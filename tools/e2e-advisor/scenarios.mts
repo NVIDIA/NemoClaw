@@ -29,6 +29,7 @@ import {
   type RunAdvisorResult,
   runReadOnlyAdvisor,
 } from "../advisors/session.mts";
+import { getScenario } from "../../test/e2e-scenario/scenarios/registry.ts";
 
 const root = process.cwd();
 const ADVISOR_PROVIDER = DEFAULT_ADVISOR_PROVIDER;
@@ -324,6 +325,7 @@ function sanitizeRecommendations(value: unknown, requiredFlag: boolean): Scenari
     // trust the model to author shell-safe dispatch commands.
     if (!ALLOWED_WORKFLOWS.has(workflow)) continue;
     if (!SCENARIO_ID_PATTERN.test(id)) continue;
+    if (id !== SCENARIO_ALL_ID && !getScenario(id)) continue;
     if (seen.has(id)) continue;
     seen.add(id);
     const scenario = stringOrUndefined(item.scenario);

@@ -234,11 +234,22 @@ describe("E2E scenario advisor — normalization contract", () => {
   it("drops malformed recommendations and de-duplicates by id", () => {
     const raw = {
       required: [
-        { id: "good", workflow: VITEST_SCENARIO_WORKFLOW, reason: "ok", dispatchCommand: "gh ..." },
         {
-          id: "good",
+          id: "ubuntu-repo-cloud-openclaw",
+          workflow: VITEST_SCENARIO_WORKFLOW,
+          reason: "ok",
+          dispatchCommand: "gh ...",
+        },
+        {
+          id: "ubuntu-repo-cloud-openclaw",
           workflow: VITEST_SCENARIO_WORKFLOW,
           reason: "dup",
+          dispatchCommand: "gh ...",
+        },
+        {
+          id: "valid-kebab-but-not-in-registry",
+          workflow: VITEST_SCENARIO_WORKFLOW,
+          reason: "unknown scenario",
           dispatchCommand: "gh ...",
         },
         { id: "missing-reason", workflow: VITEST_SCENARIO_WORKFLOW, dispatchCommand: "gh ..." },
@@ -249,7 +260,40 @@ describe("E2E scenario advisor — normalization contract", () => {
       confidence: "medium",
     };
     const normalized = normalizeScenarioAdvisorResult(raw, metadata());
-    expect(normalized.required.map((item) => item.id)).toEqual(["good"]);
+    expect(normalized.required.map((item) => item.id)).toEqual(["ubuntu-repo-cloud-openclaw"]);
+  });
+
+  it("drops unknown registry ids while preserving the synthetic fan-out id", () => {
+    const raw = {
+      required: [
+        {
+          id: "valid-kebab-but-not-in-registry",
+          workflow: VITEST_SCENARIO_WORKFLOW,
+          reason: "model invented a scenario",
+          dispatchCommand: "gh ...",
+        },
+        {
+          id: "e2e-scenarios-all",
+          workflow: VITEST_SCENARIO_WORKFLOW,
+          reason: "shared scenario runtime changed",
+          dispatchCommand: "gh ...",
+        },
+        {
+          id: "ubuntu-repo-cloud-openclaw",
+          workflow: VITEST_SCENARIO_WORKFLOW,
+          reason: "known scenario",
+          dispatchCommand: "gh ...",
+        },
+      ],
+      optional: [],
+      noScenarioE2eReason: null,
+      confidence: "medium",
+    };
+    const normalized = normalizeScenarioAdvisorResult(raw, metadata());
+    expect(normalized.required.map((item) => item.id)).toEqual([
+      "e2e-scenarios-all",
+      "ubuntu-repo-cloud-openclaw",
+    ]);
   });
 
   it("removes optional recommendations whose id duplicates a required one", () => {
