@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { makeMessagingState } from "../helpers/messaging-plan-fixtures";
 import { runWithEnv, testTimeoutOptions, writeSandboxRegistry } from "./helpers";
 
 function readSandboxPolicies(home: string, sandboxName = "alpha"): string[] {
@@ -160,5 +161,27 @@ describe("CLI dispatch", () => {
     expect(startMissing.out).toContain("Sandbox 'does-not-exist' not found in the registry.");
     expect(stopMissing.code).toBe(1);
     expect(stopMissing.out).toContain("Sandbox 'does-not-exist' not found in the registry.");
+  });
+
+  it("sandbox channels start rejects a registry entry without a messaging plan", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-channels-start-no-plan-"));
+    writeSandboxRegistry(home);
+
+    const result = runWithEnv("sandbox channels start alpha telegram", { HOME: home });
+
+    expect(result.code).toBe(1);
+    expect(result.out).toContain("Messaging plan for 'alpha' does not include channel 'telegram'.");
+    expect(result.out).not.toContain("already enabled");
+  });
+
+  it("sandbox channels start rejects a channel missing from the messaging plan", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-channels-start-unplanned-"));
+    writeSandboxRegistry(home, "alpha", { messaging: makeMessagingState("alpha", ["slack"]) });
+
+    const result = runWithEnv("sandbox channels start alpha telegram", { HOME: home });
+
+    expect(result.code).toBe(1);
+    expect(result.out).toContain("Messaging plan for 'alpha' does not include channel 'telegram'.");
+    expect(result.out).not.toContain("already enabled");
   });
 });

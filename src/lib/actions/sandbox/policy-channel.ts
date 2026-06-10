@@ -20,6 +20,7 @@ import {
   type SandboxMessagingPlan,
   toMessagingAgentId,
 } from "../../messaging";
+import { parseValidSandboxMessagingPlan } from "../../messaging/plan-validation";
 import { hashCredential } from "../../security/credential-hash";
 
 const { isNonInteractive } = require("../../onboard") as { isNonInteractive: () => boolean };
@@ -325,6 +326,31 @@ function availableManifestChannelsForAgent(agent: AgentDefinition): ChannelManif
 
 function channelSupportedByAgent(channelName: string, agent: AgentDefinition): boolean {
   return availableManifestChannelsForAgent(agent).some((manifest) => manifest.id === channelName);
+}
+
+function readValidatedSandboxMessagingPlan(
+  sandboxName: string,
+  entry: NonNullable<ReturnType<typeof registry.getSandbox>>,
+  agent: AgentDefinition,
+): SandboxMessagingPlan | null {
+  return parseValidSandboxMessagingPlan(entry.messaging?.plan, {
+    registry: messagingManifestRegistry,
+    sandboxName,
+    agent: toMessagingAgentId(agent),
+    supportedChannelIds: availableManifestChannelsForAgent(agent).map((manifest) => manifest.id),
+  });
+}
+
+function readValidatedSandboxMessagingChannelPlan(
+  sandboxName: string,
+  entry: NonNullable<ReturnType<typeof registry.getSandbox>>,
+  agent: AgentDefinition,
+  channelId: string,
+): { plan: SandboxMessagingPlan; channel: SandboxMessagingChannelPlan } | null {
+  const plan = readValidatedSandboxMessagingPlan(sandboxName, entry, agent);
+  if (!plan) return null;
+  const channel = plan.channels.find((candidate) => candidate.channelId === channelId);
+  return channel ? { plan, channel } : null;
 }
 
 export function listSandboxChannels(sandboxName: string) {
@@ -747,6 +773,9 @@ async function persistManifestChannelDisabledPlan(
   const entry = registry.getSandbox(sandboxName);
   if (!entry) return false;
   const agent = resolveAgentForSandbox(sandboxName);
+  if (!readValidatedSandboxMessagingChannelPlan(sandboxName, entry, agent, channelId)) {
+    return false;
+  }
   const planner = new MessagingWorkflowPlanner(messagingManifestRegistry);
   const context = {
     sandboxName,
@@ -1397,13 +1426,28 @@ async function sandboxChannelsSetEnabled(
     process.exit(1);
   }
 
-  if (!registry.getSandbox(sandboxName)) {
+  const entry = registry.getSandbox(sandboxName);
+  if (!entry) {
     console.error(`  Sandbox '${sandboxName}' not found in the registry.`);
     process.exit(1);
   }
 
   const normalized = channelArg.trim().toLowerCase();
-  const alreadyDisabled = registry.getDisabledChannels(sandboxName).includes(normalized);
+  const agent = resolveAgentForSandbox(sandboxName);
+  const planChannel = readValidatedSandboxMessagingChannelPlan(
+    sandboxName,
+    entry,
+    agent,
+    normalized,
+  );
+  if (!planChannel) {
+    console.error(
+      `  Messaging plan for '${sandboxName}' does not include channel '${normalized}'.`,
+    );
+    process.exit(1);
+  }
+
+  const alreadyDisabled = planChannel.plan.disabledChannels.includes(normalized);
   if (alreadyDisabled === disabled) {
     console.log(
       `  Channel '${normalized}' is already ${disabled ? "disabled" : "enabled"} for '${sandboxName}'. Nothing to do.`,
