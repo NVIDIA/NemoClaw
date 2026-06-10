@@ -239,15 +239,13 @@ PROBE_JS
 )
 PROBE_B64="$(printf '%s' "$PROBE_SRC" | base64 -w 0)"
 
-PROBE_OUT="$(nemoclaw "$SANDBOX" exec -- sh -c "
-. /tmp/nemoclaw-proxy-env.sh
-__probe=\"\$(mktemp /tmp/nemoclaw-preflight-probe.XXXXXX.cjs)\"
-printf %s '$PROBE_B64' | base64 -d > \"\$__probe\"
-node \"\$__probe\"
-__rc=\$?
-rm -f \"\$__probe\"
-exit \"\$__rc\"
-" 2>&1)"
+# openshell sandbox exec rejects any command argument that contains a newline
+# or carriage return ("command argument N contains newline or carriage return
+# characters"), so the inner `sh -c` payload must be a single physical line.
+# Chain with `&&` for success-only steps and `;` for the cleanup tail so the
+# probe exit code is preserved end-to-end.
+PROBE_SHELL=". /tmp/nemoclaw-proxy-env.sh && __probe=\"\$(mktemp /tmp/nemoclaw-preflight-probe.XXXXXX.cjs)\" && printf %s '$PROBE_B64' | base64 -d > \"\$__probe\" && node \"\$__probe\"; __rc=\$?; rm -f \"\$__probe\"; exit \"\$__rc\""
+PROBE_OUT="$(nemoclaw "$SANDBOX" exec -- sh -c "$PROBE_SHELL" 2>&1)"
 PROBE_RC=$?
 info "preflight probe output (rc=$PROBE_RC):"
 printf '%s\n' "$PROBE_OUT" | sed 's/^/    /'
