@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import { isTransientProviderValidationFailure } from "../live/network-policy.test.ts";
+import { isTransientProviderValidationFailure } from "../live/network-policy-transient-provider.ts";
 
 function probeOutput(output: string): { stdout: string; stderr: string } {
   return { stdout: "", stderr: output };

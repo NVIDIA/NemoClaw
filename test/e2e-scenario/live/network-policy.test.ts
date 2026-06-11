@@ -17,6 +17,7 @@ import path from "node:path";
 
 import { isPrivateIp } from "../../../nemoclaw/src/blueprint/private-networks.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
+import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
@@ -43,11 +44,6 @@ const PACKAGE_MANAGER_TIMEOUT_MS = 5 * 60_000;
 const POLICY_SETTLE_MS =
   process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true" ? 5_000 : 3_000;
 const ONBOARD_ATTEMPTS = process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true" ? 3 : 1;
-const TRANSIENT_PROVIDER_VALIDATION_RE =
-  /endpoint validation failed|failed to verify inference endpoint|Chat Completions API validation/i;
-const TRANSIENT_PROVIDER_DETAIL_RE =
-  /timed? out|timeout|curl failed \(exit (7|28|35|52|56)\)|ETIMEDOUT|ECONNRESET|EAI_AGAIN|ENOTFOUND|failed to connect|error sending request|HTTP (429|502|503|504)|returned HTTP (429|502|503|504)|temporar/i;
-
 type NemoEnv = NodeJS.ProcessEnv;
 
 function text(result: Pick<ShellProbeResult, "stdout" | "stderr">): string {
@@ -65,13 +61,6 @@ function baseEnv(extra: NemoEnv = {}): NemoEnv {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-export function isTransientProviderValidationFailure(
-  result: Pick<ShellProbeResult, "stdout" | "stderr">,
-): boolean {
-  const output = text(result);
-  return TRANSIENT_PROVIDER_VALIDATION_RE.test(output) && TRANSIENT_PROVIDER_DETAIL_RE.test(output);
 }
 
 async function runNemoclaw(
@@ -550,9 +539,16 @@ hello
     await expect(
       curlStatus(sandbox, "https://pypi.org/simple/requests/", "tc-net-02-pypi-get"),
     ).resolves.toBe("200");
+    // Use the same real artifact as the retained legacy shell test. A
+    // placeholder files.pythonhosted.org path can legitimately return 404,
+    // which does not prove useful artifact egress for TC-NET-02.
     await expect(
-      curlStatus(sandbox, "https://files.pythonhosted.org/rg/", "tc-net-02-pythonhosted-get"),
-    ).resolves.toMatch(/^([23][0-9][0-9]|404)$/);
+      curlStatus(
+        sandbox,
+        "https://files.pythonhosted.org/packages/source/r/requests/requests-2.32.5.tar.gz",
+        "tc-net-02-pythonhosted-get",
+      ),
+    ).resolves.toMatch(/^[23][0-9][0-9]$/);
     await expect(
       curlStatus(sandbox, "https://pypi.org/simple/le/", "tc-net-02-pypi-post", "-X POST"),
     ).resolves.toBe("403");
