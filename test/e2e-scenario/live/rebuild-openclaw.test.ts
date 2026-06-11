@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { Buffer } from "node:buffer";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -151,6 +152,11 @@ function openshellBestEffort(
       timeoutMs: OPENSHELL_TIMEOUT_MS,
     },
   );
+}
+
+function pythonExecArgs(script: string): string[] {
+  const encoded = Buffer.from(script, "utf8").toString("base64");
+  return ["python3", "-c", `import base64; exec(base64.b64decode('${encoded}'))`];
 }
 
 function createOldBaseBuildContext(): string {
@@ -527,9 +533,20 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       [
         "env",
         `PRE_REBUILD_GATEWAY_TOKEN=${PRE_REBUILD_GATEWAY_TOKEN}`,
-        "python3",
-        "-c",
-        `import json, os, subprocess\npath='/sandbox/.openclaw/openclaw.json'\ntry:\n    cfg=json.load(open(path))\nexcept Exception:\n    cfg={}\ncfg.setdefault('gateway', {}).setdefault('auth', {})['token']=os.environ['PRE_REBUILD_GATEWAY_TOKEN']\nwith open(path, 'w') as f:\n    json.dump(cfg, f, indent=2)\n    f.write('\\n')\nsubprocess.check_call(['bash','-lc','cd /sandbox/.openclaw && sha256sum openclaw.json > .config-hash'])\nsaved=json.load(open(path)).get('gateway',{}).get('auth',{}).get('token','')\nhash_text=open('/sandbox/.openclaw/.config-hash').read()\nprint(json.dumps({'seeded': saved == os.environ['PRE_REBUILD_GATEWAY_TOKEN'], 'hashReferencesConfig': 'openclaw.json' in hash_text}))`,
+        ...pythonExecArgs(`import json, os, subprocess
+path='/sandbox/.openclaw/openclaw.json'
+try:
+    cfg=json.load(open(path))
+except Exception:
+    cfg={}
+cfg.setdefault('gateway', {}).setdefault('auth', {})['token']=os.environ['PRE_REBUILD_GATEWAY_TOKEN']
+with open(path, 'w') as f:
+    json.dump(cfg, f, indent=2)
+    f.write('\\n')
+subprocess.check_call(['bash','-lc','cd /sandbox/.openclaw && sha256sum openclaw.json > .config-hash'])
+saved=json.load(open(path)).get('gateway',{}).get('auth',{}).get('token','')
+hash_text=open('/sandbox/.openclaw/.config-hash').read()
+print(json.dumps({'seeded': saved == os.environ['PRE_REBUILD_GATEWAY_TOKEN'], 'hashReferencesConfig': 'openclaw.json' in hash_text}))`),
       ],
       {
         artifactName: "phase-4-seed-gateway-token",
@@ -664,9 +681,14 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
         "env",
         `PRE_REBUILD_GATEWAY_TOKEN=${PRE_REBUILD_GATEWAY_TOKEN}`,
         `PRE_REBUILD_CONFIG_HASH=${preRebuildConfigHash}`,
-        "python3",
-        "-c",
-        `import json, os, subprocess\ncfg=json.load(open('/sandbox/.openclaw/openclaw.json'))\ntoken=cfg.get('gateway',{}).get('auth',{}).get('token','')\nruntime=subprocess.check_output(['bash','-lc','. /tmp/nemoclaw-proxy-env.sh >/dev/null 2>&1 || exit 1; printf "%s" "\${OPENCLAW_GATEWAY_TOKEN:-}"'], text=True)\nhash_text=open('/sandbox/.openclaw/.config-hash').read()\nhash_ok=subprocess.call(['bash','-lc','cd /sandbox/.openclaw && sha256sum -c .config-hash --status']) == 0\nold=os.environ['PRE_REBUILD_GATEWAY_TOKEN']\nprint(json.dumps({'tokenPresent': bool(token), 'tokenRotated': token != old, 'runtimeMatchesConfig': runtime == token, 'runtimeStillOld': runtime == old, 'hashReferencesConfig': 'openclaw.json' in hash_text, 'hashChanged': hash_text != os.environ['PRE_REBUILD_CONFIG_HASH'], 'hashValid': hash_ok}))`,
+        ...pythonExecArgs(`import json, os, subprocess
+cfg=json.load(open('/sandbox/.openclaw/openclaw.json'))
+token=cfg.get('gateway',{}).get('auth',{}).get('token','')
+runtime=subprocess.check_output(['bash','-lc','. /tmp/nemoclaw-proxy-env.sh >/dev/null 2>&1 || exit 1; printf "%s" "\${OPENCLAW_GATEWAY_TOKEN:-}"'], text=True)
+hash_text=open('/sandbox/.openclaw/.config-hash').read()
+hash_ok=subprocess.call(['bash','-lc','cd /sandbox/.openclaw && sha256sum -c .config-hash --status']) == 0
+old=os.environ['PRE_REBUILD_GATEWAY_TOKEN']
+print(json.dumps({'tokenPresent': bool(token), 'tokenRotated': token != old, 'runtimeMatchesConfig': runtime == token, 'runtimeStillOld': runtime == old, 'hashReferencesConfig': 'openclaw.json' in hash_text, 'hashChanged': hash_text != os.environ['PRE_REBUILD_CONFIG_HASH'], 'hashValid': hash_ok}))`),
       ],
       {
         artifactName: "phase-7-gateway-token-rotation-check",
