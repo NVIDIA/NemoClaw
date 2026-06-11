@@ -17,11 +17,11 @@ const { help } = require("../actions/root-help");
 const { runOclifArgv, runOclifCommandById } = require("./oclif-runner");
 const {
   canonicalUsageList,
-  directGlobalCommandIds,
   globalCommandTokens,
   sandboxActionTokens,
 } = require("./command-registry");
 import { normalizeArgv, suggestCommand, type NormalizedSandboxArgv } from "./argv-normalizer";
+import { getRegisteredOclifCommandMetadata } from "./oclif-metadata";
 import {
   translatePublicGlobalArgv,
   translatePublicSandboxArgv,
@@ -169,21 +169,17 @@ function validSandboxActionsText(): string {
   return sandboxActionList().filter(Boolean).join(", ");
 }
 
-// Direct command-ID execution is a bounded fallback for leaf global commands.
-// With oclif flexible taxonomy enabled, native argv like `status bogus` can be
-// interpreted as command ID `status:bogus` instead of command `status` with an
-// unexpected positional arg `bogus`. Derive the leaf set from oclif metadata so
-// adding/removing global commands does not require maintaining a parallel list.
-const DIRECT_OCLIF_COMMAND_ID_GLOBALS = directGlobalCommandIds();
-
 function shouldExecuteViaNativeArgv(
   result: Extract<PublicTranslationResult, { kind: "nativeArgv" }>,
 ): boolean {
+  // Native argv remains useful for fabricated unknown child routes so oclif owns
+  // the unknown-command error. Exact public translations should run by command
+  // ID to avoid flexible-taxonomy reinterpreting positional args under WSL.
   const helpArgs =
     result.commandId === "sandbox:exec" ? argsBeforeSeparator(result.args) : result.args;
   if (hasHelpFlag(helpArgs)) return false;
-  if (DIRECT_OCLIF_COMMAND_ID_GLOBALS.has(result.commandId)) return false;
   if (result.commandId.startsWith("root:")) return false;
+  if (getRegisteredOclifCommandMetadata(result.commandId)) return false;
   return true;
 }
 function printDispatchUsageError(
