@@ -154,6 +154,10 @@ function captureConfig(
 ): OpenClawConfig {
   let lastResult: CommandResult | undefined;
   let lastError: Error | undefined;
+  // Preserve the legacy script's Docker/ENTRYPOINT stdout tolerance: very short
+  // one-shot containers can race the entrypoint's tee process substitution even
+  // though the JSON is written to fd3. Keep this local retry until the startup
+  // capture path no longer uses tee for container stdout/stderr fanout.
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     const result = runContainer(
       dockerLog,
