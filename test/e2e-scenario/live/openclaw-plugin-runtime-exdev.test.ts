@@ -82,7 +82,7 @@ function patchPoliciesForDevShm(): () => void {
   };
 }
 
-const runtimeDepsReplacementProbe = trustedSandboxShellScript(`set -eu
+const runtimeDepsReplacementProbeSource = `set -eu
 rm -rf /sandbox/.openclaw/plugin-runtime-deps/exdev-guard 2>/dev/null || true
 rm -rf /dev/shm/nemoclaw-exdev-source 2>/dev/null || true
 mkdir -p /dev/shm/nemoclaw-exdev-source /sandbox/.openclaw/plugin-runtime-deps/exdev-guard
@@ -112,7 +112,11 @@ function replaceNodeModulesDir(targetDir, sourceDir) {
 }
 replaceNodeModulesDir('/sandbox/.openclaw/plugin-runtime-deps/exdev-guard/node_modules', '/dev/shm/nemoclaw-exdev-source');
 console.log('runtime deps replacement completed');
-NODE`);
+NODE`;
+
+const runtimeDepsReplacementProbe = trustedSandboxShellScript(
+  `printf '%s' '${Buffer.from(runtimeDepsReplacementProbeSource).toString("base64")}' | base64 -d > /tmp/nemoclaw-exdev-guard.sh && sh /tmp/nemoclaw-exdev-guard.sh`,
+);
 
 liveTest(
   "OpenClaw plugin runtime deps replacement survives cross-filesystem EXDEV layout",
