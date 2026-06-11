@@ -992,7 +992,8 @@ fi
 # renderer cannot be resolved/executed at all (an infra/resolution issue, not a
 # size regression) the sub-check SKIPs rather than failing the suite — an actual
 # oversized render still yields a number above the ceiling and fails. The
-# hard-gated, version-pinned size proof lives in test-whatsapp-qr-compact-e2e.sh.
+# hard-gated, version-pinned size proof lives in
+# test/e2e-scenario/live/whatsapp-qr-compact.test.ts.
 WHATSAPP_QR_RENDER_PROBE=$(
   cat <<'PROBE'
 import { renderQrTerminal } from "openclaw/plugin-sdk/media-runtime";

@@ -50,4 +50,13 @@ describe("Regression E2E workflow contract", () => {
     expect(selectorScript).not.toContain("strict-tool-call-probe-e2e");
     expect(selectorScript).not.toContain("strict_tool_call_probe");
   });
+
+  it("runs WhatsApp compact QR through Vitest instead of the retired shell script", () => {
+    const job = workflow.jobs?.["whatsapp-qr-compact-e2e"];
+    const runText = (job?.steps ?? []).map((step) => step.run ?? "").join("\n");
+
+    expect(runText).toContain("test/e2e-scenario/live/whatsapp-qr-compact.test.ts");
+    expect(runText).toContain("npx vitest run --project e2e-scenarios-live");
+    expect(runText).not.toContain("test/e2e/test-whatsapp-qr-compact-e2e.sh");
+  });
 });

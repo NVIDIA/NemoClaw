@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
@@ -80,7 +80,6 @@ const LEGACY_E2E_SHELL_ALLOWLIST = [
   "test/e2e/test-tunnel-lifecycle.sh",
   "test/e2e/test-upgrade-stale-sandbox.sh",
   "test/e2e/test-vm-driver-privileged-exec-routing.sh",
-  "test/e2e/test-whatsapp-qr-compact-e2e.sh",
 ];
 
 // Scheduled nightly wiring is frozen separately: retiring a nightly-wired legacy
