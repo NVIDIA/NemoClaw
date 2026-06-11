@@ -383,10 +383,9 @@ $$nemoclaw onboard
 `$$nemoclaw <name> connect` checks the OpenShell gateway before it tries dashboard forwarding, SSH, or inference repair.
 If the gateway is not reachable, the command exits early and prints recovery guidance.
 
-Start the gateway or resume onboarding, then retry:
+Resume onboarding so NemoClaw recreates or reconnects the managed gateway, then retry:
 
 ```bash
-openshell gateway start --name nemoclaw
 $$nemoclaw onboard --resume
 $$nemoclaw <name> connect
 ```
@@ -564,12 +563,12 @@ Follow these steps to reconnect.
 
    If the sandbox shows `Ready`, skip to step 4.
 
-1. Restart the gateway (if needed).
+1. Recover the managed gateway (if needed).
 
-   If the sandbox is not listed or the command fails, restart the OpenShell gateway:
+   If the sandbox is not listed or the command fails, let NemoClaw recover the managed gateway and sandbox registration:
 
    ```bash
-   openshell gateway start --name nemoclaw
+   $$nemoclaw onboard --resume
    ```
 
    Wait a few seconds, then re-check with `openshell sandbox list`.
@@ -663,11 +662,11 @@ $$nemoclaw <name> rebuild
 
 ### Sandbox creation reports a TLS certificate mismatch
 
-If sandbox creation reports a TLS or certificate mismatch, the OpenShell gateway certificate may have changed since the CLI last trusted it.
-Refresh the gateway trust and then resume onboarding:
+If sandbox creation reports a TLS or certificate mismatch, the OpenShell gateway certificate may have changed since the CLI last registered it.
+Remove the stale local gateway registration and then resume onboarding so NemoClaw refreshes the registration:
 
 ```bash
-openshell gateway trust -g nemoclaw
+openshell gateway remove nemoclaw
 $$nemoclaw onboard --resume
 ```
 
