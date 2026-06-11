@@ -194,48 +194,28 @@ esac
 NEMOCLAW_CMD=("$@")
 
 # Marker file the Docker HEALTHCHECK reads to decide whether an in-container
-# gateway liveness check is meaningful. Its presence means this container runs
-# the OpenClaw gateway (standalone deployments and the #3975 forwarded-port
-# shape); its absence means the gateway is delivered out of this container's
-# namespace (OpenShell docker-driver sandboxes run it on the host — #4503),
-# so the HEALTHCHECK short-circuits to healthy and defers to host-side
-# delivery-chain monitoring. See the HEALTHCHECK block in the Dockerfile.
+# gateway liveness check is meaningful. Its presence means this container has
+# entered the OpenClaw gateway launch path (standalone deployments and the #3975
+# forwarded-port shape); its absence means this entrypoint has not launched a
+# gateway in this container, so the HEALTHCHECK short-circuits to healthy and
+# defers to the runtime that owns gateway delivery. See the HEALTHCHECK block in
+# the Dockerfile.
 #
 # IMPORTANT (#4710): the marker is dropped immediately before each
 # `openclaw gateway run --port ...` invocation later in this script — NOT
 # here. An early conditional gated on env hints (NEMOCLAW_CMD empty or
 # OPENSHELL_DRIVERS=docker) is unreliable because OpenShell 0.0.44 does not
 # export OPENSHELL_DRIVERS into the sandbox container env, so the guard never
-# fires for docker-driver sandboxes and the marker would be created
-# unconditionally — defeating the HEALTHCHECK short-circuit. Tying the marker
-# to the actual gateway-launch code path makes it true-by-construction: the
-# marker exists if-and-only-if this container is about to start the gateway.
-# Both the root and non-root entrypoint paths call `mark_in_container_gateway`
-# directly before their `openclaw gateway run` invocation.
+# fires for docker-driver sandboxes. Other OpenShell env values are also not a
+# trusted gateway-location source: they describe the sandbox container request,
+# not whether this process owns the dashboard gateway. Tying the marker to the
+# actual gateway-launch code path makes it true-by-construction: the marker
+# exists if-and-only-if this container is about to start the gateway. Both the
+# root and non-root entrypoint paths call `mark_in_container_gateway` directly
+# before their `openclaw gateway run` invocation.
 # Best-effort: a write failure must never block startup.
 mark_in_container_gateway() {
   : >/tmp/nemoclaw-gateway-local 2>/dev/null || true
-}
-
-gateway_delivered_by_openshell_host() {
-  case ",${OPENSHELL_DRIVERS:-}," in
-    *,docker,*) return 0 ;;
-    *,vm,* | *,kubernetes,* | *,k3s,*) return 1 ;;
-  esac
-
-  # OpenShell 0.0.44 does not export OPENSHELL_DRIVERS into Docker-driver
-  # sandbox containers. The live container does expose this sleep-infinity
-  # command plus OpenShell identity env, which identifies the host-owned gateway
-  # shape from #4710 without relying on the missing driver env.
-  [ "${OPENSHELL_SANDBOX_COMMAND:-}" = "sleep infinity" ] || return 1
-  [ -n "${OPENSHELL_ENDPOINT:-}" ] || return 1
-  [ -n "${OPENSHELL_SANDBOX_ID:-}${OPENSHELL_SANDBOX:-}" ] || return 1
-}
-
-skip_in_container_gateway_for_host_delivery() {
-  gateway_delivered_by_openshell_host || return 0
-  echo "[gateway] OpenShell host-delivered gateway detected; leaving /tmp/nemoclaw-gateway-local absent" >&2
-  exec sleep infinity
 }
 
 _chat_ui_url_port() {
@@ -3341,8 +3321,6 @@ if [ "$(id -u)" -ne 0 ]; then
   # inject code into any Node process via NODE_OPTIONS).
   validate_tmp_permissions "$_SANDBOX_SAFETY_NET" "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT" "$_WS_FIX_SCRIPT" "$_SECCOMP_GUARD_SCRIPT" "$_CIAO_GUARD_SCRIPT" "$_TELEGRAM_DIAGNOSTICS_SCRIPT" "$_SLACK_GUARD_SCRIPT" "$_WHATSAPP_QR_COMPACT_SCRIPT"
 
-  skip_in_container_gateway_for_host_delivery
-
   # Start gateway in background, auto-pair, then wait. Mark the in-container
   # gateway path so the Docker HEALTHCHECK probes it rather than short-circuiting
   # to healthy — see the mark_in_container_gateway comment near the top of this
@@ -3565,8 +3543,6 @@ seed_default_workspace_templates_as_sandbox
 # (both are trust-boundary files; tampering would let the sandbox user
 # inject code into any Node process via NODE_OPTIONS).
 validate_tmp_permissions "$_SANDBOX_SAFETY_NET" "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT" "$_WS_FIX_SCRIPT" "$_SECCOMP_GUARD_SCRIPT" "$_CIAO_GUARD_SCRIPT" "$_TELEGRAM_DIAGNOSTICS_SCRIPT" "$_SLACK_GUARD_SCRIPT" "$_WHATSAPP_QR_COMPACT_SCRIPT"
-
-skip_in_container_gateway_for_host_delivery
 
 # Start the gateway as the 'gateway' user.
 # SECURITY: The sandbox user cannot kill this process because it runs

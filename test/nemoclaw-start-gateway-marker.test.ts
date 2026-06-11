@@ -128,15 +128,52 @@ describe("nemoclaw-start in-container gateway healthcheck marker (#4503, #4710)"
     }
   });
 
-  it("leaves the marker absent and skips local launch for OpenShell docker-driver startup (#4710)", () => {
+  it.each([
+    [
+      "explicit docker driver",
+      {
+        OPENSHELL_DRIVERS: "docker",
+        OPENSHELL_ENDPOINT: "http://127.0.0.1:8080",
+        OPENSHELL_SANDBOX_COMMAND: "sleep infinity",
+        OPENSHELL_SANDBOX_ID: "sandbox-id",
+      },
+    ],
+    [
+      "missing driver with OpenShell sleep command and identity",
+      {
+        OPENSHELL_DRIVERS: "",
+        OPENSHELL_ENDPOINT: "http://127.0.0.1:8080",
+        OPENSHELL_SANDBOX_COMMAND: "sleep infinity",
+        OPENSHELL_SANDBOX_ID: "sandbox-id",
+      },
+    ],
+    ["vm driver", { OPENSHELL_DRIVERS: "vm" }],
+    ["kubernetes driver", { OPENSHELL_DRIVERS: "kubernetes" }],
+    ["k3s driver", { OPENSHELL_DRIVERS: "k3s" }],
+    [
+      "missing endpoint",
+      { OPENSHELL_SANDBOX_COMMAND: "sleep infinity", OPENSHELL_SANDBOX_ID: "sandbox-id" },
+    ],
+    [
+      "missing sandbox id",
+      {
+        OPENSHELL_ENDPOINT: "http://127.0.0.1:8080",
+        OPENSHELL_SANDBOX_COMMAND: "sleep infinity",
+      },
+    ],
+    [
+      "non-sleep command",
+      {
+        OPENSHELL_ENDPOINT: "http://127.0.0.1:8080",
+        OPENSHELL_SANDBOX_COMMAND: "env CHAT_UI_URL=http://127.0.0.1:8642 nemoclaw-start",
+        OPENSHELL_SANDBOX_ID: "sandbox-id",
+      },
+    ],
+  ])("does not let %s env suppress a reached local gateway launch (#4710)", (_label, env) => {
     const src = fs.readFileSync(START_SCRIPT, "utf-8");
     const markFn = extractShellFunctionFromSource(src, "mark_in_container_gateway");
-    const hostDeliveredFn = extractShellFunctionFromSource(
-      src,
-      "gateway_delivered_by_openshell_host",
-    );
 
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gw-host-delivered-"));
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gw-env-contract-"));
     const markerPath = path.join(tmpDir, "nemoclaw-gateway-local");
     const openclawLog = path.join(tmpDir, "openclaw.log");
     const fakeBin = path.join(tmpDir, "bin");
@@ -153,17 +190,12 @@ describe("nemoclaw-start in-container gateway healthcheck marker (#4503, #4710)"
         "#!/usr/bin/env bash",
         "set -euo pipefail",
         markFn.replaceAll("/tmp/nemoclaw-gateway-local", markerPath),
-        hostDeliveredFn,
         'nohup() { "$@"; }',
         'OPENCLAW="$(command -v openclaw)"',
         "_DASHBOARD_PORT=18789",
-        "if gateway_delivered_by_openshell_host; then",
-        "  echo HOST_DELIVERED",
-        "else",
-        "  mark_in_container_gateway",
-        '  nohup "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}"',
-        "fi",
-        `[ ! -e ${JSON.stringify(markerPath)} ] && echo MARKER_ABSENT`,
+        "mark_in_container_gateway",
+        'nohup "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}"',
+        `[ -f ${JSON.stringify(markerPath)} ] && echo MARKER_PRESENT`,
       ].join("\n");
 
       const result = spawnSync("bash", ["-c", script], {
@@ -172,18 +204,14 @@ describe("nemoclaw-start in-container gateway healthcheck marker (#4503, #4710)"
         env: {
           ...process.env,
           PATH: `${fakeBin}:${process.env.PATH || ""}`,
-          OPENSHELL_DRIVERS: "",
-          OPENSHELL_ENDPOINT: "http://127.0.0.1:8080",
-          OPENSHELL_SANDBOX_COMMAND: "sleep infinity",
-          OPENSHELL_SANDBOX_ID: "sandbox-id",
+          ...env,
         },
       });
 
       expect(result.status).toBe(0);
-      expect(result.stdout).toContain("HOST_DELIVERED");
-      expect(result.stdout).toContain("MARKER_ABSENT");
-      expect(fs.existsSync(markerPath)).toBe(false);
-      expect(fs.existsSync(openclawLog)).toBe(false);
+      expect(result.stdout).toContain("MARKER_PRESENT");
+      expect(fs.readFileSync(openclawLog, "utf-8")).toContain("gateway run --port 18789");
+      expect(fs.existsSync(markerPath)).toBe(true);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

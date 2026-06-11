@@ -3764,7 +3764,7 @@ describe("Telegram diagnostics (#2766)", () => {
         // gets invoked (issue #3280 follow-up).
         "STEP_DOWN_PREFIX_SANDBOX=(gosu sandbox)",
         "STEP_DOWN_PREFIX_GATEWAY=(gosu gateway)",
-        'validate_tmp_permissions() { printf "VALIDATE:%s\\n" "$*"; }; skip_in_container_gateway_for_host_delivery() { :; }',
+        'validate_tmp_permissions() { printf "VALIDATE:%s\\n" "$*"; }',
         "_SANDBOX_HOME=/sandbox",
         `_SANDBOX_SAFETY_NET=${JSON.stringify(path.join(tmpDir, "safety.js"))}`,
         `_PROXY_FIX_SCRIPT=${JSON.stringify(path.join(tmpDir, "proxy-fix.js"))}`,
