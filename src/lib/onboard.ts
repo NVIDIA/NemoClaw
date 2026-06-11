@@ -27,6 +27,7 @@ const {
   abortNonInteractive,
 }: typeof import("./onboard/non-interactive-abort") = require("./onboard/non-interactive-abort");
 const { stopStaleDashboardListenersForSandbox } = require("./onboard/stale-gateway-cleanup");
+const extraPlaceholderKeysModule: typeof import("./onboard/extra-placeholder-keys") = require("./onboard/extra-placeholder-keys");
 const {
   ensureOllamaLoopbackSystemdOverride,
 }: typeof import("./onboard/ollama-systemd") = require("./onboard/ollama-systemd");
@@ -414,10 +415,13 @@ const {
   messagingChannelConfigsEqual,
   persistMessagingChannelConfigToSession,
 } = messagingConfig;
+const messagingPrep: typeof import("./onboard/messaging-prep") = require("./onboard/messaging-prep");
 const sandboxAgent: typeof import("./onboard/sandbox-agent") = require("./onboard/sandbox-agent");
 const sandboxLifecycle: typeof import("./onboard/sandbox-lifecycle") = require("./onboard/sandbox-lifecycle");
 const sandboxRegistryMetadata: typeof import("./onboard/sandbox-registry-metadata") = require("./onboard/sandbox-registry-metadata");
 const sandboxReuse: typeof import("./onboard/sandbox-reuse") = require("./onboard/sandbox-reuse");
+const sandboxRegistration: typeof import("./onboard/sandbox-registration") =
+  require("./onboard/sandbox-registration");
 const {
   RESERVED_SANDBOX_NAMES,
   formatSandboxAgentName,
@@ -475,8 +479,11 @@ const policyPresetCarry: typeof import("./onboard/policy-preset-persistence") = 
 const tiers: typeof import("./policy/tiers") = require("./policy/tiers");
 const policyTierEnv: typeof import("./onboard/policy-tier-env") = require("./onboard/policy-tier-env");
 const { ensureUsageNoticeConsent } = require("./onboard/usage-notice");
-const { findAvailableDashboardPort, preflightDashboardPortRangeAvailability } =
-  require("./onboard/dashboard-port") as typeof import("./onboard/dashboard-port");
+const {
+  findAvailableDashboardPort,
+  preflightDashboardPortRangeAvailability,
+  resolveCreateSandboxDashboardPort,
+} = require("./onboard/dashboard-port") as typeof import("./onboard/dashboard-port");
 const { tryCleanupOrphanedDashboardForward } =
   require("./onboard/orphaned-dashboard-forward") as typeof import("./onboard/orphaned-dashboard-forward");
 const { destroyGatewayForReuse } =
@@ -591,7 +598,7 @@ import type { SelectionDrift } from "./onboard/selection-drift";
 import { formatOnboardConfigSummary, formatSandboxBuildEstimateNote } from "./onboard/summary";
 import type { ModelValidationResult, ValidationFailureLike } from "./onboard/types";
 import type { ContainerRuntime } from "./platform";
-import { getChannelTokenKeys, listChannels } from "./sandbox/channels";
+import { listChannels } from "./sandbox/channels";
 import type { GatewayReuseState } from "./state/gateway";
 import type { Session, SessionUpdates } from "./state/onboard-session";
 import type { SandboxEntry } from "./state/registry";
@@ -922,12 +929,7 @@ function upsertProvider(
   return result;
 }
 
-type MessagingTokenDef = {
-  name: string;
-  envKey: string;
-  token: string | null;
-  providerType?: string;
-};
+type MessagingTokenDef = import("./onboard/messaging-prep").MessagingTokenDef;
 
 type EndpointValidationResult =
   | { ok: true; api: string | null; retry?: undefined }
@@ -2559,46 +2561,16 @@ async function createSandbox(
   const effectiveSandboxGpuConfig =
     sandboxGpuConfig ?? resolveSandboxGpuConfig(gpu, { flag: null, device: null });
 
-  // Port priority: --control-ui-port > CHAT_UI_URL env > registry (resume) > agent.forwardPort > default
-  // Pre-resolve port availability so CHAT_UI_URL baked into the Dockerfile,
-  // the sandbox env, and the readiness probe all use the final forwarded port.
-  const persistedPort = registry.getSandbox(sandboxName)?.dashboardPort ?? null;
-  // When CHAT_UI_URL is set, extract its port so the allocator and the URL stay in sync.
-  let envPort: number | null = null;
-  if (process.env.CHAT_UI_URL) {
-    try {
-      const u = new URL(
-        process.env.CHAT_UI_URL.includes("://")
-          ? process.env.CHAT_UI_URL
-          : `http://${process.env.CHAT_UI_URL}`,
-      );
-      const p = Number(u.port);
-      if (p > 0) envPort = p;
-    } catch {
-      /* malformed URL — ignore */
-    }
-  }
-  const preferredPort =
-    controlUiPort ?? envPort ?? persistedPort ?? (agent ? agent.forwardPort : DASHBOARD_PORT);
-  const earlyForwards = runCaptureOpenshell(["forward", "list"], { ignoreError: true });
-  const effectivePort = findAvailableDashboardPort(sandboxName, preferredPort, earlyForwards);
-  if (effectivePort !== preferredPort) {
-    console.warn(`  ! Port ${preferredPort} is taken. Using port ${effectivePort} instead.`);
-  }
-  // Build chatUiUrl: preserve the hostname from CHAT_UI_URL when set, but
-  // always use effectivePort so the Dockerfile, env, and readiness probe agree.
-  let chatUiUrl: string;
-  if (process.env.CHAT_UI_URL && controlUiPort == null) {
-    const parsed = new URL(
-      process.env.CHAT_UI_URL.includes("://")
-        ? process.env.CHAT_UI_URL
-        : `http://${process.env.CHAT_UI_URL}`,
-    );
-    parsed.port = String(effectivePort);
-    chatUiUrl = parsed.toString().replace(/\/$/, "");
-  } else {
-    chatUiUrl = `http://127.0.0.1:${effectivePort}`;
-  }
+  let { effectivePort, chatUiUrl } = resolveCreateSandboxDashboardPort({
+    sandboxName,
+    controlUiPort,
+    chatUiUrlEnv: process.env.CHAT_UI_URL,
+    persistedPort: registry.getSandbox(sandboxName)?.dashboardPort ?? null,
+    agentForwardPort: agent?.forwardPort,
+    defaultPort: DASHBOARD_PORT,
+    forwardListOutput: runCaptureOpenshell(["forward", "list"], { ignoreError: true }),
+    warn: (message) => console.warn(message),
+  });
   const hermesDashboardForwarding = onboardHermesDashboard.createHermesDashboardOnboardForwarding({
     agentName: agent?.name,
     env: process.env,
@@ -2653,93 +2625,35 @@ async function createSandbox(
     error: (message) => console.error(message),
   });
 
-  // When enabledChannels is provided (from the toggle picker), only include
-  // channels the user selected. When null (backward compat), include all.
-  const enabledEnvKeys =
-    enabledChannels != null
-      ? new Set(
-          MESSAGING_CHANNELS.filter((c) => enabledChannels.includes(c.name)).flatMap((c) =>
-            getChannelTokenKeys(c),
-          ),
-        )
-      : null;
-
-  const disabledEnvKeys = new Set(
-    MESSAGING_CHANNELS.filter((c) => disabledChannelNames.has(c.name)).flatMap((c) =>
-      getChannelTokenKeys(c),
-    ),
-  );
-
-  const messagingTokenDefs: MessagingTokenDef[] = [
-    {
-      name: `${sandboxName}-discord-bridge`,
-      envKey: "DISCORD_BOT_TOKEN",
-      token: getValidatedMessagingTokenByEnvKey(MESSAGING_CHANNELS, "DISCORD_BOT_TOKEN"),
-    },
-    {
-      name: `${sandboxName}-slack-bridge`,
-      envKey: "SLACK_BOT_TOKEN",
-      token: getValidatedMessagingTokenByEnvKey(MESSAGING_CHANNELS, "SLACK_BOT_TOKEN"),
-    },
-    {
-      name: `${sandboxName}-slack-app`,
-      envKey: "SLACK_APP_TOKEN",
-      token: getValidatedMessagingTokenByEnvKey(MESSAGING_CHANNELS, "SLACK_APP_TOKEN"),
-    },
-    {
-      name: `${sandboxName}-telegram-bridge`,
-      envKey: "TELEGRAM_BOT_TOKEN",
-      token: getValidatedMessagingTokenByEnvKey(MESSAGING_CHANNELS, "TELEGRAM_BOT_TOKEN"),
-    },
-    {
-      name: `${sandboxName}-wechat-bridge`,
-      envKey: "WECHAT_BOT_TOKEN",
-      token: getValidatedMessagingTokenByEnvKey(MESSAGING_CHANNELS, "WECHAT_BOT_TOKEN"),
-    },
-  ]
-    .filter(({ envKey }) => !enabledEnvKeys || enabledEnvKeys.has(envKey))
-    .filter(({ envKey }) => !disabledEnvKeys.has(envKey));
-
-  const braveWebSearchEnabled = braveProviderProfile.shouldEnableBraveWebSearch(webSearchConfig);
-  const braveApiKey = braveWebSearchEnabled
-    ? getCredential(webSearch.BRAVE_API_KEY_ENV) ||
-      normalizeCredentialValue(process.env[webSearch.BRAVE_API_KEY_ENV])
-    : null;
+  const {
+    messagingTokenDefs,
+    extraPlaceholderKeys,
+    hasMessagingTokens,
+    reusableMessagingProviders,
+    reusableMessagingChannels,
+    missingBraveApiKey,
+  } = messagingPrep.prepareCreateSandboxMessaging({
+    sandboxName,
+    channels: MESSAGING_CHANNELS,
+    enabledChannels,
+    disabledChannels,
+    webSearchConfig,
+    env: process.env,
+    getValidatedMessagingTokenByEnvKey,
+    getCredential,
+    normalizeCredentialValue,
+    registerExtraPlaceholderProviders: extraPlaceholderKeysModule.registerExtraPlaceholderProviders,
+    getMessagingChannelForEnvKey,
+    providerExistsInGateway,
+  });
   // Fail before any recreate/delete path runs: otherwise a missing key would
   // destroy the existing sandbox first and only then surface the abort (#3626).
-  if (braveWebSearchEnabled && !braveApiKey) {
+  if (missingBraveApiKey) {
     console.error("  Brave Search is enabled, but BRAVE_API_KEY is not available in this process.");
     console.error(
       "  Re-run with BRAVE_API_KEY set, or disable Brave Search before recreating the sandbox.",
     );
     process.exit(1);
-  }
-  if (braveWebSearchEnabled)
-    messagingTokenDefs.push({
-      name: `${sandboxName}-brave-search`,
-      envKey: webSearch.BRAVE_API_KEY_ENV,
-      token: braveApiKey,
-      providerType: braveProviderProfile.BRAVE_PROVIDER_PROFILE_ID,
-    });
-  const extraPlaceholderKeys: string[] =
-    require("./onboard/extra-placeholder-keys").registerExtraPlaceholderProviders(
-      sandboxName,
-      messagingTokenDefs,
-    );
-  const hasMessagingTokens = messagingTokenDefs.some(({ token }) => !!token);
-  const reusableMessagingProviders: string[] = [];
-  const reusableMessagingChannels: string[] = [];
-  if (enabledChannels != null) {
-    for (const { name, envKey, token } of messagingTokenDefs) {
-      if (token) continue;
-      const channel = envKey === "SLACK_APP_TOKEN" ? "slack" : getMessagingChannelForEnvKey(envKey);
-      if (!channel || !enabledChannels.includes(channel)) continue;
-      if (!providerExistsInGateway(name)) continue;
-      reusableMessagingProviders.push(name);
-      if (!reusableMessagingChannels.includes(channel)) {
-        reusableMessagingChannels.push(channel);
-      }
-    }
   }
 
   const existingRegistryEntryBeforePrune = registry.getSandbox(sandboxName);
@@ -2888,28 +2802,21 @@ async function createSandbox(
                 "  Pass --recreate-sandbox or set NEMOCLAW_RECREATE_SANDBOX=1 to force recreation.",
               );
             }
-            const reusedPort = ensureDashboardForward(sandboxName, chatUiUrl);
-            chatUiUrl = `http://127.0.0.1:${reusedPort}`;
-            process.env.CHAT_UI_URL = chatUiUrl;
-            const reusedHermesDashboardState =
-              hermesDashboardForwarding.resolveStateForPort(reusedPort);
-            hermesDashboardForwarding.ensureForState(reusedHermesDashboardState, sandboxName);
-            updateReusedSandboxMetadata(
+            ({ chatUiUrl } = sandboxReuse.applyReusedSandboxDashboardState({
               sandboxName,
+              chatUiUrl,
+              env: process.env,
               agent,
               model,
               provider,
-              reusedPort,
-              !selectionDrift.unknown,
-              effectiveSandboxGpuConfig,
-            );
-            registry.updateSandbox(sandboxName, {
-              ...onboardHermesDashboard.getHermesDashboardRegistryFields(
-                reusedHermesDashboardState,
-              ),
+              selectionVerified: !selectionDrift.unknown,
+              sandboxGpuConfig: effectiveSandboxGpuConfig,
               gatewayName: GATEWAY_NAME,
               gatewayPort: GATEWAY_PORT,
-            });
+              ensureDashboardForward,
+              hermesDashboardForwarding,
+              updateReusedSandboxMetadata,
+            }));
             return sandboxName;
           }
         } else {
@@ -2937,28 +2844,21 @@ async function createSandbox(
           if (await promptYesNoOrDefault("  Reuse existing sandbox?", null, true)) {
             policyPresetCarry.seedReusedSandboxPolicyPresets(sandboxName, isNonInteractive());
             upsertMessagingProviders(messagingTokenDefs);
-            const reusedPort2 = ensureDashboardForward(sandboxName, chatUiUrl);
-            chatUiUrl = `http://127.0.0.1:${reusedPort2}`;
-            process.env.CHAT_UI_URL = chatUiUrl;
-            const reusedHermesDashboardState2 =
-              hermesDashboardForwarding.resolveStateForPort(reusedPort2);
-            hermesDashboardForwarding.ensureForState(reusedHermesDashboardState2, sandboxName);
-            updateReusedSandboxMetadata(
+            ({ chatUiUrl } = sandboxReuse.applyReusedSandboxDashboardState({
               sandboxName,
+              chatUiUrl,
+              env: process.env,
               agent,
               model,
               provider,
-              reusedPort2,
-              !selectionDrift.unknown,
-              effectiveSandboxGpuConfig,
-            );
-            registry.updateSandbox(sandboxName, {
-              ...onboardHermesDashboard.getHermesDashboardRegistryFields(
-                reusedHermesDashboardState2,
-              ),
+              selectionVerified: !selectionDrift.unknown,
+              sandboxGpuConfig: effectiveSandboxGpuConfig,
               gatewayName: GATEWAY_NAME,
               gatewayPort: GATEWAY_PORT,
-            });
+              ensureDashboardForward,
+              hermesDashboardForwarding,
+              updateReusedSandboxMetadata,
+            }));
             return sandboxName;
           }
         }
@@ -3563,30 +3463,28 @@ async function createSandbox(
   const resolvedImageTag = resolveSandboxImageTagFromCreateOutput(createResult.output, buildId);
 
   const sandboxRuntimeFields = getSandboxRuntimeRegistryFields(effectiveSandboxGpuConfig);
-  const plannedMessagingState = MessagingHostStateApplier.readPlanStateFromEnv();
-  const messagingState =
-    plannedMessagingState?.plan.sandboxName === sandboxName ? plannedMessagingState : undefined;
-  registry.registerSandbox({
-    name: sandboxName,
-    model: model || null,
-    provider: provider || null,
-    ...sandboxRuntimeFields,
-    ...getSandboxAgentRegistryFields(agent, !fromDockerfile),
+  sandboxRegistration.registerCreatedSandbox({
+    sandboxName,
+    model,
+    provider,
+    runtimeFields: sandboxRuntimeFields,
+    agent,
+    agentVersionKnown: !fromDockerfile,
     imageTag: resolvedImageTag,
-    providerCredentialHashes:
-      Object.keys(providerCredentialHashes).length > 0 ? providerCredentialHashes : undefined,
-    policies: initialSandboxPolicy.appliedPresets,
+    providerCredentialHashes,
+    appliedPolicies: initialSandboxPolicy.appliedPresets,
     // Persist the operator's configured channel set, not the post-disabled-filter
     // active set. After `channels stop X` + rebuild, activeMessagingChannels drops
     // X, but X is still configured — losing it here means a later `channels start
     // X` has nothing to re-enable (the next rebuild sees an empty channel set and
     // never reattaches the gateway bridge). See #3381.
-    messagingChannels: configuredMessagingChannels,
-    messagingChannelConfig: messagingChannelConfig || undefined,
-    messaging: messagingState,
-    disabledChannels: disabledChannels.length > 0 ? [...disabledChannels] : undefined,
-    hermesToolGateways: hermesToolGateways.length > 0 ? [...hermesToolGateways] : undefined,
-    ...onboardHermesDashboard.getHermesDashboardRegistryFields(finalHermesDashboardState),
+    configuredMessagingChannels,
+    activeMessagingChannels,
+    messagingChannelConfig,
+    plannedMessagingState: MessagingHostStateApplier.readPlanStateFromEnv(),
+    disabledChannels,
+    hermesToolGateways,
+    hermesDashboardState: finalHermesDashboardState,
     dashboardPort: actualDashboardPort,
     gatewayName: GATEWAY_NAME,
     gatewayPort: GATEWAY_PORT,
