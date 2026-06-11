@@ -128,21 +128,78 @@ describe("nemoclaw-start in-container gateway healthcheck marker (#4503, #4710)"
     }
   });
 
+  it("leaves the marker absent and skips local launch for OpenShell docker-driver startup (#4710)", () => {
+    const src = fs.readFileSync(START_SCRIPT, "utf-8");
+    const markFn = extractShellFunctionFromSource(src, "mark_in_container_gateway");
+    const hostDeliveredFn = extractShellFunctionFromSource(
+      src,
+      "gateway_delivered_by_openshell_host",
+    );
+
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gw-host-delivered-"));
+    const markerPath = path.join(tmpDir, "nemoclaw-gateway-local");
+    const openclawLog = path.join(tmpDir, "openclaw.log");
+    const fakeBin = path.join(tmpDir, "bin");
+
+    try {
+      fs.mkdirSync(fakeBin);
+      fs.writeFileSync(
+        path.join(fakeBin, "openclaw"),
+        `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> ${JSON.stringify(openclawLog)}\n`,
+        { mode: 0o755 },
+      );
+
+      const script = [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        markFn.replaceAll("/tmp/nemoclaw-gateway-local", markerPath),
+        hostDeliveredFn,
+        'nohup() { "$@"; }',
+        'OPENCLAW="$(command -v openclaw)"',
+        "_DASHBOARD_PORT=18789",
+        "if gateway_delivered_by_openshell_host; then",
+        "  echo HOST_DELIVERED",
+        "else",
+        "  mark_in_container_gateway",
+        '  nohup "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}"',
+        "fi",
+        `[ ! -e ${JSON.stringify(markerPath)} ] && echo MARKER_ABSENT`,
+      ].join("\n");
+
+      const result = spawnSync("bash", ["-c", script], {
+        encoding: "utf-8",
+        timeout: 5000,
+        env: {
+          ...process.env,
+          PATH: `${fakeBin}:${process.env.PATH || ""}`,
+          OPENSHELL_DRIVERS: "",
+          OPENSHELL_ENDPOINT: "http://127.0.0.1:8080",
+          OPENSHELL_SANDBOX_COMMAND: "sleep infinity",
+          OPENSHELL_SANDBOX_ID: "sandbox-id",
+        },
+      });
+
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain("HOST_DELIVERED");
+      expect(result.stdout).toContain("MARKER_ABSENT");
+      expect(fs.existsSync(markerPath)).toBe(false);
+      expect(fs.existsSync(openclawLog)).toBe(false);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   // Behavioral test of the marker function: confirms the helper itself writes
   // an empty file at the target path and is a no-op when the path is already
   // present (idempotent restart-loop semantics).
   it("mark_in_container_gateway writes the marker file idempotently (#4710)", () => {
     const src = fs.readFileSync(START_SCRIPT, "utf-8");
-    const fnStart = src.indexOf("mark_in_container_gateway() {");
-    const fnEnd = src.indexOf("}", fnStart);
-    if (fnStart === -1 || fnEnd === -1) {
-      throw new Error("mark_in_container_gateway function not found");
-    }
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gw-marker-"));
     const markerPath = path.join(tmpDir, "nemoclaw-gateway-local");
-    const fnSrc = src
-      .slice(fnStart, fnEnd + 1)
-      .replaceAll("/tmp/nemoclaw-gateway-local", markerPath);
+    const fnSrc = extractShellFunctionFromSource(src, "mark_in_container_gateway").replaceAll(
+      "/tmp/nemoclaw-gateway-local",
+      markerPath,
+    );
 
     try {
       const script = [
