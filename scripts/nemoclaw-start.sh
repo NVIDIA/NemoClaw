@@ -2307,6 +2307,7 @@ PYAPPROVEBEFORE
       if NEMOCLAW_APPROVE_REQUEST_ID="$_nemoclaw_approve_request_id" NEMOCLAW_APPROVE_STATE_DIR="$_nemoclaw_approve_state_dir" NEMOCLAW_APPROVE_BEFORE="$_nemoclaw_approve_before" NEMOCLAW_APPROVE_OUTPUT="$_nemoclaw_approve_output" python3 - <<'PYAPPROVEAFTER'; then
 import json
 import os
+import re
 from pathlib import Path
 
 request_id = os.environ.get("NEMOCLAW_APPROVE_REQUEST_ID") or ""
@@ -2325,7 +2326,13 @@ def load(name):
     return value if isinstance(value, dict) else {}
 
 def save(name, value):
-    (root / name).write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    path = root / name
+    tmp = path.with_name(f".{path.name}.tmp")
+    with tmp.open("w", encoding="utf-8") as handle:
+        handle.write(json.dumps(value, indent=2, sort_keys=True) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(tmp, path)
 
 def norm(value):
     return str(value or "").strip()
@@ -2333,17 +2340,27 @@ def norm(value):
 def scope_set(entry, key="scopes"):
     return {norm(scope) for scope in (entry.get(key) or []) if norm(scope)}
 
+def output_mentions_request_id(value):
+    request = norm(value)
+    return bool(request and re.search(r"(?<![0-9A-Za-z_-])" + re.escape(request) + r"(?![0-9A-Za-z_-])", approve_output))
+
 requested = scope_set(before)
 device_id = norm(before.get("deviceId"))
 pending = load("pending.json")
 paired = load("paired.json")
 still_pending = any(isinstance(item, dict) and item.get("requestId") == request_id for item in pending.values())
 paired_entry = paired.get(device_id) if device_id else None
-paired_scopes = scope_set(paired_entry or {}, "approvedScopes") or scope_set(paired_entry or {})
+paired_scopes = scope_set(paired_entry or {}, "approvedScopes") | scope_set(paired_entry or {})
+# Compatibility boundary: treat a nonzero approve as success only when OpenClaw
+# already removed the pending request and persisted the requested paired scopes.
 if request_id and requested and not still_pending and isinstance(paired_entry, dict) and requested.issubset(paired_scopes):
     print(json.dumps({"requestId": request_id, "deviceId": device_id, "approvedScopes": sorted(requested), "compatibility": "openclaw-approve-applied-after-nonzero"}, sort_keys=True))
     raise SystemExit(0)
 
+# Compatibility boundary: repair only the local OpenClaw device state after the
+# CLI reports a replaced scope-upgrade approval. Remove this once OpenClaw
+# stops replacing operator.write approvals with admin-shaped pending requests
+# or exposes a supported approval repair API.
 if "scope upgrade pending approval" not in approve_output and "pairing required" not in approve_output:
     raise SystemExit(1)
 allowed = {"operator.pairing", "operator.read", "operator.write"}
@@ -2353,7 +2370,7 @@ replacement_key = replacement = None
 for key, item in pending.items():
     item_scopes = scope_set(item) if isinstance(item, dict) else set()
     if (isinstance(item, dict) and norm(item.get("requestId")) != request_id and norm(item.get("deviceId")) == device_id and
-            "operator.admin" in item_scopes and requested.issubset(item_scopes) and norm(item.get("requestId")) in approve_output):
+            "operator.admin" in item_scopes and requested.issubset(item_scopes) and output_mentions_request_id(item.get("requestId"))):
         replacement_key, replacement = key, item
         break
 if not replacement:
