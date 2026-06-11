@@ -40,9 +40,13 @@ jobs:
           SCENARIOS: ${{ inputs.scenarios }}
         run: |
           set -euo pipefail
-          allowed_jobs="openshell-version-pin-vitest,onboard-negative-paths-vitest,token-rotation-vitest,openclaw-tui-chat-correlation-vitest,gateway-guard-recovery"
+          allowed_jobs="openshell-version-pin-vitest,onboard-negative-paths-vitest,network-policy-vitest,token-rotation-vitest,openclaw-tui-chat-correlation-vitest,gateway-guard-recovery"
           if [ -n "${JOBS}" ] && [ -n "${SCENARIOS}" ]; then
             echo "::error::Use either scenarios or jobs, not both." >&2
+            exit 1
+          fi
+          if [ -n "${SCENARIOS}" ] && [[ ! "${SCENARIOS}" =~ ^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$ ]]; then
+            echo "::error::Invalid scenario input; use comma-separated scenario ids containing only letters, numbers, underscores, and hyphens." >&2
             exit 1
           fi
           if [ -z "${JOBS}" ]; then
@@ -85,22 +89,43 @@ jobs:
         name: Generate Vitest scenario matrix
         env:
           SCENARIOS: ${{ inputs.scenarios }}
-          JOBS: ${{ inputs.jobs }}
         run: |
           set -euo pipefail
           args=(--emit-live-matrix)
+          registry_scenarios=()
+          free_standing_scenarios=(openshell-version-pin onboard-negative-paths network-policy token-rotation openclaw-tui-chat-correlation)
+          is_free_standing_scenario() {
+            local id="$1"
+            local known
+            for known in "${free_standing_scenarios[@]}"; do
+              if [[ "${id}" == "${known}" ]]; then
+                return 0
+              fi
+            done
+            return 1
+          }
           if [ -n "${SCENARIOS}" ]; then
             if [[ ! "${SCENARIOS}" =~ ^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$ ]]; then
-              echo "::error::Invalid scenario input: ${SCENARIOS}" >&2
+              echo "::error::Invalid scenario input; use comma-separated scenario ids containing only letters, numbers, underscores, and hyphens." >&2
               exit 1
             fi
-            args+=(--scenarios "${SCENARIOS}")
+            IFS=',' read -r -a requested_scenarios <<< "${SCENARIOS}"
+            for scenario in "${requested_scenarios[@]}"; do
+              if is_free_standing_scenario "${scenario}"; then
+                continue
+              fi
+              registry_scenarios+=("${scenario}")
+            done
+            if [ "${#registry_scenarios[@]}" -gt 0 ]; then
+              registry_csv="$(IFS=,; echo "${registry_scenarios[*]}")"
+              args+=(--scenarios "${registry_csv}")
+            fi
           fi
-          if [ -n "${JOBS}" ] && [[ ! "${JOBS}" =~ ^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$ ]]; then
-            echo "::error::Invalid jobs input; use comma-separated job ids" >&2
-            exit 1
+          if [ -n "${SCENARIOS}" ] && [ "${#registry_scenarios[@]}" -eq 0 ]; then
+            matrix="[]"
+          else
+            matrix="$(npx tsx test/e2e-scenario/scenarios/run.ts "${args[@]}")"
           fi
-          matrix="$(npx tsx test/e2e-scenario/scenarios/run.ts "${args[@]}")"
           echo "matrix=${matrix}" >> "$GITHUB_OUTPUT"
           MATRIX_JSON="${matrix}" python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
           import json
@@ -117,7 +142,7 @@ jobs:
 
   live-scenarios:
     needs: generate-matrix
-    if: ${{ inputs.jobs == '' }}
+    if: ${{ inputs.jobs == '' && needs.generate-matrix.outputs.matrix != '[]' }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     strategy:
@@ -218,8 +243,8 @@ jobs:
   # because the matrix above only runs registry-scenarios.test.ts. Modeled on
   # #5049's free-standing pattern.
   openshell-version-pin-vitest:
-    needs: validate-jobs
-    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',openshell-version-pin-vitest,') }}
+    needs: [validate-jobs, generate-matrix]
+    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',openshell-version-pin-vitest,') || contains(format(',{0},', inputs.scenarios), ',openshell-version-pin,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -259,8 +284,8 @@ jobs:
           retention-days: 14
 
   onboard-negative-paths-vitest:
-    needs: validate-jobs
-    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',onboard-negative-paths-vitest,') }}
+    needs: [validate-jobs, generate-matrix]
+    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',onboard-negative-paths-vitest,') || contains(format(',{0},', inputs.scenarios), ',onboard-negative-paths,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -303,9 +328,71 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  network-policy-vitest:
+    needs: [validate-jobs, generate-matrix]
+    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',network-policy-vitest,') || contains(format(',{0},', inputs.scenarios), ',network-policy,') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/network-policy
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      # Raw OpenShell sandbox commands in the migrated live test must target
+      # the gateway registered by NemoClaw onboarding even when OpenShell has
+      # no active gateway selected on the runner.
+      OPENSHELL_GATEWAY: nemoclaw
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build CLI
+        run: npm run build:cli
+
+      - name: Install OpenShell
+        # Runs without workflow tokens, Docker credentials, or NVIDIA_API_KEY.
+        # scripts/install-openshell.sh pins the OpenShell version and verifies
+        # release SHA-256 checksums before installation.
+        env:
+          NEMOCLAW_NON_INTERACTIVE: "1"
+        run: |
+          set -euo pipefail
+          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
+
+      - name: Run network-policy live test
+        # Migrated from test/e2e/test-network-policy.sh. Free-standing anchor
+        # for live network policy allow/deny probes; shell retirement remains
+        # deferred to #5098 Phase 11.
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+        run: |
+          set -euo pipefail
+          npx vitest run --project e2e-scenarios-live \
+            test/e2e-scenario/live/network-policy.test.ts \
+            --silent=false --reporter=default
+
+      - name: Upload network-policy artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-vitest-scenarios-network-policy
+          path: e2e-artifacts/vitest/network-policy/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
+
   token-rotation-vitest:
-    needs: validate-jobs
-    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',token-rotation-vitest,') }}
+    needs: [validate-jobs, generate-matrix]
+    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',token-rotation-vitest,') || contains(format(',{0},', inputs.scenarios), ',token-rotation,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -390,8 +477,8 @@ jobs:
   # protocol/history contract. The retained legacy bash lane remains the
   # source for full closeout until a later PR proves replacement and deletes it.
   openclaw-tui-chat-correlation-vitest:
-    needs: validate-jobs
-    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',openclaw-tui-chat-correlation-vitest,') }}
+    needs: [validate-jobs, generate-matrix]
+    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',openclaw-tui-chat-correlation-vitest,') || contains(format(',{0},', inputs.scenarios), ',openclaw-tui-chat-correlation,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 75
     env:
@@ -569,6 +656,7 @@ jobs:
         live-scenarios,
         openshell-version-pin-vitest,
         onboard-negative-paths-vitest,
+        network-policy-vitest,
         token-rotation-vitest,
         openclaw-tui-chat-correlation-vitest,
         gateway-guard-recovery,
@@ -590,11 +678,13 @@ jobs:
             const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
             const workflowBranch = context.ref.replace('refs/heads/', '');
             const prNumberInput = process.env.JOB_PR_NUMBER || '';
-            const requestedScenarios = process.env.JOB_SCENARIOS || '';
+            const rawRequestedScenarios = process.env.JOB_SCENARIOS || '';
             const rawRequestedJobs = process.env.JOBS || '';
-            const jobsValidationPassed = needs['validate-jobs']?.result === 'success';
-            const requestedJobs = jobsValidationPassed ? rawRequestedJobs : '';
-            const jobsRejected = rawRequestedJobs && !jobsValidationPassed;
+            const selectorValidationPassed = needs['validate-jobs']?.result === 'success';
+            const requestedScenarios = selectorValidationPassed ? rawRequestedScenarios : '';
+            const requestedJobs = selectorValidationPassed ? rawRequestedJobs : '';
+            const scenariosRejected = rawRequestedScenarios && !selectorValidationPassed;
+            const jobsRejected = rawRequestedJobs && !selectorValidationPassed;
 
             let prNumber = prNumberInput ? Number.parseInt(prNumberInput, 10) : undefined;
             if (!prNumber) {
@@ -632,9 +722,11 @@ jobs:
               '',
               `**Run:** [${context.runId}](${runUrl})`,
               `**Workflow ref:** \`${workflowBranch}\``,
-              requestedScenarios
-                ? `**Requested scenarios:** \`${requestedScenarios}\``
-                : '**Requested scenarios:** _(default — all supported)_',
+              scenariosRejected
+                ? '**Requested scenarios:** _(selector rejected by validate-jobs)_'
+                : requestedScenarios
+                  ? `**Requested scenarios:** \`${requestedScenarios}\``
+                  : '**Requested scenarios:** _(default — all supported)_',
               jobsRejected
                 ? '**Requested jobs:** _(selector rejected by validate-jobs)_'
                 : requestedJobs
