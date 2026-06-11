@@ -79,6 +79,7 @@ describe("Regression E2E workflow contract", () => {
     expect(checkoutStep?.uses).toMatch(FULL_SHA_ACTION);
     expect(checkoutStep?.with?.["persist-credentials"]).toBe(false);
     expect(setupNodeStep?.uses).toMatch(FULL_SHA_ACTION);
+    expect(runVitestStep?.env?.NEMOCLAW_RUN_E2E_SCENARIOS).toBe("1");
     for (const step of steps) {
       expect(step.env?.NVIDIA_API_KEY, step.name ?? step.uses ?? "<unnamed>").toBeUndefined();
     }
