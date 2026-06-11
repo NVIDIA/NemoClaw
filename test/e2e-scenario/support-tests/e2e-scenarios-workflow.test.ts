@@ -114,6 +114,22 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       selectedFreeStandingJobs: ["openshell-version-pin-vitest"],
       registryScenarios: [],
     });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({ jobs: "runtime-overrides-vitest" }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["runtime-overrides-vitest"],
+      registryScenarios: [],
+    });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "runtime-overrides" }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["runtime-overrides-vitest"],
+      registryScenarios: [],
+    });
     expect(evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "hermes-e2e" })).toMatchObject({
       valid: true,
       liveScenariosRuns: false,
@@ -136,6 +152,16 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
     expect(
       generateMatrixForDispatch({ JOBS: "network-policy-vitest", SCENARIOS: "" }),
     ).toMatchObject({
+      hermes_selected: "false",
+      matrix: "[]",
+    });
+    expect(
+      generateMatrixForDispatch({ JOBS: "runtime-overrides-vitest", SCENARIOS: "" }),
+    ).toMatchObject({
+      hermes_selected: "false",
+      matrix: "[]",
+    });
+    expect(generateMatrixForDispatch({ JOBS: "", SCENARIOS: "runtime-overrides" })).toMatchObject({
       hermes_selected: "false",
       matrix: "[]",
     });
@@ -320,6 +346,7 @@ jobs:
           "step 'Validate free-standing job selector' run script must include Use either scenarios or jobs, not both",
           "step 'Validate free-standing job selector' run script must include Invalid scenario input; use comma-separated scenario ids",
           "step 'Validate free-standing job selector' run script must include allowed_jobs=",
+          "step 'Validate free-standing job selector' run script must include runtime-overrides-vitest",
           "step 'Validate free-standing job selector' run script must include hermes-e2e-vitest",
           "step 'Validate free-standing job selector' run script must include Invalid jobs input; use comma-separated job ids",
           "step 'Validate free-standing job selector' run script must not include Invalid jobs input: ${JOBS}",
@@ -409,6 +436,7 @@ jobs:
           "onboard-negative-paths-vitest artifact upload retention-days must be 14",
           "credential-migration-vitest job must depend on validate-jobs",
           "credential-migration-vitest job must use the shared jobs selector condition",
+          "workflow missing runtime-overrides-vitest job",
           "network-policy-vitest checkout action must be pinned to a full commit SHA",
           "network-policy-vitest checkout step must set persist-credentials=false",
           "network-policy-vitest must not include unused Docker Hub authentication",
@@ -432,6 +460,7 @@ jobs:
           "network-policy-vitest artifact upload must ignore missing fixture artifacts",
           "network-policy-vitest artifact upload retention-days must be 14",
           "report-to-pr job must wait for credential-migration-vitest",
+          "report-to-pr job must wait for runtime-overrides-vitest",
           "report-to-pr job must wait for network-policy-vitest",
           "workflow missing hermes-e2e-vitest job",
           "report-to-pr job must wait for hermes-e2e-vitest",
@@ -451,6 +480,59 @@ jobs:
           "step 'Post Vitest scenario results to PR' run script must include **Requested jobs:**",
           "step 'Post Vitest scenario results to PR' run script must include **Requested scenarios:**",
         ]),
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("requires runtime-overrides literals in selector allowlists", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-vitest-workflow-"));
+    const workflowPath = path.join(tmp, "workflow.yaml");
+    const workflow = fs.readFileSync(
+      path.join(process.cwd(), ".github/workflows/e2e-vitest-scenarios.yaml"),
+      "utf8",
+    );
+    fs.writeFileSync(
+      workflowPath,
+      workflow
+        .replace(/runtime-overrides-vitest/g, "runtime-overrides-missing")
+        .replace(/runtime-overrides/g, "runtime-overrides-missing"),
+    );
+
+    try {
+      const errors = validateE2eVitestScenariosWorkflowBoundary(workflowPath);
+      expect(errors).toEqual(
+        expect.arrayContaining([
+          "step 'Validate free-standing job selector' run script must include runtime-overrides-vitest",
+          "step 'Generate Vitest scenario matrix' run script must include runtime-overrides-vitest",
+          "workflow missing runtime-overrides-vitest job",
+        ]),
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects Docker Hub auth and inline secrets in runtime-overrides run steps", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-vitest-workflow-"));
+    const workflowPath = path.join(tmp, "workflow.yaml");
+    const workflow = fs.readFileSync(
+      path.join(process.cwd(), ".github/workflows/e2e-vitest-scenarios.yaml"),
+      "utf8",
+    );
+    fs.writeFileSync(
+      workflowPath,
+      workflow.replace(
+        "npx vitest run --project e2e-scenarios-live \\\n            test/e2e-scenario/live/runtime-overrides.test.ts \\",
+        "docker login docker.io --username user --password ${{ secrets.DOCKERHUB_TOKEN }}\n          npx vitest run --project e2e-scenarios-live \\\n            test/e2e-scenario/live/runtime-overrides.test.ts \\",
+      ),
+    );
+
+    try {
+      const errors = validateE2eVitestScenariosWorkflowBoundary(workflowPath);
+      expect(errors).toContain(
+        "runtime-overrides-vitest step 'Run runtime overrides live test' run script must not use docker login or inline secret interpolation",
       );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
