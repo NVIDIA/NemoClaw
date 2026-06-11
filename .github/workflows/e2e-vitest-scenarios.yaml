@@ -353,11 +353,31 @@ jobs:
       - name: Build CLI
         run: npm run build:cli
 
+      - name: Install OpenShell CLI
+        # The migrated skill-agent lane invokes helper scripts that call
+        # `openshell` after the repo CLI onboard command has returned. Install
+        # and resolve OpenShell in the workflow parent so PATH/OPENSHELL_BIN is
+        # available to both Vitest and the bash helpers.
+        run: bash scripts/install-openshell.sh
+
       - name: Run skill-agent live test
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
         run: |
           set -euo pipefail
+          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
+          if command -v openshell >/dev/null 2>&1; then
+            OPENSHELL_BIN="$(command -v openshell)"
+          elif [ -x "$HOME/.local/bin/openshell" ]; then
+            OPENSHELL_BIN="$HOME/.local/bin/openshell"
+          else
+            echo "::error::OpenShell CLI not found after install"
+            ls -la /usr/local/bin/openshell "$HOME/.local/bin/openshell" 2>&1 || true
+            exit 1
+          fi
+          export OPENSHELL_BIN
+          echo "Using OPENSHELL_BIN=$OPENSHELL_BIN"
+          "$OPENSHELL_BIN" --version
           npx vitest run --project e2e-scenarios-live \
             test/e2e-scenario/live/skill-agent.test.ts \
             --silent=false --reporter=default

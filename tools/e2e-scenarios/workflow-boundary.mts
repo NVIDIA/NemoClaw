@@ -308,11 +308,17 @@ function validateSkillAgentVitestJob(errors: string[], jobs: WorkflowRecord): vo
   const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
   requireRunContains(errors, buildCli, "npm run build:cli");
 
+  const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell CLI");
+  requireRunContains(errors, installOpenShell, "bash scripts/install-openshell.sh");
+
   const runVitest = requireJobStep(errors, jobName, steps, "Run skill-agent live test");
   const runEnv = asRecord(runVitest?.env);
   if (runEnv.NVIDIA_API_KEY !== "${{ secrets.NVIDIA_API_KEY }}") {
     errors.push("skill-agent-vitest run step must receive NVIDIA_API_KEY from secrets");
   }
+  requireRunContains(errors, runVitest, "export PATH=\"$HOME/.local/bin:$HOME/.npm-global/bin:$PATH\"");
+  requireRunContains(errors, runVitest, "OPENSHELL_BIN=\"$(command -v openshell)\"");
+  requireRunContains(errors, runVitest, "export OPENSHELL_BIN");
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-scenarios-live");
   requireRunContains(errors, runVitest, "test/e2e-scenario/live/skill-agent.test.ts");
 
