@@ -264,12 +264,26 @@ interface CleanupSandboxOptions {
   readonly strict?: boolean;
 }
 
-async function optionalCleanupStep(run: () => Promise<unknown>): Promise<void> {
+function isExpectedPreOnboardCleanupMiss(text: string): boolean {
+  return /does not exist|run 'nemoclaw onboard'|no active gateway|not found|no such file|enoent/i.test(
+    text,
+  );
+}
+
+async function optionalCleanupStep(
+  label: string,
+  run: () => Promise<{ exitCode: number | null; stdout: string; stderr: string }>,
+): Promise<void> {
   try {
-    await run();
-  } catch {
-    // Pre-onboard cleanup is best-effort because a fresh runner may not have
-    // OpenShell installed until `nemoclaw onboard` reaches that phase.
+    const result = await run();
+    if (result.exitCode === 0) return;
+    const text = resultText(result);
+    if (isExpectedPreOnboardCleanupMiss(text)) return;
+    throw new Error(`${label} failed unexpectedly during pre-onboard cleanup: ${text}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (isExpectedPreOnboardCleanupMiss(message)) return;
+    throw error;
   }
 }
 
@@ -288,14 +302,14 @@ async function cleanupSandbox(
   options: CleanupSandboxOptions = {},
 ): Promise<void> {
   if (!options.strict) {
-    await optionalCleanupStep(() =>
+    await optionalCleanupStep("nemoclaw destroy", () =>
       host.command(process.execPath, [CLI_ENTRYPOINT, sandboxName, "destroy", "--yes"], {
         artifactName: `cleanup-nemoclaw-destroy-${sandboxName}`,
         env: buildAvailabilityProbeEnv(),
         timeoutMs: 120_000,
       }),
     );
-    await optionalCleanupStep(() =>
+    await optionalCleanupStep("openshell sandbox delete", () =>
       sandbox.openshell(["sandbox", "delete", sandboxName], {
         artifactName: `cleanup-openshell-sandbox-delete-${sandboxName}`,
         env: buildAvailabilityProbeEnv(),

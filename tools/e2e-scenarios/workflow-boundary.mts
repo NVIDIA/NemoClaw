@@ -122,12 +122,22 @@ function requireNoDispatchInputInterpolation(
   }
 }
 
+const SELECTABLE_FREE_STANDING_JOBS = [
+  "openshell-version-pin-vitest",
+  "onboard-negative-paths-vitest",
+  "inference-routing-vitest",
+  "openclaw-tui-chat-correlation-vitest",
+  "gateway-guard-recovery",
+] as const;
+
+type SelectableFreeStandingJob = (typeof SELECTABLE_FREE_STANDING_JOBS)[number];
+
 function requireFreeStandingJobSelector(
   errors: string[],
-  jobName: string,
+  jobName: SelectableFreeStandingJob,
   job: WorkflowRecord,
 ): void {
-  const expected = `${"${{"} inputs.jobs == '' || contains(format(',{0},', inputs.jobs), ',${jobName},') ${"}}"}`;
+  const expected = `${"${{"} needs.validate-jobs.outputs.${jobName.replaceAll("-", "_")} == 'true' ${"}}"}`;
   if (job.if !== expected) {
     errors.push(`${jobName} job must use the trusted jobs selector`);
   }
@@ -144,9 +154,7 @@ function validateOpenShellVersionPinVitestJob(errors: string[], jobs: WorkflowRe
   if (job["runs-on"] !== "ubuntu-latest") {
     errors.push("openshell-version-pin-vitest job must run on ubuntu-latest");
   }
-  if (Object.hasOwn(job, "needs")) {
-    errors.push("openshell-version-pin-vitest job must run independently of generate-matrix");
-  }
+  requireNeedsValidateJobs(errors, jobName, job);
   requireFreeStandingJobSelector(errors, jobName, job);
 
   const jobEnv = asRecord(job.env);
@@ -228,9 +236,7 @@ function validateInferenceRoutingVitestJob(errors: string[], jobs: WorkflowRecor
   if (job["runs-on"] !== "ubuntu-latest") {
     errors.push("inference-routing-vitest job must run on ubuntu-latest");
   }
-  if (Object.hasOwn(job, "needs")) {
-    errors.push("inference-routing-vitest job must run independently of generate-matrix");
-  }
+  requireNeedsValidateJobs(errors, jobName, job);
   requireFreeStandingJobSelector(errors, jobName, job);
 
   const providerEnvNames = [
@@ -329,9 +335,7 @@ function validateOnboardNegativePathsVitestJob(errors: string[], jobs: WorkflowR
   if (job["runs-on"] !== "ubuntu-latest") {
     errors.push("onboard-negative-paths-vitest job must run on ubuntu-latest");
   }
-  if (Object.hasOwn(job, "needs")) {
-    errors.push("onboard-negative-paths-vitest job must run independently of generate-matrix");
-  }
+  requireNeedsValidateJobs(errors, jobName, job);
   requireFreeStandingJobSelector(errors, jobName, job);
 
   const jobEnv = asRecord(job.env);
@@ -404,6 +408,45 @@ function validateOnboardNegativePathsVitestJob(errors: string[], jobs: WorkflowR
   }
 }
 
+function validateJobsGuard(errors: string[], jobs: WorkflowRecord): void {
+  const jobName = "validate-jobs";
+  const job = asRecord(jobs[jobName]);
+  if (Object.keys(job).length === 0) {
+    errors.push("workflow missing validate-jobs job");
+    return;
+  }
+
+  if (job["runs-on"] !== "ubuntu-latest") {
+    errors.push("validate-jobs job must run on ubuntu-latest");
+  }
+  const outputs = asRecord(job.outputs);
+  for (const selectable of SELECTABLE_FREE_STANDING_JOBS) {
+    const key = selectable.replaceAll("-", "_");
+    if (outputs[key] !== `${"${{"} steps.validate.outputs.${key} ${"}}"}`) {
+      errors.push(`validate-jobs must expose ${key} output`);
+    }
+  }
+
+  const steps = asSteps(job.steps);
+  requireNoDispatchInputInterpolation(errors, steps);
+  const validate = requireJobStep(errors, jobName, steps, "Validate free-standing job selector");
+  const validateEnv = asRecord(validate?.env);
+  if (validateEnv.JOBS !== "${{ inputs.jobs }}") {
+    errors.push("validate-jobs step must pass jobs through JOBS env");
+  }
+  for (const selectable of SELECTABLE_FREE_STANDING_JOBS) {
+    requireRunContains(errors, validate, selectable);
+    requireRunContains(errors, validate, selectable.replaceAll("-", "_"));
+  }
+  requireRunContains(errors, validate, "Invalid jobs input");
+}
+
+function requireNeedsValidateJobs(errors: string[], jobName: string, job: WorkflowRecord): void {
+  if (job.needs !== "validate-jobs") {
+    errors.push(`${jobName} job must depend on validate-jobs`);
+  }
+}
+
 export function validateE2eVitestScenariosWorkflowBoundary(
   workflowPath = DEFAULT_VITEST_WORKFLOW_PATH,
 ): string[] {
@@ -416,6 +459,7 @@ export function validateE2eVitestScenariosWorkflowBoundary(
 
   const dispatchInputs = asRecord(workflowDispatch.inputs);
   requireInput(errors, dispatchInputs, "scenarios");
+  requireInput(errors, dispatchInputs, "jobs");
   if (Object.hasOwn(dispatchInputs, "test_filter")) {
     errors.push("workflow_dispatch must not expose legacy test_filter input");
   }
@@ -424,6 +468,7 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   if (permissions.contents !== "read") errors.push("workflow permissions.contents must be read");
 
   const jobs = asRecord(workflow.jobs);
+  validateJobsGuard(errors, jobs);
   const generateMatrix = asRecord(jobs["generate-matrix"]);
   if (Object.keys(generateMatrix).length === 0) errors.push("workflow missing generate-matrix job");
   if (generateMatrix["runs-on"] !== "ubuntu-latest") {

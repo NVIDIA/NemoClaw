@@ -30,6 +30,48 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  validate-jobs:
+    runs-on: ubuntu-latest
+    outputs:
+      openshell_version_pin_vitest: ${{ steps.validate.outputs.openshell_version_pin_vitest }}
+      onboard_negative_paths_vitest: ${{ steps.validate.outputs.onboard_negative_paths_vitest }}
+      inference_routing_vitest: ${{ steps.validate.outputs.inference_routing_vitest }}
+      openclaw_tui_chat_correlation_vitest: ${{ steps.validate.outputs.openclaw_tui_chat_correlation_vitest }}
+      gateway_guard_recovery: ${{ steps.validate.outputs.gateway_guard_recovery }}
+    steps:
+      - id: validate
+        name: Validate free-standing job selector
+        env:
+          JOBS: ${{ inputs.jobs }}
+        run: |
+          set -euo pipefail
+          declare -A allowed=(
+            [openshell-version-pin-vitest]=openshell_version_pin_vitest
+            [onboard-negative-paths-vitest]=onboard_negative_paths_vitest
+            [inference-routing-vitest]=inference_routing_vitest
+            [openclaw-tui-chat-correlation-vitest]=openclaw_tui_chat_correlation_vitest
+            [gateway-guard-recovery]=gateway_guard_recovery
+          )
+          declare -A selected=()
+          if [ -n "${JOBS}" ]; then
+            IFS=',' read -ra requested <<< "${JOBS}"
+            for job in "${requested[@]}"; do
+              if [[ ! "${job}" =~ ^[A-Za-z0-9_-]+$ ]] || [[ -z "${allowed[$job]:-}" ]]; then
+                echo "::error::Invalid jobs input: ${job}" >&2
+                exit 1
+              fi
+              selected[$job]=1
+            done
+          fi
+          for job in "${!allowed[@]}"; do
+            output="${allowed[$job]}"
+            if [ -z "${JOBS}" ] || [ -n "${selected[$job]:-}" ]; then
+              echo "${output}=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "${output}=false" >> "$GITHUB_OUTPUT"
+            fi
+          done
+
   generate-matrix:
     runs-on: ubuntu-latest
     outputs:
@@ -185,7 +227,8 @@ jobs:
   # because the matrix above only runs registry-scenarios.test.ts. Modeled on
   # #5049's free-standing pattern.
   openshell-version-pin-vitest:
-    if: ${{ inputs.jobs == '' || contains(format(',{0},', inputs.jobs), ',openshell-version-pin-vitest,') }}
+    needs: validate-jobs
+    if: ${{ needs.validate-jobs.outputs.openshell_version_pin_vitest == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -225,7 +268,8 @@ jobs:
           retention-days: 14
 
   onboard-negative-paths-vitest:
-    if: ${{ inputs.jobs == '' || contains(format(',{0},', inputs.jobs), ',onboard-negative-paths-vitest,') }}
+    needs: validate-jobs
+    if: ${{ needs.validate-jobs.outputs.onboard_negative_paths_vitest == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -269,7 +313,8 @@ jobs:
           retention-days: 14
 
   inference-routing-vitest:
-    if: ${{ inputs.jobs == '' || contains(format(',{0},', inputs.jobs), ',inference-routing-vitest,') }}
+    needs: validate-jobs
+    if: ${{ needs.validate-jobs.outputs.inference_routing_vitest == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -319,7 +364,8 @@ jobs:
   # protocol/history contract. The retained legacy bash lane remains the
   # source for full closeout until a later PR proves replacement and deletes it.
   openclaw-tui-chat-correlation-vitest:
-    if: ${{ inputs.jobs == '' || contains(format(',{0},', inputs.jobs), ',openclaw-tui-chat-correlation-vitest,') }}
+    needs: validate-jobs
+    if: ${{ needs.validate-jobs.outputs.openclaw_tui_chat_correlation_vitest == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 75
     env:
@@ -398,7 +444,8 @@ jobs:
   # restore the /tmp guard chain after pod recreate). Will fail on `main`
   # until the #2701 fix lands; flips green afterwards.
   gateway-guard-recovery:
-    if: ${{ inputs.jobs == '' || contains(format(',{0},', inputs.jobs), ',gateway-guard-recovery,') }}
+    needs: validate-jobs
+    if: ${{ needs.validate-jobs.outputs.gateway_guard_recovery == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -491,6 +538,7 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       [
+        validate-jobs,
         generate-matrix,
         live-scenarios,
         openshell-version-pin-vitest,
