@@ -398,6 +398,7 @@ jobs:
   # restore the /tmp guard chain after pod recreate). Will fail on `main`
   # until the #2701 fix lands; flips green afterwards.
   gateway-guard-recovery:
+    if: ${{ inputs.jobs == '' || contains(format(',{0},', inputs.jobs), ',gateway-guard-recovery,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -495,6 +496,7 @@ jobs:
         openshell-version-pin-vitest,
         onboard-negative-paths-vitest,
         openclaw-tui-chat-correlation-vitest,
+        inference-routing-vitest,
         gateway-guard-recovery,
       ]
     if: ${{ always() && github.event_name == 'workflow_dispatch' }}
