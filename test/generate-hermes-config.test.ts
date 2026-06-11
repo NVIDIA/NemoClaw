@@ -262,7 +262,7 @@ describe("agents/hermes/generate-config.ts", () => {
     });
   });
 
-  it("exposes the managed endpoint to the model picker via custom_providers", () => {
+  it("exposes the managed endpoint to Hermes v16 providers and legacy custom_providers", () => {
     const { config } = runConfigScript({
       NEMOCLAW_PROVIDER_KEY: "nvidia-prod",
       NEMOCLAW_MODEL: "nvidia/nemotron-3-super-120b-a12b",
@@ -274,6 +274,16 @@ describe("agents/hermes/generate-config.ts", () => {
     // providers — not the inline `model:` block. Without this entry the picker
     // shows zero models even though inference works. discover_models lets the
     // picker live-list /v1/models from the proxied endpoint.
+    expect(config.model.provider).toBe("nvidia-prod");
+    expect(config.providers).toEqual({
+      "nvidia-prod": {
+        name: "nvidia-prod",
+        api: "https://inference.local/v1",
+        api_key: HERMES_PROXY_API_KEY_PLACEHOLDER,
+        default_model: "nvidia/nemotron-3-super-120b-a12b",
+        discover_models: true,
+      },
+    });
     expect(config.custom_providers).toEqual([
       {
         name: "nvidia-prod",
@@ -350,7 +360,7 @@ describe("agents/hermes/generate-config.ts", () => {
 
     expect(config.model).toEqual({
       default: "test-model",
-      provider: "custom",
+      provider: "anthropic",
       base_url: "https://inference.local",
       api_key: HERMES_PROXY_API_KEY_PLACEHOLDER,
       api_mode: "anthropic_messages",
@@ -714,7 +724,7 @@ describe("agents/hermes/generate-config.ts", () => {
 
     expect(config.model).toEqual({
       default: "moonshotai/kimi-k2.6",
-      provider: "custom",
+      provider: "inference",
       base_url: "https://inference.local/v1",
       api_key: HERMES_PROXY_API_KEY_PLACEHOLDER,
     });

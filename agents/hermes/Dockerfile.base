@@ -259,9 +259,9 @@ RUN set -eu; \
 # Re-review the version and both hashes on every Hermes version bump.
 # hadolint ignore=DL3059
 RUN printf '%s\n' \
-        'python-multipart==0.0.27 \' \
-        '    --hash=sha256:6fccfad17a27334bd0193681b369f476eda3409f17381a2d65aa7df3f7275645 \' \
-        '    --hash=sha256:9870a6a8c5a20a5bf4f07c017bd1489006ff8836cff097b6933355ee2b49b602' \
+        "python-multipart==0.0.27 \\" \
+        "    --hash=sha256:6fccfad17a27334bd0193681b369f476eda3409f17381a2d65aa7df3f7275645 \\" \
+        "    --hash=sha256:9870a6a8c5a20a5bf4f07c017bd1489006ff8836cff097b6933355ee2b49b602" \
         > /tmp/multipart-req.txt \
     && uv pip install --python /opt/hermes/.venv/bin/python \
         --no-deps --no-cache --require-hashes -r /tmp/multipart-req.txt \

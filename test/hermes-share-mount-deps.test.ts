@@ -19,9 +19,13 @@ function extractAptInstallCommand(dockerfile: string): string {
 }
 
 function extractHermesInstallCommand(dockerfile: string): string {
-  const match = dockerfile.match(
-    /RUN\s+set -eu;[\s\S]*?ln -sf \/opt\/hermes\/\.venv\/bin\/hermes-acp \/usr\/local\/bin\/hermes-acp/m,
-  );
+  const installStart = dockerfile.indexOf("WORKDIR /opt/hermes");
+  expect(installStart).toBeGreaterThanOrEqual(0);
+  const match = dockerfile
+    .slice(installStart)
+    .match(
+      /RUN\s+set -eu;[\s\S]*?ln -sf \/opt\/hermes\/\.venv\/bin\/hermes-acp \/usr\/local\/bin\/hermes-acp/m,
+    );
   expect(match).not.toBeNull();
   return match![0].replace(/^RUN\s+/, "").replace(/\\\n/g, " ");
 }
@@ -47,6 +51,7 @@ function runHermesInstallLayer(command: string, tmp: string) {
   const logPath = path.join(tmp, "calls.log");
   const scriptPath = path.join(tmp, "run-hermes-install-layer.sh");
   fs.mkdirSync(path.join(fixture, "web"), { recursive: true });
+  fs.writeFileSync(path.join(fixture, "pyproject.toml"), 'version = "0.16.0"\n');
   fs.writeFileSync(path.join(fixture, "package-lock.json"), "{}\n");
   fs.writeFileSync(path.join(fixture, "web", "package-lock.json"), "{}\n");
 
@@ -57,6 +62,10 @@ function runHermesInstallLayer(command: string, tmp: string) {
     `call_log=${JSON.stringify(logPath)}`,
     'uv() { printf "uv %s\\n" "$*" >> "$call_log"; }',
     "npm() {",
+    '  if [ "${1:-}" = "view" ]; then',
+    '    printf "%s\\n" "${HERMES_NPM_INTEGRITY}"',
+    "    return 0",
+    "  fi",
     '  printf "npm %s\\n" "$*" >> "$call_log"',
     '  if [ "${1:-}" = "ci" ]; then',
     "    shift",
@@ -76,8 +85,10 @@ function runHermesInstallLayer(command: string, tmp: string) {
     "}",
     'rm() { printf "rm %s\\n" "$*" >> "$call_log"; }',
     'ln() { printf "ln %s\\n" "$*" >> "$call_log"; }',
+    'export HERMES_SEMVER="0.16.0"',
+    'export HERMES_NPM_INTEGRITY="sha512-test"',
     'export HERMES_UV_EXTRAS="messaging"',
-    command,
+    command.replaceAll("/opt/hermes", fixture),
   ].join("\n");
   fs.writeFileSync(scriptPath, script, { mode: 0o700 });
   const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });

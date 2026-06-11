@@ -279,7 +279,7 @@ describe("onboard gateway runtime helpers", () => {
         desiredEnv,
         gatewayBin: "/home/user/.local/bin/openshell-gateway",
       })?.reason,
-    ).toContain("executable=/usr/bin/docker");
+    ).toMatch(/^executable=.* \(expected \/home\/user\/\.local\/bin\/openshell-gateway\)$/);
   });
 
   it("recognizes an existing Docker-driver gateway listener on Docker-driver platforms", () => {

@@ -1119,6 +1119,7 @@ describe("Hermes sandbox provisioning", () => {
     const hermesWebDist = path.join(hermesRoot, "hermes_cli", "web_dist");
     fs.mkdirSync(hermesWebDir, { recursive: true });
     fs.writeFileSync(path.join(hermesWebDir, "package.json"), "{}\n");
+    fs.writeFileSync(path.join(hermesWebDir, "package-lock.json"), "{}\n");
     fs.mkdirSync(path.join(hermesWebDir, "node_modules"), { recursive: true });
 
     const command = dockerRunCommandBetween(

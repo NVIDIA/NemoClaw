@@ -656,34 +656,45 @@ prepare_hermes_dashboard_home() {
     chown "$owner" "$HERMES_DASHBOARD_HOME"
   fi
   chmod 700 "$HERMES_DASHBOARD_HOME"
+  # The dashboard can attempt a gateway restart from its isolated HERMES_HOME.
+  # In NemoClaw the real gateway lives under /sandbox/.hermes, so a failed
+  # dashboard-scoped restart can leave stale startup_failed state that poisons
+  # /api/status even while the real gateway is healthy.
+  rm -f "${HERMES_DASHBOARD_HOME}/gateway_state.json" 2>/dev/null || true
   seed_hermes_dashboard_config "$owner"
 }
 
-# Mirror the gateway's model routing (model + custom_providers) into the
-# dashboard's isolated HERMES_HOME so its Models page (/api/model/options) and
-# the kanban specifier/dispatcher resolve the routed model. The dashboard runs
-# under HERMES_DASHBOARD_HOME for privilege separation and otherwise only sees a
-# Hermes-default config with an empty model. Idempotent: refreshes the keys on
-# every launch. Best-effort — a seed failure must not block the dashboard.
+# Mirror the gateway's model routing and dotenv context into the dashboard's
+# isolated HERMES_HOME so its Models page (/api/model/options), Chat/TUI setup
+# checks, and kanban specifier/dispatcher resolve the routed model. The
+# dashboard runs under HERMES_DASHBOARD_HOME for privilege separation and
+# otherwise only sees a Hermes-default config with an empty model. Idempotent:
+# refreshes the keys on every launch. Best-effort — a seed failure must not
+# block the dashboard.
 seed_hermes_dashboard_config() {
   local owner="${1:-}"
   local dst="${HERMES_DASHBOARD_HOME}/config.yaml"
+  local env_dst="${HERMES_DASHBOARD_HOME}/.env"
   local rc=0
 
-  python3 "$_HERMES_DASHBOARD_CONFIG_SEEDER" "${HERMES_DIR}/config.yaml" "$dst" || rc=$?
+  python3 "$_HERMES_DASHBOARD_CONFIG_SEEDER" \
+    "${HERMES_DIR}/config.yaml" "$dst" \
+    "${HERMES_DIR}/.env" "$env_dst" || rc=$?
   if [ "$rc" -ne 0 ]; then
-    echo "[dashboard] WARN: model routing seed exited ${rc}; Models page may show no models" >&2
+    echo "[dashboard] WARN: config seed exited ${rc}; Models page or Chat may show setup incomplete" >&2
     return 0
   fi
 
   # The seeder runs as root on the privilege-separated path; hand the file back
   # to the dashboard user (its HERMES_HOME is chmod 700) so it can read/rewrite it.
-  if [ -f "$dst" ]; then
-    if [ "$(id -u)" -eq 0 ] && [ -n "$owner" ]; then
-      chown "$owner" "$dst" 2>/dev/null || true
+  for _dashboard_seeded_file in "$dst" "$env_dst"; do
+    if [ -f "$_dashboard_seeded_file" ]; then
+      if [ "$(id -u)" -eq 0 ] && [ -n "$owner" ]; then
+        chown "$owner" "$_dashboard_seeded_file" 2>/dev/null || true
+      fi
+      chmod 600 "$_dashboard_seeded_file" 2>/dev/null || true
     fi
-    chmod 600 "$dst" 2>/dev/null || true
-  fi
+  done
 }
 
 start_hermes_dashboard_current_user() {
@@ -697,6 +708,7 @@ start_hermes_dashboard_current_user() {
   echo "[gateway] hermes dashboard launched (pid $DASHBOARD_PID)" >&2
   start_dashboard_log_stream
   start_socat_forwarder "$DASHBOARD_PUBLIC_PORT" "$DASHBOARD_INTERNAL_PORT" "dashboard" DASHBOARD_SOCAT_PID
+  seed_hermes_dashboard_config ""
 }
 
 start_hermes_dashboard_sandbox_user() {
@@ -710,6 +722,7 @@ start_hermes_dashboard_sandbox_user() {
   echo "[gateway] hermes dashboard launched as 'sandbox' user (pid $DASHBOARD_PID)" >&2
   start_dashboard_log_stream
   start_socat_forwarder "$DASHBOARD_PUBLIC_PORT" "$DASHBOARD_INTERNAL_PORT" "dashboard" DASHBOARD_SOCAT_PID
+  seed_hermes_dashboard_config sandbox:sandbox
 }
 
 wait_for_hermes_gateway_internal() {

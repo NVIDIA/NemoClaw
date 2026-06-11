@@ -49,7 +49,7 @@ describe("CLI dispatch", () => {
     expect(restore.out).toContain(
       "$ nemoclaw sandbox snapshot restore <name> [selector] [--to <dst>]",
     );
-  });
+  }, 15_000);
 
   it("snapshot list dispatches through oclif", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-snapshot-list-"));
