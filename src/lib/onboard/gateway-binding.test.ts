@@ -23,10 +23,7 @@ import {
   resolveGatewayName,
   resolveGatewayStateDirName,
 } from "../../../dist/lib/onboard/gateway-binding";
-import {
-  BASE_NEMOCLAW_HOME_DIR_NAME,
-  resolveNemoclawHomeDir,
-} from "../../../dist/lib/state/paths";
+import { BASE_NEMOCLAW_HOME_DIR_NAME, resolveNemoclawHomeDir } from "../../../dist/lib/state/paths";
 
 describe("gateway-binding resolver (#4422)", () => {
   const DEFAULT_INSTANCE = DEFAULT_NEMOCLAW_INSTANCE;
@@ -128,13 +125,20 @@ describe("gateway-binding resolver factors NEMOCLAW_INSTANCE (#3053)", () => {
 // distinct gateway by varying the port alone.
 describe("default and port-based fallback identity chain", () => {
   const ENV_KEY = "TEST_NEMOCLAW_INSTANCE_FALLBACK";
+  const FIXTURE_HOME = path.join(os.tmpdir(), "nemoclaw-instance-fallback");
+  let previousEnvValue: string | undefined;
 
   beforeEach(() => {
+    previousEnvValue = process.env[ENV_KEY];
     delete process.env[ENV_KEY];
   });
 
   afterEach(() => {
-    delete process.env[ENV_KEY];
+    if (previousEnvValue === undefined) {
+      delete process.env[ENV_KEY];
+    } else {
+      process.env[ENV_KEY] = previousEnvValue;
+    }
   });
 
   it("resolves bare nemoclaw names and the bare home dir when NEMOCLAW_INSTANCE is unset", () => {
@@ -147,8 +151,8 @@ describe("default and port-based fallback identity chain", () => {
     expect(resolveGatewayCompatContainerName(DEFAULT_GATEWAY_PORT, resolved)).toBe(
       BASE_GATEWAY_COMPAT_CONTAINER_NAME,
     );
-    expect(resolveNemoclawHomeDir("/tmp/fixture", resolved)).toBe(
-      `/tmp/fixture/${BASE_NEMOCLAW_HOME_DIR_NAME}`,
+    expect(resolveNemoclawHomeDir(FIXTURE_HOME, resolved)).toBe(
+      path.join(FIXTURE_HOME, BASE_NEMOCLAW_HOME_DIR_NAME),
     );
   });
 
@@ -157,8 +161,8 @@ describe("default and port-based fallback identity chain", () => {
     expect(resolved).toBe(DEFAULT_NEMOCLAW_INSTANCE);
     // The home dir stays at the bare default — port alone does not segregate
     // host state, only the gateway binding.
-    expect(resolveNemoclawHomeDir("/tmp/fixture", resolved)).toBe(
-      `/tmp/fixture/${BASE_NEMOCLAW_HOME_DIR_NAME}`,
+    expect(resolveNemoclawHomeDir(FIXTURE_HOME, resolved)).toBe(
+      path.join(FIXTURE_HOME, BASE_NEMOCLAW_HOME_DIR_NAME),
     );
     // The gateway binding takes the port suffix so two default-instance
     // sandboxes on distinct ports never share gateway state.

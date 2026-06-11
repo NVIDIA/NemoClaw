@@ -28,8 +28,8 @@
  * default-port deployments observe no name change.
  */
 
-import { DEFAULT_GATEWAY_PORT } from "../core/ports";
 import { isDefaultInstance, NEMOCLAW_INSTANCE } from "../core/instance";
+import { DEFAULT_GATEWAY_PORT } from "../core/ports";
 import type { GatewayReuseState } from "../state/gateway";
 
 /** Gateway registration name used for the default instance and default port. */

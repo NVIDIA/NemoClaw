@@ -8,10 +8,10 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_NEMOCLAW_INSTANCE } from "../../../dist/lib/core/instance";
 import {
   BASE_NEMOCLAW_HOME_DIR_NAME,
+  ROOT,
   resolveNemoclawHomeDir,
   resolveNemoclawHomeDirName,
   resolveNemoclawStateDir,
-  ROOT,
   SCRIPTS,
 } from "../../../dist/lib/state/paths";
 

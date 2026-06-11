@@ -31,12 +31,12 @@ import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts.js";
 import type { AgentStateFile } from "../agent/defs.js";
 import { loadAgent } from "../agent/defs.js";
 import { isRecord, type UnknownRecord } from "../core/json-types.js";
+import { shellQuote } from "../runner.js";
+import { isSensitiveFile, sanitizeConfigFile } from "../security/credential-filter.js";
 import {
   buildOpenClawConfigRestoreInputFromSandbox,
   shouldMergeOpenClawConfigStateFile,
 } from "./openclaw-config-restore-input.js";
-import { shellQuote } from "../runner.js";
-import { isSensitiveFile, sanitizeConfigFile } from "../security/credential-filter.js";
 import { resolveNemoclawHomeDir } from "./paths.js";
 import * as registry from "./registry.js";
 import { runTarListing } from "./tar-listing.js";

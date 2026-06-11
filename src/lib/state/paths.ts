@@ -17,7 +17,19 @@ export const BASE_NEMOCLAW_HOME_DIR_NAME = ".nemoclaw";
  * the active instance identity. The default instance keeps the bare
  * `.nemoclaw` name verbatim so existing single-instance deployments and
  * on-disk state are untouched; any non-default instance gets a
- * `.nemoclaw-<instance>` leaf so two instances never share a state tree.
+ * `.nemoclaw-<instance>` leaf so callers that route through this helper land
+ * in a per-instance tree.
+ *
+ * Migration is partial. Surfaces that route through this helper today: the
+ * credentials store (`credentials/store.ts`), rebuild backups + blueprint
+ * digest (`state/sandbox.ts`), the local-adapter state directory and Ollama
+ * auth-proxy token (`inference/local-adapter-lifecycle.ts`, `inference/local.ts`),
+ * and the gateway-name binding (`onboard/gateway-binding.ts`). Surfaces that
+ * still hard-code `.nemoclaw` — the sandbox registry (`state/registry.ts`),
+ * onboard session state (`state/onboard-session.ts`), messaging configuration,
+ * uninstall plan, host-side mount roots, and the `config-io` host-root
+ * permission healer — continue to share state across instances until
+ * follow-up PRs migrate them.
  */
 export function resolveNemoclawHomeDirName(instance: string = NEMOCLAW_INSTANCE): string {
   return isDefaultInstance(instance)

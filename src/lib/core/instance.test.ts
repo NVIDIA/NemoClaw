@@ -10,13 +10,19 @@ import {
 
 describe("parseInstanceName", () => {
   const ENV_KEY = "TEST_NEMOCLAW_INSTANCE";
+  let previousEnvValue: string | undefined;
 
   beforeEach(() => {
+    previousEnvValue = process.env[ENV_KEY];
     delete process.env[ENV_KEY];
   });
 
   afterEach(() => {
-    delete process.env[ENV_KEY];
+    if (previousEnvValue === undefined) {
+      delete process.env[ENV_KEY];
+    } else {
+      process.env[ENV_KEY] = previousEnvValue;
+    }
   });
 
   it.each([
