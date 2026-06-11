@@ -5,7 +5,11 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
-import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
+import {
+  type SandboxClient,
+  trustedSandboxShellScript,
+  validateSandboxName,
+} from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { shouldRunLiveE2EScenarios } from "../fixtures/live-project-gate.ts";
 
@@ -36,6 +40,7 @@ const VERIFY_SKILL_SCRIPT = path.join(
   "verify-sandbox-skill-via-agent.sh",
 );
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-skill-agent";
+validateSandboxName(SANDBOX_NAME);
 const SKILL_ID = "skill-smoke-fixture";
 const VERIFY_PHRASE = "SKILL_SMOKE_VERIFY_K9X2";
 const ONBOARD_TIMEOUT_MS = 20 * 60_000;
@@ -59,7 +64,10 @@ function shellQuote(value: string): string {
 }
 
 function isExternalAgentVerificationFlake(text: string): boolean {
-  return /LLM idle timeout|request timed out|fetch timeout|model did not produce a response|tool_search_code failed|describe id must be a string|openclaw\.tools\.[A-Za-z0-9_]+ is not a function|call id must be a string|ReferenceError: require is not defined|ssh\/agent exit 124|exit 124/i.test(
+  // Only provider/model/transport timeout signatures are skippable. OpenClaw
+  // tool/runtime errors must fail this migration guard because the contract is
+  // that the real agent can read SKILL.md and return the token.
+  return /LLM idle timeout|request timed out|fetch timeout|model did not produce a response|ssh\/agent exit 124|exit 124/i.test(
     text,
   );
 }
@@ -71,16 +79,39 @@ function agentSectionContainsToken(agentOutput: string): boolean {
   return collapsed.includes(VERIFY_PHRASE.toLowerCase());
 }
 
+function buildVerifySkillFixtureScript(): string {
+  return `
+token=${shellQuote(VERIFY_PHRASE)}
+skill=${shellQuote(SKILL_ID)}
+found=0
+for path in \
+  "/sandbox/.openclaw/skills/${SKILL_ID}/SKILL.md" \
+  "\${HOME:-/home/sandbox}/.openclaw/skills/${SKILL_ID}/SKILL.md" \
+  "/home/sandbox/.openclaw/skills/${SKILL_ID}/SKILL.md" \
+  "/home/openclaw/.openclaw/skills/${SKILL_ID}/SKILL.md"
+do
+  if [ -f "$path" ] && grep -Fq "$token" "$path"; then
+    echo "SKILL_TOKEN_PATH=$path"
+    found=1
+  fi
+done
+test "$found" = 1
+`.trim();
+}
+
 async function verifySkillFixturePresent(
   sandbox: SandboxClient,
   sandboxName: string,
 ): Promise<boolean> {
-  const script = `token=${shellQuote(VERIFY_PHRASE)}; skill=${shellQuote(SKILL_ID)}; found=0; for path in "/sandbox/.openclaw/skills/${SKILL_ID}/SKILL.md" "\${HOME:-/home/sandbox}/.openclaw/skills/${SKILL_ID}/SKILL.md" "/home/sandbox/.openclaw/skills/${SKILL_ID}/SKILL.md" "/home/openclaw/.openclaw/skills/${SKILL_ID}/SKILL.md"; do if [ -f "$path" ] && grep -Fq "$token" "$path"; then echo "SKILL_TOKEN_PATH=$path"; found=1; fi; done; test "$found" = 1`;
-  const result = await sandbox.execShell(sandboxName, trustedSandboxShellScript(script), {
-    artifactName: "verify-skill-fixture-present",
-    env: buildAvailabilityProbeEnv(),
-    timeoutMs: 30_000,
-  });
+  const result = await sandbox.execShell(
+    sandboxName,
+    trustedSandboxShellScript(buildVerifySkillFixtureScript()),
+    {
+      artifactName: "verify-skill-fixture-present",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 30_000,
+    },
+  );
   return result.exitCode === 0;
 }
 
@@ -192,6 +223,10 @@ runSkillAgentTest(
           NEMOCLAW_PROVIDER: "cloud",
           NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
           NEMOCLAW_RECREATE_SANDBOX: "1",
+          // This migration targets skill injection + agent skill discovery, not
+          // policy rendering/enforcement. Dedicated policy E2Es own that
+          // boundary; skipping policies keeps this live guard focused and avoids
+          // conflating policy setup failures with the skill-agent contract.
           NEMOCLAW_POLICY_MODE: "skip",
         },
         redactionValues: [apiKey],
