@@ -29,6 +29,7 @@ const {
 const { stopStaleDashboardListenersForSandbox } = require("./onboard/stale-gateway-cleanup");
 const extraPlaceholderKeysModule: typeof import("./onboard/extra-placeholder-keys") = require("./onboard/extra-placeholder-keys");
 const buildContextStage: typeof import("./onboard/build-context-stage") = require("./onboard/build-context-stage");
+const sandboxBuildPatchConfig: typeof import("./onboard/sandbox-build-patch-config") = require("./onboard/sandbox-build-patch-config");
 const sandboxCreateLaunch: typeof import("./onboard/sandbox-create-launch") = require("./onboard/sandbox-create-launch");
 const {
   ensureOllamaLoopbackSystemdOverride,
@@ -105,7 +106,7 @@ const {
 }: typeof import("./onboard/e2e-failure-injection") = require("./onboard/e2e-failure-injection");
 const onboardTracing: typeof import("./onboard/tracing") = require("./onboard/tracing");
 const sandboxReadinessTracing: typeof import("./onboard/sandbox-readiness-tracing") = require("./onboard/sandbox-readiness-tracing");
-const { gatherWechatConfig, hasWechatConfigDrift, toSessionWechatConfig } =
+const { hasWechatConfigDrift } =
   require("./onboard/wechat-config") as typeof import("./onboard/wechat-config");
 const {
   setupMessagingChannels: setupMessagingChannelsImpl,
@@ -3047,29 +3048,11 @@ async function createSandbox(
   const plannedMessagingState =
     envMessagingState?.plan.sandboxName === sandboxName ? envMessagingState : undefined;
   const plannedMessagingPlan = plannedMessagingState?.plan;
-  // Telegram mention-only mode; off unless enabled by TELEGRAM_REQUIRE_MENTION or prompt.
-  const telegramConfig: { requireMention?: boolean } = {};
   const configuredMessagingChannels =
     getChannelsFromPlan(plannedMessagingPlan) ??
     (enabledChannels != null ? [...new Set(enabledChannels)] : activeMessagingChannels);
-  if (configuredMessagingChannels.includes("telegram")) {
-    const telegramRequireMention = computeTelegramRequireMention();
-    if (telegramRequireMention !== null) {
-      telegramConfig.requireMention = telegramRequireMention;
-    }
-  }
-  const wechatConfig = gatherWechatConfig(onboardSession.loadSession());
-  // Persist the effective Telegram config into the session so a later resume
-  // can detect drift (TELEGRAM_REQUIRE_MENTION changed since last build) and
-  // force a sandbox recreate — otherwise the old groupPolicy would stay baked
-  // in. Mirrors the pattern used for webSearchConfig. See CodeRabbit on #2417.
-  onboardSession.updateSession((current) => {
-    current.telegramConfig =
-      typeof telegramConfig.requireMention === "boolean"
-        ? { requireMention: telegramConfig.requireMention as boolean }
-        : null;
-    current.wechatConfig = toSessionWechatConfig(wechatConfig);
-    return current;
+  sandboxBuildPatchConfig.prepareSandboxBuildPatchConfig({
+    configuredMessagingChannels,
   });
   // Pull the base image and resolve its digest so the Dockerfile is pinned to
   // exactly what we just fetched. This prevents stale :latest tags from
