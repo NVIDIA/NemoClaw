@@ -85,6 +85,10 @@ const LEGACY_E2E_SHELL_ALLOWLIST = [
 // Scheduled nightly wiring is frozen separately: retiring a nightly-wired legacy
 // script should remove it from nightly and this allowlist in the same PR that
 // deletes the script.
+const RETIRED_VM_DRIVER_PRIVEXEC_JOB = "vm-driver-privileged-exec-routing-e2e";
+const RETIRED_VM_DRIVER_PRIVEXEC_SCRIPT = "test/e2e/test-vm-driver-privileged-exec-routing.sh";
+const VM_DRIVER_PRIVEXEC_VITEST = "test/vm-driver-privileged-exec-routing.test.ts";
+
 const NIGHTLY_E2E_SCRIPT_ALLOWLIST = [
   "test/e2e/test-agent-turn-latency-e2e.sh",
   "test/e2e/test-bedrock-runtime-compatible-anthropic.sh",
@@ -213,6 +217,31 @@ describe("E2E reusable workflow contract", () => {
     for (const script of nightlyScripts) {
       expect(existsSync(new URL(`../${script}`, import.meta.url)), script).toBe(true);
     }
+  });
+
+  it("keeps the retired VM driver privileged-exec lane covered by CLI Vitest", () => {
+    const nightlyText = readFileSync(
+      new URL("../.github/workflows/nightly-e2e.yaml", import.meta.url),
+      "utf8",
+    );
+    const cliShardAction = readFileSync(
+      new URL("../.github/actions/ci-cli-coverage-shard/action.yaml", import.meta.url),
+      "utf8",
+    );
+    const vitestConfig = readFileSync(new URL("../vitest.config.ts", import.meta.url), "utf8");
+
+    expect(nightlyWorkflow.jobs[RETIRED_VM_DRIVER_PRIVEXEC_JOB]).toBeUndefined();
+    expect(nightlyText).not.toContain(RETIRED_VM_DRIVER_PRIVEXEC_JOB);
+    expect(nightlyText).not.toContain(RETIRED_VM_DRIVER_PRIVEXEC_SCRIPT);
+    expect(existsSync(new URL(`../${VM_DRIVER_PRIVEXEC_VITEST}`, import.meta.url))).toBe(true);
+    expect(vitestConfig).toContain('name: "cli"');
+    expect(vitestConfig).toContain('"test/**/*.test.{js,ts}"');
+    expect(VM_DRIVER_PRIVEXEC_VITEST).toMatch(/^test\/.*\.test\.ts$/);
+    expect(cliShardAction).toContain("npm run build:cli");
+    expect(cliShardAction).toContain("npx vitest run --project cli");
+    expect(cliShardAction.indexOf("npm run build:cli")).toBeLessThan(
+      cliShardAction.indexOf("npx vitest run --project cli"),
+    );
   });
 
   it("passes only named secrets to reusable nightly jobs", () => {
