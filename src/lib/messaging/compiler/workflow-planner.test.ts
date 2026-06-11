@@ -651,7 +651,6 @@ describe("MessagingWorkflowPlanner", () => {
           agent: "openclaw",
           sandboxEntry: {
             name: "demo",
-            messagingChannels: ["telegram"],
             messaging: {
               schemaVersion: 1,
               plan: existingPlan,
@@ -673,74 +672,6 @@ describe("MessagingWorkflowPlanner", () => {
             disabled: false,
           },
         );
-      },
-    );
-  });
-
-  it("rebuilds legacy registry entries from messaging channels and provider credential hashes", async () => {
-    await withEnv(
-      {
-        DISCORD_BOT_TOKEN: undefined,
-        DISCORD_SERVER_ID: "1491590992753590594",
-        DISCORD_REQUIRE_MENTION: "0",
-        DISCORD_USER_ID: "1005536447329222676",
-      },
-      async () => {
-        const rebuilt = await planner().buildRebuildPlanFromSandboxEntry({
-          sandboxName: "demo",
-          agent: "hermes",
-          sandboxEntry: {
-            name: "demo",
-            messagingChannels: ["discord"],
-            providerCredentialHashes: {
-              DISCORD_BOT_TOKEN: "sha256-test-discord-token",
-            },
-          },
-        });
-
-        const discordChannel = rebuilt?.channels.find((channel) => channel.channelId === "discord");
-        const discordEnv = rebuilt?.agentRender.find(
-          (render) => render.channelId === "discord" && render.kind === "env-lines",
-        );
-        const discordConfig = rebuilt?.agentRender.find(
-          (render) =>
-            render.channelId === "discord" &&
-            render.kind === "json-fragment" &&
-            render.path === "discord",
-        );
-
-        expect(rebuilt?.workflow).toBe("rebuild");
-        expect(discordChannel).toMatchObject({
-          active: true,
-          disabled: false,
-          configured: true,
-        });
-        expect(
-          rebuilt?.credentialBindings.find(
-            (binding) =>
-              binding.channelId === "discord" && binding.providerEnvKey === "DISCORD_BOT_TOKEN",
-          ),
-        ).toMatchObject({ credentialAvailable: true });
-        expect(discordEnv).toMatchObject({
-          lines: [
-            "DISCORD_BOT_TOKEN=openshell:resolve:env:DISCORD_BOT_TOKEN",
-            "NEMOCLAW_DISCORD_GUILD_IDS=1491590992753590594",
-            "DISCORD_ALLOWED_USERS=1005536447329222676",
-          ],
-        });
-        expect(discordConfig).toMatchObject({
-          value: {
-            require_mention: false,
-          },
-        });
-        expect(
-          rebuilt?.agentRender.find(
-            (render) =>
-              render.channelId === "discord" &&
-              render.kind === "json-fragment" &&
-              render.path === "platforms.discord",
-          ),
-        ).toMatchObject({ value: { enabled: true } });
       },
     );
   });

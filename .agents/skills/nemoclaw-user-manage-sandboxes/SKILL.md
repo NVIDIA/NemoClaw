@@ -217,7 +217,7 @@ The standard installer follows the admin-promoted `lkg` release tag by default.
 If you need a specific release, set `NEMOCLAW_INSTALL_TAG` on the `bash` side of the install pipeline.
 
 ```bash
-curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_TAG=v0.0.56 bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_TAG=v0.0.63 bash
 nemoclaw upgrade-sandboxes --check
 ```
 
@@ -231,6 +231,8 @@ nemoclaw upgrade-sandboxes --check
 ```
 
 Each rebuild destroys the old container and creates a new one, while preserving the manifest-defined workspace or agent state that NemoClaw knows how to snapshot.
+`upgrade-sandboxes --check` can report a sandbox as stale because the running agent version is behind, because the managed NemoClaw image fingerprint differs from the current CLI, or both.
+Custom-image sandboxes created with `--from <Dockerfile>` are not marked stale solely by image fingerprint, so an upgrade check does not accidentally replace them with the default image.
 Runtime changes outside those state paths, such as packages installed manually in the running container, are not preserved.
 For the full state-preservation contract, snapshot restore behavior, and manual backup workflow, refer to [Backup and Restore](references/backup-restore.md).
 For command flags, refer to `nemoclaw update` (use the `nemoclaw-user-reference` skill), `nemoclaw upgrade-sandboxes` (use the `nemoclaw-user-reference` skill), and `nemoclaw <name> rebuild` (use the `nemoclaw-user-reference` skill).

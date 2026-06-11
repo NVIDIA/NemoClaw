@@ -128,6 +128,42 @@ jobs:
           path: .e2e/onboard-negative-paths/
           include-hidden-files: true
           if-no-files-found: error
+  token-rotation-vitest:
+    runs-on: macos-latest
+    needs: generate-matrix
+    if: \${{ inputs.scenarios != '' }}
+    timeout-minutes: 15
+    env:
+      E2E_ARTIFACT_DIR: \${{ github.workspace }}/.e2e/token-rotation
+      NEMOCLAW_RUN_E2E_SCENARIOS: "0"
+      NEMOCLAW_CLI_BIN: /tmp/nemoclaw
+      NVIDIA_API_KEY: \${{ secrets.NVIDIA_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - name: Authenticate to Docker Hub
+        env:
+          DOCKERHUB_USERNAME: bad
+          DOCKERHUB_TOKEN: bad
+        run: echo no-docker-login
+      - name: Set up Node
+        uses: actions/setup-node@v4
+      - name: Install root dependencies
+        run: npm install
+      - name: Run token rotation live test
+        env:
+          NVIDIA_API_KEY: bad
+          GITHUB_TOKEN: bad
+          TELEGRAM_BOT_TOKEN_A: ""
+        run: npx vitest run --project e2e-scenarios-live "\${{ inputs.test_filter }}"
+      - name: Upload token rotation artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: token-rotation
+          path: .e2e/token-rotation/
+          include-hidden-files: true
+          if-no-files-found: error
 `,
     );
 
@@ -143,11 +179,14 @@ jobs:
           "validate-jobs step must pass scenarios through SCENARIOS env",
           "step 'Validate free-standing job selector' run script must include Use either scenarios or jobs, not both",
           "step 'Validate free-standing job selector' run script must include allowed_jobs=",
+          "step 'Validate free-standing job selector' run script must include token-rotation-vitest",
           "step 'Validate free-standing job selector' run script must include Invalid jobs input; use comma-separated job ids",
           "step 'Validate free-standing job selector' run script must not include Invalid jobs input: ${JOBS}",
           "step 'Validate free-standing job selector' run script must include Unknown free-standing Vitest job",
           "workflow missing generate-matrix job",
           "generate-matrix job must run on ubuntu-latest",
+          "matrix generation step must pass scenarios through SCENARIOS env",
+          "matrix generation step must pass jobs through JOBS env",
           "live-scenarios job must run on the matrix runner",
           "live-scenarios job must depend on generate-matrix",
           "live-scenarios job must not run when a free-standing jobs selector is supplied",
@@ -217,18 +256,78 @@ jobs:
           "onboard-negative-paths-vitest artifact upload must set include-hidden-files: false",
           "onboard-negative-paths-vitest artifact upload must ignore missing fixture artifacts",
           "onboard-negative-paths-vitest artifact upload retention-days must be 14",
+          "token-rotation-vitest job must run on ubuntu-latest",
+          "token-rotation-vitest job must depend on validate-jobs",
+          "token-rotation-vitest job must use the shared jobs selector condition",
+          "token-rotation-vitest job must keep the legacy 45 minute timeout",
+          "token-rotation-vitest job must set NEMOCLAW_RUN_E2E_SCENARIOS=1",
+          "token-rotation-vitest job must write artifacts under e2e-artifacts/vitest/token-rotation",
+          "token-rotation-vitest job must point NEMOCLAW_CLI_BIN at the repo CLI",
+          "token-rotation-vitest job env must not include NVIDIA_API_KEY",
+          "token-rotation-vitest checkout action must be pinned to a full commit SHA",
+          "token-rotation-vitest checkout step must set persist-credentials=false",
+          "token-rotation-vitest Docker Hub auth must receive DOCKERHUB_USERNAME from secrets",
+          "token-rotation-vitest Docker Hub auth must receive DOCKERHUB_TOKEN from secrets",
+          "step 'Authenticate to Docker Hub' run script must include docker login docker.io",
+          "token-rotation-vitest setup-node action must be pinned to a full commit SHA",
+          "token-rotation-vitest job missing step: Build CLI",
+          "token-rotation-vitest step must receive GITHUB_TOKEN from github.token",
+          "token-rotation-vitest step must set TELEGRAM_BOT_TOKEN_A",
+          "token-rotation-vitest step must set TELEGRAM_BOT_TOKEN_B",
+          "token-rotation-vitest step must set DISCORD_BOT_TOKEN_A",
+          "token-rotation-vitest step must set DISCORD_BOT_TOKEN_B",
+          "token-rotation-vitest step must set SLACK_BOT_TOKEN_A",
+          "token-rotation-vitest step must set SLACK_BOT_TOKEN_B",
+          "token-rotation-vitest step must set SLACK_APP_TOKEN_A",
+          "token-rotation-vitest step must set SLACK_APP_TOKEN_B",
+          "step 'Run token rotation live test' run script must include test/e2e-scenario/live/token-rotation.test.ts",
+          "token-rotation-vitest upload-artifact action must be pinned to a full commit SHA",
+          "token-rotation-vitest artifact upload name must be stable",
+          "artifact upload path must include e2e-artifacts/vitest/token-rotation/",
+          "token-rotation-vitest artifact upload must set include-hidden-files: false",
+          "token-rotation-vitest artifact upload must ignore missing fixture artifacts",
+          "token-rotation-vitest artifact upload retention-days must be 14",
           "openclaw-tui-chat-correlation-vitest job must depend on validate-jobs",
           "openclaw-tui-chat-correlation-vitest job must use the shared jobs selector condition",
           "gateway-guard-recovery job must depend on validate-jobs",
           "gateway-guard-recovery job must use the shared jobs selector condition",
           "report-to-pr job must wait for validate-jobs",
           "report-to-pr job must wait for live-scenarios",
+          "report-to-pr job must wait for token-rotation-vitest",
           "report-to-pr step must pass pr_number through JOB_PR_NUMBER env",
           "report-to-pr step must pass scenarios through JOB_SCENARIOS env",
           "step 'Post Vitest scenario results to PR' run script must include process.env.JOBS",
           "step 'Post Vitest scenario results to PR' run script must check validate-jobs before echoing jobs",
           "step 'Post Vitest scenario results to PR' run script must omit rejected job selectors",
           "step 'Post Vitest scenario results to PR' run script must include **Requested jobs:**",
+        ]),
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects raw jobs selector echo from matrix generation", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-vitest-workflow-"));
+    const workflowPath = path.join(tmp, "workflow.yaml");
+    const workflow = fs.readFileSync(
+      path.join(process.cwd(), ".github/workflows/e2e-vitest-scenarios.yaml"),
+      "utf8",
+    );
+    fs.writeFileSync(
+      workflowPath,
+      workflow.replace(
+        'echo "::error::Invalid jobs input; use comma-separated job ids" >&2\n            exit 1\n          fi\n          matrix=',
+        'echo "::error::Invalid jobs input: ${JOBS}" >&2\n            exit 1\n          fi\n          matrix=',
+      ),
+    );
+
+    try {
+      const errors = validateE2eVitestScenariosWorkflowBoundary(workflowPath);
+      expect(errors).toEqual(
+        expect.arrayContaining([
+          "step 'Generate Vitest scenario matrix' run script must include Invalid jobs input; use comma-separated job ids",
+          "step 'Generate Vitest scenario matrix' run script must not include Invalid jobs input: ${JOBS}",
         ]),
       );
     } finally {
