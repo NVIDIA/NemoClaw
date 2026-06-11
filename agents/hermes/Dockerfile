@@ -36,16 +36,28 @@ RUN set -eu; \
             echo "ERROR: Hermes dashboard source missing at $hermes_web_dir" >&2; \
             exit 1; \
         fi; \
-        npm ci --prefix "$hermes_web_dir" --prefer-offline --no-audit --no-fund; \
-        npm run build --prefix "$hermes_web_dir"; \
-        rm -rf "$hermes_web_dir/node_modules"; \
+        if [ -f "$hermes_web_dir/package-lock.json" ]; then \
+            npm ci --prefix "$hermes_web_dir" --prefer-offline --no-audit --no-fund; \
+            npm run build --prefix "$hermes_web_dir"; \
+            rm -rf "$hermes_web_dir/node_modules"; \
+        elif grep -q '"web"' /opt/hermes/package-lock.json; then \
+            npm ci --prefix /opt/hermes --prefer-offline --no-audit --no-fund; \
+            npm run build --prefix /opt/hermes --workspace web; \
+            npm ci --omit=dev --prefix /opt/hermes --prefer-offline --no-audit --no-fund; \
+        else \
+            echo "ERROR: Hermes dashboard at $hermes_web_dir is not covered by a pinned lockfile" >&2; \
+            exit 1; \
+        fi; \
     fi; \
     test -d "$hermes_web_dist"
 
 ENV HERMES_WEB_DIST="/opt/hermes/hermes_cli/web_dist"
 
-# Harden: remove unnecessary build tools and network probes
-RUN (apt-get remove --purge -y gcc gcc-12 g++ g++-12 cpp cpp-12 make \
+# Harden: remove unnecessary build tools and network probes.
+# build-essential comes from the base image (node-gyp build during npm ci);
+# the final image does not compile anything, so strip the whole toolchain.
+RUN (apt-get remove --purge -y build-essential gcc gcc-12 gcc-14 g++ g++-12 g++-14 \
+        cpp cpp-12 cpp-14 make \
         netcat-openbsd netcat-traditional ncat 2>/dev/null || true) \
     && apt-get autoremove --purge -y \
     && rm -rf /var/lib/apt/lists/*
