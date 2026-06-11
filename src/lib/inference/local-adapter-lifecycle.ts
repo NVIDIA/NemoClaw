@@ -5,8 +5,9 @@ import { spawn, type ChildProcess } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
-import os from "node:os";
 import path from "node:path";
+
+import { resolveNemoclawHomeDir } from "../state/paths";
 
 export type JsonObject = Record<string, unknown>;
 
@@ -20,7 +21,7 @@ export type RunFn = (
   options?: { ignoreError?: boolean; suppressOutput?: boolean },
 ) => unknown;
 
-export const DEFAULT_LOCAL_ADAPTER_STATE_DIR = path.join(os.homedir(), ".nemoclaw");
+export const DEFAULT_LOCAL_ADAPTER_STATE_DIR = resolveNemoclawHomeDir();
 
 export function ensureLocalAdapterStateDir(stateDir = DEFAULT_LOCAL_ADAPTER_STATE_DIR): void {
   if (!fs.existsSync(stateDir)) {

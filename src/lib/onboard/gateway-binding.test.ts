@@ -99,6 +99,20 @@ describe("gateway-binding resolver factors NEMOCLAW_INSTANCE (#3053)", () => {
   it("preserves the bare nemoclaw names when the instance is left at default", () => {
     expect(resolveGatewayName(DEFAULT_GATEWAY_PORT, DEFAULT_INSTANCE)).toBe(BASE_GATEWAY_NAME);
   });
+
+  // Regression for the encoding ambiguity surfaced in review: instance
+  // "agent-a" composed with port 8081 produces the same gateway name as
+  // instance "agent-a-8081" composed with the default port. The instance
+  // parser rejects purely-numeric hyphen-segments to guarantee this never
+  // happens for env-derived values; the resolver itself stays a pure function
+  // so callers must validate first via parseInstanceName().
+  it("composed names would collide if a port-like instance tail were permitted", () => {
+    const composed = resolveGatewayName(8081, "agent-a");
+    const portLikeTail = resolveGatewayName(DEFAULT_GATEWAY_PORT, "agent-a-8081");
+    expect(composed).toBe("nemoclaw-agent-a-8081");
+    expect(portLikeTail).toBe("nemoclaw-agent-a-8081");
+    // parseInstanceName() refuses "agent-a-8081" — see src/lib/core/instance.test.ts.
+  });
 });
 
 describe("docker-driver compat container is gateway-port scoped (#4422)", () => {

@@ -13,12 +13,21 @@
  * `NEMOCLAW_INSTANCE` makes the instance identity configurable. The default
  * instance keeps every existing on-disk path and gateway name verbatim so
  * single-instance deployments are unaffected; a non-default instance gets a
- * suffixed state root and gateway name so two instances never collide.
+ * suffixed state root, credentials directory, rebuild-backups directory,
+ * local-adapter state directory, and gateway name so the migrated surfaces
+ * stay segregated.
+ *
+ * Scope of segregation in this groundwork: NemoClaw home directory, gateway
+ * binding (name, state dir, compat container), credentials store, rebuild
+ * backups, and local inference adapter state. Out of scope here and tracked
+ * as follow-up: the sandbox registry, onboard session state, messaging
+ * configuration, snapshot trees, and any module that still reads
+ * `~/.nemoclaw` directly. Callers that have not yet migrated to
+ * `resolveNemoclawHomeDir()` still share state across instances.
  *
  * This module is the single source of truth for resolving the active instance
- * name; downstream callers (state root, gateway-name resolver, credentials
- * store, rebuild-backups dir) thread the resolved value through their own
- * paths rather than parsing the env var directly.
+ * name; downstream callers thread the resolved value through their own paths
+ * rather than parsing the env var directly.
  */
 
 /** Reserved name representing today's singleton behaviour. */
@@ -30,6 +39,17 @@ export const DEFAULT_NEMOCLAW_INSTANCE = "default";
  * strings, and container names.
  */
 const INSTANCE_NAME_RE = /^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/;
+
+/**
+ * Pure-digit hyphen-separated segments are rejected so the instance name can
+ * never collide with the `-<port>` suffix appended by the gateway-name
+ * resolver. Without this rule, `NEMOCLAW_INSTANCE=agent-a NEMOCLAW_GATEWAY_PORT=8081`
+ * and `NEMOCLAW_INSTANCE=agent-a-8081` (default port) would both compose
+ * `nemoclaw-agent-a-8081` and overwrite each other's gateway state.
+ */
+function hasNumericSegment(name: string): boolean {
+  return name.split("-").some((segment) => /^\d+$/.test(segment));
+}
 
 /**
  * Validate an instance-name candidate. Returns the trimmed lower-case name if
@@ -46,6 +66,12 @@ export function parseInstanceName(envVar: string, fallback: string): string {
     throw new Error(
       `Invalid instance name: ${envVar}="${raw}" — must be 1–32 lower-case ` +
         `alphanumerics with internal '-' (e.g. "agent-a", "tenant1")`,
+    );
+  }
+  if (hasNumericSegment(trimmed)) {
+    throw new Error(
+      `Invalid instance name: ${envVar}="${raw}" — hyphen-separated segments ` +
+        `may not be purely numeric (would collide with the gateway port suffix)`,
     );
   }
   return trimmed;

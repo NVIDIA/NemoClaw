@@ -54,6 +54,28 @@ describe("parseInstanceName", () => {
     );
   });
 
+  it.each([
+    ["a pure-digit name", "8081"],
+    ["a port-like trailing segment", "agent-8081"],
+    ["a port-like leading segment", "8081-agent"],
+    ["a port-like middle segment", "agent-1-instance"],
+    ["a short numeric tail", "tenant-1"],
+  ] as const)("rejects %s as a port-suffix collision risk", (_label, value) => {
+    process.env[ENV_KEY] = value;
+    expect(() => parseInstanceName(ENV_KEY, DEFAULT_NEMOCLAW_INSTANCE)).toThrow(
+      /hyphen-separated segments may not be purely numeric/,
+    );
+  });
+
+  it.each([
+    ["a name with a mixed alphanumeric segment", "agent-a1"],
+    ["a name leading with a digit", "1agent"],
+    ["a name with a number embedded in a segment", "tenant1"],
+  ] as const)("still accepts %s (no purely-numeric segment)", (_label, value) => {
+    process.env[ENV_KEY] = value;
+    expect(parseInstanceName(ENV_KEY, DEFAULT_NEMOCLAW_INSTANCE)).toBe(value);
+  });
+
   it("falls back to a non-default fallback when the env var is unset", () => {
     expect(parseInstanceName(ENV_KEY, "primary")).toBe("primary");
   });
