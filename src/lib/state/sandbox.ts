@@ -31,12 +31,13 @@ import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts.js";
 import type { AgentStateFile } from "../agent/defs.js";
 import { loadAgent } from "../agent/defs.js";
 import { isRecord, type UnknownRecord } from "../core/json-types.js";
+import { shellQuote } from "../runner.js";
+import { isSensitiveFile, sanitizeConfigFile } from "../security/credential-filter.js";
 import {
   buildOpenClawConfigRestoreInputFromSandbox,
   shouldMergeOpenClawConfigStateFile,
 } from "./openclaw-config-restore-input.js";
-import { shellQuote } from "../runner.js";
-import { isSensitiveFile, sanitizeConfigFile } from "../security/credential-filter.js";
+import type { CustomPolicyEntry } from "./registry.js";
 import * as registry from "./registry.js";
 import { runTarListing } from "./tar-listing.js";
 
@@ -69,6 +70,15 @@ export interface RebuildManifest {
   backupPath: string;
   blueprintDigest: string | null;
   policyPresets?: string[];
+  /**
+   * Custom policy presets applied via `--from-file`/`--from-dir`, captured with
+   * full content so they can be re-applied on restore without the source file.
+   * Like `policyPresets`, these live in the gateway policy engine and are
+   * otherwise lost on destroy/recreate. Always present on snapshots created since
+   * this field was added (possibly an empty array, so restore can reconcile a
+   * zero-custom snapshot); absent only on legacy manifests.
+   */
+  customPolicies?: CustomPolicyEntry[];
   instances?: InstanceBackup[];
   // Optional user-provided label for `snapshot restore <name>`.
   name?: string;
@@ -154,6 +164,19 @@ function isInstanceBackup(value: unknown): value is InstanceBackup {
   );
 }
 
+function isCustomPolicyEntryArray(value: unknown): value is CustomPolicyEntry[] {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (entry) =>
+        typeof entry === "object" &&
+        entry !== null &&
+        typeof (entry as { name?: unknown }).name === "string" &&
+        typeof (entry as { content?: unknown }).content === "string",
+    )
+  );
+}
+
 function isRebuildManifest(value: unknown): value is RebuildManifest {
   if (!isRecord(value) || !isStateDirArray(value.stateDirs)) return false;
   return (
@@ -172,6 +195,7 @@ function isRebuildManifest(value: unknown): value is RebuildManifest {
       value.blueprintDigest === null ||
       typeof value.blueprintDigest === "string") &&
     (value.policyPresets === undefined || isStringArray(value.policyPresets)) &&
+    (value.customPolicies === undefined || isCustomPolicyEntryArray(value.customPolicies)) &&
     (value.instances === undefined ||
       (Array.isArray(value.instances) &&
         value.instances.every((entry) => isInstanceBackup(entry)))) &&
@@ -1037,6 +1061,12 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
   // not on the sandbox filesystem, so they are lost on destroy/recreate.
   const policyPresets: string[] = sb?.policies && sb.policies.length > 0 ? [...sb.policies] : [];
   _log(`policyPresets from registry: [${policyPresets.join(",")}]`);
+  // Custom presets (--from-file/--from-dir) also live only in the gateway policy
+  // engine, so capture their full content for replay. Always record the field
+  // (even empty) so restore can tell a zero-custom snapshot (reconcile, remove
+  // any stale custom presets on the target) from a legacy snapshot (skip).
+  const customPolicies: CustomPolicyEntry[] = sb?.customPolicies ? [...sb.customPolicies] : [];
+  _log(`customPolicies from registry: [${customPolicies.map((c) => c.name).join(",")}]`);
 
   const manifest: RebuildManifest = {
     version: MANIFEST_VERSION,
@@ -1051,6 +1081,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
     backupPath,
     blueprintDigest: computeBlueprintDigest(),
     policyPresets,
+    customPolicies,
     ...(providedName !== null ? { name: providedName } : {}),
   };
 
