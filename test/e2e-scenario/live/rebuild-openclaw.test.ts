@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { shouldRunLiveE2EScenarios } from "../fixtures/live-project-gate.ts";
@@ -119,6 +120,27 @@ function cliEnv(apiKey: string, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEn
     NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
     ...extra,
   });
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'"'"'`)}'`;
+}
+
+function openshellBestEffort(
+  host: HostCliClient,
+  args: string[],
+  artifactName: string,
+): Promise<ShellProbeResult> {
+  const quotedArgs = args.map(shellQuote).join(" ");
+  return host.command(
+    "bash",
+    ["-lc", `command -v openshell >/dev/null 2>&1 && openshell ${quotedArgs} || true`],
+    {
+      artifactName,
+      env: dockerContextEnv(),
+      timeoutMs: OPENSHELL_TIMEOUT_MS,
+    },
+  );
 }
 
 function createOldBaseBuildContext(): string {
@@ -285,20 +307,6 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       skip("Docker is required for rebuild-openclaw live coverage");
     }
 
-    const openshellVersion = await host.command("openshell", ["--version"], {
-      artifactName: "prereq-openshell-version",
-      env: dockerContextEnv(),
-      timeoutMs: 30_000,
-    });
-    if (openshellVersion.exitCode !== 0) {
-      if (process.env.GITHUB_ACTIONS === "true") {
-        throw new Error(
-          `OpenShell is required for rebuild-openclaw live coverage:\n${resultText(openshellVersion)}`,
-        );
-      }
-      skip("OpenShell is required for rebuild-openclaw live coverage");
-    }
-
     await artifacts.writeJson("contract.json", {
       legacySource: "test/e2e/test-rebuild-openclaw.sh",
       oldOpenClawVersion: OLD_OPENCLAW_VERSION,
@@ -322,16 +330,16 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       redactionValues: [apiKey],
       timeoutMs: 2 * 60_000,
     });
-    await sandbox.openshell(["sandbox", "delete", SANDBOX_NAME], {
-      artifactName: "pre-cleanup-openshell-sandbox-delete",
-      env: dockerContextEnv(),
-      timeoutMs: OPENSHELL_TIMEOUT_MS,
-    });
-    await sandbox.openshell(["gateway", "destroy", "-g", "nemoclaw"], {
-      artifactName: "pre-cleanup-openshell-gateway-destroy",
-      env: dockerContextEnv(),
-      timeoutMs: OPENSHELL_TIMEOUT_MS,
-    });
+    await openshellBestEffort(
+      host,
+      ["sandbox", "delete", SANDBOX_NAME],
+      "pre-cleanup-openshell-sandbox-delete",
+    );
+    await openshellBestEffort(
+      host,
+      ["gateway", "destroy", "-g", "nemoclaw"],
+      "pre-cleanup-openshell-gateway-destroy",
+    );
     await host.command("docker", ["rmi", OLD_BASE_TAG], {
       artifactName: "pre-cleanup-docker-rmi-old-base",
       env: dockerContextEnv(),
@@ -358,16 +366,16 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
           timeoutMs: 2 * 60_000,
         },
       );
-      await sandbox.openshell(["sandbox", "delete", SANDBOX_NAME], {
-        artifactName: "cleanup-openshell-sandbox-delete",
-        env: dockerContextEnv(),
-        timeoutMs: OPENSHELL_TIMEOUT_MS,
-      });
-      await sandbox.openshell(["gateway", "destroy", "-g", "nemoclaw"], {
-        artifactName: "cleanup-openshell-gateway-destroy",
-        env: dockerContextEnv(),
-        timeoutMs: OPENSHELL_TIMEOUT_MS,
-      });
+      await openshellBestEffort(
+        host,
+        ["sandbox", "delete", SANDBOX_NAME],
+        "cleanup-openshell-sandbox-delete",
+      );
+      await openshellBestEffort(
+        host,
+        ["gateway", "destroy", "-g", "nemoclaw"],
+        "cleanup-openshell-gateway-destroy",
+      );
       await host.command("docker", ["rmi", OLD_BASE_TAG], {
         artifactName: "cleanup-docker-rmi-old-base",
         env: dockerContextEnv(),
