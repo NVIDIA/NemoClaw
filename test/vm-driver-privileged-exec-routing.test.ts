@@ -93,7 +93,7 @@ function loadHelperWithFakeHome(
 ): PrivilegedExecHelper {
   rememberEnv();
   process.env.HOME = home;
-  process.env.PATH = `${fakeBin}${path.delimiter}${process.env.PATH ?? ""}`;
+  process.env.PATH = `${fakeBin}:${process.env.PATH ?? ""}`;
   process.env.XDG_NEMOCLAW_FAKE_DOCKER_LOG = dockerLog;
   process.env.XDG_NEMOCLAW_FAKE_DOCKER_PS_FILE = dockerPsFile;
   clearDistModuleCache();
