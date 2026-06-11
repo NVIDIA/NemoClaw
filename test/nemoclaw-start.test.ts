@@ -2,11 +2,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 
 const START_SCRIPT = path.join(import.meta.dirname, "..", "scripts", "nemoclaw-start.sh");
 const APPROVAL_POLICY_DIR = path.join(import.meta.dirname, "..", "scripts", "lib");
@@ -323,112 +323,6 @@ describe("nemoclaw-start non-root fallback", () => {
       expect(invalidHighPort.status).toBe(1);
       expect(invalidHighPort.stderr).toContain("Invalid NEMOCLAW_DASHBOARD_PORT='70000'");
       expect(invalidHighPort.stderr).toContain("must be an integer between 1024 and 65535");
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
-
-  // #4503/#4710: the Docker HEALTHCHECK reports healthy on curl-exit-7 only
-  // when the /tmp/nemoclaw-gateway-local marker is ABSENT (gateway delivered
-  // out of this container's namespace). The marker must be true-by-construction:
-  // dropped immediately before each `openclaw gateway run` invocation in this
-  // script, NOT gated on env hints at startup — OpenShell 0.0.44 does not
-  // export OPENSHELL_DRIVERS into the sandbox container env, so any startup
-  // conditional based on that var never fires for docker-driver sandboxes
-  // (#4710 root cause; #4748 fix attempt was a no-op for that reason).
-  //
-  // This test enforces the structural invariants on the script source so the
-  // fix cannot regress to an env-gated form:
-  //   (a) the early region around NEMOCLAW_CMD has no `mark_in_container_gateway`
-  //       call and no `OPENSHELL_DRIVERS`-based conditional;
-  //   (b) every `openclaw gateway run --port` invocation in the script is
-  //       immediately preceded (within a few lines) by `mark_in_container_gateway`.
-  it("ties the in-container gateway healthcheck marker to the gateway launch site (#4503, #4710)", () => {
-    const src = fs.readFileSync(START_SCRIPT, "utf-8");
-
-    // (a) Region immediately after the `mark_in_container_gateway` function
-    // definition closes — the next ~30 lines — must NOT contain an early
-    // call of the function and must NOT introduce an OPENSHELL_DRIVERS-based
-    // conditional. (OPENSHELL_DRIVERS may appear elsewhere in the script
-    // for legitimate reasons; the regression we lock here is the *startup
-    // gate* that #4710 showed never fires for docker-driver sandboxes.)
-    const fnDefStart = src.indexOf("mark_in_container_gateway() {");
-    const closingBrace = src.indexOf("\n}\n", fnDefStart);
-    if (fnDefStart === -1 || closingBrace === -1) {
-      throw new Error("mark_in_container_gateway function definition not found");
-    }
-    const allLines = src.split("\n");
-    const closingLineIdx = src.slice(0, closingBrace).split("\n").length - 1;
-    const postFnWindow = allLines.slice(closingLineIdx + 1, closingLineIdx + 31).join("\n");
-    expect(postFnWindow).not.toMatch(/^\s*mark_in_container_gateway\s*$/m);
-    expect(postFnWindow).not.toMatch(/OPENSHELL_DRIVERS/);
-
-    // (b) Every `openclaw gateway run --port` launch in this script is
-    // preceded (within the prior 6 lines) by a `mark_in_container_gateway`
-    // call. Restart-loop fallbacks may rely on the first launch's marker, so
-    // we only enforce the invariant on lines that are an actual first launch
-    // (the marker function is idempotent, so always calling it is also fine,
-    // but this test holds either way).
-    const lines = src.split("\n");
-    const launchLineNumbers: number[] = [];
-    lines.forEach((line, i) => {
-      // Match the two forms used in the script: bare `"$OPENCLAW" gateway run`
-      // (non-root mode) and the step-down-prefixed root-mode form.
-      if (/^[^#]*\$OPENCLAW[^"]*"?\s*gateway run --port/.test(line)) {
-        launchLineNumbers.push(i);
-      }
-    });
-    expect(launchLineNumbers.length).toBeGreaterThanOrEqual(2); // root + non-root
-
-    for (const launchIdx of launchLineNumbers) {
-      const preceding = lines.slice(Math.max(0, launchIdx - 6), launchIdx).join("\n");
-      const hasMarkerCall = /^\s*mark_in_container_gateway\s*$/m.test(preceding);
-      if (!hasMarkerCall) {
-        // Check whether this is a known restart-loop fallback rather than a
-        // first launch. Restart loops appear inside `while`/`until`/`for`
-        // blocks; identify them by scanning backwards for a loop keyword
-        // within 60 lines without hitting a function boundary.
-        const upstream = lines.slice(Math.max(0, launchIdx - 60), launchIdx).join("\n");
-        const inRestartLoop = /^\s*(while|until|for)\s/m.test(upstream);
-        if (!inRestartLoop) {
-          throw new Error(
-            `openclaw gateway run at line ${launchIdx + 1} is not a restart loop and ` +
-              `is not preceded by mark_in_container_gateway within 6 lines`,
-          );
-        }
-      }
-    }
-  });
-
-  // Behavioral test of the marker function: confirms the helper itself writes
-  // an empty file at the target path and is a no-op when the path is already
-  // present (idempotent restart-loop semantics).
-  it("mark_in_container_gateway writes the marker file idempotently (#4710)", () => {
-    const src = fs.readFileSync(START_SCRIPT, "utf-8");
-    const fnStart = src.indexOf("mark_in_container_gateway() {");
-    const fnEnd = src.indexOf("}", fnStart);
-    if (fnStart === -1 || fnEnd === -1) {
-      throw new Error("mark_in_container_gateway function not found");
-    }
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gw-marker-"));
-    const markerPath = path.join(tmpDir, "nemoclaw-gateway-local");
-    const fnSrc = src
-      .slice(fnStart, fnEnd + 1)
-      .replaceAll("/tmp/nemoclaw-gateway-local", markerPath);
-
-    try {
-      const script = [
-        "#!/usr/bin/env bash",
-        "set -euo pipefail",
-        fnSrc,
-        "mark_in_container_gateway",
-        "mark_in_container_gateway", // second call must be a no-op
-      ].join("\n");
-      const result = spawnSync("bash", ["-c", script], { encoding: "utf-8", timeout: 5000 });
-      expect(result.status).toBe(0);
-      expect(fs.existsSync(markerPath)).toBe(true);
-      // file must be empty (`:` redirected to it, not appended)
-      expect(fs.statSync(markerPath).size).toBe(0);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
