@@ -70,7 +70,7 @@ function modeBits(filePath: string): number {
 function mutableSandboxOwnerStatShim(): string {
   return [
     "stat() {",
-    '  if [ "${1:-}" = "-c" ] && [ "${2:-}" = "%U" ]; then',
+    '  if [ "${1:-}" = "-c" ] && [ "${2:-}" = "%U" ] && [ "${3:-}" = "$OPENCLAW_STATE_DIR" ]; then',
     '    printf "sandbox\\n";',
     "    return 0;",
     "  fi",
