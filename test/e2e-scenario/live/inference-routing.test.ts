@@ -611,26 +611,16 @@ liveTest(
     }
 
     const keyB64 = Buffer.from(apiKey, "utf8").toString("base64");
-    const scanScript = `
-const fs = require('fs');
-const { execFileSync } = require('child_process');
-const key = Buffer.from(process.env.KEY_B64 || '', 'base64').toString('utf8');
-if (!key) { console.log('NO_KEY_PROVIDED'); process.exit(0); }
-let out = '';
-try {
-  out = execFileSync('sh', ['-lc', 'find /sandbox /home /tmp -type f -size -1M 2>/dev/null | head -200'], { encoding: 'utf8' });
-} catch {
-  console.log('SCAN_ERROR');
-  process.exit(0);
-}
-for (const file of out.trim().split(/\\n/).filter(Boolean)) {
-  try {
-    const content = fs.readFileSync(file, 'utf8');
-    if (content.includes(key)) console.log('FOUND:' + file);
-  } catch {}
-}
-console.log('SCAN_DONE');
-`;
+    const scanScript = [
+      "const fs=require('fs')",
+      "const {execFileSync}=require('child_process')",
+      "const key=Buffer.from(process.env.KEY_B64||'','base64').toString('utf8')",
+      "if(!key){console.log('NO_KEY_PROVIDED');process.exit(0)}",
+      "let out=''",
+      "try{out=execFileSync('sh',['-lc','find /sandbox /home /tmp -type f -size -1M 2>/dev/null | head -200'],{encoding:'utf8'})}catch{console.log('SCAN_ERROR');process.exit(0)}",
+      "for(const file of out.trim().split(/\\n/).filter(Boolean)){try{const content=fs.readFileSync(file,'utf8');if(content.includes(key))console.log('FOUND:'+file)}catch{}}",
+      "console.log('SCAN_DONE')",
+    ].join(";");
     const filesystemScan = await runOpenShell(
       [
         "sandbox",
