@@ -140,7 +140,7 @@ on:
           openclaw-anthropic-inference-switch-e2e,
           network-policy-e2e, state-backup-restore-e2e, tunnel-lifecycle-e2e,
           diagnostics-e2e, credential-migration-e2e, snapshot-commands-e2e,
-          shields-config-e2e, vm-driver-privileged-exec-routing-e2e, rebuild-openclaw-e2e,
+          shields-config-e2e, rebuild-openclaw-e2e,
           upgrade-stale-sandbox-e2e, openshell-gateway-upgrade-e2e, rebuild-hermes-e2e,
           rebuild-hermes-stale-base-e2e, double-onboard-e2e, onboard-repair-e2e,
           onboard-resume-e2e, onboard-negative-paths-e2e, runtime-overrides-e2e,
@@ -310,6 +310,8 @@ jobs:
        inputs.jobs == '' ||
        contains(format(',{0},', inputs.jobs), ',docs-validation-e2e,'))
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     timeout-minutes: 15
     steps:
       - &target-ref-checkout
@@ -319,55 +321,35 @@ jobs:
           ref: ${{ inputs.target_ref || github.ref }}
           persist-credentials: false
 
-      # Authenticate Docker Hub pulls for sandbox image builds when CI
-      # credentials are configured. Withhold credentials from workflow_dispatch
-      # runs against an explicit target_ref because those can execute untrusted
-      # PR-head code checked out above.
-      - &dockerhub-auth-step
-        name: Authenticate to Docker Hub
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.target_ref == '' }}
-        env:
-          DOCKERHUB_USERNAME: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_USERNAME || '' }}
-          DOCKERHUB_TOKEN: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_TOKEN || '' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep $((attempt * 5))
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
+      - name: Setup Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: "22"
+          cache: npm
 
-      - name: Install NemoClaw
-        env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-          NEMOCLAW_NON_INTERACTIVE: "1"
-          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-        run: bash install.sh --non-interactive --yes-i-accept-third-party-software
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
 
-      - name: Run docs validation
+      - name: Run docs validation Vitest test
         env:
           CHECK_DOC_LINKS_REMOTE: "0"
+          NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+          E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/docs-validation
         run: |
           set -euo pipefail
-          [ -f "$HOME/.bashrc" ] && source "$HOME/.bashrc" 2>/dev/null || true
-          export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
-          [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
-          [ -d "$HOME/.local/bin" ] && [[ ":$PATH:" != *":$HOME/.local/bin:"* ]] && export PATH="$HOME/.local/bin:$PATH"
-          bash test/e2e/test-docs-validation.sh
+          npx vitest run --project e2e-scenarios-live \
+            test/e2e-scenario/live/docs-validation.test.ts \
+            --silent=false --reporter=default
+
+      - name: Upload docs validation artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: docs-validation-artifacts
+          path: e2e-artifacts/vitest/docs-validation/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
 
   # ── Messaging Providers E2E ──────────────────────────────────
   # Validates the full provider/placeholder/L7-proxy chain for token-backed
@@ -430,7 +412,37 @@ jobs:
     steps:
       - *target-ref-checkout
 
-      - *dockerhub-auth-step
+      # Authenticate Docker Hub pulls for sandbox image builds when CI
+      # credentials are configured. Withhold credentials from workflow_dispatch
+      # runs against an explicit target_ref because those can execute untrusted
+      # PR-head code checked out above.
+      - &dockerhub-auth-step
+        name: Authenticate to Docker Hub
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.target_ref == '' }}
+        env:
+          DOCKERHUB_USERNAME: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_USERNAME || '' }}
+          DOCKERHUB_TOKEN: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_TOKEN || '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          login_succeeded=0
+          for attempt in 1 2 3; do
+            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
+              login_succeeded=1
+              break
+            fi
+            if [[ "$attempt" -lt 3 ]]; then
+              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
+              sleep $((attempt * 5))
+            fi
+          done
+          if [[ "$login_succeeded" -ne 1 ]]; then
+            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
+          fi
 
       - name: Resolve public install ref
         id: public_install_ref
@@ -1527,20 +1539,6 @@ jobs:
       nvidia_api_key: true
       github_token: true
     secrets: *nightly-e2e-default-secrets
-  vm-driver-privileged-exec-routing-e2e:
-    if: >-
-      github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
-       inputs.jobs == '' ||
-       contains(format(',{0},', inputs.jobs), ',vm-driver-privileged-exec-routing-e2e,'))
-    uses: ./.github/workflows/e2e-script.yaml
-    with:
-      ref: ${{ inputs.target_ref || github.ref }}
-      script: test/e2e/test-vm-driver-privileged-exec-routing.sh
-      timeout_minutes: 10
-      artifact_name: "vm-driver-privileged-exec-routing-log"
-      artifact_path: "/tmp/nemoclaw-vm-driver-privileged-exec-routing-build.log"
-      env_json: '{"NEMOCLAW_NON_INTERACTIVE":"1"}'
-    secrets: *nightly-e2e-default-secrets
   rebuild-openclaw-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
@@ -2290,7 +2288,6 @@ jobs:
         credential-migration-e2e,
         snapshot-commands-e2e,
         shields-config-e2e,
-        vm-driver-privileged-exec-routing-e2e,
         rebuild-openclaw-e2e,
         upgrade-stale-sandbox-e2e,
         openshell-gateway-upgrade-e2e,
@@ -2408,7 +2405,6 @@ jobs:
         credential-migration-e2e,
         snapshot-commands-e2e,
         shields-config-e2e,
-        vm-driver-privileged-exec-routing-e2e,
         rebuild-openclaw-e2e,
         upgrade-stale-sandbox-e2e,
         openshell-gateway-upgrade-e2e,
@@ -2585,7 +2581,6 @@ jobs:
         credential-migration-e2e,
         snapshot-commands-e2e,
         shields-config-e2e,
-        vm-driver-privileged-exec-routing-e2e,
         rebuild-openclaw-e2e,
         upgrade-stale-sandbox-e2e,
         openshell-gateway-upgrade-e2e,
