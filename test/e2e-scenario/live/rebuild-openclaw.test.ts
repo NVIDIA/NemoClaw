@@ -33,12 +33,20 @@ const REGISTRY_FILE = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
 const SESSION_FILE = path.join(os.homedir(), ".nemoclaw", "onboard-session.json");
 const BACKUP_ROOT = path.join(os.homedir(), ".nemoclaw", "rebuild-backups");
 const DEFAULT_MODEL = "nvidia/nemotron-3-super-120b-a12b";
+const TEST_SANDBOX_PREFIX = "e2e-rebuild-openclaw";
 const SANDBOX_NAME =
   process.env.NEMOCLAW_SANDBOX_NAME ??
-  ["e2e-rebuild-openclaw", process.env.GITHUB_RUN_ID, process.env.GITHUB_RUN_ATTEMPT, process.pid]
+  [TEST_SANDBOX_PREFIX, process.env.GITHUB_RUN_ID, process.env.GITHUB_RUN_ATTEMPT, process.pid]
     .filter(Boolean)
     .join("-");
 validateSandboxName(SANDBOX_NAME);
+if (!SANDBOX_NAME.startsWith(TEST_SANDBOX_PREFIX)) {
+  throw new Error(
+    `rebuild-openclaw live test is destructive and only accepts sandbox names with prefix ${TEST_SANDBOX_PREFIX}; got ${SANDBOX_NAME}`,
+  );
+}
+
+const POLICY_PRESETS = ["npm", "pypi", "telegram"] as const;
 
 const MARKER_CONTENT = `REBUILD_OC_E2E_${Date.now()}`;
 const PRE_REBUILD_GATEWAY_TOKEN = `nemoclaw-e2e-old-gateway-token-${MARKER_CONTENT}`;
@@ -217,6 +225,13 @@ async function configureGatewayInferenceRoute(
 }
 
 function seedRegistryAndSession(): void {
+  // The legacy rebuild regression requires an intentionally old OpenClaw sandbox
+  // that NemoClaw cannot create through the normal onboard path because current
+  // blueprints reject versions below min_openclaw_version. Create that sandbox
+  // through OpenShell, then upsert only this test-owned registry/session entry
+  // so `nemoclaw <name> rebuild --yes` exercises the user-visible rebuild
+  // boundary. Remove this local seeding once a first-class old-version lifecycle
+  // fixture/profile exists.
   const registry = readJsonFile<{
     sandboxes?: Record<string, Record<string, unknown>>;
     defaultSandbox?: string;
@@ -313,9 +328,9 @@ function backupCredentialLeakPaths(backupDir: string, oldGatewayToken: string): 
       }
       if (!entry.isFile()) continue;
       if (skippedLockfiles.has(entry.name)) continue;
-      if (!/\.json$|\.env$|^\.env$/i.test(entry.name)) continue;
       const text = fs.readFileSync(fullPath, "utf8");
-      if (candidatePattern.test(text) || text.includes(oldGatewayToken)) {
+      const isJsonOrEnv = /\.json$|\.env$|^\.env$/i.test(entry.name);
+      if (text.includes(oldGatewayToken) || (isJsonOrEnv && candidatePattern.test(text))) {
         leaks.push(fullPath);
       }
     }
@@ -366,9 +381,10 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       ],
     });
 
-    // Pre-clean any stale resources before registering final cleanup. These are
-    // best-effort and intentionally run after prereq/secret checks so a skipped
-    // test does not mutate local state.
+    // Pre-clean stale resources for the test-owned sandbox prefix before
+    // registering final cleanup. The prefix guard above keeps a caller-selected
+    // production/local sandbox name from being destroyed accidentally; snapshots
+    // below still restore registry/session files after this generated-name run.
     await host.command("node", [CLI_ENTRYPOINT, SANDBOX_NAME, "destroy", "--yes"], {
       artifactName: "pre-cleanup-nemoclaw-destroy",
       env: cliEnv(apiKey),
@@ -627,7 +643,7 @@ print(json.dumps({'seeded': saved == os.environ['PRE_REBUILD_GATEWAY_TOKEN'], 'h
 
     // Phase 4.5: apply policy presets through the public CLI, then verify both
     // registry persistence and the live OpenShell gateway policy.
-    for (const preset of ["npm", "pypi"]) {
+    for (const preset of POLICY_PRESETS) {
       const policyAdd = await host.command(
         "node",
         [CLI_ENTRYPOINT, "sandbox", "policy", "add", SANDBOX_NAME, preset, "--yes"],
@@ -649,7 +665,8 @@ print(json.dumps({'seeded': saved == os.environ['PRE_REBUILD_GATEWAY_TOKEN'], 'h
     expectExitZero(prePolicy, "openshell policy get before rebuild");
     expect(prePolicy.stdout).toMatch(/npm|registry\.npmjs\.org/i);
     expect(prePolicy.stdout).toMatch(/pypi|pypi\.org/i);
-    expect(registrySandbox().policies).toEqual(expect.arrayContaining(["npm", "pypi"]));
+    expect(prePolicy.stdout).toMatch(/telegram|api\.telegram\.org/i);
+    expect(registrySandbox().policies).toEqual(expect.arrayContaining([...POLICY_PRESETS]));
 
     // Phase 5: restore the current base image tag that rebuild consumes.
     const buildCurrentBase = await host.command(
@@ -746,11 +763,12 @@ print(json.dumps({'tokenPresent': bool(token), 'tokenRotated': token != old, 'ru
       backupDir,
       stateDirCount: Array.isArray(manifest.stateDirs) ? manifest.stateDirs.length : undefined,
       policyPresets: manifest.policyPresets,
+      telegramBridgeTraffic: "not exercised; real bot credentials/messages stay out of this rebuild migration",
     });
-    expect(manifest.policyPresets).toEqual(expect.arrayContaining(["npm", "pypi"]));
+    expect(manifest.policyPresets).toEqual(expect.arrayContaining([...POLICY_PRESETS]));
     expect(backupCredentialLeakPaths(backupDir, PRE_REBUILD_GATEWAY_TOKEN)).toEqual([]);
 
-    expect(registrySandbox().policies).toEqual(expect.arrayContaining(["npm", "pypi"]));
+    expect(registrySandbox().policies).toEqual(expect.arrayContaining([...POLICY_PRESETS]));
     const postPolicy = await sandbox.openshell(["policy", "get", "--full", SANDBOX_NAME], {
       artifactName: "phase-7-live-policy-after-rebuild",
       env: dockerContextEnv(),
@@ -759,6 +777,7 @@ print(json.dumps({'tokenPresent': bool(token), 'tokenRotated': token != old, 'ru
     expectExitZero(postPolicy, "openshell policy get after rebuild");
     expect(postPolicy.stdout).toMatch(/npm|registry\.npmjs\.org/i);
     expect(postPolicy.stdout).toMatch(/pypi|pypi\.org/i);
+    expect(postPolicy.stdout).toMatch(/telegram|api\.telegram\.org/i);
 
     // External API availability can make this inconclusive; keep it as a
     // non-fatal artifact-producing probe like the legacy script did.

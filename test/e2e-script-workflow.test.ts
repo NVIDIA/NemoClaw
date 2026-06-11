@@ -98,7 +98,6 @@ const NIGHTLY_E2E_SCRIPT_ALLOWLIST = [
   "test/e2e/test-cloud-onboard-e2e.sh",
   "test/e2e/test-common-egress-agent-e2e.sh",
   "test/e2e/test-concurrent-gateway-ports.sh",
-  "test/e2e/test-credential-migration.sh",
   "test/e2e/test-credential-sanitization.sh",
   "test/e2e/test-cron-preflight-inference-local-e2e.sh",
   "test/e2e/test-device-auth-health.sh",
@@ -368,6 +367,48 @@ describe("E2E reusable workflow contract", () => {
     expect(uploadStep?.with?.["retention-days"]).toBe(14);
   });
 
+  it("runs credential migration on the former shell runner through Vitest artifacts", () => {
+    const job = nightlyWorkflow.jobs["credential-migration-e2e"];
+    const checkoutStep = job.steps?.find((step) =>
+      String(step.uses ?? "").startsWith("actions/checkout@"),
+    );
+    const authStep = job.steps?.find((step) => step.name === "Authenticate to Docker Hub");
+    const installStep = job.steps?.find((step) => step.name === "Install root dependencies");
+    const buildStep = job.steps?.find((step) => step.name === "Build CLI");
+    const setupNodeStep = job.steps?.find((step) =>
+      String(step.uses ?? "").startsWith("actions/setup-node@"),
+    );
+    const runStep = job.steps?.find((step) => step.name === "Run credential migration Vitest test");
+    const uploadStep = job.steps?.find(
+      (step) => step.name === "Upload credential migration artifacts",
+    );
+
+    expect(job["runs-on"]).toBe("ubuntu-latest");
+    expect(job["timeout-minutes"]).toBe(50);
+    expect(checkoutStep?.with?.ref).toBe("${{ inputs.target_ref || github.ref }}");
+    expect(checkoutStep?.with?.["persist-credentials"]).toBe(false);
+    expect(authStep).toBeDefined();
+    expect(setupNodeStep?.uses).toMatch(/^actions\/setup-node@[0-9a-f]{40}$/);
+    expect(setupNodeStep?.with?.cache).toBe("npm");
+    expect(installStep?.run).toBe("npm ci --ignore-scripts");
+    expect(buildStep?.run).toBe("npm run build:cli");
+    expect(runStep?.run).toContain("npx vitest run --project e2e-scenarios-live");
+    expect(runStep?.run).toContain("test/e2e-scenario/live/credential-migration.test.ts");
+    expect(runStep?.run).not.toContain("test/e2e/test-credential-migration.sh");
+    expect(runStep?.env?.NVIDIA_API_KEY).toBe("${{ secrets.NVIDIA_API_KEY }}");
+    expect(runStep?.env?.GITHUB_TOKEN).toBeUndefined();
+    expect(runStep?.env?.NEMOCLAW_RUN_E2E_SCENARIOS).toBe("1");
+    expect(runStep?.env?.NEMOCLAW_SANDBOX_NAME).toBe("e2e-cred-migration");
+    expect(runStep?.env?.E2E_ARTIFACT_DIR).toBe(
+      "${{ github.workspace }}/e2e-artifacts/vitest/credential-migration",
+    );
+    expect(uploadStep?.if).toBe("always()");
+    expect(uploadStep?.with?.path).toBe("e2e-artifacts/vitest/credential-migration/");
+    expect(uploadStep?.with?.["include-hidden-files"]).toBe(false);
+    expect(uploadStep?.with?.["if-no-files-found"]).toBe("ignore");
+    expect(uploadStep?.with?.["retention-days"]).toBe(14);
+  });
+
   it("authenticates Docker Hub pulls in direct nightly E2E jobs", () => {
     const directE2eJobs = [
       "openclaw-tui-chat-correlation-e2e",
@@ -376,6 +417,7 @@ describe("E2E reusable workflow contract", () => {
       "bedrock-runtime-compatible-anthropic-e2e",
       "token-rotation-e2e",
       "sandbox-operations-e2e",
+      "credential-migration-e2e",
       "openshell-gateway-upgrade-e2e",
       "double-onboard-e2e",
       "onboard-repair-e2e",
