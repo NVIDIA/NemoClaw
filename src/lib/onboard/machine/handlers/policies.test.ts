@@ -8,12 +8,48 @@ import { handlePoliciesState, type PoliciesStateOptions } from "./policies";
 
 type Agent = { name: string } | null;
 type WebSearchConfig = { fetchEnabled: true };
+type MessagingPlan = NonNullable<Session["messagingPlan"]>;
+type MessagingChannelId = MessagingPlan["channels"][number]["channelId"];
+
+function makeMessagingPlan(
+  sandboxName: string,
+  channels: readonly MessagingChannelId[],
+  disabledChannels: readonly MessagingChannelId[] = [],
+): MessagingPlan {
+  const disabled = new Set(disabledChannels);
+  return {
+    schemaVersion: 1,
+    sandboxName,
+    agent: "openclaw",
+    workflow: "onboard",
+    channels: channels.map((channelId) => ({
+      channelId,
+      displayName: channelId,
+      authMode: "token-paste",
+      active: !disabled.has(channelId),
+      selected: true,
+      configured: true,
+      disabled: disabled.has(channelId),
+      inputs: [],
+      hooks: [],
+    })),
+    disabledChannels,
+    credentialBindings: [],
+    networkPolicy: { presets: [], entries: [] },
+    agentRender: [],
+    buildSteps: [],
+    stateUpdates: [],
+    healthChecks: [],
+  };
+}
 
 function createDeps(overrides: Partial<PoliciesStateOptions<Agent, WebSearchConfig>["deps"]> = {}) {
   let session = createSession();
   const calls = {
     load: vi.fn(() => session),
-    activeSandbox: vi.fn(() => ({ messagingChannels: ["telegram"], disabledChannels: null })),
+    activeSandbox: vi.fn(() => ({
+      messaging: { plan: makeMessagingPlan("my-assistant", ["telegram"]) },
+    })),
     mergeChannels: vi.fn(
       (selected: string[], recorded: string[], active: string[] | null | undefined) =>
         selected.length > 0 ? selected : (active ?? recorded),
@@ -136,9 +172,9 @@ describe("handlePoliciesState", () => {
   });
 
   it("uses recorded messaging channels when no active selection exists", async () => {
-    const session = createSession({ messagingChannels: ["slack"] });
+    const session = createSession({ messagingPlan: makeMessagingPlan("my-assistant", ["slack"]) });
     const { deps, calls, setSession } = createDeps({
-      getActiveSandbox: vi.fn(() => ({ messagingChannels: null, disabledChannels: null })),
+      getActiveSandbox: vi.fn(() => ({ messaging: null })),
     });
     setSession(session);
 
