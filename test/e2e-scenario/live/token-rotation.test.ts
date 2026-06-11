@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import http from "node:http";
+import type { AddressInfo } from "node:net";
 import path from "node:path";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
@@ -52,6 +54,18 @@ type RegistryCredentialBinding = {
   credentialHash?: unknown;
 };
 
+type FakeOpenAIRequest = {
+  method: string;
+  path: string;
+  bodyBytes: number;
+};
+
+type FakeOpenAIEndpoint = {
+  baseUrl: string;
+  requests: FakeOpenAIRequest[];
+  close(): Promise<void>;
+};
+
 type RegistrySandboxEntry = {
   messaging?: {
     plan?: {
@@ -64,10 +78,96 @@ function resultText(result: { stdout: string; stderr: string }): string {
   return [result.stdout, result.stderr].filter(Boolean).join("\n");
 }
 
-function onboardEnv(apiKey: string, tokens: TokenSet): NodeJS.ProcessEnv {
+function jsonResponse(res: http.ServerResponse, status: number, payload: unknown): void {
+  const body = JSON.stringify(payload);
+  res.writeHead(status, {
+    "Content-Type": "application/json",
+    "Content-Length": Buffer.byteLength(body),
+  });
+  res.end(body);
+}
+
+async function startFakeOpenAIEndpoint(): Promise<FakeOpenAIEndpoint> {
+  const requests: FakeOpenAIRequest[] = [];
+  const server = http.createServer((req, res) => {
+    let bodyBytes = 0;
+    req.on("data", (chunk: Buffer) => {
+      bodyBytes += chunk.length;
+    });
+    req.on("end", () => {
+      const requestPath = new URL(req.url ?? "/", "http://fake.local").pathname;
+      requests.push({
+        method: req.method ?? "GET",
+        path: requestPath,
+        bodyBytes,
+      });
+      if (req.method === "GET" && ["/v1/models", "/models"].includes(requestPath)) {
+        jsonResponse(res, 200, {
+          data: [{ id: "test-model", object: "model" }],
+        });
+        return;
+      }
+      if (
+        req.method === "POST" &&
+        ["/v1/chat/completions", "/chat/completions"].includes(requestPath)
+      ) {
+        jsonResponse(res, 200, {
+          id: "chatcmpl-token-rotation-e2e",
+          object: "chat.completion",
+          choices: [
+            {
+              index: 0,
+              message: { role: "assistant", content: "OK" },
+              finish_reason: "stop",
+            },
+          ],
+        });
+        return;
+      }
+      if (req.method === "POST" && ["/v1/responses", "/responses"].includes(requestPath)) {
+        jsonResponse(res, 200, {
+          id: "resp-token-rotation-e2e",
+          object: "response",
+          output: [
+            {
+              type: "message",
+              role: "assistant",
+              content: [{ type: "output_text", text: "OK" }],
+            },
+          ],
+        });
+        return;
+      }
+      jsonResponse(res, 404, { error: { message: "not found" } });
+    });
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "0.0.0.0", () => {
+      server.off("error", reject);
+      resolve();
+    });
+  });
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("fake OpenAI-compatible endpoint did not bind to a TCP port");
+  }
+  const port = (address as AddressInfo).port;
+  return {
+    baseUrl: `http://host.openshell.internal:${port}/v1`,
+    requests,
+    close: () =>
+      new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      }),
+  };
+}
+
+function onboardEnv(endpointUrl: string, tokens: TokenSet): NodeJS.ProcessEnv {
   return {
     ...buildAvailabilityProbeEnv(),
-    NVIDIA_API_KEY: apiKey,
+    COMPATIBLE_API_KEY: "token-rotation-compatible-e2e",
     TELEGRAM_BOT_TOKEN: tokens.telegram,
     DISCORD_BOT_TOKEN: tokens.discord,
     SLACK_BOT_TOKEN: tokens.slackBot,
@@ -76,7 +176,9 @@ function onboardEnv(apiKey: string, tokens: TokenSet): NodeJS.ProcessEnv {
     NEMOCLAW_NON_INTERACTIVE: "1",
     NEMOCLAW_YES: "1",
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
-    NEMOCLAW_PROVIDER: "cloud",
+    NEMOCLAW_PROVIDER: "custom",
+    NEMOCLAW_ENDPOINT_URL: endpointUrl,
+    NEMOCLAW_MODEL: "test-model",
     NEMOCLAW_POLICY_TIER: "open",
     NEMOCLAW_SKIP_TELEGRAM_REACHABILITY: "1",
     NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION: "1",
@@ -135,9 +237,10 @@ function expectRotationOutput(
   expect(output).toContain("Rebuilding sandbox to propagate new credentials");
 }
 
-function redactionValues(apiKey: string): string[] {
+function redactionValues(): string[] {
   return [
-    apiKey,
+    "token-rotation-compatible-e2e",
+    process.env.NVIDIA_API_KEY,
     process.env.GITHUB_TOKEN,
     ...Object.values(TOKEN_A),
     ...Object.values(TOKEN_B),
@@ -146,7 +249,7 @@ function redactionValues(apiKey: string): string[] {
 
 async function runInstall(
   host: import("../fixtures/clients/host.ts").HostCliClient,
-  apiKey: string,
+  endpointUrl: string,
   tokens: TokenSet,
   extraEnv: NodeJS.ProcessEnv = {},
 ) {
@@ -154,17 +257,17 @@ async function runInstall(
     artifactName: "phase-0-install-token-a",
     cwd: REPO_ROOT,
     env: {
-      ...onboardEnv(apiKey, tokens),
+      ...onboardEnv(endpointUrl, tokens),
       ...extraEnv,
     },
-    redactionValues: redactionValues(apiKey),
+    redactionValues: redactionValues(),
     timeoutMs: ONBOARD_TIMEOUT_MS,
   });
 }
 
 async function runOnboard(
   host: import("../fixtures/clients/host.ts").HostCliClient,
-  apiKey: string,
+  endpointUrl: string,
   tokens: TokenSet,
   artifactName: string,
   extraEnv: NodeJS.ProcessEnv = {},
@@ -172,10 +275,10 @@ async function runOnboard(
   return host.command("node", [CLI_ENTRYPOINT, "onboard", "--non-interactive"], {
     artifactName,
     env: {
-      ...onboardEnv(apiKey, tokens),
+      ...onboardEnv(endpointUrl, tokens),
       ...extraEnv,
     },
-    redactionValues: redactionValues(apiKey),
+    redactionValues: redactionValues(),
     timeoutMs: ONBOARD_TIMEOUT_MS,
   });
 }
@@ -205,7 +308,7 @@ const liveTest = shouldRunLiveE2EScenarios() ? test : test.skip;
 liveTest(
   "messaging token rotation rebuilds only the changed provider and reuses unchanged credentials",
   testTimeoutOptions(PHASE_TIMEOUT_MS),
-  async ({ artifacts, cleanup, host, secrets, skip }) => {
+  async ({ artifacts, cleanup, host, skip }) => {
     expect(
       fs.existsSync(CLI_ENTRYPOINT),
       "run `npm run build:cli` before live repo CLI scenarios",
@@ -223,7 +326,11 @@ liveTest(
       skip("Docker is required for token rotation live E2E");
     }
 
-    const apiKey = secrets.required("NVIDIA_API_KEY");
+    const fakeOpenAI = await startFakeOpenAIEndpoint();
+    cleanup.add("stop fake OpenAI-compatible endpoint for token rotation", async () => {
+      await artifacts.writeJson("fake-openai-compatible-requests.json", fakeOpenAI.requests);
+      await fakeOpenAI.close();
+    });
 
     await artifacts.writeJson("scenario.json", {
       id: "token-rotation",
@@ -234,14 +341,26 @@ liveTest(
         workflow: "nightly-e2e.yaml",
         job: "token-rotation-e2e",
         runsOn: "ubuntu-latest",
-        resources: ["Docker", "install.sh/OpenShell", "NVIDIA_API_KEY", "fake messaging tokens"],
+        resources: [
+          "Docker",
+          "install.sh/OpenShell",
+          "NVIDIA_API_KEY or fake OpenAI-compatible endpoint",
+          "fake messaging tokens",
+        ],
       },
       replacementRunner: {
         workflow: "e2e-vitest-scenarios.yaml",
         job: "token-rotation-vitest",
         runsOn: "ubuntu-latest",
-        resources: ["Docker", "install.sh/OpenShell", "NVIDIA_API_KEY", "fake messaging tokens"],
+        resources: [
+          "Docker",
+          "install.sh/OpenShell",
+          "hermetic fake OpenAI-compatible endpoint",
+          "fake messaging tokens",
+        ],
       },
+      documentedException:
+        "The replacement uses the legacy-supported fake OpenAI-compatible endpoint path so the messaging credential-rotation guard is not blocked by unrelated NVIDIA endpoint 429 rate limits.",
       contract: [
         "first onboard stores messaging credential hashes and creates provider attachments",
         "rotating Telegram rebuilds and names only telegram-bridge",
@@ -271,7 +390,7 @@ liveTest(
       "pre-cleanup-openshell-sandbox-delete-token-rotation",
     );
 
-    const first = await runInstall(host, apiKey, TOKEN_A, {
+    const first = await runInstall(host, fakeOpenAI.baseUrl, TOKEN_A, {
       NEMOCLAW_RECREATE_SANDBOX: "1",
     });
     expect(first.exitCode, resultText(first)).toBe(0);
@@ -308,7 +427,7 @@ liveTest(
 
     const telegram = await runOnboard(
       host,
-      apiKey,
+      fakeOpenAI.baseUrl,
       { ...TOKEN_A, telegram: TOKEN_B.telegram },
       "phase-2-rotate-telegram",
     );
@@ -326,7 +445,7 @@ liveTest(
 
     const afterTelegramSame = await runOnboard(
       host,
-      apiKey,
+      fakeOpenAI.baseUrl,
       { ...TOKEN_A, telegram: TOKEN_B.telegram },
       "phase-3-same-after-telegram",
     );
@@ -337,7 +456,7 @@ liveTest(
 
     const discord = await runOnboard(
       host,
-      apiKey,
+      fakeOpenAI.baseUrl,
       { ...TOKEN_A, telegram: TOKEN_B.telegram, discord: TOKEN_B.discord },
       "phase-4-rotate-discord",
     );
@@ -355,7 +474,7 @@ liveTest(
 
     const afterDiscordSame = await runOnboard(
       host,
-      apiKey,
+      fakeOpenAI.baseUrl,
       { ...TOKEN_A, telegram: TOKEN_B.telegram, discord: TOKEN_B.discord },
       "phase-5-same-after-discord",
     );
@@ -364,7 +483,7 @@ liveTest(
     expect(afterDiscordSameText).toContain(`Sandbox '${SANDBOX_NAME}' exists and is ready`);
     expect(afterDiscordSameText).toContain("reusing it");
 
-    const slack = await runOnboard(host, apiKey, TOKEN_B, "phase-6-rotate-slack");
+    const slack = await runOnboard(host, fakeOpenAI.baseUrl, TOKEN_B, "phase-6-rotate-slack");
     const slackText = resultText(slack);
     expect(slack.exitCode, slackText).toBe(0);
     expectRotationOutput(
@@ -373,7 +492,12 @@ liveTest(
       [`${SANDBOX_NAME}-telegram-bridge`, `${SANDBOX_NAME}-discord-bridge`],
     );
 
-    const afterSlackSame = await runOnboard(host, apiKey, TOKEN_B, "phase-7-same-after-slack");
+    const afterSlackSame = await runOnboard(
+      host,
+      fakeOpenAI.baseUrl,
+      TOKEN_B,
+      "phase-7-same-after-slack",
+    );
     const afterSlackSameText = resultText(afterSlackSame);
     expect(afterSlackSame.exitCode, afterSlackSameText).toBe(0);
     expect(afterSlackSameText).toContain(`Sandbox '${SANDBOX_NAME}' exists and is ready`);

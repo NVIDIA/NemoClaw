@@ -322,9 +322,9 @@ jobs:
       - name: Run token rotation live test
         # Migrated from nightly-e2e.yaml token-rotation-e2e. Preserve the
         # original runner class: ubuntu-latest with Docker/OpenShell plus the
-        # same NVIDIA_API_KEY and fake Telegram/Discord/Slack token boundary.
+        # legacy-supported fake OpenAI-compatible endpoint path and fake
+        # Telegram/Discord/Slack token boundary.
         env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           GITHUB_TOKEN: ${{ github.token }}
           TELEGRAM_BOT_TOKEN_A: "test-fake-token-A-rotation-e2e"
           TELEGRAM_BOT_TOKEN_B: "test-fake-token-B-rotation-e2e"

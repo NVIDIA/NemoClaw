@@ -136,10 +136,11 @@ function validateOpenShellVersionPinVitestJob(errors: string[], jobs: WorkflowRe
   if (Object.hasOwn(job, "needs")) {
     errors.push("openshell-version-pin-vitest job must run independently of generate-matrix");
   }
-  if (Object.hasOwn(job, "if")) {
-    errors.push(
-      "openshell-version-pin-vitest job must run independently of workflow dispatch scenario filters",
-    );
+  if (
+    job.if !==
+    "${{ inputs.jobs == '' || contains(format(',{0},', inputs.jobs), ',openshell-version-pin-vitest,') }}"
+  ) {
+    errors.push("openshell-version-pin-vitest job must use jobs dispatch selector");
   }
 
   const jobEnv = asRecord(job.env);
@@ -221,8 +222,11 @@ function validateTokenRotationVitestJob(errors: string[], jobs: WorkflowRecord):
   if (job["runs-on"] !== "ubuntu-latest") {
     errors.push("token-rotation-vitest job must run on ubuntu-latest");
   }
-  if (job.if !== "${{ inputs.scenarios == '' }}") {
-    errors.push("token-rotation-vitest job must run only for full workflow dispatches");
+  if (
+    job.if !==
+    "${{ inputs.jobs == '' || contains(format(',{0},', inputs.jobs), ',token-rotation-vitest,') }}"
+  ) {
+    errors.push("token-rotation-vitest job must use jobs dispatch selector");
   }
   if (job["timeout-minutes"] !== 45) {
     errors.push("token-rotation-vitest job must keep the legacy 45 minute timeout");
@@ -285,9 +289,12 @@ function validateTokenRotationVitestJob(errors: string[], jobs: WorkflowRecord):
 
   const runVitest = requireJobStep(errors, jobName, steps, "Run token rotation live test");
   const runVitestEnv = asRecord(runVitest?.env);
-  if (runVitestEnv.NVIDIA_API_KEY !== "${{ secrets.NVIDIA_API_KEY }}") {
-    errors.push("token-rotation-vitest step must receive NVIDIA_API_KEY from secrets");
-  }
+  requireEnvDoesNotExposeSecret(
+    errors,
+    "token-rotation-vitest step",
+    runVitestEnv,
+    "NVIDIA_API_KEY",
+  );
   if (runVitestEnv.GITHUB_TOKEN !== "${{ github.token }}") {
     errors.push("token-rotation-vitest step must receive GITHUB_TOKEN from github.token");
   }
@@ -341,10 +348,11 @@ function validateOnboardNegativePathsVitestJob(errors: string[], jobs: WorkflowR
   if (Object.hasOwn(job, "needs")) {
     errors.push("onboard-negative-paths-vitest job must run independently of generate-matrix");
   }
-  if (Object.hasOwn(job, "if")) {
-    errors.push(
-      "onboard-negative-paths-vitest job must run independently of workflow dispatch scenario filters",
-    );
+  if (
+    job.if !==
+    "${{ inputs.jobs == '' || contains(format(',{0},', inputs.jobs), ',onboard-negative-paths-vitest,') }}"
+  ) {
+    errors.push("onboard-negative-paths-vitest job must use jobs dispatch selector");
   }
 
   const jobEnv = asRecord(job.env);
