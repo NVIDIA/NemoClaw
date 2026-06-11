@@ -1119,6 +1119,106 @@ exit 2
     }
   });
 
+  it("#4462: recovers a same-device replacement when the original scope request was already replaced", () => {
+    const setup = writeProxyEnvWithGuard();
+    const stateDir = path.join(setup.tmpDir, "openclaw-state");
+    const devicesDir = path.join(stateDir, "devices");
+    fs.mkdirSync(devicesDir, { recursive: true });
+    fs.writeFileSync(path.join(devicesDir, "pending.json"), "{}\n");
+    fs.writeFileSync(
+      path.join(devicesDir, "paired.json"),
+      JSON.stringify(
+        {
+          "device-1": {
+            deviceId: "device-1",
+            publicKey: "public-key-1",
+            platform: "linux",
+            clientId: "cli",
+            clientMode: "cli",
+            role: "operator",
+            roles: ["operator"],
+            scopes: ["operator.pairing"],
+            approvedScopes: ["operator.pairing"],
+            tokens: {
+              operator: {
+                role: "operator",
+                scopes: ["operator.pairing"],
+                token: "token-1",
+                createdAtMs: 1,
+              },
+            },
+          },
+        },
+        null,
+        2,
+      ),
+    );
+    fs.writeFileSync(
+      path.join(setup.fakeBin, "openclaw"),
+      `#!/usr/bin/env bash
+set -euo pipefail
+printf 'ARGS=%s URL=%s PORT=%s TOKEN=%s\n' "$*" "\${OPENCLAW_GATEWAY_URL-unset}" "\${OPENCLAW_GATEWAY_PORT-unset}" "\${OPENCLAW_GATEWAY_TOKEN-unset}" >> ${JSON.stringify(setup.commandLog)}
+if [ "\${1:-}" = "devices" ] && [ "\${2:-}" = "approve" ]; then
+  cat > "\${OPENCLAW_STATE_DIR}/devices/pending.json" <<'JSON'
+{
+  "replacement": {
+    "requestId": "replacement-1",
+    "deviceId": "device-1",
+    "publicKey": "public-key-1",
+    "platform": "linux",
+    "clientId": "cli",
+    "clientMode": "cli",
+    "role": "operator",
+    "roles": ["operator"],
+    "scopes": ["operator.write", "operator.pairing", "operator.read", "operator.admin"]
+  }
+}
+JSON
+  echo 'gateway connect failed: GatewayClientRequestError: scope upgrade pending approval (requestId: replacement-1)' >&2
+  echo '[openclaw] Reason: gateway closed (1008): pairing required: device is asking for more scopes than currently approved (requestId: replacement-1)' >&2
+  exit 1
+fi
+exit 2
+`,
+      { mode: 0o755 },
+    );
+
+    try {
+      const result = runGuardedShell(setup, [
+        `export OPENCLAW_STATE_DIR=${JSON.stringify(stateDir)}`,
+        shellOpenclawCommand(["devices", "approve", "request-1", "--json"]),
+      ]);
+
+      expect(result.status, result.stderr).toBe(0);
+      const payload = JSON.parse(result.stdout.trim());
+      expect(payload).toMatchObject({
+        requestId: "request-1",
+        deviceId: "device-1",
+        compatibility: "nemoclaw-approve-recovered-replacement-request",
+      });
+      expect(payload.approvedScopes).toEqual([
+        "operator.pairing",
+        "operator.read",
+        "operator.write",
+      ]);
+      expect(JSON.parse(fs.readFileSync(path.join(devicesDir, "pending.json"), "utf-8"))).toEqual(
+        {},
+      );
+      const paired = JSON.parse(fs.readFileSync(path.join(devicesDir, "paired.json"), "utf-8"));
+      expect(paired["device-1"].approvedScopes).toEqual([
+        "operator.pairing",
+        "operator.read",
+        "operator.write",
+      ]);
+      expect(JSON.stringify(paired)).not.toContain("operator.admin");
+      expect(fs.readFileSync(setup.commandLog, "utf-8")).toContain(
+        "ARGS=devices approve request-1 --json URL=unset PORT=unset TOKEN=unset",
+      );
+    } finally {
+      fs.rmSync(setup.tmpDir, { recursive: true, force: true });
+    }
+  });
+
   // #2592 reported the guard did not fire for `openclaw channels add telegram`
   // and `openclaw channels remove telegram` from inside the sandbox. The
   // existing test above only exercises `add slack`. Lock in coverage for every

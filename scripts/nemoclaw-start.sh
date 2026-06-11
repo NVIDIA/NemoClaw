@@ -2277,17 +2277,29 @@ openclaw() {
       _nemoclaw_approve_before="$(NEMOCLAW_APPROVE_REQUEST_ID="$_nemoclaw_approve_request_id" NEMOCLAW_APPROVE_STATE_DIR="$_nemoclaw_approve_state_dir" python3 - <<'PYAPPROVEBEFORE' 2>/dev/null || true
 import json
 import os
+import time
 from pathlib import Path
 
 root = Path(os.environ.get("NEMOCLAW_APPROVE_STATE_DIR") or "/sandbox/.openclaw") / "devices"
 request_id = os.environ.get("NEMOCLAW_APPROVE_REQUEST_ID") or ""
-try:
-    pending = json.loads((root / "pending.json").read_text(encoding="utf-8"))
-except Exception:
-    pending = {}
-if not isinstance(pending, dict):
-    pending = {}
-request = next((item for item in pending.values() if isinstance(item, dict) and item.get("requestId") == request_id), None)
+
+def load_json(path):
+    for _ in range(10):
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            time.sleep(0.05)
+    return {}
+
+def entries(value):
+    if isinstance(value, dict):
+        return [item for item in value.values() if isinstance(item, dict)]
+    if isinstance(value, list):
+        return [item for item in value if isinstance(item, dict)]
+    return []
+
+pending = load_json(root / "pending.json")
+request = next((item for item in entries(pending) if item.get("requestId") == request_id), None)
 if request:
     print(json.dumps({
         "requestId": request_id,
@@ -2319,8 +2331,8 @@ PYAPPROVEBEFORE
         _nemoclaw_approve_recover=1
         ;;
     esac
-    if [ "$_nemoclaw_approve_recover" = "1" ] && [ -n "$_nemoclaw_approve_request_id" ] && [ -n "$_nemoclaw_approve_before" ] && command -v python3 >/dev/null 2>&1; then
-      if NEMOCLAW_APPROVE_REQUEST_ID="$_nemoclaw_approve_request_id" NEMOCLAW_APPROVE_STATE_DIR="$_nemoclaw_approve_state_dir" NEMOCLAW_APPROVE_BEFORE="$_nemoclaw_approve_before" python3 - <<'PYAPPROVEAFTER'; then
+    if [ "$_nemoclaw_approve_recover" = "1" ] && [ -n "$_nemoclaw_approve_request_id" ] && command -v python3 >/dev/null 2>&1; then
+      if NEMOCLAW_APPROVE_REQUEST_ID="$_nemoclaw_approve_request_id" NEMOCLAW_APPROVE_STATE_DIR="$_nemoclaw_approve_state_dir" NEMOCLAW_APPROVE_BEFORE="$_nemoclaw_approve_before" NEMOCLAW_APPROVE_OUTPUT="$_nemoclaw_approve_output" python3 - <<'PYAPPROVEAFTER'; then
 import json
 import os
 import time
@@ -2329,21 +2341,26 @@ from pathlib import Path
 ALLOWED_CLIENTS = {"openclaw-control-ui"}
 ALLOWED_MODES = {"webchat", "cli"}
 ALLOWED_SCOPES = {"operator.pairing", "operator.read", "operator.write"}
+REPLACEMENT_ONLY_EXTRAS = {"operator.admin"}
 SCOPE_ORDER = ["operator.pairing", "operator.read", "operator.write"]
 
 request_id = os.environ.get("NEMOCLAW_APPROVE_REQUEST_ID") or ""
 root = Path(os.environ.get("NEMOCLAW_APPROVE_STATE_DIR") or "/sandbox/.openclaw") / "devices"
+approve_output = os.environ.get("NEMOCLAW_APPROVE_OUTPUT") or ""
 try:
     before = json.loads(os.environ.get("NEMOCLAW_APPROVE_BEFORE") or "{}")
 except Exception:
     before = {}
 
 def load(name):
-    try:
-        value = json.loads((root / name).read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-    return value if isinstance(value, dict) else {}
+    path = root / name
+    for _ in range(10):
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+            return value if isinstance(value, (dict, list)) else {}
+        except Exception:
+            time.sleep(0.05)
+    return {}
 
 def save(name, value):
     root.mkdir(parents=True, exist_ok=True)
@@ -2351,6 +2368,13 @@ def save(name, value):
 
 def norm(value):
     return str(value or "").strip()
+
+def entries(value):
+    if isinstance(value, dict):
+        return [item for item in value.values() if isinstance(item, dict)]
+    if isinstance(value, list):
+        return [item for item in value if isinstance(item, dict)]
+    return []
 
 def list_scopes(entry, *names):
     for name in names:
@@ -2394,8 +2418,8 @@ def approval_closure(scopes):
         closed.add("operator.pairing")
     return closed
 
-def update_tokens(entry, scopes):
-    role = norm(before.get("role")) or "operator"
+def update_tokens(entry, scopes, role):
+    role = norm(role) or "operator"
     now_ms = int(time.time() * 1000)
     tokens = entry.get("tokens")
     if isinstance(tokens, dict):
@@ -2416,46 +2440,119 @@ def update_tokens(entry, scopes):
     else:
         entry["tokens"] = {role: {"role": role, "scopes": ordered(scopes), "createdAtMs": now_ms}}
 
-requested = list_scopes(before, "scopes", "requestedScopes")
-device_id = norm(before.get("deviceId"))
-if not request_id or not device_id or not requested or not requested.issubset(ALLOWED_SCOPES) or not client_allowed(before):
-    raise SystemExit(1)
+def find_paired(paired, device_id):
+    if isinstance(paired, dict):
+        item = paired.get(device_id)
+        if isinstance(item, dict):
+            return item
+    return next((item for item in entries(paired) if norm(item.get("deviceId")) == device_id), None)
+
+def upsert_paired(paired, device_id, entry):
+    if isinstance(paired, list):
+        for index, item in enumerate(paired):
+            if isinstance(item, dict) and norm(item.get("deviceId")) == device_id:
+                paired[index] = entry
+                return paired
+        paired.append(entry)
+        return paired
+    if not isinstance(paired, dict):
+        paired = {}
+    for key, item in paired.items():
+        if isinstance(item, dict) and norm(item.get("deviceId")) == device_id:
+            paired[key] = entry
+            return paired
+    paired[device_id] = entry
+    return paired
+
+def remove_pending(pending, candidate, request_ids, requested_all):
+    def should_remove(item):
+        if not isinstance(item, dict):
+            return False
+        if norm(item.get("requestId")) in request_ids:
+            return True
+        if same_identity(candidate, item) and list_scopes(item, "scopes", "requestedScopes").intersection(requested_all):
+            return True
+        return False
+    if isinstance(pending, list):
+        return [item for item in pending if not should_remove(item)]
+    if isinstance(pending, dict):
+        return {key: item for key, item in pending.items() if not should_remove(item)}
+    return {}
+
+def replacement_candidate_allowed(requested_all):
+    extras = requested_all - ALLOWED_SCOPES
+    if not extras or not extras.issubset(REPLACEMENT_ONLY_EXTRAS):
+        return False
+    return bool(requested_all.intersection({"operator.read", "operator.write"}))
+
+def approve_candidate(candidate, from_original, pending, paired):
+    candidate_request_id = norm(candidate.get("requestId"))
+    device_id = norm(candidate.get("deviceId"))
+    requested_all = list_scopes(candidate, "scopes", "requestedScopes")
+    if not request_id or not candidate_request_id or not device_id or not requested_all or not client_allowed(candidate):
+        return False
+    extras = requested_all - ALLOWED_SCOPES
+    if from_original:
+        if extras:
+            return False
+        requested = requested_all
+        compatibility = "nemoclaw-approve-recovered-original-request"
+    else:
+        if candidate_request_id == request_id:
+            if extras:
+                return False
+            requested = requested_all
+            compatibility = "nemoclaw-approve-recovered-original-request"
+        else:
+            if not replacement_candidate_allowed(requested_all):
+                return False
+            requested = requested_all & ALLOWED_SCOPES
+            compatibility = "nemoclaw-approve-recovered-replacement-request"
+    paired_entry = find_paired(paired, device_id)
+    if not isinstance(paired_entry, dict) or not same_identity(candidate, paired_entry):
+        return False
+    current_scopes = list_scopes(paired_entry, "approvedScopes", "scopes")
+    if "operator.pairing" not in current_scopes:
+        return False
+    approved = approval_closure(current_scopes | requested)
+    if not approved.issubset(ALLOWED_SCOPES):
+        return False
+    request_ids = {request_id, candidate_request_id}
+    pending = remove_pending(pending, candidate, request_ids, requested_all)
+    approved_list = ordered(approved)
+    paired_entry["scopes"] = approved_list
+    paired_entry["approvedScopes"] = approved_list
+    paired_entry.setdefault("approvedAtMs", int(time.time() * 1000))
+    update_tokens(paired_entry, approved, norm(candidate.get("role")) or "operator")
+    paired = upsert_paired(paired, device_id, paired_entry)
+    save("pending.json", pending)
+    save("paired.json", paired)
+    print(json.dumps({
+        "requestId": request_id,
+        "deviceId": device_id,
+        "approvedScopes": approved_list,
+        "compatibility": compatibility,
+    }, sort_keys=True))
+    return True
 
 pending = load("pending.json")
 paired = load("paired.json")
-paired_entry = paired.get(device_id)
-if not isinstance(paired_entry, dict):
-    paired_entry = next((item for item in paired.values() if isinstance(item, dict) and norm(item.get("deviceId")) == device_id), None)
-if not isinstance(paired_entry, dict) or not same_identity(before, paired_entry):
-    raise SystemExit(1)
-
-current_scopes = list_scopes(paired_entry, "approvedScopes", "scopes")
-if "operator.pairing" not in current_scopes:
-    raise SystemExit(1)
-approved = approval_closure(current_scopes | requested)
-if not approved.issubset(ALLOWED_SCOPES):
-    raise SystemExit(1)
-
-for key, item in list(pending.items()):
-    if not isinstance(item, dict):
+candidates = []
+if isinstance(before, dict) and before:
+    candidates.append((before, True))
+seen = {norm(before.get("requestId"))} if isinstance(before, dict) else set()
+for item in entries(pending):
+    item_request_id = norm(item.get("requestId"))
+    if not item_request_id or item_request_id in seen:
         continue
-    if norm(item.get("requestId")) == request_id or same_identity(before, item):
-        pending.pop(key, None)
+    if item_request_id == request_id or "requestId: " + item_request_id in approve_output or replacement_candidate_allowed(list_scopes(item, "scopes", "requestedScopes")):
+        candidates.append((item, False))
+        seen.add(item_request_id)
 
-approved_list = ordered(approved)
-paired_entry["scopes"] = approved_list
-paired_entry["approvedScopes"] = approved_list
-paired_entry.setdefault("approvedAtMs", int(time.time() * 1000))
-update_tokens(paired_entry, approved)
-paired[device_id] = paired_entry
-save("pending.json", pending)
-save("paired.json", paired)
-print(json.dumps({
-    "requestId": request_id,
-    "deviceId": device_id,
-    "approvedScopes": approved_list,
-    "compatibility": "nemoclaw-approve-recovered-original-request",
-}, sort_keys=True))
+for candidate, from_original in candidates:
+    if approve_candidate(candidate, from_original, pending, paired):
+        raise SystemExit(0)
+raise SystemExit(1)
 PYAPPROVEAFTER
         return 0
       fi
