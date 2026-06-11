@@ -240,16 +240,28 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
     return token.replace(/^['"]|['"]$/g, "").replace(/ \(deleted\)$/, "");
   }
 
+  const DOCKER_DRIVER_GATEWAY_CONTAINER_RUNTIME_NAMES = new Set(["docker"]);
+  const DOCKER_DRIVER_GATEWAY_MOUNT_PATH = "/opt/nemoclaw/openshell-gateway";
+
   function processIdentityMatchesGatewayBinary(
     identity: string,
     gatewayBin?: string | null,
   ): boolean {
     const expectedExe = normalizeGatewayExecutablePath(gatewayBin);
-    for (const token of identity.split(/\s+/).filter(Boolean)) {
-      const cleanedToken = cleanProcessCommandToken(token);
-      if (path.basename(cleanedToken) === "openshell-gateway") return true;
-      if (!expectedExe || !cleanedToken.includes(path.sep)) continue;
-      if (normalizeGatewayExecutablePath(cleanedToken) === expectedExe) return true;
+    const tokens = identity.split(/\s+/).filter(Boolean).map(cleanProcessCommandToken);
+    const executableToken = tokens[0];
+    if (!executableToken) return false;
+    const executableName = path.basename(executableToken);
+    if (executableName === "openshell-gateway") return true;
+    if (
+      expectedExe &&
+      executableToken.includes(path.sep) &&
+      normalizeGatewayExecutablePath(executableToken) === expectedExe
+    ) {
+      return true;
+    }
+    if (DOCKER_DRIVER_GATEWAY_CONTAINER_RUNTIME_NAMES.has(executableName)) {
+      return tokens.slice(1).includes(DOCKER_DRIVER_GATEWAY_MOUNT_PATH);
     }
     return false;
   }
