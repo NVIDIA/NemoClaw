@@ -28,7 +28,6 @@ export interface SandboxMessagingPreflightDeps {
   resolveDisabledChannels?: (sandboxName: string) => string[];
   gatewayName: string;
   registry: MessagingConflictGuardDeps["registry"];
-  checkGatewayLiveness(): boolean;
   providerExistsInGateway(name: string): boolean;
   isNonInteractive(): boolean;
   promptYesNoOrDefault(
@@ -113,8 +112,6 @@ async function checkMessagingPlanConflicts(
     currentPlan,
     currentSandboxDisabledChannels: disabledChannels,
     registry: deps.registry,
-    checkGatewayLiveness: deps.checkGatewayLiveness,
-    providerExists: deps.providerExistsInGateway,
     isNonInteractive: deps.isNonInteractive,
     promptContinue: () => deps.promptYesNoOrDefault("  Continue anyway?", null, false),
     cliName: deps.cliName,

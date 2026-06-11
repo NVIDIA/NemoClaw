@@ -143,30 +143,16 @@ openshell() {
   fi
 }
 
-registry_field() {
-  local field="$1"
-  if [ ! -f "$REGISTRY" ]; then
-    echo "null"
-    return
-  fi
-  if command -v jq >/dev/null 2>&1; then
-    jq -c --arg name "$SANDBOX_NAME" --arg field "$field" \
-      '.sandboxes[$name][$field]' "$REGISTRY" 2>/dev/null || echo "null"
-  else
-    node -e "
-const r = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'));
-const v = (r.sandboxes || {})[process.argv[2]]?.[process.argv[3]];
-process.stdout.write(JSON.stringify(v ?? null));
-" "$REGISTRY" "$SANDBOX_NAME" "$field" 2>/dev/null || echo "null"
-  fi
-}
-
-registry_array_contains() {
-  local field="$1"
-  local item="$2"
-  local value
-  value="$(registry_field "$field")"
-  printf '%s' "$value" | grep -Fq "\"${item}\""
+registry_plan_channel_contains() {
+  local item="$1"
+  node -e '
+const fs = require("fs");
+const [registryPath, sandboxName, channelId] = process.argv.slice(1);
+if (!fs.existsSync(registryPath)) process.exit(1);
+const registry = JSON.parse(fs.readFileSync(registryPath, "utf8"));
+const channels = registry.sandboxes?.[sandboxName]?.messaging?.plan?.channels;
+process.exit(Array.isArray(channels) && channels.some((channel) => channel?.channelId === channelId) ? 0 : 1);
+' "$REGISTRY" "$SANDBOX_NAME" "$item"
 }
 
 assert_openclaw_config_activation() {
@@ -899,10 +885,10 @@ else
   pass "M-WA1: WhatsApp QR-only channel creates no bridge provider"
 fi
 
-if registry_array_contains messagingChannels "whatsapp"; then
-  pass "M-WA2: registry.messagingChannels contains whatsapp after channel add"
+if registry_plan_channel_contains "whatsapp"; then
+  pass "M-WA2: registry.messaging.plan.channels contains whatsapp after channel add"
 else
-  fail "M-WA2: registry.messagingChannels missing whatsapp after channel add ($(registry_field messagingChannels))"
+  fail "M-WA2: registry.messaging.plan.channels missing whatsapp after channel add"
 fi
 
 whatsapp_policy_pre=$(openshell policy get --full "$SANDBOX_NAME" 2>/dev/null || true)

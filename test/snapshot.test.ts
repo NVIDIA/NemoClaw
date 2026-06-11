@@ -10,6 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
+
 // Override HOME BEFORE importing sandbox-state — it reads process.env.HOME
 // at module-load time to compute REBUILD_BACKUPS_DIR. Captured original is
 // restored in afterAll so sibling tests running in the same worker don't
@@ -158,6 +159,47 @@ describe("listBackups computes virtual versions", () => {
     const [entry] = sandboxState.listBackups("test-sandbox");
     expect(entry.name).toBe("before-upgrade");
     expect(entry.snapshotVersion).toBe(1);
+  });
+
+  it("surfaces customPolicies (name + content + sourcePath) through the manifest round-trip", () => {
+    const custom = [
+      {
+        name: "my-custom",
+        content: "version: 1\n\nnetwork_policies: {}\n",
+        sourcePath: "/host/policy.yaml",
+      },
+    ];
+    writeBackup("test-sandbox", "2026-04-21T14-00-00-000Z", { customPolicies: custom });
+    const [entry] = sandboxState.listBackups("test-sandbox");
+    expect(entry.customPolicies).toEqual(custom);
+  });
+
+  it("preserves an empty customPolicies array so restore can distinguish zero-custom from legacy snapshots", () => {
+    writeBackup("test-sandbox", "2026-04-21T14-00-00-000Z", { customPolicies: [] });
+    const [entry] = sandboxState.listBackups("test-sandbox");
+    expect(entry.customPolicies).toEqual([]);
+  });
+
+  it("ignores rebuild manifests with malformed customPolicies (entry missing content)", () => {
+    const dir = path.join(BACKUPS_ROOT, "test-sandbox", "2026-04-21T14-02-00-000Z");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, "rebuild-manifest.json"),
+      JSON.stringify({
+        version: 1,
+        sandboxName: "test-sandbox",
+        timestamp: "2026-04-21T14-02-00-000Z",
+        agentType: "openclaw",
+        agentVersion: null,
+        expectedVersion: null,
+        stateDirs: [],
+        dir: "/sandbox/.openclaw",
+        backupPath: dir,
+        blueprintDigest: null,
+        customPolicies: [{ name: "no-content" }],
+      }),
+    );
+    expect(sandboxState.listBackups("test-sandbox")).toEqual([]);
   });
   it("preserves legacy manifests created before blueprintDigest existed", () => {
     const dir = path.join(BACKUPS_ROOT, "test-sandbox", "2026-04-21T13-59-00-000Z");

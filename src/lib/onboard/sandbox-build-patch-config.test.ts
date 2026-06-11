@@ -6,26 +6,16 @@ import { describe, expect, it, vi } from "vitest";
 import type { Session } from "../state/onboard-session";
 import { prepareSandboxBuildPatchConfig } from "./sandbox-build-patch-config";
 
-const DISCORD_SNOWFLAKE_RE = /^[0-9]{17,19}$/;
-
 describe("prepareSandboxBuildPatchConfig", () => {
-  it("collects build-time messaging config and persists the session snapshot", () => {
+  it("reads build-time messaging config and persists session snapshots", () => {
     const updateSession = vi.fn((mutator: (session: Session) => Session | void) => {
       const current = {} as Session;
       return mutator(current) ?? current;
     });
-    const messagingChannelConfig = { TELEGRAM_ALLOWED_IDS: "123,456" };
+    const readMessagingChannelConfigFromEnv = vi.fn();
 
     const result = prepareSandboxBuildPatchConfig({
-      channels: [
-        { name: "telegram", userIdEnvKey: "TELEGRAM_ALLOWED_IDS" },
-        { name: "slack", userIdEnvKey: "SLACK_ALLOWED_USERS" },
-        { name: "wechat", userIdEnvKey: "WECHAT_ALLOWED_IDS" },
-      ],
-      activeMessagingChannels: ["telegram", "slack"],
       configuredMessagingChannels: ["telegram", "slack"],
-      messagingTokenDefs: [{ envKey: "TELEGRAM_BOT_TOKEN" }, { envKey: "SLACK_BOT_TOKEN" }],
-      discordSnowflakeRe: DISCORD_SNOWFLAKE_RE,
       env: {
         TELEGRAM_ALLOWED_IDS: "123,456",
         SLACK_ALLOWED_USERS: "U01ABC2DEF3",
@@ -33,7 +23,7 @@ describe("prepareSandboxBuildPatchConfig", () => {
         WECHAT_ALLOWED_IDS: "wxid-unused",
       },
       deps: {
-        readMessagingChannelConfigFromEnv: vi.fn(() => messagingChannelConfig),
+        readMessagingChannelConfigFromEnv,
         computeTelegramRequireMention: vi.fn(() => true),
         loadSession: vi.fn(() => ({ wechatConfig: { accountId: "old" } }) as Session),
         gatherWechatConfig: vi.fn(() => ({
@@ -45,14 +35,12 @@ describe("prepareSandboxBuildPatchConfig", () => {
       },
     });
 
-    expect(result.messagingChannelConfig).toBe(messagingChannelConfig);
-    expect(result.enabledTokenEnvKeys).toEqual(new Set(["TELEGRAM_BOT_TOKEN", "SLACK_BOT_TOKEN"]));
-    expect(result.activeChannelNames).toEqual(new Set(["telegram", "slack"]));
-    expect(result.messagingAllowedIds).toEqual({
-      slack: ["U01ABC2DEF3"],
-      telegram: ["123", "456"],
+    expect(readMessagingChannelConfigFromEnv).toHaveBeenCalledWith({
+      TELEGRAM_ALLOWED_IDS: "123,456",
+      SLACK_ALLOWED_USERS: "U01ABC2DEF3",
+      SLACK_ALLOWED_CHANNELS: "C012AB3CD,C987ZY6XW",
+      WECHAT_ALLOWED_IDS: "wxid-unused",
     });
-    expect(result.slackConfig).toEqual({ allowedChannels: ["C012AB3CD", "C987ZY6XW"] });
     expect(result.telegramConfig).toEqual({ requireMention: true });
     expect(result.wechatConfig).toEqual({
       accountId: "acct",
@@ -60,7 +48,6 @@ describe("prepareSandboxBuildPatchConfig", () => {
       userId: "wxid-user",
     });
     expect(updateSession).toHaveReturnedWith({
-      messagingChannelConfig,
       telegramConfig: { requireMention: true },
       wechatConfig: {
         accountId: "acct",
@@ -74,7 +61,6 @@ describe("prepareSandboxBuildPatchConfig", () => {
     const computeTelegramRequireMention = vi.fn(() => true);
     const updateSession = vi.fn((mutator: (session: Session) => Session | void) => {
       const current = {
-        messagingChannelConfig: { TELEGRAM_ALLOWED_IDS: "stale" },
         telegramConfig: { requireMention: true },
         wechatConfig: { accountId: "stale" },
       } as unknown as Session;
@@ -82,10 +68,7 @@ describe("prepareSandboxBuildPatchConfig", () => {
     });
 
     const result = prepareSandboxBuildPatchConfig({
-      channels: [],
-      activeMessagingChannels: [],
-      messagingTokenDefs: [],
-      discordSnowflakeRe: DISCORD_SNOWFLAKE_RE,
+      configuredMessagingChannels: [],
       deps: {
         readMessagingChannelConfigFromEnv: vi.fn(() => null),
         computeTelegramRequireMention,
@@ -95,12 +78,10 @@ describe("prepareSandboxBuildPatchConfig", () => {
       },
     });
 
-    expect(result.messagingChannelConfig).toBeNull();
     expect(result.telegramConfig).toEqual({});
     expect(result.wechatConfig).toEqual({});
     expect(computeTelegramRequireMention).not.toHaveBeenCalled();
     expect(updateSession).toHaveReturnedWith({
-      messagingChannelConfig: null,
       telegramConfig: null,
       wechatConfig: null,
     });
@@ -110,11 +91,7 @@ describe("prepareSandboxBuildPatchConfig", () => {
     const computeTelegramRequireMention = vi.fn(() => true);
 
     const result = prepareSandboxBuildPatchConfig({
-      channels: [{ name: "telegram", userIdEnvKey: "TELEGRAM_ALLOWED_IDS" }],
-      activeMessagingChannels: [],
       configuredMessagingChannels: ["telegram"],
-      messagingTokenDefs: [],
-      discordSnowflakeRe: DISCORD_SNOWFLAKE_RE,
       deps: {
         readMessagingChannelConfigFromEnv: vi.fn(() => null),
         computeTelegramRequireMention,
@@ -129,5 +106,25 @@ describe("prepareSandboxBuildPatchConfig", () => {
 
     expect(result.telegramConfig).toEqual({ requireMention: true });
     expect(computeTelegramRequireMention).toHaveBeenCalledOnce();
+  });
+
+  it("keeps messaging authorization parsing delegated to the central env reader", () => {
+    expect(() =>
+      prepareSandboxBuildPatchConfig({
+        configuredMessagingChannels: ["telegram"],
+        env: {
+          TELEGRAM_ALLOWED_IDS: "123\n456",
+        } as NodeJS.ProcessEnv,
+        deps: {
+          computeTelegramRequireMention: vi.fn(() => null),
+          loadSession: vi.fn(() => null),
+          gatherWechatConfig: vi.fn(() => ({})),
+          updateSession: vi.fn((mutator: (session: Session) => Session | void) => {
+            const current = {} as Session;
+            return mutator(current) ?? current;
+          }),
+        },
+      }),
+    ).toThrow("Messaging channel config values must not contain line breaks.");
   });
 });
