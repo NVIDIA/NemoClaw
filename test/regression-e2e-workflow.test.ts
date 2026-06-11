@@ -63,7 +63,7 @@ describe("Regression E2E workflow contract", () => {
     expect(runText).not.toContain("test/e2e/test-whatsapp-qr-compact-e2e.sh");
   });
 
-  it("runs OpenClaw plugin runtime-deps EXDEV through a secret-scoped Vitest lane", () => {
+  it("runs OpenClaw plugin runtime-deps EXDEV through a secret-free Vitest lane", () => {
     const job = workflow.jobs?.["openclaw-plugin-runtime-exdev-e2e"];
     const steps = job?.steps ?? [];
     const runText = steps.map((step) => step.run ?? "").join("\n");
@@ -79,11 +79,8 @@ describe("Regression E2E workflow contract", () => {
     expect(checkoutStep?.uses).toMatch(FULL_SHA_ACTION);
     expect(checkoutStep?.with?.["persist-credentials"]).toBe(false);
     expect(setupNodeStep?.uses).toMatch(FULL_SHA_ACTION);
-    expect(runVitestStep?.env?.NVIDIA_API_KEY).toBe("${{ secrets.NVIDIA_API_KEY }}");
     for (const step of steps) {
-      if (step !== runVitestStep) {
-        expect(step.env?.NVIDIA_API_KEY, step.name ?? step.uses ?? "<unnamed>").toBeUndefined();
-      }
+      expect(step.env?.NVIDIA_API_KEY, step.name ?? step.uses ?? "<unnamed>").toBeUndefined();
     }
 
     expect(runText).toContain("test/e2e-scenario/live/openclaw-plugin-runtime-exdev.test.ts");

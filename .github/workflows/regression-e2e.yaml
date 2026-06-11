@@ -299,7 +299,6 @@ jobs:
       - name: Run OpenClaw plugin runtime-deps EXDEV Vitest test
         env:
           E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/openclaw-plugin-runtime-exdev
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           NEMOCLAW_RUN_E2E_SCENARIOS: "1"
         run: |
           set -euo pipefail
