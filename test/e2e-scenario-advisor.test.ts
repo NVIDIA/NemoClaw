@@ -306,6 +306,66 @@ describe("Vitest E2E scenario advisor — normalization contract", () => {
     ]);
   });
 
+  it("suppresses fan-out for a new free-standing live test that is not workflow-wired", () => {
+    const normalized = normalizeScenarioAdvisorResult(
+      {
+        required: [
+          {
+            id: "e2e-scenarios-all",
+            workflow: VITEST_SCENARIO_WORKFLOW,
+            reason: "model tried to fan out for an unwired free-standing test",
+            dispatchCommand: "gh ...",
+          },
+        ],
+        optional: [],
+        noScenarioE2eReason: null,
+        confidence: "high",
+      },
+      metadata({ changedFiles: ["test/e2e-scenario/live/rebuild-openclaw.test.ts"] }),
+      { vitestWorkflowText: "jobs:\n  live-scenarios:\n    steps: []\n" },
+    );
+
+    expect(normalized.required).toEqual([]);
+    expect(normalized.optional).toEqual([]);
+    expect(normalized.noScenarioE2eReason).toContain(
+      "not wired into `.github/workflows/e2e-vitest-scenarios.yaml`",
+    );
+    expect(normalized.noScenarioE2eReason).toContain(
+      "test/e2e-scenario/live/rebuild-openclaw.test.ts",
+    );
+  });
+
+  it("keeps fan-out for a new free-standing live test once workflow wiring is present", () => {
+    const normalized = normalizeScenarioAdvisorResult(
+      {
+        required: [
+          {
+            id: "e2e-scenarios-all",
+            workflow: VITEST_SCENARIO_WORKFLOW,
+            reason: "workflow-wired free-standing test should run through the Vitest workflow",
+            dispatchCommand: "gh ...",
+          },
+        ],
+        optional: [],
+        noScenarioE2eReason: null,
+        confidence: "high",
+      },
+      metadata({
+        changedFiles: [
+          ".github/workflows/e2e-vitest-scenarios.yaml",
+          "test/e2e-scenario/live/rebuild-openclaw.test.ts",
+        ],
+      }),
+      {
+        vitestWorkflowText:
+          "npx vitest run --project e2e-scenarios-live test/e2e-scenario/live/rebuild-openclaw.test.ts",
+      },
+    );
+
+    expect(normalized.required.map((item) => item.id)).toEqual(["e2e-scenarios-all"]);
+    expect(normalized.noScenarioE2eReason).toBeNull();
+  });
+
   it("removes optional recommendations whose id duplicates a required one", () => {
     const raw = {
       required: [

@@ -43,7 +43,10 @@ const ADVISOR_PROVIDER = DEFAULT_ADVISOR_PROVIDER;
 const ADVISOR_MODEL = DEFAULT_ADVISOR_MODEL;
 const ADVISOR_CREDENTIAL_ENV = ["E2E", "ADVISOR", "API", "KEY"].join("_");
 const SCENARIO_WORKFLOW = "e2e-vitest-scenarios.yaml";
+const SCENARIO_WORKFLOW_PATH = `.github/workflows/${SCENARIO_WORKFLOW}`;
 const SCENARIO_ALL_ID = "e2e-scenarios-all";
+const REGISTRY_LIVE_ENTRYPOINT = "test/e2e-scenario/live/registry-scenarios.test.ts";
+const FREE_STANDING_LIVE_TEST_PATTERN = /^test\/e2e-scenario\/live\/[^/]+\.test\.ts$/;
 const ALLOWED_WORKFLOWS = new Set<string>([SCENARIO_WORKFLOW]);
 // Scenario IDs are embedded into the dispatch command we hand to users; restrict
 // to a strict kebab-case allowlist so a hallucinated id can never inject shell
@@ -176,6 +179,7 @@ async function main(): Promise<void> {
     result = normalizeScenarioAdvisorResult(
       extractJson(sdkResult.text || sdkResult.raw, artifacts.raw, "e2e_scenario_advisor_json"),
       metadata,
+      { vitestWorkflowText: readVitestWorkflowText() },
     );
   } catch (error: unknown) {
     writeFailure(error instanceof Error ? error.message : String(error));
@@ -238,6 +242,7 @@ export function buildSystemPrompt(schema: AdvisorSchema): string {
     "Decision policy:",
     "- Required (all scenarios): changes to scenario registry, matrix emission, expected-state metadata, live support classification, shared fixtures, or the Vitest scenario workflow itself. Recommend the `e2e-scenarios-all` fan-out through `e2e-vitest-scenarios.yaml`.",
     "- Required (targeted): fixture, live test, manifest, runtime-support, or scenario changes that affect a specific subset. Recommend the smallest set of live-supported typed scenario IDs that exercises the changed surface.",
+    "- Missing wiring: if a PR adds or changes a free-standing live Vitest file under `test/e2e-scenario/live/*.test.ts` but that file is not referenced by `.github/workflows/e2e-vitest-scenarios.yaml` and is not `registry-scenarios.test.ts`, do not recommend the fan-out as proof. Return no required/optional recommendations and set `noScenarioE2eReason` to say the test must be wired into `e2e-vitest-scenarios.yaml` before it can be dispatched.",
     "- Optional: adjacent scenarios that exercise the same suite on a different platform/onboarding (e.g. macOS, WSL, GPU) but are not the primary target. Special-runner scenarios (`gpu-`, `macos-`, `wsl-`, `brev-`) should usually be optional unless they are the only path that exercises the change.",
     "- None: docs-only, comment-only, tests-only outside `test/e2e-scenario/`, or changes that cannot affect Vitest scenario behavior. Set `noScenarioE2eReason` and return empty `required`/`optional` arrays.",
     "",
@@ -246,7 +251,7 @@ export function buildSystemPrompt(schema: AdvisorSchema): string {
     "- The only allowed workflow is `e2e-vitest-scenarios.yaml`.",
     "- Each `dispatchCommand` for a single-scenario recommendation MUST be exactly: `gh workflow run e2e-vitest-scenarios.yaml --ref <pr-head-ref> --field scenarios=<id>`.",
     "- For the fan-out, use exactly: `gh workflow run e2e-vitest-scenarios.yaml --ref <pr-head-ref>` and set `id`/`workflow` to `e2e-scenarios-all`/`e2e-vitest-scenarios.yaml`.",
-    "- The normalizer validates targeted IDs against the trusted advisor checkout's registry/runtime-support modules, not PR-local TypeScript. If a PR adds or newly wires a scenario that is not live-supported on trusted `main` yet, recommend the `e2e-scenarios-all` fan-out rather than a targeted dispatch.",
+    "- The normalizer validates targeted IDs against the trusted advisor checkout's registry/runtime-support modules, not PR-local TypeScript. If a PR adds or newly wires a typed registry scenario that is not live-supported on trusted `main` yet, recommend the `e2e-scenarios-all` fan-out rather than a targeted dispatch. This fallback does not apply to unwired free-standing live test files.",
     "- A `suiteFilter` may be set on a recommendation as analytical metadata explaining why the scenario was selected. It must NOT leak into the dispatch command.",
     "- `relevantChangedFiles` must be the subset of `changedFiles` under `test/e2e-scenario/`, `.github/workflows/e2e-vitest-scenarios.yaml`, or other directly scenario-relevant paths.",
     "",
@@ -289,21 +294,33 @@ ${diff || "<no diff available>"}
 export function normalizeScenarioAdvisorResult(
   result: unknown,
   metadata: AdvisorMetadata,
+  options: { vitestWorkflowText?: string } = {},
 ): ScenarioAdvisorResult {
   if (!result || typeof result !== "object" || Array.isArray(result)) {
     throw new Error("Scenario advisor returned a non-object result");
   }
 
   const object = result as Record<string, unknown>;
-  const required = sanitizeRecommendations(object.required, true);
-  const optional = sanitizeRecommendations(object.optional, false);
+  const unwiredFreeStandingLiveTests = findUnwiredFreeStandingLiveTests(
+    metadata.changedFiles,
+    options.vitestWorkflowText,
+  );
+  const suppressFanout = shouldSuppressFanoutForUnwiredLiveTests(
+    metadata.changedFiles,
+    unwiredFreeStandingLiveTests,
+  );
+  const required = suppressFanout ? [] : sanitizeRecommendations(object.required, true);
+  const optional = suppressFanout ? [] : sanitizeRecommendations(object.optional, false);
   const reasonField = object.noScenarioE2eReason;
-  const noScenarioE2eReason =
-    typeof reasonField === "string" && reasonField.trim()
+  const noScenarioE2eReason = suppressFanout
+    ? missingFreeStandingLiveWiringReason(unwiredFreeStandingLiveTests)
+    : typeof reasonField === "string" && reasonField.trim()
       ? reasonField.trim()
       : reasonField === null || reasonField === undefined
         ? required.length === 0 && optional.length === 0
-          ? "Advisor reported no Vitest E2E scenario impact."
+          ? unwiredFreeStandingLiveTests.length > 0
+            ? missingFreeStandingLiveWiringReason(unwiredFreeStandingLiveTests)
+            : "Advisor reported no Vitest E2E scenario impact."
           : null
         : null;
 
@@ -318,6 +335,53 @@ export function normalizeScenarioAdvisorResult(
     noScenarioE2eReason,
     confidence: enumValue<["low", "medium", "high"]>(object.confidence, ["low", "medium", "high"], "medium"),
   };
+}
+
+function readVitestWorkflowText(): string | undefined {
+  try {
+    return fs.readFileSync(path.join(root, SCENARIO_WORKFLOW_PATH), "utf8");
+  } catch {
+    return undefined;
+  }
+}
+
+function findUnwiredFreeStandingLiveTests(
+  changedFiles: string[],
+  vitestWorkflowText = readVitestWorkflowText(),
+): string[] {
+  return changedFiles.filter(
+    (file) =>
+      FREE_STANDING_LIVE_TEST_PATTERN.test(file) &&
+      file !== REGISTRY_LIVE_ENTRYPOINT &&
+      !(vitestWorkflowText ?? "").includes(file),
+  );
+}
+
+function shouldSuppressFanoutForUnwiredLiveTests(
+  changedFiles: string[],
+  unwiredFreeStandingLiveTests: string[],
+): boolean {
+  if (unwiredFreeStandingLiveTests.length === 0) return false;
+  const relevantFiles = changedFiles.filter(isVitestScenarioRelevantFile);
+  return relevantFiles.every(
+    (file) =>
+      unwiredFreeStandingLiveTests.includes(file) ||
+      file === SCENARIO_WORKFLOW_PATH,
+  );
+}
+
+function isVitestScenarioRelevantFile(file: string): boolean {
+  return (
+    file === SCENARIO_WORKFLOW_PATH ||
+    file.startsWith("test/e2e-scenario/") ||
+    file.startsWith("tools/e2e-scenario") ||
+    file.startsWith("tools/e2e-scenarios")
+  );
+}
+
+function missingFreeStandingLiveWiringReason(files: string[]): string {
+  const fileList = files.map((file) => `\`${file}\``).join(", ");
+  return `New free-standing live Vitest test ${fileList} is not wired into \`${SCENARIO_WORKFLOW_PATH}\`, so the Vitest scenario workflow cannot dispatch it yet. Add a discrete job or register it as a typed live scenario before treating the PR as E2E-runnable.`;
 }
 
 function sanitizeRecommendations(value: unknown, requiredFlag: boolean): ScenarioRecommendation[] {
