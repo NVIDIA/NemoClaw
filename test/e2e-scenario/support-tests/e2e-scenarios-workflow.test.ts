@@ -13,6 +13,16 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
     expect(validateE2eVitestScenariosWorkflowBoundary()).toEqual([]);
   });
 
+  it("maps scenarios=network-policy to the free-standing network-policy job", () => {
+    const workflow = fs.readFileSync(
+      path.join(process.cwd(), ".github/workflows/e2e-vitest-scenarios.yaml"),
+      "utf8",
+    );
+
+    expect(workflow).toContain("contains(format(',{0},', inputs.scenarios), ',network-policy,')");
+    expect(workflow).toContain("network-policy-vitest");
+  });
+
   it("flags direct dispatch-input interpolation and unsafe artifact upload", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-vitest-workflow-"));
     const workflowPath = path.join(tmp, "workflow.yaml");

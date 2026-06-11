@@ -326,7 +326,7 @@ jobs:
 
   network-policy-vitest:
     needs: validate-jobs
-    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',network-policy-vitest,') }}
+    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',network-policy-vitest,') || contains(format(',{0},', inputs.scenarios), ',network-policy,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
