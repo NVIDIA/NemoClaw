@@ -3052,11 +3052,7 @@ async function createSandbox(
     getChannelsFromPlan(plannedMessagingPlan) ??
     (enabledChannels != null ? [...new Set(enabledChannels)] : activeMessagingChannels);
   const { messagingChannelConfig } = sandboxBuildPatchConfig.prepareSandboxBuildPatchConfig({
-    channels: MESSAGING_CHANNELS,
-    activeMessagingChannels,
     configuredMessagingChannels,
-    messagingTokenDefs,
-    discordSnowflakeRe: onboardProviders.DISCORD_SNOWFLAKE_RE,
   });
   // Pull the base image and resolve its digest so the Dockerfile is pinned to
   // exactly what we just fetched. This prevents stale :latest tags from
