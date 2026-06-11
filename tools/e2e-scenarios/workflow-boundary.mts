@@ -122,6 +122,18 @@ function requireNoDispatchInputInterpolation(
   }
 }
 
+function allowedJobSelector(jobName: string): string {
+  return `\${{ inputs.jobs == '' || contains(format(',{0},', inputs.jobs), ',${jobName},') }}`;
+}
+
+function validateJobFilter(errors: string[], job: WorkflowRecord, jobName: string): void {
+  const filter = job.if;
+  if (filter === undefined) return;
+  if (filter !== allowedJobSelector(jobName)) {
+    errors.push(`${jobName} job must run independently of workflow dispatch scenario filters`);
+  }
+}
+
 function validateOpenShellVersionPinVitestJob(errors: string[], jobs: WorkflowRecord): void {
   const jobName = "openshell-version-pin-vitest";
   const job = asRecord(jobs[jobName]);
@@ -136,11 +148,7 @@ function validateOpenShellVersionPinVitestJob(errors: string[], jobs: WorkflowRe
   if (Object.hasOwn(job, "needs")) {
     errors.push("openshell-version-pin-vitest job must run independently of generate-matrix");
   }
-  if (Object.hasOwn(job, "if")) {
-    errors.push(
-      "openshell-version-pin-vitest job must run independently of workflow dispatch scenario filters",
-    );
-  }
+  validateJobFilter(errors, job, jobName);
 
   const jobEnv = asRecord(job.env);
   if (jobEnv.NEMOCLAW_RUN_E2E_SCENARIOS !== "1") {
@@ -224,11 +232,7 @@ function validateOnboardNegativePathsVitestJob(errors: string[], jobs: WorkflowR
   if (Object.hasOwn(job, "needs")) {
     errors.push("onboard-negative-paths-vitest job must run independently of generate-matrix");
   }
-  if (Object.hasOwn(job, "if")) {
-    errors.push(
-      "onboard-negative-paths-vitest job must run independently of workflow dispatch scenario filters",
-    );
-  }
+  validateJobFilter(errors, job, jobName);
 
   const jobEnv = asRecord(job.env);
   if (jobEnv.NEMOCLAW_RUN_E2E_SCENARIOS !== "1") {
