@@ -26,7 +26,7 @@ const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? `e2e-token-rotation-${
 validateSandboxName(SANDBOX_NAME);
 
 const ONBOARD_TIMEOUT_MS = 25 * 60_000;
-const PHASE_TIMEOUT_MS = 7 * ONBOARD_TIMEOUT_MS;
+const PHASE_TIMEOUT_MS = 40 * 60_000;
 
 interface TokenSet {
   telegram: string;
@@ -283,6 +283,23 @@ async function runOnboard(
   });
 }
 
+async function assertSandboxListed(
+  host: import("../fixtures/clients/host.ts").HostCliClient,
+  artifactName: string,
+): Promise<void> {
+  const sandboxList = await host.command(
+    "bash",
+    ["-lc", 'openshell sandbox list 2>/dev/null | grep -F -- "$1"', "_", SANDBOX_NAME],
+    {
+      artifactName,
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 30_000,
+    },
+  );
+  expect(sandboxList.exitCode, resultText(sandboxList)).toBe(0);
+  expect(sandboxList.stdout, resultText(sandboxList)).toContain(SANDBOX_NAME);
+}
+
 async function deleteSandboxIfOpenshellExists(
   host: import("../fixtures/clients/host.ts").HostCliClient,
   artifactName: string,
@@ -294,6 +311,24 @@ async function deleteSandboxIfOpenshellExists(
       'if command -v openshell >/dev/null 2>&1; then openshell sandbox delete "$1"; fi',
       "_",
       SANDBOX_NAME,
+    ],
+    {
+      artifactName,
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 60_000,
+    },
+  );
+}
+
+async function destroyGatewayIfOpenshellExists(
+  host: import("../fixtures/clients/host.ts").HostCliClient,
+  artifactName: string,
+): Promise<void> {
+  await host.command(
+    "bash",
+    [
+      "-lc",
+      "if command -v openshell >/dev/null 2>&1; then openshell gateway destroy -g nemoclaw; fi",
     ],
     {
       artifactName,
@@ -378,6 +413,10 @@ liveTest(
         timeoutMs: 120_000,
       });
       await deleteSandboxIfOpenshellExists(host, "cleanup-openshell-sandbox-delete-token-rotation");
+      await destroyGatewayIfOpenshellExists(
+        host,
+        "cleanup-openshell-gateway-destroy-token-rotation",
+      );
     });
 
     await host.command("node", [CLI_ENTRYPOINT, SANDBOX_NAME, "destroy", "--yes"], {
@@ -388,6 +427,10 @@ liveTest(
     await deleteSandboxIfOpenshellExists(
       host,
       "pre-cleanup-openshell-sandbox-delete-token-rotation",
+    );
+    await destroyGatewayIfOpenshellExists(
+      host,
+      "pre-cleanup-openshell-gateway-destroy-token-rotation",
     );
 
     const first = await runInstall(host, fakeOpenAI.baseUrl, TOKEN_A, {
@@ -424,6 +467,7 @@ liveTest(
     ]) {
       expectCredentialHash(envKey);
     }
+    await assertSandboxListed(host, "phase-1-sandbox-list-after-install");
 
     const telegram = await runOnboard(
       host,
@@ -442,6 +486,7 @@ liveTest(
         `${SANDBOX_NAME}-slack-app`,
       ],
     );
+    await assertSandboxListed(host, "phase-2-sandbox-list-after-telegram-rotation");
 
     const afterTelegramSame = await runOnboard(
       host,
@@ -471,6 +516,7 @@ liveTest(
         `${SANDBOX_NAME}-slack-app`,
       ],
     );
+    await assertSandboxListed(host, "phase-4-sandbox-list-after-discord-rotation");
 
     const afterDiscordSame = await runOnboard(
       host,
@@ -491,6 +537,7 @@ liveTest(
       [`${SANDBOX_NAME}-slack-bridge`, `${SANDBOX_NAME}-slack-app`],
       [`${SANDBOX_NAME}-telegram-bridge`, `${SANDBOX_NAME}-discord-bridge`],
     );
+    await assertSandboxListed(host, "phase-6-sandbox-list-after-slack-rotation");
 
     const afterSlackSame = await runOnboard(
       host,

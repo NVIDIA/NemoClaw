@@ -163,6 +163,7 @@ function validateJobsSelector(errors: string[], jobs: WorkflowRecord): void {
   requireRunContains(errors, validate, "allowed_jobs=");
   requireRunContains(errors, validate, "openshell-version-pin-vitest");
   requireRunContains(errors, validate, "onboard-negative-paths-vitest");
+  requireRunContains(errors, validate, "token-rotation-vitest");
   requireRunContains(errors, validate, "openclaw-tui-chat-correlation-vitest");
   requireRunContains(errors, validate, "gateway-guard-recovery");
   requireRunContains(errors, validate, "^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$");
@@ -340,7 +341,12 @@ function validateTokenRotationVitestJob(errors: string[], jobs: WorkflowRecord):
     "SLACK_APP_TOKEN_A",
     "SLACK_APP_TOKEN_B",
   ]) {
-    if (typeof runVitestEnv[tokenName] !== "string" || stringValue(runVitestEnv[tokenName]).length === 0) {
+    const tokenValue = stringValue(runVitestEnv[tokenName]);
+    if (
+      tokenValue.length === 0 ||
+      tokenValue.includes("${{") ||
+      !/^(test-fake-token-|dc-|xoxb-fake-|xapp-fake-)/.test(tokenValue)
+    ) {
       errors.push(`token-rotation-vitest step must set ${tokenName}`);
     }
   }
@@ -492,6 +498,9 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   const generateEnv = asRecord(generate?.env);
   if (generateEnv.SCENARIOS !== "${{ inputs.scenarios }}") {
     errors.push("matrix generation step must pass scenarios through SCENARIOS env");
+  }
+  if (generateEnv.JOBS !== "${{ inputs.jobs }}") {
+    errors.push("matrix generation step must pass jobs through JOBS env");
   }
   requireRunContains(errors, generate, "npx tsx test/e2e-scenario/scenarios/run.ts");
   requireRunContains(errors, generate, "--emit-live-matrix");
