@@ -102,6 +102,20 @@ newgrp docker
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
+### Installer reports Docker access outside the docker group
+
+On Linux, the installer may report that Docker is reachable even though your user is not in the `docker` group.
+This means the host grants Docker daemon access through another path, such as a custom `DOCKER_HOST`, socket ACL, or managed runtime policy.
+NemoClaw can continue when `docker info` works, but the diagnostic explains why a negative Docker-permission test will not reproduce on that host.
+
+Check the Docker access path before relying on the host as a clean permission baseline:
+
+```bash
+id -nG
+echo "${DOCKER_HOST:-}"
+docker info
+```
+
 ### macOS first-run failures
 
 The two most common first-run failures on macOS are missing developer tools and Docker connection errors.
@@ -164,6 +178,21 @@ docker run --rm busybox nslookup example.com
 ```
 
 When the lookup returns an answer, retry onboarding.
+
+### Host DNS resolution is blocked before provider validation
+
+NemoClaw also checks that the host process can resolve the provider host before it starts NVIDIA provider validation.
+A firewall rule that blocks host DNS traffic on port `53` can make later validation fail with `curl: (6) Could not resolve host: integrate.api.nvidia.com` even when container DNS probes look healthy.
+Current onboarding stops earlier with a host DNS diagnostic and remediation hints.
+
+Verify host DNS outside NemoClaw:
+
+```bash
+node -e 'require("node:dns").resolve4("integrate.api.nvidia.com", (err, addrs) => { if (err) { console.error(err); process.exit(1); } console.log(addrs.join(",")); })'
+```
+
+Fix the host firewall, VPN, or DNS policy so the host can resolve the provider endpoint, then rerun onboarding.
+If you intentionally use a non-NVIDIA provider and need to bypass only this preflight, set `NEMOCLAW_SKIP_HOST_DNS_PREFLIGHT=1`.
 
 ### Port already in use
 
@@ -544,6 +573,8 @@ Follow these steps to reconnect.
    ```
 
    Wait a few seconds, then re-check with `openshell sandbox list`.
+   On Docker-driver hosts, NemoClaw also looks for OpenShell-labeled sandbox containers when the gateway is healthy but reports the sandbox as missing.
+   It can start a stopped labeled container, or restore the latest GPU-backup sibling container name and start it.
 
 1. Reconnect.
 
@@ -569,9 +600,10 @@ Follow these steps to reconnect.
 
 <Warning title="If the sandbox does not recover">
 
-If the sandbox remains missing after restarting the gateway, run `$$nemoclaw onboard` to recreate it.
-The wizard prompts for confirmation before destroying an existing sandbox. If you confirm, it **destroys and recreates** the sandbox. Workspace files (SOUL.md, USER.md, IDENTITY.md, AGENTS.md, MEMORY.md, and daily memory notes) are lost.
-Back up your workspace first by following the instructions at [Back Up and Restore](../manage-sandboxes/backup-restore).
+If the sandbox remains missing after restarting the gateway, run `$$nemoclaw <name> rebuild --yes` while the local registry entry still exists.
+The rebuild path uses the recorded sandbox metadata and the snapshot flow to preserve supported workspace and agent state.
+If the sandbox was intentionally deleted and you want a clean setup instead, run `$$nemoclaw <name> destroy` to remove the stale local entry, then run `$$nemoclaw onboard`.
+Create a snapshot first when the sandbox is reachable enough to back up state. For details, refer to [Back Up and Restore](../manage-sandboxes/backup-restore).
 </Warning>
 
 ### Sandbox is running an outdated agent version
