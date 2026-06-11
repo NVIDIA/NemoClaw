@@ -71,7 +71,7 @@ async function ensureOpenshellAvailable(host: HostCliClient, home: string): Prom
 
   const install = await host.command(
     "bash",
-    [path.join(REPO_ROOT, "install.sh"), "--yes-i-accept-third-party-software"],
+    [path.join(REPO_ROOT, "scripts", "install-openshell.sh")],
     {
       artifactName: "prereq-install-openshell",
       cwd: REPO_ROOT,
@@ -79,7 +79,7 @@ async function ensureOpenshellAvailable(host: HostCliClient, home: string): Prom
       timeoutMs: INSTALL_TIMEOUT_MS,
     },
   );
-  expect(install.exitCode, `install.sh failed\n${resultText(install)}`).toBe(0);
+  expect(install.exitCode, `install-openshell.sh failed\n${resultText(install)}`).toBe(0);
 
   const afterInstall = await host.command(
     "bash",
