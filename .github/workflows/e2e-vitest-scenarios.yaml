@@ -11,12 +11,17 @@ on:
         required: false
         default: ""
         type: string
+      jobs:
+        description: "Optional comma-separated free-standing live Vitest job ids. Empty runs all enabled jobs."
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: e2e-vitest-scenarios-${{ github.ref }}-${{ inputs.scenarios || 'supported' }}
+  group: e2e-vitest-scenarios-${{ github.ref }}-${{ inputs.scenarios || 'supported' }}-${{ inputs.jobs || 'all-jobs' }}
   cancel-in-progress: false
 
 jobs:
@@ -42,6 +47,7 @@ jobs:
         name: Generate Vitest scenario matrix
         env:
           SCENARIOS: ${{ inputs.scenarios }}
+          JOBS: ${{ inputs.jobs }}
         run: |
           set -euo pipefail
           args=(--emit-live-matrix)
@@ -51,6 +57,10 @@ jobs:
               exit 1
             fi
             args+=(--scenarios "${SCENARIOS}")
+          fi
+          if [ -n "${JOBS}" ] && [[ ! "${JOBS}" =~ ^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$ ]]; then
+            echo "::error::Invalid jobs input: ${JOBS}" >&2
+            exit 1
           fi
           matrix="$(npx tsx test/e2e-scenario/scenarios/run.ts "${args[@]}")"
           echo "matrix=${matrix}" >> "$GITHUB_OUTPUT"
@@ -69,6 +79,7 @@ jobs:
 
   live-scenarios:
     needs: generate-matrix
+    if: ${{ inputs.jobs == '' }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     strategy:
@@ -169,6 +180,7 @@ jobs:
   # because the matrix above only runs registry-scenarios.test.ts. Modeled on
   # #5049's free-standing pattern.
   openshell-version-pin-vitest:
+    if: ${{ inputs.jobs == '' || contains(format(',{0},', inputs.jobs), ',openshell-version-pin-vitest,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -208,6 +220,7 @@ jobs:
           retention-days: 14
 
   onboard-negative-paths-vitest:
+    if: ${{ inputs.jobs == '' || contains(format(',{0},', inputs.jobs), ',onboard-negative-paths-vitest,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -251,7 +264,7 @@ jobs:
           retention-days: 14
 
   sandbox-operations-vitest:
-    if: ${{ inputs.scenarios == '' }}
+    if: ${{ inputs.jobs == '' || contains(format(',{0},', inputs.jobs), ',sandbox-operations-vitest,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
@@ -324,7 +337,7 @@ jobs:
   # protocol/history contract. The retained legacy bash lane remains the
   # source for full closeout until a later PR proves replacement and deletes it.
   openclaw-tui-chat-correlation-vitest:
-    if: ${{ inputs.scenarios == '' }}
+    if: ${{ inputs.jobs == '' || contains(format(',{0},', inputs.jobs), ',openclaw-tui-chat-correlation-vitest,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 75
     env:
