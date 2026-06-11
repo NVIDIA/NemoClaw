@@ -3,7 +3,10 @@
 
 import { describe, expect, it } from "vitest";
 
-import { createBuiltInChannelManifestRegistry } from "../channels";
+import {
+  createBuiltInChannelManifestRegistry,
+  createBuiltInRenderTemplateResolver,
+} from "../channels";
 import { createBuiltInMessagingHookRegistry, MessagingHookRegistry } from "../hooks";
 import { MessagingWorkflowPlanner } from "./workflow-planner";
 
@@ -17,7 +20,7 @@ const TEST_CREDENTIALS: Readonly<Record<string, string>> = {
 const TEST_WECHAT_LOGIN = {
   token: "test-wechat-token",
   accountId: "test-wechat-account",
-  baseUrl: "https://ilinkai.wechat.example",
+  baseUrl: "https://ilinkai.wechat.com",
   userId: "test-wechat-user",
 } as const;
 
@@ -65,6 +68,7 @@ function planner(): MessagingWorkflowPlanner {
         },
       },
     }),
+    createBuiltInRenderTemplateResolver(),
   );
 }
 
@@ -217,6 +221,7 @@ describe("MessagingWorkflowPlanner", () => {
     const plan = await new MessagingWorkflowPlanner(
       createBuiltInChannelManifestRegistry(),
       hooks,
+      createBuiltInRenderTemplateResolver(),
     ).buildPlan({
       sandboxName: "demo",
       agent: "openclaw",
@@ -254,6 +259,25 @@ describe("MessagingWorkflowPlanner", () => {
         id: "slack.validateCredentials",
         handler: () => ({}),
       },
+      {
+        id: "wechat.seedOpenClawAccount",
+        handler: () => ({
+          outputs: {
+            openclawWeixinAccountsIndex: {
+              kind: "build-file",
+              value: { path: "openclaw-weixin/accounts.json", content: [] },
+            },
+            openclawWeixinAccountFile: {
+              kind: "build-file",
+              value: { path: "openclaw-weixin/accounts/cached-wechat-account.json", content: {} },
+            },
+            openclawConfigPatch: {
+              kind: "build-file",
+              value: { path: "openclaw.json", merge: {} },
+            },
+          },
+        }),
+      },
     ]);
 
     await withEnv(
@@ -265,6 +289,7 @@ describe("MessagingWorkflowPlanner", () => {
         const plan = await new MessagingWorkflowPlanner(
           createBuiltInChannelManifestRegistry(),
           hooks,
+          createBuiltInRenderTemplateResolver(),
         ).buildPlan({
           sandboxName: "demo",
           agent: "openclaw",
@@ -470,6 +495,7 @@ describe("MessagingWorkflowPlanner", () => {
     const plan = await new MessagingWorkflowPlanner(
       createBuiltInChannelManifestRegistry(),
       hooks,
+      createBuiltInRenderTemplateResolver(),
     ).buildChannelAddPlanFromSandboxEntry({
       sandboxName: "demo",
       agent: "openclaw",
@@ -651,13 +677,80 @@ describe("MessagingWorkflowPlanner", () => {
     );
   });
 
-  it("does not compile a rebuild plan when the sandbox entry has no stored plan", async () => {
+  it("rebuilds legacy registry entries from messaging channels and provider credential hashes", async () => {
+    await withEnv(
+      {
+        DISCORD_BOT_TOKEN: undefined,
+        DISCORD_SERVER_ID: "1491590992753590594",
+        DISCORD_REQUIRE_MENTION: "0",
+        DISCORD_USER_ID: "1005536447329222676",
+      },
+      async () => {
+        const rebuilt = await planner().buildRebuildPlanFromSandboxEntry({
+          sandboxName: "demo",
+          agent: "hermes",
+          sandboxEntry: {
+            name: "demo",
+            messagingChannels: ["discord"],
+            providerCredentialHashes: {
+              DISCORD_BOT_TOKEN: "sha256-test-discord-token",
+            },
+          },
+        });
+
+        const discordChannel = rebuilt?.channels.find((channel) => channel.channelId === "discord");
+        const discordEnv = rebuilt?.agentRender.find(
+          (render) => render.channelId === "discord" && render.kind === "env-lines",
+        );
+        const discordConfig = rebuilt?.agentRender.find(
+          (render) =>
+            render.channelId === "discord" &&
+            render.kind === "json-fragment" &&
+            render.path === "discord",
+        );
+
+        expect(rebuilt?.workflow).toBe("rebuild");
+        expect(discordChannel).toMatchObject({
+          active: true,
+          disabled: false,
+          configured: true,
+        });
+        expect(
+          rebuilt?.credentialBindings.find(
+            (binding) =>
+              binding.channelId === "discord" && binding.providerEnvKey === "DISCORD_BOT_TOKEN",
+          ),
+        ).toMatchObject({ credentialAvailable: true });
+        expect(discordEnv).toMatchObject({
+          lines: [
+            "DISCORD_BOT_TOKEN=openshell:resolve:env:DISCORD_BOT_TOKEN",
+            "NEMOCLAW_DISCORD_GUILD_IDS=1491590992753590594",
+            "DISCORD_ALLOWED_USERS=1005536447329222676",
+          ],
+        });
+        expect(discordConfig).toMatchObject({
+          value: {
+            require_mention: false,
+          },
+        });
+        expect(
+          rebuilt?.agentRender.find(
+            (render) =>
+              render.channelId === "discord" &&
+              render.kind === "json-fragment" &&
+              render.path === "platforms.discord",
+          ),
+        ).toMatchObject({ value: { enabled: true } });
+      },
+    );
+  });
+
+  it("does not compile a rebuild plan when the sandbox entry has no stored plan or channels", async () => {
     const rebuilt = await planner().buildRebuildPlanFromSandboxEntry({
       sandboxName: "demo",
       agent: "openclaw",
       sandboxEntry: {
         name: "demo",
-        messagingChannels: ["telegram"],
       },
     });
 

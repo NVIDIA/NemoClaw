@@ -365,10 +365,12 @@ else:
 platforms = cfg.get("platforms")
 if not isinstance(platforms, dict):
     errors.append("missing platforms")
-elif "discord" in platforms:
-    errors.append("platforms.discord present")
-elif not isinstance(platforms.get("api_server"), dict):
-    errors.append("platforms.api_server missing")
+else:
+    discord_platform = platforms.get("discord")
+    if discord_platform != {"enabled": True}:
+        errors.append(f"platforms.discord={discord_platform!r} expected enabled true")
+    if not isinstance(platforms.get("api_server"), dict):
+        errors.append("platforms.api_server missing")
 if "DISCORD_BOT_TOKEN" in text:
     errors.append("config.yaml contains DISCORD_BOT_TOKEN")
 if errors:
@@ -379,7 +381,7 @@ PY
 )
 
 if [ "$config_probe" = "OK" ]; then
-  pass "config.yaml uses top-level discord and no platforms.discord"
+  pass "config.yaml uses top-level discord and platforms.discord"
 else
   fail "config.yaml schema check failed: ${config_probe:0:400}"
 fi

@@ -18,6 +18,7 @@ import {
 const tmpRoots: string[] = [];
 
 beforeEach(() => {
+  delete process.env.NEMOCLAW_MESSAGING_PLAN_B64;
   delete process.env.NEMOCLAW_OPENCLAW_OTEL;
   delete process.env.NEMOCLAW_OPENCLAW_OTEL_ENDPOINT;
   delete process.env.NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME;
@@ -32,10 +33,48 @@ function dockerfileWith(content: string): string {
   return file;
 }
 
+type TestMessagingPlan = Record<string, unknown>;
+
+function buildMessagingPlan(overrides: TestMessagingPlan = {}): TestMessagingPlan {
+  return {
+    schemaVersion: 1,
+    sandboxName: "my-assistant",
+    agent: "openclaw",
+    workflow: "onboard",
+    channels: [],
+    disabledChannels: [],
+    credentialBindings: [],
+    networkPolicy: { presets: [], entries: [] },
+    agentRender: [],
+    buildSteps: [],
+    stateUpdates: [],
+    healthChecks: [],
+    ...overrides,
+  };
+}
+
+function setMessagingPlanEnv(overrides: TestMessagingPlan = {}): TestMessagingPlan {
+  const plan = buildMessagingPlan(overrides);
+  process.env.NEMOCLAW_MESSAGING_PLAN_B64 = Buffer.from(JSON.stringify(plan), "utf8").toString(
+    "base64",
+  );
+  return plan;
+}
+
+function readMessagingPlanArg(dockerfile: string): unknown {
+  const line = dockerfile
+    .split("\n")
+    .find((entry) => entry.startsWith("ARG NEMOCLAW_MESSAGING_PLAN_B64="));
+  assert.ok(line, "expected messaging plan build arg");
+  const prefix = "ARG NEMOCLAW_MESSAGING_PLAN_B64=";
+  return JSON.parse(Buffer.from(line.slice(prefix.length), "base64").toString("utf8"));
+}
+
 afterEach(() => {
   for (const dir of tmpRoots.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+  delete process.env.NEMOCLAW_MESSAGING_PLAN_B64;
   delete process.env.NEMOCLAW_PROXY_HOST;
   delete process.env.NEMOCLAW_PROXY_PORT;
   delete process.env.NEMOCLAW_OPENCLAW_OTEL;
@@ -93,27 +132,25 @@ describe("dockerfile patch helpers", () => {
         "compatible-endpoint",
         null,
         null,
-        [],
-        {},
-        {},
         null,
-        {},
-        {},
         false,
         null,
         [],
-        {},
       ),
     ).toThrow(/Dockerfile is missing ARG NEMOCLAW_OPENCLAW_OTEL_ENDPOINT/);
   });
 
-  it("patches base image, inference, proxy, and messaging args", () => {
+  it("patches base image, inference, proxy, and messaging plan args", () => {
     process.env.NEMOCLAW_PROXY_HOST = "host.docker.internal";
     process.env.NEMOCLAW_PROXY_PORT = "3128";
     process.env.NEMOCLAW_OPENCLAW_OTEL = "1";
     process.env.NEMOCLAW_OPENCLAW_OTEL_ENDPOINT = "http://host.openshell.internal:4318";
     process.env.NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME = "nemoclaw-local";
     process.env.NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE = "0.5";
+    const messagingPlan = setMessagingPlanEnv({
+      channels: [{ channelId: "telegram", active: true }],
+      buildSteps: [{ channelId: "telegram", kind: "build-arg", target: "openclaw" }],
+    });
     const dockerfilePath = dockerfileWith(
       [
         "ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/sandbox-base:latest",
@@ -134,11 +171,7 @@ describe("dockerfile patch helpers", () => {
         "ARG NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME=old",
         "ARG NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE=old",
         "ARG NEMOCLAW_DISABLE_DEVICE_AUTH=0",
-        "ARG NEMOCLAW_MESSAGING_CHANNELS_B64=old",
-        "ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=old",
-        "ARG NEMOCLAW_DISCORD_GUILDS_B64=old",
-        "ARG NEMOCLAW_TELEGRAM_CONFIG_B64=old",
-        "ARG NEMOCLAW_SLACK_CONFIG_B64=old",
+        "ARG NEMOCLAW_MESSAGING_PLAN_B64=old",
       ].join("\n"),
     );
 
@@ -150,16 +183,10 @@ describe("dockerfile patch helpers", () => {
       "compatible-endpoint",
       null,
       { fetchEnabled: true },
-      ["telegram"],
-      { telegram: ["123"] },
-      { discord: ["456"] },
       "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:abc",
-      { requireMention: true },
-      {},
       true,
       null,
       [],
-      { allowedChannels: ["C012AB3CD", "C987ZY6XW"] },
     );
 
     const patched = fs.readFileSync(dockerfilePath, "utf-8");
@@ -181,15 +208,7 @@ describe("dockerfile patch helpers", () => {
     expect(patched).toContain("ARG NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME=nemoclaw-local");
     expect(patched).toContain("ARG NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE=0.5");
     expect(patched).toContain("ARG NEMOCLAW_DISABLE_DEVICE_AUTH=1");
-    expect(patched).not.toContain("ARG NEMOCLAW_MESSAGING_CHANNELS_B64=old");
-    expect(patched).not.toContain("ARG NEMOCLAW_TELEGRAM_CONFIG_B64=old");
-    const slackLine = patched
-      .split("\n")
-      .find((line) => line.startsWith("ARG NEMOCLAW_SLACK_CONFIG_B64="));
-    assert.ok(slackLine, "expected slack config build arg");
-    assert.deepEqual(JSON.parse(Buffer.from(slackLine.split("=")[1], "base64").toString("utf8")), {
-      allowedChannels: ["C012AB3CD", "C987ZY6XW"],
-    });
+    assert.deepEqual(readMessagingPlanArg(patched), messagingPlan);
   });
 
   it("uses the shared sandbox inference mapping", () => {
@@ -309,12 +328,7 @@ describe("dockerfile patch helpers", () => {
       "ollama-local",
       null,
       null,
-      [],
-      {},
-      {},
       null,
-      {},
-      {},
       false,
       "http://127.0.0.1:11434/v1",
     );
@@ -352,9 +366,6 @@ describe("dockerfile patch helpers", () => {
       "compatible-endpoint",
       "openai-responses\nRUN touch /tmp/api-pwn",
       null,
-      [],
-      {},
-      {},
       "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:abc\nRUN touch /tmp/base-pwn",
     );
 
@@ -431,12 +442,7 @@ describe("dockerfile patch helpers", () => {
         "openai-api",
         null,
         null,
-        [],
-        {},
-        {},
         null,
-        {},
-        {},
         true,
       );
       const patched = fs.readFileSync(dockerfilePath, "utf8");
@@ -446,8 +452,17 @@ describe("dockerfile patch helpers", () => {
     }
   });
 
-  it("patches the staged Dockerfile with Discord guild config for server workspaces", () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-discord-"));
+  it("patches the staged Dockerfile with the manifest messaging plan", () => {
+    const messagingPlan = setMessagingPlanEnv({
+      channels: [
+        { channelId: "discord", active: true },
+        { channelId: "telegram", active: true },
+      ],
+      agentRender: [
+        { channelId: "discord", target: "openclaw.json", path: ["channels", "discord"] },
+      ],
+    });
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-plan-"));
     const dockerfilePath = path.join(tmpDir, "Dockerfile");
     fs.writeFileSync(
       dockerfilePath,
@@ -458,9 +473,7 @@ describe("dockerfile patch helpers", () => {
         "ARG CHAT_UI_URL=http://127.0.0.1:18789",
         "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
         "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
-        "ARG NEMOCLAW_MESSAGING_CHANNELS_B64=W10=",
-        "ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=e30=",
-        "ARG NEMOCLAW_DISCORD_GUILDS_B64=e30=",
+        "ARG NEMOCLAW_MESSAGING_PLAN_B64=old",
         "ARG NEMOCLAW_BUILD_ID=default",
       ].join("\n"),
     );
@@ -470,45 +483,24 @@ describe("dockerfile patch helpers", () => {
         dockerfilePath,
         "gpt-5.4",
         "http://127.0.0.1:19999",
-        "build-discord-guild",
+        "build-manifest-plan",
         "openai-api",
         null,
         null,
-        ["discord"],
-        {},
-        {
-          "1491590992753590594": {
-            requireMention: true,
-            users: ["1005536447329222676"],
-          },
-        },
       );
       const patched = fs.readFileSync(dockerfilePath, "utf8");
-      assert.match(patched, /^ARG NEMOCLAW_MESSAGING_CHANNELS_B64=/m);
-      const guildLine = patched
-        .split("\n")
-        .find((line) => line.startsWith("ARG NEMOCLAW_DISCORD_GUILDS_B64="));
-      assert.ok(guildLine, "expected discord guild build arg");
-      const encoded = guildLine.split("=")[1];
-      const decoded = JSON.parse(Buffer.from(encoded, "base64").toString("utf8"));
-      assert.deepEqual(decoded, {
-        "1491590992753590594": {
-          requireMention: true,
-          users: ["1005536447329222676"],
-        },
-      });
+      assert.deepEqual(readMessagingPlanArg(patched), messagingPlan);
+      assert.doesNotMatch(patched, /NEMOCLAW_MESSAGING_CHANNELS_B64/);
+      assert.doesNotMatch(patched, /NEMOCLAW_DISCORD_GUILDS_B64/);
+      assert.doesNotMatch(patched, /NEMOCLAW_TELEGRAM_CONFIG_B64/);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
 
-  it("patches the staged Dockerfile with Discord guild config that allows all server members", () => {
-    const tmpDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-discord-open-"),
-    );
-    const dockerfilePath = path.join(tmpDir, "Dockerfile");
-    fs.writeFileSync(
-      dockerfilePath,
+  it("fails when a messaging plan exists but the staged Dockerfile has no manifest ARG", () => {
+    setMessagingPlanEnv({ channels: [{ channelId: "telegram", active: true }] });
+    const dockerfilePath = dockerfileWith(
       [
         "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
         "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
@@ -516,189 +508,19 @@ describe("dockerfile patch helpers", () => {
         "ARG CHAT_UI_URL=http://127.0.0.1:18789",
         "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
         "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
-        "ARG NEMOCLAW_MESSAGING_CHANNELS_B64=W10=",
-        "ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=e30=",
-        "ARG NEMOCLAW_DISCORD_GUILDS_B64=e30=",
         "ARG NEMOCLAW_BUILD_ID=default",
       ].join("\n"),
     );
 
-    try {
+    expect(() =>
       patchStagedDockerfile(
         dockerfilePath,
         "gpt-5.4",
         "http://127.0.0.1:19999",
-        "build-discord-open",
+        "build-missing-plan-arg",
         "openai-api",
-        null,
-        null,
-        ["discord"],
-        {},
-        {
-          "1491590992753590594": {
-            requireMention: false,
-          },
-        },
-      );
-      const patched = fs.readFileSync(dockerfilePath, "utf8");
-      const guildLine = patched
-        .split("\n")
-        .find((line) => line.startsWith("ARG NEMOCLAW_DISCORD_GUILDS_B64="));
-      assert.ok(guildLine, "expected discord guild build arg");
-      const encoded = guildLine.split("=")[1];
-      const decoded = JSON.parse(Buffer.from(encoded, "base64").toString("utf8"));
-      assert.deepEqual(decoded, {
-        "1491590992753590594": {
-          requireMention: false,
-        },
-      });
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
-
-  it("#1737: patches the staged Dockerfile with Telegram mention-only config", () => {
-    const tmpDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-tg-mention-"),
-    );
-    const dockerfilePath = path.join(tmpDir, "Dockerfile");
-    fs.writeFileSync(
-      dockerfilePath,
-      [
-        "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
-        "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
-        "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
-        "ARG CHAT_UI_URL=http://127.0.0.1:18789",
-        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
-        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
-        "ARG NEMOCLAW_MESSAGING_CHANNELS_B64=W10=",
-        "ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=e30=",
-        "ARG NEMOCLAW_DISCORD_GUILDS_B64=e30=",
-        "ARG NEMOCLAW_TELEGRAM_CONFIG_B64=e30=",
-        "ARG NEMOCLAW_BUILD_ID=default",
-      ].join("\n"),
-    );
-
-    try {
-      patchStagedDockerfile(
-        dockerfilePath,
-        "gpt-5.4",
-        "http://127.0.0.1:19999",
-        "build-tg-mention",
-        "openai-api",
-        null,
-        null,
-        ["telegram"],
-        {},
-        {},
-        null,
-        { requireMention: true },
-      );
-      const patched = fs.readFileSync(dockerfilePath, "utf8");
-      const line = patched
-        .split("\n")
-        .find((l) => l.startsWith("ARG NEMOCLAW_TELEGRAM_CONFIG_B64="));
-      assert.ok(line, "expected telegram config build arg");
-      const encoded = line.split("=")[1];
-      const decoded = JSON.parse(Buffer.from(encoded, "base64").toString("utf8"));
-      assert.deepEqual(decoded, { requireMention: true });
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
-
-  it("#1737: patches the staged Dockerfile with Telegram open-group config when requireMention=false", () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-tg-open-"));
-    const dockerfilePath = path.join(tmpDir, "Dockerfile");
-    fs.writeFileSync(
-      dockerfilePath,
-      [
-        "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
-        "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
-        "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
-        "ARG CHAT_UI_URL=http://127.0.0.1:18789",
-        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
-        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
-        "ARG NEMOCLAW_MESSAGING_CHANNELS_B64=W10=",
-        "ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=e30=",
-        "ARG NEMOCLAW_DISCORD_GUILDS_B64=e30=",
-        "ARG NEMOCLAW_TELEGRAM_CONFIG_B64=e30=",
-        "ARG NEMOCLAW_BUILD_ID=default",
-      ].join("\n"),
-    );
-
-    try {
-      patchStagedDockerfile(
-        dockerfilePath,
-        "gpt-5.4",
-        "http://127.0.0.1:19999",
-        "build-tg-open",
-        "openai-api",
-        null,
-        null,
-        ["telegram"],
-        {},
-        {},
-        null,
-        { requireMention: false },
-      );
-      const patched = fs.readFileSync(dockerfilePath, "utf8");
-      const line = patched
-        .split("\n")
-        .find((l) => l.startsWith("ARG NEMOCLAW_TELEGRAM_CONFIG_B64="));
-      assert.ok(line, "expected telegram config build arg");
-      const encoded = line.split("=")[1];
-      const decoded = JSON.parse(Buffer.from(encoded, "base64").toString("utf8"));
-      assert.deepEqual(decoded, { requireMention: false });
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
-
-  it("#1737: preserves default Telegram group-open behavior when telegramConfig is empty", () => {
-    // Backward compatibility guard: the ARG default stays at e30= ({} base64)
-    // and patchStagedDockerfile does not rewrite it when no config is passed.
-    // The Dockerfile Python generator reads empty config as requireMention=false
-    // which maps to groupPolicy=open (matches pre-#1737 behavior).
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-tg-empty-"));
-    const dockerfilePath = path.join(tmpDir, "Dockerfile");
-    fs.writeFileSync(
-      dockerfilePath,
-      [
-        "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
-        "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
-        "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
-        "ARG CHAT_UI_URL=http://127.0.0.1:18789",
-        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
-        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
-        "ARG NEMOCLAW_MESSAGING_CHANNELS_B64=W10=",
-        "ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=e30=",
-        "ARG NEMOCLAW_DISCORD_GUILDS_B64=e30=",
-        "ARG NEMOCLAW_TELEGRAM_CONFIG_B64=e30=",
-        "ARG NEMOCLAW_BUILD_ID=default",
-      ].join("\n"),
-    );
-
-    try {
-      patchStagedDockerfile(
-        dockerfilePath,
-        "gpt-5.4",
-        "http://127.0.0.1:19999",
-        "build-tg-default",
-        "openai-api",
-        null,
-        null,
-        ["telegram"],
-        {},
-        {},
-        null,
-        {},
-      );
-      const patched = fs.readFileSync(dockerfilePath, "utf8");
-      assert.match(patched, /^ARG NEMOCLAW_TELEGRAM_CONFIG_B64=e30=$/m);
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
+      ),
+    ).toThrow(/missing ARG NEMOCLAW_MESSAGING_PLAN_B64/);
   });
 
   it("patchStagedDockerfile rewrites ARG BASE_IMAGE when baseImageRef is provided", () => {
@@ -729,9 +551,6 @@ describe("dockerfile patch helpers", () => {
         "openai-api",
         null,
         null,
-        [],
-        {},
-        {},
         fakeRef,
       );
       const patched = fs.readFileSync(dockerfilePath, "utf8");
@@ -772,9 +591,6 @@ describe("dockerfile patch helpers", () => {
         "openai-api",
         null,
         null,
-        [],
-        {},
-        {},
         null,
       );
       const patched = fs.readFileSync(dockerfilePath, "utf8");
@@ -815,9 +631,6 @@ describe("dockerfile patch helpers", () => {
         "openai-api",
         null,
         null,
-        [],
-        {},
-        {},
         fakeRef,
       );
       const patched = fs.readFileSync(dockerfilePath, "utf8");
@@ -865,9 +678,6 @@ describe("dockerfile patch helpers", () => {
         "openai-api",
         null,
         null,
-        [],
-        {},
-        {},
         correctRef,
       );
       const patched = fs.readFileSync(dockerfilePath, "utf8");
@@ -915,9 +725,6 @@ describe("dockerfile patch helpers", () => {
         "openai-api",
         null,
         null,
-        [],
-        {},
-        {},
         sandboxRef,
       );
       const patched = fs.readFileSync(dockerfilePath, "utf8");

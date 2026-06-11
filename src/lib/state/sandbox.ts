@@ -31,6 +31,10 @@ import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts.js";
 import type { AgentStateFile } from "../agent/defs.js";
 import { loadAgent } from "../agent/defs.js";
 import { isRecord, type UnknownRecord } from "../core/json-types.js";
+import {
+  buildOpenClawConfigRestoreInputFromSandbox,
+  shouldMergeOpenClawConfigStateFile,
+} from "./openclaw-config-restore-input.js";
 import { shellQuote } from "../runner.js";
 import { isSensitiveFile, sanitizeConfigFile } from "../security/credential-filter.js";
 import * as registry from "./registry.js";
@@ -537,7 +541,7 @@ function sanitizeBackupDirectory(dirPath: string): void {
 
 const _verbose = () => process.env.NEMOCLAW_REBUILD_VERBOSE === "1";
 
-// Exact symlinks baked into the base image at build time (Dockerfile.base) by
+// Exact symlinks baked into OpenClaw messaging images at build time by
 // `openclaw plugins install`. Source paths are relative to the agent state-dir
 // root (e.g. for OpenClaw, /sandbox/.openclaw); targets are matched exactly
 // against the value of `readlink(source)`. Source-only matching is unsafe: a
@@ -856,7 +860,11 @@ function backupStateFile(
   return "backed_up";
 }
 
-function buildStateFileRestoreCommand(dir: string, spec: StateFileSpec): string {
+function buildStateFileRestoreCommand(
+  dir: string,
+  spec: StateFileSpec,
+  refreshOpenClawConfigHash = false,
+): string {
   const remotePath = stateFileRemotePath(dir, spec.path);
   const quotedRemotePath = shellQuote(remotePath);
   if (spec.strategy === "sqlite_backup") {
@@ -874,7 +882,7 @@ function buildStateFileRestoreCommand(dir: string, spec: StateFileSpec): string 
     ].join("; ");
   }
 
-  return [
+  const steps = [
     `dst=${quotedRemotePath}`,
     'parent="$(dirname "$dst")"',
     '[ ! -L "$parent" ] || { echo "refusing symlinked state parent: $parent" >&2; exit 10; }',
@@ -885,7 +893,42 @@ function buildStateFileRestoreCommand(dir: string, spec: StateFileSpec): string 
     'cat > "$tmp"',
     'chmod 640 "$tmp"',
     'mv -f "$tmp" "$dst"',
-  ].join("; ");
+  ];
+
+  if (refreshOpenClawConfigHash) {
+    steps.push(
+      'hash_file="${parent}/.config-hash"',
+      '[ ! -L "$hash_file" ] || { echo "refusing symlinked config hash target: $hash_file" >&2; exit 12; }',
+      '(cd "$parent" && sha256sum "$(basename "$dst")" > .config-hash)',
+      'chmod 660 "$hash_file" 2>/dev/null || true',
+    );
+  }
+
+  return steps.join("; ");
+}
+
+function buildStateFileRestoreInput(
+  configFile: string,
+  sandboxName: string,
+  dir: string,
+  spec: StateFileSpec,
+  backupPath: string,
+  mergeOpenClawConfig: boolean,
+): Buffer | null {
+  const localPath = path.join(backupPath, spec.path);
+  const backupContents = readFileSync(localPath);
+  if (!mergeOpenClawConfig) return backupContents;
+
+  const result = buildOpenClawConfigRestoreInputFromSandbox({
+    backupContents,
+    dir,
+    log: _log,
+    specPath: spec.path,
+    sshArgs: sshArgs(configFile, sandboxName),
+  });
+  if (result.ok) return result.input;
+  _log(`FAILED: ${result.error}`);
+  return null;
 }
 
 function restoreStateFile(
@@ -894,14 +937,25 @@ function restoreStateFile(
   dir: string,
   spec: StateFileSpec,
   backupPath: string,
+  mergeOpenClawConfig = false,
 ): boolean {
   const localPath = path.join(backupPath, spec.path);
   if (!existsSync(localPath)) return true;
 
-  const command = buildStateFileRestoreCommand(dir, spec);
+  const command = buildStateFileRestoreCommand(dir, spec, mergeOpenClawConfig);
   _log(`Restoring state file ${spec.path} (${spec.strategy})`);
+  const input = buildStateFileRestoreInput(
+    configFile,
+    sandboxName,
+    dir,
+    spec,
+    backupPath,
+    mergeOpenClawConfig,
+  );
+  if (input === null) return false;
+
   const result = spawnSync("ssh", [...sshArgs(configFile, sandboxName), command], {
-    input: readFileSync(localPath),
+    input,
     stdio: ["pipe", "pipe", "pipe"],
     timeout: 120000,
   });
@@ -1476,7 +1530,16 @@ export function restoreSandboxState(sandboxName: string, backupPath: string): Re
     }
 
     for (const spec of localFiles) {
-      if (restoreStateFile(configFile, sandboxName, dir, spec, backupPath)) {
+      if (
+        restoreStateFile(
+          configFile,
+          sandboxName,
+          dir,
+          spec,
+          backupPath,
+          shouldMergeOpenClawConfigStateFile(manifest.agentType, dir, spec),
+        )
+      ) {
         restoredFiles.push(spec.path);
       } else {
         failedFiles.push(spec.path);

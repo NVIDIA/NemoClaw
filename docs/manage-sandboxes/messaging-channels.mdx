@@ -91,7 +91,7 @@ Channel messages still require an explicit bot mention.
 When a Slack channel `@mention` is denied by these allowlists, NemoClaw sends a denial notice back to the sender instead of dropping the message silently.
 During sandbox startup, NemoClaw normalizes OpenShell credential placeholders into the environment shape expected by the Slack runtime, so post-rebuild Slack starts use the gateway-managed tokens instead of literal placeholder strings.
 
-WeChat (experimental) delivers messages over Tencent's iLink gateway through the upstream `@tencent-weixin/openclaw-weixin` plugin baked into the sandbox base image and the built-in Hermes iLink WeChat adapter.
+WeChat (experimental) delivers messages over Tencent's iLink gateway through the upstream `@tencent-weixin/openclaw-weixin` plugin installed into WeChat-enabled OpenClaw sandbox images and the built-in Hermes iLink WeChat adapter.
 The supported mode in this release is **personal WeChat** (`bot_type=3`).
 WeChat Official Account and WeCom/Enterprise WeChat are not wired up.
 
