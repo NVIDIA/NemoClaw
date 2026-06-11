@@ -353,6 +353,13 @@ jobs:
             echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
             exit 0
           fi
+          docker_config="$(mktemp -d)"
+          export DOCKER_CONFIG="${docker_config}"
+          cleanup_docker_auth() {
+            docker logout docker.io >/dev/null 2>&1 || true
+            rm -rf "${docker_config}"
+          }
+          trap cleanup_docker_auth EXIT
           login_succeeded=0
           for attempt in 1 2 3; do
             if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
@@ -366,6 +373,8 @@ jobs:
           done
           if [[ "$login_succeeded" -ne 1 ]]; then
             echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
+          else
+            echo "::notice::Docker Hub authentication succeeded with isolated config; credentials are removed before repository-controlled steps."
           fi
 
       - name: Set up Node
@@ -381,9 +390,14 @@ jobs:
         run: npm run build:cli
 
       - name: Install OpenShell
+        # Runs without workflow tokens, Docker credentials, or NVIDIA_API_KEY.
+        # scripts/install-openshell.sh pins the OpenShell version and verifies
+        # release SHA-256 checksums before installation.
         env:
           NEMOCLAW_NON_INTERACTIVE: "1"
-        run: bash scripts/install-openshell.sh
+        run: |
+          set -euo pipefail
+          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
 
       - name: Run network-policy live test
         # Migrated from test/e2e/test-network-policy.sh. Free-standing anchor

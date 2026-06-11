@@ -6,11 +6,49 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
-import { validateE2eVitestScenariosWorkflowBoundary } from "../../../tools/e2e-scenarios/workflow-boundary.mts";
+import {
+  evaluateE2eVitestWorkflowDispatchSelectors,
+  validateE2eVitestScenariosWorkflowBoundary,
+} from "../../../tools/e2e-scenarios/workflow-boundary.mts";
 
 describe("e2e-vitest-scenarios workflow boundary", () => {
   it("keeps the live Vitest scenario workflow manual, pinned, and artifact-safe", () => {
     expect(validateE2eVitestScenariosWorkflowBoundary()).toEqual([]);
+  });
+
+  it("evaluates high-risk dispatch selector behavior before secret-bearing jobs run", () => {
+    expect(evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "network-policy,../escape" })).toMatchObject({
+      valid: false,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: [],
+    });
+    expect(evaluateE2eVitestWorkflowDispatchSelectors({ jobs: "network-policy-vitest", scenarios: "network-policy" })).toMatchObject({
+      valid: false,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: [],
+    });
+    expect(evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "network-policy" })).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["network-policy-vitest"],
+      registryScenarios: [],
+    });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({
+        scenarios: "network-policy,ubuntu-repo-cloud-openclaw",
+      }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: true,
+      selectedFreeStandingJobs: ["network-policy-vitest"],
+      registryScenarios: ["ubuntu-repo-cloud-openclaw"],
+    });
+    expect(evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "openshell-version-pin" })).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["openshell-version-pin-vitest"],
+      registryScenarios: [],
+    });
   });
 
   it("flags direct dispatch-input interpolation and unsafe artifact upload", () => {
@@ -276,12 +314,19 @@ jobs:
           "network-policy-vitest checkout step must set persist-credentials=false",
           "network-policy-vitest step 'Authenticate to Docker Hub' env must not include GITHUB_TOKEN",
           "step 'Authenticate to Docker Hub' run script must not interpolate dispatch inputs directly",
+          "step 'Authenticate to Docker Hub' run script must include DOCKER_CONFIG",
+          "step 'Authenticate to Docker Hub' run script must include docker logout docker.io",
           "network-policy-vitest step 'Set up Node' env must not include NVIDIA_API_KEY",
           "network-policy-vitest setup-node action must be pinned to a full commit SHA",
           "step 'Install root dependencies' run script must include npm ci --ignore-scripts",
           "step 'Build CLI' run script must include npm run build:cli",
           "network-policy-vitest step 'Install OpenShell' env must not include GITHUB_TOKEN",
           "step 'Install OpenShell' run script must include bash scripts/install-openshell.sh",
+          "step 'Install OpenShell' run script must include env -u DOCKER_CONFIG",
+          "step 'Install OpenShell' run script must include -u DOCKERHUB_USERNAME",
+          "step 'Install OpenShell' run script must include -u DOCKERHUB_TOKEN",
+          "step 'Install OpenShell' run script must include -u NVIDIA_API_KEY",
+          "step 'Install OpenShell' run script must include -u GITHUB_TOKEN",
           "step 'Run network-policy live test' run script must not interpolate dispatch inputs directly",
           "step 'Run network-policy live test' run script must include test/e2e-scenario/live/network-policy.test.ts",
           "network-policy-vitest upload-artifact action must be pinned to a full commit SHA",

@@ -17,6 +17,26 @@ const DEFAULT_VITEST_WORKFLOW_PATH = join(
 type WorkflowRecord = Record<string, unknown>;
 type WorkflowStep = WorkflowRecord & { name?: string; run?: string; uses?: string; with?: WorkflowRecord };
 
+const SELECTOR_PATTERN = /^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$/;
+const FREE_STANDING_SCENARIO_JOBS = new Map([
+  ["openshell-version-pin", "openshell-version-pin-vitest"],
+  ["onboard-negative-paths", "onboard-negative-paths-vitest"],
+  ["network-policy", "network-policy-vitest"],
+  ["openclaw-tui-chat-correlation", "openclaw-tui-chat-correlation-vitest"],
+]);
+const ALLOWED_FREE_STANDING_JOBS = new Set([
+  ...FREE_STANDING_SCENARIO_JOBS.values(),
+  "gateway-guard-recovery",
+]);
+
+export interface WorkflowDispatchSelectorEvaluation {
+  valid: boolean;
+  errors: string[];
+  selectedFreeStandingJobs: string[];
+  registryScenarios: string[];
+  liveScenariosRuns: boolean;
+}
+
 function asRecord(value: unknown): WorkflowRecord {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as WorkflowRecord)
@@ -31,6 +51,85 @@ function asSteps(value: unknown): WorkflowStep[] {
 
 function stringValue(value: unknown): string {
   return typeof value === "string" ? value : "";
+}
+
+function splitSelector(value: string): string[] {
+  return value
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+export function evaluateE2eVitestWorkflowDispatchSelectors(input: {
+  jobs?: string;
+  scenarios?: string;
+}): WorkflowDispatchSelectorEvaluation {
+  const jobs = input.jobs ?? "";
+  const scenarios = input.scenarios ?? "";
+  const errors: string[] = [];
+
+  if (jobs && scenarios) {
+    errors.push("Use either scenarios or jobs, not both");
+  }
+  if (scenarios && !SELECTOR_PATTERN.test(scenarios)) {
+    errors.push("Invalid scenario input");
+  }
+  if (jobs && !SELECTOR_PATTERN.test(jobs)) {
+    errors.push("Invalid jobs input");
+  }
+  if (jobs && SELECTOR_PATTERN.test(jobs)) {
+    for (const job of splitSelector(jobs)) {
+      if (!ALLOWED_FREE_STANDING_JOBS.has(job)) {
+        errors.push(`Unknown free-standing Vitest job: ${job}`);
+      }
+    }
+  }
+
+  if (errors.length > 0) {
+    return {
+      valid: false,
+      errors,
+      selectedFreeStandingJobs: [],
+      registryScenarios: [],
+      liveScenariosRuns: false,
+    };
+  }
+
+  if (!jobs && !scenarios) {
+    return {
+      valid: true,
+      errors: [],
+      selectedFreeStandingJobs: [...ALLOWED_FREE_STANDING_JOBS].sort(),
+      registryScenarios: [],
+      liveScenariosRuns: true,
+    };
+  }
+
+  if (jobs) {
+    return {
+      valid: true,
+      errors: [],
+      selectedFreeStandingJobs: splitSelector(jobs).sort(),
+      registryScenarios: [],
+      liveScenariosRuns: false,
+    };
+  }
+
+  const selectedFreeStandingJobs = new Set<string>();
+  const registryScenarios: string[] = [];
+  for (const scenario of splitSelector(scenarios)) {
+    const job = FREE_STANDING_SCENARIO_JOBS.get(scenario);
+    if (job) selectedFreeStandingJobs.add(job);
+    else registryScenarios.push(scenario);
+  }
+
+  return {
+    valid: true,
+    errors: [],
+    selectedFreeStandingJobs: [...selectedFreeStandingJobs].sort(),
+    registryScenarios,
+    liveScenariosRuns: registryScenarios.length > 0,
+  };
 }
 
 function namedStep(steps: readonly WorkflowStep[], name: string): WorkflowStep | undefined {
@@ -354,8 +453,18 @@ function validateNetworkPolicyVitestJob(errors: string[], jobs: WorkflowRecord):
   const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
   requireRunContains(errors, buildCli, "npm run build:cli");
 
+  const dockerAuth = requireJobStep(errors, jobName, steps, "Authenticate to Docker Hub");
+  requireRunContains(errors, dockerAuth, "DOCKER_CONFIG");
+  requireRunContains(errors, dockerAuth, "docker logout docker.io");
+  requireRunContains(errors, dockerAuth, "rm -rf \"${docker_config}\"");
+
   const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell");
   requireRunContains(errors, installOpenShell, "bash scripts/install-openshell.sh");
+  requireRunContains(errors, installOpenShell, "env -u DOCKER_CONFIG");
+  requireRunContains(errors, installOpenShell, "-u DOCKERHUB_USERNAME");
+  requireRunContains(errors, installOpenShell, "-u DOCKERHUB_TOKEN");
+  requireRunContains(errors, installOpenShell, "-u NVIDIA_API_KEY");
+  requireRunContains(errors, installOpenShell, "-u GITHUB_TOKEN");
 
   const runVitest = requireJobStep(errors, jobName, steps, "Run network-policy live test");
   const runVitestEnv = asRecord(runVitest?.env);
