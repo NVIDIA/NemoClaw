@@ -14,12 +14,8 @@ import path from "node:path";
 import { isErrnoException } from "../core/errno";
 import type { JsonObject, JsonValue } from "../core/json-types";
 import type { WebSearchConfig } from "../inference/web-search";
-import {
-  type MessagingChannelConfig,
-  sanitizeMessagingChannelConfig,
-} from "../messaging-channel-config";
 import type { SandboxMessagingPlan } from "../messaging/manifest";
-import { parseSandboxMessagingPlan } from "../onboard/messaging-plan-session";
+import { parseSandboxMessagingPlan } from "../messaging/plan-validation";
 import {
   createOnboardMachineEvent,
   emitOnboardMachineEvent,
@@ -104,17 +100,7 @@ export interface Session {
   webSearchConfig: WebSearchConfig | null;
   hermesToolGateways: string[] | null;
   policyPresets: string[] | null;
-  messagingChannels: string[] | null;
-  messagingChannelConfig: MessagingChannelConfig | null;
   messagingPlan: SandboxMessagingPlan | null;
-  // Channels the operator paused via `nemoclaw <sb> channels stop <ch>`.
-  // Mirrors `SandboxEntry.disabledChannels` so that `rebuild` — which
-  // destroys the registry entry before calling `onboard --resume` —
-  // can carry the paused set across the destroy/recreate window.
-  // Without this mirror, the disabledChannels filter inside createSandbox
-  // reads back `[]` from the freshly-empty registry and the channel
-  // comes back live after rebuild. See #(channels-stop-rebuild bug).
-  disabledChannels: string[] | null;
   // SHA-256 hex digest of every legacy credential value successfully
   // written to the OpenShell gateway during this onboard session, keyed by
   // env-name. Persisted across process restarts so a `--resume` run that
@@ -183,10 +169,7 @@ export interface SessionUpdates {
   webSearchConfig?: WebSearchConfig | null;
   hermesToolGateways?: string[] | null;
   policyPresets?: string[] | null;
-  messagingChannels?: string[] | null;
-  messagingChannelConfig?: MessagingChannelConfig | null;
   messagingPlan?: SandboxMessagingPlan | null;
-  disabledChannels?: string[] | null;
   migratedLegacyValueHashes?: Record<string, string>;
   gpuPassthrough?: boolean;
   telegramConfig?: TelegramConfig | null;
@@ -465,10 +448,7 @@ export function createSession(overrides: Partial<Session> = {}): Session {
       overrides.webSearchConfig?.fetchEnabled === true ? { fetchEnabled: true } : null,
     hermesToolGateways: readStringArray(overrides.hermesToolGateways),
     policyPresets: readStringArray(overrides.policyPresets),
-    messagingChannels: readStringArray(overrides.messagingChannels),
-    messagingChannelConfig: sanitizeMessagingChannelConfig(overrides.messagingChannelConfig),
     messagingPlan: parseSandboxMessagingPlan(overrides.messagingPlan),
-    disabledChannels: readStringArray(overrides.disabledChannels),
     migratedLegacyValueHashes: overrides.migratedLegacyValueHashes
       ? readStringRecord(overrides.migratedLegacyValueHashes)
       : null,
@@ -509,10 +489,7 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     webSearchConfig: parseWebSearchConfig(data.webSearchConfig),
     hermesToolGateways: readStringArray(data.hermesToolGateways),
     policyPresets: readStringArray(data.policyPresets),
-    messagingChannels: readStringArray(data.messagingChannels),
-    messagingChannelConfig: sanitizeMessagingChannelConfig(data.messagingChannelConfig),
     messagingPlan: parseSandboxMessagingPlan(data.messagingPlan),
-    disabledChannels: readStringArray(data.disabledChannels),
     migratedLegacyValueHashes: readStringRecord(data.migratedLegacyValueHashes),
     gpuPassthrough: data.gpuPassthrough === true,
     telegramConfig: parseTelegramConfig(data.telegramConfig),
@@ -953,27 +930,11 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
   } else if (Array.isArray(updates.policyPresets)) {
     safe.policyPresets = updates.policyPresets.filter((value) => typeof value === "string");
   }
-  if (updates.messagingChannels === null) {
-    safe.messagingChannels = null;
-  } else if (Array.isArray(updates.messagingChannels)) {
-    safe.messagingChannels = updates.messagingChannels.filter((value) => typeof value === "string");
-  }
-  if (updates.messagingChannelConfig === null) {
-    safe.messagingChannelConfig = null;
-  } else {
-    const messagingChannelConfig = sanitizeMessagingChannelConfig(updates.messagingChannelConfig);
-    if (messagingChannelConfig) safe.messagingChannelConfig = messagingChannelConfig;
-  }
   if (updates.messagingPlan === null) {
     safe.messagingPlan = null;
   } else {
     const messagingPlan = parseSandboxMessagingPlan(updates.messagingPlan);
     if (messagingPlan) safe.messagingPlan = messagingPlan;
-  }
-  if (updates.disabledChannels === null) {
-    safe.disabledChannels = null;
-  } else if (Array.isArray(updates.disabledChannels)) {
-    safe.disabledChannels = updates.disabledChannels.filter((value) => typeof value === "string");
   }
   if (isObject(updates.migratedLegacyValueHashes)) {
     const cleaned: Record<string, string> = {};

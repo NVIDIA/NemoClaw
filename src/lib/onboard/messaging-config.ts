@@ -4,10 +4,9 @@
 import {
   type MessagingChannelConfig,
   mergeMessagingChannelConfigs,
-  sanitizeMessagingChannelConfig,
 } from "../messaging-channel-config";
+import { getMessagingChannelConfigFromPlan } from "../messaging/plan-validation";
 import type { Session } from "../state/onboard-session";
-import * as onboardSession from "../state/onboard-session";
 import * as registry from "../state/registry";
 
 // Read TELEGRAM_REQUIRE_MENTION (set either by the interactive mention prompt
@@ -26,23 +25,16 @@ export function getStoredMessagingChannelConfig(
   session: Session | null,
 ): MessagingChannelConfig | null {
   const registryConfig = sandboxName
-    ? sanitizeMessagingChannelConfig(registry.getSandbox(sandboxName)?.messagingChannelConfig)
+    ? getMessagingChannelConfigFromPlan(
+        registry.getMessagingPlanFromEntry(registry.getSandbox(sandboxName)),
+      )
     : null;
   const sessionMatchesSandbox =
     !session?.sandboxName || !sandboxName || session.sandboxName === sandboxName;
   const sessionConfig = sessionMatchesSandbox
-    ? sanitizeMessagingChannelConfig(session?.messagingChannelConfig)
+    ? getMessagingChannelConfigFromPlan(session?.messagingPlan)
     : null;
   return mergeMessagingChannelConfigs(registryConfig, sessionConfig);
-}
-
-export function persistMessagingChannelConfigToSession(
-  config: MessagingChannelConfig | null,
-): void {
-  onboardSession.updateSession((current: Session) => {
-    current.messagingChannelConfig = config;
-    return current;
-  });
 }
 
 export function messagingChannelConfigsEqual(
