@@ -296,6 +296,8 @@ If vLLM is already running, NemoClaw detects the running model and validates the
 When vLLM exposes runtime metadata such as `max_model_len`, NemoClaw uses that value for the `contextWindow` baked into `openclaw.json` unless you set `NEMOCLAW_CONTEXT_WINDOW` yourself.
 If vLLM is not running and your host matches a DGX Spark or DGX Station managed profile, NemoClaw shows the **Install vLLM** or **Start vLLM** entry by default.
 Generic Linux NVIDIA GPU hosts still require `NEMOCLAW_EXPERIMENTAL=1` or `NEMOCLAW_PROVIDER=install-vllm` before the managed entry appears.
+In interactive runs, the managed vLLM path lists the supported registry models for your host profile before it pulls weights.
+Press **Enter** to use the default model, or choose a numbered entry to serve another validated model with its matching `vllm serve` flags.
 NemoClaw pulls the vLLM image, downloads model weights into `~/.cache/huggingface`, starts the `nemoclaw-vllm` container on `localhost:8000`, streams Hugging Face download progress, and polls `/v1/models` until the model is ready.
 Managed DGX Spark and DGX Station profiles use the stable NGC `nvcr.io/nvidia/vllm:26.05.post1-py3` container image.
 If Docker pull output stops making progress, a watchdog stops the stalled pull instead of failing slow but active downloads on a fixed wall-clock timeout.
@@ -327,6 +329,7 @@ NEMOCLAW_PROVIDER=vllm \
 
 Install or start managed vLLM when NemoClaw detects a supported profile.
 On DGX Spark and DGX Station, `NEMOCLAW_PROVIDER=install-vllm` is enough for non-interactive runs; add `NEMOCLAW_EXPERIMENTAL=1` on generic Linux NVIDIA GPU hosts.
+Non-interactive runs use the profile default unless you set `NEMOCLAW_VLLM_MODEL`.
 
 ```bash
 NEMOCLAW_PROVIDER=install-vllm \
@@ -338,8 +341,8 @@ Start vLLM with the model you want before onboarding if you manage the server yo
 
 ### Override the Managed-vLLM Model
 
-Managed vLLM serves the profile default unless you select a different registry entry.
-Export `NEMOCLAW_VLLM_MODEL=<slug>` before invoking the installer to choose a different model from the registry.
+Managed vLLM serves the profile default unless you choose a different registry entry in the interactive picker or set an override for automation.
+Export `NEMOCLAW_VLLM_MODEL=<slug>` before invoking the installer to choose a different model without prompting.
 NemoClaw uses the matching `vllm serve` flags, including the reasoning parser, tool-call parser, and `--max-model-len`.
 Recognized slugs are:
 
