@@ -1,0 +1,67 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+/**
+ * NemoClaw instance identity primitive.
+ *
+ * Historically NemoClaw treated the host-side installation as a process-global
+ * singleton: one gateway named `nemoclaw`, one state root at `~/.nemoclaw`, one
+ * registry/credentials/snapshot tree. Two NemoClaw-managed sandboxes on the
+ * same host therefore had to share that tree even when the user wanted full
+ * segregation (billing isolation, A/B model testing, multi-tenant POCs).
+ *
+ * `NEMOCLAW_INSTANCE` makes the instance identity configurable. The default
+ * instance keeps every existing on-disk path and gateway name verbatim so
+ * single-instance deployments are unaffected; a non-default instance gets a
+ * suffixed state root and gateway name so two instances never collide.
+ *
+ * This module is the single source of truth for resolving the active instance
+ * name; downstream callers (state root, gateway-name resolver, credentials
+ * store, rebuild-backups dir) thread the resolved value through their own
+ * paths rather than parsing the env var directly.
+ */
+
+/** Reserved name representing today's singleton behaviour. */
+export const DEFAULT_NEMOCLAW_INSTANCE = "default";
+
+/**
+ * Lower-case alphanumeric slug with internal `-`. Must start and end with an
+ * alphanumeric so it composes safely into filesystem names, gateway-name
+ * strings, and container names.
+ */
+const INSTANCE_NAME_RE = /^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/;
+
+/**
+ * Validate an instance-name candidate. Returns the trimmed lower-case name if
+ * valid, or throws with a stable error message that callers can surface to the
+ * user verbatim. Empty input resolves to {@link DEFAULT_NEMOCLAW_INSTANCE} so
+ * `NEMOCLAW_INSTANCE=""` and an unset variable behave the same.
+ */
+export function parseInstanceName(envVar: string, fallback: string): string {
+  const raw = process.env[envVar];
+  if (raw === undefined || raw === "") return fallback;
+  const trimmed = String(raw).trim().toLowerCase();
+  if (trimmed === "") return fallback;
+  if (!INSTANCE_NAME_RE.test(trimmed)) {
+    throw new Error(
+      `Invalid instance name: ${envVar}="${raw}" — must be 1–32 lower-case ` +
+        `alphanumerics with internal '-' (e.g. "agent-a", "tenant1")`,
+    );
+  }
+  return trimmed;
+}
+
+/** Whether the supplied instance name refers to today's singleton tree. */
+export function isDefaultInstance(name: string): boolean {
+  return name === DEFAULT_NEMOCLAW_INSTANCE;
+}
+
+/**
+ * Active NemoClaw instance name resolved at module load. Read from
+ * `NEMOCLAW_INSTANCE`; falls back to {@link DEFAULT_NEMOCLAW_INSTANCE}.
+ *
+ * Callers needing test-time overrides should call {@link parseInstanceName}
+ * directly against an explicit env-var name rather than re-reading this
+ * constant, since this value is captured once per process.
+ */
+export const NEMOCLAW_INSTANCE = parseInstanceName("NEMOCLAW_INSTANCE", DEFAULT_NEMOCLAW_INSTANCE);

@@ -24,26 +24,80 @@ import {
 } from "../../../dist/lib/onboard/gateway-binding";
 
 describe("gateway-binding resolver (#4422)", () => {
-  it("keeps the bare nemoclaw names for the default gateway port", () => {
-    expect(resolveGatewayName(DEFAULT_GATEWAY_PORT)).toBe(BASE_GATEWAY_NAME);
-    expect(resolveGatewayStateDirName(DEFAULT_GATEWAY_PORT)).toBe(BASE_GATEWAY_STATE_DIR_NAME);
-    expect(resolveGatewayCompatContainerName(DEFAULT_GATEWAY_PORT)).toBe(
+  const DEFAULT_INSTANCE = "default";
+
+  it("keeps the bare nemoclaw names for the default instance on the default gateway port", () => {
+    expect(resolveGatewayName(DEFAULT_GATEWAY_PORT, DEFAULT_INSTANCE)).toBe(BASE_GATEWAY_NAME);
+    expect(resolveGatewayStateDirName(DEFAULT_GATEWAY_PORT, DEFAULT_INSTANCE)).toBe(
+      BASE_GATEWAY_STATE_DIR_NAME,
+    );
+    expect(resolveGatewayCompatContainerName(DEFAULT_GATEWAY_PORT, DEFAULT_INSTANCE)).toBe(
       BASE_GATEWAY_COMPAT_CONTAINER_NAME,
     );
   });
 
   it("suffixes the name, state dir, and compat container for a non-default port", () => {
-    expect(resolveGatewayName(8081)).toBe("nemoclaw-8081");
-    expect(resolveGatewayStateDirName(8081)).toBe("openshell-docker-gateway-8081");
-    expect(resolveGatewayCompatContainerName(8081)).toBe("nemoclaw-openshell-gateway-8081");
+    expect(resolveGatewayName(8081, DEFAULT_INSTANCE)).toBe("nemoclaw-8081");
+    expect(resolveGatewayStateDirName(8081, DEFAULT_INSTANCE)).toBe(
+      "openshell-docker-gateway-8081",
+    );
+    expect(resolveGatewayCompatContainerName(8081, DEFAULT_INSTANCE)).toBe(
+      "nemoclaw-openshell-gateway-8081",
+    );
   });
 
   it("derives distinct bindings for two different gateway ports", () => {
     const a = 8080;
     const b = 8081;
-    expect(resolveGatewayName(a)).not.toBe(resolveGatewayName(b));
-    expect(resolveGatewayStateDirName(a)).not.toBe(resolveGatewayStateDirName(b));
-    expect(resolveGatewayCompatContainerName(a)).not.toBe(resolveGatewayCompatContainerName(b));
+    expect(resolveGatewayName(a, DEFAULT_INSTANCE)).not.toBe(
+      resolveGatewayName(b, DEFAULT_INSTANCE),
+    );
+    expect(resolveGatewayStateDirName(a, DEFAULT_INSTANCE)).not.toBe(
+      resolveGatewayStateDirName(b, DEFAULT_INSTANCE),
+    );
+    expect(resolveGatewayCompatContainerName(a, DEFAULT_INSTANCE)).not.toBe(
+      resolveGatewayCompatContainerName(b, DEFAULT_INSTANCE),
+    );
+  });
+});
+
+describe("gateway-binding resolver factors NEMOCLAW_INSTANCE (#3053)", () => {
+  const DEFAULT_INSTANCE = "default";
+
+  it("suffixes the gateway name with the instance for a non-default instance on the default port", () => {
+    expect(resolveGatewayName(DEFAULT_GATEWAY_PORT, "agent-a")).toBe("nemoclaw-agent-a");
+    expect(resolveGatewayStateDirName(DEFAULT_GATEWAY_PORT, "agent-a")).toBe(
+      "openshell-docker-gateway-agent-a",
+    );
+    expect(resolveGatewayCompatContainerName(DEFAULT_GATEWAY_PORT, "agent-a")).toBe(
+      "nemoclaw-openshell-gateway-agent-a",
+    );
+  });
+
+  it("composes instance and port suffixes when both are non-default", () => {
+    expect(resolveGatewayName(8081, "agent-a")).toBe("nemoclaw-agent-a-8081");
+    expect(resolveGatewayStateDirName(8081, "agent-a")).toBe(
+      "openshell-docker-gateway-agent-a-8081",
+    );
+    expect(resolveGatewayCompatContainerName(8081, "agent-a")).toBe(
+      "nemoclaw-openshell-gateway-agent-a-8081",
+    );
+  });
+
+  it("segregates two non-default instances even on the same default port", () => {
+    expect(resolveGatewayName(DEFAULT_GATEWAY_PORT, "agent-a")).not.toBe(
+      resolveGatewayName(DEFAULT_GATEWAY_PORT, "agent-b"),
+    );
+    expect(resolveGatewayStateDirName(DEFAULT_GATEWAY_PORT, "agent-a")).not.toBe(
+      resolveGatewayStateDirName(DEFAULT_GATEWAY_PORT, "agent-b"),
+    );
+    expect(resolveGatewayCompatContainerName(DEFAULT_GATEWAY_PORT, "agent-a")).not.toBe(
+      resolveGatewayCompatContainerName(DEFAULT_GATEWAY_PORT, "agent-b"),
+    );
+  });
+
+  it("preserves the bare nemoclaw names when the instance is left at default", () => {
+    expect(resolveGatewayName(DEFAULT_GATEWAY_PORT, DEFAULT_INSTANCE)).toBe(BASE_GATEWAY_NAME);
   });
 });
 
