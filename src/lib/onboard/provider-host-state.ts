@@ -6,7 +6,11 @@ import { OLLAMA_PORT, VLLM_PORT } from "../core/ports";
 import { findReachableOllamaHost, OLLAMA_HOST_DOCKER_INTERNAL } from "../inference/local";
 import type { NvidiaPlatform } from "../inference/nim";
 import { detectVllmProfile, type VllmProfile } from "../inference/vllm";
-import { type ContainerRuntime, isWsl as defaultIsWsl } from "../platform";
+import {
+  type ContainerRuntime,
+  isWsl as defaultIsWsl,
+  type WslDetectionOptions,
+} from "../platform";
 import { runCapture as defaultRunCapture } from "../runner";
 import {
   getContainerRuntime as defaultGetContainerRuntime,
@@ -62,7 +66,7 @@ export interface DetectInferenceProviderHostStateDeps {
   dockerCapture: DockerCapture;
   hostCommandExists: (commandName: string) => boolean;
   findReachableOllamaHost: () => string | null;
-  isWsl: () => boolean;
+  isWsl: (opts?: WslDetectionOptions) => boolean;
   getContainerRuntime: () => ContainerRuntime;
   detectWindowsHostOllama: () => WindowsHostOllamaState;
   getWindowsHostOllamaDockerRequirement: (
@@ -150,7 +154,7 @@ export function detectInferenceProviderHostState(
   const deps = buildDeps(input.deps);
   const log = input.log ?? console.log;
   const platform = input.platform ?? process.platform;
-  const isWsl = deps.isWsl();
+  const isWsl = deps.isWsl({ platform, env: input.env });
   const hasOllama = deps.hostCommandExists("ollama");
   const ollamaHost = deps.findReachableOllamaHost();
   const ollamaRunning = ollamaHost !== null;
