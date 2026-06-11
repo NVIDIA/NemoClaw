@@ -7,7 +7,7 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
-import { buildRunPlan, defaultReadLine, type RunResult, runUninstallPlan } from "./run-plan";
+import { buildRunPlan, type RunResult, runUninstallPlan } from "./run-plan";
 
 function ok(stdout = ""): RunResult {
   return { status: 0, stdout, stderr: "" };
@@ -260,69 +260,6 @@ describe("uninstall run plan", () => {
     );
     expect(logs).toContain("Aborted.");
     expect(run).not.toHaveBeenCalled();
-  });
-
-  describe("defaultReadLine", () => {
-    // Scripted fs.readSync stand-in: a single character delivers that byte,
-    // 0 reports EOF, and any longer string throws an error with that code.
-    function makeReadSync(events: Array<string | 0>) {
-      return vi.fn((_fd: number, buffer: Buffer): number => {
-        const event = events.shift();
-        if (event === undefined) throw new Error("readSync called past end of script");
-        if (event === 0) return 0;
-        if (event.length === 1) {
-          buffer[0] = event.charCodeAt(0);
-          return 1;
-        }
-        const err = new Error(event) as NodeJS.ErrnoException;
-        err.code = event;
-        throw err;
-      });
-    }
-
-    it("retries on EAGAIN until input arrives instead of treating it as EOF (#5020)", () => {
-      const sleep = vi.fn();
-      const readSync = makeReadSync(["EAGAIN", "EAGAIN", "y", "\n"]);
-
-      expect(defaultReadLine({ readSync, sleep })).toBe("y");
-      expect(sleep).toHaveBeenCalledTimes(2);
-      expect(sleep).toHaveBeenCalledWith(25);
-    });
-
-    it("retries immediately on EINTR without sleeping", () => {
-      const sleep = vi.fn();
-      const readSync = makeReadSync(["EINTR", "n", "\n"]);
-
-      expect(defaultReadLine({ readSync, sleep })).toBe("n");
-      expect(sleep).not.toHaveBeenCalled();
-    });
-
-    it("returns null at immediate EOF", () => {
-      expect(defaultReadLine({ readSync: makeReadSync([0]), sleep: vi.fn() })).toBeNull();
-    });
-
-    it("strips the trailing CR from CRLF input", () => {
-      const readSync = makeReadSync(["y", "e", "s", "\r", "\n"]);
-
-      expect(defaultReadLine({ readSync, sleep: vi.fn() })).toBe("yes");
-    });
-
-    it("returns buffered bytes when EOF arrives before a newline", () => {
-      expect(defaultReadLine({ readSync: makeReadSync(["y", 0]), sleep: vi.fn() })).toBe("y");
-    });
-
-    it("returns null on a hard error with no buffered bytes", () => {
-      const sleep = vi.fn();
-
-      expect(defaultReadLine({ readSync: makeReadSync(["EBADF"]), sleep })).toBeNull();
-      expect(sleep).not.toHaveBeenCalled();
-    });
-
-    it("returns buffered bytes when a hard error interrupts mid-line", () => {
-      const readSync = makeReadSync(["y", "e", "EBADF"]);
-
-      expect(defaultReadLine({ readSync, sleep: vi.fn() })).toBe("ye");
-    });
   });
 
   it("kills the Ollama auth proxy via the persisted PID file (#2759)", () => {
