@@ -491,6 +491,25 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
     expect(promptMock).not.toHaveBeenCalled();
   });
 
+  it("in-sandbox-qr whatsapp aborts when plan persistence fails", async () => {
+    arrangeRegistry({
+      current: { name: "alpha", messagingChannels: [] },
+      others: [],
+    });
+    updateSandboxMock.mockReturnValue(false);
+    process.env.NEMOCLAW_NON_INTERACTIVE = "1";
+
+    await expect(addSandboxChannel("alpha", { channel: "whatsapp" })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    const text = loggedText();
+    expect(text).toContain("Could not persist messaging plan for 'alpha'");
+    expect(text).not.toContain("Enabled whatsapp channel");
+    expect(exitMock).toHaveBeenCalledWith(1);
+    expect(promptMock).not.toHaveBeenCalled();
+  });
+
   // Scenario 9
   it("entries without messaging plans are ignored while plan-backed conflicts still warn", async () => {
     arrangeRegistry({

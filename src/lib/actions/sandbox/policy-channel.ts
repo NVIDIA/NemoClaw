@@ -1039,7 +1039,10 @@ export async function addSandboxChannel(
     }
     await applyChannelAddToGatewayAndRegistry(sandboxName, canonical, {});
     persistManifestAddState(sandboxName, manifest);
-    MessagingHostStateApplier.applyPlanToRegistry(sandboxName, plan);
+    if (!MessagingHostStateApplier.applyPlanToRegistry(sandboxName, plan)) {
+      console.error(`  ${YW}⚠${R} Could not persist messaging plan for '${sandboxName}'.`);
+      process.exit(1);
+    }
     console.log("");
     const help = manifest.enrollmentHelp ?? manifest.inputs[0]?.prompt?.help;
     if (help) console.log(`  ${help}`);
