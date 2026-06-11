@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
@@ -51,7 +51,6 @@ const LEGACY_E2E_SHELL_ALLOWLIST = [
   "test/e2e/test-model-router-provider-routed-inference.sh",
   "test/e2e/test-network-policy.sh",
   "test/e2e/test-ollama-auth-proxy-e2e.sh",
-  "test/e2e/test-onboard-inference-smoke.sh",
   "test/e2e/test-onboard-negative-paths.sh",
   "test/e2e/test-onboard-repair.sh",
   "test/e2e/test-onboard-resume.sh",
@@ -76,18 +75,19 @@ const LEGACY_E2E_SHELL_ALLOWLIST = [
   "test/e2e/test-snapshot-commands.sh",
   "test/e2e/test-spark-install.sh",
   "test/e2e/test-state-backup-restore.sh",
-  "test/e2e/test-strict-tool-call-probe.sh",
   "test/e2e/test-telegram-injection.sh",
   "test/e2e/test-token-rotation.sh",
   "test/e2e/test-tunnel-lifecycle.sh",
   "test/e2e/test-upgrade-stale-sandbox.sh",
   "test/e2e/test-vm-driver-privileged-exec-routing.sh",
-  "test/e2e/test-whatsapp-qr-compact-e2e.sh",
 ];
 
 // Scheduled nightly wiring is frozen separately: retiring a nightly-wired legacy
 // script should remove it from nightly and this allowlist in the same PR that
 // deletes the script.
+const RETIRED_VM_DRIVER_PRIVEXEC_JOB = "vm-driver-privileged-exec-routing-e2e";
+const VM_DRIVER_PRIVEXEC_VITEST = "test/vm-driver-privileged-exec-routing.test.ts";
+
 const NIGHTLY_E2E_SCRIPT_ALLOWLIST = [
   "test/e2e/test-agent-turn-latency-e2e.sh",
   "test/e2e/test-bedrock-runtime-compatible-anthropic.sh",
@@ -103,7 +103,6 @@ const NIGHTLY_E2E_SCRIPT_ALLOWLIST = [
   "test/e2e/test-cron-preflight-inference-local-e2e.sh",
   "test/e2e/test-device-auth-health.sh",
   "test/e2e/test-diagnostics.sh",
-  "test/e2e/test-docs-validation.sh",
   "test/e2e/test-double-onboard.sh",
   "test/e2e/test-full-e2e.sh",
   "test/e2e/test-gpu-double-onboard.sh",
@@ -148,7 +147,6 @@ const NIGHTLY_E2E_SCRIPT_ALLOWLIST = [
   "test/e2e/test-token-rotation.sh",
   "test/e2e/test-tunnel-lifecycle.sh",
   "test/e2e/test-upgrade-stale-sandbox.sh",
-  "test/e2e/test-vm-driver-privileged-exec-routing.sh",
 ];
 
 function listLegacyE2eShellScripts(): string[] {
@@ -217,6 +215,33 @@ describe("E2E reusable workflow contract", () => {
     for (const script of nightlyScripts) {
       expect(existsSync(new URL(`../${script}`, import.meta.url)), script).toBe(true);
     }
+  });
+
+  it("keeps the unwired VM driver privileged-exec lane covered by CLI Vitest", () => {
+    const { cliCoverageShardAction } = loadE2eWorkflowContract();
+    const runStepNames = cliCoverageShardAction.runs.steps.map((step) => step.name);
+    const cliShardRunStep = cliCoverageShardAction.runs.steps.find(
+      (step) => step.name === "Run CLI coverage shard",
+    );
+
+    expect(nightlyWorkflow.jobs[RETIRED_VM_DRIVER_PRIVEXEC_JOB]).toBeUndefined();
+    expect(collectLegacyE2eShellScriptRefs(nightlyWorkflow)).not.toContain(
+      "test/e2e/test-vm-driver-privileged-exec-routing.sh",
+    );
+    expect(
+      existsSync(new URL("./e2e/test-vm-driver-privileged-exec-routing.sh", import.meta.url)),
+    ).toBe(true);
+    expect(existsSync(new URL(`../${VM_DRIVER_PRIVEXEC_VITEST}`, import.meta.url))).toBe(true);
+    expect(VM_DRIVER_PRIVEXEC_VITEST).toMatch(/^test\/.*\.test\.ts$/);
+    expect(runStepNames).toContain("Run CLI coverage shard");
+    expect(cliShardRunStep?.run?.split("\n").map((line) => line.trim())).toEqual(
+      expect.arrayContaining([
+        "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+        "npm run build:cli",
+        "npx tsx scripts/check-dist-sourcemaps.ts dist",
+        "npx vitest run --project cli \\",
+      ]),
+    );
   });
 
   it("passes only named secrets to reusable nightly jobs", () => {
@@ -309,9 +334,42 @@ describe("E2E reusable workflow contract", () => {
     expect(authStep?.run).toContain("continuing with anonymous pulls");
   });
 
+  it("runs docs validation directly through Vitest artifacts", () => {
+    const job = nightlyWorkflow.jobs["docs-validation-e2e"];
+    const checkoutStep = job.steps?.find((step) =>
+      String(step.uses ?? "").startsWith("actions/checkout@"),
+    );
+    const authStep = job.steps?.find((step) => step.name === "Authenticate to Docker Hub");
+    const installStep = job.steps?.find((step) => step.name === "Install root dependencies");
+    const setupNodeStep = job.steps?.find((step) =>
+      String(step.uses ?? "").startsWith("actions/setup-node@"),
+    );
+    const runStep = job.steps?.find((step) => step.name === "Run docs validation Vitest test");
+    const uploadStep = job.steps?.find((step) => step.name === "Upload docs validation artifacts");
+
+    expect(checkoutStep?.with?.ref).toBe("${{ inputs.target_ref || github.ref }}");
+    expect(checkoutStep?.with?.["persist-credentials"]).toBe(false);
+    expect(authStep).toBeUndefined();
+    expect(setupNodeStep?.uses).toMatch(/^actions\/setup-node@[0-9a-f]{40}$/);
+    expect(setupNodeStep?.with?.cache).toBe("npm");
+    expect(installStep?.run).toBe("npm ci --ignore-scripts");
+    expect(runStep?.run).toContain("npx vitest run --project e2e-scenarios-live");
+    expect(runStep?.run).toContain("test/e2e-scenario/live/docs-validation.test.ts");
+    expect(runStep?.run).not.toContain("test/e2e/test-docs-validation.sh");
+    expect(runStep?.env?.CHECK_DOC_LINKS_REMOTE).toBe("0");
+    expect(runStep?.env?.NEMOCLAW_RUN_E2E_SCENARIOS).toBe("1");
+    expect(runStep?.env?.E2E_ARTIFACT_DIR).toBe(
+      "${{ github.workspace }}/e2e-artifacts/vitest/docs-validation",
+    );
+    expect(uploadStep?.if).toBe("always()");
+    expect(uploadStep?.with?.path).toBe("e2e-artifacts/vitest/docs-validation/");
+    expect(uploadStep?.with?.["include-hidden-files"]).toBe(false);
+    expect(uploadStep?.with?.["if-no-files-found"]).toBe("ignore");
+    expect(uploadStep?.with?.["retention-days"]).toBe(14);
+  });
+
   it("authenticates Docker Hub pulls in direct nightly E2E jobs", () => {
     const directE2eJobs = [
-      "docs-validation-e2e",
       "openclaw-tui-chat-correlation-e2e",
       "issue-3600-gpu-proof-optional-e2e",
       "kimi-inference-compat-e2e",

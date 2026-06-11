@@ -5,23 +5,22 @@
 //
 // Called at Docker image build time. Reads NEMOCLAW_* env vars and writes:
 //   ~/.hermes/config.yaml  — Hermes configuration (immutable at runtime)
-//   ~/.hermes/.env         — Messaging token placeholders (immutable at runtime)
+//   ~/.hermes/.env         — Base environment placeholders (immutable at runtime)
 //
 // Sets what's required for Hermes to run inside OpenShell:
 //   - Model and inference endpoint (custom provider pointing at inference.local)
 //   - API server on internal port (socat forwards to public port)
-//   - Messaging platform tokens (if configured during onboard)
+//   - Base environment entries used by Hermes inside OpenShell
 //   - Agent defaults (terminal, memory, skills, display)
 
 import { readHermesBuildSettings } from "./config/build-env.ts";
-import { buildHermesConfig } from "./config/hermes-config.ts";
-import { buildMessagingEnvLines } from "./config/messaging-config.ts";
+import { buildHermesEnvLines } from "./config/hermes-env.ts";
+import { buildHermesConfig, finalizeHermesPlatformToolsets } from "./config/hermes-config.ts";
 import { discoverModelSpecificSetups } from "./config/model-specific-setup.ts";
 import { writeHermesConfigFiles } from "./config/write-config.ts";
 
 function main(): void {
   const settings = readHermesBuildSettings(process.env);
-
   discoverModelSpecificSetups(
     "hermes",
     {
@@ -37,14 +36,8 @@ function main(): void {
   );
 
   const config = buildHermesConfig(settings);
-  const envLines = buildMessagingEnvLines(
-    settings.messaging.enabledChannels,
-    settings.messaging.allowedIds,
-    settings.messaging.discordGuilds,
-    settings.messaging.wechatConfig,
-    settings.messaging.slackConfig,
-    settings.managedToolGateways.brokerEnabled ? settings.managedToolGateways.presets : [],
-  );
+  const envLines = buildHermesEnvLines(settings);
+  finalizeHermesPlatformToolsets(config, settings);
   const written = writeHermesConfigFiles(config, envLines);
 
   console.log(`[config] Wrote ${written.configPath} (model=${settings.model}, provider=custom)`);

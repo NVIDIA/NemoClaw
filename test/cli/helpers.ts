@@ -159,12 +159,31 @@ export function runWithEnv(
   env: Record<string, string | undefined> = {},
   timeout: number = execTimeout(),
 ): CliRunResult {
+  return runWithEnvInternal(args, env, timeout);
+}
+
+export function runWithInput(
+  args: string,
+  input: string,
+  env: Record<string, string | undefined> = {},
+  timeout: number = execTimeout(),
+): CliRunResult {
+  return runWithEnvInternal(args, env, timeout, input);
+}
+
+function runWithEnvInternal(
+  args: string,
+  env: Record<string, string | undefined>,
+  timeout: number,
+  input?: string,
+): CliRunResult {
   const parsedArgs = splitCliArgs(args);
   const mergeStderrOnSuccess = parsedArgs.includes("2>&1");
   const cliArgs = parsedArgs.filter((token) => token !== "2>&1");
   const result = spawnSync(process.execPath, [CLI, ...cliArgs], {
     encoding: "utf-8",
-    stdio: ["ignore", "pipe", "pipe"],
+    input,
+    stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
     timeout,
     env: {
       ...process.env,

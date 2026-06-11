@@ -125,7 +125,6 @@ describe("Gateway auth hardening: Dockerfile must not hardcode insecure auth def
     const lines = src.split("\n");
     let promoted = false;
     let inEnvBlock = false;
-    let sawGeneratorRun = false;
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       if (/^\s*FROM\b/.test(line)) {
@@ -142,7 +141,7 @@ describe("Gateway auth hardening: Dockerfile must not hardcode insecure auth def
         inEnvBlock = false;
       }
       if (
-        /^\s*RUN\b.*node\s+--experimental-strip-types\s+\/usr\/local\/lib\/nemoclaw\/generate-openclaw-config\.mts\b/.test(
+        /^\s*RUN\b.*node\s+--experimental-strip-types\s+\/scripts\/generate-openclaw-config\.mts\b/.test(
           line,
         )
       ) {
@@ -150,6 +149,6 @@ describe("Gateway auth hardening: Dockerfile must not hardcode insecure auth def
         return;
       }
     }
-    expect(sawGeneratorRun).toBeTruthy();
+    throw new Error("expected generate-openclaw-config RUN layer");
   });
 });

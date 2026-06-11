@@ -112,26 +112,34 @@ describe("runOclifArgv", () => {
 });
 
 describe("runOclifCommandById", () => {
+  let originalArgv: string[];
+
   beforeEach(() => {
     executeMock.mockReset();
     runCommandMock.mockReset();
     loadMock.mockReset();
     loadMock.mockResolvedValue(makeConfig());
+    originalArgv = process.argv;
+    process.argv = ["/usr/bin/node", "/repo/bin/nemoclaw.js", "alpha", "status"];
     process.exitCode = undefined;
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+    process.argv = originalArgv;
     process.exitCode = undefined;
   });
 
   it("loads the oclif config, applies branded bin metadata, and runs the command", async () => {
     const config = makeConfig();
     loadMock.mockResolvedValue(config);
-    runCommandMock.mockResolvedValue(undefined);
+    runCommandMock.mockImplementation(async () => {
+      expect(process.argv).toEqual(["/usr/bin/node", "/repo/bin/nemoclaw.js", "list", "--json"]);
+    });
 
     await runOclifCommandById("list", ["--json"], { rootDir: "/repo" });
 
+    expect(process.argv).toEqual(["/usr/bin/node", "/repo/bin/nemoclaw.js", "alpha", "status"]);
     expect(loadMock).toHaveBeenCalledWith("/repo");
     expect(runCommandMock).toHaveBeenCalledWith("list", ["--json"]);
     expect(config.bin).toBe("nemoclaw");
@@ -228,9 +236,13 @@ describe("runOclifCommandById", () => {
 
   it("rethrows non-parse command failures", async () => {
     const error = new Error("boom");
-    runCommandMock.mockRejectedValue(error);
+    runCommandMock.mockImplementation(async () => {
+      expect(process.argv).toEqual(["/usr/bin/node", "/repo/bin/nemoclaw.js", "list"]);
+      throw error;
+    });
 
     await expect(runOclifCommandById("list", [], { rootDir: "/repo" })).rejects.toBe(error);
+    expect(process.argv).toEqual(["/usr/bin/node", "/repo/bin/nemoclaw.js", "alpha", "status"]);
   });
 
   it("exits cleanly without rethrowing when oclif Command.exit(code) bubbles up", async () => {

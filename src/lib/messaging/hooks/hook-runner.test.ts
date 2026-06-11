@@ -33,6 +33,7 @@ describe("MessagingHookRegistry", () => {
     const registry = createBuiltInMessagingHookRegistry();
 
     expect(registry.listIds()).toEqual([
+      "common.staticOutputs",
       "common.tokenPaste",
       "common.configPrompt",
       "slack.validateCredentials",
@@ -42,6 +43,43 @@ describe("MessagingHookRegistry", () => {
       "wechat.seedOpenClawAccount",
       "wechat.healthCheck",
     ]);
+  });
+
+  it("returns declared static outputs for manifest-owned build and render hooks", async () => {
+    const registry = createBuiltInMessagingHookRegistry();
+    const hook = {
+      id: "discord-openclaw-package-install",
+      phase: "agent-install",
+      handler: "common.staticOutputs",
+      outputs: [
+        {
+          id: "openclawPluginPackage",
+          kind: "package-install",
+          required: true,
+          value: {
+            manager: "openclaw-plugin",
+            spec: "npm:@openclaw/discord@{{openclaw.version}}",
+            pin: true,
+          },
+        },
+      ],
+    } as const satisfies ChannelHookSpec;
+
+    await expect(runMessagingHook(hook, registry, { channelId: "discord" })).resolves.toEqual({
+      hookId: "discord-openclaw-package-install",
+      handlerId: "common.staticOutputs",
+      phase: "agent-install",
+      outputs: {
+        openclawPluginPackage: {
+          kind: "package-install",
+          value: {
+            manager: "openclaw-plugin",
+            spec: "npm:@openclaw/discord@{{openclaw.version}}",
+            pin: true,
+          },
+        },
+      },
+    });
   });
 
   it("registers handlers by stable handler id", async () => {

@@ -6,6 +6,7 @@ import { posix as path } from "node:path";
 import YAML from "yaml";
 
 import { redact } from "../../security/redact";
+import type { MessagingHookOutputMap } from "../hooks";
 import type {
   ChannelHookPhase,
   MessagingAgentId,
@@ -16,13 +17,12 @@ import type {
   SandboxMessagingJsonRenderPlan,
   SandboxMessagingPlan,
 } from "../manifest";
-import type { MessagingHookOutputMap } from "../hooks";
+import { enabledPlanChannels, filterEnabledPlanEntries } from "./plan-filter";
 import type {
   MessagingHookApplyRequest,
   MessagingHookApplyRunner,
   MessagingOpenShellRunner,
 } from "./types";
-import { enabledPlanChannels, filterEnabledPlanEntries } from "./plan-filter";
 
 const AGENT_CONFIG_HOOK_PHASES = new Set<ChannelHookPhase>(["apply", "post-agent-install"]);
 
@@ -74,7 +74,7 @@ export async function applyAgentConfigAtOpenShell(
     const existing = readSandboxFile(plan.sandboxName, resolvedTarget, options.runOpenshell);
     const contents =
       kind === "json-fragment"
-        ? applyJsonFragments(existing, render.filter(isJsonRender), resolvedTarget)
+        ? applyJsonFragments(plan, existing, render.filter(isJsonRender), resolvedTarget)
         : applyEnvLines(existing, render.filter(isEnvLinesRender));
     writeSandboxFile(plan.sandboxName, resolvedTarget, contents, options.runOpenshell);
     appliedTargets.push(resolvedTarget);
@@ -198,16 +198,22 @@ function isEnvLinesRender(
 }
 
 function applyJsonFragments(
+  plan: SandboxMessagingPlan,
   existing: string | undefined,
   render: readonly SandboxMessagingJsonRenderPlan[],
   target: string,
 ): string {
   const format = target.endsWith(".yaml") || target.endsWith(".yml") ? "yaml" : "json";
   const root = parseStructuredConfig(existing, target, format);
+  const rules = credentialPlaceholderRules(plan);
   for (const entry of render) {
-    setJsonPath(root, entry.path, entry.value);
+    setJsonPath(
+      root,
+      entry.path,
+      preserveCredentialPlaceholders(entry.value, getJsonPath(root, entry.path), rules),
+    );
   }
-  return format === "yaml" ? YAML.stringify(root) : `${JSON.stringify(root, null, 2)}\n`;
+  return format === "yaml" ? YAML.stringify(root) : JSON.stringify(root, null, 2) + "\n";
 }
 
 function parseStructuredConfig(
@@ -221,6 +227,86 @@ function parseStructuredConfig(
     throw new Error(`Messaging agent config target ${target} must contain an object.`);
   }
   return parsed as Record<string, MessagingSerializableValue>;
+}
+
+type CredentialPlaceholderRule = {
+  readonly envKey: string;
+  readonly placeholder: string;
+};
+
+function credentialPlaceholderRules(plan: SandboxMessagingPlan): CredentialPlaceholderRule[] {
+  const active = new Set(enabledPlanChannels(plan).map((channel) => channel.channelId));
+  return plan.credentialBindings.flatMap((binding) => {
+    if (!active.has(binding.channelId)) return [];
+    if (typeof binding.providerEnvKey !== "string" || typeof binding.placeholder !== "string") {
+      return [];
+    }
+    return [{ envKey: binding.providerEnvKey, placeholder: binding.placeholder }];
+  });
+}
+
+function preserveCredentialPlaceholders(
+  desired: MessagingSerializableValue,
+  existing: unknown,
+  rules: readonly CredentialPlaceholderRule[],
+): MessagingSerializableValue {
+  if (typeof desired === "string") {
+    const rule = rules.find((candidate) => candidate.placeholder === desired);
+    if (
+      rule &&
+      typeof existing === "string" &&
+      isProviderPlaceholderForEnvKey(existing, rule.envKey)
+    ) {
+      return existing;
+    }
+    return desired;
+  }
+  if (Array.isArray(desired)) {
+    return desired.map((entry, index) =>
+      preserveCredentialPlaceholders(
+        entry,
+        Array.isArray(existing) ? existing[index] : undefined,
+        rules,
+      ),
+    );
+  }
+  if (isObject(desired)) {
+    const existingObject = isObject(existing) ? existing : {};
+    return Object.fromEntries(
+      Object.entries(desired).map(([key, value]) => [
+        key,
+        preserveCredentialPlaceholders(value, existingObject[key], rules),
+      ]),
+    );
+  }
+  return desired;
+}
+
+function getJsonPath(root: Record<string, MessagingSerializableValue>, pathValue: string): unknown {
+  let cursor: unknown = root;
+  for (const segment of pathValue.split(".").filter(Boolean)) {
+    if (!isObject(cursor)) return undefined;
+    cursor = cursor[segment];
+  }
+  return cursor;
+}
+
+function isProviderPlaceholderForEnvKey(value: string, envKey: string): boolean {
+  const openShellPrefix = "openshell:resolve:env:";
+  if (value.startsWith(openShellPrefix)) {
+    return placeholderSuffixMatchesEnvKey(value.slice(openShellPrefix.length), envKey);
+  }
+  const aliasPrefix = "-OPENSHELL-RESOLVE-ENV-";
+  const aliasIndex = value.indexOf(aliasPrefix);
+  return aliasIndex > 0
+    ? placeholderSuffixMatchesEnvKey(value.slice(aliasIndex + aliasPrefix.length), envKey)
+    : false;
+}
+
+function placeholderSuffixMatchesEnvKey(suffix: string, envKey: string): boolean {
+  if (suffix === envKey) return true;
+  const revisionPrefix = suffix.match(/^v[0-9]+_/);
+  return revisionPrefix ? suffix.slice(revisionPrefix[0].length) === envKey : false;
 }
 
 function setJsonPath(
@@ -246,6 +332,14 @@ function setJsonPath(
   }
   const finalSegment = segments[segments.length - 1] as string;
   assertSafeObjectKey(finalSegment, "Messaging render path");
+  const existing = cursor[finalSegment];
+  if (isObject(existing) && isObject(value)) {
+    mergeObjects(
+      existing as Record<string, MessagingSerializableValue>,
+      value as Record<string, MessagingSerializableValue>,
+    );
+    return;
+  }
   cursor[finalSegment] = value;
 }
 

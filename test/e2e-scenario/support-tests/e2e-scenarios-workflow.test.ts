@@ -83,6 +83,35 @@ jobs:
           path: .e2e/openshell-version-pin/
           include-hidden-files: true
           if-no-files-found: error
+  onboard-negative-paths-vitest:
+    runs-on: ubuntu-latest
+    needs: generate-matrix
+    if: \${{ inputs.scenarios != '' }}
+    env:
+      E2E_ARTIFACT_DIR: \${{ github.workspace }}/.e2e/onboard-negative-paths
+      NEMOCLAW_RUN_E2E_SCENARIOS: "0"
+      NVIDIA_API_KEY: \${{ secrets.NVIDIA_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        env:
+          NVIDIA_API_KEY: \${{ secrets.NVIDIA_API_KEY }}
+      - name: Install root dependencies
+        run: npm install
+      - name: Run onboard negative-paths live test
+        env:
+          NVIDIA_API_KEY: \${{ secrets.NVIDIA_API_KEY }}
+        run: npx vitest run --project e2e-scenarios-live "\${{ inputs.test_filter }}"
+      - name: Upload onboard negative-paths artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: onboard-negative-paths
+          path: .e2e/onboard-negative-paths/
+          include-hidden-files: true
+          if-no-files-found: error
 `,
     );
 
@@ -143,6 +172,25 @@ jobs:
           "openshell-version-pin-vitest artifact upload must set include-hidden-files: false",
           "openshell-version-pin-vitest artifact upload must ignore missing fixture artifacts",
           "openshell-version-pin-vitest artifact upload retention-days must be 14",
+          "onboard-negative-paths-vitest job must run independently of generate-matrix",
+          "onboard-negative-paths-vitest job must run independently of workflow dispatch scenario filters",
+          "onboard-negative-paths-vitest job must set NEMOCLAW_RUN_E2E_SCENARIOS=1",
+          "onboard-negative-paths-vitest job must write artifacts under e2e-artifacts/vitest/onboard-negative-paths",
+          "onboard-negative-paths-vitest job env must not include NVIDIA_API_KEY",
+          "onboard-negative-paths-vitest checkout action must be pinned to a full commit SHA",
+          "onboard-negative-paths-vitest checkout step must set persist-credentials=false",
+          "onboard-negative-paths-vitest step 'Set up Node' env must not include NVIDIA_API_KEY",
+          "onboard-negative-paths-vitest setup-node action must be pinned to a full commit SHA",
+          "onboard-negative-paths-vitest job missing step: Build CLI",
+          "onboard-negative-paths-vitest step 'Run onboard negative-paths live test' env must not include NVIDIA_API_KEY",
+          "step 'Run onboard negative-paths live test' run script must not interpolate dispatch inputs directly",
+          "step 'Run onboard negative-paths live test' run script must include test/e2e-scenario/live/onboard-negative-paths.test.ts",
+          "onboard-negative-paths-vitest upload-artifact action must be pinned to a full commit SHA",
+          "onboard-negative-paths-vitest artifact upload name must be stable",
+          "artifact upload path must include e2e-artifacts/vitest/onboard-negative-paths/",
+          "onboard-negative-paths-vitest artifact upload must set include-hidden-files: false",
+          "onboard-negative-paths-vitest artifact upload must ignore missing fixture artifacts",
+          "onboard-negative-paths-vitest artifact upload retention-days must be 14",
         ]),
       );
     } finally {

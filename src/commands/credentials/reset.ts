@@ -25,6 +25,7 @@ export default class CredentialsResetCommand extends NemoClawCommand {
     provider: Args.string({
       name: "PROVIDER",
       description: "OpenShell provider name",
+      ignoreStdin: true,
       required: true,
     }),
   };
