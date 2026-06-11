@@ -72,6 +72,13 @@ function isExternalAgentVerificationFlake(text: string): boolean {
   );
 }
 
+function isExternalProviderValidationFailure(text: string): boolean {
+  return (
+    /NVIDIA Endpoints endpoint validation failed/i.test(text) &&
+    /HTTP 429|rate limit|quota|temporarily unavailable|timed out|timeout/i.test(text)
+  );
+}
+
 function agentSectionContainsToken(agentOutput: string): boolean {
   const match = agentOutput.match(/--- agent stdout\/stderr[\s\S]*?--- end ---/);
   if (!match) return false;
@@ -231,7 +238,17 @@ runSkillAgentTest(
         timeoutMs: ONBOARD_TIMEOUT_MS,
       },
     );
-    expect(onboard.exitCode, resultText(onboard)).toBe(0);
+    const onboardText = resultText(onboard);
+    if (onboard.exitCode !== 0 && isExternalProviderValidationFailure(onboardText)) {
+      await artifacts.writeJson("scenario-result.json", {
+        id: "skill-agent",
+        status: "skipped",
+        reason: "external-provider-validation-unavailable-before-sandbox-skill-check",
+        onboardExitCode: onboard.exitCode,
+      });
+      skip("NVIDIA endpoint validation was unavailable/rate-limited during onboarding");
+    }
+    expect(onboard.exitCode, onboardText).toBe(0);
 
     const addSkill = await host.command("bash", [ADD_SKILL_SCRIPT], {
       artifactName: "add-sandbox-skill-fixture",
