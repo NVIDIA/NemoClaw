@@ -55,7 +55,6 @@ import {
   MessagingWorkflowPlanner,
   toMessagingAgentId,
 } from "../../messaging";
-import { hydrateMessagingChannelConfig } from "../../messaging-channel-config";
 import { pruneDisabledMessagingPolicyPresets } from "../../onboard/messaging-policy-presets";
 import {
   captureSandboxListWithGatewayRecovery,
@@ -200,7 +199,6 @@ async function stageMessagingManifestPlanForRebuild(
 ): Promise<SandboxMessagingPlan | null> {
   const agent = loadAgent(rebuildAgent || "openclaw");
   const planner = new MessagingWorkflowPlanner(createBuiltInChannelManifestRegistry());
-  hydrateMessagingChannelConfig(sandboxEntry.messagingChannelConfig);
   const plan = await planner.buildRebuildPlanFromSandboxEntry({
     sandboxName,
     agent: toMessagingAgentId(agent),

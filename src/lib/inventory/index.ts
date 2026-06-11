@@ -120,7 +120,7 @@ export interface ShowStatusCommandDeps {
    */
   getGatewayHealth?: () => GatewayHealth;
   checkMessagingBridgeHealth?: (sandboxName: string, channels: string[]) => MessagingBridgeHealth[];
-  backfillAndFindOverlaps?: () => MessagingOverlap[];
+  findMessagingOverlaps?: () => MessagingOverlap[];
   readGatewayLog?: (sandboxName: string) => string | null;
   log?: (message?: string) => void;
 }
@@ -474,8 +474,8 @@ export function showStatusCommand(deps: ShowStatusCommandDeps): void {
 
   deps.showServiceStatus({ sandboxName: resolvedDefault || undefined });
 
-  if (deps.backfillAndFindOverlaps) {
-    const overlaps = deps.backfillAndFindOverlaps();
+  if (deps.findMessagingOverlaps) {
+    const overlaps = deps.findMessagingOverlaps();
     if (overlaps.length > 0) {
       log("");
       for (const { channel, sandboxes: pair, reason } of overlaps) {

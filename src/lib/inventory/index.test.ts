@@ -428,9 +428,9 @@ describe("inventory commands", () => {
     expect(lines.some((l) => l.includes("degraded"))).toBe(false);
   });
 
-  it("prints a cross-sandbox overlap warning when backfillAndFindOverlaps reports overlaps", () => {
+  it("prints a cross-sandbox overlap warning when findMessagingOverlaps reports overlaps", () => {
     const lines: string[] = [];
-    const backfillAndFindOverlaps = vi
+    const findMessagingOverlaps = vi
       .fn()
       .mockReturnValue([
         { channel: "telegram", sandboxes: ["alice", "bob"], reason: "matching-token" },
@@ -445,11 +445,11 @@ describe("inventory commands", () => {
       }),
       getLiveInference: () => null,
       showServiceStatus: vi.fn(),
-      backfillAndFindOverlaps,
+      findMessagingOverlaps,
       log: (message = "") => lines.push(message),
     });
 
-    expect(backfillAndFindOverlaps).toHaveBeenCalled();
+    expect(findMessagingOverlaps).toHaveBeenCalled();
     expect(
       lines.some((l) => l.includes("'alice' and 'bob' share the same telegram credential")),
     ).toBe(true);
@@ -457,7 +457,7 @@ describe("inventory commands", () => {
 
   it("defaults missing overlap reason to the conservative warning", () => {
     const lines: string[] = [];
-    const backfillAndFindOverlaps = vi
+    const findMessagingOverlaps = vi
       .fn()
       .mockReturnValue([{ channel: "telegram", sandboxes: ["alice", "bob"] }]);
     showStatusCommand({
@@ -470,7 +470,7 @@ describe("inventory commands", () => {
       }),
       getLiveInference: () => null,
       showServiceStatus: vi.fn(),
-      backfillAndFindOverlaps,
+      findMessagingOverlaps,
       log: (message = "") => lines.push(message),
     });
 
@@ -485,7 +485,7 @@ describe("inventory commands", () => {
 
   it("marks a shared-gateway Slack Socket Mode overlap as conflicted (#4953)", () => {
     const lines: string[] = [];
-    const backfillAndFindOverlaps = vi
+    const findMessagingOverlaps = vi
       .fn()
       .mockReturnValue([
         { channel: "slack", sandboxes: ["alice", "bob"], reason: "slack-socket-mode-gateway" },
@@ -493,14 +493,14 @@ describe("inventory commands", () => {
     showStatusCommand({
       listSandboxes: () => ({
         sandboxes: [
-          { name: "alice", model: "m", messagingChannels: ["slack"] },
-          { name: "bob", model: "m", messagingChannels: ["slack"] },
+          { name: "alice", model: "m", messaging: messagingState("alice", ["slack"]) },
+          { name: "bob", model: "m", messaging: messagingState("bob", ["slack"]) },
         ],
         defaultSandbox: "alice",
       }),
       getLiveInference: () => null,
       showServiceStatus: vi.fn(),
-      backfillAndFindOverlaps,
+      findMessagingOverlaps,
       log: (message = "") => lines.push(message),
     });
 

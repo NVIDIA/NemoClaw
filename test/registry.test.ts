@@ -237,8 +237,9 @@ describe("registry", () => {
 
     const sb = registry.getSandbox("messaging");
     expect(sb.messaging).toEqual({ schemaVersion: 1, plan });
-    expect(sb.messagingChannels).toBeUndefined();
-    expect(sb.messagingChannelConfig).toBeUndefined();
+    const rawSandbox = sb as unknown as Record<string, unknown>;
+    expect(rawSandbox.messagingChannels).toBeUndefined();
+    expect(rawSandbox.messagingChannelConfig).toBeUndefined();
     expect(registry.getConfiguredMessagingChannels("messaging")).toEqual(["telegram"]);
     const data = JSON.parse(fs.readFileSync(regFile, "utf-8"));
     expect(data.sandboxes.messaging.messaging).toEqual({ schemaVersion: 1, plan });

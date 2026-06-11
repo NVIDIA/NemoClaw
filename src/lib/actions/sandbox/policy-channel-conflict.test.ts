@@ -636,7 +636,7 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
     const slackBot = "xoxb-alpha-bot-token";
     const slackApp = "xapp-alpha-app-token";
     arrangeRegistry({
-      current: { name: "alpha", messagingChannels: [] } as SandboxEntry,
+      current: { name: "alpha" } as SandboxEntry,
       // bob holds Slack on the default gateway with entirely different tokens —
       // the credential axis would NOT flag this, but the gateway axis must.
       others: [
@@ -676,7 +676,7 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
     const slackBot = "xoxb-shared-bot-token";
     const slackApp = "xapp-shared-app-token";
     arrangeRegistry({
-      current: { name: "alpha", messagingChannels: [] } as SandboxEntry,
+      current: { name: "alpha" } as SandboxEntry,
       others: [
         makePlanEntry("bob", "slack", [
           { providerEnvKey: "SLACK_BOT_TOKEN", credentialHash: hashCredential(slackBot) as string },
@@ -714,7 +714,7 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
     ]);
     (bob as { gatewayName?: string }).gatewayName = "nemoclaw-9090";
     arrangeRegistry({
-      current: { name: "alpha", messagingChannels: [] } as SandboxEntry,
+      current: { name: "alpha" } as SandboxEntry,
       others: [bob],
     });
     getCredentialMock.mockImplementation((key: string) =>
@@ -735,7 +735,7 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
   });
 
   it("slack: a gateway conflict-detection failure is fail-soft, not a crash (#4953)", async () => {
-    arrangeRegistry({ current: { name: "alpha", messagingChannels: [] } as SandboxEntry });
+    arrangeRegistry({ current: { name: "alpha" } as SandboxEntry });
     // Simulate a malformed registry read: listSandboxes throws. The Slack
     // gateway lookup must swallow it (best-effort warning) rather than crash
     // the add or bypass the downstream guarded credential check.

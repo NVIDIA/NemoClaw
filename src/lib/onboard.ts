@@ -406,7 +406,7 @@ const {
 } = messagingConfig;
 const messagingPlanSession: typeof import("./onboard/messaging-plan-session") =
   require("./onboard/messaging-plan-session");
-const { getChannelsFromPlan, getMessagingChannelConfigFromPlan } = messagingPlanSession;
+const { getChannelsFromPlan } = messagingPlanSession;
 const messagingPrep: typeof import("./onboard/messaging-prep") = require("./onboard/messaging-prep");
 const sandboxAgent: typeof import("./onboard/sandbox-agent") = require("./onboard/sandbox-agent");
 const sandboxLifecycle: typeof import("./onboard/sandbox-lifecycle") = require("./onboard/sandbox-lifecycle");
@@ -2606,9 +2606,6 @@ async function createSandbox(
     currentPlan,
     currentSandboxDisabledChannels: disabledChannels,
     registry,
-    checkGatewayLiveness: () =>
-      runOpenshell(["sandbox", "list"], { ignoreError: true, suppressOutput: true }).status === 0,
-    providerExists: (name) => providerExistsInGateway(name),
     isNonInteractive,
     promptContinue: () => promptYesNoOrDefault("  Continue anyway?", null, false),
     cliName,
@@ -3052,10 +3049,7 @@ async function createSandbox(
   const plannedMessagingState =
     envMessagingState?.plan.sandboxName === sandboxName ? envMessagingState : undefined;
   const plannedMessagingPlan = plannedMessagingState?.plan;
-  const messagingChannelConfig = getMessagingChannelConfigFromPlan(plannedMessagingPlan);
-  // Telegram mention-only mode — parity with Discord's requireMention.
-  // Off by default so existing sandboxes behave the same; opt-in via
-  // TELEGRAM_REQUIRE_MENTION=1 or the interactive prompt. See #1737.
+  // Telegram mention-only mode; off unless enabled by TELEGRAM_REQUIRE_MENTION or prompt.
   const telegramConfig: { requireMention?: boolean } = {};
   const configuredMessagingChannels =
     getChannelsFromPlan(plannedMessagingPlan) ??
@@ -3396,16 +3390,7 @@ async function createSandbox(
     imageTag: resolvedImageTag,
     providerCredentialHashes,
     appliedPolicies: initialSandboxPolicy.appliedPresets,
-    // Persist the operator's configured channel set, not the post-disabled-filter
-    // active set. After `channels stop X` + rebuild, activeMessagingChannels drops
-    // X, but X is still configured — losing it here means a later `channels start
-    // X` has nothing to re-enable (the next rebuild sees an empty channel set and
-    // never reattaches the gateway bridge). See #3381.
-    configuredMessagingChannels,
-    activeMessagingChannels,
-    messagingChannelConfig,
     plannedMessagingState,
-    disabledChannels,
     hermesToolGateways,
     hermesDashboardState: finalHermesDashboardState,
     dashboardPort: actualDashboardPort,
