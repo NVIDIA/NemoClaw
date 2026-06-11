@@ -274,13 +274,12 @@ jobs:
         run: npm run build:cli
 
       - name: Run inference routing live test
-        env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
         # Direct Vitest coverage for test/e2e/test-inference-routing.sh. The
-        # always-on slices prove invalid-key classification, unreachable
-        # endpoint classification, and NVIDIA credential isolation; optional
-        # third-party provider smokes stay skipped unless their secrets are
-        # explicitly enabled by a future workflow.
+        # always-on PR-safe slices prove invalid-key and unreachable-endpoint
+        # classification/cleanup without spending live provider quota; real
+        # NVIDIA credential isolation and third-party provider smokes stay
+        # skipped unless their secrets are explicitly supplied by a future
+        # workflow.
         run: |
           set -euo pipefail
           npx vitest run --project e2e-scenarios-live \
