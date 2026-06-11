@@ -133,14 +133,17 @@ describe("OpenClaw doctor mutable-perms patch", () => {
     }
   });
 
-  it("is a no-op when no doctor state-integrity module is present", () => {
+  it("fails closed when no doctor state-integrity module is present (dist drift)", () => {
+    // The doctor module is core OpenClaw and always present where this patch
+    // runs; an absent module means dist drift, so a silent no-op would ship an
+    // unpatched image. Fail closed instead.
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-doctor-perms-none-"));
     fs.mkdirSync(path.join(tmp, "dist"), { recursive: true });
     fs.writeFileSync(path.join(tmp, "dist", "unrelated.js"), "export const x = 1;\n");
     try {
       const patch = runPatch(path.join(tmp, "dist"));
-      expect(patch.status, `${patch.stdout}${patch.stderr}`).toBe(0);
-      expect(patch.stdout).toContain("no OpenClaw doctor state-integrity module found");
+      expect(patch.status).toBe(1);
+      expect(patch.stderr).toContain("no OpenClaw doctor state-integrity module found");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

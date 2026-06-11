@@ -44,9 +44,10 @@
  *
  * The patch classifies the compiled OpenClaw dist by content signature, requires
  * exactly the two reviewed `(stat.mode & 63) !== 0` permission gates in the
- * doctor state-integrity module, and fails loudly when the shape is unrecognized
- * rather than silently leaving the sandbox unpatched. It is idempotent and a
- * no-op when no matching module is present.
+ * doctor state-integrity module, and fails loudly (non-zero) when the shape is
+ * unrecognized OR no module is found — rather than silently leaving the sandbox
+ * unpatched, since the doctor module is core OpenClaw and always present where
+ * this runs. It is idempotent across re-runs.
  *
  * Removal criteria: drop when OpenClaw's doctor recognizes a group-shared state
  * layout (or exposes config to opt out of the 700/600 enforcement), so the
@@ -153,11 +154,17 @@ function patchDoctorModule(file: string): boolean {
 
 const modules = locateDoctorModules(dirs);
 if (modules.length === 0) {
-  console.log(
-    `INFO: no OpenClaw doctor state-integrity module found under ${dirs.join(", ")}; ` +
-      "skipping mutable-perms doctor patch",
+  // Fail closed. The doctor state-integrity module is core OpenClaw and is
+  // always present wherever this patch runs (the OpenClaw runtime dist). An
+  // absent module means the dist shape/path drifted, so a silent no-op would
+  // ship an image whose `doctor --fix` resumes tightening the NemoClaw mutable
+  // contract back to 700/600 (#4538, #4859) — the exact regression this patch
+  // prevents. Stop the build and force a re-review instead, matching the
+  // fetch-guard patches' "fail on unknown OpenClaw dist shape" stance.
+  fail(
+    `no OpenClaw doctor state-integrity module found under ${dirs.join(", ")}; ` +
+      "the OpenClaw dist shape may have drifted — re-review this patch for the new layout",
   );
-  process.exit(0);
 }
 
 const patchedFiles: string[] = [];
