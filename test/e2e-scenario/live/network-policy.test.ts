@@ -42,6 +42,11 @@ const SANDBOX_EXEC_TIMEOUT_MS = 120_000;
 const PACKAGE_MANAGER_TIMEOUT_MS = 5 * 60_000;
 const POLICY_SETTLE_MS =
   process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true" ? 5_000 : 3_000;
+const ONBOARD_ATTEMPTS = process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true" ? 3 : 1;
+const TRANSIENT_PROVIDER_VALIDATION_RE =
+  /endpoint validation failed|failed to verify inference endpoint|Chat Completions API validation/i;
+const TRANSIENT_PROVIDER_DETAIL_RE =
+  /timed? out|timeout|curl failed \(exit (7|28|35|52|56)\)|ETIMEDOUT|ECONNRESET|EAI_AGAIN|ENOTFOUND|failed to connect|error sending request|HTTP (429|502|503|504)|returned HTTP (429|502|503|504)|temporar/i;
 
 type NemoEnv = NodeJS.ProcessEnv;
 
@@ -60,6 +65,11 @@ function baseEnv(extra: NemoEnv = {}): NemoEnv {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isTransientProviderValidationFailure(result: ShellProbeResult): boolean {
+  const output = text(result);
+  return TRANSIENT_PROVIDER_VALIDATION_RE.test(output) && TRANSIENT_PROVIDER_DETAIL_RE.test(output);
 }
 
 async function runNemoclaw(
@@ -413,23 +423,50 @@ RUN_NETWORK_POLICY_TEST(
       timeoutMs: 120_000,
     });
 
-    const onboard = await runNemoclaw(
-      host,
-      ["onboard", "--non-interactive", "--yes-i-accept-third-party-software"],
-      {
-        artifactName: "onboard-restricted-network-policy",
-        env: baseEnv({
-          NVIDIA_API_KEY: apiKey,
-          NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
-          NEMOCLAW_RECREATE_SANDBOX: "1",
-          NEMOCLAW_POLICY_TIER: "restricted",
-          NEMOCLAW_WEB_SEARCH_ENABLED: "1",
-        }),
-        redactionValues: [apiKey],
-        timeoutMs: ONBOARD_TIMEOUT_MS,
-      },
-    );
-    expect(onboard.exitCode, text(onboard)).toBe(0);
+    let onboard: ShellProbeResult | null = null;
+    for (let attempt = 1; attempt <= ONBOARD_ATTEMPTS; attempt += 1) {
+      if (attempt > 1) {
+        await runNemoclaw(host, [SANDBOX_NAME, "destroy", "--yes"], {
+          artifactName: `pre-cleanup-nemoclaw-destroy-network-policy-attempt-${attempt}`,
+          env: baseEnv(),
+          timeoutMs: 120_000,
+        });
+      }
+
+      onboard = await runNemoclaw(
+        host,
+        ["onboard", "--non-interactive", "--yes-i-accept-third-party-software"],
+        {
+          artifactName:
+            attempt === 1
+              ? "onboard-restricted-network-policy"
+              : `onboard-restricted-network-policy-attempt-${attempt}`,
+          env: baseEnv({
+            NVIDIA_API_KEY: apiKey,
+            NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
+            NEMOCLAW_RECREATE_SANDBOX: "1",
+            NEMOCLAW_POLICY_TIER: "restricted",
+            NEMOCLAW_WEB_SEARCH_ENABLED: "1",
+          }),
+          redactionValues: [apiKey],
+          timeoutMs: ONBOARD_TIMEOUT_MS,
+        },
+      );
+      if (onboard.exitCode === 0) {
+        break;
+      }
+      if (isTransientProviderValidationFailure(onboard) && attempt < ONBOARD_ATTEMPTS) {
+        await sleep(10_000 * attempt);
+        continue;
+      }
+      if (isTransientProviderValidationFailure(onboard) && process.env.GITHUB_ACTIONS === "true") {
+        skip(
+          `NVIDIA Endpoints validation hit a transient upstream/rate-limit failure after ${ONBOARD_ATTEMPTS} attempts`,
+        );
+      }
+      break;
+    }
+    expect(onboard?.exitCode, onboard ? text(onboard) : "onboard did not run").toBe(0);
 
     const denyDefault = await fetchStatus(
       sandbox,
