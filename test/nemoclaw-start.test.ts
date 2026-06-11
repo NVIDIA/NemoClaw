@@ -961,12 +961,20 @@ exit 1
         expect(fs.readFileSync(setup.commandLog, "utf-8")).toContain(
           "ARGS=devices approve request-1 --json URL=unset PORT=unset TOKEN=unset",
         );
-        expect(paired["device-1"].approvedScopes).toEqual(
-          shouldRecover
-            ? ["operator.pairing", "operator.read", "operator.write"]
-            : ["operator.pairing"],
-        );
+        const expectedScopes = shouldRecover
+          ? ["operator.pairing", "operator.read", "operator.write"]
+          : ["operator.pairing"];
+        for (const scopes of [
+          paired["device-1"].approvedScopes,
+          paired["device-1"].scopes,
+          paired["device-1"].tokens.operator.scopes,
+        ]) {
+          expect(scopes).toEqual(expectedScopes);
+        }
         expect(JSON.stringify(paired)).not.toContain("operator.admin");
+        expect(shouldRecover ? pending : pending.replacement.requestId).toEqual(
+          shouldRecover ? {} : "replacement-1",
+        );
         expect(
           shouldRecover ? JSON.parse(result.stdout).compatibility : pending.replacement.requestId,
         ).toBe(shouldRecover ? "openclaw-approve-recovered-replacement" : "replacement-1");
