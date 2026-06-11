@@ -543,11 +543,11 @@ hello
     ).resolves.toBe("403");
 
     const slackBefore = await fetchStatus(sandbox, "https://slack.com/", "tc-net-03-slack-before");
-    expect(slackBefore).not.toMatch(/STATUS_[23][0-9][0-9]/);
+    expect(slackBefore).toMatch(/STATUS_403/);
     const slackApply = await applyPresetInteractively(host, "slack");
     expect(slackApply.exitCode, text(slackApply)).toBe(0);
     const slackAfter = await fetchStatus(sandbox, "https://slack.com/", "tc-net-03-slack-after");
-    expect(slackAfter).toMatch(/STATUS_[2-4][0-9][0-9]/);
+    expect(slackAfter).toMatch(/STATUS_200/);
 
     const atlassianBefore = await fetchStatus(
       sandbox,
