@@ -71,6 +71,16 @@ function expectExitZero(result: ShellProbeResult, label: string): void {
   expect(result.exitCode, `${label} failed:\n${resultText(result)}`).toBe(0);
 }
 
+function isRetryableOnboardEndpointFailure(result: ShellProbeResult): boolean {
+  const text = resultText(result);
+  return (
+    /endpoint validation failed|Chat Completions API validation/i.test(text) &&
+    /HTTP 429|timed? out|timeout|ETIMEDOUT|ECONNRESET|EAI_AGAIN|ENOTFOUND|502|503|504|temporar/i.test(
+      text,
+    )
+  );
+}
+
 function readJsonFile<T>(file: string, fallback: T): T {
   if (!fs.existsSync(file)) return fallback;
   return JSON.parse(fs.readFileSync(file, "utf8")) as T;
@@ -392,14 +402,27 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       redactionValues: [apiKey],
       timeoutMs: ONBOARD_TIMEOUT_MS,
     });
-    expectExitZero(onboard, "initial current onboard");
+    if (onboard.exitCode !== 0) {
+      if (!isRetryableOnboardEndpointFailure(onboard)) {
+        expectExitZero(onboard, "initial current onboard");
+      }
+      const gatewayProbe = await sandbox.list({
+        artifactName: "phase-1-gateway-after-onboard-endpoint-transient",
+        env: dockerContextEnv(),
+        timeoutMs: OPENSHELL_TIMEOUT_MS,
+      });
+      expectExitZero(gatewayProbe, "OpenShell gateway after tolerated onboard endpoint transient");
+      await artifacts.writeJson("phase-1-onboard-transient-summary.json", {
+        tolerated: true,
+        reason: "retryable endpoint validation failure after gateway/provider setup",
+      });
+    }
 
-    const deleteCurrentSandbox = await sandbox.openshell(["sandbox", "delete", SANDBOX_NAME], {
-      artifactName: "phase-1-delete-current-sandbox",
-      env: dockerContextEnv(),
-      timeoutMs: OPENSHELL_TIMEOUT_MS,
-    });
-    expectExitZero(deleteCurrentSandbox, "openshell sandbox delete current sandbox");
+    await openshellBestEffort(
+      host,
+      ["sandbox", "delete", SANDBOX_NAME],
+      "phase-1-delete-current-sandbox",
+    );
 
     // Phase 2: build the old base image with a temporary build context that
     // lowers only the blueprint minimum-version gate consumed by Dockerfile.base.
