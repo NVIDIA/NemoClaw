@@ -10,12 +10,23 @@
  * same host therefore had to share that tree even when the user wanted full
  * segregation (billing isolation, A/B model testing, multi-tenant POCs).
  *
- * `NEMOCLAW_INSTANCE` makes the instance identity configurable. The default
- * instance keeps every existing on-disk path and gateway name verbatim so
- * single-instance deployments are unaffected; a non-default instance gets a
- * suffixed state root, credentials directory, rebuild-backups directory,
- * local-adapter state directory, and gateway name so the migrated surfaces
- * stay segregated.
+ * `NEMOCLAW_INSTANCE` makes the instance identity configurable. The fallback
+ * chain has two layers:
+ *
+ *   1. When `NEMOCLAW_INSTANCE` is unset or empty, the default instance is
+ *      selected, every existing on-disk path resolves to `~/.nemoclaw`, and
+ *      the gateway name stays at the bare `nemoclaw` — single-instance
+ *      deployments observe no change after upgrading.
+ *   2. With the default instance still selected, a non-default
+ *      `NEMOCLAW_GATEWAY_PORT` produces a `nemoclaw-<port>` gateway that
+ *      segregates from the bare default at the gateway-binding layer alone.
+ *      This port-derived form is the implicit fallback identity when the
+ *      bare `nemoclaw` gateway is already occupied.
+ *
+ * Setting `NEMOCLAW_INSTANCE` to a non-default value overrides both layers
+ * with a named instance: the state root, credentials directory,
+ * rebuild-backups directory, local-adapter state directory, and gateway name
+ * all gain an `<instance>` suffix so the migrated surfaces stay segregated.
  *
  * Scope of segregation in this groundwork: NemoClaw home directory, gateway
  * binding (name, state dir, compat container), credentials store, rebuild

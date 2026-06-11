@@ -5,7 +5,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { DEFAULT_NEMOCLAW_INSTANCE, parseInstanceName } from "../../../dist/lib/core/instance";
 import { DEFAULT_GATEWAY_PORT } from "../../../dist/lib/core/ports";
 import { buildDockerDriverGatewayLaunch } from "../../../dist/lib/onboard/docker-driver-gateway-launch";
 import {
@@ -22,6 +23,10 @@ import {
   resolveGatewayName,
   resolveGatewayStateDirName,
 } from "../../../dist/lib/onboard/gateway-binding";
+import {
+  BASE_NEMOCLAW_HOME_DIR_NAME,
+  resolveNemoclawHomeDir,
+} from "../../../dist/lib/state/paths";
 
 describe("gateway-binding resolver (#4422)", () => {
   const DEFAULT_INSTANCE = "default";
@@ -112,6 +117,63 @@ describe("gateway-binding resolver factors NEMOCLAW_INSTANCE (#3053)", () => {
     expect(composed).toBe("nemoclaw-agent-a-8081");
     expect(portLikeTail).toBe("nemoclaw-agent-a-8081");
     // parseInstanceName() refuses "agent-a-8081" — see src/lib/core/instance.test.ts.
+  });
+});
+
+// Confirms the standing fallback contract: an unset NEMOCLAW_INSTANCE must
+// resolve to the bare `nemoclaw` identity on the default gateway port, and
+// to `nemoclaw-<port>` when only NEMOCLAW_GATEWAY_PORT is supplied. The
+// port-derived form is the implicit fallback identity when the bare default
+// is already occupied — users opting out of the new env var still get a
+// distinct gateway by varying the port alone.
+describe("default and port-based fallback identity chain", () => {
+  const ENV_KEY = "TEST_NEMOCLAW_INSTANCE_FALLBACK";
+
+  beforeEach(() => {
+    delete process.env[ENV_KEY];
+  });
+
+  afterEach(() => {
+    delete process.env[ENV_KEY];
+  });
+
+  it("resolves bare nemoclaw names and the bare home dir when NEMOCLAW_INSTANCE is unset", () => {
+    const resolved = parseInstanceName(ENV_KEY, DEFAULT_NEMOCLAW_INSTANCE);
+    expect(resolved).toBe(DEFAULT_NEMOCLAW_INSTANCE);
+    expect(resolveGatewayName(DEFAULT_GATEWAY_PORT, resolved)).toBe(BASE_GATEWAY_NAME);
+    expect(resolveGatewayStateDirName(DEFAULT_GATEWAY_PORT, resolved)).toBe(
+      BASE_GATEWAY_STATE_DIR_NAME,
+    );
+    expect(resolveGatewayCompatContainerName(DEFAULT_GATEWAY_PORT, resolved)).toBe(
+      BASE_GATEWAY_COMPAT_CONTAINER_NAME,
+    );
+    expect(resolveNemoclawHomeDir("/tmp/fixture", resolved)).toBe(
+      `/tmp/fixture/${BASE_NEMOCLAW_HOME_DIR_NAME}`,
+    );
+  });
+
+  it("resolves the port-based fallback when NEMOCLAW_INSTANCE is unset and only the gateway port shifts", () => {
+    const resolved = parseInstanceName(ENV_KEY, DEFAULT_NEMOCLAW_INSTANCE);
+    expect(resolved).toBe(DEFAULT_NEMOCLAW_INSTANCE);
+    // The home dir stays at the bare default — port alone does not segregate
+    // host state, only the gateway binding.
+    expect(resolveNemoclawHomeDir("/tmp/fixture", resolved)).toBe(
+      `/tmp/fixture/${BASE_NEMOCLAW_HOME_DIR_NAME}`,
+    );
+    // The gateway binding takes the port suffix so two default-instance
+    // sandboxes on distinct ports never share gateway state.
+    expect(resolveGatewayName(8081, resolved)).toBe("nemoclaw-8081");
+    expect(resolveGatewayStateDirName(8081, resolved)).toBe("openshell-docker-gateway-8081");
+    expect(resolveGatewayCompatContainerName(8081, resolved)).toBe(
+      "nemoclaw-openshell-gateway-8081",
+    );
+  });
+
+  it("treats an empty env value the same as an unset env value", () => {
+    process.env[ENV_KEY] = "";
+    const resolved = parseInstanceName(ENV_KEY, DEFAULT_NEMOCLAW_INSTANCE);
+    expect(resolved).toBe(DEFAULT_NEMOCLAW_INSTANCE);
+    expect(resolveGatewayName(DEFAULT_GATEWAY_PORT, resolved)).toBe(BASE_GATEWAY_NAME);
   });
 });
 
