@@ -63,9 +63,32 @@ jobs:
             fi
             args+=(--scenarios "${SCENARIOS}")
           fi
-          if [ -n "${JOBS}" ] && [[ ! "${JOBS}" =~ ^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$ ]]; then
-            echo "::error::Invalid jobs input: ${JOBS}" >&2
-            exit 1
+          if [ -n "${JOBS}" ]; then
+            if [[ ! "${JOBS}" =~ ^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$ ]]; then
+              echo "::error::Invalid jobs input: ${JOBS}" >&2
+              exit 1
+            fi
+            allowed_jobs=(
+              openshell-version-pin-vitest
+              onboard-negative-paths-vitest
+              skill-agent-vitest
+              openclaw-tui-chat-correlation-vitest
+              gateway-guard-recovery
+            )
+            IFS=',' read -r -a requested_jobs <<< "${JOBS}"
+            for requested_job in "${requested_jobs[@]}"; do
+              known_job=0
+              for allowed_job in "${allowed_jobs[@]}"; do
+                if [[ "${requested_job}" == "${allowed_job}" ]]; then
+                  known_job=1
+                  break
+                fi
+              done
+              if [[ "${known_job}" -ne 1 ]]; then
+                echo "::error::Unknown jobs input: ${requested_job}" >&2
+                exit 1
+              fi
+            done
           fi
           matrix="$(npx tsx test/e2e-scenario/scenarios/run.ts "${args[@]}")"
           echo "matrix=${matrix}" >> "$GITHUB_OUTPUT"

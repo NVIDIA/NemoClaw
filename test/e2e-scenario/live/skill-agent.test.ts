@@ -64,9 +64,11 @@ function shellQuote(value: string): string {
 }
 
 function isExternalAgentVerificationFlake(text: string): boolean {
-  // Only provider/model/transport timeout signatures are skippable. OpenClaw
-  // tool/runtime errors must fail this migration guard because the contract is
-  // that the real agent can read SKILL.md and return the token.
+  // Only provider/model/transport timeout signatures are skippable, and only
+  // after the fixture is proven present. OpenClaw tool/runtime errors must fail
+  // this migration guard because the contract is that the real agent can read
+  // SKILL.md and return the token. This tolerance can be narrowed once the live
+  // provider/agent turn is consistently non-429/non-timeout in scheduled runs.
   return /LLM idle timeout|request timed out|fetch timeout|model did not produce a response|ssh\/agent exit 124|exit 124/i.test(
     text,
   );
@@ -89,6 +91,11 @@ function shouldSkipExternalAgentVerificationFailure(
 }
 
 function isExternalProviderValidationFailure(text: string): boolean {
+  // Onboarding can fail before sandbox creation when the external NVIDIA
+  // endpoint validation is rate-limited or unavailable. Treat only those
+  // live-service states as inconclusive; repo-local onboarding errors still
+  // fail. This can be narrowed when endpoint validation stops producing
+  // intermittent 429/timeout failures in scheduled live runs.
   return (
     /NVIDIA Endpoints endpoint validation failed/i.test(text) &&
     /HTTP 429|rate limit|quota|temporarily unavailable|timed out|timeout/i.test(text)
@@ -216,6 +223,7 @@ runSkillAgentTest(
       ],
     });
 
+    let sandboxProvisioned = false;
     const cleanupEnv = buildAvailabilityProbeEnv();
     await ignoreCleanupError(() =>
       host.command("node", [CLI_ENTRYPOINT, SANDBOX_NAME, "destroy", "--yes"], {
@@ -233,20 +241,30 @@ runSkillAgentTest(
     );
 
     cleanup.add(`destroy skill-agent sandbox ${SANDBOX_NAME}`, async () => {
-      await ignoreCleanupError(() =>
-        host.command("node", [CLI_ENTRYPOINT, SANDBOX_NAME, "destroy", "--yes"], {
+      const destroy = await host.command(
+        "node",
+        [CLI_ENTRYPOINT, SANDBOX_NAME, "destroy", "--yes"],
+        {
           artifactName: "cleanup-nemoclaw-destroy-skill-agent",
           env: buildAvailabilityProbeEnv(),
           timeoutMs: 120_000,
-        }),
+        },
       );
-      await ignoreCleanupError(() =>
-        sandbox.openshell(["sandbox", "delete", SANDBOX_NAME], {
-          artifactName: "cleanup-openshell-sandbox-delete-skill-agent",
-          env: buildAvailabilityProbeEnv(),
-          timeoutMs: 60_000,
-        }),
-      );
+      const deleteSandbox = await sandbox.openshell(["sandbox", "delete", SANDBOX_NAME], {
+        artifactName: "cleanup-openshell-sandbox-delete-skill-agent",
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 60_000,
+      });
+      await artifacts.writeJson("cleanup-skill-agent-summary.json", {
+        sandboxProvisioned,
+        destroyExitCode: destroy.exitCode,
+        deleteExitCode: deleteSandbox.exitCode,
+      });
+      if (sandboxProvisioned && destroy.exitCode !== 0 && deleteSandbox.exitCode !== 0) {
+        throw new Error(
+          `skill-agent cleanup failed\n${resultText(destroy)}\n${resultText(deleteSandbox)}`,
+        );
+      }
     });
 
     const onboard = await host.command(
@@ -289,6 +307,7 @@ runSkillAgentTest(
       skip("NVIDIA endpoint validation was unavailable/rate-limited during onboarding");
     }
     expect(onboard.exitCode, onboardText).toBe(0);
+    sandboxProvisioned = true;
 
     const addSkill = await host.command("bash", [ADD_SKILL_SCRIPT], {
       artifactName: "add-sandbox-skill-fixture",

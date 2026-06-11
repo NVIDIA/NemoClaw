@@ -112,6 +112,37 @@ jobs:
           path: .e2e/onboard-negative-paths/
           include-hidden-files: true
           if-no-files-found: error
+  skill-agent-vitest:
+    runs-on: ubuntu-latest
+    needs: generate-matrix
+    if: \${{ inputs.scenarios != '' }}
+    env:
+      E2E_ARTIFACT_DIR: \${{ github.workspace }}/.e2e/skill-agent
+      NEMOCLAW_RUN_E2E_SCENARIOS: "0"
+      NVIDIA_API_KEY: \${{ secrets.NVIDIA_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        env:
+          NVIDIA_API_KEY: \${{ secrets.NVIDIA_API_KEY }}
+      - name: Install root dependencies
+        run: npm install
+      - name: Build CLI
+        run: echo skip
+      - name: Run skill-agent live test
+        env:
+          NVIDIA_API_KEY: \${{ secrets.NVIDIA_API_KEY }}
+        run: npx vitest run --project e2e-scenarios-live "\${{ inputs.test_filter }}"
+      - name: Upload skill-agent artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: skill-agent
+          path: .e2e/skill-agent/
+          include-hidden-files: true
+          if-no-files-found: error
 `,
     );
 
@@ -193,6 +224,24 @@ jobs:
           "onboard-negative-paths-vitest artifact upload must set include-hidden-files: false",
           "onboard-negative-paths-vitest artifact upload must ignore missing fixture artifacts",
           "onboard-negative-paths-vitest artifact upload retention-days must be 14",
+          "skill-agent-vitest job must run independently of generate-matrix",
+          "skill-agent-vitest job must use the approved jobs selector",
+          "skill-agent-vitest job must set NEMOCLAW_RUN_E2E_SCENARIOS=1",
+          "skill-agent-vitest job must write artifacts under e2e-artifacts/vitest/skill-agent",
+          "skill-agent-vitest job must point NEMOCLAW_CLI_BIN at the repo CLI",
+          "skill-agent-vitest job env must not include NVIDIA_API_KEY",
+          "skill-agent-vitest checkout action must be pinned to a full commit SHA",
+          "skill-agent-vitest checkout step must set persist-credentials=false",
+          "skill-agent-vitest step 'Set up Node' env must not include NVIDIA_API_KEY",
+          "skill-agent-vitest setup-node action must be pinned to a full commit SHA",
+          "step 'Run skill-agent live test' run script must not interpolate dispatch inputs directly",
+          "step 'Run skill-agent live test' run script must include test/e2e-scenario/live/skill-agent.test.ts",
+          "skill-agent-vitest upload-artifact action must be pinned to a full commit SHA",
+          "skill-agent-vitest artifact upload name must be stable",
+          "artifact upload path must include e2e-artifacts/vitest/skill-agent/",
+          "skill-agent-vitest artifact upload must set include-hidden-files: false",
+          "skill-agent-vitest artifact upload must ignore missing fixture artifacts",
+          "skill-agent-vitest artifact upload retention-days must be 14",
         ]),
       );
     } finally {

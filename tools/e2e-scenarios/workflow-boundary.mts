@@ -212,6 +212,93 @@ function validateOpenShellVersionPinVitestJob(errors: string[], jobs: WorkflowRe
 }
 
 
+function validateSkillAgentVitestJob(errors: string[], jobs: WorkflowRecord): void {
+  const jobName = "skill-agent-vitest";
+  const job = asRecord(jobs[jobName]);
+  if (Object.keys(job).length === 0) {
+    errors.push("workflow missing skill-agent-vitest job");
+    return;
+  }
+
+  if (job["runs-on"] !== "ubuntu-latest") {
+    errors.push("skill-agent-vitest job must run on ubuntu-latest");
+  }
+  if (Object.hasOwn(job, "needs")) {
+    errors.push("skill-agent-vitest job must run independently of generate-matrix");
+  }
+  if (job.if !== expectedFreeStandingJobSelector(jobName)) {
+    errors.push("skill-agent-vitest job must use the approved jobs selector");
+  }
+
+  const jobEnv = asRecord(job.env);
+  if (jobEnv.NEMOCLAW_RUN_E2E_SCENARIOS !== "1") {
+    errors.push("skill-agent-vitest job must set NEMOCLAW_RUN_E2E_SCENARIOS=1");
+  }
+  if (jobEnv.E2E_ARTIFACT_DIR !== "${{ github.workspace }}/e2e-artifacts/vitest/skill-agent") {
+    errors.push("skill-agent-vitest job must write artifacts under e2e-artifacts/vitest/skill-agent");
+  }
+  if (!stringValue(jobEnv.NEMOCLAW_CLI_BIN).includes("bin/nemoclaw.js")) {
+    errors.push("skill-agent-vitest job must point NEMOCLAW_CLI_BIN at the repo CLI");
+  }
+  requireEnvDoesNotExposeSecret(errors, "skill-agent-vitest job", jobEnv, "NVIDIA_API_KEY");
+
+  const steps = asSteps(job.steps);
+  requireNoDispatchInputInterpolation(errors, steps);
+  for (const step of steps) {
+    if (step.name !== "Run skill-agent live test") {
+      requireEnvDoesNotExposeSecret(
+        errors,
+        `skill-agent-vitest step '${step.name ?? step.uses ?? "<unnamed>"}'`,
+        asRecord(step.env),
+        "NVIDIA_API_KEY",
+      );
+    }
+  }
+
+  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
+  if (!checkout) errors.push("skill-agent-vitest job missing checkout step");
+  requireFullShaAction(errors, checkout, "skill-agent-vitest checkout");
+  if (asRecord(checkout?.with)["persist-credentials"] !== false) {
+    errors.push("skill-agent-vitest checkout step must set persist-credentials=false");
+  }
+
+  const setupNode = namedStep(steps, "Set up Node");
+  if (!setupNode) errors.push("skill-agent-vitest job missing step: Set up Node");
+  requireFullShaAction(errors, setupNode, "skill-agent-vitest setup-node");
+
+  const installRootDependencies = requireJobStep(errors, jobName, steps, "Install root dependencies");
+  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
+
+  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
+  requireRunContains(errors, buildCli, "npm run build:cli");
+
+  const runVitest = requireJobStep(errors, jobName, steps, "Run skill-agent live test");
+  const runEnv = asRecord(runVitest?.env);
+  if (runEnv.NVIDIA_API_KEY !== "${{ secrets.NVIDIA_API_KEY }}") {
+    errors.push("skill-agent-vitest run step must receive NVIDIA_API_KEY from secrets");
+  }
+  requireRunContains(errors, runVitest, "npx vitest run --project e2e-scenarios-live");
+  requireRunContains(errors, runVitest, "test/e2e-scenario/live/skill-agent.test.ts");
+
+  const upload = requireJobStep(errors, jobName, steps, "Upload skill-agent artifacts");
+  requireFullShaAction(errors, upload, "skill-agent-vitest upload-artifact");
+  const uploadWith = asRecord(upload?.with);
+  if (uploadWith.name !== "e2e-vitest-scenarios-skill-agent") {
+    errors.push("skill-agent-vitest artifact upload name must be stable");
+  }
+  const uploadPath = stringValue(uploadWith.path);
+  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/vitest/skill-agent/");
+  if (uploadWith["include-hidden-files"] !== false) {
+    errors.push("skill-agent-vitest artifact upload must set include-hidden-files: false");
+  }
+  if (uploadWith["if-no-files-found"] !== "ignore") {
+    errors.push("skill-agent-vitest artifact upload must ignore missing fixture artifacts");
+  }
+  if (uploadWith["retention-days"] !== 14) {
+    errors.push("skill-agent-vitest artifact upload retention-days must be 14");
+  }
+}
+
 function validateOnboardNegativePathsVitestJob(errors: string[], jobs: WorkflowRecord): void {
   const jobName = "onboard-negative-paths-vitest";
   const job = asRecord(jobs[jobName]);
@@ -350,6 +437,16 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   requireRunContains(errors, generate, "--scenarios");
   requireRunContains(errors, generate, "^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$");
   requireRunContains(errors, generate, "Invalid jobs input");
+  requireRunContains(errors, generate, "Unknown jobs input");
+  for (const jobName of [
+    "openshell-version-pin-vitest",
+    "onboard-negative-paths-vitest",
+    "skill-agent-vitest",
+    "openclaw-tui-chat-correlation-vitest",
+    "gateway-guard-recovery",
+  ]) {
+    requireRunContains(errors, generate, jobName);
+  }
   requireRunDoesNotContain(errors, generate, "^[A-Za-z0-9._-]+");
   requireRunContains(errors, generate, "## Vitest E2E Scenario Matrix");
   requireRunContains(errors, generate, "| Scenario | Runner | Label |");
@@ -490,6 +587,7 @@ export function validateE2eVitestScenariosWorkflowBoundary(
 
   validateOpenShellVersionPinVitestJob(errors, jobs);
   validateOnboardNegativePathsVitestJob(errors, jobs);
+  validateSkillAgentVitestJob(errors, jobs);
 
   return errors;
 }
