@@ -396,10 +396,17 @@ export async function handleSandboxState<
         ),
     );
     webSearchConfig = nextWebSearchConfig;
+    // createSandbox() already wrote the NemoClaw build fingerprint correctly:
+    // a fresh build stamps the current version, while reuse preserves the
+    // existing value (updateReusedSandboxMetadata never overwrites it). Drop it
+    // from this supplementary update so reusing a sandbox after a NemoClaw
+    // upgrade does not re-stamp a stale image as current and mask drift (#5026).
+    const { nemoclawVersion: _builtFingerprint, ...agentRegistryFields } =
+      deps.getSandboxAgentRegistryFields(agent, !fromDockerfile);
     deps.updateSandboxRegistry(sandboxName, {
       model,
       provider,
-      ...deps.getSandboxAgentRegistryFields(agent, !fromDockerfile),
+      ...agentRegistryFields,
     });
     // Default-marking is deferred to finalization so a cancelled onboard never
     // leaves this sandbox registered as default (#4614).

@@ -382,6 +382,71 @@ RUN set -eu; \
             patch_fail "Patch 4 cannot safely skip"; \
         fi; \
     fi; \
+    # --- Patch 6: cron model-provider preflight opts into trusted env-proxy mode --- \
+    # Reviewed against openclaw@2026.5.27 dist: the cron isolated-agent preflight \
+    # (`probeLocalProviderEndpoint`) calls `fetchWithSsrFGuard` with \
+    # `auditContext: "cron-model-provider-preflight"` and a narrow hostname-allowlist \
+    # SsrFPolicy from `buildLocalProviderSsrFPolicy`, but does not pass a `mode`. \
+    # Default STRICT mode pins DNS for the managed inference hostname \
+    # (`inference.local`), which is intentionally only resolvable through the \
+    # OpenShell L7 proxy — pinned `dns.lookup` therefore fails with EAI_AGAIN and \
+    # the scheduler permanently skips every cron run. Inject \
+    # `mode: "trusted_env_proxy"` so the call uses the env proxy dispatcher; SSRF \
+    # protection is retained through the existing hostname allowlist and the \
+    # proxy's own ACLs. \
+    # \
+    # The patch keys on the co-located shape of the reviewed preflight call: in \
+    # any file that mentions the audit context literal, both the \
+    # `fetchWithSsrFGuard(` helper and the `buildLocalProviderSsrFPolicy` policy \
+    # builder must appear; the audit literal itself must appear exactly once; and \
+    # after patching exactly one patched literal must remain. Any ambiguous \
+    # multi-callsite or mixed patched/unpatched layout fails the image build \
+    # rather than silently widening the rewrite. \
+    # \
+    # Removal condition: drop this block (and any related `OC_VERSION` floor bump) \
+    # once an OpenClaw release sets `mode: "trusted_env_proxy"` directly at the \
+    # preflight call site or otherwise routes the managed inference base URL \
+    # through the env-proxy dispatcher by default. The reviewed shape lives at \
+    # `src/cron/isolated-agent/model-preflight.runtime.ts` in the openclaw repo. \
+    preflight_files="$(grep -RIlF --include='*.js' 'cron-model-provider-preflight' "$OC_DIST" || true)"; \
+    if [ -n "$preflight_files" ]; then \
+        patched_preflight=0; \
+        for f in $preflight_files; do \
+            audit_count="$(grep -Fc 'auditContext: "cron-model-provider-preflight"' "$f" || true)"; \
+            [ "${audit_count:-0}" -ge 1 ] \
+                || patch_fail "Patch 6 shape gate: $f mentions cron-model-provider-preflight but has no auditContext literal"; \
+            [ "${audit_count:-0}" -eq 1 ] \
+                || patch_fail "Patch 6 shape gate: $f has ${audit_count} auditContext literals (expected exactly 1); refusing ambiguous multi-callsite rewrite"; \
+            grep -Fq 'fetchWithSsrFGuard(' "$f" \
+                || patch_fail "Patch 6 shape gate: $f has cron-model-provider-preflight but no fetchWithSsrFGuard call"; \
+            grep -Fq 'buildLocalProviderSsrFPolicy' "$f" \
+                || patch_fail "Patch 6 shape gate: $f has cron-model-provider-preflight but no buildLocalProviderSsrFPolicy"; \
+            patched_count="$(grep -Fc 'mode: "trusted_env_proxy", auditContext: "cron-model-provider-preflight"' "$f" || true)"; \
+            if [ "${patched_count:-0}" -eq 1 ]; then \
+                echo "INFO: Patch 6 already present in $f"; \
+            elif [ "${patched_count:-0}" -eq 0 ]; then \
+                sed -i -E 's|auditContext: "cron-model-provider-preflight"|mode: "trusted_env_proxy", auditContext: "cron-model-provider-preflight"|g' "$f"; \
+                new_patched_count="$(grep -Fc 'mode: "trusted_env_proxy", auditContext: "cron-model-provider-preflight"' "$f" || true)"; \
+                [ "${new_patched_count:-0}" -eq 1 ] \
+                    || patch_fail "Patch 6 verification: expected exactly one patched literal in $f, found ${new_patched_count}"; \
+                patched_preflight=1; \
+            else \
+                patch_fail "Patch 6 shape gate: $f has ${patched_count} already-patched literals (expected 0 or 1); refusing mixed-state rewrite"; \
+            fi; \
+        done; \
+        if [ "$patched_preflight" = "1" ]; then \
+            echo "INFO: Patch 6 applied to OpenClaw ${OC_VERSION} cron preflight trusted env-proxy"; \
+        fi; \
+    else \
+        preflight_refs="$(grep -RIlE --include='*.js' 'preflightCronModelProvider|probeLocalProviderEndpoint' "$OC_DIST" || true)"; \
+        if [ -z "$preflight_refs" ]; then \
+            echo "INFO: OpenClaw ${OC_VERSION} has no cron model-provider preflight; Patch 6 not needed"; \
+        else \
+            echo "ERROR: Patch 6 target missing but cron preflight references remain:" >&2; \
+            printf '%s\n' "$preflight_refs" | head -n 5 >&2; \
+            patch_fail "Patch 6 cannot safely skip"; \
+        fi; \
+    fi; \
     # --- Patch 3: follow symlinks in plugin-install path checks (#2203) --- \
     # OpenClaw's install-safe-path and install-package-dir reject symlinked \
     # directories via lstat. Changing lstat → stat in these two modules lets \
@@ -603,12 +668,19 @@ USER sandbox
 # block until after build-time OpenClaw doctor/plugin commands complete.
 RUN NEMOCLAW_OPENCLAW_MANAGED_PROXY=0 node --experimental-strip-types /scripts/generate-openclaw-config.mts
 
-# Install the non-messaging OpenClaw diagnostics plugin when OTEL is enabled.
+# Install non-messaging OpenClaw plugins that need to match the runtime.
 # hadolint ignore=DL3059,DL4006
 RUN set -eu; \
-    if [ "$NEMOCLAW_OPENCLAW_OTEL" = "1" ]; then \
+    if [ "$NEMOCLAW_OPENCLAW_OTEL" = "1" ] || [ "$NEMOCLAW_WEB_SEARCH_ENABLED" = "1" ]; then \
         test -n "$OPENCLAW_VERSION"; \
+    fi; \
+    if [ "$NEMOCLAW_OPENCLAW_OTEL" = "1" ]; then \
         openclaw plugins install "npm:@openclaw/diagnostics-otel@${OPENCLAW_VERSION}" --pin; \
+    fi; \
+    if [ "$NEMOCLAW_WEB_SEARCH_ENABLED" = "1" ]; then \
+        openclaw plugins install "npm:@openclaw/brave-plugin@${OPENCLAW_VERSION}" --pin; \
+        BRAVE_API_KEY=openshell:resolve:env:BRAVE_API_KEY openclaw doctor --fix --non-interactive; \
+    elif [ "$NEMOCLAW_OPENCLAW_OTEL" = "1" ]; then \
         openclaw doctor --fix --non-interactive; \
     fi
 
@@ -670,6 +742,20 @@ RUN node --experimental-strip-types /src/lib/messaging/applier/build/messaging-b
 # Release the offline lock so the runtime sandbox can install MCP servers,
 # skills, and ad-hoc packages via the OpenShell L7 proxy.
 ENV NPM_CONFIG_OFFLINE=false
+
+# Seed container-level proxy env so `docker exec <sandbox> env` and
+# non-shell processes observe the same OpenShell proxy defaults.
+# nemoclaw-start.sh still rewrites these at boot from NEMOCLAW_PROXY_HOST/PORT
+# and emits /tmp/nemoclaw-proxy-env.sh for connect sessions, but Docker's
+# container config cannot see entrypoint exports. Keeping the ENV here closes
+# that observability/runtime gap for in-sandbox tools launched directly by
+# docker exec. Ref: https://github.com/NVIDIA/NemoClaw/issues/4304
+ENV HTTP_PROXY=http://${NEMOCLAW_PROXY_HOST}:${NEMOCLAW_PROXY_PORT} \
+    HTTPS_PROXY=http://${NEMOCLAW_PROXY_HOST}:${NEMOCLAW_PROXY_PORT} \
+    NO_PROXY=localhost,127.0.0.1,::1,${NEMOCLAW_PROXY_HOST} \
+    http_proxy=http://${NEMOCLAW_PROXY_HOST}:${NEMOCLAW_PROXY_PORT} \
+    https_proxy=http://${NEMOCLAW_PROXY_HOST}:${NEMOCLAW_PROXY_PORT} \
+    no_proxy=localhost,127.0.0.1,::1,${NEMOCLAW_PROXY_HOST}
 
 # SECURITY: Clear any gateway auth token that openclaw doctor/plugins may have
 # auto-generated. The real token is created at container startup by the

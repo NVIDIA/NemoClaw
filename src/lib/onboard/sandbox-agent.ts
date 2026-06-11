@@ -3,6 +3,7 @@
 
 import type { AgentDefinition } from "../agent/defs";
 import { loadAgent } from "../agent/defs";
+import { getVersion } from "../core/version";
 import { getNameValidationGuidance, NAME_ALLOWED_FORMAT } from "../name-validation";
 import { validateName } from "../runner";
 import type { SandboxEntry } from "../state/registry";
@@ -79,15 +80,39 @@ export function getAgentInferenceProviderOptions(
     : [];
 }
 
+/**
+ * Resolve the running NemoClaw build fingerprint stamped onto a freshly created
+ * or rebuilt sandbox image. Falls back to null when the version cannot be
+ * resolved so a transient failure never blocks registration; image-drift
+ * detection is simply skipped for that sandbox until its next rebuild (#5026).
+ */
+export function getNemoclawBuildFingerprint(): string | null {
+  try {
+    return getVersion();
+  } catch {
+    return null;
+  }
+}
+
 export function getSandboxAgentRegistryFields(
   agent: AgentDefinition | null | undefined,
   agentVersionKnown = true,
-): Pick<SandboxEntry, "agent" | "agentVersion"> {
+): Pick<SandboxEntry, "agent" | "agentVersion" | "nemoclawVersion"> {
   const effectiveAgent = getEffectiveSandboxAgent(agent);
   const agentName = normalizeSandboxAgentName(effectiveAgent.name);
   return {
     agent: agentName === "openclaw" ? null : agentName,
     agentVersion: agentVersionKnown ? effectiveAgent.expectedVersion || null : null,
+    // Stamp the NemoClaw build that produced this image, but ONLY for
+    // NemoClaw-managed images. `agentVersionKnown` is `!fromDockerfile` at the
+    // onboard call sites, so it doubles as "this is a managed image."
+    // Custom-image sandboxes (`--from`) are not defined by NemoClaw's build and
+    // are intentionally left without a fingerprint, so `upgrade-sandboxes` never
+    // auto-rebuilds them onto the default image. The reuse path
+    // (updateReusedSandboxMetadata) picks only `.agent` from these fields, so a
+    // reused (un-rebuilt) sandbox keeps its original fingerprint rather than
+    // being silently re-stamped as current. (#5026)
+    nemoclawVersion: agentVersionKnown ? getNemoclawBuildFingerprint() : null,
   };
 }
 

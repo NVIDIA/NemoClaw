@@ -85,7 +85,10 @@ export interface SandboxInventoryResult {
 export interface MessagingOverlap {
   channel: string;
   sandboxes: [string, string];
-  reason?: "matching-token" | "unknown-token";
+  // "slack-socket-mode-gateway": both sandboxes have Slack Socket Mode active on
+  // the same OpenShell gateway, so only one receives events (#4953) — distinct
+  // from the credential-sharing reasons, which catch a *shared* token.
+  reason?: "matching-token" | "unknown-token" | "slack-socket-mode-gateway";
 }
 
 export interface GatewayHealth {
@@ -474,6 +477,12 @@ export function showStatusCommand(deps: ShowStatusCommandDeps): void {
     if (overlaps.length > 0) {
       log("");
       for (const { channel, sandboxes: pair, reason } of overlaps) {
+        if (reason === "slack-socket-mode-gateway") {
+          log(
+            `  ⚠ '${pair[0]}' and '${pair[1]}' both have Slack Socket Mode enabled on the same gateway; only one sandbox can receive Slack Socket Mode events unless the gateway supports multiplexing.`,
+          );
+          continue;
+        }
         const detail =
           reason === "matching-token"
             ? `share the same ${channel} credential`

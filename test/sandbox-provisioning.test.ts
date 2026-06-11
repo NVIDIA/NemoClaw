@@ -12,11 +12,11 @@
 // fixtures where practical, so coverage follows behavior rather than source
 // text shape.
 
-import { describe, expect, it } from "vitest";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { describe, expect, it } from "vitest";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const DOCKERFILE = path.join(ROOT, "Dockerfile");
@@ -261,6 +261,44 @@ describe("sandbox provisioning: runtime npm online state", () => {
       const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
       expect(result.status, `stderr: ${result.stderr}`).toBe(0);
       expect(result.stdout.trim()).toBe("true");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("sandbox provisioning: non-messaging OpenClaw plugins", () => {
+  it("pins Brave web-search and preserves its placeholder during build-time doctor", () => {
+    const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");
+    const command = dockerRunCommandBetween(
+      dockerfile,
+      "# Install non-messaging OpenClaw plugins",
+      "# hadolint ignore=DL3059,DL4006\nRUN node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent openclaw --phase agent-install",
+    );
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-brave-plugin-install-"));
+    try {
+      const { result, calls } = runLoggedDockerShell(
+        command,
+        tmp,
+        [
+          [
+            "openclaw() {",
+            '  printf "%s|BRAVE_API_KEY=%s\\n" "$*" "${BRAVE_API_KEY:-}" >> "$call_log"',
+            "}",
+          ].join("\n"),
+        ],
+        {
+          NEMOCLAW_OPENCLAW_OTEL: "0",
+          NEMOCLAW_WEB_SEARCH_ENABLED: "1",
+          OPENCLAW_VERSION: "2026.5.22",
+        },
+      );
+
+      expect(result.status, `stderr: ${result.stderr}`).toBe(0);
+      expect(calls.trim().split("\n")).toEqual([
+        "plugins install npm:@openclaw/brave-plugin@2026.5.22 --pin|BRAVE_API_KEY=",
+        "doctor --fix --non-interactive|BRAVE_API_KEY=openshell:resolve:env:BRAVE_API_KEY",
+      ]);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

@@ -176,6 +176,17 @@ describe("messaging-build-applier.mts: agent-install", () => {
     expect(payload.installSpecs).toEqual([]);
   });
 
+  it("preserves the Brave web-search placeholder when doctor runs after messaging render", () => {
+    const payload = parseDryRun({
+      OPENCLAW_VERSION: "2026.5.22",
+      NEMOCLAW_WEB_SEARCH_ENABLED: "1",
+      NEMOCLAW_MESSAGING_CHANNELS_B64: channelsB64(["slack"]),
+    });
+
+    expect(payload.installSpecs).toEqual(["npm:@openclaw/slack@2026.5.22"]);
+    expect(payload.doctorEnv.BRAVE_API_KEY).toBe("openshell:resolve:env:BRAVE_API_KEY");
+  });
+
   it("fails fast on malformed messaging plans", () => {
     const result = runDryRun({
       OPENCLAW_VERSION: "2026.5.22",
@@ -328,7 +339,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
         "#!/usr/bin/env node",
         'const fs = require("fs");',
         "const args = process.argv.slice(2);",
-        'fs.appendFileSync(process.env.OPENCLAW_TRACE, `${args.join("|")}|${process.env.DISCORD_BOT_TOKEN || ""}\\n`);',
+        'fs.appendFileSync(process.env.OPENCLAW_TRACE, `${args.join("|")}|${process.env.DISCORD_BOT_TOKEN || ""}|${process.env.BRAVE_API_KEY || ""}\\n`);',
         'if (args[0] === "plugins" && args[1] === "install") {',
         '  if (args[2] !== "npm:@openclaw/discord@2026.5.22") process.exit(41);',
         '  if (args[3] !== "--pin") process.exit(47);',
@@ -356,6 +367,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
           ...BASE_GENERATOR_ENV,
           NEMOCLAW_MESSAGING_CHANNELS_B64: discordChannels,
           NEMOCLAW_OPENCLAW_MANAGED_PROXY: "0",
+          NEMOCLAW_WEB_SEARCH_ENABLED: "1",
         },
         "openclaw",
       );
@@ -373,6 +385,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
         OPENCLAW_TRACE: tracePath,
         OPENCLAW_VERSION: "2026.5.22",
         NEMOCLAW_MESSAGING_PLAN_B64: generatorEnv.NEMOCLAW_MESSAGING_PLAN_B64,
+        NEMOCLAW_WEB_SEARCH_ENABLED: "1",
       };
       const pluginResult = spawnSync(
         "node",
@@ -413,8 +426,8 @@ describe("messaging-build-applier.mts: agent-install", () => {
 
       expect(postInstallResult.status, postInstallResult.stderr).toBe(0);
       expect(fs.readFileSync(tracePath, "utf-8").trim().split("\n")).toEqual([
-        "plugins|install|npm:@openclaw/discord@2026.5.22|--pin|",
-        "doctor|--fix|--non-interactive|openshell:resolve:env:DISCORD_BOT_TOKEN",
+        "plugins|install|npm:@openclaw/discord@2026.5.22|--pin||",
+        "doctor|--fix|--non-interactive|openshell:resolve:env:DISCORD_BOT_TOKEN|openshell:resolve:env:BRAVE_API_KEY",
       ]);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });

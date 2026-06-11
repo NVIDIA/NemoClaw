@@ -259,6 +259,7 @@ export function collectOpenClawMessagingPluginInstallSpecs(
 
 export function openClawDoctorEnvOverrides(
   plan: MessagingBuildPlan | null,
+  env: Env = process.env,
 ): Record<string, string> {
   if (!plan) return {};
   const active = new Set(activeChannels(plan));
@@ -268,6 +269,9 @@ export function openClawDoctorEnvOverrides(
     if (typeof binding.providerEnvKey === "string" && typeof binding.placeholder === "string") {
       overrides[binding.providerEnvKey] = binding.placeholder;
     }
+  }
+  if (isTruthyEnv(env.NEMOCLAW_WEB_SEARCH_ENABLED)) {
+    overrides.BRAVE_API_KEY = "openshell:resolve:env:BRAVE_API_KEY";
   }
   return overrides;
 }
@@ -285,7 +289,7 @@ export function runOpenClawMessagingDoctor(plan: MessagingBuildPlan | null, env:
   if (!plan) return;
   runCommand(["openclaw", "doctor", "--fix", "--non-interactive"], {
     ...env,
-    ...openClawDoctorEnvOverrides(plan),
+    ...openClawDoctorEnvOverrides(plan, env),
   });
 }
 
@@ -1044,6 +1048,11 @@ function readEnvLineKey(line: string): string | null {
   return key.length > 0 ? key : null;
 }
 
+function isTruthyEnv(value: string | undefined): boolean {
+  if (!value || value.trim() === "") return false;
+  return !["0", "false", "no", "off"].includes(value.trim().toLowerCase());
+}
+
 function requiredSerializableValue(value: unknown, label: string): MessagingSerializableValue {
   if (value === undefined) {
     throw new MessagingBuildApplierError(`Messaging ${label} is missing`);
@@ -1118,7 +1127,7 @@ export function describeMessagingBuildPhase(
     agent: plan?.agent ?? "unknown",
     phase,
     channels: activeChannels(plan),
-    doctorEnv: plan?.agent === "openclaw" ? openClawDoctorEnvOverrides(plan) : {},
+    doctorEnv: plan?.agent === "openclaw" ? openClawDoctorEnvOverrides(plan, env) : {},
     installSpecs: plan?.agent === "openclaw" ? collectOpenClawMessagingPluginInstallSpecs(plan, env) : [],
     openclawVersion: env.OPENCLAW_VERSION || "",
   };

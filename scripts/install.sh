@@ -2193,6 +2193,39 @@ run_onboard() {
 # instructions to relogin/newgrp — Linux only loads group membership at
 # login, so the rest of this script (onboard, etc.) would fail otherwise.
 # Skipped on macOS (Docker Desktop) and inside WSL (host-managed Docker).
+report_unexpected_docker_access() {
+  # If Docker is reachable, installation can continue. Still surface the
+  # unusual QA/security posture where a non-root user outside the docker group
+  # can control the daemon, because that makes "non-docker user denied" checks
+  # non-reproducible on this host.
+  if [ "$(id -u 2>/dev/null || printf 1)" -eq 0 ]; then
+    return 0
+  fi
+
+  local current_user
+  current_user="$(id -un 2>/dev/null || printf unknown)"
+
+  if id -nG "$current_user" 2>/dev/null | tr ' ' '\n' | grep -qx docker; then
+    return 0
+  fi
+  if id -nG 2>/dev/null | tr ' ' '\n' | grep -qx docker; then
+    return 0
+  fi
+
+  info "Docker is reachable even though user '$current_user' is not in the docker group."
+  info "This host grants Docker daemon access through another path, so a negative test that expects 'docker info' to fail for non-docker users will not reproduce here."
+  if [ -n "${DOCKER_HOST:-}" ]; then
+    info "DOCKER_HOST is set to: $DOCKER_HOST"
+  else
+    info "DOCKER_HOST is not set; check for a docker wrapper, socket ACLs, sudo/policy rules, or host-specific daemon access configuration."
+  fi
+  local socket_state
+  socket_state="$(stat -Lc '%a %U %G %n' /var/run/docker.sock 2>/dev/null || true)"
+  if [ -n "$socket_state" ]; then
+    info "Docker socket: $socket_state"
+  fi
+}
+
 ensure_docker() {
   case "$(uname -s)" in
     Darwin | MINGW* | MSYS*) return 0 ;;
@@ -2202,6 +2235,7 @@ ensure_docker() {
   fi
   # Fast path: docker info works → already set up (root, or already-active group).
   if docker info >/dev/null 2>&1; then
+    report_unexpected_docker_access
     return 0
   fi
 
