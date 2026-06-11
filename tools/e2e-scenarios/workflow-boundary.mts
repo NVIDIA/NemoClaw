@@ -456,10 +456,9 @@ function validateNetworkPolicyVitestJob(errors: string[], jobs: WorkflowRecord):
   const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
   requireRunContains(errors, buildCli, "npm run build:cli");
 
-  const dockerAuth = requireJobStep(errors, jobName, steps, "Authenticate to Docker Hub");
-  requireRunContains(errors, dockerAuth, "DOCKER_CONFIG");
-  requireRunContains(errors, dockerAuth, "docker logout docker.io");
-  requireRunContains(errors, dockerAuth, "rm -rf \"${docker_config}\"");
+  if (namedStep(steps, "Authenticate to Docker Hub")) {
+    errors.push("network-policy-vitest must not include unused Docker Hub authentication");
+  }
 
   const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell");
   requireRunContains(errors, installOpenShell, "bash scripts/install-openshell.sh");
