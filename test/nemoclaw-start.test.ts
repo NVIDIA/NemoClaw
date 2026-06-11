@@ -2229,6 +2229,7 @@ describe("nemoclaw-start gateway launch signal handling", () => {
     const openclawLog = path.join(tmpDir, "openclaw.log");
     const gosuLog = path.join(tmpDir, "gosu.log");
     const gatewayLog = path.join(tmpDir, "gateway.log");
+    const markerPath = path.join(tmpDir, "nemoclaw-gateway-local");
     const scriptPath = path.join(tmpDir, "run.sh");
     const waitForLaunchLogIterations = Array.from({ length: 100 }, (_, i) => String(i + 1)).join(
       " ",
@@ -2236,7 +2237,7 @@ describe("nemoclaw-start gateway launch signal handling", () => {
     fs.mkdirSync(fakeBin);
     fs.writeFileSync(
       path.join(fakeBin, "openclaw"),
-      `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> ${JSON.stringify(openclawLog)}\nprintf 'state=%s oauth=%s home=%s config=%s\\n' "$OPENCLAW_STATE_DIR" "$OPENCLAW_OAUTH_DIR" "$OPENCLAW_HOME" "$OPENCLAW_CONFIG_PATH" >> ${JSON.stringify(openclawLog)}\nprintf 'gateway stdout marker\\n'\nprintf 'gateway stderr marker\\n' >&2\nexec sleep 30\n`,
+      `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> ${JSON.stringify(openclawLog)}\nif [ -f ${JSON.stringify(markerPath)} ]; then printf 'marker=present\\n' >> ${JSON.stringify(openclawLog)}; else printf 'marker=absent\\n' >> ${JSON.stringify(openclawLog)}; fi\nprintf 'state=%s oauth=%s home=%s config=%s\\n' "$OPENCLAW_STATE_DIR" "$OPENCLAW_OAUTH_DIR" "$OPENCLAW_HOME" "$OPENCLAW_CONFIG_PATH" >> ${JSON.stringify(openclawLog)}\nprintf 'gateway stdout marker\\n'\nprintf 'gateway stderr marker\\n' >&2\nexec sleep 30\n`,
       { mode: 0o755 },
     );
     fs.writeFileSync(
@@ -2261,15 +2262,10 @@ describe("nemoclaw-start gateway launch signal handling", () => {
         "start_auto_pair() { sleep 30 & AUTO_PAIR_PID=$!; }",
         "start_plugin_registry_refresh() { :; }",
         "cleanup_on_signal() { :; }",
-        // The gateway-launch block now calls mark_in_container_gateway right
-        // before `nohup "$OPENCLAW" gateway run`; stub it so the test snippet
-        // runs without the real /tmp marker write (#4710).
-        "mark_in_container_gateway() { :; }",
-        // STEP_DOWN_PREFIX_* are normally populated by init_step_down_prefixes
-        // in sandbox-init.sh; the launch block uses STEP_DOWN_PREFIX_GATEWAY
-        // for the gateway exec. Initialize to the gosu fallback so the
-        // stubbed gosu() in fakeBin still receives the call (issue #3280
-        // follow-up).
+        extractShellFunctionFromSource(src, "mark_in_container_gateway").replaceAll(
+          "/tmp/nemoclaw-gateway-local",
+          markerPath,
+        ),
         "STEP_DOWN_PREFIX_SANDBOX=(gosu sandbox)",
         "STEP_DOWN_PREFIX_GATEWAY=(gosu gateway)",
         launchBlock(kind, gatewayLog),
@@ -2301,6 +2297,8 @@ describe("nemoclaw-start gateway launch signal handling", () => {
     const { result, openclaw, gateway } = runLaunchBlock("non-root");
     expect(result.status).toBe(0);
     expect(openclaw).toContain("gateway run --port 19000");
+    expect(openclaw).toContain("marker=present");
+    expect(openclaw).not.toContain("marker=absent");
     expect(openclaw).toContain(
       "state=/sandbox/.openclaw oauth=/sandbox/.openclaw/credentials home=/sandbox config=/sandbox/.openclaw/openclaw.json",
     );
@@ -2323,6 +2321,8 @@ describe("nemoclaw-start gateway launch signal handling", () => {
     expect(result.status).toBe(0);
     expect(gosu).toContain("user=gateway");
     expect(gosu).toContain("gateway run --port 19000");
+    expect(openclaw).toContain("marker=present");
+    expect(openclaw).not.toContain("marker=absent");
     expect(openclaw).toContain(
       "state=/sandbox/.openclaw oauth=/sandbox/.openclaw/credentials home=/sandbox config=/sandbox/.openclaw/openclaw.json",
     );
