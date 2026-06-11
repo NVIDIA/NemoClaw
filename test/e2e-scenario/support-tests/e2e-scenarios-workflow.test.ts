@@ -1,15 +1,69 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
+import YAML from "yaml";
 import {
   evaluateE2eVitestWorkflowDispatchSelectors,
   validateE2eVitestScenariosWorkflowBoundary,
 } from "../../../tools/e2e-scenarios/workflow-boundary.mts";
+
+function readWorkflow(): Record<string, unknown> {
+  return YAML.parse(
+    fs.readFileSync(
+      path.join(process.cwd(), ".github/workflows/e2e-vitest-scenarios.yaml"),
+      "utf-8",
+    ),
+  ) as Record<string, unknown>;
+}
+
+function generateMatrixForDispatch(env: {
+  JOBS: string;
+  SCENARIOS: string;
+}): Record<string, string> {
+  const workflow = readWorkflow();
+  const jobs = workflow.jobs as Record<string, { steps?: Array<Record<string, unknown>> }>;
+  const generateStep = jobs["generate-matrix"]?.steps?.find(
+    (step) => step.name === "Generate Vitest scenario matrix",
+  );
+  expect(generateStep?.run).toEqual(expect.any(String));
+
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-vitest-matrix-"));
+  const outputPath = path.join(tmp, "github-output");
+  const summaryPath = path.join(tmp, "github-summary");
+  try {
+    const result = spawnSync("bash", ["-c", generateStep?.run as string], {
+      cwd: process.cwd(),
+      encoding: "utf-8",
+      timeout: 120_000,
+      killSignal: "SIGKILL",
+      env: {
+        ...process.env,
+        GITHUB_OUTPUT: outputPath,
+        GITHUB_STEP_SUMMARY: summaryPath,
+        JOBS: env.JOBS,
+        SCENARIOS: env.SCENARIOS,
+      },
+    });
+    expect(result.signal).toBeNull();
+    expect(result.stderr).toBe("");
+    expect(result.status).toBe(0);
+    return Object.fromEntries(
+      fs
+        .readFileSync(outputPath, "utf-8")
+        .trim()
+        .split("\n")
+        .map((line) => line.split(/=(.*)/s).slice(0, 2)),
+    );
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
 
 describe("e2e-vitest-scenarios workflow boundary", () => {
   it("keeps the live Vitest scenario workflow manual, pinned, and artifact-safe", () => {
@@ -59,6 +113,35 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       liveScenariosRuns: false,
       selectedFreeStandingJobs: ["openshell-version-pin-vitest"],
       registryScenarios: [],
+    });
+    expect(evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "hermes-e2e" })).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["hermes-e2e-vitest"],
+      registryScenarios: [],
+    });
+  });
+
+  it("keeps jobs-only dispatches from selecting the Hermes secret-bearing job", () => {
+    expect(
+      generateMatrixForDispatch({ JOBS: "openshell-version-pin-vitest", SCENARIOS: "" }),
+    ).toMatchObject({
+      hermes_selected: "false",
+      matrix: "[]",
+    });
+    expect(generateMatrixForDispatch({ JOBS: "hermes-e2e-vitest", SCENARIOS: "" })).toMatchObject({
+      hermes_selected: "true",
+      matrix: "[]",
+    });
+    expect(
+      generateMatrixForDispatch({ JOBS: "network-policy-vitest", SCENARIOS: "" }),
+    ).toMatchObject({
+      hermes_selected: "false",
+      matrix: "[]",
+    });
+    expect(generateMatrixForDispatch({ JOBS: "", SCENARIOS: "hermes-e2e" })).toMatchObject({
+      hermes_selected: "true",
+      matrix: "[]",
     });
   });
 
@@ -237,10 +320,12 @@ jobs:
           "step 'Validate free-standing job selector' run script must include Use either scenarios or jobs, not both",
           "step 'Validate free-standing job selector' run script must include Invalid scenario input; use comma-separated scenario ids",
           "step 'Validate free-standing job selector' run script must include allowed_jobs=",
+          "step 'Validate free-standing job selector' run script must include hermes-e2e-vitest",
           "step 'Validate free-standing job selector' run script must include Invalid jobs input; use comma-separated job ids",
           "step 'Validate free-standing job selector' run script must not include Invalid jobs input: ${JOBS}",
           "step 'Validate free-standing job selector' run script must include Unknown free-standing Vitest job",
           "workflow missing generate-matrix job",
+          "generate-matrix job must expose hermes_selected output",
           "generate-matrix job must run on ubuntu-latest",
           "live-scenarios job must run on the matrix runner",
           "live-scenarios job must depend on generate-matrix",
@@ -345,6 +430,8 @@ jobs:
           "network-policy-vitest artifact upload must ignore missing fixture artifacts",
           "network-policy-vitest artifact upload retention-days must be 14",
           "report-to-pr job must wait for network-policy-vitest",
+          "workflow missing hermes-e2e-vitest job",
+          "report-to-pr job must wait for hermes-e2e-vitest",
           "openclaw-tui-chat-correlation-vitest job must depend on validate-jobs and generate-matrix",
           "openclaw-tui-chat-correlation-vitest job must use the shared jobs selector condition",
           "gateway-guard-recovery job must depend on validate-jobs",
@@ -360,6 +447,34 @@ jobs:
           "step 'Post Vitest scenario results to PR' run script must omit rejected scenario selectors",
           "step 'Post Vitest scenario results to PR' run script must include **Requested jobs:**",
           "step 'Post Vitest scenario results to PR' run script must include **Requested scenarios:**",
+        ]),
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects raw jobs selector echo from matrix generation", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-vitest-workflow-"));
+    const workflowPath = path.join(tmp, "workflow.yaml");
+    const workflow = fs.readFileSync(
+      path.join(process.cwd(), ".github/workflows/e2e-vitest-scenarios.yaml"),
+      "utf8",
+    );
+    fs.writeFileSync(
+      workflowPath,
+      workflow.replace(
+        'echo "::error::Invalid jobs input; use comma-separated job ids" >&2',
+        'echo "::error::Invalid jobs input: ${JOBS}" >&2',
+      ),
+    );
+
+    try {
+      const errors = validateE2eVitestScenariosWorkflowBoundary(workflowPath);
+      expect(errors).toEqual(
+        expect.arrayContaining([
+          "step 'Generate Vitest scenario matrix' run script must include Invalid jobs input; use comma-separated job ids",
+          "step 'Generate Vitest scenario matrix' run script must not include Invalid jobs input: ${JOBS}",
         ]),
       );
     } finally {
