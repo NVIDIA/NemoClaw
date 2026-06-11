@@ -1516,17 +1516,51 @@ jobs:
       github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
        inputs.jobs == '' ||
        contains(format(',{0},', inputs.jobs), ',credential-migration-e2e,'))
-    uses: ./.github/workflows/e2e-script.yaml
-    with:
-      ref: ${{ inputs.target_ref || github.ref }}
-      script: test/e2e/test-credential-migration.sh
-      timeout_minutes: 30
-      artifact_name: "install-log-credential-migration"
-      artifact_path: "/tmp/nemoclaw-e2e-install.log"
-      env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-cred-migration"}'
-      nvidia_api_key: true
-      github_token: true
-    secrets: *nightly-e2e-default-secrets
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 50
+    steps:
+      - *target-ref-checkout
+
+      - *dockerhub-auth-step
+      - name: Setup Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build CLI
+        run: npm run build:cli
+
+      - name: Run credential migration Vitest test
+        # Trusted-code boundary: this job runs the checked-out target ref with
+        # NVIDIA_API_KEY because it validates live credential migration into the
+        # OpenShell gateway. Keep checkout credentials disabled, do not pass
+        # GITHUB_TOKEN, and rely on reviewed/maintainer-dispatched refs.
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/credential-migration
+          NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+          NEMOCLAW_SANDBOX_NAME: "e2e-cred-migration"
+        run: |
+          set -euo pipefail
+          npx vitest run --project e2e-scenarios-live \
+            test/e2e-scenario/live/credential-migration.test.ts \
+            --silent=false --reporter=default
+
+      - name: Upload credential migration artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: credential-migration-artifacts
+          path: e2e-artifacts/vitest/credential-migration/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
   snapshot-commands-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||

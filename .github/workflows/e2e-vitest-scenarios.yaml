@@ -40,9 +40,13 @@ jobs:
           SCENARIOS: ${{ inputs.scenarios }}
         run: |
           set -euo pipefail
-          allowed_jobs="openshell-version-pin-vitest,onboard-negative-paths-vitest,openclaw-tui-chat-correlation-vitest,gateway-guard-recovery"
+          allowed_jobs="openshell-version-pin-vitest,onboard-negative-paths-vitest,credential-migration-vitest,runtime-overrides-vitest,hermes-e2e-vitest,network-policy-vitest,token-rotation-vitest,launchable-smoke-vitest,openclaw-tui-chat-correlation-vitest,gateway-guard-recovery"
           if [ -n "${JOBS}" ] && [ -n "${SCENARIOS}" ]; then
             echo "::error::Use either scenarios or jobs, not both." >&2
+            exit 1
+          fi
+          if [ -n "${SCENARIOS}" ] && [[ ! "${SCENARIOS}" =~ ^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$ ]]; then
+            echo "::error::Invalid scenario input; use comma-separated scenario ids containing only letters, numbers, underscores, and hyphens." >&2
             exit 1
           fi
           if [ -z "${JOBS}" ]; then
@@ -67,6 +71,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
+      hermes_selected: ${{ steps.matrix.outputs.hermes_selected }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
@@ -84,19 +89,79 @@ jobs:
       - id: matrix
         name: Generate Vitest scenario matrix
         env:
+          JOBS: ${{ inputs.jobs }}
           SCENARIOS: ${{ inputs.scenarios }}
         run: |
           set -euo pipefail
+          allowed_jobs="openshell-version-pin-vitest,onboard-negative-paths-vitest,credential-migration-vitest,runtime-overrides-vitest,hermes-e2e-vitest,network-policy-vitest,token-rotation-vitest,launchable-smoke-vitest,openclaw-tui-chat-correlation-vitest,gateway-guard-recovery"
           args=(--emit-live-matrix)
-          if [ -n "${SCENARIOS}" ]; then
-            if [[ ! "${SCENARIOS}" =~ ^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$ ]]; then
-              echo "::error::Invalid scenario input: ${SCENARIOS}" >&2
+          matrix=""
+          hermes_selected=false
+          registry_scenarios=()
+          free_standing_scenarios=(openshell-version-pin onboard-negative-paths runtime-overrides hermes-e2e network-policy token-rotation openclaw-tui-chat-correlation)
+          is_free_standing_scenario() {
+            local id="$1"
+            local known
+            for known in "${free_standing_scenarios[@]}"; do
+              if [[ "${id}" == "${known}" ]]; then
+                return 0
+              fi
+            done
+            return 1
+          }
+          if [ -n "${JOBS}" ] && [ -n "${SCENARIOS}" ]; then
+            echo "::error::Use either scenarios or jobs, not both." >&2
+            exit 1
+          fi
+          if [ -n "${JOBS}" ]; then
+            if [[ ! "${JOBS}" =~ ^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$ ]]; then
+              echo "::error::Invalid jobs input; use comma-separated job ids" >&2
               exit 1
             fi
-            args+=(--scenarios "${SCENARIOS}")
+            IFS=',' read -r -a selected_jobs <<< "${JOBS}"
+            for job in "${selected_jobs[@]}"; do
+              if [[ ",${allowed_jobs}," != *",${job},"* ]]; then
+                echo "::error::Unknown free-standing Vitest job: ${job}" >&2
+                echo "::error::Allowed jobs: ${allowed_jobs}" >&2
+                exit 1
+              fi
+              case "${job}" in
+                hermes-e2e-vitest)
+                  hermes_selected=true
+                  ;;
+              esac
+            done
+            matrix="[]"
+          elif [ -n "${SCENARIOS}" ]; then
+            if [[ ! "${SCENARIOS}" =~ ^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$ ]]; then
+              echo "::error::Invalid scenario input; use comma-separated scenario ids containing only letters, numbers, underscores, and hyphens." >&2
+              exit 1
+            fi
+            IFS=',' read -r -a requested_scenarios <<< "${SCENARIOS}"
+            for scenario in "${requested_scenarios[@]}"; do
+              case "${scenario}" in
+                hermes-e2e)
+                  hermes_selected=true
+                  ;;
+              esac
+              if is_free_standing_scenario "${scenario}"; then
+                continue
+              fi
+              registry_scenarios+=("${scenario}")
+            done
+            if [ "${#registry_scenarios[@]}" -gt 0 ]; then
+              registry_csv="$(IFS=,; echo "${registry_scenarios[*]}")"
+              args+=(--scenarios "${registry_csv}")
+              matrix="$(npx tsx test/e2e-scenario/scenarios/run.ts "${args[@]}")"
+            else
+              matrix="[]"
+            fi
+          else
+            hermes_selected=true
+            matrix="$(npx tsx test/e2e-scenario/scenarios/run.ts "${args[@]}")"
           fi
-          matrix="$(npx tsx test/e2e-scenario/scenarios/run.ts "${args[@]}")"
           echo "matrix=${matrix}" >> "$GITHUB_OUTPUT"
+          echo "hermes_selected=${hermes_selected}" >> "$GITHUB_OUTPUT"
           MATRIX_JSON="${matrix}" python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
           import json
           import os
@@ -112,7 +177,7 @@ jobs:
 
   live-scenarios:
     needs: generate-matrix
-    if: ${{ inputs.jobs == '' }}
+    if: ${{ inputs.jobs == '' && needs.generate-matrix.outputs.matrix != '[]' }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     strategy:
@@ -213,8 +278,8 @@ jobs:
   # because the matrix above only runs registry-scenarios.test.ts. Modeled on
   # #5049's free-standing pattern.
   openshell-version-pin-vitest:
-    needs: validate-jobs
-    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',openshell-version-pin-vitest,') }}
+    needs: [validate-jobs, generate-matrix]
+    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',openshell-version-pin-vitest,') || contains(format(',{0},', inputs.scenarios), ',openshell-version-pin,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -254,8 +319,8 @@ jobs:
           retention-days: 14
 
   onboard-negative-paths-vitest:
-    needs: validate-jobs
-    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',onboard-negative-paths-vitest,') }}
+    needs: [validate-jobs, generate-matrix]
+    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',onboard-negative-paths-vitest,') || contains(format(',{0},', inputs.scenarios), ',onboard-negative-paths,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -298,12 +363,399 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  credential-migration-vitest:
+    needs: validate-jobs
+    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',credential-migration-vitest,') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    env:
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/credential-migration
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_SANDBOX_NAME: "e2e-cred-migration"
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Authenticate to Docker Hub
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          login_succeeded=0
+          for attempt in 1 2 3; do
+            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
+              login_succeeded=1
+              break
+            fi
+            if [[ "$attempt" -lt 3 ]]; then
+              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
+              sleep 5
+            fi
+          done
+          if [[ "$login_succeeded" -ne 1 ]]; then
+            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
+          fi
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build CLI
+        run: npm run build:cli
+
+      - name: Run credential migration live test
+        # Migrated from test/e2e/test-credential-migration.sh. This live test
+        # needs NVIDIA_API_KEY only as the staged legacy credential value; it
+        # preserves the default NVIDIA provider/key migration path while
+        # pinning a lower-quota catalog model in the test fixture.
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+        run: |
+          set -euo pipefail
+          npx vitest run --project e2e-scenarios-live \
+            test/e2e-scenario/live/credential-migration.test.ts \
+            --silent=false --reporter=default
+
+      - name: Upload credential migration artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-vitest-scenarios-credential-migration
+          path: e2e-artifacts/vitest/credential-migration/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
+
+
+
+  runtime-overrides-vitest:
+    needs: [validate-jobs, generate-matrix]
+    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',runtime-overrides-vitest,') || contains(format(',{0},', inputs.scenarios), ',runtime-overrides,') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/runtime-overrides
+      NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Run runtime overrides live test
+        # Migrated from test/e2e/test-runtime-overrides.sh. Builds the real
+        # sandbox image and exercises the runtime ENTRYPOINT override boundary.
+        run: |
+          set -euo pipefail
+          npx vitest run --project e2e-scenarios-live \
+            test/e2e-scenario/live/runtime-overrides.test.ts \
+            --silent=false --reporter=default
+
+      - name: Upload runtime overrides artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-vitest-scenarios-runtime-overrides
+          path: e2e-artifacts/vitest/runtime-overrides/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
+
+  hermes-e2e-vitest:
+    needs: [validate-jobs, generate-matrix]
+    if: ${{ needs.generate-matrix.outputs.hermes_selected == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    env:
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/hermes-e2e
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+      NEMOCLAW_AGENT: hermes
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_RECREATE_SANDBOX: "1"
+      NEMOCLAW_SANDBOX_NAME: e2e-hermes
+      NEMOCLAW_MODEL: minimaxai/minimax-m2.7
+      NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS: "60"
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build CLI
+        run: npm run build:cli
+
+      - name: Run Hermes live Vitest test
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+        run: |
+          set -euo pipefail
+          npx vitest run --project e2e-scenarios-live \
+            test/e2e-scenario/live/hermes-e2e.test.ts \
+            --silent=false --reporter=default
+
+      - name: Upload Hermes live Vitest artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-vitest-scenarios-hermes-e2e
+          path: e2e-artifacts/vitest/hermes-e2e/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
+
+  network-policy-vitest:
+    needs: [validate-jobs, generate-matrix]
+    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',network-policy-vitest,') || contains(format(',{0},', inputs.scenarios), ',network-policy,') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/network-policy
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      # Raw OpenShell sandbox commands in the migrated live test must target
+      # the gateway registered by NemoClaw onboarding even when OpenShell has
+      # no active gateway selected on the runner.
+      OPENSHELL_GATEWAY: nemoclaw
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build CLI
+        run: npm run build:cli
+
+      - name: Install OpenShell
+        # Runs without workflow tokens, Docker credentials, or NVIDIA_API_KEY.
+        # scripts/install-openshell.sh pins the OpenShell version and verifies
+        # release SHA-256 checksums before installation.
+        env:
+          NEMOCLAW_NON_INTERACTIVE: "1"
+        run: |
+          set -euo pipefail
+          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
+
+      - name: Run network-policy live test
+        # Migrated from test/e2e/test-network-policy.sh. Free-standing anchor
+        # for live network policy allow/deny probes; shell retirement remains
+        # deferred to #5098 Phase 11.
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+        run: |
+          set -euo pipefail
+          npx vitest run --project e2e-scenarios-live \
+            test/e2e-scenario/live/network-policy.test.ts \
+            --silent=false --reporter=default
+
+      - name: Upload network-policy artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-vitest-scenarios-network-policy
+          path: e2e-artifacts/vitest/network-policy/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
+
+  token-rotation-vitest:
+    needs: [validate-jobs, generate-matrix]
+    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',token-rotation-vitest,') || contains(format(',{0},', inputs.scenarios), ',token-rotation,') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/token-rotation
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Authenticate to Docker Hub
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          login_succeeded=0
+          for attempt in 1 2 3; do
+            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
+              login_succeeded=1
+              break
+            fi
+            if [[ "$attempt" -lt 3 ]]; then
+              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
+              sleep 5
+            fi
+          done
+          if [[ "$login_succeeded" -ne 1 ]]; then
+            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
+          fi
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build CLI
+        run: npm run build:cli
+
+      - name: Run token rotation live test
+        # Migrated from nightly-e2e.yaml token-rotation-e2e. Preserve the
+        # original runner class: ubuntu-latest with Docker/OpenShell plus the
+        # legacy-supported fake OpenAI-compatible endpoint path and fake
+        # Telegram/Discord/Slack token boundary.
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TELEGRAM_BOT_TOKEN_A: "test-fake-token-A-rotation-e2e"
+          TELEGRAM_BOT_TOKEN_B: "test-fake-token-B-rotation-e2e"
+          DISCORD_BOT_TOKEN_A: "dc-a-rotation-e2e"
+          DISCORD_BOT_TOKEN_B: "dc-b-rotation-e2e"
+          SLACK_BOT_TOKEN_A: "xoxb-fake-A-rotation-e2e"
+          SLACK_BOT_TOKEN_B: "xoxb-fake-B-rotation-e2e"
+          SLACK_APP_TOKEN_A: "xapp-fake-A-rotation-e2e"
+          SLACK_APP_TOKEN_B: "xapp-fake-B-rotation-e2e"
+        run: |
+          set -euo pipefail
+          npx vitest run --project e2e-scenarios-live \
+            test/e2e-scenario/live/token-rotation.test.ts \
+            --silent=false --reporter=default
+
+      - name: Upload token rotation artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-vitest-scenarios-token-rotation
+          path: e2e-artifacts/vitest/token-rotation/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
+
+  launchable-smoke-vitest:
+    needs: validate-jobs
+    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',launchable-smoke-vitest,') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/launchable-smoke
+      NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_SANDBOX_NAME: "e2e-launchable"
+      NEMOCLAW_RECREATE_SANDBOX: "1"
+      NEMOCLAW_MODEL: minimaxai/minimax-m2.7
+      SKIP_DOCKER_PULL: "1"
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Authenticate to Docker Hub
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          login_succeeded=0
+          for attempt in 1 2 3; do
+            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
+              login_succeeded=1
+              break
+            fi
+            if [[ "$attempt" -lt 3 ]]; then
+              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
+              sleep 5
+            fi
+          done
+          if [[ "$login_succeeded" -ne 1 ]]; then
+            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
+          fi
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Run launchable smoke live test
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+        run: |
+          set -euo pipefail
+          npx vitest run --project e2e-scenarios-live \
+            test/e2e-scenario/live/launchable-smoke.test.ts \
+            --silent=false --reporter=default
+
+      - name: Upload launchable smoke artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-vitest-scenarios-launchable-smoke
+          path: e2e-artifacts/vitest/launchable-smoke/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
+
   # Focused coverage slice for the #2603/#3145 OpenClaw websocket
   # protocol/history contract. The retained legacy bash lane remains the
   # source for full closeout until a later PR proves replacement and deletes it.
   openclaw-tui-chat-correlation-vitest:
-    needs: validate-jobs
-    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',openclaw-tui-chat-correlation-vitest,') }}
+    needs: [validate-jobs, generate-matrix]
+    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',openclaw-tui-chat-correlation-vitest,') || contains(format(',{0},', inputs.scenarios), ',openclaw-tui-chat-correlation,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 75
     env:
@@ -481,6 +933,12 @@ jobs:
         live-scenarios,
         openshell-version-pin-vitest,
         onboard-negative-paths-vitest,
+        credential-migration-vitest,
+        runtime-overrides-vitest,
+        hermes-e2e-vitest,
+        network-policy-vitest,
+        token-rotation-vitest,
+        launchable-smoke-vitest,
         openclaw-tui-chat-correlation-vitest,
         gateway-guard-recovery,
       ]
@@ -501,11 +959,13 @@ jobs:
             const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
             const workflowBranch = context.ref.replace('refs/heads/', '');
             const prNumberInput = process.env.JOB_PR_NUMBER || '';
-            const requestedScenarios = process.env.JOB_SCENARIOS || '';
+            const rawRequestedScenarios = process.env.JOB_SCENARIOS || '';
             const rawRequestedJobs = process.env.JOBS || '';
-            const jobsValidationPassed = needs['validate-jobs']?.result === 'success';
-            const requestedJobs = jobsValidationPassed ? rawRequestedJobs : '';
-            const jobsRejected = rawRequestedJobs && !jobsValidationPassed;
+            const selectorValidationPassed = needs['validate-jobs']?.result === 'success';
+            const requestedScenarios = selectorValidationPassed ? rawRequestedScenarios : '';
+            const requestedJobs = selectorValidationPassed ? rawRequestedJobs : '';
+            const scenariosRejected = rawRequestedScenarios && !selectorValidationPassed;
+            const jobsRejected = rawRequestedJobs && !selectorValidationPassed;
 
             let prNumber = prNumberInput ? Number.parseInt(prNumberInput, 10) : undefined;
             if (!prNumber) {
@@ -543,9 +1003,11 @@ jobs:
               '',
               `**Run:** [${context.runId}](${runUrl})`,
               `**Workflow ref:** \`${workflowBranch}\``,
-              requestedScenarios
-                ? `**Requested scenarios:** \`${requestedScenarios}\``
-                : '**Requested scenarios:** _(default — all supported)_',
+              scenariosRejected
+                ? '**Requested scenarios:** _(selector rejected by validate-jobs)_'
+                : requestedScenarios
+                  ? `**Requested scenarios:** \`${requestedScenarios}\``
+                  : '**Requested scenarios:** _(default — all supported)_',
               jobsRejected
                 ? '**Requested jobs:** _(selector rejected by validate-jobs)_'
                 : requestedJobs
