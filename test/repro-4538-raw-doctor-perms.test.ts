@@ -65,6 +65,20 @@ function modeBits(filePath: string): number {
   return fs.statSync(filePath).mode & 0o7777;
 }
 
+// WSL CI can run these snippets as root; force restore-path cases to model a
+// mutable sandbox-owned config tree instead of the shields-up root-owned branch.
+function mutableSandboxOwnerStatShim(): string {
+  return [
+    "stat() {",
+    '  if [ "${1:-}" = "-c" ] && [ "${2:-}" = "%U" ] && [ "${3:-}" = "$OPENCLAW_STATE_DIR" ]; then',
+    '    printf "sandbox\\n";',
+    "    return 0;",
+    "  fi",
+    '  command stat "$@";',
+    "}",
+  ].join("\n");
+}
+
 function mkdtempOnPosixFs(prefix: string): string {
   const roots = process.platform === "linux" ? ["/tmp", os.tmpdir()] : [os.tmpdir()];
   let lastError: unknown = null;
@@ -109,6 +123,7 @@ describe("#4538 raw `openclaw doctor --fix` mutable-perm restore", () => {
           "-c",
           [
             "set -uo pipefail",
+            mutableSandboxOwnerStatShim(),
             extractShellFunctionFromSource(src, "_nemoclaw_restore_mutable_config_perms"),
             "_nemoclaw_restore_mutable_config_perms",
           ].join("\n"),
@@ -177,6 +192,7 @@ describe("#4538 raw `openclaw doctor --fix` mutable-perm restore", () => {
           "-c",
           [
             "set -uo pipefail",
+            mutableSandboxOwnerStatShim(),
             // Intercept `command openclaw ...` (the guard's terminal call) to
             // simulate `doctor --fix`: tighten perms, then exit nonzero — the
             // EACCES-on-.bashrc case the reporter hit.
@@ -226,6 +242,7 @@ describe("#4538 raw `openclaw doctor --fix` mutable-perm restore", () => {
           "-c",
           [
             "set -e",
+            mutableSandboxOwnerStatShim(),
             "command() {",
             '  if [ "${1:-}" = "openclaw" ]; then',
             '    chmod 700 "$OPENCLAW_STATE_DIR";',
@@ -270,6 +287,7 @@ describe("#4538 raw `openclaw doctor --fix` mutable-perm restore", () => {
           "-c",
           [
             "set -uo pipefail",
+            mutableSandboxOwnerStatShim(),
             extractShellFunctionFromSource(src, "_nemoclaw_restore_mutable_config_perms"),
             "_nemoclaw_restore_mutable_config_perms",
           ].join("\n"),

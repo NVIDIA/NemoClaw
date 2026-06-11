@@ -262,7 +262,7 @@ describe("setupSelectedMessagingChannels", () => {
       token: "wechat-token",
       extraEnv: {
         WECHAT_ACCOUNT_ID: "wechat-account",
-        WECHAT_BASE_URL: "https://ilinkai.wechat.example",
+        WECHAT_BASE_URL: "https://ilinkai.wechat.com",
         WECHAT_USER_ID: "wechat-user",
       },
       defaultUserId: "wechat-user",
@@ -281,7 +281,7 @@ describe("setupSelectedMessagingChannels", () => {
 
     expect(saveCredential).toHaveBeenCalledWith("WECHAT_BOT_TOKEN", "wechat-token");
     expect(process.env.WECHAT_ACCOUNT_ID).toBe("wechat-account");
-    expect(process.env.WECHAT_BASE_URL).toBe("https://ilinkai.wechat.example");
+    expect(process.env.WECHAT_BASE_URL).toBe("https://ilinkai.wechat.com");
     expect(process.env.WECHAT_USER_ID).toBe("wechat-user");
     expect(process.env.WECHAT_ALLOWED_IDS).toBe("wechat-user");
     expect(plan?.channels[0]).toMatchObject({ channelId: "wechat", active: true });

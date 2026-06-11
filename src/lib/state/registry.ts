@@ -67,6 +67,7 @@ export interface SandboxEntry {
   // are never auto-rebuilt onto the default image (#5026).
   nemoclawVersion?: string | null;
   imageTag?: string | null;
+  providerCredentialHashes?: Record<string, string>;
   messagingChannels?: string[];
   messagingChannelConfig?: MessagingChannelConfig;
   messaging?: SandboxMessagingState;
@@ -349,6 +350,7 @@ export function registerSandbox(entry: SandboxEntry): void {
       agentVersion: entry.agentVersion || null,
       nemoclawVersion: entry.nemoclawVersion || null,
       imageTag: entry.imageTag || null,
+      providerCredentialHashes: entry.providerCredentialHashes || undefined,
       messagingChannels: entry.messagingChannels || [],
       messagingChannelConfig:
         entry.messagingChannelConfig && Object.keys(entry.messagingChannelConfig).length > 0

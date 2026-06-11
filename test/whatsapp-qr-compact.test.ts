@@ -2,11 +2,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const START_SCRIPT = path.join(REPO_ROOT, "scripts", "nemoclaw-start.sh");
@@ -23,8 +23,8 @@ const PRELOAD_SOURCE = path.join(
 // the bundled @openclaw/whatsapp passes NO `small`, so it defaults to full
 // size. These tests prove the preload patches that real package shape. End-to-
 // end proof that this shrinks a *real* rendered QR lives in
-// test/e2e/test-whatsapp-qr-compact-e2e.sh, which drives the actual upstream
-// renderer at the version bundled in Dockerfile.base. Ref: NemoClaw#4522.
+// test/e2e-scenario/live/whatsapp-qr-compact.test.ts, which drives the actual
+// upstream renderer at the version bundled in Dockerfile.base. Ref: NemoClaw#4522.
 
 // A fake `qrcode` package (toString + create — the shape the preload keys on)
 // and a fake `qrcode-terminal` (generate). Each records the options it was
@@ -200,8 +200,9 @@ describe("WhatsApp compact-QR preload (qrcode package)", () => {
 // is exercised behaviorally rather than by asserting on source text: the guard
 // describe-block below executes the extracted openclaw() function and checks the
 // --require injection, and the end-to-end renderer E2E
-// (test/e2e/test-whatsapp-qr-compact-e2e.sh) plus the in-sandbox M-WA6d check in
-// test-messaging-providers.sh prove the wired preload actually shrinks the QR.
+// (test/e2e-scenario/live/whatsapp-qr-compact.test.ts) plus the in-sandbox
+// M-WA6d check in test-messaging-providers.sh prove the wired preload actually
+// shrinks the QR.
 
 // Extract the sandbox-side `openclaw()` guard function from the single-quoted
 // heredoc so we can exercise the WhatsApp login branch without a live sandbox.

@@ -234,7 +234,7 @@ describe("stripCredentials", () => {
           url: "https://mcp.example.com",
           headers: {
             Authorization: "Bearer ghp_0123456789abcdef",
-            "X-API-Key": "sk-0123456789abcdefghij",
+            "X-API-Key": "sk-0123456789abcdefghij", // gitleaks:allow
             // Opaque value (no recognizable prefix) caught by header name.
             "X-API-Token": "plain-opaque-value-12345",
             // Opaque value under a custom -auth header, caught by header name.
