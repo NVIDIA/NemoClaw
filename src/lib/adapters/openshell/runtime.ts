@@ -19,6 +19,7 @@ type CommandArgs = string[];
 type RunnerOptions = {
   env?: NodeJS.ProcessEnv;
   stdio?: StdioOptions;
+  input?: string;
   ignoreError?: boolean;
   timeout?: number;
 };
@@ -41,6 +42,7 @@ export function runOpenshell(args: CommandArgs, opts: RunnerOptions = {}) {
     cwd: ROOT,
     env: opts.env,
     stdio: opts.stdio,
+    input: opts.input,
     ignoreError: opts.ignoreError,
     timeout: opts.timeout,
     errorLine: console.error,

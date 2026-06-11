@@ -276,9 +276,9 @@ network_policies:
 
   # WeChat (personal) via Tencent's iLink Bot API. The Hermes adapter uses
   # HTTP long-polling (no WebSocket). WEIXIN_TOKEN is L7-resolved at egress
-  # from WECHAT_BOT_TOKEN (same credential slot OpenClaw's bridge uses) — see
-  # agents/hermes/config/messaging-config.ts and
-  # nemoclaw-blueprint/policies/presets/wechat.yaml for the shared host set.
+  # from WECHAT_BOT_TOKEN (same credential slot OpenClaw's bridge uses) via
+  # manifest hook render outputs. See nemoclaw-blueprint/policies/presets/wechat.yaml
+  # for the shared host set.
   wechat_bridge:
     name: wechat_bridge
     endpoints:

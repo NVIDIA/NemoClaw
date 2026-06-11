@@ -45,20 +45,21 @@ and artifact shape operators needed from the retired workflows:
 - `.github/workflows/e2e-vitest-scenarios.yaml` runs the live matrix.
 - `test/e2e-scenario/live/registry-scenarios.test.ts` executes supported
   registry scenarios through Vitest.
-- `test/e2e-scenario/framework/` owns fixtures, clients, shell-probe bridges,
+- `test/e2e-scenario/fixtures/` owns fixtures, clients, shell-probe bridges,
   artifact writing, cleanup, and redaction.
 
 ## What Was Not Removed
 
 Direct legacy E2E scripts under `test/e2e/test-*.sh` remain in place. Those
-scripts are governed by #5098 and
-`test/e2e-scenario/migration/legacy-inventory.json`. They should be migrated,
-augmented, or kept by family according to their KEEP_BASH, HYBRID, or
-MIGRATE_TYPED classification.
+scripts are governed by #5098 and live GitHub issues and pull requests. They
+should be migrated by contract into the single Vitest E2E system. A PR that
+retires a nightly-wired legacy E2E script removes the script, removes the
+`nightly-e2e.yaml` reference, and updates the workflow allowlist test in the
+same change.
 
 That includes the security and messaging contracts that the deleted typed-shell
 validation suites used to mirror. Until #5098 migrates those families into
-Vitest scenario fixtures, the active source of truth remains:
+Vitest fixtures, the active source of truth remains:
 
 - `test/e2e/test-credential-sanitization.sh` and
   `test/e2e/test-credential-migration.sh` for credential leak prevention and

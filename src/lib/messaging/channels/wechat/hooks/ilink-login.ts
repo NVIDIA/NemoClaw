@@ -7,6 +7,7 @@ import type {
   MessagingHookRegistration,
 } from "../../../hooks/types";
 import type { MessagingSerializableValue } from "../../../manifest";
+import { normalizeWechatIlinkBaseUrl } from "../ilink-base-url";
 
 export interface WechatLoginCredentials {
   readonly token: string;
@@ -67,11 +68,12 @@ export function createWechatIlinkLoginHook(
       );
     }
     const { token, accountId, baseUrl, userId } = result.credentials;
+    const normalizedBaseUrl = normalizeWechatIlinkBaseUrl(baseUrl);
 
     saveCredential("WECHAT_BOT_TOKEN", token);
     env.WECHAT_BOT_TOKEN = token;
     env.WECHAT_ACCOUNT_ID = accountId;
-    if (baseUrl) env.WECHAT_BASE_URL = baseUrl;
+    if (normalizedBaseUrl) env.WECHAT_BASE_URL = normalizedBaseUrl;
     if (userId) env.WECHAT_USER_ID = userId;
     const suffix = result.summary ? ` (${result.summary})` : "";
     (options.log ?? console.log)(`  ✓ ${context.channelId} token saved${suffix}`);
@@ -87,10 +89,10 @@ export function createWechatIlinkLoginHook(
       },
     };
 
-    if (baseUrl) {
+    if (normalizedBaseUrl) {
       outputs.baseUrl = {
         kind: "config",
-        value: baseUrl,
+        value: normalizedBaseUrl,
       };
     }
     if (userId) {
@@ -156,5 +158,9 @@ function normalizeCsvValues(value: string): string[] {
 }
 
 function normalizeCredentialValue(value: string): string {
-  return value.replace(/\r/g, "").trim();
+  const normalized = value.trim();
+  if (/[\r\n]/.test(normalized)) {
+    throw new Error("WeChat config values must not contain line breaks.");
+  }
+  return normalized;
 }

@@ -6,8 +6,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { type ArtifactSink } from "../framework/artifacts.ts";
-import { expect, test } from "../framework/e2e-test.ts";
+import { type ArtifactSink } from "../fixtures/artifacts.ts";
+import { expect, test } from "../fixtures/e2e-test.ts";
 
 // Migrated from test/e2e/test-openshell-version-pin.sh (regression guard for
 // #3474). The legacy bash script is a hermetic installer-script behavioral
