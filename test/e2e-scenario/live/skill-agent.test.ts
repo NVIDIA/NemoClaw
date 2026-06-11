@@ -3,7 +3,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-
+import { describe, it } from "vitest";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import {
   type SandboxClient,
@@ -72,6 +72,22 @@ function isExternalAgentVerificationFlake(text: string): boolean {
   );
 }
 
+function isAgentVerificationFailClosed(text: string): boolean {
+  // Preserve the existing helper's fail-closed ordering: a non-zero helper
+  // result that reports tool/security/runtime failure must not be turned into
+  // success just because the agent transcript also echoed the token.
+  return /SsrFBlockedError|Blocked hostname|Blocked: resolves to|transport error|provider error|ECONNREFUSED|EAI_AGAIN|gateway unavailable/i.test(
+    text,
+  );
+}
+
+function shouldSkipExternalAgentVerificationFailure(
+  text: string,
+  fixturePresent: boolean,
+): boolean {
+  return fixturePresent && isExternalAgentVerificationFlake(text);
+}
+
 function isExternalProviderValidationFailure(text: string): boolean {
   return (
     /NVIDIA Endpoints endpoint validation failed/i.test(text) &&
@@ -128,6 +144,30 @@ async function ignoreCleanupError(run: () => Promise<unknown>): Promise<void> {
     // or after onboarding already removed part of the runtime state.
   }
 }
+
+describe("skill-agent live test local classifiers", () => {
+  it("does not treat helper fail-closed output as a skippable provider flake", () => {
+    const output = `--- agent stdout/stderr\nSsrFBlockedError\n${VERIFY_PHRASE}\n--- end ---`;
+
+    expect(isAgentVerificationFailClosed(output)).toBe(true);
+    expect(shouldSkipExternalAgentVerificationFailure(output, true)).toBe(false);
+  });
+
+  it("skips only timeout-like agent verification failures after fixture presence is proven", () => {
+    const timeoutOutput = `--- agent stdout/stderr\nLLM idle timeout\n--- end ---`;
+
+    expect(shouldSkipExternalAgentVerificationFailure(timeoutOutput, false)).toBe(false);
+    expect(shouldSkipExternalAgentVerificationFailure(timeoutOutput, true)).toBe(true);
+    expect(shouldSkipExternalAgentVerificationFailure("require is not defined", true)).toBe(false);
+  });
+
+  it("matches the token only inside the delimited agent section", () => {
+    expect(agentSectionContainsToken(`helper echoed ${VERIFY_PHRASE}`)).toBe(false);
+    expect(
+      agentSectionContainsToken(`--- agent stdout/stderr\n\`${VERIFY_PHRASE}\`\n--- end ---`),
+    ).toBe(true);
+  });
+});
 
 const runSkillAgentTest = shouldRunLiveE2EScenarios() ? test : test.skip;
 
@@ -288,16 +328,23 @@ runSkillAgentTest(
       });
       lastAgentOutput = resultText(verify);
       lastExitCode = verify.exitCode;
-      if (verify.exitCode === 0 || agentSectionContainsToken(lastAgentOutput)) {
+      if (verify.exitCode === 0) {
+        agentOk = true;
+        break;
+      }
+      if (isAgentVerificationFailClosed(lastAgentOutput)) {
+        break;
+      }
+      if (agentSectionContainsToken(lastAgentOutput)) {
         agentOk = true;
         break;
       }
       if (attempt < attempts) await sleep(RETRY_SLEEP_MS);
     }
 
-    if (!agentOk && isExternalAgentVerificationFlake(lastAgentOutput)) {
+    if (!agentOk) {
       const fixturePresent = await verifySkillFixturePresent(sandbox, SANDBOX_NAME);
-      if (fixturePresent) {
+      if (shouldSkipExternalAgentVerificationFailure(lastAgentOutput, fixturePresent)) {
         await artifacts.writeJson("scenario-result.json", {
           id: "skill-agent",
           status: "skipped",
