@@ -275,23 +275,28 @@ async function readTraceSummaryFromRun(
     artifact_id: artifact.id,
     archive_format: "zip",
   });
-  const zipPath = path.join(os.tmpdir(), `${TRACE_ARTIFACT_NAME}-${runId}-${artifact.id}.zip`);
-  fs.writeFileSync(zipPath, Buffer.from(download.data));
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-trace-artifact-"));
+  try {
+    const zipPath = path.join(tempDir, `${TRACE_ARTIFACT_NAME}.zip`);
+    fs.writeFileSync(zipPath, Buffer.from(download.data), { mode: 0o600 });
 
-  const names = execFileSync("unzip", ["-Z1", zipPath], {
-    encoding: "utf8",
-    maxBuffer: 1024 * 1024,
-  })
-    .split("\n")
-    .map((name) => name.trim())
-    .filter((name) => name.endsWith(".json"));
-  const jsonTexts = names.map((name) =>
-    execFileSync("unzip", ["-p", zipPath, name], {
+    const names = execFileSync("unzip", ["-Z1", zipPath], {
       encoding: "utf8",
-      maxBuffer: 20 * 1024 * 1024,
-    }),
-  );
-  return selectOnboardTrace(jsonTexts);
+      maxBuffer: 1024 * 1024,
+    })
+      .split("\n")
+      .map((name) => name.trim())
+      .filter((name) => name.endsWith(".json"));
+    const jsonTexts = names.map((name) =>
+      execFileSync("unzip", ["-p", zipPath, name], {
+        encoding: "utf8",
+        maxBuffer: 20 * 1024 * 1024,
+      }),
+    );
+    return selectOnboardTrace(jsonTexts);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
 }
 
 async function buildTraceTimingResult(
