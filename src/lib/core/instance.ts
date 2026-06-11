@@ -33,12 +33,15 @@
  * Scope of segregation in this groundwork: NemoClaw home directory, gateway
  * binding (name, state dir, compat container), credentials store (including
  * the legacy plaintext credentials file path), rebuild backups and the
- * snapshot tree underneath, local inference adapter state, and the Ollama
- * auth-proxy token reader/writer. Out of scope here and tracked as follow-up:
- * the sandbox registry, onboard session state, messaging configuration,
- * host-side mount roots, the uninstall plan, and the `config-io` host-root
- * permission healer. Callers that have not yet migrated to
- * `resolveNemoclawHomeDir()` still share state across instances.
+ * snapshot tree underneath, local inference adapter state, the Ollama
+ * auth-proxy token reader/writer, and every consumer of
+ * `resolveNemoclawStateDir()` — shields audit, shields posture, and the
+ * shields timer all already route through the instance-aware state dir.
+ * Out of scope here and tracked as follow-up: the sandbox registry, onboard
+ * session state, messaging configuration, host-side mount roots, the
+ * uninstall plan, and the `config-io` host-root permission healer. Callers
+ * that have not yet migrated to `resolveNemoclawHomeDir()` still share state
+ * across instances.
  *
  * This module is the single source of truth for resolving the active instance
  * name; downstream callers thread the resolved value through their own paths

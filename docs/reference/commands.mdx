@@ -1834,7 +1834,7 @@ Existing single-instance deployments therefore observe no change after upgrading
 When the bare default gateway is already in use, varying `NEMOCLAW_GATEWAY_PORT` alone produces a `nemoclaw-<port>` gateway that segregates from the bare default without requiring `NEMOCLAW_INSTANCE`.
 The port suffix is the implicit fallback identity for the default instance.
 
-Setting `NEMOCLAW_INSTANCE` to a non-default value before `$$nemoclaw onboard` routes the NemoClaw home directory, credentials store, rebuild backups (and the snapshot tree underneath), local inference adapter state (including the Ollama auth-proxy token), and gateway binding (name, state directory, compatibility container) to that instance.
+Setting `NEMOCLAW_INSTANCE` to a non-default value before `$$nemoclaw onboard` routes the NemoClaw home directory, credentials store, rebuild backups (and the snapshot tree underneath), local inference adapter state (including the Ollama auth-proxy token), shields audit and timer state, and gateway binding (name, state directory, compatibility container) to that instance.
 Combine `NEMOCLAW_INSTANCE` with `NEMOCLAW_GATEWAY_PORT` to compose the instance and port suffixes (`nemoclaw-<instance>-<port>`).
 Modules that still read `~/.nemoclaw` directly continue to share state across instances until follow-up PRs migrate them.
 These remaining shared surfaces are the sandbox registry, onboard session state, messaging configuration, host-side mount roots, the uninstall plan, and the `config-io` host-root permission healer.

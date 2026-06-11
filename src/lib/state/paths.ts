@@ -24,12 +24,15 @@ export const BASE_NEMOCLAW_HOME_DIR_NAME = ".nemoclaw";
  * credentials store (`credentials/store.ts`), rebuild backups + blueprint
  * digest (`state/sandbox.ts`), the local-adapter state directory and Ollama
  * auth-proxy token (`inference/local-adapter-lifecycle.ts`, `inference/local.ts`),
- * and the gateway-name binding (`onboard/gateway-binding.ts`). Surfaces that
- * still hard-code `.nemoclaw` — the sandbox registry (`state/registry.ts`),
- * onboard session state (`state/onboard-session.ts`), messaging configuration,
- * uninstall plan, host-side mount roots, and the `config-io` host-root
- * permission healer — continue to share state across instances until
- * follow-up PRs migrate them.
+ * the gateway-name binding (`onboard/gateway-binding.ts`), and every consumer
+ * of `resolveNemoclawStateDir()` — shields audit (`shields/audit.ts`),
+ * shields posture (`shields/index.ts`), and the shields timer
+ * (`shields/timer.ts`) all already land under `.nemoclaw-<instance>/state`.
+ * Surfaces that still hard-code `.nemoclaw` — the sandbox registry
+ * (`state/registry.ts`), onboard session state (`state/onboard-session.ts`),
+ * messaging configuration, uninstall plan, host-side mount roots, and the
+ * `config-io` host-root permission healer — continue to share state across
+ * instances until follow-up PRs migrate them.
  */
 export function resolveNemoclawHomeDirName(instance: string = NEMOCLAW_INSTANCE): string {
   return isDefaultInstance(instance)
