@@ -29,10 +29,6 @@ inputs:
     description: Optional newline-capable artifact path glob list to upload after every script run.
     required: false
     default: ""
-  always-artifact-sanitize-trace-source-path:
-    description: Optional raw trace directory to sanitize into always-artifact-path before upload.
-    required: false
-    default: ""
 
 runs:
   using: composite
@@ -74,17 +70,6 @@ runs:
         name: ${{ inputs.artifact-name }}
         path: ${{ inputs.artifact-path }}
         if-no-files-found: ignore
-
-    - name: Sanitize E2E trace artifacts
-      if: always() && inputs.always-artifact-sanitize-trace-source-path != '' && inputs.always-artifact-path != ''
-      shell: bash
-      working-directory: ${{ inputs.working-directory }}
-      env:
-        RAW_TRACE_PATH: ${{ inputs.always-artifact-sanitize-trace-source-path }}
-        SANITIZED_TRACE_PATH: ${{ inputs.always-artifact-path }}
-      run: |
-        set -euo pipefail
-        node "$GITHUB_ACTION_PATH/../../../scripts/ci/sanitize-trace-artifacts.js" "$RAW_TRACE_PATH" "$SANITIZED_TRACE_PATH"
 
     - name: Upload E2E artifacts
       if: always() && inputs.always-artifact-name != '' && inputs.always-artifact-path != ''

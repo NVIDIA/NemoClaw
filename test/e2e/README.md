@@ -12,9 +12,9 @@ That job sets:
 NEMOCLAW_TRACE_DIR=/tmp/nemoclaw-traces
 ```
 
-The reusable E2E runner sanitizes `/tmp/nemoclaw-traces/` into `/tmp/nemoclaw-traces-sanitized/`, then uploads the sanitized directory after every run as the `cloud-onboard-traces` artifact.
+The reusable E2E runner uploads `/tmp/nemoclaw-traces/` after every run as the `cloud-onboard-traces` artifact.
 Failure-only logs continue to use each job's normal `artifact_name` and `artifact_path`.
-The sanitizer redacts sensitive-looking keys and common token value formats while preserving trace span names, durations, statuses, and summary timing fields.
+NemoClaw sanitizes trace artifacts as they are written: sensitive-looking keys and common token value formats are redacted while trace span names, durations, statuses, and summary timing fields are preserved.
 
 The nightly `scorecard` job reads the `cloud-onboard-traces` artifact, selects the trace JSON that contains the root `nemoclaw.onboard` span, and reports:
 
@@ -37,4 +37,4 @@ If the artifact, prior release tag, prior run, or matching trace data is unavail
 
 The trace timing section is part of the same Slack scorecard message, but it stays compact: total duration, the three largest matching phase changes, and a pointer to the GitHub run summary for the full table.
 It does not post raw trace JSON, prompts, credentials, or environment values.
-The uploaded trace artifact is sanitized before upload.
+The uploaded trace artifact is already sanitized by NemoClaw before upload.

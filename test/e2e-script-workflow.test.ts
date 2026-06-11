@@ -2,10 +2,30 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 
 import { describe, expect, it } from "vitest";
 
 import { loadE2eWorkflowContract, reusableNightlyJobs } from "./helpers/e2e-workflow-contract";
+
+type TraceTimingAnalyzer = {
+  buildPhaseRows: (
+    currentPhases: Record<string, number>,
+    priorPhases: Record<string, number>,
+  ) => Array<{ label: string; currentMs: number; priorMs: number; deltaAbsMs: number }>;
+  formatTopPhaseChanges: (
+    phaseRows: Array<{ label: string; currentMs: number; priorMs: number; deltaAbsMs: number }>,
+  ) => string;
+  buildTraceSummaryLines: (
+    currentTrace: { totalMs: number },
+    priorTrace: { totalMs: number },
+    priorTag: { name: string },
+    phaseRows: Array<{ label: string; currentMs: number; priorMs: number; deltaAbsMs: number }>,
+  ) => string[];
+};
+
+const require = createRequire(import.meta.url);
+const traceTiming = require("../scripts/scorecard/analyze-trace-timing.ts") as TraceTimingAnalyzer;
 
 // Direct legacy bash E2Es are being migrated toward Vitest coverage. Keep the
 // top-level shell suite frozen so new coverage starts in the newer E2E surface
@@ -375,9 +395,6 @@ describe("E2E reusable workflow contract", () => {
     const callInputs =
       runnerWorkflow.on?.workflow_call?.inputs ?? runnerWorkflow.true?.workflow_call?.inputs ?? {};
     const runStep = runnerWorkflow.jobs.run.steps.find((step) => step.name === "Run E2E script");
-    const sanitizeStep = action.runs.steps.find(
-      (step) => step.name === "Sanitize E2E trace artifacts",
-    );
     const alwaysUploadStep = action.runs.steps.find((step) => step.name === "Upload E2E artifacts");
     const workflowActionCheckout = runnerWorkflow.jobs.run.steps.find(
       (step) => step.name === "Checkout workflow action",
@@ -387,29 +404,22 @@ describe("E2E reusable workflow contract", () => {
 
     expect(callInputs.always_artifact_name?.default).toBe("");
     expect(callInputs.always_artifact_path?.default).toBe("");
-    expect(callInputs.always_artifact_sanitize_trace_source_path?.default).toBe("");
+    expect(callInputs.always_artifact_sanitize_trace_source_path).toBeUndefined();
     expect(runStep?.with?.["always-artifact-name"]).toBe("${{ inputs.always_artifact_name }}");
     expect(runStep?.with?.["always-artifact-path"]).toBe("${{ inputs.always_artifact_path }}");
-    expect(runStep?.with?.["always-artifact-sanitize-trace-source-path"]).toBe(
-      "${{ inputs.always_artifact_sanitize_trace_source_path }}",
+    expect(runStep?.with?.["always-artifact-sanitize-trace-source-path"]).toBeUndefined();
+    expect(action.runs.steps.some((step) => step.name === "Sanitize E2E trace artifacts")).toBe(
+      false,
     );
-    expect(sanitizeStep?.if).toBe(
-      "always() && inputs.always-artifact-sanitize-trace-source-path != '' && inputs.always-artifact-path != ''",
-    );
-    expect(sanitizeStep?.run).toContain(
-      'node "$GITHUB_ACTION_PATH/../../../scripts/ci/sanitize-trace-artifacts.js"',
-    );
-    expect(workflowActionCheckout?.with?.["sparse-checkout"]).toContain(
-      "scripts/ci/sanitize-trace-artifacts.js",
+    expect(workflowActionCheckout?.with?.["sparse-checkout"]).not.toContain(
+      "sanitize-trace-artifacts",
     );
     expect(alwaysUploadStep?.if).toBe(
       "always() && inputs.always-artifact-name != '' && inputs.always-artifact-path != ''",
     );
     expect(cloudOnboardJob.with?.always_artifact_name).toBe("cloud-onboard-traces");
-    expect(cloudOnboardJob.with?.always_artifact_path).toBe("/tmp/nemoclaw-traces-sanitized/");
-    expect(cloudOnboardJob.with?.always_artifact_sanitize_trace_source_path).toBe(
-      "/tmp/nemoclaw-traces/",
-    );
+    expect(cloudOnboardJob.with?.always_artifact_path).toBe("/tmp/nemoclaw-traces/");
+    expect(cloudOnboardJob.with?.always_artifact_sanitize_trace_source_path).toBeUndefined();
     expect(envJson.NEMOCLAW_TRACE_DIR).toBe("/tmp/nemoclaw-traces");
   });
 
@@ -417,18 +427,39 @@ describe("E2E reusable workflow contract", () => {
     const scorecardStep = nightlyWorkflow.jobs.scorecard.steps?.find(
       (step) => step.name === "Generate nightly scorecard",
     );
-
-    expect(scorecardStep?.with?.script).toContain(
-      "const ONBOARD_PHASE_PREFIX = 'nemoclaw.onboard.phase.'",
+    const phaseRows = traceTiming.buildPhaseRows(
+      {
+        "nemoclaw.onboard.phase.preflight": 1_000,
+        "nemoclaw.onboard.phase.gateway": 5_000,
+        "nemoclaw.onboard.phase.sandbox": 2_000,
+        "nemoclaw.onboard.phase.renamed": 20_000,
+      },
+      {
+        "nemoclaw.onboard.phase.preflight": 2_000,
+        "nemoclaw.onboard.phase.gateway": 3_000,
+        "nemoclaw.onboard.phase.sandbox": 10_000,
+        "nemoclaw.onboard.phase.old": 20_000,
+      },
     );
-    expect(scorecardStep?.with?.script).toContain("const ONBOARD_PHASE_ORDER = [");
-    expect(scorecardStep?.with?.script).toContain("head_sha: tag.sha");
-    expect(scorecardStep?.with?.script).toContain("if (phaseRows.length === 0) return []");
-    expect(scorecardStep?.with?.script).toContain("if (phaseRows.length === 0) {");
-    expect(scorecardStep?.with?.script).toContain("return traceTimingResult(traceLine)");
-    expect(scorecardStep?.with?.script).toContain("Top phase changes: ${topPhaseChanges}.");
-    expect(scorecardStep?.with?.script).toContain("## Cloud Onboard Trace Timing");
-    expect(scorecardStep?.with?.script).toContain("| Phase | Current | Previous | Delta |");
+    const summaryLines = traceTiming.buildTraceSummaryLines(
+      { totalMs: 8_000 },
+      { totalMs: 15_000 },
+      { name: "v0.0.56" },
+      phaseRows,
+    );
+
+    expect(scorecardStep?.with?.script).toContain("scripts/scorecard/analyze-trace-timing.ts");
+    expect(scorecardStep?.with?.script).toContain("traceTiming.buildTraceTimingResult");
+    expect(phaseRows.map((row) => row.label)).toEqual(["preflight", "gateway", "sandbox"]);
+    expect(traceTiming.formatTopPhaseChanges(phaseRows)).toBe(
+      "sandbox -8.0s; gateway +2.0s; preflight -1.0s",
+    );
+    expect(
+      traceTiming.buildTraceSummaryLines({ totalMs: 1 }, { totalMs: 2 }, { name: "v0" }, []),
+    ).toEqual([]);
+    expect(summaryLines).toContain("## Cloud Onboard Trace Timing");
+    expect(summaryLines).toContain("| Phase | Current | Previous | Delta |");
+    expect(summaryLines.join("\n")).toContain("Baseline: latest completed `nightly-e2e.yaml` run");
     expect(scorecardStep?.with?.script).toContain("lines.push(...traceSummaryLines)");
   });
 
