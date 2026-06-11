@@ -80,23 +80,26 @@ function agentSectionContainsToken(agentOutput: string): boolean {
 }
 
 function buildVerifySkillFixtureScript(): string {
-  return `
-token=${shellQuote(VERIFY_PHRASE)}
-skill=${shellQuote(SKILL_ID)}
-found=0
-for path in \
-  "/sandbox/.openclaw/skills/${SKILL_ID}/SKILL.md" \
-  "\${HOME:-/home/sandbox}/.openclaw/skills/${SKILL_ID}/SKILL.md" \
-  "/home/sandbox/.openclaw/skills/${SKILL_ID}/SKILL.md" \
-  "/home/openclaw/.openclaw/skills/${SKILL_ID}/SKILL.md"
-do
-  if [ -f "$path" ] && grep -Fq "$token" "$path"; then
-    echo "SKILL_TOKEN_PATH=$path"
-    found=1
-  fi
-done
-test "$found" = 1
-`.trim();
+  // OpenShell rejects newline-bearing command args, so keep this readable as
+  // discrete clauses while emitting a single-line `sh -lc` script.
+  const skillPaths = [
+    `/sandbox/.openclaw/skills/${SKILL_ID}/SKILL.md`,
+    `\${HOME:-/home/sandbox}/.openclaw/skills/${SKILL_ID}/SKILL.md`,
+    `/home/sandbox/.openclaw/skills/${SKILL_ID}/SKILL.md`,
+    `/home/openclaw/.openclaw/skills/${SKILL_ID}/SKILL.md`,
+  ];
+  return [
+    `token=${shellQuote(VERIFY_PHRASE)}`,
+    `skill=${shellQuote(SKILL_ID)}`,
+    "found=0",
+    `for path in ${skillPaths.map(shellQuote).join(" ")}; do`,
+    'if [ -f "$path" ] && grep -Fq "$token" "$path"; then',
+    'echo "SKILL_TOKEN_PATH=$path"',
+    "found=1",
+    "fi",
+    "done",
+    'test "$found" = 1',
+  ].join("; ");
 }
 
 async function verifySkillFixturePresent(
