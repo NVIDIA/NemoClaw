@@ -122,24 +122,29 @@ function requireNoDispatchInputInterpolation(
   }
 }
 
-function freeStandingJobIf(jobName: string): string {
-  return `\${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',${jobName},') }}`;
-}
-
-function networkPolicyJobIf(): string {
-  return "${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',network-policy-vitest,') || contains(format(',{0},', inputs.scenarios), ',network-policy,') }}";
+function freeStandingJobIf(jobName: string, scenarioName?: string): string {
+  const scenarioSelector = scenarioName
+    ? ` || contains(format(',{0},', inputs.scenarios), ',${scenarioName},')`
+    : "";
+  return `\${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',${jobName},')${scenarioSelector} }}`;
 }
 
 function validateFreeStandingJobSelector(
   errors: string[],
   jobs: WorkflowRecord,
   jobName: string,
+  scenarioName?: string,
 ): void {
   const job = asRecord(jobs[jobName]);
-  if (job.needs !== "validate-jobs") {
+  if (scenarioName) {
+    const needs = Array.isArray(job.needs) ? job.needs : [];
+    if (!needs.includes("validate-jobs") || !needs.includes("generate-matrix")) {
+      errors.push(`${jobName} job must depend on validate-jobs and generate-matrix`);
+    }
+  } else if (job.needs !== "validate-jobs") {
     errors.push(`${jobName} job must depend on validate-jobs`);
   }
-  if (job.if !== freeStandingJobIf(jobName)) {
+  if (job.if !== freeStandingJobIf(jobName, scenarioName)) {
     errors.push(`${jobName} job must use the shared jobs selector condition`);
   }
 }
@@ -164,6 +169,7 @@ function validateJobsSelector(errors: string[], jobs: WorkflowRecord): void {
     errors.push("validate-jobs step must pass scenarios through SCENARIOS env");
   }
   requireRunContains(errors, validate, "Use either scenarios or jobs, not both");
+  requireRunContains(errors, validate, "Invalid scenario input; use comma-separated scenario ids");
   requireRunContains(errors, validate, "allowed_jobs=");
   requireRunContains(errors, validate, "openshell-version-pin-vitest");
   requireRunContains(errors, validate, "onboard-negative-paths-vitest");
@@ -187,7 +193,7 @@ function validateOpenShellVersionPinVitestJob(errors: string[], jobs: WorkflowRe
   if (job["runs-on"] !== "ubuntu-latest") {
     errors.push("openshell-version-pin-vitest job must run on ubuntu-latest");
   }
-  validateFreeStandingJobSelector(errors, jobs, jobName);
+  validateFreeStandingJobSelector(errors, jobs, jobName, "openshell-version-pin");
 
   const jobEnv = asRecord(job.env);
   if (jobEnv.NEMOCLAW_RUN_E2E_SCENARIOS !== "1") {
@@ -267,10 +273,11 @@ function validateNetworkPolicyVitestJob(errors: string[], jobs: WorkflowRecord):
   if (job["runs-on"] !== "ubuntu-latest") {
     errors.push("network-policy-vitest job must run on ubuntu-latest");
   }
-  if (job.needs !== "validate-jobs") {
-    errors.push("network-policy-vitest job must depend on validate-jobs");
+  const needs = Array.isArray(job.needs) ? job.needs : [];
+  if (!needs.includes("validate-jobs") || !needs.includes("generate-matrix")) {
+    errors.push("network-policy-vitest job must depend on validate-jobs and generate-matrix");
   }
-  if (job.if !== networkPolicyJobIf()) {
+  if (job.if !== freeStandingJobIf(jobName, "network-policy")) {
     errors.push("network-policy-vitest job must map scenarios=network-policy to the network-policy job");
   }
 
@@ -388,7 +395,7 @@ function validateOnboardNegativePathsVitestJob(errors: string[], jobs: WorkflowR
   if (job["runs-on"] !== "ubuntu-latest") {
     errors.push("onboard-negative-paths-vitest job must run on ubuntu-latest");
   }
-  validateFreeStandingJobSelector(errors, jobs, jobName);
+  validateFreeStandingJobSelector(errors, jobs, jobName, "onboard-negative-paths");
 
   const jobEnv = asRecord(job.env);
   if (jobEnv.NEMOCLAW_RUN_E2E_SCENARIOS !== "1") {
@@ -649,7 +656,12 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   validateOpenShellVersionPinVitestJob(errors, jobs);
   validateOnboardNegativePathsVitestJob(errors, jobs);
   validateNetworkPolicyVitestJob(errors, jobs);
-  validateFreeStandingJobSelector(errors, jobs, "openclaw-tui-chat-correlation-vitest");
+  validateFreeStandingJobSelector(
+    errors,
+    jobs,
+    "openclaw-tui-chat-correlation-vitest",
+    "openclaw-tui-chat-correlation",
+  );
   validateFreeStandingJobSelector(errors, jobs, "gateway-guard-recovery");
 
   const reportToPr = asRecord(jobs["report-to-pr"]);

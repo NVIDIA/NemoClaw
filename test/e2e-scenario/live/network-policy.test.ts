@@ -462,6 +462,19 @@ RUN_NETWORK_POLICY_TEST(
         continue;
       }
       if (isTransientProviderValidationFailure(onboard) && process.env.GITHUB_ACTIONS === "true") {
+        // Invalid state: the external NVIDIA Endpoints validation request is unreachable,
+        // rate-limited, or temporarily unavailable while local CLI/config/policy setup has
+        // not produced a classifier match on its own. Source boundary: hosted provider
+        // availability outside this repo. Removal condition: endpoint validation becomes
+        // stable enough in CI to avoid transient 429/5xx/connectivity skips for a release
+        // cycle, or NemoClaw gains a hermetic provider-validation fixture for onboarding.
+        await artifacts.writeJson("transient-provider-validation.skip.json", {
+          reason: "transient NVIDIA Endpoints validation failure after retries",
+          attempts: ONBOARD_ATTEMPTS,
+          sourceBoundary: "external NVIDIA Endpoints provider availability",
+          removalCondition:
+            "remove once CI endpoint validation is stable for a release cycle or covered by a hermetic provider-validation fixture",
+        });
         skip(
           `NVIDIA Endpoints validation hit a transient upstream/rate-limit failure after ${ONBOARD_ATTEMPTS} attempts`,
         );

@@ -45,6 +45,10 @@ jobs:
             echo "::error::Use either scenarios or jobs, not both." >&2
             exit 1
           fi
+          if [ -n "${SCENARIOS}" ] && [[ ! "${SCENARIOS}" =~ ^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$ ]]; then
+            echo "::error::Invalid scenario input; use comma-separated scenario ids containing only letters, numbers, underscores, and hyphens." >&2
+            exit 1
+          fi
           if [ -z "${JOBS}" ]; then
             echo "No free-standing job selector supplied; default workflow behavior applies."
             exit 0
@@ -239,8 +243,8 @@ jobs:
   # because the matrix above only runs registry-scenarios.test.ts. Modeled on
   # #5049's free-standing pattern.
   openshell-version-pin-vitest:
-    needs: validate-jobs
-    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',openshell-version-pin-vitest,') }}
+    needs: [validate-jobs, generate-matrix]
+    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',openshell-version-pin-vitest,') || contains(format(',{0},', inputs.scenarios), ',openshell-version-pin,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -280,8 +284,8 @@ jobs:
           retention-days: 14
 
   onboard-negative-paths-vitest:
-    needs: validate-jobs
-    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',onboard-negative-paths-vitest,') }}
+    needs: [validate-jobs, generate-matrix]
+    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',onboard-negative-paths-vitest,') || contains(format(',{0},', inputs.scenarios), ',onboard-negative-paths,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -325,7 +329,7 @@ jobs:
           retention-days: 14
 
   network-policy-vitest:
-    needs: validate-jobs
+    needs: [validate-jobs, generate-matrix]
     if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',network-policy-vitest,') || contains(format(',{0},', inputs.scenarios), ',network-policy,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
@@ -407,8 +411,8 @@ jobs:
   # protocol/history contract. The retained legacy bash lane remains the
   # source for full closeout until a later PR proves replacement and deletes it.
   openclaw-tui-chat-correlation-vitest:
-    needs: validate-jobs
-    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',openclaw-tui-chat-correlation-vitest,') }}
+    needs: [validate-jobs, generate-matrix]
+    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',openclaw-tui-chat-correlation-vitest,') || contains(format(',{0},', inputs.scenarios), ',openclaw-tui-chat-correlation,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 75
     env:
