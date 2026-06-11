@@ -97,6 +97,42 @@ fi
 node --input-type=module - <<'NODE'
 import fs from 'node:fs';
 import path from 'node:path';
+function assertLegacySourceSideStagingFailsWithExdev(targetDir, sourceDir) {
+  const sourceParentDir = path.dirname(sourceDir);
+  const tempDir = fs.mkdtempSync(path.join(sourceParentDir, '.openclaw-runtime-deps-source-side-'));
+  const stagedDir = path.join(tempDir, 'node_modules');
+  try {
+    fs.mkdirSync(path.dirname(targetDir), { recursive: true });
+    fs.cpSync(sourceDir, stagedDir, { recursive: true });
+    const sourceDevice = fs.statSync(sourceDir).dev;
+    const stagedDevice = fs.statSync(stagedDir).dev;
+    const targetParentDevice = fs.statSync(path.dirname(targetDir)).dev;
+    if (stagedDevice !== sourceDevice || stagedDevice === targetParentDevice) {
+      throw new Error(
+        'legacy self-check lost cross-device layout: source=' +
+          sourceDevice +
+          ' staged=' +
+          stagedDevice +
+          ' target_parent=' +
+          targetParentDevice,
+      );
+    }
+    try {
+      fs.rmSync(targetDir, { recursive: true, force: true });
+      fs.renameSync(stagedDir, targetDir);
+      throw new Error('legacy source-side staging unexpectedly renamed across devices');
+    } catch (error) {
+      if (error && error.code === 'EXDEV') {
+        console.log('legacy source-side staging failure self-check completed');
+        return;
+      }
+      throw error;
+    }
+  } finally {
+    try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {}
+    try { fs.rmSync(path.dirname(targetDir), { recursive: true, force: true }); } catch {}
+  }
+}
 function replaceNodeModulesDir(targetDir, sourceDir) {
   const targetParentDir = path.dirname(targetDir);
   fs.mkdirSync(targetParentDir, { recursive: true });
@@ -110,6 +146,10 @@ function replaceNodeModulesDir(targetDir, sourceDir) {
     try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {}
   }
 }
+assertLegacySourceSideStagingFailsWithExdev(
+  '/sandbox/.openclaw/plugin-runtime-deps/exdev-guard/source-side-regression/node_modules',
+  '/dev/shm/nemoclaw-exdev-source',
+);
 replaceNodeModulesDir('/sandbox/.openclaw/plugin-runtime-deps/exdev-guard/node_modules', '/dev/shm/nemoclaw-exdev-source');
 console.log('runtime deps replacement completed');
 NODE`;
@@ -131,7 +171,8 @@ liveTest(
       contract: [
         "fresh OpenClaw sandbox onboards from the checkout Dockerfile",
         "sandbox proves /dev/shm and plugin-runtime-deps are distinct devices",
-        "OpenClaw-style plugin runtime-deps replacement completes without EXDEV",
+        "legacy source-side staging fails with EXDEV across the same /dev/shm to plugin-runtime-deps boundary",
+        "OpenClaw-style target-side plugin runtime-deps replacement completes without EXDEV",
       ],
     });
 
@@ -249,6 +290,7 @@ liveTest(
     ).toBe(false);
     expect(probe.exitCode, probeText).toBe(0);
     expect(probeText).toMatch(/source_device=\d+ target_device=\d+/);
+    expect(probeText).toContain("legacy source-side staging failure self-check completed");
     expect(probeText).toContain("runtime deps replacement completed");
 
     await artifacts.writeJson("scenario-result.json", {
@@ -258,6 +300,9 @@ liveTest(
       runtimeDepsProbeExitCode: probe.exitCode,
       assertions: {
         distinctDevices: /source_device=\d+ target_device=\d+/.test(probeText),
+        legacySourceSideExdevSelfCheck: probeText.includes(
+          "legacy source-side staging failure self-check completed",
+        ),
         noExdevSignature: !EXDEV_PATTERNS.some((pattern) => pattern.test(probeText)),
         successMarker: probeText.includes("runtime deps replacement completed"),
       },
