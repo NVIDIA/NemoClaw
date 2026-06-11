@@ -47,6 +47,7 @@ vi.mock("../../shields", () => ({
 }));
 
 vi.mock("../../state/gateway", () => ({
+  BASE_GATEWAY_NAME: "nemoclaw",
   isGatewayHealthy: isGatewayHealthyMock,
 }));
 

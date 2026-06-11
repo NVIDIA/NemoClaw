@@ -5243,7 +5243,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       session = onboardSession.saveSession(
         onboardSession.createSession({
           mode: isNonInteractive() ? "non-interactive" : "interactive",
-          metadata: { gatewayName: "nemoclaw", fromDockerfile: fromDockerfile || null },
+          metadata: { gatewayName: GATEWAY_NAME, fromDockerfile: fromDockerfile || null },
         }),
       );
     }

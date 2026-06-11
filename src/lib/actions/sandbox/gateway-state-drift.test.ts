@@ -49,6 +49,8 @@ describe("sandbox gateway state drift guard", () => {
     const gatewayRuntime = requireDist("../../../../dist/lib/gateway-runtime-action.js");
     const registry = requireDist("../../../../dist/lib/state/registry.js");
 
+    vi.spyOn(registry, "getSandbox").mockReturnValue(null);
+
     captureOpenshellSpy = vi
       .spyOn(openshellRuntime, "captureOpenshell")
       .mockReturnValue({ status: 0, output: "Sandbox:\n  Name: alpha\n  Phase: Ready" });

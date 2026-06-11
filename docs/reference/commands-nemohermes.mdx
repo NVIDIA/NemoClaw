@@ -1102,7 +1102,7 @@ If the registry is unreachable (offline or firewalled hosts), NemoClaw falls bac
 
 ### `nemohermes backup-all`
 
-Back up all registered running sandboxes to `~/.nemoclaw/rebuild-backups/` for the default instance, or `~/.nemoclaw-<instance>/rebuild-backups/` when `NEMOCLAW_INSTANCE` is set to a non-default value (see the Environment Variables section).
+Back up all registered running sandboxes to `~/.nemoclaw/rebuild-backups/`.
 Sandboxes that are not running are skipped.
 
 ```bash
@@ -1114,7 +1114,7 @@ The installer calls `backup-all` automatically before onboarding to protect agai
 ### `nemohermes <name> snapshot create`
 
 Create a timestamped snapshot of sandbox state.
-The command writes the snapshot to `~/.nemoclaw/rebuild-backups/<name>/` for the default instance, or `~/.nemoclaw-<instance>/rebuild-backups/<name>/` when `NEMOCLAW_INSTANCE` is set to a non-default value.
+Snapshots are stored in `~/.nemoclaw/rebuild-backups/<name>/`.
 
 ```bash
 nemohermes my-assistant snapshot create
@@ -1573,27 +1573,10 @@ All ports must be non-privileged integers between 1024 and 65535.
 | `NEMOCLAW_OLLAMA_PORT` | 11434 | Ollama inference |
 | `NEMOCLAW_OLLAMA_PROXY_PORT` | 11435 | Ollama auth proxy |
 | `NEMOCLAW_DASHBOARD_BIND` | *unset* (loopback) | Dashboard or API forward bind address. Set to `0.0.0.0` to opt in to remote bind for SSH-deployed hosts. |
-| `NEMOCLAW_INSTANCE` | nemoclaw | NemoClaw instance identity for multi-instance hosts. Scopes the migrated host-side surfaces — state root (`~/.nemoclaw` for the default instance, `~/.nemoclaw-<instance>` otherwise), credentials store, rebuild backups, local inference adapter state, shields audit and timer state, and the OpenShell gateway binding. Registry, onboard session, messaging, mount roots, uninstall plan, and `config-io` host-root healing still share `~/.nemoclaw` until follow-up PRs migrate them. |
 
 If a port value is not a valid integer or falls outside the allowed range, the CLI exits with an error.
 `NEMOCLAW_GATEWAY_PORT` also cannot overlap the configured dashboard, vLLM, Ollama, or Ollama proxy ports, and cannot use the dashboard auto-allocation range `18789` through `18799` or the default inference/proxy ports `8000`, `11434`, and `11435`.
 When you run multiple NemoClaw gateways with different `NEMOCLAW_GATEWAY_PORT` values, NemoClaw derives a separate gateway name, state directory, and compatibility container name from the port so one gateway does not tear down another.
-
-`NEMOCLAW_INSTANCE` must be 1–32 lower-case alphanumerics with internal `-` (for example `agent-a`, `tenant1`).
-Hyphen-separated segments may not be purely numeric so the instance name cannot collide with the gateway port suffix.
-Without this rule, `agent-a` plus `NEMOCLAW_GATEWAY_PORT=8081` and `agent-a-8081` plus the default port would produce the same composed name.
-
-The default instance name is the historical singleton identity NemoClaw has always used.
-Leaving `NEMOCLAW_INSTANCE` unset, setting it to the empty string, or setting it explicitly to that default value all resolve to the same identity.
-The state root then stays at `~/.nemoclaw` and the OpenShell gateway keeps its bare historical name (`nemoclaw-<port>` for non-default ports, with no suffix on the default port).
-Existing single-instance deployments therefore observe no change after upgrading.
-When the bare default gateway is already in use, varying `NEMOCLAW_GATEWAY_PORT` alone produces a `nemoclaw-<port>` gateway that segregates from the bare default without requiring `NEMOCLAW_INSTANCE`.
-The port suffix is the implicit fallback identity for the default instance.
-
-Setting `NEMOCLAW_INSTANCE` to a non-default value before `nemohermes onboard` routes the NemoClaw home directory, credentials store, rebuild backups (and the snapshot tree underneath), local inference adapter state (including the Ollama auth-proxy token), shields audit and timer state, and gateway binding (name, state directory, compatibility container) to that instance.
-Combine `NEMOCLAW_INSTANCE` with `NEMOCLAW_GATEWAY_PORT` to compose the instance and port suffixes (`nemoclaw-<instance>-<port>`).
-Modules that still read `~/.nemoclaw` directly continue to share state across instances until follow-up PRs migrate them.
-These remaining shared surfaces are the sandbox registry, onboard session state, messaging configuration, host-side mount roots, the uninstall plan, and the `config-io` host-root permission healer.
 On non-WSL hosts, `NEMOCLAW_OLLAMA_PORT` and `NEMOCLAW_OLLAMA_PROXY_PORT` must be different.
 If you run Ollama on port 11435, set `NEMOCLAW_OLLAMA_PROXY_PORT` to another free port before onboarding.
 

@@ -16,14 +16,14 @@ import {
   resolveDockerDriverGatewayStateDir,
 } from "../../onboard/host-gateway-process";
 import { isOpenShellProtobufSchemaMismatch } from "../../runtime-recovery";
-import { isGatewayHealthy } from "../../state/gateway";
+import { BASE_GATEWAY_NAME, isGatewayHealthy } from "../../state/gateway";
 import { dockerContainerInspectFormat } from "../docker";
 import { parseVersionFromText, stripAnsi } from "./client";
 import { resolveOpenshell } from "./resolve";
 import { captureOpenshell, getInstalledOpenshellVersionOrNull } from "./runtime";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "./timeouts";
 
-const DEFAULT_GATEWAY_NAME = "nemoclaw";
+const DEFAULT_GATEWAY_NAME = BASE_GATEWAY_NAME;
 
 export type GatewayClusterImageDrift = {
   containerName: string;

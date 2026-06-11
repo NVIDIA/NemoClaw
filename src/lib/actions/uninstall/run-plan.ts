@@ -16,6 +16,7 @@ import {
   type UninstallPaths,
 } from "../../domain/uninstall/paths";
 import { buildUninstallPlan, type UninstallPlan } from "../../domain/uninstall/plan";
+import { DEFAULT_GATEWAY_NAME } from "../../domain/uninstall/paths";
 import { stopHostGatewayProcesses } from "../../onboard/host-gateway-process";
 import { stopStaleDashboardListeners } from "../../onboard/stale-gateway-cleanup";
 import { classifyShimPath, type FileSystemDeps } from "./plan";
@@ -529,7 +530,7 @@ function removeOpenShellResources(options: UninstallRunOptions, runtime: Uninsta
       provider,
     ]);
   }
-  const gatewayLabel = options.gatewayName || "nemoclaw";
+  const gatewayLabel = options.gatewayName || DEFAULT_GATEWAY_NAME;
   runOptional(
     runtime,
     `Destroyed gateway '${gatewayLabel}'`,

@@ -8,7 +8,14 @@
  * returns a typed result — no I/O, no side effects.
  */
 
-const GATEWAY_NAME = "nemoclaw";
+/**
+ * Canonical OpenShell gateway registration name used by every NemoClaw
+ * host-side surface. Exported so call sites import this single source of
+ * truth instead of hardcoding the `"nemoclaw"` literal across the codebase.
+ * The per-port resolver in `onboard/gateway-binding.ts` derives suffixed
+ * variants (`nemoclaw-<port>`) from this base.
+ */
+export const BASE_GATEWAY_NAME = "nemoclaw";
 
 const ANSI_RE = /\x1b\[[0-9;]*m/g;
 
@@ -81,7 +88,7 @@ export function getSandboxFailurePhase(output: string, sandboxName: string): str
  * Determine whether stale NemoClaw gateway output indicates a previous
  * session that should be cleaned up before the port preflight check.
  */
-export function hasStaleGateway(gwInfoOutput: string, gatewayName = GATEWAY_NAME): boolean {
+export function hasStaleGateway(gwInfoOutput: string, gatewayName = BASE_GATEWAY_NAME): boolean {
   const clean = typeof gwInfoOutput === "string" ? stripAnsi(gwInfoOutput) : "";
   return (
     clean.length > 0 &&
@@ -117,7 +124,7 @@ export function hasActiveGatewayInfo(activeGatewayInfoOutput = ""): boolean {
   );
 }
 
-export function isSelectedGateway(statusOutput = "", gatewayName = GATEWAY_NAME): boolean {
+export function isSelectedGateway(statusOutput = "", gatewayName = BASE_GATEWAY_NAME): boolean {
   return getReportedGatewayName(statusOutput) === gatewayName;
 }
 
@@ -125,7 +132,7 @@ export function isGatewayHealthy(
   statusOutput = "",
   gwInfoOutput = "",
   activeGatewayInfoOutput = "",
-  gatewayName = GATEWAY_NAME,
+  gatewayName = BASE_GATEWAY_NAME,
 ): boolean {
   const namedGatewayKnown = hasStaleGateway(gwInfoOutput, gatewayName);
   const activeGatewayName =
@@ -150,7 +157,7 @@ export function getGatewayReuseState(
   statusOutput = "",
   gwInfoOutput = "",
   activeGatewayInfoOutput = "",
-  gatewayName = GATEWAY_NAME,
+  gatewayName = BASE_GATEWAY_NAME,
 ): GatewayReuseState {
   if (isGatewayHealthy(statusOutput, gwInfoOutput, activeGatewayInfoOutput, gatewayName)) {
     return "healthy";
@@ -178,7 +185,7 @@ export function shouldSelectNamedGatewayForReuse(
   statusOutput = "",
   gwInfoOutput = "",
   activeGatewayInfoOutput = "",
-  gatewayName = GATEWAY_NAME,
+  gatewayName = BASE_GATEWAY_NAME,
 ): boolean {
   return (
     getGatewayReuseState(statusOutput, gwInfoOutput, activeGatewayInfoOutput, gatewayName) ===

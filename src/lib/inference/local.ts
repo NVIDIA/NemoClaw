@@ -7,13 +7,13 @@
  */
 
 import fs from "node:fs";
+import os from "node:os";
 import nodePath from "node:path";
-import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
 import type { CurlProbeResult } from "../adapters/http/probe";
+import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
 import { runCurlProbe } from "../adapters/http/probe";
 import type { CaptureResult } from "../runner";
 import { buildSubprocessEnv } from "../subprocess-env";
-import type { OllamaRuntimeModelStatus } from "./ollama-runtime-context";
 import {
   applyOllamaRuntimeContextWindow as applyOllamaRuntimeContextWindowWithHost,
   MAX_AUTODETECTED_OLLAMA_CONTEXT_WINDOW,
@@ -22,15 +22,14 @@ import {
   resetOllamaRuntimeContextWindowAutoState,
   resolveOllamaRuntimeContextWindow as resolveOllamaRuntimeContextWindowWithHost,
 } from "./ollama-runtime-context";
+import type { OllamaRuntimeModelStatus } from "./ollama-runtime-context";
 import { applyVllmRuntimeContextWindow as applyVllmRuntimeContextWindowFromModels } from "./vllm-runtime-context";
-
 export type { OllamaRuntimeModelStatus } from "./ollama-runtime-context";
 
 const { shellQuote, runCapture, runCaptureEx } = require("../runner");
 
 import { OLLAMA_PORT, OLLAMA_PROXY_PORT, VLLM_PORT } from "../core/ports";
 import { sleepSeconds } from "../core/wait";
-import { resolveNemoclawHomeDir } from "../state/paths";
 import {
   anyRegistryModelFits,
   effectiveGpuMemoryMB,
@@ -239,16 +238,14 @@ export interface LocalProviderHealthProbeOptions {
   skipOllamaAuthProxySubprobe?: boolean;
   /**
    * Reads the persisted Ollama auth-proxy bearer token. Injectable for tests.
-   * Default reads from `<NemoClawHome>/ollama-proxy-token` (written by
-   * inference/ollama/proxy.ts during onboard). The active NemoClaw home
-   * follows `NEMOCLAW_INSTANCE` so the reader and writer stay in sync for
-   * non-default instances.
+   * Default reads from `~/.nemoclaw/ollama-proxy-token` (written by
+   * inference/ollama/proxy.ts during onboard).
    */
   loadOllamaProxyTokenImpl?: () => string | null;
 }
 
 function defaultLoadOllamaProxyToken(): string | null {
-  const tokenPath = nodePath.join(resolveNemoclawHomeDir(), "ollama-proxy-token");
+  const tokenPath = nodePath.join(os.homedir(), ".nemoclaw", "ollama-proxy-token");
   try {
     if (fs.existsSync(tokenPath)) {
       const token = fs.readFileSync(tokenPath, "utf-8").trim();

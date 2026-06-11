@@ -12,6 +12,11 @@ import {
 import { CLI_NAME } from "../../cli/branding";
 import { prompt as askPrompt } from "../../credentials/store";
 import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
+import { GATEWAY_PORT } from "../../core/ports";
+import {
+  resolveGatewayName,
+  resolveSandboxGatewayName,
+} from "../../onboard/gateway-binding";
 import * as policies from "../../policy";
 import { ROOT, run, shellQuote, validateName } from "../../runner";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
@@ -29,8 +34,6 @@ const G = useColor ? (trueColor ? "\x1b[38;2;118;185;0m" : "\x1b[38;5;148m") : "
 const B = useColor ? "\x1b[1m" : "";
 const D = useColor ? "\x1b[2m" : "";
 const R = useColor ? "\x1b[0m" : "";
-
-const NEMOCLAW_GATEWAY_NAME = "nemoclaw";
 
 export type SnapshotRequest =
   | { kind: "help" }
@@ -116,7 +119,7 @@ function resolveSrcPodImage(
     return registeredImage ?? null;
   }
 
-  const gatewayContainer = `openshell-cluster-${NEMOCLAW_GATEWAY_NAME}`;
+  const gatewayContainer = `openshell-cluster-${resolveSandboxGatewayName(srcEntry as { gatewayName?: string | null; gatewayPort?: number | null })}`;
   try {
     const output = dockerCapture(
       [
@@ -207,7 +210,7 @@ async function autoCreateSandboxFromSource(
   const dnsScript = path.join(ROOT, "scripts", "setup-dns-proxy.sh");
   const srcDriver = (srcEntry as { openshellDriver?: string | null }).openshellDriver;
   if (srcDriver === "kubernetes" && fs.existsSync(dnsScript)) {
-    run(["bash", dnsScript, NEMOCLAW_GATEWAY_NAME, dstName], { ignoreError: true });
+    run(["bash", dnsScript, resolveSandboxGatewayName(srcEntry as { gatewayName?: string | null; gatewayPort?: number | null }), dstName], { ignoreError: true });
   }
 
   // Register dst in the NemoClaw registry, cloning most fields from src.
@@ -294,9 +297,9 @@ function deleteSandboxForRestore(name: string): void {
 
 // Docker/VM-driver sandboxes do not expose the legacy cluster container, so
 // verify gateway health through OpenShell metadata instead.
-function probeGatewayMetadataHealth(): boolean {
+function probeGatewayMetadataHealth(gatewayName: string): boolean {
   const status = captureOpenshell(["status"], { ignoreError: true, timeout: 10000 });
-  const namedGatewayInfo = captureOpenshell(["gateway", "info", "-g", NEMOCLAW_GATEWAY_NAME], {
+  const namedGatewayInfo = captureOpenshell(["gateway", "info", "-g", gatewayName], {
     ignoreError: true,
     timeout: 10000,
   });
@@ -308,6 +311,7 @@ function probeGatewayMetadataHealth(): boolean {
     status.output || "",
     namedGatewayInfo.output || "",
     activeGatewayInfo.output || "",
+    gatewayName,
   );
 }
 
@@ -317,10 +321,13 @@ function usesGatewayMetadataProbe(driver: string | null | undefined): boolean {
 
 function probeGatewayRunning(sandboxName?: string): boolean {
   const entry = sandboxName ? registry.getSandbox(sandboxName) : null;
+  const gatewayName = entry
+    ? resolveSandboxGatewayName(entry)
+    : resolveGatewayName(GATEWAY_PORT);
   if (usesGatewayMetadataProbe(entry?.openshellDriver)) {
-    return probeGatewayMetadataHealth();
+    return probeGatewayMetadataHealth(gatewayName);
   }
-  const container = `openshell-cluster-${NEMOCLAW_GATEWAY_NAME}`;
+  const container = `openshell-cluster-${gatewayName}`;
   const result = dockerInspect(
     ["--type", "container", "--format", "{{.State.Running}}", container],
     { ignoreError: true, suppressOutput: true },

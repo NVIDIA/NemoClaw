@@ -26,6 +26,7 @@ import {
 import { findReachableOllamaHost, probeLocalProviderHealth } from "../../inference/local";
 import { ensureOllamaAuthProxy, probeOllamaAuthProxyHealth } from "../../inference/ollama/proxy";
 import { LOCAL_INFERENCE_TIMEOUT_SECS } from "../../onboard/env";
+import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import { isWsl } from "../../platform";
 import { ROOT } from "../../runner";
 import * as sandboxVersion from "../../sandbox/version";
@@ -54,7 +55,6 @@ import { ensureLiveSandboxOrExit, printGatewayLifecycleHint } from "./gateway-st
 import { checkAndRecoverSandboxProcesses } from "./process-recovery";
 import { applyOpenShellVmDnsMonkeypatch, shouldApplyVmDnsMonkeypatch } from "./vm-dns-monkeypatch";
 
-const NEMOCLAW_GATEWAY_NAME = "nemoclaw";
 
 export type SandboxConnectOptions = {
   probeOnly?: boolean;
@@ -512,7 +512,7 @@ function repairSandboxInferenceRouteIfNeeded(
       reapplyVmInferenceRoute,
       repairLegacyDnsProxy: (name, isQuiet) =>
         runSetupDnsProxy(
-          { gatewayName: NEMOCLAW_GATEWAY_NAME, sandboxName: name },
+          { gatewayName: resolveSandboxGatewayName(sb), sandboxName: name },
           { log: isQuiet ? () => undefined : console.log },
         ),
     },

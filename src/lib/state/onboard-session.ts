@@ -13,7 +13,9 @@ import path from "node:path";
 
 import { isErrnoException } from "../core/errno";
 import type { JsonObject, JsonValue } from "../core/json-types";
+import { GATEWAY_PORT } from "../core/ports";
 import type { WebSearchConfig } from "../inference/web-search";
+import { resolveGatewayName } from "../onboard/gateway-binding";
 import {
   type MessagingChannelConfig,
   sanitizeMessagingChannelConfig,
@@ -312,7 +314,7 @@ function parseWechatConfig(value: unknown): WechatConfig | null {
 function parseSessionMetadata(value: SessionJsonValue | undefined): SessionMetadata | undefined {
   if (!isObject(value)) return undefined;
   return {
-    gatewayName: readString(value.gatewayName) ?? "nemoclaw",
+    gatewayName: readString(value.gatewayName) ?? resolveGatewayName(GATEWAY_PORT),
     fromDockerfile: readString(value.fromDockerfile),
   };
 }
@@ -476,7 +478,7 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     telegramConfig: parseTelegramConfig(overrides.telegramConfig),
     wechatConfig: parseWechatConfig(overrides.wechatConfig),
     metadata: {
-      gatewayName: overrides.metadata?.gatewayName ?? "nemoclaw",
+      gatewayName: overrides.metadata?.gatewayName ?? resolveGatewayName(GATEWAY_PORT),
       fromDockerfile: overrides.metadata?.fromDockerfile ?? null,
     },
     machine:

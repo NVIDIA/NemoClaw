@@ -8,7 +8,7 @@ import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import { CLI_NAME } from "../../cli/branding";
 import { G, R, YW } from "../../cli/terminal-style";
-import { DASHBOARD_PORT } from "../../core/ports";
+import { DASHBOARD_PORT, GATEWAY_PORT } from "../../core/ports";
 import { prompt as askPrompt } from "../../credentials/store";
 import {
   type DestroySandboxOptions,
@@ -19,6 +19,10 @@ import {
   shouldCleanupGatewayAfterDestroy,
   shouldStopHostServicesAfterDestroy,
 } from "../../domain/sandbox/destroy";
+import {
+  resolveGatewayName,
+  resolveSandboxGatewayName,
+} from "../../onboard/gateway-binding";
 import { stopStaleDashboardListeners } from "../../onboard/stale-gateway-cleanup";
 import { stopHostGatewayProcesses } from "../../onboard/host-gateway-process";
 import {
@@ -76,10 +80,10 @@ type RemoveShieldsStateDeps = {
   warn?: (message: string) => void;
 };
 
-const NEMOCLAW_GATEWAY_NAME = "nemoclaw";
 const DASHBOARD_FORWARD_PORT = String(DASHBOARD_PORT);
 
 function cleanupGatewayAfterLastSandbox(): void {
+  const gatewayName = resolveGatewayName(GATEWAY_PORT);
   const { runOpenshell } = require("../../adapters/openshell/runtime") as {
     runOpenshell: (args: string[], opts?: Record<string, unknown>) => { status: number | null };
   };
@@ -103,22 +107,22 @@ function cleanupGatewayAfterLastSandbox(): void {
     // possible on shared hosts) is not torn down by a NemoClaw `destroy`.
     // The uninstall path keeps the broader sweep on (run-plan.ts).
     stopHostGatewayProcesses({}, { usePgrepFallback: false });
-    const removeResult = runOpenshell(["gateway", "remove", NEMOCLAW_GATEWAY_NAME], {
+    const removeResult = runOpenshell(["gateway", "remove", gatewayName], {
       ignoreError: true,
       stdio: ["ignore", "pipe", "pipe"],
     });
     if (removeResult.status !== 0) {
-      runOpenshell(["gateway", "destroy", "-g", NEMOCLAW_GATEWAY_NAME], {
+      runOpenshell(["gateway", "destroy", "-g", gatewayName], {
         ignoreError: true,
         stdio: ["ignore", "pipe", "pipe"],
       });
     }
   } else {
-    runOpenshell(["gateway", "destroy", "-g", NEMOCLAW_GATEWAY_NAME], {
+    runOpenshell(["gateway", "destroy", "-g", gatewayName], {
       ignoreError: true,
     });
   }
-  dockerRemoveVolumesByPrefix(`openshell-cluster-${NEMOCLAW_GATEWAY_NAME}`, {
+  dockerRemoveVolumesByPrefix(`openshell-cluster-${gatewayName}`, {
     ignoreError: true,
   });
 }
@@ -457,10 +461,11 @@ export async function destroySandbox(
     if (shouldCleanupGateway) {
       cleanupGatewayAfterLastSandbox();
     } else {
+      const preservedGatewayName = resolveGatewayName(GATEWAY_PORT);
       const gatewayRemovalHint =
         process.platform === "linux"
-          ? `openshell gateway remove ${NEMOCLAW_GATEWAY_NAME}`
-          : `openshell gateway destroy -g ${NEMOCLAW_GATEWAY_NAME}`;
+          ? `openshell gateway remove ${preservedGatewayName}`
+          : `openshell gateway destroy -g ${preservedGatewayName}`;
       console.log(
         `  Shared NemoClaw gateway preserved. Re-run '${gatewayRemovalHint}' to remove it,`,
       );

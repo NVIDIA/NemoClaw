@@ -18,6 +18,10 @@ import { recoverNamedGatewayRuntime } from "../../gateway-runtime-action";
 import { parseGatewayInference } from "../../inference/config";
 import { type ProviderHealthStatus, probeProviderHealth } from "../../inference/health";
 import { isLinuxDockerDriverGatewayEnabled } from "../../onboard/docker-driver-platform";
+import {
+  resolveGatewayName,
+  resolveSandboxGatewayName,
+} from "../../onboard/gateway-binding";
 import { executeSandboxCommandForVerification } from "../../onboard/sandbox-verification-exec";
 import { ROOT } from "../../runner";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
@@ -37,7 +41,6 @@ import { captureHostCommand } from "./doctor-host-command";
 import { buildToolScopeChecks } from "./doctor-tool-scope";
 import { probeSandboxInferenceGatewayHealth } from "./process-recovery";
 
-const NEMOCLAW_GATEWAY_NAME = "nemoclaw";
 
 type DoctorStatus = "ok" | "warn" | "fail" | "info";
 
@@ -550,6 +553,7 @@ export async function runSandboxDoctor(
   }
 
   const sb = registry.getSandbox(sandboxName);
+  const gatewayName = sb ? resolveSandboxGatewayName(sb) : resolveGatewayName(GATEWAY_PORT);
   const checks: DoctorCheck[] = [];
   // Tracks whether the named sandbox is present-and-Ready, so live-only probes
   // (e.g. the #4616 dashboard tool-scope diagnostic) only run when they can
@@ -603,15 +607,17 @@ export async function runSandboxDoctor(
       label: "OpenShell status",
       status: openshellConnected ? "ok" : "fail",
       detail: openshellConnected
-        ? "connected to nemoclaw"
-        : oneLine(cleanStatus || lifecycle?.gatewayInfo || "not connected to nemoclaw"),
-      hint: openshellConnected ? undefined : "run `openshell gateway select nemoclaw` and retry",
+        ? `connected to ${gatewayName}`
+        : oneLine(cleanStatus || lifecycle?.gatewayInfo || `not connected to ${gatewayName}`),
+      hint: openshellConnected
+        ? undefined
+        : `run \`openshell gateway select ${gatewayName}\` and retry`,
     });
   }
 
   if (shouldInspectLegacyGatewayContainer(sb)) {
     checks.push(
-      ...dockerInspectGateway(`openshell-cluster-${NEMOCLAW_GATEWAY_NAME}`, {
+      ...dockerInspectGateway(`openshell-cluster-${gatewayName}`, {
         namedGatewayConnected: openshellConnected,
       }),
     );

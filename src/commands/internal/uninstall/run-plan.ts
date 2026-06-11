@@ -6,6 +6,8 @@ import { NemoClawCommand } from "../../../lib/cli/nemoclaw-oclif-command";
 
 import { runUninstallPlan } from "../../../lib/actions/uninstall/run-plan";
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../../../lib/cli/branding";
+import { GATEWAY_PORT } from "../../../lib/core/ports";
+import { resolveGatewayName } from "../../../lib/onboard/gateway-binding";
 
 export default class InternalUninstallRunPlanCommand extends NemoClawCommand {
   static hidden = true;
@@ -20,7 +22,10 @@ export default class InternalUninstallRunPlanCommand extends NemoClawCommand {
     "delete-models": Flags.boolean({
       description: `Remove ${CLI_DISPLAY_NAME}-pulled Ollama models`,
     }),
-    gateway: Flags.string({ description: "Gateway name", default: "nemoclaw" }),
+    gateway: Flags.string({
+      description: "Gateway name",
+      default: resolveGatewayName(GATEWAY_PORT),
+    }),
   };
 
   public async run(): Promise<void> {

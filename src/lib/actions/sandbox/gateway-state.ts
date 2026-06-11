@@ -6,11 +6,17 @@ import os from "node:os";
 import path from "node:path";
 
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../../cli/branding";
+import { GATEWAY_PORT } from "../../core/ports";
 import {
   getNamedGatewayLifecycleState,
   recoverNamedGatewayRuntime,
 } from "../../gateway-runtime-action";
+import {
+  resolveGatewayName,
+  resolveSandboxGatewayName,
+} from "../../onboard/gateway-binding";
 import { isTerminalSandboxPhase, parseSandboxPhase } from "../../state/gateway";
+import * as registry from "../../state/registry";
 
 const { pruneKnownHostsEntries } = require("../../onboard") as {
   pruneKnownHostsEntries: (contents: string) => string;
@@ -227,9 +233,11 @@ export function reconcileMissingAgainstNamedGateway(
   sandboxName: string,
   missingLookup: SandboxGatewayState,
 ): SandboxGatewayState {
-  const lifecycle = getNamedGatewayLifecycleState();
+  const sb = registry.getSandbox(sandboxName);
+  const targetGatewayName = sb ? resolveSandboxGatewayName(sb) : resolveGatewayName(GATEWAY_PORT);
+  const lifecycle = getNamedGatewayLifecycleState(targetGatewayName);
   if (lifecycle.state === "connected_other") {
-    runOpenshell(["gateway", "select", "nemoclaw"], {
+    runOpenshell(["gateway", "select", targetGatewayName], {
       ignoreError: true,
       timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
     });
@@ -317,12 +325,15 @@ export function printWrongGatewayActiveGuidance(
   // guidance points back to the workflow the user actually invoked.
   retryCommand = "connect",
 ): void {
-  const other = activeGateway && activeGateway !== "nemoclaw" ? activeGateway : "another gateway";
+  const sb = registry.getSandbox(sandboxName);
+  const targetGatewayName = sb ? resolveSandboxGatewayName(sb) : resolveGatewayName(GATEWAY_PORT);
+  const other =
+    activeGateway && activeGateway !== targetGatewayName ? activeGateway : "another gateway";
   writer(
-    `  Sandbox '${sandboxName}' is registered against the ${CLI_DISPLAY_NAME} gateway, but the currently active OpenShell gateway is '${other}'. Your sandbox has NOT been removed.`,
+    `  Sandbox '${sandboxName}' is registered against the ${CLI_DISPLAY_NAME} gateway '${targetGatewayName}', but the currently active OpenShell gateway is '${other}'. Your sandbox has NOT been removed.`,
   );
   writer("  Switch gateways and retry:");
-  writer("      openshell gateway select nemoclaw");
+  writer(`      openshell gateway select ${targetGatewayName}`);
   writer(`  Then re-run: ${CLI_NAME} ${sandboxName} ${retryCommand}`);
 }
 

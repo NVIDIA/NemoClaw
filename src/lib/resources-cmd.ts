@@ -16,8 +16,10 @@ import { spawnSync, execSync } from "child_process";
 import * as YAML from "yaml";
 
 import { dockerSpawnSync } from "./adapters/docker";
+import { GATEWAY_PORT } from "./core/ports";
+import { resolveGatewayName } from "./onboard/gateway-binding";
 
-const GATEWAY_NAME = "nemoclaw";
+const GATEWAY_NAME = resolveGatewayName(GATEWAY_PORT);
 
 function getGatewayContainer(): string {
   return `openshell-cluster-${GATEWAY_NAME}`;

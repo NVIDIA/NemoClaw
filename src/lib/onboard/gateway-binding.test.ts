@@ -5,8 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { DEFAULT_NEMOCLAW_INSTANCE, parseInstanceName } from "../../../dist/lib/core/instance";
+import { describe, expect, it } from "vitest";
 import { DEFAULT_GATEWAY_PORT } from "../../../dist/lib/core/ports";
 import { buildDockerDriverGatewayLaunch } from "../../../dist/lib/onboard/docker-driver-gateway-launch";
 import {
@@ -22,162 +21,64 @@ import {
   resolveGatewayCompatContainerName,
   resolveGatewayName,
   resolveGatewayStateDirName,
+  resolveSandboxGatewayName,
 } from "../../../dist/lib/onboard/gateway-binding";
-import { BASE_NEMOCLAW_HOME_DIR_NAME, resolveNemoclawHomeDir } from "../../../dist/lib/state/paths";
 
 describe("gateway-binding resolver (#4422)", () => {
-  const DEFAULT_INSTANCE = DEFAULT_NEMOCLAW_INSTANCE;
-
-  it("keeps the bare nemoclaw names for the default instance on the default gateway port", () => {
-    expect(resolveGatewayName(DEFAULT_GATEWAY_PORT, DEFAULT_INSTANCE)).toBe(BASE_GATEWAY_NAME);
-    expect(resolveGatewayStateDirName(DEFAULT_GATEWAY_PORT, DEFAULT_INSTANCE)).toBe(
-      BASE_GATEWAY_STATE_DIR_NAME,
-    );
-    expect(resolveGatewayCompatContainerName(DEFAULT_GATEWAY_PORT, DEFAULT_INSTANCE)).toBe(
+  it("keeps the bare nemoclaw names for the default gateway port", () => {
+    expect(resolveGatewayName(DEFAULT_GATEWAY_PORT)).toBe(BASE_GATEWAY_NAME);
+    expect(resolveGatewayStateDirName(DEFAULT_GATEWAY_PORT)).toBe(BASE_GATEWAY_STATE_DIR_NAME);
+    expect(resolveGatewayCompatContainerName(DEFAULT_GATEWAY_PORT)).toBe(
       BASE_GATEWAY_COMPAT_CONTAINER_NAME,
     );
   });
 
   it("suffixes the name, state dir, and compat container for a non-default port", () => {
-    expect(resolveGatewayName(8081, DEFAULT_INSTANCE)).toBe("nemoclaw-8081");
-    expect(resolveGatewayStateDirName(8081, DEFAULT_INSTANCE)).toBe(
-      "openshell-docker-gateway-8081",
-    );
-    expect(resolveGatewayCompatContainerName(8081, DEFAULT_INSTANCE)).toBe(
-      "nemoclaw-openshell-gateway-8081",
-    );
+    expect(resolveGatewayName(8081)).toBe("nemoclaw-8081");
+    expect(resolveGatewayStateDirName(8081)).toBe("openshell-docker-gateway-8081");
+    expect(resolveGatewayCompatContainerName(8081)).toBe("nemoclaw-openshell-gateway-8081");
   });
 
   it("derives distinct bindings for two different gateway ports", () => {
     const a = 8080;
     const b = 8081;
-    expect(resolveGatewayName(a, DEFAULT_INSTANCE)).not.toBe(
-      resolveGatewayName(b, DEFAULT_INSTANCE),
-    );
-    expect(resolveGatewayStateDirName(a, DEFAULT_INSTANCE)).not.toBe(
-      resolveGatewayStateDirName(b, DEFAULT_INSTANCE),
-    );
-    expect(resolveGatewayCompatContainerName(a, DEFAULT_INSTANCE)).not.toBe(
-      resolveGatewayCompatContainerName(b, DEFAULT_INSTANCE),
-    );
+    expect(resolveGatewayName(a)).not.toBe(resolveGatewayName(b));
+    expect(resolveGatewayStateDirName(a)).not.toBe(resolveGatewayStateDirName(b));
+    expect(resolveGatewayCompatContainerName(a)).not.toBe(resolveGatewayCompatContainerName(b));
   });
 });
 
-describe("gateway-binding resolver factors NEMOCLAW_INSTANCE", () => {
-  const DEFAULT_INSTANCE = DEFAULT_NEMOCLAW_INSTANCE;
+describe("resolveSandboxGatewayName", () => {
+  it("returns the persisted gatewayName when present", () => {
+    expect(
+      resolveSandboxGatewayName({ gatewayName: "nemoclaw-9090", gatewayPort: 9090 }),
+    ).toBe("nemoclaw-9090");
+  });
 
-  it("suffixes the gateway name with the instance for a non-default instance on the default port", () => {
-    expect(resolveGatewayName(DEFAULT_GATEWAY_PORT, "agent-a")).toBe("nemoclaw-agent-a");
-    expect(resolveGatewayStateDirName(DEFAULT_GATEWAY_PORT, "agent-a")).toBe(
-      "openshell-docker-gateway-agent-a",
+  it("derives the gateway name from gatewayPort when gatewayName is absent", () => {
+    expect(resolveSandboxGatewayName({ gatewayPort: 8081 })).toBe("nemoclaw-8081");
+    expect(resolveSandboxGatewayName({ gatewayPort: 8080 })).toBe(BASE_GATEWAY_NAME);
+  });
+
+  it("falls back to the bare base name for legacy sandbox entries with neither field set", () => {
+    expect(resolveSandboxGatewayName({})).toBe(BASE_GATEWAY_NAME);
+    expect(resolveSandboxGatewayName(null)).toBe(BASE_GATEWAY_NAME);
+    expect(resolveSandboxGatewayName(undefined)).toBe(BASE_GATEWAY_NAME);
+  });
+
+  it("ignores null persisted values and falls back through the resolution chain", () => {
+    expect(resolveSandboxGatewayName({ gatewayName: null, gatewayPort: 8081 })).toBe(
+      "nemoclaw-8081",
     );
-    expect(resolveGatewayCompatContainerName(DEFAULT_GATEWAY_PORT, "agent-a")).toBe(
-      "nemoclaw-openshell-gateway-agent-a",
+    expect(resolveSandboxGatewayName({ gatewayName: null, gatewayPort: null })).toBe(
+      BASE_GATEWAY_NAME,
     );
   });
 
-  it("composes instance and port suffixes when both are non-default", () => {
-    expect(resolveGatewayName(8081, "agent-a")).toBe("nemoclaw-agent-a-8081");
-    expect(resolveGatewayStateDirName(8081, "agent-a")).toBe(
-      "openshell-docker-gateway-agent-a-8081",
+  it("returns distinct names for sandboxes on different non-default ports", () => {
+    expect(resolveSandboxGatewayName({ gatewayPort: 8081 })).not.toBe(
+      resolveSandboxGatewayName({ gatewayPort: 8090 }),
     );
-    expect(resolveGatewayCompatContainerName(8081, "agent-a")).toBe(
-      "nemoclaw-openshell-gateway-agent-a-8081",
-    );
-  });
-
-  it("segregates two non-default instances even on the same default port", () => {
-    expect(resolveGatewayName(DEFAULT_GATEWAY_PORT, "agent-a")).not.toBe(
-      resolveGatewayName(DEFAULT_GATEWAY_PORT, "agent-b"),
-    );
-    expect(resolveGatewayStateDirName(DEFAULT_GATEWAY_PORT, "agent-a")).not.toBe(
-      resolveGatewayStateDirName(DEFAULT_GATEWAY_PORT, "agent-b"),
-    );
-    expect(resolveGatewayCompatContainerName(DEFAULT_GATEWAY_PORT, "agent-a")).not.toBe(
-      resolveGatewayCompatContainerName(DEFAULT_GATEWAY_PORT, "agent-b"),
-    );
-  });
-
-  it("preserves the bare nemoclaw names when the instance is left at default", () => {
-    expect(resolveGatewayName(DEFAULT_GATEWAY_PORT, DEFAULT_INSTANCE)).toBe(BASE_GATEWAY_NAME);
-  });
-
-  // Regression for the encoding ambiguity surfaced in review: instance
-  // "agent-a" composed with port 8081 produces the same gateway name as
-  // instance "agent-a-8081" composed with the default port. The instance
-  // parser rejects purely-numeric hyphen-segments to guarantee this never
-  // happens for env-derived values; the resolver itself stays a pure function
-  // so callers must validate first via parseInstanceName().
-  it("composed names would collide if a port-like instance tail were permitted", () => {
-    const composed = resolveGatewayName(8081, "agent-a");
-    const portLikeTail = resolveGatewayName(DEFAULT_GATEWAY_PORT, "agent-a-8081");
-    expect(composed).toBe("nemoclaw-agent-a-8081");
-    expect(portLikeTail).toBe("nemoclaw-agent-a-8081");
-    // parseInstanceName() refuses "agent-a-8081" — see src/lib/core/instance.test.ts.
-  });
-});
-
-// Confirms the standing fallback contract: an unset NEMOCLAW_INSTANCE must
-// resolve to the bare `nemoclaw` identity on the default gateway port, and
-// to `nemoclaw-<port>` when only NEMOCLAW_GATEWAY_PORT is supplied. The
-// port-derived form is the implicit fallback identity when the bare default
-// is already occupied — users opting out of the new env var still get a
-// distinct gateway by varying the port alone.
-describe("default and port-based fallback identity chain", () => {
-  const ENV_KEY = "TEST_NEMOCLAW_INSTANCE_FALLBACK";
-  const FIXTURE_HOME = path.join(os.tmpdir(), "nemoclaw-instance-fallback");
-  let previousEnvValue: string | undefined;
-
-  beforeEach(() => {
-    previousEnvValue = process.env[ENV_KEY];
-    delete process.env[ENV_KEY];
-  });
-
-  afterEach(() => {
-    if (previousEnvValue === undefined) {
-      delete process.env[ENV_KEY];
-    } else {
-      process.env[ENV_KEY] = previousEnvValue;
-    }
-  });
-
-  it("resolves bare nemoclaw names and the bare home dir when NEMOCLAW_INSTANCE is unset", () => {
-    const resolved = parseInstanceName(ENV_KEY, DEFAULT_NEMOCLAW_INSTANCE);
-    expect(resolved).toBe(DEFAULT_NEMOCLAW_INSTANCE);
-    expect(resolveGatewayName(DEFAULT_GATEWAY_PORT, resolved)).toBe(BASE_GATEWAY_NAME);
-    expect(resolveGatewayStateDirName(DEFAULT_GATEWAY_PORT, resolved)).toBe(
-      BASE_GATEWAY_STATE_DIR_NAME,
-    );
-    expect(resolveGatewayCompatContainerName(DEFAULT_GATEWAY_PORT, resolved)).toBe(
-      BASE_GATEWAY_COMPAT_CONTAINER_NAME,
-    );
-    expect(resolveNemoclawHomeDir(FIXTURE_HOME, resolved)).toBe(
-      path.join(FIXTURE_HOME, BASE_NEMOCLAW_HOME_DIR_NAME),
-    );
-  });
-
-  it("resolves the port-based fallback when NEMOCLAW_INSTANCE is unset and only the gateway port shifts", () => {
-    const resolved = parseInstanceName(ENV_KEY, DEFAULT_NEMOCLAW_INSTANCE);
-    expect(resolved).toBe(DEFAULT_NEMOCLAW_INSTANCE);
-    // The home dir stays at the bare default — port alone does not segregate
-    // host state, only the gateway binding.
-    expect(resolveNemoclawHomeDir(FIXTURE_HOME, resolved)).toBe(
-      path.join(FIXTURE_HOME, BASE_NEMOCLAW_HOME_DIR_NAME),
-    );
-    // The gateway binding takes the port suffix so two default-instance
-    // sandboxes on distinct ports never share gateway state.
-    expect(resolveGatewayName(8081, resolved)).toBe("nemoclaw-8081");
-    expect(resolveGatewayStateDirName(8081, resolved)).toBe("openshell-docker-gateway-8081");
-    expect(resolveGatewayCompatContainerName(8081, resolved)).toBe(
-      "nemoclaw-openshell-gateway-8081",
-    );
-  });
-
-  it("treats an empty env value the same as an unset env value", () => {
-    process.env[ENV_KEY] = "";
-    const resolved = parseInstanceName(ENV_KEY, DEFAULT_NEMOCLAW_INSTANCE);
-    expect(resolved).toBe(DEFAULT_NEMOCLAW_INSTANCE);
-    expect(resolveGatewayName(DEFAULT_GATEWAY_PORT, resolved)).toBe(BASE_GATEWAY_NAME);
   });
 });
 

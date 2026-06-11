@@ -15,7 +15,6 @@ import readline from "node:readline";
 
 import { isErrnoException } from "../core/errno";
 import { rejectSymlinksOnPath } from "../state/config-io";
-import { resolveNemoclawHomeDir } from "../state/paths";
 
 const UNSAFE_HOME_PATHS = new Set(["/tmp", "/var/tmp", "/dev/shm", "/"]);
 
@@ -118,20 +117,15 @@ let _cachedHome: string | null = null;
 let _credsDir: string | null = null;
 let _legacyCredsFile: string | null = null;
 
-/**
- * Return the active-instance NemoClaw home directory (e.g. `~/.nemoclaw` for
- * the default instance, `~/.nemoclaw-<instance>` otherwise). The host-side
- * gateway is the system of record for credentials; this path is retained only
- * for the pre-migration plaintext credentials file the legacy stager reads.
- */
+/** Return `~/.nemoclaw`, resolving and validating `HOME` once per process. */
 export function getCredsDir(): string {
   const home = resolveHomeDir();
   if (_cachedHome !== home) {
     _cachedHome = home;
-    _credsDir = resolveNemoclawHomeDir(home);
+    _credsDir = path.join(home, ".nemoclaw");
     _legacyCredsFile = null;
   }
-  return _credsDir || resolveNemoclawHomeDir(home);
+  return _credsDir || path.join(home, ".nemoclaw");
 }
 
 /**

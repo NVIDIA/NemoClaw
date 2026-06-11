@@ -31,18 +31,17 @@ import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts.js";
 import type { AgentStateFile } from "../agent/defs.js";
 import { loadAgent } from "../agent/defs.js";
 import { isRecord, type UnknownRecord } from "../core/json-types.js";
-import { shellQuote } from "../runner.js";
-import { isSensitiveFile, sanitizeConfigFile } from "../security/credential-filter.js";
 import {
   buildOpenClawConfigRestoreInputFromSandbox,
   shouldMergeOpenClawConfigStateFile,
 } from "./openclaw-config-restore-input.js";
-import { resolveNemoclawHomeDir } from "./paths.js";
+import { shellQuote } from "../runner.js";
+import { isSensitiveFile, sanitizeConfigFile } from "../security/credential-filter.js";
 import * as registry from "./registry.js";
 import { runTarListing } from "./tar-listing.js";
 
 const HOME_DIR = path.resolve(process.env.HOME || os.homedir());
-export const REBUILD_BACKUPS_DIR = path.join(resolveNemoclawHomeDir(HOME_DIR), "rebuild-backups");
+const REBUILD_BACKUPS_DIR = path.join(HOME_DIR, ".nemoclaw", "rebuild-backups");
 
 const MANIFEST_VERSION = 1;
 
@@ -479,12 +478,7 @@ function sshArgs(configFile: string, sandboxName: string): string[] {
 function computeBlueprintDigest(): string | null {
   // Look for blueprint.yaml relative to the agent-defs ROOT
   const candidates = [
-    path.join(
-      resolveNemoclawHomeDir(process.env.HOME || "/tmp"),
-      "blueprints",
-      "0.1.0",
-      "blueprint.yaml",
-    ),
+    path.join(process.env.HOME || "/tmp", ".nemoclaw", "blueprints", "0.1.0", "blueprint.yaml"),
     path.join(__dirname, "..", "..", "nemoclaw-blueprint", "blueprint.yaml"),
   ];
   for (const p of candidates) {

@@ -2,7 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { CLI_NAME } from "../../cli/branding";
+import { GATEWAY_PORT } from "../../core/ports";
 import { prompt as askPrompt } from "../../credentials/store";
+import {
+  resolveGatewayName,
+  resolveSandboxGatewayName,
+} from "../../onboard/gateway-binding";
 import {
   normalizeRebuildSandboxOptions,
   type RebuildSandboxOptions,
@@ -586,9 +591,9 @@ export async function rebuildSandbox(
     // orphan its live workspace. Refuse the destructive path in that case and
     // point the operator at the sandbox's own gateway. (If that gateway were
     // active, the sandbox would have appeared in the list above.)
-    const recordedGateway =
-      typeof sb.gatewayName === "string" && sb.gatewayName ? sb.gatewayName : "nemoclaw";
-    if (recordedGateway !== "nemoclaw") {
+    const recordedGateway = resolveSandboxGatewayName(sb);
+    const activeDefaultGateway = resolveGatewayName(GATEWAY_PORT);
+    if (recordedGateway !== activeDefaultGateway) {
       console.error(
         `  Sandbox '${sandboxName}' is registered on the '${recordedGateway}' OpenShell gateway, which is not the active gateway.`,
       );
