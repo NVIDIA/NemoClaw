@@ -17,17 +17,26 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
   });
 
   it("evaluates high-risk dispatch selector behavior before secret-bearing jobs run", () => {
-    expect(evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "network-policy,../escape" })).toMatchObject({
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "network-policy,../escape" }),
+    ).toMatchObject({
       valid: false,
       liveScenariosRuns: false,
       selectedFreeStandingJobs: [],
     });
-    expect(evaluateE2eVitestWorkflowDispatchSelectors({ jobs: "network-policy-vitest", scenarios: "network-policy" })).toMatchObject({
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({
+        jobs: "network-policy-vitest",
+        scenarios: "network-policy",
+      }),
+    ).toMatchObject({
       valid: false,
       liveScenariosRuns: false,
       selectedFreeStandingJobs: [],
     });
-    expect(evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "network-policy" })).toMatchObject({
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "network-policy" }),
+    ).toMatchObject({
       valid: true,
       liveScenariosRuns: false,
       selectedFreeStandingJobs: ["network-policy-vitest"],
@@ -43,7 +52,9 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       selectedFreeStandingJobs: ["network-policy-vitest"],
       registryScenarios: ["ubuntu-repo-cloud-openclaw"],
     });
-    expect(evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "openshell-version-pin" })).toMatchObject({
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "openshell-version-pin" }),
+    ).toMatchObject({
       valid: true,
       liveScenariosRuns: false,
       selectedFreeStandingJobs: ["openshell-version-pin-vitest"],
