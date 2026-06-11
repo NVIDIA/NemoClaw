@@ -23,7 +23,8 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const CLI_ENTRYPOINT = path.join(REPO_ROOT, "bin", "nemoclaw.js");
-const BLUEPRINT = path.join(REPO_ROOT, "nemoclaw-blueprint", "blueprint.yaml");
+const BLUEPRINT_RELPATH = path.join("nemoclaw-blueprint", "blueprint.yaml");
+const BLUEPRINT = path.join(REPO_ROOT, BLUEPRINT_RELPATH);
 const OLD_OPENCLAW_VERSION = "2026.3.11";
 const MARKER_FILE = "/sandbox/.openclaw/workspace/rebuild-marker.txt";
 const REGISTRY_FILE = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
@@ -32,7 +33,7 @@ const BACKUP_ROOT = path.join(os.homedir(), ".nemoclaw", "rebuild-backups");
 const DEFAULT_MODEL = "nvidia/nemotron-3-super-120b-a12b";
 const SANDBOX_NAME =
   process.env.NEMOCLAW_SANDBOX_NAME ??
-  ["e2e-rebuild-openclaw", process.env.GITHUB_RUN_ID, process.env.GITHUB_RUN_ATTEMPT]
+  ["e2e-rebuild-openclaw", process.env.GITHUB_RUN_ID, process.env.GITHUB_RUN_ATTEMPT, process.pid]
     .filter(Boolean)
     .join("-");
 validateSandboxName(SANDBOX_NAME);
@@ -79,6 +80,26 @@ function writeJsonFile(file: string, value: unknown): void {
   fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
+interface FileSnapshot {
+  exists: boolean;
+  content?: string;
+}
+
+function snapshotFile(file: string): FileSnapshot {
+  return fs.existsSync(file)
+    ? { exists: true, content: fs.readFileSync(file, "utf8") }
+    : { exists: false };
+}
+
+function restoreFile(file: string, snapshot: FileSnapshot): void {
+  if (!snapshot.exists) {
+    fs.rmSync(file, { force: true });
+    return;
+  }
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, snapshot.content ?? "", "utf8");
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -100,15 +121,17 @@ function cliEnv(apiKey: string, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEn
   });
 }
 
-function updateBlueprintMinVersionForOldOpenClaw(): () => void {
+function createOldBaseBuildContext(): string {
+  const buildContext = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-rebuild-openclaw-base-"));
+  fs.mkdirSync(path.join(buildContext, path.dirname(BLUEPRINT_RELPATH)), { recursive: true });
   const original = fs.readFileSync(BLUEPRINT, "utf8");
   const lowered = original.replace(
     /min_openclaw_version:.*/,
     `min_openclaw_version: "${OLD_OPENCLAW_VERSION}"`,
   );
   expect(lowered, "blueprint min_openclaw_version line was not found").not.toBe(original);
-  fs.writeFileSync(BLUEPRINT, lowered, "utf8");
-  return () => fs.writeFileSync(BLUEPRINT, original, "utf8");
+  fs.writeFileSync(path.join(buildContext, BLUEPRINT_RELPATH), lowered, "utf8");
+  return buildContext;
 }
 
 async function waitForSandboxReady(sandbox: {
@@ -127,22 +150,23 @@ async function waitForSandboxReady(sandbox: {
 }
 
 function seedRegistryAndSession(): void {
-  const registry = {
-    sandboxes: {
-      [SANDBOX_NAME]: {
-        name: SANDBOX_NAME,
-        createdAt: new Date().toISOString(),
-        model: DEFAULT_MODEL,
-        provider: "nvidia-prod",
-        gpuEnabled: false,
-        policies: [],
-        policyTier: null,
-        agent: null,
-        agentVersion: OLD_OPENCLAW_VERSION,
-      },
-    },
-    defaultSandbox: SANDBOX_NAME,
+  const registry = readJsonFile<{
+    sandboxes?: Record<string, Record<string, unknown>>;
+    defaultSandbox?: string;
+  }>(REGISTRY_FILE, {});
+  registry.sandboxes = registry.sandboxes ?? {};
+  registry.sandboxes[SANDBOX_NAME] = {
+    name: SANDBOX_NAME,
+    createdAt: new Date().toISOString(),
+    model: DEFAULT_MODEL,
+    provider: "nvidia-prod",
+    gpuEnabled: false,
+    policies: [],
+    policyTier: null,
+    agent: null,
+    agentVersion: OLD_OPENCLAW_VERSION,
   };
+  registry.defaultSandbox = SANDBOX_NAME;
   writeJsonFile(REGISTRY_FILE, registry);
 
   const now = new Date().toISOString();
@@ -183,7 +207,7 @@ function registrySandbox(): Record<string, unknown> {
   return sandbox;
 }
 
-function latestRebuildManifest(): Record<string, unknown> {
+function latestRebuildBackupDir(): string {
   const sandboxBackupRoot = path.join(BACKUP_ROOT, SANDBOX_NAME);
   expect(fs.existsSync(sandboxBackupRoot), `backup root missing: ${sandboxBackupRoot}`).toBe(true);
   const latest = fs
@@ -193,13 +217,16 @@ function latestRebuildManifest(): Record<string, unknown> {
     .sort()
     .at(-1);
   expect(latest, `no timestamped backup directory under ${sandboxBackupRoot}`).toBeTruthy();
-  const manifestPath = path.join(sandboxBackupRoot, latest!, "rebuild-manifest.json");
+  return path.join(sandboxBackupRoot, latest!);
+}
+
+function latestRebuildManifest(backupDir: string): Record<string, unknown> {
+  const manifestPath = path.join(backupDir, "rebuild-manifest.json");
   expect(fs.existsSync(manifestPath), `backup manifest missing: ${manifestPath}`).toBe(true);
   return JSON.parse(fs.readFileSync(manifestPath, "utf8")) as Record<string, unknown>;
 }
 
-function backupCredentialLeakPaths(oldGatewayToken: string): string[] {
-  const sandboxBackupRoot = path.join(BACKUP_ROOT, SANDBOX_NAME);
+function backupCredentialLeakPaths(backupDir: string, oldGatewayToken: string): string[] {
   const leaks: string[] = [];
   const skippedLockfiles = new Set([
     "package-lock.json",
@@ -227,7 +254,7 @@ function backupCredentialLeakPaths(oldGatewayToken: string): string[] {
     }
   }
 
-  if (fs.existsSync(sandboxBackupRoot)) scan(sandboxBackupRoot);
+  if (fs.existsSync(backupDir)) scan(backupDir);
   return leaks;
 }
 
@@ -311,15 +338,33 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       timeoutMs: OPENSHELL_TIMEOUT_MS,
     });
 
+    const registrySnapshot = snapshotFile(REGISTRY_FILE);
+    const sessionSnapshot = snapshotFile(SESSION_FILE);
+    const sandboxBackupRoot = path.join(BACKUP_ROOT, SANDBOX_NAME);
+    cleanup.add(`restore NemoClaw state files for ${SANDBOX_NAME}`, () => {
+      restoreFile(REGISTRY_FILE, registrySnapshot);
+      restoreFile(SESSION_FILE, sessionSnapshot);
+      fs.rmSync(sandboxBackupRoot, { recursive: true, force: true });
+    });
+
     cleanup.add(`destroy rebuilt sandbox ${SANDBOX_NAME}`, async () => {
-      await host.command("node", [CLI_ENTRYPOINT, SANDBOX_NAME, "destroy", "--yes"], {
-        artifactName: "cleanup-nemoclaw-destroy",
-        env: cliEnv(apiKey),
-        redactionValues: [apiKey],
-        timeoutMs: 2 * 60_000,
-      });
+      await host.command(
+        "node",
+        [CLI_ENTRYPOINT, SANDBOX_NAME, "destroy", "--yes", "--cleanup-gateway"],
+        {
+          artifactName: "cleanup-nemoclaw-destroy",
+          env: cliEnv(apiKey),
+          redactionValues: [apiKey],
+          timeoutMs: 2 * 60_000,
+        },
+      );
       await sandbox.openshell(["sandbox", "delete", SANDBOX_NAME], {
         artifactName: "cleanup-openshell-sandbox-delete",
+        env: dockerContextEnv(),
+        timeoutMs: OPENSHELL_TIMEOUT_MS,
+      });
+      await sandbox.openshell(["gateway", "destroy", "-g", "nemoclaw"], {
+        artifactName: "cleanup-openshell-gateway-destroy",
         env: dockerContextEnv(),
         timeoutMs: OPENSHELL_TIMEOUT_MS,
       });
@@ -348,11 +393,11 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
     });
     expectExitZero(deleteCurrentSandbox, "openshell sandbox delete current sandbox");
 
-    // Phase 2: build the old base image while temporarily lowering the
-    // blueprint minimum-version gate, then restore the checkout file.
-    let restoreBlueprint: (() => void) | undefined;
+    // Phase 2: build the old base image with a temporary build context that
+    // lowers only the blueprint minimum-version gate consumed by Dockerfile.base.
+    // The trusted checkout stays read-only.
+    const oldBaseBuildContext = createOldBaseBuildContext();
     try {
-      restoreBlueprint = updateBlueprintMinVersionForOldOpenClaw();
       const buildOldBase = await host.command(
         "docker",
         [
@@ -363,7 +408,7 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
           path.join(REPO_ROOT, "Dockerfile.base"),
           "-t",
           OLD_BASE_TAG,
-          REPO_ROOT,
+          oldBaseBuildContext,
         ],
         {
           artifactName: "phase-2-docker-build-old-openclaw-base",
@@ -373,7 +418,7 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       );
       expectExitZero(buildOldBase, `docker build old OpenClaw ${OLD_OPENCLAW_VERSION}`);
     } finally {
-      restoreBlueprint?.();
+      fs.rmSync(oldBaseBuildContext, { recursive: true, force: true });
     }
 
     // Phase 3: create an OpenShell sandbox from the old base image.
@@ -479,9 +524,25 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
     expect(preRebuildConfigHash).toContain("openclaw.json");
 
     seedRegistryAndSession();
+    const sessionAfterSeed = readJsonFile<Record<string, unknown>>(SESSION_FILE, {});
+    const seededSteps = sessionAfterSeed.steps as Record<string, { status?: string }> | undefined;
+    const seededSandbox = registrySandbox();
     await artifacts.writeJson("phase-4-registry-session-summary.json", {
-      registry: registrySandbox(),
-      session: readJsonFile<Record<string, unknown>>(SESSION_FILE, {}),
+      registry: {
+        name: seededSandbox.name,
+        provider: seededSandbox.provider,
+        agentVersion: seededSandbox.agentVersion,
+        policyCount: Array.isArray(seededSandbox.policies) ? seededSandbox.policies.length : 0,
+      },
+      session: {
+        sandboxName: sessionAfterSeed.sandboxName,
+        status: sessionAfterSeed.status,
+        provider: sessionAfterSeed.provider,
+        model: sessionAfterSeed.model,
+        stepStatuses: Object.fromEntries(
+          Object.entries(seededSteps ?? {}).map(([step, value]) => [step, value.status]),
+        ),
+      },
     });
 
     // Phase 4.5: apply policy presets through the public CLI, then verify both
@@ -594,10 +655,15 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       hashValid: true,
     });
 
-    const manifest = latestRebuildManifest();
-    await artifacts.writeJson("phase-7-rebuild-manifest-summary.json", manifest);
+    const backupDir = latestRebuildBackupDir();
+    const manifest = latestRebuildManifest(backupDir);
+    await artifacts.writeJson("phase-7-rebuild-manifest-summary.json", {
+      backupDir,
+      stateDirCount: Array.isArray(manifest.stateDirs) ? manifest.stateDirs.length : undefined,
+      policyPresets: manifest.policyPresets,
+    });
     expect(manifest.policyPresets).toEqual(expect.arrayContaining(["npm", "pypi"]));
-    expect(backupCredentialLeakPaths(PRE_REBUILD_GATEWAY_TOKEN)).toEqual([]);
+    expect(backupCredentialLeakPaths(backupDir, PRE_REBUILD_GATEWAY_TOKEN)).toEqual([]);
 
     expect(registrySandbox().policies).toEqual(expect.arrayContaining(["npm", "pypi"]));
     const postPolicy = await sandbox.openshell(["policy", "get", "--full", SANDBOX_NAME], {
