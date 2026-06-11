@@ -47,6 +47,27 @@ export function buildHermesConfig(settings: HermesBuildSettings): Record<string,
   const apiMode = hermesApiMode(settings.inferenceApi);
   if (apiMode) modelConfig.api_mode = apiMode;
 
+  // Surface the managed endpoint to Hermes' model picker. The inline `model:`
+  // block above is enough for the gateway to ROUTE inference, but the picker
+  // (CLI `hermes model` and the dashboard Models page via /api/model/options)
+  // enumerates providers through get_compatible_custom_providers(), which only
+  // reads `custom_providers:` / `providers:` — never the inline `model:` block.
+  // Without an entry here the picker shows zero models even though inference
+  // works. Mirror the same proxied endpoint and let Hermes live-discover the
+  // available models from /v1/models (served by the OpenShell inference proxy;
+  // GET /v1/models is allowlisted in policy-additions.yaml). discover_models is
+  // Hermes' default, but we set it explicitly so the intent survives upstream
+  // default changes, and we omit an explicit `models:` list precisely so the
+  // picker reflects the live catalog rather than a single hard-coded id.
+  const providerName = settings.upstreamProvider || "nemoclaw-inference";
+  const customProvider: Record<string, unknown> = {
+    name: providerName,
+    base_url: settings.baseUrl,
+    api_key: "sk-OPENSHELL-PROXY-REWRITE",
+    discover_models: true,
+  };
+  if (apiMode) customProvider.api_mode = apiMode;
+
   const upstream: Record<string, unknown> = {
     provider: settings.upstreamProvider,
     model: settings.model,
@@ -56,6 +77,7 @@ export function buildHermesConfig(settings: HermesBuildSettings): Record<string,
     _config_version: 12,
     _nemoclaw_upstream: upstream,
     model: modelConfig,
+    custom_providers: [customProvider],
     terminal: {
       backend: "local",
       timeout: 180,

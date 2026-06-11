@@ -256,6 +256,51 @@ describe("agents/hermes/generate-config.ts", () => {
     });
   });
 
+  it("exposes the managed endpoint to the model picker via custom_providers", () => {
+    const { config } = runConfigScript({
+      NEMOCLAW_PROVIDER_KEY: "nvidia-prod",
+      NEMOCLAW_MODEL: "nvidia/nemotron-3-super-120b-a12b",
+    });
+
+    // The inline `model:` block routes inference, but Hermes' model picker
+    // (CLI `hermes model` and the dashboard Models page) enumerates providers
+    // via get_compatible_custom_providers(), which only reads custom_providers/
+    // providers — not the inline `model:` block. Without this entry the picker
+    // shows zero models even though inference works. discover_models lets the
+    // picker live-list /v1/models from the proxied endpoint.
+    expect(config.custom_providers).toEqual([
+      {
+        name: "nvidia-prod",
+        base_url: "https://inference.local/v1",
+        api_key: HERMES_PROXY_API_KEY_PLACEHOLDER,
+        discover_models: true,
+      },
+    ]);
+  });
+
+  it("falls back to a stable picker provider name when no upstream is named", () => {
+    const { config } = runConfigScript();
+
+    // upstreamProvider defaults to "custom"; the picker entry stays well-formed.
+    expect(config.custom_providers[0]).toMatchObject({
+      base_url: "https://inference.local/v1",
+      discover_models: true,
+    });
+    expect(typeof config.custom_providers[0].name).toBe("string");
+    expect(config.custom_providers[0].name.length).toBeGreaterThan(0);
+  });
+
+  it("mirrors the inference api_mode onto the picker provider for non-default routing", () => {
+    const { config } = runConfigScript({
+      NEMOCLAW_INFERENCE_API: "anthropic-messages",
+    });
+
+    expect(config.custom_providers[0]).toMatchObject({
+      api_mode: "anthropic_messages",
+      discover_models: true,
+    });
+  });
+
   it("prepends a grep-friendly YAML comment header naming the upstream route", () => {
     runConfigScript({
       NEMOCLAW_PROVIDER_KEY: "nvidia-prod",
