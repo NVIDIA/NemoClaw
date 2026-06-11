@@ -92,12 +92,7 @@ function buildVerifySkillFixtureScript(): string {
     `token=${shellQuote(VERIFY_PHRASE)}`,
     `skill=${shellQuote(SKILL_ID)}`,
     "found=0",
-    `for path in ${skillPaths.map(shellQuote).join(" ")}; do`,
-    'if [ -f "$path" ] && grep -Fq "$token" "$path"; then',
-    'echo "SKILL_TOKEN_PATH=$path"',
-    "found=1",
-    "fi",
-    "done",
+    `for path in ${skillPaths.map(shellQuote).join(" ")}; do if [ -f "$path" ] && grep -Fq "$token" "$path"; then echo "SKILL_TOKEN_PATH=$path"; found=1; fi; done`,
     'test "$found" = 1',
   ].join("; ");
 }
