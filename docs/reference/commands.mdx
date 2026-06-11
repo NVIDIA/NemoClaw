@@ -517,7 +517,11 @@ The exit code is the remote command's exit code.
 | `--tty` / `--no-tty` | Allocate a pseudo-terminal; defaults to auto-detection (on when stdin and stdout are terminals) |
 | `--timeout <seconds>` | Timeout in seconds (`0` means no timeout) |
 
-### `$$nemoclaw <name> config get`
+### Advanced Sandbox Maintenance Commands
+
+The following commands are available for targeted host-side maintenance, but they are not part of the top-level public command list.
+
+#### `$$nemoclaw <name> config get`
 
 Read the sanitized agent configuration from a sandbox.
 The output removes credential-bearing sections such as the OpenClaw gateway token before printing.
@@ -533,7 +537,7 @@ $$nemoclaw my-assistant config get --key model --format yaml
 | `--key <dotpath>` | Print one value from the sanitized config |
 | `--format json|yaml` | Output format. Defaults to JSON |
 
-### `$$nemoclaw <name> shields`
+#### `$$nemoclaw <name> shields`
 
 Manage the sandbox config lockdown posture from the host.
 Use `shields status` to inspect the current state, `shields up` to lock the sandbox config and restore the captured restrictive policy, and `shields down` to temporarily unlock the config for maintenance.
