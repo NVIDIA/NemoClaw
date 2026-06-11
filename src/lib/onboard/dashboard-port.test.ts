@@ -9,6 +9,7 @@ import {
   findAvailableDashboardPort,
   findDashboardForwardOwner,
   preflightDashboardPortRangeAvailability,
+  resolveCreateSandboxDashboardPort,
 } from "../../../dist/lib/onboard/dashboard-port";
 
 describe("findDashboardForwardOwner", () => {
@@ -92,6 +93,127 @@ describe("findAvailableDashboardPort port-conflict detection (#3260)", () => {
     };
     findAvailableDashboardPort("cursor", 18789, "", stub);
     assert.deepEqual(seen, [18789, 18790]);
+  });
+});
+
+describe("resolveCreateSandboxDashboardPort", () => {
+  it("lets --control-ui-port override CHAT_UI_URL, registry, agent, and default ports", () => {
+    let preferredSeen: number | null = null;
+    const result = resolveCreateSandboxDashboardPort({
+      sandboxName: "cursor",
+      controlUiPort: 19000,
+      chatUiUrlEnv: "http://127.0.0.1:18790",
+      persistedPort: 18791,
+      agentForwardPort: 18792,
+      defaultPort: 18793,
+      forwardListOutput: "",
+      findAvailablePort: (_sandboxName, preferredPort) => {
+        preferredSeen = preferredPort;
+        return preferredPort;
+      },
+    });
+
+    assert.equal(preferredSeen, 19000);
+    assert.equal(result.preferredPort, 19000);
+    assert.equal(result.effectivePort, 19000);
+    assert.equal(result.chatUiUrl, "http://127.0.0.1:19000");
+  });
+
+  it("uses CHAT_UI_URL port before registry and rewrites the URL to the allocated port", () => {
+    const warnings: string[] = [];
+    const result = resolveCreateSandboxDashboardPort({
+      sandboxName: "cursor",
+      controlUiPort: null,
+      chatUiUrlEnv: "https://chat.example.test:18790/ui/",
+      persistedPort: 18791,
+      agentForwardPort: 18792,
+      defaultPort: 18793,
+      forwardListOutput: "FORWARDS",
+      findAvailablePort: (sandboxName, preferredPort, forwardListOutput) => {
+        assert.equal(sandboxName, "cursor");
+        assert.equal(preferredPort, 18790);
+        assert.equal(forwardListOutput, "FORWARDS");
+        return 18794;
+      },
+      warn: (message) => warnings.push(message),
+    });
+
+    assert.equal(result.preferredPort, 18790);
+    assert.equal(result.effectivePort, 18794);
+    assert.equal(result.chatUiUrl, "https://chat.example.test:18794/ui");
+    assert.deepEqual(warnings, ["  ! Port 18790 is taken. Using port 18794 instead."]);
+  });
+
+  it("falls back through registry, agent, and default ports", () => {
+    const preferredPorts: number[] = [];
+    const resolve = (persistedPort: number | null, agentForwardPort: number | null | undefined) =>
+      resolveCreateSandboxDashboardPort({
+        sandboxName: "cursor",
+        controlUiPort: null,
+        chatUiUrlEnv: null,
+        persistedPort,
+        agentForwardPort,
+        defaultPort: 18793,
+        forwardListOutput: "",
+        findAvailablePort: (_sandboxName, preferredPort) => {
+          preferredPorts.push(preferredPort);
+          return preferredPort;
+        },
+      });
+
+    assert.equal(resolve(18791, 18792).preferredPort, 18791);
+    assert.equal(resolve(null, 18792).preferredPort, 18792);
+    assert.equal(resolve(null, null).preferredPort, 18793);
+    assert.deepEqual(preferredPorts, [18791, 18792, 18793]);
+  });
+
+  it("normalizes schemeless CHAT_UI_URL values before preserving their host", () => {
+    const result = resolveCreateSandboxDashboardPort({
+      sandboxName: "cursor",
+      controlUiPort: null,
+      chatUiUrlEnv: "remote.example.test:18790",
+      persistedPort: null,
+      agentForwardPort: null,
+      defaultPort: 18789,
+      forwardListOutput: "",
+      findAvailablePort: (_sandboxName, preferredPort) => preferredPort,
+    });
+
+    assert.equal(result.preferredPort, 18790);
+    assert.equal(result.chatUiUrl, "http://remote.example.test:18790");
+  });
+
+  it("preserves malformed CHAT_UI_URL failure when the env URL would be used", () => {
+    assert.throws(
+      () =>
+        resolveCreateSandboxDashboardPort({
+          sandboxName: "cursor",
+          controlUiPort: null,
+          chatUiUrlEnv: "https://example.test:abc",
+          persistedPort: 18791,
+          agentForwardPort: null,
+          defaultPort: 18789,
+          forwardListOutput: "",
+          findAvailablePort: (_sandboxName, preferredPort) => preferredPort,
+        }),
+      /Invalid URL/,
+    );
+  });
+
+  it("ignores malformed CHAT_UI_URL when --control-ui-port supplies the URL", () => {
+    const result = resolveCreateSandboxDashboardPort({
+      sandboxName: "cursor",
+      controlUiPort: 19000,
+      chatUiUrlEnv: "https://example.test:abc",
+      persistedPort: 18791,
+      agentForwardPort: null,
+      defaultPort: 18789,
+      forwardListOutput: "",
+      findAvailablePort: (_sandboxName, preferredPort) => preferredPort,
+    });
+
+    assert.equal(result.preferredPort, 19000);
+    assert.equal(result.chatUiUrl, "http://127.0.0.1:19000");
   });
 });
 

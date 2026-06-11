@@ -2,11 +2,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 
 const START_SCRIPT = path.join(import.meta.dirname, "..", "scripts", "nemoclaw-start.sh");
 const APPROVAL_POLICY_DIR = path.join(import.meta.dirname, "..", "scripts", "lib");
@@ -323,65 +323,6 @@ describe("nemoclaw-start non-root fallback", () => {
       expect(invalidHighPort.status).toBe(1);
       expect(invalidHighPort.stderr).toContain("Invalid NEMOCLAW_DASHBOARD_PORT='70000'");
       expect(invalidHighPort.stderr).toContain("must be an integer between 1024 and 65535");
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
-
-  // #4503/#4710: the Docker HEALTHCHECK reports healthy on curl-exit-7 only
-  // when the /tmp/nemoclaw-gateway-local marker is ABSENT (gateway delivered
-  // out of this container's namespace). To avoid masking a slow in-container
-  // startup, the entrypoint must drop that marker early on the gateway-serving
-  // path — and must NOT drop it when only running a one-shot command or when
-  // OpenShell's Docker driver serves the gateway from the host.
-  it("drops the in-container gateway healthcheck marker only on the local gateway path (#4503, #4710)", () => {
-    const src = fs.readFileSync(START_SCRIPT, "utf-8");
-    const start = src.indexOf('NEMOCLAW_CMD=("$@")');
-    const end = src.indexOf("_chat_ui_url_port()", start);
-    if (start === -1 || end === -1 || end <= start) {
-      throw new Error("Expected NEMOCLAW_CMD assignment and the gateway marker block");
-    }
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gw-marker-"));
-    const markerPath = path.join(tmpDir, "nemoclaw-gateway-local");
-    const snippet = src.slice(start, end).replaceAll("/tmp/nemoclaw-gateway-local", markerPath);
-
-    function runScenario(setArgs: string, env: NodeJS.ProcessEnv = {}) {
-      const script = ["#!/usr/bin/env bash", "set -euo pipefail", setArgs, snippet].join("\n");
-      return spawnSync("bash", ["-c", script], {
-        encoding: "utf-8",
-        env: { ...process.env, ...env },
-        timeout: 5000,
-      });
-    }
-
-    try {
-      // Gateway-serving path: no trailing command, so the marker is dropped.
-      fs.rmSync(markerPath, { force: true });
-      const serving = runScenario("set --");
-      expect(serving.status).toBe(0);
-      expect(fs.existsSync(markerPath)).toBe(true);
-
-      // One-shot command path: the marker must stay absent so the out-of-
-      // namespace healthcheck branch never strict-checks a non-gateway
-      // container.
-      fs.rmSync(markerPath, { force: true });
-      const oneShot = runScenario("set -- openclaw agent --agent main");
-      expect(oneShot.status).toBe(0);
-      expect(fs.existsSync(markerPath)).toBe(false);
-
-      // Docker-driver path: the sandbox container has no trailing command, but
-      // OpenShell serves the gateway on the host. The marker must stay absent
-      // so Dockerfile HEALTHCHECK can short-circuit curl exit 7 instead of
-      // looking for an in-container gateway process.
-      fs.rmSync(markerPath, { force: true });
-      const dockerDriver = runScenario("set --", { OPENSHELL_DRIVERS: "docker" });
-      expect(dockerDriver.status).toBe(0);
-      expect(fs.existsSync(markerPath)).toBe(false);
-
-      fs.rmSync(markerPath, { force: true });
-      const mixedDrivers = runScenario("set --", { OPENSHELL_DRIVERS: "vm,docker" });
-      expect(mixedDrivers.status).toBe(0);
-      expect(fs.existsSync(markerPath)).toBe(false);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -2288,6 +2229,7 @@ describe("nemoclaw-start gateway launch signal handling", () => {
     const openclawLog = path.join(tmpDir, "openclaw.log");
     const gosuLog = path.join(tmpDir, "gosu.log");
     const gatewayLog = path.join(tmpDir, "gateway.log");
+    const markerPath = path.join(tmpDir, "nemoclaw-gateway-local");
     const scriptPath = path.join(tmpDir, "run.sh");
     const waitForLaunchLogIterations = Array.from({ length: 100 }, (_, i) => String(i + 1)).join(
       " ",
@@ -2295,7 +2237,7 @@ describe("nemoclaw-start gateway launch signal handling", () => {
     fs.mkdirSync(fakeBin);
     fs.writeFileSync(
       path.join(fakeBin, "openclaw"),
-      `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> ${JSON.stringify(openclawLog)}\nprintf 'state=%s oauth=%s home=%s config=%s\\n' "$OPENCLAW_STATE_DIR" "$OPENCLAW_OAUTH_DIR" "$OPENCLAW_HOME" "$OPENCLAW_CONFIG_PATH" >> ${JSON.stringify(openclawLog)}\nprintf 'gateway stdout marker\\n'\nprintf 'gateway stderr marker\\n' >&2\nexec sleep 30\n`,
+      `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> ${JSON.stringify(openclawLog)}\nif [ -f ${JSON.stringify(markerPath)} ]; then printf 'marker=present\\n' >> ${JSON.stringify(openclawLog)}; else printf 'marker=absent\\n' >> ${JSON.stringify(openclawLog)}; fi\nprintf 'state=%s oauth=%s home=%s config=%s\\n' "$OPENCLAW_STATE_DIR" "$OPENCLAW_OAUTH_DIR" "$OPENCLAW_HOME" "$OPENCLAW_CONFIG_PATH" >> ${JSON.stringify(openclawLog)}\nprintf 'gateway stdout marker\\n'\nprintf 'gateway stderr marker\\n' >&2\nexec sleep 30\n`,
       { mode: 0o755 },
     );
     fs.writeFileSync(
@@ -2320,11 +2262,10 @@ describe("nemoclaw-start gateway launch signal handling", () => {
         "start_auto_pair() { sleep 30 & AUTO_PAIR_PID=$!; }",
         "start_plugin_registry_refresh() { :; }",
         "cleanup_on_signal() { :; }",
-        // STEP_DOWN_PREFIX_* are normally populated by init_step_down_prefixes
-        // in sandbox-init.sh; the launch block uses STEP_DOWN_PREFIX_GATEWAY
-        // for the gateway exec. Initialize to the gosu fallback so the
-        // stubbed gosu() in fakeBin still receives the call (issue #3280
-        // follow-up).
+        extractShellFunctionFromSource(src, "mark_in_container_gateway").replaceAll(
+          "/tmp/nemoclaw-gateway-local",
+          markerPath,
+        ),
         "STEP_DOWN_PREFIX_SANDBOX=(gosu sandbox)",
         "STEP_DOWN_PREFIX_GATEWAY=(gosu gateway)",
         launchBlock(kind, gatewayLog),
@@ -2356,6 +2297,8 @@ describe("nemoclaw-start gateway launch signal handling", () => {
     const { result, openclaw, gateway } = runLaunchBlock("non-root");
     expect(result.status).toBe(0);
     expect(openclaw).toContain("gateway run --port 19000");
+    expect(openclaw).toContain("marker=present");
+    expect(openclaw).not.toContain("marker=absent");
     expect(openclaw).toContain(
       "state=/sandbox/.openclaw oauth=/sandbox/.openclaw/credentials home=/sandbox config=/sandbox/.openclaw/openclaw.json",
     );
@@ -2378,6 +2321,8 @@ describe("nemoclaw-start gateway launch signal handling", () => {
     expect(result.status).toBe(0);
     expect(gosu).toContain("user=gateway");
     expect(gosu).toContain("gateway run --port 19000");
+    expect(openclaw).toContain("marker=present");
+    expect(openclaw).not.toContain("marker=absent");
     expect(openclaw).toContain(
       "state=/sandbox/.openclaw oauth=/sandbox/.openclaw/credentials home=/sandbox config=/sandbox/.openclaw/openclaw.json",
     );
