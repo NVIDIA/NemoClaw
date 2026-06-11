@@ -1314,7 +1314,7 @@ NemoClaw resolves the digest of `ghcr.io/nvidia/nemoclaw/sandbox-base:latest` fr
 Sandboxes that match the current digest are left alone.
 NemoClaw also checks the build fingerprint recorded on each managed sandbox image.
 A sandbox needs upgrade when its agent version is stale, when its recorded NemoClaw image fingerprint differs from the running CLI, or both.
-Custom-image sandboxes created with `--from <Dockerfile>` are not classified by image drift because rebuilding them onto the default image would drop the custom image.
+Custom Dockerfile sandboxes are not classified by image drift because rebuilding them onto the default image would drop the custom image.
 Legacy sandboxes without a recorded fingerprint opt into this check after their next rebuild.
 
 ```bash

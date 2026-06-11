@@ -14,7 +14,6 @@ NemoClaw v0.0.63 improves sandbox recovery, OpenClaw configuration restore safet
 - Snapshot-backed rebuilds preserve OpenClaw configuration more safely. Rebuilds now carry forward user-owned `openclaw.json` settings, merge restored config with freshly generated runtime state, and fail when restored config cannot be applied safely. For more information, refer to Backup and Restore (use the `nemoclaw-user-manage-sandboxes` skill).
 - Onboarding diagnoses host setup and local inference issues earlier. The installer reports unusual Docker daemon access when a Linux user is outside the `docker` group, host DNS blocks are caught before NVIDIA provider validation, Ollama auth-proxy port conflicts recover during startup, and managed vLLM offers an interactive model picker for supported host profiles. For more information, refer to Use a Local Inference Server (use the `nemoclaw-user-configure-inference` skill).
 - Messaging and Hermes startup paths enforce clearer runtime boundaries. Slack setup validates Socket Mode credentials and warns or blocks duplicate Slack Socket Mode sandboxes on a shared gateway, while Hermes direct gateway launch keeps environment-secret protections active and handles wrapped gateway arguments. For more information, refer to Messaging Channels (use the `nemoclaw-user-manage-sandboxes` skill).
-- Release validation continues moving onboarding and E2E coverage into typed, targeted Vitest slices, including resume, Docker-unreachable gateway startup, version-pin, docs validation, and migration-retirement coverage.
 
 ## v0.0.62
 
