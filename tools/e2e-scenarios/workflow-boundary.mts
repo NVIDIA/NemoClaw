@@ -281,6 +281,7 @@ function validateJobsSelector(errors: string[], jobs: WorkflowRecord): void {
   requireRunContains(errors, validate, "runtime-overrides-vitest");
   requireRunContains(errors, validate, "hermes-e2e-vitest");
   requireRunContains(errors, validate, "network-policy-vitest");
+  requireRunContains(errors, validate, "rebuild-openclaw-vitest");
   requireRunContains(errors, validate, "token-rotation-vitest");
   requireRunContains(errors, validate, "openclaw-tui-chat-correlation-vitest");
   requireRunContains(errors, validate, "gateway-guard-recovery");
