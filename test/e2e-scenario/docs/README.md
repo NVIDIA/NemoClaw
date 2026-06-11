@@ -1,13 +1,14 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# NemoClaw E2E Scenario Framework
+# NemoClaw E2E Vitest Fixtures
 
-NemoClaw scenario E2E now uses **Vitest as the scenario execution runner**.
-Vitest owns discovery, filtering, timeouts, reporters, fixture lifecycle,
-skips, and CI integration. NemoClaw owns the domain layer: scenario metadata,
-phase fixtures, product clients, evidence artifacts, redaction, cleanup,
-expected-state probes, and typed assertion helpers.
+NemoClaw E2E now has one target execution model, Vitest as the harness and
+GitHub Actions as the matrix. Vitest owns discovery, filtering, timeouts,
+reporters, fixture lifecycle, skips, and CI integration. NemoClaw owns the
+domain layer: scenario metadata, phase fixtures, product clients, evidence
+artifacts, redaction, cleanup, expected-state probes, and typed assertion
+helpers.
 
 The retired typed-shell scenario runner is documented in
 [`RETIREMENT.md`](./RETIREMENT.md). Do not add new durable behavior to the old
@@ -15,8 +16,7 @@ YAML/bash scenario-runner shape.
 
 Direct legacy E2E scripts under `test/e2e/test-*.sh` still provide most live
 nightly and platform coverage. Those scripts are not deleted by the scenario
-runner cutover; migrate or augment them family by family using the inventory
-rules in `MIGRATION.md`.
+runner cutover; migrate them by contract using the rules in `MIGRATION.md`.
 
 ## Sources Of Truth
 
@@ -25,11 +25,11 @@ rules in `MIGRATION.md`.
 | Live scenario IDs and metadata | `test/e2e-scenario/scenarios/registry.ts`, `test/e2e-scenario/scenarios/scenarios/baseline.ts` |
 | GitHub Actions matrix emission | `test/e2e-scenario/scenarios/run.ts --emit-live-matrix` |
 | Live scenario execution | `test/e2e-scenario/live/registry-scenarios.test.ts` |
-| Phase fixtures and clients | `test/e2e-scenario/framework/` |
+| Phase fixtures and clients | `test/e2e-scenario/fixtures/` |
 | Expected-state probes | `test/e2e-scenario/scenarios/expected-states.ts` |
 | Product-facing setup/onboarding state | `test/e2e-scenario/manifests/*.yaml` |
 | Legacy direct E2E coverage | `test/e2e/test-*.sh` and their workflows |
-| Deletion guard inventory | `test/e2e-scenario/migration/legacy-inventory.json` |
+| Migration status and retirement decisions | GitHub issues and pull requests |
 
 ## Scenario Model
 
@@ -52,6 +52,9 @@ Live execution happens through Vitest fixtures:
 - `artifacts`, `secrets`, `cleanup`, and `shellProbe` provide shared fixture
   services.
 
+The `test/e2e-scenario/fixtures/` path is fixture/support code, not a test
+harness or runner. Vitest remains the only test harness.
+
 `suiteIds` remain metadata for reporting and migration planning. They do not
 dispatch shell validation suites.
 
@@ -67,8 +70,8 @@ npx tsx test/e2e-scenario/scenarios/run.ts --emit-live-matrix
 # Emit the matrix for selected scenario ids
 npx tsx test/e2e-scenario/scenarios/run.ts --emit-live-matrix --scenarios ubuntu-repo-cloud-openclaw
 
-# Framework tests
-npx vitest run --project e2e-scenario-framework --silent=false --reporter=default
+# Fixture/support tests
+npx vitest run --project e2e-vitest-support --silent=false --reporter=default
 
 # Opt-in live Vitest scenarios
 npm run build:cli
@@ -82,13 +85,12 @@ paths must not be reintroduced.
 
 ```text
 test/e2e-scenario/
-  docs/                  # Framework guide, migration notes, retirement record
-  framework/             # Vitest fixtures, clients, redaction, artifacts, cleanup
-  framework-tests/       # Fast framework and metadata tests
+  docs/                  # Fixture guide, migration notes, retirement record
+  fixtures/              # Vitest fixtures, clients, redaction, artifacts, cleanup
   live/                  # Opt-in live Vitest scenario tests
   manifests/             # Product-facing NemoClawInstance desired state
-  migration/             # Machine-readable deletion guard inventory
   scenarios/             # Typed registry, matrix helpers, expected states
+  support-tests/         # Fast fixture/support and metadata tests
 ```
 
 ## CI Entry Points
@@ -100,12 +102,14 @@ test/e2e-scenario/
 - Existing workflows such as `nightly-e2e.yaml`, `e2e-branch-validation.yaml`,
   `macos-e2e.yaml`, `wsl-e2e.yaml`, `ollama-proxy-e2e.yaml`, and
   `regression-e2e.yaml` still run direct legacy E2E scripts during migration.
-- `vitest.config.ts` contains `e2e-scenario-framework` for fast framework tests
-  and `e2e-scenarios-live` for opt-in live scenario execution.
+- `vitest.config.ts` contains `e2e-vitest-support` for fast fixture/support
+  tests and `e2e-scenarios-live` for opt-in live scenario execution.
 
 ## Migration Tracking
 
-Migration status is tracked outside the repository.
+Migration status is tracked outside the repository. GitHub issues and pull
+requests are the source of truth for script-by-script state, ownership,
+replacement Vitest coverage, and retirement decisions.
 
 GitHub issues and PRs own changing migration status. The key issues are:
 
@@ -114,11 +118,14 @@ GitHub issues and PRs own changing migration status. The key issues are:
 - #4990: phase fixtures and registry-driven live discovery
 - #5098: direct legacy bash-suite migration epic
 
-The repo-local inventory at
-`test/e2e-scenario/migration/legacy-inventory.json` is a deletion gate, not a
-progress dashboard. It prevents accidental deletion of direct legacy E2E
-scripts and records the retired internal typed-shell runner surfaces.
+The former repo-local `legacy-inventory.json` ledger and generated legacy
+assertion inventories are removed because they duplicated live GitHub state and
+drifted quickly. The durable guardrail is the workflow contract test that
+freezes both the top-level legacy `test/e2e/test-*.sh` set and the scheduled
+`nightly-e2e.yaml` legacy wiring. When a nightly-wired legacy script is
+intentionally retired, remove the script, remove the nightly workflow reference,
+and update the allowlist test in the same PR.
 
-Prefer new scenario coverage in Vitest fixtures unless shell itself is the
-contract or an existing legacy umbrella test is intentionally kept for
-end-to-end install/user-flow fidelity.
+Prefer new E2E coverage in Vitest fixtures. When shell, installer, process,
+platform, or full user-flow behavior is the contract, invoke that real boundary
+from Vitest rather than preserving a second durable runner.

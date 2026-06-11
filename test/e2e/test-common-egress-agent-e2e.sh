@@ -128,16 +128,24 @@ cli_command_available_from_source() {
   [ -f "$REPO/dist/nemoclaw.js" ] && command -v node >/dev/null 2>&1 && command -v openshell >/dev/null 2>&1
 }
 
+run_nemoclaw_cli_with_timeout() {
+  local seconds="$1"
+  shift
+  if cli_command_available_from_source; then
+    run_with_timeout "$seconds" node "$REPO/bin/nemoclaw.js" "$@"
+  elif command -v nemoclaw >/dev/null 2>&1; then
+    run_with_timeout "$seconds" nemoclaw "$@"
+  else
+    return 127
+  fi
+}
+
 destroy_sandbox_best_effort() {
   local sandbox="$1"
   if [ "${NEMOCLAW_E2E_KEEP_SANDBOX:-}" = "1" ] || [ "${NEMOCLAW_COMMON_EGRESS_KEEP_SANDBOX:-}" = "1" ]; then
     return 0
   fi
-  if cli_command_available_from_source; then
-    run_with_timeout 120 node "$REPO/bin/nemoclaw.js" "$sandbox" destroy --yes >/dev/null 2>&1 || true
-  elif command -v nemoclaw >/dev/null 2>&1; then
-    run_with_timeout 120 nemoclaw "$sandbox" destroy --yes >/dev/null 2>&1 || true
-  fi
+  run_nemoclaw_cli_with_timeout 120 "$sandbox" destroy --yes >/dev/null 2>&1 || true
   if command -v openshell >/dev/null 2>&1; then
     run_with_timeout 60 openshell sandbox delete "$sandbox" >/dev/null 2>&1 || true
   fi
@@ -253,7 +261,7 @@ run_openclaw_agent_assertion() {
   local label="$2"
   local prompt="$3"
   local expected="$4"
-  local ssh_cfg raw reply rc=0 session_id remote_cmd stderr_file log_file attempt last_fail
+  local ssh_cfg raw reply rc=0 session_id remote_cmd stderr_file stderr_text combined log_file attempt last_fail recover_rc
   log_file="/tmp/nemoclaw-e2e-common-egress-${sandbox}-agent.log"
 
   ssh_cfg="$(mktemp)"
@@ -277,18 +285,21 @@ run_openclaw_agent_assertion() {
       "openshell-${sandbox}" \
       "$remote_cmd" \
       2>"$stderr_file") || rc=$?
+    stderr_text="$(cat "$stderr_file" 2>/dev/null || true)"
+    combined="${raw}
+${stderr_text}"
     {
       printf '=== %s attempt=%s rc=%s ===\n' "$label" "$attempt" "$rc"
       printf '%s\n' '--- stdout ---'
       printf '%s\n' "$raw"
       printf '%s\n' '--- stderr ---'
-      cat "$stderr_file" 2>/dev/null || true
+      printf '%s\n' "$stderr_text"
     } >>"$log_file"
     rm -f "$stderr_file"
 
-    if printf '%s' "$raw" | grep -qiE "SsrFBlockedError|Blocked hostname|ECONNREFUSED|EAI_AGAIN|gateway unavailable|network connection error"; then
+    if printf '%s' "$combined" | grep -qiE "SsrFBlockedError|Blocked hostname"; then
       rm -f "$ssh_cfg"
-      fail "${label}: agent hit policy/transport error (exit ${rc}): ${raw:0:300}"
+      fail "${label}: agent hit policy block (exit ${rc}): ${combined:0:300}"
       return
     fi
 
@@ -298,7 +309,28 @@ run_openclaw_agent_assertion() {
       pass "${label}: OpenClaw agent returned ${expected}"
       return
     fi
-    last_fail="reply='${reply:0:240}' (exit ${rc}, raw='${raw:0:240}')"
+    last_fail="reply='${reply:0:240}' (exit ${rc}, raw='${raw:0:240}', stderr='${stderr_text:0:240}')"
+
+    if [ "$attempt" -lt 3 ] && printf '%s' "$combined" | grep -qiE "scope upgrade pending approval|pairing required: device is asking for more scopes"; then
+      info "${label}: pending OpenClaw scope upgrade detected; running recover before retry"
+      recover_rc=0
+      {
+        printf '=== %s recover after attempt=%s ===\n' "$label" "$attempt"
+      } >>"$log_file"
+      run_nemoclaw_cli_with_timeout 120 "$sandbox" recover >>"$log_file" 2>&1 || recover_rc=$?
+      if [ "$recover_rc" -ne 0 ]; then
+        info "${label}: recover exited ${recover_rc}; retrying agent turn"
+      fi
+      sleep $((attempt * 15))
+      continue
+    fi
+
+    if [ "$attempt" -lt 3 ] && printf '%s' "$combined" | grep -qiE "ECONNREFUSED|EAI_AGAIN|ECONNRESET|ETIMEDOUT|gateway unavailable|network connection error|DNS error|fetch failed|LLM request timed out|FailoverError|inference service unavailable|rawError=503"; then
+      info "${label}: transient agent/inference error detected; retrying after backoff"
+      sleep $((attempt * 15))
+      continue
+    fi
+
     [ "$attempt" -ge 3 ] || sleep 5
   done
 
