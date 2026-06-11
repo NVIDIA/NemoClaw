@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 type MessagingChannel = { name: string; envKey: string };
-type SandboxEntry = { messagingChannels?: string[] | null } | null | undefined;
 
 export function getMessagingProviderNamesForChannel(
   sandboxName: string,
@@ -30,7 +29,7 @@ export function getNonInteractiveStoredMessagingChannels(
   sandboxName: string | null,
   messagingChannels: readonly MessagingChannel[],
   hasMessagingToken: (envKey: string) => boolean,
-  getSandbox: (sandboxName: string) => SandboxEntry,
+  getConfiguredChannels: (sandboxName: string) => string[],
   getDisabledChannels: (sandboxName: string) => string[],
   providerExists: (providerName: string) => boolean,
   nonInteractive: boolean,
@@ -49,7 +48,7 @@ export function getNonInteractiveStoredMessagingChannels(
   }
 
   const configuredChannels = getKnownMessagingChannels(
-    getSandbox(sandboxName)?.messagingChannels,
+    getConfiguredChannels(sandboxName),
     messagingChannels,
   );
   const disabledChannels = new Set(getDisabledChannels(sandboxName));

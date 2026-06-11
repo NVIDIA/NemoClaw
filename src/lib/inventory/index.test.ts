@@ -7,8 +7,45 @@ import {
   getSandboxInventory,
   getStatusReport,
   listSandboxesCommand,
+  type SandboxEntry,
   showStatusCommand,
 } from "./index";
+
+type MessagingState = NonNullable<SandboxEntry["messaging"]>;
+type MessagingChannelId = MessagingState["plan"]["channels"][number]["channelId"];
+
+function messagingState(
+  sandboxName: string,
+  channels: readonly MessagingChannelId[],
+): MessagingState {
+  return {
+    schemaVersion: 1,
+    plan: {
+      schemaVersion: 1,
+      sandboxName,
+      agent: "openclaw",
+      workflow: "onboard",
+      channels: channels.map((channelId) => ({
+        channelId,
+        displayName: channelId,
+        authMode: "token-paste",
+        active: true,
+        selected: true,
+        configured: true,
+        disabled: false,
+        inputs: [],
+        hooks: [],
+      })),
+      disabledChannels: [],
+      credentialBindings: [],
+      networkPolicy: { presets: [], entries: [] },
+      agentRender: [],
+      buildSteps: [],
+      stateUpdates: [],
+      healthChecks: [],
+    },
+  };
+}
 
 describe("inventory commands", () => {
   it("returns structured empty inventory for JSON consumers", async () => {
@@ -356,7 +393,7 @@ describe("inventory commands", () => {
           {
             name: "alpha",
             model: "m",
-            messagingChannels: ["telegram"],
+            messaging: messagingState("alpha", ["telegram"]),
           },
         ],
         defaultSandbox: "alpha",
@@ -391,9 +428,9 @@ describe("inventory commands", () => {
     expect(lines.some((l) => l.includes("degraded"))).toBe(false);
   });
 
-  it("prints a cross-sandbox overlap warning when backfillAndFindOverlaps reports overlaps", () => {
+  it("prints a cross-sandbox overlap warning when findMessagingOverlaps reports overlaps", () => {
     const lines: string[] = [];
-    const backfillAndFindOverlaps = vi
+    const findMessagingOverlaps = vi
       .fn()
       .mockReturnValue([
         { channel: "telegram", sandboxes: ["alice", "bob"], reason: "matching-token" },
@@ -401,18 +438,18 @@ describe("inventory commands", () => {
     showStatusCommand({
       listSandboxes: () => ({
         sandboxes: [
-          { name: "alice", model: "m", messagingChannels: ["telegram"] },
-          { name: "bob", model: "m", messagingChannels: ["telegram"] },
+          { name: "alice", model: "m", messaging: messagingState("alice", ["telegram"]) },
+          { name: "bob", model: "m", messaging: messagingState("bob", ["telegram"]) },
         ],
         defaultSandbox: "alice",
       }),
       getLiveInference: () => null,
       showServiceStatus: vi.fn(),
-      backfillAndFindOverlaps,
+      findMessagingOverlaps,
       log: (message = "") => lines.push(message),
     });
 
-    expect(backfillAndFindOverlaps).toHaveBeenCalled();
+    expect(findMessagingOverlaps).toHaveBeenCalled();
     expect(
       lines.some((l) => l.includes("'alice' and 'bob' share the same telegram credential")),
     ).toBe(true);
@@ -420,20 +457,20 @@ describe("inventory commands", () => {
 
   it("defaults missing overlap reason to the conservative warning", () => {
     const lines: string[] = [];
-    const backfillAndFindOverlaps = vi
+    const findMessagingOverlaps = vi
       .fn()
       .mockReturnValue([{ channel: "telegram", sandboxes: ["alice", "bob"] }]);
     showStatusCommand({
       listSandboxes: () => ({
         sandboxes: [
-          { name: "alice", model: "m", messagingChannels: ["telegram"] },
-          { name: "bob", model: "m", messagingChannels: ["telegram"] },
+          { name: "alice", model: "m", messaging: messagingState("alice", ["telegram"]) },
+          { name: "bob", model: "m", messaging: messagingState("bob", ["telegram"]) },
         ],
         defaultSandbox: "alice",
       }),
       getLiveInference: () => null,
       showServiceStatus: vi.fn(),
-      backfillAndFindOverlaps,
+      findMessagingOverlaps,
       log: (message = "") => lines.push(message),
     });
 
@@ -448,7 +485,7 @@ describe("inventory commands", () => {
 
   it("marks a shared-gateway Slack Socket Mode overlap as conflicted (#4953)", () => {
     const lines: string[] = [];
-    const backfillAndFindOverlaps = vi
+    const findMessagingOverlaps = vi
       .fn()
       .mockReturnValue([
         { channel: "slack", sandboxes: ["alice", "bob"], reason: "slack-socket-mode-gateway" },
@@ -456,14 +493,14 @@ describe("inventory commands", () => {
     showStatusCommand({
       listSandboxes: () => ({
         sandboxes: [
-          { name: "alice", model: "m", messagingChannels: ["slack"] },
-          { name: "bob", model: "m", messagingChannels: ["slack"] },
+          { name: "alice", model: "m", messaging: messagingState("alice", ["slack"]) },
+          { name: "bob", model: "m", messaging: messagingState("bob", ["slack"]) },
         ],
         defaultSandbox: "alice",
       }),
       getLiveInference: () => null,
       showServiceStatus: vi.fn(),
-      backfillAndFindOverlaps,
+      findMessagingOverlaps,
       log: (message = "") => lines.push(message),
     });
 
@@ -491,7 +528,7 @@ describe("inventory commands", () => {
           {
             name: "alpha",
             model: "m",
-            messagingChannels: ["telegram"],
+            messaging: messagingState("alpha", ["telegram"]),
             agent: "hermes",
           },
         ],
@@ -521,7 +558,7 @@ describe("inventory commands", () => {
           {
             name: "alpha",
             model: "m",
-            messagingChannels: ["telegram"],
+            messaging: messagingState("alpha", ["telegram"]),
           },
         ],
         defaultSandbox: "alpha",
