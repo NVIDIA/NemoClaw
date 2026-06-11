@@ -29,6 +29,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
+      has_matrix: ${{ steps.matrix.outputs.has_matrix }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
@@ -55,10 +56,30 @@ jobs:
               echo "::error::Invalid scenario input: ${SCENARIOS}" >&2
               exit 1
             fi
-            args+=(--scenarios "${SCENARIOS}")
+
+            registry_scenarios=()
+            IFS=',' read -ra requested_scenarios <<< "${SCENARIOS}"
+            for scenario in "${requested_scenarios[@]}"; do
+              case "${scenario}" in
+                issue-4434-tui-unreachable-inference) ;;
+                *) registry_scenarios+=("${scenario}") ;;
+              esac
+            done
+
+            if [ "${#registry_scenarios[@]}" -gt 0 ]; then
+              registry_csv="$(IFS=,; echo "${registry_scenarios[*]}")"
+              args+=(--scenarios "${registry_csv}")
+            else
+              echo "matrix=[]" >> "$GITHUB_OUTPUT"
+              echo "has_matrix=false" >> "$GITHUB_OUTPUT"
+              matrix="[]"
+            fi
           fi
-          matrix="$(npx tsx test/e2e-scenario/scenarios/run.ts "${args[@]}")"
-          echo "matrix=${matrix}" >> "$GITHUB_OUTPUT"
+          if [ -z "${matrix:-}" ]; then
+            matrix="$(npx tsx test/e2e-scenario/scenarios/run.ts "${args[@]}")"
+            echo "matrix=${matrix}" >> "$GITHUB_OUTPUT"
+            echo "has_matrix=true" >> "$GITHUB_OUTPUT"
+          fi
           MATRIX_JSON="${matrix}" python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
           import json
           import os
@@ -74,6 +95,7 @@ jobs:
 
   live-scenarios:
     needs: generate-matrix
+    if: ${{ needs.generate-matrix.outputs.has_matrix == 'true' }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     strategy:
@@ -328,6 +350,107 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  # Privileged live repro for #4434's unreachable NVIDIA endpoint TUI failure.
+  # Keeps the replacement Vitest coverage runnable before the retained legacy
+  # shell lane is retired in #5098 Phase 11.
+  issue-4434-tui-unreachable-inference-vitest:
+    if: >-
+      inputs.scenarios == '' ||
+      contains(format(',{0},', inputs.scenarios), ',issue-4434-tui-unreachable-inference,')
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/issue-4434-tui-unreachable-inference
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_ISSUE_4434_LIVE: "1"
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+      OPENSHELL_GATEWAY: "nemoclaw"
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Authenticate to Docker Hub
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          login_succeeded=0
+          for attempt in 1 2 3; do
+            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
+              login_succeeded=1
+              break
+            fi
+            if [[ "$attempt" -lt 3 ]]; then
+              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
+              sleep 5
+            fi
+          done
+          if [[ "$login_succeeded" -ne 1 ]]; then
+            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
+          fi
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Install issue #4434 host dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y expect iptables
+
+      - name: Build CLI
+        run: npm run build:cli
+
+      - name: Install OpenShell CLI
+        run: bash scripts/install-openshell.sh
+
+      - name: Run issue #4434 TUI unreachable inference live test
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
+          if command -v openshell >/dev/null 2>&1; then
+            OPENSHELL_BIN="$(command -v openshell)"
+          elif [ -x "$HOME/.local/bin/openshell" ]; then
+            OPENSHELL_BIN="$HOME/.local/bin/openshell"
+          else
+            echo "::error::OpenShell CLI not found after install"
+            ls -la /usr/local/bin/openshell "$HOME/.local/bin/openshell" 2>&1 || true
+            exit 1
+          fi
+          export OPENSHELL_BIN
+          echo "Using OPENSHELL_BIN=$OPENSHELL_BIN"
+          "$OPENSHELL_BIN" --version
+          npx vitest run --project e2e-scenarios-live \
+            test/e2e-scenario/live/issue-4434-tui-unreachable-inference.test.ts \
+            --silent=false --reporter=default
+
+      - name: Upload issue #4434 TUI unreachable inference artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-vitest-scenarios-issue-4434-tui-unreachable-inference
+          path: e2e-artifacts/vitest/issue-4434-tui-unreachable-inference/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
+
   # ── Free-standing recovery scenarios (#2701) ─────────────────────────
   # Recovery / disruption scenarios don't fit the steady-state expected-state
   # registry that drives `live-scenarios` above. They run as free-standing
@@ -435,6 +558,7 @@ jobs:
         openshell-version-pin-vitest,
         onboard-negative-paths-vitest,
         openclaw-tui-chat-correlation-vitest,
+        issue-4434-tui-unreachable-inference-vitest,
         gateway-guard-recovery,
       ]
     if: ${{ always() && github.event_name == 'workflow_dispatch' }}
