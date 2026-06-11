@@ -40,7 +40,7 @@ jobs:
           SCENARIOS: ${{ inputs.scenarios }}
         run: |
           set -euo pipefail
-          allowed_jobs="openshell-version-pin-vitest,onboard-negative-paths-vitest,openclaw-tui-chat-correlation-vitest,gateway-guard-recovery"
+          allowed_jobs="openshell-version-pin-vitest,onboard-negative-paths-vitest,credential-migration-vitest,openclaw-tui-chat-correlation-vitest,gateway-guard-recovery"
           if [ -n "${JOBS}" ] && [ -n "${SCENARIOS}" ]; then
             echo "::error::Use either scenarios or jobs, not both." >&2
             exit 1
@@ -299,6 +299,8 @@ jobs:
           retention-days: 14
 
   credential-migration-vitest:
+    needs: validate-jobs
+    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',credential-migration-vitest,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 50
     env:

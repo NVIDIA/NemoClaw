@@ -163,6 +163,7 @@ function validateJobsSelector(errors: string[], jobs: WorkflowRecord): void {
   requireRunContains(errors, validate, "allowed_jobs=");
   requireRunContains(errors, validate, "openshell-version-pin-vitest");
   requireRunContains(errors, validate, "onboard-negative-paths-vitest");
+  requireRunContains(errors, validate, "credential-migration-vitest");
   requireRunContains(errors, validate, "openclaw-tui-chat-correlation-vitest");
   requireRunContains(errors, validate, "gateway-guard-recovery");
   requireRunContains(errors, validate, "^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$");
@@ -523,6 +524,7 @@ export function validateE2eVitestScenariosWorkflowBoundary(
 
   validateOpenShellVersionPinVitestJob(errors, jobs);
   validateOnboardNegativePathsVitestJob(errors, jobs);
+  validateFreeStandingJobSelector(errors, jobs, "credential-migration-vitest");
   validateFreeStandingJobSelector(errors, jobs, "openclaw-tui-chat-correlation-vitest");
   validateFreeStandingJobSelector(errors, jobs, "gateway-guard-recovery");
 
@@ -537,6 +539,7 @@ export function validateE2eVitestScenariosWorkflowBoundary(
       "live-scenarios",
       "openshell-version-pin-vitest",
       "onboard-negative-paths-vitest",
+      "credential-migration-vitest",
       "openclaw-tui-chat-correlation-vitest",
       "gateway-guard-recovery",
     ]) {
