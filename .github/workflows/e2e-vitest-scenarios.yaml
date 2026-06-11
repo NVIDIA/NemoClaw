@@ -40,7 +40,7 @@ jobs:
           SCENARIOS: ${{ inputs.scenarios }}
         run: |
           set -euo pipefail
-          allowed_jobs="openshell-version-pin-vitest,onboard-negative-paths-vitest,runtime-overrides-vitest,openclaw-tui-chat-correlation-vitest,gateway-guard-recovery"
+          allowed_jobs="openshell-version-pin-vitest,onboard-negative-paths-vitest,openclaw-tui-chat-correlation-vitest,gateway-guard-recovery,runtime-overrides-vitest"
           if [ -n "${JOBS}" ] && [ -n "${SCENARIOS}" ]; then
             echo "::error::Use either scenarios or jobs, not both." >&2
             exit 1
@@ -338,6 +338,10 @@ jobs:
           include-hidden-files: false
           if-no-files-found: ignore
           retention-days: 14
+
+  # Focused coverage slice for the #2603/#3145 OpenClaw websocket
+  # protocol/history contract. The retained legacy bash lane remains the
+  # source for full closeout until a later PR proves replacement and deletes it.
 
   # Focused coverage slice for the #2603/#3145 OpenClaw websocket
   # protocol/history contract. The retained legacy bash lane remains the
