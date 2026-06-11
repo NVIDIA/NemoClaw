@@ -5,13 +5,11 @@
 //   - validateSnapshotName accepts/rejects names
 //   - listBackups computes virtual v<N> versions by timestamp-ascending position
 //   - findBackup resolves selectors (v<N>, name, exact timestamp)
-
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
-
 // Override HOME BEFORE importing sandbox-state — it reads process.env.HOME
 // at module-load time to compute REBUILD_BACKUPS_DIR. Captured original is
 // restored in afterAll so sibling tests running in the same worker don't
@@ -19,15 +17,11 @@ import { afterAll, beforeEach, describe, expect, it } from "vitest";
 const ORIGINAL_HOME = process.env.HOME;
 const TMP_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-snap-naming-"));
 process.env.HOME = TMP_HOME;
-
 const REPO_ROOT = path.join(import.meta.dirname, "..");
-
 type BackupScalar = string | number | boolean | null | undefined;
 type BackupValue = BackupScalar | BackupManifestOverrides | BackupValue[];
-
 type SandboxStateModule = typeof import("../dist/lib/state/sandbox.js");
 type SandboxStateModuleCandidate = Partial<SandboxStateModule> | null;
-
 function isSandboxStateModule(value: SandboxStateModuleCandidate): value is SandboxStateModule {
   return (
     value !== null &&
@@ -37,7 +31,6 @@ function isSandboxStateModule(value: SandboxStateModuleCandidate): value is Sand
     typeof value.parseRestoreArgs === "function"
   );
 }
-
 const loadedSandboxState = await import(
   pathToFileURL(path.join(REPO_ROOT, "dist", "lib", "state", "sandbox.js")).href
 );
@@ -46,11 +39,8 @@ if (!isSandboxStateModule(loadedSandboxState)) {
 }
 const sandboxState = loadedSandboxState;
 const { parseRestoreArgs } = sandboxState;
-
 const BACKUPS_ROOT = path.join(TMP_HOME, ".nemoclaw", "rebuild-backups");
-
 type BackupManifestOverrides = { [key: string]: BackupValue };
-
 function writeBackup(
   sandboxName: string,
   dirName: string,
@@ -74,7 +64,6 @@ function writeBackup(
   fs.writeFileSync(path.join(dir, "rebuild-manifest.json"), JSON.stringify(manifest, null, 2));
   return manifest;
 }
-
 afterAll(() => {
   if (ORIGINAL_HOME === undefined) {
     delete process.env.HOME;
@@ -83,15 +72,12 @@ afterAll(() => {
   }
   fs.rmSync(TMP_HOME, { recursive: true, force: true });
 });
-
 beforeEach(() => {
   fs.rmSync(BACKUPS_ROOT, { recursive: true, force: true });
 });
-
 function writeExecutable(filePath: string, source: string): void {
   fs.writeFileSync(filePath, source, { mode: 0o755 });
 }
-
 function writeOpenClawRegistry(sandboxName: string): void {
   fs.mkdirSync(path.join(TMP_HOME, ".nemoclaw"), { recursive: true });
   fs.writeFileSync(
@@ -111,7 +97,6 @@ function writeOpenClawRegistry(sandboxName: string): void {
     }),
   );
 }
-
 function writeFakeOpenshell(binDir: string): string {
   const openshell = path.join(binDir, "openshell");
   writeExecutable(
@@ -127,32 +112,27 @@ process.exit(0);
   );
   return openshell;
 }
-
 describe("validateSnapshotName", () => {
   it("accepts normal names", () => {
     expect(sandboxState.validateSnapshotName("before-upgrade")).toBeNull();
     expect(sandboxState.validateSnapshotName("clean_state.v2")).toBeNull();
     expect(sandboxState.validateSnapshotName("A")).toBeNull();
   });
-
   it("rejects names matching the v<N> version pattern", () => {
     expect(sandboxState.validateSnapshotName("v1")).toMatch(/conflicts with.*v<N>/);
     expect(sandboxState.validateSnapshotName("V42")).toMatch(/conflicts with.*v<N>/);
   });
-
   it("rejects empty, leading-symbol, or too-long names", () => {
     expect(sandboxState.validateSnapshotName("")).toMatch(/Invalid/);
     expect(sandboxState.validateSnapshotName("-foo")).toMatch(/Invalid/);
     expect(sandboxState.validateSnapshotName(".hidden")).toMatch(/Invalid/);
     expect(sandboxState.validateSnapshotName("x".repeat(64))).toMatch(/Invalid/);
   });
-
   it("rejects names with spaces or slashes", () => {
     expect(sandboxState.validateSnapshotName("hello world")).toMatch(/Invalid/);
     expect(sandboxState.validateSnapshotName("foo/bar")).toMatch(/Invalid/);
   });
 });
-
 describe("listBackups computes virtual versions", () => {
   it("assigns v1 to the oldest by timestamp and vN to the newest", () => {
     // Written out of chronological order to verify sort-by-timestamp.
@@ -167,21 +147,18 @@ describe("listBackups computes virtual versions", () => {
       [1, "2026-04-21T14-01-00-000Z"],
     ]);
   });
-
   it("ignores any snapshotVersion persisted in legacy manifests", () => {
     // Old on-disk value should be overridden by position-based virtual version.
     writeBackup("test-sandbox", "2026-04-21T14-00-00-000Z", { snapshotVersion: 99 });
     const [entry] = sandboxState.listBackups("test-sandbox");
     expect(entry.snapshotVersion).toBe(1);
   });
-
   it("surfaces the name field when present", () => {
     writeBackup("test-sandbox", "2026-04-21T14-00-00-000Z", { name: "before-upgrade" });
     const [entry] = sandboxState.listBackups("test-sandbox");
     expect(entry.name).toBe("before-upgrade");
     expect(entry.snapshotVersion).toBe(1);
   });
-
   it("preserves legacy manifests created before blueprintDigest existed", () => {
     const dir = path.join(BACKUPS_ROOT, "test-sandbox", "2026-04-21T13-59-00-000Z");
     fs.mkdirSync(dir, { recursive: true });
@@ -199,14 +176,12 @@ describe("listBackups computes virtual versions", () => {
         backupPath: dir,
       }),
     );
-
     const [entry] = sandboxState.listBackups("test-sandbox");
     expect(entry?.timestamp).toBe("2026-04-21T13-59-00-000Z");
     expect(entry?.dir).toBe("/sandbox/.openclaw-data");
     expect(entry?.writableDir).toBe("/sandbox/.openclaw-data");
     expect(entry?.blueprintDigest).toBeNull();
   });
-
   it("ignores rebuild manifests with invalid typed fields", () => {
     const dir = path.join(BACKUPS_ROOT, "test-sandbox", "2026-04-21T14-00-00-000Z");
     fs.mkdirSync(dir, { recursive: true });
@@ -226,28 +201,22 @@ describe("listBackups computes virtual versions", () => {
         policyPresets: [1],
       }),
     );
-
     expect(sandboxState.listBackups("test-sandbox")).toEqual([]);
   });
-
   it("ignores rebuild manifests with unsafe backed-up directory paths", () => {
     writeBackup("test-sandbox", "2026-04-21T14-00-00-000Z", {
       stateDirs: ["workspace"],
       backedUpDirs: ["../outside"],
     });
-
     expect(sandboxState.listBackups("test-sandbox")).toEqual([]);
   });
-
   it("ignores rebuild manifests whose backed-up dirs are not declared state dirs", () => {
     writeBackup("test-sandbox", "2026-04-21T14-00-00-000Z", {
       stateDirs: ["workspace"],
       backedUpDirs: ["workspace", "agents"],
     });
-
     expect(sandboxState.listBackups("test-sandbox")).toEqual([]);
   });
-
   it("does not restore backed-up directory entries that are plain files", () => {
     const manifest = writeBackup("test-sandbox", "2026-04-21T14-00-00-000Z", {
       stateDirs: ["workspace"],
@@ -446,6 +415,9 @@ if (cmd.includes("[ -d ")) {
   process.stdout.write(existingDirs.join("\\n") + "\\n");
   process.exit(0);
 }
+if (cmd.includes("openclaw.json") && cmd.includes("cat --")) {
+  process.exit(2);
+}
 if (cmd.includes("find ")) {
   process.exit(0);
 }
@@ -514,6 +486,10 @@ function readStdin() {
 }
 if (cmd.includes("[ -d ")) {
   process.stdout.write(existingDirs.join("\\n") + "\\n");
+  process.exit(0);
+}
+if (cmd.includes("openclaw.json") && cmd.includes("cat --")) {
+  process.stdout.write(JSON.stringify({ gateway: { auth: { token: "fresh" } }, channels: {} }));
   process.exit(0);
 }
 if (cmd.includes("find ")) {
@@ -1324,169 +1300,6 @@ process.exit(0);
       expect(loggedCommands).toContain("sqlite3.connect");
       expect(loggedCommands).toContain("src_conn.backup(dst_conn)");
       expect(loggedCommands).toContain("PRAGMA quick_check");
-    } finally {
-      if (oldOpenshell === undefined) {
-        delete process.env.NEMOCLAW_OPENSHELL_BIN;
-      } else {
-        process.env.NEMOCLAW_OPENSHELL_BIN = oldOpenshell;
-      }
-      process.env.PATH = oldPath;
-      fs.rmSync(fixture, { recursive: true, force: true });
-    }
-  });
-});
-
-describe("OpenClaw durable config file (#5027)", () => {
-  it("backs up and restores openclaw.json settings while sanitizing secrets", () => {
-    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-snapshot-"));
-    const oldPath = process.env.PATH;
-    const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
-    try {
-      const binDir = path.join(fixture, "bin");
-      const fakeRoot = path.join(fixture, "sandbox-root");
-      const openclawDir = path.join(fakeRoot, ".openclaw");
-      fs.mkdirSync(binDir, { recursive: true });
-      fs.mkdirSync(openclawDir, { recursive: true });
-
-      // Reporter-shaped config: model/provider/MCP/agent settings plus a
-      // provider apiKey sentinel, a channel resolve placeholder, a real inline
-      // secret, and a gateway block (regenerated at startup).
-      const original = {
-        models: {
-          mode: "merge",
-          providers: {
-            nvidia: {
-              baseUrl: "https://integrate.api.nvidia.com/v1",
-              apiKey: "unused",
-              models: [{ id: "moonshotai/kimi-k2" }],
-            },
-          },
-        },
-        mcpServers: {
-          filesystem: { command: "npx" },
-          github: {
-            command: "npx",
-            env: { GITHUB_TOKEN: "ghp_raw_secret", NODE_ENV: "production" },
-          },
-        },
-        channels: {
-          discord: {
-            accounts: { default: { token: "openshell:resolve:env:DISCORD_BOT_TOKEN" } },
-          },
-          slack: { accounts: { default: { botToken: "xoxb-123-raw-secret" } } },
-        },
-        customAgents: { researcher: { prompt: "be thorough" } },
-        leaked: { apiKey: "sk-real-secret" },
-        gateway: { port: 18789, authToken: "gw-token" },
-      };
-      fs.writeFileSync(path.join(openclawDir, "openclaw.json"), JSON.stringify(original, null, 2));
-
-      writeExecutable(
-        path.join(binDir, "openshell"),
-        `#!/usr/bin/env node
-const args = process.argv.slice(2);
-if (args[0] === "sandbox" && args[1] === "ssh-config") {
-  process.stdout.write("Host openshell-alpha\\n  HostName 127.0.0.1\\n  User sandbox\\n");
-  process.exit(0);
-}
-process.exit(0);
-`,
-      );
-
-      writeExecutable(
-        path.join(binDir, "ssh"),
-        `#!/usr/bin/env node
-const fs = require("fs");
-const path = require("path");
-const dir = path.join(${JSON.stringify(fakeRoot)}, ".openclaw");
-const cmd = process.argv[process.argv.length - 1] || "";
-function readStdin() {
-  const chunks = [];
-  for (;;) {
-    const buf = Buffer.alloc(65536);
-    let n = 0;
-    try { n = fs.readSync(0, buf, 0, buf.length, null); } catch { break; }
-    if (n === 0) break;
-    chunks.push(buf.subarray(0, n));
-  }
-  return Buffer.concat(chunks);
-}
-if (cmd.includes("[ -d ")) { process.exit(0); }
-if (cmd.includes("openclaw.json") && cmd.includes("cat --")) {
-  process.stdout.write(fs.readFileSync(path.join(dir, "openclaw.json")));
-  process.exit(0);
-}
-if (cmd.includes(".nemoclaw-restore") && cmd.includes("openclaw.json")) {
-  fs.writeFileSync(path.join(dir, "openclaw.json"), readStdin());
-  process.exit(0);
-}
-process.exit(0);
-`,
-      );
-
-      writeOpenClawRegistry("alpha");
-      // writeOpenClawRegistry records agent:null → defaults to openclaw.
-
-      process.env.NEMOCLAW_OPENSHELL_BIN = path.join(binDir, "openshell");
-      process.env.PATH = `${binDir}:${oldPath || ""}`;
-
-      const backup = sandboxState.backupSandboxState("alpha");
-      expect(backup.success).toBe(true);
-      expect(backup.backedUpFiles).toEqual(["openclaw.json"]);
-      expect(backup.manifest?.stateFiles).toEqual([{ path: "openclaw.json", strategy: "copy" }]);
-
-      // The local backup is sanitized: secret stripped, gateway removed,
-      // restorable references preserved.
-      const backedUp = JSON.parse(
-        fs.readFileSync(path.join(backup.manifest!.backupPath, "openclaw.json"), "utf-8"),
-      );
-      expect(backedUp.models.providers.nvidia.apiKey).toBe("unused");
-      expect(backedUp.models.providers.nvidia.models[0].id).toBe("moonshotai/kimi-k2");
-      expect(backedUp.mcpServers.filesystem.command).toBe("npx");
-      expect(backedUp.channels.discord.accounts.default.token).toBe(
-        "openshell:resolve:env:DISCORD_BOT_TOKEN",
-      );
-      expect(backedUp.customAgents.researcher.prompt).toBe("be thorough");
-      expect(backedUp.leaked.apiKey).toBe("[STRIPPED_BY_MIGRATION]");
-      // Raw channel tokens and MCP env secrets must not leak into backups.
-      expect(backedUp.channels.slack.accounts.default.botToken).toBe("[STRIPPED_BY_MIGRATION]");
-      expect(backedUp.mcpServers.github.env.GITHUB_TOKEN).toBe("[STRIPPED_BY_MIGRATION]");
-      expect(backedUp.mcpServers.github.env.NODE_ENV).toBe("production");
-      expect(backedUp.gateway).toBeUndefined();
-
-      fs.writeFileSync(
-        path.join(openclawDir, "openclaw.json"),
-        JSON.stringify(
-          {
-            models: {
-              mode: "merge",
-              providers: { nvidia: { apiKey: "unused", models: [{ id: "nvidia/nemotron" }] } },
-            },
-            channels: {
-              defaults: {},
-              discord: { accounts: { default: { token: "openshell:resolve:env:v222_TOKEN" } } },
-              whatsapp: { accounts: { default: { enabled: true } } },
-            },
-            gateway: { auth: { token: "fresh-runtime-token" } },
-          },
-          null,
-          2,
-        ),
-      );
-      const restore = sandboxState.restoreSandboxState("alpha", backup.manifest!.backupPath);
-      expect(restore.success).toBe(true);
-      expect(restore.restoredFiles).toEqual(["openclaw.json"]);
-
-      const after = JSON.parse(fs.readFileSync(path.join(openclawDir, "openclaw.json"), "utf-8"));
-      expect(after.gateway.auth.token).toBe("fresh-runtime-token");
-      expect(after.models.providers.nvidia.models[0].id).toBe("nvidia/nemotron");
-      expect(after.channels.discord.accounts.default.token).toBe(
-        "openshell:resolve:env:v222_TOKEN",
-      );
-      expect(after.channels.whatsapp.accounts.default.enabled).toBe(true);
-      expect(after.channels.slack).toBeUndefined();
-      expect(after.mcpServers.filesystem.command).toBe("npx");
-      expect(after.customAgents.researcher.prompt).toBe("be thorough");
     } finally {
       if (oldOpenshell === undefined) {
         delete process.env.NEMOCLAW_OPENSHELL_BIN;

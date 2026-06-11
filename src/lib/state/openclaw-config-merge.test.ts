@@ -75,4 +75,72 @@ describe("mergeOpenClawRestoredConfig", () => {
     });
     expect((merged as { channels: Record<string, unknown> }).channels.telegram).toBeUndefined();
   });
+
+  it("preserves backup provider and plugin entries when current entry maps are absent", () => {
+    const merged = mergeOpenClawRestoredConfig(
+      {
+        models: { providers: { custom: { models: [{ id: "custom-model" }] } } },
+        plugins: { entries: { customPlugin: { enabled: true } } },
+      },
+      { models: { mode: "route-through-gateway" }, plugins: { load: { paths: ["/plugins"] } } },
+    );
+
+    expect(merged).toMatchObject({
+      models: {
+        mode: "route-through-gateway",
+        providers: { custom: { models: [{ id: "custom-model" }] } },
+      },
+      plugins: {
+        load: { paths: ["/plugins"] },
+        entries: { customPlugin: { enabled: true } },
+      },
+    });
+  });
+
+  it("keeps current provider and plugin entries for matching keys", () => {
+    const merged = mergeOpenClawRestoredConfig(
+      {
+        models: {
+          providers: {
+            nvidia: { models: [{ id: "stale" }], apiKey: "unused" },
+            custom: { models: [{ id: "stale-custom" }] },
+            backupOnly: { models: [{ id: "backup-only" }] },
+          },
+        },
+        plugins: {
+          entries: {
+            discord: { enabled: false },
+            customPlugin: { enabled: true },
+            backupOnlyPlugin: { enabled: true },
+          },
+        },
+      },
+      {
+        models: {
+          providers: {
+            nvidia: { models: [{ id: "fresh" }], apiKey: "unused" },
+            custom: { models: [{ id: "fresh-custom" }] },
+          },
+        },
+        plugins: { entries: { discord: { enabled: true }, customPlugin: { enabled: false } } },
+      },
+    );
+
+    expect(merged).toMatchObject({
+      models: {
+        providers: {
+          nvidia: { models: [{ id: "fresh" }], apiKey: "unused" },
+          custom: { models: [{ id: "fresh-custom" }] },
+          backupOnly: { models: [{ id: "backup-only" }] },
+        },
+      },
+      plugins: {
+        entries: {
+          discord: { enabled: true },
+          customPlugin: { enabled: false },
+          backupOnlyPlugin: { enabled: true },
+        },
+      },
+    });
+  });
 });
