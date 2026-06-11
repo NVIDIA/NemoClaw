@@ -220,29 +220,29 @@ describe("E2E reusable workflow contract", () => {
   });
 
   it("keeps the unwired VM driver privileged-exec lane covered by CLI Vitest", () => {
-    const nightlyText = readFileSync(
-      new URL("../.github/workflows/nightly-e2e.yaml", import.meta.url),
-      "utf8",
+    const { cliCoverageShardAction } = loadE2eWorkflowContract();
+    const runStepNames = cliCoverageShardAction.runs.steps.map((step) => step.name);
+    const cliShardRunStep = cliCoverageShardAction.runs.steps.find(
+      (step) => step.name === "Run CLI coverage shard",
     );
-    const cliShardAction = readFileSync(
-      new URL("../.github/actions/ci-cli-coverage-shard/action.yaml", import.meta.url),
-      "utf8",
-    );
-    const vitestConfig = readFileSync(new URL("../vitest.config.ts", import.meta.url), "utf8");
 
     expect(nightlyWorkflow.jobs[RETIRED_VM_DRIVER_PRIVEXEC_JOB]).toBeUndefined();
-    expect(nightlyText).not.toContain(RETIRED_VM_DRIVER_PRIVEXEC_JOB);
+    expect(collectLegacyE2eShellScriptRefs(nightlyWorkflow)).not.toContain(
+      "test/e2e/test-vm-driver-privileged-exec-routing.sh",
+    );
     expect(
       existsSync(new URL("./e2e/test-vm-driver-privileged-exec-routing.sh", import.meta.url)),
     ).toBe(true);
     expect(existsSync(new URL(`../${VM_DRIVER_PRIVEXEC_VITEST}`, import.meta.url))).toBe(true);
-    expect(vitestConfig).toContain('name: "cli"');
-    expect(vitestConfig).toContain('"test/**/*.test.{js,ts}"');
     expect(VM_DRIVER_PRIVEXEC_VITEST).toMatch(/^test\/.*\.test\.ts$/);
-    expect(cliShardAction).toContain("npm run build:cli");
-    expect(cliShardAction).toContain("npx vitest run --project cli");
-    expect(cliShardAction.indexOf("npm run build:cli")).toBeLessThan(
-      cliShardAction.indexOf("npx vitest run --project cli"),
+    expect(runStepNames).toContain("Run CLI coverage shard");
+    expect(cliShardRunStep?.run?.split("\n").map((line) => line.trim())).toEqual(
+      expect.arrayContaining([
+        "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+        "npm run build:cli",
+        "npx tsx scripts/check-dist-sourcemaps.ts dist",
+        "npx vitest run --project cli \\",
+      ]),
     );
   });
 

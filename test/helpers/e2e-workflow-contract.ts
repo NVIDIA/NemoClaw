@@ -66,11 +66,15 @@ export function loadE2eWorkflowContract(): {
   runnerWorkflow: RunnerWorkflow;
   nightlyWorkflow: NightlyWorkflow;
   action: CompositeAction;
+  cliCoverageShardAction: CompositeAction;
 } {
   return {
     runnerWorkflow: readYaml<RunnerWorkflow>(".github/workflows/e2e-script.yaml"),
     nightlyWorkflow: readYaml<NightlyWorkflow>(".github/workflows/nightly-e2e.yaml"),
     action: readYaml<CompositeAction>(".github/actions/run-e2e-script/action.yaml"),
+    cliCoverageShardAction: readYaml<CompositeAction>(
+      ".github/actions/ci-cli-coverage-shard/action.yaml",
+    ),
   };
 }
 
