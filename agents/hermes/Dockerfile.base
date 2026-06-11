@@ -241,6 +241,33 @@ RUN set -eu; \
     && ln -sf /opt/hermes/.venv/bin/hermes-agent /usr/local/bin/hermes-agent \
     && ln -sf /opt/hermes/.venv/bin/hermes-acp /usr/local/bin/hermes-acp
 
+# python-multipart: FastAPI's multipart/form-data parser. FastAPI imports it
+# lazily, only when a route declares Form/File/UploadFile, and treats it as an
+# optional dependency (bare `fastapi` does not require it — only fastapi[standard]
+# does). The bundled kanban dashboard plugin
+# (plugins/kanban/dashboard/plugin_api.py) registers a card-attachment upload
+# route that uses File/Form, so without python-multipart the plugin's API routes
+# fail to mount ("Form data requires python-multipart to be installed").
+#
+# It is NOT a dependency of hermes-agent core or any extra we enable; upstream
+# only pulls it transitively via the mcp/daytona/all extras. Rather than drag in
+# the MCP client (a new agent capability) or the Daytona cloud-provider SDK (an
+# unused, egress/telemetry-capable SDK) just to obtain a dependency-free form
+# parser, vendor python-multipart directly — pinned and hash-verified to the
+# exact version resolved in the checksum-pinned release's uv.lock, so it stays
+# tied to HERMES_VERSION/HERMES_TARBALL_SHA256 review like every other dep.
+# Re-review the version and both hashes on every Hermes version bump.
+# hadolint ignore=DL3059
+RUN printf '%s\n' \
+        'python-multipart==0.0.27 \' \
+        '    --hash=sha256:6fccfad17a27334bd0193681b369f476eda3409f17381a2d65aa7df3f7275645 \' \
+        '    --hash=sha256:9870a6a8c5a20a5bf4f07c017bd1489006ff8836cff097b6933355ee2b49b602' \
+        > /tmp/multipart-req.txt \
+    && uv pip install --python /opt/hermes/.venv/bin/python \
+        --no-deps --no-cache --require-hashes -r /tmp/multipart-req.txt \
+    && rm -f /tmp/multipart-req.txt \
+    && /opt/hermes/.venv/bin/python -c "import multipart; print('python-multipart', multipart.__version__)"
+
 ENV PATH="/usr/local/bin:/opt/hermes/.venv/bin:${PATH}" \
     HERMES_TUI_DIR="/opt/hermes/ui-tui" \
     HERMES_WEB_DIST="/opt/hermes/hermes_cli/web_dist"

@@ -342,14 +342,18 @@ if [[ "$DO_REBUILD" == 1 ]]; then
   NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF="$pin_tag" nemohermes hermes rebuild
 
   echo "Verifying running Hermes version…"
-  RUNNING="$(nemohermes hermes connect -- hermes --version 2>/dev/null || true)"
+  # `sandbox exec` (not `connect`) is the one-shot passthrough: connect is a
+  # strict, interactive shell that ignores a trailing `-- <cmd>`, so it would
+  # just print its own usage. exec forwards everything after `--` to the
+  # sandbox user and exits with the remote command's status.
+  RUNNING="$(nemohermes hermes exec -- hermes --version 2>/dev/null || true)"
   if [[ "$RUNNING" == *"$SEMVER"* ]]; then
     echo "OK: sandbox reports Hermes Agent v${SEMVER} (${TAG})."
   else
     echo "ERROR: sandbox reports '${RUNNING:-<no output>}', expected v${SEMVER}." >&2
     echo "Hint: the rebuild may have used a cached/GHCR base image; re-run with --rebuild after" >&2
     echo "      checking the build log, or verify manually:" >&2
-    echo "        nemohermes hermes connect -- hermes --version" >&2
+    echo "        nemohermes hermes exec -- hermes --version" >&2
     exit 1
   fi
 elif [[ "$DO_BUILD" == 0 ]]; then

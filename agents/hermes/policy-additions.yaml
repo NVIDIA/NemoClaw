@@ -27,6 +27,20 @@ filesystem_policy:
     - /sandbox
     - /tmp
     - /dev/null
+    - /dev/pts                      # PTY multiplexer + slave devices (devpts).
+                                    # The Hermes TUI (prompt_toolkit), the web
+                                    # dashboard's interactive chat pty bridge,
+                                    # and terminal.backend: local all allocate a
+                                    # PTY via openpty()/forkpty(), opening
+                                    # /dev/ptmx (-> /dev/pts/ptmx) and a
+                                    # /dev/pts/<n> slave. Without this grant
+                                    # landlock denies the open with EACCES, which
+                                    # the dashboard surfaces as "Chat failed to
+                                    # start: out of pty devices" and which breaks
+                                    # any interactive shell tool. Grant the
+                                    # directory, not /dev/ptmx itself — it is a
+                                    # symlink the supervisor refuses to chown.
+                                    # Mirrors the OpenClaw policy grant (#4513).
     # Agent config/state root. Shields-up locks config.yaml/.env and the
     # parent directory, but intentionally leaves /sandbox/.hermes/.hermes_history
     # as sandbox:sandbox 0660 because prompt_toolkit FileHistory appends there
