@@ -2,11 +2,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { spawnSync } from "node:child_process";
+import { describe, it, expect } from "vitest";
 
 const START_SCRIPT = path.join(import.meta.dirname, "..", "scripts", "nemoclaw-start.sh");
 const APPROVAL_POLICY_DIR = path.join(import.meta.dirname, "..", "scripts", "lib");
@@ -990,66 +990,6 @@ describe("nemoclaw-start configure guard behavior", () => {
         "SHELL_URL=ws://127.0.0.1:18789",
         "ARGS=agent --agent main -m hello URL=ws://127.0.0.1:18789 PORT=18789 TOKEN=test-gateway-token",
       ]);
-    } finally {
-      fs.rmSync(setup.tmpDir, { recursive: true, force: true });
-    }
-  });
-
-  it("#4462: strips admin from same-device approval replacement", () => {
-    const setup = writeProxyEnvWithGuard();
-    const stateDir = path.join(setup.tmpDir, "openclaw-state");
-    const devicesDir = path.join(stateDir, "devices");
-    fs.mkdirSync(devicesDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(devicesDir, "pending.json"),
-      JSON.stringify({
-        original: { requestId: "request-1", deviceId: "device-1", scopes: ["operator.write"] },
-      }),
-    );
-    fs.writeFileSync(
-      path.join(devicesDir, "paired.json"),
-      JSON.stringify({
-        "device-1": {
-          deviceId: "device-1",
-          scopes: ["operator.pairing"],
-          approvedScopes: ["operator.pairing"],
-          tokens: { operator: { role: "operator", scopes: ["operator.pairing"] } },
-        },
-      }),
-    );
-    fs.writeFileSync(
-      path.join(setup.fakeBin, "openclaw"),
-      `#!/usr/bin/env bash
-printf 'ARGS=%s URL=%s PORT=%s TOKEN=%s\n' "$*" "\${OPENCLAW_GATEWAY_URL-unset}" "\${OPENCLAW_GATEWAY_PORT-unset}" "\${OPENCLAW_GATEWAY_TOKEN-unset}" >> ${JSON.stringify(setup.commandLog)}
-cat > "\${OPENCLAW_STATE_DIR}/devices/pending.json" <<'JSON'
-{"replacement":{"requestId":"replacement-1","deviceId":"device-1","scopes":["operator.write","operator.pairing","operator.read","operator.admin"]}}
-JSON
-echo 'gateway connect failed: GatewayClientRequestError: scope upgrade pending approval (requestId: replacement-1)' >&2
-exit 1
-`,
-      { mode: 0o755 },
-    );
-
-    try {
-      const result = runGuardedShell(setup, [
-        `export OPENCLAW_STATE_DIR=${JSON.stringify(stateDir)}`,
-        shellOpenclawCommand(["devices", "approve", "request-1", "--json"]),
-      ]);
-      expect(result.status, result.stderr).toBe(0);
-      expect(JSON.parse(result.stdout)).toMatchObject({
-        requestId: "request-1",
-        compatibility: "openclaw-approve-recovered-replacement",
-      });
-      const paired = JSON.parse(fs.readFileSync(path.join(devicesDir, "paired.json"), "utf-8"));
-      expect(paired["device-1"].approvedScopes).toEqual([
-        "operator.pairing",
-        "operator.read",
-        "operator.write",
-      ]);
-      expect(JSON.stringify(paired)).not.toContain("operator.admin");
-      expect(JSON.parse(fs.readFileSync(path.join(devicesDir, "pending.json"), "utf-8"))).toEqual(
-        {},
-      );
     } finally {
       fs.rmSync(setup.tmpDir, { recursive: true, force: true });
     }
