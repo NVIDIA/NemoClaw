@@ -51,6 +51,7 @@ const dockerGpuPatch: typeof import("./onboard/docker-gpu-patch") = require("./o
 const dockerGpuLocalInference: typeof import("./onboard/docker-gpu-local-inference") = require("./onboard/docker-gpu-local-inference");
 const dockerGpuSandboxCreate: typeof import("./onboard/docker-gpu-sandbox-create") = require("./onboard/docker-gpu-sandbox-create");
 const dockerDriverGatewayLaunch: typeof import("./onboard/docker-driver-gateway-launch") = require("./onboard/docker-driver-gateway-launch");
+const dockerDriverGatewayRuntime: typeof import("./onboard/docker-driver-gateway-runtime") = require("./onboard/docker-driver-gateway-runtime");
 const {
   findReadableNvidiaCdiSpecFiles,
   parseDockerCdiSpecDirs,
@@ -405,7 +406,6 @@ const {
   getRecordedMessagingChannelsForResume: getRecordedMessagingChannelsForResumeFromState,
 }: typeof import("./onboard/messaging-credentials") = require("./onboard/messaging-credentials");
 const {
-  collectMessagingBuildConfig,
   computeTelegramRequireMention,
   getStoredMessagingChannelConfig,
   messagingChannelConfigsEqual,
@@ -511,7 +511,6 @@ const { getDockerDriverGatewayEndpoint } = dockerDriverGatewayEnv;
 const dockerDriverGatewayRuntimeMarker: typeof import("./onboard/docker-driver-gateway-runtime-marker") =
   require("./onboard/docker-driver-gateway-runtime-marker");
 const gatewayBinding: typeof import("./onboard/gateway-binding") = require("./onboard/gateway-binding");
-const vmDriverProcess: typeof import("./onboard/vm-driver-process") = require("./onboard/vm-driver-process");
 const preflightUtils: typeof import("./onboard/preflight") = require("./onboard/preflight");
 const clusterImagePatch: typeof import("./cluster-image-patch") = require("./cluster-image-patch");
 const { assessHost, checkPortAvailable, ensureSwap, getMemoryInfo, planHostRemediation } =
@@ -602,6 +601,32 @@ const DIM = USE_COLOR ? "\x1b[2m" : "";
 const RESET = USE_COLOR ? "\x1b[0m" : "";
 let OPENSHELL_BIN: string | null = null;
 const GATEWAY_NAME = gatewayBinding.resolveGatewayName(GATEWAY_PORT);
+const {
+  clearDockerDriverGatewayRuntimeFiles,
+  getDockerDriverGatewayEnv,
+  getDockerDriverGatewayPid,
+  getDockerDriverGatewayPortListenerPid,
+  getDockerDriverGatewayRuntimeDrift,
+  getDockerDriverGatewayRuntimeDriftFromSnapshot,
+  getDockerDriverGatewayStateDir,
+  isDockerDriverGatewayPortListener,
+  isDockerDriverGatewayProcess,
+  isDockerDriverGatewayProcessAlive,
+  isPidAlive,
+  rememberDockerDriverGatewayPid,
+  resolveOpenShellGatewayBinary,
+  resolveOpenShellSandboxBinary,
+  shouldRequireDockerDriverEnv,
+} = dockerDriverGatewayRuntime.createDockerDriverGatewayRuntimeHelpers({
+  gatewayPort: GATEWAY_PORT,
+  getCachedOpenshellBinary: () => OPENSHELL_BIN,
+  getBlueprintMaxOpenshellVersion,
+  getInstalledOpenshellVersion,
+  isOpenshellDevVersion,
+  runCapture,
+  shouldUseOpenshellDevChannel,
+  supportedOpenshellFallbackVersion: SUPPORTED_OPENSHELL_FALLBACK_VERSION,
+});
 
 import type { JsonObject as LooseObject } from "./core/json-types";
 
@@ -1387,321 +1412,6 @@ const { gatewayClusterHealthcheckPassed, repairGatewayBootstrapSecrets } =
     run,
     runCapture,
   });
-
-function getDockerDriverGatewayStateDir(): string {
-  const configured = process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR;
-  if (configured && configured.trim()) return path.resolve(configured.trim());
-  const dir = gatewayBinding.resolveGatewayStateDirName(GATEWAY_PORT);
-  return path.join(os.homedir(), ".local", "state", "nemoclaw", dir);
-}
-
-function getDockerDriverGatewayPidFile(): string {
-  return path.join(getDockerDriverGatewayStateDir(), "openshell-gateway.pid");
-}
-
-function resolveSiblingBinary(binaryName: string): string | null {
-  const openshellBin = OPENSHELL_BIN || resolveOpenshell();
-  if (typeof openshellBin !== "string" || openshellBin.length === 0) return null;
-  const sibling = path.join(path.dirname(openshellBin), binaryName);
-  if (fs.existsSync(sibling)) return sibling;
-  return null;
-}
-
-function resolveOpenShellGatewayBinary(): string | null {
-  const configured = process.env.NEMOCLAW_OPENSHELL_GATEWAY_BIN;
-  if (configured && configured.trim()) return path.resolve(configured.trim());
-  const sibling = resolveSiblingBinary("openshell-gateway");
-  if (sibling) return sibling;
-  for (const candidate of [
-    path.join(os.homedir(), ".local", "bin", "openshell-gateway"),
-    "/usr/local/bin/openshell-gateway",
-    "/usr/bin/openshell-gateway",
-  ]) {
-    if (fs.existsSync(candidate)) return candidate;
-  }
-  return null;
-}
-
-function resolveOpenShellSandboxBinary(): string | null {
-  const configured = process.env.NEMOCLAW_OPENSHELL_SANDBOX_BIN;
-  if (configured && configured.trim()) return path.resolve(configured.trim());
-  const sibling = resolveSiblingBinary("openshell-sandbox");
-  if (sibling) return sibling;
-  for (const candidate of [
-    path.join(os.homedir(), ".local", "bin", "openshell-sandbox"),
-    "/usr/local/bin/openshell-sandbox",
-    "/usr/bin/openshell-sandbox",
-  ]) {
-    if (fs.existsSync(candidate)) return candidate;
-  }
-  return null;
-}
-
-function getOpenShellDockerSupervisorImage(versionOutput: string | null = null): string {
-  if (process.env.OPENSHELL_DOCKER_SUPERVISOR_IMAGE) {
-    return process.env.OPENSHELL_DOCKER_SUPERVISOR_IMAGE;
-  }
-  const installedVersion = getInstalledOpenshellVersion(versionOutput);
-  if (shouldUseOpenshellDevChannel() || isOpenshellDevVersion(versionOutput)) {
-    return "ghcr.io/nvidia/openshell/supervisor:dev";
-  }
-  const supportedVersion =
-    installedVersion ?? getBlueprintMaxOpenshellVersion() ?? SUPPORTED_OPENSHELL_FALLBACK_VERSION;
-  return `ghcr.io/nvidia/openshell/supervisor:${supportedVersion}`;
-}
-
-function getDockerDriverGatewayEnv(
-  versionOutput: string | null = null,
-  platform: NodeJS.Platform = process.platform,
-): Record<string, string> {
-  return dockerDriverGatewayEnv.buildDockerDriverGatewayEnv({
-    platform,
-    stateDir: getDockerDriverGatewayStateDir(),
-    dockerNetworkName: process.env.OPENSHELL_DOCKER_NETWORK_NAME || "openshell-docker",
-    getDockerSupervisorImage: () => getOpenShellDockerSupervisorImage(versionOutput),
-    resolveSandboxBin: resolveOpenShellSandboxBinary,
-  });
-}
-
-function isPidAlive(pid: number): boolean {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return isErrnoException(error) && error.code === "EPERM";
-  }
-}
-
-function getDockerDriverGatewayPid(): number | null {
-  try {
-    const raw = fs.readFileSync(getDockerDriverGatewayPidFile(), "utf-8").trim();
-    const pid = Number.parseInt(raw, 10);
-    return Number.isInteger(pid) && pid > 0 ? pid : null;
-  } catch {
-    return null;
-  }
-}
-
-function readProcessEnv(pid: number): Record<string, string> | null {
-  const procEnvPath = `/proc/${pid}/environ`;
-  const env: Record<string, string> = {};
-  try {
-    if (!fs.existsSync(procEnvPath)) return null;
-    for (const entry of fs.readFileSync(procEnvPath, "utf-8").split("\0")) {
-      if (!entry) continue;
-      const idx = entry.indexOf("=");
-      if (idx <= 0) continue;
-      env[entry.slice(0, idx)] = entry.slice(idx + 1);
-    }
-  } catch {
-    return null;
-  }
-  return env;
-}
-
-function hasDockerDriverGatewayEnv(pid: number): boolean {
-  const env = readProcessEnv(pid);
-  if (!env) return false;
-  return (
-    env.OPENSHELL_DRIVERS === "docker" ||
-    Boolean(env.OPENSHELL_DOCKER_SUPERVISOR_IMAGE) ||
-    env.OPENSHELL_GRPC_ENDPOINT === getDockerDriverGatewayEndpoint()
-  );
-}
-
-function readProcessExe(pid: number): string | null {
-  try {
-    const procExePath = `/proc/${pid}/exe`;
-    if (!fs.existsSync(procExePath)) return null;
-    return fs.readlinkSync(procExePath);
-  } catch {
-    return null;
-  }
-}
-
-function normalizeGatewayExecutablePath(value: string | null | undefined): string | null {
-  if (!value) return null;
-  const withoutDeletedSuffix = value.replace(/ \(deleted\)$/, "");
-  try {
-    return fs.realpathSync.native(withoutDeletedSuffix);
-  } catch {
-    return path.resolve(withoutDeletedSuffix);
-  }
-}
-
-type DockerDriverGatewayRuntimeDrift = { reason: string };
-
-function shouldRequireDockerDriverEnv(platform: NodeJS.Platform = process.platform): boolean {
-  return platform === "linux";
-}
-
-function getDockerDriverGatewayRuntimeDriftFromSnapshot({
-  processEnv,
-  processExe,
-  desiredEnv,
-  gatewayBin,
-}: {
-  processEnv: Record<string, string> | null;
-  processExe: string | null;
-  desiredEnv: Record<string, string>;
-  gatewayBin?: string | null;
-}): DockerDriverGatewayRuntimeDrift | null {
-  if (!processEnv) {
-    return { reason: "could not verify process environment" };
-  }
-  for (const key of dockerDriverGatewayEnv.DOCKER_DRIVER_GATEWAY_RUNTIME_ENV_KEYS) {
-    const desired = desiredEnv[key];
-    if (typeof desired !== "string") continue;
-    const actual = processEnv[key];
-    if (actual !== desired) {
-      return { reason: `${key}=${actual || "<unset>"} (expected ${desired})` };
-    }
-  }
-
-  if (processExe === null) {
-    return { reason: "could not verify process executable" };
-  }
-  if (processExe.endsWith(" (deleted)")) {
-    return { reason: "gateway executable was replaced on disk" };
-  }
-  const expectedExe = normalizeGatewayExecutablePath(gatewayBin);
-  const actualExe = normalizeGatewayExecutablePath(processExe);
-  if (expectedExe && actualExe && actualExe !== expectedExe) {
-    return { reason: `executable=${actualExe} (expected ${expectedExe})` };
-  }
-  return null;
-}
-
-function getDockerDriverGatewayRuntimeDrift(
-  pid: number,
-  desiredEnv: Record<string, string>,
-  gatewayBin?: string | null,
-  platform: NodeJS.Platform = process.platform,
-): DockerDriverGatewayRuntimeDrift | null {
-  if (platform === "darwin" && desiredEnv.OPENSHELL_DRIVERS === "docker") {
-    const markerDrift =
-      dockerDriverGatewayRuntimeMarker.getDockerDriverGatewayRuntimeMarkerDriftForStateDir(
-        getDockerDriverGatewayStateDir(),
-        {
-          pid,
-          desiredEnv,
-          endpoint: getDockerDriverGatewayEndpoint(),
-          gatewayBin,
-          dockerHost: process.env.DOCKER_HOST || null,
-          platform,
-          arch: process.arch,
-        },
-      );
-    if (markerDrift) return markerDrift;
-    if (
-      vmDriverProcess.hasOpenShellVmDriverChildProcess(pid, (args) =>
-        runCapture([...args], { ignoreError: true }),
-      )
-    ) {
-      return { reason: "VM driver child process is still attached to the gateway" };
-    }
-  }
-  if (!shouldRequireDockerDriverEnv(platform)) return null;
-  return getDockerDriverGatewayRuntimeDriftFromSnapshot({
-    processEnv: readProcessEnv(pid),
-    processExe: readProcessExe(pid),
-    desiredEnv,
-    gatewayBin,
-  });
-}
-
-function isDockerDriverGatewayProcess(
-  pid: number,
-  gatewayBin?: string | null,
-  opts: { requireDockerDriverEnv?: boolean } = {},
-): boolean {
-  const procCmdlinePath = `/proc/${pid}/cmdline`;
-  let identity = "";
-  try {
-    if (fs.existsSync(procCmdlinePath)) {
-      identity = fs.readFileSync(procCmdlinePath, "utf-8").replace(/\0/g, " ").trim();
-    }
-  } catch {
-    identity = "";
-  }
-  if (!identity) {
-    identity = captureProcessArgs(pid);
-  }
-  if (!identity) return false;
-  const matchesGatewayBinary =
-    identity.includes("openshell-gateway") ||
-    (typeof gatewayBin === "string" && gatewayBin.length > 0 && identity.includes(gatewayBin));
-  if (!matchesGatewayBinary) return false;
-  if (opts.requireDockerDriverEnv && !hasDockerDriverGatewayEnv(pid)) return false;
-  return true;
-}
-
-function isDockerDriverGatewayProcessAlive(): boolean {
-  const pid = getDockerDriverGatewayPid();
-  if (pid === null || !isPidAlive(pid)) return false;
-  if (
-    !isDockerDriverGatewayProcess(pid, resolveOpenShellGatewayBinary(), {
-      requireDockerDriverEnv: shouldRequireDockerDriverEnv(),
-    })
-  ) {
-    clearDockerDriverGatewayRuntimeFiles();
-    return false;
-  }
-  return true;
-}
-
-function clearDockerDriverGatewayRuntimeFiles(): void {
-  fs.rmSync(getDockerDriverGatewayPidFile(), { force: true });
-  dockerDriverGatewayRuntimeMarker.clearDockerDriverGatewayRuntimeMarker(
-    getDockerDriverGatewayStateDir(),
-  );
-}
-
-function rememberDockerDriverGatewayPid(pid: number): void {
-  dockerDriverGatewayRuntimeMarker.writeDockerDriverGatewayPidFile(
-    getDockerDriverGatewayPidFile(),
-    pid,
-  );
-}
-
-function getDockerDriverGatewayPortListenerPid(
-  portCheck: import("./onboard/preflight").PortProbeResult,
-  opts: {
-    platform?: NodeJS.Platform;
-    arch?: NodeJS.Architecture;
-    gatewayBin?: string | null;
-    isPidAliveFn?: (pid: number) => boolean;
-    isDockerDriverGatewayProcessFn?: (pid: number, gatewayBin?: string | null) => boolean;
-  } = {},
-): number | null {
-  if (portCheck.ok) return null;
-  if (
-    !isLinuxDockerDriverGatewayEnabled(opts.platform ?? process.platform, opts.arch ?? process.arch)
-  )
-    return null;
-  const pid = Number(portCheck.pid);
-  if (!Number.isInteger(pid) || pid <= 0) return null;
-  const proc = String(portCheck.process || "").toLowerCase();
-  if (!proc.startsWith("openshell")) return null;
-  const alive = opts.isPidAliveFn ?? isPidAlive;
-  if (!alive(pid)) return null;
-  const isGateway =
-    opts.isDockerDriverGatewayProcessFn ??
-    ((candidatePid: number, gatewayBin?: string | null) =>
-      isDockerDriverGatewayProcess(candidatePid, gatewayBin, {
-        requireDockerDriverEnv: shouldRequireDockerDriverEnv(opts.platform ?? process.platform),
-      }));
-  if (!isGateway(pid, opts.gatewayBin)) return null;
-  return pid;
-}
-
-function isDockerDriverGatewayPortListener(
-  portCheck: import("./onboard/preflight").PortProbeResult,
-  opts: Parameters<typeof getDockerDriverGatewayPortListenerPid>[1] = {},
-): boolean {
-  return getDockerDriverGatewayPortListenerPid(portCheck, opts) !== null;
-}
 
 function registerDockerDriverGatewayEndpoint(): boolean {
   const selectExisting = runQuietOpenshell(["gateway", "select", GATEWAY_NAME]);
@@ -3517,19 +3227,13 @@ async function createSandbox(
 
   console.log(`  Creating sandbox '${sandboxName}' (this takes a few minutes on first run)...`);
   const messagingChannelConfig = readMessagingChannelConfigFromEnv();
-  const enabledTokenEnvKeys = new Set(messagingTokenDefs.map(({ envKey }) => envKey));
-  const activeChannelNames = new Set(activeMessagingChannels);
-  const { messagingAllowedIds, discordGuilds, slackConfig } = collectMessagingBuildConfig({
-    channels: MESSAGING_CHANNELS,
-    activeChannelNames,
-    enabledTokenEnvKeys,
-    discordSnowflakeRe: onboardProviders.DISCORD_SNOWFLAKE_RE,
-  });
   // Telegram mention-only mode — parity with Discord's requireMention.
   // Off by default so existing sandboxes behave the same; opt-in via
   // TELEGRAM_REQUIRE_MENTION=1 or the interactive prompt. See #1737.
   const telegramConfig: { requireMention?: boolean } = {};
-  if (enabledTokenEnvKeys.has("TELEGRAM_BOT_TOKEN")) {
+  const configuredMessagingChannels =
+    enabledChannels != null ? [...new Set(enabledChannels)] : activeMessagingChannels;
+  if (configuredMessagingChannels.includes("telegram")) {
     const telegramRequireMention = computeTelegramRequireMention();
     if (telegramRequireMention !== null) {
       telegramConfig.requireMention = telegramRequireMention;
@@ -3604,18 +3308,12 @@ async function createSandbox(
     provider,
     preferredInferenceApi,
     webSearchConfig,
-    activeMessagingChannels,
-    messagingAllowedIds,
-    discordGuilds,
     resolved ? resolved.ref : null,
-    telegramConfig,
-    wechatConfig as Record<string, unknown>,
     // Docker-on-Colima uses normal container ownership; keep the old VM chmod
     // compatibility path disabled unless a future VM-specific flow opts in.
     false,
     sandboxInferenceBaseUrlOverride,
     hermesToolGateways,
-    slackConfig,
   );
   // Only pass non-sensitive env vars to the sandbox. Credentials flow through
   // OpenShell providers — the gateway injects them as placeholders and the L7
@@ -3850,6 +3548,14 @@ async function createSandbox(
     hermesDashboardForwarding.resolveStateForPort(actualDashboardPort);
   hermesDashboardForwarding.ensureForState(finalHermesDashboardState, sandboxName, true);
 
+  // Register only after confirmed ready — prevents phantom entries
+  const providerCredentialHashes: Record<string, string> = {};
+  for (const { envKey, token } of messagingTokenDefs) {
+    const hash = token ? hashCredential(token) : null;
+    if (hash) {
+      providerCredentialHashes[envKey] = hash;
+    }
+  }
   // openshell tags images with seconds; buildId is ms. Parse actual tag from output. Fixes #2672.
   const resolvedImageTag = resolveSandboxImageTagFromCreateOutput(createResult.output, buildId);
 
@@ -3864,14 +3570,15 @@ async function createSandbox(
     ...sandboxRuntimeFields,
     ...getSandboxAgentRegistryFields(agent, !fromDockerfile),
     imageTag: resolvedImageTag,
+    providerCredentialHashes:
+      Object.keys(providerCredentialHashes).length > 0 ? providerCredentialHashes : undefined,
     policies: initialSandboxPolicy.appliedPresets,
     // Persist the operator's configured channel set, not the post-disabled-filter
     // active set. After `channels stop X` + rebuild, activeMessagingChannels drops
     // X, but X is still configured — losing it here means a later `channels start
     // X` has nothing to re-enable (the next rebuild sees an empty channel set and
     // never reattaches the gateway bridge). See #3381.
-    messagingChannels:
-      enabledChannels != null ? [...new Set(enabledChannels)] : activeMessagingChannels,
+    messagingChannels: configuredMessagingChannels,
     messagingChannelConfig: messagingChannelConfig || undefined,
     messaging: messagingState,
     disabledChannels: disabledChannels.length > 0 ? [...disabledChannels] : undefined,

@@ -7,7 +7,7 @@ import {
   shouldRunBranchValidationE2E,
   shouldRunInstallerIntegration,
   shouldRunLiveE2EScenarios,
-} from "./test/e2e-scenario/framework/live-project-gate.ts";
+} from "./test/e2e-scenario/fixtures/live-project-gate.ts";
 import { testTimeout } from "./test/helpers/timeouts";
 
 const isGithubActions = process.env.GITHUB_ACTIONS === "true";
@@ -67,9 +67,11 @@ export default defineConfig({
       },
       {
         test: {
-          name: "e2e-scenario-framework",
+          // Fast tests for the E2E fixture/support layer. Vitest remains the
+          // only harness; this project does not define a separate runner.
+          name: "e2e-vitest-support",
           testTimeout: testTimeout(),
-          include: ["test/e2e-scenario/framework-tests/**/*.test.ts"],
+          include: ["test/e2e-scenario/support-tests/**/*.test.ts"],
         },
       },
       {

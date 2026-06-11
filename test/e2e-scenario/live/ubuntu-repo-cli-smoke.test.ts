@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { expect, test } from "../framework/e2e-test.ts";
+import { expect, test } from "../fixtures/e2e-test.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const CLI_DIST_ENTRYPOINT = path.join(REPO_ROOT, "dist", "nemoclaw.js");

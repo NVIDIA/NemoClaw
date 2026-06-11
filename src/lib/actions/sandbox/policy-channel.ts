@@ -12,6 +12,7 @@ import {
   type ChannelManifest,
   createBuiltInChannelManifestRegistry,
   createBuiltInMessagingHookRegistry,
+  createBuiltInRenderTemplateResolver,
   getMessagingManifestAvailabilityContext,
   MessagingHostStateApplier,
   MessagingSetupApplier,
@@ -717,8 +718,8 @@ async function promptAndRebuild(sandboxName: string, actionDesc: string): Promis
 // and emit `[<name>] [default]` startup breadcrumbs in /tmp/gateway.log.
 // WhatsApp is QR-only (no host-side bridge process at this point), and WeChat
 // is recorded under the `openclaw-weixin` channel id with its own per-account
-// metadata flow seeded by seed-wechat-accounts.py — neither match the probe
-// shape and would produce false-negative warnings here.
+// metadata flow seeded by the manifest post-agent-install hook — neither match
+// the probe shape and would produce false-negative warnings here.
 const OPENCLAW_BRIDGE_VERIFIABLE_CHANNELS = new Set(["telegram", "discord", "slack"]);
 
 // Probe OpenClaw runtime state for a freshly added messaging channel. Runs
@@ -834,6 +835,7 @@ async function planSandboxChannelAdd(
   const planner = new MessagingWorkflowPlanner(
     messagingManifestRegistry,
     createBuiltInMessagingHookRegistry(),
+    createBuiltInRenderTemplateResolver(),
   );
   const availableChannels = availableManifestChannelsForAgent(agent);
   const supportedChannelIds = availableChannels.map((manifest) => manifest.id);
