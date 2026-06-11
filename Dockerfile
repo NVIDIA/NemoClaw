@@ -743,20 +743,6 @@ RUN node --experimental-strip-types /src/lib/messaging/applier/build/messaging-b
 # skills, and ad-hoc packages via the OpenShell L7 proxy.
 ENV NPM_CONFIG_OFFLINE=false
 
-# Seed container-level proxy env so `docker exec <sandbox> env` and
-# non-shell processes observe the same OpenShell proxy defaults.
-# nemoclaw-start.sh still rewrites these at boot from NEMOCLAW_PROXY_HOST/PORT
-# and emits /tmp/nemoclaw-proxy-env.sh for connect sessions, but Docker's
-# container config cannot see entrypoint exports. Keeping the ENV here closes
-# that observability/runtime gap for in-sandbox tools launched directly by
-# docker exec. Ref: https://github.com/NVIDIA/NemoClaw/issues/4304
-ENV HTTP_PROXY=http://${NEMOCLAW_PROXY_HOST}:${NEMOCLAW_PROXY_PORT} \
-    HTTPS_PROXY=http://${NEMOCLAW_PROXY_HOST}:${NEMOCLAW_PROXY_PORT} \
-    NO_PROXY=localhost,127.0.0.1,::1,${NEMOCLAW_PROXY_HOST} \
-    http_proxy=http://${NEMOCLAW_PROXY_HOST}:${NEMOCLAW_PROXY_PORT} \
-    https_proxy=http://${NEMOCLAW_PROXY_HOST}:${NEMOCLAW_PROXY_PORT} \
-    no_proxy=localhost,127.0.0.1,::1,${NEMOCLAW_PROXY_HOST}
-
 # SECURITY: Clear any gateway auth token that openclaw doctor/plugins may have
 # auto-generated. The real token is created at container startup by the
 # entrypoint (generate_gateway_token) and never stored in openclaw.json.

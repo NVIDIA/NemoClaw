@@ -2,7 +2,7 @@
 
 import { AgentOnly } from "../_components/AgentGuide";
 
-NemoClaw ships with deny-by-default security controls across four layers: network, filesystem, process, and inference.
+NemoClaw ships with deny-by-default security controls across five layers: network, filesystem, process, gateway authentication, and inference.
 You can tune every control, but each change shifts the risk profile.
 This page documents each configurable control, its default, what it protects, the concrete risk of relaxing it, and a recommendation for common use cases.
 
@@ -10,7 +10,7 @@ For background on how the layers fit together, refer to How It Works (use the `n
 
 ## Protection Layers at a Glance
 
-NemoClaw enforces security at four layers.
+NemoClaw enforces security at five layers.
 NemoClaw locks some controls when it creates the sandbox and requires a restart to change them.
 You can hot-reload others while the sandbox runs.
 
@@ -36,6 +36,7 @@ flowchart TB
             subgraph GW["Gateway: the gatekeeper"]
                 direction LR
                 NET["🌐 Network Layer<br/>Controls where the agent can connect"]
+                AUTH["🔐 Gateway Authentication Layer<br/>Controls which devices and clients can reach the gateway"]
                 INF["🧠 Inference Layer<br/>Controls which AI models the agent can use"]
             end
         end
@@ -54,7 +55,7 @@ flowchart TB
     classDef operator fill:#fff,stroke:#76b900,color:#1a1a1a,stroke-width:2px,font-weight:bold
 
     class AGENT agent
-    class PROC,FS locked
+    class PROC,FS,AUTH locked
     class NET,INF hot
     class OUTSIDE external
     class YOU operator
@@ -70,6 +71,7 @@ flowchart TB
 | Network | Unauthorized outbound connections and data exfiltration. | OpenShell gateway | Yes. Use `openshell policy set` or operator approval. |
 | Filesystem | System binary tampering, credential theft, config manipulation. | Landlock LSM + container mounts | Landlock layout: no. Requires sandbox re-creation. Use host-side NemoClaw commands for durable config changes. |
 | Process | Privilege escalation, fork bombs, syscall abuse. | Container runtime (Docker/K8s `securityContext`) | No. Requires sandbox re-creation. |
+| Gateway Authentication | Unauthorized devices or clients reaching the gateway and its dashboard. | OpenShell gateway | No. Set at image build / onboarding time. |
 | Inference | Credential exposure, unauthorized model access, cost overruns. | OpenShell gateway | Yes. Use the NemoClaw inference switching command. |
 
 ## Network Controls
@@ -276,7 +278,7 @@ This is opt-in because such hosts are common (many cloud VMs, Docker Desktop, WS
 The check covers the agent process tree only — a `nemoclaw connect` shell is spawned by the container runtime outside that tree and is not affected (tracked in [NVIDIA/OpenShell#1452](https://github.com/NVIDIA/OpenShell/issues/1452)).
 
 <AgentOnly variant="openclaw">
-For additional protection, pass `--cap-drop=ALL` with `docker run` or Compose. Refer to Sandbox Hardening.
+For additional protection, pass `--cap-drop=ALL` with `docker run` or Compose. Refer to Sandbox Hardening (use the `nemoclaw-user-deploy-remote` skill).
 </AgentOnly>
 
 | Aspect | Detail |
@@ -594,7 +596,7 @@ The following patterns weaken security without providing meaningful benefit.
 - Customize the Network Policy (use the `nemoclaw-user-manage-policy` skill) for static and dynamic policy changes.
 - Approve or Deny Network Requests (use the `nemoclaw-user-manage-policy` skill) for the operator approval flow.
 <AgentOnly variant="openclaw">
-- Sandbox Hardening for container-level security measures.
+- Sandbox Hardening (use the `nemoclaw-user-deploy-remote` skill) for container-level security measures.
 </AgentOnly>
 - Inference Options (use the `nemoclaw-user-configure-inference` skill) for provider configuration details.
 - How It Works (use the `nemoclaw-user-overview` skill) for the protection layer architecture.

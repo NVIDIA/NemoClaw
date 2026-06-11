@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { run } from "./helpers";
+import { run, runWithInput } from "./helpers";
 
 describe("credentials CLI dispatch", () => {
   it("credentials help exits 0 and shows credential subcommands", () => {
@@ -27,5 +27,13 @@ describe("credentials CLI dispatch", () => {
     expect(r.code).toBe(2);
     expect(r.out).toContain("Missing 1 required arg");
     expect(r.out).toContain("provider  OpenShell provider name");
+  });
+
+  it("credentials reset without provider ignores poisoned stdin", () => {
+    const r = runWithInput("credentials reset --yes", "/usr/bin/dmesg\n3");
+    expect(r.code).toBe(2);
+    expect(r.out).toContain("Missing 1 required arg");
+    expect(r.out).toContain("provider  OpenShell provider name");
+    expect(r.out).not.toContain("Could not remove provider");
   });
 });

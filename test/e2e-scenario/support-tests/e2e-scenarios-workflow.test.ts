@@ -27,6 +27,22 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
 permissions:
   contents: read
 jobs:
+  validate-jobs:
+    runs-on: macos-latest
+    steps:
+      - name: Validate free-standing job selector
+        env:
+          JOBS: bad
+        run: |
+          echo "::error::Invalid jobs input: \${JOBS}"
+  report-to-pr:
+    runs-on: ubuntu-latest
+    needs: [generate-matrix]
+    steps:
+      - name: Post Vitest scenario results to PR
+        env:
+          JOBS: bad
+        run: echo "\${{ inputs.pr_number }} \${{ inputs.scenarios }}"
   live-scenarios:
     runs-on: ubuntu-latest
     env:
@@ -120,11 +136,21 @@ jobs:
       expect(errors).toEqual(
         expect.arrayContaining([
           "workflow_dispatch missing input: scenarios",
+          "workflow_dispatch missing input: jobs",
           "workflow_dispatch must not expose legacy test_filter input",
+          "validate-jobs job must run on ubuntu-latest",
+          "validate-jobs step must pass jobs through JOBS env",
+          "validate-jobs step must pass scenarios through SCENARIOS env",
+          "step 'Validate free-standing job selector' run script must include Use either scenarios or jobs, not both",
+          "step 'Validate free-standing job selector' run script must include allowed_jobs=",
+          "step 'Validate free-standing job selector' run script must include Invalid jobs input; use comma-separated job ids",
+          "step 'Validate free-standing job selector' run script must not include Invalid jobs input: ${JOBS}",
+          "step 'Validate free-standing job selector' run script must include Unknown free-standing Vitest job",
           "workflow missing generate-matrix job",
           "generate-matrix job must run on ubuntu-latest",
           "live-scenarios job must run on the matrix runner",
           "live-scenarios job must depend on generate-matrix",
+          "live-scenarios job must not run when a free-standing jobs selector is supplied",
           "live-scenarios strategy.fail-fast must be false",
           "live-scenarios matrix.include must come from generate-matrix output",
           "live-scenarios job must write artifacts under e2e-artifacts/vitest",
@@ -153,8 +179,8 @@ jobs:
           "artifact upload path must include e2e-artifacts/vitest/${{ matrix.id }}/shell/",
           "artifact upload retention-days must be 14",
           "upload-artifact action must be pinned to a full commit SHA",
-          "openshell-version-pin-vitest job must run independently of generate-matrix",
-          "openshell-version-pin-vitest job must run independently of workflow dispatch scenario filters",
+          "openshell-version-pin-vitest job must depend on validate-jobs",
+          "openshell-version-pin-vitest job must use the shared jobs selector condition",
           "openshell-version-pin-vitest job must set NEMOCLAW_RUN_E2E_SCENARIOS=1",
           "openshell-version-pin-vitest job must write artifacts under e2e-artifacts/vitest/openshell-version-pin",
           "openshell-version-pin-vitest job env must not include NVIDIA_API_KEY",
@@ -172,8 +198,8 @@ jobs:
           "openshell-version-pin-vitest artifact upload must set include-hidden-files: false",
           "openshell-version-pin-vitest artifact upload must ignore missing fixture artifacts",
           "openshell-version-pin-vitest artifact upload retention-days must be 14",
-          "onboard-negative-paths-vitest job must run independently of generate-matrix",
-          "onboard-negative-paths-vitest job must run independently of workflow dispatch scenario filters",
+          "onboard-negative-paths-vitest job must depend on validate-jobs",
+          "onboard-negative-paths-vitest job must use the shared jobs selector condition",
           "onboard-negative-paths-vitest job must set NEMOCLAW_RUN_E2E_SCENARIOS=1",
           "onboard-negative-paths-vitest job must write artifacts under e2e-artifacts/vitest/onboard-negative-paths",
           "onboard-negative-paths-vitest job env must not include NVIDIA_API_KEY",
@@ -191,6 +217,18 @@ jobs:
           "onboard-negative-paths-vitest artifact upload must set include-hidden-files: false",
           "onboard-negative-paths-vitest artifact upload must ignore missing fixture artifacts",
           "onboard-negative-paths-vitest artifact upload retention-days must be 14",
+          "openclaw-tui-chat-correlation-vitest job must depend on validate-jobs",
+          "openclaw-tui-chat-correlation-vitest job must use the shared jobs selector condition",
+          "gateway-guard-recovery job must depend on validate-jobs",
+          "gateway-guard-recovery job must use the shared jobs selector condition",
+          "report-to-pr job must wait for validate-jobs",
+          "report-to-pr job must wait for live-scenarios",
+          "report-to-pr step must pass pr_number through JOB_PR_NUMBER env",
+          "report-to-pr step must pass scenarios through JOB_SCENARIOS env",
+          "step 'Post Vitest scenario results to PR' run script must include process.env.JOBS",
+          "step 'Post Vitest scenario results to PR' run script must check validate-jobs before echoing jobs",
+          "step 'Post Vitest scenario results to PR' run script must omit rejected job selectors",
+          "step 'Post Vitest scenario results to PR' run script must include **Requested jobs:**",
         ]),
       );
     } finally {

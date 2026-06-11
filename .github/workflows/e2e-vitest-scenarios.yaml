@@ -11,15 +11,58 @@ on:
         required: false
         default: ""
         type: string
+      jobs:
+        description: "Optional comma-separated free-standing live Vitest job ids. Empty runs all jobs only when scenarios is also empty."
+        required: false
+        default: ""
+        type: string
+      pr_number:
+        description: Optional PR number for selective-dispatch result comments.
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
 
 concurrency:
-  group: e2e-vitest-scenarios-${{ github.ref }}-${{ inputs.scenarios || 'supported' }}
+  group: e2e-vitest-scenarios-${{ github.ref }}-${{ inputs.scenarios || 'supported' }}-${{ inputs.jobs || 'all-jobs' }}
   cancel-in-progress: false
 
 jobs:
+  validate-jobs:
+    runs-on: ubuntu-latest
+    steps:
+      - id: validate
+        name: Validate free-standing job selector
+        env:
+          JOBS: ${{ inputs.jobs }}
+          SCENARIOS: ${{ inputs.scenarios }}
+        run: |
+          set -euo pipefail
+          allowed_jobs="openshell-version-pin-vitest,onboard-negative-paths-vitest,openclaw-tui-chat-correlation-vitest,gateway-guard-recovery"
+          if [ -n "${JOBS}" ] && [ -n "${SCENARIOS}" ]; then
+            echo "::error::Use either scenarios or jobs, not both." >&2
+            exit 1
+          fi
+          if [ -z "${JOBS}" ]; then
+            echo "No free-standing job selector supplied; default workflow behavior applies."
+            exit 0
+          fi
+          if [[ ! "${JOBS}" =~ ^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$ ]]; then
+            echo "::error::Invalid jobs input; use comma-separated job ids containing only letters, numbers, underscores, and hyphens." >&2
+            exit 1
+          fi
+          IFS=',' read -ra requested <<< "${JOBS}"
+          for job in "${requested[@]}"; do
+            if [[ ",${allowed_jobs}," != *",${job},"* ]]; then
+              echo "::error::Unknown free-standing Vitest job: ${job}" >&2
+              echo "::error::Allowed jobs: ${allowed_jobs}" >&2
+              exit 1
+            fi
+          done
+          printf 'Validated free-standing Vitest jobs: `%s`\n' "${JOBS}" >> "$GITHUB_STEP_SUMMARY"
+
   generate-matrix:
     runs-on: ubuntu-latest
     outputs:
@@ -69,6 +112,7 @@ jobs:
 
   live-scenarios:
     needs: generate-matrix
+    if: ${{ inputs.jobs == '' }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     strategy:
@@ -169,6 +213,8 @@ jobs:
   # because the matrix above only runs registry-scenarios.test.ts. Modeled on
   # #5049's free-standing pattern.
   openshell-version-pin-vitest:
+    needs: validate-jobs
+    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',openshell-version-pin-vitest,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -208,6 +254,8 @@ jobs:
           retention-days: 14
 
   onboard-negative-paths-vitest:
+    needs: validate-jobs
+    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',onboard-negative-paths-vitest,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -254,7 +302,8 @@ jobs:
   # protocol/history contract. The retained legacy bash lane remains the
   # source for full closeout until a later PR proves replacement and deletes it.
   openclaw-tui-chat-correlation-vitest:
-    if: ${{ inputs.scenarios == '' }}
+    needs: validate-jobs
+    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',openclaw-tui-chat-correlation-vitest,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 75
     env:
@@ -322,3 +371,200 @@ jobs:
           include-hidden-files: false
           if-no-files-found: ignore
           retention-days: 14
+
+  # ── Free-standing recovery scenarios (#2701) ─────────────────────────
+  # Recovery / disruption scenarios don't fit the steady-state expected-state
+  # registry that drives `live-scenarios` above. They run as free-standing
+  # Vitest test files using the same `e2e-scenarios-live` project, framework
+  # fixtures, and live-project gate — just outside the matrix.
+  #
+  # First failing-test-first guard for #2701 (gateway recovery does not
+  # restore the /tmp guard chain after pod recreate). Will fail on `main`
+  # until the #2701 fix lands; flips green afterwards.
+  gateway-guard-recovery:
+    needs: validate-jobs
+    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',gateway-guard-recovery,') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/gateway-guard-recovery
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+      # nemoclaw onboard registers the gateway under the canonical name
+      # "nemoclaw" (src/lib/actions/sandbox/connect.ts:NEMOCLAW_GATEWAY_NAME)
+      # but does not call `openshell gateway select` to mark it active. The
+      # SandboxClient and recovery probes invoke `openshell sandbox exec`
+      # directly, which fails with "No active gateway" when no active
+      # gateway is configured. Setting OPENSHELL_GATEWAY here tells openshell
+      # to use the named gateway for every invocation (per `openshell` -h
+      # GATEWAY FLAGS: env: OPENSHELL_GATEWAY=).
+      OPENSHELL_GATEWAY: "nemoclaw"
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build CLI
+        run: npm run build:cli
+
+      - name: Install OpenShell CLI
+        # Onboard expects openshell to already be on PATH — install.sh handles
+        # this for the legacy bash E2E suite (which runs `bash install.sh
+        # --non-interactive` end-to-end). The Vitest fixture path skips
+        # install.sh and invokes `bin/nemoclaw.js onboard` directly, so we
+        # need to run the standalone openshell installer here. Mirrors what
+        # `maybe_install_openshell_during_install` does in install.sh.
+        run: bash scripts/install-openshell.sh
+
+      - name: Run Vitest gateway-guard-recovery scenario
+        run: |
+          set -euo pipefail
+          # OpenShell installs to /usr/local/bin on GitHub-hosted runners
+          # (writable by the runner user, no sudo) or to ~/.local/bin in
+          # NEMOCLAW_NON_INTERACTIVE mode when /usr/local/bin is not writable.
+          # See scripts/install-openshell.sh:394-425. Cover both paths.
+          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
+          # Resolve the actual install path so the framework's SandboxClient
+          # can spawn it without relying on PATH inheritance from the test
+          # process (the framework also accepts OPENSHELL_BIN as an override).
+          if command -v openshell >/dev/null 2>&1; then
+            OPENSHELL_BIN="$(command -v openshell)"
+          elif [ -x "$HOME/.local/bin/openshell" ]; then
+            OPENSHELL_BIN="$HOME/.local/bin/openshell"
+          else
+            echo "::error::OpenShell CLI not found after install"
+            ls -la /usr/local/bin/openshell "$HOME/.local/bin/openshell" 2>&1 || true
+            exit 1
+          fi
+          export OPENSHELL_BIN
+          echo "Using OPENSHELL_BIN=$OPENSHELL_BIN"
+          "$OPENSHELL_BIN" --version
+          npx vitest run \
+            --project e2e-scenarios-live \
+            test/e2e-scenario/live/gateway-guard-recovery.test.ts \
+            --reporter=default --silent=false
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-vitest-gateway-guard-recovery
+          path: e2e-artifacts/vitest/gateway-guard-recovery/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # ── PR result comment (mirrors nightly-e2e.yaml's report-to-pr) ───────────
+  # Posts a results table on the open PR for the dispatching branch (or the
+  # PR identified by `inputs.pr_number`). `if: always()` so the comment lands
+  # even when scenario jobs failed — that's the whole point of a result
+  # comment. Same shape as nightly-e2e.yaml:report-to-pr so reviewers see
+  # consistent comment formatting across both suites.
+  report-to-pr:
+    runs-on: ubuntu-latest
+    needs:
+      [
+        validate-jobs,
+        generate-matrix,
+        live-scenarios,
+        openshell-version-pin-vitest,
+        onboard-negative-paths-vitest,
+        openclaw-tui-chat-correlation-vitest,
+        gateway-guard-recovery,
+      ]
+    if: ${{ always() && github.event_name == 'workflow_dispatch' }}
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Post Vitest scenario results to PR
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          JOB_PR_NUMBER: ${{ inputs.pr_number }}
+          JOB_SCENARIOS: ${{ inputs.scenarios }}
+          JOBS: ${{ inputs.jobs }}
+        with:
+          script: |
+            const needs = ${{ toJSON(needs) }};
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const workflowBranch = context.ref.replace('refs/heads/', '');
+            const prNumberInput = process.env.JOB_PR_NUMBER || '';
+            const requestedScenarios = process.env.JOB_SCENARIOS || '';
+            const rawRequestedJobs = process.env.JOBS || '';
+            const jobsValidationPassed = needs['validate-jobs']?.result === 'success';
+            const requestedJobs = jobsValidationPassed ? rawRequestedJobs : '';
+            const jobsRejected = rawRequestedJobs && !jobsValidationPassed;
+
+            let prNumber = prNumberInput ? Number.parseInt(prNumberInput, 10) : undefined;
+            if (!prNumber) {
+              const { data: prs } = await github.rest.pulls.list({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                head: `${context.repo.owner}:${workflowBranch}`,
+                state: 'open',
+              });
+              if (prs.length === 0) {
+                core.info(`No open PR found for branch ${workflowBranch} — skipping comment.`);
+                return;
+              }
+              prNumber = prs[0].number;
+            }
+
+            const emoji = { success: '✅', failure: '❌', cancelled: '⚠️', skipped: '⏭️' };
+            const entries = Object.entries(needs).sort(([a], [b]) => a.localeCompare(b));
+            const rows = entries.map(
+              ([name, { result }]) => `| ${name} | ${emoji[result] || '❓'} ${result} |`,
+            );
+            const ran = entries.filter(([, v]) => v.result !== 'skipped');
+            const passed = ran.filter(([, v]) => v.result === 'success');
+            const failed = ran.filter(([, v]) => v.result === 'failure');
+            const skipped = entries.filter(([, v]) => v.result === 'skipped');
+            const status =
+              failed.length > 0
+                ? '❌ Some jobs failed'
+                : skipped.length > 0 && passed.length === 0
+                  ? '⚠️ No jobs ran'
+                  : '✅ All jobs passed';
+
+            const lines = [
+              `### Vitest E2E Scenario Results — ${status}`,
+              '',
+              `**Run:** [${context.runId}](${runUrl})`,
+              `**Workflow ref:** \`${workflowBranch}\``,
+              requestedScenarios
+                ? `**Requested scenarios:** \`${requestedScenarios}\``
+                : '**Requested scenarios:** _(default — all supported)_',
+              jobsRejected
+                ? '**Requested jobs:** _(selector rejected by validate-jobs)_'
+                : requestedJobs
+                  ? `**Requested jobs:** \`${requestedJobs}\``
+                  : '**Requested jobs:** _(default — all free-standing when no scenarios are requested)_',
+              `**Summary:** ${passed.length} passed, ${failed.length} failed, ${skipped.length} skipped`,
+              '',
+              '| Job | Result |',
+              '|-----|--------|',
+              ...rows,
+            ];
+            if (failed.length > 0) {
+              const failedNames = failed.map(([name]) => name).join(', ');
+              lines.push('', `> **Failed jobs:** ${failedNames}. Check [run artifacts](${runUrl}) for logs.`);
+            }
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              body: lines.join('\n'),
+            });

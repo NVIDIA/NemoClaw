@@ -193,34 +193,30 @@ case "${1:-}" in
 esac
 NEMOCLAW_CMD=("$@")
 
-# Drop the marker the Docker HEALTHCHECK reads to decide whether an
-# in-container gateway liveness check is meaningful. We write it as early as
-# possible on the gateway-serving path — before the long startup work below —
-# so a slow or hung boot is governed by the strict local liveness check
-# (pgrep + gateway log) instead of being masked as healthy. Its presence means
-# this container runs the OpenClaw gateway (standalone deployments and the
-# #3975 forwarded-port shape). Its absence means the gateway is delivered out
-# of this container's namespace (OpenShell docker-driver sandboxes run it on
-# the host — #4503); an in-container probe cannot observe it, so the HEALTHCHECK
-# reports healthy and defers to NemoClaw/OpenShell host-side delivery-chain
-# monitoring. See the HEALTHCHECK block in the Dockerfile.
+# Marker file the Docker HEALTHCHECK reads to decide whether an in-container
+# gateway liveness check is meaningful. Its presence means this container has
+# entered the OpenClaw gateway launch path (standalone deployments and the #3975
+# forwarded-port shape); its absence means this entrypoint has not launched a
+# gateway in this container, so the HEALTHCHECK short-circuits to healthy and
+# defers to the runtime that owns gateway delivery. See the HEALTHCHECK block in
+# the Dockerfile.
+#
+# IMPORTANT (#4710): the marker is dropped immediately before each
+# `openclaw gateway run --port ...` invocation later in this script — NOT
+# here. An early conditional gated on env hints (NEMOCLAW_CMD empty or
+# OPENSHELL_DRIVERS=docker) is unreliable because OpenShell 0.0.44 does not
+# export OPENSHELL_DRIVERS into the sandbox container env, so the guard never
+# fires for docker-driver sandboxes. Other OpenShell env values are also not a
+# trusted gateway-location source: they describe the sandbox container request,
+# not whether this process owns the dashboard gateway. Tying the marker to the
+# actual gateway-launch code path makes it true-by-construction: the marker
+# exists if-and-only-if this container is about to start the gateway. Both the
+# root and non-root entrypoint paths call `mark_in_container_gateway` directly
+# before their `openclaw gateway run` invocation.
 # Best-effort: a write failure must never block startup.
 mark_in_container_gateway() {
   : >/tmp/nemoclaw-gateway-local 2>/dev/null || true
 }
-# A non-empty NEMOCLAW_CMD means this container only runs a one-shot command
-# (e.g. `openclaw agent ...`) and never serves the gateway, so leave the marker
-# absent. Docker-driver sandboxes also leave it absent because OpenShell runs
-# the gateway as a host-side process outside this container's namespace. Both
-# the root and non-root entrypoint paths gate local gateway startup on the same
-# emptiness check further below.
-case ",${OPENSHELL_DRIVERS:-}," in
-  *,docker,*) _NEMOCLAW_DOCKER_DRIVER=1 ;;
-  *) _NEMOCLAW_DOCKER_DRIVER=0 ;;
-esac
-if [ ${#NEMOCLAW_CMD[@]} -eq 0 ] && [ "$_NEMOCLAW_DOCKER_DRIVER" != "1" ]; then
-  mark_in_container_gateway
-fi
 
 _chat_ui_url_port() {
   [ -n "${CHAT_UI_URL:-}" ] || return 1
@@ -2308,9 +2304,10 @@ PYAPPROVEBEFORE
       return 0
     fi
     if [ -n "$_nemoclaw_approve_request_id" ] && [ -n "$_nemoclaw_approve_before" ] && command -v python3 >/dev/null 2>&1; then
-      if NEMOCLAW_APPROVE_REQUEST_ID="$_nemoclaw_approve_request_id" NEMOCLAW_APPROVE_STATE_DIR="$_nemoclaw_approve_state_dir" NEMOCLAW_APPROVE_BEFORE="$_nemoclaw_approve_before" python3 - <<'PYAPPROVEAFTER'; then
+      if NEMOCLAW_APPROVE_REQUEST_ID="$_nemoclaw_approve_request_id" NEMOCLAW_APPROVE_STATE_DIR="$_nemoclaw_approve_state_dir" NEMOCLAW_APPROVE_BEFORE="$_nemoclaw_approve_before" NEMOCLAW_APPROVE_OUTPUT="$_nemoclaw_approve_output" python3 - <<'PYAPPROVEAFTER'; then
 import json
 import os
+import re
 from pathlib import Path
 
 request_id = os.environ.get("NEMOCLAW_APPROVE_REQUEST_ID") or ""
@@ -2319,6 +2316,7 @@ try:
     before = json.loads(os.environ.get("NEMOCLAW_APPROVE_BEFORE") or "{}")
 except Exception:
     before = {}
+approve_output = os.environ.get("NEMOCLAW_APPROVE_OUTPUT") or ""
 
 def load(name):
     try:
@@ -2327,27 +2325,84 @@ def load(name):
         return {}
     return value if isinstance(value, dict) else {}
 
+def save(name, value):
+    path = root / name
+    tmp = path.with_name(f".{path.name}.tmp")
+    with tmp.open("w", encoding="utf-8") as handle:
+        handle.write(json.dumps(value, indent=2, sort_keys=True) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(tmp, path)
+
 def norm(value):
     return str(value or "").strip()
 
-def scopes(entry):
-    return {norm(scope) for scope in (entry.get("approvedScopes") or entry.get("scopes") or []) if norm(scope)}
+def scope_set(entry, key="scopes"):
+    return {norm(scope) for scope in (entry.get(key) or []) if norm(scope)}
 
-requested = {norm(scope) for scope in (before.get("scopes") or []) if norm(scope)}
+def output_mentions_request_id(value):
+    request = norm(value)
+    return bool(request and re.search(r"(?<![0-9A-Za-z_-])" + re.escape(request) + r"(?![0-9A-Za-z_-])", approve_output))
+
+requested = scope_set(before)
 device_id = norm(before.get("deviceId"))
 pending = load("pending.json")
 paired = load("paired.json")
 still_pending = any(isinstance(item, dict) and item.get("requestId") == request_id for item in pending.values())
 paired_entry = paired.get(device_id) if device_id else None
-if request_id and requested and not still_pending and isinstance(paired_entry, dict) and requested.issubset(scopes(paired_entry)):
-    print(json.dumps({
-        "requestId": request_id,
-        "deviceId": device_id,
-        "approvedScopes": sorted(requested),
-        "compatibility": "openclaw-approve-applied-after-nonzero",
-    }, sort_keys=True))
+paired_scopes = scope_set(paired_entry or {}, "approvedScopes") | scope_set(paired_entry or {})
+# Compatibility boundary: treat a nonzero approve as success only when OpenClaw
+# already removed the pending request and persisted the requested paired scopes.
+if request_id and requested and not still_pending and isinstance(paired_entry, dict) and requested.issubset(paired_scopes):
+    print(json.dumps({"requestId": request_id, "deviceId": device_id, "approvedScopes": sorted(requested), "compatibility": "openclaw-approve-applied-after-nonzero"}, sort_keys=True))
     raise SystemExit(0)
-raise SystemExit(1)
+
+# Compatibility boundary: repair only the local OpenClaw device state after a
+# failed approve leaves behind exactly one same-device admin-shaped replacement
+# request. Some OpenClaw failures only surface opaque gateway text, so the state
+# files are the source of truth; stderr is only used as an exact disambiguator
+# when it carries a replacement request ID. Remove this once OpenClaw stops
+# replacing operator.write approvals with admin-shaped pending requests or
+# exposes a supported approval repair API.
+allowed = {"operator.pairing", "operator.read", "operator.write"}
+if not request_id or not device_id or not requested or not requested.issubset(allowed) or "operator.pairing" not in paired_scopes or still_pending:
+    raise SystemExit(1)
+replacement_allowed = allowed | {"operator.admin"}
+candidates = []
+mentioned = []
+for key, item in pending.items():
+    item_scopes = scope_set(item) if isinstance(item, dict) else set()
+    if (isinstance(item, dict) and norm(item.get("requestId")) != request_id and norm(item.get("deviceId")) == device_id and
+            "operator.admin" in item_scopes and requested.issubset(item_scopes) and item_scopes.issubset(replacement_allowed)):
+        candidates.append((key, item))
+        if output_mentions_request_id(item.get("requestId")):
+            mentioned.append((key, item))
+if len(mentioned) == 1:
+    replacement_key, replacement = mentioned[0]
+elif len(candidates) == 1 and not re.search(r"\brequestId\b|\brequest[-_ ]?id\b", approve_output, re.IGNORECASE):
+    replacement_key, replacement = candidates[0]
+else:
+    raise SystemExit(1)
+approved = set(paired_scopes) | requested
+if "operator.write" in approved:
+    approved.add("operator.read")
+if {"operator.read", "operator.write"} & approved:
+    approved.add("operator.pairing")
+if not approved.issubset(allowed):
+    raise SystemExit(1)
+approved_list = [scope for scope in ("operator.pairing", "operator.read", "operator.write") if scope in approved]
+paired_entry["scopes"] = approved_list
+paired_entry["approvedScopes"] = approved_list
+token = paired_entry.get("tokens", {}).get("operator")
+if isinstance(token, dict):
+    token["scopes"] = approved_list
+pending.pop(request_id, None)
+pending.pop(replacement_key, None)
+paired[device_id] = paired_entry
+save("pending.json", pending)
+save("paired.json", paired)
+print(json.dumps({"requestId": request_id, "deviceId": device_id, "approvedScopes": approved_list, "compatibility": "openclaw-approve-recovered-replacement"}, sort_keys=True))
+raise SystemExit(0)
 PYAPPROVEAFTER
         return 0
       fi
@@ -3325,7 +3380,12 @@ if [ "$(id -u)" -ne 0 ]; then
   # inject code into any Node process via NODE_OPTIONS).
   validate_tmp_permissions "$_SANDBOX_SAFETY_NET" "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT" "$_WS_FIX_SCRIPT" "$_SECCOMP_GUARD_SCRIPT" "$_CIAO_GUARD_SCRIPT" "$_TELEGRAM_DIAGNOSTICS_SCRIPT" "$_SLACK_GUARD_SCRIPT" "$_WHATSAPP_QR_COMPACT_SCRIPT"
 
-  # Start gateway in background, auto-pair, then wait
+  # Start gateway in background, auto-pair, then wait. Mark the in-container
+  # gateway path so the Docker HEALTHCHECK probes it rather than short-circuiting
+  # to healthy — see the mark_in_container_gateway comment near the top of this
+  # file for the #4710 rationale (why the marker is tied to the launch site
+  # rather than an env-var conditional at startup).
+  mark_in_container_gateway
   nohup "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" >/tmp/gateway.log 2>&1 &
   GATEWAY_PID=$!
   echo "[gateway] openclaw gateway launched (pid $GATEWAY_PID)" >&2
@@ -3547,6 +3607,10 @@ validate_tmp_permissions "$_SANDBOX_SAFETY_NET" "$_PROXY_FIX_SCRIPT" "$_NEMOTRON
 # SECURITY: The sandbox user cannot kill this process because it runs
 # under a different UID. The fake-HOME attack no longer works because
 # the agent cannot restart the gateway with a tampered config.
+# Mark the in-container gateway path so the Docker HEALTHCHECK probes it
+# rather than short-circuiting to healthy — see mark_in_container_gateway
+# comment near the top of this file for the #4710 rationale.
+mark_in_container_gateway
 nohup "${STEP_DOWN_PREFIX_GATEWAY[@]}" "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" >/tmp/gateway.log 2>&1 &
 GATEWAY_PID=$!
 echo "[gateway] openclaw gateway launched as 'gateway' user (pid $GATEWAY_PID)" >&2
