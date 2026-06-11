@@ -508,6 +508,7 @@ jobs:
         live-scenarios,
         openshell-version-pin-vitest,
         onboard-negative-paths-vitest,
+        credential-migration-vitest,
         openclaw-tui-chat-correlation-vitest,
         gateway-guard-recovery,
       ]
