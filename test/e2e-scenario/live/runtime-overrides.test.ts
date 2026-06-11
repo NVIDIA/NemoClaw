@@ -33,6 +33,7 @@ type ModelConfig = {
 };
 
 type ProviderConfig = {
+  api?: string;
   models: ModelConfig[];
   [key: string]: unknown;
 };
@@ -80,9 +81,14 @@ function formatLog(label: string, result: CommandResult): string {
   return [`## ${label}`, resultText(result)].join("\n");
 }
 
-function firstProviderModel(config: OpenClawConfig): ModelConfig {
+function firstProvider(config: OpenClawConfig): ProviderConfig {
   const provider = Object.values(config.models.providers)[0];
-  const model = provider?.models?.[0];
+  if (!provider) throw new Error("config must contain at least one provider");
+  return provider;
+}
+
+function firstProviderModel(config: OpenClawConfig): ModelConfig {
+  const model = firstProvider(config).models?.[0];
   if (!model) throw new Error("config must contain at least one provider model");
   return model;
 }
@@ -227,7 +233,7 @@ function buildImage(dockerLog: string[], image: string): void {
 runtimeOverridesTest(
   "runtime config overrides patch OpenClaw config through the Docker entrypoint",
   testTimeoutOptions(TEST_TIMEOUT_MS),
-  async ({ artifacts, skip }) => {
+  async ({ artifacts, secrets, skip }) => {
     const dockerLog: string[] = [];
     const image =
       process.env.NEMOCLAW_TEST_IMAGE ?? `nemoclaw-runtime-overrides-vitest-${process.pid}`;
@@ -281,6 +287,16 @@ runtimeOverridesTest(
       expect(
         runConfigHashCheck(dockerLog, image, "model override", {
           NEMOCLAW_MODEL_OVERRIDE: overrideModel,
+        }),
+      ).toBe("OK");
+
+      const apiOverride = captureConfig(dockerLog, image, "inference API override", {
+        NEMOCLAW_INFERENCE_API_OVERRIDE: "anthropic-messages",
+      });
+      expect(firstProvider(apiOverride).api).toBe("anthropic-messages");
+      expect(
+        runConfigHashCheck(dockerLog, image, "inference API override", {
+          NEMOCLAW_INFERENCE_API_OVERRIDE: "anthropic-messages",
         }),
       ).toBe("OK");
 
@@ -376,7 +392,7 @@ runtimeOverridesTest(
         const cleanup = run("docker", ["image", "rm", "-f", image]);
         dockerLog.push(formatLog(`cleanup ${image}`, cleanup));
       }
-      await artifacts.writeText("docker.log", `${dockerLog.join("\n\n")}\n`);
+      await artifacts.writeText("docker.log", `${secrets.redact(dockerLog.join("\n\n"))}\n`);
     }
   },
 );
