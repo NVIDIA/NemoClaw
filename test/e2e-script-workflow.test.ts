@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
@@ -26,7 +26,6 @@ const LEGACY_E2E_SHELL_ALLOWLIST = [
   "test/e2e/test-dashboard-remote-bind.sh",
   "test/e2e/test-device-auth-health.sh",
   "test/e2e/test-diagnostics.sh",
-  "test/e2e/test-docs-validation.sh",
   "test/e2e/test-double-onboard.sh",
   "test/e2e/test-full-e2e.sh",
   "test/e2e/test-gateway-drift-preflight.sh",
@@ -101,7 +100,6 @@ const NIGHTLY_E2E_SCRIPT_ALLOWLIST = [
   "test/e2e/test-cron-preflight-inference-local-e2e.sh",
   "test/e2e/test-device-auth-health.sh",
   "test/e2e/test-diagnostics.sh",
-  "test/e2e/test-docs-validation.sh",
   "test/e2e/test-double-onboard.sh",
   "test/e2e/test-full-e2e.sh",
   "test/e2e/test-gpu-double-onboard.sh",
@@ -307,9 +305,42 @@ describe("E2E reusable workflow contract", () => {
     expect(authStep?.run).toContain("continuing with anonymous pulls");
   });
 
+  it("runs docs validation directly through Vitest artifacts", () => {
+    const job = nightlyWorkflow.jobs["docs-validation-e2e"];
+    const checkoutStep = job.steps?.find((step) =>
+      String(step.uses ?? "").startsWith("actions/checkout@"),
+    );
+    const authStep = job.steps?.find((step) => step.name === "Authenticate to Docker Hub");
+    const installStep = job.steps?.find((step) => step.name === "Install root dependencies");
+    const setupNodeStep = job.steps?.find((step) =>
+      String(step.uses ?? "").startsWith("actions/setup-node@"),
+    );
+    const runStep = job.steps?.find((step) => step.name === "Run docs validation Vitest test");
+    const uploadStep = job.steps?.find((step) => step.name === "Upload docs validation artifacts");
+
+    expect(checkoutStep?.with?.ref).toBe("${{ inputs.target_ref || github.ref }}");
+    expect(checkoutStep?.with?.["persist-credentials"]).toBe(false);
+    expect(authStep).toBeUndefined();
+    expect(setupNodeStep?.uses).toMatch(/^actions\/setup-node@[0-9a-f]{40}$/);
+    expect(setupNodeStep?.with?.cache).toBe("npm");
+    expect(installStep?.run).toBe("npm ci --ignore-scripts");
+    expect(runStep?.run).toContain("npx vitest run --project e2e-scenarios-live");
+    expect(runStep?.run).toContain("test/e2e-scenario/live/docs-validation.test.ts");
+    expect(runStep?.run).not.toContain("test/e2e/test-docs-validation.sh");
+    expect(runStep?.env?.CHECK_DOC_LINKS_REMOTE).toBe("0");
+    expect(runStep?.env?.NEMOCLAW_RUN_E2E_SCENARIOS).toBe("1");
+    expect(runStep?.env?.E2E_ARTIFACT_DIR).toBe(
+      "${{ github.workspace }}/e2e-artifacts/vitest/docs-validation",
+    );
+    expect(uploadStep?.if).toBe("always()");
+    expect(uploadStep?.with?.path).toBe("e2e-artifacts/vitest/docs-validation/");
+    expect(uploadStep?.with?.["include-hidden-files"]).toBe(false);
+    expect(uploadStep?.with?.["if-no-files-found"]).toBe("ignore");
+    expect(uploadStep?.with?.["retention-days"]).toBe(14);
+  });
+
   it("authenticates Docker Hub pulls in direct nightly E2E jobs", () => {
     const directE2eJobs = [
-      "docs-validation-e2e",
       "openclaw-tui-chat-correlation-e2e",
       "issue-3600-gpu-proof-optional-e2e",
       "kimi-inference-compat-e2e",
