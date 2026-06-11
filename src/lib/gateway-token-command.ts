@@ -13,7 +13,12 @@
  */
 
 export interface GatewayTokenCommandDeps {
-  /** Pull gateway.auth.token from the sandbox config (host-side helper). */
+  /**
+   * Fetch the agent-appropriate auth token for the sandbox (host-side helper).
+   * The bridge wires the right fetcher based on the resolved agent: OpenClaw's
+   * gateway.auth.token, or a bearer_token agent's web-auth key (e.g. Hermes'
+   * API_SERVER_KEY).
+   */
   fetchToken: (sandboxName: string) => string | null;
   /**
    * Resolve the agent name registered for the sandbox (e.g. "openclaw",
@@ -24,6 +29,14 @@ export interface GatewayTokenCommandDeps {
    * existed.
    */
   getSandboxAgent?: (sandboxName: string) => string | null;
+  /**
+   * Whether the resolved agent exposes a retrievable auth token. OpenClaw
+   * (gateway token) and bearer_token agents like Hermes (API key) return
+   * true; agents with no token mechanism return false and get the
+   * not-applicable message. Defaults to "openclaw only" when omitted so
+   * callers without agent metadata keep the historical behaviour.
+   */
+  agentExposesToken?: (agentName: string | null) => boolean;
   /** Optional stdout sink -- defaults to console.log. */
   log?: (message: string) => void;
   /** Optional stderr sink -- defaults to console.error. */
@@ -67,10 +80,11 @@ export function runGatewayTokenCommand(
   const log = deps.log ?? ((m: string) => console.log(m));
   const error = deps.error ?? ((m: string) => console.error(m));
 
-  // NCQ #3180: gateway-token only applies to the OpenClaw agent. Hermes (and
-  // any other non-OpenClaw agent) does not store a gateway auth token, so
-  // skip the OpenClaw lookup entirely and surface an agent-aware message
-  // instead of the misleading "make sure the sandbox is running" hint.
+  // NCQ #3180: surface an agent-aware "not applicable" message (instead of the
+  // misleading "make sure the sandbox is running" hint) for agents that have no
+  // retrievable auth token. OpenClaw exposes its gateway token; bearer_token
+  // agents like Hermes expose their web-auth key (API_SERVER_KEY). Anything
+  // else is rejected.
   let resolvedAgent: string | null = null;
   if (deps.getSandboxAgent) {
     try {
@@ -79,9 +93,12 @@ export function runGatewayTokenCommand(
       resolvedAgent = null;
     }
   }
-  if (resolvedAgent && resolvedAgent !== "openclaw") {
+  const exposesToken = deps.agentExposesToken
+    ? deps.agentExposesToken(resolvedAgent)
+    : resolvedAgent === null || resolvedAgent === "openclaw";
+  if (!exposesToken) {
     gatewayTokenFail(
-      `  gateway-token is not applicable for sandbox '${sandboxName}': it uses the '${resolvedAgent}' agent, which does not expose a gateway auth token. This command only supports the OpenClaw agent.`,
+      `  gateway-token is not applicable for sandbox '${sandboxName}': it uses the '${resolvedAgent}' agent, which does not expose a retrievable auth token.`,
     );
   }
 

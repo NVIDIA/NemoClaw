@@ -537,6 +537,26 @@ function dashboardUrlForDisplay(url: string): string {
 }
 
 /**
+ * Print how to reach a bearer_token agent's HTTP API (e.g. Hermes'
+ * OpenAI-compatible endpoint on :8642, which requires API_SERVER_KEY since
+ * Hermes v0.16.0). The raw key is never printed here — we point at the
+ * on-demand `gateway-token` command so it stays out of onboard logs.
+ */
+function printBearerTokenApiAccess(
+  sandboxName: string,
+  agent: AgentDefinition,
+  cliName: string,
+): void {
+  if (agent.webAuth.method !== "bearer_token") return;
+  const apiPort = agent.healthProbe.port;
+  console.log("");
+  console.log("  OpenAI-compatible API (bearer auth)");
+  console.log(`  Port ${apiPort} must be forwarded; clients send an Authorization header:`);
+  console.log("    Authorization: Bearer <API key>");
+  console.log(`  Get the key: ${cliName} ${sandboxName} gateway-token --quiet`);
+}
+
+/**
  * Print the dashboard UI section for a non-OpenClaw agent.
  *
  * When the agent manifest declares `dashboard.kind: api`, we print the
@@ -568,6 +588,7 @@ export function printDashboardUi(
       seen.add(url);
       console.log(`  ${dashboardUrlForDisplay(url)}`);
     }
+    printBearerTokenApiAccess(sandboxName, agent, cliName);
     printOptionalDashboardUi(agent, { ...deps, redactUrl: dashboardUrlForDisplay });
     return;
   }
@@ -578,6 +599,7 @@ export function printDashboardUi(
     for (const url of deps.buildControlUiUrls(null, info.port)) {
       console.log(`  ${dashboardUrlForDisplay(url)}`);
     }
+    printBearerTokenApiAccess(sandboxName, agent, cliName);
     return;
   }
 

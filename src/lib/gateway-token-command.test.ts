@@ -138,33 +138,50 @@ describe("runGatewayTokenCommand", () => {
   // NCQ #3180: gateway-token is OpenClaw-specific. On non-OpenClaw agents
   // (e.g. Hermes) the misleading "make sure the sandbox is running" message
   // and the @oclif/core stack trace must NOT appear.
-  it("prints an agent-aware not-applicable message on hermes without invoking fetchToken", () => {
+  it("prints an agent-aware not-applicable message for a tokenless agent without invoking fetchToken", () => {
     const sinks = makeSinks();
     const fetchToken = vi.fn(() => "should-not-be-called");
-    const getSandboxAgent = vi.fn(() => "hermes");
+    const getSandboxAgent = vi.fn(() => "tokenless-agent");
+    const agentExposesToken = vi.fn(() => false);
     let thrown: GatewayTokenCommandError | null = null;
     try {
       runGatewayTokenCommand(
-        "hermes",
+        "tokenless",
         { quiet: false },
-        { fetchToken, getSandboxAgent, log: sinks.log, error: sinks.error },
+        { fetchToken, getSandboxAgent, agentExposesToken, log: sinks.log, error: sinks.error },
       );
     } catch (error) {
       thrown = error as GatewayTokenCommandError;
     }
     expect(thrown).toBeInstanceOf(GatewayTokenCommandError);
-    expect(getSandboxAgent).toHaveBeenCalledWith("hermes");
+    expect(getSandboxAgent).toHaveBeenCalledWith("tokenless");
+    expect(agentExposesToken).toHaveBeenCalledWith("tokenless-agent");
     expect(fetchToken).not.toHaveBeenCalled();
     expect(sinks.out).toEqual([]);
     // Issue #3180 contract: a single agent-aware "not applicable" line.
     expect(sinks.err).toEqual([]);
     expect(thrown?.lines).toHaveLength(1);
     const stderr = thrown?.lines[0] ?? "";
-    expect(stderr).toMatch(/hermes/);
-    expect(stderr).toMatch(/OpenClaw/);
+    expect(stderr).toMatch(/tokenless-agent/);
     expect(stderr).toMatch(/not applicable/i);
     expect(stderr).not.toMatch(/sandbox is running/i);
     expect(stderr).not.toMatch(/ExitError|@oclif\/core|at Object\.exit/);
+  });
+
+  it("fetches and prints the token for a bearer_token agent that exposes one (e.g. hermes)", () => {
+    const sinks = makeSinks();
+    const fetchToken = vi.fn(() => "hermes-api-server-key");
+    const getSandboxAgent = vi.fn(() => "hermes");
+    const agentExposesToken = vi.fn(() => true);
+    runGatewayTokenCommand(
+      "hermes",
+      { quiet: true },
+      { fetchToken, getSandboxAgent, agentExposesToken, log: sinks.log, error: sinks.error },
+    );
+    expect(agentExposesToken).toHaveBeenCalledWith("hermes");
+    expect(fetchToken).toHaveBeenCalledWith("hermes");
+    expect(sinks.out).toEqual(["hermes-api-server-key"]);
+    expect(sinks.err).toEqual([]);
   });
 
   it("falls back to fetchToken when the agent lookup throws", () => {

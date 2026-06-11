@@ -17,6 +17,7 @@ export function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefini
     healthProbe: { url: "http://127.0.0.1:19000/", port: 19000, timeout_seconds: 5 },
     forwardPort: 19000,
     dashboard: { kind: "ui", label: "UI", path: "/", healthPath: "/health", auth: "url_token" },
+    webAuth: { method: "none", env: null },
     configPaths: {
       dir: "/tmp/agent",
       configFile: "/tmp/agent/config.yaml",
