@@ -620,6 +620,59 @@ export async function runSandboxSnapshot(
           }
         }
       }
+      // Reconcile custom policy presets (applied via --from-file/--from-dir).
+      // Their full content travels in the manifest, so re-apply by content
+      // (which also re-records them in the registry). Diff by content + source,
+      // not just name: a same-name preset whose body changed must be re-applied.
+      // Full replacement, mirroring the built-in preset reconcile above; skipped
+      // for legacy snapshots that predate the `customPolicies` field.
+      if (resolvedSnapshot && Array.isArray(resolvedSnapshot.customPolicies)) {
+        const snapshotCustom = resolvedSnapshot.customPolicies;
+        const currentCustom = registry.getCustomPolicies(targetSandbox);
+        const snapshotByName = new Map(snapshotCustom.map((entry) => [entry.name, entry]));
+        const currentByName = new Map(currentCustom.map((entry) => [entry.name, entry]));
+        const toRemove = currentCustom.filter((c) => !snapshotByName.has(c.name));
+        const toAdd = snapshotCustom.filter((sp) => {
+          const current = currentByName.get(sp.name);
+          return !current || current.content !== sp.content || current.sourcePath !== sp.sourcePath;
+        });
+
+        if (toRemove.length > 0 || toAdd.length > 0) {
+          const summary: string[] = [];
+          if (toAdd.length > 0) summary.push(`add ${toAdd.map((c) => c.name).join(", ")}`);
+          if (toRemove.length > 0) summary.push(`remove ${toRemove.map((c) => c.name).join(", ")}`);
+          console.log(`  Reconciling custom policies on '${targetSandbox}': ${summary.join("; ")}`);
+
+          const failed: string[] = [];
+          for (const entry of toRemove) {
+            try {
+              if (!policies.removePreset(targetSandbox, entry.name)) {
+                failed.push(`${entry.name} (remove failed)`);
+              }
+            } catch (err) {
+              const message = err instanceof Error ? err.message : String(err);
+              failed.push(`${entry.name} (remove: ${message})`);
+            }
+          }
+          for (const entry of toAdd) {
+            try {
+              if (
+                !policies.applyPresetContent(targetSandbox, entry.name, entry.content, {
+                  custom: { sourcePath: entry.sourcePath },
+                })
+              ) {
+                failed.push(`${entry.name} (apply failed)`);
+              }
+            } catch (err) {
+              const message = err instanceof Error ? err.message : String(err);
+              failed.push(`${entry.name} (apply: ${message})`);
+            }
+          }
+          if (failed.length > 0) {
+            console.warn(`  Warning: could not reconcile custom policy(ies): ${failed.join("; ")}`);
+          }
+        }
+      }
       break;
     }
     default:
