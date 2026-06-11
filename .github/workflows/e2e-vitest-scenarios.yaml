@@ -11,6 +11,11 @@ on:
         required: false
         default: ""
         type: string
+      pr_number:
+        description: Optional PR number for selective-dispatch result comments.
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -322,3 +327,184 @@ jobs:
           include-hidden-files: false
           if-no-files-found: ignore
           retention-days: 14
+
+  # ── Free-standing recovery scenarios (#2701) ─────────────────────────
+  # Recovery / disruption scenarios don't fit the steady-state expected-state
+  # registry that drives `live-scenarios` above. They run as free-standing
+  # Vitest test files using the same `e2e-scenarios-live` project, framework
+  # fixtures, and live-project gate — just outside the matrix.
+  #
+  # First failing-test-first guard for #2701 (gateway recovery does not
+  # restore the /tmp guard chain after pod recreate). Will fail on `main`
+  # until the #2701 fix lands; flips green afterwards.
+  gateway-guard-recovery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/gateway-guard-recovery
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+      # nemoclaw onboard registers the gateway under the canonical name
+      # "nemoclaw" (src/lib/actions/sandbox/connect.ts:NEMOCLAW_GATEWAY_NAME)
+      # but does not call `openshell gateway select` to mark it active. The
+      # SandboxClient and recovery probes invoke `openshell sandbox exec`
+      # directly, which fails with "No active gateway" when no active
+      # gateway is configured. Setting OPENSHELL_GATEWAY here tells openshell
+      # to use the named gateway for every invocation (per `openshell` -h
+      # GATEWAY FLAGS: env: OPENSHELL_GATEWAY=).
+      OPENSHELL_GATEWAY: "nemoclaw"
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build CLI
+        run: npm run build:cli
+
+      - name: Install OpenShell CLI
+        # Onboard expects openshell to already be on PATH — install.sh handles
+        # this for the legacy bash E2E suite (which runs `bash install.sh
+        # --non-interactive` end-to-end). The Vitest fixture path skips
+        # install.sh and invokes `bin/nemoclaw.js onboard` directly, so we
+        # need to run the standalone openshell installer here. Mirrors what
+        # `maybe_install_openshell_during_install` does in install.sh.
+        run: bash scripts/install-openshell.sh
+
+      - name: Run Vitest gateway-guard-recovery scenario
+        run: |
+          set -euo pipefail
+          # OpenShell installs to /usr/local/bin on GitHub-hosted runners
+          # (writable by the runner user, no sudo) or to ~/.local/bin in
+          # NEMOCLAW_NON_INTERACTIVE mode when /usr/local/bin is not writable.
+          # See scripts/install-openshell.sh:394-425. Cover both paths.
+          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
+          # Resolve the actual install path so the framework's SandboxClient
+          # can spawn it without relying on PATH inheritance from the test
+          # process (the framework also accepts OPENSHELL_BIN as an override).
+          if command -v openshell >/dev/null 2>&1; then
+            OPENSHELL_BIN="$(command -v openshell)"
+          elif [ -x "$HOME/.local/bin/openshell" ]; then
+            OPENSHELL_BIN="$HOME/.local/bin/openshell"
+          else
+            echo "::error::OpenShell CLI not found after install"
+            ls -la /usr/local/bin/openshell "$HOME/.local/bin/openshell" 2>&1 || true
+            exit 1
+          fi
+          export OPENSHELL_BIN
+          echo "Using OPENSHELL_BIN=$OPENSHELL_BIN"
+          "$OPENSHELL_BIN" --version
+          npx vitest run \
+            --project e2e-scenarios-live \
+            test/e2e-scenario/live/gateway-guard-recovery.test.ts \
+            --reporter=default --silent=false
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-vitest-gateway-guard-recovery
+          path: e2e-artifacts/vitest/gateway-guard-recovery/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # ── PR result comment (mirrors nightly-e2e.yaml's report-to-pr) ───────────
+  # Posts a results table on the open PR for the dispatching branch (or the
+  # PR identified by `inputs.pr_number`). `if: always()` so the comment lands
+  # even when scenario jobs failed — that's the whole point of a result
+  # comment. Same shape as nightly-e2e.yaml:report-to-pr so reviewers see
+  # consistent comment formatting across both suites.
+  report-to-pr:
+    runs-on: ubuntu-latest
+    needs:
+      [
+        generate-matrix,
+        live-scenarios,
+        openshell-version-pin-vitest,
+        onboard-negative-paths-vitest,
+        openclaw-tui-chat-correlation-vitest,
+        gateway-guard-recovery,
+      ]
+    if: ${{ always() && github.event_name == 'workflow_dispatch' }}
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Post Vitest scenario results to PR
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const needs = ${{ toJSON(needs) }};
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const workflowBranch = context.ref.replace('refs/heads/', '');
+            const prNumberInput = ${{ toJSON(inputs.pr_number) }} || '';
+            const requestedScenarios = ${{ toJSON(inputs.scenarios) }} || '';
+
+            let prNumber = prNumberInput ? Number.parseInt(prNumberInput, 10) : undefined;
+            if (!prNumber) {
+              const { data: prs } = await github.rest.pulls.list({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                head: `${context.repo.owner}:${workflowBranch}`,
+                state: 'open',
+              });
+              if (prs.length === 0) {
+                core.info(`No open PR found for branch ${workflowBranch} — skipping comment.`);
+                return;
+              }
+              prNumber = prs[0].number;
+            }
+
+            const emoji = { success: '✅', failure: '❌', cancelled: '⚠️', skipped: '⏭️' };
+            const entries = Object.entries(needs).sort(([a], [b]) => a.localeCompare(b));
+            const rows = entries.map(
+              ([name, { result }]) => `| ${name} | ${emoji[result] || '❓'} ${result} |`,
+            );
+            const ran = entries.filter(([, v]) => v.result !== 'skipped');
+            const passed = ran.filter(([, v]) => v.result === 'success');
+            const failed = ran.filter(([, v]) => v.result === 'failure');
+            const skipped = entries.filter(([, v]) => v.result === 'skipped');
+            const status =
+              failed.length > 0
+                ? '❌ Some jobs failed'
+                : skipped.length > 0 && passed.length === 0
+                  ? '⚠️ No jobs ran'
+                  : '✅ All jobs passed';
+
+            const lines = [
+              `### Vitest E2E Scenario Results — ${status}`,
+              '',
+              `**Run:** [${context.runId}](${runUrl})`,
+              `**Workflow ref:** \`${workflowBranch}\``,
+              requestedScenarios
+                ? `**Requested scenarios:** \`${requestedScenarios}\``
+                : '**Requested scenarios:** _(default — all supported)_',
+              `**Summary:** ${passed.length} passed, ${failed.length} failed, ${skipped.length} skipped`,
+              '',
+              '| Job | Result |',
+              '|-----|--------|',
+              ...rows,
+            ];
+            if (failed.length > 0) {
+              const failedNames = failed.map(([name]) => name).join(', ');
+              lines.push('', `> **Failed jobs:** ${failedNames}. Check [run artifacts](${runUrl}) for logs.`);
+            }
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              body: lines.join('\n'),
+            });
