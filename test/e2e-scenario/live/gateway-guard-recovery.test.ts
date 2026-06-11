@@ -97,8 +97,11 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
   cleanup.add(`recovery-result-${instance.sandboxName}`, async () => {
     await artifacts.writeJson("recovery-result.json", {
       exitCode: recoveryResult.exitCode,
+      signal: recoveryResult.signal,
     });
   });
+  expect(recoveryResult.exitCode).toBe(0);
+  expect(recoveryResult.signal).toBeNull();
 
   // ── Assert #2701 contract ────────────────────────────────────────
   // After recovery completes, the guard chain MUST be restored. Today
