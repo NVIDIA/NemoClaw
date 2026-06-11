@@ -41,4 +41,14 @@ describe("CLI status routing", () => {
     expect(r.code).toBe(2);
     expect(r.out).toContain("Unexpected argument: bogus");
   });
+
+  it("sandbox-first status rejects unexpected positional arguments through command-id dispatch", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sandbox-status-extra-"));
+    writeSandboxRegistry(home);
+
+    const r = runWithEnv("alpha status extra", { HOME: home });
+
+    expect(r.code).toBe(2);
+    expect(r.out).toContain("Unexpected argument: extra");
+  });
 });

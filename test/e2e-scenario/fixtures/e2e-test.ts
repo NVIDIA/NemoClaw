@@ -77,11 +77,14 @@ export const test = base.extend<E2EScenarioFixtures>({
   host: async ({ shellProbe }, use) => {
     await use(new HostCliClient(shellProbe));
   },
-  gateway: async ({ host }, use) => {
-    await use(new GatewayClient(host));
-  },
   sandbox: async ({ shellProbe }, use) => {
     await use(new SandboxClient(shellProbe));
+  },
+  gateway: async ({ host, sandbox }, use) => {
+    // GatewayClient depends on `sandbox` for in-sandbox probes
+    // (guard-chain inspection, log tailing, gateway-PID polling).
+    // The fixture chain is sandbox → gateway so the dependency stays acyclic.
+    await use(new GatewayClient(host, sandbox));
   },
   provider: async ({ shellProbe }, use) => {
     await use(new ProviderClient(shellProbe));
