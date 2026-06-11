@@ -3051,7 +3051,7 @@ async function createSandbox(
   const configuredMessagingChannels =
     getChannelsFromPlan(plannedMessagingPlan) ??
     (enabledChannels != null ? [...new Set(enabledChannels)] : activeMessagingChannels);
-  const { messagingChannelConfig } = sandboxBuildPatchConfig.prepareSandboxBuildPatchConfig({
+  sandboxBuildPatchConfig.prepareSandboxBuildPatchConfig({
     configuredMessagingChannels,
   });
   // Pull the base image and resolve its digest so the Dockerfile is pinned to

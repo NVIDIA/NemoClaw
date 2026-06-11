@@ -12,7 +12,7 @@ describe("prepareSandboxBuildPatchConfig", () => {
       const current = {} as Session;
       return mutator(current) ?? current;
     });
-    const messagingChannelConfig = { TELEGRAM_ALLOWED_IDS: "123,456" };
+    const readMessagingChannelConfigFromEnv = vi.fn();
 
     const result = prepareSandboxBuildPatchConfig({
       configuredMessagingChannels: ["telegram", "slack"],
@@ -23,7 +23,7 @@ describe("prepareSandboxBuildPatchConfig", () => {
         WECHAT_ALLOWED_IDS: "wxid-unused",
       },
       deps: {
-        readMessagingChannelConfigFromEnv: vi.fn(() => messagingChannelConfig),
+        readMessagingChannelConfigFromEnv,
         computeTelegramRequireMention: vi.fn(() => true),
         loadSession: vi.fn(() => ({ wechatConfig: { accountId: "old" } }) as Session),
         gatherWechatConfig: vi.fn(() => ({
@@ -35,7 +35,12 @@ describe("prepareSandboxBuildPatchConfig", () => {
       },
     });
 
-    expect(result.messagingChannelConfig).toBe(messagingChannelConfig);
+    expect(readMessagingChannelConfigFromEnv).toHaveBeenCalledWith({
+      TELEGRAM_ALLOWED_IDS: "123,456",
+      SLACK_ALLOWED_USERS: "U01ABC2DEF3",
+      SLACK_ALLOWED_CHANNELS: "C012AB3CD,C987ZY6XW",
+      WECHAT_ALLOWED_IDS: "wxid-unused",
+    });
     expect(result.telegramConfig).toEqual({ requireMention: true });
     expect(result.wechatConfig).toEqual({
       accountId: "acct",
@@ -73,7 +78,6 @@ describe("prepareSandboxBuildPatchConfig", () => {
       },
     });
 
-    expect(result.messagingChannelConfig).toBeNull();
     expect(result.telegramConfig).toEqual({});
     expect(result.wechatConfig).toEqual({});
     expect(computeTelegramRequireMention).not.toHaveBeenCalled();

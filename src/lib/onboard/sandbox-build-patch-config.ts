@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { MessagingChannelConfig } from "../messaging-channel-config";
 import { readMessagingChannelConfigFromEnv } from "../messaging-channel-config";
 import * as onboardSession from "../state/onboard-session";
 import type { Session } from "../state/onboard-session";
@@ -15,13 +14,12 @@ import {
 type TelegramConfig = { requireMention?: boolean };
 
 export type SandboxBuildPatchConfig = {
-  messagingChannelConfig: MessagingChannelConfig | null;
   telegramConfig: TelegramConfig;
   wechatConfig: WechatConfigSnapshot;
 };
 
 export type SandboxBuildPatchConfigDeps = {
-  readMessagingChannelConfigFromEnv?(env?: NodeJS.ProcessEnv): MessagingChannelConfig | null;
+  readMessagingChannelConfigFromEnv?(env?: NodeJS.ProcessEnv): unknown;
   computeTelegramRequireMention?(): boolean | null;
   loadSession?(): Session | null;
   gatherWechatConfig?(session: Session | null): WechatConfigSnapshot;
@@ -42,9 +40,9 @@ export function prepareSandboxBuildPatchConfig({
   env = process.env,
   deps = {},
 }: PrepareSandboxBuildPatchConfigInput): SandboxBuildPatchConfig {
-  const messagingChannelConfig = (
-    deps.readMessagingChannelConfigFromEnv ?? readMessagingChannelConfigFromEnv
-  )(env);
+  // Dockerfile messaging rendering is sourced from the manifest plan. Reading
+  // env config here validates operator-provided channel config before build.
+  (deps.readMessagingChannelConfigFromEnv ?? readMessagingChannelConfigFromEnv)(env);
   const configuredChannelNames = new Set(configuredMessagingChannels);
 
   const telegramConfig: TelegramConfig = {};
@@ -69,7 +67,6 @@ export function prepareSandboxBuildPatchConfig({
   });
 
   return {
-    messagingChannelConfig,
     telegramConfig,
     wechatConfig,
   };
