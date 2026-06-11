@@ -10,13 +10,15 @@
  * same host therefore had to share that tree even when the user wanted full
  * segregation (billing isolation, A/B model testing, multi-tenant POCs).
  *
- * `NEMOCLAW_INSTANCE` makes the instance identity configurable. The fallback
- * chain has two layers:
+ * `NEMOCLAW_INSTANCE` makes the instance identity configurable. The default
+ * instance name is the historical singleton identity `nemoclaw`, so the
+ * fallback chain has two layers without any synthetic sentinel name:
  *
- *   1. When `NEMOCLAW_INSTANCE` is unset or empty, the default instance is
- *      selected, every existing on-disk path resolves to `~/.nemoclaw`, and
- *      the gateway name stays at the bare `nemoclaw` — single-instance
- *      deployments observe no change after upgrading.
+ *   1. When `NEMOCLAW_INSTANCE` is unset, empty, or set explicitly to
+ *      `nemoclaw`, the default instance is selected, every existing on-disk
+ *      path resolves to `~/.nemoclaw`, and the gateway name stays at the
+ *      bare `nemoclaw` — single-instance deployments observe no change
+ *      after upgrading.
  *   2. With the default instance still selected, a non-default
  *      `NEMOCLAW_GATEWAY_PORT` produces a `nemoclaw-<port>` gateway that
  *      segregates from the bare default at the gateway-binding layer alone.
@@ -41,8 +43,13 @@
  * rather than parsing the env var directly.
  */
 
-/** Reserved name representing today's singleton behaviour. */
-export const DEFAULT_NEMOCLAW_INSTANCE = "default";
+/**
+ * Default instance name. Equals the historical singleton identity so the
+ * bare `nemoclaw` gateway name and `~/.nemoclaw` state root fall out of the
+ * resolvers without a synthetic sentinel. `NEMOCLAW_INSTANCE=nemoclaw` is
+ * therefore equivalent to leaving the variable unset.
+ */
+export const DEFAULT_NEMOCLAW_INSTANCE = "nemoclaw";
 
 /**
  * Lower-case alphanumeric slug with internal `-`. Must start and end with an

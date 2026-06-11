@@ -79,10 +79,26 @@ describe("parseInstanceName", () => {
   it("falls back to a non-default fallback when the env var is unset", () => {
     expect(parseInstanceName(ENV_KEY, "primary")).toBe("primary");
   });
+
+  it("treats an explicit NEMOCLAW_INSTANCE=nemoclaw as the default", () => {
+    process.env[ENV_KEY] = "nemoclaw";
+    const resolved = parseInstanceName(ENV_KEY, DEFAULT_NEMOCLAW_INSTANCE);
+    expect(resolved).toBe(DEFAULT_NEMOCLAW_INSTANCE);
+    expect(isDefaultInstance(resolved)).toBe(true);
+  });
+
+  it("normalises uppercase NEMOCLAW to the default instance", () => {
+    process.env[ENV_KEY] = "NEMOCLAW";
+    const resolved = parseInstanceName(ENV_KEY, DEFAULT_NEMOCLAW_INSTANCE);
+    expect(resolved).toBe(DEFAULT_NEMOCLAW_INSTANCE);
+    expect(isDefaultInstance(resolved)).toBe(true);
+  });
 });
 
 describe("isDefaultInstance", () => {
-  it("recognises the default instance", () => {
+  it("recognises the default instance name as `nemoclaw`", () => {
+    expect(DEFAULT_NEMOCLAW_INSTANCE).toBe("nemoclaw");
+    expect(isDefaultInstance("nemoclaw")).toBe(true);
     expect(isDefaultInstance(DEFAULT_NEMOCLAW_INSTANCE)).toBe(true);
   });
 
@@ -90,5 +106,6 @@ describe("isDefaultInstance", () => {
     expect(isDefaultInstance("agent-a")).toBe(false);
     expect(isDefaultInstance("")).toBe(false);
     expect(isDefaultInstance("primary")).toBe(false);
+    expect(isDefaultInstance("default")).toBe(false);
   });
 });

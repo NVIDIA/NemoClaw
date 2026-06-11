@@ -29,7 +29,7 @@ import {
 } from "../../../dist/lib/state/paths";
 
 describe("gateway-binding resolver (#4422)", () => {
-  const DEFAULT_INSTANCE = "default";
+  const DEFAULT_INSTANCE = DEFAULT_NEMOCLAW_INSTANCE;
 
   it("keeps the bare nemoclaw names for the default instance on the default gateway port", () => {
     expect(resolveGatewayName(DEFAULT_GATEWAY_PORT, DEFAULT_INSTANCE)).toBe(BASE_GATEWAY_NAME);
@@ -67,7 +67,7 @@ describe("gateway-binding resolver (#4422)", () => {
 });
 
 describe("gateway-binding resolver factors NEMOCLAW_INSTANCE (#3053)", () => {
-  const DEFAULT_INSTANCE = "default";
+  const DEFAULT_INSTANCE = DEFAULT_NEMOCLAW_INSTANCE;
 
   it("suffixes the gateway name with the instance for a non-default instance on the default port", () => {
     expect(resolveGatewayName(DEFAULT_GATEWAY_PORT, "agent-a")).toBe("nemoclaw-agent-a");
