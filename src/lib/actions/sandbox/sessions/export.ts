@@ -40,9 +40,8 @@
 
 import { randomBytes } from "node:crypto";
 import fs from "node:fs";
-
-import { CLI_NAME } from "../../../cli/branding";
 import { captureOpenshell, runOpenshell } from "../../../adapters/openshell/runtime";
+import { CLI_NAME } from "../../../cli/branding";
 import { ensureLiveSandboxOrExit } from "../gateway-state";
 import {
   DEFAULT_AGENT_ID,
@@ -158,6 +157,18 @@ export async function exportSandboxSessions(
       ignoreError: true,
       stdio: "ignore",
     });
+  }
+
+  // Harden the downloaded bundle: session JSONL captures user prompts and tool
+  // I/O, which routinely contain pasted secrets (API keys, tokens). The
+  // in-sandbox staging tarball is created 0600, but the host copy lands with
+  // the caller's umask, so restrict it to owner-only here too.
+  try {
+    fs.chmodSync(hostDest, 0o600);
+  } catch {
+    console.error(
+      `  Warning: could not restrict permissions on ${hostDest}; treat it as sensitive — it may contain session secrets.`,
+    );
   }
 
   let bundleBytes: number | null = null;

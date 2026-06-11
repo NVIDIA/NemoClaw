@@ -21,6 +21,10 @@ export default class SandboxSessionsExportCommand extends NemoClawCommand {
     "",
     "Trajectory files are excluded by default (large) and re-added with",
     "--include-trajectory.",
+    "",
+    "Note: session JSONL can contain pasted secrets (API keys, tokens). The",
+    "downloaded bundle is written owner-only (0600); keep it private and avoid",
+    "committing or sharing it without review.",
   ].join("\n");
   static usage = ["<name> [keys...] [--agent <id>] [--out <path>] [--include-trajectory] [--json]"];
   static examples = [

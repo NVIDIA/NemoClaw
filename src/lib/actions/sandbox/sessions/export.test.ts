@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../gateway-state", () => ({
@@ -113,10 +115,17 @@ describe("exportSandboxSessions", () => {
       ),
     );
 
+    const chmodSpy = vi.spyOn(fs, "chmodSync").mockImplementation(() => {});
+
     const result = await exportSandboxSessions({
       sandboxName: "alpha",
       out: "./out.tgz",
     });
+
+    // Session JSONL can contain pasted secrets, so the downloaded host bundle
+    // must be locked down to owner-only, not just the in-sandbox staging copy.
+    expect(chmodSpy).toHaveBeenCalledWith("./out.tgz", 0o600);
+    chmodSpy.mockRestore();
 
     expect(captureMock).toHaveBeenCalledTimes(1);
     const captureCall = captureMock.mock.calls[0]?.[0] as string[];
