@@ -104,6 +104,10 @@ function makePlanEntry(
   } as unknown as SandboxEntry;
 }
 
+function makeEmptyEntry(name: string): SandboxEntry {
+  return { name } as SandboxEntry;
+}
+
 let spies: MockInstance[];
 let logSpy: MockInstance;
 let errSpy: MockInstance;
@@ -246,7 +250,7 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
   // Scenario 1
   it("interactive matching-token conflict: warns, user continues, add proceeds", async () => {
     arrangeRegistry({
-      current: { name: "alpha", messagingChannels: [] },
+      current: makeEmptyEntry("alpha"),
       others: [
         makePlanEntry("bob", "telegram", [
           { providerEnvKey: "TELEGRAM_BOT_TOKEN", credentialHash: TELEGRAM_HASH },
@@ -268,7 +272,7 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
   // Scenario 2
   it("interactive matching-token conflict: user aborts, nothing is mutated", async () => {
     arrangeRegistry({
-      current: { name: "alpha", messagingChannels: [] },
+      current: makeEmptyEntry("alpha"),
       others: [
         makePlanEntry("bob", "telegram", [
           { providerEnvKey: "TELEGRAM_BOT_TOKEN", credentialHash: TELEGRAM_HASH },
@@ -288,7 +292,7 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
 
   it("interactive matching-token conflict: empty answer (default N) aborts", async () => {
     arrangeRegistry({
-      current: { name: "alpha", messagingChannels: [] },
+      current: makeEmptyEntry("alpha"),
       others: [
         makePlanEntry("bob", "telegram", [
           { providerEnvKey: "TELEGRAM_BOT_TOKEN", credentialHash: TELEGRAM_HASH },
@@ -307,7 +311,7 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
   // Scenario 3
   it("non-interactive matching-token conflict: aborts with exit(1) and guidance", async () => {
     arrangeRegistry({
-      current: { name: "alpha", messagingChannels: [] },
+      current: makeEmptyEntry("alpha"),
       others: [
         makePlanEntry("bob", "telegram", [
           { providerEnvKey: "TELEGRAM_BOT_TOKEN", credentialHash: TELEGRAM_HASH },
@@ -335,7 +339,7 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
   // Scenario 4
   it("--force bypasses the conflict even in non-interactive mode", async () => {
     arrangeRegistry({
-      current: { name: "alpha", messagingChannels: [] },
+      current: makeEmptyEntry("alpha"),
       others: [
         makePlanEntry("bob", "telegram", [
           { providerEnvKey: "TELEGRAM_BOT_TOKEN", credentialHash: TELEGRAM_HASH },
@@ -359,8 +363,8 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
   // Scenario 5a
   it("unknown-token wording when the other sandbox has the channel but no hash", async () => {
     arrangeRegistry({
-      current: { name: "alpha", messagingChannels: [] },
-      others: [{ name: "bob", messagingChannels: ["telegram"] }], // no plan — legacy entry, unknown-token
+      current: makeEmptyEntry("alpha"),
+      others: [makePlanEntry("bob", "telegram", [{ providerEnvKey: "TELEGRAM_BOT_TOKEN" }])],
     });
     getCredentialMock.mockReturnValue(TELEGRAM_TOKEN);
     promptMock.mockResolvedValue("y");
@@ -375,7 +379,7 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
   // Scenario 5b
   it("different hash on the other sandbox is NOT a conflict (no warning, add proceeds)", async () => {
     arrangeRegistry({
-      current: { name: "alpha", messagingChannels: [] },
+      current: makeEmptyEntry("alpha"),
       others: [
         makePlanEntry("bob", "telegram", [
           {
@@ -421,7 +425,7 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
   // Scenario 7
   it("--dry-run never runs the conflict check or touches credentials", async () => {
     arrangeRegistry({
-      current: { name: "alpha", messagingChannels: [] },
+      current: makeEmptyEntry("alpha"),
       others: [
         makePlanEntry("bob", "telegram", [
           { providerEnvKey: "TELEGRAM_BOT_TOKEN", credentialHash: TELEGRAM_HASH },
@@ -447,7 +451,7 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
     const wechatToken = "wx-secret-token-abc";
     const wechatHash = hashCredential(wechatToken) as string;
     arrangeRegistry({
-      current: { name: "alpha", messagingChannels: [] },
+      current: makeEmptyEntry("alpha"),
       others: [
         makePlanEntry("bob", "wechat", [
           { providerEnvKey: "WECHAT_BOT_TOKEN", credentialHash: wechatHash },
@@ -473,8 +477,8 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
   // acquired and skips the credential conflict check entirely.
   it("in-sandbox-qr whatsapp skips the credential conflict check", async () => {
     arrangeRegistry({
-      current: { name: "alpha", messagingChannels: [] },
-      others: [{ name: "bob", messagingChannels: ["whatsapp"] }],
+      current: makeEmptyEntry("alpha"),
+      others: [makePlanEntry("bob", "whatsapp", [])],
     });
     process.env.NEMOCLAW_NON_INTERACTIVE = "1";
 
@@ -487,35 +491,39 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
     expect(promptMock).not.toHaveBeenCalled();
   });
 
-  // Scenario 9
-  it("probe + backfill failure is swallowed; a pre-recorded matching hash still warns", async () => {
+  it("in-sandbox-qr whatsapp aborts when plan persistence fails", async () => {
     arrangeRegistry({
-      current: { name: "alpha", messagingChannels: [] },
+      current: makeEmptyEntry("alpha"),
+      others: [],
+    });
+    updateSandboxMock.mockReturnValue(false);
+    process.env.NEMOCLAW_NON_INTERACTIVE = "1";
+
+    await expect(addSandboxChannel("alpha", { channel: "whatsapp" })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    const text = loggedText();
+    expect(text).toContain("Could not persist messaging plan for 'alpha'");
+    expect(text).not.toContain("Enabled whatsapp channel");
+    expect(exitMock).toHaveBeenCalledWith(1);
+    expect(promptMock).not.toHaveBeenCalled();
+  });
+
+  // Scenario 9
+  it("entries without messaging plans are ignored while plan-backed conflicts still warn", async () => {
+    arrangeRegistry({
+      current: makeEmptyEntry("alpha"),
       others: [
         makePlanEntry("bob", "telegram", [
           { providerEnvKey: "TELEGRAM_BOT_TOKEN", credentialHash: TELEGRAM_HASH },
         ]),
-        // Legacy entry with NO messagingChannels field — backfill probes the
-        // (alive) gateway, gets "absent" for every provider, then writes
-        // messagingChannels:[] for it. We make THAT write throw to genuinely
-        // exercise the try/catch around backfillMessagingChannels.
-        { name: "legacy" },
+        makeEmptyEntry("legacy"),
       ],
     });
     getCredentialMock.mockReturnValue(TELEGRAM_TOKEN);
-    // Gateway alive (status 0) + every provider absent, so backfill reaches the
-    // updateSandbox("legacy") write — which throws below.
-    runOpenshellMock.mockReturnValue({ status: 0, stdout: "", stderr: "" });
-    updateSandboxMock.mockImplementation((name: string, _updates: Partial<SandboxEntry>) => {
-      if (name === "legacy") throw new Error("backfill boom");
-      return true;
-    });
     process.env.NEMOCLAW_NON_INTERACTIVE = "1";
 
-    // bob already has messagingChannels + a matching hash, so the conflict is
-    // still found -> non-interactive abort. Key guarantee: a throw inside
-    // backfillMessagingChannels is swallowed; the only exit is the conflict
-    // exit(1), not an unhandled exception.
     await expect(addSandboxChannel("alpha", { channel: "telegram" })).rejects.toThrow(
       "process.exit(1)",
     );
@@ -523,13 +531,12 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
     expect(loggedText()).toContain("same telegram credential");
   });
 
-  it("probe + backfill failure with no pre-recorded conflict lets the add proceed", async () => {
+  it("entries without messaging plans do not block an add", async () => {
     arrangeRegistry({
-      current: { name: "alpha", messagingChannels: [] },
-      others: [], // no other sandbox -> no conflict resolvable
+      current: makeEmptyEntry("alpha"),
+      others: [makeEmptyEntry("legacy")],
     });
     getCredentialMock.mockReturnValue(TELEGRAM_TOKEN);
-    runOpenshellMock.mockReturnValue({ status: 1, stdout: "", stderr: "down" });
 
     await addSandboxChannel("alpha", { channel: "telegram" });
 
@@ -539,7 +546,7 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
   });
 
   it("non-interactive add aborts when the conflict check throws", async () => {
-    arrangeRegistry({ current: { name: "alpha", messagingChannels: [] }, others: [] });
+    arrangeRegistry({ current: makeEmptyEntry("alpha"), others: [] });
     getCredentialMock.mockReturnValue(TELEGRAM_TOKEN);
     listSandboxesMock.mockImplementation(() => {
       throw new Error("malformed messaging plan");
@@ -557,7 +564,7 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
   });
 
   it("--force proceeds when the conflict check throws", async () => {
-    arrangeRegistry({ current: { name: "alpha", messagingChannels: [] }, others: [] });
+    arrangeRegistry({ current: makeEmptyEntry("alpha"), others: [] });
     getCredentialMock.mockReturnValue(TELEGRAM_TOKEN);
     listSandboxesMock.mockImplementation(() => {
       throw new Error("malformed messaging plan");
@@ -575,7 +582,7 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
   // Scenario 10
   it("never prints the raw token value in any conflict output (proceed path)", async () => {
     arrangeRegistry({
-      current: { name: "alpha", messagingChannels: [] },
+      current: makeEmptyEntry("alpha"),
       others: [
         makePlanEntry("bob", "telegram", [
           { providerEnvKey: "TELEGRAM_BOT_TOKEN", credentialHash: TELEGRAM_HASH },
@@ -595,7 +602,7 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
 
   it("non-interactive abort path also keeps the raw token out of output", async () => {
     arrangeRegistry({
-      current: { name: "alpha", messagingChannels: [] },
+      current: makeEmptyEntry("alpha"),
       others: [
         makePlanEntry("bob", "telegram", [
           { providerEnvKey: "TELEGRAM_BOT_TOKEN", credentialHash: TELEGRAM_HASH },
@@ -618,7 +625,7 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
     const slackApp = "xapp-test-slack-app-token";
     const slackBotHash = hashCredential(slackBot) as string;
     arrangeRegistry({
-      current: { name: "alpha", messagingChannels: [] },
+      current: makeEmptyEntry("alpha"),
       // only bot token stored — app token unknown → conservative unknown-token OR
       // matching-token if bot token matches; test verifies the conflict is surfaced.
       others: [
@@ -648,7 +655,7 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
     const slackBot = "xoxb-alpha-bot-token";
     const slackApp = "xapp-alpha-app-token";
     arrangeRegistry({
-      current: { name: "alpha", messagingChannels: [] } as SandboxEntry,
+      current: { name: "alpha" } as SandboxEntry,
       // bob holds Slack on the default gateway with entirely different tokens —
       // the credential axis would NOT flag this, but the gateway axis must.
       others: [
@@ -688,7 +695,7 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
     const slackBot = "xoxb-shared-bot-token";
     const slackApp = "xapp-shared-app-token";
     arrangeRegistry({
-      current: { name: "alpha", messagingChannels: [] } as SandboxEntry,
+      current: { name: "alpha" } as SandboxEntry,
       others: [
         makePlanEntry("bob", "slack", [
           { providerEnvKey: "SLACK_BOT_TOKEN", credentialHash: hashCredential(slackBot) as string },
@@ -726,7 +733,7 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
     ]);
     (bob as { gatewayName?: string }).gatewayName = "nemoclaw-9090";
     arrangeRegistry({
-      current: { name: "alpha", messagingChannels: [] } as SandboxEntry,
+      current: { name: "alpha" } as SandboxEntry,
       others: [bob],
     });
     getCredentialMock.mockImplementation((key: string) =>
@@ -747,7 +754,7 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
   });
 
   it("slack: a gateway conflict-detection failure is fail-soft, not a crash (#4953)", async () => {
-    arrangeRegistry({ current: { name: "alpha", messagingChannels: [] } as SandboxEntry });
+    arrangeRegistry({ current: { name: "alpha" } as SandboxEntry });
     // Simulate a malformed registry read: listSandboxes throws. The Slack
     // gateway lookup must swallow it (best-effort warning) rather than crash
     // the add or bypass the downstream guarded credential check.

@@ -107,26 +107,7 @@ export class MessagingWorkflowPlanner {
         "rebuild",
       );
     }
-
-    const configuredChannels = uniqueChannels(context.sandboxEntry?.messagingChannels);
-    if (configuredChannels.length === 0) return null;
-
-    return this.buildPlan({
-      sandboxName: context.sandboxName,
-      agent: context.agent,
-      workflow: "rebuild",
-      isInteractive: false,
-      configuredChannels,
-      disabledChannels: disabledChannelsFromSandboxEntry(context.sandboxEntry, null),
-      supportedChannelIds: context.supportedChannelIds,
-      credentialAvailability: mergeAvailability(
-        this.credentialAvailabilityFromProviderCredentialHashes(
-          context.sandboxEntry,
-          configuredChannels,
-        ),
-        context.credentialAvailability,
-      ),
-    });
+    return null;
   }
 
   private assertSupportedChannels(
@@ -194,37 +175,11 @@ export class MessagingWorkflowPlanner {
     }
     return Object.keys(availability).length > 0 ? availability : undefined;
   }
-
-  private credentialAvailabilityFromProviderCredentialHashes(
-    sandboxEntry: MessagingWorkflowPlannerSandboxEntry | null | undefined,
-    channelIds: readonly MessagingChannelId[],
-  ): MessagingCompilerCredentialAvailability | undefined {
-    const hashes = sandboxEntry?.providerCredentialHashes;
-    if (!hashes) return undefined;
-
-    const availability: Record<string, boolean> = {};
-    for (const channelId of channelIds) {
-      const manifest = this.registry.get(channelId);
-      if (!manifest) continue;
-      for (const credential of manifest.credentials) {
-        if (!hashes[credential.providerEnvKey]) continue;
-        availability[credential.sourceInput] = true;
-        availability[manifest.id + "." + credential.sourceInput] = true;
-        availability[credential.id] = true;
-        availability[manifest.id + "." + credential.id] = true;
-        availability[credential.providerEnvKey] = true;
-      }
-    }
-    return Object.keys(availability).length > 0 ? availability : undefined;
-  }
 }
 
 export interface MessagingWorkflowPlannerSandboxEntry {
   readonly name: string;
   readonly agent?: string | null;
-  readonly messagingChannels?: readonly MessagingChannelId[] | null;
-  readonly disabledChannels?: readonly MessagingChannelId[] | null;
-  readonly providerCredentialHashes?: Readonly<Record<string, string>> | null;
   readonly messaging?: {
     readonly schemaVersion: 1;
     readonly plan: SandboxMessagingPlan;
@@ -282,14 +237,10 @@ function readSandboxEntryPlan(
 }
 
 function disabledChannelsFromSandboxEntry(
-  sandboxEntry: MessagingWorkflowPlannerSandboxEntry | null | undefined,
+  _sandboxEntry: MessagingWorkflowPlannerSandboxEntry | null | undefined,
   fallbackPlan: SandboxMessagingPlan | null,
 ): MessagingChannelId[] {
-  return uniqueChannels(
-    Array.isArray(sandboxEntry?.disabledChannels)
-      ? sandboxEntry.disabledChannels
-      : (fallbackPlan?.disabledChannels ?? []),
-  );
+  return uniqueChannels(fallbackPlan?.disabledChannels ?? []);
 }
 
 function clonePlan(plan: SandboxMessagingPlan): SandboxMessagingPlan {
