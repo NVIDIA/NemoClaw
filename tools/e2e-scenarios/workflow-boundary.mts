@@ -392,6 +392,9 @@ function validateNetworkPolicyVitestJob(errors: string[], jobs: WorkflowRecord):
   if (!stringValue(jobEnv.NEMOCLAW_CLI_BIN).includes("bin/nemoclaw.js")) {
     errors.push("network-policy-vitest job must point NEMOCLAW_CLI_BIN at the repo CLI");
   }
+  if (jobEnv.OPENSHELL_GATEWAY !== "nemoclaw") {
+    errors.push("network-policy-vitest job must force OPENSHELL_GATEWAY=nemoclaw");
+  }
   for (const secret of ["NVIDIA_API_KEY", "DOCKERHUB_USERNAME", "DOCKERHUB_TOKEN", "GITHUB_TOKEN"]) {
     requireEnvDoesNotExposeSecret(errors, "network-policy-vitest job", jobEnv, secret);
   }

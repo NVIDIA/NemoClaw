@@ -55,6 +55,7 @@ function baseEnv(extra: NemoEnv = {}): NemoEnv {
     ...buildAvailabilityProbeEnv(),
     NEMOCLAW_NON_INTERACTIVE: "1",
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+    OPENSHELL_GATEWAY: process.env.OPENSHELL_GATEWAY ?? "nemoclaw",
     ...extra,
   };
 }

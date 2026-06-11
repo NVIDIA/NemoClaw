@@ -300,6 +300,7 @@ jobs:
           "network-policy-vitest job must set NEMOCLAW_RUN_E2E_SCENARIOS=1",
           "network-policy-vitest job must write artifacts under e2e-artifacts/vitest/network-policy",
           "network-policy-vitest job must point NEMOCLAW_CLI_BIN at the repo CLI",
+          "network-policy-vitest job must force OPENSHELL_GATEWAY=nemoclaw",
           "network-policy-vitest job env must not include NVIDIA_API_KEY",
           "network-policy-vitest job env must not include DOCKERHUB_USERNAME",
           "network-policy-vitest job env must not include DOCKERHUB_TOKEN",
