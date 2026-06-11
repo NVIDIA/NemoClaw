@@ -93,7 +93,7 @@ jobs:
           SCENARIOS: ${{ inputs.scenarios }}
         run: |
           set -euo pipefail
-          allowed_jobs="openshell-version-pin-vitest,onboard-negative-paths-vitest,credential-migration-vitest,hermes-e2e-vitest,network-policy-vitest,token-rotation-vitest,openclaw-tui-chat-correlation-vitest,gateway-guard-recovery"
+          allowed_jobs="openshell-version-pin-vitest,onboard-negative-paths-vitest,credential-migration-vitest,hermes-e2e-vitest,network-policy-vitest,token-rotation-vitest,launchable-smoke-vitest,openclaw-tui-chat-correlation-vitest,gateway-guard-recovery"
           args=(--emit-live-matrix)
           matrix=""
           hermes_selected=false
@@ -648,6 +648,7 @@ jobs:
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
       NEMOCLAW_SANDBOX_NAME: "e2e-launchable"
       NEMOCLAW_RECREATE_SANDBOX: "1"
+      NEMOCLAW_MODEL: minimaxai/minimax-m2.7
       SKIP_DOCKER_PULL: "1"
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3

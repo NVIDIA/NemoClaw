@@ -13,6 +13,7 @@ import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { shouldRunLiveE2EScenarios } from "../fixtures/live-project-gate.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
 
 // Migrated coverage for test/e2e/test-launchable-smoke.sh (Refs #2599/#5098).
 // This is intentionally a single live Vitest test instead of a new fixture
@@ -24,13 +25,14 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const LAUNCHABLE_SCRIPT = path.join(REPO_ROOT, "scripts", "brev-launchable-ci-cpu.sh");
 const SENTINEL = "/var/run/nemoclaw-launchable-ready";
-const MODEL = "nvidia/nemotron-3-super-120b-a12b";
+const MODEL = process.env.NEMOCLAW_MODEL ?? "nvidia/nemotron-3-super-120b-a12b";
 const DEFAULT_SANDBOX_NAME = `e2e-launchable-${randomUUID().slice(0, 8)}`;
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? DEFAULT_SANDBOX_NAME;
 const TEST_TIMEOUT_MS = 30 * 60_000;
 const INSTALL_TIMEOUT_MS = 30 * 60_000;
 const ONBOARD_TIMEOUT_MS = 15 * 60_000;
 const INFERENCE_TIMEOUT_MS = 2 * 60_000;
+const ONBOARD_ATTEMPTS = 3;
 
 type ChatCompletion = {
   choices?: Array<{
@@ -158,6 +160,10 @@ async function cleanupLaunchableState(host: HostCliClient, cloneDir: string): Pr
   );
 }
 
+async function sleep(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function expectPongFromSandboxInference(
   sandboxExec: (command: string[], artifactName: string) => Promise<ShellProbeResult>,
 ): Promise<void> {
@@ -192,7 +198,7 @@ async function expectPongFromSandboxInference(
       }
       if (/PONG/i.test(lastContent)) return;
     }
-    if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, 5_000));
+    if (attempt < 3) await sleep(5_000);
   }
 
   throw new Error(
@@ -320,19 +326,41 @@ runLaunchableSmokeTest(
       `${cloneDir}/nemoclaw/dist missing`,
     ).toBe(true);
 
-    const onboard = await host.command("nemoclaw", ["onboard", "--non-interactive"], {
-      artifactName: "phase-4-onboard",
-      cwd: cloneDir,
-      env: runEnv({
-        PATH: `/usr/local/bin:${process.env.PATH ?? ""}`,
-        NVIDIA_API_KEY: apiKey,
-        NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
-        NEMOCLAW_RECREATE_SANDBOX: "1",
-      }),
-      redactionValues: [apiKey],
-      timeoutMs: ONBOARD_TIMEOUT_MS,
-    });
-    expectExitZero(onboard, "nemoclaw onboard --non-interactive");
+    let onboard: ShellProbeResult | undefined;
+    for (let attempt = 1; attempt <= ONBOARD_ATTEMPTS; attempt += 1) {
+      onboard = await host.command("nemoclaw", ["onboard", "--non-interactive"], {
+        artifactName: attempt === 1 ? "phase-4-onboard" : `phase-4-onboard-attempt-${attempt}`,
+        cwd: cloneDir,
+        env: runEnv({
+          PATH: `/usr/local/bin:${process.env.PATH ?? ""}`,
+          NVIDIA_API_KEY: apiKey,
+          NEMOCLAW_MODEL: MODEL,
+          NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
+          NEMOCLAW_RECREATE_SANDBOX: "1",
+        }),
+        redactionValues: [apiKey],
+        timeoutMs: ONBOARD_TIMEOUT_MS,
+      });
+      if (onboard.exitCode === 0) break;
+      if (isTransientProviderValidationFailure(onboard) && attempt < ONBOARD_ATTEMPTS) {
+        await sleep(30_000 * attempt);
+        continue;
+      }
+      if (isTransientProviderValidationFailure(onboard) && process.env.GITHUB_ACTIONS === "true") {
+        await artifacts.writeJson("transient-provider-validation.skip.json", {
+          reason: "transient NVIDIA Endpoints validation failure during launchable onboard",
+          attempts: ONBOARD_ATTEMPTS,
+          sourceBoundary: "external NVIDIA Endpoints provider availability",
+          removalCondition:
+            "remove once CI endpoint validation is stable for a release cycle or covered by a hermetic provider-validation fixture",
+        });
+        skip(
+          `NVIDIA Endpoints validation hit a transient upstream/rate-limit failure after ${ONBOARD_ATTEMPTS} attempts`,
+        );
+      }
+      break;
+    }
+    expectExitZero(onboard as ShellProbeResult, "nemoclaw onboard --non-interactive");
 
     const list = await host.command("nemoclaw", ["list"], {
       artifactName: "phase-5-nemoclaw-list",
