@@ -76,7 +76,13 @@ if (cmd.includes("openclaw.json") && cmd.includes("cat --")) {
 }
 if (cmd.includes(".nemoclaw-restore") && cmd.includes("openclaw.json")) {
   const configPath = path.join(dir, "openclaw.json");
-  fs.writeFileSync(configPath, readStdin());
+  const restored = readStdin();
+  // Mirror the real restore command: the OpenClaw .last-good recovery anchor is
+  // refreshed from the staged temp BEFORE the live config is swapped (#5202).
+  if (cmd.includes("last-good")) {
+    fs.writeFileSync(path.join(dir, "openclaw.json.last-good"), restored);
+  }
+  fs.writeFileSync(configPath, restored);
   if (cmd.includes("sha256sum") && cmd.includes(".config-hash")) {
     const digest = require("crypto").createHash("sha256").update(fs.readFileSync(configPath)).digest("hex");
     fs.writeFileSync(path.join(dir, ".config-hash"), digest + "  openclaw.json\\n");
@@ -361,6 +367,15 @@ describe("OpenClaw durable config file (#5027)", () => {
         args: ["-y", "fs-server", "/work"],
       });
       expect(after.mcp.servers.github.env.GITHUB_TOKEN).toBe("[STRIPPED_BY_MIGRATION]");
+
+      // OpenClaw's .last-good recovery anchor is refreshed to the restored
+      // config so its integrity check does not revert the merge (#5202).
+      const lastGood = JSON.parse(
+        fs.readFileSync(path.join(openclawDir, "openclaw.json.last-good"), "utf-8"),
+      );
+      expect(lastGood.models.providers.inference.models[0].reasoning).toBe(true);
+      expect(lastGood.models.providers.inference.models[0].maxTokens).toBe(32768);
+      expect(lastGood.mcp.servers.filesystem.command).toBe("npx");
     } finally {
       if (oldOpenshell === undefined) {
         delete process.env.NEMOCLAW_OPENSHELL_BIN;
