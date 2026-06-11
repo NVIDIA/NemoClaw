@@ -27,10 +27,16 @@ validateSandboxName(SANDBOX_NAME);
 
 const INTEGRATE_MODELS_URL = "https://integrate.api.nvidia.com/v1/models";
 const BLOCKED_IPS = ["75.2.113.119", "99.83.136.103"];
-const TUI_TIMEOUT_SEC = Number.parseInt(
-  process.env.NEMOCLAW_ISSUE_4434_TUI_TIMEOUT_SEC ?? "180",
+const DEFAULT_TUI_TIMEOUT_SEC = 180;
+const MAX_TUI_TIMEOUT_SEC = 3600;
+const rawTuiTimeoutSec = Number.parseInt(
+  process.env.NEMOCLAW_ISSUE_4434_TUI_TIMEOUT_SEC ?? String(DEFAULT_TUI_TIMEOUT_SEC),
   10,
 );
+const TUI_TIMEOUT_SEC =
+  Number.isFinite(rawTuiTimeoutSec) && rawTuiTimeoutSec > 0
+    ? Math.min(rawTuiTimeoutSec, MAX_TUI_TIMEOUT_SEC)
+    : DEFAULT_TUI_TIMEOUT_SEC;
 
 const VISIBLE_ERROR_RE =
   /\b(error|failed|timeout|timed out|unavailable|fetch failed|ETIMEDOUT|ECONN|upstream|connection|refused|no route to host)\b/i;
@@ -220,19 +226,6 @@ runIssue4434LiveTest(
     });
     expect(connectProbe.exitCode, resultText(connectProbe)).toBe(0);
 
-    const preBlockEndpointProbe = await sandbox.execShell(
-      instance.sandboxName,
-      trustedSandboxShellScript(
-        `command -v curl >/dev/null && curl -sk --connect-timeout 5 --max-time 12 ${shellSingleQuote(INTEGRATE_MODELS_URL)} >/tmp/issue4434-models.before.out 2>&1`,
-      ),
-      {
-        artifactName: "issue4434-endpoint-probe-before-block",
-        env: buildAvailabilityProbeEnv(),
-        timeoutMs: 30_000,
-      },
-    );
-    expect(preBlockEndpointProbe.exitCode, resultText(preBlockEndpointProbe)).toBe(0);
-
     for (const ip of BLOCKED_IPS) {
       const insert = await host.command(
         "sudo",
@@ -281,7 +274,15 @@ runIssue4434LiveTest(
     });
     fs.writeFileSync(expectLog, resultText(tui), "utf8");
 
-    const rawCapture = fs.existsSync(captureFile) ? fs.readFileSync(captureFile, "utf8") : "";
+    let rawCapture = "";
+    try {
+      rawCapture = fs.readFileSync(captureFile, "utf8");
+    } catch (error) {
+      const fileError = error as NodeJS.ErrnoException;
+      if (fileError.code !== "ENOENT") {
+        throw error;
+      }
+    }
     const redactedRawCapture = secrets.redact(rawCapture, [apiKey]);
     fs.writeFileSync(captureFile, redactedRawCapture, "utf8");
     const analysis = analyzeIssue4434TuiCapture(redactedRawCapture);

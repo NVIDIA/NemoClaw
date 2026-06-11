@@ -43,19 +43,35 @@ const ADVISOR_PROVIDER = DEFAULT_ADVISOR_PROVIDER;
 const ADVISOR_MODEL = DEFAULT_ADVISOR_MODEL;
 const ADVISOR_CREDENTIAL_ENV = ["E2E", "ADVISOR", "API", "KEY"].join("_");
 const SCENARIO_WORKFLOW = "e2e-vitest-scenarios.yaml";
+const SCENARIO_WORKFLOW_PATH = `.github/workflows/${SCENARIO_WORKFLOW}`;
 const SCENARIO_ALL_ID = "e2e-scenarios-all";
+const REGISTRY_LIVE_ENTRYPOINT = "test/e2e-scenario/live/registry-scenarios.test.ts";
+const FREE_STANDING_LIVE_TEST_PATTERN = /^test\/e2e-scenario\/live\/[^/]+\.test\.ts$/;
+const FREE_STANDING_LIVE_FILE_PATTERN = /^test\/e2e-scenario\/live\/[^/]+\.ts$/;
 const ALLOWED_WORKFLOWS = new Set<string>([SCENARIO_WORKFLOW]);
-// Scenario IDs are embedded into the dispatch command we hand to users; restrict
-// to a strict kebab-case allowlist so a hallucinated id can never inject shell
-// metacharacters or non-canonical tokens into the dispatch line.
+// Scenario IDs and job IDs are embedded into the dispatch command we hand to
+// users; restrict them to shell-safe allowlists so a hallucinated id can never
+// inject metacharacters or non-canonical tokens into the dispatch line.
 const SCENARIO_ID_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
+const JOB_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 
-export function canonicalDispatchCommand(workflow: string, id: string): string {
+type ScenarioSelectorType = "all" | "scenario" | "job";
+
+export function canonicalDispatchCommand(
+  workflow: string,
+  id: string,
+  selectorType: ScenarioSelectorType = id === SCENARIO_ALL_ID ? "all" : "scenario",
+): string {
   if (workflow !== SCENARIO_WORKFLOW) {
     throw new Error(`Unknown scenario workflow: ${workflow}`);
   }
-  if (id === SCENARIO_ALL_ID) {
+  if (selectorType === "all") {
+    if (id !== SCENARIO_ALL_ID) throw new Error(`Invalid fan-out selector id: ${id}`);
     return `gh workflow run ${SCENARIO_WORKFLOW} --ref <pr-head-ref>`;
+  }
+  if (selectorType === "job") {
+    if (!JOB_ID_PATTERN.test(id)) throw new Error(`Invalid Vitest job id: ${id}`);
+    return `gh workflow run ${SCENARIO_WORKFLOW} --ref <pr-head-ref> --field jobs=${id}`;
   }
   return `gh workflow run ${SCENARIO_WORKFLOW} --ref <pr-head-ref> --field scenarios=${id}`;
 }
@@ -73,11 +89,23 @@ type AdvisorMetadata = {
 export type ScenarioRecommendation = {
   id: string;
   workflow: string;
+  selectorType: ScenarioSelectorType;
   scenario?: string;
   suiteFilter?: string;
   required: boolean;
   reason: string;
   dispatchCommand: string;
+};
+
+export type VitestWorkflowJob = {
+  id: string;
+  liveTestFiles: string[];
+};
+
+type ScenarioNormalizationContext = {
+  vitestWorkflowText?: string;
+  freeStandingJobs: VitestWorkflowJob[];
+  liveTestToJobs: Map<string, string[]>;
 };
 
 export type ScenarioAdvisorResult = {
@@ -176,6 +204,7 @@ async function main(): Promise<void> {
     result = normalizeScenarioAdvisorResult(
       extractJson(sdkResult.text || sdkResult.raw, artifacts.raw, "e2e_scenario_advisor_json"),
       metadata,
+      { vitestWorkflowText: readVitestWorkflowText() },
     );
   } catch (error: unknown) {
     writeFailure(error instanceof Error ? error.message : String(error));
@@ -236,8 +265,10 @@ export function buildSystemPrompt(schema: AdvisorSchema): string {
     "- `test/e2e-scenario/fixtures/` and `test/e2e-scenario/support-tests/` — shared Vitest fixtures, clients, and phase helpers.",
     "",
     "Decision policy:",
-    "- Required (all scenarios): changes to scenario registry, matrix emission, expected-state metadata, live support classification, shared fixtures, or the Vitest scenario workflow itself. Recommend the `e2e-scenarios-all` fan-out through `e2e-vitest-scenarios.yaml`.",
+    "- Required (all scenarios): changes to scenario registry, matrix emission, expected-state metadata, live support classification, shared fixtures, or the shared Vitest scenario workflow machinery. Recommend the `e2e-scenarios-all` fan-out through `e2e-vitest-scenarios.yaml`.",
     "- Required (targeted): fixture, live test, manifest, runtime-support, or scenario changes that affect a specific subset. Recommend the smallest set of live-supported typed scenario IDs that exercises the changed surface.",
+    "- Required (free-standing job): if a PR wires or changes a discrete live Vitest job in `.github/workflows/e2e-vitest-scenarios.yaml` for a specific `test/e2e-scenario/live/*.test.ts`, prefer that job over `e2e-scenarios-all`. Use selectorType=`job`, id=`<job-id>`, workflow=`e2e-vitest-scenarios.yaml`, and dispatchCommand exactly `gh workflow run e2e-vitest-scenarios.yaml --ref <pr-head-ref> --field jobs=<job-id>`.",
+    "- Missing wiring: if a PR adds or changes a free-standing live Vitest file under `test/e2e-scenario/live/*.test.ts` but that file is not referenced by `.github/workflows/e2e-vitest-scenarios.yaml` and is not `registry-scenarios.test.ts`, do not recommend the fan-out as proof. Return no required/optional recommendations and set `noScenarioE2eReason` to say the test must be wired into `e2e-vitest-scenarios.yaml` before it can be dispatched.",
     "- Optional: adjacent scenarios that exercise the same suite on a different platform/onboarding (e.g. macOS, WSL, GPU) but are not the primary target. Special-runner scenarios (`gpu-`, `macos-`, `wsl-`, `brev-`) should usually be optional unless they are the only path that exercises the change.",
     "- None: docs-only, comment-only, tests-only outside `test/e2e-scenario/`, or changes that cannot affect Vitest scenario behavior. Set `noScenarioE2eReason` and return empty `required`/`optional` arrays.",
     "",
@@ -245,8 +276,9 @@ export function buildSystemPrompt(schema: AdvisorSchema): string {
     "- Only recommend live-supported typed scenario IDs that exist in the registry or the synthetic fan-out id `e2e-scenarios-all`. Do not invent IDs.",
     "- The only allowed workflow is `e2e-vitest-scenarios.yaml`.",
     "- Each `dispatchCommand` for a single-scenario recommendation MUST be exactly: `gh workflow run e2e-vitest-scenarios.yaml --ref <pr-head-ref> --field scenarios=<id>`.",
-    "- For the fan-out, use exactly: `gh workflow run e2e-vitest-scenarios.yaml --ref <pr-head-ref>` and set `id`/`workflow` to `e2e-scenarios-all`/`e2e-vitest-scenarios.yaml`.",
-    "- The normalizer validates targeted IDs against the trusted advisor checkout's registry/runtime-support modules, not PR-local TypeScript. If a PR adds or newly wires a scenario that is not live-supported on trusted `main` yet, recommend the `e2e-scenarios-all` fan-out rather than a targeted dispatch.",
+    "- Each `dispatchCommand` for a free-standing job recommendation MUST be exactly: `gh workflow run e2e-vitest-scenarios.yaml --ref <pr-head-ref> --field jobs=<id>`.",
+    "- For the fan-out, use exactly: `gh workflow run e2e-vitest-scenarios.yaml --ref <pr-head-ref>` and set `id`/`workflow`/`selectorType` to `e2e-scenarios-all`/`e2e-vitest-scenarios.yaml`/`all`.",
+    "- The normalizer validates targeted IDs against the trusted advisor checkout's registry/runtime-support modules, not PR-local TypeScript. If a PR adds or newly wires a typed registry scenario that is not live-supported on trusted `main` yet, recommend the `e2e-scenarios-all` fan-out rather than a targeted dispatch. This fallback does not apply to free-standing live test jobs.",
     "- A `suiteFilter` may be set on a recommendation as analytical metadata explaining why the scenario was selected. It must NOT leak into the dispatch command.",
     "- `relevantChangedFiles` must be the subset of `changedFiles` under `test/e2e-scenario/`, `.github/workflows/e2e-vitest-scenarios.yaml`, or other directly scenario-relevant paths.",
     "",
@@ -289,22 +321,49 @@ ${diff || "<no diff available>"}
 export function normalizeScenarioAdvisorResult(
   result: unknown,
   metadata: AdvisorMetadata,
+  options: { vitestWorkflowText?: string } = {},
 ): ScenarioAdvisorResult {
   if (!result || typeof result !== "object" || Array.isArray(result)) {
     throw new Error("Scenario advisor returned a non-object result");
   }
 
   const object = result as Record<string, unknown>;
-  const required = sanitizeRecommendations(object.required, true);
-  const optional = sanitizeRecommendations(object.optional, false);
+  const context = buildScenarioNormalizationContext(options.vitestWorkflowText);
+  const unwiredFreeStandingLiveTests = findUnwiredFreeStandingLiveTests(
+    metadata.changedFiles,
+    context.vitestWorkflowText,
+  );
+  const suppressFanout = shouldSuppressFanoutForUnwiredLiveTests(
+    metadata.changedFiles,
+    unwiredFreeStandingLiveTests,
+  );
+  const deterministicJobs = deterministicFreeStandingJobRecommendations(metadata.changedFiles, context);
+  const required = suppressFanout
+    ? []
+    : mergeRecommendations(
+        deterministicJobs,
+        suppressFanoutForFocusedJobs(
+          sanitizeRecommendations(object.required, true, context),
+          deterministicJobs,
+          metadata.changedFiles,
+        ),
+      );
+  const optional = suppressFanout
+    ? []
+    : suppressFanoutForFocusedJobs(
+        sanitizeRecommendations(object.optional, false, context),
+        deterministicJobs,
+        metadata.changedFiles,
+      );
   const reasonField = object.noScenarioE2eReason;
-  const noScenarioE2eReason =
-    typeof reasonField === "string" && reasonField.trim()
+  const noScenarioE2eReason = suppressFanout
+    ? missingFreeStandingLiveWiringReason(unwiredFreeStandingLiveTests)
+    : typeof reasonField === "string" && reasonField.trim() && required.length === 0 && optional.length === 0
       ? reasonField.trim()
-      : reasonField === null || reasonField === undefined
-        ? required.length === 0 && optional.length === 0
-          ? "Advisor reported no Vitest E2E scenario impact."
-          : null
+      : required.length === 0 && optional.length === 0
+        ? unwiredFreeStandingLiveTests.length > 0
+          ? missingFreeStandingLiveWiringReason(unwiredFreeStandingLiveTests)
+          : "Advisor reported no Vitest E2E scenario impact."
         : null;
 
   return {
@@ -314,44 +373,204 @@ export function normalizeScenarioAdvisorResult(
     changedFiles: metadata.changedFiles,
     relevantChangedFiles: stringArrayWithinChanged(object.relevantChangedFiles, metadata.changedFiles),
     required,
-    optional: optional.filter((candidate) => !required.some((item) => item.id === candidate.id)),
+    optional: optional.filter(
+      (candidate) => !required.some((item) => item.id === candidate.id && item.selectorType === candidate.selectorType),
+    ),
     noScenarioE2eReason,
     confidence: enumValue<["low", "medium", "high"]>(object.confidence, ["low", "medium", "high"], "medium"),
   };
 }
 
-function sanitizeRecommendations(value: unknown, requiredFlag: boolean): ScenarioRecommendation[] {
+function readVitestWorkflowText(): string | undefined {
+  try {
+    return fs.readFileSync(path.join(root, SCENARIO_WORKFLOW_PATH), "utf8");
+  } catch {
+    return undefined;
+  }
+}
+
+function buildScenarioNormalizationContext(vitestWorkflowText = readVitestWorkflowText()): ScenarioNormalizationContext {
+  const freeStandingJobs = extractFreeStandingVitestJobs(vitestWorkflowText ?? "");
+  const liveTestToJobs = new Map<string, string[]>();
+  for (const job of freeStandingJobs) {
+    for (const file of job.liveTestFiles) {
+      const jobs = liveTestToJobs.get(file) ?? [];
+      jobs.push(job.id);
+      liveTestToJobs.set(file, jobs);
+    }
+  }
+  return { vitestWorkflowText, freeStandingJobs, liveTestToJobs };
+}
+
+export function extractFreeStandingVitestJobs(workflowText: string): VitestWorkflowJob[] {
+  const jobsBlockStart = workflowText.search(/^jobs:\s*$/m);
+  if (jobsBlockStart === -1) return [];
+
+  const lines = workflowText.slice(jobsBlockStart).split(/\r?\n/);
+  const jobs: VitestWorkflowJob[] = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const match = lines[index].match(/^  ([A-Za-z0-9_-]+):\s*$/);
+    if (!match) continue;
+
+    const id = match[1] || "";
+    const bodyLines: string[] = [];
+    for (let bodyIndex = index + 1; bodyIndex < lines.length; bodyIndex += 1) {
+      if (/^  [A-Za-z0-9_-]+:\s*$/.test(lines[bodyIndex])) break;
+      bodyLines.push(lines[bodyIndex]);
+    }
+    const body = bodyLines.join("\n");
+    if (!body.includes("inputs.jobs") || !body.includes(`,${id},`)) continue;
+    const liveTestFiles = uniqueStrings(
+      [...body.matchAll(/test\/e2e-scenario\/live\/[A-Za-z0-9._-]+\.test\.ts/g)].map(
+        (item) => item[0],
+      ),
+    ).filter((file) => file !== REGISTRY_LIVE_ENTRYPOINT);
+    if (liveTestFiles.length === 0) continue;
+    jobs.push({ id, liveTestFiles });
+  }
+  return jobs.sort((a, b) => a.id.localeCompare(b.id));
+}
+
+function findUnwiredFreeStandingLiveTests(
+  changedFiles: string[],
+  vitestWorkflowText = readVitestWorkflowText(),
+): string[] {
+  return changedFiles.filter(
+    (file) =>
+      FREE_STANDING_LIVE_TEST_PATTERN.test(file) &&
+      file !== REGISTRY_LIVE_ENTRYPOINT &&
+      !(vitestWorkflowText ?? "").includes(file),
+  );
+}
+
+function shouldSuppressFanoutForUnwiredLiveTests(
+  changedFiles: string[],
+  unwiredFreeStandingLiveTests: string[],
+): boolean {
+  if (unwiredFreeStandingLiveTests.length === 0) return false;
+  const relevantFiles = changedFiles.filter(isVitestScenarioRelevantFile);
+  return relevantFiles.every(
+    (file) =>
+      unwiredFreeStandingLiveTests.includes(file) ||
+      file === SCENARIO_WORKFLOW_PATH,
+  );
+}
+
+function isVitestScenarioRelevantFile(file: string): boolean {
+  return (
+    file === SCENARIO_WORKFLOW_PATH ||
+    file.startsWith("test/e2e-scenario/") ||
+    file.startsWith("tools/e2e-scenario") ||
+    file.startsWith("tools/e2e-scenarios")
+  );
+}
+
+function missingFreeStandingLiveWiringReason(files: string[]): string {
+  const fileList = files.map((file) => `\`${file}\``).join(", ");
+  return `New free-standing live Vitest test ${fileList} is not wired into \`${SCENARIO_WORKFLOW_PATH}\`, so the Vitest scenario workflow cannot dispatch it yet. Add a discrete job or register it as a typed live scenario before treating the PR as E2E-runnable.`;
+}
+
+function deterministicFreeStandingJobRecommendations(
+  changedFiles: string[],
+  context: ScenarioNormalizationContext,
+): ScenarioRecommendation[] {
+  const liveFiles = changedFiles.filter(
+    (file) => FREE_STANDING_LIVE_FILE_PATTERN.test(file) && file !== REGISTRY_LIVE_ENTRYPOINT,
+  );
+  const output: ScenarioRecommendation[] = [];
+  const seen = new Set<string>();
+  for (const file of liveFiles) {
+    for (const job of context.liveTestToJobs.get(file) ?? []) {
+      if (seen.has(job)) continue;
+      seen.add(job);
+      output.push({
+        id: job,
+        workflow: SCENARIO_WORKFLOW,
+        selectorType: "job",
+        required: true,
+        reason: `Focused free-standing Vitest job wired for changed live test \`${file}\`.`,
+        dispatchCommand: canonicalDispatchCommand(SCENARIO_WORKFLOW, job, "job"),
+      });
+    }
+  }
+  return output.sort((a, b) => a.id.localeCompare(b.id));
+}
+
+function suppressFanoutForFocusedJobs(
+  recommendations: ScenarioRecommendation[],
+  deterministicJobs: ScenarioRecommendation[],
+  changedFiles: string[],
+): ScenarioRecommendation[] {
+  if (deterministicJobs.length === 0) return recommendations;
+  const relevantFiles = changedFiles.filter(isVitestScenarioRelevantFile);
+  const onlyFocusedFreeStandingChange = relevantFiles.every(
+    (file) =>
+      file === SCENARIO_WORKFLOW_PATH ||
+      FREE_STANDING_LIVE_FILE_PATTERN.test(file) ||
+      file.startsWith("test/e2e-scenario/support-tests/") ||
+      file.startsWith("tools/e2e-scenarios/"),
+  );
+  if (!onlyFocusedFreeStandingChange) return recommendations;
+  return recommendations.filter((item) => item.selectorType !== "all");
+}
+
+function mergeRecommendations(
+  first: ScenarioRecommendation[],
+  second: ScenarioRecommendation[],
+): ScenarioRecommendation[] {
   const seen = new Set<string>();
   const output: ScenarioRecommendation[] = [];
+  for (const item of [...first, ...second]) {
+    const key = `${item.selectorType}:${item.id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    output.push(item);
+  }
+  return output;
+}
+
+function sanitizeRecommendations(
+  value: unknown,
+  requiredFlag: boolean,
+  context: ScenarioNormalizationContext,
+): ScenarioRecommendation[] {
+  const seen = new Set<string>();
+  const output: ScenarioRecommendation[] = [];
+  const allowedJobIds = new Set(context.freeStandingJobs.map((job) => job.id));
   for (const item of recordItems(value)) {
     const id = stringOrUndefined(item.id);
     const reason = stringOrUndefined(item.reason);
     const workflow = stringOrUndefined(item.workflow);
     if (!id || !reason || !workflow) continue;
     // Allowlist: only the Vitest scenario workflow may be dispatched, and
-    // only kebab-case ids are accepted. Reject everything else; we do not
+    // only safe selector ids are accepted. Reject everything else; we do not
     // trust the model to author shell-safe dispatch commands.
     if (!ALLOWED_WORKFLOWS.has(workflow)) continue;
-    if (!SCENARIO_ID_PATTERN.test(id)) continue;
-    const scenarioDefinition = id === SCENARIO_ALL_ID ? undefined : getScenario(id);
+    const selectorType = normalizeSelectorType(item.selectorType, id, allowedJobIds);
+    if (!selectorType) continue;
+    if (selectorType === "job" && !allowedJobIds.has(id)) continue;
+    if (selectorType !== "job" && !SCENARIO_ID_PATTERN.test(id)) continue;
+    const scenarioDefinition = selectorType === "all" ? undefined : getScenario(id);
     if (
-      id !== SCENARIO_ALL_ID &&
+      selectorType === "scenario" &&
       (!scenarioDefinition || !liveScenarioSupport(scenarioDefinition).supported)
     ) {
       continue;
     }
-    if (seen.has(id)) continue;
-    seen.add(id);
+    const key = `${selectorType}:${id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
     const scenario = stringOrUndefined(item.scenario);
     const suiteFilter = stringOrUndefined(item.suiteFilter);
     // Build dispatchCommand server-side. The model's value is intentionally
     // discarded so prompt drift can never leak a non-canonical dispatch into
     // the sticky comment.
-    const dispatchCommand = canonicalDispatchCommand(workflow, id);
+    const dispatchCommand = canonicalDispatchCommand(workflow, id, selectorType);
     output.push(
       dropUndefinedValues({
         id,
         workflow,
+        selectorType,
         scenario,
         suiteFilter,
         // Authority is the array position, not the model. Items in required[]
@@ -364,6 +583,21 @@ function sanitizeRecommendations(value: unknown, requiredFlag: boolean): Scenari
     );
   }
   return output;
+}
+
+function normalizeSelectorType(
+  value: unknown,
+  id: string,
+  allowedJobIds: Set<string>,
+): ScenarioSelectorType | null {
+  if (value === "all" || value === "scenario" || value === "job") return value;
+  if (id === SCENARIO_ALL_ID) return "all";
+  if (allowedJobIds.has(id)) return "job";
+  return "scenario";
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values)];
 }
 
 function stringArrayWithinChanged(value: unknown, changedFiles: string[]): string[] {
