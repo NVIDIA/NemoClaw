@@ -41,6 +41,19 @@ function liveEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   };
 }
 
+function isTransientProviderValidationThrottle(result: {
+  exitCode: number | null;
+  stdout: string;
+  stderr: string;
+}): boolean {
+  const text = resultText(result);
+  return (
+    result.exitCode !== 0 &&
+    /HTTP 429|Too Many Requests/i.test(text) &&
+    /endpoint validation failed/i.test(text)
+  );
+}
+
 async function ignoreCleanupError(run: () => Promise<unknown>): Promise<void> {
   try {
     await run();
@@ -219,8 +232,18 @@ liveTest(
         timeoutMs: ONBOARD_TIMEOUT_MS,
       },
     );
-    expect(onboard.exitCode, resultText(onboard)).toBe(0);
-    expect(resultText(onboard)).toMatch(/Creating sandbox|Sandbox '.+' created/);
+    const onboardText = resultText(onboard);
+    if (isTransientProviderValidationThrottle(onboard)) {
+      await artifacts.writeJson("scenario-skip.json", {
+        id: "openclaw-plugin-runtime-exdev",
+        reason: "provider-validation-throttled",
+        detail:
+          "NVIDIA endpoint validation returned HTTP 429 before sandbox creation; EXDEV probe was not exercised.",
+      });
+      skip("NVIDIA endpoint validation was rate limited before sandbox creation");
+    }
+    expect(onboard.exitCode, onboardText).toBe(0);
+    expect(onboardText).toMatch(/Creating sandbox|Sandbox '.+' created/);
 
     const df = await sandbox.execShell(
       SANDBOX_NAME,
