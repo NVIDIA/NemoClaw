@@ -9,6 +9,10 @@ import { resolveOpenshell } from "../adapters/openshell/resolve";
 import { isErrnoException } from "../core/errno";
 import * as dockerDriverGatewayRuntimeMarker from "./docker-driver-gateway-runtime-marker";
 import { isLinuxDockerDriverGatewayEnabled } from "./docker-driver-platform";
+import {
+  gatewayProcessCmdlineMatches,
+  OPENSHELL_GATEWAY_PROCESS_NAMES,
+} from "./gateway-process-identity";
 import * as gatewayBinding from "./gateway-binding";
 import type { PortProbeResult } from "./preflight";
 import * as vmDriverProcess from "./vm-driver-process";
@@ -236,34 +240,14 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
     }
   }
 
-  function cleanProcessCommandToken(token: string): string {
-    return token.replace(/^['"]|['"]$/g, "").replace(/ \(deleted\)$/, "");
-  }
-
-  const DOCKER_DRIVER_GATEWAY_CONTAINER_RUNTIME_NAMES = new Set(["docker"]);
-  const DOCKER_DRIVER_GATEWAY_MOUNT_PATH = "/opt/nemoclaw/openshell-gateway";
-
   function processIdentityMatchesGatewayBinary(
     identity: string,
     gatewayBin?: string | null,
   ): boolean {
-    const expectedExe = normalizeGatewayExecutablePath(gatewayBin);
-    const tokens = identity.split(/\s+/).filter(Boolean).map(cleanProcessCommandToken);
-    const executableToken = tokens[0];
-    if (!executableToken) return false;
-    const executableName = path.basename(executableToken);
-    if (executableName === "openshell-gateway") return true;
-    if (
-      expectedExe &&
-      executableToken.includes(path.sep) &&
-      normalizeGatewayExecutablePath(executableToken) === expectedExe
-    ) {
-      return true;
-    }
-    if (DOCKER_DRIVER_GATEWAY_CONTAINER_RUNTIME_NAMES.has(executableName)) {
-      return tokens.slice(1).includes(DOCKER_DRIVER_GATEWAY_MOUNT_PATH);
-    }
-    return false;
+    return gatewayProcessCmdlineMatches(identity, gatewayBin, {
+      processNames: OPENSHELL_GATEWAY_PROCESS_NAMES,
+      resolveExecutablePath: normalizeGatewayExecutablePath,
+    });
   }
 
   function shouldRequireDockerDriverEnv(platform: NodeJS.Platform = process.platform): boolean {
