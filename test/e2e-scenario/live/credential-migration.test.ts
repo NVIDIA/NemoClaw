@@ -17,7 +17,10 @@ import { shouldRunLiveE2EScenarios } from "../fixtures/live-project-gate.ts";
 // a successful real onboard registers the migrated value with the OpenShell
 // gateway, the plaintext file is removed after success, credentials list reads
 // from the gateway, and secure unlink removes a planted symlink without touching
-// its target. No registry, migration ledger, or shared helper is introduced.
+// its target. The live onboard uses OpenAI-compatible provider wiring pointed at
+// the sandbox-internal host boundary so the migration proof does not depend on
+// external NVIDIA endpoint quota. No registry, migration ledger, or shared helper
+// is introduced.
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const CLI_ENTRYPOINT = path.join(REPO_ROOT, "bin", "nemoclaw.js");
@@ -134,8 +137,14 @@ runCredentialMigrationTest(
   "credential migration stages legacy file into gateway and removes plaintext safely",
   { timeout: ONBOARD_TIMEOUT_MS + INSTALL_TIMEOUT_MS + 5 * 60_000 },
   async ({ artifacts, cleanup, host, secrets, skip }) => {
-    const apiKey = secrets.required("NVIDIA_API_KEY");
-    expect(apiKey.startsWith("nvapi-"), "NVIDIA_API_KEY must start with nvapi-").toBe(true);
+    // Use the existing nightly secret as the migrated value, but register it
+    // under COMPATIBLE_API_KEY so this migration proof exercises real gateway
+    // provider storage without depending on external NVIDIA endpoint quota.
+    const migratedCredentialValue = secrets.required("NVIDIA_API_KEY");
+    expect(
+      migratedCredentialValue.startsWith("nvapi-"),
+      "NVIDIA_API_KEY must start with nvapi-",
+    ).toBe(true);
     expect(fs.existsSync(CLI_ENTRYPOINT), "bin/nemoclaw.js missing").toBe(true);
     expect(
       fs.existsSync(DIST_CREDENTIAL_STORE),
@@ -171,8 +180,8 @@ runCredentialMigrationTest(
       migratedFrom: "test/e2e/test-credential-migration.sh",
       sandboxName: SANDBOX_NAME,
       contracts: [
-        "legacy credentials.json stages allowlisted keys into onboard env",
-        "successful onboard registers the migrated value with OpenShell gateway",
+        "legacy credentials.json stages allowlisted provider keys into onboard env",
+        "successful compatible-endpoint onboard registers the migrated value with OpenShell gateway",
         "successful onboard removes plaintext credentials.json",
         "tampered non-credential keys do not become gateway providers",
         "credentials list reads providers from the gateway, not disk",
@@ -189,7 +198,7 @@ runCredentialMigrationTest(
       legacyFile,
       JSON.stringify(
         {
-          NVIDIA_API_KEY: apiKey,
+          COMPATIBLE_API_KEY: migratedCredentialValue,
           OPENSHELL_GATEWAY: "evil-gw-from-tampered-file",
           NODE_OPTIONS: "--require=/tmp/evil.js",
         },
@@ -204,9 +213,13 @@ runCredentialMigrationTest(
       env: testEnv(home, {
         NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
         NEMOCLAW_RECREATE_SANDBOX: "1",
+        NEMOCLAW_PROVIDER: "custom",
+        NEMOCLAW_ENDPOINT_URL: "http://host.openshell.internal:18089/v1",
+        NEMOCLAW_MODEL: "credential-migration/mock-model",
+        NEMOCLAW_PREFERRED_API: "openai-completions",
         NEMOCLAW_POLICY_MODE: "skip",
       }),
-      redactionValues: [apiKey],
+      redactionValues: [migratedCredentialValue],
       timeoutMs: ONBOARD_TIMEOUT_MS,
     });
     const onboardText = resultText(onboard);
@@ -243,7 +256,7 @@ runCredentialMigrationTest(
     const credentialsList = await host.command("node", [CLI_ENTRYPOINT, "credentials", "list"], {
       artifactName: "nemoclaw-credentials-list",
       env: testEnv(home),
-      redactionValues: [apiKey],
+      redactionValues: [migratedCredentialValue],
       timeoutMs: 60_000,
     });
     const credentialsText = resultText(credentialsList);
