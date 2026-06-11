@@ -30,6 +30,7 @@ const { stopStaleDashboardListenersForSandbox } = require("./onboard/stale-gatew
 const extraPlaceholderKeysModule: typeof import("./onboard/extra-placeholder-keys") = require("./onboard/extra-placeholder-keys");
 const buildContextStage: typeof import("./onboard/build-context-stage") = require("./onboard/build-context-stage");
 const sandboxBuildPatchConfig: typeof import("./onboard/sandbox-build-patch-config") = require("./onboard/sandbox-build-patch-config");
+const sandboxDockerfilePatchFlow: typeof import("./onboard/sandbox-dockerfile-patch-flow") = require("./onboard/sandbox-dockerfile-patch-flow");
 const sandboxCreateLaunch: typeof import("./onboard/sandbox-create-launch") = require("./onboard/sandbox-create-launch");
 const {
   ensureOllamaLoopbackSystemdOverride,
@@ -155,7 +156,6 @@ const docker: typeof import("./adapters/docker") = require("./adapters/docker");
 const {
   dockerContainerInspectFormat,
   dockerExecArgv,
-  dockerImageInspect,
   dockerInfoFormat,
   dockerInspect,
   dockerRemoveVolumesByPrefix,
@@ -3054,68 +3054,22 @@ async function createSandbox(
   sandboxBuildPatchConfig.prepareSandboxBuildPatchConfig({
     configuredMessagingChannels,
   });
-  // Pull the base image and resolve its digest so the Dockerfile is pinned to
-  // exactly what we just fetched. This prevents stale :latest tags from
-  // silently reusing a cached old image after NemoClaw upgrades (#1904).
-  const resolved =
-    agent && !fromDockerfile
-      ? null
-      : pullAndResolveBaseImageDigest({
-          requireOpenshellSandboxAbi: isLinuxDockerDriverGatewayEnabled(),
-        });
-  if (resolved?.digest) {
-    console.log(`  Pinning base image to ${resolved.digest.slice(0, 19)}...`);
-  } else if (resolved) {
-    console.log(`  Using sandbox base image ${resolved.ref}`);
-  } else if (!(agent && !fromDockerfile)) {
-    // Check if the image exists locally before falling back to unpinned :latest.
-    // On a first-time install behind a firewall with no cached image, warn early
-    // so the user knows the build will likely fail.
-    const localCheck = dockerImageInspect(`${SANDBOX_BASE_IMAGE}:${SANDBOX_BASE_TAG}`, {
-      ignoreError: true,
-      suppressOutput: true,
-    });
-    if (localCheck.status === 0) {
-      console.warn("  Warning: could not pull base image from registry; using cached :latest.");
-    } else {
-      console.warn(
-        `  Warning: base image ${SANDBOX_BASE_IMAGE}:${SANDBOX_BASE_TAG} is not available locally.`,
-      );
-      console.warn("  The build will fail unless Docker can pull the image during build.");
-      console.warn("  If offline, pull the image manually first:");
-      console.warn(`    docker pull ${SANDBOX_BASE_IMAGE}:${SANDBOX_BASE_TAG}`);
-    }
-  }
-  const buildId = String(Date.now());
-  // OpenClaw never uses a direct container-loopback inference URL: the agent's
-  // isolated sandbox netns can't reach the host loopback even under --network
-  // host. For local providers this drops the host-network GPU opt-in so
-  // inference uses the reachable inference.local route (re-checking the bridge
-  // it now needs); OpenClaw falls back to OpenShell-managed routing (#4509).
-  await dockerGpuLocalInference.enforceDockerGpuPatchPreserveNetwork(
-    provider,
-    effectiveSandboxGpuConfig,
-    {
-      dockerDriverGateway: isLinuxDockerDriverGatewayEnabled(),
-      log: console.log,
-    },
-  );
-  const sandboxInferenceBaseUrlOverride = null;
-  patchStagedDockerfile(
+  const { buildId } = await sandboxDockerfilePatchFlow.prepareSandboxDockerfilePatch({
+    agent,
+    fromDockerfile,
+    sandboxBaseImage: SANDBOX_BASE_IMAGE,
+    sandboxBaseTag: SANDBOX_BASE_TAG,
     stagedDockerfile,
     model,
     chatUiUrl,
-    buildId,
     provider,
     preferredInferenceApi,
     webSearchConfig,
-    resolved ? resolved.ref : null,
-    // Docker-on-Colima uses normal container ownership; keep the old VM chmod
-    // compatibility path disabled unless a future VM-specific flow opts in.
-    false,
-    sandboxInferenceBaseUrlOverride,
     hermesToolGateways,
-  );
+    sandboxGpuConfig: effectiveSandboxGpuConfig,
+    log: console.log,
+    warn: console.warn,
+  });
   const sandboxReadyTimeoutSecs = getSandboxReadyTimeoutSecs(effectiveSandboxGpuConfig);
   const { createCommand, effectiveDashboardPort, sandboxEnv, sandboxStartupCommand } =
     sandboxCreateLaunch.prepareSandboxCreateLaunch({
