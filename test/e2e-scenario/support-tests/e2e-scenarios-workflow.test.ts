@@ -306,4 +306,32 @@ jobs:
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
+
+  it("rejects raw jobs selector echo from matrix generation", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-vitest-workflow-"));
+    const workflowPath = path.join(tmp, "workflow.yaml");
+    const workflow = fs.readFileSync(
+      path.join(process.cwd(), ".github/workflows/e2e-vitest-scenarios.yaml"),
+      "utf8",
+    );
+    fs.writeFileSync(
+      workflowPath,
+      workflow.replace(
+        'echo "::error::Invalid jobs input; use comma-separated job ids" >&2\n            exit 1\n          fi\n          matrix=',
+        'echo "::error::Invalid jobs input: ${JOBS}" >&2\n            exit 1\n          fi\n          matrix=',
+      ),
+    );
+
+    try {
+      const errors = validateE2eVitestScenariosWorkflowBoundary(workflowPath);
+      expect(errors).toEqual(
+        expect.arrayContaining([
+          "step 'Generate Vitest scenario matrix' run script must include Invalid jobs input; use comma-separated job ids",
+          "step 'Generate Vitest scenario matrix' run script must not include Invalid jobs input: ${JOBS}",
+        ]),
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
 });

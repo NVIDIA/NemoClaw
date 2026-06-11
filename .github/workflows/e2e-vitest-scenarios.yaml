@@ -97,7 +97,7 @@ jobs:
             args+=(--scenarios "${SCENARIOS}")
           fi
           if [ -n "${JOBS}" ] && [[ ! "${JOBS}" =~ ^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$ ]]; then
-            echo "::error::Invalid jobs input: ${JOBS}" >&2
+            echo "::error::Invalid jobs input; use comma-separated job ids" >&2
             exit 1
           fi
           matrix="$(npx tsx test/e2e-scenario/scenarios/run.ts "${args[@]}")"

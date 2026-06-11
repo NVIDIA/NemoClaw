@@ -237,6 +237,17 @@ function expectRotationOutput(
   expect(output).toContain("Rebuilding sandbox to propagate new credentials");
 }
 
+function assertTokenPairsDiffer(): void {
+  for (const [label, a, b] of [
+    ["TELEGRAM_BOT_TOKEN", TOKEN_A.telegram, TOKEN_B.telegram],
+    ["DISCORD_BOT_TOKEN", TOKEN_A.discord, TOKEN_B.discord],
+    ["SLACK_BOT_TOKEN", TOKEN_A.slackBot, TOKEN_B.slackBot],
+    ["SLACK_APP_TOKEN", TOKEN_A.slackApp, TOKEN_B.slackApp],
+  ] as const) {
+    expect(a, `${label}_A and ${label}_B must be different`).not.toBe(b);
+  }
+}
+
 function redactionValues(): string[] {
   return [
     "token-rotation-compatible-e2e",
@@ -283,7 +294,7 @@ async function runOnboard(
   });
 }
 
-async function assertSandboxListed(
+async function assertSandboxRunning(
   host: import("../fixtures/clients/host.ts").HostCliClient,
   artifactName: string,
 ): Promise<void> {
@@ -296,8 +307,10 @@ async function assertSandboxListed(
       timeoutMs: 30_000,
     },
   );
-  expect(sandboxList.exitCode, resultText(sandboxList)).toBe(0);
-  expect(sandboxList.stdout, resultText(sandboxList)).toContain(SANDBOX_NAME);
+  const output = resultText(sandboxList);
+  expect(sandboxList.exitCode, output).toBe(0);
+  expect(sandboxList.stdout, output).toContain(SANDBOX_NAME);
+  expect(sandboxList.stdout, output).toMatch(/\b(?:Ready|Running)\b/i);
 }
 
 async function deleteSandboxIfOpenshellExists(
@@ -348,6 +361,8 @@ liveTest(
       fs.existsSync(CLI_ENTRYPOINT),
       "run `npm run build:cli` before live repo CLI scenarios",
     ).toBe(true);
+
+    assertTokenPairsDiffer();
 
     const docker = await host.command("docker", ["info"], {
       artifactName: "prereq-docker-info-token-rotation",
@@ -467,7 +482,7 @@ liveTest(
     ]) {
       expectCredentialHash(envKey);
     }
-    await assertSandboxListed(host, "phase-1-sandbox-list-after-install");
+    await assertSandboxRunning(host, "phase-1-sandbox-running-after-install");
 
     const telegram = await runOnboard(
       host,
@@ -486,7 +501,7 @@ liveTest(
         `${SANDBOX_NAME}-slack-app`,
       ],
     );
-    await assertSandboxListed(host, "phase-2-sandbox-list-after-telegram-rotation");
+    await assertSandboxRunning(host, "phase-2-sandbox-running-after-telegram-rotation");
 
     const afterTelegramSame = await runOnboard(
       host,
@@ -516,7 +531,7 @@ liveTest(
         `${SANDBOX_NAME}-slack-app`,
       ],
     );
-    await assertSandboxListed(host, "phase-4-sandbox-list-after-discord-rotation");
+    await assertSandboxRunning(host, "phase-4-sandbox-running-after-discord-rotation");
 
     const afterDiscordSame = await runOnboard(
       host,
@@ -537,7 +552,7 @@ liveTest(
       [`${SANDBOX_NAME}-slack-bridge`, `${SANDBOX_NAME}-slack-app`],
       [`${SANDBOX_NAME}-telegram-bridge`, `${SANDBOX_NAME}-discord-bridge`],
     );
-    await assertSandboxListed(host, "phase-6-sandbox-list-after-slack-rotation");
+    await assertSandboxRunning(host, "phase-6-sandbox-running-after-slack-rotation");
 
     const afterSlackSame = await runOnboard(
       host,
