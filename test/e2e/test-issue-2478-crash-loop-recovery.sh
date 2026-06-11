@@ -510,6 +510,26 @@ if [ -z "$NEGATIVE_PID" ]; then
 fi
 info "Negative-case recovery respawned gateway pid=$NEGATIVE_PID"
 
+# ── #2701 contract assertion ─────────────────────────────────────────
+# After recovery, the guard chain MUST be restored. Today this fails on
+# `main`: recovery emits the WARNING above and then launches the gateway
+# naked, leaving /tmp/nemoclaw-proxy-env.sh absent. On aarch64 / DGX Spark
+# this triggers the @homebridge/ciao crash loop documented in #2701; on
+# x86 the gateway boots fine but the guard chain is still missing, which
+# is the failure shape this assertion catches.
+#
+# Once the #2701 fix lands, recovery re-emits the chain before launching
+# and this assertion flips green. Will fail on origin/main as of 2026-06-09.
+if gateway_guards_active "$NEGATIVE_PID"; then
+  pass "#2701: recovery restored guard chain (proxy-env.sh + safety-net + ciao)"
+else
+  fail "#2701: recovery did NOT restore guard chain — gateway respawned naked (DGX Spark crash-loop scenario)"
+  gateway_diagnostics "$NEGATIVE_PID"
+  # Do not exit 1 yet — we still want Phase 4's restore + Phase 5 soak to
+  # run so the artifact bundle is comparable to historical runs. Defer the
+  # failure decision to the test-level fail counter at the end of the file.
+fi
+
 # Restore proxy-env.sh by base64-injecting the snapshot via argv. `openshell
 # sandbox exec` does not pipe stdin from the caller through to the subshell,
 # so a `printf | sandbox_exec sh -c 'cat > file'` would leave an empty file.

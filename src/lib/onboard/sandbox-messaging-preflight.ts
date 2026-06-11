@@ -2,17 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { WebSearchConfig } from "../inference/web-search";
-import {
-  backfillMessagingChannels as defaultBackfillMessagingChannels,
-  createMessagingConflictProbe as defaultCreateMessagingConflictProbe,
-  findChannelConflictsFromPlan as defaultFindChannelConflictsFromPlan,
-  type ConflictMatch,
-  type ConflictRegistry,
-  type MessagingConflictProbe,
-  type MessagingConflictProbeGatewayDeps,
-} from "../messaging/applier";
 import type { SandboxMessagingPlan } from "../messaging/manifest/types";
 import { resolveDisabledChannels as defaultResolveDisabledChannels } from "./channel-state";
+import {
+  enforceMessagingChannelConflicts as defaultEnforceMessagingChannelConflicts,
+  type MessagingConflictGuardDeps,
+} from "./messaging-conflict-guard";
 import {
   prepareCreateSandboxMessaging as defaultPrepareCreateSandboxMessaging,
   type CreateSandboxMessagingPrepInput,
@@ -31,7 +26,8 @@ export interface SandboxMessagingPreflightInput {
 export interface SandboxMessagingPreflightDeps {
   readMessagingPlanFromEnv(): SandboxMessagingPlan | null;
   resolveDisabledChannels?: (sandboxName: string) => string[];
-  registry: ConflictRegistry;
+  gatewayName: string;
+  registry: MessagingConflictGuardDeps["registry"];
   checkGatewayLiveness(): boolean;
   providerExistsInGateway(name: string): boolean;
   isNonInteractive(): boolean;
@@ -58,15 +54,7 @@ export interface SandboxMessagingPreflightDeps {
   prepareCreateSandboxMessaging?: (
     input: CreateSandboxMessagingPrepInput,
   ) => CreateSandboxMessagingPrepResult;
-  createMessagingConflictProbe?: (
-    deps: MessagingConflictProbeGatewayDeps,
-  ) => MessagingConflictProbe;
-  backfillMessagingChannels?: (registry: ConflictRegistry, probe: MessagingConflictProbe) => void;
-  findChannelConflictsFromPlan?: (
-    currentSandbox: string | null,
-    plan: SandboxMessagingPlan,
-    registry: ConflictRegistry,
-  ) => ConflictMatch[];
+  enforceMessagingChannelConflicts?: (deps: MessagingConflictGuardDeps) => Promise<void>;
 }
 
 export interface SandboxMessagingPreflightResult extends CreateSandboxMessagingPrepResult {
@@ -77,11 +65,11 @@ export async function prepareSandboxMessagingPreflight(
   input: SandboxMessagingPreflightInput,
   deps: SandboxMessagingPreflightDeps,
 ): Promise<SandboxMessagingPreflightResult> {
-  await checkMessagingPlanConflicts(input.sandboxName, deps);
-
   const disabledChannels = (deps.resolveDisabledChannels ?? defaultResolveDisabledChannels)(
     input.sandboxName,
   );
+  await checkMessagingPlanConflicts(input.sandboxName, disabledChannels, deps);
+
   const result = (deps.prepareCreateSandboxMessaging ?? defaultPrepareCreateSandboxMessaging)({
     sandboxName: input.sandboxName,
     channels: input.channels,
@@ -110,45 +98,28 @@ export async function prepareSandboxMessagingPreflight(
 
 async function checkMessagingPlanConflicts(
   sandboxName: string,
+  disabledChannels: readonly string[],
   deps: SandboxMessagingPreflightDeps,
 ): Promise<void> {
   const envPlan = deps.readMessagingPlanFromEnv();
   const currentPlan = envPlan?.sandboxName === sandboxName ? envPlan : null;
-  const hasPlanCredentials =
-    currentPlan?.credentialBindings.some((binding) => binding.credentialAvailable) ?? false;
-  if (!currentPlan || !hasPlanCredentials) return;
+  if (!currentPlan) return;
 
-  const createMessagingConflictProbe =
-    deps.createMessagingConflictProbe ?? defaultCreateMessagingConflictProbe;
-  const backfillMessagingChannels =
-    deps.backfillMessagingChannels ?? defaultBackfillMessagingChannels;
-  const findChannelConflictsFromPlan =
-    deps.findChannelConflictsFromPlan ?? defaultFindChannelConflictsFromPlan;
-  const probe = createMessagingConflictProbe({
+  const enforceMessagingChannelConflicts =
+    deps.enforceMessagingChannelConflicts ?? defaultEnforceMessagingChannelConflicts;
+  await enforceMessagingChannelConflicts({
+    sandboxName,
+    gatewayName: deps.gatewayName,
+    currentPlan,
+    currentSandboxDisabledChannels: disabledChannels,
+    registry: deps.registry,
     checkGatewayLiveness: deps.checkGatewayLiveness,
     providerExists: deps.providerExistsInGateway,
+    isNonInteractive: deps.isNonInteractive,
+    promptContinue: () => deps.promptYesNoOrDefault("  Continue anyway?", null, false),
+    cliName: deps.cliName,
+    log: deps.log,
+    error: deps.error,
+    exit: deps.exitProcess,
   });
-  backfillMessagingChannels(deps.registry, probe);
-  const conflicts = findChannelConflictsFromPlan(sandboxName, currentPlan, deps.registry);
-  if (conflicts.length === 0) return;
-
-  for (const { channel, sandbox, reason } of conflicts) {
-    const detail =
-      reason === "matching-token"
-        ? `uses the same ${channel} credential`
-        : `already has ${channel} enabled, but its credential hash is unavailable`;
-    deps.log(
-      `  ⚠ Sandbox '${sandbox}' ${detail}. Shared channel credentials only allow one sandbox to poll/connect — continuing may break both bridges.`,
-    );
-  }
-  if (deps.isNonInteractive()) {
-    deps.error(
-      `  Aborting: resolve the messaging channel conflict above or run \`${deps.cliName()} <sandbox> channels stop <channel>\` / \`${deps.cliName()} <sandbox> channels remove <channel>\` on the other sandbox.`,
-    );
-    deps.exitProcess(1);
-  }
-  if (!(await deps.promptYesNoOrDefault("  Continue anyway?", null, false))) {
-    deps.log("  Aborting sandbox creation.");
-    deps.exitProcess(1);
-  }
 }
