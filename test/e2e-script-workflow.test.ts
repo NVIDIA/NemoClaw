@@ -101,7 +101,6 @@ const NIGHTLY_E2E_SCRIPT_ALLOWLIST = [
   "test/e2e/test-cron-preflight-inference-local-e2e.sh",
   "test/e2e/test-device-auth-health.sh",
   "test/e2e/test-diagnostics.sh",
-  "test/e2e/test-docs-validation.sh",
   "test/e2e/test-double-onboard.sh",
   "test/e2e/test-full-e2e.sh",
   "test/e2e/test-gpu-double-onboard.sh",
