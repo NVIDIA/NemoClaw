@@ -743,26 +743,14 @@ RUN node --experimental-strip-types /src/lib/messaging/applier/build/messaging-b
 # skills, and ad-hoc packages via the OpenShell L7 proxy.
 ENV NPM_CONFIG_OFFLINE=false
 
-# SECURITY: Clear any gateway auth token that openclaw doctor/plugins may have
-# auto-generated. The real token is created at container startup by the
-# entrypoint (generate_gateway_token) and never stored in openclaw.json.
+# SECURITY: Clear any gateway auth token and device-auth state that build-time
+# openclaw doctor/plugins may have auto-generated. The real token, device
+# identity, and pending/paired approvals are created at container startup.
 # Also add the final OpenClaw managed proxy config after build-time OpenClaw
 # commands are done, so runtime Discord/WebSocket traffic uses the OpenShell
 # gateway proxy without forcing image-build npm traffic through that proxy.
-RUN python3 -c "\
-import json, os; \
-path = os.path.expanduser('~/.openclaw/openclaw.json'); \
-cfg = json.load(open(path)); \
-cfg.setdefault('gateway', {}).setdefault('auth', {})['token'] = ''; \
-proxy_host = os.environ.get('NEMOCLAW_PROXY_HOST') or '10.200.0.1'; \
-proxy_port = os.environ.get('NEMOCLAW_PROXY_PORT') or '3128'; \
-cfg['proxy'] = { \
-    'enabled': True, \
-    'proxyUrl': f'http://{proxy_host}:{proxy_port}', \
-    'loopbackMode': 'gateway-only', \
-}; \
-json.dump(cfg, open(path, 'w'), indent=2); \
-os.chmod(path, 0o600)"
+RUN rm -rf "$HOME/.openclaw/devices" "$HOME/.openclaw/identity" \
+    && python3 -c "import json, os; path = os.path.expanduser('~/.openclaw/openclaw.json'); cfg = json.load(open(path)); cfg.setdefault('gateway', {}).setdefault('auth', {})['token'] = ''; proxy_host = os.environ.get('NEMOCLAW_PROXY_HOST') or '10.200.0.1'; proxy_port = os.environ.get('NEMOCLAW_PROXY_PORT') or '3128'; cfg['proxy'] = {'enabled': True, 'proxyUrl': f'http://{proxy_host}:{proxy_port}', 'loopbackMode': 'gateway-only'}; json.dump(cfg, open(path, 'w'), indent=2); os.chmod(path, 0o600)"
 
 # Flatten stale published base images that still contain the old
 # .openclaw-data symlink bridge. OpenShell starts the sandbox as the sandbox

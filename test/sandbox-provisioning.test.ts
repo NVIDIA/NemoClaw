@@ -305,6 +305,48 @@ describe("sandbox provisioning: non-messaging OpenClaw plugins", () => {
   });
 });
 
+describe("sandbox provisioning: OpenClaw runtime state cleanup", () => {
+  it("removes build-time device auth state while preserving gateway config cleanup", () => {
+    const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");
+    const command = dockerRunCommandBetween(
+      dockerfile,
+      "# SECURITY: Clear any gateway auth token",
+      "# Flatten stale published base images",
+    );
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-runtime-cleanup-"));
+    const home = path.join(tmp, "sandbox");
+    const openclawDir = path.join(home, ".openclaw");
+    try {
+      fs.mkdirSync(path.join(openclawDir, "devices"), { recursive: true });
+      fs.mkdirSync(path.join(openclawDir, "identity"), { recursive: true });
+      fs.writeFileSync(path.join(openclawDir, "devices", "pending.json"), "[]\n");
+      fs.writeFileSync(path.join(openclawDir, "identity", "device.json"), "{}\n");
+      fs.writeFileSync(
+        path.join(openclawDir, "openclaw.json"),
+        JSON.stringify({ gateway: { auth: { token: "build-token" } } }),
+      );
+
+      const { result } = runLoggedDockerShell(command, tmp, [], {
+        HOME: home,
+        NEMOCLAW_PROXY_HOST: "10.200.0.1",
+        NEMOCLAW_PROXY_PORT: "3128",
+      });
+
+      expect(result.status, `stderr: ${result.stderr}`).toBe(0);
+      expect(fs.existsSync(path.join(openclawDir, "devices"))).toBe(false);
+      expect(fs.existsSync(path.join(openclawDir, "identity"))).toBe(false);
+      const config = JSON.parse(fs.readFileSync(path.join(openclawDir, "openclaw.json"), "utf-8"));
+      expect(config.gateway.auth.token).toBe("");
+      expect(config.proxy).toEqual({
+        enabled: true,
+        proxyUrl: "http://10.200.0.1:3128",
+        loopbackMode: "gateway-only",
+      });
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
 function dockerfileEnvDirectives(text: string): string[] {
   const lines = text.split("\n");
   const directives: string[] = [];
