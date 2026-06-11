@@ -402,8 +402,10 @@ const {
   computeTelegramRequireMention,
   getStoredMessagingChannelConfig,
   messagingChannelConfigsEqual,
-  persistMessagingChannelConfigToSession,
 } = messagingConfig;
+const messagingPlanSession: typeof import("./onboard/messaging-plan-session") =
+  require("./onboard/messaging-plan-session");
+const { getChannelsFromPlan } = messagingPlanSession;
 const messagingPrep: typeof import("./onboard/messaging-prep") = require("./onboard/messaging-prep");
 const sandboxAgent: typeof import("./onboard/sandbox-agent") = require("./onboard/sandbox-agent");
 const sandboxLifecycle: typeof import("./onboard/sandbox-lifecycle") = require("./onboard/sandbox-lifecycle");
@@ -544,7 +546,6 @@ import type { WebSearchConfig } from "./inference/web-search";
 import {
   hydrateMessagingChannelConfig,
   type MessagingChannelConfig,
-  readMessagingChannelConfigFromEnv,
 } from "./messaging-channel-config";
 import { finalizationHandlerDeps } from "./onboard/finalization-deps";
 import { streamGatewayStart } from "./onboard/gateway";
@@ -2604,9 +2605,6 @@ async function createSandbox(
     currentPlan,
     currentSandboxDisabledChannels: disabledChannels,
     registry,
-    checkGatewayLiveness: () =>
-      runOpenshell(["sandbox", "list"], { ignoreError: true, suppressOutput: true }).status === 0,
-    providerExists: (name) => providerExistsInGateway(name),
     isNonInteractive,
     promptContinue: () => promptYesNoOrDefault("  Continue anyway?", null, false),
     cliName,
@@ -3046,14 +3044,15 @@ async function createSandbox(
   }
 
   console.log(`  Creating sandbox '${sandboxName}' (this takes a few minutes on first run)...`);
+  const envMessagingState = MessagingHostStateApplier.readPlanStateFromEnv();
+  const plannedMessagingState =
+    envMessagingState?.plan.sandboxName === sandboxName ? envMessagingState : undefined;
+  const plannedMessagingPlan = plannedMessagingState?.plan;
   const configuredMessagingChannels =
-    enabledChannels != null ? [...new Set(enabledChannels)] : activeMessagingChannels;
-  const { messagingChannelConfig } = sandboxBuildPatchConfig.prepareSandboxBuildPatchConfig({
-    channels: MESSAGING_CHANNELS,
-    activeMessagingChannels,
+    getChannelsFromPlan(plannedMessagingPlan) ??
+    (enabledChannels != null ? [...new Set(enabledChannels)] : activeMessagingChannels);
+  sandboxBuildPatchConfig.prepareSandboxBuildPatchConfig({
     configuredMessagingChannels,
-    messagingTokenDefs,
-    discordSnowflakeRe: onboardProviders.DISCORD_SNOWFLAKE_RE,
   });
   const { buildId } = await sandboxDockerfilePatchFlow.prepareSandboxDockerfilePatch({
     agent,
@@ -3267,16 +3266,7 @@ async function createSandbox(
     imageTag: resolvedImageTag,
     providerCredentialHashes,
     appliedPolicies: initialSandboxPolicy.appliedPresets,
-    // Persist the operator's configured channel set, not the post-disabled-filter
-    // active set. After `channels stop X` + rebuild, activeMessagingChannels drops
-    // X, but X is still configured — losing it here means a later `channels start
-    // X` has nothing to re-enable (the next rebuild sees an empty channel set and
-    // never reattaches the gateway bridge). See #3381.
-    configuredMessagingChannels,
-    activeMessagingChannels,
-    messagingChannelConfig,
-    plannedMessagingState: MessagingHostStateApplier.readPlanStateFromEnv(),
-    disabledChannels,
+    plannedMessagingState,
     hermesToolGateways,
     hermesDashboardState: finalHermesDashboardState,
     dashboardPort: actualDashboardPort,
@@ -4649,7 +4639,7 @@ function getRecordedMessagingChannelsForResume(
 ): string[] | null {
   return getRecordedMessagingChannelsForResumeFromState({
     resume,
-    sessionMessagingChannels: session?.messagingChannels,
+    sessionMessagingChannels: getChannelsFromPlan(session?.messagingPlan),
     sandboxName,
     channels: MESSAGING_CHANNELS,
     getCredential,
@@ -5409,7 +5399,6 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           getStoredMessagingChannelConfig,
           hydrateMessagingChannelConfig,
           messagingChannelConfigsEqual,
-          persistMessagingChannelConfigToSession,
           getSandboxReuseState,
           computeTelegramRequireMention,
           hasSandboxGpuDrift,
@@ -5424,9 +5413,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           configureWebSearch,
           startRecordedStep,
           getRecordedMessagingChannelsForResume,
-          getSandboxMessagingChannels: (name) => registry.getSandbox(name)?.messagingChannels,
           setupMessagingChannels,
-          readMessagingChannelConfigFromEnv,
           readMessagingPlanFromEnv,
           writePlanToEnv,
           getRegistrySandboxMessagingPlan,
