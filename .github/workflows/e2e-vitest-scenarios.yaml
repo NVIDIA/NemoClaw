@@ -40,7 +40,7 @@ jobs:
           SCENARIOS: ${{ inputs.scenarios }}
         run: |
           set -euo pipefail
-          allowed_jobs="openshell-version-pin-vitest,onboard-negative-paths-vitest,network-policy-vitest,token-rotation-vitest,openclaw-tui-chat-correlation-vitest,gateway-guard-recovery"
+          allowed_jobs="openshell-version-pin-vitest,onboard-negative-paths-vitest,hermes-e2e-vitest,network-policy-vitest,token-rotation-vitest,openclaw-tui-chat-correlation-vitest,gateway-guard-recovery"
           if [ -n "${JOBS}" ] && [ -n "${SCENARIOS}" ]; then
             echo "::error::Use either scenarios or jobs, not both." >&2
             exit 1
@@ -71,6 +71,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
+      hermes_selected: ${{ steps.matrix.outputs.hermes_selected }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
@@ -88,12 +89,16 @@ jobs:
       - id: matrix
         name: Generate Vitest scenario matrix
         env:
+          JOBS: ${{ inputs.jobs }}
           SCENARIOS: ${{ inputs.scenarios }}
         run: |
           set -euo pipefail
+          allowed_jobs="openshell-version-pin-vitest,onboard-negative-paths-vitest,hermes-e2e-vitest,network-policy-vitest,token-rotation-vitest,openclaw-tui-chat-correlation-vitest,gateway-guard-recovery"
           args=(--emit-live-matrix)
+          matrix=""
+          hermes_selected=false
           registry_scenarios=()
-          free_standing_scenarios=(openshell-version-pin onboard-negative-paths network-policy token-rotation openclaw-tui-chat-correlation)
+          free_standing_scenarios=(openshell-version-pin onboard-negative-paths hermes-e2e network-policy token-rotation openclaw-tui-chat-correlation)
           is_free_standing_scenario() {
             local id="$1"
             local known
@@ -104,13 +109,41 @@ jobs:
             done
             return 1
           }
-          if [ -n "${SCENARIOS}" ]; then
+          if [ -n "${JOBS}" ] && [ -n "${SCENARIOS}" ]; then
+            echo "::error::Use either scenarios or jobs, not both." >&2
+            exit 1
+          fi
+          if [ -n "${JOBS}" ]; then
+            if [[ ! "${JOBS}" =~ ^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$ ]]; then
+              echo "::error::Invalid jobs input; use comma-separated job ids" >&2
+              exit 1
+            fi
+            IFS=',' read -r -a selected_jobs <<< "${JOBS}"
+            for job in "${selected_jobs[@]}"; do
+              if [[ ",${allowed_jobs}," != *",${job},"* ]]; then
+                echo "::error::Unknown free-standing Vitest job: ${job}" >&2
+                echo "::error::Allowed jobs: ${allowed_jobs}" >&2
+                exit 1
+              fi
+              case "${job}" in
+                hermes-e2e-vitest)
+                  hermes_selected=true
+                  ;;
+              esac
+            done
+            matrix="[]"
+          elif [ -n "${SCENARIOS}" ]; then
             if [[ ! "${SCENARIOS}" =~ ^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$ ]]; then
               echo "::error::Invalid scenario input; use comma-separated scenario ids containing only letters, numbers, underscores, and hyphens." >&2
               exit 1
             fi
             IFS=',' read -r -a requested_scenarios <<< "${SCENARIOS}"
             for scenario in "${requested_scenarios[@]}"; do
+              case "${scenario}" in
+                hermes-e2e)
+                  hermes_selected=true
+                  ;;
+              esac
               if is_free_standing_scenario "${scenario}"; then
                 continue
               fi
@@ -119,14 +152,16 @@ jobs:
             if [ "${#registry_scenarios[@]}" -gt 0 ]; then
               registry_csv="$(IFS=,; echo "${registry_scenarios[*]}")"
               args+=(--scenarios "${registry_csv}")
+              matrix="$(npx tsx test/e2e-scenario/scenarios/run.ts "${args[@]}")"
+            else
+              matrix="[]"
             fi
-          fi
-          if [ -n "${SCENARIOS}" ] && [ "${#registry_scenarios[@]}" -eq 0 ]; then
-            matrix="[]"
           else
+            hermes_selected=true
             matrix="$(npx tsx test/e2e-scenario/scenarios/run.ts "${args[@]}")"
           fi
           echo "matrix=${matrix}" >> "$GITHUB_OUTPUT"
+          echo "hermes_selected=${hermes_selected}" >> "$GITHUB_OUTPUT"
           MATRIX_JSON="${matrix}" python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
           import json
           import os
@@ -324,6 +359,58 @@ jobs:
         with:
           name: e2e-vitest-scenarios-onboard-negative-paths
           path: e2e-artifacts/vitest/onboard-negative-paths/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
+
+  hermes-e2e-vitest:
+    needs: [validate-jobs, generate-matrix]
+    if: ${{ needs.generate-matrix.outputs.hermes_selected == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    env:
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/hermes-e2e
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+      NEMOCLAW_AGENT: hermes
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_RECREATE_SANDBOX: "1"
+      NEMOCLAW_SANDBOX_NAME: e2e-hermes
+      NEMOCLAW_MODEL: minimaxai/minimax-m2.7
+      NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS: "60"
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build CLI
+        run: npm run build:cli
+
+      - name: Run Hermes live Vitest test
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+        run: |
+          set -euo pipefail
+          npx vitest run --project e2e-scenarios-live \
+            test/e2e-scenario/live/hermes-e2e.test.ts \
+            --silent=false --reporter=default
+
+      - name: Upload Hermes live Vitest artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-vitest-scenarios-hermes-e2e
+          path: e2e-artifacts/vitest/hermes-e2e/
           include-hidden-files: false
           if-no-files-found: ignore
           retention-days: 14
@@ -656,6 +743,7 @@ jobs:
         live-scenarios,
         openshell-version-pin-vitest,
         onboard-negative-paths-vitest,
+        hermes-e2e-vitest,
         network-policy-vitest,
         token-rotation-vitest,
         openclaw-tui-chat-correlation-vitest,
