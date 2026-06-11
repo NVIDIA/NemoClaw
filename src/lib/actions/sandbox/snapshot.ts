@@ -3,27 +3,29 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { dockerCapture, dockerInspect } from "../../adapters/docker";
+import { dockerCapture } from "../../adapters/docker";
 import {
   captureOpenshell,
   getOpenshellBinary,
   runOpenshell,
 } from "../../adapters/openshell/runtime";
-import { OPENSHELL_OPERATION_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import { CLI_NAME } from "../../cli/branding";
 import { prompt as askPrompt } from "../../credentials/store";
 import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
-import { GATEWAY_PORT } from "../../core/ports";
-import { resolveGatewayName, resolveSandboxGatewayName } from "../../onboard/gateway-binding";
+import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import * as policies from "../../policy";
 import { ROOT, run, shellQuote, validateName } from "../../runner";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
 import * as shields from "../../shields";
-import { isGatewayHealthy } from "../../state/gateway";
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import * as sandboxState from "../../state/sandbox";
 import { cleanupShieldsDestroyArtifacts, removeSandboxRegistryEntry } from "./destroy";
+import {
+  probeGatewayRunning,
+  selectSandboxGatewayIfRegistered,
+  usesGatewayMetadataProbe,
+} from "./sandbox-gateway-routing";
 
 const useColor = !process.env.NO_COLOR && !!process.stdout.isTTY;
 const trueColor =
@@ -299,58 +301,6 @@ function deleteSandboxForRestore(name: string): void {
   console.log(`  ${G}\u2713${R} '${name}' deleted`);
 }
 
-// Docker/VM-driver sandboxes do not expose the legacy cluster container, so
-// verify gateway health through OpenShell metadata instead.
-function probeGatewayMetadataHealth(gatewayName: string): boolean {
-  const status = captureOpenshell(["status"], { ignoreError: true, timeout: 10000 });
-  const namedGatewayInfo = captureOpenshell(["gateway", "info", "-g", gatewayName], {
-    ignoreError: true,
-    timeout: 10000,
-  });
-  const activeGatewayInfo = captureOpenshell(["gateway", "info"], {
-    ignoreError: true,
-    timeout: 10000,
-  });
-  return isGatewayHealthy(
-    status.output || "",
-    namedGatewayInfo.output || "",
-    activeGatewayInfo.output || "",
-    gatewayName,
-  );
-}
-
-function usesGatewayMetadataProbe(driver: string | null | undefined): boolean {
-  return driver === "docker" || driver === "vm";
-}
-
-function probeGatewayRunning(sandboxName?: string): boolean {
-  const entry = sandboxName ? registry.getSandbox(sandboxName) : null;
-  const gatewayName = entry ? resolveSandboxGatewayName(entry) : resolveGatewayName(GATEWAY_PORT);
-  if (usesGatewayMetadataProbe(entry?.openshellDriver)) {
-    return probeGatewayMetadataHealth(gatewayName);
-  }
-  const container = `openshell-cluster-${gatewayName}`;
-  const result = dockerInspect(
-    ["--type", "container", "--format", "{{.State.Running}}", container],
-    { ignoreError: true, suppressOutput: true },
-  );
-  return result.status === 0 && String(result.stdout || "").trim() === "true";
-}
-
-// Best-effort: switch the active OpenShell gateway to the one this sandbox is
-// registered on so downstream `sandbox list` / `sandbox get` queries target
-// the right gateway. Silent on failure — the subsequent list call surfaces a
-// clearer error if the gateway is genuinely unavailable.
-function selectSandboxGatewayIfRegistered(sandboxName: string): void {
-  const entry = registry.getSandbox(sandboxName);
-  if (!entry) return;
-  const target = resolveSandboxGatewayName(entry);
-  runOpenshell(["gateway", "select", target], {
-    ignoreError: true,
-    timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
-  });
-}
-
 function isSnapshotCreationAllowedByShields(sandboxName: string): boolean {
   // Snapshot creation is a shields/policy boundary. If a packaged or mocked
   // CommonJS interop surface ever omits the helper, fail closed before any
@@ -369,15 +319,16 @@ export async function runSandboxSnapshot(
 ) {
   switch (request.kind) {
     case "create": {
+      // Select the sandbox's gateway before the health probe and `sandbox list`
+      // — Docker/VM-driver health and the sandbox listing both require the
+      // sandbox's gateway to be the active one, otherwise a sandbox registered
+      // on a non-default `NEMOCLAW_GATEWAY_PORT` fails health-check before the
+      // subsequent list ever runs.
+      selectSandboxGatewayIfRegistered(sandboxName);
       if (!probeGatewayRunning(sandboxName)) {
         console.error("  Failed to query live sandbox state from OpenShell.");
         snapshotExit(1);
       }
-      // Select the sandbox's gateway before `sandbox list` — otherwise the
-      // list runs against whatever gateway is currently active and would
-      // miss a sandbox registered on a non-default `NEMOCLAW_GATEWAY_PORT`
-      // (#4985).
-      selectSandboxGatewayIfRegistered(sandboxName);
       const isLive = captureOpenshell(["sandbox", "list"], { ignoreError: true });
       const liveNames = parseLiveSandboxNames(isLive.output || "");
       if (!liveNames.has(sandboxName)) {
@@ -440,11 +391,11 @@ export async function runSandboxSnapshot(
       const target = request.to ?? sandboxName;
       const targetSandbox =
         target === sandboxName ? sandboxName : validateName(target, "target sandbox name");
+      selectSandboxGatewayIfRegistered(sandboxName);
       if (!probeGatewayRunning(sandboxName)) {
         console.error("  Failed to query live sandbox state from OpenShell.");
         snapshotExit(1);
       }
-      selectSandboxGatewayIfRegistered(sandboxName);
       const isLive = captureOpenshell(["sandbox", "list"], { ignoreError: true });
       const liveNames = parseLiveSandboxNames(isLive.output || "");
       const isCrossSandboxRestore = targetSandbox !== sandboxName;

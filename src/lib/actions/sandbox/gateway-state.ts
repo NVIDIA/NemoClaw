@@ -246,7 +246,7 @@ export function reconcileMissingAgainstNamedGateway(
       return retry;
     }
     if (retry.state === "missing") {
-      const after = getNamedGatewayLifecycleState();
+      const after = getNamedGatewayLifecycleState(targetGatewayName);
       if (after.state === "healthy_named") {
         // Even with the right gateway selected, the sandbox is
         // still missing. Try Docker-side recovery before declaring

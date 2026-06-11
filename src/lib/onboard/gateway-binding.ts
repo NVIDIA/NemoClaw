@@ -54,6 +54,24 @@ export interface SandboxGatewayBinding {
 }
 
 /**
+ * Recognises a NemoClaw-namespaced gateway name. The persisted form is either
+ * the bare `nemoclaw` or the per-port `nemoclaw-<port>` derivation — anything
+ * outside that namespace must not be trusted, since
+ * `resolveSandboxGatewayName` drives gateway select/info/recover/remove/
+ * destroy and Docker volume targeting from the value.
+ */
+const VALID_GATEWAY_NAME_RE =
+  /^nemoclaw(-(?:[1-9]\d{0,3}|[1-5]\d{4}|6[0-4]\d{3}|65[0-4]\d{2}|655[0-2]\d|6553[0-5]))?$/;
+
+function isValidPersistedGatewayName(value: string): boolean {
+  return VALID_GATEWAY_NAME_RE.test(value);
+}
+
+function isValidPersistedGatewayPort(value: number): boolean {
+  return Number.isInteger(value) && value >= 1 && value <= 65535;
+}
+
+/**
  * Resolve the OpenShell gateway name a given sandbox should be addressed by.
  * Sandbox-scoped lifecycle commands (`connect`, `destroy`, `doctor`,
  * `snapshot`, gateway-state probes) must call this rather than hardcoding
@@ -63,18 +81,29 @@ export interface SandboxGatewayBinding {
  * gateway and fails with `sandbox has no spec`.
  *
  * Resolution order:
- *   1. The sandbox's persisted `gatewayName` (recorded at onboard time).
- *   2. The per-port derivation from the persisted `gatewayPort`.
+ *   1. The sandbox's persisted `gatewayName`, validated against the NemoClaw
+ *      namespace (`nemoclaw` or `nemoclaw-<port>`). Tampered registry state
+ *      with an out-of-namespace gateway name is ignored to avoid redirecting
+ *      destructive gateway/volume operations.
+ *   2. The per-port derivation from the persisted `gatewayPort`, validated
+ *      against the TCP port range.
  *   3. The bare `BASE_GATEWAY_NAME` for legacy entries that pre-date the
  *      per-port migration.
  */
 export function resolveSandboxGatewayName(
   sandbox: SandboxGatewayBinding | null | undefined,
 ): string {
-  if (sandbox?.gatewayName && typeof sandbox.gatewayName === "string") {
+  if (
+    sandbox?.gatewayName &&
+    typeof sandbox.gatewayName === "string" &&
+    isValidPersistedGatewayName(sandbox.gatewayName)
+  ) {
     return sandbox.gatewayName;
   }
-  if (typeof sandbox?.gatewayPort === "number" && Number.isFinite(sandbox.gatewayPort)) {
+  if (
+    typeof sandbox?.gatewayPort === "number" &&
+    isValidPersistedGatewayPort(sandbox.gatewayPort)
+  ) {
     return resolveGatewayName(sandbox.gatewayPort);
   }
   return BASE_GATEWAY_NAME;

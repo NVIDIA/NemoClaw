@@ -80,6 +80,31 @@ describe("resolveSandboxGatewayName", () => {
       resolveSandboxGatewayName({ gatewayPort: 8090 }),
     );
   });
+
+  it("rejects an out-of-namespace persisted gatewayName and falls through to the port", () => {
+    // A tampered registry entry must not redirect destructive gateway/volume
+    // operations to an arbitrary string. The validator strips it and the
+    // per-port fallback kicks in instead.
+    expect(resolveSandboxGatewayName({ gatewayName: "rogue-gateway", gatewayPort: 8081 })).toBe(
+      "nemoclaw-8081",
+    );
+    expect(resolveSandboxGatewayName({ gatewayName: "../etc/passwd" })).toBe(BASE_GATEWAY_NAME);
+    expect(resolveSandboxGatewayName({ gatewayName: "nemoclaw evil" })).toBe(BASE_GATEWAY_NAME);
+    expect(resolveSandboxGatewayName({ gatewayName: "nemoclaw-0" })).toBe(BASE_GATEWAY_NAME);
+    expect(resolveSandboxGatewayName({ gatewayName: "nemoclaw-65536" })).toBe(BASE_GATEWAY_NAME);
+  });
+
+  it("rejects an out-of-range or non-integer persisted gatewayPort", () => {
+    expect(resolveSandboxGatewayName({ gatewayPort: 0 })).toBe(BASE_GATEWAY_NAME);
+    expect(resolveSandboxGatewayName({ gatewayPort: -1 })).toBe(BASE_GATEWAY_NAME);
+    expect(resolveSandboxGatewayName({ gatewayPort: 65536 })).toBe(BASE_GATEWAY_NAME);
+    expect(resolveSandboxGatewayName({ gatewayPort: 8081.5 })).toBe(BASE_GATEWAY_NAME);
+    expect(resolveSandboxGatewayName({ gatewayPort: Number.NaN })).toBe(BASE_GATEWAY_NAME);
+  });
+
+  it("accepts the canonical bare base gateway name", () => {
+    expect(resolveSandboxGatewayName({ gatewayName: "nemoclaw" })).toBe(BASE_GATEWAY_NAME);
+  });
 });
 
 describe("docker-driver compat container is gateway-port scoped (#4422)", () => {
