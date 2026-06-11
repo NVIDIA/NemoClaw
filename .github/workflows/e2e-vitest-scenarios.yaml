@@ -40,7 +40,7 @@ jobs:
           SCENARIOS: ${{ inputs.scenarios }}
         run: |
           set -euo pipefail
-          allowed_jobs="openshell-version-pin-vitest,onboard-negative-paths-vitest,openclaw-tui-chat-correlation-vitest,gateway-guard-recovery"
+          allowed_jobs="openshell-version-pin-vitest,onboard-negative-paths-vitest,token-rotation-vitest,openclaw-tui-chat-correlation-vitest,gateway-guard-recovery"
           if [ -n "${JOBS}" ] && [ -n "${SCENARIOS}" ]; then
             echo "::error::Use either scenarios or jobs, not both." >&2
             exit 1
@@ -85,6 +85,7 @@ jobs:
         name: Generate Vitest scenario matrix
         env:
           SCENARIOS: ${{ inputs.scenarios }}
+          JOBS: ${{ inputs.jobs }}
         run: |
           set -euo pipefail
           args=(--emit-live-matrix)
@@ -94,6 +95,10 @@ jobs:
               exit 1
             fi
             args+=(--scenarios "${SCENARIOS}")
+          fi
+          if [ -n "${JOBS}" ] && [[ ! "${JOBS}" =~ ^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$ ]]; then
+            echo "::error::Invalid jobs input; use comma-separated job ids" >&2
+            exit 1
           fi
           matrix="$(npx tsx test/e2e-scenario/scenarios/run.ts "${args[@]}")"
           echo "matrix=${matrix}" >> "$GITHUB_OUTPUT"
@@ -298,6 +303,89 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  token-rotation-vitest:
+    needs: validate-jobs
+    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',token-rotation-vitest,') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/token-rotation
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Authenticate to Docker Hub
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          login_succeeded=0
+          for attempt in 1 2 3; do
+            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
+              login_succeeded=1
+              break
+            fi
+            if [[ "$attempt" -lt 3 ]]; then
+              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
+              sleep 5
+            fi
+          done
+          if [[ "$login_succeeded" -ne 1 ]]; then
+            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
+          fi
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build CLI
+        run: npm run build:cli
+
+      - name: Run token rotation live test
+        # Migrated from nightly-e2e.yaml token-rotation-e2e. Preserve the
+        # original runner class: ubuntu-latest with Docker/OpenShell plus the
+        # legacy-supported fake OpenAI-compatible endpoint path and fake
+        # Telegram/Discord/Slack token boundary.
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TELEGRAM_BOT_TOKEN_A: "test-fake-token-A-rotation-e2e"
+          TELEGRAM_BOT_TOKEN_B: "test-fake-token-B-rotation-e2e"
+          DISCORD_BOT_TOKEN_A: "dc-a-rotation-e2e"
+          DISCORD_BOT_TOKEN_B: "dc-b-rotation-e2e"
+          SLACK_BOT_TOKEN_A: "xoxb-fake-A-rotation-e2e"
+          SLACK_BOT_TOKEN_B: "xoxb-fake-B-rotation-e2e"
+          SLACK_APP_TOKEN_A: "xapp-fake-A-rotation-e2e"
+          SLACK_APP_TOKEN_B: "xapp-fake-B-rotation-e2e"
+        run: |
+          set -euo pipefail
+          npx vitest run --project e2e-scenarios-live \
+            test/e2e-scenario/live/token-rotation.test.ts \
+            --silent=false --reporter=default
+
+      - name: Upload token rotation artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-vitest-scenarios-token-rotation
+          path: e2e-artifacts/vitest/token-rotation/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
+
   # Focused coverage slice for the #2603/#3145 OpenClaw websocket
   # protocol/history contract. The retained legacy bash lane remains the
   # source for full closeout until a later PR proves replacement and deletes it.
@@ -481,6 +569,7 @@ jobs:
         live-scenarios,
         openshell-version-pin-vitest,
         onboard-negative-paths-vitest,
+        token-rotation-vitest,
         openclaw-tui-chat-correlation-vitest,
         gateway-guard-recovery,
       ]
