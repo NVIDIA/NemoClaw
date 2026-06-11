@@ -272,7 +272,7 @@ jobs:
   # injection + real OpenClaw agent-turn contract. The retained legacy bash
   # lane remains in nightly-e2e.yaml until #5098 Phase 11 shell retirement.
   skill-agent-vitest:
-    if: ${{ inputs.scenarios == '' && (inputs.jobs == '' || contains(format(',{0},', inputs.jobs), ',skill-agent-vitest,')) }}
+    if: ${{ inputs.jobs == '' || contains(format(',{0},', inputs.jobs), ',skill-agent-vitest,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -345,7 +345,7 @@ jobs:
   # protocol/history contract. The retained legacy bash lane remains the
   # source for full closeout until a later PR proves replacement and deletes it.
   openclaw-tui-chat-correlation-vitest:
-    if: ${{ inputs.scenarios == '' && inputs.jobs == '' }}
+    if: ${{ inputs.jobs == '' || contains(format(',{0},', inputs.jobs), ',openclaw-tui-chat-correlation-vitest,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 75
     env:
