@@ -214,6 +214,19 @@ if [ ! -f "$_HERMES_DASHBOARD_CONFIG_SEEDER" ]; then
   _HERMES_DASHBOARD_CONFIG_SEEDER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/seed-dashboard-config.py"
 fi
 
+# The seeder imports PyYAML, which ships ONLY in the Hermes venv — not in the
+# base-image python3 that is first on PATH at container boot. (An interactive
+# login shell activates the venv, masking this: `python3` there resolves to
+# /opt/hermes/.venv/bin/python3 and has yaml, but the entrypoint that runs this
+# script does not.) Invoked with bare python3, the seeder hits its "PyYAML
+# unavailable; skipping model seed" branch and returns 0, so the model routing
+# is silently never mirrored into the dashboard home and the Models page shows
+# no models. Resolve the venv interpreter explicitly, falling back to python3.
+_HERMES_PYTHON="/opt/hermes/.venv/bin/python"
+if [ ! -x "$_HERMES_PYTHON" ]; then
+  _HERMES_PYTHON="$(command -v python3 || echo python3)"
+fi
+
 truthy_env() {
   case "$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')" in
     1 | true | yes | on) return 0 ;;
@@ -677,7 +690,7 @@ seed_hermes_dashboard_config() {
   local env_dst="${HERMES_DASHBOARD_HOME}/.env"
   local rc=0
 
-  python3 "$_HERMES_DASHBOARD_CONFIG_SEEDER" \
+  "$_HERMES_PYTHON" "$_HERMES_DASHBOARD_CONFIG_SEEDER" \
     "${HERMES_DIR}/config.yaml" "$dst" \
     "${HERMES_DIR}/.env" "$env_dst" || rc=$?
   if [ "$rc" -ne 0 ]; then
