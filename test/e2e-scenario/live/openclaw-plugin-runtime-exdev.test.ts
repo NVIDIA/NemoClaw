@@ -11,9 +11,9 @@ import { shouldRunLiveE2EScenarios } from "../fixtures/live-project-gate.ts";
 
 // Migrated from test/e2e/test-openclaw-plugin-runtime-exdev.sh. This keeps the
 // legacy contract as a simple live Vitest test: onboard a fresh OpenClaw sandbox
-// from the repo Dockerfile, capture the sandbox filesystem layout, then run the
-// same in-sandbox Node replacement probe that reproduces #3513/#3127's EXDEV
-// cross-device rename failure. No registry, no ledger, no shared helper.
+// from the repo Dockerfile, capture the sandbox filesystem layout, then run a
+// focused in-sandbox Node replacement probe that guards #3513/#3127's EXDEV
+// cross-device runtime-deps failure mode. No registry, no ledger, no shared helper.
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const CLI_ENTRYPOINT = path.join(REPO_ROOT, "bin", "nemoclaw.js");
@@ -98,9 +98,9 @@ node --input-type=module - <<'NODE'
 import fs from 'node:fs';
 import path from 'node:path';
 function replaceNodeModulesDir(targetDir, sourceDir) {
-  const parentDir = path.dirname(sourceDir);
-  fs.mkdirSync(path.dirname(targetDir), { recursive: true });
-  const tempDir = fs.mkdtempSync(path.join(parentDir, '.openclaw-runtime-deps-copy-'));
+  const targetParentDir = path.dirname(targetDir);
+  fs.mkdirSync(targetParentDir, { recursive: true });
+  const tempDir = fs.mkdtempSync(path.join(targetParentDir, '.openclaw-runtime-deps-copy-'));
   const stagedDir = path.join(tempDir, 'node_modules');
   try {
     fs.cpSync(sourceDir, stagedDir, { recursive: true });
