@@ -2508,13 +2508,21 @@ jobs:
             const passed = ran.filter(([, v]) => v.result === 'success');
             const failed = ran.filter(([, v]) => v.result === 'failure');
             const skipped = reportedEntries.filter(([, v]) => v.result === 'skipped');
+            // Cancelled jobs (e.g. cancel-in-progress superseding an older run)
+            // are neither success, failure, nor skipped. Without a bucket for
+            // them they slipped through the status tally and the comment fell
+            // through to the default "✅ All requested jobs passed" — masking
+            // the fact that the run produced no signal at all.
+            const cancelled = ran.filter(([, v]) => v.result === 'cancelled');
 
             const status =
               failed.length > 0 || missingRequested.length > 0
                 ? '❌ Some jobs failed'
-                : skipped.length > 0 && passed.length === 0
-                  ? '⚠️ No requested jobs ran'
-                  : '✅ All requested jobs passed';
+                : cancelled.length > 0 && passed.length === 0
+                  ? '⚠️ Run cancelled — no signal'
+                  : skipped.length > 0 && passed.length === 0
+                    ? '⚠️ No requested jobs ran'
+                    : '✅ All requested jobs passed';
 
             const body = [
               `### Selective E2E Results — ${status}`,
@@ -2523,7 +2531,7 @@ jobs:
               `**Target ref:** \`${displayRef}\``,
               targetRef ? `**Workflow ref:** \`${workflowBranch}\`` : undefined,
               requestedJobs ? `**Requested jobs:** \`${requestedJobs}\`` : '**Requested jobs:** all (no filter)',
-              `**Summary:** ${passed.length} passed, ${failed.length} failed, ${skipped.length} skipped`,
+              `**Summary:** ${passed.length} passed, ${failed.length} failed, ${cancelled.length} cancelled, ${skipped.length} skipped`,
               '',
               '| Job | Result |',
               '|-----|--------|',
