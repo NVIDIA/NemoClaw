@@ -79,6 +79,7 @@ const LEGACY_E2E_SHELL_ALLOWLIST = [
   "test/e2e/test-token-rotation.sh",
   "test/e2e/test-tunnel-lifecycle.sh",
   "test/e2e/test-upgrade-stale-sandbox.sh",
+  "test/e2e/test-vm-driver-privileged-exec-routing.sh",
   "test/e2e/test-whatsapp-qr-compact-e2e.sh",
 ];
 
@@ -86,7 +87,6 @@ const LEGACY_E2E_SHELL_ALLOWLIST = [
 // script should remove it from nightly and this allowlist in the same PR that
 // deletes the script.
 const RETIRED_VM_DRIVER_PRIVEXEC_JOB = "vm-driver-privileged-exec-routing-e2e";
-const RETIRED_VM_DRIVER_PRIVEXEC_SCRIPT = "test/e2e/test-vm-driver-privileged-exec-routing.sh";
 const VM_DRIVER_PRIVEXEC_VITEST = "test/vm-driver-privileged-exec-routing.test.ts";
 
 const NIGHTLY_E2E_SCRIPT_ALLOWLIST = [
@@ -219,7 +219,7 @@ describe("E2E reusable workflow contract", () => {
     }
   });
 
-  it("keeps the retired VM driver privileged-exec lane covered by CLI Vitest", () => {
+  it("keeps the unwired VM driver privileged-exec lane covered by CLI Vitest", () => {
     const nightlyText = readFileSync(
       new URL("../.github/workflows/nightly-e2e.yaml", import.meta.url),
       "utf8",
@@ -232,7 +232,9 @@ describe("E2E reusable workflow contract", () => {
 
     expect(nightlyWorkflow.jobs[RETIRED_VM_DRIVER_PRIVEXEC_JOB]).toBeUndefined();
     expect(nightlyText).not.toContain(RETIRED_VM_DRIVER_PRIVEXEC_JOB);
-    expect(nightlyText).not.toContain(RETIRED_VM_DRIVER_PRIVEXEC_SCRIPT);
+    expect(
+      existsSync(new URL("./e2e/test-vm-driver-privileged-exec-routing.sh", import.meta.url)),
+    ).toBe(true);
     expect(existsSync(new URL(`../${VM_DRIVER_PRIVEXEC_VITEST}`, import.meta.url))).toBe(true);
     expect(vitestConfig).toContain('name: "cli"');
     expect(vitestConfig).toContain('"test/**/*.test.{js,ts}"');
