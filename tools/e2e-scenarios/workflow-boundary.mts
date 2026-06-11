@@ -122,6 +122,17 @@ function requireNoDispatchInputInterpolation(
   }
 }
 
+function requireFreeStandingJobSelector(
+  errors: string[],
+  jobName: string,
+  job: WorkflowRecord,
+): void {
+  const expected = `${"${{"} inputs.jobs == '' || contains(format(',{0},', inputs.jobs), ',${jobName},') ${"}}"}`;
+  if (job.if !== expected) {
+    errors.push(`${jobName} job must use the trusted jobs selector`);
+  }
+}
+
 function validateOpenShellVersionPinVitestJob(errors: string[], jobs: WorkflowRecord): void {
   const jobName = "openshell-version-pin-vitest";
   const job = asRecord(jobs[jobName]);
@@ -136,11 +147,7 @@ function validateOpenShellVersionPinVitestJob(errors: string[], jobs: WorkflowRe
   if (Object.hasOwn(job, "needs")) {
     errors.push("openshell-version-pin-vitest job must run independently of generate-matrix");
   }
-  if (Object.hasOwn(job, "if")) {
-    errors.push(
-      "openshell-version-pin-vitest job must run independently of workflow dispatch scenario filters",
-    );
-  }
+  requireFreeStandingJobSelector(errors, jobName, job);
 
   const jobEnv = asRecord(job.env);
   if (jobEnv.NEMOCLAW_RUN_E2E_SCENARIOS !== "1") {
@@ -224,11 +231,7 @@ function validateInferenceRoutingVitestJob(errors: string[], jobs: WorkflowRecor
   if (Object.hasOwn(job, "needs")) {
     errors.push("inference-routing-vitest job must run independently of generate-matrix");
   }
-  if (Object.hasOwn(job, "if")) {
-    errors.push(
-      "inference-routing-vitest job must run independently of workflow dispatch scenario filters",
-    );
-  }
+  requireFreeStandingJobSelector(errors, jobName, job);
 
   const providerEnvNames = [
     "NVIDIA_API_KEY",
@@ -329,11 +332,7 @@ function validateOnboardNegativePathsVitestJob(errors: string[], jobs: WorkflowR
   if (Object.hasOwn(job, "needs")) {
     errors.push("onboard-negative-paths-vitest job must run independently of generate-matrix");
   }
-  if (Object.hasOwn(job, "if")) {
-    errors.push(
-      "onboard-negative-paths-vitest job must run independently of workflow dispatch scenario filters",
-    );
-  }
+  requireFreeStandingJobSelector(errors, jobName, job);
 
   const jobEnv = asRecord(job.env);
   if (jobEnv.NEMOCLAW_RUN_E2E_SCENARIOS !== "1") {
