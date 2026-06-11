@@ -221,4 +221,25 @@ describe("docker-driver gateway runtime helpers", () => {
       "/opt/openshell/openshell-gateway",
     );
   });
+
+  it("does not match process args that only contain openshell-gateway as a suffix", () => {
+    const pid = 12_345;
+    const { helpers, runCapture } = makeHelpers({
+      runCapture: vi.fn(() => "node /tmp/not-openshell-gateway\n"),
+    });
+    const originalExistsSync = fs.existsSync;
+    vi.spyOn(fs, "existsSync").mockImplementation(((candidate) => {
+      if (String(candidate) === `/proc/${pid}/cmdline`) return false;
+      return originalExistsSync(candidate);
+    }) as typeof fs.existsSync);
+
+    expect(
+      helpers.isDockerDriverGatewayProcess(pid, "/opt/openshell/openshell-gateway", {
+        requireDockerDriverEnv: false,
+      }),
+    ).toBe(false);
+    expect(runCapture).toHaveBeenCalledWith(["ps", "-p", String(pid), "-o", "args="], {
+      ignoreError: true,
+    });
+  });
 });

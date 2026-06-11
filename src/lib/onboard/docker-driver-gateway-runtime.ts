@@ -236,6 +236,24 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
     }
   }
 
+  function cleanProcessCommandToken(token: string): string {
+    return token.replace(/^['"]|['"]$/g, "").replace(/ \(deleted\)$/, "");
+  }
+
+  function processIdentityMatchesGatewayBinary(
+    identity: string,
+    gatewayBin?: string | null,
+  ): boolean {
+    const expectedExe = normalizeGatewayExecutablePath(gatewayBin);
+    for (const token of identity.split(/\s+/).filter(Boolean)) {
+      const cleanedToken = cleanProcessCommandToken(token);
+      if (path.basename(cleanedToken) === "openshell-gateway") return true;
+      if (!expectedExe || !cleanedToken.includes(path.sep)) continue;
+      if (normalizeGatewayExecutablePath(cleanedToken) === expectedExe) return true;
+    }
+    return false;
+  }
+
   function shouldRequireDockerDriverEnv(platform: NodeJS.Platform = process.platform): boolean {
     return platform === "linux";
   }
@@ -341,9 +359,7 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
       identity = captureProcessArgs(pid);
     }
     if (!identity) return false;
-    const matchesGatewayBinary =
-      identity.includes("openshell-gateway") ||
-      (typeof gatewayBin === "string" && gatewayBin.length > 0 && identity.includes(gatewayBin));
+    const matchesGatewayBinary = processIdentityMatchesGatewayBinary(identity, gatewayBin);
     if (!matchesGatewayBinary) return false;
     if (opts.requireDockerDriverEnv && !hasDockerDriverGatewayEnv(pid)) return false;
     return true;
