@@ -44,11 +44,15 @@ function expectExitZero(result: ProcessResult, label: string): void {
 }
 
 async function cleanupSandbox(host: HostCliClient, sandboxName: string): Promise<void> {
-  await host.nemoclaw([sandboxName, "destroy", "--yes"], {
+  const result = await host.nemoclaw([sandboxName, "destroy", "--yes"], {
     artifactName: `cleanup-destroy-${sandboxName}`,
     env: buildAvailabilityProbeEnv(),
     timeoutMs: 15 * 60_000,
   });
+  if (result.exitCode === 0) return;
+  const text = resultText(result);
+  if (/Sandbox '.+' does not exist|Run 'nemoclaw onboard' to create one/i.test(text)) return;
+  expectExitZero(result, `cleanup destroy sandbox ${sandboxName}`);
 }
 
 async function bestEffortCleanupSandbox(host: HostCliClient, sandboxName: string): Promise<void> {
@@ -523,7 +527,7 @@ async function assertGatewayRecovery(host: HostCliClient, sandboxName: string): 
 
 liveTest(
   "sandbox operations preserve list/status/logs/recovery/multi-sandbox contracts",
-  async ({ artifacts, cleanup, environment, host, onboard, sandbox, secrets, skip }) => {
+  async ({ artifacts, cleanup, environment, host, sandbox, secrets, skip }) => {
     secrets.required("NVIDIA_API_KEY");
 
     await artifacts.writeJson("scenario.json", {
@@ -558,12 +562,12 @@ liveTest(
       skip("Docker is required for sandbox operations E2E");
     }
 
-    const ready = await environment.assertReady(ENVIRONMENT);
+    await environment.assertReady(ENVIRONMENT);
     cleanup.add("destroy shared NemoClaw gateway", () => bestEffortDestroyGateway(host));
     await bestEffortCleanupSandbox(host, SANDBOX_B);
     await bestEffortCleanupSandbox(host, SANDBOX_A);
 
-    await onboard.from(ready, { sandboxName: SANDBOX_A, timeoutMs: 20 * 60_000 });
+    await onboardSandbox(host, cleanup, SANDBOX_A, "onboard-sandbox-a");
 
     await expectListed(host, SANDBOX_A, "tc-sbx-01-list-sandbox-a");
     await assertAgentCanAnswer(host, SANDBOX_A);
