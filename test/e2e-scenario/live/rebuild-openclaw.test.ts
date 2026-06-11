@@ -327,10 +327,14 @@ function backupCredentialLeakPaths(backupDir: string, oldGatewayToken: string): 
         continue;
       }
       if (!entry.isFile()) continue;
-      if (skippedLockfiles.has(entry.name)) continue;
       const text = fs.readFileSync(fullPath, "utf8");
+      if (text.includes(oldGatewayToken)) {
+        leaks.push(fullPath);
+        continue;
+      }
+      if (skippedLockfiles.has(entry.name)) continue;
       const isJsonOrEnv = /\.json$|\.env$|^\.env$/i.test(entry.name);
-      if (text.includes(oldGatewayToken) || (isJsonOrEnv && candidatePattern.test(text))) {
+      if (isJsonOrEnv && candidatePattern.test(text)) {
         leaks.push(fullPath);
       }
     }
@@ -665,8 +669,21 @@ print(json.dumps({'seeded': saved == os.environ['PRE_REBUILD_GATEWAY_TOKEN'], 'h
     expectExitZero(prePolicy, "openshell policy get before rebuild");
     expect(prePolicy.stdout).toMatch(/npm|registry\.npmjs\.org/i);
     expect(prePolicy.stdout).toMatch(/pypi|pypi\.org/i);
-    expect(prePolicy.stdout).toMatch(/telegram|api\.telegram\.org/i);
+    expect(prePolicy.stdout).toMatch(/telegram/i);
+    expect(prePolicy.stdout).toContain("api.telegram.org");
     expect(registrySandbox().policies).toEqual(expect.arrayContaining([...POLICY_PRESETS]));
+    const prePolicyList = await host.command(
+      "node",
+      [CLI_ENTRYPOINT, SANDBOX_NAME, "policy-list"],
+      {
+        artifactName: "phase-4-nemoclaw-policy-list-before-rebuild",
+        env: cliEnv(apiKey),
+        redactionValues: [apiKey],
+        timeoutMs: OPENSHELL_TIMEOUT_MS,
+      },
+    );
+    expectExitZero(prePolicyList, "nemoclaw policy-list before rebuild");
+    expect(prePolicyList.stdout).toMatch(/●\s+telegram/i);
 
     // Phase 5: restore the current base image tag that rebuild consumes.
     const buildCurrentBase = await host.command(
@@ -763,7 +780,8 @@ print(json.dumps({'tokenPresent': bool(token), 'tokenRotated': token != old, 'ru
       backupDir,
       stateDirCount: Array.isArray(manifest.stateDirs) ? manifest.stateDirs.length : undefined,
       policyPresets: manifest.policyPresets,
-      telegramBridgeTraffic: "not exercised; real bot credentials/messages stay out of this rebuild migration",
+      telegramBridgeTraffic:
+        "real bot response remains owned by test/e2e/test-messaging-providers.sh M19b/future Phase 6 messaging-provider Vitest migration; this rebuild migration asserts restored telegram policy and api.telegram.org reachability",
     });
     expect(manifest.policyPresets).toEqual(expect.arrayContaining([...POLICY_PRESETS]));
     expect(backupCredentialLeakPaths(backupDir, PRE_REBUILD_GATEWAY_TOKEN)).toEqual([]);
@@ -777,9 +795,45 @@ print(json.dumps({'tokenPresent': bool(token), 'tokenRotated': token != old, 'ru
     expectExitZero(postPolicy, "openshell policy get after rebuild");
     expect(postPolicy.stdout).toMatch(/npm|registry\.npmjs\.org/i);
     expect(postPolicy.stdout).toMatch(/pypi|pypi\.org/i);
-    expect(postPolicy.stdout).toMatch(/telegram|api\.telegram\.org/i);
+    expect(postPolicy.stdout).toMatch(/telegram/i);
+    expect(postPolicy.stdout).toContain("api.telegram.org");
 
-    // External API availability can make this inconclusive; keep it as a
+    const postPolicyList = await host.command(
+      "node",
+      [CLI_ENTRYPOINT, SANDBOX_NAME, "policy-list"],
+      {
+        artifactName: "phase-7-nemoclaw-policy-list-after-rebuild",
+        env: cliEnv(apiKey),
+        redactionValues: [apiKey],
+        timeoutMs: OPENSHELL_TIMEOUT_MS,
+      },
+    );
+    expectExitZero(postPolicyList, "nemoclaw policy-list after rebuild");
+    expect(postPolicyList.stdout).toMatch(/●\s+telegram/i);
+
+    // #1952's real bot-response clause is owned by the messaging provider E2E
+    // (`test/e2e/test-messaging-providers.sh` M19b, then the Phase 6 Vitest
+    // migration). This rebuild/state migration keeps the deterministic
+    // prerequisite: Telegram policy is restored and the gateway does not block
+    // api.telegram.org after rebuild.
+    const telegramApiReachability = await sandbox.exec(
+      SANDBOX_NAME,
+      [
+        "node",
+        "-e",
+        "fetch('https://api.telegram.org/bot000000000:invalid/getMe', { signal: AbortSignal.timeout(15000) }).then((r) => console.log('STATUS_' + r.status)).catch((e) => { console.log('ERROR_' + (e.cause?.code || e.code || e.message)); process.exitCode = 1; })",
+      ],
+      {
+        artifactName: "phase-7-telegram-api-reachability-after-rebuild",
+        env: dockerContextEnv(),
+        timeoutMs: 30_000,
+      },
+    );
+    expectExitZero(telegramApiReachability, "api.telegram.org reachability after rebuild");
+    expect(telegramApiReachability.stdout).toMatch(/STATUS_\d+/);
+    expect(telegramApiReachability.stdout).not.toMatch(/STATUS_403|Forbidden/i);
+
+    // External inference API availability can make this inconclusive; keep it as a
     // non-fatal artifact-producing probe like the legacy script did.
     await sandbox.exec(
       SANDBOX_NAME,

@@ -570,11 +570,21 @@ function validateRebuildOpenClawVitestJob(errors: string[], jobs: WorkflowRecord
   const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
   requireRunContains(errors, buildCli, "npm run build:cli");
 
+  const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell");
+  requireEnvDoesNotExposeSecret(errors, "rebuild-openclaw-vitest step 'Install OpenShell'", asRecord(installOpenShell?.env), "GITHUB_TOKEN");
+  requireRunContains(errors, installOpenShell, "bash scripts/install-openshell.sh");
+  requireRunContains(errors, installOpenShell, "env -u DOCKER_CONFIG");
+  requireRunContains(errors, installOpenShell, "-u DOCKERHUB_USERNAME");
+  requireRunContains(errors, installOpenShell, "-u DOCKERHUB_TOKEN");
+  requireRunContains(errors, installOpenShell, "-u NVIDIA_API_KEY");
+  requireRunContains(errors, installOpenShell, "-u GITHUB_TOKEN");
+
   const runVitest = requireJobStep(errors, jobName, steps, "Run OpenClaw rebuild live test");
   const runVitestEnv = asRecord(runVitest?.env);
   if (runVitestEnv.NVIDIA_API_KEY !== "${{ secrets.NVIDIA_API_KEY }}") {
     errors.push("rebuild-openclaw-vitest step must receive NVIDIA_API_KEY from secrets");
   }
+  requireRunContains(errors, runVitest, "OPENSHELL_BIN");
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-scenarios-live");
   requireRunContains(errors, runVitest, "test/e2e-scenario/live/rebuild-openclaw.test.ts");
 
