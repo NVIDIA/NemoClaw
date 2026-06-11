@@ -203,6 +203,17 @@ if [ ! -f "$_HERMES_BOUNDARY_VALIDATOR" ]; then
   _HERMES_BOUNDARY_VALIDATOR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/validate-env-secret-boundary.py"
 fi
 
+# Resolve the dashboard config seeder (same install/dev-fallback pattern as the
+# boundary validator above). The Hermes dashboard runs under its own
+# HERMES_DASHBOARD_HOME, so it never sees the model/custom_providers block
+# NemoClaw writes to the gateway config; this script mirrors those routing keys
+# into the dashboard config so the Models page and kanban specifier/dispatcher
+# resolve the routed model.
+_HERMES_DASHBOARD_CONFIG_SEEDER="/usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py"
+if [ ! -f "$_HERMES_DASHBOARD_CONFIG_SEEDER" ]; then
+  _HERMES_DASHBOARD_CONFIG_SEEDER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/seed-dashboard-config.py"
+fi
+
 truthy_env() {
   case "$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')" in
     1 | true | yes | on) return 0 ;;
@@ -645,6 +656,34 @@ prepare_hermes_dashboard_home() {
     chown "$owner" "$HERMES_DASHBOARD_HOME"
   fi
   chmod 700 "$HERMES_DASHBOARD_HOME"
+  seed_hermes_dashboard_config "$owner"
+}
+
+# Mirror the gateway's model routing (model + custom_providers) into the
+# dashboard's isolated HERMES_HOME so its Models page (/api/model/options) and
+# the kanban specifier/dispatcher resolve the routed model. The dashboard runs
+# under HERMES_DASHBOARD_HOME for privilege separation and otherwise only sees a
+# Hermes-default config with an empty model. Idempotent: refreshes the keys on
+# every launch. Best-effort — a seed failure must not block the dashboard.
+seed_hermes_dashboard_config() {
+  local owner="${1:-}"
+  local dst="${HERMES_DASHBOARD_HOME}/config.yaml"
+  local rc=0
+
+  python3 "$_HERMES_DASHBOARD_CONFIG_SEEDER" "${HERMES_DIR}/config.yaml" "$dst" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    echo "[dashboard] WARN: model routing seed exited ${rc}; Models page may show no models" >&2
+    return 0
+  fi
+
+  # The seeder runs as root on the privilege-separated path; hand the file back
+  # to the dashboard user (its HERMES_HOME is chmod 700) so it can read/rewrite it.
+  if [ -f "$dst" ]; then
+    if [ "$(id -u)" -eq 0 ] && [ -n "$owner" ]; then
+      chown "$owner" "$dst" 2>/dev/null || true
+    fi
+    chmod 600 "$dst" 2>/dev/null || true
+  fi
 }
 
 start_hermes_dashboard_current_user() {
