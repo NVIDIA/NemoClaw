@@ -20,9 +20,10 @@
  */
 
 import { DEFAULT_GATEWAY_PORT } from "../core/ports";
-import { BASE_GATEWAY_NAME, type GatewayReuseState } from "../state/gateway";
+import type { GatewayReuseState } from "../state/gateway";
 
-export { BASE_GATEWAY_NAME };
+/** Gateway registration name used for the default gateway port. */
+export const BASE_GATEWAY_NAME = "nemoclaw";
 /** Docker-driver gateway state directory leaf name for the default port. */
 export const BASE_GATEWAY_STATE_DIR_NAME = "openshell-docker-gateway";
 /** Docker-driver gateway compatibility container name for the default port. */

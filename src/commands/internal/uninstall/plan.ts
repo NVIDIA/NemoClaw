@@ -5,8 +5,6 @@ import { Flags } from "@oclif/core";
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../../../lib/cli/branding";
 import { jsonFlag } from "../../../lib/cli/common-flags";
 import { NemoClawCommand } from "../../../lib/cli/nemoclaw-oclif-command";
-import { GATEWAY_PORT } from "../../../lib/core/ports";
-import { resolveGatewayName } from "../../../lib/onboard/gateway-binding";
 
 import { buildHostUninstallPlan } from "../../../lib/actions/uninstall/plan";
 
@@ -26,10 +24,7 @@ export default class InternalUninstallPlanCommand extends NemoClawCommand {
       description: `Plan removal of ${CLI_DISPLAY_NAME}-pulled Ollama models`,
     }),
     "keep-openshell": Flags.boolean({ description: "Keep the openshell binary installed" }),
-    gateway: Flags.string({
-      description: "Gateway name",
-      default: resolveGatewayName(GATEWAY_PORT),
-    }),
+    gateway: Flags.string({ description: "Gateway name", default: "nemoclaw" }),
   };
 
   public async run(): Promise<void> {
