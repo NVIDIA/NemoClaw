@@ -53,6 +53,32 @@ describe("readLineFromStdin", () => {
       expected,
     );
   });
+
+  it.each([
+    ["EAGAIN"],
+    ["EWOULDBLOCK"],
+  ] as const)("gives up with null after the non-TTY deadline on persistent %s", (code) => {
+    const sleep = vi.fn();
+    const readSync = vi.fn((): number => {
+      const err = new Error(code) as NodeJS.ErrnoException;
+      err.code = code;
+      throw err;
+    });
+
+    expect(readLineFromStdin({ isTty: () => false, readSync, sleep })).toBeNull();
+    // 10s virtual deadline at 25ms per retry = exactly 400 bounded waits.
+    expect(sleep).toHaveBeenCalledTimes(400);
+  });
+
+  it("keeps waiting past the deadline on a TTY until input arrives", () => {
+    const sleep = vi.fn();
+    const events = [...Array.from({ length: 450 }, () => "EAGAIN"), "y", "\n"];
+
+    expect(readLineFromStdin({ isTty: () => true, readSync: makeReadSync(events), sleep })).toBe(
+      "y",
+    );
+    expect(sleep).toHaveBeenCalledTimes(450);
+  });
 });
 
 describe("isStdinTty", () => {

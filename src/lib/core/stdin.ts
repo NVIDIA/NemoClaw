@@ -45,7 +45,18 @@ export function isStdinTty(): boolean {
  */
 const READ_LINE_RETRY_DELAY_MS = 25;
 
+/**
+ * How long a non-TTY stdin may stay in the `EAGAIN` "no input yet" state
+ * before the read gives up and reports no input. On a TTY the prompt waits
+ * indefinitely — a human may answer at any time and Ctrl-C always escapes —
+ * but a non-interactive stdin left non-blocking (e.g. a never-written pipe)
+ * may never become ready, and a confirm prompt hanging forever in
+ * automation is an operator hazard.
+ */
+const NON_TTY_EAGAIN_DEADLINE_MS = 10_000;
+
 export interface ReadLineDeps {
+  isTty?: () => boolean;
   readSync?: (
     fd: number,
     buffer: Buffer,
@@ -61,13 +72,19 @@ export interface ReadLineDeps {
  * module comment). A non-blocking fd must be tolerated here: `EAGAIN` means
  * "no input yet", not end-of-input — wait briefly and retry. Treating
  * `EAGAIN` as EOF (#5020) made every confirm prompt auto-abort on Linux
- * TTYs before the user could type.
+ * TTYs before the user could type. On a TTY the wait is unbounded; on a
+ * non-TTY stdin it is capped at `NON_TTY_EAGAIN_DEADLINE_MS` so automation
+ * never hangs on a permanently non-ready fd.
  */
 export function readLineFromStdin(deps: ReadLineDeps = {}): string | null {
   const readSync = deps.readSync ?? fs.readSync;
   const sleep = deps.sleep ?? sleepMs;
+  const stdinIsTerminal = (deps.isTty ?? isStdinTty)();
   const chunks: Buffer[] = [];
   const byte = Buffer.alloc(1);
+  // Virtual elapsed time: advanced by the nominal retry delay rather than a
+  // wall clock so the deadline stays deterministic under an injected sleep.
+  let eagainWaitMs = 0;
   while (true) {
     let bytesRead = 0;
     try {
@@ -75,7 +92,11 @@ export function readLineFromStdin(deps: ReadLineDeps = {}): string | null {
     } catch (err) {
       const code = isErrnoException(err) ? err.code : undefined;
       if (code === "EAGAIN" || code === "EWOULDBLOCK") {
+        if (!stdinIsTerminal && eagainWaitMs >= NON_TTY_EAGAIN_DEADLINE_MS) {
+          return chunks.length > 0 ? Buffer.concat(chunks).toString("utf-8") : null;
+        }
         sleep(READ_LINE_RETRY_DELAY_MS);
+        eagainWaitMs += READ_LINE_RETRY_DELAY_MS;
         continue;
       }
       if (code === "EINTR") continue;

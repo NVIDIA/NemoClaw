@@ -77,6 +77,7 @@ describe("uninstall run plan", () => {
         commandExists: () => true,
         env: {
           HOME: "/tmp/nemoclaw-uninstall-test",
+          NEMOCLAW_AGENT: "",
           TMPDIR: "/tmp/nemoclaw-uninstall-test",
         } as NodeJS.ProcessEnv,
         existsSync: () => false,
@@ -206,7 +207,7 @@ describe("uninstall run plan", () => {
     const result = runUninstallPlan(
       { assumeYes: false, deleteModels: false, keepOpenShell: true },
       {
-        env: { HOME: "/tmp/nemoclaw-uninstall-test" } as NodeJS.ProcessEnv,
+        env: { HOME: "/tmp/nemoclaw-uninstall-test", NEMOCLAW_AGENT: "" } as NodeJS.ProcessEnv,
         existsSync: () => false,
         isTty: true,
         log: (line) => logs.push(line),
@@ -718,7 +719,10 @@ describe("uninstall run plan", () => {
           { assumeYes: true, deleteModels: false, keepOpenShell: true },
           {
             commandExists: () => false,
-            env: { HOME: tmpHome } as NodeJS.ProcessEnv,
+            env: {
+              HOME: tmpHome,
+              NEMOCLAW_UNINSTALL_DESTROY_USER_DATA: "",
+            } as NodeJS.ProcessEnv,
             existsSync: tempScopedExistsSync(tmpHome),
             isTty: false,
             log: (line) => logs.push(line),
@@ -789,7 +793,11 @@ describe("uninstall run plan", () => {
           { assumeYes: false, deleteModels: false, keepOpenShell: true },
           {
             commandExists: () => false,
-            env: { HOME: tmpHome, NEMOCLAW_NON_INTERACTIVE: "" } as NodeJS.ProcessEnv,
+            env: {
+              HOME: tmpHome,
+              NEMOCLAW_NON_INTERACTIVE: "",
+              NEMOCLAW_UNINSTALL_DESTROY_USER_DATA: "",
+            } as NodeJS.ProcessEnv,
             existsSync: tempScopedExistsSync(tmpHome),
             isTty: true,
             log: (line) => logs.push(line),
@@ -817,7 +825,11 @@ describe("uninstall run plan", () => {
           { assumeYes: false, deleteModels: false, keepOpenShell: true },
           {
             commandExists: () => false,
-            env: { HOME: tmpHome, NEMOCLAW_NON_INTERACTIVE: "" } as NodeJS.ProcessEnv,
+            env: {
+              HOME: tmpHome,
+              NEMOCLAW_NON_INTERACTIVE: "",
+              NEMOCLAW_UNINSTALL_DESTROY_USER_DATA: "",
+            } as NodeJS.ProcessEnv,
             existsSync: tempScopedExistsSync(tmpHome),
             isTty: true,
             log: (line) => logs.push(line),
@@ -853,6 +865,7 @@ describe("uninstall run plan", () => {
             env: {
               HOME: tmpHome,
               NEMOCLAW_NON_INTERACTIVE: "1",
+              NEMOCLAW_UNINSTALL_DESTROY_USER_DATA: "",
             } as NodeJS.ProcessEnv,
             existsSync: tempScopedExistsSync(tmpHome),
             // Simulate a TTY so we exercise the env-var-only branch (the prior
@@ -904,7 +917,10 @@ describe("uninstall run plan", () => {
           { assumeYes: true, deleteModels: false, keepOpenShell: true },
           {
             commandExists: () => false,
-            env: { HOME: tmpHome } as NodeJS.ProcessEnv,
+            env: {
+              HOME: tmpHome,
+              NEMOCLAW_UNINSTALL_DESTROY_USER_DATA: "",
+            } as NodeJS.ProcessEnv,
             error: (line) => warnings.push(line),
             existsSync: tempScopedExistsSync(tmpHome),
             isTty: false,
