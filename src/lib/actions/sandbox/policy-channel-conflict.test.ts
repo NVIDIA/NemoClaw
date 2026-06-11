@@ -493,7 +493,7 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
 
   it("in-sandbox-qr whatsapp aborts when plan persistence fails", async () => {
     arrangeRegistry({
-      current: { name: "alpha", messagingChannels: [] },
+      current: makeEmptyEntry("alpha"),
       others: [],
     });
     updateSandboxMock.mockReturnValue(false);
