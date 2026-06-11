@@ -24,7 +24,6 @@ describe("buildCreatedSandboxRegistryEntry", () => {
       schemaVersion: 1 as const,
       plan: { sandboxName: "demo" },
     };
-    const messagingChannelConfig = { DISCORD_ALLOWED_USER_IDS: "123" };
 
     const entry = buildCreatedSandboxRegistryEntry({
       sandboxName: "demo",
@@ -36,11 +35,7 @@ describe("buildCreatedSandboxRegistryEntry", () => {
       imageTag: "nemoclaw-demo:123",
       providerCredentialHashes: { SLACK_BOT_TOKEN: "hash-slack-bot" },
       appliedPolicies: ["discord", "slack"],
-      configuredMessagingChannels: ["slack", "discord", "slack"],
-      activeMessagingChannels: ["discord"],
-      messagingChannelConfig,
       plannedMessagingState: plannedMessagingState as any,
-      disabledChannels: ["telegram"],
       hermesToolGateways: ["filesystem"],
       hermesDashboardState: {
         enabled: true,
@@ -58,9 +53,6 @@ describe("buildCreatedSandboxRegistryEntry", () => {
       imageTag: "nemoclaw-demo:123",
       providerCredentialHashes: { SLACK_BOT_TOKEN: "hash-slack-bot" },
       policies: ["discord", "slack"],
-      messagingChannels: ["slack", "discord"],
-      messagingChannelConfig,
-      disabledChannels: ["telegram"],
       hermesToolGateways: ["filesystem"],
       hermesDashboardEnabled: true,
       hermesDashboardPort: 18790,
@@ -75,9 +67,13 @@ describe("buildCreatedSandboxRegistryEntry", () => {
     });
     expect(entry.agent).toBeNull();
     expect(entry.messaging).toBe(plannedMessagingState);
+    const rawEntry = entry as unknown as Record<string, unknown>;
+    expect(rawEntry.messagingChannels).toBeUndefined();
+    expect(rawEntry.messagingChannelConfig).toBeUndefined();
+    expect(rawEntry.disabledChannels).toBeUndefined();
   });
 
-  it("uses active channels and skips stale messaging plans when no configured channel set exists", () => {
+  it("skips stale messaging plans without writing legacy messaging fields", () => {
     const entry = buildCreatedSandboxRegistryEntry({
       sandboxName: "demo",
       model: "",
@@ -88,14 +84,10 @@ describe("buildCreatedSandboxRegistryEntry", () => {
       imageTag: null,
       providerCredentialHashes: {},
       appliedPolicies: [],
-      configuredMessagingChannels: null,
-      activeMessagingChannels: ["telegram"],
-      messagingChannelConfig: null,
       plannedMessagingState: {
         schemaVersion: 1 as const,
         plan: { sandboxName: "other" },
       } as any,
-      disabledChannels: [],
       hermesToolGateways: [],
       hermesDashboardState: { enabled: false, config: null },
       dashboardPort: 18789,
@@ -105,10 +97,11 @@ describe("buildCreatedSandboxRegistryEntry", () => {
 
     expect(entry.model).toBeNull();
     expect(entry.provider).toBeNull();
-    expect(entry.messagingChannels).toEqual(["telegram"]);
-    expect(entry.messagingChannelConfig).toBeUndefined();
+    const rawEntry = entry as unknown as Record<string, unknown>;
+    expect(rawEntry.messagingChannels).toBeUndefined();
+    expect(rawEntry.messagingChannelConfig).toBeUndefined();
     expect(entry.messaging).toBeUndefined();
-    expect(entry.disabledChannels).toBeUndefined();
+    expect(rawEntry.disabledChannels).toBeUndefined();
     expect(entry.hermesToolGateways).toBeUndefined();
     expect(entry.hermesDashboardEnabled).toBeUndefined();
     expect(entry.hermesDashboardPort).toBeUndefined();
@@ -131,11 +124,7 @@ describe("registerCreatedSandbox", () => {
       imageTag: null,
       providerCredentialHashes: {},
       appliedPolicies: [],
-      configuredMessagingChannels: null,
-      activeMessagingChannels: [],
-      messagingChannelConfig: undefined,
       plannedMessagingState: undefined,
-      disabledChannels: [],
       hermesToolGateways: [],
       hermesDashboardState: { enabled: false, config: null },
       dashboardPort: 18789,
