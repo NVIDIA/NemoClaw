@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 
 const START_SCRIPT = path.join(import.meta.dirname, "..", "agents", "hermes", "start.sh");
@@ -321,6 +321,7 @@ function runTirithExplicitCommandDispatch(mode: "non-root" | "root") {
       "apply_shields_up_runtime_env() { :; }",
       "validate_hermes_env_secret_boundary() { :; }",
       "validate_hermes_runtime_env_secret_boundary() { :; }",
+      "ensure_hermes_api_server_key() { :; }",
       "refresh_hermes_provider_placeholders() { :; }",
       "configure_messaging_channels() { :; }",
       'cleanup_stale_hermes_gateway_runtime() { echo "unexpected gateway cleanup" >&2; return 99; }',
@@ -824,6 +825,20 @@ describe("agents/hermes/start.sh env secret boundary", () => {
     expect(result.stderr).toBe("");
   });
 
+  it("allows a raw API_SERVER_KEY (Hermes loopback api_server token)", () => {
+    const result = runHermesEnvSecretBoundary({
+      envFile: [
+        "API_SERVER_PORT=18642",
+        "API_SERVER_HOST=127.0.0.1",
+        "API_SERVER_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "",
+      ].join("\n"),
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
+  });
+
   it("rejects raw secret-shaped values without printing the value", () => {
     const rawToken = "SENTINEL_RAW_SECRET_VALUE";
     const result = runHermesEnvSecretBoundary({
@@ -877,6 +892,7 @@ describe("agents/hermes/start.sh env secret boundary", () => {
       NEMOCLAW_INFERENCE_API: "openai-completions",
       NEMOCLAW_PROVIDER_KEY: "custom",
       OPENCLAW_GATEWAY_TOKEN: "raw-gateway-token",
+      API_SERVER_KEY: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
       SLACK_BOT_TOKEN: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
       TELEGRAM_BOT_TOKEN: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
     });

@@ -676,10 +676,17 @@ start_hermes_dashboard_sandbox_user() {
 wait_for_hermes_gateway_internal() {
   local gateway_pid="$1"
   local attempts=0
-  while [ "$attempts" -lt 45 ]; do
-    if curl -sf --max-time 2 "http://127.0.0.1:${INTERNAL_PORT}/health" >/dev/null 2>&1; then
-      return 0
-    fi
+  local code
+  while [ "$attempts" -lt 60 ]; do
+    # Status-code extraction (not curl -sf) so a 401 counts as alive: Hermes
+    # v0.16.0+ may guard the api_server with API_SERVER_KEY, and the probe is
+    # unauthenticated. A 401 still proves the gateway is bound and serving.
+    # Mirrors GATEWAY_ALIVE_CODES in src/lib/verify-deployment.ts.
+    code=$(curl -so /dev/null -w '%{http_code}' --max-time 2 \
+      "http://127.0.0.1:${INTERNAL_PORT}/health" 2>/dev/null || echo 000)
+    case "$code" in
+      200 | 401) return 0 ;;
+    esac
     if ! kill -0 "$gateway_pid" 2>/dev/null; then
       wait "$gateway_pid"
       return $?

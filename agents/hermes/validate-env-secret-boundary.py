@@ -30,6 +30,14 @@ PLACEHOLDER_RE = re.compile(r"^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-[A-Z0-9_]+$")
 KEY_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 ENV_FILE_ALLOWED_NONSECRET_KEYS = frozenset({"API_SERVER_HOST", "API_SERVER_PORT"})
+# API_SERVER_KEY is the bearer token Hermes' own api_server (Hermes v0.16.0+)
+# mints for its loopback bind. It is not an external-service credential routed
+# through the OpenShell resolver — it authenticates clients reaching the
+# 127.0.0.1 api_server (and the forwarded port), so the gateway must read it
+# raw and it legitimately lives in .env. This mirrors the OPENCLAW_GATEWAY_TOKEN
+# allowance below: a self-minted, loopback-only token the secret boundary does
+# not require to be placeholdered.
+ENV_FILE_ALLOWED_RAW_SECRET_KEYS = frozenset({"API_SERVER_KEY"})
 RUNTIME_ALLOWED_NONSECRET_KEYS = frozenset(
     {
         "API_SERVER_HOST",
@@ -39,7 +47,7 @@ RUNTIME_ALLOWED_NONSECRET_KEYS = frozenset(
         "NEMOCLAW_PROVIDER_KEY",
     }
 )
-RUNTIME_ALLOWED_RAW_SECRET_KEYS = frozenset({"OPENCLAW_GATEWAY_TOKEN"})
+RUNTIME_ALLOWED_RAW_SECRET_KEYS = frozenset({"OPENCLAW_GATEWAY_TOKEN", "API_SERVER_KEY"})
 ALLOWED_LITERALS = frozenset({"", "[STRIPPED_BY_MIGRATION]"})
 
 
@@ -107,6 +115,8 @@ def validate_env_file(path: str) -> int:
                 if not KEY_NAME_RE.fullmatch(key):
                     continue
                 if key in ENV_FILE_ALLOWED_NONSECRET_KEYS:
+                    continue
+                if key in ENV_FILE_ALLOWED_RAW_SECRET_KEYS:
                     continue
                 if not SECRET_KEY_RE.search(key):
                     continue
