@@ -2588,6 +2588,7 @@ async function createSandbox(
     },
     {
       readMessagingPlanFromEnv,
+      gatewayName: GATEWAY_NAME,
       registry,
       checkGatewayLiveness: () =>
         runOpenshell(["sandbox", "list"], { ignoreError: true, suppressOutput: true }).status === 0,
