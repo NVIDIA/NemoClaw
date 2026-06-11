@@ -629,11 +629,13 @@ jobs:
             const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
             const workflowBranch = context.ref.replace('refs/heads/', '');
             const prNumberInput = process.env.JOB_PR_NUMBER || '';
-            const requestedScenarios = process.env.JOB_SCENARIOS || '';
+            const rawRequestedScenarios = process.env.JOB_SCENARIOS || '';
             const rawRequestedJobs = process.env.JOBS || '';
-            const jobsValidationPassed = needs['validate-jobs']?.result === 'success';
-            const requestedJobs = jobsValidationPassed ? rawRequestedJobs : '';
-            const jobsRejected = rawRequestedJobs && !jobsValidationPassed;
+            const selectorValidationPassed = needs['validate-jobs']?.result === 'success';
+            const requestedScenarios = selectorValidationPassed ? rawRequestedScenarios : '';
+            const requestedJobs = selectorValidationPassed ? rawRequestedJobs : '';
+            const scenariosRejected = rawRequestedScenarios && !selectorValidationPassed;
+            const jobsRejected = rawRequestedJobs && !selectorValidationPassed;
 
             let prNumber = prNumberInput ? Number.parseInt(prNumberInput, 10) : undefined;
             if (!prNumber) {
@@ -671,9 +673,11 @@ jobs:
               '',
               `**Run:** [${context.runId}](${runUrl})`,
               `**Workflow ref:** \`${workflowBranch}\``,
-              requestedScenarios
-                ? `**Requested scenarios:** \`${requestedScenarios}\``
-                : '**Requested scenarios:** _(default — all supported)_',
+              scenariosRejected
+                ? '**Requested scenarios:** _(selector rejected by validate-jobs)_'
+                : requestedScenarios
+                  ? `**Requested scenarios:** \`${requestedScenarios}\``
+                  : '**Requested scenarios:** _(default — all supported)_',
               jobsRejected
                 ? '**Requested jobs:** _(selector rejected by validate-jobs)_'
                 : requestedJobs

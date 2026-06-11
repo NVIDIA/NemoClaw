@@ -357,9 +357,12 @@ jobs:
           "report-to-pr step must pass pr_number through JOB_PR_NUMBER env",
           "report-to-pr step must pass scenarios through JOB_SCENARIOS env",
           "step 'Post Vitest scenario results to PR' run script must include process.env.JOBS",
-          "step 'Post Vitest scenario results to PR' run script must check validate-jobs before echoing jobs",
+          "step 'Post Vitest scenario results to PR' run script must include process.env.JOB_SCENARIOS",
+          "step 'Post Vitest scenario results to PR' run script must check validate-jobs before echoing selectors",
           "step 'Post Vitest scenario results to PR' run script must omit rejected job selectors",
+          "step 'Post Vitest scenario results to PR' run script must omit rejected scenario selectors",
           "step 'Post Vitest scenario results to PR' run script must include **Requested jobs:**",
+          "step 'Post Vitest scenario results to PR' run script must include **Requested scenarios:**",
         ]),
       );
     } finally {

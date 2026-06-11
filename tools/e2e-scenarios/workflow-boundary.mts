@@ -809,14 +809,23 @@ export function validateE2eVitestScenariosWorkflowBoundary(
     if (!reportScript.includes("process.env.JOBS")) {
       errors.push("step 'Post Vitest scenario results to PR' run script must include process.env.JOBS");
     }
-    if (!reportScript.includes("jobsValidationPassed")) {
-      errors.push("step 'Post Vitest scenario results to PR' run script must check validate-jobs before echoing jobs");
+    if (!reportScript.includes("process.env.JOB_SCENARIOS")) {
+      errors.push("step 'Post Vitest scenario results to PR' run script must include process.env.JOB_SCENARIOS");
     }
-    if (!reportScript.includes("selector rejected by validate-jobs")) {
+    if (!reportScript.includes("selectorValidationPassed")) {
+      errors.push("step 'Post Vitest scenario results to PR' run script must check validate-jobs before echoing selectors");
+    }
+    if (!reportScript.includes("jobsRejected")) {
       errors.push("step 'Post Vitest scenario results to PR' run script must omit rejected job selectors");
+    }
+    if (!reportScript.includes("scenariosRejected")) {
+      errors.push("step 'Post Vitest scenario results to PR' run script must omit rejected scenario selectors");
     }
     if (!reportScript.includes("**Requested jobs:**")) {
       errors.push("step 'Post Vitest scenario results to PR' run script must include **Requested jobs:**");
+    }
+    if (!reportScript.includes("**Requested scenarios:**")) {
+      errors.push("step 'Post Vitest scenario results to PR' run script must include **Requested scenarios:**");
     }
     for (const forbidden of ["toJSON(inputs.pr_number)", "toJSON(inputs.scenarios)"]) {
       if (reportScript.includes(forbidden)) {
