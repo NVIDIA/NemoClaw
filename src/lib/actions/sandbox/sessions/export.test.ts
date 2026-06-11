@@ -120,6 +120,7 @@ describe("exportSandboxSessions", () => {
     const result = await exportSandboxSessions({
       sandboxName: "alpha",
       out: "./out.tgz",
+      format: "tar",
     });
 
     // Session JSONL can contain pasted secrets, so the downloaded host bundle
@@ -154,6 +155,67 @@ describe("exportSandboxSessions", () => {
     expect(result.bundleBytes).toBeNull();
   });
 
+  it("writes a browsable directory of session files by default (dir format, no tar staging)", async () => {
+    captureMock.mockReturnValueOnce(
+      makeCapture(
+        JSON.stringify([
+          { key: "agent:main:main", sessionId: "sid-a" },
+          { key: "agent:main:telegram:t-1", sessionId: "sid-b" },
+        ]),
+      ),
+    );
+
+    const mkdirSpy = vi.spyOn(fs, "mkdirSync").mockImplementation(() => undefined);
+    const chmodSpy = vi.spyOn(fs, "chmodSync").mockImplementation(() => {});
+    const statSpy = vi
+      .spyOn(fs, "statSync")
+      .mockReturnValue({ size: 42 } as unknown as ReturnType<typeof fs.statSync>);
+
+    const result = await exportSandboxSessions({
+      sandboxName: "alpha",
+      out: "./sessions-alpha",
+    });
+
+    // dir is the default: no in-sandbox tar/staging, just a per-file download
+    // straight into the host directory.
+    expect(mkdirSpy).toHaveBeenCalledWith("./sessions-alpha", { recursive: true });
+    const shellCalls = runMock.mock.calls.filter((c) => (c[0] as string[]).includes("sh"));
+    expect(shellCalls).toHaveLength(0);
+    const downloadCalls = runMock.mock.calls.filter((c) => (c[0] as string[])[1] === "download");
+    expect(downloadCalls).toHaveLength(2);
+    expect(downloadCalls[0]?.[0]).toEqual([
+      "sandbox",
+      "download",
+      "alpha",
+      "/sandbox/.openclaw/agents/main/sessions/sid-a.jsonl",
+      "sessions-alpha/sid-a.jsonl",
+    ]);
+    // Each downloaded file is locked to owner-only (session JSONL may hold secrets).
+    expect(chmodSpy).toHaveBeenCalledWith("sessions-alpha/sid-a.jsonl", 0o600);
+
+    expect(result.format).toBe("dir");
+    expect(result.hostDest).toBe("./sessions-alpha");
+    expect(result.bundleBytes).toBeNull();
+    expect(result.sessions).toEqual([
+      {
+        key: "agent:main:main",
+        sessionId: "sid-a",
+        path: "sessions-alpha/sid-a.jsonl",
+        sizeBytes: 42,
+      },
+      {
+        key: "agent:main:telegram:t-1",
+        sessionId: "sid-b",
+        path: "sessions-alpha/sid-b.jsonl",
+        sizeBytes: 42,
+      },
+    ]);
+
+    mkdirSpy.mockRestore();
+    chmodSpy.mockRestore();
+    statSpy.mockRestore();
+  });
+
   it("dedupes resolved session ids when the same session is referenced by both alias and canonical key", async () => {
     captureMock.mockReturnValueOnce(
       makeCapture(
@@ -168,6 +230,7 @@ describe("exportSandboxSessions", () => {
       sandboxName: "alpha",
       keys: ["agent:main:main", "main"],
       out: "./out.tgz",
+      format: "tar",
     });
 
     expect(result.resolvedSessionIds).toEqual(["sid-a"]);
@@ -188,6 +251,7 @@ describe("exportSandboxSessions", () => {
       sandboxName: "alpha",
       keys: ["agent:main:telegram:t-1"],
       out: "./out.tgz",
+      format: "tar",
       includeTrajectory: true,
     });
 
@@ -209,6 +273,7 @@ describe("exportSandboxSessions", () => {
       agent: "work",
       keys: ["telegram:t-1"],
       out: "./out.tgz",
+      format: "tar",
     });
 
     const captureCall = captureMock.mock.calls[0]?.[0] as string[];
@@ -246,6 +311,7 @@ describe("exportSandboxSessions", () => {
       exportSandboxSessions({
         sandboxName: "alpha",
         out: "./out.tgz",
+        format: "tar",
       }),
     ).rejects.toThrow(/agent 'main' has no sessions to bundle/);
     expect(runMock).not.toHaveBeenCalled();
@@ -257,6 +323,7 @@ describe("exportSandboxSessions", () => {
       exportSandboxSessions({
         sandboxName: "alpha",
         out: "./out.tgz",
+        format: "tar",
       }),
     ).rejects.toThrow(/Could not parse `openclaw sessions list/);
     expect(runMock).not.toHaveBeenCalled();
@@ -284,6 +351,7 @@ describe("exportSandboxSessions", () => {
     await exportSandboxSessions({
       sandboxName: "alpha",
       out: "./out.tgz",
+      format: "tar",
     });
     const cleanupCall = runMock.mock.calls.at(-1);
     expect(cleanupCall?.[0]).toContain("rm");
@@ -300,6 +368,7 @@ describe("exportSandboxSessions", () => {
       exportSandboxSessions({
         sandboxName: "alpha",
         out: "./out.tgz",
+        format: "tar",
       }),
     ).rejects.toThrow(/Failed to tar sessions/);
     const cleanupCall = runMock.mock.calls.at(-1);
@@ -317,6 +386,7 @@ describe("exportSandboxSessions", () => {
       exportSandboxSessions({
         sandboxName: "alpha",
         out: "./out.tgz",
+        format: "tar",
       }),
     ).rejects.toThrow(/Failed to download/);
     const cleanupCall = runMock.mock.calls.at(-1);
@@ -332,6 +402,7 @@ describe("exportSandboxSessions", () => {
     await exportSandboxSessions({
       sandboxName: "alpha",
       out: "./out.tgz",
+      format: "tar",
       json: true,
     });
     expect(consoleLogSpy).toHaveBeenCalledTimes(1);

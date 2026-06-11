@@ -40,6 +40,7 @@
 
 import { randomBytes } from "node:crypto";
 import fs from "node:fs";
+import path from "node:path";
 import { captureOpenshell, runOpenshell } from "../../../adapters/openshell/runtime";
 import { CLI_NAME } from "../../../cli/branding";
 import { ensureLiveSandboxOrExit } from "../gateway-state";
@@ -50,24 +51,38 @@ import {
   validateSessionKey,
 } from "./paths";
 
+export type SessionsExportFormat = "dir" | "tar";
+
 export interface SessionsExportOptions {
   sandboxName: string;
   agent?: string;
   keys?: readonly string[];
   out?: string;
+  format?: SessionsExportFormat;
   includeTrajectory?: boolean;
   json?: boolean;
+}
+
+export interface SessionExportEntry {
+  key: string;
+  sessionId: string;
+  // Host path to the session's `<sessionId>.jsonl` in `dir` format; null in
+  // `tar` format (the file lives inside the bundle).
+  path: string | null;
+  sizeBytes: number | null;
 }
 
 export interface SessionsExportResult {
   sandboxName: string;
   agent: string;
+  format: SessionsExportFormat;
   selectedKeys: string[] | "all";
   resolvedSessionIds: string[];
   resolvedFiles: string[];
-  tarballRemote: string;
   hostDest: string;
+  // Tarball size in `tar` format; null in `dir` format.
   bundleBytes: number | null;
+  sessions: SessionExportEntry[];
 }
 
 interface SessionIndexEntry {
@@ -89,104 +104,136 @@ export async function exportSandboxSessions(
 
   await ensureLiveSandboxOrExit(opts.sandboxName, { allowNonReadyPhase: true });
 
+  const format: SessionsExportFormat = opts.format === "tar" ? "tar" : "dir";
   const sourceDir = `/sandbox/.openclaw/agents/${agent}/sessions`;
-  const tarballRemote = stagingTarballPath(agent);
 
   // Always enumerate sessions through the in-sandbox `openclaw sessions list`
-  // index, even with no key filter, so the tarball contains exactly the
+  // index, even with no key filter, so the export contains exactly the
   // matching `<sessionId>.jsonl` (+ optional trajectory) files and never
   // picks up `sessions.json`, stale `.jsonl.lock` files, or other store
   // bookkeeping.
-  const { sessionIds: resolvedSessionIds, files: resolvedFiles } = resolveSelectedFiles(
-    opts.sandboxName,
-    agent,
-    trimmedKeys,
-    opts.includeTrajectory ?? false,
-  );
+  const {
+    sessionIds: resolvedSessionIds,
+    files: resolvedFiles,
+    sessions,
+  } = resolveSelectedFiles(opts.sandboxName, agent, trimmedKeys, opts.includeTrajectory ?? false);
 
   if (resolvedFiles.length === 0) {
     throw new Error(`Refusing to export: agent '${agent}' has no sessions to bundle.`);
   }
 
-  const tarArgv = buildSandboxTarArgv({
-    sourceDir,
-    tarballRemote,
-    resolvedFiles,
-  });
-
-  const hostDest = resolveHostDestination(opts.out, opts.sandboxName, agent);
-
-  try {
-    // Use ignoreError so the underlying spawn helper does not call
-    // process.exit on a non-zero tar/download status. Without that, the
-    // finally cleanup below would never run and the staged session JSONL
-    // would survive in the sandbox's /tmp.
-    const tarResult = runOpenshell(
-      [
-        "sandbox",
-        "exec",
-        "--name",
-        opts.sandboxName,
-        "--",
-        "sh",
-        "-c",
-        buildShellInvocation(tarArgv, tarballRemote),
-      ],
-      { ignoreError: true, stdio: "inherit" },
-    );
-    if (tarResult.status !== 0) {
-      throw new Error(
-        `Failed to tar sessions for agent '${agent}' in sandbox '${opts.sandboxName}' (exit ${tarResult.status}).`,
-      );
-    }
-
-    const downloadResult = runOpenshell(
-      ["sandbox", "download", opts.sandboxName, tarballRemote, hostDest],
-      { ignoreError: true, stdio: "inherit" },
-    );
-    if (downloadResult.status !== 0) {
-      throw new Error(
-        `Failed to download '${tarballRemote}' from sandbox '${opts.sandboxName}' (exit ${downloadResult.status}).`,
-      );
-    }
-  } finally {
-    // Best-effort cleanup of the in-sandbox staging tarball. Runs even when
-    // tar/download fail so a partial export cannot leave a world-readable
-    // bundle of session JSONL in the sandbox's /tmp.
-    runOpenshell(["sandbox", "exec", "--name", opts.sandboxName, "--", "rm", "-f", tarballRemote], {
-      ignoreError: true,
-      stdio: "ignore",
-    });
-  }
-
-  // Harden the downloaded bundle: session JSONL captures user prompts and tool
-  // I/O, which routinely contain pasted secrets (API keys, tokens). The
-  // in-sandbox staging tarball is created 0600, but the host copy lands with
-  // the caller's umask, so restrict it to owner-only here too.
-  try {
-    fs.chmodSync(hostDest, 0o600);
-  } catch {
-    console.error(
-      `  Warning: could not restrict permissions on ${hostDest}; treat it as sensitive — it may contain session secrets.`,
-    );
-  }
+  const hostDest = resolveHostDestination(opts.out, opts.sandboxName, agent, format);
 
   let bundleBytes: number | null = null;
-  try {
-    bundleBytes = fs.statSync(hostDest).size;
-  } catch {
-    bundleBytes = null;
+  let exported: SessionExportEntry[];
+
+  if (format === "tar") {
+    const tarballRemote = stagingTarballPath(agent);
+    const tarArgv = buildSandboxTarArgv({ sourceDir, tarballRemote, resolvedFiles });
+    try {
+      // Use ignoreError so the underlying spawn helper does not call
+      // process.exit on a non-zero tar/download status. Without that, the
+      // finally cleanup below would never run and the staged session JSONL
+      // would survive in the sandbox's /tmp.
+      const tarResult = runOpenshell(
+        [
+          "sandbox",
+          "exec",
+          "--name",
+          opts.sandboxName,
+          "--",
+          "sh",
+          "-c",
+          buildShellInvocation(tarArgv, tarballRemote),
+        ],
+        { ignoreError: true, stdio: "inherit" },
+      );
+      if (tarResult.status !== 0) {
+        throw new Error(
+          `Failed to tar sessions for agent '${agent}' in sandbox '${opts.sandboxName}' (exit ${tarResult.status}).`,
+        );
+      }
+
+      const downloadResult = runOpenshell(
+        ["sandbox", "download", opts.sandboxName, tarballRemote, hostDest],
+        { ignoreError: true, stdio: "inherit" },
+      );
+      if (downloadResult.status !== 0) {
+        throw new Error(
+          `Failed to download '${tarballRemote}' from sandbox '${opts.sandboxName}' (exit ${downloadResult.status}).`,
+        );
+      }
+    } finally {
+      // Best-effort cleanup of the in-sandbox staging tarball. Runs even when
+      // tar/download fail so a partial export cannot leave a world-readable
+      // bundle of session JSONL in the sandbox's /tmp.
+      runOpenshell(
+        ["sandbox", "exec", "--name", opts.sandboxName, "--", "rm", "-f", tarballRemote],
+        { ignoreError: true, stdio: "ignore" },
+      );
+    }
+
+    // Session JSONL captures user prompts and tool I/O, which routinely contain
+    // pasted secrets. The host tarball lands with the caller's umask, so
+    // restrict it to owner-only (the in-sandbox staging copy is already 0600).
+    hardenPermissions(hostDest);
+    try {
+      bundleBytes = fs.statSync(hostDest).size;
+    } catch {
+      bundleBytes = null;
+    }
+    // Per-session files live inside the tarball, so the manifest carries ids only.
+    exported = sessions.map((entry) => ({
+      key: entry.key,
+      sessionId: entry.sessionId,
+      path: null,
+      sizeBytes: null,
+    }));
+  } else {
+    // dir format (the #3979 default): copy each resolved session file straight
+    // onto the host into a browsable directory. No /tmp staging tarball, so
+    // there is no world-readable staging window to clean up.
+    try {
+      fs.mkdirSync(hostDest, { recursive: true });
+    } catch (err) {
+      throw new Error(`Failed to create export directory '${hostDest}': ${(err as Error).message}`);
+    }
+    for (const file of resolvedFiles) {
+      const localPath = path.join(hostDest, file);
+      const downloadResult = runOpenshell(
+        ["sandbox", "download", opts.sandboxName, `${sourceDir}/${file}`, localPath],
+        { ignoreError: true, stdio: "inherit" },
+      );
+      if (downloadResult.status !== 0) {
+        throw new Error(
+          `Failed to download '${file}' from sandbox '${opts.sandboxName}' (exit ${downloadResult.status}).`,
+        );
+      }
+      // Session JSONL can contain pasted secrets — restrict each file to owner-only.
+      hardenPermissions(localPath);
+    }
+    exported = sessions.map((entry) => {
+      const localPath = path.join(hostDest, `${entry.sessionId}.jsonl`);
+      let sizeBytes: number | null = null;
+      try {
+        sizeBytes = fs.statSync(localPath).size;
+      } catch {
+        sizeBytes = null;
+      }
+      return { key: entry.key, sessionId: entry.sessionId, path: localPath, sizeBytes };
+    });
   }
 
   const result: SessionsExportResult = {
     sandboxName: opts.sandboxName,
     agent,
+    format,
     selectedKeys: trimmedKeys.length > 0 ? trimmedKeys : "all",
     resolvedSessionIds,
     resolvedFiles,
-    tarballRemote,
     hostDest,
     bundleBytes,
+    sessions: exported,
   };
 
   if (opts.json) {
@@ -201,6 +248,19 @@ export async function exportSandboxSessions(
   }
 
   return result;
+}
+
+// Restrict a freshly written host artefact to owner-only (0600). Best-effort:
+// session JSONL can contain pasted secrets, but a chmod failure (e.g. an exotic
+// host filesystem) should warn rather than abort an otherwise-successful export.
+function hardenPermissions(target: string): void {
+  try {
+    fs.chmodSync(target, 0o600);
+  } catch {
+    console.error(
+      `  Warning: could not restrict permissions on ${target}; treat it as sensitive — it may contain session secrets.`,
+    );
+  }
 }
 
 export function buildSandboxTarArgv(input: {
@@ -256,7 +316,7 @@ function resolveSelectedFiles(
   agent: string,
   keys: readonly string[],
   includeTrajectory: boolean,
-): { sessionIds: string[]; files: string[] } {
+): { sessionIds: string[]; files: string[]; sessions: SessionIndexEntry[] } {
   const index = readSessionIndex(sandboxName, agent);
   const byKey = new Map<string, string>();
   for (const entry of index) byKey.set(entry.key, entry.sessionId);
@@ -284,6 +344,7 @@ function resolveSelectedFiles(
   const seen = new Set<string>();
   const sessionIds: string[] = [];
   const files: string[] = [];
+  const sessions: SessionIndexEntry[] = [];
   for (const { key, sessionId } of entries) {
     if (!SAFE_TOKEN_RE.test(sessionId)) {
       throw new Error(
@@ -293,10 +354,11 @@ function resolveSelectedFiles(
     if (seen.has(sessionId)) continue;
     seen.add(sessionId);
     sessionIds.push(sessionId);
+    sessions.push({ key, sessionId });
     files.push(`${sessionId}.jsonl`);
     if (includeTrajectory) files.push(`${sessionId}.trajectory.jsonl`);
   }
-  return { sessionIds, files };
+  return { sessionIds, files, sessions };
 }
 
 function normaliseToCanonical(agent: string, key: string): string {
@@ -432,7 +494,10 @@ function resolveHostDestination(
   out: string | undefined,
   sandboxName: string,
   agent: string,
+  format: SessionsExportFormat,
 ): string {
   if (out && out.trim()) return out.trim();
-  return `./sessions-${sandboxName}-${agent}.tgz`;
+  // dir is the #3979 default: a browsable `./sessions-<sandbox>/` tree. tar
+  // keeps the single-bundle name for share/upload cases.
+  return format === "tar" ? `./sessions-${sandboxName}-${agent}.tgz` : `./sessions-${sandboxName}/`;
 }

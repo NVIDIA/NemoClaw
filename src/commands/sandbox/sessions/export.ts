@@ -26,22 +26,31 @@ export default class SandboxSessionsExportCommand extends NemoClawCommand {
     "downloaded bundle is written owner-only (0600); keep it private and avoid",
     "committing or sharing it without review.",
   ].join("\n");
-  static usage = ["<name> [keys...] [--agent <id>] [--out <path>] [--include-trajectory] [--json]"];
+  static usage = [
+    "<name> [keys...] [--agent <id>] [--format <dir|tar>] [--out <path>] [--include-trajectory] [--json]",
+  ];
   static examples = [
     "<%= config.bin %> sandbox sessions export alpha",
     "<%= config.bin %> sandbox sessions export alpha main --agent main",
     "<%= config.bin %> sandbox sessions export alpha agent:work:telegram:t-1 --include-trajectory",
-    "<%= config.bin %> sandbox sessions export alpha --out ./bundles/alpha.tgz --json",
+    "<%= config.bin %> sandbox sessions export alpha --format tar --out ./bundles/alpha.tgz --json",
   ];
   static flags = {
     agent: Flags.string({
       description: "Agent id when keys are aliases rather than canonical form.",
     }),
+    format: Flags.string({
+      description:
+        "Output format: 'dir' (default) writes a directory of session files; 'tar' writes a single .tgz bundle for sharing/upload.",
+      options: ["dir", "tar"],
+      default: "dir",
+    }),
     out: Flags.string({
-      description: "Host destination tarball path (default: ./sessions-<sandbox>-<agent>.tgz).",
+      description:
+        "Host destination. Defaults to ./sessions-<sandbox>/ for dir format, or ./sessions-<sandbox>-<agent>.tgz for tar format.",
     }),
     "include-trajectory": Flags.boolean({
-      description: "Include the (large) trajectory.jsonl files in the bundle.",
+      description: "Include the (large) trajectory.jsonl files in the export.",
       default: false,
     }),
     json: Flags.boolean({
@@ -73,6 +82,7 @@ export default class SandboxSessionsExportCommand extends NemoClawCommand {
         sandboxName,
         agent: flags.agent,
         keys: rest,
+        format: flags.format === "tar" ? "tar" : "dir",
         out: flags.out,
         includeTrajectory: flags["include-trajectory"],
         json: flags.json,

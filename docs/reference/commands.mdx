@@ -1249,31 +1249,31 @@ $$nemoclaw my-assistant sessions delete agent:main:slack:c-9 --json
 
 ### `$$nemoclaw <name> sessions export [keys...]`
 
-Bundle the OpenClaw session JSONL from a running sandbox and download the tarball to the host, replacing the two-hop `docker exec kubectl cp` plus `docker cp` workaround.
+Export the OpenClaw session JSONL from a running sandbox to the host, replacing the two-hop `docker exec kubectl cp` plus `docker cp` workaround.
 
-The command always enumerates the session store through `openclaw sessions list --agent <id> --json` and tars only the matching `<sessionId>.jsonl` (plus optional `<sessionId>.trajectory.jsonl`) files, so the bundle never picks up `sessions.json`, stale `.jsonl.lock` files, or other store bookkeeping.
+The command always enumerates the session store through `openclaw sessions list --agent <id> --json` and copies only the matching `<sessionId>.jsonl` (plus optional `<sessionId>.trajectory.jsonl`) files, so the export never picks up `sessions.json`, stale `.jsonl.lock` files, or other store bookkeeping.
+By default it writes a browsable directory of session files (`dir` format); pass `--format tar` for a single `.tgz` bundle suited to sharing or upload.
 With no positional keys, the command exports every session for the agent.
 Pass one or more keys (alias or canonical `agent:<id>:<rest>`) to filter.
-The command builds the bundle inside the sandbox via `openshell sandbox exec`, then downloads it through `openshell sandbox download`.
-A best-effort cleanup removes the staging artefact even when the export fails partway.
 
 ```bash
 $$nemoclaw my-assistant sessions export
 $$nemoclaw my-assistant sessions export main --agent main
 $$nemoclaw my-assistant sessions export agent:work:telegram:t-1 --include-trajectory
-$$nemoclaw my-assistant sessions export --out ./bundles/alpha.tgz --json
+$$nemoclaw my-assistant sessions export --format tar --out ./bundles/alpha.tgz --json
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--agent <id>` | Agent id when `<keys>` are aliases rather than the canonical `agent:<id>:<rest>` form. |
-| `--out <path>` | Host destination tarball path. Defaults to `./sessions-<sandbox>-<agent>.tgz`. |
-| `--include-trajectory` | Include the (large) `*.trajectory.jsonl` files in the bundle. Excluded by default. |
+| `--format <dir\|tar>` | `dir` (default) writes a directory of session files; `tar` writes a single `.tgz` bundle for sharing/upload. |
+| `--out <path>` | Host destination. Defaults to `./sessions-<sandbox>/` for `dir`, or `./sessions-<sandbox>-<agent>.tgz` for `tar`. |
+| `--include-trajectory` | Include the (large) `*.trajectory.jsonl` files in the export. Excluded by default. |
 | `--json` | Print the export manifest as JSON instead of a status line. |
 
-Mismatched `--agent` plus canonical-key combinations are refused before the in-sandbox tar runs.
+Mismatched `--agent` plus canonical-key combinations are refused before any download runs.
 Session keys that begin with `-` are rejected at the command boundary instead of being silently dropped.
-The staging tarball is created with `umask 077` and removed after the host download completes, so a concurrent sandbox user cannot read the staged session JSONL out of `/tmp` between the tar step and the download step.
+Session JSONL can contain pasted secrets (API keys, tokens), so exported files are written owner-only (`0600`); for `tar` format the in-sandbox staging tarball is additionally created with `umask 077` and removed after the host download completes.
 
 ### `$$nemoclaw <name> download <sandbox-path> [host-dest]`
 

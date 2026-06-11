@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { describe, expect, it } from "vitest";
 
 import { runWithEnv, writeSandboxRegistry } from "./cli/helpers";
 
@@ -24,7 +24,10 @@ function buildStubOpenshell(home: string, logFile: string, sessionListJson: stri
       `    printf '%s\\n' ${JSON.stringify(sessionListJson)}`,
       "    exit 0 ;;",
       '  *"sandbox exec --name alpha -- sh -c"*) exit 0 ;;',
-      '  "sandbox download"*) exit 0 ;;',
+      '  "sandbox download"*)',
+      // Create the destination so the host-side chmod/stat succeed (mirrors a
+      // real download); the last positional arg is the host path.
+      '    dest="${@: -1}"; printf "session-data" > "$dest" 2>/dev/null || true; exit 0 ;;',
       '  *"sandbox exec --name alpha -- rm"*) exit 0 ;;',
       "  *) exit 0 ;;",
       "esac",
@@ -50,7 +53,7 @@ describe("sandbox sessions export CLI", () => {
       );
 
       const out = path.join(home, "bundle.tgz");
-      const result = runWithEnv(`alpha sessions export --out ${out} --json 2>&1`, {
+      const result = runWithEnv(`alpha sessions export --format tar --out ${out} --json 2>&1`, {
         HOME: home,
         PATH: `${localBin}:${process.env.PATH || ""}`,
       });
@@ -88,6 +91,49 @@ describe("sandbox sessions export CLI", () => {
     }
   });
 
+  it("writes a browsable directory of session files by default (dir format, no tar/staging)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sessions-export-dir-"));
+    try {
+      writeSandboxRegistry(home);
+      const openshellLog = path.join(home, "openshell-calls.log");
+      const localBin = buildStubOpenshell(
+        home,
+        openshellLog,
+        JSON.stringify([
+          { key: "agent:main:main", sessionId: "sid-a" },
+          { key: "agent:main:telegram:t-1", sessionId: "sid-b" },
+        ]),
+      );
+
+      const outDir = path.join(home, "sessions-alpha");
+      const result = runWithEnv(`alpha sessions export --out ${outDir} --json 2>&1`, {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+      });
+      expect(result.code).toBe(0);
+
+      const calls = fs.readFileSync(openshellLog, "utf8").split("\n");
+      // dir is the default: no in-sandbox tar (umask 077) and no /tmp staging cleanup.
+      expect(calls.some((line) => line.includes("umask 077"))).toBe(false);
+      expect(calls.some((line) => line.includes("-- rm -f"))).toBe(false);
+      const downloadLines = calls.filter((line) => line.startsWith("sandbox download"));
+      expect(downloadLines).toHaveLength(2);
+      expect(downloadLines[0]).toContain("/sandbox/.openclaw/agents/main/sessions/sid-a.jsonl");
+      expect(downloadLines[0]).toContain(path.join(outDir, "sid-a.jsonl"));
+
+      const manifest = JSON.parse(result.out.trim().split("\n").at(-1) as string);
+      expect(manifest).toMatchObject({
+        format: "dir",
+        hostDest: outDir,
+        resolvedSessionIds: ["sid-a", "sid-b"],
+      });
+      expect(manifest.sessions).toHaveLength(2);
+      expect(manifest.sessions[0]).toMatchObject({ key: "agent:main:main", sessionId: "sid-a" });
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("resolves canonical keys to session-id files via openclaw sessions list and tars only those files", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sessions-export-keys-"));
     try {
@@ -104,7 +150,7 @@ describe("sandbox sessions export CLI", () => {
 
       const out = path.join(home, "bundle.tgz");
       const result = runWithEnv(
-        `alpha sessions export agent:main:telegram:t-1 --out ${out} --include-trajectory --json 2>&1`,
+        `alpha sessions export agent:main:telegram:t-1 --format tar --out ${out} --include-trajectory --json 2>&1`,
         {
           HOME: home,
           PATH: `${localBin}:${process.env.PATH || ""}`,
@@ -136,7 +182,7 @@ describe("sandbox sessions export CLI", () => {
 
       const out = path.join(home, "bundle.tgz");
       const result = runWithEnv(
-        `alpha sessions export telegram:t-1 --agent work --out ${out} --json 2>&1`,
+        `alpha sessions export telegram:t-1 --agent work --format tar --out ${out} --json 2>&1`,
         {
           HOME: home,
           PATH: `${localBin}:${process.env.PATH || ""}`,
