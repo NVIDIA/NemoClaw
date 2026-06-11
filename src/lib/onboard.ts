@@ -228,7 +228,6 @@ const {
   printWindowsOllamaTimeoutDiagnostics,
 } = require("./inference/ollama/windows");
 const { installVllm } = require("./inference/vllm");
-const { preflightVllmModelEnv } = require("./inference/vllm-models");
 const inferenceConfig: typeof import("./inference/config") = require("./inference/config");
 const { DEFAULT_CLOUD_MODEL, getProviderSelectionConfig, parseGatewayInference } = inferenceConfig;
 
@@ -5058,24 +5057,11 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
   if (!noticeAccepted) {
     process.exit(1);
   }
-  // Validate NEMOCLAW_PROVIDER early so invalid values fail before
-  // preflight (Docker/OpenShell checks). Without this, users see a
+  // Validate NEMOCLAW_PROVIDER and NEMOCLAW_VLLM_MODEL early so invalid values
+  // fail before preflight (Docker/OpenShell checks). Without this, users see a
   // misleading 'Docker is not reachable' error instead of the real
-  // problem: an unsupported provider value.
-  getRequestedProviderHint();
-  // Validate NEMOCLAW_VLLM_MODEL up front, before preflight and any side
-  // effects, mirroring the `connect` preflight (#4567). The variable steers
-  // the express-vLLM installer, but it is only consumed deep in the [3/8]
-  // provider step — so a typo'd or gated slug used to be validated late (or
-  // silently ignored on non-installer paths), letting `onboard` exit 0 on an
-  // unrecognised slug (#5207). Running the same selectVllmModelFromEnv +
-  // assertGatedModelAccess checks here gives one fail-fast surface with a
-  // non-zero exit and the canonical, slug-listing error message.
-  const vllmModelPreflight = preflightVllmModelEnv();
-  if (!vllmModelPreflight.ok) {
-    console.error(`  ${vllmModelPreflight.message}`);
-    process.exit(1);
-  }
+  // problem: an unsupported provider value or unrecognised vLLM model slug.
+  resumeConfig.preflightEarlyOnboardEnv();
   const lockResult = onboardSession.acquireOnboardLock(
     `nemoclaw onboard${resume ? " --resume" : ""}${fresh ? " --fresh" : ""}${isNonInteractive() ? " --non-interactive" : ""}${requestedFromDockerfile ? ` --from ${requestedFromDockerfile}` : ""}`,
   );
