@@ -128,6 +128,26 @@ describe("detectInferenceProviderHostState", () => {
     expect(deps.getWindowsHostOllamaDockerRequirement).toHaveBeenCalledWith("docker-desktop");
   });
 
+  it("passes injected platform and env through WSL detection", () => {
+    const env = { WSL_DISTRO_NAME: "Ubuntu" } as NodeJS.ProcessEnv;
+    const isWsl = vi.fn<DetectInferenceProviderHostStateDeps["isWsl"]>(() => true);
+    const deps = buildDeps({ isWsl });
+
+    const state = detectInferenceProviderHostState({
+      gpu: null,
+      experimental: false,
+      platform: "linux",
+      env,
+      log: () => {},
+      installedOllamaVersion: "0.24.0",
+      runningOllamaVersion: "0.24.0",
+      deps,
+    });
+
+    expect(state.isWsl).toBe(true);
+    expect(isWsl).toHaveBeenCalledWith({ platform: "linux", env });
+  });
+
   it("suppresses the duplicate-daemon warning when WSL mirrored networking makes the probes equivalent", () => {
     const logs: string[] = [];
     const deps = buildDeps({
