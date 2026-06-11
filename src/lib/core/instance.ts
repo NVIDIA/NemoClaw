@@ -31,11 +31,13 @@
  * all gain an `<instance>` suffix so the migrated surfaces stay segregated.
  *
  * Scope of segregation in this groundwork: NemoClaw home directory, gateway
- * binding (name, state dir, compat container), credentials store, rebuild
- * backups, and local inference adapter state. Out of scope here and tracked
- * as follow-up: the sandbox registry, onboard session state, messaging
- * configuration, snapshot trees, and any module that still reads
- * `~/.nemoclaw` directly. Callers that have not yet migrated to
+ * binding (name, state dir, compat container), credentials store (including
+ * the legacy plaintext credentials file path), rebuild backups and the
+ * snapshot tree underneath, local inference adapter state, and the Ollama
+ * auth-proxy token reader/writer. Out of scope here and tracked as follow-up:
+ * the sandbox registry, onboard session state, messaging configuration,
+ * host-side mount roots, the uninstall plan, and the `config-io` host-root
+ * permission healer. Callers that have not yet migrated to
  * `resolveNemoclawHomeDir()` still share state across instances.
  *
  * This module is the single source of truth for resolving the active instance
