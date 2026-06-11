@@ -76,10 +76,12 @@ type NamedGatewayLifecycleStateName = ReturnType<typeof getNamedGatewayLifecycle
 
 export type RecoverNamedGatewayRuntimeOptions = {
   recoverableStates?: readonly NamedGatewayLifecycleStateName[];
+  gatewayName?: string;
 };
 
 /** Attempt to recover the named NemoClaw gateway after a restart or connectivity loss. */
 export async function recoverNamedGatewayRuntime(options: RecoverNamedGatewayRuntimeOptions = {}) {
+  const gatewayName = options.gatewayName ?? "nemoclaw";
   const recoverableStates = new Set<NamedGatewayLifecycleStateName>(
     options.recoverableStates ?? [
       "missing_named",
@@ -88,7 +90,7 @@ export async function recoverNamedGatewayRuntime(options: RecoverNamedGatewayRun
       "connected_other",
     ],
   );
-  const before = getNamedGatewayLifecycleState();
+  const before = getNamedGatewayLifecycleState(gatewayName);
   if (before.state === "healthy_named") {
     return { recovered: true, before, after: before, attempted: false };
   }
@@ -96,13 +98,13 @@ export async function recoverNamedGatewayRuntime(options: RecoverNamedGatewayRun
     return { recovered: false, before, after: before, attempted: false };
   }
 
-  runOpenshell(["gateway", "select", "nemoclaw"], {
+  runOpenshell(["gateway", "select", gatewayName], {
     ignoreError: true,
     timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
   });
-  let after = getNamedGatewayLifecycleState();
+  let after = getNamedGatewayLifecycleState(gatewayName);
   if (after.state === "healthy_named") {
-    process.env.OPENSHELL_GATEWAY = "nemoclaw";
+    process.env.OPENSHELL_GATEWAY = gatewayName;
     return { recovered: true, before, after, attempted: true, via: "select" };
   }
 
@@ -119,13 +121,13 @@ export async function recoverNamedGatewayRuntime(options: RecoverNamedGatewayRun
       // Fall through to the lifecycle re-check below so we preserve the
       // existing recovery result shape and emit the correct classification.
     }
-    runOpenshell(["gateway", "select", "nemoclaw"], {
+    runOpenshell(["gateway", "select", gatewayName], {
       ignoreError: true,
       timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
     });
-    after = getNamedGatewayLifecycleState();
+    after = getNamedGatewayLifecycleState(gatewayName);
     if (after.state === "healthy_named") {
-      process.env.OPENSHELL_GATEWAY = "nemoclaw";
+      process.env.OPENSHELL_GATEWAY = gatewayName;
       return { recovered: true, before, after, attempted: true, via: "start" };
     }
   }

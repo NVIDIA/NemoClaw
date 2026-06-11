@@ -11,10 +11,7 @@ import {
   getNamedGatewayLifecycleState,
   recoverNamedGatewayRuntime,
 } from "../../gateway-runtime-action";
-import {
-  resolveGatewayName,
-  resolveSandboxGatewayName,
-} from "../../onboard/gateway-binding";
+import { resolveGatewayName, resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import { isTerminalSandboxPhase, parseSandboxPhase } from "../../state/gateway";
 import * as registry from "../../state/registry";
 
@@ -408,7 +405,9 @@ export async function getReconciledSandboxGatewayState(
   }
 
   if (lookup.state === "gateway_error") {
-    const recovery = await recoverNamedGatewayRuntime();
+    const sb = registry.getSandbox(sandboxName);
+    const targetGatewayName = sb ? resolveSandboxGatewayName(sb) : resolveGatewayName(GATEWAY_PORT);
+    const recovery = await recoverNamedGatewayRuntime({ gatewayName: targetGatewayName });
     if (recovery.recovered) {
       const retried = await getState(sandboxName);
       if (retried.state === "present" || retried.state === "missing") {
@@ -424,7 +423,7 @@ export async function getReconciledSandboxGatewayState(
       }
       return { ...retried, recoveredGateway: true, recoveryVia: recovery.via || null };
     }
-    const latestLifecycle = getNamedGatewayLifecycleState();
+    const latestLifecycle = getNamedGatewayLifecycleState(targetGatewayName);
     const latestStatus = stripAnsi(latestLifecycle.status || "");
     if (/No gateway configured/i.test(latestStatus)) {
       return {
@@ -432,9 +431,13 @@ export async function getReconciledSandboxGatewayState(
         output: latestLifecycle.status || lookup.output,
       };
     }
+    const namedGatewayRe = new RegExp(
+      `Gateway:\\s+${targetGatewayName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`,
+      "i",
+    );
     if (
       /Connection refused|client error \(Connect\)|tcp connect error/i.test(latestStatus) &&
-      /Gateway:\s+nemoclaw/i.test(latestStatus)
+      namedGatewayRe.test(latestStatus)
     ) {
       return {
         state: "gateway_unreachable_after_restart",
@@ -489,7 +492,9 @@ export async function ensureLiveSandboxOrExit(
     process.exit(1);
   }
   if (lookup.state === "missing") {
-    const guard = getNamedGatewayLifecycleState();
+    const sb = registry.getSandbox(sandboxName);
+    const targetGatewayName = sb ? resolveSandboxGatewayName(sb) : resolveGatewayName(GATEWAY_PORT);
+    const guard = getNamedGatewayLifecycleState(targetGatewayName);
     if (guard.state !== "healthy_named") {
       if (guard.state === "connected_other") {
         printWrongGatewayActiveGuidance(sandboxName, guard.activeGateway, console.error);

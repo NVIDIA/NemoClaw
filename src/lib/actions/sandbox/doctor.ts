@@ -18,10 +18,7 @@ import { recoverNamedGatewayRuntime } from "../../gateway-runtime-action";
 import { parseGatewayInference } from "../../inference/config";
 import { type ProviderHealthStatus, probeProviderHealth } from "../../inference/health";
 import { isLinuxDockerDriverGatewayEnabled } from "../../onboard/docker-driver-platform";
-import {
-  resolveGatewayName,
-  resolveSandboxGatewayName,
-} from "../../onboard/gateway-binding";
+import { resolveGatewayName, resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import { executeSandboxCommandForVerification } from "../../onboard/sandbox-verification-exec";
 import { ROOT } from "../../runner";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
@@ -40,7 +37,6 @@ import {
 import { captureHostCommand } from "./doctor-host-command";
 import { buildToolScopeChecks } from "./doctor-tool-scope";
 import { probeSandboxInferenceGatewayHealth } from "./process-recovery";
-
 
 type DoctorStatus = "ok" | "warn" | "fail" | "info";
 
@@ -598,7 +594,7 @@ export async function runSandboxDoctor(
 
   let openshellConnected = false;
   if (openshellBin) {
-    const recovery = await recoverNamedGatewayRuntime();
+    const recovery = await recoverNamedGatewayRuntime({ gatewayName });
     const lifecycle = recovery.after || recovery.before;
     const cleanStatus = stripAnsi(lifecycle?.status || "");
     openshellConnected = lifecycle?.state === "healthy_named";

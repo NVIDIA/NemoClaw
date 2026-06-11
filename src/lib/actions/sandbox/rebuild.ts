@@ -4,10 +4,7 @@
 import { CLI_NAME } from "../../cli/branding";
 import { GATEWAY_PORT } from "../../core/ports";
 import { prompt as askPrompt } from "../../credentials/store";
-import {
-  resolveGatewayName,
-  resolveSandboxGatewayName,
-} from "../../onboard/gateway-binding";
+import { resolveGatewayName, resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import {
   normalizeRebuildSandboxOptions,
   type RebuildSandboxOptions,
@@ -621,12 +618,12 @@ export async function rebuildSandbox(
     const reconciled = await getReconciledSandboxGatewayState(sandboxName);
     if (reconciled.state === "present") {
       // `sandbox get` resolved the sandbox, but that query ran against whatever
-      // gateway is currently active. Only trust it as live when the named
-      // nemoclaw gateway is the active healthy one — otherwise a foreign active
-      // gateway with a same-named sandbox (or a list/get inconsistency) could
-      // send the destructive backup/delete below at the wrong sandbox. If a
-      // foreign gateway is active, abort with guidance instead.
-      const lifecycle = getNamedGatewayLifecycleState();
+      // gateway is currently active. Only trust it as live when the sandbox's
+      // own registered gateway is the active healthy one — otherwise a foreign
+      // active gateway with a same-named sandbox (or a list/get inconsistency)
+      // could send the destructive backup/delete below at the wrong sandbox. If
+      // a foreign gateway is active, abort with guidance instead.
+      const lifecycle = getNamedGatewayLifecycleState(resolveSandboxGatewayName(sb));
       if (lifecycle.state !== "healthy_named") {
         printWrongGatewayActiveGuidance(
           sandboxName,

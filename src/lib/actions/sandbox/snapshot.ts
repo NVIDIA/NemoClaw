@@ -9,14 +9,12 @@ import {
   getOpenshellBinary,
   runOpenshell,
 } from "../../adapters/openshell/runtime";
+import { OPENSHELL_OPERATION_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import { CLI_NAME } from "../../cli/branding";
 import { prompt as askPrompt } from "../../credentials/store";
 import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
 import { GATEWAY_PORT } from "../../core/ports";
-import {
-  resolveGatewayName,
-  resolveSandboxGatewayName,
-} from "../../onboard/gateway-binding";
+import { resolveGatewayName, resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import * as policies from "../../policy";
 import { ROOT, run, shellQuote, validateName } from "../../runner";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
@@ -119,7 +117,10 @@ function resolveSrcPodImage(
     return registeredImage ?? null;
   }
 
-  const gatewayContainer = `openshell-cluster-${resolveSandboxGatewayName(srcEntry as { gatewayName?: string | null; gatewayPort?: number | null })}`;
+  const srcGatewayName = resolveSandboxGatewayName(
+    srcEntry as { gatewayName?: string | null; gatewayPort?: number | null },
+  );
+  const gatewayContainer = `openshell-cluster-${srcGatewayName}`;
   try {
     const output = dockerCapture(
       [
@@ -210,7 +211,10 @@ async function autoCreateSandboxFromSource(
   const dnsScript = path.join(ROOT, "scripts", "setup-dns-proxy.sh");
   const srcDriver = (srcEntry as { openshellDriver?: string | null }).openshellDriver;
   if (srcDriver === "kubernetes" && fs.existsSync(dnsScript)) {
-    run(["bash", dnsScript, resolveSandboxGatewayName(srcEntry as { gatewayName?: string | null; gatewayPort?: number | null }), dstName], { ignoreError: true });
+    const srcGatewayName = resolveSandboxGatewayName(
+      srcEntry as { gatewayName?: string | null; gatewayPort?: number | null },
+    );
+    run(["bash", dnsScript, srcGatewayName, dstName], { ignoreError: true });
   }
 
   // Register dst in the NemoClaw registry, cloning most fields from src.
@@ -321,9 +325,7 @@ function usesGatewayMetadataProbe(driver: string | null | undefined): boolean {
 
 function probeGatewayRunning(sandboxName?: string): boolean {
   const entry = sandboxName ? registry.getSandbox(sandboxName) : null;
-  const gatewayName = entry
-    ? resolveSandboxGatewayName(entry)
-    : resolveGatewayName(GATEWAY_PORT);
+  const gatewayName = entry ? resolveSandboxGatewayName(entry) : resolveGatewayName(GATEWAY_PORT);
   if (usesGatewayMetadataProbe(entry?.openshellDriver)) {
     return probeGatewayMetadataHealth(gatewayName);
   }
@@ -333,6 +335,20 @@ function probeGatewayRunning(sandboxName?: string): boolean {
     { ignoreError: true, suppressOutput: true },
   );
   return result.status === 0 && String(result.stdout || "").trim() === "true";
+}
+
+// Best-effort: switch the active OpenShell gateway to the one this sandbox is
+// registered on so downstream `sandbox list` / `sandbox get` queries target
+// the right gateway. Silent on failure — the subsequent list call surfaces a
+// clearer error if the gateway is genuinely unavailable.
+function selectSandboxGatewayIfRegistered(sandboxName: string): void {
+  const entry = registry.getSandbox(sandboxName);
+  if (!entry) return;
+  const target = resolveSandboxGatewayName(entry);
+  runOpenshell(["gateway", "select", target], {
+    ignoreError: true,
+    timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
+  });
 }
 
 function isSnapshotCreationAllowedByShields(sandboxName: string): boolean {
@@ -357,6 +373,11 @@ export async function runSandboxSnapshot(
         console.error("  Failed to query live sandbox state from OpenShell.");
         snapshotExit(1);
       }
+      // Select the sandbox's gateway before `sandbox list` — otherwise the
+      // list runs against whatever gateway is currently active and would
+      // miss a sandbox registered on a non-default `NEMOCLAW_GATEWAY_PORT`
+      // (#4985).
+      selectSandboxGatewayIfRegistered(sandboxName);
       const isLive = captureOpenshell(["sandbox", "list"], { ignoreError: true });
       const liveNames = parseLiveSandboxNames(isLive.output || "");
       if (!liveNames.has(sandboxName)) {
@@ -423,6 +444,7 @@ export async function runSandboxSnapshot(
         console.error("  Failed to query live sandbox state from OpenShell.");
         snapshotExit(1);
       }
+      selectSandboxGatewayIfRegistered(sandboxName);
       const isLive = captureOpenshell(["sandbox", "list"], { ignoreError: true });
       const liveNames = parseLiveSandboxNames(isLive.output || "");
       const isCrossSandboxRestore = targetSandbox !== sandboxName;

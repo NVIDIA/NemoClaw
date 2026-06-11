@@ -8,7 +8,7 @@ import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import { CLI_NAME } from "../../cli/branding";
 import { G, R, YW } from "../../cli/terminal-style";
-import { DASHBOARD_PORT, GATEWAY_PORT } from "../../core/ports";
+import { DASHBOARD_PORT } from "../../core/ports";
 import { prompt as askPrompt } from "../../credentials/store";
 import {
   type DestroySandboxOptions,
@@ -19,10 +19,7 @@ import {
   shouldCleanupGatewayAfterDestroy,
   shouldStopHostServicesAfterDestroy,
 } from "../../domain/sandbox/destroy";
-import {
-  resolveGatewayName,
-  resolveSandboxGatewayName,
-} from "../../onboard/gateway-binding";
+import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import { stopStaleDashboardListeners } from "../../onboard/stale-gateway-cleanup";
 import { stopHostGatewayProcesses } from "../../onboard/host-gateway-process";
 import {
@@ -82,8 +79,7 @@ type RemoveShieldsStateDeps = {
 
 const DASHBOARD_FORWARD_PORT = String(DASHBOARD_PORT);
 
-function cleanupGatewayAfterLastSandbox(): void {
-  const gatewayName = resolveGatewayName(GATEWAY_PORT);
+function cleanupGatewayAfterLastSandbox(gatewayName: string): void {
   const { runOpenshell } = require("../../adapters/openshell/runtime") as {
     runOpenshell: (args: string[], opts?: Record<string, unknown>) => { status: number | null };
   };
@@ -441,6 +437,10 @@ export async function destroySandbox(
     stopHostServices: shouldStopHostServices,
   });
   cleanupShieldsDestroyArtifacts(sandboxName);
+  // Capture the sandbox's gateway BEFORE the registry entry is removed —
+  // post-removal lookups return null and would collapse the cleanup target
+  // back to the default gateway (#4865).
+  const cleanupGatewayName = resolveSandboxGatewayName(sb);
   const removed = removeSandboxRegistryEntry(sandboxName);
   const session = onboardSession.loadSession();
   if (session && session.sandboxName === sandboxName) {
@@ -459,13 +459,12 @@ export async function destroySandbox(
   ) {
     const shouldCleanupGateway = await resolveCleanupGatewayDecision(normalized);
     if (shouldCleanupGateway) {
-      cleanupGatewayAfterLastSandbox();
+      cleanupGatewayAfterLastSandbox(cleanupGatewayName);
     } else {
-      const preservedGatewayName = resolveGatewayName(GATEWAY_PORT);
       const gatewayRemovalHint =
         process.platform === "linux"
-          ? `openshell gateway remove ${preservedGatewayName}`
-          : `openshell gateway destroy -g ${preservedGatewayName}`;
+          ? `openshell gateway remove ${cleanupGatewayName}`
+          : `openshell gateway destroy -g ${cleanupGatewayName}`;
       console.log(
         `  Shared NemoClaw gateway preserved. Re-run '${gatewayRemovalHint}' to remove it,`,
       );

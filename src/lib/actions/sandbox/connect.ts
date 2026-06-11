@@ -55,7 +55,6 @@ import { ensureLiveSandboxOrExit, printGatewayLifecycleHint } from "./gateway-st
 import { checkAndRecoverSandboxProcesses } from "./process-recovery";
 import { applyOpenShellVmDnsMonkeypatch, shouldApplyVmDnsMonkeypatch } from "./vm-dns-monkeypatch";
 
-
 export type SandboxConnectOptions = {
   probeOnly?: boolean;
 };
@@ -273,7 +272,8 @@ function failConnectReadinessDockerRuntimeDown(sandboxName: string): never {
 }
 
 function failIfGatewayBlocksConnectReadiness(sandboxName: string): void {
-  const lifecycle = getNamedGatewayLifecycleState();
+  const sb = registry.getSandbox(sandboxName);
+  const lifecycle = getNamedGatewayLifecycleState(resolveSandboxGatewayName(sb));
   if (isBlockingGatewayLifecycle(lifecycle)) {
     failConnectReadinessGatewayUnavailable(
       sandboxName,

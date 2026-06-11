@@ -68,7 +68,9 @@ export interface SandboxGatewayBinding {
  *   3. The bare `BASE_GATEWAY_NAME` for legacy entries that pre-date the
  *      per-port migration.
  */
-export function resolveSandboxGatewayName(sandbox: SandboxGatewayBinding | null | undefined): string {
+export function resolveSandboxGatewayName(
+  sandbox: SandboxGatewayBinding | null | undefined,
+): string {
   if (sandbox?.gatewayName && typeof sandbox.gatewayName === "string") {
     return sandbox.gatewayName;
   }

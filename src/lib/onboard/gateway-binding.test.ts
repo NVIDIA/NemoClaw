@@ -50,9 +50,9 @@ describe("gateway-binding resolver (#4422)", () => {
 
 describe("resolveSandboxGatewayName", () => {
   it("returns the persisted gatewayName when present", () => {
-    expect(
-      resolveSandboxGatewayName({ gatewayName: "nemoclaw-9090", gatewayPort: 9090 }),
-    ).toBe("nemoclaw-9090");
+    expect(resolveSandboxGatewayName({ gatewayName: "nemoclaw-9090", gatewayPort: 9090 })).toBe(
+      "nemoclaw-9090",
+    );
   });
 
   it("derives the gateway name from gatewayPort when gatewayName is absent", () => {
