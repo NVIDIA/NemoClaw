@@ -29,6 +29,7 @@ const {
 const { stopStaleDashboardListenersForSandbox } = require("./onboard/stale-gateway-cleanup");
 const extraPlaceholderKeysModule: typeof import("./onboard/extra-placeholder-keys") = require("./onboard/extra-placeholder-keys");
 const buildContextStage: typeof import("./onboard/build-context-stage") = require("./onboard/build-context-stage");
+const sandboxBuildPatchConfig: typeof import("./onboard/sandbox-build-patch-config") = require("./onboard/sandbox-build-patch-config");
 const sandboxCreateLaunch: typeof import("./onboard/sandbox-create-launch") = require("./onboard/sandbox-create-launch");
 const {
   ensureOllamaLoopbackSystemdOverride,
@@ -105,7 +106,7 @@ const {
 }: typeof import("./onboard/e2e-failure-injection") = require("./onboard/e2e-failure-injection");
 const onboardTracing: typeof import("./onboard/tracing") = require("./onboard/tracing");
 const sandboxReadinessTracing: typeof import("./onboard/sandbox-readiness-tracing") = require("./onboard/sandbox-readiness-tracing");
-const { gatherWechatConfig, hasWechatConfigDrift, toSessionWechatConfig } =
+const { hasWechatConfigDrift } =
   require("./onboard/wechat-config") as typeof import("./onboard/wechat-config");
 const {
   setupMessagingChannels: setupMessagingChannelsImpl,
@@ -401,8 +402,10 @@ const {
   computeTelegramRequireMention,
   getStoredMessagingChannelConfig,
   messagingChannelConfigsEqual,
-  persistMessagingChannelConfigToSession,
 } = messagingConfig;
+const messagingPlanSession: typeof import("./onboard/messaging-plan-session") =
+  require("./onboard/messaging-plan-session");
+const { getChannelsFromPlan } = messagingPlanSession;
 const messagingPrep: typeof import("./onboard/messaging-prep") = require("./onboard/messaging-prep");
 const sandboxAgent: typeof import("./onboard/sandbox-agent") = require("./onboard/sandbox-agent");
 const sandboxLifecycle: typeof import("./onboard/sandbox-lifecycle") = require("./onboard/sandbox-lifecycle");
@@ -543,7 +546,6 @@ import type { WebSearchConfig } from "./inference/web-search";
 import {
   hydrateMessagingChannelConfig,
   type MessagingChannelConfig,
-  readMessagingChannelConfigFromEnv,
 } from "./messaging-channel-config";
 import { finalizationHandlerDeps } from "./onboard/finalization-deps";
 import { streamGatewayStart } from "./onboard/gateway";
@@ -2603,9 +2605,6 @@ async function createSandbox(
     currentPlan,
     currentSandboxDisabledChannels: disabledChannels,
     registry,
-    checkGatewayLiveness: () =>
-      runOpenshell(["sandbox", "list"], { ignoreError: true, suppressOutput: true }).status === 0,
-    providerExists: (name) => providerExistsInGateway(name),
     isNonInteractive,
     promptContinue: () => promptYesNoOrDefault("  Continue anyway?", null, false),
     cliName,
@@ -3045,32 +3044,15 @@ async function createSandbox(
   }
 
   console.log(`  Creating sandbox '${sandboxName}' (this takes a few minutes on first run)...`);
-  const messagingChannelConfig = readMessagingChannelConfigFromEnv();
-  // Telegram mention-only mode — parity with Discord's requireMention.
-  // Off by default so existing sandboxes behave the same; opt-in via
-  // TELEGRAM_REQUIRE_MENTION=1 or the interactive prompt. See #1737.
-  const telegramConfig: { requireMention?: boolean } = {};
+  const envMessagingState = MessagingHostStateApplier.readPlanStateFromEnv();
+  const plannedMessagingState =
+    envMessagingState?.plan.sandboxName === sandboxName ? envMessagingState : undefined;
+  const plannedMessagingPlan = plannedMessagingState?.plan;
   const configuredMessagingChannels =
-    enabledChannels != null ? [...new Set(enabledChannels)] : activeMessagingChannels;
-  if (configuredMessagingChannels.includes("telegram")) {
-    const telegramRequireMention = computeTelegramRequireMention();
-    if (telegramRequireMention !== null) {
-      telegramConfig.requireMention = telegramRequireMention;
-    }
-  }
-  const wechatConfig = gatherWechatConfig(onboardSession.loadSession());
-  // Persist the effective Telegram config into the session so a later resume
-  // can detect drift (TELEGRAM_REQUIRE_MENTION changed since last build) and
-  // force a sandbox recreate — otherwise the old groupPolicy would stay baked
-  // in. Mirrors the pattern used for webSearchConfig. See CodeRabbit on #2417.
-  onboardSession.updateSession((current) => {
-    current.telegramConfig =
-      typeof telegramConfig.requireMention === "boolean"
-        ? { requireMention: telegramConfig.requireMention as boolean }
-        : null;
-    current.wechatConfig = toSessionWechatConfig(wechatConfig);
-    current.messagingChannelConfig = messagingChannelConfig;
-    return current;
+    getChannelsFromPlan(plannedMessagingPlan) ??
+    (enabledChannels != null ? [...new Set(enabledChannels)] : activeMessagingChannels);
+  sandboxBuildPatchConfig.prepareSandboxBuildPatchConfig({
+    configuredMessagingChannels,
   });
   // Pull the base image and resolve its digest so the Dockerfile is pinned to
   // exactly what we just fetched. This prevents stale :latest tags from
@@ -3330,16 +3312,7 @@ async function createSandbox(
     imageTag: resolvedImageTag,
     providerCredentialHashes,
     appliedPolicies: initialSandboxPolicy.appliedPresets,
-    // Persist the operator's configured channel set, not the post-disabled-filter
-    // active set. After `channels stop X` + rebuild, activeMessagingChannels drops
-    // X, but X is still configured — losing it here means a later `channels start
-    // X` has nothing to re-enable (the next rebuild sees an empty channel set and
-    // never reattaches the gateway bridge). See #3381.
-    configuredMessagingChannels,
-    activeMessagingChannels,
-    messagingChannelConfig,
-    plannedMessagingState: MessagingHostStateApplier.readPlanStateFromEnv(),
-    disabledChannels,
+    plannedMessagingState,
     hermesToolGateways,
     hermesDashboardState: finalHermesDashboardState,
     dashboardPort: actualDashboardPort,
@@ -4712,7 +4685,7 @@ function getRecordedMessagingChannelsForResume(
 ): string[] | null {
   return getRecordedMessagingChannelsForResumeFromState({
     resume,
-    sessionMessagingChannels: session?.messagingChannels,
+    sessionMessagingChannels: getChannelsFromPlan(session?.messagingPlan),
     sandboxName,
     channels: MESSAGING_CHANNELS,
     getCredential,
@@ -5472,7 +5445,6 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           getStoredMessagingChannelConfig,
           hydrateMessagingChannelConfig,
           messagingChannelConfigsEqual,
-          persistMessagingChannelConfigToSession,
           getSandboxReuseState,
           computeTelegramRequireMention,
           hasSandboxGpuDrift,
@@ -5487,9 +5459,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           configureWebSearch,
           startRecordedStep,
           getRecordedMessagingChannelsForResume,
-          getSandboxMessagingChannels: (name) => registry.getSandbox(name)?.messagingChannels,
           setupMessagingChannels,
-          readMessagingChannelConfigFromEnv,
           readMessagingPlanFromEnv,
           writePlanToEnv,
           getRegistrySandboxMessagingPlan,
