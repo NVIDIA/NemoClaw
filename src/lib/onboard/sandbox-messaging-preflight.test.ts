@@ -142,6 +142,7 @@ describe("prepareSandboxMessagingPreflight", () => {
     const result = await prepareSandboxMessagingPreflight(baseInput, deps);
 
     expect([...result.disabledChannelNames]).toEqual(["telegram"]);
+    expect(result.disabledChannels).toEqual(["telegram"]);
     expect(deps.prepareCreateSandboxMessaging).toHaveBeenCalledWith(
       expect.objectContaining({
         sandboxName: "demo",
