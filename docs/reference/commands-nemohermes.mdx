@@ -1114,7 +1114,7 @@ The installer calls `backup-all` automatically before onboarding to protect agai
 ### `nemohermes <name> snapshot create`
 
 Create a timestamped snapshot of sandbox state.
-Snapshots are stored in `~/.nemoclaw/rebuild-backups/<name>/` for the default instance, or `~/.nemoclaw-<instance>/rebuild-backups/<name>/` when `NEMOCLAW_INSTANCE` is set to a non-default value.
+The command writes the snapshot to `~/.nemoclaw/rebuild-backups/<name>/` for the default instance, or `~/.nemoclaw-<instance>/rebuild-backups/<name>/` when `NEMOCLAW_INSTANCE` is set to a non-default value.
 
 ```bash
 nemohermes my-assistant snapshot create
@@ -1573,7 +1573,7 @@ All ports must be non-privileged integers between 1024 and 65535.
 | `NEMOCLAW_OLLAMA_PORT` | 11434 | Ollama inference |
 | `NEMOCLAW_OLLAMA_PROXY_PORT` | 11435 | Ollama auth proxy |
 | `NEMOCLAW_DASHBOARD_BIND` | *unset* (loopback) | Dashboard or API forward bind address. Set to `0.0.0.0` to opt in to remote bind for SSH-deployed hosts. |
-| `NEMOCLAW_INSTANCE` | _historical default_ | NemoClaw instance identity for multi-instance hosts. Scopes the state root (`~/.nemoclaw` for the default instance, `~/.nemoclaw-<instance>` otherwise) and the OpenShell gateway name so two instances on the same host stay segregated. |
+| `NEMOCLAW_INSTANCE` | nemoclaw | NemoClaw instance identity for multi-instance hosts. Scopes the migrated host-side surfaces — state root (`~/.nemoclaw` for the default instance, `~/.nemoclaw-<instance>` otherwise), credentials store, rebuild backups, local inference adapter state, shields audit and timer state, and the OpenShell gateway binding. Registry, onboard session, messaging, mount roots, uninstall plan, and `config-io` host-root healing still share `~/.nemoclaw` until follow-up PRs migrate them. |
 
 If a port value is not a valid integer or falls outside the allowed range, the CLI exits with an error.
 `NEMOCLAW_GATEWAY_PORT` also cannot overlap the configured dashboard, vLLM, Ollama, or Ollama proxy ports, and cannot use the dashboard auto-allocation range `18789` through `18799` or the default inference/proxy ports `8000`, `11434`, and `11435`.

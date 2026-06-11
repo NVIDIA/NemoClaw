@@ -42,7 +42,7 @@ import * as registry from "./registry.js";
 import { runTarListing } from "./tar-listing.js";
 
 const HOME_DIR = path.resolve(process.env.HOME || os.homedir());
-const REBUILD_BACKUPS_DIR = path.join(resolveNemoclawHomeDir(HOME_DIR), "rebuild-backups");
+export const REBUILD_BACKUPS_DIR = path.join(resolveNemoclawHomeDir(HOME_DIR), "rebuild-backups");
 
 const MANIFEST_VERSION = 1;
 

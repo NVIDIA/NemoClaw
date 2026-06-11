@@ -89,29 +89,28 @@ describe("runtime call-site coverage under NEMOCLAW_INSTANCE", () => {
     });
   });
 
-  it("rebuild-backups directory lands under .nemoclaw-<instance>/rebuild-backups", async () => {
+  it("state/sandbox.ts captures REBUILD_BACKUPS_DIR under .nemoclaw-<instance>/rebuild-backups", async () => {
     await withFreshHome(async (home) => {
       process.env.HOME = home;
       process.env.NEMOCLAW_INSTANCE = "agent-a";
-      const { resolveNemoclawHomeDir } = await import("../../../dist/lib/state/paths");
-      // state/sandbox.ts caches REBUILD_BACKUPS_DIR at module load via the
-      // same helper. Asserting via the helper composes the same path the
-      // module captures, without dragging in sandbox.ts's heavy side-effect
-      // imports just to read a constant.
-      const composed = path.join(resolveNemoclawHomeDir(home), "rebuild-backups");
-      expect(composed).toBe(path.join(home, ".nemoclaw-agent-a", "rebuild-backups"));
+      const { REBUILD_BACKUPS_DIR } = await import("../../../dist/lib/state/sandbox");
+      expect(REBUILD_BACKUPS_DIR).toBe(path.join(home, ".nemoclaw-agent-a", "rebuild-backups"));
     });
   });
 
-  it("shields state directory lands under .nemoclaw-<instance>/state", async () => {
+  it("shields/audit.ts captures AUDIT_DIR / AUDIT_FILE under .nemoclaw-<instance>/state", async () => {
     await withFreshHome(async (home) => {
       process.env.HOME = home;
       process.env.NEMOCLAW_INSTANCE = "agent-a";
-      const { resolveNemoclawStateDir } = await import("../../../dist/lib/state/paths");
-      // shields/{index,audit,timer}.ts all capture STATE_DIR / AUDIT_DIR from
-      // resolveNemoclawStateDir() at module load. Asserting via the helper is
-      // sufficient — the modules close over the same value.
-      expect(resolveNemoclawStateDir(home)).toBe(path.join(home, ".nemoclaw-agent-a", "state"));
+      const { AUDIT_DIR, AUDIT_FILE } = await import("../../../dist/lib/shields/audit");
+      const expectedStateDir = path.join(home, ".nemoclaw-agent-a", "state");
+      expect(AUDIT_DIR).toBe(expectedStateDir);
+      expect(AUDIT_FILE).toBe(path.join(expectedStateDir, "shields-audit.jsonl"));
+      // shields/index.ts and shields/timer.ts capture their own STATE_DIR
+      // constants from the same `resolveNemoclawStateDir()` call, so the
+      // audit module's captured value is the canonical observable: a
+      // regression in the resolver, the helper, or the import order would
+      // surface here too.
     });
   });
 });

@@ -63,7 +63,7 @@ describe("gateway-binding resolver (#4422)", () => {
   });
 });
 
-describe("gateway-binding resolver factors NEMOCLAW_INSTANCE (#3053)", () => {
+describe("gateway-binding resolver factors NEMOCLAW_INSTANCE", () => {
   const DEFAULT_INSTANCE = DEFAULT_NEMOCLAW_INSTANCE;
 
   it("suffixes the gateway name with the instance for a non-default instance on the default port", () => {

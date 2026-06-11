@@ -9,15 +9,15 @@
  * a single compatibility container. A second onboard that requested a
  * different `NEMOCLAW_GATEWAY_PORT` therefore reused the same named gateway,
  * the same runtime-marker state dir, and the same compat container — so
- * creating the second sandbox recreated/killed the first sandbox's gateway and
- * overwrote its runtime marker (#4422).
+ * creating the second sandbox recreated/killed the first sandbox's gateway
+ * and overwrote its runtime marker.
  *
  * These pure resolvers derive a stable per-binding identity along two
  * independent axes:
  *
  * 1. **Gateway port** — the original `nemoclaw-<port>` suffix introduced for
- *    `NEMOCLAW_GATEWAY_PORT` (#4422). The default port keeps the bare
- *    `nemoclaw` name verbatim for backward compatibility.
+ *    `NEMOCLAW_GATEWAY_PORT`. The default port keeps the bare `nemoclaw`
+ *    name verbatim for backward compatibility.
  * 2. **NemoClaw instance** — the `NEMOCLAW_INSTANCE` identity that scopes the
  *    entire host-side install (state root, gateway name, lifecycle). The
  *    default instance keeps the bare `nemoclaw` name verbatim; any other
