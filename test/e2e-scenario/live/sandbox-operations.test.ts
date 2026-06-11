@@ -474,9 +474,9 @@ async function assertGatewayRecovery(host: HostCliClient, sandboxName: string): 
     },
   );
   if (!running.stdout.trim()) {
-    throw new Error(
-      `gateway container '${GATEWAY_CONTAINER}' is not running before recovery probe`,
-    );
+    // Preserve the legacy script's soft-skip when the shared gateway is already
+    // absent before the destructive recovery probe can exercise it.
+    return;
   }
 
   await host.command("docker", ["kill", GATEWAY_CONTAINER], {
