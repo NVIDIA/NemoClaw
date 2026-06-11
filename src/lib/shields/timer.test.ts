@@ -436,7 +436,7 @@ describe("shields timer authorization", () => {
     // A single instantaneous lock+verify cannot prove the gateway didn't
     // re-permission .config-hash afterward. The fix must re-confirm the lock
     // held after the gateway settled, which re-invokes the verified lock path.
-    expect(lockMock.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(lockMock).toHaveBeenCalledTimes(2);
     expect(exitCode).toBe(0);
     expect(JSON.parse(fs.readFileSync(stateFile, "utf-8")).shieldsDown).toBe(false);
   });
@@ -514,10 +514,21 @@ describe("shields timer authorization", () => {
 
     expect(exitCode).toBe(1);
     expect(updatedState.shieldsDown).toBe(true);
-    expect(
-      auditEntries.some(
-        (e) => e.action === "shields_auto_restore_lock_warning" || e.action === "shields_up_failed",
-      ),
-    ).toBe(true);
+    // Both audit outcomes must fire: the durable re-lock warning AND the
+    // terminal fail-closed entry that keeps shields DOWN.
+    expect(auditEntries).toContainEqual(
+      expect.objectContaining({
+        action: "shields_auto_restore_lock_warning",
+        sandbox: sandboxName,
+        lock_verified: false,
+      }),
+    );
+    expect(auditEntries).toContainEqual(
+      expect.objectContaining({
+        action: "shields_up_failed",
+        sandbox: sandboxName,
+        error: "Config re-lock verification failed — shields remain DOWN",
+      }),
+    );
   });
 });
