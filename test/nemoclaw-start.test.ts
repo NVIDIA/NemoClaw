@@ -913,8 +913,7 @@ describe("nemoclaw-start configure guard behavior", () => {
       fs.rmSync(setup.tmpDir, { recursive: true, force: true });
     }
   });
-
-  it("#4462: unsets gateway env and recovers only exact replacement request IDs", () => {
+  it("#4462: unsets gateway env and recovers constrained replacement state", () => {
     const setup = writeProxyEnvWithGuard();
     const stateDir = path.join(setup.tmpDir, "openclaw-state");
     const devicesDir = path.join(stateDir, "devices");
@@ -939,7 +938,7 @@ printf 'ARGS=%s URL=%s PORT=%s TOKEN=%s\n' "$*" "\${OPENCLAW_GATEWAY_URL-unset}"
 cat > "\${OPENCLAW_STATE_DIR}/devices/pending.json" <<'JSON'
 {"replacement":{"requestId":"replacement-1","deviceId":"device-1","scopes":["operator.write","operator.pairing","operator.read","operator.admin"]}}
 JSON
-echo "gateway connect failed: GatewayClientRequestError: scope upgrade pending approval (requestId: \${CASE_REPLACEMENT_ID})" >&2
+if [ -n "\${CASE_REPLACEMENT_ID:-}" ]; then echo "gateway connect failed: GatewayClientRequestError: scope upgrade pending approval (requestId: \${CASE_REPLACEMENT_ID})" >&2; else echo "gateway connect failed: G" >&2; fi
 exit 1
 `,
       { mode: 0o755 },
@@ -948,6 +947,7 @@ exit 1
       for (const [replacementId, shouldRecover] of [
         ["replacement-1", true],
         ["replacement-10", false],
+        ["", true],
       ] as const) {
         resetState();
         const result = runGuardedShell(setup, [

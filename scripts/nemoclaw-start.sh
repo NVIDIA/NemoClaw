@@ -2357,23 +2357,31 @@ if request_id and requested and not still_pending and isinstance(paired_entry, d
     print(json.dumps({"requestId": request_id, "deviceId": device_id, "approvedScopes": sorted(requested), "compatibility": "openclaw-approve-applied-after-nonzero"}, sort_keys=True))
     raise SystemExit(0)
 
-# Compatibility boundary: repair only the local OpenClaw device state after the
-# CLI reports a replaced scope-upgrade approval. Remove this once OpenClaw
-# stops replacing operator.write approvals with admin-shaped pending requests
-# or exposes a supported approval repair API.
-if "scope upgrade pending approval" not in approve_output and "pairing required" not in approve_output:
-    raise SystemExit(1)
+# Compatibility boundary: repair only the local OpenClaw device state after a
+# failed approve leaves behind exactly one same-device admin-shaped replacement
+# request. Some OpenClaw failures only surface opaque gateway text, so the state
+# files are the source of truth; stderr is only used as an exact disambiguator
+# when it carries a replacement request ID. Remove this once OpenClaw stops
+# replacing operator.write approvals with admin-shaped pending requests or
+# exposes a supported approval repair API.
 allowed = {"operator.pairing", "operator.read", "operator.write"}
-if not request_id or not device_id or not requested or not requested.issubset(allowed) or "operator.pairing" not in paired_scopes:
+if not request_id or not device_id or not requested or not requested.issubset(allowed) or "operator.pairing" not in paired_scopes or still_pending:
     raise SystemExit(1)
-replacement_key = replacement = None
+replacement_allowed = allowed | {"operator.admin"}
+candidates = []
+mentioned = []
 for key, item in pending.items():
     item_scopes = scope_set(item) if isinstance(item, dict) else set()
     if (isinstance(item, dict) and norm(item.get("requestId")) != request_id and norm(item.get("deviceId")) == device_id and
-            "operator.admin" in item_scopes and requested.issubset(item_scopes) and output_mentions_request_id(item.get("requestId"))):
-        replacement_key, replacement = key, item
-        break
-if not replacement:
+            "operator.admin" in item_scopes and requested.issubset(item_scopes) and item_scopes.issubset(replacement_allowed)):
+        candidates.append((key, item))
+        if output_mentions_request_id(item.get("requestId")):
+            mentioned.append((key, item))
+if len(mentioned) == 1:
+    replacement_key, replacement = mentioned[0]
+elif len(candidates) == 1 and not re.search(r"\brequestId\b|\brequest[-_ ]?id\b", approve_output, re.IGNORECASE):
+    replacement_key, replacement = candidates[0]
+else:
     raise SystemExit(1)
 approved = set(paired_scopes) | requested
 if "operator.write" in approved:
