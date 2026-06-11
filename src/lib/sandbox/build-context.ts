@@ -165,6 +165,10 @@ function stageOptimizedSandboxBuildContext(
     path.join(rootDir, "scripts", "patch-openclaw-slack-deny-feedback.mts"),
     path.join(stagedScriptsDir, "patch-openclaw-slack-deny-feedback.mts"),
   );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "patch-openclaw-doctor-mutable-perms.mts"),
+    path.join(stagedScriptsDir, "patch-openclaw-doctor-mutable-perms.mts"),
+  );
 
   return { buildCtx, stagedDockerfile };
 }

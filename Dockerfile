@@ -93,9 +93,11 @@ RUN npm ci --omit=dev
 COPY scripts/patch-openclaw-tool-catalog.js /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.js
 COPY scripts/patch-openclaw-chat-send.js /usr/local/lib/nemoclaw/patch-openclaw-chat-send.js
 COPY scripts/patch-openclaw-slack-deny-feedback.mts /usr/local/lib/nemoclaw/patch-openclaw-slack-deny-feedback.mts
+COPY scripts/patch-openclaw-doctor-mutable-perms.mts /usr/local/lib/nemoclaw/patch-openclaw-doctor-mutable-perms.mts
 RUN chmod 755 /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.js \
         /usr/local/lib/nemoclaw/patch-openclaw-chat-send.js \
-        /usr/local/lib/nemoclaw/patch-openclaw-slack-deny-feedback.mts
+        /usr/local/lib/nemoclaw/patch-openclaw-slack-deny-feedback.mts \
+        /usr/local/lib/nemoclaw/patch-openclaw-doctor-mutable-perms.mts
 
 # Upgrade OpenClaw if the base image is stale.
 #
@@ -504,6 +506,23 @@ RUN set -eu; \
 # and openclaw/openclaw#50298, or when NemoClaw no longer ships OpenClaw 2026.5.x.
 # hadolint ignore=DL3059
 RUN node /usr/local/lib/nemoclaw/patch-openclaw-chat-send.js \
+    /usr/local/lib/node_modules/openclaw/dist
+
+# Patch OpenClaw's `doctor` state-integrity check so it stops reporting and
+# tightening NemoClaw's mutable-config contract (NVIDIA/NemoClaw #4538, #4859).
+#
+# OpenClaw doctor flags /sandbox/.openclaw (2770) and openclaw.json (660) as
+# "permissions are too open" and, with --fix, tightens them to single-user
+# 700/600 — durably breaking the group-shared contract the gateway UID needs to
+# persist config writes. The patch narrows doctor's over-open test to OTHER
+# (world) bits only when running inside an OpenShell sandbox (OPENSHELL_SANDBOX
+# is set — OpenShell injects the sandbox name there, verified on 0.0.44), so
+# group bits (the gateway's shared access) are tolerated while genuinely
+# world-accessible modes are still caught. Out-of-sandbox behavior is unchanged.
+# The script fails closed if the pinned doctor state-integrity shape changes.
+# See the script header for details.
+# hadolint ignore=DL3059
+RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-doctor-mutable-perms.mts \
     /usr/local/lib/node_modules/openclaw/dist
 
 # Patch OpenClaw's pinned 2026.5.27 compiled selection runtime to expose a
