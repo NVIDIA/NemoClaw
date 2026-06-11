@@ -188,6 +188,34 @@ async function waitForSandboxReady(sandbox: {
   throw new Error(`sandbox ${SANDBOX_NAME} did not become Ready`);
 }
 
+async function configureGatewayInferenceRoute(
+  host: HostCliClient,
+  apiKey: string,
+): Promise<ShellProbeResult> {
+  const model = shellQuote(DEFAULT_MODEL);
+  return host.command(
+    "bash",
+    [
+      "-lc",
+      [
+        "set -euo pipefail",
+        "if openshell provider get nvidia-prod >/dev/null 2>&1; then",
+        "  openshell provider update nvidia-prod --credential NVIDIA_API_KEY",
+        "else",
+        "  openshell provider create --name nvidia-prod --type nvidia --credential NVIDIA_API_KEY",
+        "fi",
+        `openshell inference set --no-verify --provider nvidia-prod --model ${model}`,
+      ].join("\n"),
+    ],
+    {
+      artifactName: "phase-4-configure-gateway-inference-route",
+      env: cliEnv(apiKey),
+      redactionValues: [apiKey],
+      timeoutMs: OPENSHELL_TIMEOUT_MS,
+    },
+  );
+}
+
 function seedRegistryAndSession(): void {
   const registry = readJsonFile<{
     sandboxes?: Record<string, Record<string, unknown>>;
@@ -216,7 +244,7 @@ function seedRegistryAndSession(): void {
     sandboxName: SANDBOX_NAME,
     status: "complete",
     resumable: true,
-    lastCompletedStep: "gateway",
+    lastCompletedStep: "inference",
     failure: null,
     provider: "nvidia-prod",
     model: DEFAULT_MODEL,
@@ -226,8 +254,8 @@ function seedRegistryAndSession(): void {
       preflight: complete,
       gateway: complete,
       sandbox: pending,
-      provider_selection: pending,
-      inference: pending,
+      provider_selection: complete,
+      inference: complete,
       openclaw: pending,
       agent_setup: pending,
       policies: pending,
@@ -593,6 +621,9 @@ print(json.dumps({'seeded': saved == os.environ['PRE_REBUILD_GATEWAY_TOKEN'], 'h
         ),
       },
     });
+
+    const routeResult = await configureGatewayInferenceRoute(host, apiKey);
+    expectExitZero(routeResult, "configure gateway inference route before rebuild");
 
     // Phase 4.5: apply policy presets through the public CLI, then verify both
     // registry persistence and the live OpenShell gateway policy.
