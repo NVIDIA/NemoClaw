@@ -33,7 +33,8 @@ jobs:
       - name: Validate free-standing job selector
         env:
           JOBS: bad
-        run: echo unchecked
+        run: |
+          echo "::error::Invalid jobs input: \${JOBS}"
   report-to-pr:
     runs-on: ubuntu-latest
     needs: [generate-matrix]
@@ -142,6 +143,8 @@ jobs:
           "validate-jobs step must pass scenarios through SCENARIOS env",
           "step 'Validate free-standing job selector' run script must include Use either scenarios or jobs, not both",
           "step 'Validate free-standing job selector' run script must include allowed_jobs=",
+          "step 'Validate free-standing job selector' run script must include Invalid jobs input; use comma-separated job ids",
+          "step 'Validate free-standing job selector' run script must not include Invalid jobs input: ${JOBS}",
           "step 'Validate free-standing job selector' run script must include Unknown free-standing Vitest job",
           "workflow missing generate-matrix job",
           "generate-matrix job must run on ubuntu-latest",
@@ -223,6 +226,8 @@ jobs:
           "report-to-pr step must pass pr_number through JOB_PR_NUMBER env",
           "report-to-pr step must pass scenarios through JOB_SCENARIOS env",
           "step 'Post Vitest scenario results to PR' run script must include process.env.JOBS",
+          "step 'Post Vitest scenario results to PR' run script must check validate-jobs before echoing jobs",
+          "step 'Post Vitest scenario results to PR' run script must omit rejected job selectors",
           "step 'Post Vitest scenario results to PR' run script must include **Requested jobs:**",
         ]),
       );

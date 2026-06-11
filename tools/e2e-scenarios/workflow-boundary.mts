@@ -166,6 +166,8 @@ function validateJobsSelector(errors: string[], jobs: WorkflowRecord): void {
   requireRunContains(errors, validate, "openclaw-tui-chat-correlation-vitest");
   requireRunContains(errors, validate, "gateway-guard-recovery");
   requireRunContains(errors, validate, "^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$");
+  requireRunContains(errors, validate, "Invalid jobs input; use comma-separated job ids");
+  requireRunDoesNotContain(errors, validate, "Invalid jobs input: ${JOBS}");
   requireRunContains(errors, validate, "Unknown free-standing Vitest job");
 }
 
@@ -555,6 +557,12 @@ export function validateE2eVitestScenariosWorkflowBoundary(
     const reportScript = stringValue(asRecord(report?.with).script ?? report?.run);
     if (!reportScript.includes("process.env.JOBS")) {
       errors.push("step 'Post Vitest scenario results to PR' run script must include process.env.JOBS");
+    }
+    if (!reportScript.includes("jobsValidationPassed")) {
+      errors.push("step 'Post Vitest scenario results to PR' run script must check validate-jobs before echoing jobs");
+    }
+    if (!reportScript.includes("selector rejected by validate-jobs")) {
+      errors.push("step 'Post Vitest scenario results to PR' run script must omit rejected job selectors");
     }
     if (!reportScript.includes("**Requested jobs:**")) {
       errors.push("step 'Post Vitest scenario results to PR' run script must include **Requested jobs:**");

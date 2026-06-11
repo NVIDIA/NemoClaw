@@ -50,7 +50,7 @@ jobs:
             exit 0
           fi
           if [[ ! "${JOBS}" =~ ^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$ ]]; then
-            echo "::error::Invalid jobs input: ${JOBS}" >&2
+            echo "::error::Invalid jobs input; use comma-separated job ids containing only letters, numbers, underscores, and hyphens." >&2
             exit 1
           fi
           IFS=',' read -ra requested <<< "${JOBS}"
@@ -502,7 +502,10 @@ jobs:
             const workflowBranch = context.ref.replace('refs/heads/', '');
             const prNumberInput = process.env.JOB_PR_NUMBER || '';
             const requestedScenarios = process.env.JOB_SCENARIOS || '';
-            const requestedJobs = process.env.JOBS || '';
+            const rawRequestedJobs = process.env.JOBS || '';
+            const jobsValidationPassed = needs['validate-jobs']?.result === 'success';
+            const requestedJobs = jobsValidationPassed ? rawRequestedJobs : '';
+            const jobsRejected = rawRequestedJobs && !jobsValidationPassed;
 
             let prNumber = prNumberInput ? Number.parseInt(prNumberInput, 10) : undefined;
             if (!prNumber) {
@@ -543,9 +546,11 @@ jobs:
               requestedScenarios
                 ? `**Requested scenarios:** \`${requestedScenarios}\``
                 : '**Requested scenarios:** _(default — all supported)_',
-              requestedJobs
-                ? `**Requested jobs:** \`${requestedJobs}\``
-                : '**Requested jobs:** _(default — all free-standing when no scenarios are requested)_',
+              jobsRejected
+                ? '**Requested jobs:** _(selector rejected by validate-jobs)_'
+                : requestedJobs
+                  ? `**Requested jobs:** \`${requestedJobs}\``
+                  : '**Requested jobs:** _(default — all free-standing when no scenarios are requested)_',
               `**Summary:** ${passed.length} passed, ${failed.length} failed, ${skipped.length} skipped`,
               '',
               '| Job | Result |',
