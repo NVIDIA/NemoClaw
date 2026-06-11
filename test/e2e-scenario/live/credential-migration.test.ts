@@ -28,6 +28,7 @@ const DIST_CREDENTIAL_STORE = path.join(REPO_ROOT, "dist", "lib", "credentials",
 const ONBOARD_TIMEOUT_MS = 30 * 60_000;
 const INSTALL_TIMEOUT_MS = 10 * 60_000;
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? `e2e-cred-migration-${process.pid}`;
+const CREDENTIAL_MIGRATION_MODEL = "openai/gpt-oss-120b";
 validateSandboxName(SANDBOX_NAME);
 
 const runCredentialMigrationTest = shouldRunLiveE2EScenarios() ? test : test.skip;
@@ -183,6 +184,7 @@ runCredentialMigrationTest(
       contracts: [
         "legacy credentials.json stages allowlisted provider keys into onboard env",
         "successful default NVIDIA Endpoints onboard registers the migrated value with OpenShell gateway",
+        "onboard keeps the default NVIDIA provider/key/endpoint/policy path while pinning a low-quota catalog model",
         "successful onboard removes plaintext credentials.json",
         "tampered non-credential keys do not become gateway providers",
         "credentials list reads providers from the gateway, not disk",
@@ -214,6 +216,9 @@ runCredentialMigrationTest(
       env: testEnv(home, {
         NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
         NEMOCLAW_RECREATE_SANDBOX: "1",
+        // Keep the default NVIDIA provider/key/endpoint/policy path while
+        // avoiding the high-quota default Nemotron validation model.
+        NEMOCLAW_MODEL: CREDENTIAL_MIGRATION_MODEL,
       }),
       redactionValues: [migratedCredentialValue],
       timeoutMs: ONBOARD_TIMEOUT_MS,
@@ -287,6 +292,7 @@ runCredentialMigrationTest(
     await artifacts.writeJson("scenario-result.json", {
       id: "credential-migration",
       sandboxName: SANDBOX_NAME,
+      model: CREDENTIAL_MIGRATION_MODEL,
       providerNames,
       assertions: {
         onboardSucceeded: onboard.exitCode === 0,
