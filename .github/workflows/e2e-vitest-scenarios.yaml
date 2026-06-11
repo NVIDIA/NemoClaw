@@ -106,7 +106,7 @@ jobs:
           }
           if [ -n "${SCENARIOS}" ]; then
             if [[ ! "${SCENARIOS}" =~ ^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$ ]]; then
-              echo "::error::Invalid scenario input: ${SCENARIOS}" >&2
+              echo "::error::Invalid scenario input; use comma-separated scenario ids containing only letters, numbers, underscores, and hyphens." >&2
               exit 1
             fi
             IFS=',' read -r -a requested_scenarios <<< "${SCENARIOS}"

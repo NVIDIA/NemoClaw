@@ -748,6 +748,8 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   requireRunContains(errors, generate, "--emit-live-matrix");
   requireRunContains(errors, generate, "--scenarios");
   requireRunContains(errors, generate, "^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$");
+  requireRunContains(errors, generate, "Invalid scenario input; use comma-separated scenario ids");
+  requireRunDoesNotContain(errors, generate, "Invalid scenario input: ${SCENARIOS}");
   requireRunDoesNotContain(errors, generate, "^[A-Za-z0-9._-]+");
   requireRunContains(errors, generate, "## Vitest E2E Scenario Matrix");
   requireRunContains(errors, generate, "| Scenario | Runner | Label |");
