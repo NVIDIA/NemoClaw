@@ -34,8 +34,6 @@ type ScorecardData = {
   perfect: boolean;
   /** Sorted failed jobs with optional html_url. */
   failedJobs: { name: string; url: string | null }[];
-  /** Pre-rendered trend line, prefixed with "Trend: ". */
-  trendLine: string;
   /** Pre-rendered trace timing line, prefixed with "Trace: ". */
   traceTimingLine?: string;
   /** Direct link to the current run. */
@@ -130,16 +128,6 @@ function buildBlocks(data: ScorecardData): SlackBlock[] {
       },
     });
   }
-
-  blocks.push({
-    type: "context",
-    elements: [
-      {
-        type: "mrkdwn",
-        text: data.trendLine.replace(/^Trend:\s*/, "*Trend:* "),
-      },
-    ],
-  });
 
   if (data.traceTimingLine) {
     blocks.push({
