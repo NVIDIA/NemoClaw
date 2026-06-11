@@ -28,8 +28,6 @@
 
 import type { ConflictRegistry, ConflictRegistryEntry } from "../messaging/applier";
 import {
-  backfillMessagingChannels,
-  createMessagingConflictProbe,
   findChannelConflictsFromPlan,
   findSlackSocketModeGatewayConflicts,
   formatSlackSocketModeConflictMessage,
@@ -55,10 +53,6 @@ export interface MessagingConflictGuardDeps {
   readonly registry: ConflictRegistry & {
     listSandboxes: () => { sandboxes: ConflictRegistryEntry[]; defaultSandbox?: string | null };
   };
-  /** `openshell sandbox list` succeeded — gateway answered (for backfill probe). */
-  readonly checkGatewayLiveness: () => boolean;
-  /** Whether the named OpenShell provider exists (gateway assumed alive). */
-  readonly providerExists: (name: string) => boolean;
   readonly isNonInteractive: () => boolean;
   /** Interactive "Continue anyway?" prompt; resolves true to proceed. */
   readonly promptContinue: () => Promise<boolean>;
@@ -103,16 +97,10 @@ export async function enforceMessagingChannelConflicts(
     : null;
 
   // Axis 1: credential-scoped conflict (#1953). Only runs when the plan carries
-  // an available credential hash to compare; backfill first so legacy entries
-  // expose their active channels.
+  // an available credential hash to compare.
   const hasPlanCredentials =
     currentPlan?.credentialBindings.some((b) => b.credentialAvailable) ?? false;
   if (currentPlan && hasPlanCredentials) {
-    const probe = createMessagingConflictProbe({
-      checkGatewayLiveness: deps.checkGatewayLiveness,
-      providerExists: deps.providerExists,
-    });
-    backfillMessagingChannels(registry, probe);
     const conflicts = findChannelConflictsFromPlan(sandboxName, currentPlan, registry);
     if (conflicts.length > 0) {
       for (const { channel, sandbox, reason } of conflicts) {
