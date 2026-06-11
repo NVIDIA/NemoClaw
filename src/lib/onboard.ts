@@ -27,15 +27,12 @@ const {
   abortNonInteractive,
 }: typeof import("./onboard/non-interactive-abort") = require("./onboard/non-interactive-abort");
 const { stopStaleDashboardListenersForSandbox } = require("./onboard/stale-gateway-cleanup");
+const extraPlaceholderKeysModule: typeof import("./onboard/extra-placeholder-keys") = require("./onboard/extra-placeholder-keys");
+const buildContextStage: typeof import("./onboard/build-context-stage") = require("./onboard/build-context-stage");
 const {
   ensureOllamaLoopbackSystemdOverride,
 }: typeof import("./onboard/ollama-systemd") = require("./onboard/ollama-systemd");
 const { bestEffortForwardStop } = require("./onboard/forward-cleanup");
-const {
-  CUSTOM_BUILD_CONTEXT_WARN_BYTES,
-  createCustomBuildContextFilter,
-  isInsideIgnoredCustomBuildContextPath,
-}: typeof import("./onboard/custom-build-context") = require("./onboard/custom-build-context");
 const {
   buildCompatibleEndpointSandboxSmokeCommand,
   buildCompatibleEndpointSandboxSmokeScript,
@@ -89,6 +86,12 @@ const {
 const {
   resolveRequestedProviderSelection,
 }: typeof import("./onboard/provider-selection") = require("./onboard/provider-selection");
+const {
+  reportProviderSelectionFailure,
+}: typeof import("./onboard/provider-selection-failure") = require("./onboard/provider-selection-failure");
+const {
+  promptForInferenceProviderSelection,
+}: typeof import("./onboard/provider-selection-prompt") = require("./onboard/provider-selection-prompt");
 const {
   isLinuxDockerDriverGatewayEnabled,
 }: typeof import("./onboard/docker-driver-platform") = require("./onboard/docker-driver-platform");
@@ -168,8 +171,6 @@ const {
   getStableGatewayImageRef,
   pullAndResolveBaseImageDigest,
 }: typeof import("./onboard/base-image") = require("./onboard/base-image");
-const errnoUtils: typeof import("./core/errno") = require("./core/errno");
-const { isErrnoException } = errnoUtils;
 const { requireValue }: typeof import("./core/require-value") = require("./core/require-value");
 const {
   logMissingNvidiaApiKeyHelp,
@@ -184,10 +185,6 @@ type RunnerOptions = {
   openshellBinary?: string;
 };
 
-const {
-  collectBuildContextStats,
-  stageOptimizedSandboxBuildContext,
-} = require("./sandbox/build-context");
 const { buildSubprocessEnv } = require("./subprocess-env");
 const {
   DASHBOARD_PORT,
@@ -408,6 +405,7 @@ const {
   messagingChannelConfigsEqual,
   persistMessagingChannelConfigToSession,
 } = messagingConfig;
+const messagingPrep: typeof import("./onboard/messaging-prep") = require("./onboard/messaging-prep");
 const sandboxAgent: typeof import("./onboard/sandbox-agent") = require("./onboard/sandbox-agent");
 const sandboxLifecycle: typeof import("./onboard/sandbox-lifecycle") = require("./onboard/sandbox-lifecycle");
 const sandboxRegistryMetadata: typeof import("./onboard/sandbox-registry-metadata") = require("./onboard/sandbox-registry-metadata");
@@ -590,7 +588,7 @@ import type { SelectionDrift } from "./onboard/selection-drift";
 import { formatOnboardConfigSummary, formatSandboxBuildEstimateNote } from "./onboard/summary";
 import type { ModelValidationResult, ValidationFailureLike } from "./onboard/types";
 import type { ContainerRuntime } from "./platform";
-import { getChannelTokenKeys, listChannels } from "./sandbox/channels";
+import { listChannels } from "./sandbox/channels";
 import type { GatewayReuseState } from "./state/gateway";
 import type { Session, SessionUpdates } from "./state/onboard-session";
 import type { SandboxEntry } from "./state/registry";
@@ -921,12 +919,7 @@ function upsertProvider(
   return result;
 }
 
-type MessagingTokenDef = {
-  name: string;
-  envKey: string;
-  token: string | null;
-  providerType?: string;
-};
+type MessagingTokenDef = import("./onboard/messaging-prep").MessagingTokenDef;
 
 type EndpointValidationResult =
   | { ok: true; api: string | null; retry?: undefined }
@@ -2622,93 +2615,35 @@ async function createSandbox(
     error: (message) => console.error(message),
   });
 
-  // When enabledChannels is provided (from the toggle picker), only include
-  // channels the user selected. When null (backward compat), include all.
-  const enabledEnvKeys =
-    enabledChannels != null
-      ? new Set(
-          MESSAGING_CHANNELS.filter((c) => enabledChannels.includes(c.name)).flatMap((c) =>
-            getChannelTokenKeys(c),
-          ),
-        )
-      : null;
-
-  const disabledEnvKeys = new Set(
-    MESSAGING_CHANNELS.filter((c) => disabledChannelNames.has(c.name)).flatMap((c) =>
-      getChannelTokenKeys(c),
-    ),
-  );
-
-  const messagingTokenDefs: MessagingTokenDef[] = [
-    {
-      name: `${sandboxName}-discord-bridge`,
-      envKey: "DISCORD_BOT_TOKEN",
-      token: getValidatedMessagingTokenByEnvKey(MESSAGING_CHANNELS, "DISCORD_BOT_TOKEN"),
-    },
-    {
-      name: `${sandboxName}-slack-bridge`,
-      envKey: "SLACK_BOT_TOKEN",
-      token: getValidatedMessagingTokenByEnvKey(MESSAGING_CHANNELS, "SLACK_BOT_TOKEN"),
-    },
-    {
-      name: `${sandboxName}-slack-app`,
-      envKey: "SLACK_APP_TOKEN",
-      token: getValidatedMessagingTokenByEnvKey(MESSAGING_CHANNELS, "SLACK_APP_TOKEN"),
-    },
-    {
-      name: `${sandboxName}-telegram-bridge`,
-      envKey: "TELEGRAM_BOT_TOKEN",
-      token: getValidatedMessagingTokenByEnvKey(MESSAGING_CHANNELS, "TELEGRAM_BOT_TOKEN"),
-    },
-    {
-      name: `${sandboxName}-wechat-bridge`,
-      envKey: "WECHAT_BOT_TOKEN",
-      token: getValidatedMessagingTokenByEnvKey(MESSAGING_CHANNELS, "WECHAT_BOT_TOKEN"),
-    },
-  ]
-    .filter(({ envKey }) => !enabledEnvKeys || enabledEnvKeys.has(envKey))
-    .filter(({ envKey }) => !disabledEnvKeys.has(envKey));
-
-  const braveWebSearchEnabled = braveProviderProfile.shouldEnableBraveWebSearch(webSearchConfig);
-  const braveApiKey = braveWebSearchEnabled
-    ? getCredential(webSearch.BRAVE_API_KEY_ENV) ||
-      normalizeCredentialValue(process.env[webSearch.BRAVE_API_KEY_ENV])
-    : null;
+  const {
+    messagingTokenDefs,
+    extraPlaceholderKeys,
+    hasMessagingTokens,
+    reusableMessagingProviders,
+    reusableMessagingChannels,
+    missingBraveApiKey,
+  } = messagingPrep.prepareCreateSandboxMessaging({
+    sandboxName,
+    channels: MESSAGING_CHANNELS,
+    enabledChannels,
+    disabledChannels,
+    webSearchConfig,
+    env: process.env,
+    getValidatedMessagingTokenByEnvKey,
+    getCredential,
+    normalizeCredentialValue,
+    registerExtraPlaceholderProviders: extraPlaceholderKeysModule.registerExtraPlaceholderProviders,
+    getMessagingChannelForEnvKey,
+    providerExistsInGateway,
+  });
   // Fail before any recreate/delete path runs: otherwise a missing key would
   // destroy the existing sandbox first and only then surface the abort (#3626).
-  if (braveWebSearchEnabled && !braveApiKey) {
+  if (missingBraveApiKey) {
     console.error("  Brave Search is enabled, but BRAVE_API_KEY is not available in this process.");
     console.error(
       "  Re-run with BRAVE_API_KEY set, or disable Brave Search before recreating the sandbox.",
     );
     process.exit(1);
-  }
-  if (braveWebSearchEnabled)
-    messagingTokenDefs.push({
-      name: `${sandboxName}-brave-search`,
-      envKey: webSearch.BRAVE_API_KEY_ENV,
-      token: braveApiKey,
-      providerType: braveProviderProfile.BRAVE_PROVIDER_PROFILE_ID,
-    });
-  const extraPlaceholderKeys: string[] =
-    require("./onboard/extra-placeholder-keys").registerExtraPlaceholderProviders(
-      sandboxName,
-      messagingTokenDefs,
-    );
-  const hasMessagingTokens = messagingTokenDefs.some(({ token }) => !!token);
-  const reusableMessagingProviders: string[] = [];
-  const reusableMessagingChannels: string[] = [];
-  if (enabledChannels != null) {
-    for (const { name, envKey, token } of messagingTokenDefs) {
-      if (token) continue;
-      const channel = envKey === "SLACK_APP_TOKEN" ? "slack" : getMessagingChannelForEnvKey(envKey);
-      if (!channel || !enabledChannels.includes(channel)) continue;
-      if (!providerExistsInGateway(name)) continue;
-      reusableMessagingProviders.push(name);
-      if (!reusableMessagingChannels.includes(channel)) {
-        reusableMessagingChannels.push(channel);
-      }
-    }
   }
 
   const existingRegistryEntryBeforePrune = registry.getSandbox(sandboxName);
@@ -3003,93 +2938,21 @@ async function createSandbox(
   // in env args, so it must not persist in /tmp after a failed sandbox create.
   // run() calls process.exit() on failure (bypassing normal control flow), so
   // we register a process 'exit' handler to guarantee cleanup in all cases.
-  let buildCtx: string, stagedDockerfile: string;
-  if (fromDockerfile) {
-    const fromResolved = path.resolve(fromDockerfile);
-    if (!fs.existsSync(fromResolved)) {
-      console.error(`  Custom Dockerfile not found: ${fromResolved}`);
-      process.exit(1);
-    }
-    if (!fs.statSync(fromResolved).isFile()) {
-      console.error(`  Custom Dockerfile path is not a file: ${fromResolved}`);
-      process.exit(1);
-    }
-    const buildContextDir = path.dirname(fromResolved);
-    if (isInsideIgnoredCustomBuildContextPath(buildContextDir)) {
-      console.error(
-        `  Custom Dockerfile is inside an ignored build-context path: ${buildContextDir}`,
-      );
-      console.error("  Move your Dockerfile to a dedicated directory and retry.");
-      process.exit(1);
-    }
-    console.log(`  Using custom Dockerfile: ${fromResolved}`);
-    console.log(`  Docker build context: ${buildContextDir}`);
-    const shouldIncludeCustomContextPath = createCustomBuildContextFilter(buildContextDir);
-    const buildContextStats = collectBuildContextStats(
-      buildContextDir,
-      shouldIncludeCustomContextPath,
-    );
-    if (buildContextStats.totalBytes > CUSTOM_BUILD_CONTEXT_WARN_BYTES) {
-      const sizeMb = (buildContextStats.totalBytes / 1_000_000).toFixed(1);
-      console.warn(
-        `  WARN: build context contains about ${sizeMb} MB across ${buildContextStats.fileCount} files.`,
-      );
-      console.warn(
-        "  The --from flag sends the Dockerfile's parent directory to Docker; use a dedicated directory if this is not intentional.",
-      );
-    }
-    buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-"));
-    stagedDockerfile = path.join(buildCtx, "Dockerfile");
-    const cleanupCustomBuildCtx = (): void => {
-      try {
-        fs.rmSync(buildCtx, { recursive: true, force: true });
-      } catch {
-        // Best effort cleanup; the original error is more useful to the caller.
-      }
-    };
-    // Copy the entire parent directory as build context.
-    try {
-      fs.cpSync(buildContextDir, buildCtx, {
-        recursive: true,
-        filter: shouldIncludeCustomContextPath,
-      });
-      // If the caller pointed at a file not named "Dockerfile", copy it to the
-      // location openshell expects (buildCtx/Dockerfile).
-      if (path.basename(fromResolved) !== "Dockerfile") {
-        fs.copyFileSync(fromResolved, stagedDockerfile);
-      }
-    } catch (err) {
-      cleanupCustomBuildCtx();
-      const errorObject = typeof err === "object" && err !== null ? err : null;
-      if (isErrnoException(errorObject) && errorObject.code === "EACCES") {
-        console.error(`  Permission denied while copying build context from: ${buildContextDir}`);
-        console.error(
-          "  The --from flag uses the Dockerfile's parent directory as the Docker build context.",
-        );
-        console.error("  Move your Dockerfile to a dedicated directory and retry.");
-        process.exit(1);
-      }
-      throw err;
-    }
-  } else if (agent) {
-    const agentBuild = agentOnboard.createAgentSandbox(agent);
-    buildCtx = agentBuild.buildCtx;
-    stagedDockerfile = agentBuild.stagedDockerfile;
-  } else {
-    ({ buildCtx, stagedDockerfile } = stageOptimizedSandboxBuildContext(ROOT));
-  }
+  const { buildCtx, stagedDockerfile, cleanupBuildCtx } =
+    buildContextStage.stageCreateSandboxBuildContext({
+      root: ROOT,
+      fromDockerfile,
+      agent,
+      createAgentSandbox: agentOnboard.createAgentSandbox,
+      log: console.log,
+      warn: console.warn,
+      error: console.error,
+      exit: process.exit,
+    });
   // Returns true if the build context was fully removed, false otherwise.
   // The caller uses this to decide whether the process 'exit' safety net
   // can be deregistered — if inline cleanup fails, we leave the handler
   // armed so the temp dir is still removed on process exit.
-  const cleanupBuildCtx = (): boolean => {
-    try {
-      fs.rmSync(buildCtx, { recursive: true, force: true });
-      return true;
-    } catch {
-      return false;
-    }
-  };
   process.on("exit", cleanupBuildCtx);
 
   const defaultPolicyPath = path.join(
@@ -3815,43 +3678,12 @@ async function setupNim(
           readRecordedModel,
         });
         if (providerSelection.kind === "failure") {
-          switch (providerSelection.reason.kind) {
-            case "wsl-recorded-ollama-windows-host":
-              console.error(
-                `  Recorded provider '${providerSelection.reason.recordedProvider}' (WSL Ollama) is not available in this environment.`,
-              );
-              console.error(
-                "  Hint: Windows-host Ollama is reachable here; re-run with NEMOCLAW_PROVIDER=ollama to use it explicitly.",
-              );
-              break;
-            case "recorded-provider-unavailable":
-              console.error(
-                `  Recorded provider '${providerSelection.reason.recordedProvider}' is not available in this environment.`,
-              );
-              console.error(
-                "  Set NEMOCLAW_PROVIDER explicitly, or restore the missing local-inference dependency.",
-              );
-              if (providerSelection.reason.windowsHostKey) {
-                console.error(
-                  `  Hint: Windows-host Ollama is available here — re-run with NEMOCLAW_PROVIDER=${providerSelection.reason.windowsHostKey} to use it.`,
-                );
-              }
-              break;
-            case "unsupported-windows-host-ollama":
-              rejectWindowsHostOllama(providerSelection.reason.providerKey, isWindowsHostOllama);
-              break;
-            case "hermes-provider-unavailable":
-              console.error("  Hermes Provider is only available when onboarding Hermes Agent.");
-              console.error(
-                "  Re-run with `nemohermes onboard` or `nemoclaw onboard --agent hermes`.",
-              );
-              break;
-            case "requested-provider-unavailable":
-              console.error(
-                `  Requested provider '${providerSelection.reason.providerKey}' is not available in this environment.`,
-              );
-              break;
-          }
+          reportProviderSelectionFailure({
+            reason: providerSelection.reason,
+            isWindowsHostOllama,
+            rejectWindowsHostOllama,
+            writeError: (message) => console.error(message),
+          });
           process.exit(1);
         }
         selected = providerSelection.selected;
@@ -3863,31 +3695,14 @@ async function setupNim(
             : `  [non-interactive] Provider: ${selected.key}`,
         );
       } else {
-        const suggestions: string[] = [];
-        if (vllmRunning) suggestions.push("vLLM");
-        if (ollamaRunning) suggestions.push("Ollama");
-        if (suggestions.length > 0) {
-          console.log(
-            `  Detected local inference option${suggestions.length > 1 ? "s" : ""}: ${suggestions.join(", ")}`,
-          );
-          console.log("");
-        }
-
-        console.log("");
-        console.log("  Select your inference provider:");
-        options.forEach((o, i) => {
-          console.log(`    ${i + 1}) ${o.label}`);
+        selected = await promptForInferenceProviderSelection({
+          options,
+          vllmRunning,
+          ollamaRunning,
+          prompt,
+          log: console.log,
+          selectFromNumberedMenu: selectFromNumberedMenuOrExit,
         });
-        console.log("");
-
-        const envProviderHint = (process.env.NEMOCLAW_PROVIDER || "").trim().toLowerCase();
-        const envProviderIdx = envProviderHint
-          ? options.findIndex((o) => o.key.toLowerCase() === envProviderHint)
-          : -1;
-        const defaultIdx =
-          (envProviderIdx >= 0 ? envProviderIdx : options.findIndex((o) => o.key === "build")) + 1;
-        const choice = await prompt(`  Choose [${defaultIdx}]: `);
-        selected = selectFromNumberedMenuOrExit(choice, defaultIdx, options);
       }
 
       if (!selected) {
