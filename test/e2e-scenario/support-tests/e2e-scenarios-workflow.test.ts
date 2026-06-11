@@ -238,7 +238,7 @@ jobs:
           "step 'Run skill-agent live test' run script must include test/e2e-scenario/live/skill-agent.test.ts",
           "skill-agent-vitest upload-artifact action must be pinned to a full commit SHA",
           "skill-agent-vitest artifact upload name must be stable",
-          "artifact upload path must include e2e-artifacts/vitest/skill-agent/",
+          "artifact upload path must include e2e-artifacts/vitest/skill-agent/*/scenario-result.json",
           "skill-agent-vitest artifact upload must set include-hidden-files: false",
           "skill-agent-vitest artifact upload must ignore missing fixture artifacts",
           "skill-agent-vitest artifact upload retention-days must be 14",

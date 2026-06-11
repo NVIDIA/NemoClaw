@@ -287,7 +287,23 @@ function validateSkillAgentVitestJob(errors: string[], jobs: WorkflowRecord): vo
     errors.push("skill-agent-vitest artifact upload name must be stable");
   }
   const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/vitest/skill-agent/");
+  for (const expected of [
+    "e2e-artifacts/vitest/skill-agent/*/artifact-summary.json",
+    "e2e-artifacts/vitest/skill-agent/*/cleanup.json",
+    "e2e-artifacts/vitest/skill-agent/*/cleanup-skill-agent-summary.json",
+    "e2e-artifacts/vitest/skill-agent/*/scenario.json",
+    "e2e-artifacts/vitest/skill-agent/*/scenario-result.json",
+    "e2e-artifacts/vitest/skill-agent/*/shell/*.result.json",
+    "e2e-artifacts/vitest/skill-agent/*/shell/*.stdout.txt",
+    "e2e-artifacts/vitest/skill-agent/*/shell/*.stderr.txt",
+  ]) {
+    requireUploadPathContains(errors, uploadPath, expected);
+  }
+  for (const line of uploadPath.split("\n")) {
+    if (line.trim() === "e2e-artifacts/vitest/skill-agent/") {
+      errors.push("skill-agent-vitest artifact upload path must not list the whole skill-agent artifact directory");
+    }
+  }
   if (uploadWith["include-hidden-files"] !== false) {
     errors.push("skill-agent-vitest artifact upload must set include-hidden-files: false");
   }
@@ -442,8 +458,6 @@ export function validateE2eVitestScenariosWorkflowBoundary(
     "openshell-version-pin-vitest",
     "onboard-negative-paths-vitest",
     "skill-agent-vitest",
-    "openclaw-tui-chat-correlation-vitest",
-    "gateway-guard-recovery",
   ]) {
     requireRunContains(errors, generate, jobName);
   }

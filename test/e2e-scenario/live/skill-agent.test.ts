@@ -168,6 +168,18 @@ describe("skill-agent live test local classifiers", () => {
     expect(shouldSkipExternalAgentVerificationFailure("require is not defined", true)).toBe(false);
   });
 
+  it("skips only NVIDIA endpoint validation outages during onboarding", () => {
+    expect(
+      isExternalProviderValidationFailure(
+        "NVIDIA Endpoints endpoint validation failed.\nChat Completions API validation returned HTTP 429",
+      ),
+    ).toBe(true);
+    expect(isExternalProviderValidationFailure("local docker preflight timed out")).toBe(false);
+    expect(
+      isExternalProviderValidationFailure("NVIDIA Endpoints endpoint validation failed."),
+    ).toBe(false);
+  });
+
   it("matches the token only inside the delimited agent section", () => {
     expect(agentSectionContainsToken(`helper echoed ${VERIFY_PHRASE}`)).toBe(false);
     expect(
