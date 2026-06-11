@@ -16,12 +16,17 @@ on:
         required: false
         type: string
         default: ""
+      jobs:
+        description: "Optional comma-separated free-standing live Vitest job ids. Empty runs all enabled jobs."
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: e2e-vitest-scenarios-${{ github.ref }}-${{ inputs.scenarios || 'supported' }}
+  group: e2e-vitest-scenarios-${{ github.ref }}-${{ inputs.scenarios || 'supported' }}-${{ inputs.jobs || 'all-jobs' }}
   cancel-in-progress: false
 
 jobs:
@@ -47,6 +52,7 @@ jobs:
         name: Generate Vitest scenario matrix
         env:
           SCENARIOS: ${{ inputs.scenarios }}
+          JOBS: ${{ inputs.jobs }}
         run: |
           set -euo pipefail
           args=(--emit-live-matrix)
@@ -56,6 +62,10 @@ jobs:
               exit 1
             fi
             args+=(--scenarios "${SCENARIOS}")
+          fi
+          if [ -n "${JOBS}" ] && [[ ! "${JOBS}" =~ ^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$ ]]; then
+            echo "::error::Invalid jobs input: ${JOBS}" >&2
+            exit 1
           fi
           matrix="$(npx tsx test/e2e-scenario/scenarios/run.ts "${args[@]}")"
           echo "matrix=${matrix}" >> "$GITHUB_OUTPUT"
@@ -74,6 +84,7 @@ jobs:
 
   live-scenarios:
     needs: generate-matrix
+    if: ${{ inputs.jobs == '' }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     strategy:
@@ -174,6 +185,7 @@ jobs:
   # because the matrix above only runs registry-scenarios.test.ts. Modeled on
   # #5049's free-standing pattern.
   openshell-version-pin-vitest:
+    if: ${{ inputs.jobs == '' || contains(format(',{0},', inputs.jobs), ',openshell-version-pin-vitest,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -213,6 +225,7 @@ jobs:
           retention-days: 14
 
   onboard-negative-paths-vitest:
+    if: ${{ inputs.jobs == '' || contains(format(',{0},', inputs.jobs), ',onboard-negative-paths-vitest,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -259,7 +272,7 @@ jobs:
   # injection + real OpenClaw agent-turn contract. The retained legacy bash
   # lane remains in nightly-e2e.yaml until #5098 Phase 11 shell retirement.
   skill-agent-vitest:
-    if: ${{ inputs.scenarios == '' }}
+    if: ${{ inputs.scenarios == '' && (inputs.jobs == '' || contains(format(',{0},', inputs.jobs), ',skill-agent-vitest,')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -332,7 +345,7 @@ jobs:
   # protocol/history contract. The retained legacy bash lane remains the
   # source for full closeout until a later PR proves replacement and deletes it.
   openclaw-tui-chat-correlation-vitest:
-    if: ${{ inputs.scenarios == '' }}
+    if: ${{ inputs.scenarios == '' && inputs.jobs == '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 75
     env:
@@ -411,6 +424,7 @@ jobs:
   # restore the /tmp guard chain after pod recreate). Will fail on `main`
   # until the #2701 fix lands; flips green afterwards.
   gateway-guard-recovery:
+    if: ${{ inputs.jobs == '' || contains(format(',{0},', inputs.jobs), ',gateway-guard-recovery,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -507,6 +521,7 @@ jobs:
         live-scenarios,
         openshell-version-pin-vitest,
         onboard-negative-paths-vitest,
+        skill-agent-vitest,
         openclaw-tui-chat-correlation-vitest,
         gateway-guard-recovery,
       ]
@@ -524,6 +539,7 @@ jobs:
             const workflowBranch = context.ref.replace('refs/heads/', '');
             const prNumberInput = ${{ toJSON(inputs.pr_number) }} || '';
             const requestedScenarios = ${{ toJSON(inputs.scenarios) }} || '';
+            const requestedJobs = ${{ toJSON(inputs.jobs) }} || '';
 
             let prNumber = prNumberInput ? Number.parseInt(prNumberInput, 10) : undefined;
             if (!prNumber) {
@@ -564,6 +580,9 @@ jobs:
               requestedScenarios
                 ? `**Requested scenarios:** \`${requestedScenarios}\``
                 : '**Requested scenarios:** _(default — all supported)_',
+              requestedJobs
+                ? `**Requested jobs:** \`${requestedJobs}\``
+                : '**Requested jobs:** _(default — all enabled)_',
               `**Summary:** ${passed.length} passed, ${failed.length} failed, ${skipped.length} skipped`,
               '',
               '| Job | Result |',
