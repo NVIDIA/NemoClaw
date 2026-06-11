@@ -227,14 +227,19 @@ async function requireLivePrerequisites(host: HostCliClient, skip: SkipFn): Prom
     skipLive(skip, message);
   }
 
-  const openshell = await host.command("openshell", ["--version"], {
-    artifactName: "prereq-openshell-version-inference-routing",
-    env: buildAvailabilityProbeEnv(),
-    timeoutMs: 30_000,
-  });
-  if (openshell.exitCode !== 0) {
-    // A fresh GitHub runner may not have OpenShell before the first onboard;
-    // `nemoclaw onboard` installs it. Record the prereq probe without blocking.
+  try {
+    const openshell = await host.command("openshell", ["--version"], {
+      artifactName: "prereq-openshell-version-inference-routing",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 30_000,
+    });
+    if (openshell.exitCode !== 0) {
+      // A fresh GitHub runner may not have OpenShell before the first onboard;
+      // `nemoclaw onboard` installs it. Record the prereq probe without blocking.
+      return;
+    }
+  } catch {
+    // Same as non-zero: fresh runner may not have openshell until onboard.
     return;
   }
 }
