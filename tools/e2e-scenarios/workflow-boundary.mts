@@ -21,6 +21,7 @@ const SELECTOR_PATTERN = /^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$/;
 const FREE_STANDING_SCENARIO_JOBS = new Map([
   ["openshell-version-pin", "openshell-version-pin-vitest"],
   ["onboard-negative-paths", "onboard-negative-paths-vitest"],
+  ["runtime-overrides", "runtime-overrides-vitest"],
   ["hermes-e2e", "hermes-e2e-vitest"],
   ["network-policy", "network-policy-vitest"],
   ["token-rotation", "token-rotation-vitest"],
@@ -276,6 +277,7 @@ function validateJobsSelector(errors: string[], jobs: WorkflowRecord): void {
   requireRunContains(errors, validate, "openshell-version-pin-vitest");
   requireRunContains(errors, validate, "onboard-negative-paths-vitest");
   requireRunContains(errors, validate, "credential-migration-vitest");
+  requireRunContains(errors, validate, "runtime-overrides-vitest");
   requireRunContains(errors, validate, "hermes-e2e-vitest");
   requireRunContains(errors, validate, "network-policy-vitest");
   requireRunContains(errors, validate, "token-rotation-vitest");
@@ -704,6 +706,91 @@ function validateOnboardNegativePathsVitestJob(errors: string[], jobs: WorkflowR
   }
 }
 
+function requireNoDockerHubAuthInRun(
+  errors: string[],
+  owner: string,
+  runScript: string,
+): void {
+  if (!runScript) return;
+  const usesDockerLogin = /\bdocker\s+login\b/i.test(runScript);
+  const referencesSecret = /\bsecrets\.[A-Za-z0-9_]+\b|\$\{\{\s*secrets\.[^}]+\}\}/.test(runScript);
+  if (usesDockerLogin || referencesSecret) {
+    errors.push(`${owner} run script must not use docker login or inline secret interpolation`);
+  }
+}
+
+function validateRuntimeOverridesVitestJob(errors: string[], jobs: WorkflowRecord): void {
+  const jobName = "runtime-overrides-vitest";
+  const job = asRecord(jobs[jobName]);
+  if (Object.keys(job).length === 0) {
+    errors.push("workflow missing runtime-overrides-vitest job");
+    return;
+  }
+
+  if (job["runs-on"] !== "ubuntu-latest") {
+    errors.push("runtime-overrides-vitest job must run on ubuntu-latest");
+  }
+  validateFreeStandingJobSelector(errors, jobs, jobName, "runtime-overrides");
+
+  const jobEnv = asRecord(job.env);
+  if (jobEnv.NEMOCLAW_RUN_E2E_SCENARIOS !== "1") {
+    errors.push("runtime-overrides-vitest job must set NEMOCLAW_RUN_E2E_SCENARIOS=1");
+  }
+  if (jobEnv.E2E_ARTIFACT_DIR !== "${{ github.workspace }}/e2e-artifacts/vitest/runtime-overrides") {
+    errors.push("runtime-overrides-vitest job must write artifacts under e2e-artifacts/vitest/runtime-overrides");
+  }
+  requireEnvDoesNotExposeSecret(errors, "runtime-overrides-vitest job", jobEnv, "NVIDIA_API_KEY");
+  requireEnvDoesNotExposeSecret(errors, "runtime-overrides-vitest job", jobEnv, "DOCKERHUB_USERNAME");
+  requireEnvDoesNotExposeSecret(errors, "runtime-overrides-vitest job", jobEnv, "DOCKERHUB_TOKEN");
+
+  const steps = asSteps(job.steps);
+  requireNoDispatchInputInterpolation(errors, steps);
+  for (const step of steps) {
+    const stepName = `runtime-overrides-vitest step '${step.name ?? step.uses ?? "<unnamed>"}'`;
+    const stepEnv = asRecord(step.env);
+    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_API_KEY");
+    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_USERNAME");
+    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_TOKEN");
+    requireNoDockerHubAuthInRun(errors, stepName, stringValue(step.run));
+  }
+
+  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
+  if (!checkout) errors.push("runtime-overrides-vitest job missing checkout step");
+  requireFullShaAction(errors, checkout, "runtime-overrides-vitest checkout");
+  if (asRecord(checkout?.with)["persist-credentials"] !== false) {
+    errors.push("runtime-overrides-vitest checkout step must set persist-credentials=false");
+  }
+
+  const setupNode = namedStep(steps, "Set up Node");
+  if (!setupNode) errors.push("runtime-overrides-vitest job missing step: Set up Node");
+  requireFullShaAction(errors, setupNode, "runtime-overrides-vitest setup-node");
+
+  const installRootDependencies = requireJobStep(errors, jobName, steps, "Install root dependencies");
+  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
+
+  const runVitest = requireJobStep(errors, jobName, steps, "Run runtime overrides live test");
+  requireRunContains(errors, runVitest, "npx vitest run --project e2e-scenarios-live");
+  requireRunContains(errors, runVitest, "test/e2e-scenario/live/runtime-overrides.test.ts");
+
+  const upload = requireJobStep(errors, jobName, steps, "Upload runtime overrides artifacts");
+  requireFullShaAction(errors, upload, "runtime-overrides-vitest upload-artifact");
+  const uploadWith = asRecord(upload?.with);
+  if (uploadWith.name !== "e2e-vitest-scenarios-runtime-overrides") {
+    errors.push("runtime-overrides-vitest artifact upload name must be stable");
+  }
+  const uploadPath = stringValue(uploadWith.path);
+  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/vitest/runtime-overrides/");
+  if (uploadWith["include-hidden-files"] !== false) {
+    errors.push("runtime-overrides-vitest artifact upload must set include-hidden-files: false");
+  }
+  if (uploadWith["if-no-files-found"] !== "ignore") {
+    errors.push("runtime-overrides-vitest artifact upload must ignore missing fixture artifacts");
+  }
+  if (uploadWith["retention-days"] !== 14) {
+    errors.push("runtime-overrides-vitest artifact upload retention-days must be 14");
+  }
+}
+
 function validateHermesE2EVitestJob(errors: string[], jobs: WorkflowRecord): void {
   const jobName = "hermes-e2e-vitest";
   const job = asRecord(jobs[jobName]);
@@ -862,6 +949,8 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   requireRunContains(errors, generate, "allowed_jobs=");
   requireRunContains(errors, generate, "Use either scenarios or jobs, not both");
   requireRunContains(errors, generate, "Unknown free-standing Vitest job");
+  requireRunContains(errors, generate, "runtime-overrides-vitest");
+  requireRunContains(errors, generate, "runtime-overrides");
   requireRunContains(errors, generate, "hermes-e2e-vitest");
   requireRunContains(errors, generate, "network-policy-vitest");
   requireRunContains(errors, generate, "token-rotation-vitest");
@@ -1018,6 +1107,7 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   validateOpenShellVersionPinVitestJob(errors, jobs);
   validateOnboardNegativePathsVitestJob(errors, jobs);
   validateFreeStandingJobSelector(errors, jobs, "credential-migration-vitest");
+  validateRuntimeOverridesVitestJob(errors, jobs);
   validateHermesE2EVitestJob(errors, jobs);
   validateNetworkPolicyVitestJob(errors, jobs);
   validateTokenRotationVitestJob(errors, jobs);
@@ -1041,6 +1131,7 @@ export function validateE2eVitestScenariosWorkflowBoundary(
       "openshell-version-pin-vitest",
       "onboard-negative-paths-vitest",
       "credential-migration-vitest",
+      "runtime-overrides-vitest",
       "hermes-e2e-vitest",
       "network-policy-vitest",
       "token-rotation-vitest",
