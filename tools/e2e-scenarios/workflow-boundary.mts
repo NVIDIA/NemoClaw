@@ -21,6 +21,7 @@ const SELECTOR_PATTERN = /^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$/;
 const FREE_STANDING_SCENARIO_JOBS = new Map([
   ["openshell-version-pin", "openshell-version-pin-vitest"],
   ["onboard-negative-paths", "onboard-negative-paths-vitest"],
+  ["hermes-e2e", "hermes-e2e-vitest"],
   ["network-policy", "network-policy-vitest"],
   ["token-rotation", "token-rotation-vitest"],
   ["openclaw-tui-chat-correlation", "openclaw-tui-chat-correlation-vitest"],
@@ -273,6 +274,7 @@ function validateJobsSelector(errors: string[], jobs: WorkflowRecord): void {
   requireRunContains(errors, validate, "allowed_jobs=");
   requireRunContains(errors, validate, "openshell-version-pin-vitest");
   requireRunContains(errors, validate, "onboard-negative-paths-vitest");
+  requireRunContains(errors, validate, "hermes-e2e-vitest");
   requireRunContains(errors, validate, "network-policy-vitest");
   requireRunContains(errors, validate, "token-rotation-vitest");
   requireRunContains(errors, validate, "openclaw-tui-chat-correlation-vitest");
@@ -700,6 +702,107 @@ function validateOnboardNegativePathsVitestJob(errors: string[], jobs: WorkflowR
   }
 }
 
+function validateHermesE2EVitestJob(errors: string[], jobs: WorkflowRecord): void {
+  const jobName = "hermes-e2e-vitest";
+  const job = asRecord(jobs[jobName]);
+  if (Object.keys(job).length === 0) {
+    errors.push("workflow missing hermes-e2e-vitest job");
+    return;
+  }
+
+  if (job["runs-on"] !== "ubuntu-latest") {
+    errors.push("hermes-e2e-vitest job must run on ubuntu-latest");
+  }
+  const needs = Array.isArray(job.needs) ? job.needs : [];
+  if (!needs.includes("validate-jobs") || !needs.includes("generate-matrix")) {
+    errors.push("hermes-e2e-vitest job must depend on validate-jobs and generate-matrix validation");
+  }
+  if (job.if !== "${{ needs.generate-matrix.outputs.hermes_selected == 'true' }}") {
+    errors.push("hermes-e2e-vitest job must use validated hermes_selected output");
+  }
+  if (stringValue(job.if).includes("inputs.scenarios")) {
+    errors.push("hermes-e2e-vitest job must not inspect raw workflow dispatch scenarios");
+  }
+
+  const jobEnv = asRecord(job.env);
+  if (jobEnv.NEMOCLAW_RUN_E2E_SCENARIOS !== "1") {
+    errors.push("hermes-e2e-vitest job must set NEMOCLAW_RUN_E2E_SCENARIOS=1");
+  }
+  if (jobEnv.NEMOCLAW_CLI_BIN !== "${{ github.workspace }}/bin/nemoclaw.js") {
+    errors.push("hermes-e2e-vitest job must point NEMOCLAW_CLI_BIN at the repo CLI");
+  }
+  if (jobEnv.E2E_ARTIFACT_DIR !== "${{ github.workspace }}/e2e-artifacts/vitest/hermes-e2e") {
+    errors.push("hermes-e2e-vitest job must write artifacts under e2e-artifacts/vitest/hermes-e2e");
+  }
+  if (jobEnv.NEMOCLAW_AGENT !== "hermes") {
+    errors.push("hermes-e2e-vitest job must set NEMOCLAW_AGENT=hermes");
+  }
+  if (jobEnv.NEMOCLAW_MODEL !== "minimaxai/minimax-m2.7") {
+    errors.push("hermes-e2e-vitest job must pin the CI-safe Hermes model");
+  }
+  if (jobEnv.NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS !== "60") {
+    errors.push("hermes-e2e-vitest job must give hosted endpoint validation a CI-safe timeout");
+  }
+  requireEnvDoesNotExposeSecret(errors, "hermes-e2e-vitest job", jobEnv, "NVIDIA_API_KEY");
+
+  const steps = asSteps(job.steps);
+  requireNoDispatchInputInterpolation(errors, steps);
+  for (const step of steps) {
+    if (step.name !== "Run Hermes live Vitest test") {
+      requireEnvDoesNotExposeSecret(
+        errors,
+        `hermes-e2e-vitest step '${step.name ?? step.uses ?? "<unnamed>"}'`,
+        asRecord(step.env),
+        "NVIDIA_API_KEY",
+      );
+    }
+  }
+
+  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
+  if (!checkout) errors.push("hermes-e2e-vitest job missing checkout step");
+  requireFullShaAction(errors, checkout, "hermes-e2e-vitest checkout");
+  if (asRecord(checkout?.with)["persist-credentials"] !== false) {
+    errors.push("hermes-e2e-vitest checkout step must set persist-credentials=false");
+  }
+
+  const setupNode = namedStep(steps, "Set up Node");
+  if (!setupNode) errors.push("hermes-e2e-vitest job missing step: Set up Node");
+  requireFullShaAction(errors, setupNode, "hermes-e2e-vitest setup-node");
+
+  const installRootDependencies = requireJobStep(errors, jobName, steps, "Install root dependencies");
+  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
+
+  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
+  requireRunContains(errors, buildCli, "npm run build:cli");
+
+  const runVitest = requireJobStep(errors, jobName, steps, "Run Hermes live Vitest test");
+  const runVitestEnv = asRecord(runVitest?.env);
+  if (runVitestEnv.NVIDIA_API_KEY !== "${{ secrets.NVIDIA_API_KEY }}") {
+    errors.push("hermes-e2e-vitest Vitest step must receive NVIDIA_API_KEY from secrets");
+  }
+  requireRunContains(errors, runVitest, "npx vitest run --project e2e-scenarios-live");
+  requireRunContains(errors, runVitest, "test/e2e-scenario/live/hermes-e2e.test.ts");
+  requireRunDoesNotContain(errors, runVitest, "${{ inputs.");
+
+  const upload = requireJobStep(errors, jobName, steps, "Upload Hermes live Vitest artifacts");
+  requireFullShaAction(errors, upload, "hermes-e2e-vitest upload-artifact");
+  const uploadWith = asRecord(upload?.with);
+  if (uploadWith.name !== "e2e-vitest-scenarios-hermes-e2e") {
+    errors.push("hermes-e2e-vitest artifact upload name must be stable");
+  }
+  const uploadPath = stringValue(uploadWith.path);
+  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/vitest/hermes-e2e/");
+  if (uploadWith["include-hidden-files"] !== false) {
+    errors.push("hermes-e2e-vitest artifact upload must set include-hidden-files: false");
+  }
+  if (uploadWith["if-no-files-found"] !== "ignore") {
+    errors.push("hermes-e2e-vitest artifact upload must ignore missing fixture artifacts");
+  }
+  if (uploadWith["retention-days"] !== 14) {
+    errors.push("hermes-e2e-vitest artifact upload retention-days must be 14");
+  }
+}
+
 export function validateE2eVitestScenariosWorkflowBoundary(
   workflowPath = DEFAULT_VITEST_WORKFLOW_PATH,
 ): string[] {
@@ -728,6 +831,13 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   if (generateMatrix["runs-on"] !== "ubuntu-latest") {
     errors.push("generate-matrix job must run on ubuntu-latest");
   }
+  const generateOutputs = asRecord(generateMatrix.outputs);
+  if (generateOutputs.matrix !== "${{ steps.matrix.outputs.matrix }}") {
+    errors.push("generate-matrix job must expose matrix output");
+  }
+  if (generateOutputs.hermes_selected !== "${{ steps.matrix.outputs.hermes_selected }}") {
+    errors.push("generate-matrix job must expose hermes_selected output");
+  }
   const generateSteps = asSteps(generateMatrix.steps);
   requireNoDispatchInputInterpolation(errors, generateSteps);
   const generateCheckout = generateSteps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
@@ -741,16 +851,31 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   requireFullShaAction(errors, generateSetupNode, "generate-matrix setup-node");
   const generate = requireStep(errors, generateSteps, "Generate Vitest scenario matrix");
   const generateEnv = asRecord(generate?.env);
+  if (generateEnv.JOBS !== "${{ inputs.jobs }}") {
+    errors.push("matrix generation step must pass jobs through JOBS env");
+  }
   if (generateEnv.SCENARIOS !== "${{ inputs.scenarios }}") {
     errors.push("matrix generation step must pass scenarios through SCENARIOS env");
   }
+  requireRunContains(errors, generate, "allowed_jobs=");
+  requireRunContains(errors, generate, "Use either scenarios or jobs, not both");
+  requireRunContains(errors, generate, "Unknown free-standing Vitest job");
+  requireRunContains(errors, generate, "hermes-e2e-vitest");
+  requireRunContains(errors, generate, "network-policy-vitest");
+  requireRunContains(errors, generate, "token-rotation-vitest");
+  requireRunContains(errors, generate, 'matrix="[]"');
   requireRunContains(errors, generate, "npx tsx test/e2e-scenario/scenarios/run.ts");
   requireRunContains(errors, generate, "--emit-live-matrix");
   requireRunContains(errors, generate, "--scenarios");
   requireRunContains(errors, generate, "^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$");
   requireRunContains(errors, generate, "Invalid scenario input; use comma-separated scenario ids");
+  requireRunContains(errors, generate, "Invalid jobs input; use comma-separated job ids");
+  requireRunDoesNotContain(errors, generate, "Invalid jobs input: ${JOBS}");
   requireRunDoesNotContain(errors, generate, "Invalid scenario input: ${SCENARIOS}");
   requireRunDoesNotContain(errors, generate, "^[A-Za-z0-9._-]+");
+  requireRunContains(errors, generate, "hermes_selected=false");
+  requireRunContains(errors, generate, "hermes_selected=true");
+  requireRunContains(errors, generate, 'echo "hermes_selected=${hermes_selected}" >> "$GITHUB_OUTPUT"');
   requireRunContains(errors, generate, "## Vitest E2E Scenario Matrix");
   requireRunContains(errors, generate, "| Scenario | Runner | Label |");
 
@@ -890,6 +1015,7 @@ export function validateE2eVitestScenariosWorkflowBoundary(
 
   validateOpenShellVersionPinVitestJob(errors, jobs);
   validateOnboardNegativePathsVitestJob(errors, jobs);
+  validateHermesE2EVitestJob(errors, jobs);
   validateNetworkPolicyVitestJob(errors, jobs);
   validateTokenRotationVitestJob(errors, jobs);
   validateFreeStandingJobSelector(
@@ -911,6 +1037,7 @@ export function validateE2eVitestScenariosWorkflowBoundary(
       "live-scenarios",
       "openshell-version-pin-vitest",
       "onboard-negative-paths-vitest",
+      "hermes-e2e-vitest",
       "network-policy-vitest",
       "token-rotation-vitest",
       "openclaw-tui-chat-correlation-vitest",
