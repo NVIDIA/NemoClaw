@@ -206,7 +206,8 @@ jobs:
   # because the matrix above only runs registry-scenarios.test.ts. Modeled on
   # #5049's free-standing pattern.
   openshell-version-pin-vitest:
-    if: ${{ inputs.jobs == '' || contains(format(',{0},', inputs.jobs), ',openshell-version-pin-vitest,') }}
+    needs: generate-matrix
+    if: ${{ needs.generate-matrix.result == 'success' && (inputs.jobs == '' || contains(format(',{0},', inputs.jobs), ',openshell-version-pin-vitest,')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -246,7 +247,8 @@ jobs:
           retention-days: 14
 
   onboard-negative-paths-vitest:
-    if: ${{ inputs.jobs == '' || contains(format(',{0},', inputs.jobs), ',onboard-negative-paths-vitest,') }}
+    needs: generate-matrix
+    if: ${{ needs.generate-matrix.result == 'success' && (inputs.jobs == '' || contains(format(',{0},', inputs.jobs), ',onboard-negative-paths-vitest,')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -293,7 +295,8 @@ jobs:
   # injection + real OpenClaw agent-turn contract. The retained legacy bash
   # lane remains in nightly-e2e.yaml until #5098 Phase 11 shell retirement.
   skill-agent-vitest:
-    if: ${{ inputs.jobs == '' || contains(format(',{0},', inputs.jobs), ',skill-agent-vitest,') }}
+    needs: generate-matrix
+    if: ${{ needs.generate-matrix.result == 'success' && (inputs.jobs == '' || contains(format(',{0},', inputs.jobs), ',skill-agent-vitest,')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -374,7 +377,8 @@ jobs:
   # protocol/history contract. The retained legacy bash lane remains the
   # source for full closeout until a later PR proves replacement and deletes it.
   openclaw-tui-chat-correlation-vitest:
-    if: ${{ inputs.jobs == '' }}
+    needs: generate-matrix
+    if: ${{ needs.generate-matrix.result == 'success' && inputs.jobs == '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 75
     env:
@@ -453,7 +457,8 @@ jobs:
   # restore the /tmp guard chain after pod recreate). Will fail on `main`
   # until the #2701 fix lands; flips green afterwards.
   gateway-guard-recovery:
-    if: ${{ inputs.jobs == '' }}
+    needs: generate-matrix
+    if: ${{ needs.generate-matrix.result == 'success' && inputs.jobs == '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:

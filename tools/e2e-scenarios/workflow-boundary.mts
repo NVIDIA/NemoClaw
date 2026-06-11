@@ -123,7 +123,7 @@ function requireNoDispatchInputInterpolation(
 }
 
 function expectedFreeStandingJobSelector(jobName: string): string {
-  return `\${{ inputs.jobs == '' || contains(format(',{0},', inputs.jobs), ',${jobName},') }}`;
+  return `\${{ needs.generate-matrix.result == 'success' && (inputs.jobs == '' || contains(format(',{0},', inputs.jobs), ',${jobName},')) }}`;
 }
 
 function validateOpenShellVersionPinVitestJob(errors: string[], jobs: WorkflowRecord): void {
@@ -137,11 +137,11 @@ function validateOpenShellVersionPinVitestJob(errors: string[], jobs: WorkflowRe
   if (job["runs-on"] !== "ubuntu-latest") {
     errors.push("openshell-version-pin-vitest job must run on ubuntu-latest");
   }
-  if (Object.hasOwn(job, "needs")) {
-    errors.push("openshell-version-pin-vitest job must run independently of generate-matrix");
+  if (job.needs !== "generate-matrix") {
+    errors.push("openshell-version-pin-vitest job must depend on generate-matrix validation");
   }
   if (job.if !== expectedFreeStandingJobSelector(jobName)) {
-    errors.push("openshell-version-pin-vitest job must use the approved jobs selector");
+    errors.push("openshell-version-pin-vitest job must use the approved validated jobs selector");
   }
 
   const jobEnv = asRecord(job.env);
@@ -223,11 +223,11 @@ function validateSkillAgentVitestJob(errors: string[], jobs: WorkflowRecord): vo
   if (job["runs-on"] !== "ubuntu-latest") {
     errors.push("skill-agent-vitest job must run on ubuntu-latest");
   }
-  if (Object.hasOwn(job, "needs")) {
-    errors.push("skill-agent-vitest job must run independently of generate-matrix");
+  if (job.needs !== "generate-matrix") {
+    errors.push("skill-agent-vitest job must depend on generate-matrix validation");
   }
   if (job.if !== expectedFreeStandingJobSelector(jobName)) {
-    errors.push("skill-agent-vitest job must use the approved jobs selector");
+    errors.push("skill-agent-vitest job must use the approved validated jobs selector");
   }
 
   const jobEnv = asRecord(job.env);
@@ -326,11 +326,11 @@ function validateOnboardNegativePathsVitestJob(errors: string[], jobs: WorkflowR
   if (job["runs-on"] !== "ubuntu-latest") {
     errors.push("onboard-negative-paths-vitest job must run on ubuntu-latest");
   }
-  if (Object.hasOwn(job, "needs")) {
-    errors.push("onboard-negative-paths-vitest job must run independently of generate-matrix");
+  if (job.needs !== "generate-matrix") {
+    errors.push("onboard-negative-paths-vitest job must depend on generate-matrix validation");
   }
   if (job.if !== expectedFreeStandingJobSelector(jobName)) {
-    errors.push("onboard-negative-paths-vitest job must use the approved jobs selector");
+    errors.push("onboard-negative-paths-vitest job must use the approved validated jobs selector");
   }
 
   const jobEnv = asRecord(job.env);

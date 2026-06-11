@@ -69,7 +69,7 @@ function isExternalAgentVerificationFlake(text: string): boolean {
   // this migration guard because the contract is that the real agent can read
   // SKILL.md and return the token. This tolerance can be narrowed once the live
   // provider/agent turn is consistently non-429/non-timeout in scheduled runs.
-  return /LLM idle timeout|request timed out|fetch timeout|model did not produce a response|ssh\/agent exit 124|exit 124/i.test(
+  return /LLM idle timeout|request timed out|fetch timeout|model did not produce a response|ssh\/agent exit 124|exit 124|HTTP 429|\b429\b|rate[- ]?limit|quota|temporarily unavailable/i.test(
     text,
   );
 }
@@ -87,7 +87,9 @@ function shouldSkipExternalAgentVerificationFailure(
   text: string,
   fixturePresent: boolean,
 ): boolean {
-  return fixturePresent && isExternalAgentVerificationFlake(text);
+  return (
+    fixturePresent && !isAgentVerificationFailClosed(text) && isExternalAgentVerificationFlake(text)
+  );
 }
 
 function isExternalProviderValidationFailure(text: string): boolean {
@@ -166,6 +168,10 @@ describe("skill-agent live test local classifiers", () => {
     expect(shouldSkipExternalAgentVerificationFailure(timeoutOutput, false)).toBe(false);
     expect(shouldSkipExternalAgentVerificationFailure(timeoutOutput, true)).toBe(true);
     expect(shouldSkipExternalAgentVerificationFailure("require is not defined", true)).toBe(false);
+    expect(shouldSkipExternalAgentVerificationFailure("HTTP 429 rate limit", true)).toBe(true);
+    expect(
+      shouldSkipExternalAgentVerificationFailure("SsrFBlockedError plus request timed out", true),
+    ).toBe(false);
   });
 
   it("skips only NVIDIA endpoint validation outages during onboarding", () => {
