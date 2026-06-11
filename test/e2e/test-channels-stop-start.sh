@@ -5,9 +5,10 @@
 # Channel stop/start lifecycle E2E test.
 #
 # Covers Test 1 from issue #3462 ("onboard telegram -> channels stop -> channels start").
-# The regression surface is intentionally exercised for both supported agents
-# (OpenClaw and Hermes) and every messaging channel (telegram, discord, wechat,
-# slack, whatsapp).
+# The regression surface is exercised for both supported agents (OpenClaw and
+# Hermes) and every messaging channel (telegram, discord, wechat, slack,
+# whatsapp). Set NEMOCLAW_CHANNELS_STOP_START_AGENT=openclaw or hermes to run a
+# single-agent shard.
 #
 # Regression coverage:
 #   - #3453: `channels stop <ch>` + rebuild must actually remove the channel
@@ -96,10 +97,29 @@ fi
 BASE_SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-channels-stop-start}"
 OPENCLAW_SANDBOX_NAME="${NEMOCLAW_CHANNELS_OPENCLAW_SANDBOX_NAME:-${BASE_SANDBOX_NAME}-openclaw}"
 HERMES_SANDBOX_NAME="${NEMOCLAW_CHANNELS_HERMES_SANDBOX_NAME:-${BASE_SANDBOX_NAME}-hermes}"
+REQUESTED_AGENT="${NEMOCLAW_CHANNELS_STOP_START_AGENT:-all}"
 REGISTRY="$HOME/.nemoclaw/sandboxes.json"
 OPENSHELL_BIN="${NEMOCLAW_OPENSHELL_BIN:-openshell}"
 CHANNELS=(telegram discord wechat slack whatsapp)
 TOKENLESS_CHANNELS=(whatsapp)
+SELECTED_AGENT_SCENARIOS=()
+
+case "$REQUESTED_AGENT" in
+  all)
+    SELECTED_AGENT_SCENARIOS=("openclaw:${OPENCLAW_SANDBOX_NAME}" "hermes:${HERMES_SANDBOX_NAME}")
+    ;;
+  openclaw)
+    SELECTED_AGENT_SCENARIOS=("openclaw:${OPENCLAW_SANDBOX_NAME}")
+    ;;
+  hermes)
+    SELECTED_AGENT_SCENARIOS=("hermes:${HERMES_SANDBOX_NAME}")
+    ;;
+  *)
+    section "Phase 0: Prerequisites"
+    fail_msg "C0: NEMOCLAW_CHANNELS_STOP_START_AGENT must be all, openclaw, or hermes (got ${REQUESTED_AGENT})"
+    print_summary
+    ;;
+esac
 
 ACTIVE_AGENT=""
 ACTIVE_SANDBOX=""
@@ -132,8 +152,9 @@ openshell() {
 
 # shellcheck source=test/e2e/lib/sandbox-teardown.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox-teardown.sh"
-register_sandbox_for_teardown "$OPENCLAW_SANDBOX_NAME"
-register_sandbox_for_teardown "$HERMES_SANDBOX_NAME"
+for scenario in "${SELECTED_AGENT_SCENARIOS[@]}"; do
+  register_sandbox_for_teardown "${scenario#*:}"
+done
 
 refresh_path() {
   if [ -f "$HOME/.bashrc" ]; then
@@ -806,8 +827,12 @@ fi
 
 refresh_path
 
-run_agent_scenario "openclaw" "$OPENCLAW_SANDBOX_NAME"
-destroy_completed_sandbox "$OPENCLAW_SANDBOX_NAME"
-run_agent_scenario "hermes" "$HERMES_SANDBOX_NAME"
+for index in "${!SELECTED_AGENT_SCENARIOS[@]}"; do
+  scenario="${SELECTED_AGENT_SCENARIOS[$index]}"
+  run_agent_scenario "${scenario%%:*}" "${scenario#*:}"
+  if [ "$index" -lt "$((${#SELECTED_AGENT_SCENARIOS[@]} - 1))" ]; then
+    destroy_completed_sandbox "${scenario#*:}"
+  fi
+done
 
 print_summary
