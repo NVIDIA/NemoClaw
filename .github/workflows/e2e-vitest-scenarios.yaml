@@ -330,6 +330,12 @@ jobs:
       - name: Build CLI
         run: npm run build:cli
 
+      - name: Install OpenShell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+        run: bash scripts/install-openshell.sh
+
       - name: Run network-policy live test
         # Migrated from test/e2e/test-network-policy.sh. Free-standing anchor
         # for live network policy allow/deny probes; shell retirement remains
