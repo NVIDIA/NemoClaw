@@ -60,7 +60,6 @@ describe("prepareSandboxBuildPatchConfig", () => {
       userId: "wxid-user",
     });
     expect(updateSession).toHaveReturnedWith({
-      messagingChannelConfig,
       telegramConfig: { requireMention: true },
       wechatConfig: {
         accountId: "acct",
@@ -74,7 +73,6 @@ describe("prepareSandboxBuildPatchConfig", () => {
     const computeTelegramRequireMention = vi.fn(() => true);
     const updateSession = vi.fn((mutator: (session: Session) => Session | void) => {
       const current = {
-        messagingChannelConfig: { TELEGRAM_ALLOWED_IDS: "stale" },
         telegramConfig: { requireMention: true },
         wechatConfig: { accountId: "stale" },
       } as unknown as Session;
@@ -100,7 +98,6 @@ describe("prepareSandboxBuildPatchConfig", () => {
     expect(result.wechatConfig).toEqual({});
     expect(computeTelegramRequireMention).not.toHaveBeenCalled();
     expect(updateSession).toHaveReturnedWith({
-      messagingChannelConfig: null,
       telegramConfig: null,
       wechatConfig: null,
     });

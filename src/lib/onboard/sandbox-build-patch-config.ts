@@ -181,7 +181,6 @@ export function prepareSandboxBuildPatchConfig({
         ? { requireMention: telegramConfig.requireMention }
         : null;
     current.wechatConfig = (deps.toSessionWechatConfig ?? toSessionWechatConfig)(wechatConfig);
-    current.messagingChannelConfig = messagingChannelConfig;
     return current;
   });
 

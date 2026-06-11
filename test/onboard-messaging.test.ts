@@ -26,8 +26,12 @@ type CommandEntry = {
   dockerfileReadError?: string;
 };
 
-function parseStdoutJson<T>(stdout: string): T {
-  const line = stdout.trim().split("\n").pop();
+function parseStdoutJson<T = Record<string, any>>(stdout: string): T {
+  const line = stdout
+    .trim()
+    .split("\n")
+    .reverse()
+    .find((value) => /^[{[]/.test(value) && /[}\]]$/.test(value));
   assert.ok(line, `expected JSON payload in stdout:\n${stdout}`);
   return JSON.parse(line);
 }
@@ -38,6 +42,12 @@ const yamlModulePath = requireForTest.resolve("yaml");
 const onboardScriptMocksPath = JSON.stringify(
   path.join(repoRoot, "test", "helpers", "onboard-script-mocks.cjs"),
 );
+const inlineMessagingPlanHelper = String.raw`
+function makeMessagingPlan(channelIds, disabledChannels = []) {
+  const disabled = new Set(disabledChannels);
+  return { schemaVersion: 1, sandboxName: "my-assistant", agent: "openclaw", workflow: "onboard", channels: channelIds.map((channelId) => ({ channelId, displayName: channelId, authMode: channelId === "whatsapp" ? "in-sandbox-qr" : "token-paste", active: !disabled.has(channelId), selected: true, configured: true, disabled: disabled.has(channelId), inputs: [], hooks: [] })), disabledChannels, credentialBindings: [], networkPolicy: { presets: [], entries: [] }, agentRender: [], buildSteps: [], stateUpdates: [], healthChecks: [] };
+}
+`.trim();
 
 describe("onboard messaging", () => {
   it("creates providers for messaging tokens and attaches them to the sandbox", {
@@ -127,6 +137,7 @@ const { createSandbox, setupMessagingChannels } = require(${onboardPath});
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   process.env.NEMOCLAW_SKIP_TELEGRAM_REACHABILITY = "1";
+  process.env.NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION = "1";
   process.env.DISCORD_BOT_TOKEN = "test-discord-token-value";
   process.env.SLACK_BOT_TOKEN = "xoxb-test-slack-token-value";
   process.env.SLACK_APP_TOKEN = "xapp-test-slack-app-token-value";
@@ -159,14 +170,7 @@ const { createSandbox, setupMessagingChannels } = require(${onboardPath});
     });
 
     assert.equal(result.status, 0, result.stderr);
-    const payloadLine = result.stdout
-      .trim()
-      .split("\n")
-      .slice()
-      .reverse()
-      .find((line) => line.startsWith("{") && line.endsWith("}"));
-    assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
-    const payload = JSON.parse(payloadLine);
+    const payload = parseStdoutJson(result.stdout);
 
     // Verify providers were created with the right credential keys
     const providerCommands = payload.commands.filter((e: CommandEntry) =>
@@ -452,14 +456,7 @@ const { createSandbox } = require(${onboardPath});
       });
 
       assert.equal(result.status, 0, result.stderr);
-      const payloadLine = result.stdout
-        .trim()
-        .split("\n")
-        .slice()
-        .reverse()
-        .find((line) => line.startsWith("{") && line.endsWith("}"));
-      assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
-      const payload = JSON.parse(payloadLine);
+      const payload = parseStdoutJson(result.stdout);
 
       assert.ok(payload.createCommand.command.includes("sandbox create"));
       assert.match(payload.createCommand.command, /--provider my-assistant-slack-bridge/);
@@ -529,9 +526,10 @@ const fs = require("node:fs");
 
 const commands = [];
 const registerCalls = [];
+${inlineMessagingPlanHelper}
 registry.registerSandbox({
   name: "my-assistant",
-  messagingChannels: ["discord", "slack"],
+  messaging: { schemaVersion: 1, plan: makeMessagingPlan(["discord", "slack"]) },
 });
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
@@ -594,6 +592,7 @@ const { createSandbox } = require(${onboardPath});
   delete process.env.SLACK_BOT_TOKEN;
   delete process.env.SLACK_APP_TOKEN;
   delete process.env.TELEGRAM_BOT_TOKEN;
+  process.env.NEMOCLAW_MESSAGING_PLAN_B64 = Buffer.from(JSON.stringify(makeMessagingPlan(["discord", "slack"]))).toString("base64");
   const sandboxName = await createSandbox(
     null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, ["discord", "slack"],
   );
@@ -622,14 +621,7 @@ const { createSandbox } = require(${onboardPath});
     });
 
     assert.equal(result.status, 0, result.stderr);
-    const payloadLine = result.stdout
-      .trim()
-      .split("\n")
-      .slice()
-      .reverse()
-      .find((line) => line.startsWith("{") && line.endsWith("}"));
-    assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
-    const payload = JSON.parse(payloadLine);
+    const payload = parseStdoutJson(result.stdout);
 
     const providerMutationCommands = payload.commands.filter((entry: CommandEntry) =>
       /\bprovider (create|update)\b/.test(entry.command),
@@ -653,7 +645,13 @@ const { createSandbox } = require(${onboardPath});
       "discord",
       "slack",
     ]);
-    assert.deepEqual(payload.registerCalls[0]?.messagingChannels, ["discord", "slack"]);
+    assert.deepEqual(
+      payload.registerCalls[0]?.messaging?.plan?.channels.map(
+        (channel: { channelId: string }) => channel.channelId,
+      ),
+      ["discord", "slack"],
+    );
+    assert.equal(payload.registerCalls[0]?.messagingChannels, undefined);
     assert.equal(payload.registerCalls[0]?.providerCredentialHashes, undefined);
   });
 
@@ -693,10 +691,10 @@ const fs = require("node:fs");
 
 const commands = [];
 const registerCalls = [];
+${inlineMessagingPlanHelper}
 registry.registerSandbox({
   name: "my-assistant",
-  messagingChannels: ["telegram"],
-  disabledChannels: ["telegram"],
+  messaging: { schemaVersion: 1, plan: makeMessagingPlan(["telegram"], ["telegram"]) },
 });
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
@@ -754,6 +752,7 @@ const { createSandbox } = require(${onboardPath});
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   delete process.env.TELEGRAM_BOT_TOKEN;
+  process.env.NEMOCLAW_MESSAGING_PLAN_B64 = Buffer.from(JSON.stringify(makeMessagingPlan(["telegram"], ["telegram"]))).toString("base64");
   const sandboxName = await createSandbox(
     null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, ["telegram"],
   );
@@ -779,14 +778,7 @@ const { createSandbox } = require(${onboardPath});
     });
 
     assert.equal(result.status, 0, result.stderr);
-    const payloadLine = result.stdout
-      .trim()
-      .split("\n")
-      .slice()
-      .reverse()
-      .find((line) => line.startsWith("{") && line.endsWith("}"));
-    assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
-    const payload = JSON.parse(payloadLine);
+    const payload = parseStdoutJson(result.stdout);
 
     const createCommand = payload.commands.find((entry: CommandEntry) =>
       entry.command.includes("sandbox create"),
@@ -805,15 +797,16 @@ const { createSandbox } = require(${onboardPath});
       "disabled channel's bridge must not be attached to the new sandbox",
     );
 
+    const registeredPlan = payload.registerCalls[0]?.messaging?.plan;
     assert.deepEqual(
-      payload.registerCalls[0]?.messagingChannels,
+      registeredPlan?.channels.map((channel: { channelId: string }) => channel.channelId),
       ["telegram"],
-      "registry.messagingChannels must keep the disabled-but-configured channel so `channels start` can recover it",
+      "registry.messaging.plan must keep the disabled-but-configured channel so `channels start` can recover it",
     );
     assert.deepEqual(
-      payload.registerCalls[0]?.disabledChannels,
+      registeredPlan?.disabledChannels,
       ["telegram"],
-      "registry.disabledChannels must round-trip through the rebuild",
+      "registry.messaging.plan.disabledChannels must round-trip through the rebuild",
     );
   });
 
@@ -854,6 +847,7 @@ const fs = require("node:fs");
 
 const commands = [];
 const registerCalls = [];
+${inlineMessagingPlanHelper}
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
@@ -913,6 +907,7 @@ const { createSandbox } = require(${onboardPath});
       delete process.env[key];
     }
   }
+  process.env.NEMOCLAW_MESSAGING_PLAN_B64 = Buffer.from(JSON.stringify(makeMessagingPlan(["whatsapp"]))).toString("base64");
   const sandboxName = await createSandbox(
     null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, ["whatsapp"],
   );
@@ -937,14 +932,7 @@ const { createSandbox } = require(${onboardPath});
       });
 
       assert.equal(result.status, 0, result.stderr);
-      const payloadLine = result.stdout
-        .trim()
-        .split("\n")
-        .slice()
-        .reverse()
-        .find((line) => line.startsWith("{") && line.endsWith("}"));
-      assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
-      const payload = JSON.parse(payloadLine);
+      const payload = parseStdoutJson(result.stdout);
 
       const providerMutationCommands = payload.commands.filter((entry: CommandEntry) =>
         /\bprovider (create|update)\b/.test(entry.command),
@@ -963,7 +951,13 @@ const { createSandbox } = require(${onboardPath});
       assert.doesNotMatch(createCommand.command, /--provider \S+-bridge\b/);
 
       assert.deepEqual(activeChannelsFromDockerfile(createCommand.dockerfileContent), ["whatsapp"]);
-      assert.deepEqual(payload.registerCalls[0]?.messagingChannels, ["whatsapp"]);
+      assert.deepEqual(
+        payload.registerCalls[0]?.messaging?.plan?.channels.map(
+          (channel: { channelId: string }) => channel.channelId,
+        ),
+        ["whatsapp"],
+      );
+      assert.equal(payload.registerCalls[0]?.messagingChannels, undefined);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -1004,9 +998,10 @@ const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
 const fs = require("node:fs");
 
+${inlineMessagingPlanHelper}
 registry.registerSandbox({
   name: "my-assistant",
-  disabledChannels: ["whatsapp"],
+  messaging: { schemaVersion: 1, plan: makeMessagingPlan(["whatsapp"], ["whatsapp"]) },
 });
 
 const commands = [];
@@ -1070,6 +1065,7 @@ const { createSandbox } = require(${onboardPath});
       delete process.env[key];
     }
   }
+  process.env.NEMOCLAW_MESSAGING_PLAN_B64 = Buffer.from(JSON.stringify(makeMessagingPlan(["whatsapp"], ["whatsapp"]))).toString("base64");
   const sandboxName = await createSandbox(
     null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, ["whatsapp"],
   );
@@ -1094,14 +1090,7 @@ const { createSandbox } = require(${onboardPath});
       });
 
       assert.equal(result.status, 0, result.stderr);
-      const payloadLine = result.stdout
-        .trim()
-        .split("\n")
-        .slice()
-        .reverse()
-        .find((line) => line.startsWith("{") && line.endsWith("}"));
-      assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
-      const payload = JSON.parse(payloadLine);
+      const payload = parseStdoutJson(result.stdout);
 
       const createCommand = payload.commands.find((entry: CommandEntry) =>
         entry.command.includes("sandbox create"),
@@ -1114,15 +1103,16 @@ const { createSandbox } = require(${onboardPath});
         [],
         "disabled QR channel must not be active in the image plan",
       );
+      const registeredPlan = payload.registerCalls[0]?.messaging?.plan;
       assert.deepEqual(
-        payload.registerCalls[0]?.messagingChannels,
+        registeredPlan?.channels.map((channel: { channelId: string }) => channel.channelId),
         ["whatsapp"],
-        "registry.messagingChannels must keep the disabled QR channel so `channels start` can recover it (mirrors #3381)",
+        "registry.messaging.plan must keep the disabled QR channel so `channels start` can recover it (mirrors #3381)",
       );
       assert.deepEqual(
-        payload.registerCalls[0]?.disabledChannels,
+        registeredPlan?.disabledChannels,
         ["whatsapp"],
-        "registry.disabledChannels must round-trip through the rebuild",
+        "registry.messaging.plan.disabledChannels must round-trip through the rebuild",
       );
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -1273,14 +1263,7 @@ const { createSandbox } = require(${onboardPath});
     });
 
     assert.equal(result.status, 0, result.stderr);
-    const payloadLine = result.stdout
-      .trim()
-      .split("\n")
-      .slice()
-      .reverse()
-      .find((line) => line.startsWith("{") && line.endsWith("}"));
-    assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
-    const payload = JSON.parse(payloadLine);
+    const payload = parseStdoutJson(result.stdout);
 
     assert.equal(payload.sandboxName, "my-assistant", "should reuse existing sandbox");
     assert.ok(
@@ -1409,14 +1392,7 @@ const { createSandbox } = require(${onboardPath});
     });
 
     assert.equal(result.status, 0, result.stderr);
-    const payloadLine = result.stdout
-      .trim()
-      .split("\n")
-      .slice()
-      .reverse()
-      .find((line) => line.startsWith("{") && line.endsWith("}"));
-    assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
-    const payload = JSON.parse(payloadLine);
+    const payload = parseStdoutJson(result.stdout);
 
     // Only telegram provider should be created
     const providerCommands = payload.commands.filter((e: CommandEntry) =>
@@ -1547,14 +1523,7 @@ const { createSandbox } = require(${onboardPath});
     });
 
     assert.equal(result.status, 0, result.stderr);
-    const payloadLine = result.stdout
-      .trim()
-      .split("\n")
-      .slice()
-      .reverse()
-      .find((line) => line.startsWith("{") && line.endsWith("}"));
-    assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
-    const payload = JSON.parse(payloadLine);
+    const payload = parseStdoutJson(result.stdout);
 
     // No messaging providers should be created at all
     const providerCommands = payload.commands.filter((e: CommandEntry) =>

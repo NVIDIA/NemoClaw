@@ -127,7 +127,8 @@ on:
           issue-4462-scope-upgrade-approval-e2e,
           issue-4462-gateway-pinned-approval-characterization-e2e,
           messaging-compatible-endpoint-e2e, sessions-agents-cli-e2e,
-          channels-add-remove-e2e, channels-stop-start-e2e, brave-search-e2e,
+          channels-add-remove-e2e, channels-stop-start-openclaw-e2e,
+          channels-stop-start-hermes-e2e, brave-search-e2e,
           common-egress-agent-e2e, kimi-inference-compat-e2e,
           bedrock-runtime-compatible-anthropic-e2e, token-rotation-e2e,
           sandbox-survival-e2e, issue-2478-crash-loop-recovery-e2e,
@@ -750,24 +751,43 @@ jobs:
     secrets: *nightly-e2e-default-secrets
   # ── Channels stop/start lifecycle E2E (#3462) ───────────────────────
   # Regression coverage for #3453 (stop must disable across rebuild), #3381
-  # (start must re-attach from cached credentials).
-  # Exercises OpenClaw and Hermes across telegram, discord, wechat, slack, and whatsapp.
-  channels-stop-start-e2e:
+  # (start must re-attach from cached credentials). Sharded by agent so the
+  # OpenClaw and Hermes coverage can run in parallel.
+  channels-stop-start-openclaw-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
        inputs.jobs == '' ||
-       contains(format(',{0},', inputs.jobs), ',channels-stop-start-e2e,'))
+       contains(format(',{0},', inputs.jobs), ',channels-stop-start-openclaw-e2e,'))
     uses: ./.github/workflows/e2e-script.yaml
     with:
       ref: ${{ inputs.target_ref || github.ref }}
       script: test/e2e/test-channels-stop-start.sh
-      timeout_minutes: 120
-      artifact_name: "install-log-channels-stop-start"
+      timeout_minutes: 75
+      artifact_name: "install-log-channels-stop-start-openclaw"
       artifact_path: |
         /tmp/nemoclaw-e2e-install.log
         /tmp/nemoclaw-e2e-channels-*-install.log
         /tmp/nc-channels-*.log
-      env_json: '{"DISCORD_ALLOWED_IDS":"1005536447329222676","DISCORD_BOT_TOKEN":"test-fake-discord-token-stop-start-e2e","DISCORD_REQUIRE_MENTION":"0","DISCORD_SERVER_ID":"1491590992753590594","NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_POLICY_TIER":"open","NEMOCLAW_SANDBOX_NAME":"e2e-channels-stop-start","SLACK_ALLOWED_USERS":"U0123456789,U09ABCDEFGH","SLACK_APP_TOKEN":"xapp-fake-slack-app-token-stop-start-e2e","SLACK_BOT_TOKEN":"xoxb-fake-slack-token-stop-start-e2e","TELEGRAM_ALLOWED_IDS":"123456789","TELEGRAM_BOT_TOKEN":"test-fake-telegram-token-stop-start-e2e","WECHAT_ACCOUNT_ID":"e2e-fake-account-stop-start","WECHAT_ALLOWED_IDS":"wxid_stopstart_operator","WECHAT_BASE_URL":"https://ilinkai.wechat.com","WECHAT_BOT_TOKEN":"test-fake-wechat-token-stop-start-e2e","WECHAT_USER_ID":"wxid_stopstart_operator"}'
+      env_json: '{"DISCORD_ALLOWED_IDS":"1005536447329222676","DISCORD_BOT_TOKEN":"test-fake-discord-token-stop-start-e2e","DISCORD_REQUIRE_MENTION":"0","DISCORD_SERVER_ID":"1491590992753590594","NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_CHANNELS_STOP_START_AGENT":"openclaw","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_POLICY_TIER":"open","NEMOCLAW_SANDBOX_NAME":"e2e-channels-stop-start","SLACK_ALLOWED_USERS":"U0123456789,U09ABCDEFGH","SLACK_APP_TOKEN":"xapp-fake-slack-app-token-stop-start-e2e","SLACK_BOT_TOKEN":"xoxb-fake-slack-token-stop-start-e2e","TELEGRAM_ALLOWED_IDS":"123456789","TELEGRAM_BOT_TOKEN":"test-fake-telegram-token-stop-start-e2e","WECHAT_ACCOUNT_ID":"e2e-fake-account-stop-start","WECHAT_ALLOWED_IDS":"wxid_stopstart_operator","WECHAT_BASE_URL":"https://ilinkai.wechat.com","WECHAT_BOT_TOKEN":"test-fake-wechat-token-stop-start-e2e","WECHAT_USER_ID":"wxid_stopstart_operator"}'
+      nvidia_api_key: true
+      github_token: true
+    secrets: *nightly-e2e-default-secrets
+  channels-stop-start-hermes-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',channels-stop-start-hermes-e2e,'))
+    uses: ./.github/workflows/e2e-script.yaml
+    with:
+      ref: ${{ inputs.target_ref || github.ref }}
+      script: test/e2e/test-channels-stop-start.sh
+      timeout_minutes: 75
+      artifact_name: "install-log-channels-stop-start-hermes"
+      artifact_path: |
+        /tmp/nemoclaw-e2e-install.log
+        /tmp/nemoclaw-e2e-channels-*-install.log
+        /tmp/nc-channels-*.log
+      env_json: '{"DISCORD_ALLOWED_IDS":"1005536447329222676","DISCORD_BOT_TOKEN":"test-fake-discord-token-stop-start-e2e","DISCORD_REQUIRE_MENTION":"0","DISCORD_SERVER_ID":"1491590992753590594","NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_CHANNELS_STOP_START_AGENT":"hermes","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_POLICY_TIER":"open","NEMOCLAW_SANDBOX_NAME":"e2e-channels-stop-start","SLACK_ALLOWED_USERS":"U0123456789,U09ABCDEFGH","SLACK_APP_TOKEN":"xapp-fake-slack-app-token-stop-start-e2e","SLACK_BOT_TOKEN":"xoxb-fake-slack-token-stop-start-e2e","TELEGRAM_ALLOWED_IDS":"123456789","TELEGRAM_BOT_TOKEN":"test-fake-telegram-token-stop-start-e2e","WECHAT_ACCOUNT_ID":"e2e-fake-account-stop-start","WECHAT_ALLOWED_IDS":"wxid_stopstart_operator","WECHAT_BASE_URL":"https://ilinkai.wechat.com","WECHAT_BOT_TOKEN":"test-fake-wechat-token-stop-start-e2e","WECHAT_USER_ID":"wxid_stopstart_operator"}'
       nvidia_api_key: true
       github_token: true
     secrets: *nightly-e2e-default-secrets
@@ -2259,7 +2279,8 @@ jobs:
         messaging-compatible-endpoint-e2e,
         sessions-agents-cli-e2e,
         channels-add-remove-e2e,
-        channels-stop-start-e2e,
+        channels-stop-start-openclaw-e2e,
+        channels-stop-start-hermes-e2e,
         brave-search-e2e,
         common-egress-agent-e2e,
         kimi-inference-compat-e2e,
@@ -2376,7 +2397,8 @@ jobs:
         messaging-compatible-endpoint-e2e,
         sessions-agents-cli-e2e,
         channels-add-remove-e2e,
-        channels-stop-start-e2e,
+        channels-stop-start-openclaw-e2e,
+        channels-stop-start-hermes-e2e,
         brave-search-e2e,
         common-egress-agent-e2e,
         kimi-inference-compat-e2e,
@@ -2486,13 +2508,21 @@ jobs:
             const passed = ran.filter(([, v]) => v.result === 'success');
             const failed = ran.filter(([, v]) => v.result === 'failure');
             const skipped = reportedEntries.filter(([, v]) => v.result === 'skipped');
+            // Cancelled jobs (e.g. cancel-in-progress superseding an older run)
+            // are neither success, failure, nor skipped. Without a bucket for
+            // them they slipped through the status tally and the comment fell
+            // through to the default "✅ All requested jobs passed" — masking
+            // the fact that the run produced no signal at all.
+            const cancelled = ran.filter(([, v]) => v.result === 'cancelled');
 
             const status =
               failed.length > 0 || missingRequested.length > 0
                 ? '❌ Some jobs failed'
-                : skipped.length > 0 && passed.length === 0
-                  ? '⚠️ No requested jobs ran'
-                  : '✅ All requested jobs passed';
+                : cancelled.length > 0 && passed.length === 0
+                  ? '⚠️ Run cancelled — no signal'
+                  : skipped.length > 0 && passed.length === 0
+                    ? '⚠️ No requested jobs ran'
+                    : '✅ All requested jobs passed';
 
             const body = [
               `### Selective E2E Results — ${status}`,
@@ -2501,7 +2531,7 @@ jobs:
               `**Target ref:** \`${displayRef}\``,
               targetRef ? `**Workflow ref:** \`${workflowBranch}\`` : undefined,
               requestedJobs ? `**Requested jobs:** \`${requestedJobs}\`` : '**Requested jobs:** all (no filter)',
-              `**Summary:** ${passed.length} passed, ${failed.length} failed, ${skipped.length} skipped`,
+              `**Summary:** ${passed.length} passed, ${failed.length} failed, ${cancelled.length} cancelled, ${skipped.length} skipped`,
               '',
               '| Job | Result |',
               '|-----|--------|',
@@ -2552,7 +2582,8 @@ jobs:
         messaging-compatible-endpoint-e2e,
         sessions-agents-cli-e2e,
         channels-add-remove-e2e,
-        channels-stop-start-e2e,
+        channels-stop-start-openclaw-e2e,
+        channels-stop-start-hermes-e2e,
         brave-search-e2e,
         common-egress-agent-e2e,
         kimi-inference-compat-e2e,
