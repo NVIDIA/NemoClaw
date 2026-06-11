@@ -157,11 +157,12 @@ function createOldBaseBuildContext(): string {
   const buildContext = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-rebuild-openclaw-base-"));
   fs.mkdirSync(path.join(buildContext, path.dirname(BLUEPRINT_RELPATH)), { recursive: true });
   const original = fs.readFileSync(BLUEPRINT, "utf8");
-  const lowered = original.replace(
-    /min_openclaw_version:.*/,
-    `min_openclaw_version: "${OLD_OPENCLAW_VERSION}"`,
-  );
-  expect(lowered, "blueprint min_openclaw_version line was not found").not.toBe(original);
+  const minOpenClawVersion = /^(\s*min_openclaw_version:\s*).*/m;
+  expect(
+    minOpenClawVersion.test(original),
+    "blueprint min_openclaw_version line was not found",
+  ).toBe(true);
+  const lowered = original.replace(minOpenClawVersion, `$1"${OLD_OPENCLAW_VERSION}"`);
   fs.writeFileSync(path.join(buildContext, BLUEPRINT_RELPATH), lowered, "utf8");
   return buildContext;
 }
