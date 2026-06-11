@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawn } from "node:child_process";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -71,6 +72,7 @@ interface RawRunOptions {
   readonly cwd?: string;
   readonly env?: NodeJS.ProcessEnv;
   readonly redactionValues?: readonly string[];
+  readonly stdin?: string;
   readonly timeoutMs?: number;
 }
 
@@ -124,7 +126,7 @@ async function runRawCommand(
     cwd: options.cwd ?? REPO_ROOT,
     detached: true,
     env: options.env,
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: [options.stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
   });
   const fullCommand = [command, ...args];
   let stdout = "";
@@ -147,6 +149,10 @@ async function runRawCommand(
     setTimeout(() => killProcessGroup("SIGKILL"), 1_000).unref();
   }, timeoutMs);
   timeout.unref();
+
+  if (options.stdin !== undefined) {
+    child.stdin?.end(options.stdin);
+  }
 
   child.stdout?.on("data", (chunk: Buffer) => {
     stdout += chunk.toString("utf8");
@@ -244,35 +250,96 @@ async function requireLivePrerequisites(host: HostCliClient, skip: SkipFn): Prom
   }
 }
 
-async function ignoreCleanupError(run: () => Promise<unknown>): Promise<void> {
+interface CleanupSandboxOptions {
+  readonly strict?: boolean;
+}
+
+async function optionalCleanupStep(run: () => Promise<unknown>): Promise<void> {
   try {
     await run();
   } catch {
-    // Cleanup is best-effort before the first onboard because a fresh runner may
-    // not have OpenShell installed until `nemoclaw onboard` reaches that phase.
+    // Pre-onboard cleanup is best-effort because a fresh runner may not have
+    // OpenShell installed until `nemoclaw onboard` reaches that phase.
   }
+}
+
+function probeSummary(
+  label: string,
+  result: { exitCode: number | null; stdout: string; stderr: string },
+): string {
+  const text = resultText(result).trim();
+  return `${label} exit=${result.exitCode}${text ? `: ${text.slice(0, 500)}` : ""}`;
 }
 
 async function cleanupSandbox(
   host: HostCliClient,
   sandbox: SandboxClient,
   sandboxName: string,
+  options: CleanupSandboxOptions = {},
 ): Promise<void> {
-  await ignoreCleanupError(() =>
-    host.command(process.execPath, [CLI_ENTRYPOINT, sandboxName, "destroy", "--yes"], {
-      artifactName: `cleanup-nemoclaw-destroy-${sandboxName}`,
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 120_000,
-    }),
-  );
-  await ignoreCleanupError(() =>
-    sandbox.openshell(["sandbox", "delete", sandboxName], {
+  if (!options.strict) {
+    await optionalCleanupStep(() =>
+      host.command(process.execPath, [CLI_ENTRYPOINT, sandboxName, "destroy", "--yes"], {
+        artifactName: `cleanup-nemoclaw-destroy-${sandboxName}`,
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 120_000,
+      }),
+    );
+    await optionalCleanupStep(() =>
+      sandbox.openshell(["sandbox", "delete", sandboxName], {
+        artifactName: `cleanup-openshell-sandbox-delete-${sandboxName}`,
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 60_000,
+      }),
+    );
+    clearOnboardState();
+    return;
+  }
+
+  const cleanupEvidence: string[] = [];
+  try {
+    const destroy = await host.command(
+      process.execPath,
+      [CLI_ENTRYPOINT, sandboxName, "destroy", "--yes"],
+      {
+        artifactName: `cleanup-nemoclaw-destroy-${sandboxName}`,
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 120_000,
+      },
+    );
+    cleanupEvidence.push(probeSummary("nemoclaw destroy", destroy));
+  } catch (error) {
+    cleanupEvidence.push(
+      `nemoclaw destroy threw: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+
+  try {
+    const deletion = await sandbox.openshell(["sandbox", "delete", sandboxName], {
       artifactName: `cleanup-openshell-sandbox-delete-${sandboxName}`,
       env: buildAvailabilityProbeEnv(),
       timeoutMs: 60_000,
-    }),
-  );
+    });
+    cleanupEvidence.push(probeSummary("openshell sandbox delete", deletion));
+  } catch (error) {
+    cleanupEvidence.push(
+      `openshell sandbox delete threw: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+
   clearOnboardState();
+
+  const status = await sandbox.status(sandboxName, {
+    artifactName: `cleanup-openshell-sandbox-status-${sandboxName}`,
+    env: buildAvailabilityProbeEnv(),
+    timeoutMs: 30_000,
+  });
+  cleanupEvidence.push(probeSummary("openshell sandbox status", status));
+  if (status.exitCode === 0) {
+    throw new Error(
+      `sandbox '${sandboxName}' still exists after strict cleanup\n${cleanupEvidence.join("\n")}`,
+    );
+  }
 }
 
 async function expectNoActiveSandbox(host: HostCliClient, sandboxName: string): Promise<void> {
@@ -546,8 +613,9 @@ liveTest(
       skipLive(skip, "NVIDIA_API_KEY not set — cannot test credential isolation");
     await requireLivePrerequisites(host, skip);
     const sandboxName = inferenceSandboxName("e2e-inf-cred");
-    cleanup.add(`remove inference-routing credential-isolation residue for ${sandboxName}`, () =>
-      cleanupSandbox(host, sandbox, sandboxName),
+    cleanup.add(
+      `best-effort inference-routing credential-isolation cleanup for ${sandboxName}`,
+      () => cleanupSandbox(host, sandbox, sandboxName),
     );
     await cleanupSandbox(host, sandbox, sandboxName);
 
@@ -571,6 +639,9 @@ liveTest(
       "tc-inf-05-onboard-credential-isolation",
     );
     expectOnboardSuccess(onboard, "TC-INF-05 credential-isolation onboard");
+    cleanup.add(`strict inference-routing credential-isolation cleanup for ${sandboxName}`, () =>
+      cleanupSandbox(host, sandbox, sandboxName, { strict: true }),
+    );
 
     const sandboxEnv = await runOpenShell(["sandbox", "exec", "-n", sandboxName, "--", "env"], {
       artifactName: "tc-inf-05-sandbox-env",
@@ -610,35 +681,59 @@ liveTest(
       });
     }
 
-    const keyB64 = Buffer.from(apiKey, "utf8").toString("base64");
     const scanScript = [
       "const fs=require('fs')",
       "const {execFileSync}=require('child_process')",
-      "const key=Buffer.from(process.env.KEY_B64||'','base64').toString('utf8')",
+      "const key=fs.readFileSync(0,'utf8')",
       "if(!key){console.log('NO_KEY_PROVIDED');process.exit(0)}",
       "let out=''",
       "try{out=execFileSync('sh',['-lc','find /sandbox /home /tmp -type f -size -1M 2>/dev/null | head -200'],{encoding:'utf8'})}catch{console.log('SCAN_ERROR');process.exit(0)}",
       "for(const file of out.trim().split(/\\n/).filter(Boolean)){try{const content=fs.readFileSync(file,'utf8');if(content.includes(key))console.log('FOUND:'+file)}catch{}}",
       "console.log('SCAN_DONE')",
     ].join(";");
+    const leakCanary = `nemoclaw-fs-scan-canary-${crypto.randomUUID()}`;
+    const canaryPath = "/tmp/nemoclaw-fs-scan-canary.txt";
+    const plantCanary = await sandbox.execShell(
+      sandboxName,
+      trustedSandboxShellScript(`printf '%s' '${leakCanary}' > ${canaryPath}`),
+      {
+        artifactName: "tc-inf-05-sandbox-filesystem-canary-plant",
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 30_000,
+      },
+    );
+    expect(plantCanary.exitCode, resultText(plantCanary)).toBe(0);
+    const canaryScan = await runOpenShell(
+      ["sandbox", "exec", "-n", sandboxName, "--", "node", "-e", scanScript],
+      {
+        artifactName: "tc-inf-05-sandbox-filesystem-canary-scan",
+        artifacts,
+        env: buildAvailabilityProbeEnv(),
+        stdin: leakCanary,
+        timeoutMs: 90_000,
+      },
+    );
+    expect(canaryScan.stdout, redactedResultText(canaryScan)).toContain(`FOUND:${canaryPath}`);
+
+    const removeCanary = await sandbox.execShell(
+      sandboxName,
+      trustedSandboxShellScript(`rm -f ${canaryPath}`),
+      {
+        artifactName: "tc-inf-05-sandbox-filesystem-canary-remove",
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 30_000,
+      },
+    );
+    expect(removeCanary.exitCode, resultText(removeCanary)).toBe(0);
+
     const filesystemScan = await runOpenShell(
-      [
-        "sandbox",
-        "exec",
-        "-n",
-        sandboxName,
-        "--",
-        "env",
-        `KEY_B64=${keyB64}`,
-        "node",
-        "-e",
-        scanScript,
-      ],
+      ["sandbox", "exec", "-n", sandboxName, "--", "node", "-e", scanScript],
       {
         artifactName: "tc-inf-05-sandbox-filesystem-scan",
         artifacts,
         env: buildAvailabilityProbeEnv(),
-        redactionValues: [apiKey, keyB64],
+        redactionValues: [apiKey],
+        stdin: apiKey,
         timeoutMs: 90_000,
       },
     );
@@ -681,7 +776,7 @@ liveTest(
     await requireLivePrerequisites(host, skip);
     const sandboxName = inferenceSandboxName("e2e-openai");
     const model = process.env.NEMOCLAW_OPENAI_MODEL || "gpt-4o-mini";
-    cleanup.add(`remove inference-routing OpenAI residue for ${sandboxName}`, () =>
+    cleanup.add(`best-effort inference-routing OpenAI cleanup for ${sandboxName}`, () =>
       cleanupSandbox(host, sandbox, sandboxName),
     );
     await cleanupSandbox(host, sandbox, sandboxName);
@@ -702,6 +797,9 @@ liveTest(
       "tc-inf-02-onboard-openai",
     );
     expectOnboardSuccess(onboard, "TC-INF-02 OpenAI onboard");
+    cleanup.add(`strict inference-routing OpenAI cleanup for ${sandboxName}`, () =>
+      cleanupSandbox(host, sandbox, sandboxName, { strict: true }),
+    );
     await expectOpenAiChatThroughSandbox(
       sandbox,
       sandboxName,
@@ -727,7 +825,7 @@ liveTest(
     await requireLivePrerequisites(host, skip);
     const sandboxName = inferenceSandboxName("e2e-anthropic");
     const model = process.env.NEMOCLAW_ANTHROPIC_MODEL || "claude-sonnet-4-6";
-    cleanup.add(`remove inference-routing Anthropic residue for ${sandboxName}`, () =>
+    cleanup.add(`best-effort inference-routing Anthropic cleanup for ${sandboxName}`, () =>
       cleanupSandbox(host, sandbox, sandboxName),
     );
     await cleanupSandbox(host, sandbox, sandboxName);
@@ -751,6 +849,9 @@ liveTest(
       "tc-inf-03-onboard-anthropic",
     );
     expectOnboardSuccess(onboard, "TC-INF-03 Anthropic onboard");
+    cleanup.add(`strict inference-routing Anthropic cleanup for ${sandboxName}`, () =>
+      cleanupSandbox(host, sandbox, sandboxName, { strict: true }),
+    );
     await expectAnthropicMessageThroughSandbox(sandbox, sandboxName, model, [apiKey]);
   },
 );
@@ -777,8 +878,9 @@ liveTest(
       skipLive(skip, "Missing NEMOCLAW_ENDPOINT_URL, NEMOCLAW_COMPAT_MODEL, or COMPATIBLE_API_KEY");
     await requireLivePrerequisites(host, skip);
     const sandboxName = inferenceSandboxName("e2e-compat-ep");
-    cleanup.add(`remove inference-routing compatible-endpoint residue for ${sandboxName}`, () =>
-      cleanupSandbox(host, sandbox, sandboxName),
+    cleanup.add(
+      `best-effort inference-routing compatible-endpoint cleanup for ${sandboxName}`,
+      () => cleanupSandbox(host, sandbox, sandboxName),
     );
     await cleanupSandbox(host, sandbox, sandboxName);
 
@@ -807,6 +909,9 @@ liveTest(
       "tc-inf-09-onboard-compatible-endpoint",
     );
     expectOnboardSuccess(onboard, "TC-INF-09 compatible-endpoint onboard");
+    cleanup.add(`strict inference-routing compatible-endpoint cleanup for ${sandboxName}`, () =>
+      cleanupSandbox(host, sandbox, sandboxName, { strict: true }),
+    );
     await expectOpenAiChatThroughSandbox(
       sandbox,
       sandboxName,
