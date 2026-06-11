@@ -43,7 +43,7 @@ function testEnv(home: string, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv
   return {
     ...base,
     HOME: home,
-    PATH: [path.join(home, ".local", "bin"), base.PATH].filter(Boolean).join(path.delimiter),
+    PATH: [path.join(home, ".local", "bin"), base.PATH].filter(Boolean).join(":"),
     NEMOCLAW_NON_INTERACTIVE: "1",
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
     ...extra,

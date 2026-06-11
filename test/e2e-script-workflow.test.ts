@@ -384,6 +384,7 @@ describe("E2E reusable workflow contract", () => {
     );
 
     expect(job["runs-on"]).toBe("ubuntu-latest");
+    expect(job["timeout-minutes"]).toBe(50);
     expect(checkoutStep?.with?.ref).toBe("${{ inputs.target_ref || github.ref }}");
     expect(checkoutStep?.with?.["persist-credentials"]).toBe(false);
     expect(authStep).toBeDefined();
@@ -394,7 +395,11 @@ describe("E2E reusable workflow contract", () => {
     expect(runStep?.run).toContain("npx vitest run --project e2e-scenarios-live");
     expect(runStep?.run).toContain("test/e2e-scenario/live/credential-migration.test.ts");
     expect(runStep?.run).not.toContain("test/e2e/test-credential-migration.sh");
+    expect(
+      readFileSync(new URL("../.github/workflows/nightly-e2e.yaml", import.meta.url), "utf8"),
+    ).toContain("Trusted-code boundary");
     expect(runStep?.env?.NVIDIA_API_KEY).toBe("${{ secrets.NVIDIA_API_KEY }}");
+    expect(runStep?.env?.GITHUB_TOKEN).toBeUndefined();
     expect(runStep?.env?.NEMOCLAW_RUN_E2E_SCENARIOS).toBe("1");
     expect(runStep?.env?.NEMOCLAW_SANDBOX_NAME).toBe("e2e-cred-migration");
     expect(runStep?.env?.E2E_ARTIFACT_DIR).toBe(
