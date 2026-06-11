@@ -88,6 +88,20 @@ newgrp docker
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
+### Installer reports Docker access outside the docker group
+
+On Linux, the installer may report that Docker is reachable even though your user is not in the `docker` group.
+This means the host grants Docker daemon access through another path, such as a custom `DOCKER_HOST`, socket ACL, or managed runtime policy.
+NemoClaw can continue when `docker info` works, but the diagnostic explains why a negative Docker-permission test will not reproduce on that host.
+
+Check the Docker access path before relying on the host as a clean permission baseline:
+
+```bash
+id -nG
+echo "${DOCKER_HOST:-}"
+docker info
+```
+
 ### macOS first-run failures
 
 The two most common first-run failures on macOS are missing developer tools and Docker connection errors.
@@ -150,6 +164,21 @@ docker run --rm busybox nslookup example.com
 ```
 
 When the lookup returns an answer, retry onboarding.
+
+### Host DNS resolution is blocked before provider validation
+
+NemoClaw also checks that the host process can resolve the provider host before it starts NVIDIA provider validation.
+A firewall rule that blocks host DNS traffic on port `53` can make later validation fail with `curl: (6) Could not resolve host: integrate.api.nvidia.com` even when container DNS probes look healthy.
+Current onboarding stops earlier with a host DNS diagnostic and remediation hints.
+
+Verify host DNS outside NemoClaw:
+
+```bash
+node -e 'require("node:dns").resolve4("integrate.api.nvidia.com", (err, addrs) => { if (err) { console.error(err); process.exit(1); } console.log(addrs.join(",")); })'
+```
+
+Fix the host firewall, VPN, or DNS policy so the host can resolve the provider endpoint, then rerun onboarding.
+If you intentionally use a non-NVIDIA provider and need to bypass only this preflight, set `NEMOCLAW_SKIP_HOST_DNS_PREFLIGHT=1`.
 
 ### Port already in use
 
@@ -530,6 +559,8 @@ Follow these steps to reconnect.
    ```
 
    Wait a few seconds, then re-check with `openshell sandbox list`.
+   On Docker-driver hosts, NemoClaw also looks for OpenShell-labeled sandbox containers when the gateway is healthy but reports the sandbox as missing.
+   It can start a stopped labeled container, or restore the latest GPU-backup sibling container name and start it.
 
 1. Reconnect.
 
@@ -555,9 +586,10 @@ Follow these steps to reconnect.
 
 **If the sandbox does not recover:**
 
-If the sandbox remains missing after restarting the gateway, run `nemoclaw onboard` to recreate it.
-The wizard prompts for confirmation before destroying an existing sandbox. If you confirm, it **destroys and recreates** the sandbox. Workspace files (SOUL.md, USER.md, IDENTITY.md, AGENTS.md, MEMORY.md, and daily memory notes) are lost.
-Back up your workspace first by following the instructions at Back Up and Restore (use the `nemoclaw-user-manage-sandboxes` skill).
+If the sandbox remains missing after restarting the gateway, run `nemoclaw <name> rebuild --yes` while the local registry entry still exists.
+The rebuild path uses the recorded sandbox metadata and the snapshot flow to preserve supported workspace and agent state.
+If the sandbox was intentionally deleted and you want a clean setup instead, run `nemoclaw <name> destroy` to remove the stale local entry, then run `nemoclaw onboard`.
+Create a snapshot first when the sandbox is reachable enough to back up state. For details, refer to Back Up and Restore (use the `nemoclaw-user-manage-sandboxes` skill).
 
 ### Sandbox is running an outdated agent version
 
@@ -1113,6 +1145,47 @@ CHAT_UI_URL=http://127.0.0.1:19000 nemoclaw onboard
 
 If you need to run multiple sandboxes at different ports at the same time, see
 [Running multiple sandboxes simultaneously](#running-multiple-sandboxes-simultaneously).
+
+### Control UI config endpoint returns 404 or non-JSON
+
+The Control UI loads its runtime configuration from a gateway endpoint, not from a static
+`controlui.bootstrap.config.json` file. No `controlui.bootstrap.config.json` path is served,
+so requesting it returns `HTTP 404 Not Found` with a short plain-text body, and piping that
+response to `jq` fails with a parse error such as `Invalid numeric literal`.
+
+<AgentOnly variant="openclaw">
+
+The supported Control UI config endpoint is `/__openclaw/control-ui-config.json`, served by
+the OpenClaw gateway on the forwarded dashboard port. It is gated by the gateway auth token:
+
+- An unauthenticated request returns `HTTP 401 Unauthorized` with a JSON body
+  (`{"error":{"message":"Unauthorized","type":"unauthorized"}}`), which is already valid JSON.
+- An authenticated request returns `HTTP 200 OK` with the Control UI config as JSON.
+
+Resolve the forwarded dashboard port, then authenticate with the gateway token from
+`nemoclaw <name> gateway-token`:
+
+```bash
+openshell forward list                       # note the dashboard PORT for the sandbox
+export DASH_PORT=<port>
+TOKEN=$(nemoclaw <name> gateway-token --quiet)
+curl -fsS -H "Authorization: Bearer $TOKEN" \
+  "http://127.0.0.1:${DASH_PORT}/__openclaw/control-ui-config.json" | jq empty \
+  && echo "Control UI config is valid JSON"
+```
+
+The token is sensitive; treat it like a password and do not log, share, or commit it. For
+browser access, use the tokenized URL from `nemoclaw <name> dashboard-url` instead of
+calling the config endpoint directly.
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+
+Hermes manages its own dashboard sessions and does not expose an OpenClaw gateway auth token
+or a `/__openclaw/control-ui-config.json` endpoint. Use `nemohermes <name> status` to see the
+dashboard and API endpoints for a Hermes sandbox.
+
+</AgentOnly>
 
 ### Ollama auth proxy did not start
 
