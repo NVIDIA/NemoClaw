@@ -112,6 +112,36 @@ jobs:
           path: .e2e/onboard-negative-paths/
           include-hidden-files: true
           if-no-files-found: error
+  inference-routing-vitest:
+    runs-on: ubuntu-latest
+    needs: generate-matrix
+    if: \${{ inputs.scenarios != '' }}
+    env:
+      E2E_ARTIFACT_DIR: \${{ github.workspace }}/.e2e/inference-routing
+      NEMOCLAW_RUN_E2E_SCENARIOS: "0"
+      NVIDIA_API_KEY: \${{ secrets.NVIDIA_API_KEY }}
+      NEMOCLAW_INFERENCE_ROUTING_PROVIDER_SMOKE: all
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        env:
+          OPENAI_API_KEY: \${{ secrets.OPENAI_API_KEY }}
+      - name: Install root dependencies
+        run: npm install
+      - name: Run inference routing live test
+        env:
+          COMPATIBLE_API_KEY: \${{ secrets.COMPATIBLE_API_KEY }}
+        run: npx vitest run --project e2e-scenarios-live "\${{ inputs.test_filter }}"
+      - name: Upload inference routing artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: inference-routing
+          path: e2e-artifacts/vitest/
+          include-hidden-files: true
+          if-no-files-found: error
 `,
     );
 
@@ -191,6 +221,26 @@ jobs:
           "onboard-negative-paths-vitest artifact upload must set include-hidden-files: false",
           "onboard-negative-paths-vitest artifact upload must ignore missing fixture artifacts",
           "onboard-negative-paths-vitest artifact upload retention-days must be 14",
+          "inference-routing-vitest job must run independently of generate-matrix",
+          "inference-routing-vitest job must run independently of workflow dispatch scenario filters",
+          "inference-routing-vitest job must set NEMOCLAW_RUN_E2E_SCENARIOS=1",
+          "inference-routing-vitest job must write artifacts under e2e-artifacts/vitest/inference-routing",
+          "inference-routing-vitest job env must not include NVIDIA_API_KEY",
+          "inference-routing-vitest job env must not include NEMOCLAW_INFERENCE_ROUTING_PROVIDER_SMOKE",
+          "inference-routing-vitest checkout action must be pinned to a full commit SHA",
+          "inference-routing-vitest checkout step must set persist-credentials=false",
+          "inference-routing-vitest step 'Set up Node' env must not include OPENAI_API_KEY",
+          "inference-routing-vitest setup-node action must be pinned to a full commit SHA",
+          "inference-routing-vitest job missing step: Build CLI",
+          "inference-routing-vitest step 'Run inference routing live test' env must not include COMPATIBLE_API_KEY",
+          "step 'Run inference routing live test' run script must not interpolate dispatch inputs directly",
+          "step 'Run inference routing live test' run script must include test/e2e-scenario/live/inference-routing.test.ts",
+          "inference-routing-vitest upload-artifact action must be pinned to a full commit SHA",
+          "inference-routing-vitest artifact upload name must be stable",
+          "artifact upload path must include e2e-artifacts/vitest/inference-routing/",
+          "inference-routing-vitest artifact upload must set include-hidden-files: false",
+          "inference-routing-vitest artifact upload must ignore missing fixture artifacts",
+          "inference-routing-vitest artifact upload retention-days must be 14",
         ]),
       );
     } finally {

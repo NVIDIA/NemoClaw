@@ -210,6 +210,111 @@ function validateOpenShellVersionPinVitestJob(errors: string[], jobs: WorkflowRe
 }
 
 
+function validateInferenceRoutingVitestJob(errors: string[], jobs: WorkflowRecord): void {
+  const jobName = "inference-routing-vitest";
+  const job = asRecord(jobs[jobName]);
+  if (Object.keys(job).length === 0) {
+    errors.push("workflow missing inference-routing-vitest job");
+    return;
+  }
+
+  if (job["runs-on"] !== "ubuntu-latest") {
+    errors.push("inference-routing-vitest job must run on ubuntu-latest");
+  }
+  if (Object.hasOwn(job, "needs")) {
+    errors.push("inference-routing-vitest job must run independently of generate-matrix");
+  }
+  if (Object.hasOwn(job, "if")) {
+    errors.push(
+      "inference-routing-vitest job must run independently of workflow dispatch scenario filters",
+    );
+  }
+
+  const providerEnvNames = [
+    "NVIDIA_API_KEY",
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "COMPATIBLE_API_KEY",
+    "NEMOCLAW_ENDPOINT_URL",
+    "NEMOCLAW_INFERENCE_ROUTING_PROVIDER_SMOKE",
+  ];
+  const jobEnv = asRecord(job.env);
+  if (jobEnv.NEMOCLAW_RUN_E2E_SCENARIOS !== "1") {
+    errors.push("inference-routing-vitest job must set NEMOCLAW_RUN_E2E_SCENARIOS=1");
+  }
+  if (
+    jobEnv.E2E_ARTIFACT_DIR !== "${{ github.workspace }}/e2e-artifacts/vitest/inference-routing"
+  ) {
+    errors.push(
+      "inference-routing-vitest job must write artifacts under e2e-artifacts/vitest/inference-routing",
+    );
+  }
+  for (const envName of providerEnvNames) {
+    requireEnvDoesNotExposeSecret(errors, "inference-routing-vitest job", jobEnv, envName);
+  }
+
+  const steps = asSteps(job.steps);
+  requireNoDispatchInputInterpolation(errors, steps);
+  for (const step of steps) {
+    const stepEnv = asRecord(step.env);
+    for (const envName of providerEnvNames) {
+      requireEnvDoesNotExposeSecret(
+        errors,
+        `inference-routing-vitest step '${step.name ?? step.uses ?? "<unnamed>"}'`,
+        stepEnv,
+        envName,
+      );
+    }
+  }
+
+  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
+  if (!checkout) errors.push("inference-routing-vitest job missing checkout step");
+  requireFullShaAction(errors, checkout, "inference-routing-vitest checkout");
+  if (asRecord(checkout?.with)["persist-credentials"] !== false) {
+    errors.push("inference-routing-vitest checkout step must set persist-credentials=false");
+  }
+
+  const setupNode = namedStep(steps, "Set up Node");
+  if (!setupNode) errors.push("inference-routing-vitest job missing step: Set up Node");
+  requireFullShaAction(errors, setupNode, "inference-routing-vitest setup-node");
+
+  const installRootDependencies = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Install root dependencies",
+  );
+  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
+
+  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
+  requireRunContains(errors, buildCli, "npm run build:cli");
+
+  const runVitest = requireJobStep(errors, jobName, steps, "Run inference routing live test");
+  requireRunContains(errors, runVitest, "npx vitest run --project e2e-scenarios-live");
+  requireRunContains(errors, runVitest, "test/e2e-scenario/live/inference-routing.test.ts");
+
+  const upload = requireJobStep(errors, jobName, steps, "Upload inference routing artifacts");
+  requireFullShaAction(errors, upload, "inference-routing-vitest upload-artifact");
+  const uploadWith = asRecord(upload?.with);
+  if (uploadWith.name !== "e2e-vitest-scenarios-inference-routing") {
+    errors.push("inference-routing-vitest artifact upload name must be stable");
+  }
+  const uploadPath = stringValue(uploadWith.path);
+  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/vitest/inference-routing/");
+  if (uploadPath.trim() === "e2e-artifacts/vitest/") {
+    errors.push("inference-routing-vitest artifact upload path must not list all Vitest artifacts");
+  }
+  if (uploadWith["include-hidden-files"] !== false) {
+    errors.push("inference-routing-vitest artifact upload must set include-hidden-files: false");
+  }
+  if (uploadWith["if-no-files-found"] !== "ignore") {
+    errors.push("inference-routing-vitest artifact upload must ignore missing fixture artifacts");
+  }
+  if (uploadWith["retention-days"] !== 14) {
+    errors.push("inference-routing-vitest artifact upload retention-days must be 14");
+  }
+}
+
 function validateOnboardNegativePathsVitestJob(errors: string[], jobs: WorkflowRecord): void {
   const jobName = "onboard-negative-paths-vitest";
   const job = asRecord(jobs[jobName]);
@@ -482,6 +587,7 @@ export function validateE2eVitestScenariosWorkflowBoundary(
 
   validateOpenShellVersionPinVitestJob(errors, jobs);
   validateOnboardNegativePathsVitestJob(errors, jobs);
+  validateInferenceRoutingVitestJob(errors, jobs);
 
   return errors;
 }

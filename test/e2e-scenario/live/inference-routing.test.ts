@@ -44,6 +44,10 @@ const TRANSPORT_CLASSIFICATION_PATTERN =
 const liveTest = shouldRunLiveE2EScenarios() ? test : test.skip;
 
 function shouldRunProviderSmoke(provider: "openai" | "anthropic" | "compatible"): boolean {
+  // The legacy shell script auto-ran these smokes when provider secrets were
+  // present. This Vitest migration requires an explicit opt-in so PR-safe jobs
+  // cannot spend third-party quota accidentally; any future secret-backed lane
+  // must set NEMOCLAW_INFERENCE_ROUTING_PROVIDER_SMOKE=all or a provider name.
   const requested = process.env.NEMOCLAW_INFERENCE_ROUTING_PROVIDER_SMOKE?.trim().toLowerCase();
   return requested === "1" || requested === "true" || requested === "all" || requested === provider;
 }
@@ -72,7 +76,6 @@ interface RawRunOptions {
   readonly cwd?: string;
   readonly env?: NodeJS.ProcessEnv;
   readonly redactionValues?: readonly string[];
-  readonly stdin?: string;
   readonly timeoutMs?: number;
 }
 
@@ -126,7 +129,7 @@ async function runRawCommand(
     cwd: options.cwd ?? REPO_ROOT,
     detached: true,
     env: options.env,
-    stdio: [options.stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
+    stdio: ["ignore", "pipe", "pipe"],
   });
   const fullCommand = [command, ...args];
   let stdout = "";
@@ -149,10 +152,6 @@ async function runRawCommand(
     setTimeout(() => killProcessGroup("SIGKILL"), 1_000).unref();
   }, timeoutMs);
   timeout.unref();
-
-  if (options.stdin !== undefined) {
-    child.stdin?.end(options.stdin);
-  }
 
   child.stdout?.on("data", (chunk: Buffer) => {
     stdout += chunk.toString("utf8");
@@ -209,11 +208,22 @@ async function runNemoclawCli(
   return runRawCommand(process.execPath, [CLI_ENTRYPOINT, ...args], options);
 }
 
+function rawOpenShellEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+  return {
+    ...buildAvailabilityProbeEnv(),
+    OPENSHELL_GATEWAY: process.env.OPENSHELL_GATEWAY ?? "nemoclaw",
+    ...extra,
+  };
+}
+
 async function runOpenShell(
   args: readonly string[],
   options: RawRunOptions,
 ): Promise<RawRunResult> {
-  return runRawCommand("openshell", args, options);
+  return runRawCommand("openshell", args, {
+    ...options,
+    env: rawOpenShellEnv(options.env),
+  });
 }
 
 async function requireLivePrerequisites(host: HostCliClient, skip: SkipFn): Promise<void> {
@@ -682,13 +692,17 @@ liveTest(
     }
 
     const scanScript = [
+      "const crypto=require('crypto')",
       "const fs=require('fs')",
       "const {execFileSync}=require('child_process')",
-      "const key=fs.readFileSync(0,'utf8')",
-      "if(!key){console.log('NO_KEY_PROVIDED');process.exit(0)}",
+      "const len=Number(process.env.KEY_LEN||'0')",
+      "const salt=process.env.SCAN_SALT||''",
+      "const target=process.env.TARGET_HASH||''",
+      "const digest=(value)=>crypto.createHash('sha256').update(salt).update(value).digest('hex')",
+      "if(!len||!salt||!target){console.log('SCAN_CONFIG_MISSING');process.exit(0)}",
       "let out=''",
       "try{out=execFileSync('sh',['-lc','find /sandbox /home /tmp -type f -size -1M 2>/dev/null | head -200'],{encoding:'utf8'})}catch{console.log('SCAN_ERROR');process.exit(0)}",
-      "for(const file of out.trim().split(/\\n/).filter(Boolean)){try{const content=fs.readFileSync(file,'utf8');if(content.includes(key))console.log('FOUND:'+file)}catch{}}",
+      "for(const file of out.trim().split(/\\n/).filter(Boolean)){try{const content=fs.readFileSync(file,'utf8');for(let i=0;i<=content.length-len;i++){if(digest(content.slice(i,i+len))===target){console.log('FOUND:'+file);break}}}catch{}}",
       "console.log('SCAN_DONE')",
     ].join(";");
     const leakCanary = `nemoclaw-fs-scan-canary-${crypto.randomUUID()}`;
@@ -703,13 +717,21 @@ liveTest(
       },
     );
     expect(plantCanary.exitCode, resultText(plantCanary)).toBe(0);
+    const canarySalt = crypto.randomUUID();
     const canaryScan = await runOpenShell(
       ["sandbox", "exec", "-n", sandboxName, "--", "node", "-e", scanScript],
       {
         artifactName: "tc-inf-05-sandbox-filesystem-canary-scan",
         artifacts,
-        env: buildAvailabilityProbeEnv(),
-        stdin: leakCanary,
+        env: rawOpenShellEnv({
+          KEY_LEN: String(leakCanary.length),
+          SCAN_SALT: canarySalt,
+          TARGET_HASH: crypto
+            .createHash("sha256")
+            .update(canarySalt)
+            .update(leakCanary)
+            .digest("hex"),
+        }),
         timeoutMs: 90_000,
       },
     );
@@ -726,18 +748,26 @@ liveTest(
     );
     expect(removeCanary.exitCode, resultText(removeCanary)).toBe(0);
 
+    const secretScanSalt = crypto.randomUUID();
     const filesystemScan = await runOpenShell(
       ["sandbox", "exec", "-n", sandboxName, "--", "node", "-e", scanScript],
       {
         artifactName: "tc-inf-05-sandbox-filesystem-scan",
         artifacts,
-        env: buildAvailabilityProbeEnv(),
+        env: rawOpenShellEnv({
+          KEY_LEN: String(apiKey.length),
+          SCAN_SALT: secretScanSalt,
+          TARGET_HASH: crypto
+            .createHash("sha256")
+            .update(secretScanSalt)
+            .update(apiKey)
+            .digest("hex"),
+        }),
         redactionValues: [apiKey],
-        stdin: apiKey,
         timeoutMs: 90_000,
       },
     );
-    expect(filesystemScan.stdout).not.toContain("NO_KEY_PROVIDED");
+    expect(filesystemScan.stdout).not.toContain("SCAN_CONFIG_MISSING");
     expect(filesystemScan.stdout).not.toContain("FOUND:");
     expect(filesystemScan.stdout, redactedResultText(filesystemScan)).toContain("SCAN_DONE");
 
