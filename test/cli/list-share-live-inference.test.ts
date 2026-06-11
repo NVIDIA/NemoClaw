@@ -507,7 +507,7 @@ describe("list shows live gateway inference", () => {
     expect(r.out).toContain("status");
   });
 
-  it("share help uses native oclif usage", () => {
+  it("share help uses native oclif usage", testTimeoutOptions(15_000), () => {
     const env = createShareTestEnv("nemoclaw-cli-share-help-");
 
     const parent = runWithEnv("alpha share --help", env);

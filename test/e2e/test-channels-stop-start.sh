@@ -511,7 +511,7 @@ export_fake_channel_env() {
 
   export WECHAT_BOT_TOKEN="${ORIG_WECHAT_BOT_TOKEN:-test-fake-wechat-token-${suffix}}"
   export WECHAT_ACCOUNT_ID="${ORIG_WECHAT_ACCOUNT_ID:-e2e-fake-account-${suffix}}"
-  export WECHAT_BASE_URL="${ORIG_WECHAT_BASE_URL:-https://ilinkai-fake-${suffix}.wechat.com}"
+  export WECHAT_BASE_URL="${ORIG_WECHAT_BASE_URL:-https://ilinkai.wechat.com}"
   export WECHAT_USER_ID="${ORIG_WECHAT_USER_ID:-wxid_${suffix}_operator}"
   export WECHAT_ALLOWED_IDS="${ORIG_WECHAT_ALLOWED_IDS:-${WECHAT_USER_ID}}"
 }

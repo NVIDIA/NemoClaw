@@ -83,7 +83,8 @@ Per-user units, partial units, and user-manager or bus outages do not take over 
 That compatibility fallback remains until supported upgrade paths no longer include pre-service OpenShell installs and the package-managed handoff has direct nightly coverage.
 On Apple Silicon macOS, NemoClaw starts the OpenShell Docker-driver gateway and creates the sandbox as a Docker container.
 In both Docker-driver modes, the sandbox is a Docker container, not a Kubernetes pod.
-When `OPENSHELL_DRIVERS` includes `docker`, NemoClaw treats the gateway as host-owned and does not write the in-container `/tmp/nemoclaw-gateway-local` marker that legacy in-container gateway paths use.
+The in-container `/tmp/nemoclaw-gateway-local` marker is written only by the entrypoint path that actually launches `openclaw gateway run`;
+NemoClaw does not treat sandbox environment hints such as `OPENSHELL_DRIVERS` as authoritative for dashboard-gateway ownership.
 Legacy non-Docker-driver installs still use the k3s-based gateway path; the diagram below shows the standard Docker-driver topology.
 
 ```mermaid

@@ -7,12 +7,14 @@ import type {
   MessagingHookOutputMap,
   MessagingHookRegistration,
 } from "../../../hooks/types";
+import { normalizeWechatIlinkBaseUrl } from "../ilink-base-url";
 
 export const WECHAT_SEED_OPENCLAW_ACCOUNT_HOOK_ID = "wechat.seedOpenClawAccount";
 export const WECHAT_TOKEN_PLACEHOLDER = "openshell:resolve:env:WECHAT_BOT_TOKEN";
 export const WECHAT_PLUGIN_ID = "openclaw-weixin";
 export const WECHAT_PLUGIN_INSTALL_PATH = "/sandbox/.openclaw/extensions/openclaw-weixin";
 export const WECHAT_PLUGIN_SPEC = "@tencent-weixin/openclaw-weixin@2.4.3";
+export const WECHAT_PLUGIN_INSTALL_SPEC = `npm:${WECHAT_PLUGIN_SPEC}`;
 
 export interface WechatSeedOpenClawAccountHookOptions {
   readonly now?: () => Date | string;
@@ -43,7 +45,7 @@ export function buildWechatSeedOpenClawAccountOutputs(
 ): MessagingHookOutputMap {
   const accountId = requiredInputString(inputs, "wechatConfig.accountId");
   assertSafeWechatAccountId(accountId);
-  const baseUrl = optionalInputString(inputs, "wechatConfig.baseUrl");
+  const baseUrl = normalizeWechatIlinkBaseUrl(optionalInputString(inputs, "wechatConfig.baseUrl"));
   const userId = optionalInputString(inputs, "wechatConfig.userId");
   const token =
     optionalInputString(inputs, "credential.wechatBotToken.placeholder") ||
@@ -86,9 +88,6 @@ export function buildWechatSeedOpenClawAccountOutputs(
                 spec: pluginSpec,
                 installPath: pluginInstallPath,
               },
-            },
-            load: {
-              paths: [pluginInstallPath],
             },
             entries: {
               [WECHAT_PLUGIN_ID]: {
