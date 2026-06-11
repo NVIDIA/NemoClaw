@@ -78,6 +78,10 @@ function resultText(result: { stdout: string; stderr: string }): string {
   return [result.stdout, result.stderr].filter(Boolean).join("\n");
 }
 
+function stripAnsi(value: string): string {
+  return value.replace(/\u001B\[[0-?]*[ -/]*[@-~]/g, "");
+}
+
 function jsonResponse(res: http.ServerResponse, status: number, payload: unknown): void {
   const body = JSON.stringify(payload);
   res.writeHead(status, {
@@ -308,9 +312,10 @@ async function assertSandboxRunning(
     },
   );
   const output = resultText(sandboxList);
+  const plainStdout = stripAnsi(sandboxList.stdout);
   expect(sandboxList.exitCode, output).toBe(0);
-  expect(sandboxList.stdout, output).toContain(SANDBOX_NAME);
-  expect(sandboxList.stdout, output).toMatch(/\b(?:Ready|Running)\b/i);
+  expect(plainStdout, output).toContain(SANDBOX_NAME);
+  expect(plainStdout, output).toMatch(/\b(?:Ready|Running)\b/i);
 }
 
 async function deleteSandboxIfOpenshellExists(
