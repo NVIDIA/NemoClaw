@@ -99,9 +99,7 @@ function createDeps(
     gatewayName: "nemoclaw",
     registry: {
       listSandboxes: vi.fn(() => ({ sandboxes: [] })),
-      updateSandbox: vi.fn(() => true),
     },
-    checkGatewayLiveness: vi.fn(() => true),
     providerExistsInGateway: vi.fn(() => false),
     isNonInteractive: vi.fn(() => false),
     promptYesNoOrDefault: vi.fn(async () => true),
@@ -174,7 +172,6 @@ describe("prepareSandboxMessagingPreflight", () => {
             { name: "other", messaging: { plan: createPlan("other", "telegram", "same") } },
           ],
         })),
-        updateSandbox: vi.fn(() => true),
       },
       promptYesNoOrDefault: vi.fn(async () => true),
     });
@@ -194,9 +191,10 @@ describe("prepareSandboxMessagingPreflight", () => {
       isNonInteractive: vi.fn(() => true),
       registry: {
         listSandboxes: vi.fn(() => ({
-          sandboxes: [{ name: "other", messagingChannels: ["discord"] }],
+          sandboxes: [
+            { name: "other", messaging: { plan: createPlan("other", "discord", undefined) } },
+          ],
         })),
-        updateSandbox: vi.fn(() => true),
       },
     });
 
@@ -221,7 +219,6 @@ describe("prepareSandboxMessagingPreflight", () => {
             },
           ],
         })),
-        updateSandbox: vi.fn(() => true),
       },
     });
 
