@@ -541,7 +541,7 @@ function sanitizeBackupDirectory(dirPath: string): void {
 
 const _verbose = () => process.env.NEMOCLAW_REBUILD_VERBOSE === "1";
 
-// Exact symlinks baked into the base image at build time (Dockerfile.base) by
+// Exact symlinks baked into OpenClaw messaging images at build time by
 // `openclaw plugins install`. Source paths are relative to the agent state-dir
 // root (e.g. for OpenClaw, /sandbox/.openclaw); targets are matched exactly
 // against the value of `readlink(source)`. Source-only matching is unsafe: a

@@ -407,7 +407,6 @@ const {
   getRecordedMessagingChannelsForResume: getRecordedMessagingChannelsForResumeFromState,
 }: typeof import("./onboard/messaging-credentials") = require("./onboard/messaging-credentials");
 const {
-  collectMessagingBuildConfig,
   computeTelegramRequireMention,
   getStoredMessagingChannelConfig,
   messagingChannelConfigsEqual,
@@ -3525,19 +3524,13 @@ async function createSandbox(
 
   console.log(`  Creating sandbox '${sandboxName}' (this takes a few minutes on first run)...`);
   const messagingChannelConfig = readMessagingChannelConfigFromEnv();
-  const enabledTokenEnvKeys = new Set(messagingTokenDefs.map(({ envKey }) => envKey));
-  const activeChannelNames = new Set(activeMessagingChannels);
-  const { messagingAllowedIds, discordGuilds, slackConfig } = collectMessagingBuildConfig({
-    channels: MESSAGING_CHANNELS,
-    activeChannelNames,
-    enabledTokenEnvKeys,
-    discordSnowflakeRe: onboardProviders.DISCORD_SNOWFLAKE_RE,
-  });
   // Telegram mention-only mode — parity with Discord's requireMention.
   // Off by default so existing sandboxes behave the same; opt-in via
   // TELEGRAM_REQUIRE_MENTION=1 or the interactive prompt. See #1737.
   const telegramConfig: { requireMention?: boolean } = {};
-  if (enabledTokenEnvKeys.has("TELEGRAM_BOT_TOKEN")) {
+  const configuredMessagingChannels =
+    enabledChannels != null ? [...new Set(enabledChannels)] : activeMessagingChannels;
+  if (configuredMessagingChannels.includes("telegram")) {
     const telegramRequireMention = computeTelegramRequireMention();
     if (telegramRequireMention !== null) {
       telegramConfig.requireMention = telegramRequireMention;
@@ -3612,18 +3605,12 @@ async function createSandbox(
     provider,
     preferredInferenceApi,
     webSearchConfig,
-    activeMessagingChannels,
-    messagingAllowedIds,
-    discordGuilds,
     resolved ? resolved.ref : null,
-    telegramConfig,
-    wechatConfig as Record<string, unknown>,
     // Docker-on-Colima uses normal container ownership; keep the old VM chmod
     // compatibility path disabled unless a future VM-specific flow opts in.
     false,
     sandboxInferenceBaseUrlOverride,
     hermesToolGateways,
-    slackConfig,
   );
   // Only pass non-sensitive env vars to the sandbox. Credentials flow through
   // OpenShell providers — the gateway injects them as placeholders and the L7
@@ -3858,6 +3845,14 @@ async function createSandbox(
     hermesDashboardForwarding.resolveStateForPort(actualDashboardPort);
   hermesDashboardForwarding.ensureForState(finalHermesDashboardState, sandboxName, true);
 
+  // Register only after confirmed ready — prevents phantom entries
+  const providerCredentialHashes: Record<string, string> = {};
+  for (const { envKey, token } of messagingTokenDefs) {
+    const hash = token ? hashCredential(token) : null;
+    if (hash) {
+      providerCredentialHashes[envKey] = hash;
+    }
+  }
   // openshell tags images with seconds; buildId is ms. Parse actual tag from output. Fixes #2672.
   const resolvedImageTag = resolveSandboxImageTagFromCreateOutput(createResult.output, buildId);
 
@@ -3872,14 +3867,15 @@ async function createSandbox(
     ...sandboxRuntimeFields,
     ...getSandboxAgentRegistryFields(agent, !fromDockerfile),
     imageTag: resolvedImageTag,
+    providerCredentialHashes:
+      Object.keys(providerCredentialHashes).length > 0 ? providerCredentialHashes : undefined,
     policies: initialSandboxPolicy.appliedPresets,
     // Persist the operator's configured channel set, not the post-disabled-filter
     // active set. After `channels stop X` + rebuild, activeMessagingChannels drops
     // X, but X is still configured — losing it here means a later `channels start
     // X` has nothing to re-enable (the next rebuild sees an empty channel set and
     // never reattaches the gateway bridge). See #3381.
-    messagingChannels:
-      enabledChannels != null ? [...new Set(enabledChannels)] : activeMessagingChannels,
+    messagingChannels: configuredMessagingChannels,
     messagingChannelConfig: messagingChannelConfig || undefined,
     messaging: messagingState,
     disabledChannels: disabledChannels.length > 0 ? [...disabledChannels] : undefined,

@@ -3,11 +3,14 @@
 
 import { describe, expect, it } from "vitest";
 
-import { createBuiltInChannelManifestRegistry } from "../channels";
+import {
+  createBuiltInChannelManifestRegistry,
+  createBuiltInRenderTemplateResolver,
+} from "../channels";
 import { MessagingWorkflowPlanner } from "../compiler";
 import { createBuiltInMessagingHookRegistry, runMessagingHook } from "../hooks";
-import type { ChannelHookSpec } from "../manifest";
 import type {
+  ChannelHookSpec,
   MessagingAgentId,
   MessagingSerializableObject,
   SandboxMessagingPlan,
@@ -99,6 +102,7 @@ function planner(): MessagingWorkflowPlanner {
         },
       },
     }),
+    createBuiltInRenderTemplateResolver(),
   );
 }
 
@@ -343,14 +347,50 @@ describe("MessagingSetupApplier", () => {
       enabled: true,
       groupPolicy: "open",
     });
-    expect(openclawConfig.channels.telegram.groups["*"]).toEqual({
-      requireMention: "{{telegramConfig.requireMention}}",
-    });
+    expect(openclawConfig.channels.telegram.groups).toBeUndefined();
     expect(result.appliedTargets).toEqual(["/sandbox/.openclaw/openclaw.json"]);
     expect(result.appliedHooks).toEqual([]);
-    expect(result.unresolvedTemplateRefs).toEqual(
-      expect.arrayContaining(["proxyUrl", "telegramConfig.requireMention"]),
-    );
+    expect(result.unresolvedTemplateRefs).toEqual([]);
+  });
+
+  it("preserves runtime-scoped credential placeholders when reapplying render plans", async () => {
+    const plan = await buildOnboardPlan({ TELEGRAM_BOT_TOKEN: "123456:telegram-token" }, [
+      "telegram",
+    ]);
+    const scoped = "openshell:resolve:env:v42_TELEGRAM_BOT_TOKEN";
+    const files: Record<string, string> = {
+      "/sandbox/.openclaw/openclaw.json": JSON.stringify({
+        channels: {
+          telegram: {
+            accounts: {
+              default: {
+                botToken: scoped,
+              },
+            },
+          },
+        },
+      }),
+    };
+    const runOpenshell: MessagingOpenShellRunner = (args, options) => {
+      const target = String(args.at(-1));
+      if (args.includes("cat") && !options?.input) {
+        return { status: files[target] === undefined ? 1 : 0, stdout: files[target] ?? "" };
+      }
+      if (options?.input !== undefined) {
+        files[target] = options.input;
+        return { status: 0 };
+      }
+      return { status: 1 };
+    };
+
+    await MessagingSetupApplier.applyAgentConfigAtOpenShell(plan, { runOpenshell });
+
+    const openclawConfig = JSON.parse(files["/sandbox/.openclaw/openclaw.json"] ?? "{}");
+    expect(openclawConfig.channels.telegram.accounts.default).toMatchObject({
+      botToken: scoped,
+      enabled: true,
+      groupPolicy: "open",
+    });
   });
 
   it("excludes disabled channels at the applier boundary", async () => {
@@ -385,6 +425,7 @@ describe("MessagingSetupApplier", () => {
         (request) => `${request.channelId}:${request.hookId}`,
       ),
     ).toEqual([
+      "slack:slack-openclaw-package-install",
       "slack:slack-token-paste",
       "slack:slack-config-prompt",
       "slack:slack-credential-validation",
@@ -447,7 +488,7 @@ describe("MessagingSetupApplier", () => {
       {
         WECHAT_BOT_TOKEN: "wechat-token",
         WECHAT_ACCOUNT_ID: "wechat-account",
-        WECHAT_BASE_URL: "https://ilinkai.wechat.example",
+        WECHAT_BASE_URL: "https://ilinkai.wechat.com",
         WECHAT_USER_ID: "wechat-user",
       },
       ["wechat"],
@@ -510,7 +551,7 @@ describe("MessagingSetupApplier", () => {
       JSON.parse(files["/sandbox/.openclaw/openclaw-weixin/accounts/wechat-account.json"] ?? "{}"),
     ).toMatchObject({
       token: "openshell:resolve:env:WECHAT_BOT_TOKEN",
-      baseUrl: "https://ilinkai.wechat.example",
+      baseUrl: "https://ilinkai.wechat.com",
       userId: "wechat-user",
     });
     const openclawConfig = JSON.parse(files["/sandbox/.openclaw/openclaw.json"] ?? "{}");
@@ -519,16 +560,16 @@ describe("MessagingSetupApplier", () => {
     expect(openclawConfig.plugins.installs["openclaw-weixin"].spec).toBe(
       "@tencent-weixin/openclaw-weixin@2.4.3",
     );
-    expect(openclawConfig.plugins.load.paths).toEqual([
+    expect(openclawConfig.plugins.load?.paths ?? []).not.toContain(
       "/sandbox/.openclaw/extensions/openclaw-weixin",
-    ]);
+    );
     expect(openclawConfig.channels["openclaw-weixin"].accounts["wechat-account"]).toEqual({
       enabled: true,
     });
     expect(result.appliedTargets).toEqual([
+      "/sandbox/.openclaw/openclaw.json",
       "/sandbox/.openclaw/openclaw-weixin/accounts.json",
       "/sandbox/.openclaw/openclaw-weixin/accounts/wechat-account.json",
-      "/sandbox/.openclaw/openclaw.json",
     ]);
     expect(result.appliedHooks).toEqual(["wechat:wechat-seed-openclaw-account"]);
   });
