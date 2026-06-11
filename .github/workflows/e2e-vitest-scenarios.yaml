@@ -46,7 +46,7 @@ jobs:
           set -euo pipefail
           args=(--emit-live-matrix)
           registry_scenarios=()
-          free_standing_scenarios=(network-policy)
+          free_standing_scenarios=(openshell-version-pin onboard-negative-paths network-policy openclaw-tui-chat-correlation)
           is_free_standing_scenario() {
             local id="$1"
             local known
@@ -196,6 +196,7 @@ jobs:
   # because the matrix above only runs registry-scenarios.test.ts. Modeled on
   # #5049's free-standing pattern.
   openshell-version-pin-vitest:
+    if: ${{ inputs.scenarios == '' || contains(format(',{0},', inputs.scenarios), ',openshell-version-pin,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -235,6 +236,7 @@ jobs:
           retention-days: 14
 
   onboard-negative-paths-vitest:
+    if: ${{ inputs.scenarios == '' || contains(format(',{0},', inputs.scenarios), ',onboard-negative-paths,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -354,7 +356,7 @@ jobs:
   # protocol/history contract. The retained legacy bash lane remains the
   # source for full closeout until a later PR proves replacement and deletes it.
   openclaw-tui-chat-correlation-vitest:
-    if: ${{ inputs.scenarios == '' }}
+    if: ${{ inputs.scenarios == '' || contains(format(',{0},', inputs.scenarios), ',openclaw-tui-chat-correlation,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 75
     env:
