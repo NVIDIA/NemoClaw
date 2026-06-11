@@ -12,7 +12,7 @@ on:
         default: ""
         type: string
       jobs:
-        description: "Optional comma-separated free-standing live Vitest job ids. Empty runs all enabled jobs."
+        description: "Optional comma-separated free-standing live Vitest job ids. Empty runs all jobs only when scenarios is also empty."
         required: false
         default: ""
         type: string
@@ -30,6 +30,39 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  validate-jobs:
+    runs-on: ubuntu-latest
+    steps:
+      - id: validate
+        name: Validate free-standing job selector
+        env:
+          JOBS: ${{ inputs.jobs }}
+          SCENARIOS: ${{ inputs.scenarios }}
+        run: |
+          set -euo pipefail
+          allowed_jobs="openshell-version-pin-vitest,onboard-negative-paths-vitest,runtime-overrides-vitest,openclaw-tui-chat-correlation-vitest,gateway-guard-recovery"
+          if [ -n "${JOBS}" ] && [ -n "${SCENARIOS}" ]; then
+            echo "::error::Use either scenarios or jobs, not both." >&2
+            exit 1
+          fi
+          if [ -z "${JOBS}" ]; then
+            echo "No free-standing job selector supplied; default workflow behavior applies."
+            exit 0
+          fi
+          if [[ ! "${JOBS}" =~ ^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$ ]]; then
+            echo "::error::Invalid jobs input; use comma-separated job ids containing only letters, numbers, underscores, and hyphens." >&2
+            exit 1
+          fi
+          IFS=',' read -ra requested <<< "${JOBS}"
+          for job in "${requested[@]}"; do
+            if [[ ",${allowed_jobs}," != *",${job},"* ]]; then
+              echo "::error::Unknown free-standing Vitest job: ${job}" >&2
+              echo "::error::Allowed jobs: ${allowed_jobs}" >&2
+              exit 1
+            fi
+          done
+          printf 'Validated free-standing Vitest jobs: `%s`\n' "${JOBS}" >> "$GITHUB_STEP_SUMMARY"
+
   generate-matrix:
     runs-on: ubuntu-latest
     outputs:
@@ -52,7 +85,6 @@ jobs:
         name: Generate Vitest scenario matrix
         env:
           SCENARIOS: ${{ inputs.scenarios }}
-          JOBS: ${{ inputs.jobs }}
         run: |
           set -euo pipefail
           args=(--emit-live-matrix)
@@ -62,10 +94,6 @@ jobs:
               exit 1
             fi
             args+=(--scenarios "${SCENARIOS}")
-          fi
-          if [ -n "${JOBS}" ] && [[ ! "${JOBS}" =~ ^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$ ]]; then
-            echo "::error::Invalid jobs input: ${JOBS}" >&2
-            exit 1
           fi
           matrix="$(npx tsx test/e2e-scenario/scenarios/run.ts "${args[@]}")"
           echo "matrix=${matrix}" >> "$GITHUB_OUTPUT"
@@ -185,7 +213,8 @@ jobs:
   # because the matrix above only runs registry-scenarios.test.ts. Modeled on
   # #5049's free-standing pattern.
   openshell-version-pin-vitest:
-    if: ${{ inputs.jobs == '' || contains(format(',{0},', inputs.jobs), ',openshell-version-pin-vitest,') }}
+    needs: validate-jobs
+    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',openshell-version-pin-vitest,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -225,7 +254,8 @@ jobs:
           retention-days: 14
 
   onboard-negative-paths-vitest:
-    if: ${{ inputs.jobs == '' || contains(format(',{0},', inputs.jobs), ',onboard-negative-paths-vitest,') }}
+    needs: validate-jobs
+    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',onboard-negative-paths-vitest,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -269,7 +299,8 @@ jobs:
           retention-days: 14
 
   runtime-overrides-vitest:
-    if: ${{ inputs.jobs == '' || contains(format(',{0},', inputs.jobs), ',runtime-overrides-vitest,') }}
+    needs: validate-jobs
+    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',runtime-overrides-vitest,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -312,7 +343,8 @@ jobs:
   # protocol/history contract. The retained legacy bash lane remains the
   # source for full closeout until a later PR proves replacement and deletes it.
   openclaw-tui-chat-correlation-vitest:
-    if: ${{ inputs.jobs == '' || contains(format(',{0},', inputs.jobs), ',openclaw-tui-chat-correlation-vitest,') }}
+    needs: validate-jobs
+    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',openclaw-tui-chat-correlation-vitest,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 75
     env:
@@ -391,7 +423,8 @@ jobs:
   # restore the /tmp guard chain after pod recreate). Will fail on `main`
   # until the #2701 fix lands; flips green afterwards.
   gateway-guard-recovery:
-    if: ${{ inputs.jobs == '' || contains(format(',{0},', inputs.jobs), ',gateway-guard-recovery,') }}
+    needs: validate-jobs
+    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',gateway-guard-recovery,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -484,6 +517,7 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       [
+        validate-jobs,
         generate-matrix,
         live-scenarios,
         openshell-version-pin-vitest,
@@ -500,15 +534,20 @@ jobs:
       - name: Post Vitest scenario results to PR
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
-          PR_NUMBER_INPUT: ${{ inputs.pr_number }}
-          REQUESTED_SCENARIOS: ${{ inputs.scenarios }}
+          JOB_PR_NUMBER: ${{ inputs.pr_number }}
+          JOB_SCENARIOS: ${{ inputs.scenarios }}
+          JOBS: ${{ inputs.jobs }}
         with:
           script: |
             const needs = ${{ toJSON(needs) }};
             const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
             const workflowBranch = context.ref.replace('refs/heads/', '');
-            const prNumberInput = process.env.PR_NUMBER_INPUT || '';
-            const requestedScenarios = process.env.REQUESTED_SCENARIOS || '';
+            const prNumberInput = process.env.JOB_PR_NUMBER || '';
+            const requestedScenarios = process.env.JOB_SCENARIOS || '';
+            const rawRequestedJobs = process.env.JOBS || '';
+            const jobsValidationPassed = needs['validate-jobs']?.result === 'success';
+            const requestedJobs = jobsValidationPassed ? rawRequestedJobs : '';
+            const jobsRejected = rawRequestedJobs && !jobsValidationPassed;
 
             let prNumber = prNumberInput ? Number.parseInt(prNumberInput, 10) : undefined;
             if (!prNumber) {
@@ -549,6 +588,11 @@ jobs:
               requestedScenarios
                 ? `**Requested scenarios:** \`${requestedScenarios}\``
                 : '**Requested scenarios:** _(default — all supported)_',
+              jobsRejected
+                ? '**Requested jobs:** _(selector rejected by validate-jobs)_'
+                : requestedJobs
+                  ? `**Requested jobs:** \`${requestedJobs}\``
+                  : '**Requested jobs:** _(default — all free-standing when no scenarios are requested)_',
               `**Summary:** ${passed.length} passed, ${failed.length} failed, ${skipped.length} skipped`,
               '',
               '| Job | Result |',
