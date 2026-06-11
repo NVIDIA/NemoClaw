@@ -218,7 +218,7 @@ export class GatewayClient {
       );
     }
 
-    const samples = Math.max(1, Math.ceil(options.durationSeconds / pollIntervalSeconds));
+    const samples = Math.max(1, Math.floor(options.durationSeconds / pollIntervalSeconds));
     for (let i = 0; i < samples; i += 1) {
       await sleepSeconds(pollIntervalSeconds);
       const pid = await this.resolveGatewayPid(instance);
