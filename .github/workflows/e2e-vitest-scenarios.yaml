@@ -351,11 +351,40 @@ jobs:
       - name: Build CLI
         run: npm run build:cli
 
+      - name: Install OpenShell CLI
+        # Onboard expects openshell to already be on PATH — install.sh handles
+        # this for the legacy bash E2E suite (which runs `bash install.sh
+        # --non-interactive` end-to-end). The Vitest fixture path skips
+        # install.sh and invokes `bin/nemoclaw.js onboard` directly, so we
+        # need to run the standalone openshell installer here before the
+        # SandboxClient-backed sandbox operations probes spawn openshell.
+        run: bash scripts/install-openshell.sh
+
       - name: Run sandbox operations live test
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
         run: |
           set -euo pipefail
+          # OpenShell installs to /usr/local/bin on GitHub-hosted runners
+          # (writable by the runner user, no sudo) or to ~/.local/bin in
+          # NEMOCLAW_NON_INTERACTIVE mode when /usr/local/bin is not writable.
+          # See scripts/install-openshell.sh:394-425. Cover both paths.
+          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
+          # Resolve the actual install path so the framework's SandboxClient
+          # can spawn it without relying on PATH inheritance from the test
+          # process (the framework also accepts OPENSHELL_BIN as an override).
+          if command -v openshell >/dev/null 2>&1; then
+            OPENSHELL_BIN="$(command -v openshell)"
+          elif [ -x "$HOME/.local/bin/openshell" ]; then
+            OPENSHELL_BIN="$HOME/.local/bin/openshell"
+          else
+            echo "::error::OpenShell CLI not found after install"
+            ls -la /usr/local/bin/openshell "$HOME/.local/bin/openshell" 2>&1 || true
+            exit 1
+          fi
+          export OPENSHELL_BIN
+          echo "Using OPENSHELL_BIN=$OPENSHELL_BIN"
+          "$OPENSHELL_BIN" --version
           npx vitest run --project e2e-scenarios-live \
             test/e2e-scenario/live/sandbox-operations.test.ts \
             --silent=false --reporter=default

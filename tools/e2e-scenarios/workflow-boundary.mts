@@ -165,6 +165,7 @@ function validateJobsSelector(errors: string[], jobs: WorkflowRecord): void {
   requireRunContains(errors, validate, "onboard-negative-paths-vitest");
   requireRunContains(errors, validate, "openclaw-tui-chat-correlation-vitest");
   requireRunContains(errors, validate, "gateway-guard-recovery");
+  requireRunContains(errors, validate, "sandbox-operations-vitest");
   requireRunContains(errors, validate, "^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$");
   requireRunContains(errors, validate, "Invalid jobs input; use comma-separated job ids");
   requireRunDoesNotContain(errors, validate, "Invalid jobs input: ${JOBS}");
@@ -251,6 +252,98 @@ function validateOpenShellVersionPinVitestJob(errors: string[], jobs: WorkflowRe
   }
 }
 
+
+function validateSandboxOperationsVitestJob(errors: string[], jobs: WorkflowRecord): void {
+  const jobName = "sandbox-operations-vitest";
+  const job = asRecord(jobs[jobName]);
+  if (Object.keys(job).length === 0) {
+    errors.push("workflow missing sandbox-operations-vitest job");
+    return;
+  }
+
+  if (job["runs-on"] !== "ubuntu-latest") {
+    errors.push("sandbox-operations-vitest job must run on ubuntu-latest");
+  }
+  validateFreeStandingJobSelector(errors, jobs, jobName);
+
+  const jobEnv = asRecord(job.env);
+  if (jobEnv.NEMOCLAW_RUN_E2E_SCENARIOS !== "1") {
+    errors.push("sandbox-operations-vitest job must set NEMOCLAW_RUN_E2E_SCENARIOS=1");
+  }
+  if (jobEnv.E2E_ARTIFACT_DIR !== "${{ github.workspace }}/e2e-artifacts/vitest/sandbox-operations") {
+    errors.push(
+      "sandbox-operations-vitest job must write artifacts under e2e-artifacts/vitest/sandbox-operations",
+    );
+  }
+  if (jobEnv.NEMOCLAW_CLI_BIN !== "${{ github.workspace }}/bin/nemoclaw.js") {
+    errors.push("sandbox-operations-vitest job must point NEMOCLAW_CLI_BIN at the repo CLI");
+  }
+  requireEnvDoesNotExposeSecret(errors, "sandbox-operations-vitest job", jobEnv, "NVIDIA_API_KEY");
+
+  const steps = asSteps(job.steps);
+  requireNoDispatchInputInterpolation(errors, steps);
+  for (const step of steps) {
+    const stepEnv = asRecord(step.env);
+    const stepName = `sandbox-operations-vitest step '${step.name ?? step.uses ?? "<unnamed>"}'`;
+    if (step.name === "Run sandbox operations live test") {
+      if (stepEnv.NVIDIA_API_KEY !== "${{ secrets.NVIDIA_API_KEY }}") {
+        errors.push("sandbox-operations-vitest Vitest step must receive NVIDIA_API_KEY from secrets");
+      }
+    } else {
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_API_KEY");
+    }
+  }
+
+  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
+  if (!checkout) errors.push("sandbox-operations-vitest job missing checkout step");
+  requireFullShaAction(errors, checkout, "sandbox-operations-vitest checkout");
+  if (asRecord(checkout?.with)["persist-credentials"] !== false) {
+    errors.push("sandbox-operations-vitest checkout step must set persist-credentials=false");
+  }
+
+  const setupNode = namedStep(steps, "Set up Node");
+  if (!setupNode) errors.push("sandbox-operations-vitest job missing step: Set up Node");
+  requireFullShaAction(errors, setupNode, "sandbox-operations-vitest setup-node");
+
+  const installRootDependencies = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Install root dependencies",
+  );
+  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
+
+  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
+  requireRunContains(errors, buildCli, "npm run build:cli");
+
+  const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell CLI");
+  requireRunContains(errors, installOpenShell, "bash scripts/install-openshell.sh");
+
+  const runVitest = requireJobStep(errors, jobName, steps, "Run sandbox operations live test");
+  requireRunContains(errors, runVitest, "OPENSHELL_BIN");
+  requireRunContains(errors, runVitest, "command -v openshell");
+  requireRunContains(errors, runVitest, "$HOME/.local/bin/openshell");
+  requireRunContains(errors, runVitest, "npx vitest run --project e2e-scenarios-live");
+  requireRunContains(errors, runVitest, "test/e2e-scenario/live/sandbox-operations.test.ts");
+
+  const upload = requireJobStep(errors, jobName, steps, "Upload sandbox operations artifacts");
+  requireFullShaAction(errors, upload, "sandbox-operations-vitest upload-artifact");
+  const uploadWith = asRecord(upload?.with);
+  if (uploadWith.name !== "e2e-vitest-scenarios-sandbox-operations") {
+    errors.push("sandbox-operations-vitest artifact upload name must be stable");
+  }
+  const uploadPath = stringValue(uploadWith.path);
+  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/vitest/sandbox-operations/");
+  if (uploadWith["include-hidden-files"] !== false) {
+    errors.push("sandbox-operations-vitest artifact upload must set include-hidden-files: false");
+  }
+  if (uploadWith["if-no-files-found"] !== "ignore") {
+    errors.push("sandbox-operations-vitest artifact upload must ignore missing fixture artifacts");
+  }
+  if (uploadWith["retention-days"] !== 14) {
+    errors.push("sandbox-operations-vitest artifact upload retention-days must be 14");
+  }
+}
 
 function validateOnboardNegativePathsVitestJob(errors: string[], jobs: WorkflowRecord): void {
   const jobName = "onboard-negative-paths-vitest";
@@ -523,6 +616,7 @@ export function validateE2eVitestScenariosWorkflowBoundary(
 
   validateOpenShellVersionPinVitestJob(errors, jobs);
   validateOnboardNegativePathsVitestJob(errors, jobs);
+  validateSandboxOperationsVitestJob(errors, jobs);
   validateFreeStandingJobSelector(errors, jobs, "openclaw-tui-chat-correlation-vitest");
   validateFreeStandingJobSelector(errors, jobs, "gateway-guard-recovery");
 
@@ -538,6 +632,7 @@ export function validateE2eVitestScenariosWorkflowBoundary(
       "openshell-version-pin-vitest",
       "onboard-negative-paths-vitest",
       "openclaw-tui-chat-correlation-vitest",
+      "sandbox-operations-vitest",
       "gateway-guard-recovery",
     ]) {
       if (!needs.includes(required)) errors.push(`report-to-pr job must wait for ${required}`);
