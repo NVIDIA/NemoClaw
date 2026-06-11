@@ -126,6 +126,10 @@ function freeStandingJobIf(jobName: string): string {
   return `\${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',${jobName},') }}`;
 }
 
+function networkPolicyJobIf(): string {
+  return "${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',network-policy-vitest,') || contains(format(',{0},', inputs.scenarios), ',network-policy,') }}";
+}
+
 function validateFreeStandingJobSelector(
   errors: string[],
   jobs: WorkflowRecord,
@@ -163,6 +167,7 @@ function validateJobsSelector(errors: string[], jobs: WorkflowRecord): void {
   requireRunContains(errors, validate, "allowed_jobs=");
   requireRunContains(errors, validate, "openshell-version-pin-vitest");
   requireRunContains(errors, validate, "onboard-negative-paths-vitest");
+  requireRunContains(errors, validate, "network-policy-vitest");
   requireRunContains(errors, validate, "openclaw-tui-chat-correlation-vitest");
   requireRunContains(errors, validate, "gateway-guard-recovery");
   requireRunContains(errors, validate, "^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$");
@@ -251,6 +256,24 @@ function validateOpenShellVersionPinVitestJob(errors: string[], jobs: WorkflowRe
   }
 }
 
+
+function validateNetworkPolicyVitestJob(errors: string[], jobs: WorkflowRecord): void {
+  const jobName = "network-policy-vitest";
+  const job = asRecord(jobs[jobName]);
+  if (Object.keys(job).length === 0) {
+    errors.push("workflow missing network-policy-vitest job");
+    return;
+  }
+  if (job["runs-on"] !== "ubuntu-latest") {
+    errors.push("network-policy-vitest job must run on ubuntu-latest");
+  }
+  if (job.needs !== "validate-jobs") {
+    errors.push("network-policy-vitest job must depend on validate-jobs");
+  }
+  if (job.if !== networkPolicyJobIf()) {
+    errors.push("network-policy-vitest job must map scenarios=network-policy to the network-policy job");
+  }
+}
 
 function validateOnboardNegativePathsVitestJob(errors: string[], jobs: WorkflowRecord): void {
   const jobName = "onboard-negative-paths-vitest";
@@ -523,6 +546,7 @@ export function validateE2eVitestScenariosWorkflowBoundary(
 
   validateOpenShellVersionPinVitestJob(errors, jobs);
   validateOnboardNegativePathsVitestJob(errors, jobs);
+  validateNetworkPolicyVitestJob(errors, jobs);
   validateFreeStandingJobSelector(errors, jobs, "openclaw-tui-chat-correlation-vitest");
   validateFreeStandingJobSelector(errors, jobs, "gateway-guard-recovery");
 
@@ -537,6 +561,7 @@ export function validateE2eVitestScenariosWorkflowBoundary(
       "live-scenarios",
       "openshell-version-pin-vitest",
       "onboard-negative-paths-vitest",
+      "network-policy-vitest",
       "openclaw-tui-chat-correlation-vitest",
       "gateway-guard-recovery",
     ]) {

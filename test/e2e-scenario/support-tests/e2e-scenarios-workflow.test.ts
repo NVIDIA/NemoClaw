@@ -13,16 +13,6 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
     expect(validateE2eVitestScenariosWorkflowBoundary()).toEqual([]);
   });
 
-  it("maps scenarios=network-policy to the free-standing network-policy job", () => {
-    const workflow = fs.readFileSync(
-      path.join(process.cwd(), ".github/workflows/e2e-vitest-scenarios.yaml"),
-      "utf8",
-    );
-
-    expect(workflow).toContain("contains(format(',{0},', inputs.scenarios), ',network-policy,')");
-    expect(workflow).toContain("network-policy-vitest");
-  });
-
   it("flags direct dispatch-input interpolation and unsafe artifact upload", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-vitest-workflow-"));
     const workflowPath = path.join(tmp, "workflow.yaml");
@@ -210,6 +200,7 @@ jobs:
           "openshell-version-pin-vitest artifact upload retention-days must be 14",
           "onboard-negative-paths-vitest job must depend on validate-jobs",
           "onboard-negative-paths-vitest job must use the shared jobs selector condition",
+          "workflow missing network-policy-vitest job",
           "onboard-negative-paths-vitest job must set NEMOCLAW_RUN_E2E_SCENARIOS=1",
           "onboard-negative-paths-vitest job must write artifacts under e2e-artifacts/vitest/onboard-negative-paths",
           "onboard-negative-paths-vitest job env must not include NVIDIA_API_KEY",
@@ -227,6 +218,7 @@ jobs:
           "onboard-negative-paths-vitest artifact upload must set include-hidden-files: false",
           "onboard-negative-paths-vitest artifact upload must ignore missing fixture artifacts",
           "onboard-negative-paths-vitest artifact upload retention-days must be 14",
+          "report-to-pr job must wait for network-policy-vitest",
           "openclaw-tui-chat-correlation-vitest job must depend on validate-jobs",
           "openclaw-tui-chat-correlation-vitest job must use the shared jobs selector condition",
           "gateway-guard-recovery job must depend on validate-jobs",
