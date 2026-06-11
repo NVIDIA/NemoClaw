@@ -9,6 +9,10 @@ import { resolveOpenshell } from "../adapters/openshell/resolve";
 import { isErrnoException } from "../core/errno";
 import * as dockerDriverGatewayRuntimeMarker from "./docker-driver-gateway-runtime-marker";
 import { isLinuxDockerDriverGatewayEnabled } from "./docker-driver-platform";
+import {
+  gatewayProcessCmdlineMatches,
+  OPENSHELL_GATEWAY_PROCESS_NAMES,
+} from "./gateway-process-identity";
 import * as gatewayBinding from "./gateway-binding";
 import type { PortProbeResult } from "./preflight";
 import * as vmDriverProcess from "./vm-driver-process";
@@ -236,6 +240,16 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
     }
   }
 
+  function processIdentityMatchesGatewayBinary(
+    identity: string,
+    gatewayBin?: string | null,
+  ): boolean {
+    return gatewayProcessCmdlineMatches(identity, gatewayBin, {
+      processNames: OPENSHELL_GATEWAY_PROCESS_NAMES,
+      resolveExecutablePath: normalizeGatewayExecutablePath,
+    });
+  }
+
   function shouldRequireDockerDriverEnv(platform: NodeJS.Platform = process.platform): boolean {
     return platform === "linux";
   }
@@ -341,9 +355,7 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
       identity = captureProcessArgs(pid);
     }
     if (!identity) return false;
-    const matchesGatewayBinary =
-      identity.includes("openshell-gateway") ||
-      (typeof gatewayBin === "string" && gatewayBin.length > 0 && identity.includes(gatewayBin));
+    const matchesGatewayBinary = processIdentityMatchesGatewayBinary(identity, gatewayBin);
     if (!matchesGatewayBinary) return false;
     if (opts.requireDockerDriverEnv && !hasDockerDriverGatewayEnv(pid)) return false;
     return true;

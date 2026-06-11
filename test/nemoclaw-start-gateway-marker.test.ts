@@ -95,7 +95,9 @@ describe("nemoclaw-start in-container gateway healthcheck marker (#4503, #4710)"
           "set -euo pipefail",
           markFn.replaceAll("/tmp/nemoclaw-gateway-local", markerPath),
           'nohup() { "$@"; }',
-          "STEP_DOWN_PREFIX_GATEWAY=()",
+          // macOS runners still use Bash 3.2; keep the simulated prefix
+          // non-empty so nounset never treats empty-array expansion as unbound.
+          "STEP_DOWN_PREFIX_GATEWAY=(env)",
           'OPENCLAW="$(command -v openclaw)"',
           "_DASHBOARD_PORT=18789",
           `rm -f ${JSON.stringify(markerPath)}`,
