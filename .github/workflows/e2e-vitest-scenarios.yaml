@@ -45,14 +45,40 @@ jobs:
         run: |
           set -euo pipefail
           args=(--emit-live-matrix)
+          registry_scenarios=()
+          free_standing_scenarios=(network-policy)
+          is_free_standing_scenario() {
+            local id="$1"
+            local known
+            for known in "${free_standing_scenarios[@]}"; do
+              if [[ "${id}" == "${known}" ]]; then
+                return 0
+              fi
+            done
+            return 1
+          }
           if [ -n "${SCENARIOS}" ]; then
             if [[ ! "${SCENARIOS}" =~ ^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$ ]]; then
               echo "::error::Invalid scenario input: ${SCENARIOS}" >&2
               exit 1
             fi
-            args+=(--scenarios "${SCENARIOS}")
+            IFS=',' read -r -a requested_scenarios <<< "${SCENARIOS}"
+            for scenario in "${requested_scenarios[@]}"; do
+              if is_free_standing_scenario "${scenario}"; then
+                continue
+              fi
+              registry_scenarios+=("${scenario}")
+            done
+            if [ "${#registry_scenarios[@]}" -gt 0 ]; then
+              registry_csv="$(IFS=,; echo "${registry_scenarios[*]}")"
+              args+=(--scenarios "${registry_csv}")
+            fi
           fi
-          matrix="$(npx tsx test/e2e-scenario/scenarios/run.ts "${args[@]}")"
+          if [ -n "${SCENARIOS}" ] && [ "${#registry_scenarios[@]}" -eq 0 ]; then
+            matrix="[]"
+          else
+            matrix="$(npx tsx test/e2e-scenario/scenarios/run.ts "${args[@]}")"
+          fi
           echo "matrix=${matrix}" >> "$GITHUB_OUTPUT"
           MATRIX_JSON="${matrix}" python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
           import json
@@ -69,6 +95,7 @@ jobs:
 
   live-scenarios:
     needs: generate-matrix
+    if: ${{ needs.generate-matrix.outputs.matrix != '[]' }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     strategy:
@@ -246,6 +273,79 @@ jobs:
         with:
           name: e2e-vitest-scenarios-onboard-negative-paths
           path: e2e-artifacts/vitest/onboard-negative-paths/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
+
+  network-policy-vitest:
+    if: ${{ inputs.scenarios == '' || contains(format(',{0},', inputs.scenarios), ',network-policy,') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/network-policy
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Authenticate to Docker Hub
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          login_succeeded=0
+          for attempt in 1 2 3; do
+            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
+              login_succeeded=1
+              break
+            fi
+            if [[ "$attempt" -lt 3 ]]; then
+              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
+              sleep 5
+            fi
+          done
+          if [[ "$login_succeeded" -ne 1 ]]; then
+            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
+          fi
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build CLI
+        run: npm run build:cli
+
+      - name: Run network-policy live test
+        # Migrated from test/e2e/test-network-policy.sh. Free-standing anchor
+        # for live network policy allow/deny probes; shell retirement remains
+        # deferred to #5098 Phase 11.
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+        run: |
+          set -euo pipefail
+          npx vitest run --project e2e-scenarios-live \
+            test/e2e-scenario/live/network-policy.test.ts \
+            --silent=false --reporter=default
+
+      - name: Upload network-policy artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-vitest-scenarios-network-policy
+          path: e2e-artifacts/vitest/network-policy/
           include-hidden-files: false
           if-no-files-found: ignore
           retention-days: 14
