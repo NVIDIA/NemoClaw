@@ -10,6 +10,18 @@
  * `EAGAIN` instead of blocking for input (#5188, regressed by #5020). The
  * helpers here avoid creating that state and tolerate it when other code in
  * the same process has already created it.
+ *
+ * Why the `EAGAIN` retry stays even though `isStdinTty()` fixed the local
+ * source: other CLI paths still instantiate `process.stdin` in this process
+ * — the onboard TTY probe in `onboard.ts`, and the readline prompts in
+ * `policy/index.ts` and `onboard/messaging-selector.ts` — so any flow that
+ * runs one of them before prompting here inherits a non-blocking fd 0. The
+ * retry keeps this module correct regardless of what ran first.
+ *
+ * Removal condition: once every synchronous prompt reads stdin through this
+ * module and a repo-wide lint guard bans direct `process.stdin` access in
+ * sync CLI paths, the `EAGAIN`/`EWOULDBLOCK` retry can collapse back to the
+ * plain EOF-on-error behavior.
  */
 
 import fs from "node:fs";
