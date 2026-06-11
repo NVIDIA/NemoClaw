@@ -273,6 +273,108 @@ function validateNetworkPolicyVitestJob(errors: string[], jobs: WorkflowRecord):
   if (job.if !== networkPolicyJobIf()) {
     errors.push("network-policy-vitest job must map scenarios=network-policy to the network-policy job");
   }
+
+  const jobEnv = asRecord(job.env);
+  if (jobEnv.NEMOCLAW_RUN_E2E_SCENARIOS !== "1") {
+    errors.push("network-policy-vitest job must set NEMOCLAW_RUN_E2E_SCENARIOS=1");
+  }
+  if (jobEnv.E2E_ARTIFACT_DIR !== "${{ github.workspace }}/e2e-artifacts/vitest/network-policy") {
+    errors.push(
+      "network-policy-vitest job must write artifacts under e2e-artifacts/vitest/network-policy",
+    );
+  }
+  if (!stringValue(jobEnv.NEMOCLAW_CLI_BIN).includes("bin/nemoclaw.js")) {
+    errors.push("network-policy-vitest job must point NEMOCLAW_CLI_BIN at the repo CLI");
+  }
+  for (const secret of ["NVIDIA_API_KEY", "DOCKERHUB_USERNAME", "DOCKERHUB_TOKEN", "GITHUB_TOKEN"]) {
+    requireEnvDoesNotExposeSecret(errors, "network-policy-vitest job", jobEnv, secret);
+  }
+
+  const steps = asSteps(job.steps);
+  requireNoDispatchInputInterpolation(errors, steps);
+  for (const step of steps) {
+    const stepName = step.name ?? step.uses ?? "<unnamed>";
+    const stepEnv = asRecord(step.env);
+    if (step.name !== "Run network-policy live test") {
+      requireEnvDoesNotExposeSecret(
+        errors,
+        `network-policy-vitest step '${stepName}'`,
+        stepEnv,
+        "NVIDIA_API_KEY",
+      );
+    }
+    if (step.name !== "Authenticate to Docker Hub") {
+      requireEnvDoesNotExposeSecret(
+        errors,
+        `network-policy-vitest step '${stepName}'`,
+        stepEnv,
+        "DOCKERHUB_USERNAME",
+      );
+      requireEnvDoesNotExposeSecret(
+        errors,
+        `network-policy-vitest step '${stepName}'`,
+        stepEnv,
+        "DOCKERHUB_TOKEN",
+      );
+    }
+    requireEnvDoesNotExposeSecret(
+      errors,
+      `network-policy-vitest step '${stepName}'`,
+      stepEnv,
+      "GITHUB_TOKEN",
+    );
+  }
+
+  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
+  if (!checkout) errors.push("network-policy-vitest job missing checkout step");
+  requireFullShaAction(errors, checkout, "network-policy-vitest checkout");
+  if (asRecord(checkout?.with)["persist-credentials"] !== false) {
+    errors.push("network-policy-vitest checkout step must set persist-credentials=false");
+  }
+
+  const setupNode = namedStep(steps, "Set up Node");
+  if (!setupNode) errors.push("network-policy-vitest job missing step: Set up Node");
+  requireFullShaAction(errors, setupNode, "network-policy-vitest setup-node");
+
+  const installRootDependencies = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Install root dependencies",
+  );
+  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
+
+  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
+  requireRunContains(errors, buildCli, "npm run build:cli");
+
+  const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell");
+  requireRunContains(errors, installOpenShell, "bash scripts/install-openshell.sh");
+
+  const runVitest = requireJobStep(errors, jobName, steps, "Run network-policy live test");
+  const runVitestEnv = asRecord(runVitest?.env);
+  if (runVitestEnv.NVIDIA_API_KEY !== "${{ secrets.NVIDIA_API_KEY }}") {
+    errors.push("network-policy-vitest Vitest step must receive NVIDIA_API_KEY from secrets");
+  }
+  requireRunContains(errors, runVitest, "npx vitest run --project e2e-scenarios-live");
+  requireRunContains(errors, runVitest, "test/e2e-scenario/live/network-policy.test.ts");
+
+  const upload = requireJobStep(errors, jobName, steps, "Upload network-policy artifacts");
+  requireFullShaAction(errors, upload, "network-policy-vitest upload-artifact");
+  const uploadWith = asRecord(upload?.with);
+  if (uploadWith.name !== "e2e-vitest-scenarios-network-policy") {
+    errors.push("network-policy-vitest artifact upload name must be stable");
+  }
+  const uploadPath = stringValue(uploadWith.path);
+  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/vitest/network-policy/");
+  if (uploadWith["include-hidden-files"] !== false) {
+    errors.push("network-policy-vitest artifact upload must set include-hidden-files: false");
+  }
+  if (uploadWith["if-no-files-found"] !== "ignore") {
+    errors.push("network-policy-vitest artifact upload must ignore missing fixture artifacts");
+  }
+  if (uploadWith["retention-days"] !== 14) {
+    errors.push("network-policy-vitest artifact upload retention-days must be 14");
+  }
 }
 
 function validateOnboardNegativePathsVitestJob(errors: string[], jobs: WorkflowRecord): void {

@@ -67,7 +67,9 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function isTransientProviderValidationFailure(result: ShellProbeResult): boolean {
+export function isTransientProviderValidationFailure(
+  result: Pick<ShellProbeResult, "stdout" | "stderr">,
+): boolean {
   const output = text(result);
   return TRANSIENT_PROVIDER_VALIDATION_RE.test(output) && TRANSIENT_PROVIDER_DETAIL_RE.test(output);
 }

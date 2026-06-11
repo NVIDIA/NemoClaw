@@ -378,7 +378,6 @@ jobs:
 
       - name: Install OpenShell
         env:
-          GITHUB_TOKEN: ${{ github.token }}
           NEMOCLAW_NON_INTERACTIVE: "1"
         run: bash scripts/install-openshell.sh
 

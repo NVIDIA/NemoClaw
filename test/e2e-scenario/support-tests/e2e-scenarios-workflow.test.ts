@@ -128,6 +128,50 @@ jobs:
           path: .e2e/onboard-negative-paths/
           include-hidden-files: true
           if-no-files-found: error
+  network-policy-vitest:
+    runs-on: macos-latest
+    needs: generate-matrix
+    if: \${{ inputs.scenarios != '' }}
+    env:
+      E2E_ARTIFACT_DIR: \${{ github.workspace }}/.e2e/network-policy
+      NEMOCLAW_CLI_BIN: bin/not-nemoclaw.js
+      NEMOCLAW_RUN_E2E_SCENARIOS: "0"
+      NVIDIA_API_KEY: \${{ secrets.NVIDIA_API_KEY }}
+      DOCKERHUB_USERNAME: \${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: \${{ secrets.DOCKERHUB_TOKEN }}
+      GITHUB_TOKEN: \${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - name: Authenticate to Docker Hub
+        env:
+          GITHUB_TOKEN: \${{ github.token }}
+        run: echo "\${{ inputs.jobs }}"
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        env:
+          NVIDIA_API_KEY: \${{ secrets.NVIDIA_API_KEY }}
+      - name: Install root dependencies
+        run: npm install
+      - name: Build CLI
+        run: echo skip
+      - name: Install OpenShell
+        env:
+          GITHUB_TOKEN: \${{ github.token }}
+        run: echo install
+      - name: Run network-policy live test
+        env:
+          NVIDIA_API_KEY: \${{ secrets.NVIDIA_API_KEY }}
+        run: npx vitest run --project e2e-scenarios-live "\${{ inputs.test_filter }}"
+      - name: Upload network-policy artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: network-policy
+          path: .e2e/network-policy/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 1
 `,
     );
 
@@ -200,7 +244,16 @@ jobs:
           "openshell-version-pin-vitest artifact upload retention-days must be 14",
           "onboard-negative-paths-vitest job must depend on validate-jobs",
           "onboard-negative-paths-vitest job must use the shared jobs selector condition",
-          "workflow missing network-policy-vitest job",
+          "network-policy-vitest job must run on ubuntu-latest",
+          "network-policy-vitest job must depend on validate-jobs",
+          "network-policy-vitest job must map scenarios=network-policy to the network-policy job",
+          "network-policy-vitest job must set NEMOCLAW_RUN_E2E_SCENARIOS=1",
+          "network-policy-vitest job must write artifacts under e2e-artifacts/vitest/network-policy",
+          "network-policy-vitest job must point NEMOCLAW_CLI_BIN at the repo CLI",
+          "network-policy-vitest job env must not include NVIDIA_API_KEY",
+          "network-policy-vitest job env must not include DOCKERHUB_USERNAME",
+          "network-policy-vitest job env must not include DOCKERHUB_TOKEN",
+          "network-policy-vitest job env must not include GITHUB_TOKEN",
           "onboard-negative-paths-vitest job must set NEMOCLAW_RUN_E2E_SCENARIOS=1",
           "onboard-negative-paths-vitest job must write artifacts under e2e-artifacts/vitest/onboard-negative-paths",
           "onboard-negative-paths-vitest job env must not include NVIDIA_API_KEY",
@@ -218,6 +271,24 @@ jobs:
           "onboard-negative-paths-vitest artifact upload must set include-hidden-files: false",
           "onboard-negative-paths-vitest artifact upload must ignore missing fixture artifacts",
           "onboard-negative-paths-vitest artifact upload retention-days must be 14",
+          "network-policy-vitest checkout action must be pinned to a full commit SHA",
+          "network-policy-vitest checkout step must set persist-credentials=false",
+          "network-policy-vitest step 'Authenticate to Docker Hub' env must not include GITHUB_TOKEN",
+          "step 'Authenticate to Docker Hub' run script must not interpolate dispatch inputs directly",
+          "network-policy-vitest step 'Set up Node' env must not include NVIDIA_API_KEY",
+          "network-policy-vitest setup-node action must be pinned to a full commit SHA",
+          "step 'Install root dependencies' run script must include npm ci --ignore-scripts",
+          "step 'Build CLI' run script must include npm run build:cli",
+          "network-policy-vitest step 'Install OpenShell' env must not include GITHUB_TOKEN",
+          "step 'Install OpenShell' run script must include bash scripts/install-openshell.sh",
+          "step 'Run network-policy live test' run script must not interpolate dispatch inputs directly",
+          "step 'Run network-policy live test' run script must include test/e2e-scenario/live/network-policy.test.ts",
+          "network-policy-vitest upload-artifact action must be pinned to a full commit SHA",
+          "network-policy-vitest artifact upload name must be stable",
+          "artifact upload path must include e2e-artifacts/vitest/network-policy/",
+          "network-policy-vitest artifact upload must set include-hidden-files: false",
+          "network-policy-vitest artifact upload must ignore missing fixture artifacts",
+          "network-policy-vitest artifact upload retention-days must be 14",
           "report-to-pr job must wait for network-policy-vitest",
           "openclaw-tui-chat-correlation-vitest job must depend on validate-jobs",
           "openclaw-tui-chat-correlation-vitest job must use the shared jobs selector condition",
