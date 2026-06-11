@@ -6,6 +6,15 @@ NVIDIA NemoClaw is available in early preview starting March 16, 2026.
 Use this page to track the highlights of the latest release.
 For more detailed release notes, refer to the [NemoClaw GitHub announcements](https://github.com/NVIDIA/NemoClaw/discussions/categories/announcements?discussions_q=is%3Aopen+category%3AAnnouncements).
 
+## v0.0.63
+
+NemoClaw v0.0.63 improves sandbox recovery, OpenClaw configuration restore safety, local inference onboarding, messaging safeguards, and release validation:
+
+- Sandbox lifecycle commands preserve and recover more state. `rebuild --yes` can recreate a locally registered sandbox that is missing from a healthy gateway, Docker-driver sandboxes can restart from OpenShell container labels after a host reboot, and `upgrade-sandboxes` detects recorded NemoClaw image drift even when the agent version itself matches. For more information, refer to Manage Sandbox Lifecycle (use the `nemoclaw-user-manage-sandboxes` skill).
+- Snapshot-backed rebuilds preserve OpenClaw configuration more safely. Rebuilds now carry forward user-owned `openclaw.json` settings, merge restored config with freshly generated runtime state, and fail when restored config cannot be applied safely. For more information, refer to Backup and Restore (use the `nemoclaw-user-manage-sandboxes` skill).
+- Onboarding diagnoses host setup and local inference issues earlier. The installer reports unusual Docker daemon access when a Linux user is outside the `docker` group, host DNS blocks are caught before NVIDIA provider validation, Ollama auth-proxy port conflicts recover during startup, and managed vLLM offers an interactive model picker for supported host profiles. For more information, refer to Use a Local Inference Server (use the `nemoclaw-user-configure-inference` skill).
+- Messaging and Hermes startup paths enforce clearer runtime boundaries. Slack setup validates Socket Mode credentials and warns or blocks duplicate Slack Socket Mode sandboxes on a shared gateway, while Hermes direct gateway launch keeps environment-secret protections active and handles wrapped gateway arguments. For more information, refer to Messaging Channels (use the `nemoclaw-user-manage-sandboxes` skill).
+
 ## v0.0.62
 
 NemoClaw v0.0.62 improves onboarding reliability for GPU sandboxes, local inference, gateway pairing, Hermes configuration, and release validation:
@@ -34,7 +43,7 @@ NemoClaw v0.0.61 improves sandbox network visibility, onboarding recovery, Herme
 - Onboarding and rebuild paths recover more reliably across host and provider drift. ARM64 image-tar upload failures receive a clear classification with an image-reference workaround, rebuild detaches sandbox providers before delete, rebuilt resume snapshots keep session state, and messaging selector key sequences work during onboarding. For more information, refer to NemoClaw CLI Commands Reference (use the `nemoclaw-user-reference` skill).
 - Local inference and Hermes setup cover more restart and configuration edge cases. Managed inference hostnames bypass host proxies, managed vLLM restarts after host reboot, DGX Station managed vLLM defaults to `Qwen/Qwen3.6-27B-FP8`, Hermes rejects dashboard port collisions during configuration, and Hermes recovery enforces the environment-secret boundary. For more information, refer to Use a Local Inference Server (use the `nemoclaw-user-configure-inference` skill).
 - Messaging setup gives clearer feedback and stores more deterministic state. Slack now notifies the sender when a channel `@mention` is denied, operator-supplied placeholder keys can be registered during onboarding, `messagingPlan` persists into resume state, and channel conflict detection now uses the manifest-plan architecture. For more information, refer to Messaging Channels (use the `nemoclaw-user-manage-sandboxes` skill).
-- Release validation now uses real shell assertions in the e2e scenario runner, includes an opt-in live scenario project, shards CLI coverage, adds a docs-only PR fast path, and trims slow CLI subprocess coverage.
+- Release validation now runs real shell-boundary assertions through Vitest E2E support, includes an opt-in live scenario project, shards CLI coverage, adds a docs-only PR fast path, and trims slow CLI subprocess coverage.
 
 ## v0.0.60
 
@@ -197,7 +206,7 @@ NemoClaw v0.0.48 improves onboarding, sandbox builds, local inference, messaging
 
 NemoClaw v0.0.47 focused on release hardening and validation coverage:
 
-- The scenario E2E framework gained baseline onboarding coverage for CLI setup, OpenShell gateway creation, sandbox state, inference routing, and smoke tests.
+- The Vitest E2E fixture layer gained baseline onboarding coverage for CLI setup, OpenShell gateway creation, sandbox state, inference routing, and smoke tests.
 - Messaging provider scenarios now validate provider attachment, placeholder configuration, secret-leak prevention, bridge reachability, Discord gateway routing, Slack provider state, Telegram injection safety, and token-rotation isolation.
 - CLI command registration was refactored so public display defaults stay consistent across sandbox channel, host, log, policy, skill, and snapshot commands.
 - PR review advisor automation was added for maintainers, with deterministic GitHub context gathering and structured review comments.

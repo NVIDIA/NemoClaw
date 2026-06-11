@@ -15,6 +15,18 @@ vi.mock("../../policy", () => ({
 
 vi.mock("../../state/registry", () => ({
   getSandbox: vi.fn(),
+  getConfiguredMessagingChannelsFromEntry: vi.fn((entry) => {
+    const channels = entry?.messaging?.plan?.channels;
+    return Array.isArray(channels)
+      ? channels
+          .filter((channel) => channel?.configured === true)
+          .map((channel) => channel.channelId)
+      : [];
+  }),
+  getDisabledMessagingChannelsFromEntry: vi.fn((entry) => {
+    const disabled = entry?.messaging?.plan?.disabledChannels;
+    return Array.isArray(disabled) ? [...disabled] : [];
+  }),
 }));
 
 vi.mock("../../agent/defs", () => ({
@@ -108,11 +120,37 @@ function entry(
   messagingChannels: string[] = ["whatsapp"],
   disabledChannels: string[] = [],
 ): SandboxEntry {
+  const disabled = new Set(disabledChannels);
   return {
     name: "alpha",
     agent: "openclaw",
-    messagingChannels,
-    disabledChannels,
+    messaging: {
+      schemaVersion: 1,
+      plan: {
+        schemaVersion: 1,
+        sandboxName: "alpha",
+        agent: "openclaw",
+        workflow: "onboard",
+        channels: messagingChannels.map((channelId) => ({
+          channelId,
+          displayName: channelId,
+          authMode: channelId === "whatsapp" ? "in-sandbox-qr" : "token-paste",
+          active: !disabled.has(channelId),
+          selected: true,
+          configured: true,
+          disabled: disabled.has(channelId),
+          inputs: [],
+          hooks: [],
+        })),
+        disabledChannels,
+        credentialBindings: [],
+        networkPolicy: { presets: [], entries: [] },
+        agentRender: [],
+        buildSteps: [],
+        stateUpdates: [],
+        healthChecks: [],
+      },
+    },
   } as SandboxEntry;
 }
 

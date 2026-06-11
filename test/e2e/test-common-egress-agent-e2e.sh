@@ -6,9 +6,9 @@
 #
 # Proves the safe common-egress defaults through real agent turns:
 #   C1  OpenClaw balanced includes weather and the agent fetches Open-Meteo.
-#   C2  OpenClaw open includes public-reference and the agent fetches REST Countries.
+#   C2  OpenClaw open includes public-reference and the agent fetches Wikidata.
 #   C3  Hermes open includes public-reference plus all Hermes Nous policy presets,
-#       and the Hermes agent fetches REST Countries through its API-server agent path.
+#       and the Hermes agent fetches Wikidata through its API-server agent path.
 #
 # Required env:
 #   NVIDIA_API_KEY                         real NVIDIA Endpoints key for inference
@@ -438,12 +438,12 @@ PROMPT
   section "Phase 2: OpenClaw open public reference"
   OPENCLAW_OPEN_SANDBOX="${NEMOCLAW_COMMON_EGRESS_OPENCLAW_OPEN_SANDBOX:-e2e-common-egress-openclaw-open}"
   run_onboard "$OPENCLAW_OPEN_SANDBOX" "openclaw" "open"
-  assert_policy_contains "$OPENCLAW_OPEN_SANDBOX" "C2 policy" "restcountries.com" "nominatim.openstreetmap.org" "query.wikidata.org"
+  assert_policy_contains "$OPENCLAW_OPEN_SANDBOX" "C2 policy" "www.wikidata.org" "nominatim.openstreetmap.org" "query.wikidata.org"
   REFERENCE_AGENT_PROMPT=$(
     cat <<'PROMPT'
 Use the web_fetch tool to fetch exactly this URL:
-https://restcountries.com/v3.1/alpha/US?fields=name,cca3
-After web_fetch returns, reply exactly REFERENCE_AGENT_OK if the fetched response says the common name is United States and cca3 is USA. Do not fetch any other URL.
+https://www.wikidata.org/w/api.php?action=wbgetentities&ids=Q30&props=labels&languages=en&format=json
+After web_fetch returns, reply exactly REFERENCE_AGENT_OK if the fetched response says entity Q30 has the English label United States. Do not fetch any other URL.
 PROMPT
   )
   run_openclaw_agent_assertion "$OPENCLAW_OPEN_SANDBOX" "C2 agent reference" "$REFERENCE_AGENT_PROMPT" "REFERENCE_AGENT_OK"
@@ -455,7 +455,7 @@ if [ "${NEMOCLAW_COMMON_EGRESS_SKIP_HERMES:-}" != "1" ]; then
   section "Phase 3: Hermes open public reference"
   HERMES_SANDBOX="${NEMOCLAW_COMMON_EGRESS_HERMES_SANDBOX:-e2e-common-egress-hermes-open}"
   run_onboard "$HERMES_SANDBOX" "hermes" "open"
-  assert_policy_contains "$HERMES_SANDBOX" "C3 common policy" "restcountries.com" "api.open-meteo.com"
+  assert_policy_contains "$HERMES_SANDBOX" "C3 common policy" "www.wikidata.org" "api.open-meteo.com"
   assert_policy_contains "$HERMES_SANDBOX" "C3 Hermes Nous policy" "/firecrawl" "/fal-queue" "/openai-audio" "/browser-use" "/modal"
   HERMES_REFERENCE_AGENT_PROMPT=$(
     cat <<'PROMPT'
@@ -464,11 +464,10 @@ python3 - <<'PY'
 import json
 import urllib.request
 
-url = "https://restcountries.com/v3.1/alpha/US?fields=name,cca3"
+url = "https://www.wikidata.org/w/api.php?action=wbgetentities&ids=Q30&props=labels&languages=en&format=json"
 with urllib.request.urlopen(url, timeout=20) as response:
     doc = json.load(response)
-country = doc[0] if isinstance(doc, list) else doc
-ok = country.get("name", {}).get("common") == "United States" and country.get("cca3") == "USA"
+ok = doc.get("success") == 1 and doc.get("entities", {}).get("Q30", {}).get("labels", {}).get("en", {}).get("value") == "United States"
 print("HERMES_REFERENCE_AGENT_OK" if ok else "HERMES_REFERENCE_AGENT_BAD")
 PY
 After the command completes, reply exactly HERMES_REFERENCE_AGENT_OK if that exact token appeared. Do not fetch any other URL.

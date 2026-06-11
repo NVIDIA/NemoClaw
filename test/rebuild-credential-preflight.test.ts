@@ -33,6 +33,33 @@ afterEach(() => {
   }
 });
 
+function makeMessagingPlan(sandboxName: string, agent: string, channelIds: string[]) {
+  return {
+    schemaVersion: 1,
+    sandboxName,
+    agent,
+    workflow: "onboard",
+    channels: channelIds.map((channelId) => ({
+      channelId,
+      displayName: channelId,
+      authMode: "token-paste",
+      active: true,
+      selected: true,
+      configured: true,
+      disabled: false,
+      inputs: [],
+      hooks: [],
+    })),
+    disabledChannels: [],
+    credentialBindings: [],
+    networkPolicy: { presets: [], entries: [] },
+    agentRender: [],
+    buildSteps: [],
+    stateUpdates: [],
+    healthChecks: [],
+  };
+}
+
 /**
  * Create a temp HOME with a sandbox registry, onboard session, and
  * optionally a saved credential in credentials.json.
@@ -50,7 +77,7 @@ function createFixture(opts: {
   providerSelectionStatus?: string;
   agent?: string | null;
   hermesAuthMethod?: string | null;
-  messagingChannels?: string[] | null;
+  messagingPlanChannels?: string[] | null;
   dockerBuildExitCode?: number;
   providerRegistered?: boolean;
 }) {
@@ -62,7 +89,7 @@ function createFixture(opts: {
     providerSelectionStatus = "complete",
     agent = null,
     hermesAuthMethod = null,
-    messagingChannels = null,
+    messagingPlanChannels = null,
     dockerBuildExitCode = 0,
     providerRegistered = true,
   } = opts;
@@ -70,6 +97,10 @@ function createFixture(opts: {
   tmpFixtures.push(tmpDir);
   const nemoclawDir = path.join(tmpDir, ".nemoclaw");
   fs.mkdirSync(nemoclawDir, { recursive: true, mode: 0o700 });
+  const messagingPlan =
+    messagingPlanChannels && messagingPlanChannels.length > 0
+      ? makeMessagingPlan(sandboxName, agent ?? "openclaw", messagingPlanChannels)
+      : null;
 
   // ── Registry ──────────────────────────────────────────────────
   fs.writeFileSync(
@@ -84,7 +115,7 @@ function createFixture(opts: {
           gpuEnabled: false,
           policies: [],
           agent,
-          messagingChannels,
+          ...(messagingPlan ? { messaging: { schemaVersion: 1, plan: messagingPlan } } : {}),
         },
       },
     }),
@@ -116,7 +147,7 @@ function createFixture(opts: {
       nimContainer: null,
       webSearchConfig: null,
       policyPresets: [],
-      messagingChannels: null,
+      messagingPlan: null,
       metadata: { gatewayName: "nemoclaw", fromDockerfile: null },
       steps: {
         preflight: {
@@ -352,7 +383,7 @@ describe("Issue #2273: atomic rebuild", () => {
     }, () => {
       const f = createFixture({
         agent: "hermes",
-        messagingChannels: ["discord"],
+        messagingPlanChannels: ["discord"],
         credentialEnv: "NVIDIA_API_KEY",
         savedCredential: {
           key: "NVIDIA_API_KEY",
@@ -368,7 +399,9 @@ describe("Issue #2273: atomic rebuild", () => {
         fs.readFileSync(path.join(f.nemoclawDir, "onboard-session.json"), "utf-8"),
       );
       expect(session.agent).toBe("hermes");
-      expect(session.messagingChannels).toEqual(["discord"]);
+      expect(
+        session.messagingPlan?.channels.map((channel: { channelId: string }) => channel.channelId),
+      ).toEqual(["discord"]);
     });
 
     it("aborts rebuild before backup when forced Hermes base image build fails", {
