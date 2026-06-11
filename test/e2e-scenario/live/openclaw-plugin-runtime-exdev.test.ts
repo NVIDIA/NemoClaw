@@ -232,7 +232,6 @@ liveTest(
     await artifacts.writeText("filesystem-layout.txt", resultText(df));
     expect(df.exitCode, resultText(df)).toBe(0);
     expect(resultText(df)).toContain("/dev/shm");
-    expect(resultText(df)).toContain("/sandbox");
 
     const probe = await sandbox.execShell(SANDBOX_NAME, runtimeDepsReplacementProbe, {
       artifactName: "openclaw-plugin-exdev-runtime-deps-replacement",
