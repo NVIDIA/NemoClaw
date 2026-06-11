@@ -29,6 +29,7 @@ const {
 const { stopStaleDashboardListenersForSandbox } = require("./onboard/stale-gateway-cleanup");
 const extraPlaceholderKeysModule: typeof import("./onboard/extra-placeholder-keys") = require("./onboard/extra-placeholder-keys");
 const buildContextStage: typeof import("./onboard/build-context-stage") = require("./onboard/build-context-stage");
+const sandboxCreateLaunch: typeof import("./onboard/sandbox-create-launch") = require("./onboard/sandbox-create-launch");
 const {
   ensureOllamaLoopbackSystemdOverride,
 }: typeof import("./onboard/ollama-systemd") = require("./onboard/ollama-systemd");
@@ -62,8 +63,6 @@ const {
   selectResourceProfileForSandbox,
 }: typeof import("./onboard/resource-profile-selection") = require("./onboard/resource-profile-selection");
 const {
-  isValidProxyHost,
-  isValidProxyPort,
   patchStagedDockerfile,
 }: typeof import("./onboard/dockerfile-patch") = require("./onboard/dockerfile-patch");
 const {
@@ -185,7 +184,6 @@ type RunnerOptions = {
   openshellBinary?: string;
 };
 
-const { buildSubprocessEnv } = require("./subprocess-env");
 const {
   DASHBOARD_PORT,
   GATEWAY_PORT,
@@ -3136,77 +3134,18 @@ async function createSandbox(
     sandboxInferenceBaseUrlOverride,
     hermesToolGateways,
   );
-  // Only pass non-sensitive env vars to the sandbox. Credentials flow through
-  // OpenShell providers — the gateway injects them as placeholders and the L7
-  // proxy rewrites Authorization headers with real secrets at egress.
-  // See: crates/openshell-sandbox/src/secrets.rs (placeholder rewriting),
-  //      crates/openshell-router/src/backend.rs (inference auth injection).
-  //
-  // Use the shared allowlist (subprocess-env.ts) instead of the old
-  // blocklist. The blocklist only blocked 12 specific credential names
-  // and passed EVERYTHING else — including GITHUB_TOKEN,
-  // AWS_SECRET_ACCESS_KEY, SSH_AUTH_SOCK, KUBECONFIG, NPM_TOKEN, and
-  // any CI/CD secrets that happened to be in the host environment.
-  // The allowlist inverts the default: only known-safe env vars are forwarded.
-  // For sandbox create, also strip KUBECONFIG and SSH_AUTH_SOCK: the generic
-  // allowlist needs them for host-side subprocesses, but sandbox code must not
-  // access host Kubernetes or SSH-agent credentials.
-  const envArgs = [formatEnvAssignment("CHAT_UI_URL", chatUiUrl)];
-  // Always pass the effective dashboard port into the sandbox so
-  // nemoclaw-start.sh starts the gateway on the correct port. When the
-  // user sets CHAT_UI_URL with a custom port (e.g. :18790), the port
-  // must reach the container — otherwise _DASHBOARD_PORT defaults to
-  // 18789 and the gateway listens on the wrong port. (#2267, #1925)
-  const effectiveDashboardPort = getDashboardForwardPort(chatUiUrl);
-  envArgs.push(formatEnvAssignment("NEMOCLAW_DASHBOARD_PORT", effectiveDashboardPort));
-  require("./onboard/openclaw-runtime-env").appendOpenClawRuntimeEnvArgs(envArgs, agent);
-  onboardHermesDashboard.appendHermesDashboardEnvArgs(
-    envArgs,
-    hermesDashboardState,
-    formatEnvAssignment,
-  );
-  require("./onboard/host-proxy-env").appendHostProxyEnvArgs(envArgs);
-  // Propagate NEMOCLAW_PROXY_HOST / NEMOCLAW_PROXY_PORT to the runtime
-  // sandbox container. patchStagedDockerfile() already substitutes them
-  // into the build-time Dockerfile ARG/ENV, but `openshell sandbox create
-  // -- env … nemoclaw-start` only forwards the explicitly listed env vars
-  // — image-baked ENV does not propagate into the running pod. Without
-  // this, nemoclaw-start.sh:898 falls back to the default 10.200.0.1:3128
-  // and `HTTPS_PROXY` inside the sandbox ignores the host override. The
-  // build-time substitution and runtime env stay in sync as a result.
-  // Fixes #2424. Uses the shared isValidProxyHost / isValidProxyPort
-  // helpers so build-time and runtime validation stay aligned.
-  const sandboxProxyHost = process.env.NEMOCLAW_PROXY_HOST;
-  if (sandboxProxyHost && isValidProxyHost(sandboxProxyHost)) {
-    envArgs.push(formatEnvAssignment("NEMOCLAW_PROXY_HOST", sandboxProxyHost));
-  }
-  const sandboxProxyPort = process.env.NEMOCLAW_PROXY_PORT;
-  if (sandboxProxyPort && isValidProxyPort(sandboxProxyPort)) {
-    envArgs.push(formatEnvAssignment("NEMOCLAW_PROXY_PORT", sandboxProxyPort));
-  }
-  require("./onboard/extra-placeholder-keys").appendExtraPlaceholderKeysEnvArg(
-    envArgs,
-    extraPlaceholderKeys,
-    formatEnvAssignment,
-  );
   const sandboxReadyTimeoutSecs = getSandboxReadyTimeoutSecs(effectiveSandboxGpuConfig);
-  const sandboxEnv = buildSubprocessEnv();
-  // Remove host-infrastructure credentials that the generic allowlist
-  // permits for host-side processes but that must not enter the sandbox.
-  delete sandboxEnv.KUBECONFIG;
-  delete sandboxEnv.SSH_AUTH_SOCK;
-  // Run without piping through awk — the pipe masked non-zero exit codes
-  // from openshell because bash returns the status of the last pipeline
-  // command (awk, always 0) unless pipefail is set. Removing the pipe
-  // lets the real exit code flow through to run().
-  const sandboxStartupCommand = ["env", ...envArgs, "nemoclaw-start"];
-  const createCommand = `${openshellShellCommand([
-    "sandbox",
-    "create",
-    ...createArgs,
-    "--",
-    ...sandboxStartupCommand,
-  ])} 2>&1`;
+  const { createCommand, effectiveDashboardPort, sandboxEnv, sandboxStartupCommand } =
+    sandboxCreateLaunch.prepareSandboxCreateLaunch({
+      agent,
+      chatUiUrl,
+      createArgs,
+      env: process.env,
+      extraPlaceholderKeys,
+      getDashboardForwardPort,
+      hermesDashboardState,
+      openshellShellCommand,
+    });
   const dockerGpuCreatePatch = dockerGpuSandboxCreate.createDockerGpuSandboxCreatePatch({
     enabled: useDockerGpuPatch,
     sandboxName,
