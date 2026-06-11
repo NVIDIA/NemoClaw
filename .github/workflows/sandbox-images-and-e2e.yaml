@@ -97,18 +97,35 @@ jobs:
           path: /tmp/nemoclaw-hermes-sandbox-secret-boundary.log
           if-no-files-found: ignore
 
-      - name: Run Hermes root entrypoint smoke
-        env:
-          NEMOCLAW_HERMES_TEST_IMAGE: nemoclaw-hermes-production
-        run: bash test/e2e/test-hermes-root-entrypoint-smoke.sh
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
 
-      - name: Upload Hermes root entrypoint smoke log on failure
-        if: failure()
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Run Hermes root entrypoint smoke Vitest test
+        env:
+          E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/hermes-root-entrypoint-smoke
+          NEMOCLAW_HERMES_TEST_IMAGE: nemoclaw-hermes-production
+          NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+        run: |
+          set -euo pipefail
+          npx vitest run --project e2e-scenarios-live \
+            test/e2e-scenario/live/hermes-root-entrypoint-smoke.test.ts \
+            --silent=false --reporter=default
+
+      - name: Upload Hermes root entrypoint smoke artifacts
+        if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: hermes-root-entrypoint-smoke-log
-          path: /tmp/nemoclaw-hermes-root-entrypoint-smoke.log
+          name: hermes-root-entrypoint-smoke-artifacts
+          path: e2e-artifacts/vitest/hermes-root-entrypoint-smoke/
+          include-hidden-files: false
           if-no-files-found: ignore
+          retention-days: 14
 
   build-sandbox-images-arm64:
     if: inputs.run_arm64
