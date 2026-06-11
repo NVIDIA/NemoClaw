@@ -7,7 +7,6 @@ import { fileURLToPath } from "node:url";
 import YAML from "yaml";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
-const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e-scenarios.yaml");
 const DEFAULT_VITEST_WORKFLOW_PATH = join(
   REPO_ROOT,
   ".github",
@@ -48,6 +47,17 @@ function requireStep(errors: string[], steps: readonly WorkflowStep[], name: str
   return step;
 }
 
+function requireJobStep(
+  errors: string[],
+  jobName: string,
+  steps: readonly WorkflowStep[],
+  name: string,
+): WorkflowStep | undefined {
+  const step = namedStep(steps, name);
+  if (!step) errors.push(`${jobName} job missing step: ${name}`);
+  return step;
+}
+
 function requireRunContains(errors: string[], step: WorkflowStep | undefined, expected: string): void {
   if (!step) return;
   if (!stringValue(step.run).includes(expected)) {
@@ -59,6 +69,23 @@ function requireRunDoesNotContain(errors: string[], step: WorkflowStep | undefin
   if (!step) return;
   if (stringValue(step.run).includes(forbidden)) {
     errors.push(`step '${step.name ?? "<unnamed>"}' run script must not include ${forbidden}`);
+  }
+}
+
+function requireUploadPathContains(errors: string[], uploadPath: string, expected: string): void {
+  if (!uploadPath.includes(expected)) {
+    errors.push(`artifact upload path must include ${expected}`);
+  }
+}
+
+function requireEnvDoesNotExposeSecret(
+  errors: string[],
+  owner: string,
+  env: WorkflowRecord,
+  secretName: string,
+): void {
+  if (Object.hasOwn(env, secretName)) {
+    errors.push(`${owner} env must not include ${secretName}`);
   }
 }
 
@@ -95,115 +122,182 @@ function requireNoDispatchInputInterpolation(
   }
 }
 
-export function validateE2eScenariosWorkflowBoundary(
-  workflowPath = DEFAULT_WORKFLOW_PATH,
-): string[] {
-  const workflow = asRecord(YAML.parse(readFileSync(workflowPath, "utf-8")));
-  const errors: string[] = [];
-  const triggers = asRecord(workflow.on ?? workflow[true as unknown as string]);
-
-  const workflowDispatch = requireWorkflowDispatch(errors, triggers);
-  const workflowCall = asRecord(triggers.workflow_call);
-  if (Object.keys(workflowCall).length === 0) errors.push("workflow must support workflow_call");
-  rejectAutomaticTriggers(errors, triggers);
-
-  const dispatchInputs = asRecord(workflowDispatch.inputs);
-  requireInput(errors, dispatchInputs, "scenarios");
-  if (Object.hasOwn(dispatchInputs, "scenario")) {
-    errors.push("workflow_dispatch must not expose legacy scenario input");
-  }
-  if (Object.hasOwn(dispatchInputs, "suite_filter")) {
-    errors.push("workflow_dispatch must not expose legacy suite_filter input");
-  }
-  if (Object.hasOwn(dispatchInputs, "plan_only")) {
-    errors.push("workflow_dispatch must not expose retired plan_only input");
+function validateOpenShellVersionPinVitestJob(errors: string[], jobs: WorkflowRecord): void {
+  const jobName = "openshell-version-pin-vitest";
+  const job = asRecord(jobs[jobName]);
+  if (Object.keys(job).length === 0) {
+    errors.push("workflow missing openshell-version-pin-vitest job");
+    return;
   }
 
-  const permissions = asRecord(workflow.permissions);
-  if (permissions.contents !== "read") errors.push("workflow permissions.contents must be read");
-
-  const jobs = asRecord(workflow.jobs);
-  const resolveRunner = asRecord(jobs["resolve-runner"]);
-  if (Object.keys(resolveRunner).length === 0) errors.push("workflow missing resolve-runner job");
-  const runScenario = asRecord(jobs["run-scenario"]);
-  if (Object.keys(runScenario).length === 0) errors.push("workflow missing run-scenario job");
-  if (runScenario["runs-on"] !== "${{ needs.resolve-runner.outputs.runner }}") {
-    errors.push("run-scenario job must use the resolved runner output");
+  if (job["runs-on"] !== "ubuntu-latest") {
+    errors.push("openshell-version-pin-vitest job must run on ubuntu-latest");
+  }
+  if (Object.hasOwn(job, "needs")) {
+    errors.push("openshell-version-pin-vitest job must run independently of generate-matrix");
+  }
+  if (Object.hasOwn(job, "if")) {
+    errors.push(
+      "openshell-version-pin-vitest job must run independently of workflow dispatch scenario filters",
+    );
   }
 
-  const steps = asSteps(runScenario.steps);
-  const normalRun = requireStep(errors, steps, "Run typed scenarios");
-  requireRunContains(errors, normalRun, "npx tsx test/e2e-scenario/scenarios/run.ts");
-  requireRunContains(errors, normalRun, "--scenarios");
-  // The TS runner has one execution mode: live. Workflows must not pass
-  // --dry-run, --plan-only, or --validate-only — they hide real test runs.
-  requireRunDoesNotContain(errors, normalRun, "--dry-run");
-  requireRunDoesNotContain(errors, normalRun, "--plan-only");
-  requireRunDoesNotContain(errors, normalRun, "--validate-only");
+  const jobEnv = asRecord(job.env);
+  if (jobEnv.NEMOCLAW_RUN_E2E_SCENARIOS !== "1") {
+    errors.push("openshell-version-pin-vitest job must set NEMOCLAW_RUN_E2E_SCENARIOS=1");
+  }
+  if (
+    jobEnv.E2E_ARTIFACT_DIR !==
+    "${{ github.workspace }}/e2e-artifacts/vitest/openshell-version-pin"
+  ) {
+    errors.push(
+      "openshell-version-pin-vitest job must write artifacts under e2e-artifacts/vitest/openshell-version-pin",
+    );
+  }
+  requireEnvDoesNotExposeSecret(errors, "openshell-version-pin-vitest job", jobEnv, "NVIDIA_API_KEY");
 
-  const wslInstall = requireStep(errors, steps, "Ensure Ubuntu WSL exists");
-  requireRunContains(errors, wslInstall, "wsl --install");
-  requireRunContains(errors, wslInstall, "wsl --set-default");
+  const steps = asSteps(job.steps);
+  requireNoDispatchInputInterpolation(errors, steps);
+  for (const step of steps) {
+    requireEnvDoesNotExposeSecret(
+      errors,
+      `openshell-version-pin-vitest step '${step.name ?? step.uses ?? "<unnamed>"}'`,
+      asRecord(step.env),
+      "NVIDIA_API_KEY",
+    );
+  }
 
-  const wslDeps = requireStep(errors, steps, "Install Ubuntu dependencies");
-  requireRunContains(errors, wslDeps, "apt-get install");
-  requireRunContains(errors, wslDeps, "rsync");
+  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
+  if (!checkout) errors.push("openshell-version-pin-vitest job missing checkout step");
+  requireFullShaAction(errors, checkout, "openshell-version-pin-vitest checkout");
+  if (asRecord(checkout?.with)["persist-credentials"] !== false) {
+    errors.push("openshell-version-pin-vitest checkout step must set persist-credentials=false");
+  }
 
-  const wslNode = requireStep(errors, steps, "Install Node.js 22 in WSL");
-  requireRunContains(errors, wslNode, "setup_22.x");
-  requireRunContains(errors, wslNode, "npm --version");
+  const setupNode = namedStep(steps, "Set up Node");
+  if (!setupNode) errors.push("openshell-version-pin-vitest job missing step: Set up Node");
+  requireFullShaAction(errors, setupNode, "openshell-version-pin-vitest setup-node");
 
-  const wslWorkspace = requireStep(errors, steps, "Copy checkout into WSL ext4 workspace");
-  requireRunContains(errors, wslWorkspace, "rsync -a");
-  requireRunContains(errors, wslWorkspace, "WSL ext4 workspace ready");
+  const installRootDependencies = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Install root dependencies",
+  );
+  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
 
-  const wslRun = requireStep(errors, steps, "Run typed scenarios in WSL");
-  requireRunContains(errors, wslRun, "npx tsx test/e2e-scenario/scenarios/run.ts");
-  requireRunContains(errors, wslRun, "--scenarios");
-  // From this PR: the typed runner is the only execution path; the
-  // bash runner / dry-run / validate-only / plan-only modes are
-  // removed from CI.
-  requireRunDoesNotContain(errors, wslRun, "--dry-run");
-  requireRunDoesNotContain(errors, wslRun, "--plan-only");
-  requireRunDoesNotContain(errors, wslRun, "--validate-only");
-  // From main (#4346): the WSL step must use the robust PowerShell
-  // wrapper that materializes a bash script, copies it into WSL via
-  // wslpath, and invokes it with `bash -l` so Docker WSL integration
-  // and Ubuntu first-run races are handled.
-  requireRunContains(errors, wslRun, "$env:WSL_WORKDIR");
-  requireRunContains(errors, wslRun, "WriteAllText");
-  requireRunContains(errors, wslRun, "bash -l $wslTmp");
+  const runVitest = requireJobStep(errors, jobName, steps, "Run OpenShell version-pin live test");
+  requireRunContains(errors, runVitest, "npx vitest run --project e2e-scenarios-live");
+  requireRunContains(errors, runVitest, "test/e2e-scenario/live/openshell-version-pin.test.ts");
 
-  const upload = requireStep(errors, steps, "Upload scenario artifacts");
+  const upload = requireJobStep(errors, jobName, steps, "Upload OpenShell version-pin artifacts");
+  requireFullShaAction(errors, upload, "openshell-version-pin-vitest upload-artifact");
   const uploadWith = asRecord(upload?.with);
-  if (uploadWith.name !== "e2e-scenario-${{ inputs.scenarios || github.event.inputs.scenarios }}") {
-    errors.push("artifact upload name must include the scenarios input");
-  }
-  // Framework-owned secret hygiene: include-hidden-files MUST be false.
-  // Hidden dotfiles under the workspace can carry raw secrets (notably
-  // .e2e/context.env, written by e2e_context_set without redaction).
-  // The redacted surfaces are explicit subpaths under .e2e/ that the
-  // framework writes via orchestrators/redaction.ts::pipeRedacted.
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push("artifact upload must set include-hidden-files: false (raw context.env must not leak)");
+  if (uploadWith.name !== "e2e-vitest-scenarios-openshell-version-pin") {
+    errors.push("openshell-version-pin-vitest artifact upload name must be stable");
   }
   const uploadPath = stringValue(uploadWith.path);
-  if (!uploadPath.includes(".e2e/actions/")) {
-    errors.push("artifact upload path must include .e2e/actions/ (redacted action evidence)");
+  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/vitest/openshell-version-pin/");
+  if (uploadWith["include-hidden-files"] !== false) {
+    errors.push("openshell-version-pin-vitest artifact upload must set include-hidden-files: false");
   }
-  if (!uploadPath.includes(".e2e/logs/")) {
-    errors.push("artifact upload path must include .e2e/logs/ (redacted shell-step evidence)");
+  if (uploadWith["if-no-files-found"] !== "ignore") {
+    errors.push("openshell-version-pin-vitest artifact upload must ignore missing fixture artifacts");
   }
-  // Bare blanket '.e2e/' (without a trailing subdir) would re-include
-  // the raw context.env file. Reject it so the explicit-subpath
-  // contract stays honest. Subpaths like '.e2e/actions/' are fine.
-  for (const line of uploadPath.split("\n")) {
-    if (line.trim() === ".e2e/") {
-      errors.push("artifact upload path must not list bare .e2e/ (use explicit subpaths to avoid context.env leakage)");
-    }
+  if (uploadWith["retention-days"] !== 14) {
+    errors.push("openshell-version-pin-vitest artifact upload retention-days must be 14");
+  }
+}
+
+
+function validateOnboardNegativePathsVitestJob(errors: string[], jobs: WorkflowRecord): void {
+  const jobName = "onboard-negative-paths-vitest";
+  const job = asRecord(jobs[jobName]);
+  if (Object.keys(job).length === 0) {
+    errors.push("workflow missing onboard-negative-paths-vitest job");
+    return;
   }
 
-  return errors;
+  if (job["runs-on"] !== "ubuntu-latest") {
+    errors.push("onboard-negative-paths-vitest job must run on ubuntu-latest");
+  }
+  if (Object.hasOwn(job, "needs")) {
+    errors.push("onboard-negative-paths-vitest job must run independently of generate-matrix");
+  }
+  if (Object.hasOwn(job, "if")) {
+    errors.push(
+      "onboard-negative-paths-vitest job must run independently of workflow dispatch scenario filters",
+    );
+  }
+
+  const jobEnv = asRecord(job.env);
+  if (jobEnv.NEMOCLAW_RUN_E2E_SCENARIOS !== "1") {
+    errors.push("onboard-negative-paths-vitest job must set NEMOCLAW_RUN_E2E_SCENARIOS=1");
+  }
+  if (
+    jobEnv.E2E_ARTIFACT_DIR !==
+    "${{ github.workspace }}/e2e-artifacts/vitest/onboard-negative-paths"
+  ) {
+    errors.push(
+      "onboard-negative-paths-vitest job must write artifacts under e2e-artifacts/vitest/onboard-negative-paths",
+    );
+  }
+  requireEnvDoesNotExposeSecret(errors, "onboard-negative-paths-vitest job", jobEnv, "NVIDIA_API_KEY");
+
+  const steps = asSteps(job.steps);
+  requireNoDispatchInputInterpolation(errors, steps);
+  for (const step of steps) {
+    requireEnvDoesNotExposeSecret(
+      errors,
+      `onboard-negative-paths-vitest step '${step.name ?? step.uses ?? "<unnamed>"}'`,
+      asRecord(step.env),
+      "NVIDIA_API_KEY",
+    );
+  }
+
+  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
+  if (!checkout) errors.push("onboard-negative-paths-vitest job missing checkout step");
+  requireFullShaAction(errors, checkout, "onboard-negative-paths-vitest checkout");
+  if (asRecord(checkout?.with)["persist-credentials"] !== false) {
+    errors.push("onboard-negative-paths-vitest checkout step must set persist-credentials=false");
+  }
+
+  const setupNode = namedStep(steps, "Set up Node");
+  if (!setupNode) errors.push("onboard-negative-paths-vitest job missing step: Set up Node");
+  requireFullShaAction(errors, setupNode, "onboard-negative-paths-vitest setup-node");
+
+  const installRootDependencies = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Install root dependencies",
+  );
+  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
+
+  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
+  requireRunContains(errors, buildCli, "npm run build:cli");
+
+  const runVitest = requireJobStep(errors, jobName, steps, "Run onboard negative-paths live test");
+  requireRunContains(errors, runVitest, "npx vitest run --project e2e-scenarios-live");
+  requireRunContains(errors, runVitest, "test/e2e-scenario/live/onboard-negative-paths.test.ts");
+
+  const upload = requireJobStep(errors, jobName, steps, "Upload onboard negative-paths artifacts");
+  requireFullShaAction(errors, upload, "onboard-negative-paths-vitest upload-artifact");
+  const uploadWith = asRecord(upload?.with);
+  if (uploadWith.name !== "e2e-vitest-scenarios-onboard-negative-paths") {
+    errors.push("onboard-negative-paths-vitest artifact upload name must be stable");
+  }
+  const uploadPath = stringValue(uploadWith.path);
+  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/vitest/onboard-negative-paths/");
+  if (uploadWith["include-hidden-files"] !== false) {
+    errors.push("onboard-negative-paths-vitest artifact upload must set include-hidden-files: false");
+  }
+  if (uploadWith["if-no-files-found"] !== "ignore") {
+    errors.push("onboard-negative-paths-vitest artifact upload must ignore missing fixture artifacts");
+  }
+  if (uploadWith["retention-days"] !== 14) {
+    errors.push("onboard-negative-paths-vitest artifact upload retention-days must be 14");
+  }
 }
 
 export function validateE2eVitestScenariosWorkflowBoundary(
@@ -252,6 +346,8 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   requireRunContains(errors, generate, "--scenarios");
   requireRunContains(errors, generate, "^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$");
   requireRunDoesNotContain(errors, generate, "^[A-Za-z0-9._-]+");
+  requireRunContains(errors, generate, "## Vitest E2E Scenario Matrix");
+  requireRunContains(errors, generate, "| Scenario | Runner | Label |");
 
   const liveScenarios = asRecord(jobs["live-scenarios"]);
   if (Object.keys(liveScenarios).length === 0) errors.push("workflow missing live-scenarios job");
@@ -277,15 +373,26 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   if (!stringValue(jobEnv.E2E_ARTIFACT_DIR).includes("e2e-artifacts/vitest")) {
     errors.push("live-scenarios job must write artifacts under e2e-artifacts/vitest");
   }
-  if (!stringValue(jobEnv.E2E_ARTIFACT_DIR).includes("${{ matrix.id }}")) {
-    errors.push("live-scenarios artifacts must be scoped by matrix.id");
+  if (stringValue(jobEnv.E2E_ARTIFACT_DIR).includes("${{ matrix.id }}")) {
+    errors.push("live-scenarios job E2E_ARTIFACT_DIR must be the Vitest artifact parent");
   }
   if (!stringValue(jobEnv.NEMOCLAW_CLI_BIN).includes("bin/nemoclaw.js")) {
     errors.push("live-scenarios job must point NEMOCLAW_CLI_BIN at the repo CLI");
   }
+  requireEnvDoesNotExposeSecret(errors, "live-scenarios job", jobEnv, "NVIDIA_API_KEY");
 
   const steps = asSteps(liveScenarios.steps);
   requireNoDispatchInputInterpolation(errors, steps);
+  for (const step of steps) {
+    if (step.name !== "Run Vitest live E2E scenarios") {
+      requireEnvDoesNotExposeSecret(
+        errors,
+        `step '${step.name ?? step.uses ?? "<unnamed>"}'`,
+        asRecord(step.env),
+        "NVIDIA_API_KEY",
+      );
+    }
+  }
 
   const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
   if (!checkout) errors.push("live-scenarios job missing checkout step");
@@ -306,6 +413,9 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   if (runVitestEnv.SCENARIO_ID !== "${{ matrix.id }}") {
     errors.push("Vitest step must pass matrix.id through SCENARIO_ID env");
   }
+  if (runVitestEnv.NVIDIA_API_KEY !== "${{ secrets.NVIDIA_API_KEY }}") {
+    errors.push("Vitest step must receive NVIDIA_API_KEY from secrets");
+  }
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-scenarios-live");
   requireRunContains(errors, runVitest, "test/e2e-scenario/live/registry-scenarios.test.ts");
   requireRunContains(errors, runVitest, '"^${SCENARIO_ID}$"');
@@ -318,7 +428,10 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   if (summaryEnv.SCENARIO_LABEL !== "${{ matrix.label }}") {
     errors.push("summary step must pass matrix.label through SCENARIO_LABEL env");
   }
-  requireRunContains(errors, summary, "${SCENARIO_ID}");
+  requireRunContains(errors, summary, "run-plan.json");
+  requireRunContains(errors, summary, 'Path(os.environ["E2E_ARTIFACT_DIR"]) / os.environ["SCENARIO_ID"]');
+  requireRunContains(errors, summary, "| Scenario | Manifest | Expected state | Suites | Phases |");
+  requireRunContains(errors, summary, "SCENARIO_ID");
 
   const upload = requireStep(errors, steps, "Upload Vitest E2E artifacts");
   requireFullShaAction(errors, upload, "upload-artifact");
@@ -326,8 +439,36 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   if (uploadWith.name !== "e2e-vitest-scenarios-${{ matrix.id }}") {
     errors.push("artifact upload name must include matrix.id");
   }
-  if (uploadWith.path !== "e2e-artifacts/vitest/${{ matrix.id }}/") {
-    errors.push("artifact upload path must be non-hidden and scoped by matrix.id");
+  const uploadPath = stringValue(uploadWith.path);
+  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/vitest/${{ matrix.id }}/run-plan.json");
+  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/vitest/${{ matrix.id }}/scenario.json");
+  requireUploadPathContains(
+    errors,
+    uploadPath,
+    "e2e-artifacts/vitest/${{ matrix.id }}/scenario-result.json",
+  );
+  requireUploadPathContains(
+    errors,
+    uploadPath,
+    "e2e-artifacts/vitest/${{ matrix.id }}/environment.result.json",
+  );
+  requireUploadPathContains(
+    errors,
+    uploadPath,
+    "e2e-artifacts/vitest/${{ matrix.id }}/onboarding.result.json",
+  );
+  requireUploadPathContains(
+    errors,
+    uploadPath,
+    "e2e-artifacts/vitest/${{ matrix.id }}/state-validation.result.json",
+  );
+  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/vitest/${{ matrix.id }}/actions/");
+  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/vitest/${{ matrix.id }}/logs/");
+  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/vitest/${{ matrix.id }}/shell/");
+  for (const line of uploadPath.split("\n")) {
+    if (line.trim() === "e2e-artifacts/vitest/${{ matrix.id }}/") {
+      errors.push("artifact upload path must not list the whole matrix artifact directory");
+    }
   }
   if (uploadWith["include-hidden-files"] !== false) {
     errors.push("artifact upload must set include-hidden-files: false");
@@ -335,6 +476,12 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   if (uploadWith["if-no-files-found"] !== "ignore") {
     errors.push("artifact upload must ignore missing fixture artifacts");
   }
+  if (uploadWith["retention-days"] !== 14) {
+    errors.push("artifact upload retention-days must be 14");
+  }
+
+  validateOpenShellVersionPinVitestJob(errors, jobs);
+  validateOnboardNegativePathsVitestJob(errors, jobs);
 
   return errors;
 }

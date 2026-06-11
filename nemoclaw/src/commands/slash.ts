@@ -31,7 +31,9 @@ export function handleSlashCommand(
   ctx: PluginCommandContext,
   api: OpenClawPluginApi,
 ): PluginCommandResult {
-  const subcommand = ctx.args?.trim().split(/\s+/)[0] ?? "";
+  const tokens = ctx.args?.trim().split(/\s+/).filter(Boolean) ?? [];
+  const subcommand = tokens[0] ?? "";
+  const subArg = tokens[1];
 
   switch (subcommand) {
     case "status":
@@ -41,7 +43,7 @@ export function handleSlashCommand(
     case "onboard":
       return slashOnboard();
     case "shields":
-      return slashShieldsStatus();
+      return slashShieldsStatus(subArg);
     case "config":
       return slashConfigShow();
     default:

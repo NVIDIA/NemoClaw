@@ -6,9 +6,14 @@
  *
  * Each entry pins the model-specific `vllm serve` flags (reasoning parser,
  * tool-call parser, max model length, load format) so the express path can
- * swap models without leaving the wrong flags behind. Users select a model
- * via `NEMOCLAW_VLLM_MODEL=<envValue>` before invoking the installer; the
- * default (when the env var is unset) is the first entry.
+ * swap models without leaving the wrong flags behind.
+ *
+ * Selection precedence in `installVllm`:
+ *   1. `NEMOCLAW_VLLM_MODEL=<envValue-or-HF-id>` for automation overrides.
+ *   2. Interactive picker over the per-platform subset (via
+ *      `modelsForPlatform`), defaulting to the profile's `defaultModel`.
+ *   3. Non-interactive runs without an override use the profile default
+ *      directly, never the first registry entry.
  *
  * Gated entries (e.g. DeepSeek-R1 Distill Llama 70B) require the operator
  * to have accepted the model's licence on Hugging Face AND export a
@@ -16,10 +21,12 @@
  * before the wizard pulls the model weights so the failure is fast and the
  * user knows exactly which token to provision.
  *
- * The registry is deliberately small and additive — extend it when QA
- * adds a model to the express coverage matrix (related: NemoClaw issue
- * tracking the express vLLM model picker).
+ * The registry is deliberately small and additive — extend it only when a
+ * new checkpoint has its `vllm serve` flags, context length, memory
+ * envelope, and tool-call behaviour validated.
  */
+
+export type VllmPlatform = "spark" | "station" | "linux";
 
 export interface VllmModelDef {
   /** Hugging Face model id (also passed to `vllm serve`). */
@@ -34,6 +41,14 @@ export interface VllmModelDef {
   modelArgs: string[];
   /** True when the upstream HF repo requires accepting a licence. */
   gated: boolean;
+  /**
+   * Platforms whose interactive picker should offer this entry. Models with
+   * platform-specific flags (the NVFP4 MoE checkpoint targets `sm_121a` only,
+   * the very large V4 Flash recipe wants Station-class VRAM) appear only on
+   * profiles they can actually run on. Non-interactive callers and direct
+   * `NEMOCLAW_VLLM_MODEL` overrides bypass the filter.
+   */
+  platforms: readonly VllmPlatform[];
   /**
    * Environment variables exported immediately before `vllm serve` (e.g.
    * FlashInfer / MoE-backend selection, target SM arch). Joined as
@@ -64,6 +79,7 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
       "--enable-prefix-caching",
     ],
     gated: false,
+    platforms: ["spark", "station", "linux"],
   },
   {
     id: "deepseek-ai/DeepSeek-R1-Distill-Llama-70B",
@@ -82,6 +98,7 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
       "hermes",
     ],
     gated: true,
+    platforms: ["spark", "station", "linux"],
   },
   {
     id: "nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8",
@@ -93,6 +110,7 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
     maxModelLen: 262144,
     modelArgs: ["--gpu-memory-utilization", "0.7", "--load-format", "fastsafetensors"],
     gated: false,
+    platforms: ["spark", "station", "linux"],
   },
   {
     id: "deepseek-ai/DeepSeek-V4-Flash",
@@ -132,6 +150,7 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
       "auto",
     ],
     gated: false,
+    platforms: ["station"],
   },
   {
     id: "nvidia/Qwen3.6-35B-A3B-NVFP4",
@@ -174,6 +193,7 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
       "fastsafetensors",
     ],
     gated: false,
+    platforms: ["spark"],
     // Arch- and backend-specific knobs required for the NVFP4 MoE checkpoint
     // on DGX Spark (GB10 / sm_121a) with the FlashInfer CUTLASS FP8 path.
     serveEnv: {
@@ -186,6 +206,15 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
 ] as const;
 
 export const DEFAULT_VLLM_MODEL: VllmModelDef = VLLM_MODELS[0];
+
+/**
+ * Subset of the registry that should appear in the interactive picker for a
+ * given platform. Order matches registry order so callers can stably annotate
+ * the recommended entry by id rather than position.
+ */
+export function modelsForPlatform(platform: VllmPlatform): readonly VllmModelDef[] {
+  return VLLM_MODELS.filter((model) => model.platforms.includes(platform));
+}
 
 const HF_TOKEN_ENV_KEYS = ["HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"] as const;
 

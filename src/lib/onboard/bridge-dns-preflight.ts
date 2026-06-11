@@ -77,13 +77,16 @@ function printDaemonJsonDnsPatch(opts: DaemonJsonDnsPatchOpts): void {
 }
 import {
   BUSYBOX_PROBE_IMAGE,
+  DEFAULT_HOST_DNS_PROBE_HOSTNAME,
   DOCKER_DESKTOP_WSL_INTEGRATION_HINT,
   type DockerBridgeContainerStartProbeResult,
   getDockerBridgeGatewayIp,
   type HostAssessment,
   isFatalContainerDnsProbeFailure,
+  isFatalHostDnsProbeFailure,
   probeContainerDns,
   probeDockerBridgeContainerStart,
+  probeHostDns,
 } from "./preflight";
 
 type Host = HostAssessment;
@@ -145,7 +148,7 @@ export function printDockerBridgeContainerStartFailure(
  * wall (mirroring the [[assertCdiNvidiaGpuSpecPresent]] resume backstop
  * pattern at #3152).
  */
-export function assertDockerBridgeAndContainerDnsHealthy(host: Host): void {
+export function assertDockerBridgeAndContainerDnsHealthy(host: Host, nonInteractive = false): void {
   // A minimal bridge-backed container start catches Docker/kernel failures
   // (notably Jetson veth "operation not supported") before longer gateway or
   // sandbox build work starts. Only veth/timeout/killed/daemon-unreachable
@@ -175,6 +178,15 @@ export function assertDockerBridgeAndContainerDnsHealthy(host: Host): void {
     }
     console.warn("    Continuing to DNS probe for more specific diagnosis.");
   }
+
+  // Host-side DNS (#4784). The container DNS probe below only proves the
+  // docker network namespace can resolve names; a host OUTPUT chain that
+  // drops tcp/udp:53 still lets that pass while the CLI process itself
+  // cannot resolve the provider endpoint, so later NVIDIA Endpoints
+  // validation dies with `curl: (6) Could not resolve host: ...`. Catch
+  // that here, before provider validation, and keep it distinct from the
+  // container-DNS line.
+  assertHostDnsHealthy(host, { nonInteractive });
 
   // DNS resolution from inside containers (#2101). A corp firewall that
   // blocks outbound UDP:53 to public resolvers leaves the sandbox build
@@ -251,6 +263,182 @@ export function assertDockerBridgeAndContainerDnsHealthy(host: Host): void {
   console.error("");
   printContainerDnsRemediation(host);
   process.exit(1);
+}
+
+/**
+ * Environment escape hatch for the host DNS preflight. Air-gapped or
+ * local-inference-only hosts that intentionally cannot resolve public
+ * provider endpoints can set this to skip the check rather than abort.
+ */
+export const SKIP_HOST_DNS_PREFLIGHT_ENV = "NEMOCLAW_SKIP_HOST_DNS_PREFLIGHT";
+
+function hostDnsPreflightSkipped(env: NodeJS.ProcessEnv = process.env): boolean {
+  const value = env[SKIP_HOST_DNS_PREFLIGHT_ENV];
+  return value === "1" || String(value || "").toLowerCase() === "true";
+}
+
+// `NEMOCLAW_PROVIDER` keys that resolve to NVIDIA-hosted endpoints
+// (integrate.api.nvidia.com). Mirrors the aliases in
+// `onboard/providers.ts::getNonInteractiveProvider`. Local/custom and
+// other hosted providers (ollama, vllm, openai, anthropic, nim-local, …)
+// do not need this host, so the NVIDIA host DNS probe must not gate them.
+const NVIDIA_ENDPOINT_PROVIDER_KEYS = new Set(["build", "cloud", "routed"]);
+
+/**
+ * Whether onboarding's effective inference provider is NVIDIA Endpoints,
+ * so the `integrate.api.nvidia.com` host DNS probe is relevant.
+ *
+ * `NEMOCLAW_PROVIDER` is honored only in non-interactive mode (mirroring
+ * `getRequestedProviderHint`), where an unset value defaults to NVIDIA
+ * Endpoints. A fresh interactive run hits preflight *before* the provider
+ * menu, so it returns false and is never blocked on NVIDIA-domain DNS — an
+ * interactive user can still pick a local provider (codex #4784 P2).
+ */
+function usesNvidiaEndpointProvider(
+  env: NodeJS.ProcessEnv = process.env,
+  nonInteractive = false,
+): boolean {
+  if (!nonInteractive) return false;
+  const envKey = String(env.NEMOCLAW_PROVIDER || "")
+    .trim()
+    .toLowerCase();
+  if (!envKey) return true;
+  return NVIDIA_ENDPOINT_PROVIDER_KEYS.has(envKey);
+}
+
+/**
+ * Whether the provider host is reached through a configured HTTPS/ALL
+ * proxy (honoring NO_PROXY). When it is, the later curl-based provider
+ * validation hands the hostname to the proxy and never resolves it
+ * locally, so a direct host DNS probe would false-fail valid corporate /
+ * proxied setups (codex #4784 P2). Skip the probe in that case.
+ */
+function providerHostProxied(env: NodeJS.ProcessEnv, hostname: string): boolean {
+  const proxy = env.HTTPS_PROXY || env.https_proxy || env.ALL_PROXY || env.all_proxy || "";
+  if (!String(proxy).trim()) return false;
+  const noProxy = String(env.NO_PROXY || env.no_proxy || "");
+  const host = hostname.trim().toLowerCase();
+  const bypassed = noProxy
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean)
+    .some((entry) => {
+      if (entry === "*") return true;
+      const e = entry.replace(/^\*?\./, "");
+      return host === e || host.endsWith(`.${e}`);
+    });
+  return !bypassed;
+}
+
+export interface AssertHostDnsHealthyOpts {
+  /** Whether onboarding is running non-interactively (default NVIDIA path). */
+  nonInteractive?: boolean;
+  /** Inject a host DNS probe result (test seam). */
+  probeHostDnsImpl?: typeof probeHostDns;
+  /** Override the skip-env decision (test seam). */
+  env?: NodeJS.ProcessEnv;
+  /** Override process exit (test seam). */
+  exit?: (code: number) => void;
+}
+
+/**
+ * Host DNS gate (#4784). Resolves the provider endpoint from the CLI
+ * process and prints a `Host DNS resolution` line distinct from the
+ * `Container DNS resolution` line. A fatal failure (resolver unreachable
+ * or the name cannot be resolved) exits early with host-DNS remediation;
+ * an inconclusive probe (could not even spawn) warns and continues so a
+ * probe-infrastructure hiccup never blocks onboarding.
+ */
+export function assertHostDnsHealthy(host: Host, opts: AssertHostDnsHealthyOpts = {}): void {
+  const env = opts.env ?? process.env;
+  const exit = opts.exit ?? ((code: number) => process.exit(code));
+  const probe = opts.probeHostDnsImpl ?? probeHostDns;
+
+  if (hostDnsPreflightSkipped(env)) {
+    console.log(`  ⓘ Host DNS resolution check skipped (${SKIP_HOST_DNS_PREFLIGHT_ENV} is set)`);
+    return;
+  }
+
+  // The probe resolves the NVIDIA Endpoints host, so only run it when that
+  // is the effective provider. A user who explicitly selected a local or
+  // non-NVIDIA provider — or who hasn't chosen one yet in interactive mode —
+  // must not be blocked by NVIDIA-domain DNS.
+  if (!usesNvidiaEndpointProvider(env, opts.nonInteractive ?? false)) {
+    return;
+  }
+
+  // When the provider host is reached through a configured proxy, curl-based
+  // provider validation never resolves it locally, so a direct DNS probe
+  // would false-fail. Skip and let provider validation use the proxy route.
+  if (providerHostProxied(env, DEFAULT_HOST_DNS_PROBE_HOSTNAME)) {
+    console.log(
+      "  ⓘ Host DNS resolution check skipped (HTTPS proxy configured; provider reached via proxy)",
+    );
+    return;
+  }
+
+  const result = probe();
+  if (result.ok) {
+    console.log("  ✓ Host DNS resolution works");
+    return;
+  }
+  if (!isFatalHostDnsProbeFailure(result)) {
+    console.warn(`  ⚠ Host DNS probe inconclusive (reason: ${result.reason ?? "unknown"}).`);
+    if (result.details) {
+      console.warn(`    ${String(result.details).trim()}`);
+    }
+    console.warn(
+      "    Proceeding; provider validation will surface a clearer error if DNS is broken.",
+    );
+    return;
+  }
+
+  if (result.reason === "timeout" || result.reason === "killed") {
+    console.error(`  ✗ Host DNS probe did not complete (could not resolve ${result.hostname}).`);
+  } else if (result.reason === "resolution_failed") {
+    console.error(`  ✗ Host could not resolve ${result.hostname} (resolver answered, no record).`);
+  } else {
+    console.error(`  ✗ Host DNS resolution failed (could not resolve ${result.hostname}).`);
+  }
+  if (result.details) {
+    console.error(`    ${String(result.details).trim()}`);
+  }
+  console.error("");
+  printHostDnsRemediation(host, result.hostname);
+  exit(1);
+}
+
+export function printHostDnsRemediation(
+  host: Pick<Host, "platform" | "isWsl">,
+  hostname: string = DEFAULT_HOST_DNS_PROBE_HOSTNAME,
+): void {
+  console.error(`  ${cliDisplayName()} could not resolve ${hostname} from this host.`);
+  console.error("  Container DNS may still look healthy, but the CLI itself cannot reach a DNS");
+  console.error("  resolver, so provider validation will later fail with");
+  console.error(`  \`curl: (6) Could not resolve host: ${hostname}\`. See issue #4784.`);
+  console.error("");
+  console.error("  Common causes and fixes:");
+  console.error("");
+  console.error("  1. A firewall is dropping outbound DNS (tcp/udp port 53). On Linux, check the");
+  console.error("     OUTPUT chain and remove any port-53 DROP/REJECT rules:");
+  console.error("       sudo iptables -S OUTPUT | grep -- '--dport 53'");
+  console.error("       sudo nft list ruleset | grep -- 53   # if you use nftables");
+  console.error("  2. A VPN or corporate split-DNS / kill-switch is blocking public DNS — connect");
+  console.error("     to the VPN (or disconnect it) so the host can resolve provider endpoints.");
+  console.error("  3. The system resolver is misconfigured — verify /etc/resolv.conf points at a");
+  console.error("     reachable nameserver, then retry.");
+  if (host.platform === "win32" || host.isWsl) {
+    console.error("  4. On Windows/WSL, check Windows Firewall and any VPN client DNS settings.");
+  }
+  console.error("");
+  console.error(`  If this host is intentionally air-gapped or uses only local inference, set`);
+  console.error(`  ${SKIP_HOST_DNS_PREFLIGHT_ENV}=1 to skip this check.`);
+  console.error("");
+  console.error("  Verify the fix worked:");
+  console.error(
+    `    node -e "require('node:dns').resolve('${hostname}', (e,a)=>{if(e)throw e;console.log(a)})"`,
+  );
+  console.error(`    curl -sS https://${hostname}/v1/models -o /dev/null && echo reachable`);
 }
 
 export function printContainerDnsRemediation(host: Host): void {

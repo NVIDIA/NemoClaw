@@ -4,10 +4,11 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { expect, test } from "../framework/e2e-test.ts";
-import type { LifecycleProfile } from "../framework/phases/index.ts";
+import { expect, test } from "../fixtures/e2e-test.ts";
+import type { LifecycleProfile } from "../fixtures/phases/index.ts";
 import { listScenarios } from "../scenarios/registry.ts";
 import { liveScenarioSupport, liveScenarioTestName } from "../scenarios/runtime-support.ts";
+import { buildLiveScenarioRunPlan } from "./run-plan.ts";
 
 const LIFECYCLE_PROFILES: ReadonlySet<LifecycleProfile> = new Set(["post-reboot-recovery"]);
 
@@ -59,6 +60,8 @@ for (const scenario of listScenarios()) {
         boundary: "typed-registry",
         pendingRuntimeSuites: support.pendingRuntimeSuites,
       });
+
+      await artifacts.writeJson("run-plan.json", buildLiveScenarioRunPlan(scenario));
 
       const ready = await environment.assertReady(scenario.environment);
       const instance = await onboard.from(ready, { sandboxName: `e2e-${scenario.id}` });

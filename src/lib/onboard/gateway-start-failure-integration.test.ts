@@ -5,31 +5,24 @@
 // startGatewayWithOptions() takes when `openshell gateway start` reports
 // the Docker daemon is not reachable. See src/lib/onboard.ts:2233.
 //
-// This file replaces test/e2e/test-docker-unreachable-gateway-start.sh,
-// which was structurally a Node-process unit test of startGateway() with a
-// PATH-shimmed openshell binary, not a sandbox-lifecycle e2e.
+// This helper-level suite preserves coverage from the former
+// test/e2e/test-docker-unreachable-gateway-start.sh, which was structurally
+// a Node-process unit test of startGateway() with a PATH-shimmed openshell
+// binary, not a sandbox-lifecycle e2e.
 //
 // Original regression: NemoClaw #2347.
 // Owning migration issue: NemoClaw #4355.
 //
-// Coverage strategy: prove the contract through two layers:
+// Coverage strategy: prove the helper-level contract through two layers:
 //
 //   1. Unit tests of the already-exported helpers (printDockerDaemonRecovery,
 //      handleFinalGatewayStartFailure with dockerUnreachable=true).
 //   2. A composition test that runs the same helper sequence the call site
 //      uses (classify → handleFinal → exitProcess(1)).
 //
-// What this file deliberately DOES NOT cover (gap documented as it.todo
-// at the bottom of the suite, with a follow-up issue tracking the
-// refactor): direct executable proof that startGatewayWithOptions, on a
-// docker-unreachable streamGatewayStart() result, (a) throws
-// pRetry.AbortError instead of retrying, (b) never logs "Waiting for
-// gateway health...", and (c) never calls openshell `status` or
-// `gateway info` probes. Closing that gap requires either mocking the
-// ~10 module-internal closures `startGatewayWithOptions` touches before
-// reaching streamGatewayStart, or extracting the inner pRetry async body
-// into an exported helper that takes streamGatewayStart as a DI
-// parameter. Both changes are out of scope for the retirement PR.
+// The caller-level process regression that drives startGateway() through a
+// PATH-shimmed openshell binary lives in
+// test/onboard-gateway-docker-unreachable.test.ts.
 
 import { describe, expect, it, vi } from "vitest";
 // `handleFinalGatewayStartFailure` is exposed via `module.exports = {...}` at
@@ -308,45 +301,6 @@ describe("startGatewayWithOptions docker-unreachable abort (#2347)", () => {
       // happened.
       void exitCode;
     });
-  });
-
-  // ── Documented coverage gap: caller-level contracts that need a
-  //    behavior-level seam (out of scope for this retirement PR) ─────────
-  //
-  // The legacy bash script directly executed `startGateway()` with a
-  // PATH-shimmed openshell binary and asserted runtime behavior of the
-  // call site. The unit + composition tests above cover the same ground
-  // for everything reachable through already-exported helpers, but three
-  // call-site contracts cannot be proven without driving the actual
-  // `startGatewayWithOptions` orchestrator past its ~200 lines of
-  // gateway-reuse / ssh-keygen / known_hosts / docker-driver-detect
-  // preamble. Doing that in a focused way requires either:
-  //
-  //   (a) ~10 vi.mock() calls on module-internal closures inside
-  //       onboard.ts (brittle), or
-  //   (b) a small refactor extracting the inner pRetry async body of
-  //       startGatewayWithOptions into an exported helper that takes
-  //       streamGatewayStart as a DI parameter.
-  //
-  // Both are out of scope for this retirement PR. Follow-up issue
-  // [#5113](https://github.com/NVIDIA/NemoClaw/issues/5113) tracks
-  // landing option (b) and converting these `it.todo` placeholders into
-  // real assertions. Until then, the
-  // primary safety net for these contracts is code review on
-  // src/lib/onboard.ts:startGatewayWithOptions plus the existing
-  // classifyGatewayStartFailure / printDockerDaemonRecovery /
-  // handleFinalGatewayStartFailure unit tests above.
-
-  describe("call-site contracts (caller-level coverage gap)", () => {
-    it.todo(
-      "startGateway aborts via pRetry.AbortError without entering health-poll loop on docker-unreachable streamGatewayStart output",
-    );
-    it.todo(
-      "startGateway never invokes openshell `status` or `gateway info` after docker-unreachable streamGatewayStart output",
-    );
-    it.todo(
-      "startGateway forwards dockerUnreachable=true to handleFinalGatewayStartFailure (no doctor logs collection, no destroyGateway cleanup) when streamGatewayStart returns docker-unreachable signature",
-    );
   });
 
   // ── Sanity: classifyGatewayStartFailure recognises both signatures ─────

@@ -5,6 +5,7 @@ import { MACHINE_SNAPSHOT_VERSION, type Session } from "../state/onboard-session
 import { nextMachineStateAfterCompletedStep } from "../state/onboard-step-state";
 import { machineStateFromOnboardSessionStep } from "./machine/events";
 import type { OnboardMachineState } from "./machine/types";
+import { classifyResumeMachineRepair } from "./resume-repair-policy";
 
 /**
  * Reads the legacy step-level source of truth for interrupted sessions whose
@@ -39,14 +40,6 @@ export function resumeMachineState(session: Session): OnboardMachineState {
   );
 }
 
-function shouldRepairTerminalMachineSnapshot(session: Session): boolean {
-  if (session.machine.state === "failed") return true;
-  return (
-    session.machine.state === "complete" &&
-    (session.status !== "complete" || session.resumable !== false)
-  );
-}
-
 /**
  * Repairs legacy terminal-session/FSM boundaries during --resume.
  *
@@ -60,7 +53,7 @@ export function repairResumeMachineSnapshot(
   session: Session,
   stateEnteredAt = new Date().toISOString(),
 ): Session {
-  if (!shouldRepairTerminalMachineSnapshot(session)) return session;
+  if (classifyResumeMachineRepair(session).action !== "repair") return session;
   const state = resumeMachineState(session);
   session.machine = {
     version: MACHINE_SNAPSHOT_VERSION,

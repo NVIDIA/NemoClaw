@@ -4,10 +4,11 @@
 """Install OpenClaw plugins that match the bundled OpenClaw version.
 
 OpenClaw's doctor repair uses the official catalog's unversioned plugin specs.
-That can drift to a newer external messaging plugin than the host OpenClaw
-runtime. NemoClaw pins the runtime with OPENCLAW_VERSION, so build-time channel
-activation must force explicit npm installs for external messaging plugins and
-pin them to that same version.
+That can drift to a newer external plugin than the host OpenClaw runtime — for
+messaging channels, the diagnostics OTEL exporter, and the Brave web-search
+provider alike. NemoClaw pins the runtime with OPENCLAW_VERSION, so build-time
+activation must force explicit npm installs for every external plugin and pin
+them to that same version.
 """
 
 from __future__ import annotations
@@ -29,6 +30,16 @@ EXTERNAL_CHANNEL_PACKAGES = {
     "whatsapp": "@openclaw/whatsapp",
 }
 DIAGNOSTICS_OTEL_PACKAGE = "@openclaw/diagnostics-otel"
+# The Brave web-search provider is an external plugin too. Without an explicit
+# pin, `openclaw doctor --fix` installs it from the official catalog's
+# unversioned npmSpec, which resolves to the newest published brave-plugin —
+# newer than the host runtime once OpenClaw cuts a release the NemoClaw pin has
+# not caught up to. The newer plugin imports plugin-SDK symbols the older host
+# does not export, so web_search fails at runtime with
+#   (0, _providerWebSearch.readPositiveIntegerParam) is not a function
+# Pin it to OPENCLAW_VERSION like the messaging channels and diagnostics OTEL
+# exporter above so the installed plugin always matches the host runtime.
+WEB_SEARCH_PLUGIN_PACKAGE = "@openclaw/brave-plugin"
 
 DOCTOR_ENV_BY_CHANNEL = {
     "telegram": {
@@ -88,9 +99,12 @@ def require_openclaw_version(
     env: dict[str, str],
     *,
     diagnostics_otel_enabled: bool,
+    web_search_enabled: bool,
 ) -> str:
     needs_external_install = any(channel in EXTERNAL_CHANNEL_PACKAGES for channel in channels)
-    needs_external_install = needs_external_install or diagnostics_otel_enabled
+    needs_external_install = (
+        needs_external_install or diagnostics_otel_enabled or web_search_enabled
+    )
     version = (env.get("OPENCLAW_VERSION") or "").strip()
     if needs_external_install and not version:
         raise BuildMessagingPluginError(
@@ -104,6 +118,7 @@ def plugin_specs(
     openclaw_version: str,
     *,
     diagnostics_otel_enabled: bool,
+    web_search_enabled: bool,
 ) -> list[str]:
     specs: list[str] = []
     for channel in channels:
@@ -112,13 +127,25 @@ def plugin_specs(
             specs.append(f"npm:{package_name}@{openclaw_version}")
     if diagnostics_otel_enabled:
         specs.append(f"npm:{DIAGNOSTICS_OTEL_PACKAGE}@{openclaw_version}")
+    if web_search_enabled:
+        specs.append(f"npm:{WEB_SEARCH_PLUGIN_PACKAGE}@{openclaw_version}")
     return specs
 
 
-def doctor_env_overrides(channels: Iterable[str]) -> dict[str, str]:
+def doctor_env_overrides(
+    channels: Iterable[str],
+    *,
+    web_search_enabled: bool,
+) -> dict[str, str]:
     overrides: dict[str, str] = {}
     for channel in channels:
         overrides.update(DOCTOR_ENV_BY_CHANNEL.get(channel, {}))
+    # The generated config references openshell:resolve:env:BRAVE_API_KEY in
+    # tools.web.search.apiKey. `openclaw doctor --fix` runs with only this env,
+    # so without the placeholder set it can mutate/strip the web-search block.
+    # Inject it the same way the messaging channel tokens above are injected.
+    if web_search_enabled:
+        overrides["BRAVE_API_KEY"] = "openshell:resolve:env:BRAVE_API_KEY"
     return overrides
 
 
@@ -139,17 +166,22 @@ def main(argv: list[str]) -> int:
     raw_channels = os.environ.get("NEMOCLAW_MESSAGING_CHANNELS_B64", DEFAULT_CHANNELS_B64)
     channels = decode_channels(raw_channels or DEFAULT_CHANNELS_B64)
     diagnostics_otel_enabled = is_truthy_env(os.environ.get("NEMOCLAW_OPENCLAW_OTEL"))
+    web_search_enabled = is_truthy_env(os.environ.get("NEMOCLAW_WEB_SEARCH_ENABLED"))
     openclaw_version = require_openclaw_version(
         channels,
         os.environ,
         diagnostics_otel_enabled=diagnostics_otel_enabled,
+        web_search_enabled=web_search_enabled,
     )
     specs = plugin_specs(
         channels,
         openclaw_version,
         diagnostics_otel_enabled=diagnostics_otel_enabled,
+        web_search_enabled=web_search_enabled,
     )
-    env_overrides = doctor_env_overrides(channels)
+    env_overrides = doctor_env_overrides(
+        channels, web_search_enabled=web_search_enabled
+    )
 
     if args.dry_run:
         print(
@@ -160,6 +192,7 @@ def main(argv: list[str]) -> int:
                     "doctorEnv": env_overrides,
                     "installSpecs": specs,
                     "openclawVersion": openclaw_version,
+                    "webSearchEnabled": web_search_enabled,
                 },
                 indent=2,
                 sort_keys=True,

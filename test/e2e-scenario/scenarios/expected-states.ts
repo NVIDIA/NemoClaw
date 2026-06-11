@@ -3,17 +3,10 @@
 
 import type { ExpectedState, StateProbeId } from "./types.ts";
 
-// Typed mirror of nemoclaw_scenarios/expected-states.yaml.
-//
-// During the transition this registry is the source of truth for the
-// TS runner. expected-states.yaml stays in place for the legacy bash
-// resolver; a framework test verifies the typed registry covers the
-// YAML's expected-state ids and matches their structural shape on the
-// dimensions the typed runner probes today (cli, gateway, sandbox).
-// Inference and credentials remain declared in YAML and in this typed
-// registry, but the compiler skips emitting probe actions for them
-// until the corresponding probe scripts land — see
-// nemoclaw_scenarios/probes/.
+// Source of truth for expected state in the live Vitest scenario path.
+// Inference and credentials remain declared in metadata, but the
+// state-validation phase fixture only emits probes for dimensions with typed
+// helpers today.
 
 const cloudOpenclawReady: ExpectedState = {
   id: "cloud-openclaw-ready",

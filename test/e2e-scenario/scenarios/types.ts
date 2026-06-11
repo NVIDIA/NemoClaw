@@ -11,11 +11,9 @@ export type NegativeContractPhase = "negative-contract";
 
 export type PhaseResultName = PhaseName | NegativeContractPhase;
 
-// Concrete probe ids the state-validation orchestrator emits as phase
-// actions. Each id maps to a probe script under
-// nemoclaw_scenarios/probes/. Inference and credentials probes are
-// declared but not yet implemented; the compiler skips emitting actions
-// for them until the probe scripts land.
+// Concrete probe ids the Vitest state-validation phase fixture can execute.
+// Inference and credentials remain part of ExpectedState metadata but do not
+// emit probe ids until typed fixture helpers cover those dimensions.
 //
 // `local-registry-entry-present` and `docker-sandbox-container-present`
 // are host-side aspects of the sandbox: the local NemoClaw registry
@@ -36,11 +34,9 @@ export type StateProbeId =
 
 // User-facing phase the negative-scenario contract advertises. Wider
 // than PhaseName because manifests may declare "preflight" failures,
-// which the matcher resolves to the onboarding phase orchestrator.
-// state-validation is intentionally omitted: it is an internal phase
-// the framework inserts after onboarding; scenarios cannot declare
-// expected failures against it (those are expressed via
-// expectedStateId + the absent/forbidden-side-effect probes).
+// which the onboarding fixture resolves as a preflight error.
+// state-validation is intentionally omitted: scenarios express those
+// expectations via expectedStateId + absent/forbidden-side-effect probes.
 export type ExpectedFailurePhase = "environment" | "onboarding" | "runtime" | "preflight";
 
 export interface ExpectedFailureContract {
@@ -49,18 +45,10 @@ export interface ExpectedFailureContract {
   forbiddenSideEffects?: readonly string[];
 }
 
-// Expected-state contract. Mirrors the structural shape of
-// nemoclaw_scenarios/expected-states.yaml so the typed registry can
-// remain a verifiable mirror of the legacy YAML during transition.
-// Each dimension's `expected` field declares whether that aspect of
-// the post-setup environment should be present, absent, or optional.
-// Optional dimensions emit no probe actions; present/absent dimensions
-// emit a real probe that gates the runtime phase.
-//
-// Spec ownership: the typed registry (scenarios/expected-states.ts) is
-// the source of truth for the TS runner; expected-states.yaml stays
-// alongside until the legacy resolver is fully retired, with a contract
-// test that the typed registry mirrors the YAML.
+// Expected-state contract owned by scenarios/expected-states.ts. Each
+// dimension's `expected` field declares whether that aspect of the
+// post-setup environment should be present, absent, or optional.
+// Optional dimensions emit no fixture probes.
 export type ExpectedPresence = "present" | "absent" | "optional";
 export type ExpectedHealth = "healthy" | "absent" | "optional";
 export type ExpectedSandboxStatus = "running" | "absent" | "optional";
@@ -162,10 +150,10 @@ export interface AssertionStep {
   };
   evidencePath?: string;
   reliability?: AssertionStepReliability;
-  // Declared parent-env keys this step requires beyond the framework's
+  // Declared parent-env keys this step requires beyond the fixture layer's
   // allowlist. Anything not allowlisted and not declared here is
-  // dropped before spawn. See orchestrators/redaction.ts. Each entry
-  // must match the secret-key shape; the framework rejects non-secret
+  // dropped before spawn. See fixtures/redaction.ts. Each entry
+  // must match the secret-key shape; the fixture layer rejects non-secret
   // names to keep the allowlist-vs-declared-secret boundary honest.
   secretEnv?: readonly string[];
   // When true, a probe/pending step that resolves as "skipped" is
@@ -194,14 +182,10 @@ export interface ScenarioEnvironment {
   install: string;
   runtime: string;
   onboarding: string;
-  // Optional lifecycle profile id. When set, the compiler emits a
-  // dedicated `lifecycle` phase action between state-validation and
-  // runtime. The action is implemented by a worker under
-  // nemoclaw_scenarios/lifecycle/, dispatched by
-  // nemoclaw_scenarios/lifecycle/dispatch.sh, and routes by profile
-  // id (e.g. "rebuild-current-version"). Scenarios that don't need a
-  // post-onboard state mutation simply omit this field; their
-  // lifecycle phase emits no actions and runs no assertions.
+  // Optional lifecycle profile id. When set to a profile supported by
+  // LifecyclePhaseFixture, the live registry test runs that fixture between
+  // onboarding and state-validation. Scenarios that do not need a post-onboard
+  // state mutation omit this field.
   lifecycle?: string;
 }
 
@@ -220,13 +204,9 @@ export interface ScenarioDefinition {
   expectedFailure?: ExpectedFailureContract;
 }
 
-// A phase action is real, deterministic setup work the phase orchestrator
-// performs BEFORE running its assertions: install nemoclaw, run
-// onboarding, emit context.env, etc. Actions short-circuit assertions on
-// failure (assertions don't run if the action they depend on failed).
-//
-// Spec ownership: phase orchestrators own actions. The top-level runner
-// must not execute actions; clients must not embed action policy.
+// Legacy phase-action vocabulary retained for migration metadata. New live
+// scenarios should prefer Vitest phase fixtures rather than adding action
+// dispatch records.
 export interface PhaseAction {
   id: string;
   phase: PhaseName;
@@ -254,10 +234,10 @@ export interface PhaseAction {
   // keep working without coupling them to the action's stable id.
   aliasPath?: string;
   // Declared parent-env keys this action requires beyond the
-  // framework's allowlist (PATH, HOME, E2E_*, NEMOCLAW_*, ...).
+  // fixture layer's allowlist (PATH, HOME, E2E_*, NEMOCLAW_*, ...).
   // Anything not allowlisted and not declared here is dropped before
-  // spawn. See orchestrators/redaction.ts. Each entry must match the
-  // secret-key shape; the framework rejects non-secret names so the
+  // spawn. See fixtures/redaction.ts. Each entry must match the
+  // secret-key shape; the fixture layer rejects non-secret names so the
   // allowlist-vs-declared-secret boundary stays honest. Cloud install
   // declares ["NVIDIA_API_KEY"]; slack onboarding declares the slack
   // tokens it actually needs; etc.

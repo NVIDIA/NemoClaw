@@ -209,7 +209,7 @@ function writeUnavailableArtifacts(
   writeJson(paths.finalResult, result);
   fs.writeFileSync(
     paths.summary,
-    `# E2E Scenario Advisor\n\n${failed ? "Failed" : "Skipped"}: ${reason}\n`,
+    `# Vitest E2E Scenario Advisor\n\n${failed ? "Failed" : "Skipped"}: ${reason}\n`,
   );
   if (failed) {
     console.error(`Scenario advisor analysis failed: ${reason}`);
@@ -222,24 +222,24 @@ function logProgress(message: string): void {
 
 export function buildSystemPrompt(schema: AdvisorSchema): string {
   return [
-    "You are the NemoClaw E2E Scenario advisor for CI.",
+    "You are the NemoClaw Vitest E2E scenario advisor for CI.",
     "",
-    "Your job is to recommend which **Vitest scenario E2E** jobs should run for a PR. Scenario E2E is the layered scenario suite under `test/e2e-scenario/`, dispatched via `.github/workflows/e2e-vitest-scenarios.yaml`.",
+    "Your job is to recommend which Vitest-backed E2E scenario dispatches should run for a PR. They are part of the single NemoClaw E2E system, dispatched via `.github/workflows/e2e-vitest-scenarios.yaml`.",
     "",
-    "You are a separate advisor from the general E2E recommendation advisor. Do not opine on legacy `test/e2e/` workflows or non-scenario E2E jobs; those are owned by the general advisor.",
+    "Limit recommendations to the Vitest scenario workflow. Broader direct legacy `test/e2e/` workflows are owned by the general E2E advisor until they migrate; do not describe them as a separate kind of E2E.",
     "",
     "Authoritative sources to inspect with your read-only tools:",
     "- `.github/workflows/e2e-vitest-scenarios.yaml` — canonical Vitest live scenario workflow.",
     "- `test/e2e-scenario/scenarios/registry.ts` and `test/e2e-scenario/scenarios/scenarios/` — typed scenario IDs and metadata.",
     "- `test/e2e-scenario/scenarios/runtime-support.ts` — which typed scenarios are wired for live Vitest execution.",
     "- `test/e2e-scenario/live/registry-scenarios.test.ts` — live Vitest registry scenario entry point.",
-    "- `test/e2e-scenario/framework/` and `test/e2e-scenario/framework-tests/` — shared Vitest fixtures, clients, and phase helpers.",
+    "- `test/e2e-scenario/fixtures/` and `test/e2e-scenario/support-tests/` — shared Vitest fixtures, clients, and phase helpers.",
     "",
     "Decision policy:",
-    "- Required (all scenarios): changes to scenario runtime/runner code, scenario catalog metadata, expected-state metadata, live support classification, shared fixtures, or the Vitest scenario workflow itself. Recommend the `e2e-scenarios-all` fan-out through `e2e-vitest-scenarios.yaml`.",
+    "- Required (all scenarios): changes to scenario registry, matrix emission, expected-state metadata, live support classification, shared fixtures, or the Vitest scenario workflow itself. Recommend the `e2e-scenarios-all` fan-out through `e2e-vitest-scenarios.yaml`.",
     "- Required (targeted): fixture, live test, manifest, runtime-support, or scenario changes that affect a specific subset. Recommend the smallest set of live-supported typed scenario IDs that exercises the changed surface.",
     "- Optional: adjacent scenarios that exercise the same suite on a different platform/onboarding (e.g. macOS, WSL, GPU) but are not the primary target. Special-runner scenarios (`gpu-`, `macos-`, `wsl-`, `brev-`) should usually be optional unless they are the only path that exercises the change.",
-    "- None: docs-only, comment-only, tests-only outside `test/e2e-scenario/`, or changes that cannot affect scenario E2E behavior. Set `noScenarioE2eReason` and return empty `required`/`optional` arrays.",
+    "- None: docs-only, comment-only, tests-only outside `test/e2e-scenario/`, or changes that cannot affect Vitest scenario behavior. Set `noScenarioE2eReason` and return empty `required`/`optional` arrays.",
     "",
     "Hard rules:",
     "- Only recommend live-supported typed scenario IDs that exist in the registry or the synthetic fan-out id `e2e-scenarios-all`. Do not invent IDs.",
@@ -268,7 +268,7 @@ export function buildPrompt({
   changedFiles: string[];
   diff: string;
 }): string {
-  return `Return a scenario E2E recommendation for this PR.
+  return `Return a Vitest E2E scenario recommendation for this PR.
 
 Set these fields exactly:
 - version: 1
@@ -303,7 +303,7 @@ export function normalizeScenarioAdvisorResult(
       ? reasonField.trim()
       : reasonField === null || reasonField === undefined
         ? required.length === 0 && optional.length === 0
-          ? "Advisor reported no scenario E2E impact."
+          ? "Advisor reported no Vitest E2E scenario impact."
           : null
         : null;
 
@@ -374,13 +374,13 @@ function stringArrayWithinChanged(value: unknown, changedFiles: string[]): strin
 
 export function renderScenarioSummary(result: ScenarioAdvisorResult): string {
   const lines: string[] = [];
-  lines.push("# E2E Scenario Advisor");
+  lines.push("# Vitest E2E Scenario Advisor");
   lines.push("");
   lines.push(`Base: \`${result.baseRef}\`  `);
   lines.push(`Head: \`${result.headRef}\`  `);
   lines.push(`Confidence: **${result.confidence}**`);
   lines.push("");
-  lines.push("## Required scenario E2E");
+  lines.push("## Required Vitest E2E scenarios");
   if (result.required.length === 0) {
     lines.push(`- _None._ ${result.noScenarioE2eReason || ""}`.trim());
   } else {
@@ -390,7 +390,7 @@ export function renderScenarioSummary(result: ScenarioAdvisorResult): string {
     }
   }
   lines.push("");
-  lines.push("## Optional scenario E2E");
+  lines.push("## Optional Vitest E2E scenarios");
   if (result.optional.length === 0) {
     lines.push("- _None._");
   } else {

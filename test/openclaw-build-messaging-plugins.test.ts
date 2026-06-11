@@ -133,6 +133,41 @@ describe("openclaw-build-messaging-plugins.py", () => {
     expect(result.stderr).toContain("OPENCLAW_VERSION is required");
   });
 
+  it("pins the Brave web-search plugin to OPENCLAW_VERSION when web search is enabled", () => {
+    const payload = parseDryRun({
+      OPENCLAW_VERSION: "2026.5.22",
+      NEMOCLAW_WEB_SEARCH_ENABLED: "1",
+      NEMOCLAW_MESSAGING_CHANNELS_B64: channelsB64(["slack"]),
+    });
+
+    expect(payload.webSearchEnabled).toBe(true);
+    expect(payload.installSpecs).toEqual([
+      "npm:@openclaw/slack@2026.5.22",
+      "npm:@openclaw/brave-plugin@2026.5.22",
+    ]);
+    expect(payload.doctorEnv.BRAVE_API_KEY).toBe("openshell:resolve:env:BRAVE_API_KEY");
+  });
+
+  it("does not install the Brave plugin when web search is disabled", () => {
+    const payload = parseDryRun({
+      OPENCLAW_VERSION: "2026.5.22",
+      NEMOCLAW_MESSAGING_CHANNELS_B64: channelsB64(["slack"]),
+    });
+
+    expect(payload.webSearchEnabled).toBe(false);
+    expect(payload.installSpecs).toEqual(["npm:@openclaw/slack@2026.5.22"]);
+    expect(payload.doctorEnv.BRAVE_API_KEY).toBeUndefined();
+  });
+
+  it("requires OPENCLAW_VERSION when web search is enabled", () => {
+    const result = runDryRun({
+      NEMOCLAW_WEB_SEARCH_ENABLED: "1",
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("OPENCLAW_VERSION is required");
+  });
+
   it("fails fast on malformed channel payloads", () => {
     const result = runDryRun({
       OPENCLAW_VERSION: "2026.5.22",
