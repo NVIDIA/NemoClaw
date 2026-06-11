@@ -41,19 +41,6 @@ function liveEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   };
 }
 
-function isTransientProviderValidationThrottle(result: {
-  exitCode: number | null;
-  stdout: string;
-  stderr: string;
-}): boolean {
-  const text = resultText(result);
-  return (
-    result.exitCode !== 0 &&
-    /HTTP 429|Too Many Requests/i.test(text) &&
-    /endpoint validation failed/i.test(text)
-  );
-}
-
 async function ignoreCleanupError(run: () => Promise<unknown>): Promise<void> {
   try {
     await run();
@@ -134,7 +121,7 @@ const runtimeDepsReplacementProbe = trustedSandboxShellScript(
 liveTest(
   "OpenClaw plugin runtime deps replacement survives cross-filesystem EXDEV layout",
   { timeout: ONBOARD_TIMEOUT_MS + PROBE_TIMEOUT_MS + 5 * 60_000 },
-  async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
+  async ({ artifacts, cleanup, host, sandbox, skip }) => {
     await artifacts.writeJson("scenario.json", {
       id: "openclaw-plugin-runtime-exdev",
       runner: "vitest",
@@ -166,9 +153,6 @@ liveTest(
       fs.existsSync(CLI_ENTRYPOINT),
       "bin/nemoclaw.js missing — run npm run build:cli before this live scenario",
     ).toBe(true);
-
-    const apiKey = secrets.required("NVIDIA_API_KEY");
-    expect(apiKey.startsWith("nvapi-"), "NVIDIA_API_KEY must start with nvapi-").toBe(true);
 
     cleanup.add(`destroy sandbox ${SANDBOX_NAME}`, async () => {
       const cleanupEnv = liveEnv();
@@ -222,26 +206,19 @@ liveTest(
       {
         artifactName: "openclaw-plugin-exdev-onboard",
         env: liveEnv({
-          NVIDIA_API_KEY: apiKey,
-          NEMOCLAW_PROVIDER_KEY: apiKey,
+          COMPATIBLE_API_KEY: "nemoclaw-exdev-dummy-key",
+          NEMOCLAW_ENDPOINT_URL: "http://host.openshell.internal:65535/v1",
+          NEMOCLAW_MODEL: "nemoclaw-exdev-probe",
+          NEMOCLAW_PROVIDER_KEY: "nemoclaw-exdev-dummy-key",
           NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
           NEMOCLAW_POLICY_MODE: "skip",
-          NEMOCLAW_PROVIDER: "build",
+          NEMOCLAW_PREFERRED_API: "openai-completions",
+          NEMOCLAW_PROVIDER: "custom",
         }),
-        redactionValues: [apiKey],
         timeoutMs: ONBOARD_TIMEOUT_MS,
       },
     );
     const onboardText = resultText(onboard);
-    if (isTransientProviderValidationThrottle(onboard)) {
-      await artifacts.writeJson("scenario-skip.json", {
-        id: "openclaw-plugin-runtime-exdev",
-        reason: "provider-validation-throttled",
-        detail:
-          "NVIDIA endpoint validation returned HTTP 429 before sandbox creation; EXDEV probe was not exercised.",
-      });
-      skip("NVIDIA endpoint validation was rate limited before sandbox creation");
-    }
     expect(onboard.exitCode, onboardText).toBe(0);
     expect(onboardText).toMatch(/Creating sandbox|Sandbox '.+' created/);
 
