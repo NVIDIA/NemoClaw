@@ -112,6 +112,42 @@ jobs:
           path: .e2e/onboard-negative-paths/
           include-hidden-files: true
           if-no-files-found: error
+  token-rotation-vitest:
+    runs-on: macos-latest
+    needs: generate-matrix
+    if: \${{ inputs.scenarios != '' }}
+    timeout-minutes: 15
+    env:
+      E2E_ARTIFACT_DIR: \${{ github.workspace }}/.e2e/token-rotation
+      NEMOCLAW_RUN_E2E_SCENARIOS: "0"
+      NEMOCLAW_CLI_BIN: /tmp/nemoclaw
+      NVIDIA_API_KEY: \${{ secrets.NVIDIA_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - name: Authenticate to Docker Hub
+        env:
+          DOCKERHUB_USERNAME: bad
+          DOCKERHUB_TOKEN: bad
+        run: echo no-docker-login
+      - name: Set up Node
+        uses: actions/setup-node@v4
+      - name: Install root dependencies
+        run: npm install
+      - name: Run token rotation live test
+        env:
+          NVIDIA_API_KEY: bad
+          GITHUB_TOKEN: bad
+          TELEGRAM_BOT_TOKEN_A: ""
+        run: npx vitest run --project e2e-scenarios-live "\${{ inputs.test_filter }}"
+      - name: Upload token rotation artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: token-rotation
+          path: .e2e/token-rotation/
+          include-hidden-files: true
+          if-no-files-found: error
 `,
     );
 
@@ -191,6 +227,38 @@ jobs:
           "onboard-negative-paths-vitest artifact upload must set include-hidden-files: false",
           "onboard-negative-paths-vitest artifact upload must ignore missing fixture artifacts",
           "onboard-negative-paths-vitest artifact upload retention-days must be 14",
+          "token-rotation-vitest job must run on ubuntu-latest",
+          "token-rotation-vitest job must run only for full workflow dispatches",
+          "token-rotation-vitest job must keep the legacy 45 minute timeout",
+          "token-rotation-vitest job must run independently of generate-matrix",
+          "token-rotation-vitest job must set NEMOCLAW_RUN_E2E_SCENARIOS=1",
+          "token-rotation-vitest job must write artifacts under e2e-artifacts/vitest/token-rotation",
+          "token-rotation-vitest job must point NEMOCLAW_CLI_BIN at the repo CLI",
+          "token-rotation-vitest job env must not include NVIDIA_API_KEY",
+          "token-rotation-vitest checkout action must be pinned to a full commit SHA",
+          "token-rotation-vitest checkout step must set persist-credentials=false",
+          "token-rotation-vitest Docker Hub auth must receive DOCKERHUB_USERNAME from secrets",
+          "token-rotation-vitest Docker Hub auth must receive DOCKERHUB_TOKEN from secrets",
+          "step 'Authenticate to Docker Hub' run script must include docker login docker.io",
+          "token-rotation-vitest setup-node action must be pinned to a full commit SHA",
+          "token-rotation-vitest job missing step: Build CLI",
+          "token-rotation-vitest step must receive NVIDIA_API_KEY from secrets",
+          "token-rotation-vitest step must receive GITHUB_TOKEN from github.token",
+          "token-rotation-vitest step must set TELEGRAM_BOT_TOKEN_A",
+          "token-rotation-vitest step must set TELEGRAM_BOT_TOKEN_B",
+          "token-rotation-vitest step must set DISCORD_BOT_TOKEN_A",
+          "token-rotation-vitest step must set DISCORD_BOT_TOKEN_B",
+          "token-rotation-vitest step must set SLACK_BOT_TOKEN_A",
+          "token-rotation-vitest step must set SLACK_BOT_TOKEN_B",
+          "token-rotation-vitest step must set SLACK_APP_TOKEN_A",
+          "token-rotation-vitest step must set SLACK_APP_TOKEN_B",
+          "step 'Run token rotation live test' run script must include test/e2e-scenario/live/token-rotation.test.ts",
+          "token-rotation-vitest upload-artifact action must be pinned to a full commit SHA",
+          "token-rotation-vitest artifact upload name must be stable",
+          "artifact upload path must include e2e-artifacts/vitest/token-rotation/",
+          "token-rotation-vitest artifact upload must set include-hidden-files: false",
+          "token-rotation-vitest artifact upload must ignore missing fixture artifacts",
+          "token-rotation-vitest artifact upload retention-days must be 14",
         ]),
       );
     } finally {
