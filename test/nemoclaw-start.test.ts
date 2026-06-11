@@ -913,24 +913,72 @@ describe("nemoclaw-start configure guard behavior", () => {
       fs.rmSync(setup.tmpDir, { recursive: true, force: true });
     }
   });
-
-  it("#4462: unsets OPENCLAW_GATEWAY_URL, PORT, and TOKEN for devices approve", () => {
+  it("#4462: unsets gateway env and recovers constrained replacement state", () => {
     const setup = writeProxyEnvWithGuard();
+    const stateDir = path.join(setup.tmpDir, "openclaw-state");
+    const devicesDir = path.join(stateDir, "devices");
+    const pendingFile = path.join(devicesDir, "pending.json");
+    const pairedFile = path.join(devicesDir, "paired.json");
+    const readJson = (file: string) => JSON.parse(fs.readFileSync(file, "utf-8"));
+    const resetState = () => {
+      fs.mkdirSync(devicesDir, { recursive: true });
+      fs.writeFileSync(
+        pendingFile,
+        '{"original":{"requestId":"request-1","deviceId":"device-1","scopes":["operator.write"]}}',
+      );
+      fs.writeFileSync(
+        pairedFile,
+        '{"device-1":{"deviceId":"device-1","scopes":["operator.pairing"],"approvedScopes":["operator.pairing"],"tokens":{"operator":{"role":"operator","scopes":["operator.pairing"]}}}}',
+      );
+    };
+    fs.writeFileSync(
+      path.join(setup.fakeBin, "openclaw"),
+      `#!/usr/bin/env bash
+printf 'ARGS=%s URL=%s PORT=%s TOKEN=%s\n' "$*" "\${OPENCLAW_GATEWAY_URL-unset}" "\${OPENCLAW_GATEWAY_PORT-unset}" "\${OPENCLAW_GATEWAY_TOKEN-unset}" >> ${JSON.stringify(setup.commandLog)}
+cat > "\${OPENCLAW_STATE_DIR}/devices/pending.json" <<'JSON'
+{"replacement":{"requestId":"replacement-1","deviceId":"device-1","scopes":["operator.write","operator.pairing","operator.read","operator.admin"]}}
+JSON
+if [ -n "\${CASE_REPLACEMENT_ID:-}" ]; then echo "gateway connect failed: GatewayClientRequestError: scope upgrade pending approval (requestId: \${CASE_REPLACEMENT_ID})" >&2; else echo "gateway connect failed: G" >&2; fi
+exit 1
+`,
+      { mode: 0o755 },
+    );
     try {
-      const result = runGuardedShell(setup, [
-        shellOpenclawCommand(["devices", "list", "--json"]),
-        shellOpenclawCommand(["devices", "approve", "request-1", "--json"]),
-        `printf 'SHELL_URL=%s\\n' "\${OPENCLAW_GATEWAY_URL-unset}" >> ${JSON.stringify(setup.commandLog)}`,
-        shellOpenclawCommand(["agent", "--agent", "main", "-m", "hello"]),
-      ]);
-
-      expect(result.status).toBe(0);
-      expect(fs.readFileSync(setup.commandLog, "utf-8").trim().split("\n")).toEqual([
-        "ARGS=devices list --json URL=ws://127.0.0.1:18789 PORT=18789 TOKEN=test-gateway-token",
-        "ARGS=devices approve request-1 --json URL=unset PORT=unset TOKEN=unset",
-        "SHELL_URL=ws://127.0.0.1:18789",
-        "ARGS=agent --agent main -m hello URL=ws://127.0.0.1:18789 PORT=18789 TOKEN=test-gateway-token",
-      ]);
+      for (const [replacementId, shouldRecover] of [
+        ["replacement-1", true],
+        ["replacement-10", false],
+        ["", true],
+      ] as const) {
+        resetState();
+        const result = runGuardedShell(setup, [
+          `export OPENCLAW_STATE_DIR=${JSON.stringify(stateDir)}`,
+          `export CASE_REPLACEMENT_ID=${JSON.stringify(replacementId)}`,
+          shellOpenclawCommand(["devices", "approve", "request-1", "--json"]),
+        ]);
+        const paired = readJson(pairedFile);
+        const pending = readJson(pendingFile);
+        expect(result.status).toBe(shouldRecover ? 0 : 1);
+        expect(fs.readFileSync(setup.commandLog, "utf-8")).toContain(
+          "ARGS=devices approve request-1 --json URL=unset PORT=unset TOKEN=unset",
+        );
+        const expectedScopes = shouldRecover
+          ? ["operator.pairing", "operator.read", "operator.write"]
+          : ["operator.pairing"];
+        for (const scopes of [
+          paired["device-1"].approvedScopes,
+          paired["device-1"].scopes,
+          paired["device-1"].tokens.operator.scopes,
+        ]) {
+          expect(scopes).toEqual(expectedScopes);
+        }
+        expect(JSON.stringify(paired)).not.toContain("operator.admin");
+        expect(shouldRecover ? pending : pending.replacement.requestId).toEqual(
+          shouldRecover ? {} : "replacement-1",
+        );
+        expect(
+          shouldRecover ? JSON.parse(result.stdout).compatibility : pending.replacement.requestId,
+        ).toBe(shouldRecover ? "openclaw-approve-recovered-replacement" : "replacement-1");
+      }
     } finally {
       fs.rmSync(setup.tmpDir, { recursive: true, force: true });
     }
@@ -5035,20 +5083,6 @@ describe("ensure_mutable_openclaw_config_hash root-mode step-down", () => {
 });
 
 describe("direct-root entrypoint composition under CAP_DAC_OVERRIDE drop", () => {
-  // Chain the production helpers in the exact order the root entrypoint
-  // calls them — ensure_mutable_openclaw_config_hash →
-  // prepare_gateway_token_for_current_command → export_gateway_token →
-  // write_runtime_shell_env → lock_rc_files → setup_auth_profile_as_sandbox —
-  // against a tmpfs layout that mirrors /sandbox + /tmp, with uid=0 stubbed
-  // and a step-down prefix that mirrors the CAP_DAC_OVERRIDE-dropped
-  // effective ownership of the mutable config tree. Verifies the
-  // entrypoint acceptance clauses:
-  //   1. /sandbox/.openclaw/.config-hash gets a fresh sha256 row.
-  //   2. /tmp/nemoclaw-proxy-env.sh exists and exports OPENCLAW_GATEWAY_TOKEN.
-  //   3. Stderr never carries "Missing gateway auth token".
-  //   4. Stderr never carries the heredoc-roundtrip "syntax error … 'fi'".
-  //   5. /sandbox/.bashrc and /sandbox/.profile end at mode 0444.
-  //   6. The chain reaches the continuation path (exit 0).
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
   it("runs the helper chain end-to-end against a simulated root entrypoint", () => {
@@ -5065,9 +5099,6 @@ describe("direct-root entrypoint composition under CAP_DAC_OVERRIDE drop", () =>
       configPath,
       JSON.stringify({ gateway: { port: 18789, auth: {} } }, null, 2) + "\n",
     );
-    // Pre-existing hash file owned by the test uid at mode 0444 mirrors the
-    // production EACCES condition: the redirection cannot bypass the
-    // sandbox-only write bit unless the step-down prefix relaxes ownership.
     fs.writeFileSync(hashPath, "placeholder\n");
     fs.chmodSync(hashPath, 0o444);
 
@@ -5102,11 +5133,6 @@ describe("direct-root entrypoint composition under CAP_DAC_OVERRIDE drop", () =>
       "prepare_gateway_token_for_current_command",
     );
     const exportToken = extractShellFunctionFromSource(src, "export_gateway_token");
-    // `extractShellFunctionFromSource` looks for the first `^}` after the
-    // signature, which trips on the embedded `<<'GUARDENVEOF'` heredoc inside
-    // `write_runtime_shell_env` (the heredoc body contains a column-0 `}`
-    // that closes the inlined `openclaw()` shell shim). Slice the function
-    // by the next sibling function's signature instead.
     const writeRuntimeStart = src.indexOf("write_runtime_shell_env() {");
     const writeRuntimeEnd = src.indexOf("\nensure_runtime_shell_env_shim() {", writeRuntimeStart);
     if (writeRuntimeStart === -1 || writeRuntimeEnd === -1) {
@@ -5125,43 +5151,22 @@ describe("direct-root entrypoint composition under CAP_DAC_OVERRIDE drop", () =>
       [
         "#!/usr/bin/env bash",
         "set -euo pipefail",
-        // Pretend to be uid 0 from the perspective of every consumer.
         'id() { if [ "${1:-}" = "-u" ]; then printf "0"; else command id "$@"; fi; }',
-        // Mutable-default tree owned by the sandbox user.
         'openclaw_config_dir_owner() { printf "sandbox"; }',
-        // prepare/restore wrap the python writer in real production. The
-        // step-down prefix relaxes the hash file mode the same way, so the
-        // wrappers stay no-ops here.
         "prepare_openclaw_config_for_write() { :; }",
         "restore_openclaw_config_after_write() { :; }",
-        // Drive the production gating fn instead of stubbing it: the root
-        // entrypoint enters this branch with `NEMOCLAW_CMD=()`, which sends
-        // `needs_gateway_token_for_current_command` down the `return 0` path
-        // and `prepare_gateway_token_for_current_command` into a real
-        // `ensure_gateway_token` call.
         "NEMOCLAW_CMD=()",
-        // Proxy environment is empty in the test — the function still writes
-        // the file because it is hardcoded to do so once entered.
         '_PROXY_URL=""',
         '_NO_PROXY_VAL=""',
-        // CAP_DAC_OVERRIDE-dropped step-down: the only effective recovery
-        // the production sandbox-uid switch performs (from this test's
-        // single-uid vantage) is restoring the write bit on the hash file
-        // it owns. Mirror that here.
         `STEP_DOWN_PREFIX_SANDBOX=(bash -c 'chmod 0660 ${JSON.stringify(hashPath)} 2>/dev/null; exec "$@"' sandbox-step-down)`,
-        // Stub lock_rc_files so it does not require CAP_CHOWN inside vitest.
         "lock_rc_files() {",
         '  for rc in "${1}/.bashrc" "${1}/.profile"; do',
         '    [ -f "$rc" ] && chmod 0444 "$rc"',
         "  done",
         "}",
-        // `emit_sandbox_sourced_file` is provided by sandbox-init.sh in
-        // production; mirror its tee-to-444 shape here.
         'emit_sandbox_sourced_file() { local target="$1"; cat > "$target"; chmod 444 "$target"; }',
         "write_auth_profile() { :; }",
         "harden_auth_profiles() { :; }",
-        // Default the script-globals write_runtime_shell_env reads so `set -u`
-        // does not trip and the optional emit branches stay dormant in the test.
         '_SANDBOX_SAFETY_NET=""',
         '_PROXY_FIX_SCRIPT=""',
         '_WS_FIX_SCRIPT=""',
@@ -5183,14 +5188,12 @@ describe("direct-root entrypoint composition under CAP_DAC_OVERRIDE drop", () =>
         writeRuntimeEnv,
         helper,
         setupAuth,
-        // Exact production call order from the root path of the entrypoint.
         "ensure_mutable_openclaw_config_hash",
         "prepare_gateway_token_for_current_command",
         "export_gateway_token",
         "write_runtime_shell_env",
         `lock_rc_files ${JSON.stringify(sandboxHome)}`,
         "setup_auth_profile_as_sandbox",
-        // Continuation signal.
         'echo "CONTINUATION_REACHED"',
       ].join("\n"),
       { mode: 0o700 },
@@ -5199,29 +5202,23 @@ describe("direct-root entrypoint composition under CAP_DAC_OVERRIDE drop", () =>
     try {
       const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 10000 });
 
-      // Clause 6: continuation path reached, exit 0.
       expect(result.status, result.stderr || result.stdout).toBe(0);
       expect(result.stdout).toContain("CONTINUATION_REACHED");
 
-      // Clauses 3 and 4: neither failure mode the linked issues described.
       expect(result.stderr).not.toContain("Missing gateway auth token");
       expect(result.stderr).not.toMatch(/syntax error near unexpected token .?fi/);
 
-      // Clause 1: hash refresh wrote a fresh sha256 row.
       const hashContents = fs.readFileSync(hashPath, "utf-8").trim();
       expect(hashContents).toMatch(/^[0-9a-f]{64}\s+openclaw\.json$/);
       expect((fs.statSync(hashPath).mode & 0o777).toString(8)).toBe("660");
 
-      // Clause 2: proxy env file present with the gateway token export.
       expect(fs.existsSync(proxyEnvFile)).toBe(true);
       const proxyEnv = fs.readFileSync(proxyEnvFile, "utf-8");
       expect(proxyEnv).toMatch(/export OPENCLAW_GATEWAY_TOKEN='[A-Za-z0-9_-]{20,}'/);
 
-      // Clause 5: rc files locked.
       expect((fs.statSync(bashrcPath).mode & 0o777).toString(8)).toBe("444");
       expect((fs.statSync(profilePath).mode & 0o777).toString(8)).toBe("444");
 
-      // The token persisted into openclaw.json matches the export above.
       const updatedConfig = JSON.parse(fs.readFileSync(configPath, "utf-8"));
       expect(updatedConfig.gateway?.auth?.token).toMatch(/^[A-Za-z0-9_-]{20,}$/);
       expect(proxyEnv).toContain(
