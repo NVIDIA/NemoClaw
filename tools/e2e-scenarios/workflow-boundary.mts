@@ -122,6 +122,10 @@ function requireNoDispatchInputInterpolation(
   }
 }
 
+function expectedFreeStandingJobSelector(jobName: string): string {
+  return `\${{ inputs.jobs == '' || contains(format(',{0},', inputs.jobs), ',${jobName},') }}`;
+}
+
 function validateOpenShellVersionPinVitestJob(errors: string[], jobs: WorkflowRecord): void {
   const jobName = "openshell-version-pin-vitest";
   const job = asRecord(jobs[jobName]);
@@ -136,10 +140,8 @@ function validateOpenShellVersionPinVitestJob(errors: string[], jobs: WorkflowRe
   if (Object.hasOwn(job, "needs")) {
     errors.push("openshell-version-pin-vitest job must run independently of generate-matrix");
   }
-  if (Object.hasOwn(job, "if")) {
-    errors.push(
-      "openshell-version-pin-vitest job must run independently of workflow dispatch scenario filters",
-    );
+  if (job.if !== expectedFreeStandingJobSelector(jobName)) {
+    errors.push("openshell-version-pin-vitest job must use the approved jobs selector");
   }
 
   const jobEnv = asRecord(job.env);
@@ -224,10 +226,8 @@ function validateOnboardNegativePathsVitestJob(errors: string[], jobs: WorkflowR
   if (Object.hasOwn(job, "needs")) {
     errors.push("onboard-negative-paths-vitest job must run independently of generate-matrix");
   }
-  if (Object.hasOwn(job, "if")) {
-    errors.push(
-      "onboard-negative-paths-vitest job must run independently of workflow dispatch scenario filters",
-    );
+  if (job.if !== expectedFreeStandingJobSelector(jobName)) {
+    errors.push("onboard-negative-paths-vitest job must use the approved jobs selector");
   }
 
   const jobEnv = asRecord(job.env);
@@ -312,6 +312,7 @@ export function validateE2eVitestScenariosWorkflowBoundary(
 
   const dispatchInputs = asRecord(workflowDispatch.inputs);
   requireInput(errors, dispatchInputs, "scenarios");
+  requireInput(errors, dispatchInputs, "jobs");
   if (Object.hasOwn(dispatchInputs, "test_filter")) {
     errors.push("workflow_dispatch must not expose legacy test_filter input");
   }
@@ -341,10 +342,14 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   if (generateEnv.SCENARIOS !== "${{ inputs.scenarios }}") {
     errors.push("matrix generation step must pass scenarios through SCENARIOS env");
   }
+  if (generateEnv.JOBS !== "${{ inputs.jobs }}") {
+    errors.push("matrix generation step must pass jobs through JOBS env");
+  }
   requireRunContains(errors, generate, "npx tsx test/e2e-scenario/scenarios/run.ts");
   requireRunContains(errors, generate, "--emit-live-matrix");
   requireRunContains(errors, generate, "--scenarios");
   requireRunContains(errors, generate, "^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$");
+  requireRunContains(errors, generate, "Invalid jobs input");
   requireRunDoesNotContain(errors, generate, "^[A-Za-z0-9._-]+");
   requireRunContains(errors, generate, "## Vitest E2E Scenario Matrix");
   requireRunContains(errors, generate, "| Scenario | Runner | Label |");
@@ -356,6 +361,9 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   }
   if (liveScenarios.needs !== "generate-matrix") {
     errors.push("live-scenarios job must depend on generate-matrix");
+  }
+  if (liveScenarios.if !== "${{ inputs.jobs == '' }}") {
+    errors.push("live-scenarios job must not run when a free-standing job selector is provided");
   }
   const strategy = asRecord(liveScenarios.strategy);
   if (strategy["fail-fast"] !== false) {
