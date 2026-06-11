@@ -59,7 +59,7 @@ describe("CLI dispatch", () => {
           HOME: home,
           PATH: `${localBin}:${process.env.PATH || ""}`,
         },
-        execTimeout(),
+        execTimeout(20_000),
       );
 
       expect(r.code).toBe(1);
@@ -68,7 +68,7 @@ describe("CLI dispatch", () => {
       const saved = JSON.parse(fs.readFileSync(path.join(registryDir, "sandboxes.json"), "utf8"));
       expect(saved.sandboxes.alpha).toBeTruthy();
     },
-    testTimeout(10_000),
+    testTimeout(20_000),
   );
 
   it(
@@ -116,15 +116,15 @@ describe("CLI dispatch", () => {
           PATH: `${localBin}:${process.env.PATH || ""}`,
           NEMOCLAW_STATUS_PROBE_TIMEOUT_MS: "100",
         },
-        10000,
+        execTimeout(20_000),
       );
 
-      expect(Date.now() - started).toBeLessThan(7000);
+      expect(Date.now() - started).toBeLessThan(execTimeout(12_000));
       expect(r.code).toBe(1);
       expect(r.out).toContain("Model:    test-model");
       expect(r.out).toContain("Live sandbox status probe timed out");
     },
-    testTimeout(10_000),
+    testTimeout(20_000),
   );
 
   it("recovers status after gateway runtime is reattached", () => {

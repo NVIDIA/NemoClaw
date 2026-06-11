@@ -33,18 +33,18 @@ function metadata(
   };
 }
 
-describe("E2E scenario advisor — prompt construction", () => {
+describe("Vitest E2E scenario advisor — prompt construction", () => {
   it("user prompt embeds the metadata fields the advisor must echo back", () => {
     const prompt = buildPrompt({
       baseRef: "origin/main",
       headRef: "HEAD",
-      changedFiles: ["test/e2e-scenario/framework/phases/onboarding.ts"],
+      changedFiles: ["test/e2e-scenario/fixtures/phases/onboarding.ts"],
       diff: "+ echo ok",
     });
     // Caller of normalizeScenarioAdvisorResult re-injects metadata, but the
     // prompt must still surface enough context for the model to reason.
     expect(prompt).toContain("origin/main");
-    expect(prompt).toContain("test/e2e-scenario/framework/phases/onboarding.ts");
+    expect(prompt).toContain("test/e2e-scenario/fixtures/phases/onboarding.ts");
     expect(prompt).toContain("+ echo ok");
   });
 
@@ -59,6 +59,8 @@ describe("E2E scenario advisor — prompt construction", () => {
     expect(systemPrompt).toContain(VITEST_SCENARIO_WORKFLOW);
     expect(systemPrompt).toContain("trusted advisor checkout");
     expect(systemPrompt).toContain("recommend the `e2e-scenarios-all` fan-out");
+    expect(systemPrompt).toContain("single NemoClaw E2E system");
+    expect(systemPrompt).not.toContain("non-scenario E2E");
     expect(systemPrompt).not.toContain("e2e-scenarios-all.yaml");
     expect(systemPrompt).not.toContain("e2e-scenarios.yaml");
   });
@@ -71,7 +73,7 @@ describe("E2E scenario advisor — prompt construction", () => {
   });
 });
 
-describe("E2E scenario advisor — normalization contract", () => {
+describe("Vitest E2E scenario advisor — normalization contract", () => {
   it("preserves valid recommendations and canonicalizes the dispatch command", () => {
     const raw = {
       version: 1,
@@ -364,7 +366,7 @@ describe("E2E scenario advisor — normalization contract", () => {
       { required: [], optional: [], confidence: "low" },
       metadata({ changedFiles: ["docs/foo.md"] }),
     );
-    expect(normalized.noScenarioE2eReason).toMatch(/no scenario E2E impact/i);
+    expect(normalized.noScenarioE2eReason).toMatch(/no Vitest E2E scenario impact/i);
   });
 
   it("rejects non-object advisor output", () => {
@@ -373,7 +375,7 @@ describe("E2E scenario advisor — normalization contract", () => {
   });
 });
 
-describe("E2E scenario advisor — summary and comment rendering", () => {
+describe("Vitest E2E scenario advisor — summary and comment rendering", () => {
   function sampleResult(): ScenarioAdvisorResult {
     return {
       version: 1,
@@ -398,6 +400,8 @@ describe("E2E scenario advisor — summary and comment rendering", () => {
 
   it("renders a summary that surfaces required scenarios with their dispatch line", () => {
     const summary = renderScenarioSummary(sampleResult());
+    expect(summary).toContain("# Vitest E2E Scenario Advisor");
+    expect(summary).toContain("Required Vitest E2E scenarios");
     expect(summary).toContain("e2e-scenarios-all");
     expect(summary).toContain(
       canonicalDispatchCommand(VITEST_SCENARIO_WORKFLOW, "e2e-scenarios-all"),
@@ -413,6 +417,8 @@ describe("E2E scenario advisor — summary and comment rendering", () => {
       runUrl: "https://example.invalid/run",
     });
     expect(comment).toContain("<!-- nemoclaw-e2e-scenario-advisor -->");
+    expect(comment).toContain("## Vitest E2E Scenario Recommendation");
+    expect(comment).toContain("Dispatch required Vitest E2E scenarios");
     expect(comment).toContain("https://example.invalid/run");
   });
 });

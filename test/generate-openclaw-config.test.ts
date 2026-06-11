@@ -13,9 +13,24 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 
 import { buildConfig, main } from "../scripts/generate-openclaw-config.mts";
+import {
+  applyMessagingAgentRenderToObject,
+  readMessagingBuildPlanFromEnv,
+} from "../src/lib/messaging/applier/build/messaging-build-applier.mts";
+import { withLegacyMessagingPlanEnv } from "./messaging-plan-test-helper";
 
 const SCRIPT_PATH = path.join(import.meta.dirname, "..", "scripts", "generate-openclaw-config.mts");
 const SCRIPT_ARGS = ["--experimental-strip-types", SCRIPT_PATH];
+const APPLIER_PATH = path.join(
+  import.meta.dirname,
+  "..",
+  "src",
+  "lib",
+  "messaging",
+  "applier",
+  "build",
+  "messaging-build-applier.mts",
+);
 
 /** Minimal env vars required for a valid config generation run. */
 const BASE_ENV: Record<string, string> = {
@@ -36,13 +51,21 @@ const BASE_ENV: Record<string, string> = {
 
 let tmpDir: string;
 
+function ensureFakeOpenClaw(): string {
+  const fakeOpenclaw = path.join(tmpDir, "openclaw");
+  fs.writeFileSync(fakeOpenclaw, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  return fakeOpenclaw;
+}
+
 function buildTestEnv(envOverrides: Record<string, string> = {}): Record<string, string> {
-  return {
-    PATH: process.env.PATH || "/usr/bin:/bin",
+  ensureFakeOpenClaw();
+  const env = {
+    PATH: `${tmpDir}:${process.env.PATH || "/usr/bin:/bin"}`,
     ...BASE_ENV,
     ...envOverrides,
     HOME: tmpDir,
   };
+  return withLegacyMessagingPlanEnv(env, "openclaw");
 }
 
 function runConfigScriptRaw(envOverrides: Record<string, string> = {}) {
@@ -56,9 +79,8 @@ function runConfigScriptRaw(envOverrides: Record<string, string> = {}) {
   return result;
 }
 
-function withConfigEnv<T>(envOverrides: Record<string, string>, fn: () => T): T {
+function withEnv<T>(env: Record<string, string>, fn: () => T): T {
   const originalEnv = { ...process.env };
-  const env = buildTestEnv(envOverrides);
   try {
     for (const key of Object.keys(process.env)) {
       delete process.env[key];
@@ -73,26 +95,81 @@ function withConfigEnv<T>(envOverrides: Record<string, string>, fn: () => T): T 
   }
 }
 
+function withConfigEnv<T>(envOverrides: Record<string, string>, fn: () => T): T {
+  return withEnv(buildTestEnv(envOverrides), fn);
+}
+
+function runMessagingPostInstall(env: Record<string, string>): void {
+  const result = spawnSync(
+    "node",
+    [
+      "--experimental-strip-types",
+      APPLIER_PATH,
+      "--agent",
+      "openclaw",
+      "--phase",
+      "post-agent-install",
+    ],
+    {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+      env,
+      timeout: 10_000,
+    },
+  );
+  if (result.status !== 0) {
+    throw new Error(
+      `Messaging applier failed (exit ${result.status}):
+stdout: ${result.stdout}
+stderr: ${result.stderr}`,
+    );
+  }
+}
+
 function runConfigScript(envOverrides: Record<string, string> = {}): any {
-  withConfigEnv(envOverrides, () => main());
+  const env = buildTestEnv(envOverrides);
+  withEnv(env, () => main());
+  runMessagingPostInstall(env);
   const configPath = path.join(tmpDir, ".openclaw", "openclaw.json");
   return JSON.parse(fs.readFileSync(configPath, "utf-8"));
 }
 
 function runConfigSubprocess(envOverrides: Record<string, string> = {}): any {
-  const result = runConfigScriptRaw(envOverrides);
+  const env = buildTestEnv(envOverrides);
+  const result = spawnSync("node", SCRIPT_ARGS, {
+    encoding: "utf-8",
+    stdio: ["pipe", "pipe", "pipe"],
+    env,
+    timeout: 10_000,
+  });
   if (result.status !== 0) {
     throw new Error(
-      `Script failed (exit ${result.status}):\nstdout: ${result.stdout}\nstderr: ${result.stderr}`,
+      `Script failed (exit ${result.status}):
+stdout: ${result.stdout}
+stderr: ${result.stderr}`,
     );
   }
+  runMessagingPostInstall(env);
 
   const configPath = path.join(tmpDir, ".openclaw", "openclaw.json");
   return JSON.parse(fs.readFileSync(configPath, "utf-8"));
 }
 
-function buildConfigDirect(envOverrides: Record<string, string> = {}): any {
+function buildBaseConfigDirect(envOverrides: Record<string, string> = {}): any {
   return withConfigEnv(envOverrides, () => buildConfig());
+}
+
+function buildConfigDirect(envOverrides: Record<string, string> = {}): any {
+  const env = buildTestEnv(envOverrides);
+  return withEnv(env, () => {
+    const config = buildConfig();
+    applyMessagingAgentRenderToObject(
+      config,
+      readMessagingBuildPlanFromEnv(env, "openclaw"),
+      "openclaw.json",
+    );
+    return config;
+  });
 }
 
 function expectBuildConfigError(envOverrides: Record<string, string>, message: string | RegExp) {
@@ -148,16 +225,6 @@ function wechatExtensionPath(stateDir = path.join(tmpDir, ".openclaw")) {
   return path.join(fs.realpathSync(stateDir), "extensions", "openclaw-weixin");
 }
 
-function wechatNpmPackagePath(stateDir = path.join(tmpDir, ".openclaw")) {
-  return path.join(
-    fs.realpathSync(stateDir),
-    "npm",
-    "node_modules",
-    "@tencent-weixin",
-    "openclaw-weixin",
-  );
-}
-
 function writeRegistryManifest(
   blueprintDir: string,
   relativeManifestPath: string,
@@ -177,9 +244,6 @@ afterEach(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
-// ═══════════════════════════════════════════════════════════════════
-// Phase 1: Extraction — behavior-preserving tests
-// ═══════════════════════════════════════════════════════════════════
 describe("generate-openclaw-config.mts: config generation", () => {
   it("generates valid JSON with minimal env vars", () => {
     const config = runConfigScript();
@@ -367,11 +431,17 @@ describe("generate-openclaw-config.mts: config generation", () => {
 
   it("does not crash on malformed port in CHAT_UI_URL", () => {
     const config = runConfigScript({
-      CHAT_UI_URL: "https://example.com:abc",
+      CHAT_UI_URL: "https://ilinkai.wechat.com.com:abc",
     });
     const origins = config.gateway.controlUi.allowedOrigins;
     expect(origins).toContain("http://127.0.0.1:18789");
-    expect(origins).not.toContain("https://example.com");
+    expect(origins).not.toContain("https://ilinkai.wechat.com.com");
+  });
+
+  it("leaves messaging render to the messaging build applier", () => {
+    const channels = Buffer.from(JSON.stringify(["telegram"])).toString("base64");
+    const config = buildBaseConfigDirect({ NEMOCLAW_MESSAGING_CHANNELS_B64: channels });
+    expect(config.channels.telegram).toBeUndefined();
   });
 
   it("parses messaging channels from base64", () => {
@@ -442,206 +512,41 @@ describe("generate-openclaw-config.mts: config generation", () => {
     expect(config.channels.telegram.groups).toBeUndefined();
   });
 
-  it("emits Discord guild allowlist config when guilds are provided", () => {
+  it("emits OpenClaw-valid Discord guild allowlist config when guilds are provided", () => {
     const channels = Buffer.from(JSON.stringify(["discord"])).toString("base64");
-    const guilds = { "1234567890": { enabled: true, requireMention: true } };
+    const legacyGuilds = { "1234567890": { enabled: true, requireMention: true } };
     const config = buildConfigDirect({
       NEMOCLAW_MESSAGING_CHANNELS_B64: channels,
-      NEMOCLAW_DISCORD_GUILDS_B64: Buffer.from(JSON.stringify(guilds)).toString("base64"),
+      NEMOCLAW_DISCORD_GUILDS_B64: Buffer.from(JSON.stringify(legacyGuilds)).toString("base64"),
     });
 
     expect(config.channels.discord.groupPolicy).toBe("allowlist");
-    expect(config.channels.discord.guilds).toEqual(guilds);
+    expect(config.channels.discord.guilds).toEqual({
+      "1234567890": { requireMention: true },
+    });
+    expect(config.channels.discord.guilds["1234567890"].enabled).toBeUndefined();
   });
 
-  it("does not seed channels.openclaw-weixin before the base plugin install registry exists", () => {
+  it("applies WeChat post-agent-install build-file outputs through the messaging applier", () => {
     const channels = Buffer.from(JSON.stringify(["wechat"])).toString("base64");
     const wechatConfig = Buffer.from(
-      JSON.stringify({ accountId: "primary", baseUrl: "https://example", userId: "u1" }),
+      JSON.stringify({ accountId: "primary", baseUrl: "https://ilinkai.wechat.com", userId: "u1" }),
     ).toString("base64");
     const config = runConfigScript({
       NEMOCLAW_MESSAGING_CHANNELS_B64: channels,
       NEMOCLAW_WECHAT_CONFIG_B64: wechatConfig,
     });
-    expect(config.channels?.["openclaw-weixin"]).toBeUndefined();
-    // The "wechat" alias is the NemoClaw channel name, not an OpenClaw
-    // channel id — must never appear under channels.
-    expect(config.channels?.wechat).toBeUndefined();
-  });
 
-  it("detects installed WeChat metadata in nested extension directories", () => {
-    const pluginDir = path.join(tmpDir, ".openclaw", "extensions", "vendor", "openclaw-weixin");
-    fs.mkdirSync(pluginDir, { recursive: true });
-    fs.mkdirSync(path.join(tmpDir, ".openclaw", "extensions", "node_modules"), { recursive: true });
-    fs.writeFileSync(
-      path.join(pluginDir, "package.json"),
-      JSON.stringify({ name: "@tencent-weixin/openclaw-weixin" }),
+    expect(config.plugins?.installs?.["openclaw-weixin"]).toEqual({
+      source: "npm",
+      spec: "@tencent-weixin/openclaw-weixin@2.4.3",
+      installPath: "/sandbox/.openclaw/extensions/openclaw-weixin",
+    });
+    expect(config.plugins?.load?.paths ?? []).not.toContain(
+      "/sandbox/.openclaw/extensions/openclaw-weixin",
     );
-
-    const channels = Buffer.from(JSON.stringify(["wechat"])).toString("base64");
-    const wechatConfig = Buffer.from(
-      JSON.stringify({ accountId: "primary", baseUrl: "https://example", userId: "u1" }),
-    ).toString("base64");
-    const config = runConfigScript({
-      NEMOCLAW_MESSAGING_CHANNELS_B64: channels,
-      NEMOCLAW_WECHAT_CONFIG_B64: wechatConfig,
-    });
-
-    expect(config.channels?.["openclaw-weixin"]?.accounts?.primary).toEqual({
-      enabled: true,
-    });
-  });
-
-  it("seeds channels.openclaw-weixin when the base plugin install registry exists", () => {
-    const configPath = path.join(tmpDir, ".openclaw", "openclaw.json");
-    const installEntry = {
-      source: "npm",
-      spec: "@tencent-weixin/openclaw-weixin@2.4.3",
-    };
-    fs.mkdirSync(path.dirname(configPath), { recursive: true });
-    fs.writeFileSync(
-      configPath,
-      JSON.stringify({ plugins: { installs: { "openclaw-weixin": installEntry } } }),
-    );
-
-    const channels = Buffer.from(JSON.stringify(["wechat"])).toString("base64");
-    const wechatConfig = Buffer.from(
-      JSON.stringify({ accountId: "primary", baseUrl: "https://example", userId: "u1" }),
-    ).toString("base64");
-    const config = runConfigScript({
-      NEMOCLAW_MESSAGING_CHANNELS_B64: channels,
-      NEMOCLAW_WECHAT_CONFIG_B64: wechatConfig,
-    });
-
-    expect(config.plugins?.installs?.["openclaw-weixin"]).toEqual({
-      ...installEntry,
-      installPath: wechatExtensionPath(),
-    });
-    expect(config.plugins?.load?.paths).toEqual([wechatExtensionPath()]);
-    expect(config.channels?.["openclaw-weixin"]?.accounts?.primary).toEqual({
-      enabled: true,
-    });
-    expect(config.channels?.wechat).toBeUndefined();
-
-    const accountFile = path.join(
-      tmpDir,
-      ".openclaw",
-      "openclaw-weixin",
-      "accounts",
-      "primary.json",
-    );
-    const account = JSON.parse(fs.readFileSync(accountFile, "utf-8"));
-    expect(account).toMatchObject({
-      token: "openshell:resolve:env:WECHAT_BOT_TOKEN",
-      baseUrl: "https://example",
-      userId: "u1",
-    });
-  });
-
-  it("seeds channels.openclaw-weixin and restores install registry when installed WeChat plugin metadata exists", () => {
-    writeWeChatPluginMetadata({
-      id: "openclaw-weixin",
-      channels: ["openclaw-weixin"],
-      channelConfigs: { "openclaw-weixin": {} },
-    });
-
-    const channels = Buffer.from(JSON.stringify(["wechat"])).toString("base64");
-    const wechatConfig = Buffer.from(
-      JSON.stringify({ accountId: "primary", baseUrl: "https://example", userId: "u1" }),
-    ).toString("base64");
-    const config = runConfigScript({
-      NEMOCLAW_MESSAGING_CHANNELS_B64: channels,
-      NEMOCLAW_WECHAT_CONFIG_B64: wechatConfig,
-    });
-
-    expect(config.plugins?.installs?.["openclaw-weixin"]).toEqual({
-      source: "npm",
-      spec: "@tencent-weixin/openclaw-weixin@2.4.3",
-      installPath: wechatExtensionPath(),
-    });
-    expect(config.plugins?.load?.paths).toEqual([wechatExtensionPath()]);
-    expect(config.channels?.["openclaw-weixin"]?.accounts?.primary).toEqual({
-      enabled: true,
-    });
-    expect(config.channels?.wechat).toBeUndefined();
-  });
-
-  it("uses the npm package path when installed WeChat package metadata exists without an extension dir", () => {
-    writeWeChatNpmPackageMetadata({
-      name: "@tencent-weixin/openclaw-weixin",
-      openclaw: { channels: ["vendor-weixin"] },
-    });
-
-    const channels = Buffer.from(JSON.stringify(["wechat"])).toString("base64");
-    const wechatConfig = Buffer.from(
-      JSON.stringify({ accountId: "primary", baseUrl: "https://example", userId: "u1" }),
-    ).toString("base64");
-    const config = runConfigScript({
-      NEMOCLAW_MESSAGING_CHANNELS_B64: channels,
-      NEMOCLAW_WECHAT_CONFIG_B64: wechatConfig,
-    });
-
-    expect(config.plugins?.installs?.["openclaw-weixin"]).toEqual({
-      source: "npm",
-      spec: "@tencent-weixin/openclaw-weixin@2.4.3",
-      installPath: wechatNpmPackagePath(),
-    });
-    expect(config.plugins?.load?.paths).toEqual([wechatNpmPackagePath()]);
-    expect(config.channels?.["vendor-weixin"]?.accounts?.primary).toEqual({
-      enabled: true,
-    });
-    expect(config.channels?.["openclaw-weixin"]?.accounts?.primary).toEqual({
-      enabled: true,
-    });
-    expect(config.channels?.wechat).toBeUndefined();
-    expect(fs.existsSync(wechatExtensionPath())).toBe(false);
-  });
-
-  it("uses the npm package path when installed WeChat plugin metadata exists without an extension dir", () => {
-    writeWeChatNpmPluginMetadata({
-      id: "openclaw-weixin",
-      channelConfigs: { "vendor-weixin": {} },
-    });
-
-    const channels = Buffer.from(JSON.stringify(["wechat"])).toString("base64");
-    const wechatConfig = Buffer.from(
-      JSON.stringify({ accountId: "primary", baseUrl: "https://example", userId: "u1" }),
-    ).toString("base64");
-    const config = runConfigScript({
-      NEMOCLAW_MESSAGING_CHANNELS_B64: channels,
-      NEMOCLAW_WECHAT_CONFIG_B64: wechatConfig,
-    });
-
-    expect(config.plugins?.installs?.["openclaw-weixin"]).toEqual({
-      source: "npm",
-      spec: "@tencent-weixin/openclaw-weixin@2.4.3",
-      installPath: wechatNpmPackagePath(),
-    });
-    expect(config.plugins?.load?.paths).toEqual([wechatNpmPackagePath()]);
-    expect(config.channels?.["vendor-weixin"]?.accounts?.primary).toEqual({
-      enabled: true,
-    });
-    expect(config.channels?.["openclaw-weixin"]?.accounts?.primary).toEqual({
-      enabled: true,
-    });
-    expect(config.channels?.wechat).toBeUndefined();
-    expect(fs.existsSync(wechatExtensionPath())).toBe(false);
-  });
-
-  it("seeds channels.openclaw-weixin when the Dockerfile marks the plugin preinstalled", () => {
-    const channels = Buffer.from(JSON.stringify(["wechat"])).toString("base64");
-    const wechatConfig = Buffer.from(
-      JSON.stringify({ accountId: "primary", baseUrl: "https://example", userId: "u1" }),
-    ).toString("base64");
-    const config = runConfigScript({
-      NEMOCLAW_MESSAGING_CHANNELS_B64: channels,
-      NEMOCLAW_WECHAT_CONFIG_B64: wechatConfig,
-      NEMOCLAW_OPENCLAW_WECHAT_PLUGIN_PREINSTALLED: "1",
-    });
-
-    expect(config.channels?.["openclaw-weixin"]?.accounts?.primary).toEqual({
-      enabled: true,
-    });
+    expect(config.plugins?.entries?.["openclaw-weixin"]?.enabled).toBe(true);
+    expect(config.channels?.["openclaw-weixin"]?.accounts?.primary).toEqual({ enabled: true });
     expect(config.channels?.wechat).toBeUndefined();
   });
 
@@ -654,15 +559,12 @@ describe("generate-openclaw-config.mts: config generation", () => {
     expect(config.channels?.wechat).toBeUndefined();
   });
 
-  it("enables the openclaw-weixin plugin entry unconditionally", () => {
-    // The plugin ships in the base image, so we activate the entry on every
-    // build. With no seeded account, the upstream auth/accounts.ts no-ops
-    // and the bridge never starts.
+  it("omits the openclaw-weixin plugin entry until WeChat is active", () => {
     const config = runConfigScript({});
-    expect(config.plugins?.entries?.["openclaw-weixin"]?.enabled).toBe(true);
+    expect(config.plugins?.entries?.["openclaw-weixin"]).toBeUndefined();
   });
 
-  it("preserves base-image plugin install registry entries", () => {
+  it("preserves existing plugin install registry entries without enabling WeChat", () => {
     const configPath = path.join(tmpDir, ".openclaw", "openclaw.json");
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
     const installEntry = {
@@ -677,7 +579,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
     const config = runConfigScript({});
 
     expect(config.plugins?.installs?.["openclaw-weixin"]).toEqual(installEntry);
-    expect(config.plugins?.entries?.["openclaw-weixin"]?.enabled).toBe(true);
+    expect(config.plugins?.entries?.["openclaw-weixin"]).toBeUndefined();
   });
 
   it("ignores malformed existing plugin install registries while regenerating config", () => {
@@ -687,7 +589,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
     for (const existing of [null, { plugins: null }, { plugins: { installs: {} } }]) {
       fs.writeFileSync(configPath, JSON.stringify(existing));
       const config = runConfigScript();
-      expect(config.plugins?.entries?.["openclaw-weixin"]?.enabled).toBe(true);
+      expect(config.plugins?.entries?.["openclaw-weixin"]).toBeUndefined();
       expect(config.plugins?.installs).toBeUndefined();
     }
   });
@@ -1942,9 +1844,6 @@ describe("generate-openclaw-config.mts: config generation", () => {
   });
 });
 
-// ═══════════════════════════════════════════════════════════════════
-// Phase 2: Auto-disable device auth for non-loopback URLs
-// ═══════════════════════════════════════════════════════════════════
 describe("generate-openclaw-config.mts: non-loopback auto-disable device auth", () => {
   it("auto-disables device auth for Brev Launchable URL", () => {
     const config = runConfigScript({
