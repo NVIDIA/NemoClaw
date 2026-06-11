@@ -2522,9 +2522,11 @@ jobs:
                 ? '❌ Some jobs failed'
                 : cancelled.length > 0 && passed.length === 0
                   ? '⚠️ Run cancelled — no signal'
-                  : skipped.length > 0 && passed.length === 0
-                    ? '⚠️ No requested jobs ran'
-                    : '✅ All requested jobs passed';
+                  : cancelled.length > 0 && passed.length > 0
+                    ? '⚠️ Some jobs cancelled — partial pass'
+                    : skipped.length > 0 && passed.length === 0
+                      ? '⚠️ No requested jobs ran'
+                      : '✅ All requested jobs passed';
 
             const body = [
               `### Selective E2E Results — ${status}`,
