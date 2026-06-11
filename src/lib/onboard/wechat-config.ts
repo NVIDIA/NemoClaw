@@ -18,8 +18,8 @@ export interface WechatConfigSnapshot {
  * host-qr handler because the bot token is already cached.
  *
  * Non-secret — the bot token lives in the OpenShell provider, not here.
- * The metadata is what `patchStagedDockerfile` serializes into
- * `NEMOCLAW_WECHAT_CONFIG_B64` so `seed-wechat-accounts.py` can write
+ * The metadata is serialized into the messaging manifest plan so the
+ * `wechat.seedOpenClawAccount` post-agent-install hook can write
  * `<stateDir>/openclaw-weixin/accounts/<id>.json` at image-build time.
  */
 export function gatherWechatConfig(session: Session | null): WechatConfigSnapshot {

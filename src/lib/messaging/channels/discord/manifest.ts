@@ -74,21 +74,26 @@ export const discordManifest = {
   policyPresets: ["discord"],
   render: [
     {
-      id: "discord-openclaw-account",
+      id: "discord-openclaw-channel",
       kind: "json-fragment",
       agent: "openclaw",
       target: "openclaw.json",
       fragment: {
-        path: "channels.discord.accounts.default",
+        path: "channels.discord",
         value: {
-          token: "{{credential.discordBotToken.placeholder}}",
           enabled: true,
-          healthMonitor: {
-            enabled: false,
+          accounts: {
+            default: {
+              token: "{{credential.discordBotToken.placeholder}}",
+              enabled: true,
+              healthMonitor: {
+                enabled: false,
+              },
+              proxy: "{{discordProxyUrl}}",
+              dmPolicy: "{{discord.allowedUsers.dmPolicy}}",
+              allowFrom: "{{discord.allowedUsers.values}}",
+            },
           },
-          proxy: "{{discordProxyUrl}}",
-          dmPolicy: "{{discord.allowedUsers.dmPolicy}}",
-          allowFrom: "{{discord.allowedUsers.values}}",
         },
       },
     },
@@ -97,11 +102,24 @@ export const discordManifest = {
       kind: "json-fragment",
       agent: "openclaw",
       target: "openclaw.json",
+      when: "{{discord.hasGuilds}}",
       fragment: {
         path: "channels.discord",
         value: {
           groupPolicy: "allowlist",
           guilds: "{{discord.guilds}}",
+        },
+      },
+    },
+    {
+      id: "discord-openclaw-plugin",
+      kind: "json-fragment",
+      agent: "openclaw",
+      target: "openclaw.json",
+      fragment: {
+        path: "plugins.entries.discord",
+        value: {
+          enabled: true,
         },
       },
     },
@@ -134,6 +152,18 @@ export const discordManifest = {
         },
       },
     },
+    {
+      id: "discord-hermes-platform",
+      kind: "json-fragment",
+      agent: "hermes",
+      target: "~/.hermes/config.yaml",
+      fragment: {
+        path: "platforms.discord",
+        value: {
+          enabled: true,
+        },
+      },
+    },
   ],
   state: {
     persist: {
@@ -155,6 +185,25 @@ export const discordManifest = {
     ],
   },
   hooks: [
+    {
+      id: "discord-openclaw-package-install",
+      phase: "agent-install",
+      handler: "common.staticOutputs",
+      agents: ["openclaw"],
+      outputs: [
+        {
+          id: "openclawPluginPackage",
+          kind: "package-install",
+          required: true,
+          value: {
+            manager: "openclaw-plugin",
+            spec: "npm:@openclaw/discord@{{openclaw.version}}",
+            pin: true,
+          },
+        },
+      ],
+      onFailure: "abort",
+    },
     {
       id: "discord-token-paste",
       phase: "enroll",

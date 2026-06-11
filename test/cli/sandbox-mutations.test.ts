@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { runWithEnv, testTimeoutOptions, writeSandboxRegistry } from "./helpers";
+import { runWithEnv, runWithInput, testTimeoutOptions, writeSandboxRegistry } from "./helpers";
 
 function readSandboxPolicies(home: string, sandboxName = "alpha"): string[] {
   const registryPath = path.join(home, ".nemoclaw", "sandboxes.json");
@@ -144,6 +144,23 @@ describe("CLI dispatch", () => {
 
     expect(result.code).toBe(1);
     expect(result.out).toContain("Non-interactive mode requires a preset name.");
+    expect(readSandboxPolicies(home)).toEqual([]);
+  });
+
+  it("keeps public policy-add missing-preset failure when stdin contains probe output", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-policy-stdin-"));
+    writeSandboxRegistry(home);
+    const openshell = writePolicyMutationOpenshellStub(home);
+
+    const result = runWithInput("alpha policy-add", "/usr/bin/dmesg\n3", {
+      HOME: home,
+      NEMOCLAW_NON_INTERACTIVE: "1",
+      NEMOCLAW_OPENSHELL_BIN: openshell,
+    });
+
+    expect(result.code).toBe(1);
+    expect(result.out).toContain("Non-interactive mode requires a preset name.");
+    expect(result.out).not.toContain("Unknown preset '/usr/bin/dmesg");
     expect(readSandboxPolicies(home)).toEqual([]);
   });
 
