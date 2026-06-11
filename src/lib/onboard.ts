@@ -124,12 +124,6 @@ const {
 const bedrockRuntimeOnboard: typeof import("./onboard/bedrock-runtime") =
   require("./onboard/bedrock-runtime");
 const {
-  buildVllmMenuEntries,
-}: typeof import("./onboard/vllm-menu") = require("./onboard/vllm-menu");
-const {
-  detectWindowsHostOllama,
-}: typeof import("./onboard/windows-host-ollama") = require("./onboard/windows-host-ollama");
-const {
   installOllamaOnLinux,
 }: typeof import("./onboard/install-ollama-linux") = require("./onboard/install-ollama-linux");
 const {
@@ -204,22 +198,24 @@ const {
 } = require("./core/ports");
 const localInference: typeof import("./inference/local") = require("./inference/local");
 const {
-  findReachableOllamaHost,
   resetOllamaHostCache,
   getLocalProviderBaseUrl,
   getLocalProviderHealthCheck,
   getLocalProviderValidationBaseUrl,
   getOllamaModelOptions,
   getOllamaWarmupCommand,
-  OLLAMA_HOST_DOCKER_INTERNAL,
   validateLocalProvider,
 } = localInference;
 const {
   checkOllamaPortsOrWarn,
-  resolveOllamaInstallMenuEntry,
-  resolveRunningOllamaMenuEntry,
   assertOllamaUpgradeApplied,
 } = require("./onboard/ollama-install-menu");
+const {
+  buildInferenceProviderMenu,
+}: typeof import("./onboard/provider-menu") = require("./onboard/provider-menu");
+const {
+  detectInferenceProviderHostState,
+}: typeof import("./onboard/provider-host-state") = require("./onboard/provider-host-state");
 const {
   ensureOllamaAuthProxy,
   getOllamaProxyToken,
@@ -234,7 +230,7 @@ const {
   switchToWindowsOllamaHost,
   printWindowsOllamaTimeoutDiagnostics,
 } = require("./inference/ollama/windows");
-const { detectVllmProfile, installVllm } = require("./inference/vllm");
+const { installVllm } = require("./inference/vllm");
 const inferenceConfig: typeof import("./inference/config") = require("./inference/config");
 const { DEFAULT_CLOUD_MODEL, getProviderSelectionConfig, parseGatewayInference } = inferenceConfig;
 
@@ -308,7 +304,6 @@ const platformUtils: typeof import("./platform") = require("./platform");
 const { isWsl, shouldPatchCoredns } = platformUtils;
 const {
   getContainerRuntime,
-  getWindowsHostOllamaDockerRequirement,
   repairLocalInferenceSystemdOverrideOrExit,
   rejectUnsupportedWindowsHostOllama,
   shouldFrontOllamaWithProxy,
@@ -1397,12 +1392,6 @@ function getGatewayHealthWaitConfig(_startStatus = 0, containerState = "") {
 
 function buildGatewayClusterExecArgv(script: string): string[] {
   return dockerExecArgv(getGatewayClusterContainerName(), ["sh", "-lc", script]);
-}
-
-function hostCommandExists(commandName: string): boolean {
-  return !!runCapture(["sh", "-c", 'command -v "$1"', "--", commandName], {
-    ignoreError: true,
-  });
 }
 
 function captureProcessArgs(pid: number): string {
@@ -3610,7 +3599,7 @@ async function createSandbox(
 
 // ── Step 3: Inference selection ──────────────────────────────────
 
-type ProviderChoice = { key: string; label: string };
+type ProviderChoice = import("./onboard/provider-menu").ProviderMenuChoice;
 
 const { readRecordedProvider, readRecordedNimContainer, readRecordedModel } =
   providerRecovery.createProviderRecoveryHelpers({
@@ -3738,135 +3727,59 @@ async function setupNim(
   let preferredInferenceApi: string | null = null;
   let allowToolsIncompatible = false;
 
-  const localProbeCurlArgs = ["--connect-timeout", "2", "--max-time", "5"] as const;
-  const hasOllama = hostCommandExists("ollama");
-  const ollamaHost = findReachableOllamaHost();
-  const ollamaRunning = ollamaHost !== null;
-  const isWindowsHostOllama = ollamaHost === OLLAMA_HOST_DOCKER_INTERNAL;
-  const vllmRunning = !!runCapture(
-    ["curl", "-sf", ...localProbeCurlArgs, `http://127.0.0.1:${VLLM_PORT}/v1/models`],
-    { ignoreError: true },
-  );
-  // Pick a vLLM install recipe for this host. Profiles live in inference/vllm.ts;
-  // null means "no supported platform" (vLLM stays behind EXPERIMENTAL).
-  const vllmProfile = detectVllmProfile(gpu);
-  // If the profile's image is already cached, the install path is really a
-  // "start" — docker pull is a no-op and the container can come up in seconds.
-  const hasVllmImage = !!(
-    vllmProfile &&
-    docker.dockerCapture(["images", "-q", vllmProfile.image], { ignoreError: true }).trim()
-  );
-  const windowsHostOllamaDockerRequirement = getWindowsHostOllamaDockerRequirement(
-    isWsl() ? getContainerRuntime() : null,
-  );
-  // Probed even when WSL has its own Ollama: users may prefer the Windows
-  // instance for GPU access and a unified model cache. See
-  // src/lib/onboard/windows-host-ollama.ts for process/path fallback details.
-  const winOllamaState = detectWindowsHostOllama();
-  const hasWindowsOllama = winOllamaState.installed;
-  const winOllamaInstalledPath = winOllamaState.installedPath;
-  const winOllamaLoopbackOnly = winOllamaState.loopbackOnly;
-
-  // Independent of findReachableOllamaHost: when WSL Ollama wins the cache
-  // on 127.0.0.1, Windows-host may also be running on 0.0.0.0 and we want
-  // to offer a "switch" without restarting anything.
-  let windowsOllamaReachable = false;
-  if (isWsl() && !isWindowsHostOllama) {
-    windowsOllamaReachable = !!runCapture(
-      ["curl", "-sf", ...localProbeCurlArgs, `http://host.docker.internal:${OLLAMA_PORT}/api/tags`],
-      { ignoreError: true },
-    );
-  }
-
-  // Mirrored mode shares loopback so both probes hit the same instance;
-  // only NAT mode actually has two separate daemons to warn about.
-  if (isWsl() && ollamaHost === "127.0.0.1" && windowsOllamaReachable) {
-    const networkingMode = runCapture(["wslinfo", "--networking-mode"], {
-      ignoreError: true,
-    }).trim();
-    if (networkingMode !== "mirrored") {
-      console.log("");
-      console.log("  ⚠ Ollama is running on both WSL and the Windows host.");
-      console.log("    Stop one to avoid duplicated GPU memory and model caches.");
-      console.log("");
-    }
-  }
+  const providerHostState = detectInferenceProviderHostState({
+    gpu,
+    experimental: EXPERIMENTAL,
+  });
+  const {
+    hasOllama,
+    ollamaHost,
+    ollamaRunning,
+    isWindowsHostOllama,
+    isWsl: isWslHost,
+    hasWindowsOllama,
+    winOllamaInstalledPath,
+    winOllamaLoopbackOnly,
+    windowsOllamaReachable,
+    windowsHostOllamaDockerRequirement,
+    vllmRunning,
+    vllmProfile,
+    hasVllmImage,
+    vllmEntries,
+    ollamaInstallMenu,
+    gpuNimCapable,
+  } = providerHostState;
   const requestedProvider = getNonInteractiveProvider();
   const requestedModel = isNonInteractive()
     ? getNonInteractiveModel(requestedProvider || "build")
     : null;
   const agentProviderOptions = getAgentInferenceProviderOptions(agent);
-  const hermesProviderAvailable = agentProviderOptions.includes("hermesProvider");
-  const options: Array<{ key: string; label: string }> = [];
-  options.push({ key: "build", label: "NVIDIA Endpoints" });
-  options.push({ key: "openai", label: "OpenAI" });
-  options.push({ key: "custom", label: "Other OpenAI-compatible endpoint" });
-  options.push({ key: "anthropic", label: "Anthropic" });
-  options.push({ key: "anthropicCompatible", label: "Other Anthropic-compatible endpoint" });
-  options.push({ key: "gemini", label: "Google Gemini" });
-  const runningOllamaMenu = resolveRunningOllamaMenuEntry({
-    hasOllama,
-    ollamaRunning,
-    ollamaHost,
-    isWsl: isWsl(),
-    ollamaPort: OLLAMA_PORT,
-    windowsHostLabelSuffix: windowsHostOllamaDockerRequirement.supported
-      ? ""
-      : windowsHostOllamaDockerRequirement.labelSuffix,
-  });
-  if (runningOllamaMenu) options.push(runningOllamaMenu);
-  if (EXPERIMENTAL && gpu && gpu.nimCapable) {
-    options.push({ key: "nim-local", label: "Local NVIDIA NIM [experimental]" });
-  }
-  options.push(
-    ...buildVllmMenuEntries({
-      vllmRunning,
-      vllmProfile,
-      experimental: EXPERIMENTAL,
-      platform: gpu?.platform,
-      hasVllmImage,
-    }),
-  );
-  // Skipped when Windows-host already won the cache: the running entry
-  // above already covers that case.
-  if (hasWindowsOllama && !isWindowsHostOllama) {
-    options.push({
-      key: "start-windows-ollama",
-      label: windowsHostOllamaDockerRequirement.startLabel({
-        reachable: windowsOllamaReachable,
-        loopbackOnly: winOllamaLoopbackOnly,
-      }),
-    });
-  }
-  // On WSL, always offer to install Ollama on the Windows host when not
-  // already installed, regardless of WSL Ollama state — users may prefer the
-  // Windows-host instance (GPU access) even with WSL Ollama running.
-  if (isWsl() && !hasWindowsOllama) {
-    options.push({
-      key: "install-windows-ollama",
-      label: windowsHostOllamaDockerRequirement.installLabel,
-    });
-  }
-  const ollamaInstallMenu = resolveOllamaInstallMenuEntry({
-    hasOllama,
-    ollamaRunning,
-    hasWindowsOllama,
-    ollamaHost,
-    platform: process.platform,
-    isWsl: isWsl(),
-  });
-  if (ollamaInstallMenu.entry) options.push(ollamaInstallMenu.entry);
 
   // Model Router: complexity-based routing via blueprint config.
   const blueprintRouterCfg = loadBlueprintProfile("routed");
-  if (blueprintRouterCfg && blueprintRouterCfg.router?.enabled === true) {
-    options.push({ key: "routed", label: "Model Router (experimental)" });
-  }
-  for (const providerKey of agentProviderOptions) {
-    const remoteConfig = REMOTE_PROVIDER_CONFIG[providerKey];
-    if (!remoteConfig || options.some((option) => option.key === providerKey)) continue;
-    options.push({ key: providerKey, label: remoteConfig.label });
-  }
+  const { options, hermesProviderAvailable } = buildInferenceProviderMenu({
+    remoteProviderConfig: REMOTE_PROVIDER_CONFIG,
+    agentProviderOptions,
+    experimental: EXPERIMENTAL,
+    gpuNimCapable,
+    hasOllama,
+    ollamaRunning,
+    ollamaHost,
+    ollamaPort: OLLAMA_PORT,
+    isWsl: isWslHost,
+    hasWindowsOllama,
+    isWindowsHostOllama,
+    windowsHostLabelSuffix: windowsHostOllamaDockerRequirement.supported
+      ? ""
+      : windowsHostOllamaDockerRequirement.labelSuffix,
+    windowsHostInstallLabel: windowsHostOllamaDockerRequirement.installLabel,
+    windowsHostStartLabel: windowsHostOllamaDockerRequirement.startLabel,
+    windowsOllamaReachable,
+    winOllamaLoopbackOnly,
+    ollamaInstallEntry: ollamaInstallMenu.entry,
+    vllmEntries,
+    routedEnabled: blueprintRouterCfg?.router?.enabled === true,
+  });
 
   function rejectWindowsHostOllama(providerKey: string, windowsHostSelected: boolean): boolean {
     return rejectUnsupportedWindowsHostOllama(
@@ -3906,7 +3819,7 @@ async function setupNim(
             // (so the menu's "ollama" key points there), the availability
             // check below would pass and silently swap the daemon. Detect
             // and fail-loud with a hint.
-            if (isWsl() && recordedProvider === "ollama-local" && isWindowsHostOllama) {
+            if (isWslHost && recordedProvider === "ollama-local" && isWindowsHostOllama) {
               console.error(
                 `  Recorded provider '${recordedProvider}' (WSL Ollama) is not available in this environment.`,
               );
