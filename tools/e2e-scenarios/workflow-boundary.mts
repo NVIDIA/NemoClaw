@@ -122,6 +122,55 @@ function requireNoDispatchInputInterpolation(
   }
 }
 
+function freeStandingJobIf(jobName: string): string {
+  return `\${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',${jobName},') }}`;
+}
+
+function validateFreeStandingJobSelector(
+  errors: string[],
+  jobs: WorkflowRecord,
+  jobName: string,
+): void {
+  const job = asRecord(jobs[jobName]);
+  if (job.needs !== "validate-jobs") {
+    errors.push(`${jobName} job must depend on validate-jobs`);
+  }
+  if (job.if !== freeStandingJobIf(jobName)) {
+    errors.push(`${jobName} job must use the shared jobs selector condition`);
+  }
+}
+
+function validateJobsSelector(errors: string[], jobs: WorkflowRecord): void {
+  const job = asRecord(jobs["validate-jobs"]);
+  if (Object.keys(job).length === 0) {
+    errors.push("workflow missing validate-jobs job");
+    return;
+  }
+  if (job["runs-on"] !== "ubuntu-latest") {
+    errors.push("validate-jobs job must run on ubuntu-latest");
+  }
+  const steps = asSteps(job.steps);
+  requireNoDispatchInputInterpolation(errors, steps);
+  const validate = requireJobStep(errors, "validate-jobs", steps, "Validate free-standing job selector");
+  const env = asRecord(validate?.env);
+  if (env.JOBS !== "${{ inputs.jobs }}") {
+    errors.push("validate-jobs step must pass jobs through JOBS env");
+  }
+  if (env.SCENARIOS !== "${{ inputs.scenarios }}") {
+    errors.push("validate-jobs step must pass scenarios through SCENARIOS env");
+  }
+  requireRunContains(errors, validate, "Use either scenarios or jobs, not both");
+  requireRunContains(errors, validate, "allowed_jobs=");
+  requireRunContains(errors, validate, "openshell-version-pin-vitest");
+  requireRunContains(errors, validate, "onboard-negative-paths-vitest");
+  requireRunContains(errors, validate, "openclaw-tui-chat-correlation-vitest");
+  requireRunContains(errors, validate, "gateway-guard-recovery");
+  requireRunContains(errors, validate, "^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$");
+  requireRunContains(errors, validate, "Invalid jobs input; use comma-separated job ids");
+  requireRunDoesNotContain(errors, validate, "Invalid jobs input: ${JOBS}");
+  requireRunContains(errors, validate, "Unknown free-standing Vitest job");
+}
+
 function validateOpenShellVersionPinVitestJob(errors: string[], jobs: WorkflowRecord): void {
   const jobName = "openshell-version-pin-vitest";
   const job = asRecord(jobs[jobName]);
@@ -133,14 +182,7 @@ function validateOpenShellVersionPinVitestJob(errors: string[], jobs: WorkflowRe
   if (job["runs-on"] !== "ubuntu-latest") {
     errors.push("openshell-version-pin-vitest job must run on ubuntu-latest");
   }
-  if (Object.hasOwn(job, "needs")) {
-    errors.push("openshell-version-pin-vitest job must run independently of generate-matrix");
-  }
-  if (Object.hasOwn(job, "if")) {
-    errors.push(
-      "openshell-version-pin-vitest job must run independently of workflow dispatch scenario filters",
-    );
-  }
+  validateFreeStandingJobSelector(errors, jobs, jobName);
 
   const jobEnv = asRecord(job.env);
   if (jobEnv.NEMOCLAW_RUN_E2E_SCENARIOS !== "1") {
@@ -221,14 +263,7 @@ function validateOnboardNegativePathsVitestJob(errors: string[], jobs: WorkflowR
   if (job["runs-on"] !== "ubuntu-latest") {
     errors.push("onboard-negative-paths-vitest job must run on ubuntu-latest");
   }
-  if (Object.hasOwn(job, "needs")) {
-    errors.push("onboard-negative-paths-vitest job must run independently of generate-matrix");
-  }
-  if (Object.hasOwn(job, "if")) {
-    errors.push(
-      "onboard-negative-paths-vitest job must run independently of workflow dispatch scenario filters",
-    );
-  }
+  validateFreeStandingJobSelector(errors, jobs, jobName);
 
   const jobEnv = asRecord(job.env);
   if (jobEnv.NEMOCLAW_RUN_E2E_SCENARIOS !== "1") {
@@ -312,6 +347,7 @@ export function validateE2eVitestScenariosWorkflowBoundary(
 
   const dispatchInputs = asRecord(workflowDispatch.inputs);
   requireInput(errors, dispatchInputs, "scenarios");
+  requireInput(errors, dispatchInputs, "jobs");
   if (Object.hasOwn(dispatchInputs, "test_filter")) {
     errors.push("workflow_dispatch must not expose legacy test_filter input");
   }
@@ -320,6 +356,8 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   if (permissions.contents !== "read") errors.push("workflow permissions.contents must be read");
 
   const jobs = asRecord(workflow.jobs);
+  validateJobsSelector(errors, jobs);
+
   const generateMatrix = asRecord(jobs["generate-matrix"]);
   if (Object.keys(generateMatrix).length === 0) errors.push("workflow missing generate-matrix job");
   if (generateMatrix["runs-on"] !== "ubuntu-latest") {
@@ -356,6 +394,9 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   }
   if (liveScenarios.needs !== "generate-matrix") {
     errors.push("live-scenarios job must depend on generate-matrix");
+  }
+  if (liveScenarios.if !== "${{ inputs.jobs == '' }}") {
+    errors.push("live-scenarios job must not run when a free-standing jobs selector is supplied");
   }
   const strategy = asRecord(liveScenarios.strategy);
   if (strategy["fail-fast"] !== false) {
@@ -482,6 +523,58 @@ export function validateE2eVitestScenariosWorkflowBoundary(
 
   validateOpenShellVersionPinVitestJob(errors, jobs);
   validateOnboardNegativePathsVitestJob(errors, jobs);
+  validateFreeStandingJobSelector(errors, jobs, "openclaw-tui-chat-correlation-vitest");
+  validateFreeStandingJobSelector(errors, jobs, "gateway-guard-recovery");
+
+  const reportToPr = asRecord(jobs["report-to-pr"]);
+  if (Object.keys(reportToPr).length === 0) {
+    errors.push("workflow missing report-to-pr job");
+  } else {
+    const needs = Array.isArray(reportToPr.needs) ? reportToPr.needs : [];
+    for (const required of [
+      "validate-jobs",
+      "generate-matrix",
+      "live-scenarios",
+      "openshell-version-pin-vitest",
+      "onboard-negative-paths-vitest",
+      "openclaw-tui-chat-correlation-vitest",
+      "gateway-guard-recovery",
+    ]) {
+      if (!needs.includes(required)) errors.push(`report-to-pr job must wait for ${required}`);
+    }
+    const reportSteps = asSteps(reportToPr.steps);
+    const report = requireJobStep(errors, "report-to-pr", reportSteps, "Post Vitest scenario results to PR");
+    const reportEnv = asRecord(report?.env);
+    if (reportEnv.JOBS !== "${{ inputs.jobs }}") {
+      errors.push("report-to-pr step must pass jobs through JOBS env");
+    }
+    if (reportEnv.JOB_PR_NUMBER !== "${{ inputs.pr_number }}") {
+      errors.push("report-to-pr step must pass pr_number through JOB_PR_NUMBER env");
+    }
+    if (reportEnv.JOB_SCENARIOS !== "${{ inputs.scenarios }}") {
+      errors.push("report-to-pr step must pass scenarios through JOB_SCENARIOS env");
+    }
+    const reportScript = stringValue(asRecord(report?.with).script ?? report?.run);
+    if (!reportScript.includes("process.env.JOBS")) {
+      errors.push("step 'Post Vitest scenario results to PR' run script must include process.env.JOBS");
+    }
+    if (!reportScript.includes("jobsValidationPassed")) {
+      errors.push("step 'Post Vitest scenario results to PR' run script must check validate-jobs before echoing jobs");
+    }
+    if (!reportScript.includes("selector rejected by validate-jobs")) {
+      errors.push("step 'Post Vitest scenario results to PR' run script must omit rejected job selectors");
+    }
+    if (!reportScript.includes("**Requested jobs:**")) {
+      errors.push("step 'Post Vitest scenario results to PR' run script must include **Requested jobs:**");
+    }
+    for (const forbidden of ["toJSON(inputs.pr_number)", "toJSON(inputs.scenarios)"]) {
+      if (reportScript.includes(forbidden)) {
+        errors.push(
+          `step 'Post Vitest scenario results to PR' run script must not include ${forbidden}`,
+        );
+      }
+    }
+  }
 
   return errors;
 }
