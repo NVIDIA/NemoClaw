@@ -472,13 +472,8 @@ const credentialBindings = Array.isArray(plan.credentialBindings) ? plan.credent
 if (channelId !== "whatsapp" && !credentialBindings.some((entry) => entry?.channelId === channelId)) {
   fail(channelId + " credential binding missing from messaging.plan");
 }
-const agentRender = Array.isArray(plan.agentRender) ? plan.agentRender : [];
-const buildSteps = Array.isArray(plan.buildSteps) ? plan.buildSteps : [];
-const hasAgentRender = agentRender.some((entry) => entry?.channelId === channelId && entry?.agent === agent);
-const hasBuildStep = buildSteps.some((entry) => entry?.channelId === channelId);
-if (!hasAgentRender && !hasBuildStep) {
-  fail(channelId + " " + agent + " render/build-step entry missing from messaging.plan");
-}
+if (Object.hasOwn(plan, "agentRender")) fail("messaging.plan.agentRender should not be persisted");
+if (channels.some((item) => item && Object.hasOwn(item, "hooks"))) fail("messaging.plan.channels hooks should not be persisted");
 ' "$REGISTRY" "$ACTIVE_SANDBOX" "$ACTIVE_AGENT" "$channel" "$expected" 2>&1)"; then
       msg="${ACTIVE_AGENT}/${channel}: host registry messaging.plan has channel ${expected} ${context}"
       pass_msg "$msg"

@@ -241,8 +241,18 @@ describe("registry", () => {
     expect(rawSandbox.messagingChannels).toBeUndefined();
     expect(rawSandbox.messagingChannelConfig).toBeUndefined();
     expect(registry.getConfiguredMessagingChannels("messaging")).toEqual(["telegram"]);
+    const hydrated = registry.getHydratedMessagingPlanFromEntry(sb);
+    expect(hydrated.agentRender.some((entry) => entry.channelId === "telegram")).toBe(true);
+    expect(hydrated.channels[0].hooks.some((hook) => hook.channelId === "telegram")).toBe(true);
     const data = JSON.parse(fs.readFileSync(regFile, "utf-8"));
-    expect(data.sandboxes.messaging.messaging).toEqual({ schemaVersion: 1, plan });
+    expect(data.sandboxes.messaging.messaging.schemaVersion).toBe(1);
+    expect(data.sandboxes.messaging.messaging.plan).toMatchObject({
+      schemaVersion: 1,
+      sandboxName: "messaging",
+      channels: [{ channelId: "telegram" }],
+    });
+    expect(data.sandboxes.messaging.messaging.plan.agentRender).toBeUndefined();
+    expect(data.sandboxes.messaging.messaging.plan.channels[0].hooks).toBeUndefined();
     expect(data.sandboxes.messaging.messagingChannels).toBeUndefined();
     expect(data.sandboxes.messaging.messagingChannelConfig).toBeUndefined();
   });

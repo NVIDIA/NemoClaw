@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { MessagingHookRegistry } from "../hooks";
+import { hydrateDerivedSandboxMessagingPlanFields } from "../persistence";
+import { parseSandboxMessagingPlan } from "../plan-validation";
 import type {
   ChannelManifestRegistry,
   MessagingAgentId,
@@ -177,7 +179,7 @@ export class MessagingWorkflowPlanner {
     sandboxEntry: MessagingWorkflowPlannerSandboxEntry | null | undefined,
     channelIds: readonly MessagingChannelId[],
   ): MessagingCompilerCredentialAvailability | undefined {
-    const plan = sandboxEntry?.messaging?.plan;
+    const plan = parseSandboxMessagingPlan(sandboxEntry?.messaging?.plan);
     if (!plan) return undefined;
 
     const availability: Record<string, boolean> = {};
@@ -247,16 +249,11 @@ function onlyConfiguredChannels(
 function readSandboxEntryPlan(
   context: Pick<MessagingWorkflowPlannerSandboxContext, "agent" | "sandboxEntry" | "sandboxName">,
 ): SandboxMessagingPlan | null {
-  const plan = context.sandboxEntry?.messaging?.plan;
-  if (
-    !plan ||
-    plan.schemaVersion !== 1 ||
-    plan.sandboxName !== context.sandboxName ||
-    plan.agent !== context.agent
-  ) {
-    return null;
-  }
-  return clonePlan(plan);
+  const plan = parseSandboxMessagingPlan(context.sandboxEntry?.messaging?.plan, {
+    sandboxName: context.sandboxName,
+    agent: context.agent,
+  });
+  return plan ? hydrateDerivedSandboxMessagingPlanFields(plan) : null;
 }
 
 function disabledChannelsFromSandboxEntry(
