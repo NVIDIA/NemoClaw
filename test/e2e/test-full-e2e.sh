@@ -71,6 +71,8 @@ except Exception as e:
 
 # shellcheck source=test/e2e/lib/openclaw-json.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/openclaw-json.sh"
+# shellcheck source=test/e2e/lib/ci-compatible-inference.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/ci-compatible-inference.sh"
 
 # Determine repo root
 if [ -d /workspace ] && [ -f /workspace/install.sh ]; then
@@ -83,6 +85,7 @@ else
 fi
 
 SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-nightly}"
+nemoclaw_e2e_configure_compatible_inference
 
 # shellcheck source=test/e2e/lib/sandbox-teardown.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox-teardown.sh"
@@ -114,17 +117,20 @@ else
   exit 1
 fi
 
-if [ -n "${NVIDIA_INFERENCE_API_KEY:-}" ] && [[ "${NVIDIA_INFERENCE_API_KEY}" == nvapi-* ]]; then
-  pass "NVIDIA_INFERENCE_API_KEY is set (starts with nvapi-)"
-else
-  fail "NVIDIA_INFERENCE_API_KEY not set or invalid — required for live inference"
+if ! nemoclaw_e2e_require_hosted_inference_key; then
   exit 1
 fi
 
-if curl -sf --max-time 10 https://inference-api.nvidia.com/v1/models >/dev/null 2>&1; then
-  pass "Network access to inference-api.nvidia.com"
+HOSTED_INFERENCE_BASE_URL="$(nemoclaw_e2e_hosted_inference_base_url)"
+HOSTED_INFERENCE_MODEL="$(nemoclaw_e2e_hosted_inference_model)"
+HOSTED_INFERENCE_KEY="$(nemoclaw_e2e_hosted_inference_key)"
+
+if curl -sf --max-time 10 \
+  -H "Authorization: Bearer $HOSTED_INFERENCE_KEY" \
+  "${HOSTED_INFERENCE_BASE_URL}/models" >/dev/null 2>&1; then
+  pass "Network access to ${HOSTED_INFERENCE_BASE_URL}"
 else
-  fail "Cannot reach inference-api.nvidia.com"
+  fail "Cannot reach ${HOSTED_INFERENCE_BASE_URL}"
   exit 1
 fi
 
@@ -306,13 +312,13 @@ fi
 section "Phase 4: Live inference"
 
 # ── Test 4a: Direct NVIDIA Endpoints ──
-info "[LIVE] Direct API test → inference-api.nvidia.com..."
+info "[LIVE] Direct API test → ${HOSTED_INFERENCE_BASE_URL}..."
 api_response=$(curl -s --max-time 30 \
-  -X POST https://inference-api.nvidia.com/v1/chat/completions \
+  -X POST "${HOSTED_INFERENCE_BASE_URL}/chat/completions" \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $NVIDIA_INFERENCE_API_KEY" \
+  -H "Authorization: Bearer $HOSTED_INFERENCE_KEY" \
   -d '{
-    "model": "nvidia/nemotron-3-super-120b-a12b",
+    "model": "'"${HOSTED_INFERENCE_MODEL}"'",
     "messages": [{"role": "user", "content": "Reply with exactly one word: PONG"}],
     "max_tokens": 100
   }' 2>/dev/null) || true

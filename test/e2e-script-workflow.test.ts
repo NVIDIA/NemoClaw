@@ -524,6 +524,32 @@ describe("E2E reusable workflow contract", () => {
     expect(exportStep?.run).toContain('>> "$GITHUB_ENV"');
   });
 
+  it("can route selected reusable jobs through the CI compatible inference endpoint", () => {
+    const exportStep = runnerWorkflow.jobs.run.steps.find(
+      (step) => step.name === "Export CI compatible inference environment",
+    );
+    const expectedJobs = ["cloud-e2e", "cloud-onboard-e2e", "cloud-inference-e2e"];
+    const workflowCall = runnerWorkflow.on?.workflow_call ?? runnerWorkflow.true?.workflow_call;
+
+    expect(workflowCall?.inputs?.nvidia_secret_as_compatible_api_key).toMatchObject({
+      required: false,
+      type: "boolean",
+      default: false,
+    });
+    expect(exportStep?.if).toBe("${{ inputs.nvidia_secret_as_compatible_api_key }}");
+    expect(exportStep?.env?.NVIDIA_INFERENCE_API_KEY).toBe(
+      "${{ secrets.NVIDIA_INFERENCE_API_KEY }}",
+    );
+    expect(exportStep?.run).toContain("NEMOCLAW_E2E_USE_NVIDIA_SECRET_AS_COMPATIBLE=1");
+    expect(exportStep?.run).toContain("NEMOCLAW_PROVIDER=custom");
+    expect(exportStep?.run).toContain("NEMOCLAW_ENDPOINT_URL=https://inference-api.nvidia.com/v1");
+    expect(exportStep?.run).toContain("COMPATIBLE_API_KEY=%s");
+
+    for (const name of expectedJobs) {
+      expect(nightlyWorkflow.jobs[name].with?.nvidia_secret_as_compatible_api_key, name).toBe(true);
+    }
+  });
+
   it("keeps converted jobs dispatchable through the reusable workflow", () => {
     const cloudJob = nightlyWorkflow.jobs["cloud-e2e"];
 

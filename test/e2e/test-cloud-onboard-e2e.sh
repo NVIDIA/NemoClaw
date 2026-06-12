@@ -88,6 +88,9 @@ PUBLIC_INSTALL_CWD="${NEMOCLAW_PUBLIC_INSTALL_CWD:-}"
 . "${E2E_DIR}/lib/sandbox-teardown.sh"
 # shellcheck source=test/e2e/lib/install-path-refresh.sh
 . "${E2E_DIR}/lib/install-path-refresh.sh"
+# shellcheck source=test/e2e/lib/ci-compatible-inference.sh
+. "${E2E_DIR}/lib/ci-compatible-inference.sh"
+nemoclaw_e2e_configure_compatible_inference
 register_sandbox_for_teardown "$SANDBOX_NAME"
 
 # ══════════════════════════════════════════════════════════════════════
@@ -111,17 +114,19 @@ else
   exit 1
 fi
 
-if [ -n "${NVIDIA_INFERENCE_API_KEY:-}" ] && [[ "${NVIDIA_INFERENCE_API_KEY}" == nvapi-* ]]; then
-  pass "NVIDIA_INFERENCE_API_KEY is set (starts with nvapi-)"
-else
-  fail "NVIDIA_INFERENCE_API_KEY not set or invalid — required for cloud onboard"
+if ! nemoclaw_e2e_require_hosted_inference_key; then
   exit 1
 fi
 
-if curl -sf --max-time 10 https://inference-api.nvidia.com/v1/models >/dev/null 2>&1; then
-  pass "Network access to inference-api.nvidia.com"
+HOSTED_INFERENCE_BASE_URL="$(nemoclaw_e2e_hosted_inference_base_url)"
+HOSTED_INFERENCE_KEY="$(nemoclaw_e2e_hosted_inference_key)"
+
+if curl -sf --max-time 10 \
+  -H "Authorization: Bearer $HOSTED_INFERENCE_KEY" \
+  "${HOSTED_INFERENCE_BASE_URL}/models" >/dev/null 2>&1; then
+  pass "Network access to ${HOSTED_INFERENCE_BASE_URL}"
 else
-  fail "Cannot reach inference-api.nvidia.com"
+  fail "Cannot reach ${HOSTED_INFERENCE_BASE_URL}"
   exit 1
 fi
 
@@ -152,8 +157,8 @@ section "Phase 3: Install via public URL"
 
 export NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME"
 export NEMOCLAW_EXPERIMENTAL=1
-export NEMOCLAW_PROVIDER=cloud
-export NEMOCLAW_MODEL="$CLOUD_MODEL"
+export NEMOCLAW_PROVIDER="${NEMOCLAW_PROVIDER:-cloud}"
+export NEMOCLAW_MODEL="${NEMOCLAW_MODEL:-$CLOUD_MODEL}"
 export NEMOCLAW_POLICY_MODE="${NEMOCLAW_POLICY_MODE:-custom}"
 export NEMOCLAW_POLICY_PRESETS="${NEMOCLAW_POLICY_PRESETS:-npm,pypi}"
 

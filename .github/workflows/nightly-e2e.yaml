@@ -204,6 +204,7 @@ jobs:
       artifact_path: "/tmp/nemoclaw-e2e-install.log"
       env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-nightly"}'
       nvidia_api_key: true
+      nvidia_secret_as_compatible_api_key: true
       github_token: true
     secrets: &nightly-e2e-default-secrets
       NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
@@ -224,6 +225,7 @@ jobs:
       env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_POLICY_MODE":"custom","NEMOCLAW_POLICY_PRESETS":"npm,pypi","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-cloud-onboard"}'
       checked_out_ref_env: "NEMOCLAW_PUBLIC_INSTALL_REF"
       nvidia_api_key: true
+      nvidia_secret_as_compatible_api_key: true
       github_token: true
     secrets: *nightly-e2e-default-secrets
   cloud-inference-e2e:
@@ -240,6 +242,7 @@ jobs:
       artifact_path: "/tmp/nemoclaw-e2e-cloud-inference-install.log"
       env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-cloud-inference"}'
       nvidia_api_key: true
+      nvidia_secret_as_compatible_api_key: true
     secrets: *nightly-e2e-default-secrets
   cron-preflight-inference-local-e2e:
     if: >-
