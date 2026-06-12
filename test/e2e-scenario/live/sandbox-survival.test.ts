@@ -181,14 +181,17 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
     });
 
     cleanup.add(`destroy sandbox ${SANDBOX_NAME}`, async () => {
-      await host.cleanupSandbox(SANDBOX_NAME, {
+      await host.bestEffortCleanupSandbox(SANDBOX_NAME, {
         artifactName: "cleanup-nemoclaw-destroy-sandbox-survival",
       });
     });
     cleanup.add("destroy shared NemoClaw gateway", async () => {
       await host.command(
-        "openshell",
-        ["gateway", "destroy", "-g", "nemoclaw"],
+        "sh",
+        [
+          "-lc",
+          "command -v openshell >/dev/null 2>&1 && openshell gateway destroy -g nemoclaw || true",
+        ],
         {
           artifactName: "cleanup-openshell-gateway-destroy",
           env: buildAvailabilityProbeEnv(),
@@ -285,7 +288,10 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       "pre-restart-marker-read",
     );
 
-    await lifecycle.restartGatewayRuntime({ delayMs: 5_000 });
+    await lifecycle.restartGatewayRuntime({
+      delayMs: 5_000,
+      sandboxName: SANDBOX_NAME,
+    });
     await lifecycle.waitForGatewayConnected({
       attempts: 60,
       intervalMs: 5_000,

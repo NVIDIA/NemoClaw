@@ -148,23 +148,34 @@ export class LifecyclePhaseFixture {
 
     if (mode === "rename-to-gpu-backup") {
       const backupName = buildBackupContainerName(originalName, Date.now());
-      const rename = await this.host.command("docker", ["rename", originalName, backupName], {
-        artifactName: `lifecycle-post-reboot-docker-rename-${originalName}`,
-        env: buildAvailabilityProbeEnv(),
-        timeoutMs: DOCKER_PROBE_TIMEOUT_MS,
-      });
+      const rename = await this.host.command(
+        "docker",
+        ["rename", originalName, backupName],
+        {
+          artifactName: `lifecycle-post-reboot-docker-rename-${originalName}`,
+          env: buildAvailabilityProbeEnv(),
+          timeoutMs: DOCKER_PROBE_TIMEOUT_MS,
+        },
+      );
       assertExitZero(rename, `docker rename ${originalName} ${backupName}`);
       steps.push({
         id: `docker-rename:${originalName}->${backupName}`,
         results: [rename],
       });
-      this.cleanup.add(`lifecycle.docker-rename-back:${backupName}`, async () => {
-        await this.host.command("docker", ["rename", backupName, originalName], {
-          artifactName: `lifecycle-cleanup-docker-rename-back-${backupName}`,
-          env: buildAvailabilityProbeEnv(),
-          timeoutMs: DOCKER_PROBE_TIMEOUT_MS,
-        });
-      });
+      this.cleanup.add(
+        `lifecycle.docker-rename-back:${backupName}`,
+        async () => {
+          await this.host.command(
+            "docker",
+            ["rename", backupName, originalName],
+            {
+              artifactName: `lifecycle-cleanup-docker-rename-back-${backupName}`,
+              env: buildAvailabilityProbeEnv(),
+              timeoutMs: DOCKER_PROBE_TIMEOUT_MS,
+            },
+          );
+        },
+      );
     }
 
     // Final step: drive the user-visible action that exposed #4423.
@@ -174,11 +185,14 @@ export class LifecyclePhaseFixture {
     // Status is allowed to fail (exit non-zero) because on unfixed
     // code it intentionally fails after destroying state — the
     // post-action invariants are checked by state-validation.
-    const statusResult = await this.host.nemoclaw([instance.sandboxName, "status"], {
-      artifactName: `lifecycle-post-reboot-nemoclaw-status-${instance.sandboxName}`,
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: STATUS_TIMEOUT_MS,
-    });
+    const statusResult = await this.host.nemoclaw(
+      [instance.sandboxName, "status"],
+      {
+        artifactName: `lifecycle-post-reboot-nemoclaw-status-${instance.sandboxName}`,
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: STATUS_TIMEOUT_MS,
+      },
+    );
     steps.push({
       id: `nemoclaw-status:${instance.sandboxName}`,
       results: [statusResult],
@@ -191,7 +205,10 @@ export class LifecyclePhaseFixture {
     const runtime = (await this.gateway?.resolveHostRuntime()) ?? null;
     await this.host.command(
       "sh",
-      ["-lc", "command -v openshell >/dev/null 2>&1 && openshell forward stop 18789 || true"],
+      [
+        "-lc",
+        "command -v openshell >/dev/null 2>&1 && openshell forward stop 18789 || true",
+      ],
       {
         artifactName: "lifecycle-gateway-forward-stop",
         env: buildAvailabilityProbeEnv(),
@@ -200,7 +217,10 @@ export class LifecyclePhaseFixture {
     );
     await this.host.command(
       "sh",
-      ["-lc", "command -v openshell >/dev/null 2>&1 && openshell gateway stop -g nemoclaw || true"],
+      [
+        "-lc",
+        "command -v openshell >/dev/null 2>&1 && openshell gateway stop -g nemoclaw || true",
+      ],
       {
         artifactName: "lifecycle-gateway-stop",
         env: buildAvailabilityProbeEnv(),
@@ -246,23 +266,35 @@ export class LifecyclePhaseFixture {
     return runtime;
   }
 
-  async startGatewayRuntime(previousRuntime: HostGatewayRuntime | null): Promise<ShellProbeResult> {
+  async startGatewayRuntime(
+    previousRuntime: HostGatewayRuntime | null,
+    options: { sandboxName?: string } = {},
+  ): Promise<ShellProbeResult> {
     if (previousRuntime?.kind === "pid") {
-      return await this.host.nemoclaw(["status"], {
-        artifactName: "lifecycle-gateway-recover-through-nemoclaw-status",
+      const args = options.sandboxName
+        ? [options.sandboxName, "status"]
+        : ["status"];
+      return await this.host.nemoclaw(args, {
+        artifactName: options.sandboxName
+          ? `lifecycle-gateway-recover-through-nemoclaw-status-${options.sandboxName}`
+          : "lifecycle-gateway-recover-through-nemoclaw-status",
         env: buildAvailabilityProbeEnv(),
         timeoutMs: 120_000,
       });
     }
-    return await this.host.command("openshell", ["gateway", "start", "--name", "nemoclaw"], {
-      artifactName: "lifecycle-gateway-start",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 120_000,
-    });
+    return await this.host.command(
+      "openshell",
+      ["gateway", "start", "--name", "nemoclaw"],
+      {
+        artifactName: "lifecycle-gateway-start",
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 120_000,
+      },
+    );
   }
 
   async restartGatewayRuntime(
-    options: { delayMs?: number } = {},
+    options: { delayMs?: number; sandboxName?: string } = {},
   ): Promise<HostGatewayRuntime | null> {
     const previousRuntime = await this.stopGatewayRuntime();
     if (this.gateway) {
@@ -274,7 +306,9 @@ export class LifecyclePhaseFixture {
     if (delayMs > 0) {
       await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
-    await this.startGatewayRuntime(previousRuntime);
+    await this.startGatewayRuntime(previousRuntime, {
+      sandboxName: options.sandboxName,
+    });
     return previousRuntime;
   }
 
@@ -302,14 +336,17 @@ export class LifecyclePhaseFixture {
       } catch (error) {
         lastError = error;
       }
-      if (attempt < attempts) await new Promise((resolve) => setTimeout(resolve, intervalMs));
+      if (attempt < attempts)
+        await new Promise((resolve) => setTimeout(resolve, intervalMs));
     }
     throw new Error(
       `gateway did not become healthy after restart: ${lastError instanceof Error ? lastError.message : String(lastError ?? "unknown")}`,
     );
   }
 
-  private async discoverLabeledContainerNames(instance: NemoClawInstance): Promise<string[]> {
+  private async discoverLabeledContainerNames(
+    instance: NemoClawInstance,
+  ): Promise<string[]> {
     const result = await this.host.command(
       "docker",
       [
@@ -343,7 +380,10 @@ export class LifecyclePhaseFixture {
 // `src/lib/onboard/docker-gpu-patch.ts`.
 const MAX_DOCKER_CONTAINER_NAME_LENGTH = 253;
 
-export function buildBackupContainerName(originalName: string, nowMs: number): string {
+export function buildBackupContainerName(
+  originalName: string,
+  nowMs: number,
+): string {
   const suffix = `-nemoclaw-gpu-backup-${String(nowMs)}`;
   const maxOriginalLength = MAX_DOCKER_CONTAINER_NAME_LENGTH - suffix.length;
   return `${originalName.slice(0, Math.max(1, maxOriginalLength))}${suffix}`;
