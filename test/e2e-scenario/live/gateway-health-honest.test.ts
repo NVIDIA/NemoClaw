@@ -159,5 +159,37 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
     expect(output).toMatch(
       /Docker-driver gateway failed to start|Gateway process exited with code 127|__onboard_startGateway_threw__/i,
     );
+
+    const lingeringGateway = await host.command(
+      "bash",
+      [
+        "-lc",
+        String.raw`
+set -euo pipefail
+pid_file="$1"
+if [ ! -f "$pid_file" ]; then
+  exit 0
+fi
+pid="$(tr -d '[:space:]' <"$pid_file" 2>/dev/null || true)"
+if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then
+  exit 0
+fi
+state="$(ps -p "$pid" -o state= 2>/dev/null | tr -d '[:space:]')"
+if [ -n "$state" ] && [ "$state" != "Z" ]; then
+  printf 'live non-zombie gateway pid remains: pid=%s state=%s\n' "$pid" "$state" >&2
+  exit 1
+fi
+exit 0
+`,
+        "gateway-lingering-process-check",
+        gatewayPidFile,
+      ],
+      {
+        artifactName: "gateway-lingering-process-check",
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 30_000,
+      },
+    );
+    expect(lingeringGateway.exitCode, resultText(lingeringGateway)).toBe(0);
   },
 );
