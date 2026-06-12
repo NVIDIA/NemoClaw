@@ -52,6 +52,7 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
         "a crashed gateway binary does not log 'Docker-driver gateway is healthy'",
         "startGateway() exits non-zero and surfaces a gateway-start failure",
         "the gateway log proves the sabotaged GLIBC-failure binary was executed",
+        "no live non-zombie gateway process remains after the simulated crash",
       ],
     });
 
@@ -165,19 +166,18 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       [
         "-lc",
         String.raw`
-set -euo pipefail
+set -u
 pid_file="$1"
-if [ ! -f "$pid_file" ]; then
-  exit 0
-fi
+[ -f "$pid_file" ] || exit 0
 pid="$(tr -d '[:space:]' <"$pid_file" 2>/dev/null || true)"
-if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then
-  exit 0
-fi
-state="$(ps -p "$pid" -o state= 2>/dev/null | tr -d '[:space:]' || true)"
-if [ -z "$state" ] || [[ "$state" == Z* ]]; then
-  exit 0
-fi
+case "$pid" in
+  ""|*[!0-9]*) exit 0 ;;
+esac
+kill -0 "$pid" 2>/dev/null || exit 0
+state="$(ps -p "$pid" -o state= 2>/dev/null | tr -d '[:space:]')" || state=""
+case "$state" in
+  ""|Z*) exit 0 ;;
+esac
 printf 'live non-zombie gateway pid remains: pid=%s state=%s\n' "$pid" "$state" >&2
 exit 1
 `,
