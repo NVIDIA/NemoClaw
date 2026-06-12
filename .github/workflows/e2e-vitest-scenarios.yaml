@@ -1219,7 +1219,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
-      DOCKER_CONFIG: ${{ runner.temp }}/docker-config-model-router-provider-routed-inference
+      DOCKER_CONFIG: ${{ github.workspace }}/.docker-config-model-router-provider-routed-inference
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/model-router-provider-routed-inference
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
