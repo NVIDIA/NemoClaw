@@ -320,6 +320,7 @@ function sendConverseStream(stream: http2.ServerHttp2Stream, codec: EventStreamC
       delta: { text: "PONG" },
     }),
   );
+  stream.write(eventMessage(codec, "contentBlockStop", { contentBlockIndex: 0 }));
   stream.write(eventMessage(codec, "messageStop", { stopReason: "end_turn" }));
   stream.write(
     eventMessage(codec, "metadata", {
@@ -364,6 +365,12 @@ async function startFakeBedrockRuntimeMock(options: {
     logs.push(line);
   };
   const server = http2.createServer();
+  const sessions = new Set<http2.ServerHttp2Session>();
+
+  server.on("session", (session) => {
+    sessions.add(session);
+    session.once("close", () => sessions.delete(session));
+  });
 
   server.on("stream", (rawStream, headers) => {
     const stream = rawStream as http2.ServerHttp2Stream;
@@ -438,7 +445,18 @@ async function startFakeBedrockRuntimeMock(options: {
     },
     close: () =>
       new Promise<void>((resolve) => {
-        server.close(() => resolve());
+        let done = false;
+        const finish = () => {
+          if (done) return;
+          done = true;
+          resolve();
+        };
+        server.close(finish);
+        for (const session of sessions) session.close();
+        setTimeout(() => {
+          for (const session of sessions) session.destroy();
+          finish();
+        }, 1_000).unref();
       }),
   };
 }
