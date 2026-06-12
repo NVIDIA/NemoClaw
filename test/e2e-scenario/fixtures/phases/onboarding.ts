@@ -38,6 +38,7 @@ const MISSING_SANDBOX_DELETE_PATTERNS = [
   /sandbox not found/i,
   /sandbox .* not found/i,
   /sandbox .* not present/i,
+  /sandbox .* does not exist/i,
   /sandbox does not exist/i,
   /no such sandbox/i,
 ];

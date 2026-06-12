@@ -61,6 +61,11 @@ function isFakeTelegramToken(value: string): boolean {
   return value.includes("fake");
 }
 
+function isEndpointRateLimited(error: unknown): boolean {
+  const text = error instanceof Error ? error.message : String(error);
+  return /HTTP 429|rate limit|too many requests/i.test(text);
+}
+
 function baseEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return {
     ...buildAvailabilityProbeEnv(),
@@ -337,7 +342,7 @@ const liveTest = shouldRunLiveE2EScenarios() ? test : test.skip;
 liveTest(
   "channels add/remove telegram updates registry, gateway, policy, and sandbox state",
   testTimeoutOptions(TEST_TIMEOUT_MS),
-  async ({ artifacts, cleanup, environment, host, lifecycle, onboard, sandbox, secrets }) => {
+  async ({ artifacts, cleanup, environment, host, lifecycle, onboard, sandbox, secrets, skip }) => {
     if (!SANDBOX_NAME.startsWith(TEST_SANDBOX_PREFIX)) {
       throw new Error(
         `channels-add-remove live test is destructive and only accepts sandbox names with prefix ${TEST_SANDBOX_PREFIX}; got ${SANDBOX_NAME}`,
@@ -401,10 +406,24 @@ liveTest(
       }),
     );
 
-    const instance = await onboard.from(ready, {
-      sandboxName: SANDBOX_NAME,
-      timeoutMs: ONBOARD_TIMEOUT_MS,
-    });
+    let instance;
+    try {
+      instance = await onboard.from(ready, {
+        sandboxName: SANDBOX_NAME,
+        timeoutMs: ONBOARD_TIMEOUT_MS,
+      });
+    } catch (error) {
+      if (isEndpointRateLimited(error)) {
+        await artifacts.writeText(
+          "endpoint-rate-limit-skip.txt",
+          error instanceof Error ? error.message : String(error),
+        );
+        skip(
+          "NVIDIA endpoint validation was rate-limited before the channels add/remove contract could run",
+        );
+      }
+      throw error;
+    }
     await expectSandboxReady(sandbox, "phase-1-sandbox-ready-after-onboard");
 
     await expectProvider(host, "absent", "phase-2-provider-get-baseline");
