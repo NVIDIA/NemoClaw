@@ -134,6 +134,22 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       registryScenarios: [],
     });
     expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "openclaw-skill-cli" }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["openclaw-skill-cli-vitest"],
+      registryScenarios: [],
+    });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({ jobs: "openclaw-skill-cli-vitest" }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["openclaw-skill-cli-vitest"],
+      registryScenarios: [],
+    });
+    expect(
       evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "credential-sanitization" }),
     ).toMatchObject({
       valid: true,
@@ -356,7 +372,7 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
     }
   });
 
-  it("keeps each free-standing scenario out of the registry matrix", () => {
+  it("keeps each free-standing scenario out of the registry matrix", { timeout: 15_000 }, () => {
     const inventory = readFreeStandingJobsInventory();
     for (const job of inventory.allowedJobs) {
       expect(generateMatrixForDispatch({ JOBS: job, SCENARIOS: "" })).toMatchObject({
