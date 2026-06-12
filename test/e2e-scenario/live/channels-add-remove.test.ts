@@ -249,10 +249,15 @@ async function expectProvider(
   if (expected === "present") {
     assertExitZero(result, `openshell provider get ${PROVIDER_NAME}`);
   } else {
+    const text = stripAnsi(resultText(result));
     expect(
       result.exitCode,
       `${PROVIDER_NAME} unexpectedly exists:\n${resultText(result)}`,
     ).not.toBe(0);
+    expect(
+      /not found|does not exist|no provider|unknown provider/i.test(text),
+      `${PROVIDER_NAME} absence check failed for an unexpected reason:\n${resultText(result)}`,
+    ).toBe(true);
   }
 }
 
