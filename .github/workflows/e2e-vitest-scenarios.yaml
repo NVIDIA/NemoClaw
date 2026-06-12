@@ -40,7 +40,7 @@ jobs:
           SCENARIOS: ${{ inputs.scenarios }}
         run: |
           set -euo pipefail
-          allowed_jobs="openshell-version-pin-vitest,onboard-negative-paths-vitest,inference-routing-vitest,credential-migration-vitest,runtime-overrides-vitest,hermes-e2e-vitest,hermes-root-entrypoint-smoke-vitest,network-policy-vitest,rebuild-openclaw-vitest,token-rotation-vitest,launchable-smoke-vitest,openclaw-tui-chat-correlation-vitest,gateway-guard-recovery,double-onboard-vitest,issue-4434-tui-unreachable-inference-vitest,model-router-provider-routed-inference-vitest"
+          allowed_jobs="openshell-version-pin-vitest,onboard-negative-paths-vitest,inference-routing-vitest,credential-migration-vitest,runtime-overrides-vitest,hermes-e2e-vitest,hermes-root-entrypoint-smoke-vitest,network-policy-vitest,rebuild-openclaw-vitest,token-rotation-vitest,launchable-smoke-vitest,openclaw-tui-chat-correlation-vitest,gateway-guard-recovery,double-onboard-vitest,issue-4434-tui-unreachable-inference-vitest,model-router-provider-routed-inference-vitest,sandbox-survival-vitest"
           if [ -n "${JOBS}" ] && [ -n "${SCENARIOS}" ]; then
             echo "::error::Use either scenarios or jobs, not both." >&2
             exit 1
@@ -93,12 +93,12 @@ jobs:
           SCENARIOS: ${{ inputs.scenarios }}
         run: |
           set -euo pipefail
-          allowed_jobs="openshell-version-pin-vitest,onboard-negative-paths-vitest,inference-routing-vitest,credential-migration-vitest,runtime-overrides-vitest,hermes-e2e-vitest,hermes-root-entrypoint-smoke-vitest,network-policy-vitest,rebuild-openclaw-vitest,token-rotation-vitest,launchable-smoke-vitest,openclaw-tui-chat-correlation-vitest,gateway-guard-recovery,double-onboard-vitest,issue-4434-tui-unreachable-inference-vitest,model-router-provider-routed-inference-vitest"
+          allowed_jobs="openshell-version-pin-vitest,onboard-negative-paths-vitest,inference-routing-vitest,credential-migration-vitest,runtime-overrides-vitest,hermes-e2e-vitest,hermes-root-entrypoint-smoke-vitest,network-policy-vitest,rebuild-openclaw-vitest,token-rotation-vitest,launchable-smoke-vitest,openclaw-tui-chat-correlation-vitest,gateway-guard-recovery,double-onboard-vitest,issue-4434-tui-unreachable-inference-vitest,model-router-provider-routed-inference-vitest,sandbox-survival-vitest"
           args=(--emit-live-matrix)
           matrix=""
           hermes_selected=false
           registry_scenarios=()
-          free_standing_scenarios=(openshell-version-pin onboard-negative-paths inference-routing runtime-overrides hermes-e2e hermes-root-entrypoint-smoke network-policy rebuild-openclaw token-rotation openclaw-tui-chat-correlation double-onboard issue-4434-tui-unreachable-inference model-router-provider-routed-inference)
+          free_standing_scenarios=(openshell-version-pin onboard-negative-paths inference-routing runtime-overrides hermes-e2e hermes-root-entrypoint-smoke network-policy rebuild-openclaw token-rotation openclaw-tui-chat-correlation double-onboard issue-4434-tui-unreachable-inference model-router-provider-routed-inference sandbox-survival)
           is_free_standing_scenario() {
             local id="$1"
             local known
@@ -550,7 +550,6 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-
   credential-migration-vitest:
     needs: validate-jobs
     if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',credential-migration-vitest,') }}
@@ -626,8 +625,6 @@ jobs:
           include-hidden-files: false
           if-no-files-found: ignore
           retention-days: 14
-
-
 
   runtime-overrides-vitest:
     needs: [validate-jobs, generate-matrix]
@@ -1207,6 +1204,94 @@ jobs:
           docker logout docker.io || true
           rm -rf "${DOCKER_CONFIG}"
 
+  sandbox-survival-vitest:
+    needs: [validate-jobs, generate-matrix]
+    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',sandbox-survival-vitest,') || contains(format(',{0},', inputs.scenarios), ',sandbox-survival,') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DOCKER_CONFIG: ${{ runner.temp }}/docker-config-sandbox-survival
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/sandbox-survival
+      NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+      NEMOCLAW_SANDBOX_NAME: "e2e-survival"
+      OPENSHELL_GATEWAY: "nemoclaw"
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Authenticate to Docker Hub
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          mkdir -p "${DOCKER_CONFIG}"
+          chmod 700 "${DOCKER_CONFIG}"
+          login_succeeded=0
+          for attempt in 1 2 3; do
+            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
+              login_succeeded=1
+              break
+            fi
+            if [[ "$attempt" -lt 3 ]]; then
+              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
+              sleep 5
+            fi
+          done
+          if [[ "$login_succeeded" -ne 1 ]]; then
+            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
+          fi
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build CLI
+        run: npm run build:cli
+
+      - name: Run sandbox survival live test
+        # Migrated from test/e2e/test-sandbox-survival.sh. This intentionally
+        # runs install.sh from Vitest to preserve installer/OpenShell/onboard
+        # fidelity before exercising gateway restart, state survival, and live
+        # inference.local before and after restart.
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+        run: |
+          set -euo pipefail
+          npx vitest run --project e2e-scenarios-live \
+            test/e2e-scenario/live/sandbox-survival.test.ts \
+            --silent=false --reporter=default
+
+      - name: Upload sandbox survival artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-vitest-scenarios-sandbox-survival
+          path: e2e-artifacts/vitest/sandbox-survival/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Clean up Docker auth
+        if: always()
+        run: |
+          set -euo pipefail
+          docker logout docker.io || true
+          rm -rf "${DOCKER_CONFIG}"
+
   # Focused coverage slice for the #2603/#3145 OpenClaw websocket
   # protocol/history contract. The retained legacy bash lane remains the
   # source for full closeout until a later PR proves replacement and deletes it.
@@ -1401,6 +1486,7 @@ jobs:
         launchable-smoke-vitest,
         double-onboard-vitest,
         model-router-provider-routed-inference-vitest,
+        sandbox-survival-vitest,
         openclaw-tui-chat-correlation-vitest,
         gateway-guard-recovery,
         issue-4434-tui-unreachable-inference-vitest,
