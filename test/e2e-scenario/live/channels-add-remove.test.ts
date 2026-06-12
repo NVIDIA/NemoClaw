@@ -62,8 +62,18 @@ function isFakeTelegramToken(value: string): boolean {
 }
 
 function isEndpointRateLimited(error: unknown): boolean {
-  const text = error instanceof Error ? error.message : String(error);
-  return /HTTP 429|rate limit|too many requests/i.test(text);
+  const text = errorText(error);
+  return (
+    /NVIDIA Endpoints endpoint validation failed/i.test(text) &&
+    (/Validation details were omitted/i.test(text) ||
+      /HTTP 429|rate limit|too many requests|quota|temporarily unavailable|timed out|timeout/i.test(
+        text,
+      ))
+  );
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function baseEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
@@ -419,12 +429,9 @@ liveTest(
       });
     } catch (error) {
       if (isEndpointRateLimited(error)) {
-        await artifacts.writeText(
-          "endpoint-rate-limit-skip.txt",
-          error instanceof Error ? error.message : String(error),
-        );
+        await artifacts.writeText("endpoint-rate-limit-skip.txt", errorText(error));
         skip(
-          "NVIDIA endpoint validation was rate-limited before the channels add/remove contract could run",
+          "NVIDIA endpoint validation was unavailable/rate-limited before the channels add/remove contract could run",
         );
       }
       throw error;
