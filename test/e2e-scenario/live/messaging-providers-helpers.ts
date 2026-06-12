@@ -769,7 +769,18 @@ function encodeClientText(payload) {
   const mask = crypto.randomBytes(4);
   const masked = Buffer.alloc(body.length);
   for (let i = 0; i < body.length; i += 1) masked[i] = body[i] ^ mask[i % 4];
-  return Buffer.concat([Buffer.from([0x81, 0x80 | body.length]), mask, masked]);
+  let header;
+  if (body.length < 126) {
+    header = Buffer.from([0x81, 0x80 | body.length]);
+  } else if (body.length < 65_536) {
+    header = Buffer.from([0x81, 0x80 | 126, body.length >> 8, body.length & 0xff]);
+  } else {
+    header = Buffer.alloc(10);
+    header[0] = 0x81;
+    header[1] = 0x80 | 127;
+    header.writeBigUInt64BE(BigInt(body.length), 2);
+  }
+  return Buffer.concat([header, mask, masked]);
 }
 
 function decodeFrame(buffer) {

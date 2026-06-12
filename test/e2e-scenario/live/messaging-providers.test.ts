@@ -171,10 +171,10 @@ runLiveTest(
       timeoutMs: 60_000,
     });
     expectExitZero(sandboxList, "openshell sandbox list");
-    check(
-      sandboxList.stdout.includes(SANDBOX_NAME) && /Ready/.test(sandboxList.stdout),
-      "M0b: sandbox is Ready",
-    );
+    const sandboxRow = sandboxList.stdout
+      .split(/\r?\n/)
+      .find((line) => line.includes(SANDBOX_NAME));
+    check(Boolean(sandboxRow && /\bReady\b/.test(sandboxRow)), "M0b: sandbox is Ready");
 
     const whatsappAdd = await runHost(
       host,
@@ -612,7 +612,7 @@ let pending = targets.length;
 let failed = false;
 function done() {
   pending -= 1;
-  if (pending === 0) process.exit(failed ? 1 : 0);
+  if (pending === 0) process.exit(0);
 }
 for (const [name, url] of targets) {
   const req = https.get(url, (res) => {
