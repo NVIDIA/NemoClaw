@@ -142,6 +142,16 @@ describe("resolveSandboxGatewayName", () => {
   it("accepts the canonical bare base gateway name", () => {
     expect(resolveSandboxGatewayName({ gatewayName: "nemoclaw" })).toBe(BASE_GATEWAY_NAME);
   });
+
+  it("rejects the non-canonical default-port suffix form", () => {
+    // `nemoclaw-8080` matches the namespace regex but is not what
+    // resolveGatewayName(8080) emits (it emits the bare `nemoclaw`). A
+    // sandbox registered against the non-canonical form would target a
+    // gateway name that does not exist.
+    expect(() => resolveSandboxGatewayName({ gatewayName: "nemoclaw-8080" })).toThrow(
+      /Invalid persisted sandbox gateway binding/,
+    );
+  });
 });
 
 describe("docker-driver compat container is gateway-port scoped (#4422)", () => {

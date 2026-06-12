@@ -13,7 +13,8 @@ import {
 } from "./adapters/openshell/timeouts";
 import { stripAnsi } from "./adapters/openshell/client";
 import { captureOpenshell, runOpenshell } from "./adapters/openshell/runtime";
-import { resolveGatewayPortFromName } from "./onboard/gateway-binding";
+import { resolveGatewayName, resolveGatewayPortFromName } from "./onboard/gateway-binding";
+import { GATEWAY_PORT } from "./core/ports";
 
 function hasNamedGateway(output = "", gatewayName = "nemoclaw"): boolean {
   return stripAnsi(output).includes(`Gateway: ${gatewayName}`);
@@ -85,7 +86,7 @@ export type RecoverNamedGatewayRuntimeOptions = {
 
 /** Attempt to recover the named NemoClaw gateway after a restart or connectivity loss. */
 export async function recoverNamedGatewayRuntime(options: RecoverNamedGatewayRuntimeOptions = {}) {
-  const gatewayName = options.gatewayName ?? "nemoclaw";
+  const gatewayName = options.gatewayName ?? resolveGatewayName(GATEWAY_PORT);
   const recoverableStates = new Set<NamedGatewayLifecycleStateName>(
     options.recoverableStates ?? [
       "missing_named",

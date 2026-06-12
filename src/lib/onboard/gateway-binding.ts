@@ -79,7 +79,12 @@ const VALID_GATEWAY_NAME_RE =
   /^nemoclaw(-(?:[1-9]\d{0,3}|[1-5]\d{4}|6[0-4]\d{3}|65[0-4]\d{2}|655[0-2]\d|6553[0-5]))?$/;
 
 function isValidPersistedGatewayName(value: string): boolean {
-  return VALID_GATEWAY_NAME_RE.test(value);
+  if (!VALID_GATEWAY_NAME_RE.test(value)) return false;
+  // The regex permits `nemoclaw-<default-port>` but that form is not the
+  // canonical name for the default port (the bare `BASE_GATEWAY_NAME` is).
+  // Reject it so a persisted `nemoclaw-8080` cannot drive lifecycle commands
+  // against a gateway name that does not actually exist in the registry.
+  return resolveGatewayPortFromName(value) !== null;
 }
 
 function isValidPersistedGatewayPort(value: number): boolean {

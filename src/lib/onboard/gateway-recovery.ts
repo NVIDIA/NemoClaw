@@ -25,6 +25,7 @@ import { envInt } from "./env";
 import { resolveGatewayName, resolveGatewayPortFromName } from "./gateway-binding";
 import { isGatewayHttpReady } from "./gateway-http-readiness";
 import { getContainerRuntime } from "./local-inference-topology";
+import { isLinuxDockerDriverGatewayEnabled } from "./docker-driver-platform";
 
 export type StartGatewayForRecoveryOptions = {
   gatewayName?: string;
@@ -189,8 +190,18 @@ export async function startGatewayForRecovery(
   deps: GatewayRecoveryDeps,
 ): Promise<void> {
   const target = resolveGatewayRecoveryTarget(options);
-  if (target.gatewayName === resolveDefaultGatewayName() && target.gatewayPort === GATEWAY_PORT) {
-    return deps.startGatewayWithOptions(undefined as never, { exitOnFailure: false });
+  // The Docker-driver Linux startup path (startGatewayWithOptions →
+  // startDockerDriverGateway) restores the runtime-marker, package-managed
+  // registration, and sandbox-bridge reachability — none of which a plain
+  // `openshell gateway start` produces. Route through it whenever the
+  // recovery target matches the current process's GATEWAY_PORT (the common
+  // case where the user re-runs with the same NEMOCLAW_GATEWAY_PORT). Plain
+  // CLI start is only the fallback for cross-port recovery, which the
+  // module-globals captured by startDockerDriverGateway cannot retarget.
+  if (target.gatewayPort === GATEWAY_PORT) {
+    if (target.gatewayName === resolveDefaultGatewayName() || isLinuxDockerDriverGatewayEnabled()) {
+      return deps.startGatewayWithOptions(undefined as never, { exitOnFailure: false });
+    }
   }
   return startTargetGatewayForRecovery(target, deps);
 }

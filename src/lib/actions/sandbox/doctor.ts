@@ -192,7 +192,7 @@ function dockerInspectGateway(
     detail: `${containerName} ${running ? "running" : "stopped"} (${health}; ${image})`,
     hint: running
       ? undefined
-      : "restart the gateway with `openshell gateway start --name nemoclaw`",
+      : `restart the gateway with \`openshell gateway start --name ${options.gatewayName ?? "nemoclaw"}\``,
   });
 
   const port = captureHostCommand("docker", ["port", containerName, "30051/tcp"], 5000);
@@ -615,6 +615,7 @@ export async function runSandboxDoctor(
     checks.push(
       ...dockerInspectGateway(`openshell-cluster-${gatewayName}`, {
         namedGatewayConnected: openshellConnected,
+        gatewayName,
       }),
     );
   }

@@ -596,7 +596,7 @@ export async function rebuildSandbox(
           "rebuild --yes",
         );
         bail(
-          `Could not confirm '${sandboxName}' against the NemoClaw gateway (gateway '${lifecycle.activeGateway ?? "unknown"}' is active).`,
+          `Could not confirm '${sandboxName}' against gateway '${recordedGateway}' (gateway '${lifecycle.activeGateway ?? "unknown"}' is active).`,
         );
         return;
       }
@@ -635,7 +635,7 @@ export async function rebuildSandbox(
         );
       } else {
         console.error(
-          `  Sandbox '${sandboxName}' is not visible on the NemoClaw gateway and its live state could not be confirmed.`,
+          `  Sandbox '${sandboxName}' is not visible on gateway '${recordedGateway}' and its live state could not be confirmed.`,
         );
         console.error("  Your local registry entry has been preserved — nothing was removed.");
         printGatewayLifecycleHint(reconciled.output || "", sandboxName, console.error);

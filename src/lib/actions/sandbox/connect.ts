@@ -27,6 +27,7 @@ import { findReachableOllamaHost, probeLocalProviderHealth } from "../../inferen
 import { ensureOllamaAuthProxy, probeOllamaAuthProxyHealth } from "../../inference/ollama/proxy";
 import { LOCAL_INFERENCE_TIMEOUT_SECS } from "../../onboard/env";
 import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
+import { getSandboxTargetGatewayName } from "./gateway-target";
 import { isWsl } from "../../platform";
 import { ROOT } from "../../runner";
 import * as sandboxVersion from "../../sandbox/version";
@@ -252,7 +253,9 @@ function failConnectReadinessGatewayUnavailable(sandboxName: string, detailOutpu
     printGatewayLifecycleHint(detailOutput, sandboxName, console.error);
   }
   console.error("  Recovery:");
-  console.error("    1. Run: openshell gateway start --name nemoclaw");
+  console.error(
+    `    1. Run: openshell gateway start --name ${getSandboxTargetGatewayName(sandboxName)}`,
+  );
   console.error(`    2. If the gateway cannot be restarted, run: ${CLI_NAME} onboard`);
   console.error(`    3. Retry: ${CLI_NAME} ${sandboxName} connect`);
   process.exit(1);
