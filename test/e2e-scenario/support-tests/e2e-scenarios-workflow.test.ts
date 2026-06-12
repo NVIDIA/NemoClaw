@@ -10,7 +10,9 @@ import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 import {
   evaluateE2eVitestWorkflowDispatchSelectors,
+  readFreeStandingJobsInventory,
   validateE2eVitestScenariosWorkflowBoundary,
+  validateFreeStandingJobsEnvContent,
 } from "../../../tools/e2e-scenarios/workflow-boundary.mts";
 
 function readWorkflow(): Record<string, unknown> {
@@ -22,22 +24,25 @@ function readWorkflow(): Record<string, unknown> {
   ) as Record<string, unknown>;
 }
 
-function generateMatrixForDispatch(env: {
-  JOBS: string;
-  SCENARIOS: string;
-}): Record<string, string> {
+function generateMatrixScript(): string {
   const workflow = readWorkflow();
   const jobs = workflow.jobs as Record<string, { steps?: Array<Record<string, unknown>> }>;
   const generateStep = jobs["generate-matrix"]?.steps?.find(
     (step) => step.name === "Generate Vitest scenario matrix",
   );
   expect(generateStep?.run).toEqual(expect.any(String));
+  return generateStep?.run as string;
+}
 
+function generateMatrixForDispatch(env: {
+  JOBS: string;
+  SCENARIOS: string;
+}): Record<string, string> {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-vitest-matrix-"));
   const outputPath = path.join(tmp, "github-output");
   const summaryPath = path.join(tmp, "github-summary");
   try {
-    const result = spawnSync("bash", ["-c", generateStep?.run as string], {
+    const result = spawnSync("bash", ["-c", generateMatrixScript()], {
       cwd: process.cwd(),
       encoding: "utf-8",
       timeout: 120_000,
@@ -114,6 +119,36 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       selectedFreeStandingJobs: ["openshell-version-pin-vitest"],
       registryScenarios: [],
     });
+    expect(evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "skill-agent" })).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["skill-agent-vitest"],
+      registryScenarios: [],
+    });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({ jobs: "skill-agent-vitest" }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["skill-agent-vitest"],
+      registryScenarios: [],
+    });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "credential-sanitization" }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["credential-sanitization-vitest"],
+      registryScenarios: [],
+    });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({ jobs: "credential-sanitization-vitest" }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["credential-sanitization-vitest"],
+      registryScenarios: [],
+    });
     expect(
       evaluateE2eVitestWorkflowDispatchSelectors({ jobs: "runtime-overrides-vitest" }),
     ).toMatchObject({
@@ -130,45 +165,217 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       selectedFreeStandingJobs: ["runtime-overrides-vitest"],
       registryScenarios: [],
     });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "inference-routing" }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["inference-routing-vitest"],
+      registryScenarios: [],
+    });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({ jobs: "inference-routing-vitest" }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["inference-routing-vitest"],
+      registryScenarios: [],
+    });
     expect(evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "hermes-e2e" })).toMatchObject({
       valid: true,
       liveScenariosRuns: false,
       selectedFreeStandingJobs: ["hermes-e2e-vitest"],
       registryScenarios: [],
     });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "hermes-root-entrypoint-smoke" }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["hermes-root-entrypoint-smoke-vitest"],
+      registryScenarios: [],
+    });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({ jobs: "hermes-root-entrypoint-smoke-vitest" }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["hermes-root-entrypoint-smoke-vitest"],
+      registryScenarios: [],
+    });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "shields-config" }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["shields-config-vitest"],
+      registryScenarios: [],
+    });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({ jobs: "shields-config-vitest" }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["shields-config-vitest"],
+      registryScenarios: [],
+    });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "rebuild-openclaw" }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["rebuild-openclaw-vitest"],
+      registryScenarios: [],
+    });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({ jobs: "rebuild-openclaw-vitest" }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["rebuild-openclaw-vitest"],
+      registryScenarios: [],
+    });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({
+        scenarios: "model-router-provider-routed-inference",
+      }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["model-router-provider-routed-inference-vitest"],
+      registryScenarios: [],
+    });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({
+        jobs: "model-router-provider-routed-inference-vitest",
+      }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["model-router-provider-routed-inference-vitest"],
+      registryScenarios: [],
+    });
   });
 
-  it("keeps jobs-only dispatches from selecting the Hermes secret-bearing job", () => {
+  it("keeps the free-standing inventory internally consistent and data-only", () => {
+    const inventory = fs.readFileSync(
+      path.join(process.cwd(), "tools/e2e-scenarios/free-standing-jobs.env"),
+      "utf-8",
+    );
+    expect(validateFreeStandingJobsEnvContent(inventory)).toEqual([]);
     expect(
-      generateMatrixForDispatch({ JOBS: "openshell-version-pin-vitest", SCENARIOS: "" }),
-    ).toMatchObject({
-      hermes_selected: "false",
-      matrix: "[]",
-    });
-    expect(generateMatrixForDispatch({ JOBS: "hermes-e2e-vitest", SCENARIOS: "" })).toMatchObject({
-      hermes_selected: "true",
-      matrix: "[]",
-    });
+      validateFreeStandingJobsEnvContent(
+        [
+          "allowed_jobs=openshell-version-pin-vitest",
+          "free_standing_scenarios_csv=openshell-version-pin",
+          "free_standing_scenario_jobs_csv=openshell-version-pin:missing-vitest",
+        ].join("\n"),
+      ),
+    ).toContain("free-standing inventory maps openshell-version-pin to unknown job missing-vitest");
     expect(
-      generateMatrixForDispatch({ JOBS: "network-policy-vitest", SCENARIOS: "" }),
-    ).toMatchObject({
-      hermes_selected: "false",
-      matrix: "[]",
-    });
+      validateFreeStandingJobsEnvContent(
+        [
+          "allowed_jobs=openshell-version-pin-vitest",
+          "free_standing_scenarios_csv=openshell-version-pin,extra-scenario",
+          "free_standing_scenario_jobs_csv=openshell-version-pin:openshell-version-pin-vitest",
+        ].join("\n"),
+      ),
+    ).toContain(
+      "free_standing_scenarios_csv must exactly match free_standing_scenario_jobs_csv keys",
+    );
     expect(
-      generateMatrixForDispatch({ JOBS: "runtime-overrides-vitest", SCENARIOS: "" }),
-    ).toMatchObject({
-      hermes_selected: "false",
-      matrix: "[]",
-    });
-    expect(generateMatrixForDispatch({ JOBS: "", SCENARIOS: "runtime-overrides" })).toMatchObject({
-      hermes_selected: "false",
-      matrix: "[]",
-    });
-    expect(generateMatrixForDispatch({ JOBS: "", SCENARIOS: "hermes-e2e" })).toMatchObject({
-      hermes_selected: "true",
-      matrix: "[]",
-    });
+      validateFreeStandingJobsEnvContent(
+        [
+          "allowed_jobs=openshell-version-pin-vitest",
+          "free_standing_scenarios_csv=openshell-version-pin",
+          "free_standing_scenario_jobs_csv=openshell-version-pin:openshell-version-pin-vitest",
+          "export injected=true",
+          "allowed_jobs=$(touch /tmp/nope)",
+        ].join("\n"),
+      ),
+    ).toEqual(
+      expect.arrayContaining([
+        "free-standing jobs inventory line 4 must be data-only key=value",
+        "free-standing jobs inventory line 5 must be data-only key=value",
+      ]),
+    );
+  });
+
+  it("rejects malformed inventory in the workflow runtime before matrix generation", () => {
+    const malformedInventories = [
+      [
+        "allowed_jobs=openshell-version-pin-vitest",
+        "allowed_jobs=onboard-negative-paths-vitest",
+        "free_standing_scenarios_csv=openshell-version-pin",
+        "free_standing_scenario_jobs_csv=openshell-version-pin:openshell-version-pin-vitest",
+      ],
+      [
+        "allowed_jobs=openshell-version-pin-vitest,openshell-version-pin-vitest",
+        "free_standing_scenarios_csv=openshell-version-pin",
+        "free_standing_scenario_jobs_csv=openshell-version-pin:openshell-version-pin-vitest",
+      ],
+      [
+        "allowed_jobs=bad:job",
+        "free_standing_scenarios_csv=openshell-version-pin",
+        "free_standing_scenario_jobs_csv=openshell-version-pin:bad:job",
+      ],
+      [
+        "allowed_jobs=openshell-version-pin-vitest",
+        "free_standing_scenarios_csv=openshell-version-pin",
+        "free_standing_scenario_jobs_csv=openshell-version-pin:openshell-version-pin-vitest,openshell-version-pin:openshell-version-pin-vitest",
+      ],
+    ];
+
+    for (const inventory of malformedInventories) {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-vitest-bad-inventory-"));
+      try {
+        fs.mkdirSync(path.join(tmp, "tools", "e2e-scenarios"), { recursive: true });
+        fs.writeFileSync(
+          path.join(tmp, "tools", "e2e-scenarios", "free-standing-jobs.env"),
+          `${inventory.join("\n")}\n`,
+        );
+        const result = spawnSync("bash", ["-c", generateMatrixScript()], {
+          cwd: tmp,
+          encoding: "utf-8",
+          timeout: 10_000,
+          killSignal: "SIGKILL",
+          env: {
+            ...process.env,
+            GITHUB_OUTPUT: path.join(tmp, "github-output"),
+            GITHUB_STEP_SUMMARY: path.join(tmp, "github-summary"),
+            JOBS: "",
+            SCENARIOS: "",
+          },
+        });
+        expect(result.signal).toBeNull();
+        expect(result.status).not.toBe(0);
+        expect(result.stderr).toContain("::error::");
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    }
+  });
+
+  it("keeps each free-standing scenario out of the registry matrix", () => {
+    const inventory = readFreeStandingJobsInventory();
+    for (const job of inventory.allowedJobs) {
+      expect(generateMatrixForDispatch({ JOBS: job, SCENARIOS: "" })).toMatchObject({
+        hermes_selected: job === "hermes-e2e-vitest" ? "true" : "false",
+        matrix: "[]",
+      });
+    }
+    for (const [scenario, job] of inventory.scenarioToJob) {
+      expect(generateMatrixForDispatch({ JOBS: "", SCENARIOS: scenario })).toMatchObject({
+        hermes_selected: scenario === "hermes-e2e" ? "true" : "false",
+        matrix: "[]",
+      });
+      expect(evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: scenario })).toMatchObject({
+        valid: true,
+        liveScenariosRuns: false,
+        selectedFreeStandingJobs: [job],
+        registryScenarios: [],
+      });
+    }
   });
 
   it("flags direct dispatch-input interpolation and unsafe artifact upload", () => {
@@ -330,6 +537,45 @@ jobs:
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 1
+  double-onboard-vitest:
+    runs-on: ubuntu-latest
+    needs: generate-matrix
+    if: \${{ inputs.scenarios != '' }}
+    env:
+      E2E_ARTIFACT_DIR: \${{ github.workspace }}/.e2e/double-onboard
+      NEMOCLAW_CLI_BIN: ./bad-cli.js
+      NEMOCLAW_RUN_E2E_SCENARIOS: "0"
+      NVIDIA_API_KEY: \${{ secrets.NVIDIA_API_KEY }}
+      DOCKERHUB_TOKEN: \${{ secrets.DOCKERHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - name: Authenticate to Docker Hub
+        env:
+          DOCKERHUB_USERNAME: plain-user
+          DOCKERHUB_TOKEN: plain-token
+        run: echo no docker login
+      - name: Set up Node
+        uses: actions/setup-node@v4
+      - name: Install root dependencies
+        run: npm install
+      - name: Build CLI
+        run: echo skip build
+      - name: Install OpenShell CLI
+        run: echo skip install
+      - name: Run double-onboard live Vitest test
+        env:
+          DOCKERHUB_TOKEN: \${{ secrets.DOCKERHUB_TOKEN }}
+        run: npx vitest run --project e2e-scenarios-live "\${{ inputs.test_filter }}"
+      - name: Upload double-onboard Vitest artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: double-onboard
+          path: .e2e/double-onboard/
+          include-hidden-files: true
+          if-no-files-found: error
+
 `,
     );
 
@@ -340,145 +586,25 @@ jobs:
           "workflow_dispatch missing input: scenarios",
           "workflow_dispatch missing input: jobs",
           "workflow_dispatch must not expose legacy test_filter input",
-          "validate-jobs job must run on ubuntu-latest",
-          "validate-jobs step must pass jobs through JOBS env",
-          "validate-jobs step must pass scenarios through SCENARIOS env",
-          "step 'Validate free-standing job selector' run script must include Use either scenarios or jobs, not both",
-          "step 'Validate free-standing job selector' run script must include Invalid scenario input; use comma-separated scenario ids",
-          "step 'Validate free-standing job selector' run script must include allowed_jobs=",
-          "step 'Validate free-standing job selector' run script must include runtime-overrides-vitest",
-          "step 'Validate free-standing job selector' run script must include hermes-e2e-vitest",
-          "step 'Validate free-standing job selector' run script must include Invalid jobs input; use comma-separated job ids",
-          "step 'Validate free-standing job selector' run script must not include Invalid jobs input: ${JOBS}",
-          "step 'Validate free-standing job selector' run script must include Unknown free-standing Vitest job",
           "workflow missing generate-matrix job",
-          "generate-matrix job must expose hermes_selected output",
-          "generate-matrix job must run on ubuntu-latest",
           "live-scenarios job must run on the matrix runner",
-          "live-scenarios job must depend on generate-matrix",
-          "live-scenarios job must not run when a free-standing jobs selector is supplied",
-          "live-scenarios strategy.fail-fast must be false",
-          "live-scenarios matrix.include must come from generate-matrix output",
-          "live-scenarios job must write artifacts under e2e-artifacts/vitest",
-          "live-scenarios job must point NEMOCLAW_CLI_BIN at the repo CLI",
           "live-scenarios job env must not include NVIDIA_API_KEY",
-          "checkout action must be pinned to a full commit SHA",
-          "checkout step must set persist-credentials=false",
-          "step 'Set up Node' env must not include NVIDIA_API_KEY",
-          "setup-node action must be pinned to a full commit SHA",
-          "run-scenario job missing step: Build CLI",
-          "Vitest step must pass matrix.id through SCENARIO_ID env",
-          "Vitest step must receive NVIDIA_API_KEY from secrets",
           "step 'Run Vitest live E2E scenarios' run script must not interpolate dispatch inputs directly",
-          "step 'Run Vitest live E2E scenarios' run script must include test/e2e-scenario/live/registry-scenarios.test.ts",
-          "step 'Run Vitest live E2E scenarios' run script must include \"^${SCENARIO_ID}$\"",
-          "step 'Summarize artifacts' run script must not interpolate dispatch inputs directly",
-          "summary step must pass matrix.id through SCENARIO_ID env",
-          "summary step must pass matrix.label through SCENARIO_LABEL env",
-          "step 'Summarize artifacts' run script must include run-plan.json",
-          'step \'Summarize artifacts\' run script must include Path(os.environ["E2E_ARTIFACT_DIR"]) / os.environ["SCENARIO_ID"]',
-          "step 'Summarize artifacts' run script must include | Scenario | Manifest | Expected state | Suites | Phases |",
+          "Vitest step must receive NVIDIA_API_KEY from secrets",
           "artifact upload must set include-hidden-files: false",
-          "artifact upload name must include matrix.id",
-          "artifact upload path must include e2e-artifacts/vitest/${{ matrix.id }}/run-plan.json",
-          "artifact upload path must include e2e-artifacts/vitest/${{ matrix.id }}/scenario.json",
-          "artifact upload path must include e2e-artifacts/vitest/${{ matrix.id }}/shell/",
-          "artifact upload retention-days must be 14",
           "upload-artifact action must be pinned to a full commit SHA",
-          "openshell-version-pin-vitest job must depend on validate-jobs and generate-matrix",
           "openshell-version-pin-vitest job must use the shared jobs selector condition",
-          "openshell-version-pin-vitest job must set NEMOCLAW_RUN_E2E_SCENARIOS=1",
-          "openshell-version-pin-vitest job must write artifacts under e2e-artifacts/vitest/openshell-version-pin",
-          "openshell-version-pin-vitest job env must not include NVIDIA_API_KEY",
-          "openshell-version-pin-vitest checkout action must be pinned to a full commit SHA",
-          "openshell-version-pin-vitest checkout step must set persist-credentials=false",
-          "openshell-version-pin-vitest step 'Set up Node' env must not include NVIDIA_API_KEY",
-          "openshell-version-pin-vitest setup-node action must be pinned to a full commit SHA",
-          "step 'Install root dependencies' run script must include npm ci --ignore-scripts",
-          "openshell-version-pin-vitest step 'Run OpenShell version-pin live test' env must not include NVIDIA_API_KEY",
-          "step 'Run OpenShell version-pin live test' run script must not interpolate dispatch inputs directly",
-          "step 'Run OpenShell version-pin live test' run script must include test/e2e-scenario/live/openshell-version-pin.test.ts",
-          "openshell-version-pin-vitest upload-artifact action must be pinned to a full commit SHA",
-          "openshell-version-pin-vitest artifact upload name must be stable",
-          "artifact upload path must include e2e-artifacts/vitest/openshell-version-pin/",
-          "openshell-version-pin-vitest artifact upload must set include-hidden-files: false",
-          "openshell-version-pin-vitest artifact upload must ignore missing fixture artifacts",
-          "openshell-version-pin-vitest artifact upload retention-days must be 14",
-          "onboard-negative-paths-vitest job must depend on validate-jobs and generate-matrix",
-          "onboard-negative-paths-vitest job must use the shared jobs selector condition",
-          "network-policy-vitest job must run on ubuntu-latest",
-          "network-policy-vitest job must depend on validate-jobs and generate-matrix",
-          "network-policy-vitest job must map scenarios=network-policy to the network-policy job",
-          "network-policy-vitest job must set NEMOCLAW_RUN_E2E_SCENARIOS=1",
-          "network-policy-vitest job must write artifacts under e2e-artifacts/vitest/network-policy",
-          "network-policy-vitest job must point NEMOCLAW_CLI_BIN at the repo CLI",
-          "network-policy-vitest job must force OPENSHELL_GATEWAY=nemoclaw",
           "network-policy-vitest job env must not include NVIDIA_API_KEY",
-          "network-policy-vitest job env must not include DOCKERHUB_USERNAME",
-          "network-policy-vitest job env must not include DOCKERHUB_TOKEN",
-          "network-policy-vitest job env must not include GITHUB_TOKEN",
-          "onboard-negative-paths-vitest job must set NEMOCLAW_RUN_E2E_SCENARIOS=1",
-          "onboard-negative-paths-vitest job must write artifacts under e2e-artifacts/vitest/onboard-negative-paths",
-          "onboard-negative-paths-vitest job env must not include NVIDIA_API_KEY",
-          "onboard-negative-paths-vitest checkout action must be pinned to a full commit SHA",
-          "onboard-negative-paths-vitest checkout step must set persist-credentials=false",
-          "onboard-negative-paths-vitest step 'Set up Node' env must not include NVIDIA_API_KEY",
-          "onboard-negative-paths-vitest setup-node action must be pinned to a full commit SHA",
-          "onboard-negative-paths-vitest job missing step: Build CLI",
-          "onboard-negative-paths-vitest step 'Run onboard negative-paths live test' env must not include NVIDIA_API_KEY",
-          "step 'Run onboard negative-paths live test' run script must not interpolate dispatch inputs directly",
-          "step 'Run onboard negative-paths live test' run script must include test/e2e-scenario/live/onboard-negative-paths.test.ts",
-          "onboard-negative-paths-vitest upload-artifact action must be pinned to a full commit SHA",
-          "onboard-negative-paths-vitest artifact upload name must be stable",
-          "artifact upload path must include e2e-artifacts/vitest/onboard-negative-paths/",
-          "onboard-negative-paths-vitest artifact upload must set include-hidden-files: false",
-          "onboard-negative-paths-vitest artifact upload must ignore missing fixture artifacts",
-          "onboard-negative-paths-vitest artifact upload retention-days must be 14",
-          "credential-migration-vitest job must depend on validate-jobs",
-          "credential-migration-vitest job must use the shared jobs selector condition",
-          "workflow missing runtime-overrides-vitest job",
-          "network-policy-vitest checkout action must be pinned to a full commit SHA",
-          "network-policy-vitest checkout step must set persist-credentials=false",
-          "network-policy-vitest must not include unused Docker Hub authentication",
-          "network-policy-vitest step 'Set up Node' env must not include NVIDIA_API_KEY",
-          "network-policy-vitest setup-node action must be pinned to a full commit SHA",
-          "step 'Install root dependencies' run script must include npm ci --ignore-scripts",
-          "step 'Build CLI' run script must include npm run build:cli",
           "network-policy-vitest step 'Install OpenShell' env must not include GITHUB_TOKEN",
-          "step 'Install OpenShell' run script must include bash scripts/install-openshell.sh",
-          "step 'Install OpenShell' run script must include env -u DOCKER_CONFIG",
-          "step 'Install OpenShell' run script must include -u DOCKERHUB_USERNAME",
-          "step 'Install OpenShell' run script must include -u DOCKERHUB_TOKEN",
-          "step 'Install OpenShell' run script must include -u NVIDIA_API_KEY",
-          "step 'Install OpenShell' run script must include -u GITHUB_TOKEN",
-          "step 'Run network-policy live test' run script must not interpolate dispatch inputs directly",
-          "step 'Run network-policy live test' run script must include test/e2e-scenario/live/network-policy.test.ts",
-          "network-policy-vitest upload-artifact action must be pinned to a full commit SHA",
-          "network-policy-vitest artifact upload name must be stable",
-          "artifact upload path must include e2e-artifacts/vitest/network-policy/",
-          "network-policy-vitest artifact upload must set include-hidden-files: false",
-          "network-policy-vitest artifact upload must ignore missing fixture artifacts",
-          "network-policy-vitest artifact upload retention-days must be 14",
-          "report-to-pr job must wait for credential-migration-vitest",
-          "report-to-pr job must wait for runtime-overrides-vitest",
-          "report-to-pr job must wait for network-policy-vitest",
+          "double-onboard-vitest job env must not include DOCKERHUB_TOKEN",
+          "step 'Run double-onboard live Vitest test' run script must not interpolate dispatch inputs directly",
           "workflow missing hermes-e2e-vitest job",
-          "report-to-pr job must wait for hermes-e2e-vitest",
-          "openclaw-tui-chat-correlation-vitest job must depend on validate-jobs and generate-matrix",
-          "openclaw-tui-chat-correlation-vitest job must use the shared jobs selector condition",
-          "gateway-guard-recovery job must depend on validate-jobs",
-          "gateway-guard-recovery job must use the shared jobs selector condition",
-          "report-to-pr job must wait for validate-jobs",
+          "workflow missing skill-agent-vitest job",
+          "workflow missing model-router-provider-routed-inference-vitest job",
           "report-to-pr job must wait for live-scenarios",
-          "report-to-pr step must pass pr_number through JOB_PR_NUMBER env",
-          "report-to-pr step must pass scenarios through JOB_SCENARIOS env",
-          "step 'Post Vitest scenario results to PR' run script must include process.env.JOBS",
-          "step 'Post Vitest scenario results to PR' run script must include process.env.JOB_SCENARIOS",
-          "step 'Post Vitest scenario results to PR' run script must check validate-jobs before echoing selectors",
+          "report-to-pr step must pass jobs through JOBS env",
+          "step 'Post Vitest scenario results to PR' run script must check selector validation before echoing selectors",
           "step 'Post Vitest scenario results to PR' run script must omit rejected job selectors",
-          "step 'Post Vitest scenario results to PR' run script must omit rejected scenario selectors",
-          "step 'Post Vitest scenario results to PR' run script must include **Requested jobs:**",
-          "step 'Post Vitest scenario results to PR' run script must include **Requested scenarios:**",
         ]),
       );
     } finally {
@@ -486,7 +612,28 @@ jobs:
     }
   });
 
-  it("requires runtime-overrides literals in selector allowlists", () => {
+  it("rejects workflow selector drift from the free-standing inventory", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-vitest-workflow-"));
+    const workflowPath = path.join(tmp, "workflow.yaml");
+    const workflow = fs.readFileSync(
+      path.join(process.cwd(), ".github/workflows/e2e-vitest-scenarios.yaml"),
+      "utf8",
+    );
+    fs.writeFileSync(
+      workflowPath,
+      workflow.replace(" || contains(format(',{0},', inputs.scenarios), ',sandbox-rebuild,')", ""),
+    );
+
+    try {
+      expect(validateE2eVitestScenariosWorkflowBoundary(workflowPath)).toContain(
+        "free-standing inventory mapping sandbox-rebuild:sandbox-rebuild-vitest must match the workflow job selector",
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("requires runtime-overrides workflow and report coverage", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-vitest-workflow-"));
     const workflowPath = path.join(tmp, "workflow.yaml");
     const workflow = fs.readFileSync(
@@ -504,9 +651,8 @@ jobs:
       const errors = validateE2eVitestScenariosWorkflowBoundary(workflowPath);
       expect(errors).toEqual(
         expect.arrayContaining([
-          "step 'Validate free-standing job selector' run script must include runtime-overrides-vitest",
-          "step 'Generate Vitest scenario matrix' run script must include runtime-overrides-vitest",
           "workflow missing runtime-overrides-vitest job",
+          "report-to-pr job must wait for runtime-overrides-vitest",
         ]),
       );
     } finally {
@@ -533,6 +679,41 @@ jobs:
       const errors = validateE2eVitestScenariosWorkflowBoundary(workflowPath);
       expect(errors).toContain(
         "runtime-overrides-vitest step 'Run runtime overrides live test' run script must not use docker login or inline secret interpolation",
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects Docker Hub auth in the Hermes root-entrypoint smoke job", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-vitest-workflow-"));
+    const workflowPath = path.join(tmp, "workflow.yaml");
+    const workflow = readWorkflow() as {
+      jobs: Record<string, { steps: Array<Record<string, unknown>> }>;
+    };
+    const steps = workflow.jobs["hermes-root-entrypoint-smoke-vitest"]?.steps;
+    expect(steps).toEqual(expect.any(Array));
+    const setupNodeIndex = steps.findIndex((step) => step.name === "Set up Node");
+    expect(setupNodeIndex).toBeGreaterThan(0);
+    steps.splice(setupNodeIndex, 0, {
+      name: "Authenticate to Docker Hub",
+      env: {
+        DOCKERHUB_USERNAME: "${{ secrets.DOCKERHUB_USERNAME }}",
+        DOCKERHUB_TOKEN: "${{ secrets.DOCKERHUB_TOKEN }}",
+      },
+      run: "docker login docker.io --username user --password ${{ secrets.DOCKERHUB_TOKEN }}",
+    });
+    fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+    try {
+      const errors = validateE2eVitestScenariosWorkflowBoundary(workflowPath);
+      expect(errors).toEqual(
+        expect.arrayContaining([
+          "hermes-root-entrypoint-smoke-vitest must not authenticate to Docker Hub before branch-controlled test code runs",
+          "hermes-root-entrypoint-smoke-vitest step 'Authenticate to Docker Hub' env must not include DOCKERHUB_USERNAME",
+          "hermes-root-entrypoint-smoke-vitest step 'Authenticate to Docker Hub' env must not include DOCKERHUB_TOKEN",
+          "hermes-root-entrypoint-smoke-vitest step 'Authenticate to Docker Hub' run script must not use docker login or inline secret interpolation",
+        ]),
       );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });

@@ -17,21 +17,139 @@ const DEFAULT_VITEST_WORKFLOW_PATH = join(
 type WorkflowRecord = Record<string, unknown>;
 type WorkflowStep = WorkflowRecord & { name?: string; run?: string; uses?: string; with?: WorkflowRecord };
 
+export interface FreeStandingJobsInventory {
+  allowedJobs: string[];
+  freeStandingScenarios: string[];
+  scenarioToJob: Map<string, string>;
+}
+
 const SELECTOR_PATTERN = /^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$/;
-const FREE_STANDING_SCENARIO_JOBS = new Map([
-  ["openshell-version-pin", "openshell-version-pin-vitest"],
-  ["onboard-negative-paths", "onboard-negative-paths-vitest"],
-  ["runtime-overrides", "runtime-overrides-vitest"],
-  ["hermes-e2e", "hermes-e2e-vitest"],
-  ["network-policy", "network-policy-vitest"],
-  ["token-rotation", "token-rotation-vitest"],
-  ["openclaw-tui-chat-correlation", "openclaw-tui-chat-correlation-vitest"],
-]);
-const ALLOWED_FREE_STANDING_JOBS = new Set([
-  ...FREE_STANDING_SCENARIO_JOBS.values(),
-  "credential-migration-vitest",
-  "gateway-guard-recovery",
-]);
+const SELECTOR_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
+const FREE_STANDING_JOBS_ENV_PATH = join(REPO_ROOT, "tools", "e2e-scenarios", "free-standing-jobs.env");
+const FREE_STANDING_JOBS_ENV_KEYS = [
+  "allowed_jobs",
+  "free_standing_scenarios_csv",
+  "free_standing_scenario_jobs_csv",
+] as const;
+const FREE_STANDING_JOBS_ENV_LINE_PATTERN =
+  /^(allowed_jobs|free_standing_scenarios_csv|free_standing_scenario_jobs_csv)=[A-Za-z0-9_:-]+(,[A-Za-z0-9_:-]+)*$/;
+const FREE_STANDING_SCENARIO_JOB_PATTERN = /^[A-Za-z0-9_-]+:[A-Za-z0-9_-]+$/;
+
+function splitEnvCsv(value: string | undefined): string[] {
+  return (value ?? "")
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function findDuplicates(values: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const duplicates = new Set<string>();
+  for (const value of values) {
+    if (seen.has(value)) duplicates.add(value);
+    seen.add(value);
+  }
+  return [...duplicates].sort();
+}
+
+function parseFreeStandingJobsEnvContent(content: string): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const rawLine of content.split("\n")) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) continue;
+    const [key, value] = line.split(/=(.*)/s).slice(0, 2).map((part) => part.trim());
+    env[key] = value;
+  }
+  return env;
+}
+
+export function validateFreeStandingJobsEnvContent(content: string): string[] {
+  const errors: string[] = [];
+  const env: Record<string, string> = {};
+
+  content.split("\n").forEach((rawLine, index) => {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) return;
+    if (!FREE_STANDING_JOBS_ENV_LINE_PATTERN.test(line)) {
+      errors.push(`free-standing jobs inventory line ${index + 1} must be data-only key=value`);
+      return;
+    }
+    const [key, value] = line.split(/=(.*)/s).slice(0, 2).map((part) => part.trim());
+    if (Object.hasOwn(env, key)) {
+      errors.push(`free-standing jobs inventory must not redefine ${key}`);
+    }
+    env[key] = value;
+  });
+
+  for (const key of FREE_STANDING_JOBS_ENV_KEYS) {
+    if (!env[key]) errors.push(`free-standing jobs inventory must define non-empty ${key}`);
+  }
+  if (errors.length > 0) return errors;
+
+  const allowedJobs = splitEnvCsv(env.allowed_jobs);
+  const freeStandingScenarios = splitEnvCsv(env.free_standing_scenarios_csv);
+  const scenarioJobEntries = splitEnvCsv(env.free_standing_scenario_jobs_csv);
+  const scenarioJobPairs = scenarioJobEntries.map((entry) => entry.split(":", 2) as [string, string]);
+  const scenarioKeys = scenarioJobPairs.map(([scenario]) => scenario);
+
+  for (const job of allowedJobs) {
+    if (!SELECTOR_ID_PATTERN.test(job)) {
+      errors.push(`free-standing jobs inventory contains invalid job id: ${job}`);
+    }
+  }
+  for (const scenario of freeStandingScenarios) {
+    if (!SELECTOR_ID_PATTERN.test(scenario)) {
+      errors.push(`free-standing jobs inventory contains invalid scenario id: ${scenario}`);
+    }
+  }
+  for (const entry of scenarioJobEntries) {
+    if (!FREE_STANDING_SCENARIO_JOB_PATTERN.test(entry)) {
+      errors.push(`free-standing jobs inventory contains invalid scenario job mapping: ${entry}`);
+    }
+  }
+
+  for (const duplicate of findDuplicates(allowedJobs)) {
+    errors.push(`free-standing jobs inventory repeats job id: ${duplicate}`);
+  }
+  for (const duplicate of findDuplicates(freeStandingScenarios)) {
+    errors.push(`free-standing jobs inventory repeats scenario id: ${duplicate}`);
+  }
+  for (const duplicate of findDuplicates(scenarioKeys)) {
+    errors.push(`free-standing jobs inventory repeats scenario mapping: ${duplicate}`);
+  }
+
+  if (freeStandingScenarios.join(",") !== scenarioKeys.join(",")) {
+    errors.push("free_standing_scenarios_csv must exactly match free_standing_scenario_jobs_csv keys");
+  }
+  for (const [scenario, job] of scenarioJobPairs) {
+    if (!allowedJobs.includes(job)) {
+      errors.push(`free-standing inventory maps ${scenario} to unknown job ${job}`);
+    }
+  }
+
+  return errors;
+}
+
+export function readFreeStandingJobsInventory(): FreeStandingJobsInventory {
+  const content = readFileSync(FREE_STANDING_JOBS_ENV_PATH, "utf-8");
+  const errors = validateFreeStandingJobsEnvContent(content);
+  if (errors.length > 0) {
+    throw new Error(`Invalid free-standing jobs inventory:\n${errors.join("\n")}`);
+  }
+  const env = parseFreeStandingJobsEnvContent(content);
+  const scenarioJobPairs = splitEnvCsv(env.free_standing_scenario_jobs_csv).map(
+    (entry) => entry.split(":", 2) as [string, string],
+  );
+  return {
+    allowedJobs: splitEnvCsv(env.allowed_jobs),
+    freeStandingScenarios: splitEnvCsv(env.free_standing_scenarios_csv),
+    scenarioToJob: new Map(scenarioJobPairs),
+  };
+}
+
+const FREE_STANDING_JOBS_INVENTORY = readFreeStandingJobsInventory();
+const FREE_STANDING_VITEST_JOB_IDS = FREE_STANDING_JOBS_INVENTORY.allowedJobs;
+const FREE_STANDING_VITEST_SCENARIO_TO_JOB = FREE_STANDING_JOBS_INVENTORY.scenarioToJob;
 
 export interface WorkflowDispatchSelectorEvaluation {
   valid: boolean;
@@ -83,7 +201,7 @@ export function evaluateE2eVitestWorkflowDispatchSelectors(input: {
   }
   if (jobs && SELECTOR_PATTERN.test(jobs)) {
     for (const job of splitSelector(jobs)) {
-      if (!ALLOWED_FREE_STANDING_JOBS.has(job)) {
+      if (!FREE_STANDING_VITEST_JOB_IDS.includes(job)) {
         errors.push(`Unknown free-standing Vitest job: ${job}`);
       }
     }
@@ -103,7 +221,7 @@ export function evaluateE2eVitestWorkflowDispatchSelectors(input: {
     return {
       valid: true,
       errors: [],
-      selectedFreeStandingJobs: [...ALLOWED_FREE_STANDING_JOBS].sort(),
+      selectedFreeStandingJobs: [...FREE_STANDING_VITEST_JOB_IDS].sort(),
       registryScenarios: [],
       liveScenariosRuns: true,
     };
@@ -122,7 +240,7 @@ export function evaluateE2eVitestWorkflowDispatchSelectors(input: {
   const selectedFreeStandingJobs = new Set<string>();
   const registryScenarios: string[] = [];
   for (const scenario of splitSelector(scenarios)) {
-    const job = FREE_STANDING_SCENARIO_JOBS.get(scenario);
+    const job = FREE_STANDING_VITEST_SCENARIO_TO_JOB.get(scenario);
     if (job) selectedFreeStandingJobs.add(job);
     else registryScenarios.push(scenario);
   }
@@ -239,54 +357,42 @@ function validateFreeStandingJobSelector(
   scenarioName?: string,
 ): void {
   const job = asRecord(jobs[jobName]);
-  if (scenarioName) {
-    const needs = Array.isArray(job.needs) ? job.needs : [];
-    if (!needs.includes("validate-jobs") || !needs.includes("generate-matrix")) {
-      errors.push(`${jobName} job must depend on validate-jobs and generate-matrix`);
-    }
-  } else if (job.needs !== "validate-jobs") {
-    errors.push(`${jobName} job must depend on validate-jobs`);
+  if (job.needs !== "generate-matrix") {
+    errors.push(`${jobName} job must depend on generate-matrix`);
   }
   if (job.if !== freeStandingJobIf(jobName, scenarioName)) {
     errors.push(`${jobName} job must use the shared jobs selector condition`);
   }
 }
 
-function validateJobsSelector(errors: string[], jobs: WorkflowRecord): void {
-  const job = asRecord(jobs["validate-jobs"]);
-  if (Object.keys(job).length === 0) {
-    errors.push("workflow missing validate-jobs job");
-    return;
+function validateFreeStandingInventoryCoverage(
+  errors: string[],
+  jobs: WorkflowRecord,
+  reportNeeds: readonly unknown[],
+): void {
+  for (const jobId of FREE_STANDING_VITEST_JOB_IDS) {
+    if (!Object.hasOwn(jobs, jobId)) {
+      errors.push(`free-standing inventory job missing workflow job: ${jobId}`);
+    }
+    if (!reportNeeds.includes(jobId)) {
+      errors.push(`report-to-pr job must wait for ${jobId}`);
+    }
   }
-  if (job["runs-on"] !== "ubuntu-latest") {
-    errors.push("validate-jobs job must run on ubuntu-latest");
+  for (const [scenario, jobId] of FREE_STANDING_VITEST_SCENARIO_TO_JOB) {
+    if (!FREE_STANDING_VITEST_JOB_IDS.includes(jobId)) {
+      errors.push(`free-standing inventory maps ${scenario} to unknown job ${jobId}`);
+      continue;
+    }
+    const job = asRecord(jobs[jobId]);
+    if (Object.keys(job).length === 0) continue;
+    const jobIf = stringValue(job.if);
+    const mappingIsRepresented =
+      jobIf.includes(`,${scenario},`) ||
+      (jobId === "hermes-e2e-vitest" && jobIf.includes("needs.generate-matrix.outputs.hermes_selected"));
+    if (!mappingIsRepresented) {
+      errors.push(`free-standing inventory mapping ${scenario}:${jobId} must match the workflow job selector`);
+    }
   }
-  const steps = asSteps(job.steps);
-  requireNoDispatchInputInterpolation(errors, steps);
-  const validate = requireJobStep(errors, "validate-jobs", steps, "Validate free-standing job selector");
-  const env = asRecord(validate?.env);
-  if (env.JOBS !== "${{ inputs.jobs }}") {
-    errors.push("validate-jobs step must pass jobs through JOBS env");
-  }
-  if (env.SCENARIOS !== "${{ inputs.scenarios }}") {
-    errors.push("validate-jobs step must pass scenarios through SCENARIOS env");
-  }
-  requireRunContains(errors, validate, "Use either scenarios or jobs, not both");
-  requireRunContains(errors, validate, "Invalid scenario input; use comma-separated scenario ids");
-  requireRunContains(errors, validate, "allowed_jobs=");
-  requireRunContains(errors, validate, "openshell-version-pin-vitest");
-  requireRunContains(errors, validate, "onboard-negative-paths-vitest");
-  requireRunContains(errors, validate, "credential-migration-vitest");
-  requireRunContains(errors, validate, "runtime-overrides-vitest");
-  requireRunContains(errors, validate, "hermes-e2e-vitest");
-  requireRunContains(errors, validate, "network-policy-vitest");
-  requireRunContains(errors, validate, "token-rotation-vitest");
-  requireRunContains(errors, validate, "openclaw-tui-chat-correlation-vitest");
-  requireRunContains(errors, validate, "gateway-guard-recovery");
-  requireRunContains(errors, validate, "^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$");
-  requireRunContains(errors, validate, "Invalid jobs input; use comma-separated job ids");
-  requireRunDoesNotContain(errors, validate, "Invalid jobs input: ${JOBS}");
-  requireRunContains(errors, validate, "Unknown free-standing Vitest job");
 }
 
 function validateOpenShellVersionPinVitestJob(errors: string[], jobs: WorkflowRecord): void {
@@ -370,6 +476,110 @@ function validateOpenShellVersionPinVitestJob(errors: string[], jobs: WorkflowRe
 }
 
 
+function validateSkillAgentVitestJob(errors: string[], jobs: WorkflowRecord): void {
+  const jobName = "skill-agent-vitest";
+  const job = asRecord(jobs[jobName]);
+  if (Object.keys(job).length === 0) {
+    errors.push("workflow missing skill-agent-vitest job");
+    return;
+  }
+
+  if (job["runs-on"] !== "ubuntu-latest") {
+    errors.push("skill-agent-vitest job must run on ubuntu-latest");
+  }
+  validateFreeStandingJobSelector(errors, jobs, jobName, "skill-agent");
+
+  const jobEnv = asRecord(job.env);
+  if (jobEnv.NEMOCLAW_RUN_E2E_SCENARIOS !== "1") {
+    errors.push("skill-agent-vitest job must set NEMOCLAW_RUN_E2E_SCENARIOS=1");
+  }
+  if (jobEnv.E2E_ARTIFACT_DIR !== "${{ github.workspace }}/e2e-artifacts/vitest/skill-agent") {
+    errors.push("skill-agent-vitest job must write artifacts under e2e-artifacts/vitest/skill-agent");
+  }
+  if (!stringValue(jobEnv.NEMOCLAW_CLI_BIN).includes("bin/nemoclaw.js")) {
+    errors.push("skill-agent-vitest job must point NEMOCLAW_CLI_BIN at the repo CLI");
+  }
+  requireEnvDoesNotExposeSecret(errors, "skill-agent-vitest job", jobEnv, "NVIDIA_API_KEY");
+
+  const steps = asSteps(job.steps);
+  requireNoDispatchInputInterpolation(errors, steps);
+  for (const step of steps) {
+    if (step.name !== "Run skill-agent live test") {
+      requireEnvDoesNotExposeSecret(
+        errors,
+        `skill-agent-vitest step '${step.name ?? step.uses ?? "<unnamed>"}'`,
+        asRecord(step.env),
+        "NVIDIA_API_KEY",
+      );
+    }
+  }
+
+  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
+  if (!checkout) errors.push("skill-agent-vitest job missing checkout step");
+  requireFullShaAction(errors, checkout, "skill-agent-vitest checkout");
+  if (asRecord(checkout?.with)["persist-credentials"] !== false) {
+    errors.push("skill-agent-vitest checkout step must set persist-credentials=false");
+  }
+
+  const setupNode = namedStep(steps, "Set up Node");
+  if (!setupNode) errors.push("skill-agent-vitest job missing step: Set up Node");
+  requireFullShaAction(errors, setupNode, "skill-agent-vitest setup-node");
+
+  const installRootDependencies = requireJobStep(errors, jobName, steps, "Install root dependencies");
+  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
+
+  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
+  requireRunContains(errors, buildCli, "npm run build:cli");
+
+  const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell CLI");
+  requireRunContains(errors, installOpenShell, "bash scripts/install-openshell.sh");
+
+  const runVitest = requireJobStep(errors, jobName, steps, "Run skill-agent live test");
+  const runEnv = asRecord(runVitest?.env);
+  if (runEnv.NVIDIA_API_KEY !== "${{ secrets.NVIDIA_API_KEY }}") {
+    errors.push("skill-agent-vitest run step must receive NVIDIA_API_KEY from secrets");
+  }
+  requireRunContains(errors, runVitest, 'export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"');
+  requireRunContains(errors, runVitest, 'OPENSHELL_BIN="$(command -v openshell)"');
+  requireRunContains(errors, runVitest, "export OPENSHELL_BIN");
+  requireRunContains(errors, runVitest, "npx vitest run --project e2e-scenarios-live");
+  requireRunContains(errors, runVitest, "test/e2e-scenario/live/skill-agent.test.ts");
+
+  const upload = requireJobStep(errors, jobName, steps, "Upload skill-agent artifacts");
+  requireFullShaAction(errors, upload, "skill-agent-vitest upload-artifact");
+  const uploadWith = asRecord(upload?.with);
+  if (uploadWith.name !== "e2e-vitest-scenarios-skill-agent") {
+    errors.push("skill-agent-vitest artifact upload name must be stable");
+  }
+  const uploadPath = stringValue(uploadWith.path);
+  for (const expected of [
+    "e2e-artifacts/vitest/skill-agent/*/artifact-summary.json",
+    "e2e-artifacts/vitest/skill-agent/*/cleanup.json",
+    "e2e-artifacts/vitest/skill-agent/*/cleanup-skill-agent-summary.json",
+    "e2e-artifacts/vitest/skill-agent/*/scenario.json",
+    "e2e-artifacts/vitest/skill-agent/*/scenario-result.json",
+    "e2e-artifacts/vitest/skill-agent/*/shell/*.result.json",
+    "e2e-artifacts/vitest/skill-agent/*/shell/*.stdout.txt",
+    "e2e-artifacts/vitest/skill-agent/*/shell/*.stderr.txt",
+  ]) {
+    requireUploadPathContains(errors, uploadPath, expected);
+  }
+  for (const line of uploadPath.split("\n")) {
+    if (line.trim() === "e2e-artifacts/vitest/skill-agent/") {
+      errors.push("skill-agent-vitest artifact upload path must not list the whole skill-agent artifact directory");
+    }
+  }
+  if (uploadWith["include-hidden-files"] !== false) {
+    errors.push("skill-agent-vitest artifact upload must set include-hidden-files: false");
+  }
+  if (uploadWith["if-no-files-found"] !== "ignore") {
+    errors.push("skill-agent-vitest artifact upload must ignore missing fixture artifacts");
+  }
+  if (uploadWith["retention-days"] !== 14) {
+    errors.push("skill-agent-vitest artifact upload retention-days must be 14");
+  }
+}
+
 function validateNetworkPolicyVitestJob(errors: string[], jobs: WorkflowRecord): void {
   const jobName = "network-policy-vitest";
   const job = asRecord(jobs[jobName]);
@@ -380,9 +590,8 @@ function validateNetworkPolicyVitestJob(errors: string[], jobs: WorkflowRecord):
   if (job["runs-on"] !== "ubuntu-latest") {
     errors.push("network-policy-vitest job must run on ubuntu-latest");
   }
-  const needs = Array.isArray(job.needs) ? job.needs : [];
-  if (!needs.includes("validate-jobs") || !needs.includes("generate-matrix")) {
-    errors.push("network-policy-vitest job must depend on validate-jobs and generate-matrix");
+  if (job.needs !== "generate-matrix") {
+    errors.push("network-policy-vitest job must depend on generate-matrix");
   }
   if (job.if !== freeStandingJobIf(jobName, "network-policy")) {
     errors.push("network-policy-vitest job must map scenarios=network-policy to the network-policy job");
@@ -503,6 +712,342 @@ function validateNetworkPolicyVitestJob(errors: string[], jobs: WorkflowRecord):
   }
 }
 
+
+function validateShieldsConfigVitestJob(errors: string[], jobs: WorkflowRecord): void {
+  const jobName = "shields-config-vitest";
+  const job = asRecord(jobs[jobName]);
+  if (Object.keys(job).length === 0) {
+    errors.push("workflow missing shields-config-vitest job");
+    return;
+  }
+
+  if (job["runs-on"] !== "ubuntu-latest") {
+    errors.push("shields-config-vitest job must run on ubuntu-latest");
+  }
+  validateFreeStandingJobSelector(errors, jobs, jobName, "shields-config");
+  if (job["timeout-minutes"] !== 45) {
+    errors.push("shields-config-vitest job must keep the legacy 45 minute timeout");
+  }
+  const jobEnv = asRecord(job.env);
+  if (jobEnv.NEMOCLAW_RUN_E2E_SCENARIOS !== "1") {
+    errors.push("shields-config-vitest job must set NEMOCLAW_RUN_E2E_SCENARIOS=1");
+  }
+  if (jobEnv.E2E_ARTIFACT_DIR !== "${{ github.workspace }}/e2e-artifacts/vitest/shields-config") {
+    errors.push("shields-config-vitest job must write artifacts under e2e-artifacts/vitest/shields-config");
+  }
+  if (jobEnv.OPENSHELL_GATEWAY !== "nemoclaw") {
+    errors.push("shields-config-vitest job must force OPENSHELL_GATEWAY=nemoclaw");
+  }
+  if (jobEnv.NEMOCLAW_NON_INTERACTIVE !== "1") {
+    errors.push("shields-config-vitest job must set NEMOCLAW_NON_INTERACTIVE=1");
+  }
+  if (jobEnv.NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE !== "1") {
+    errors.push("shields-config-vitest job must set NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1");
+  }
+  if (jobEnv.NEMOCLAW_SANDBOX_NAME !== "e2e-shields") {
+    errors.push("shields-config-vitest job must set NEMOCLAW_SANDBOX_NAME=e2e-shields");
+  }
+  requireEnvDoesNotExposeSecret(errors, "shields-config-vitest job", jobEnv, "NVIDIA_API_KEY");
+  requireEnvDoesNotExposeSecret(errors, "shields-config-vitest job", jobEnv, "DOCKERHUB_USERNAME");
+  requireEnvDoesNotExposeSecret(errors, "shields-config-vitest job", jobEnv, "DOCKERHUB_TOKEN");
+
+  const steps = asSteps(job.steps);
+  requireNoDispatchInputInterpolation(errors, steps);
+  for (const step of steps) {
+    const stepName = step.name ?? step.uses ?? "<unnamed>";
+    const stepEnv = asRecord(step.env);
+    if (step.name !== "Run shields-config live test") {
+      requireEnvDoesNotExposeSecret(
+        errors,
+        `shields-config-vitest step '${stepName}'`,
+        stepEnv,
+        "NVIDIA_API_KEY",
+      );
+    }
+    if (step.name !== "Authenticate to Docker Hub") {
+      requireEnvDoesNotExposeSecret(
+        errors,
+        `shields-config-vitest step '${stepName}'`,
+        stepEnv,
+        "DOCKERHUB_USERNAME",
+      );
+      requireEnvDoesNotExposeSecret(
+        errors,
+        `shields-config-vitest step '${stepName}'`,
+        stepEnv,
+        "DOCKERHUB_TOKEN",
+      );
+    }
+  }
+
+  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
+  if (!checkout) errors.push("shields-config-vitest job missing checkout step");
+  requireFullShaAction(errors, checkout, "shields-config-vitest checkout");
+  if (asRecord(checkout?.with)["persist-credentials"] !== false) {
+    errors.push("shields-config-vitest checkout step must set persist-credentials=false");
+  }
+
+  const dockerHubAuth = requireJobStep(errors, jobName, steps, "Authenticate to Docker Hub");
+  const dockerHubEnv = asRecord(dockerHubAuth?.env);
+  if (dockerHubEnv.DOCKERHUB_USERNAME !== "${{ secrets.DOCKERHUB_USERNAME }}") {
+    errors.push("shields-config-vitest Docker Hub auth must receive DOCKERHUB_USERNAME from secrets");
+  }
+  if (dockerHubEnv.DOCKERHUB_TOKEN !== "${{ secrets.DOCKERHUB_TOKEN }}") {
+    errors.push("shields-config-vitest Docker Hub auth must receive DOCKERHUB_TOKEN from secrets");
+  }
+  requireRunContains(errors, dockerHubAuth, "docker login docker.io");
+
+  const setupNode = namedStep(steps, "Set up Node");
+  if (!setupNode) errors.push("shields-config-vitest job missing step: Set up Node");
+  requireFullShaAction(errors, setupNode, "shields-config-vitest setup-node");
+
+  const installRootDependencies = requireJobStep(errors, jobName, steps, "Install root dependencies");
+  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
+
+  const runVitest = requireJobStep(errors, jobName, steps, "Run shields-config live test");
+  const runVitestEnv = asRecord(runVitest?.env);
+  if (runVitestEnv.NVIDIA_API_KEY !== "${{ secrets.NVIDIA_API_KEY }}") {
+    errors.push("shields-config-vitest step must receive NVIDIA_API_KEY from secrets");
+  }
+  requireRunContains(errors, runVitest, "npx vitest run --project e2e-scenarios-live");
+  requireRunContains(errors, runVitest, "test/e2e-scenario/live/shields-config.test.ts");
+
+  const upload = requireJobStep(errors, jobName, steps, "Upload shields-config artifacts");
+  requireFullShaAction(errors, upload, "shields-config-vitest upload-artifact");
+  const uploadWith = asRecord(upload?.with);
+  if (uploadWith.name !== "e2e-vitest-scenarios-shields-config") {
+    errors.push("shields-config-vitest artifact upload name must be stable");
+  }
+  const uploadPath = stringValue(uploadWith.path);
+  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/vitest/shields-config/");
+  requireUploadPathContains(errors, uploadPath, "/tmp/nemoclaw-e2e-shields-install.log");
+  if (uploadWith["include-hidden-files"] !== false) {
+    errors.push("shields-config-vitest artifact upload must set include-hidden-files: false");
+  }
+  if (uploadWith["if-no-files-found"] !== "ignore") {
+    errors.push("shields-config-vitest artifact upload must ignore missing fixture artifacts");
+  }
+  if (uploadWith["retention-days"] !== 14) {
+    errors.push("shields-config-vitest artifact upload retention-days must be 14");
+  }
+}
+
+function validateRebuildOpenClawVitestJob(errors: string[], jobs: WorkflowRecord): void {
+  const jobName = "rebuild-openclaw-vitest";
+  const job = asRecord(jobs[jobName]);
+  if (Object.keys(job).length === 0) {
+    errors.push("workflow missing rebuild-openclaw-vitest job");
+    return;
+  }
+
+  if (job["runs-on"] !== "ubuntu-latest") {
+    errors.push("rebuild-openclaw-vitest job must run on ubuntu-latest");
+  }
+  validateFreeStandingJobSelector(errors, jobs, jobName, "rebuild-openclaw");
+  if (job["timeout-minutes"] !== 130) {
+    errors.push("rebuild-openclaw-vitest job must keep the legacy 130 minute timeout");
+  }
+  const jobEnv = asRecord(job.env);
+  if (jobEnv.NEMOCLAW_RUN_E2E_SCENARIOS !== "1") {
+    errors.push("rebuild-openclaw-vitest job must set NEMOCLAW_RUN_E2E_SCENARIOS=1");
+  }
+  if (jobEnv.E2E_ARTIFACT_DIR !== "${{ github.workspace }}/e2e-artifacts/vitest/rebuild-openclaw") {
+    errors.push("rebuild-openclaw-vitest job must write artifacts under e2e-artifacts/vitest/rebuild-openclaw");
+  }
+  if (!stringValue(jobEnv.NEMOCLAW_CLI_BIN).includes("bin/nemoclaw.js")) {
+    errors.push("rebuild-openclaw-vitest job must point NEMOCLAW_CLI_BIN at the repo CLI");
+  }
+  requireEnvDoesNotExposeSecret(errors, "rebuild-openclaw-vitest job", jobEnv, "NVIDIA_API_KEY");
+
+  const steps = asSteps(job.steps);
+  requireNoDispatchInputInterpolation(errors, steps);
+  for (const step of steps) {
+    if (step.name !== "Run OpenClaw rebuild live test") {
+      requireEnvDoesNotExposeSecret(
+        errors,
+        `rebuild-openclaw-vitest step '${step.name ?? step.uses ?? "<unnamed>"}'`,
+        asRecord(step.env),
+        "NVIDIA_API_KEY",
+      );
+    }
+  }
+
+  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
+  if (!checkout) errors.push("rebuild-openclaw-vitest job missing checkout step");
+  requireFullShaAction(errors, checkout, "rebuild-openclaw-vitest checkout");
+  if (asRecord(checkout?.with)["persist-credentials"] !== false) {
+    errors.push("rebuild-openclaw-vitest checkout step must set persist-credentials=false");
+  }
+
+  const dockerHubAuth = requireJobStep(errors, jobName, steps, "Authenticate to Docker Hub");
+  const dockerHubEnv = asRecord(dockerHubAuth?.env);
+  if (dockerHubEnv.DOCKERHUB_USERNAME !== "${{ secrets.DOCKERHUB_USERNAME }}") {
+    errors.push("rebuild-openclaw-vitest Docker Hub auth must receive DOCKERHUB_USERNAME from secrets");
+  }
+  if (dockerHubEnv.DOCKERHUB_TOKEN !== "${{ secrets.DOCKERHUB_TOKEN }}") {
+    errors.push("rebuild-openclaw-vitest Docker Hub auth must receive DOCKERHUB_TOKEN from secrets");
+  }
+  requireRunContains(errors, dockerHubAuth, "docker login docker.io");
+
+  const setupNode = namedStep(steps, "Set up Node");
+  if (!setupNode) errors.push("rebuild-openclaw-vitest job missing step: Set up Node");
+  requireFullShaAction(errors, setupNode, "rebuild-openclaw-vitest setup-node");
+
+  const installRootDependencies = requireJobStep(errors, jobName, steps, "Install root dependencies");
+  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
+
+  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
+  requireRunContains(errors, buildCli, "npm run build:cli");
+
+  const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell");
+  requireEnvDoesNotExposeSecret(errors, "rebuild-openclaw-vitest step 'Install OpenShell'", asRecord(installOpenShell?.env), "GITHUB_TOKEN");
+  requireRunContains(errors, installOpenShell, "bash scripts/install-openshell.sh");
+  requireRunContains(errors, installOpenShell, "env -u DOCKER_CONFIG");
+  requireRunContains(errors, installOpenShell, "-u DOCKERHUB_USERNAME");
+  requireRunContains(errors, installOpenShell, "-u DOCKERHUB_TOKEN");
+  requireRunContains(errors, installOpenShell, "-u NVIDIA_API_KEY");
+  requireRunContains(errors, installOpenShell, "-u GITHUB_TOKEN");
+
+  const runVitest = requireJobStep(errors, jobName, steps, "Run OpenClaw rebuild live test");
+  const runVitestEnv = asRecord(runVitest?.env);
+  if (runVitestEnv.NVIDIA_API_KEY !== "${{ secrets.NVIDIA_API_KEY }}") {
+    errors.push("rebuild-openclaw-vitest step must receive NVIDIA_API_KEY from secrets");
+  }
+  requireRunContains(errors, runVitest, "OPENSHELL_BIN");
+  requireRunContains(errors, runVitest, "npx vitest run --project e2e-scenarios-live");
+  requireRunContains(errors, runVitest, "test/e2e-scenario/live/rebuild-openclaw.test.ts");
+
+  const upload = requireJobStep(errors, jobName, steps, "Upload OpenClaw rebuild artifacts");
+  requireFullShaAction(errors, upload, "rebuild-openclaw-vitest upload-artifact");
+  const uploadWith = asRecord(upload?.with);
+  if (uploadWith.name !== "e2e-vitest-scenarios-rebuild-openclaw") {
+    errors.push("rebuild-openclaw-vitest artifact upload name must be stable");
+  }
+  const uploadPath = stringValue(uploadWith.path);
+  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/vitest/rebuild-openclaw/");
+  if (uploadWith["include-hidden-files"] !== false) {
+    errors.push("rebuild-openclaw-vitest artifact upload must set include-hidden-files: false");
+  }
+  if (uploadWith["if-no-files-found"] !== "ignore") {
+    errors.push("rebuild-openclaw-vitest artifact upload must ignore missing fixture artifacts");
+  }
+  if (uploadWith["retention-days"] !== 14) {
+    errors.push("rebuild-openclaw-vitest artifact upload retention-days must be 14");
+  }
+}
+
+function validateSandboxRebuildVitestJob(errors: string[], jobs: WorkflowRecord): void {
+  const jobName = "sandbox-rebuild-vitest";
+  const scenarioName = "sandbox-rebuild";
+  const job = asRecord(jobs[jobName]);
+  if (Object.keys(job).length === 0) {
+    errors.push("workflow missing sandbox-rebuild-vitest job");
+    return;
+  }
+
+  if (job["runs-on"] !== "ubuntu-latest") {
+    errors.push("sandbox-rebuild-vitest job must run on ubuntu-latest");
+  }
+  validateFreeStandingJobSelector(errors, jobs, jobName, scenarioName);
+  if (job["timeout-minutes"] !== 90) {
+    errors.push("sandbox-rebuild-vitest job must keep the legacy 90 minute timeout");
+  }
+  const jobEnv = asRecord(job.env);
+  if (jobEnv.NEMOCLAW_RUN_E2E_SCENARIOS !== "1") {
+    errors.push("sandbox-rebuild-vitest job must set NEMOCLAW_RUN_E2E_SCENARIOS=1");
+  }
+  if (jobEnv.E2E_ARTIFACT_DIR !== "${{ github.workspace }}/e2e-artifacts/vitest/sandbox-rebuild") {
+    errors.push("sandbox-rebuild-vitest job must write artifacts under e2e-artifacts/vitest/sandbox-rebuild");
+  }
+  if (jobEnv.NEMOCLAW_CLI_BIN !== "${{ github.workspace }}/bin/nemoclaw.js") {
+    errors.push("sandbox-rebuild-vitest job must point NEMOCLAW_CLI_BIN at the repo CLI");
+  }
+  if (jobEnv.OPENSHELL_GATEWAY !== "nemoclaw") {
+    errors.push("sandbox-rebuild-vitest job must force OPENSHELL_GATEWAY=nemoclaw");
+  }
+  for (const secret of ["NVIDIA_API_KEY", "DOCKERHUB_USERNAME", "DOCKERHUB_TOKEN", "GITHUB_TOKEN"]) {
+    requireEnvDoesNotExposeSecret(errors, "sandbox-rebuild-vitest job", jobEnv, secret);
+  }
+
+  const steps = asSteps(job.steps);
+  requireNoDispatchInputInterpolation(errors, steps);
+  for (const step of steps) {
+    const stepName = `sandbox-rebuild-vitest step '${step.name ?? step.uses ?? "<unnamed>"}'`;
+    const stepEnv = asRecord(step.env);
+    if (step.name !== "Run sandbox rebuild live test") {
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_API_KEY");
+    }
+    if (step.name !== "Authenticate to Docker Hub") {
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_USERNAME");
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_TOKEN");
+      requireNoDockerHubAuthInRun(errors, stepName, stringValue(step.run));
+    }
+    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "GITHUB_TOKEN");
+  }
+
+  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
+  if (!checkout) errors.push("sandbox-rebuild-vitest job missing checkout step");
+  requireFullShaAction(errors, checkout, "sandbox-rebuild-vitest checkout");
+  if (asRecord(checkout?.with)["persist-credentials"] !== false) {
+    errors.push("sandbox-rebuild-vitest checkout step must set persist-credentials=false");
+  }
+
+  const dockerHubAuth = requireJobStep(errors, jobName, steps, "Authenticate to Docker Hub");
+  const dockerHubEnv = asRecord(dockerHubAuth?.env);
+  if (dockerHubEnv.DOCKERHUB_USERNAME !== "${{ secrets.DOCKERHUB_USERNAME }}") {
+    errors.push("sandbox-rebuild-vitest Docker Hub auth must receive DOCKERHUB_USERNAME from secrets");
+  }
+  if (dockerHubEnv.DOCKERHUB_TOKEN !== "${{ secrets.DOCKERHUB_TOKEN }}") {
+    errors.push("sandbox-rebuild-vitest Docker Hub auth must receive DOCKERHUB_TOKEN from secrets");
+  }
+  requireRunContains(errors, dockerHubAuth, "docker login docker.io");
+  requireRunContains(errors, dockerHubAuth, "continuing with anonymous pulls");
+
+  const setupNode = namedStep(steps, "Set up Node");
+  if (!setupNode) errors.push("sandbox-rebuild-vitest job missing step: Set up Node");
+  requireFullShaAction(errors, setupNode, "sandbox-rebuild-vitest setup-node");
+
+  const installRootDependencies = requireJobStep(errors, jobName, steps, "Install root dependencies");
+  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
+
+  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
+  requireRunContains(errors, buildCli, "npm run build:cli");
+
+  const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell");
+  requireRunContains(errors, installOpenShell, "bash scripts/install-openshell.sh");
+  requireRunContains(errors, installOpenShell, "env -u DOCKER_CONFIG");
+  requireRunContains(errors, installOpenShell, "-u DOCKERHUB_USERNAME");
+  requireRunContains(errors, installOpenShell, "-u DOCKERHUB_TOKEN");
+  requireRunContains(errors, installOpenShell, "-u NVIDIA_API_KEY");
+  requireRunContains(errors, installOpenShell, "-u GITHUB_TOKEN");
+
+  const runVitest = requireJobStep(errors, jobName, steps, "Run sandbox rebuild live test");
+  const runVitestEnv = asRecord(runVitest?.env);
+  if (runVitestEnv.NVIDIA_API_KEY !== "${{ secrets.NVIDIA_API_KEY }}") {
+    errors.push("sandbox-rebuild-vitest step must receive NVIDIA_API_KEY from secrets");
+  }
+  requireRunContains(errors, runVitest, "OPENSHELL_BIN");
+  requireRunContains(errors, runVitest, "npx vitest run --project e2e-scenarios-live");
+  requireRunContains(errors, runVitest, "test/e2e-scenario/live/sandbox-rebuild.test.ts");
+
+  const upload = requireJobStep(errors, jobName, steps, "Upload sandbox rebuild artifacts");
+  requireFullShaAction(errors, upload, "sandbox-rebuild-vitest upload-artifact");
+  const uploadWith = asRecord(upload?.with);
+  if (uploadWith.name !== "e2e-vitest-scenarios-sandbox-rebuild") {
+    errors.push("sandbox-rebuild-vitest artifact upload name must be stable");
+  }
+  const uploadPath = stringValue(uploadWith.path);
+  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/vitest/sandbox-rebuild/");
+  if (uploadWith["include-hidden-files"] !== false) {
+    errors.push("sandbox-rebuild-vitest artifact upload must set include-hidden-files: false");
+  }
+  if (uploadWith["if-no-files-found"] !== "ignore") {
+    errors.push("sandbox-rebuild-vitest artifact upload must ignore missing fixture artifacts");
+  }
+  if (uploadWith["retention-days"] !== 14) {
+    errors.push("sandbox-rebuild-vitest artifact upload retention-days must be 14");
+  }
+}
 
 function validateTokenRotationVitestJob(errors: string[], jobs: WorkflowRecord): void {
   const jobName = "token-rotation-vitest";
@@ -719,7 +1264,115 @@ function requireNoDockerHubAuthInRun(
   }
 }
 
-function validateRuntimeOverridesVitestJob(errors: string[], jobs: WorkflowRecord): void {
+function validateDoubleOnboardVitestJob(errors: string[], jobs: WorkflowRecord): void {
+  const jobName = "double-onboard-vitest";
+  const job = asRecord(jobs[jobName]);
+  if (Object.keys(job).length === 0) {
+    errors.push("workflow missing double-onboard-vitest job");
+    return;
+  }
+
+  if (job["runs-on"] !== "ubuntu-latest") {
+    errors.push("double-onboard-vitest job must run on ubuntu-latest");
+  }
+  validateFreeStandingJobSelector(errors, jobs, jobName, "double-onboard");
+
+  const jobEnv = asRecord(job.env);
+  if (jobEnv.NEMOCLAW_RUN_E2E_SCENARIOS !== "1") {
+    errors.push("double-onboard-vitest job must set NEMOCLAW_RUN_E2E_SCENARIOS=1");
+  }
+  if (jobEnv.NEMOCLAW_CLI_BIN !== "${{ github.workspace }}/bin/nemoclaw.js") {
+    errors.push("double-onboard-vitest job must point NEMOCLAW_CLI_BIN at the repo CLI");
+  }
+  if (
+    jobEnv.E2E_ARTIFACT_DIR !==
+    "${{ github.workspace }}/e2e-artifacts/vitest/double-onboard"
+  ) {
+    errors.push(
+      "double-onboard-vitest job must write artifacts under e2e-artifacts/vitest/double-onboard",
+    );
+  }
+  requireEnvDoesNotExposeSecret(errors, "double-onboard-vitest job", jobEnv, "NVIDIA_API_KEY");
+  requireEnvDoesNotExposeSecret(errors, "double-onboard-vitest job", jobEnv, "DOCKERHUB_TOKEN");
+
+  const steps = asSteps(job.steps);
+  requireNoDispatchInputInterpolation(errors, steps);
+  for (const step of steps) {
+    if (step.name !== "Authenticate to Docker Hub") {
+      requireEnvDoesNotExposeSecret(
+        errors,
+        `double-onboard-vitest step '${step.name ?? step.uses ?? "<unnamed>"}'`,
+        asRecord(step.env),
+        "DOCKERHUB_TOKEN",
+      );
+    }
+    requireEnvDoesNotExposeSecret(
+      errors,
+      `double-onboard-vitest step '${step.name ?? step.uses ?? "<unnamed>"}'`,
+      asRecord(step.env),
+      "NVIDIA_API_KEY",
+    );
+  }
+
+  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
+  if (!checkout) errors.push("double-onboard-vitest job missing checkout step");
+  requireFullShaAction(errors, checkout, "double-onboard-vitest checkout");
+  if (asRecord(checkout?.with)["persist-credentials"] !== false) {
+    errors.push("double-onboard-vitest checkout step must set persist-credentials=false");
+  }
+
+  const dockerLogin = requireJobStep(errors, jobName, steps, "Authenticate to Docker Hub");
+  const dockerLoginEnv = asRecord(dockerLogin?.env);
+  if (dockerLoginEnv.DOCKERHUB_USERNAME !== "${{ secrets.DOCKERHUB_USERNAME }}") {
+    errors.push("double-onboard-vitest Docker login step must read DOCKERHUB_USERNAME from secrets");
+  }
+  if (dockerLoginEnv.DOCKERHUB_TOKEN !== "${{ secrets.DOCKERHUB_TOKEN }}") {
+    errors.push("double-onboard-vitest Docker login step must read DOCKERHUB_TOKEN from secrets");
+  }
+  requireRunContains(errors, dockerLogin, "docker login docker.io");
+  requireRunContains(errors, dockerLogin, "continuing with anonymous pulls");
+
+  const setupNode = namedStep(steps, "Set up Node");
+  if (!setupNode) errors.push("double-onboard-vitest job missing step: Set up Node");
+  requireFullShaAction(errors, setupNode, "double-onboard-vitest setup-node");
+
+  const installRootDependencies = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Install root dependencies",
+  );
+  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
+
+  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
+  requireRunContains(errors, buildCli, "npm run build:cli");
+
+  const installTools = requireJobStep(errors, jobName, steps, "Install OpenShell CLI");
+  requireRunContains(errors, installTools, "bash scripts/install-openshell.sh");
+
+  const runVitest = requireJobStep(errors, jobName, steps, "Run double-onboard live Vitest test");
+  requireRunContains(errors, runVitest, "OPENSHELL_BIN");
+  requireRunContains(errors, runVitest, "npx vitest run --project e2e-scenarios-live");
+  requireRunContains(errors, runVitest, "test/e2e-scenario/live/double-onboard.test.ts");
+
+  const upload = requireJobStep(errors, jobName, steps, "Upload double-onboard Vitest artifacts");
+  requireFullShaAction(errors, upload, "double-onboard-vitest upload-artifact");
+  const uploadWith = asRecord(upload?.with);
+  if (uploadWith.name !== "e2e-vitest-scenarios-double-onboard") {
+    errors.push("double-onboard-vitest artifact upload name must be stable");
+  }
+  const uploadPath = stringValue(uploadWith.path);
+  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/vitest/double-onboard/");
+  if (uploadWith["include-hidden-files"] !== false) {
+    errors.push("double-onboard-vitest artifact upload must set include-hidden-files: false");
+  }
+  if (uploadWith["if-no-files-found"] !== "ignore") {
+    errors.push("double-onboard-vitest artifact upload must ignore missing fixture artifacts");
+  }
+  if (uploadWith["retention-days"] !== 14) {
+    errors.push("double-onboard-vitest artifact upload retention-days must be 14");
+  }
+}function validateRuntimeOverridesVitestJob(errors: string[], jobs: WorkflowRecord): void {
   const jobName = "runtime-overrides-vitest";
   const job = asRecord(jobs[jobName]);
   if (Object.keys(job).length === 0) {
@@ -802,9 +1455,8 @@ function validateHermesE2EVitestJob(errors: string[], jobs: WorkflowRecord): voi
   if (job["runs-on"] !== "ubuntu-latest") {
     errors.push("hermes-e2e-vitest job must run on ubuntu-latest");
   }
-  const needs = Array.isArray(job.needs) ? job.needs : [];
-  if (!needs.includes("validate-jobs") || !needs.includes("generate-matrix")) {
-    errors.push("hermes-e2e-vitest job must depend on validate-jobs and generate-matrix validation");
+  if (job.needs !== "generate-matrix") {
+    errors.push("hermes-e2e-vitest job must depend on generate-matrix validation");
   }
   if (job.if !== "${{ needs.generate-matrix.outputs.hermes_selected == 'true' }}") {
     errors.push("hermes-e2e-vitest job must use validated hermes_selected output");
@@ -892,6 +1544,359 @@ function validateHermesE2EVitestJob(errors: string[], jobs: WorkflowRecord): voi
   }
 }
 
+function validateHermesRootEntrypointSmokeVitestJob(
+  errors: string[],
+  jobs: WorkflowRecord,
+): void {
+  const jobName = "hermes-root-entrypoint-smoke-vitest";
+  const job = asRecord(jobs[jobName]);
+  if (Object.keys(job).length === 0) {
+    errors.push("workflow missing hermes-root-entrypoint-smoke-vitest job");
+    return;
+  }
+
+  if (job["runs-on"] !== "ubuntu-latest") {
+    errors.push("hermes-root-entrypoint-smoke-vitest job must run on ubuntu-latest");
+  }
+  if (job.needs !== "generate-matrix") {
+    errors.push("hermes-root-entrypoint-smoke-vitest job must depend on generate-matrix");
+  }
+  const expectedIf =
+    "${{ needs.generate-matrix.result == 'success' && ((inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',hermes-root-entrypoint-smoke-vitest,') || contains(format(',{0},', inputs.scenarios), ',hermes-root-entrypoint-smoke,')) }}";
+  if (job.if !== expectedIf) {
+    errors.push(
+      "hermes-root-entrypoint-smoke-vitest job must gate on generate-matrix and the shared selector condition",
+    );
+  }
+  if (job["timeout-minutes"] !== 45) {
+    errors.push("hermes-root-entrypoint-smoke-vitest job must keep the 45 minute timeout");
+  }
+
+  const jobEnv = asRecord(job.env);
+  if (jobEnv.NEMOCLAW_RUN_E2E_SCENARIOS !== "1") {
+    errors.push("hermes-root-entrypoint-smoke-vitest job must set NEMOCLAW_RUN_E2E_SCENARIOS=1");
+  }
+  if (
+    jobEnv.E2E_ARTIFACT_DIR !==
+    "${{ github.workspace }}/e2e-artifacts/vitest/hermes-root-entrypoint-smoke"
+  ) {
+    errors.push(
+      "hermes-root-entrypoint-smoke-vitest job must write artifacts under e2e-artifacts/vitest/hermes-root-entrypoint-smoke",
+    );
+  }
+  requireEnvDoesNotExposeSecret(
+    errors,
+    "hermes-root-entrypoint-smoke-vitest job",
+    jobEnv,
+    "NVIDIA_API_KEY",
+  );
+  requireEnvDoesNotExposeSecret(
+    errors,
+    "hermes-root-entrypoint-smoke-vitest job",
+    jobEnv,
+    "DOCKERHUB_USERNAME",
+  );
+  requireEnvDoesNotExposeSecret(
+    errors,
+    "hermes-root-entrypoint-smoke-vitest job",
+    jobEnv,
+    "DOCKERHUB_TOKEN",
+  );
+
+  const steps = asSteps(job.steps);
+  requireNoDispatchInputInterpolation(errors, steps);
+  for (const step of steps) {
+    const stepName = step.name ?? step.uses ?? "<unnamed>";
+    const stepEnv = asRecord(step.env);
+    requireEnvDoesNotExposeSecret(
+      errors,
+      `hermes-root-entrypoint-smoke-vitest step '${stepName}'`,
+      stepEnv,
+      "NVIDIA_API_KEY",
+    );
+    requireEnvDoesNotExposeSecret(
+      errors,
+      `hermes-root-entrypoint-smoke-vitest step '${stepName}'`,
+      stepEnv,
+      "DOCKERHUB_USERNAME",
+    );
+    requireEnvDoesNotExposeSecret(
+      errors,
+      `hermes-root-entrypoint-smoke-vitest step '${stepName}'`,
+      stepEnv,
+      "DOCKERHUB_TOKEN",
+    );
+    requireNoDockerHubAuthInRun(
+      errors,
+      `hermes-root-entrypoint-smoke-vitest step '${stepName}'`,
+      stringValue(step.run),
+    );
+  }
+
+  if (namedStep(steps, "Authenticate to Docker Hub")) {
+    errors.push(
+      "hermes-root-entrypoint-smoke-vitest must not authenticate to Docker Hub before branch-controlled test code runs",
+    );
+  }
+
+  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
+  if (!checkout) errors.push("hermes-root-entrypoint-smoke-vitest job missing checkout step");
+  requireFullShaAction(errors, checkout, "hermes-root-entrypoint-smoke-vitest checkout");
+  if (asRecord(checkout?.with)["persist-credentials"] !== false) {
+    errors.push("hermes-root-entrypoint-smoke-vitest checkout step must set persist-credentials=false");
+  }
+
+
+  const setupNode = namedStep(steps, "Set up Node");
+  if (!setupNode) errors.push("hermes-root-entrypoint-smoke-vitest job missing step: Set up Node");
+  requireFullShaAction(errors, setupNode, "hermes-root-entrypoint-smoke-vitest setup-node");
+
+  const installRootDependencies = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Install root dependencies",
+  );
+  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
+
+  const runVitest = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Run Hermes root entrypoint smoke live test",
+  );
+  requireRunContains(errors, runVitest, "npx vitest run --project e2e-scenarios-live");
+  requireRunContains(
+    errors,
+    runVitest,
+    "test/e2e-scenario/live/hermes-root-entrypoint-smoke.test.ts",
+  );
+  requireRunDoesNotContain(errors, runVitest, "${{ inputs.");
+
+  const upload = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Upload Hermes root entrypoint smoke artifacts",
+  );
+  requireFullShaAction(errors, upload, "hermes-root-entrypoint-smoke-vitest upload-artifact");
+  const uploadWith = asRecord(upload?.with);
+  if (uploadWith.name !== "e2e-vitest-scenarios-hermes-root-entrypoint-smoke") {
+    errors.push("hermes-root-entrypoint-smoke-vitest artifact upload name must be stable");
+  }
+  const uploadPath = stringValue(uploadWith.path);
+  requireUploadPathContains(
+    errors,
+    uploadPath,
+    "e2e-artifacts/vitest/hermes-root-entrypoint-smoke/",
+  );
+  if (uploadWith["include-hidden-files"] !== false) {
+    errors.push(
+      "hermes-root-entrypoint-smoke-vitest artifact upload must set include-hidden-files: false",
+    );
+  }
+  if (uploadWith["if-no-files-found"] !== "ignore") {
+    errors.push(
+      "hermes-root-entrypoint-smoke-vitest artifact upload must ignore missing fixture artifacts",
+    );
+  }
+  if (uploadWith["retention-days"] !== 14) {
+    errors.push("hermes-root-entrypoint-smoke-vitest artifact upload retention-days must be 14");
+  }
+}
+
+function validateModelRouterProviderRoutedInferenceVitestJob(
+  errors: string[],
+  jobs: WorkflowRecord,
+): void {
+  const jobName = "model-router-provider-routed-inference-vitest";
+  const scenarioName = "model-router-provider-routed-inference";
+  const job = asRecord(jobs[jobName]);
+  if (Object.keys(job).length === 0) {
+    errors.push("workflow missing model-router-provider-routed-inference-vitest job");
+    return;
+  }
+
+  if (job["runs-on"] !== "ubuntu-latest") {
+    errors.push("model-router-provider-routed-inference-vitest job must run on ubuntu-latest");
+  }
+  validateFreeStandingJobSelector(errors, jobs, jobName, scenarioName);
+
+  const jobEnv = asRecord(job.env);
+  if ("DOCKER_CONFIG" in jobEnv) {
+    errors.push(
+      "model-router-provider-routed-inference-vitest job must not set DOCKER_CONFIG at job level",
+    );
+  }
+  if (
+    jobEnv.E2E_ARTIFACT_DIR !==
+    "${{ github.workspace }}/e2e-artifacts/vitest/model-router-provider-routed-inference"
+  ) {
+    errors.push(
+      "model-router-provider-routed-inference-vitest job must write artifacts under e2e-artifacts/vitest/model-router-provider-routed-inference",
+    );
+  }
+  if (jobEnv.NEMOCLAW_CLI_BIN !== "${{ github.workspace }}/bin/nemoclaw.js") {
+    errors.push(
+      "model-router-provider-routed-inference-vitest job must point NEMOCLAW_CLI_BIN at the repo CLI",
+    );
+  }
+  if (jobEnv.NEMOCLAW_RUN_E2E_SCENARIOS !== "1") {
+    errors.push(
+      "model-router-provider-routed-inference-vitest job must set NEMOCLAW_RUN_E2E_SCENARIOS=1",
+    );
+  }
+  if (jobEnv.OPENSHELL_GATEWAY !== "nemoclaw") {
+    errors.push(
+      "model-router-provider-routed-inference-vitest job must force OPENSHELL_GATEWAY=nemoclaw",
+    );
+  }
+  for (const secret of ["NVIDIA_API_KEY", "DOCKERHUB_USERNAME", "DOCKERHUB_TOKEN", "GITHUB_TOKEN"]) {
+    requireEnvDoesNotExposeSecret(
+      errors,
+      "model-router-provider-routed-inference-vitest job",
+      jobEnv,
+      secret,
+    );
+  }
+
+  const steps = asSteps(job.steps);
+  requireNoDispatchInputInterpolation(errors, steps);
+  for (const step of steps) {
+    const stepName = `model-router-provider-routed-inference-vitest step '${step.name ?? step.uses ?? "<unnamed>"}'`;
+    const stepEnv = asRecord(step.env);
+    if (step.name !== "Run Model Router provider-routed inference live test") {
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_API_KEY");
+    }
+    if (step.name !== "Authenticate to Docker Hub") {
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_USERNAME");
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_TOKEN");
+      requireNoDockerHubAuthInRun(errors, stepName, stringValue(step.run));
+    }
+    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "GITHUB_TOKEN");
+  }
+
+  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
+  if (!checkout) {
+    errors.push("model-router-provider-routed-inference-vitest job missing checkout step");
+  }
+  requireFullShaAction(errors, checkout, "model-router-provider-routed-inference-vitest checkout");
+  if (asRecord(checkout?.with)["persist-credentials"] !== false) {
+    errors.push(
+      "model-router-provider-routed-inference-vitest checkout step must set persist-credentials=false",
+    );
+  }
+
+  const configureDockerAuth = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Configure isolated Docker auth directory",
+  );
+  requireRunContains(
+    errors,
+    configureDockerAuth,
+    'echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-model-router-provider-routed-inference" >> "$GITHUB_ENV"',
+  );
+  requireRunDoesNotContain(errors, configureDockerAuth, "${{ runner.temp }}");
+
+  const dockerLogin = requireJobStep(errors, jobName, steps, "Authenticate to Docker Hub");
+  const dockerLoginEnv = asRecord(dockerLogin?.env);
+  if (dockerLoginEnv.DOCKERHUB_USERNAME !== "${{ secrets.DOCKERHUB_USERNAME }}") {
+    errors.push(
+      "model-router-provider-routed-inference-vitest Docker Hub auth must receive DOCKERHUB_USERNAME from secrets",
+    );
+  }
+  if (dockerLoginEnv.DOCKERHUB_TOKEN !== "${{ secrets.DOCKERHUB_TOKEN }}") {
+    errors.push(
+      "model-router-provider-routed-inference-vitest Docker Hub auth must receive DOCKERHUB_TOKEN from secrets",
+    );
+  }
+  requireRunContains(errors, dockerLogin, 'mkdir -p "${DOCKER_CONFIG}"');
+  requireRunContains(errors, dockerLogin, 'chmod 700 "${DOCKER_CONFIG}"');
+  requireRunContains(errors, dockerLogin, "docker login docker.io");
+  requireRunContains(errors, dockerLogin, "--password-stdin");
+  requireRunContains(errors, dockerLogin, "continuing with anonymous pulls");
+
+  const setupNode = namedStep(steps, "Set up Node");
+  if (!setupNode) {
+    errors.push("model-router-provider-routed-inference-vitest job missing step: Set up Node");
+  }
+  requireFullShaAction(errors, setupNode, "model-router-provider-routed-inference-vitest setup-node");
+
+  const installRootDependencies = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Install root dependencies",
+  );
+  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
+
+  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
+  requireRunContains(errors, buildCli, "npm run build:cli");
+
+  const runVitest = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Run Model Router provider-routed inference live test",
+  );
+  const runVitestEnv = asRecord(runVitest?.env);
+  if (runVitestEnv.NVIDIA_API_KEY !== "${{ secrets.NVIDIA_API_KEY }}") {
+    errors.push(
+      "model-router-provider-routed-inference-vitest Vitest step must receive NVIDIA_API_KEY from secrets",
+    );
+  }
+  requireRunContains(errors, runVitest, "npx vitest run --project e2e-scenarios-live");
+  requireRunContains(
+    errors,
+    runVitest,
+    "test/e2e-scenario/live/model-router-provider-routed-inference.test.ts",
+  );
+
+  const upload = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Upload Model Router provider-routed inference artifacts",
+  );
+  requireFullShaAction(
+    errors,
+    upload,
+    "model-router-provider-routed-inference-vitest upload-artifact",
+  );
+  const uploadWith = asRecord(upload?.with);
+  if (uploadWith.name !== "e2e-vitest-scenarios-model-router-provider-routed-inference") {
+    errors.push("model-router-provider-routed-inference-vitest artifact upload name must be stable");
+  }
+  const uploadPath = stringValue(uploadWith.path);
+  requireUploadPathContains(
+    errors,
+    uploadPath,
+    "e2e-artifacts/vitest/model-router-provider-routed-inference/",
+  );
+  if (uploadWith["include-hidden-files"] !== false) {
+    errors.push(
+      "model-router-provider-routed-inference-vitest artifact upload must set include-hidden-files: false",
+    );
+  }
+  if (uploadWith["if-no-files-found"] !== "ignore") {
+    errors.push(
+      "model-router-provider-routed-inference-vitest artifact upload must ignore missing fixture artifacts",
+    );
+  }
+  if (uploadWith["retention-days"] !== 14) {
+    errors.push("model-router-provider-routed-inference-vitest artifact upload retention-days must be 14");
+  }
+
+  const cleanup = requireJobStep(errors, jobName, steps, "Clean up Docker auth");
+  if (cleanup?.if !== "always()") {
+    errors.push("model-router-provider-routed-inference-vitest Docker auth cleanup must always run");
+  }
+  requireRunContains(errors, cleanup, "docker logout docker.io");
+  requireRunContains(errors, cleanup, 'rm -rf "${DOCKER_CONFIG}"');
+}
+
 export function validateE2eVitestScenariosWorkflowBoundary(
   workflowPath = DEFAULT_VITEST_WORKFLOW_PATH,
 ): string[] {
@@ -913,8 +1918,6 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   if (permissions.contents !== "read") errors.push("workflow permissions.contents must be read");
 
   const jobs = asRecord(workflow.jobs);
-  validateJobsSelector(errors, jobs);
-
   const generateMatrix = asRecord(jobs["generate-matrix"]);
   if (Object.keys(generateMatrix).length === 0) errors.push("workflow missing generate-matrix job");
   if (generateMatrix["runs-on"] !== "ubuntu-latest") {
@@ -946,14 +1949,12 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   if (generateEnv.SCENARIOS !== "${{ inputs.scenarios }}") {
     errors.push("matrix generation step must pass scenarios through SCENARIOS env");
   }
-  requireRunContains(errors, generate, "allowed_jobs=");
+  requireRunContains(errors, generate, "tools/e2e-scenarios/free-standing-jobs.env");
+  requireRunContains(errors, generate, "free-standing jobs inventory must be data-only key=value");
+  requireRunContains(errors, generate, "free_standing_scenarios_csv must match scenario mapping keys");
+  requireRunContains(errors, generate, "Free-standing scenario maps to unknown job");
   requireRunContains(errors, generate, "Use either scenarios or jobs, not both");
   requireRunContains(errors, generate, "Unknown free-standing Vitest job");
-  requireRunContains(errors, generate, "runtime-overrides-vitest");
-  requireRunContains(errors, generate, "runtime-overrides");
-  requireRunContains(errors, generate, "hermes-e2e-vitest");
-  requireRunContains(errors, generate, "network-policy-vitest");
-  requireRunContains(errors, generate, "token-rotation-vitest");
   requireRunContains(errors, generate, 'matrix="[]"');
   requireRunContains(errors, generate, "npx tsx test/e2e-scenario/scenarios/run.ts");
   requireRunContains(errors, generate, "--emit-live-matrix");
@@ -1106,10 +2107,17 @@ export function validateE2eVitestScenariosWorkflowBoundary(
 
   validateOpenShellVersionPinVitestJob(errors, jobs);
   validateOnboardNegativePathsVitestJob(errors, jobs);
+  validateSkillAgentVitestJob(errors, jobs);
   validateFreeStandingJobSelector(errors, jobs, "credential-migration-vitest");
+  validateFreeStandingJobSelector(errors, jobs, "inference-routing-vitest", "inference-routing");
   validateRuntimeOverridesVitestJob(errors, jobs);
+  validateDoubleOnboardVitestJob(errors, jobs);
   validateHermesE2EVitestJob(errors, jobs);
+  validateHermesRootEntrypointSmokeVitestJob(errors, jobs);
   validateNetworkPolicyVitestJob(errors, jobs);
+  validateShieldsConfigVitestJob(errors, jobs);
+  validateRebuildOpenClawVitestJob(errors, jobs);
+  validateSandboxRebuildVitestJob(errors, jobs);
   validateTokenRotationVitestJob(errors, jobs);
   validateFreeStandingJobSelector(
     errors,
@@ -1118,28 +2126,23 @@ export function validateE2eVitestScenariosWorkflowBoundary(
     "openclaw-tui-chat-correlation",
   );
   validateFreeStandingJobSelector(errors, jobs, "gateway-guard-recovery");
+  validateFreeStandingJobSelector(
+    errors,
+    jobs,
+    "issue-4434-tui-unreachable-inference-vitest",
+    "issue-4434-tui-unreachable-inference",
+  );
+  validateModelRouterProviderRoutedInferenceVitestJob(errors, jobs);
 
   const reportToPr = asRecord(jobs["report-to-pr"]);
   if (Object.keys(reportToPr).length === 0) {
     errors.push("workflow missing report-to-pr job");
   } else {
     const needs = Array.isArray(reportToPr.needs) ? reportToPr.needs : [];
-    for (const required of [
-      "validate-jobs",
-      "generate-matrix",
-      "live-scenarios",
-      "openshell-version-pin-vitest",
-      "onboard-negative-paths-vitest",
-      "credential-migration-vitest",
-      "runtime-overrides-vitest",
-      "hermes-e2e-vitest",
-      "network-policy-vitest",
-      "token-rotation-vitest",
-      "openclaw-tui-chat-correlation-vitest",
-      "gateway-guard-recovery",
-    ]) {
+    for (const required of ["generate-matrix", "live-scenarios"]) {
       if (!needs.includes(required)) errors.push(`report-to-pr job must wait for ${required}`);
     }
+    validateFreeStandingInventoryCoverage(errors, jobs, needs);
     const reportSteps = asSteps(reportToPr.steps);
     const report = requireJobStep(errors, "report-to-pr", reportSteps, "Post Vitest scenario results to PR");
     const reportEnv = asRecord(report?.env);
@@ -1160,7 +2163,7 @@ export function validateE2eVitestScenariosWorkflowBoundary(
       errors.push("step 'Post Vitest scenario results to PR' run script must include process.env.JOB_SCENARIOS");
     }
     if (!reportScript.includes("selectorValidationPassed")) {
-      errors.push("step 'Post Vitest scenario results to PR' run script must check validate-jobs before echoing selectors");
+      errors.push("step 'Post Vitest scenario results to PR' run script must check selector validation before echoing selectors");
     }
     if (!reportScript.includes("jobsRejected")) {
       errors.push("step 'Post Vitest scenario results to PR' run script must omit rejected job selectors");

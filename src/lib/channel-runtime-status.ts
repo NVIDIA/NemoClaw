@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { shellQuote } from "./core/shell-quote";
+
 /**
  * Probe the OpenClaw runtime channel registry from inside a sandbox.
  *
@@ -139,10 +141,6 @@ export function extractEnabledChannelsFromOpenclawConfig(json: unknown): string[
     }
   }
   return [...visible].sort();
-}
-
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
 // Sentinel header the gateway-log scan script always echoes when the log

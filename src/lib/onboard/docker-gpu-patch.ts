@@ -522,17 +522,26 @@ export function shouldApplyDockerGpuPatch(
     env?: NodeJS.ProcessEnv;
     platform?: NodeJS.Platform;
     dockerDriverGateway?: boolean;
+    dockerDesktopWsl?: boolean;
+    log?: (message: string) => void;
   } = {},
 ): boolean {
   const env = options.env ?? process.env;
   const platform = options.platform ?? process.platform;
   const dockerDriverGateway = options.dockerDriverGateway ?? platform === "linux";
-  return (
-    config.sandboxGpuEnabled &&
-    platform === "linux" &&
-    dockerDriverGateway &&
-    String(env.NEMOCLAW_DOCKER_GPU_PATCH || "").trim() !== "0"
-  );
+  if (!(config.sandboxGpuEnabled && platform === "linux" && dockerDriverGateway)) {
+    return false;
+  }
+  const optedOut = String(env.NEMOCLAW_DOCKER_GPU_PATCH || "").trim() === "0";
+  if (optedOut && options.dockerDesktopWsl) {
+    const log = options.log ?? ((message: string) => console.warn(message));
+    log(
+      "  NEMOCLAW_DOCKER_GPU_PATCH=0 ignored on Docker Desktop WSL: GPU passthrough on this runtime requires the patch.",
+    );
+    log("  Skip GPU passthrough entirely with --no-gpu or NEMOCLAW_SANDBOX_GPU=0.");
+    return true;
+  }
+  return !optedOut;
 }
 
 export function buildDockerGpuCloneRunOptions(
@@ -1250,7 +1259,13 @@ export function printDockerGpuPatchFailureAndExit(
   if (diagnostics) {
     console.error(`  Diagnostics saved: ${diagnostics.dir}`);
   }
-  console.error("  Escape hatch: set NEMOCLAW_DOCKER_GPU_PATCH=0 to skip this patch.");
+  console.error("  Escape hatches:");
+  console.error(
+    "    NEMOCLAW_DOCKER_GPU_PATCH=0  skip this Docker GPU patch (Linux native Docker only; ignored on Docker Desktop WSL where the patch is required).",
+  );
+  console.error(
+    "    NEMOCLAW_SANDBOX_GPU=0      skip GPU passthrough entirely (or rerun with --no-gpu).",
+  );
   printDockerGpuPatchCleanup(sandboxName);
   process.exit(1);
 }

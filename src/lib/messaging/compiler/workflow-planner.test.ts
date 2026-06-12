@@ -446,6 +446,55 @@ describe("MessagingWorkflowPlanner", () => {
     ]);
   });
 
+  it("refreshes missing manifest render entries from stale rebuild plans", async () => {
+    const existingPlan = await planner().buildPlan({
+      sandboxName: "demo",
+      agent: "hermes",
+      workflow: "onboard",
+      isInteractive: false,
+      configuredChannels: ["discord"],
+      credentialAvailability: {
+        DISCORD_BOT_TOKEN: true,
+      },
+    });
+    const stalePlan = {
+      ...existingPlan,
+      credentialBindings: existingPlan.credentialBindings.map((binding) => ({
+        ...binding,
+        credentialHash: "hash-discord-token",
+      })),
+      agentRender: [],
+      buildSteps: [],
+    };
+
+    const plan = await planner().buildRebuildPlanFromSandboxEntry({
+      sandboxName: "demo",
+      agent: "hermes",
+      sandboxEntry: {
+        name: "demo",
+        agent: "hermes",
+        messaging: { schemaVersion: 1, plan: stalePlan },
+      },
+      supportedChannelIds: ["discord"],
+    });
+
+    expect(plan?.workflow).toBe("rebuild");
+    expect(
+      plan?.credentialBindings.find((binding) => binding.providerEnvKey === "DISCORD_BOT_TOKEN")
+        ?.credentialHash,
+    ).toBe("hash-discord-token");
+    const discordEnvRender = plan?.agentRender.find(
+      (entry) =>
+        entry.channelId === "discord" &&
+        entry.kind === "env-lines" &&
+        entry.target === "~/.hermes/.env",
+    );
+    expect(discordEnvRender).toMatchObject({
+      kind: "env-lines",
+      lines: expect.arrayContaining(["DISCORD_BOT_TOKEN=openshell:resolve:env:DISCORD_BOT_TOKEN"]),
+    });
+  });
+
   it("adds one manifest channel into an existing sandbox entry plan", async () => {
     const existingPlan = await planner().buildPlan({
       sandboxName: "demo",

@@ -136,6 +136,7 @@ export async function prepareSandboxDockerfilePatch({
       log,
     },
   );
+  const darwinVmCompat = false;
   (deps.patchStagedDockerfile ?? patchStagedDockerfile)(
     stagedDockerfile,
     model,
@@ -145,7 +146,7 @@ export async function prepareSandboxDockerfilePatch({
     preferredInferenceApi,
     webSearchConfig,
     resolved ? resolved.ref : null,
-    false,
+    darwinVmCompat,
     null,
     hermesToolGateways,
   );

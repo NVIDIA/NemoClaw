@@ -16,6 +16,15 @@ import {
 } from "../fixtures/clients/index.ts";
 import type { E2EScenarioFixtures } from "../fixtures/e2e-test.ts";
 import { StateValidationPhaseFixture, type NemoClawInstance } from "../fixtures/phases/index.ts";
+import {
+  latestRebuildBackupDir,
+  listCredentialLeakPaths,
+  patchRegistrySandboxEntry,
+  readRebuildBackupManifest,
+  readRegistrySandboxEntry,
+  restoreRegistryAndSession,
+  snapshotRegistryAndSession,
+} from "../fixtures/phases/state-validation.ts";
 import type {
   ShellProbeResult,
   ShellProbeRunOptions,
@@ -95,7 +104,11 @@ class FakeRunner implements CommandRunner {
     command: TrustedShellCommand,
     options?: ShellProbeRunOptions,
   ): Promise<ShellProbeResult> {
-    this.calls.push({ command: command.command, args: [...command.args], options });
+    this.calls.push({
+      command: command.command,
+      args: [...command.args],
+      options,
+    });
     const response = this.responses.shift();
     if (response instanceof Error) {
       throw response;
@@ -472,6 +485,34 @@ describe("state-validation phase fixture", () => {
     );
   });
 
+  it("exposes direct registry and sandbox marker helpers for survival checks", async () => {
+    const runner = new FakeRunner();
+    const fx = fixture(runner, {
+      readRegistry: () => ({
+        entries: { "e2e-ubuntu-repo-cloud-openclaw": {} },
+      }),
+    });
+
+    expect(() => fx.expectLocalRegistryContains("e2e-ubuntu-repo-cloud-openclaw")).not.toThrow();
+    runner.enqueue(shellResult(0));
+    runner.enqueue(shellResult(0, "survived\n"));
+    runner.enqueue(shellResult(0, "/sandbox/.openclaw/config.json\n"));
+
+    const marker = {
+      path: "/sandbox/.openclaw/.survival-marker",
+      value: "survived",
+    };
+    await fx.writeSandboxMarkers(instance(), [marker]);
+    await fx.expectSandboxMarkers(instance(), [marker]);
+    await fx.expectSandboxDirectoryPopulated(instance(), "/sandbox/.openclaw");
+
+    expect(runner.calls.map((call) => call.args.slice(0, 7))).toEqual([
+      ["sandbox", "exec", "-n", "e2e-ubuntu-repo-cloud-openclaw", "--", "sh", "-lc"],
+      ["sandbox", "exec", "-n", "e2e-ubuntu-repo-cloud-openclaw", "--", "sh", "-lc"],
+      ["sandbox", "exec", "-n", "e2e-ubuntu-repo-cloud-openclaw", "--", "sh", "-lc"],
+    ]);
+  });
+
   it("writes a state-validation phase result artifact on success", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-state-validation-artifacts-"));
     try {
@@ -532,7 +573,11 @@ describe("state-validation host-side probes", () => {
     const runner = new FakeRunner();
     const fx = fixture(runner, {
       readRegistry: () => ({
-        entries: { "e2e-ubuntu-repo-cloud-openclaw": { name: "e2e-ubuntu-repo-cloud-openclaw" } },
+        entries: {
+          "e2e-ubuntu-repo-cloud-openclaw": {
+            name: "e2e-ubuntu-repo-cloud-openclaw",
+          },
+        },
       }),
     });
 
@@ -620,5 +665,124 @@ describe("state-validation host-side probes", () => {
     await expect(fx.from(dockerContainerState, instance())).rejects.toThrow(
       /could not query Docker for label.*exit 1/,
     );
+  });
+
+  it("writes, reads, and asserts sandbox marker files through OpenShell exec", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(shellResult(0));
+    runner.enqueue(shellResult(0, "marker-value"));
+    const fx = fixture(runner);
+
+    await fx.writeMarkerFile(
+      "e2e-marker",
+      "/sandbox/.openclaw/workspace/rebuild-marker.txt",
+      "marker-value",
+    );
+    await fx.expectMarkerFileContent(
+      "e2e-marker",
+      "/sandbox/.openclaw/workspace/rebuild-marker.txt",
+      "marker-value",
+    );
+
+    expect(runner.calls.map((call) => call.args)).toEqual([
+      [
+        "sandbox",
+        "exec",
+        "-n",
+        "e2e-marker",
+        "--",
+        "sh",
+        "-c",
+        'mkdir -p "$(dirname "$1")" && printf \'%s\' "$2" > "$1"',
+        "sh",
+        "/sandbox/.openclaw/workspace/rebuild-marker.txt",
+        "marker-value",
+      ],
+      [
+        "sandbox",
+        "exec",
+        "-n",
+        "e2e-marker",
+        "--",
+        "cat",
+        "/sandbox/.openclaw/workspace/rebuild-marker.txt",
+      ],
+    ]);
+  });
+
+  it("keeps marker content comparisons exact", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(shellResult(0, " marker-value "));
+    const fx = fixture(runner);
+
+    await expect(
+      fx.expectMarkerFileContent(
+        "e2e-marker",
+        "/sandbox/.openclaw/workspace/rebuild-marker.txt",
+        "marker-value",
+      ),
+    ).rejects.toThrow(/did not match expected content/);
+  });
+
+  it("patches registry entries and validates refreshed agentVersion", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-registry-"));
+    const registryPath = path.join(tmp, "sandboxes.json");
+    fs.writeFileSync(
+      registryPath,
+      JSON.stringify({ sandboxes: { "e2e-rebuild": { agentVersion: "0.0.1" } } }),
+    );
+    try {
+      patchRegistrySandboxEntry("e2e-rebuild", { agentVersion: "1.2.3" }, { registryPath });
+      expect(readRegistrySandboxEntry("e2e-rebuild", { registryPath }).agentVersion).toBe("1.2.3");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("snapshots and restores registry/session files", () => {
+    const oldHome = process.env.HOME;
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-home-"));
+    process.env.HOME = home;
+    try {
+      const stateDir = path.join(home, ".nemoclaw");
+      fs.mkdirSync(stateDir, { recursive: true });
+      const registryPath = path.join(stateDir, "sandboxes.json");
+      const sessionPath = path.join(stateDir, "onboard-session.json");
+      fs.writeFileSync(registryPath, "registry-before");
+      fs.writeFileSync(sessionPath, "session-before");
+
+      const snapshot = snapshotRegistryAndSession();
+      fs.writeFileSync(registryPath, "registry-after");
+      fs.rmSync(sessionPath);
+      restoreRegistryAndSession(snapshot);
+
+      expect(fs.readFileSync(registryPath, "utf8")).toBe("registry-before");
+      expect(fs.readFileSync(sessionPath, "utf8")).toBe("session-before");
+    } finally {
+      if (oldHome === undefined) delete process.env.HOME;
+      else process.env.HOME = oldHome;
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("discovers backup manifests and reports credential leak paths", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-backups-"));
+    const backupRoot = path.join(home, "rebuild-backups");
+    const backupDir = path.join(backupRoot, "e2e-rebuild", "2026-06-12T00-00-00Z");
+    fs.mkdirSync(backupDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(backupDir, "rebuild-manifest.json"),
+      JSON.stringify({ stateDirs: [] }),
+    );
+    fs.writeFileSync(path.join(backupDir, "safe.json"), JSON.stringify({ value: "ok" }));
+    fs.writeFileSync(path.join(backupDir, "leak.json"), JSON.stringify({ key: "nvapi-secret" }));
+    try {
+      const latest = latestRebuildBackupDir("e2e-rebuild", { backupRoot });
+      expect(latest).toBe(backupDir);
+      expect(readRebuildBackupManifest(latest!)).toEqual({ stateDirs: [] });
+      expect(listCredentialLeakPaths(latest)).toEqual([path.join(backupDir, "leak.json")]);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 });
