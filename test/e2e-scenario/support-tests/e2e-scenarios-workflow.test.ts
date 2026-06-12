@@ -137,6 +137,22 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       registryScenarios: [],
     });
     expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "hermes-root-entrypoint-smoke" }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["hermes-root-entrypoint-smoke-vitest"],
+      registryScenarios: [],
+    });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({ jobs: "hermes-root-entrypoint-smoke-vitest" }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["hermes-root-entrypoint-smoke-vitest"],
+      registryScenarios: [],
+    });
+    expect(
       evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "rebuild-openclaw" }),
     ).toMatchObject({
       valid: true,
@@ -193,6 +209,18 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
     });
     expect(generateMatrixForDispatch({ JOBS: "", SCENARIOS: "hermes-e2e" })).toMatchObject({
       hermes_selected: "true",
+      matrix: "[]",
+    });
+    expect(
+      generateMatrixForDispatch({ JOBS: "hermes-root-entrypoint-smoke-vitest", SCENARIOS: "" }),
+    ).toMatchObject({
+      hermes_selected: "false",
+      matrix: "[]",
+    });
+    expect(
+      generateMatrixForDispatch({ JOBS: "", SCENARIOS: "hermes-root-entrypoint-smoke" }),
+    ).toMatchObject({
+      hermes_selected: "false",
       matrix: "[]",
     });
   });

@@ -7,6 +7,7 @@ import { setTimeout as delay } from "node:timers/promises";
 
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import type { SecretStore } from "../fixtures/secrets.ts";
 
 // Migrated from test/e2e/test-hermes-root-entrypoint-smoke.sh. This remains a
 // real Docker/root-entrypoint smoke: it builds the Hermes image when no prebuilt
@@ -60,7 +61,10 @@ function resultText(result: CommandResult): string {
 class DockerProbe {
   private sequence = 0;
 
-  constructor(private readonly artifacts: ArtifactSink) {}
+  constructor(
+    private readonly artifacts: ArtifactSink,
+    private readonly redact: SecretStore["redact"],
+  ) {}
 
   async run(
     args: string[],
@@ -75,12 +79,12 @@ class DockerProbe {
       timeout: options.timeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS,
     });
     const commandResult: CommandResult = {
-      command,
+      command: command.map((part) => this.redact(part)),
       exitCode: result.status,
       signal: result.signal,
-      stdout: result.stdout ?? "",
-      stderr: result.stderr ?? "",
-      error: result.error instanceof Error ? result.error.message : undefined,
+      stdout: this.redact(result.stdout ?? ""),
+      stderr: this.redact(result.stderr ?? ""),
+      error: result.error instanceof Error ? this.redact(result.error.message) : undefined,
     };
     const artifactBase = `docker/${String(++this.sequence).padStart(3, "0")}-${safeName(
       options.artifactName,
@@ -384,8 +388,10 @@ exec /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-start`;
 
 liveTest(
   "hermes root-entrypoint smoke preserves runtime layout and legacy pid migration",
-  async ({ artifacts, cleanup, skip }) => {
-    const probe = new DockerProbe(artifacts);
+  async ({ artifacts, cleanup, secrets, skip }) => {
+    const probe = new DockerProbe(artifacts, (text, extraValues) =>
+      secrets.redact(text, extraValues),
+    );
     const runId = safeTag(`${process.env.GITHUB_RUN_ID ?? "local"}-${process.pid}-${Date.now()}`);
     const image =
       process.env.NEMOCLAW_HERMES_TEST_IMAGE ?? `nemoclaw-hermes-root-entrypoint-smoke:${runId}`;

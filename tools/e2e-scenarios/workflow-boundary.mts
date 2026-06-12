@@ -23,6 +23,7 @@ const FREE_STANDING_SCENARIO_JOBS = new Map([
   ["onboard-negative-paths", "onboard-negative-paths-vitest"],
   ["runtime-overrides", "runtime-overrides-vitest"],
   ["hermes-e2e", "hermes-e2e-vitest"],
+  ["hermes-root-entrypoint-smoke", "hermes-root-entrypoint-smoke-vitest"],
   ["network-policy", "network-policy-vitest"],
   ["rebuild-openclaw", "rebuild-openclaw-vitest"],
   ["token-rotation", "token-rotation-vitest"],
@@ -283,6 +284,7 @@ function validateJobsSelector(errors: string[], jobs: WorkflowRecord): void {
   requireRunContains(errors, validate, "runtime-overrides-vitest");
   requireRunContains(errors, validate, "double-onboard-vitest");
   requireRunContains(errors, validate, "hermes-e2e-vitest");
+  requireRunContains(errors, validate, "hermes-root-entrypoint-smoke-vitest");
   requireRunContains(errors, validate, "network-policy-vitest");
   requireRunContains(errors, validate, "rebuild-openclaw-vitest");
   requireRunContains(errors, validate, "token-rotation-vitest");
@@ -1109,6 +1111,175 @@ function validateHermesE2EVitestJob(errors: string[], jobs: WorkflowRecord): voi
   }
 }
 
+function validateHermesRootEntrypointSmokeVitestJob(
+  errors: string[],
+  jobs: WorkflowRecord,
+): void {
+  const jobName = "hermes-root-entrypoint-smoke-vitest";
+  const job = asRecord(jobs[jobName]);
+  if (Object.keys(job).length === 0) {
+    errors.push("workflow missing hermes-root-entrypoint-smoke-vitest job");
+    return;
+  }
+
+  if (job["runs-on"] !== "ubuntu-latest") {
+    errors.push("hermes-root-entrypoint-smoke-vitest job must run on ubuntu-latest");
+  }
+  const needs = Array.isArray(job.needs) ? job.needs : [];
+  if (!needs.includes("validate-jobs") || !needs.includes("generate-matrix")) {
+    errors.push(
+      "hermes-root-entrypoint-smoke-vitest job must depend on validate-jobs and generate-matrix",
+    );
+  }
+  const expectedIf =
+    "${{ needs.generate-matrix.result == 'success' && ((inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',hermes-root-entrypoint-smoke-vitest,') || contains(format(',{0},', inputs.scenarios), ',hermes-root-entrypoint-smoke,')) }}";
+  if (job.if !== expectedIf) {
+    errors.push(
+      "hermes-root-entrypoint-smoke-vitest job must gate on generate-matrix and the shared selector condition",
+    );
+  }
+  if (job["timeout-minutes"] !== 45) {
+    errors.push("hermes-root-entrypoint-smoke-vitest job must keep the 45 minute timeout");
+  }
+
+  const jobEnv = asRecord(job.env);
+  if (jobEnv.NEMOCLAW_RUN_E2E_SCENARIOS !== "1") {
+    errors.push("hermes-root-entrypoint-smoke-vitest job must set NEMOCLAW_RUN_E2E_SCENARIOS=1");
+  }
+  if (
+    jobEnv.E2E_ARTIFACT_DIR !==
+    "${{ github.workspace }}/e2e-artifacts/vitest/hermes-root-entrypoint-smoke"
+  ) {
+    errors.push(
+      "hermes-root-entrypoint-smoke-vitest job must write artifacts under e2e-artifacts/vitest/hermes-root-entrypoint-smoke",
+    );
+  }
+  requireEnvDoesNotExposeSecret(
+    errors,
+    "hermes-root-entrypoint-smoke-vitest job",
+    jobEnv,
+    "NVIDIA_API_KEY",
+  );
+  requireEnvDoesNotExposeSecret(
+    errors,
+    "hermes-root-entrypoint-smoke-vitest job",
+    jobEnv,
+    "DOCKERHUB_USERNAME",
+  );
+  requireEnvDoesNotExposeSecret(
+    errors,
+    "hermes-root-entrypoint-smoke-vitest job",
+    jobEnv,
+    "DOCKERHUB_TOKEN",
+  );
+
+  const steps = asSteps(job.steps);
+  requireNoDispatchInputInterpolation(errors, steps);
+  for (const step of steps) {
+    const stepName = step.name ?? step.uses ?? "<unnamed>";
+    const stepEnv = asRecord(step.env);
+    requireEnvDoesNotExposeSecret(
+      errors,
+      `hermes-root-entrypoint-smoke-vitest step '${stepName}'`,
+      stepEnv,
+      "NVIDIA_API_KEY",
+    );
+    if (step.name !== "Authenticate to Docker Hub") {
+      requireEnvDoesNotExposeSecret(
+        errors,
+        `hermes-root-entrypoint-smoke-vitest step '${stepName}'`,
+        stepEnv,
+        "DOCKERHUB_USERNAME",
+      );
+      requireEnvDoesNotExposeSecret(
+        errors,
+        `hermes-root-entrypoint-smoke-vitest step '${stepName}'`,
+        stepEnv,
+        "DOCKERHUB_TOKEN",
+      );
+    }
+  }
+
+  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
+  if (!checkout) errors.push("hermes-root-entrypoint-smoke-vitest job missing checkout step");
+  requireFullShaAction(errors, checkout, "hermes-root-entrypoint-smoke-vitest checkout");
+  if (asRecord(checkout?.with)["persist-credentials"] !== false) {
+    errors.push("hermes-root-entrypoint-smoke-vitest checkout step must set persist-credentials=false");
+  }
+
+  const dockerHubAuth = requireJobStep(errors, jobName, steps, "Authenticate to Docker Hub");
+  const dockerHubEnv = asRecord(dockerHubAuth?.env);
+  if (dockerHubEnv.DOCKERHUB_USERNAME !== "${{ secrets.DOCKERHUB_USERNAME }}") {
+    errors.push(
+      "hermes-root-entrypoint-smoke-vitest Docker Hub auth must receive DOCKERHUB_USERNAME from secrets",
+    );
+  }
+  if (dockerHubEnv.DOCKERHUB_TOKEN !== "${{ secrets.DOCKERHUB_TOKEN }}") {
+    errors.push(
+      "hermes-root-entrypoint-smoke-vitest Docker Hub auth must receive DOCKERHUB_TOKEN from secrets",
+    );
+  }
+  requireRunContains(errors, dockerHubAuth, "docker login docker.io");
+  requireRunContains(errors, dockerHubAuth, "continuing with anonymous pulls");
+
+  const setupNode = namedStep(steps, "Set up Node");
+  if (!setupNode) errors.push("hermes-root-entrypoint-smoke-vitest job missing step: Set up Node");
+  requireFullShaAction(errors, setupNode, "hermes-root-entrypoint-smoke-vitest setup-node");
+
+  const installRootDependencies = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Install root dependencies",
+  );
+  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
+
+  const runVitest = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Run Hermes root entrypoint smoke live test",
+  );
+  requireRunContains(errors, runVitest, "npx vitest run --project e2e-scenarios-live");
+  requireRunContains(
+    errors,
+    runVitest,
+    "test/e2e-scenario/live/hermes-root-entrypoint-smoke.test.ts",
+  );
+  requireRunDoesNotContain(errors, runVitest, "${{ inputs.");
+
+  const upload = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Upload Hermes root entrypoint smoke artifacts",
+  );
+  requireFullShaAction(errors, upload, "hermes-root-entrypoint-smoke-vitest upload-artifact");
+  const uploadWith = asRecord(upload?.with);
+  if (uploadWith.name !== "e2e-vitest-scenarios-hermes-root-entrypoint-smoke") {
+    errors.push("hermes-root-entrypoint-smoke-vitest artifact upload name must be stable");
+  }
+  const uploadPath = stringValue(uploadWith.path);
+  requireUploadPathContains(
+    errors,
+    uploadPath,
+    "e2e-artifacts/vitest/hermes-root-entrypoint-smoke/",
+  );
+  if (uploadWith["include-hidden-files"] !== false) {
+    errors.push(
+      "hermes-root-entrypoint-smoke-vitest artifact upload must set include-hidden-files: false",
+    );
+  }
+  if (uploadWith["if-no-files-found"] !== "ignore") {
+    errors.push(
+      "hermes-root-entrypoint-smoke-vitest artifact upload must ignore missing fixture artifacts",
+    );
+  }
+  if (uploadWith["retention-days"] !== 14) {
+    errors.push("hermes-root-entrypoint-smoke-vitest artifact upload retention-days must be 14");
+  }
+}
+
 export function validateE2eVitestScenariosWorkflowBoundary(
   workflowPath = DEFAULT_VITEST_WORKFLOW_PATH,
 ): string[] {
@@ -1170,6 +1341,8 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   requireRunContains(errors, generate, "runtime-overrides");
   requireRunContains(errors, generate, "double-onboard-vitest");
   requireRunContains(errors, generate, "hermes-e2e-vitest");
+  requireRunContains(errors, generate, "hermes-root-entrypoint-smoke-vitest");
+  requireRunContains(errors, generate, "hermes-root-entrypoint-smoke");
   requireRunContains(errors, generate, "network-policy-vitest");
   requireRunContains(errors, generate, "rebuild-openclaw-vitest");
   requireRunContains(errors, generate, "token-rotation-vitest");
@@ -1329,6 +1502,7 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   validateRuntimeOverridesVitestJob(errors, jobs);
   validateDoubleOnboardVitestJob(errors, jobs);
   validateHermesE2EVitestJob(errors, jobs);
+  validateHermesRootEntrypointSmokeVitestJob(errors, jobs);
   validateNetworkPolicyVitestJob(errors, jobs);
   validateRebuildOpenClawVitestJob(errors, jobs);
   validateTokenRotationVitestJob(errors, jobs);
@@ -1360,6 +1534,7 @@ export function validateE2eVitestScenariosWorkflowBoundary(
       "credential-migration-vitest",
       "runtime-overrides-vitest",
       "hermes-e2e-vitest",
+      "hermes-root-entrypoint-smoke-vitest",
       "network-policy-vitest",
       "rebuild-openclaw-vitest",
       "token-rotation-vitest",
