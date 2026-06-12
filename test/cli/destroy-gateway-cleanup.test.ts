@@ -229,6 +229,83 @@ describe("CLI dispatch", () => {
     },
   );
 
+  it.runIf(process.platform === "linux")(
+    "clears only the per-port host gateway PID file when destroying nemoclaw-<port>",
+    testTimeoutOptions(30_000),
+    () => {
+      // A `nemoclaw-8081` sandbox's destroy must read and clear its own
+      // `openshell-docker-gateway-8081/openshell-gateway.pid`, NOT the default
+      // instance's `openshell-docker-gateway/openshell-gateway.pid`. Otherwise
+      // destroying a non-default sandbox tears down the default instance's
+      // tracked host gateway process (#4865 impact clause).
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-destroy-perport-pid-"));
+      const localBin = path.join(home, "bin");
+      const registryDir = path.join(home, ".nemoclaw");
+      const defaultStateDir = path.join(home, ".local/state/nemoclaw/openshell-docker-gateway");
+      const perPortStateDir = path.join(
+        home,
+        ".local/state/nemoclaw/openshell-docker-gateway-8081",
+      );
+      const defaultPidFile = path.join(defaultStateDir, "openshell-gateway.pid");
+      const perPortPidFile = path.join(perPortStateDir, "openshell-gateway.pid");
+      fs.mkdirSync(localBin, { recursive: true });
+      fs.mkdirSync(registryDir, { recursive: true });
+      fs.mkdirSync(defaultStateDir, { recursive: true });
+      fs.mkdirSync(perPortStateDir, { recursive: true });
+      // PIDs that are guaranteed to be dead so stopHostGatewayProcesses takes
+      // the clearRuntimeFiles branch without trying to kill anything.
+      fs.writeFileSync(defaultPidFile, "999998\n");
+      fs.writeFileSync(perPortPidFile, "999999\n");
+      fs.writeFileSync(
+        path.join(registryDir, "sandboxes.json"),
+        JSON.stringify({
+          sandboxes: {
+            alpha: {
+              name: "alpha",
+              model: "test-model",
+              provider: "nvidia-prod",
+              gpuEnabled: false,
+              policies: [],
+              gatewayName: "nemoclaw-8081",
+              gatewayPort: 8081,
+            },
+          },
+          defaultSandbox: "alpha",
+        }),
+        { mode: 0o600 },
+      );
+      fs.writeFileSync(
+        path.join(localBin, "openshell"),
+        [
+          "#!/bin/sh",
+          'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
+          '  printf "NAME STATUS\\n"',
+          "  exit 0",
+          "fi",
+          "exit 0",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      fs.writeFileSync(path.join(localBin, "docker"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      fs.writeFileSync(path.join(localBin, "pgrep"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+      fs.writeFileSync(path.join(localBin, "lsof"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+
+      const r = runWithEnv(
+        "alpha destroy -y --cleanup-gateway",
+        {
+          HOME: home,
+          PATH: `${localBin}:${process.env.PATH || ""}`,
+        },
+        30_000,
+      );
+
+      expect(r.code, r.out).toBe(0);
+      expect(fs.existsSync(perPortPidFile)).toBe(false);
+      expect(fs.existsSync(defaultPidFile)).toBe(true);
+      expect(fs.readFileSync(defaultPidFile, "utf8").trim()).toBe("999998");
+    },
+  );
+
   it("keeps the gateway runtime when other sandboxes still exist", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-destroy-shared-"));
     const localBin = path.join(home, "bin");

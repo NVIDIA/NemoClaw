@@ -250,6 +250,16 @@ export function reconcileMissingAgainstNamedGateway(
         // the sandbox truly absent.
         return tryRecoverDockerDriverSandbox(sandboxName, retry);
       }
+      // The select moved the active gateway off, but the target gateway is
+      // now missing or unreachable. Surface that post-select state so the
+      // caller emits restart guidance, rather than `wrong_gateway_active`
+      // pointing at the now-irrelevant pre-select active gateway.
+      if (after.state === "missing_named") {
+        return { state: "gateway_missing_after_restart", output: after.status };
+      }
+      if (after.state === "named_unreachable" || after.state === "named_unhealthy") {
+        return { state: "gateway_unreachable_after_restart", output: after.status };
+      }
     }
     return {
       state: "wrong_gateway_active",

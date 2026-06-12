@@ -457,14 +457,13 @@ async function checkSlackSocketModeGatewayConflict(
   let conflictMessages: string[] = [];
   try {
     const applier = require("../../messaging/applier") as typeof import("../../messaging/applier");
-    const { BASE_GATEWAY_NAME } =
-      require("../../onboard/gateway-binding") as typeof import("../../onboard/gateway-binding");
-    // `channels add` registers the Slack provider on the default `nemoclaw`
+    // `channels add` registers the Slack provider on the sandbox's target
     // gateway — applyChannelAddToGatewayAndRegistry → recoverNamedGatewayRuntime
-    // selects `nemoclaw` regardless of the sandbox's recorded gateway. Detect
-    // conflicts on the gateway the add actually mutates so the check matches the
-    // provider registration and cannot leave a false negative (#4953).
-    const gatewayName = BASE_GATEWAY_NAME;
+    // selects that same name. Detect conflicts on the gateway the add actually
+    // mutates so the check matches the provider registration and cannot leave a
+    // false negative for a sibling sandbox on the same non-default gateway
+    // (#4953).
+    const gatewayName = getSandboxTargetGatewayName(sandboxName);
     conflictMessages = applier
       .findSlackSocketModeGatewayConflicts(
         sandboxName,
