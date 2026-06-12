@@ -55,7 +55,6 @@ import {
   MessagingWorkflowPlanner,
   toMessagingAgentId,
 } from "../../messaging";
-import { hydrateMessagingChannelConfig } from "../../messaging-channel-config";
 import { pruneDisabledMessagingPolicyPresets } from "../../onboard/messaging-policy-presets";
 import {
   captureSandboxListWithGatewayRecovery,
@@ -200,19 +199,22 @@ async function stageMessagingManifestPlanForRebuild(
 ): Promise<SandboxMessagingPlan | null> {
   const agent = loadAgent(rebuildAgent || "openclaw");
   const planner = new MessagingWorkflowPlanner(createBuiltInChannelManifestRegistry());
-  hydrateMessagingChannelConfig(sandboxEntry.messagingChannelConfig);
   const plan = await planner.buildRebuildPlanFromSandboxEntry({
     sandboxName,
     agent: toMessagingAgentId(agent),
     sandboxEntry,
     supportedChannelIds: agent.messagingPlatforms,
   });
-  if (!plan || plan.channels.length === 0) {
+  if (!plan) {
     MessagingSetupApplier.clearPlanEnv();
     log("Messaging manifest rebuild plan: no configured channels");
     return null;
   }
   MessagingSetupApplier.writePlanToEnv(plan);
+  if (plan.channels.length === 0) {
+    log("Messaging manifest rebuild plan staged: no configured channels");
+    return plan;
+  }
   log(
     `Messaging manifest rebuild plan staged: ${plan.channels
       .map((channel) => channel.channelId)
@@ -830,21 +832,6 @@ export async function rebuildSandbox(
     // Mark session resumable and point at this sandbox; set env var as fallback.
     const sessionBefore = onboardSession.loadSession();
     const sessionMatchesSandbox = sessionBefore?.sandboxName === sandboxName;
-    const registryMessagingChannels = Array.isArray(sb.messagingChannels)
-      ? sb.messagingChannels.filter((value: unknown): value is string => typeof value === "string")
-      : null;
-    const sessionMessagingChannels =
-      sessionMatchesSandbox && Array.isArray(sessionBefore?.messagingChannels)
-        ? sessionBefore.messagingChannels.filter(
-            (value: unknown): value is string => typeof value === "string",
-          )
-        : null;
-    const rebuildMessagingChannels = registryMessagingChannels ?? sessionMessagingChannels ?? [];
-    const sessionMessagingChannelConfig = sessionMatchesSandbox
-      ? (sessionBefore?.messagingChannelConfig ?? null)
-      : null;
-    const rebuildMessagingChannelConfig =
-      sb.messagingChannelConfig ?? sessionMessagingChannelConfig ?? null;
     const rebuildsHermesSandbox = rebuildAgent === "hermes";
     let registryHermesToolGateways: string[] | null = null;
     if (rebuildsHermesSandbox && Array.isArray(sb.hermesToolGateways)) {
@@ -866,23 +853,6 @@ export async function rebuildSandbox(
     const hasRebuildHermesToolGateways =
       rebuildsHermesSandbox &&
       (registryHermesToolGateways !== null || sessionHermesToolGateways !== null);
-    const hasRebuildMessagingChannels =
-      registryMessagingChannels !== null || sessionMessagingChannels !== null;
-    // Snapshot the operator's paused channel set BEFORE `removeSandboxRegistryEntry`
-    // wipes the registry entry. Otherwise the `disabledChannels` filter inside
-    // `createSandbox` (onboard.ts) reads back `[]` from the freshly-empty registry
-    // and the stopped channel comes back live in the rebuilt image. The session
-    // mirror is the only place this list can survive the destroy/recreate window.
-    //
-    // Always re-stash from `sb` — do NOT fall back to a prior session value.
-    // `sb` is loaded fresh from the registry at the top of rebuildSandbox, so it
-    // already reflects the latest `channels stop|start` write. The session mirror
-    // is downstream of the registry; re-stashing on every rebuild keeps a stale
-    // ["telegram"] from a prior stop/rebuild cycle from leaking into the next
-    // start/rebuild and filtering the channel back out.
-    const rebuildDisabledChannels = Array.isArray(sb.disabledChannels)
-      ? sb.disabledChannels.filter((value: unknown): value is string => typeof value === "string")
-      : [];
     log(
       `Session before update: sandboxName=${sessionBefore?.sandboxName}, status=${sessionBefore?.status}, resumable=${sessionBefore?.resumable}, provider=${sessionBefore?.provider}, model=${sessionBefore?.model}, sessionMatch=${sessionMatchesSandbox}`,
     );
@@ -896,9 +866,6 @@ export async function rebuildSandbox(
       s.resumable = true;
       s.status = "in_progress";
       s.agent = rebuildAgent;
-      s.messagingChannels = rebuildMessagingChannels;
-      s.messagingChannelConfig = rebuildMessagingChannelConfig;
-      s.disabledChannels = rebuildDisabledChannels;
       s.messagingPlan = rebuildMessagingPlan;
       s.hermesToolGateways = rebuildsHermesSandbox ? rebuildHermesToolGateways : [];
       // Persist inference selection from the about-to-be-removed registry entry
@@ -1077,9 +1044,6 @@ export async function rebuildSandbox(
     }
 
     const preservedRegistryFields = {
-      ...(hasRebuildMessagingChannels ? { messagingChannels: [...rebuildMessagingChannels] } : {}),
-      disabledChannels:
-        rebuildDisabledChannels.length > 0 ? [...rebuildDisabledChannels] : undefined,
       ...(hasRebuildHermesToolGateways
         ? { hermesToolGateways: [...rebuildHermesToolGateways] }
         : {}),
@@ -1129,6 +1093,7 @@ export async function rebuildSandbox(
     const registryPolicyPresets = Array.isArray(sb.policies)
       ? sb.policies.filter((value: unknown): value is string => typeof value === "string")
       : [];
+    const rebuildDisabledChannels = [...(rebuildMessagingPlan?.disabledChannels ?? [])];
     const savedPresets = pruneDisabledMessagingPolicyPresets(
       backupManifest?.policyPresets ?? registryPolicyPresets,
       rebuildDisabledChannels,

@@ -233,6 +233,8 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_NON_INTERACTIVE=1 NEMOC
 
 If the installer cannot prompt for the notice in a terminal and no explicit acceptance is set, it exits before installing Node.js or the NemoClaw CLI.
 
+<AgentOnly variant="openclaw">
+
 To enable Brave Search in non-interactive mode, set:
 
 ```bash
@@ -242,7 +244,17 @@ BRAVE_API_KEY=... \
 
 `BRAVE_API_KEY` enables Brave Search in non-interactive mode and also enables `web_fetch`.
 If Brave Search key validation fails in non-interactive mode, onboarding prints a warning, skips web search setup, and continues with the rest of the sandbox setup.
-After fixing the key, re-enable web search with `$$nemoclaw config web-search`.
+After fixing the key, rerun onboarding with `BRAVE_API_KEY` set so NemoClaw can validate the key, register the Brave Search provider, and apply the `brave` policy preset.
+If the sandbox already exists without web search, accept the recreate prompt or pass `--recreate-sandbox`.
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+
+Hermes does not use NemoClaw's OpenClaw Brave Search setup.
+If you authenticate Hermes through Nous Portal OAuth, the wizard can prompt for managed Nous tool gateways such as web search.
+API-key mode is inference-only and does not enable managed tool gateways.
+
+</AgentOnly>
 
 The wizard prompts for a sandbox name.
 Names must be 1 to 63 characters, lowercase, start with a letter, contain only letters, numbers, and internal hyphens, and end with a letter or number.
@@ -504,6 +516,44 @@ The exit code is the remote command's exit code.
 | `--workdir <dir>` | Working directory inside the sandbox |
 | `--tty` / `--no-tty` | Allocate a pseudo-terminal; defaults to auto-detection (on when stdin and stdout are terminals) |
 | `--timeout <seconds>` | Timeout in seconds (`0` means no timeout) |
+
+### Advanced Sandbox Maintenance Commands
+
+The following commands are available for targeted host-side maintenance, but they are not part of the top-level public command list.
+
+#### `$$nemoclaw <name> config get`
+
+Read the sanitized agent configuration from a sandbox.
+The output removes credential-bearing sections such as the OpenClaw gateway token before printing.
+Use `--key` to read one dotpath and `--format` to choose JSON or YAML output.
+
+```bash
+$$nemoclaw my-assistant config get
+$$nemoclaw my-assistant config get --key model --format yaml
+```
+
+| Flag | Description |
+|------|-------------|
+| `--key <dotpath>` | Print one value from the sanitized config |
+| `--format json|yaml` | Output format. Defaults to JSON |
+
+#### `$$nemoclaw <name> shields`
+
+Manage the sandbox config lockdown posture from the host.
+Use `shields status` to inspect the current state, `shields up` to lock the sandbox config and restore the captured restrictive policy, and `shields down` to temporarily unlock the config for maintenance.
+For the full mutability matrix, see [Runtime Controls](../manage-sandboxes/runtime-controls).
+
+```bash
+$$nemoclaw my-assistant shields status
+$$nemoclaw my-assistant shields up
+$$nemoclaw my-assistant shields down --timeout 5m --reason "maintenance"
+```
+
+| Subcommand | Description |
+|------|-------------|
+| `shields status` | Show whether lockdown is configured, active, temporarily unlocked, or in error |
+| `shields up` | Lock the sandbox config and restore the saved restrictive policy |
+| `shields down` | Temporarily unlock the sandbox config. Supports `--timeout`, `--reason`, and `--policy` |
 
 ### `$$nemoclaw <name> recover`
 
@@ -1312,6 +1362,10 @@ When the command is running from a source checkout, it reports that state and do
 Rebuild sandboxes whose base image is older than the one currently pinned by NemoClaw.
 NemoClaw resolves the digest of `ghcr.io/nvidia/nemoclaw/sandbox-base:latest` from the registry, then compares it against the digest each sandbox was created with.
 Sandboxes that match the current digest are left alone.
+NemoClaw also checks the build fingerprint recorded on each managed sandbox image.
+A sandbox needs upgrade when its agent version is stale, when its recorded NemoClaw image fingerprint differs from the running CLI, or both.
+Custom Dockerfile sandboxes are not classified by image drift because rebuilding them onto the default image would drop the custom image.
+Legacy sandboxes without a recorded fingerprint opt into this check after their next rebuild.
 
 ```bash
 $$nemoclaw upgrade-sandboxes [--check] [--auto] [--yes|-y]
@@ -1570,7 +1624,7 @@ $$nemoclaw status --json
 
 When at least one sandbox is registered and the named NemoClaw gateway is unreachable, unhealthy, or attached to a different sandbox, the command prints a `gateway: down [state] (reason)` line between the sandbox list and the host-service list.
 The command classifies the failing layer when possible: the named gateway port is not accepting connections, the named gateway is running but not Connected, the active OpenShell gateway points at a different name, or the named gateway is not configured at all.
-It then suggests `openshell gateway start --name nemoclaw` or `$$nemoclaw onboard --resume` to recover.
+It then suggests `$$nemoclaw onboard --resume` or equivalent managed-gateway recovery guidance.
 It exits with code `1` so shell scripts and CI can detect the degraded state from `$?`.
 For `--json`, the structured output includes `gatewayHealth`, and the exit code is set after the report is generated.
 A clean machine with no registered sandboxes keeps the legacy `0` exit because no gateway is expected to be configured yet.
