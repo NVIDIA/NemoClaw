@@ -42,6 +42,14 @@ const DEFAULT_GUARD_MARKERS: ReadonlyArray<string> = [
 
 /** Default gateway log path inside the sandbox. */
 const GATEWAY_LOG_PATH = "/tmp/gateway.log";
+const DOCKER_DRIVER_GATEWAY_PID_RELPATH = [
+  ".local",
+  "state",
+  "nemoclaw",
+  "openshell-docker-gateway",
+  "openshell-gateway.pid",
+] as const;
+const DEFAULT_GATEWAY_CONTAINER = "openshell-cluster-nemoclaw";
 
 export interface ExpectGuardChainOptions extends ShellProbeRunOptions {
   /** Markers required in `/tmp/nemoclaw-proxy-env.sh`. Defaults to safety-net + ciao. */
@@ -58,6 +66,11 @@ export interface ExpectPidStableOptions extends ShellProbeRunOptions {
   durationSeconds: number;
   /** Polling interval in seconds. Defaults to 3. */
   pollIntervalSeconds?: number;
+}
+
+export interface HostGatewayRuntime {
+  kind: "pid" | "container";
+  id: string;
 }
 
 export class GatewayClient {
@@ -79,6 +92,74 @@ export class GatewayClient {
   async expectHealthy(options: ShellProbeRunOptions = {}): Promise<ShellProbeResult> {
     const result = await this.status(options);
     assertExitZero(result, "nemoclaw gateway status");
+    return result;
+  }
+
+  async resolveHostRuntime(): Promise<HostGatewayRuntime | null> {
+    const pid = await this.host.command(
+      "sh",
+      [
+        "-lc",
+        `pid_file=\"$HOME/${DOCKER_DRIVER_GATEWAY_PID_RELPATH.join("/")}\"; ` +
+          `if [ -f \"$pid_file\" ]; then ` +
+          `pid=\"$(tr -d '[:space:]' <\"$pid_file\" 2>/dev/null || true)\"; ` +
+          `if [ -n \"$pid\" ] && kill -0 \"$pid\" 2>/dev/null; then printf '%s\\n' \"$pid\"; exit 0; fi; ` +
+          `fi; exit 1`,
+      ],
+      {
+        artifactName: "gateway-runtime-pid-probe",
+        env: probeEnv(),
+        timeoutMs: 15_000,
+      },
+    );
+    if (pid.exitCode === 0 && pid.stdout.trim()) {
+      return { kind: "pid", id: pid.stdout.trim() };
+    }
+
+    const container = await this.host.command(
+      "docker",
+      ["ps", "-qf", `name=${DEFAULT_GATEWAY_CONTAINER}`],
+      {
+        artifactName: "gateway-runtime-container-probe",
+        env: probeEnv(),
+        timeoutMs: 15_000,
+      },
+    );
+    const id = container.stdout.trim().split(/\r?\n/).find(Boolean);
+    return id ? { kind: "container", id } : null;
+  }
+
+  async expectHostRuntimeStopped(options: ShellProbeRunOptions = {}): Promise<void> {
+    const runtime = await this.resolveHostRuntime();
+    if (runtime) {
+      throw new Error(
+        `gateway runtime still appears to be running after stop: ${runtime.kind}:${runtime.id}`,
+      );
+    }
+    if (options.artifactName) {
+      await this.host.command("true", [], {
+        artifactName: options.artifactName,
+        env: probeEnv(),
+        timeoutMs: 5_000,
+      });
+    }
+  }
+
+  async expectOpenshellStatusConnected(
+    gatewayName = "nemoclaw",
+    options: ShellProbeRunOptions = {},
+  ): Promise<ShellProbeResult> {
+    const result = await this.host.command("openshell", ["status"], {
+      artifactName: `openshell-status-${gatewayName}`,
+      env: probeEnv(),
+      timeoutMs: 30_000,
+      ...options,
+    });
+    assertExitZero(result, "openshell status");
+    const text = `${result.stdout}\n${result.stderr}`;
+    if (!/connected/i.test(text) || !new RegExp(gatewayName, "i").test(text)) {
+      throw new Error(`openshell status did not report connected gateway '${gatewayName}'.`);
+    }
     return result;
   }
 
