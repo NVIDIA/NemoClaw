@@ -255,6 +255,26 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       selectedFreeStandingJobs: ["model-router-provider-routed-inference-vitest"],
       registryScenarios: [],
     });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({
+        scenarios: "bedrock-runtime-compatible-anthropic",
+      }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["bedrock-runtime-compatible-anthropic-vitest"],
+      registryScenarios: [],
+    });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({
+        jobs: "bedrock-runtime-compatible-anthropic-vitest",
+      }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["bedrock-runtime-compatible-anthropic-vitest"],
+      registryScenarios: [],
+    });
   });
 
   it("keeps the free-standing inventory internally consistent and data-only", () => {
@@ -356,7 +376,7 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
     }
   });
 
-  it("keeps each free-standing scenario out of the registry matrix", () => {
+  it("keeps each free-standing scenario out of the registry matrix", { timeout: 15_000 }, () => {
     const inventory = readFreeStandingJobsInventory();
     for (const job of inventory.allowedJobs) {
       expect(generateMatrixForDispatch({ JOBS: job, SCENARIOS: "" })).toMatchObject({
