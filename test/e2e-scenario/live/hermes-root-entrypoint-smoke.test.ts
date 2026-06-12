@@ -23,7 +23,6 @@ function safeTag(value: string): string {
   return value.replace(/[^A-Za-z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "") || "local";
 }
 
-
 async function requireDocker(probe: DockerProbe, skip: (message: string) => void): Promise<void> {
   const result = await probe.run(["info"], { artifactName: "docker-info", timeoutMs: 30_000 });
   if (result.exitCode === 0) return;
@@ -47,17 +46,10 @@ async function buildImageIfNeeded(
     return;
   }
 
-  await probe.expect(
-    [
-      "build",
-      "-f",
-      "agents/hermes/Dockerfile.base",
-      "-t",
-      baseImage,
-      ".",
-    ],
-    { artifactName: "build-hermes-base-image", timeoutMs: BUILD_TIMEOUT_MS },
-  );
+  await probe.expect(["build", "-f", "agents/hermes/Dockerfile.base", "-t", baseImage, "."], {
+    artifactName: "build-hermes-base-image",
+    timeoutMs: BUILD_TIMEOUT_MS,
+  });
   await probe.expect(
     [
       "build",
