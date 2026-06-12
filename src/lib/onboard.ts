@@ -35,6 +35,7 @@ const sandboxMessagingPreflight: typeof import("./onboard/sandbox-messaging-pref
 const sandboxCreatePlan: typeof import("./onboard/sandbox-create-plan") = require("./onboard/sandbox-create-plan");
 const sandboxCreateLaunch: typeof import("./onboard/sandbox-create-launch") = require("./onboard/sandbox-create-launch");
 const onboardEntryOptions: typeof import("./onboard/entry-options") = require("./onboard/entry-options");
+const onboardSessionBootstrap: typeof import("./onboard/session-bootstrap") = require("./onboard/session-bootstrap");
 const channelState: typeof import("./onboard/channel-state") = require("./onboard/channel-state");
 const {
   ensureOllamaLoopbackSystemdOverride,
@@ -4881,119 +4882,34 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
   let traceCompleted = false;
   try {
     onboardTrace = onboardTracing.startOnboardTrace(opts, process.env);
-    let session: Session | null;
     let selectedMessagingChannels: string[] = [];
-    // Merged, absolute fromDockerfile: explicit flag/env takes precedence; on
-    // resume falls back to what the original session recorded so the same image
-    // is used even when --from is omitted from the resume invocation.
-    let fromDockerfile: string | null;
-    if (resume) {
-      session = onboardSession.loadSession();
-      setOnboardBrandingAgent(opts.agent || session?.agent || process.env.NEMOCLAW_AGENT || null);
-      if (!session || session.resumable === false) {
-        console.error("  No resumable onboarding session was found.");
-        console.error("  --resume only continues an interrupted onboarding run.");
-        console.error("  To change configuration on an existing sandbox, rebuild it:");
-        console.error(`    ${cliName()} onboard`);
-        process.exit(1);
-      }
-      const sessionFrom = session?.metadata?.fromDockerfile || null;
-      fromDockerfile = requestedFromDockerfile
-        ? path.resolve(requestedFromDockerfile)
-        : sessionFrom
-          ? path.resolve(sessionFrom)
-          : null;
-      const resumeConflicts = getResumeConfigConflicts(session, {
+    let { session, fromDockerfile } = await onboardSessionBootstrap.prepareOnboardSession(
+      {
+        resume,
+        fresh,
+        requestedFromDockerfile,
+        requestedSandboxName,
+        cannotPrompt,
         nonInteractive: isNonInteractive(),
-        fromDockerfile: requestedFromDockerfile,
-        sandboxName: requestedSandboxName,
-        agent: opts.agent || null,
-      });
-      if (resumeConflicts.length > 0) {
-        for (const conflict of resumeConflicts) {
-          try {
-            await onboardRuntimeBoundary.recordResumeConflict(conflict);
-          } catch {
-            /* diagnostic-only */
-          }
-          if (conflict.field === "sandbox") {
-            console.error(
-              `  Resumable state belongs to sandbox '${conflict.recorded}', not '${conflict.requested}'.`,
-            );
-          } else if (conflict.field === "agent") {
-            console.error(
-              `  Session was started with agent '${conflict.recorded}', not '${conflict.requested}'.`,
-            );
-          } else if (conflict.field === "fromDockerfile") {
-            if (!conflict.recorded) {
-              console.error(
-                `  Session was started without --from; add --from '${conflict.requested}' to resume it.`,
-              );
-            } else if (!conflict.requested) {
-              console.error(
-                `  Session was started with --from '${conflict.recorded}'; rerun with that path to resume it.`,
-              );
-            } else {
-              console.error(
-                `  Session was started with --from '${conflict.recorded}', not '${conflict.requested}'.`,
-              );
-            }
-          } else {
-            console.error(
-              `  Resumable state recorded ${conflict.field} '${conflict.recorded}', not '${conflict.requested}'.`,
-            );
-          }
-        }
-        console.error(
-          `  Run: ${cliName()} onboard              # start a fresh onboarding session`,
-        );
-        console.error("  Or rerun with the original settings to continue that session.");
-        process.exit(1);
-      }
-      onboardSession.updateSession((current: Session) => {
-        repairResumeMachineSnapshot(current);
-        current.mode = isNonInteractive() ? "non-interactive" : "interactive";
-        current.failure = null;
-        current.status = "in_progress";
-        return current;
-      });
-      session = onboardSession.loadSession();
-      // #2753: a resumed onboard whose sandbox step did not complete has no
-      // recorded sandboxName (the onboard fix only persists it after
-      // createSandbox succeeds). Falling through would silently default to
-      // the agent's `my-assistant` instead of the user's original --name.
-      // Use `cannotPrompt` so non-TTY runs without explicit --non-interactive
-      // are also caught, and `requestedSandboxName` from
-      // resolveOnboardEntryOptions so whitespace-only env values can't satisfy
-      // the guard.
-      const sandboxStepCompleted = session?.steps?.sandbox?.status === "complete";
-      const recoveredSandboxName =
-        requestedSandboxName || (sandboxStepCompleted ? session?.sandboxName || null : null);
-      if (cannotPrompt && !recoveredSandboxName) {
-        console.error(
-          "  Cannot resume non-interactive onboard: the previous run was interrupted before sandbox creation completed,",
-        );
-        console.error(
-          "  so no sandbox name was recorded. Re-run with --name <sandbox> (or set NEMOCLAW_SANDBOX_NAME).",
-        );
-        process.exit(1);
-      }
-    } else {
-      // --fresh asks for an explicit fresh start. createSession + saveSession
-      // already overwrites any existing file, but clearing first removes the
-      // old file outright so an interrupted createSession cannot leave the
-      // previous session readable on disk.
-      if (fresh) {
-        onboardSession.clearSession();
-      }
-      fromDockerfile = requestedFromDockerfile ? path.resolve(requestedFromDockerfile) : null;
-      session = onboardSession.saveSession(
-        onboardSession.createSession({
-          mode: isNonInteractive() ? "non-interactive" : "interactive",
-          metadata: { gatewayName: "nemoclaw", fromDockerfile: fromDockerfile || null },
-        }),
-      );
-    }
+        agentFlag: opts.agent || null,
+        envAgent: process.env.NEMOCLAW_AGENT || null,
+      },
+      {
+        loadSession: onboardSession.loadSession,
+        clearSession: onboardSession.clearSession,
+        createSession: onboardSession.createSession,
+        saveSession: onboardSession.saveSession,
+        updateSession: onboardSession.updateSession,
+        repairResumeMachineSnapshot,
+        setOnboardBrandingAgent,
+        getResumeConfigConflicts,
+        recordResumeConflict: (conflict) => onboardRuntimeBoundary.recordResumeConflict(conflict),
+        resolvePath: path.resolve,
+        cliName,
+        error: (message) => console.error(message),
+        exitProcess: (code) => process.exit(code),
+      },
+    );
     await onboardRuntimeBoundary.recordOnboardStarted(resume);
     await recordStateResult(advanceTo("preflight", { metadata: { state: "init" } }));
     // Backstop for the resume path: a session may exist (so the early guard

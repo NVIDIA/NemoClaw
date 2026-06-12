@@ -40,7 +40,7 @@ jobs:
           SCENARIOS: ${{ inputs.scenarios }}
         run: |
           set -euo pipefail
-          allowed_jobs="openshell-version-pin-vitest,onboard-negative-paths-vitest,credential-migration-vitest,runtime-overrides-vitest,hermes-e2e-vitest,hermes-root-entrypoint-smoke-vitest,network-policy-vitest,rebuild-openclaw-vitest,token-rotation-vitest,launchable-smoke-vitest,openclaw-tui-chat-correlation-vitest,gateway-guard-recovery,double-onboard-vitest,issue-4434-tui-unreachable-inference-vitest"
+          allowed_jobs="openshell-version-pin-vitest,onboard-negative-paths-vitest,inference-routing-vitest,credential-migration-vitest,runtime-overrides-vitest,hermes-e2e-vitest,hermes-root-entrypoint-smoke-vitest,network-policy-vitest,rebuild-openclaw-vitest,token-rotation-vitest,launchable-smoke-vitest,openclaw-tui-chat-correlation-vitest,gateway-guard-recovery,double-onboard-vitest,issue-4434-tui-unreachable-inference-vitest"
           if [ -n "${JOBS}" ] && [ -n "${SCENARIOS}" ]; then
             echo "::error::Use either scenarios or jobs, not both." >&2
             exit 1
@@ -93,12 +93,12 @@ jobs:
           SCENARIOS: ${{ inputs.scenarios }}
         run: |
           set -euo pipefail
-          allowed_jobs="openshell-version-pin-vitest,onboard-negative-paths-vitest,credential-migration-vitest,runtime-overrides-vitest,hermes-e2e-vitest,hermes-root-entrypoint-smoke-vitest,network-policy-vitest,rebuild-openclaw-vitest,token-rotation-vitest,launchable-smoke-vitest,openclaw-tui-chat-correlation-vitest,gateway-guard-recovery,double-onboard-vitest,issue-4434-tui-unreachable-inference-vitest"
+          allowed_jobs="openshell-version-pin-vitest,onboard-negative-paths-vitest,inference-routing-vitest,credential-migration-vitest,runtime-overrides-vitest,hermes-e2e-vitest,hermes-root-entrypoint-smoke-vitest,network-policy-vitest,rebuild-openclaw-vitest,token-rotation-vitest,launchable-smoke-vitest,openclaw-tui-chat-correlation-vitest,gateway-guard-recovery,double-onboard-vitest,issue-4434-tui-unreachable-inference-vitest"
           args=(--emit-live-matrix)
           matrix=""
           hermes_selected=false
           registry_scenarios=()
-          free_standing_scenarios=(openshell-version-pin onboard-negative-paths runtime-overrides hermes-e2e hermes-root-entrypoint-smoke network-policy rebuild-openclaw token-rotation openclaw-tui-chat-correlation double-onboard issue-4434-tui-unreachable-inference)
+          free_standing_scenarios=(openshell-version-pin onboard-negative-paths inference-routing runtime-overrides hermes-e2e hermes-root-entrypoint-smoke network-policy rebuild-openclaw token-rotation openclaw-tui-chat-correlation double-onboard issue-4434-tui-unreachable-inference)
           is_free_standing_scenario() {
             local id="$1"
             local known
@@ -162,7 +162,7 @@ jobs:
           fi
           echo "matrix=${matrix}" >> "$GITHUB_OUTPUT"
           echo "hermes_selected=${hermes_selected}" >> "$GITHUB_OUTPUT"
-          MATRIX_JSON="${matrix}" python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          MATRIX_JSON="${matrix}" python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
           import json
           import os
 
@@ -219,7 +219,7 @@ jobs:
           SCENARIO_ID: ${{ matrix.id }}
           SCENARIO_LABEL: ${{ matrix.label }}
         run: |
-          python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
           import json
           import os
           from pathlib import Path
@@ -427,6 +427,54 @@ jobs:
         with:
           name: e2e-vitest-scenarios-hermes-root-entrypoint-smoke
           path: e2e-artifacts/vitest/hermes-root-entrypoint-smoke/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
+
+  inference-routing-vitest:
+    needs: [validate-jobs, generate-matrix]
+    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',inference-routing-vitest,') || contains(format(',{0},', inputs.scenarios), ',inference-routing,') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/inference-routing
+      NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build CLI
+        run: npm run build:cli
+
+      - name: Run inference routing live test
+        # Direct Vitest coverage for test/e2e/test-inference-routing.sh. The
+        # always-on PR-safe slices prove invalid-key and unreachable-endpoint
+        # classification/cleanup without spending live provider quota; real
+        # NVIDIA credential isolation and third-party provider smokes stay
+        # skipped unless their secrets are explicitly supplied by a future
+        # workflow.
+        run: |
+          set -euo pipefail
+          npx vitest run --project e2e-scenarios-live \
+            test/e2e-scenario/live/inference-routing.test.ts \
+            --silent=false --reporter=default
+
+      - name: Upload inference routing artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-vitest-scenarios-inference-routing
+          path: e2e-artifacts/vitest/inference-routing/
           include-hidden-files: false
           if-no-files-found: ignore
           retention-days: 14
@@ -1278,6 +1326,7 @@ jobs:
         live-scenarios,
         openshell-version-pin-vitest,
         onboard-negative-paths-vitest,
+        inference-routing-vitest,
         credential-migration-vitest,
         runtime-overrides-vitest,
         hermes-e2e-vitest,
