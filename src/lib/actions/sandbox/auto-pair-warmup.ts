@@ -97,12 +97,18 @@ except ValueError:
     sys.exit(1)
 if not isinstance(data, dict):
     sys.exit(1)
-pending = data.get('pending')
-if not isinstance(pending, list):
-    sys.exit(1)
-for device in pending:
-    if not isinstance(device, dict):
-        continue
+# Terminal success = operator.write is satisfied, whether it is a PENDING
+# upgrade (the approval pass will grant it next) or ALREADY GRANTED on a
+# re-onboard (idempotent no-op — nothing left to do before handoff). Scan
+# every device collection the response exposes (pending plus any granted/
+# approved/paired/devices list, and any other top-level list of device dicts)
+# rather than only 'pending', so the already-paired path short-circuits
+# immediately instead of burning the whole poll budget.
+devices = []
+for value in data.values():
+    if isinstance(value, list):
+        devices.extend(d for d in value if isinstance(d, dict))
+for device in devices:
     scopes = device.get('scopes') or device.get('requestedScopes')
     if isinstance(scopes, str):
         scopes = scopes.replace(',', ' ').split()
