@@ -247,17 +247,23 @@ export class OnboardingPhaseFixture {
     }
   }
 
+  async destroySandbox(sandboxName: string, artifactName?: string): Promise<ShellProbeResult> {
+    validateSandboxName(sandboxName);
+    const result = await this.host.nemoclaw([sandboxName, "destroy", "--yes"], {
+      artifactName: artifactName ?? `cleanup-destroy-${artifactLabel(sandboxName)}`,
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: DEFAULT_TIMEOUT_MS,
+    });
+    if (result.exitCode !== 0 && !hasMissingSandboxDeleteSignature(result)) {
+      assertExitZero(result, `cleanup destroy sandbox ${sandboxName}`);
+    }
+    return result;
+  }
+
   private registerSandboxCleanup(sandboxName: string): void {
     if (!this.cleanup) return;
     this.cleanup.add(`destroy NemoClaw sandbox ${sandboxName}`, async () => {
-      const result = await this.host.nemoclaw([sandboxName, "destroy", "--yes"], {
-        artifactName: `cleanup-destroy-${artifactLabel(sandboxName)}`,
-        env: buildAvailabilityProbeEnv(),
-        timeoutMs: DEFAULT_TIMEOUT_MS,
-      });
-      if (result.exitCode !== 0 && !hasMissingSandboxDeleteSignature(result)) {
-        assertExitZero(result, `cleanup destroy sandbox ${sandboxName}`);
-      }
+      await this.destroySandbox(sandboxName);
     });
   }
 

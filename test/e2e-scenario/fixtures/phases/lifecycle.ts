@@ -22,6 +22,9 @@ const DOCKER_PROBE_TIMEOUT_MS = 15_000;
 // the gateway recovery path retries. Keep the budget generous; the
 // bug is independent of latency.
 const STATUS_TIMEOUT_MS = 5 * 60_000;
+const REBUILD_TIMEOUT_MS = 20 * 60_000;
+const SANDBOX_READY_ATTEMPTS = 30;
+const SANDBOX_READY_DELAY_MS = 5_000;
 
 export type LifecycleProfile = "post-reboot-recovery";
 
@@ -57,6 +60,42 @@ export interface LifecycleResult {
   steps: Array<{ id: string; results: ShellProbeResult[] }>;
 }
 
+export interface RebuildSandboxOptions {
+  artifactName?: string;
+  env?: NodeJS.ProcessEnv;
+  redactionValues?: string[];
+  timeoutMs?: number;
+  verbose?: boolean;
+}
+
+export interface SandboxReadyAfterRebuildOptions {
+  attempts?: number;
+  delayMs?: number;
+  env?: NodeJS.ProcessEnv;
+  artifactNamePrefix?: string;
+  timeoutMs?: number;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function instanceName(instance: NemoClawInstance | string): string {
+  const name = typeof instance === "string" ? instance : instance.sandboxName;
+  return name;
+}
+
+function stripAnsi(text: string): string {
+  return text.replace(/\u001b\[[0-9;]*m/g, "");
+}
+
+function outputContainsReadySandbox(result: ShellProbeResult, sandboxName: string): boolean {
+  const escaped = sandboxName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`${escaped}.*\\bReady\\b`, "i").test(
+    stripAnsi(`${result.stdout}\n${result.stderr}`),
+  );
+}
+
 export class LifecyclePhaseFixture {
   constructor(
     private readonly host: HostCliClient,
@@ -64,6 +103,53 @@ export class LifecyclePhaseFixture {
     private readonly cleanup: LifecycleCleanup,
     private readonly gateway?: GatewayClient,
   ) {}
+
+  async rebuildSandbox(
+    instance: NemoClawInstance | string,
+    options: RebuildSandboxOptions = {},
+  ): Promise<ShellProbeResult> {
+    const sandboxName = instanceName(instance);
+    const args = [sandboxName, "rebuild", "--yes"];
+    if (options.verbose) args.push("--verbose");
+    const result = await this.host.nemoclaw(args, {
+      artifactName: options.artifactName ?? `lifecycle-rebuild-${sandboxName}`,
+      env: {
+        ...buildAvailabilityProbeEnv(),
+        ...(options.env ?? {}),
+      },
+      redactionValues: options.redactionValues,
+      timeoutMs: options.timeoutMs ?? REBUILD_TIMEOUT_MS,
+    });
+    assertExitZero(result, `nemoclaw ${sandboxName} rebuild --yes`);
+    return result;
+  }
+
+  async assertSandboxReadyAfterRebuild(
+    instance: NemoClawInstance | string,
+    options: SandboxReadyAfterRebuildOptions = {},
+  ): Promise<ShellProbeResult> {
+    const sandboxName = instanceName(instance);
+    const attempts = options.attempts ?? SANDBOX_READY_ATTEMPTS;
+    const delayMs = options.delayMs ?? SANDBOX_READY_DELAY_MS;
+    const env = { ...buildAvailabilityProbeEnv(), ...(options.env ?? {}) };
+    let last: ShellProbeResult | undefined;
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      const artifactPrefix = options.artifactNamePrefix ?? `lifecycle-rebuild-ready-${sandboxName}`;
+      last = await this.sandbox.list({
+        artifactName: `${artifactPrefix}-${attempt}`,
+        env,
+        timeoutMs: options.timeoutMs ?? 30_000,
+      });
+      if (last.exitCode === 0 && outputContainsReadySandbox(last, sandboxName)) {
+        return last;
+      }
+      if (attempt < attempts) await sleep(delayMs);
+    }
+    const detail = last ? `${last.stdout}\n${last.stderr}`.trim() : "no probe result";
+    throw new Error(
+      `sandbox ${sandboxName} did not become Ready after rebuild within ${attempts} attempts: ${detail}`,
+    );
+  }
 
   async simulate(
     profile: LifecycleProfile,

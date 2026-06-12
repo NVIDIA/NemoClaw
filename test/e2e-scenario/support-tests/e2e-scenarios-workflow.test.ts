@@ -215,6 +215,22 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       registryScenarios: [],
     });
     expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "sandbox-rebuild" }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["sandbox-rebuild-vitest"],
+      registryScenarios: [],
+    });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({ jobs: "sandbox-rebuild-vitest" }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["sandbox-rebuild-vitest"],
+      registryScenarios: [],
+    });
+    expect(
       evaluateE2eVitestWorkflowDispatchSelectors({
         scenarios: "model-router-provider-routed-inference",
       }),
@@ -290,6 +306,16 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       matrix: "[]",
     });
     expect(generateMatrixForDispatch({ JOBS: "", SCENARIOS: "rebuild-openclaw" })).toMatchObject({
+      hermes_selected: "false",
+      matrix: "[]",
+    });
+    expect(
+      generateMatrixForDispatch({ JOBS: "sandbox-rebuild-vitest", SCENARIOS: "" }),
+    ).toMatchObject({
+      hermes_selected: "false",
+      matrix: "[]",
+    });
+    expect(generateMatrixForDispatch({ JOBS: "", SCENARIOS: "sandbox-rebuild" })).toMatchObject({
       hermes_selected: "false",
       matrix: "[]",
     });
@@ -544,6 +570,7 @@ jobs:
           "step 'Validate free-standing job selector' run script must include Invalid scenario input; use comma-separated scenario ids",
           "step 'Validate free-standing job selector' run script must include allowed_jobs=",
           "step 'Validate free-standing job selector' run script must include runtime-overrides-vitest",
+          "step 'Validate free-standing job selector' run script must include sandbox-rebuild-vitest",
           "step 'Validate free-standing job selector' run script must include double-onboard-vitest",
           "step 'Validate free-standing job selector' run script must include hermes-e2e-vitest",
           "step 'Validate free-standing job selector' run script must include Invalid jobs input; use comma-separated job ids",
@@ -662,6 +689,8 @@ jobs:
           "report-to-pr job must wait for network-policy-vitest",
           "workflow missing shields-config-vitest job",
           "report-to-pr job must wait for shields-config-vitest",
+          "workflow missing sandbox-rebuild-vitest job",
+          "report-to-pr job must wait for sandbox-rebuild-vitest",
           "double-onboard-vitest job must depend on validate-jobs",
           "double-onboard-vitest job must use the shared jobs selector condition",
           "double-onboard-vitest job must set NEMOCLAW_RUN_E2E_SCENARIOS=1",
