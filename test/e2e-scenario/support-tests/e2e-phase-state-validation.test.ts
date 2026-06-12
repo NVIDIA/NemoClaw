@@ -710,6 +710,20 @@ describe("state-validation host-side probes", () => {
     ]);
   });
 
+  it("keeps marker content comparisons exact", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(shellResult(0, " marker-value "));
+    const fx = fixture(runner);
+
+    await expect(
+      fx.expectMarkerFileContent(
+        "e2e-marker",
+        "/sandbox/.openclaw/workspace/rebuild-marker.txt",
+        "marker-value",
+      ),
+    ).rejects.toThrow(/did not match expected content/);
+  });
+
   it("patches registry entries and validates refreshed agentVersion", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-registry-"));
     const registryPath = path.join(tmp, "sandboxes.json");

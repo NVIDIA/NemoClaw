@@ -229,6 +229,21 @@ describe("LifecyclePhaseFixture rebuild helpers", () => {
       args: ["sandbox", "list"],
     });
   });
+
+  it("requires an exact sandbox-name match when waiting after rebuild", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(shellResult(0, "NAME  PHASE\ne2e-x-dev  Ready\n"));
+    runner.enqueue(shellResult(0, "NAME  PHASE\ne2e-x  Ready\n"));
+    const cleanup = new FakeCleanup();
+
+    const result = await fixture(runner, cleanup).assertSandboxReadyAfterRebuild("e2e-x", {
+      attempts: 2,
+      delayMs: 0,
+    });
+
+    expect(result.stdout).toContain("e2e-x  Ready");
+    expect(runner.calls).toHaveLength(2);
+  });
 });
 
 describe("LifecyclePhaseFixture gateway runtime restart helpers", () => {

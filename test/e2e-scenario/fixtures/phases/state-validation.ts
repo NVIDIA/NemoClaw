@@ -346,7 +346,7 @@ export class StateValidationPhaseFixture {
     options: MarkerFileOptions = {},
   ): Promise<void> {
     const actual = await this.readMarkerFile(instance, markerPath, options);
-    if (actual !== expected && actual.trim() !== expected) {
+    if (actual !== expected) {
       const sandboxName = typeof instance === "string" ? instance : instance.sandboxName;
       throw new Error(
         `marker ${markerPath} in ${sandboxName} did not match expected content: got ${JSON.stringify(

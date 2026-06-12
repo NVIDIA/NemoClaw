@@ -931,6 +931,8 @@ function validateSandboxRebuildVitestJob(errors: string[], jobs: WorkflowRecord)
   const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell");
   requireRunContains(errors, installOpenShell, "bash scripts/install-openshell.sh");
   requireRunContains(errors, installOpenShell, "env -u DOCKER_CONFIG");
+  requireRunContains(errors, installOpenShell, "-u DOCKERHUB_USERNAME");
+  requireRunContains(errors, installOpenShell, "-u DOCKERHUB_TOKEN");
   requireRunContains(errors, installOpenShell, "-u NVIDIA_API_KEY");
   requireRunContains(errors, installOpenShell, "-u GITHUB_TOKEN");
 

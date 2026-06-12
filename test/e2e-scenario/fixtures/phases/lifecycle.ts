@@ -90,10 +90,14 @@ function stripAnsi(text: string): string {
 }
 
 function outputContainsReadySandbox(result: ShellProbeResult, sandboxName: string): boolean {
-  const escaped = sandboxName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`${escaped}.*\\bReady\\b`, "i").test(
-    stripAnsi(`${result.stdout}\n${result.stderr}`),
-  );
+  return stripAnsi(`${result.stdout}\n${result.stderr}`)
+    .split(/\r?\n/)
+    .some((line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return false;
+      const [name] = trimmed.split(/\s+/);
+      return name === sandboxName && /\bReady\b/i.test(trimmed);
+    });
 }
 
 export class LifecyclePhaseFixture {
