@@ -1117,18 +1117,20 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-  # Focused coverage slice for the #2603/#3145 OpenClaw websocket
-  # protocol/history contract. The retained legacy bash lane remains the
-  # source for full closeout until a later PR proves replacement and deletes it.
+  # Focused coverage slice for the provider-routed Model Router inference
+  # contract. The retained legacy bash lane remains the source for full
+  # closeout until a later PR proves replacement and deletes it.
   model-router-provider-routed-inference-vitest:
     needs: [validate-jobs, generate-matrix]
     if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',model-router-provider-routed-inference-vitest,') || contains(format(',{0},', inputs.scenarios), ',model-router-provider-routed-inference,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
+      DOCKER_CONFIG: ${{ runner.temp }}/docker-config-model-router-provider-routed-inference
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/model-router-provider-routed-inference
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      OPENSHELL_GATEWAY: "nemoclaw"
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
@@ -1145,6 +1147,8 @@ jobs:
             echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
             exit 0
           fi
+          mkdir -p "${DOCKER_CONFIG}"
+          chmod 700 "${DOCKER_CONFIG}"
           login_succeeded=0
           for attempt in 1 2 3; do
             if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
@@ -1196,6 +1200,16 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Clean up Docker auth
+        if: always()
+        run: |
+          set -euo pipefail
+          docker logout docker.io || true
+          rm -rf "${DOCKER_CONFIG}"
+
+  # Focused coverage slice for the #2603/#3145 OpenClaw websocket
+  # protocol/history contract. The retained legacy bash lane remains the
+  # source for full closeout until a later PR proves replacement and deletes it.
   openclaw-tui-chat-correlation-vitest:
     needs: [validate-jobs, generate-matrix]
     if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',openclaw-tui-chat-correlation-vitest,') || contains(format(',{0},', inputs.scenarios), ',openclaw-tui-chat-correlation,') }}
