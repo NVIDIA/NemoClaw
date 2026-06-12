@@ -115,6 +115,22 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       registryScenarios: [],
     });
     expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "credential-sanitization" }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["credential-sanitization-vitest"],
+      registryScenarios: [],
+    });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({ jobs: "credential-sanitization-vitest" }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["credential-sanitization-vitest"],
+      registryScenarios: [],
+    });
+    expect(
       evaluateE2eVitestWorkflowDispatchSelectors({ jobs: "runtime-overrides-vitest" }),
     ).toMatchObject({
       valid: true,
@@ -209,6 +225,18 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
   it("keeps jobs-only dispatches from selecting the Hermes secret-bearing job", () => {
     expect(
       generateMatrixForDispatch({ JOBS: "openshell-version-pin-vitest", SCENARIOS: "" }),
+    ).toMatchObject({
+      hermes_selected: "false",
+      matrix: "[]",
+    });
+    expect(
+      generateMatrixForDispatch({ JOBS: "credential-sanitization-vitest", SCENARIOS: "" }),
+    ).toMatchObject({
+      hermes_selected: "false",
+      matrix: "[]",
+    });
+    expect(
+      generateMatrixForDispatch({ JOBS: "", SCENARIOS: "credential-sanitization" }),
     ).toMatchObject({
       hermes_selected: "false",
       matrix: "[]",
@@ -594,6 +622,8 @@ jobs:
           "onboard-negative-paths-vitest artifact upload retention-days must be 14",
           "credential-migration-vitest job must depend on validate-jobs",
           "credential-migration-vitest job must use the shared jobs selector condition",
+          "credential-sanitization-vitest job must depend on validate-jobs and generate-matrix",
+          "credential-sanitization-vitest job must use the shared jobs selector condition",
           "workflow missing runtime-overrides-vitest job",
           "network-policy-vitest checkout action must be pinned to a full commit SHA",
           "network-policy-vitest checkout step must set persist-credentials=false",
@@ -618,6 +648,7 @@ jobs:
           "network-policy-vitest artifact upload must ignore missing fixture artifacts",
           "network-policy-vitest artifact upload retention-days must be 14",
           "report-to-pr job must wait for credential-migration-vitest",
+          "report-to-pr job must wait for credential-sanitization-vitest",
           "report-to-pr job must wait for runtime-overrides-vitest",
           "report-to-pr job must wait for network-policy-vitest",
           "double-onboard-vitest job must depend on validate-jobs",

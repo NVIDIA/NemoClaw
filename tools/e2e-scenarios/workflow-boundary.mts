@@ -31,10 +31,12 @@ const FREE_STANDING_SCENARIO_JOBS = new Map([
   ["openclaw-tui-chat-correlation", "openclaw-tui-chat-correlation-vitest"],
   ["issue-4434-tui-unreachable-inference", "issue-4434-tui-unreachable-inference-vitest"],
   ["model-router-provider-routed-inference", "model-router-provider-routed-inference-vitest"],
+  ["credential-sanitization", "credential-sanitization-vitest"],
 ]);
 const ALLOWED_FREE_STANDING_JOBS = new Set([
   ...FREE_STANDING_SCENARIO_JOBS.values(),
   "credential-migration-vitest",
+  "credential-sanitization-vitest",
   "gateway-guard-recovery",
   "double-onboard-vitest",
 ]);
@@ -284,6 +286,7 @@ function validateJobsSelector(errors: string[], jobs: WorkflowRecord): void {
   requireRunContains(errors, validate, "onboard-negative-paths-vitest");
   requireRunContains(errors, validate, "inference-routing-vitest");
   requireRunContains(errors, validate, "credential-migration-vitest");
+  requireRunContains(errors, validate, "credential-sanitization-vitest");
   requireRunContains(errors, validate, "runtime-overrides-vitest");
   requireRunContains(errors, validate, "double-onboard-vitest");
   requireRunContains(errors, validate, "hermes-e2e-vitest");
@@ -1531,6 +1534,8 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   requireRunContains(errors, generate, "token-rotation-vitest");
   requireRunContains(errors, generate, "model-router-provider-routed-inference-vitest");
   requireRunContains(errors, generate, "model-router-provider-routed-inference");
+  requireRunContains(errors, generate, "credential-sanitization-vitest");
+  requireRunContains(errors, generate, "credential-sanitization");
   requireRunContains(errors, generate, 'matrix="[]"');
   requireRunContains(errors, generate, "npx tsx test/e2e-scenario/scenarios/run.ts");
   requireRunContains(errors, generate, "--emit-live-matrix");
@@ -1684,6 +1689,7 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   validateOpenShellVersionPinVitestJob(errors, jobs);
   validateOnboardNegativePathsVitestJob(errors, jobs);
   validateFreeStandingJobSelector(errors, jobs, "credential-migration-vitest");
+  validateFreeStandingJobSelector(errors, jobs, "credential-sanitization-vitest", "credential-sanitization");
   validateFreeStandingJobSelector(errors, jobs, "inference-routing-vitest", "inference-routing");
   validateRuntimeOverridesVitestJob(errors, jobs);
   validateDoubleOnboardVitestJob(errors, jobs);
@@ -1720,6 +1726,7 @@ export function validateE2eVitestScenariosWorkflowBoundary(
       "onboard-negative-paths-vitest",
       "inference-routing-vitest",
       "credential-migration-vitest",
+      "credential-sanitization-vitest",
       "runtime-overrides-vitest",
       "hermes-e2e-vitest",
       "hermes-root-entrypoint-smoke-vitest",

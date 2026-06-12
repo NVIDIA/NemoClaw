@@ -40,7 +40,7 @@ jobs:
           SCENARIOS: ${{ inputs.scenarios }}
         run: |
           set -euo pipefail
-          allowed_jobs="openshell-version-pin-vitest,onboard-negative-paths-vitest,inference-routing-vitest,credential-migration-vitest,runtime-overrides-vitest,hermes-e2e-vitest,hermes-root-entrypoint-smoke-vitest,network-policy-vitest,rebuild-openclaw-vitest,token-rotation-vitest,launchable-smoke-vitest,openclaw-tui-chat-correlation-vitest,gateway-guard-recovery,double-onboard-vitest,issue-4434-tui-unreachable-inference-vitest,model-router-provider-routed-inference-vitest"
+          allowed_jobs="openshell-version-pin-vitest,onboard-negative-paths-vitest,inference-routing-vitest,credential-migration-vitest,runtime-overrides-vitest,hermes-e2e-vitest,hermes-root-entrypoint-smoke-vitest,network-policy-vitest,rebuild-openclaw-vitest,token-rotation-vitest,launchable-smoke-vitest,openclaw-tui-chat-correlation-vitest,gateway-guard-recovery,double-onboard-vitest,issue-4434-tui-unreachable-inference-vitest,model-router-provider-routed-inference-vitest,credential-sanitization-vitest"
           if [ -n "${JOBS}" ] && [ -n "${SCENARIOS}" ]; then
             echo "::error::Use either scenarios or jobs, not both." >&2
             exit 1
@@ -93,12 +93,12 @@ jobs:
           SCENARIOS: ${{ inputs.scenarios }}
         run: |
           set -euo pipefail
-          allowed_jobs="openshell-version-pin-vitest,onboard-negative-paths-vitest,inference-routing-vitest,credential-migration-vitest,runtime-overrides-vitest,hermes-e2e-vitest,hermes-root-entrypoint-smoke-vitest,network-policy-vitest,rebuild-openclaw-vitest,token-rotation-vitest,launchable-smoke-vitest,openclaw-tui-chat-correlation-vitest,gateway-guard-recovery,double-onboard-vitest,issue-4434-tui-unreachable-inference-vitest,model-router-provider-routed-inference-vitest"
+          allowed_jobs="openshell-version-pin-vitest,onboard-negative-paths-vitest,inference-routing-vitest,credential-migration-vitest,runtime-overrides-vitest,hermes-e2e-vitest,hermes-root-entrypoint-smoke-vitest,network-policy-vitest,rebuild-openclaw-vitest,token-rotation-vitest,launchable-smoke-vitest,openclaw-tui-chat-correlation-vitest,gateway-guard-recovery,double-onboard-vitest,issue-4434-tui-unreachable-inference-vitest,model-router-provider-routed-inference-vitest,credential-sanitization-vitest"
           args=(--emit-live-matrix)
           matrix=""
           hermes_selected=false
           registry_scenarios=()
-          free_standing_scenarios=(openshell-version-pin onboard-negative-paths inference-routing runtime-overrides hermes-e2e hermes-root-entrypoint-smoke network-policy rebuild-openclaw token-rotation openclaw-tui-chat-correlation double-onboard issue-4434-tui-unreachable-inference model-router-provider-routed-inference)
+          free_standing_scenarios=(openshell-version-pin onboard-negative-paths inference-routing runtime-overrides hermes-e2e hermes-root-entrypoint-smoke network-policy rebuild-openclaw token-rotation openclaw-tui-chat-correlation double-onboard issue-4434-tui-unreachable-inference model-router-provider-routed-inference credential-sanitization)
           is_free_standing_scenario() {
             local id="$1"
             local known
@@ -144,6 +144,9 @@ jobs:
                   hermes_selected=true
                   ;;
               esac
+              if [[ "${scenario}" == "credential-sanitization" ]]; then
+                continue
+              fi
               if is_free_standing_scenario "${scenario}"; then
                 continue
               fi
@@ -549,6 +552,90 @@ jobs:
           include-hidden-files: false
           if-no-files-found: ignore
           retention-days: 14
+
+
+  credential-sanitization-vitest:
+    needs: [validate-jobs, generate-matrix]
+    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',credential-sanitization-vitest,') || contains(format(',{0},', inputs.scenarios), ',credential-sanitization,') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    env:
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/credential-sanitization
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_SANDBOX_NAME: "e2e-credential-sanitization"
+      OPENSHELL_GATEWAY: "nemoclaw"
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Authenticate to Docker Hub
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          login_succeeded=0
+          for attempt in 1 2 3; do
+            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
+              login_succeeded=1
+              break
+            fi
+            if [[ "$attempt" -lt 3 ]]; then
+              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
+              sleep 5
+            fi
+          done
+          if [[ "$login_succeeded" -ne 1 ]]; then
+            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
+          fi
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build CLI
+        run: npm run build:cli
+
+      - name: Run credential sanitization live test
+        # Migrated from test/e2e/test-credential-sanitization.sh. Preserves the
+        # same ubuntu-latest + Docker/OpenShell + NVIDIA_API_KEY lane by running
+        # install.sh, onboarding a real sandbox, and probing sandbox state from
+        # Vitest while fixture redaction owns evidence logs.
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+        run: |
+          set -euo pipefail
+          npx vitest run --project e2e-scenarios-live \
+            test/e2e-scenario/live/credential-sanitization.test.ts \
+            --silent=false --reporter=default
+
+      - name: Upload credential sanitization artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-vitest-scenarios-credential-sanitization
+          path: e2e-artifacts/vitest/credential-sanitization/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: |
+          docker logout docker.io >/dev/null 2>&1 || true
 
 
   credential-migration-vitest:
@@ -1401,6 +1488,7 @@ jobs:
         launchable-smoke-vitest,
         double-onboard-vitest,
         model-router-provider-routed-inference-vitest,
+        credential-sanitization-vitest,
         openclaw-tui-chat-correlation-vitest,
         gateway-guard-recovery,
         issue-4434-tui-unreachable-inference-vitest,
