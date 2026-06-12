@@ -369,6 +369,81 @@ describe("CLI dispatch", () => {
     }
   });
 
+  it("selects the sandbox persisted gateway before provider cleanup and delete", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-destroy-select-gateway-"));
+    const localBin = path.join(home, "bin");
+    const registryDir = path.join(home, ".nemoclaw");
+    const openshellLog = path.join(home, "openshell.log");
+    const activeGateway = path.join(home, "active-gateway");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.mkdirSync(registryDir, { recursive: true });
+    fs.writeFileSync(activeGateway, "other-gateway\n");
+    fs.writeFileSync(
+      path.join(registryDir, "sandboxes.json"),
+      JSON.stringify({
+        sandboxes: {
+          alpha: {
+            name: "alpha",
+            model: "test-model",
+            provider: "nvidia-prod",
+            gpuEnabled: false,
+            policies: [],
+            gatewayName: "nemoclaw-8081",
+            gatewayPort: 8081,
+          },
+        },
+        defaultSandbox: "alpha",
+      }),
+      { mode: 0o600 },
+    );
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/bin/sh",
+        `log_file=${JSON.stringify(openshellLog)}`,
+        `active_gateway=${JSON.stringify(activeGateway)}`,
+        'printf \'%s\\n\' "$*" >> "$log_file"',
+        'if [ "$1" = "gateway" ] && [ "$2" = "select" ]; then',
+        '  printf "%s\\n" "$3" > "$active_gateway"',
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "sandbox" ] && [ "$2" = "delete" ]; then',
+        '  active="$(cat "$active_gateway")"',
+        '  if [ "$active" != "nemoclaw-8081" ]; then',
+        '    printf "wrong gateway: %s\\n" "$active" >&2',
+        "    exit 42",
+        "  fi",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
+        '  active="$(cat "$active_gateway")"',
+        '  if [ "$active" != "nemoclaw-8081" ]; then',
+        '    printf "wrong list gateway: %s\\n" "$active" >&2',
+        "    exit 43",
+        "  fi",
+        '  printf "NAME STATUS\\n"',
+        "  exit 0",
+        "fi",
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(path.join(localBin, "docker"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+
+    const r = runWithEnv("alpha destroy --yes", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
+
+    expect(r.code, r.out).toBe(0);
+    const lines = fs.readFileSync(openshellLog, "utf8").trim().split("\n");
+    const selectIndex = lines.indexOf("gateway select nemoclaw-8081");
+    const deleteIndex = lines.indexOf("sandbox delete alpha");
+    expect(selectIndex).toBeGreaterThanOrEqual(0);
+    expect(deleteIndex).toBeGreaterThan(selectIndex);
+    expect(lines.slice(deleteIndex + 1)).toContain("sandbox list");
+  });
+
   it("fails destroy when openshell sandbox delete returns a real error", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-destroy-failure-"));
     const localBin = path.join(home, "bin");

@@ -5,7 +5,10 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
-import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
+import {
+  OPENSHELL_OPERATION_TIMEOUT_MS,
+  OPENSHELL_PROBE_TIMEOUT_MS,
+} from "../../adapters/openshell/timeouts";
 import { CLI_NAME } from "../../cli/branding";
 import { G, R, YW } from "../../cli/terminal-style";
 import { DASHBOARD_PORT } from "../../core/ports";
@@ -52,6 +55,11 @@ type RemoveSandboxRegistryEntryDeps = {
 };
 
 type RunOpenshell = (args: string[], opts?: Record<string, unknown>) => { status: number | null };
+
+type DestroyRunOpenshell = (
+  args: string[],
+  opts?: Record<string, unknown>,
+) => { status: number | null; stdout?: string; stderr?: string };
 
 export type CleanupSandboxServicesDeps = {
   getSandbox?: typeof registry.getSandbox;
@@ -174,6 +182,28 @@ function hasNoLiveSandboxes(): boolean {
     return false;
   }
   return parseLiveSandboxNames(liveList.output).size === 0;
+}
+
+function selectGatewayForSandboxDestroy(
+  sandboxName: string,
+  gatewayName: string,
+  runOpenshell: DestroyRunOpenshell,
+): void {
+  const result = runOpenshell(["gateway", "select", gatewayName], {
+    ignoreError: true,
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
+  });
+  if (result.status === 0) return;
+
+  const output = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
+  if (output) {
+    console.error(`  ${output}`);
+  }
+  console.error(
+    `  Failed to select gateway '${gatewayName}' before destroying sandbox '${sandboxName}'.`,
+  );
+  process.exit(result.status || 1);
 }
 
 export function cleanupSandboxServices(
@@ -403,11 +433,13 @@ export async function destroySandbox(
 
   console.log(`  Deleting sandbox '${sandboxName}'...`);
   const { runOpenshell } = require("../../adapters/openshell/runtime") as {
-    runOpenshell: (
-      args: string[],
-      opts?: Record<string, unknown>,
-    ) => { status: number | null; stdout?: string; stderr?: string };
+    runOpenshell: DestroyRunOpenshell;
   };
+  // Capture and select the sandbox's gateway before any destructive OpenShell
+  // operation. Provider cleanup and sandbox delete must address the gateway
+  // recorded for this sandbox, not whichever gateway happens to be active.
+  const cleanupGatewayName = resolveSandboxGatewayName(sb);
+  selectGatewayForSandboxDestroy(sandboxName, cleanupGatewayName, runOpenshell);
   const detachOutcome = runSandboxProviderPreDeleteCleanup(sandboxName, {
     runOpenshell,
     redact,
@@ -437,10 +469,9 @@ export async function destroySandbox(
     stopHostServices: shouldStopHostServices,
   });
   cleanupShieldsDestroyArtifacts(sandboxName);
-  // Capture the sandbox's gateway BEFORE the registry entry is removed —
+  // The sandbox's gateway was captured before the registry entry is removed —
   // post-removal lookups return null and would collapse the cleanup target
   // back to the default gateway (#4865).
-  const cleanupGatewayName = resolveSandboxGatewayName(sb);
   const removed = removeSandboxRegistryEntry(sandboxName);
   const session = onboardSession.loadSession();
   if (session && session.sandboxName === sandboxName) {
