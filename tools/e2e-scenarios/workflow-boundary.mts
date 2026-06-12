@@ -1251,6 +1251,107 @@ function validateOnboardNegativePathsVitestJob(errors: string[], jobs: WorkflowR
   }
 }
 
+function validateCloudInferenceVitestJob(errors: string[], jobs: WorkflowRecord): void {
+  const jobName = "cloud-inference-vitest";
+  const job = asRecord(jobs[jobName]);
+  if (Object.keys(job).length === 0) {
+    errors.push("workflow missing cloud-inference-vitest job");
+    return;
+  }
+
+  if (job["runs-on"] !== "ubuntu-latest") {
+    errors.push("cloud-inference-vitest job must run on ubuntu-latest");
+  }
+  validateFreeStandingJobSelector(errors, jobs, jobName, "cloud-inference");
+  if (job["timeout-minutes"] !== 50) {
+    errors.push("cloud-inference-vitest job must keep the 50 minute timeout");
+  }
+
+  const jobEnv = asRecord(job.env);
+  if (
+    jobEnv.E2E_ARTIFACT_DIR !==
+    "${{ github.workspace }}/e2e-artifacts/vitest/cloud-inference"
+  ) {
+    errors.push(
+      "cloud-inference-vitest job must write artifacts under e2e-artifacts/vitest/cloud-inference",
+    );
+  }
+  if (jobEnv.NEMOCLAW_CLI_BIN !== "${{ github.workspace }}/bin/nemoclaw.js") {
+    errors.push("cloud-inference-vitest job must point NEMOCLAW_CLI_BIN at the repo CLI");
+  }
+  if (jobEnv.NEMOCLAW_RUN_E2E_SCENARIOS !== "1") {
+    errors.push("cloud-inference-vitest job must set NEMOCLAW_RUN_E2E_SCENARIOS=1");
+  }
+  if (jobEnv.NEMOCLAW_SANDBOX_NAME !== "e2e-cloud-inference") {
+    errors.push("cloud-inference-vitest job must set NEMOCLAW_SANDBOX_NAME=e2e-cloud-inference");
+  }
+  if (jobEnv.OPENSHELL_GATEWAY !== "nemoclaw") {
+    errors.push("cloud-inference-vitest job must force OPENSHELL_GATEWAY=nemoclaw");
+  }
+  requireEnvDoesNotExposeSecret(errors, "cloud-inference-vitest job", jobEnv, "NVIDIA_API_KEY");
+
+  const steps = asSteps(job.steps);
+  requireNoDispatchInputInterpolation(errors, steps);
+  for (const step of steps) {
+    if (step.name !== "Run cloud inference live test") {
+      requireEnvDoesNotExposeSecret(
+        errors,
+        `cloud-inference-vitest step '${step.name ?? step.uses ?? "<unnamed>"}'`,
+        asRecord(step.env),
+        "NVIDIA_API_KEY",
+      );
+    }
+  }
+
+  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
+  if (!checkout) errors.push("cloud-inference-vitest job missing checkout step");
+  requireFullShaAction(errors, checkout, "cloud-inference-vitest checkout");
+  if (asRecord(checkout?.with)["persist-credentials"] !== false) {
+    errors.push("cloud-inference-vitest checkout step must set persist-credentials=false");
+  }
+
+  const setupNode = namedStep(steps, "Set up Node");
+  if (!setupNode) errors.push("cloud-inference-vitest job missing step: Set up Node");
+  requireFullShaAction(errors, setupNode, "cloud-inference-vitest setup-node");
+
+  const installRootDependencies = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Install root dependencies",
+  );
+  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
+
+  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
+  requireRunContains(errors, buildCli, "npm run build:cli");
+
+  const runVitest = requireJobStep(errors, jobName, steps, "Run cloud inference live test");
+  const runVitestEnv = asRecord(runVitest?.env);
+  if (runVitestEnv.NVIDIA_API_KEY !== "${{ secrets.NVIDIA_API_KEY }}") {
+    errors.push("cloud-inference-vitest run step must receive NVIDIA_API_KEY from secrets");
+  }
+  requireRunContains(errors, runVitest, "npx vitest run --project e2e-scenarios-live");
+  requireRunContains(errors, runVitest, "test/e2e-scenario/live/cloud-inference.test.ts");
+
+  const upload = requireJobStep(errors, jobName, steps, "Upload cloud inference artifacts");
+  requireFullShaAction(errors, upload, "cloud-inference-vitest upload-artifact");
+  const uploadWith = asRecord(upload?.with);
+  if (uploadWith.name !== "e2e-vitest-scenarios-cloud-inference") {
+    errors.push("cloud-inference-vitest artifact upload name must be stable");
+  }
+  const uploadPath = stringValue(uploadWith.path);
+  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/vitest/cloud-inference/");
+  if (uploadWith["include-hidden-files"] !== false) {
+    errors.push("cloud-inference-vitest artifact upload must set include-hidden-files: false");
+  }
+  if (uploadWith["if-no-files-found"] !== "ignore") {
+    errors.push("cloud-inference-vitest artifact upload must ignore missing fixture artifacts");
+  }
+  if (uploadWith["retention-days"] !== 14) {
+    errors.push("cloud-inference-vitest artifact upload retention-days must be 14");
+  }
+}
+
 function requireNoDockerHubAuthInRun(
   errors: string[],
   owner: string,
@@ -2110,6 +2211,7 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   validateSkillAgentVitestJob(errors, jobs);
   validateFreeStandingJobSelector(errors, jobs, "credential-migration-vitest");
   validateFreeStandingJobSelector(errors, jobs, "inference-routing-vitest", "inference-routing");
+  validateCloudInferenceVitestJob(errors, jobs);
   validateRuntimeOverridesVitestJob(errors, jobs);
   validateDoubleOnboardVitestJob(errors, jobs);
   validateHermesE2EVitestJob(errors, jobs);
