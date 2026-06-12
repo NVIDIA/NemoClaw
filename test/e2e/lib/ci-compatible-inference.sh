@@ -7,6 +7,9 @@
 # of the public NVIDIA Endpoints provider. Keep this helper in test/e2e so the
 # product-facing provider/default endpoint remain unchanged.
 
+NEMOCLAW_E2E_COMPATIBLE_INFERENCE_MODEL_DEFAULT="nvidia/nvidia/nemotron-3-super-v3"
+NEMOCLAW_E2E_NVIDIA_INFERENCE_MODEL_DEFAULT="nvidia/nemotron-3-super-120b-a12b"
+
 nemoclaw_e2e_using_compatible_inference() {
   [ "${NEMOCLAW_E2E_USE_NVIDIA_SECRET_AS_COMPATIBLE:-}" = "1" ]
 }
@@ -18,7 +21,7 @@ nemoclaw_e2e_configure_compatible_inference() {
 
   export NEMOCLAW_PROVIDER="${NEMOCLAW_PROVIDER:-custom}"
   export NEMOCLAW_ENDPOINT_URL="${NEMOCLAW_ENDPOINT_URL:-https://inference-api.nvidia.com/v1}"
-  export NEMOCLAW_MODEL="${NEMOCLAW_MODEL:-${NEMOCLAW_CLOUD_EXPERIMENTAL_MODEL:-nvidia/nemotron-3-super-120b-a12b}}"
+  export NEMOCLAW_MODEL="${NEMOCLAW_MODEL:-${NEMOCLAW_CLOUD_EXPERIMENTAL_MODEL:-$NEMOCLAW_E2E_COMPATIBLE_INFERENCE_MODEL_DEFAULT}}"
   export NEMOCLAW_COMPAT_MODEL="${NEMOCLAW_COMPAT_MODEL:-$NEMOCLAW_MODEL}"
 
   if [ -z "${COMPATIBLE_API_KEY:-}" ] && [ -n "${NVIDIA_INFERENCE_API_KEY:-}" ]; then
@@ -43,7 +46,11 @@ nemoclaw_e2e_hosted_inference_base_url() {
 }
 
 nemoclaw_e2e_hosted_inference_model() {
-  printf '%s' "${NEMOCLAW_MODEL:-${NEMOCLAW_CLOUD_EXPERIMENTAL_MODEL:-nvidia/nemotron-3-super-120b-a12b}}"
+  if nemoclaw_e2e_using_compatible_inference; then
+    printf '%s' "${NEMOCLAW_MODEL:-${NEMOCLAW_CLOUD_EXPERIMENTAL_MODEL:-$NEMOCLAW_E2E_COMPATIBLE_INFERENCE_MODEL_DEFAULT}}"
+  else
+    printf '%s' "${NEMOCLAW_MODEL:-${NEMOCLAW_CLOUD_EXPERIMENTAL_MODEL:-$NEMOCLAW_E2E_NVIDIA_INFERENCE_MODEL_DEFAULT}}"
+  fi
 }
 
 nemoclaw_e2e_require_hosted_inference_key() {
