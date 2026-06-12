@@ -40,7 +40,7 @@ jobs:
           SCENARIOS: ${{ inputs.scenarios }}
         run: |
           set -euo pipefail
-          allowed_jobs="openshell-version-pin-vitest,onboard-negative-paths-vitest,inference-routing-vitest,credential-migration-vitest,runtime-overrides-vitest,hermes-e2e-vitest,hermes-root-entrypoint-smoke-vitest,network-policy-vitest,rebuild-openclaw-vitest,token-rotation-vitest,launchable-smoke-vitest,openclaw-tui-chat-correlation-vitest,gateway-guard-recovery,double-onboard-vitest,issue-4434-tui-unreachable-inference-vitest,model-router-provider-routed-inference-vitest,sandbox-survival-vitest"
+          allowed_jobs="openshell-version-pin-vitest,onboard-negative-paths-vitest,skill-agent-vitest,inference-routing-vitest,credential-migration-vitest,runtime-overrides-vitest,hermes-e2e-vitest,hermes-root-entrypoint-smoke-vitest,network-policy-vitest,rebuild-openclaw-vitest,token-rotation-vitest,launchable-smoke-vitest,openclaw-tui-chat-correlation-vitest,gateway-guard-recovery,double-onboard-vitest,issue-4434-tui-unreachable-inference-vitest,model-router-provider-routed-inference-vitest,sandbox-survival-vitest"
           if [ -n "${JOBS}" ] && [ -n "${SCENARIOS}" ]; then
             echo "::error::Use either scenarios or jobs, not both." >&2
             exit 1
@@ -93,12 +93,12 @@ jobs:
           SCENARIOS: ${{ inputs.scenarios }}
         run: |
           set -euo pipefail
-          allowed_jobs="openshell-version-pin-vitest,onboard-negative-paths-vitest,inference-routing-vitest,credential-migration-vitest,runtime-overrides-vitest,hermes-e2e-vitest,hermes-root-entrypoint-smoke-vitest,network-policy-vitest,rebuild-openclaw-vitest,token-rotation-vitest,launchable-smoke-vitest,openclaw-tui-chat-correlation-vitest,gateway-guard-recovery,double-onboard-vitest,issue-4434-tui-unreachable-inference-vitest,model-router-provider-routed-inference-vitest,sandbox-survival-vitest"
+          allowed_jobs="openshell-version-pin-vitest,onboard-negative-paths-vitest,skill-agent-vitest,inference-routing-vitest,credential-migration-vitest,runtime-overrides-vitest,hermes-e2e-vitest,hermes-root-entrypoint-smoke-vitest,network-policy-vitest,rebuild-openclaw-vitest,token-rotation-vitest,launchable-smoke-vitest,openclaw-tui-chat-correlation-vitest,gateway-guard-recovery,double-onboard-vitest,issue-4434-tui-unreachable-inference-vitest,model-router-provider-routed-inference-vitest,sandbox-survival-vitest"
           args=(--emit-live-matrix)
           matrix=""
           hermes_selected=false
           registry_scenarios=()
-          free_standing_scenarios=(openshell-version-pin onboard-negative-paths inference-routing runtime-overrides hermes-e2e hermes-root-entrypoint-smoke network-policy rebuild-openclaw token-rotation openclaw-tui-chat-correlation double-onboard issue-4434-tui-unreachable-inference model-router-provider-routed-inference sandbox-survival)
+          free_standing_scenarios=(openshell-version-pin onboard-negative-paths skill-agent inference-routing runtime-overrides hermes-e2e hermes-root-entrypoint-smoke network-policy rebuild-openclaw token-rotation openclaw-tui-chat-correlation double-onboard issue-4434-tui-unreachable-inference model-router-provider-routed-inference sandbox-survival)
           is_free_standing_scenario() {
             local id="$1"
             local known
@@ -359,6 +359,108 @@ jobs:
         with:
           name: e2e-vitest-scenarios-onboard-negative-paths
           path: e2e-artifacts/vitest/onboard-negative-paths/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # Focused coverage for test/e2e/test-skill-agent-e2e.sh's live skill
+  # injection + real OpenClaw agent-turn contract. The retained legacy bash
+  # lane remains in nightly-e2e.yaml until #5098 Phase 11 shell retirement.
+  skill-agent-vitest:
+    needs: [validate-jobs, generate-matrix]
+    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',skill-agent-vitest,') || contains(format(',{0},', inputs.scenarios), ',skill-agent,') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/skill-agent
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Authenticate to Docker Hub
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          login_succeeded=0
+          for attempt in 1 2 3; do
+            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
+              login_succeeded=1
+              break
+            fi
+            if [[ "$attempt" -lt 3 ]]; then
+              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
+              sleep 5
+            fi
+          done
+          if [[ "$login_succeeded" -ne 1 ]]; then
+            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
+          fi
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build CLI
+        run: npm run build:cli
+
+      - name: Install OpenShell CLI
+        # The migrated skill-agent lane invokes helper scripts that call
+        # `openshell` after the repo CLI onboard command has returned. Install
+        # and resolve OpenShell in the workflow parent so PATH/OPENSHELL_BIN is
+        # available to both Vitest and the bash helpers.
+        run: bash scripts/install-openshell.sh
+
+      - name: Run skill-agent live test
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
+          if command -v openshell >/dev/null 2>&1; then
+            OPENSHELL_BIN="$(command -v openshell)"
+          elif [ -x "$HOME/.local/bin/openshell" ]; then
+            OPENSHELL_BIN="$HOME/.local/bin/openshell"
+          else
+            echo "::error::OpenShell CLI not found after install"
+            ls -la /usr/local/bin/openshell "$HOME/.local/bin/openshell" 2>&1 || true
+            exit 1
+          fi
+          export OPENSHELL_BIN
+          echo "Using OPENSHELL_BIN=$OPENSHELL_BIN"
+          "$OPENSHELL_BIN" --version
+          npx vitest run --project e2e-scenarios-live \
+            test/e2e-scenario/live/skill-agent.test.ts \
+            --silent=false --reporter=default
+
+      - name: Upload skill-agent artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-vitest-scenarios-skill-agent
+          path: |
+            e2e-artifacts/vitest/skill-agent/*/artifact-summary.json
+            e2e-artifacts/vitest/skill-agent/*/cleanup.json
+            e2e-artifacts/vitest/skill-agent/*/cleanup-skill-agent-summary.json
+            e2e-artifacts/vitest/skill-agent/*/scenario.json
+            e2e-artifacts/vitest/skill-agent/*/scenario-result.json
+            e2e-artifacts/vitest/skill-agent/*/shell/*.result.json
+            e2e-artifacts/vitest/skill-agent/*/shell/*.stdout.txt
+            e2e-artifacts/vitest/skill-agent/*/shell/*.stderr.txt
           include-hidden-files: false
           if-no-files-found: ignore
           retention-days: 14
@@ -1123,7 +1225,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
-      DOCKER_CONFIG: ${{ github.workspace }}/.docker-config-model-router-provider-routed-inference
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/model-router-provider-routed-inference
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
@@ -1132,6 +1233,9 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
+
+      - name: Configure isolated Docker auth directory
+        run: echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-model-router-provider-routed-inference" >> "$GITHUB_ENV"
 
       - name: Authenticate to Docker Hub
         env:
@@ -1475,6 +1579,7 @@ jobs:
         live-scenarios,
         openshell-version-pin-vitest,
         onboard-negative-paths-vitest,
+        skill-agent-vitest,
         inference-routing-vitest,
         credential-migration-vitest,
         runtime-overrides-vitest,
