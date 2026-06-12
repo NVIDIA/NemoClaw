@@ -345,7 +345,11 @@ RUN_SHIELDS_TEST(
       artifactName: "phase-4-config-get-dotpath",
       redactionValues: [apiKey],
     });
-    if (dotpath.exitCode === 0 && dotpath.stdout.trim() !== "" && dotpath.stdout.trim() !== "null") {
+    if (
+      dotpath.exitCode === 0 &&
+      dotpath.stdout.trim() !== "" &&
+      dotpath.stdout.trim() !== "null"
+    ) {
       expect(dotpath.stdout).not.toMatch(/nvapi-|sk-|Bearer /);
     } else {
       await artifacts.writeJson("phase-4-dotpath-non-fatal.json", {
