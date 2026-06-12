@@ -3,7 +3,9 @@
 
 import { CLI_NAME } from "../cli/branding";
 import type { GatewayInference } from "../inference/config";
+import { getActiveChannelIdsFromPlan } from "../messaging/plan-validation";
 import { redactFull } from "../security/redact";
+import type { SandboxMessagingState } from "../state/registry";
 import { resolveDefaultSandboxName } from "../tunnel/service-command";
 
 export interface SandboxEntry {
@@ -18,7 +20,7 @@ export interface SandboxEntry {
   openshellDriver?: string | null;
   openshellVersion?: string | null;
   policies?: string[] | null;
-  messagingChannels?: string[] | null;
+  messaging?: SandboxMessagingState | null;
   agent?: string | null;
   dashboardPort?: number | null;
 }
@@ -118,7 +120,7 @@ export interface ShowStatusCommandDeps {
    */
   getGatewayHealth?: () => GatewayHealth;
   checkMessagingBridgeHealth?: (sandboxName: string, channels: string[]) => MessagingBridgeHealth[];
-  backfillAndFindOverlaps?: () => MessagingOverlap[];
+  findMessagingOverlaps?: () => MessagingOverlap[];
   readGatewayLog?: (sandboxName: string) => string | null;
   log?: (message?: string) => void;
 }
@@ -472,8 +474,8 @@ export function showStatusCommand(deps: ShowStatusCommandDeps): void {
 
   deps.showServiceStatus({ sandboxName: resolvedDefault || undefined });
 
-  if (deps.backfillAndFindOverlaps) {
-    const overlaps = deps.backfillAndFindOverlaps();
+  if (deps.findMessagingOverlaps) {
+    const overlaps = deps.findMessagingOverlaps();
     if (overlaps.length > 0) {
       log("");
       for (const { channel, sandboxes: pair, reason } of overlaps) {
@@ -498,13 +500,10 @@ export function showStatusCommand(deps: ShowStatusCommandDeps): void {
   }
 
   if (deps.checkMessagingBridgeHealth && resolvedDefault) {
-    // Re-fetch: backfillAndFindOverlaps above may have populated
-    // messagingChannels for the default sandbox on first run after upgrade,
-    // and the original `sandboxes` snapshot is stale.
     const refreshed = deps.listSandboxes().sandboxes;
     const defaultEntry = refreshed.find((sb) => sb.name === resolvedDefault);
-    const channels = defaultEntry?.messagingChannels;
-    if (Array.isArray(channels) && channels.length > 0) {
+    const channels = getActiveChannelIdsFromPlan(defaultEntry?.messaging?.plan);
+    if (channels.length > 0) {
       const degraded = deps.checkMessagingBridgeHealth(resolvedDefault, channels);
       if (degraded.length > 0) {
         log("");

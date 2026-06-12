@@ -131,7 +131,7 @@ register_sandbox_for_teardown "$SANDBOX_NAME"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
-if [ "$(uname -s)" = "Linux" ] && grep -q 'return platform === "linux";' "$REPO_ROOT/src/lib/onboard.ts"; then
+if [ "$(uname -s)" = "Linux" ] && grep -q 'platform === "linux"' "$REPO_ROOT/src/lib/onboard/docker-driver-platform.ts"; then
   section "Applicability"
   skip "OpenShell Docker-driver onboarding is active on Linux; k3s overlayfs auto-fix is not in the runtime path"
   print_summary
