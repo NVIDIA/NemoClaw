@@ -33,6 +33,11 @@ import { loadAgent } from "../agent/defs.js";
 import { isRecord, type UnknownRecord } from "../core/json-types.js";
 import { shellQuote } from "../runner.js";
 import { isSensitiveFile, sanitizeConfigFile } from "../security/credential-filter.js";
+import {
+  buildOpenClawConfigRestoreInputFromSandbox,
+  shouldMergeOpenClawConfigStateFile,
+} from "./openclaw-config-restore-input.js";
+import type { CustomPolicyEntry } from "./registry.js";
 import * as registry from "./registry.js";
 import { runTarListing } from "./tar-listing.js";
 
@@ -65,6 +70,15 @@ export interface RebuildManifest {
   backupPath: string;
   blueprintDigest: string | null;
   policyPresets?: string[];
+  /**
+   * Custom policy presets applied via `--from-file`/`--from-dir`, captured with
+   * full content so they can be re-applied on restore without the source file.
+   * Like `policyPresets`, these live in the gateway policy engine and are
+   * otherwise lost on destroy/recreate. Always present on snapshots created since
+   * this field was added (possibly an empty array, so restore can reconcile a
+   * zero-custom snapshot); absent only on legacy manifests.
+   */
+  customPolicies?: CustomPolicyEntry[];
   instances?: InstanceBackup[];
   // Optional user-provided label for `snapshot restore <name>`.
   name?: string;
@@ -150,6 +164,19 @@ function isInstanceBackup(value: unknown): value is InstanceBackup {
   );
 }
 
+function isCustomPolicyEntryArray(value: unknown): value is CustomPolicyEntry[] {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (entry) =>
+        typeof entry === "object" &&
+        entry !== null &&
+        typeof (entry as { name?: unknown }).name === "string" &&
+        typeof (entry as { content?: unknown }).content === "string",
+    )
+  );
+}
+
 function isRebuildManifest(value: unknown): value is RebuildManifest {
   if (!isRecord(value) || !isStateDirArray(value.stateDirs)) return false;
   return (
@@ -168,6 +195,7 @@ function isRebuildManifest(value: unknown): value is RebuildManifest {
       value.blueprintDigest === null ||
       typeof value.blueprintDigest === "string") &&
     (value.policyPresets === undefined || isStringArray(value.policyPresets)) &&
+    (value.customPolicies === undefined || isCustomPolicyEntryArray(value.customPolicies)) &&
     (value.instances === undefined ||
       (Array.isArray(value.instances) &&
         value.instances.every((entry) => isInstanceBackup(entry)))) &&
@@ -537,7 +565,7 @@ function sanitizeBackupDirectory(dirPath: string): void {
 
 const _verbose = () => process.env.NEMOCLAW_REBUILD_VERBOSE === "1";
 
-// Exact symlinks baked into the base image at build time (Dockerfile.base) by
+// Exact symlinks baked into OpenClaw messaging images at build time by
 // `openclaw plugins install`. Source paths are relative to the agent state-dir
 // root (e.g. for OpenClaw, /sandbox/.openclaw); targets are matched exactly
 // against the value of `readlink(source)`. Source-only matching is unsafe: a
@@ -856,7 +884,11 @@ function backupStateFile(
   return "backed_up";
 }
 
-function buildStateFileRestoreCommand(dir: string, spec: StateFileSpec): string {
+function buildStateFileRestoreCommand(
+  dir: string,
+  spec: StateFileSpec,
+  refreshOpenClawConfigHash = false,
+): string {
   const remotePath = stateFileRemotePath(dir, spec.path);
   const quotedRemotePath = shellQuote(remotePath);
   if (spec.strategy === "sqlite_backup") {
@@ -874,7 +906,7 @@ function buildStateFileRestoreCommand(dir: string, spec: StateFileSpec): string 
     ].join("; ");
   }
 
-  return [
+  const steps = [
     `dst=${quotedRemotePath}`,
     'parent="$(dirname "$dst")"',
     '[ ! -L "$parent" ] || { echo "refusing symlinked state parent: $parent" >&2; exit 10; }',
@@ -885,7 +917,42 @@ function buildStateFileRestoreCommand(dir: string, spec: StateFileSpec): string 
     'cat > "$tmp"',
     'chmod 640 "$tmp"',
     'mv -f "$tmp" "$dst"',
-  ].join("; ");
+  ];
+
+  if (refreshOpenClawConfigHash) {
+    steps.push(
+      'hash_file="${parent}/.config-hash"',
+      '[ ! -L "$hash_file" ] || { echo "refusing symlinked config hash target: $hash_file" >&2; exit 12; }',
+      '(cd "$parent" && sha256sum "$(basename "$dst")" > .config-hash)',
+      'chmod 660 "$hash_file" 2>/dev/null || true',
+    );
+  }
+
+  return steps.join("; ");
+}
+
+function buildStateFileRestoreInput(
+  configFile: string,
+  sandboxName: string,
+  dir: string,
+  spec: StateFileSpec,
+  backupPath: string,
+  mergeOpenClawConfig: boolean,
+): Buffer | null {
+  const localPath = path.join(backupPath, spec.path);
+  const backupContents = readFileSync(localPath);
+  if (!mergeOpenClawConfig) return backupContents;
+
+  const result = buildOpenClawConfigRestoreInputFromSandbox({
+    backupContents,
+    dir,
+    log: _log,
+    specPath: spec.path,
+    sshArgs: sshArgs(configFile, sandboxName),
+  });
+  if (result.ok) return result.input;
+  _log(`FAILED: ${result.error}`);
+  return null;
 }
 
 function restoreStateFile(
@@ -894,14 +961,25 @@ function restoreStateFile(
   dir: string,
   spec: StateFileSpec,
   backupPath: string,
+  mergeOpenClawConfig = false,
 ): boolean {
   const localPath = path.join(backupPath, spec.path);
   if (!existsSync(localPath)) return true;
 
-  const command = buildStateFileRestoreCommand(dir, spec);
+  const command = buildStateFileRestoreCommand(dir, spec, mergeOpenClawConfig);
   _log(`Restoring state file ${spec.path} (${spec.strategy})`);
+  const input = buildStateFileRestoreInput(
+    configFile,
+    sandboxName,
+    dir,
+    spec,
+    backupPath,
+    mergeOpenClawConfig,
+  );
+  if (input === null) return false;
+
   const result = spawnSync("ssh", [...sshArgs(configFile, sandboxName), command], {
-    input: readFileSync(localPath),
+    input,
     stdio: ["pipe", "pipe", "pipe"],
     timeout: 120000,
   });
@@ -983,6 +1061,12 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
   // not on the sandbox filesystem, so they are lost on destroy/recreate.
   const policyPresets: string[] = sb?.policies && sb.policies.length > 0 ? [...sb.policies] : [];
   _log(`policyPresets from registry: [${policyPresets.join(",")}]`);
+  // Custom presets (--from-file/--from-dir) also live only in the gateway policy
+  // engine, so capture their full content for replay. Always record the field
+  // (even empty) so restore can tell a zero-custom snapshot (reconcile, remove
+  // any stale custom presets on the target) from a legacy snapshot (skip).
+  const customPolicies: CustomPolicyEntry[] = sb?.customPolicies ? [...sb.customPolicies] : [];
+  _log(`customPolicies from registry: [${customPolicies.map((c) => c.name).join(",")}]`);
 
   const manifest: RebuildManifest = {
     version: MANIFEST_VERSION,
@@ -997,6 +1081,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
     backupPath,
     blueprintDigest: computeBlueprintDigest(),
     policyPresets,
+    customPolicies,
     ...(providedName !== null ? { name: providedName } : {}),
   };
 
@@ -1476,7 +1561,16 @@ export function restoreSandboxState(sandboxName: string, backupPath: string): Re
     }
 
     for (const spec of localFiles) {
-      if (restoreStateFile(configFile, sandboxName, dir, spec, backupPath)) {
+      if (
+        restoreStateFile(
+          configFile,
+          sandboxName,
+          dir,
+          spec,
+          backupPath,
+          shouldMergeOpenClawConfigStateFile(manifest.agentType, dir, spec),
+        )
+      ) {
         restoredFiles.push(spec.path);
       } else {
         failedFiles.push(spec.path);

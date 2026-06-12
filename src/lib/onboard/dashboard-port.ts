@@ -15,7 +15,11 @@
 
 import { spawnSync } from "node:child_process";
 
-import { DASHBOARD_PORT_RANGE_END, DASHBOARD_PORT_RANGE_START } from "../core/ports";
+import {
+  DASHBOARD_PORT,
+  DASHBOARD_PORT_RANGE_END,
+  DASHBOARD_PORT_RANGE_START,
+} from "../core/ports";
 
 // runner.ts is still CommonJS — use require so module shape matches.
 const { runCapture } = require("../runner");
@@ -188,6 +192,77 @@ export function findAvailableDashboardPort(
     `All dashboard ports in range ${DASHBOARD_PORT_RANGE_START}-${DASHBOARD_PORT_RANGE_END} are occupied:\n${lines}\n` +
       `Free a sandbox or use --control-ui-port <N> with a port outside this range.`,
   );
+}
+
+export interface CreateSandboxDashboardPortInput {
+  sandboxName: string;
+  controlUiPort: number | null;
+  chatUiUrlEnv: string | null | undefined;
+  persistedPort: number | null;
+  agentForwardPort: number | null | undefined;
+  forwardListOutput: string | null;
+  defaultPort?: number;
+  findAvailablePort?: typeof findAvailableDashboardPort;
+  warn?: (message: string) => void;
+}
+
+export interface CreateSandboxDashboardPortResult {
+  preferredPort: number;
+  effectivePort: number;
+  chatUiUrl: string;
+}
+
+function normalizeChatUiUrlForParsing(chatUiUrl: string): string {
+  return chatUiUrl.includes("://") ? chatUiUrl : `http://${chatUiUrl}`;
+}
+
+function parseChatUiUrlPort(chatUiUrlEnv: string | null | undefined): number | null {
+  if (!chatUiUrlEnv) return null;
+  try {
+    const parsed = new URL(normalizeChatUiUrlForParsing(chatUiUrlEnv));
+    const port = Number(parsed.port);
+    return port > 0 ? port : null;
+  } catch {
+    return null;
+  }
+}
+
+function buildCreateSandboxChatUiUrl(
+  chatUiUrlEnv: string | null | undefined,
+  controlUiPort: number | null,
+  effectivePort: number,
+): string {
+  if (chatUiUrlEnv && controlUiPort == null) {
+    const parsed = new URL(normalizeChatUiUrlForParsing(chatUiUrlEnv));
+    parsed.port = String(effectivePort);
+    return parsed.toString().replace(/\/$/, "");
+  }
+  return `http://127.0.0.1:${effectivePort}`;
+}
+
+export function resolveCreateSandboxDashboardPort(
+  input: CreateSandboxDashboardPortInput,
+): CreateSandboxDashboardPortResult {
+  const preferredPort =
+    input.controlUiPort ??
+    parseChatUiUrlPort(input.chatUiUrlEnv) ??
+    input.persistedPort ??
+    input.agentForwardPort ??
+    input.defaultPort ??
+    DASHBOARD_PORT;
+  const effectivePort = (input.findAvailablePort ?? findAvailableDashboardPort)(
+    input.sandboxName,
+    preferredPort,
+    input.forwardListOutput,
+  );
+  if (effectivePort !== preferredPort) {
+    input.warn?.(`  ! Port ${preferredPort} is taken. Using port ${effectivePort} instead.`);
+  }
+  return {
+    preferredPort,
+    effectivePort,
+    chatUiUrl: buildCreateSandboxChatUiUrl(input.chatUiUrlEnv, input.controlUiPort, effectivePort),
+  };
 }
 
 /**

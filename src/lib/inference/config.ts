@@ -6,6 +6,7 @@
  * inference output parsing. All functions are pure.
  */
 
+import { shouldSkipResponsesProbe } from "../validation";
 import { DEFAULT_OLLAMA_MODEL } from "./local";
 
 export const INFERENCE_ROUTE_URL = "https://inference.local/v1";
@@ -186,6 +187,15 @@ export function getSandboxInferenceConfig(
   let primaryModelRef: string;
   let inferenceBaseUrl = INFERENCE_ROUTE_URL;
   let inferenceApi = preferredInferenceApi || "openai-completions";
+  // Providers without a /v1/responses endpoint must never be configured with the
+  // Responses API. On a provider switch the runtime API resolves to null and the
+  // caller falls back to the persisted (shared "inference") provider api, which
+  // can carry a prior provider's "openai-responses" over to e.g. nvidia-prod and
+  // 404 every request. Force completions here, mirroring how anthropic-prod
+  // forces anthropic-messages below.
+  if (provider && shouldSkipResponsesProbe(provider)) {
+    inferenceApi = "openai-completions";
+  }
   let inferenceCompat: Record<string, unknown> | null = null;
 
   switch (provider) {

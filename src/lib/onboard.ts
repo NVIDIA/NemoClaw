@@ -27,15 +27,20 @@ const {
   abortNonInteractive,
 }: typeof import("./onboard/non-interactive-abort") = require("./onboard/non-interactive-abort");
 const { stopStaleDashboardListenersForSandbox } = require("./onboard/stale-gateway-cleanup");
+const extraPlaceholderKeysModule: typeof import("./onboard/extra-placeholder-keys") = require("./onboard/extra-placeholder-keys");
+const buildContextStage: typeof import("./onboard/build-context-stage") = require("./onboard/build-context-stage");
+const sandboxBuildPatchConfig: typeof import("./onboard/sandbox-build-patch-config") = require("./onboard/sandbox-build-patch-config");
+const sandboxDockerfilePatchFlow: typeof import("./onboard/sandbox-dockerfile-patch-flow") = require("./onboard/sandbox-dockerfile-patch-flow");
+const sandboxMessagingPreflight: typeof import("./onboard/sandbox-messaging-preflight") = require("./onboard/sandbox-messaging-preflight");
+const sandboxCreatePlan: typeof import("./onboard/sandbox-create-plan") = require("./onboard/sandbox-create-plan");
+const sandboxCreateLaunch: typeof import("./onboard/sandbox-create-launch") = require("./onboard/sandbox-create-launch");
+const onboardEntryOptions: typeof import("./onboard/entry-options") = require("./onboard/entry-options");
+const onboardSessionBootstrap: typeof import("./onboard/session-bootstrap") = require("./onboard/session-bootstrap");
+const channelState: typeof import("./onboard/channel-state") = require("./onboard/channel-state");
 const {
   ensureOllamaLoopbackSystemdOverride,
 }: typeof import("./onboard/ollama-systemd") = require("./onboard/ollama-systemd");
 const { bestEffortForwardStop } = require("./onboard/forward-cleanup");
-const {
-  CUSTOM_BUILD_CONTEXT_WARN_BYTES,
-  createCustomBuildContextFilter,
-  isInsideIgnoredCustomBuildContextPath,
-}: typeof import("./onboard/custom-build-context") = require("./onboard/custom-build-context");
 const {
   buildCompatibleEndpointSandboxSmokeCommand,
   buildCompatibleEndpointSandboxSmokeScript,
@@ -51,6 +56,7 @@ const dockerGpuPatch: typeof import("./onboard/docker-gpu-patch") = require("./o
 const dockerGpuLocalInference: typeof import("./onboard/docker-gpu-local-inference") = require("./onboard/docker-gpu-local-inference");
 const dockerGpuSandboxCreate: typeof import("./onboard/docker-gpu-sandbox-create") = require("./onboard/docker-gpu-sandbox-create");
 const dockerDriverGatewayLaunch: typeof import("./onboard/docker-driver-gateway-launch") = require("./onboard/docker-driver-gateway-launch");
+const dockerDriverGatewayRuntime: typeof import("./onboard/docker-driver-gateway-runtime") = require("./onboard/docker-driver-gateway-runtime");
 const {
   findReadableNvidiaCdiSpecFiles,
   parseDockerCdiSpecDirs,
@@ -64,8 +70,6 @@ const {
   selectResourceProfileForSandbox,
 }: typeof import("./onboard/resource-profile-selection") = require("./onboard/resource-profile-selection");
 const {
-  isValidProxyHost,
-  isValidProxyPort,
   patchStagedDockerfile,
 }: typeof import("./onboard/dockerfile-patch") = require("./onboard/dockerfile-patch");
 const {
@@ -80,14 +84,19 @@ const {
 const {
   buildDirectGpuPolicyYaml,
   buildDirectSandboxGpuProofCommands,
-  prepareInitialSandboxCreatePolicy,
 }: typeof import("./onboard/initial-policy") = require("./onboard/initial-policy");
 const {
   getSelectionDrift,
 }: typeof import("./onboard/selection-drift") = require("./onboard/selection-drift");
 const {
-  resolveProviderKeyFallback,
-}: typeof import("./onboard/provider-key-fallback") = require("./onboard/provider-key-fallback");
+  resolveRequestedProviderSelection,
+}: typeof import("./onboard/provider-selection") = require("./onboard/provider-selection");
+const {
+  reportProviderSelectionFailure,
+}: typeof import("./onboard/provider-selection-failure") = require("./onboard/provider-selection-failure");
+const {
+  promptForInferenceProviderSelection,
+}: typeof import("./onboard/provider-selection-prompt") = require("./onboard/provider-selection-prompt");
 const {
   isLinuxDockerDriverGatewayEnabled,
 }: typeof import("./onboard/docker-driver-platform") = require("./onboard/docker-driver-platform");
@@ -102,7 +111,7 @@ const {
 }: typeof import("./onboard/e2e-failure-injection") = require("./onboard/e2e-failure-injection");
 const onboardTracing: typeof import("./onboard/tracing") = require("./onboard/tracing");
 const sandboxReadinessTracing: typeof import("./onboard/sandbox-readiness-tracing") = require("./onboard/sandbox-readiness-tracing");
-const { gatherWechatConfig, hasWechatConfigDrift, toSessionWechatConfig } =
+const { hasWechatConfigDrift } =
   require("./onboard/wechat-config") as typeof import("./onboard/wechat-config");
 const {
   setupMessagingChannels: setupMessagingChannelsImpl,
@@ -122,12 +131,6 @@ const {
 }: typeof import("./onboard/model-router-process") = require("./onboard/model-router-process");
 const bedrockRuntimeOnboard: typeof import("./onboard/bedrock-runtime") =
   require("./onboard/bedrock-runtime");
-const {
-  buildVllmMenuEntries,
-}: typeof import("./onboard/vllm-menu") = require("./onboard/vllm-menu");
-const {
-  detectWindowsHostOllama,
-}: typeof import("./onboard/windows-host-ollama") = require("./onboard/windows-host-ollama");
 const {
   installOllamaOnLinux,
 }: typeof import("./onboard/install-ollama-linux") = require("./onboard/install-ollama-linux");
@@ -157,7 +160,6 @@ const docker: typeof import("./adapters/docker") = require("./adapters/docker");
 const {
   dockerContainerInspectFormat,
   dockerExecArgv,
-  dockerImageInspect,
   dockerInfoFormat,
   dockerInspect,
   dockerRemoveVolumesByPrefix,
@@ -173,8 +175,6 @@ const {
   getStableGatewayImageRef,
   pullAndResolveBaseImageDigest,
 }: typeof import("./onboard/base-image") = require("./onboard/base-image");
-const errnoUtils: typeof import("./core/errno") = require("./core/errno");
-const { isErrnoException } = errnoUtils;
 const { requireValue }: typeof import("./core/require-value") = require("./core/require-value");
 const {
   logMissingNvidiaApiKeyHelp,
@@ -190,11 +190,6 @@ type RunnerOptions = {
 };
 
 const {
-  collectBuildContextStats,
-  stageOptimizedSandboxBuildContext,
-} = require("./sandbox/build-context");
-const { buildSubprocessEnv } = require("./subprocess-env");
-const {
   DASHBOARD_PORT,
   GATEWAY_PORT,
   VLLM_PORT,
@@ -203,22 +198,24 @@ const {
 } = require("./core/ports");
 const localInference: typeof import("./inference/local") = require("./inference/local");
 const {
-  findReachableOllamaHost,
   resetOllamaHostCache,
   getLocalProviderBaseUrl,
   getLocalProviderHealthCheck,
   getLocalProviderValidationBaseUrl,
   getOllamaModelOptions,
   getOllamaWarmupCommand,
-  OLLAMA_HOST_DOCKER_INTERNAL,
   validateLocalProvider,
 } = localInference;
 const {
   checkOllamaPortsOrWarn,
-  resolveOllamaInstallMenuEntry,
-  resolveRunningOllamaMenuEntry,
   assertOllamaUpgradeApplied,
 } = require("./onboard/ollama-install-menu");
+const {
+  buildInferenceProviderMenu,
+}: typeof import("./onboard/provider-menu") = require("./onboard/provider-menu");
+const {
+  detectInferenceProviderHostState,
+}: typeof import("./onboard/provider-host-state") = require("./onboard/provider-host-state");
 const {
   ensureOllamaAuthProxy,
   getOllamaProxyToken,
@@ -233,7 +230,7 @@ const {
   switchToWindowsOllamaHost,
   printWindowsOllamaTimeoutDiagnostics,
 } = require("./inference/ollama/windows");
-const { detectVllmProfile, installVllm } = require("./inference/vllm");
+const { installVllm } = require("./inference/vllm");
 const inferenceConfig: typeof import("./inference/config") = require("./inference/config");
 const { DEFAULT_CLOUD_MODEL, getProviderSelectionConfig, parseGatewayInference } = inferenceConfig;
 
@@ -307,7 +304,6 @@ const platformUtils: typeof import("./platform") = require("./platform");
 const { isWsl, shouldPatchCoredns } = platformUtils;
 const {
   getContainerRuntime,
-  getWindowsHostOllamaDockerRequirement,
   repairLocalInferenceSystemdOverrideOrExit,
   rejectUnsupportedWindowsHostOllama,
   shouldFrontOllamaWithProxy,
@@ -407,16 +403,19 @@ const {
   getRecordedMessagingChannelsForResume: getRecordedMessagingChannelsForResumeFromState,
 }: typeof import("./onboard/messaging-credentials") = require("./onboard/messaging-credentials");
 const {
-  collectMessagingBuildConfig,
   computeTelegramRequireMention,
   getStoredMessagingChannelConfig,
   messagingChannelConfigsEqual,
-  persistMessagingChannelConfigToSession,
 } = messagingConfig;
+const messagingPlanSession: typeof import("./onboard/messaging-plan-session") =
+  require("./onboard/messaging-plan-session");
+const { getChannelsFromPlan } = messagingPlanSession;
 const sandboxAgent: typeof import("./onboard/sandbox-agent") = require("./onboard/sandbox-agent");
 const sandboxLifecycle: typeof import("./onboard/sandbox-lifecycle") = require("./onboard/sandbox-lifecycle");
 const sandboxRegistryMetadata: typeof import("./onboard/sandbox-registry-metadata") = require("./onboard/sandbox-registry-metadata");
 const sandboxReuse: typeof import("./onboard/sandbox-reuse") = require("./onboard/sandbox-reuse");
+const sandboxRegistration: typeof import("./onboard/sandbox-registration") =
+  require("./onboard/sandbox-registration");
 const {
   RESERVED_SANDBOX_NAMES,
   formatSandboxAgentName,
@@ -474,8 +473,11 @@ const policyPresetCarry: typeof import("./onboard/policy-preset-persistence") = 
 const tiers: typeof import("./policy/tiers") = require("./policy/tiers");
 const policyTierEnv: typeof import("./onboard/policy-tier-env") = require("./onboard/policy-tier-env");
 const { ensureUsageNoticeConsent } = require("./onboard/usage-notice");
-const { findAvailableDashboardPort, preflightDashboardPortRangeAvailability } =
-  require("./onboard/dashboard-port") as typeof import("./onboard/dashboard-port");
+const {
+  findAvailableDashboardPort,
+  preflightDashboardPortRangeAvailability,
+  resolveCreateSandboxDashboardPort,
+} = require("./onboard/dashboard-port") as typeof import("./onboard/dashboard-port");
 const { tryCleanupOrphanedDashboardForward } =
   require("./onboard/orphaned-dashboard-forward") as typeof import("./onboard/orphaned-dashboard-forward");
 const { destroyGatewayForReuse } =
@@ -513,7 +515,6 @@ const { getDockerDriverGatewayEndpoint } = dockerDriverGatewayEnv;
 const dockerDriverGatewayRuntimeMarker: typeof import("./onboard/docker-driver-gateway-runtime-marker") =
   require("./onboard/docker-driver-gateway-runtime-marker");
 const gatewayBinding: typeof import("./onboard/gateway-binding") = require("./onboard/gateway-binding");
-const vmDriverProcess: typeof import("./onboard/vm-driver-process") = require("./onboard/vm-driver-process");
 const preflightUtils: typeof import("./onboard/preflight") = require("./onboard/preflight");
 const clusterImagePatch: typeof import("./cluster-image-patch") = require("./cluster-image-patch");
 const { assessHost, checkPortAvailable, ensureSwap, getMemoryInfo, planHostRemediation } =
@@ -548,7 +549,6 @@ import type { WebSearchConfig } from "./inference/web-search";
 import {
   hydrateMessagingChannelConfig,
   type MessagingChannelConfig,
-  readMessagingChannelConfigFromEnv,
 } from "./messaging-channel-config";
 import { finalizationHandlerDeps } from "./onboard/finalization-deps";
 import { streamGatewayStart } from "./onboard/gateway";
@@ -559,7 +559,7 @@ import {
   stringSetsEqual,
 } from "./onboard/hermes-managed-tools";
 import { mergePolicyMessagingChannels } from "./onboard/messaging-policy-presets";
-import { filterEnabledChannelsByAgent, resolveQrSelectedChannels } from "./onboard/messaging-state";
+import { filterEnabledChannelsByAgent } from "./onboard/messaging-state";
 import { getValidatedMessagingTokenByEnvKey } from "./onboard/messaging-token";
 import { handleOllamaProbeFailure } from "./onboard/ollama-probe-failure";
 import { runOllamaStartupOrGate } from "./onboard/ollama-startup";
@@ -591,7 +591,7 @@ import type { SelectionDrift } from "./onboard/selection-drift";
 import { formatOnboardConfigSummary, formatSandboxBuildEstimateNote } from "./onboard/summary";
 import type { ModelValidationResult, ValidationFailureLike } from "./onboard/types";
 import type { ContainerRuntime } from "./platform";
-import { getChannelTokenKeys, listChannels } from "./sandbox/channels";
+import { listChannels } from "./sandbox/channels";
 import type { GatewayReuseState } from "./state/gateway";
 import type { Session, SessionUpdates } from "./state/onboard-session";
 import type { SandboxEntry } from "./state/registry";
@@ -604,6 +604,32 @@ const DIM = USE_COLOR ? "\x1b[2m" : "";
 const RESET = USE_COLOR ? "\x1b[0m" : "";
 let OPENSHELL_BIN: string | null = null;
 const GATEWAY_NAME = gatewayBinding.resolveGatewayName(GATEWAY_PORT);
+const {
+  clearDockerDriverGatewayRuntimeFiles,
+  getDockerDriverGatewayEnv,
+  getDockerDriverGatewayPid,
+  getDockerDriverGatewayPortListenerPid,
+  getDockerDriverGatewayRuntimeDrift,
+  getDockerDriverGatewayRuntimeDriftFromSnapshot,
+  getDockerDriverGatewayStateDir,
+  isDockerDriverGatewayPortListener,
+  isDockerDriverGatewayProcess,
+  isDockerDriverGatewayProcessAlive,
+  isPidAlive,
+  rememberDockerDriverGatewayPid,
+  resolveOpenShellGatewayBinary,
+  resolveOpenShellSandboxBinary,
+  shouldRequireDockerDriverEnv,
+} = dockerDriverGatewayRuntime.createDockerDriverGatewayRuntimeHelpers({
+  gatewayPort: GATEWAY_PORT,
+  getCachedOpenshellBinary: () => OPENSHELL_BIN,
+  getBlueprintMaxOpenshellVersion,
+  getInstalledOpenshellVersion,
+  isOpenshellDevVersion,
+  runCapture,
+  shouldUseOpenshellDevChannel,
+  supportedOpenshellFallbackVersion: SUPPORTED_OPENSHELL_FALLBACK_VERSION,
+});
 
 import type { JsonObject as LooseObject } from "./core/json-types";
 
@@ -896,12 +922,7 @@ function upsertProvider(
   return result;
 }
 
-type MessagingTokenDef = {
-  name: string;
-  envKey: string;
-  token: string | null;
-  providerType?: string;
-};
+type MessagingTokenDef = import("./onboard/messaging-prep").MessagingTokenDef;
 
 type EndpointValidationResult =
   | { ok: true; api: string | null; retry?: undefined }
@@ -1369,12 +1390,6 @@ function buildGatewayClusterExecArgv(script: string): string[] {
   return dockerExecArgv(getGatewayClusterContainerName(), ["sh", "-lc", script]);
 }
 
-function hostCommandExists(commandName: string): boolean {
-  return !!runCapture(["sh", "-c", 'command -v "$1"', "--", commandName], {
-    ignoreError: true,
-  });
-}
-
 function captureProcessArgs(pid: number): string {
   return runCapture(["ps", "-p", String(pid), "-o", "args="], {
     ignoreError: true,
@@ -1395,321 +1410,6 @@ const { gatewayClusterHealthcheckPassed, repairGatewayBootstrapSecrets } =
     run,
     runCapture,
   });
-
-function getDockerDriverGatewayStateDir(): string {
-  const configured = process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR;
-  if (configured && configured.trim()) return path.resolve(configured.trim());
-  const dir = gatewayBinding.resolveGatewayStateDirName(GATEWAY_PORT);
-  return path.join(os.homedir(), ".local", "state", "nemoclaw", dir);
-}
-
-function getDockerDriverGatewayPidFile(): string {
-  return path.join(getDockerDriverGatewayStateDir(), "openshell-gateway.pid");
-}
-
-function resolveSiblingBinary(binaryName: string): string | null {
-  const openshellBin = OPENSHELL_BIN || resolveOpenshell();
-  if (typeof openshellBin !== "string" || openshellBin.length === 0) return null;
-  const sibling = path.join(path.dirname(openshellBin), binaryName);
-  if (fs.existsSync(sibling)) return sibling;
-  return null;
-}
-
-function resolveOpenShellGatewayBinary(): string | null {
-  const configured = process.env.NEMOCLAW_OPENSHELL_GATEWAY_BIN;
-  if (configured && configured.trim()) return path.resolve(configured.trim());
-  const sibling = resolveSiblingBinary("openshell-gateway");
-  if (sibling) return sibling;
-  for (const candidate of [
-    path.join(os.homedir(), ".local", "bin", "openshell-gateway"),
-    "/usr/local/bin/openshell-gateway",
-    "/usr/bin/openshell-gateway",
-  ]) {
-    if (fs.existsSync(candidate)) return candidate;
-  }
-  return null;
-}
-
-function resolveOpenShellSandboxBinary(): string | null {
-  const configured = process.env.NEMOCLAW_OPENSHELL_SANDBOX_BIN;
-  if (configured && configured.trim()) return path.resolve(configured.trim());
-  const sibling = resolveSiblingBinary("openshell-sandbox");
-  if (sibling) return sibling;
-  for (const candidate of [
-    path.join(os.homedir(), ".local", "bin", "openshell-sandbox"),
-    "/usr/local/bin/openshell-sandbox",
-    "/usr/bin/openshell-sandbox",
-  ]) {
-    if (fs.existsSync(candidate)) return candidate;
-  }
-  return null;
-}
-
-function getOpenShellDockerSupervisorImage(versionOutput: string | null = null): string {
-  if (process.env.OPENSHELL_DOCKER_SUPERVISOR_IMAGE) {
-    return process.env.OPENSHELL_DOCKER_SUPERVISOR_IMAGE;
-  }
-  const installedVersion = getInstalledOpenshellVersion(versionOutput);
-  if (shouldUseOpenshellDevChannel() || isOpenshellDevVersion(versionOutput)) {
-    return "ghcr.io/nvidia/openshell/supervisor:dev";
-  }
-  const supportedVersion =
-    installedVersion ?? getBlueprintMaxOpenshellVersion() ?? SUPPORTED_OPENSHELL_FALLBACK_VERSION;
-  return `ghcr.io/nvidia/openshell/supervisor:${supportedVersion}`;
-}
-
-function getDockerDriverGatewayEnv(
-  versionOutput: string | null = null,
-  platform: NodeJS.Platform = process.platform,
-): Record<string, string> {
-  return dockerDriverGatewayEnv.buildDockerDriverGatewayEnv({
-    platform,
-    stateDir: getDockerDriverGatewayStateDir(),
-    dockerNetworkName: process.env.OPENSHELL_DOCKER_NETWORK_NAME || "openshell-docker",
-    getDockerSupervisorImage: () => getOpenShellDockerSupervisorImage(versionOutput),
-    resolveSandboxBin: resolveOpenShellSandboxBinary,
-  });
-}
-
-function isPidAlive(pid: number): boolean {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return isErrnoException(error) && error.code === "EPERM";
-  }
-}
-
-function getDockerDriverGatewayPid(): number | null {
-  try {
-    const raw = fs.readFileSync(getDockerDriverGatewayPidFile(), "utf-8").trim();
-    const pid = Number.parseInt(raw, 10);
-    return Number.isInteger(pid) && pid > 0 ? pid : null;
-  } catch {
-    return null;
-  }
-}
-
-function readProcessEnv(pid: number): Record<string, string> | null {
-  const procEnvPath = `/proc/${pid}/environ`;
-  const env: Record<string, string> = {};
-  try {
-    if (!fs.existsSync(procEnvPath)) return null;
-    for (const entry of fs.readFileSync(procEnvPath, "utf-8").split("\0")) {
-      if (!entry) continue;
-      const idx = entry.indexOf("=");
-      if (idx <= 0) continue;
-      env[entry.slice(0, idx)] = entry.slice(idx + 1);
-    }
-  } catch {
-    return null;
-  }
-  return env;
-}
-
-function hasDockerDriverGatewayEnv(pid: number): boolean {
-  const env = readProcessEnv(pid);
-  if (!env) return false;
-  return (
-    env.OPENSHELL_DRIVERS === "docker" ||
-    Boolean(env.OPENSHELL_DOCKER_SUPERVISOR_IMAGE) ||
-    env.OPENSHELL_GRPC_ENDPOINT === getDockerDriverGatewayEndpoint()
-  );
-}
-
-function readProcessExe(pid: number): string | null {
-  try {
-    const procExePath = `/proc/${pid}/exe`;
-    if (!fs.existsSync(procExePath)) return null;
-    return fs.readlinkSync(procExePath);
-  } catch {
-    return null;
-  }
-}
-
-function normalizeGatewayExecutablePath(value: string | null | undefined): string | null {
-  if (!value) return null;
-  const withoutDeletedSuffix = value.replace(/ \(deleted\)$/, "");
-  try {
-    return fs.realpathSync.native(withoutDeletedSuffix);
-  } catch {
-    return path.resolve(withoutDeletedSuffix);
-  }
-}
-
-type DockerDriverGatewayRuntimeDrift = { reason: string };
-
-function shouldRequireDockerDriverEnv(platform: NodeJS.Platform = process.platform): boolean {
-  return platform === "linux";
-}
-
-function getDockerDriverGatewayRuntimeDriftFromSnapshot({
-  processEnv,
-  processExe,
-  desiredEnv,
-  gatewayBin,
-}: {
-  processEnv: Record<string, string> | null;
-  processExe: string | null;
-  desiredEnv: Record<string, string>;
-  gatewayBin?: string | null;
-}): DockerDriverGatewayRuntimeDrift | null {
-  if (!processEnv) {
-    return { reason: "could not verify process environment" };
-  }
-  for (const key of dockerDriverGatewayEnv.DOCKER_DRIVER_GATEWAY_RUNTIME_ENV_KEYS) {
-    const desired = desiredEnv[key];
-    if (typeof desired !== "string") continue;
-    const actual = processEnv[key];
-    if (actual !== desired) {
-      return { reason: `${key}=${actual || "<unset>"} (expected ${desired})` };
-    }
-  }
-
-  if (processExe === null) {
-    return { reason: "could not verify process executable" };
-  }
-  if (processExe.endsWith(" (deleted)")) {
-    return { reason: "gateway executable was replaced on disk" };
-  }
-  const expectedExe = normalizeGatewayExecutablePath(gatewayBin);
-  const actualExe = normalizeGatewayExecutablePath(processExe);
-  if (expectedExe && actualExe && actualExe !== expectedExe) {
-    return { reason: `executable=${actualExe} (expected ${expectedExe})` };
-  }
-  return null;
-}
-
-function getDockerDriverGatewayRuntimeDrift(
-  pid: number,
-  desiredEnv: Record<string, string>,
-  gatewayBin?: string | null,
-  platform: NodeJS.Platform = process.platform,
-): DockerDriverGatewayRuntimeDrift | null {
-  if (platform === "darwin" && desiredEnv.OPENSHELL_DRIVERS === "docker") {
-    const markerDrift =
-      dockerDriverGatewayRuntimeMarker.getDockerDriverGatewayRuntimeMarkerDriftForStateDir(
-        getDockerDriverGatewayStateDir(),
-        {
-          pid,
-          desiredEnv,
-          endpoint: getDockerDriverGatewayEndpoint(),
-          gatewayBin,
-          dockerHost: process.env.DOCKER_HOST || null,
-          platform,
-          arch: process.arch,
-        },
-      );
-    if (markerDrift) return markerDrift;
-    if (
-      vmDriverProcess.hasOpenShellVmDriverChildProcess(pid, (args) =>
-        runCapture([...args], { ignoreError: true }),
-      )
-    ) {
-      return { reason: "VM driver child process is still attached to the gateway" };
-    }
-  }
-  if (!shouldRequireDockerDriverEnv(platform)) return null;
-  return getDockerDriverGatewayRuntimeDriftFromSnapshot({
-    processEnv: readProcessEnv(pid),
-    processExe: readProcessExe(pid),
-    desiredEnv,
-    gatewayBin,
-  });
-}
-
-function isDockerDriverGatewayProcess(
-  pid: number,
-  gatewayBin?: string | null,
-  opts: { requireDockerDriverEnv?: boolean } = {},
-): boolean {
-  const procCmdlinePath = `/proc/${pid}/cmdline`;
-  let identity = "";
-  try {
-    if (fs.existsSync(procCmdlinePath)) {
-      identity = fs.readFileSync(procCmdlinePath, "utf-8").replace(/\0/g, " ").trim();
-    }
-  } catch {
-    identity = "";
-  }
-  if (!identity) {
-    identity = captureProcessArgs(pid);
-  }
-  if (!identity) return false;
-  const matchesGatewayBinary =
-    identity.includes("openshell-gateway") ||
-    (typeof gatewayBin === "string" && gatewayBin.length > 0 && identity.includes(gatewayBin));
-  if (!matchesGatewayBinary) return false;
-  if (opts.requireDockerDriverEnv && !hasDockerDriverGatewayEnv(pid)) return false;
-  return true;
-}
-
-function isDockerDriverGatewayProcessAlive(): boolean {
-  const pid = getDockerDriverGatewayPid();
-  if (pid === null || !isPidAlive(pid)) return false;
-  if (
-    !isDockerDriverGatewayProcess(pid, resolveOpenShellGatewayBinary(), {
-      requireDockerDriverEnv: shouldRequireDockerDriverEnv(),
-    })
-  ) {
-    clearDockerDriverGatewayRuntimeFiles();
-    return false;
-  }
-  return true;
-}
-
-function clearDockerDriverGatewayRuntimeFiles(): void {
-  fs.rmSync(getDockerDriverGatewayPidFile(), { force: true });
-  dockerDriverGatewayRuntimeMarker.clearDockerDriverGatewayRuntimeMarker(
-    getDockerDriverGatewayStateDir(),
-  );
-}
-
-function rememberDockerDriverGatewayPid(pid: number): void {
-  dockerDriverGatewayRuntimeMarker.writeDockerDriverGatewayPidFile(
-    getDockerDriverGatewayPidFile(),
-    pid,
-  );
-}
-
-function getDockerDriverGatewayPortListenerPid(
-  portCheck: import("./onboard/preflight").PortProbeResult,
-  opts: {
-    platform?: NodeJS.Platform;
-    arch?: NodeJS.Architecture;
-    gatewayBin?: string | null;
-    isPidAliveFn?: (pid: number) => boolean;
-    isDockerDriverGatewayProcessFn?: (pid: number, gatewayBin?: string | null) => boolean;
-  } = {},
-): number | null {
-  if (portCheck.ok) return null;
-  if (
-    !isLinuxDockerDriverGatewayEnabled(opts.platform ?? process.platform, opts.arch ?? process.arch)
-  )
-    return null;
-  const pid = Number(portCheck.pid);
-  if (!Number.isInteger(pid) || pid <= 0) return null;
-  const proc = String(portCheck.process || "").toLowerCase();
-  if (!proc.startsWith("openshell")) return null;
-  const alive = opts.isPidAliveFn ?? isPidAlive;
-  if (!alive(pid)) return null;
-  const isGateway =
-    opts.isDockerDriverGatewayProcessFn ??
-    ((candidatePid: number, gatewayBin?: string | null) =>
-      isDockerDriverGatewayProcess(candidatePid, gatewayBin, {
-        requireDockerDriverEnv: shouldRequireDockerDriverEnv(opts.platform ?? process.platform),
-      }));
-  if (!isGateway(pid, opts.gatewayBin)) return null;
-  return pid;
-}
-
-function isDockerDriverGatewayPortListener(
-  portCheck: import("./onboard/preflight").PortProbeResult,
-  opts: Parameters<typeof getDockerDriverGatewayPortListenerPid>[1] = {},
-): boolean {
-  return getDockerDriverGatewayPortListenerPid(portCheck, opts) !== null;
-}
 
 function registerDockerDriverGatewayEndpoint(): boolean {
   const selectExisting = runQuietOpenshell(["gateway", "select", GATEWAY_NAME]);
@@ -2854,46 +2554,16 @@ async function createSandbox(
   const effectiveSandboxGpuConfig =
     sandboxGpuConfig ?? resolveSandboxGpuConfig(gpu, { flag: null, device: null });
 
-  // Port priority: --control-ui-port > CHAT_UI_URL env > registry (resume) > agent.forwardPort > default
-  // Pre-resolve port availability so CHAT_UI_URL baked into the Dockerfile,
-  // the sandbox env, and the readiness probe all use the final forwarded port.
-  const persistedPort = registry.getSandbox(sandboxName)?.dashboardPort ?? null;
-  // When CHAT_UI_URL is set, extract its port so the allocator and the URL stay in sync.
-  let envPort: number | null = null;
-  if (process.env.CHAT_UI_URL) {
-    try {
-      const u = new URL(
-        process.env.CHAT_UI_URL.includes("://")
-          ? process.env.CHAT_UI_URL
-          : `http://${process.env.CHAT_UI_URL}`,
-      );
-      const p = Number(u.port);
-      if (p > 0) envPort = p;
-    } catch {
-      /* malformed URL — ignore */
-    }
-  }
-  const preferredPort =
-    controlUiPort ?? envPort ?? persistedPort ?? (agent ? agent.forwardPort : DASHBOARD_PORT);
-  const earlyForwards = runCaptureOpenshell(["forward", "list"], { ignoreError: true });
-  const effectivePort = findAvailableDashboardPort(sandboxName, preferredPort, earlyForwards);
-  if (effectivePort !== preferredPort) {
-    console.warn(`  ! Port ${preferredPort} is taken. Using port ${effectivePort} instead.`);
-  }
-  // Build chatUiUrl: preserve the hostname from CHAT_UI_URL when set, but
-  // always use effectivePort so the Dockerfile, env, and readiness probe agree.
-  let chatUiUrl: string;
-  if (process.env.CHAT_UI_URL && controlUiPort == null) {
-    const parsed = new URL(
-      process.env.CHAT_UI_URL.includes("://")
-        ? process.env.CHAT_UI_URL
-        : `http://${process.env.CHAT_UI_URL}`,
-    );
-    parsed.port = String(effectivePort);
-    chatUiUrl = parsed.toString().replace(/\/$/, "");
-  } else {
-    chatUiUrl = `http://127.0.0.1:${effectivePort}`;
-  }
+  let { effectivePort, chatUiUrl } = resolveCreateSandboxDashboardPort({
+    sandboxName,
+    controlUiPort,
+    chatUiUrlEnv: process.env.CHAT_UI_URL,
+    persistedPort: registry.getSandbox(sandboxName)?.dashboardPort ?? null,
+    agentForwardPort: agent?.forwardPort,
+    defaultPort: DASHBOARD_PORT,
+    forwardListOutput: runCaptureOpenshell(["forward", "list"], { ignoreError: true }),
+    warn: (message) => console.warn(message),
+  });
   const hermesDashboardForwarding = onboardHermesDashboard.createHermesDashboardOnboardForwarding({
     agentName: agent?.name,
     env: process.env,
@@ -2904,138 +2574,42 @@ async function createSandbox(
   });
   const hermesDashboardState = hermesDashboardForwarding.resolveStateForPort(effectivePort);
 
-  // Check whether messaging providers will be needed — this must happen before
-  // the sandbox reuse decision so we can detect stale sandboxes that were created
-  // without provider attachments (security: prevents legacy raw-env-var leaks).
-
-  // Messaging channels like Telegram (getUpdates), Discord (gateway), and Slack
-  // (Socket Mode) enforce one consumer per channel credential. Two sandboxes
-  // sharing a credential silently break both bridges (see #1953). Warn before
-  // we commit.
-  //
-  // The compiled plan (written to env by setupMessagingChannels) is the source
-  // of truth: credential hashes and active-channel membership are read from
-  // plan.credentialBindings rather than from MESSAGING_CHANNELS constants.
-  // Validate sandbox identity before trusting the env plan: a stale plan from a
-  // prior run of a different sandbox must not gate or bypass conflict detection
-  // for the current sandbox creation.
-  const envPlan = readMessagingPlanFromEnv();
-  const currentPlan = envPlan?.sandboxName === sandboxName ? envPlan : null;
-  // Drop channels the operator disabled via `nemoclaw <sandbox> channels stop`.
-  // Credentials stay in the keychain; the bridge simply isn't registered with
-  // the gateway on the next rebuild. `channels start` removes the entry and
-  // the bridge comes back. Resolved before conflict detection so a *stopped*
-  // channel on this sandbox is not treated as an active consumer (a stopped
-  // Slack bridge must not block a second sandbox on the same gateway).
-  const disabledChannels: string[] =
-    require("./onboard/channel-state").resolveDisabledChannels(sandboxName);
-  const disabledChannelNames = new Set(disabledChannels);
-  const { enforceMessagingChannelConflicts } =
-    require("./onboard/messaging-conflict-guard") as typeof import("./onboard/messaging-conflict-guard");
-  await enforceMessagingChannelConflicts({
-    sandboxName,
-    gatewayName: GATEWAY_NAME,
-    currentPlan,
-    currentSandboxDisabledChannels: disabledChannels,
-    registry,
-    checkGatewayLiveness: () =>
-      runOpenshell(["sandbox", "list"], { ignoreError: true, suppressOutput: true }).status === 0,
-    providerExists: (name) => providerExistsInGateway(name),
-    isNonInteractive,
-    promptContinue: () => promptYesNoOrDefault("  Continue anyway?", null, false),
-    cliName,
-    log: (message) => console.log(message),
-    error: (message) => console.error(message),
-  });
-
-  // When enabledChannels is provided (from the toggle picker), only include
-  // channels the user selected. When null (backward compat), include all.
-  const enabledEnvKeys =
-    enabledChannels != null
-      ? new Set(
-          MESSAGING_CHANNELS.filter((c) => enabledChannels.includes(c.name)).flatMap((c) =>
-            getChannelTokenKeys(c),
-          ),
-        )
-      : null;
-
-  const disabledEnvKeys = new Set(
-    MESSAGING_CHANNELS.filter((c) => disabledChannelNames.has(c.name)).flatMap((c) =>
-      getChannelTokenKeys(c),
-    ),
-  );
-
-  const messagingTokenDefs: MessagingTokenDef[] = [
+  const {
+    messagingTokenDefs,
+    extraPlaceholderKeys,
+    hasMessagingTokens,
+    reusableMessagingProviders,
+    reusableMessagingChannels,
+    disabledChannelNames,
+    disabledChannels,
+  } = await sandboxMessagingPreflight.prepareSandboxMessagingPreflight(
     {
-      name: `${sandboxName}-discord-bridge`,
-      envKey: "DISCORD_BOT_TOKEN",
-      token: getValidatedMessagingTokenByEnvKey(MESSAGING_CHANNELS, "DISCORD_BOT_TOKEN"),
-    },
-    {
-      name: `${sandboxName}-slack-bridge`,
-      envKey: "SLACK_BOT_TOKEN",
-      token: getValidatedMessagingTokenByEnvKey(MESSAGING_CHANNELS, "SLACK_BOT_TOKEN"),
-    },
-    {
-      name: `${sandboxName}-slack-app`,
-      envKey: "SLACK_APP_TOKEN",
-      token: getValidatedMessagingTokenByEnvKey(MESSAGING_CHANNELS, "SLACK_APP_TOKEN"),
-    },
-    {
-      name: `${sandboxName}-telegram-bridge`,
-      envKey: "TELEGRAM_BOT_TOKEN",
-      token: getValidatedMessagingTokenByEnvKey(MESSAGING_CHANNELS, "TELEGRAM_BOT_TOKEN"),
-    },
-    {
-      name: `${sandboxName}-wechat-bridge`,
-      envKey: "WECHAT_BOT_TOKEN",
-      token: getValidatedMessagingTokenByEnvKey(MESSAGING_CHANNELS, "WECHAT_BOT_TOKEN"),
-    },
-  ]
-    .filter(({ envKey }) => !enabledEnvKeys || enabledEnvKeys.has(envKey))
-    .filter(({ envKey }) => !disabledEnvKeys.has(envKey));
-
-  const braveWebSearchEnabled = braveProviderProfile.shouldEnableBraveWebSearch(webSearchConfig);
-  const braveApiKey = braveWebSearchEnabled
-    ? getCredential(webSearch.BRAVE_API_KEY_ENV) ||
-      normalizeCredentialValue(process.env[webSearch.BRAVE_API_KEY_ENV])
-    : null;
-  // Fail before any recreate/delete path runs: otherwise a missing key would
-  // destroy the existing sandbox first and only then surface the abort (#3626).
-  if (braveWebSearchEnabled && !braveApiKey) {
-    console.error("  Brave Search is enabled, but BRAVE_API_KEY is not available in this process.");
-    console.error(
-      "  Re-run with BRAVE_API_KEY set, or disable Brave Search before recreating the sandbox.",
-    );
-    process.exit(1);
-  }
-  if (braveWebSearchEnabled)
-    messagingTokenDefs.push({
-      name: `${sandboxName}-brave-search`,
-      envKey: webSearch.BRAVE_API_KEY_ENV,
-      token: braveApiKey,
-      providerType: braveProviderProfile.BRAVE_PROVIDER_PROFILE_ID,
-    });
-  const extraPlaceholderKeys: string[] =
-    require("./onboard/extra-placeholder-keys").registerExtraPlaceholderProviders(
+      channels: MESSAGING_CHANNELS,
+      enabledChannels,
       sandboxName,
-      messagingTokenDefs,
-    );
-  const hasMessagingTokens = messagingTokenDefs.some(({ token }) => !!token);
-  const reusableMessagingProviders: string[] = [];
-  const reusableMessagingChannels: string[] = [];
-  if (enabledChannels != null) {
-    for (const { name, envKey, token } of messagingTokenDefs) {
-      if (token) continue;
-      const channel = envKey === "SLACK_APP_TOKEN" ? "slack" : getMessagingChannelForEnvKey(envKey);
-      if (!channel || !enabledChannels.includes(channel)) continue;
-      if (!providerExistsInGateway(name)) continue;
-      reusableMessagingProviders.push(name);
-      if (!reusableMessagingChannels.includes(channel)) {
-        reusableMessagingChannels.push(channel);
-      }
-    }
-  }
+      webSearchConfig,
+      env: process.env,
+    },
+    {
+      readMessagingPlanFromEnv,
+      resolveDisabledChannels: channelState.resolveDisabledChannels,
+      gatewayName: GATEWAY_NAME,
+      registry,
+      providerExistsInGateway,
+      isNonInteractive,
+      promptYesNoOrDefault,
+      cliName,
+      log: (message) => console.log(message),
+      error: (message) => console.error(message),
+      exitProcess: (code) => process.exit(code),
+      getValidatedMessagingTokenByEnvKey,
+      getCredential,
+      normalizeCredentialValue,
+      registerExtraPlaceholderProviders:
+        extraPlaceholderKeysModule.registerExtraPlaceholderProviders,
+      getMessagingChannelForEnvKey,
+    },
+  );
 
   const existingRegistryEntryBeforePrune = registry.getSandbox(sandboxName);
 
@@ -3183,28 +2757,21 @@ async function createSandbox(
                 "  Pass --recreate-sandbox or set NEMOCLAW_RECREATE_SANDBOX=1 to force recreation.",
               );
             }
-            const reusedPort = ensureDashboardForward(sandboxName, chatUiUrl);
-            chatUiUrl = `http://127.0.0.1:${reusedPort}`;
-            process.env.CHAT_UI_URL = chatUiUrl;
-            const reusedHermesDashboardState =
-              hermesDashboardForwarding.resolveStateForPort(reusedPort);
-            hermesDashboardForwarding.ensureForState(reusedHermesDashboardState, sandboxName);
-            updateReusedSandboxMetadata(
+            ({ chatUiUrl } = sandboxReuse.applyReusedSandboxDashboardState({
               sandboxName,
+              chatUiUrl,
+              env: process.env,
               agent,
               model,
               provider,
-              reusedPort,
-              !selectionDrift.unknown,
-              effectiveSandboxGpuConfig,
-            );
-            registry.updateSandbox(sandboxName, {
-              ...onboardHermesDashboard.getHermesDashboardRegistryFields(
-                reusedHermesDashboardState,
-              ),
+              selectionVerified: !selectionDrift.unknown,
+              sandboxGpuConfig: effectiveSandboxGpuConfig,
               gatewayName: GATEWAY_NAME,
               gatewayPort: GATEWAY_PORT,
-            });
+              ensureDashboardForward,
+              hermesDashboardForwarding,
+              updateReusedSandboxMetadata,
+            }));
             return sandboxName;
           }
         } else {
@@ -3232,28 +2799,21 @@ async function createSandbox(
           if (await promptYesNoOrDefault("  Reuse existing sandbox?", null, true)) {
             policyPresetCarry.seedReusedSandboxPolicyPresets(sandboxName, isNonInteractive());
             upsertMessagingProviders(messagingTokenDefs);
-            const reusedPort2 = ensureDashboardForward(sandboxName, chatUiUrl);
-            chatUiUrl = `http://127.0.0.1:${reusedPort2}`;
-            process.env.CHAT_UI_URL = chatUiUrl;
-            const reusedHermesDashboardState2 =
-              hermesDashboardForwarding.resolveStateForPort(reusedPort2);
-            hermesDashboardForwarding.ensureForState(reusedHermesDashboardState2, sandboxName);
-            updateReusedSandboxMetadata(
+            ({ chatUiUrl } = sandboxReuse.applyReusedSandboxDashboardState({
               sandboxName,
+              chatUiUrl,
+              env: process.env,
               agent,
               model,
               provider,
-              reusedPort2,
-              !selectionDrift.unknown,
-              effectiveSandboxGpuConfig,
-            );
-            registry.updateSandbox(sandboxName, {
-              ...onboardHermesDashboard.getHermesDashboardRegistryFields(
-                reusedHermesDashboardState2,
-              ),
+              selectionVerified: !selectionDrift.unknown,
+              sandboxGpuConfig: effectiveSandboxGpuConfig,
               gatewayName: GATEWAY_NAME,
               gatewayPort: GATEWAY_PORT,
-            });
+              ensureDashboardForward,
+              hermesDashboardForwarding,
+              updateReusedSandboxMetadata,
+            }));
             return sandboxName;
           }
         }
@@ -3343,93 +2903,21 @@ async function createSandbox(
   // in env args, so it must not persist in /tmp after a failed sandbox create.
   // run() calls process.exit() on failure (bypassing normal control flow), so
   // we register a process 'exit' handler to guarantee cleanup in all cases.
-  let buildCtx: string, stagedDockerfile: string;
-  if (fromDockerfile) {
-    const fromResolved = path.resolve(fromDockerfile);
-    if (!fs.existsSync(fromResolved)) {
-      console.error(`  Custom Dockerfile not found: ${fromResolved}`);
-      process.exit(1);
-    }
-    if (!fs.statSync(fromResolved).isFile()) {
-      console.error(`  Custom Dockerfile path is not a file: ${fromResolved}`);
-      process.exit(1);
-    }
-    const buildContextDir = path.dirname(fromResolved);
-    if (isInsideIgnoredCustomBuildContextPath(buildContextDir)) {
-      console.error(
-        `  Custom Dockerfile is inside an ignored build-context path: ${buildContextDir}`,
-      );
-      console.error("  Move your Dockerfile to a dedicated directory and retry.");
-      process.exit(1);
-    }
-    console.log(`  Using custom Dockerfile: ${fromResolved}`);
-    console.log(`  Docker build context: ${buildContextDir}`);
-    const shouldIncludeCustomContextPath = createCustomBuildContextFilter(buildContextDir);
-    const buildContextStats = collectBuildContextStats(
-      buildContextDir,
-      shouldIncludeCustomContextPath,
-    );
-    if (buildContextStats.totalBytes > CUSTOM_BUILD_CONTEXT_WARN_BYTES) {
-      const sizeMb = (buildContextStats.totalBytes / 1_000_000).toFixed(1);
-      console.warn(
-        `  WARN: build context contains about ${sizeMb} MB across ${buildContextStats.fileCount} files.`,
-      );
-      console.warn(
-        "  The --from flag sends the Dockerfile's parent directory to Docker; use a dedicated directory if this is not intentional.",
-      );
-    }
-    buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-"));
-    stagedDockerfile = path.join(buildCtx, "Dockerfile");
-    const cleanupCustomBuildCtx = (): void => {
-      try {
-        fs.rmSync(buildCtx, { recursive: true, force: true });
-      } catch {
-        // Best effort cleanup; the original error is more useful to the caller.
-      }
-    };
-    // Copy the entire parent directory as build context.
-    try {
-      fs.cpSync(buildContextDir, buildCtx, {
-        recursive: true,
-        filter: shouldIncludeCustomContextPath,
-      });
-      // If the caller pointed at a file not named "Dockerfile", copy it to the
-      // location openshell expects (buildCtx/Dockerfile).
-      if (path.basename(fromResolved) !== "Dockerfile") {
-        fs.copyFileSync(fromResolved, stagedDockerfile);
-      }
-    } catch (err) {
-      cleanupCustomBuildCtx();
-      const errorObject = typeof err === "object" && err !== null ? err : null;
-      if (isErrnoException(errorObject) && errorObject.code === "EACCES") {
-        console.error(`  Permission denied while copying build context from: ${buildContextDir}`);
-        console.error(
-          "  The --from flag uses the Dockerfile's parent directory as the Docker build context.",
-        );
-        console.error("  Move your Dockerfile to a dedicated directory and retry.");
-        process.exit(1);
-      }
-      throw err;
-    }
-  } else if (agent) {
-    const agentBuild = agentOnboard.createAgentSandbox(agent);
-    buildCtx = agentBuild.buildCtx;
-    stagedDockerfile = agentBuild.stagedDockerfile;
-  } else {
-    ({ buildCtx, stagedDockerfile } = stageOptimizedSandboxBuildContext(ROOT));
-  }
+  const { buildCtx, stagedDockerfile, cleanupBuildCtx } =
+    buildContextStage.stageCreateSandboxBuildContext({
+      root: ROOT,
+      fromDockerfile,
+      agent,
+      createAgentSandbox: agentOnboard.createAgentSandbox,
+      log: console.log,
+      warn: console.warn,
+      error: console.error,
+      exit: process.exit,
+    });
   // Returns true if the build context was fully removed, false otherwise.
   // The caller uses this to decide whether the process 'exit' safety net
   // can be deregistered — if inline cleanup fails, we leave the handler
   // armed so the temp dir is still removed on process exit.
-  const cleanupBuildCtx = (): boolean => {
-    try {
-      fs.rmSync(buildCtx, { recursive: true, force: true });
-      return true;
-    } catch {
-      return false;
-    }
-  };
   process.on("exit", cleanupBuildCtx);
 
   const defaultPolicyPath = path.join(
@@ -3439,44 +2927,44 @@ async function createSandbox(
     "openclaw-sandbox.yaml",
   );
   const basePolicyPath = (agent && agentOnboard.getAgentPolicyPath(agent)) || defaultPolicyPath;
-  const tokensByEnvKey = Object.fromEntries(
-    messagingTokenDefs.map(({ envKey, token }) => [envKey, token]),
-  );
-  const qrSelectedChannels = resolveQrSelectedChannels(
-    MESSAGING_CHANNELS,
+  const {
+    activeMessagingChannels,
+    initialSandboxPolicy,
+    createArgs,
+    messagingProviders,
+    useDockerGpuPatch,
+    sandboxGpuLogMessage,
+  } = sandboxCreatePlan.prepareSandboxCreatePlan({
+    basePolicyPath,
+    buildCtx,
+    sandboxName,
+    channels: MESSAGING_CHANNELS,
     enabledChannels,
     disabledChannelNames,
-  );
-  const activeMessagingChannels = [
-    ...new Set([
-      ...messagingTokenDefs
-        .filter(({ token }) => !!token)
-        .flatMap(({ envKey }) => {
-          const channel = getMessagingChannelForEnvKey(envKey);
-          if (channel) return [channel];
-          // SLACK_APP_TOKEN alone does not enable slack; bot token is required.
-          if (envKey === "SLACK_APP_TOKEN") {
-            return tokensByEnvKey["SLACK_BOT_TOKEN"] ? ["slack"] : [];
-          }
-          return [];
-        }),
-      ...reusableMessagingChannels,
-      ...qrSelectedChannels,
-    ]),
-  ];
-  const { useDockerGpuPatch, logMessage: sandboxGpuLogMessage } =
-    dockerGpuSandboxCreate.resolveDockerGpuSandboxCreatePlan(effectiveSandboxGpuConfig, {
-      dockerDriverGateway: isLinuxDockerDriverGatewayEnabled(),
-    });
-  const initialSandboxPolicy = prepareInitialSandboxCreatePolicy(
-    basePolicyPath,
-    activeMessagingChannels,
-    {
-      directGpu: effectiveSandboxGpuConfig.sandboxGpuEnabled,
-      dockerGpuPatch: useDockerGpuPatch,
-      additionalPresets: hermesToolGateways,
-    },
-  );
+    messagingTokenDefs,
+    reusableMessagingChannels,
+    reusableMessagingProviders,
+    hermesToolGateways,
+    sandboxGpuConfig: effectiveSandboxGpuConfig,
+    dockerDriverGateway: isLinuxDockerDriverGatewayEnabled(),
+    appendResourceFlags: (args) =>
+      appendResourceFlagsForProfile(args, resourceProfile, getOpenshellBinary(), {
+        isNonInteractive,
+        note,
+        prompt,
+        promptOrDefault,
+      }),
+    runProviderPreDeleteCleanup: () =>
+      runSandboxProviderPreDeleteCleanup(sandboxName, {
+        runOpenshell,
+        redact,
+        tolerateMissingSandbox: true,
+      }),
+    upsertMessagingProviders,
+    getMessagingChannelForEnvKey,
+    getHermesToolGatewayProviderName: (targetSandbox) =>
+      getHermesToolGatewayBroker().getHermesToolGatewayProviderName(targetSandbox),
+  });
   if (initialSandboxPolicy.cleanup) {
     process.on("exit", initialSandboxPolicy.cleanup);
   }
@@ -3486,216 +2974,45 @@ async function createSandbox(
     );
   }
   if (sandboxGpuLogMessage) console.log(sandboxGpuLogMessage);
-  const createArgs = [
-    "--from",
-    `${buildCtx}/Dockerfile`,
-    "--name",
-    sandboxName,
-    "--policy",
-    initialSandboxPolicy.policyPath,
-    ...buildSandboxGpuCreateArgs(effectiveSandboxGpuConfig, {
-      suppressGpuFlag: useDockerGpuPatch,
-    }),
-  ];
-
-  appendResourceFlagsForProfile(createArgs, resourceProfile, getOpenshellBinary(), {
-    isNonInteractive,
-    note,
-    prompt,
-    promptOrDefault,
-  });
-  runSandboxProviderPreDeleteCleanup(sandboxName, {
-    runOpenshell,
-    redact,
-    tolerateMissingSandbox: true,
-  });
-  const messagingProviders = [
-    ...new Set([
-      ...upsertMessagingProviders(messagingTokenDefs, { replaceExisting: true }),
-      ...reusableMessagingProviders,
-    ]),
-  ];
-  for (const p of messagingProviders) {
-    createArgs.push("--provider", p);
-  }
-  if (hermesToolGateways.length > 0) {
-    const hermesToolGateway = getHermesToolGatewayBroker();
-    createArgs.push("--provider", hermesToolGateway.getHermesToolGatewayProviderName(sandboxName));
-  }
 
   console.log(`  Creating sandbox '${sandboxName}' (this takes a few minutes on first run)...`);
-  const messagingChannelConfig = readMessagingChannelConfigFromEnv();
-  const enabledTokenEnvKeys = new Set(messagingTokenDefs.map(({ envKey }) => envKey));
-  const activeChannelNames = new Set(activeMessagingChannels);
-  const { messagingAllowedIds, discordGuilds, slackConfig } = collectMessagingBuildConfig({
-    channels: MESSAGING_CHANNELS,
-    activeChannelNames,
-    enabledTokenEnvKeys,
-    discordSnowflakeRe: onboardProviders.DISCORD_SNOWFLAKE_RE,
+  const envMessagingState = MessagingHostStateApplier.readPlanStateFromEnv();
+  const plannedMessagingState =
+    envMessagingState?.plan.sandboxName === sandboxName ? envMessagingState : undefined;
+  const plannedMessagingPlan = plannedMessagingState?.plan;
+  const configuredMessagingChannels =
+    getChannelsFromPlan(plannedMessagingPlan) ?? activeMessagingChannels;
+  sandboxBuildPatchConfig.prepareSandboxBuildPatchConfig({
+    configuredMessagingChannels,
   });
-  // Telegram mention-only mode — parity with Discord's requireMention.
-  // Off by default so existing sandboxes behave the same; opt-in via
-  // TELEGRAM_REQUIRE_MENTION=1 or the interactive prompt. See #1737.
-  const telegramConfig: { requireMention?: boolean } = {};
-  if (enabledTokenEnvKeys.has("TELEGRAM_BOT_TOKEN")) {
-    const telegramRequireMention = computeTelegramRequireMention();
-    if (telegramRequireMention !== null) {
-      telegramConfig.requireMention = telegramRequireMention;
-    }
-  }
-  const wechatConfig = gatherWechatConfig(onboardSession.loadSession());
-  // Persist the effective Telegram config into the session so a later resume
-  // can detect drift (TELEGRAM_REQUIRE_MENTION changed since last build) and
-  // force a sandbox recreate — otherwise the old groupPolicy would stay baked
-  // in. Mirrors the pattern used for webSearchConfig. See CodeRabbit on #2417.
-  onboardSession.updateSession((current) => {
-    current.telegramConfig =
-      typeof telegramConfig.requireMention === "boolean"
-        ? { requireMention: telegramConfig.requireMention as boolean }
-        : null;
-    current.wechatConfig = toSessionWechatConfig(wechatConfig);
-    current.messagingChannelConfig = messagingChannelConfig;
-    return current;
-  });
-  // Pull the base image and resolve its digest so the Dockerfile is pinned to
-  // exactly what we just fetched. This prevents stale :latest tags from
-  // silently reusing a cached old image after NemoClaw upgrades (#1904).
-  const resolved =
-    agent && !fromDockerfile
-      ? null
-      : pullAndResolveBaseImageDigest({
-          requireOpenshellSandboxAbi: isLinuxDockerDriverGatewayEnabled(),
-        });
-  if (resolved?.digest) {
-    console.log(`  Pinning base image to ${resolved.digest.slice(0, 19)}...`);
-  } else if (resolved) {
-    console.log(`  Using sandbox base image ${resolved.ref}`);
-  } else if (!(agent && !fromDockerfile)) {
-    // Check if the image exists locally before falling back to unpinned :latest.
-    // On a first-time install behind a firewall with no cached image, warn early
-    // so the user knows the build will likely fail.
-    const localCheck = dockerImageInspect(`${SANDBOX_BASE_IMAGE}:${SANDBOX_BASE_TAG}`, {
-      ignoreError: true,
-      suppressOutput: true,
-    });
-    if (localCheck.status === 0) {
-      console.warn("  Warning: could not pull base image from registry; using cached :latest.");
-    } else {
-      console.warn(
-        `  Warning: base image ${SANDBOX_BASE_IMAGE}:${SANDBOX_BASE_TAG} is not available locally.`,
-      );
-      console.warn("  The build will fail unless Docker can pull the image during build.");
-      console.warn("  If offline, pull the image manually first:");
-      console.warn(`    docker pull ${SANDBOX_BASE_IMAGE}:${SANDBOX_BASE_TAG}`);
-    }
-  }
-  const buildId = String(Date.now());
-  // OpenClaw never uses a direct container-loopback inference URL: the agent's
-  // isolated sandbox netns can't reach the host loopback even under --network
-  // host. For local providers this drops the host-network GPU opt-in so
-  // inference uses the reachable inference.local route (re-checking the bridge
-  // it now needs); OpenClaw falls back to OpenShell-managed routing (#4509).
-  await dockerGpuLocalInference.enforceDockerGpuPatchPreserveNetwork(
-    provider,
-    effectiveSandboxGpuConfig,
-    {
-      dockerDriverGateway: isLinuxDockerDriverGatewayEnabled(),
-      log: console.log,
-    },
-  );
-  const sandboxInferenceBaseUrlOverride = null;
-  patchStagedDockerfile(
+  const { buildId } = await sandboxDockerfilePatchFlow.prepareSandboxDockerfilePatch({
+    agent,
+    fromDockerfile,
+    sandboxBaseImage: SANDBOX_BASE_IMAGE,
+    sandboxBaseTag: SANDBOX_BASE_TAG,
     stagedDockerfile,
     model,
     chatUiUrl,
-    buildId,
     provider,
     preferredInferenceApi,
     webSearchConfig,
-    activeMessagingChannels,
-    messagingAllowedIds,
-    discordGuilds,
-    resolved ? resolved.ref : null,
-    telegramConfig,
-    wechatConfig as Record<string, unknown>,
-    // Docker-on-Colima uses normal container ownership; keep the old VM chmod
-    // compatibility path disabled unless a future VM-specific flow opts in.
-    false,
-    sandboxInferenceBaseUrlOverride,
     hermesToolGateways,
-    slackConfig,
-  );
-  // Only pass non-sensitive env vars to the sandbox. Credentials flow through
-  // OpenShell providers — the gateway injects them as placeholders and the L7
-  // proxy rewrites Authorization headers with real secrets at egress.
-  // See: crates/openshell-sandbox/src/secrets.rs (placeholder rewriting),
-  //      crates/openshell-router/src/backend.rs (inference auth injection).
-  //
-  // Use the shared allowlist (subprocess-env.ts) instead of the old
-  // blocklist. The blocklist only blocked 12 specific credential names
-  // and passed EVERYTHING else — including GITHUB_TOKEN,
-  // AWS_SECRET_ACCESS_KEY, SSH_AUTH_SOCK, KUBECONFIG, NPM_TOKEN, and
-  // any CI/CD secrets that happened to be in the host environment.
-  // The allowlist inverts the default: only known-safe env vars are forwarded.
-  // For sandbox create, also strip KUBECONFIG and SSH_AUTH_SOCK: the generic
-  // allowlist needs them for host-side subprocesses, but sandbox code must not
-  // access host Kubernetes or SSH-agent credentials.
-  const envArgs = [formatEnvAssignment("CHAT_UI_URL", chatUiUrl)];
-  // Always pass the effective dashboard port into the sandbox so
-  // nemoclaw-start.sh starts the gateway on the correct port. When the
-  // user sets CHAT_UI_URL with a custom port (e.g. :18790), the port
-  // must reach the container — otherwise _DASHBOARD_PORT defaults to
-  // 18789 and the gateway listens on the wrong port. (#2267, #1925)
-  const effectiveDashboardPort = getDashboardForwardPort(chatUiUrl);
-  envArgs.push(formatEnvAssignment("NEMOCLAW_DASHBOARD_PORT", effectiveDashboardPort));
-  require("./onboard/openclaw-runtime-env").appendOpenClawRuntimeEnvArgs(envArgs, agent);
-  onboardHermesDashboard.appendHermesDashboardEnvArgs(
-    envArgs,
-    hermesDashboardState,
-    formatEnvAssignment,
-  );
-  require("./onboard/host-proxy-env").appendHostProxyEnvArgs(envArgs);
-  // Propagate NEMOCLAW_PROXY_HOST / NEMOCLAW_PROXY_PORT to the runtime
-  // sandbox container. patchStagedDockerfile() already substitutes them
-  // into the build-time Dockerfile ARG/ENV, but `openshell sandbox create
-  // -- env … nemoclaw-start` only forwards the explicitly listed env vars
-  // — image-baked ENV does not propagate into the running pod. Without
-  // this, nemoclaw-start.sh:898 falls back to the default 10.200.0.1:3128
-  // and `HTTPS_PROXY` inside the sandbox ignores the host override. The
-  // build-time substitution and runtime env stay in sync as a result.
-  // Fixes #2424. Uses the shared isValidProxyHost / isValidProxyPort
-  // helpers so build-time and runtime validation stay aligned.
-  const sandboxProxyHost = process.env.NEMOCLAW_PROXY_HOST;
-  if (sandboxProxyHost && isValidProxyHost(sandboxProxyHost)) {
-    envArgs.push(formatEnvAssignment("NEMOCLAW_PROXY_HOST", sandboxProxyHost));
-  }
-  const sandboxProxyPort = process.env.NEMOCLAW_PROXY_PORT;
-  if (sandboxProxyPort && isValidProxyPort(sandboxProxyPort)) {
-    envArgs.push(formatEnvAssignment("NEMOCLAW_PROXY_PORT", sandboxProxyPort));
-  }
-  require("./onboard/extra-placeholder-keys").appendExtraPlaceholderKeysEnvArg(
-    envArgs,
-    extraPlaceholderKeys,
-    formatEnvAssignment,
-  );
+    sandboxGpuConfig: effectiveSandboxGpuConfig,
+    log: console.log,
+    warn: console.warn,
+  });
   const sandboxReadyTimeoutSecs = getSandboxReadyTimeoutSecs(effectiveSandboxGpuConfig);
-  const sandboxEnv = buildSubprocessEnv();
-  // Remove host-infrastructure credentials that the generic allowlist
-  // permits for host-side processes but that must not enter the sandbox.
-  delete sandboxEnv.KUBECONFIG;
-  delete sandboxEnv.SSH_AUTH_SOCK;
-  // Run without piping through awk — the pipe masked non-zero exit codes
-  // from openshell because bash returns the status of the last pipeline
-  // command (awk, always 0) unless pipefail is set. Removing the pipe
-  // lets the real exit code flow through to run().
-  const sandboxStartupCommand = ["env", ...envArgs, "nemoclaw-start"];
-  const createCommand = `${openshellShellCommand([
-    "sandbox",
-    "create",
-    ...createArgs,
-    "--",
-    ...sandboxStartupCommand,
-  ])} 2>&1`;
+  const { createCommand, effectiveDashboardPort, sandboxEnv, sandboxStartupCommand } =
+    sandboxCreateLaunch.prepareSandboxCreateLaunch({
+      agent,
+      chatUiUrl,
+      createArgs,
+      env: process.env,
+      extraPlaceholderKeys,
+      getDashboardForwardPort,
+      hermesDashboardState,
+      openshellShellCommand,
+    });
   const dockerGpuCreatePatch = dockerGpuSandboxCreate.createDockerGpuSandboxCreatePatch({
     enabled: useDockerGpuPatch,
     sandboxName,
@@ -3858,33 +3175,31 @@ async function createSandbox(
     hermesDashboardForwarding.resolveStateForPort(actualDashboardPort);
   hermesDashboardForwarding.ensureForState(finalHermesDashboardState, sandboxName, true);
 
+  // Register only after confirmed ready — prevents phantom entries
+  const providerCredentialHashes: Record<string, string> = {};
+  for (const { envKey, token } of messagingTokenDefs) {
+    const hash = token ? hashCredential(token) : null;
+    if (hash) {
+      providerCredentialHashes[envKey] = hash;
+    }
+  }
   // openshell tags images with seconds; buildId is ms. Parse actual tag from output. Fixes #2672.
   const resolvedImageTag = resolveSandboxImageTagFromCreateOutput(createResult.output, buildId);
 
   const sandboxRuntimeFields = getSandboxRuntimeRegistryFields(effectiveSandboxGpuConfig);
-  const plannedMessagingState = MessagingHostStateApplier.readPlanStateFromEnv();
-  const messagingState =
-    plannedMessagingState?.plan.sandboxName === sandboxName ? plannedMessagingState : undefined;
-  registry.registerSandbox({
-    name: sandboxName,
-    model: model || null,
-    provider: provider || null,
-    ...sandboxRuntimeFields,
-    ...getSandboxAgentRegistryFields(agent, !fromDockerfile),
+  sandboxRegistration.registerCreatedSandbox({
+    sandboxName,
+    model,
+    provider,
+    runtimeFields: sandboxRuntimeFields,
+    agent,
+    agentVersionKnown: !fromDockerfile,
     imageTag: resolvedImageTag,
-    policies: initialSandboxPolicy.appliedPresets,
-    // Persist the operator's configured channel set, not the post-disabled-filter
-    // active set. After `channels stop X` + rebuild, activeMessagingChannels drops
-    // X, but X is still configured — losing it here means a later `channels start
-    // X` has nothing to re-enable (the next rebuild sees an empty channel set and
-    // never reattaches the gateway bridge). See #3381.
-    messagingChannels:
-      enabledChannels != null ? [...new Set(enabledChannels)] : activeMessagingChannels,
-    messagingChannelConfig: messagingChannelConfig || undefined,
-    messaging: messagingState,
-    disabledChannels: disabledChannels.length > 0 ? [...disabledChannels] : undefined,
-    hermesToolGateways: hermesToolGateways.length > 0 ? [...hermesToolGateways] : undefined,
-    ...onboardHermesDashboard.getHermesDashboardRegistryFields(finalHermesDashboardState),
+    providerCredentialHashes,
+    appliedPolicies: initialSandboxPolicy.appliedPresets,
+    plannedMessagingState,
+    hermesToolGateways,
+    hermesDashboardState: finalHermesDashboardState,
     dashboardPort: actualDashboardPort,
     gatewayName: GATEWAY_NAME,
     gatewayPort: GATEWAY_PORT,
@@ -3944,7 +3259,7 @@ async function createSandbox(
 
 // ── Step 3: Inference selection ──────────────────────────────────
 
-type ProviderChoice = { key: string; label: string };
+type ProviderChoice = import("./onboard/provider-menu").ProviderMenuChoice;
 
 const { readRecordedProvider, readRecordedNimContainer, readRecordedModel } =
   providerRecovery.createProviderRecoveryHelpers({
@@ -4072,135 +3387,59 @@ async function setupNim(
   let preferredInferenceApi: string | null = null;
   let allowToolsIncompatible = false;
 
-  const localProbeCurlArgs = ["--connect-timeout", "2", "--max-time", "5"] as const;
-  const hasOllama = hostCommandExists("ollama");
-  const ollamaHost = findReachableOllamaHost();
-  const ollamaRunning = ollamaHost !== null;
-  const isWindowsHostOllama = ollamaHost === OLLAMA_HOST_DOCKER_INTERNAL;
-  const vllmRunning = !!runCapture(
-    ["curl", "-sf", ...localProbeCurlArgs, `http://127.0.0.1:${VLLM_PORT}/v1/models`],
-    { ignoreError: true },
-  );
-  // Pick a vLLM install recipe for this host. Profiles live in inference/vllm.ts;
-  // null means "no supported platform" (vLLM stays behind EXPERIMENTAL).
-  const vllmProfile = detectVllmProfile(gpu);
-  // If the profile's image is already cached, the install path is really a
-  // "start" — docker pull is a no-op and the container can come up in seconds.
-  const hasVllmImage = !!(
-    vllmProfile &&
-    docker.dockerCapture(["images", "-q", vllmProfile.image], { ignoreError: true }).trim()
-  );
-  const windowsHostOllamaDockerRequirement = getWindowsHostOllamaDockerRequirement(
-    isWsl() ? getContainerRuntime() : null,
-  );
-  // Probed even when WSL has its own Ollama: users may prefer the Windows
-  // instance for GPU access and a unified model cache. See
-  // src/lib/onboard/windows-host-ollama.ts for process/path fallback details.
-  const winOllamaState = detectWindowsHostOllama();
-  const hasWindowsOllama = winOllamaState.installed;
-  const winOllamaInstalledPath = winOllamaState.installedPath;
-  const winOllamaLoopbackOnly = winOllamaState.loopbackOnly;
-
-  // Independent of findReachableOllamaHost: when WSL Ollama wins the cache
-  // on 127.0.0.1, Windows-host may also be running on 0.0.0.0 and we want
-  // to offer a "switch" without restarting anything.
-  let windowsOllamaReachable = false;
-  if (isWsl() && !isWindowsHostOllama) {
-    windowsOllamaReachable = !!runCapture(
-      ["curl", "-sf", ...localProbeCurlArgs, `http://host.docker.internal:${OLLAMA_PORT}/api/tags`],
-      { ignoreError: true },
-    );
-  }
-
-  // Mirrored mode shares loopback so both probes hit the same instance;
-  // only NAT mode actually has two separate daemons to warn about.
-  if (isWsl() && ollamaHost === "127.0.0.1" && windowsOllamaReachable) {
-    const networkingMode = runCapture(["wslinfo", "--networking-mode"], {
-      ignoreError: true,
-    }).trim();
-    if (networkingMode !== "mirrored") {
-      console.log("");
-      console.log("  ⚠ Ollama is running on both WSL and the Windows host.");
-      console.log("    Stop one to avoid duplicated GPU memory and model caches.");
-      console.log("");
-    }
-  }
+  const providerHostState = detectInferenceProviderHostState({
+    gpu,
+    experimental: EXPERIMENTAL,
+  });
+  const {
+    hasOllama,
+    ollamaHost,
+    ollamaRunning,
+    isWindowsHostOllama,
+    isWsl: isWslHost,
+    hasWindowsOllama,
+    winOllamaInstalledPath,
+    winOllamaLoopbackOnly,
+    windowsOllamaReachable,
+    windowsHostOllamaDockerRequirement,
+    vllmRunning,
+    vllmProfile,
+    hasVllmImage,
+    vllmEntries,
+    ollamaInstallMenu,
+    gpuNimCapable,
+  } = providerHostState;
   const requestedProvider = getNonInteractiveProvider();
   const requestedModel = isNonInteractive()
     ? getNonInteractiveModel(requestedProvider || "build")
     : null;
   const agentProviderOptions = getAgentInferenceProviderOptions(agent);
-  const hermesProviderAvailable = agentProviderOptions.includes("hermesProvider");
-  const options: Array<{ key: string; label: string }> = [];
-  options.push({ key: "build", label: "NVIDIA Endpoints" });
-  options.push({ key: "openai", label: "OpenAI" });
-  options.push({ key: "custom", label: "Other OpenAI-compatible endpoint" });
-  options.push({ key: "anthropic", label: "Anthropic" });
-  options.push({ key: "anthropicCompatible", label: "Other Anthropic-compatible endpoint" });
-  options.push({ key: "gemini", label: "Google Gemini" });
-  const runningOllamaMenu = resolveRunningOllamaMenuEntry({
-    hasOllama,
-    ollamaRunning,
-    ollamaHost,
-    isWsl: isWsl(),
-    ollamaPort: OLLAMA_PORT,
-    windowsHostLabelSuffix: windowsHostOllamaDockerRequirement.supported
-      ? ""
-      : windowsHostOllamaDockerRequirement.labelSuffix,
-  });
-  if (runningOllamaMenu) options.push(runningOllamaMenu);
-  if (EXPERIMENTAL && gpu && gpu.nimCapable) {
-    options.push({ key: "nim-local", label: "Local NVIDIA NIM [experimental]" });
-  }
-  options.push(
-    ...buildVllmMenuEntries({
-      vllmRunning,
-      vllmProfile,
-      experimental: EXPERIMENTAL,
-      platform: gpu?.platform,
-      hasVllmImage,
-    }),
-  );
-  // Skipped when Windows-host already won the cache: the running entry
-  // above already covers that case.
-  if (hasWindowsOllama && !isWindowsHostOllama) {
-    options.push({
-      key: "start-windows-ollama",
-      label: windowsHostOllamaDockerRequirement.startLabel({
-        reachable: windowsOllamaReachable,
-        loopbackOnly: winOllamaLoopbackOnly,
-      }),
-    });
-  }
-  // On WSL, always offer to install Ollama on the Windows host when not
-  // already installed, regardless of WSL Ollama state — users may prefer the
-  // Windows-host instance (GPU access) even with WSL Ollama running.
-  if (isWsl() && !hasWindowsOllama) {
-    options.push({
-      key: "install-windows-ollama",
-      label: windowsHostOllamaDockerRequirement.installLabel,
-    });
-  }
-  const ollamaInstallMenu = resolveOllamaInstallMenuEntry({
-    hasOllama,
-    ollamaRunning,
-    hasWindowsOllama,
-    ollamaHost,
-    platform: process.platform,
-    isWsl: isWsl(),
-  });
-  if (ollamaInstallMenu.entry) options.push(ollamaInstallMenu.entry);
 
   // Model Router: complexity-based routing via blueprint config.
   const blueprintRouterCfg = loadBlueprintProfile("routed");
-  if (blueprintRouterCfg && blueprintRouterCfg.router?.enabled === true) {
-    options.push({ key: "routed", label: "Model Router (experimental)" });
-  }
-  for (const providerKey of agentProviderOptions) {
-    const remoteConfig = REMOTE_PROVIDER_CONFIG[providerKey];
-    if (!remoteConfig || options.some((option) => option.key === providerKey)) continue;
-    options.push({ key: providerKey, label: remoteConfig.label });
-  }
+  const { options, hermesProviderAvailable } = buildInferenceProviderMenu({
+    remoteProviderConfig: REMOTE_PROVIDER_CONFIG,
+    agentProviderOptions,
+    experimental: EXPERIMENTAL,
+    gpuNimCapable,
+    hasOllama,
+    ollamaRunning,
+    ollamaHost,
+    ollamaPort: OLLAMA_PORT,
+    isWsl: isWslHost,
+    hasWindowsOllama,
+    isWindowsHostOllama,
+    windowsHostLabelSuffix: windowsHostOllamaDockerRequirement.supported
+      ? ""
+      : windowsHostOllamaDockerRequirement.labelSuffix,
+    windowsHostInstallLabel: windowsHostOllamaDockerRequirement.installLabel,
+    windowsHostStartLabel: windowsHostOllamaDockerRequirement.startLabel,
+    windowsOllamaReachable,
+    winOllamaLoopbackOnly,
+    ollamaInstallEntry: ollamaInstallMenu.entry,
+    vllmEntries,
+    routedEnabled: blueprintRouterCfg?.router?.enabled === true,
+  });
 
   function rejectWindowsHostOllama(providerKey: string, windowsHostSelected: boolean): boolean {
     return rejectUnsupportedWindowsHostOllama(
@@ -4222,124 +3461,45 @@ async function setupNim(
       hermesAuthMethod = null;
 
       if (isNonInteractive() || requestedProvider) {
-        let providerKey = requestedProvider;
-        if (!providerKey) {
-          const recordedProvider = readRecordedProvider(sandboxName);
-          const hasNimContainer = !!readRecordedNimContainer(sandboxName);
-          const recoveredKey = providerRecovery.providerNameToOptionKey(
-            REMOTE_PROVIDER_CONFIG,
-            recordedProvider,
-            { hasNimContainer },
-          );
-          if (recoveredKey) {
-            // Refuse to silently switch providers behind the user's back; if
-            // the previously-recorded one is gone, surface the recorded value
-            // so the user can fix the dependency or override via env var.
-            // Special case: on WSL, recorded ollama-local was WSL Ollama at
-            // record time. If the only reachable Ollama is now Windows-host
-            // (so the menu's "ollama" key points there), the availability
-            // check below would pass and silently swap the daemon. Detect
-            // and fail-loud with a hint.
-            if (isWsl() && recordedProvider === "ollama-local" && isWindowsHostOllama) {
-              console.error(
-                `  Recorded provider '${recordedProvider}' (WSL Ollama) is not available in this environment.`,
-              );
-              console.error(
-                "  Hint: Windows-host Ollama is reachable here; re-run with NEMOCLAW_PROVIDER=ollama to use it explicitly.",
-              );
-              process.exit(1);
-            }
-            if (!options.some((o) => o.key === recoveredKey)) {
-              console.error(
-                `  Recorded provider '${recordedProvider}' is not available in this environment.`,
-              );
-              console.error(
-                "  Set NEMOCLAW_PROVIDER explicitly, or restore the missing local-inference dependency.",
-              );
-              if (recoveredKey === "ollama") {
-                const winHostKey = options.find(
-                  (o) => o.key === "start-windows-ollama" || o.key === "install-windows-ollama",
-                )?.key;
-                if (winHostKey) {
-                  console.error(
-                    `  Hint: Windows-host Ollama is available here — re-run with NEMOCLAW_PROVIDER=${winHostKey} to use it.`,
-                  );
-                }
-              }
-              process.exit(1);
-            }
-            providerKey = recoveredKey;
-            recoveredFromSandbox = true;
-            recoveredModel = readRecordedModel(sandboxName);
-          } else if (recordedProvider === "vllm-local") {
-            // vllm-local without a nimContainer marker is ambiguous — could be
-            // standalone vLLM or Local NIM. Don't guess; require an override.
-            console.error(
-              "  Recorded provider 'vllm-local' is ambiguous (could be standalone vLLM or Local NIM).",
-            );
-            console.error("  Set NEMOCLAW_PROVIDER explicitly (vllm or nim-local) and re-run.");
-            process.exit(1);
-          } else {
-            providerKey = "build";
-          }
-        }
-        selected = options.find((o) => o.key === providerKey);
-        if (!selected) {
-          if (
-            (providerKey === "start-windows-ollama" || providerKey === "install-windows-ollama") &&
-            rejectWindowsHostOllama(providerKey, isWindowsHostOllama)
-          ) {
-            process.exit(1);
-          }
-          selected = resolveProviderKeyFallback(options, providerKey, {
-            canUseWindowsHostOllama:
-              isWindowsHostOllama && windowsHostOllamaDockerRequirement.supported,
+        const providerSelection = resolveRequestedProviderSelection({
+          options,
+          requestedProvider,
+          sandboxName,
+          remoteProviderConfig: REMOTE_PROVIDER_CONFIG,
+          isWsl: isWslHost,
+          isWindowsHostOllama,
+          windowsHostOllamaSupported: windowsHostOllamaDockerRequirement.supported,
+          hermesProviderAvailable,
+          readRecordedProvider,
+          readRecordedNimContainer,
+          readRecordedModel,
+        });
+        if (providerSelection.kind === "failure") {
+          reportProviderSelectionFailure({
+            reason: providerSelection.reason,
+            isWindowsHostOllama,
+            rejectWindowsHostOllama,
+            writeError: (message) => console.error(message),
           });
-          if (!selected) {
-            if (providerKey === "hermesProvider" && !hermesProviderAvailable) {
-              console.error("  Hermes Provider is only available when onboarding Hermes Agent.");
-              console.error(
-                "  Re-run with `nemohermes onboard` or `nemoclaw onboard --agent hermes`.",
-              );
-              process.exit(1);
-            }
-            console.error(
-              `  Requested provider '${providerKey}' is not available in this environment.`,
-            );
-            process.exit(1);
-          }
+          process.exit(1);
         }
+        selected = providerSelection.selected;
+        recoveredFromSandbox = providerSelection.recoveredFromSandbox;
+        recoveredModel = providerSelection.recoveredModel;
         note(
           recoveredFromSandbox
             ? `  [non-interactive] Provider: ${selected.key} (recovered from sandbox '${sandboxName}')`
             : `  [non-interactive] Provider: ${selected.key}`,
         );
       } else {
-        const suggestions: string[] = [];
-        if (vllmRunning) suggestions.push("vLLM");
-        if (ollamaRunning) suggestions.push("Ollama");
-        if (suggestions.length > 0) {
-          console.log(
-            `  Detected local inference option${suggestions.length > 1 ? "s" : ""}: ${suggestions.join(", ")}`,
-          );
-          console.log("");
-        }
-
-        console.log("");
-        console.log("  Select your inference provider:");
-        options.forEach((o, i) => {
-          console.log(`    ${i + 1}) ${o.label}`);
+        selected = await promptForInferenceProviderSelection({
+          options,
+          vllmRunning,
+          ollamaRunning,
+          prompt,
+          log: console.log,
+          selectFromNumberedMenu: selectFromNumberedMenuOrExit,
         });
-        console.log("");
-
-        const envProviderHint = (process.env.NEMOCLAW_PROVIDER || "").trim().toLowerCase();
-        const envProviderIdx = envProviderHint
-          ? options.findIndex((o) => o.key.toLowerCase() === envProviderHint)
-          : -1;
-        const defaultIdx =
-          (envProviderIdx >= 0 ? envProviderIdx : options.findIndex((o) => o.key === "build")) + 1;
-        const choice = await prompt(`  Choose [${defaultIdx}]: `);
-        selected = selectFromNumberedMenuOrExit(choice, defaultIdx, options);
       }
 
       if (!selected) {
@@ -5410,7 +4570,7 @@ function getRecordedMessagingChannelsForResume(
 ): string[] | null {
   return getRecordedMessagingChannelsForResumeFromState({
     resume,
-    sessionMessagingChannels: session?.messagingChannels,
+    sessionMessagingChannels: getChannelsFromPlan(session?.messagingPlan),
     sandboxName,
     channels: MESSAGING_CHANNELS,
     getCredential,
@@ -5617,73 +4777,24 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     opts.controlUiPort ?? (process.env.NEMOCLAW_DASHBOARD_PORT != null ? DASHBOARD_PORT : null);
   onboardRuntimeBoundary.reset();
   delete process.env.OPENSHELL_GATEWAY;
-  const resume = opts.resume === true;
-  const fresh = opts.fresh === true;
-  if (resume && fresh) {
-    console.error("  --resume and --fresh cannot both be set.");
-    process.exit(1);
-  }
-  // In non-interactive mode also accept the env var so CI pipelines can set it.
-  // This is the explicitly requested value; on resume it may be absent and the
-  // session-recorded path is used instead (see below).
-  const requestedFromDockerfile =
-    opts.fromDockerfile ||
-    (isNonInteractive() ? process.env.NEMOCLAW_FROM_DOCKERFILE || null : null);
-  // Resolve the explicit sandbox name early so both validation and the
-  // --from guard work off the same source. --name always counts; the env
-  // var is used as the interactive prompt default via getSandboxPromptDefault,
-  // and also as the resolved name when we cannot prompt (non-interactive or
-  // missing-TTY runs such as CI scripts and piped stdin).
-  const stdinIsTty = Boolean(process.stdin && process.stdin.isTTY);
-  const stdoutIsTty = Boolean(process.stdout && process.stdout.isTTY);
-  const cannotPrompt = isNonInteractive() || !stdinIsTty || !stdoutIsTty;
-  let requestedSandboxName: string | null =
-    typeof opts.sandboxName === "string" && opts.sandboxName.length > 0 ? opts.sandboxName : null;
-  let requestedSandboxSource: "--name" | "NEMOCLAW_SANDBOX_NAME" | null = requestedSandboxName
-    ? "--name"
-    : null;
-  if (!requestedSandboxName && cannotPrompt) {
-    const envName = process.env.NEMOCLAW_SANDBOX_NAME;
-    if (typeof envName === "string" && envName.trim().length > 0) {
-      requestedSandboxName = envName.trim();
-      requestedSandboxSource = "NEMOCLAW_SANDBOX_NAME";
-    }
-  }
-  if (requestedSandboxName) {
-    try {
-      const validated = validateName(requestedSandboxName, "sandbox name");
-      if (RESERVED_SANDBOX_NAMES.has(validated)) {
-        console.error(`  Reserved name: '${validated}' is a ${cliDisplayName()} CLI command.`);
-        console.error(
-          `  Choose a different sandbox name (passed via ${requestedSandboxSource}) to avoid routing conflicts.`,
-        );
-        process.exit(1);
-      }
-      requestedSandboxName = validated;
-    } catch (error) {
-      console.error(`  ${error instanceof Error ? error.message : String(error)}`);
-      for (const line of getNameValidationGuidance("sandbox name", requestedSandboxName, {
-        includeAllowedFormat: false,
-      })) {
-        console.error(`  ${line}`);
-      }
-      process.exit(1);
-    }
-  }
-  // The downstream prompt path silently defaults to 'my-assistant' when no
-  // input arrives. With --from in play that would clobber the default
-  // sandbox, so refuse to proceed unless the caller has supplied a name
-  // out-of-band. Cover both --non-interactive and missing-TTY runs (CI
-  // scripts, piped stdin) — the issue's test plan asks for both. The resume
-  // case is handled separately after session load (see below) because its
-  // recorded sandboxName may already satisfy the requirement.
-  if (cannotPrompt && !resume && requestedFromDockerfile && !requestedSandboxName) {
-    console.error(
-      "  --from <Dockerfile> requires --name <sandbox> (or NEMOCLAW_SANDBOX_NAME) when running without a TTY or with --non-interactive.",
+  const { resume, fresh, requestedFromDockerfile, requestedSandboxName, cannotPrompt } =
+    onboardEntryOptions.resolveOnboardEntryOptions(
+      {
+        opts,
+        env: process.env,
+        stdinIsTty: Boolean(process.stdin && process.stdin.isTTY),
+        stdoutIsTty: Boolean(process.stdout && process.stdout.isTTY),
+      },
+      {
+        isNonInteractive,
+        validateName,
+        reservedSandboxNames: RESERVED_SANDBOX_NAMES,
+        cliDisplayName,
+        getNameValidationGuidance,
+        error: (message) => console.error(message),
+        exitProcess: (code) => process.exit(code),
+      },
     );
-    console.error("  A sandbox name cannot be prompted for in this context.");
-    process.exit(1);
-  }
   // Fail fast for NEMOCLAW_POLICY_TIER only where selectPolicyTier reads it.
   if (isNonInteractive()) policyTierEnv.validatePolicyTierEnvEarly();
   const noticeAccepted = await ensureUsageNoticeConsent({
@@ -5771,119 +4882,34 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
   let traceCompleted = false;
   try {
     onboardTrace = onboardTracing.startOnboardTrace(opts, process.env);
-    let session: Session | null;
     let selectedMessagingChannels: string[] = [];
-    // Merged, absolute fromDockerfile: explicit flag/env takes precedence; on
-    // resume falls back to what the original session recorded so the same image
-    // is used even when --from is omitted from the resume invocation.
-    let fromDockerfile: string | null;
-    if (resume) {
-      session = onboardSession.loadSession();
-      setOnboardBrandingAgent(opts.agent || session?.agent || process.env.NEMOCLAW_AGENT || null);
-      if (!session || session.resumable === false) {
-        console.error("  No resumable onboarding session was found.");
-        console.error("  --resume only continues an interrupted onboarding run.");
-        console.error("  To change configuration on an existing sandbox, rebuild it:");
-        console.error(`    ${cliName()} onboard`);
-        process.exit(1);
-      }
-      const sessionFrom = session?.metadata?.fromDockerfile || null;
-      fromDockerfile = requestedFromDockerfile
-        ? path.resolve(requestedFromDockerfile)
-        : sessionFrom
-          ? path.resolve(sessionFrom)
-          : null;
-      const resumeConflicts = getResumeConfigConflicts(session, {
+    let { session, fromDockerfile } = await onboardSessionBootstrap.prepareOnboardSession(
+      {
+        resume,
+        fresh,
+        requestedFromDockerfile,
+        requestedSandboxName,
+        cannotPrompt,
         nonInteractive: isNonInteractive(),
-        fromDockerfile: requestedFromDockerfile,
-        sandboxName: requestedSandboxName,
-        agent: opts.agent || null,
-      });
-      if (resumeConflicts.length > 0) {
-        for (const conflict of resumeConflicts) {
-          try {
-            await onboardRuntimeBoundary.recordResumeConflict(conflict);
-          } catch {
-            /* diagnostic-only */
-          }
-          if (conflict.field === "sandbox") {
-            console.error(
-              `  Resumable state belongs to sandbox '${conflict.recorded}', not '${conflict.requested}'.`,
-            );
-          } else if (conflict.field === "agent") {
-            console.error(
-              `  Session was started with agent '${conflict.recorded}', not '${conflict.requested}'.`,
-            );
-          } else if (conflict.field === "fromDockerfile") {
-            if (!conflict.recorded) {
-              console.error(
-                `  Session was started without --from; add --from '${conflict.requested}' to resume it.`,
-              );
-            } else if (!conflict.requested) {
-              console.error(
-                `  Session was started with --from '${conflict.recorded}'; rerun with that path to resume it.`,
-              );
-            } else {
-              console.error(
-                `  Session was started with --from '${conflict.recorded}', not '${conflict.requested}'.`,
-              );
-            }
-          } else {
-            console.error(
-              `  Resumable state recorded ${conflict.field} '${conflict.recorded}', not '${conflict.requested}'.`,
-            );
-          }
-        }
-        console.error(
-          `  Run: ${cliName()} onboard              # start a fresh onboarding session`,
-        );
-        console.error("  Or rerun with the original settings to continue that session.");
-        process.exit(1);
-      }
-      onboardSession.updateSession((current: Session) => {
-        repairResumeMachineSnapshot(current);
-        current.mode = isNonInteractive() ? "non-interactive" : "interactive";
-        current.failure = null;
-        current.status = "in_progress";
-        return current;
-      });
-      session = onboardSession.loadSession();
-      // #2753: a resumed onboard whose sandbox step did not complete has no
-      // recorded sandboxName (the onboard fix only persists it after
-      // createSandbox succeeds). Falling through would silently default to
-      // the agent's `my-assistant` instead of the user's original --name.
-      // Use `cannotPrompt` so non-TTY runs without explicit --non-interactive
-      // are also caught, and `requestedSandboxName` (already env-var-resolved
-      // and trimmed above, lines 8302-8308) so whitespace-only env values
-      // can't satisfy the guard.
-      const sandboxStepCompleted = session?.steps?.sandbox?.status === "complete";
-      const recoveredSandboxName =
-        requestedSandboxName || (sandboxStepCompleted ? session?.sandboxName || null : null);
-      if (cannotPrompt && !recoveredSandboxName) {
-        console.error(
-          "  Cannot resume non-interactive onboard: the previous run was interrupted before sandbox creation completed,",
-        );
-        console.error(
-          "  so no sandbox name was recorded. Re-run with --name <sandbox> (or set NEMOCLAW_SANDBOX_NAME).",
-        );
-        process.exit(1);
-      }
-    } else {
-      // --fresh asks for an explicit fresh start. createSession + saveSession
-      // already overwrites any existing file, but clearing first removes the
-      // old file outright so an interrupted createSession cannot leave the
-      // previous session readable on disk.
-      if (fresh) {
-        onboardSession.clearSession();
-      }
-      fromDockerfile = requestedFromDockerfile ? path.resolve(requestedFromDockerfile) : null;
-      session = onboardSession.saveSession(
-        onboardSession.createSession({
-          mode: isNonInteractive() ? "non-interactive" : "interactive",
-          metadata: { gatewayName: "nemoclaw", fromDockerfile: fromDockerfile || null },
-        }),
-      );
-    }
+        agentFlag: opts.agent || null,
+        envAgent: process.env.NEMOCLAW_AGENT || null,
+      },
+      {
+        loadSession: onboardSession.loadSession,
+        clearSession: onboardSession.clearSession,
+        createSession: onboardSession.createSession,
+        saveSession: onboardSession.saveSession,
+        updateSession: onboardSession.updateSession,
+        repairResumeMachineSnapshot,
+        setOnboardBrandingAgent,
+        getResumeConfigConflicts,
+        recordResumeConflict: (conflict) => onboardRuntimeBoundary.recordResumeConflict(conflict),
+        resolvePath: path.resolve,
+        cliName,
+        error: (message) => console.error(message),
+        exitProcess: (code) => process.exit(code),
+      },
+    );
     await onboardRuntimeBoundary.recordOnboardStarted(resume);
     await recordStateResult(advanceTo("preflight", { metadata: { state: "init" } }));
     // Backstop for the resume path: a session may exist (so the early guard
@@ -6170,7 +5196,6 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           getStoredMessagingChannelConfig,
           hydrateMessagingChannelConfig,
           messagingChannelConfigsEqual,
-          persistMessagingChannelConfigToSession,
           getSandboxReuseState,
           computeTelegramRequireMention,
           hasSandboxGpuDrift,
@@ -6185,9 +5210,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           configureWebSearch,
           startRecordedStep,
           getRecordedMessagingChannelsForResume,
-          getSandboxMessagingChannels: (name) => registry.getSandbox(name)?.messagingChannels,
           setupMessagingChannels,
-          readMessagingChannelConfigFromEnv,
           readMessagingPlanFromEnv,
           writePlanToEnv,
           getRegistrySandboxMessagingPlan,

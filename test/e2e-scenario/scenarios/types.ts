@@ -150,10 +150,10 @@ export interface AssertionStep {
   };
   evidencePath?: string;
   reliability?: AssertionStepReliability;
-  // Declared parent-env keys this step requires beyond the framework's
+  // Declared parent-env keys this step requires beyond the fixture layer's
   // allowlist. Anything not allowlisted and not declared here is
-  // dropped before spawn. See framework/redaction.ts. Each entry
-  // must match the secret-key shape; the framework rejects non-secret
+  // dropped before spawn. See fixtures/redaction.ts. Each entry
+  // must match the secret-key shape; the fixture layer rejects non-secret
   // names to keep the allowlist-vs-declared-secret boundary honest.
   secretEnv?: readonly string[];
   // When true, a probe/pending step that resolves as "skipped" is
@@ -234,10 +234,10 @@ export interface PhaseAction {
   // keep working without coupling them to the action's stable id.
   aliasPath?: string;
   // Declared parent-env keys this action requires beyond the
-  // framework's allowlist (PATH, HOME, E2E_*, NEMOCLAW_*, ...).
+  // fixture layer's allowlist (PATH, HOME, E2E_*, NEMOCLAW_*, ...).
   // Anything not allowlisted and not declared here is dropped before
-  // spawn. See framework/redaction.ts. Each entry must match the
-  // secret-key shape; the framework rejects non-secret names so the
+  // spawn. See fixtures/redaction.ts. Each entry must match the
+  // secret-key shape; the fixture layer rejects non-secret names so the
   // allowlist-vs-declared-secret boundary stays honest. Cloud install
   // declares ["NVIDIA_API_KEY"]; slack onboarding declares the slack
   // tokens it actually needs; etc.

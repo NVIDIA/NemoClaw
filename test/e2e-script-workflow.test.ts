@@ -1,11 +1,182 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
 import { loadE2eWorkflowContract, reusableNightlyJobs } from "./helpers/e2e-workflow-contract";
+
+// Direct legacy bash E2Es are being migrated toward Vitest coverage. Keep the
+// top-level shell suite frozen so new coverage starts in the newer E2E surface
+// unless maintainers intentionally update this allowlist.
+const LEGACY_E2E_SHELL_ALLOWLIST = [
+  "test/e2e/test-agent-turn-latency-e2e.sh",
+  "test/e2e/test-bedrock-runtime-compatible-anthropic.sh",
+  "test/e2e/test-brave-search-e2e.sh",
+  "test/e2e/test-channels-add-remove.sh",
+  "test/e2e/test-channels-stop-start.sh",
+  "test/e2e/test-cloud-inference-e2e.sh",
+  "test/e2e/test-cloud-onboard-e2e.sh",
+  "test/e2e/test-common-egress-agent-e2e.sh",
+  "test/e2e/test-concurrent-gateway-ports.sh",
+  "test/e2e/test-credential-migration.sh",
+  "test/e2e/test-credential-sanitization.sh",
+  "test/e2e/test-cron-preflight-inference-local-e2e.sh",
+  "test/e2e/test-dashboard-remote-bind.sh",
+  "test/e2e/test-device-auth-health.sh",
+  "test/e2e/test-diagnostics.sh",
+  "test/e2e/test-docs-validation.sh",
+  "test/e2e/test-double-onboard.sh",
+  "test/e2e/test-full-e2e.sh",
+  "test/e2e/test-gateway-drift-preflight.sh",
+  "test/e2e/test-gateway-health-honest.sh",
+  "test/e2e/test-gpu-double-onboard.sh",
+  "test/e2e/test-gpu-e2e.sh",
+  "test/e2e/test-hermes-discord-e2e.sh",
+  "test/e2e/test-hermes-e2e.sh",
+  "test/e2e/test-hermes-inference-switch.sh",
+  "test/e2e/test-hermes-root-entrypoint-smoke.sh",
+  "test/e2e/test-hermes-sandbox-secret-boundary.sh",
+  "test/e2e/test-hermes-slack-e2e.sh",
+  "test/e2e/test-inference-routing.sh",
+  "test/e2e/test-issue-2478-crash-loop-recovery.sh",
+  "test/e2e/test-issue-4434-tui-unreachable-inference.sh",
+  "test/e2e/test-issue-4462-scope-upgrade-approval.sh",
+  "test/e2e/test-jetson-nvmap-gpu.sh",
+  "test/e2e/test-kimi-inference-compat.sh",
+  "test/e2e/test-launchable-smoke.sh",
+  "test/e2e/test-messaging-compatible-endpoint.sh",
+  "test/e2e/test-messaging-providers.sh",
+  "test/e2e/test-model-router-provider-routed-inference.sh",
+  "test/e2e/test-network-policy.sh",
+  "test/e2e/test-ollama-auth-proxy-e2e.sh",
+  "test/e2e/test-onboard-negative-paths.sh",
+  "test/e2e/test-onboard-repair.sh",
+  "test/e2e/test-onboard-resume.sh",
+  "test/e2e/test-openclaw-discord-pairing.sh",
+  "test/e2e/test-openclaw-inference-switch.sh",
+  "test/e2e/test-openclaw-plugin-runtime-exdev.sh",
+  "test/e2e/test-openclaw-skill-cli-e2e.sh",
+  "test/e2e/test-openclaw-slack-pairing.sh",
+  "test/e2e/test-openclaw-tui-chat-correlation.sh",
+  "test/e2e/test-openshell-gateway-upgrade.sh",
+  "test/e2e/test-openshell-version-pin.sh",
+  "test/e2e/test-overlayfs-autofix.sh",
+  "test/e2e/test-rebuild-hermes.sh",
+  "test/e2e/test-rebuild-openclaw.sh",
+  "test/e2e/test-runtime-overrides.sh",
+  "test/e2e/test-sandbox-operations.sh",
+  "test/e2e/test-sandbox-rebuild.sh",
+  "test/e2e/test-sandbox-survival.sh",
+  "test/e2e/test-sessions-agents-cli.sh",
+  "test/e2e/test-shields-config.sh",
+  "test/e2e/test-skill-agent-e2e.sh",
+  "test/e2e/test-snapshot-commands.sh",
+  "test/e2e/test-spark-install.sh",
+  "test/e2e/test-state-backup-restore.sh",
+  "test/e2e/test-telegram-injection.sh",
+  "test/e2e/test-token-rotation.sh",
+  "test/e2e/test-tunnel-lifecycle.sh",
+  "test/e2e/test-upgrade-stale-sandbox.sh",
+  "test/e2e/test-vm-driver-privileged-exec-routing.sh",
+];
+
+// Scheduled nightly wiring is frozen separately: retiring a nightly-wired legacy
+// script should remove it from nightly and this allowlist in the same PR that
+// deletes the script.
+const RETIRED_VM_DRIVER_PRIVEXEC_JOB = "vm-driver-privileged-exec-routing-e2e";
+const VM_DRIVER_PRIVEXEC_VITEST = "test/vm-driver-privileged-exec-routing.test.ts";
+
+const NIGHTLY_E2E_SCRIPT_ALLOWLIST = [
+  "test/e2e/test-agent-turn-latency-e2e.sh",
+  "test/e2e/test-bedrock-runtime-compatible-anthropic.sh",
+  "test/e2e/test-brave-search-e2e.sh",
+  "test/e2e/test-channels-add-remove.sh",
+  "test/e2e/test-channels-stop-start.sh",
+  "test/e2e/test-cloud-inference-e2e.sh",
+  "test/e2e/test-cloud-onboard-e2e.sh",
+  "test/e2e/test-common-egress-agent-e2e.sh",
+  "test/e2e/test-concurrent-gateway-ports.sh",
+  "test/e2e/test-credential-sanitization.sh",
+  "test/e2e/test-cron-preflight-inference-local-e2e.sh",
+  "test/e2e/test-device-auth-health.sh",
+  "test/e2e/test-diagnostics.sh",
+  "test/e2e/test-double-onboard.sh",
+  "test/e2e/test-full-e2e.sh",
+  "test/e2e/test-gpu-double-onboard.sh",
+  "test/e2e/test-gpu-e2e.sh",
+  "test/e2e/test-hermes-discord-e2e.sh",
+  "test/e2e/test-hermes-e2e.sh",
+  "test/e2e/test-hermes-inference-switch.sh",
+  "test/e2e/test-hermes-root-entrypoint-smoke.sh",
+  "test/e2e/test-hermes-sandbox-secret-boundary.sh",
+  "test/e2e/test-hermes-slack-e2e.sh",
+  "test/e2e/test-inference-routing.sh",
+  "test/e2e/test-issue-2478-crash-loop-recovery.sh",
+  "test/e2e/test-issue-4434-tui-unreachable-inference.sh",
+  "test/e2e/test-issue-4462-scope-upgrade-approval.sh",
+  "test/e2e/test-jetson-nvmap-gpu.sh",
+  "test/e2e/test-kimi-inference-compat.sh",
+  "test/e2e/test-launchable-smoke.sh",
+  "test/e2e/test-messaging-compatible-endpoint.sh",
+  "test/e2e/test-messaging-providers.sh",
+  "test/e2e/test-network-policy.sh",
+  "test/e2e/test-onboard-negative-paths.sh",
+  "test/e2e/test-onboard-repair.sh",
+  "test/e2e/test-onboard-resume.sh",
+  "test/e2e/test-openclaw-discord-pairing.sh",
+  "test/e2e/test-openclaw-inference-switch.sh",
+  "test/e2e/test-openclaw-skill-cli-e2e.sh",
+  "test/e2e/test-openclaw-slack-pairing.sh",
+  "test/e2e/test-openclaw-tui-chat-correlation.sh",
+  "test/e2e/test-openshell-gateway-upgrade.sh",
+  "test/e2e/test-overlayfs-autofix.sh",
+  "test/e2e/test-rebuild-hermes.sh",
+  "test/e2e/test-rebuild-openclaw.sh",
+  "test/e2e/test-runtime-overrides.sh",
+  "test/e2e/test-sandbox-operations.sh",
+  "test/e2e/test-sandbox-survival.sh",
+  "test/e2e/test-sessions-agents-cli.sh",
+  "test/e2e/test-shields-config.sh",
+  "test/e2e/test-skill-agent-e2e.sh",
+  "test/e2e/test-snapshot-commands.sh",
+  "test/e2e/test-state-backup-restore.sh",
+  "test/e2e/test-telegram-injection.sh",
+  "test/e2e/test-token-rotation.sh",
+  "test/e2e/test-tunnel-lifecycle.sh",
+  "test/e2e/test-upgrade-stale-sandbox.sh",
+];
+
+function listLegacyE2eShellScripts(): string[] {
+  return readdirSync(new URL("./e2e/", import.meta.url))
+    .filter((name) => /^test-.*\.sh$/.test(name))
+    .map((name) => `test/e2e/${name}`)
+    .sort();
+}
+
+function collectLegacyE2eShellScriptRefs(value: unknown): string[] {
+  const scripts = new Set<string>();
+  const visit = (node: unknown): void => {
+    if (typeof node === "string") {
+      for (const match of node.matchAll(/test\/e2e\/test-[A-Za-z0-9_.-]+\.sh/g)) {
+        scripts.add(match[0] ?? "");
+      }
+      scripts.delete("");
+      return;
+    }
+    if (Array.isArray(node)) {
+      for (const item of node) visit(item);
+      return;
+    }
+    if (node && typeof node === "object") {
+      for (const item of Object.values(node)) visit(item);
+    }
+  };
+
+  visit(value);
+  return [...scripts].sort();
+}
 
 describe("E2E reusable workflow contract", () => {
   const { runnerWorkflow, nightlyWorkflow, action } = loadE2eWorkflowContract();
@@ -30,6 +201,46 @@ describe("E2E reusable workflow contract", () => {
     expect(runStep?.run).toContain("test/e2e/*.sh");
     expect(runStep?.run).toContain('bash "$E2E_SCRIPT"');
     expect(runStep?.run).not.toContain('bash "${{ inputs.script }}"');
+  });
+
+  it("keeps the top-level legacy E2E bash script set frozen", () => {
+    expect(listLegacyE2eShellScripts()).toEqual(LEGACY_E2E_SHELL_ALLOWLIST);
+  });
+
+  it("keeps scheduled nightly legacy E2E script wiring frozen and file-backed", () => {
+    const nightlyScripts = collectLegacyE2eShellScriptRefs(nightlyWorkflow.jobs);
+
+    expect(nightlyScripts).toEqual(NIGHTLY_E2E_SCRIPT_ALLOWLIST);
+    for (const script of nightlyScripts) {
+      expect(existsSync(new URL(`../${script}`, import.meta.url)), script).toBe(true);
+    }
+  });
+
+  it("keeps the unwired VM driver privileged-exec lane covered by CLI Vitest", () => {
+    const { cliCoverageShardAction } = loadE2eWorkflowContract();
+    const runStepNames = cliCoverageShardAction.runs.steps.map((step) => step.name);
+    const cliShardRunStep = cliCoverageShardAction.runs.steps.find(
+      (step) => step.name === "Run CLI coverage shard",
+    );
+
+    expect(nightlyWorkflow.jobs[RETIRED_VM_DRIVER_PRIVEXEC_JOB]).toBeUndefined();
+    expect(collectLegacyE2eShellScriptRefs(nightlyWorkflow)).not.toContain(
+      "test/e2e/test-vm-driver-privileged-exec-routing.sh",
+    );
+    expect(
+      existsSync(new URL("./e2e/test-vm-driver-privileged-exec-routing.sh", import.meta.url)),
+    ).toBe(true);
+    expect(existsSync(new URL(`../${VM_DRIVER_PRIVEXEC_VITEST}`, import.meta.url))).toBe(true);
+    expect(VM_DRIVER_PRIVEXEC_VITEST).toMatch(/^test\/.*\.test\.ts$/);
+    expect(runStepNames).toContain("Run CLI coverage shard");
+    expect(cliShardRunStep?.run?.split("\n").map((line) => line.trim())).toEqual(
+      expect.arrayContaining([
+        "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+        "npm run build:cli",
+        "npx tsx scripts/check-dist-sourcemaps.ts dist",
+        "npx vitest run --project cli \\",
+      ]),
+    );
   });
 
   it("passes only named secrets to reusable nightly jobs", () => {
@@ -122,15 +333,91 @@ describe("E2E reusable workflow contract", () => {
     expect(authStep?.run).toContain("continuing with anonymous pulls");
   });
 
+  it("runs docs validation directly through Vitest artifacts", () => {
+    const job = nightlyWorkflow.jobs["docs-validation-e2e"];
+    const checkoutStep = job.steps?.find((step) =>
+      String(step.uses ?? "").startsWith("actions/checkout@"),
+    );
+    const authStep = job.steps?.find((step) => step.name === "Authenticate to Docker Hub");
+    const installStep = job.steps?.find((step) => step.name === "Install root dependencies");
+    const setupNodeStep = job.steps?.find((step) =>
+      String(step.uses ?? "").startsWith("actions/setup-node@"),
+    );
+    const runStep = job.steps?.find((step) => step.name === "Run docs validation Vitest test");
+    const uploadStep = job.steps?.find((step) => step.name === "Upload docs validation artifacts");
+
+    expect(checkoutStep?.with?.ref).toBe("${{ inputs.target_ref || github.ref }}");
+    expect(checkoutStep?.with?.["persist-credentials"]).toBe(false);
+    expect(authStep).toBeUndefined();
+    expect(setupNodeStep?.uses).toMatch(/^actions\/setup-node@[0-9a-f]{40}$/);
+    expect(setupNodeStep?.with?.cache).toBe("npm");
+    expect(installStep?.run).toBe("npm ci --ignore-scripts");
+    expect(runStep?.run).toContain("npx vitest run --project e2e-scenarios-live");
+    expect(runStep?.run).toContain("test/e2e-scenario/live/docs-validation.test.ts");
+    expect(runStep?.run).not.toContain("test/e2e/test-docs-validation.sh");
+    expect(runStep?.env?.CHECK_DOC_LINKS_REMOTE).toBe("0");
+    expect(runStep?.env?.NEMOCLAW_RUN_E2E_SCENARIOS).toBe("1");
+    expect(runStep?.env?.E2E_ARTIFACT_DIR).toBe(
+      "${{ github.workspace }}/e2e-artifacts/vitest/docs-validation",
+    );
+    expect(uploadStep?.if).toBe("always()");
+    expect(uploadStep?.with?.path).toBe("e2e-artifacts/vitest/docs-validation/");
+    expect(uploadStep?.with?.["include-hidden-files"]).toBe(false);
+    expect(uploadStep?.with?.["if-no-files-found"]).toBe("ignore");
+    expect(uploadStep?.with?.["retention-days"]).toBe(14);
+  });
+
+  it("runs credential migration on the former shell runner through Vitest artifacts", () => {
+    const job = nightlyWorkflow.jobs["credential-migration-e2e"];
+    const checkoutStep = job.steps?.find((step) =>
+      String(step.uses ?? "").startsWith("actions/checkout@"),
+    );
+    const authStep = job.steps?.find((step) => step.name === "Authenticate to Docker Hub");
+    const installStep = job.steps?.find((step) => step.name === "Install root dependencies");
+    const buildStep = job.steps?.find((step) => step.name === "Build CLI");
+    const setupNodeStep = job.steps?.find((step) =>
+      String(step.uses ?? "").startsWith("actions/setup-node@"),
+    );
+    const runStep = job.steps?.find((step) => step.name === "Run credential migration Vitest test");
+    const uploadStep = job.steps?.find(
+      (step) => step.name === "Upload credential migration artifacts",
+    );
+
+    expect(job["runs-on"]).toBe("ubuntu-latest");
+    expect(job["timeout-minutes"]).toBe(50);
+    expect(checkoutStep?.with?.ref).toBe("${{ inputs.target_ref || github.ref }}");
+    expect(checkoutStep?.with?.["persist-credentials"]).toBe(false);
+    expect(authStep).toBeDefined();
+    expect(setupNodeStep?.uses).toMatch(/^actions\/setup-node@[0-9a-f]{40}$/);
+    expect(setupNodeStep?.with?.cache).toBe("npm");
+    expect(installStep?.run).toBe("npm ci --ignore-scripts");
+    expect(buildStep?.run).toBe("npm run build:cli");
+    expect(runStep?.run).toContain("npx vitest run --project e2e-scenarios-live");
+    expect(runStep?.run).toContain("test/e2e-scenario/live/credential-migration.test.ts");
+    expect(runStep?.run).not.toContain("test/e2e/test-credential-migration.sh");
+    expect(runStep?.env?.NVIDIA_API_KEY).toBe("${{ secrets.NVIDIA_API_KEY }}");
+    expect(runStep?.env?.GITHUB_TOKEN).toBeUndefined();
+    expect(runStep?.env?.NEMOCLAW_RUN_E2E_SCENARIOS).toBe("1");
+    expect(runStep?.env?.NEMOCLAW_SANDBOX_NAME).toBe("e2e-cred-migration");
+    expect(runStep?.env?.E2E_ARTIFACT_DIR).toBe(
+      "${{ github.workspace }}/e2e-artifacts/vitest/credential-migration",
+    );
+    expect(uploadStep?.if).toBe("always()");
+    expect(uploadStep?.with?.path).toBe("e2e-artifacts/vitest/credential-migration/");
+    expect(uploadStep?.with?.["include-hidden-files"]).toBe(false);
+    expect(uploadStep?.with?.["if-no-files-found"]).toBe("ignore");
+    expect(uploadStep?.with?.["retention-days"]).toBe(14);
+  });
+
   it("authenticates Docker Hub pulls in direct nightly E2E jobs", () => {
     const directE2eJobs = [
-      "docs-validation-e2e",
       "openclaw-tui-chat-correlation-e2e",
       "issue-3600-gpu-proof-optional-e2e",
       "kimi-inference-compat-e2e",
       "bedrock-runtime-compatible-anthropic-e2e",
       "token-rotation-e2e",
       "sandbox-operations-e2e",
+      "credential-migration-e2e",
       "openshell-gateway-upgrade-e2e",
       "double-onboard-e2e",
       "onboard-repair-e2e",

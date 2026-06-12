@@ -10,27 +10,41 @@
 // issue is named after — the backward-compatibility negative path and the
 // scope-synchronization invariant — without growing that file past its budget.
 
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { buildConfig } from "../scripts/generate-openclaw-config.mts";
+import {
+  applyMessagingAgentRenderToObject,
+  readMessagingBuildPlanFromEnv,
+} from "../src/lib/messaging/applier/build/messaging-build-applier.mts";
+import { withLegacyMessagingPlanEnv } from "./messaging-plan-test-helper";
 
 /** Minimal env for a valid config-generation run with Slack enabled. */
 function slackEnv(overrides: Record<string, string> = {}): Record<string, string> {
-  return {
-    NEMOCLAW_MODEL: "test-model",
-    NEMOCLAW_PROVIDER_KEY: "test-provider",
-    NEMOCLAW_PRIMARY_MODEL_REF: "test-ref",
-    NEMOCLAW_INFERENCE_BASE_URL: "http://localhost:8080",
-    NEMOCLAW_INFERENCE_API: "openai",
-    NEMOCLAW_AGENT_TIMEOUT: "600",
-    HOME: "/tmp",
-    NEMOCLAW_MESSAGING_CHANNELS_B64: Buffer.from(JSON.stringify(["slack"])).toString("base64"),
-    ...overrides,
-  };
+  return withLegacyMessagingPlanEnv(
+    {
+      NEMOCLAW_MODEL: "test-model",
+      NEMOCLAW_PROVIDER_KEY: "test-provider",
+      NEMOCLAW_PRIMARY_MODEL_REF: "test-ref",
+      NEMOCLAW_INFERENCE_BASE_URL: "http://localhost:8080",
+      NEMOCLAW_INFERENCE_API: "openai",
+      NEMOCLAW_AGENT_TIMEOUT: "600",
+      HOME: "/tmp",
+      NEMOCLAW_MESSAGING_CHANNELS_B64: Buffer.from(JSON.stringify(["slack"])).toString("base64"),
+      ...overrides,
+    },
+    "openclaw",
+  );
 }
 
 function slackAccount(env: Record<string, string>): any {
-  return buildConfig(env as any).channels.slack.accounts.default;
+  const config = buildConfig(env as any);
+  applyMessagingAgentRenderToObject(
+    config,
+    readMessagingBuildPlanFromEnv(env, "openclaw"),
+    "openclaw.json",
+  );
+  return config.channels.slack.accounts.default;
 }
 
 describe("generate-openclaw-config.mts: Slack allowlist guards (#4869)", () => {
