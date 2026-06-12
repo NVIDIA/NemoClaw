@@ -151,17 +151,31 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
     await host.bestEffortCleanupSandbox(SANDBOX_NAME, {
       artifactName: "pre-cleanup-nemoclaw-destroy-sandbox-survival",
     });
-    await sandbox.openshell(["sandbox", "delete", SANDBOX_NAME], {
-      artifactName: "pre-cleanup-openshell-delete-sandbox-survival",
-      env: sandboxAccessEnv(),
-      timeoutMs: 120_000,
-    });
+    await host.command(
+      "sh",
+      [
+        "-lc",
+        `command -v openshell >/dev/null 2>&1 && openshell sandbox delete ${SANDBOX_NAME} || true`,
+      ],
+      {
+        artifactName: "pre-cleanup-openshell-delete-sandbox-survival",
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 120_000,
+      },
+    );
     await lifecycle.stopGatewayRuntime();
-    await host.command("openshell", ["gateway", "destroy", "-g", "nemoclaw"], {
-      artifactName: "pre-cleanup-openshell-gateway-destroy",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 120_000,
-    });
+    await host.command(
+      "sh",
+      [
+        "-lc",
+        "command -v openshell >/dev/null 2>&1 && openshell gateway destroy -g nemoclaw || true",
+      ],
+      {
+        artifactName: "pre-cleanup-openshell-gateway-destroy",
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 120_000,
+      },
+    );
     fs.rmSync(path.join(process.env.HOME ?? "", ".nemoclaw", "onboard.lock"), {
       force: true,
     });
