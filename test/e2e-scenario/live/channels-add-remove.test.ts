@@ -322,7 +322,7 @@ async function telegramEgressProbe(
     "fetch(url, { signal: AbortSignal.timeout(15000) })",
     "  .then((response) => console.log(`STATUS_${response.status}`))",
     "  .catch((error) => console.log(`ERROR_${error.cause?.code || error.code || error.message}`));",
-  ].join("\n");
+  ].join(" ");
   const result = await sandbox.exec(SANDBOX_NAME, ["node", "-e", source], {
     artifactName,
     env: sandboxAccessEnv(),
