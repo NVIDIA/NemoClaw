@@ -1,13 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
-import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
-import type { ArtifactSink } from "../fixtures/artifacts.ts";
+import { DockerProbe, resultText, type DockerCommandResult } from "../fixtures/docker-probe.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
-import type { SecretStore } from "../fixtures/secrets.ts";
 
 // Migrated from test/e2e/test-hermes-root-entrypoint-smoke.sh. This remains a
 // real Docker/root-entrypoint smoke: it builds the Hermes image when no prebuilt
@@ -15,95 +12,17 @@ import type { SecretStore } from "../fixtures/secrets.ts";
 // as root, and verifies health, gateway privilege separation, runtime layout,
 // sticky config protection, and legacy gateway.pid symlink migration.
 
-const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const HEALTH_ATTEMPTS = 90;
 const HEALTH_POLL_MS = 2_000;
-const DEFAULT_COMMAND_TIMEOUT_MS = 30_000;
 const BUILD_TIMEOUT_MS = 10 * 60_000;
 const RUN_TIMEOUT_MS = 60_000;
 
 const liveTest = process.env.NEMOCLAW_RUN_E2E_SCENARIOS === "1" ? test : test.skip;
 
-type CommandResult = {
-  command: string[];
-  exitCode: number | null;
-  signal: NodeJS.Signals | null;
-  stdout: string;
-  stderr: string;
-  error?: string;
-};
-
-function safeName(value: string): string {
-  return (
-    value
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9._-]+/g, "-")
-      .replace(/^-+|-+$/g, "") || "docker"
-  );
-}
-
 function safeTag(value: string): string {
   return value.replace(/[^A-Za-z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "") || "local";
 }
 
-function resultText(result: CommandResult): string {
-  return [
-    `$ ${result.command.join(" ")}`,
-    result.stdout.trim(),
-    result.stderr.trim(),
-    result.error ? `error: ${result.error}` : "",
-  ]
-    .filter(Boolean)
-    .join("\n");
-}
-
-class DockerProbe {
-  private sequence = 0;
-
-  constructor(
-    private readonly artifacts: ArtifactSink,
-    private readonly redact: SecretStore["redact"],
-  ) {}
-
-  async run(
-    args: string[],
-    options: { artifactName: string; timeoutMs?: number } = { artifactName: "docker" },
-  ): Promise<CommandResult> {
-    const command = ["docker", ...args];
-    const result = spawnSync("docker", args, {
-      cwd: REPO_ROOT,
-      encoding: "utf8",
-      env: process.env,
-      maxBuffer: 10 * 1024 * 1024,
-      timeout: options.timeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS,
-    });
-    const commandResult: CommandResult = {
-      command: command.map((part) => this.redact(part)),
-      exitCode: result.status,
-      signal: result.signal,
-      stdout: this.redact(result.stdout ?? ""),
-      stderr: this.redact(result.stderr ?? ""),
-      error: result.error instanceof Error ? this.redact(result.error.message) : undefined,
-    };
-    const artifactBase = `docker/${String(++this.sequence).padStart(3, "0")}-${safeName(
-      options.artifactName,
-    )}`;
-    await this.artifacts.writeText(`${artifactBase}.stdout.txt`, commandResult.stdout);
-    await this.artifacts.writeText(`${artifactBase}.stderr.txt`, commandResult.stderr);
-    await this.artifacts.writeJson(`${artifactBase}.result.json`, commandResult);
-    return commandResult;
-  }
-
-  async expect(
-    args: string[],
-    options: { artifactName: string; timeoutMs?: number },
-  ): Promise<CommandResult> {
-    const result = await this.run(args, options);
-    expect(result.exitCode, resultText(result)).toBe(0);
-    return result;
-  }
-}
 
 async function requireDocker(probe: DockerProbe, skip: (message: string) => void): Promise<void> {
   const result = await probe.run(["info"], { artifactName: "docker-info", timeoutMs: 30_000 });
@@ -132,10 +51,10 @@ async function buildImageIfNeeded(
     [
       "build",
       "-f",
-      path.join(REPO_ROOT, "agents/hermes/Dockerfile.base"),
+      "agents/hermes/Dockerfile.base",
       "-t",
       baseImage,
-      REPO_ROOT,
+      ".",
     ],
     { artifactName: "build-hermes-base-image", timeoutMs: BUILD_TIMEOUT_MS },
   );
@@ -143,12 +62,12 @@ async function buildImageIfNeeded(
     [
       "build",
       "-f",
-      path.join(REPO_ROOT, "agents/hermes/Dockerfile"),
+      "agents/hermes/Dockerfile",
       "--build-arg",
       `BASE_IMAGE=${baseImage}`,
       "-t",
       image,
-      REPO_ROOT,
+      ".",
     ],
     { artifactName: "build-hermes-production-image", timeoutMs: BUILD_TIMEOUT_MS },
   );
@@ -159,7 +78,7 @@ async function dockerExecSh(
   container: string,
   script: string,
   artifactName: string,
-): Promise<CommandResult> {
+): Promise<DockerCommandResult> {
   return probe.run(["exec", container, "sh", "-lc", script], { artifactName });
 }
 
@@ -168,7 +87,7 @@ async function expectContainerSh(
   container: string,
   message: string,
   script: string,
-): Promise<CommandResult> {
+): Promise<DockerCommandResult> {
   const result = await dockerExecSh(probe, container, script, message);
   expect(result.exitCode, `${container}: ${message}\n${resultText(result)}`).toBe(0);
   return result;
