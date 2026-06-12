@@ -11,5 +11,8 @@ export function getSandboxTargetGatewayName(sandboxName = ""): string {
 }
 
 export function gatewayNamePattern(gatewayName: string): RegExp {
-  return new RegExp(`Gateway:\\s+${gatewayName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "i");
+  return new RegExp(
+    `Gateway:\\s+${gatewayName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?=\\s|$)`,
+    "i",
+  );
 }

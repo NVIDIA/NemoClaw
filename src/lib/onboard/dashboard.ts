@@ -24,6 +24,7 @@ import {
   isLiveForwardStatus,
 } from "./dashboard-port";
 import { bestEffortForwardStop } from "./forward-cleanup";
+import * as registry from "../state/registry";
 import {
   buildDetachedForwardStartSpawn,
   buildForwardStartProgressLogger,
@@ -100,6 +101,25 @@ export interface OnboardDashboardHelpers {
     agent?: AgentDefinition | null,
   ): void;
   stopAllDashboardForwards(): void;
+}
+
+function collectRegistryReservedDashboardPorts(
+  excludeSandboxName: string,
+): ReadonlyMap<number, string> {
+  const reserved = new Map<number, string>();
+  try {
+    const list = registry.listSandboxes();
+    for (const entry of list.sandboxes) {
+      if (entry.name === excludeSandboxName) continue;
+      if (typeof entry.dashboardPort === "number" && Number.isFinite(entry.dashboardPort)) {
+        reserved.set(entry.dashboardPort, entry.name);
+      }
+    }
+  } catch {
+    // The registry may be unreadable mid-onboard; downstream lsof + bind
+    // probes are still the final authority on port availability.
+  }
+  return reserved;
 }
 
 function findForwardEntry(
@@ -249,7 +269,13 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     }
     let actualPort: number;
     try {
-      actualPort = findAvailableDashboardPort(sandboxName, preferredPort, existingForwards);
+      actualPort = findAvailableDashboardPort(
+        sandboxName,
+        preferredPort,
+        existingForwards,
+        undefined,
+        collectRegistryReservedDashboardPorts(sandboxName),
+      );
     } catch (err) {
       if (!rollbackSandboxOnFailure) throw err;
       rollbackSandboxAndExit(sandboxName, err);

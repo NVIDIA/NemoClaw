@@ -103,7 +103,11 @@ function isValidPersistedGatewayPort(value: number): boolean {
  *   2. A name-only legacy entry may use a persisted `gatewayName`, validated
  *      against the NemoClaw namespace (`nemoclaw` or `nemoclaw-<port>`).
  *   3. The bare `BASE_GATEWAY_NAME` for older entries that pre-date the
- *      per-port migration entirely.
+ *      per-port migration entirely (neither field present).
+ *
+ * Fail closed when either field is present but invalid. Silently falling
+ * back to the default gateway would let a corrupted or tampered registry
+ * row redirect destroy/snapshot/cleanup to the wrong (or default) gateway.
  */
 export function resolveSandboxGatewayName(
   sandbox: SandboxGatewayBinding | null | undefined,
@@ -121,7 +125,15 @@ export function resolveSandboxGatewayName(
   ) {
     return sandbox.gatewayName;
   }
-  return BASE_GATEWAY_NAME;
+  const portPresent = sandbox?.gatewayPort !== undefined && sandbox?.gatewayPort !== null;
+  const namePresent = sandbox?.gatewayName !== undefined && sandbox?.gatewayName !== null;
+  if (!portPresent && !namePresent) {
+    return BASE_GATEWAY_NAME;
+  }
+  const detail: string[] = [];
+  if (portPresent) detail.push(`gatewayPort=${JSON.stringify(sandbox?.gatewayPort)}`);
+  if (namePresent) detail.push(`gatewayName=${JSON.stringify(sandbox?.gatewayName)}`);
+  throw new Error(`Invalid persisted sandbox gateway binding (${detail.join(", ")})`);
 }
 
 /**

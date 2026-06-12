@@ -173,7 +173,12 @@ describe("gateway drift preflight for maintenance actions", () => {
     await backupAll();
 
     expect(recoverNamedGatewayRuntimeSpy).toHaveBeenCalledWith({
-      recoverableStates: ["missing_named", "named_unhealthy", "named_unreachable"],
+      recoverableStates: [
+        "missing_named",
+        "named_unhealthy",
+        "named_unreachable",
+        "connected_other",
+      ],
     });
     expect(captureOpenshellSpy).toHaveBeenCalledTimes(2);
     expect(captureOpenshellSpy).toHaveBeenNthCalledWith(1, ["sandbox", "list"]);
@@ -258,7 +263,12 @@ describe("gateway drift preflight for maintenance actions", () => {
     await upgradeSandboxes({ check: true });
 
     expect(recoverNamedGatewayRuntimeSpy).toHaveBeenCalledWith({
-      recoverableStates: ["missing_named", "named_unhealthy", "named_unreachable"],
+      recoverableStates: [
+        "missing_named",
+        "named_unhealthy",
+        "named_unreachable",
+        "connected_other",
+      ],
     });
     expect(captureOpenshellSpy).toHaveBeenCalledTimes(2);
     expect(classifyUpgradeableSandboxesSpy).toHaveBeenCalledWith(

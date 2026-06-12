@@ -169,7 +169,12 @@ describe("rebuild gateway drift preflight", () => {
 
     expect(recoverNamedGatewayRuntimeSpy).toHaveBeenCalledWith({
       gatewayName: "nemoclaw",
-      recoverableStates: ["missing_named", "named_unhealthy", "named_unreachable"],
+      recoverableStates: [
+        "missing_named",
+        "named_unhealthy",
+        "named_unreachable",
+        "connected_other",
+      ],
     });
     // The liveness query ran twice (initial failure + post-recovery retry).
     expect(listCalls).toBe(2);

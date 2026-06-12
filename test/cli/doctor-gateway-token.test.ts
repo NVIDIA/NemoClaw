@@ -213,9 +213,9 @@ describe("CLI dispatch", () => {
         detail: "connected to nemoclaw-8090",
       }),
     );
-    const calls = setup.readCalls().join("\n");
+    const calls = setup.readCalls();
     expect(calls).toContain("gateway info -g nemoclaw-8090");
-    expect(calls).not.toContain("gateway info -g nemoclaw\n");
+    expect(calls).not.toContain("gateway info -g nemoclaw");
   });
 
   it("doctor still inspects the legacy k3s gateway container for the kubernetes driver", () => {

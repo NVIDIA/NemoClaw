@@ -96,25 +96,47 @@ describe("resolveSandboxGatewayName", () => {
     );
   });
 
-  it("rejects an out-of-namespace persisted gatewayName and falls through to the port", () => {
-    // A tampered registry entry must not redirect destructive gateway/volume
-    // operations to an arbitrary string. The validator strips it and the
-    // per-port fallback kicks in instead.
+  it("falls through to a valid port when only the persisted gatewayName is out-of-namespace", () => {
+    // A tampered name with a still-valid port resolves from the port so the
+    // operation lands on a real NemoClaw gateway rather than the tampered string.
     expect(resolveSandboxGatewayName({ gatewayName: "rogue-gateway", gatewayPort: 8081 })).toBe(
       "nemoclaw-8081",
     );
-    expect(resolveSandboxGatewayName({ gatewayName: "../etc/passwd" })).toBe(BASE_GATEWAY_NAME);
-    expect(resolveSandboxGatewayName({ gatewayName: "nemoclaw evil" })).toBe(BASE_GATEWAY_NAME);
-    expect(resolveSandboxGatewayName({ gatewayName: "nemoclaw-0" })).toBe(BASE_GATEWAY_NAME);
-    expect(resolveSandboxGatewayName({ gatewayName: "nemoclaw-65536" })).toBe(BASE_GATEWAY_NAME);
   });
 
-  it("rejects an out-of-range or non-integer persisted gatewayPort", () => {
-    expect(resolveSandboxGatewayName({ gatewayPort: 0 })).toBe(BASE_GATEWAY_NAME);
-    expect(resolveSandboxGatewayName({ gatewayPort: -1 })).toBe(BASE_GATEWAY_NAME);
-    expect(resolveSandboxGatewayName({ gatewayPort: 65536 })).toBe(BASE_GATEWAY_NAME);
-    expect(resolveSandboxGatewayName({ gatewayPort: 8081.5 })).toBe(BASE_GATEWAY_NAME);
-    expect(resolveSandboxGatewayName({ gatewayPort: Number.NaN })).toBe(BASE_GATEWAY_NAME);
+  it("throws on an invalid persisted gatewayName when no valid port is present", () => {
+    // Refuse to silently rewrite destroy/snapshot to the default gateway when
+    // the persisted binding is present but unusable.
+    expect(() => resolveSandboxGatewayName({ gatewayName: "../etc/passwd" })).toThrow(
+      /Invalid persisted sandbox gateway binding/,
+    );
+    expect(() => resolveSandboxGatewayName({ gatewayName: "nemoclaw evil" })).toThrow(
+      /Invalid persisted sandbox gateway binding/,
+    );
+    expect(() => resolveSandboxGatewayName({ gatewayName: "nemoclaw-0" })).toThrow(
+      /Invalid persisted sandbox gateway binding/,
+    );
+    expect(() => resolveSandboxGatewayName({ gatewayName: "nemoclaw-65536" })).toThrow(
+      /Invalid persisted sandbox gateway binding/,
+    );
+  });
+
+  it("throws on an out-of-range or non-integer persisted gatewayPort", () => {
+    expect(() => resolveSandboxGatewayName({ gatewayPort: 0 })).toThrow(
+      /Invalid persisted sandbox gateway binding/,
+    );
+    expect(() => resolveSandboxGatewayName({ gatewayPort: -1 })).toThrow(
+      /Invalid persisted sandbox gateway binding/,
+    );
+    expect(() => resolveSandboxGatewayName({ gatewayPort: 65536 })).toThrow(
+      /Invalid persisted sandbox gateway binding/,
+    );
+    expect(() => resolveSandboxGatewayName({ gatewayPort: 8081.5 })).toThrow(
+      /Invalid persisted sandbox gateway binding/,
+    );
+    expect(() => resolveSandboxGatewayName({ gatewayPort: Number.NaN })).toThrow(
+      /Invalid persisted sandbox gateway binding/,
+    );
   });
 
   it("accepts the canonical bare base gateway name", () => {
