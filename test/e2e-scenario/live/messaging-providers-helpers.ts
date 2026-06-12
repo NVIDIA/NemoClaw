@@ -12,7 +12,6 @@ import type { HostCliClient } from "../fixtures/clients/host.ts";
 import {
   type SandboxClient,
   sandboxAccessEnv,
-  trustedSandboxShellScript,
   validateSandboxName,
 } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
@@ -87,6 +86,10 @@ export type FakeDockerApi = {
 
 export function outputText(result: CommandOutput): string {
   return [result.stdout, result.stderr].filter(Boolean).join("\n");
+}
+
+export function stripAnsi(value: string): string {
+  return value.replace(/\u001b\[[0-9;]*m/g, "");
 }
 
 export function base64(value: string): string {
@@ -316,7 +319,9 @@ export async function runSandboxShell(
     timeoutMs?: number;
   },
 ): Promise<ShellProbeResult> {
-  return sandbox.execShell(SANDBOX_NAME, trustedSandboxShellScript(script), {
+  const encodedScript = base64(script);
+  const wrapper = `printf '%s' ${shellQuote(encodedScript)} | base64 -d | sh`;
+  return sandbox.exec(SANDBOX_NAME, ["sh", "-lc", wrapper], {
     artifactName: options.artifactName,
     env: sandboxAccessEnv(),
     redactionValues: options.redactionValues,

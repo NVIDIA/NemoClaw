@@ -51,6 +51,7 @@ import {
   shellQuote,
   skipNote,
   startFakeDockerApi,
+  stripAnsi,
   tokenValues,
 } from "./messaging-providers-helpers.ts";
 
@@ -171,7 +172,7 @@ runLiveTest(
       timeoutMs: 60_000,
     });
     expectExitZero(sandboxList, "openshell sandbox list");
-    const sandboxRow = sandboxList.stdout
+    const sandboxRow = stripAnsi(sandboxList.stdout)
       .split(/\r?\n/)
       .find((line) => line.includes(SANDBOX_NAME));
     check(Boolean(sandboxRow && /\bReady\b/.test(sandboxRow)), "M0b: sandbox is Ready");
