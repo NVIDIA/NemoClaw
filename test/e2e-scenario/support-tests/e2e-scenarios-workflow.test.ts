@@ -199,6 +199,22 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       registryScenarios: [],
     });
     expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "shields-config" }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["shields-config-vitest"],
+      registryScenarios: [],
+    });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({ jobs: "shields-config-vitest" }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["shields-config-vitest"],
+      registryScenarios: [],
+    });
+    expect(
       evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "rebuild-openclaw" }),
     ).toMatchObject({
       valid: true,
@@ -298,6 +314,16 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       matrix: "[]",
     });
     expect(generateMatrixForDispatch({ JOBS: "", SCENARIOS: "inference-routing" })).toMatchObject({
+      hermes_selected: "false",
+      matrix: "[]",
+    });
+    expect(
+      generateMatrixForDispatch({ JOBS: "shields-config-vitest", SCENARIOS: "" }),
+    ).toMatchObject({
+      hermes_selected: "false",
+      matrix: "[]",
+    });
+    expect(generateMatrixForDispatch({ JOBS: "", SCENARIOS: "shields-config" })).toMatchObject({
       hermes_selected: "false",
       matrix: "[]",
     });
@@ -692,6 +718,8 @@ jobs:
           "report-to-pr job must wait for credential-sanitization-vitest",
           "report-to-pr job must wait for runtime-overrides-vitest",
           "report-to-pr job must wait for network-policy-vitest",
+          "workflow missing shields-config-vitest job",
+          "report-to-pr job must wait for shields-config-vitest",
           "workflow missing sandbox-rebuild-vitest job",
           "report-to-pr job must wait for sandbox-rebuild-vitest",
           "double-onboard-vitest job must depend on validate-jobs",
