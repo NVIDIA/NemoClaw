@@ -1822,28 +1822,6 @@ exit 1
       }
     });
 
-    it("Hermes baseline does not bake in github access; it ships only via the opt-in preset", () => {
-      const parsed = parseRepoYaml("agents/hermes/policy-additions.yaml");
-      expect(parsed.network_policies?.github).toBeUndefined();
-      const baselineHosts = Object.values(
-        (parsed.network_policies ?? {}) as Record<string, { endpoints?: Array<{ host?: string }> }>,
-      ).flatMap((policy) => (policy.endpoints ?? []).map((endpoint) => endpoint.host));
-      expect(baselineHosts).not.toContain("github.com");
-      expect(baselineHosts).not.toContain("api.github.com");
-
-      const preset = parsePresetYaml("github");
-      const presetGithub = preset.network_policies?.github as
-        | { endpoints?: Array<{ host?: string }>; binaries?: Array<{ path?: string }> }
-        | undefined;
-      const presetHosts = (presetGithub?.endpoints ?? [])
-        .map((endpoint) => endpoint.host)
-        .sort();
-      expect(presetHosts).toEqual(["api.github.com", "github.com"]);
-      const presetBinaries = (presetGithub?.binaries ?? []).map((binary) => binary.path);
-      expect(presetBinaries).toContain("/usr/bin/git");
-      expect(presetBinaries).not.toContain("/usr/bin/gh");
-    });
-
     it("REST policy YAML avoids deprecated tls: terminate", () => {
       const agentsDir = path.join(REPO_ROOT, "agents");
       const agentPolicyFiles = fs.existsSync(agentsDir)

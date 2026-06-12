@@ -545,6 +545,14 @@ describe("Hermes sandbox policy", () => {
   it("regression #4230: managed_inference keeps a narrow inference API allowlist", () => {
     expectManagedInferenceSecurityShape();
   });
+
+  it("base policy does not silently grant GitHub access; only the opt-in preset does", () => {
+    const np = policy.network_policies ?? {};
+    expect("github" in np).toBe(false);
+    const hosts = Object.values(np).flatMap((entry) => (entry.endpoints ?? []).map((e) => e.host));
+    expect(hosts).not.toContain("github.com");
+    expect(hosts).not.toContain("api.github.com");
+  });
 });
 
 describe("github preset", () => {
