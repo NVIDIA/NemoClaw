@@ -37,6 +37,14 @@ type TraceSpanLike = {
   duration_ms?: unknown;
 };
 
+type TimingSummaryArtifact = {
+  schema_version?: unknown;
+  trace_id?: unknown;
+  total_duration_ms?: unknown;
+  phases?: unknown;
+  slowest_spans?: unknown;
+};
+
 type OnboardTraceSummary = {
   artifact: unknown;
   totalMs: number;
@@ -126,21 +134,32 @@ function traceTimingResult(
   return { traceTimingLine, traceSummaryLines };
 }
 
+function isNumberRecord(value: unknown): value is Record<string, number> {
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    Object.values(value).every((entry) => Number.isFinite(Number(entry)))
+  );
+}
+
 function selectOnboardTrace(jsonTexts: string[]): OnboardTraceSummary | null {
   const candidates: OnboardTraceSummary[] = [];
   for (const text of jsonTexts) {
     try {
-      const artifact = JSON.parse(text);
-      const spans = artifact?.resource_spans?.[0]?.scope_spans?.[0]?.spans ?? [];
-      if (!Array.isArray(spans)) continue;
-      const hasOnboard = spans.some((span) => span?.name === "nemoclaw.onboard");
-      const totalMs = Number(artifact?.summary?.total_duration_ms);
-      if (hasOnboard && Number.isFinite(totalMs)) {
-        candidates.push({ artifact, totalMs, phases: extractPhaseDurations(spans) });
+      const artifact = JSON.parse(text) as TimingSummaryArtifact;
+      const totalMs = Number(artifact?.total_duration_ms);
+      if (
+        artifact?.schema_version === "nemoclaw.trace_timing.v1" &&
+        Number.isFinite(totalMs) &&
+        isNumberRecord(artifact.phases)
+      ) {
+        candidates.push({ artifact, totalMs, phases: artifact.phases });
       }
     } catch {
-      // Ignore malformed files inside the artifact; the trace upload can contain
-      // only one useful onboard JSON plus incidental files in future revisions.
+      // The trusted sanitizer emits a single timing-summary JSON file; keep
+      // scorecard parsing best-effort so a missing/malformed summary does not
+      // hide the E2E pass/fail signal.
     }
   }
   candidates.sort((a, b) => b.totalMs - a.totalMs);

@@ -12,11 +12,15 @@ That job sets:
 NEMOCLAW_TRACE_DIR=/tmp/nemoclaw-traces
 ```
 
-The reusable E2E runner uploads `/tmp/nemoclaw-traces/` after every run as the `cloud-onboard-traces` artifact.
+The reusable E2E runner does not upload `/tmp/nemoclaw-traces/` directly.
+After the target-ref script finishes, trusted workflow code reads candidate trace JSON files from that target-controlled directory and writes a timing-only summary under `/tmp/nemoclaw-trace-summary/`.
+Only that summary directory is uploaded after every run as the `cloud-onboard-traces` artifact.
 Failure-only logs continue to use each job's normal `artifact_name` and `artifact_path`.
-NemoClaw sanitizes trace artifacts as they are written: sensitive-looking keys and common token value formats are redacted while trace span names, durations, statuses, and summary timing fields are preserved.
+The uploaded timing summary keeps only the trace schema version, trace id, total duration, known `nemoclaw.onboard.phase.*` durations, and a bounded slowest-span timing list.
+It omits raw attributes, events, prompts, environment values, file names, arbitrary files, and unrecognized trace fields.
+NemoClaw also sanitizes trace files as they are written, but that in-process redaction is defense in depth rather than the artifact upload trust boundary.
 
-The nightly `scorecard` job reads the `cloud-onboard-traces` artifact, selects the trace JSON that contains the root `nemoclaw.onboard` span, and reports:
+The nightly `scorecard` job reads the `cloud-onboard-traces` artifact, selects the trusted `nemoclaw.trace_timing.v1` summary JSON, and reports:
 
 - total onboard trace duration from `summary.total_duration_ms`
 - top matching `nemoclaw.onboard.phase.*` duration changes in Slack
@@ -36,5 +40,5 @@ If the artifact, prior release tag, prior run, or matching trace data is unavail
 - `SLACK_WEBHOOK_URL_PREVIEW` for selective dispatches when `post_to_slack=true`
 
 The trace timing section is part of the same Slack scorecard message, but it stays compact: total duration, the three largest matching phase changes, and a pointer to the GitHub run summary for the full table.
-It does not post raw trace JSON, prompts, credentials, or environment values.
-The uploaded trace artifact is already sanitized by NemoClaw before upload.
+Slack does not post raw trace JSON, prompts, credentials, or environment values.
+The uploaded artifact is the trusted timing-only summary, not the raw target-ref trace directory.

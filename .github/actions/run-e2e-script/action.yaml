@@ -29,6 +29,10 @@ inputs:
     description: Optional newline-capable artifact path glob list to upload after every script run.
     required: false
     default: ""
+  always-artifact-trace-source-path:
+    description: Optional target-controlled trace path to reduce to a trusted timing-only summary before upload.
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -70,6 +74,19 @@ runs:
         name: ${{ inputs.artifact-name }}
         path: ${{ inputs.artifact-path }}
         if-no-files-found: ignore
+
+    - name: Sanitize E2E trace artifacts
+      if: always() && inputs.always-artifact-name != '' && inputs.always-artifact-path != '' && inputs.always-artifact-trace-source-path != ''
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        E2E_TRACE_SOURCE_PATH: ${{ inputs.always-artifact-trace-source-path }}
+        E2E_TRACE_SUMMARY_DIR: ${{ inputs.always-artifact-path }}
+      run: |
+        set -euo pipefail
+        python3 "$GITHUB_ACTION_PATH/sanitize-trace-artifacts.py" \
+          "$E2E_TRACE_SOURCE_PATH" \
+          "$E2E_TRACE_SUMMARY_DIR"
 
     - name: Upload E2E artifacts
       if: always() && inputs.always-artifact-name != '' && inputs.always-artifact-path != ''
