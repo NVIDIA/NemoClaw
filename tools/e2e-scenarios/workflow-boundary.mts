@@ -31,6 +31,7 @@ const ALLOWED_FREE_STANDING_JOBS = new Set([
   ...FREE_STANDING_SCENARIO_JOBS.values(),
   "credential-migration-vitest",
   "gateway-guard-recovery",
+  "double-onboard-vitest",
 ]);
 
 export interface WorkflowDispatchSelectorEvaluation {
@@ -278,6 +279,7 @@ function validateJobsSelector(errors: string[], jobs: WorkflowRecord): void {
   requireRunContains(errors, validate, "onboard-negative-paths-vitest");
   requireRunContains(errors, validate, "credential-migration-vitest");
   requireRunContains(errors, validate, "runtime-overrides-vitest");
+  requireRunContains(errors, validate, "double-onboard-vitest");
   requireRunContains(errors, validate, "hermes-e2e-vitest");
   requireRunContains(errors, validate, "network-policy-vitest");
   requireRunContains(errors, validate, "token-rotation-vitest");
@@ -719,7 +721,115 @@ function requireNoDockerHubAuthInRun(
   }
 }
 
-function validateRuntimeOverridesVitestJob(errors: string[], jobs: WorkflowRecord): void {
+function validateDoubleOnboardVitestJob(errors: string[], jobs: WorkflowRecord): void {
+  const jobName = "double-onboard-vitest";
+  const job = asRecord(jobs[jobName]);
+  if (Object.keys(job).length === 0) {
+    errors.push("workflow missing double-onboard-vitest job");
+    return;
+  }
+
+  if (job["runs-on"] !== "ubuntu-latest") {
+    errors.push("double-onboard-vitest job must run on ubuntu-latest");
+  }
+  validateFreeStandingJobSelector(errors, jobs, jobName);
+
+  const jobEnv = asRecord(job.env);
+  if (jobEnv.NEMOCLAW_RUN_E2E_SCENARIOS !== "1") {
+    errors.push("double-onboard-vitest job must set NEMOCLAW_RUN_E2E_SCENARIOS=1");
+  }
+  if (jobEnv.NEMOCLAW_CLI_BIN !== "${{ github.workspace }}/bin/nemoclaw.js") {
+    errors.push("double-onboard-vitest job must point NEMOCLAW_CLI_BIN at the repo CLI");
+  }
+  if (
+    jobEnv.E2E_ARTIFACT_DIR !==
+    "${{ github.workspace }}/e2e-artifacts/vitest/double-onboard"
+  ) {
+    errors.push(
+      "double-onboard-vitest job must write artifacts under e2e-artifacts/vitest/double-onboard",
+    );
+  }
+  requireEnvDoesNotExposeSecret(errors, "double-onboard-vitest job", jobEnv, "NVIDIA_API_KEY");
+  requireEnvDoesNotExposeSecret(errors, "double-onboard-vitest job", jobEnv, "DOCKERHUB_TOKEN");
+
+  const steps = asSteps(job.steps);
+  requireNoDispatchInputInterpolation(errors, steps);
+  for (const step of steps) {
+    if (step.name !== "Authenticate to Docker Hub") {
+      requireEnvDoesNotExposeSecret(
+        errors,
+        `double-onboard-vitest step '${step.name ?? step.uses ?? "<unnamed>"}'`,
+        asRecord(step.env),
+        "DOCKERHUB_TOKEN",
+      );
+    }
+    requireEnvDoesNotExposeSecret(
+      errors,
+      `double-onboard-vitest step '${step.name ?? step.uses ?? "<unnamed>"}'`,
+      asRecord(step.env),
+      "NVIDIA_API_KEY",
+    );
+  }
+
+  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
+  if (!checkout) errors.push("double-onboard-vitest job missing checkout step");
+  requireFullShaAction(errors, checkout, "double-onboard-vitest checkout");
+  if (asRecord(checkout?.with)["persist-credentials"] !== false) {
+    errors.push("double-onboard-vitest checkout step must set persist-credentials=false");
+  }
+
+  const dockerLogin = requireJobStep(errors, jobName, steps, "Authenticate to Docker Hub");
+  const dockerLoginEnv = asRecord(dockerLogin?.env);
+  if (dockerLoginEnv.DOCKERHUB_USERNAME !== "${{ secrets.DOCKERHUB_USERNAME }}") {
+    errors.push("double-onboard-vitest Docker login step must read DOCKERHUB_USERNAME from secrets");
+  }
+  if (dockerLoginEnv.DOCKERHUB_TOKEN !== "${{ secrets.DOCKERHUB_TOKEN }}") {
+    errors.push("double-onboard-vitest Docker login step must read DOCKERHUB_TOKEN from secrets");
+  }
+  requireRunContains(errors, dockerLogin, "docker login docker.io");
+  requireRunContains(errors, dockerLogin, "continuing with anonymous pulls");
+
+  const setupNode = namedStep(steps, "Set up Node");
+  if (!setupNode) errors.push("double-onboard-vitest job missing step: Set up Node");
+  requireFullShaAction(errors, setupNode, "double-onboard-vitest setup-node");
+
+  const installRootDependencies = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Install root dependencies",
+  );
+  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
+
+  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
+  requireRunContains(errors, buildCli, "npm run build:cli");
+
+  const installTools = requireJobStep(errors, jobName, steps, "Install OpenShell CLI");
+  requireRunContains(errors, installTools, "bash scripts/install-openshell.sh");
+
+  const runVitest = requireJobStep(errors, jobName, steps, "Run double-onboard live Vitest test");
+  requireRunContains(errors, runVitest, "OPENSHELL_BIN");
+  requireRunContains(errors, runVitest, "npx vitest run --project e2e-scenarios-live");
+  requireRunContains(errors, runVitest, "test/e2e-scenario/live/double-onboard.test.ts");
+
+  const upload = requireJobStep(errors, jobName, steps, "Upload double-onboard Vitest artifacts");
+  requireFullShaAction(errors, upload, "double-onboard-vitest upload-artifact");
+  const uploadWith = asRecord(upload?.with);
+  if (uploadWith.name !== "e2e-vitest-scenarios-double-onboard") {
+    errors.push("double-onboard-vitest artifact upload name must be stable");
+  }
+  const uploadPath = stringValue(uploadWith.path);
+  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/vitest/double-onboard/");
+  if (uploadWith["include-hidden-files"] !== false) {
+    errors.push("double-onboard-vitest artifact upload must set include-hidden-files: false");
+  }
+  if (uploadWith["if-no-files-found"] !== "ignore") {
+    errors.push("double-onboard-vitest artifact upload must ignore missing fixture artifacts");
+  }
+  if (uploadWith["retention-days"] !== 14) {
+    errors.push("double-onboard-vitest artifact upload retention-days must be 14");
+  }
+}function validateRuntimeOverridesVitestJob(errors: string[], jobs: WorkflowRecord): void {
   const jobName = "runtime-overrides-vitest";
   const job = asRecord(jobs[jobName]);
   if (Object.keys(job).length === 0) {
@@ -951,6 +1061,7 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   requireRunContains(errors, generate, "Unknown free-standing Vitest job");
   requireRunContains(errors, generate, "runtime-overrides-vitest");
   requireRunContains(errors, generate, "runtime-overrides");
+  requireRunContains(errors, generate, "double-onboard-vitest");
   requireRunContains(errors, generate, "hermes-e2e-vitest");
   requireRunContains(errors, generate, "network-policy-vitest");
   requireRunContains(errors, generate, "token-rotation-vitest");
@@ -1108,6 +1219,7 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   validateOnboardNegativePathsVitestJob(errors, jobs);
   validateFreeStandingJobSelector(errors, jobs, "credential-migration-vitest");
   validateRuntimeOverridesVitestJob(errors, jobs);
+  validateDoubleOnboardVitestJob(errors, jobs);
   validateHermesE2EVitestJob(errors, jobs);
   validateNetworkPolicyVitestJob(errors, jobs);
   validateTokenRotationVitestJob(errors, jobs);
@@ -1135,6 +1247,7 @@ export function validateE2eVitestScenariosWorkflowBoundary(
       "hermes-e2e-vitest",
       "network-policy-vitest",
       "token-rotation-vitest",
+      "double-onboard-vitest",
       "openclaw-tui-chat-correlation-vitest",
       "gateway-guard-recovery",
     ]) {

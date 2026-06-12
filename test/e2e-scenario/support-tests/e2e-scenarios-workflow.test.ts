@@ -330,6 +330,45 @@ jobs:
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 1
+  double-onboard-vitest:
+    runs-on: ubuntu-latest
+    needs: generate-matrix
+    if: \${{ inputs.scenarios != '' }}
+    env:
+      E2E_ARTIFACT_DIR: \${{ github.workspace }}/.e2e/double-onboard
+      NEMOCLAW_CLI_BIN: ./bad-cli.js
+      NEMOCLAW_RUN_E2E_SCENARIOS: "0"
+      NVIDIA_API_KEY: \${{ secrets.NVIDIA_API_KEY }}
+      DOCKERHUB_TOKEN: \${{ secrets.DOCKERHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - name: Authenticate to Docker Hub
+        env:
+          DOCKERHUB_USERNAME: plain-user
+          DOCKERHUB_TOKEN: plain-token
+        run: echo no docker login
+      - name: Set up Node
+        uses: actions/setup-node@v4
+      - name: Install root dependencies
+        run: npm install
+      - name: Build CLI
+        run: echo skip build
+      - name: Install OpenShell CLI
+        run: echo skip install
+      - name: Run double-onboard live Vitest test
+        env:
+          DOCKERHUB_TOKEN: \${{ secrets.DOCKERHUB_TOKEN }}
+        run: npx vitest run --project e2e-scenarios-live "\${{ inputs.test_filter }}"
+      - name: Upload double-onboard Vitest artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: double-onboard
+          path: .e2e/double-onboard/
+          include-hidden-files: true
+          if-no-files-found: error
+
 `,
     );
 
@@ -347,6 +386,7 @@ jobs:
           "step 'Validate free-standing job selector' run script must include Invalid scenario input; use comma-separated scenario ids",
           "step 'Validate free-standing job selector' run script must include allowed_jobs=",
           "step 'Validate free-standing job selector' run script must include runtime-overrides-vitest",
+          "step 'Validate free-standing job selector' run script must include double-onboard-vitest",
           "step 'Validate free-standing job selector' run script must include hermes-e2e-vitest",
           "step 'Validate free-standing job selector' run script must include Invalid jobs input; use comma-separated job ids",
           "step 'Validate free-standing job selector' run script must not include Invalid jobs input: ${JOBS}",
@@ -462,6 +502,33 @@ jobs:
           "report-to-pr job must wait for credential-migration-vitest",
           "report-to-pr job must wait for runtime-overrides-vitest",
           "report-to-pr job must wait for network-policy-vitest",
+          "double-onboard-vitest job must depend on validate-jobs",
+          "double-onboard-vitest job must use the shared jobs selector condition",
+          "double-onboard-vitest job must set NEMOCLAW_RUN_E2E_SCENARIOS=1",
+          "double-onboard-vitest job must point NEMOCLAW_CLI_BIN at the repo CLI",
+          "double-onboard-vitest job must write artifacts under e2e-artifacts/vitest/double-onboard",
+          "double-onboard-vitest job env must not include NVIDIA_API_KEY",
+          "double-onboard-vitest job env must not include DOCKERHUB_TOKEN",
+          "double-onboard-vitest checkout action must be pinned to a full commit SHA",
+          "double-onboard-vitest checkout step must set persist-credentials=false",
+          "double-onboard-vitest Docker login step must read DOCKERHUB_USERNAME from secrets",
+          "double-onboard-vitest Docker login step must read DOCKERHUB_TOKEN from secrets",
+          "step 'Authenticate to Docker Hub' run script must include docker login docker.io",
+          "step 'Authenticate to Docker Hub' run script must include continuing with anonymous pulls",
+          "double-onboard-vitest setup-node action must be pinned to a full commit SHA",
+          "step 'Install root dependencies' run script must include npm ci --ignore-scripts",
+          "step 'Build CLI' run script must include npm run build:cli",
+          "step 'Install OpenShell CLI' run script must include bash scripts/install-openshell.sh",
+          "double-onboard-vitest step 'Run double-onboard live Vitest test' env must not include DOCKERHUB_TOKEN",
+          "step 'Run double-onboard live Vitest test' run script must not interpolate dispatch inputs directly",
+          "step 'Run double-onboard live Vitest test' run script must include OPENSHELL_BIN",
+          "step 'Run double-onboard live Vitest test' run script must include test/e2e-scenario/live/double-onboard.test.ts",
+          "double-onboard-vitest upload-artifact action must be pinned to a full commit SHA",
+          "double-onboard-vitest artifact upload name must be stable",
+          "artifact upload path must include e2e-artifacts/vitest/double-onboard/",
+          "double-onboard-vitest artifact upload must set include-hidden-files: false",
+          "double-onboard-vitest artifact upload must ignore missing fixture artifacts",
+          "double-onboard-vitest artifact upload retention-days must be 14",
           "workflow missing hermes-e2e-vitest job",
           "report-to-pr job must wait for hermes-e2e-vitest",
           "openclaw-tui-chat-correlation-vitest job must depend on validate-jobs and generate-matrix",
@@ -470,6 +537,7 @@ jobs:
           "gateway-guard-recovery job must use the shared jobs selector condition",
           "report-to-pr job must wait for validate-jobs",
           "report-to-pr job must wait for live-scenarios",
+          "report-to-pr job must wait for double-onboard-vitest",
           "report-to-pr step must pass pr_number through JOB_PR_NUMBER env",
           "report-to-pr step must pass scenarios through JOB_SCENARIOS env",
           "step 'Post Vitest scenario results to PR' run script must include process.env.JOBS",
