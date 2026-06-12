@@ -795,12 +795,18 @@ function rollbackShieldsDown(
   let rollbackChattrApplied: boolean | null = null;
   let rollbackFileHashes: { [path: string]: string } | null = null;
   if (rollbackResult.status === 0) {
-    try {
-      const lockResult = lockAgentConfig(sandboxName, target);
-      rollbackChattrApplied = lockResult.chattrApplied;
-      rollbackFileHashes = lockResult.fileHashes;
-    } catch {
-      console.error("  Warning: Rollback re-lock could not be verified. Check config manually.");
+    // Re-confirm after the settle window so a reconciler revert cannot leave
+    // the rolled-back config DRIFTED — same fail-closed treatment as the
+    // auto-restore path. Leaves the hashes null (→ "manual intervention"
+    // below) when the lock will not re-confirm.
+    const relock = relockAndReconfirm(() => lockAgentConfig(sandboxName, target));
+    if (relock.ok && relock.lastResult) {
+      rollbackChattrApplied = relock.lastResult.chattrApplied;
+      rollbackFileHashes = relock.lastResult.fileHashes;
+    } else {
+      console.error(
+        "  Warning: Rollback re-lock could not be re-confirmed. Check config manually.",
+      );
     }
   } else {
     console.error("  Warning: Policy restore failed during rollback.");
@@ -851,17 +857,23 @@ function activateLockdownFromSnapshot(
   }
 
   const target = resolveAgentConfig(sandboxName);
-  try {
-    const lockResult = lockAgentConfig(sandboxName, target);
+  // Re-confirm the lock after a settle window. This restore feeds the
+  // auto-restore inline recovery and the `shields up` snapshot path, both of
+  // which mark shields UP on this result — so a reconciler revert here would
+  // otherwise leave the same DRIFTED state #4663 is about. relockAndReconfirm
+  // fails closed (ok:false) when the lock will not hold past the settle window.
+  const relock = relockAndReconfirm(() => lockAgentConfig(sandboxName, target));
+  if (!relock.ok || !relock.lastResult) {
     return {
-      ok: true,
-      chattrApplied: lockResult.chattrApplied,
-      fileHashes: lockResult.fileHashes,
+      ok: false,
+      error: relock.error ?? "config re-lock did not re-confirm after the settle window",
     };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return { ok: false, error: message };
   }
+  return {
+    ok: true,
+    chattrApplied: relock.lastResult.chattrApplied,
+    fileHashes: relock.lastResult.fileHashes,
+  };
 }
 
 function recoverExpiredAutoRestoreInline(
