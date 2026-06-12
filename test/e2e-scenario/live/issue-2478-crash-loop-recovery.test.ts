@@ -48,7 +48,12 @@ async function waitForGatewayPid(
 }
 
 async function runProbeOnly(
-  host: { nemoclaw(args?: string[], options?: Record<string, unknown>): Promise<{ exitCode: number | null; stdout: string; stderr: string }> },
+  host: {
+    nemoclaw(
+      args?: string[],
+      options?: Record<string, unknown>,
+    ): Promise<{ exitCode: number | null; stdout: string; stderr: string }>;
+  },
   sandboxName: string,
   artifactName: string,
 ): Promise<void> {
@@ -64,26 +69,49 @@ async function runProbeOnly(
 }
 
 async function killGatewayPid(
-  sandbox: { exec(name: string, command: string[], options?: Record<string, unknown>): Promise<{ exitCode: number | null; stdout: string; stderr: string }> },
+  sandbox: {
+    exec(
+      name: string,
+      command: string[],
+      options?: Record<string, unknown>,
+    ): Promise<{ exitCode: number | null; stdout: string; stderr: string }>;
+  },
   sandboxName: string,
   pid: number,
   artifactName: string,
 ): Promise<void> {
-  const result = await sandbox.exec(sandboxName, ["sh", "-c", `kill -9 ${pid} 2>/dev/null; sleep 1`], {
-    artifactName,
-    env: probeEnv(),
-    timeoutMs: 30_000,
-  });
-  expect(result.exitCode, `${artifactName}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`).toBe(0);
+  const result = await sandbox.exec(
+    sandboxName,
+    ["sh", "-c", `kill -9 ${pid} 2>/dev/null; sleep 1`],
+    {
+      artifactName,
+      env: probeEnv(),
+      timeoutMs: 30_000,
+    },
+  );
+  expect(
+    result.exitCode,
+    `${artifactName}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+  ).toBe(0);
 }
 
 async function snapshotProxyEnv(
-  sandbox: { exec(name: string, command: string[], options?: Record<string, unknown>): Promise<{ exitCode: number | null; stdout: string; stderr: string }> },
+  sandbox: {
+    exec(
+      name: string,
+      command: string[],
+      options?: Record<string, unknown>,
+    ): Promise<{ exitCode: number | null; stdout: string; stderr: string }>;
+  },
   sandboxName: string,
 ): Promise<{ b64: string; size: number }> {
   const result = await sandbox.exec(
     sandboxName,
-    ["sh", "-c", "base64 < /tmp/nemoclaw-proxy-env.sh && printf '\\nSIZE=' && wc -c < /tmp/nemoclaw-proxy-env.sh"],
+    [
+      "sh",
+      "-c",
+      "base64 < /tmp/nemoclaw-proxy-env.sh && printf '\\nSIZE=' && wc -c < /tmp/nemoclaw-proxy-env.sh",
+    ],
     { artifactName: "snapshot-proxy-env", env: probeEnv(), timeoutMs: 30_000 },
   );
   expect(result.exitCode, result.stderr).toBe(0);
@@ -97,7 +125,13 @@ async function snapshotProxyEnv(
 }
 
 async function restoreProxyEnv(
-  sandbox: { exec(name: string, command: string[], options?: Record<string, unknown>): Promise<{ exitCode: number | null; stdout: string; stderr: string }> },
+  sandbox: {
+    exec(
+      name: string,
+      command: string[],
+      options?: Record<string, unknown>,
+    ): Promise<{ exitCode: number | null; stdout: string; stderr: string }>;
+  },
   sandboxName: string,
   snapshot: { b64: string; size: number },
 ): Promise<void> {
@@ -106,7 +140,7 @@ async function restoreProxyEnv(
     [
       "sh",
       "-c",
-      `echo '${snapshot.b64}' | base64 -d > /tmp/nemoclaw-proxy-env.sh && chmod 444 /tmp/nemoclaw-proxy-env.sh && wc -c < /tmp/nemoclaw-proxy-env.sh`,
+      `rm -f /tmp/nemoclaw-proxy-env.sh && echo '${snapshot.b64}' | base64 -d > /tmp/nemoclaw-proxy-env.sh && chmod 444 /tmp/nemoclaw-proxy-env.sh && wc -c < /tmp/nemoclaw-proxy-env.sh`,
     ],
     { artifactName: "restore-proxy-env", env: probeEnv(), timeoutMs: 30_000 },
   );
@@ -115,7 +149,13 @@ async function restoreProxyEnv(
 }
 
 async function waitForRecoveryWarning(
-  gateway: { expectLogContains(instance: NemoClawInstance, pattern: RegExp, options?: Record<string, unknown>): Promise<void> },
+  gateway: {
+    expectLogContains(
+      instance: NemoClawInstance,
+      pattern: RegExp,
+      options?: Record<string, unknown>,
+    ): Promise<void>;
+  },
   instance: NemoClawInstance,
 ): Promise<void> {
   let lastError: unknown;
@@ -133,7 +173,12 @@ async function waitForRecoveryWarning(
 
 async function sampleGatewayStability(
   gateway: { resolveGatewayPid(instance: NemoClawInstance): Promise<number | null> },
-  runtime: { expectInferenceLocalModels(instance: NemoClawInstance, options?: Record<string, unknown>): Promise<unknown> },
+  runtime: {
+    expectInferenceLocalModels(
+      instance: NemoClawInstance,
+      options?: Record<string, unknown>,
+    ): Promise<unknown>;
+  },
   instance: NemoClawInstance,
   soakSeconds: number,
 ): Promise<{ samples: Array<number | null>; inferenceFailures: number; inferenceProbes: number }> {
@@ -249,6 +294,9 @@ test("issue-2478: gateway recovery preserves guard chain and avoids crash loop",
     distinctPids.size,
     `crash-loop signature: ${distinctPids.size} distinct PIDs in samples ${soak.samples.join(",")}`,
   ).toBeLessThanOrEqual(2);
-  expect(emptySamples, `gateway should not disappear repeatedly during soak: ${soak.samples.join(",")}`).toBeLessThanOrEqual(1);
+  expect(
+    emptySamples,
+    `gateway should not disappear repeatedly during soak: ${soak.samples.join(",")}`,
+  ).toBeLessThanOrEqual(1);
   expect(soak.inferenceFailures, "inference.local should stay available during soak").toBe(0);
 });
