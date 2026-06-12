@@ -40,12 +40,7 @@ export async function captureSandboxListWithGatewayRecovery(
   }
 
   const recoveryOptions: Parameters<typeof recoverNamedGatewayRuntime>[0] = {
-    recoverableStates: [
-      "missing_named",
-      "named_unhealthy",
-      "named_unreachable",
-      "connected_other",
-    ],
+    recoverableStates: ["missing_named", "named_unhealthy", "named_unreachable", "connected_other"],
   };
   if (options.gatewayName) {
     recoveryOptions.gatewayName = options.gatewayName;
