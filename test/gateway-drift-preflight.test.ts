@@ -305,7 +305,7 @@ function expectNotContains(result: CommandResult, pattern: RegExp, description: 
 
 function expectSandboxListCalled(result: CommandResult, expected: boolean): void {
   const calls = fs.readFileSync(path.join(result.caseDir, "openshell-calls.log"), "utf-8");
-  const called = calls.split(/\r?\n/).includes("sandbox list");
+  const called = calls.split(/\r?\n/).some((line) => /^sandbox\s+list(?:\s|$)/.test(line.trim()));
   expect(
     called,
     `sandbox list calls expectation failed\n${logsFor(result.caseDir)}\n${result.output}`,
