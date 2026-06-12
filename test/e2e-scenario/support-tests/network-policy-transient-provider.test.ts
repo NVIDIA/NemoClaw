@@ -20,6 +20,11 @@ describe("network-policy transient provider validation classifier", () => {
         probeOutput("endpoint validation failed: returned HTTP 503 from provider"),
       ),
     ).toBe(true);
+    expect(
+      isTransientProviderValidationFailure(
+        probeOutput("endpoint validation failed: provider rate limit exceeded"),
+      ),
+    ).toBe(true);
 
     expect(
       isTransientProviderValidationFailure(

@@ -166,6 +166,26 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       registryScenarios: [],
     });
     expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({
+        scenarios: "messaging-compatible-endpoint",
+      }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["messaging-compatible-endpoint-vitest"],
+      registryScenarios: [],
+    });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({
+        jobs: "messaging-compatible-endpoint-vitest",
+      }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["messaging-compatible-endpoint-vitest"],
+      registryScenarios: [],
+    });
+    expect(
       evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "inference-routing" }),
     ).toMatchObject({
       valid: true,
@@ -376,7 +396,7 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
         registryScenarios: [],
       });
     }
-  });
+  }, 15_000);
 
   it("flags direct dispatch-input interpolation and unsafe artifact upload", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-vitest-workflow-"));
@@ -653,6 +673,33 @@ jobs:
         expect.arrayContaining([
           "workflow missing runtime-overrides-vitest job",
           "report-to-pr job must wait for runtime-overrides-vitest",
+        ]),
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("requires messaging-compatible-endpoint workflow and report coverage", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-vitest-workflow-"));
+    const workflowPath = path.join(tmp, "workflow.yaml");
+    const workflow = fs.readFileSync(
+      path.join(process.cwd(), ".github/workflows/e2e-vitest-scenarios.yaml"),
+      "utf8",
+    );
+    fs.writeFileSync(
+      workflowPath,
+      workflow
+        .replace(/messaging-compatible-endpoint-vitest/g, "msg-compatible-missing")
+        .replace(/messaging-compatible-endpoint/g, "msg-compatible-missing"),
+    );
+
+    try {
+      const errors = validateE2eVitestScenariosWorkflowBoundary(workflowPath);
+      expect(errors).toEqual(
+        expect.arrayContaining([
+          "workflow missing messaging-compatible-endpoint-vitest job",
+          "report-to-pr job must wait for messaging-compatible-endpoint-vitest",
         ]),
       );
     } finally {

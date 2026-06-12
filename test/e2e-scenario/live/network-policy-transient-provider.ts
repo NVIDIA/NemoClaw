@@ -6,7 +6,7 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 const TRANSIENT_PROVIDER_VALIDATION_RE =
   /endpoint validation failed|failed to verify inference endpoint|Chat Completions API validation/i;
 const TRANSIENT_PROVIDER_DETAIL_RE =
-  /timed? out|timeout|curl failed \(exit (7|28|35|52|56)\)|ETIMEDOUT|ECONNRESET|EAI_AGAIN|ENOTFOUND|failed to connect|error sending request|HTTP (429|502|503|504)|returned HTTP (429|502|503|504)|temporar/i;
+  /timed? out|timeout|curl failed \(exit (7|28|35|52|56)\)|ETIMEDOUT|ECONNRESET|EAI_AGAIN|ENOTFOUND|failed to connect|error sending request|HTTP (429|502|503|504)|returned HTTP (429|502|503|504)|too many requests|rate[- ]?limit|quota|temporar/i;
 
 function resultText(result: Pick<ShellProbeResult, "stdout" | "stderr">): string {
   return [result.stdout, result.stderr].filter(Boolean).join("\n");

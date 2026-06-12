@@ -1168,6 +1168,157 @@ function validateTokenRotationVitestJob(errors: string[], jobs: WorkflowRecord):
   }
 }
 
+function validateMessagingCompatibleEndpointVitestJob(
+  errors: string[],
+  jobs: WorkflowRecord,
+): void {
+  const jobName = "messaging-compatible-endpoint-vitest";
+  const job = asRecord(jobs[jobName]);
+  if (Object.keys(job).length === 0) {
+    errors.push("workflow missing messaging-compatible-endpoint-vitest job");
+    return;
+  }
+
+  if (job["runs-on"] !== "ubuntu-latest") {
+    errors.push("messaging-compatible-endpoint-vitest job must run on ubuntu-latest");
+  }
+  validateFreeStandingJobSelector(errors, jobs, jobName, "messaging-compatible-endpoint");
+  if (job["timeout-minutes"] !== 45) {
+    errors.push("messaging-compatible-endpoint-vitest job must keep the legacy 45 minute timeout");
+  }
+
+  const jobEnv = asRecord(job.env);
+  if (
+    jobEnv.E2E_ARTIFACT_DIR !==
+    "${{ github.workspace }}/e2e-artifacts/vitest/messaging-compatible-endpoint"
+  ) {
+    errors.push(
+      "messaging-compatible-endpoint-vitest job must write artifacts under e2e-artifacts/vitest/messaging-compatible-endpoint",
+    );
+  }
+  if (!stringValue(jobEnv.NEMOCLAW_CLI_BIN).includes("bin/nemoclaw.js")) {
+    errors.push("messaging-compatible-endpoint-vitest job must point NEMOCLAW_CLI_BIN at the repo CLI");
+  }
+  if (jobEnv.NEMOCLAW_RUN_E2E_SCENARIOS !== "1") {
+    errors.push("messaging-compatible-endpoint-vitest job must set NEMOCLAW_RUN_E2E_SCENARIOS=1");
+  }
+  if (jobEnv.NEMOCLAW_SANDBOX_NAME !== "e2e-msg-compat") {
+    errors.push("messaging-compatible-endpoint-vitest job must pin the legacy sandbox name");
+  }
+  if (jobEnv.OPENSHELL_GATEWAY !== "nemoclaw") {
+    errors.push("messaging-compatible-endpoint-vitest job must force OPENSHELL_GATEWAY=nemoclaw");
+  }
+  requireEnvDoesNotExposeSecret(
+    errors,
+    "messaging-compatible-endpoint-vitest job",
+    jobEnv,
+    "NVIDIA_API_KEY",
+  );
+
+  const steps = asSteps(job.steps);
+  requireNoDispatchInputInterpolation(errors, steps);
+  for (const step of steps) {
+    if (step.name !== "Run messaging compatible endpoint live test") {
+      requireEnvDoesNotExposeSecret(
+        errors,
+        `messaging-compatible-endpoint-vitest step '${step.name ?? step.uses ?? "<unnamed>"}'`,
+        asRecord(step.env),
+        "NVIDIA_API_KEY",
+      );
+    }
+  }
+
+  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
+  if (!checkout) errors.push("messaging-compatible-endpoint-vitest job missing checkout step");
+  requireFullShaAction(errors, checkout, "messaging-compatible-endpoint-vitest checkout");
+  if (asRecord(checkout?.with)["persist-credentials"] !== false) {
+    errors.push("messaging-compatible-endpoint-vitest checkout step must set persist-credentials=false");
+  }
+
+  const dockerHubAuth = requireJobStep(errors, jobName, steps, "Authenticate to Docker Hub");
+  const dockerHubEnv = asRecord(dockerHubAuth?.env);
+  if (dockerHubEnv.DOCKERHUB_USERNAME !== "${{ secrets.DOCKERHUB_USERNAME }}") {
+    errors.push(
+      "messaging-compatible-endpoint-vitest Docker Hub auth must receive DOCKERHUB_USERNAME from secrets",
+    );
+  }
+  if (dockerHubEnv.DOCKERHUB_TOKEN !== "${{ secrets.DOCKERHUB_TOKEN }}") {
+    errors.push(
+      "messaging-compatible-endpoint-vitest Docker Hub auth must receive DOCKERHUB_TOKEN from secrets",
+    );
+  }
+  requireRunContains(errors, dockerHubAuth, "docker login docker.io");
+
+  const setupNode = namedStep(steps, "Set up Node");
+  if (!setupNode) errors.push("messaging-compatible-endpoint-vitest job missing step: Set up Node");
+  requireFullShaAction(errors, setupNode, "messaging-compatible-endpoint-vitest setup-node");
+
+  const installRootDependencies = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Install root dependencies",
+  );
+  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
+
+  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
+  requireRunContains(errors, buildCli, "npm run build:cli");
+
+  const runVitest = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Run messaging compatible endpoint live test",
+  );
+  const runVitestEnv = asRecord(runVitest?.env);
+  requireEnvDoesNotExposeSecret(
+    errors,
+    "messaging-compatible-endpoint-vitest step",
+    runVitestEnv,
+    "NVIDIA_API_KEY",
+  );
+  if (runVitestEnv.NEMOCLAW_COMPAT_MOCK_API_KEY !== "fake-compatible-key-e2e") {
+    errors.push("messaging-compatible-endpoint-vitest step must set a fake compatible endpoint key");
+  }
+  if (runVitestEnv.TELEGRAM_BOT_TOKEN !== "test-fake-telegram-token-e2e") {
+    errors.push("messaging-compatible-endpoint-vitest step must set a fake Telegram token");
+  }
+  if (runVitestEnv.TELEGRAM_ALLOWED_IDS !== "123456789") {
+    errors.push("messaging-compatible-endpoint-vitest step must set fake Telegram allowed ids");
+  }
+  requireRunContains(errors, runVitest, "npx vitest run --project e2e-scenarios-live");
+  requireRunContains(
+    errors,
+    runVitest,
+    "test/e2e-scenario/live/messaging-compatible-endpoint.test.ts",
+  );
+
+  const upload = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Upload messaging compatible endpoint artifacts",
+  );
+  requireFullShaAction(errors, upload, "messaging-compatible-endpoint-vitest upload-artifact");
+  const uploadWith = asRecord(upload?.with);
+  if (uploadWith.name !== "e2e-vitest-scenarios-messaging-compatible-endpoint") {
+    errors.push("messaging-compatible-endpoint-vitest artifact upload name must be stable");
+  }
+  const uploadPath = stringValue(uploadWith.path);
+  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/vitest/messaging-compatible-endpoint/");
+  if (uploadWith["include-hidden-files"] !== false) {
+    errors.push("messaging-compatible-endpoint-vitest artifact upload must set include-hidden-files: false");
+  }
+  if (uploadWith["if-no-files-found"] !== "ignore") {
+    errors.push(
+      "messaging-compatible-endpoint-vitest artifact upload must ignore missing fixture artifacts",
+    );
+  }
+  if (uploadWith["retention-days"] !== 14) {
+    errors.push("messaging-compatible-endpoint-vitest artifact upload retention-days must be 14");
+  }
+}
+
 function validateOnboardNegativePathsVitestJob(errors: string[], jobs: WorkflowRecord): void {
   const jobName = "onboard-negative-paths-vitest";
   const job = asRecord(jobs[jobName]);
@@ -2119,6 +2270,7 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   validateRebuildOpenClawVitestJob(errors, jobs);
   validateSandboxRebuildVitestJob(errors, jobs);
   validateTokenRotationVitestJob(errors, jobs);
+  validateMessagingCompatibleEndpointVitestJob(errors, jobs);
   validateFreeStandingJobSelector(
     errors,
     jobs,
