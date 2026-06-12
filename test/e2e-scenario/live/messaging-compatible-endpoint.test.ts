@@ -55,8 +55,6 @@ const HOP_BY_HOP_HEADERS = new Set([
 const RATE_LIMIT_VALIDATION_RE =
   /HTTP\s+429|returned\s+HTTP\s+429|\b429\b|too many requests|rate[- ]?limit|quota/i;
 const DEFAULT_NVIDIA_PROVIDER_VALIDATION_RE = /NVIDIA Endpoints endpoint validation failed/i;
-const COMPATIBLE_ENDPOINT_VALIDATION_RE =
-  /Other OpenAI-compatible endpoint endpoint validation failed/i;
 const COMPAT_AGENT_REPLY = "COMPAT_MOCK_ROUTE_5098_OK";
 const COMPAT_AGENT_PROMPT =
   "Call the configured model and report the compatible endpoint route token.";
@@ -432,36 +430,15 @@ function hasLegacyCompatibleEndpointSmokeEvidence(
   return resultText(result).includes("Compatible endpoint responds through inference.local");
 }
 
-function hasCompatibleMockValidationEvidence(
-  requests: readonly MockRequestLog[],
-  requestCountBeforeOnboard: number,
-): boolean {
-  return requests
-    .slice(requestCountBeforeOnboard)
-    .some(
-      (request) =>
-        request.auth === "ok" &&
-        [
-          "/v1/models",
-          "/models",
-          "/v1/responses",
-          "/responses",
-          "/v1/chat/completions",
-          "/chat/completions",
-        ].includes(request.path),
-    );
-}
-
 function shouldSkipPreContractProviderRateLimit(
   result: Pick<ShellProbeResult, "stdout" | "stderr">,
-  requests: readonly MockRequestLog[] = [],
-  requestCountBeforeOnboard = 0,
+  options: { githubActions?: boolean } = {},
 ): boolean {
   const text = resultText(result);
+  const runningInActions = options.githubActions ?? process.env.GITHUB_ACTIONS === "true";
   return (
-    COMPATIBLE_ENDPOINT_VALIDATION_RE.test(text) &&
-    !DEFAULT_NVIDIA_PROVIDER_VALIDATION_RE.test(text) &&
-    hasCompatibleMockValidationEvidence(requests, requestCountBeforeOnboard) &&
+    runningInActions &&
+    DEFAULT_NVIDIA_PROVIDER_VALIDATION_RE.test(text) &&
     isTransientProviderValidationFailure(result) &&
     RATE_LIMIT_VALIDATION_RE.test(text) &&
     !hasLegacyCompatibleEndpointSmokeEvidence(result)
@@ -839,6 +816,7 @@ describe("messaging-compatible-endpoint live test local classifiers", () => {
         output(
           "Other OpenAI-compatible endpoint endpoint validation failed.\nChat Completions API validation returned HTTP 429",
         ),
+        { githubActions: true },
       ),
     ).toBe(false);
     expect(
@@ -846,42 +824,41 @@ describe("messaging-compatible-endpoint live test local classifiers", () => {
         output(
           "Other OpenAI-compatible endpoint endpoint validation failed.\nChat Completions API validation returned HTTP 429",
         ),
-        [
-          { auth: "missing", hopHeaders: [], method: "GET", path: "/v1/models" },
-          { auth: "ok", hopHeaders: [], method: "POST", path: "/v1/chat/completions" },
-        ],
-        1,
+        { githubActions: false },
       ),
-    ).toBe(true);
+    ).toBe(false);
     expect(
       shouldSkipPreContractProviderRateLimit(
         output(
           "Other OpenAI-compatible endpoint endpoint validation failed.\nChat Completions API validation returned HTTP 429",
         ),
-        [{ auth: "ok", hopHeaders: [], method: "POST", path: "/v1/chat/completions" }],
-        1,
+        { githubActions: true },
       ),
     ).toBe(false);
     expect(
       shouldSkipPreContractProviderRateLimit(
         output("NVIDIA Endpoints endpoint validation failed.\nRequest rate limit exceeded"),
+        { githubActions: true },
       ),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       shouldSkipPreContractProviderRateLimit(
         output(
           "NVIDIA Endpoints endpoint validation failed.\nChat Completions API validation returned HTTP 429",
         ),
+        { githubActions: false },
       ),
     ).toBe(false);
     expect(
       shouldSkipPreContractProviderRateLimit(
         output("Chat Completions API validation returned HTTP 429"),
+        { githubActions: true },
       ),
     ).toBe(false);
     expect(
       shouldSkipPreContractProviderRateLimit(
         output("Other OpenAI-compatible endpoint endpoint validation failed: invalid credential"),
+        { githubActions: true },
       ),
     ).toBe(false);
     expect(
@@ -889,24 +866,28 @@ describe("messaging-compatible-endpoint live test local classifiers", () => {
         output(
           "Chat Completions API validation returned HTTP 429\n✓ Compatible endpoint responds through inference.local inside the sandbox",
         ),
+        { githubActions: true },
       ),
     ).toBe(false);
     expect(
-      shouldSkipPreContractProviderRateLimit(output("endpoint validation failed: HTTP 429"), [
-        {
-          auth: "ok",
-          hopHeaders: [],
-          method: "POST",
-          path: "/v1/chat/completions",
-        },
-      ]),
+      shouldSkipPreContractProviderRateLimit(output("endpoint validation failed: HTTP 429"), {
+        githubActions: true,
+      }),
     ).toBe(false);
     expect(
       shouldSkipPreContractProviderRateLimit(
         output(
           "Other OpenAI-compatible endpoint endpoint validation failed.\nChat Completions API validation returned HTTP 429\n✓ Compatible endpoint responds through inference.local inside the sandbox",
         ),
-        [{ auth: "ok", hopHeaders: [], method: "POST", path: "/v1/chat/completions" }],
+        { githubActions: true },
+      ),
+    ).toBe(false);
+    expect(
+      shouldSkipPreContractProviderRateLimit(
+        output(
+          "NVIDIA Endpoints endpoint validation failed.\nChat Completions API validation returned HTTP 429\n✓ Compatible endpoint responds through inference.local inside the sandbox",
+        ),
+        { githubActions: true },
       ),
     ).toBe(false);
   });
@@ -984,38 +965,25 @@ liveTest(
     });
     expect(hostReachability.exitCode, resultText(hostReachability)).toBe(0);
 
-    const mockRequestCountBeforeOnboard = compatibleMock.requests.length;
     const { result: onboard, runner } = await runCompatibleOnboard(host, endpointUrl);
-    if (
-      onboard.exitCode !== 0 &&
-      shouldSkipPreContractProviderRateLimit(
-        onboard,
-        compatibleMock.requests,
-        mockRequestCountBeforeOnboard,
-      )
-    ) {
+    if (onboard.exitCode !== 0 && shouldSkipPreContractProviderRateLimit(onboard)) {
       await artifacts.writeJson("scenario-result.json", {
         id: "messaging-compatible-endpoint",
         status: "skipped",
-        reason: "external-provider-rate-limit-before-legacy-contract",
+        reason: "external-nvidia-provider-rate-limit-before-legacy-contract",
         runner,
         onboardExitCode: onboard.exitCode,
         onboardTimedOut: onboard.timedOut,
         onboardArtifacts: onboard.artifacts,
-        mockRequestsBeforeOnboard: mockRequestCountBeforeOnboard,
         mockRequestsBeforeSkip: compatibleMock.requests.length,
-        compatibleMockValidationRequests: compatibleMock.requests.slice(
-          mockRequestCountBeforeOnboard,
-        ),
-        sourceBoundary:
-          "onboard reached the configured compatible mock before an external provider rate limit stopped the pre-contract validation path",
+        sourceBoundary: "external NVIDIA Endpoints provider availability",
         sourceFixConstraint:
-          "skip requires compatible/custom endpoint validation text plus new authenticated mock traffic; NVIDIA/default provider validation or zero-mock-traffic 429 remains a test failure",
+          "skip is limited to explicit NVIDIA Endpoints validation in GitHub Actions; compatible endpoint validation failures against the local mock remain test failures",
         removalCondition:
           "remove once CI endpoint validation is stable for a release cycle or covered by a hermetic provider-validation fixture",
       });
       skip(
-        "External endpoint validation was rate-limited before the messaging-compatible endpoint contract could run",
+        "NVIDIA Endpoints validation was rate-limited before the messaging-compatible endpoint contract could run",
       );
     }
     expect(onboard.exitCode, resultText(onboard)).toBe(0);
