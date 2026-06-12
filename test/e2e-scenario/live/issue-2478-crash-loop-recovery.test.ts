@@ -124,6 +124,24 @@ async function snapshotProxyEnv(
   return { b64, size };
 }
 
+async function removeProxyEnv(
+  sandbox: {
+    exec(
+      name: string,
+      command: string[],
+      options?: Record<string, unknown>,
+    ): Promise<{ exitCode: number | null; stdout: string; stderr: string }>;
+  },
+  sandboxName: string,
+): Promise<void> {
+  const result = await sandbox.exec(sandboxName, ["rm", "-f", "/tmp/nemoclaw-proxy-env.sh"], {
+    artifactName: "remove-proxy-env",
+    env: probeEnv(),
+    timeoutMs: 30_000,
+  });
+  expect(result.exitCode, result.stderr).toBe(0);
+}
+
 async function restoreProxyEnv(
   sandbox: {
     exec(
@@ -263,15 +281,12 @@ test("issue-2478: gateway recovery preserves guard chain and avoids crash loop",
   }
 
   const snapshot = await snapshotProxyEnv(sandbox, instance.sandboxName);
-  await sandbox.wipeGuardChain(instance.sandboxName);
+  await removeProxyEnv(sandbox, instance.sandboxName);
   await sandbox.killGatewayTree(instance.sandboxName);
   await runProbeOnly(host, instance.sandboxName, "missing-proxy-env-connect-probe-only");
   await waitForRecoveryWarning(gateway, instance);
   const negativePid = await waitForGatewayPid(gateway, instance, 45_000);
   expect(negativePid, "missing proxy-env warning path should still respawn gateway").not.toBeNull();
-
-  // #2701 follow-on contract from the legacy script: after the recovery fix,
-  // missing /tmp guard files are re-emitted instead of leaving the gateway naked.
   await gateway.expectGuardChainActive(instance);
 
   await restoreProxyEnv(sandbox, instance.sandboxName, snapshot);
