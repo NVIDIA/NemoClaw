@@ -17,13 +17,13 @@ import path from "node:path";
 
 import { isPrivateIp } from "../../../nemoclaw/src/blueprint/private-networks.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
-import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { shouldRunLiveE2EScenarios } from "../fixtures/live-project-gate.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const CLI_ENTRYPOINT = path.join(REPO_ROOT, "bin", "nemoclaw.js");
@@ -64,6 +64,11 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function shellEvalArg(script: string): string {
+  const encoded = Buffer.from(script, "utf8").toString("base64");
+  return `eval "$(printf %s ${encoded} | base64 -d)"`;
+}
+
 async function runNemoclaw(
   host: HostCliClient,
   args: string[],
@@ -82,7 +87,7 @@ async function sandboxBash(
   script: string,
   options: { artifactName: string; timeoutMs?: number } = { artifactName: "sandbox-bash" },
 ): Promise<ShellProbeResult> {
-  return sandbox.execShell(SANDBOX_NAME, trustedSandboxShellScript(script), {
+  return sandbox.execShell(SANDBOX_NAME, trustedSandboxShellScript(shellEvalArg(script)), {
     artifactName: options.artifactName,
     env: baseEnv(),
     timeoutMs: options.timeoutMs ?? SANDBOX_EXEC_TIMEOUT_MS,
