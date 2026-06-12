@@ -272,7 +272,7 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       if (process.env.GITHUB_ACTIONS === "true") {
         throw new Error(`Docker is required for cloud inference E2E: ${resultText(docker)}`);
       }
-      skip("Docker is required for cloud inference E2E");
+      return skip("Docker is required for cloud inference E2E");
     }
 
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cloud-inference-home-"));
@@ -303,7 +303,7 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       install.exitCode === 0 ? null : classifyPreContractExternalProviderFailure(install);
     if (preContractFailure) {
       await writePreContractExternalProviderSkip(artifacts, install, preContractFailure);
-      skip("NVIDIA endpoint validation was unavailable/rate-limited during install/onboard");
+      return skip("NVIDIA endpoint validation was unavailable/rate-limited during install/onboard");
     }
     expect(install.exitCode, resultText(install)).toBe(0);
 
