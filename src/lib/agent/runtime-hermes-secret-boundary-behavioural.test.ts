@@ -31,6 +31,10 @@ function writeStub(dir: string, name: string, body: string) {
   return stub;
 }
 
+function removeTempDir(dir: string) {
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+}
+
 const SHARED_PYTHON_STUB_BY_MODE = [
   'if [ "$1" = "-c" ]; then',
   "  exit 0",
@@ -114,7 +118,7 @@ describe("Hermes secret-boundary guard — guard snippet behaviour", () => {
           : "",
       };
     } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
+      removeTempDir(tmp);
     }
   }
 
@@ -289,7 +293,7 @@ describe("Hermes secret-boundary guard — full recovery script behaviour", () =
       expect(log).toContain("[SECURITY] Refusing Hermes startup");
       expect(log).toContain("TELEGRAM_BOT_TOKEN (line 2)");
     } finally {
-      fs.rmSync(harness.tmp, { recursive: true, force: true });
+      removeTempDir(harness.tmp);
     }
   });
 
@@ -326,7 +330,7 @@ describe("Hermes secret-boundary guard — full recovery script behaviour", () =
       expect(log).toContain("(line 2)");
       expect(log).not.toContain("1234567890:AAExample-RawSecretValueHere");
     } finally {
-      fs.rmSync(harness.tmp, { recursive: true, force: true });
+      removeTempDir(harness.tmp);
     }
   });
 
@@ -375,7 +379,7 @@ describe("Hermes secret-boundary guard — full recovery script behaviour", () =
       expect(log).toContain("TELEGRAM_BOT_TOKEN");
       expect(log).not.toContain("1234567890:AAExample-RawSecretValueHere");
     } finally {
-      fs.rmSync(harness.tmp, { recursive: true, force: true });
+      removeTempDir(harness.tmp);
     }
   });
 
@@ -443,7 +447,7 @@ describe("Hermes secret-boundary guard — full recovery script behaviour", () =
       expect(log).toContain("[SECURITY] Refusing Hermes startup because the process environment");
       expect(log).toContain("TELEGRAM_BOT_TOKEN");
     } finally {
-      fs.rmSync(harness.tmp, { recursive: true, force: true });
+      removeTempDir(harness.tmp);
     }
   });
 
@@ -494,7 +498,7 @@ describe("Hermes secret-boundary guard — full recovery script behaviour", () =
       expect(log).not.toContain("TELEGRAM_BOT_TOKEN");
       expect(log).not.toContain("1234567890:AAExample-RawSecretValueHere");
     } finally {
-      fs.rmSync(harness.tmp, { recursive: true, force: true });
+      removeTempDir(harness.tmp);
     }
   });
 });
