@@ -2,13 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Live Vitest migration for test/e2e/test-messaging-providers.sh.
+ * Focused live Vitest coverage for test/e2e/test-messaging-providers.sh paths.
  *
- * Keep this close to the shell suite's observable contract: fake tokens by
- * default, _REAL secrets opt in to real sends, provider placeholders must not
- * leak into sandbox-visible surfaces, WhatsApp stays QR-only, and optional
- * live-network probes skip on transport reachability rather than weakening the
- * provider/config/redaction assertions.
+ * Keep this close to the shell suite's high-value provider/config/redaction
+ * contracts: fake tokens by default, _REAL secrets opt in to real sends,
+ * provider placeholders must not leak into sandbox-visible surfaces, WhatsApp
+ * stays QR-only, and optional live-network probes skip on transport
+ * reachability rather than weakening the assertions. Legacy-only paths such as
+ * Telegram inbound replies, Slack mention/reply feedback, revoked Slack token
+ * pre-validation, and no-real-secret plugin-send fallbacks remain in the shell
+ * suite until their own scoped migrations.
  */
 
 import fs from "node:fs";
