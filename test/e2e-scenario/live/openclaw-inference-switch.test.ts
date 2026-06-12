@@ -31,7 +31,6 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const CLI_ENTRYPOINT = path.join(REPO_ROOT, "bin", "nemoclaw.js");
-const INSTALL_LOG = "/tmp/nemoclaw-e2e-openclaw-inference-switch-install.log";
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-openclaw-inference-switch";
 const SWITCH_PROVIDER = process.env.NEMOCLAW_SWITCH_PROVIDER ?? "nvidia-prod";
 const SWITCH_MODEL = process.env.NEMOCLAW_SWITCH_MODEL ?? "z-ai/glm-5.1";
