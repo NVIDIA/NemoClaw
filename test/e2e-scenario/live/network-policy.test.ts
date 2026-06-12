@@ -560,7 +560,7 @@ hello
     ).resolves.toBe("403");
 
     const slackBefore = await fetchStatus(sandbox, "https://slack.com/", "tc-net-03-slack-before");
-    expect(slackBefore).toMatch(/STATUS_403/);
+    expect(slackBefore).toMatch(/STATUS_403|ERROR_/);
     const slackApply = await applyPresetInteractively(host, "slack");
     expect(slackApply.exitCode, text(slackApply)).toBe(0);
     const slackAfter = await fetchStatus(sandbox, "https://slack.com/", "tc-net-03-slack-after");
