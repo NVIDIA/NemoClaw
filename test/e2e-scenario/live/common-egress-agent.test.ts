@@ -73,8 +73,25 @@ interface ChatCompletionLike {
   }>;
 }
 
+interface CommonEgressProviderValidationSkip {
+  http429ProviderValidationFailure: boolean;
+  matches: boolean;
+  sanitizedEndpointValidationFailure: boolean;
+  transientProviderValidationFailure: boolean;
+}
+
+interface CleanupAttempt {
+  exitCode: number | null;
+  missingSandboxTolerated: boolean;
+  outputTail: string;
+}
+
 function text(result: Pick<ShellProbeResult, "stdout" | "stderr">): string {
   return [result.stdout, result.stderr].filter(Boolean).join("\n");
+}
+
+function tail(value: string, length = 4_000): string {
+  return value.length > length ? value.slice(-length) : value;
 }
 
 function commandEnv(extra: NemoEnv = {}): NemoEnv {
@@ -166,6 +183,48 @@ function isOpenClawTransientAgentError(output: string): boolean {
   );
 }
 
+function classifyPreContractProviderValidationSkip(
+  result: Pick<ShellProbeResult, "stdout" | "stderr">,
+): CommonEgressProviderValidationSkip {
+  const output = text(result);
+  const providerValidation =
+    /endpoint validation failed|failed to verify inference endpoint|Chat Completions API validation/i.test(
+      output,
+    );
+  const transientProviderValidationFailure = isTransientProviderValidationFailure(result);
+  const http429ProviderValidationFailure =
+    providerValidation && /HTTP\s*429|\b429\b|rate[- ]?limit|too many requests/i.test(output);
+  const sanitizedEndpointValidationFailure =
+    providerValidation &&
+    /Validation details were omitted to avoid exposing credentials/i.test(output) &&
+    process.env.GITHUB_ACTIONS === "true";
+
+  return {
+    http429ProviderValidationFailure,
+    matches:
+      transientProviderValidationFailure ||
+      http429ProviderValidationFailure ||
+      sanitizedEndpointValidationFailure,
+    sanitizedEndpointValidationFailure,
+    transientProviderValidationFailure,
+  };
+}
+
+function isMissingSandboxOutput(output: string): boolean {
+  return /Sandbox .* does not exist|sandbox .* does not exist|does not exist|not found|No such sandbox/i.test(
+    output,
+  );
+}
+
+function cleanupAttempt(result: ShellProbeResult): CleanupAttempt {
+  const output = text(result);
+  return {
+    exitCode: result.exitCode,
+    missingSandboxTolerated: result.exitCode !== 0 && isMissingSandboxOutput(output),
+    outputTail: tail(output, 2_000),
+  };
+}
+
 async function assertPrerequisites(
   host: HostCliClient,
   secrets: SecretStore,
@@ -210,10 +269,14 @@ async function bestEffortDestroySandbox(
   sandbox: SandboxClient,
   sandboxName: string,
   artifactPrefix: string,
-): Promise<{ nemoclawDestroy?: number | null; openshellDelete?: number | null; errors: string[] }> {
+): Promise<{
+  nemoclawDestroy?: CleanupAttempt;
+  openshellDelete?: CleanupAttempt;
+  errors: string[];
+}> {
   const result: {
-    nemoclawDestroy?: number | null;
-    openshellDelete?: number | null;
+    nemoclawDestroy?: CleanupAttempt;
+    openshellDelete?: CleanupAttempt;
     errors: string[];
   } = {
     errors: [],
@@ -224,7 +287,7 @@ async function bestEffortDestroySandbox(
       env: commandEnv(),
       timeoutMs: 120_000,
     });
-    result.nemoclawDestroy = destroy.exitCode;
+    result.nemoclawDestroy = cleanupAttempt(destroy);
   } catch (error) {
     result.errors.push(error instanceof Error ? error.message : String(error));
   }
@@ -235,7 +298,7 @@ async function bestEffortDestroySandbox(
       env: commandEnv(),
       timeoutMs: 60_000,
     });
-    result.openshellDelete = deleted.exitCode;
+    result.openshellDelete = cleanupAttempt(deleted);
   } catch (error) {
     result.errors.push(error instanceof Error ? error.message : String(error));
   }
@@ -299,13 +362,31 @@ async function runOnboard(
       timeoutMs: ONBOARD_TIMEOUT_MS,
     },
   );
-  if (onboard.exitCode !== 0 && isTransientProviderValidationFailure(onboard)) {
+  const preContractProviderSkip = classifyPreContractProviderValidationSkip(onboard);
+  if (onboard.exitCode !== 0 && preContractProviderSkip.matches) {
+    // Invalid state: external NVIDIA endpoint validation failed before the
+    // migrated common-egress contract reached sandbox policy or agent checks.
+    // Source boundary: hosted provider availability/rate limiting outside this
+    // repo. Removal condition: endpoint validation becomes stable in CI for a
+    // release cycle or NemoClaw gains a hermetic provider-validation fixture.
     await args.artifacts.writeJson(`onboard-common-egress-${args.sandboxName}.skip.json`, {
+      id: "common-egress-agent",
       sandboxName: args.sandboxName,
       status: "skipped",
-      reason: "transient NVIDIA Endpoints validation failure before common-egress assertions",
+      reason: "provider-validation-unavailable-before-common-egress-contract",
+      sourceBoundary: "external NVIDIA Endpoints validation before sandbox common-egress contract",
+      removalCondition:
+        "remove once CI endpoint validation is stable for a release cycle or covered by a hermetic provider-validation fixture",
+      classifier: preContractProviderSkip,
+      onboardExitCode: onboard.exitCode,
+      onboardSignal: onboard.signal,
+      onboardTimedOut: onboard.timedOut,
+      stdoutTail: tail(onboard.stdout),
+      stderrTail: tail(onboard.stderr),
     });
-    args.skip("NVIDIA endpoint validation was unavailable/rate-limited during onboarding");
+    args.skip(
+      "NVIDIA endpoint validation was unavailable/rate-limited before common-egress assertions",
+    );
   }
   expect(onboard.exitCode, text(onboard)).toBe(0);
   return onboard;
@@ -531,6 +612,47 @@ test("common-egress agent Hermes response parser reads message content", () => {
       JSON.stringify({ choices: [{ message: { content: "HERMES_REFERENCE_AGENT_OK" } }] }),
     ),
   ).toBe("HERMES_REFERENCE_AGENT_OK");
+});
+
+test("common-egress agent classifies pre-contract provider validation skips", () => {
+  expect(
+    classifyPreContractProviderValidationSkip({
+      stdout: "",
+      stderr:
+        "NVIDIA Endpoints endpoint validation failed.\nChat Completions API validation returned HTTP 429",
+    }),
+  ).toMatchObject({
+    http429ProviderValidationFailure: true,
+    matches: true,
+  });
+
+  const originalGithubActions = process.env.GITHUB_ACTIONS;
+  try {
+    process.env.GITHUB_ACTIONS = "true";
+    expect(
+      classifyPreContractProviderValidationSkip({
+        stdout: "",
+        stderr:
+          "NVIDIA Endpoints endpoint validation failed.\nValidation details were omitted to avoid exposing credentials.",
+      }),
+    ).toMatchObject({
+      matches: true,
+      sanitizedEndpointValidationFailure: true,
+    });
+  } finally {
+    if (originalGithubActions === undefined) {
+      delete process.env.GITHUB_ACTIONS;
+    } else {
+      process.env.GITHUB_ACTIONS = originalGithubActions;
+    }
+  }
+
+  expect(
+    classifyPreContractProviderValidationSkip({
+      stdout: "",
+      stderr: "NVIDIA Endpoints endpoint validation failed.\ninvalid NVIDIA_API_KEY credential",
+    }),
+  ).toMatchObject({ matches: false });
 });
 
 describe.sequential("common-egress agent live scenarios", () => {
