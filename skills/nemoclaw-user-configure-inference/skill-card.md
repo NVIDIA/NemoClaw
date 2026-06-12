@@ -23,7 +23,6 @@ Mitigation: Review and scan skill before deployment. <br>
 - [Set Up Sub-Agent](references/set-up-sub-agent.md) <br>
 - [Switch Inference Providers](references/switch-inference-providers.md) <br>
 - [Tool-Calling Reliability](references/tool-calling-reliability.md) <br>
-- [Use Local Inference Details](references/use-local-inference-details.md) <br>
 
 
 ## Skill Output: <br>
