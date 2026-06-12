@@ -125,7 +125,12 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
     });
 
     const stateSnapshot = snapshotRegistryAndSession();
-    const backupRoot = path.join(os.homedir(), ".nemoclaw", "rebuild-backups", SANDBOX_NAME);
+    const backupRoot = path.join(
+      process.env.HOME ?? os.homedir(),
+      ".nemoclaw",
+      "rebuild-backups",
+      SANDBOX_NAME,
+    );
     cleanup.add(`restore NemoClaw state files for ${SANDBOX_NAME}`, () => {
       restoreRegistryAndSession(stateSnapshot);
       fs.rmSync(backupRoot, { recursive: true, force: true });
