@@ -1299,10 +1299,10 @@ function validateModelRouterProviderRoutedInferenceVitestJob(
   const jobEnv = asRecord(job.env);
   if (
     jobEnv.DOCKER_CONFIG !==
-    "${{ runner.temp }}/docker-config-model-router-provider-routed-inference"
+    "${{ github.workspace }}/.docker-config-model-router-provider-routed-inference"
   ) {
     errors.push(
-      "model-router-provider-routed-inference-vitest job must isolate Docker auth with DOCKER_CONFIG under runner.temp",
+      "model-router-provider-routed-inference-vitest job must isolate Docker auth with DOCKER_CONFIG under github.workspace",
     );
   }
   if (

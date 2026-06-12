@@ -14,11 +14,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
-import {
-  assertExitZero,
-  resultText,
-  sandboxAccessEnv,
-} from "../fixtures/clients/index.ts";
+import { assertExitZero, resultText, sandboxAccessEnv } from "../fixtures/clients/index.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { shouldRunLiveE2EScenarios } from "../fixtures/live-project-gate.ts";
 import type { NemoClawInstance } from "../fixtures/phases/index.ts";
@@ -34,17 +30,9 @@ function sleep(ms: number): Promise<void> {
 }
 
 function versionGte(actual: string, minimum: string): boolean {
-  const actualParts = actual
-    .split(".")
-    .map((part) => Number.parseInt(part, 10));
-  const minimumParts = minimum
-    .split(".")
-    .map((part) => Number.parseInt(part, 10));
-  for (
-    let index = 0;
-    index < Math.max(actualParts.length, minimumParts.length);
-    index += 1
-  ) {
+  const actualParts = actual.split(".").map((part) => Number.parseInt(part, 10));
+  const minimumParts = minimum.split(".").map((part) => Number.parseInt(part, 10));
+  for (let index = 0; index < Math.max(actualParts.length, minimumParts.length); index += 1) {
     const a = Number.isFinite(actualParts[index]) ? actualParts[index] : 0;
     const b = Number.isFinite(minimumParts[index]) ? minimumParts[index] : 0;
     if (a > b) return true;
@@ -79,10 +67,7 @@ async function expectSandboxExecAlive(
   artifactName: string,
 ): Promise<void> {
   const alive = await exec("echo alive", artifactName);
-  expect(
-    alive.exitCode,
-    `${sandboxName} exec failed: ${resultText(alive)}`,
-  ).toBe(0);
+  expect(alive.exitCode, `${sandboxName} exec failed: ${resultText(alive)}`).toBe(0);
   expect(alive.stdout.trim(), resultText(alive)).toBe("alive");
 }
 
@@ -100,10 +85,7 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
     stateValidation,
   }) => {
     const apiKey = secrets.required("NVIDIA_API_KEY");
-    expect(
-      apiKey.startsWith("nvapi-"),
-      "NVIDIA_API_KEY must start with nvapi-",
-    ).toBe(true);
+    expect(apiKey.startsWith("nvapi-"), "NVIDIA_API_KEY must start with nvapi-").toBe(true);
 
     await artifacts.writeJson("scenario.json", {
       id: "sandbox-survival",
@@ -128,9 +110,7 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
     });
     if (docker.exitCode !== 0) {
       if (process.env.GITHUB_ACTIONS === "true") {
-        throw new Error(
-          `Docker is required for sandbox survival E2E: ${resultText(docker)}`,
-        );
+        throw new Error(`Docker is required for sandbox survival E2E: ${resultText(docker)}`);
       }
       skip("Docker is required for sandbox survival E2E");
     }
@@ -200,17 +180,13 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       );
     });
 
-    const install = await host.command(
-      "bash",
-      ["install.sh", "--non-interactive"],
-      {
-        artifactName: "install-sh-sandbox-survival",
-        cwd: REPO_ROOT,
-        env: installEnv(apiKey),
-        redactionValues: [apiKey],
-        timeoutMs: 20 * 60_000,
-      },
-    );
+    const install = await host.command("bash", ["install.sh", "--non-interactive"], {
+      artifactName: "install-sh-sandbox-survival",
+      cwd: REPO_ROOT,
+      env: installEnv(apiKey),
+      redactionValues: [apiKey],
+      timeoutMs: 20 * 60_000,
+    });
     expect(install.exitCode, resultText(install)).toBe(0);
 
     await host.expectNemoclawAvailable();
@@ -222,10 +198,7 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
     assertExitZero(openshellVersion, "openshell --version");
     const version = extractSemver(resultText(openshellVersion));
     expect(version, resultText(openshellVersion)).toBeTruthy();
-    expect(
-      versionGte(version!, MIN_OPENSHELL_VERSION),
-      resultText(openshellVersion),
-    ).toBe(true);
+    expect(versionGte(version!, MIN_OPENSHELL_VERSION), resultText(openshellVersion)).toBe(true);
 
     const instance: NemoClawInstance = {
       onboarding: "cloud-openclaw",
@@ -255,11 +228,7 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
         env: sandboxAccessEnv(),
         timeoutMs: 60_000,
       });
-    await expectSandboxExecAlive(
-      SANDBOX_NAME,
-      execShell,
-      "baseline-sandbox-exec-alive",
-    );
+    await expectSandboxExecAlive(SANDBOX_NAME, execShell, "baseline-sandbox-exec-alive");
 
     await runtime.expectInferenceLocalPong(instance, {
       artifactName: "baseline-inference-local-pong",
@@ -282,11 +251,7 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       },
     ];
     await stateValidation.writeSandboxMarkers(instance, markers);
-    await stateValidation.expectSandboxMarkers(
-      instance,
-      markers,
-      "pre-restart-marker-read",
-    );
+    await stateValidation.expectSandboxMarkers(instance, markers, "pre-restart-marker-read");
 
     await lifecycle.restartGatewayRuntime({
       delayMs: 5_000,
@@ -308,16 +273,8 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       artifactName: "post-restart-nemoclaw-status",
       timeoutMs: 120_000,
     });
-    await expectSandboxExecAlive(
-      SANDBOX_NAME,
-      execShell,
-      "post-restart-sandbox-exec-alive",
-    );
-    await stateValidation.expectSandboxMarkers(
-      instance,
-      markers,
-      "post-restart-marker-read",
-    );
+    await expectSandboxExecAlive(SANDBOX_NAME, execShell, "post-restart-sandbox-exec-alive");
+    await stateValidation.expectSandboxMarkers(instance, markers, "post-restart-marker-read");
     await stateValidation.expectSandboxDirectoryPopulated(
       instance,
       "/sandbox/.openclaw",
@@ -341,10 +298,9 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       env: buildAvailabilityProbeEnv(),
       timeoutMs: 60_000,
     });
-    expect(
-      resultText(afterDestroyList),
-      "sandbox still listed after destroy",
-    ).not.toMatch(new RegExp(`(^|\\s)${SANDBOX_NAME}(\\s|$)`, "m"));
+    expect(resultText(afterDestroyList), "sandbox still listed after destroy").not.toMatch(
+      new RegExp(`(^|\\s)${SANDBOX_NAME}(\\s|$)`, "m"),
+    );
 
     await artifacts.writeJson("scenario-result.json", {
       id: "sandbox-survival",

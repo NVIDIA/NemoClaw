@@ -97,10 +97,7 @@ function instance(overrides: Partial<NemoClawInstance> = {}): NemoClawInstance {
   };
 }
 
-function fixture(
-  runner: FakeRunner,
-  cleanup: FakeCleanup,
-): LifecyclePhaseFixture {
+function fixture(runner: FakeRunner, cleanup: FakeCleanup): LifecyclePhaseFixture {
   const host = new HostCliClient(runner);
   const sandbox = new SandboxClient(runner);
   return new LifecyclePhaseFixture(host, sandbox, cleanup);
@@ -109,26 +106,19 @@ function fixture(
 describe("LifecyclePhaseFixture.simulate post-reboot-recovery (stop-original)", () => {
   it("stops the labeled container then runs `nemoclaw <name> status`", async () => {
     const runner = new FakeRunner();
-    runner.enqueue(
-      shellResult(0, "openshell-cluster-e2e-ubuntu-repo-cloud-openclaw\n"),
-    ); // discover
+    runner.enqueue(shellResult(0, "openshell-cluster-e2e-ubuntu-repo-cloud-openclaw\n")); // discover
     runner.enqueue(shellResult(0)); // docker stop
     runner.enqueue(shellResult(1, "Removed stale local registry entry.\n")); // status (non-zero on unfixed)
     const cleanup = new FakeCleanup();
 
-    const result = await fixture(runner, cleanup).simulate(
-      "post-reboot-recovery",
-      instance(),
-    );
+    const result = await fixture(runner, cleanup).simulate("post-reboot-recovery", instance());
 
     expect(result.profile).toBe("post-reboot-recovery");
     expect(result.steps.map((step) => step.id)).toEqual([
       "docker-stop:openshell-cluster-e2e-ubuntu-repo-cloud-openclaw",
       "nemoclaw-status:e2e-ubuntu-repo-cloud-openclaw",
     ]);
-    expect(
-      runner.calls.map((call) => ({ command: call.command, args: call.args })),
-    ).toEqual([
+    expect(runner.calls.map((call) => ({ command: call.command, args: call.args }))).toEqual([
       {
         command: "docker",
         args: [
@@ -161,16 +151,11 @@ describe("LifecyclePhaseFixture.simulate post-reboot-recovery (stop-original)", 
     runner.enqueue(shellResult(1, "Removed stale local registry entry.\n")); // status non-zero
     const cleanup = new FakeCleanup();
 
-    const result = await fixture(runner, cleanup).simulate(
-      "post-reboot-recovery",
-      instance(),
-    );
+    const result = await fixture(runner, cleanup).simulate("post-reboot-recovery", instance());
 
     // simulate() does not throw; the post-status invariants belong
     // to the state-validation phase that runs after.
-    expect(
-      result.steps.find((step) => step.id.startsWith("nemoclaw-status:")),
-    ).toBeTruthy();
+    expect(result.steps.find((step) => step.id.startsWith("nemoclaw-status:"))).toBeTruthy();
   });
 
   it("fails when no Docker container carries the OpenShell sandbox-name label", async () => {
@@ -217,9 +202,7 @@ describe("LifecyclePhaseFixture.simulate post-reboot-recovery (rename-to-gpu-bac
     );
     expect(renameCall).toBeTruthy();
     expect(renameCall!.args[1]).toBe("openshell-cluster-e2e-x");
-    expect(renameCall!.args[2]).toMatch(
-      /^openshell-cluster-e2e-x-nemoclaw-gpu-backup-\d+$/,
-    );
+    expect(renameCall!.args[2]).toMatch(/^openshell-cluster-e2e-x-nemoclaw-gpu-backup-\d+$/);
 
     // Cleanup queue now has both docker-start and docker-rename-back.
     expect(cleanup.calls.map((call) => call.name.split(":")[0])).toEqual([
@@ -245,12 +228,7 @@ describe("LifecyclePhaseFixture gateway runtime restart helpers", () => {
     const cleanup = new FakeCleanup();
     const host = new HostCliClient(runner);
     const sandbox = new SandboxClient(runner);
-    const fx = new LifecyclePhaseFixture(
-      host,
-      sandbox,
-      cleanup,
-      new GatewayClient(host, sandbox),
-    );
+    const fx = new LifecyclePhaseFixture(host, sandbox, cleanup, new GatewayClient(host, sandbox));
 
     await expect(fx.restartGatewayRuntime({ delayMs: 0 })).resolves.toEqual({
       kind: "pid",
@@ -258,9 +236,7 @@ describe("LifecyclePhaseFixture gateway runtime restart helpers", () => {
     });
     await fx.waitForGatewayConnected({ attempts: 1, intervalMs: 1 });
 
-    expect(
-      runner.calls.map((call) => `${call.command} ${call.args.join(" ")}`),
-    ).toEqual([
+    expect(runner.calls.map((call) => `${call.command} ${call.args.join(" ")}`)).toEqual([
       expect.stringContaining("sh -lc pid_file="),
       "sh -lc command -v openshell >/dev/null 2>&1 && openshell forward stop 18789 || true",
       "sh -lc command -v openshell >/dev/null 2>&1 && openshell gateway stop -g nemoclaw || true",
@@ -288,9 +264,9 @@ describe("LifecyclePhaseFixture gateway runtime restart helpers", () => {
       ),
     ).resolves.toMatchObject({ exitCode: 0 });
 
-    expect(
-      runner.calls.map((call) => `${call.command} ${call.args.join(" ")}`),
-    ).toEqual(["nemoclaw e2e-survival status"]);
+    expect(runner.calls.map((call) => `${call.command} ${call.args.join(" ")}`)).toEqual([
+      "nemoclaw e2e-survival status",
+    ]);
   });
 });
 
@@ -306,17 +282,15 @@ describe("LifecyclePhaseFixture profile dispatch", () => {
   });
 
   it("exposes the lifecycle phase on the Vitest scenario context", () => {
-    expectTypeOf<
-      E2EScenarioFixtures["lifecycle"]
-    >().toEqualTypeOf<LifecyclePhaseFixture>();
+    expectTypeOf<E2EScenarioFixtures["lifecycle"]>().toEqualTypeOf<LifecyclePhaseFixture>();
   });
 });
 
 describe("buildBackupContainerName", () => {
   it("appends -nemoclaw-gpu-backup-<ts> to the original name", () => {
-    expect(
-      buildBackupContainerName("openshell-cluster-foo", 1717280000000),
-    ).toBe("openshell-cluster-foo-nemoclaw-gpu-backup-1717280000000");
+    expect(buildBackupContainerName("openshell-cluster-foo", 1717280000000)).toBe(
+      "openshell-cluster-foo-nemoclaw-gpu-backup-1717280000000",
+    );
   });
 
   it("truncates the original name to fit within Docker's 253-char limit", () => {
