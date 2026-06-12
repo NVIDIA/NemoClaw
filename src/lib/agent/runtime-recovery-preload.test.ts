@@ -38,6 +38,7 @@ function makeHarness() {
     tmpSafetyNet: path.join(workDir, "nemoclaw-sandbox-safety-net.js"),
     tmpCiao: path.join(workDir, "nemoclaw-ciao-network-guard.js"),
     proxyEnv: path.join(workDir, "nemoclaw-proxy-env.sh"),
+    recoverySourceEnv: path.join(workDir, "nemoclaw-recovered-proxy-env.sh"),
     gatewayLog: path.join(workDir, "gateway.log"),
     hostileMarker: path.join(root, "hostile-proxy-env-sourced"),
   };
@@ -54,7 +55,8 @@ function rewriteRuntimePaths(script: string, paths: ReturnType<typeof makeHarnes
     .replaceAll(SAFETY_NET_GUARD.sourcePath, paths.sourceSafetyNet)
     .replaceAll(CIAO_GUARD.tmpPath, paths.tmpCiao)
     .replaceAll(CIAO_GUARD.sourcePath, paths.sourceCiao)
-    .replaceAll("/tmp/nemoclaw-proxy-env.sh", paths.proxyEnv);
+    .replaceAll("/tmp/nemoclaw-proxy-env.sh", paths.proxyEnv)
+    .replaceAll("/tmp/nemoclaw-recovered-proxy-env.sh", paths.recoverySourceEnv);
 }
 
 function runGuardRecovery(opts: {
@@ -144,6 +146,7 @@ function runGuardRecovery(opts: {
       files: {
         gatewayLog: readIfExists(paths.gatewayLog) ?? "",
         proxyEnv: readIfExists(paths.proxyEnv),
+        recoverySourceEnv: readIfExists(paths.recoverySourceEnv),
         tmpSafetyNet: readIfExists(paths.tmpSafetyNet),
         tmpCiao: readIfExists(paths.tmpCiao),
         tmpSafetyNetMode: modeIfExists(paths.tmpSafetyNet),
@@ -226,7 +229,65 @@ describe("gateway recovery preload repair", () => {
     expect(result.files.proxyEnv).toContain(`--require ${result.paths.tmpCiao}`);
   });
 
-  it("persists repairs for a metadata-safe proxy-env.sh that is missing one guard", () => {
+  it("preserves a trusted full proxy-env.sh while sourcing only a generated recovery copy", () => {
+    const result = runGuardRecovery({
+      fakeRoot: true,
+      proxyEnvContent: [
+        "# Proxy configuration (overrides narrow OpenShell defaults on connect)",
+        'export OPENCLAW_GATEWAY_URL="ws://127.0.0.1:18789"',
+        "export OPENCLAW_GATEWAY_TOKEN='trusted-token'",
+        "# nemoclaw-configure-guard begin",
+        "openclaw() {",
+        '  command openclaw "$@"',
+        "}",
+        "# nemoclaw-configure-guard end",
+        `export NODE_OPTIONS="\${NODE_OPTIONS:+$NODE_OPTIONS }--require ${SAFETY_NET_GUARD.tmpPath}"`,
+        'export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require /tmp/nemoclaw-http-proxy-fix.js"',
+        `export NODE_OPTIONS="\${NODE_OPTIONS:+$NODE_OPTIONS }--require ${CIAO_GUARD.tmpPath}"`,
+        "# Tool cache redirects — keep transient tool state under /tmp",
+        "export npm_config_cache=/tmp/.npm-cache",
+        "",
+      ].join("\n"),
+    });
+    expect(result.status).toBe(0);
+    expect(result.files.proxyEnv).toContain("OPENCLAW_GATEWAY_TOKEN='trusted-token'");
+    expect(result.files.proxyEnv).toContain("openclaw() {");
+    expect(result.files.proxyEnv).toContain("/tmp/nemoclaw-http-proxy-fix.js");
+    expect(result.files.recoverySourceEnv).toContain("OPENCLAW_GATEWAY_TOKEN='trusted-token'");
+    expect(result.files.recoverySourceEnv).toContain("openclaw() {");
+    expect(result.files.recoverySourceEnv).toContain("/tmp/nemoclaw-http-proxy-fix.js");
+    const nodeOptions = result.stdout.match(/^NODE_OPTIONS=(.*)$/m)?.[1] ?? "";
+    expect(nodeOptions.match(new RegExp(result.paths.tmpSafetyNet, "g"))?.length).toBe(1);
+    expect(nodeOptions.match(new RegExp(result.paths.tmpCiao, "g"))?.length).toBe(1);
+  });
+
+  it("repairs an incomplete trusted proxy-env.sh without dropping full runtime entries", () => {
+    const result = runGuardRecovery({
+      fakeRoot: true,
+      proxyEnvContent: [
+        "# Proxy configuration (overrides narrow OpenShell defaults on connect)",
+        'export OPENCLAW_GATEWAY_URL="ws://127.0.0.1:18789"',
+        "export OPENCLAW_GATEWAY_TOKEN='trusted-token'",
+        "# nemoclaw-configure-guard begin",
+        "openclaw() {",
+        '  command openclaw "$@"',
+        "}",
+        "# nemoclaw-configure-guard end",
+        `export NODE_OPTIONS="\${NODE_OPTIONS:+$NODE_OPTIONS }--require ${SAFETY_NET_GUARD.tmpPath}"`,
+        'export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require /tmp/nemoclaw-http-proxy-fix.js"',
+        "export npm_config_cache=/tmp/.npm-cache",
+        "",
+      ].join("\n"),
+    });
+    expect(result.status).toBe(0);
+    expect(result.files.proxyEnv).toContain("OPENCLAW_GATEWAY_TOKEN='trusted-token'");
+    expect(result.files.proxyEnv).toContain("openclaw() {");
+    expect(result.files.proxyEnv).toContain("/tmp/nemoclaw-http-proxy-fix.js");
+    expect(result.files.proxyEnv).toContain(`--require ${result.paths.tmpCiao}`);
+    expect(result.files.gatewayLog).toContain("proxy-env.sh incomplete");
+  });
+
+  it("rewrites a non-root metadata-safe proxy-env.sh that is missing one guard", () => {
     const result = runGuardRecovery({
       proxyEnvContent: `export NODE_OPTIONS="--require ${SAFETY_NET_GUARD.tmpPath}"\n`,
     });
@@ -236,7 +297,7 @@ describe("gateway recovery preload repair", () => {
     expect(result.files.proxyEnvMode).toBe(0o444);
     expect(result.files.proxyEnv).toContain(`--require ${result.paths.tmpSafetyNet}`);
     expect(result.files.proxyEnv).toContain(`--require ${result.paths.tmpCiao}`);
-    expect(result.files.gatewayLog).toContain("proxy-env.sh incomplete");
+    expect(result.files.gatewayLog).toContain("proxy-env.sh missing or unsafe");
   });
 
   it("rebuilds an unsafe proxy-env.sh without sourcing attacker-controlled content", () => {
@@ -360,7 +421,7 @@ describe("gateway recovery preload repair", () => {
       const validateIdx = script!.indexOf(
         "_nemoclaw_validate_recovery_proxy_env /tmp/nemoclaw-proxy-env.sh",
       );
-      const sourceIdx = script!.indexOf("then . /tmp/nemoclaw-proxy-env.sh");
+      const sourceIdx = script!.indexOf('then . "$_NEMOCLAW_RECOVERY_SOURCE_ENV"');
       expect(validateIdx).toBeGreaterThanOrEqual(0);
       expect(sourceIdx).toBeGreaterThanOrEqual(0);
       expect(validateIdx).toBeLessThan(sourceIdx);

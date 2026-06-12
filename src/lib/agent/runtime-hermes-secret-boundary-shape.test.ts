@@ -26,10 +26,10 @@ describe("Hermes secret-boundary guard — generated shell shape", () => {
     expect(script).toContain(`python3 '${VALIDATOR_PATH}' env-file /sandbox/.hermes/.env`);
   });
 
-  it("invokes the runtime-env validator after sourcing /tmp/nemoclaw-proxy-env.sh", () => {
+  it("invokes the runtime-env validator after sourcing the generated recovery env", () => {
     const script = buildRecoveryScript(hermesAgent, 8642);
     expect(script).not.toBeNull();
-    const proxyEnvIdx = script!.indexOf(". /tmp/nemoclaw-proxy-env.sh");
+    const proxyEnvIdx = script!.indexOf('. "$_NEMOCLAW_RECOVERY_SOURCE_ENV"');
     const runtimeGuardIdx = script!.indexOf(`python3 '${VALIDATOR_PATH}' runtime-env`);
     const launchIdx = script!.indexOf("nohup");
     expect(proxyEnvIdx).toBeGreaterThanOrEqual(0);
@@ -77,7 +77,7 @@ describe("Hermes secret-boundary guard — generated shell shape", () => {
     expect(script).not.toContain("SECRET_BOUNDARY_REFUSED");
   });
 
-  it("guards the dashboard-only recovery path with env-file before sourcing and runtime-env after", () => {
+  it("guards the dashboard-only recovery path with env-file before generated sourcing and runtime-env after", () => {
     const script = buildHermesDashboardProcessRecoveryScript({
       publicPort: 9119,
       internalPort: 19119,
@@ -85,7 +85,7 @@ describe("Hermes secret-boundary guard — generated shell shape", () => {
     });
     const envFileIdx = script.indexOf(`python3 '${VALIDATOR_PATH}' env-file /sandbox/.hermes/.env`);
     const guardRecoveryIdx = script.indexOf("_nemoclaw_validate_recovery_proxy_env");
-    const proxyEnvIdx = script.indexOf(". /tmp/nemoclaw-proxy-env.sh");
+    const proxyEnvIdx = script.indexOf('. "$_NEMOCLAW_RECOVERY_SOURCE_ENV"');
     const bashrcIdx = script.indexOf("[ -f ~/.bashrc ] && . ~/.bashrc;");
     const runtimeIdx = script.indexOf(`python3 '${VALIDATOR_PATH}' runtime-env`);
     const launchIdx = script.indexOf('"$AGENT_BIN" dashboard');
