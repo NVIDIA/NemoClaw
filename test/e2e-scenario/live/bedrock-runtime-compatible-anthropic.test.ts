@@ -60,8 +60,8 @@ type EventStreamCodec = {
   encode(message: { headers: Record<string, EventHeader>; body: Uint8Array }): Uint8Array;
 };
 type EventStreamCodecConstructor = new (
-  encoder: (input: string) => Uint8Array,
-  decoder: (input: Uint8Array) => string,
+  toUtf8: (input: Uint8Array) => string,
+  fromUtf8: (input: string) => Uint8Array,
 ) => EventStreamCodec;
 
 interface RawRunResult {
@@ -251,8 +251,8 @@ function loadEventStreamCodec(): EventStreamCodec {
     EventStreamCodec: EventStreamCodecConstructor;
   };
   return new loaded.EventStreamCodec(
-    (input) => Buffer.from(input, "utf8"),
     (input) => Buffer.from(input).toString("utf8"),
+    (input) => Buffer.from(input, "utf8"),
   );
 }
 
@@ -312,6 +312,7 @@ function sendConverseStream(stream: http2.ServerHttp2Stream, codec: EventStreamC
   stream.respond({
     [http2.constants.HTTP2_HEADER_STATUS]: 200,
     [http2.constants.HTTP2_HEADER_CONTENT_TYPE]: "application/vnd.amazon.eventstream",
+    "x-amzn-bedrock-content-type": "application/json",
   });
   stream.write(eventMessage(codec, "messageStart", { role: "assistant" }));
   stream.write(
@@ -383,33 +384,38 @@ async function startFakeBedrockRuntimeMock(options: {
       chunks.push(Buffer.from(chunk));
     });
     stream.on("end", () => {
-      const parsed = parseModelPath(pathname);
-      if (method !== "POST" || !parsed) {
-        sendHttp2Json(stream, 404, { message: "not found" });
-        return;
-      }
+      try {
+        const parsed = parseModelPath(pathname);
+        if (method !== "POST" || !parsed) {
+          sendHttp2Json(stream, 404, { message: "not found" });
+          return;
+        }
 
-      const opLabel = parsed.operation === "converse-stream" ? "converse-stream" : "converse";
-      if (auth !== `Bearer ${options.expectedBearer}`) {
-        record(`POST /model/${opLabel} auth=missing`);
-        sendHttp2Json(stream, 401, { message: "missing bearer credential" });
-        return;
-      }
+        const opLabel = parsed.operation === "converse-stream" ? "converse-stream" : "converse";
+        if (auth !== `Bearer ${options.expectedBearer}`) {
+          record(`POST /model/${opLabel} auth=missing`);
+          sendHttp2Json(stream, 401, { message: "missing bearer credential" });
+          return;
+        }
 
-      record(`POST /model/${opLabel} auth=ok`);
-      if (parsed.operation === "converse-stream") streamCount += 1;
-      else converseCount += 1;
+        record(`POST /model/${opLabel} auth=ok`);
+        if (parsed.operation === "converse-stream") streamCount += 1;
+        else converseCount += 1;
 
-      if (parsed.model !== options.expectedModel) {
-        sendHttp2Json(stream, 400, { message: "unexpected model id" });
-        return;
-      }
+        if (parsed.model !== options.expectedModel) {
+          sendHttp2Json(stream, 400, { message: "unexpected model id" });
+          return;
+        }
 
-      if (parsed.operation === "converse-stream") {
-        sendConverseStream(stream, codec);
-        return;
+        if (parsed.operation === "converse-stream") {
+          sendConverseStream(stream, codec);
+          return;
+        }
+        sendHttp2Json(stream, 200, conversePayload());
+      } catch (error) {
+        record(`stream_handler_error=${error instanceof Error ? error.message : String(error)}`);
+        stream.destroy(error instanceof Error ? error : undefined);
       }
-      sendHttp2Json(stream, 200, conversePayload());
     });
   });
   server.on("sessionError", (err) => {
