@@ -6,14 +6,12 @@ import os from "node:os";
 import path from "node:path";
 
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../../cli/branding";
-import { GATEWAY_PORT } from "../../core/ports";
 import {
   getNamedGatewayLifecycleState,
   recoverNamedGatewayRuntime,
 } from "../../gateway-runtime-action";
-import { resolveGatewayName, resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import { isTerminalSandboxPhase, parseSandboxPhase } from "../../state/gateway";
-import * as registry from "../../state/registry";
+import { gatewayNamePattern, getSandboxTargetGatewayName } from "./gateway-target";
 
 const { pruneKnownHostsEntries } = require("../../onboard") as {
   pruneKnownHostsEntries: (contents: string) => string;
@@ -230,8 +228,7 @@ export function reconcileMissingAgainstNamedGateway(
   sandboxName: string,
   missingLookup: SandboxGatewayState,
 ): SandboxGatewayState {
-  const sb = registry.getSandbox(sandboxName);
-  const targetGatewayName = sb ? resolveSandboxGatewayName(sb) : resolveGatewayName(GATEWAY_PORT);
+  const targetGatewayName = getSandboxTargetGatewayName(sandboxName);
   const lifecycle = getNamedGatewayLifecycleState(targetGatewayName);
   if (lifecycle.state === "connected_other") {
     runOpenshell(["gateway", "select", targetGatewayName], {
@@ -322,8 +319,7 @@ export function printWrongGatewayActiveGuidance(
   // guidance points back to the workflow the user actually invoked.
   retryCommand = "connect",
 ): void {
-  const sb = registry.getSandbox(sandboxName);
-  const targetGatewayName = sb ? resolveSandboxGatewayName(sb) : resolveGatewayName(GATEWAY_PORT);
+  const targetGatewayName = getSandboxTargetGatewayName(sandboxName);
   const other =
     activeGateway && activeGateway !== targetGatewayName ? activeGateway : "another gateway";
   writer(
@@ -334,11 +330,6 @@ export function printWrongGatewayActiveGuidance(
   writer(`  Then re-run: ${CLI_NAME} ${sandboxName} ${retryCommand}`);
 }
 
-function getSandboxHintGatewayName(sandboxName = ""): string {
-  const sb = sandboxName ? registry.getSandbox(sandboxName) : null;
-  return sb ? resolveSandboxGatewayName(sb) : resolveGatewayName(GATEWAY_PORT);
-}
-
 /** Print troubleshooting hints based on gateway lifecycle state in the output. */
 export function printGatewayLifecycleHint(
   output = "",
@@ -346,7 +337,7 @@ export function printGatewayLifecycleHint(
   writer: (message: string) => void = console.error,
 ): void {
   const cleanOutput = stripAnsi(output);
-  const targetGatewayName = getSandboxHintGatewayName(sandboxName);
+  const targetGatewayName = getSandboxTargetGatewayName(sandboxName);
   if (/No gateway configured/i.test(cleanOutput)) {
     writer(
       `  The selected ${CLI_DISPLAY_NAME} gateway is no longer configured or its metadata/runtime has been lost.`,
@@ -359,13 +350,9 @@ export function printGatewayLifecycleHint(
     );
     return;
   }
-  const targetGatewayRe = new RegExp(
-    `Gateway:\\s+${targetGatewayName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`,
-    "i",
-  );
   if (
     /Connection refused|client error \(Connect\)|tcp connect error/i.test(cleanOutput) &&
-    targetGatewayRe.test(cleanOutput)
+    gatewayNamePattern(targetGatewayName).test(cleanOutput)
   ) {
     writer(
       "  The selected NemoClaw gateway exists in metadata, but its API is refusing connections after restart.",
@@ -415,8 +402,7 @@ export async function getReconciledSandboxGatewayState(
   }
 
   if (lookup.state === "gateway_error") {
-    const sb = registry.getSandbox(sandboxName);
-    const targetGatewayName = sb ? resolveSandboxGatewayName(sb) : resolveGatewayName(GATEWAY_PORT);
+    const targetGatewayName = getSandboxTargetGatewayName(sandboxName);
     const recovery = await recoverNamedGatewayRuntime({ gatewayName: targetGatewayName });
     if (recovery.recovered) {
       const retried = await getState(sandboxName);
@@ -441,13 +427,9 @@ export async function getReconciledSandboxGatewayState(
         output: latestLifecycle.status || lookup.output,
       };
     }
-    const namedGatewayRe = new RegExp(
-      `Gateway:\\s+${targetGatewayName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`,
-      "i",
-    );
     if (
       /Connection refused|client error \(Connect\)|tcp connect error/i.test(latestStatus) &&
-      namedGatewayRe.test(latestStatus)
+      gatewayNamePattern(targetGatewayName).test(latestStatus)
     ) {
       return {
         state: "gateway_unreachable_after_restart",
@@ -502,8 +484,7 @@ export async function ensureLiveSandboxOrExit(
     process.exit(1);
   }
   if (lookup.state === "missing") {
-    const sb = registry.getSandbox(sandboxName);
-    const targetGatewayName = sb ? resolveSandboxGatewayName(sb) : resolveGatewayName(GATEWAY_PORT);
+    const targetGatewayName = getSandboxTargetGatewayName(sandboxName);
     const guard = getNamedGatewayLifecycleState(targetGatewayName);
     if (guard.state !== "healthy_named") {
       if (guard.state === "connected_other") {
@@ -571,7 +552,7 @@ export async function ensureLiveSandboxOrExit(
       console.error(lookup.output);
     }
     console.error(
-      `  Retry \`openshell gateway start --name ${getSandboxHintGatewayName(sandboxName)}\` and verify \`openshell status\` is healthy before reconnecting.`,
+      `  Retry \`openshell gateway start --name ${getSandboxTargetGatewayName(sandboxName)}\` and verify \`openshell status\` is healthy before reconnecting.`,
     );
     console.error(
       "  If the gateway never becomes healthy, rebuild the gateway and then recreate the affected sandbox.",
@@ -586,7 +567,7 @@ export async function ensureLiveSandboxOrExit(
       console.error(lookup.output);
     }
     console.error(
-      `  Start the gateway again with \`openshell gateway start --name ${getSandboxHintGatewayName(sandboxName)}\` before retrying.`,
+      `  Start the gateway again with \`openshell gateway start --name ${getSandboxTargetGatewayName(sandboxName)}\` before retrying.`,
     );
     console.error(
       "  If the gateway had to be rebuilt from scratch, recreate the affected sandbox afterward.",

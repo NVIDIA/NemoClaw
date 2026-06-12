@@ -6,7 +6,17 @@ import path from "node:path";
 import { dockerContainerInspectFormat } from "../adapters/docker";
 import { getGatewayClusterContainerName } from "../adapters/openshell/gateway-drift";
 import { getGatewayHttpEndpoint } from "../core/gateway-address";
-import { GATEWAY_PORT } from "../core/ports";
+import {
+  BEDROCK_RUNTIME_ADAPTER_PORT,
+  DASHBOARD_PORT,
+  DASHBOARD_PORT_RANGE_END,
+  DASHBOARD_PORT_RANGE_START,
+  GATEWAY_PORT,
+  OLLAMA_PORT,
+  OLLAMA_PROXY_PORT,
+  validateGatewayPort,
+  VLLM_PORT,
+} from "../core/ports";
 import { sleepSeconds } from "../core/wait";
 import { shouldPatchCoredns } from "../platform";
 import { run, SCRIPTS } from "../runner";
@@ -44,7 +54,7 @@ export type GatewayRecoveryDeps = {
 };
 
 function isValidGatewayRecoveryPort(port: number | null | undefined): port is number {
-  return Number.isInteger(port) && Number(port) >= 1 && Number(port) <= 65535;
+  return Number.isInteger(port) && Number(port) >= 1024 && Number(port) <= 65535;
 }
 
 function resolveDefaultGatewayName(): string {
@@ -52,11 +62,31 @@ function resolveDefaultGatewayName(): string {
 }
 
 function resolveGatewayRecoveryTarget(options: StartGatewayForRecoveryOptions = {}) {
-  const gatewayName = options.gatewayName || resolveDefaultGatewayName();
+  const gatewayName =
+    options.gatewayName ||
+    (isValidGatewayRecoveryPort(options.gatewayPort)
+      ? resolveGatewayName(options.gatewayPort)
+      : resolveDefaultGatewayName());
   const portFromName = resolveGatewayPortFromName(gatewayName);
-  const gatewayPort = isValidGatewayRecoveryPort(options.gatewayPort)
-    ? options.gatewayPort
-    : (portFromName ?? GATEWAY_PORT);
+  if (portFromName === null) {
+    throw new Error(`Invalid NemoClaw gateway name '${gatewayName}'`);
+  }
+  const gatewayPort = options.gatewayPort ?? portFromName;
+  if (gatewayPort !== portFromName) {
+    throw new Error(`Gateway '${gatewayName}' does not match port ${gatewayPort}`);
+  }
+  if (!isValidGatewayRecoveryPort(gatewayPort)) {
+    throw new Error(`Invalid gateway recovery port ${gatewayPort}`);
+  }
+  validateGatewayPort("NEMOCLAW_GATEWAY_PORT", gatewayPort, {
+    dashboardPort: DASHBOARD_PORT,
+    dashboardRangeStart: DASHBOARD_PORT_RANGE_START,
+    dashboardRangeEnd: DASHBOARD_PORT_RANGE_END,
+    vllmPort: VLLM_PORT,
+    ollamaPort: OLLAMA_PORT,
+    ollamaProxyPort: OLLAMA_PROXY_PORT,
+    bedrockRuntimeAdapterPort: BEDROCK_RUNTIME_ADAPTER_PORT,
+  });
   return { gatewayName, gatewayPort };
 }
 

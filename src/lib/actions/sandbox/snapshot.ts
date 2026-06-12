@@ -301,6 +301,37 @@ function deleteSandboxForRestore(name: string): void {
   console.log(`  ${G}\u2713${R} '${name}' deleted`);
 }
 
+function listLiveSandboxesOnSandboxGateway(sandboxName: string): Set<string> | null {
+  selectSandboxGatewayIfRegistered(sandboxName);
+  if (!probeGatewayRunning(sandboxName)) return null;
+  const isLive = captureOpenshell(["sandbox", "list"], { ignoreError: true });
+  if (isLive.status !== 0) return null;
+  return parseLiveSandboxNames(isLive.output || "");
+}
+
+function requireLiveSandboxesOnSandboxGateway(sandboxName: string, error: string): Set<string> {
+  const liveNames = listLiveSandboxesOnSandboxGateway(sandboxName);
+  if (!liveNames) {
+    console.error(error);
+    snapshotExit(1);
+  }
+  return liveNames;
+}
+
+function verifyRestoreDestinationOnOwnGateway(targetSandbox: string): void {
+  const liveNames = requireLiveSandboxesOnSandboxGateway(
+    targetSandbox,
+    `  Cannot verify destination sandbox '${targetSandbox}' on its registered gateway. Aborting restore.`,
+  );
+  if (!liveNames.has(targetSandbox)) {
+    console.error(
+      `  Destination sandbox '${targetSandbox}' is registered locally, but is not present on its registered gateway.`,
+    );
+    console.error("  Aborting restore before deleting or overwriting local sandbox metadata.");
+    snapshotExit(1);
+  }
+}
+
 function isSnapshotCreationAllowedByShields(sandboxName: string): boolean {
   // Snapshot creation is a shields/policy boundary. If a packaged or mocked
   // CommonJS interop surface ever omits the helper, fail closed before any
@@ -324,13 +355,10 @@ export async function runSandboxSnapshot(
       // sandbox's gateway to be the active one, otherwise a sandbox registered
       // on a non-default `NEMOCLAW_GATEWAY_PORT` fails health-check before the
       // subsequent list ever runs.
-      selectSandboxGatewayIfRegistered(sandboxName);
-      if (!probeGatewayRunning(sandboxName)) {
-        console.error("  Failed to query live sandbox state from OpenShell.");
-        snapshotExit(1);
-      }
-      const isLive = captureOpenshell(["sandbox", "list"], { ignoreError: true });
-      const liveNames = parseLiveSandboxNames(isLive.output || "");
+      const liveNames = requireLiveSandboxesOnSandboxGateway(
+        sandboxName,
+        "  Failed to query live sandbox state from OpenShell.",
+      );
       if (!liveNames.has(sandboxName)) {
         console.error(`  Sandbox '${sandboxName}' is not running. Cannot create snapshot.`);
         snapshotExit(1);
@@ -391,15 +419,13 @@ export async function runSandboxSnapshot(
       const target = request.to ?? sandboxName;
       const targetSandbox =
         target === sandboxName ? sandboxName : validateName(target, "target sandbox name");
-      selectSandboxGatewayIfRegistered(sandboxName);
-      if (!probeGatewayRunning(sandboxName)) {
-        console.error("  Failed to query live sandbox state from OpenShell.");
-        snapshotExit(1);
-      }
-      const isLive = captureOpenshell(["sandbox", "list"], { ignoreError: true });
-      const liveNames = parseLiveSandboxNames(isLive.output || "");
+      const sourceLiveNames = requireLiveSandboxesOnSandboxGateway(
+        sandboxName,
+        "  Failed to query live sandbox state from OpenShell.",
+      );
       const isCrossSandboxRestore = targetSandbox !== sandboxName;
-      const targetExists = liveNames.has(targetSandbox);
+      const targetEntry = isCrossSandboxRestore ? registry.getSandbox(targetSandbox) : null;
+      const targetExists = sourceLiveNames.has(targetSandbox) || Boolean(targetEntry);
 
       // #3756 P1 preflight: resolve the snapshot selector AND the source pod
       // image before any destructive action. A bad selector, missing snapshot,
@@ -462,7 +488,7 @@ export async function runSandboxSnapshot(
         // we must be able to clone the source's running pod image. Resolve it
         // upfront so a missing source / unresolvable image cannot delete the
         // destination first (#3756 P1).
-        if (!liveNames.has(sandboxName)) {
+        if (!sourceLiveNames.has(sandboxName)) {
           if (targetExists) {
             console.error(
               `  Cannot recreate '${targetSandbox}' from snapshot: source '${sandboxName}' not found.`,
@@ -500,7 +526,14 @@ export async function runSandboxSnapshot(
               snapshotExit(1);
             }
           }
+          if (targetEntry) {
+            verifyRestoreDestinationOnOwnGateway(targetSandbox);
+          }
           deleteSandboxForRestore(targetSandbox);
+          requireLiveSandboxesOnSandboxGateway(
+            sandboxName,
+            "  Failed to re-select source sandbox gateway after deleting destination.",
+          );
         }
         await autoCreateSandboxFromSource(sandboxName, targetSandbox, srcEntry);
       }

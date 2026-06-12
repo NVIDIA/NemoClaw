@@ -63,4 +63,54 @@ describe("gateway recovery", () => {
       ignoreError: true,
     });
   });
+
+  it("derives the canonical gateway name when only a non-default port is supplied", async () => {
+    vi.stubEnv("NEMOCLAW_HEALTH_POLL_COUNT", "1");
+    const deps = createDeps();
+
+    await expect(startGatewayForRecovery({ gatewayPort: 8091 }, deps)).rejects.toThrow(
+      "Gateway 'nemoclaw-8091' failed to start",
+    );
+
+    expect(deps.runOpenshell).toHaveBeenNthCalledWith(
+      1,
+      ["gateway", "start", "--name", "nemoclaw-8091", "--port", "8091"],
+      expect.objectContaining({
+        env: expect.objectContaining({
+          OPENSHELL_SERVER_PORT: "8091",
+          OPENSHELL_SSH_GATEWAY_PORT: "8091",
+        }),
+      }),
+    );
+  });
+
+  it("rejects non-canonical gateway recovery names before invoking OpenShell", async () => {
+    const deps = createDeps();
+
+    await expect(startGatewayForRecovery({ gatewayName: "other-gateway" }, deps)).rejects.toThrow(
+      "Invalid NemoClaw gateway name 'other-gateway'",
+    );
+
+    expect(deps.runOpenshell).not.toHaveBeenCalled();
+  });
+
+  it("rejects a gateway name and port mismatch before invoking OpenShell", async () => {
+    const deps = createDeps();
+
+    await expect(
+      startGatewayForRecovery({ gatewayName: "nemoclaw-8090", gatewayPort: 8091 }, deps),
+    ).rejects.toThrow("Gateway 'nemoclaw-8090' does not match port 8091");
+
+    expect(deps.runOpenshell).not.toHaveBeenCalled();
+  });
+
+  it("rejects privileged recovery ports before invoking OpenShell", async () => {
+    const deps = createDeps();
+
+    await expect(startGatewayForRecovery({ gatewayName: "nemoclaw-80" }, deps)).rejects.toThrow(
+      "Invalid gateway recovery port 80",
+    );
+
+    expect(deps.runOpenshell).not.toHaveBeenCalled();
+  });
 });

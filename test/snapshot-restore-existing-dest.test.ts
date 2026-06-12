@@ -58,6 +58,10 @@ interface MakeEnvOptions {
   withSnapshot?: boolean;
   /** When false, fake docker exec returns an empty image string. */
   withSourceImage?: boolean;
+  /** Put dst on a registered non-default gateway and hide it from src's gateway list. */
+  destinationGatewayPort?: number;
+  /** When false, the destination gateway probe fails before --force can delete it. */
+  destinationGatewayRunning?: boolean;
 }
 
 /**
@@ -82,6 +86,9 @@ function makeExistingDestEnv(
   const home = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   const localBin = path.join(home, "bin");
   fs.mkdirSync(localBin, { recursive: true });
+  const destinationGatewayName = opts.destinationGatewayPort
+    ? `nemoclaw-${opts.destinationGatewayPort}`
+    : null;
 
   const registryDir = path.join(home, ".nemoclaw");
   fs.mkdirSync(registryDir, { recursive: true });
@@ -102,6 +109,12 @@ function makeExistingDestEnv(
           provider: "nvidia-prod",
           gpuEnabled: false,
           policies: [],
+          ...(destinationGatewayName
+            ? {
+                gatewayName: destinationGatewayName,
+                gatewayPort: opts.destinationGatewayPort,
+              }
+            : {}),
         },
       },
       defaultSandbox: "src",
@@ -132,13 +145,21 @@ function makeExistingDestEnv(
   }
 
   const osLog = path.join(home, "openshell.log");
+  const activeGateway = path.join(home, "active-gateway");
   fs.writeFileSync(
     path.join(localBin, "openshell"),
     [
       "#!/bin/sh",
       `printf '%s\\n' "$*" >> ${JSON.stringify(osLog)}`,
+      `ACTIVE_GATEWAY=${JSON.stringify(activeGateway)}`,
+      'if [ "$1" = "gateway" ] && [ "$2" = "select" ]; then',
+      '  printf "%s\\n" "$3" > "$ACTIVE_GATEWAY"',
+      "  exit 0",
+      "fi",
       'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
-      '  printf "NAME STATUS\\nsrc Ready\\ndst Ready\\n"',
+      destinationGatewayName
+        ? `  active="$(cat "$ACTIVE_GATEWAY" 2>/dev/null || printf '%s' nemoclaw)"; if [ "$active" = ${JSON.stringify(destinationGatewayName)} ]; then printf "NAME STATUS\\ndst Ready\\n"; else printf "NAME STATUS\\nsrc Ready\\n"; fi`
+        : '  printf "NAME STATUS\\nsrc Ready\\ndst Ready\\n"',
       "  exit 0",
       "fi",
       'if [ "$1" = "status" ]; then',
@@ -146,6 +167,9 @@ function makeExistingDestEnv(
       "  exit 0",
       "fi",
       'if [ "$1" = "sandbox" ] && [ "$2" = "delete" ]; then',
+      destinationGatewayName
+        ? `  active="$(cat "$ACTIVE_GATEWAY" 2>/dev/null || printf '%s' nemoclaw)"; if [ "$active" != ${JSON.stringify(destinationGatewayName)} ]; then echo "delete on wrong gateway: $active" >&2; exit 42; fi`
+        : "  :",
       "  exit 0",
       "fi",
       'if [ "$1" = "sandbox" ] && [ "$2" = "create" ]; then',
@@ -166,6 +190,9 @@ function makeExistingDestEnv(
     [
       "#!/bin/sh",
       'if [ "$1" = "inspect" ]; then',
+      destinationGatewayName && opts.destinationGatewayRunning === false
+        ? `  case "$*" in *openshell-cluster-${destinationGatewayName}*) echo "false"; exit 0 ;; esac`
+        : "  :",
       '  echo "true"',
       "  exit 0",
       "fi",
@@ -197,6 +224,17 @@ describe("snapshot restore --to existing destination (#3756)", () => {
     expect(log).not.toMatch(/sandbox delete dst/);
   });
 
+  it("refuses by default when the destination is registered on another gateway", () => {
+    const { env, osLog } = makeExistingDestEnv("nemoclaw-snap-restore-cross-refuse-", {
+      destinationGatewayPort: 8090,
+    });
+    const r = runCli(["src", "snapshot", "restore", "--to", "dst"], env);
+    expect(r.code).toBe(1);
+    expect(r.out).toMatch(/Destination sandbox 'dst' already exists/);
+    const log = fs.existsSync(osLog) ? fs.readFileSync(osLog, "utf-8") : "";
+    expect(log).not.toMatch(/sandbox delete dst/);
+  });
+
   it("refuses by default before running source-image preflight (Codex #3796 P2)", () => {
     // Existing destination + unresolvable source image. The user must see the
     // precise "destination exists" error, not the "cannot resolve image"
@@ -219,6 +257,31 @@ describe("snapshot restore --to existing destination (#3756)", () => {
     expect(r.out).toMatch(/Deleting existing destination 'dst'/);
     const log = fs.existsSync(osLog) ? fs.readFileSync(osLog, "utf-8") : "";
     expect(log).toMatch(/sandbox delete dst/);
+  });
+
+  it("deletes a registered cross-gateway destination on its own gateway before recreating", () => {
+    const { env, osLog } = makeExistingDestEnv("nemoclaw-snap-restore-cross-force-", {
+      destinationGatewayPort: 8090,
+    });
+    const r = runCli(["src", "snapshot", "restore", "--to", "dst", "--force", "--yes"], env);
+    expect(r.out).toMatch(/Deleting existing destination 'dst'/);
+    const lines = fs.readFileSync(osLog, "utf-8").trim().split("\n");
+    const deleteIndex = lines.indexOf("sandbox delete dst");
+    expect(deleteIndex).toBeGreaterThan(0);
+    expect(lines.slice(0, deleteIndex)).toContain("gateway select nemoclaw-8090");
+    expect(lines.slice(deleteIndex + 1)).toContain("gateway select nemoclaw");
+  });
+
+  it("aborts before deleting when a registered destination gateway cannot be verified", () => {
+    const { env, osLog } = makeExistingDestEnv("nemoclaw-snap-restore-cross-unverified-", {
+      destinationGatewayPort: 8090,
+      destinationGatewayRunning: false,
+    });
+    const r = runCli(["src", "snapshot", "restore", "--to", "dst", "--force", "--yes"], env);
+    expect(r.code).toBe(1);
+    expect(r.out).toMatch(/Cannot verify destination sandbox 'dst'/);
+    const log = fs.existsSync(osLog) ? fs.readFileSync(osLog, "utf-8") : "";
+    expect(log).not.toMatch(/sandbox delete dst/);
   });
 
   it("skips the prompt under NEMOCLAW_NON_INTERACTIVE=1 even without --yes", () => {
