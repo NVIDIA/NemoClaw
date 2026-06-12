@@ -191,8 +191,6 @@ const {
   OLLAMA_PORT,
   OLLAMA_PROXY_PORT,
 } = require("./core/ports");
-const { getGatewayHttpEndpoint } =
-  require("./core/gateway-address") as typeof import("./core/gateway-address");
 const localInference: typeof import("./inference/local") = require("./inference/local");
 const {
   resetOllamaHostCache,
@@ -1351,8 +1349,8 @@ function handleFinalGatewayStartFailure({
   return exitProcess(1);
 }
 
-function getGatewayClusterContainerState(gatewayName = GATEWAY_NAME): string {
-  const containerName = getGatewayClusterContainerName(gatewayName);
+function getGatewayClusterContainerState(): string {
+  const containerName = getGatewayClusterContainerName();
   const state = dockerContainerInspectFormat(
     "{{.State.Status}}{{if .State.Health}} {{.State.Health.Status}}{{end}}",
     containerName,
@@ -2329,87 +2327,6 @@ async function startDockerDriverGateway({
   throw new Error("Docker-driver gateway failed to start");
 }
 
-type StartGatewayForRecoveryOptions = {
-  gatewayName?: string;
-  gatewayPort?: number;
-};
-
-function isValidGatewayRecoveryPort(port: number | null | undefined): port is number {
-  return Number.isInteger(port) && Number(port) >= 1 && Number(port) <= 65535;
-}
-
-function resolveGatewayRecoveryTarget(options: StartGatewayForRecoveryOptions = {}) {
-  const gatewayName = options.gatewayName || GATEWAY_NAME;
-  const portFromName = gatewayBinding.resolveGatewayPortFromName(gatewayName);
-  const gatewayPort = isValidGatewayRecoveryPort(options.gatewayPort)
-    ? options.gatewayPort
-    : (portFromName ?? GATEWAY_PORT);
-  return { gatewayName, gatewayPort };
-}
-
-function getGatewayStartEnvForPort(gatewayPort: number): Record<string, string> {
-  return {
-    ...getGatewayStartEnv(),
-    OPENSHELL_SERVER_PORT: String(gatewayPort),
-    OPENSHELL_SSH_GATEWAY_PORT: String(gatewayPort),
-  };
-}
-
-async function startTargetGatewayForRecovery({
-  gatewayName,
-  gatewayPort,
-}: {
-  gatewayName: string;
-  gatewayPort: number;
-}): Promise<void> {
-  const gatewayPortArg = String(gatewayPort);
-  const startResult = runOpenshell(
-    ["gateway", "start", "--name", gatewayName, "--port", gatewayPortArg],
-    {
-      ignoreError: true,
-      env: getGatewayStartEnvForPort(gatewayPort),
-      suppressOutput: true,
-    },
-  );
-  runOpenshell(["gateway", "select", gatewayName], { ignoreError: true });
-
-  const recoveryWait = getGatewayHealthWaitConfig(
-    startResult.status ?? 0,
-    getGatewayClusterContainerState(gatewayName),
-  );
-  const recoveryPollCount = recoveryWait.extended
-    ? recoveryWait.count
-    : envInt("NEMOCLAW_HEALTH_POLL_COUNT", 10);
-  const recoveryPollInterval = recoveryWait.extended
-    ? recoveryWait.interval
-    : envInt("NEMOCLAW_HEALTH_POLL_INTERVAL", 2);
-  const targetGatewayUrl = `${getGatewayHttpEndpoint(gatewayPort)}/`;
-  for (let i = 0; i < recoveryPollCount; i++) {
-    const status = runCaptureOpenshell(["status"], { ignoreError: true });
-    const namedInfo = runCaptureOpenshell(["gateway", "info", "-g", gatewayName], {
-      ignoreError: true,
-    });
-    const currentInfo = runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
-    if (
-      status.includes("Connected") &&
-      gatewayState.isGatewayHealthy(status, namedInfo, currentInfo, gatewayName) &&
-      (await isGatewayHttpReady(undefined, targetGatewayUrl))
-    ) {
-      process.env.OPENSHELL_GATEWAY = gatewayName;
-      const runtime = getContainerRuntime();
-      if (shouldPatchCoredns(runtime)) {
-        run(["bash", path.join(SCRIPTS, "fix-coredns.sh"), gatewayName], {
-          ignoreError: true,
-        });
-      }
-      return;
-    }
-    if (i < recoveryPollCount - 1) sleepSeconds(recoveryPollInterval);
-  }
-
-  throw new Error(`Gateway '${gatewayName}' failed to start`);
-}
-
 async function startGateway(
   _gpu: ReturnType<typeof nim.detectGpu>,
   { gpuPassthrough = false }: { gpuPassthrough?: boolean } = {},
@@ -2417,15 +2334,12 @@ async function startGateway(
   return startGatewayWithOptions(_gpu, { exitOnFailure: true, gpuPassthrough });
 }
 
-async function startGatewayForRecovery(
-  options: StartGatewayForRecoveryOptions = {},
-): Promise<void> {
-  const target = resolveGatewayRecoveryTarget(options);
-  if (target.gatewayName !== GATEWAY_NAME || target.gatewayPort !== GATEWAY_PORT) {
-    return startTargetGatewayForRecovery(target);
-  }
-  return startGatewayWithOptions(undefined as unknown as ReturnType<typeof nim.detectGpu>, {
-    exitOnFailure: false,
+async function startGatewayForRecovery(options = {}): Promise<void> {
+  return require("./onboard/gateway-recovery").startGatewayForRecovery(options, {
+    getGatewayStartEnv,
+    runCaptureOpenshell,
+    runOpenshell,
+    startGatewayWithOptions,
   });
 }
 
@@ -2446,17 +2360,7 @@ function getGatewayStartEnv(): Record<string, string> {
   return gatewayEnv;
 }
 
-/**
- * Memoizes `applyOverlayfsAutoFix` per upstream image for the lifetime of
- * the process. The expensive work (host assessment + image inspect / pull /
- * build) only needs to happen once per onboard invocation; both
- * `startGatewayWithOptions` and `recoverGatewayRuntime` go through
- * `getGatewayStartEnv()`, and without this cache the recovery path would
- * re-run the full assessment.
- *
- * Reset on a per-process basis only — env-var changes mid-process are
- * not modelled here and shouldn't happen in the CLI's normal flow.
- */
+/** Cache the overlayfs auto-fix result per upstream image for this onboard process. */
 const overlayFixResultCache = new Map<string, string | null>();
 
 /**
