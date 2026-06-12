@@ -47,15 +47,15 @@ import { wrapSandboxShellScript } from "./auto-pair-approval";
 export const WARMUP_TIMEOUT_MS = 30_000;
 
 // Bounded in-sandbox poll for the pending scope upgrade after the provoke run.
-// `openclaw devices list` per-iteration budget and the number of 1s-spaced
-// retries; WARMUP_POLL_ATTEMPTS × (~WARMUP_POLL_LIST_TIMEOUT_S + 1s sleep) caps
-// the poll at ~10s, comfortably inside WARMUP_TIMEOUT_MS even after the provoke
-// agent run consumes the bulk of the budget. The gateway persists the upgrade
+// Worst case = WARMUP_POLL_ATTEMPTS × WARMUP_POLL_LIST_TIMEOUT_S list calls plus
+// (WARMUP_POLL_ATTEMPTS - 1) inter-attempt 1s sleeps = 5×2 + 4×1 = 14s, which
+// leaves clear headroom under WARMUP_TIMEOUT_MS (30s) for shell startup and the
+// throwaway agent run that runs first. The gateway persists the upgrade
 // requestId once created (#4504 evidence), so once the poll sees it pending the
 // downstream approval pass deterministically finds and approves it before
 // handoff — making "very first real run, zero fallback" deterministic even on
 // slow/contended gateways.
-export const WARMUP_POLL_ATTEMPTS = 10;
+export const WARMUP_POLL_ATTEMPTS = 5;
 export const WARMUP_POLL_LIST_TIMEOUT_S = 2;
 
 // Best-effort in-sandbox warm-up script. Always exits 0. It connects to the
@@ -114,7 +114,7 @@ PYPOLL
     break
   fi
   i=$((i + 1))
-  sleep 1
+  [ "$i" -lt ${WARMUP_POLL_ATTEMPTS} ] && sleep 1
 done
 exit 0
 `;
