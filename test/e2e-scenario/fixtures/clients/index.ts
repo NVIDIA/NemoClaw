@@ -1,7 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-export { assertExitZero, type CommandRunner } from "./command.ts";
+export {
+  assertExitZero,
+  outputContainsSandbox,
+  resultText,
+  type CommandRunner,
+} from "./command.ts";
 export { GatewayClient } from "./gateway.ts";
 export { HostCliClient } from "./host.ts";
 export {
@@ -13,6 +18,7 @@ export {
 } from "./provider.ts";
 export {
   SandboxClient,
+  sandboxAccessEnv,
   trustedSandboxShellScript,
   type TrustedSandboxShellScript,
   validateSandboxName,
