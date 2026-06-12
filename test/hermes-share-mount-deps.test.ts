@@ -84,9 +84,10 @@ function runHermesInstallLayer(
     '      echo "missing lockfile for ${prefix}" >&2',
     "      return 42",
     "    }",
+    '    mkdir -p "${prefix}/node_modules"',
     "  fi",
     "}",
-    'rm() { printf "rm %s\\n" "$*" >> "$call_log"; }',
+    'rm() { printf "rm %s\\n" "$*" >> "$call_log"; command rm "$@"; }',
     'ln() { printf "ln %s\\n" "$*" >> "$call_log"; }',
     'export HERMES_UV_EXTRAS="messaging"',
     command,
@@ -140,6 +141,14 @@ describe("Hermes share mount package parity (#2947)", () => {
   it("pre-installs the WhatsApp bridge node_modules with npm ci when a lockfile ships (#4764)", () => {
     const dockerfile = fs.readFileSync(HERMES_DOCKERFILE_BASE, "utf-8");
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-wa-bridge-"));
+    const bridgeNodeModules = path.join(
+      tmp,
+      "hermes",
+      "scripts",
+      "whatsapp-bridge",
+      "node_modules",
+    );
+    const webNodeModules = path.join(tmp, "hermes", "web", "node_modules");
 
     try {
       const command = extractHermesInstallCommand(dockerfile);
@@ -153,6 +162,8 @@ describe("Hermes share mount package parity (#2947)", () => {
       expect(calls).toContain(
         "npm ci --prefix scripts/whatsapp-bridge --prefer-offline --no-audit --no-fund",
       );
+      expect(fs.existsSync(bridgeNodeModules)).toBe(true);
+      expect(fs.existsSync(webNodeModules)).toBe(false);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
