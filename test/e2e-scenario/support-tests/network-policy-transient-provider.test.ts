@@ -33,6 +33,26 @@ describe("network-policy transient provider validation classifier", () => {
     ).toBe(false);
     expect(
       isTransientProviderValidationFailure(
+        probeOutput("endpoint validation failed: invalid NVIDIA_API_KEY credential quota exceeded"),
+      ),
+    ).toBe(false);
+    expect(
+      isTransientProviderValidationFailure(
+        probeOutput("endpoint validation failed: denied by network policy rate-limit preset"),
+      ),
+    ).toBe(false);
+    expect(
+      isTransientProviderValidationFailure(
+        probeOutput("endpoint validation failed: routing failed before rate limit check"),
+      ),
+    ).toBe(false);
+    expect(
+      isTransientProviderValidationFailure(
+        probeOutput("endpoint validation failed: proxy header stripping quota marker failed"),
+      ),
+    ).toBe(false);
+    expect(
+      isTransientProviderValidationFailure(
         probeOutput("policy update failed: denied by network policy"),
       ),
     ).toBe(false);
