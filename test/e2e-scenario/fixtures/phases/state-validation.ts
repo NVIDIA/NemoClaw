@@ -8,6 +8,7 @@ import path from "node:path";
 import { buildAvailabilityProbeEnv } from "../availability-env.ts";
 import type { ArtifactSink } from "../artifacts.ts";
 import {
+  resultText,
   trustedProviderEndpoint,
   type GatewayClient,
   type HostCliClient,
@@ -90,6 +91,11 @@ function outputContainsSandbox(result: ShellProbeResult, sandboxName: string): b
   return new RegExp(`(^|\\s)${escapeRegExp(sandboxName)}(\\s|$)`, "m").test(output);
 }
 
+export interface SandboxMarker {
+  path: string;
+  value: string;
+}
+
 function statusProbeEnv(): NodeJS.ProcessEnv {
   return buildAvailabilityProbeEnv();
 }
@@ -102,12 +108,12 @@ function gatewayBaseEndpoint(gatewayUrl: string): string {
   return trustedProviderEndpoint(gatewayUrl).url;
 }
 
-function resultText(result: ShellProbeResult): string {
-  return [result.stdout, result.stderr].filter(Boolean).join("\n");
-}
-
 function resultHttpCode(result: ShellProbeResult): string {
   return result.stdout.trim();
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'"'"'`)}'`;
 }
 
 function resultHasHttpCode(result: ShellProbeResult, allowedCodes: readonly string[]): boolean {
@@ -381,6 +387,93 @@ export class StateValidationPhaseFixture {
     }
   }
 
+  expectLocalRegistryContains(sandboxName: string): void {
+    const reader = this.io.readRegistry ?? defaultReadRegistry;
+    const registry = reader();
+    if (!registry) {
+      throw new Error(
+        `expected local registry entry for '${sandboxName}', but ${defaultRegistryPath()} does not exist.`,
+      );
+    }
+    if (!Object.prototype.hasOwnProperty.call(registry.entries, sandboxName)) {
+      const present = Object.keys(registry.entries).sort().join(", ") || "(none)";
+      throw new Error(
+        `expected local registry entry for '${sandboxName}', but registry contains: ${present}`,
+      );
+    }
+  }
+
+  async writeSandboxMarkers(
+    instance: NemoClawInstance,
+    markers: readonly SandboxMarker[],
+  ): Promise<void> {
+    for (const marker of markers) {
+      const result = await this.sandbox.exec(
+        instance.sandboxName,
+        [
+          "sh",
+          "-lc",
+          `mkdir -p "$(dirname ${shellQuote(marker.path)})" && printf '%s\\n' ${shellQuote(marker.value)} > ${shellQuote(marker.path)}`,
+        ],
+        {
+          artifactName: `state-marker-write-${path.basename(marker.path)}`,
+          env: statusProbeEnv(),
+          timeoutMs: 30_000,
+        },
+      );
+      if (result.exitCode !== 0) {
+        throw new Error(`failed to write sandbox marker ${marker.path}: ${resultText(result)}`);
+      }
+    }
+  }
+
+  async expectSandboxMarkers(
+    instance: NemoClawInstance,
+    markers: readonly SandboxMarker[],
+    artifactPrefix = "state-marker-read",
+  ): Promise<void> {
+    for (const marker of markers) {
+      const result = await this.sandbox.exec(
+        instance.sandboxName,
+        ["sh", "-lc", `cat ${shellQuote(marker.path)} 2>/dev/null`],
+        {
+          artifactName: `${artifactPrefix}-${path.basename(marker.path)}`,
+          env: statusProbeEnv(),
+          timeoutMs: 30_000,
+        },
+      );
+      const actual = result.stdout.trim();
+      if (result.exitCode !== 0 || actual !== marker.value) {
+        throw new Error(
+          `sandbox marker ${marker.path} mismatch: expected '${marker.value}', got '${actual || "<empty>"}'`,
+        );
+      }
+    }
+  }
+
+  async expectSandboxDirectoryPopulated(
+    instance: NemoClawInstance,
+    directory: string,
+    artifactName = "state-directory-populated",
+  ): Promise<void> {
+    const result = await this.sandbox.exec(
+      instance.sandboxName,
+      [
+        "sh",
+        "-lc",
+        `find ${shellQuote(directory)} -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null`,
+      ],
+      {
+        artifactName,
+        env: statusProbeEnv(),
+        timeoutMs: 30_000,
+      },
+    );
+    if (result.exitCode !== 0 || result.stdout.trim() === "") {
+      throw new Error(`sandbox directory ${directory} is not populated after restart.`);
+    }
+  }
+
   private async writeResult(
     status: "passed" | "failed",
     expectedState: string | ExpectedState,
@@ -519,7 +612,11 @@ export class StateValidationPhaseFixture {
         `state-validation expected gateway to be absent, but ${healthUrl} responded healthy.`,
       );
     }
-    return { id: "gateway-absent", status: "passed", results: [result, health] };
+    return {
+      id: "gateway-absent",
+      status: "passed",
+      results: [result, health],
+    };
   }
 
   private async expectSandboxRunning(
@@ -558,7 +655,11 @@ export class StateValidationPhaseFixture {
           `but the registry contains: ${present}.`,
       );
     }
-    return { id: "local-registry-entry-present", status: "passed", results: [] };
+    return {
+      id: "local-registry-entry-present",
+      status: "passed",
+      results: [],
+    };
   }
 
   private async expectDockerSandboxContainerPresent(
@@ -597,7 +698,11 @@ export class StateValidationPhaseFixture {
           `*-nemoclaw-gpu-backup-* sibling), but docker ps -a returned none.`,
       );
     }
-    return { id: "docker-sandbox-container-present", status: "passed", results: [result] };
+    return {
+      id: "docker-sandbox-container-present",
+      status: "passed",
+      results: [result],
+    };
   }
 
   private async expectSandboxAbsent(

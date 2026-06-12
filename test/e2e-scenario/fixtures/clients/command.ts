@@ -11,6 +11,18 @@ export interface CommandRunner {
   run(command: TrustedShellCommand, options?: ShellProbeRunOptions): Promise<ShellProbeResult>;
 }
 
+export function resultText(result: Pick<ShellProbeResult, "stdout" | "stderr">): string {
+  return [result.stdout, result.stderr].filter(Boolean).join("\n");
+}
+
+export function outputContainsSandbox(
+  result: Pick<ShellProbeResult, "stdout" | "stderr">,
+  sandboxName: string,
+): boolean {
+  const escaped = sandboxName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(^|\\s)${escaped}(\\s|$)`, "m").test(resultText(result));
+}
+
 export function assertExitZero(result: ShellProbeResult, label: string): void {
   if (result.exitCode === 0) return;
   const fallback = result.signal
