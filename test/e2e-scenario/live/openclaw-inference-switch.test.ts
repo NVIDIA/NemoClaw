@@ -164,18 +164,27 @@ async function runNemoclaw(
   });
 }
 
+function singleLineSandboxShellScript(script: string): string {
+  if (!/[\r\n]/.test(script)) return script;
+  return `printf '%s' ${shellQuote(Buffer.from(script, "utf8").toString("base64"))} | base64 -d | sh`;
+}
+
 async function sandboxShell(
   sandbox: SandboxClient,
   home: string,
   script: string,
   options: { artifactName: string; timeoutMs?: number; redactionValues?: string[] },
 ): Promise<ShellProbeResult> {
-  return sandbox.execShell(SANDBOX_NAME, trustedSandboxShellScript(script), {
-    artifactName: options.artifactName,
-    env: commandEnv(home),
-    timeoutMs: options.timeoutMs ?? COMMAND_TIMEOUT_MS,
-    redactionValues: options.redactionValues,
-  });
+  return sandbox.execShell(
+    SANDBOX_NAME,
+    trustedSandboxShellScript(singleLineSandboxShellScript(script)),
+    {
+      artifactName: options.artifactName,
+      env: commandEnv(home),
+      timeoutMs: options.timeoutMs ?? COMMAND_TIMEOUT_MS,
+      redactionValues: options.redactionValues,
+    },
+  );
 }
 
 async function cleanupOpenClawInferenceSwitchState(
@@ -731,6 +740,13 @@ function isTransientInferenceSetFailure(text: string): boolean {
   );
 }
 
+function isExternalProviderValidationFailure(text: string): boolean {
+  return (
+    /NVIDIA Endpoints endpoint validation failed/i.test(text) &&
+    /HTTP 429|rate limit|quota|temporarily unavailable|timed out|timeout/i.test(text)
+  );
+}
+
 async function runInferenceSetWithRetry(
   host: HostCliClient,
   home: string,
@@ -845,7 +861,17 @@ RUN_OPENCLAW_INFERENCE_SWITCH_TEST(
         timeoutMs: INSTALL_TIMEOUT_MS,
       },
     );
-    expect(install.exitCode, resultText(install)).toBe(0);
+    const installText = resultText(install);
+    if (install.exitCode !== 0 && isExternalProviderValidationFailure(installText)) {
+      await artifacts.writeJson("scenario-result.json", {
+        id: "openclaw-inference-switch",
+        status: "skipped",
+        reason: "external-provider-validation-unavailable-before-inference-switch",
+        installExitCode: install.exitCode,
+      });
+      skip("NVIDIA endpoint validation was unavailable/rate-limited during onboarding");
+    }
+    expect(install.exitCode, installText).toBe(0);
 
     if (SWITCH_PROVIDER === "compatible-anthropic-endpoint" && SWITCH_MOCK_ANTHROPIC === "1") {
       mockProvider = await startMockAnthropicProvider();
