@@ -152,6 +152,10 @@ async function startCompatibleMock(
 
     if (req.method === "GET" && ["/v1/models", "/models"].includes(requestPath)) {
       requests.push({ method: "GET", path: requestPath, auth, hopHeaders: [] });
+      if (auth !== "ok") {
+        jsonResponse(res, 401, { error: { message: "missing bearer credential" } });
+        return;
+      }
       jsonResponse(res, 200, {
         object: "list",
         data: [{ id: model, object: "model" }],
@@ -292,7 +296,9 @@ async function startCompatibleMock(
 
   for (let attempt = 1; attempt <= 30; attempt += 1) {
     try {
-      const response = await fetch(`${mock.localBaseUrl}/models`);
+      const response = await fetch(`${mock.localBaseUrl}/models`, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+      });
       if (response.ok) return mock;
     } catch {
       // Keep polling until the server accepts connections.
@@ -669,12 +675,16 @@ liveTest(
 
     const hostAddress = await hostAddressForSandbox(host);
     const endpointUrl = `http://${hostAddress}:${new URL(compatibleMock.localBaseUrl).port}/v1`;
-    const hostReachability = await host.command("curl", ["-sf", `${endpointUrl}/models`], {
-      artifactName: "compatible-endpoint-host-reachability",
-      env: commandEnv(),
-      redactionValues: redactionValues(),
-      timeoutMs: 30_000,
-    });
+    const hostReachability = await host.command(
+      "curl",
+      ["-sf", "-H", `Authorization: Bearer ${COMPATIBLE_KEY}`, `${endpointUrl}/models`],
+      {
+        artifactName: "compatible-endpoint-host-reachability",
+        env: commandEnv(),
+        redactionValues: redactionValues(),
+        timeoutMs: 30_000,
+      },
+    );
     expect(hostReachability.exitCode, resultText(hostReachability)).toBe(0);
 
     const { result: onboard, runner } = await runCompatibleOnboard(host, endpointUrl);

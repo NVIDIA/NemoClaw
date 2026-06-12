@@ -65,6 +65,9 @@ function sleep(ms: number): Promise<void> {
 }
 
 function shellEvalArg(script: string): string {
+  if (script.length === 0) {
+    return "";
+  }
   const encoded = Buffer.from(script, "utf8").toString("base64");
   return `printf %s ${encoded} | base64 -d | sh`;
 }

@@ -24,6 +24,8 @@ async function bestEffort(run: () => Promise<unknown>): Promise<void> {
     await run();
   } catch {
     // Best-effort cleanup mirrors the legacy shell teardown.
+    // Narrow this once NemoClaw/OpenShell/gateway teardown treats missing
+    // resources as successful cleanup.
   }
 }
 
@@ -153,7 +155,9 @@ export function parseOpenClawAgentText(raw: string): string {
     }
     if (!value || typeof value !== "object") return;
     const record = value as Record<string, unknown>;
-    for (const key of textKeys) add(record[key]);
+    for (const key of textKeys) {
+      if (key in record) collect(record[key]);
+    }
     const choices = record.choices;
     if (Array.isArray(choices)) {
       for (const choice of choices) {

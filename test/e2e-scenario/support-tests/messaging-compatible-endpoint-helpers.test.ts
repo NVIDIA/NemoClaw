@@ -66,4 +66,14 @@ describe("messaging compatible endpoint helper coverage", () => {
 
     expect(parseOpenClawAgentText(noisyOutput)).toContain(COMPAT_AGENT_REPLY);
   });
+
+  it("extracts OpenAI Responses content parts", () => {
+    const output = JSON.stringify({
+      result: {
+        content: [{ type: "output_text", text: COMPAT_AGENT_REPLY }],
+      },
+    });
+
+    expect(parseOpenClawAgentText(output)).toContain(COMPAT_AGENT_REPLY);
+  });
 });
