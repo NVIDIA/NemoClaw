@@ -712,6 +712,133 @@ function validateNetworkPolicyVitestJob(errors: string[], jobs: WorkflowRecord):
   }
 }
 
+function validateCommonEgressAgentVitestJob(errors: string[], jobs: WorkflowRecord): void {
+  const jobName = "common-egress-agent-vitest";
+  const job = asRecord(jobs[jobName]);
+  if (Object.keys(job).length === 0) {
+    errors.push("workflow missing common-egress-agent-vitest job");
+    return;
+  }
+
+  if (job["runs-on"] !== "ubuntu-latest") {
+    errors.push("common-egress-agent-vitest job must run on ubuntu-latest");
+  }
+  validateFreeStandingJobSelector(errors, jobs, jobName, "common-egress-agent");
+  if (job["timeout-minutes"] !== 120) {
+    errors.push("common-egress-agent-vitest job must keep the legacy 120 minute timeout");
+  }
+
+  const jobEnv = asRecord(job.env);
+  if (jobEnv.NEMOCLAW_RUN_E2E_SCENARIOS !== "1") {
+    errors.push("common-egress-agent-vitest job must set NEMOCLAW_RUN_E2E_SCENARIOS=1");
+  }
+  if (
+    jobEnv.E2E_ARTIFACT_DIR !==
+    "${{ github.workspace }}/e2e-artifacts/vitest/common-egress-agent"
+  ) {
+    errors.push(
+      "common-egress-agent-vitest job must write artifacts under e2e-artifacts/vitest/common-egress-agent",
+    );
+  }
+  if (!stringValue(jobEnv.NEMOCLAW_CLI_BIN).includes("bin/nemoclaw.js")) {
+    errors.push("common-egress-agent-vitest job must point NEMOCLAW_CLI_BIN at the repo CLI");
+  }
+  if (jobEnv.NEMOCLAW_NON_INTERACTIVE !== "1") {
+    errors.push("common-egress-agent-vitest job must set NEMOCLAW_NON_INTERACTIVE=1");
+  }
+  if (jobEnv.NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE !== "1") {
+    errors.push("common-egress-agent-vitest job must set NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1");
+  }
+  if (jobEnv.NEMOCLAW_RECREATE_SANDBOX !== "1") {
+    errors.push("common-egress-agent-vitest job must set NEMOCLAW_RECREATE_SANDBOX=1");
+  }
+  if (jobEnv.OPENSHELL_GATEWAY !== "nemoclaw") {
+    errors.push("common-egress-agent-vitest job must force OPENSHELL_GATEWAY=nemoclaw");
+  }
+  for (const secret of ["NVIDIA_API_KEY", "DOCKERHUB_USERNAME", "DOCKERHUB_TOKEN", "GITHUB_TOKEN"]) {
+    requireEnvDoesNotExposeSecret(errors, "common-egress-agent-vitest job", jobEnv, secret);
+  }
+
+  const steps = asSteps(job.steps);
+  requireNoDispatchInputInterpolation(errors, steps);
+  for (const step of steps) {
+    const stepName = step.name ?? step.uses ?? "<unnamed>";
+    const stepEnv = asRecord(step.env);
+    if (step.name !== "Run common-egress agent live test") {
+      requireEnvDoesNotExposeSecret(
+        errors,
+        `common-egress-agent-vitest step '${stepName}'`,
+        stepEnv,
+        "NVIDIA_API_KEY",
+      );
+    }
+    for (const secret of ["DOCKERHUB_USERNAME", "DOCKERHUB_TOKEN", "GITHUB_TOKEN"]) {
+      requireEnvDoesNotExposeSecret(
+        errors,
+        `common-egress-agent-vitest step '${stepName}'`,
+        stepEnv,
+        secret,
+      );
+    }
+  }
+
+  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
+  if (!checkout) errors.push("common-egress-agent-vitest job missing checkout step");
+  requireFullShaAction(errors, checkout, "common-egress-agent-vitest checkout");
+  if (asRecord(checkout?.with)["persist-credentials"] !== false) {
+    errors.push("common-egress-agent-vitest checkout step must set persist-credentials=false");
+  }
+
+  const setupNode = namedStep(steps, "Set up Node");
+  if (!setupNode) errors.push("common-egress-agent-vitest job missing step: Set up Node");
+  requireFullShaAction(errors, setupNode, "common-egress-agent-vitest setup-node");
+
+  const installRootDependencies = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Install root dependencies",
+  );
+  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
+
+  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
+  requireRunContains(errors, buildCli, "npm run build:cli");
+
+  const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell");
+  requireRunContains(errors, installOpenShell, "bash scripts/install-openshell.sh");
+  requireRunContains(errors, installOpenShell, "env -u DOCKER_CONFIG");
+  requireRunContains(errors, installOpenShell, "-u DOCKERHUB_USERNAME");
+  requireRunContains(errors, installOpenShell, "-u DOCKERHUB_TOKEN");
+  requireRunContains(errors, installOpenShell, "-u NVIDIA_API_KEY");
+  requireRunContains(errors, installOpenShell, "-u GITHUB_TOKEN");
+
+  const runVitest = requireJobStep(errors, jobName, steps, "Run common-egress agent live test");
+  const runVitestEnv = asRecord(runVitest?.env);
+  if (runVitestEnv.NVIDIA_API_KEY !== "${{ secrets.NVIDIA_API_KEY }}") {
+    errors.push("common-egress-agent-vitest step must receive NVIDIA_API_KEY from secrets");
+  }
+  requireRunContains(errors, runVitest, "OPENSHELL_BIN");
+  requireRunContains(errors, runVitest, "npx vitest run --project e2e-scenarios-live");
+  requireRunContains(errors, runVitest, "test/e2e-scenario/live/common-egress-agent.test.ts");
+
+  const upload = requireJobStep(errors, jobName, steps, "Upload common-egress agent artifacts");
+  requireFullShaAction(errors, upload, "common-egress-agent-vitest upload-artifact");
+  const uploadWith = asRecord(upload?.with);
+  if (uploadWith.name !== "e2e-vitest-scenarios-common-egress-agent") {
+    errors.push("common-egress-agent-vitest artifact upload name must be stable");
+  }
+  const uploadPath = stringValue(uploadWith.path);
+  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/vitest/common-egress-agent/");
+  if (uploadWith["include-hidden-files"] !== false) {
+    errors.push("common-egress-agent-vitest artifact upload must set include-hidden-files: false");
+  }
+  if (uploadWith["if-no-files-found"] !== "ignore") {
+    errors.push("common-egress-agent-vitest artifact upload must ignore missing fixture artifacts");
+  }
+  if (uploadWith["retention-days"] !== 14) {
+    errors.push("common-egress-agent-vitest artifact upload retention-days must be 14");
+  }
+}
 
 function validateShieldsConfigVitestJob(errors: string[], jobs: WorkflowRecord): void {
   const jobName = "shields-config-vitest";
@@ -2115,6 +2242,7 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   validateHermesE2EVitestJob(errors, jobs);
   validateHermesRootEntrypointSmokeVitestJob(errors, jobs);
   validateNetworkPolicyVitestJob(errors, jobs);
+  validateCommonEgressAgentVitestJob(errors, jobs);
   validateShieldsConfigVitestJob(errors, jobs);
   validateRebuildOpenClawVitestJob(errors, jobs);
   validateSandboxRebuildVitestJob(errors, jobs);
