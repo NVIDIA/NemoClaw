@@ -450,7 +450,7 @@ exercise_macos_docker_rootfs_permission_regression() {
     || fail "Dockerfile is missing the macOS VM rootfs compatibility ARG"
   grep -Fq "ARG NEMOCLAW_DARWIN_VM_COMPAT=\${sanitizeDockerArg(darwinVmCompat ? \"1\" : \"0\")}" src/lib/onboard/dockerfile-patch.ts \
     || fail "Dockerfile patch helper does not patch the macOS VM rootfs compatibility ARG"
-  grep -Fq "Docker-on-Colima uses normal container ownership" src/lib/onboard.ts \
+  grep -Fq "const darwinVmCompat = false;" src/lib/onboard/sandbox-dockerfile-patch-flow.ts \
     || fail "onboard does not keep macOS Docker sandbox builds out of the VM rootfs compatibility path"
   grep -q "chmod -R a+rwX /sandbox/.openclaw" Dockerfile \
     || fail "Dockerfile does not relax OpenClaw state permissions for macOS VM rootfs remapping"

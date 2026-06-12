@@ -29,7 +29,14 @@ const {
 const { stopStaleDashboardListenersForSandbox } = require("./onboard/stale-gateway-cleanup");
 const extraPlaceholderKeysModule: typeof import("./onboard/extra-placeholder-keys") = require("./onboard/extra-placeholder-keys");
 const buildContextStage: typeof import("./onboard/build-context-stage") = require("./onboard/build-context-stage");
+const sandboxBuildPatchConfig: typeof import("./onboard/sandbox-build-patch-config") = require("./onboard/sandbox-build-patch-config");
+const sandboxDockerfilePatchFlow: typeof import("./onboard/sandbox-dockerfile-patch-flow") = require("./onboard/sandbox-dockerfile-patch-flow");
+const sandboxMessagingPreflight: typeof import("./onboard/sandbox-messaging-preflight") = require("./onboard/sandbox-messaging-preflight");
+const sandboxCreatePlan: typeof import("./onboard/sandbox-create-plan") = require("./onboard/sandbox-create-plan");
 const sandboxCreateLaunch: typeof import("./onboard/sandbox-create-launch") = require("./onboard/sandbox-create-launch");
+const onboardEntryOptions: typeof import("./onboard/entry-options") = require("./onboard/entry-options");
+const onboardSessionBootstrap: typeof import("./onboard/session-bootstrap") = require("./onboard/session-bootstrap");
+const channelState: typeof import("./onboard/channel-state") = require("./onboard/channel-state");
 const {
   ensureOllamaLoopbackSystemdOverride,
 }: typeof import("./onboard/ollama-systemd") = require("./onboard/ollama-systemd");
@@ -77,7 +84,6 @@ const {
 const {
   buildDirectGpuPolicyYaml,
   buildDirectSandboxGpuProofCommands,
-  prepareInitialSandboxCreatePolicy,
 }: typeof import("./onboard/initial-policy") = require("./onboard/initial-policy");
 const {
   getSelectionDrift,
@@ -105,7 +111,7 @@ const {
 }: typeof import("./onboard/e2e-failure-injection") = require("./onboard/e2e-failure-injection");
 const onboardTracing: typeof import("./onboard/tracing") = require("./onboard/tracing");
 const sandboxReadinessTracing: typeof import("./onboard/sandbox-readiness-tracing") = require("./onboard/sandbox-readiness-tracing");
-const { gatherWechatConfig, hasWechatConfigDrift, toSessionWechatConfig } =
+const { hasWechatConfigDrift } =
   require("./onboard/wechat-config") as typeof import("./onboard/wechat-config");
 const {
   setupMessagingChannels: setupMessagingChannelsImpl,
@@ -154,7 +160,6 @@ const docker: typeof import("./adapters/docker") = require("./adapters/docker");
 const {
   dockerContainerInspectFormat,
   dockerExecArgv,
-  dockerImageInspect,
   dockerInfoFormat,
   dockerInspect,
   dockerRemoveVolumesByPrefix,
@@ -401,9 +406,10 @@ const {
   computeTelegramRequireMention,
   getStoredMessagingChannelConfig,
   messagingChannelConfigsEqual,
-  persistMessagingChannelConfigToSession,
 } = messagingConfig;
-const messagingPrep: typeof import("./onboard/messaging-prep") = require("./onboard/messaging-prep");
+const messagingPlanSession: typeof import("./onboard/messaging-plan-session") =
+  require("./onboard/messaging-plan-session");
+const { getChannelsFromPlan } = messagingPlanSession;
 const sandboxAgent: typeof import("./onboard/sandbox-agent") = require("./onboard/sandbox-agent");
 const sandboxLifecycle: typeof import("./onboard/sandbox-lifecycle") = require("./onboard/sandbox-lifecycle");
 const sandboxRegistryMetadata: typeof import("./onboard/sandbox-registry-metadata") = require("./onboard/sandbox-registry-metadata");
@@ -543,7 +549,6 @@ import type { WebSearchConfig } from "./inference/web-search";
 import {
   hydrateMessagingChannelConfig,
   type MessagingChannelConfig,
-  readMessagingChannelConfigFromEnv,
 } from "./messaging-channel-config";
 import { finalizationHandlerDeps } from "./onboard/finalization-deps";
 import { streamGatewayStart } from "./onboard/gateway";
@@ -554,7 +559,7 @@ import {
   stringSetsEqual,
 } from "./onboard/hermes-managed-tools";
 import { mergePolicyMessagingChannels } from "./onboard/messaging-policy-presets";
-import { filterEnabledChannelsByAgent, resolveQrSelectedChannels } from "./onboard/messaging-state";
+import { filterEnabledChannelsByAgent } from "./onboard/messaging-state";
 import { getValidatedMessagingTokenByEnvKey } from "./onboard/messaging-token";
 import { handleOllamaProbeFailure } from "./onboard/ollama-probe-failure";
 import { runOllamaStartupOrGate } from "./onboard/ollama-startup";
@@ -2569,80 +2574,42 @@ async function createSandbox(
   });
   const hermesDashboardState = hermesDashboardForwarding.resolveStateForPort(effectivePort);
 
-  // Check whether messaging providers will be needed — this must happen before
-  // the sandbox reuse decision so we can detect stale sandboxes that were created
-  // without provider attachments (security: prevents legacy raw-env-var leaks).
-
-  // Messaging channels like Telegram (getUpdates), Discord (gateway), and Slack
-  // (Socket Mode) enforce one consumer per channel credential. Two sandboxes
-  // sharing a credential silently break both bridges (see #1953). Warn before
-  // we commit.
-  //
-  // The compiled plan (written to env by setupMessagingChannels) is the source
-  // of truth: credential hashes and active-channel membership are read from
-  // plan.credentialBindings rather than from MESSAGING_CHANNELS constants.
-  // Validate sandbox identity before trusting the env plan: a stale plan from a
-  // prior run of a different sandbox must not gate or bypass conflict detection
-  // for the current sandbox creation.
-  const envPlan = readMessagingPlanFromEnv();
-  const currentPlan = envPlan?.sandboxName === sandboxName ? envPlan : null;
-  // Drop channels the operator disabled via `nemoclaw <sandbox> channels stop`.
-  // Credentials stay in the keychain; the bridge simply isn't registered with
-  // the gateway on the next rebuild. `channels start` removes the entry and
-  // the bridge comes back. Resolved before conflict detection so a *stopped*
-  // channel on this sandbox is not treated as an active consumer (a stopped
-  // Slack bridge must not block a second sandbox on the same gateway).
-  const disabledChannels: string[] =
-    require("./onboard/channel-state").resolveDisabledChannels(sandboxName);
-  const disabledChannelNames = new Set(disabledChannels);
-  const { enforceMessagingChannelConflicts } =
-    require("./onboard/messaging-conflict-guard") as typeof import("./onboard/messaging-conflict-guard");
-  await enforceMessagingChannelConflicts({
-    sandboxName,
-    gatewayName: GATEWAY_NAME,
-    currentPlan,
-    currentSandboxDisabledChannels: disabledChannels,
-    registry,
-    checkGatewayLiveness: () =>
-      runOpenshell(["sandbox", "list"], { ignoreError: true, suppressOutput: true }).status === 0,
-    providerExists: (name) => providerExistsInGateway(name),
-    isNonInteractive,
-    promptContinue: () => promptYesNoOrDefault("  Continue anyway?", null, false),
-    cliName,
-    log: (message) => console.log(message),
-    error: (message) => console.error(message),
-  });
-
   const {
     messagingTokenDefs,
     extraPlaceholderKeys,
     hasMessagingTokens,
     reusableMessagingProviders,
     reusableMessagingChannels,
-    missingBraveApiKey,
-  } = messagingPrep.prepareCreateSandboxMessaging({
-    sandboxName,
-    channels: MESSAGING_CHANNELS,
-    enabledChannels,
+    disabledChannelNames,
     disabledChannels,
-    webSearchConfig,
-    env: process.env,
-    getValidatedMessagingTokenByEnvKey,
-    getCredential,
-    normalizeCredentialValue,
-    registerExtraPlaceholderProviders: extraPlaceholderKeysModule.registerExtraPlaceholderProviders,
-    getMessagingChannelForEnvKey,
-    providerExistsInGateway,
-  });
-  // Fail before any recreate/delete path runs: otherwise a missing key would
-  // destroy the existing sandbox first and only then surface the abort (#3626).
-  if (missingBraveApiKey) {
-    console.error("  Brave Search is enabled, but BRAVE_API_KEY is not available in this process.");
-    console.error(
-      "  Re-run with BRAVE_API_KEY set, or disable Brave Search before recreating the sandbox.",
-    );
-    process.exit(1);
-  }
+  } = await sandboxMessagingPreflight.prepareSandboxMessagingPreflight(
+    {
+      channels: MESSAGING_CHANNELS,
+      enabledChannels,
+      sandboxName,
+      webSearchConfig,
+      env: process.env,
+    },
+    {
+      readMessagingPlanFromEnv,
+      resolveDisabledChannels: channelState.resolveDisabledChannels,
+      gatewayName: GATEWAY_NAME,
+      registry,
+      providerExistsInGateway,
+      isNonInteractive,
+      promptYesNoOrDefault,
+      cliName,
+      log: (message) => console.log(message),
+      error: (message) => console.error(message),
+      exitProcess: (code) => process.exit(code),
+      getValidatedMessagingTokenByEnvKey,
+      getCredential,
+      normalizeCredentialValue,
+      registerExtraPlaceholderProviders:
+        extraPlaceholderKeysModule.registerExtraPlaceholderProviders,
+      getMessagingChannelForEnvKey,
+    },
+  );
 
   const existingRegistryEntryBeforePrune = registry.getSandbox(sandboxName);
 
@@ -2960,44 +2927,44 @@ async function createSandbox(
     "openclaw-sandbox.yaml",
   );
   const basePolicyPath = (agent && agentOnboard.getAgentPolicyPath(agent)) || defaultPolicyPath;
-  const tokensByEnvKey = Object.fromEntries(
-    messagingTokenDefs.map(({ envKey, token }) => [envKey, token]),
-  );
-  const qrSelectedChannels = resolveQrSelectedChannels(
-    MESSAGING_CHANNELS,
+  const {
+    activeMessagingChannels,
+    initialSandboxPolicy,
+    createArgs,
+    messagingProviders,
+    useDockerGpuPatch,
+    sandboxGpuLogMessage,
+  } = sandboxCreatePlan.prepareSandboxCreatePlan({
+    basePolicyPath,
+    buildCtx,
+    sandboxName,
+    channels: MESSAGING_CHANNELS,
     enabledChannels,
     disabledChannelNames,
-  );
-  const activeMessagingChannels = [
-    ...new Set([
-      ...messagingTokenDefs
-        .filter(({ token }) => !!token)
-        .flatMap(({ envKey }) => {
-          const channel = getMessagingChannelForEnvKey(envKey);
-          if (channel) return [channel];
-          // SLACK_APP_TOKEN alone does not enable slack; bot token is required.
-          if (envKey === "SLACK_APP_TOKEN") {
-            return tokensByEnvKey["SLACK_BOT_TOKEN"] ? ["slack"] : [];
-          }
-          return [];
-        }),
-      ...reusableMessagingChannels,
-      ...qrSelectedChannels,
-    ]),
-  ];
-  const { useDockerGpuPatch, logMessage: sandboxGpuLogMessage } =
-    dockerGpuSandboxCreate.resolveDockerGpuSandboxCreatePlan(effectiveSandboxGpuConfig, {
-      dockerDriverGateway: isLinuxDockerDriverGatewayEnabled(),
-    });
-  const initialSandboxPolicy = prepareInitialSandboxCreatePolicy(
-    basePolicyPath,
-    activeMessagingChannels,
-    {
-      directGpu: effectiveSandboxGpuConfig.sandboxGpuEnabled,
-      dockerGpuPatch: useDockerGpuPatch,
-      additionalPresets: hermesToolGateways,
-    },
-  );
+    messagingTokenDefs,
+    reusableMessagingChannels,
+    reusableMessagingProviders,
+    hermesToolGateways,
+    sandboxGpuConfig: effectiveSandboxGpuConfig,
+    dockerDriverGateway: isLinuxDockerDriverGatewayEnabled(),
+    appendResourceFlags: (args) =>
+      appendResourceFlagsForProfile(args, resourceProfile, getOpenshellBinary(), {
+        isNonInteractive,
+        note,
+        prompt,
+        promptOrDefault,
+      }),
+    runProviderPreDeleteCleanup: () =>
+      runSandboxProviderPreDeleteCleanup(sandboxName, {
+        runOpenshell,
+        redact,
+        tolerateMissingSandbox: true,
+      }),
+    upsertMessagingProviders,
+    getMessagingChannelForEnvKey,
+    getHermesToolGatewayProviderName: (targetSandbox) =>
+      getHermesToolGatewayBroker().getHermesToolGatewayProviderName(targetSandbox),
+  });
   if (initialSandboxPolicy.cleanup) {
     process.on("exit", initialSandboxPolicy.cleanup);
   }
@@ -3007,133 +2974,33 @@ async function createSandbox(
     );
   }
   if (sandboxGpuLogMessage) console.log(sandboxGpuLogMessage);
-  const createArgs = [
-    "--from",
-    `${buildCtx}/Dockerfile`,
-    "--name",
-    sandboxName,
-    "--policy",
-    initialSandboxPolicy.policyPath,
-    ...buildSandboxGpuCreateArgs(effectiveSandboxGpuConfig, {
-      suppressGpuFlag: useDockerGpuPatch,
-    }),
-  ];
-
-  appendResourceFlagsForProfile(createArgs, resourceProfile, getOpenshellBinary(), {
-    isNonInteractive,
-    note,
-    prompt,
-    promptOrDefault,
-  });
-  runSandboxProviderPreDeleteCleanup(sandboxName, {
-    runOpenshell,
-    redact,
-    tolerateMissingSandbox: true,
-  });
-  const messagingProviders = [
-    ...new Set([
-      ...upsertMessagingProviders(messagingTokenDefs, { replaceExisting: true }),
-      ...reusableMessagingProviders,
-    ]),
-  ];
-  for (const p of messagingProviders) {
-    createArgs.push("--provider", p);
-  }
-  if (hermesToolGateways.length > 0) {
-    const hermesToolGateway = getHermesToolGatewayBroker();
-    createArgs.push("--provider", hermesToolGateway.getHermesToolGatewayProviderName(sandboxName));
-  }
 
   console.log(`  Creating sandbox '${sandboxName}' (this takes a few minutes on first run)...`);
-  const messagingChannelConfig = readMessagingChannelConfigFromEnv();
-  // Telegram mention-only mode — parity with Discord's requireMention.
-  // Off by default so existing sandboxes behave the same; opt-in via
-  // TELEGRAM_REQUIRE_MENTION=1 or the interactive prompt. See #1737.
-  const telegramConfig: { requireMention?: boolean } = {};
+  const envMessagingState = MessagingHostStateApplier.readPlanStateFromEnv();
+  const plannedMessagingState =
+    envMessagingState?.plan.sandboxName === sandboxName ? envMessagingState : undefined;
+  const plannedMessagingPlan = plannedMessagingState?.plan;
   const configuredMessagingChannels =
-    enabledChannels != null ? [...new Set(enabledChannels)] : activeMessagingChannels;
-  if (configuredMessagingChannels.includes("telegram")) {
-    const telegramRequireMention = computeTelegramRequireMention();
-    if (telegramRequireMention !== null) {
-      telegramConfig.requireMention = telegramRequireMention;
-    }
-  }
-  const wechatConfig = gatherWechatConfig(onboardSession.loadSession());
-  // Persist the effective Telegram config into the session so a later resume
-  // can detect drift (TELEGRAM_REQUIRE_MENTION changed since last build) and
-  // force a sandbox recreate — otherwise the old groupPolicy would stay baked
-  // in. Mirrors the pattern used for webSearchConfig. See CodeRabbit on #2417.
-  onboardSession.updateSession((current) => {
-    current.telegramConfig =
-      typeof telegramConfig.requireMention === "boolean"
-        ? { requireMention: telegramConfig.requireMention as boolean }
-        : null;
-    current.wechatConfig = toSessionWechatConfig(wechatConfig);
-    current.messagingChannelConfig = messagingChannelConfig;
-    return current;
+    getChannelsFromPlan(plannedMessagingPlan) ?? activeMessagingChannels;
+  sandboxBuildPatchConfig.prepareSandboxBuildPatchConfig({
+    configuredMessagingChannels,
   });
-  // Pull the base image and resolve its digest so the Dockerfile is pinned to
-  // exactly what we just fetched. This prevents stale :latest tags from
-  // silently reusing a cached old image after NemoClaw upgrades (#1904).
-  const resolved =
-    agent && !fromDockerfile
-      ? null
-      : pullAndResolveBaseImageDigest({
-          requireOpenshellSandboxAbi: isLinuxDockerDriverGatewayEnabled(),
-        });
-  if (resolved?.digest) {
-    console.log(`  Pinning base image to ${resolved.digest.slice(0, 19)}...`);
-  } else if (resolved) {
-    console.log(`  Using sandbox base image ${resolved.ref}`);
-  } else if (!(agent && !fromDockerfile)) {
-    // Check if the image exists locally before falling back to unpinned :latest.
-    // On a first-time install behind a firewall with no cached image, warn early
-    // so the user knows the build will likely fail.
-    const localCheck = dockerImageInspect(`${SANDBOX_BASE_IMAGE}:${SANDBOX_BASE_TAG}`, {
-      ignoreError: true,
-      suppressOutput: true,
-    });
-    if (localCheck.status === 0) {
-      console.warn("  Warning: could not pull base image from registry; using cached :latest.");
-    } else {
-      console.warn(
-        `  Warning: base image ${SANDBOX_BASE_IMAGE}:${SANDBOX_BASE_TAG} is not available locally.`,
-      );
-      console.warn("  The build will fail unless Docker can pull the image during build.");
-      console.warn("  If offline, pull the image manually first:");
-      console.warn(`    docker pull ${SANDBOX_BASE_IMAGE}:${SANDBOX_BASE_TAG}`);
-    }
-  }
-  const buildId = String(Date.now());
-  // OpenClaw never uses a direct container-loopback inference URL: the agent's
-  // isolated sandbox netns can't reach the host loopback even under --network
-  // host. For local providers this drops the host-network GPU opt-in so
-  // inference uses the reachable inference.local route (re-checking the bridge
-  // it now needs); OpenClaw falls back to OpenShell-managed routing (#4509).
-  await dockerGpuLocalInference.enforceDockerGpuPatchPreserveNetwork(
-    provider,
-    effectiveSandboxGpuConfig,
-    {
-      dockerDriverGateway: isLinuxDockerDriverGatewayEnabled(),
-      log: console.log,
-    },
-  );
-  const sandboxInferenceBaseUrlOverride = null;
-  patchStagedDockerfile(
+  const { buildId } = await sandboxDockerfilePatchFlow.prepareSandboxDockerfilePatch({
+    agent,
+    fromDockerfile,
+    sandboxBaseImage: SANDBOX_BASE_IMAGE,
+    sandboxBaseTag: SANDBOX_BASE_TAG,
     stagedDockerfile,
     model,
     chatUiUrl,
-    buildId,
     provider,
     preferredInferenceApi,
     webSearchConfig,
-    resolved ? resolved.ref : null,
-    // Docker-on-Colima uses normal container ownership; keep the old VM chmod
-    // compatibility path disabled unless a future VM-specific flow opts in.
-    false,
-    sandboxInferenceBaseUrlOverride,
     hermesToolGateways,
-  );
+    sandboxGpuConfig: effectiveSandboxGpuConfig,
+    log: console.log,
+    warn: console.warn,
+  });
   const sandboxReadyTimeoutSecs = getSandboxReadyTimeoutSecs(effectiveSandboxGpuConfig);
   const { createCommand, effectiveDashboardPort, sandboxEnv, sandboxStartupCommand } =
     sandboxCreateLaunch.prepareSandboxCreateLaunch({
@@ -3330,16 +3197,7 @@ async function createSandbox(
     imageTag: resolvedImageTag,
     providerCredentialHashes,
     appliedPolicies: initialSandboxPolicy.appliedPresets,
-    // Persist the operator's configured channel set, not the post-disabled-filter
-    // active set. After `channels stop X` + rebuild, activeMessagingChannels drops
-    // X, but X is still configured — losing it here means a later `channels start
-    // X` has nothing to re-enable (the next rebuild sees an empty channel set and
-    // never reattaches the gateway bridge). See #3381.
-    configuredMessagingChannels,
-    activeMessagingChannels,
-    messagingChannelConfig,
-    plannedMessagingState: MessagingHostStateApplier.readPlanStateFromEnv(),
-    disabledChannels,
+    plannedMessagingState,
     hermesToolGateways,
     hermesDashboardState: finalHermesDashboardState,
     dashboardPort: actualDashboardPort,
@@ -4712,7 +4570,7 @@ function getRecordedMessagingChannelsForResume(
 ): string[] | null {
   return getRecordedMessagingChannelsForResumeFromState({
     resume,
-    sessionMessagingChannels: session?.messagingChannels,
+    sessionMessagingChannels: getChannelsFromPlan(session?.messagingPlan),
     sandboxName,
     channels: MESSAGING_CHANNELS,
     getCredential,
@@ -4919,73 +4777,24 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     opts.controlUiPort ?? (process.env.NEMOCLAW_DASHBOARD_PORT != null ? DASHBOARD_PORT : null);
   onboardRuntimeBoundary.reset();
   delete process.env.OPENSHELL_GATEWAY;
-  const resume = opts.resume === true;
-  const fresh = opts.fresh === true;
-  if (resume && fresh) {
-    console.error("  --resume and --fresh cannot both be set.");
-    process.exit(1);
-  }
-  // In non-interactive mode also accept the env var so CI pipelines can set it.
-  // This is the explicitly requested value; on resume it may be absent and the
-  // session-recorded path is used instead (see below).
-  const requestedFromDockerfile =
-    opts.fromDockerfile ||
-    (isNonInteractive() ? process.env.NEMOCLAW_FROM_DOCKERFILE || null : null);
-  // Resolve the explicit sandbox name early so both validation and the
-  // --from guard work off the same source. --name always counts; the env
-  // var is used as the interactive prompt default via getSandboxPromptDefault,
-  // and also as the resolved name when we cannot prompt (non-interactive or
-  // missing-TTY runs such as CI scripts and piped stdin).
-  const stdinIsTty = Boolean(process.stdin && process.stdin.isTTY);
-  const stdoutIsTty = Boolean(process.stdout && process.stdout.isTTY);
-  const cannotPrompt = isNonInteractive() || !stdinIsTty || !stdoutIsTty;
-  let requestedSandboxName: string | null =
-    typeof opts.sandboxName === "string" && opts.sandboxName.length > 0 ? opts.sandboxName : null;
-  let requestedSandboxSource: "--name" | "NEMOCLAW_SANDBOX_NAME" | null = requestedSandboxName
-    ? "--name"
-    : null;
-  if (!requestedSandboxName && cannotPrompt) {
-    const envName = process.env.NEMOCLAW_SANDBOX_NAME;
-    if (typeof envName === "string" && envName.trim().length > 0) {
-      requestedSandboxName = envName.trim();
-      requestedSandboxSource = "NEMOCLAW_SANDBOX_NAME";
-    }
-  }
-  if (requestedSandboxName) {
-    try {
-      const validated = validateName(requestedSandboxName, "sandbox name");
-      if (RESERVED_SANDBOX_NAMES.has(validated)) {
-        console.error(`  Reserved name: '${validated}' is a ${cliDisplayName()} CLI command.`);
-        console.error(
-          `  Choose a different sandbox name (passed via ${requestedSandboxSource}) to avoid routing conflicts.`,
-        );
-        process.exit(1);
-      }
-      requestedSandboxName = validated;
-    } catch (error) {
-      console.error(`  ${error instanceof Error ? error.message : String(error)}`);
-      for (const line of getNameValidationGuidance("sandbox name", requestedSandboxName, {
-        includeAllowedFormat: false,
-      })) {
-        console.error(`  ${line}`);
-      }
-      process.exit(1);
-    }
-  }
-  // The downstream prompt path silently defaults to 'my-assistant' when no
-  // input arrives. With --from in play that would clobber the default
-  // sandbox, so refuse to proceed unless the caller has supplied a name
-  // out-of-band. Cover both --non-interactive and missing-TTY runs (CI
-  // scripts, piped stdin) — the issue's test plan asks for both. The resume
-  // case is handled separately after session load (see below) because its
-  // recorded sandboxName may already satisfy the requirement.
-  if (cannotPrompt && !resume && requestedFromDockerfile && !requestedSandboxName) {
-    console.error(
-      "  --from <Dockerfile> requires --name <sandbox> (or NEMOCLAW_SANDBOX_NAME) when running without a TTY or with --non-interactive.",
+  const { resume, fresh, requestedFromDockerfile, requestedSandboxName, cannotPrompt } =
+    onboardEntryOptions.resolveOnboardEntryOptions(
+      {
+        opts,
+        env: process.env,
+        stdinIsTty: Boolean(process.stdin && process.stdin.isTTY),
+        stdoutIsTty: Boolean(process.stdout && process.stdout.isTTY),
+      },
+      {
+        isNonInteractive,
+        validateName,
+        reservedSandboxNames: RESERVED_SANDBOX_NAMES,
+        cliDisplayName,
+        getNameValidationGuidance,
+        error: (message) => console.error(message),
+        exitProcess: (code) => process.exit(code),
+      },
     );
-    console.error("  A sandbox name cannot be prompted for in this context.");
-    process.exit(1);
-  }
   // Fail fast for NEMOCLAW_POLICY_TIER only where selectPolicyTier reads it.
   if (isNonInteractive()) policyTierEnv.validatePolicyTierEnvEarly();
   const noticeAccepted = await ensureUsageNoticeConsent({
@@ -5073,119 +4882,34 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
   let traceCompleted = false;
   try {
     onboardTrace = onboardTracing.startOnboardTrace(opts, process.env);
-    let session: Session | null;
     let selectedMessagingChannels: string[] = [];
-    // Merged, absolute fromDockerfile: explicit flag/env takes precedence; on
-    // resume falls back to what the original session recorded so the same image
-    // is used even when --from is omitted from the resume invocation.
-    let fromDockerfile: string | null;
-    if (resume) {
-      session = onboardSession.loadSession();
-      setOnboardBrandingAgent(opts.agent || session?.agent || process.env.NEMOCLAW_AGENT || null);
-      if (!session || session.resumable === false) {
-        console.error("  No resumable onboarding session was found.");
-        console.error("  --resume only continues an interrupted onboarding run.");
-        console.error("  To change configuration on an existing sandbox, rebuild it:");
-        console.error(`    ${cliName()} onboard`);
-        process.exit(1);
-      }
-      const sessionFrom = session?.metadata?.fromDockerfile || null;
-      fromDockerfile = requestedFromDockerfile
-        ? path.resolve(requestedFromDockerfile)
-        : sessionFrom
-          ? path.resolve(sessionFrom)
-          : null;
-      const resumeConflicts = getResumeConfigConflicts(session, {
+    let { session, fromDockerfile } = await onboardSessionBootstrap.prepareOnboardSession(
+      {
+        resume,
+        fresh,
+        requestedFromDockerfile,
+        requestedSandboxName,
+        cannotPrompt,
         nonInteractive: isNonInteractive(),
-        fromDockerfile: requestedFromDockerfile,
-        sandboxName: requestedSandboxName,
-        agent: opts.agent || null,
-      });
-      if (resumeConflicts.length > 0) {
-        for (const conflict of resumeConflicts) {
-          try {
-            await onboardRuntimeBoundary.recordResumeConflict(conflict);
-          } catch {
-            /* diagnostic-only */
-          }
-          if (conflict.field === "sandbox") {
-            console.error(
-              `  Resumable state belongs to sandbox '${conflict.recorded}', not '${conflict.requested}'.`,
-            );
-          } else if (conflict.field === "agent") {
-            console.error(
-              `  Session was started with agent '${conflict.recorded}', not '${conflict.requested}'.`,
-            );
-          } else if (conflict.field === "fromDockerfile") {
-            if (!conflict.recorded) {
-              console.error(
-                `  Session was started without --from; add --from '${conflict.requested}' to resume it.`,
-              );
-            } else if (!conflict.requested) {
-              console.error(
-                `  Session was started with --from '${conflict.recorded}'; rerun with that path to resume it.`,
-              );
-            } else {
-              console.error(
-                `  Session was started with --from '${conflict.recorded}', not '${conflict.requested}'.`,
-              );
-            }
-          } else {
-            console.error(
-              `  Resumable state recorded ${conflict.field} '${conflict.recorded}', not '${conflict.requested}'.`,
-            );
-          }
-        }
-        console.error(
-          `  Run: ${cliName()} onboard              # start a fresh onboarding session`,
-        );
-        console.error("  Or rerun with the original settings to continue that session.");
-        process.exit(1);
-      }
-      onboardSession.updateSession((current: Session) => {
-        repairResumeMachineSnapshot(current);
-        current.mode = isNonInteractive() ? "non-interactive" : "interactive";
-        current.failure = null;
-        current.status = "in_progress";
-        return current;
-      });
-      session = onboardSession.loadSession();
-      // #2753: a resumed onboard whose sandbox step did not complete has no
-      // recorded sandboxName (the onboard fix only persists it after
-      // createSandbox succeeds). Falling through would silently default to
-      // the agent's `my-assistant` instead of the user's original --name.
-      // Use `cannotPrompt` so non-TTY runs without explicit --non-interactive
-      // are also caught, and `requestedSandboxName` (already env-var-resolved
-      // and trimmed above, lines 8302-8308) so whitespace-only env values
-      // can't satisfy the guard.
-      const sandboxStepCompleted = session?.steps?.sandbox?.status === "complete";
-      const recoveredSandboxName =
-        requestedSandboxName || (sandboxStepCompleted ? session?.sandboxName || null : null);
-      if (cannotPrompt && !recoveredSandboxName) {
-        console.error(
-          "  Cannot resume non-interactive onboard: the previous run was interrupted before sandbox creation completed,",
-        );
-        console.error(
-          "  so no sandbox name was recorded. Re-run with --name <sandbox> (or set NEMOCLAW_SANDBOX_NAME).",
-        );
-        process.exit(1);
-      }
-    } else {
-      // --fresh asks for an explicit fresh start. createSession + saveSession
-      // already overwrites any existing file, but clearing first removes the
-      // old file outright so an interrupted createSession cannot leave the
-      // previous session readable on disk.
-      if (fresh) {
-        onboardSession.clearSession();
-      }
-      fromDockerfile = requestedFromDockerfile ? path.resolve(requestedFromDockerfile) : null;
-      session = onboardSession.saveSession(
-        onboardSession.createSession({
-          mode: isNonInteractive() ? "non-interactive" : "interactive",
-          metadata: { gatewayName: "nemoclaw", fromDockerfile: fromDockerfile || null },
-        }),
-      );
-    }
+        agentFlag: opts.agent || null,
+        envAgent: process.env.NEMOCLAW_AGENT || null,
+      },
+      {
+        loadSession: onboardSession.loadSession,
+        clearSession: onboardSession.clearSession,
+        createSession: onboardSession.createSession,
+        saveSession: onboardSession.saveSession,
+        updateSession: onboardSession.updateSession,
+        repairResumeMachineSnapshot,
+        setOnboardBrandingAgent,
+        getResumeConfigConflicts,
+        recordResumeConflict: (conflict) => onboardRuntimeBoundary.recordResumeConflict(conflict),
+        resolvePath: path.resolve,
+        cliName,
+        error: (message) => console.error(message),
+        exitProcess: (code) => process.exit(code),
+      },
+    );
     await onboardRuntimeBoundary.recordOnboardStarted(resume);
     await recordStateResult(advanceTo("preflight", { metadata: { state: "init" } }));
     // Backstop for the resume path: a session may exist (so the early guard
@@ -5472,7 +5196,6 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           getStoredMessagingChannelConfig,
           hydrateMessagingChannelConfig,
           messagingChannelConfigsEqual,
-          persistMessagingChannelConfigToSession,
           getSandboxReuseState,
           computeTelegramRequireMention,
           hasSandboxGpuDrift,
@@ -5487,9 +5210,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           configureWebSearch,
           startRecordedStep,
           getRecordedMessagingChannelsForResume,
-          getSandboxMessagingChannels: (name) => registry.getSandbox(name)?.messagingChannels,
           setupMessagingChannels,
-          readMessagingChannelConfigFromEnv,
           readMessagingPlanFromEnv,
           writePlanToEnv,
           getRegistrySandboxMessagingPlan,
