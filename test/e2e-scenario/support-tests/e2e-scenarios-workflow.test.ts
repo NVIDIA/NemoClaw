@@ -136,6 +136,22 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       selectedFreeStandingJobs: ["hermes-e2e-vitest"],
       registryScenarios: [],
     });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "rebuild-openclaw" }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["rebuild-openclaw-vitest"],
+      registryScenarios: [],
+    });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({ jobs: "rebuild-openclaw-vitest" }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["rebuild-openclaw-vitest"],
+      registryScenarios: [],
+    });
   });
 
   it("keeps jobs-only dispatches from selecting the Hermes secret-bearing job", () => {
@@ -162,6 +178,16 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       matrix: "[]",
     });
     expect(generateMatrixForDispatch({ JOBS: "", SCENARIOS: "runtime-overrides" })).toMatchObject({
+      hermes_selected: "false",
+      matrix: "[]",
+    });
+    expect(
+      generateMatrixForDispatch({ JOBS: "rebuild-openclaw-vitest", SCENARIOS: "" }),
+    ).toMatchObject({
+      hermes_selected: "false",
+      matrix: "[]",
+    });
+    expect(generateMatrixForDispatch({ JOBS: "", SCENARIOS: "rebuild-openclaw" })).toMatchObject({
       hermes_selected: "false",
       matrix: "[]",
     });

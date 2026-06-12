@@ -24,6 +24,7 @@ const FREE_STANDING_SCENARIO_JOBS = new Map([
   ["runtime-overrides", "runtime-overrides-vitest"],
   ["hermes-e2e", "hermes-e2e-vitest"],
   ["network-policy", "network-policy-vitest"],
+  ["rebuild-openclaw", "rebuild-openclaw-vitest"],
   ["token-rotation", "token-rotation-vitest"],
   ["openclaw-tui-chat-correlation", "openclaw-tui-chat-correlation-vitest"],
   ["issue-4434-tui-unreachable-inference", "issue-4434-tui-unreachable-inference-vitest"],
@@ -283,6 +284,7 @@ function validateJobsSelector(errors: string[], jobs: WorkflowRecord): void {
   requireRunContains(errors, validate, "double-onboard-vitest");
   requireRunContains(errors, validate, "hermes-e2e-vitest");
   requireRunContains(errors, validate, "network-policy-vitest");
+  requireRunContains(errors, validate, "rebuild-openclaw-vitest");
   requireRunContains(errors, validate, "token-rotation-vitest");
   requireRunContains(errors, validate, "openclaw-tui-chat-correlation-vitest");
   requireRunContains(errors, validate, "gateway-guard-recovery");
@@ -506,6 +508,110 @@ function validateNetworkPolicyVitestJob(errors: string[], jobs: WorkflowRecord):
   }
 }
 
+
+function validateRebuildOpenClawVitestJob(errors: string[], jobs: WorkflowRecord): void {
+  const jobName = "rebuild-openclaw-vitest";
+  const job = asRecord(jobs[jobName]);
+  if (Object.keys(job).length === 0) {
+    errors.push("workflow missing rebuild-openclaw-vitest job");
+    return;
+  }
+
+  if (job["runs-on"] !== "ubuntu-latest") {
+    errors.push("rebuild-openclaw-vitest job must run on ubuntu-latest");
+  }
+  validateFreeStandingJobSelector(errors, jobs, jobName, "rebuild-openclaw");
+  if (job["timeout-minutes"] !== 130) {
+    errors.push("rebuild-openclaw-vitest job must keep the legacy 130 minute timeout");
+  }
+  const jobEnv = asRecord(job.env);
+  if (jobEnv.NEMOCLAW_RUN_E2E_SCENARIOS !== "1") {
+    errors.push("rebuild-openclaw-vitest job must set NEMOCLAW_RUN_E2E_SCENARIOS=1");
+  }
+  if (jobEnv.E2E_ARTIFACT_DIR !== "${{ github.workspace }}/e2e-artifacts/vitest/rebuild-openclaw") {
+    errors.push("rebuild-openclaw-vitest job must write artifacts under e2e-artifacts/vitest/rebuild-openclaw");
+  }
+  if (!stringValue(jobEnv.NEMOCLAW_CLI_BIN).includes("bin/nemoclaw.js")) {
+    errors.push("rebuild-openclaw-vitest job must point NEMOCLAW_CLI_BIN at the repo CLI");
+  }
+  requireEnvDoesNotExposeSecret(errors, "rebuild-openclaw-vitest job", jobEnv, "NVIDIA_API_KEY");
+
+  const steps = asSteps(job.steps);
+  requireNoDispatchInputInterpolation(errors, steps);
+  for (const step of steps) {
+    if (step.name !== "Run OpenClaw rebuild live test") {
+      requireEnvDoesNotExposeSecret(
+        errors,
+        `rebuild-openclaw-vitest step '${step.name ?? step.uses ?? "<unnamed>"}'`,
+        asRecord(step.env),
+        "NVIDIA_API_KEY",
+      );
+    }
+  }
+
+  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
+  if (!checkout) errors.push("rebuild-openclaw-vitest job missing checkout step");
+  requireFullShaAction(errors, checkout, "rebuild-openclaw-vitest checkout");
+  if (asRecord(checkout?.with)["persist-credentials"] !== false) {
+    errors.push("rebuild-openclaw-vitest checkout step must set persist-credentials=false");
+  }
+
+  const dockerHubAuth = requireJobStep(errors, jobName, steps, "Authenticate to Docker Hub");
+  const dockerHubEnv = asRecord(dockerHubAuth?.env);
+  if (dockerHubEnv.DOCKERHUB_USERNAME !== "${{ secrets.DOCKERHUB_USERNAME }}") {
+    errors.push("rebuild-openclaw-vitest Docker Hub auth must receive DOCKERHUB_USERNAME from secrets");
+  }
+  if (dockerHubEnv.DOCKERHUB_TOKEN !== "${{ secrets.DOCKERHUB_TOKEN }}") {
+    errors.push("rebuild-openclaw-vitest Docker Hub auth must receive DOCKERHUB_TOKEN from secrets");
+  }
+  requireRunContains(errors, dockerHubAuth, "docker login docker.io");
+
+  const setupNode = namedStep(steps, "Set up Node");
+  if (!setupNode) errors.push("rebuild-openclaw-vitest job missing step: Set up Node");
+  requireFullShaAction(errors, setupNode, "rebuild-openclaw-vitest setup-node");
+
+  const installRootDependencies = requireJobStep(errors, jobName, steps, "Install root dependencies");
+  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
+
+  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
+  requireRunContains(errors, buildCli, "npm run build:cli");
+
+  const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell");
+  requireEnvDoesNotExposeSecret(errors, "rebuild-openclaw-vitest step 'Install OpenShell'", asRecord(installOpenShell?.env), "GITHUB_TOKEN");
+  requireRunContains(errors, installOpenShell, "bash scripts/install-openshell.sh");
+  requireRunContains(errors, installOpenShell, "env -u DOCKER_CONFIG");
+  requireRunContains(errors, installOpenShell, "-u DOCKERHUB_USERNAME");
+  requireRunContains(errors, installOpenShell, "-u DOCKERHUB_TOKEN");
+  requireRunContains(errors, installOpenShell, "-u NVIDIA_API_KEY");
+  requireRunContains(errors, installOpenShell, "-u GITHUB_TOKEN");
+
+  const runVitest = requireJobStep(errors, jobName, steps, "Run OpenClaw rebuild live test");
+  const runVitestEnv = asRecord(runVitest?.env);
+  if (runVitestEnv.NVIDIA_API_KEY !== "${{ secrets.NVIDIA_API_KEY }}") {
+    errors.push("rebuild-openclaw-vitest step must receive NVIDIA_API_KEY from secrets");
+  }
+  requireRunContains(errors, runVitest, "OPENSHELL_BIN");
+  requireRunContains(errors, runVitest, "npx vitest run --project e2e-scenarios-live");
+  requireRunContains(errors, runVitest, "test/e2e-scenario/live/rebuild-openclaw.test.ts");
+
+  const upload = requireJobStep(errors, jobName, steps, "Upload OpenClaw rebuild artifacts");
+  requireFullShaAction(errors, upload, "rebuild-openclaw-vitest upload-artifact");
+  const uploadWith = asRecord(upload?.with);
+  if (uploadWith.name !== "e2e-vitest-scenarios-rebuild-openclaw") {
+    errors.push("rebuild-openclaw-vitest artifact upload name must be stable");
+  }
+  const uploadPath = stringValue(uploadWith.path);
+  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/vitest/rebuild-openclaw/");
+  if (uploadWith["include-hidden-files"] !== false) {
+    errors.push("rebuild-openclaw-vitest artifact upload must set include-hidden-files: false");
+  }
+  if (uploadWith["if-no-files-found"] !== "ignore") {
+    errors.push("rebuild-openclaw-vitest artifact upload must ignore missing fixture artifacts");
+  }
+  if (uploadWith["retention-days"] !== 14) {
+    errors.push("rebuild-openclaw-vitest artifact upload retention-days must be 14");
+  }
+}
 
 function validateTokenRotationVitestJob(errors: string[], jobs: WorkflowRecord): void {
   const jobName = "token-rotation-vitest";
@@ -1065,6 +1171,7 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   requireRunContains(errors, generate, "double-onboard-vitest");
   requireRunContains(errors, generate, "hermes-e2e-vitest");
   requireRunContains(errors, generate, "network-policy-vitest");
+  requireRunContains(errors, generate, "rebuild-openclaw-vitest");
   requireRunContains(errors, generate, "token-rotation-vitest");
   requireRunContains(errors, generate, 'matrix="[]"');
   requireRunContains(errors, generate, "npx tsx test/e2e-scenario/scenarios/run.ts");
@@ -1223,6 +1330,7 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   validateDoubleOnboardVitestJob(errors, jobs);
   validateHermesE2EVitestJob(errors, jobs);
   validateNetworkPolicyVitestJob(errors, jobs);
+  validateRebuildOpenClawVitestJob(errors, jobs);
   validateTokenRotationVitestJob(errors, jobs);
   validateFreeStandingJobSelector(
     errors,
@@ -1253,6 +1361,7 @@ export function validateE2eVitestScenariosWorkflowBoundary(
       "runtime-overrides-vitest",
       "hermes-e2e-vitest",
       "network-policy-vitest",
+      "rebuild-openclaw-vitest",
       "token-rotation-vitest",
       "double-onboard-vitest",
       "openclaw-tui-chat-correlation-vitest",
