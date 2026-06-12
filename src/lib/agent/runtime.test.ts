@@ -297,10 +297,28 @@ describe("buildRecoveryScript", () => {
       expect(script).not.toContain("rm -f /tmp/gateway.log");
       expect(script).toContain("_GATEWAY_LOG=/tmp/gateway.log");
       expect(script).toContain("_GATEWAY_LOG=/tmp/gateway-recovery.log");
-      expect(script).toContain('echo "$_W" >> "$_GATEWAY_LOG"');
+      expect(script).toContain("[gateway-recovery] restored /tmp guard chain (#2701)");
       expect(script).toContain('tail -5 "$_GATEWAY_LOG"');
       expect(script).not.toContain('echo "$_W" >> /tmp/gateway.log');
       expect(script).not.toContain("cat /tmp/gateway.log");
+    });
+
+    it("re-emits OpenClaw /tmp guard chain before relaunch when proxy-env is missing (#2701)", () => {
+      const script = buildOpenClawRecoveryScript(18789);
+      const logSelectionIdx = script.indexOf("_GATEWAY_LOG=/tmp/gateway.log");
+      const restoreIdx = script.indexOf("[gateway-recovery] restored /tmp guard chain (#2701)");
+      const sourceIdx = script.lastIndexOf("then . /tmp/nemoclaw-proxy-env.sh");
+      const launchIdx = script.indexOf("nohup");
+
+      expect(script).toContain("/usr/local/lib/nemoclaw/preloads");
+      expect(script).toContain("/tmp/nemoclaw-sandbox-safety-net.js");
+      expect(script).toContain("/tmp/nemoclaw-ciao-network-guard.js");
+      expect(script).toContain("/tmp/nemoclaw-proxy-env.sh");
+      expect(script).not.toContain("gateway launching without library guards");
+      expect(logSelectionIdx).toBeGreaterThanOrEqual(0);
+      expect(restoreIdx).toBeGreaterThan(logSelectionIdx);
+      expect(sourceIdx).toBeGreaterThan(restoreIdx);
+      expect(launchIdx).toBeGreaterThan(sourceIdx);
     });
 
     it("rejects a symlinked gateway.log before preparing the log", () => {

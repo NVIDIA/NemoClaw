@@ -137,6 +137,45 @@ function buildGatewayLogSelection(): string {
   return '_GATEWAY_LOG=/tmp/gateway.log; if ! : >> "$_GATEWAY_LOG" 2>/dev/null; then _GATEWAY_LOG=/tmp/gateway-recovery.log; : >> "$_GATEWAY_LOG" 2>/dev/null || true; fi;';
 }
 
+function buildOpenClawGuardRestoreCommand(port: number): string {
+  return `
+if [ ! -r /tmp/nemoclaw-proxy-env.sh ]; then
+  _PRELOAD_DIR=/usr/local/lib/nemoclaw/preloads
+  for _name in sandbox-safety-net ciao-network-guard nemotron-inference-fix seccomp-guard http-proxy-fix ws-proxy-fix; do
+    _src="$_PRELOAD_DIR/\${_name}.js"
+    _dst="/tmp/nemoclaw-\${_name}.js"
+    [ -f "$_src" ] || continue
+    cp "$_src" "$_dst" && chmod 444 "$_dst" || { _E="[gateway-recovery] ERROR: failed to restore $_dst (#2701)"; echo "$_E" >&2; echo "$_E" >> "$_GATEWAY_LOG"; exit 1; }
+  done
+  [ -f /tmp/nemoclaw-sandbox-safety-net.js ] && [ -f /tmp/nemoclaw-ciao-network-guard.js ] || { _E="[gateway-recovery] ERROR: required guard preload source missing (#2701)"; echo "$_E" >&2; echo "$_E" >> "$_GATEWAY_LOG"; exit 1; }
+  cat > /tmp/nemoclaw-proxy-env.sh <<'NEMOCLAW_PROXY_ENV'
+# Proxy configuration (re-emitted by gateway recovery #2701)
+export HTTP_PROXY="http://\${NEMOCLAW_PROXY_HOST:-10.200.0.1}:\${NEMOCLAW_PROXY_PORT:-3128}"
+export HTTPS_PROXY="http://\${NEMOCLAW_PROXY_HOST:-10.200.0.1}:\${NEMOCLAW_PROXY_PORT:-3128}"
+export NO_PROXY="localhost,127.0.0.1,::1,\${NEMOCLAW_PROXY_HOST:-10.200.0.1}"
+export http_proxy="http://\${NEMOCLAW_PROXY_HOST:-10.200.0.1}:\${NEMOCLAW_PROXY_PORT:-3128}"
+export https_proxy="http://\${NEMOCLAW_PROXY_HOST:-10.200.0.1}:\${NEMOCLAW_PROXY_PORT:-3128}"
+export no_proxy="localhost,127.0.0.1,::1,\${NEMOCLAW_PROXY_HOST:-10.200.0.1}"
+export JITI_FS_CACHE="false"
+export OPENCLAW_HOME='/sandbox'
+export OPENCLAW_STATE_DIR='/sandbox/.openclaw'
+export OPENCLAW_CONFIG_PATH='/sandbox/.openclaw/openclaw.json'
+export OPENCLAW_OAUTH_DIR='/sandbox/.openclaw/credentials'
+export OPENCLAW_GATEWAY_PORT='${port}'
+export OPENCLAW_GATEWAY_URL='ws://127.0.0.1:${port}'
+export NODE_OPTIONS="\${NODE_OPTIONS:+$NODE_OPTIONS }--require /tmp/nemoclaw-sandbox-safety-net.js"
+[ -f "/tmp/nemoclaw-http-proxy-fix.js" ] && export NODE_OPTIONS="\${NODE_OPTIONS:+$NODE_OPTIONS }--require /tmp/nemoclaw-http-proxy-fix.js"
+[ -f "/tmp/nemoclaw-ws-proxy-fix.js" ] && export NODE_OPTIONS="\${NODE_OPTIONS:+$NODE_OPTIONS }--require /tmp/nemoclaw-ws-proxy-fix.js"
+[ -f "/tmp/nemoclaw-nemotron-inference-fix.js" ] && export NODE_OPTIONS="\${NODE_OPTIONS:+$NODE_OPTIONS }--require /tmp/nemoclaw-nemotron-inference-fix.js"
+[ -f "/tmp/nemoclaw-seccomp-guard.js" ] && export NODE_OPTIONS="\${NODE_OPTIONS:+$NODE_OPTIONS }--require /tmp/nemoclaw-seccomp-guard.js"
+export NODE_OPTIONS="\${NODE_OPTIONS:+$NODE_OPTIONS }--require /tmp/nemoclaw-ciao-network-guard.js"
+NEMOCLAW_PROXY_ENV
+  chmod 444 /tmp/nemoclaw-proxy-env.sh || { _E="[gateway-recovery] ERROR: failed to chmod /tmp/nemoclaw-proxy-env.sh (#2701)"; echo "$_E" >&2; echo "$_E" >> "$_GATEWAY_LOG"; exit 1; }
+  _I="[gateway-recovery] restored /tmp guard chain (#2701)"
+  echo "$_I" >> "$_GATEWAY_LOG"
+fi;`;
+}
+
 function gatewayLaunchCommand(command: string, runAsUser?: string): string {
   const logSelection = buildGatewayLogSelection();
   const userLaunch = `nohup ${command} >> "$_GATEWAY_LOG" 2>&1 &`;
@@ -200,10 +239,13 @@ export function buildOpenClawRecoveryScript(port: number): string {
     "rm -rf /tmp/openclaw-*/gateway.*.lock 2>/dev/null;",
     ...buildGatewayLogSetup(true, "gateway"),
     buildGatewayLogSelection(),
+    buildOpenClawGuardRestoreCommand(port),
+    "if [ -r /tmp/nemoclaw-proxy-env.sh ]; then . /tmp/nemoclaw-proxy-env.sh; _PE_MISSING=0; else _PE_MISSING=1; fi;",
+    'if [ "$_PE_MISSING" = "0" ]; then case "${NODE_OPTIONS:-}" in *nemoclaw-sandbox-safety-net*) _SN_MISSING=0 ;; *) _SN_MISSING=1 ;; esac; case "${NODE_OPTIONS:-}" in *nemoclaw-ciao-network-guard*) _CIAO_MISSING=0 ;; *) _CIAO_MISSING=1 ;; esac; if [ "$_SN_MISSING" = "0" ] && [ "$_CIAO_MISSING" = "0" ]; then _GUARDS_MISSING=0; else _GUARDS_MISSING=1; fi; else _GUARDS_MISSING=1; fi;',
+    '[ "$_PE_MISSING" = "1" ] && { _E="[gateway-recovery] ERROR: /tmp/nemoclaw-proxy-env.sh missing after guard restore (#2701)"; echo "$_E" >&2; echo "$_E" >> "$_GATEWAY_LOG"; exit 1; };',
+    '[ "$_GUARDS_MISSING" = "1" ] && { _E="[gateway-recovery] ERROR: /tmp/nemoclaw-proxy-env.sh present but NODE_OPTIONS missing safety-net preload or ciao preload - refusing unguarded gateway relaunch (#2478 #2701)"; echo "$_E" >&2; echo "$_E" >> "$_GATEWAY_LOG"; exit 1; };',
     `_GATEWAY_PROC_PATTERN=${shellQuote(staleGatewayPattern)};`,
     'if [ -n "$_GATEWAY_PROC_PATTERN" ]; then pkill -TERM -f "$_GATEWAY_PROC_PATTERN" 2>/dev/null || true; for _i in 1 2 3 4 5; do pgrep -f "$_GATEWAY_PROC_PATTERN" >/dev/null 2>&1 || break; sleep 1; done; pkill -KILL -f "$_GATEWAY_PROC_PATTERN" 2>/dev/null || true; for _i in 1 2 3 4 5; do pgrep -f "$_GATEWAY_PROC_PATTERN" >/dev/null 2>&1 || break; sleep 1; done; if pgrep -f "$_GATEWAY_PROC_PATTERN" >/dev/null 2>&1; then echo GATEWAY_STALE_PROCESSES; exit 1; fi; fi;',
-    '[ "$_PE_MISSING" = "1" ] && { _W="[gateway-recovery] WARNING: /tmp/nemoclaw-proxy-env.sh missing - gateway launching without library guards (#2478)"; echo "$_W" >&2; echo "$_W" >> "$_GATEWAY_LOG"; };',
-    '[ "$_PE_MISSING" = "0" ] && [ "$_GUARDS_MISSING" = "1" ] && { _E="[gateway-recovery] ERROR: /tmp/nemoclaw-proxy-env.sh present but NODE_OPTIONS missing safety-net preload or ciao preload - refusing unguarded gateway relaunch (#2478)"; echo "$_E" >&2; echo "$_E" >> "$_GATEWAY_LOG"; exit 1; };',
     'OPENCLAW="$(command -v openclaw)";',
     'if [ -z "$OPENCLAW" ]; then echo OPENCLAW_MISSING; exit 1; fi;',
     gatewayLaunchCommand('"$OPENCLAW" gateway run --port ' + port, "gateway"),
