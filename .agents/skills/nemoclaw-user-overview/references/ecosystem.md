@@ -90,3 +90,4 @@ Use the following table to decide when to use NemoClaw versus OpenShell.
 - [Overview](overview.md) describes what NemoClaw is, including capabilities, benefits, and use cases.
 - [How It Works](how-it-works.md) describes how NemoClaw runs, including the plugin, blueprint, sandbox creation, routing, and protection layers.
 - Architecture (use the `nemoclaw-user-reference` skill) shows the repository structure and technical diagrams.
+- [NemoClaw Community](https://github.com/NVIDIA/nemoclaw-community) collects community-driven examples, showcases, and integrations that demonstrate complete blueprint patterns.

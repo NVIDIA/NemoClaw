@@ -15,6 +15,15 @@ NVIDIA NemoClaw is available in early preview starting March 16, 2026.
 Use this page to track the highlights of the latest release.
 For more detailed release notes, refer to the [NemoClaw GitHub announcements](https://github.com/NVIDIA/NemoClaw/discussions/categories/announcements?discussions_q=is%3Aopen+category%3AAnnouncements).
 
+## v0.0.64
+
+NemoClaw v0.0.64 improves sandbox restore, onboarding stability, inference routing, messaging setup, and release validation:
+
+- Snapshot restore preserves custom policy presets applied with `policy-add --from-file` or `policy-add --from-dir`, so restored sandboxes keep the custom egress rules that were recorded with the source sandbox. For more information, refer to [Backup and Restore](../manage-sandboxes/backup-restore) and [Customize the Network Policy](../network-policy/customize-network-policy).
+- OpenClaw onboarding keeps Brave Search pinned to the NemoClaw-managed runtime and preserves the `BRAVE_API_KEY` placeholder through build doctor. Docker-driver gateway health checks now follow the entrypoint path that actually launches the in-container gateway, which avoids misleading health reports on host-gateway setups. For more information, refer to [NemoClaw CLI Commands Reference](../reference/commands).
+- Inference routes choose chat completions for providers that do not expose `/v1/responses`, including NVIDIA Endpoints, NVIDIA NIM, and Gemini-compatible routes. NemoClaw also adds a targeted Nemotron Ultra 550B compatibility fix for tool-less requests. For more information, refer to [NemoClaw Inference Options](../inference/inference-options).
+- Messaging setup refreshes stale render plans during rebuild, recovers replaced OpenClaw scope-upgrade approvals, and preinstalls Hermes WhatsApp bridge dependencies when the upstream lockfile is present. For more information, refer to [Messaging Channels](../manage-sandboxes/messaging-channels).
+
 ## v0.0.63
 
 NemoClaw v0.0.63 improves sandbox recovery, OpenClaw configuration restore safety, local inference onboarding, messaging safeguards, and release validation:
