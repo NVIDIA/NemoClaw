@@ -21,6 +21,7 @@ const SELECTOR_PATTERN = /^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$/;
 const FREE_STANDING_SCENARIO_JOBS = new Map([
   ["openshell-version-pin", "openshell-version-pin-vitest"],
   ["onboard-negative-paths", "onboard-negative-paths-vitest"],
+  ["inference-routing", "inference-routing-vitest"],
   ["runtime-overrides", "runtime-overrides-vitest"],
   ["hermes-e2e", "hermes-e2e-vitest"],
   ["network-policy", "network-policy-vitest"],
@@ -279,6 +280,7 @@ function validateJobsSelector(errors: string[], jobs: WorkflowRecord): void {
   requireRunContains(errors, validate, "allowed_jobs=");
   requireRunContains(errors, validate, "openshell-version-pin-vitest");
   requireRunContains(errors, validate, "onboard-negative-paths-vitest");
+  requireRunContains(errors, validate, "inference-routing-vitest");
   requireRunContains(errors, validate, "credential-migration-vitest");
   requireRunContains(errors, validate, "runtime-overrides-vitest");
   requireRunContains(errors, validate, "double-onboard-vitest");
@@ -1166,6 +1168,8 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   requireRunContains(errors, generate, "allowed_jobs=");
   requireRunContains(errors, generate, "Use either scenarios or jobs, not both");
   requireRunContains(errors, generate, "Unknown free-standing Vitest job");
+  requireRunContains(errors, generate, "inference-routing-vitest");
+  requireRunContains(errors, generate, "inference-routing");
   requireRunContains(errors, generate, "runtime-overrides-vitest");
   requireRunContains(errors, generate, "runtime-overrides");
   requireRunContains(errors, generate, "double-onboard-vitest");
@@ -1326,6 +1330,7 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   validateOpenShellVersionPinVitestJob(errors, jobs);
   validateOnboardNegativePathsVitestJob(errors, jobs);
   validateFreeStandingJobSelector(errors, jobs, "credential-migration-vitest");
+  validateFreeStandingJobSelector(errors, jobs, "inference-routing-vitest", "inference-routing");
   validateRuntimeOverridesVitestJob(errors, jobs);
   validateDoubleOnboardVitestJob(errors, jobs);
   validateHermesE2EVitestJob(errors, jobs);
@@ -1357,6 +1362,7 @@ export function validateE2eVitestScenariosWorkflowBoundary(
       "live-scenarios",
       "openshell-version-pin-vitest",
       "onboard-negative-paths-vitest",
+      "inference-routing-vitest",
       "credential-migration-vitest",
       "runtime-overrides-vitest",
       "hermes-e2e-vitest",

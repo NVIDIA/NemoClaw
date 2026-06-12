@@ -130,6 +130,22 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       selectedFreeStandingJobs: ["runtime-overrides-vitest"],
       registryScenarios: [],
     });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "inference-routing" }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["inference-routing-vitest"],
+      registryScenarios: [],
+    });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({ jobs: "inference-routing-vitest" }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["inference-routing-vitest"],
+      registryScenarios: [],
+    });
     expect(evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "hermes-e2e" })).toMatchObject({
       valid: true,
       liveScenariosRuns: false,
@@ -178,6 +194,16 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       matrix: "[]",
     });
     expect(generateMatrixForDispatch({ JOBS: "", SCENARIOS: "runtime-overrides" })).toMatchObject({
+      hermes_selected: "false",
+      matrix: "[]",
+    });
+    expect(
+      generateMatrixForDispatch({ JOBS: "inference-routing-vitest", SCENARIOS: "" }),
+    ).toMatchObject({
+      hermes_selected: "false",
+      matrix: "[]",
+    });
+    expect(generateMatrixForDispatch({ JOBS: "", SCENARIOS: "inference-routing" })).toMatchObject({
       hermes_selected: "false",
       matrix: "[]",
     });
