@@ -3646,9 +3646,8 @@ async function setupNim(
         hydrateCredentialEnv(credentialEnv);
 
         if (selected.key === "build") {
-          // Allow NEMOCLAW_PROVIDER_KEY as a fallback for NVIDIA_INFERENCE_API_KEY.
-          // Check raw process.env first — NEMOCLAW_PROVIDER_KEY is a user-facing
-          // override that should take precedence before resolving from credentials.json.
+          // Let NEMOCLAW_PROVIDER_KEY fill the canonical NVIDIA key without
+          // overriding an explicit env or migrated legacy credential.
           const _nvProviderKey = (process.env.NEMOCLAW_PROVIDER_KEY || "").trim();
           const existingNvidiaKey =
             getCredential("NVIDIA_INFERENCE_API_KEY") || getCredential("NVIDIA_API_KEY") || "";
