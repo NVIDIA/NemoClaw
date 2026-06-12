@@ -39,6 +39,10 @@ function resultText(result: Pick<ShellProbeResult, "stdout" | "stderr">): string
   return [result.stdout, result.stderr].filter(Boolean).join("\n");
 }
 
+function isEndpointRateLimited(text: string): boolean {
+  return /HTTP 429|rate limit|too many requests/i.test(text);
+}
+
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'\\''`)}'`;
 }
@@ -205,7 +209,14 @@ runOpenClawSkillCliTest(
         timeoutMs: INSTALL_TIMEOUT_MS,
       },
     );
-    expect(install.exitCode, resultText(install)).toBe(0);
+    const installText = resultText(install);
+    if (install.exitCode !== 0 && isEndpointRateLimited(installText)) {
+      await artifacts.writeText("endpoint-rate-limit-skip.txt", installText);
+      skip(
+        "NVIDIA endpoint validation was rate-limited before the OpenClaw skill CLI contract could run",
+      );
+    }
+    expect(install.exitCode, installText).toBe(0);
 
     const envCheck = await expectSandboxShellZero(
       sandbox,
