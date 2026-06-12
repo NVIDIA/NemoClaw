@@ -534,18 +534,27 @@ fi
 # sandbox exec` does not pipe stdin from the caller through to the subshell,
 # so a `printf | sandbox_exec sh -c 'cat > file'` would leave an empty file.
 # Encoding into the command argv sidesteps the stdin gap entirely.
+#
+# After the #2701 fix, recovery may already have restored a minimal hardened
+# proxy-env from trusted preload sources. In that case the sandbox user cannot
+# necessarily overwrite the root-owned 0444 file with the original snapshot;
+# accept the recovered file if it still proves the guard chain is active. This
+# keeps the test focused on the user-visible contract instead of byte-identical
+# cleanup of an implementation detail.
 sandbox_exec sh -c "echo '$SNAPSHOT_B64' | base64 -d > /tmp/nemoclaw-proxy-env.sh && chmod 444 /tmp/nemoclaw-proxy-env.sh" >/dev/null
 
-# Verify restore is byte-identical to the snapshot.
 restored_size="$(sandbox_exec sh -c 'wc -c < /tmp/nemoclaw-proxy-env.sh' | tr -d '[:space:]')"
-if [ "$restored_size" != "$SNAPSHOT_SIZE" ]; then
-  fail "proxy-env.sh restore failed: expected $SNAPSHOT_SIZE bytes, got '${restored_size}'"
+if [ "$restored_size" = "$SNAPSHOT_SIZE" ]; then
+  info "proxy-env.sh restored from snapshot (${restored_size} bytes verified)"
+elif gateway_guards_active "$NEGATIVE_PID" 5; then
+  info "proxy-env.sh retained recovered guard env (${restored_size} bytes; original snapshot was ${SNAPSHOT_SIZE} bytes)"
+else
+  fail "proxy-env.sh restore failed and recovered guard env is not active: expected $SNAPSHOT_SIZE bytes, got '${restored_size}'"
   exit 1
 fi
-info "proxy-env.sh restored (${restored_size} bytes verified)"
 
-# Kill the guardless negative-case gateway, then trigger recovery to bring the
-# gateway back with guards intact from the restored env file.
+# Kill the current negative-case gateway, then trigger recovery to bring the
+# gateway back with guards intact from either the snapshot or recovered env file.
 sandbox_exec sh -c "pkill -9 -f '[o]penclaw' 2>/dev/null; sleep 2; pgrep -af '[o]penclaw' || echo ALL_DEAD" >/dev/null
 run_probe_only_or_fail "Guard restore recovery"
 SOAK_START_PID="$(wait_for_gateway_up 30)"
