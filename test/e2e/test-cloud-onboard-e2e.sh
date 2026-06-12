@@ -91,6 +91,9 @@ PUBLIC_INSTALL_CWD="${NEMOCLAW_PUBLIC_INSTALL_CWD:-}"
 # shellcheck source=test/e2e/lib/ci-compatible-inference.sh
 . "${E2E_DIR}/lib/ci-compatible-inference.sh"
 nemoclaw_e2e_configure_compatible_inference
+if nemoclaw_e2e_using_compatible_inference; then
+  CLOUD_MODEL="$(nemoclaw_e2e_hosted_inference_model)"
+fi
 register_sandbox_for_teardown "$SANDBOX_NAME"
 
 # ══════════════════════════════════════════════════════════════════════
@@ -280,7 +283,12 @@ fi
 # ══════════════════════════════════════════════════════════════════════
 section "Phase 4: Sandbox checks (Landlock, security, inference.local)"
 
-export SANDBOX_NAME CLOUD_EXPERIMENTAL_MODEL="$CLOUD_MODEL" REPO NVIDIA_INFERENCE_API_KEY
+if nemoclaw_e2e_using_compatible_inference; then
+  export NEMOCLAW_E2E_CLOUD_API_KEY_ENV=COMPATIBLE_API_KEY
+else
+  export NEMOCLAW_E2E_CLOUD_API_KEY_ENV=NVIDIA_INFERENCE_API_KEY
+fi
+export SANDBOX_NAME CLOUD_EXPERIMENTAL_MODEL="$CLOUD_MODEL" REPO NVIDIA_INFERENCE_API_KEY COMPATIBLE_API_KEY
 export PATH="/usr/local/bin:${HOME}/.local/bin:${PATH}"
 
 shopt -s nullglob

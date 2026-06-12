@@ -242,7 +242,13 @@ fi
 # 3c: Inference must be configured by onboard (no fallback — if onboard
 # failed to configure it, that's a bug we want to catch)
 if inf_check=$(openshell inference get 2>&1); then
-  if grep -qi "nvidia-prod" <<<"$inf_check"; then
+  if nemoclaw_e2e_using_compatible_inference; then
+    if grep -qi "Provider:[[:space:]]*custom" <<<"$inf_check" && grep -Fq "$HOSTED_INFERENCE_MODEL" <<<"$inf_check"; then
+      pass "Inference configured via onboard (CI-compatible endpoint)"
+    else
+      fail "Inference not configured — onboard did not set up CI-compatible custom provider"
+    fi
+  elif grep -qi "nvidia-prod" <<<"$inf_check"; then
     pass "Inference configured via onboard"
   else
     fail "Inference not configured — onboard did not set up nvidia-prod provider"
