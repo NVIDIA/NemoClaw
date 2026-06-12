@@ -85,6 +85,18 @@ function commandFailed(result: ShellProbeResult): boolean {
   return result.exitCode !== 0 || result.timedOut;
 }
 
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function isNvidiaEndpointValidationUnavailable(text: string): boolean {
+  return (
+    /NVIDIA Endpoints endpoint validation failed/i.test(text) &&
+    (/Validation details were omitted/i.test(text) ||
+      /HTTP 429|rate limit|quota|temporarily unavailable|timed out|timeout/i.test(text))
+  );
+}
+
 async function bestEffort(run: () => Promise<unknown>): Promise<void> {
   try {
     await run();
@@ -213,10 +225,24 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       onboarding: "cloud-openclaw",
     });
 
-    const instance = await onboard.from(ready, {
-      sandboxName: SANDBOX_NAME,
-      timeoutMs: ONBOARD_TIMEOUT_MS,
-    });
+    let instance: NemoClawInstance;
+    try {
+      instance = await onboard.from(ready, {
+        sandboxName: SANDBOX_NAME,
+        timeoutMs: ONBOARD_TIMEOUT_MS,
+      });
+    } catch (error) {
+      const text = errorText(error);
+      if (isNvidiaEndpointValidationUnavailable(text)) {
+        await artifacts.writeJson("scenario-result.json", {
+          id: "state-backup-restore",
+          status: "skipped",
+          reason: "external-provider-validation-unavailable-before-state-backup-contract",
+        });
+        skip("NVIDIA endpoint validation was unavailable/rate-limited during onboarding");
+      }
+      throw error;
+    }
 
     const markerContent = `E2E_BACKUP_TEST_${Date.now()}`;
     const expectations: BackupExpectation[] = WORKSPACE_FILES.map((file) => ({
