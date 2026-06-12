@@ -55,11 +55,12 @@ describe("command-registry", () => {
   });
 
   describe("sandboxCommands()", () => {
-    it("should return exactly 44 entries", () => {
-      // 38 visible + 6 hidden (shields×3 + config get/set/rotate-token).
-      // 38 visible includes the sessions group (root + list + reset + delete)
-      // and the agents trio (add + delete + list).
-      expect(sandboxCommands()).toHaveLength(44);
+    it("should return exactly 47 entries", () => {
+      // 41 visible + 6 hidden (shields×3 + config get/set/rotate-token).
+      // 41 visible includes the sessions group (root + list + reset + delete +
+      // export), the agents trio (add + delete + list), and the download +
+      // upload host-side openshell wrappers.
+      expect(sandboxCommands()).toHaveLength(47);
     });
 
     it("every entry has scope sandbox", () => {
@@ -213,14 +214,15 @@ describe("command-registry", () => {
   });
 
   describe("sandboxActionTokens()", () => {
-    it("returns exactly 26 unique action tokens including empty string", () => {
+    it("returns exactly 28 unique action tokens including empty string", () => {
       const tokens = sandboxActionTokens();
-      expect(tokens).toHaveLength(26);
+      expect(tokens).toHaveLength(28);
       // Must contain every first-level sandbox action plus the empty default action.
       const expected = new Set([
         "agents",
         "connect",
         "dashboard-url",
+        "download",
         "exec",
         "status",
         "doctor",
@@ -243,6 +245,7 @@ describe("command-registry", () => {
         "config",
         "channels",
         "gateway-token",
+        "upload",
         "",
       ]);
       expect(new Set(tokens)).toEqual(expected);

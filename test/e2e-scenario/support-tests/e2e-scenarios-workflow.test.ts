@@ -134,6 +134,22 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       registryScenarios: [],
     });
     expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "credential-sanitization" }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["credential-sanitization-vitest"],
+      registryScenarios: [],
+    });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({ jobs: "credential-sanitization-vitest" }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["credential-sanitization-vitest"],
+      registryScenarios: [],
+    });
+    expect(
       evaluateE2eVitestWorkflowDispatchSelectors({ jobs: "runtime-overrides-vitest" }),
     ).toMatchObject({
       valid: true,

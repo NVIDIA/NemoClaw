@@ -693,6 +693,90 @@ jobs:
           retention-days: 14
 
 
+  credential-sanitization-vitest:
+    needs: generate-matrix
+    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',credential-sanitization-vitest,') || contains(format(',{0},', inputs.scenarios), ',credential-sanitization,') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    env:
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/credential-sanitization
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_SANDBOX_NAME: "e2e-credential-sanitization"
+      OPENSHELL_GATEWAY: "nemoclaw"
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Authenticate to Docker Hub
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          login_succeeded=0
+          for attempt in 1 2 3; do
+            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
+              login_succeeded=1
+              break
+            fi
+            if [[ "$attempt" -lt 3 ]]; then
+              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
+              sleep 5
+            fi
+          done
+          if [[ "$login_succeeded" -ne 1 ]]; then
+            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
+          fi
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build CLI
+        run: npm run build:cli
+
+      - name: Run credential sanitization live test
+        # Migrated from test/e2e/test-credential-sanitization.sh. Preserves the
+        # same ubuntu-latest + Docker/OpenShell + NVIDIA_API_KEY lane by running
+        # install.sh, onboarding a real sandbox, and probing sandbox state from
+        # Vitest while fixture redaction owns evidence logs.
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+        run: |
+          set -euo pipefail
+          npx vitest run --project e2e-scenarios-live \
+            test/e2e-scenario/live/credential-sanitization.test.ts \
+            --silent=false --reporter=default
+
+      - name: Upload credential sanitization artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-vitest-scenarios-credential-sanitization
+          path: e2e-artifacts/vitest/credential-sanitization/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: |
+          docker logout docker.io >/dev/null 2>&1 || true
+
+
   credential-migration-vitest:
     needs: generate-matrix
     if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',credential-migration-vitest,') }}
@@ -1792,6 +1876,7 @@ jobs:
         onboard-negative-paths-vitest,
         skill-agent-vitest,
         inference-routing-vitest,
+        credential-sanitization-vitest,
         credential-migration-vitest,
         runtime-overrides-vitest,
         hermes-e2e-vitest,

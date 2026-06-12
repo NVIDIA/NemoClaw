@@ -12,6 +12,7 @@ import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { shouldRunLiveE2EScenarios } from "../fixtures/live-project-gate.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import { shellQuote } from "../../../src/lib/core/shell-quote";
 
 // Direct Vitest replacement coverage for test/e2e/test-rebuild-openclaw.sh.
 // The contract stays intentionally local to this live test: build an older
@@ -139,10 +140,6 @@ function cliEnv(apiKey: string, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEn
     NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
     ...extra,
   });
-}
-
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, `'"'"'`)}'`;
 }
 
 function openshellBestEffort(
