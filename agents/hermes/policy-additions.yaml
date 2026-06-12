@@ -90,21 +90,12 @@ network_policies:
       - { path: /usr/bin/python3* }
       - { path: /opt/hermes/.venv/bin/python }
 
-  github:
-    name: github
-    endpoints:
-      - host: github.com
-        port: 443
-        access: full
-      - host: api.github.com
-        port: 443
-        access: full
-    binaries:
-      # `gh` was historically whitelisted here, but the Hermes sandbox base
-      # image (agents/hermes/Dockerfile.base) only apt-installs `git`, not
-      # `gh`, so the entry was a phantom — see #2179.
-      - { path: /usr/bin/git }
-      - { path: /opt/hermes/.venv/bin/python }
+  # NOTE: github.com / api.github.com and the git binary used to
+  # live in this base policy and were therefore granted to every
+  # Hermes sandbox regardless of user opt-in. They have been moved
+  # into a discoverable preset (`presets/github.yaml`) so a sandbox
+  # only gets GitHub access when the user explicitly selects the
+  # `github` preset during onboard.
 
   # ── Nous Research — public metadata and agent updates ─────────
   # Nous Portal OAuth, managed inference, and managed tool gateway auth are
