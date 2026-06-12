@@ -114,6 +114,20 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       selectedFreeStandingJobs: ["openshell-version-pin-vitest"],
       registryScenarios: [],
     });
+    expect(evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "skill-agent" })).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["skill-agent-vitest"],
+      registryScenarios: [],
+    });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({ jobs: "skill-agent-vitest" }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["skill-agent-vitest"],
+      registryScenarios: [],
+    });
     expect(
       evaluateE2eVitestWorkflowDispatchSelectors({ jobs: "runtime-overrides-vitest" }),
     ).toMatchObject({
