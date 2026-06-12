@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import * as http2 from "node:http2";
@@ -500,7 +500,7 @@ function stopBedrockAdapterBestEffort(home: string): void {
     }
     if (fs.existsSync(pidFile)) {
       const pid = Number(fs.readFileSync(pidFile, "utf8").trim());
-      if (Number.isInteger(pid) && pid > 0) {
+      if (Number.isInteger(pid) && pid > 0 && isBedrockAdapterProcess(pid)) {
         try {
           process.kill(pid, "SIGTERM");
         } catch {
@@ -515,9 +515,26 @@ function stopBedrockAdapterBestEffort(home: string): void {
   }
 }
 
+function isBedrockAdapterProcess(pid: number): boolean {
+  const expectedScript = "bedrock-runtime-adapter.js";
+  try {
+    const cmdline = fs.readFileSync(`/proc/${pid}/cmdline`, "utf8").replaceAll("\0", " ");
+    if (cmdline.includes(expectedScript)) return true;
+  } catch {
+    // Fall back to ps on platforms without procfs.
+  }
+
+  const ps = spawnSync("ps", ["-p", String(pid), "-o", "args="], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+  return ps.status === 0 && ps.stdout.includes(expectedScript);
+}
+
 async function restoreHostsFile(
   host: HostCliClient,
   backupPath: string,
+  backupDir: string,
   home: string,
 ): Promise<void> {
   await bestEffort(() =>
@@ -528,13 +545,13 @@ async function restoreHostsFile(
     }),
   );
   await bestEffort(() =>
-    host.command("sudo", ["rm", "-f", backupPath], {
+    host.command("sudo", ["rm", "-rf", backupDir], {
       artifactName: "remove-etc-hosts-backup-bedrock-runtime",
       env: testEnv(home),
       timeoutMs: 30_000,
     }),
   );
-  await bestEffort(() => fs.rmSync(backupPath, { force: true }));
+  await bestEffort(() => fs.rmSync(backupDir, { recursive: true, force: true }));
 }
 
 async function mapBedrockHostToLoopback(
@@ -650,7 +667,7 @@ async function assertOnboardIdentity(home: string, agent: AgentName): Promise<vo
     const session = JSON.parse(fs.readFileSync(sessionPath, "utf8")) as Record<string, unknown>;
     if (session.sandboxName !== SANDBOX_NAME)
       errors.push(`session sandboxName=${String(session.sandboxName)}`);
-    if (session.agent !== undefined && session.agent !== agent)
+    if (session.agent != null && session.agent !== agent)
       errors.push(`session agent=${String(session.agent)}`);
     if (session.provider !== expectedProvider)
       errors.push(`session provider=${String(session.provider)}`);
@@ -667,7 +684,7 @@ async function assertOnboardIdentity(home: string, agent: AgentName): Promise<vo
     if (!sandbox) {
       errors.push(`registry sandbox ${SANDBOX_NAME} missing`);
     } else {
-      if (sandbox.agent !== undefined && sandbox.agent !== agent)
+      if (sandbox.agent != null && sandbox.agent !== agent)
         errors.push(`registry agent=${String(sandbox.agent)}`);
       if (sandbox.provider !== expectedProvider)
         errors.push(`registry provider=${String(sandbox.provider)}`);
@@ -893,12 +910,56 @@ async function assertHermesConfig(sandbox: SandboxClient, home: string): Promise
   if (model.default !== BEDROCK_MODEL) errors.push(`model.default=${String(model.default)}`);
   if (model.base_url !== "https://inference.local/v1")
     errors.push(`model.base_url=${String(model.base_url)}`);
-  if (!model.api_key?.startsWith("sk-")) errors.push(`model.api_key=${String(model.api_key)}`);
+  if (model.api_key === "<REDACTED>") {
+    expectExitZero(
+      await sandbox.execShell(SANDBOX_NAME, hermesConfigApiKeyProbeScript(), {
+        artifactName: "hermes-config-api-key-probe-bedrock-runtime",
+        env: testEnv(home),
+        timeoutMs: SANDBOX_TIMEOUT_MS,
+      }),
+      "Hermes config api_key uses sk- placeholder",
+    );
+  } else if (!model.api_key?.startsWith("sk-")) {
+    errors.push(`model.api_key=${String(model.api_key)}`);
+  }
   if (/^models:\s*\n(?:[ \t].*\n)*?[ \t]+providers:/m.test(config.stdout)) {
     errors.push("OpenClaw-style models.providers block present");
   }
   if (config.stdout.includes("openshell:")) errors.push("OpenShell provider placeholder present");
   expect(errors).toEqual([]);
+}
+
+function hermesConfigApiKeyProbeScript(): ReturnType<typeof trustedSandboxShellScript> {
+  return trustedSandboxShellScript(`
+python3 - <<'PY'
+import re
+from pathlib import Path
+
+text = Path("/sandbox/.hermes/config.yaml").read_text(encoding="utf-8")
+model = {}
+in_model = False
+for line in text.splitlines():
+    if re.match(r"^model:\\s*$", line):
+        in_model = True
+        continue
+    if in_model and re.match(r"^[A-Za-z0-9_-]+:", line):
+        break
+    if not in_model:
+        continue
+    match = re.match(r"^\\s+([A-Za-z0-9_-]+):\\s*(.*?)\\s*$", line)
+    if match:
+        value = match.group(2).strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\\"'":
+            value = value[1:-1]
+        model[match.group(1)] = value
+
+api_key = model.get("api_key")
+if not isinstance(api_key, str) or not api_key.startswith("sk-"):
+    print("model.api_key missing sk- placeholder")
+    raise SystemExit(1)
+print("OK")
+PY
+`);
 }
 
 async function assertSandboxInference(sandbox: SandboxClient, home: string): Promise<void> {
@@ -1056,14 +1117,17 @@ function isPreContractEndpointValidationRateLimit(options: {
     /NVIDIA Endpoints endpoint validation failed|endpoint validation failed|failed to verify inference endpoint|Chat Completions API validation/i.test(
       text,
     );
-  const rateLimited =
-    /HTTP 429|\b429\b|Too Many Requests|rate[- ]?limit|quota|temporarily unavailable|timed? out|timeout/i.test(
-      text,
-    );
+  const explicitRateLimit = /HTTP 429|\b429\b|Too Many Requests/i.test(text);
+  const transientProviderFailure =
+    explicitRateLimit ||
+    /rate[- ]?limit|quota|temporarily unavailable|timed? out|timeout/i.test(text);
   const sanitizedNvidiaValidation =
     /NVIDIA Endpoints endpoint validation failed/i.test(text) &&
     /Validation details were omitted to avoid exposing credentials/i.test(text);
-  return endpointValidation && (rateLimited || sanitizedNvidiaValidation);
+  return (
+    endpointValidation &&
+    (explicitRateLimit || (sanitizedNvidiaValidation && transientProviderFailure))
+  );
 }
 
 async function skipPreContractEndpointValidationRateLimit(options: {
@@ -1160,10 +1224,8 @@ RUN_BEDROCK_TEST(
     validateSandboxName(SANDBOX_NAME);
 
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-bedrock-runtime-home-"));
-    const hostsBackup = path.join(
-      os.tmpdir(),
-      `nemoclaw-bedrock-hosts-${process.pid}-${Date.now()}`,
-    );
+    const hostsBackupDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-bedrock-hosts-"));
+    const hostsBackup = path.join(hostsBackupDir, "hosts");
     let mock: MockBedrockRuntime | undefined;
     let onboarding: RawRunResult | undefined;
 
@@ -1174,7 +1236,7 @@ RUN_BEDROCK_TEST(
       cleanupSandboxState(host, home),
     );
     cleanup.add("restore /etc/hosts after Bedrock Runtime mapping", () =>
-      restoreHostsFile(host, hostsBackup, home),
+      restoreHostsFile(host, hostsBackup, hostsBackupDir, home),
     );
     cleanup.add("stop Bedrock Runtime adapter", () => stopBedrockAdapterBestEffort(home));
     cleanup.add("stop fake Bedrock Runtime endpoint", async () => {
