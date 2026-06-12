@@ -21,6 +21,7 @@ const SELECTOR_PATTERN = /^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$/;
 const FREE_STANDING_SCENARIO_JOBS = new Map([
   ["openshell-version-pin", "openshell-version-pin-vitest"],
   ["onboard-negative-paths", "onboard-negative-paths-vitest"],
+  ["skill-agent", "skill-agent-vitest"],
   ["inference-routing", "inference-routing-vitest"],
   ["runtime-overrides", "runtime-overrides-vitest"],
   ["hermes-e2e", "hermes-e2e-vitest"],
@@ -283,6 +284,7 @@ function validateJobsSelector(errors: string[], jobs: WorkflowRecord): void {
   requireRunContains(errors, validate, "allowed_jobs=");
   requireRunContains(errors, validate, "openshell-version-pin-vitest");
   requireRunContains(errors, validate, "onboard-negative-paths-vitest");
+  requireRunContains(errors, validate, "skill-agent-vitest");
   requireRunContains(errors, validate, "inference-routing-vitest");
   requireRunContains(errors, validate, "credential-migration-vitest");
   requireRunContains(errors, validate, "runtime-overrides-vitest");
@@ -382,6 +384,110 @@ function validateOpenShellVersionPinVitestJob(errors: string[], jobs: WorkflowRe
   }
 }
 
+
+function validateSkillAgentVitestJob(errors: string[], jobs: WorkflowRecord): void {
+  const jobName = "skill-agent-vitest";
+  const job = asRecord(jobs[jobName]);
+  if (Object.keys(job).length === 0) {
+    errors.push("workflow missing skill-agent-vitest job");
+    return;
+  }
+
+  if (job["runs-on"] !== "ubuntu-latest") {
+    errors.push("skill-agent-vitest job must run on ubuntu-latest");
+  }
+  validateFreeStandingJobSelector(errors, jobs, jobName, "skill-agent");
+
+  const jobEnv = asRecord(job.env);
+  if (jobEnv.NEMOCLAW_RUN_E2E_SCENARIOS !== "1") {
+    errors.push("skill-agent-vitest job must set NEMOCLAW_RUN_E2E_SCENARIOS=1");
+  }
+  if (jobEnv.E2E_ARTIFACT_DIR !== "${{ github.workspace }}/e2e-artifacts/vitest/skill-agent") {
+    errors.push("skill-agent-vitest job must write artifacts under e2e-artifacts/vitest/skill-agent");
+  }
+  if (!stringValue(jobEnv.NEMOCLAW_CLI_BIN).includes("bin/nemoclaw.js")) {
+    errors.push("skill-agent-vitest job must point NEMOCLAW_CLI_BIN at the repo CLI");
+  }
+  requireEnvDoesNotExposeSecret(errors, "skill-agent-vitest job", jobEnv, "NVIDIA_API_KEY");
+
+  const steps = asSteps(job.steps);
+  requireNoDispatchInputInterpolation(errors, steps);
+  for (const step of steps) {
+    if (step.name !== "Run skill-agent live test") {
+      requireEnvDoesNotExposeSecret(
+        errors,
+        `skill-agent-vitest step '${step.name ?? step.uses ?? "<unnamed>"}'`,
+        asRecord(step.env),
+        "NVIDIA_API_KEY",
+      );
+    }
+  }
+
+  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
+  if (!checkout) errors.push("skill-agent-vitest job missing checkout step");
+  requireFullShaAction(errors, checkout, "skill-agent-vitest checkout");
+  if (asRecord(checkout?.with)["persist-credentials"] !== false) {
+    errors.push("skill-agent-vitest checkout step must set persist-credentials=false");
+  }
+
+  const setupNode = namedStep(steps, "Set up Node");
+  if (!setupNode) errors.push("skill-agent-vitest job missing step: Set up Node");
+  requireFullShaAction(errors, setupNode, "skill-agent-vitest setup-node");
+
+  const installRootDependencies = requireJobStep(errors, jobName, steps, "Install root dependencies");
+  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
+
+  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
+  requireRunContains(errors, buildCli, "npm run build:cli");
+
+  const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell CLI");
+  requireRunContains(errors, installOpenShell, "bash scripts/install-openshell.sh");
+
+  const runVitest = requireJobStep(errors, jobName, steps, "Run skill-agent live test");
+  const runEnv = asRecord(runVitest?.env);
+  if (runEnv.NVIDIA_API_KEY !== "${{ secrets.NVIDIA_API_KEY }}") {
+    errors.push("skill-agent-vitest run step must receive NVIDIA_API_KEY from secrets");
+  }
+  requireRunContains(errors, runVitest, 'export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"');
+  requireRunContains(errors, runVitest, 'OPENSHELL_BIN="$(command -v openshell)"');
+  requireRunContains(errors, runVitest, "export OPENSHELL_BIN");
+  requireRunContains(errors, runVitest, "npx vitest run --project e2e-scenarios-live");
+  requireRunContains(errors, runVitest, "test/e2e-scenario/live/skill-agent.test.ts");
+
+  const upload = requireJobStep(errors, jobName, steps, "Upload skill-agent artifacts");
+  requireFullShaAction(errors, upload, "skill-agent-vitest upload-artifact");
+  const uploadWith = asRecord(upload?.with);
+  if (uploadWith.name !== "e2e-vitest-scenarios-skill-agent") {
+    errors.push("skill-agent-vitest artifact upload name must be stable");
+  }
+  const uploadPath = stringValue(uploadWith.path);
+  for (const expected of [
+    "e2e-artifacts/vitest/skill-agent/*/artifact-summary.json",
+    "e2e-artifacts/vitest/skill-agent/*/cleanup.json",
+    "e2e-artifacts/vitest/skill-agent/*/cleanup-skill-agent-summary.json",
+    "e2e-artifacts/vitest/skill-agent/*/scenario.json",
+    "e2e-artifacts/vitest/skill-agent/*/scenario-result.json",
+    "e2e-artifacts/vitest/skill-agent/*/shell/*.result.json",
+    "e2e-artifacts/vitest/skill-agent/*/shell/*.stdout.txt",
+    "e2e-artifacts/vitest/skill-agent/*/shell/*.stderr.txt",
+  ]) {
+    requireUploadPathContains(errors, uploadPath, expected);
+  }
+  for (const line of uploadPath.split("\n")) {
+    if (line.trim() === "e2e-artifacts/vitest/skill-agent/") {
+      errors.push("skill-agent-vitest artifact upload path must not list the whole skill-agent artifact directory");
+    }
+  }
+  if (uploadWith["include-hidden-files"] !== false) {
+    errors.push("skill-agent-vitest artifact upload must set include-hidden-files: false");
+  }
+  if (uploadWith["if-no-files-found"] !== "ignore") {
+    errors.push("skill-agent-vitest artifact upload must ignore missing fixture artifacts");
+  }
+  if (uploadWith["retention-days"] !== 14) {
+    errors.push("skill-agent-vitest artifact upload retention-days must be 14");
+  }
+}
 
 function validateNetworkPolicyVitestJob(errors: string[], jobs: WorkflowRecord): void {
   const jobName = "network-policy-vitest";
@@ -1391,12 +1497,9 @@ function validateModelRouterProviderRoutedInferenceVitestJob(
   validateFreeStandingJobSelector(errors, jobs, jobName, scenarioName);
 
   const jobEnv = asRecord(job.env);
-  if (
-    jobEnv.DOCKER_CONFIG !==
-    "${{ github.workspace }}/.docker-config-model-router-provider-routed-inference"
-  ) {
+  if ("DOCKER_CONFIG" in jobEnv) {
     errors.push(
-      "model-router-provider-routed-inference-vitest job must isolate Docker auth with DOCKER_CONFIG under the workspace",
+      "model-router-provider-routed-inference-vitest job must not set DOCKER_CONFIG at job level",
     );
   }
   if (
@@ -1457,6 +1560,19 @@ function validateModelRouterProviderRoutedInferenceVitestJob(
       "model-router-provider-routed-inference-vitest checkout step must set persist-credentials=false",
     );
   }
+
+  const configureDockerAuth = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Configure isolated Docker auth directory",
+  );
+  requireRunContains(
+    errors,
+    configureDockerAuth,
+    'echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-model-router-provider-routed-inference" >> "$GITHUB_ENV"',
+  );
+  requireRunDoesNotContain(errors, configureDockerAuth, "${{ runner.temp }}");
 
   const dockerLogin = requireJobStep(errors, jobName, steps, "Authenticate to Docker Hub");
   const dockerLoginEnv = asRecord(dockerLogin?.env);
@@ -1779,6 +1895,7 @@ export function validateE2eVitestScenariosWorkflowBoundary(
 
   validateOpenShellVersionPinVitestJob(errors, jobs);
   validateOnboardNegativePathsVitestJob(errors, jobs);
+  validateSkillAgentVitestJob(errors, jobs);
   validateFreeStandingJobSelector(errors, jobs, "credential-migration-vitest");
   validateFreeStandingJobSelector(errors, jobs, "inference-routing-vitest", "inference-routing");
   validateRuntimeOverridesVitestJob(errors, jobs);
@@ -1815,6 +1932,7 @@ export function validateE2eVitestScenariosWorkflowBoundary(
       "live-scenarios",
       "openshell-version-pin-vitest",
       "onboard-negative-paths-vitest",
+      "skill-agent-vitest",
       "inference-routing-vitest",
       "credential-migration-vitest",
       "runtime-overrides-vitest",
