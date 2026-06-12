@@ -58,7 +58,10 @@ jobs:
           cache: npm
 
       - name: Install docs-only check dependencies
-        run: npm install --ignore-scripts
+        shell: bash
+        run: |
+          npm install --ignore-scripts
+          cd nemoclaw && npm install --ignore-scripts
 
       - name: Fetch base commit for docs-only checks
         run: git fetch --no-tags --depth=1 origin "${{ github.event.pull_request.base.sha }}"
