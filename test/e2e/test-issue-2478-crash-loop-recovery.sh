@@ -291,14 +291,40 @@ gateway_log_line_count() {
     | awk '/^[0-9]+$/ { print; found=1; exit } END { if (!found) print 0 }'
 }
 
-gateway_log_after_line() {
-  local min_line="${1:-0}"
-  local current_lines
-  current_lines="$(gateway_log_line_count)"
-  if [ "$current_lines" -lt "$min_line" ]; then
-    min_line=0
+gateway_log_marker() {
+  local label="$1"
+  local marker
+  marker="NEMOCLAW_E2E_LOG_MARKER_${label}_$(date +%s)_$$"
+  if sandbox_exec sh -c "printf '%s\n' '$marker' >> /tmp/gateway.log 2>/dev/null && grep -Fq '$marker' /tmp/gateway.log 2>/dev/null" >/dev/null; then
+    printf '%s\n' "$marker"
+    return
   fi
-  sandbox_exec sh -c "cat /tmp/gateway.log 2>/dev/null" | tail -n +"$((min_line + 1))"
+  gateway_log_line_count
+}
+
+gateway_log_after_boundary() {
+  local boundary="${1:-0}"
+  if [[ "$boundary" =~ ^[0-9]+$ ]]; then
+    local current_lines
+    current_lines="$(gateway_log_line_count)"
+    if [ "$current_lines" -lt "$boundary" ]; then
+      boundary=0
+    fi
+    sandbox_exec sh -c "cat /tmp/gateway.log 2>/dev/null" | tail -n +"$((boundary + 1))"
+    return
+  fi
+
+  local out status
+  out="$(sandbox_exec sh -c "awk -v marker='$boundary' 'found { print } index(\$0, marker) { found=1; next } END { if (!found) exit 42 }' /tmp/gateway.log 2>/dev/null")"
+  status=$?
+  if [ "$status" -eq 0 ]; then
+    printf '%s\n' "$out"
+    return
+  fi
+
+  # If the gateway rewrote or rotated /tmp/gateway.log, the marker is gone and
+  # the whole current file is fresh relative to the boundary.
+  sandbox_exec sh -c "cat /tmp/gateway.log 2>/dev/null"
 }
 
 # Returns 0 if the gateway has the library guard chain active, 1 otherwise.
@@ -317,7 +343,7 @@ gateway_log_after_line() {
 gateway_guards_active() {
   local pid="$1"
   local timeout="${2:-30}"
-  local min_log_line="${3:-0}"
+  local log_boundary="${3:-0}"
   local elapsed=0
 
   if [ -z "$pid" ]; then
@@ -336,8 +362,8 @@ gateway_guards_active() {
   fi
 
   while [ "$elapsed" -lt "$timeout" ]; do
-    if gateway_log_after_line "$min_log_line" | grep -Eq '\[sandbox-safety-net\] loaded \((openclaw-gateway|launcher)\)' \
-      && gateway_log_after_line "$min_log_line" | grep -Eq '\[guard\] ciao-network-guard loaded \((openclaw-gateway|launcher)\)'; then
+    if gateway_log_after_boundary "$log_boundary" | grep -Eq '\[sandbox-safety-net\] loaded \((openclaw-gateway|launcher)\)' \
+      && gateway_log_after_boundary "$log_boundary" | grep -Eq '\[guard\] ciao-network-guard loaded \((openclaw-gateway|launcher)\)'; then
       # Confirm gateway is still alive after guard activations.
       if [ -n "$(gateway_pid)" ]; then
         return 0
@@ -347,7 +373,7 @@ gateway_guards_active() {
     fi
     # Backward-compatible proof for older images: this line is emitted by
     # the ciao preload only when ciao calls os.networkInterfaces().
-    if gateway_log_after_line "$min_log_line" | grep -Fq '[guard] os.networkInterfaces() failed:'; then
+    if gateway_log_after_boundary "$log_boundary" | grep -Fq '[guard] os.networkInterfaces() failed:'; then
       if [ -n "$(gateway_pid)" ]; then
         return 0
       fi
@@ -628,7 +654,7 @@ section "Phase 3: Crash-recovery loop ($CRASH_CYCLES cycles)"
 prev_pid="$INIT_PID"
 for cycle in $(seq 1 "$CRASH_CYCLES"); do
   info "Cycle $cycle/$CRASH_CYCLES — killing gateway pid=$prev_pid"
-  guard_log_start="$(gateway_log_line_count)"
+  guard_log_start="$(gateway_log_marker "cycle_${cycle}")"
   sandbox_exec sh -c "kill -9 $prev_pid 2>/dev/null; sleep 1" >/dev/null
 
   # Trigger recovery via the actual operator probe path:
@@ -700,7 +726,7 @@ info "Snapshotted proxy-env.sh ($SNAPSHOT_SIZE bytes, ${#SNAPSHOT_B64}-char base
 # pkill -9 -f '[o]penclaw' takes them all out so the launcher's watchdog
 # can't silently respawn the gateway before nemoclaw status runs the
 # recovery script (which is the only path that emits the warning).
-negative_guard_log_start="$(gateway_log_line_count)"
+negative_guard_log_start="$(gateway_log_marker "negative")"
 sandbox_exec sh -c 'rm -f /tmp/nemoclaw-proxy-env.sh' >/dev/null
 sandbox_exec sh -c "pkill -9 -f '[o]penclaw' 2>/dev/null; sleep 2; pgrep -af '[o]penclaw' || echo ALL_DEAD" >/dev/null
 run_probe_only_or_fail "Negative case after proxy-env removal"
@@ -774,7 +800,7 @@ fi
 
 # Kill the current negative-case gateway, then trigger recovery to bring the
 # gateway back with guards intact from either the snapshot or recovered env file.
-restore_guard_log_start="$(gateway_log_line_count)"
+restore_guard_log_start="$(gateway_log_marker "restore")"
 sandbox_exec sh -c "pkill -9 -f '[o]penclaw' 2>/dev/null; sleep 2; pgrep -af '[o]penclaw' || echo ALL_DEAD" >/dev/null
 run_probe_only_or_fail "Guard restore recovery"
 SOAK_START_PID="$(wait_for_gateway_up 30)"
