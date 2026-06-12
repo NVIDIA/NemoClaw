@@ -20,7 +20,11 @@ import { type SandboxClient, validateSandboxName } from "../fixtures/clients/san
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { shouldRunLiveE2EScenarios } from "../fixtures/live-project-gate.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
-import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
+import {
+  buildPreContractExternalProviderSkipEvidence,
+  classifyPreContractExternalProviderFailure,
+  type PreContractExternalProviderFailure,
+} from "./cloud-inference-provider-skip.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const CLI_ENTRYPOINT = path.join(REPO_ROOT, "bin", "nemoclaw.js");
@@ -52,12 +56,6 @@ const CHAT_TIMEOUT_MS = 120_000;
 const TEST_TIMEOUT_MS = 40 * 60_000;
 const MAX_ATTEMPTS = positiveInteger(process.env.E2E_PHASE_5B_MAX_ATTEMPTS, 3);
 const RETRY_SLEEP_MS = positiveInteger(process.env.E2E_PHASE_5B_RETRY_SLEEP_SEC, 5) * 1_000;
-const ENDPOINT_VALIDATION_RE =
-  /endpoint validation failed|failed to verify inference endpoint|Chat Completions API validation/i;
-const RATE_LIMIT_OR_SANITIZED_EXTERNAL_RE =
-  /HTTP 429|\b429\b|rate[- ]?limit|too many requests|quota|temporar|timed? out|timeout|ETIMEDOUT|ECONNRESET|EAI_AGAIN|ENOTFOUND|failed to connect|error sending request|\b(redacted|sanitized)\b/i;
-const CREDENTIAL_OR_AUTH_RE =
-  /invalid.*(api[_-]?key|credential)|unauthorized|forbidden|HTTP 40[13]\b|\b40[13]\b/i;
 
 validateSandboxName(SANDBOX_NAME);
 
@@ -74,51 +72,12 @@ function resultText(result: Pick<ShellProbeResult, "stdout" | "stderr">): string
   return [result.stdout, result.stderr].filter(Boolean).join("\n");
 }
 
-function tailForEvidence(text: string, maxLength = 1600): string {
-  return text.length > maxLength ? text.slice(-maxLength) : text;
-}
-
-function preContractExternalProviderFailure(
-  result: Pick<ShellProbeResult, "stdout" | "stderr">,
-): { classifier: string; outputTail: string } | null {
-  const output = resultText(result);
-  if (!ENDPOINT_VALIDATION_RE.test(output)) return null;
-  if (CREDENTIAL_OR_AUTH_RE.test(output)) return null;
-  if (isTransientProviderValidationFailure(result)) {
-    return {
-      classifier: "transient-endpoint-validation",
-      outputTail: tailForEvidence(output),
-    };
-  }
-  if (RATE_LIMIT_OR_SANITIZED_EXTERNAL_RE.test(output)) {
-    return {
-      classifier: "rate-limited-or-sanitized-endpoint-validation",
-      outputTail: tailForEvidence(output),
-    };
-  }
-  return null;
-}
-
 async function writePreContractExternalProviderSkip(
   artifacts: ArtifactSink,
   install: ShellProbeResult,
-  classification: { classifier: string; outputTail: string },
+  classification: PreContractExternalProviderFailure,
 ): Promise<void> {
-  const evidence = {
-    id: "cloud-inference",
-    status: "skipped",
-    reason: "external-provider-validation-unavailable-before-legacy-contract",
-    classifier: classification.classifier,
-    phase: "install-sh-onboard",
-    legacyContractStarted: false,
-    installExitCode: install.exitCode,
-    installTimedOut: install.timedOut,
-    outputTail: classification.outputTail,
-    artifacts: install.artifacts,
-    sourceBoundary: "external NVIDIA Endpoints provider availability",
-    removalCondition:
-      "remove once CI endpoint validation is stable for a release cycle or covered by a hermetic provider-validation fixture",
-  };
+  const evidence = buildPreContractExternalProviderSkipEvidence(install, classification);
   await artifacts.writeJson("transient-provider-validation.skip.json", evidence);
   await artifacts.writeJson("scenario-result.json", evidence);
 }
@@ -341,7 +300,7 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       },
     );
     const preContractFailure =
-      install.exitCode === 0 ? null : preContractExternalProviderFailure(install);
+      install.exitCode === 0 ? null : classifyPreContractExternalProviderFailure(install);
     if (preContractFailure) {
       await writePreContractExternalProviderSkip(artifacts, install, preContractFailure);
       skip("NVIDIA endpoint validation was unavailable/rate-limited during install/onboard");
