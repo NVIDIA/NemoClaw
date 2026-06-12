@@ -35,6 +35,16 @@ function removeTempDir(dir: string) {
   fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 }
 
+function waitForPath(filePath: string, timeoutMs = 1000) {
+  const sleepView = new Int32Array(new SharedArrayBuffer(4));
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (fs.existsSync(filePath)) return true;
+    Atomics.wait(sleepView, 0, 0, 10);
+  }
+  return fs.existsSync(filePath);
+}
+
 const SHARED_PYTHON_STUB_BY_MODE = [
   'if [ "$1" = "-c" ]; then',
   "  exit 0",
@@ -488,7 +498,7 @@ describe("Hermes secret-boundary guard — full recovery script behaviour", () =
         proxyEnvPath: proxyEnvFile,
       });
       expect(result.status).toBe(0);
-      expect(fs.existsSync(harness.hermesLaunchMarker)).toBe(true);
+      expect(waitForPath(harness.hermesLaunchMarker)).toBe(true);
       expect(result.stdout).not.toContain("SECRET_BOUNDARY_REFUSED");
       expect(result.stderr).not.toContain("TELEGRAM_BOT_TOKEN");
       const proxyEnv = fs.readFileSync(proxyEnvFile, "utf-8");
