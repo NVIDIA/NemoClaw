@@ -1965,6 +1965,9 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Configure isolated Docker auth directory
+        run: echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-issue-2478-crash-loop-recovery" >> "$GITHUB_ENV"
+
       - name: Authenticate to Docker Hub
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -1976,6 +1979,8 @@ jobs:
             echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
             exit 0
           fi
+          mkdir -p "${DOCKER_CONFIG}"
+          chmod 700 "${DOCKER_CONFIG}"
           login_succeeded=0
           for attempt in 1 2 3; do
             if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
@@ -2037,6 +2042,13 @@ jobs:
           include-hidden-files: false
           if-no-files-found: ignore
           retention-days: 14
+
+      - name: Clean up Docker auth
+        if: always()
+        run: |
+          set -euo pipefail
+          docker logout docker.io || true
+          rm -rf "${DOCKER_CONFIG}"
 
   # ── PR result comment (mirrors nightly-e2e.yaml's report-to-pr) ───────────
   # Posts a results table on the open PR for the dispatching branch (or the
