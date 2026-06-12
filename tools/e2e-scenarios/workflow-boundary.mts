@@ -2133,6 +2133,7 @@ export function validateE2eVitestScenariosWorkflowBoundary(
     "issue-4434-tui-unreachable-inference",
   );
   validateModelRouterProviderRoutedInferenceVitestJob(errors, jobs);
+  validateFreeStandingJobSelector(errors, jobs, "gateway-drift-preflight-vitest", "gateway-drift-preflight");
 
   const reportToPr = asRecord(jobs["report-to-pr"]);
   if (Object.keys(reportToPr).length === 0) {

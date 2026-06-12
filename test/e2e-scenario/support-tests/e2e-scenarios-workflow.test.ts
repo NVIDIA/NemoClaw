@@ -255,6 +255,22 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       selectedFreeStandingJobs: ["model-router-provider-routed-inference-vitest"],
       registryScenarios: [],
     });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "gateway-drift-preflight" }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["gateway-drift-preflight-vitest"],
+      registryScenarios: [],
+    });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({ jobs: "gateway-drift-preflight-vitest" }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["gateway-drift-preflight-vitest"],
+      registryScenarios: [],
+    });
   });
 
   it("keeps the free-standing inventory internally consistent and data-only", () => {

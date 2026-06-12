@@ -1692,6 +1692,54 @@ jobs:
           docker logout docker.io || true
           rm -rf "${DOCKER_CONFIG}"
 
+  gateway-drift-preflight-vitest:
+    needs: generate-matrix
+    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',gateway-drift-preflight-vitest,') || contains(format(',{0},', inputs.scenarios), ',gateway-drift-preflight,') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/gateway-drift-preflight
+      NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build CLI
+        run: npm run build:cli
+
+      - name: Run gateway drift preflight Vitest test
+        # Migrated from test/e2e/test-gateway-drift-preflight.sh. This keeps
+        # the real repo CLI, PATH-resolved openshell/docker shims, host-process
+        # marker/PID probes, and process exit behavior while avoiding live
+        # Docker/OpenShell mutation.
+        run: |
+          set -euo pipefail
+          npx vitest run --project cli \
+            test/gateway-drift-preflight.test.ts \
+            --silent=false --reporter=default
+
+      - name: Upload gateway drift preflight artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-vitest-scenarios-gateway-drift-preflight
+          path: e2e-artifacts/vitest/gateway-drift-preflight/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
+
   # Focused coverage slice for the #2603/#3145 OpenClaw websocket
   # protocol/history contract. The retained legacy bash lane remains the
   # source for full closeout until a later PR proves replacement and deletes it.
@@ -1890,6 +1938,7 @@ jobs:
         double-onboard-vitest,
         model-router-provider-routed-inference-vitest,
         sandbox-survival-vitest,
+        gateway-drift-preflight-vitest,
         openclaw-tui-chat-correlation-vitest,
         gateway-guard-recovery,
         issue-4434-tui-unreachable-inference-vitest,
