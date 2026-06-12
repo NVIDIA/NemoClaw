@@ -1297,12 +1297,9 @@ function validateModelRouterProviderRoutedInferenceVitestJob(
   validateFreeStandingJobSelector(errors, jobs, jobName, scenarioName);
 
   const jobEnv = asRecord(job.env);
-  if (
-    jobEnv.DOCKER_CONFIG !==
-    "${{ runner.temp }}/docker-config-model-router-provider-routed-inference"
-  ) {
+  if ("DOCKER_CONFIG" in jobEnv) {
     errors.push(
-      "model-router-provider-routed-inference-vitest job must isolate Docker auth with DOCKER_CONFIG under runner.temp",
+      "model-router-provider-routed-inference-vitest job must not set DOCKER_CONFIG at job level",
     );
   }
   if (
@@ -1363,6 +1360,19 @@ function validateModelRouterProviderRoutedInferenceVitestJob(
       "model-router-provider-routed-inference-vitest checkout step must set persist-credentials=false",
     );
   }
+
+  const configureDockerAuth = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Configure isolated Docker auth directory",
+  );
+  requireRunContains(
+    errors,
+    configureDockerAuth,
+    'echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-model-router-provider-routed-inference" >> "$GITHUB_ENV"',
+  );
+  requireRunDoesNotContain(errors, configureDockerAuth, "${{ runner.temp }}");
 
   const dockerLogin = requireJobStep(errors, jobName, steps, "Authenticate to Docker Hub");
   const dockerLoginEnv = asRecord(dockerLogin?.env);
