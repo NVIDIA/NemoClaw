@@ -23,7 +23,6 @@ NemoClaw v0.0.64 improves sandbox restore, onboarding stability, inference routi
 - OpenClaw onboarding keeps Brave Search pinned to the NemoClaw-managed runtime and preserves the `BRAVE_API_KEY` placeholder through build doctor. Docker-driver gateway health checks now follow the entrypoint path that actually launches the in-container gateway, which avoids misleading health reports on host-gateway setups. For more information, refer to [NemoClaw CLI Commands Reference](../reference/commands).
 - Inference routes choose chat completions for providers that do not expose `/v1/responses`, including NVIDIA Endpoints, NVIDIA NIM, and Gemini-compatible routes. NemoClaw also adds a targeted Nemotron Ultra 550B compatibility fix for tool-less requests. For more information, refer to [NemoClaw Inference Options](../inference/inference-options).
 - Messaging setup refreshes stale render plans during rebuild, recovers replaced OpenClaw scope-upgrade approvals, and preinstalls Hermes WhatsApp bridge dependencies when the upstream lockfile is present. For more information, refer to [Messaging Channels](../manage-sandboxes/messaging-channels).
-- Release validation expands live Vitest coverage for rebuild, sandbox operations, network policy, credential migration, inference routing, Hermes, WhatsApp QR, dashboard binding, VM driver, docs validation, token rotation, and launch smoke paths.
 
 ## v0.0.63
 
