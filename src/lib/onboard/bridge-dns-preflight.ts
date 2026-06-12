@@ -278,7 +278,7 @@ function hostDnsPreflightSkipped(env: NodeJS.ProcessEnv = process.env): boolean 
 }
 
 // `NEMOCLAW_PROVIDER` keys that resolve to NVIDIA-hosted endpoints
-// (integrate.api.nvidia.com). Mirrors the aliases in
+// (inference-api.nvidia.com). Mirrors the aliases in
 // `onboard/providers.ts::getNonInteractiveProvider`. Local/custom and
 // other hosted providers (ollama, vllm, openai, anthropic, nim-local, …)
 // do not need this host, so the NVIDIA host DNS probe must not gate them.
@@ -286,7 +286,7 @@ const NVIDIA_ENDPOINT_PROVIDER_KEYS = new Set(["build", "cloud", "routed"]);
 
 /**
  * Whether onboarding's effective inference provider is NVIDIA Endpoints,
- * so the `integrate.api.nvidia.com` host DNS probe is relevant.
+ * so the `inference-api.nvidia.com` host DNS probe is relevant.
  *
  * `NEMOCLAW_PROVIDER` is honored only in non-interactive mode (mirroring
  * `getRequestedProviderHint`), where an unset value defaults to NVIDIA

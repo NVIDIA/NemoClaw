@@ -43,7 +43,7 @@ on:
         type: string
         default: ""
       nvidia_api_key:
-        description: Pass the NVIDIA_API_KEY secret to the script.
+        description: Pass the NVIDIA_INFERENCE_API_KEY secret to the script.
         required: false
         type: boolean
         default: false
@@ -63,7 +63,7 @@ on:
         type: boolean
         default: false
     secrets:
-      NVIDIA_API_KEY:
+      NVIDIA_INFERENCE_API_KEY:
         required: false
       BRAVE_API_KEY:
         required: false
@@ -206,7 +206,7 @@ jobs:
         env:
           BRAVE_API_KEY: ${{ inputs.brave_api_key && secrets.BRAVE_API_KEY || '' }}
           GITHUB_TOKEN: ${{ inputs.github_token && github.token || '' }}
-          NVIDIA_API_KEY: ${{ inputs.nvidia_api_key && secrets.NVIDIA_API_KEY || '' }}
+          NVIDIA_INFERENCE_API_KEY: ${{ inputs.nvidia_api_key && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
           TELEGRAM_BOT_TOKEN_REAL: ${{ inputs.messaging_live_secrets && secrets.TELEGRAM_BOT_TOKEN_REAL || '' }}
           TELEGRAM_CHAT_ID_E2E: ${{ inputs.messaging_live_secrets && secrets.TELEGRAM_CHAT_ID_E2E || '' }}
           DISCORD_BOT_TOKEN_REAL: ${{ inputs.messaging_live_secrets && secrets.DISCORD_BOT_TOKEN_REAL || '' }}

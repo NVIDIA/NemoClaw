@@ -102,7 +102,7 @@ describe("valueLooksLikeSecret", () => {
 
   it("does not match benign values", () => {
     expect(valueLooksLikeSecret("npx")).toBe(false);
-    expect(valueLooksLikeSecret("https://integrate.api.nvidia.com/v1")).toBe(false);
+    expect(valueLooksLikeSecret("https://inference-api.nvidia.com/v1")).toBe(false);
     expect(valueLooksLikeSecret("moonshotai/kimi-k2")).toBe(false);
     expect(valueLooksLikeSecret("production")).toBe(false);
   });

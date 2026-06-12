@@ -209,7 +209,7 @@ interface DangerousHostFinding {
   host: string;
 }
 
-const ROUTER_API_BASE_HOST_ALLOWLIST: ReadonlySet<string> = new Set(["integrate.api.nvidia.com"]);
+const ROUTER_API_BASE_HOST_ALLOWLIST: ReadonlySet<string> = new Set(["inference-api.nvidia.com"]);
 
 /**
  * Walk a parsed policy document (full `network_policies` map or a preset

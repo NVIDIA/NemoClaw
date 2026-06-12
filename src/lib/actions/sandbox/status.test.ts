@@ -27,7 +27,7 @@ describe("sandbox status inference health", () => {
           ok: true,
           probed: true,
           providerLabel: "NVIDIA Endpoints",
-          endpoint: "https://integrate.api.nvidia.com/v1/chat/completions",
+          endpoint: "https://inference-api.nvidia.com/v1/chat/completions",
           detail: "healthy",
         };
       },
@@ -184,7 +184,7 @@ describe("maybeGetSandboxStatusInferenceHealth", () => {
           ok: true,
           probed: true,
           providerLabel: "NVIDIA Endpoints",
-          endpoint: "https://integrate.api.nvidia.com/v1/chat/completions",
+          endpoint: "https://inference-api.nvidia.com/v1/chat/completions",
           detail: "healthy",
         };
       },

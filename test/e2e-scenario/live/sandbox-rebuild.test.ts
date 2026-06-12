@@ -48,7 +48,7 @@ function sandboxRebuildEnv(apiKey: string, extra: NodeJS.ProcessEnv = {}): NodeJ
   return {
     ...buildAvailabilityProbeEnv(),
     ...extra,
-    NVIDIA_API_KEY: apiKey,
+    NVIDIA_INFERENCE_API_KEY: apiKey,
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
     NEMOCLAW_NON_INTERACTIVE: "1",
     NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
@@ -86,8 +86,10 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
     stateValidation,
   }) => {
     assertTestOwnedSandboxName();
-    const apiKey = secrets.required("NVIDIA_API_KEY");
-    expect(apiKey.startsWith("nvapi-"), "NVIDIA_API_KEY must start with nvapi-").toBe(true);
+    const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
+    expect(apiKey.startsWith("nvapi-"), "NVIDIA_INFERENCE_API_KEY must start with nvapi-").toBe(
+      true,
+    );
 
     const dockerInfo = await host.command("docker", ["info"], {
       artifactName: "prereq-docker-info",

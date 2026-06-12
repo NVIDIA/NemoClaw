@@ -75,7 +75,7 @@ function routedPongReason(raw: string): "ok" | string {
 function withProviderRoutedEnv(apiKey: string): NodeJS.ProcessEnv {
   return {
     ...buildAvailabilityProbeEnv(),
-    NVIDIA_API_KEY: apiKey,
+    NVIDIA_INFERENCE_API_KEY: apiKey,
     NEMOCLAW_PROVIDER_KEY: apiKey,
     NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
     NEMOCLAW_NON_INTERACTIVE: "1",
@@ -107,8 +107,10 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       skip("Docker is required for provider-routed Model Router onboarding");
     }
 
-    const apiKey = secrets.required("NVIDIA_API_KEY");
-    expect(apiKey.startsWith("nvapi-"), "NVIDIA_API_KEY must start with nvapi-").toBe(true);
+    const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
+    expect(apiKey.startsWith("nvapi-"), "NVIDIA_INFERENCE_API_KEY must start with nvapi-").toBe(
+      true,
+    );
 
     await artifacts.writeJson("scenario.json", {
       id: "model-router-provider-routed-inference",
@@ -117,7 +119,7 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       legacySource: "test/e2e/test-model-router-provider-routed-inference.sh",
       contract: [
         "Docker is available before onboarding",
-        "NVIDIA_API_KEY is present and nvapi-prefixed",
+        "NVIDIA_INFERENCE_API_KEY is present and nvapi-prefixed",
         "nemoclaw onboard --fresh completes with NEMOCLAW_PROVIDER=routed",
         "host model-router health reports at least one healthy endpoint",
         "sandbox inference.local returns model nvidia-routed with PONG content",

@@ -1357,7 +1357,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
       { NEMOCLAW_MODEL: "deepseek-ai/DeepSeek-V4-Flash" },
       { NEMOCLAW_PROVIDER_KEY: "openai" },
       { NEMOCLAW_INFERENCE_API: "responses" },
-      { NEMOCLAW_INFERENCE_BASE_URL: "https://integrate.api.nvidia.com/v1" },
+      { NEMOCLAW_INFERENCE_BASE_URL: "https://inference-api.nvidia.com/v1" },
     ];
 
     for (const envCase of cases) {
@@ -1405,7 +1405,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
       { NEMOCLAW_MODEL: "nvidia/nemotron-3-nano:30b" },
       { NEMOCLAW_PROVIDER_KEY: "nvidia" },
       { NEMOCLAW_INFERENCE_API: "responses" },
-      { NEMOCLAW_INFERENCE_BASE_URL: "https://integrate.api.nvidia.com/v1" },
+      { NEMOCLAW_INFERENCE_BASE_URL: "https://inference-api.nvidia.com/v1" },
     ];
 
     for (const envCase of cases) {

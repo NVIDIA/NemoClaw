@@ -578,7 +578,7 @@ send('inference.local', JSON.stringify({
   model: 'nvidia/nemotron-3-ultra-550b-a55b',
   messages: [{ role: 'user', content: 'hi' }],
 }));
-send('integrate.api.nvidia.com', JSON.stringify({
+send('inference-api.nvidia.com', JSON.stringify({
   model: 'nvidia/nemotron-3-ultra-550b-a55b',
   messages: [{ role: 'user', content: 'hi' }],
 }));

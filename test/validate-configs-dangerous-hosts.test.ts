@@ -59,14 +59,14 @@ describe("findDangerousRouterApiBases", () => {
   it("allows the public NVIDIA Build endpoint", () => {
     expect(
       findDangerousRouterApiBases({
-        models: [{ api_base: "https://integrate.api.nvidia.com/v1" }],
+        models: [{ api_base: "https://inference-api.nvidia.com/v1" }],
       }),
     ).toEqual([]);
-    expect(ROUTER_API_BASE_HOST_ALLOWLIST.has("integrate.api.nvidia.com")).toBe(true);
+    expect(ROUTER_API_BASE_HOST_ALLOWLIST.has("inference-api.nvidia.com")).toBe(true);
   });
 
   it.each([
-    "http://integrate.api.nvidia.com/v1",
+    "http://inference-api.nvidia.com/v1",
     "https://localhost/v1",
     "https://127.0.0.1/v1",
     "https://10.0.0.5/v1",

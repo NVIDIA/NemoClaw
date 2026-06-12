@@ -13,8 +13,8 @@
 #
 # Prerequisites:
 #   - Docker running
-#   - NVIDIA_API_KEY set (real key, starts with nvapi-)
-#   - Network access to integrate.api.nvidia.com
+#   - NVIDIA_INFERENCE_API_KEY set (real key, starts with nvapi-)
+#   - Network access to inference-api.nvidia.com
 #
 # Environment:
 #   NEMOCLAW_NON_INTERACTIVE=1                         — required for non-interactive install
@@ -32,7 +32,7 @@
 #
 # Usage:
 #   NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
-#     NVIDIA_API_KEY=nvapi-... bash test/e2e/test-cloud-onboard-e2e.sh
+#     NVIDIA_INFERENCE_API_KEY=nvapi-... bash test/e2e/test-cloud-onboard-e2e.sh
 
 set -uo pipefail
 
@@ -111,17 +111,17 @@ else
   exit 1
 fi
 
-if [ -n "${NVIDIA_API_KEY:-}" ] && [[ "${NVIDIA_API_KEY}" == nvapi-* ]]; then
-  pass "NVIDIA_API_KEY is set (starts with nvapi-)"
+if [ -n "${NVIDIA_INFERENCE_API_KEY:-}" ] && [[ "${NVIDIA_INFERENCE_API_KEY}" == nvapi-* ]]; then
+  pass "NVIDIA_INFERENCE_API_KEY is set (starts with nvapi-)"
 else
-  fail "NVIDIA_API_KEY not set or invalid — required for cloud onboard"
+  fail "NVIDIA_INFERENCE_API_KEY not set or invalid — required for cloud onboard"
   exit 1
 fi
 
-if curl -sf --max-time 10 https://integrate.api.nvidia.com/v1/models >/dev/null 2>&1; then
-  pass "Network access to integrate.api.nvidia.com"
+if curl -sf --max-time 10 https://inference-api.nvidia.com/v1/models >/dev/null 2>&1; then
+  pass "Network access to inference-api.nvidia.com"
 else
-  fail "Cannot reach integrate.api.nvidia.com"
+  fail "Cannot reach inference-api.nvidia.com"
   exit 1
 fi
 
@@ -275,7 +275,7 @@ fi
 # ══════════════════════════════════════════════════════════════════════
 section "Phase 4: Sandbox checks (Landlock, security, inference.local)"
 
-export SANDBOX_NAME CLOUD_EXPERIMENTAL_MODEL="$CLOUD_MODEL" REPO NVIDIA_API_KEY
+export SANDBOX_NAME CLOUD_EXPERIMENTAL_MODEL="$CLOUD_MODEL" REPO NVIDIA_INFERENCE_API_KEY
 export PATH="/usr/local/bin:${HOME}/.local/bin:${PATH}"
 
 shopt -s nullglob

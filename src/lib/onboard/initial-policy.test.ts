@@ -116,7 +116,7 @@ network_policies:
   nvidia:
     name: nvidia
     endpoints:
-      - host: integrate.api.nvidia.com
+      - host: inference-api.nvidia.com
         port: 443
 `);
     const gpuDoc = YAML.parse(gpuPolicy);

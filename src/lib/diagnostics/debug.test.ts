@@ -17,7 +17,7 @@ import {
 } from "../../../dist/lib/diagnostics/debug";
 
 describe("redact", () => {
-  it("redacts NVIDIA_API_KEY=value patterns", () => {
+  it("redacts NVIDIA_INFERENCE_API_KEY=value patterns", () => {
     const key = ["NVIDIA", "API", "KEY"].join("_");
     expect(redact(`${key}=some-value`)).toBe(`${key}=<REDACTED>`);
   });

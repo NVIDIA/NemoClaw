@@ -10,7 +10,7 @@ describe("renderBox (plugin)", () => {
       [
         "  NemoClaw registered",
         null,
-        "  Endpoint:  https://integrate.api.nvidia.com/v1",
+        "  Endpoint:  https://inference-api.nvidia.com/v1",
         "  Provider:  NVIDIA Endpoints",
         "  Model:     nvidia/nemotron-3-super-120b-a12b",
         "  Slash:     /nemoclaw",

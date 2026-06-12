@@ -218,7 +218,7 @@ describe("validateEndpointUrl", () => {
 
   it("allows NVIDIA API endpoint", async () => {
     mockPublicDns();
-    const url = "https://integrate.api.nvidia.com/v1";
+    const url = "https://inference-api.nvidia.com/v1";
     const result = await validateEndpointUrl(url);
     expect(result.url).toBe(url);
     expect(result.pinnedUrl).toBe("https://93.184.216.34/v1");

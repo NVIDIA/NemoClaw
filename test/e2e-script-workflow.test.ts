@@ -266,7 +266,7 @@ describe("E2E reusable workflow contract", () => {
   it("passes only named secrets to reusable nightly jobs", () => {
     const reusableJobs = reusableNightlyJobs(nightlyWorkflow);
     const defaultSecrets = {
-      NVIDIA_API_KEY: "${{ secrets.NVIDIA_API_KEY }}",
+      NVIDIA_INFERENCE_API_KEY: "${{ secrets.NVIDIA_INFERENCE_API_KEY }}",
       BRAVE_API_KEY: "${{ secrets.BRAVE_API_KEY }}",
       DOCKERHUB_USERNAME:
         "${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_USERNAME || '' }}",
@@ -415,7 +415,7 @@ describe("E2E reusable workflow contract", () => {
     expect(runStep?.run).toContain("npx vitest run --project e2e-scenarios-live");
     expect(runStep?.run).toContain("test/e2e-scenario/live/credential-migration.test.ts");
     expect(runStep?.run).not.toContain("test/e2e/test-credential-migration.sh");
-    expect(runStep?.env?.NVIDIA_API_KEY).toBe("${{ secrets.NVIDIA_API_KEY }}");
+    expect(runStep?.env?.NVIDIA_INFERENCE_API_KEY).toBe("${{ secrets.NVIDIA_INFERENCE_API_KEY }}");
     expect(runStep?.env?.GITHUB_TOKEN).toBeUndefined();
     expect(runStep?.env?.NEMOCLAW_RUN_E2E_SCENARIOS).toBe("1");
     expect(runStep?.env?.NEMOCLAW_SANDBOX_NAME).toBe("e2e-cred-migration");

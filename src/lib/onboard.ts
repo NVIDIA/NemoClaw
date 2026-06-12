@@ -3646,17 +3646,17 @@ async function setupNim(
         hydrateCredentialEnv(credentialEnv);
 
         if (selected.key === "build") {
-          // Allow NEMOCLAW_PROVIDER_KEY as a fallback for NVIDIA_API_KEY.
+          // Allow NEMOCLAW_PROVIDER_KEY as a fallback for NVIDIA_INFERENCE_API_KEY.
           // Check raw process.env first — NEMOCLAW_PROVIDER_KEY is a user-facing
           // override that should take precedence before resolving from credentials.json.
           const _nvProviderKey = (process.env.NEMOCLAW_PROVIDER_KEY || "").trim();
-          // check-direct-credential-env-ignore -- intentional: checking if env is already set before applying NEMOCLAW_PROVIDER_KEY override
-          const existingNvidiaKey = normalizeCredentialValue(process.env.NVIDIA_API_KEY ?? "");
+          const existingNvidiaKey =
+            getCredential("NVIDIA_INFERENCE_API_KEY") || getCredential("NVIDIA_API_KEY") || "";
           if (_nvProviderKey && !existingNvidiaKey) {
-            process.env.NVIDIA_API_KEY = _nvProviderKey;
+            process.env.NVIDIA_INFERENCE_API_KEY = _nvProviderKey;
           }
           if (isNonInteractive()) {
-            const resolvedNvidiaKey = resolveProviderCredential("NVIDIA_API_KEY");
+            const resolvedNvidiaKey = resolveProviderCredential("NVIDIA_INFERENCE_API_KEY");
             if (resolvedNvidiaKey) {
               const keyError = validateNvidiaApiKeyValue(resolvedNvidiaKey);
               if (keyError) {
@@ -4015,7 +4015,8 @@ async function setupNim(
             // answer falls through to startNimContainerByName's warning so
             // we don't double-fail in non-interactive callers.
             ngcApiKey =
-              hydrateCredentialEnv("NGC_API_KEY") || hydrateCredentialEnv("NVIDIA_API_KEY");
+              hydrateCredentialEnv("NGC_API_KEY") ||
+              hydrateCredentialEnv("NVIDIA_INFERENCE_API_KEY");
             if (!ngcApiKey && !isNonInteractive()) {
               console.log("");
               console.log("  NGC API Key required to download NIM model weights at runtime.");

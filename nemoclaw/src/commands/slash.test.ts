@@ -173,7 +173,7 @@ describe("commands/slash", () => {
       ncpPartner: null,
       model: "nvidia/nemotron-3-super-120b-a12b",
       profile: "default",
-      credentialEnv: "NVIDIA_API_KEY",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
       onboardedAt: "2026-03-01T00:00:00.000Z",
     };
 
@@ -309,7 +309,7 @@ describe("commands/slash", () => {
         ncpPartner: null,
         model: "nvidia/nemotron-3-super-120b-a12b",
         profile: "default",
-        credentialEnv: "NVIDIA_API_KEY",
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
         onboardedAt: "2026-03-01T00:00:00.000Z",
       };
       mockedLoadOnboardConfig.mockReturnValue(config);
@@ -319,7 +319,7 @@ describe("commands/slash", () => {
       expect(result.text).toContain("NemoClaw Onboard Status");
       expect(result.text).toContain("NVIDIA Endpoint API");
       expect(result.text).toContain("nvidia/nemotron-3-super-120b-a12b");
-      expect(result.text).toContain("NVIDIA_API_KEY");
+      expect(result.text).toContain("NVIDIA_INFERENCE_API_KEY");
     });
 
     it("includes NCP partner when set", () => {
@@ -329,7 +329,7 @@ describe("commands/slash", () => {
         ncpPartner: "PartnerCo",
         model: "nvidia/nemotron-3-super-120b-a12b",
         profile: "default",
-        credentialEnv: "NVIDIA_API_KEY",
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
         onboardedAt: "2026-03-01T00:00:00.000Z",
       };
       mockedLoadOnboardConfig.mockReturnValue(config);
