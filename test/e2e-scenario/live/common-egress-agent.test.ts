@@ -110,9 +110,13 @@ function parseAgentJsonDocs(raw: string): AgentJsonDoc[] {
     const parsed = JSON.parse(raw) as AgentJsonDoc | AgentJsonDoc[];
     return Array.isArray(parsed) ? parsed : [parsed];
   } catch {
-    // `openclaw agent --json` has emitted both single JSON documents and
-    // log-prefixed streams across versions. Match the permissive decoder shape
-    // used by other migrated live tests instead of assuming one framing.
+    // Invalid state: `openclaw agent --json` has emitted both single JSON
+    // documents and log-prefixed streams across versions. Source boundary:
+    // OpenClaw CLI stdout framing inside the sandbox, outside this NemoClaw
+    // migration. Source-fix constraint: keep this test local and legacy-script
+    // compatible instead of rewriting shared fixtures or patching OpenClaw from
+    // a migration PR. Removal condition: supported OpenClaw versions guarantee
+    // a strict single JSON document with payload text on stdout.
   }
 
   const docs: AgentJsonDoc[] = [];
@@ -604,6 +608,18 @@ test("common-egress agent OpenClaw JSON parser accepts framed agent payloads", (
       JSON.stringify({ payloads: [{ text: "noise" }, { text: "WEATHER_AGENT_OK" }] }),
     ),
   ).toContain("WEATHER_AGENT_OK");
+  expect(
+    parseOpenClawAgentText(
+      JSON.stringify({ result: { payloads: [{ text: "REFERENCE_AGENT_OK" }] } }),
+    ),
+  ).toContain("REFERENCE_AGENT_OK");
+  expect(
+    parseOpenClawAgentText(
+      `openclaw log line\n${JSON.stringify({
+        result: { payloads: [{ text: "HERMES_REFERENCE_AGENT_OK" }] },
+      })}\n`,
+    ),
+  ).toContain("HERMES_REFERENCE_AGENT_OK");
 });
 
 test("common-egress agent Hermes response parser reads message content", () => {
