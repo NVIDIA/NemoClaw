@@ -707,6 +707,41 @@ jobs:
     }
   });
 
+  it("rejects Docker Hub auth in the messaging-compatible-endpoint job", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-vitest-workflow-"));
+    const workflowPath = path.join(tmp, "workflow.yaml");
+    const workflow = readWorkflow() as {
+      jobs: Record<string, { steps: Array<Record<string, unknown>> }>;
+    };
+    const steps = workflow.jobs["messaging-compatible-endpoint-vitest"]?.steps;
+    expect(steps).toEqual(expect.any(Array));
+    const setupNodeIndex = steps.findIndex((step) => step.name === "Set up Node");
+    expect(setupNodeIndex).toBeGreaterThan(0);
+    steps.splice(setupNodeIndex, 0, {
+      name: "Authenticate to Docker Hub",
+      env: {
+        DOCKERHUB_USERNAME: "${{ secrets.DOCKERHUB_USERNAME }}",
+        DOCKERHUB_TOKEN: "${{ secrets.DOCKERHUB_TOKEN }}",
+      },
+      run: "docker login docker.io --username user --password ${{ secrets.DOCKERHUB_TOKEN }}",
+    });
+    fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+    try {
+      const errors = validateE2eVitestScenariosWorkflowBoundary(workflowPath);
+      expect(errors).toEqual(
+        expect.arrayContaining([
+          "messaging-compatible-endpoint-vitest must not authenticate to Docker Hub before branch-controlled test code runs",
+          "messaging-compatible-endpoint-vitest step 'Authenticate to Docker Hub' env must not include DOCKERHUB_USERNAME",
+          "messaging-compatible-endpoint-vitest step 'Authenticate to Docker Hub' env must not include DOCKERHUB_TOKEN",
+          "messaging-compatible-endpoint-vitest step 'Authenticate to Docker Hub' run script must not use docker login or inline secret interpolation",
+        ]),
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("rejects Docker Hub auth and inline secrets in runtime-overrides run steps", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-vitest-workflow-"));
     const workflowPath = path.join(tmp, "workflow.yaml");

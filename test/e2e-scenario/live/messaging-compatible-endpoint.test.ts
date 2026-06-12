@@ -54,6 +54,12 @@ const HOP_BY_HOP_HEADERS = new Set([
 ]);
 const RATE_LIMIT_VALIDATION_RE =
   /HTTP\s+429|returned\s+HTTP\s+429|\b429\b|too many requests|rate[- ]?limit|quota/i;
+const DEFAULT_NVIDIA_PROVIDER_VALIDATION_RE = /NVIDIA Endpoints endpoint validation failed/i;
+const COMPATIBLE_ENDPOINT_VALIDATION_RE =
+  /Other OpenAI-compatible endpoint endpoint validation failed|Chat Completions API validation/i;
+const COMPAT_AGENT_REPLY = "COMPAT_MOCK_ROUTE_5098_OK";
+const COMPAT_AGENT_PROMPT =
+  "Call the configured model and report the compatible endpoint route token.";
 
 interface MockRequestLog {
   method: string;
@@ -201,7 +207,7 @@ async function startCompatibleMock(
           {
             type: "message",
             role: "assistant",
-            content: [{ type: "output_text", text: "PONG from compatible endpoint mock" }],
+            content: [{ type: "output_text", text: COMPAT_AGENT_REPLY }],
           },
         ],
       });
@@ -229,7 +235,7 @@ async function startCompatibleMock(
           choices: [
             {
               index: 0,
-              delta: { role: "assistant", content: "PONG from compatible endpoint mock" },
+              delta: { role: "assistant", content: COMPAT_AGENT_REPLY },
               finish_reason: null,
             },
           ],
@@ -248,7 +254,7 @@ async function startCompatibleMock(
         choices: [
           {
             index: 0,
-            message: { role: "assistant", content: "PONG from compatible endpoint mock" },
+            message: { role: "assistant", content: COMPAT_AGENT_REPLY },
             finish_reason: "stop",
           },
         ],
@@ -429,9 +435,12 @@ function shouldSkipPreContractProviderRateLimit(
   result: Pick<ShellProbeResult, "stdout" | "stderr">,
   requests: readonly MockRequestLog[] = [],
 ): boolean {
+  const text = resultText(result);
   return (
+    COMPATIBLE_ENDPOINT_VALIDATION_RE.test(text) &&
+    !DEFAULT_NVIDIA_PROVIDER_VALIDATION_RE.test(text) &&
     isTransientProviderValidationFailure(result) &&
-    RATE_LIMIT_VALIDATION_RE.test(resultText(result)) &&
+    RATE_LIMIT_VALIDATION_RE.test(text) &&
     !hasLegacyCompatibleEndpointEvidence(result, requests)
   );
 }
@@ -761,7 +770,7 @@ async function assertOpenClawAgentTurn(
       "--session-id",
       sessionId,
       "-m",
-      "Reply with only: PONG",
+      COMPAT_AGENT_PROMPT,
     ],
     {
       artifactName: "openclaw-agent-compatible-endpoint",
@@ -777,7 +786,7 @@ async function assertOpenClawAgentTurn(
     text.slice(0, 500),
   ).toBe(false);
   expect(agent.exitCode, text.slice(0, 500)).toBe(0);
-  expect(parseOpenClawAgentText(agent.stdout), text.slice(0, 500)).toMatch(/PONG/i);
+  expect(parseOpenClawAgentText(agent.stdout), text.slice(0, 500)).toContain(COMPAT_AGENT_REPLY);
 
   const newHopHeaderLogs = compatibleMock.hopHeaderLogs.slice(hopCountBefore);
   expect(
@@ -805,7 +814,14 @@ describe("messaging-compatible-endpoint live test local classifiers", () => {
       shouldSkipPreContractProviderRateLimit(
         output("NVIDIA Endpoints endpoint validation failed.\nRequest rate limit exceeded"),
       ),
-    ).toBe(true);
+    ).toBe(false);
+    expect(
+      shouldSkipPreContractProviderRateLimit(
+        output(
+          "NVIDIA Endpoints endpoint validation failed.\nChat Completions API validation returned HTTP 429",
+        ),
+      ),
+    ).toBe(false);
     expect(
       shouldSkipPreContractProviderRateLimit(
         output("Other OpenAI-compatible endpoint endpoint validation failed: invalid credential"),
@@ -828,6 +844,16 @@ describe("messaging-compatible-endpoint live test local classifiers", () => {
         },
       ]),
     ).toBe(false);
+  });
+
+  it("does not satisfy the agent reply assertion with echoed prompt text", () => {
+    expect(COMPAT_AGENT_PROMPT).not.toContain(COMPAT_AGENT_REPLY);
+    expect(
+      parseOpenClawAgentText(JSON.stringify({ result: { content: COMPAT_AGENT_PROMPT } })),
+    ).not.toContain(COMPAT_AGENT_REPLY);
+    expect(
+      parseOpenClawAgentText(JSON.stringify({ result: { content: COMPAT_AGENT_REPLY } })),
+    ).toContain(COMPAT_AGENT_REPLY);
   });
 });
 
@@ -854,6 +880,10 @@ liveTest(
       runner: "vitest",
       boundary: "direct-cli-onboard-openshell-compatible-endpoint",
       legacySource: "test/e2e/test-messaging-compatible-endpoint.sh",
+      legacyRetirement: {
+        shellDeletion: "deferred to #5098 Phase 11 cleanup",
+        nightlyShellWiring: "deferred to #5098 Phase 11 cleanup",
+      },
       refs: ["#2766", "#2572", "#5098"],
       contract: [
         "local OpenAI-compatible mock endpoint starts and is reachable",
@@ -904,6 +934,8 @@ liveTest(
         onboardArtifacts: onboard.artifacts,
         mockRequestsBeforeSkip: compatibleMock.requests.length,
         sourceBoundary: "external provider endpoint validation outside the repo",
+        sourceFixConstraint:
+          "skip is limited to compatible/custom endpoint validation evidence; NVIDIA/default provider validation remains a test failure",
         removalCondition:
           "remove once CI endpoint validation is stable for a release cycle or covered by a hermetic provider-validation fixture",
       });
@@ -951,6 +983,10 @@ liveTest(
       id: "messaging-compatible-endpoint",
       runner,
       endpointUrl,
+      legacyRetirement: {
+        shellDeletion: "deferred to #5098 Phase 11 cleanup",
+        nightlyShellWiring: "deferred to #5098 Phase 11 cleanup",
+      },
       assertions: {
         dockerRunning: docker.exitCode === 0,
         mockReachable: hostReachability.exitCode === 0,

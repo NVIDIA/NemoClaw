@@ -1214,18 +1214,53 @@ function validateMessagingCompatibleEndpointVitestJob(
     jobEnv,
     "NVIDIA_API_KEY",
   );
+  requireEnvDoesNotExposeSecret(
+    errors,
+    "messaging-compatible-endpoint-vitest job",
+    jobEnv,
+    "DOCKERHUB_USERNAME",
+  );
+  requireEnvDoesNotExposeSecret(
+    errors,
+    "messaging-compatible-endpoint-vitest job",
+    jobEnv,
+    "DOCKERHUB_TOKEN",
+  );
 
   const steps = asSteps(job.steps);
   requireNoDispatchInputInterpolation(errors, steps);
   for (const step of steps) {
-    if (step.name !== "Run messaging compatible endpoint live test") {
-      requireEnvDoesNotExposeSecret(
-        errors,
-        `messaging-compatible-endpoint-vitest step '${step.name ?? step.uses ?? "<unnamed>"}'`,
-        asRecord(step.env),
-        "NVIDIA_API_KEY",
-      );
-    }
+    const stepName = step.name ?? step.uses ?? "<unnamed>";
+    const stepEnv = asRecord(step.env);
+    requireEnvDoesNotExposeSecret(
+      errors,
+      `messaging-compatible-endpoint-vitest step '${stepName}'`,
+      stepEnv,
+      "NVIDIA_API_KEY",
+    );
+    requireEnvDoesNotExposeSecret(
+      errors,
+      `messaging-compatible-endpoint-vitest step '${stepName}'`,
+      stepEnv,
+      "DOCKERHUB_USERNAME",
+    );
+    requireEnvDoesNotExposeSecret(
+      errors,
+      `messaging-compatible-endpoint-vitest step '${stepName}'`,
+      stepEnv,
+      "DOCKERHUB_TOKEN",
+    );
+    requireNoDockerHubAuthInRun(
+      errors,
+      `messaging-compatible-endpoint-vitest step '${stepName}'`,
+      stringValue(step.run),
+    );
+  }
+
+  if (namedStep(steps, "Authenticate to Docker Hub")) {
+    errors.push(
+      "messaging-compatible-endpoint-vitest must not authenticate to Docker Hub before branch-controlled test code runs",
+    );
   }
 
   const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
@@ -1234,20 +1269,6 @@ function validateMessagingCompatibleEndpointVitestJob(
   if (asRecord(checkout?.with)["persist-credentials"] !== false) {
     errors.push("messaging-compatible-endpoint-vitest checkout step must set persist-credentials=false");
   }
-
-  const dockerHubAuth = requireJobStep(errors, jobName, steps, "Authenticate to Docker Hub");
-  const dockerHubEnv = asRecord(dockerHubAuth?.env);
-  if (dockerHubEnv.DOCKERHUB_USERNAME !== "${{ secrets.DOCKERHUB_USERNAME }}") {
-    errors.push(
-      "messaging-compatible-endpoint-vitest Docker Hub auth must receive DOCKERHUB_USERNAME from secrets",
-    );
-  }
-  if (dockerHubEnv.DOCKERHUB_TOKEN !== "${{ secrets.DOCKERHUB_TOKEN }}") {
-    errors.push(
-      "messaging-compatible-endpoint-vitest Docker Hub auth must receive DOCKERHUB_TOKEN from secrets",
-    );
-  }
-  requireRunContains(errors, dockerHubAuth, "docker login docker.io");
 
   const setupNode = namedStep(steps, "Set up Node");
   if (!setupNode) errors.push("messaging-compatible-endpoint-vitest job missing step: Set up Node");
