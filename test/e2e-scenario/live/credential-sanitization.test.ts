@@ -266,15 +266,15 @@ async function assertSandboxCredentialBoundary(
     [
       "sh",
       "-lc",
-      String.raw`for dir in /sandbox/.openclaw /sandbox/.nemoclaw; do
-  [ -d "$dir" ] || continue
-  grep -rE 'nvapi-|ghp_|npm_' "$dir" 2>/dev/null \
-    | grep -v 'STRIPPED' \
-    | grep -v '/policies/' \
-    | grep -v '/plugin-runtime-deps/' \
-    | grep -Ev '/extensions/[^/]+/(dist|node_modules)/' \
-    | head -5 || true
-done`,
+      "for dir in /sandbox/.openclaw /sandbox/.nemoclaw; do " +
+        '[ -d "$dir" ] || continue; ' +
+        "grep -rE 'nvapi-|ghp_|npm_' \"$dir\" 2>/dev/null " +
+        "| grep -v 'STRIPPED' " +
+        "| grep -v '/policies/' " +
+        "| grep -v '/plugin-runtime-deps/' " +
+        "| grep -Ev '/extensions/[^/]+/(dist|node_modules)/' " +
+        "| head -5 || true; " +
+        "done",
     ],
     {
       artifactName: "sandbox-secret-pattern-probe-credential-sanitization",
