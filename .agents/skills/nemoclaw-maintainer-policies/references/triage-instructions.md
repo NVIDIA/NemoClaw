@@ -16,6 +16,7 @@ These instructions are for agents and skills that evaluate NemoClaw issues and P
 - Project Status is a Project field, not a label. Valid values include `No Status`, `Backlog`, `In Progress`, `Blocked`, `Needs Review`, `NV QA`, `Done`, `Won't Fix`, and `Duplicate`.
 - Set `human_review_required: true` when the proposed write is outside the current authorization context, has elevated risk, or needs maintainer judgment before execution.
 - Normal initial triage should not add inbox or placeholder labels such as `needs: triage`. Use `questions_for_author` without a `needs:*` label when a question is useful but the item is still actionable.
+- Never recommend `PRR` during triage. `PRR` is a reserved Product Readiness Review label that maintainers or dedicated PRR workflows apply outside normal triage.
 
 ## Issue Flow
 
@@ -192,3 +193,4 @@ Recommendation:
 - Do not add `priority: high`; recommend Project Priority instead.
 - Do not treat an issue `v0.0.x` label as release inclusion; PR labels own daily release activation.
 - Do not add `needs: review`; use Project Status `Needs Review` for review-ready PRs.
+- Do not add `PRR`; it is reserved and must never be suggested by triage instructions.
