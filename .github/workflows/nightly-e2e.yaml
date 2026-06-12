@@ -2594,7 +2594,7 @@ jobs:
   # ── Nightly Scorecard ──────────────────────────────────────────────────
   # Aggregates results into a scorecard published to $GITHUB_STEP_SUMMARY
   # and optionally to Slack. Computes pass/fail/cancel breakdowns and
-  # compares trends vs prior day. Runs on:
+  # cloud-onboard trace timing vs the latest prior-release run. Runs on:
   #   - schedule (cron)            → Slack post (DAILY route)
   #   - workflow_dispatch full run → Slack post (FULLRUN route)
   #   - workflow_dispatch selective→ silent unless post_to_slack=true (preview)

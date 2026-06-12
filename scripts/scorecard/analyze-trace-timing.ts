@@ -131,16 +131,16 @@ function traceTimingResult(
   return { traceTimingLine, traceSummaryLines };
 }
 
-function isPhaseDurationRecord(value: unknown): value is Record<string, number> {
-  return (
-    value !== null &&
-    typeof value === "object" &&
-    !Array.isArray(value) &&
-    Object.entries(value).every(
-      ([name, entry]) =>
-        ONBOARD_PHASE_NAMES.has(name) && Number.isFinite(Number(entry)) && Number(entry) >= 0,
-    )
-  );
+function normalizePhaseDurations(value: unknown): Record<string, number> | null {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
+  const phases: Record<string, number> = {};
+  for (const [name, entry] of Object.entries(value)) {
+    if (!ONBOARD_PHASE_NAMES.has(name)) continue;
+    const durationMs = Number(entry);
+    if (!Number.isFinite(durationMs) || durationMs < 0) return null;
+    phases[name] = durationMs;
+  }
+  return phases;
 }
 
 function selectOnboardTrace(jsonTexts: string[]): OnboardTraceSummary | null {
@@ -149,13 +149,14 @@ function selectOnboardTrace(jsonTexts: string[]): OnboardTraceSummary | null {
     try {
       const artifact = JSON.parse(text) as TimingSummaryArtifact;
       const totalMs = Number(artifact?.total_duration_ms);
+      const phases = normalizePhaseDurations(artifact.phases);
       if (
         artifact?.schema_version === "nemoclaw.trace_timing.v1" &&
         Number.isFinite(totalMs) &&
         totalMs >= 0 &&
-        isPhaseDurationRecord(artifact.phases)
+        phases !== null
       ) {
-        candidates.push({ artifact, totalMs, phases: artifact.phases });
+        candidates.push({ artifact, totalMs, phases });
       }
     } catch {
       // The trusted sanitizer emits a single timing-summary JSON file; keep

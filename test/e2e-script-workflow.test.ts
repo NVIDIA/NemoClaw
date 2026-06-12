@@ -1,8 +1,19 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
@@ -21,8 +32,8 @@ type TraceTimingAnalyzer = {
     priorPhases: Record<string, number>,
   ) => Array<{ label: string; currentMs: number; priorMs: number; deltaAbsMs: number }>;
   buildTraceTimingResult: (deps: {
-    context: { repo: { owner: string; repo: string }; runId: number };
-    github: { paginate: () => Promise<unknown> };
+    context: Record<string, any>;
+    github: Record<string, any>;
   }) => Promise<{ traceTimingLine: string; traceSummaryLines: string[] }>;
   formatTopPhaseChanges: (
     phaseRows: Array<{ label: string; currentMs: number; priorMs: number; deltaAbsMs: number }>,
@@ -40,6 +51,89 @@ type TraceTimingAnalyzer = {
 
 const require = createRequire(import.meta.url);
 const traceTiming = require("../scripts/scorecard/analyze-trace-timing.ts") as TraceTimingAnalyzer;
+
+const TRACE_SUMMARY_FILE = "cloud-onboard-trace-timing-summary.json";
+
+function timingSummary(
+  phases: Record<string, number> = { "nemoclaw.onboard.phase.preflight": 1000 },
+): string {
+  return JSON.stringify({
+    schema_version: "nemoclaw.trace_timing.v1",
+    total_duration_ms: Object.values(phases).reduce((total, value) => total + value, 0) || 1000,
+    phases,
+  });
+}
+
+function zippedTimingSummary(text: string): Buffer {
+  const tempDir = mkdtempSync(path.join(tmpdir(), "nemoclaw-trace-summary-zip-"));
+  try {
+    writeFileSync(path.join(tempDir, TRACE_SUMMARY_FILE), text, "utf8");
+    execFileSync(
+      "python3",
+      [
+        "-c",
+        "import sys, zipfile; z=zipfile.ZipFile(sys.argv[1], 'w'); z.write(sys.argv[2], sys.argv[3]); z.close()",
+        path.join(tempDir, "artifact.zip"),
+        path.join(tempDir, TRACE_SUMMARY_FILE),
+        TRACE_SUMMARY_FILE,
+      ],
+      { encoding: "utf8" },
+    );
+    return readFileSync(path.join(tempDir, "artifact.zip"));
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
+function traceGithubFixture(options: {
+  summariesByRunId?: Record<number, string>;
+  tags?: Array<{ name: string; sha: string }>;
+  runsByHeadSha?: Record<string, Array<{ id: number; status: string }>>;
+}) {
+  const artifactIdsByRunId = new Map<number, number>();
+  const artifactDataById = new Map<number, Buffer>();
+  let nextArtifactId = 100;
+  for (const [runIdText, summary] of Object.entries(options.summariesByRunId ?? {})) {
+    const runId = Number(runIdText);
+    const artifactId = nextArtifactId++;
+    artifactIdsByRunId.set(runId, artifactId);
+    artifactDataById.set(artifactId, zippedTimingSummary(summary));
+  }
+
+  const github: any = {
+    rest: {
+      actions: {
+        listWorkflowRunArtifacts: Symbol("listWorkflowRunArtifacts"),
+        listWorkflowRuns: Symbol("listWorkflowRuns"),
+        downloadArtifact: async ({ artifact_id }: { artifact_id: number }) => ({
+          data: artifactDataById.get(artifact_id) ?? Buffer.alloc(0),
+        }),
+      },
+      repos: {
+        listTags: Symbol("listTags"),
+      },
+    },
+    paginate: async (endpoint: symbol, args: Record<string, any>) => {
+      if (endpoint === github.rest.actions.listWorkflowRunArtifacts) {
+        const artifactId = artifactIdsByRunId.get(Number(args.run_id));
+        return artifactId === undefined ? [] : [{ id: artifactId, name: "cloud-onboard-traces" }];
+      }
+      if (endpoint === github.rest.repos.listTags) {
+        return (options.tags ?? []).map((tag) => ({
+          name: tag.name,
+          commit: { sha: tag.sha },
+        }));
+      }
+      throw new Error(`Unexpected paginate endpoint: ${String(endpoint)}`);
+    },
+  };
+
+  github.rest.actions.listWorkflowRuns = async ({ head_sha }: { head_sha: string }) => ({
+    data: { workflow_runs: options.runsByHeadSha?.[head_sha] ?? [] },
+  });
+
+  return github;
+}
 
 // Direct legacy bash E2Es are being migrated toward Vitest coverage. Keep the
 // top-level shell suite frozen so new coverage starts in the newer E2E surface
@@ -551,12 +645,18 @@ describe("E2E reusable workflow contract", () => {
     expect(sanitizeStep?.env?.E2E_TRACE_SOURCE_PATH).toBe(
       "${{ inputs.always-artifact-trace-source-path }}",
     );
-    expect(sanitizeStep?.env?.E2E_TRACE_SUMMARY_DIR).toBe("${{ inputs.always-artifact-path }}");
+    expect(sanitizeStep?.env?.E2E_TRACE_SUMMARY_DIR).toBeUndefined();
+    expect(sanitizeStep?.run).toContain('trusted_summary_dir="$(mktemp -d');
+    expect(sanitizeStep?.run).toContain('find "$trusted_summary_dir" -mindepth 1');
+    expect(sanitizeStep?.run).toContain("summary-file=%s");
     expect(workflowActionCheckout?.with?.["sparse-checkout"]).toContain(
       ".github/actions/run-e2e-script",
     );
     expect(alwaysUploadStep?.if).toBe(
       "always() && inputs.always-artifact-name != '' && inputs.always-artifact-path != '' && inputs.always-artifact-trace-source-path != '' && steps.sanitize-trace-artifacts.outcome == 'success'",
+    );
+    expect(alwaysUploadStep?.with?.path).toBe(
+      "${{ steps.sanitize-trace-artifacts.outputs.summary-file }}",
     );
     expect(cloudOnboardJob.with?.always_artifact_name).toBe("cloud-onboard-traces");
     expect(cloudOnboardJob.with?.always_artifact_path).toBe("/tmp/nemoclaw-trace-summary/");
@@ -616,6 +716,7 @@ describe("E2E reusable workflow contract", () => {
       schema_version: "nemoclaw.trace_timing.v1",
       total_duration_ms: 1000,
       phases: {
+        "nemoclaw.onboard.phase.preflight": 500,
         "nemoclaw.onboard.phase.future": 500,
       },
     });
@@ -636,7 +737,10 @@ describe("E2E reusable workflow contract", () => {
       "nemoclaw.onboard.phase.sandbox",
     ]);
     expect(traceTiming.selectOnboardTrace([goodSummary])?.totalMs).toBe(1000);
-    expect(traceTiming.selectOnboardTrace([unknownPhaseSummary])).toBeNull();
+    expect(traceTiming.selectOnboardTrace([unknownPhaseSummary])).toMatchObject({
+      totalMs: 1000,
+      phases: { "nemoclaw.onboard.phase.preflight": 500 },
+    });
     expect(traceTiming.selectOnboardTrace([negativeDurationSummary])).toBeNull();
   });
 
@@ -652,6 +756,91 @@ describe("E2E reusable workflow contract", () => {
 
     expect(result.traceTimingLine).toBe("Trace: ⊘ comparison unavailable");
     expect(result.traceTimingLine).not.toContain("secret");
+  });
+
+  it("covers trace timing fallback branches with mocked GitHub data", async () => {
+    const context = {
+      repo: { owner: "NVIDIA", repo: "NemoClaw" },
+      runId: 1,
+      ref: "refs/heads/main",
+    };
+
+    await expect(
+      traceTiming.buildTraceTimingResult({
+        context,
+        github: traceGithubFixture({}),
+      }),
+    ).resolves.toMatchObject({
+      traceTimingLine: "Trace: ⊘ cloud-onboard-traces artifact not found for this run",
+    });
+
+    await expect(
+      traceTiming.buildTraceTimingResult({
+        context,
+        github: traceGithubFixture({ summariesByRunId: { 1: timingSummary() } }),
+      }),
+    ).resolves.toMatchObject({
+      traceTimingLine: "Trace: cloud-onboard total 1.0s (no prior release tag found)",
+    });
+
+    await expect(
+      traceTiming.buildTraceTimingResult({
+        context,
+        github: traceGithubFixture({
+          summariesByRunId: { 1: timingSummary() },
+          tags: [{ name: "v0.0.1", sha: "prior-sha" }],
+        }),
+      }),
+    ).resolves.toMatchObject({
+      traceTimingLine: "Trace: cloud-onboard total 1.0s (no nightly-e2e run found for v0.0.1)",
+    });
+
+    await expect(
+      traceTiming.buildTraceTimingResult({
+        context,
+        github: traceGithubFixture({
+          summariesByRunId: { 1: timingSummary() },
+          tags: [{ name: "v0.0.1", sha: "prior-sha" }],
+          runsByHeadSha: { "prior-sha": [{ id: 2, status: "completed" }] },
+        }),
+      }),
+    ).resolves.toMatchObject({
+      traceTimingLine:
+        "Trace: cloud-onboard total 1.0s (no cloud-onboard-traces artifact found for v0.0.1)",
+    });
+
+    await expect(
+      traceTiming.buildTraceTimingResult({
+        context,
+        github: traceGithubFixture({
+          summariesByRunId: { 1: timingSummary(), 2: "{not-json" },
+          tags: [{ name: "v0.0.1", sha: "prior-sha" }],
+          runsByHeadSha: { "prior-sha": [{ id: 2, status: "completed" }] },
+        }),
+      }),
+    ).resolves.toMatchObject({
+      traceTimingLine:
+        "Trace: cloud-onboard total 1.0s (no cloud-onboard-traces artifact found for v0.0.1)",
+    });
+  });
+
+  it("keeps total trace comparison when phase names do not overlap", async () => {
+    const result = await traceTiming.buildTraceTimingResult({
+      context: { repo: { owner: "NVIDIA", repo: "NemoClaw" }, runId: 1 },
+      github: traceGithubFixture({
+        summariesByRunId: {
+          1: timingSummary({ "nemoclaw.onboard.phase.preflight": 1000 }),
+          2: timingSummary({ "nemoclaw.onboard.phase.gateway": 2000 }),
+        },
+        tags: [{ name: "v0.0.1", sha: "prior-sha" }],
+        runsByHeadSha: { "prior-sha": [{ id: 2, status: "completed" }] },
+      }),
+    });
+
+    expect(result.traceTimingLine).toBe(
+      "Trace: cloud-onboard total 1.0s, decreased -1.0s (-50.0%) vs v0.0.1.",
+    );
+    expect(result.traceSummaryLines).toEqual([]);
   });
 
   it("keeps env_json valid and aligned with target-ref installs", () => {

@@ -38,7 +38,7 @@ on:
         type: string
         default: ""
       always_artifact_path:
-        description: Optional trusted trace summary directory to upload after every script run.
+        description: Optional legacy trace summary path; trusted code writes uploads to RUNNER_TEMP.
         required: false
         type: string
         default: ""

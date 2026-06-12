@@ -53,6 +53,21 @@ function runSanitizer(source: string, output: string): void {
   execFileSync("python3", [SANITIZER, source, output], { encoding: "utf8" });
 }
 
+function runSanitizerRaw(source: string, output: string): { status: number; stderr: string } {
+  try {
+    execFileSync("python3", [SANITIZER, source, output], { encoding: "utf8", stdio: "pipe" });
+    return { status: 0, stderr: "" };
+  } catch (error) {
+    const failure = error as { status?: number; stderr?: Buffer | string };
+    return {
+      status: failure.status ?? 1,
+      stderr: Buffer.isBuffer(failure.stderr)
+        ? failure.stderr.toString("utf8")
+        : String(failure.stderr ?? ""),
+    };
+  }
+}
+
 describe("run-e2e-script trace artifact sanitizer", () => {
   it("writes only trusted timing fields and ignores target-controlled arbitrary files", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-trace-sanitize-"));
@@ -137,5 +152,21 @@ describe("run-e2e-script trace artifact sanitizer", () => {
     expect(fs.statSync(output).isDirectory()).toBe(true);
     expect(fs.existsSync(path.join(targetControlled, "raw-secret.txt"))).toBe(true);
     expect(fs.readdirSync(output)).toEqual(["cloud-onboard-trace-timing-summary.json"]);
+  });
+
+  it("rejects a symlinked trace source before resolving it", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-trace-source-symlink-"));
+    const sourceTarget = path.join(tmp, "raw-target");
+    const sourceLink = path.join(tmp, "raw-link");
+    const output = path.join(tmp, "summary");
+    fs.mkdirSync(sourceTarget);
+    fs.writeFileSync(path.join(sourceTarget, "trace.json"), JSON.stringify(makeTrace()), "utf8");
+    fs.symlinkSync(sourceTarget, sourceLink, "dir");
+
+    const result = runSanitizerRaw(sourceLink, output);
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("trace source must not be a symlink");
+    expect(fs.existsSync(output)).toBe(false);
   });
 });

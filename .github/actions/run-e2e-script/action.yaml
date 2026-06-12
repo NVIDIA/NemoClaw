@@ -26,7 +26,7 @@ inputs:
     required: false
     default: ""
   always-artifact-path:
-    description: Optional trusted trace summary directory to upload after every script run.
+    description: Optional legacy trace summary path; trusted code writes uploads to RUNNER_TEMP.
     required: false
     default: ""
   always-artifact-trace-source-path:
@@ -82,17 +82,36 @@ runs:
       working-directory: ${{ inputs.working-directory }}
       env:
         E2E_TRACE_SOURCE_PATH: ${{ inputs.always-artifact-trace-source-path }}
-        E2E_TRACE_SUMMARY_DIR: ${{ inputs.always-artifact-path }}
       run: |
         set -euo pipefail
+        trusted_summary_dir="$(mktemp -d "${RUNNER_TEMP:-/tmp}/nemoclaw-trace-summary.XXXXXX")"
         python3 "$GITHUB_ACTION_PATH/sanitize-trace-artifacts.py" \
           "$E2E_TRACE_SOURCE_PATH" \
-          "$E2E_TRACE_SUMMARY_DIR"
+          "$trusted_summary_dir"
+
+        summary_file="$trusted_summary_dir/cloud-onboard-trace-timing-summary.json"
+        if [ -e "$summary_file" ]; then
+          if [ -L "$summary_file" ] || [ ! -f "$summary_file" ]; then
+            echo "::error::Sanitized trace summary must be a regular file: $summary_file" >&2
+            exit 1
+          fi
+
+          unexpected="$(
+            find "$trusted_summary_dir" -mindepth 1 -maxdepth 1 \
+              ! -name cloud-onboard-trace-timing-summary.json -print -quit
+          )"
+          if [ -n "$unexpected" ]; then
+            echo "::error::Unexpected file in trusted trace summary directory: $unexpected" >&2
+            exit 1
+          fi
+        fi
+
+        printf 'summary-file=%s\n' "$summary_file" >> "$GITHUB_OUTPUT"
 
     - name: Upload E2E artifacts
       if: always() && inputs.always-artifact-name != '' && inputs.always-artifact-path != '' && inputs.always-artifact-trace-source-path != '' && steps.sanitize-trace-artifacts.outcome == 'success'
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
         name: ${{ inputs.always-artifact-name }}
-        path: ${{ inputs.always-artifact-path }}
+        path: ${{ steps.sanitize-trace-artifacts.outputs.summary-file }}
         if-no-files-found: warn

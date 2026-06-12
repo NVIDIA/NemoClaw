@@ -153,7 +153,12 @@ def main(argv: list[str]) -> int:
         print("usage: sanitize-trace-artifacts.py <source-file-or-dir> <output-dir>", file=sys.stderr)
         return 2
 
-    source = Path(argv[1]).resolve()
+    source_input = Path(argv[1]).absolute()
+    if source_input.is_symlink():
+        print("trace source must not be a symlink", file=sys.stderr)
+        return 2
+
+    source = source_input.resolve(strict=False)
     output_dir = Path(argv[2]).absolute()
     if source == output_dir.resolve(strict=False):
         print("trace source and trusted output directory must be distinct", file=sys.stderr)
