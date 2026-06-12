@@ -37,6 +37,10 @@ export default defineConfig({
             "**/node_modules/**",
             "**/.claude/**",
             "test/e2e/**",
+            // Live scenario tests own their own gated project (e2e-scenarios-live)
+            // and require Docker + a real onboard to pass. Excluding here keeps
+            // the cli project (and pre-commit `Test (cli)`) green locally.
+            "test/e2e-scenario/live/**",
             "test/install-preflight.test.ts",
             "test/install-preflight-docker-bootstrap.test.ts",
             "test/install-openshell-version-check.test.ts",

@@ -10,6 +10,7 @@ import type {
   SandboxMessagingChannelPlan,
   SandboxMessagingPlan,
 } from "../manifest";
+import type { RenderTemplateReferenceResolver } from "./engines/template";
 import { ManifestCompiler } from "./manifest-compiler";
 import type { ManifestCompilerContext, MessagingCompilerCredentialAvailability } from "./types";
 
@@ -30,8 +31,9 @@ export class MessagingWorkflowPlanner {
   constructor(
     private readonly registry: ChannelManifestRegistry,
     hooks = new MessagingHookRegistry(),
+    renderTemplateResolver?: RenderTemplateReferenceResolver,
   ) {
-    this.compiler = new ManifestCompiler(registry, hooks);
+    this.compiler = new ManifestCompiler(registry, hooks, renderTemplateResolver);
   }
 
   async buildPlan(context: MessagingWorkflowPlannerBuildContext): Promise<SandboxMessagingPlan> {
@@ -98,12 +100,14 @@ export class MessagingWorkflowPlanner {
     context: MessagingWorkflowPlannerSandboxRebuildContext,
   ): Promise<SandboxMessagingPlan | null> {
     const existingPlan = readSandboxEntryPlan(context);
-    if (!existingPlan) return null;
-    return setPlanDisabledChannels(
-      existingPlan,
-      disabledChannelsFromSandboxEntry(context.sandboxEntry, existingPlan),
-      "rebuild",
-    );
+    if (existingPlan) {
+      return setPlanDisabledChannels(
+        existingPlan,
+        disabledChannelsFromSandboxEntry(context.sandboxEntry, existingPlan),
+        "rebuild",
+      );
+    }
+    return null;
   }
 
   private assertSupportedChannels(
@@ -163,9 +167,9 @@ export class MessagingWorkflowPlanner {
         );
         if (!binding?.credentialAvailable) continue;
         availability[credential.sourceInput] = true;
-        availability[`${manifest.id}.${credential.sourceInput}`] = true;
+        availability[manifest.id + "." + credential.sourceInput] = true;
         availability[credential.id] = true;
-        availability[`${manifest.id}.${credential.id}`] = true;
+        availability[manifest.id + "." + credential.id] = true;
         availability[credential.providerEnvKey] = true;
       }
     }
@@ -176,8 +180,6 @@ export class MessagingWorkflowPlanner {
 export interface MessagingWorkflowPlannerSandboxEntry {
   readonly name: string;
   readonly agent?: string | null;
-  readonly messagingChannels?: readonly MessagingChannelId[] | null;
-  readonly disabledChannels?: readonly MessagingChannelId[] | null;
   readonly messaging?: {
     readonly schemaVersion: 1;
     readonly plan: SandboxMessagingPlan;
@@ -206,7 +208,7 @@ export interface MessagingWorkflowPlannerChannelMutationContext
 export type MessagingWorkflowPlannerSandboxRebuildContext = MessagingWorkflowPlannerSandboxContext;
 
 function uniqueChannels(
-  channelIds: readonly MessagingChannelId[] | undefined,
+  channelIds: readonly MessagingChannelId[] | null | undefined,
 ): MessagingChannelId[] {
   return [...new Set(channelIds ?? [])];
 }
@@ -235,14 +237,10 @@ function readSandboxEntryPlan(
 }
 
 function disabledChannelsFromSandboxEntry(
-  sandboxEntry: MessagingWorkflowPlannerSandboxEntry | null | undefined,
+  _sandboxEntry: MessagingWorkflowPlannerSandboxEntry | null | undefined,
   fallbackPlan: SandboxMessagingPlan | null,
 ): MessagingChannelId[] {
-  return uniqueChannels(
-    Array.isArray(sandboxEntry?.disabledChannels)
-      ? sandboxEntry.disabledChannels
-      : (fallbackPlan?.disabledChannels ?? []),
-  );
+  return uniqueChannels(fallbackPlan?.disabledChannels ?? []);
 }
 
 function clonePlan(plan: SandboxMessagingPlan): SandboxMessagingPlan {

@@ -87,7 +87,7 @@ describe("OpenClaw durable config file (#5027)", () => {
           discord: {
             accounts: { default: { token: "openshell:resolve:env:DISCORD_BOT_TOKEN" } },
           },
-          slack: { accounts: { default: { botToken: "xoxb-123-raw-secret" } } },
+          slack: { accounts: { default: { botToken: "xoxb-123-raw-secret" } } }, // gitleaks:allow
         },
         customAgents: { researcher: { prompt: "be thorough" } },
         leaked: { apiKey: "sk-real-secret" },

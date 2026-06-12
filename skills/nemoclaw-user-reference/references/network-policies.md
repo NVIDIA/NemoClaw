@@ -57,13 +57,14 @@ The baseline policy is always applied regardless of the selected tier.
 | Tier | Presets included | Description |
 |------|------------------|-------------|
 | Restricted | None | Base sandbox only. No third-party network access beyond inference and core agent tooling. |
-| Balanced (default) | `npm`, `pypi`, `huggingface`, `brew`, `brave when supported` | Full dev tooling and web search for agents that support web search. No messaging platform access. |
-| Open | `npm`, `pypi`, `huggingface`, `brew`, `brave when supported`, `slack`, `discord`, `telegram`, `wechat` (experimental), `whatsapp` (experimental), `jira`, `outlook` | Broad access across third-party services including messaging and productivity. |
+| Balanced (default) | `npm`, `pypi`, `huggingface`, `brew`, `brave when supported`, `weather` | Full dev tooling, read-only weather lookups, and web search for agents that support web search. No messaging platform access. |
+| Open | `npm`, `pypi`, `huggingface`, `brew`, `brave when supported`, `weather`, `public-reference`, `slack`, `discord`, `telegram`, `wechat` (experimental), `whatsapp` (experimental), `jira`, `outlook` | Broad access across third-party services including messaging, productivity, weather, and public-reference APIs. |
 
 After selecting a tier, a combined preset and access-mode screen lets you include or exclude individual presets and toggle each between read (GET only) and read-write (GET + POST/PUT/PATCH) access.
 Tier-default presets are pre-selected; additional presets can be added from the full list.
 NemoClaw filters tier defaults by the active agent's supported integrations.
 For example, Hermes onboarding omits the Brave Search preset because Hermes does not use NemoClaw's OpenClaw web-search configuration.
+Hermes managed-tool gateway selections can add Hermes-specific presets, such as Nous-hosted web, image, audio, browser, or code tools, without applying unsupported OpenClaw-only presets.
 Claude Code direct egress is not included in any policy tier.
 If you install and run the Claude Code CLI inside the sandbox with its own credentials, apply the `claude-code` preset explicitly.
 Normal NemoClaw Anthropic inference still routes through the OpenShell gateway.
@@ -76,7 +77,9 @@ In non-interactive mode, set the tier with `NEMOCLAW_POLICY_TIER`:
 NEMOCLAW_POLICY_TIER=open nemoclaw onboard --non-interactive --yes-i-accept-third-party-software
 ```
 
-If the value does not match a known tier, onboarding exits with an error listing the valid options.
+Unset, blank, or whitespace-only `NEMOCLAW_POLICY_TIER` values use the `balanced` default.
+In non-interactive onboarding, a non-blank value that does not match a known tier exits before preflight, gateway, or inference side effects and lists the valid options.
+Interactive onboarding ignores an invalid environment value and shows the normal tier prompt.
 
 ### Inference
 

@@ -59,7 +59,7 @@
 #   SLACK_BOT_TOKEN_REVOKED                — optional: revoked xoxb- token to test auth pre-validation (#2340)
 #   SLACK_APP_TOKEN_REVOKED                — optional: paired xapp- token for the revoked bot token
 #   WECHAT_BOT_TOKEN                       — defaults to fake token; presence skips host-side QR login
-#   WECHAT_ACCOUNT_ID                      — defaults to fake iLink account ID (seed-wechat-accounts.py key)
+#   WECHAT_ACCOUNT_ID                      — defaults to fake iLink account ID (manifest hook account key)
 #   WECHAT_BASE_URL                        — defaults to fake iLink baseUrl (per-account API host)
 #   WECHAT_USER_ID                         — defaults to fake operator wechat user ID (seeds DM allowlist)
 #   WECHAT_ALLOWED_IDS                     — optional: comma-separated DM allowlist for wechat
@@ -143,30 +143,16 @@ openshell() {
   fi
 }
 
-registry_field() {
-  local field="$1"
-  if [ ! -f "$REGISTRY" ]; then
-    echo "null"
-    return
-  fi
-  if command -v jq >/dev/null 2>&1; then
-    jq -c --arg name "$SANDBOX_NAME" --arg field "$field" \
-      '.sandboxes[$name][$field]' "$REGISTRY" 2>/dev/null || echo "null"
-  else
-    node -e "
-const r = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'));
-const v = (r.sandboxes || {})[process.argv[2]]?.[process.argv[3]];
-process.stdout.write(JSON.stringify(v ?? null));
-" "$REGISTRY" "$SANDBOX_NAME" "$field" 2>/dev/null || echo "null"
-  fi
-}
-
-registry_array_contains() {
-  local field="$1"
-  local item="$2"
-  local value
-  value="$(registry_field "$field")"
-  printf '%s' "$value" | grep -Fq "\"${item}\""
+registry_plan_channel_contains() {
+  local item="$1"
+  node -e '
+const fs = require("fs");
+const [registryPath, sandboxName, channelId] = process.argv.slice(1);
+if (!fs.existsSync(registryPath)) process.exit(1);
+const registry = JSON.parse(fs.readFileSync(registryPath, "utf8"));
+const channels = registry.sandboxes?.[sandboxName]?.messaging?.plan?.channels;
+process.exit(Array.isArray(channels) && channels.some((channel) => channel?.channelId === channelId) ? 0 : 1);
+' "$REGISTRY" "$SANDBOX_NAME" "$item"
 }
 
 assert_openclaw_config_activation() {
@@ -436,7 +422,7 @@ SLACK_IDS="${SLACK_ALLOWED_USERS-U0AR85ATALW,U09E2ESLACK}"
 # made because no token exchange happens at build time.
 WECHAT_TOKEN="${WECHAT_BOT_TOKEN:-test-fake-wechat-token-e2e}"
 WECHAT_ACCOUNT="${WECHAT_ACCOUNT_ID:-e2e-fake-account-12345}"
-WECHAT_BASE="${WECHAT_BASE_URL:-https://ilinkai-fake-e2e.wechat.com}"
+WECHAT_BASE="${WECHAT_BASE_URL:-https://ilinkai.wechat.com}"
 WECHAT_USER="${WECHAT_USER_ID:-wxid_e2efakeoperator}"
 WECHAT_IDS="${WECHAT_ALLOWED_IDS:-${WECHAT_USER}}"
 # WhatsApp is QR-only, but seed host-side decoys to prove they are ignored.
@@ -899,10 +885,10 @@ else
   pass "M-WA1: WhatsApp QR-only channel creates no bridge provider"
 fi
 
-if registry_array_contains messagingChannels "whatsapp"; then
-  pass "M-WA2: registry.messagingChannels contains whatsapp after channel add"
+if registry_plan_channel_contains "whatsapp"; then
+  pass "M-WA2: registry.messaging.plan.channels contains whatsapp after channel add"
 else
-  fail "M-WA2: registry.messagingChannels missing whatsapp after channel add ($(registry_field messagingChannels))"
+  fail "M-WA2: registry.messaging.plan.channels missing whatsapp after channel add"
 fi
 
 whatsapp_policy_pre=$(openshell policy get --full "$SANDBOX_NAME" 2>/dev/null || true)
@@ -992,7 +978,8 @@ fi
 # renderer cannot be resolved/executed at all (an infra/resolution issue, not a
 # size regression) the sub-check SKIPs rather than failing the suite — an actual
 # oversized render still yields a number above the ceiling and fails. The
-# hard-gated, version-pinned size proof lives in test-whatsapp-qr-compact-e2e.sh.
+# hard-gated, version-pinned size proof lives in
+# test/e2e-scenario/live/whatsapp-qr-compact.test.ts.
 WHATSAPP_QR_RENDER_PROBE=$(
   cat <<'PROBE'
 import { renderQrTerminal } from "openclaw/plugin-sdk/media-runtime";
@@ -2138,8 +2125,8 @@ print(','.join(bad))
   # concrete semver. The upstream plugin loader needs this install metadata
   # after OpenClaw config rewrites (plugins.entries alone is not enough),
   # and a floating spec (e.g. "@latest") would silently bypass the
-  # installer-trust pinning enforced in Dockerfile.base and
-  # scripts/seed-wechat-accounts.py (WECHAT_PLUGIN_SPEC=@2.4.3).
+  # installer-trust pinning enforced by the WeChat package-install allowlist and
+  # wechat.seedOpenClawAccount manifest hook (WECHAT_PLUGIN_SPEC=@2.4.3).
   wechat_plugins_json=$(sandbox_exec "python3 -c \"
 import json
 cfg = json.load(open('/sandbox/.openclaw/openclaw.json'))
@@ -2177,10 +2164,10 @@ sys.exit(0 if ok else 1)
   fi
 
   # M-W8: WeChat channel registered under channels.openclaw-weixin with the
-  # configured accountId enabled. Written by seed-wechat-accounts.py during
-  # image build using NEMOCLAW_WECHAT_CONFIG_B64. Absence here means
-  # NEMOCLAW_WECHAT_CONFIG_B64 was empty or seed-wechat-accounts.py was
-  # skipped — both regressions on the non-interactive QR-skip path.
+  # configured accountId enabled. Written by the manifest post-agent-install
+  # hook during image build. Absence here means WeChat metadata was empty or
+  # the manifest build-file output was skipped — both regressions on the
+  # non-interactive QR-skip path.
   wechat_enabled=$(echo "$channel_json" | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
@@ -2196,16 +2183,16 @@ print(account.get('enabled', False))
 fi
 
 # M-W9: Per-account credential file holds the WECHAT_BOT_TOKEN placeholder,
-# not the real token. seed-wechat-accounts.py writes
+# not the real token. The manifest post-agent-install hook writes
 # <stateDir>/openclaw-weixin/accounts/<accountId>.json with
 # token = "openshell:resolve:env:WECHAT_BOT_TOKEN". A real-token hit
 # would mean someone bypassed the placeholder constant.
 wechat_account_json=$(sandbox_exec "cat /sandbox/.openclaw/openclaw-weixin/accounts/${WECHAT_ACCOUNT}.json 2>/dev/null || true" 2>/dev/null || true)
 if [ -z "$wechat_account_json" ] || echo "$wechat_account_json" | grep -qi "no such file"; then
-  fail "M-W9: WeChat per-account credential file not found (seed-wechat-accounts.py may have been skipped)"
+  fail "M-W9: WeChat per-account credential file not found (manifest post-agent-install hook may have been skipped)"
 else
   if echo "$wechat_account_json" | grep -qF "$WECHAT_TOKEN"; then
-    fail "M-W9: Real WeChat token spliced into accounts/${WECHAT_ACCOUNT}.json — seed-wechat-accounts.py placeholder regression"
+    fail "M-W9: Real WeChat token spliced into accounts/${WECHAT_ACCOUNT}.json — manifest seed placeholder regression"
   elif echo "$wechat_account_json" | grep -qF "openshell:resolve:env:WECHAT_BOT_TOKEN"; then
     pass "M-W9: WeChat per-account credential file uses the L7-resolved placeholder"
   else
@@ -2214,7 +2201,7 @@ else
 fi
 
 # M-W10: Accounts index lists the configured accountId. Written by
-# seed-wechat-accounts.py before the per-account file; the upstream plugin's
+# the manifest post-agent-install hook before the per-account file; the upstream plugin's
 # auth/accounts.ts boots accounts that appear in this index.
 wechat_index_json=$(sandbox_exec "cat /sandbox/.openclaw/openclaw-weixin/accounts.json 2>/dev/null || true" 2>/dev/null || true)
 if [ -z "$wechat_index_json" ] || echo "$wechat_index_json" | grep -qi "no such file"; then

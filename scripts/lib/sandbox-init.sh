@@ -769,9 +769,9 @@ harden_config_symlinks() {
 
 # ── Messaging channels ──────────────────────────────────────────
 # Channel entries are baked into the config at image build time via
-# NEMOCLAW_MESSAGING_CHANNELS_B64. Placeholder tokens flow through
-# to the L7 proxy for rewriting at egress. Real tokens are never
-# visible inside the sandbox.
+# NEMOCLAW_MESSAGING_PLAN_B64 manifest render hooks. Placeholder tokens
+# flow through to the L7 proxy for rewriting at egress. Real tokens are
+# never visible inside the sandbox.
 #
 # This function just logs which channels are active. Runtime patching
 # of config files is not possible — Landlock enforces read-only at

@@ -3,7 +3,10 @@
 
 import { describe, expect, it } from "vitest";
 
-import { createBuiltInChannelManifestRegistry } from "../channels";
+import {
+  createBuiltInChannelManifestRegistry,
+  createBuiltInRenderTemplateResolver,
+} from "../channels";
 import { createBuiltInMessagingHookRegistry, MessagingHookRegistry } from "../hooks";
 import { MessagingWorkflowPlanner } from "./workflow-planner";
 
@@ -17,7 +20,7 @@ const TEST_CREDENTIALS: Readonly<Record<string, string>> = {
 const TEST_WECHAT_LOGIN = {
   token: "test-wechat-token",
   accountId: "test-wechat-account",
-  baseUrl: "https://ilinkai.wechat.example",
+  baseUrl: "https://ilinkai.wechat.com",
   userId: "test-wechat-user",
 } as const;
 
@@ -65,6 +68,7 @@ function planner(): MessagingWorkflowPlanner {
         },
       },
     }),
+    createBuiltInRenderTemplateResolver(),
   );
 }
 
@@ -217,6 +221,7 @@ describe("MessagingWorkflowPlanner", () => {
     const plan = await new MessagingWorkflowPlanner(
       createBuiltInChannelManifestRegistry(),
       hooks,
+      createBuiltInRenderTemplateResolver(),
     ).buildPlan({
       sandboxName: "demo",
       agent: "openclaw",
@@ -254,6 +259,25 @@ describe("MessagingWorkflowPlanner", () => {
         id: "slack.validateCredentials",
         handler: () => ({}),
       },
+      {
+        id: "wechat.seedOpenClawAccount",
+        handler: () => ({
+          outputs: {
+            openclawWeixinAccountsIndex: {
+              kind: "build-file",
+              value: { path: "openclaw-weixin/accounts.json", content: [] },
+            },
+            openclawWeixinAccountFile: {
+              kind: "build-file",
+              value: { path: "openclaw-weixin/accounts/cached-wechat-account.json", content: {} },
+            },
+            openclawConfigPatch: {
+              kind: "build-file",
+              value: { path: "openclaw.json", merge: {} },
+            },
+          },
+        }),
+      },
     ]);
 
     await withEnv(
@@ -265,6 +289,7 @@ describe("MessagingWorkflowPlanner", () => {
         const plan = await new MessagingWorkflowPlanner(
           createBuiltInChannelManifestRegistry(),
           hooks,
+          createBuiltInRenderTemplateResolver(),
         ).buildPlan({
           sandboxName: "demo",
           agent: "openclaw",
@@ -470,6 +495,7 @@ describe("MessagingWorkflowPlanner", () => {
     const plan = await new MessagingWorkflowPlanner(
       createBuiltInChannelManifestRegistry(),
       hooks,
+      createBuiltInRenderTemplateResolver(),
     ).buildChannelAddPlanFromSandboxEntry({
       sandboxName: "demo",
       agent: "openclaw",
@@ -625,7 +651,6 @@ describe("MessagingWorkflowPlanner", () => {
           agent: "openclaw",
           sandboxEntry: {
             name: "demo",
-            messagingChannels: ["telegram"],
             messaging: {
               schemaVersion: 1,
               plan: existingPlan,
@@ -651,13 +676,12 @@ describe("MessagingWorkflowPlanner", () => {
     );
   });
 
-  it("does not compile a rebuild plan when the sandbox entry has no stored plan", async () => {
+  it("does not compile a rebuild plan when the sandbox entry has no stored plan or channels", async () => {
     const rebuilt = await planner().buildRebuildPlanFromSandboxEntry({
       sandboxName: "demo",
       agent: "openclaw",
       sandboxEntry: {
         name: "demo",
-        messagingChannels: ["telegram"],
       },
     });
 

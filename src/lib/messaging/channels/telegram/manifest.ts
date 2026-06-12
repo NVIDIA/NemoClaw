@@ -64,22 +64,27 @@ export const telegramManifest = {
   policyPresets: [{ name: "telegram", policyKeys: ["telegram_bot"] }],
   render: [
     {
-      id: "telegram-openclaw-account",
+      id: "telegram-openclaw-channel",
       kind: "json-fragment",
       agent: "openclaw",
       target: "openclaw.json",
       fragment: {
-        path: "channels.telegram.accounts.default",
+        path: "channels.telegram",
         value: {
-          botToken: "{{credential.telegramBotToken.placeholder}}",
           enabled: true,
-          healthMonitor: {
-            enabled: false,
+          accounts: {
+            default: {
+              botToken: "{{credential.telegramBotToken.placeholder}}",
+              enabled: true,
+              healthMonitor: {
+                enabled: false,
+              },
+              proxy: "{{proxyUrl}}",
+              groupPolicy: "open",
+              dmPolicy: "{{allowedIds.telegram.dmPolicy}}",
+              allowFrom: "{{allowedIds.telegram.values}}",
+            },
           },
-          proxy: "{{proxyUrl}}",
-          groupPolicy: "open",
-          dmPolicy: "{{allowedIds.telegram.dmPolicy}}",
-          allowFrom: "{{allowedIds.telegram.values}}",
         },
       },
     },
@@ -88,12 +93,25 @@ export const telegramManifest = {
       kind: "json-fragment",
       agent: "openclaw",
       target: "openclaw.json",
+      when: "{{telegramConfig.requireMention}}",
       fragment: {
         path: "channels.telegram.groups",
         value: {
           "*": {
             requireMention: "{{telegramConfig.requireMention}}",
           },
+        },
+      },
+    },
+    {
+      id: "telegram-openclaw-plugin",
+      kind: "json-fragment",
+      agent: "openclaw",
+      target: "openclaw.json",
+      fragment: {
+        path: "plugins.entries.telegram",
+        value: {
+          enabled: true,
         },
       },
     },
@@ -116,6 +134,18 @@ export const telegramManifest = {
         path: "telegram",
         value: {
           require_mention: "{{telegramConfig.requireMention}}",
+        },
+      },
+    },
+    {
+      id: "telegram-hermes-platform",
+      kind: "json-fragment",
+      agent: "hermes",
+      target: "~/.hermes/config.yaml",
+      fragment: {
+        path: "platforms.telegram",
+        value: {
+          enabled: true,
         },
       },
     },

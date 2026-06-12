@@ -45,6 +45,33 @@ afterEach(() => {
   }
 });
 
+function makeMessagingPlan(sandboxName: string, agent: string | null, channelIds: string[]) {
+  return {
+    schemaVersion: 1,
+    sandboxName,
+    agent: agent ?? "openclaw",
+    workflow: "onboard",
+    channels: channelIds.map((channelId) => ({
+      channelId,
+      displayName: channelId,
+      authMode: "token-paste",
+      active: true,
+      selected: true,
+      configured: true,
+      disabled: false,
+      inputs: [],
+      hooks: [],
+    })),
+    disabledChannels: [],
+    credentialBindings: [],
+    networkPolicy: { presets: [], entries: [] },
+    agentRender: [],
+    buildSteps: [],
+    stateUpdates: [],
+    healthChecks: [],
+  };
+}
+
 /**
  * Set up a temp HOME that mirrors the reporter's scenario:
  *
@@ -64,12 +91,12 @@ function createFixture({
   rebuildTarget: {
     name: string;
     agent: string | null;
-    messagingChannelConfig?: Record<string, string> | null;
+    messagingPlanChannels?: string[] | null;
   };
   lastOnboarded: {
     name: string;
     agent: string | null;
-    messagingChannelConfig?: Record<string, string> | null;
+    messagingPlanChannels?: string[] | null;
   };
   fromDockerfile?: string | null;
 }) {
@@ -77,6 +104,20 @@ function createFixture({
   tmpFixtures.push(tmpDir);
   const nemoclawDir = path.join(tmpDir, ".nemoclaw");
   fs.mkdirSync(nemoclawDir, { recursive: true, mode: 0o700 });
+  const rebuildTargetMessagingPlan = rebuildTarget.messagingPlanChannels
+    ? makeMessagingPlan(
+        rebuildTarget.name,
+        rebuildTarget.agent,
+        rebuildTarget.messagingPlanChannels,
+      )
+    : null;
+  const lastOnboardedMessagingPlan = lastOnboarded.messagingPlanChannels
+    ? makeMessagingPlan(
+        lastOnboarded.name,
+        lastOnboarded.agent,
+        lastOnboarded.messagingPlanChannels,
+      )
+    : null;
 
   // ── Registry — both sandboxes exist ───────────────────────────
   fs.writeFileSync(
@@ -91,8 +132,8 @@ function createFixture({
           gpuEnabled: false,
           policies: [],
           agent: rebuildTarget.agent,
-          ...(rebuildTarget.messagingChannelConfig
-            ? { messagingChannelConfig: rebuildTarget.messagingChannelConfig }
+          ...(rebuildTargetMessagingPlan
+            ? { messaging: { schemaVersion: 1, plan: rebuildTargetMessagingPlan } }
             : {}),
         },
         [lastOnboarded.name]: {
@@ -102,8 +143,8 @@ function createFixture({
           gpuEnabled: false,
           policies: [],
           agent: lastOnboarded.agent,
-          ...(lastOnboarded.messagingChannelConfig
-            ? { messagingChannelConfig: lastOnboarded.messagingChannelConfig }
+          ...(lastOnboardedMessagingPlan
+            ? { messaging: { schemaVersion: 1, plan: lastOnboardedMessagingPlan } }
             : {}),
         },
       },
@@ -135,8 +176,7 @@ function createFixture({
       nimContainer: null,
       webSearchConfig: null,
       policyPresets: [],
-      messagingChannels: null,
-      messagingChannelConfig: lastOnboarded.messagingChannelConfig ?? null,
+      messagingPlan: lastOnboardedMessagingPlan,
       metadata: { gatewayName: "nemoclaw", fromDockerfile: fromDockerfile },
       steps: {
         preflight: { status: "complete", startedAt: null, completedAt: null, error: null },
@@ -249,7 +289,7 @@ function runRebuild(fixture: ReturnType<typeof createFixture>) {
 
 type SessionFixture = {
   agent?: string | null;
-  messagingChannelConfig?: Record<string, string> | null;
+  messagingPlan?: { channels?: Array<{ channelId?: string }> } | null;
 };
 
 /**
@@ -268,12 +308,12 @@ function readSessionAgent(fixture: ReturnType<typeof createFixture>): string | n
 }
 
 /**
- * Read only the messaging config recorded in the fixture onboarding session.
+ * Read only the messaging plan recorded in the fixture onboarding session.
  */
-function readSessionMessagingChannelConfig(
+function readSessionMessagingPlan(
   fixture: ReturnType<typeof createFixture>,
-): Record<string, string> | null | undefined {
-  return readSession(fixture).messagingChannelConfig;
+): SessionFixture["messagingPlan"] {
+  return readSession(fixture).messagingPlan;
 }
 
 describe("Issue #2201: rebuild syncs agent from registry, not stale session", () => {
@@ -305,7 +345,7 @@ describe("Issue #2201: rebuild syncs agent from registry, not stale session", ()
     expect(readSessionAgent(f)).toBe("hermes");
   });
 
-  it("does not inherit messaging channel config from a stale session for another sandbox", {
+  it("does not inherit messaging plan from a stale session for another sandbox", {
     timeout: 60_000,
   }, () => {
     const f = createFixture({
@@ -313,14 +353,11 @@ describe("Issue #2201: rebuild syncs agent from registry, not stale session", ()
       lastOnboarded: {
         name: "hermes",
         agent: "hermes",
-        messagingChannelConfig: {
-          TELEGRAM_ALLOWED_IDS: "999",
-          TELEGRAM_REQUIRE_MENTION: "1",
-        },
+        messagingPlanChannels: ["telegram"],
       },
     });
     runRebuild(f);
-    expect(readSessionMessagingChannelConfig(f)).toBeNull();
+    expect(readSessionMessagingPlan(f)).toBeNull();
   });
 });
 

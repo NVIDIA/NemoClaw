@@ -5,12 +5,64 @@ import fs from "node:fs";
 
 import { getSandboxInferenceConfig } from "../inference/config";
 import type { WebSearchConfig } from "../inference/web-search";
+import { MessagingSetupApplier } from "../messaging";
 
 const SANDBOX_BASE_IMAGE = "ghcr.io/nvidia/nemoclaw/sandbox-base";
 const PROXY_HOST_RE = /^[A-Za-z0-9._-]+$/;
 const POSITIVE_INT_RE = /^[1-9][0-9]*$/;
 
 type LooseObject = Record<string, unknown>;
+const O_NOFOLLOW = fs.constants.O_NOFOLLOW;
+
+function errnoCode(err: unknown): string | null {
+  return typeof err === "object" && err !== null && "code" in err
+    ? String((err as { code?: unknown }).code)
+    : null;
+}
+
+function openExistingRegularDockerfileNoFollow(dockerfilePath: string, flags: number): number {
+  if (typeof O_NOFOLLOW !== "number") {
+    throw new Error("Refusing to patch Dockerfile: O_NOFOLLOW is unavailable on this platform.");
+  }
+  let fd: number;
+  try {
+    fd = fs.openSync(dockerfilePath, flags | O_NOFOLLOW, 0o600);
+  } catch (err) {
+    if (errnoCode(err) === "ELOOP") {
+      throw new Error(`Refusing to patch Dockerfile through a symlink: ${dockerfilePath}`);
+    }
+    throw err;
+  }
+  try {
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile()) {
+      throw new Error(`Refusing to patch non-regular Dockerfile path: ${dockerfilePath}`);
+    }
+    return fd;
+  } catch (err) {
+    fs.closeSync(fd);
+    throw err;
+  }
+}
+
+function readExistingDockerfileNoFollow(dockerfilePath: string): string {
+  const fd = openExistingRegularDockerfileNoFollow(dockerfilePath, fs.constants.O_RDONLY);
+  try {
+    return fs.readFileSync(fd, "utf8");
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function writeExistingDockerfileNoFollow(dockerfilePath: string, dockerfile: string): void {
+  const fd = openExistingRegularDockerfileNoFollow(dockerfilePath, fs.constants.O_WRONLY);
+  try {
+    fs.ftruncateSync(fd, 0);
+    fs.writeFileSync(fd, dockerfile, { encoding: "utf8" });
+  } finally {
+    fs.closeSync(fd);
+  }
+}
 
 export function encodeDockerJsonArg(value: unknown): string {
   return Buffer.from(JSON.stringify(value ?? {}), "utf8").toString("base64");
@@ -42,16 +94,10 @@ export function patchStagedDockerfile(
   provider: string | null = null,
   preferredInferenceApi: string | null = null,
   webSearchConfig: WebSearchConfig | null = null,
-  messagingChannels: string[] = [],
-  messagingAllowedIds: LooseObject = {},
-  discordGuilds: LooseObject = {},
   baseImageRef: string | null = null,
-  telegramConfig: LooseObject = {},
-  wechatConfig: LooseObject = {},
   darwinVmCompat = false,
   inferenceBaseUrlOverride: string | null = null,
   hermesToolGateways: string[] = [],
-  slackConfig: LooseObject = {},
 ): void {
   const sanitizedModel = sanitizeDockerArg(model);
   const sandboxInference = getSandboxInferenceConfig(
@@ -64,7 +110,7 @@ export function patchStagedDockerfile(
     inferenceBaseUrlOverride && inferenceBaseUrlOverride.trim()
       ? inferenceBaseUrlOverride
       : sandboxInference.inferenceBaseUrl;
-  let dockerfile = fs.readFileSync(dockerfilePath, "utf8");
+  let dockerfile = readExistingDockerfileNoFollow(dockerfilePath);
   // Pin the base image to a specific digest when available (#1904).
   // The ref must come from pullAndResolveBaseImageDigest() — never from
   // blueprint.yaml, whose digest belongs to a different registry.
@@ -229,40 +275,17 @@ export function patchStagedDockerfile(
     /^ARG NEMOCLAW_DISABLE_DEVICE_AUTH=.*$/m,
     `ARG NEMOCLAW_DISABLE_DEVICE_AUTH=${sanitizeDockerArg("1")}`,
   );
-  if (messagingChannels.length > 0) {
+  const messagingPlan = MessagingSetupApplier.readPlanFromEnv();
+  if (messagingPlan) {
+    const messagingPlanArgPattern = /^ARG NEMOCLAW_MESSAGING_PLAN_B64=.*$/m;
+    if (!messagingPlanArgPattern.test(dockerfile)) {
+      throw new Error(
+        "Dockerfile is missing ARG NEMOCLAW_MESSAGING_PLAN_B64; cannot apply messaging plan.",
+      );
+    }
     dockerfile = dockerfile.replace(
-      /^ARG NEMOCLAW_MESSAGING_CHANNELS_B64=.*$/m,
-      `ARG NEMOCLAW_MESSAGING_CHANNELS_B64=${encodeSanitizedDockerJsonArg(messagingChannels)}`,
-    );
-  }
-  if (Object.keys(messagingAllowedIds).length > 0) {
-    dockerfile = dockerfile.replace(
-      /^ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=.*$/m,
-      `ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=${encodeSanitizedDockerJsonArg(messagingAllowedIds)}`,
-    );
-  }
-  if (Object.keys(discordGuilds).length > 0) {
-    dockerfile = dockerfile.replace(
-      /^ARG NEMOCLAW_DISCORD_GUILDS_B64=.*$/m,
-      `ARG NEMOCLAW_DISCORD_GUILDS_B64=${encodeSanitizedDockerJsonArg(discordGuilds)}`,
-    );
-  }
-  if (telegramConfig && Object.keys(telegramConfig).length > 0) {
-    dockerfile = dockerfile.replace(
-      /^ARG NEMOCLAW_TELEGRAM_CONFIG_B64=.*$/m,
-      `ARG NEMOCLAW_TELEGRAM_CONFIG_B64=${encodeSanitizedDockerJsonArg(telegramConfig)}`,
-    );
-  }
-  if (wechatConfig && Object.keys(wechatConfig).length > 0) {
-    dockerfile = dockerfile.replace(
-      /^ARG NEMOCLAW_WECHAT_CONFIG_B64=.*$/m,
-      `ARG NEMOCLAW_WECHAT_CONFIG_B64=${encodeSanitizedDockerJsonArg(wechatConfig)}`,
-    );
-  }
-  if (slackConfig && Object.keys(slackConfig).length > 0) {
-    dockerfile = dockerfile.replace(
-      /^ARG NEMOCLAW_SLACK_CONFIG_B64=.*$/m,
-      `ARG NEMOCLAW_SLACK_CONFIG_B64=${encodeSanitizedDockerJsonArg(slackConfig)}`,
+      messagingPlanArgPattern,
+      `ARG NEMOCLAW_MESSAGING_PLAN_B64=${sanitizeDockerArg(MessagingSetupApplier.encodePlan(messagingPlan))}`,
     );
   }
   if (hermesToolGateways.length > 0) {
@@ -291,5 +314,5 @@ export function patchStagedDockerfile(
       `ARG NEMOCLAW_EXTRA_AGENTS_JSON_B64=${encoded}`,
     );
   }
-  fs.writeFileSync(dockerfilePath, dockerfile);
+  writeExistingDockerfileNoFollow(dockerfilePath, dockerfile);
 }

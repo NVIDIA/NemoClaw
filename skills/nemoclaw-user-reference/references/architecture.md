@@ -68,9 +68,14 @@ graph LR
 The logical diagram above shows how components relate.
 This section shows what actually runs where on the host.
 NemoClaw's default Docker-driver topology does not place the sandbox in an embedded k3s cluster.
-On Linux and Apple Silicon macOS, NemoClaw starts the OpenShell Docker-driver gateway and creates the sandbox as a Docker container.
-The gateway normally runs as a host process; Linux hosts that need the gateway compatibility patch may run the same gateway binary inside a small container.
+On Linux, NemoClaw configures and restarts the package-managed OpenShell gateway user service when it is installed, then creates the sandbox as a Docker container.
+NemoClaw treats that service as authoritative only when `systemctl --user show openshell-gateway` reports a package/vendor unit path and an `openshell-gateway` `ExecStart`.
+Per-user units, partial units, and user-manager or bus outages do not take over gateway ownership; NemoClaw falls back to the standalone gateway process used by earlier installs.
+That compatibility fallback remains until supported upgrade paths no longer include pre-service OpenShell installs and the package-managed handoff has direct nightly coverage.
+On Apple Silicon macOS, NemoClaw starts the OpenShell Docker-driver gateway and creates the sandbox as a Docker container.
 In both Docker-driver modes, the sandbox is a Docker container, not a Kubernetes pod.
+The in-container `/tmp/nemoclaw-gateway-local` marker is written only by the entrypoint path that actually launches `openclaw gateway run`;
+NemoClaw does not treat sandbox environment hints such as `OPENSHELL_DRIVERS` as authoritative for dashboard-gateway ownership.
 Legacy non-Docker-driver installs still use the k3s-based gateway path; the diagram below shows the standard Docker-driver topology.
 
 ```mermaid
@@ -134,8 +139,10 @@ The concrete files differ by agent because each runtime has its own plugin syste
 | Hermes | `agents/hermes/manifest.yaml`, `agents/hermes/plugin/plugin.yaml`, `agents/hermes/generate-config.ts`, `agents/hermes/config/`, and `agents/hermes/start.sh` | Declares the Hermes agent contract, installs the NemoClaw Hermes plugin, writes `/sandbox/.hermes/config.yaml` and `/sandbox/.hermes/.env`, and launches `hermes gateway run` behind the OpenShell proxy. |
 
 The OpenClaw integration is a thin TypeScript plugin that runs in-process with the OpenClaw gateway inside the sandbox.
-Before an OpenClaw turn starts, the plugin prepends a short context block with the active sandbox name, sandbox phase, network policy summary, and filesystem policy summary.
+Before an OpenClaw turn starts, the plugin prepends a short system-context block with the active sandbox name, sandbox phase, network policy summary, and filesystem policy summary.
+This guidance stays out of the visible chat transcript.
 When the policy or phase changes during a session, the plugin sends a smaller update block instead of repeating the full context.
+The context tells the agent to try allowed network and filesystem operations before reporting them unavailable, and to distinguish policy denials from DNS, timeout, TLS, or filesystem errors.
 
 The Hermes integration follows the generic agent-manifest path instead of the OpenClaw plugin package path.
 The manifest declares Hermes' binary, health probe, config directory, state directories, messaging support, and OpenAI-compatible API endpoint.
@@ -197,7 +204,7 @@ runner still carries a pinned OpenShell Community OpenClaw image for legacy
 - Inference calls are routed through OpenShell to the configured provider.
 - Network egress is restricted by the baseline policy for the selected agent profile.
 - Filesystem access is confined to `/sandbox` and `/tmp` for read-write access, with system paths read-only.
-- NemoClaw injects sandbox and policy context into agent turns when the selected agent supports runtime context hooks, so the agent can report policy blocks accurately.
+- NemoClaw injects sandbox and policy context into agent turns when the selected agent supports runtime context hooks, so the agent can attempt allowed actions and report policy blocks or infrastructure failures accurately.
 - The image exposes a Docker health check that probes the in-sandbox gateway, so container runtimes can report whether the agent service is responding.
 - The image includes common runtime compatibility helpers such as Homebrew and a `python` to `python3` symlink for tools that still invoke `python`.
 

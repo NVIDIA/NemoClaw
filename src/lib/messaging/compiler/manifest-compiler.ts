@@ -1,12 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { resolveMessagingChannelConfigEnvValue } from "../../messaging-channel-config";
 import type {
   MessagingHookInputMap,
   MessagingHookOutputMap,
   MessagingHookRunResult,
 } from "../hooks";
 import { MessagingHookRegistry, runMessagingHook } from "../hooks";
+import {
+  COMMON_STATIC_OUTPUTS_HOOK_HANDLER_ID,
+  createStaticOutputsHook,
+} from "../hooks/common/static-outputs";
 import type {
   ChannelHookOutputSpec,
   ChannelHookSpec,
@@ -21,20 +26,25 @@ import type {
   SandboxMessagingInputReference,
   SandboxMessagingPlan,
 } from "../manifest";
-import { resolveMessagingChannelConfigEnvValue } from "../../messaging-channel-config";
 import { planAgentRender } from "./engines/agent-render-engine";
 import { planBuildSteps } from "./engines/build-step-engine";
 import { planCredentialBindings } from "./engines/credential-binding-engine";
 import { planHealthChecks } from "./engines/health-check-engine";
 import { planNetworkPolicy } from "./engines/policy-resolver";
 import { planStateUpdates } from "./engines/state-update-engine";
+import type { RenderTemplateReferenceResolver } from "./engines/template";
 import type { ManifestCompilerContext } from "./types";
 
 export class ManifestCompiler {
+  private readonly hooks: MessagingHookRegistry;
+
   constructor(
     private readonly registry: ChannelManifestRegistry,
-    private readonly hooks = new MessagingHookRegistry(),
-  ) {}
+    hooks = new MessagingHookRegistry(),
+    private readonly renderTemplateResolver?: RenderTemplateReferenceResolver,
+  ) {
+    this.hooks = ensureCommonCompilerHooks(hooks);
+  }
 
   async compile(context: ManifestCompilerContext): Promise<SandboxMessagingPlan> {
     const manifests = this.resolveManifests(requestedChannelIds(context), context);
@@ -52,8 +62,35 @@ export class ManifestCompiler {
       planCredentialBindings(manifest, context, inputRegistry.get(manifest.id) ?? []),
     );
     const networkPolicy = planNetworkPolicy(manifests, context);
-    const agentRender = manifests.flatMap((manifest) => planAgentRender(manifest, context));
-    const buildSteps = manifests.flatMap((manifest) => planBuildSteps(manifest, context.agent));
+    const agentRender = (
+      await Promise.all(
+        manifests.map((manifest) =>
+          planAgentRender(
+            manifest,
+            context,
+            inputRegistry.get(manifest.id) ?? [],
+            this.hooks,
+            this.renderTemplateResolver,
+          ),
+        ),
+      )
+    ).flat();
+    const channelRegistry = new Map(
+      channels.map((channel) => [channel.channelId, channel] as const),
+    );
+    const buildSteps = (
+      await Promise.all(
+        manifests.map((manifest) =>
+          planBuildSteps(
+            manifest,
+            context.agent,
+            channelRegistry.get(manifest.id),
+            credentialBindings,
+            this.hooks,
+          ),
+        ),
+      )
+    ).flat();
     const stateUpdates = manifests.flatMap((manifest) => planStateUpdates(manifest));
     const healthChecks = manifests.flatMap((manifest) => planHealthChecks(manifest));
 
@@ -131,6 +168,13 @@ export class ManifestCompiler {
         : [],
     };
   }
+}
+
+function ensureCommonCompilerHooks(hooks: MessagingHookRegistry): MessagingHookRegistry {
+  if (!hooks.get(COMMON_STATIC_OUTPUTS_HOOK_HANDLER_ID)) {
+    hooks.register(COMMON_STATIC_OUTPUTS_HOOK_HANDLER_ID, createStaticOutputsHook());
+  }
+  return hooks;
 }
 
 function isHookForAgent(hook: ChannelHookSpec, agent: ManifestCompilerContext["agent"]): boolean {
@@ -279,13 +323,23 @@ function inputReferenceBase(
 }
 
 function readInputEnvValue(input: ChannelInputSpec): MessagingSerializableValue | undefined {
+  const normalize = (raw: string | null | undefined): string | undefined => {
+    if (raw && /[\r\n]/.test(raw)) {
+      throw new Error("Messaging input values must not contain line breaks.");
+    }
+    const normalized = raw?.trim();
+    if (!normalized || normalized.length === 0) return undefined;
+    if (input.validValues && !input.validValues.includes(normalized)) return undefined;
+    return normalized;
+  };
+
   if (!input.envKey) return undefined;
   if (input.kind === "config") {
     const resolved = resolveMessagingChannelConfigEnvValue(input.envKey, process.env);
-    if (resolved.value) return resolved.value;
+    const normalizedResolved = normalize(resolved.value);
+    if (normalizedResolved !== undefined) return normalizedResolved;
   }
-  const normalized = process.env[input.envKey]?.replace(/\r/g, "").trim();
-  return normalized && normalized.length > 0 ? normalized : undefined;
+  return normalize(process.env[input.envKey]);
 }
 
 function readInputStatePath(input: ChannelInputSpec): MessagingStatePath | undefined {

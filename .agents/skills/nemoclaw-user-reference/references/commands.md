@@ -741,6 +741,15 @@ The token is written to stdout with no surrounding text.
 A one-line security warning is written to stderr; pass `--quiet` (or `-q`) to suppress it.
 The command exits non-zero with a diagnostic on stderr when the sandbox is not registered or when the token cannot be retrieved (for example, if the sandbox is not running).
 
+The token also authenticates the Control UI config endpoint served by the gateway on the forwarded dashboard port.
+There is no `controlui.bootstrap.config.json` path; the supported endpoint is `/__openclaw/control-ui-config.json`, and it requires the token (unauthenticated requests return `401` with a JSON body):
+
+```bash
+TOKEN=$(nemoclaw my-assistant gateway-token --quiet)
+curl -fsS -H "Authorization: Bearer $TOKEN" \
+  "http://127.0.0.1:18789/__openclaw/control-ui-config.json"
+```
+
 **Warning:**
 
 Treat the gateway token like a password.
@@ -1278,6 +1287,10 @@ When the command is running from a source checkout, it reports that state and do
 Rebuild sandboxes whose base image is older than the one currently pinned by NemoClaw.
 NemoClaw resolves the digest of `ghcr.io/nvidia/nemoclaw/sandbox-base:latest` from the registry, then compares it against the digest each sandbox was created with.
 Sandboxes that match the current digest are left alone.
+NemoClaw also checks the build fingerprint recorded on each managed sandbox image.
+A sandbox needs upgrade when its agent version is stale, when its recorded NemoClaw image fingerprint differs from the running CLI, or both.
+Custom Dockerfile sandboxes are not classified by image drift because rebuilding them onto the default image would drop the custom image.
+Legacy sandboxes without a recorded fingerprint opt into this check after their next rebuild.
 
 ```bash
 nemoclaw upgrade-sandboxes [--check] [--auto] [--yes|-y]
