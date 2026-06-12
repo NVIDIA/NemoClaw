@@ -198,12 +198,16 @@ if echo "$first_output" | grep -q "\[e2e\] Forced onboarding failure at step 'po
   pass "First run failed at policy setup as intended"
 else
   fail "First run did not fail at the expected policy step"
+  info "Captured first-onboard stdout/stderr (exit=$first_exit):"
+  printf '%s\n' "$first_output" | sed 's/^/    /'
 fi
 
 if openshell sandbox get "$SANDBOX_NAME" >/dev/null 2>&1; then
   pass "Sandbox '$SANDBOX_NAME' exists after interrupted run"
 else
   fail "Sandbox '$SANDBOX_NAME' not found after interrupted run"
+  info "Captured first-onboard stdout/stderr (exit=$first_exit):"
+  printf '%s\n' "$first_output" | sed 's/^/    /'
 fi
 
 # ══════════════════════════════════════════════════════════════════
