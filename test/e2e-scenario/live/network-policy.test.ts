@@ -66,7 +66,7 @@ function sleep(ms: number): Promise<void> {
 
 function shellEvalArg(script: string): string {
   const encoded = Buffer.from(script, "utf8").toString("base64");
-  return `eval "$(printf %s ${encoded} | base64 -d)"`;
+  return `printf %s ${encoded} | base64 -d | sh`;
 }
 
 async function runNemoclaw(
