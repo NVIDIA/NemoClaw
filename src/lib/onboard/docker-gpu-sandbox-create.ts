@@ -22,6 +22,20 @@ import {
   waitForOpenShellSupervisorReconnect,
 } from "./docker-gpu-patch";
 import { finalizeDockerGpuPatchBackup } from "./docker-gpu-patch-finalize";
+import { detectWslDockerDesktopStatus } from "./wsl-docker-desktop-gpu";
+
+let cachedDockerDesktopWslRuntime: boolean | null = null;
+
+export function isDockerDesktopWslRuntime(): boolean {
+  if (cachedDockerDesktopWslRuntime === null) {
+    cachedDockerDesktopWslRuntime = detectWslDockerDesktopStatus({}) === "docker-desktop";
+  }
+  return cachedDockerDesktopWslRuntime;
+}
+
+export function resetIsDockerDesktopWslRuntimeCache(): void {
+  cachedDockerDesktopWslRuntime = null;
+}
 
 type DockerGpuSandboxCreateDeps = Pick<
   DockerGpuPatchDeps,
@@ -288,10 +302,16 @@ function buildFailureContext(
 
 export function shouldUseDockerGpuPatchForCreate(
   config: DockerGpuSandboxConfig,
-  options: { dockerDriverGateway: boolean; log?: (message: string) => void },
+  options: {
+    dockerDriverGateway: boolean;
+    dockerDesktopWsl?: boolean;
+    log?: (message: string) => void;
+  },
 ): boolean {
   const enabled = shouldApplyDockerGpuPatch(config, {
     dockerDriverGateway: options.dockerDriverGateway,
+    dockerDesktopWsl: options.dockerDesktopWsl,
+    log: options.log,
   });
   if (enabled) {
     options.log?.(
@@ -305,9 +325,18 @@ export function shouldUseDockerGpuPatchForCreate(
 
 export function resolveDockerGpuSandboxCreatePlan(
   config: DockerGpuSandboxConfig,
-  options: { dockerDriverGateway: boolean },
+  options: {
+    dockerDriverGateway: boolean;
+    dockerDesktopWsl?: boolean;
+    detectDockerDesktopWsl?: () => boolean;
+  },
 ): DockerGpuSandboxCreatePlan {
-  const useDockerGpuPatch = shouldUseDockerGpuPatchForCreate(config, options);
+  const dockerDesktopWsl =
+    options.dockerDesktopWsl ?? (options.detectDockerDesktopWsl ?? isDockerDesktopWslRuntime)();
+  const useDockerGpuPatch = shouldUseDockerGpuPatchForCreate(config, {
+    dockerDriverGateway: options.dockerDriverGateway,
+    dockerDesktopWsl,
+  });
   const logMessage = config.sandboxGpuEnabled
     ? useDockerGpuPatch
       ? config.hostGpuPlatform === "jetson"

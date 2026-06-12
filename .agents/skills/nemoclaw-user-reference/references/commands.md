@@ -246,6 +246,12 @@ Use `--control-ui-port <N>` to choose the host dashboard port for a sandbox.
 The value must be an integer from `1024` through `65535`.
 This flag takes precedence over `CHAT_UI_URL`, `NEMOCLAW_DASHBOARD_PORT`, the previous registry value, and the default port.
 
+<AgentOnly variant="hermes">
+
+For Hermes sandboxes, do not use port `8642`; NemoClaw reserves it for the Hermes OpenAI-compatible API and rejects it as a dashboard port before sandbox creation.
+
+</AgentOnly>
+
 If you enable Slack during onboarding, the wizard collects both the Bot Token (`SLACK_BOT_TOKEN`) and the App-Level Token (`SLACK_APP_TOKEN`).
 Socket Mode requires both tokens.
 The app-level token is stored in a dedicated `slack-app` OpenShell provider and forwarded to the sandbox alongside the bot token.
@@ -377,6 +383,8 @@ Use `--gpu` to require GPU passthrough and fail fast if an NVIDIA GPU is not det
 Use `--sandbox-gpu` or `--no-sandbox-gpu` to control only direct NVIDIA GPU access inside the sandbox.
 Use `--sandbox-gpu --sandbox-gpu-device <device>` to pass a specific OpenShell GPU device selector to `openshell sandbox create`; device selectors require explicit sandbox GPU enablement.
 On Linux Docker-driver gateways, NemoClaw can create the sandbox first and then recreate the OpenShell-managed Docker container with NVIDIA GPU access when that compatibility path is needed.
+When this compatibility path recreates the Docker container, NemoClaw uses an available NVIDIA CDI spec before falling back to Docker `--gpus all` or the NVIDIA runtime.
+On Jetson/Tegra hosts, it also adds the host group IDs that own `/dev/nvmap` and `/dev/nvhost-*` so the sandbox user can initialize CUDA.
 If the patch fails, onboarding keeps diagnostics and prints a manual cleanup command rather than deleting the failed sandbox automatically.
 
 Prerequisites:
@@ -732,6 +740,15 @@ export OPENCLAW_GATEWAY_TOKEN="$TOKEN"
 The token is written to stdout with no surrounding text.
 A one-line security warning is written to stderr; pass `--quiet` (or `-q`) to suppress it.
 The command exits non-zero with a diagnostic on stderr when the sandbox is not registered or when the token cannot be retrieved (for example, if the sandbox is not running).
+
+The token also authenticates the Control UI config endpoint served by the gateway on the forwarded dashboard port.
+There is no `controlui.bootstrap.config.json` path; the supported endpoint is `/__openclaw/control-ui-config.json`, and it requires the token (unauthenticated requests return `401` with a JSON body):
+
+```bash
+TOKEN=$(nemoclaw my-assistant gateway-token --quiet)
+curl -fsS -H "Authorization: Bearer $TOKEN" \
+  "http://127.0.0.1:18789/__openclaw/control-ui-config.json"
+```
 
 **Warning:**
 
@@ -1109,6 +1126,18 @@ nemoclaw my-assistant skill remove my-skill
 Use the skill name from the `SKILL.md` frontmatter, not the local directory name.
 Skill names must contain only alphanumeric characters, dots, hyphens, and underscores, and cannot be `.` or `..`.
 
+### `nemoclaw <name> agents list`
+
+List the OpenClaw agents configured in the sandbox.
+This is a thin pass-through to `openclaw agents list` via `openshell sandbox exec`; the OpenClaw CLI owns the gateway `agents.list` call, output formatting, and binding summaries.
+Flags accepted by the in-sandbox CLI (`--json`, `--bindings`) are forwarded verbatim.
+
+```bash
+nemoclaw my-assistant agents list
+nemoclaw my-assistant agents list --json
+nemoclaw my-assistant agents list --bindings
+```
+
 ### `nemoclaw <name> agents add`
 
 Run the OpenClaw interactive add wizard inside the sandbox.
@@ -1258,6 +1287,10 @@ When the command is running from a source checkout, it reports that state and do
 Rebuild sandboxes whose base image is older than the one currently pinned by NemoClaw.
 NemoClaw resolves the digest of `ghcr.io/nvidia/nemoclaw/sandbox-base:latest` from the registry, then compares it against the digest each sandbox was created with.
 Sandboxes that match the current digest are left alone.
+NemoClaw also checks the build fingerprint recorded on each managed sandbox image.
+A sandbox needs upgrade when its agent version is stale, when its recorded NemoClaw image fingerprint differs from the running CLI, or both.
+Custom Dockerfile sandboxes are not classified by image drift because rebuilding them onto the default image would drop the custom image.
+Legacy sandboxes without a recorded fingerprint opt into this check after their next rebuild.
 
 ```bash
 nemoclaw upgrade-sandboxes [--check] [--auto] [--yes|-y]

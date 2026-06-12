@@ -28,7 +28,7 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           # Core maintainers are exempt from the PR limit.
-          EXEMPT="ericksoa kjw3 jacobtomlinson cv"
+          EXEMPT="ericksoa kjw3 jacobtomlinson cv jyaunches"
           for user in $EXEMPT; do
             if [ "$AUTHOR" = "$user" ]; then
               echo "Author $AUTHOR is a core maintainer — exempt from PR limit"

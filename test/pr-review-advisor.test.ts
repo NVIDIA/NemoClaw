@@ -5,21 +5,21 @@ import fs from "node:fs";
 import path from "node:path";
 import Ajv2020 from "ajv/dist/2020.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
-
-import { buildComment } from "../tools/pr-review-advisor/comment.mts";
+import { githubGraphql } from "../tools/advisors/github.mts";
 import {
   buildPromptTurns,
   buildSystemPrompt,
   classifyMonolithDelta,
   classifyTestDepth,
   detectLocalizedPatchSignals,
+  findRetiredE2eMigrationLedgerChanges,
   normalizeReviewResult,
   readTrustedSecurityReviewSkill,
   renderDetailedReview,
   renderSummary,
   writePromptArtifacts,
 } from "../tools/pr-review-advisor/analyze.mts";
-import { githubGraphql } from "../tools/advisors/github.mts";
+import { buildComment } from "../tools/pr-review-advisor/comment.mts";
 import { validatePrReviewAdvisorWorkflowBoundary } from "../tools/pr-review-advisor/workflow-boundary.mts";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
@@ -39,6 +39,7 @@ function metadata(overrides: Partial<ReviewMetadata> = {}): ReviewMetadata {
     previousAdvisorReview: null,
     workflowSignals: [],
     localizedPatchSignals: [],
+    retiredE2eMigrationLedgerChanges: [],
     monolithDeltas: [],
     driftEvidence: [],
     github: null,
@@ -219,10 +220,17 @@ describe("PR review advisor", () => {
       "any unmet acceptance clause or security fail/warning must be represented as a finding",
     );
     expect(prompt).toContain("Source-of-truth review");
+    expect(prompt).toContain("Vitest E2E suite simplicity");
+    expect(prompt).toContain("take a closer architecture look for new systems");
+    expect(prompt).toContain("Favor focused Vitest tests and local test helpers");
     expect(prompt).toContain("what invalid state is handled");
     expect(prompt).toContain(
       "Any sourceOfTruthReview item with status=missing or status=needs_followup must also be represented as a finding",
     );
+    expect(prompt).toContain("Legacy E2E migration governance");
+    expect(prompt).toContain("retired repo-local E2E migration ledger");
+    expect(prompt).toContain("Do not infer migration fidelity from PR-body prose");
+    expect(prompt).toContain("deterministic workflow tests own the frozen legacy bash script");
     expect(prompt).toContain("multi-turn conversation");
     expect(prompt).toContain(
       "In the final synthesis turn, return JSON only matching the schema provided in that turn",
@@ -348,6 +356,55 @@ describe("PR review advisor", () => {
       }),
     ]);
     expect(signals[0]?.reviewRule).toContain("invalid state");
+  });
+
+  it("detects retired E2E migration ledgers only when added or modified", () => {
+    const diff = `diff --git a/test/e2e-scenario/migration/legacy-inventory.json b/test/e2e-scenario/migration/legacy-inventory.json
+index 1111111..2222222 100644
+--- a/test/e2e-scenario/migration/legacy-inventory.json
++++ b/test/e2e-scenario/migration/legacy-inventory.json
+@@ -1 +1 @@
+-{"status":"old"}
++{"status":"bridge-probe"}
+diff --git a/test/e2e/docs/parity-inventory.generated.json b/test/e2e/docs/parity-inventory.generated.json
+deleted file mode 100644
+--- a/test/e2e/docs/parity-inventory.generated.json
++++ /dev/null
+@@ -1 +0,0 @@
+-{}
+`;
+
+    expect(findRetiredE2eMigrationLedgerChanges(diff)).toEqual([
+      {
+        file: "test/e2e-scenario/migration/legacy-inventory.json",
+        change: "modified",
+      },
+    ]);
+  });
+
+  it("adds a blocker finding when a retired E2E migration ledger is reintroduced", () => {
+    const result = normalizeReviewResult(
+      validResult({ findings: [], sourceOfTruthReview: [] }),
+      metadata({
+        deterministic: {
+          ...metadata().deterministic,
+          retiredE2eMigrationLedgerChanges: [
+            {
+              file: "test/e2e-scenario/migration/legacy-inventory.json",
+              change: "added",
+            },
+          ],
+        },
+      }),
+    );
+
+    expect(result.findings[0]).toMatchObject({
+      severity: "blocker",
+      category: "tests",
+      file: "test/e2e-scenario/migration/legacy-inventory.json",
+      title: "Retired E2E migration ledger is being reintroduced",
+    });
+    expect(result.findings[0]?.recommendation).toContain("Remove repo-local migration ledger");
   });
 
   it("adds a finding when source-of-truth review is missing follow-up", () => {

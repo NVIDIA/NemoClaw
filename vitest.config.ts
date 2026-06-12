@@ -7,7 +7,7 @@ import {
   shouldRunBranchValidationE2E,
   shouldRunInstallerIntegration,
   shouldRunLiveE2EScenarios,
-} from "./test/e2e-scenario/framework/live-project-gate.ts";
+} from "./test/e2e-scenario/fixtures/live-project-gate.ts";
 import { testTimeout } from "./test/helpers/timeouts";
 
 const isGithubActions = process.env.GITHUB_ACTIONS === "true";
@@ -37,7 +37,12 @@ export default defineConfig({
             "**/node_modules/**",
             "**/.claude/**",
             "test/e2e/**",
+            // Live scenario tests own their own gated project (e2e-scenarios-live)
+            // and require Docker + a real onboard to pass. Excluding here keeps
+            // the cli project (and pre-commit `Test (cli)`) green locally.
+            "test/e2e-scenario/live/**",
             "test/install-preflight.test.ts",
+            "test/install-preflight-docker-bootstrap.test.ts",
             "test/install-openshell-version-check.test.ts",
           ],
         },
@@ -46,7 +51,11 @@ export default defineConfig({
         test: {
           name: "installer-integration",
           include: runInstallerIntegration
-            ? ["test/install-preflight.test.ts", "test/install-openshell-version-check.test.ts"]
+            ? [
+                "test/install-preflight.test.ts",
+                "test/install-preflight-docker-bootstrap.test.ts",
+                "test/install-openshell-version-check.test.ts",
+              ]
             : [],
           // Slow tests that spawn real bash install.sh processes.
           // Run in CI or explicitly with:
@@ -62,9 +71,11 @@ export default defineConfig({
       },
       {
         test: {
-          name: "e2e-scenario-framework",
+          // Fast tests for the E2E fixture/support layer. Vitest remains the
+          // only harness; this project does not define a separate runner.
+          name: "e2e-vitest-support",
           testTimeout: testTimeout(),
-          include: ["test/e2e-scenario/framework-tests/**/*.test.ts"],
+          include: ["test/e2e-scenario/support-tests/**/*.test.ts"],
         },
       },
       {

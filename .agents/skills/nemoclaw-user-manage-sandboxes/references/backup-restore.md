@@ -68,6 +68,9 @@ nemoclaw my-assistant snapshot restore before-upgrade --to my-assistant-clone --
 The `nemoclaw <name> rebuild` command uses the same snapshot mechanism automatically.
 Snapshot restore performs a targeted repair for legacy `.openclaw-data` symlinks that older images created.
 NemoClaw rejects unsafe symlinks and hard links inside sandbox state during backup creation before they can enter a snapshot.
+Snapshots also preserve user-owned `openclaw.json` settings.
+During rebuild or restore, NemoClaw merges those restored settings with the freshly generated runtime config so current provider placeholders, messaging enablement, and gateway state win over stale snapshot values.
+If the restored config cannot be parsed or applied safely, NemoClaw stops the restore instead of replacing the generated config with an unsafe fallback.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
@@ -153,8 +156,8 @@ openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/platforms/" /sandbox/.hermes/pl
 To back up every registered, running sandbox in one step, run `nemoclaw backup-all`.
 This is the recommended host-installed command before broad maintenance such as `nemoclaw update`, `nemoclaw upgrade-sandboxes`, or an OpenShell gateway migration.
 
-```console
-$ nemoclaw backup-all
+```bash
+nemoclaw backup-all
 ```
 
 `backup-all` walks the sandboxes registered on the host, creates a snapshot for each running sandbox, and stores the snapshot bundles under `~/.nemoclaw/rebuild-backups/<name>/`.

@@ -79,6 +79,9 @@ $$nemoclaw my-assistant snapshot restore before-upgrade --to my-assistant-clone 
 The `$$nemoclaw <name> rebuild` command uses the same snapshot mechanism automatically.
 Snapshot restore performs a targeted repair for legacy `.openclaw-data` symlinks that older images created.
 NemoClaw rejects unsafe symlinks and hard links inside sandbox state during backup creation before they can enter a snapshot.
+Snapshots also preserve user-owned `openclaw.json` settings.
+During rebuild or restore, NemoClaw merges those restored settings with the freshly generated runtime config so current provider placeholders, messaging enablement, and gateway state win over stale snapshot values.
+If the restored config cannot be parsed or applied safely, NemoClaw stops the restore instead of replacing the generated config with an unsafe fallback.
 
 </AgentOnly>
 <AgentOnly variant="hermes">

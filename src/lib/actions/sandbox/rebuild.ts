@@ -43,13 +43,18 @@ import { RD as _RD, B, D, G, R, YW } from "../../cli/terminal-style";
 import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
 import { getNamedGatewayLifecycleState } from "../../gateway-runtime-action";
 import * as nim from "../../inference/nim";
+import type {
+  MessagingHookApplyRequest,
+  MessagingHookOutputMap,
+  MessagingOpenShellRunner,
+  SandboxMessagingPlan,
+} from "../../messaging";
 import {
   createBuiltInChannelManifestRegistry,
   MessagingSetupApplier,
   MessagingWorkflowPlanner,
   toMessagingAgentId,
 } from "../../messaging";
-import type { SandboxMessagingPlan } from "../../messaging/manifest";
 import { pruneDisabledMessagingPolicyPresets } from "../../onboard/messaging-policy-presets";
 import {
   captureSandboxListWithGatewayRecovery,
@@ -200,18 +205,80 @@ async function stageMessagingManifestPlanForRebuild(
     sandboxEntry,
     supportedChannelIds: agent.messagingPlatforms,
   });
-  if (!plan || plan.channels.length === 0) {
+  if (!plan) {
     MessagingSetupApplier.clearPlanEnv();
     log("Messaging manifest rebuild plan: no configured channels");
     return null;
   }
   MessagingSetupApplier.writePlanToEnv(plan);
+  if (plan.channels.length === 0) {
+    log("Messaging manifest rebuild plan staged: no configured channels");
+    return plan;
+  }
   log(
     `Messaging manifest rebuild plan staged: ${plan.channels
       .map((channel) => channel.channelId)
       .join(",")}`,
   );
   return plan;
+}
+
+const runMessagingOpenshell: MessagingOpenShellRunner = (args, options = {}) =>
+  runOpenshell([...args], {
+    env: options.env as NodeJS.ProcessEnv | undefined,
+    ignoreError: options.ignoreError,
+    input: options.input,
+    stdio: options.stdio as never,
+  });
+
+function hookOutputsFromBuildSteps(
+  plan: SandboxMessagingPlan,
+  request: MessagingHookApplyRequest,
+): { readonly outputs: MessagingHookOutputMap } {
+  const outputs: Record<string, MessagingHookOutputMap[string]> = {};
+  for (const step of plan.buildSteps) {
+    if (
+      step.channelId !== request.channelId ||
+      step.hookId !== request.hookId ||
+      step.value === undefined
+    ) {
+      continue;
+    }
+    outputs[step.outputId] = {
+      kind: step.kind,
+      value: step.value,
+    };
+  }
+  return { outputs };
+}
+
+async function reapplyMessagingManifestAfterOpenClawDoctor(
+  sandboxName: string,
+  plan: SandboxMessagingPlan | null,
+  log: (msg: string) => void,
+): Promise<void> {
+  if (!plan || plan.agent !== "openclaw") {
+    log("Messaging manifest reapply skipped: no OpenClaw messaging plan");
+    return;
+  }
+
+  try {
+    log("Reapplying messaging manifest render and post-agent-install hooks after doctor");
+    const result = await MessagingSetupApplier.applyAgentConfigAtOpenShell(plan, {
+      runOpenshell: runMessagingOpenshell,
+      runHook: (request) => hookOutputsFromBuildSteps(plan, request),
+    });
+    log(
+      `messaging manifest reapply: targets=${result.appliedTargets.join(",")}, hooks=${result.appliedHooks.join(",")}`,
+    );
+    if (result.appliedTargets.length > 0 || result.appliedHooks.length > 0) {
+      console.log(`  ${G}✓${R} Messaging manifest config reapplied`);
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    log(`Messaging manifest reapply failed: ${message}`);
+    console.log(`  ${D}Messaging manifest config reapply skipped (${message})${R}`);
+  }
 }
 
 /**
@@ -288,10 +355,10 @@ export async function rebuildSandbox(
   // / WECHAT_USER_ID lets the in-process onboard --resume that fires later
   // see it directly via the wechatConfig builder's process.env path.
   // `openclaw-weixin/` runtime state is intentionally NOT in state_dirs —
-  // seed-wechat-accounts.py rebuilds the account files from these envs
-  // every image build, so keeping the envs here is the only thing the next
-  // image needs to put the right accountId/baseUrl/userId back into
-  // openclaw.json + the accounts state file.
+  // the manifest post-agent-install hook rebuilds account files from these
+  // env-backed config inputs every image build, so keeping the envs here is
+  // what the next image needs to put the right accountId/baseUrl/userId back
+  // into openclaw.json + the accounts state file.
   {
     // Only hydrate from the session when it belongs to THIS sandbox. The
     // global session file holds the most recent onboard, which may be for a
@@ -765,21 +832,6 @@ export async function rebuildSandbox(
     // Mark session resumable and point at this sandbox; set env var as fallback.
     const sessionBefore = onboardSession.loadSession();
     const sessionMatchesSandbox = sessionBefore?.sandboxName === sandboxName;
-    const registryMessagingChannels = Array.isArray(sb.messagingChannels)
-      ? sb.messagingChannels.filter((value: unknown): value is string => typeof value === "string")
-      : null;
-    const sessionMessagingChannels =
-      sessionMatchesSandbox && Array.isArray(sessionBefore?.messagingChannels)
-        ? sessionBefore.messagingChannels.filter(
-            (value: unknown): value is string => typeof value === "string",
-          )
-        : null;
-    const rebuildMessagingChannels = registryMessagingChannels ?? sessionMessagingChannels ?? [];
-    const sessionMessagingChannelConfig = sessionMatchesSandbox
-      ? (sessionBefore?.messagingChannelConfig ?? null)
-      : null;
-    const rebuildMessagingChannelConfig =
-      sb.messagingChannelConfig ?? sessionMessagingChannelConfig ?? null;
     const rebuildsHermesSandbox = rebuildAgent === "hermes";
     let registryHermesToolGateways: string[] | null = null;
     if (rebuildsHermesSandbox && Array.isArray(sb.hermesToolGateways)) {
@@ -801,23 +853,6 @@ export async function rebuildSandbox(
     const hasRebuildHermesToolGateways =
       rebuildsHermesSandbox &&
       (registryHermesToolGateways !== null || sessionHermesToolGateways !== null);
-    const hasRebuildMessagingChannels =
-      registryMessagingChannels !== null || sessionMessagingChannels !== null;
-    // Snapshot the operator's paused channel set BEFORE `removeSandboxRegistryEntry`
-    // wipes the registry entry. Otherwise the `disabledChannels` filter inside
-    // `createSandbox` (onboard.ts) reads back `[]` from the freshly-empty registry
-    // and the stopped channel comes back live in the rebuilt image. The session
-    // mirror is the only place this list can survive the destroy/recreate window.
-    //
-    // Always re-stash from `sb` — do NOT fall back to a prior session value.
-    // `sb` is loaded fresh from the registry at the top of rebuildSandbox, so it
-    // already reflects the latest `channels stop|start` write. The session mirror
-    // is downstream of the registry; re-stashing on every rebuild keeps a stale
-    // ["telegram"] from a prior stop/rebuild cycle from leaking into the next
-    // start/rebuild and filtering the channel back out.
-    const rebuildDisabledChannels = Array.isArray(sb.disabledChannels)
-      ? sb.disabledChannels.filter((value: unknown): value is string => typeof value === "string")
-      : [];
     log(
       `Session before update: sandboxName=${sessionBefore?.sandboxName}, status=${sessionBefore?.status}, resumable=${sessionBefore?.resumable}, provider=${sessionBefore?.provider}, model=${sessionBefore?.model}, sessionMatch=${sessionMatchesSandbox}`,
     );
@@ -831,9 +866,6 @@ export async function rebuildSandbox(
       s.resumable = true;
       s.status = "in_progress";
       s.agent = rebuildAgent;
-      s.messagingChannels = rebuildMessagingChannels;
-      s.messagingChannelConfig = rebuildMessagingChannelConfig;
-      s.disabledChannels = rebuildDisabledChannels;
       s.messagingPlan = rebuildMessagingPlan;
       s.hermesToolGateways = rebuildsHermesSandbox ? rebuildHermesToolGateways : [];
       // Persist inference selection from the about-to-be-removed registry entry
@@ -1012,11 +1044,11 @@ export async function rebuildSandbox(
     }
 
     const preservedRegistryFields = {
-      ...(hasRebuildMessagingChannels ? { messagingChannels: [...rebuildMessagingChannels] } : {}),
-      disabledChannels:
-        rebuildDisabledChannels.length > 0 ? [...rebuildDisabledChannels] : undefined,
       ...(hasRebuildHermesToolGateways
         ? { hermesToolGateways: [...rebuildHermesToolGateways] }
+        : {}),
+      ...(sb.providerCredentialHashes
+        ? { providerCredentialHashes: sb.providerCredentialHashes }
         : {}),
     };
     if (Object.keys(preservedRegistryFields).length > 0) {
@@ -1061,6 +1093,7 @@ export async function rebuildSandbox(
     const registryPolicyPresets = Array.isArray(sb.policies)
       ? sb.policies.filter((value: unknown): value is string => typeof value === "string")
       : [];
+    const rebuildDisabledChannels = [...(rebuildMessagingPlan?.disabledChannels ?? [])];
     const savedPresets = pruneDisabledMessagingPolicyPresets(
       backupManifest?.policyPresets ?? registryPolicyPresets,
       rebuildDisabledChannels,
@@ -1120,39 +1153,18 @@ export async function rebuildSandbox(
         );
       }
 
-      // doctor --fix may rewrite openclaw.json after the image build seeded the
-      // WeChat account/channel block. Re-run the image-bundled seed helper when
-      // present so channels.openclaw-weixin remains paired with the preserved
-      // openclaw-weixin extension after rebuild restore.
-      log("Reapplying WeChat account seed after post-upgrade structure repair");
-      const seedWechatCommand = [
-        "if [ -f /usr/local/lib/nemoclaw/seed-wechat-accounts.py ]; then",
-        "python3 /usr/local/lib/nemoclaw/seed-wechat-accounts.py;",
-        "else",
-        "echo '[nemoclaw] seed-wechat-accounts.py not present; skipping';",
-        "fi",
-      ].join(" ");
-      const seedWechatResult = executeSandboxCommand(sandboxName, seedWechatCommand);
-      log(
-        `seed-wechat-accounts.py: exit=${seedWechatResult?.status}, stdout=${(seedWechatResult?.stdout || "").substring(0, 200)}`,
-      );
-      if (seedWechatResult && seedWechatResult.status === 0) {
-        const seedWechatStdout = seedWechatResult.stdout ?? "";
-        if (!seedWechatStdout.includes("not present; skipping")) {
-          console.log(`  ${G}\u2713${R} WeChat account seed reapplied`);
-        }
-      } else {
-        console.log(
-          `  ${D}WeChat account seed skipped (seed helper returned ${seedWechatResult?.status ?? "null"})${R}`,
-        );
-      }
+      // doctor --fix may rewrite openclaw.json after the image build applied
+      // manifest-owned messaging render and post-agent-install build-file outputs.
+      // Reapply the staged plan so channel config and WeChat account seed files
+      // remain paired with the restored OpenClaw extension state.
+      await reapplyMessagingManifestAfterOpenClawDoctor(sandboxName, rebuildMessagingPlan, log);
 
       // #4538: `openclaw doctor --fix` enforces a single-user 700/600 state
       // layout, which silently tightens NemoClaw's mutable config contract
       // (setgid + group-writable /sandbox/.openclaw and group-writable
       // openclaw.json). Run this LAST in the OpenClaw post-restore sequence —
-      // after doctor --fix and the WeChat seed helper, both of which rewrite
-      // openclaw.json (the seed helper atomically writes it 0600) — so the
+      // after doctor --fix and messaging manifest reapply, both of which can
+      // rewrite openclaw.json — so the
       // restored contract is not immediately undone. No-op for shields-up
       // sandboxes (config is intentionally root-owned/locked).
       log("Restoring mutable OpenClaw config permissions after post-restore config writes");
