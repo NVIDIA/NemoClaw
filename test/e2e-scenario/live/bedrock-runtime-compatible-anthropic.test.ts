@@ -95,8 +95,18 @@ function redactedResultText(
   return [result.redactedStdout, result.redactedStderr].filter(Boolean).join("\n");
 }
 
+function evidenceTail(text: string): string {
+  return text.slice(-4_000);
+}
+
 function expectExitZero(result: CommandText & { exitCode: number | null }, label: string): void {
   expect(result.exitCode, `${label} failed:\n${resultText(result)}`).toBe(0);
+}
+
+function isMissingSandboxCleanupOutput(text: string): boolean {
+  return /Sandbox '.+' does not exist|Run 'nemoclaw onboard' to create one|sandbox .* not found|no such sandbox/i.test(
+    text,
+  );
 }
 
 function shellQuote(value: string): string {
@@ -429,29 +439,54 @@ async function bestEffort(run: () => Promise<unknown> | unknown): Promise<void> 
   }
 }
 
-async function cleanupSandboxState(host: HostCliClient, home: string): Promise<void> {
-  const env = testEnv(home);
-  await bestEffort(() =>
-    host.command("node", [CLI_ENTRYPOINT, SANDBOX_NAME, "destroy", "--yes"], {
-      artifactName: "cleanup-nemoclaw-destroy-bedrock-runtime",
-      env,
-      timeoutMs: 180_000,
-    }),
-  );
-  await bestEffort(() =>
-    host.command("openshell", ["sandbox", "delete", SANDBOX_NAME], {
+async function cleanupNemoClawSandbox(host: HostCliClient, home: string): Promise<void> {
+  const result = await host.command("node", [CLI_ENTRYPOINT, SANDBOX_NAME, "destroy", "--yes"], {
+    artifactName: "cleanup-nemoclaw-destroy-bedrock-runtime",
+    env: testEnv(home),
+    timeoutMs: 180_000,
+  });
+  if (result.exitCode === 0 || isMissingSandboxCleanupOutput(resultText(result))) return;
+  expectExitZero(result, `cleanup NemoClaw sandbox ${SANDBOX_NAME}`);
+}
+
+async function cleanupOpenShellSandbox(host: HostCliClient, home: string): Promise<void> {
+  const result = await host.command(
+    "bash",
+    [
+      "-lc",
+      'if ! command -v openshell >/dev/null 2>&1; then exit 0; fi; openshell sandbox delete "$1"',
+      "cleanup-openshell-sandbox-delete",
+      SANDBOX_NAME,
+    ],
+    {
       artifactName: "cleanup-openshell-sandbox-delete-bedrock-runtime",
-      env,
+      env: testEnv(home),
       timeoutMs: 60_000,
-    }),
+    },
   );
-  await bestEffort(() =>
-    host.command("openshell", ["gateway", "destroy", "-g", "nemoclaw"], {
+  if (result.exitCode === 0 || isMissingSandboxCleanupOutput(resultText(result))) return;
+  expectExitZero(result, `cleanup OpenShell sandbox ${SANDBOX_NAME}`);
+}
+
+async function cleanupOpenShellGateway(host: HostCliClient, home: string): Promise<void> {
+  await host.command(
+    "bash",
+    [
+      "-lc",
+      "if ! command -v openshell >/dev/null 2>&1; then exit 0; fi; openshell gateway destroy -g nemoclaw",
+    ],
+    {
       artifactName: "cleanup-openshell-gateway-destroy-bedrock-runtime",
-      env,
+      env: testEnv(home),
       timeoutMs: 120_000,
-    }),
+    },
   );
+}
+
+async function cleanupSandboxState(host: HostCliClient, home: string): Promise<void> {
+  await bestEffort(() => cleanupNemoClawSandbox(host, home));
+  await bestEffort(() => cleanupOpenShellSandbox(host, home));
+  await bestEffort(() => cleanupOpenShellGateway(host, home));
 }
 
 function stopBedrockAdapterBestEffort(home: string): void {
@@ -574,11 +609,15 @@ async function prepareSourceCliAndOpenShell(host: HostCliClient, home: string): 
     "source CLI version",
   );
 
-  const openshell = await host.command("openshell", ["--version"], {
-    artifactName: "prereq-openshell-version-bedrock-runtime",
-    env: testEnv(home),
-    timeoutMs: 30_000,
-  });
+  const openshell = await host.command(
+    "bash",
+    ["-lc", "command -v openshell >/dev/null && openshell --version"],
+    {
+      artifactName: "prereq-openshell-version-bedrock-runtime",
+      env: testEnv(home),
+      timeoutMs: 30_000,
+    },
+  );
   if (openshell.exitCode === 0) return;
 
   const install = await host.command(
@@ -592,7 +631,7 @@ async function prepareSourceCliAndOpenShell(host: HostCliClient, home: string): 
   );
   expectExitZero(install, "Install OpenShell CLI");
   expectExitZero(
-    await host.command("openshell", ["--version"], {
+    await host.command("bash", ["-lc", "openshell --version"], {
       artifactName: "post-install-openshell-version-bedrock-runtime",
       env: testEnv(home),
       timeoutMs: 30_000,
@@ -1003,6 +1042,64 @@ function findForbiddenLeaks(
   return [...new Set(locations)].sort();
 }
 
+function isPreContractEndpointValidationRateLimit(options: {
+  mock: MockBedrockRuntime | undefined;
+  onboarding: RawRunResult;
+}): boolean {
+  if (options.onboarding.exitCode === 0) return false;
+  if ((options.mock?.converseCount ?? 0) > 0 || (options.mock?.streamCount ?? 0) > 0) {
+    return false;
+  }
+
+  const text = redactedResultText(options.onboarding);
+  const endpointValidation =
+    /NVIDIA Endpoints endpoint validation failed|endpoint validation failed|failed to verify inference endpoint|Chat Completions API validation/i.test(
+      text,
+    );
+  const rateLimited =
+    /HTTP 429|\b429\b|Too Many Requests|rate[- ]?limit|quota|temporarily unavailable|timed? out|timeout/i.test(
+      text,
+    );
+  const sanitizedNvidiaValidation =
+    /NVIDIA Endpoints endpoint validation failed/i.test(text) &&
+    /Validation details were omitted to avoid exposing credentials/i.test(text);
+  return endpointValidation && (rateLimited || sanitizedNvidiaValidation);
+}
+
+async function skipPreContractEndpointValidationRateLimit(options: {
+  artifacts: ArtifactSink;
+  mock: MockBedrockRuntime | undefined;
+  onboarding: RawRunResult;
+  skip: (note?: string) => never;
+}): Promise<void> {
+  if (!isPreContractEndpointValidationRateLimit(options)) return;
+  await options.artifacts.writeJson("transient-provider-validation.skip.json", {
+    id: "bedrock-runtime-compatible-anthropic",
+    status: "skipped",
+    reason: "external-provider-validation-unavailable-before-bedrock-runtime-contract",
+    sourceBoundary:
+      "external NVIDIA Endpoints provider availability before Bedrock Runtime contract",
+    removalCondition:
+      "remove once CI endpoint validation is stable for a release cycle or covered by a hermetic provider-validation fixture",
+    onboardExitCode: options.onboarding.exitCode,
+    onboardSignal: options.onboarding.signal,
+    onboardTimedOut: options.onboarding.timedOut,
+    mockConverseCount: options.mock?.converseCount ?? 0,
+    mockConverseStreamCount: options.mock?.streamCount ?? 0,
+    redactedStdoutTail: evidenceTail(options.onboarding.redactedStdout),
+    redactedStderrTail: evidenceTail(options.onboarding.redactedStderr),
+  });
+  await options.artifacts.writeJson("scenario-result.json", {
+    id: "bedrock-runtime-compatible-anthropic",
+    status: "skipped",
+    reason: "external-provider-validation-unavailable-before-bedrock-runtime-contract",
+    onboardExitCode: options.onboarding.exitCode,
+  });
+  options.skip(
+    "NVIDIA endpoint validation was rate-limited/unavailable before the Bedrock Runtime contract could run",
+  );
+}
+
 async function assertNoBedrockLeaks(options: {
   artifacts: ArtifactSink;
   home: string;
@@ -1161,6 +1258,12 @@ RUN_BEDROCK_TEST(
         timeoutMs: ONBOARD_TIMEOUT_MS,
       },
     );
+    await skipPreContractEndpointValidationRateLimit({
+      artifacts,
+      mock,
+      onboarding,
+      skip,
+    });
     expect(onboarding.exitCode, redactedResultText(onboarding)).toBe(0);
 
     await assertOnboardIdentity(home, AGENT);
