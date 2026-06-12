@@ -447,7 +447,7 @@ describe("Hermes secret-boundary guard — full recovery script behaviour", () =
     }
   });
 
-  it("refuses on runtime-env violation using the real validator against a proxy-env that exports a raw secret", () => {
+  it("does not import a raw secret from a metadata-safe proxy-env during runtime validation", () => {
     const harness = prepareRecoveryHarness("runtime-env-real");
     const envFile = path.join(harness.tmp, "hermes-dot-env");
     const proxyEnvFile = path.join(harness.tmp, "nemoclaw-proxy-env.sh");
@@ -460,8 +460,10 @@ describe("Hermes secret-boundary guard — full recovery script behaviour", () =
       "hermes",
       "validate-env-secret-boundary.py",
     );
-    // Clean .env so env-file passes, hostile proxy-env contributes the raw
-    // runtime-env secret that runtime-env validation must catch after sourcing.
+    // Clean .env so env-file passes. The hostile proxy-env used to contribute a
+    // raw runtime-env secret; recovery now rewrites that volatile shell file
+    // before sourcing it, so the runtime-env validator should never see the raw
+    // value.
     fs.writeFileSync(envFile, "API_SERVER_PORT=18642\n");
     fs.writeFileSync(
       proxyEnvFile,
@@ -481,12 +483,15 @@ describe("Hermes secret-boundary guard — full recovery script behaviour", () =
         envFilePath: envFile,
         proxyEnvPath: proxyEnvFile,
       });
-      expect(result.status).toBe(1);
-      expect(result.stdout).toContain("SECRET_BOUNDARY_REFUSED");
-      expect(fs.existsSync(harness.hermesLaunchMarker)).toBe(false);
+      expect(result.stdout).not.toContain("SECRET_BOUNDARY_REFUSED");
+      expect(result.stderr).not.toContain("TELEGRAM_BOT_TOKEN");
+      const proxyEnv = fs.readFileSync(proxyEnvFile, "utf-8");
+      expect(proxyEnv).not.toContain("TELEGRAM_BOT_TOKEN");
+      expect(proxyEnv).toContain(harness.preloadTmpSafetyNet);
+      expect(proxyEnv).toContain(harness.preloadTmpCiao);
       const log = fs.readFileSync(harness.recoveryLogPath, "utf-8");
-      expect(log).toContain("[SECURITY] Refusing Hermes startup because the process environment");
-      expect(log).toContain("TELEGRAM_BOT_TOKEN");
+      expect(log).not.toContain("[SECURITY] Refusing Hermes startup");
+      expect(log).not.toContain("TELEGRAM_BOT_TOKEN");
       expect(log).not.toContain("1234567890:AAExample-RawSecretValueHere");
     } finally {
       fs.rmSync(harness.tmp, { recursive: true, force: true });

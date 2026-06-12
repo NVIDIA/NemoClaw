@@ -58,7 +58,7 @@ function rewriteRuntimePaths(script: string, paths: ReturnType<typeof makeHarnes
 }
 
 function runGuardRecovery(opts: {
-  proxyEnvContent?: string;
+  proxyEnvContent?: string | ((paths: ReturnType<typeof makeHarness>) => string);
   beforeScript?: (paths: ReturnType<typeof makeHarness>) => void;
   fakeRoot?: boolean;
   shell?: "bash" | "sh";
@@ -79,8 +79,10 @@ function runGuardRecovery(opts: {
   }
   opts.beforeScript?.(paths);
 
-  const proxyEnvContent = opts.proxyEnvContent
-    ? rewriteRuntimePaths(opts.proxyEnvContent, paths)
+  const rawProxyEnvContent =
+    typeof opts.proxyEnvContent === "function" ? opts.proxyEnvContent(paths) : opts.proxyEnvContent;
+  const proxyEnvContent = rawProxyEnvContent
+    ? rewriteRuntimePaths(rawProxyEnvContent, paths)
     : undefined;
   const writeProxyEnv = proxyEnvContent
     ? [
@@ -208,6 +210,22 @@ describe("gateway recovery preload repair", () => {
     expect(nodeOptions.match(new RegExp(result.paths.tmpCiao, "g"))?.length).toBe(1);
   });
 
+  it("rebuilds a metadata-safe proxy-env.sh without sourcing shell content", () => {
+    const result = runGuardRecovery({
+      proxyEnvContent: (paths) =>
+        [
+          `touch ${JSON.stringify(paths.hostileMarker)}`,
+          `export NODE_OPTIONS="--require ${SAFETY_NET_GUARD.tmpPath} --require=${CIAO_GUARD.tmpPath}"`,
+          "",
+        ].join("\n"),
+    });
+    expect(result.status).toBe(0);
+    expect(result.files.hostileProxyEnvSourced).toBe(false);
+    expect(result.files.proxyEnv).not.toContain("touch");
+    expect(result.files.proxyEnv).toContain(`--require ${result.paths.tmpSafetyNet}`);
+    expect(result.files.proxyEnv).toContain(`--require ${result.paths.tmpCiao}`);
+  });
+
   it("persists repairs for a metadata-safe proxy-env.sh that is missing one guard", () => {
     const result = runGuardRecovery({
       proxyEnvContent: `export NODE_OPTIONS="--require ${SAFETY_NET_GUARD.tmpPath}"\n`,
@@ -295,6 +313,18 @@ describe("gateway recovery preload repair", () => {
     expect(result.stdout).toContain("GUARDS_MISSING");
     expect(result.files.gatewayLog).toContain("trusted preload source");
     expect(result.files.gatewayLog).toContain("refusing preload install");
+  });
+
+  it("refuses recovery when a trusted packaged preload source is group writable", () => {
+    const result = runGuardRecovery({
+      beforeScript(paths) {
+        fs.chmodSync(paths.sourceCiao, 0o664);
+      },
+    });
+    expect(result.status).toBe(17);
+    expect(result.stdout).toContain("GUARDS_MISSING");
+    expect(result.files.gatewayLog).toContain("trusted preload source");
+    expect(result.files.gatewayLog).toContain("unsafe mode=664");
   });
 
   it("refuses recovery when a trusted packaged preload source is group writable in root mode", () => {
