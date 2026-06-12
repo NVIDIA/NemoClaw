@@ -6,6 +6,8 @@ license: "Apache-2.0"
 
 # Use a Local Inference Server
 
+import { AgentOnly } from "../_components/AgentGuide";
+
 ## Gotchas
 
 - Ollama is convenient for local chat, but some model/template combinations can return tool calls as plain text under realistic agent load.
@@ -15,10 +17,16 @@ license: "Apache-2.0"
 <AgentOnly variant="openclaw">
 
 - NemoClaw installed. Refer to the Quickstart (use the `nemoclaw-user-get-started` skill) if you have not installed yet.
-- NemoClaw installed. Refer to Quickstart with Hermes (use the `nemoclaw-user-get-started` skill) if you have not installed yet.
-- A local model server running, or a supported Ollama, vLLM, or NIM setup that the NemoClaw onboard wizard can use, start, or install.
 
-import { AgentOnly } from "../_components/AgentGuide";
+</AgentOnly>
+
+<AgentOnly variant="hermes">
+
+- NemoClaw installed. Refer to Quickstart with Hermes (use the `nemoclaw-user-get-started` skill) if you have not installed yet.
+
+</AgentOnly>
+
+- A local model server running, or a supported Ollama, vLLM, or NIM setup that the NemoClaw onboard wizard can use, start, or install.
 
 NemoClaw can route inference to a model server running on your machine instead of a cloud API.
 This page covers Ollama, compatible-endpoint paths for other servers, and experimental managed options for vLLM and NVIDIA NIM.
