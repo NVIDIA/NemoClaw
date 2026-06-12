@@ -43,6 +43,21 @@ export function resolveGatewayName(port: number): string {
   return isDefaultGatewayPort(port) ? BASE_GATEWAY_NAME : `${BASE_GATEWAY_NAME}-${port}`;
 }
 
+/** Resolve the gateway port encoded by a canonical NemoClaw gateway name. */
+export function resolveGatewayPortFromName(gatewayName: string): number | null {
+  if (gatewayName === BASE_GATEWAY_NAME) {
+    return DEFAULT_GATEWAY_PORT;
+  }
+  const match = gatewayName.match(new RegExp(`^${BASE_GATEWAY_NAME}-(\\d+)$`));
+  if (!match) {
+    return null;
+  }
+  const port = Number(match[1]);
+  return isValidPersistedGatewayPort(port) && resolveGatewayName(port) === gatewayName
+    ? port
+    : null;
+}
+
 /**
  * Sandbox registry shape this resolver depends on. Kept structural to avoid
  * a hard import from `state/registry` (which would pull in the whole
@@ -81,30 +96,30 @@ function isValidPersistedGatewayPort(value: number): boolean {
  * gateway and fails with `sandbox has no spec`.
  *
  * Resolution order:
- *   1. The sandbox's persisted `gatewayName`, validated against the NemoClaw
- *      namespace (`nemoclaw` or `nemoclaw-<port>`). Tampered registry state
- *      with an out-of-namespace gateway name is ignored to avoid redirecting
- *      destructive gateway/volume operations.
- *   2. The per-port derivation from the persisted `gatewayPort`, validated
- *      against the TCP port range.
- *   3. The bare `BASE_GATEWAY_NAME` for legacy entries that pre-date the
- *      per-port migration.
+ *   1. If `gatewayPort` is valid, derive the canonical gateway name from the
+ *      port. When a persisted `gatewayName` is also present it must match that
+ *      derivation; otherwise the port wins so tampered registry state cannot
+ *      redirect destructive operations to a different valid NemoClaw gateway.
+ *   2. A name-only legacy entry may use a persisted `gatewayName`, validated
+ *      against the NemoClaw namespace (`nemoclaw` or `nemoclaw-<port>`).
+ *   3. The bare `BASE_GATEWAY_NAME` for older entries that pre-date the
+ *      per-port migration entirely.
  */
 export function resolveSandboxGatewayName(
   sandbox: SandboxGatewayBinding | null | undefined,
 ): string {
+  if (
+    typeof sandbox?.gatewayPort === "number" &&
+    isValidPersistedGatewayPort(sandbox.gatewayPort)
+  ) {
+    return resolveGatewayName(sandbox.gatewayPort);
+  }
   if (
     sandbox?.gatewayName &&
     typeof sandbox.gatewayName === "string" &&
     isValidPersistedGatewayName(sandbox.gatewayName)
   ) {
     return sandbox.gatewayName;
-  }
-  if (
-    typeof sandbox?.gatewayPort === "number" &&
-    isValidPersistedGatewayPort(sandbox.gatewayPort)
-  ) {
-    return resolveGatewayName(sandbox.gatewayPort);
   }
   return BASE_GATEWAY_NAME;
 }

@@ -20,6 +20,7 @@ import {
   BASE_GATEWAY_STATE_DIR_NAME,
   resolveGatewayCompatContainerName,
   resolveGatewayName,
+  resolveGatewayPortFromName,
   resolveGatewayStateDirName,
   resolveSandboxGatewayName,
 } from "../../../dist/lib/onboard/gateway-binding";
@@ -35,8 +36,16 @@ describe("gateway-binding resolver (#4422)", () => {
 
   it("suffixes the name, state dir, and compat container for a non-default port", () => {
     expect(resolveGatewayName(8081)).toBe("nemoclaw-8081");
+    expect(resolveGatewayPortFromName("nemoclaw-8081")).toBe(8081);
     expect(resolveGatewayStateDirName(8081)).toBe("openshell-docker-gateway-8081");
     expect(resolveGatewayCompatContainerName(8081)).toBe("nemoclaw-openshell-gateway-8081");
+  });
+
+  it("rejects malformed gateway names when resolving a port", () => {
+    expect(resolveGatewayPortFromName("nemoclaw")).toBe(DEFAULT_GATEWAY_PORT);
+    expect(resolveGatewayPortFromName("nemoclaw-0")).toBeNull();
+    expect(resolveGatewayPortFromName("nemoclaw-65536")).toBeNull();
+    expect(resolveGatewayPortFromName("other-8081")).toBeNull();
   });
 
   it("derives distinct bindings for two different gateway ports", () => {
@@ -52,6 +61,12 @@ describe("resolveSandboxGatewayName", () => {
   it("returns the persisted gatewayName when present", () => {
     expect(resolveSandboxGatewayName({ gatewayName: "nemoclaw-9090", gatewayPort: 9090 })).toBe(
       "nemoclaw-9090",
+    );
+  });
+
+  it("derives from gatewayPort when a valid persisted gatewayName conflicts", () => {
+    expect(resolveSandboxGatewayName({ gatewayName: "nemoclaw-9090", gatewayPort: 8081 })).toBe(
+      "nemoclaw-8081",
     );
   });
 

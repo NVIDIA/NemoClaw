@@ -97,6 +97,8 @@ describe("CLI dispatch", () => {
               provider: "nvidia-prod",
               gpuEnabled: false,
               policies: [],
+              gatewayName: "nemoclaw-8081",
+              gatewayPort: 8081,
             },
           },
           defaultSandbox: "alpha",
@@ -144,9 +146,13 @@ describe("CLI dispatch", () => {
       expect(openshellOutput).toContain("sandbox delete alpha");
       expect(openshellOutput).toContain("forward stop 18789");
       expect(openshellOutput).toContain(
-        process.platform === "linux" ? "gateway remove nemoclaw" : "gateway destroy -g nemoclaw",
+        process.platform === "linux"
+          ? "gateway remove nemoclaw-8081"
+          : "gateway destroy -g nemoclaw-8081",
       );
-      expect(fs.readFileSync(bashLog, "utf8")).toContain("volume ls -q --filter");
+      expect(fs.readFileSync(bashLog, "utf8")).toContain(
+        "volume ls -q --filter name=openshell-cluster-nemoclaw-8081",
+      );
     },
   );
 
@@ -241,6 +247,8 @@ describe("CLI dispatch", () => {
             provider: "nvidia-prod",
             gpuEnabled: false,
             policies: [],
+            gatewayName: "nemoclaw-8081",
+            gatewayPort: 8081,
           },
           beta: {
             name: "beta",

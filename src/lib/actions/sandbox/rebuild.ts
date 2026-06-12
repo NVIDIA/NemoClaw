@@ -2,9 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { CLI_NAME } from "../../cli/branding";
-import { GATEWAY_PORT } from "../../core/ports";
 import { prompt as askPrompt } from "../../credentials/store";
-import { resolveGatewayName, resolveSandboxGatewayName } from "../../onboard/gateway-binding";
+import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import {
   normalizeRebuildSandboxOptions,
   type RebuildSandboxOptions,
@@ -543,8 +542,11 @@ export async function rebuildSandbox(
   }
 
   // Step 1: Ensure sandbox is live for backup
-  log("Checking sandbox liveness: openshell sandbox list");
-  const liveRecovery = await captureSandboxListWithGatewayRecovery();
+  const recordedGateway = resolveSandboxGatewayName(sb);
+  log(`Checking sandbox liveness on ${recordedGateway}: openshell sandbox list`);
+  const liveRecovery = await captureSandboxListWithGatewayRecovery({
+    gatewayName: recordedGateway,
+  });
   const isLive = liveRecovery.result;
   log(
     `openshell sandbox list exit=${isLive.status}, output=${(isLive.output || "").substring(0, 200)}`,
@@ -581,49 +583,9 @@ export async function rebuildSandbox(
   // customPolicies, every field) is silently dropped or mutated (#4497).
   let staleRegistrySnapshot: ReturnType<typeof registry.load> | null = null;
   if (!liveNames.has(sandboxName)) {
-    // The default-gateway liveness checks below can only authoritatively reason
-    // about the default `nemoclaw` gateway. A sandbox created on a non-default
-    // per-port gateway (#4645, e.g. `nemoclaw-9000`) that is simply not the
-    // active gateway would look absent here, and recreating-from-scratch would
-    // orphan its live workspace. Refuse the destructive path in that case and
-    // point the operator at the sandbox's own gateway. (If that gateway were
-    // active, the sandbox would have appeared in the list above.)
-    const recordedGateway = resolveSandboxGatewayName(sb);
-    const activeDefaultGateway = resolveGatewayName(GATEWAY_PORT);
-    if (recordedGateway !== activeDefaultGateway) {
-      console.error(
-        `  Sandbox '${sandboxName}' is registered on the '${recordedGateway}' OpenShell gateway, which is not the active gateway.`,
-      );
-      console.error(
-        "  Its live state could not be confirmed — your local registry entry has been preserved.",
-      );
-      console.error("  Select that gateway and retry:");
-      console.error(`      openshell gateway select ${recordedGateway}`);
-      console.error(`  Then re-run: ${CLI_NAME} ${sandboxName} rebuild --yes`);
-      bail(
-        `Sandbox '${sandboxName}' is on the non-default gateway '${recordedGateway}'; select it before rebuilding.`,
-      );
-      return;
-    }
-
-    // The active-gateway `sandbox list` does not show this sandbox. That alone
-    // is NOT proof it is gone: a different active gateway (multi-gateway setups,
-    // #4645) would hide a live NemoClaw sandbox, and `sandbox list` can omit a
-    // sandbox that `sandbox get` still resolves. Recreating on that false
-    // signal would destroy live workspace state. So confirm authoritatively
-    // against the NAMED NemoClaw gateway: getReconciledSandboxGatewayState runs
-    // `sandbox get`, re-selecting/recovering nemoclaw as needed, and only
-    // reports "missing" once the named gateway is confirmed healthy and the
-    // sandbox is genuinely absent.
     const reconciled = await getReconciledSandboxGatewayState(sandboxName);
     if (reconciled.state === "present") {
-      // `sandbox get` resolved the sandbox, but that query ran against whatever
-      // gateway is currently active. Only trust it as live when the sandbox's
-      // own registered gateway is the active healthy one — otherwise a foreign
-      // active gateway with a same-named sandbox (or a list/get inconsistency)
-      // could send the destructive backup/delete below at the wrong sandbox. If
-      // a foreign gateway is active, abort with guidance instead.
-      const lifecycle = getNamedGatewayLifecycleState(resolveSandboxGatewayName(sb));
+      const lifecycle = getNamedGatewayLifecycleState(recordedGateway);
       if (lifecycle.state !== "healthy_named") {
         printWrongGatewayActiveGuidance(
           sandboxName,

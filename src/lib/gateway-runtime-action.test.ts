@@ -8,15 +8,18 @@ import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } fr
 type GatewayRuntimeModule = typeof import("../../dist/lib/gateway-runtime-action");
 
 const requireDist = createRequire(import.meta.url);
+const gatewayRuntimeModulePath = "../../dist/lib/gateway-runtime-action.js";
 
 describe("gateway-runtime-action per-sandbox gateway routing", () => {
   let gatewayRuntime: GatewayRuntimeModule;
   let captureSpy: MockInstance;
   let runSpy: MockInstance;
+  let startGatewaySpy: MockInstance;
   let spies: MockInstance[];
 
   beforeEach(() => {
     spies = [];
+    delete require.cache[requireDist.resolve(gatewayRuntimeModulePath)];
     const openshellRuntime = requireDist("../../dist/lib/adapters/openshell/runtime.js");
     captureSpy = vi.spyOn(openshellRuntime, "captureOpenshell");
     runSpy = vi.spyOn(openshellRuntime, "runOpenshell");
@@ -25,14 +28,18 @@ describe("gateway-runtime-action per-sandbox gateway routing", () => {
     // The recovery path also pokes onboard.startGatewayForRecovery via lazy
     // require(); stub it so the tests do not pull onboard's runtime in.
     const onboard = requireDist("../../dist/lib/onboard.js");
-    spies.push(vi.spyOn(onboard, "startGatewayForRecovery").mockResolvedValue(undefined as never));
+    startGatewaySpy = vi
+      .spyOn(onboard, "startGatewayForRecovery")
+      .mockResolvedValue(undefined as never);
+    spies.push(startGatewaySpy);
 
-    gatewayRuntime = requireDist("../../dist/lib/gateway-runtime-action.js");
+    gatewayRuntime = requireDist(gatewayRuntimeModulePath);
   });
 
   afterEach(() => {
     for (const spy of spies) spy.mockRestore();
     delete process.env.OPENSHELL_GATEWAY;
+    delete require.cache[requireDist.resolve(gatewayRuntimeModulePath)];
   });
 
   describe("getNamedGatewayLifecycleState", () => {
@@ -115,6 +122,35 @@ describe("gateway-runtime-action per-sandbox gateway routing", () => {
       for (const args of selectCalls) {
         expect(args[2]).toBe("nemoclaw-8090");
       }
+    });
+
+    it("starts recovery with the supplied gateway name and derived port", async () => {
+      captureSpy
+        .mockReturnValueOnce({ status: 0, output: "Status: Disconnected\nGateway: nemoclaw\n" })
+        .mockReturnValueOnce({ status: 0, output: "" })
+        .mockReturnValueOnce({ status: 0, output: "Status: Disconnected\nGateway: nemoclaw\n" })
+        .mockReturnValueOnce({ status: 0, output: "" })
+        .mockReturnValueOnce({
+          status: 0,
+          output: "Status: Connected\nGateway: nemoclaw-8090\n",
+        })
+        .mockReturnValueOnce({
+          status: 0,
+          output: "Gateway: nemoclaw-8090\n",
+        });
+      runSpy.mockReturnValue({ status: 0 } as never);
+
+      const result = await gatewayRuntime.recoverNamedGatewayRuntime({
+        gatewayName: "nemoclaw-8090",
+      });
+
+      expect(startGatewaySpy).toHaveBeenCalledWith({
+        gatewayName: "nemoclaw-8090",
+        gatewayPort: 8090,
+      });
+      expect(result.recovered).toBe(true);
+      expect(result.via).toBe("start");
+      expect(process.env.OPENSHELL_GATEWAY).toBe("nemoclaw-8090");
     });
   });
 });

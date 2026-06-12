@@ -36,6 +36,7 @@ describe("rebuild gateway drift preflight", () => {
   let checkAgentVersionSpy: MockInstance;
   let detectPreflightIssueSpy: MockInstance;
   let captureOpenshellSpy: MockInstance;
+  let runOpenshellSpy: MockInstance;
   let printIssueSpy: MockInstance;
   let recoverNamedGatewayRuntimeSpy: MockInstance;
 
@@ -66,6 +67,9 @@ describe("rebuild gateway drift preflight", () => {
     captureOpenshellSpy = vi
       .spyOn(openshellRuntime, "captureOpenshell")
       .mockReturnValue({ status: 0, output: "alpha Ready" });
+    runOpenshellSpy = vi
+      .spyOn(openshellRuntime, "runOpenshell")
+      .mockReturnValue({ status: 0, output: "" } as never);
     recoverNamedGatewayRuntimeSpy = vi
       .spyOn(gatewayRuntime, "recoverNamedGatewayRuntime")
       .mockResolvedValue({ recovered: true });
@@ -74,6 +78,7 @@ describe("rebuild gateway drift preflight", () => {
       detectPreflightIssueSpy,
       vi.spyOn(gatewayDrift, "detectOpenShellStateRpcResultIssue").mockReturnValue(null),
       captureOpenshellSpy,
+      runOpenshellSpy,
       recoverNamedGatewayRuntimeSpy,
       printIssueSpy,
       vi.spyOn(registry, "getSandbox").mockReturnValue({
@@ -151,13 +156,9 @@ describe("rebuild gateway drift preflight", () => {
     // preserved registry metadata. Stub the destructive steps + recreate handoff
     // so the path stays hermetic, and assert the recreate failure surfaces the
     // stale-recovery message instead of "not running".
-    const openshellRuntime = requireDist("../../../../dist/lib/adapters/openshell/runtime.js");
     const destroy = requireDist("../../../../dist/lib/actions/sandbox/destroy.js");
     const onboardMod = requireDist("../../../../dist/lib/onboard.js");
     spies.push(
-      vi
-        .spyOn(openshellRuntime, "runOpenshell")
-        .mockReturnValue({ status: 0, output: "" } as never),
       vi.spyOn(destroy, "removeSandboxRegistryEntry").mockImplementation(() => undefined),
       vi.spyOn(onboardMod, "onboard").mockRejectedValue(new Error("recreate-stub")),
     );
@@ -167,6 +168,7 @@ describe("rebuild gateway drift preflight", () => {
     );
 
     expect(recoverNamedGatewayRuntimeSpy).toHaveBeenCalledWith({
+      gatewayName: "nemoclaw",
       recoverableStates: ["missing_named", "named_unhealthy", "named_unreachable"],
     });
     // The liveness query ran twice (initial failure + post-recovery retry).

@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 const { startGatewayForRecovery } = require("./onboard") as {
-  startGatewayForRecovery: () => Promise<void>;
+  startGatewayForRecovery: (options?: {
+    gatewayName?: string;
+    gatewayPort?: number;
+  }) => Promise<void>;
 };
 import {
   OPENSHELL_OPERATION_TIMEOUT_MS,
@@ -10,6 +13,7 @@ import {
 } from "./adapters/openshell/timeouts";
 import { stripAnsi } from "./adapters/openshell/client";
 import { captureOpenshell, runOpenshell } from "./adapters/openshell/runtime";
+import { resolveGatewayPortFromName } from "./onboard/gateway-binding";
 
 function hasNamedGateway(output = "", gatewayName = "nemoclaw"): boolean {
   return stripAnsi(output).includes(`Gateway: ${gatewayName}`);
@@ -116,7 +120,10 @@ export async function recoverNamedGatewayRuntime(options: RecoverNamedGatewayRun
 
   if (shouldStartGateway) {
     try {
-      await startGatewayForRecovery();
+      await startGatewayForRecovery({
+        gatewayName,
+        gatewayPort: resolveGatewayPortFromName(gatewayName) ?? undefined,
+      });
     } catch {
       // Fall through to the lifecycle re-check below so we preserve the
       // existing recovery result shape and emit the correct classification.
