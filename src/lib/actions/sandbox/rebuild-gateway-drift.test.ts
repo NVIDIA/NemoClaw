@@ -203,29 +203,29 @@ describe("rebuild gateway drift preflight", () => {
     detectPreflightIssueSpy = vi
       .spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue")
       .mockReturnValue(null);
-    captureOpenshellSpy = vi
-      .spyOn(openshellRuntime, "captureOpenshell")
-      .mockImplementation(((args: string[]) => {
-        if (args[0] === "sandbox" && args[1] === "list") {
-          listCalls += 1;
-          return listCalls === 1
-            ? { status: 1, output: "client error (Connect): Connection refused" }
-            : { status: 0, output: "beta Ready" };
-        }
-        if (args[0] === "status") {
-          return {
-            status: 0,
-            output: "Server Status\n\n  Gateway: nemoclaw-12345\n  Status: Connected\n",
-          };
-        }
-        if (args[0] === "gateway" && args[1] === "info") {
-          return { status: 0, output: "Gateway Info\n\nGateway: nemoclaw-12345\n" };
-        }
-        if (args[0] === "sandbox" && args[1] === "get") {
-          return { status: 1, output: "Error:   × Not Found: sandbox not found" };
-        }
-        return { status: 0, output: "" };
-      }) as never);
+    captureOpenshellSpy = vi.spyOn(openshellRuntime, "captureOpenshell").mockImplementation(((
+      args: string[],
+    ) => {
+      if (args[0] === "sandbox" && args[1] === "list") {
+        listCalls += 1;
+        return listCalls === 1
+          ? { status: 1, output: "client error (Connect): Connection refused" }
+          : { status: 0, output: "beta Ready" };
+      }
+      if (args[0] === "status") {
+        return {
+          status: 0,
+          output: "Server Status\n\n  Gateway: nemoclaw-12345\n  Status: Connected\n",
+        };
+      }
+      if (args[0] === "gateway" && args[1] === "info") {
+        return { status: 0, output: "Gateway Info\n\nGateway: nemoclaw-12345\n" };
+      }
+      if (args[0] === "sandbox" && args[1] === "get") {
+        return { status: 1, output: "Error:   × Not Found: sandbox not found" };
+      }
+      return { status: 0, output: "" };
+    }) as never);
     runOpenshellSpy = vi
       .spyOn(openshellRuntime, "runOpenshell")
       .mockReturnValue({ status: 0, output: "" } as never);
