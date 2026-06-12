@@ -53,6 +53,30 @@ nemoclaw_e2e_hosted_inference_model() {
   fi
 }
 
+nemoclaw_e2e_probe_hosted_inference() {
+  local base_url key
+  base_url="$(nemoclaw_e2e_hosted_inference_base_url)"
+  key="$(nemoclaw_e2e_hosted_inference_key)"
+
+  if nemoclaw_e2e_using_compatible_inference; then
+    local model payload
+    model="$(nemoclaw_e2e_hosted_inference_model)"
+    payload=$(
+      printf '{"model":"%s","messages":[{"role":"user","content":"Respond with OK."}],"temperature":0,"max_tokens":8}' "$model"
+    )
+    curl -sf --max-time 30 \
+      -X POST "${base_url}/chat/completions" \
+      -H "Authorization: Bearer $key" \
+      -H "Content-Type: application/json" \
+      -d "$payload" >/dev/null 2>&1
+    return $?
+  fi
+
+  curl -sf --max-time 10 \
+    -H "Authorization: Bearer $key" \
+    "${base_url}/models" >/dev/null 2>&1
+}
+
 nemoclaw_e2e_require_hosted_inference_key() {
   local key
   key="$(nemoclaw_e2e_hosted_inference_key)"

@@ -122,11 +122,8 @@ if ! nemoclaw_e2e_require_hosted_inference_key; then
 fi
 
 HOSTED_INFERENCE_BASE_URL="$(nemoclaw_e2e_hosted_inference_base_url)"
-HOSTED_INFERENCE_KEY="$(nemoclaw_e2e_hosted_inference_key)"
 
-if curl -sf --max-time 10 \
-  -H "Authorization: Bearer $HOSTED_INFERENCE_KEY" \
-  "${HOSTED_INFERENCE_BASE_URL}/models" >/dev/null 2>&1; then
+if nemoclaw_e2e_probe_hosted_inference; then
   pass "Network access to ${HOSTED_INFERENCE_BASE_URL}"
 else
   fail "Cannot reach ${HOSTED_INFERENCE_BASE_URL}"
