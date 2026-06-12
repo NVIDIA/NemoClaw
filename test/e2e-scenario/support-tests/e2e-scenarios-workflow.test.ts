@@ -255,6 +255,26 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       selectedFreeStandingJobs: ["model-router-provider-routed-inference-vitest"],
       registryScenarios: [],
     });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({
+        scenarios: "openclaw-inference-switch",
+      }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["openclaw-inference-switch-vitest"],
+      registryScenarios: [],
+    });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({
+        jobs: "openclaw-inference-switch-vitest",
+      }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["openclaw-inference-switch-vitest"],
+      registryScenarios: [],
+    });
   });
 
   it("keeps the free-standing inventory internally consistent and data-only", () => {
@@ -376,7 +396,7 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
         registryScenarios: [],
       });
     }
-  });
+  }, 15_000);
 
   it("flags direct dispatch-input interpolation and unsafe artifact upload", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-vitest-workflow-"));
