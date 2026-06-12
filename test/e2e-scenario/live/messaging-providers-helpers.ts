@@ -368,9 +368,21 @@ export async function skipNote(
   await artifacts.writeJson("messaging-provider-skips.json", notes);
 }
 
+export function policyTextHasHost(text: string, host: string): boolean {
+  const accepted = new Set([
+    `host: ${host}`,
+    `host: "${host}"`,
+    `host: '${host}'`,
+    `- host: ${host}`,
+    `- host: "${host}"`,
+    `- host: '${host}'`,
+  ]);
+  return text.split(/\r?\n/).some((line) => accepted.has(line.trim()));
+}
+
 export async function premergeSlackPolicyIfNeeded(): Promise<() => void> {
   const original = fs.readFileSync(BASE_POLICY, "utf8");
-  if (original.includes("api.slack.com")) {
+  if (policyTextHasHost(original, "api.slack.com")) {
     return () => {};
   }
   fs.appendFileSync(

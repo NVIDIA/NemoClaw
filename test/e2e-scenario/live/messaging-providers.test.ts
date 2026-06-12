@@ -37,6 +37,7 @@ import {
   nonEmpty,
   outputText,
   pluginEnabled,
+  policyTextHasHost,
   premergeSlackPolicyIfNeeded,
   REBUILD_TIMEOUT_MS,
   rawTokenSurfaceProbe,
@@ -243,9 +244,9 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
     );
     const whatsappPolicyPreText = outputText(whatsappPolicyPre);
     check(
-      whatsappPolicyPreText.includes("web.whatsapp.com") &&
-        whatsappPolicyPreText.includes("whatsapp.net") &&
-        whatsappPolicyPreText.includes("raw.githubusercontent.com"),
+      policyTextHasHost(whatsappPolicyPreText, "web.whatsapp.com") &&
+        policyTextHasHost(whatsappPolicyPreText, "whatsapp.net") &&
+        policyTextHasHost(whatsappPolicyPreText, "raw.githubusercontent.com"),
       "M-WA3: WhatsApp policy preset applied before rebuild",
     );
 
@@ -582,8 +583,8 @@ req.setTimeout(15000, () => { req.destroy(); console.log("TIMEOUT"); });
     );
     const discordPolicyText = outputText(discordPolicy);
     check(
-      discordPolicyText.includes("discord.com") &&
-        discordPolicyText.includes("cdn.discordapp.com") &&
+      policyTextHasHost(discordPolicyText, "discord.com") &&
+        policyTextHasHost(discordPolicyText, "cdn.discordapp.com") &&
         /\/usr\/local\/bin\/node|\/usr\/bin\/node/.test(discordPolicyText),
       "M13-policy: live policy contains Discord endpoints and Node binaries",
     );
