@@ -265,13 +265,13 @@ async function assertGatewayLogClean(probe: DockerProbe, container: string): Pro
     probe,
     container,
     "gateway log contains PID race failure",
-    "! grep -F 'PID file race lost' /tmp/gateway.log",
+    "test -r /tmp/gateway.log && ! grep -F 'PID file race lost' /tmp/gateway.log",
   );
   await expectContainerSh(
     probe,
     container,
     "gateway log contains config load failure",
-    "! grep -F 'Could not load config.yaml' /tmp/gateway.log",
+    "test -r /tmp/gateway.log && ! grep -F 'Could not load config.yaml' /tmp/gateway.log",
   );
 }
 
