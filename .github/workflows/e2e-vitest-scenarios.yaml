@@ -1121,8 +1121,8 @@ jobs:
   # protocol/history contract. The retained legacy bash lane remains the
   # source for full closeout until a later PR proves replacement and deletes it.
   model-router-provider-routed-inference-vitest:
-    needs: validate-jobs
-    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',model-router-provider-routed-inference-vitest,') }}
+    needs: [validate-jobs, generate-matrix]
+    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',model-router-provider-routed-inference-vitest,') || contains(format(',{0},', inputs.scenarios), ',model-router-provider-routed-inference,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:

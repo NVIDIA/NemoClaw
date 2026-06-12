@@ -184,6 +184,26 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       selectedFreeStandingJobs: ["rebuild-openclaw-vitest"],
       registryScenarios: [],
     });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({
+        scenarios: "model-router-provider-routed-inference",
+      }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["model-router-provider-routed-inference-vitest"],
+      registryScenarios: [],
+    });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({
+        jobs: "model-router-provider-routed-inference-vitest",
+      }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["model-router-provider-routed-inference-vitest"],
+      registryScenarios: [],
+    });
   });
 
   it("keeps jobs-only dispatches from selecting the Hermes secret-bearing job", () => {
@@ -245,6 +265,24 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
     });
     expect(
       generateMatrixForDispatch({ JOBS: "", SCENARIOS: "hermes-root-entrypoint-smoke" }),
+    ).toMatchObject({
+      hermes_selected: "false",
+      matrix: "[]",
+    });
+    expect(
+      generateMatrixForDispatch({
+        JOBS: "model-router-provider-routed-inference-vitest",
+        SCENARIOS: "",
+      }),
+    ).toMatchObject({
+      hermes_selected: "false",
+      matrix: "[]",
+    });
+    expect(
+      generateMatrixForDispatch({
+        JOBS: "",
+        SCENARIOS: "model-router-provider-routed-inference",
+      }),
     ).toMatchObject({
       hermes_selected: "false",
       matrix: "[]",
