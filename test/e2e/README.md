@@ -6,6 +6,7 @@
 ## Nightly Onboard Trace Timing
 
 The GitHub Actions workflow `.github/workflows/nightly-e2e.yaml` enables NemoClaw tracing for the `cloud-onboard-e2e` lane.
+That lane is the current GitHub E2E trace-timing scope; other E2E lanes keep their existing failure-log artifacts until they opt into a trusted timing-summary artifact.
 That job sets:
 
 ```bash
@@ -39,6 +40,8 @@ If the artifact, prior release tag, prior run, or matching trace data is unavail
 - `SLACK_WEBHOOK_URL_FULLRUN` for manual full runs
 - `SLACK_WEBHOOK_URL_PREVIEW` for selective dispatches when `post_to_slack=true`
 
+Scheduled nightly runs and manual full runs post the scorecard automatically.
+Selective dispatches are silent by default and post only when `post_to_slack=true`, so developers can run targeted checks without notifying Slack.
 The trace timing section is part of the same Slack scorecard message, but it stays compact: total duration, the three largest matching phase changes, and a pointer to the GitHub run summary for the full table.
 Slack does not post raw trace JSON, prompts, credentials, or environment values.
 The uploaded artifact is the trusted timing-only summary, not the raw target-ref trace directory.

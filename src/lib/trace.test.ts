@@ -25,6 +25,10 @@ function withTraceFile<T>(fn: (traceFile: string) => T): T {
   return fn(traceFile);
 }
 
+function readTraceArtifact(traceFile: string): TraceArtifact {
+  return JSON.parse(fs.readFileSync(traceFile, "utf8")) as TraceArtifact;
+}
+
 afterEach(() => {
   delete process.env[TRACE_ENABLED_ENV];
   delete process.env[TRACE_FILE_ENV];
@@ -40,7 +44,7 @@ describe("onboard trace artifacts", () => {
       });
 
       expect(flushTrace()).toBe(traceFile);
-      const artifact = JSON.parse(fs.readFileSync(traceFile, "utf8")) as TraceArtifact;
+      const artifact = readTraceArtifact(traceFile);
       const spans = artifact.resource_spans[0].scope_spans[0].spans;
 
       expect(artifact.resource_spans[0].scope_spans[0].scope.name).toBe("nemoclaw.onboard");
@@ -53,6 +57,77 @@ describe("onboard trace artifacts", () => {
         attributes: { attempt: 1 },
       });
       expect(artifact.summary.slowest_spans[0].name).toBe("nemoclaw.onboard.phase.gateway");
+    });
+  });
+
+  it("redacts secret-like metadata before writing artifacts", () => {
+    withTraceFile((traceFile) => {
+      const cloudToken = ["nv", "api", "-"].join("") + "a".repeat(16);
+      const bearerToken = `Bearer ${"b".repeat(16)}`;
+      const awsAccessKey = ["AK", "IA"].join("") + "C".repeat(16);
+      const jwt = ["eyJ" + "a".repeat(12), "b".repeat(12), "c".repeat(12)].join(".");
+
+      withTraceSpan(
+        "nemoclaw.onboard.phase.inference",
+        {
+          api_key: cloudToken,
+          harmless_status: `probe failed with ${bearerToken}`,
+          aws_like: awsAccessKey,
+          jwt_like: jwt,
+          credential_env: "NVIDIA_API_KEY",
+        },
+        () => undefined,
+      );
+
+      expect(flushTrace()).toBe(traceFile);
+      const text = fs.readFileSync(traceFile, "utf8");
+      const artifact = JSON.parse(text) as TraceArtifact;
+      const attrs = artifact.resource_spans[0].scope_spans[0].spans[0].attributes;
+
+      expect(attrs.api_key).toBe("<REDACTED>");
+      expect(attrs.harmless_status).toContain("<REDACTED>");
+      expect(attrs.aws_like).toBe("<REDACTED>");
+      expect(attrs.jwt_like).toBe("<REDACTED>");
+      expect(attrs.credential_env).toBe("NVIDIA_API_KEY");
+      expect(text).not.toContain(cloudToken);
+      expect(text).not.toContain(bearerToken);
+      expect(text).not.toContain(awsAccessKey);
+      expect(text).not.toContain(jwt);
+    });
+  });
+
+  it("sanitizes curl probe URLs and nested sensitive event attributes", () => {
+    withTraceFile((traceFile) => {
+      const queryToken = ["ghp", "_"].join("") + "d".repeat(24);
+      const slackWebhook = `https://hooks.slack.com/services/${"A".repeat(12)}/${"B".repeat(
+        12,
+      )}/${"C".repeat(24)}`;
+      const eventBearer = `Bearer ${"e".repeat(16)}`;
+
+      withTraceSpan(
+        "nemoclaw.onboard.phase.gateway",
+        {
+          probe_url: `https://user:pass@example.test/path?token=${queryToken}`,
+          slack_webhook: slackWebhook,
+        },
+        () => {
+          addTraceEvent("curl_probe", {
+            headers: { authorization: eventBearer },
+          });
+        },
+      );
+
+      expect(flushTrace()).toBe(traceFile);
+      const text = fs.readFileSync(traceFile, "utf8");
+      const artifact = JSON.parse(text) as TraceArtifact;
+      const span = artifact.resource_spans[0].scope_spans[0].spans[0];
+
+      expect(String(span.attributes.probe_url)).not.toContain(queryToken);
+      expect(span.attributes.slack_webhook).toBe("<REDACTED>");
+      expect(JSON.stringify(span.events[0].attributes)).toContain("<REDACTED>");
+      expect(text).not.toContain(queryToken);
+      expect(text).not.toContain(slackWebhook);
+      expect(text).not.toContain(eventBearer);
     });
   });
 

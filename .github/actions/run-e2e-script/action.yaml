@@ -5,7 +5,7 @@ name: Run E2E script
 
 description: >-
   Runs a repository E2E script from an already-checked-out workspace and uploads
-  configured failure artifacts plus optional always-on artifacts.
+  configured failure artifacts plus optional sanitized trace summary artifacts.
 
 inputs:
   script:
@@ -22,11 +22,11 @@ inputs:
     description: Newline-capable artifact path glob list.
     required: true
   always-artifact-name:
-    description: Optional artifact name to upload after every script run.
+    description: Optional sanitized trace artifact name to upload after every script run.
     required: false
     default: ""
   always-artifact-path:
-    description: Optional newline-capable artifact path glob list to upload after every script run.
+    description: Optional trusted trace summary directory to upload after every script run.
     required: false
     default: ""
   always-artifact-trace-source-path:
@@ -90,7 +90,7 @@ runs:
           "$E2E_TRACE_SUMMARY_DIR"
 
     - name: Upload E2E artifacts
-      if: always() && inputs.always-artifact-name != '' && inputs.always-artifact-path != '' && (inputs.always-artifact-trace-source-path == '' || steps.sanitize-trace-artifacts.outcome == 'success')
+      if: always() && inputs.always-artifact-name != '' && inputs.always-artifact-path != '' && inputs.always-artifact-trace-source-path != '' && steps.sanitize-trace-artifacts.outcome == 'success'
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
         name: ${{ inputs.always-artifact-name }}

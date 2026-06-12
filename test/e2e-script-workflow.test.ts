@@ -14,13 +14,22 @@ import {
 } from "./helpers/e2e-workflow-contract";
 
 type TraceTimingAnalyzer = {
+  ONBOARD_PHASE_ORDER: readonly string[];
+  TRACE_SUMMARY_FILE: string;
   buildPhaseRows: (
     currentPhases: Record<string, number>,
     priorPhases: Record<string, number>,
   ) => Array<{ label: string; currentMs: number; priorMs: number; deltaAbsMs: number }>;
+  buildTraceTimingResult: (deps: {
+    context: { repo: { owner: string; repo: string }; runId: number };
+    github: { paginate: () => Promise<unknown> };
+  }) => Promise<{ traceTimingLine: string; traceSummaryLines: string[] }>;
   formatTopPhaseChanges: (
     phaseRows: Array<{ label: string; currentMs: number; priorMs: number; deltaAbsMs: number }>,
   ) => string;
+  selectOnboardTrace: (
+    jsonTexts: string[],
+  ) => { totalMs: number; phases: Record<string, number> } | null;
   buildTraceSummaryLines: (
     currentTrace: { totalMs: number },
     priorTrace: { totalMs: number },
@@ -547,7 +556,7 @@ describe("E2E reusable workflow contract", () => {
       ".github/actions/run-e2e-script",
     );
     expect(alwaysUploadStep?.if).toBe(
-      "always() && inputs.always-artifact-name != '' && inputs.always-artifact-path != '' && (inputs.always-artifact-trace-source-path == '' || steps.sanitize-trace-artifacts.outcome == 'success')",
+      "always() && inputs.always-artifact-name != '' && inputs.always-artifact-path != '' && inputs.always-artifact-trace-source-path != '' && steps.sanitize-trace-artifacts.outcome == 'success'",
     );
     expect(cloudOnboardJob.with?.always_artifact_name).toBe("cloud-onboard-traces");
     expect(cloudOnboardJob.with?.always_artifact_path).toBe("/tmp/nemoclaw-trace-summary/");
@@ -593,6 +602,56 @@ describe("E2E reusable workflow contract", () => {
     expect(summaryLines).toContain("| Phase | Current | Previous | Delta |");
     expect(summaryLines.join("\n")).toContain("Baseline: latest completed `nightly-e2e.yaml` run");
     expect(scorecardStep?.with?.script).toContain("lines.push(...traceSummaryLines)");
+  });
+
+  it("keeps trace timing analysis limited to the trusted summary schema", () => {
+    const goodSummary = JSON.stringify({
+      schema_version: "nemoclaw.trace_timing.v1",
+      total_duration_ms: 1000,
+      phases: {
+        "nemoclaw.onboard.phase.preflight": 500,
+      },
+    });
+    const unknownPhaseSummary = JSON.stringify({
+      schema_version: "nemoclaw.trace_timing.v1",
+      total_duration_ms: 1000,
+      phases: {
+        "nemoclaw.onboard.phase.future": 500,
+      },
+    });
+    const negativeDurationSummary = JSON.stringify({
+      schema_version: "nemoclaw.trace_timing.v1",
+      total_duration_ms: -1,
+      phases: {
+        "nemoclaw.onboard.phase.preflight": 500,
+      },
+    });
+
+    expect(traceTiming.TRACE_SUMMARY_FILE).toBe("cloud-onboard-trace-timing-summary.json");
+    expect(traceTiming.ONBOARD_PHASE_ORDER).toEqual([
+      "nemoclaw.onboard.phase.preflight",
+      "nemoclaw.onboard.phase.gateway",
+      "nemoclaw.onboard.phase.provider_selection",
+      "nemoclaw.onboard.phase.inference",
+      "nemoclaw.onboard.phase.sandbox",
+    ]);
+    expect(traceTiming.selectOnboardTrace([goodSummary])?.totalMs).toBe(1000);
+    expect(traceTiming.selectOnboardTrace([unknownPhaseSummary])).toBeNull();
+    expect(traceTiming.selectOnboardTrace([negativeDurationSummary])).toBeNull();
+  });
+
+  it("does not expose raw comparison errors in trace timing output", async () => {
+    const result = await traceTiming.buildTraceTimingResult({
+      context: { repo: { owner: "NVIDIA", repo: "NemoClaw" }, runId: 1 },
+      github: {
+        paginate: async () => {
+          throw new Error("download failed with token=secret");
+        },
+      },
+    });
+
+    expect(result.traceTimingLine).toBe("Trace: ⊘ comparison unavailable");
+    expect(result.traceTimingLine).not.toContain("secret");
   });
 
   it("keeps env_json valid and aligned with target-ref installs", () => {

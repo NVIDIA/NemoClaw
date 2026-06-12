@@ -33,12 +33,12 @@ on:
         required: true
         type: string
       always_artifact_name:
-        description: Optional artifact name to upload after every script run.
+        description: Optional sanitized trace artifact name to upload after every script run.
         required: false
         type: string
         default: ""
       always_artifact_path:
-        description: Optional newline-capable artifact path glob list to upload after every script run.
+        description: Optional trusted trace summary directory to upload after every script run.
         required: false
         type: string
         default: ""

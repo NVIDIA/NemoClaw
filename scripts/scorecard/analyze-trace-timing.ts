@@ -8,6 +8,7 @@ const { execFileSync } = require("node:child_process") as typeof import("node:ch
 
 const WORKFLOW_FILE = "nightly-e2e.yaml";
 const TRACE_ARTIFACT_NAME = "cloud-onboard-traces";
+const TRACE_SUMMARY_FILE = "cloud-onboard-trace-timing-summary.json";
 const ONBOARD_PHASE_PREFIX = "nemoclaw.onboard.phase.";
 // Keep this ordered list aligned with the trace span names emitted by
 // src/lib/onboard/tracing.ts.
@@ -17,12 +18,8 @@ const ONBOARD_PHASE_ORDER = [
   "nemoclaw.onboard.phase.provider_selection",
   "nemoclaw.onboard.phase.inference",
   "nemoclaw.onboard.phase.sandbox",
-  "nemoclaw.onboard.phase.openclaw",
-  "nemoclaw.onboard.phase.agent_setup",
-  "nemoclaw.onboard.phase.policies",
-  "nemoclaw.onboard.phase.finalizing",
-  "nemoclaw.onboard.phase.post_verify",
 ] as const;
+const ONBOARD_PHASE_NAMES = new Set<string>(ONBOARD_PHASE_ORDER);
 
 type SemverTag = {
   name: string;
@@ -134,12 +131,15 @@ function traceTimingResult(
   return { traceTimingLine, traceSummaryLines };
 }
 
-function isNumberRecord(value: unknown): value is Record<string, number> {
+function isPhaseDurationRecord(value: unknown): value is Record<string, number> {
   return (
     value !== null &&
     typeof value === "object" &&
     !Array.isArray(value) &&
-    Object.values(value).every((entry) => Number.isFinite(Number(entry)))
+    Object.entries(value).every(
+      ([name, entry]) =>
+        ONBOARD_PHASE_NAMES.has(name) && Number.isFinite(Number(entry)) && Number(entry) >= 0,
+    )
   );
 }
 
@@ -152,7 +152,8 @@ function selectOnboardTrace(jsonTexts: string[]): OnboardTraceSummary | null {
       if (
         artifact?.schema_version === "nemoclaw.trace_timing.v1" &&
         Number.isFinite(totalMs) &&
-        isNumberRecord(artifact.phases)
+        totalMs >= 0 &&
+        isPhaseDurationRecord(artifact.phases)
       ) {
         candidates.push({ artifact, totalMs, phases: artifact.phases });
       }
@@ -299,20 +300,11 @@ async function readTraceSummaryFromRun(
     const zipPath = path.join(tempDir, `${TRACE_ARTIFACT_NAME}.zip`);
     fs.writeFileSync(zipPath, Buffer.from(download.data), { mode: 0o600 });
 
-    const names = execFileSync("unzip", ["-Z1", zipPath], {
+    const summaryText = execFileSync("unzip", ["-p", zipPath, TRACE_SUMMARY_FILE], {
       encoding: "utf8",
       maxBuffer: 1024 * 1024,
-    })
-      .split("\n")
-      .map((name) => name.trim())
-      .filter((name) => name.endsWith(".json"));
-    const jsonTexts = names.map((name) =>
-      execFileSync("unzip", ["-p", zipPath, name], {
-        encoding: "utf8",
-        maxBuffer: 20 * 1024 * 1024,
-      }),
-    );
-    return selectOnboardTrace(jsonTexts);
+    });
+    return selectOnboardTrace([summaryText]);
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
@@ -365,13 +357,13 @@ async function buildTraceTimingResult(
       buildTraceSummaryLines(currentTrace, priorTrace, priorTag, phaseRows),
     );
   } catch (error) {
-    const safeMessage = String(error instanceof Error ? error.message : error).slice(0, 160);
-    return traceTimingResult(`Trace: ⊘ comparison unavailable (${safeMessage})`);
+    return traceTimingResult("Trace: ⊘ comparison unavailable");
   }
 }
 
 module.exports = {
   ONBOARD_PHASE_ORDER,
+  TRACE_SUMMARY_FILE,
   buildPhaseRows,
   buildTraceTimingResult,
   buildTraceSummaryLines,
