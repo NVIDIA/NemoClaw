@@ -17,30 +17,139 @@ const DEFAULT_VITEST_WORKFLOW_PATH = join(
 type WorkflowRecord = Record<string, unknown>;
 type WorkflowStep = WorkflowRecord & { name?: string; run?: string; uses?: string; with?: WorkflowRecord };
 
+export interface FreeStandingJobsInventory {
+  allowedJobs: string[];
+  freeStandingScenarios: string[];
+  scenarioToJob: Map<string, string>;
+}
+
 const SELECTOR_PATTERN = /^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$/;
-const FREE_STANDING_SCENARIO_JOBS = new Map([
-  ["openshell-version-pin", "openshell-version-pin-vitest"],
-  ["onboard-negative-paths", "onboard-negative-paths-vitest"],
-  ["skill-agent", "skill-agent-vitest"],
-  ["inference-routing", "inference-routing-vitest"],
-  ["runtime-overrides", "runtime-overrides-vitest"],
-  ["hermes-e2e", "hermes-e2e-vitest"],
-  ["hermes-root-entrypoint-smoke", "hermes-root-entrypoint-smoke-vitest"],
-  ["network-policy", "network-policy-vitest"],
-  ["shields-config", "shields-config-vitest"],
-  ["rebuild-openclaw", "rebuild-openclaw-vitest"],
-  ["sandbox-rebuild", "sandbox-rebuild-vitest"],
-  ["token-rotation", "token-rotation-vitest"],
-  ["openclaw-tui-chat-correlation", "openclaw-tui-chat-correlation-vitest"],
-  ["issue-4434-tui-unreachable-inference", "issue-4434-tui-unreachable-inference-vitest"],
-  ["model-router-provider-routed-inference", "model-router-provider-routed-inference-vitest"],
-]);
-const ALLOWED_FREE_STANDING_JOBS = new Set([
-  ...FREE_STANDING_SCENARIO_JOBS.values(),
-  "credential-migration-vitest",
-  "gateway-guard-recovery",
-  "double-onboard-vitest",
-]);
+const SELECTOR_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
+const FREE_STANDING_JOBS_ENV_PATH = join(REPO_ROOT, "tools", "e2e-scenarios", "free-standing-jobs.env");
+const FREE_STANDING_JOBS_ENV_KEYS = [
+  "allowed_jobs",
+  "free_standing_scenarios_csv",
+  "free_standing_scenario_jobs_csv",
+] as const;
+const FREE_STANDING_JOBS_ENV_LINE_PATTERN =
+  /^(allowed_jobs|free_standing_scenarios_csv|free_standing_scenario_jobs_csv)=[A-Za-z0-9_:-]+(,[A-Za-z0-9_:-]+)*$/;
+const FREE_STANDING_SCENARIO_JOB_PATTERN = /^[A-Za-z0-9_-]+:[A-Za-z0-9_-]+$/;
+
+function splitEnvCsv(value: string | undefined): string[] {
+  return (value ?? "")
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function findDuplicates(values: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const duplicates = new Set<string>();
+  for (const value of values) {
+    if (seen.has(value)) duplicates.add(value);
+    seen.add(value);
+  }
+  return [...duplicates].sort();
+}
+
+function parseFreeStandingJobsEnvContent(content: string): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const rawLine of content.split("\n")) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) continue;
+    const [key, value] = line.split(/=(.*)/s).slice(0, 2).map((part) => part.trim());
+    env[key] = value;
+  }
+  return env;
+}
+
+export function validateFreeStandingJobsEnvContent(content: string): string[] {
+  const errors: string[] = [];
+  const env: Record<string, string> = {};
+
+  content.split("\n").forEach((rawLine, index) => {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) return;
+    if (!FREE_STANDING_JOBS_ENV_LINE_PATTERN.test(line)) {
+      errors.push(`free-standing jobs inventory line ${index + 1} must be data-only key=value`);
+      return;
+    }
+    const [key, value] = line.split(/=(.*)/s).slice(0, 2).map((part) => part.trim());
+    if (Object.hasOwn(env, key)) {
+      errors.push(`free-standing jobs inventory must not redefine ${key}`);
+    }
+    env[key] = value;
+  });
+
+  for (const key of FREE_STANDING_JOBS_ENV_KEYS) {
+    if (!env[key]) errors.push(`free-standing jobs inventory must define non-empty ${key}`);
+  }
+  if (errors.length > 0) return errors;
+
+  const allowedJobs = splitEnvCsv(env.allowed_jobs);
+  const freeStandingScenarios = splitEnvCsv(env.free_standing_scenarios_csv);
+  const scenarioJobEntries = splitEnvCsv(env.free_standing_scenario_jobs_csv);
+  const scenarioJobPairs = scenarioJobEntries.map((entry) => entry.split(":", 2) as [string, string]);
+  const scenarioKeys = scenarioJobPairs.map(([scenario]) => scenario);
+
+  for (const job of allowedJobs) {
+    if (!SELECTOR_ID_PATTERN.test(job)) {
+      errors.push(`free-standing jobs inventory contains invalid job id: ${job}`);
+    }
+  }
+  for (const scenario of freeStandingScenarios) {
+    if (!SELECTOR_ID_PATTERN.test(scenario)) {
+      errors.push(`free-standing jobs inventory contains invalid scenario id: ${scenario}`);
+    }
+  }
+  for (const entry of scenarioJobEntries) {
+    if (!FREE_STANDING_SCENARIO_JOB_PATTERN.test(entry)) {
+      errors.push(`free-standing jobs inventory contains invalid scenario job mapping: ${entry}`);
+    }
+  }
+
+  for (const duplicate of findDuplicates(allowedJobs)) {
+    errors.push(`free-standing jobs inventory repeats job id: ${duplicate}`);
+  }
+  for (const duplicate of findDuplicates(freeStandingScenarios)) {
+    errors.push(`free-standing jobs inventory repeats scenario id: ${duplicate}`);
+  }
+  for (const duplicate of findDuplicates(scenarioKeys)) {
+    errors.push(`free-standing jobs inventory repeats scenario mapping: ${duplicate}`);
+  }
+
+  if (freeStandingScenarios.join(",") !== scenarioKeys.join(",")) {
+    errors.push("free_standing_scenarios_csv must exactly match free_standing_scenario_jobs_csv keys");
+  }
+  for (const [scenario, job] of scenarioJobPairs) {
+    if (!allowedJobs.includes(job)) {
+      errors.push(`free-standing inventory maps ${scenario} to unknown job ${job}`);
+    }
+  }
+
+  return errors;
+}
+
+export function readFreeStandingJobsInventory(): FreeStandingJobsInventory {
+  const content = readFileSync(FREE_STANDING_JOBS_ENV_PATH, "utf-8");
+  const errors = validateFreeStandingJobsEnvContent(content);
+  if (errors.length > 0) {
+    throw new Error(`Invalid free-standing jobs inventory:\n${errors.join("\n")}`);
+  }
+  const env = parseFreeStandingJobsEnvContent(content);
+  const scenarioJobPairs = splitEnvCsv(env.free_standing_scenario_jobs_csv).map(
+    (entry) => entry.split(":", 2) as [string, string],
+  );
+  return {
+    allowedJobs: splitEnvCsv(env.allowed_jobs),
+    freeStandingScenarios: splitEnvCsv(env.free_standing_scenarios_csv),
+    scenarioToJob: new Map(scenarioJobPairs),
+  };
+}
+
+const FREE_STANDING_JOBS_INVENTORY = readFreeStandingJobsInventory();
+const FREE_STANDING_VITEST_JOB_IDS = FREE_STANDING_JOBS_INVENTORY.allowedJobs;
+const FREE_STANDING_VITEST_SCENARIO_TO_JOB = FREE_STANDING_JOBS_INVENTORY.scenarioToJob;
 
 export interface WorkflowDispatchSelectorEvaluation {
   valid: boolean;
@@ -92,7 +201,7 @@ export function evaluateE2eVitestWorkflowDispatchSelectors(input: {
   }
   if (jobs && SELECTOR_PATTERN.test(jobs)) {
     for (const job of splitSelector(jobs)) {
-      if (!ALLOWED_FREE_STANDING_JOBS.has(job)) {
+      if (!FREE_STANDING_VITEST_JOB_IDS.includes(job)) {
         errors.push(`Unknown free-standing Vitest job: ${job}`);
       }
     }
@@ -112,7 +221,7 @@ export function evaluateE2eVitestWorkflowDispatchSelectors(input: {
     return {
       valid: true,
       errors: [],
-      selectedFreeStandingJobs: [...ALLOWED_FREE_STANDING_JOBS].sort(),
+      selectedFreeStandingJobs: [...FREE_STANDING_VITEST_JOB_IDS].sort(),
       registryScenarios: [],
       liveScenariosRuns: true,
     };
@@ -131,7 +240,7 @@ export function evaluateE2eVitestWorkflowDispatchSelectors(input: {
   const selectedFreeStandingJobs = new Set<string>();
   const registryScenarios: string[] = [];
   for (const scenario of splitSelector(scenarios)) {
-    const job = FREE_STANDING_SCENARIO_JOBS.get(scenario);
+    const job = FREE_STANDING_VITEST_SCENARIO_TO_JOB.get(scenario);
     if (job) selectedFreeStandingJobs.add(job);
     else registryScenarios.push(scenario);
   }
@@ -248,62 +357,42 @@ function validateFreeStandingJobSelector(
   scenarioName?: string,
 ): void {
   const job = asRecord(jobs[jobName]);
-  if (scenarioName) {
-    const needs = Array.isArray(job.needs) ? job.needs : [];
-    if (!needs.includes("validate-jobs") || !needs.includes("generate-matrix")) {
-      errors.push(`${jobName} job must depend on validate-jobs and generate-matrix`);
-    }
-  } else if (job.needs !== "validate-jobs") {
-    errors.push(`${jobName} job must depend on validate-jobs`);
+  if (job.needs !== "generate-matrix") {
+    errors.push(`${jobName} job must depend on generate-matrix`);
   }
   if (job.if !== freeStandingJobIf(jobName, scenarioName)) {
     errors.push(`${jobName} job must use the shared jobs selector condition`);
   }
 }
 
-function validateJobsSelector(errors: string[], jobs: WorkflowRecord): void {
-  const job = asRecord(jobs["validate-jobs"]);
-  if (Object.keys(job).length === 0) {
-    errors.push("workflow missing validate-jobs job");
-    return;
+function validateFreeStandingInventoryCoverage(
+  errors: string[],
+  jobs: WorkflowRecord,
+  reportNeeds: readonly unknown[],
+): void {
+  for (const jobId of FREE_STANDING_VITEST_JOB_IDS) {
+    if (!Object.hasOwn(jobs, jobId)) {
+      errors.push(`free-standing inventory job missing workflow job: ${jobId}`);
+    }
+    if (!reportNeeds.includes(jobId)) {
+      errors.push(`report-to-pr job must wait for ${jobId}`);
+    }
   }
-  if (job["runs-on"] !== "ubuntu-latest") {
-    errors.push("validate-jobs job must run on ubuntu-latest");
+  for (const [scenario, jobId] of FREE_STANDING_VITEST_SCENARIO_TO_JOB) {
+    if (!FREE_STANDING_VITEST_JOB_IDS.includes(jobId)) {
+      errors.push(`free-standing inventory maps ${scenario} to unknown job ${jobId}`);
+      continue;
+    }
+    const job = asRecord(jobs[jobId]);
+    if (Object.keys(job).length === 0) continue;
+    const jobIf = stringValue(job.if);
+    const mappingIsRepresented =
+      jobIf.includes(`,${scenario},`) ||
+      (jobId === "hermes-e2e-vitest" && jobIf.includes("needs.generate-matrix.outputs.hermes_selected"));
+    if (!mappingIsRepresented) {
+      errors.push(`free-standing inventory mapping ${scenario}:${jobId} must match the workflow job selector`);
+    }
   }
-  const steps = asSteps(job.steps);
-  requireNoDispatchInputInterpolation(errors, steps);
-  const validate = requireJobStep(errors, "validate-jobs", steps, "Validate free-standing job selector");
-  const env = asRecord(validate?.env);
-  if (env.JOBS !== "${{ inputs.jobs }}") {
-    errors.push("validate-jobs step must pass jobs through JOBS env");
-  }
-  if (env.SCENARIOS !== "${{ inputs.scenarios }}") {
-    errors.push("validate-jobs step must pass scenarios through SCENARIOS env");
-  }
-  requireRunContains(errors, validate, "Use either scenarios or jobs, not both");
-  requireRunContains(errors, validate, "Invalid scenario input; use comma-separated scenario ids");
-  requireRunContains(errors, validate, "allowed_jobs=");
-  requireRunContains(errors, validate, "openshell-version-pin-vitest");
-  requireRunContains(errors, validate, "onboard-negative-paths-vitest");
-  requireRunContains(errors, validate, "skill-agent-vitest");
-  requireRunContains(errors, validate, "inference-routing-vitest");
-  requireRunContains(errors, validate, "credential-migration-vitest");
-  requireRunContains(errors, validate, "runtime-overrides-vitest");
-  requireRunContains(errors, validate, "double-onboard-vitest");
-  requireRunContains(errors, validate, "hermes-e2e-vitest");
-  requireRunContains(errors, validate, "hermes-root-entrypoint-smoke-vitest");
-  requireRunContains(errors, validate, "network-policy-vitest");
-  requireRunContains(errors, validate, "shields-config-vitest");
-  requireRunContains(errors, validate, "rebuild-openclaw-vitest");
-  requireRunContains(errors, validate, "sandbox-rebuild-vitest");
-  requireRunContains(errors, validate, "token-rotation-vitest");
-  requireRunContains(errors, validate, "openclaw-tui-chat-correlation-vitest");
-  requireRunContains(errors, validate, "gateway-guard-recovery");
-  requireRunContains(errors, validate, "model-router-provider-routed-inference-vitest");
-  requireRunContains(errors, validate, "^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$");
-  requireRunContains(errors, validate, "Invalid jobs input; use comma-separated job ids");
-  requireRunDoesNotContain(errors, validate, "Invalid jobs input: ${JOBS}");
-  requireRunContains(errors, validate, "Unknown free-standing Vitest job");
 }
 
 function validateOpenShellVersionPinVitestJob(errors: string[], jobs: WorkflowRecord): void {
@@ -501,9 +590,8 @@ function validateNetworkPolicyVitestJob(errors: string[], jobs: WorkflowRecord):
   if (job["runs-on"] !== "ubuntu-latest") {
     errors.push("network-policy-vitest job must run on ubuntu-latest");
   }
-  const needs = Array.isArray(job.needs) ? job.needs : [];
-  if (!needs.includes("validate-jobs") || !needs.includes("generate-matrix")) {
-    errors.push("network-policy-vitest job must depend on validate-jobs and generate-matrix");
+  if (job.needs !== "generate-matrix") {
+    errors.push("network-policy-vitest job must depend on generate-matrix");
   }
   if (job.if !== freeStandingJobIf(jobName, "network-policy")) {
     errors.push("network-policy-vitest job must map scenarios=network-policy to the network-policy job");
@@ -1187,7 +1275,7 @@ function validateDoubleOnboardVitestJob(errors: string[], jobs: WorkflowRecord):
   if (job["runs-on"] !== "ubuntu-latest") {
     errors.push("double-onboard-vitest job must run on ubuntu-latest");
   }
-  validateFreeStandingJobSelector(errors, jobs, jobName);
+  validateFreeStandingJobSelector(errors, jobs, jobName, "double-onboard");
 
   const jobEnv = asRecord(job.env);
   if (jobEnv.NEMOCLAW_RUN_E2E_SCENARIOS !== "1") {
@@ -1367,9 +1455,8 @@ function validateHermesE2EVitestJob(errors: string[], jobs: WorkflowRecord): voi
   if (job["runs-on"] !== "ubuntu-latest") {
     errors.push("hermes-e2e-vitest job must run on ubuntu-latest");
   }
-  const needs = Array.isArray(job.needs) ? job.needs : [];
-  if (!needs.includes("validate-jobs") || !needs.includes("generate-matrix")) {
-    errors.push("hermes-e2e-vitest job must depend on validate-jobs and generate-matrix validation");
+  if (job.needs !== "generate-matrix") {
+    errors.push("hermes-e2e-vitest job must depend on generate-matrix validation");
   }
   if (job.if !== "${{ needs.generate-matrix.outputs.hermes_selected == 'true' }}") {
     errors.push("hermes-e2e-vitest job must use validated hermes_selected output");
@@ -1471,11 +1558,8 @@ function validateHermesRootEntrypointSmokeVitestJob(
   if (job["runs-on"] !== "ubuntu-latest") {
     errors.push("hermes-root-entrypoint-smoke-vitest job must run on ubuntu-latest");
   }
-  const needs = Array.isArray(job.needs) ? job.needs : [];
-  if (!needs.includes("validate-jobs") || !needs.includes("generate-matrix")) {
-    errors.push(
-      "hermes-root-entrypoint-smoke-vitest job must depend on validate-jobs and generate-matrix",
-    );
+  if (job.needs !== "generate-matrix") {
+    errors.push("hermes-root-entrypoint-smoke-vitest job must depend on generate-matrix");
   }
   const expectedIf =
     "${{ needs.generate-matrix.result == 'success' && ((inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',hermes-root-entrypoint-smoke-vitest,') || contains(format(',{0},', inputs.scenarios), ',hermes-root-entrypoint-smoke,')) }}";
@@ -1834,8 +1918,6 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   if (permissions.contents !== "read") errors.push("workflow permissions.contents must be read");
 
   const jobs = asRecord(workflow.jobs);
-  validateJobsSelector(errors, jobs);
-
   const generateMatrix = asRecord(jobs["generate-matrix"]);
   if (Object.keys(generateMatrix).length === 0) errors.push("workflow missing generate-matrix job");
   if (generateMatrix["runs-on"] !== "ubuntu-latest") {
@@ -1867,28 +1949,12 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   if (generateEnv.SCENARIOS !== "${{ inputs.scenarios }}") {
     errors.push("matrix generation step must pass scenarios through SCENARIOS env");
   }
-  requireRunContains(errors, generate, "allowed_jobs=");
+  requireRunContains(errors, generate, "tools/e2e-scenarios/free-standing-jobs.env");
+  requireRunContains(errors, generate, "free-standing jobs inventory must be data-only key=value");
+  requireRunContains(errors, generate, "free_standing_scenarios_csv must match scenario mapping keys");
+  requireRunContains(errors, generate, "Free-standing scenario maps to unknown job");
   requireRunContains(errors, generate, "Use either scenarios or jobs, not both");
   requireRunContains(errors, generate, "Unknown free-standing Vitest job");
-  requireRunContains(errors, generate, "skill-agent-vitest");
-  requireRunContains(errors, generate, "skill-agent");
-  requireRunContains(errors, generate, "inference-routing-vitest");
-  requireRunContains(errors, generate, "inference-routing");
-  requireRunContains(errors, generate, "runtime-overrides-vitest");
-  requireRunContains(errors, generate, "runtime-overrides");
-  requireRunContains(errors, generate, "double-onboard-vitest");
-  requireRunContains(errors, generate, "hermes-e2e-vitest");
-  requireRunContains(errors, generate, "hermes-root-entrypoint-smoke-vitest");
-  requireRunContains(errors, generate, "hermes-root-entrypoint-smoke");
-  requireRunContains(errors, generate, "network-policy-vitest");
-  requireRunContains(errors, generate, "shields-config-vitest");
-  requireRunContains(errors, generate, "shields-config");
-  requireRunContains(errors, generate, "rebuild-openclaw-vitest");
-  requireRunContains(errors, generate, "sandbox-rebuild-vitest");
-  requireRunContains(errors, generate, "sandbox-rebuild");
-  requireRunContains(errors, generate, "token-rotation-vitest");
-  requireRunContains(errors, generate, "model-router-provider-routed-inference-vitest");
-  requireRunContains(errors, generate, "model-router-provider-routed-inference");
   requireRunContains(errors, generate, 'matrix="[]"');
   requireRunContains(errors, generate, "npx tsx test/e2e-scenario/scenarios/run.ts");
   requireRunContains(errors, generate, "--emit-live-matrix");
@@ -2073,31 +2139,10 @@ export function validateE2eVitestScenariosWorkflowBoundary(
     errors.push("workflow missing report-to-pr job");
   } else {
     const needs = Array.isArray(reportToPr.needs) ? reportToPr.needs : [];
-    for (const required of [
-      "validate-jobs",
-      "generate-matrix",
-      "live-scenarios",
-      "openshell-version-pin-vitest",
-      "onboard-negative-paths-vitest",
-      "skill-agent-vitest",
-      "inference-routing-vitest",
-      "credential-migration-vitest",
-      "runtime-overrides-vitest",
-      "hermes-e2e-vitest",
-      "hermes-root-entrypoint-smoke-vitest",
-      "network-policy-vitest",
-      "shields-config-vitest",
-      "rebuild-openclaw-vitest",
-      "sandbox-rebuild-vitest",
-      "token-rotation-vitest",
-      "double-onboard-vitest",
-      "openclaw-tui-chat-correlation-vitest",
-      "gateway-guard-recovery",
-      "issue-4434-tui-unreachable-inference-vitest",
-      "model-router-provider-routed-inference-vitest",
-    ]) {
+    for (const required of ["generate-matrix", "live-scenarios"]) {
       if (!needs.includes(required)) errors.push(`report-to-pr job must wait for ${required}`);
     }
+    validateFreeStandingInventoryCoverage(errors, jobs, needs);
     const reportSteps = asSteps(reportToPr.steps);
     const report = requireJobStep(errors, "report-to-pr", reportSteps, "Post Vitest scenario results to PR");
     const reportEnv = asRecord(report?.env);
@@ -2118,7 +2163,7 @@ export function validateE2eVitestScenariosWorkflowBoundary(
       errors.push("step 'Post Vitest scenario results to PR' run script must include process.env.JOB_SCENARIOS");
     }
     if (!reportScript.includes("selectorValidationPassed")) {
-      errors.push("step 'Post Vitest scenario results to PR' run script must check validate-jobs before echoing selectors");
+      errors.push("step 'Post Vitest scenario results to PR' run script must check selector validation before echoing selectors");
     }
     if (!reportScript.includes("jobsRejected")) {
       errors.push("step 'Post Vitest scenario results to PR' run script must omit rejected job selectors");

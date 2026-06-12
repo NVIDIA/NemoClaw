@@ -30,43 +30,6 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  validate-jobs:
-    runs-on: ubuntu-latest
-    steps:
-      - id: validate
-        name: Validate free-standing job selector
-        env:
-          JOBS: ${{ inputs.jobs }}
-          SCENARIOS: ${{ inputs.scenarios }}
-        run: |
-          set -euo pipefail
-          allowed_jobs="openshell-version-pin-vitest,onboard-negative-paths-vitest,skill-agent-vitest,inference-routing-vitest,credential-migration-vitest,runtime-overrides-vitest,hermes-e2e-vitest,hermes-root-entrypoint-smoke-vitest,network-policy-vitest,shields-config-vitest,rebuild-openclaw-vitest,sandbox-rebuild-vitest,token-rotation-vitest,launchable-smoke-vitest,openclaw-tui-chat-correlation-vitest,gateway-guard-recovery,double-onboard-vitest,issue-4434-tui-unreachable-inference-vitest,model-router-provider-routed-inference-vitest,sandbox-survival-vitest"
-          if [ -n "${JOBS}" ] && [ -n "${SCENARIOS}" ]; then
-            echo "::error::Use either scenarios or jobs, not both." >&2
-            exit 1
-          fi
-          if [ -n "${SCENARIOS}" ] && [[ ! "${SCENARIOS}" =~ ^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$ ]]; then
-            echo "::error::Invalid scenario input; use comma-separated scenario ids containing only letters, numbers, underscores, and hyphens." >&2
-            exit 1
-          fi
-          if [ -z "${JOBS}" ]; then
-            echo "No free-standing job selector supplied; default workflow behavior applies."
-            exit 0
-          fi
-          if [[ ! "${JOBS}" =~ ^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$ ]]; then
-            echo "::error::Invalid jobs input; use comma-separated job ids containing only letters, numbers, underscores, and hyphens." >&2
-            exit 1
-          fi
-          IFS=',' read -ra requested <<< "${JOBS}"
-          for job in "${requested[@]}"; do
-            if [[ ",${allowed_jobs}," != *",${job},"* ]]; then
-              echo "::error::Unknown free-standing Vitest job: ${job}" >&2
-              echo "::error::Allowed jobs: ${allowed_jobs}" >&2
-              exit 1
-            fi
-          done
-          printf 'Validated free-standing Vitest jobs: `%s`\n' "${JOBS}" >> "$GITHUB_STEP_SUMMARY"
-
   generate-matrix:
     runs-on: ubuntu-latest
     outputs:
@@ -93,21 +56,98 @@ jobs:
           SCENARIOS: ${{ inputs.scenarios }}
         run: |
           set -euo pipefail
-          allowed_jobs="openshell-version-pin-vitest,onboard-negative-paths-vitest,skill-agent-vitest,inference-routing-vitest,credential-migration-vitest,runtime-overrides-vitest,hermes-e2e-vitest,hermes-root-entrypoint-smoke-vitest,network-policy-vitest,shields-config-vitest,rebuild-openclaw-vitest,sandbox-rebuild-vitest,token-rotation-vitest,launchable-smoke-vitest,openclaw-tui-chat-correlation-vitest,gateway-guard-recovery,double-onboard-vitest,issue-4434-tui-unreachable-inference-vitest,model-router-provider-routed-inference-vitest,sandbox-survival-vitest"
+          inventory_path="tools/e2e-scenarios/free-standing-jobs.env"
+          allowed_jobs=""
+          free_standing_scenarios_csv=""
+          free_standing_scenario_jobs_csv=""
+          declare -A seen_inventory_keys=()
+          while IFS= read -r line || [ -n "${line}" ]; do
+            line="${line#"${line%%[![:space:]]*}"}"
+            line="${line%"${line##*[![:space:]]}"}"
+            if [[ -z "${line}" || "${line}" == \#* ]]; then
+              continue
+            fi
+            if [[ ! "${line}" =~ ^(allowed_jobs|free_standing_scenarios_csv|free_standing_scenario_jobs_csv)=([A-Za-z0-9_:-]+(,[A-Za-z0-9_:-]+)*)$ ]]; then
+              echo "::error::free-standing jobs inventory must be data-only key=value" >&2
+              exit 1
+            fi
+            inventory_key="${BASH_REMATCH[1]}"
+            inventory_value="${BASH_REMATCH[2]}"
+            if [[ -n "${seen_inventory_keys[${inventory_key}]:-}" ]]; then
+              echo "::error::free-standing jobs inventory must not redefine ${inventory_key}" >&2
+              exit 1
+            fi
+            seen_inventory_keys["${inventory_key}"]=1
+            case "${inventory_key}" in
+              allowed_jobs) allowed_jobs="${inventory_value}" ;;
+              free_standing_scenarios_csv) free_standing_scenarios_csv="${inventory_value}" ;;
+              free_standing_scenario_jobs_csv) free_standing_scenario_jobs_csv="${inventory_value}" ;;
+            esac
+          done < "${inventory_path}"
+          for required_inventory_key in allowed_jobs free_standing_scenarios_csv free_standing_scenario_jobs_csv; do
+            if [[ -z "${!required_inventory_key:-}" ]]; then
+              echo "::error::free-standing jobs inventory missing ${required_inventory_key}" >&2
+              exit 1
+            fi
+          done
+          declare -A seen_allowed_jobs=()
+          IFS=',' read -r -a allowed_job_entries <<< "${allowed_jobs}"
+          for job in "${allowed_job_entries[@]}"; do
+            if [[ ! "${job}" =~ ^[A-Za-z0-9_-]+$ ]]; then
+              echo "::error::free-standing jobs inventory contains invalid job id" >&2
+              exit 1
+            fi
+            if [[ -n "${seen_allowed_jobs[${job}]:-}" ]]; then
+              echo "::error::free-standing jobs inventory repeats job id" >&2
+              exit 1
+            fi
+            seen_allowed_jobs["${job}"]=1
+          done
+          declare -A seen_free_standing_scenarios=()
+          IFS=',' read -r -a free_standing_scenario_entries <<< "${free_standing_scenarios_csv}"
+          for scenario in "${free_standing_scenario_entries[@]}"; do
+            if [[ ! "${scenario}" =~ ^[A-Za-z0-9_-]+$ ]]; then
+              echo "::error::free-standing jobs inventory contains invalid scenario id" >&2
+              exit 1
+            fi
+            if [[ -n "${seen_free_standing_scenarios[${scenario}]:-}" ]]; then
+              echo "::error::free-standing jobs inventory repeats scenario id" >&2
+              exit 1
+            fi
+            seen_free_standing_scenarios["${scenario}"]=1
+          done
+          IFS=',' read -r -a scenario_job_entries <<< "${free_standing_scenario_jobs_csv}"
+          declare -A seen_scenario_mappings=()
+          derived_free_standing_scenarios=()
+          for entry in "${scenario_job_entries[@]}"; do
+            if [[ ! "${entry}" =~ ^[A-Za-z0-9_-]+:[A-Za-z0-9_-]+$ ]]; then
+              echo "::error::Invalid free-standing scenario mapping" >&2
+              exit 1
+            fi
+            scenario="${entry%%:*}"
+            job="${entry#*:}"
+            if [[ -n "${seen_scenario_mappings[${scenario}]:-}" ]]; then
+              echo "::error::free-standing jobs inventory repeats scenario mapping" >&2
+              exit 1
+            fi
+            seen_scenario_mappings["${scenario}"]=1
+            if [[ -z "${seen_allowed_jobs[${job}]:-}" ]]; then
+              echo "::error::Free-standing scenario maps to unknown job" >&2
+              exit 1
+            fi
+            derived_free_standing_scenarios+=("${scenario}")
+          done
+          derived_free_standing_scenarios_csv="$(IFS=,; echo "${derived_free_standing_scenarios[*]}")"
+          if [[ "${free_standing_scenarios_csv}" != "${derived_free_standing_scenarios_csv}" ]]; then
+            echo "::error::free_standing_scenarios_csv must match scenario mapping keys" >&2
+            exit 1
+          fi
           args=(--emit-live-matrix)
           matrix=""
           hermes_selected=false
           registry_scenarios=()
-          free_standing_scenarios=(openshell-version-pin onboard-negative-paths skill-agent inference-routing runtime-overrides hermes-e2e hermes-root-entrypoint-smoke network-policy shields-config rebuild-openclaw sandbox-rebuild token-rotation openclaw-tui-chat-correlation double-onboard issue-4434-tui-unreachable-inference model-router-provider-routed-inference sandbox-survival)
           is_free_standing_scenario() {
-            local id="$1"
-            local known
-            for known in "${free_standing_scenarios[@]}"; do
-              if [[ "${id}" == "${known}" ]]; then
-                return 0
-              fi
-            done
-            return 1
+            [[ ",${free_standing_scenarios_csv}," == *",$1,"* ]]
           }
           if [ -n "${JOBS}" ] && [ -n "${SCENARIOS}" ]; then
             echo "::error::Use either scenarios or jobs, not both." >&2
@@ -278,7 +318,7 @@ jobs:
   # because the matrix above only runs registry-scenarios.test.ts. Modeled on
   # #5049's free-standing pattern.
   openshell-version-pin-vitest:
-    needs: [validate-jobs, generate-matrix]
+    needs: generate-matrix
     if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',openshell-version-pin-vitest,') || contains(format(',{0},', inputs.scenarios), ',openshell-version-pin,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -319,7 +359,7 @@ jobs:
           retention-days: 14
 
   onboard-negative-paths-vitest:
-    needs: [validate-jobs, generate-matrix]
+    needs: generate-matrix
     if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',onboard-negative-paths-vitest,') || contains(format(',{0},', inputs.scenarios), ',onboard-negative-paths,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -367,7 +407,7 @@ jobs:
   # injection + real OpenClaw agent-turn contract. The retained legacy bash
   # lane remains in nightly-e2e.yaml until #5098 Phase 11 shell retirement.
   skill-agent-vitest:
-    needs: [validate-jobs, generate-matrix]
+    needs: generate-matrix
     if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',skill-agent-vitest,') || contains(format(',{0},', inputs.scenarios), ',skill-agent,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -466,7 +506,7 @@ jobs:
           retention-days: 14
 
   hermes-root-entrypoint-smoke-vitest:
-    needs: [validate-jobs, generate-matrix]
+    needs: generate-matrix
     if: ${{ needs.generate-matrix.result == 'success' && ((inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',hermes-root-entrypoint-smoke-vitest,') || contains(format(',{0},', inputs.scenarios), ',hermes-root-entrypoint-smoke,')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -508,7 +548,7 @@ jobs:
           retention-days: 14
 
   inference-routing-vitest:
-    needs: [validate-jobs, generate-matrix]
+    needs: generate-matrix
     if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',inference-routing-vitest,') || contains(format(',{0},', inputs.scenarios), ',inference-routing,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -556,7 +596,7 @@ jobs:
           retention-days: 14
 
   issue-4434-tui-unreachable-inference-vitest:
-    needs: [validate-jobs, generate-matrix]
+    needs: generate-matrix
     if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',issue-4434-tui-unreachable-inference-vitest,') || contains(format(',{0},', inputs.scenarios), ',issue-4434-tui-unreachable-inference,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
@@ -652,8 +692,9 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+
   credential-migration-vitest:
-    needs: validate-jobs
+    needs: generate-matrix
     if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',credential-migration-vitest,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 50
@@ -728,8 +769,10 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+
+
   runtime-overrides-vitest:
-    needs: [validate-jobs, generate-matrix]
+    needs: generate-matrix
     if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',runtime-overrides-vitest,') || contains(format(',{0},', inputs.scenarios), ',runtime-overrides,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -770,7 +813,7 @@ jobs:
           retention-days: 14
 
   hermes-e2e-vitest:
-    needs: [validate-jobs, generate-matrix]
+    needs: generate-matrix
     if: ${{ needs.generate-matrix.outputs.hermes_selected == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 75
@@ -822,7 +865,7 @@ jobs:
           retention-days: 14
 
   network-policy-vitest:
-    needs: [validate-jobs, generate-matrix]
+    needs: generate-matrix
     if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',network-policy-vitest,') || contains(format(',{0},', inputs.scenarios), ',network-policy,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
@@ -884,7 +927,7 @@ jobs:
           retention-days: 14
 
   shields-config-vitest:
-    needs: [validate-jobs, generate-matrix]
+    needs: generate-matrix
     if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',shields-config-vitest,') || contains(format(',{0},', inputs.scenarios), ',shields-config,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -960,7 +1003,7 @@ jobs:
           retention-days: 14
 
   rebuild-openclaw-vitest:
-    needs: [validate-jobs, generate-matrix]
+    needs: generate-matrix
     if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',rebuild-openclaw-vitest,') || contains(format(',{0},', inputs.scenarios), ',rebuild-openclaw,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 130
@@ -1052,7 +1095,7 @@ jobs:
           retention-days: 14
 
   sandbox-rebuild-vitest:
-    needs: [validate-jobs, generate-matrix]
+    needs: generate-matrix
     if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',sandbox-rebuild-vitest,') || contains(format(',{0},', inputs.scenarios), ',sandbox-rebuild,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
@@ -1145,8 +1188,8 @@ jobs:
           retention-days: 14
 
   double-onboard-vitest:
-    needs: validate-jobs
-    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',double-onboard-vitest,') }}
+    needs: generate-matrix
+    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',double-onboard-vitest,') || contains(format(',{0},', inputs.scenarios), ',double-onboard,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
@@ -1232,7 +1275,7 @@ jobs:
           retention-days: 14
 
   token-rotation-vitest:
-    needs: [validate-jobs, generate-matrix]
+    needs: generate-matrix
     if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',token-rotation-vitest,') || contains(format(',{0},', inputs.scenarios), ',token-rotation,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -1315,7 +1358,7 @@ jobs:
           retention-days: 14
 
   launchable-smoke-vitest:
-    needs: validate-jobs
+    needs: generate-matrix
     if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',launchable-smoke-vitest,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -1389,7 +1432,7 @@ jobs:
   # contract. The retained legacy bash lane remains the source for full
   # closeout until a later PR proves replacement and deletes it.
   model-router-provider-routed-inference-vitest:
-    needs: [validate-jobs, generate-matrix]
+    needs: generate-matrix
     if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',model-router-provider-routed-inference-vitest,') || contains(format(',{0},', inputs.scenarios), ',model-router-provider-routed-inference,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -1478,7 +1521,7 @@ jobs:
           rm -rf "${DOCKER_CONFIG}"
 
   sandbox-survival-vitest:
-    needs: [validate-jobs, generate-matrix]
+    needs: generate-matrix
     if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',sandbox-survival-vitest,') || contains(format(',{0},', inputs.scenarios), ',sandbox-survival,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -1569,7 +1612,7 @@ jobs:
   # protocol/history contract. The retained legacy bash lane remains the
   # source for full closeout until a later PR proves replacement and deletes it.
   openclaw-tui-chat-correlation-vitest:
-    needs: [validate-jobs, generate-matrix]
+    needs: generate-matrix
     if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',openclaw-tui-chat-correlation-vitest,') || contains(format(',{0},', inputs.scenarios), ',openclaw-tui-chat-correlation,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 75
@@ -1649,7 +1692,7 @@ jobs:
   # restore the /tmp guard chain after pod recreate). Will fail on `main`
   # until the #2701 fix lands; flips green afterwards.
   gateway-guard-recovery:
-    needs: validate-jobs
+    needs: generate-matrix
     if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',gateway-guard-recovery,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -1743,7 +1786,6 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       [
-        validate-jobs,
         generate-matrix,
         live-scenarios,
         openshell-version-pin-vitest,
@@ -1786,7 +1828,7 @@ jobs:
             const prNumberInput = process.env.JOB_PR_NUMBER || '';
             const rawRequestedScenarios = process.env.JOB_SCENARIOS || '';
             const rawRequestedJobs = process.env.JOBS || '';
-            const selectorValidationPassed = needs['validate-jobs']?.result === 'success';
+            const selectorValidationPassed = needs['generate-matrix']?.result === 'success';
             const requestedScenarios = selectorValidationPassed ? rawRequestedScenarios : '';
             const requestedJobs = selectorValidationPassed ? rawRequestedJobs : '';
             const scenariosRejected = rawRequestedScenarios && !selectorValidationPassed;
@@ -1829,12 +1871,12 @@ jobs:
               `**Run:** [${context.runId}](${runUrl})`,
               `**Workflow ref:** \`${workflowBranch}\``,
               scenariosRejected
-                ? '**Requested scenarios:** _(selector rejected by validate-jobs)_'
+                ? '**Requested scenarios:** _(selector rejected by workflow validation)_'
                 : requestedScenarios
                   ? `**Requested scenarios:** \`${requestedScenarios}\``
                   : '**Requested scenarios:** _(default — all supported)_',
               jobsRejected
-                ? '**Requested jobs:** _(selector rejected by validate-jobs)_'
+                ? '**Requested jobs:** _(selector rejected by workflow validation)_'
                 : requestedJobs
                   ? `**Requested jobs:** \`${requestedJobs}\``
                   : '**Requested jobs:** _(default — all free-standing when no scenarios are requested)_',
