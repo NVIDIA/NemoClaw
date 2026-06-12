@@ -174,12 +174,12 @@ pid="$(tr -d '[:space:]' <"$pid_file" 2>/dev/null || true)"
 if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then
   exit 0
 fi
-state="$(ps -p "$pid" -o state= 2>/dev/null | tr -d '[:space:]')"
-if [ -n "$state" ] && [ "$state" != "Z" ]; then
-  printf 'live non-zombie gateway pid remains: pid=%s state=%s\n' "$pid" "$state" >&2
-  exit 1
+state="$(ps -p "$pid" -o state= 2>/dev/null | tr -d '[:space:]' || true)"
+if [ -z "$state" ] || [[ "$state" == Z* ]]; then
+  exit 0
 fi
-exit 0
+printf 'live non-zombie gateway pid remains: pid=%s state=%s\n' "$pid" "$state" >&2
+exit 1
 `,
         "gateway-lingering-process-check",
         gatewayPidFile,
