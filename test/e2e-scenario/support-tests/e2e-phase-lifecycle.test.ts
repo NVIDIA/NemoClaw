@@ -3,7 +3,12 @@
 
 import { describe, expect, expectTypeOf, it } from "vitest";
 
-import { HostCliClient, SandboxClient, type CommandRunner } from "../fixtures/clients/index.ts";
+import {
+  GatewayClient,
+  HostCliClient,
+  SandboxClient,
+  type CommandRunner,
+} from "../fixtures/clients/index.ts";
 import type { E2EScenarioFixtures } from "../fixtures/e2e-test.ts";
 import {
   buildBackupContainerName,
@@ -56,7 +61,11 @@ class FakeRunner implements CommandRunner {
     command: TrustedShellCommand,
     options?: ShellProbeRunOptions,
   ): Promise<ShellProbeResult> {
-    this.calls.push({ command: command.command, args: [...command.args], options });
+    this.calls.push({
+      command: command.command,
+      args: [...command.args],
+      options,
+    });
     const response = this.responses.shift();
     if (!response) {
       throw new Error(
@@ -121,8 +130,14 @@ describe("LifecyclePhaseFixture.simulate post-reboot-recovery (stop-original)", 
           "{{.Names}}",
         ],
       },
-      { command: "docker", args: ["stop", "openshell-cluster-e2e-ubuntu-repo-cloud-openclaw"] },
-      { command: "nemoclaw", args: ["e2e-ubuntu-repo-cloud-openclaw", "status"] },
+      {
+        command: "docker",
+        args: ["stop", "openshell-cluster-e2e-ubuntu-repo-cloud-openclaw"],
+      },
+      {
+        command: "nemoclaw",
+        args: ["e2e-ubuntu-repo-cloud-openclaw", "status"],
+      },
     ]);
     expect(cleanup.calls.map((call) => call.name)).toEqual([
       "lifecycle.docker-start:openshell-cluster-e2e-ubuntu-repo-cloud-openclaw",
@@ -193,6 +208,98 @@ describe("LifecyclePhaseFixture.simulate post-reboot-recovery (rename-to-gpu-bac
     expect(cleanup.calls.map((call) => call.name.split(":")[0])).toEqual([
       "lifecycle.docker-start",
       "lifecycle.docker-rename-back",
+    ]);
+  });
+});
+
+describe("LifecyclePhaseFixture rebuild helpers", () => {
+  it("accepts ANSI-colored Ready output when waiting after rebuild", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(shellResult(0, "NAME  PHASE\ne2e-x  \u001b[32mReady\u001b[39m\n"));
+    const cleanup = new FakeCleanup();
+
+    const result = await fixture(runner, cleanup).assertSandboxReadyAfterRebuild("e2e-x", {
+      attempts: 1,
+      delayMs: 0,
+    });
+
+    expect(result.stdout).toContain("Ready");
+    expect(runner.calls[0]).toMatchObject({
+      command: "openshell",
+      args: ["sandbox", "list"],
+    });
+  });
+
+  it("requires an exact sandbox-name match when waiting after rebuild", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(shellResult(0, "NAME  PHASE\ne2e-x-dev  Ready\n"));
+    runner.enqueue(shellResult(0, "NAME  PHASE\ne2e-x  Ready\n"));
+    const cleanup = new FakeCleanup();
+
+    const result = await fixture(runner, cleanup).assertSandboxReadyAfterRebuild("e2e-x", {
+      attempts: 2,
+      delayMs: 0,
+    });
+
+    expect(result.stdout).toContain("e2e-x  Ready");
+    expect(runner.calls).toHaveLength(2);
+  });
+});
+
+describe("LifecyclePhaseFixture gateway runtime restart helpers", () => {
+  it("stops PID/container runtimes, starts the previous runtime shape, and polls health", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(shellResult(0, "12345\n")); // resolveHostRuntime pid probe
+    runner.enqueue(shellResult(0)); // forward stop
+    runner.enqueue(shellResult(0)); // gateway stop
+    runner.enqueue(shellResult(0)); // pid stop
+    runner.enqueue(shellResult(0)); // container stop
+    runner.enqueue(shellResult(1, "")); // expectHostRuntimeStopped pid probe
+    runner.enqueue(shellResult(0, "")); // expectHostRuntimeStopped container probe
+    runner.enqueue(shellResult(0)); // lifecycle-gateway-stopped true artifact
+    runner.enqueue(shellResult(0, "status recovered\n")); // start through nemoclaw status
+    runner.enqueue(shellResult(0, "Connected to nemoclaw\n")); // waitForGatewayConnected
+    const cleanup = new FakeCleanup();
+    const host = new HostCliClient(runner);
+    const sandbox = new SandboxClient(runner);
+    const fx = new LifecyclePhaseFixture(host, sandbox, cleanup, new GatewayClient(host, sandbox));
+
+    await expect(fx.restartGatewayRuntime({ delayMs: 0 })).resolves.toEqual({
+      kind: "pid",
+      id: "12345",
+    });
+    await fx.waitForGatewayConnected({ attempts: 1, intervalMs: 1 });
+
+    expect(runner.calls.map((call) => `${call.command} ${call.args.join(" ")}`)).toEqual([
+      expect.stringContaining("sh -lc pid_file="),
+      "sh -lc command -v openshell >/dev/null 2>&1 && openshell forward stop 18789 || true",
+      "sh -lc command -v openshell >/dev/null 2>&1 && openshell gateway stop -g nemoclaw || true",
+      expect.stringContaining("sh -lc pid_file="),
+      expect.stringContaining("sh -lc cid="),
+      expect.stringContaining("sh -lc pid_file="),
+      "docker ps -qf name=openshell-cluster-nemoclaw",
+      "true ",
+      "nemoclaw status",
+      "openshell status",
+    ]);
+  });
+
+  it("can recover a PID runtime through sandbox-specific status", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(shellResult(0, "status recovered\n"));
+    const cleanup = new FakeCleanup();
+
+    await expect(
+      fixture(runner, cleanup).startGatewayRuntime(
+        { kind: "pid", id: "12345" },
+        {
+          sandboxName: "e2e-survival",
+        },
+      ),
+    ).resolves.toMatchObject({ exitCode: 0 });
+
+    expect(runner.calls.map((call) => `${call.command} ${call.args.join(" ")}`)).toEqual([
+      "nemoclaw e2e-survival status",
     ]);
   });
 });

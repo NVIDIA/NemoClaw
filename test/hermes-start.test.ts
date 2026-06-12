@@ -7,6 +7,8 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 
+import { shellQuote } from "../src/lib/core/shell-quote";
+
 const START_SCRIPT = path.join(import.meta.dirname, "..", "agents", "hermes", "start.sh");
 const SECRET_BOUNDARY_VALIDATOR_SCRIPT = path.join(
   import.meta.dirname,
@@ -15,10 +17,6 @@ const SECRET_BOUNDARY_VALIDATOR_SCRIPT = path.join(
   "hermes",
   "validate-env-secret-boundary.py",
 );
-
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, "'\\''")}'`;
-}
 
 function bashPrintfQ(value: string): string {
   const result = spawnSync("bash", ["-c", "printf '%q' \"$1\"", "bash-printf-q", value], {

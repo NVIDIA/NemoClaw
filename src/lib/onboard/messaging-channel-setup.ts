@@ -3,12 +3,12 @@
 
 import type { AgentDefinition } from "../agent/defs";
 import { getCredential, normalizeCredentialValue } from "../credentials/store";
-import * as registry from "../state/registry";
 import {
   type ChannelInputSpec,
   type ChannelManifest,
-  createBuiltInMessagingHookRegistry,
   createBuiltInChannelManifestRegistry,
+  createBuiltInMessagingHookRegistry,
+  createBuiltInRenderTemplateResolver,
   getMessagingManifestAvailabilityContext,
   hasMessagingManifestRequiredInputs,
   MessagingHostStateApplier,
@@ -18,14 +18,17 @@ import {
   type SandboxMessagingPlan,
   toMessagingAgentId,
 } from "../messaging";
+import * as registry from "../state/registry";
+
 export { MessagingHostStateApplier };
+
 import { resolveMessagingChannelConfigEnvValue } from "../messaging-channel-config";
 import {
+  type MessagingSelectorInput,
+  type MessagingSelectorOutput,
   promptMessagingChannelLineSelection,
   readMessagingChannelSelection,
   renderMessagingChannelList,
-  type MessagingSelectorInput,
-  type MessagingSelectorOutput,
 } from "./messaging-selector";
 
 export interface SetupSelectedMessagingChannelsOptions {
@@ -157,7 +160,11 @@ export async function setupSelectedMessagingChannels(
 
   const agent = toMessagingAgentId(options.agent);
   const sandboxName = resolveMessagingSetupSandboxName(options);
-  const planner = new MessagingWorkflowPlanner(registry, createBuiltInMessagingHookRegistry());
+  const planner = new MessagingWorkflowPlanner(
+    registry,
+    createBuiltInMessagingHookRegistry(),
+    createBuiltInRenderTemplateResolver(),
+  );
 
   if (options.interactive === false) {
     const plan = await planner.buildPlan({

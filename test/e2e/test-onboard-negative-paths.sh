@@ -15,6 +15,8 @@
 #   5. A host listener on the configured gateway port produces a friendly conflict.
 #   6. Custom non-interactive policy presets are applied.
 #   7. NEMOCLAW_PROVIDER=cloud and NEMOCLAW_MODEL are honored.
+#   8. --from without --name/NEMOCLAW_SANDBOX_NAME fails before defaulting.
+#   9. --from with NEMOCLAW_SANDBOX_NAME proceeds past entry validation.
 
 set -uo pipefail
 
@@ -327,7 +329,74 @@ else
   fail "NEMOCLAW_POLICY_MODE=nonexistent did not fall back cleanly"
 fi
 
-section "Phase 3: Provider credential validation"
+section "Phase 3: Entry option validation"
+
+FROM_GUARD_LOG="$(mktemp)"
+env -u NEMOCLAW_SANDBOX_NAME \
+  NEMOCLAW_NON_INTERACTIVE=1 \
+  NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
+  NEMOCLAW_PROVIDER=cloud \
+  NEMOCLAW_POLICY_MODE=skip \
+  NVIDIA_API_KEY="$RESTORE_API_KEY" \
+  node "$REPO/bin/nemoclaw.js" onboard --non-interactive --from "$REPO/Dockerfile" \
+  >"$FROM_GUARD_LOG" 2>&1
+from_guard_exit=$?
+from_guard_output="$(cat "$FROM_GUARD_LOG")"
+rm -f "$FROM_GUARD_LOG"
+rm -f "$SESSION_FILE"
+
+if [ "$from_guard_exit" -eq 1 ]; then
+  pass "--from without sandbox name exited 1"
+else
+  fail "--from without sandbox name exited $from_guard_exit (expected 1)"
+fi
+
+if printf '%s\n' "$from_guard_output" | grep -q -- "--from <Dockerfile> requires --name <sandbox>"; then
+  pass "--from missing-name guard message is explicit"
+else
+  fail "--from missing-name guard message missing"
+fi
+
+if assert_no_stack_trace "$from_guard_output"; then
+  pass "--from missing-name guard did not print a stack trace"
+else
+  fail "--from missing-name guard printed a stack trace"
+fi
+
+FROM_ENV_NAME_LOG="$(mktemp)"
+env \
+  NEMOCLAW_NON_INTERACTIVE=1 \
+  NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
+  NEMOCLAW_SANDBOX_NAME="bad name" \
+  NEMOCLAW_PROVIDER=cloud \
+  NEMOCLAW_POLICY_MODE=skip \
+  NVIDIA_API_KEY="$RESTORE_API_KEY" \
+  node "$REPO/bin/nemoclaw.js" onboard --non-interactive --from "$REPO/Dockerfile" \
+  >"$FROM_ENV_NAME_LOG" 2>&1
+from_env_name_exit=$?
+from_env_name_output="$(cat "$FROM_ENV_NAME_LOG")"
+rm -f "$FROM_ENV_NAME_LOG"
+rm -f "$SESSION_FILE"
+
+if [ "$from_env_name_exit" -eq 1 ]; then
+  pass "--from with NEMOCLAW_SANDBOX_NAME reached name validation"
+else
+  fail "--from with NEMOCLAW_SANDBOX_NAME exited $from_env_name_exit (expected 1)"
+fi
+
+if printf '%s\n' "$from_env_name_output" | grep -q "Invalid sandbox name"; then
+  pass "--from with env sandbox name used NEMOCLAW_SANDBOX_NAME"
+else
+  fail "--from with env sandbox name did not reach name validation"
+fi
+
+if printf '%s\n' "$from_env_name_output" | grep -q -- "--from <Dockerfile> requires --name <sandbox>"; then
+  fail "--from with env sandbox name still printed missing-name guard"
+else
+  pass "--from with env sandbox name did not print missing-name guard"
+fi
+
+section "Phase 4: Provider credential validation"
 
 INVALID_KEY_LOG="$(mktemp)"
 NEMOCLAW_NON_INTERACTIVE=1 \
@@ -368,7 +437,7 @@ else
   fail "Provider-aware credential validation rejected a non-NVIDIA key prefix"
 fi
 
-section "Phase 4: Gateway port conflict"
+section "Phase 5: Gateway port conflict"
 
 if start_port_holder "$PORT_CONFLICT_PORT"; then
   pass "Held gateway port ${PORT_CONFLICT_PORT} with a host listener"
@@ -415,7 +484,7 @@ else
   fail "Port conflict path printed a stack trace"
 fi
 
-section "Phase 5: Live non-interactive onboard honors presets and model"
+section "Phase 6: Live non-interactive onboard honors presets and model"
 
 LIVE_LOG="$(mktemp)"
 NEMOCLAW_NON_INTERACTIVE=1 \
@@ -491,7 +560,7 @@ else
   fail "Session did not record requested provider, model, and policy presets"
 fi
 
-section "Phase 6: Final cleanup"
+section "Phase 7: Final cleanup"
 
 if [[ "${NEMOCLAW_E2E_KEEP_SANDBOX:-}" != "1" ]]; then
   run_nemoclaw "$SANDBOX_NAME" destroy --yes >/dev/null 2>&1 || true

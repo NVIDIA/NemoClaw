@@ -8,16 +8,21 @@
 // generated-shell shape assertions live in
 // runtime-hermes-secret-boundary-shape.test.ts.
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
-  HERMES_SECRET_BOUNDARY_VALIDATOR_PATH,
   __testing,
+  HERMES_SECRET_BOUNDARY_VALIDATOR_PATH,
 } from "../../../dist/lib/agent/hermes-recovery-boundary";
 import { buildRecoveryScript } from "../../../dist/lib/agent/runtime";
+import {
+  createRecoveryPreloadHarnessPaths,
+  type RecoveryPreloadHarnessPaths,
+  rewriteRecoveryPreloadPaths,
+} from "../../../test/helpers/runtime-recovery-preload-test-helpers";
 import { hermesAgent } from "./hermes-recovery-boundary-fixtures";
 
 function writeStub(dir: string, name: string, body: string) {
@@ -193,6 +198,7 @@ describe("Hermes secret-boundary guard — full recovery script behaviour", () =
       hermesLaunchMarker,
       gatewayLogPath,
       recoveryFallbackLog,
+      ...createRecoveryPreloadHarnessPaths(tmp),
     };
   }
 
@@ -204,19 +210,21 @@ describe("Hermes secret-boundary guard — full recovery script behaviour", () =
     writeStub(stubsDir, "hermes", `: > ${JSON.stringify(hermesLaunchMarker)}\nexit 0`);
   }
 
-  function runRecovery(opts: {
-    stubsDir: string;
-    validatorPath: string;
-    envFilePath?: string;
-    proxyEnvPath?: string;
-    recoveryLogPath: string;
-    gatewayLogPath: string;
-    recoveryFallbackLog: string;
-    tmp: string;
-  }) {
+  function runRecovery(
+    opts: {
+      stubsDir: string;
+      validatorPath: string;
+      envFilePath?: string;
+      proxyEnvPath?: string;
+      recoveryLogPath: string;
+      gatewayLogPath: string;
+      recoveryFallbackLog: string;
+      tmp: string;
+    } & RecoveryPreloadHarnessPaths,
+  ) {
     const recoveryScript = buildRecoveryScript(hermesAgent, 8642);
     expect(recoveryScript).not.toBeNull();
-    let stubbed = recoveryScript!
+    let stubbed = rewriteRecoveryPreloadPaths(recoveryScript!, opts)
       .replace(new RegExp(HERMES_SECRET_BOUNDARY_VALIDATOR_PATH, "g"), opts.validatorPath)
       .replace(/\/tmp\/gateway-recovery\.log/g, opts.recoveryLogPath)
       .replace(/\/tmp\/gateway\.log/g, opts.gatewayLogPath)
@@ -384,6 +392,7 @@ describe("Hermes secret-boundary guard — full recovery script behaviour", () =
       proxyEnvFile,
       "export NODE_OPTIONS='--require=nemoclaw-sandbox-safety-net --require=nemoclaw-ciao-network-guard'\n",
     );
+    fs.chmodSync(proxyEnvFile, 0o444);
     writeStub(harness.stubsDir, "python3", `${SHARED_PYTHON_STUB_BY_MODE}\n`);
     stubBaselineUtilities(harness.stubsDir, harness.pkillLog, harness.hermesLaunchMarker);
 
@@ -394,7 +403,7 @@ describe("Hermes secret-boundary guard — full recovery script behaviour", () =
           (() => {
             const recoveryScript = buildRecoveryScript(hermesAgent, 8642);
             expect(recoveryScript).not.toBeNull();
-            const stubbed = recoveryScript!
+            const stubbed = rewriteRecoveryPreloadPaths(recoveryScript!, harness)
               .replace(
                 new RegExp(HERMES_SECRET_BOUNDARY_VALIDATOR_PATH, "g"),
                 path.join(validatorRoot, "validate-hermes-env-secret-boundary.py"),
@@ -462,6 +471,7 @@ describe("Hermes secret-boundary guard — full recovery script behaviour", () =
         "",
       ].join("\n"),
     );
+    fs.chmodSync(proxyEnvFile, 0o444);
     stubBaselineUtilities(harness.stubsDir, harness.pkillLog, harness.hermesLaunchMarker);
 
     try {

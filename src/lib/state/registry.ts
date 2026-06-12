@@ -4,9 +4,21 @@
 import fs from "node:fs";
 import path from "node:path";
 import { isErrnoException } from "../core/errno";
-import type { SandboxMessagingPlan } from "../messaging/manifest";
-import type { MessagingChannelConfig } from "../messaging-channel-config";
 import { ensureConfigDir, readConfigFile, writeConfigFile } from "./config-io";
+import {
+  cloneSandboxMessagingState,
+  getConfiguredMessagingChannels as getRegistryConfiguredMessagingChannels,
+  getDisabledChannels as getRegistryDisabledChannels,
+  setChannelDisabled as setRegistryChannelDisabled,
+} from "./registry-messaging";
+import type { SandboxMessagingState } from "./registry-messaging";
+export {
+  getActiveMessagingChannelsFromEntry,
+  getConfiguredMessagingChannelsFromEntry,
+  getDisabledMessagingChannelsFromEntry,
+  getMessagingPlanFromEntry,
+  type SandboxMessagingState,
+} from "./registry-messaging";
 
 export interface CustomPolicyEntry {
   name: string;
@@ -67,15 +79,13 @@ export interface SandboxEntry {
   // are never auto-rebuilt onto the default image (#5026).
   nemoclawVersion?: string | null;
   imageTag?: string | null;
-  messagingChannels?: string[];
-  messagingChannelConfig?: MessagingChannelConfig;
+  providerCredentialHashes?: Record<string, string>;
   messaging?: SandboxMessagingState;
   hermesToolGateways?: string[];
   hermesDashboardEnabled?: boolean;
   hermesDashboardPort?: number | null;
   hermesDashboardInternalPort?: number | null;
   hermesDashboardTui?: boolean;
-  disabledChannels?: string[];
   dashboardPort?: number | null;
   // OpenShell gateway registration name and host port bound to this sandbox.
   // Persisted so later lifecycle commands operate on the sandbox's own gateway
@@ -83,11 +93,6 @@ export interface SandboxEntry {
   // different NEMOCLAW_GATEWAY_PORT no longer recreates/kills the first (#4422).
   gatewayName?: string | null;
   gatewayPort?: number | null;
-}
-
-export interface SandboxMessagingState {
-  schemaVersion: 1;
-  plan: SandboxMessagingPlan;
 }
 
 export interface SandboxRegistry {
@@ -349,11 +354,7 @@ export function registerSandbox(entry: SandboxEntry): void {
       agentVersion: entry.agentVersion || null,
       nemoclawVersion: entry.nemoclawVersion || null,
       imageTag: entry.imageTag || null,
-      messagingChannels: entry.messagingChannels || [],
-      messagingChannelConfig:
-        entry.messagingChannelConfig && Object.keys(entry.messagingChannelConfig).length > 0
-          ? { ...entry.messagingChannelConfig }
-          : undefined,
+      providerCredentialHashes: entry.providerCredentialHashes || undefined,
       messaging: cloneSandboxMessagingState(entry.messaging),
       hermesToolGateways:
         Array.isArray(entry.hermesToolGateways) && entry.hermesToolGateways.length > 0
@@ -363,10 +364,6 @@ export function registerSandbox(entry: SandboxEntry): void {
       hermesDashboardPort: entry.hermesDashboardPort ?? undefined,
       hermesDashboardInternalPort: entry.hermesDashboardInternalPort ?? undefined,
       hermesDashboardTui: entry.hermesDashboardTui === true ? true : undefined,
-      disabledChannels:
-        Array.isArray(entry.disabledChannels) && entry.disabledChannels.length > 0
-          ? [...entry.disabledChannels]
-          : undefined,
       dashboardPort: entry.dashboardPort ?? undefined,
       gatewayName: entry.gatewayName ?? undefined,
       gatewayPort: entry.gatewayPort ?? undefined,
@@ -376,16 +373,6 @@ export function registerSandbox(entry: SandboxEntry): void {
     }
     save(data);
   });
-}
-
-function cloneSandboxMessagingState(
-  messaging: SandboxMessagingState | undefined,
-): SandboxMessagingState | undefined {
-  if (!messaging || messaging.schemaVersion !== 1) return undefined;
-  return {
-    schemaVersion: 1,
-    plan: JSON.parse(JSON.stringify(messaging.plan)) as SandboxMessagingPlan,
-  };
 }
 
 export function updateSandbox(name: string, updates: Partial<SandboxEntry>): boolean {
@@ -505,20 +492,13 @@ export function removeCustomPolicyByName(name: string, presetName: string): bool
 }
 
 export function getDisabledChannels(name: string): string[] {
-  const data = load();
-  return data.sandboxes[name]?.disabledChannels ?? [];
+  return getRegistryDisabledChannels(name, { load });
+}
+
+export function getConfiguredMessagingChannels(name: string): string[] {
+  return getRegistryConfiguredMessagingChannels(name, { load });
 }
 
 export function setChannelDisabled(name: string, channel: string, disabled: boolean): boolean {
-  return withLock(() => {
-    const data = load();
-    const entry = data.sandboxes[name];
-    if (!entry) return false;
-    const current = new Set(entry.disabledChannels ?? []);
-    if (disabled) current.add(channel);
-    else current.delete(channel);
-    entry.disabledChannels = current.size > 0 ? Array.from(current).sort() : undefined;
-    save(data);
-    return true;
-  });
+  return setRegistryChannelDisabled(name, channel, disabled, { load, save, withLock });
 }

@@ -78,8 +78,10 @@ RUN chmod -R a+rX /opt/nemoclaw-hermes-plugin/
 COPY agents/hermes/generate-config.ts /opt/nemoclaw-hermes-config/generate-config.ts
 COPY agents/hermes/config/ /opt/nemoclaw-hermes-config/config/
 COPY agents/hermes/host/managed-tool-gateway-matrix.json /opt/nemoclaw-hermes-config/managed-tool-gateway-matrix.json
+COPY src/lib/messaging/ /src/lib/messaging/
 RUN find /opt/nemoclaw-hermes-config -type d -exec chmod 755 {} + \
-    && find /opt/nemoclaw-hermes-config -type f -exec chmod 444 {} +
+    && find /opt/nemoclaw-hermes-config -type f -exec chmod 444 {} + \
+    && chmod -R a+rX /src/lib/messaging
 
 # Copy blueprint (shared infrastructure)
 COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
@@ -121,18 +123,7 @@ ARG NEMOCLAW_INFERENCE_API=openai-completions
 # Hermes this URL points at the browser dashboard. The OpenAI-compatible
 # API remains exposed separately on port 8642.
 ARG CHAT_UI_URL=http://127.0.0.1:18789
-ARG NEMOCLAW_MESSAGING_CHANNELS_B64=W10=
-ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=e30=
-ARG NEMOCLAW_DISCORD_GUILDS_B64=e30=
-ARG NEMOCLAW_TELEGRAM_CONFIG_B64=e30=
-# Captured by NemoClaw's host-side iLink QR login during onboard (see
-# src/lib/onboard/wechat-config.ts). Carries {accountId, baseUrl, userId} so
-# the Hermes WeChat adapter starts with WEIXIN_ACCOUNT_ID/WEIXIN_BASE_URL
-# already populated from .env; no in-sandbox QR re-scan. The token itself
-# is never baked here — it flows through the OpenShell L7 proxy via the
-# WECHAT_BOT_TOKEN credential slot.
-ARG NEMOCLAW_WECHAT_CONFIG_B64=e30=
-ARG NEMOCLAW_SLACK_CONFIG_B64=e30=
+ARG NEMOCLAW_MESSAGING_PLAN_B64=
 ARG NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER=0
 ARG NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64=W10=
 ARG NEMOCLAW_BUILD_ID=default
@@ -145,12 +136,7 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_INFERENCE_BASE_URL=${NEMOCLAW_INFERENCE_BASE_URL} \
     NEMOCLAW_INFERENCE_API=${NEMOCLAW_INFERENCE_API} \
     CHAT_UI_URL=${CHAT_UI_URL} \
-    NEMOCLAW_MESSAGING_CHANNELS_B64=${NEMOCLAW_MESSAGING_CHANNELS_B64} \
-    NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=${NEMOCLAW_MESSAGING_ALLOWED_IDS_B64} \
-    NEMOCLAW_DISCORD_GUILDS_B64=${NEMOCLAW_DISCORD_GUILDS_B64} \
-    NEMOCLAW_TELEGRAM_CONFIG_B64=${NEMOCLAW_TELEGRAM_CONFIG_B64} \
-    NEMOCLAW_WECHAT_CONFIG_B64=${NEMOCLAW_WECHAT_CONFIG_B64} \
-    NEMOCLAW_SLACK_CONFIG_B64=${NEMOCLAW_SLACK_CONFIG_B64} \
+    NEMOCLAW_MESSAGING_PLAN_B64=${NEMOCLAW_MESSAGING_PLAN_B64} \
     NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER=${NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER} \
     NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64=${NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64}
 
@@ -168,9 +154,18 @@ RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0 \
 # code injection via build-arg interpolation (same concern as OpenClaw C-2).
 RUN node --experimental-strip-types /opt/nemoclaw-hermes-config/generate-config.ts
 
+# Apply messaging agent-install hooks before Hermes plugin installation.
+# hadolint ignore=DL3059
+RUN node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent hermes --phase agent-install
+
 # Install NemoClaw plugin into Hermes
+# hadolint ignore=DL3059
 RUN mkdir -p /sandbox/.hermes/plugins/nemoclaw \
     && cp -r /opt/nemoclaw-hermes-plugin/* /sandbox/.hermes/plugins/nemoclaw/
+
+# Apply messaging render and post-agent-install build-file hooks after agent/plugin installation.
+# hadolint ignore=DL3059
+RUN node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent hermes --phase post-agent-install
 
 # Write the default SOUL.md (agent identity) for the sandboxed agent.
 # This is the stock Hermes default soul (hermes_cli/default_soul.py,

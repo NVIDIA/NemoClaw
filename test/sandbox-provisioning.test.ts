@@ -12,11 +12,11 @@
 // fixtures where practical, so coverage follows behavior rather than source
 // text shape.
 
-import { describe, expect, it } from "vitest";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { describe, expect, it } from "vitest";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const DOCKERFILE = path.join(ROOT, "Dockerfile");
@@ -261,6 +261,44 @@ describe("sandbox provisioning: runtime npm online state", () => {
       const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
       expect(result.status, `stderr: ${result.stderr}`).toBe(0);
       expect(result.stdout.trim()).toBe("true");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("sandbox provisioning: non-messaging OpenClaw plugins", () => {
+  it("pins Brave web-search and preserves its placeholder during build-time doctor", () => {
+    const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");
+    const command = dockerRunCommandBetween(
+      dockerfile,
+      "# Install non-messaging OpenClaw plugins",
+      "# hadolint ignore=DL3059,DL4006\nRUN node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent openclaw --phase agent-install",
+    );
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-brave-plugin-install-"));
+    try {
+      const { result, calls } = runLoggedDockerShell(
+        command,
+        tmp,
+        [
+          [
+            "openclaw() {",
+            '  printf "%s|BRAVE_API_KEY=%s\\n" "$*" "${BRAVE_API_KEY:-}" >> "$call_log"',
+            "}",
+          ].join("\n"),
+        ],
+        {
+          NEMOCLAW_OPENCLAW_OTEL: "0",
+          NEMOCLAW_WEB_SEARCH_ENABLED: "1",
+          OPENCLAW_VERSION: "2026.5.22",
+        },
+      );
+
+      expect(result.status, `stderr: ${result.stderr}`).toBe(0);
+      expect(calls.trim().split("\n")).toEqual([
+        "plugins install npm:@openclaw/brave-plugin@2026.5.22 --pin|BRAVE_API_KEY=",
+        "doctor --fix --non-interactive|BRAVE_API_KEY=openshell:resolve:env:BRAVE_API_KEY",
+      ]);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -838,6 +876,26 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
     const localBin = path.join(tmp, "usr", "local", "bin");
     const localLib = path.join(tmp, "usr", "local", "lib", "nemoclaw");
     const localShare = path.join(tmp, "usr", "local", "share", "nemoclaw");
+    const localSrc = path.join(tmp, "src");
+    const localScripts = path.join(tmp, "scripts");
+    const generatorPath = path.join(localScripts, "generate-openclaw-config.mts");
+    const applierPath = path.join(
+      localSrc,
+      "lib",
+      "messaging",
+      "applier",
+      "build",
+      "messaging-build-applier.mts",
+    );
+    const messagingHookPath = path.join(
+      localSrc,
+      "lib",
+      "messaging",
+      "channels",
+      "fixture",
+      "hooks",
+      "example.ts",
+    );
     const pluginDir = path.join(localShare, "openclaw-plugins", "kimi-inference-compat");
     const pluginFile = path.join(pluginDir, "index.js");
     const nestedPluginDir = path.join(pluginDir, "lib");
@@ -848,9 +906,9 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
       path.join(localLib, "sandbox-init.sh"),
       path.join(localLib, "openclaw_device_approval_policy.py"),
       path.join(localLib, "clean_runtime_shell_env_shim.py"),
-      path.join(localLib, "generate-openclaw-config.mts"),
-      path.join(localLib, "openclaw-build-messaging-plugins.py"),
-      path.join(localLib, "seed-wechat-accounts.py"),
+      generatorPath,
+      applierPath,
+      messagingHookPath,
       path.join(localLib, "ws-proxy-fix.js"),
       pluginFile,
       nestedPluginFile,
@@ -859,7 +917,10 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
     try {
       fs.mkdirSync(localBin, { recursive: true });
       fs.mkdirSync(localLib, { recursive: true });
+      fs.mkdirSync(localScripts, { recursive: true });
       fs.mkdirSync(nestedPluginDir, { recursive: true });
+      fs.mkdirSync(path.dirname(applierPath), { recursive: true });
+      fs.mkdirSync(path.dirname(messagingHookPath), { recursive: true });
       for (const file of files) {
         fs.writeFileSync(file, "# fixture\n", { mode: 0o600 });
         fs.chmodSync(file, 0o600);
@@ -872,16 +933,15 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
       )
         .replaceAll("/usr/local/bin", localBin)
         .replaceAll("/usr/local/lib/nemoclaw", localLib)
-        .replaceAll("/usr/local/share/nemoclaw", localShare);
+        .replaceAll("/usr/local/share/nemoclaw", localShare)
+        .replaceAll("/src", localSrc)
+        .replaceAll("/scripts", localScripts);
       const { result } = runLoggedDockerShell(command, tmp);
 
       expect(result.status, result.stderr).toBe(0);
-      const generatorMode = (
-        fs.statSync(path.join(localLib, "generate-openclaw-config.mts")).mode & 0o777
-      ).toString(8);
-      const messagingPluginMode = (
-        fs.statSync(path.join(localLib, "openclaw-build-messaging-plugins.py")).mode & 0o777
-      ).toString(8);
+      const generatorMode = (fs.statSync(generatorPath).mode & 0o777).toString(8);
+      const applierMode = (fs.statSync(applierPath).mode & 0o777).toString(8);
+      const messagingHookMode = (fs.statSync(messagingHookPath).mode & 0o777).toString(8);
       const approvalPolicyMode = (
         fs.statSync(path.join(localLib, "openclaw_device_approval_policy.py")).mode & 0o777
       ).toString(8);
@@ -890,7 +950,8 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
       const nestedPluginDirMode = (fs.statSync(nestedPluginDir).mode & 0o777).toString(8);
       const nestedPluginMode = (fs.statSync(nestedPluginFile).mode & 0o777).toString(8);
       expect(generatorMode).toBe("755");
-      expect(messagingPluginMode).toBe("755");
+      expect(applierMode).toBe("755");
+      expect(messagingHookMode).toBe("644");
       expect(approvalPolicyMode).toBe("644");
       expect(pluginDirMode).toBe("755");
       expect(pluginMode).toBe("644");

@@ -84,21 +84,26 @@ function mergeOpenClawChannels(backupChannels: unknown, currentChannels: unknown
   return merged;
 }
 
+function mergeOpenClawEntryMap(
+  backupEntries: unknown,
+  currentEntries: unknown,
+): Record<string, unknown> | undefined {
+  if (!isPlainJsonObject(backupEntries) && !isPlainJsonObject(currentEntries)) return undefined;
+  return {
+    ...(isPlainJsonObject(backupEntries) ? cloneJson(backupEntries) : {}),
+    // Current generated entries win so rebuild does not restore stale runtime
+    // placeholders, model routing, or plugin enablement for NemoClaw-managed ids.
+    ...(isPlainJsonObject(currentEntries) ? cloneJson(currentEntries) : {}),
+  };
+}
+
 function mergeOpenClawModels(backupModels: unknown, currentModels: unknown): unknown {
   if (!isPlainJsonObject(backupModels)) return cloneJson(currentModels);
   if (!isPlainJsonObject(currentModels)) return cloneJson(backupModels);
 
   const merged = mergeJsonObjects(currentModels, backupModels);
-  const backupProviders = backupModels.providers;
-  const currentProviders = currentModels.providers;
-  if (isPlainJsonObject(backupProviders) && isPlainJsonObject(currentProviders)) {
-    merged.providers = {
-      ...cloneJson(backupProviders),
-      // Current generated provider entries win so rebuild does not restore stale
-      // runtime placeholders or model routing for providers NemoClaw manages.
-      ...cloneJson(currentProviders),
-    };
-  }
+  const providers = mergeOpenClawEntryMap(backupModels.providers, currentModels.providers);
+  if (providers) merged.providers = providers;
   return merged;
 }
 
@@ -107,16 +112,8 @@ function mergeOpenClawPlugins(backupPlugins: unknown, currentPlugins: unknown): 
   if (!isPlainJsonObject(currentPlugins)) return cloneJson(backupPlugins);
 
   const merged = mergeJsonObjects(currentPlugins, backupPlugins);
-  const backupEntries = backupPlugins.entries;
-  const currentEntries = currentPlugins.entries;
-  if (isPlainJsonObject(backupEntries) && isPlainJsonObject(currentEntries)) {
-    merged.entries = {
-      ...cloneJson(backupEntries),
-      // Current generated plugin enablement wins for channels/provider plugins;
-      // backup-only custom plugin entries are still preserved.
-      ...cloneJson(currentEntries),
-    };
-  }
+  const entries = mergeOpenClawEntryMap(backupPlugins.entries, currentPlugins.entries);
+  if (entries) merged.entries = entries;
   return merged;
 }
 
