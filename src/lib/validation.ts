@@ -19,6 +19,7 @@ export interface SandboxCreateFailure {
     | "image_upload_container_missing"
     | "sandbox_create_incomplete"
     | "tls_cert_mismatch"
+    | "gpu_cdi_injection_failed"
     | "unknown";
   uploadedToGateway: boolean;
 }
@@ -126,6 +127,12 @@ export function classifySandboxCreateFailure(output = ""): SandboxCreateFailure 
       /openshell-cluster-nemoclaw/i.test(text))
   ) {
     return { kind: "image_upload_container_missing", uploadedToGateway };
+  }
+  if (
+    /(CDI device injection failed|unresolvable CDI devices?)[^\n]*nvidia\.com\/gpu/i.test(text) ||
+    /nvidia\.com\/gpu[^\n]*(CDI device injection failed|unresolvable CDI devices?)/i.test(text)
+  ) {
+    return { kind: "gpu_cdi_injection_failed", uploadedToGateway };
   }
   if (/Created sandbox:/i.test(text)) {
     return { kind: "sandbox_create_incomplete", uploadedToGateway: true };

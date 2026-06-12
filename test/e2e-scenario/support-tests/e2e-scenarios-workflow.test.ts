@@ -114,6 +114,20 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       selectedFreeStandingJobs: ["openshell-version-pin-vitest"],
       registryScenarios: [],
     });
+    expect(evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "skill-agent" })).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["skill-agent-vitest"],
+      registryScenarios: [],
+    });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({ jobs: "skill-agent-vitest" }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["skill-agent-vitest"],
+      registryScenarios: [],
+    });
     expect(
       evaluateE2eVitestWorkflowDispatchSelectors({ jobs: "runtime-overrides-vitest" }),
     ).toMatchObject({
@@ -153,6 +167,22 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       registryScenarios: [],
     });
     expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "hermes-root-entrypoint-smoke" }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["hermes-root-entrypoint-smoke-vitest"],
+      registryScenarios: [],
+    });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({ jobs: "hermes-root-entrypoint-smoke-vitest" }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["hermes-root-entrypoint-smoke-vitest"],
+      registryScenarios: [],
+    });
+    expect(
       evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "rebuild-openclaw" }),
     ).toMatchObject({
       valid: true,
@@ -166,6 +196,26 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       valid: true,
       liveScenariosRuns: false,
       selectedFreeStandingJobs: ["rebuild-openclaw-vitest"],
+      registryScenarios: [],
+    });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({
+        scenarios: "model-router-provider-routed-inference",
+      }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["model-router-provider-routed-inference-vitest"],
+      registryScenarios: [],
+    });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({
+        jobs: "model-router-provider-routed-inference-vitest",
+      }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["model-router-provider-routed-inference-vitest"],
       registryScenarios: [],
     });
   });
@@ -219,6 +269,36 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
     });
     expect(generateMatrixForDispatch({ JOBS: "", SCENARIOS: "hermes-e2e" })).toMatchObject({
       hermes_selected: "true",
+      matrix: "[]",
+    });
+    expect(
+      generateMatrixForDispatch({ JOBS: "hermes-root-entrypoint-smoke-vitest", SCENARIOS: "" }),
+    ).toMatchObject({
+      hermes_selected: "false",
+      matrix: "[]",
+    });
+    expect(
+      generateMatrixForDispatch({ JOBS: "", SCENARIOS: "hermes-root-entrypoint-smoke" }),
+    ).toMatchObject({
+      hermes_selected: "false",
+      matrix: "[]",
+    });
+    expect(
+      generateMatrixForDispatch({
+        JOBS: "model-router-provider-routed-inference-vitest",
+        SCENARIOS: "",
+      }),
+    ).toMatchObject({
+      hermes_selected: "false",
+      matrix: "[]",
+    });
+    expect(
+      generateMatrixForDispatch({
+        JOBS: "",
+        SCENARIOS: "model-router-provider-routed-inference",
+      }),
+    ).toMatchObject({
+      hermes_selected: "false",
       matrix: "[]",
     });
   });
@@ -653,6 +733,41 @@ jobs:
       const errors = validateE2eVitestScenariosWorkflowBoundary(workflowPath);
       expect(errors).toContain(
         "runtime-overrides-vitest step 'Run runtime overrides live test' run script must not use docker login or inline secret interpolation",
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects Docker Hub auth in the Hermes root-entrypoint smoke job", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-vitest-workflow-"));
+    const workflowPath = path.join(tmp, "workflow.yaml");
+    const workflow = readWorkflow() as {
+      jobs: Record<string, { steps: Array<Record<string, unknown>> }>;
+    };
+    const steps = workflow.jobs["hermes-root-entrypoint-smoke-vitest"]?.steps;
+    expect(steps).toEqual(expect.any(Array));
+    const setupNodeIndex = steps.findIndex((step) => step.name === "Set up Node");
+    expect(setupNodeIndex).toBeGreaterThan(0);
+    steps.splice(setupNodeIndex, 0, {
+      name: "Authenticate to Docker Hub",
+      env: {
+        DOCKERHUB_USERNAME: "${{ secrets.DOCKERHUB_USERNAME }}",
+        DOCKERHUB_TOKEN: "${{ secrets.DOCKERHUB_TOKEN }}",
+      },
+      run: "docker login docker.io --username user --password ${{ secrets.DOCKERHUB_TOKEN }}",
+    });
+    fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+    try {
+      const errors = validateE2eVitestScenariosWorkflowBoundary(workflowPath);
+      expect(errors).toEqual(
+        expect.arrayContaining([
+          "hermes-root-entrypoint-smoke-vitest must not authenticate to Docker Hub before branch-controlled test code runs",
+          "hermes-root-entrypoint-smoke-vitest step 'Authenticate to Docker Hub' env must not include DOCKERHUB_USERNAME",
+          "hermes-root-entrypoint-smoke-vitest step 'Authenticate to Docker Hub' env must not include DOCKERHUB_TOKEN",
+          "hermes-root-entrypoint-smoke-vitest step 'Authenticate to Docker Hub' run script must not use docker login or inline secret interpolation",
+        ]),
       );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
