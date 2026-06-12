@@ -799,23 +799,14 @@ describe("generate-openclaw-config.mts: config generation", () => {
   it("enables web search when env is '1' using the current plugin schema", () => {
     const config = runConfigScript({ NEMOCLAW_WEB_SEARCH_ENABLED: "1" });
     expect(config.tools?.toolSearch).toBe(true);
-    // Current OpenClaw schema: tools.web.search carries only enabled+provider;
-    // the provider-owned apiKey lives under plugins.entries.brave.config. The
-    // legacy inline-apiKey shape makes build-time `openclaw plugins install`
-    // exit non-zero on its pre-install config validation. See #5266.
-    expect(config.tools?.web?.search).toEqual({
-      enabled: true,
-      provider: "brave",
-    });
-    expect(config.tools?.web?.search?.apiKey).toBeUndefined();
+    // #5266: apiKey lives under plugins.entries.brave.config (not inline on
+    // tools.web.search) so build-time `openclaw plugins install` validates.
+    expect(config.tools?.web?.search).toEqual({ enabled: true, provider: "brave" });
     expect(config.plugins?.entries?.brave).toEqual({
       enabled: true,
       config: { webSearch: { apiKey: "openshell:resolve:env:BRAVE_API_KEY" } },
     });
-    expect(config.tools?.web?.fetch).toEqual({
-      enabled: true,
-      useTrustedEnvProxy: true,
-    });
+    expect(config.tools?.web?.fetch).toEqual({ enabled: true, useTrustedEnvProxy: true });
   });
 
   it("omits web search when env is not set", () => {
