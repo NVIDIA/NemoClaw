@@ -16,8 +16,8 @@ import { run } from "../runner";
 import { resolveAgentConfig } from "../sandbox/config";
 import { resolveNemoclawStateDir } from "../state/paths";
 import { appendAuditEntry, type ShieldsAuditEntry } from "./audit";
-import { relockAndReconfirm } from "./relock-reconfirm";
 import * as shields from "./index";
+import { relockAndReconfirm } from "./relock-reconfirm";
 
 interface ShieldsStatePatch {
   shieldsDown?: boolean;
@@ -261,8 +261,7 @@ function runRestoreTimer(args: TimerArgs): void {
               sandbox: args.sandboxName,
               timestamp: now,
               restored_by: "auto_timer",
-              warning:
-                relock.error ?? "Config re-lock did not re-confirm after settle window",
+              warning: relock.error ?? "Config re-lock did not re-confirm after settle window",
               lock_verified: false,
             });
           }
