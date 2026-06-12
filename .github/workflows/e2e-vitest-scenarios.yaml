@@ -1271,6 +1271,100 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  state-backup-restore-vitest:
+    needs: generate-matrix
+    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',state-backup-restore-vitest,') || contains(format(',{0},', inputs.scenarios), ',state-backup-restore,') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/state-backup-restore
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+      NEMOCLAW_SANDBOX_NAME: e2e-state-backup
+      OPENSHELL_GATEWAY: nemoclaw
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Authenticate to Docker Hub
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          login_succeeded=0
+          for attempt in 1 2 3; do
+            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
+              login_succeeded=1
+              break
+            fi
+            if [[ "$attempt" -lt 3 ]]; then
+              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
+              sleep 5
+            fi
+          done
+          if [[ "$login_succeeded" -ne 1 ]]; then
+            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
+          fi
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build CLI
+        run: npm run build:cli
+
+      - name: Install OpenShell
+        env:
+          NEMOCLAW_NON_INTERACTIVE: "1"
+        run: |
+          set -euo pipefail
+          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
+
+      - name: Run state backup restore live test
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
+          if command -v openshell >/dev/null 2>&1; then
+            OPENSHELL_BIN="$(command -v openshell)"
+          elif [ -x "$HOME/.local/bin/openshell" ]; then
+            OPENSHELL_BIN="$HOME/.local/bin/openshell"
+          else
+            echo "::error::OpenShell CLI not found after install"
+            ls -la /usr/local/bin/openshell "$HOME/.local/bin/openshell" 2>&1 || true
+            exit 1
+          fi
+          export OPENSHELL_BIN
+          "$OPENSHELL_BIN" --version
+          npx vitest run --project e2e-scenarios-live \
+            test/e2e-scenario/live/state-backup-restore.test.ts \
+            --silent=false --reporter=default
+
+      - name: Upload state backup restore artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-vitest-scenarios-state-backup-restore
+          path: e2e-artifacts/vitest/state-backup-restore/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
+
   double-onboard-vitest:
     needs: generate-matrix
     if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',double-onboard-vitest,') || contains(format(',{0},', inputs.scenarios), ',double-onboard,') }}
@@ -1885,6 +1979,7 @@ jobs:
         shields-config-vitest,
         rebuild-openclaw-vitest,
         sandbox-rebuild-vitest,
+        state-backup-restore-vitest,
         token-rotation-vitest,
         launchable-smoke-vitest,
         double-onboard-vitest,
