@@ -694,7 +694,7 @@ jobs:
 
 
   credential-sanitization-vitest:
-    needs: [validate-jobs, generate-matrix]
+    needs: generate-matrix
     if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',credential-sanitization-vitest,') || contains(format(',{0},', inputs.scenarios), ',credential-sanitization,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 65
