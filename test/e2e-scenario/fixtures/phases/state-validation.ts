@@ -24,6 +24,8 @@ import type { NemoClawInstance } from "./onboarding.ts";
 // `src/lib/**` (CLI source) — that boundary keeps the live runner
 // honest about probing only host-observable state.
 const NEMOCLAW_REGISTRY_RELPATH = [".nemoclaw", "sandboxes.json"] as const;
+const NEMOCLAW_ONBOARD_SESSION_RELPATH = [".nemoclaw", "onboard-session.json"] as const;
+const REBUILD_BACKUPS_RELPATH = [".nemoclaw", "rebuild-backups"] as const;
 const OPENSHELL_SANDBOX_NAME_LABEL = "openshell.ai/sandbox-name";
 
 export interface ProbeIO {
@@ -33,6 +35,16 @@ export interface ProbeIO {
 function defaultRegistryPath(): string {
   const home = process.env.HOME ?? os.homedir();
   return path.join(home, ...NEMOCLAW_REGISTRY_RELPATH);
+}
+
+function defaultOnboardSessionPath(): string {
+  const home = process.env.HOME ?? os.homedir();
+  return path.join(home, ...NEMOCLAW_ONBOARD_SESSION_RELPATH);
+}
+
+function defaultRebuildBackupsRoot(): string {
+  const home = process.env.HOME ?? os.homedir();
+  return path.join(home, ...REBUILD_BACKUPS_RELPATH);
 }
 
 function defaultReadRegistry(): { entries: Record<string, unknown> } | null {
@@ -118,6 +130,151 @@ function isMissingOpenShellError(error: unknown): boolean {
   return code === "ENOENT" || /\bENOENT\b/.test(errorMessage(error));
 }
 
+export interface FileSnapshot {
+  exists: boolean;
+  content?: string;
+}
+
+export interface RegistrySnapshot {
+  registry: FileSnapshot;
+  session: FileSnapshot;
+}
+
+export interface RegistryEntryPatchOptions {
+  registryPath?: string;
+}
+
+export interface MarkerFileOptions {
+  artifactName?: string;
+  env?: NodeJS.ProcessEnv;
+  timeoutMs?: number;
+}
+
+export interface RebuildBackupOptions {
+  backupRoot?: string;
+}
+
+export interface CredentialLeakScanOptions extends RebuildBackupOptions {
+  extraSecrets?: string[];
+}
+
+export function snapshotFile(file: string): FileSnapshot {
+  return fs.existsSync(file)
+    ? { exists: true, content: fs.readFileSync(file, "utf8") }
+    : { exists: false };
+}
+
+export function restoreFile(file: string, snapshot: FileSnapshot): void {
+  if (!snapshot.exists) {
+    fs.rmSync(file, { force: true });
+    return;
+  }
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, snapshot.content ?? "", "utf8");
+}
+
+export function snapshotRegistryAndSession(): RegistrySnapshot {
+  return {
+    registry: snapshotFile(defaultRegistryPath()),
+    session: snapshotFile(defaultOnboardSessionPath()),
+  };
+}
+
+export function restoreRegistryAndSession(snapshot: RegistrySnapshot): void {
+  restoreFile(defaultRegistryPath(), snapshot.registry);
+  restoreFile(defaultOnboardSessionPath(), snapshot.session);
+}
+
+export function readRegistrySandboxEntry(
+  sandboxName: string,
+  options: RegistryEntryPatchOptions = {},
+): Record<string, unknown> {
+  const registryPath = options.registryPath ?? defaultRegistryPath();
+  const data = JSON.parse(fs.readFileSync(registryPath, "utf8")) as {
+    sandboxes?: Record<string, Record<string, unknown>>;
+  };
+  const entry = data.sandboxes?.[sandboxName];
+  if (!entry) throw new Error(`registry entry missing for ${sandboxName}`);
+  return entry;
+}
+
+export function patchRegistrySandboxEntry(
+  sandboxName: string,
+  patch: Record<string, unknown>,
+  options: RegistryEntryPatchOptions = {},
+): Record<string, unknown> {
+  const registryPath = options.registryPath ?? defaultRegistryPath();
+  const data = JSON.parse(fs.readFileSync(registryPath, "utf8")) as {
+    sandboxes?: Record<string, Record<string, unknown>>;
+  };
+  data.sandboxes = data.sandboxes ?? {};
+  const entry = data.sandboxes[sandboxName];
+  if (!entry) throw new Error(`registry entry missing for ${sandboxName}`);
+  Object.assign(entry, patch);
+  fs.writeFileSync(registryPath, `${JSON.stringify(data, null, 2)}\n`, "utf8");
+  return entry;
+}
+
+export function latestRebuildBackupDir(
+  sandboxName: string,
+  options: RebuildBackupOptions = {},
+): string | undefined {
+  const sandboxRoot = path.join(options.backupRoot ?? defaultRebuildBackupsRoot(), sandboxName);
+  if (!fs.existsSync(sandboxRoot)) return undefined;
+  const latest = fs
+    .readdirSync(sandboxRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort()
+    .at(-1);
+  return latest ? path.join(sandboxRoot, latest) : undefined;
+}
+
+export function readRebuildBackupManifest(backupDir: string): Record<string, unknown> {
+  const manifestPath = path.join(backupDir, "rebuild-manifest.json");
+  if (!fs.existsSync(manifestPath)) throw new Error(`backup manifest missing: ${manifestPath}`);
+  return JSON.parse(fs.readFileSync(manifestPath, "utf8")) as Record<string, unknown>;
+}
+
+export function listCredentialLeakPaths(
+  backupDir: string | undefined,
+  options: CredentialLeakScanOptions = {},
+): string[] {
+  if (!backupDir || !fs.existsSync(backupDir)) return [];
+  const leaks: string[] = [];
+  const skippedLockfiles = new Set([
+    "package-lock.json",
+    "npm-shrinkwrap.json",
+    "yarn.lock",
+    "pnpm-lock.yaml",
+    "pnpm-lock.yml",
+  ]);
+  const candidatePattern = /(?:nvapi-|sk-|Bearer )/;
+  const extraSecrets = options.extraSecrets?.filter(Boolean) ?? [];
+
+  function scan(dir: string): void {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        scan(fullPath);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      const text = fs.readFileSync(fullPath, "utf8");
+      if (extraSecrets.some((secret) => text.includes(secret))) {
+        leaks.push(fullPath);
+        continue;
+      }
+      if (skippedLockfiles.has(entry.name)) continue;
+      const isJsonOrEnv = /\.json$|\.env$|^\.env$/i.test(entry.name);
+      if (isJsonOrEnv && candidatePattern.test(text)) leaks.push(fullPath);
+    }
+  }
+
+  scan(backupDir);
+  return leaks.sort();
+}
+
 export class StateValidationPhaseFixture {
   private readonly io: ProbeIO;
 
@@ -129,6 +286,84 @@ export class StateValidationPhaseFixture {
     private readonly artifacts?: ArtifactSink,
   ) {
     this.io = io;
+  }
+
+  async writeMarkerFile(
+    instance: NemoClawInstance | string,
+    markerPath: string,
+    content: string,
+    options: MarkerFileOptions = {},
+  ): Promise<ShellProbeResult> {
+    const sandboxName = typeof instance === "string" ? instance : instance.sandboxName;
+    const result = await this.sandbox.exec(
+      sandboxName,
+      [
+        "sh",
+        "-c",
+        'mkdir -p "$(dirname "$1")" && printf \'%s\' "$2" > "$1"',
+        "sh",
+        markerPath,
+        content,
+      ],
+      {
+        artifactName: options.artifactName ?? `state-write-marker-${sandboxName}`,
+        env: { ...buildAvailabilityProbeEnv(), ...(options.env ?? {}) },
+        redactionValues: [content],
+        timeoutMs: options.timeoutMs ?? 30_000,
+      },
+    );
+    if (result.exitCode !== 0) {
+      throw new Error(
+        `failed to write marker ${markerPath} in ${sandboxName}: ${resultText(result)}`,
+      );
+    }
+    return result;
+  }
+
+  async readMarkerFile(
+    instance: NemoClawInstance | string,
+    markerPath: string,
+    options: MarkerFileOptions = {},
+  ): Promise<string> {
+    const sandboxName = typeof instance === "string" ? instance : instance.sandboxName;
+    const result = await this.sandbox.exec(sandboxName, ["cat", markerPath], {
+      artifactName: options.artifactName ?? `state-read-marker-${sandboxName}`,
+      env: { ...buildAvailabilityProbeEnv(), ...(options.env ?? {}) },
+      timeoutMs: options.timeoutMs ?? 30_000,
+    });
+    if (result.exitCode !== 0) {
+      throw new Error(
+        `failed to read marker ${markerPath} in ${sandboxName}: ${resultText(result)}`,
+      );
+    }
+    return result.stdout;
+  }
+
+  async expectMarkerFileContent(
+    instance: NemoClawInstance | string,
+    markerPath: string,
+    expected: string,
+    options: MarkerFileOptions = {},
+  ): Promise<void> {
+    const actual = await this.readMarkerFile(instance, markerPath, options);
+    if (actual !== expected && actual.trim() !== expected) {
+      const sandboxName = typeof instance === "string" ? instance : instance.sandboxName;
+      throw new Error(
+        `marker ${markerPath} in ${sandboxName} did not match expected content: got ${JSON.stringify(
+          actual,
+        )}`,
+      );
+    }
+  }
+
+  expectRegistryAgentVersionUpdated(sandboxName: string, staleVersion: string): string {
+    const version = readRegistrySandboxEntry(sandboxName).agentVersion;
+    if (typeof version !== "string" || version.length === 0 || version === staleVersion) {
+      throw new Error(
+        `registry agentVersion for ${sandboxName} was not refreshed from ${staleVersion}: ${String(version)}`,
+      );
+    }
+    return version;
   }
 
   async from(

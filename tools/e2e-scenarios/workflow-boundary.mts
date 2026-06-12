@@ -28,6 +28,7 @@ const FREE_STANDING_SCENARIO_JOBS = new Map([
   ["hermes-root-entrypoint-smoke", "hermes-root-entrypoint-smoke-vitest"],
   ["network-policy", "network-policy-vitest"],
   ["rebuild-openclaw", "rebuild-openclaw-vitest"],
+  ["sandbox-rebuild", "sandbox-rebuild-vitest"],
   ["token-rotation", "token-rotation-vitest"],
   ["openclaw-tui-chat-correlation", "openclaw-tui-chat-correlation-vitest"],
   ["issue-4434-tui-unreachable-inference", "issue-4434-tui-unreachable-inference-vitest"],
@@ -295,6 +296,7 @@ function validateJobsSelector(errors: string[], jobs: WorkflowRecord): void {
   requireRunContains(errors, validate, "hermes-root-entrypoint-smoke-vitest");
   requireRunContains(errors, validate, "network-policy-vitest");
   requireRunContains(errors, validate, "rebuild-openclaw-vitest");
+  requireRunContains(errors, validate, "sandbox-rebuild-vitest");
   requireRunContains(errors, validate, "token-rotation-vitest");
   requireRunContains(errors, validate, "openclaw-tui-chat-correlation-vitest");
   requireRunContains(errors, validate, "gateway-guard-recovery");
@@ -725,6 +727,117 @@ function validateRebuildOpenClawVitestJob(errors: string[], jobs: WorkflowRecord
   }
   if (uploadWith["retention-days"] !== 14) {
     errors.push("rebuild-openclaw-vitest artifact upload retention-days must be 14");
+  }
+}
+
+function validateSandboxRebuildVitestJob(errors: string[], jobs: WorkflowRecord): void {
+  const jobName = "sandbox-rebuild-vitest";
+  const scenarioName = "sandbox-rebuild";
+  const job = asRecord(jobs[jobName]);
+  if (Object.keys(job).length === 0) {
+    errors.push("workflow missing sandbox-rebuild-vitest job");
+    return;
+  }
+
+  if (job["runs-on"] !== "ubuntu-latest") {
+    errors.push("sandbox-rebuild-vitest job must run on ubuntu-latest");
+  }
+  validateFreeStandingJobSelector(errors, jobs, jobName, scenarioName);
+  if (job["timeout-minutes"] !== 90) {
+    errors.push("sandbox-rebuild-vitest job must keep the legacy 90 minute timeout");
+  }
+  const jobEnv = asRecord(job.env);
+  if (jobEnv.NEMOCLAW_RUN_E2E_SCENARIOS !== "1") {
+    errors.push("sandbox-rebuild-vitest job must set NEMOCLAW_RUN_E2E_SCENARIOS=1");
+  }
+  if (jobEnv.E2E_ARTIFACT_DIR !== "${{ github.workspace }}/e2e-artifacts/vitest/sandbox-rebuild") {
+    errors.push("sandbox-rebuild-vitest job must write artifacts under e2e-artifacts/vitest/sandbox-rebuild");
+  }
+  if (jobEnv.NEMOCLAW_CLI_BIN !== "${{ github.workspace }}/bin/nemoclaw.js") {
+    errors.push("sandbox-rebuild-vitest job must point NEMOCLAW_CLI_BIN at the repo CLI");
+  }
+  if (jobEnv.OPENSHELL_GATEWAY !== "nemoclaw") {
+    errors.push("sandbox-rebuild-vitest job must force OPENSHELL_GATEWAY=nemoclaw");
+  }
+  for (const secret of ["NVIDIA_API_KEY", "DOCKERHUB_USERNAME", "DOCKERHUB_TOKEN", "GITHUB_TOKEN"]) {
+    requireEnvDoesNotExposeSecret(errors, "sandbox-rebuild-vitest job", jobEnv, secret);
+  }
+
+  const steps = asSteps(job.steps);
+  requireNoDispatchInputInterpolation(errors, steps);
+  for (const step of steps) {
+    const stepName = `sandbox-rebuild-vitest step '${step.name ?? step.uses ?? "<unnamed>"}'`;
+    const stepEnv = asRecord(step.env);
+    if (step.name !== "Run sandbox rebuild live test") {
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_API_KEY");
+    }
+    if (step.name !== "Authenticate to Docker Hub") {
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_USERNAME");
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_TOKEN");
+      requireNoDockerHubAuthInRun(errors, stepName, stringValue(step.run));
+    }
+    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "GITHUB_TOKEN");
+  }
+
+  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
+  if (!checkout) errors.push("sandbox-rebuild-vitest job missing checkout step");
+  requireFullShaAction(errors, checkout, "sandbox-rebuild-vitest checkout");
+  if (asRecord(checkout?.with)["persist-credentials"] !== false) {
+    errors.push("sandbox-rebuild-vitest checkout step must set persist-credentials=false");
+  }
+
+  const dockerHubAuth = requireJobStep(errors, jobName, steps, "Authenticate to Docker Hub");
+  const dockerHubEnv = asRecord(dockerHubAuth?.env);
+  if (dockerHubEnv.DOCKERHUB_USERNAME !== "${{ secrets.DOCKERHUB_USERNAME }}") {
+    errors.push("sandbox-rebuild-vitest Docker Hub auth must receive DOCKERHUB_USERNAME from secrets");
+  }
+  if (dockerHubEnv.DOCKERHUB_TOKEN !== "${{ secrets.DOCKERHUB_TOKEN }}") {
+    errors.push("sandbox-rebuild-vitest Docker Hub auth must receive DOCKERHUB_TOKEN from secrets");
+  }
+  requireRunContains(errors, dockerHubAuth, "docker login docker.io");
+  requireRunContains(errors, dockerHubAuth, "continuing with anonymous pulls");
+
+  const setupNode = namedStep(steps, "Set up Node");
+  if (!setupNode) errors.push("sandbox-rebuild-vitest job missing step: Set up Node");
+  requireFullShaAction(errors, setupNode, "sandbox-rebuild-vitest setup-node");
+
+  const installRootDependencies = requireJobStep(errors, jobName, steps, "Install root dependencies");
+  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
+
+  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
+  requireRunContains(errors, buildCli, "npm run build:cli");
+
+  const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell");
+  requireRunContains(errors, installOpenShell, "bash scripts/install-openshell.sh");
+  requireRunContains(errors, installOpenShell, "env -u DOCKER_CONFIG");
+  requireRunContains(errors, installOpenShell, "-u NVIDIA_API_KEY");
+  requireRunContains(errors, installOpenShell, "-u GITHUB_TOKEN");
+
+  const runVitest = requireJobStep(errors, jobName, steps, "Run sandbox rebuild live test");
+  const runVitestEnv = asRecord(runVitest?.env);
+  if (runVitestEnv.NVIDIA_API_KEY !== "${{ secrets.NVIDIA_API_KEY }}") {
+    errors.push("sandbox-rebuild-vitest step must receive NVIDIA_API_KEY from secrets");
+  }
+  requireRunContains(errors, runVitest, "OPENSHELL_BIN");
+  requireRunContains(errors, runVitest, "npx vitest run --project e2e-scenarios-live");
+  requireRunContains(errors, runVitest, "test/e2e-scenario/live/sandbox-rebuild.test.ts");
+
+  const upload = requireJobStep(errors, jobName, steps, "Upload sandbox rebuild artifacts");
+  requireFullShaAction(errors, upload, "sandbox-rebuild-vitest upload-artifact");
+  const uploadWith = asRecord(upload?.with);
+  if (uploadWith.name !== "e2e-vitest-scenarios-sandbox-rebuild") {
+    errors.push("sandbox-rebuild-vitest artifact upload name must be stable");
+  }
+  const uploadPath = stringValue(uploadWith.path);
+  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/vitest/sandbox-rebuild/");
+  if (uploadWith["include-hidden-files"] !== false) {
+    errors.push("sandbox-rebuild-vitest artifact upload must set include-hidden-files: false");
+  }
+  if (uploadWith["if-no-files-found"] !== "ignore") {
+    errors.push("sandbox-rebuild-vitest artifact upload must ignore missing fixture artifacts");
+  }
+  if (uploadWith["retention-days"] !== 14) {
+    errors.push("sandbox-rebuild-vitest artifact upload retention-days must be 14");
   }
 }
 
@@ -1647,6 +1760,8 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   requireRunContains(errors, generate, "hermes-root-entrypoint-smoke");
   requireRunContains(errors, generate, "network-policy-vitest");
   requireRunContains(errors, generate, "rebuild-openclaw-vitest");
+  requireRunContains(errors, generate, "sandbox-rebuild-vitest");
+  requireRunContains(errors, generate, "sandbox-rebuild");
   requireRunContains(errors, generate, "token-rotation-vitest");
   requireRunContains(errors, generate, "model-router-provider-routed-inference-vitest");
   requireRunContains(errors, generate, "model-router-provider-routed-inference");
@@ -1814,6 +1929,7 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   validateHermesRootEntrypointSmokeVitestJob(errors, jobs);
   validateNetworkPolicyVitestJob(errors, jobs);
   validateRebuildOpenClawVitestJob(errors, jobs);
+  validateSandboxRebuildVitestJob(errors, jobs);
   validateTokenRotationVitestJob(errors, jobs);
   validateFreeStandingJobSelector(
     errors,
@@ -1850,6 +1966,7 @@ export function validateE2eVitestScenariosWorkflowBoundary(
       "hermes-root-entrypoint-smoke-vitest",
       "network-policy-vitest",
       "rebuild-openclaw-vitest",
+      "sandbox-rebuild-vitest",
       "token-rotation-vitest",
       "double-onboard-vitest",
       "openclaw-tui-chat-correlation-vitest",
