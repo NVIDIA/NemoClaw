@@ -1926,13 +1926,13 @@ export function isFatalContainerDnsProbeFailure(result: DnsProbeResult): boolean
 // process itself cannot resolve the provider endpoint. That gap let
 // onboarding print "Container DNS resolution works" and then fail much
 // later at NVIDIA Endpoints validation with the cryptic
-// `curl: (6) Could not resolve host: inference-api.nvidia.com`. This
+// `curl: (6) Could not resolve host: integrate.api.nvidia.com`. This
 // probe resolves the provider hostname from the host (CLI) process so
 // the blocked-DNS condition surfaces up front, distinct from the
 // container-DNS path.
 
 /** The NVIDIA Endpoints provider host onboarding validates by default. */
-export const DEFAULT_HOST_DNS_PROBE_HOSTNAME = "inference-api.nvidia.com";
+export const DEFAULT_HOST_DNS_PROBE_HOSTNAME = "integrate.api.nvidia.com";
 
 /**
  * Host DNS probe budget (ms). Shorter than the container probe: there is

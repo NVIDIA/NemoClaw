@@ -3849,10 +3849,10 @@ if echo "$url" | grep -q 'generativelanguage.googleapis.com' && echo "$url" | gr
 elif echo "$url" | grep -q 'generativelanguage.googleapis.com' && echo "$url" | grep -q '/chat/completions$'; then
   body='{"id":"chatcmpl-123","choices":[{"message":{"content":"OK"}}]}'
   status="200"
-elif echo "$url" | grep -q 'inference-api.nvidia.com' && echo "$url" | grep -q '/responses$'; then
+elif echo "$url" | grep -q 'integrate.api.nvidia.com' && echo "$url" | grep -q '/responses$'; then
   body='{"id":"resp_123"}'
   status="200"
-elif echo "$url" | grep -q 'inference-api.nvidia.com' && echo "$url" | grep -q '/chat/completions$'; then
+elif echo "$url" | grep -q 'integrate.api.nvidia.com' && echo "$url" | grep -q '/chat/completions$'; then
   body='{"id":"chatcmpl-123","choices":[{"message":{"content":"OK"}}]}'
   status="200"
 fi

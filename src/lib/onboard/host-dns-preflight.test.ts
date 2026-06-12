@@ -4,7 +4,7 @@
 // Host DNS preflight (#4784): the CLI process must be able to resolve the
 // provider endpoint over port 53. A host OUTPUT chain that drops tcp/udp:53
 // lets the container DNS probe pass while later provider validation dies with
-// `curl: (6) Could not resolve host: inference-api.nvidia.com`. These tests
+// `curl: (6) Could not resolve host: integrate.api.nvidia.com`. These tests
 // cover the host-side probe (preflight.ts) plus the gate and remediation that
 // surface it before provider validation (bridge-dns-preflight.ts).
 
@@ -34,7 +34,7 @@ describe("probeHostDns (#4784)", () => {
       runProbeImpl: exec({ stdout: "HOSTDNS_OK 1.2.3.4,5.6.7.8", exitCode: 0 }),
     });
     expect(result.ok).toBe(true);
-    expect(result.hostname).toBe("inference-api.nvidia.com");
+    expect(result.hostname).toBe("integrate.api.nvidia.com");
     expect(result.reason).toBeUndefined();
     expect(isFatalHostDnsProbeFailure(result)).toBe(false);
   });
@@ -144,11 +144,11 @@ describe("printHostDnsRemediation (#4784)", () => {
     vi.spyOn(console, "error").mockImplementation((arg?: unknown) => {
       messages.push(String(arg ?? ""));
     });
-    printHostDnsRemediation({ platform: "linux", isWsl: false }, "inference-api.nvidia.com");
+    printHostDnsRemediation({ platform: "linux", isWsl: false }, "integrate.api.nvidia.com");
     const blob = messages.join("\n");
-    expect(blob).toContain("could not resolve inference-api.nvidia.com");
+    expect(blob).toContain("could not resolve integrate.api.nvidia.com");
     expect(blob).toContain("Container DNS may still look healthy");
-    expect(blob).toContain("curl: (6) Could not resolve host: inference-api.nvidia.com");
+    expect(blob).toContain("curl: (6) Could not resolve host: integrate.api.nvidia.com");
     expect(blob).toContain("--dport 53");
     expect(blob).toContain("NEMOCLAW_SKIP_HOST_DNS_PREFLIGHT=1");
     expect(blob).toContain("#4784");
@@ -187,7 +187,7 @@ describe("assertHostDnsHealthy (#4784)", () => {
       env: {},
       nonInteractive: true,
       exit,
-      probeHostDnsImpl: () => ({ ok: true, hostname: "inference-api.nvidia.com" }),
+      probeHostDnsImpl: () => ({ ok: true, hostname: "integrate.api.nvidia.com" }),
     });
     expect(logs.join("\n")).toContain("✓ Host DNS resolution works");
     expect(exit).not.toHaveBeenCalled();
@@ -205,15 +205,15 @@ describe("assertHostDnsHealthy (#4784)", () => {
       exit,
       probeHostDnsImpl: () => ({
         ok: false,
-        hostname: "inference-api.nvidia.com",
+        hostname: "integrate.api.nvidia.com",
         reason: "servers_unreachable",
-        details: "dns.resolve inference-api.nvidia.com: ECONNREFUSED",
+        details: "dns.resolve integrate.api.nvidia.com: ECONNREFUSED",
       }),
     });
     expect(exit).toHaveBeenCalledWith(1);
     const blob = errors.join("\n");
     expect(blob).toContain("✗ Host DNS resolution failed");
-    expect(blob).toContain("could not resolve inference-api.nvidia.com");
+    expect(blob).toContain("could not resolve integrate.api.nvidia.com");
     expect(blob).toContain("--dport 53");
   });
 
@@ -229,9 +229,9 @@ describe("assertHostDnsHealthy (#4784)", () => {
       exit,
       probeHostDnsImpl: () => ({
         ok: false,
-        hostname: "inference-api.nvidia.com",
+        hostname: "integrate.api.nvidia.com",
         reason: "resolution_failed",
-        details: "dns.resolve inference-api.nvidia.com: ENOTFOUND",
+        details: "dns.resolve integrate.api.nvidia.com: ENOTFOUND",
       }),
     });
     expect(exit).toHaveBeenCalledWith(1);
@@ -248,7 +248,7 @@ describe("assertHostDnsHealthy (#4784)", () => {
       exit,
       probeHostDnsImpl: () => ({
         ok: false,
-        hostname: "inference-api.nvidia.com",
+        hostname: "integrate.api.nvidia.com",
         reason: "error",
         details: "spawn node ENOENT",
       }),
@@ -261,7 +261,7 @@ describe("assertHostDnsHealthy (#4784)", () => {
     const logs: string[] = [];
     vi.spyOn(console, "log").mockImplementation((arg?: unknown) => logs.push(String(arg ?? "")));
     const exit = vi.fn();
-    const probe = vi.fn(() => ({ ok: true as const, hostname: "inference-api.nvidia.com" }));
+    const probe = vi.fn(() => ({ ok: true as const, hostname: "integrate.api.nvidia.com" }));
     assertHostDnsHealthy(host, {
       env: { NEMOCLAW_SKIP_HOST_DNS_PREFLIGHT: "1" },
       exit,
@@ -274,7 +274,7 @@ describe("assertHostDnsHealthy (#4784)", () => {
 
   it("skips silently (no probe, no exit) when a non-NVIDIA provider is selected (codex P2)", () => {
     const exit = vi.fn();
-    const probe = vi.fn(() => ({ ok: true as const, hostname: "inference-api.nvidia.com" }));
+    const probe = vi.fn(() => ({ ok: true as const, hostname: "integrate.api.nvidia.com" }));
     // A user who picked a local/non-NVIDIA provider must not be blocked by
     // NVIDIA-domain DNS even if their host cannot resolve it — including in
     // non-interactive mode where the choice is explicit.
@@ -292,7 +292,7 @@ describe("assertHostDnsHealthy (#4784)", () => {
 
   it("skips an unset provider in interactive mode (provider not yet chosen — codex P2)", () => {
     const exit = vi.fn();
-    const probe = vi.fn(() => ({ ok: true as const, hostname: "inference-api.nvidia.com" }));
+    const probe = vi.fn(() => ({ ok: true as const, hostname: "integrate.api.nvidia.com" }));
     // Fresh interactive onboarding hits preflight before the provider menu;
     // it may end up on Ollama/vLLM, so an NVIDIA-DNS block must not abort here.
     assertHostDnsHealthy(host, {
@@ -308,7 +308,7 @@ describe("assertHostDnsHealthy (#4784)", () => {
   it("runs for an unset provider only in non-interactive mode (NVIDIA Endpoints default)", () => {
     const exit = vi.fn();
     vi.spyOn(console, "log").mockImplementation(() => {});
-    const probe = vi.fn(() => ({ ok: true as const, hostname: "inference-api.nvidia.com" }));
+    const probe = vi.fn(() => ({ ok: true as const, hostname: "integrate.api.nvidia.com" }));
     assertHostDnsHealthy(host, {
       env: {},
       nonInteractive: true,
@@ -323,7 +323,7 @@ describe("assertHostDnsHealthy (#4784)", () => {
     const exit = vi.fn();
     vi.spyOn(console, "log").mockImplementation(() => {});
     for (const provider of ["build", "cloud", "routed"]) {
-      const probe = vi.fn(() => ({ ok: true as const, hostname: "inference-api.nvidia.com" }));
+      const probe = vi.fn(() => ({ ok: true as const, hostname: "integrate.api.nvidia.com" }));
       assertHostDnsHealthy(host, {
         env: { NEMOCLAW_PROVIDER: provider },
         nonInteractive: true,
@@ -337,7 +337,7 @@ describe("assertHostDnsHealthy (#4784)", () => {
 
   it("ignores NEMOCLAW_PROVIDER in interactive mode (onboard ignores it there too)", () => {
     const exit = vi.fn();
-    const probe = vi.fn(() => ({ ok: true as const, hostname: "inference-api.nvidia.com" }));
+    const probe = vi.fn(() => ({ ok: true as const, hostname: "integrate.api.nvidia.com" }));
     // Interactive onboarding ignores NEMOCLAW_PROVIDER and shows the menu, so
     // we must not assume NVIDIA from it before the user has chosen.
     assertHostDnsHealthy(host, {
@@ -352,9 +352,9 @@ describe("assertHostDnsHealthy (#4784)", () => {
 
   it("skips an explicit local NIM provider (nim-local) in non-interactive mode", () => {
     const exit = vi.fn();
-    const probe = vi.fn(() => ({ ok: true as const, hostname: "inference-api.nvidia.com" }));
+    const probe = vi.fn(() => ({ ok: true as const, hostname: "integrate.api.nvidia.com" }));
     // `nim-local` runs NIM locally and validates against localhost, not
-    // inference-api.nvidia.com, so the NVIDIA host DNS probe must not gate it.
+    // integrate.api.nvidia.com, so the NVIDIA host DNS probe must not gate it.
     assertHostDnsHealthy(host, {
       env: { NEMOCLAW_PROVIDER: "nim-local" },
       nonInteractive: true,
@@ -369,7 +369,7 @@ describe("assertHostDnsHealthy (#4784)", () => {
     const logs: string[] = [];
     vi.spyOn(console, "log").mockImplementation((arg?: unknown) => logs.push(String(arg ?? "")));
     const exit = vi.fn();
-    const probe = vi.fn(() => ({ ok: true as const, hostname: "inference-api.nvidia.com" }));
+    const probe = vi.fn(() => ({ ok: true as const, hostname: "integrate.api.nvidia.com" }));
     assertHostDnsHealthy(host, {
       env: { NEMOCLAW_PROVIDER: "build", HTTPS_PROXY: "http://proxy.corp:3128" },
       nonInteractive: true,
@@ -384,7 +384,7 @@ describe("assertHostDnsHealthy (#4784)", () => {
   it("still runs when NO_PROXY exempts the provider host from the proxy", () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
     const exit = vi.fn();
-    const probe = vi.fn(() => ({ ok: true as const, hostname: "inference-api.nvidia.com" }));
+    const probe = vi.fn(() => ({ ok: true as const, hostname: "integrate.api.nvidia.com" }));
     assertHostDnsHealthy(host, {
       env: {
         NEMOCLAW_PROVIDER: "build",

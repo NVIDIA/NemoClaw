@@ -182,13 +182,13 @@ When the lookup returns an answer, retry onboarding.
 ### Host DNS resolution is blocked before provider validation
 
 NemoClaw also checks that the host process can resolve the provider host before it starts NVIDIA provider validation.
-A firewall rule that blocks host DNS traffic on port `53` can make later validation fail with `curl: (6) Could not resolve host: inference-api.nvidia.com` even when container DNS probes look healthy.
+A firewall rule that blocks host DNS traffic on port `53` can make later validation fail with `curl: (6) Could not resolve host: integrate.api.nvidia.com` even when container DNS probes look healthy.
 Current onboarding stops earlier with a host DNS diagnostic and remediation hints.
 
 Verify host DNS outside NemoClaw:
 
 ```bash
-node -e 'require("node:dns").resolve4("inference-api.nvidia.com", (err, addrs) => { if (err) { console.error(err); process.exit(1); } console.log(addrs.join(",")); })'
+node -e 'require("node:dns").resolve4("integrate.api.nvidia.com", (err, addrs) => { if (err) { console.error(err); process.exit(1); } console.log(addrs.join(",")); })'
 ```
 
 Fix the host firewall, VPN, or DNS policy so the host can resolve the provider endpoint, then rerun onboarding.

@@ -765,12 +765,12 @@ describe("docker-gpu-patch sandbox DNS fallback (#3579)", () => {
     );
   });
 
-  it("regression manifest: host.openshell.internal + google.com + gateway.discord.gg + inference-api.nvidia.com (#3579 manager spec)", () => {
+  it("regression manifest: host.openshell.internal + google.com + gateway.discord.gg + integrate.api.nvidia.com (#3579 manager spec)", () => {
     // The four hostnames called out in #3579's manager-provided spec:
     //   host.openshell.internal      → resolved via --add-host (mount namespace)
     //   google.com                   → public DNS via embedded Docker resolver
     //   gateway.discord.gg           → public DNS via embedded Docker resolver
-    //   inference-api.nvidia.com     → public DNS via embedded Docker resolver
+    //   integrate.api.nvidia.com     → public DNS via embedded Docker resolver
     //
     // Unit-testable invariants that together cover all four:
     //   1. --add-host preserves the host.openshell.internal mapping
@@ -788,7 +788,7 @@ describe("docker-gpu-patch sandbox DNS fallback (#3579)", () => {
     expect(args).toEqual(
       expect.arrayContaining(["--add-host", "host.openshell.internal:172.17.0.1"]),
     );
-    // google.com / gateway.discord.gg / inference-api.nvidia.com — covered by
+    // google.com / gateway.discord.gg / integrate.api.nvidia.com — covered by
     // (a) not pinning --network=host and (b) injecting --dns when the host
     // has a loopback-only resolver.
     expect(args).not.toEqual(expect.arrayContaining(["--network", "host"]));

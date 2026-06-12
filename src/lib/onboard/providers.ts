@@ -17,7 +17,7 @@ const { compactText } = require("../core/url-utils");
 
 // ── Constants ────────────────────────────────────────────────────
 
-const BUILD_ENDPOINT_URL = "https://inference-api.nvidia.com/v1";
+const BUILD_ENDPOINT_URL = "https://integrate.api.nvidia.com/v1";
 const OPENAI_ENDPOINT_URL = "https://api.openai.com/v1";
 const ANTHROPIC_ENDPOINT_URL = "https://api.anthropic.com";
 const GEMINI_ENDPOINT_URL = "https://generativelanguage.googleapis.com/v1beta/openai/";

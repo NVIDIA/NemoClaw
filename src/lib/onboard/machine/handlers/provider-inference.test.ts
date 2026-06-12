@@ -17,7 +17,7 @@ type Host = { cpus?: number };
 const baseSelection: ProviderSelectionResult = {
   model: "nvidia/test",
   provider: "nvidia-prod",
-  endpointUrl: "https://inference-api.nvidia.com/v1",
+  endpointUrl: "https://integrate.api.nvidia.com/v1",
   credentialEnv: "NVIDIA_INFERENCE_API_KEY",
   hermesAuthMethod: null,
   hermesToolGateways: [],
@@ -158,7 +158,7 @@ describe("handleProviderInferenceState", () => {
       "my-assistant",
       "nvidia/test",
       "nvidia-prod",
-      "https://inference-api.nvidia.com/v1",
+      "https://integrate.api.nvidia.com/v1",
       "NVIDIA_INFERENCE_API_KEY",
       null,
       [],

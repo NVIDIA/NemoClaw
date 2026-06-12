@@ -216,7 +216,7 @@ export function isSafeModelId(value: string): boolean {
 /**
  * Detect NVIDIA Cloud Functions "Function not found for account" errors.
  *
- * NVIDIA Build (inference-api.nvidia.com) returns this when a model is in the
+ * NVIDIA Build (integrate.api.nvidia.com) returns this when a model is in the
  * public catalog but is not deployed for the caller's account/org. The raw
  * body looks like:
  *

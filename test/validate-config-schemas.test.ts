@@ -241,7 +241,7 @@ describe("router-pool-config.schema.json", () => {
     const firstModel = asRecord(Array.isArray(root.models) ? root.models[0] : undefined);
     const bad = {
       ...root,
-      models: [{ ...firstModel, api_base: "http://inference-api.nvidia.com/v1" }],
+      models: [{ ...firstModel, api_base: "http://integrate.api.nvidia.com/v1" }],
     };
     expect(validate(bad)).toBe(false);
   });

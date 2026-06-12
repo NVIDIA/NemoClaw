@@ -53,7 +53,7 @@ export type RunReadOnlyAdvisorOptions = {
 export function openAiAdvisorProviderConfig(credentialEnv: string): AdvisorProviderConfig {
   return {
     api: "openai-completions",
-    baseUrl: "https://inference-api.nvidia.com/v1",
+    baseUrl: "https://integrate.api.nvidia.com/v1",
     models: [advisorModel(DEFAULT_ADVISOR_MODEL, "GPT-5.5", 256000, 32768, true, ["text", "image"])],
     ["api" + "Key"]: credentialEnv,
   } as AdvisorProviderConfig;

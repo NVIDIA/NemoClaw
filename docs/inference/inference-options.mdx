@@ -80,7 +80,7 @@ NVIDIA Nemotron models expose OpenAI-compatible APIs across every supported depl
 
 | Nemotron Host | Onboard Wizard Option | Why |
 |---|---|---|
-| `build.nvidia.com` (NVIDIA-hosted) | **Option 1: NVIDIA Endpoints** | NemoClaw sets the base URL to `https://inference-api.nvidia.com/v1` for you and validates the model against the build catalog. |
+| `build.nvidia.com` (NVIDIA-hosted) | **Option 1: NVIDIA Endpoints** | NemoClaw sets the base URL to `https://integrate.api.nvidia.com/v1` for you and validates the model against the build catalog. |
 | Self-hosted NIM container | **Option 3: Other OpenAI-compatible endpoint** | NIM exposes an OpenAI-compatible `/v1/chat/completions` route. Point the base URL at your NIM service and enter the Nemotron model ID. |
 | Enterprise NVIDIA AI Enterprise gateway | **Option 3: Other OpenAI-compatible endpoint** | Enterprise gateways front Nemotron with the same OpenAI-compatible contract. Use the gateway's base URL and your enterprise token. |
 | vLLM, SGLang, or TRT-LLM serving Nemotron weights | **Option 3: Other OpenAI-compatible endpoint** | Each runtime exposes Nemotron through `/v1/chat/completions`. Use the runtime's base URL and the model ID it reports. |
@@ -109,12 +109,12 @@ models:
   - name: nano
     litellm_model: "openai/nvidia/nvidia/Nemotron-3-Nano-30B-A3B"
     cost_per_m_input_tokens: 0.05
-    api_base: "https://inference-api.nvidia.com"
+    api_base: "https://integrate.api.nvidia.com"
 
   - name: super
     litellm_model: "openai/nvidia/nvidia/nemotron-3-super-v3"
     cost_per_m_input_tokens: 0.10
-    api_base: "https://inference-api.nvidia.com"
+    api_base: "https://integrate.api.nvidia.com"
 ```
 
 The `tolerance` parameter controls the accuracy-cost tradeoff.

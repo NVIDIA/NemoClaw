@@ -664,7 +664,7 @@ describe("runner", () => {
                 name: "nim_service",
                 endpoints: [
                   {
-                    host: "inference-api.nvidia.com",
+                    host: "integrate.api.nvidia.com",
                     port: 443,
                     access: "full",
                   },
@@ -736,7 +736,7 @@ describe("runner", () => {
           name: "nim_service",
           endpoints: [
             {
-              host: "inference-api.nvidia.com",
+              host: "integrate.api.nvidia.com",
               port: 443,
               access: "full",
             },
@@ -759,7 +759,7 @@ describe("runner", () => {
       const bp = blueprintWithPolicyAdditions({
         nim_service: {
           name: "nim_service",
-          endpoints: [{ host: "inference-api.nvidia.com", port: 443, access: "full" }],
+          endpoints: [{ host: "integrate.api.nvidia.com", port: 443, access: "full" }],
         },
       });
       mockCurrentPolicy(
@@ -779,7 +779,7 @@ describe("runner", () => {
       const bp = blueprintWithPolicyAdditions({
         nim_service: {
           name: "nim_service",
-          endpoints: [{ host: "inference-api.nvidia.com", port: 443, access: "full" }],
+          endpoints: [{ host: "integrate.api.nvidia.com", port: 443, access: "full" }],
         },
       });
       mockCurrentPolicy(["Version: 1", "Hash: sha256:test"].join("\n"));
@@ -797,7 +797,7 @@ describe("runner", () => {
       const bp = blueprintWithPolicyAdditions({
         nim_service: {
           name: "nim_service",
-          endpoints: [{ host: "inference-api.nvidia.com", port: 443, access: "full" }],
+          endpoints: [{ host: "integrate.api.nvidia.com", port: 443, access: "full" }],
         },
       });
       mockCurrentPolicy(["Version: 1", "Hash: sha256:test", "---"].join("\n"));

@@ -78,7 +78,7 @@
 //   against a local OpenAI-compatible endpoint, asserting both the injected
 //   system message and the refreshed Content-Length. The runtime model-
 //   output behavior (acceptance criteria from #4851) is validated against
-//   inference-api.nvidia.com via the checked-in runbook at
+//   integrate.api.nvidia.com via the checked-in runbook at
 //   test/e2e-runtime/4851-ultra-toolless-validation.md — anyone reviewing
 //   acceptance can re-run it directly. Re-run when this preload changes
 //   or when OpenClaw bumps a version that may shift Ultra's chat template.

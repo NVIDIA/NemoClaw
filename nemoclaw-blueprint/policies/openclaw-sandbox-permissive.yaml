@@ -49,7 +49,7 @@ network_policies:
   nvidia:
     name: nvidia
     endpoints:
-      - host: inference-api.nvidia.com
+      - host: integrate.api.nvidia.com
         port: 443
         protocol: rest
         enforcement: enforce

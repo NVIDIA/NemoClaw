@@ -207,7 +207,7 @@ describe("Model Router pool config", () => {
 
   it("regression #3255: routes NVIDIA API keys to the public NVIDIA inference endpoint", () => {
     const apiBases = new Set((pool.models ?? []).map((model) => model.api_base));
-    expect(apiBases).toEqual(new Set(["https://inference-api.nvidia.com/v1"]));
+    expect(apiBases).toEqual(new Set(["https://integrate.api.nvidia.com/v1"]));
   });
 
   it("regression #3255: uses valid LiteLLM NVIDIA model identifiers", () => {
@@ -284,7 +284,7 @@ describe("base sandbox policy", () => {
     const np = policy.network_policies ?? {};
     const endpoints = np.nvidia?.endpoints;
     const missingHosts: string[] = [];
-    const host = "inference-api.nvidia.com";
+    const host = "integrate.api.nvidia.com";
     const endpoint = endpoints?.find((entry) => entry.host === host);
     const hasEmbeddingsRule = endpoint?.rules?.some(
       (rule) => rule.allow?.method === "POST" && rule.allow?.path === "/v1/embeddings",

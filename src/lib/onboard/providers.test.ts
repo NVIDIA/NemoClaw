@@ -164,7 +164,7 @@ describe("onboard provider helpers", () => {
       "inference",
       "openai",
       "NVIDIA_INFERENCE_API_KEY",
-      "https://inference-api.nvidia.com/v1",
+      "https://integrate.api.nvidia.com/v1",
       {},
       (command) => {
         commands.push(command.join(" "));
@@ -177,7 +177,7 @@ describe("onboard provider helpers", () => {
     expect(commands[0]).toMatch(/provider get/);
     expect(commands[1]).toMatch(/provider update/);
     expect(commands[1]).toMatch(
-      /--config OPENAI_BASE_URL=https:\/\/inference-api\.nvidia\.com\/v1/,
+      /--config OPENAI_BASE_URL=https:\/\/integrate\.api\.nvidia\.com\/v1/,
     );
   });
 
@@ -187,7 +187,7 @@ describe("onboard provider helpers", () => {
       "nvidia-prod",
       "openai",
       "NVIDIA_INFERENCE_API_KEY",
-      "https://inference-api.nvidia.com/v1",
+      "https://integrate.api.nvidia.com/v1",
       {},
       (command) => {
         commands.push(command.join(" "));
@@ -202,7 +202,7 @@ describe("onboard provider helpers", () => {
     // OpenShell CLI rejects `--credential KEY` when the host env is empty;
     // dropping the flag turns the call into a no-op merge that succeeds.
     expect(commands[1]).not.toMatch(/--credential/);
-    expect(commands[1]).toMatch(/OPENAI_BASE_URL=https:\/\/inference-api\.nvidia\.com\/v1/);
+    expect(commands[1]).toMatch(/OPENAI_BASE_URL=https:\/\/integrate\.api\.nvidia\.com\/v1/);
   });
 
   it("keeps --credential on the create path even when env is empty", () => {

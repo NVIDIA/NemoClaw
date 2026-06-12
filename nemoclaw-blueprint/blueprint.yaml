@@ -54,7 +54,7 @@ components:
       default:
         provider_type: "nvidia"
         provider_name: "nvidia-inference"
-        endpoint: "https://inference-api.nvidia.com/v1"
+        endpoint: "https://integrate.api.nvidia.com/v1"
         model: "nvidia/nemotron-3-super-120b-a12b"
 
       ncp:

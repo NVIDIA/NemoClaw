@@ -440,11 +440,11 @@ function collectNetwork(collectDir: string): void {
     collect(collectDir, "ip-route", "ip", ["route"]);
     collectShell(collectDir, "resolv-conf", "cat /etc/resolv.conf");
   }
-  collect(collectDir, "nslookup", "nslookup", ["inference-api.nvidia.com"]);
+  collect(collectDir, "nslookup", "nslookup", ["integrate.api.nvidia.com"]);
   collectShell(
     collectDir,
     "curl-models",
-    'code=$(curl -s -o /dev/null -w "%{http_code}" https://inference-api.nvidia.com/v1/models); echo "HTTP $code"; if [ "$code" -ge 200 ] && [ "$code" -lt 500 ]; then echo "NIM API reachable"; else echo "NIM API unreachable"; exit 1; fi',
+    'code=$(curl -s -o /dev/null -w "%{http_code}" https://integrate.api.nvidia.com/v1/models); echo "HTTP $code"; if [ "$code" -ge 200 ] && [ "$code" -lt 500 ]; then echo "NIM API reachable"; else echo "NIM API unreachable"; exit 1; fi',
   );
   collectShell(collectDir, "lsof-net", "lsof -i -P -n 2>/dev/null | head -50");
   collect(collectDir, "lsof-18789", "lsof", ["-i", `:${DASHBOARD_PORT}`]);

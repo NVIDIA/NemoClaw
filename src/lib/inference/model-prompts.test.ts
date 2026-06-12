@@ -54,13 +54,13 @@ describe("model prompt helpers", () => {
       getCredentialFn: () => "nvapi-test",
       validateNvidiaEndpointModelFn: (model) => ({
         ok: model === "nemotron-custom",
-        message: `Model '${model}' is not available from NVIDIA Endpoints. Checked https://inference-api.nvidia.com/v1/models.`,
+        message: `Model '${model}' is not available from NVIDIA Endpoints. Checked https://integrate.api.nvidia.com/v1/models.`,
       }),
     });
 
     expect(result).toBe("nemotron-custom");
     expect(errorLine).toHaveBeenCalledWith(
-      "  Model 'bad-model' is not available from NVIDIA Endpoints. Checked https://inference-api.nvidia.com/v1/models.",
+      "  Model 'bad-model' is not available from NVIDIA Endpoints. Checked https://integrate.api.nvidia.com/v1/models.",
     );
   });
 
