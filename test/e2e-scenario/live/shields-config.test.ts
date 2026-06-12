@@ -293,21 +293,12 @@ RUN_SHIELDS_TEST(
 
     const layoutProbe = await sandboxShell(
       sandbox,
-      String.raw`
-bad=0
-if [ -e /sandbox/.openclaw-data ] || [ -L /sandbox/.openclaw-data ]; then
-  echo "legacy data dir exists: /sandbox/.openclaw-data"
-  bad=1
-fi
-for entry in /sandbox/.openclaw/*; do
-  [ -L "$entry" ] || continue
-  target="$(readlink -f "$entry" 2>/dev/null || readlink "$entry" 2>/dev/null || true)"
-  case "$target" in
-    /sandbox/.openclaw-data/*) echo "legacy symlink remains: $entry -> $target"; bad=1 ;;
-  esac
-done
-exit "$bad"
-`,
+      [
+        `bad=0`,
+        `if [ -e /sandbox/.openclaw-data ] || [ -L /sandbox/.openclaw-data ]; then echo "legacy data dir exists: /sandbox/.openclaw-data"; bad=1; fi`,
+        `for entry in /sandbox/.openclaw/*; do [ -L "$entry" ] || continue; target="$(readlink -f "$entry" 2>/dev/null || readlink "$entry" 2>/dev/null || true)"; case "$target" in /sandbox/.openclaw-data/*) echo "legacy symlink remains: $entry -> $target"; bad=1 ;; esac; done`,
+        `exit "$bad"`,
+      ].join("; "),
       { artifactName: "phase-2-unified-openclaw-layout" },
     );
     expect(layoutProbe.exitCode, resultText(layoutProbe)).toBe(0);
