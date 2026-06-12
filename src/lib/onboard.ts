@@ -308,6 +308,9 @@ const {
   rejectUnsupportedWindowsHostOllama,
   shouldFrontOllamaWithProxy,
 }: typeof import("./onboard/local-inference-topology") = require("./onboard/local-inference-topology");
+const {
+  waitForGatewayHealth,
+}: typeof import("./onboard/gateway-health-wait") = require("./onboard/gateway-health-wait");
 const { resolveOpenshell } = require("./adapters/openshell/resolve");
 const credentials: typeof import("./credentials/store") = require("./credentials/store");
 const {
@@ -2037,31 +2040,21 @@ async function startGatewayWithOptions(
           );
         }
 
-        const healthPollCount = healthWait.count;
-        const healthPollInterval = healthWait.interval;
-        for (let i = 0; i < healthPollCount; i++) {
-          const repairResult = repairGatewayBootstrapSecrets();
-          if (repairResult.repaired) {
-            attachGatewayMetadataIfNeeded({ forceRefresh: true });
-          } else if (gatewayClusterHealthcheckPassed()) {
-            attachGatewayMetadataIfNeeded();
-          }
-          // Ensure the gateway remains selected before each probe.
-          runCaptureOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
-          const status = runCaptureOpenshell(["status"], { ignoreError: true });
-          const namedInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], {
-            ignoreError: true,
-          });
-          const currentInfo = runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
-          // Require BOTH the openshell CLI metadata to report healthy AND the
-          // host HTTP endpoint to be serving — the CLI metadata can report
-          // healthy from the previous run while the upstream is still warming
-          // up after a Docker daemon restart, leading to "Connection refused"
-          // in step 4. See #3258.
-          if (isGatewayHealthy(status, namedInfo, currentInfo) && (await isGatewayHttpReady())) {
-            return; // success
-          }
-          if (i < healthPollCount - 1) sleepSeconds(healthPollInterval);
+        if (
+          await waitForGatewayHealth({
+            attachGatewayMetadataIfNeeded,
+            gatewayClusterHealthcheckPassed,
+            gatewayName: GATEWAY_NAME,
+            healthPollCount: healthWait.count,
+            healthPollIntervalSeconds: healthWait.interval,
+            isGatewayHealthy,
+            isGatewayHttpReady,
+            repairGatewayBootstrapSecrets,
+            runCaptureOpenshell,
+            sleepSeconds,
+          })
+        ) {
+          return;
         }
 
         throw new Error("Gateway failed to start");
