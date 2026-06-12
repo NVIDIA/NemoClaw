@@ -20,6 +20,13 @@ import {
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { shouldRunLiveE2EScenarios } from "../fixtures/live-project-gate.ts";
 import { redactString } from "../fixtures/redaction.ts";
+import {
+  BEDROCK_PRE_CONTRACT_ENDPOINT_VALIDATION_INVALID_STATE,
+  BEDROCK_PRE_CONTRACT_ENDPOINT_VALIDATION_REMOVAL_CONDITION,
+  BEDROCK_PRE_CONTRACT_ENDPOINT_VALIDATION_SKIP_REASON,
+  BEDROCK_PRE_CONTRACT_ENDPOINT_VALIDATION_SOURCE_BOUNDARY,
+  isPreContractEndpointValidationRateLimitEvidence,
+} from "./bedrock-runtime-compatible-anthropic-rate-limit.ts";
 
 // Direct Vitest migration for test/e2e/test-bedrock-runtime-compatible-anthropic.sh.
 // Keep the same live system boundary: host fake Bedrock Runtime endpoint,
@@ -1081,27 +1088,13 @@ function isPreContractEndpointValidationRateLimit(options: {
   mock: MockBedrockRuntime | undefined;
   onboarding: RawRunResult;
 }): boolean {
-  if (options.onboarding.exitCode === 0) return false;
-  if ((options.mock?.converseCount ?? 0) > 0 || (options.mock?.streamCount ?? 0) > 0) {
-    return false;
-  }
-
-  const text = redactedResultText(options.onboarding);
-  const endpointValidation =
-    /NVIDIA Endpoints endpoint validation failed|endpoint validation failed|failed to verify inference endpoint|Chat Completions API validation/i.test(
-      text,
-    );
-  const explicitRateLimit = /HTTP 429|\b429\b|Too Many Requests/i.test(text);
-  const transientProviderFailure =
-    explicitRateLimit ||
-    /rate[- ]?limit|quota|temporarily unavailable|timed? out|timeout/i.test(text);
-  const sanitizedNvidiaValidation =
-    /NVIDIA Endpoints endpoint validation failed/i.test(text) &&
-    /Validation details were omitted to avoid exposing credentials/i.test(text);
-  return (
-    endpointValidation &&
-    (explicitRateLimit || (sanitizedNvidiaValidation && transientProviderFailure))
-  );
+  return isPreContractEndpointValidationRateLimitEvidence({
+    onboardingExitCode: options.onboarding.exitCode,
+    redactedStdout: options.onboarding.redactedStdout,
+    redactedStderr: options.onboarding.redactedStderr,
+    mockConverseCount: options.mock?.converseCount ?? 0,
+    mockConverseStreamCount: options.mock?.streamCount ?? 0,
+  });
 }
 
 async function skipPreContractEndpointValidationRateLimit(options: {
@@ -1114,11 +1107,11 @@ async function skipPreContractEndpointValidationRateLimit(options: {
   await options.artifacts.writeJson("transient-provider-validation.skip.json", {
     id: "bedrock-runtime-compatible-anthropic",
     status: "skipped",
-    reason: "external-provider-validation-unavailable-before-bedrock-runtime-contract",
-    sourceBoundary:
-      "external NVIDIA Endpoints provider availability before Bedrock Runtime contract",
-    removalCondition:
-      "remove once CI endpoint validation is stable for a release cycle or covered by a hermetic provider-validation fixture",
+    reason: BEDROCK_PRE_CONTRACT_ENDPOINT_VALIDATION_SKIP_REASON,
+    sourceBoundary: BEDROCK_PRE_CONTRACT_ENDPOINT_VALIDATION_SOURCE_BOUNDARY,
+    invalidState: BEDROCK_PRE_CONTRACT_ENDPOINT_VALIDATION_INVALID_STATE,
+    removalCondition: BEDROCK_PRE_CONTRACT_ENDPOINT_VALIDATION_REMOVAL_CONDITION,
+    legacyContractNotExecuted: true,
     onboardExitCode: options.onboarding.exitCode,
     onboardSignal: options.onboarding.signal,
     onboardTimedOut: options.onboarding.timedOut,
@@ -1130,7 +1123,7 @@ async function skipPreContractEndpointValidationRateLimit(options: {
   await options.artifacts.writeJson("scenario-result.json", {
     id: "bedrock-runtime-compatible-anthropic",
     status: "skipped",
-    reason: "external-provider-validation-unavailable-before-bedrock-runtime-contract",
+    reason: BEDROCK_PRE_CONTRACT_ENDPOINT_VALIDATION_SKIP_REASON,
     onboardExitCode: options.onboarding.exitCode,
   });
   options.skip(
