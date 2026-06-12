@@ -3,7 +3,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { lockUntilDurable, resolveSettleMs } from "./durable-lock";
+import { relockAndReconfirm, resolveSettleMs } from "./relock-reconfirm";
 
 const sealedHashes = {
   "/sandbox/.openclaw/openclaw.json":
@@ -16,12 +16,12 @@ function okResult() {
   return { chattrApplied: true, fileHashes: sealedHashes };
 }
 
-describe("lockUntilDurable", () => {
+describe("relockAndReconfirm", () => {
   it("returns ok with the re-confirmed result when the lock always succeeds", () => {
     const lock = vi.fn(() => okResult());
     const sleep = vi.fn();
 
-    const result = lockUntilDurable(lock, { sleep, settleMs: 5 });
+    const result = relockAndReconfirm(lock, { sleep, settleMs: 5 });
 
     expect(result.ok).toBe(true);
     expect(result.attempts).toBe(1);
@@ -51,7 +51,7 @@ describe("lockUntilDurable", () => {
       }); // attempt 3 re-confirm
     const sleep = vi.fn();
 
-    const result = lockUntilDurable(lock, { sleep, settleMs: 0, maxAttempts: 3 });
+    const result = relockAndReconfirm(lock, { sleep, settleMs: 0, maxAttempts: 3 });
 
     expect(result.ok).toBe(false);
     expect(result.attempts).toBe(3);
@@ -73,7 +73,7 @@ describe("lockUntilDurable", () => {
       .mockImplementationOnce(() => okResult()); // attempt 2 re-confirm — holds
     const sleep = vi.fn();
 
-    const result = lockUntilDurable(lock, { sleep, settleMs: 0, maxAttempts: 3 });
+    const result = relockAndReconfirm(lock, { sleep, settleMs: 0, maxAttempts: 3 });
 
     expect(result.ok).toBe(true);
     expect(result.attempts).toBe(2);
@@ -88,7 +88,7 @@ describe("lockUntilDurable", () => {
     });
     const sleep = vi.fn();
 
-    const result = lockUntilDurable(lock, { sleep, settleMs: 0, maxAttempts: 3 });
+    const result = relockAndReconfirm(lock, { sleep, settleMs: 0, maxAttempts: 3 });
 
     expect(result.ok).toBe(false);
     expect(result.attempts).toBe(1);

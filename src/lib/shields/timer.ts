@@ -16,7 +16,7 @@ import { run } from "../runner";
 import { resolveAgentConfig } from "../sandbox/config";
 import { resolveNemoclawStateDir } from "../state/paths";
 import { appendAuditEntry, type ShieldsAuditEntry } from "./audit";
-import { lockUntilDurable } from "./durable-lock";
+import { relockAndReconfirm } from "./relock-reconfirm";
 import * as shields from "./index";
 
 interface ShieldsStatePatch {
@@ -247,12 +247,13 @@ function runRestoreTimer(args: TimerArgs): void {
           // #4663: a single instantaneous lock+verify cannot prove an
           // in-sandbox reconciler didn't re-permission .config-hash after the
           // verified lock returned. Re-confirm the lock held once the gateway
-          // has settled, re-applying if it drifted. Fail closed (leave shields
-          // DOWN + audit) when the lock will not durably hold.
-          const durable = lockUntilDurable(() => lockAgentConfig(args.sandboxName, lockTarget));
-          if (durable.ok && durable.lastResult) {
-            lockedChattr = durable.lastResult.chattrApplied;
-            lockedHashes = durable.lastResult.fileHashes;
+          // has settled, re-applying if it drifted. This narrows (does not
+          // close) the revert window; fail closed (leave shields DOWN + audit)
+          // when the lock will not re-confirm within the retry budget.
+          const relock = relockAndReconfirm(() => lockAgentConfig(args.sandboxName, lockTarget));
+          if (relock.ok && relock.lastResult) {
+            lockedChattr = relock.lastResult.chattrApplied;
+            lockedHashes = relock.lastResult.fileHashes;
           } else {
             lockVerified = false;
             appendAudit({
@@ -260,7 +261,8 @@ function runRestoreTimer(args: TimerArgs): void {
               sandbox: args.sandboxName,
               timestamp: now,
               restored_by: "auto_timer",
-              warning: durable.error ?? "Config re-lock did not hold durably after settle window",
+              warning:
+                relock.error ?? "Config re-lock did not re-confirm after settle window",
               lock_verified: false,
             });
           }

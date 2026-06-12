@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
-// Durable config-lock helper for shields (#4663).
+// Re-lock-and-reconfirm helper for shields (#4663).
 //
 // `lockAgentConfig` chmod 444 / chown root:root the config files and verifies
 // the on-disk state once — a single instantaneous snapshot. On DGX Station /
@@ -11,11 +11,19 @@
 // untouched (the SHA-256 seal still matches), so only mode/owner drift and the
 // next `shields status` reports UP (DRIFTED).
 //
-// `lockUntilDurable` runs a bounded "lock -> settle -> re-confirm -> re-lock if
-// drifted" cycle so we only declare the lock UP when the on-disk perms are
-// durably 444 root:root once the reconciler has had a chance to settle. It is
-// synchronous (uses the blocking `sleepMs`) so callers such as the auto-restore
-// timer stay synchronous.
+// `relockAndReconfirm` runs a bounded "lock -> settle -> re-confirm -> re-lock
+// if drifted" cycle and only declares the lock UP when a re-confirmation passes
+// after the reconciler has had a chance to settle.
+//
+// IMPORTANT — this NARROWS the race window, it does NOT close it. After the
+// final re-confirm returns, the same reconciler can revert perms one settle
+// window later (the TOCTOU is shifted, not eliminated). The only fully durable
+// defense is the `chattr +i` immutable bit set inside `lockAgentConfig`, which
+// is best-effort and may be unavailable (e.g. no CAP_LINUX_IMMUTABLE). This
+// helper is a fail-closed mitigation: when the lock will not re-confirm within
+// the retry budget, callers leave shields DOWN rather than report a stale UP.
+// It is synchronous (uses the blocking `sleepMs`) so callers such as the
+// auto-restore timer stay synchronous.
 
 import { sleepMs } from "../core/wait";
 
@@ -33,7 +41,7 @@ export interface LockResult {
 /** A lock operation: applies the lock and verifies it, throwing on drift. */
 export type LockFn = () => LockResult;
 
-export interface LockUntilDurableOptions {
+export interface RelockReconfirmOptions {
   /** Maximum number of lock -> settle -> re-confirm cycles. Default 3. */
   maxAttempts?: number;
   /** Override the settle window (ms) between apply and re-confirm. */
@@ -42,7 +50,7 @@ export interface LockUntilDurableOptions {
   sleep?: (ms: number) => void;
 }
 
-export interface DurableLockResult {
+export interface RelockReconfirmResult {
   /** True only when a re-confirmation after the settle window succeeded. */
   ok: boolean;
   /** Number of full cycles attempted (1-based). */
@@ -63,7 +71,7 @@ export interface DurableLockResult {
 export function resolveSettleMs(): number {
   // VITEST is the precise test signal (Vitest always sets it). Do NOT key off
   // NODE_ENV=test — the real settle window must apply in production regardless
-  // of NODE_ENV, or the durability wait would silently collapse to 0.
+  // of NODE_ENV, or the re-confirm wait would silently collapse to 0.
   if (process.env.VITEST === "true") {
     return 0;
   }
@@ -86,16 +94,18 @@ export function resolveSettleMs(): number {
  *   1. `lock()` — apply + verify. If this throws, fail immediately (the lock
  *      could not even be applied/verified once).
  *   2. `sleep(settleMs)` — give the gateway/reconciler time to settle.
- *   3. `lock()` — re-confirm. Success => durable, return ok. Throw => the
+ *   3. `lock()` — re-confirm. Success => re-confirmed, return ok. Throw => the
  *      reconciler reverted during the settle window; retry the whole cycle.
  *
  * Returns ok:false (fail closed) when attempts are exhausted or the first
- * apply of an attempt throws.
+ * apply of an attempt throws. NOTE: ok:true means the lock re-confirmed after
+ * the settle window — it does not guarantee the perms cannot be reverted again
+ * afterward (see the module header on the residual TOCTOU window).
  */
-export function lockUntilDurable(
+export function relockAndReconfirm(
   lock: LockFn,
-  opts: LockUntilDurableOptions = {},
-): DurableLockResult {
+  opts: RelockReconfirmOptions = {},
+): RelockReconfirmResult {
   const maxAttempts =
     opts.maxAttempts !== undefined && opts.maxAttempts > 0
       ? opts.maxAttempts
@@ -103,7 +113,7 @@ export function lockUntilDurable(
   const settleMs = opts.settleMs !== undefined ? opts.settleMs : resolveSettleMs();
   const sleep = opts.sleep ?? sleepMs;
 
-  let lastError = "Config re-lock did not hold after settle window";
+  let lastError = "Config re-lock did not re-confirm after settle window";
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     // Apply + verify. A failure here means the lock could not be established

@@ -276,8 +276,9 @@ describe("shields timer authorization", () => {
 
     expect(exitCode).toBe(0);
     expect(runMock).toHaveBeenCalledTimes(1);
-    // #4663: the durable lock applies then re-confirms after the settle window
-    // (0ms under test), so lockAgentConfig is invoked twice for a clean lock.
+    // #4663: relockAndReconfirm applies then re-confirms after the settle
+    // window (0ms under test), so lockAgentConfig is invoked twice for a clean
+    // lock.
     expect(lockMock).toHaveBeenCalledTimes(2);
     expect(updatedState.shieldsDown).toBe(false);
     expect(updatedState.chattrApplied).toBe(true);
@@ -375,8 +376,9 @@ describe("shields timer authorization", () => {
   //
   // Contract the fix must satisfy: after restoring policy, the timer must
   // re-verify the lock held once the gateway has settled and re-apply if it
-  // drifted; it must only mark shields UP when the on-disk perms are durably
-  // 444 root:root, otherwise leave shields DOWN with an audit warning.
+  // drifted; it must only mark shields UP when a re-confirm passes 444 root:root
+  // after the settle window, otherwise leave shields DOWN with an audit warning.
+  // (This narrows the revert window; it does not close the TOCTOU.)
   // -------------------------------------------------------------------------
 
   it("#4663 re-verifies the auto-restore lock after settle so a reconciler reverting .config-hash perms is caught", async () => {
@@ -514,8 +516,8 @@ describe("shields timer authorization", () => {
 
     expect(exitCode).toBe(1);
     expect(updatedState.shieldsDown).toBe(true);
-    // Both audit outcomes must fire: the durable re-lock warning AND the
-    // terminal fail-closed entry that keeps shields DOWN.
+    // Both audit outcomes must fire: the re-lock warning AND the terminal
+    // fail-closed entry that keeps shields DOWN.
     expect(auditEntries).toContainEqual(
       expect.objectContaining({
         action: "shields_auto_restore_lock_warning",

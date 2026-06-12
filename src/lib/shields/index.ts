@@ -42,7 +42,7 @@ const {
 }: typeof import("./permissive-runtime") = require("./permissive-runtime");
 const { cleanupTempDir } = require("../onboard/temp-files");
 const { verifyShieldsLockState }: typeof import("./verify-lock") = require("./verify-lock");
-const { lockUntilDurable }: typeof import("./durable-lock") = require("./durable-lock");
+const { relockAndReconfirm }: typeof import("./relock-reconfirm") = require("./relock-reconfirm");
 const {
   parseSha256Output,
   isHashVerificationIssue,
@@ -1259,16 +1259,18 @@ function shieldsUp(sandboxName: string, opts: { throwOnError?: boolean } = {}): 
     console.log(`  Lockdown drifted — re-applying lock for ${sandboxName}...`);
     // #4663: re-confirm the lock held after the in-sandbox reconciler settles,
     // re-applying if it reverts perms. A single re-apply here was also being
-    // reverted on DGX Station / DGX Spark, leaving the sandbox DRIFTED.
-    const durable = lockUntilDurable(() => lockAgentConfig(sandboxName, target));
-    if (!durable.ok || !durable.lastResult) {
-      const message = durable.error ?? "Config re-lock did not hold after settle window";
+    // reverted on DGX Station / DGX Spark, leaving the sandbox DRIFTED. This
+    // narrows (does not close) the revert window; the chattr +i immutable bit
+    // applied inside lockAgentConfig is the only fully durable defense.
+    const relock = relockAndReconfirm(() => lockAgentConfig(sandboxName, target));
+    if (!relock.ok || !relock.lastResult) {
+      const message = relock.error ?? "Config re-lock did not re-confirm after settle window";
       console.error(`  ERROR: ${message}`);
       console.error("  Config remains drifted — manual intervention required.");
       return failShieldsCommand(message, opts.throwOnError);
     }
     const lockResult: { chattrApplied: boolean; fileHashes: { [path: string]: string } } =
-      durable.lastResult;
+      relock.lastResult;
     saveShieldsState(sandboxName, {
       shieldsDown: false,
       chattrApplied: lockResult.chattrApplied,
