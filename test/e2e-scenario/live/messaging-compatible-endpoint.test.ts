@@ -56,7 +56,7 @@ const RATE_LIMIT_VALIDATION_RE =
   /HTTP\s+429|returned\s+HTTP\s+429|\b429\b|too many requests|rate[- ]?limit|quota/i;
 const DEFAULT_NVIDIA_PROVIDER_VALIDATION_RE = /NVIDIA Endpoints endpoint validation failed/i;
 const COMPATIBLE_ENDPOINT_VALIDATION_RE =
-  /Other OpenAI-compatible endpoint endpoint validation failed|Chat Completions API validation/i;
+  /Other OpenAI-compatible endpoint endpoint validation failed/i;
 const COMPAT_AGENT_REPLY = "COMPAT_MOCK_ROUTE_5098_OK";
 const COMPAT_AGENT_PROMPT =
   "Call the configured model and report the compatible endpoint route token.";
@@ -631,7 +631,9 @@ sock.setTimeout(1000, () => finish("TIMEOUT", 1));
 async function assertSandboxInference(sandbox: SandboxClient): Promise<void> {
   const payload = JSON.stringify({
     model: COMPAT_MODEL,
-    messages: [{ role: "user", content: "Reply with exactly: PONG" }],
+    messages: [
+      { role: "user", content: "Return the compatible endpoint route verification value." },
+    ],
     max_tokens: 32,
   });
   const response = await sandbox.exec(
@@ -654,7 +656,9 @@ async function assertSandboxInference(sandbox: SandboxClient): Promise<void> {
     },
   );
   expect(response.exitCode, resultText(response)).toBe(0);
-  expect(openAiContent(response.stdout), response.stdout.slice(0, 500)).toMatch(/PONG/i);
+  expect(openAiContent(response.stdout), response.stdout.slice(0, 500)).toContain(
+    COMPAT_AGENT_REPLY,
+  );
 }
 
 function findJsonObjectEnd(raw: string, start: number): number | null {
@@ -829,6 +833,11 @@ describe("messaging-compatible-endpoint live test local classifiers", () => {
         output(
           "NVIDIA Endpoints endpoint validation failed.\nChat Completions API validation returned HTTP 429",
         ),
+      ),
+    ).toBe(false);
+    expect(
+      shouldSkipPreContractProviderRateLimit(
+        output("Chat Completions API validation returned HTTP 429"),
       ),
     ).toBe(false);
     expect(
