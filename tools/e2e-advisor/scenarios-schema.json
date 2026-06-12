@@ -42,10 +42,11 @@
   "$defs": {
     "scenarioRecommendation": {
       "type": "object",
-      "required": ["id", "workflow", "required", "reason", "dispatchCommand"],
+      "required": ["id", "workflow", "selectorType", "required", "reason", "dispatchCommand"],
       "properties": {
         "id": { "type": "string" },
         "workflow": { "type": "string" },
+        "selectorType": { "enum": ["all", "scenario", "job"] },
         "scenario": { "type": "string" },
         "suiteFilter": { "type": "string" },
         "required": { "type": "boolean" },

@@ -5,9 +5,10 @@
 # Channel stop/start lifecycle E2E test.
 #
 # Covers Test 1 from issue #3462 ("onboard telegram -> channels stop -> channels start").
-# The regression surface is intentionally exercised for both supported agents
-# (OpenClaw and Hermes) and every messaging channel (telegram, discord, wechat,
-# slack, whatsapp).
+# The regression surface is exercised for both supported agents (OpenClaw and
+# Hermes) and every messaging channel (telegram, discord, wechat, slack,
+# whatsapp). Set NEMOCLAW_CHANNELS_STOP_START_AGENT=openclaw or hermes to run a
+# single-agent shard.
 #
 # Regression coverage:
 #   - #3453: `channels stop <ch>` + rebuild must actually remove the channel
@@ -96,10 +97,29 @@ fi
 BASE_SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-channels-stop-start}"
 OPENCLAW_SANDBOX_NAME="${NEMOCLAW_CHANNELS_OPENCLAW_SANDBOX_NAME:-${BASE_SANDBOX_NAME}-openclaw}"
 HERMES_SANDBOX_NAME="${NEMOCLAW_CHANNELS_HERMES_SANDBOX_NAME:-${BASE_SANDBOX_NAME}-hermes}"
+REQUESTED_AGENT="${NEMOCLAW_CHANNELS_STOP_START_AGENT:-all}"
 REGISTRY="$HOME/.nemoclaw/sandboxes.json"
 OPENSHELL_BIN="${NEMOCLAW_OPENSHELL_BIN:-openshell}"
 CHANNELS=(telegram discord wechat slack whatsapp)
 TOKENLESS_CHANNELS=(whatsapp)
+SELECTED_AGENT_SCENARIOS=()
+
+case "$REQUESTED_AGENT" in
+  all)
+    SELECTED_AGENT_SCENARIOS=("openclaw:${OPENCLAW_SANDBOX_NAME}" "hermes:${HERMES_SANDBOX_NAME}")
+    ;;
+  openclaw)
+    SELECTED_AGENT_SCENARIOS=("openclaw:${OPENCLAW_SANDBOX_NAME}")
+    ;;
+  hermes)
+    SELECTED_AGENT_SCENARIOS=("hermes:${HERMES_SANDBOX_NAME}")
+    ;;
+  *)
+    section "Phase 0: Prerequisites"
+    fail_msg "C0: NEMOCLAW_CHANNELS_STOP_START_AGENT must be all, openclaw, or hermes (got ${REQUESTED_AGENT})"
+    print_summary
+    ;;
+esac
 
 ACTIVE_AGENT=""
 ACTIVE_SANDBOX=""
@@ -132,8 +152,9 @@ openshell() {
 
 # shellcheck source=test/e2e/lib/sandbox-teardown.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox-teardown.sh"
-register_sandbox_for_teardown "$OPENCLAW_SANDBOX_NAME"
-register_sandbox_for_teardown "$HERMES_SANDBOX_NAME"
+for scenario in "${SELECTED_AGENT_SCENARIOS[@]}"; do
+  register_sandbox_for_teardown "${scenario#*:}"
+done
 
 refresh_path() {
   if [ -f "$HOME/.bashrc" ]; then
@@ -196,6 +217,31 @@ registry_array_contains() {
   printf '%s' "$value" | grep -Fq "\"${item}\""
 }
 
+registry_plan_channel_contains() {
+  local item="$1"
+  node -e '
+const fs = require("fs");
+const [registryPath, sandboxName, channelId] = process.argv.slice(1);
+if (!fs.existsSync(registryPath)) process.exit(1);
+const registry = JSON.parse(fs.readFileSync(registryPath, "utf8"));
+const plan = registry.sandboxes?.[sandboxName]?.messaging?.plan;
+const channels = Array.isArray(plan?.channels) ? plan.channels : [];
+process.exit(channels.some((channel) => channel?.channelId === channelId) ? 0 : 1);
+' "$REGISTRY" "$ACTIVE_SANDBOX" "$item"
+}
+
+registry_plan_disabled_contains() {
+  local item="$1"
+  node -e '
+const fs = require("fs");
+const [registryPath, sandboxName, channelId] = process.argv.slice(1);
+if (!fs.existsSync(registryPath)) process.exit(1);
+const registry = JSON.parse(fs.readFileSync(registryPath, "utf8"));
+const disabled = registry.sandboxes?.[sandboxName]?.messaging?.plan?.disabledChannels;
+process.exit(Array.isArray(disabled) && disabled.includes(channelId) ? 0 : 1);
+' "$REGISTRY" "$ACTIVE_SANDBOX" "$item"
+}
+
 provider_names_for_channel() {
   local sandbox="$1"
   local channel="$2"
@@ -250,8 +296,8 @@ channel_presence() {
 }
 
 dump_channel_state() {
-  info "registry.messagingChannels: $(registry_field messagingChannels)"
-  info "registry.disabledChannels: $(registry_field disabledChannels)"
+  info "registry.messaging.plan.channels: $(node -e 'const fs=require("fs"); const [p,n]=process.argv.slice(1); const r=fs.existsSync(p)?JSON.parse(fs.readFileSync(p,"utf8")):{}; const c=r.sandboxes?.[n]?.messaging?.plan?.channels; process.stdout.write(JSON.stringify(Array.isArray(c)?c.map((x)=>x?.channelId):null));' "$REGISTRY" "$ACTIVE_SANDBOX" 2>/dev/null || echo null)"
+  info "registry.messaging.plan.disabledChannels: $(node -e 'const fs=require("fs"); const [p,n]=process.argv.slice(1); const r=fs.existsSync(p)?JSON.parse(fs.readFileSync(p,"utf8")):{}; process.stdout.write(JSON.stringify(r.sandboxes?.[n]?.messaging?.plan?.disabledChannels ?? null));' "$REGISTRY" "$ACTIVE_SANDBOX" 2>/dev/null || echo null)"
   info "registry.providerCredentialHashes: $(registry_field providerCredentialHashes)"
   if [ "$ACTIVE_AGENT" = "openclaw" ]; then
     info "openclaw.json channels:"
@@ -287,14 +333,14 @@ assert_registry_channels() {
   local context="$2"
   local channel msg
   for channel in "${CHANNELS[@]}"; do
-    if [ "$expected" = "present" ] && registry_array_contains messagingChannels "$channel"; then
-      msg="${ACTIVE_AGENT}/${channel}: registry.messagingChannels contains channel ${context}"
+    if [ "$expected" = "present" ] && registry_plan_channel_contains "$channel"; then
+      msg="${ACTIVE_AGENT}/${channel}: registry.messaging.plan.channels contains channel ${context}"
       pass_msg "$msg"
-    elif [ "$expected" = "absent" ] && ! registry_array_contains messagingChannels "$channel"; then
-      msg="${ACTIVE_AGENT}/${channel}: registry.messagingChannels excludes channel ${context}"
+    elif [ "$expected" = "absent" ] && ! registry_plan_channel_contains "$channel"; then
+      msg="${ACTIVE_AGENT}/${channel}: registry.messaging.plan.channels excludes channel ${context}"
       pass_msg "$msg"
     else
-      msg="${ACTIVE_AGENT}/${channel}: registry.messagingChannels expected ${expected} ${context}, got $(registry_field messagingChannels)"
+      msg="${ACTIVE_AGENT}/${channel}: registry.messaging.plan.channels expected ${expected} ${context}"
       fail_msg "$msg"
     fi
   done
@@ -303,17 +349,16 @@ assert_registry_channels() {
 assert_disabled_channels() {
   local expected="$1"
   local context="$2"
-  local channel msg value
-  value="$(registry_field disabledChannels)"
+  local channel msg
   for channel in "${CHANNELS[@]}"; do
-    if [ "$expected" = "present" ] && registry_array_contains disabledChannels "$channel"; then
-      msg="${ACTIVE_AGENT}/${channel}: registry.disabledChannels contains channel ${context}"
+    if [ "$expected" = "present" ] && registry_plan_disabled_contains "$channel"; then
+      msg="${ACTIVE_AGENT}/${channel}: registry.messaging.plan.disabledChannels contains channel ${context}"
       pass_msg "$msg"
-    elif [ "$expected" = "absent" ] && ! registry_array_contains disabledChannels "$channel"; then
-      msg="${ACTIVE_AGENT}/${channel}: registry.disabledChannels excludes channel ${context}"
+    elif [ "$expected" = "absent" ] && ! registry_plan_disabled_contains "$channel"; then
+      msg="${ACTIVE_AGENT}/${channel}: registry.messaging.plan.disabledChannels excludes channel ${context}"
       pass_msg "$msg"
     else
-      msg="${ACTIVE_AGENT}/${channel}: registry.disabledChannels expected ${expected} ${context}, got ${value}"
+      msg="${ACTIVE_AGENT}/${channel}: registry.messaging.plan.disabledChannels expected ${expected} ${context}"
       fail_msg "$msg"
     fi
   done
@@ -333,15 +378,30 @@ if (!fs.existsSync(registryPath)) fail("registry file not found: " + registryPat
 const registry = JSON.parse(fs.readFileSync(registryPath, "utf8"));
 const entry = registry.sandboxes?.[sandboxName];
 if (!entry) fail("sandbox " + sandboxName + " missing from registry");
-const config = entry.messagingChannelConfig;
-if (!config || typeof config !== "object" || Array.isArray(config)) {
-  fail("messagingChannelConfig missing or not an object");
-}
+const plan = entry.messaging?.plan;
+if (!plan || plan.schemaVersion !== 1) fail("messaging.plan missing or schemaVersion != 1");
+const channels = Array.isArray(plan.channels) ? plan.channels : [];
+const inputMap = {
+  TELEGRAM_ALLOWED_IDS: ["telegram", "allowedIds"],
+  TELEGRAM_REQUIRE_MENTION: ["telegram", "requireMention"],
+  DISCORD_SERVER_ID: ["discord", "serverId"],
+  DISCORD_USER_ID: ["discord", "userId"],
+  DISCORD_REQUIRE_MENTION: ["discord", "requireMention"],
+  SLACK_ALLOWED_USERS: ["slack", "allowedUsers"],
+  WECHAT_ALLOWED_IDS: ["wechat", "allowedIds"],
+};
 for (let i = 0; i < pairs.length; i += 2) {
   const key = pairs[i];
   const expected = pairs[i + 1];
-  if (config[key] !== expected) {
-    fail(key + " expected " + expected + ", got " + JSON.stringify(config[key]));
+  const mapping = inputMap[key];
+  if (!mapping) fail("no plan input mapping for " + key);
+  const [channelId, inputId] = mapping;
+  const channel = channels.find((item) => item?.channelId === channelId);
+  if (!channel) fail(channelId + " missing from messaging.plan.channels");
+  const inputs = Array.isArray(channel.inputs) ? channel.inputs : [];
+  const actual = inputs.find((input) => input?.inputId === inputId)?.value;
+  if (actual !== expected) {
+    fail(key + " expected " + expected + ", got " + JSON.stringify(actual));
   }
 }
 ' "$REGISTRY" "$ACTIVE_SANDBOX" \
@@ -352,10 +412,10 @@ for (let i = 0; i < pairs.length; i += 2) {
     DISCORD_REQUIRE_MENTION "$DISCORD_REQUIRE_MENTION" \
     SLACK_ALLOWED_USERS "$SLACK_ALLOWED_USERS" \
     WECHAT_ALLOWED_IDS "$WECHAT_ALLOWED_IDS" 2>&1)"; then
-    msg="${ACTIVE_AGENT}: host registry messagingChannelConfig persists channel config ${context}"
+    msg="${ACTIVE_AGENT}: host registry messaging.plan persists channel config ${context}"
     pass_msg "$msg"
   else
-    msg="${ACTIVE_AGENT}: host registry messagingChannelConfig missing channel config ${context}: ${output}"
+    msg="${ACTIVE_AGENT}: host registry messaging.plan missing channel config ${context}: ${output}"
     fail_msg "$msg"
   fi
 }
@@ -605,7 +665,7 @@ ensure_tokenless_channels_enabled() {
   local added=0
   local channel log rc msg
   for channel in "${TOKENLESS_CHANNELS[@]}"; do
-    if registry_array_contains messagingChannels "$channel"; then
+    if registry_plan_channel_contains "$channel"; then
       msg="${ACTIVE_AGENT}/${channel}: tokenless channel already registered"
       pass_msg "$msg"
       continue
@@ -806,8 +866,12 @@ fi
 
 refresh_path
 
-run_agent_scenario "openclaw" "$OPENCLAW_SANDBOX_NAME"
-destroy_completed_sandbox "$OPENCLAW_SANDBOX_NAME"
-run_agent_scenario "hermes" "$HERMES_SANDBOX_NAME"
+for index in "${!SELECTED_AGENT_SCENARIOS[@]}"; do
+  scenario="${SELECTED_AGENT_SCENARIOS[$index]}"
+  run_agent_scenario "${scenario%%:*}" "${scenario#*:}"
+  if [ "$index" -lt "$((${#SELECTED_AGENT_SCENARIOS[@]} - 1))" ]; then
+    destroy_completed_sandbox "${scenario#*:}"
+  fi
+done
 
 print_summary
