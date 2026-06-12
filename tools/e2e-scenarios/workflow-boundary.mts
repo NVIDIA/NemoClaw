@@ -2126,6 +2126,7 @@ export function validateE2eVitestScenariosWorkflowBoundary(
     "openclaw-tui-chat-correlation",
   );
   validateFreeStandingJobSelector(errors, jobs, "gateway-guard-recovery");
+  validateFreeStandingJobSelector(errors, jobs, "gateway-health-honest-vitest", "gateway-health-honest");
   validateFreeStandingJobSelector(
     errors,
     jobs,
