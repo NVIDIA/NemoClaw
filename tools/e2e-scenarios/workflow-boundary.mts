@@ -26,6 +26,7 @@ const FREE_STANDING_SCENARIO_JOBS = new Map([
   ["hermes-e2e", "hermes-e2e-vitest"],
   ["hermes-root-entrypoint-smoke", "hermes-root-entrypoint-smoke-vitest"],
   ["network-policy", "network-policy-vitest"],
+  ["shields-config", "shields-config-vitest"],
   ["rebuild-openclaw", "rebuild-openclaw-vitest"],
   ["token-rotation", "token-rotation-vitest"],
   ["openclaw-tui-chat-correlation", "openclaw-tui-chat-correlation-vitest"],
@@ -289,6 +290,7 @@ function validateJobsSelector(errors: string[], jobs: WorkflowRecord): void {
   requireRunContains(errors, validate, "hermes-e2e-vitest");
   requireRunContains(errors, validate, "hermes-root-entrypoint-smoke-vitest");
   requireRunContains(errors, validate, "network-policy-vitest");
+  requireRunContains(errors, validate, "shields-config-vitest");
   requireRunContains(errors, validate, "rebuild-openclaw-vitest");
   requireRunContains(errors, validate, "token-rotation-vitest");
   requireRunContains(errors, validate, "openclaw-tui-chat-correlation-vitest");
@@ -514,6 +516,98 @@ function validateNetworkPolicyVitestJob(errors: string[], jobs: WorkflowRecord):
   }
 }
 
+
+function validateShieldsConfigVitestJob(errors: string[], jobs: WorkflowRecord): void {
+  const jobName = "shields-config-vitest";
+  const job = asRecord(jobs[jobName]);
+  if (Object.keys(job).length === 0) {
+    errors.push("workflow missing shields-config-vitest job");
+    return;
+  }
+
+  if (job["runs-on"] !== "ubuntu-latest") {
+    errors.push("shields-config-vitest job must run on ubuntu-latest");
+  }
+  validateFreeStandingJobSelector(errors, jobs, jobName, "shields-config");
+  if (job["timeout-minutes"] !== 45) {
+    errors.push("shields-config-vitest job must keep the legacy 45 minute timeout");
+  }
+  const jobEnv = asRecord(job.env);
+  if (jobEnv.NEMOCLAW_RUN_E2E_SCENARIOS !== "1") {
+    errors.push("shields-config-vitest job must set NEMOCLAW_RUN_E2E_SCENARIOS=1");
+  }
+  if (jobEnv.E2E_ARTIFACT_DIR !== "${{ github.workspace }}/e2e-artifacts/vitest/shields-config") {
+    errors.push("shields-config-vitest job must write artifacts under e2e-artifacts/vitest/shields-config");
+  }
+  if (jobEnv.OPENSHELL_GATEWAY !== "nemoclaw") {
+    errors.push("shields-config-vitest job must force OPENSHELL_GATEWAY=nemoclaw");
+  }
+  requireEnvDoesNotExposeSecret(errors, "shields-config-vitest job", jobEnv, "NVIDIA_API_KEY");
+
+  const steps = asSteps(job.steps);
+  requireNoDispatchInputInterpolation(errors, steps);
+  for (const step of steps) {
+    if (step.name !== "Run shields-config live test") {
+      requireEnvDoesNotExposeSecret(
+        errors,
+        `shields-config-vitest step '${step.name ?? step.uses ?? "<unnamed>"}'`,
+        asRecord(step.env),
+        "NVIDIA_API_KEY",
+      );
+    }
+  }
+
+  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
+  if (!checkout) errors.push("shields-config-vitest job missing checkout step");
+  requireFullShaAction(errors, checkout, "shields-config-vitest checkout");
+  if (asRecord(checkout?.with)["persist-credentials"] !== false) {
+    errors.push("shields-config-vitest checkout step must set persist-credentials=false");
+  }
+
+  const dockerHubAuth = requireJobStep(errors, jobName, steps, "Authenticate to Docker Hub");
+  const dockerHubEnv = asRecord(dockerHubAuth?.env);
+  if (dockerHubEnv.DOCKERHUB_USERNAME !== "${{ secrets.DOCKERHUB_USERNAME }}") {
+    errors.push("shields-config-vitest Docker Hub auth must receive DOCKERHUB_USERNAME from secrets");
+  }
+  if (dockerHubEnv.DOCKERHUB_TOKEN !== "${{ secrets.DOCKERHUB_TOKEN }}") {
+    errors.push("shields-config-vitest Docker Hub auth must receive DOCKERHUB_TOKEN from secrets");
+  }
+  requireRunContains(errors, dockerHubAuth, "docker login docker.io");
+
+  const setupNode = namedStep(steps, "Set up Node");
+  if (!setupNode) errors.push("shields-config-vitest job missing step: Set up Node");
+  requireFullShaAction(errors, setupNode, "shields-config-vitest setup-node");
+
+  const installRootDependencies = requireJobStep(errors, jobName, steps, "Install root dependencies");
+  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
+
+  const runVitest = requireJobStep(errors, jobName, steps, "Run shields-config live test");
+  const runVitestEnv = asRecord(runVitest?.env);
+  if (runVitestEnv.NVIDIA_API_KEY !== "${{ secrets.NVIDIA_API_KEY }}") {
+    errors.push("shields-config-vitest step must receive NVIDIA_API_KEY from secrets");
+  }
+  requireRunContains(errors, runVitest, "npx vitest run --project e2e-scenarios-live");
+  requireRunContains(errors, runVitest, "test/e2e-scenario/live/shields-config.test.ts");
+
+  const upload = requireJobStep(errors, jobName, steps, "Upload shields-config artifacts");
+  requireFullShaAction(errors, upload, "shields-config-vitest upload-artifact");
+  const uploadWith = asRecord(upload?.with);
+  if (uploadWith.name !== "e2e-vitest-scenarios-shields-config") {
+    errors.push("shields-config-vitest artifact upload name must be stable");
+  }
+  const uploadPath = stringValue(uploadWith.path);
+  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/vitest/shields-config/");
+  requireUploadPathContains(errors, uploadPath, "/tmp/nemoclaw-e2e-shields-install.log");
+  if (uploadWith["include-hidden-files"] !== false) {
+    errors.push("shields-config-vitest artifact upload must set include-hidden-files: false");
+  }
+  if (uploadWith["if-no-files-found"] !== "ignore") {
+    errors.push("shields-config-vitest artifact upload must ignore missing fixture artifacts");
+  }
+  if (uploadWith["retention-days"] !== 14) {
+    errors.push("shields-config-vitest artifact upload retention-days must be 14");
+  }
+}
 
 function validateRebuildOpenClawVitestJob(errors: string[], jobs: WorkflowRecord): void {
   const jobName = "rebuild-openclaw-vitest";
@@ -1527,6 +1621,8 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   requireRunContains(errors, generate, "hermes-root-entrypoint-smoke-vitest");
   requireRunContains(errors, generate, "hermes-root-entrypoint-smoke");
   requireRunContains(errors, generate, "network-policy-vitest");
+  requireRunContains(errors, generate, "shields-config-vitest");
+  requireRunContains(errors, generate, "shields-config");
   requireRunContains(errors, generate, "rebuild-openclaw-vitest");
   requireRunContains(errors, generate, "token-rotation-vitest");
   requireRunContains(errors, generate, "model-router-provider-routed-inference-vitest");
@@ -1690,6 +1786,7 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   validateHermesE2EVitestJob(errors, jobs);
   validateHermesRootEntrypointSmokeVitestJob(errors, jobs);
   validateNetworkPolicyVitestJob(errors, jobs);
+  validateShieldsConfigVitestJob(errors, jobs);
   validateRebuildOpenClawVitestJob(errors, jobs);
   validateTokenRotationVitestJob(errors, jobs);
   validateFreeStandingJobSelector(
@@ -1724,6 +1821,7 @@ export function validateE2eVitestScenariosWorkflowBoundary(
       "hermes-e2e-vitest",
       "hermes-root-entrypoint-smoke-vitest",
       "network-policy-vitest",
+      "shields-config-vitest",
       "rebuild-openclaw-vitest",
       "token-rotation-vitest",
       "double-onboard-vitest",
