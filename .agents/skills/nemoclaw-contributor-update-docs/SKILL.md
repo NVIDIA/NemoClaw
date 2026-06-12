@@ -36,6 +36,34 @@ Ignore comment lines (starting with `#`) and inline comments (everything after `
 
 Keep the loaded skip list in memory for use throughout the skill execution and the whole documentation process.
 
+## Step 0.5: Find Release Announcement Notes
+
+When the user asks for release-prep or post-release docs for a specific version `n` (for example `0.0.63`), find the NemoClaw GitHub discussion announcement for that release before drafting release notes.
+Use the announcement as source context alongside the commit scan, especially for release themes, PR grouping, contributor thanks, and maintainer wording.
+
+Search recent discussions and select the announcement whose title or body references `v<n>` or `NemoClaw v<n>`:
+
+```bash
+gh api graphql -f owner=NVIDIA -f name=NemoClaw -f query='
+query($owner: String!, $name: String!) {
+  repository(owner: $owner, name: $name) {
+    discussions(first: 50, orderBy: {field: CREATED_AT, direction: DESC}) {
+      nodes {
+        number
+        title
+        url
+        body
+        createdAt
+        category { name }
+      }
+    }
+  }
+}'
+```
+
+Prefer discussions in the `Announcements` category. If the discussion body is unavailable through `gh api`, use the GitHub discussion URL supplied by the user or fetch the discussion page content through the available tools.
+If no matching discussion exists, continue from the commit scan and report the missing announcement in the final summary.
+
 ## Step 1: Identify Relevant Commits
 
 Determine the commit range. The user may provide one explicitly (e.g., "since v0.1.0" or "last 30 commits"). If not, default to commits since the head of the main branch.
@@ -174,7 +202,7 @@ Skip this step when the user only asked for ordinary doc catch-up and no release
 
 If the user invoked this skill for release prep, finish the release-specific doc work before verification:
 
-1. Determine the release label from the release version requested by the user. Release labels use `vX.Y.Z` format. For example, release `0.0.37` uses label `v0.0.37`. If the user did not provide a release version, ask for it before opening the release-prep PR.
+1. Determine the documented release version `n` from the user's request. For post-release documentation refreshes, label the PR with the next patch release label, not the documented release label. Release labels use `vX.Y.Z` format. For example, a docs refresh for release `0.0.63` uses label `v0.0.64`. Increment only the patch component; if the version is nonstandard or pre-release, ask before choosing a label. If the user did not provide a release version, ask for it before opening the release-prep PR.
 2. Refresh the NemoClaw user skills:
 
    ```bash
@@ -208,8 +236,8 @@ Commit changes and open a pull request with a concise summary of the doc updates
 - #<doc-impacting-PR-number> -> `docs/path.mdx`: Description of the doc change reflecting the source code changes in the PR.
 ```
 
-Apply the `area: docs`, `area: skills`, and corresponding release labels so reviewers can identify doc-only changes for the target release and generated skill updates.
-When creating the PR with `gh pr create`, pass all labels, for example `--label "area: docs" --label "area: skills" --label v0.0.37`.
+Apply the `area: docs`, `area: skills`, and next-patch release label so reviewers can identify doc-only changes for the next train and generated skill updates.
+When creating the PR with `gh pr create`, pass all labels, for example a post-release docs refresh for `0.0.63` uses `--label "area: docs" --label "area: skills" --label v0.0.64`.
 If the release label does not exist, report that instead of substituting another label.
 
 ## Tips
@@ -228,15 +256,17 @@ User says: "Catch up the docs for everything merged since v0.1.0."
 2. Filter to `feat`, `fix`, `refactor`, `perf` commits touching user-facing code.
 3. Map each to a doc page.
 4. Read the commit diffs and current doc pages.
-5. Draft doc updates reflecting the source code changes in the commits following the style guide.
-6. **Release prep only:** Determine the release label from the user-requested release version.
-7. **Release prep only:** Run `python3 scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user --doc-platform fern-mdx`. Do not update root `skills/`.
-8. Present the summary.
-9. Build with `npm run docs` to verify.
-10. **Release prep only:** Commit changes and open a pull request with the `area: docs`, `area: skills`, and corresponding `vX.Y.Z` release labels. Include a concise summary of the doc updates and a source summary that links each identified merged PR to its matching doc page. Include the PR number, affected doc page, links, and description of the doc change in this shape:
+5. For release-specific docs, find the matching GitHub discussion announcement and use it as source context.
+6. Draft doc updates reflecting the source code changes in the commits following the style guide.
+7. **Release prep only:** Determine the next-patch release label from the user-requested documented release version.
+   For a post-release docs refresh for `0.0.63`, use label `v0.0.64`.
+8. **Release prep only:** Run `python3 scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user --doc-platform fern-mdx`. Do not update root `skills/`.
+9. Present the summary.
+10. Build with `npm run docs` to verify.
+11. **Release prep only:** Commit changes and open a pull request with the `area: docs`, `area: skills`, and next-patch release label. Include a concise summary of the doc updates and a source summary that links each identified merged PR to its matching doc page. Include the PR number, affected doc page, links, and description of the doc change in this shape:
 
    ```markdown
    - #<doc-impacting-PR-number> -> `docs/path.mdx`: Description of the doc change reflecting the source code changes in the PR.
    ```
 
-   If the release label does not exist, report that the PR was created without the release label or that PR creation failed because the label was missing.
+   If the next-patch release label does not exist, report that the PR was created without the release label or that PR creation failed because the label was missing.
