@@ -648,17 +648,44 @@ function validateShieldsConfigVitestJob(errors: string[], jobs: WorkflowRecord):
   if (jobEnv.OPENSHELL_GATEWAY !== "nemoclaw") {
     errors.push("shields-config-vitest job must force OPENSHELL_GATEWAY=nemoclaw");
   }
+  if (jobEnv.NEMOCLAW_NON_INTERACTIVE !== "1") {
+    errors.push("shields-config-vitest job must set NEMOCLAW_NON_INTERACTIVE=1");
+  }
+  if (jobEnv.NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE !== "1") {
+    errors.push("shields-config-vitest job must set NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1");
+  }
+  if (jobEnv.NEMOCLAW_SANDBOX_NAME !== "e2e-shields") {
+    errors.push("shields-config-vitest job must set NEMOCLAW_SANDBOX_NAME=e2e-shields");
+  }
   requireEnvDoesNotExposeSecret(errors, "shields-config-vitest job", jobEnv, "NVIDIA_API_KEY");
+  requireEnvDoesNotExposeSecret(errors, "shields-config-vitest job", jobEnv, "DOCKERHUB_USERNAME");
+  requireEnvDoesNotExposeSecret(errors, "shields-config-vitest job", jobEnv, "DOCKERHUB_TOKEN");
 
   const steps = asSteps(job.steps);
   requireNoDispatchInputInterpolation(errors, steps);
   for (const step of steps) {
+    const stepName = step.name ?? step.uses ?? "<unnamed>";
+    const stepEnv = asRecord(step.env);
     if (step.name !== "Run shields-config live test") {
       requireEnvDoesNotExposeSecret(
         errors,
-        `shields-config-vitest step '${step.name ?? step.uses ?? "<unnamed>"}'`,
-        asRecord(step.env),
+        `shields-config-vitest step '${stepName}'`,
+        stepEnv,
         "NVIDIA_API_KEY",
+      );
+    }
+    if (step.name !== "Authenticate to Docker Hub") {
+      requireEnvDoesNotExposeSecret(
+        errors,
+        `shields-config-vitest step '${stepName}'`,
+        stepEnv,
+        "DOCKERHUB_USERNAME",
+      );
+      requireEnvDoesNotExposeSecret(
+        errors,
+        `shields-config-vitest step '${stepName}'`,
+        stepEnv,
+        "DOCKERHUB_TOKEN",
       );
     }
   }
@@ -1728,6 +1755,8 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   requireRunContains(errors, generate, "allowed_jobs=");
   requireRunContains(errors, generate, "Use either scenarios or jobs, not both");
   requireRunContains(errors, generate, "Unknown free-standing Vitest job");
+  requireRunContains(errors, generate, "skill-agent-vitest");
+  requireRunContains(errors, generate, "skill-agent");
   requireRunContains(errors, generate, "inference-routing-vitest");
   requireRunContains(errors, generate, "inference-routing");
   requireRunContains(errors, generate, "runtime-overrides-vitest");
