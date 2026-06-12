@@ -1186,20 +1186,29 @@ function validateHermesRootEntrypointSmokeVitestJob(
       stepEnv,
       "NVIDIA_API_KEY",
     );
-    if (step.name !== "Authenticate to Docker Hub") {
-      requireEnvDoesNotExposeSecret(
-        errors,
-        `hermes-root-entrypoint-smoke-vitest step '${stepName}'`,
-        stepEnv,
-        "DOCKERHUB_USERNAME",
-      );
-      requireEnvDoesNotExposeSecret(
-        errors,
-        `hermes-root-entrypoint-smoke-vitest step '${stepName}'`,
-        stepEnv,
-        "DOCKERHUB_TOKEN",
-      );
-    }
+    requireEnvDoesNotExposeSecret(
+      errors,
+      `hermes-root-entrypoint-smoke-vitest step '${stepName}'`,
+      stepEnv,
+      "DOCKERHUB_USERNAME",
+    );
+    requireEnvDoesNotExposeSecret(
+      errors,
+      `hermes-root-entrypoint-smoke-vitest step '${stepName}'`,
+      stepEnv,
+      "DOCKERHUB_TOKEN",
+    );
+    requireNoDockerHubAuthInRun(
+      errors,
+      `hermes-root-entrypoint-smoke-vitest step '${stepName}'`,
+      stringValue(step.run),
+    );
+  }
+
+  if (namedStep(steps, "Authenticate to Docker Hub")) {
+    errors.push(
+      "hermes-root-entrypoint-smoke-vitest must not authenticate to Docker Hub before branch-controlled test code runs",
+    );
   }
 
   const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
@@ -1209,20 +1218,6 @@ function validateHermesRootEntrypointSmokeVitestJob(
     errors.push("hermes-root-entrypoint-smoke-vitest checkout step must set persist-credentials=false");
   }
 
-  const dockerHubAuth = requireJobStep(errors, jobName, steps, "Authenticate to Docker Hub");
-  const dockerHubEnv = asRecord(dockerHubAuth?.env);
-  if (dockerHubEnv.DOCKERHUB_USERNAME !== "${{ secrets.DOCKERHUB_USERNAME }}") {
-    errors.push(
-      "hermes-root-entrypoint-smoke-vitest Docker Hub auth must receive DOCKERHUB_USERNAME from secrets",
-    );
-  }
-  if (dockerHubEnv.DOCKERHUB_TOKEN !== "${{ secrets.DOCKERHUB_TOKEN }}") {
-    errors.push(
-      "hermes-root-entrypoint-smoke-vitest Docker Hub auth must receive DOCKERHUB_TOKEN from secrets",
-    );
-  }
-  requireRunContains(errors, dockerHubAuth, "docker login docker.io");
-  requireRunContains(errors, dockerHubAuth, "continuing with anonymous pulls");
 
   const setupNode = namedStep(steps, "Set up Node");
   if (!setupNode) errors.push("hermes-root-entrypoint-smoke-vitest job missing step: Set up Node");
