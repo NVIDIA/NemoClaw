@@ -10,11 +10,11 @@ import { resultText } from "../fixtures/clients/index.ts";
 import { sandboxAccessEnv, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { shouldRunLiveE2EScenarios } from "../fixtures/live-project-gate.ts";
+import type { NemoClawInstance } from "../fixtures/phases/onboarding.ts";
 import {
   restoreRegistryAndSession,
   snapshotRegistryAndSession,
 } from "../fixtures/phases/state-validation.ts";
-import type { NemoClawInstance } from "../fixtures/phases/onboarding.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
 // Direct Vitest replacement coverage for test/e2e/test-state-backup-restore.sh.
@@ -334,10 +334,24 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       attempts: DESTROY_ATTEMPTS,
     });
 
-    const restoredInstance: NemoClawInstance = await onboard.from(ready, {
-      sandboxName: SANDBOX_NAME,
-      timeoutMs: ONBOARD_TIMEOUT_MS,
-    });
+    let restoredInstance: NemoClawInstance;
+    try {
+      restoredInstance = await onboard.from(ready, {
+        sandboxName: SANDBOX_NAME,
+        timeoutMs: ONBOARD_TIMEOUT_MS,
+      });
+    } catch (error) {
+      const text = errorText(error);
+      if (isNvidiaEndpointValidationUnavailable(text)) {
+        await artifacts.writeJson("scenario-result.json", {
+          id: "state-backup-restore",
+          status: "skipped",
+          reason: "external-provider-validation-unavailable-during-reonboard",
+        });
+        skip("NVIDIA endpoint validation was unavailable/rate-limited during re-onboard");
+      }
+      throw error;
+    }
     await artifacts.writeJson("phase-4-reonboard-summary.json", {
       sandboxName: restoredInstance.sandboxName,
     });
