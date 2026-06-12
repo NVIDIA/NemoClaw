@@ -104,13 +104,18 @@ function expectExitZero(result: CommandText & { exitCode: number | null }, label
 }
 
 function isMissingSandboxCleanupOutput(text: string): boolean {
-  return /Sandbox '.+' does not exist|Run 'nemoclaw onboard' to create one|sandbox .* not found|no such sandbox/i.test(
+  return /Sandbox '.+' does not exist|Run 'nemoclaw onboard' to create one|sandbox (?:.* )?not found|no such sandbox/i.test(
     text,
   );
 }
 
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+function sandboxShellArgs(script: string): string[] {
+  const encoded = Buffer.from(script, "utf8").toString("base64");
+  return ["sh", "-lc", `printf %s ${shellQuote(encoded)} | base64 -d | sh`];
 }
 
 function assertAgent(value: string): asserts value is AgentName {
@@ -835,47 +840,36 @@ function parseOpenClawAgentText(raw: string): string {
 }
 
 async function assertOpenClawConfig(sandbox: SandboxClient, home: string): Promise<void> {
-  const script = trustedSandboxShellScript(`
-python3 - ${shellQuote(BEDROCK_MODEL)} <<'PY'
-import json
-import sys
-
-model = sys.argv[1]
-cfg = json.load(open("/sandbox/.openclaw/openclaw.json", encoding="utf-8"))
-errors = []
-providers = cfg.get("models", {}).get("providers", {})
-inference = providers.get("inference") if isinstance(providers, dict) else None
-if sorted(providers.keys()) != ["inference"]:
-    errors.append("provider keys are %r" % sorted(providers.keys()))
-if not isinstance(inference, dict):
-    errors.append("models.providers.inference is missing")
-else:
-    if inference.get("baseUrl") != "https://inference.local/v1":
-        errors.append("inference baseUrl is %r" % inference.get("baseUrl"))
-    if inference.get("apiKey") != "unused":
-        errors.append("inference apiKey is not the non-secret placeholder")
-    if inference.get("api") != "openai-completions":
-        errors.append("inference api is %r" % inference.get("api"))
-primary = cfg.get("agents", {}).get("defaults", {}).get("model", {}).get("primary")
-if primary != "inference/" + model:
-    errors.append("primary model is %r" % primary)
-print(json.dumps({
-    "provider_keys": sorted(providers.keys()) if isinstance(providers, dict) else [],
-    "inference_base": inference.get("baseUrl") if isinstance(inference, dict) else None,
-    "inference_api_key": inference.get("apiKey") if isinstance(inference, dict) else None,
-    "primary": primary,
-    "errors": errors,
-}))
-sys.exit(1 if errors else 0)
-PY
-`);
-  const output = await sandbox.execShell(SANDBOX_NAME, script, {
-    artifactName: "openclaw-config-summary-bedrock-runtime",
-    env: testEnv(home),
-    timeoutMs: SANDBOX_TIMEOUT_MS,
-  });
+  const output = await sandbox.exec(
+    SANDBOX_NAME,
+    ["python3", "-c", OPENCLAW_CONFIG_PROBE, BEDROCK_MODEL],
+    {
+      artifactName: "openclaw-config-summary-bedrock-runtime",
+      env: testEnv(home),
+      timeoutMs: SANDBOX_TIMEOUT_MS,
+    },
+  );
   expectExitZero(output, "OpenClaw config uses only managed inference.local provider");
 }
+
+const OPENCLAW_CONFIG_PROBE = [
+  "import json,sys",
+  "model=sys.argv[1]",
+  'cfg=json.load(open("/sandbox/.openclaw/openclaw.json", encoding="utf-8"))',
+  "errors=[]",
+  'providers=cfg.get("models",{}).get("providers",{})',
+  "provider_keys=sorted(providers.keys()) if isinstance(providers,dict) else []",
+  'inference=providers.get("inference") if isinstance(providers,dict) else None',
+  'errors.append("provider keys are %r" % provider_keys) if provider_keys != ["inference"] else None',
+  'errors.append("models.providers.inference is missing") if not isinstance(inference,dict) else None',
+  'errors.append("inference baseUrl is %r" % inference.get("baseUrl")) if isinstance(inference,dict) and inference.get("baseUrl") != "https://inference.local/v1" else None',
+  'errors.append("inference apiKey is not the non-secret placeholder") if isinstance(inference,dict) and inference.get("apiKey") != "unused" else None',
+  'errors.append("inference api is %r" % inference.get("api")) if isinstance(inference,dict) and inference.get("api") != "openai-completions" else None',
+  'primary=cfg.get("agents",{}).get("defaults",{}).get("model",{}).get("primary")',
+  'errors.append("primary model is %r" % primary) if primary != "inference/" + model else None',
+  'print(json.dumps({"provider_keys":provider_keys,"inference_base":inference.get("baseUrl") if isinstance(inference,dict) else None,"inference_api_key":inference.get("apiKey") if isinstance(inference,dict) else None,"primary":primary,"errors":errors}))',
+  "sys.exit(1 if errors else 0)",
+].join("; ");
 
 async function assertHermesConfig(sandbox: SandboxClient, home: string): Promise<void> {
   const config = await sandbox.exec(SANDBOX_NAME, ["cat", "/sandbox/.hermes/config.yaml"], {
@@ -912,7 +906,7 @@ async function assertHermesConfig(sandbox: SandboxClient, home: string): Promise
     errors.push(`model.base_url=${String(model.base_url)}`);
   if (model.api_key === "<REDACTED>") {
     expectExitZero(
-      await sandbox.execShell(SANDBOX_NAME, hermesConfigApiKeyProbeScript(), {
+      await sandbox.exec(SANDBOX_NAME, ["python3", "-c", HERMES_CONFIG_API_KEY_PROBE], {
         artifactName: "hermes-config-api-key-probe-bedrock-runtime",
         env: testEnv(home),
         timeoutMs: SANDBOX_TIMEOUT_MS,
@@ -929,38 +923,18 @@ async function assertHermesConfig(sandbox: SandboxClient, home: string): Promise
   expect(errors).toEqual([]);
 }
 
-function hermesConfigApiKeyProbeScript(): ReturnType<typeof trustedSandboxShellScript> {
-  return trustedSandboxShellScript(`
-python3 - <<'PY'
-import re
-from pathlib import Path
-
-text = Path("/sandbox/.hermes/config.yaml").read_text(encoding="utf-8")
-model = {}
-in_model = False
-for line in text.splitlines():
-    if re.match(r"^model:\\s*$", line):
-        in_model = True
-        continue
-    if in_model and re.match(r"^[A-Za-z0-9_-]+:", line):
-        break
-    if not in_model:
-        continue
-    match = re.match(r"^\\s+([A-Za-z0-9_-]+):\\s*(.*?)\\s*$", line)
-    if match:
-        value = match.group(2).strip()
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\\"'":
-            value = value[1:-1]
-        model[match.group(1)] = value
-
-api_key = model.get("api_key")
-if not isinstance(api_key, str) or not api_key.startswith("sk-"):
-    print("model.api_key missing sk- placeholder")
-    raise SystemExit(1)
-print("OK")
-PY
-`);
-}
+const HERMES_CONFIG_API_KEY_PROBE = [
+  "import pathlib,re,sys",
+  'text=pathlib.Path("/sandbox/.hermes/config.yaml").read_text(encoding="utf-8")',
+  'section=re.search(r"(?ms)^model:\\s*\\n((?:[ \\t].*\\n)*)", text)',
+  'body=section.group(1) if section else ""',
+  'match=re.search(r"(?m)^[ \\t]+api_key:\\s*(.*?)\\s*$", body)',
+  'value=match.group(1).strip() if match else ""',
+  'value=value[1:-1] if len(value)>=2 and value[0]==value[-1] and value[0] in "\\"\'" else value',
+  'ok=value.startswith("sk-")',
+  'print("OK" if ok else "model.api_key missing sk- placeholder")',
+  "sys.exit(0 if ok else 1)",
+].join("; ");
 
 async function assertSandboxInference(sandbox: SandboxClient, home: string): Promise<void> {
   const payload = JSON.stringify({
@@ -1182,7 +1156,7 @@ async function assertNoBedrockLeaks(options: {
   ];
   const snapshot = await runRawCommand(
     "openshell",
-    ["sandbox", "exec", "-n", SANDBOX_NAME, "--", "sh", "-lc", SNAPSHOT_SCRIPT],
+    ["sandbox", "exec", "-n", SANDBOX_NAME, "--", ...sandboxShellArgs(SNAPSHOT_SCRIPT)],
     {
       artifactName: "sandbox-snapshot-bedrock-runtime",
       artifacts: options.artifacts,
