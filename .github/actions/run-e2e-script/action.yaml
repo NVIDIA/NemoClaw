@@ -65,7 +65,28 @@ runs:
           exit 1
         fi
 
-        bash "$E2E_SCRIPT"
+        setsid bash "$E2E_SCRIPT" &
+        script_pid="$!"
+
+        set +e
+        wait "$script_pid"
+        script_status="$?"
+        set -e
+
+        # The target-ref script may start background processes with access to
+        # job secrets. Reap its process group before trusted sanitization/upload.
+        if kill -0 -- "-$script_pid" 2>/dev/null; then
+          kill -TERM -- "-$script_pid" 2>/dev/null || true
+          for _ in 1 2 3 4 5; do
+            if ! kill -0 -- "-$script_pid" 2>/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          kill -KILL -- "-$script_pid" 2>/dev/null || true
+        fi
+
+        exit "$script_status"
 
     - name: Upload E2E artifacts on failure
       if: failure()

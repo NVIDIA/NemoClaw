@@ -342,7 +342,11 @@ describe("E2E reusable workflow contract", () => {
     expect(runStep?.env?.E2E_SCRIPT).toBe("${{ inputs.script }}");
     expect(runStep?.run).toContain('case "$E2E_SCRIPT" in');
     expect(runStep?.run).toContain("test/e2e/*.sh");
-    expect(runStep?.run).toContain('bash "$E2E_SCRIPT"');
+    expect(runStep?.run).toContain('setsid bash "$E2E_SCRIPT"');
+    expect(runStep?.run).toContain('wait "$script_pid"');
+    expect(runStep?.run).toContain('kill -TERM -- "-$script_pid"');
+    expect(runStep?.run).toContain('kill -KILL -- "-$script_pid"');
+    expect(runStep?.run).toContain('exit "$script_status"');
     expect(runStep?.run).not.toContain('bash "${{ inputs.script }}"');
   });
 
