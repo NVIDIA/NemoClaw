@@ -65,17 +65,17 @@ export function probeGatewayRunning(sandboxName?: string): boolean {
 }
 
 /**
- * Best-effort: switch the active OpenShell gateway to the one this sandbox is
- * registered on so downstream `sandbox list` / `sandbox get` queries target
- * the right gateway. Silent on failure — the subsequent list call surfaces a
- * clearer error if the gateway is genuinely unavailable.
+ * Switch the active OpenShell gateway to the one this sandbox is registered on
+ * so downstream unscoped `sandbox list` / `sandbox get` queries target the
+ * right gateway.
  */
-export function selectSandboxGatewayIfRegistered(sandboxName: string): void {
+export function selectSandboxGatewayIfRegistered(sandboxName: string): boolean {
   const entry = registry.getSandbox(sandboxName);
-  if (!entry) return;
+  if (!entry) return true;
   const target = resolveSandboxGatewayName(entry);
-  runOpenshell(["gateway", "select", target], {
+  const result = runOpenshell(["gateway", "select", target], {
     ignoreError: true,
     timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
   });
+  return result.status === 0;
 }

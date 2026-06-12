@@ -60,8 +60,12 @@ interface MakeEnvOptions {
   withSourceImage?: boolean;
   /** Put dst on a registered non-default gateway and hide it from src's gateway list. */
   destinationGatewayPort?: number;
+  /** When false, selecting the destination's persisted gateway fails. */
+  destinationGatewaySelectSucceeds?: boolean;
   /** When false, the destination gateway probe fails before --force can delete it. */
   destinationGatewayRunning?: boolean;
+  /** Let the currently-active source gateway also report a same-named destination. */
+  foreignActiveGatewayListsDestination?: boolean;
 }
 
 /**
@@ -153,12 +157,15 @@ function makeExistingDestEnv(
       `printf '%s\\n' "$*" >> ${JSON.stringify(osLog)}`,
       `ACTIVE_GATEWAY=${JSON.stringify(activeGateway)}`,
       'if [ "$1" = "gateway" ] && [ "$2" = "select" ]; then',
+      destinationGatewayName && opts.destinationGatewaySelectSucceeds === false
+        ? `  if [ "$3" = ${JSON.stringify(destinationGatewayName)} ]; then echo "select failed" >&2; exit 17; fi`
+        : "  :",
       '  printf "%s\\n" "$3" > "$ACTIVE_GATEWAY"',
       "  exit 0",
       "fi",
       'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
       destinationGatewayName
-        ? `  active="$(cat "$ACTIVE_GATEWAY" 2>/dev/null || printf '%s' nemoclaw)"; if [ "$active" = ${JSON.stringify(destinationGatewayName)} ]; then printf "NAME STATUS\\ndst Ready\\n"; else printf "NAME STATUS\\nsrc Ready\\n"; fi`
+        ? `  active="$(cat "$ACTIVE_GATEWAY" 2>/dev/null || printf '%s' nemoclaw)"; if [ "$active" = ${JSON.stringify(destinationGatewayName)} ]; then printf "NAME STATUS\\ndst Ready\\n"; else ${opts.foreignActiveGatewayListsDestination ? 'printf "NAME STATUS\\nsrc Ready\\ndst Ready\\n"' : 'printf "NAME STATUS\\nsrc Ready\\n"'}; fi`
         : '  printf "NAME STATUS\\nsrc Ready\\ndst Ready\\n"',
       "  exit 0",
       "fi",
@@ -281,6 +288,20 @@ describe("snapshot restore --to existing destination (#3756)", () => {
     expect(r.code).toBe(1);
     expect(r.out).toMatch(/Cannot verify destination sandbox 'dst'/);
     const log = fs.existsSync(osLog) ? fs.readFileSync(osLog, "utf-8") : "";
+    expect(log).not.toMatch(/sandbox delete dst/);
+  });
+
+  it("aborts before deleting when destination gateway select fails even if the active gateway lists dst", () => {
+    const { env, osLog } = makeExistingDestEnv("nemoclaw-snap-restore-cross-select-fails-", {
+      destinationGatewayPort: 8090,
+      destinationGatewaySelectSucceeds: false,
+      foreignActiveGatewayListsDestination: true,
+    });
+    const r = runCli(["src", "snapshot", "restore", "--to", "dst", "--force", "--yes"], env);
+    expect(r.code).toBe(1);
+    expect(r.out).toMatch(/Cannot verify destination sandbox 'dst'/);
+    const log = fs.existsSync(osLog) ? fs.readFileSync(osLog, "utf-8") : "";
+    expect(log).toMatch(/gateway select nemoclaw-8090/);
     expect(log).not.toMatch(/sandbox delete dst/);
   });
 

@@ -302,7 +302,7 @@ function deleteSandboxForRestore(name: string): void {
 }
 
 function listLiveSandboxesOnSandboxGateway(sandboxName: string): Set<string> | null {
-  selectSandboxGatewayIfRegistered(sandboxName);
+  if (!selectSandboxGatewayIfRegistered(sandboxName)) return null;
   if (!probeGatewayRunning(sandboxName)) return null;
   const isLive = captureOpenshell(["sandbox", "list"], { ignoreError: true });
   if (isLive.status !== 0) return null;
