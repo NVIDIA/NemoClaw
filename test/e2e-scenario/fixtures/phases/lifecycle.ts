@@ -84,9 +84,15 @@ function instanceName(instance: NemoClawInstance | string): string {
   return name;
 }
 
+function stripAnsi(text: string): string {
+  return text.replace(/\u001b\[[0-9;]*m/g, "");
+}
+
 function outputContainsReadySandbox(result: ShellProbeResult, sandboxName: string): boolean {
   const escaped = sandboxName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`${escaped}.*\\bReady\\b`, "i").test(`${result.stdout}\n${result.stderr}`);
+  return new RegExp(`${escaped}.*\\bReady\\b`, "i").test(
+    stripAnsi(`${result.stdout}\n${result.stderr}`),
+  );
 }
 
 export class LifecyclePhaseFixture {

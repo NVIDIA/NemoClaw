@@ -197,6 +197,25 @@ describe("LifecyclePhaseFixture.simulate post-reboot-recovery (rename-to-gpu-bac
   });
 });
 
+describe("LifecyclePhaseFixture rebuild helpers", () => {
+  it("accepts ANSI-colored Ready output when waiting after rebuild", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(shellResult(0, "NAME  PHASE\ne2e-x  \u001b[32mReady\u001b[39m\n"));
+    const cleanup = new FakeCleanup();
+
+    const result = await fixture(runner, cleanup).assertSandboxReadyAfterRebuild("e2e-x", {
+      attempts: 1,
+      delayMs: 0,
+    });
+
+    expect(result.stdout).toContain("Ready");
+    expect(runner.calls[0]).toMatchObject({
+      command: "openshell",
+      args: ["sandbox", "list"],
+    });
+  });
+});
+
 describe("LifecyclePhaseFixture profile dispatch", () => {
   it("rejects unknown lifecycle profiles", async () => {
     const runner = new FakeRunner();
