@@ -34,6 +34,7 @@ const sandboxDockerfilePatchFlow: typeof import("./onboard/sandbox-dockerfile-pa
 const sandboxMessagingPreflight: typeof import("./onboard/sandbox-messaging-preflight") = require("./onboard/sandbox-messaging-preflight");
 const sandboxCreatePlan: typeof import("./onboard/sandbox-create-plan") = require("./onboard/sandbox-create-plan");
 const sandboxCreateLaunch: typeof import("./onboard/sandbox-create-launch") = require("./onboard/sandbox-create-launch");
+const onboardEntryOptions: typeof import("./onboard/entry-options") = require("./onboard/entry-options");
 const {
   ensureOllamaLoopbackSystemdOverride,
 }: typeof import("./onboard/ollama-systemd") = require("./onboard/ollama-systemd");
@@ -4774,73 +4775,24 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     opts.controlUiPort ?? (process.env.NEMOCLAW_DASHBOARD_PORT != null ? DASHBOARD_PORT : null);
   onboardRuntimeBoundary.reset();
   delete process.env.OPENSHELL_GATEWAY;
-  const resume = opts.resume === true;
-  const fresh = opts.fresh === true;
-  if (resume && fresh) {
-    console.error("  --resume and --fresh cannot both be set.");
-    process.exit(1);
-  }
-  // In non-interactive mode also accept the env var so CI pipelines can set it.
-  // This is the explicitly requested value; on resume it may be absent and the
-  // session-recorded path is used instead (see below).
-  const requestedFromDockerfile =
-    opts.fromDockerfile ||
-    (isNonInteractive() ? process.env.NEMOCLAW_FROM_DOCKERFILE || null : null);
-  // Resolve the explicit sandbox name early so both validation and the
-  // --from guard work off the same source. --name always counts; the env
-  // var is used as the interactive prompt default via getSandboxPromptDefault,
-  // and also as the resolved name when we cannot prompt (non-interactive or
-  // missing-TTY runs such as CI scripts and piped stdin).
-  const stdinIsTty = Boolean(process.stdin && process.stdin.isTTY);
-  const stdoutIsTty = Boolean(process.stdout && process.stdout.isTTY);
-  const cannotPrompt = isNonInteractive() || !stdinIsTty || !stdoutIsTty;
-  let requestedSandboxName: string | null =
-    typeof opts.sandboxName === "string" && opts.sandboxName.length > 0 ? opts.sandboxName : null;
-  let requestedSandboxSource: "--name" | "NEMOCLAW_SANDBOX_NAME" | null = requestedSandboxName
-    ? "--name"
-    : null;
-  if (!requestedSandboxName && cannotPrompt) {
-    const envName = process.env.NEMOCLAW_SANDBOX_NAME;
-    if (typeof envName === "string" && envName.trim().length > 0) {
-      requestedSandboxName = envName.trim();
-      requestedSandboxSource = "NEMOCLAW_SANDBOX_NAME";
-    }
-  }
-  if (requestedSandboxName) {
-    try {
-      const validated = validateName(requestedSandboxName, "sandbox name");
-      if (RESERVED_SANDBOX_NAMES.has(validated)) {
-        console.error(`  Reserved name: '${validated}' is a ${cliDisplayName()} CLI command.`);
-        console.error(
-          `  Choose a different sandbox name (passed via ${requestedSandboxSource}) to avoid routing conflicts.`,
-        );
-        process.exit(1);
-      }
-      requestedSandboxName = validated;
-    } catch (error) {
-      console.error(`  ${error instanceof Error ? error.message : String(error)}`);
-      for (const line of getNameValidationGuidance("sandbox name", requestedSandboxName, {
-        includeAllowedFormat: false,
-      })) {
-        console.error(`  ${line}`);
-      }
-      process.exit(1);
-    }
-  }
-  // The downstream prompt path silently defaults to 'my-assistant' when no
-  // input arrives. With --from in play that would clobber the default
-  // sandbox, so refuse to proceed unless the caller has supplied a name
-  // out-of-band. Cover both --non-interactive and missing-TTY runs (CI
-  // scripts, piped stdin) — the issue's test plan asks for both. The resume
-  // case is handled separately after session load (see below) because its
-  // recorded sandboxName may already satisfy the requirement.
-  if (cannotPrompt && !resume && requestedFromDockerfile && !requestedSandboxName) {
-    console.error(
-      "  --from <Dockerfile> requires --name <sandbox> (or NEMOCLAW_SANDBOX_NAME) when running without a TTY or with --non-interactive.",
+  const { resume, fresh, requestedFromDockerfile, requestedSandboxName, cannotPrompt } =
+    onboardEntryOptions.resolveOnboardEntryOptions(
+      {
+        opts,
+        env: process.env,
+        stdinIsTty: Boolean(process.stdin && process.stdin.isTTY),
+        stdoutIsTty: Boolean(process.stdout && process.stdout.isTTY),
+      },
+      {
+        isNonInteractive,
+        validateName,
+        reservedSandboxNames: RESERVED_SANDBOX_NAMES,
+        cliDisplayName,
+        getNameValidationGuidance,
+        error: (message) => console.error(message),
+        exitProcess: (code) => process.exit(code),
+      },
     );
-    console.error("  A sandbox name cannot be prompted for in this context.");
-    process.exit(1);
-  }
   // Fail fast for NEMOCLAW_POLICY_TIER only where selectPolicyTier reads it.
   if (isNonInteractive()) policyTierEnv.validatePolicyTierEnvEarly();
   const noticeAccepted = await ensureUsageNoticeConsent({
@@ -5010,9 +4962,9 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       // createSandbox succeeds). Falling through would silently default to
       // the agent's `my-assistant` instead of the user's original --name.
       // Use `cannotPrompt` so non-TTY runs without explicit --non-interactive
-      // are also caught, and `requestedSandboxName` (already env-var-resolved
-      // and trimmed above, lines 8302-8308) so whitespace-only env values
-      // can't satisfy the guard.
+      // are also caught, and `requestedSandboxName` from
+      // resolveOnboardEntryOptions so whitespace-only env values can't satisfy
+      // the guard.
       const sandboxStepCompleted = session?.steps?.sandbox?.status === "complete";
       const recoveredSandboxName =
         requestedSandboxName || (sandboxStepCompleted ? session?.sandboxName || null : null);
