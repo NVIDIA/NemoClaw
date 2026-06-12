@@ -959,8 +959,8 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           TELEGRAM_BOT_TOKEN_A: "test-fake-token-A-rotation-e2e"
           TELEGRAM_BOT_TOKEN_B: "test-fake-token-B-rotation-e2e"
-          DISCORD_BOT_TOKEN_A: "test-fake-discord-A-rotation-e2e"
-          DISCORD_BOT_TOKEN_B: "test-fake-discord-B-rotation-e2e"
+          DISCORD_BOT_TOKEN_A: "discord-a"
+          DISCORD_BOT_TOKEN_B: "discord-b"
           SLACK_BOT_TOKEN_A: "xoxb-fake-A-rotation-e2e"
           SLACK_BOT_TOKEN_B: "xoxb-fake-B-rotation-e2e"
           SLACK_APP_TOKEN_A: "xapp-fake-A-rotation-e2e"

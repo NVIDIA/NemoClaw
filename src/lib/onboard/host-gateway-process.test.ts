@@ -87,6 +87,42 @@ describe("stopHostGatewayProcesses", () => {
     expect(log).toHaveBeenCalledWith("Stopped host openshell-gateway process 9999887");
   });
 
+  it("polls for host gateway exit before escalating to SIGKILL", () => {
+    const pid = 9999333;
+    const signals: Array<NodeJS.Signals | number | undefined> = [];
+    let pidChecks = 0;
+    const responses = new Map<string, RunResult | ((args: string[]) => RunResult)>([
+      ["pgrep -f ^(/[^ ]*/)?openshell-gateway( |$)", ok(`${pid}\n`)],
+      [`ps -p ${pid} -o user=`, ok("tester\n")],
+      [`ps -p ${pid} -o args=`, ok("/home/test/.local/bin/openshell-gateway --port 8080\n")],
+      [
+        `ps -p ${pid} -o pid=`,
+        () => {
+          pidChecks += 1;
+          return pidChecks >= 3 ? notFound() : ok(`${pid}\n`);
+        },
+      ],
+    ]);
+    const { run } = makeRun(responses);
+    const kill = vi.fn<HostGatewayProcessDeps["kill"]>((_pid, signal) => {
+      signals.push(signal);
+      return true;
+    });
+
+    const result = stopHostGatewayProcesses(
+      { run, kill, env: { USER: "tester" }, commandExists: () => true, log: vi.fn() },
+      {
+        pollIntervalMs: 0,
+        stateDir: fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-host-gateway-")),
+        termWaitMs: 20,
+      },
+    );
+
+    expect(result.stopped).toEqual([pid]);
+    expect(signals).toEqual(["SIGTERM"]);
+    expect(pidChecks).toBe(3);
+  });
+
   it("accepts the docker-compat parent PID whose argv0 is docker", () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-host-gateway-"));
     const pidFile = path.join(stateDir, "openshell-gateway.pid");
