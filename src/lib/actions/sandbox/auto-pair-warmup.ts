@@ -126,14 +126,20 @@ exit 0
  * must never throw — onboard finalization must not be blocked.
  */
 export function runSandboxScopeWarmupRun(sandboxName: string): void {
-  // Lazy require: `adapters/openshell/runtime` pulls in `runner`, whose
+  // Lazy require: `adapters/openshell/resolve` pulls in `runner`, whose
   // load-time `require("./platform")` cannot be resolved by the Vitest TS
   // loader. Importing it here keeps this module unit-testable in-process.
-  const { getOpenshellBinary } =
-    require("../../adapters/openshell/runtime") as typeof import("../../adapters/openshell/runtime");
+  // Use `resolveOpenshell` (returns null) rather than `getOpenshellBinary`,
+  // which `process.exit(1)`s when the CLI is missing — that fail-fast escapes
+  // this try/catch and would turn the best-effort warm-up into a hard onboard
+  // exit. A missing OpenShell here is a no-op instead.
+  const { resolveOpenshell } =
+    require("../../adapters/openshell/resolve") as typeof import("../../adapters/openshell/resolve");
   try {
+    const openshellBinary = resolveOpenshell();
+    if (!openshellBinary) return;
     spawnSync(
-      getOpenshellBinary(),
+      openshellBinary,
       [
         "sandbox",
         "exec",
