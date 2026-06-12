@@ -127,6 +127,12 @@ describe("buildRecoveryScript", () => {
       internalPort: 19119,
       tuiEnabled: false,
     });
+    const validationIndex = script.indexOf(
+      "_nemoclaw_validate_recovery_proxy_env /tmp/nemoclaw-proxy-env.sh",
+    );
+    const sourceIndex = script.indexOf('. "$_NEMOCLAW_RECOVERY_SOURCE_ENV"');
+    expect(validationIndex).toBeGreaterThanOrEqual(0);
+    expect(sourceIndex).toBeGreaterThan(validationIndex);
     expect(script).toContain('. "$_NEMOCLAW_RECOVERY_SOURCE_ENV"');
     expect(script).toContain("/usr/local/bin/hermes");
     expect(script).toContain(

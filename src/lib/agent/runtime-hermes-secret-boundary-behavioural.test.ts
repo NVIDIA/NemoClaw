@@ -211,7 +211,7 @@ describe("Hermes secret-boundary guard — full recovery script behaviour", () =
     writeStub(stubsDir, "pgrep", "exit 1");
     writeStub(stubsDir, "sleep", "exit 0");
     writeStub(stubsDir, "curl", 'printf "000"\nexit 0');
-    writeStub(stubsDir, "hermes", `: > ${JSON.stringify(hermesLaunchMarker)}\nexit 0`);
+    writeStub(stubsDir, "hermes", `: > ${JSON.stringify(hermesLaunchMarker)}\n/bin/sleep 5`);
   }
 
   function runRecovery(
@@ -487,6 +487,8 @@ describe("Hermes secret-boundary guard — full recovery script behaviour", () =
         envFilePath: envFile,
         proxyEnvPath: proxyEnvFile,
       });
+      expect(result.status).toBe(0);
+      expect(fs.existsSync(harness.hermesLaunchMarker)).toBe(true);
       expect(result.stdout).not.toContain("SECRET_BOUNDARY_REFUSED");
       expect(result.stderr).not.toContain("TELEGRAM_BOT_TOKEN");
       const proxyEnv = fs.readFileSync(proxyEnvFile, "utf-8");
