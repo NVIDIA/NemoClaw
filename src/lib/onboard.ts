@@ -35,6 +35,7 @@ const sandboxMessagingPreflight: typeof import("./onboard/sandbox-messaging-pref
 const sandboxCreatePlan: typeof import("./onboard/sandbox-create-plan") = require("./onboard/sandbox-create-plan");
 const sandboxCreateLaunch: typeof import("./onboard/sandbox-create-launch") = require("./onboard/sandbox-create-launch");
 const onboardEntryOptions: typeof import("./onboard/entry-options") = require("./onboard/entry-options");
+const channelState: typeof import("./onboard/channel-state") = require("./onboard/channel-state");
 const {
   ensureOllamaLoopbackSystemdOverride,
 }: typeof import("./onboard/ollama-systemd") = require("./onboard/ollama-systemd");
@@ -2590,6 +2591,7 @@ async function createSandbox(
     },
     {
       readMessagingPlanFromEnv,
+      resolveDisabledChannels: channelState.resolveDisabledChannels,
       gatewayName: GATEWAY_NAME,
       registry,
       providerExistsInGateway,
@@ -2978,8 +2980,7 @@ async function createSandbox(
     envMessagingState?.plan.sandboxName === sandboxName ? envMessagingState : undefined;
   const plannedMessagingPlan = plannedMessagingState?.plan;
   const configuredMessagingChannels =
-    getChannelsFromPlan(plannedMessagingPlan) ??
-    (enabledChannels != null ? [...new Set(enabledChannels)] : activeMessagingChannels);
+    getChannelsFromPlan(plannedMessagingPlan) ?? activeMessagingChannels;
   sandboxBuildPatchConfig.prepareSandboxBuildPatchConfig({
     configuredMessagingChannels,
   });

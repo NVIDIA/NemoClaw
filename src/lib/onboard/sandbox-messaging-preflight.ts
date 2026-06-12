@@ -3,7 +3,6 @@
 
 import type { WebSearchConfig } from "../inference/web-search";
 import type { SandboxMessagingPlan } from "../messaging/manifest/types";
-import { resolveDisabledChannels as defaultResolveDisabledChannels } from "./channel-state";
 import {
   enforceMessagingChannelConflicts as defaultEnforceMessagingChannelConflicts,
   type MessagingConflictGuardDeps,
@@ -25,7 +24,7 @@ export interface SandboxMessagingPreflightInput {
 
 export interface SandboxMessagingPreflightDeps {
   readMessagingPlanFromEnv(): SandboxMessagingPlan | null;
-  resolveDisabledChannels?: (sandboxName: string) => string[];
+  resolveDisabledChannels(sandboxName: string): string[];
   gatewayName: string;
   registry: MessagingConflictGuardDeps["registry"];
   providerExistsInGateway(name: string): boolean;
@@ -64,9 +63,7 @@ export async function prepareSandboxMessagingPreflight(
   input: SandboxMessagingPreflightInput,
   deps: SandboxMessagingPreflightDeps,
 ): Promise<SandboxMessagingPreflightResult> {
-  const disabledChannels = (deps.resolveDisabledChannels ?? defaultResolveDisabledChannels)(
-    input.sandboxName,
-  );
+  const disabledChannels = deps.resolveDisabledChannels(input.sandboxName);
   await checkMessagingPlanConflicts(input.sandboxName, disabledChannels, deps);
 
   const result = (deps.prepareCreateSandboxMessaging ?? defaultPrepareCreateSandboxMessaging)({
