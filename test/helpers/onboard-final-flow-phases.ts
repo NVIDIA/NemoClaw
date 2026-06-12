@@ -246,6 +246,7 @@ export function createPhases(
       removeLegacyCredentialsFile: vi.fn(),
       cleanupStaleHostFiles: vi.fn(),
       checkAndRecoverSandboxProcesses: vi.fn(),
+      warmupScopeUpgrade: vi.fn(),
       autoPairScopeApproval: vi.fn(),
       getChatUiUrl: () => "http://127.0.0.1:45123",
       buildVerifyChain: (): DashboardDeliveryChain => ({

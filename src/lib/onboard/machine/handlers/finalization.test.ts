@@ -24,6 +24,7 @@ function createDeps(
     removeLegacy: vi.fn(),
     cleanupHost: vi.fn(),
     recoverProcesses: vi.fn(),
+    warmupScopeUpgrade: vi.fn(),
     autoPairScopeApproval: vi.fn(),
     getChatUiUrl: vi.fn(() => "http://127.0.0.1:18789"),
     buildChain: vi.fn(() => ({ port: 18789 })),
@@ -44,6 +45,7 @@ function createDeps(
       removeLegacyCredentialsFile: calls.removeLegacy,
       cleanupStaleHostFiles: calls.cleanupHost,
       checkAndRecoverSandboxProcesses: calls.recoverProcesses,
+      warmupScopeUpgrade: calls.warmupScopeUpgrade,
       autoPairScopeApproval: calls.autoPairScopeApproval,
       getChatUiUrl: calls.getChatUiUrl,
       buildVerifyChain: calls.buildChain,
@@ -234,5 +236,66 @@ describe("handleFinalizationState", () => {
     // is asserted via the downstream dashboard + diagnostics rather than a dep.)
     expect(calls.dashboard).toHaveBeenCalledOnce();
     expect(result.verificationDiagnostics).toEqual(["  ✓ verified"]);
+  });
+
+  // Scenario 1 (#4504-v2, HEADLINE): the warm-up provokes the operator.write
+  // scope upgrade so the approval pass below has something pending to approve.
+  // The order is load-bearing: process recovery (gateway live) → warmup
+  // (provoke / create pending) → autoPairScopeApproval (approve / clear
+  // pending). Reversing warmup and approval makes the approval pass a no-op and
+  // the user's first real run falls back — exactly the bug v2 fixes.
+  it("provokes the scope upgrade after recovery and before the approval pass (#4504-v2)", async () => {
+    const { deps, calls } = createDeps();
+
+    await handleFinalizationState(baseOptions(deps));
+
+    expect(calls.warmupScopeUpgrade).toHaveBeenCalledOnce();
+    expect(calls.warmupScopeUpgrade).toHaveBeenCalledWith("my-assistant");
+    // recover → warmup (provoke) → autoPairScopeApproval (approve).
+    expect(calls.warmupScopeUpgrade.mock.invocationCallOrder[0]).toBeGreaterThan(
+      calls.recoverProcesses.mock.invocationCallOrder[0],
+    );
+    expect(calls.warmupScopeUpgrade.mock.invocationCallOrder[0]).toBeLessThan(
+      calls.autoPairScopeApproval.mock.invocationCallOrder[0],
+    );
+  });
+
+  // Scenario 2 (#4504-v2): the warm-up is best-effort / non-blocking. The
+  // handler wraps no try/catch around the dep and relies on the dep itself
+  // never throwing (the production leaf swallows every failure — covered in
+  // auto-pair-warmup.test.ts). Per the contract we assert the implemented
+  // behavior here: the warm-up is invoked and, because the (non-throwing) dep
+  // returns cleanly, finalization is NOT ordered to depend on its success — it
+  // proceeds straight to the approval pass, verification, and the dashboard.
+  // The dep returning nothing useful (no pending provoked, gateway slow) does
+  // not change the downstream flow: behavior degrades to v1, never blocks.
+  it("does not depend on the warm-up succeeding; finalization still completes (#4504-v2)", async () => {
+    // The default warm-up mock returns undefined (e.g. gateway not up → the
+    // production leaf swallowed and provoked nothing). Finalization must be
+    // unaffected.
+    const { deps, calls } = createDeps();
+
+    const result = await handleFinalizationState(baseOptions(deps));
+
+    expect(calls.warmupScopeUpgrade).toHaveBeenCalledOnce();
+    expect(calls.warmupScopeUpgrade.mock.results[0]).toEqual({ type: "return", value: undefined });
+    // The approval pass still runs after it (degrades to v1, not skipped).
+    expect(calls.autoPairScopeApproval).toHaveBeenCalledOnce();
+    expect(calls.dashboard).toHaveBeenCalledOnce();
+    expect(result.verificationDiagnostics).toEqual(["  ✓ verified"]);
+  });
+
+  // Scenario 3 (#4504-v2): the warm-up is agent-agnostic — the first-run scope
+  // upgrade is provoked regardless of which agent the sandbox runs (the
+  // contract says run it unconditionally; idempotent once operator.write is
+  // paired).
+  it("provokes the scope upgrade regardless of agent type (#4504-v2)", async () => {
+    const { deps: depsHermes, calls: callsHermes } = createDeps();
+    await handleFinalizationState({ ...baseOptions(depsHermes), agent: { name: "hermes" } });
+    expect(callsHermes.warmupScopeUpgrade).toHaveBeenCalledWith("my-assistant");
+
+    const { deps: depsOpenclaw, calls: callsOpenclaw } = createDeps();
+    await handleFinalizationState({ ...baseOptions(depsOpenclaw), agent: { name: "openclaw" } });
+    expect(callsOpenclaw.warmupScopeUpgrade).toHaveBeenCalledWith("my-assistant");
   });
 });
