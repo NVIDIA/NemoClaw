@@ -620,7 +620,9 @@ describe("onboard session", () => {
     const raw = JSON.parse(fs.readFileSync(session.SESSION_FILE, "utf-8"));
     expect(raw.messagingPlan.agentRender).toBeUndefined();
     expect(raw.messagingPlan.channels[0].hooks).toBeUndefined();
-    expect(requireLoadedSession(session.loadSession()).messagingPlan?.agentRender).toEqual([]);
+    const reloadedPlan = requireLoadedSession(session.loadSession()).messagingPlan;
+    expect(reloadedPlan?.agentRender).toEqual([]);
+    expect(reloadedPlan?.channels[0]?.hooks).toEqual([]);
   });
 
   it("drops malformed persisted messagingPlan on load", () => {

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { SandboxMessagingPlan } from "../manifest";
+import { hydrateDerivedSandboxMessagingPlanFields } from "../persistence";
 import { parseSandboxMessagingPlan } from "../plan-validation";
 import * as registry from "../../state/registry";
 import { MessagingSetupApplier } from "./setup-applier";
@@ -44,9 +45,12 @@ export class MessagingHostStateApplier {
     const entry = registry.getSandbox(sandboxName);
     if (!entry) return false;
     const existingPlan = parseSandboxMessagingPlan(entry.messaging?.plan);
+    const hydratedExistingPlan = existingPlan
+      ? hydrateDerivedSandboxMessagingPlanFields(existingPlan)
+      : null;
     const nextPlan =
-      options.mode === "merge" && existingPlan
-        ? mergeSandboxMessagingPlans(existingPlan, plan)
+      options.mode === "merge" && hydratedExistingPlan
+        ? mergeSandboxMessagingPlans(hydratedExistingPlan, plan)
         : clonePlan(plan);
     return registry.updateSandbox(sandboxName, {
       messaging: {

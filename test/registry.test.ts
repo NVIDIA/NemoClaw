@@ -283,6 +283,27 @@ describe("registry", () => {
     expect(sandboxes.length).toBe(0);
   });
 
+  it("skips malformed sandbox entries while loading the registry", () => {
+    fs.mkdirSync(path.dirname(regFile), { recursive: true });
+    fs.writeFileSync(
+      regFile,
+      JSON.stringify({
+        defaultSandbox: "broken",
+        sandboxes: {
+          good: { name: "good", model: "m1" },
+          broken: null,
+          text: "not-an-entry",
+        },
+      }),
+    );
+
+    expect(registry.getSandbox("broken")).toBe(null);
+    expect(registry.getDefault()).toBe("good");
+    expect(
+      registry.listSandboxes().sandboxes.map((sandbox: { name: string }) => sandbox.name),
+    ).toEqual(["good"]);
+  });
+
   it("setChannelDisabled toggles a channel on and off for a sandbox", () => {
     registry.registerSandbox({
       name: "s1",

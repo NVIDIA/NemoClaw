@@ -320,10 +320,7 @@ function normalizeRegistry(data: SandboxRegistry): SandboxRegistry {
   return {
     defaultSandbox: data.defaultSandbox ?? null,
     sandboxes: Object.fromEntries(
-      Object.entries(data.sandboxes ?? {}).map(([name, entry]) => [
-        name,
-        normalizeSandboxEntry(entry),
-      ]),
+      sandboxRegistryEntries(data).map(([name, entry]) => [name, normalizeSandboxEntry(entry)]),
     ),
   };
 }
@@ -332,12 +329,27 @@ function serializeRegistryForDisk(data: SandboxRegistry): SandboxRegistry {
   return {
     defaultSandbox: data.defaultSandbox ?? null,
     sandboxes: Object.fromEntries(
-      Object.entries(data.sandboxes ?? {}).map(([name, entry]) => [
+      sandboxRegistryEntries(data).map(([name, entry]) => [
         name,
         serializeSandboxEntryForDisk(entry),
       ]),
     ),
   };
+}
+
+function sandboxRegistryEntries(data: SandboxRegistry): Array<[string, SandboxEntry]> {
+  const sandboxes = isRecord(data.sandboxes) ? data.sandboxes : {};
+  return Object.entries(sandboxes).filter((entry): entry is [string, SandboxEntry] =>
+    isSandboxEntryLike(entry[1]),
+  );
+}
+
+function isSandboxEntryLike(entry: unknown): entry is SandboxEntry {
+  return isRecord(entry);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function normalizeSandboxEntry(entry: SandboxEntry): SandboxEntry {
