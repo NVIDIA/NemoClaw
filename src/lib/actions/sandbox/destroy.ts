@@ -5,13 +5,9 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
-import {
-  OPENSHELL_OPERATION_TIMEOUT_MS,
-  OPENSHELL_PROBE_TIMEOUT_MS,
-} from "../../adapters/openshell/timeouts";
+import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import { CLI_NAME } from "../../cli/branding";
 import { G, R, YW } from "../../cli/terminal-style";
-import { DASHBOARD_PORT } from "../../core/ports";
 import { prompt as askPrompt } from "../../credentials/store";
 import {
   type DestroySandboxOptions,
@@ -22,9 +18,6 @@ import {
   shouldCleanupGatewayAfterDestroy,
   shouldStopHostServicesAfterDestroy,
 } from "../../domain/sandbox/destroy";
-import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
-import { stopStaleDashboardListeners } from "../../onboard/stale-gateway-cleanup";
-import { stopHostGatewayProcesses } from "../../onboard/host-gateway-process";
 import {
   SANDBOX_PROVIDER_SUFFIXES,
   emitProviderDetachResidualHint,
@@ -41,6 +34,12 @@ import {
   createSystemDeps as createSessionDeps,
   getActiveSandboxSessions,
 } from "../../state/sandbox-session";
+import {
+  cleanupGatewayAfterLastSandbox,
+  type DestroyRunOpenshell,
+  selectGatewayForSandboxDestroy,
+} from "./destroy-gateway";
+import { getSandboxTargetGatewayName } from "./gateway-target";
 
 type DockerRmi = (tag: string, opts?: { ignoreError?: boolean }) => { status: number | null };
 
@@ -55,11 +54,6 @@ type RemoveSandboxRegistryEntryDeps = {
 };
 
 type RunOpenshell = (args: string[], opts?: Record<string, unknown>) => { status: number | null };
-
-type DestroyRunOpenshell = (
-  args: string[],
-  opts?: Record<string, unknown>,
-) => { status: number | null; stdout?: string; stderr?: string };
 
 export type CleanupSandboxServicesDeps = {
   getSandbox?: typeof registry.getSandbox;
@@ -84,52 +78,6 @@ type RemoveShieldsStateDeps = {
   rmSync?: typeof fs.rmSync;
   warn?: (message: string) => void;
 };
-
-const DASHBOARD_FORWARD_PORT = String(DASHBOARD_PORT);
-
-function cleanupGatewayAfterLastSandbox(gatewayName: string): void {
-  const { runOpenshell } = require("../../adapters/openshell/runtime") as {
-    runOpenshell: (args: string[], opts?: Record<string, unknown>) => { status: number | null };
-  };
-  const { dockerRemoveVolumesByPrefix } = require("../../adapters/docker") as {
-    dockerRemoveVolumesByPrefix: (prefix: string, opts?: { ignoreError?: boolean }) => void;
-  };
-
-  runOpenshell(["forward", "stop", DASHBOARD_FORWARD_PORT], {
-    ignoreError: true,
-    stdio: ["ignore", "ignore", "ignore"],
-  });
-  // After the cooperative forward-stop, sweep the dashboard port range for
-  // stale host-side gateway-forward processes (#3397, #3398). The forward-stop
-  // above releases ports the live openshell tracks; this catches orphans whose
-  // openshell record was lost across upgrades or failed onboards.
-  stopStaleDashboardListeners();
-  if (process.platform === "linux") {
-    // Sandbox destroy is conservative: only stop the host gateway whose PID
-    // file we wrote during onboard. Disable the pgrep sweep so a stray
-    // openshell-gateway under another user/project on the same host (rare but
-    // possible on shared hosts) is not torn down by a NemoClaw `destroy`.
-    // The uninstall path keeps the broader sweep on (run-plan.ts).
-    stopHostGatewayProcesses({}, { usePgrepFallback: false });
-    const removeResult = runOpenshell(["gateway", "remove", gatewayName], {
-      ignoreError: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    if (removeResult.status !== 0) {
-      runOpenshell(["gateway", "destroy", "-g", gatewayName], {
-        ignoreError: true,
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-    }
-  } else {
-    runOpenshell(["gateway", "destroy", "-g", gatewayName], {
-      ignoreError: true,
-    });
-  }
-  dockerRemoveVolumesByPrefix(`openshell-cluster-${gatewayName}`, {
-    ignoreError: true,
-  });
-}
 
 // Mirrors the body of `isNonInteractive()` in src/lib/onboard.ts. Duplicated
 // here to avoid an awkward sibling-action -> onboard import; the canonical
@@ -182,28 +130,6 @@ function hasNoLiveSandboxes(): boolean {
     return false;
   }
   return parseLiveSandboxNames(liveList.output).size === 0;
-}
-
-function selectGatewayForSandboxDestroy(
-  sandboxName: string,
-  gatewayName: string,
-  runOpenshell: DestroyRunOpenshell,
-): void {
-  const result = runOpenshell(["gateway", "select", gatewayName], {
-    ignoreError: true,
-    stdio: ["ignore", "pipe", "pipe"],
-    timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
-  });
-  if (result.status === 0) return;
-
-  const output = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
-  if (output) {
-    console.error(`  ${output}`);
-  }
-  console.error(
-    `  Failed to select gateway '${gatewayName}' before destroying sandbox '${sandboxName}'.`,
-  );
-  process.exit(result.status || 1);
 }
 
 export function cleanupSandboxServices(
@@ -438,7 +364,7 @@ export async function destroySandbox(
   // Capture and select the sandbox's gateway before any destructive OpenShell
   // operation. Provider cleanup and sandbox delete must address the gateway
   // recorded for this sandbox, not whichever gateway happens to be active.
-  const cleanupGatewayName = resolveSandboxGatewayName(sb);
+  const cleanupGatewayName = getSandboxTargetGatewayName(sandboxName);
   selectGatewayForSandboxDestroy(sandboxName, cleanupGatewayName, runOpenshell);
   const detachOutcome = runSandboxProviderPreDeleteCleanup(sandboxName, {
     runOpenshell,
@@ -490,7 +416,7 @@ export async function destroySandbox(
   ) {
     const shouldCleanupGateway = await resolveCleanupGatewayDecision(normalized);
     if (shouldCleanupGateway) {
-      cleanupGatewayAfterLastSandbox(cleanupGatewayName);
+      cleanupGatewayAfterLastSandbox(cleanupGatewayName, runOpenshell);
     } else {
       const gatewayRemovalHint =
         process.platform === "linux"
