@@ -55,7 +55,11 @@ class FakeRunner implements CommandRunner {
     command: TrustedShellCommand,
     options?: ShellProbeRunOptions,
   ): Promise<ShellProbeResult> {
-    this.calls.push({ command: command.command, args: [...command.args], options });
+    this.calls.push({
+      command: command.command,
+      args: [...command.args],
+      options,
+    });
     const response = this.responses.shift();
     if (!response) {
       throw new Error(
@@ -194,6 +198,33 @@ describe("runtime phase fixture", () => {
     expect(call?.options?.artifactName).toBe("custom-chat");
   });
 
+  it("retries inference.local PONG chat completions and accepts reasoning content", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(
+      shellResult(0, JSON.stringify({ choices: [{ message: { content: "not yet" } }] })),
+    );
+    runner.enqueue(
+      shellResult(
+        0,
+        JSON.stringify({
+          choices: [{ message: { reasoning_content: "PONG" } }],
+        }),
+      ),
+    );
+
+    const result = await fixture(runner).expectInferenceLocalPong(instance(), {
+      artifactName: "pong-probe",
+      attempts: 2,
+      retryDelayMs: 1,
+    });
+
+    expect(result.result.stdout).toContain("PONG");
+    expect(runner.calls.map((call) => call.options?.artifactName)).toEqual([
+      "pong-probe-1",
+      "pong-probe-2",
+    ]);
+  });
+
   it("accepts configured status codes for auth-proxy and route-health checks", async () => {
     const runner = new FakeRunner();
     runner.enqueue(shellResult(0, "403"));
@@ -327,7 +358,9 @@ describe("runtime phase fixture", () => {
       const runner = new FakeRunner();
 
       await expect(
-        fixture(runner).expectInferenceLocalModels(instance(), { curlMaxTimeSeconds }),
+        fixture(runner).expectInferenceLocalModels(instance(), {
+          curlMaxTimeSeconds,
+        }),
       ).rejects.toThrow("inference request curlMaxTimeSeconds must be a finite positive number");
       expect(runner.calls).toEqual([]);
     }

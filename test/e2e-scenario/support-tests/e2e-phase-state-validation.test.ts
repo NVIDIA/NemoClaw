@@ -95,7 +95,11 @@ class FakeRunner implements CommandRunner {
     command: TrustedShellCommand,
     options?: ShellProbeRunOptions,
   ): Promise<ShellProbeResult> {
-    this.calls.push({ command: command.command, args: [...command.args], options });
+    this.calls.push({
+      command: command.command,
+      args: [...command.args],
+      options,
+    });
     const response = this.responses.shift();
     if (response instanceof Error) {
       throw response;
@@ -472,6 +476,34 @@ describe("state-validation phase fixture", () => {
     );
   });
 
+  it("exposes direct registry and sandbox marker helpers for survival checks", async () => {
+    const runner = new FakeRunner();
+    const fx = fixture(runner, {
+      readRegistry: () => ({
+        entries: { "e2e-ubuntu-repo-cloud-openclaw": {} },
+      }),
+    });
+
+    expect(() => fx.expectLocalRegistryContains("e2e-ubuntu-repo-cloud-openclaw")).not.toThrow();
+    runner.enqueue(shellResult(0));
+    runner.enqueue(shellResult(0, "survived\n"));
+    runner.enqueue(shellResult(0, "/sandbox/.openclaw/config.json\n"));
+
+    const marker = {
+      path: "/sandbox/.openclaw/.survival-marker",
+      value: "survived",
+    };
+    await fx.writeSandboxMarkers(instance(), [marker]);
+    await fx.expectSandboxMarkers(instance(), [marker]);
+    await fx.expectSandboxDirectoryPopulated(instance(), "/sandbox/.openclaw");
+
+    expect(runner.calls.map((call) => call.args.slice(0, 7))).toEqual([
+      ["sandbox", "exec", "-n", "e2e-ubuntu-repo-cloud-openclaw", "--", "sh", "-lc"],
+      ["sandbox", "exec", "-n", "e2e-ubuntu-repo-cloud-openclaw", "--", "sh", "-lc"],
+      ["sandbox", "exec", "-n", "e2e-ubuntu-repo-cloud-openclaw", "--", "sh", "-lc"],
+    ]);
+  });
+
   it("writes a state-validation phase result artifact on success", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-state-validation-artifacts-"));
     try {
@@ -532,7 +564,11 @@ describe("state-validation host-side probes", () => {
     const runner = new FakeRunner();
     const fx = fixture(runner, {
       readRegistry: () => ({
-        entries: { "e2e-ubuntu-repo-cloud-openclaw": { name: "e2e-ubuntu-repo-cloud-openclaw" } },
+        entries: {
+          "e2e-ubuntu-repo-cloud-openclaw": {
+            name: "e2e-ubuntu-repo-cloud-openclaw",
+          },
+        },
       }),
     });
 
