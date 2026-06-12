@@ -140,21 +140,28 @@ async function ensureOpenshellAvailable(host: HostCliClient): Promise<void> {
 async function cleanupSandbox(host: HostCliClient, apiKey: string): Promise<void> {
   if (process.env.NEMOCLAW_E2E_KEEP_SANDBOX === "1") return;
 
-  // Match the legacy teardown helper's tolerance: a failed preflight or
-  // provider-validation skip may happen before a sandbox exists.
-  await bestEffort(() =>
-    runNemoclaw(host, [SANDBOX_NAME, "destroy", "--yes"], apiKey, {
-      artifactName: "cleanup-nemoclaw-destroy-sessions-agents-cli",
-      timeoutMs: 5 * 60_000,
-    }),
-  );
-  await bestEffort(() =>
-    host.command("openshell", ["sandbox", "delete", SANDBOX_NAME], {
-      artifactName: "cleanup-openshell-sandbox-delete-sessions-agents-cli",
-      env: commandEnv(),
-      timeoutMs: 60_000,
-    }),
-  );
+  const destroy = await runNemoclaw(host, [SANDBOX_NAME, "destroy", "--yes"], apiKey, {
+    artifactName: "cleanup-nemoclaw-destroy-sessions-agents-cli",
+    timeoutMs: 5 * 60_000,
+  });
+  expect(
+    destroy.exitCode === 0 || isMissingSandboxCleanupOutput(resultText(destroy)),
+    `cleanup NemoClaw destroy failed\n${resultText(destroy)}`,
+  ).toBe(true);
+
+  const openshellDelete = await host.command("openshell", ["sandbox", "delete", SANDBOX_NAME], {
+    artifactName: "cleanup-openshell-sandbox-delete-sessions-agents-cli",
+    env: commandEnv(),
+    timeoutMs: 60_000,
+  });
+  expect(
+    openshellDelete.exitCode === 0 || isMissingSandboxCleanupOutput(resultText(openshellDelete)),
+    `cleanup OpenShell sandbox delete failed\n${resultText(openshellDelete)}`,
+  ).toBe(true);
+}
+
+function isMissingSandboxCleanupOutput(text: string): boolean {
+  return /does not exist|not found|Run 'nemoclaw onboard'|no such sandbox/i.test(text);
 }
 
 function isPreContractEndpointValidationRateLimit(result: ShellProbeResult): boolean {
@@ -363,7 +370,7 @@ runSessionsAgentsCliTest(
 
     await ensureOpenshellAvailable(host);
     cleanup.add(`destroy sessions/agents sandbox ${SANDBOX_NAME}`, async () =>
-      cleanupSandbox(host, apiKey),
+      bestEffort(() => cleanupSandbox(host, apiKey)),
     );
     await cleanupSandbox(host, apiKey);
     fs.rmSync(path.join(process.env.HOME ?? "", ".nemoclaw", "onboard.lock"), { force: true });
@@ -539,26 +546,15 @@ runSessionsAgentsCliTest(
     );
     expect(deleteAgent.exitCode, `agents delete failed\n${resultText(deleteAgent)}`).toBe(0);
 
-    const deletedAgentSessions = await runNemoclaw(
+    const agentsAfterDelete = await expectJsonCommand(
       host,
-      [SANDBOX_NAME, "sessions", "list", "--agent", TEST_AGENT_ID, "--json"],
+      [SANDBOX_NAME, "agents", "list", "--json"],
       apiKey,
-      {
-        artifactName: "tc-agent-02-sessions-list-after-agent-delete",
-        timeoutMs: 60_000,
-      },
+      "tc-agent-02-agents-list-after-delete-json",
     );
-    let deletedAgentStillVisible = false;
-    if (deletedAgentSessions.exitCode === 0) {
-      try {
-        parseJsonEnvelope(deletedAgentSessions, "sessions list deleted agent --json");
-        deletedAgentStillVisible = true;
-      } catch {
-        deletedAgentStillVisible = false;
-      }
-    }
-    expect(deletedAgentStillVisible, `agent '${TEST_AGENT_ID}' still visible after delete`).toBe(
-      false,
-    );
+    expect(
+      agentEntries(agentsAfterDelete).some((entry) => entry.id === TEST_AGENT_ID),
+      `agent '${TEST_AGENT_ID}' still visible after delete`,
+    ).toBe(false);
   },
 );
