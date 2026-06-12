@@ -5,7 +5,12 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
-import { loadE2eWorkflowContract, reusableNightlyJobs } from "./helpers/e2e-workflow-contract";
+import {
+  loadE2eWorkflowContract,
+  readYaml,
+  reusableNightlyJobs,
+  type WorkflowJob,
+} from "./helpers/e2e-workflow-contract";
 
 // Direct legacy bash E2Es are being migrated toward Vitest coverage. Keep the
 // top-level shell suite frozen so new coverage starts in the newer E2E surface
@@ -189,6 +194,21 @@ describe("E2E reusable workflow contract", () => {
     expect(checkoutSteps).toHaveLength(2);
     for (const step of checkoutSteps) {
       expect(step.with?.["persist-credentials"]).toBe(false);
+    }
+  });
+
+  it("does not persist checkout credentials in sandbox image E2E jobs", () => {
+    const sandboxWorkflow = readYaml<{ jobs: Record<string, WorkflowJob> }>(
+      ".github/workflows/sandbox-images-and-e2e.yaml",
+    );
+
+    for (const [jobName, job] of Object.entries(sandboxWorkflow.jobs)) {
+      const checkoutStep = job.steps?.find((step) =>
+        String(step.uses ?? "").startsWith("actions/checkout@"),
+      );
+      if (!checkoutStep) continue;
+
+      expect(checkoutStep.with?.["persist-credentials"], jobName).toBe(false);
     }
   });
 
