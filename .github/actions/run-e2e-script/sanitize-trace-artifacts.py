@@ -154,13 +154,15 @@ def main(argv: list[str]) -> int:
         return 2
 
     source = Path(argv[1]).resolve()
-    output_dir = Path(argv[2]).resolve()
-    if source == output_dir:
+    output_dir = Path(argv[2]).absolute()
+    if source == output_dir.resolve(strict=False):
         print("trace source and trusted output directory must be distinct", file=sys.stderr)
         return 2
 
     if output_dir.exists() or output_dir.is_symlink():
-        if output_dir.is_dir() and not output_dir.is_symlink():
+        if output_dir.is_symlink():
+            output_dir.unlink()
+        elif output_dir.is_dir():
             shutil.rmtree(output_dir)
         else:
             output_dir.unlink()

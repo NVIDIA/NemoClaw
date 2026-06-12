@@ -76,6 +76,7 @@ runs:
         if-no-files-found: ignore
 
     - name: Sanitize E2E trace artifacts
+      id: sanitize-trace-artifacts
       if: always() && inputs.always-artifact-name != '' && inputs.always-artifact-path != '' && inputs.always-artifact-trace-source-path != ''
       shell: bash
       working-directory: ${{ inputs.working-directory }}
@@ -89,7 +90,7 @@ runs:
           "$E2E_TRACE_SUMMARY_DIR"
 
     - name: Upload E2E artifacts
-      if: always() && inputs.always-artifact-name != '' && inputs.always-artifact-path != ''
+      if: always() && inputs.always-artifact-name != '' && inputs.always-artifact-path != '' && (inputs.always-artifact-trace-source-path == '' || steps.sanitize-trace-artifacts.outcome == 'success')
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
         name: ${{ inputs.always-artifact-name }}

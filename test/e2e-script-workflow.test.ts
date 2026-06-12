@@ -537,6 +537,7 @@ describe("E2E reusable workflow contract", () => {
       "${{ inputs.always_artifact_trace_source_path }}",
     );
     expect(sanitizeStep).toBeDefined();
+    expect(sanitizeStep?.id).toBe("sanitize-trace-artifacts");
     expect(sanitizeStep?.run).toContain("sanitize-trace-artifacts.py");
     expect(sanitizeStep?.env?.E2E_TRACE_SOURCE_PATH).toBe(
       "${{ inputs.always-artifact-trace-source-path }}",
@@ -546,7 +547,7 @@ describe("E2E reusable workflow contract", () => {
       ".github/actions/run-e2e-script",
     );
     expect(alwaysUploadStep?.if).toBe(
-      "always() && inputs.always-artifact-name != '' && inputs.always-artifact-path != ''",
+      "always() && inputs.always-artifact-name != '' && inputs.always-artifact-path != '' && (inputs.always-artifact-trace-source-path == '' || steps.sanitize-trace-artifacts.outcome == 'success')",
     );
     expect(cloudOnboardJob.with?.always_artifact_name).toBe("cloud-onboard-traces");
     expect(cloudOnboardJob.with?.always_artifact_path).toBe("/tmp/nemoclaw-trace-summary/");

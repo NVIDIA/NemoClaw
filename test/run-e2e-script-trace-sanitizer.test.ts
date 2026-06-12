@@ -116,4 +116,26 @@ describe("run-e2e-script trace artifact sanitizer", () => {
     expect(fs.existsSync(output)).toBe(true);
     expect(fs.readdirSync(output)).toEqual([]);
   });
+
+  it("replaces a target-created output symlink with a trusted directory", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-trace-sanitize-symlink-"));
+    const source = path.join(tmp, "raw");
+    const output = path.join(tmp, "summary");
+    const targetControlled = path.join(tmp, "target-controlled");
+    fs.mkdirSync(source);
+    fs.mkdirSync(targetControlled);
+    fs.writeFileSync(path.join(source, "trace.json"), JSON.stringify(makeTrace()), "utf8");
+    fs.writeFileSync(
+      path.join(targetControlled, "raw-secret.txt"),
+      "NVIDIA_API_KEY=nvapi-secret\n",
+    );
+    fs.symlinkSync(targetControlled, output, "dir");
+
+    runSanitizer(source, output);
+
+    expect(fs.lstatSync(output).isSymbolicLink()).toBe(false);
+    expect(fs.statSync(output).isDirectory()).toBe(true);
+    expect(fs.existsSync(path.join(targetControlled, "raw-secret.txt"))).toBe(true);
+    expect(fs.readdirSync(output)).toEqual(["cloud-onboard-trace-timing-summary.json"]);
+  });
 });
