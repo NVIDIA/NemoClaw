@@ -110,7 +110,7 @@ async function applyPresetInteractively(
   const script = String.raw`
 set -euo pipefail
 preset_list="$(env NEMOCLAW_NON_INTERACTIVE= node "$NEMOCLAW_E2E_CLI" "$NEMOCLAW_E2E_SANDBOX" policy-add </dev/null 2>&1 || true)"
-preset_num="$(printf '%s\n' "$preset_list" | python3 -c 'import re,sys; preset=sys.argv[1]; text=sys.stdin.read(); m=re.search(r"(?m)^\\s*(\\d+)\\).*" + re.escape(preset), text); print(m.group(1) if m else "")' "$NEMOCLAW_E2E_PRESET")"
+preset_num="$(printf '%s\n' "$preset_list" | python3 -c 'import re,sys; preset=sys.argv[1]; text=sys.stdin.read(); m=re.search(r"(?m)^\s*(\d+)\).*" + re.escape(preset), text); print(m.group(1) if m else "")' "$NEMOCLAW_E2E_PRESET")"
 if [ -z "$preset_num" ]; then
   printf 'preset %s not found in list:\n%s\n' "$NEMOCLAW_E2E_PRESET" "$preset_list" >&2
   exit 1
