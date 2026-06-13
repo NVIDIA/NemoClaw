@@ -68,7 +68,7 @@ describe("cleanupStaleHostFiles (post-upgrade sweep, #3105)", () => {
     const credsDir = path.join(home, ".nemoclaw");
     const legacyFile = path.join(credsDir, "credentials.json");
     fs.mkdirSync(credsDir, { recursive: true });
-    const payload = JSON.stringify({ NVIDIA_API_KEY: "nvapi-real" });
+    const payload = JSON.stringify({ NVIDIA_INFERENCE_API_KEY: "nvapi-real" });
     fs.writeFileSync(legacyFile, payload, { mode: 0o600 });
     vi.stubEnv("HOME", home);
 
