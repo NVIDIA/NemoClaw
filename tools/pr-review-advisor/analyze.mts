@@ -38,6 +38,8 @@ const root = process.cwd();
 const ADVISOR_PROVIDER = DEFAULT_ADVISOR_PROVIDER;
 const ADVISOR_MODEL = DEFAULT_ADVISOR_MODEL;
 const ADVISOR_CREDENTIAL_ENV = ["PR", "REVIEW", "ADVISOR", "API", "KEY"].join("_");
+const OPEN_PR_OVERLAP_LIMIT = 80;
+const OPEN_PR_OVERLAP_CONCURRENCY = 6;
 const SECURITY_REVIEW_SKILL_PATH =
   ".agents/skills/nemoclaw-maintainer-security-code-review/SKILL.md";
 const TRUSTED_SECURITY_REVIEW_SKILL_PATH = path.resolve(
@@ -752,6 +754,25 @@ async function collectLinkedIssue(
   }
 }
 
+async function mapWithConcurrency<T, U>(
+  items: readonly T[],
+  concurrency: number,
+  mapper: (item: T, index: number) => Promise<U>,
+): Promise<U[]> {
+  const results = new Array<U>(items.length);
+  let nextIndex = 0;
+  const workerCount = Math.min(Math.max(1, concurrency), items.length);
+  const workers = Array.from({ length: workerCount }, async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await mapper(items[index] as T, index);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
 async function collectOpenPrOverlaps(
   repo: string,
   currentPrNumber: number,
@@ -770,41 +791,43 @@ async function collectOpenPrOverlaps(
       .map((file) => file.filename)
       .filter((file): file is string => typeof file === "string"),
   );
-  const overlaps = await Promise.all(
-    openPulls
-      .filter((pull) => getPath<number>(pull, ["number"]) !== currentPrNumber)
-      .slice(0, 80)
-      .map(async (pull): Promise<OpenPrOverlap | null> => {
-        const number = getPath<number>(pull, ["number"]);
-        if (!number) return null;
-        const title = stringOrDefault(getPath<unknown>(pull, ["title"]), `PR #${number}`);
-        const body = stringOrDefault(getPath<unknown>(pull, ["body"]), "");
-        const labels = recordItems(getPath<unknown>(pull, ["labels"]))
-          .map((label) => stringOrUndefined(label.name))
-          .filter((label): label is string => Boolean(label));
-        const linkedIssues = extractIssueRefs(`${title}\n${body}`, number);
-        const duplicateLinkedIssues = linkedIssues.filter((issue) =>
-          currentLinkedIssues.includes(issue),
-        );
-        let sameFiles: string[] = [];
-        if (currentFiles.size > 0) {
-          try {
-            sameFiles = (
-              await githubRestPaginated<{ filename?: string }>(
-                `repos/${repo}/pulls/${number}/files`,
-                token,
-                300,
-              )
+  const candidatePulls = openPulls
+    .filter((pull) => getPath<number>(pull, ["number"]) !== currentPrNumber)
+    .slice(0, OPEN_PR_OVERLAP_LIMIT);
+  const overlaps = await mapWithConcurrency(
+    candidatePulls,
+    OPEN_PR_OVERLAP_CONCURRENCY,
+    async (pull): Promise<OpenPrOverlap | null> => {
+      const number = getPath<number>(pull, ["number"]);
+      if (!number) return null;
+      const title = stringOrDefault(getPath<unknown>(pull, ["title"]), `PR #${number}`);
+      const body = stringOrDefault(getPath<unknown>(pull, ["body"]), "");
+      const labels = recordItems(getPath<unknown>(pull, ["labels"]))
+        .map((label) => stringOrUndefined(label.name))
+        .filter((label): label is string => Boolean(label));
+      const linkedIssues = extractIssueRefs(`${title}\n${body}`, number);
+      const duplicateLinkedIssues = linkedIssues.filter((issue) =>
+        currentLinkedIssues.includes(issue),
+      );
+      let sameFiles: string[] = [];
+      if (currentFiles.size > 0) {
+        try {
+          sameFiles = (
+            await githubRestPaginated<{ filename?: string }>(
+              `repos/${repo}/pulls/${number}/files`,
+              token,
+              300,
             )
-              .map((file) => file.filename)
-              .filter((file): file is string => typeof file === "string" && currentFiles.has(file));
-          } catch {
-            sameFiles = [];
-          }
+          )
+            .map((file) => file.filename)
+            .filter((file): file is string => typeof file === "string" && currentFiles.has(file));
+        } catch {
+          sameFiles = [];
         }
-        if (sameFiles.length === 0 && duplicateLinkedIssues.length === 0) return null;
-        return { number, title, labels, linkedIssues, sameFiles, duplicateLinkedIssues };
-      }),
+      }
+      if (sameFiles.length === 0 && duplicateLinkedIssues.length === 0) return null;
+      return { number, title, labels, linkedIssues, sameFiles, duplicateLinkedIssues };
+    },
   );
   return overlaps
     .filter((overlap): overlap is OpenPrOverlap => overlap !== null)

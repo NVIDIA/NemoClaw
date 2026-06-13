@@ -44,7 +44,7 @@
 #
 # Prerequisites:
 #   - Docker running
-#   - python3 + curl for the local OpenAI-compatible mock endpoint
+#   - node + curl for the local OpenAI-compatible mock endpoint
 #
 # Environment variables:
 #   NEMOCLAW_NON_INTERACTIVE=1             — required
@@ -412,8 +412,12 @@ fi
 pass "Docker running"
 
 if [ "$USE_COMPAT_MOCK" = "1" ]; then
-  if ! command -v python3 >/dev/null 2>&1; then
-    fail "python3 is required for the compatible endpoint mock"
+  if ! command -v node >/dev/null 2>&1; then
+    fail "node is required for the compatible endpoint mock"
+    exit 1
+  fi
+  if ! node --experimental-strip-types -e "" >/dev/null 2>&1; then
+    fail "node with --experimental-strip-types support is required for the compatible endpoint mock"
     exit 1
   fi
   if ! command -v curl >/dev/null 2>&1; then

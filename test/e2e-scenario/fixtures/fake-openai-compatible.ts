@@ -54,11 +54,21 @@ function waitForExit(child: ChildProcess): Promise<void> {
   });
 }
 
-function canReachModels(port: number): Promise<boolean> {
+function readinessProbeHost(host: string): string {
+  if (host === "0.0.0.0") return "127.0.0.1";
+  if (host === "::") return "::1";
+  return host;
+}
+
+function formatHttpHost(host: string): string {
+  return host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+}
+
+function canReachModels(host: string, port: number): Promise<boolean> {
   return new Promise((resolve) => {
     const req = http.get(
       {
-        host: "127.0.0.1",
+        host: readinessProbeHost(host),
         path: "/v1/models",
         port,
         timeout: 1_000,
@@ -76,14 +86,14 @@ function canReachModels(port: number): Promise<boolean> {
   });
 }
 
-async function waitForReady(portFile: string, child: ChildProcess): Promise<number> {
+async function waitForReady(portFile: string, child: ChildProcess, host: string): Promise<number> {
   const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
     if (child.exitCode !== null || child.signalCode !== null) {
       throw new Error("fake OpenAI-compatible endpoint exited before becoming ready");
     }
     const port = readPort(portFile);
-    if (port !== null && (await canReachModels(port))) return port;
+    if (port !== null && (await canReachModels(host, port))) return port;
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
   throw new Error("fake OpenAI-compatible endpoint did not become ready");
@@ -128,16 +138,16 @@ export async function startFakeOpenAiCompatibleServer(
 
   let port: number;
   try {
-    port = await waitForReady(portFile, child);
+    port = await waitForReady(portFile, child, host);
   } catch (error) {
     child.kill("SIGTERM");
     await waitForExit(child);
     fs.rmSync(tmpDir, { force: true, recursive: true });
     throw error;
   }
-  const publicHost = options.publicHost ?? (host === "0.0.0.0" ? "127.0.0.1" : host);
+  const publicHost = options.publicHost ?? readinessProbeHost(host);
   return {
-    baseUrl: `http://${publicHost}:${port}/v1`,
+    baseUrl: `http://${formatHttpHost(publicHost)}:${port}/v1`,
     logFile,
     requestsFile,
     requests: () => parseRequests(requestsFile),
