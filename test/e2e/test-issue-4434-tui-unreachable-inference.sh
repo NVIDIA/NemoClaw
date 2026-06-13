@@ -65,6 +65,11 @@ if [ "${NEMOCLAW_ISSUE_4434_LIVE:-0}" != "1" ]; then
   exit 0
 fi
 
+if nemoclaw_e2e_using_compatible_inference; then
+  info "skipping: hosted compatible inference is gateway-managed; this repro only blocks sandbox egress"
+  exit 0
+fi
+
 if [ "$(uname -s)" != "Linux" ]; then
   fail "Linux host required for DOCKER-USER iptables repro"
 fi
