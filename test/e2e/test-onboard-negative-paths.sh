@@ -77,7 +77,7 @@ CLOUD_MODEL="${NEMOCLAW_ONBOARD_NEGATIVE_MODEL:-nvidia/nemotron-3-super-120b-a12
 PORT_CONFLICT_PORT="${NEMOCLAW_ONBOARD_NEGATIVE_CONFLICT_PORT:-18080}"
 SESSION_FILE="$HOME/.nemoclaw/onboard-session.json"
 REGISTRY_FILE="$HOME/.nemoclaw/sandboxes.json"
-RESTORE_API_KEY="${NVIDIA_API_KEY:-}"
+RESTORE_API_KEY="${NVIDIA_INFERENCE_API_KEY:-}"
 
 # shellcheck source=test/e2e/lib/sandbox-teardown.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox-teardown.sh"
@@ -217,7 +217,7 @@ const path = require("node:path");
 const repo = process.argv[2];
 const { validateNvidiaApiKeyValue } = require(path.join(repo, "dist", "lib", "validation.js"));
 
-const nvidiaError = validateNvidiaApiKeyValue("not-a-nvidia-key", "NVIDIA_API_KEY");
+const nvidiaError = validateNvidiaApiKeyValue("not-a-nvidia-key", "NVIDIA_INFERENCE_API_KEY");
 if (!nvidiaError || !nvidiaError.includes("Must start with nvapi-")) {
   throw new Error(`expected NVIDIA key prefix rejection, got: ${nvidiaError}`);
 }
@@ -295,9 +295,9 @@ else
 fi
 
 if [[ -n "$RESTORE_API_KEY" && "$RESTORE_API_KEY" == nvapi-* ]]; then
-  pass "NVIDIA_API_KEY is set"
+  pass "NVIDIA_INFERENCE_API_KEY is set"
 else
-  fail "NVIDIA_API_KEY not set or invalid; required for live onboard scenarios"
+  fail "NVIDIA_INFERENCE_API_KEY not set or invalid; required for live onboard scenarios"
   print_summary
   exit 1
 fi
@@ -337,7 +337,7 @@ env -u NEMOCLAW_SANDBOX_NAME \
   NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
   NEMOCLAW_PROVIDER=cloud \
   NEMOCLAW_POLICY_MODE=skip \
-  NVIDIA_API_KEY="$RESTORE_API_KEY" \
+  NVIDIA_INFERENCE_API_KEY="$RESTORE_API_KEY" \
   node "$REPO/bin/nemoclaw.js" onboard --non-interactive --from "$REPO/Dockerfile" \
   >"$FROM_GUARD_LOG" 2>&1
 from_guard_exit=$?
@@ -370,7 +370,7 @@ env \
   NEMOCLAW_SANDBOX_NAME="bad name" \
   NEMOCLAW_PROVIDER=cloud \
   NEMOCLAW_POLICY_MODE=skip \
-  NVIDIA_API_KEY="$RESTORE_API_KEY" \
+  NVIDIA_INFERENCE_API_KEY="$RESTORE_API_KEY" \
   node "$REPO/bin/nemoclaw.js" onboard --non-interactive --from "$REPO/Dockerfile" \
   >"$FROM_ENV_NAME_LOG" 2>&1
 from_env_name_exit=$?
@@ -405,7 +405,7 @@ NEMOCLAW_NON_INTERACTIVE=1 \
   NEMOCLAW_RECREATE_SANDBOX=1 \
   NEMOCLAW_PROVIDER=cloud \
   NEMOCLAW_POLICY_MODE=skip \
-  NVIDIA_API_KEY=not-a-nvidia-key \
+  NVIDIA_INFERENCE_API_KEY=not-a-nvidia-key \
   node "$REPO/bin/nemoclaw.js" onboard --non-interactive >"$INVALID_KEY_LOG" 2>&1
 invalid_key_exit=$?
 invalid_key_output="$(cat "$INVALID_KEY_LOG")"
@@ -453,7 +453,7 @@ NEMOCLAW_NON_INTERACTIVE=1 \
   NEMOCLAW_GATEWAY_PORT="$PORT_CONFLICT_PORT" \
   NEMOCLAW_PROVIDER=cloud \
   NEMOCLAW_POLICY_MODE=skip \
-  NVIDIA_API_KEY="$RESTORE_API_KEY" \
+  NVIDIA_INFERENCE_API_KEY="$RESTORE_API_KEY" \
   node "$REPO/bin/nemoclaw.js" onboard --non-interactive >"$PORT_CONFLICT_LOG" 2>&1
 port_conflict_exit=$?
 port_conflict_output="$(cat "$PORT_CONFLICT_LOG")"
@@ -495,7 +495,7 @@ NEMOCLAW_NON_INTERACTIVE=1 \
   NEMOCLAW_MODEL="$CLOUD_MODEL" \
   NEMOCLAW_POLICY_MODE=custom \
   NEMOCLAW_POLICY_PRESETS=npm,pypi \
-  NVIDIA_API_KEY="$RESTORE_API_KEY" \
+  NVIDIA_INFERENCE_API_KEY="$RESTORE_API_KEY" \
   node "$REPO/bin/nemoclaw.js" onboard --non-interactive >"$LIVE_LOG" 2>&1
 live_exit=$?
 live_output="$(cat "$LIVE_LOG")"

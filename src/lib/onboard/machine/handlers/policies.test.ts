@@ -118,7 +118,7 @@ function baseOptions(
     provider: "provider",
     model: "model",
     endpointUrl: "https://example.com/v1",
-    credentialEnv: "NVIDIA_API_KEY",
+    credentialEnv: "NVIDIA_INFERENCE_API_KEY",
     selectedMessagingChannels: [],
     webSearchConfig: null,
     webSearchSupported: true,
@@ -139,7 +139,7 @@ describe("handlePoliciesState", () => {
       provider: "provider",
       model: "model",
       endpointUrl: "https://example.com/v1",
-      credentialEnv: "NVIDIA_API_KEY",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
       messagingChannels: ["telegram"],
       agent: null,
     });

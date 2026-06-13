@@ -162,10 +162,10 @@ export async function promptCloudModel(
     return deps.cloudModelOptions[index].id;
   }
 
-  const nvidiaApiKey = deps.getCredentialFn("NVIDIA_API_KEY");
+  const nvidiaApiKey = deps.getCredentialFn("NVIDIA_INFERENCE_API_KEY");
   if (!nvidiaApiKey) {
     deps.errorLine(
-      "  NVIDIA_API_KEY is required before validating a custom NVIDIA Endpoints model.",
+      "  NVIDIA_INFERENCE_API_KEY is required before validating a custom NVIDIA Endpoints model.",
     );
     return deps.backToSelection;
   }
