@@ -10,7 +10,7 @@
 #
 # Prerequisites:
 #   - Docker running
-#   - NVIDIA_API_KEY set (real key, starts with nvapi-)
+#   - NVIDIA_INFERENCE_API_KEY set (real key, starts with nvapi-)
 #   - NEMOCLAW_NON_INTERACTIVE=1
 #   - NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1
 
@@ -445,8 +445,11 @@ SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-hermes-inference-switch}"
 SWITCH_PROVIDER="${NEMOCLAW_SWITCH_PROVIDER:-nvidia-prod}"
 SWITCH_MODEL="${NEMOCLAW_SWITCH_MODEL:-z-ai/glm-5.1}"
 SWITCH_INFERENCE_API="${NEMOCLAW_SWITCH_INFERENCE_API:-openai-completions}"
+# shellcheck disable=SC2034 # consumed by sourced anthropic-switch-provider.sh
 SWITCH_ENDPOINT_URL="${NEMOCLAW_SWITCH_ENDPOINT_URL:-}"
+# shellcheck disable=SC2034 # consumed by sourced anthropic-switch-provider.sh
 SWITCH_MOCK_ANTHROPIC="${NEMOCLAW_SWITCH_MOCK_ANTHROPIC:-0}"
+# shellcheck disable=SC2034 # consumed by sourced anthropic-switch-provider.sh
 SWITCH_MOCK_PORT="${NEMOCLAW_SWITCH_MOCK_PORT:-18766}"
 INSTALL_LOG="/tmp/nemoclaw-e2e-hermes-inference-switch-install.log"
 ENV_HASH_BEFORE=""
@@ -480,10 +483,10 @@ else
   exit 1
 fi
 
-if [ -n "${NVIDIA_API_KEY:-}" ] && [[ "${NVIDIA_API_KEY}" == nvapi-* ]]; then
-  pass "NVIDIA_API_KEY is set"
+if [ -n "${NVIDIA_INFERENCE_API_KEY:-}" ] && [[ "${NVIDIA_INFERENCE_API_KEY}" == nvapi-* ]]; then
+  pass "NVIDIA_INFERENCE_API_KEY is set"
 else
-  fail "NVIDIA_API_KEY not set or invalid"
+  fail "NVIDIA_INFERENCE_API_KEY not set or invalid"
   exit 1
 fi
 

@@ -263,9 +263,9 @@ const { createSandbox, setupMessagingChannels } = require(${onboardPath});
       "TELEGRAM_BOT_TOKEN must not be in sandbox env",
     );
     assert.equal(
-      createCommand.env.NVIDIA_API_KEY,
+      createCommand.env.NVIDIA_INFERENCE_API_KEY,
       undefined,
-      "NVIDIA_API_KEY must not be in sandbox env",
+      "NVIDIA_INFERENCE_API_KEY must not be in sandbox env",
     );
     assert.equal(createCommand.env.KUBECONFIG, undefined, "KUBECONFIG must not be in sandbox env");
     assert.equal(

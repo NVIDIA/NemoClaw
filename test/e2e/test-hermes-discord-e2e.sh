@@ -21,7 +21,7 @@
 #   NEMOCLAW_RECREATE_SANDBOX=1            - auto-set
 #   NEMOCLAW_FRESH=1                       - auto-set to discard interrupted onboard sessions
 #   NEMOCLAW_OPENSHELL_BIN                 - optional OpenShell binary under test
-#   NVIDIA_API_KEY                         - required for Hermes onboarding
+#   NVIDIA_INFERENCE_API_KEY                         - required for Hermes onboarding
 #   DISCORD_BOT_TOKEN                      - defaults to a fake token
 #   DISCORD_SERVER_IDS                     - defaults to a fake snowflake
 #   DISCORD_ALLOWED_IDS                    - defaults to a fake snowflake
@@ -29,7 +29,7 @@
 #
 # Usage:
 #   NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
-#     NVIDIA_API_KEY=nvapi-... bash test/e2e/test-hermes-discord-e2e.sh
+#     NVIDIA_INFERENCE_API_KEY=nvapi-... bash test/e2e/test-hermes-discord-e2e.sh
 
 set -uo pipefail
 
@@ -197,10 +197,10 @@ else
   exit 1
 fi
 
-if [ -n "${NVIDIA_API_KEY:-}" ] && [[ "${NVIDIA_API_KEY}" == nvapi-* ]]; then
-  pass "NVIDIA_API_KEY is set (starts with nvapi-)"
+if [ -n "${NVIDIA_INFERENCE_API_KEY:-}" ] && [[ "${NVIDIA_INFERENCE_API_KEY}" == nvapi-* ]]; then
+  pass "NVIDIA_INFERENCE_API_KEY is set (starts with nvapi-)"
 else
-  fail "NVIDIA_API_KEY not set or invalid"
+  fail "NVIDIA_INFERENCE_API_KEY not set or invalid"
   exit 1
 fi
 
@@ -584,7 +584,7 @@ fi
 
 section "Phase 8: Gateway-stored credential rebuild"
 
-# Rebuild with NVIDIA_API_KEY unset so the preflight is forced to reuse the
+# Rebuild with NVIDIA_INFERENCE_API_KEY unset so the preflight is forced to reuse the
 # gateway-stored inference credential. Catches the Hermes regression that
 # motivated the gateway-aware credential check in setupNim + rebuild.
 
@@ -601,9 +601,10 @@ if [ -d "$REPO/.tmp" ]; then
   sudo rm -rf "$REPO/.tmp"/fake-discord.* 2>/dev/null || rm -rf "$REPO/.tmp"/fake-discord.* 2>/dev/null || true
 fi
 
+NVIDIA_INFERENCE_API_KEY_BACKUP="${NVIDIA_INFERENCE_API_KEY:-}"
 NVIDIA_API_KEY_BACKUP="${NVIDIA_API_KEY:-}"
-unset NVIDIA_API_KEY
-info "NVIDIA_API_KEY unset; gateway must hold the inference credential"
+unset NVIDIA_INFERENCE_API_KEY NVIDIA_API_KEY
+info "NVIDIA_INFERENCE_API_KEY and NVIDIA_API_KEY unset; gateway must hold the inference credential"
 
 HERMES_REBUILD_LOG="/tmp/nc-hermes-rebuild-noenv.log"
 if nemoclaw "$SANDBOX_NAME" rebuild --yes >"$HERMES_REBUILD_LOG" 2>&1; then
@@ -613,17 +614,21 @@ else
 fi
 
 if [ "$rebuild_rc" -ne 0 ]; then
-  fail "Hermes rebuild failed with NVIDIA_API_KEY unset (rc=${rebuild_rc})"
+  fail "Hermes rebuild failed with NVIDIA_INFERENCE_API_KEY unset (rc=${rebuild_rc})"
   tail -80 "$HERMES_REBUILD_LOG" 2>/dev/null || true
 elif grep -q "provider credential not found" "$HERMES_REBUILD_LOG"; then
-  fail "REGRESSION — rebuild aborted on missing NVIDIA_API_KEY despite gateway-registered credential"
+  fail "REGRESSION — rebuild aborted on missing NVIDIA_INFERENCE_API_KEY despite gateway-registered credential"
 else
-  pass "Hermes rebuild reused gateway-stored credential without NVIDIA_API_KEY"
+  pass "Hermes rebuild reused gateway-stored credential without NVIDIA_INFERENCE_API_KEY"
 fi
 
+if [ -n "$NVIDIA_INFERENCE_API_KEY_BACKUP" ]; then
+  export NVIDIA_INFERENCE_API_KEY="$NVIDIA_INFERENCE_API_KEY_BACKUP"
+fi
 if [ -n "$NVIDIA_API_KEY_BACKUP" ]; then
   export NVIDIA_API_KEY="$NVIDIA_API_KEY_BACKUP"
 fi
+unset NVIDIA_INFERENCE_API_KEY_BACKUP
 unset NVIDIA_API_KEY_BACKUP
 
 section "Phase 9: Cleanup"

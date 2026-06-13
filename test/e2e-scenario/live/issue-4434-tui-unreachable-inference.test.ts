@@ -25,7 +25,7 @@ const ENVIRONMENT = ubuntuRepoDocker("cloud-openclaw");
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-issue-4434-tui-unreachable";
 validateSandboxName(SANDBOX_NAME);
 
-const INTEGRATE_MODELS_URL = "https://integrate.api.nvidia.com/v1/models";
+const INFERENCE_MODELS_URL = "https://inference-api.nvidia.com/v1/models";
 const BLOCKED_IPS = ["75.2.113.119", "99.83.136.103"];
 const DEFAULT_TUI_TIMEOUT_SEC = 180;
 const MAX_TUI_TIMEOUT_SEC = 3600;
@@ -138,8 +138,10 @@ runIssue4434LiveTest(
       skip("Linux host required for DOCKER-USER iptables repro");
     }
 
-    const apiKey = secrets.required("NVIDIA_API_KEY");
-    expect(apiKey.startsWith("nvapi-"), "NVIDIA_API_KEY must start with nvapi-").toBe(true);
+    const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
+    expect(apiKey.startsWith("nvapi-"), "NVIDIA_INFERENCE_API_KEY must start with nvapi-").toBe(
+      true,
+    );
 
     await artifacts.writeJson("scenario.json", {
       id: "issue-4434-tui-unreachable-inference",
@@ -243,7 +245,7 @@ runIssue4434LiveTest(
     const blockedEndpointProbe = await sandbox.execShell(
       instance.sandboxName,
       trustedSandboxShellScript(
-        `command -v curl >/dev/null && curl -sk --connect-timeout 5 --max-time 12 ${shellSingleQuote(INTEGRATE_MODELS_URL)} >/tmp/issue4434-models.blocked.out 2>&1`,
+        `command -v curl >/dev/null && curl -sk --connect-timeout 5 --max-time 12 ${shellSingleQuote(INFERENCE_MODELS_URL)} >/tmp/issue4434-models.blocked.out 2>&1`,
       ),
       {
         artifactName: "issue4434-endpoint-probe-after-block",
@@ -253,7 +255,7 @@ runIssue4434LiveTest(
     );
     expect(
       blockedEndpointProbe.exitCode,
-      `integrate.api.nvidia.com remained reachable from inside the sandbox after firewall block\n${resultText(blockedEndpointProbe)}`,
+      `inference-api.nvidia.com remained reachable from inside the sandbox after firewall block\n${resultText(blockedEndpointProbe)}`,
     ).not.toBe(0);
 
     const captureFile = artifacts.pathFor("openclaw-tui-capture.log");

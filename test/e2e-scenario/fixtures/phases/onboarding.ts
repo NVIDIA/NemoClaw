@@ -175,11 +175,11 @@ export class OnboardingPhaseFixture {
       throw new Error("cloud-openclaw onboarding requires an available Docker runtime.");
     }
     const sandboxName = sandboxNameFromOptions(environment.onboarding, options);
-    const apiKey = this.secrets.required("NVIDIA_API_KEY");
+    const apiKey = this.secrets.required("NVIDIA_INFERENCE_API_KEY");
     this.registerSandboxCleanup(sandboxName);
     const result = await this.host.nemoclaw(ONBOARD_ARGS, {
       artifactName: "onboard-cloud-openclaw",
-      env: commandEnv(sandboxName, { NVIDIA_API_KEY: apiKey }),
+      env: commandEnv(sandboxName, { NVIDIA_INFERENCE_API_KEY: apiKey }),
       redactionValues: [apiKey],
       timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     });
@@ -205,14 +205,14 @@ export class OnboardingPhaseFixture {
       );
     }
     const sandboxName = sandboxNameFromOptions(environment.onboarding, options);
-    const apiKey = this.secrets.required("NVIDIA_API_KEY");
+    const apiKey = this.secrets.required("NVIDIA_INFERENCE_API_KEY");
     this.registerSandboxCleanup(sandboxName);
     const shimDir = await mkdtemp(join(tmpdir(), "e2e-no-docker-"));
     const shimPath = join(shimDir, "docker");
     try {
       await writeFile(shimPath, noDockerShim(), "utf8");
       await chmod(shimPath, 0o700);
-      const env = commandEnv(sandboxName, { NVIDIA_API_KEY: apiKey });
+      const env = commandEnv(sandboxName, { NVIDIA_INFERENCE_API_KEY: apiKey });
       env.PATH = prependPath(shimDir, env.PATH);
       const result = await this.host.nemoclaw(ONBOARD_ARGS, {
         artifactName: "onboard-cloud-openclaw-no-docker",

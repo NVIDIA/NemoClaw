@@ -401,8 +401,10 @@ RUN_NETWORK_POLICY_TEST(
     });
     expect(openshellVersion.exitCode, text(openshellVersion)).toBe(0);
 
-    const apiKey = secrets.required("NVIDIA_API_KEY");
-    expect(apiKey.startsWith("nvapi-"), "NVIDIA_API_KEY must start with nvapi-").toBe(true);
+    const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
+    expect(apiKey.startsWith("nvapi-"), "NVIDIA_INFERENCE_API_KEY must start with nvapi-").toBe(
+      true,
+    );
 
     cleanup.add(`destroy network-policy sandbox ${SANDBOX_NAME}`, async () => {
       await runNemoclaw(host, [SANDBOX_NAME, "destroy", "--yes"], {
@@ -442,7 +444,7 @@ RUN_NETWORK_POLICY_TEST(
               ? "onboard-restricted-network-policy"
               : `onboard-restricted-network-policy-attempt-${attempt}`,
           env: baseEnv({
-            NVIDIA_API_KEY: apiKey,
+            NVIDIA_INFERENCE_API_KEY: apiKey,
             NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
             NEMOCLAW_RECREATE_SANDBOX: "1",
             NEMOCLAW_POLICY_TIER: "restricted",
@@ -687,7 +689,7 @@ printf '\n'
     expect(inferenceContent.trim().length).toBeGreaterThan(0);
     const directProvider = await fetchStatus(
       sandbox,
-      "https://integrate.api.nvidia.com/v1/models",
+      "https://inference-api.nvidia.com/v1/models",
       "tc-net-07-direct-provider-blocked",
     );
     expect(directProvider).toMatch(/STATUS_403|ERROR_/);

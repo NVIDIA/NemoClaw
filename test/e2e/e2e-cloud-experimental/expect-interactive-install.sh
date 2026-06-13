@@ -4,10 +4,10 @@
 #
 # Thin wrapper: real logic lives in test/e2e/test-e2e-cloud-experimental.sh (Phase 3 expect branch).
 #
-# Prereq: repo checkout at cwd or run from repo; NVIDIA_API_KEY for cloud onboard unless creds on disk.
+# Prereq: repo checkout at cwd or run from repo; NVIDIA_INFERENCE_API_KEY for cloud onboard unless creds on disk.
 #
 # Usage (full suite; Phase 3 is interactive by default in test-e2e-cloud-experimental.sh — this wrapper is optional):
-#   NVIDIA_API_KEY=nvapi-... bash test/e2e/e2e-cloud-experimental/expect-interactive-install.sh
+#   NVIDIA_INFERENCE_API_KEY=nvapi-... bash test/e2e/e2e-cloud-experimental/expect-interactive-install.sh
 #
 # Offline expect-only smoke:
 #   DEMO_FAKE_ONLY=1 bash test/e2e/e2e-cloud-experimental/expect-interactive-install.sh

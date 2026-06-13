@@ -5,7 +5,7 @@
  * Subprocess environment allowlist.
  *
  * Subprocesses spawned by the CLI or plugin must NOT inherit the full
- * parent process.env — that leaks secrets (NVIDIA_API_KEY, GITHUB_TOKEN,
+ * parent process.env — that leaks secrets (NVIDIA_INFERENCE_API_KEY, GITHUB_TOKEN,
  * AWS_ACCESS_KEY_ID, etc.) to child processes where they can be read and
  * exfiltrated. Instead, only forward the categories below.
  *
