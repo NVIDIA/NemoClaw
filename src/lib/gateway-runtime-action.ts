@@ -25,7 +25,9 @@ function getActiveGatewayName(output = ""): string | null {
   return match ? match[1].trim() : null;
 }
 
-export function getNamedGatewayLifecycleState(gatewayName = "nemoclaw") {
+export function getNamedGatewayLifecycleState(
+  gatewayName: string = resolveGatewayName(GATEWAY_PORT),
+) {
   const status = captureOpenshell(["status"], { timeout: OPENSHELL_PROBE_TIMEOUT_MS });
   const gatewayInfo = captureOpenshell(["gateway", "info", "-g", gatewayName], {
     timeout: OPENSHELL_PROBE_TIMEOUT_MS,

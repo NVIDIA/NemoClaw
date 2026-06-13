@@ -10,7 +10,7 @@
  * different `NEMOCLAW_GATEWAY_PORT` therefore reused the same named gateway,
  * the same runtime-marker state dir, and the same compat container — so
  * creating the second sandbox recreated/killed the first sandbox's gateway and
- * overwrote its runtime marker (#4422).
+ * overwrote its runtime marker.
  *
  * These pure resolvers derive a stable per-port binding. The default port
  * keeps the original `nemoclaw` names verbatim so existing single-sandbox
@@ -185,7 +185,7 @@ export interface GatewayNameBoundClassifiers {
  * Bind the gateway-name-aware health/reuse classifiers to a resolved gateway
  * name so a non-default NEMOCLAW_GATEWAY_PORT (gateway `nemoclaw-<port>`) is
  * recognized as its own gateway rather than matched against the `nemoclaw`
- * singleton (#4422). Kept out of onboard.ts to avoid growing that file.
+ * singleton. Kept out of onboard.ts to avoid growing that file.
  */
 export function createGatewayNameBoundClassifiers(
   state: typeof import("../state/gateway"),

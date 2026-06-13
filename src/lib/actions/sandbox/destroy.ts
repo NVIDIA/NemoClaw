@@ -397,7 +397,7 @@ export async function destroySandbox(
   cleanupShieldsDestroyArtifacts(sandboxName);
   // The sandbox's gateway was captured before the registry entry is removed —
   // post-removal lookups return null and would collapse the cleanup target
-  // back to the default gateway (#4865).
+  // back to the default gateway.
   const removed = removeSandboxRegistryEntry(sandboxName);
   const session = onboardSession.loadSession();
   if (session && session.sandboxName === sandboxName) {

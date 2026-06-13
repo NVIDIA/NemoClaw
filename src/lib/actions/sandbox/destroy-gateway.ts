@@ -75,9 +75,9 @@ export function cleanupGatewayAfterLastSandbox(
     stdio: ["ignore", "ignore", "ignore"],
   });
   // After the cooperative forward-stop, sweep the dashboard port range for
-  // stale host-side gateway-forward processes (#3397, #3398). The forward-stop
-  // above releases ports the live openshell tracks; this catches orphans whose
-  // openshell record was lost across upgrades or failed onboards.
+  // stale host-side gateway-forward processes. The forward-stop above releases
+  // ports the live openshell tracks; this catches orphans whose openshell
+  // record was lost across upgrades or failed onboards.
   stopStaleDashboardListeners();
   if (process.platform === "linux") {
     // Sandbox destroy is conservative: only stop the host gateway whose PID

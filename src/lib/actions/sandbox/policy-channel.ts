@@ -461,8 +461,7 @@ async function checkSlackSocketModeGatewayConflict(
     // gateway — applyChannelAddToGatewayAndRegistry → recoverNamedGatewayRuntime
     // selects that same name. Detect conflicts on the gateway the add actually
     // mutates so the check matches the provider registration and cannot leave a
-    // false negative for a sibling sandbox on the same non-default gateway
-    // (#4953).
+    // false negative for a sibling sandbox on the same non-default gateway.
     const gatewayName = getSandboxTargetGatewayName(sandboxName);
     conflictMessages = applier
       .findSlackSocketModeGatewayConflicts(

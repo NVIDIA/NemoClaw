@@ -12,7 +12,10 @@
 
 import { dockerInspect } from "../../adapters/docker";
 import { captureOpenshell, runOpenshell } from "../../adapters/openshell/runtime";
-import { OPENSHELL_OPERATION_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
+import {
+  OPENSHELL_OPERATION_TIMEOUT_MS,
+  OPENSHELL_PROBE_TIMEOUT_MS,
+} from "../../adapters/openshell/timeouts";
 import { GATEWAY_PORT } from "../../core/ports";
 import { resolveGatewayName, resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import { isGatewayHealthy } from "../../state/gateway";
@@ -23,14 +26,17 @@ import * as registry from "../../state/registry";
  * verify gateway health through OpenShell metadata instead.
  */
 export function probeGatewayMetadataHealth(gatewayName: string): boolean {
-  const status = captureOpenshell(["status"], { ignoreError: true, timeout: 10000 });
+  const status = captureOpenshell(["status"], {
+    ignoreError: true,
+    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+  });
   const namedGatewayInfo = captureOpenshell(["gateway", "info", "-g", gatewayName], {
     ignoreError: true,
-    timeout: 10000,
+    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
   });
   const activeGatewayInfo = captureOpenshell(["gateway", "info"], {
     ignoreError: true,
-    timeout: 10000,
+    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
   });
   return isGatewayHealthy(
     status.output || "",
@@ -48,7 +54,7 @@ export function usesGatewayMetadataProbe(driver: string | null | undefined): boo
  * Probe whether the OpenShell gateway the named sandbox lives on is running.
  * Resolves the gateway from the sandbox's persisted registry entry — never
  * the process-level `GATEWAY_PORT` — so the probe targets the gateway the
- * sandbox was actually onboarded against (#4985).
+ * sandbox was actually onboarded against.
  */
 export function probeGatewayRunning(sandboxName?: string): boolean {
   const entry = sandboxName ? registry.getSandbox(sandboxName) : null;

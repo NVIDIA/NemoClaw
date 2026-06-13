@@ -237,7 +237,7 @@ describe("CLI dispatch", () => {
       // `openshell-docker-gateway-8081/openshell-gateway.pid`, NOT the default
       // instance's `openshell-docker-gateway/openshell-gateway.pid`. Otherwise
       // destroying a non-default sandbox tears down the default instance's
-      // tracked host gateway process (#4865 impact clause).
+      // tracked host gateway process.
       const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-destroy-perport-pid-"));
       const localBin = path.join(home, "bin");
       const registryDir = path.join(home, ".nemoclaw");

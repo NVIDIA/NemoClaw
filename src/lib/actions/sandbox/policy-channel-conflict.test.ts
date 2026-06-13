@@ -687,7 +687,7 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
     expect(upsertMock).not.toHaveBeenCalled(); // aborted before registering
   });
 
-  it("slack: a second sandbox on the SAME non-default gateway is blocked (#4953)", async () => {
+  it("slack: a second sandbox on the SAME non-default gateway is blocked", async () => {
     // Both sandboxes are bound to `nemoclaw-8090`. The credential axis would
     // not flag distinct tokens, but the gateway axis must — without this case,
     // `checkSlackSocketModeGatewayConflict` previously checked the default
