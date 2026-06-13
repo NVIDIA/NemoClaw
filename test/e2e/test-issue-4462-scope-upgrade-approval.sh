@@ -602,6 +602,23 @@ exit 0
   if [ -n "$pending_after" ]; then
     pass "legacy gateway-pinned approve leaves the CLI scope-upgrade request pending"
     recovery_request_id="$pending_after"
+    # Wait for the gateway WebSocket to stabilise after the legacy approve
+    # failure — the failed request can leave the connection transiently
+    # unreachable, causing an immediate recovery approve to fail with
+    # "gateway connect failed".
+    local gw_ready=0
+    for _gw_attempt in 1 2 3 4 5; do
+      if device_state_json >/dev/null 2>&1; then
+        gw_ready=1
+        break
+      fi
+      info "gateway not yet reachable (attempt ${_gw_attempt}/5), waiting 2 s …"
+      sleep 2
+    done
+    if [ "$gw_ready" -eq 0 ]; then
+      fail "gateway did not become reachable within 10 s after legacy approve failure"
+      return 1
+    fi
     approve_request "$recovery_request_id" "recovery after legacy characterization" 1 || return 1
     pass "fixed devices approve path recovers the pending legacy request"
     return 0
