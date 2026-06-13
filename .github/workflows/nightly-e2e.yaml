@@ -222,7 +222,10 @@ jobs:
       script: test/e2e/test-cloud-onboard-e2e.sh
       artifact_name: "install-log-cloud-onboard"
       artifact_path: "/tmp/nemoclaw-e2e-cloud-onboard-install.log"
-      env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_POLICY_MODE":"custom","NEMOCLAW_POLICY_PRESETS":"npm,pypi","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-cloud-onboard"}'
+      always_artifact_name: "cloud-onboard-traces"
+      always_artifact_path: "/tmp/nemoclaw-trace-summary/"
+      always_artifact_trace_source_path: "/tmp/nemoclaw-traces/"
+      env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_POLICY_MODE":"custom","NEMOCLAW_POLICY_PRESETS":"npm,pypi","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-cloud-onboard","NEMOCLAW_TRACE_DIR":"/tmp/nemoclaw-traces"}'
       checked_out_ref_env: "NEMOCLAW_PUBLIC_INSTALL_REF"
       nvidia_api_key: true
       nvidia_secret_as_compatible_api_key: true
@@ -2572,9 +2575,11 @@ jobs:
                 ? '❌ Some jobs failed'
                 : cancelled.length > 0 && passed.length === 0
                   ? '⚠️ Run cancelled — no signal'
-                  : skipped.length > 0 && passed.length === 0
-                    ? '⚠️ No requested jobs ran'
-                    : '✅ All requested jobs passed';
+                  : cancelled.length > 0 && passed.length > 0
+                    ? '⚠️ Some jobs cancelled — partial pass'
+                    : skipped.length > 0 && passed.length === 0
+                      ? '⚠️ No requested jobs ran'
+                      : '✅ All requested jobs passed';
 
             const body = [
               `### Selective E2E Results — ${status}`,
@@ -2607,7 +2612,7 @@ jobs:
   # ── Nightly Scorecard ──────────────────────────────────────────────────
   # Aggregates results into a scorecard published to $GITHUB_STEP_SUMMARY
   # and optionally to Slack. Computes pass/fail/cancel breakdowns and
-  # compares trends vs prior day. Runs on:
+  # cloud-onboard trace timing vs the latest prior-release run. Runs on:
   #   - schedule (cron)            → Slack post (DAILY route)
   #   - workflow_dispatch full run → Slack post (FULLRUN route)
   #   - workflow_dispatch selective→ silent unless post_to_slack=true (preview)
@@ -2705,6 +2710,12 @@ jobs:
             const EXCLUDED_JOBS = new Set(['gpu-e2e', 'notify-on-failure', 'report-to-pr', 'scorecard']);
 
             // ── Helpers ─────────────────────────────────────────────
+            const path = require('path');
+            const traceTiming = require(path.join(
+              process.env.GITHUB_WORKSPACE,
+              'scripts/scorecard/analyze-trace-timing.ts',
+            ));
+
             function formatDate(date) {
               return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
             }
@@ -2811,59 +2822,8 @@ jobs:
                   .map(([name]) => ({ name, url: null }))
                   .sort((a, b) => a.name.localeCompare(b.name));
 
-            // ── Fetch prior-day run for trend comparison ────────────
-            let trendLine = '';
-            if (isSelectiveDispatch) {
-              trendLine = 'Trend: ⊘ Not shown for selective dispatches';
-            } else {
-              try {
-                const WORKFLOW_FILE = 'nightly-e2e.yaml';
-                const now = new Date();
-                const since48h = new Date(now.getTime() - 48 * 60 * 60 * 1000).toISOString();
-                const since24h = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
-
-                const priorRuns = [];
-                for (let page = 1; page <= 10 && priorRuns.length === 0; page++) {
-                  const { data } = await github.rest.actions.listWorkflowRuns({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    workflow_id: WORKFLOW_FILE,
-                    created: `>=${since48h}`,
-                    per_page: 100,
-                    page,
-                  });
-
-                  priorRuns.push(
-                    ...data.workflow_runs.filter(r =>
-                      r.status === 'completed' &&
-                      r.event === 'schedule' &&
-                      new Date(r.created_at) < new Date(since24h)
-                    )
-                  );
-
-                  if (data.workflow_runs.length < 100) break;
-                }
-
-                if (priorRuns.length > 0) {
-                  // Check the most recent prior run
-                  const priorRun = priorRuns[0];
-                  const priorPerfect = priorRun.conclusion === 'success';
-                  if (perfect && priorPerfect) {
-                    trendLine = 'Trend: ➡️ Stable (perfect both days)';
-                  } else if (perfect && !priorPerfect) {
-                    trendLine = 'Trend: ↗️ Improving (yesterday had failures → today perfect)';
-                  } else if (!perfect && priorPerfect) {
-                    trendLine = 'Trend: ↘️ Degrading (yesterday perfect → today has failures)';
-                  } else {
-                    trendLine = 'Trend: ➡️ Stable (failures both days)';
-                  }
-                } else {
-                  trendLine = 'Trend: ⊘ No prior-day data for comparison';
-                }
-              } catch (e) {
-                trendLine = `Trend: ⊘ Could not fetch prior-day data (${e.message})`;
-              }
-            }
+            const { traceTimingLine, traceSummaryLines } =
+              await traceTiming.buildTraceTimingResult({ github, context });
 
             // ── Build scorecard ─────────────────────────────────────
             const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
@@ -2899,7 +2859,8 @@ jobs:
             }
 
             lines.push('');
-            lines.push(trendLine);
+            lines.push(traceTimingLine);
+            lines.push(...traceSummaryLines);
             lines.push('');
             lines.push(`🔗 [Full run details](${runUrl})`);
 
@@ -2925,7 +2886,7 @@ jobs:
               skipped,
               perfect,
               failedJobs,
-              trendLine,
+              traceTimingLine,
               runUrl,
             }));
 

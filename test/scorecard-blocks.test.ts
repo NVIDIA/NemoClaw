@@ -61,7 +61,8 @@ function makeData(overrides: Partial<ScorecardData> = {}): ScorecardData {
     skipped: 1,
     perfect: true,
     failedJobs: [],
-    trendLine: "Trend: ↗️ Improving (yesterday had failures → today perfect)",
+    traceTimingLine:
+      "Trace: cloud-onboard total 1m 35.3s, increased +12.4s (+15.0%) vs v0.0.56. Top phase changes: sandbox +4.0s; preflight +2.0s; gateway -1.0s. Full phase timing table is in the GitHub run summary.",
     runUrl: "https://github.com/NVIDIA/NemoClaw/actions/runs/12345678",
     ...overrides,
   };
@@ -116,10 +117,28 @@ describe("buildBlocks — perfect scheduled run", () => {
     );
   });
 
-  it("strips the 'Trend: ' prefix and re-bolds it", () => {
-    const trendCtx = blocks.filter((block) => block.type === "context").pop();
-    expect(elementText(trendCtx, 0)).toMatch(/^\*Trend:\*/);
-    expect(elementText(trendCtx, 0)).not.toMatch(/^Trend: /);
+  it("omits the legacy trend context", () => {
+    const contextText = blocks
+      .filter((block) => block.type === "context")
+      .flatMap((block) => block.elements?.map((element) => element.text ?? "") ?? [])
+      .join("\n");
+    expect(contextText).not.toContain("Trend");
+  });
+
+  it("includes cloud onboard trace timing as a dedicated section", () => {
+    const traceSection = findRequiredBlock(
+      blocks,
+      (block) => block.type === "section" && block.text?.text?.startsWith("*Trace:*") === true,
+    );
+
+    expect(traceSection.text?.text).toContain("cloud-onboard total 1m 35.3s");
+    expect(traceSection.text?.text).toContain("increased +12.4s (+15.0%) vs v0.0.56");
+    expect(traceSection.text?.text).toContain("Top phase changes: sandbox +4.0s");
+    expect(traceSection.text?.text).toContain("preflight +2.0s");
+    expect(traceSection.text?.text).toContain("gateway -1.0s");
+    expect(traceSection.text?.text).toContain(
+      "Full phase timing table is in the GitHub run summary",
+    );
   });
 });
 
@@ -141,7 +160,6 @@ describe("buildBlocks — run with failures", () => {
         // url=null exercises the fallback rendering (no API result for this job)
         { name: "sandbox-operations-e2e", url: null },
       ],
-      trendLine: "Trend: ↘️ Degrading (yesterday perfect → today has failures)",
     }),
   );
 
@@ -187,7 +205,6 @@ describe("buildBlocks — selective dispatch", () => {
       ran: 2,
       success: 2,
       skipped: 0,
-      trendLine: "Trend: ⊘ Not shown for selective dispatches",
     }),
   );
 
@@ -209,9 +226,12 @@ describe("buildBlocks — selective dispatch", () => {
     expect(elementText(withActor[0], 0)).toContain("(by *hple*)");
   });
 
-  it("keeps the 'not shown' trend text from the generator", () => {
-    const trendCtx = blocks.filter((block) => block.type === "context").pop();
-    expect(elementText(trendCtx, 0)).toContain("Not shown");
+  it("does not add a legacy trend context", () => {
+    const contextText = blocks
+      .filter((block) => block.type === "context")
+      .flatMap((block) => block.elements?.map((element) => element.text ?? "") ?? [])
+      .join("\n");
+    expect(contextText).not.toContain("Trend");
   });
 });
 

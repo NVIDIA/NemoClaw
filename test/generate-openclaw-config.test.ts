@@ -6,11 +6,11 @@
 // Runs the actual TypeScript script with controlled env vars and asserts on
 // the generated openclaw.json output.
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { buildConfig, main } from "../scripts/generate-openclaw-config.mts";
 import {
@@ -613,10 +613,10 @@ describe("generate-openclaw-config.mts: config generation", () => {
       "openshell:resolve:env:DISCORD_BOT_TOKEN",
     );
     expect(config.channels.telegram.accounts.default.proxy).toBe("http://10.200.0.1:3128");
-    expect(config.channels.discord.accounts.default.proxy).toBeUndefined();
+    expect(config.channels.discord.accounts.default.proxy).toBe("http://10.200.0.1:3128");
   });
 
-  it("#3894: routes Discord gateway traffic through OpenClaw's managed proxy", () => {
+  it("#3894: routes Discord gateway traffic through the per-account proxy", () => {
     const channels = Buffer.from(JSON.stringify(["discord"])).toString("base64");
     const config = runConfigScript({
       NEMOCLAW_MESSAGING_CHANNELS_B64: channels,
@@ -633,10 +633,10 @@ describe("generate-openclaw-config.mts: config generation", () => {
       token: "openshell:resolve:env:DISCORD_BOT_TOKEN",
       enabled: true,
     });
-    expect(config.channels.discord.accounts.default.proxy).toBeUndefined();
+    expect(config.channels.discord.accounts.default.proxy).toBe("http://10.201.0.9:43128");
   });
 
-  it("does not write a Discord account proxy when the managed proxy is configured", () => {
+  it("writes the Discord account proxy alongside the managed proxy", () => {
     const channels = Buffer.from(JSON.stringify(["discord"])).toString("base64");
     const config = runConfigScript({
       NEMOCLAW_MESSAGING_CHANNELS_B64: channels,
@@ -644,7 +644,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
     });
 
     expect(config.proxy.proxyUrl).toBe("http://10.200.0.1:43128");
-    expect(config.channels.discord.accounts.default.proxy).toBeUndefined();
+    expect(config.channels.discord.accounts.default.proxy).toBe("http://10.200.0.1:43128");
   });
 
   it("can defer OpenClaw managed proxy config for build-time doctor", () => {
@@ -655,7 +655,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
     });
 
     expect(config.proxy).toBeUndefined();
-    expect(config.channels.discord.accounts.default.proxy).toBeUndefined();
+    expect(config.channels.discord.accounts.default.proxy).toBe("http://10.200.0.1:3128");
   });
 
   it("ignores the OpenShell loopback proxy env var when using OpenClaw managed proxy", () => {
@@ -667,10 +667,10 @@ describe("generate-openclaw-config.mts: config generation", () => {
     });
 
     expect(config.proxy.proxyUrl).toBe("http://10.200.0.1:3128");
-    expect(config.channels.discord.accounts.default.proxy).toBeUndefined();
+    expect(config.channels.discord.accounts.default.proxy).toBe("http://10.200.0.1:3128");
   });
 
-  it("keeps Telegram on the OpenShell proxy while Discord relies on the managed proxy", () => {
+  it("routes both Telegram and Discord through the per-account proxy", () => {
     const channels = Buffer.from(JSON.stringify(["telegram", "discord"])).toString("base64");
     const config = runConfigScript({
       NEMOCLAW_MESSAGING_CHANNELS_B64: channels,
@@ -680,7 +680,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
 
     expect(config.proxy.proxyUrl).toBe("http://10.201.0.9:43128");
     expect(config.channels.telegram.accounts.default.proxy).toBe("http://10.201.0.9:43128");
-    expect(config.channels.discord.accounts.default.proxy).toBeUndefined();
+    expect(config.channels.discord.accounts.default.proxy).toBe("http://10.201.0.9:43128");
   });
 
   it("emits Bolt-shape placeholders for Slack so the SDK's prefix regex passes", () => {
