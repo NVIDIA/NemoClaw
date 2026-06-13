@@ -7,7 +7,7 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
-import { buildRunPlan, runUninstallPlan, type RunResult } from "./run-plan";
+import { buildRunPlan, type RunResult, runUninstallPlan } from "./run-plan";
 
 function ok(stdout = ""): RunResult {
   return { status: 0, stdout, stderr: "" };
@@ -77,6 +77,7 @@ describe("uninstall run plan", () => {
         commandExists: () => true,
         env: {
           HOME: "/tmp/nemoclaw-uninstall-test",
+          NEMOCLAW_AGENT: "",
           TMPDIR: "/tmp/nemoclaw-uninstall-test",
         } as NodeJS.ProcessEnv,
         existsSync: () => false,
@@ -206,7 +207,7 @@ describe("uninstall run plan", () => {
     const result = runUninstallPlan(
       { assumeYes: false, deleteModels: false, keepOpenShell: true },
       {
-        env: { HOME: "/tmp/nemoclaw-uninstall-test" } as NodeJS.ProcessEnv,
+        env: { HOME: "/tmp/nemoclaw-uninstall-test", NEMOCLAW_AGENT: "" } as NodeJS.ProcessEnv,
         existsSync: () => false,
         isTty: true,
         log: (line) => logs.push(line),
@@ -239,6 +240,53 @@ describe("uninstall run plan", () => {
     expect(result.exitCode).toBe(0);
     expect(logs).toContain("Aborted.");
     expect(run).not.toHaveBeenCalled();
+  });
+
+  it("explains how to proceed when stdin yields no input at the confirm prompt", () => {
+    const logs: string[] = [];
+    const run = vi.fn();
+    const result = runUninstallPlan(
+      { assumeYes: false, deleteModels: false, keepOpenShell: true },
+      {
+        env: { HOME: "/tmp/nemoclaw-uninstall-test" } as NodeJS.ProcessEnv,
+        log: (line) => logs.push(line),
+        readLine: () => null,
+        run,
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(logs).toContain(
+      "No input available on stdin (closed or non-interactive); re-run with --yes to skip this prompt.",
+    );
+    expect(logs).toContain("Aborted.");
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("builds the default runtime without touching process.stdin (#5188)", () => {
+    const stdinGet = vi.spyOn(process, "stdin", "get");
+    try {
+      const result = runUninstallPlan(
+        { assumeYes: true, deleteModels: false, keepOpenShell: true },
+        {
+          commandExists: () => false,
+          env: { HOME: "/tmp/nemoclaw-uninstall-test" } as NodeJS.ProcessEnv,
+          existsSync: () => false,
+          kill: () => true,
+          log: () => {},
+          rmSync: vi.fn(),
+          run: vi.fn(() => ok()),
+          runDocker: () => ok(""),
+          // isTty/readLine intentionally not injected: the default
+          // isStdinTty/readLineFromStdin pair must never instantiate
+          // process.stdin, which would flip fd 0 non-blocking (#5188).
+        },
+      );
+      expect(result.exitCode).toBe(0);
+      expect(stdinGet).not.toHaveBeenCalled();
+    } finally {
+      stdinGet.mockRestore();
+    }
   });
 
   it("kills the Ollama auth proxy via the persisted PID file (#2759)", () => {
@@ -580,7 +628,14 @@ describe("uninstall run plan", () => {
       { assumeYes: true, deleteModels: false, keepOpenShell: true },
       {
         commandExists: (command) => command !== "docker" && command !== "pgrep",
-        env: { HOME: "/home/test", TMPDIR: "/tmp/test" } as NodeJS.ProcessEnv,
+        // Neutralize NEMOCLAW_NON_INTERACTIVE: the runtime merges the real
+        // process.env, so a developer shell exporting it would silently flip
+        // this interactive scenario onto the non-interactive path.
+        env: {
+          HOME: "/home/test",
+          NEMOCLAW_NON_INTERACTIVE: "",
+          TMPDIR: "/tmp/test",
+        } as NodeJS.ProcessEnv,
         error: (line) => warnings.push(line),
         existsSync: (target) =>
           target === "/swapfile" || target === "/home/test/.nemoclaw/managed_swap",
@@ -664,7 +719,10 @@ describe("uninstall run plan", () => {
           { assumeYes: true, deleteModels: false, keepOpenShell: true },
           {
             commandExists: () => false,
-            env: { HOME: tmpHome } as NodeJS.ProcessEnv,
+            env: {
+              HOME: tmpHome,
+              NEMOCLAW_UNINSTALL_DESTROY_USER_DATA: "",
+            } as NodeJS.ProcessEnv,
             existsSync: tempScopedExistsSync(tmpHome),
             isTty: false,
             log: (line) => logs.push(line),
@@ -735,7 +793,11 @@ describe("uninstall run plan", () => {
           { assumeYes: false, deleteModels: false, keepOpenShell: true },
           {
             commandExists: () => false,
-            env: { HOME: tmpHome } as NodeJS.ProcessEnv,
+            env: {
+              HOME: tmpHome,
+              NEMOCLAW_NON_INTERACTIVE: "",
+              NEMOCLAW_UNINSTALL_DESTROY_USER_DATA: "",
+            } as NodeJS.ProcessEnv,
             existsSync: tempScopedExistsSync(tmpHome),
             isTty: true,
             log: (line) => logs.push(line),
@@ -763,7 +825,11 @@ describe("uninstall run plan", () => {
           { assumeYes: false, deleteModels: false, keepOpenShell: true },
           {
             commandExists: () => false,
-            env: { HOME: tmpHome } as NodeJS.ProcessEnv,
+            env: {
+              HOME: tmpHome,
+              NEMOCLAW_NON_INTERACTIVE: "",
+              NEMOCLAW_UNINSTALL_DESTROY_USER_DATA: "",
+            } as NodeJS.ProcessEnv,
             existsSync: tempScopedExistsSync(tmpHome),
             isTty: true,
             log: (line) => logs.push(line),
@@ -799,6 +865,7 @@ describe("uninstall run plan", () => {
             env: {
               HOME: tmpHome,
               NEMOCLAW_NON_INTERACTIVE: "1",
+              NEMOCLAW_UNINSTALL_DESTROY_USER_DATA: "",
             } as NodeJS.ProcessEnv,
             existsSync: tempScopedExistsSync(tmpHome),
             // Simulate a TTY so we exercise the env-var-only branch (the prior
@@ -850,7 +917,10 @@ describe("uninstall run plan", () => {
           { assumeYes: true, deleteModels: false, keepOpenShell: true },
           {
             commandExists: () => false,
-            env: { HOME: tmpHome } as NodeJS.ProcessEnv,
+            env: {
+              HOME: tmpHome,
+              NEMOCLAW_UNINSTALL_DESTROY_USER_DATA: "",
+            } as NodeJS.ProcessEnv,
             error: (line) => warnings.push(line),
             existsSync: tempScopedExistsSync(tmpHome),
             isTty: false,
