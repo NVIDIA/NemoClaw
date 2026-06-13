@@ -399,7 +399,7 @@ process.env.NEMOCLAW_PROVIDER = "";
 process.env.NEMOCLAW_MODEL = "";
 
 credentials.ensureApiKey = async () => {
-  process.env.NVIDIA_API_KEY = "nvapi-good";
+  process.env.NVIDIA_INFERENCE_API_KEY = "nvapi-good";
 };
 runner.runCapture = (command) => {
   const cmd = Array.isArray(command) ? command.join(" ") : command;
@@ -423,6 +423,7 @@ async function runScenario(scenario) {
   };
   process.env.NEMOCLAW_PROVIDER = "";
   process.env.NEMOCLAW_MODEL = "";
+  process.env.NVIDIA_INFERENCE_API_KEY = "";
   process.env.NVIDIA_API_KEY = "";
   delete require.cache[require.resolve(${onboardPath})];
   const { setupNim } = require(${onboardPath});

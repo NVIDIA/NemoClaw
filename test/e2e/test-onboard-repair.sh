@@ -14,10 +14,10 @@
 #   - Docker running
 #   - openshell CLI installed
 #   - Node.js available
-#   - NVIDIA_API_KEY set to a valid nvapi-* key before starting the test
+#   - NVIDIA_INFERENCE_API_KEY set to a valid nvapi-* key before starting the test
 #
 # Usage:
-#   NVIDIA_API_KEY=nvapi-... bash test/e2e/test-onboard-repair.sh
+#   NVIDIA_INFERENCE_API_KEY=nvapi-... bash test/e2e/test-onboard-repair.sh
 
 set -uo pipefail
 
@@ -80,7 +80,7 @@ if [ -n "$INSTALL_SANDBOX_NAME" ]; then
 fi
 
 SESSION_FILE="$HOME/.nemoclaw/onboard-session.json"
-RESTORE_API_KEY="${NVIDIA_API_KEY:-}"
+RESTORE_API_KEY="${NVIDIA_INFERENCE_API_KEY:-}"
 
 wait_openshell_sandbox_absent() {
   local sandbox_name="$1"
@@ -149,14 +149,14 @@ else
 fi
 
 if [[ -n "$RESTORE_API_KEY" && "$RESTORE_API_KEY" == nvapi-* ]]; then
-  pass "NVIDIA_API_KEY is set (starts with nvapi-)"
+  pass "NVIDIA_INFERENCE_API_KEY is set (starts with nvapi-)"
 else
-  fail "NVIDIA_API_KEY not set or invalid — required for resume completion"
+  fail "NVIDIA_INFERENCE_API_KEY not set or invalid — required for resume completion"
   exit 1
 fi
 
-export NVIDIA_API_KEY="$RESTORE_API_KEY"
-pass "Exported NVIDIA_API_KEY for the repair run (host writes nothing to disk; OpenShell gateway is the system of record)"
+export NVIDIA_INFERENCE_API_KEY="$RESTORE_API_KEY"
+pass "Exported NVIDIA_INFERENCE_API_KEY for the repair run (host writes nothing to disk; OpenShell gateway is the system of record)"
 
 # ══════════════════════════════════════════════════════════════════
 # Phase 2: Create interrupted resumable state
@@ -222,7 +222,7 @@ else
 fi
 
 REPAIR_LOG="$(mktemp)"
-env -u NVIDIA_API_KEY \
+env -u NVIDIA_INFERENCE_API_KEY \
   NEMOCLAW_NON_INTERACTIVE=1 \
   NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
   NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME" \
@@ -295,7 +295,7 @@ pass "Re-created interrupted session for conflict tests"
 info "Attempting resume with a different sandbox name..."
 
 SANDBOX_CONFLICT_LOG="$(mktemp)"
-env -u NVIDIA_API_KEY \
+env -u NVIDIA_INFERENCE_API_KEY \
   NEMOCLAW_NON_INTERACTIVE=1 \
   NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
   NEMOCLAW_SANDBOX_NAME="$OTHER_SANDBOX_NAME" \
@@ -324,7 +324,7 @@ section "Phase 5: Reject conflicting provider and model"
 info "Attempting resume with conflicting provider/model inputs..."
 
 PROVIDER_CONFLICT_LOG="$(mktemp)"
-env -u NVIDIA_API_KEY \
+env -u NVIDIA_INFERENCE_API_KEY \
   NEMOCLAW_NON_INTERACTIVE=1 \
   NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
   NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME" \

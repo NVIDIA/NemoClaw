@@ -432,8 +432,8 @@ describe("state-validation phase fixture", () => {
   });
 
   it("does not pass unrelated secret environment values to status probes", async () => {
-    const original = process.env.NVIDIA_API_KEY;
-    process.env.NVIDIA_API_KEY = "nvapi-test-secret-value";
+    const original = process.env.NVIDIA_INFERENCE_API_KEY;
+    process.env.NVIDIA_INFERENCE_API_KEY = "nvapi-test-secret-value";
     try {
       const runner = new FakeRunner();
       runner.enqueue(shellResult(0, "nemoclaw v0.0.0\n"));
@@ -447,13 +447,13 @@ describe("state-validation phase fixture", () => {
       for (const call of runner.calls.slice(1)) {
         expect(call.options).not.toHaveProperty("inheritEnv");
         expect(call.options?.env).toEqual(expect.objectContaining({ PATH: expect.any(String) }));
-        expect(call.options?.env).not.toHaveProperty("NVIDIA_API_KEY");
+        expect(call.options?.env).not.toHaveProperty("NVIDIA_INFERENCE_API_KEY");
       }
     } finally {
       if (original === undefined) {
-        delete process.env.NVIDIA_API_KEY;
+        delete process.env.NVIDIA_INFERENCE_API_KEY;
       } else {
-        process.env.NVIDIA_API_KEY = original;
+        process.env.NVIDIA_INFERENCE_API_KEY = original;
       }
     }
   });
