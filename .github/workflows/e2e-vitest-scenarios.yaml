@@ -990,8 +990,8 @@ jobs:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
           NEMOCLAW_PROVIDER: custom
           NEMOCLAW_ENDPOINT_URL: https://inference-api.nvidia.com/v1
-          NEMOCLAW_MODEL: nvidia/nemotron-3-super-120b-a12b
-          NEMOCLAW_COMPAT_MODEL: nvidia/nemotron-3-super-120b-a12b
+          NEMOCLAW_MODEL: nvidia/nvidia/nemotron-3-super-v3
+          NEMOCLAW_COMPAT_MODEL: nvidia/nvidia/nemotron-3-super-v3
           NEMOCLAW_PREFERRED_API: openai-completions
         run: |
           set -euo pipefail

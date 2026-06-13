@@ -6,7 +6,7 @@ const HOSTED_INFERENCE_CREDENTIAL_ENV = "COMPATIBLE_API_KEY";
 const HOSTED_INFERENCE_PROVIDER = "custom";
 const HOSTED_INFERENCE_PROVIDER_NAME = "compatible-endpoint";
 const DEFAULT_HOSTED_INFERENCE_BASE_URL = "https://inference-api.nvidia.com/v1";
-const DEFAULT_HOSTED_INFERENCE_MODEL = "nvidia/nemotron-3-super-120b-a12b";
+const DEFAULT_HOSTED_INFERENCE_MODEL = "nvidia/nvidia/nemotron-3-super-v3";
 
 export interface HostedInferenceSecrets {
   required(name: string): string;
