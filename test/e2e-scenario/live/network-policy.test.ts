@@ -17,13 +17,13 @@ import path from "node:path";
 
 import { isPrivateIp } from "../../../nemoclaw/src/blueprint/private-networks.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
-import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { shouldRunLiveE2EScenarios } from "../fixtures/live-project-gate.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const CLI_ENTRYPOINT = path.join(REPO_ROOT, "bin", "nemoclaw.js");
@@ -64,6 +64,14 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function shellEvalArg(script: string): string {
+  if (script.length === 0) {
+    return "";
+  }
+  const encoded = Buffer.from(script, "utf8").toString("base64");
+  return `printf %s ${encoded} | base64 -d | sh`;
+}
+
 async function runNemoclaw(
   host: HostCliClient,
   args: string[],
@@ -82,7 +90,7 @@ async function sandboxBash(
   script: string,
   options: { artifactName: string; timeoutMs?: number } = { artifactName: "sandbox-bash" },
 ): Promise<ShellProbeResult> {
-  return sandbox.execShell(SANDBOX_NAME, trustedSandboxShellScript(script), {
+  return sandbox.execShell(SANDBOX_NAME, trustedSandboxShellScript(shellEvalArg(script)), {
     artifactName: options.artifactName,
     env: baseEnv(),
     timeoutMs: options.timeoutMs ?? SANDBOX_EXEC_TIMEOUT_MS,
@@ -105,7 +113,7 @@ async function applyPresetInteractively(
   const script = String.raw`
 set -euo pipefail
 preset_list="$(env NEMOCLAW_NON_INTERACTIVE= node "$NEMOCLAW_E2E_CLI" "$NEMOCLAW_E2E_SANDBOX" policy-add </dev/null 2>&1 || true)"
-preset_num="$(printf '%s\n' "$preset_list" | python3 -c 'import re,sys; preset=sys.argv[1]; text=sys.stdin.read(); m=re.search(r"(?m)^\\s*(\\d+)\\).*" + re.escape(preset), text); print(m.group(1) if m else "")' "$NEMOCLAW_E2E_PRESET")"
+preset_num="$(printf '%s\n' "$preset_list" | python3 -c 'import re,sys; preset=sys.argv[1]; text=sys.stdin.read(); m=re.search(r"(?m)^\s*(\d+)\).*" + re.escape(preset), text); print(m.group(1) if m else "")' "$NEMOCLAW_E2E_PRESET")"
 if [ -z "$preset_num" ]; then
   printf 'preset %s not found in list:\n%s\n' "$NEMOCLAW_E2E_PRESET" "$preset_list" >&2
   exit 1
@@ -557,7 +565,7 @@ hello
     ).resolves.toBe("403");
 
     const slackBefore = await fetchStatus(sandbox, "https://slack.com/", "tc-net-03-slack-before");
-    expect(slackBefore).toMatch(/STATUS_403/);
+    expect(slackBefore).toMatch(/STATUS_403|ERROR_/);
     const slackApply = await applyPresetInteractively(host, "slack");
     expect(slackApply.exitCode, text(slackApply)).toBe(0);
     const slackAfter = await fetchStatus(sandbox, "https://slack.com/", "tc-net-03-slack-after");

@@ -2292,6 +2292,12 @@ _nemoclaw_restore_mutable_config_perms() {
   chmod -R g+rwX,o-rwx "$_nemoclaw_oc_dir" 2>/dev/null || true
   find "$_nemoclaw_oc_dir" -type d -exec chmod g+s {} + 2>/dev/null || true
   chmod 2770 "$_nemoclaw_oc_dir" 2>/dev/null || true
+  if [ ! -L "$_nemoclaw_oc_dir" ] &&
+    [ ! -L "$_nemoclaw_oc_dir/openclaw.json" ] &&
+    [ ! -L "$_nemoclaw_oc_dir/.config-hash" ] &&
+    [ -f "$_nemoclaw_oc_dir/openclaw.json" ]; then
+    (cd "$_nemoclaw_oc_dir" && sha256sum openclaw.json >.config-hash) 2>/dev/null || true
+  fi
   chmod 660 "$_nemoclaw_oc_dir/openclaw.json" "$_nemoclaw_oc_dir/.config-hash" 2>/dev/null || true
   # Keep the recovery baseline out of the group-writable contract — it is a
   # read-only trust anchor (root:sandbox 0440 when root re-locks it). The

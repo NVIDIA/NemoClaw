@@ -31,6 +31,7 @@
  */
 
 import { execFileSync, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -63,6 +64,17 @@ function extractGuardBlock(src: string): string {
 
 function modeBits(filePath: string): number {
   return fs.statSync(filePath).mode & 0o7777;
+}
+
+function sha256Hex(filePath: string): string {
+  return createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
+}
+
+function openClawConfigHashMatches(configDir: string): boolean {
+  const configFile = path.join(configDir, "openclaw.json");
+  const hashFile = path.join(configDir, ".config-hash");
+  const [digest, fileName] = fs.readFileSync(hashFile, "utf-8").trim().split(/\s+/);
+  return digest === sha256Hex(configFile) && fileName === "openclaw.json";
 }
 
 // WSL CI can run these snippets as root; force restore-path cases to model a
@@ -141,6 +153,7 @@ describe("#4538 raw `openclaw doctor --fix` mutable-perm restore", () => {
       // Config + hash: group-writable so the gateway UID can persist edits.
       expect(modeBits(configFile)).toBe(0o660);
       expect(modeBits(hashFile)).toBe(0o660);
+      expect(openClawConfigHashMatches(configDir)).toBe(true);
       // Recursive: nested dirs regain setgid + group access too.
       expect(modeBits(nestedDir) & 0o2070).toBe(0o2070);
     } finally {
@@ -199,6 +212,7 @@ describe("#4538 raw `openclaw doctor --fix` mutable-perm restore", () => {
             "command() {",
             '  if [ "${1:-}" = "openclaw" ]; then',
             '    chmod 700 "$OPENCLAW_STATE_DIR";',
+            '    printf \'{"doctor":true}\\n\' > "$OPENCLAW_STATE_DIR/openclaw.json";',
             '    chmod 600 "$OPENCLAW_STATE_DIR/openclaw.json";',
             "    return 7;",
             "  fi",
@@ -222,6 +236,7 @@ describe("#4538 raw `openclaw doctor --fix` mutable-perm restore", () => {
       // ...and still restores the mutable contract afterwards.
       expect(modeBits(configDir)).toBe(0o2770);
       expect(modeBits(configFile)).toBe(0o660);
+      expect(openClawConfigHashMatches(configDir)).toBe(true);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -246,6 +261,7 @@ describe("#4538 raw `openclaw doctor --fix` mutable-perm restore", () => {
             "command() {",
             '  if [ "${1:-}" = "openclaw" ]; then',
             '    chmod 700 "$OPENCLAW_STATE_DIR";',
+            '    printf \'{"doctor":true}\\n\' > "$OPENCLAW_STATE_DIR/openclaw.json";',
             '    chmod 600 "$OPENCLAW_STATE_DIR/openclaw.json";',
             "    return 7;",
             "  fi",
@@ -268,6 +284,7 @@ describe("#4538 raw `openclaw doctor --fix` mutable-perm restore", () => {
       // ...but the in-function restore ran before the function returned.
       expect(modeBits(configDir)).toBe(0o2770);
       expect(modeBits(configFile)).toBe(0o660);
+      expect(openClawConfigHashMatches(configDir)).toBe(true);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

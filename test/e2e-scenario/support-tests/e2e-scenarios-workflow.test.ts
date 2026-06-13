@@ -223,6 +223,26 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
     });
     expect(
       evaluateE2eVitestWorkflowDispatchSelectors({
+        scenarios: "messaging-compatible-endpoint",
+      }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["messaging-compatible-endpoint-vitest"],
+      registryScenarios: [],
+    });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({
+        jobs: "messaging-compatible-endpoint-vitest",
+      }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["messaging-compatible-endpoint-vitest"],
+      registryScenarios: [],
+    });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({
         scenarios: "inference-routing",
       }),
     ).toMatchObject({
@@ -925,6 +945,70 @@ jobs:
       );
       expect(validateE2eVitestScenariosWorkflowBoundary(missingReportNeedPath)).toContain(
         "report-to-pr job must wait for runtime-overrides-vitest",
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("requires messaging-compatible-endpoint workflow and report coverage", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-vitest-workflow-"));
+    const renamedWorkflowPath = path.join(tmp, "renamed-workflow.yaml");
+    const missingReportNeedPath = path.join(tmp, "missing-report-need.yaml");
+    const workflow = fs.readFileSync(
+      path.join(process.cwd(), ".github/workflows/e2e-vitest-scenarios.yaml"),
+      "utf8",
+    );
+    fs.writeFileSync(
+      renamedWorkflowPath,
+      workflow.replace(/^  messaging-compatible-endpoint-vitest:$/m, "  msg-compatible-missing:"),
+    );
+    fs.writeFileSync(
+      missingReportNeedPath,
+      workflow.replace("        messaging-compatible-endpoint-vitest,\n", ""),
+    );
+
+    try {
+      expect(validateE2eVitestScenariosWorkflowBoundary(renamedWorkflowPath)).toContain(
+        "workflow missing messaging-compatible-endpoint-vitest job",
+      );
+      expect(validateE2eVitestScenariosWorkflowBoundary(missingReportNeedPath)).toContain(
+        "report-to-pr job must wait for messaging-compatible-endpoint-vitest",
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects Docker Hub auth in the messaging-compatible-endpoint job", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-vitest-workflow-"));
+    const workflowPath = path.join(tmp, "workflow.yaml");
+    const workflow = readWorkflow() as {
+      jobs: Record<string, { steps: Array<Record<string, unknown>> }>;
+    };
+    const steps = workflow.jobs["messaging-compatible-endpoint-vitest"]?.steps;
+    expect(steps).toEqual(expect.any(Array));
+    const setupNodeIndex = steps.findIndex((step) => step.name === "Set up Node");
+    expect(setupNodeIndex).toBeGreaterThan(0);
+    steps.splice(setupNodeIndex, 0, {
+      name: "Authenticate to Docker Hub",
+      env: {
+        DOCKERHUB_USERNAME: "${{ secrets.DOCKERHUB_USERNAME }}",
+        DOCKERHUB_TOKEN: "${{ secrets.DOCKERHUB_TOKEN }}",
+      },
+      run: "docker login docker.io --username user --password ${{ secrets.DOCKERHUB_TOKEN }}",
+    });
+    fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+    try {
+      const errors = validateE2eVitestScenariosWorkflowBoundary(workflowPath);
+      expect(errors).toEqual(
+        expect.arrayContaining([
+          "messaging-compatible-endpoint-vitest must not authenticate to Docker Hub before branch-controlled test code runs",
+          "messaging-compatible-endpoint-vitest step 'Authenticate to Docker Hub' env must not include DOCKERHUB_USERNAME",
+          "messaging-compatible-endpoint-vitest step 'Authenticate to Docker Hub' env must not include DOCKERHUB_TOKEN",
+          "messaging-compatible-endpoint-vitest step 'Authenticate to Docker Hub' run script must not use docker login or inline secret interpolation",
+        ]),
       );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
