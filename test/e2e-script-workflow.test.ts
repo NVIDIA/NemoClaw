@@ -915,6 +915,25 @@ describe("E2E reusable workflow contract", () => {
     }
   });
 
+  it("keeps rebuild fixture registry inference aligned with hosted custom inference", () => {
+    const rebuildFixtures = [
+      "test/e2e/test-rebuild-openclaw.sh",
+      "test/e2e/test-rebuild-hermes.sh",
+      "test/e2e/test-upgrade-stale-sandbox.sh",
+    ];
+
+    for (const fixture of rebuildFixtures) {
+      const body = readFileSync(fixture, "utf8");
+      expect(body, fixture).toContain("provider = sess.get('provider')");
+      expect(body, fixture).toContain("if env_provider == 'custom'");
+      expect(body, fixture).toContain("'provider': provider");
+      expect(body, fixture).toContain("'model': model");
+      expect(body, fixture).toContain("nvidia/nvidia/nemotron-3-super-v3");
+      expect(body, fixture).not.toContain("'provider': 'nvidia-prod'");
+      expect(body, fixture).not.toContain("'model': 'nvidia/nemotron-3-super-120b-a12b'");
+    }
+  });
+
   it("routes direct hosted-secret jobs through the hosted custom inference endpoint", () => {
     const trustedWorkflowSecretExceptions = new Set([
       "issue-4434-tui-unreachable-inference-e2e:Sanitize issue #4434 logs on failure",
