@@ -225,7 +225,8 @@ const disabledChannels = Array.isArray(plan.disabledChannels) ? plan.disabledCha
 const credentialBindings = Array.isArray(plan.credentialBindings) ? plan.credentialBindings : [];
 const networkEntries = Array.isArray(plan.networkPolicy?.entries) ? plan.networkPolicy.entries : [];
 const networkPresets = Array.isArray(plan.networkPolicy?.presets) ? plan.networkPolicy.presets : [];
-const agentRender = Array.isArray(plan.agentRender) ? plan.agentRender : [];
+if (Object.hasOwn(plan, "agentRender")) fail("messaging.plan.agentRender should not be persisted");
+if (channels.some((item) => item && Object.hasOwn(item, "hooks"))) fail("messaging.plan.channels hooks should not be persisted");
 if (expected === "active") {
   if (!channel) fail("telegram channel missing from messaging.plan.channels");
   if (channel.active !== true) fail("telegram plan active expected true, got " + JSON.stringify(channel.active));
@@ -237,9 +238,6 @@ if (expected === "active") {
   if (!credentialBindings.some((entry) => entry?.channelId === "telegram" && entry?.providerEnvKey === "TELEGRAM_BOT_TOKEN")) {
     fail("telegram TELEGRAM_BOT_TOKEN credential binding missing from messaging.plan");
   }
-  if (!agentRender.some((entry) => entry?.channelId === "telegram" && entry?.agent === "openclaw")) {
-    fail("telegram openclaw agent render entry missing from messaging.plan");
-  }
   if (disabledChannels.includes("telegram")) fail("telegram unexpectedly listed in messaging.plan.disabledChannels");
 } else if (expected === "removed") {
   if (channel) fail("telegram still present in messaging.plan.channels");
@@ -250,9 +248,6 @@ if (expected === "active") {
   }
   if (credentialBindings.some((entry) => entry?.channelId === "telegram")) {
     fail("telegram credential binding still present in messaging.plan");
-  }
-  if (agentRender.some((entry) => entry?.channelId === "telegram")) {
-    fail("telegram agent render entry still present in messaging.plan");
   }
 } else {
   fail("unknown expected plan state: " + expected);
