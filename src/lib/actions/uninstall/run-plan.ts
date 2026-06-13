@@ -8,6 +8,7 @@ import path from "node:path";
 
 import { dockerSpawnSync } from "../../adapters/docker/exec";
 import { type AgentBranding, getAgentBranding } from "../../cli/branding";
+import { isStdinTty, readLineFromStdin } from "../../core/stdin";
 import { sleepMs } from "../../core/wait";
 import {
   defaultUninstallPaths,
@@ -90,23 +91,6 @@ function defaultCommandExists(command: string, env: NodeJS.ProcessEnv): boolean 
     }
   }
   return false;
-}
-
-function defaultReadLine(): string | null {
-  const chunks: Buffer[] = [];
-  const byte = Buffer.alloc(1);
-  while (true) {
-    let bytesRead = 0;
-    try {
-      bytesRead = fs.readSync(0, byte, 0, 1, null);
-    } catch {
-      return chunks.length > 0 ? Buffer.concat(chunks).toString("utf-8") : null;
-    }
-    if (bytesRead === 0 || byte[0] === 10) break;
-    chunks.push(Buffer.from(byte));
-  }
-  if (chunks.length === 0) return null;
-  return Buffer.concat(chunks).toString("utf-8").replace(/\r$/, "");
 }
 
 function splitNonEmptyLines(output: string): string[] {
@@ -254,7 +238,9 @@ function buildRuntime(deps: UninstallRunDeps): UninstallRuntime {
     env,
     error: deps.error ?? ((message) => console.error(message)),
     existsSync: deps.existsSync ?? ((target) => fs.existsSync(target)),
-    isTty: deps.isTty ?? !!process.stdin.isTTY,
+    // Side-effect-free TTY check + EAGAIN-tolerant reader; the
+    // process.stdin/non-blocking-fd hazard is documented in core/stdin.ts.
+    isTty: deps.isTty ?? isStdinTty(),
     kill:
       deps.kill ??
       ((pid, signal) => {
@@ -266,7 +252,7 @@ function buildRuntime(deps: UninstallRunDeps): UninstallRuntime {
         }
       }),
     log: deps.log ?? ((message) => console.log(message)),
-    readLine: deps.readLine ?? defaultReadLine,
+    readLine: deps.readLine ?? readLineFromStdin,
     rmSync: deps.rmSync ?? fs.rmSync,
     run: deps.run ?? defaultRun,
     runDocker: deps.runDocker ?? defaultRunDocker,
@@ -311,6 +297,11 @@ function confirm(options: UninstallRunOptions, runtime: UninstallRuntime): boole
   runtime.log("Proceed? [y/N]");
   const reply = runtime.readLine();
   if (reply && /^(y|yes)$/i.test(reply.trim())) return true;
+  if (reply === null) {
+    runtime.log(
+      "No input available on stdin (closed or non-interactive); re-run with --yes to skip this prompt.",
+    );
+  }
   runtime.log("Aborted.");
   return false;
 }
