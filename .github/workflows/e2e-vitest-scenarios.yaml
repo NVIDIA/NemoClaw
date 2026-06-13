@@ -2521,6 +2521,107 @@ jobs:
         run: |
           docker logout docker.io >/dev/null 2>&1 || true
 
+  # Focused coverage slice for the Bedrock Runtime compatible Anthropic
+  # endpoint contract. The retained legacy bash lane remains the source for
+  # full closeout until #5098 Phase 11 shell retirement.
+  bedrock-runtime-compatible-anthropic-vitest:
+    needs: generate-matrix
+    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',bedrock-runtime-compatible-anthropic-vitest,') || contains(format(',{0},', inputs.scenarios), ',bedrock-runtime-compatible-anthropic,') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        agent: [openclaw, hermes]
+    env:
+      FREE_STANDING_VITEST_JOB: "1"
+      FREE_STANDING_SCENARIO_ID: "bedrock-runtime-compatible-anthropic"
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/bedrock-runtime-compatible-anthropic/${{ matrix.agent }}
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+      NEMOCLAW_RECREATE_SANDBOX: "1"
+      NEMOCLAW_AGENT: ${{ matrix.agent }}
+      NEMOCLAW_SANDBOX_NAME: e2e-bedrock-${{ matrix.agent }}
+      OPENSHELL_GATEWAY: "nemoclaw"
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Configure isolated Docker auth directory
+        run: echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-bedrock-runtime-compatible-anthropic-${{ matrix.agent }}" >> "$GITHUB_ENV"
+
+      - name: Authenticate to Docker Hub
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          mkdir -p "${DOCKER_CONFIG}"
+          chmod 700 "${DOCKER_CONFIG}"
+          login_succeeded=0
+          for attempt in 1 2 3; do
+            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
+              login_succeeded=1
+              break
+            fi
+            if [[ "$attempt" -lt 3 ]]; then
+              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
+              sleep 5
+            fi
+          done
+          if [[ "$login_succeeded" -ne 1 ]]; then
+            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
+          fi
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build CLI
+        run: npm run build:cli
+
+      - name: Run Bedrock Runtime compatible Anthropic live test
+        # Direct Vitest coverage for
+        # test/e2e/test-bedrock-runtime-compatible-anthropic.sh. Preserves the
+        # fake Bedrock Runtime endpoint, /etc/hosts mapping, source CLI
+        # onboard, OpenShell adapter route, agent-specific runtime probes, and
+        # leak-scan contract for both OpenClaw and Hermes.
+        run: |
+          set -euo pipefail
+          npx vitest run --project e2e-scenarios-live \
+            test/e2e-scenario/live/bedrock-runtime-compatible-anthropic.test.ts \
+            --silent=false --reporter=default
+
+      - name: Upload Bedrock Runtime compatible Anthropic artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-vitest-scenarios-bedrock-runtime-compatible-anthropic-${{ matrix.agent }}
+          path: e2e-artifacts/vitest/bedrock-runtime-compatible-anthropic/${{ matrix.agent }}/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Clean up Docker auth
+        if: always()
+        run: |
+          set -euo pipefail
+          docker logout docker.io || true
+          rm -rf "${DOCKER_CONFIG}"
+
   # ── PR result comment (mirrors nightly-e2e.yaml's report-to-pr) ───────────
   # Posts a results table on the open PR for the dispatching branch (or the
   # PR identified by `inputs.pr_number`). `if: always()` so the comment lands
@@ -2561,7 +2662,8 @@ jobs:
         openclaw-tui-chat-correlation-vitest,
         gateway-guard-recovery,
         issue-4434-tui-unreachable-inference-vitest,
-        openclaw-inference-switch-vitest,
+        openclaw-inference-switch-vitest,        bedrock-runtime-compatible-anthropic-vitest,
+
       ]
     if: ${{ always() && github.event_name == 'workflow_dispatch' }}
     permissions:

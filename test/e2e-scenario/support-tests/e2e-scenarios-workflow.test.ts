@@ -367,6 +367,26 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       selectedFreeStandingJobs: ["openclaw-inference-switch-vitest"],
       registryScenarios: [],
     });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({
+        scenarios: "bedrock-runtime-compatible-anthropic",
+      }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["bedrock-runtime-compatible-anthropic-vitest"],
+      registryScenarios: [],
+    });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({
+        jobs: "bedrock-runtime-compatible-anthropic-vitest",
+      }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["bedrock-runtime-compatible-anthropic-vitest"],
+      registryScenarios: [],
+    });
   });
 
   it("derives the free-standing inventory from workflow job metadata", () => {
@@ -464,7 +484,7 @@ jobs:
     }
   });
 
-  it("keeps each free-standing scenario out of the registry matrix", { timeout: 60_000 }, () => {
+  it("keeps each free-standing scenario out of the registry matrix", { timeout: 120_000 }, () => {
     const inventory = readFreeStandingJobsInventory();
     for (const job of inventory.allowedJobs) {
       expect(generateMatrixForDispatch({ JOBS: job, SCENARIOS: "" })).toMatchObject({
