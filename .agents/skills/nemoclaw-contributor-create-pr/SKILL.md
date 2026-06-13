@@ -35,27 +35,47 @@ Before creating a PR, verify the branch.
    git status
    ```
 
-## Step 2: Run Pre-PR Checks
+## Step 2: Choose Efficient Pre-PR Checks
 
-Choose checks based on the files changed.
+Do not rerun the whole local gate just to create a PR when Git hooks already supplied that evidence.
+Use the checks that match the diff and the verification you already have.
 
-For code changes, run both checks and confirm they pass before proceeding:
+### Hook Evidence
+
+If the commits were created normally and the branch was pushed normally, count the installed hooks as verification:
+
+- `pre-commit` runs file fixers, formatters, linters, docs-to-skills dry-run validation, and changed-surface Vitest hooks.
+- `commit-msg` runs commitlint.
+- `pre-push` runs TypeScript build and type-check gates.
+
+If hooks were skipped with `--no-verify`, were not installed, failed, or you cannot tell whether they ran, run a manual diff-scoped fallback before creating the PR:
 
 ```bash
-npx prek run --all-files
-npm test
+npx prek run --from-ref main --to-ref HEAD
 ```
 
-For doc-only changes, do not run the full test suite unless the docs change requires it.
-Run the docs and hook checks instead:
+Use `npx prek run --all-files` only when you need a whole-repository baseline, such as changing hook configuration, formatter configuration, generated-check scripts, or other repo-wide validation behavior.
+
+### Targeted Tests
+
+Run the smallest meaningful tests for changed behavior:
+
+- CLI or root `src/`, `bin/`, `scripts/`, or `test/` changes: `npx vitest run --project cli` or the directly affected test file.
+- Plugin changes under `nemoclaw/src/`: `npx vitest run --project plugin` or the directly affected plugin test file.
+- E2E support changes under `test/e2e-scenario/support-tests/`: `npx vitest run --project e2e-vitest-support`.
+- Installer behavior changes: run the relevant installer integration project only when the local environment supports it.
+
+Reserve full `npm test` for broad runtime changes, test harness changes, or cases where targeted coverage is hard to justify.
+Do not run the full test suite for doc-only changes unless the docs change code samples or generated behavior in a way that needs runtime validation.
+
+For doc-only changes, run the docs build before opening the PR:
 
 ```bash
-npx prek run --all-files
 npm run docs
 ```
 
 If a required check fails, fix the issue before creating the PR.
-When preparing the PR body for a doc-only change, leave the `npm test` verification box unchecked unless you actually ran it.
+When preparing the PR body, check only the verification boxes backed by hooks, manual commands, or CI evidence you actually have.
 
 ## Step 3: Push the Branch
 
@@ -129,8 +149,9 @@ Use the exact template structure below. Fill in each section based on the diff (
 
 ## Verification
 <!-- Check each item you ran and confirmed. Leave unchecked items you skipped. Doc-only changes do not require npm test unless you ran it. -->
-- [ ] `npx prek run --all-files` passes
-- [ ] `npm test` passes
+- [ ] Git hooks passed during commit and push, or `npx prek run --from-ref main --to-ref HEAD` passes
+- [ ] Targeted tests pass for changed behavior
+- [ ] Full `npm test` passes (broad runtime changes only)
 - [ ] Tests added or updated for new or changed behavior
 - [ ] No secrets, API keys, or credentials committed
 - [ ] Docs updated for user-facing behavior changes
@@ -151,7 +172,7 @@ Follow these rules when filling in the template:
 - **Related Issue:** Include `Fixes #NNN` or `Closes #NNN` if an issue exists. Remove the section entirely if there is no related issue.
 - **Changes:** Bullet list of key changes. Be specific — reference file names, commands, or behaviors that changed.
 - **Type of Change:** Check exactly one box. Use `[x]` for checked, `[ ]` for unchecked.
-- **Verification:** Check only the boxes for steps you actually ran and confirmed passing. Do not check boxes for steps you skipped or did not verify. For doc-only changes, `npm test` is not required; leave it unchecked unless you ran it.
+- **Verification:** Check only the boxes for steps you actually ran and confirmed passing, or for Git hooks that passed during normal commit and push. Do not check boxes for steps you skipped or did not verify. For doc-only changes, `npm test` is not required; leave it unchecked unless you ran it.
 - **DCO Sign-Off:** Replace `{name}` and `{email}` with values from `git config user.name` and `git config user.email`.
 
 ## Step 6: Create the PR
@@ -198,7 +219,8 @@ Created PR [#NNN](https://github.com/NVIDIA/NemoClaw/pull/NNN)
 - **Do not invent your own PR body format.** Use the template from Step 5 exactly.
 - **Do not omit sections.** Even if a section is not applicable, keep it with the "Skip if..." comment.
 - **Do not check boxes for steps you did not run.** If you did not run `npm run docs`, leave that box unchecked.
-- **Do not run the full test suite for doc-only changes by default.** Run docs and hook checks instead, and leave `npm test` unchecked unless you actually ran it.
+- **Do not rerun hook-covered checks by default.** Normal commit and push hooks are valid verification. Use `npx prek run --from-ref main --to-ref HEAD` as the fallback when hooks were skipped, missing, or uncertain.
+- **Do not run the full test suite for doc-only changes by default.** Run the docs build instead, and leave `npm test` unchecked unless you actually ran it.
 - **Do not forget the DCO sign-off.** CI will reject the PR without it.
 - **Do not forget `--assignee @me`.** Every PR must be assigned to its creator.
 - **Do not create PRs from main.** Always use a feature branch.

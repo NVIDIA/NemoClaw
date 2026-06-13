@@ -129,15 +129,15 @@ Do not convert route-style links to `.mdx` file links just to satisfy a local fi
 ## Doc-Only PR Verification
 
 Doc-only pull requests do not need the full test suite by default.
-Before opening a doc-only PR, run:
+Commit and push normally so the Git hooks run, then run:
 
 ```bash
-npx prek run --all-files
 npm run docs
 ```
 
 Leave `npm test` unchecked in the PR verification checklist unless you actually ran it.
-Run the full tests only when the change also touches code, generated behavior, or runtime behavior.
+If hooks were skipped or unavailable, run `npx prek run --from-ref main --to-ref HEAD` before opening the PR.
+Run targeted tests only when the change also touches code, generated behavior, or runtime behavior.
 
 ## Writing Conventions
 
