@@ -81,7 +81,10 @@ describe("Regression E2E workflow contract", () => {
     expect(setupNodeStep?.uses).toMatch(FULL_SHA_ACTION);
     expect(runVitestStep?.env?.NEMOCLAW_RUN_E2E_SCENARIOS).toBe("1");
     for (const step of steps) {
-      expect(step.env?.NVIDIA_API_KEY, step.name ?? step.uses ?? "<unnamed>").toBeUndefined();
+      expect(
+        step.env?.NVIDIA_INFERENCE_API_KEY,
+        step.name ?? step.uses ?? "<unnamed>",
+      ).toBeUndefined();
     }
 
     expect(runText).toContain("test/e2e-scenario/live/openclaw-plugin-runtime-exdev.test.ts");

@@ -19,12 +19,12 @@
 #
 # Prerequisites:
 #   - Docker running
-#   - NVIDIA_API_KEY set (real key, starts with nvapi-)
+#   - NVIDIA_INFERENCE_API_KEY set (real key, starts with nvapi-)
 #
 # Environment variables:
 #   NEMOCLAW_NON_INTERACTIVE=1             — required
 #   NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 — required
-#   NVIDIA_API_KEY                         — required
+#   NVIDIA_INFERENCE_API_KEY                         — required
 #   NEMOCLAW_SANDBOX_NAME                  — sandbox name (default: e2e-shields)
 #   NEMOCLAW_E2E_TIMEOUT_SECONDS           — overall timeout (default: 900)
 
@@ -79,10 +79,10 @@ else
   exit 1
 fi
 
-if [ -n "${NVIDIA_API_KEY:-}" ] && [[ "${NVIDIA_API_KEY}" == nvapi-* ]]; then
-  pass "NVIDIA_API_KEY is set"
+if [ -n "${NVIDIA_INFERENCE_API_KEY:-}" ] && [[ "${NVIDIA_INFERENCE_API_KEY}" == nvapi-* ]]; then
+  pass "NVIDIA_INFERENCE_API_KEY is set"
 else
-  fail "NVIDIA_API_KEY not set or invalid"
+  fail "NVIDIA_INFERENCE_API_KEY not set or invalid"
   exit 1
 fi
 

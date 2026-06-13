@@ -205,7 +205,7 @@ describe("blueprint.yaml", () => {
 describe("Model Router pool config", () => {
   const pool = loadYaml<RouterPoolConfig>(ROUTER_POOL_CONFIG_PATH);
 
-  it("regression #3255: routes NVIDIA API keys to the public NVIDIA Build endpoint", () => {
+  it("regression #3255: routes NVIDIA API keys to the public NVIDIA inference endpoint", () => {
     const apiBases = new Set((pool.models ?? []).map((model) => model.api_base));
     expect(apiBases).toEqual(new Set(["https://integrate.api.nvidia.com/v1"]));
   });
@@ -280,18 +280,17 @@ describe("base sandbox policy", () => {
     expect(violations).toEqual([]);
   });
 
-  it("allows NVIDIA embeddings on both NVIDIA inference hosts", () => {
+  it("allows NVIDIA embeddings on the NVIDIA inference host", () => {
     const np = policy.network_policies ?? {};
     const endpoints = np.nvidia?.endpoints;
     const missingHosts: string[] = [];
-    for (const host of ["integrate.api.nvidia.com", "inference-api.nvidia.com"]) {
-      const endpoint = endpoints?.find((entry) => entry.host === host);
-      const hasEmbeddingsRule = endpoint?.rules?.some(
-        (rule) => rule.allow?.method === "POST" && rule.allow?.path === "/v1/embeddings",
-      );
-      if (!hasEmbeddingsRule) {
-        missingHosts.push(host);
-      }
+    const host = "integrate.api.nvidia.com";
+    const endpoint = endpoints?.find((entry) => entry.host === host);
+    const hasEmbeddingsRule = endpoint?.rules?.some(
+      (rule) => rule.allow?.method === "POST" && rule.allow?.path === "/v1/embeddings",
+    );
+    if (!hasEmbeddingsRule) {
+      missingHosts.push(host);
     }
     expect(missingHosts).toEqual([]);
   });

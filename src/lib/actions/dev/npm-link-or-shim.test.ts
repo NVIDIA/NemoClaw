@@ -87,7 +87,7 @@ describe("runNpmLinkOrShim", () => {
         commandPath: () => process.execPath,
         logError: (message) => errors.push(message),
         run: failingNpm(
-          `npm failed in ${repoDir} under ${homeDir}\nNVIDIA_API_KEY=${token}\nAuthorization: Bearer ${token}\n`,
+          `npm failed in ${repoDir} under ${homeDir}\nNVIDIA_INFERENCE_API_KEY=${token}\nAuthorization: Bearer ${token}\n`,
         ),
       },
     );
@@ -97,7 +97,7 @@ describe("runNpmLinkOrShim", () => {
     expect(logOutput).toContain("npm link failed");
     expect(logOutput).toContain("<repo-root>");
     expect(logOutput).toContain("~");
-    expect(logOutput).toContain("NVIDIA_API_KEY=[REDACTED]");
+    expect(logOutput).toContain("NVIDIA_INFERENCE_API_KEY=[REDACTED]");
     expect(logOutput).toContain("Bearer [REDACTED]");
     expect(logOutput).not.toContain(homeDir);
     expect(logOutput).not.toContain(repoDir);

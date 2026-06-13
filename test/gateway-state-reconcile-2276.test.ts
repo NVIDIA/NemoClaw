@@ -756,7 +756,7 @@ describe("Scenario 14 (#4497): connect preserves registry so rebuild can recover
           // HOME — fine: the assertions below target the recovery markers that
           // are emitted BEFORE the recreate, proving rebuild crossed the
           // backup gate that previously blocked it.
-          NVIDIA_API_KEY: "",
+          NVIDIA_INFERENCE_API_KEY: "",
           NEMOCLAW_PROVIDER_KEY: "",
         },
       },

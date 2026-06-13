@@ -76,7 +76,7 @@ describe("model prompt helpers", () => {
 
     expect(result).toBe(BACK_TO_SELECTION);
     expect(errorLine).toHaveBeenCalledWith(
-      "  NVIDIA_API_KEY is required before validating a custom NVIDIA Endpoints model.",
+      "  NVIDIA_INFERENCE_API_KEY is required before validating a custom NVIDIA Endpoints model.",
     );
   });
 

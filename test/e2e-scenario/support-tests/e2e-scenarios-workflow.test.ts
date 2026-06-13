@@ -441,7 +441,7 @@ jobs:
     env:
       E2E_ARTIFACT_DIR: \${{ github.workspace }}/.e2e/vitest
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
-      NVIDIA_API_KEY: \${{ secrets.NVIDIA_API_KEY }}
+      NVIDIA_INFERENCE_API_KEY: \${{ secrets.NVIDIA_INFERENCE_API_KEY }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -449,7 +449,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         env:
-          NVIDIA_API_KEY: \${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: \${{ secrets.NVIDIA_INFERENCE_API_KEY }}
       - name: Run Vitest live E2E scenarios
         env:
           TEST_FILTER: \${{ inputs.test_filter }}
@@ -470,7 +470,7 @@ jobs:
     env:
       E2E_ARTIFACT_DIR: \${{ github.workspace }}/.e2e/openshell-version-pin
       NEMOCLAW_RUN_E2E_SCENARIOS: "0"
-      NVIDIA_API_KEY: \${{ secrets.NVIDIA_API_KEY }}
+      NVIDIA_INFERENCE_API_KEY: \${{ secrets.NVIDIA_INFERENCE_API_KEY }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -478,12 +478,12 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         env:
-          NVIDIA_API_KEY: \${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: \${{ secrets.NVIDIA_INFERENCE_API_KEY }}
       - name: Install root dependencies
         run: npm install
       - name: Run OpenShell version-pin live test
         env:
-          NVIDIA_API_KEY: \${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: \${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: npx vitest run --project e2e-scenarios-live "\${{ inputs.test_filter }}"
       - name: Upload OpenShell version-pin artifacts
         uses: actions/upload-artifact@v4
@@ -499,7 +499,7 @@ jobs:
     env:
       E2E_ARTIFACT_DIR: \${{ github.workspace }}/.e2e/onboard-negative-paths
       NEMOCLAW_RUN_E2E_SCENARIOS: "0"
-      NVIDIA_API_KEY: \${{ secrets.NVIDIA_API_KEY }}
+      NVIDIA_INFERENCE_API_KEY: \${{ secrets.NVIDIA_INFERENCE_API_KEY }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -507,12 +507,12 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         env:
-          NVIDIA_API_KEY: \${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: \${{ secrets.NVIDIA_INFERENCE_API_KEY }}
       - name: Install root dependencies
         run: npm install
       - name: Run onboard negative-paths live test
         env:
-          NVIDIA_API_KEY: \${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: \${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: npx vitest run --project e2e-scenarios-live "\${{ inputs.test_filter }}"
       - name: Upload onboard negative-paths artifacts
         uses: actions/upload-artifact@v4
@@ -529,7 +529,7 @@ jobs:
       E2E_ARTIFACT_DIR: \${{ github.workspace }}/.e2e/network-policy
       NEMOCLAW_CLI_BIN: bin/not-nemoclaw.js
       NEMOCLAW_RUN_E2E_SCENARIOS: "0"
-      NVIDIA_API_KEY: \${{ secrets.NVIDIA_API_KEY }}
+      NVIDIA_INFERENCE_API_KEY: \${{ secrets.NVIDIA_INFERENCE_API_KEY }}
       DOCKERHUB_USERNAME: \${{ secrets.DOCKERHUB_USERNAME }}
       DOCKERHUB_TOKEN: \${{ secrets.DOCKERHUB_TOKEN }}
       GITHUB_TOKEN: \${{ github.token }}
@@ -544,7 +544,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         env:
-          NVIDIA_API_KEY: \${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: \${{ secrets.NVIDIA_INFERENCE_API_KEY }}
       - name: Install root dependencies
         run: npm install
       - name: Build CLI
@@ -555,7 +555,7 @@ jobs:
         run: echo install
       - name: Run network-policy live test
         env:
-          NVIDIA_API_KEY: \${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: \${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: npx vitest run --project e2e-scenarios-live "\${{ inputs.test_filter }}"
       - name: Upload network-policy artifacts
         uses: actions/upload-artifact@v4
@@ -573,7 +573,7 @@ jobs:
       E2E_ARTIFACT_DIR: \${{ github.workspace }}/.e2e/double-onboard
       NEMOCLAW_CLI_BIN: ./bad-cli.js
       NEMOCLAW_RUN_E2E_SCENARIOS: "0"
-      NVIDIA_API_KEY: \${{ secrets.NVIDIA_API_KEY }}
+      NVIDIA_INFERENCE_API_KEY: \${{ secrets.NVIDIA_INFERENCE_API_KEY }}
       DOCKERHUB_TOKEN: \${{ secrets.DOCKERHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
@@ -616,13 +616,13 @@ jobs:
           "workflow_dispatch must not expose legacy test_filter input",
           "workflow missing generate-matrix job",
           "live-scenarios job must run on the matrix runner",
-          "live-scenarios job env must not include NVIDIA_API_KEY",
+          "live-scenarios job env must not include NVIDIA_INFERENCE_API_KEY",
           "step 'Run Vitest live E2E scenarios' run script must not interpolate dispatch inputs directly",
-          "Vitest step must receive NVIDIA_API_KEY from secrets",
+          "Vitest step must receive NVIDIA_INFERENCE_API_KEY from secrets",
           "artifact upload must set include-hidden-files: false",
           "upload-artifact action must be pinned to a full commit SHA",
           "openshell-version-pin-vitest job must use the shared jobs selector condition",
-          "network-policy-vitest job env must not include NVIDIA_API_KEY",
+          "network-policy-vitest job env must not include NVIDIA_INFERENCE_API_KEY",
           "network-policy-vitest step 'Install OpenShell' env must not include GITHUB_TOKEN",
           "double-onboard-vitest job env must not include DOCKERHUB_TOKEN",
           "step 'Run double-onboard live Vitest test' run script must not interpolate dispatch inputs directly",
@@ -715,7 +715,7 @@ jobs:
     job.env = {
       ...(job.env as Record<string, unknown>),
       DOCKER_CONFIG: "${{ github.workspace }}/.docker-config-issue-2478",
-      NVIDIA_API_KEY: "${{ secrets.NVIDIA_API_KEY }}",
+      NVIDIA_INFERENCE_API_KEY: "${{ secrets.NVIDIA_INFERENCE_API_KEY }}",
     };
     const checkout = job.steps?.find((step) =>
       String(step.uses ?? "").includes("actions/checkout@"),
@@ -740,7 +740,7 @@ jobs:
         expect.arrayContaining([
           "issue-2478-crash-loop-recovery-vitest job must keep the 30 minute timeout",
           "issue-2478-crash-loop-recovery-vitest job must not set DOCKER_CONFIG at job level",
-          "issue-2478-crash-loop-recovery-vitest job env must not include NVIDIA_API_KEY",
+          "issue-2478-crash-loop-recovery-vitest job env must not include NVIDIA_INFERENCE_API_KEY",
           "issue-2478-crash-loop-recovery-vitest checkout step must set persist-credentials=false",
           'step \'Configure isolated Docker auth directory\' run script must include echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-issue-2478-crash-loop-recovery" >> "$GITHUB_ENV"',
           "step 'Configure isolated Docker auth directory' run script must not include ${{ github.workspace }}",

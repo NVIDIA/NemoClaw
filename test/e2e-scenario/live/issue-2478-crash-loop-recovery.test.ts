@@ -313,7 +313,7 @@ test("issue-2478: gateway recovery preserves guard chain and avoids crash loop",
   sandbox,
   secrets,
 }) => {
-  secrets.required("NVIDIA_API_KEY");
+  secrets.required("NVIDIA_INFERENCE_API_KEY");
 
   await artifacts.writeJson("scenario.json", {
     id: "issue-2478-crash-loop-recovery",

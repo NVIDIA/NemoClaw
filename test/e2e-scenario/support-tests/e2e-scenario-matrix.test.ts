@@ -88,7 +88,7 @@ describe("live Vitest scenario matrix", () => {
       runtime: "docker-running",
       onboarding: "cloud-openclaw",
       expectedStateId: "cloud-openclaw-ready",
-      requiredSecrets: ["NVIDIA_API_KEY"],
+      requiredSecrets: ["NVIDIA_INFERENCE_API_KEY"],
       supported: true,
       supportReasons: [],
       pendingRuntimeSuites: ["smoke", "inference", "credentials"],
@@ -105,7 +105,7 @@ describe("live Vitest scenario matrix", () => {
       runtime: "docker-running",
       onboarding: "cloud-openclaw",
       expectedStateId: "post-reboot-recovery-ready",
-      requiredSecrets: ["NVIDIA_API_KEY"],
+      requiredSecrets: ["NVIDIA_INFERENCE_API_KEY"],
       supported: true,
       supportReasons: [],
     });

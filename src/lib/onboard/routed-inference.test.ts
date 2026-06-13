@@ -12,7 +12,7 @@ vi.mock("../inference/local", () => ({
   HOST_GATEWAY_URL: "http://host.openshell.internal",
 }));
 vi.mock("./model-router", () => ({
-  DEFAULT_MODEL_ROUTER_CREDENTIAL_ENV: "NVIDIA_API_KEY",
+  DEFAULT_MODEL_ROUTER_CREDENTIAL_ENV: "NVIDIA_INFERENCE_API_KEY",
   loadBlueprintProfile: vi.fn(() => ({ endpoint: "http://localhost:4000/v1" })),
 }));
 
@@ -76,7 +76,7 @@ describe("resolveRoutedCredentialEnv (#4564)", () => {
 
   it("uses the NVIDIA default when no profile credential env is set", () => {
     const loadProfile = vi.fn(() => ({ endpoint: "http://localhost:4000/v1" })) as never;
-    expect(resolveRoutedCredentialEnv(null, loadProfile)).toBe("NVIDIA_API_KEY");
+    expect(resolveRoutedCredentialEnv(null, loadProfile)).toBe("NVIDIA_INFERENCE_API_KEY");
   });
 });
 
@@ -88,7 +88,7 @@ describe("upsertRoutedProvider (#4564)", () => {
     const result = upsertRoutedProvider(
       "nvidia-router",
       "http://localhost:4000/v1",
-      "NVIDIA_API_KEY",
+      "NVIDIA_INFERENCE_API_KEY",
       {
         upsertProvider,
         hydrateCredentialEnv,
@@ -97,13 +97,13 @@ describe("upsertRoutedProvider (#4564)", () => {
 
     expect(result.ok).toBe(true);
     expect(result.endpointUrl).toBe("http://host.openshell.internal:4000/v1");
-    expect(result.resolvedCredentialEnv).toBe("NVIDIA_API_KEY");
+    expect(result.resolvedCredentialEnv).toBe("NVIDIA_INFERENCE_API_KEY");
     expect(upsertProvider).toHaveBeenCalledWith(
       "nvidia-router",
       "openai",
-      "NVIDIA_API_KEY",
+      "NVIDIA_INFERENCE_API_KEY",
       "http://host.openshell.internal:4000/v1",
-      { NVIDIA_API_KEY: "nvapi-secret" },
+      { NVIDIA_INFERENCE_API_KEY: "nvapi-secret" },
     );
   });
 
@@ -116,11 +116,11 @@ describe("upsertRoutedProvider (#4564)", () => {
       hydrateCredentialEnv,
     });
 
-    expect(result.resolvedCredentialEnv).toBe("NVIDIA_API_KEY");
+    expect(result.resolvedCredentialEnv).toBe("NVIDIA_INFERENCE_API_KEY");
     expect(upsertProvider).toHaveBeenCalledWith(
       "nvidia-router",
       "openai",
-      "NVIDIA_API_KEY",
+      "NVIDIA_INFERENCE_API_KEY",
       "http://host.openshell.internal:4000/v1",
       {},
     );
@@ -133,7 +133,7 @@ describe("upsertRoutedProvider (#4564)", () => {
     const result = upsertRoutedProvider(
       "nvidia-router",
       "http://localhost:4000/v1",
-      "NVIDIA_API_KEY",
+      "NVIDIA_INFERENCE_API_KEY",
       {
         upsertProvider,
         hydrateCredentialEnv,
