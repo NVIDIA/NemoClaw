@@ -103,6 +103,19 @@ In the Omni demo, the OpenClaw gateway runs as `/usr/local/bin/node`, so the NVI
 
 Refer to [Customize the Network Policy](../network-policy/customize-network-policy) for policy update workflows.
 
+## Sub-Agent Gateway Connectivity
+
+Spawned sub-agents connect back to the OpenClaw gateway over WebSocket at `OPENCLAW_GATEWAY_URL`.
+Inside the sandbox this connection runs through the enforced process tree, where the OpenShell proxy always blocks loopback destinations.
+NemoClaw therefore points `OPENCLAW_GATEWAY_URL` at the sandbox's own interface address (for example `ws://10.200.0.2:18790`) and allowlists that endpoint in the base sandbox policy (`openclaw_gateway_dialback`).
+
+If `sessions_spawn` returns `gateway closed (1006 abnormal closure (no close frame))` and the gateway log shows no connection attempt, the dial-back path is blocked.
+Check the following:
+
+1. `OPENCLAW_GATEWAY_URL` in the gateway process environment targets the sandbox interface address, not `127.0.0.1`.
+2. The active policy allows that address and port. Custom `NEMOCLAW_DASHBOARD_PORT` or proxy subnet values need a matching `openshell policy update`.
+3. Do not point the dial-back at `127.0.0.1` — the proxy denies loopback regardless of policy.
+
 ## Add Delegation Instructions
 
 OpenClaw handles `sessions_spawn`, but the primary agent still needs task instructions.

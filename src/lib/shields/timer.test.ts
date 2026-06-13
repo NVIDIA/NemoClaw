@@ -276,7 +276,10 @@ describe("shields timer authorization", () => {
 
     expect(exitCode).toBe(0);
     expect(runMock).toHaveBeenCalledTimes(1);
-    expect(lockMock).toHaveBeenCalledTimes(1);
+    // #4663: relockAndReconfirm applies then re-confirms after the settle
+    // window (0ms under test), so lockAgentConfig is invoked twice for a clean
+    // lock.
+    expect(lockMock).toHaveBeenCalledTimes(2);
     expect(updatedState.shieldsDown).toBe(false);
     expect(updatedState.chattrApplied).toBe(true);
     expect(updatedState.fileHashes).toEqual(sealedHashes);
@@ -357,5 +360,177 @@ describe("shields timer authorization", () => {
       }),
     );
     expect(fs.existsSync(markerPath)).toBe(false);
+  });
+
+  // -------------------------------------------------------------------------
+  // #4663 — auto-restore durability against post-lock perm revert
+  //
+  // On DGX Station / DGX Spark the auto-restore lock succeeds and verifies
+  // (444 root:root), but an in-sandbox reconciler (OpenClaw gateway /
+  // doctor-style perm normalization) re-touches `.config-hash` in place
+  // *after* the lock returns, reverting it to 660 sandbox:sandbox. Content is
+  // unchanged (the SHA-256 seal still matches), so only mode/owner drift, and
+  // the next `shields status` reports UP (DRIFTED). The auto-restore path
+  // performs a single instantaneous verify (inside lockAgentConfig) and never
+  // re-confirms after the gateway has had a chance to settle.
+  //
+  // Contract the fix must satisfy: after restoring policy, the timer must
+  // re-verify the lock held once the gateway has settled and re-apply if it
+  // drifted; it must only mark shields UP when a re-confirm passes 444 root:root
+  // after the settle window, otherwise leave shields DOWN with an audit warning.
+  // (This narrows the revert window; it does not close the TOCTOU.)
+  // -------------------------------------------------------------------------
+
+  it("#4663 re-verifies the auto-restore lock after settle so a reconciler reverting .config-hash perms is caught", async () => {
+    const stateDir = path.join(tmpHome, ".nemoclaw", "state");
+    fs.mkdirSync(stateDir, { recursive: true });
+
+    const sandboxName = "alpha";
+    const configPath = "/sandbox/.openclaw/openclaw.json";
+    const configDir = "/sandbox/.openclaw";
+    const sensitiveHashPath = `${configDir}/.config-hash`;
+    const snapshotPath = path.join(stateDir, "snapshot.yaml");
+    const restoreAtIso = new Date(Date.now() + 60_000).toISOString();
+    const markerPath = path.join(stateDir, `shields-timer-${sandboxName}.json`);
+    const stateFile = path.join(stateDir, `shields-${sandboxName}.json`);
+
+    fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies:\n  default: {}\n");
+    fs.writeFileSync(
+      markerPath,
+      JSON.stringify({
+        pid: process.pid,
+        sandboxName,
+        snapshotPath,
+        restoreAt: restoreAtIso,
+        processToken: "tok",
+      }),
+    );
+
+    const sealedHashes = {
+      [configPath]: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      [sensitiveHashPath]: "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
+    };
+    const lockMock = vi.fn(() => ({ chattrApplied: true, fileHashes: sealedHashes }));
+
+    const sandboxConfigModule = await import("../sandbox/config");
+    (sandboxConfigModule.resolveAgentConfig as ReturnType<typeof vi.fn>).mockReturnValue({
+      agentName: "openclaw",
+      configPath,
+      configDir,
+      sensitiveFiles: [sensitiveHashPath],
+    });
+    const indexModule = await import("./index");
+    (indexModule.lockAgentConfig as ReturnType<typeof vi.fn>).mockImplementation(lockMock);
+
+    const timer = await import("./timer");
+    const args = timer.parseTimerArgs([
+      sandboxName,
+      snapshotPath,
+      restoreAtIso,
+      configPath,
+      configDir,
+      "tok",
+    ]);
+    expect(args).not.toBeNull();
+
+    const exitCode = invokeTimerAndCaptureExit(timer.runRestoreTimer, args);
+
+    // A single instantaneous lock+verify cannot prove the gateway didn't
+    // re-permission .config-hash afterward. The fix must re-confirm the lock
+    // held after the gateway settled, which re-invokes the verified lock path.
+    expect(lockMock).toHaveBeenCalledTimes(2);
+    expect(exitCode).toBe(0);
+    expect(JSON.parse(fs.readFileSync(stateFile, "utf-8")).shieldsDown).toBe(false);
+  });
+
+  it("#4663 leaves shields DOWN and audits when the post-settle re-lock cannot hold .config-hash perms", async () => {
+    const stateDir = path.join(tmpHome, ".nemoclaw", "state");
+    fs.mkdirSync(stateDir, { recursive: true });
+
+    const sandboxName = "alpha";
+    const configPath = "/sandbox/.openclaw/openclaw.json";
+    const configDir = "/sandbox/.openclaw";
+    const sensitiveHashPath = `${configDir}/.config-hash`;
+    const snapshotPath = path.join(stateDir, "snapshot.yaml");
+    const restoreAtIso = new Date(Date.now() + 60_000).toISOString();
+    const markerPath = path.join(stateDir, `shields-timer-${sandboxName}.json`);
+    const stateFile = path.join(stateDir, `shields-${sandboxName}.json`);
+    const auditFile = path.join(stateDir, "shields-audit.jsonl");
+
+    fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies:\n  default: {}\n");
+    fs.writeFileSync(stateFile, JSON.stringify({ shieldsDown: true }, null, 2));
+    fs.writeFileSync(
+      markerPath,
+      JSON.stringify({
+        pid: process.pid,
+        sandboxName,
+        snapshotPath,
+        restoreAt: restoreAtIso,
+        processToken: "tok",
+      }),
+    );
+
+    const sealedHashes = {
+      [configPath]: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      [sensitiveHashPath]: "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
+    };
+    // First lock succeeds and verifies; on re-confirmation the gateway has
+    // reverted .config-hash, so the verified lock path throws drift.
+    const lockMock = vi
+      .fn()
+      .mockImplementationOnce(() => ({ chattrApplied: true, fileHashes: sealedHashes }))
+      .mockImplementation(() => {
+        throw new Error(
+          "Config not locked: /sandbox/.openclaw/.config-hash mode=660 (expected 444), /sandbox/.openclaw/.config-hash owner=sandbox:sandbox (expected root:root)",
+        );
+      });
+
+    const sandboxConfigModule = await import("../sandbox/config");
+    (sandboxConfigModule.resolveAgentConfig as ReturnType<typeof vi.fn>).mockReturnValue({
+      agentName: "openclaw",
+      configPath,
+      configDir,
+      sensitiveFiles: [sensitiveHashPath],
+    });
+    const indexModule = await import("./index");
+    (indexModule.lockAgentConfig as ReturnType<typeof vi.fn>).mockImplementation(lockMock);
+
+    const timer = await import("./timer");
+    const args = timer.parseTimerArgs([
+      sandboxName,
+      snapshotPath,
+      restoreAtIso,
+      configPath,
+      configDir,
+      "tok",
+    ]);
+    expect(args).not.toBeNull();
+
+    const exitCode = invokeTimerAndCaptureExit(timer.runRestoreTimer, args);
+    const updatedState = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
+    const auditEntries = fs
+      .readFileSync(auditFile, "utf-8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+
+    expect(exitCode).toBe(1);
+    expect(updatedState.shieldsDown).toBe(true);
+    // Both audit outcomes must fire: the re-lock warning AND the terminal
+    // fail-closed entry that keeps shields DOWN.
+    expect(auditEntries).toContainEqual(
+      expect.objectContaining({
+        action: "shields_auto_restore_lock_warning",
+        sandbox: sandboxName,
+        lock_verified: false,
+      }),
+    );
+    expect(auditEntries).toContainEqual(
+      expect.objectContaining({
+        action: "shields_up_failed",
+        sandbox: sandboxName,
+        error: "Config re-lock verification failed — shields remain DOWN",
+      }),
+    );
   });
 });

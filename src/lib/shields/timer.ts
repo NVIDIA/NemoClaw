@@ -17,6 +17,7 @@ import { resolveAgentConfig } from "../sandbox/config";
 import { resolveNemoclawStateDir } from "../state/paths";
 import { appendAuditEntry, type ShieldsAuditEntry } from "./audit";
 import * as shields from "./index";
+import { relockAndReconfirm } from "./relock-reconfirm";
 
 interface ShieldsStatePatch {
   shieldsDown?: boolean;
@@ -243,9 +244,27 @@ function runRestoreTimer(args: TimerArgs): void {
       if (lockTarget) {
         try {
           const lockAgentConfig = resolveLockAgentConfig();
-          const lockResult = lockAgentConfig(args.sandboxName, lockTarget);
-          lockedChattr = lockResult.chattrApplied;
-          lockedHashes = lockResult.fileHashes;
+          // #4663: a single instantaneous lock+verify cannot prove an
+          // in-sandbox reconciler didn't re-permission .config-hash after the
+          // verified lock returned. Re-confirm the lock held once the gateway
+          // has settled, re-applying if it drifted. This narrows (does not
+          // close) the revert window; fail closed (leave shields DOWN + audit)
+          // when the lock will not re-confirm within the retry budget.
+          const relock = relockAndReconfirm(() => lockAgentConfig(args.sandboxName, lockTarget));
+          if (relock.ok && relock.lastResult) {
+            lockedChattr = relock.lastResult.chattrApplied;
+            lockedHashes = relock.lastResult.fileHashes;
+          } else {
+            lockVerified = false;
+            appendAudit({
+              action: "shields_auto_restore_lock_warning",
+              sandbox: args.sandboxName,
+              timestamp: now,
+              restored_by: "auto_timer",
+              warning: relock.error ?? "Config re-lock did not re-confirm after settle window",
+              lock_verified: false,
+            });
+          }
         } catch (error: unknown) {
           lockVerified = false;
           appendAudit({
