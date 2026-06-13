@@ -2051,7 +2051,7 @@ jobs:
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
 
-      - name: Run issue #2478 crash-loop recovery live Vitest test
+      - name: "Run issue #2478 crash-loop recovery live Vitest test"
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
         run: |
@@ -2073,7 +2073,7 @@ jobs:
             test/e2e-scenario/live/issue-2478-crash-loop-recovery.test.ts \
             --silent=false --reporter=default
 
-      - name: Upload issue #2478 crash-loop recovery artifacts
+      - name: "Upload issue #2478 crash-loop recovery artifacts"
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

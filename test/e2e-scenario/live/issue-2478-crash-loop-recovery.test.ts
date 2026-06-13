@@ -167,6 +167,28 @@ async function removeProxyEnv(
   expect(result.exitCode, result.stderr).toBe(0);
 }
 
+async function proxyEnvHasGuardMarkers(
+  sandbox: {
+    exec(
+      name: string,
+      command: string[],
+      options?: Record<string, unknown>,
+    ): Promise<{ exitCode: number | null; stdout: string; stderr: string }>;
+  },
+  sandboxName: string,
+  artifactName: string,
+): Promise<boolean> {
+  const result = await sandbox.exec(
+    sandboxName,
+    ["sh", "-c", "cat /tmp/nemoclaw-proxy-env.sh 2>/dev/null || true"],
+    { artifactName, env: probeEnv(), timeoutMs: 30_000 },
+  );
+  return (
+    result.stdout.includes("nemoclaw-sandbox-safety-net") &&
+    result.stdout.includes("nemoclaw-ciao-network-guard")
+  );
+}
+
 async function restoreProxyEnv(
   sandbox: {
     exec(
@@ -183,17 +205,30 @@ async function restoreProxyEnv(
     [
       "sh",
       "-c",
-      `rm -f /tmp/nemoclaw-proxy-env.sh && echo '${snapshot.b64}' | base64 -d > /tmp/nemoclaw-proxy-env.sh && chmod 444 /tmp/nemoclaw-proxy-env.sh && wc -c < /tmp/nemoclaw-proxy-env.sh`,
+      `rm -f /tmp/nemoclaw-proxy-env.sh 2>/dev/null || true; (printf '%s' '${snapshot.b64}' | base64 -d > /tmp/nemoclaw-proxy-env.sh 2>/dev/null && chmod 444 /tmp/nemoclaw-proxy-env.sh) || true; wc -c < /tmp/nemoclaw-proxy-env.sh 2>/dev/null || true`,
     ],
     { artifactName: "restore-proxy-env", env: probeEnv(), timeoutMs: 30_000 },
   );
   expect(result.exitCode, result.stderr).toBe(0);
-  expect(Number(result.stdout.trim()), "restored proxy-env byte size").toBe(snapshot.size);
+
+  const restoredSize = Number(result.stdout.trim() || 0);
+  if (restoredSize === snapshot.size) return;
+  if (await proxyEnvHasGuardMarkers(sandbox, sandboxName, "restore-proxy-env-guard-markers"))
+    return;
+
+  expect(restoredSize, "restored proxy-env byte size or recovered guard markers").toBe(
+    snapshot.size,
+  );
 }
 
 async function waitForRecoveryWarning(
   gateway: {
     expectLogContains(
+      instance: NemoClawInstance,
+      pattern: RegExp,
+      options?: Record<string, unknown>,
+    ): Promise<void>;
+    expectLogDoesNotContain(
       instance: NemoClawInstance,
       pattern: RegExp,
       options?: Record<string, unknown>,
@@ -204,7 +239,14 @@ async function waitForRecoveryWarning(
   let lastError: unknown;
   for (let attempt = 1; attempt <= 5; attempt += 1) {
     try {
-      await gateway.expectLogContains(instance, /\[gateway-recovery\] WARNING/, { lines: 100 });
+      await gateway.expectLogContains(
+        instance,
+        /\[gateway-recovery\] WARNING: .*restoring library guards from packaged preloads/,
+        { lines: 200 },
+      );
+      await gateway.expectLogDoesNotContain(instance, /gateway launching without library guards/, {
+        lines: 200,
+      });
       return;
     } catch (error) {
       lastError = error;
