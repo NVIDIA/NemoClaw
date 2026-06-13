@@ -2775,6 +2775,8 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   validateModelRouterProviderRoutedInferenceVitestJob(errors, jobs);
   validateFreeStandingJobSelector(errors, jobs, "gateway-drift-preflight-vitest", "gateway-drift-preflight");
 
+  validateFreeStandingJobSelector(errors, jobs, "openclaw-inference-switch-vitest", "openclaw-inference-switch");
+
   validateBedrockRuntimeCompatibleAnthropicVitestJob(errors, jobs);
 
   const reportToPr = asRecord(jobs["report-to-pr"]);
