@@ -59,10 +59,13 @@ describe("record-only onboard step mutation", () => {
     expect(loaded.sandboxName).toBe("my-assistant");
     expect(loaded.machine).toMatchObject({ state: "init", revision: 0 });
 
-    session.markStepFailedRecordOnly("gateway", "Gateway failed: NVIDIA_API_KEY=nvapi-secret");
+    session.markStepFailedRecordOnly(
+      "gateway",
+      "Gateway failed: NVIDIA_INFERENCE_API_KEY=nvapi-secret",
+    );
     loaded = requireLoadedSession(session.loadSession());
     expect(loaded.steps.gateway.status).toBe("failed");
-    expect(loaded.steps.gateway.error).toBe("Gateway failed: NVIDIA_API_KEY=<REDACTED>");
+    expect(loaded.steps.gateway.error).toBe("Gateway failed: NVIDIA_INFERENCE_API_KEY=<REDACTED>");
     expect(loaded.steps.gateway.error).not.toContain("nvapi-secret");
     expect(loaded.status).toBe("in_progress");
     expect(loaded.failure).toBeNull();

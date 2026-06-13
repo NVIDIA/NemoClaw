@@ -369,10 +369,9 @@ nemoclaw onboard
 `nemoclaw <name> connect` checks the OpenShell gateway before it tries dashboard forwarding, SSH, or inference repair.
 If the gateway is not reachable, the command exits early and prints recovery guidance.
 
-Start the gateway or resume onboarding, then retry:
+Resume onboarding so NemoClaw recreates or reconnects the managed gateway, then retry:
 
 ```bash
-openshell gateway start --name nemoclaw
 nemoclaw onboard --resume
 nemoclaw <name> connect
 ```
@@ -550,12 +549,12 @@ Follow these steps to reconnect.
 
    If the sandbox shows `Ready`, skip to step 4.
 
-1. Restart the gateway (if needed).
+1. Recover the managed gateway (if needed).
 
-   If the sandbox is not listed or the command fails, restart the OpenShell gateway:
+   If the sandbox is not listed or the command fails, let NemoClaw recover the managed gateway and sandbox registration:
 
    ```bash
-   openshell gateway start --name nemoclaw
+   nemoclaw onboard --resume
    ```
 
    Wait a few seconds, then re-check with `openshell sandbox list`.
@@ -648,11 +647,11 @@ nemoclaw <name> rebuild
 
 ### Sandbox creation reports a TLS certificate mismatch
 
-If sandbox creation reports a TLS or certificate mismatch, the OpenShell gateway certificate may have changed since the CLI last trusted it.
-Refresh the gateway trust and then resume onboarding:
+If sandbox creation reports a TLS or certificate mismatch, the OpenShell gateway certificate may have changed since the CLI last registered it.
+Remove the stale local gateway registration and then resume onboarding so NemoClaw refreshes the registration:
 
 ```bash
-openshell gateway trust -g nemoclaw
+openshell gateway remove nemoclaw
 nemoclaw onboard --resume
 ```
 
@@ -1376,6 +1375,12 @@ openshell sandbox delete <sandbox-name>
 Fix the NVIDIA Container Toolkit or CDI configuration reported in the diagnostics, clean up the failed sandbox, then rerun onboarding.
 If you do not need GPU access inside the sandbox, rerun with `--no-sandbox-gpu`.
 Set `NEMOCLAW_DOCKER_GPU_PATCH=0` only when you need to bypass this compatibility path during troubleshooting.
+On Docker Desktop WSL the patch is required for GPU passthrough — `NEMOCLAW_DOCKER_GPU_PATCH=0` is ignored on that runtime, and onboarding logs a warning when it is set there.
+To skip GPU passthrough entirely on Docker Desktop WSL, rerun with `--no-gpu` or set `NEMOCLAW_SANDBOX_GPU=0`.
+
+If sandbox creation fails with `CDI device injection failed: unresolvable CDI devices nvidia.com/gpu=all`, the OpenShell gateway tried `docker create --device nvidia.com/gpu=all` and Docker could not resolve the CDI spec.
+This injection happens inside the gateway, so `NEMOCLAW_DOCKER_GPU_PATCH=0` does not bypass it.
+Rerun with `--no-gpu`, or set `NEMOCLAW_SANDBOX_GPU=0` and resume onboarding.
 
 If onboarding reports `OpenShell supervisor did not reconnect to the GPU-enabled container.` even though the diagnostic bundle shows the patched container is running and healthy, the supervisor-reconnect wait is treating a transient Error phase (reported while the OpenShell host re-registers the new container) as fatal.
 The reconnect wait debounces consecutive Error-phase polls before fast-failing, defaulting to fifteen consecutive polls of about 30 seconds in total.

@@ -50,6 +50,8 @@ fail() {
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+# shellcheck source=test/e2e/lib/openai-compatible-api-proof.sh
+source "${SCRIPT_DIR}/lib/openai-compatible-api-proof.sh"
 STATE_DIR="${NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR:-$HOME/.local/state/nemoclaw/openshell-docker-gateway}"
 PID_FILE="${STATE_DIR}/openshell-gateway.pid"
 OLD_NEMOCLAW_REF="${NEMOCLAW_OLD_NEMOCLAW_REF:-v0.0.36}"
@@ -62,7 +64,6 @@ SURVIVOR_MARKER="gateway-upgrade-survivor-$(date +%s)"
 SURVIVOR_MARKER_PATH="/sandbox/.openclaw/workspace/nemoclaw-gateway-upgrade-marker"
 REGISTRY_FILE="$HOME/.nemoclaw/sandboxes.json"
 FAKE_BASE_URL=""
-FAKE_MOCK_PID=""
 SURVIVOR_AGENT_PID=""
 
 load_shell_path() {
@@ -257,7 +258,7 @@ PY
 
 cleanup() {
   set +e
-  cleanup_pid "$FAKE_MOCK_PID"
+  stop_fake_openai_compatible_api
   if command -v openshell >/dev/null 2>&1; then
     openshell sandbox delete "$SURVIVOR_SANDBOX" >/dev/null 2>&1 || true
     openshell gateway remove nemoclaw >/dev/null 2>&1 || true
@@ -474,90 +475,14 @@ wait_for_survivor_ready() {
 }
 
 start_compatible_endpoint_mock() {
-  local tmp port_file
-  tmp="$(mktemp -d)"
-  port_file="${tmp}/port"
-  rm -f "$MOCK_LOG"
-
-  python3 - "$port_file" "$MOCK_LOG" <<'PY' &
-import json
-import sys
-from http.server import BaseHTTPRequestHandler, HTTPServer
-
-port_file = sys.argv[1]
-log_file = sys.argv[2]
-
-class Handler(BaseHTTPRequestHandler):
-    def _send(self, status, payload):
-        body = json.dumps(payload).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def _log(self, message):
-        with open(log_file, "a", encoding="utf-8") as fh:
-            fh.write(message + "\n")
-            fh.flush()
-
-    def log_message(self, _fmt, *_args):
-        return
-
-    def do_GET(self):
-        self._log(f"GET {self.path}")
-        if self.path in ("/v1/models", "/models"):
-            self._send(200, {"data": [{"id": "test-model", "object": "model"}]})
-            return
-        self._send(404, {"error": {"message": "not found"}})
-
-    def do_POST(self):
-        length = int(self.headers.get("Content-Length", "0"))
-        body = self.rfile.read(length) if length else b""
-        self._log(f"POST {self.path} {body[:200].decode('utf-8', 'replace')}")
-        if self.path in ("/v1/chat/completions", "/chat/completions"):
-            self._send(200, {
-                "id": "chatcmpl-test",
-                "object": "chat.completion",
-                "choices": [{
-                    "index": 0,
-                    "message": {"role": "assistant", "content": "ok"},
-                    "finish_reason": "stop",
-                }],
-            })
-            return
-        if self.path in ("/v1/responses", "/responses"):
-            self._send(200, {
-                "id": "resp-test",
-                "object": "response",
-                "output": [{
-                    "type": "message",
-                    "role": "assistant",
-                    "content": [{"type": "output_text", "text": "ok"}],
-                }],
-            })
-            return
-        self._send(404, {"error": {"message": "not found"}})
-
-server = HTTPServer(("127.0.0.1", 0), Handler)
-with open(port_file, "w", encoding="utf-8") as fh:
-    fh.write(str(server.server_port))
-server.serve_forever()
-PY
-  FAKE_MOCK_PID="$!"
-
-  for _i in $(seq 1 30); do
-    if [ -s "$port_file" ]; then
-      FAKE_BASE_URL="http://127.0.0.1:$(cat "$port_file")/v1"
-      if curl -sf "${FAKE_BASE_URL}/models" >/dev/null 2>&1; then
-        rm -rf "$tmp"
-        pass "Compatible endpoint mock is listening at ${FAKE_BASE_URL}"
-        return 0
-      fi
-    fi
-    sleep 1
-  done
-  rm -rf "$tmp"
+  export FAKE_OPENAI_HOST="127.0.0.1"
+  export FAKE_OPENAI_PORT="0"
+  export FAKE_OPENAI_LOG="$MOCK_LOG"
+  if start_fake_openai_compatible_api; then
+    FAKE_BASE_URL="$FAKE_OPENAI_BASE_URL"
+    pass "Compatible endpoint mock is listening at ${FAKE_BASE_URL}"
+    return 0
+  fi
   fail "compatible endpoint mock did not start"
 }
 

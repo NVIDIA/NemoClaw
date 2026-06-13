@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 // Import from compiled dist/ so coverage is attributed correctly.
 import {
   buildHermesDashboardProcessRecoveryScript,
@@ -127,7 +127,13 @@ describe("buildRecoveryScript", () => {
       internalPort: 19119,
       tuiEnabled: false,
     });
-    expect(script).toContain(". /tmp/nemoclaw-proxy-env.sh");
+    const validationIndex = script.indexOf(
+      "_nemoclaw_validate_recovery_proxy_env /tmp/nemoclaw-proxy-env.sh",
+    );
+    const sourceIndex = script.indexOf('. "$_NEMOCLAW_RECOVERY_SOURCE_ENV"');
+    expect(validationIndex).toBeGreaterThanOrEqual(0);
+    expect(sourceIndex).toBeGreaterThan(validationIndex);
+    expect(script).toContain('. "$_NEMOCLAW_RECOVERY_SOURCE_ENV"');
     expect(script).toContain("/usr/local/bin/hermes");
     expect(script).toContain(
       '"$AGENT_BIN" dashboard --host 127.0.0.1 --port 19119 --skip-build --no-open',
@@ -193,24 +199,25 @@ describe("buildRecoveryScript", () => {
     expect(script).not.toContain("hermes gateway run --profile recovery --port 8642");
   });
 
-  // Regression coverage for #2478. The recovery script must explicitly source
-  // /tmp/nemoclaw-proxy-env.sh (single source of truth for NODE_OPTIONS
-  // library guards) and warn — not silently continue — when the file is
-  // missing or the safety-net preload is absent from NODE_OPTIONS. The pre-fix
-  // recovery path swallowed sourcing errors via `2>/dev/null`, leaving
-  // respawned gateways guard-less and crash-looping on the next library
-  // error from ciao, model-pricing, or anything else hitting a sandboxed
-  // syscall.
+  // Regression coverage for #2478. The recovery script must validate
+  // /tmp/nemoclaw-proxy-env.sh, then source a generated recovery env carrying
+  // the critical NODE_OPTIONS library guards. The pre-fix recovery path
+  // swallowed sourcing errors via `2>/dev/null`, leaving respawned gateways
+  // guard-less and crash-looping on the next library error from ciao,
+  // model-pricing, or anything else hitting a sandboxed syscall.
   describe("#2478 hardened library-guard preload chain", () => {
-    it("explicitly sources the gateway env file", () => {
+    it("sources the generated recovery env after validating the gateway env file", () => {
       const script = buildRecoveryScript(minimalAgent, 19000);
-      expect(script).toContain(". /tmp/nemoclaw-proxy-env.sh");
+      expect(script).toContain("_nemoclaw_validate_recovery_proxy_env /tmp/nemoclaw-proxy-env.sh");
+      expect(script).toContain('. "$_NEMOCLAW_RECOVERY_SOURCE_ENV"');
     });
 
-    it("warns when the gateway env file is missing instead of silently launching", () => {
+    it("warns and restores guards when the gateway env file is missing", () => {
       const script = buildRecoveryScript(minimalAgent, 19000);
       expect(script).toContain("/tmp/nemoclaw-proxy-env.sh missing");
+      expect(script).toContain("restoring library guards from packaged preloads");
       expect(script).toContain("#2478");
+      expect(script).not.toContain("gateway launching without library guards");
     });
 
     it("does not silence sourcing errors with 2>/dev/null", () => {
@@ -237,22 +244,9 @@ describe("buildRecoveryScript", () => {
       expect(script).toContain("GATEWAY_STALE_PROCESSES");
     });
 
-    it("sources proxy-env.sh BEFORE launching the gateway binary", () => {
+    it("fails recovery when trusted guard restoration cannot install required guards", () => {
       const script = buildRecoveryScript(minimalAgent, 19000);
-      expect(script).not.toBeNull();
-      const staleStopIdx = script!.indexOf('pkill -TERM -f "$_GATEWAY_PROC_PATTERN"');
-      const sourceIdx = script!.indexOf("then . /tmp/nemoclaw-proxy-env.sh");
-      const launchIdx = script!.indexOf("nohup");
-      expect(staleStopIdx).toBeGreaterThanOrEqual(0);
-      expect(sourceIdx).toBeGreaterThanOrEqual(0);
-      expect(launchIdx).toBeGreaterThanOrEqual(0);
-      expect(staleStopIdx).toBeLessThan(sourceIdx);
-      expect(sourceIdx).toBeLessThan(launchIdx);
-    });
-
-    it("fails recovery when an existing proxy-env.sh does not install required guards", () => {
-      const script = buildRecoveryScript(minimalAgent, 19000);
-      expect(script).toContain('if [ "$_PE_MISSING" = "0" ]');
+      expect(script).toContain("_NEMOCLAW_CRITICAL_GUARDS_READY");
       expect(script).toContain("refusing unguarded gateway relaunch");
       expect(script).toContain('echo "$_E" >> "$_GATEWAY_LOG"; exit 1');
     });
@@ -263,13 +257,14 @@ describe("buildRecoveryScript", () => {
       // executeSandboxCommand silently discards stderr from the recovery
       // script, so a warning that only goes to stderr is invisible to
       // anyone debugging a crash-loop. (#2478)
-      expect(script).toContain('echo "$_W" >> "$_GATEWAY_LOG"');
+      expect(script).toContain('_nemoclaw_recovery_log "$_W"');
+      expect(script).toContain('echo "$_msg" >> "$_GATEWAY_LOG"');
       // And the warning must be deferred until AFTER gateway.log is
       // safely opened with O_NOFOLLOW, otherwise the redirect targets a
       // stale or attacker-controlled file.
       const gatewayPrepIdx = script!.indexOf(" /tmp/gateway.log || exit 1;");
       const logSelectionIdx = script!.indexOf("_GATEWAY_LOG=/tmp/gateway.log");
-      const warnIdx = script!.indexOf('echo "$_W" >> "$_GATEWAY_LOG"');
+      const warnIdx = script!.indexOf("_W=");
       expect(gatewayPrepIdx).toBeGreaterThanOrEqual(0);
       expect(logSelectionIdx).toBeGreaterThanOrEqual(0);
       expect(warnIdx).toBeGreaterThanOrEqual(0);
@@ -297,7 +292,7 @@ describe("buildRecoveryScript", () => {
       expect(script).not.toContain("rm -f /tmp/gateway.log");
       expect(script).toContain("_GATEWAY_LOG=/tmp/gateway.log");
       expect(script).toContain("_GATEWAY_LOG=/tmp/gateway-recovery.log");
-      expect(script).toContain('echo "$_W" >> "$_GATEWAY_LOG"');
+      expect(script).toContain('_nemoclaw_recovery_log "$_W"');
       expect(script).toContain('tail -5 "$_GATEWAY_LOG"');
       expect(script).not.toContain('echo "$_W" >> /tmp/gateway.log');
       expect(script).not.toContain("cat /tmp/gateway.log");

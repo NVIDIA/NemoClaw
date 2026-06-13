@@ -44,24 +44,30 @@
 #
 # Prerequisites:
 #   - Docker running
-#   - NVIDIA_API_KEY set (real key, starts with nvapi-)
-#   - Network access to integrate.api.nvidia.com
+#   - node + curl for the local OpenAI-compatible mock endpoint
 #
 # Environment variables:
 #   NEMOCLAW_NON_INTERACTIVE=1             — required
 #   NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 — required
-#   NVIDIA_API_KEY                         — required for onboard
+#   NEMOCLAW_E2E_USE_COMPAT_MOCK           — use local mock provider (default: 1)
+#   NEMOCLAW_COMPAT_MOCK_PORT              — local mock endpoint port (default: 18191)
+#   NEMOCLAW_COMPAT_MODEL                  — local mock model id (default: test-model)
+#   NEMOCLAW_COMPAT_MOCK_LOG               — local mock server log path
 #   NEMOCLAW_SANDBOX_NAME                  — sandbox name (default: e2e-2478)
+#   NEMOCLAW_E2E_INSTALL_LOG               — install log path for CI artifacts
 #   NEMOCLAW_E2E_TIMEOUT_SECONDS           — overall timeout (default: 1500)
 #   NEMOCLAW_E2E_CRASH_CYCLES              — crash-recover cycles (default: 5)
 #   NEMOCLAW_E2E_SOAK_SECONDS              — idle soak window (default: 300)
+#   NVIDIA_INFERENCE_API_KEY               — required only with NEMOCLAW_E2E_USE_COMPAT_MOCK=0
+#   NVIDIA_API_KEY                         — legacy fallback for NVIDIA_INFERENCE_API_KEY
 #
 # Usage:
 #   NEMOCLAW_NON_INTERACTIVE=1 \
 #   NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
-#   NVIDIA_API_KEY=nvapi-... \
 #     bash test/e2e/test-issue-2478-crash-loop-recovery.sh
 
+# ShellCheck cannot see EXIT trap invocations of cleanup helpers in this E2E script.
+# shellcheck disable=SC2317,SC2329
 set -uo pipefail
 
 export NEMOCLAW_E2E_DEFAULT_TIMEOUT=1500
@@ -93,9 +99,57 @@ SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-2478}"
 CRASH_CYCLES="${NEMOCLAW_E2E_CRASH_CYCLES:-5}"
 SOAK_SECONDS="${NEMOCLAW_E2E_SOAK_SECONDS:-300}"
 DASHBOARD_PORT="${NEMOCLAW_DASHBOARD_PORT:-18789}"
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+# shellcheck source=test/e2e/lib/openai-compatible-api-proof.sh
+source "${SCRIPT_DIR}/lib/openai-compatible-api-proof.sh"
+USE_COMPAT_MOCK="${NEMOCLAW_E2E_USE_COMPAT_MOCK:-1}"
+COMPAT_MOCK_PORT="${NEMOCLAW_COMPAT_MOCK_PORT:-18191}"
+COMPAT_MODEL="${NEMOCLAW_COMPAT_MODEL:-test-model}"
+COMPATIBLE_KEY="${COMPATIBLE_API_KEY:-nemoclaw-e2e-compatible-key}"
+COMPAT_MOCK_LOG="${NEMOCLAW_COMPAT_MOCK_LOG:-/tmp/nemoclaw-2478-compatible-endpoint.log}"
 
 # ── Helpers ──────────────────────────────────────────────────────
+
+host_ip_for_sandbox() {
+  local ip_addr
+  if command -v ip >/dev/null 2>&1; then
+    ip_addr="$(ip route get 1 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}')"
+    if [ -n "$ip_addr" ]; then
+      echo "$ip_addr"
+      return
+    fi
+  fi
+  if command -v hostname >/dev/null 2>&1; then
+    for ip_addr in $(hostname -I 2>/dev/null); do
+      case "$ip_addr" in
+        127.* | ::1) ;;
+        *)
+          echo "$ip_addr"
+          return
+          ;;
+      esac
+    done
+  fi
+  echo "127.0.0.1"
+}
+
+stop_compat_mock() {
+  stop_fake_openai_compatible_api
+}
+trap stop_compat_mock EXIT
+
+start_compat_mock() {
+  export FAKE_OPENAI_HOST="0.0.0.0"
+  export FAKE_OPENAI_PORT="$COMPAT_MOCK_PORT"
+  export FAKE_OPENAI_MODEL="$COMPAT_MODEL"
+  export FAKE_OPENAI_API_KEY="$COMPATIBLE_KEY"
+  export FAKE_OPENAI_REQUIRE_AUTH="1"
+  export FAKE_OPENAI_CHAT_CONTENT="PONG from issue-2478 mock"
+  export FAKE_OPENAI_RESPONSE_TEXT="PONG from issue-2478 mock"
+  export FAKE_OPENAI_LOG="$COMPAT_MOCK_LOG"
+  start_fake_openai_compatible_api || return 1
+}
 
 # Run a command inside the sandbox via openshell sandbox exec. Returns
 # stdout; non-zero exit prints stderr but does not abort the test.
@@ -121,6 +175,47 @@ proxy_env_contents() {
   sandbox_exec sh -c "cat /tmp/nemoclaw-proxy-env.sh 2>/dev/null"
 }
 
+gateway_log_line_count() {
+  sandbox_exec sh -c "wc -l < /tmp/gateway.log 2>/dev/null || printf '0\n'" \
+    | awk '/^[0-9]+$/ { print; found=1; exit } END { if (!found) print 0 }'
+}
+
+gateway_log_marker() {
+  local label="$1"
+  local marker
+  marker="NEMOCLAW_E2E_LOG_MARKER_${label}_$(date +%s)_$$"
+  if sandbox_exec sh -c "printf '%s\n' '$marker' >> /tmp/gateway.log 2>/dev/null && grep -Fq '$marker' /tmp/gateway.log 2>/dev/null" >/dev/null; then
+    printf '%s\n' "$marker"
+    return
+  fi
+  gateway_log_line_count
+}
+
+gateway_log_after_boundary() {
+  local boundary="${1:-0}"
+  if [[ "$boundary" =~ ^[0-9]+$ ]]; then
+    local current_lines
+    current_lines="$(gateway_log_line_count)"
+    if [ "$current_lines" -lt "$boundary" ]; then
+      boundary=0
+    fi
+    sandbox_exec sh -c "cat /tmp/gateway.log 2>/dev/null" | tail -n +"$((boundary + 1))"
+    return
+  fi
+
+  local out status
+  out="$(sandbox_exec sh -c "awk -v marker='$boundary' 'found { print } index(\$0, marker) { found=1; next } END { if (!found) exit 42 }' /tmp/gateway.log 2>/dev/null")"
+  status=$?
+  if [ "$status" -eq 0 ]; then
+    printf '%s\n' "$out"
+    return
+  fi
+
+  # If the gateway rewrote or rotated /tmp/gateway.log, the marker is gone and
+  # the whole current file is fresh relative to the boundary.
+  sandbox_exec sh -c "cat /tmp/gateway.log 2>/dev/null"
+}
+
 # Returns 0 if the gateway has the library guard chain active, 1 otherwise.
 # /proc/<pid>/environ is unreadable across non-ancestor process trees due
 # to kernel.yama.ptrace_scope=1, so we verify the guards by their effects:
@@ -137,6 +232,7 @@ proxy_env_contents() {
 gateway_guards_active() {
   local pid="$1"
   local timeout="${2:-30}"
+  local log_boundary="${3:-0}"
   local elapsed=0
 
   if [ -z "$pid" ]; then
@@ -155,8 +251,8 @@ gateway_guards_active() {
   fi
 
   while [ "$elapsed" -lt "$timeout" ]; do
-    if sandbox_exec sh -c "grep -Eq '\\[sandbox-safety-net\\] loaded \\((openclaw-gateway|launcher)\\)' /tmp/gateway.log 2>/dev/null" \
-      && sandbox_exec sh -c "grep -Eq '\\[guard\\] ciao-network-guard loaded \\((openclaw-gateway|launcher)\\)' /tmp/gateway.log 2>/dev/null"; then
+    if gateway_log_after_boundary "$log_boundary" | grep -Eq '\[sandbox-safety-net\] loaded \((openclaw-gateway|launcher)\)' \
+      && gateway_log_after_boundary "$log_boundary" | grep -Eq '\[guard\] ciao-network-guard loaded \((openclaw-gateway|launcher)\)'; then
       # Confirm gateway is still alive after guard activations.
       if [ -n "$(gateway_pid)" ]; then
         return 0
@@ -166,7 +262,7 @@ gateway_guards_active() {
     fi
     # Backward-compatible proof for older images: this line is emitted by
     # the ciao preload only when ciao calls os.networkInterfaces().
-    if sandbox_exec sh -c "grep -Fq '[guard] os.networkInterfaces() failed:' /tmp/gateway.log 2>/dev/null"; then
+    if gateway_log_after_boundary "$log_boundary" | grep -Fq '[guard] os.networkInterfaces() failed:'; then
       if [ -n "$(gateway_pid)" ]; then
         return 0
       fi
@@ -177,7 +273,7 @@ gateway_guards_active() {
     elapsed=$((elapsed + 3))
   done
 
-  echo "  [guards] no gateway-process guard activation signatures in gateway.log within ${timeout}s"
+  echo "  [guards] no fresh gateway-process guard activation signatures in gateway.log within ${timeout}s"
   return 1
 }
 
@@ -315,11 +411,30 @@ if ! docker info >/dev/null 2>&1; then
 fi
 pass "Docker running"
 
-if [ -z "${NVIDIA_API_KEY:-}" ] || [[ "${NVIDIA_API_KEY}" != nvapi-* ]]; then
-  fail "NVIDIA_API_KEY not set or invalid"
-  exit 1
+if [ "$USE_COMPAT_MOCK" = "1" ]; then
+  if ! command -v node >/dev/null 2>&1; then
+    fail "node is required for the compatible endpoint mock"
+    exit 1
+  fi
+  if ! node --experimental-strip-types -e "" >/dev/null 2>&1; then
+    fail "node with --experimental-strip-types support is required for the compatible endpoint mock"
+    exit 1
+  fi
+  if ! command -v curl >/dev/null 2>&1; then
+    fail "curl is required for the compatible endpoint mock readiness probe"
+    exit 1
+  fi
+  pass "Compatible endpoint mock prerequisites available"
+else
+  if [ -z "${NVIDIA_INFERENCE_API_KEY:-}" ] && [ -n "${NVIDIA_API_KEY:-}" ]; then
+    export NVIDIA_INFERENCE_API_KEY="$NVIDIA_API_KEY"
+  fi
+  if [ -z "${NVIDIA_INFERENCE_API_KEY:-}" ] || [[ "${NVIDIA_INFERENCE_API_KEY}" != nvapi-* ]]; then
+    fail "NVIDIA_INFERENCE_API_KEY not set or invalid"
+    exit 1
+  fi
+  pass "NVIDIA_INFERENCE_API_KEY set"
 fi
-pass "NVIDIA_API_KEY set"
 
 if [ "${NEMOCLAW_NON_INTERACTIVE:-}" != "1" ] || [ "${NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE:-}" != "1" ]; then
   fail "NEMOCLAW_NON_INTERACTIVE=1 and NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 are required"
@@ -344,22 +459,46 @@ cd "$REPO_ROOT" || {
   exit 1
 }
 
-INSTALL_LOG="$(mktemp)"
-env \
-  NEMOCLAW_NON_INTERACTIVE=1 \
-  NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
-  NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME" \
-  NEMOCLAW_RECREATE_SANDBOX=1 \
-  bash install.sh --non-interactive >"$INSTALL_LOG" 2>&1
+install_env=(
+  env
+  NEMOCLAW_NON_INTERACTIVE=1
+  NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1
+  NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME"
+  NEMOCLAW_RECREATE_SANDBOX=1
+)
+
+if [ "$USE_COMPAT_MOCK" = "1" ]; then
+  COMPAT_HOST="$(host_ip_for_sandbox)"
+  COMPAT_ENDPOINT_URL="http://${COMPAT_HOST}:${COMPAT_MOCK_PORT}/v1"
+  if start_compat_mock; then
+    pass "Compatible endpoint mock listening at ${COMPAT_ENDPOINT_URL}"
+  else
+    fail "Compatible endpoint mock did not become ready; see ${COMPAT_MOCK_LOG}"
+    cat "$COMPAT_MOCK_LOG"
+    exit 1
+  fi
+  install_env+=(
+    COMPATIBLE_API_KEY="$COMPATIBLE_KEY"
+    NEMOCLAW_PROVIDER=custom
+    NEMOCLAW_ENDPOINT_URL="$COMPAT_ENDPOINT_URL"
+    NEMOCLAW_MODEL="$COMPAT_MODEL"
+  )
+fi
+
+INSTALL_LOG="${NEMOCLAW_E2E_INSTALL_LOG:-/tmp/nemoclaw-e2e-install.log}"
+: >"$INSTALL_LOG" || {
+  fail "Cannot write install log at $INSTALL_LOG"
+  exit 1
+}
+"${install_env[@]}" bash install.sh --non-interactive >"$INSTALL_LOG" 2>&1
 
 install_exit=$?
 if [ $install_exit -ne 0 ]; then
   fail "install.sh failed (exit $install_exit). Last 30 lines:"
   tail -30 "$INSTALL_LOG"
-  rm -f "$INSTALL_LOG"
+  info "Full install log retained at $INSTALL_LOG"
   exit 1
 fi
-rm -f "$INSTALL_LOG"
 pass "install.sh + onboard completed"
 
 # Pick up PATH changes
@@ -411,6 +550,7 @@ section "Phase 3: Crash-recovery loop ($CRASH_CYCLES cycles)"
 prev_pid="$INIT_PID"
 for cycle in $(seq 1 "$CRASH_CYCLES"); do
   info "Cycle $cycle/$CRASH_CYCLES — killing gateway pid=$prev_pid"
+  guard_log_start="$(gateway_log_marker "cycle_${cycle}")"
   sandbox_exec sh -c "kill -9 $prev_pid 2>/dev/null; sleep 1" >/dev/null
 
   # Trigger recovery via the actual operator probe path:
@@ -438,7 +578,7 @@ for cycle in $(seq 1 "$CRASH_CYCLES"); do
   fi
   pass "Cycle $cycle: gateway respawned (pid $prev_pid → $new_pid)"
 
-  if gateway_guards_active "$new_pid" 30; then
+  if gateway_guards_active "$new_pid" 30 "$guard_log_start"; then
     pass "Cycle $cycle: respawned gateway retains guard chain (proxy-env + gateway preloads loaded)"
   else
     fail "Cycle $cycle: respawned gateway LOST guard chain — recovery hardening regressed"
@@ -482,6 +622,7 @@ info "Snapshotted proxy-env.sh ($SNAPSHOT_SIZE bytes, ${#SNAPSHOT_B64}-char base
 # pkill -9 -f '[o]penclaw' takes them all out so the launcher's watchdog
 # can't silently respawn the gateway before nemoclaw status runs the
 # recovery script (which is the only path that emits the warning).
+negative_guard_log_start="$(gateway_log_marker "negative")"
 sandbox_exec sh -c 'rm -f /tmp/nemoclaw-proxy-env.sh' >/dev/null
 sandbox_exec sh -c "pkill -9 -f '[o]penclaw' 2>/dev/null; sleep 2; pgrep -af '[o]penclaw' || echo ALL_DEAD" >/dev/null
 run_probe_only_or_fail "Negative case after proxy-env removal"
@@ -520,7 +661,7 @@ info "Negative-case recovery respawned gateway pid=$NEGATIVE_PID"
 #
 # Once the #2701 fix lands, recovery re-emits the chain before launching
 # and this assertion flips green. Will fail on origin/main as of 2026-06-09.
-if gateway_guards_active "$NEGATIVE_PID"; then
+if gateway_guards_active "$NEGATIVE_PID" 30 "$negative_guard_log_start"; then
   pass "#2701: recovery restored guard chain (proxy-env.sh + safety-net + ciao)"
 else
   fail "#2701: recovery did NOT restore guard chain — gateway respawned naked (DGX Spark crash-loop scenario)"
@@ -534,18 +675,28 @@ fi
 # sandbox exec` does not pipe stdin from the caller through to the subshell,
 # so a `printf | sandbox_exec sh -c 'cat > file'` would leave an empty file.
 # Encoding into the command argv sidesteps the stdin gap entirely.
+#
+# After the #2701 fix, recovery may already have restored a minimal hardened
+# proxy-env from trusted preload sources. In that case the sandbox user cannot
+# necessarily overwrite the root-owned 0444 file with the original snapshot;
+# accept the recovered file if it still proves the guard chain is active. This
+# keeps the test focused on the user-visible contract instead of byte-identical
+# cleanup of an implementation detail.
 sandbox_exec sh -c "echo '$SNAPSHOT_B64' | base64 -d > /tmp/nemoclaw-proxy-env.sh && chmod 444 /tmp/nemoclaw-proxy-env.sh" >/dev/null
 
-# Verify restore is byte-identical to the snapshot.
 restored_size="$(sandbox_exec sh -c 'wc -c < /tmp/nemoclaw-proxy-env.sh' | tr -d '[:space:]')"
-if [ "$restored_size" != "$SNAPSHOT_SIZE" ]; then
-  fail "proxy-env.sh restore failed: expected $SNAPSHOT_SIZE bytes, got '${restored_size}'"
+if [ "$restored_size" = "$SNAPSHOT_SIZE" ]; then
+  info "proxy-env.sh restored from snapshot (${restored_size} bytes verified)"
+elif gateway_guards_active "$NEGATIVE_PID" 5 "$negative_guard_log_start"; then
+  info "proxy-env.sh retained recovered guard env (${restored_size} bytes; original snapshot was ${SNAPSHOT_SIZE} bytes)"
+else
+  fail "proxy-env.sh restore failed and recovered guard env is not active: expected $SNAPSHOT_SIZE bytes, got '${restored_size}'"
   exit 1
 fi
-info "proxy-env.sh restored (${restored_size} bytes verified)"
 
-# Kill the guardless negative-case gateway, then trigger recovery to bring the
-# gateway back with guards intact from the restored env file.
+# Kill the current negative-case gateway, then trigger recovery to bring the
+# gateway back with guards intact from either the snapshot or recovered env file.
+restore_guard_log_start="$(gateway_log_marker "restore")"
 sandbox_exec sh -c "pkill -9 -f '[o]penclaw' 2>/dev/null; sleep 2; pgrep -af '[o]penclaw' || echo ALL_DEAD" >/dev/null
 run_probe_only_or_fail "Guard restore recovery"
 SOAK_START_PID="$(wait_for_gateway_up 30)"
@@ -556,7 +707,7 @@ if [ -z "$SOAK_START_PID" ]; then
 fi
 # Confirm the restored gateway has guards back in place — otherwise the
 # soak measures a crash-looping gateway, not steady-state recovery.
-if ! gateway_guards_active "$SOAK_START_PID" 30; then
+if ! gateway_guards_active "$SOAK_START_PID" 30 "$restore_guard_log_start"; then
   fail "Gateway up but guards not active entering soak — restore did not take"
   gateway_diagnostics "$SOAK_START_PID"
   exit 1

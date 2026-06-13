@@ -114,7 +114,7 @@ export const KNOWN_CHANNELS: Record<string, ChannelDef> = {
     appTokenHelp: "Slack API → Your Apps → Basic Information → App-Level Tokens (xapp-...).",
     appTokenLabel: "Slack App Token (Socket Mode)",
     appTokenFormat: /^xapp-[A-Za-z0-9_-]+$/,
-    appTokenFormatHint: "Slack app tokens start with 'xapp-' (e.g. xapp-1-A0000-12345-abcdef).",
+    appTokenFormatHint: "Slack app tokens start with 'xapp-'.",
     userIdEnvKey: "SLACK_ALLOWED_USERS",
     userIdHelp:
       "In Slack, open each allowed human user's profile -> More -> Copy member ID. Enter one or more comma-separated member IDs, not the app or bot user ID. Member IDs look like U01ABC2DEF3.",
