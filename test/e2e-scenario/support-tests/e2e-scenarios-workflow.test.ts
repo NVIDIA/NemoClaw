@@ -143,6 +143,26 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
     });
     expect(
       evaluateE2eVitestWorkflowDispatchSelectors({
+        scenarios: "openclaw-skill-cli",
+      }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["openclaw-skill-cli-vitest"],
+      registryScenarios: [],
+    });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({
+        jobs: "openclaw-skill-cli-vitest",
+      }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["openclaw-skill-cli-vitest"],
+      registryScenarios: [],
+    });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({
         scenarios: "credential-sanitization",
       }),
     ).toMatchObject({
@@ -201,6 +221,26 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       selectedFreeStandingJobs: ["inference-routing-vitest"],
       registryScenarios: [],
     });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({
+        scenarios: "cloud-inference",
+      }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["cloud-inference-vitest"],
+      registryScenarios: [],
+    });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({
+        jobs: "cloud-inference-vitest",
+      }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["cloud-inference-vitest"],
+      registryScenarios: [],
+    });
     expect(evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "hermes-e2e" })).toMatchObject({
       valid: true,
       liveScenariosRuns: false,
@@ -225,6 +265,26 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       valid: true,
       liveScenariosRuns: false,
       selectedFreeStandingJobs: ["hermes-root-entrypoint-smoke-vitest"],
+      registryScenarios: [],
+    });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({
+        scenarios: "common-egress-agent",
+      }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["common-egress-agent-vitest"],
+      registryScenarios: [],
+    });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({
+        jobs: "common-egress-agent-vitest",
+      }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["common-egress-agent-vitest"],
       registryScenarios: [],
     });
     expect(
@@ -269,6 +329,26 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
     });
     expect(
       evaluateE2eVitestWorkflowDispatchSelectors({
+        scenarios: "state-backup-restore",
+      }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["state-backup-restore-vitest"],
+      registryScenarios: [],
+    });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({
+        jobs: "state-backup-restore-vitest",
+      }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["state-backup-restore-vitest"],
+      registryScenarios: [],
+    });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({
         scenarios: "model-router-provider-routed-inference",
       }),
     ).toMatchObject({
@@ -285,6 +365,26 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       valid: true,
       liveScenariosRuns: false,
       selectedFreeStandingJobs: ["model-router-provider-routed-inference-vitest"],
+      registryScenarios: [],
+    });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({
+        scenarios: "gateway-drift-preflight",
+      }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["gateway-drift-preflight-vitest"],
+      registryScenarios: [],
+    });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({
+        jobs: "gateway-drift-preflight-vitest",
+      }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["gateway-drift-preflight-vitest"],
       registryScenarios: [],
     });
   });
