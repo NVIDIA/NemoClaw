@@ -205,7 +205,15 @@ For the full compatible-endpoint prompt flow, non-interactive variables, API-pat
 
 NemoClaw can use an already-running vLLM server on `localhost:8000`, start managed vLLM on supported NVIDIA GPU hosts, or manage a local NIM container when `NEMOCLAW_EXPERIMENTAL=1` is set.
 Managed vLLM records the model returned by `/v1/models` and uses runtime metadata such as `max_model_len` when available.
+In interactive managed vLLM setup, the wizard lists validated model choices for your host profile before it pulls weights.
+Press **Enter** to accept the profile default, or choose a numbered model from the list.
+For scripted runs, set `NEMOCLAW_VLLM_MODEL=<slug>` to choose a registry model without prompting.
+If the host reboots and the `nemoclaw-vllm` container is stopped, NemoClaw restarts the managed vLLM container during recovery instead of requiring a fresh onboarding run.
 NIM uses the same chat-completions API path restriction as vLLM.
+
+On Linux Docker-driver GPU sandboxes, NemoClaw keeps local inference on the OpenShell bridge route and verifies `https://inference.local/v1/models` from inside the sandbox runtime after the sandbox reaches ready.
+It treats only a 2xx response as success because that path includes the proxy authentication rewrite the agent uses.
+If the runtime route fails, onboarding reports the endpoint and recovery steps before the first agent prompt.
 
 For registry slugs, Hugging Face token requirements, NGC login behavior, and non-interactive examples, refer to [Inference Options](references/inference-options.md#setup-details-for-local-and-compatible-providers).
 

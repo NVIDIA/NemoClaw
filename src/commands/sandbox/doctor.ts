@@ -11,7 +11,8 @@ export default class SandboxDoctorCliCommand extends NemoClawCommand {
   static strict = true;
   static enableJsonFlag = true;
   static summary = "Diagnose sandbox and gateway health";
-  static description = "Run host, gateway, sandbox, inference, messaging, and local service diagnostics.";
+  static description =
+    "Run host, gateway, sandbox, inference, messaging, and local service diagnostics.";
   static usage = ["<name> [--json] [--fix]"];
   static examples = [
     "<%= config.bin %> sandbox doctor alpha",
@@ -28,7 +29,7 @@ export default class SandboxDoctorCliCommand extends NemoClawCommand {
   static flags = {
     fix: Flags.boolean({
       description:
-        "Restore the mutable OpenClaw config permission contract if `openclaw doctor --fix` tightened it",
+        "Restore the mutable OpenClaw config permission contract if `openclaw doctor --fix` tightened it, and approve pending allowlisted dashboard/CLI tool-scope upgrades",
       default: false,
       // `--fix` mutates sandbox permissions; keep it out of the machine-readable
       // `--json` readiness-gate path so automation cannot trigger a silent repair.

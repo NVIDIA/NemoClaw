@@ -55,6 +55,9 @@ describe("agent definitions", () => {
       "whatsapp",
     ]);
     expect(openclaw.inferenceProviderOptions).toEqual([]);
+    // #5027: openclaw.json must be declared as a durable state file so
+    // backup-all/rebuild preserve core settings (model/provider, MCP, agents).
+    expect(openclaw.stateFiles).toEqual([{ path: "openclaw.json", strategy: "copy" }]);
     expect(openclaw.legacyPaths?.startScript).toContain("scripts/nemoclaw-start.sh");
   });
 

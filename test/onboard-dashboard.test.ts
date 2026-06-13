@@ -4,10 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import type {
-  OnboardDashboardDeps,
-  OnboardDashboardHelpers,
-} from "../src/lib/onboard/dashboard";
+import type { OnboardDashboardDeps, OnboardDashboardHelpers } from "../src/lib/onboard/dashboard";
 
 const { getPortConflictServiceHints } = require("../dist/lib/onboard") as {
   getPortConflictServiceHints: (platform?: string) => string[];
@@ -48,6 +45,7 @@ describe("onboard dashboard helpers", () => {
       redact: (value: unknown) => String(value),
       sleep: vi.fn(),
       printAgentDashboardUi: vi.fn(),
+      listSandboxes: () => ({ sandboxes: [] }),
     });
 
     expect(helpers.ensureDashboardForward("my-sandbox", "http://127.0.0.1:18789")).toBe(18789);
@@ -58,10 +56,7 @@ describe("onboard dashboard helpers", () => {
     expect(
       stopArgs.some(
         (args) =>
-          Array.isArray(args) &&
-          args[0] === "forward" &&
-          args[1] === "stop" &&
-          args.length === 3,
+          Array.isArray(args) && args[0] === "forward" && args[1] === "stop" && args.length === 3,
       ),
     ).toBe(false);
   });
@@ -93,15 +88,16 @@ describe("onboard dashboard helpers", () => {
       redact: (value: unknown) => String(value),
       sleep: vi.fn(),
       printAgentDashboardUi: vi.fn(),
+      listSandboxes: () => ({ sandboxes: [] }),
     });
 
     expect(helpers.ensureDashboardForward("my-sandbox", "http://127.0.0.1:18789")).toBe(18789);
 
     expect(ownerLookupCount).toBeGreaterThanOrEqual(2);
-    expect(runOpenshell).toHaveBeenCalledWith(
-      ["forward", "stop", "18789", "my-sandbox"],
-      { ignoreError: true, suppressOutput: true },
-    );
+    expect(runOpenshell).toHaveBeenCalledWith(["forward", "stop", "18789", "my-sandbox"], {
+      ignoreError: true,
+      suppressOutput: true,
+    });
   });
 
   it("starts declared non-dashboard agent port forwards without cleaning up the dashboard forward", () => {
@@ -127,6 +123,7 @@ describe("onboard dashboard helpers", () => {
       redact: (value: unknown) => String(value),
       sleep: vi.fn(),
       printAgentDashboardUi: vi.fn(),
+      listSandboxes: () => ({ sandboxes: [] }),
     });
 
     expect(
@@ -139,7 +136,9 @@ describe("onboard dashboard helpers", () => {
     const stopArgs = runOpenshell.mock.calls.map(([args]) => args);
     expect(stopArgs).toContainEqual(["forward", "stop", "18789", "my-sandbox"]);
     expect(stopArgs).toContainEqual(["forward", "stop", "8642", "my-sandbox"]);
-    expect(stopArgs.filter((args) => args.join(" ") === "forward stop 18789 my-sandbox")).toHaveLength(1);
+    expect(
+      stopArgs.filter((args) => args.join(" ") === "forward stop 18789 my-sandbox"),
+    ).toHaveLength(1);
   });
 
   it("prints the dashboard-url command instead of raw gateway-token guidance", () => {
@@ -172,6 +171,7 @@ describe("onboard dashboard helpers", () => {
       redact: (value: unknown) => String(value),
       sleep: vi.fn(),
       printAgentDashboardUi: vi.fn(),
+      listSandboxes: () => ({ sandboxes: [] }),
     });
 
     let output = "";
@@ -212,6 +212,7 @@ describe("onboard dashboard helpers", () => {
       redact: (value: unknown) => String(value),
       sleep: vi.fn(),
       printAgentDashboardUi: vi.fn(),
+      listSandboxes: () => ({ sandboxes: [] }),
     });
 
     let output = "";
@@ -222,7 +223,9 @@ describe("onboard dashboard helpers", () => {
       logSpy.mockRestore();
     }
 
-    expect(note).toHaveBeenCalledWith("  Could not read gateway token from the sandbox (download failed).");
+    expect(note).toHaveBeenCalledWith(
+      "  Could not read gateway token from the sandbox (download failed).",
+    );
     expect(output).toMatch(/Browser:\n\s+https?:\/\/\S+/);
     expect(output).not.toContain("#token=");
     expect(output).not.toContain("dashboard-url --quiet");

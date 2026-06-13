@@ -80,13 +80,21 @@ Set `DISCORD_USER_ID` to restrict access to one user; otherwise, any member of t
 Slack uses Socket Mode and requires two tokens.
 Use `SLACK_BOT_TOKEN` for the bot user OAuth token (`xoxb-...`) and `SLACK_APP_TOKEN` for the app-level Socket Mode token (`xapp-...`).
 NemoClaw validates both tokens before it saves Slack credentials or enables the channel.
+This validation calls the live Slack API (`auth.test` and `apps.connections.open`), so the tokens must belong to a real Slack app.
+If Slack rejects the tokens (for example, `invalid_auth` for placeholder or fake values), NemoClaw skips the Slack channel.
+Because the `slack` network policy preset is only applied for channels that are actually enabled, a skipped Slack channel also means the `slack` preset is not applied, so it does not appear as applied (`●`) in `$$nemoclaw <name> policy-list`.
+To exercise Slack channel setup and the `slack` policy preset with placeholder tokens in a restricted network or hermetic test environment, set `NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION=1` to skip the live credential probes; Slack token format checks still apply.
 Set `SLACK_ALLOWED_USERS` to comma-separated Slack member IDs to authorize those users for DMs and for channel `@mention` events in channels where the Slack app is present.
 Set `SLACK_ALLOWED_CHANNELS` to comma-separated Slack channel IDs to restrict channel `@mention` handling to those channels.
 When both Slack allowlists are set, NemoClaw requires the mention to come from one of the allowed channels and one of the allowed members.
 Channel messages still require an explicit bot mention.
+When a Slack channel `@mention` is denied by these allowlists, NemoClaw sends a denial notice back to the sender instead of dropping the message silently.
 During sandbox startup, NemoClaw normalizes OpenShell credential placeholders into the environment shape expected by the Slack runtime, so post-rebuild Slack starts use the gateway-managed tokens instead of literal placeholder strings.
+Slack Socket Mode allows one active connection per app-level token.
+If another sandbox on the same gateway already uses the same Slack app token, onboarding and `channels add slack` warn before continuing in interactive mode and abort in non-interactive mode.
+Use `--force` only when you intentionally want to move the Slack Socket Mode session to the new sandbox.
 
-WeChat (experimental) delivers messages over Tencent's iLink gateway through the upstream `@tencent-weixin/openclaw-weixin` plugin baked into the sandbox base image and the built-in Hermes iLink WeChat adapter.
+WeChat (experimental) delivers messages over Tencent's iLink gateway through the upstream `@tencent-weixin/openclaw-weixin` plugin installed into WeChat-enabled OpenClaw sandbox images and the built-in Hermes iLink WeChat adapter.
 The supported mode in this release is **personal WeChat** (`bot_type=3`).
 WeChat Official Account and WeCom/Enterprise WeChat are not wired up.
 
@@ -293,6 +301,7 @@ For example, two Telegram sandboxes can DM the same `TELEGRAM_ALLOWED_IDS` accou
 For WeChat, each sandbox must own a distinct iLink `accountId` (bot identity).
 Running two sandboxes against the same WeChat account causes one of them to lose messages.
 If you enable a messaging channel and another sandbox already uses the same token, onboarding prompts you to confirm before continuing in interactive mode and exits non-zero in non-interactive mode.
+For Slack, NemoClaw checks both the bot token and the Socket Mode app token so duplicate Socket Mode sessions do not compete silently.
 If NemoClaw only has legacy channel metadata and cannot compare credential hashes, it keeps the conservative warning.
 Re-run `channels add <channel>` with the intended token to refresh the stored non-secret hash.
 `$$nemoclaw status` reports cross-sandbox overlaps so you can resolve duplicates before messages start dropping.

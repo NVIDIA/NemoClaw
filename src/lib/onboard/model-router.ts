@@ -24,6 +24,7 @@ import {
 } from "./host-service-reachability";
 import {
   doesModelRouterProcessOwnPort,
+  findModelRouterPidForPort,
   isRouterHealthy,
   stopModelRouterProcess,
 } from "./model-router-process";
@@ -48,7 +49,7 @@ const MODEL_ROUTER_FINGERPRINT_IGNORED_NAMES = new Set([
   "node_modules",
   "venv",
 ]);
-export const DEFAULT_MODEL_ROUTER_CREDENTIAL_ENV = "NVIDIA_API_KEY";
+export const DEFAULT_MODEL_ROUTER_CREDENTIAL_ENV = "NVIDIA_INFERENCE_API_KEY";
 
 export type BlueprintRouterConfig = {
   enabled?: boolean;
@@ -125,8 +126,10 @@ function isExecutableFile(filePath: string): boolean {
 }
 
 function isModelRouterPackageReady(routerDir = modelRouterPackageDir()): boolean {
-  return fs.existsSync(path.join(routerDir, "pyproject.toml")) ||
-    fs.existsSync(path.join(routerDir, "setup.py"));
+  return (
+    fs.existsSync(path.join(routerDir, "pyproject.toml")) ||
+    fs.existsSync(path.join(routerDir, "setup.py"))
+  );
 }
 
 function shouldSkipModelRouterFingerprintEntry(name: string): boolean {
@@ -186,9 +189,12 @@ function getModelRouterSourceFingerprint(routerDir = modelRouterPackageDir()): s
   }).trim();
   if (/^[0-9a-f]{40}$/i.test(gitHead)) return `git:${gitHead}`;
 
-  const gitLink = runCapture(["git", "-C", ROOT, "rev-parse", `HEAD:${MODEL_ROUTER_RELATIVE_DIR}`], {
-    ignoreError: true,
-  }).trim();
+  const gitLink = runCapture(
+    ["git", "-C", ROOT, "rev-parse", `HEAD:${MODEL_ROUTER_RELATIVE_DIR}`],
+    {
+      ignoreError: true,
+    },
+  ).trim();
   if (/^[0-9a-f]{40}$/i.test(gitLink)) return `gitlink:${gitLink}`;
 
   return hashModelRouterSourceTree(routerDir);
@@ -211,15 +217,19 @@ function writeModelRouterInstalledFingerprint(
   fs.writeFileSync(modelRouterFingerprintPath(venvDir), `${fingerprint}\n`, { mode: 0o600 });
 }
 
-function isManagedModelRouterCurrent(
+export function isManagedModelRouterCurrent(
   routerDir = modelRouterPackageDir(),
   venvDir = modelRouterVenvDir(),
 ): boolean {
   if (!isExecutableFile(modelRouterCommandPath(venvDir))) return false;
   const sourceFingerprint = getModelRouterSourceFingerprint(routerDir);
-  return Boolean(
-    sourceFingerprint && readModelRouterInstalledFingerprint(venvDir) === sourceFingerprint,
-  );
+  if (sourceFingerprint) {
+    return readModelRouterInstalledFingerprint(venvDir) === sourceFingerprint;
+  }
+  // When source fingerprint is unavailable (no git), accept an existing
+  // install-prefixed fingerprint to avoid reinstalling on every onboard.
+  const installed = readModelRouterInstalledFingerprint(venvDir);
+  return installed !== null && installed.startsWith("install:");
 }
 
 function initializeModelRouterSubmodule(routerDir = modelRouterPackageDir()): void {
@@ -228,9 +238,12 @@ function initializeModelRouterSubmodule(routerDir = modelRouterPackageDir()): vo
     return;
   }
   console.log("  Initializing Model Router source...");
-  run(["git", "-C", ROOT, "submodule", "update", "--init", "--depth", "1", MODEL_ROUTER_RELATIVE_DIR], {
-    ignoreError: true,
-  });
+  run(
+    ["git", "-C", ROOT, "submodule", "update", "--init", "--depth", "1", MODEL_ROUTER_RELATIVE_DIR],
+    {
+      ignoreError: true,
+    },
+  );
 }
 
 function installModelRouterCommand(routerDir = modelRouterPackageDir()): string {
@@ -266,7 +279,10 @@ function installModelRouterCommand(routerDir = modelRouterPackageDir()): string 
   if (!isExecutableFile(routerCommand)) {
     throw new Error("Model Router install did not produce the model-router command.");
   }
-  writeModelRouterInstalledFingerprint(sourceFingerprint, venvDir);
+  const version =
+    JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8")).version ?? "unknown";
+  const effectiveFingerprint = sourceFingerprint ?? `install:${version}`;
+  writeModelRouterInstalledFingerprint(effectiveFingerprint, venvDir);
   return routerCommand;
 }
 
@@ -346,10 +362,14 @@ async function startModelRouter(routerCfg: BlueprintRouterConfig): Promise<numbe
     routerCommand,
     [
       "proxy",
-      "--litellm-config", litellmConfigPath,
-      "--router-config", poolConfigPath,
-      "--host", "0.0.0.0",
-      "--port", String(port),
+      "--litellm-config",
+      litellmConfigPath,
+      "--router-config",
+      poolConfigPath,
+      "--host",
+      "0.0.0.0",
+      "--port",
+      String(port),
     ],
     {
       detached: true,
@@ -482,11 +502,25 @@ export async function reconcileModelRouter(): Promise<void> {
     }
     if (recordedProcessOwnsRouter) {
       console.log("  Restarting model router with updated credentials...");
-      await stopModelRouterProcess(requireValue(recordedPid, "Expected recorded router PID"), routerPort);
-    } else {
-      throw new Error(
-        `Port ${routerPort} already has a healthy router endpoint, but its credential state is unknown. Stop the existing model-router process and rerun onboarding.`,
+      await stopModelRouterProcess(
+        requireValue(recordedPid, "Expected recorded router PID"),
+        routerPort,
       );
+    } else {
+      // The recorded PID doesn't own the port (stale session or fresh start).
+      // Try to locate the orphaned router via /proc so we can recover without
+      // requiring a manual stop-and-retry. Only stop it if the cmdline
+      // confirms it is actually model-router proxy — never kill an unrelated
+      // service that happens to occupy the port. See issue #5169.
+      const orphanPid = findModelRouterPidForPort(routerPort);
+      if (orphanPid !== null) {
+        console.log(`  Stopping orphaned model router (PID ${orphanPid})...`);
+        await stopModelRouterProcess(orphanPid, routerPort);
+      } else {
+        throw new Error(
+          `Port ${routerPort} already has a healthy router endpoint, but its credential state is unknown. Stop the existing model-router process and rerun onboarding.`,
+        );
+      }
     }
   }
 

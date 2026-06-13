@@ -25,9 +25,8 @@ type SlackBuilder = {
 };
 
 const require = createRequire(import.meta.url);
-const { buildBlocks, buildFallbackText, getSlackChannel, getStatusColor } = require(
-  "../scripts/scorecard/build-slack-blocks.ts",
-) as SlackBuilder;
+const { buildBlocks, buildFallbackText, getSlackChannel, getStatusColor } =
+  require("../scripts/scorecard/build-slack-blocks.ts") as SlackBuilder;
 
 function renderBlocks(data: ScorecardData): TestSlackBlock[] {
   return buildBlocks(data);
@@ -62,7 +61,8 @@ function makeData(overrides: Partial<ScorecardData> = {}): ScorecardData {
     skipped: 1,
     perfect: true,
     failedJobs: [],
-    trendLine: "Trend: ↗️ Improving (yesterday had failures → today perfect)",
+    traceTimingLine:
+      "Trace: cloud-onboard total 1m 35.3s, increased +12.4s (+15.0%) vs v0.0.56. Top phase changes: sandbox +4.0s; preflight +2.0s; gateway -1.0s. Full phase timing table is in the GitHub run summary.",
     runUrl: "https://github.com/NVIDIA/NemoClaw/actions/runs/12345678",
     ...overrides,
   };
@@ -117,10 +117,28 @@ describe("buildBlocks — perfect scheduled run", () => {
     );
   });
 
-  it("strips the 'Trend: ' prefix and re-bolds it", () => {
-    const trendCtx = blocks.filter((block) => block.type === "context").pop();
-    expect(elementText(trendCtx, 0)).toMatch(/^\*Trend:\*/);
-    expect(elementText(trendCtx, 0)).not.toMatch(/^Trend: /);
+  it("omits the legacy trend context", () => {
+    const contextText = blocks
+      .filter((block) => block.type === "context")
+      .flatMap((block) => block.elements?.map((element) => element.text ?? "") ?? [])
+      .join("\n");
+    expect(contextText).not.toContain("Trend");
+  });
+
+  it("includes cloud onboard trace timing as a dedicated section", () => {
+    const traceSection = findRequiredBlock(
+      blocks,
+      (block) => block.type === "section" && block.text?.text?.startsWith("*Trace:*") === true,
+    );
+
+    expect(traceSection.text?.text).toContain("cloud-onboard total 1m 35.3s");
+    expect(traceSection.text?.text).toContain("increased +12.4s (+15.0%) vs v0.0.56");
+    expect(traceSection.text?.text).toContain("Top phase changes: sandbox +4.0s");
+    expect(traceSection.text?.text).toContain("preflight +2.0s");
+    expect(traceSection.text?.text).toContain("gateway -1.0s");
+    expect(traceSection.text?.text).toContain(
+      "Full phase timing table is in the GitHub run summary",
+    );
   });
 });
 
@@ -142,7 +160,6 @@ describe("buildBlocks — run with failures", () => {
         // url=null exercises the fallback rendering (no API result for this job)
         { name: "sandbox-operations-e2e", url: null },
       ],
-      trendLine: "Trend: ↘️ Degrading (yesterday perfect → today has failures)",
     }),
   );
 
@@ -188,7 +205,6 @@ describe("buildBlocks — selective dispatch", () => {
       ran: 2,
       success: 2,
       skipped: 0,
-      trendLine: "Trend: ⊘ Not shown for selective dispatches",
     }),
   );
 
@@ -210,24 +226,23 @@ describe("buildBlocks — selective dispatch", () => {
     expect(elementText(withActor[0], 0)).toContain("(by *hple*)");
   });
 
-  it("keeps the 'not shown' trend text from the generator", () => {
-    const trendCtx = blocks.filter((block) => block.type === "context").pop();
-    expect(elementText(trendCtx, 0)).toContain("Not shown");
+  it("does not add a legacy trend context", () => {
+    const contextText = blocks
+      .filter((block) => block.type === "context")
+      .flatMap((block) => block.elements?.map((element) => element.text ?? "") ?? [])
+      .join("\n");
+    expect(contextText).not.toContain("Trend");
   });
 });
 
 describe("buildBlocks — manual full run with actor", () => {
   it("appends actor suffix in the run-mode context line", () => {
-    const blocks = renderBlocks(
-      makeData({ runMode: "Manual full run", actor: "hple" }),
-    );
+    const blocks = renderBlocks(makeData({ runMode: "Manual full run", actor: "hple" }));
     expect(elementText(blocks[0], 0)).toContain("Manual full run (by *hple*)");
   });
 
   it("omits actor suffix when actor is empty", () => {
-    const blocks = renderBlocks(
-      makeData({ runMode: "Manual full run", actor: "" }),
-    );
+    const blocks = renderBlocks(makeData({ runMode: "Manual full run", actor: "" }));
     expect(elementText(blocks[0], 0)).toBe("*Run mode:* Manual full run");
   });
 });
@@ -240,9 +255,9 @@ describe("buildFallbackText", () => {
   });
 
   it("renders manual full title with 🛠 prefix + actor", () => {
-    expect(
-      buildFallbackText(makeData({ runMode: "Manual full run", actor: "hunglp6d" })),
-    ).toBe("🌅 *NemoClaw Nightly Scorecard · 🛠 Manual full by hunglp6d · May 25*");
+    expect(buildFallbackText(makeData({ runMode: "Manual full run", actor: "hunglp6d" }))).toBe(
+      "🌅 *NemoClaw Nightly Scorecard · 🛠 Manual full by hunglp6d · May 25*",
+    );
   });
 
   it("renders selective title with 🛠 prefix + actor", () => {
@@ -259,9 +274,9 @@ describe("buildFallbackText", () => {
   });
 
   it("omits 'by <actor>' when actor empty on manual full", () => {
-    expect(
-      buildFallbackText(makeData({ runMode: "Manual full run", actor: "" })),
-    ).toBe("🌅 *NemoClaw Nightly Scorecard · 🛠 Manual full · May 25*");
+    expect(buildFallbackText(makeData({ runMode: "Manual full run", actor: "" }))).toBe(
+      "🌅 *NemoClaw Nightly Scorecard · 🛠 Manual full · May 25*",
+    );
   });
 
   it("uses the same title regardless of run outcome (within same runMode)", () => {

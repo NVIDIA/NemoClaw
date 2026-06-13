@@ -7,12 +7,14 @@ import type {
   MessagingHookOutputMap,
   MessagingHookRegistration,
 } from "../../../hooks/types";
+import { normalizeWechatIlinkBaseUrl } from "../ilink-base-url";
 
 export const WECHAT_SEED_OPENCLAW_ACCOUNT_HOOK_ID = "wechat.seedOpenClawAccount";
 export const WECHAT_TOKEN_PLACEHOLDER = "openshell:resolve:env:WECHAT_BOT_TOKEN";
 export const WECHAT_PLUGIN_ID = "openclaw-weixin";
 export const WECHAT_PLUGIN_INSTALL_PATH = "/sandbox/.openclaw/extensions/openclaw-weixin";
 export const WECHAT_PLUGIN_SPEC = "@tencent-weixin/openclaw-weixin@2.4.3";
+export const WECHAT_PLUGIN_INSTALL_SPEC = `npm:${WECHAT_PLUGIN_SPEC}`;
 
 export interface WechatSeedOpenClawAccountHookOptions {
   readonly now?: () => Date | string;
@@ -43,12 +45,11 @@ export function buildWechatSeedOpenClawAccountOutputs(
 ): MessagingHookOutputMap {
   const accountId = requiredInputString(inputs, "wechatConfig.accountId");
   assertSafeWechatAccountId(accountId);
-  const baseUrl = optionalInputString(inputs, "wechatConfig.baseUrl");
+  const baseUrl = normalizeWechatIlinkBaseUrl(optionalInputString(inputs, "wechatConfig.baseUrl"));
   const userId = optionalInputString(inputs, "wechatConfig.userId");
-  const token = optionalInputString(
-    inputs,
-    "credential.wechatBotToken.placeholder",
-  ) || WECHAT_TOKEN_PLACEHOLDER;
+  const token =
+    optionalInputString(inputs, "credential.wechatBotToken.placeholder") ||
+    WECHAT_TOKEN_PLACEHOLDER;
   const savedAt = isoTimestamp(options.now);
   const pluginInstallPath = options.pluginInstallPath ?? WECHAT_PLUGIN_INSTALL_PATH;
   const pluginSpec = options.pluginSpec ?? WECHAT_PLUGIN_SPEC;
@@ -88,9 +89,6 @@ export function buildWechatSeedOpenClawAccountOutputs(
                 installPath: pluginInstallPath,
               },
             },
-            load: {
-              paths: [pluginInstallPath],
-            },
             entries: {
               [WECHAT_PLUGIN_ID]: {
                 enabled: true,
@@ -124,10 +122,7 @@ function assertSafeWechatAccountId(accountId: string): void {
   }
 }
 
-function requiredInputString(
-  inputs: MessagingHookInputMap | undefined,
-  key: string,
-): string {
+function requiredInputString(inputs: MessagingHookInputMap | undefined, key: string): string {
   const value = optionalInputString(inputs, key);
   if (!value) {
     throw new Error(`WeChat account seeding requires ${key}.`);
@@ -135,10 +130,7 @@ function requiredInputString(
   return value;
 }
 
-function optionalInputString(
-  inputs: MessagingHookInputMap | undefined,
-  key: string,
-): string {
+function optionalInputString(inputs: MessagingHookInputMap | undefined, key: string): string {
   const value = inputs?.[key];
   return typeof value === "string" ? value.trim() : "";
 }

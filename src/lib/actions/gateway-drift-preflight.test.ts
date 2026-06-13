@@ -173,7 +173,12 @@ describe("gateway drift preflight for maintenance actions", () => {
     await backupAll();
 
     expect(recoverNamedGatewayRuntimeSpy).toHaveBeenCalledWith({
-      recoverableStates: ["missing_named", "named_unhealthy", "named_unreachable"],
+      recoverableStates: [
+        "missing_named",
+        "named_unhealthy",
+        "named_unreachable",
+        "connected_other",
+      ],
     });
     expect(captureOpenshellSpy).toHaveBeenCalledTimes(2);
     expect(captureOpenshellSpy).toHaveBeenNthCalledWith(1, ["sandbox", "list"]);
@@ -214,9 +219,7 @@ describe("gateway drift preflight for maintenance actions", () => {
 
     expect(backupSandboxStateSpy).toHaveBeenCalledWith("alpha");
     expect(backupSandboxStateSpy).not.toHaveBeenCalledWith("beta");
-    expect(logSpy.mock.calls.flat().join("\n")).toContain(
-      "Skipping 'beta' (not running)",
-    );
+    expect(logSpy.mock.calls.flat().join("\n")).toContain("Skipping 'beta' (not running)");
   });
 
   it("backup-all fails closed on protobuf mismatch instead of treating sandboxes as stopped", async () => {
@@ -260,13 +263,20 @@ describe("gateway drift preflight for maintenance actions", () => {
     await upgradeSandboxes({ check: true });
 
     expect(recoverNamedGatewayRuntimeSpy).toHaveBeenCalledWith({
-      recoverableStates: ["missing_named", "named_unhealthy", "named_unreachable"],
+      recoverableStates: [
+        "missing_named",
+        "named_unhealthy",
+        "named_unreachable",
+        "connected_other",
+      ],
     });
     expect(captureOpenshellSpy).toHaveBeenCalledTimes(2);
     expect(classifyUpgradeableSandboxesSpy).toHaveBeenCalledWith(
       [{ name: "alpha", provider: "nvidia-prod", model: "nemotron" }],
       new Set(["alpha"]),
       expect.any(Function),
+      // #5026: the running NemoClaw build is passed so image drift is detected.
+      expect.objectContaining({ currentNemoclawVersion: expect.any(String) }),
     );
   });
 

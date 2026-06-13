@@ -116,6 +116,7 @@ interface ChannelRenderBaseSpec {
   readonly id?: string;
   readonly agent: MessagingAgentId;
   readonly target: string;
+  readonly when?: MessagingTemplateString;
 }
 
 /** JSON fragment a compiler can merge into an agent config file. */
@@ -152,6 +153,8 @@ export interface ChannelRebuildHydrationSpec {
 export type ChannelHookPhase =
   | "enroll"
   | "reachability-check"
+  | "agent-install"
+  | "render"
   | "apply"
   | "post-agent-install"
   | "health-check"
@@ -175,8 +178,15 @@ export interface ChannelHookSpec {
 /** Output shape a hook promises, without embedding hook implementation details. */
 export interface ChannelHookOutputSpec {
   readonly id: string;
-  readonly kind: "secret" | "config" | "build-arg" | "build-file";
+  readonly kind:
+    | "secret"
+    | "config"
+    | "build-arg"
+    | "build-file"
+    | "package-install"
+    | "agent-render";
   readonly required?: boolean;
+  readonly value?: MessagingSerializableValue;
 }
 
 /** Serializable compiled plan for all selected messaging channels. */
@@ -267,13 +277,14 @@ export type SandboxMessagingRenderFragmentPlan = SandboxMessagingAgentRenderPlan
 interface SandboxMessagingAgentRenderBasePlan {
   readonly channelId: MessagingChannelId;
   readonly renderId?: string;
+  readonly hookId?: string;
+  readonly handler?: string;
   readonly agent: MessagingAgentId;
   readonly target: string;
 }
 
 /** Compiled JSON fragment ready for an applier/render engine. */
-export interface SandboxMessagingJsonRenderPlan
-  extends SandboxMessagingAgentRenderBasePlan {
+export interface SandboxMessagingJsonRenderPlan extends SandboxMessagingAgentRenderBasePlan {
   readonly kind: "json-fragment";
   readonly path: MessagingStatePath;
   readonly value: MessagingSerializableValue;
@@ -281,8 +292,7 @@ export interface SandboxMessagingJsonRenderPlan
 }
 
 /** Compiled env-file lines ready for an applier/render engine. */
-export interface SandboxMessagingEnvLinesRenderPlan
-  extends SandboxMessagingAgentRenderBasePlan {
+export interface SandboxMessagingEnvLinesRenderPlan extends SandboxMessagingAgentRenderBasePlan {
   readonly kind: "env-lines";
   readonly lines: readonly MessagingTemplateString[];
   readonly templateRefs: readonly string[];
@@ -291,7 +301,8 @@ export interface SandboxMessagingEnvLinesRenderPlan
 /** Build-time input the applier may pass into sandbox create/rebuild. */
 export type SandboxMessagingBuildStepPlan =
   | SandboxMessagingBuildArgStepPlan
-  | SandboxMessagingBuildFileStepPlan;
+  | SandboxMessagingBuildFileStepPlan
+  | SandboxMessagingPackageInstallStepPlan;
 
 /** Compatibility alias for older phase-1 tests and callers. */
 export type SandboxMessagingBuildInputPlan = SandboxMessagingBuildStepPlan;
@@ -300,20 +311,33 @@ export type SandboxMessagingBuildInputPlan = SandboxMessagingBuildStepPlan;
 export interface SandboxMessagingBuildArgStepPlan {
   readonly channelId: MessagingChannelId;
   readonly kind: "build-arg";
-  readonly hookId: string;
-  readonly handler: string;
+  readonly hookId?: string;
+  readonly handler?: string;
   readonly outputId: string;
   readonly required: boolean;
+  readonly value?: MessagingSerializableValue;
 }
 
 /** File planned for the sandbox build context, optionally sourced from a hook. */
 export interface SandboxMessagingBuildFileStepPlan {
   readonly channelId: MessagingChannelId;
   readonly kind: "build-file";
-  readonly hookId: string;
-  readonly handler: string;
+  readonly hookId?: string;
+  readonly handler?: string;
   readonly outputId: string;
   readonly required: boolean;
+  readonly value?: MessagingSerializableValue;
+}
+
+/** Agent package install planned for the sandbox image build. */
+export interface SandboxMessagingPackageInstallStepPlan {
+  readonly channelId: MessagingChannelId;
+  readonly kind: "package-install";
+  readonly hookId?: string;
+  readonly handler?: string;
+  readonly outputId: string;
+  readonly required: boolean;
+  readonly value?: MessagingSerializableValue;
 }
 
 /** Hook reference carried into a compiled plan. */

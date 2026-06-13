@@ -4,9 +4,23 @@
 import fs from "node:fs";
 import path from "node:path";
 import { isErrnoException } from "../core/errno";
-import type { SandboxMessagingPlan } from "../messaging/manifest";
-import type { MessagingChannelConfig } from "../messaging-channel-config";
 import { ensureConfigDir, readConfigFile, writeConfigFile } from "./config-io";
+import {
+  cloneSandboxMessagingState,
+  serializeSandboxMessagingStateForDisk,
+  getConfiguredMessagingChannels as getRegistryConfiguredMessagingChannels,
+  getDisabledChannels as getRegistryDisabledChannels,
+  setChannelDisabled as setRegistryChannelDisabled,
+} from "./registry-messaging";
+import type { SandboxMessagingState } from "./registry-messaging";
+export {
+  getActiveMessagingChannelsFromEntry,
+  getConfiguredMessagingChannelsFromEntry,
+  getDisabledMessagingChannelsFromEntry,
+  getHydratedMessagingPlanFromEntry,
+  getMessagingPlanFromEntry,
+  type SandboxMessagingState,
+} from "./registry-messaging";
 
 export interface CustomPolicyEntry {
   name: string;
@@ -59,17 +73,21 @@ export interface SandboxEntry {
   policyPresetsFinalized?: boolean;
   agent?: string | null;
   agentVersion?: string | null;
+  // NemoClaw build fingerprint (the NemoClaw CLI/build version) stamped only on
+  // NemoClaw-managed images at create/rebuild time. `upgrade-sandboxes` compares
+  // it against the running NemoClaw build so an image/build change with an
+  // unchanged agent version is still detected as needing a rebuild. Custom-image
+  // (`--from`) sandboxes are intentionally left without a fingerprint so they
+  // are never auto-rebuilt onto the default image (#5026).
+  nemoclawVersion?: string | null;
   imageTag?: string | null;
   providerCredentialHashes?: Record<string, string>;
-  messagingChannels?: string[];
-  messagingChannelConfig?: MessagingChannelConfig;
   messaging?: SandboxMessagingState;
   hermesToolGateways?: string[];
   hermesDashboardEnabled?: boolean;
   hermesDashboardPort?: number | null;
   hermesDashboardInternalPort?: number | null;
   hermesDashboardTui?: boolean;
-  disabledChannels?: string[];
   dashboardPort?: number | null;
   // OpenShell gateway registration name and host port bound to this sandbox.
   // Persisted so later lifecycle commands operate on the sandbox's own gateway
@@ -77,11 +95,6 @@ export interface SandboxEntry {
   // different NEMOCLAW_GATEWAY_PORT no longer recreates/kills the first (#4422).
   gatewayName?: string | null;
   gatewayPort?: number | null;
-}
-
-export interface SandboxMessagingState {
-  schemaVersion: 1;
-  plan: SandboxMessagingPlan;
 }
 
 export interface SandboxRegistry {
@@ -95,6 +108,87 @@ export const LOCK_OWNER = path.join(LOCK_DIR, "owner");
 export const LOCK_STALE_MS = 10_000;
 export const LOCK_RETRY_MS = 100;
 export const LOCK_MAX_RETRIES = 120;
+
+/** kill(pid, 0) liveness probe. EPERM means the pid exists but is owned by
+ * another user, which still counts as alive. */
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return isErrnoException(error) && error.code === "EPERM";
+  }
+}
+
+/** Wall-clock start time (ms since epoch) of `pid` from /proc, or null when it
+ * cannot be read (process gone, or a non-Linux host without /proc). Mirrors the
+ * onboard-session lock's recycle check. */
+function readProcessStartMs(pid: number): number | null {
+  try {
+    const statText = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
+    const btimeLine = fs
+      .readFileSync("/proc/stat", "utf8")
+      .split("\n")
+      .find((line) => line.startsWith("btime "));
+    const bootSeconds = btimeLine ? Number(btimeLine.trim().split(/\s+/)[1]) : NaN;
+    const closeParen = statText.lastIndexOf(")");
+    if (!Number.isFinite(bootSeconds) || closeParen < 0) return null;
+    const fieldsAfterComm = statText
+      .slice(closeParen + 2)
+      .trim()
+      .split(/\s+/);
+    const startTicks = Number(fieldsAfterComm[19]);
+    if (!Number.isFinite(startTicks)) return null;
+    // /proc/<pid>/stat starttime is in USER_HZ ticks (100 on supported hosts).
+    const clockTicksPerSecond = 100;
+    return (bootSeconds + startTicks / clockTicksPerSecond) * 1000;
+  } catch {
+    return null;
+  }
+}
+
+export type RegistryLockDecision = "break" | "wait";
+
+/**
+ * Decide whether an existing registry lock should be broken (stale) or waited
+ * on. Exported for tests.
+ *
+ * The PID-recycle wedge this guards against: a holder that crashes without
+ * releasing leaves `LOCK_DIR` + the owner pid behind. If that pid is later
+ * reused by an unrelated live process, `kill(pid, 0)` succeeds, so a
+ * liveness-only check treats the lock as held forever and every registry write
+ * wedges (retries exhausted -> "Failed to acquire lock"). When the owner looks
+ * alive we therefore also confirm it started BEFORE it took the lock: a process
+ * whose /proc start time is after the lock's mtime is a recycled pid, so the
+ * lock is stale. When the owner pid or its start time cannot be read (missing
+ * owner file, non-Linux host), fall back to breaking the lock once it is older
+ * than a registry op could legitimately take.
+ */
+export function classifyExistingLock(opts: {
+  ownerPid: number | null;
+  ownerAlive: boolean;
+  processStartMs: number | null;
+  lockMtimeMs: number;
+  nowMs: number;
+  staleMs: number;
+}): RegistryLockDecision {
+  const ageMs = opts.nowMs - opts.lockMtimeMs;
+  if (opts.ownerPid === null) {
+    // Owner file missing or unreadable: decide on age alone.
+    return ageMs > opts.staleMs ? "break" : "wait";
+  }
+  if (!opts.ownerAlive) {
+    return "break";
+  }
+  if (opts.processStartMs !== null && opts.processStartMs > opts.lockMtimeMs + 1000) {
+    // Live pid that started after the lock was taken -> the pid was recycled.
+    return "break";
+  }
+  // Live original holder (or start time unknown): only break once the lock is
+  // clearly older than a registry op could take, which also covers hosts where
+  // recycle cannot be detected directly.
+  return ageMs > opts.staleMs ? "break" : "wait";
+}
 
 /** Acquire an advisory lock using mkdir (atomic on POSIX). */
 export function acquireLock(): void {
@@ -127,46 +221,56 @@ export function acquireLock(): void {
       }
       return;
     } catch (error) {
-      if (
-        !isErrnoException(error) ||
-        error.code !== "EEXIST"
-      ) {
+      if (!isErrnoException(error) || error.code !== "EEXIST") {
         throw error;
       }
-      let ownerChecked = false;
+      let lockStat: fs.Stats;
       try {
-        const ownerPid = Number.parseInt(fs.readFileSync(LOCK_OWNER, "utf-8").trim(), 10);
-        if (Number.isFinite(ownerPid) && ownerPid > 0) {
-          ownerChecked = true;
-          let alive: boolean;
-          try {
-            process.kill(ownerPid, 0);
-            alive = true;
-          } catch (killErr) {
-            alive =
-              isErrnoException(killErr)
-                ? killErr.code === "EPERM"
-                : false;
-          }
-          if (!alive) {
-            const recheck = Number.parseInt(fs.readFileSync(LOCK_OWNER, "utf-8").trim(), 10);
-            if (recheck === ownerPid) {
-              fs.rmSync(LOCK_DIR, { recursive: true, force: true });
-              continue;
-            }
-          }
-        }
+        lockStat = fs.statSync(LOCK_DIR);
       } catch {
-        /* fall through to mtime staleness */
+        // Lock dir vanished between the failed mkdir and this stat: another
+        // waiter released it, so retry immediately.
+        continue;
       }
-      if (!ownerChecked) {
+      let ownerPid: number | null = null;
+      try {
+        const parsed = Number.parseInt(fs.readFileSync(LOCK_OWNER, "utf-8").trim(), 10);
+        ownerPid = Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+      } catch {
+        ownerPid = null;
+      }
+      const ownerAlive = ownerPid !== null ? isProcessAlive(ownerPid) : false;
+      const processStartMs = ownerPid !== null && ownerAlive ? readProcessStartMs(ownerPid) : null;
+      const decision = classifyExistingLock({
+        ownerPid,
+        ownerAlive,
+        processStartMs,
+        lockMtimeMs: lockStat.mtimeMs,
+        nowMs: Date.now(),
+        staleMs: LOCK_STALE_MS,
+      });
+      if (decision === "break") {
+        // Only break the lock if it is provably the same one we classified.
+        // Re-stat LOCK_DIR and require the inode + mtime to be unchanged (a
+        // replacement lock is a fresh mkdir, hence a new inode) and, when the
+        // owner pid was readable, that it still matches. Any stat/read failure
+        // means the identity cannot be proven, so the lock is left alone rather
+        // than risk clobbering an in-flight replacement that exists as LOCK_DIR
+        // before its owner file has been written.
+        let stillSameLock = false;
         try {
-          const stat = fs.statSync(LOCK_DIR);
-          if (Date.now() - stat.mtimeMs > LOCK_STALE_MS) {
-            fs.rmSync(LOCK_DIR, { recursive: true, force: true });
-            continue;
+          const currentStat = fs.statSync(LOCK_DIR);
+          stillSameLock =
+            currentStat.ino === lockStat.ino && currentStat.mtimeMs === lockStat.mtimeMs;
+          if (stillSameLock && ownerPid !== null) {
+            const recheck = Number.parseInt(fs.readFileSync(LOCK_OWNER, "utf-8").trim(), 10);
+            stillSameLock = recheck === ownerPid;
           }
         } catch {
+          stillSameLock = false;
+        }
+        if (stillSameLock) {
+          fs.rmSync(LOCK_DIR, { recursive: true, force: true });
           continue;
         }
       }
@@ -180,20 +284,14 @@ export function releaseLock(): void {
   try {
     fs.unlinkSync(LOCK_OWNER);
   } catch (error) {
-    if (
-      !isErrnoException(error) ||
-      error.code !== "ENOENT"
-    ) {
+    if (!isErrnoException(error) || error.code !== "ENOENT") {
       throw error;
     }
   }
   try {
     fs.rmSync(LOCK_DIR, { recursive: true, force: true });
   } catch (error) {
-    if (
-      !isErrnoException(error) ||
-      error.code !== "ENOENT"
-    ) {
+    if (!isErrnoException(error) || error.code !== "ENOENT") {
       throw error;
     }
   }
@@ -209,11 +307,67 @@ export function withLock<T>(fn: () => T): T {
 }
 
 export function load(): SandboxRegistry {
-  return readConfigFile<SandboxRegistry>(REGISTRY_FILE, { sandboxes: {}, defaultSandbox: null });
+  return normalizeRegistry(
+    readConfigFile<SandboxRegistry>(REGISTRY_FILE, { sandboxes: {}, defaultSandbox: null }),
+  );
 }
 
 export function save(data: SandboxRegistry): void {
-  writeConfigFile(REGISTRY_FILE, data);
+  writeConfigFile(REGISTRY_FILE, serializeRegistryForDisk(data));
+}
+
+function normalizeRegistry(data: SandboxRegistry): SandboxRegistry {
+  return {
+    defaultSandbox: data.defaultSandbox ?? null,
+    sandboxes: Object.fromEntries(
+      sandboxRegistryEntries(data).map(([name, entry]) => [name, normalizeSandboxEntry(entry)]),
+    ),
+  };
+}
+
+function serializeRegistryForDisk(data: SandboxRegistry): SandboxRegistry {
+  return {
+    defaultSandbox: data.defaultSandbox ?? null,
+    sandboxes: Object.fromEntries(
+      sandboxRegistryEntries(data).map(([name, entry]) => [
+        name,
+        serializeSandboxEntryForDisk(entry),
+      ]),
+    ),
+  };
+}
+
+function sandboxRegistryEntries(data: SandboxRegistry): Array<[string, SandboxEntry]> {
+  const sandboxes = isRecord(data.sandboxes) ? data.sandboxes : {};
+  return Object.entries(sandboxes).filter((entry): entry is [string, SandboxEntry] =>
+    isSandboxEntryLike(entry[1]),
+  );
+}
+
+function isSandboxEntryLike(entry: unknown): entry is SandboxEntry {
+  return isRecord(entry);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function normalizeSandboxEntry(entry: SandboxEntry): SandboxEntry {
+  const messaging = cloneSandboxMessagingState(entry.messaging);
+  if (!messaging) {
+    const { messaging: _messaging, ...rest } = entry;
+    return rest;
+  }
+  return { ...entry, messaging };
+}
+
+function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
+  const messaging = serializeSandboxMessagingStateForDisk(entry.messaging);
+  if (!messaging) {
+    const { messaging: _messaging, ...rest } = entry;
+    return rest;
+  }
+  return { ...entry, messaging };
 }
 
 export function getSandbox(name: string): SandboxEntry | null {
@@ -256,13 +410,9 @@ export function registerSandbox(entry: SandboxEntry): void {
       // cannot inherit a stale finalized marker. See #4621.
       agent: entry.agent || null,
       agentVersion: entry.agentVersion || null,
+      nemoclawVersion: entry.nemoclawVersion || null,
       imageTag: entry.imageTag || null,
       providerCredentialHashes: entry.providerCredentialHashes || undefined,
-      messagingChannels: entry.messagingChannels || [],
-      messagingChannelConfig:
-        entry.messagingChannelConfig && Object.keys(entry.messagingChannelConfig).length > 0
-          ? { ...entry.messagingChannelConfig }
-          : undefined,
       messaging: cloneSandboxMessagingState(entry.messaging),
       hermesToolGateways:
         Array.isArray(entry.hermesToolGateways) && entry.hermesToolGateways.length > 0
@@ -272,10 +422,6 @@ export function registerSandbox(entry: SandboxEntry): void {
       hermesDashboardPort: entry.hermesDashboardPort ?? undefined,
       hermesDashboardInternalPort: entry.hermesDashboardInternalPort ?? undefined,
       hermesDashboardTui: entry.hermesDashboardTui === true ? true : undefined,
-      disabledChannels:
-        Array.isArray(entry.disabledChannels) && entry.disabledChannels.length > 0
-          ? [...entry.disabledChannels]
-          : undefined,
       dashboardPort: entry.dashboardPort ?? undefined,
       gatewayName: entry.gatewayName ?? undefined,
       gatewayPort: entry.gatewayPort ?? undefined,
@@ -285,16 +431,6 @@ export function registerSandbox(entry: SandboxEntry): void {
     }
     save(data);
   });
-}
-
-function cloneSandboxMessagingState(
-  messaging: SandboxMessagingState | undefined,
-): SandboxMessagingState | undefined {
-  if (!messaging || messaging.schemaVersion !== 1) return undefined;
-  return {
-    schemaVersion: 1,
-    plan: JSON.parse(JSON.stringify(messaging.plan)) as SandboxMessagingPlan,
-  };
 }
 
 export function updateSandbox(name: string, updates: Partial<SandboxEntry>): boolean {
@@ -321,6 +457,36 @@ export function removeSandbox(name: string): boolean {
     }
     save(data);
     return true;
+  });
+}
+
+/**
+ * Restore a previously-removed sandbox entry verbatim under the registry lock,
+ * preserving every field exactly (unlike `registerSandbox`, which rebuilds a
+ * fresh entry from known fields). Used to roll back a failed stale-sandbox
+ * rebuild recovery (#4497): the entry was removed before the recreate, and on
+ * failure it must come back intact. Operates on the CURRENT registry (it does
+ * not clobber other sandboxes' entries another command added during the rebuild
+ * window).
+ *
+ * `reclaimDefault` undoes the default-pointer move the original `removeSandbox`
+ * performed: when this sandbox was the default, `removeSandbox` reassigned
+ * `defaultSandbox` to another remaining sandbox (or null), so the rollback puts
+ * it back. This is best-effort "undo my operation" — a deliberate default change
+ * by a concurrent command during the rebuild window is an inherent race and may
+ * be overwritten.
+ */
+export function restoreSandboxEntry(
+  entry: SandboxEntry,
+  options: { reclaimDefault?: string | null } = {},
+): void {
+  withLock(() => {
+    const data = load();
+    data.sandboxes[entry.name] = entry;
+    if (options.reclaimDefault && data.defaultSandbox !== options.reclaimDefault) {
+      data.defaultSandbox = options.reclaimDefault;
+    }
+    save(data);
   });
 }
 
@@ -384,20 +550,13 @@ export function removeCustomPolicyByName(name: string, presetName: string): bool
 }
 
 export function getDisabledChannels(name: string): string[] {
-  const data = load();
-  return data.sandboxes[name]?.disabledChannels ?? [];
+  return getRegistryDisabledChannels(name, { load });
+}
+
+export function getConfiguredMessagingChannels(name: string): string[] {
+  return getRegistryConfiguredMessagingChannels(name, { load });
 }
 
 export function setChannelDisabled(name: string, channel: string, disabled: boolean): boolean {
-  return withLock(() => {
-    const data = load();
-    const entry = data.sandboxes[name];
-    if (!entry) return false;
-    const current = new Set(entry.disabledChannels ?? []);
-    if (disabled) current.add(channel);
-    else current.delete(channel);
-    entry.disabledChannels = current.size > 0 ? Array.from(current).sort() : undefined;
-    save(data);
-    return true;
-  });
+  return setRegistryChannelDisabled(name, channel, disabled, { load, save, withLock });
 }

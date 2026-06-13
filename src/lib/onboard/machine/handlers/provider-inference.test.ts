@@ -18,24 +18,28 @@ const baseSelection: ProviderSelectionResult = {
   model: "nvidia/test",
   provider: "nvidia-prod",
   endpointUrl: "https://integrate.api.nvidia.com/v1",
-  credentialEnv: "NVIDIA_API_KEY",
+  credentialEnv: "NVIDIA_INFERENCE_API_KEY",
   hermesAuthMethod: null,
   hermesToolGateways: [],
   preferredInferenceApi: "openai-responses",
   nimContainer: null,
 };
 
-function createDeps(overrides: Partial<ProviderInferenceStateOptions<Gpu, Agent, Host>["deps"]> = {}) {
+function createDeps(
+  overrides: Partial<ProviderInferenceStateOptions<Gpu, Agent, Host>["deps"]> = {},
+) {
   const calls = {
     setupNim: vi.fn(async () => ({ ...baseSelection })),
     setupInference: vi.fn(async () => ({ ok: true as const })),
     startStep: vi.fn(async () => undefined),
     complete: vi.fn(async () => createSession()),
     skipped: vi.fn(),
-    recoverProvider: vi.fn(async (_provider: string | null | undefined, credentialEnv: string | null | undefined) => ({
-      forceInferenceSetup: false,
-      credentialEnv: credentialEnv ?? null,
-    })),
+    recoverProvider: vi.fn(
+      async (_provider: string | null | undefined, credentialEnv: string | null | undefined) => ({
+        forceInferenceSetup: false,
+        credentialEnv: credentialEnv ?? null,
+      }),
+    ),
     recordSkip: vi.fn(async () => createSession()),
     repairEvent: vi.fn(async () => createSession()),
     hydrate: vi.fn(),
@@ -140,7 +144,10 @@ describe("handleProviderInferenceState", () => {
 
     expect(calls.startStep).toHaveBeenNthCalledWith(1, "provider_selection");
     expect(calls.setupNim).toHaveBeenCalledWith({ type: "nvidia" }, null, null);
-    expect(calls.complete).toHaveBeenCalledWith("provider_selection", expect.objectContaining({ provider: "nvidia-prod" }));
+    expect(calls.complete).toHaveBeenCalledWith(
+      "provider_selection",
+      expect.objectContaining({ provider: "nvidia-prod" }),
+    );
     expect(calls.promptName).toHaveBeenCalledWith(null);
     expect(calls.log).toHaveBeenCalledWith("summary:nvidia-prod/nvidia/test/my-assistant");
     expect(calls.startStep).toHaveBeenNthCalledWith(2, "inference", {
@@ -152,12 +159,12 @@ describe("handleProviderInferenceState", () => {
       "nvidia/test",
       "nvidia-prod",
       "https://integrate.api.nvidia.com/v1",
-      "NVIDIA_API_KEY",
+      "NVIDIA_INFERENCE_API_KEY",
       null,
       [],
       { allowToolsIncompatible: false },
     );
-    expect(calls.deleteEnv).toHaveBeenCalledWith("NVIDIA_API_KEY");
+    expect(calls.deleteEnv).toHaveBeenCalledWith("NVIDIA_INFERENCE_API_KEY");
     expect(result).toMatchObject({
       sandboxName: "my-assistant",
       model: "nvidia/test",
@@ -206,7 +213,9 @@ describe("handleProviderInferenceState", () => {
 
     await expect(handleProviderInferenceState(baseOptions(deps))).rejects.toThrow("exit 1");
 
-    expect(calls.error).toHaveBeenCalledWith("  Inference selection did not yield a provider/model.");
+    expect(calls.error).toHaveBeenCalledWith(
+      "  Inference selection did not yield a provider/model.",
+    );
     expect(calls.exit).toHaveBeenCalledWith(1);
     expect(calls.complete).not.toHaveBeenCalledWith("provider_selection", expect.anything());
     expect(calls.setupInference).not.toHaveBeenCalled();
@@ -223,7 +232,9 @@ describe("handleProviderInferenceState", () => {
     });
     const { deps, calls } = createDeps({ setupNim, startRecordedStep });
 
-    await expect(handleProviderInferenceState(baseOptions(deps))).rejects.toThrow("recording failed");
+    await expect(handleProviderInferenceState(baseOptions(deps))).rejects.toThrow(
+      "recording failed",
+    );
 
     expect(calls.deleteEnv).toHaveBeenCalledWith("COMPATIBLE_API_KEY");
     expect(calls.setupInference).not.toHaveBeenCalled();
@@ -363,7 +374,7 @@ describe("handleProviderInferenceState", () => {
       provider: "nvidia-router",
       model: "router/model",
       endpointUrl: "http://localhost:4000/v1",
-      credentialEnv: "NVIDIA_API_KEY",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
     });
     session.steps.provider_selection.status = "complete";
     const { deps, calls } = createDeps({ isInferenceRouteReady: vi.fn(() => true) });
@@ -378,7 +389,7 @@ describe("handleProviderInferenceState", () => {
     expect(calls.reupsertRoutedProvider).toHaveBeenCalledWith(
       "nvidia-router",
       "http://localhost:4000/v1",
-      "NVIDIA_API_KEY",
+      "NVIDIA_INFERENCE_API_KEY",
     );
     expect(calls.setupInference).not.toHaveBeenCalled();
     expect(result.endpointUrl).toBe("http://host.openshell.internal:4000/v1");
@@ -445,7 +456,9 @@ describe("handleProviderInferenceState", () => {
       },
     ]);
     expect(result.stateResult).toMatchObject({ next: "sandbox", transitionKind: "advance" });
-    expect(result.stateResults.map((stateResult) => [stateResult.next, stateResult.transitionKind])).toEqual([
+    expect(
+      result.stateResults.map((stateResult) => [stateResult.next, stateResult.transitionKind]),
+    ).toEqual([
       ["inference", "advance"],
       ["provider_selection", "retry"],
       ["inference", "advance"],

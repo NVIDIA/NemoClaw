@@ -9,7 +9,7 @@ import type { GpuInfo } from "../local";
 
 const path = require("path");
 const { spawn, spawnSync } = require("child_process");
-const { ROOT, SCRIPTS, run, runCapture, shellQuote } = require("../../runner");
+const { ROOT, SCRIPTS, redact, run, runCapture, shellQuote } = require("../../runner");
 const { OLLAMA_PORT, OLLAMA_PROXY_PORT } = require("../../core/ports");
 const { waitForPort } = require("../../core/wait");
 const {
@@ -78,7 +78,10 @@ function loadPersistedProxyToken(): string | null {
 }
 
 function curlAuthHeaderConfig(token: string): string {
-  const escaped = String(token).replace(/[\r\n]/g, "").replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  const escaped = String(token)
+    .replace(/[\r\n]/g, "")
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"');
   return `header = "Authorization: Bearer ${escaped}"\n`;
 }
 
@@ -105,7 +108,11 @@ function runCurlWithAuthConfig(args: string[], endpoint: string, token: string |
   return spawnSync("curl", curlArgs, options);
 }
 
-function runCurlCaptureWithAuthConfig(args: string[], endpoint: string, token: string | null = null): string {
+function runCurlCaptureWithAuthConfig(
+  args: string[],
+  endpoint: string,
+  token: string | null = null,
+): string {
   const result = runCurlWithAuthConfig(args, endpoint, token);
   return result.status === 0 ? String(result.stdout || "") : "";
 }
@@ -166,11 +173,95 @@ function killStaleProxy(): void {
   }
 }
 
+// ── Port-conflict diagnostics ────────────────────────────────────
+
+// Inspect what currently listens on the proxy port, excluding our own
+// auth-proxy processes. Returns the owning PIDs and a human-readable
+// description (command line) for each so a port conflict can be reported
+// with the exact owning process instead of telling the user to run lsof
+// themselves (issue #4820).
+//
+// `family` scopes the lookup:
+//   "4"   — IPv4 listeners only. The proxy binds IPv4 (0.0.0.0), so only an
+//           IPv4 (or IPv6 dual-stack-wildcard) listener can actually block it.
+//           An IPv6-only listener (e.g. ::1 with IPV6_V6ONLY) does NOT conflict,
+//           so the pre-start abort uses this scope to avoid a false conflict.
+//   "any" — all TCP listeners. Used only to diagnose an already-failed bind,
+//           where the proxy died from EADDRINUSE: the culprit may be an IPv6
+//           dual-stack wildcard (`:::PORT`) that blocks IPv4 yet lsof reports
+//           as IPv6, so the broad scope still names the owner.
+// Either way we restrict to TCP listeners (not outbound connections / UDP that
+// merely involve the port number).
+function inspectForeignProxyPortOwners(family: "4" | "any" = "any"): {
+  pids: number[];
+  descriptions: string[];
+} {
+  const pids: number[] = [];
+  const descriptions: string[] = [];
+  const selector = family === "4" ? `-ti4TCP:${OLLAMA_PROXY_PORT}` : `-tiTCP:${OLLAMA_PROXY_PORT}`;
+  const pidOutput = runCapture(["lsof", selector, "-sTCP:LISTEN"], {
+    ignoreError: true,
+  });
+  if (!pidOutput || !String(pidOutput).trim()) return { pids, descriptions };
+  for (const raw of String(pidOutput).trim().split(/\s+/)) {
+    const pid = Number.parseInt(raw, 10);
+    if (!Number.isInteger(pid) || pid <= 0) continue;
+    // Our own auth proxy is not a conflict — killStaleProxy() reclaims it.
+    if (isOllamaProxyProcess(pid)) continue;
+    pids.push(pid);
+    // Redact the owner's command line before display: a foreign process may
+    // carry a secret in its argv (e.g. `--token=…`), and this string is printed
+    // to the console. Matches the codebase convention of redacting command
+    // output before surfacing it.
+    const args = String(
+      redact(runCapture(["ps", "-p", String(pid), "-o", "args="], { ignoreError: true }) || ""),
+    ).trim();
+    descriptions.push(args ? `PID ${pid}: ${args}` : `PID ${pid}`);
+  }
+  return { pids, descriptions };
+}
+
+function printProxyPortConflict(owners: { pids: number[]; descriptions: string[] }): void {
+  console.error(
+    `  Error: Ollama auth proxy cannot start — port ${OLLAMA_PROXY_PORT} is already in use by another process.`,
+  );
+  for (const description of owners.descriptions) {
+    console.error(`    ${description}`);
+  }
+  console.error("  Resolve the conflict, then re-run onboarding:");
+  console.error(`    • Stop the process above (e.g. kill ${owners.pids.join(" ") || "<pid>"}), or`);
+  // Export (don't inline) the override: OLLAMA_PROXY_PORT is read from the
+  // environment on every NemoClaw command, so a one-shot `VAR=… nemoclaw
+  // onboard` would drift — a later `nemoclaw connect` without it would manage
+  // the proxy on the default port while the route points at the custom one.
+  console.error("    • Choose a free proxy port and export it so every NemoClaw command");
+  console.error("      uses the same value (add it to your shell profile to persist):");
+  console.error("        export NEMOCLAW_OLLAMA_PROXY_PORT=<port>");
+  console.error("  Containers will not be able to reach Ollama without the proxy.");
+}
+
 // ── Public API ───────────────────────────────────────────────────
+
+// How long to wait for the detached proxy to bind the port. Slower hosts and
+// the window right after the systemd loopback restart can need several seconds,
+// so poll with backoff instead of the previous single 2s probe (issue #4820).
+const PROXY_START_ATTEMPTS = 12;
 
 function startOllamaAuthProxy(): boolean {
   const crypto = require("crypto");
   killStaleProxy();
+
+  // After clearing any stale NemoClaw proxy, a process still holding the port
+  // is a genuine conflict. Report the exact owner and remediation up front so
+  // the user does not have to run lsof and interpret it themselves. Scope to
+  // IPv4: an IPv6-only listener does not block our 0.0.0.0 bind, so aborting on
+  // it would be a false conflict (a dual-stack blocker is still caught below
+  // via the spawned proxy's EADDRINUSE).
+  const preOwners = inspectForeignProxyPortOwners("4");
+  if (preOwners.pids.length > 0) {
+    printProxyPortConflict(preOwners);
+    return false;
+  }
 
   const proxyToken = crypto.randomBytes(24).toString("hex");
   ollamaProxyToken = proxyToken;
@@ -178,40 +269,58 @@ function startOllamaAuthProxy(): boolean {
   // If the user backs out to a different provider, the token stays in memory
   // only and is discarded.
   const pid = spawnOllamaAuthProxy(proxyToken);
-  if (!waitForPort(OLLAMA_PROXY_PORT, 2)) {
-    console.error(
-      `  Error: Ollama auth proxy did not become ready on :${OLLAMA_PROXY_PORT} within timeout.`,
-    );
+
+  // Poll for readiness with backoff. Three terminal outcomes:
+  //   • proxy alive and listening → success
+  //   • proxy gone, a foreign process now owns the port → conflict (lost the
+  //     EADDRINUSE race after the pre-check)
+  //   • proxy gone, port free → it exited during startup (spawn failure)
+  for (let attempt = 0; attempt < PROXY_START_ATTEMPTS; attempt++) {
+    if (isOllamaProxyProcess(pid)) {
+      // waitForPort is a cheap TCP gate; proxyOwnsPortWithToken then proves the
+      // listener is our proxy (not a foreign service that grabbed the port)
+      // before we treat startup as successful.
+      if (waitForPort(OLLAMA_PROXY_PORT, 1) && proxyOwnsPortWithToken(proxyToken)) {
+        return true;
+      }
+      sleep(1); // alive but not yet bound — give a slow host more time
+      continue;
+    }
+    // The spawned proxy is gone. If it lost an EADDRINUSE race the blocker may
+    // be an IPv6 dual-stack listener, so use the broad scope to name the owner.
+    const owners = inspectForeignProxyPortOwners("any");
+    if (owners.pids.length > 0) {
+      printProxyPortConflict(owners);
+    } else {
+      console.error(`  Error: Ollama auth proxy exited during startup on :${OLLAMA_PROXY_PORT}.`);
+      console.error("  Containers will not be able to reach Ollama without the proxy.");
+      console.error(`  Check the proxy port owner: lsof -ti :${OLLAMA_PROXY_PORT}`);
+    }
     return false;
   }
-  if (!isOllamaProxyProcess(pid)) {
-    console.error(`  Error: Ollama auth proxy failed to start on :${OLLAMA_PROXY_PORT}`);
-    console.error(`  Containers will not be able to reach Ollama without the proxy.`);
-    console.error(
-      `  Check if port ${OLLAMA_PROXY_PORT} is already in use: lsof -ti :${OLLAMA_PROXY_PORT}`,
-    );
-    return false;
-  }
-  return true;
+
+  console.error(
+    `  Error: Ollama auth proxy did not become ready on :${OLLAMA_PROXY_PORT} within ${PROXY_START_ATTEMPTS}s.`,
+  );
+  console.error("  Containers will not be able to reach Ollama without the proxy.");
+  console.error(`  Check the proxy port owner: lsof -ti :${OLLAMA_PROXY_PORT}`);
+  return false;
 }
 
 /**
  * Probe the running proxy to confirm it accepts the given token.
  * The proxy validates auth before forwarding to Ollama. A backend error like
  * 502 still proves the token was accepted, while 401 means token mismatch.
+ *
+ * Targets 127.0.0.1 (not `localhost`): the proxy binds IPv4 0.0.0.0, and
+ * `localhost` can resolve to ::1 first — on a host where an unrelated IPv6-only
+ * service holds the port, that would probe the wrong listener. This matches the
+ * other proxy probes (isProxyHealthy, probeOllamaAuthProxyHealth). See #4820.
  */
 function probeProxyToken(token: string): "accepted" | "rejected" | "unreachable" {
   const result = runCurlWithAuthConfig(
-    [
-      "-sS",
-      "-o",
-      "/dev/null",
-      "-w",
-      "%{http_code}",
-      "--max-time",
-      "3",
-    ],
-    `http://localhost:${OLLAMA_PROXY_PORT}/v1/models`,
+    ["-sS", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "3"],
+    `http://127.0.0.1:${OLLAMA_PROXY_PORT}/v1/models`,
     token,
   );
   if (result.status !== 0) return "unreachable";
@@ -220,6 +329,22 @@ function probeProxyToken(token: string): "accepted" | "rejected" | "unreachable"
   if (status === "401") return "rejected";
   if (/^\d{3}$/.test(status)) return "accepted";
   return "unreachable";
+}
+
+// Confirm the listener on the proxy port is actually our auth proxy holding
+// THIS token — not a foreign service that merely answers on the port. Our
+// proxy is the only listener that BOTH rejects an unauthenticated request with
+// 401 AND accepts the current token (200 from Ollama, or 502 when the backend
+// is down — both non-401). A foreign HTTP service that ignores Authorization
+// (answers 200/404 to everything) fails the unauthenticated-401 half, and a
+// raw socket fails both. Requiring both halves is what makes this a
+// proxy-specific readiness proof: without it we could persist a token for a
+// process that never bound (lsof unavailable, or a dual-stack listener the
+// IPv4 precheck missed, losing the EADDRINUSE race). The probes target
+// 127.0.0.1, so they confirm our IPv4 proxy even when an unrelated IPv6-only
+// listener shares the port number. See #4820.
+function proxyOwnsPortWithToken(token: string): boolean {
+  return probeProxyToken(token) === "accepted" && probeProxyToken("") === "rejected";
 }
 
 /**
@@ -307,17 +432,7 @@ function probeOllamaAuthProxyHealth(): { ok: boolean; endpoint: string; detail: 
   }
 
   const result = runCurlWithAuthConfig(
-    [
-      "-sS",
-      "-o",
-      "/dev/null",
-      "-w",
-      "%{http_code}",
-      "--connect-timeout",
-      "3",
-      "--max-time",
-      "5",
-    ],
+    ["-sS", "-o", "/dev/null", "-w", "%{http_code}", "--connect-timeout", "3", "--max-time", "5"],
     endpoint,
     token,
   );
@@ -393,7 +508,7 @@ async function promptOllamaModel(
   const options = usingInstalled ? installedFitting : bootstrap;
   const defaultModelCandidate = getDefaultOllamaModel(gpu);
   const defaultModel = isExcluded(defaultModelCandidate)
-    ? options[0] ?? defaultModelCandidate
+    ? (options[0] ?? defaultModelCandidate)
     : defaultModelCandidate;
   const defaultIndex = Math.max(0, options.indexOf(defaultModel));
 
@@ -507,7 +622,6 @@ function pullOllamaModelViaHttp(model) {
 
     // The endpoint is restricted to the local Ollama hosts NemoClaw probes and
     // the model id is normalized before being serialized as JSON request data.
-    // lgtm[js/file-access-to-http]
     const proc = spawn(
       "curl",
       [
@@ -521,6 +635,7 @@ function pullOllamaModelViaHttp(model) {
         "-H",
         "Content-Type: application/json",
         "-d",
+        // codeql[js/file-access-to-http]: local-only Ollama API with a normalized model id.
         body,
         url,
       ],
@@ -699,7 +814,9 @@ async function promptProxyYesNo(question: string, defaultIsYes: boolean): Promis
     /* fall through */
   }
   const reply = await prompt(`${question} ${defaultIsYes ? "[Y/n]" : "[y/N]"}: `);
-  const v = String(reply ?? "").trim().toLowerCase();
+  const v = String(reply ?? "")
+    .trim()
+    .toLowerCase();
   if (v === "y" || v === "yes") return true;
   if (v === "n" || v === "no") return false;
   return defaultIsYes;
@@ -709,8 +826,8 @@ function printToolsIncompatibleWarning(model: string): void {
   console.log("");
   console.log(`  ⚠ Ollama model '${model}' does not advertise the 'tools' capability.`);
   console.log("    NemoClaw agents need tool-calling for file operations, web search, and");
-  console.log("    running commands. This model will likely fail with \"400 ... does not");
-  console.log("    support tools\" at first prompt.");
+  console.log('    running commands. This model will likely fail with "400 ... does not');
+  console.log('    support tools" at first prompt.');
   console.log("    Inspect a model's capabilities with `ollama show <model>` and pick");
   console.log("    one whose list includes 'tools'.");
 }

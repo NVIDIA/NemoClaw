@@ -2,9 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 type MessagingChannel = { name: string; envKey: string };
-type SandboxEntry = { messagingChannels?: string[] | null } | null | undefined;
 
-export function getMessagingProviderNamesForChannel(sandboxName: string, channel: string): string[] {
+export function getMessagingProviderNamesForChannel(
+  sandboxName: string,
+  channel: string,
+): string[] {
   if (channel === "discord") return [`${sandboxName}-discord-bridge`];
   if (channel === "telegram") return [`${sandboxName}-telegram-bridge`];
   if (channel === "wechat") return [`${sandboxName}-wechat-bridge`];
@@ -27,7 +29,7 @@ export function getNonInteractiveStoredMessagingChannels(
   sandboxName: string | null,
   messagingChannels: readonly MessagingChannel[],
   hasMessagingToken: (envKey: string) => boolean,
-  getSandbox: (sandboxName: string) => SandboxEntry,
+  getConfiguredChannels: (sandboxName: string) => string[],
   getDisabledChannels: (sandboxName: string) => string[],
   providerExists: (providerName: string) => boolean,
   nonInteractive: boolean,
@@ -37,12 +39,16 @@ export function getNonInteractiveStoredMessagingChannels(
     const knownSessionChannels = getKnownMessagingChannels(sessionChannels, messagingChannels);
     return knownSessionChannels;
   }
-  if (resume || !sandboxName || messagingChannels.some((channel) => hasMessagingToken(channel.envKey))) {
+  if (
+    resume ||
+    !sandboxName ||
+    messagingChannels.some((channel) => hasMessagingToken(channel.envKey))
+  ) {
     return null;
   }
 
   const configuredChannels = getKnownMessagingChannels(
-    getSandbox(sandboxName)?.messagingChannels,
+    getConfiguredChannels(sandboxName),
     messagingChannels,
   );
   const disabledChannels = new Set(getDisabledChannels(sandboxName));

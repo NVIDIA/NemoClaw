@@ -28,18 +28,12 @@ function runNode(src: string, env: Record<string, string | undefined> = {}) {
 
 // Simulate what Docker ARG substitution produces (the VULNERABLE pattern)
 function vulnerableSource(chatUiUrlValue: string): string {
-  return (
-    `const chatUiUrl = '${chatUiUrlValue}'; ` +
-    "console.log(JSON.stringify(chatUiUrl))"
-  );
+  return `const chatUiUrl = '${chatUiUrlValue}'; ` + "console.log(JSON.stringify(chatUiUrl))";
 }
 
 // Simulate the FIXED pattern (env var, no source interpolation)
 function fixedSource(): string {
-  return (
-    "const chatUiUrl = process.env.CHAT_UI_URL; " +
-    "console.log(JSON.stringify(chatUiUrl))"
-  );
+  return "const chatUiUrl = process.env.CHAT_UI_URL; " + "console.log(JSON.stringify(chatUiUrl))";
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -131,7 +125,6 @@ describe("Gateway auth hardening: Dockerfile must not hardcode insecure auth def
     const lines = src.split("\n");
     let promoted = false;
     let inEnvBlock = false;
-    let sawGeneratorRun = false;
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       if (/^\s*FROM\b/.test(line)) {
@@ -148,7 +141,7 @@ describe("Gateway auth hardening: Dockerfile must not hardcode insecure auth def
         inEnvBlock = false;
       }
       if (
-        /^\s*RUN\b.*node\s+--experimental-strip-types\s+\/usr\/local\/lib\/nemoclaw\/generate-openclaw-config\.mts\b/.test(
+        /^\s*RUN\b.*node\s+--experimental-strip-types\s+\/scripts\/generate-openclaw-config\.mts\b/.test(
           line,
         )
       ) {
@@ -156,6 +149,6 @@ describe("Gateway auth hardening: Dockerfile must not hardcode insecure auth def
         return;
       }
     }
-    expect(sawGeneratorRun).toBeTruthy();
+    throw new Error("expected generate-openclaw-config RUN layer");
   });
 });

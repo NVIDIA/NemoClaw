@@ -4,10 +4,7 @@
 import { describe, expect, it } from "vitest";
 
 // Import from compiled dist/ for correct coverage attribution.
-import {
-  parseLiveSandboxNames,
-  parseReadySandboxNames,
-} from "../../dist/lib/runtime-recovery";
+import { parseLiveSandboxNames, parseReadySandboxNames } from "../../dist/lib/runtime-recovery";
 
 describe("runtime recovery helpers", () => {
   it("parses live sandbox names from openshell sandbox list output", () => {

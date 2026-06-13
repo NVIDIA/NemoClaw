@@ -543,6 +543,10 @@ async function runOpenClawPrivateProof(location) {
   ) {
     fail("installed OpenClaw Slack test API does not expose the required proof helpers");
   }
+  // Records sender-facing feedback actions (chat.postEphemeral / chat.postMessage)
+  // so the proof can assert that a denied explicit @-mention still produces
+  // bounded feedback without preparing a command (NemoClaw #4752).
+  const senderFeedbackCalls = [];
   const appClient = {
     assistant: {
       threads: {
@@ -577,6 +581,25 @@ async function runOpenClawPrivateProof(location) {
         },
       }),
     },
+    chat: {
+      postEphemeral: async (payload) => {
+        senderFeedbackCalls.push({
+          method: "chat.postEphemeral",
+          channel: payload.channel,
+          user: payload.user,
+          text: payload.text,
+        });
+        return { ok: true, message_ts: "1710000000.000200" };
+      },
+      postMessage: async (payload) => {
+        senderFeedbackCalls.push({
+          method: "chat.postMessage",
+          channel: payload.channel,
+          text: payload.text,
+        });
+        return { ok: true, ts: "1710000000.000201" };
+      },
+    },
   };
 
   const ctx = createInboundSlackTestContext({
@@ -607,7 +630,11 @@ async function runOpenClawPrivateProof(location) {
   if (allowedPrepared.replyTarget !== `channel:${channelId}`) {
     fail(`unexpected allowed replyTarget: ${allowedPrepared.replyTarget}`);
   }
+  if (senderFeedbackCalls.length !== 0) {
+    fail(`allowed Slack app_mention unexpectedly produced sender feedback: ${JSON.stringify(senderFeedbackCalls)}`);
+  }
 
+  senderFeedbackCalls.length = 0;
   const deniedPrepared = await prepareSlackMessage({
     ctx,
     account,
@@ -615,6 +642,32 @@ async function runOpenClawPrivateProof(location) {
     opts: { source: "app_mention", wasMentioned: true },
   });
   if (deniedPrepared !== null) fail("denied Slack app_mention unexpectedly prepared");
+
+  // NemoClaw #4752: a denied explicit @-mention must still prepare no command
+  // (asserted above) yet send exactly one bounded, sender-facing feedback
+  // action, addressed to the denied sender, without leaking the allowlist.
+  if (senderFeedbackCalls.length !== 1) {
+    fail(
+      `denied Slack app_mention expected exactly one sender feedback action, got ${senderFeedbackCalls.length}: ${JSON.stringify(senderFeedbackCalls)}`,
+    );
+  }
+  const deniedFeedback = senderFeedbackCalls[0];
+  if (deniedFeedback.method !== "chat.postEphemeral") {
+    fail(`denied Slack app_mention expected an ephemeral feedback action, got ${deniedFeedback.method}`);
+  }
+  if (deniedFeedback.channel !== channelId) {
+    fail(`denied Slack feedback targeted unexpected channel: ${deniedFeedback.channel}`);
+  }
+  if (deniedFeedback.user !== deniedUser) {
+    fail(`denied Slack feedback addressed unexpected user: ${deniedFeedback.user}`);
+  }
+  const deniedFeedbackText = deniedFeedback.text ?? "";
+  if (!deniedFeedbackText) {
+    fail("denied Slack feedback message text was empty");
+  }
+  if (deniedFeedbackText.includes(allowedUser) || /allow\s*list|allowlist|allowed users/i.test(deniedFeedbackText)) {
+    fail(`denied Slack feedback leaked allowlist details: ${deniedFeedbackText}`);
+  }
 
   const fakeClient = {
     chat: {
@@ -651,6 +704,8 @@ async function runOpenClawPrivateProof(location) {
     proof: "openclaw-private-helper",
     allowedReplyTarget: allowedPrepared.replyTarget,
     deniedPrepared: deniedPrepared === null,
+    deniedFeedbackMethod: deniedFeedback.method,
+    deniedFeedbackCount: senderFeedbackCalls.length,
     messageId: sendResult.messageId,
     channelId: sendResult.channelId,
   };

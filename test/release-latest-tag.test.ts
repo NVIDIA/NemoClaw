@@ -8,17 +8,9 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 const repoRoot = path.join(import.meta.dirname, "..");
-const latestScriptPath = path.join(
-  repoRoot,
-  "scripts",
-  "release-latest-tag.sh",
-);
+const latestScriptPath = path.join(repoRoot, "scripts", "release-latest-tag.sh");
 const cutScriptPath = path.join(repoRoot, "scripts", "release-cut-tag.sh");
-const waitLatestScriptPath = path.join(
-  repoRoot,
-  "scripts",
-  "release-wait-latest.sh",
-);
+const waitLatestScriptPath = path.join(repoRoot, "scripts", "release-wait-latest.sh");
 const planScriptPath = path.join(repoRoot, "scripts", "release-plan.ts");
 const tsxPath = path.join(repoRoot, "node_modules", ".bin", "tsx");
 const tempRoots: string[] = [];
@@ -39,18 +31,16 @@ function testEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     GIT_AUTHOR_EMAIL: "release-test@example.com",
     GIT_COMMITTER_NAME: "Release Test",
     GIT_COMMITTER_EMAIL: "release-test@example.com",
-    GIT_CONFIG_COUNT: "1",
+    GIT_CONFIG_COUNT: "2",
     GIT_CONFIG_KEY_0: "tag.gpgSign",
     GIT_CONFIG_VALUE_0: "false",
+    GIT_CONFIG_KEY_1: "commit.gpgSign",
+    GIT_CONFIG_VALUE_1: "false",
     ...extra,
   });
 }
 
-function run(
-  cwd: string,
-  args: string[],
-  options: { allowFailure?: boolean } = {},
-): string {
+function run(cwd: string, args: string[], options: { allowFailure?: boolean } = {}): string {
   try {
     return execFileSync(args[0], args.slice(1), {
       cwd,
@@ -75,9 +65,7 @@ type Fixture = {
 };
 
 function createFixture(): Fixture {
-  const root = fs.mkdtempSync(
-    path.join(os.tmpdir(), "nemoclaw-release-latest-"),
-  );
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-release-latest-"));
   tempRoots.push(root);
   const remote = path.join(root, "remote.git");
   const work = path.join(root, "work");
@@ -107,12 +95,7 @@ function commit(fixture: Fixture, text: string): string {
   return run(fixture.work, ["git", "rev-parse", "HEAD"]).trim();
 }
 
-function pushTag(
-  fixture: Fixture,
-  tag: string,
-  target = "HEAD",
-  annotated = true,
-): void {
+function pushTag(fixture: Fixture, tag: string, target = "HEAD", annotated = true): void {
   const args = annotated
     ? ["git", "-c", "tag.gpgSign=false", "tag", "-a", tag, target, "-m", tag]
     : ["git", "-c", "tag.gpgSign=false", "tag", tag, target];
@@ -120,10 +103,7 @@ function pushTag(
   run(fixture.work, ["git", "push", "origin", `refs/tags/${tag}`]);
 }
 
-function runReleaseLatest(
-  fixture: Fixture,
-  releaseTag: string,
-): ReturnType<typeof spawnSync> {
+function runReleaseLatest(fixture: Fixture, releaseTag: string): ReturnType<typeof spawnSync> {
   return spawnSync("bash", [latestScriptPath], {
     cwd: fixture.work,
     encoding: "utf8",
@@ -144,11 +124,13 @@ function runReleaseLatestWithoutIdentity(
   fs.mkdirSync(home);
   fs.mkdirSync(xdgConfigHome);
   const env = baseEnv({
-    GIT_CONFIG_COUNT: "2",
+    GIT_CONFIG_COUNT: "3",
     GIT_CONFIG_KEY_0: "user.useConfigOnly",
     GIT_CONFIG_VALUE_0: "true",
     GIT_CONFIG_KEY_1: "tag.gpgSign",
     GIT_CONFIG_VALUE_1: "false",
+    GIT_CONFIG_KEY_2: "commit.gpgSign",
+    GIT_CONFIG_VALUE_2: "false",
     GITHUB_STEP_SUMMARY: fixture.summary,
     HOME: home,
     RELEASE_TAG: releaseTag,
@@ -180,13 +162,7 @@ function runScript(
 }
 
 function remoteCommit(fixture: Fixture, ref: string): string {
-  return run(fixture.root, [
-    "git",
-    "--git-dir",
-    fixture.remote,
-    "rev-parse",
-    `${ref}^{}`,
-  ]).trim();
+  return run(fixture.root, ["git", "--git-dir", fixture.remote, "rev-parse", `${ref}^{}`]).trim();
 }
 
 function readJson(filePath: string): any {
@@ -209,9 +185,7 @@ function createPlan(
   expect(plan.previousTag).toBe("v0.0.1");
   expect(plan.nextTag).toBe("v0.0.2");
   expect(plan.originMainCommit).toBe(releaseCommit);
-  expect(plan.confirmationPhrase).toBe(
-    `CONFIRM RELEASE v0.0.2 ${releaseCommit}`,
-  );
+  expect(plan.confirmationPhrase).toBe(`CONFIRM RELEASE v0.0.2 ${releaseCommit}`);
   return { plan, result };
 }
 
@@ -230,10 +204,7 @@ function cutFromPlan(
   ]);
 }
 
-function waitForLatest(
-  fixture: Fixture,
-  planPath: string,
-): ReturnType<typeof spawnSync> {
+function waitForLatest(fixture: Fixture, planPath: string): ReturnType<typeof spawnSync> {
   return runScript(fixture.work, [
     "bash",
     waitLatestScriptPath,
@@ -264,9 +235,7 @@ describe("release-latest-tag.sh", () => {
     expect(result.status).toBe(0);
     expect(remoteCommit(fixture, "refs/tags/latest")).toBe(releaseCommit);
     expect(remoteCommit(fixture, "refs/tags/lkg")).toBe(fixture.firstCommit);
-    expect(fs.readFileSync(fixture.summary, "utf8")).toContain(
-      "Not touched: `lkg`",
-    );
+    expect(fs.readFileSync(fixture.summary, "utf8")).toContain("Not touched: `lkg`");
   });
 
   it("configures a bot identity when promoting latest on a runner without git identity", () => {
@@ -280,12 +249,12 @@ describe("release-latest-tag.sh", () => {
 
     expect(result.status).toBe(0);
     expect(remoteCommit(fixture, "refs/tags/latest")).toBe(releaseCommit);
-    expect(
-      run(fixture.work, ["git", "config", "--local", "user.name"]).trim(),
-    ).toBe("github-actions[bot]");
-    expect(
-      run(fixture.work, ["git", "config", "--local", "user.email"]).trim(),
-    ).toBe("41898282+github-actions[bot]@users.noreply.github.com");
+    expect(run(fixture.work, ["git", "config", "--local", "user.name"]).trim()).toBe(
+      "github-actions[bot]",
+    );
+    expect(run(fixture.work, ["git", "config", "--local", "user.email"]).trim()).toBe(
+      "41898282+github-actions[bot]@users.noreply.github.com",
+    );
   });
 
   it("rejects non-semver tags", () => {
@@ -371,9 +340,7 @@ describe("release-latest-tag.sh", () => {
     const result = runReleaseLatest(fixture, "v0.0.1");
 
     expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain(
-      "is not reachable from refs/remotes/origin/main",
-    );
+    expect(result.stderr).toContain("is not reachable from refs/remotes/origin/main");
   });
 
   it("plans, cuts, promotes, and verifies a release from immutable plan data", () => {
@@ -388,9 +355,7 @@ describe("release-latest-tag.sh", () => {
 
     expect(cutResult.status).toBe(0);
     expect(remoteCommit(fixture, "refs/tags/v0.0.2")).toBe(releaseCommit);
-    expect(
-      readJson(path.join(fixture.root, "release", "cut-result.json")),
-    ).toMatchObject({
+    expect(readJson(path.join(fixture.root, "release", "cut-result.json"))).toMatchObject({
       tag: "v0.0.2",
       targetCommit: releaseCommit,
       latestTouched: false,
@@ -403,9 +368,7 @@ describe("release-latest-tag.sh", () => {
     const waitResult = waitForLatest(fixture, planPath);
 
     expect(waitResult.status).toBe(0);
-    expect(
-      readJson(path.join(fixture.root, "release", "latest-result.json")),
-    ).toMatchObject({
+    expect(readJson(path.join(fixture.root, "release", "latest-result.json"))).toMatchObject({
       tag: "v0.0.2",
       targetCommit: releaseCommit,
       latestPeeledCommit: releaseCommit,
@@ -421,11 +384,7 @@ describe("release-latest-tag.sh", () => {
     const planPath = path.join(fixture.root, "release", "plan.json");
     const { plan } = createPlan(fixture, planPath, releaseCommit);
     const tampered = { ...plan, forbiddenOperations: [] };
-    fs.writeFileSync(
-      planPath,
-      `${JSON.stringify(tampered, null, 2)}\n`,
-      "utf8",
-    );
+    fs.writeFileSync(planPath, `${JSON.stringify(tampered, null, 2)}\n`, "utf8");
 
     const cutResult = cutFromPlan(fixture, planPath, plan.confirmationPhrase);
 
@@ -445,17 +404,13 @@ describe("release-latest-tag.sh", () => {
       tag: "lkg",
     });
     expect(plan.lkgBefore.peeledSha).toBeUndefined();
-    expect(cutFromPlan(fixture, planPath, plan.confirmationPhrase).status).toBe(
-      0,
-    );
+    expect(cutFromPlan(fixture, planPath, plan.confirmationPhrase).status).toBe(0);
     expect(runReleaseLatest(fixture, "v0.0.2").status).toBe(0);
 
     const waitResult = waitForLatest(fixture, planPath);
 
     expect(waitResult.status).toBe(0);
-    expect(
-      readJson(path.join(fixture.root, "release", "latest-result.json")),
-    ).toMatchObject({
+    expect(readJson(path.join(fixture.root, "release", "latest-result.json"))).toMatchObject({
       tag: "v0.0.2",
       targetCommit: releaseCommit,
       lkgPeeledCommitBefore: fixture.firstCommit,
@@ -470,18 +425,14 @@ describe("release-latest-tag.sh", () => {
     const planPath = path.join(fixture.root, "release", "plan.json");
     const { plan } = createPlan(fixture, planPath, releaseCommit);
     expect(plan.lkgBefore).toBeNull();
-    expect(cutFromPlan(fixture, planPath, plan.confirmationPhrase).status).toBe(
-      0,
-    );
+    expect(cutFromPlan(fixture, planPath, plan.confirmationPhrase).status).toBe(0);
     expect(runReleaseLatest(fixture, "v0.0.2").status).toBe(0);
     pushTag(fixture, "lkg", fixture.firstCommit);
 
     const waitResult = waitForLatest(fixture, planPath);
 
     expect(waitResult.status).not.toBe(0);
-    expect(waitResult.stderr).toContain(
-      "lkg was created after the release plan was generated",
-    );
+    expect(waitResult.stderr).toContain("lkg was created after the release plan was generated");
   });
 
   it("extracts only squash-merge PR numbers from release notes compare commits", () => {

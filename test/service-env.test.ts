@@ -20,10 +20,7 @@ import { join } from "node:path";
 import { resolveOpenshell } from "../dist/lib/adapters/openshell/resolve";
 
 const NEMOCLAW_START_SCRIPT = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
-const RC_CLEAN_SCRIPT = join(
-  import.meta.dirname,
-  "../scripts/lib/clean_runtime_shell_env_shim.py",
-);
+const RC_CLEAN_SCRIPT = join(import.meta.dirname, "../scripts/lib/clean_runtime_shell_env_shim.py");
 
 function rcShimWrapperHeader(): string {
   return `export NEMOCLAW_RC_CLEAN_SCRIPT=${JSON.stringify(RC_CLEAN_SCRIPT)}`;
@@ -228,10 +225,9 @@ describe("service environment", () => {
     });
 
     it("proxy-env.sh includes GIT_SSL_CAINFO when set", () => {
-      const fakeDataDir = join(tmpdir(), `nemoclaw-git-ssl-test-${process.pid}`);
+      const fakeDataDir = mkdtempSync(join(tmpdir(), "nemoclaw-git-ssl-test-"));
       const fakeCaBundle = join(fakeDataDir, "ca-bundle.pem");
-      execFileSync("mkdir", ["-p", fakeDataDir]);
-      const tmpFile = join(tmpdir(), `nemoclaw-git-ssl-env-${process.pid}.sh`);
+      const tmpFile = join(fakeDataDir, "git-ssl-env.sh");
       try {
         const persistBlock = extractRuntimeShellEnvSnippet();
         // Create a fake CA bundle so the -f check passes
@@ -265,7 +261,7 @@ describe("service environment", () => {
         expect(envFile).toContain(fakeCaBundle);
       } finally {
         try {
-          execFileSync("rm", ["-rf", fakeDataDir, tmpFile]);
+          execFileSync("rm", ["-rf", fakeDataDir]);
         } catch {
           /* ignore */
         }
@@ -318,10 +314,7 @@ describe("service environment", () => {
         throw new Error("Failed to extract _TOOL_REDIRECTS block from scripts/nemoclaw-start.sh");
       }
       const block = `${src.slice(start, end)}done`;
-      const tmpFile = join(
-        tmpdir(),
-        `nemoclaw-tool-redirects-npm-online-${process.pid}.sh`,
-      );
+      const tmpFile = join(tmpdir(), `nemoclaw-tool-redirects-npm-online-${process.pid}.sh`);
       try {
         writeFileSync(
           tmpFile,
@@ -366,10 +359,7 @@ describe("service environment", () => {
           '_PROXY_URL="http://${PROXY_HOST}:${PROXY_PORT}"',
           '_NO_PROXY_VAL="localhost,127.0.0.1,::1,${PROXY_HOST}"',
           'export OPENCLAW_GATEWAY_TOKEN="probe-token"',
-          persistBlock.replaceAll(
-            "/tmp/nemoclaw-proxy-env.sh",
-            `${fakeDataDir}/proxy-env.sh`,
-          ),
+          persistBlock.replaceAll("/tmp/nemoclaw-proxy-env.sh", `${fakeDataDir}/proxy-env.sh`),
           `env -i HOME=/tmp bash --noprofile --norc -c 'source ${fakeDataDir}/proxy-env.sh; printf "%s\\n" "$npm_config_offline" "$NPM_CONFIG_OFFLINE"'`,
         ].join("\n");
         writeFileSync(tmpFile, wrapper, { mode: 0o700 });
@@ -1070,9 +1060,8 @@ describe("service environment", () => {
     });
 
     it("emit_sandbox_sourced_file prevents symlink-following attack on proxy-env.sh", () => {
-      const fakeDataDir = join(tmpdir(), `nemoclaw-symlink-test-${process.pid}`);
-      execFileSync("mkdir", ["-p", fakeDataDir]);
-      const tmpFile = join(tmpdir(), `nemoclaw-symlink-write-test-${process.pid}.sh`);
+      const fakeDataDir = mkdtempSync(join(tmpdir(), "nemoclaw-symlink-test-"));
+      const tmpFile = join(fakeDataDir, "symlink-write-test.sh");
       try {
         const persistBlock = extractRuntimeShellEnvSnippet();
         const sensitiveFile = join(fakeDataDir, "sensitive");
@@ -1110,8 +1099,7 @@ describe("service environment", () => {
     });
 
     it("[simulation] sourcing proxy-env.sh overrides narrow NO_PROXY and no_proxy", () => {
-      const fakeDataDir = join(tmpdir(), `nemoclaw-bashi-test-${process.pid}`);
-      execFileSync("mkdir", ["-p", fakeDataDir]);
+      const fakeDataDir = mkdtempSync(join(tmpdir(), "nemoclaw-bashi-test-"));
       try {
         const envContent = [
           'export HTTP_PROXY="http://10.200.0.1:3128"',
@@ -1234,6 +1222,5 @@ describe("service environment", () => {
         }
       }
     });
-
   });
 });

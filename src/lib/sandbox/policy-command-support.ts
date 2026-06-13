@@ -7,11 +7,13 @@ import { dryRunFlag, forceFlag, yesFlag } from "../cli/common-flags";
 const sandboxNameArg = Args.string({
   name: "sandbox",
   description: "Sandbox name",
+  ignoreStdin: true,
   required: true,
 });
 const presetArg = Args.string({
   name: "preset",
   description: "Policy preset name",
+  ignoreStdin: true,
   required: false,
 });
 

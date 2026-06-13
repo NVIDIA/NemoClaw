@@ -15,9 +15,10 @@ import {
 
 type Capture = { url: string; init?: { method?: string; headers?: Record<string, string> } };
 
-function makeFetch(
-  responder: (req: Capture) => { ok: boolean; status: number; body: string },
-): { fetch: FetchLike; calls: Capture[] } {
+function makeFetch(responder: (req: Capture) => { ok: boolean; status: number; body: string }): {
+  fetch: FetchLike;
+  calls: Capture[];
+} {
   const calls: Capture[] = [];
   const fetch: FetchLike = async (url, init) => {
     const capture = { url, init };
@@ -50,7 +51,10 @@ describe("fetchWechatQrSession", () => {
     const { fetch, calls } = makeFetch(() => ({
       ok: true,
       status: 200,
-      body: JSON.stringify({ qrcode: "qrcode-cookie", qrcode_img_content: "https://example.com/qr" }),
+      body: JSON.stringify({
+        qrcode: "qrcode-cookie",
+        qrcode_img_content: "https://example.com/qr",
+      }),
     }));
 
     const session = await fetchWechatQrSession({ fetch });
@@ -107,6 +111,31 @@ describe("pollWechatQrStatus", () => {
     expect(result.ilink_bot_id).toBe("bot-123");
     expect(result.baseurl).toBe("https://idc-7.weixin.qq.com");
     expect(result.ilink_user_id).toBe("user-abc");
+  });
+
+  it("does not leak the secret-ish qrcode token or query parameter if debug logging is enabled", async () => {
+    const qrToken = "secret-qr-cookie";
+    const debugEvents: string[] = [];
+    const { fetch, calls } = makeFetch(() => ({
+      ok: true,
+      status: 200,
+      body: JSON.stringify({ status: "wait" }),
+    }));
+
+    await pollWechatQrStatus({
+      baseUrl: "https://ilinkai.weixin.qq.com",
+      qrcode: qrToken,
+      fetch,
+      onDebug: (event) => debugEvents.push(event),
+    });
+
+    expect(calls[0]?.url).toContain(`qrcode=${qrToken}`);
+    const debugText = debugEvents.join("\n");
+    expect(debugText).toContain(
+      "poll request → https://ilinkai.weixin.qq.com/ilink/bot/get_qrcode_status",
+    );
+    expect(debugText).not.toContain(qrToken);
+    expect(debugText).not.toContain("qrcode=");
   });
 
   it("returns 'wait' on transport-level failure so the orchestrator simply retries", async () => {

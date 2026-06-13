@@ -346,14 +346,15 @@ reviews:
         These files control shields down/up, config mutability, audit
         trail, and auto-restore timer.
 
-        **E2E test recommendation:**
-        - `vm-driver-privileged-exec-routing-e2e` — direct Docker/VM privileged
-          exec routing for shields/config mutations
-        - `shields-config-e2e` — shields lifecycle + config get/set/rotate
+        **Test recommendation:**
+        - `test/vm-driver-privileged-exec-routing.test.ts` — CLI Vitest
+          regression for direct Docker/VM privileged exec routing used by
+          shields/config mutations
+        - `shields-config-e2e` — live shields lifecycle + config get/set/rotate
 
-        To run selectively:
+        To run the live E2E selectively:
         ```
-        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=vm-driver-privileged-exec-routing-e2e,shields-config-e2e
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=shields-config-e2e
         ```
 
     - path: "src/lib/sandbox/privileged-exec.ts"
@@ -362,15 +363,15 @@ reviews:
         sandbox writes. Changes can break shields up/down and config set on
         Docker Desktop VM-driver sandboxes.
 
-        **E2E test recommendation:**
-        - `vm-driver-privileged-exec-routing-e2e` — fake Docker registry
+        **Test recommendation:**
+        - `test/vm-driver-privileged-exec-routing.test.ts` — CLI Vitest
           coverage for VM/Docker direct-container routing and prefix
           collision handling
         - `shields-config-e2e` — live shields lifecycle + config get/set/rotate
 
-        To run selectively:
+        To run the live E2E selectively:
         ```
-        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=vm-driver-privileged-exec-routing-e2e,shields-config-e2e
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=shields-config-e2e
         ```
 
     - path: "src/lib/sandbox/config.ts"
@@ -379,15 +380,16 @@ reviews:
         config writes, hash recomputation, or privileged exec routing affect
         Docker/VM sandboxes.
 
-        **E2E test recommendation:**
-        - `vm-driver-privileged-exec-routing-e2e` — direct privileged exec
-          routing for host-side config mutation
+        **Test recommendation:**
+        - `test/vm-driver-privileged-exec-routing.test.ts` — CLI Vitest
+          coverage for direct privileged exec routing used by host-side
+          config mutation
         - `shields-config-e2e` — live config get/set/rotate while shields
           transitions are exercised
 
-        To run selectively:
+        To run the live E2E selectively:
         ```
-        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=vm-driver-privileged-exec-routing-e2e,shields-config-e2e
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=shields-config-e2e
         ```
 
     - path: "agents/hermes/**"
@@ -619,6 +621,33 @@ reviews:
         gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=cloud-inference-e2e
         ```
 
+    - path: "test/e2e/test-cron-preflight-inference-local-e2e.sh"
+      instructions: |
+        This script onboards a sandbox against the managed cloud
+        inference provider, then loads OpenClaw's cron isolated-agent
+        preflight runtime directly from the in-sandbox dist and calls
+        `preflightCronModelProvider` against the onboarded
+        `inference.local` provider/model, asserting the result reports
+        `status: "available"` and never `EAI_AGAIN` or the
+        "local provider endpoint is not reachable" message.
+
+        Exercises the Dockerfile fetch-guard patch that opts the cron
+        model-provider preflight into trusted env-proxy mode so the
+        managed inference hostname (`inference.local`) routes through
+        the OpenShell L7 proxy instead of failing pinned DNS lookup.
+        The scheduler boundary is intentionally bypassed: the cron CLI
+        surfaces require `operator.admin` scope, which the in-sandbox
+        auto-pair approval sweep deliberately omits.
+
+        **E2E test recommendation:**
+        - `cron-preflight-inference-local-e2e` — direct cron preflight
+          runtime probe via OpenShell L7 proxy
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=cron-preflight-inference-local-e2e
+        ```
+
     - path: "test/e2e/test-openclaw-inference-switch.sh"
       instructions: |
         This script validates OpenClaw model/provider switching with
@@ -791,6 +820,29 @@ reviews:
 
     - path: "src/commands/sandbox/agents/**"
       instructions: *e2e-sessions-agents-cli
+
+    - path: "test/e2e/test-jetson-nvmap-gpu.sh"
+      instructions: &e2e-jetson-nvmap |
+        This script is the reporter-workflow E2E for #4231: on a Jetson Orin
+        host it onboards with GPU, inspects the sandbox user's groups and
+        /dev/nvmap, runs the cuInit(0) CUDA proof inside the sandbox, and
+        asserts `nemoclaw status` reports `(CUDA verified)`. It validates that
+        the Jetson Docker GPU recreate grants the sandbox user the host group
+        owning /dev/nvmap so CUDA can initialize. Invisible to unit tests
+        because it needs real Tegra device nodes and a live sandbox.
+
+        **E2E test recommendation:**
+        - `gpu-jetson-nvmap-e2e` — Jetson /dev/nvmap CUDA usability + status
+          proof (Jetson-gated; needs a Jetson/Tegra GPU runner with
+          `vars.JETSON_E2E_ENABLED=true`)
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=gpu-jetson-nvmap-e2e
+        ```
+
+    - path: "src/lib/onboard/docker-gpu-patch.ts"
+      instructions: *e2e-jetson-nvmap
 
     - path: ".github/workflows/nightly-e2e.yaml"
       instructions: |

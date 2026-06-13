@@ -3,7 +3,10 @@
 
 import { describe, expect, it } from "vitest";
 
-import { createBuiltInChannelManifestRegistry } from "../channels";
+import {
+  createBuiltInChannelManifestRegistry,
+  createBuiltInRenderTemplateResolver,
+} from "../channels";
 import { createBuiltInMessagingHookRegistry, MessagingHookRegistry } from "../hooks";
 import {
   type ChannelManifest,
@@ -23,7 +26,7 @@ const TEST_CREDENTIALS: Readonly<Record<string, string>> = {
 const TEST_WECHAT_LOGIN = {
   token: "test-wechat-token",
   accountId: "test-wechat-account",
-  baseUrl: "https://ilinkai.wechat.example",
+  baseUrl: "https://ilinkai.wechat.com",
   userId: "test-wechat-user",
 } as const;
 
@@ -71,6 +74,7 @@ function compiler(): ManifestCompiler {
         },
       },
     }),
+    createBuiltInRenderTemplateResolver(),
   );
 }
 
@@ -95,9 +99,7 @@ async function withEnv<T>(
   values: Readonly<Record<string, string | undefined>>,
   run: () => Promise<T>,
 ): Promise<T> {
-  const previous = Object.fromEntries(
-    Object.keys(values).map((key) => [key, process.env[key]]),
-  );
+  const previous = Object.fromEntries(Object.keys(values).map((key) => [key, process.env[key]]));
   try {
     for (const [key, value] of Object.entries(values)) {
       if (value === undefined) {
@@ -183,18 +185,39 @@ describe("ManifestCompiler", () => {
         source: "manifest",
       },
     ]);
-    expect(plan.agentRender.map((render) => `${render.channelId}:${render.kind}`)).toEqual([
-      "telegram:json-fragment",
-      "telegram:json-fragment",
-      "discord:json-fragment",
-      "discord:json-fragment",
-      "slack:json-fragment",
-      "whatsapp:json-fragment",
+    expect(plan.agentRender.map((render) => `${render.channelId}:${render.renderId}`)).toEqual([
+      "telegram:telegram-openclaw-channel",
+      "telegram:telegram-openclaw-groups",
+      "telegram:telegram-openclaw-plugin",
+      "discord:discord-openclaw-channel",
+      "discord:discord-openclaw-plugin",
+      "wechat:wechat-openclaw-plugin",
+      "slack:slack-openclaw-channel",
+      "slack:slack-openclaw-plugin",
+      "whatsapp:whatsapp-openclaw-channel",
+      "whatsapp:whatsapp-openclaw-plugin",
     ]);
-    expect(JSON.stringify(plan.agentRender)).toContain(
-      "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
+    expect(plan.agentRender.every((render) => render.handler === "common.staticOutputs")).toBe(
+      true,
     );
-    expect(plan.buildSteps).toEqual([
+    expect(JSON.stringify(plan.agentRender)).toContain("openshell:resolve:env:TELEGRAM_BOT_TOKEN");
+    expect(plan.buildSteps.map(({ value: _value, ...step }) => step)).toEqual([
+      {
+        channelId: "discord",
+        kind: "package-install",
+        hookId: "discord-openclaw-package-install",
+        handler: "common.staticOutputs",
+        outputId: "openclawPluginPackage",
+        required: true,
+      },
+      {
+        channelId: "wechat",
+        kind: "package-install",
+        hookId: "wechat-openclaw-package-install",
+        handler: "common.staticOutputs",
+        outputId: "openclawPluginPackage",
+        required: true,
+      },
       {
         channelId: "wechat",
         kind: "build-file",
@@ -219,7 +242,45 @@ describe("ManifestCompiler", () => {
         outputId: "openclawConfigPatch",
         required: true,
       },
+      {
+        channelId: "slack",
+        kind: "package-install",
+        hookId: "slack-openclaw-package-install",
+        handler: "common.staticOutputs",
+        outputId: "openclawPluginPackage",
+        required: true,
+      },
+      {
+        channelId: "whatsapp",
+        kind: "package-install",
+        hookId: "whatsapp-openclaw-package-install",
+        handler: "common.staticOutputs",
+        outputId: "openclawPluginPackage",
+        required: true,
+      },
     ]);
+    expect(plan.buildSteps).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "package-install",
+          value: {
+            manager: "openclaw-plugin",
+            spec: "npm:@openclaw/discord@{{openclaw.version}}",
+            pin: true,
+          },
+        }),
+        expect.objectContaining({
+          channelId: "wechat",
+          kind: "package-install",
+          value: {
+            manager: "openclaw-plugin",
+            spec: "npm:@tencent-weixin/openclaw-weixin@2.4.3",
+            pin: true,
+          },
+        }),
+      ]),
+    );
+    expect(plan.buildSteps.every((step) => step.value !== undefined)).toBe(true);
     expect(plan.stateUpdates).toContainEqual({
       channelId: "wechat",
       kind: "rebuild-hydration",
@@ -237,7 +298,7 @@ describe("ManifestCompiler", () => {
       plan.agentRender.find(
         (render) => render.channelId === "telegram" && render.kind === "json-fragment",
       )?.templateRefs,
-    ).toEqual(expect.arrayContaining(["proxyUrl", "allowedIds.telegram.values"]));
+    ).toEqual([]);
   });
 
   it("compiles Hermes render and manifest-owned WeChat policy intent", async () => {
@@ -273,9 +334,13 @@ describe("ManifestCompiler", () => {
       "telegram:~/.hermes/config.yaml",
       "discord:~/.hermes/.env",
       "discord:~/.hermes/config.yaml",
+      "discord:~/.hermes/config.yaml",
       "wechat:~/.hermes/.env",
+      "wechat:~/.hermes/config.yaml",
       "slack:~/.hermes/.env",
+      "slack:~/.hermes/config.yaml",
       "whatsapp:~/.hermes/.env",
+      "whatsapp:~/.hermes/config.yaml",
     ]);
     expect(JSON.stringify(plan.agentRender)).toContain(
       "WEIXIN_TOKEN=openshell:resolve:env:WECHAT_BOT_TOKEN",
@@ -289,6 +354,91 @@ describe("ManifestCompiler", () => {
       kind: "config",
       value: "test-wechat-account",
     });
+  });
+
+  it("rejects line feeds in Slack Hermes env render values", async () => {
+    for (const [envKey, value] of [
+      ["SLACK_ALLOWED_USERS", "U123\nEVIL=1"],
+      ["SLACK_ALLOWED_CHANNELS", "C123\nEVIL=1"],
+    ] as const) {
+      await expect(
+        withEnv(
+          {
+            SLACK_BOT_TOKEN: "xoxb-test-slack-token",
+            SLACK_APP_TOKEN: "xapp-test-slack-token",
+            [envKey]: value,
+          },
+          () =>
+            compiler().compile({
+              sandboxName: "demo",
+              agent: "hermes",
+              workflow: "rebuild",
+              isInteractive: false,
+              configuredChannels: ["slack"],
+              credentialAvailability: {
+                SLACK_BOT_TOKEN: true,
+                SLACK_APP_TOKEN: true,
+              },
+            }),
+        ),
+      ).rejects.toThrow(/line breaks/);
+    }
+  });
+
+  it("rejects unsafe WeChat Hermes env render values", async () => {
+    const cases: Array<readonly [string, string]> = [
+      ["WECHAT_ACCOUNT_ID", "wechat-account\nEVIL=1"],
+      ["WECHAT_BASE_URL", "https://ilinkai.wechat.com\nEVIL=1"],
+      ["WECHAT_ALLOWED_IDS", "friend-one\nEVIL=1"],
+    ];
+
+    for (const [envKey, value] of cases) {
+      await expect(
+        withEnv(
+          {
+            WECHAT_ACCOUNT_ID: "wechat-account",
+            WECHAT_BASE_URL: "https://ilinkai.wechat.com",
+            WECHAT_ALLOWED_IDS: "friend-one",
+            [envKey]: value,
+          },
+          () =>
+            compiler().compile({
+              sandboxName: "demo",
+              agent: "hermes",
+              workflow: "rebuild",
+              isInteractive: false,
+              configuredChannels: ["wechat"],
+              credentialAvailability: {
+                WECHAT_BOT_TOKEN: true,
+              },
+            }),
+        ),
+      ).rejects.toThrow(/line breaks/);
+    }
+  });
+
+  it("rejects non-HTTPS or non-iLink WeChat baseUrl values", async () => {
+    for (const baseUrl of ["http://ilinkai.wechat.com", "https://example.com"] as const) {
+      await expect(
+        withEnv(
+          {
+            WECHAT_ACCOUNT_ID: "wechat-account",
+            WECHAT_BASE_URL: baseUrl,
+          },
+          () =>
+            compiler().compile({
+              sandboxName: "demo",
+              agent: "hermes",
+              workflow: "rebuild",
+              isInteractive: false,
+              configuredChannels: ["wechat"],
+              credentialAvailability: {
+                WECHAT_BOT_TOKEN: true,
+              },
+            }),
+        ),
+      ).rejects.toThrow(/WeChat baseUrl/);
+    }
   });
 
   it("does not activate a requested channel while any required manifest input is missing", async () => {
@@ -316,7 +466,7 @@ describe("ManifestCompiler", () => {
     });
     expect(plan.disabledChannels).toEqual(["wechat"]);
     expect(plan.networkPolicy.entries.map((entry) => entry.channelId)).toEqual(["wechat"]);
-    expect(plan.agentRender.map((render) => render.channelId)).toEqual(["wechat"]);
+    expect(plan.agentRender.map((render) => render.channelId)).toEqual(["wechat", "wechat"]);
     expect(plan.healthChecks.map((entry) => entry.channelId)).toEqual(["wechat"]);
   });
 
@@ -346,7 +496,7 @@ describe("ManifestCompiler", () => {
     });
     expect(wechat?.inputs.find((input) => input.inputId === "baseUrl")).toMatchObject({
       kind: "config",
-      value: "https://ilinkai.wechat.example",
+      value: "https://ilinkai.wechat.com",
     });
   });
 
@@ -368,6 +518,7 @@ describe("ManifestCompiler", () => {
     const plan = await new ManifestCompiler(
       createBuiltInChannelManifestRegistry(),
       hooks,
+      createBuiltInRenderTemplateResolver(),
     ).compile({
       sandboxName: "demo",
       agent: "openclaw",
@@ -390,16 +541,9 @@ describe("ManifestCompiler", () => {
       "telegram-config-prompt",
       "telegram-get-me-reachability",
     ]);
-    expect(plan.credentialBindings.map((binding) => binding.channelId)).toEqual([
-      "telegram",
-    ]);
-    expect(plan.networkPolicy.entries.map((entry) => entry.channelId)).toEqual([
-      "telegram",
-    ]);
-    expect(plan.agentRender.map((render) => render.channelId)).toEqual([
-      "telegram",
-      "telegram",
-    ]);
+    expect(plan.credentialBindings.map((binding) => binding.channelId)).toEqual(["telegram"]);
+    expect(plan.networkPolicy.entries.map((entry) => entry.channelId)).toEqual(["telegram"]);
+    expect(plan.agentRender.map((render) => render.channelId)).toEqual(["telegram", "telegram"]);
     expect(plan.buildSteps).toEqual([]);
     expect(plan.stateUpdates.map((entry) => entry.channelId)).toEqual([
       "telegram",
@@ -449,7 +593,11 @@ describe("ManifestCompiler", () => {
         TELEGRAM_BOT_TOKEN: "123456:raw-telegram-token",
       },
       () =>
-        new ManifestCompiler(createBuiltInChannelManifestRegistry(), hooks).compile({
+        new ManifestCompiler(
+          createBuiltInChannelManifestRegistry(),
+          hooks,
+          createBuiltInRenderTemplateResolver(),
+        ).compile({
           sandboxName: "demo",
           agent: "openclaw",
           workflow: "onboard",
@@ -503,6 +651,7 @@ describe("ManifestCompiler", () => {
     const plan = await new ManifestCompiler(
       createBuiltInChannelManifestRegistry(),
       hooks,
+      createBuiltInRenderTemplateResolver(),
     ).compile({
       sandboxName: "demo",
       agent: "openclaw",
@@ -536,11 +685,15 @@ describe("ManifestCompiler", () => {
           configuredChannels: ["telegram"],
         });
 
-        expect(plan.channels[0]?.inputs.find((input) => input.inputId === "botToken")).toMatchObject({
+        expect(
+          plan.channels[0]?.inputs.find((input) => input.inputId === "botToken"),
+        ).toMatchObject({
           kind: "secret",
           credentialAvailable: true,
         });
-        expect(plan.channels[0]?.inputs.find((input) => input.inputId === "allowedIds")).toMatchObject({
+        expect(
+          plan.channels[0]?.inputs.find((input) => input.inputId === "allowedIds"),
+        ).toMatchObject({
           kind: "config",
           value: "123456789",
         });
@@ -603,16 +756,9 @@ describe("ManifestCompiler", () => {
       disabled: true,
     });
     expect(plan.disabledChannels).toEqual(["telegram"]);
-    expect(plan.credentialBindings.map((binding) => binding.channelId)).toEqual([
-      "telegram",
-    ]);
-    expect(plan.networkPolicy.entries.map((entry) => entry.channelId)).toEqual([
-      "telegram",
-    ]);
-    expect(plan.agentRender.map((render) => render.channelId)).toEqual([
-      "telegram",
-      "telegram",
-    ]);
+    expect(plan.credentialBindings.map((binding) => binding.channelId)).toEqual(["telegram"]);
+    expect(plan.networkPolicy.entries.map((entry) => entry.channelId)).toEqual(["telegram"]);
+    expect(plan.agentRender.map((render) => render.channelId)).toEqual(["telegram", "telegram"]);
     expect(plan.buildSteps).toEqual([]);
     expect(plan.stateUpdates.map((entry) => entry.channelId)).toEqual([
       "telegram",
@@ -762,10 +908,7 @@ describe("ManifestCompiler", () => {
         handler: "matrix.probeHost",
       }),
     );
-    expect(hookCalls).toEqual([
-      "enroll",
-      "reachability:!room:example.com",
-    ]);
+    expect(hookCalls).toEqual(["enroll", "reachability:!room:example.com"]);
     expect(JSON.stringify(plan)).not.toContain("raw-matrix-token");
   });
 });

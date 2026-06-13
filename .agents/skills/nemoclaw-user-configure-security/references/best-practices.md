@@ -2,7 +2,7 @@
 
 import { AgentOnly } from "../_components/AgentGuide";
 
-NemoClaw ships with deny-by-default security controls across four layers: network, filesystem, process, and inference.
+NemoClaw ships with deny-by-default security controls across five layers: network, filesystem, process, gateway authentication, and inference.
 You can tune every control, but each change shifts the risk profile.
 This page documents each configurable control, its default, what it protects, the concrete risk of relaxing it, and a recommendation for common use cases.
 
@@ -10,7 +10,7 @@ For background on how the layers fit together, refer to How It Works (use the `n
 
 ## Protection Layers at a Glance
 
-NemoClaw enforces security at four layers.
+NemoClaw enforces security at five layers.
 NemoClaw locks some controls when it creates the sandbox and requires a restart to change them.
 You can hot-reload others while the sandbox runs.
 
@@ -36,6 +36,7 @@ flowchart TB
             subgraph GW["Gateway: the gatekeeper"]
                 direction LR
                 NET["🌐 Network Layer<br/>Controls where the agent can connect"]
+                AUTH["🔐 Gateway Authentication Layer<br/>Controls which devices and clients can reach the gateway"]
                 INF["🧠 Inference Layer<br/>Controls which AI models the agent can use"]
             end
         end
@@ -54,7 +55,7 @@ flowchart TB
     classDef operator fill:#fff,stroke:#76b900,color:#1a1a1a,stroke-width:2px,font-weight:bold
 
     class AGENT agent
-    class PROC,FS locked
+    class PROC,FS,AUTH locked
     class NET,INF hot
     class OUTSIDE external
     class YOU operator
@@ -70,6 +71,7 @@ flowchart TB
 | Network | Unauthorized outbound connections and data exfiltration. | OpenShell gateway | Yes. Use `openshell policy set` or operator approval. |
 | Filesystem | System binary tampering, credential theft, config manipulation. | Landlock LSM + container mounts | Landlock layout: no. Requires sandbox re-creation. Use host-side NemoClaw commands for durable config changes. |
 | Process | Privilege escalation, fork bombs, syscall abuse. | Container runtime (Docker/K8s `securityContext`) | No. Requires sandbox re-creation. |
+| Gateway Authentication | Unauthorized devices or clients reaching the gateway and its dashboard. | OpenShell gateway | No. Set at image build / onboarding time. |
 | Inference | Credential exposure, unauthorized model access, cost overruns. | OpenShell gateway | Yes. Use the NemoClaw inference switching command. |
 
 ## Network Controls
@@ -234,11 +236,11 @@ Messaging sessions such as WhatsApp pairing can remain mutable by design so they
 
 ### Writable Paths
 
-The agent has read-write access to `/sandbox`, `/tmp`, and `/dev/null`.
+The agent has read-write access to `/sandbox`, `/tmp`, `/dev/null`, and `/dev/pts`.
 
 | Aspect | Detail |
 |---|---|
-| Default | `/sandbox` (agent workspace), `/tmp` (temporary files), `/dev/null`. |
+| Default | `/sandbox` (agent workspace), `/tmp` (temporary files), `/dev/null`, and `/dev/pts` (the devpts pseudo-terminal directory, required so PTY-based tools such as `tmux`, `script`, and interactive shells can allocate a terminal). |
 | What you can change | Add additional writable paths in `filesystem_policy.read_write`. |
 | Risk if relaxed | Each additional writable path expands the agent's ability to persist data and potentially modify system behavior. Adding `/var` lets the agent write to log directories. Adding `/home` gives access to other user directories. |
 | Recommendation | Keep writable paths to `/sandbox` and `/tmp`. If the agent needs a persistent working directory, create a subdirectory under `/sandbox`. |
@@ -276,7 +278,7 @@ This is opt-in because such hosts are common (many cloud VMs, Docker Desktop, WS
 The check covers the agent process tree only — a `nemoclaw connect` shell is spawned by the container runtime outside that tree and is not affected (tracked in [NVIDIA/OpenShell#1452](https://github.com/NVIDIA/OpenShell/issues/1452)).
 
 <AgentOnly variant="openclaw">
-For additional protection, pass `--cap-drop=ALL` with `docker run` or Compose. Refer to Sandbox Hardening.
+For additional protection, pass `--cap-drop=ALL` with `docker run` or Compose. Refer to Sandbox Hardening (use the `nemoclaw-user-deploy-remote` skill).
 </AgentOnly>
 
 | Aspect | Detail |
@@ -320,6 +322,21 @@ This behavior is best effort: if the container runtime restricts `ulimit` modifi
 | What you can change | Increase or decrease the limit with `--ulimit nproc=N:N` in `docker run` or the `ulimits` section in Compose. The runtime-level ulimit takes precedence over the entrypoint's setting. |
 | Risk if relaxed | Removing or raising the limit makes the sandbox vulnerable to fork-bomb attacks, where a runaway process spawns children until the host runs out of resources. If the entrypoint cannot set the limit (logs `[SECURITY] Could not set soft/hard nproc limit`), the container runs without process limits. |
 | Recommendation | Keep the default at 512. If the agent runs workloads that spawn many child processes (such as parallel test runners), increase to 1024 and monitor host resource usage. If the entrypoint logs a warning about ulimit restrictions, set the limit through the container runtime instead. |
+
+### Open File Descriptor Limit
+
+An open file descriptor limit caps the number of files, sockets, and pipes the
+sandbox user can hold open at once. The entrypoint sets both soft and hard
+limits using `ulimit -n 65536`. This is best-effort: if the container runtime
+restricts `ulimit` modification, the entrypoint logs a security warning and
+continues without the limit.
+
+| Aspect | Detail |
+|---|---|
+| Default | 65536 open files, soft and hard (`ulimit -n 65536`), best-effort. |
+| What you can change | Increase or decrease the limit with `--ulimit nofile=N:N` in `docker run` or the `ulimits` section in Compose. The runtime-level ulimit takes precedence over the entrypoint's setting. |
+| Risk if relaxed | Without this cap the sandbox inherits the Docker daemon default (`nofile` ~1048576). A runaway or hostile process can then open file descriptors until it exhausts them — a denial-of-service that can starve the gateway, the agent, or the host of file handles. If the entrypoint cannot set the limit (logs `[SECURITY] Could not set soft/hard nofile limit`), the container runs without a file-descriptor cap. Ref [#4527](https://github.com/NVIDIA/NemoClaw/issues/4527). |
+| Recommendation | Keep the default at 65536. If the agent legitimately keeps many connections or files open, raise it deliberately and monitor host file-descriptor usage. If the entrypoint logs a warning about ulimit restrictions, set the limit through the container runtime instead. |
 
 ### Non-Root User
 
@@ -579,7 +596,7 @@ The following patterns weaken security without providing meaningful benefit.
 - Customize the Network Policy (use the `nemoclaw-user-manage-policy` skill) for static and dynamic policy changes.
 - Approve or Deny Network Requests (use the `nemoclaw-user-manage-policy` skill) for the operator approval flow.
 <AgentOnly variant="openclaw">
-- Sandbox Hardening for container-level security measures.
+- Sandbox Hardening (use the `nemoclaw-user-deploy-remote` skill) for container-level security measures.
 </AgentOnly>
 - Inference Options (use the `nemoclaw-user-configure-inference` skill) for provider configuration details.
 - How It Works (use the `nemoclaw-user-overview` skill) for the protection layer architecture.

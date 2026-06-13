@@ -78,9 +78,12 @@ export function createValidationRecoveryPromptHelpers(
       );
       console.log("  ⚠️  Do NOT paste your API key here — use the options below:");
       const choice = (
-        await deps.prompt("  Options: retry (re-enter key), back (change provider), exit [retry]: ", {
-          secret: true,
-        })
+        await deps.prompt(
+          "  Options: retry (re-enter key), back (change provider), exit [retry]: ",
+          {
+            secret: true,
+          },
+        )
       )
         .trim()
         .toLowerCase();
@@ -94,7 +97,7 @@ export function createValidationRecoveryPromptHelpers(
         // Regex fallback: base64-safe token pattern (20+ chars, no spaces, mixed alphanum)
         /^[A-Za-z0-9_\-.]{20,}$/.test(choice);
       // validateNvidiaApiKeyValue is provider-aware: it only enforces the
-      // nvapi- prefix when credentialEnv === "NVIDIA_API_KEY", so passing it
+      // nvapi- prefix when credentialEnv === "NVIDIA_INFERENCE_API_KEY", so passing it
       // unconditionally here is safe for Anthropic/OpenAI/Gemini too.
       const validator = (key: string) => deps.validateNvidiaApiKeyValue(key, credentialEnv);
       if (looksLikeToken) {
@@ -121,7 +124,9 @@ export function createValidationRecoveryPromptHelpers(
     }
 
     if (recovery.kind === "transport") {
-      console.log(deps.getTransportRecoveryMessage("failure" in recovery ? recovery.failure || {} : {}));
+      console.log(
+        deps.getTransportRecoveryMessage("failure" in recovery ? recovery.failure || {} : {}),
+      );
       const choice = (await deps.prompt("  Type 'retry', 'back', or 'exit' [retry]: "))
         .trim()
         .toLowerCase();

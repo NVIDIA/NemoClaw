@@ -12,6 +12,7 @@ import { whatsappManifest } from "./whatsapp/manifest";
 export { discordManifest } from "./discord/manifest";
 export { slackManifest } from "./slack/manifest";
 export { telegramManifest } from "./telegram/manifest";
+export { createBuiltInRenderTemplateResolver } from "./template-resolver";
 export { wechatManifest } from "./wechat/manifest";
 export { whatsappManifest } from "./whatsapp/manifest";
 

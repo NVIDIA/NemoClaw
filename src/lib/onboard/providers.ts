@@ -28,7 +28,7 @@ const REMOTE_PROVIDER_CONFIG = {
     label: "NVIDIA Endpoints",
     providerName: "nvidia-prod",
     providerType: "nvidia",
-    credentialEnv: "NVIDIA_API_KEY",
+    credentialEnv: "NVIDIA_INFERENCE_API_KEY",
     endpointUrl: BUILD_ENDPOINT_URL,
     helpUrl: "https://build.nvidia.com/settings/api-keys",
     modelMode: "catalog",
@@ -77,8 +77,15 @@ const REMOTE_PROVIDER_CONFIG = {
     defaultModel: "gemini-2.5-flash",
     skipVerify: true,
   },
+  // Hermes Provider is a single menu entry by design: every model family it
+  // serves (Moonshot, Z-AI, MiniMax, Qwen, Xiaomi, Tencent, StepFun, xAI,
+  // Arcee) routes through the same Nous portal endpoint and the same
+  // credential. After this entry is selected, the model picker lists the
+  // family options via nousModels.getHermesProviderModelOptions(). The label
+  // names all nine families so QA scripts and operators can discover them
+  // without first selecting the entry.
   hermesProvider: {
-    label: "Hermes Provider",
+    label: "Hermes Provider (Moonshot, Z-AI, MiniMax, Qwen, Xiaomi, Tencent, StepFun, xAI, Arcee)",
     providerName: "hermes-provider",
     providerType: "openai",
     credentialEnv: "OPENAI_API_KEY",
@@ -300,16 +307,18 @@ function providerExistsInGateway(name, _runOpenshell) {
 function upsertProvider(name, type, credentialEnv, baseUrl, env, _runOpenshell, options = {}) {
   const exists = providerExistsInGateway(name, _runOpenshell);
   if (exists && options.replaceExisting) {
-    const deleteResult = _runOpenshell(["provider", "delete", name], {
-      ignoreError: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    if (deleteResult.status !== 0) {
-      const output =
-        compactText(redact(`${deleteResult.stderr || ""}`)) ||
-        compactText(redact(`${deleteResult.stdout || ""}`)) ||
+    const { deleteProviderWithRecovery } = require("./sandbox-provider-cleanup");
+    const r = deleteProviderWithRecovery(name, { runOpenshell: _runOpenshell });
+    if (!r.ok) {
+      const base =
+        compactText(redact(r.stderr)) ||
+        compactText(redact(r.stdout)) ||
         `Failed to replace provider '${name}'.`;
-      return { ok: false, status: deleteResult.status || 1, message: output };
+      const detail =
+        r.recoveryFailures.length > 0
+          ? ` (detach failures: ${r.recoveryFailures.map((f) => `${f.sandbox}: ${compactText(redact(f.output))}`).join("; ")})`
+          : "";
+      return { ok: false, status: r.status || 1, message: `${base}${detail}` };
     }
   }
   const action = exists && !options.replaceExisting ? "update" : "create";

@@ -2,11 +2,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 
 const START_SCRIPT = path.join(import.meta.dirname, "..", "scripts", "nemoclaw-start.sh");
 const APPROVAL_POLICY_DIR = path.join(import.meta.dirname, "..", "scripts", "lib");
@@ -161,7 +161,7 @@ describe("nemoclaw-start non-root fallback", () => {
     const script = [
       "set -euo pipefail",
       'id() { if [ "${1:-}" = "-u" ]; then printf "1000"; else command id "$@"; fi; }',
-      'recover_openclaw_config_if_empty() { :; }',
+      "recover_openclaw_config_if_empty() { :; }",
       'verify_config_integrity_if_locked() { printf "verify:%s\\n" "$*"; return 1; }',
       'apply_model_override() { echo "SHOULD_NOT_RUN"; exit 70; }',
       nonRootIntegrityGateBlock(src),
@@ -182,15 +182,15 @@ describe("nemoclaw-start non-root fallback", () => {
     const nonRootScript = [
       "set -euo pipefail",
       'id() { if [ "${1:-}" = "-u" ]; then printf "1000"; else command id "$@"; fi; }',
-      'recover_openclaw_config_if_empty() { :; }',
+      "recover_openclaw_config_if_empty() { :; }",
       'verify_config_integrity_if_locked() { printf "nonroot:%s\\n" "$*"; }',
-      'normalize_mutable_config_perms() { :; }',
+      "normalize_mutable_config_perms() { :; }",
       nonRootIntegrityGateBlock(src),
       'echo "NONROOT_CONTINUED"',
     ].join("\n");
     const rootScript = [
       "set -euo pipefail",
-      'recover_openclaw_config_if_empty() { :; }',
+      "recover_openclaw_config_if_empty() { :; }",
       'verify_config_integrity_if_locked() { printf "root:%s\\n" "$*"; }',
       rootIntegrityGateBlock(src),
       'echo "ROOT_CONTINUED"',
@@ -302,9 +302,7 @@ describe("nemoclaw-start non-root fallback", () => {
       expect(bakedCustomPort.stdout).toContain("OPENCLAW_GATEWAY_PORT=18790");
       expect(bakedCustomPort.stdout).toContain("OPENCLAW_GATEWAY_URL=ws://127.0.0.1:18790");
       expect(bakedCustomPort.stdout).toContain("OPENCLAW_STATE_DIR=/sandbox/.openclaw");
-      expect(bakedCustomPort.stdout).toContain(
-        "OPENCLAW_OAUTH_DIR=/sandbox/.openclaw/credentials",
-      );
+      expect(bakedCustomPort.stdout).toContain("OPENCLAW_OAUTH_DIR=/sandbox/.openclaw/credentials");
       expect(bakedCustomPort.stdout).toContain("CMD=openclaw agent");
 
       const baked = runScenario("set -- nemoclaw-start openclaw agent", {
@@ -330,96 +328,35 @@ describe("nemoclaw-start non-root fallback", () => {
     }
   });
 
-  // #4503/#4710: the Docker HEALTHCHECK reports healthy on curl-exit-7 only
-  // when the /tmp/nemoclaw-gateway-local marker is ABSENT (gateway delivered
-  // out of this container's namespace). To avoid masking a slow in-container
-  // startup, the entrypoint must drop that marker early on the gateway-serving
-  // path — and must NOT drop it when only running a one-shot command or when
-  // OpenShell's Docker driver serves the gateway from the host.
-  it("drops the in-container gateway healthcheck marker only on the local gateway path (#4503, #4710)", () => {
-    const src = fs.readFileSync(START_SCRIPT, "utf-8");
-    const start = src.indexOf('NEMOCLAW_CMD=("$@")');
-    const end = src.indexOf("_chat_ui_url_port()", start);
-    if (start === -1 || end === -1 || end <= start) {
-      throw new Error("Expected NEMOCLAW_CMD assignment and the gateway marker block");
-    }
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gw-marker-"));
-    const markerPath = path.join(tmpDir, "nemoclaw-gateway-local");
-    const snippet = src
-      .slice(start, end)
-      .replaceAll("/tmp/nemoclaw-gateway-local", markerPath);
-
-    function runScenario(setArgs: string, env: NodeJS.ProcessEnv = {}) {
-      const script = ["#!/usr/bin/env bash", "set -euo pipefail", setArgs, snippet].join("\n");
-      return spawnSync("bash", ["-c", script], {
-        encoding: "utf-8",
-        env: { ...process.env, ...env },
-        timeout: 5000,
-      });
-    }
-
-    try {
-      // Gateway-serving path: no trailing command, so the marker is dropped.
-      fs.rmSync(markerPath, { force: true });
-      const serving = runScenario("set --");
-      expect(serving.status).toBe(0);
-      expect(fs.existsSync(markerPath)).toBe(true);
-
-      // One-shot command path: the marker must stay absent so the out-of-
-      // namespace healthcheck branch never strict-checks a non-gateway
-      // container.
-      fs.rmSync(markerPath, { force: true });
-      const oneShot = runScenario("set -- openclaw agent --agent main");
-      expect(oneShot.status).toBe(0);
-      expect(fs.existsSync(markerPath)).toBe(false);
-
-      // Docker-driver path: the sandbox container has no trailing command, but
-      // OpenShell serves the gateway on the host. The marker must stay absent
-      // so Dockerfile HEALTHCHECK can short-circuit curl exit 7 instead of
-      // looking for an in-container gateway process.
-      fs.rmSync(markerPath, { force: true });
-      const dockerDriver = runScenario("set --", { OPENSHELL_DRIVERS: "docker" });
-      expect(dockerDriver.status).toBe(0);
-      expect(fs.existsSync(markerPath)).toBe(false);
-
-      fs.rmSync(markerPath, { force: true });
-      const mixedDrivers = runScenario("set --", { OPENSHELL_DRIVERS: "vm,docker" });
-      expect(mixedDrivers.status).toBe(0);
-      expect(fs.existsSync(markerPath)).toBe(false);
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
-
   it("executes explicit non-root commands before gateway startup setup", () => {
     const src = fs.readFileSync(START_SCRIPT, "utf-8");
     const script = [
       "set -euo pipefail",
       'id() { if [ "${1:-}" = "-u" ]; then printf "1000"; else command id "$@"; fi; }',
-      'recover_openclaw_config_if_empty() { :; }',
-      'verify_config_integrity_if_locked() { :; }',
-      'normalize_mutable_config_perms() { :; }',
-      'apply_model_override() { :; }',
-      'reconcile_agent_model_with_provider() { :; }',
-      'apply_cors_override() { :; }',
-      'refresh_openclaw_provider_placeholders() { :; }',
-      'ensure_mutable_openclaw_config_hash() { :; }',
+      "recover_openclaw_config_if_empty() { :; }",
+      "verify_config_integrity_if_locked() { :; }",
+      "normalize_mutable_config_perms() { :; }",
+      "apply_model_override() { :; }",
+      "reconcile_agent_model_with_provider() { :; }",
+      "apply_cors_override() { :; }",
+      "refresh_openclaw_provider_placeholders() { :; }",
+      "ensure_mutable_openclaw_config_hash() { :; }",
       extractShellFunctionFromSource(src, "needs_gateway_token_for_current_command"),
       extractShellFunctionFromSource(src, "prepare_gateway_token_for_current_command"),
       'ensure_gateway_token() { echo "SHOULD_NOT_ENSURE"; exit 75; }',
       'ensure_gateway_token_if_missing() { echo "SHOULD_NOT_ENSURE"; exit 76; }',
-      'write_openclaw_config_baseline() { :; }',
-      'export_gateway_token() { :; }',
-      'write_runtime_shell_env() { :; }',
-      'ensure_runtime_shell_env_shim() { :; }',
-      'lock_rc_files() { :; }',
-      'normalize_slack_runtime_env() { :; }',
+      "write_openclaw_config_baseline() { :; }",
+      "export_gateway_token() { :; }",
+      "write_runtime_shell_env() { :; }",
+      "ensure_runtime_shell_env_shim() { :; }",
+      "lock_rc_files() { :; }",
+      "normalize_slack_runtime_env() { :; }",
       'configure_messaging_channels() { echo "SHOULD_NOT_CONFIGURE"; exit 70; }',
       'install_telegram_diagnostics() { echo "SHOULD_NOT_INSTALL"; exit 71; }',
       'install_slack_channel_guard() { echo "SHOULD_NOT_INSTALL"; exit 73; }',
       'verify_no_slack_secrets_on_disk() { echo "SHOULD_NOT_VERIFY"; exit 74; }',
-      'seed_default_workspace_templates() { :; }',
-      '_SANDBOX_HOME=/sandbox',
+      "seed_default_workspace_templates() { :; }",
+      "_SANDBOX_HOME=/sandbox",
       "NEMOCLAW_CMD=(bash -c 'echo EXPLICIT_COMMAND; exit 23')",
       nonRootFallbackBlock(src),
       'echo "SHOULD_NOT_REACH"',
@@ -603,10 +540,9 @@ describe("nemoclaw-start gateway token export (#1114)", () => {
       fs.symlinkSync(tmpSymlinkVictim, predictableTmpPath);
     }
 
-    const readToken = extractShellFunctionFromSource(src, "_read_gateway_token").replaceAll(
-      "/sandbox/.openclaw/openclaw.json",
-      configPath,
-    ).replaceAll("/opt/nemoclaw", optNemoclaw);
+    const readToken = extractShellFunctionFromSource(src, "_read_gateway_token")
+      .replaceAll("/sandbox/.openclaw/openclaw.json", configPath)
+      .replaceAll("/opt/nemoclaw", optNemoclaw);
     const ensureGatewayToken = extractShellFunctionFromSource(src, "ensure_gateway_token")
       .replaceAll("/sandbox/.openclaw/openclaw.json", configPath)
       .replaceAll("/sandbox/.openclaw/.config-hash", hashPath)
@@ -926,10 +862,7 @@ describe("nemoclaw-start configure guard behavior", () => {
         "--noprofile",
         "--norc",
         "-c",
-        [
-          `source ${JSON.stringify(setup.proxyEnv)}`,
-          ...commands,
-        ].join("; "),
+        [`source ${JSON.stringify(setup.proxyEnv)}`, ...commands].join("; "),
       ],
       {
         encoding: "utf-8",
@@ -980,24 +913,72 @@ describe("nemoclaw-start configure guard behavior", () => {
       fs.rmSync(setup.tmpDir, { recursive: true, force: true });
     }
   });
-
-  it("#4462: unsets OPENCLAW_GATEWAY_URL, PORT, and TOKEN for devices approve", () => {
+  it("#4462: unsets gateway env and recovers constrained replacement state", () => {
     const setup = writeProxyEnvWithGuard();
+    const stateDir = path.join(setup.tmpDir, "openclaw-state");
+    const devicesDir = path.join(stateDir, "devices");
+    const pendingFile = path.join(devicesDir, "pending.json");
+    const pairedFile = path.join(devicesDir, "paired.json");
+    const readJson = (file: string) => JSON.parse(fs.readFileSync(file, "utf-8"));
+    const resetState = () => {
+      fs.mkdirSync(devicesDir, { recursive: true });
+      fs.writeFileSync(
+        pendingFile,
+        '{"original":{"requestId":"request-1","deviceId":"device-1","scopes":["operator.write"]}}',
+      );
+      fs.writeFileSync(
+        pairedFile,
+        '{"device-1":{"deviceId":"device-1","scopes":["operator.pairing"],"approvedScopes":["operator.pairing"],"tokens":{"operator":{"role":"operator","scopes":["operator.pairing"]}}}}',
+      );
+    };
+    fs.writeFileSync(
+      path.join(setup.fakeBin, "openclaw"),
+      `#!/usr/bin/env bash
+printf 'ARGS=%s URL=%s PORT=%s TOKEN=%s\n' "$*" "\${OPENCLAW_GATEWAY_URL-unset}" "\${OPENCLAW_GATEWAY_PORT-unset}" "\${OPENCLAW_GATEWAY_TOKEN-unset}" >> ${JSON.stringify(setup.commandLog)}
+cat > "\${OPENCLAW_STATE_DIR}/devices/pending.json" <<'JSON'
+{"replacement":{"requestId":"replacement-1","deviceId":"device-1","scopes":["operator.write","operator.pairing","operator.read","operator.admin"]}}
+JSON
+if [ -n "\${CASE_REPLACEMENT_ID:-}" ]; then echo "gateway connect failed: GatewayClientRequestError: scope upgrade pending approval (requestId: \${CASE_REPLACEMENT_ID})" >&2; else echo "gateway connect failed: G" >&2; fi
+exit 1
+`,
+      { mode: 0o755 },
+    );
     try {
-      const result = runGuardedShell(setup, [
-        shellOpenclawCommand(["devices", "list", "--json"]),
-        shellOpenclawCommand(["devices", "approve", "request-1", "--json"]),
-        `printf 'SHELL_URL=%s\\n' "\${OPENCLAW_GATEWAY_URL-unset}" >> ${JSON.stringify(setup.commandLog)}`,
-        shellOpenclawCommand(["agent", "--agent", "main", "-m", "hello"]),
-      ]);
-
-      expect(result.status).toBe(0);
-      expect(fs.readFileSync(setup.commandLog, "utf-8").trim().split("\n")).toEqual([
-        "ARGS=devices list --json URL=ws://127.0.0.1:18789 PORT=18789 TOKEN=test-gateway-token",
-        "ARGS=devices approve request-1 --json URL=unset PORT=unset TOKEN=unset",
-        "SHELL_URL=ws://127.0.0.1:18789",
-        "ARGS=agent --agent main -m hello URL=ws://127.0.0.1:18789 PORT=18789 TOKEN=test-gateway-token",
-      ]);
+      for (const [replacementId, shouldRecover] of [
+        ["replacement-1", true],
+        ["replacement-10", false],
+        ["", true],
+      ] as const) {
+        resetState();
+        const result = runGuardedShell(setup, [
+          `export OPENCLAW_STATE_DIR=${JSON.stringify(stateDir)}`,
+          `export CASE_REPLACEMENT_ID=${JSON.stringify(replacementId)}`,
+          shellOpenclawCommand(["devices", "approve", "request-1", "--json"]),
+        ]);
+        const paired = readJson(pairedFile);
+        const pending = readJson(pendingFile);
+        expect(result.status).toBe(shouldRecover ? 0 : 1);
+        expect(fs.readFileSync(setup.commandLog, "utf-8")).toContain(
+          "ARGS=devices approve request-1 --json URL=unset PORT=unset TOKEN=unset",
+        );
+        const expectedScopes = shouldRecover
+          ? ["operator.pairing", "operator.read", "operator.write"]
+          : ["operator.pairing"];
+        for (const scopes of [
+          paired["device-1"].approvedScopes,
+          paired["device-1"].scopes,
+          paired["device-1"].tokens.operator.scopes,
+        ]) {
+          expect(scopes).toEqual(expectedScopes);
+        }
+        expect(JSON.stringify(paired)).not.toContain("operator.admin");
+        expect(shouldRecover ? pending : pending.replacement.requestId).toEqual(
+          shouldRecover ? {} : "replacement-1",
+        );
+        expect(
+          shouldRecover ? JSON.parse(result.stdout).compatibility : pending.replacement.requestId,
+        ).toBe(shouldRecover ? "openclaw-approve-recovered-replacement" : "replacement-1");
+      }
     } finally {
       fs.rmSync(setup.tmpDir, { recursive: true, force: true });
     }
@@ -1069,7 +1050,6 @@ describe("nemoclaw-start configure guard behavior", () => {
 
 describe("nemoclaw-start persistent gateway log hardening", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
-
   function persistentLogFunction(root: string, gatewayLog: string): string {
     return extractShellFunctionFromSource(src, "start_persistent_gateway_log_mirror")
       .replaceAll("/sandbox/.openclaw/logs", path.join(root, "logs"))
@@ -1103,10 +1083,11 @@ describe("nemoclaw-start persistent gateway log hardening", () => {
       const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
       expect(result.status).toBe(0);
       expect(result.stdout).toContain("PID=");
-      const stat = fs.statSync(persistentLog);
+      const fd = fs.openSync(persistentLog, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+      const [stat, log] = [fs.fstatSync(fd), fs.readFileSync(fd, "utf-8")];
+      fs.closeSync(fd);
       expect(stat.isFile()).toBe(true);
       expect((stat.mode & 0o777).toString(8)).toBe("644");
-      const log = fs.readFileSync(persistentLog, "utf-8");
       expect(log).toContain("initial gateway line");
       expect(log).toContain("later-line");
 
@@ -1550,9 +1531,7 @@ describe("nemoclaw-start auto-pair client whitelisting (#117)", () => {
       });
 
       expect(run.status).toBe(1);
-      expect(run.stderr).toContain(
-        "approval policy helper is writable by the current user",
-      );
+      expect(run.stderr).toContain("approval policy helper is writable by the current user");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -1680,9 +1659,7 @@ describe("nemoclaw-start auto-pair slow-mode keepalive (#4263)", () => {
       paired: [{ clientId: "openclaw-control-ui", clientMode: "webchat" }],
     });
     const lateCli = JSON.stringify({
-      pending: [
-        { requestId: "late-cli", clientId: "openclaw-cli", clientMode: "cli" },
-      ],
+      pending: [{ requestId: "late-cli", clientId: "openclaw-cli", clientMode: "cli" }],
       paired: [{ clientId: "openclaw-control-ui", clientMode: "webchat" }],
     });
     const allPaired = JSON.stringify({
@@ -1780,9 +1757,7 @@ exit 2
       paired: [{ clientId: "paired-cli", clientMode: "cli" }],
     });
     const evilLate = JSON.stringify({
-      pending: [
-        { requestId: "evil-late", clientId: "evil-client", clientMode: "unknown" },
-      ],
+      pending: [{ requestId: "evil-late", clientId: "evil-client", clientMode: "unknown" }],
       paired: [{ clientId: "paired-cli", clientMode: "cli" }],
     });
 
@@ -1828,9 +1803,7 @@ exit 2
       expect(run.stdout).toContain(
         "[auto-pair] devices paired (1); entering slow-mode approvals=0",
       );
-      expect(run.stdout).toContain(
-        "[auto-pair] rejected unknown client=evil-client mode=unknown",
-      );
+      expect(run.stdout).toContain("[auto-pair] rejected unknown client=evil-client mode=unknown");
       // Critical: never approved.
       expect(fs.existsSync(approveLog)).toBe(false);
     } finally {
@@ -2030,9 +2003,7 @@ exit 2
     const fakeOpenclaw = path.join(tmpDir, "openclaw");
     const approveLog = path.join(tmpDir, "approvals.log");
     const stickyEvilResponse = JSON.stringify({
-      pending: [
-        { requestId: "evil-stuck", clientId: "evil-client", clientMode: "unknown" },
-      ],
+      pending: [{ requestId: "evil-stuck", clientId: "evil-client", clientMode: "unknown" }],
       paired: [],
     });
 
@@ -2075,9 +2046,7 @@ exit 2
       expect(run.stdout).toContain(
         "[auto-pair] fast-mode deadline reached; switching to slow-mode approvals=0",
       );
-      expect(run.stdout).toContain(
-        "[auto-pair] rejected unknown client=evil-client mode=unknown",
-      );
+      expect(run.stdout).toContain("[auto-pair] rejected unknown client=evil-client mode=unknown");
       expect(run.stdout).toContain("watcher deadline reached approvals=0");
       // Unknown client was never approved.
       expect(fs.existsSync(approveLog)).toBe(false);
@@ -2104,9 +2073,7 @@ exit 0
     try {
       // Do NOT monkey-patch time.sleep here: we want real wall-clock
       // semantics so subprocess.run(..., timeout=...) actually fires.
-      const watcherSrc = localApprovalPolicyPythonScript(
-        fs.readFileSync(START_SCRIPT, "utf-8"),
-      );
+      const watcherSrc = localApprovalPolicyPythonScript(fs.readFileSync(START_SCRIPT, "utf-8"));
       const start = Date.now();
       const run = spawnSync("python3", ["-c", watcherSrc], {
         encoding: "utf-8",
@@ -2142,9 +2109,7 @@ exit 0
     const stateFile = path.join(tmpDir, "approve-count");
     const approveLog = path.join(tmpDir, "approvals.log");
     const pendingResponse = JSON.stringify({
-      pending: [
-        { requestId: "flaky-cli", clientId: "openclaw-cli", clientMode: "cli" },
-      ],
+      pending: [{ requestId: "flaky-cli", clientId: "openclaw-cli", clientMode: "cli" }],
       paired: [],
     });
     const allPaired = JSON.stringify({
@@ -2189,9 +2154,7 @@ exit 2
     );
 
     try {
-      const watcherSrc = localApprovalPolicyPythonScript(
-        fs.readFileSync(START_SCRIPT, "utf-8"),
-      );
+      const watcherSrc = localApprovalPolicyPythonScript(fs.readFileSync(START_SCRIPT, "utf-8"));
       const run = spawnSync("python3", ["-c", watcherSrc], {
         encoding: "utf-8",
         env: {
@@ -2213,9 +2176,7 @@ exit 2
       );
       // The approve log records exactly one successful approval (the
       // retry, not the hung first attempt).
-      expect(fs.readFileSync(approveLog, "utf-8").trim().split("\n")).toEqual([
-        "flaky-cli",
-      ]);
+      expect(fs.readFileSync(approveLog, "utf-8").trim().split("\n")).toEqual(["flaky-cli"]);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -2227,9 +2188,7 @@ exit 2
     const stateFile = path.join(tmpDir, "approve-count");
     const approveLog = path.join(tmpDir, "approvals.log");
     const pendingResponse = JSON.stringify({
-      pending: [
-        { requestId: "retry-cli", clientId: "openclaw-cli", clientMode: "cli" },
-      ],
+      pending: [{ requestId: "retry-cli", clientId: "openclaw-cli", clientMode: "cli" }],
       paired: [],
     });
     const allPaired = JSON.stringify({
@@ -2288,9 +2247,7 @@ exit 2
       );
       expect(run.stdout).toContain("watcher deadline reached approvals=1");
       expect(fs.readFileSync(stateFile, "utf-8").trim()).toBe("2");
-      expect(fs.readFileSync(approveLog, "utf-8").trim().split("\n")).toEqual([
-        "retry-cli",
-      ]);
+      expect(fs.readFileSync(approveLog, "utf-8").trim().split("\n")).toEqual(["retry-cli"]);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -2320,6 +2277,7 @@ describe("nemoclaw-start gateway launch signal handling", () => {
     const openclawLog = path.join(tmpDir, "openclaw.log");
     const gosuLog = path.join(tmpDir, "gosu.log");
     const gatewayLog = path.join(tmpDir, "gateway.log");
+    const markerPath = path.join(tmpDir, "nemoclaw-gateway-local");
     const scriptPath = path.join(tmpDir, "run.sh");
     const waitForLaunchLogIterations = Array.from({ length: 100 }, (_, i) => String(i + 1)).join(
       " ",
@@ -2327,7 +2285,7 @@ describe("nemoclaw-start gateway launch signal handling", () => {
     fs.mkdirSync(fakeBin);
     fs.writeFileSync(
       path.join(fakeBin, "openclaw"),
-      `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> ${JSON.stringify(openclawLog)}\nprintf 'state=%s oauth=%s home=%s config=%s\\n' "$OPENCLAW_STATE_DIR" "$OPENCLAW_OAUTH_DIR" "$OPENCLAW_HOME" "$OPENCLAW_CONFIG_PATH" >> ${JSON.stringify(openclawLog)}\nprintf 'gateway stdout marker\\n'\nprintf 'gateway stderr marker\\n' >&2\nexec sleep 30\n`,
+      `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> ${JSON.stringify(openclawLog)}\nif [ -f ${JSON.stringify(markerPath)} ]; then printf 'marker=present\\n' >> ${JSON.stringify(openclawLog)}; else printf 'marker=absent\\n' >> ${JSON.stringify(openclawLog)}; fi\nprintf 'state=%s oauth=%s home=%s config=%s\\n' "$OPENCLAW_STATE_DIR" "$OPENCLAW_OAUTH_DIR" "$OPENCLAW_HOME" "$OPENCLAW_CONFIG_PATH" >> ${JSON.stringify(openclawLog)}\nprintf 'gateway stdout marker\\n'\nprintf 'gateway stderr marker\\n' >&2\nexec sleep 30\n`,
       { mode: 0o755 },
     );
     fs.writeFileSync(
@@ -2351,12 +2309,11 @@ describe("nemoclaw-start gateway launch signal handling", () => {
         "start_persistent_gateway_log_mirror() { sleep 30 & GATEWAY_LOG_PERSIST_PID=$!; }",
         "start_auto_pair() { sleep 30 & AUTO_PAIR_PID=$!; }",
         "start_plugin_registry_refresh() { :; }",
-        "cleanup_on_signal() { :; }",
-        // STEP_DOWN_PREFIX_* are normally populated by init_step_down_prefixes
-        // in sandbox-init.sh; the launch block uses STEP_DOWN_PREFIX_GATEWAY
-        // for the gateway exec. Initialize to the gosu fallback so the
-        // stubbed gosu() in fakeBin still receives the call (issue #3280
-        // follow-up).
+        "cleanup_on_signal() { :; }; record_gateway_pid() { :; }", // record_gateway_pid: #4952
+        extractShellFunctionFromSource(src, "mark_in_container_gateway").replaceAll(
+          "/tmp/nemoclaw-gateway-local",
+          markerPath,
+        ),
         "STEP_DOWN_PREFIX_SANDBOX=(gosu sandbox)",
         "STEP_DOWN_PREFIX_GATEWAY=(gosu gateway)",
         launchBlock(kind, gatewayLog),
@@ -2388,6 +2345,8 @@ describe("nemoclaw-start gateway launch signal handling", () => {
     const { result, openclaw, gateway } = runLaunchBlock("non-root");
     expect(result.status).toBe(0);
     expect(openclaw).toContain("gateway run --port 19000");
+    expect(openclaw).toContain("marker=present");
+    expect(openclaw).not.toContain("marker=absent");
     expect(openclaw).toContain(
       "state=/sandbox/.openclaw oauth=/sandbox/.openclaw/credentials home=/sandbox config=/sandbox/.openclaw/openclaw.json",
     );
@@ -2410,6 +2369,8 @@ describe("nemoclaw-start gateway launch signal handling", () => {
     expect(result.status).toBe(0);
     expect(gosu).toContain("user=gateway");
     expect(gosu).toContain("gateway run --port 19000");
+    expect(openclaw).toContain("marker=present");
+    expect(openclaw).not.toContain("marker=absent");
     expect(openclaw).toContain(
       "state=/sandbox/.openclaw oauth=/sandbox/.openclaw/credentials home=/sandbox config=/sandbox/.openclaw/openclaw.json",
     );
@@ -3019,10 +2980,10 @@ describe("provider placeholder refresh (#4251)", () => {
     const scriptPath = path.join(tmpDir, "run.sh");
     fs.mkdirSync(openclawDir, { recursive: true });
     fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
-    const fn = extractShellFunctionFromSource(src, "refresh_openclaw_provider_placeholders").replaceAll(
-      "/sandbox/.openclaw",
-      openclawDir,
-    );
+    const fn = extractShellFunctionFromSource(
+      src,
+      "refresh_openclaw_provider_placeholders",
+    ).replaceAll("/sandbox/.openclaw", openclawDir);
     fs.writeFileSync(
       scriptPath,
       [
@@ -3253,8 +3214,7 @@ describe("provider placeholder refresh (#4251)", () => {
         },
       },
       {
-        NEMOCLAW_EXTRA_PLACEHOLDER_KEYS:
-          "TELEGRAM_BOT_TOKEN_AGENT_A SLACK_BOT_TOKEN_AGENT_B",
+        NEMOCLAW_EXTRA_PLACEHOLDER_KEYS: "TELEGRAM_BOT_TOKEN_AGENT_A SLACK_BOT_TOKEN_AGENT_B",
       },
     );
 
@@ -3279,9 +3239,7 @@ describe("provider placeholder refresh (#4251)", () => {
     );
 
     expect(run.result.status, run.result.stderr).toBe(0);
-    expect(run.result.stderr).not.toContain(
-      "[config] NEMOCLAW_EXTRA_PLACEHOLDER_KEYS accepted",
-    );
+    expect(run.result.stderr).not.toContain("[config] NEMOCLAW_EXTRA_PLACEHOLDER_KEYS accepted");
   });
 
   it("splits NEMOCLAW_EXTRA_PLACEHOLDER_KEYS on commas the same way as whitespace", () => {
@@ -3303,8 +3261,7 @@ describe("provider placeholder refresh (#4251)", () => {
         // default IFS (whitespace), so without the comma->space normalization
         // both keys would arrive concatenated as a single token and fail the
         // regex check.
-        NEMOCLAW_EXTRA_PLACEHOLDER_KEYS:
-          "TELEGRAM_BOT_TOKEN_AGENT_A,TELEGRAM_BOT_TOKEN_AGENT_B",
+        NEMOCLAW_EXTRA_PLACEHOLDER_KEYS: "TELEGRAM_BOT_TOKEN_AGENT_A,TELEGRAM_BOT_TOKEN_AGENT_B",
         TELEGRAM_BOT_TOKEN_AGENT_A: scopedA,
         TELEGRAM_BOT_TOKEN_AGENT_B: scopedB,
       },
@@ -3516,7 +3473,14 @@ describe("provider placeholder refresh (#4251)", () => {
     // extension and assert that the bash refresh accepts and revision-
     // collapses it. Drift in either direction (new channel added but bash
     // not updated, or bash list shrunk) breaks one of the two assertions.
-    const distPath = path.join(import.meta.dirname, "..", "dist", "lib", "onboard", "extra-placeholder-keys.js");
+    const distPath = path.join(
+      import.meta.dirname,
+      "..",
+      "dist",
+      "lib",
+      "onboard",
+      "extra-placeholder-keys.js",
+    );
     const { canonicalPlaceholderKeys } = require(distPath);
     const canonicalKeys: string[] = Array.from(canonicalPlaceholderKeys()).sort();
     expect(canonicalKeys.length).toBeGreaterThan(0);
@@ -3544,9 +3508,7 @@ describe("provider placeholder refresh (#4251)", () => {
       expect(
         run.result.stderr,
         `bash refresh refused canonical extension '${extension}' — parity drift with src/lib/onboard/extra-placeholder-keys.ts`,
-      ).not.toContain(
-        `[config] Ignoring NEMOCLAW_EXTRA_PLACEHOLDER_KEYS entry '${extension}'`,
-      );
+      ).not.toContain(`[config] Ignoring NEMOCLAW_EXTRA_PLACEHOLDER_KEYS entry '${extension}'`);
       expect(run.config.channels.telegram.accounts.parity.botToken).toBe(scoped);
     }
   });
@@ -3768,7 +3730,11 @@ describe("Telegram diagnostics (#2766)", () => {
       );
   }
 
-  function preGatewaySetupBlock(kind: "non-root" | "root", gatewayLog: string, autoPairLog: string) {
+  function preGatewaySetupBlock(
+    kind: "non-root" | "root",
+    gatewayLog: string,
+    autoPairLog: string,
+  ) {
     const nonRootMarker = src.indexOf("# ── Non-root fallback");
     const start =
       kind === "non-root"
@@ -3807,38 +3773,38 @@ describe("Telegram diagnostics (#2766)", () => {
           ? 'id() { if [ "${1:-}" = "-u" ]; then printf "1000"; elif [ "${1:-}" = "-g" ]; then printf "1000"; else command id "$@"; fi; }'
           : 'id() { if [ "${1:-}" = "-u" ]; then printf "0"; elif [ "${1:-}" = "-g" ]; then printf "0"; else command id "$@"; fi; }',
         'emit_sandbox_sourced_file() { local target="$1"; cat > "$target"; chmod 444 "$target"; }',
-        'recover_openclaw_config_if_empty() { :; }',
+        "recover_openclaw_config_if_empty() { :; }",
         'verify_config_integrity_if_locked() { echo "ORDER:verify"; }',
         'normalize_mutable_config_perms() { echo "ORDER:normalize"; }',
-        'apply_model_override() { :; }',
-        'reconcile_agent_model_with_provider() { :; }',
-        'apply_cors_override() { :; }',
-        'refresh_openclaw_provider_placeholders() { :; }',
-        'ensure_mutable_openclaw_config_hash() { :; }',
-        'needs_gateway_token_for_current_command() { :; }',
+        "apply_model_override() { :; }",
+        "reconcile_agent_model_with_provider() { :; }",
+        "apply_cors_override() { :; }",
+        "refresh_openclaw_provider_placeholders() { :; }",
+        "ensure_mutable_openclaw_config_hash() { :; }",
+        "needs_gateway_token_for_current_command() { :; }",
         extractShellFunctionFromSource(src, "prepare_gateway_token_for_current_command"),
-        'ensure_gateway_token() { :; }',
-        'ensure_gateway_token_if_missing() { :; }',
-        'write_openclaw_config_baseline() { :; }',
-        'export_gateway_token() { :; }',
-        'write_runtime_shell_env() { :; }',
-        'ensure_runtime_shell_env_shim() { :; }',
-        'lock_rc_files() { :; }',
-        'normalize_slack_runtime_env() { :; }',
+        "ensure_gateway_token() { :; }",
+        "ensure_gateway_token_if_missing() { :; }",
+        "write_openclaw_config_baseline() { :; }",
+        "export_gateway_token() { :; }",
+        "write_runtime_shell_env() { :; }",
+        "ensure_runtime_shell_env_shim() { :; }",
+        "lock_rc_files() { :; }",
+        "normalize_slack_runtime_env() { :; }",
         'configure_messaging_channels() { echo "ORDER:configure"; }',
-        'install_slack_channel_guard() { :; }',
-        'verify_no_slack_secrets_on_disk() { :; }',
-        'seed_default_workspace_templates() { :; }',
-        'seed_default_workspace_templates_as_sandbox() { seed_default_workspace_templates; }',
-        'write_auth_profile() { :; }',
-        'harden_auth_profiles() { :; }',
-        'run_step_down_as_sandbox() { :; }',
-        'setup_auth_profile_as_sandbox() { :; }',
+        "install_slack_channel_guard() { :; }",
+        "verify_no_slack_secrets_on_disk() { :; }",
+        "seed_default_workspace_templates() { :; }",
+        "seed_default_workspace_templates_as_sandbox() { seed_default_workspace_templates; }",
+        "write_auth_profile() { :; }",
+        "harden_auth_profiles() { :; }",
+        "run_step_down_as_sandbox() { :; }",
+        "setup_auth_profile_as_sandbox() { :; }",
         `PLUGIN_REFRESH_LOG=${JSON.stringify(pluginRefreshLog)}`,
         extractShellFunctionFromSource(src, "prepare_plugin_refresh_log"),
-        'chown() { :; }',
-        'chown_tree_no_symlink_follow() { :; }',
-        'start_persistent_gateway_log_mirror() { :; }',
+        "chown() { :; }",
+        "chown_tree_no_symlink_follow() { :; }",
+        "start_persistent_gateway_log_mirror() { :; }",
         'gosu() { shift; "$@"; }',
         // STEP_DOWN_PREFIX_* are normally populated by init_step_down_prefixes
         // in sandbox-init.sh; the test scaffolding doesn't source that, so
@@ -3847,7 +3813,7 @@ describe("Telegram diagnostics (#2766)", () => {
         "STEP_DOWN_PREFIX_SANDBOX=(gosu sandbox)",
         "STEP_DOWN_PREFIX_GATEWAY=(gosu gateway)",
         'validate_tmp_permissions() { printf "VALIDATE:%s\\n" "$*"; }',
-        '_SANDBOX_HOME=/sandbox',
+        "_SANDBOX_HOME=/sandbox",
         `_SANDBOX_SAFETY_NET=${JSON.stringify(path.join(tmpDir, "safety.js"))}`,
         `_PROXY_FIX_SCRIPT=${JSON.stringify(path.join(tmpDir, "proxy-fix.js"))}`,
         `_WS_FIX_SCRIPT=${JSON.stringify(path.join(tmpDir, "ws-fix.js"))}`,
@@ -4138,8 +4104,16 @@ process.stderr.write('FailoverError: token=123456:LATER\\n');
     const sourceRuntimeEnv = () =>
       spawnSync(
         "bash",
-        ["--norc", "-lc", `source ${JSON.stringify(proxyEnv)}; printf 'NODE_OPTIONS=%s\\n' "$NODE_OPTIONS"`],
-        { encoding: "utf-8", env: { PATH: process.env.PATH || "", NODE_OPTIONS: "" }, timeout: 5000 },
+        [
+          "--norc",
+          "-lc",
+          `source ${JSON.stringify(proxyEnv)}; printf 'NODE_OPTIONS=%s\\n' "$NODE_OPTIONS"`,
+        ],
+        {
+          encoding: "utf-8",
+          env: { PATH: process.env.PATH || "", NODE_OPTIONS: "" },
+          timeout: 5000,
+        },
       );
 
     try {
@@ -4192,7 +4166,7 @@ describe("write_auth_profile (#1332)", () => {
 
   it("writes profile under the provider key from NEMOCLAW_PROVIDER_KEY", () => {
     const { home, authPath, status, stderr } = runWriteAuthProfile({
-      NVIDIA_API_KEY: "secret",
+      NVIDIA_INFERENCE_API_KEY: "secret",
       NEMOCLAW_PROVIDER_KEY: "openai",
     });
     try {
@@ -4202,7 +4176,7 @@ describe("write_auth_profile (#1332)", () => {
         "openai:manual": {
           type: "api_key",
           provider: "openai",
-          keyRef: { source: "env", id: "NVIDIA_API_KEY" },
+          keyRef: { source: "env", id: "NVIDIA_INFERENCE_API_KEY" },
           profileId: "openai:manual",
         },
       });
@@ -4213,7 +4187,7 @@ describe("write_auth_profile (#1332)", () => {
 
   it("falls back to 'inference' when NEMOCLAW_PROVIDER_KEY is unset", () => {
     const { home, authPath, status, stderr } = runWriteAuthProfile({
-      NVIDIA_API_KEY: "secret",
+      NVIDIA_INFERENCE_API_KEY: "secret",
     });
     try {
       expect(status, stderr).toBe(0);
@@ -4228,7 +4202,7 @@ describe("write_auth_profile (#1332)", () => {
 
   it("does not use 'nvidia' as the default provider key", () => {
     const { home, authPath, status } = runWriteAuthProfile({
-      NVIDIA_API_KEY: "secret",
+      NVIDIA_INFERENCE_API_KEY: "secret",
     });
     try {
       expect(status).toBe(0);
@@ -4245,7 +4219,7 @@ describe("write_auth_profile (#1332)", () => {
     // If the provider_key were interpolated into the heredoc instead of
     // passed as argv, $(...) inside the value would execute and replace it.
     const { home, authPath, status, stderr } = runWriteAuthProfile({
-      NVIDIA_API_KEY: "secret",
+      NVIDIA_INFERENCE_API_KEY: "secret",
       NEMOCLAW_PROVIDER_KEY: "$(echo pwned)",
     });
     try {
@@ -4259,7 +4233,7 @@ describe("write_auth_profile (#1332)", () => {
     }
   });
 
-  it("is a no-op when NVIDIA_API_KEY is unset", () => {
+  it("is a no-op when NVIDIA_INFERENCE_API_KEY is unset", () => {
     const { home, authPath, status } = runWriteAuthProfile({});
     try {
       expect(status).toBe(0);
@@ -4271,7 +4245,7 @@ describe("write_auth_profile (#1332)", () => {
 
   it("writes the auth profile with 0600 permissions", () => {
     const { home, authPath, status } = runWriteAuthProfile({
-      NVIDIA_API_KEY: "secret",
+      NVIDIA_INFERENCE_API_KEY: "secret",
       NEMOCLAW_PROVIDER_KEY: "openai",
     });
     try {
@@ -4359,7 +4333,9 @@ describe("openclaw.json baseline + recovery (#3118)", () => {
       helperFns,
       fn,
       "recover_openclaw_config_if_empty",
-    ].filter(Boolean).join("\n");
+    ]
+      .filter(Boolean)
+      .join("\n");
     const script = path.join(root, "run.sh");
     fs.writeFileSync(script, wrapper, { mode: 0o700 });
     const result = spawnSync("bash", [script], { encoding: "utf-8" });
@@ -4501,10 +4477,7 @@ describe("openclaw.json baseline + recovery (#3118)", () => {
         ? `chmod() { case "$*" in *${baselineName}*) return 1 ;; esac; command chmod "$@"; }`
         : "",
       `stat() { if [ "$1" = "-c" ] && [ "$2" = "%U" ] && [ "$3" = ${JSON.stringify(openclawDir)} ]; then echo sandbox; return 0; fi; command stat "$@"; }`,
-      extractShellFunction("lock_openclaw_config_baseline_if_present").replaceAll(
-        "/sandbox",
-        root,
-      ),
+      extractShellFunction("lock_openclaw_config_baseline_if_present").replaceAll("/sandbox", root),
       extractShellFunction("normalize_mutable_config_perms").replaceAll("/sandbox", root),
       "normalize_mutable_config_perms",
     ]
@@ -4658,7 +4631,7 @@ describe("openclaw.json baseline + recovery (#3118)", () => {
   it("captures a JSON5-flavored config (comments + trailing commas) as baseline", () => {
     const config = [
       "{",
-      '  // primary model',
+      "  // primary model",
       "  agents: { defaults: { model: { primary: 'x' } } },",
       "  /* trailing comma below is JSON5-only */",
       "  models: { providers: { inference: {} } },",
@@ -4810,11 +4783,11 @@ describe("run_step_down_as_sandbox", () => {
         // with a `then`-body command, followed by `fi`. This is the
         // shape `declare -f` mangles in bash 5.x.
         "heredoc_in_if_condition() {",
-        "  local marker=\"$1\"",
+        '  local marker="$1"',
         "  if ! node - \"$marker\" <<'NODE' >/dev/null 2>&1; then",
-        "const fs = require(\"fs\");",
+        'const fs = require("fs");',
         "const target = process.argv[2];",
-        "fs.writeFileSync(target, \"ran-via-heredoc-if\\n\");",
+        'fs.writeFileSync(target, "ran-via-heredoc-if\\n");',
         "process.exit(0);",
         "NODE",
         "    return 0",
@@ -4869,7 +4842,7 @@ describe("run_step_down_as_sandbox", () => {
         // a second function with its own heredoc, to ensure declare -f
         // round-trips both bodies through the temp script intact.
         "heredoc_one() {",
-        "  if [ -z \"${OUT_PATH:-}\" ]; then",
+        '  if [ -z "${OUT_PATH:-}" ]; then',
         "    return",
         "  fi",
         "  python3 - \"$OUT_PATH\" <<'PYONE'",
@@ -4879,7 +4852,7 @@ describe("run_step_down_as_sandbox", () => {
         "PYONE",
         "}",
         "heredoc_two() {",
-        "  if [ -z \"${ALT_PATH:-}\" ]; then",
+        '  if [ -z "${ALT_PATH:-}" ]; then',
         "    return",
         "  fi",
         "  python3 - \"$ALT_PATH\" <<'PYTWO'",
@@ -4969,8 +4942,10 @@ describe("ensure_mutable_openclaw_config_hash root-mode step-down", () => {
     }
     const stepDownLog = path.join(tmpDir, "step-down.log");
     const scriptPath = path.join(tmpDir, "run.sh");
-    const helperFn = extractShellFunctionFromSource(src, "ensure_mutable_openclaw_config_hash")
-      .replaceAll("/sandbox/.openclaw", configDir);
+    const helperFn = extractShellFunctionFromSource(
+      src,
+      "ensure_mutable_openclaw_config_hash",
+    ).replaceAll("/sandbox/.openclaw", configDir);
     fs.writeFileSync(
       scriptPath,
       [
@@ -5055,10 +5030,7 @@ describe("ensure_mutable_openclaw_config_hash root-mode step-down", () => {
       // production EACCES).
       const directProbe = spawnSync(
         "sh",
-        [
-          "-c",
-          `cd ${JSON.stringify(configDir)} && sha256sum openclaw.json >".config-hash"`,
-        ],
+        ["-c", `cd ${JSON.stringify(configDir)} && sha256sum openclaw.json >".config-hash"`],
         { encoding: "utf-8", timeout: 5000 },
       );
       const runningAsRoot = typeof process.getuid === "function" && process.getuid() === 0;
@@ -5080,8 +5052,10 @@ describe("ensure_mutable_openclaw_config_hash root-mode step-down", () => {
       // owner-uid step-down restoring effective write access).
       const stepDownLog = path.join(tmpDir, "step-down.log");
       const scriptPath = path.join(tmpDir, "run.sh");
-      const helperFn = extractShellFunctionFromSource(src, "ensure_mutable_openclaw_config_hash")
-        .replaceAll("/sandbox/.openclaw", configDir);
+      const helperFn = extractShellFunctionFromSource(
+        src,
+        "ensure_mutable_openclaw_config_hash",
+      ).replaceAll("/sandbox/.openclaw", configDir);
       fs.writeFileSync(
         scriptPath,
         [
@@ -5098,10 +5072,10 @@ describe("ensure_mutable_openclaw_config_hash root-mode step-down", () => {
       );
       const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
       expect(result.status, result.stderr || result.stdout).toBe(0);
-      expect(fs.readFileSync(stepDownLog, "utf-8").trim().split("\n").filter(Boolean)).toHaveLength(1);
-      expect(fs.readFileSync(hashPath, "utf-8").trim()).toMatch(
-        /^[0-9a-f]{64}\s+openclaw\.json$/,
+      expect(fs.readFileSync(stepDownLog, "utf-8").trim().split("\n").filter(Boolean)).toHaveLength(
+        1,
       );
+      expect(fs.readFileSync(hashPath, "utf-8").trim()).toMatch(/^[0-9a-f]{64}\s+openclaw\.json$/);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -5109,20 +5083,6 @@ describe("ensure_mutable_openclaw_config_hash root-mode step-down", () => {
 });
 
 describe("direct-root entrypoint composition under CAP_DAC_OVERRIDE drop", () => {
-  // Chain the production helpers in the exact order the root entrypoint
-  // calls them — ensure_mutable_openclaw_config_hash →
-  // prepare_gateway_token_for_current_command → export_gateway_token →
-  // write_runtime_shell_env → lock_rc_files → setup_auth_profile_as_sandbox —
-  // against a tmpfs layout that mirrors /sandbox + /tmp, with uid=0 stubbed
-  // and a step-down prefix that mirrors the CAP_DAC_OVERRIDE-dropped
-  // effective ownership of the mutable config tree. Verifies the
-  // entrypoint acceptance clauses:
-  //   1. /sandbox/.openclaw/.config-hash gets a fresh sha256 row.
-  //   2. /tmp/nemoclaw-proxy-env.sh exists and exports OPENCLAW_GATEWAY_TOKEN.
-  //   3. Stderr never carries "Missing gateway auth token".
-  //   4. Stderr never carries the heredoc-roundtrip "syntax error … 'fi'".
-  //   5. /sandbox/.bashrc and /sandbox/.profile end at mode 0444.
-  //   6. The chain reaches the continuation path (exit 0).
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
   it("runs the helper chain end-to-end against a simulated root entrypoint", () => {
@@ -5139,9 +5099,6 @@ describe("direct-root entrypoint composition under CAP_DAC_OVERRIDE drop", () =>
       configPath,
       JSON.stringify({ gateway: { port: 18789, auth: {} } }, null, 2) + "\n",
     );
-    // Pre-existing hash file owned by the test uid at mode 0444 mirrors the
-    // production EACCES condition: the redirection cannot bypass the
-    // sandbox-only write bit unless the step-down prefix relaxes ownership.
     fs.writeFileSync(hashPath, "placeholder\n");
     fs.chmodSync(hashPath, 0o444);
 
@@ -5151,12 +5108,18 @@ describe("direct-root entrypoint composition under CAP_DAC_OVERRIDE drop", () =>
     fs.writeFileSync(profilePath, "# stub profile\n");
 
     const scriptPath = path.join(tmpDir, "run.sh");
-    const ensureHash = extractShellFunctionFromSource(src, "ensure_mutable_openclaw_config_hash")
-      .replaceAll("/sandbox/.openclaw", configDir);
-    const readToken = extractShellFunctionFromSource(src, "_read_gateway_token")
-      .replaceAll("/sandbox/.openclaw/openclaw.json", configPath);
-    const ensureToken = extractShellFunctionFromSource(src, "ensure_gateway_token")
-      .replaceAll("/sandbox/.openclaw", configDir);
+    const ensureHash = extractShellFunctionFromSource(
+      src,
+      "ensure_mutable_openclaw_config_hash",
+    ).replaceAll("/sandbox/.openclaw", configDir);
+    const readToken = extractShellFunctionFromSource(src, "_read_gateway_token").replaceAll(
+      "/sandbox/.openclaw/openclaw.json",
+      configPath,
+    );
+    const ensureToken = extractShellFunctionFromSource(src, "ensure_gateway_token").replaceAll(
+      "/sandbox/.openclaw",
+      configDir,
+    );
     const ensureTokenIfMissing = extractShellFunctionFromSource(
       src,
       "ensure_gateway_token_if_missing",
@@ -5170,11 +5133,6 @@ describe("direct-root entrypoint composition under CAP_DAC_OVERRIDE drop", () =>
       "prepare_gateway_token_for_current_command",
     );
     const exportToken = extractShellFunctionFromSource(src, "export_gateway_token");
-    // `extractShellFunctionFromSource` looks for the first `^}` after the
-    // signature, which trips on the embedded `<<'GUARDENVEOF'` heredoc inside
-    // `write_runtime_shell_env` (the heredoc body contains a column-0 `}`
-    // that closes the inlined `openclaw()` shell shim). Slice the function
-    // by the next sibling function's signature instead.
     const writeRuntimeStart = src.indexOf("write_runtime_shell_env() {");
     const writeRuntimeEnd = src.indexOf("\nensure_runtime_shell_env_shim() {", writeRuntimeStart);
     if (writeRuntimeStart === -1 || writeRuntimeEnd === -1) {
@@ -5193,44 +5151,22 @@ describe("direct-root entrypoint composition under CAP_DAC_OVERRIDE drop", () =>
       [
         "#!/usr/bin/env bash",
         "set -euo pipefail",
-        // Pretend to be uid 0 from the perspective of every consumer.
         'id() { if [ "${1:-}" = "-u" ]; then printf "0"; else command id "$@"; fi; }',
-        // Mutable-default tree owned by the sandbox user.
         'openclaw_config_dir_owner() { printf "sandbox"; }',
-        // prepare/restore wrap the python writer in real production. The
-        // step-down prefix relaxes the hash file mode the same way, so the
-        // wrappers stay no-ops here.
         "prepare_openclaw_config_for_write() { :; }",
         "restore_openclaw_config_after_write() { :; }",
-        // Drive the production gating fn instead of stubbing it: the root
-        // entrypoint enters this branch with `NEMOCLAW_CMD=()`, which sends
-        // `needs_gateway_token_for_current_command` down the `return 0` path
-        // and `prepare_gateway_token_for_current_command` into a real
-        // `ensure_gateway_token` call.
         "NEMOCLAW_CMD=()",
-        // Proxy environment is empty in the test — the function still writes
-        // the file because it is hardcoded to do so once entered.
         '_PROXY_URL=""',
         '_NO_PROXY_VAL=""',
-        // CAP_DAC_OVERRIDE-dropped step-down: the only effective recovery
-        // the production sandbox-uid switch performs (from this test's
-        // single-uid vantage) is restoring the write bit on the hash file
-        // it owns. Mirror that here.
         `STEP_DOWN_PREFIX_SANDBOX=(bash -c 'chmod 0660 ${JSON.stringify(hashPath)} 2>/dev/null; exec "$@"' sandbox-step-down)`,
-        // Stub lock_rc_files so it does not require CAP_CHOWN inside vitest.
         "lock_rc_files() {",
         '  for rc in "${1}/.bashrc" "${1}/.profile"; do',
         '    [ -f "$rc" ] && chmod 0444 "$rc"',
         "  done",
         "}",
-        // `emit_sandbox_sourced_file` is provided by sandbox-init.sh in
-        // production; mirror its tee-to-444 shape here.
         'emit_sandbox_sourced_file() { local target="$1"; cat > "$target"; chmod 444 "$target"; }',
         "write_auth_profile() { :; }",
         "harden_auth_profiles() { :; }",
-        // write_runtime_shell_env reads a handful of script-globals; default
-        // them so `set -u` does not trip and the optional emit branches stay
-        // dormant in the test (their content is exercised elsewhere).
         '_SANDBOX_SAFETY_NET=""',
         '_PROXY_FIX_SCRIPT=""',
         '_WS_FIX_SCRIPT=""',
@@ -5239,6 +5175,7 @@ describe("direct-root entrypoint composition under CAP_DAC_OVERRIDE drop", () =>
         '_CIAO_GUARD_SCRIPT=""',
         '_TELEGRAM_DIAGNOSTICS_SCRIPT=""',
         '_SLACK_GUARD_SCRIPT=""',
+        '_WHATSAPP_QR_COMPACT_SCRIPT=""',
         '_TOOL_REDIRECTS=("NEMOCLAW_TEST_REDIRECT=/tmp/nemoclaw-test")',
         'NODE_USE_ENV_PROXY=""',
         readToken,
@@ -5251,14 +5188,12 @@ describe("direct-root entrypoint composition under CAP_DAC_OVERRIDE drop", () =>
         writeRuntimeEnv,
         helper,
         setupAuth,
-        // Exact production call order from the root path of the entrypoint.
         "ensure_mutable_openclaw_config_hash",
         "prepare_gateway_token_for_current_command",
         "export_gateway_token",
         "write_runtime_shell_env",
         `lock_rc_files ${JSON.stringify(sandboxHome)}`,
         "setup_auth_profile_as_sandbox",
-        // Continuation signal.
         'echo "CONTINUATION_REACHED"',
       ].join("\n"),
       { mode: 0o700 },
@@ -5267,32 +5202,28 @@ describe("direct-root entrypoint composition under CAP_DAC_OVERRIDE drop", () =>
     try {
       const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 10000 });
 
-      // Clause 6: continuation path reached, exit 0.
       expect(result.status, result.stderr || result.stdout).toBe(0);
       expect(result.stdout).toContain("CONTINUATION_REACHED");
 
-      // Clauses 3 and 4: neither failure mode the linked issues described.
       expect(result.stderr).not.toContain("Missing gateway auth token");
       expect(result.stderr).not.toMatch(/syntax error near unexpected token .?fi/);
 
-      // Clause 1: hash refresh wrote a fresh sha256 row.
       const hashContents = fs.readFileSync(hashPath, "utf-8").trim();
       expect(hashContents).toMatch(/^[0-9a-f]{64}\s+openclaw\.json$/);
       expect((fs.statSync(hashPath).mode & 0o777).toString(8)).toBe("660");
 
-      // Clause 2: proxy env file present with the gateway token export.
       expect(fs.existsSync(proxyEnvFile)).toBe(true);
       const proxyEnv = fs.readFileSync(proxyEnvFile, "utf-8");
       expect(proxyEnv).toMatch(/export OPENCLAW_GATEWAY_TOKEN='[A-Za-z0-9_-]{20,}'/);
 
-      // Clause 5: rc files locked.
       expect((fs.statSync(bashrcPath).mode & 0o777).toString(8)).toBe("444");
       expect((fs.statSync(profilePath).mode & 0o777).toString(8)).toBe("444");
 
-      // The token persisted into openclaw.json matches the export above.
       const updatedConfig = JSON.parse(fs.readFileSync(configPath, "utf-8"));
       expect(updatedConfig.gateway?.auth?.token).toMatch(/^[A-Za-z0-9_-]{20,}$/);
-      expect(proxyEnv).toContain(`export OPENCLAW_GATEWAY_TOKEN='${updatedConfig.gateway.auth.token}'`);
+      expect(proxyEnv).toContain(
+        `export OPENCLAW_GATEWAY_TOKEN='${updatedConfig.gateway.auth.token}'`,
+      );
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

@@ -350,7 +350,10 @@ console.log = () => {};
     const result = runScript(script);
     assert.equal(result.status, 0, result.stderr);
     const payload = JSON.parse(result.stdout.trim());
-    assert.ok(!payload.resolved.map((p: { name: string }) => p.name).includes("npm"), "npm should be deselected");
+    assert.ok(
+      !payload.resolved.map((p: { name: string }) => p.name).includes("npm"),
+      "npm should be deselected",
+    );
   });
 
   it("access level can be restricted from read-write to read via override", () => {
@@ -434,7 +437,9 @@ console.log = (...args) => lines.push(args.join(" "));
     const payload = JSON.parse(result.stdout.trim());
     assert.ok(!payload.error, `unexpected error: ${payload.error}`);
     // registry.updateSandbox must have been called with policyTier: "open"
-    const tierUpdate = payload.updates.find((u: { policyTier?: string }) => u.policyTier !== undefined);
+    const tierUpdate = payload.updates.find(
+      (u: { policyTier?: string }) => u.policyTier !== undefined,
+    );
     assert.ok(
       tierUpdate,
       `updateSandbox should have been called with policyTier, updates: ${JSON.stringify(payload.updates)}`,
@@ -862,10 +867,7 @@ console.log = () => {};
     assert.equal(result.status, 0, result.stderr);
     const payload = JSON.parse(result.stdout.trim());
     assert.ok(!payload.error, `unexpected error: ${payload.error}`);
-    assert.ok(
-      payload.applied.includes("brave"),
-      `custom Brave was dropped: ${payload.applied}`,
-    );
+    assert.ok(payload.applied.includes("brave"), `custom Brave was dropped: ${payload.applied}`);
     assert.ok(
       !payload.appliedCalls.includes("brave"),
       `custom Brave was re-applied: ${payload.appliedCalls}`,

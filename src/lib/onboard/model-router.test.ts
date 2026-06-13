@@ -26,6 +26,21 @@ describe("model-router process ownership checks", () => {
     ).toBe(true);
   });
 
+  it("recognizes Python-interpreted model-router venv command lines (#5169)", () => {
+    expect(
+      isModelRouterCommandLineForPort(
+        [
+          "/home/user/.nemoclaw/model-router-venv/bin/python",
+          "/home/user/.nemoclaw/model-router-venv/bin/model-router",
+          "proxy",
+          "--port",
+          "4000",
+        ],
+        4000,
+      ),
+    ).toBe(true);
+  });
+
   it("falls back to ps-style command lines when /proc is unavailable", () => {
     expect(
       readModelRouterProcessCommandLine(1234, {

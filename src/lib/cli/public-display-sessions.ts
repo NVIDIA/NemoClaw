@@ -36,4 +36,12 @@ export const SANDBOX_SESSIONS_DISPLAY_LAYOUT: Record<string, readonly PublicDisp
       description: "Delete a session entry via the OpenClaw gateway",
     },
   ],
+  "sandbox:sessions:export": [
+    {
+      group: "Sandbox Management",
+      order: 17.4,
+      flags: "[keys...] [--agent <id>] [--out <path>] [--include-trajectory] [--json]",
+      description: "Export OpenClaw session JSONL out of a running sandbox",
+    },
+  ],
 };

@@ -4,7 +4,7 @@
 /**
  * Guards src/lib/onboard.ts against direct reads of provider credential env vars.
  *
- * Direct `process.env.NVIDIA_API_KEY`-style reads bypass credentials.json. Use
+ * Direct `process.env.NVIDIA_INFERENCE_API_KEY`-style reads bypass credentials.json. Use
  * resolveProviderCredential() or getCredential() for credential resolution unless
  * a narrowly-scoped raw env check is intentional and explicitly suppressed.
  */
@@ -15,6 +15,7 @@ import { fileURLToPath } from "node:url";
 import * as ts from "typescript";
 
 const CREDENTIAL_ENV_KEYS = new Set([
+  "NVIDIA_INFERENCE_API_KEY",
   "NVIDIA_API_KEY",
   "OPENAI_API_KEY",
   "ANTHROPIC_API_KEY",

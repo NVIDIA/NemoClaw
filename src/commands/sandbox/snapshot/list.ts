@@ -4,7 +4,10 @@
 import { runSandboxSnapshot } from "../../../lib/actions/sandbox/snapshot";
 import { NemoClawCommand } from "../../../lib/cli/nemoclaw-oclif-command";
 
-import { sandboxNameArg, snapshotCommandError } from "../../../lib/sandbox/snapshot-command-support";
+import {
+  sandboxNameArg,
+  snapshotCommandError,
+} from "../../../lib/sandbox/snapshot-command-support";
 
 export default class SnapshotListCommand extends NemoClawCommand {
   static id = "sandbox:snapshot:list";
@@ -16,8 +19,7 @@ export default class SnapshotListCommand extends NemoClawCommand {
   static args = {
     sandboxName: sandboxNameArg,
   };
-  static flags = {
-  };
+  static flags = {};
 
   public async run(): Promise<void> {
     const { args } = await this.parse(SnapshotListCommand);

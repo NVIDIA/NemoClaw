@@ -12,6 +12,17 @@ const requireMentionKeys = new Set(
     .filter((key): key is string => typeof key === "string" && key.length > 0),
 );
 
+const configKeyAliases: Readonly<Record<string, readonly string[]>> = {
+  DISCORD_SERVER_ID: ["DISCORD_SERVER_IDS"],
+  DISCORD_USER_ID: ["DISCORD_ALLOWED_IDS"],
+};
+
+const aliasToCanonical = new Map(
+  Object.entries(configKeyAliases).flatMap(([canonical, aliases]) =>
+    aliases.map((alias) => [alias, canonical] as const),
+  ),
+);
+
 export const MESSAGING_CHANNEL_CONFIG_ENV_KEYS: readonly string[] = [
   ...new Set(
     channels.flatMap((channel) =>
@@ -35,24 +46,24 @@ export type MessagingChannelConfigEnvResolution = {
 
 function normalizeValue(value: unknown): string | null {
   if (typeof value !== "string") return null;
-  const normalized = value.replace(/[\r\n]/g, "").trim();
+  if (/[\r\n]/.test(value)) {
+    throw new Error("Messaging channel config values must not contain line breaks.");
+  }
+  const normalized = value.trim();
   return normalized || null;
 }
 
 export function getCanonicalMessagingChannelConfigKey(key: string): string | null {
-  return knownConfigKeys.has(key) ? key : null;
+  return knownConfigKeys.has(key) ? key : (aliasToCanonical.get(key) ?? null);
 }
 
 export function getMessagingChannelConfigEnvKeys(key: string): readonly string[] {
   const canonical = getCanonicalMessagingChannelConfigKey(key);
   if (!canonical) return [];
-  return [canonical];
+  return [canonical, ...(configKeyAliases[canonical] ?? [])];
 }
 
-export function normalizeMessagingChannelConfigValue(
-  key: string,
-  value: unknown,
-): string | null {
+export function normalizeMessagingChannelConfigValue(key: string, value: unknown): string | null {
   const canonical = getCanonicalMessagingChannelConfigKey(key);
   if (!canonical) return null;
   const normalized = normalizeValue(value);

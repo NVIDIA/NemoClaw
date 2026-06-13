@@ -65,9 +65,7 @@ function displayEntriesFromOclifMetadata(): CommandDef[] {
     }
   }
 
-  return entries
-    .sort((a, b) => a.order - b.order)
-    .map(({ order: _order, ...entry }) => entry);
+  return entries.sort((a, b) => a.order - b.order).map(({ order: _order, ...entry }) => entry);
 }
 
 /** All CLI display commands. Hidden entries are included for dispatch helpers. */
@@ -126,7 +124,9 @@ export function canonicalUsageList(): string[] {
  * For "nemoclaw onboard --from", extracts "onboard".
  */
 function hasRegisteredChildCommand(commandId: string): boolean {
-  return Object.keys(getRegisteredOclifCommandsMetadata()).some((id) => id.startsWith(`${commandId}:`));
+  return Object.keys(getRegisteredOclifCommandsMetadata()).some((id) =>
+    id.startsWith(`${commandId}:`),
+  );
 }
 
 export function globalCommandTokens(): Set<string> {

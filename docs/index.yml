@@ -160,13 +160,15 @@ navigation:
               - page: "Agent Skills"
                 path: _build/agent-variants/resources/agent-skills.openclaw.generated.mdx
                 slug: agent-skills
+              - link: "Community Examples"
+                href: https://github.com/NVIDIA/nemoclaw-community
+              - link: "Discord"
+                href: https://discord.gg/XFpfPv9Uvx
               - link: "Report Vulnerabilities"
                 href: https://github.com/NVIDIA/NemoClaw/blob/main/SECURITY.md
               - page: "License"
                 path: _build/agent-variants/resources/license.openclaw.generated.mdx
                 slug: license
-              - link: "Discord"
-                href: https://discord.gg/XFpfPv9Uvx
       - title: NemoClaw for Hermes
         subtitle: Guide for Hermes agents
         slug: hermes
@@ -295,6 +297,8 @@ navigation:
               - page: "Agent Skills"
                 path: _build/agent-variants/resources/agent-skills.hermes.generated.mdx
                 slug: agent-skills
+              - link: "Community Examples"
+                href: https://github.com/NVIDIA/nemoclaw-community
               - link: "Report Vulnerabilities"
                 href: https://github.com/NVIDIA/NemoClaw/blob/main/SECURITY.md
               - page: "License"

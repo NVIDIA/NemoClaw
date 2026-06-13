@@ -29,10 +29,7 @@ const PERMISSIVE_POLICY_PATH = new URL(
   "../nemoclaw-blueprint/policies/openclaw-sandbox-permissive.yaml",
   import.meta.url,
 );
-const HERMES_POLICY_PATH = new URL(
-  "../agents/hermes/policy-additions.yaml",
-  import.meta.url,
-);
+const HERMES_POLICY_PATH = new URL("../agents/hermes/policy-additions.yaml", import.meta.url);
 const REQUIRED_PROFILE_FIELDS: ReadonlyArray<keyof BlueprintProfile> = [
   "provider_type",
   "endpoint",
@@ -208,7 +205,7 @@ describe("blueprint.yaml", () => {
 describe("Model Router pool config", () => {
   const pool = loadYaml<RouterPoolConfig>(ROUTER_POOL_CONFIG_PATH);
 
-  it("regression #3255: routes NVIDIA API keys to the public NVIDIA Build endpoint", () => {
+  it("regression #3255: routes NVIDIA API keys to the public NVIDIA inference endpoint", () => {
     const apiBases = new Set((pool.models ?? []).map((model) => model.api_base));
     expect(apiBases).toEqual(new Set(["https://integrate.api.nvidia.com/v1"]));
   });
@@ -220,9 +217,7 @@ describe("Model Router pool config", () => {
     expect(modelsByName.get("nemotron-3-nano-reasoning")).toBe(
       "openai/nvidia/nemotron-3-nano-30b-a3b",
     );
-    expect(modelsByName.get("nemotron-3-super")).toBe(
-      "openai/nvidia/nemotron-3-super-120b-a12b",
-    );
+    expect(modelsByName.get("nemotron-3-super")).toBe("openai/nvidia/nemotron-3-super-120b-a12b");
     for (const litellmModel of modelsByName.values()) {
       expect(litellmModel).not.toMatch(/nvidia\/nvidia\//);
       expect(litellmModel).not.toContain("Nemotron-3-Nano-30B-A3B");
@@ -285,18 +280,17 @@ describe("base sandbox policy", () => {
     expect(violations).toEqual([]);
   });
 
-  it("allows NVIDIA embeddings on both NVIDIA inference hosts", () => {
+  it("allows NVIDIA embeddings on the NVIDIA inference host", () => {
     const np = policy.network_policies ?? {};
     const endpoints = np.nvidia?.endpoints;
     const missingHosts: string[] = [];
-    for (const host of ["integrate.api.nvidia.com", "inference-api.nvidia.com"]) {
-      const endpoint = endpoints?.find((entry) => entry.host === host);
-      const hasEmbeddingsRule = endpoint?.rules?.some(
-        (rule) => rule.allow?.method === "POST" && rule.allow?.path === "/v1/embeddings",
-      );
-      if (!hasEmbeddingsRule) {
-        missingHosts.push(host);
-      }
+    const host = "integrate.api.nvidia.com";
+    const endpoint = endpoints?.find((entry) => entry.host === host);
+    const hasEmbeddingsRule = endpoint?.rules?.some(
+      (rule) => rule.allow?.method === "POST" && rule.allow?.path === "/v1/embeddings",
+    );
+    if (!hasEmbeddingsRule) {
+      missingHosts.push(host);
     }
     expect(missingHosts).toEqual([]);
   });
@@ -549,6 +543,18 @@ describe("Hermes sandbox policy", () => {
 
   it("regression #4230: managed_inference keeps a narrow inference API allowlist", () => {
     expectManagedInferenceSecurityShape();
+  });
+
+  function expectGithubBaselineAbsent(): void {
+    const np = policy.network_policies ?? {};
+    expect("github" in np).toBe(false);
+    const hosts = Object.values(np).flatMap((entry) => (entry.endpoints ?? []).map((e) => e.host));
+    expect(hosts).not.toContain("github.com");
+    expect(hosts).not.toContain("api.github.com");
+  }
+
+  it("base policy does not silently grant GitHub access; only the opt-in preset does", () => {
+    expectGithubBaselineAbsent();
   });
 });
 
