@@ -2294,6 +2294,241 @@ function validateModelRouterProviderRoutedInferenceVitestJob(
   requireRunContains(errors, cleanup, 'rm -rf "${DOCKER_CONFIG}"');
 }
 
+function validateBedrockRuntimeCompatibleAnthropicVitestJob(
+  errors: string[],
+  jobs: WorkflowRecord,
+): void {
+  const jobName = "bedrock-runtime-compatible-anthropic-vitest";
+  const scenarioName = "bedrock-runtime-compatible-anthropic";
+  const job = asRecord(jobs[jobName]);
+  if (Object.keys(job).length === 0) {
+    errors.push("workflow missing bedrock-runtime-compatible-anthropic-vitest job");
+    return;
+  }
+
+  if (job["runs-on"] !== "ubuntu-latest") {
+    errors.push("bedrock-runtime-compatible-anthropic-vitest job must run on ubuntu-latest");
+  }
+  if (job["timeout-minutes"] !== 60) {
+    errors.push("bedrock-runtime-compatible-anthropic-vitest timeout-minutes must be 60");
+  }
+  validateFreeStandingJobSelector(errors, jobs, jobName, scenarioName);
+
+  const strategy = asRecord(job.strategy);
+  if (strategy["fail-fast"] !== false) {
+    errors.push("bedrock-runtime-compatible-anthropic-vitest strategy.fail-fast must be false");
+  }
+  const matrix = asRecord(strategy.matrix);
+  if (!Array.isArray(matrix.agent) || matrix.agent.join(",") !== "openclaw,hermes") {
+    errors.push("bedrock-runtime-compatible-anthropic-vitest matrix.agent must be openclaw,hermes");
+  }
+
+  const jobEnv = asRecord(job.env);
+  if ("DOCKER_CONFIG" in jobEnv) {
+    errors.push(
+      "bedrock-runtime-compatible-anthropic-vitest job must not set DOCKER_CONFIG at job level",
+    );
+  }
+  if (
+    jobEnv.E2E_ARTIFACT_DIR !==
+    "${{ github.workspace }}/e2e-artifacts/vitest/bedrock-runtime-compatible-anthropic/${{ matrix.agent }}"
+  ) {
+    errors.push(
+      "bedrock-runtime-compatible-anthropic-vitest job must write artifacts under e2e-artifacts/vitest/bedrock-runtime-compatible-anthropic/${{ matrix.agent }}",
+    );
+  }
+  if (jobEnv.NEMOCLAW_CLI_BIN !== "${{ github.workspace }}/bin/nemoclaw.js") {
+    errors.push(
+      "bedrock-runtime-compatible-anthropic-vitest job must point NEMOCLAW_CLI_BIN at the repo CLI",
+    );
+  }
+  if (jobEnv.NEMOCLAW_RUN_E2E_SCENARIOS !== "1") {
+    errors.push(
+      "bedrock-runtime-compatible-anthropic-vitest job must set NEMOCLAW_RUN_E2E_SCENARIOS=1",
+    );
+  }
+  if (jobEnv.NEMOCLAW_NON_INTERACTIVE !== "1") {
+    errors.push("bedrock-runtime-compatible-anthropic-vitest job must set NEMOCLAW_NON_INTERACTIVE=1");
+  }
+  if (jobEnv.NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE !== "1") {
+    errors.push(
+      "bedrock-runtime-compatible-anthropic-vitest job must set NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1",
+    );
+  }
+  if (jobEnv.NEMOCLAW_RECREATE_SANDBOX !== "1") {
+    errors.push("bedrock-runtime-compatible-anthropic-vitest job must set NEMOCLAW_RECREATE_SANDBOX=1");
+  }
+  if (jobEnv.NEMOCLAW_AGENT !== "${{ matrix.agent }}") {
+    errors.push(
+      "bedrock-runtime-compatible-anthropic-vitest job must pass matrix.agent through NEMOCLAW_AGENT",
+    );
+  }
+  if (jobEnv.NEMOCLAW_SANDBOX_NAME !== "e2e-bedrock-${{ matrix.agent }}") {
+    errors.push(
+      "bedrock-runtime-compatible-anthropic-vitest job must derive NEMOCLAW_SANDBOX_NAME from matrix.agent",
+    );
+  }
+  if (jobEnv.OPENSHELL_GATEWAY !== "nemoclaw") {
+    errors.push(
+      "bedrock-runtime-compatible-anthropic-vitest job must force OPENSHELL_GATEWAY=nemoclaw",
+    );
+  }
+  for (const secret of [
+    "NVIDIA_API_KEY",
+    "DOCKERHUB_USERNAME",
+    "DOCKERHUB_TOKEN",
+    "GITHUB_TOKEN",
+  ]) {
+    requireEnvDoesNotExposeSecret(
+      errors,
+      "bedrock-runtime-compatible-anthropic-vitest job",
+      jobEnv,
+      secret,
+    );
+  }
+
+  const steps = asSteps(job.steps);
+  requireNoDispatchInputInterpolation(errors, steps);
+  for (const step of steps) {
+    const stepName = `bedrock-runtime-compatible-anthropic-vitest step '${step.name ?? step.uses ?? "<unnamed>"}'`;
+    const stepEnv = asRecord(step.env);
+    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_API_KEY");
+    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "GITHUB_TOKEN");
+    if (step.name !== "Authenticate to Docker Hub") {
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_USERNAME");
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_TOKEN");
+      requireNoDockerHubAuthInRun(errors, stepName, stringValue(step.run));
+    }
+  }
+
+  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
+  if (!checkout) {
+    errors.push("bedrock-runtime-compatible-anthropic-vitest job missing checkout step");
+  }
+  requireFullShaAction(errors, checkout, "bedrock-runtime-compatible-anthropic-vitest checkout");
+  if (asRecord(checkout?.with)["persist-credentials"] !== false) {
+    errors.push(
+      "bedrock-runtime-compatible-anthropic-vitest checkout step must set persist-credentials=false",
+    );
+  }
+
+  const configureDockerAuth = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Configure isolated Docker auth directory",
+  );
+  requireRunContains(
+    errors,
+    configureDockerAuth,
+    'echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-bedrock-runtime-compatible-anthropic-${{ matrix.agent }}" >> "$GITHUB_ENV"',
+  );
+  requireRunDoesNotContain(errors, configureDockerAuth, "${{ runner.temp }}");
+
+  const dockerLogin = requireJobStep(errors, jobName, steps, "Authenticate to Docker Hub");
+  const dockerLoginEnv = asRecord(dockerLogin?.env);
+  if (dockerLoginEnv.DOCKERHUB_USERNAME !== "${{ secrets.DOCKERHUB_USERNAME }}") {
+    errors.push(
+      "bedrock-runtime-compatible-anthropic-vitest Docker Hub auth must receive DOCKERHUB_USERNAME from secrets",
+    );
+  }
+  if (dockerLoginEnv.DOCKERHUB_TOKEN !== "${{ secrets.DOCKERHUB_TOKEN }}") {
+    errors.push(
+      "bedrock-runtime-compatible-anthropic-vitest Docker Hub auth must receive DOCKERHUB_TOKEN from secrets",
+    );
+  }
+  requireRunContains(errors, dockerLogin, 'mkdir -p "${DOCKER_CONFIG}"');
+  requireRunContains(errors, dockerLogin, 'chmod 700 "${DOCKER_CONFIG}"');
+  requireRunContains(errors, dockerLogin, "docker login docker.io");
+  requireRunContains(errors, dockerLogin, "--password-stdin");
+  requireRunContains(errors, dockerLogin, "continuing with anonymous pulls");
+
+  const setupNode = namedStep(steps, "Set up Node");
+  if (!setupNode) {
+    errors.push("bedrock-runtime-compatible-anthropic-vitest job missing step: Set up Node");
+  }
+  requireFullShaAction(
+    errors,
+    setupNode,
+    "bedrock-runtime-compatible-anthropic-vitest setup-node",
+  );
+
+  const installRootDependencies = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Install root dependencies",
+  );
+  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
+
+  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
+  requireRunContains(errors, buildCli, "npm run build:cli");
+
+  const runVitest = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Run Bedrock Runtime compatible Anthropic live test",
+  );
+  requireRunContains(errors, runVitest, "npx vitest run --project e2e-scenarios-live");
+  requireRunContains(
+    errors,
+    runVitest,
+    "test/e2e-scenario/live/bedrock-runtime-compatible-anthropic.test.ts",
+  );
+  requireRunDoesNotContain(errors, runVitest, "${{ inputs.");
+
+  const upload = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Upload Bedrock Runtime compatible Anthropic artifacts",
+  );
+  requireFullShaAction(
+    errors,
+    upload,
+    "bedrock-runtime-compatible-anthropic-vitest upload-artifact",
+  );
+  const uploadWith = asRecord(upload?.with);
+  if (
+    uploadWith.name !==
+    "e2e-vitest-scenarios-bedrock-runtime-compatible-anthropic-${{ matrix.agent }}"
+  ) {
+    errors.push(
+      "bedrock-runtime-compatible-anthropic-vitest artifact upload name must include matrix.agent",
+    );
+  }
+  const uploadPath = stringValue(uploadWith.path);
+  requireUploadPathContains(
+    errors,
+    uploadPath,
+    "e2e-artifacts/vitest/bedrock-runtime-compatible-anthropic/${{ matrix.agent }}/",
+  );
+  if (uploadWith["include-hidden-files"] !== false) {
+    errors.push(
+      "bedrock-runtime-compatible-anthropic-vitest artifact upload must set include-hidden-files: false",
+    );
+  }
+  if (uploadWith["if-no-files-found"] !== "ignore") {
+    errors.push(
+      "bedrock-runtime-compatible-anthropic-vitest artifact upload must ignore missing fixture artifacts",
+    );
+  }
+  if (uploadWith["retention-days"] !== 14) {
+    errors.push(
+      "bedrock-runtime-compatible-anthropic-vitest artifact upload retention-days must be 14",
+    );
+  }
+
+  const cleanup = requireJobStep(errors, jobName, steps, "Clean up Docker auth");
+  if (cleanup?.if !== "always()") {
+    errors.push("bedrock-runtime-compatible-anthropic-vitest Docker auth cleanup must always run");
+  }
+  requireRunContains(errors, cleanup, "docker logout docker.io");
+  requireRunContains(errors, cleanup, 'rm -rf "${DOCKER_CONFIG}"');
+}
+
+
 export function validateE2eVitestScenariosWorkflowBoundary(
   workflowPath = DEFAULT_VITEST_WORKFLOW_PATH,
 ): string[] {
@@ -2541,6 +2776,8 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   validateFreeStandingJobSelector(errors, jobs, "gateway-drift-preflight-vitest", "gateway-drift-preflight");
 
   validateFreeStandingJobSelector(errors, jobs, "openclaw-inference-switch-vitest", "openclaw-inference-switch");
+
+  validateBedrockRuntimeCompatibleAnthropicVitestJob(errors, jobs);
 
   const reportToPr = asRecord(jobs["report-to-pr"]);
   if (Object.keys(reportToPr).length === 0) {
