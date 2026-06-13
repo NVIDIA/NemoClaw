@@ -20,7 +20,7 @@
 # What this tests:
 #   1. Run brev-launchable-ci-cpu.sh with NEMOCLAW_REF=current branch
 #   2. Verify installation artifacts (nemoclaw, openshell, Node.js ≥22, Docker, sentinel)
-#   3. nemoclaw onboard --non-interactive with NVIDIA_API_KEY (cloud provider)
+#   3. nemoclaw onboard --non-interactive with NVIDIA_INFERENCE_API_KEY (cloud provider)
 #   4. Sandbox health: nemoclaw list, status, gateway running
 #   5. Live inference through the sandbox (same pattern as test-full-e2e.sh Phase 4)
 #   6. Destroy + cleanup
@@ -28,8 +28,8 @@
 # Prerequisites:
 #   - Ubuntu runner (ubuntu-latest)
 #   - Docker running
-#   - NVIDIA_API_KEY set (real key, starts with nvapi-)
-#   - Network access to integrate.api.nvidia.com
+#   - NVIDIA_INFERENCE_API_KEY set (real key, starts with nvapi-)
+#   - Network access to inference-api.nvidia.com
 #   - NEMOCLAW_NON_INTERACTIVE=1
 #   - NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1
 #
@@ -37,12 +37,12 @@
 #   NEMOCLAW_REF              — git ref for brev-launchable-ci-cpu.sh (default: current branch)
 #   NEMOCLAW_SANDBOX_NAME     — sandbox name (default: e2e-launchable)
 #   NEMOCLAW_RECREATE_SANDBOX — set to 1 to recreate if exists
-#   NVIDIA_API_KEY            — required for NVIDIA Endpoints inference
+#   NVIDIA_INFERENCE_API_KEY            — required for NVIDIA Endpoints inference
 #   SKIP_DOCKER_PULL          — set to 1 to skip Docker image pre-pulls (speeds up CI)
 #
 # Usage:
 #   NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
-#     NVIDIA_API_KEY=nvapi-... bash test/e2e/test-launchable-smoke.sh
+#     NVIDIA_INFERENCE_API_KEY=nvapi-... bash test/e2e/test-launchable-smoke.sh
 #
 # See: https://github.com/NVIDIA/NemoClaw/issues/2599
 
@@ -177,17 +177,17 @@ else
   exit 1
 fi
 
-if [ -n "${NVIDIA_API_KEY:-}" ] && [[ "${NVIDIA_API_KEY}" == nvapi-* ]]; then
-  pass "NVIDIA_API_KEY is set (starts with nvapi-)"
+if [ -n "${NVIDIA_INFERENCE_API_KEY:-}" ] && [[ "${NVIDIA_INFERENCE_API_KEY}" == nvapi-* ]]; then
+  pass "NVIDIA_INFERENCE_API_KEY is set (starts with nvapi-)"
 else
-  fail "NVIDIA_API_KEY not set or invalid — required for live inference"
+  fail "NVIDIA_INFERENCE_API_KEY not set or invalid — required for live inference"
   exit 1
 fi
 
-if curl -sf --max-time 10 https://integrate.api.nvidia.com/v1/models >/dev/null 2>&1; then
-  pass "Network access to integrate.api.nvidia.com"
+if curl -sf --max-time 10 https://inference-api.nvidia.com/v1/models >/dev/null 2>&1; then
+  pass "Network access to inference-api.nvidia.com"
 else
-  fail "Cannot reach integrate.api.nvidia.com"
+  fail "Cannot reach inference-api.nvidia.com"
   exit 1
 fi
 
@@ -425,11 +425,11 @@ fi
 section "Phase 6: Live inference"
 
 # ── Test 6a: Direct NVIDIA Endpoints (sanity check) ──
-info "[LIVE] Direct API test → integrate.api.nvidia.com..."
+info "[LIVE] Direct API test → inference-api.nvidia.com..."
 api_response=$(curl -s --max-time 30 \
-  -X POST https://integrate.api.nvidia.com/v1/chat/completions \
+  -X POST https://inference-api.nvidia.com/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $NVIDIA_API_KEY" \
+  -H "Authorization: Bearer $NVIDIA_INFERENCE_API_KEY" \
   -d '{
     "model": "nvidia/nemotron-3-super-120b-a12b",
     "messages": [{"role": "user", "content": "Reply with exactly one word: PONG"}],

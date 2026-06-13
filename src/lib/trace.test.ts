@@ -122,11 +122,11 @@ describe("onboard trace artifacts", () => {
     expect(
       sanitizeTraceAttributes({
         nested: { token: "xoxb-secret", ok: true },
-        credential_env: "NVIDIA_API_KEY",
+        credential_env: "NVIDIA_INFERENCE_API_KEY",
       }),
     ).toMatchObject({
       nested: '{"token":"<REDACTED>","ok":true}',
-      credential_env: "NVIDIA_API_KEY",
+      credential_env: "NVIDIA_INFERENCE_API_KEY",
     });
   });
 

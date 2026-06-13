@@ -23,7 +23,7 @@ describe("network-policy transient provider validation classifier", () => {
 
     expect(
       isTransientProviderValidationFailure(
-        probeOutput("endpoint validation failed: invalid NVIDIA_API_KEY credential"),
+        probeOutput("endpoint validation failed: invalid NVIDIA_INFERENCE_API_KEY credential"),
       ),
     ).toBe(false);
     expect(

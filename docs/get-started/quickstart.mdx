@@ -119,7 +119,7 @@ A configured blueprint router profile makes the Model Router option appear.
 
 <Tip>
 Export the API key before launching the installer so the wizard does not have to ask for it.
-For example, run `export NVIDIA_API_KEY=<your-key>` before `curl ... | bash`.
+For example, run `export NVIDIA_INFERENCE_API_KEY=<your-key>` before `curl ... | bash`.
 If you entered a key incorrectly, refer to [Reset a Stored Credential](../manage-sandboxes/lifecycle#reset-a-stored-credential) to clear and re-enter it.
 </Tip>
 
@@ -131,14 +131,14 @@ For Ollama, vLLM, NIM, and compatible local servers, refer to [Use a Local Infer
 
 | Option | Use when | Credential variable |
 |---|---|---|
-| NVIDIA Endpoints | You want hosted models from `build.nvidia.com`, including hosted Nemotron models. | `NVIDIA_API_KEY` |
+| NVIDIA Endpoints | You want hosted models from `build.nvidia.com`, including hosted Nemotron models. | `NVIDIA_INFERENCE_API_KEY` |
 | OpenAI | You want the OpenAI API at `https://api.openai.com/v1`. | `OPENAI_API_KEY` |
 | Other OpenAI-compatible endpoint | You have OpenRouter, LocalAI, llama.cpp, vLLM, NIM, SGLang, an enterprise gateway, or another `/v1/chat/completions` endpoint. | `COMPATIBLE_API_KEY` |
 | Anthropic | You want the Anthropic Messages API. | `ANTHROPIC_API_KEY` |
 | Other Anthropic-compatible endpoint | You have a Claude proxy, Bedrock-compatible gateway, or self-hosted `/v1/messages` endpoint. | `COMPATIBLE_ANTHROPIC_API_KEY` |
 | Google Gemini | You want Google's OpenAI-compatible Gemini endpoint. | `GEMINI_API_KEY` |
 | Local Ollama | You want a host-local Ollama model. | None |
-| Model Router | You want NemoClaw to start the host-side model router. | `NVIDIA_API_KEY` |
+| Model Router | You want NemoClaw to start the host-side model router. | `NVIDIA_INFERENCE_API_KEY` |
 
 Export the relevant key before launching the installer when possible.
 If your compatible endpoint does not require authentication, set its credential variable to any non-empty placeholder.

@@ -341,6 +341,7 @@ NemoClaw also applies additional secret-safety exclusions that override `.docker
 Without a `.dockerignore`, onboarding still skips common large or local-only directories (`node_modules`, `.git`, `.venv`, and `__pycache__`) while staging this context.
 Other build outputs such as `dist/`, `target/`, or `build/` are included unless your `.dockerignore` excludes them.
 If the staged context is larger than 100 MB, onboarding prints a warning before the Docker build starts.
+Move the Dockerfile into a smaller dedicated directory or add `.dockerignore` entries for generated artifacts to shrink the context.
 If the directory contains unreadable files (for example, Windows system files visible in WSL), onboarding exits with an error suggesting you move the Dockerfile to a dedicated directory.
 
 ```bash
@@ -358,6 +359,18 @@ build-dir/
 ├── Dockerfile
 └── files-used-by-COPY/
 ```
+
+For faster custom builds, plan for Docker cache behavior:
+
+- Treat the first build on a fresh host as a cold build.
+  Cold builds download the base image and package indexes, so they take longer than later warm rebuilds even when NemoClaw is healthy.
+- A warm rebuild reuses cached layers when the base image and earlier layers are unchanged, so it is much faster than the first build.
+- Order Dockerfile instructions from least-changing to most-changing: base image, system packages, dependency manifests, dependency install, then application source.
+  This lets warm rebuilds reuse cached dependency layers instead of reinstalling on every source change.
+- Pin the base image to an explicit tag or digest so warm rebuilds resolve the same cached base instead of pulling a new one.
+
+To diagnose where a slow build spends time, set `NEMOCLAW_TRACE=1` and read the phase timings in [Onboard Profiling Traces](#onboard-profiling-traces).
+NemoClaw does not guarantee exact build timings.
 
 All NemoClaw build arguments (`NEMOCLAW_MODEL`, `NEMOCLAW_PROVIDER_KEY`, `NEMOCLAW_INFERENCE_BASE_URL`, etc.) are injected as `ARG` overrides at build time, so declare them in your Dockerfile if you need to reference them.
 

@@ -48,7 +48,7 @@ name: E2E / Branch Validation
 #   all                      — Runs credential-sanitization + telegram-injection (NOT full,
 #                              which destroys the sandbox the security tests need).
 #
-# Required secrets: BREV_API_KEY + BREV_ORG_ID (or legacy BREV_API_TOKEN), NVIDIA_API_KEY
+# Required secrets: BREV_API_KEY + BREV_ORG_ID (or legacy BREV_API_TOKEN), NVIDIA_INFERENCE_API_KEY
 # Instance cost: Brev CPU credits (~$0.10/run for 4x16 instance)
 
 on:
@@ -157,7 +157,7 @@ on:
         required: false
       BREV_ORG_ID:
         required: false
-      NVIDIA_API_KEY:
+      NVIDIA_INFERENCE_API_KEY:
         required: true
 
 permissions:
@@ -253,7 +253,7 @@ jobs:
         env:
           NEMOCLAW_RUN_BRANCH_VALIDATION_E2E: "1"
           BREV_API_TOKEN: ${{ inputs.brev_token || secrets.BREV_API_TOKEN }}
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
           GITHUB_TOKEN: ${{ github.token }}
           INSTANCE_NAME: ${{ env.BREV_E2E_INSTANCE_NAME }}
           TEST_SUITE: ${{ inputs.test_suite }}

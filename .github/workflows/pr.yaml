@@ -63,7 +63,7 @@ jobs:
       - name: Fetch checked-out merge base for docs-only checks
         shell: bash
         run: |
-          DOCS_ONLY_FROM_REF="$(git rev-parse HEAD^1)"
+          DOCS_ONLY_FROM_REF="${{ github.event.pull_request.base.sha }}"
           git fetch --no-tags --depth=1 origin "$DOCS_ONLY_FROM_REF"
           echo "DOCS_ONLY_FROM_REF=$DOCS_ONLY_FROM_REF" >> "$GITHUB_ENV"
 

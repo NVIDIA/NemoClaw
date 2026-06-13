@@ -248,7 +248,7 @@ jobs:
 
       - name: Run Model Router provider-routed inference E2E test
         env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
         run: bash test/e2e/test-model-router-provider-routed-inference.sh
@@ -322,7 +322,7 @@ jobs:
   # `openclaw channels login --channel whatsapp` onQr callback invokes)
   # at the version bundled in Dockerfile.base, and asserts the pairing QR
   # renders compact with the NemoClaw preload and oversized without it.
-  # Hermetic: only needs node + npm (no Docker, GPU, or NVIDIA_API_KEY).
+  # Hermetic: only needs node + npm (no Docker, GPU, or NVIDIA_INFERENCE_API_KEY).
   whatsapp-qr-compact-e2e:
     needs: select_regression_jobs
     if: >-

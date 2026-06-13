@@ -77,8 +77,8 @@ export function normalizeRoutedEndpointUrl(
  * Mirrors `reconcileModelRouter()`'s resolution order so the gateway provider
  * is bound to the same key the router process reads: an explicit recorded env
  * first, then the routed blueprint profile's credential env, and only then the
- * `NVIDIA_API_KEY` default. Without the profile step a resume with no recorded
- * credential env would re-upsert the provider against `NVIDIA_API_KEY` even
+ * `NVIDIA_INFERENCE_API_KEY` default. Without the profile step a resume with no recorded
+ * credential env would re-upsert the provider against `NVIDIA_INFERENCE_API_KEY` even
  * when the routed profile defines a custom `credential_env`, breaking
  * inference.local (#4564).
  */
