@@ -511,6 +511,90 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  # Focused coverage for test/e2e/test-openclaw-skill-cli-e2e.sh's direct
+  # OpenClaw skills CLI contract. The retained legacy bash lane remains in
+  # nightly-e2e.yaml until #5098 Phase 11 shell retirement.
+  openclaw-skill-cli-vitest:
+    needs: generate-matrix
+    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',openclaw-skill-cli-vitest,') || contains(format(',{0},', inputs.scenarios), ',openclaw-skill-cli,') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      FREE_STANDING_VITEST_JOB: "1"
+      FREE_STANDING_SCENARIO_ID: "openclaw-skill-cli"
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/openclaw-skill-cli
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_SANDBOX_NAME: "e2e-openclaw-skill-cli"
+      OPENSHELL_GATEWAY: "nemoclaw"
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Authenticate to Docker Hub
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          login_succeeded=0
+          for attempt in 1 2 3; do
+            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
+              login_succeeded=1
+              break
+            fi
+            if [[ "$attempt" -lt 3 ]]; then
+              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
+              sleep 5
+            fi
+          done
+          if [[ "$login_succeeded" -ne 1 ]]; then
+            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
+          fi
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build CLI
+        run: npm run build:cli
+
+      - name: Run OpenClaw skill CLI live test
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+        run: |
+          set -euo pipefail
+          npx vitest run --project e2e-scenarios-live \
+            test/e2e-scenario/live/openclaw-skill-cli.test.ts \
+            --silent=false --reporter=default
+
+      - name: Upload OpenClaw skill CLI artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-vitest-scenarios-openclaw-skill-cli
+          path: e2e-artifacts/vitest/openclaw-skill-cli/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: |
+          docker logout docker.io >/dev/null 2>&1 || true
+
   hermes-root-entrypoint-smoke-vitest:
     needs: generate-matrix
     if: ${{ needs.generate-matrix.result == 'success' && ((inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',hermes-root-entrypoint-smoke-vitest,') || contains(format(',{0},', inputs.scenarios), ',hermes-root-entrypoint-smoke,')) }}
@@ -601,6 +685,59 @@ jobs:
         with:
           name: e2e-vitest-scenarios-inference-routing
           path: e2e-artifacts/vitest/inference-routing/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
+
+  cloud-inference-vitest:
+    needs: generate-matrix
+    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',cloud-inference-vitest,') || contains(format(',{0},', inputs.scenarios), ',cloud-inference,') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    env:
+      FREE_STANDING_VITEST_JOB: "1"
+      FREE_STANDING_SCENARIO_ID: "cloud-inference"
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/cloud-inference
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_SANDBOX_NAME: "e2e-cloud-inference"
+      OPENSHELL_GATEWAY: "nemoclaw"
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build CLI
+        run: npm run build:cli
+
+      - name: Run cloud inference live test
+        # Migrated from test/e2e/test-cloud-inference-e2e.sh. The Vitest test
+        # preserves the legacy install.sh/onboard path, posts a live PONG
+        # request through sandbox inference.local, and reuses the skill
+        # filesystem validators from the retained bash helpers.
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+        run: |
+          set -euo pipefail
+          npx vitest run --project e2e-scenarios-live \
+            test/e2e-scenario/live/cloud-inference.test.ts \
+            --silent=false --reporter=default
+
+      - name: Upload cloud inference artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-vitest-scenarios-cloud-inference
+          path: e2e-artifacts/vitest/cloud-inference/
           include-hidden-files: false
           if-no-files-found: ignore
           retention-days: 14
@@ -868,7 +1005,91 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  sessions-agents-cli-vitest:
+    needs: generate-matrix
+    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',sessions-agents-cli-vitest,') || contains(format(',{0},', inputs.scenarios), ',sessions-agents-cli,') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    env:
+      FREE_STANDING_VITEST_JOB: "1"
+      FREE_STANDING_SCENARIO_ID: "sessions-agents-cli"
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/sessions-agents-cli
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_SANDBOX_NAME: "e2e-sessions-agents-cli"
+      OPENSHELL_GATEWAY: "nemoclaw"
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
 
+      - name: Authenticate to Docker Hub
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          login_succeeded=0
+          for attempt in 1 2 3; do
+            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
+              login_succeeded=1
+              break
+            fi
+            if [[ "$attempt" -lt 3 ]]; then
+              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
+              sleep 5
+            fi
+          done
+          if [[ "$login_succeeded" -ne 1 ]]; then
+            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
+          fi
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build CLI
+        run: npm run build:cli
+
+      - name: Install OpenShell CLI
+        run: |
+          set -euo pipefail
+          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u GITHUB_TOKEN \
+            bash scripts/install-openshell.sh
+
+      - name: Run sessions/agents CLI live test
+        # Migrated from test/e2e/test-sessions-agents-cli.sh. This stays as a
+        # host-side CLI live test because the contract is argv translation,
+        # OpenClaw gateway dispatch, pending pairing/scope approval, and JSON
+        # envelope handling for sessions/agents commands.
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
+          npx vitest run --project e2e-scenarios-live \
+            test/e2e-scenario/live/sessions-agents-cli.test.ts \
+            --silent=false --reporter=default
+
+      - name: Upload sessions/agents CLI artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-vitest-scenarios-sessions-agents-cli
+          path: e2e-artifacts/vitest/sessions-agents-cli/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
 
   runtime-overrides-vitest:
     needs: generate-matrix
@@ -1027,6 +1248,82 @@ jobs:
         with:
           name: e2e-vitest-scenarios-network-policy
           path: e2e-artifacts/vitest/network-policy/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
+
+  common-egress-agent-vitest:
+    needs: generate-matrix
+    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',common-egress-agent-vitest,') || contains(format(',{0},', inputs.scenarios), ',common-egress-agent,') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      FREE_STANDING_VITEST_JOB: "1"
+      FREE_STANDING_SCENARIO_ID: "common-egress-agent"
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/common-egress-agent
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_RECREATE_SANDBOX: "1"
+      OPENSHELL_GATEWAY: nemoclaw
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build CLI
+        run: npm run build:cli
+
+      - name: Install OpenShell
+        # Direct Vitest execution uses bin/nemoclaw.js instead of install.sh,
+        # so install OpenShell explicitly before onboard and SSH-agent probes.
+        env:
+          NEMOCLAW_NON_INTERACTIVE: "1"
+        run: |
+          set -euo pipefail
+          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
+
+      - name: Run common-egress agent live test
+        # Migrated from test/e2e/test-common-egress-agent-e2e.sh. Preserves
+        # OpenClaw balanced/open and Hermes open common-egress agent-turn
+        # coverage against real sandbox policy and live hosted inference.
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
+          if command -v openshell >/dev/null 2>&1; then
+            OPENSHELL_BIN="$(command -v openshell)"
+          elif [ -x "$HOME/.local/bin/openshell" ]; then
+            OPENSHELL_BIN="$HOME/.local/bin/openshell"
+          else
+            echo "::error::OpenShell CLI not found after install"
+            ls -la /usr/local/bin/openshell "$HOME/.local/bin/openshell" 2>&1 || true
+            exit 1
+          fi
+          export OPENSHELL_BIN
+          echo "Using OPENSHELL_BIN=$OPENSHELL_BIN"
+          "$OPENSHELL_BIN" --version
+          npx vitest run --project e2e-scenarios-live \
+            test/e2e-scenario/live/common-egress-agent.test.ts \
+            --silent=false --reporter=default
+
+      - name: Upload common-egress agent artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-vitest-scenarios-common-egress-agent
+          path: e2e-artifacts/vitest/common-egress-agent/
           include-hidden-files: false
           if-no-files-found: ignore
           retention-days: 14
@@ -1294,6 +1591,102 @@ jobs:
         with:
           name: e2e-vitest-scenarios-sandbox-rebuild
           path: e2e-artifacts/vitest/sandbox-rebuild/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
+
+  state-backup-restore-vitest:
+    needs: generate-matrix
+    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',state-backup-restore-vitest,') || contains(format(',{0},', inputs.scenarios), ',state-backup-restore,') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      FREE_STANDING_VITEST_JOB: "1"
+      FREE_STANDING_SCENARIO_ID: "state-backup-restore"
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/state-backup-restore
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+      NEMOCLAW_SANDBOX_NAME: e2e-state-backup
+      OPENSHELL_GATEWAY: nemoclaw
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Authenticate to Docker Hub
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          login_succeeded=0
+          for attempt in 1 2 3; do
+            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
+              login_succeeded=1
+              break
+            fi
+            if [[ "$attempt" -lt 3 ]]; then
+              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
+              sleep 5
+            fi
+          done
+          if [[ "$login_succeeded" -ne 1 ]]; then
+            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
+          fi
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build CLI
+        run: npm run build:cli
+
+      - name: Install OpenShell
+        env:
+          NEMOCLAW_NON_INTERACTIVE: "1"
+        run: |
+          set -euo pipefail
+          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
+
+      - name: Run state backup restore live test
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
+          if command -v openshell >/dev/null 2>&1; then
+            OPENSHELL_BIN="$(command -v openshell)"
+          elif [ -x "$HOME/.local/bin/openshell" ]; then
+            OPENSHELL_BIN="$HOME/.local/bin/openshell"
+          else
+            echo "::error::OpenShell CLI not found after install"
+            ls -la /usr/local/bin/openshell "$HOME/.local/bin/openshell" 2>&1 || true
+            exit 1
+          fi
+          export OPENSHELL_BIN
+          "$OPENSHELL_BIN" --version
+          npx vitest run --project e2e-scenarios-live \
+            test/e2e-scenario/live/state-backup-restore.test.ts \
+            --silent=false --reporter=default
+
+      - name: Upload state backup restore artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-vitest-scenarios-state-backup-restore
+          path: e2e-artifacts/vitest/state-backup-restore/
           include-hidden-files: false
           if-no-files-found: ignore
           retention-days: 14
@@ -1817,6 +2210,56 @@ jobs:
           docker logout docker.io || true
           rm -rf "${DOCKER_CONFIG}"
 
+  gateway-drift-preflight-vitest:
+    needs: generate-matrix
+    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',gateway-drift-preflight-vitest,') || contains(format(',{0},', inputs.scenarios), ',gateway-drift-preflight,') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      FREE_STANDING_VITEST_JOB: "1"
+      FREE_STANDING_SCENARIO_ID: "gateway-drift-preflight"
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/gateway-drift-preflight
+      NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build CLI
+        run: npm run build:cli
+
+      - name: Run gateway drift preflight Vitest test
+        # Migrated from test/e2e/test-gateway-drift-preflight.sh. This keeps
+        # the real repo CLI, PATH-resolved openshell/docker shims, host-process
+        # marker/PID probes, and process exit behavior while avoiding live
+        # Docker/OpenShell mutation.
+        run: |
+          set -euo pipefail
+          npx vitest run --project cli \
+            test/gateway-drift-preflight.test.ts \
+            --silent=false --reporter=default
+
+      - name: Upload gateway drift preflight artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-vitest-scenarios-gateway-drift-preflight
+          path: e2e-artifacts/vitest/gateway-drift-preflight/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
+
   # Focused coverage slice for the #2603/#3145 OpenClaw websocket
   # protocol/history contract. The retained legacy bash lane remains the
   # source for full closeout until a later PR proves replacement and deletes it.
@@ -2004,22 +2447,28 @@ jobs:
         openshell-version-pin-vitest,
         onboard-negative-paths-vitest,
         skill-agent-vitest,
+        openclaw-skill-cli-vitest,
         inference-routing-vitest,
+        cloud-inference-vitest,
         credential-sanitization-vitest,
         credential-migration-vitest,
+        sessions-agents-cli-vitest,
         runtime-overrides-vitest,
         hermes-e2e-vitest,
         hermes-root-entrypoint-smoke-vitest,
         network-policy-vitest,
+        common-egress-agent-vitest,
         shields-config-vitest,
         rebuild-openclaw-vitest,
         sandbox-rebuild-vitest,
+        state-backup-restore-vitest,
         token-rotation-vitest,
         messaging-providers-vitest,
         launchable-smoke-vitest,
         double-onboard-vitest,
         model-router-provider-routed-inference-vitest,
         sandbox-survival-vitest,
+        gateway-drift-preflight-vitest,
         openclaw-tui-chat-correlation-vitest,
         gateway-guard-recovery,
         issue-4434-tui-unreachable-inference-vitest,
