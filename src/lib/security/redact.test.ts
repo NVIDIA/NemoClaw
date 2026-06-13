@@ -14,7 +14,7 @@ describe("redactForLog", () => {
         model: "gpt-4o",
         refreshToken: "refresh-token-value",
       },
-      items: [{ name: "safe" }, { credentialEnv: "NVIDIA_API_KEY" }],
+      items: [{ name: "safe" }, { credentialEnv: "NVIDIA_INFERENCE_API_KEY" }],
     });
 
     expect(result).toEqual({

@@ -577,7 +577,7 @@ describe("config set nested URL SSRF enforcement", () => {
       exports: {
         loadSession: () => ({
           sandboxName: "rotate-test",
-          credentialEnv: "NVIDIA_API_KEY",
+          credentialEnv: "NVIDIA_INFERENCE_API_KEY",
           provider: "nvidia-prod",
           providerType: "openai",
         }),
@@ -611,7 +611,10 @@ describe("config set nested URL SSRF enforcement", () => {
       ).resolves.toBeUndefined();
 
       expect(errorSpy).not.toHaveBeenCalled();
-      expect(saveCredential).toHaveBeenCalledWith("NVIDIA_API_KEY", "nvapi-rotated-value");
+      expect(saveCredential).toHaveBeenCalledWith(
+        "NVIDIA_INFERENCE_API_KEY",
+        "nvapi-rotated-value",
+      );
       // Credential rotation is not a shields operation; its audit entry must
       // use the rotate_token action so it does not inflate shields_down counts
       // in the forensics log.
@@ -619,7 +622,7 @@ describe("config set nested URL SSRF enforcement", () => {
         expect.objectContaining({
           action: "rotate_token",
           sandbox: "rotate-test",
-          reason: "rotate-token openclaw:NVIDIA_API_KEY",
+          reason: "rotate-token openclaw:NVIDIA_INFERENCE_API_KEY",
         }),
       );
       expect(appendAuditEntry).not.toHaveBeenCalledWith(

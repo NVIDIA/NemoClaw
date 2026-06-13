@@ -18,7 +18,7 @@ import { shouldRunLiveE2EScenarios } from "../fixtures/live-project-gate.ts";
 // gateway, the plaintext file is removed after success, credentials list reads
 // from the gateway, and secure unlink removes a planted symlink without touching
 // its target. The live onboard intentionally follows the legacy default NVIDIA
-// Endpoints path: NVIDIA_API_KEY is present only in the legacy file, absent from
+// Endpoints path: NVIDIA_INFERENCE_API_KEY is present only in the legacy file, absent from
 // the onboard child env, and must migrate into the nvidia-prod gateway provider.
 // No registry, migration ledger, or shared helper is introduced.
 
@@ -107,7 +107,7 @@ async function cleanupCredentialMigrationState(host: HostCliClient, home: string
     host.command("node", [CLI_ENTRYPOINT, SANDBOX_NAME, "destroy", "--yes"], {
       artifactName: "cleanup-nemoclaw-destroy",
       env,
-      redactionValues: [process.env.NVIDIA_API_KEY ?? ""],
+      redactionValues: [process.env.NVIDIA_INFERENCE_API_KEY ?? ""],
       timeoutMs: 120_000,
     }),
   );
@@ -139,13 +139,13 @@ runCredentialMigrationTest(
   { timeout: ONBOARD_TIMEOUT_MS + INSTALL_TIMEOUT_MS + 5 * 60_000 },
   async ({ artifacts, cleanup, host, secrets, skip }) => {
     // Use the existing nightly secret as the legacy NVIDIA credential. The
-    // onboard child env below deliberately does not receive NVIDIA_API_KEY, so
+    // onboard child env below deliberately does not receive NVIDIA_INFERENCE_API_KEY, so
     // the only source is ~/.nemoclaw/credentials.json — matching the retired
     // shell lane's migration contract.
-    const migratedCredentialValue = secrets.required("NVIDIA_API_KEY");
+    const migratedCredentialValue = secrets.required("NVIDIA_INFERENCE_API_KEY");
     expect(
       migratedCredentialValue.startsWith("nvapi-"),
-      "NVIDIA_API_KEY must start with nvapi-",
+      "NVIDIA_INFERENCE_API_KEY must start with nvapi-",
     ).toBe(true);
     expect(fs.existsSync(CLI_ENTRYPOINT), "bin/nemoclaw.js missing").toBe(true);
     expect(
@@ -201,7 +201,7 @@ runCredentialMigrationTest(
       legacyFile,
       JSON.stringify(
         {
-          NVIDIA_API_KEY: migratedCredentialValue,
+          NVIDIA_INFERENCE_API_KEY: migratedCredentialValue,
           OPENSHELL_GATEWAY: "evil-gw-from-tampered-file",
           NODE_OPTIONS: "--require=/tmp/evil.js",
         },
