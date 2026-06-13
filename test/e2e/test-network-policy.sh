@@ -23,7 +23,7 @@
 # Prerequisites:
 #   - Docker running
 #   - NemoClaw installed (or install.sh available)
-#   - NVIDIA_API_KEY for sandbox onboard
+#   - NVIDIA_INFERENCE_API_KEY for sandbox onboard
 # =============================================================================
 
 set -euo pipefail
@@ -92,7 +92,7 @@ install_nemoclaw() {
   fi
   log "=== Installing NemoClaw via install.sh ==="
   NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME" \
-    NVIDIA_API_KEY="${NVIDIA_API_KEY:-nvapi-DUMMY-FOR-INSTALL}" \
+    NVIDIA_INFERENCE_API_KEY="${NVIDIA_INFERENCE_API_KEY:-nvapi-DUMMY-FOR-INSTALL}" \
     NEMOCLAW_NON_INTERACTIVE=1 \
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
     NEMOCLAW_POLICY_TIER="restricted" \
@@ -242,9 +242,9 @@ wait_for_e2e_http_port() {
 
 # ── Onboard sandbox ─────────────────────────────────────────────────────────
 setup_sandbox() {
-  local api_key="${NVIDIA_API_KEY:-}"
+  local api_key="${NVIDIA_INFERENCE_API_KEY:-}"
   if [[ -z "$api_key" ]]; then
-    log "ERROR: NVIDIA_API_KEY not set"
+    log "ERROR: NVIDIA_INFERENCE_API_KEY not set"
     exit 1
   fi
 
@@ -681,7 +681,7 @@ test_net_07_inference_exemption() {
   log "  Step 2: Attempt direct connection to provider (should be blocked)..."
   local direct_response
   direct_response=$(sandbox_exec "node -e \"
-fetch('https://integrate.api.nvidia.com/v1/models', {signal: AbortSignal.timeout(15000)})
+fetch('https://inference-api.nvidia.com/v1/models', {signal: AbortSignal.timeout(15000)})
   .then(r => console.log('STATUS_' + r.status))
   .catch(e => console.log('ERROR_' + (e.cause?.code || e.code || e.message)))
 \"" 2>&1) || true

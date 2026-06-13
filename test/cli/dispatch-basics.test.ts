@@ -66,7 +66,7 @@ describe("CLI dispatch", () => {
   });
 
   it(
-    "start does not prompt for NVIDIA_API_KEY before launching local services",
+    "start does not prompt for NVIDIA_INFERENCE_API_KEY before launching local services",
     testTimeoutOptions(35_000),
     () => {
       const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-start-no-key-"));
@@ -107,7 +107,7 @@ describe("CLI dispatch", () => {
         {
           HOME: home,
           PATH: `${localBin}:${process.env.PATH || ""}`,
-          NVIDIA_API_KEY: "",
+          NVIDIA_INFERENCE_API_KEY: "",
           TELEGRAM_BOT_TOKEN: "",
         },
         30000,

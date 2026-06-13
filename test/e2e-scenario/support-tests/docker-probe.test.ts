@@ -28,7 +28,7 @@ describe("DockerProbe secret hygiene", () => {
         DOCKER_HOST: "unix:///tmp/docker.sock",
         DOCKER_CONTEXT: "desktop-linux",
         DOCKERHUB_TOKEN: "dockerhub-secret-token",
-        NVIDIA_API_KEY: "nvapi-secret-value",
+        NVIDIA_INFERENCE_API_KEY: "nvapi-secret-value",
         RANDOM_SECRET: "other-secret-value",
       },
       "/tmp/docker-config",
@@ -42,19 +42,19 @@ describe("DockerProbe secret hygiene", () => {
       DOCKER_CONFIG: "/tmp/docker-config",
     });
     expect(env).not.toHaveProperty("DOCKERHUB_TOKEN");
-    expect(env).not.toHaveProperty("NVIDIA_API_KEY");
+    expect(env).not.toHaveProperty("NVIDIA_INFERENCE_API_KEY");
     expect(env).not.toHaveProperty("RANDOM_SECRET");
   });
 
   it("redacts secret-shaped Docker diagnostics before artifacts are written", () => {
     const secret = "nvapi-supersecret-token";
-    const secrets = new SecretStore({ NVIDIA_API_KEY: secret }, (message) => {
+    const secrets = new SecretStore({ NVIDIA_INFERENCE_API_KEY: secret }, (message) => {
       throw new Error(message ?? "unexpected skip");
     });
 
     const result = redactDockerProbeResult(
       {
-        command: ["docker", "run", "--env", `NVIDIA_API_KEY=${secret}`],
+        command: ["docker", "run", "--env", `NVIDIA_INFERENCE_API_KEY=${secret}`],
         exitCode: 1,
         signal: null,
         stdout: `stdout ${secret}`,

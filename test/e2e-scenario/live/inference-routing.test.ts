@@ -563,7 +563,7 @@ liveTest(
     const result = await onboardSandbox(
       artifacts,
       sandboxName,
-      { NVIDIA_API_KEY: invalidKey },
+      { NVIDIA_INFERENCE_API_KEY: invalidKey },
       [invalidKey],
       "tc-inf-06-onboard-invalid-api-key",
       120_000,
@@ -612,7 +612,7 @@ liveTest(
         NEMOCLAW_ENDPOINT_URL: "https://nemoclaw-e2e.invalid/v1",
         NEMOCLAW_MODEL: "test-model",
         NEMOCLAW_PROVIDER: "custom",
-        NVIDIA_API_KEY: nvidiaKey,
+        NVIDIA_INFERENCE_API_KEY: nvidiaKey,
       },
       [nvidiaKey, compatibleKey],
       "tc-inf-07-onboard-unreachable-endpoint",
@@ -633,8 +633,8 @@ liveTest(
   { timeout: 15 * 60_000 },
   async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
     const apiKey =
-      secrets.optional("NVIDIA_API_KEY") ??
-      skipLive(skip, "NVIDIA_API_KEY not set — cannot test credential isolation");
+      secrets.optional("NVIDIA_INFERENCE_API_KEY") ??
+      skipLive(skip, "NVIDIA_INFERENCE_API_KEY not set — cannot test credential isolation");
     await requireLivePrerequisites(host, skip);
     const sandboxName = inferenceSandboxName("e2e-inf-cred");
     cleanup.add(
@@ -648,17 +648,17 @@ liveTest(
       runner: "vitest",
       migratedFrom: "test/e2e/test-inference-routing.sh",
       contract: [
-        "real NVIDIA_API_KEY does not appear in sandbox environment",
-        "real NVIDIA_API_KEY does not appear in sandbox process list when ps is available",
-        "real NVIDIA_API_KEY does not appear in sampled sandbox filesystem",
-        "sandbox NVIDIA_API_KEY, when present, is a placeholder rather than the real key",
+        "real NVIDIA_INFERENCE_API_KEY does not appear in sandbox environment",
+        "real NVIDIA_INFERENCE_API_KEY does not appear in sandbox process list when ps is available",
+        "real NVIDIA_INFERENCE_API_KEY does not appear in sampled sandbox filesystem",
+        "sandbox NVIDIA_INFERENCE_API_KEY, when present, is a placeholder rather than the real key",
       ],
     });
 
     const onboard = await onboardSandbox(
       artifacts,
       sandboxName,
-      { NVIDIA_API_KEY: apiKey },
+      { NVIDIA_INFERENCE_API_KEY: apiKey },
       [apiKey],
       "tc-inf-05-onboard-credential-isolation",
     );
@@ -787,7 +787,7 @@ liveTest(
 
     const placeholder = await sandbox.execShell(
       sandboxName,
-      trustedSandboxShellScript("printenv NVIDIA_API_KEY 2>/dev/null || true"),
+      trustedSandboxShellScript("printenv NVIDIA_INFERENCE_API_KEY 2>/dev/null || true"),
       {
         artifactName: "tc-inf-05-sandbox-placeholder",
         env: buildAvailabilityProbeEnv(),
@@ -798,7 +798,8 @@ liveTest(
     const placeholderValue = placeholder.stdout.trim();
     if (!placeholderValue) {
       await artifacts.writeJson("tc-inf-05-placeholder-skipped.json", {
-        reason: "NVIDIA_API_KEY not set in sandbox; placeholder injection may not be active",
+        reason:
+          "NVIDIA_INFERENCE_API_KEY not set in sandbox; placeholder injection may not be active",
       });
     } else {
       expect(placeholderValue, "sandbox has the real key, not a placeholder").not.toBe(apiKey);

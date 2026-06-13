@@ -16,7 +16,7 @@
 #
 # Prerequisites:
 #   - Docker running
-#   - NVIDIA_API_KEY set (needed to onboard the sandbox)
+#   - NVIDIA_INFERENCE_API_KEY set (needed to onboard the sandbox)
 #   - NEMOCLAW_NON_INTERACTIVE=1, NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1
 #
 # Environment:
@@ -25,7 +25,7 @@
 #
 # Usage:
 #   NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
-#     NVIDIA_API_KEY=nvapi-... bash test/e2e/test-openclaw-skill-cli-e2e.sh
+#     NVIDIA_INFERENCE_API_KEY=nvapi-... bash test/e2e/test-openclaw-skill-cli-e2e.sh
 
 # shellcheck disable=SC2317
 set -uo pipefail
@@ -84,11 +84,11 @@ if ! docker info >/dev/null 2>&1; then
 fi
 pass "Docker is running"
 
-if [ -z "${NVIDIA_API_KEY:-}" ] || [[ "${NVIDIA_API_KEY}" != nvapi-* ]]; then
-  fail "NVIDIA_API_KEY not set or invalid"
+if [ -z "${NVIDIA_INFERENCE_API_KEY:-}" ] || [[ "${NVIDIA_INFERENCE_API_KEY}" != nvapi-* ]]; then
+  fail "NVIDIA_INFERENCE_API_KEY not set or invalid"
   exit 1
 fi
-pass "NVIDIA_API_KEY is set"
+pass "NVIDIA_INFERENCE_API_KEY is set"
 
 cd "$REPO" || {
   fail "Could not cd to repo root"
