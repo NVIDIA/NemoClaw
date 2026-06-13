@@ -380,6 +380,20 @@ NEMOCLAW_PROVIDER=install-vllm \
 NemoClaw accepts `HUGGING_FACE_HUB_TOKEN` as an alternative.
 The token check runs on the host before any docker pull, so a missing or empty token aborts onboarding before bandwidth is spent on a 401.
 
+### Add Managed-vLLM Serve Arguments
+
+For advanced vLLM options that are not in the NemoClaw registry yet, export `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` as a JSON array of individual non-blank `vllm serve` tokens.
+NemoClaw trims and validates the array before pulling images or downloading models, shell-quotes each token, and appends the tokens after the registry defaults.
+
+```bash
+NEMOCLAW_PROVIDER=install-vllm \
+  NEMOCLAW_VLLM_EXTRA_ARGS_JSON='["--max-num-seqs","2","--disable-log-requests"]' \
+  $$nemoclaw onboard --non-interactive
+```
+
+Use this for operator-owned tuning only.
+If the selected vLLM image does not support an argument, the managed container exits and NemoClaw prints the vLLM log tail.
+
 ## NVIDIA NIM (Experimental)
 
 NemoClaw can pull, start, and manage a NIM container on hosts with a NIM-capable NVIDIA GPU.

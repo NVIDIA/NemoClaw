@@ -97,6 +97,91 @@ describe("mergeOpenClawRestoredConfig", () => {
     });
   });
 
+  it("restores reporter-owned model metadata while keeping fresh provider routing (#5202)", () => {
+    // Reporter scenario: same provider id and same model id after rebuild, but
+    // the freshly generated v0.0.63 model block resets the user's tuning. The
+    // merge must keep fresh runtime routing/credentials while restoring the
+    // backed-up non-secret model metadata.
+    const merged = mergeOpenClawRestoredConfig(
+      {
+        models: {
+          mode: "merge",
+          providers: {
+            inference: {
+              baseUrl: "http://127.0.0.1:8789/v1",
+              apiKey: "unused",
+              api: "chat-completions",
+              models: [
+                {
+                  compat: { supportsUsageInStreaming: true, toolCallStyle: "openai" },
+                  id: "moonshotai/kimi-k2",
+                  name: "stale-display-name",
+                  reasoning: true,
+                  input: ["text", "image"],
+                  cost: { input: 0.5, output: 1.5, cacheRead: 0.1, cacheWrite: 0.2 },
+                  contextWindow: 131072,
+                  maxTokens: 32768,
+                },
+              ],
+            },
+          },
+        },
+        mcp: { servers: { filesystem: { command: "npx", args: ["-y", "fs-server", "/work"] } } },
+      },
+      {
+        models: {
+          mode: "merge",
+          providers: {
+            inference: {
+              baseUrl: "http://127.0.0.1:9999/v1",
+              apiKey: "unused",
+              api: "chat-completions",
+              models: [
+                {
+                  id: "moonshotai/kimi-k2",
+                  name: "fresh-display-name",
+                  reasoning: false,
+                  input: ["text"],
+                  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                  contextWindow: 131072,
+                  maxTokens: 4096,
+                },
+              ],
+            },
+          },
+        },
+        gateway: { auth: { token: "fresh-token" } },
+      },
+    );
+
+    const provider = (
+      merged as {
+        models: { providers: { inference: Record<string, unknown> } };
+      }
+    ).models.providers.inference;
+    // Runtime-owned provider routing/credentials win from the fresh rebuild.
+    expect(provider.baseUrl).toBe("http://127.0.0.1:9999/v1");
+    expect(provider.apiKey).toBe("unused");
+    expect(provider.api).toBe("chat-completions");
+
+    const model = (provider.models as Record<string, unknown>[])[0];
+    // Routing identity (id/name) stays fresh; tuning metadata is restored.
+    expect(model.id).toBe("moonshotai/kimi-k2");
+    expect(model.name).toBe("fresh-display-name");
+    expect(model.reasoning).toBe(true);
+    expect(model.cost).toEqual({ input: 0.5, output: 1.5, cacheRead: 0.1, cacheWrite: 0.2 });
+    expect(model.maxTokens).toBe(32768);
+    expect(model.compat).toEqual({ supportsUsageInStreaming: true, toolCallStyle: "openai" });
+    expect(model.input).toEqual(["text", "image"]);
+    expect(model.contextWindow).toBe(131072);
+
+    // Fresh runtime gateway is preserved; durable user mcp.servers survives.
+    expect((merged as { gateway: unknown }).gateway).toEqual({ auth: { token: "fresh-token" } });
+    expect(
+      (merged as { mcp: { servers: Record<string, unknown> } }).mcp.servers.filesystem,
+    ).toEqual({ command: "npx", args: ["-y", "fs-server", "/work"] });
+  });
+
   it("keeps current provider and plugin entries for matching keys", () => {
     const merged = mergeOpenClawRestoredConfig(
       {

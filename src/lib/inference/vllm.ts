@@ -11,8 +11,10 @@ import { VLLM_PORT } from "../core/ports";
 import { runCapture, runShell } from "../runner";
 import { getGpuIndicesByName } from "./nim";
 import {
+  VLLM_EXTRA_ARGS_ENV,
   VLLM_MODELS,
   buildVllmServeCommand,
+  parseVllmExtraServeArgs,
   type VllmModelDef,
   type VllmPlatform,
 } from "./vllm-models";
@@ -509,12 +511,25 @@ export async function installVllm(
   if (!resolved) return { ok: false };
   const { model, source: modelSource } = resolved;
 
+  let extraServeArgs: string[];
+  try {
+    extraServeArgs = parseVllmExtraServeArgs();
+  } catch (err) {
+    console.error(`  vLLM install failed: ${(err as Error).message}`);
+    return { ok: false };
+  }
+
   console.log("");
   console.log(`  vLLM (${profile.name}):`);
   console.log(`    Image: ${profile.image}`);
   console.log(
     `    Model: ${model.id}${modelSource === "env" ? " (NEMOCLAW_VLLM_MODEL override)" : ""}`,
   );
+  if (extraServeArgs.length > 0) {
+    console.log(
+      `    Extra serve args: ${String(extraServeArgs.length)} token(s) from ${VLLM_EXTRA_ARGS_ENV}`,
+    );
+  }
   if (!opts.hasImage) console.log("    Image download on first run, cached after");
   console.log("    Model download on first run, cached after");
   console.log("");

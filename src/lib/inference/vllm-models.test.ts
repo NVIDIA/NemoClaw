@@ -5,10 +5,12 @@ import { describe, expect, it } from "vitest";
 
 import {
   DEFAULT_VLLM_MODEL,
+  VLLM_EXTRA_ARGS_ENV,
   VLLM_MODELS,
   assertGatedModelAccess,
   buildVllmServeCommand,
   modelsForPlatform,
+  parseVllmExtraServeArgs,
   preflightVllmModelEnv,
   selectVllmModelFromEnv,
 } from "../../../dist/lib/inference/vllm-models";
@@ -102,6 +104,36 @@ describe("vllm model registry", () => {
     expect(cmd).toContain("--reasoning-parser qwen3");
     expect(cmd).toContain("--tool-call-parser qwen3_coder");
     expect(cmd).toContain("--load-format fastsafetensors");
+  });
+
+  it("appends validated managed-vLLM extra serve args after registry defaults", () => {
+    const qwen = VLLM_MODELS.find((m) => m.envValue === "qwen3.6-27b");
+    const cmd = buildVllmServeCommand(qwen!, {
+      [VLLM_EXTRA_ARGS_ENV]: JSON.stringify([
+        "--max-num-seqs",
+        "2",
+        "--speculative-config",
+        '{"method":"ngram","num_speculative_tokens":1}',
+        "--served-model-name",
+        "operator test model",
+      ]),
+    } as NodeJS.ProcessEnv);
+
+    expect(cmd).toContain("--max-num-seqs 2");
+    expect(cmd).toContain(`--speculative-config '{"method":"ngram","num_speculative_tokens":1}'`);
+    expect(cmd).toContain("--served-model-name 'operator test model'");
+    expect(cmd.indexOf("--load-format fastsafetensors")).toBeLessThan(
+      cmd.indexOf("--served-model-name 'operator test model'"),
+    );
+  });
+
+  it("quotes single quotes in managed-vLLM extra serve args", () => {
+    const qwen = VLLM_MODELS.find((m) => m.envValue === "qwen3.6-27b");
+    const cmd = buildVllmServeCommand(qwen!, {
+      [VLLM_EXTRA_ARGS_ENV]: JSON.stringify(["--served-model-name", "operator's model"]),
+    } as NodeJS.ProcessEnv);
+
+    expect(cmd).toContain(`--served-model-name 'operator'"'"'s model'`);
   });
 
   it("uses model-specific max-model-len when building the command", () => {
@@ -225,6 +257,49 @@ describe("modelsForPlatform", () => {
   });
 });
 
+describe("parseVllmExtraServeArgs", () => {
+  it("returns no extra args when the env var is unset or blank", () => {
+    expect(parseVllmExtraServeArgs({} as NodeJS.ProcessEnv)).toEqual([]);
+    expect(parseVllmExtraServeArgs({ [VLLM_EXTRA_ARGS_ENV]: "  " } as NodeJS.ProcessEnv)).toEqual(
+      [],
+    );
+  });
+
+  it("parses a JSON array of extra vLLM serve argument tokens", () => {
+    expect(
+      parseVllmExtraServeArgs({
+        [VLLM_EXTRA_ARGS_ENV]: '[" --max-num-seqs ","2"]',
+      } as NodeJS.ProcessEnv),
+    ).toEqual(["--max-num-seqs", "2"]);
+  });
+
+  it("rejects malformed managed-vLLM extra args before docker work starts", () => {
+    expect(() =>
+      parseVllmExtraServeArgs({
+        [VLLM_EXTRA_ARGS_ENV]: '{"not":"an array"}',
+      } as NodeJS.ProcessEnv),
+    ).toThrow(/JSON array/);
+
+    expect(() =>
+      parseVllmExtraServeArgs({
+        [VLLM_EXTRA_ARGS_ENV]: '["--max-num-seqs",2]',
+      } as NodeJS.ProcessEnv),
+    ).toThrow(/\[1\] must be a string/);
+
+    expect(() =>
+      parseVllmExtraServeArgs({
+        [VLLM_EXTRA_ARGS_ENV]: '["   "]',
+      } as NodeJS.ProcessEnv),
+    ).toThrow(/\[0\] must not be empty/);
+
+    expect(() =>
+      parseVllmExtraServeArgs({
+        [VLLM_EXTRA_ARGS_ENV]: '["line\\nbreak"]',
+      } as NodeJS.ProcessEnv),
+    ).toThrow(/control characters/);
+  });
+});
+
 describe("preflightVllmModelEnv", () => {
   it("succeeds when NEMOCLAW_VLLM_MODEL is unset", () => {
     expect(preflightVllmModelEnv({} as NodeJS.ProcessEnv)).toEqual({ ok: true });
@@ -273,6 +348,17 @@ describe("preflightVllmModelEnv", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.message).toMatch(/Unknown NEMOCLAW_VLLM_MODEL='made-up-model'/);
+    }
+  });
+
+  it("fails fast for malformed managed-vLLM extra args", () => {
+    const result = preflightVllmModelEnv({
+      [VLLM_EXTRA_ARGS_ENV]: '["--max-num-seqs",2]',
+    } as NodeJS.ProcessEnv);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.message).toMatch(/NEMOCLAW_VLLM_EXTRA_ARGS_JSON/);
+      expect(result.message).toMatch(/\[1\] must be a string/);
     }
   });
 });

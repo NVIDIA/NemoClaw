@@ -7,6 +7,7 @@ import { isErrnoException } from "../core/errno";
 import { ensureConfigDir, readConfigFile, writeConfigFile } from "./config-io";
 import {
   cloneSandboxMessagingState,
+  serializeSandboxMessagingStateForDisk,
   getConfiguredMessagingChannels as getRegistryConfiguredMessagingChannels,
   getDisabledChannels as getRegistryDisabledChannels,
   setChannelDisabled as setRegistryChannelDisabled,
@@ -16,6 +17,7 @@ export {
   getActiveMessagingChannelsFromEntry,
   getConfiguredMessagingChannelsFromEntry,
   getDisabledMessagingChannelsFromEntry,
+  getHydratedMessagingPlanFromEntry,
   getMessagingPlanFromEntry,
   type SandboxMessagingState,
 } from "./registry-messaging";
@@ -305,11 +307,67 @@ export function withLock<T>(fn: () => T): T {
 }
 
 export function load(): SandboxRegistry {
-  return readConfigFile<SandboxRegistry>(REGISTRY_FILE, { sandboxes: {}, defaultSandbox: null });
+  return normalizeRegistry(
+    readConfigFile<SandboxRegistry>(REGISTRY_FILE, { sandboxes: {}, defaultSandbox: null }),
+  );
 }
 
 export function save(data: SandboxRegistry): void {
-  writeConfigFile(REGISTRY_FILE, data);
+  writeConfigFile(REGISTRY_FILE, serializeRegistryForDisk(data));
+}
+
+function normalizeRegistry(data: SandboxRegistry): SandboxRegistry {
+  return {
+    defaultSandbox: data.defaultSandbox ?? null,
+    sandboxes: Object.fromEntries(
+      sandboxRegistryEntries(data).map(([name, entry]) => [name, normalizeSandboxEntry(entry)]),
+    ),
+  };
+}
+
+function serializeRegistryForDisk(data: SandboxRegistry): SandboxRegistry {
+  return {
+    defaultSandbox: data.defaultSandbox ?? null,
+    sandboxes: Object.fromEntries(
+      sandboxRegistryEntries(data).map(([name, entry]) => [
+        name,
+        serializeSandboxEntryForDisk(entry),
+      ]),
+    ),
+  };
+}
+
+function sandboxRegistryEntries(data: SandboxRegistry): Array<[string, SandboxEntry]> {
+  const sandboxes = isRecord(data.sandboxes) ? data.sandboxes : {};
+  return Object.entries(sandboxes).filter((entry): entry is [string, SandboxEntry] =>
+    isSandboxEntryLike(entry[1]),
+  );
+}
+
+function isSandboxEntryLike(entry: unknown): entry is SandboxEntry {
+  return isRecord(entry);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function normalizeSandboxEntry(entry: SandboxEntry): SandboxEntry {
+  const messaging = cloneSandboxMessagingState(entry.messaging);
+  if (!messaging) {
+    const { messaging: _messaging, ...rest } = entry;
+    return rest;
+  }
+  return { ...entry, messaging };
+}
+
+function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
+  const messaging = serializeSandboxMessagingStateForDisk(entry.messaging);
+  if (!messaging) {
+    const { messaging: _messaging, ...rest } = entry;
+    return rest;
+  }
+  return { ...entry, messaging };
 }
 
 export function getSandbox(name: string): SandboxEntry | null {
