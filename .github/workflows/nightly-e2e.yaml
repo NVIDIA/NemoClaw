@@ -855,10 +855,10 @@ jobs:
 
       - name: Run Kimi inference compatibility E2E test
         env:
-          # Kimi uses the public NVIDIA Endpoints key intentionally; the script
-          # mirrors it into NVIDIA_INFERENCE_API_KEY for shared onboarding code.
+          # Kimi uses the public NVIDIA Endpoints key intentionally. The script
+          # validates this nvapi-* key, then mirrors it only inside the process
+          # for the shared onboarding/provider-registration path.
           NVIDIA_API_KEY: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.NVIDIA_API_KEY || '' }}
-          NVIDIA_INFERENCE_API_KEY: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.NVIDIA_API_KEY || '' }}
           NEMOCLAW_PROVIDER: cloud
           NEMOCLAW_MODEL: moonshotai/kimi-k2.6
           NEMOCLAW_PREFERRED_API: openai-completions
@@ -874,7 +874,6 @@ jobs:
         shell: bash
         env:
           NVIDIA_API_KEY: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.NVIDIA_API_KEY || '' }}
-          NVIDIA_INFERENCE_API_KEY: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.NVIDIA_API_KEY || '' }}
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
@@ -885,9 +884,6 @@ jobs:
             [ -f "$file" ] || continue
             if [ -n "${NVIDIA_API_KEY:-}" ]; then
               perl -0pi -e 's/\Q$ENV{NVIDIA_API_KEY}\E/[REDACTED_NVIDIA_API_KEY]/g' "$file"
-            fi
-            if [ -n "${NVIDIA_INFERENCE_API_KEY:-}" ]; then
-              perl -0pi -e 's/\Q$ENV{NVIDIA_INFERENCE_API_KEY}\E/[REDACTED_NVIDIA_API_KEY]/g' "$file"
             fi
             if [ -n "${GITHUB_TOKEN:-}" ]; then
               perl -0pi -e 's/\Q$ENV{GITHUB_TOKEN}\E/[REDACTED_GITHUB_TOKEN]/g' "$file"

@@ -17,8 +17,7 @@
 #
 # Environment:
 #   NEMOCLAW_SANDBOX_NAME            - sandbox name (default: e2e-kimi-compat)
-#   NVIDIA_API_KEY                   - public NVIDIA Endpoints key (preferred)
-#   NVIDIA_INFERENCE_API_KEY         - public NVIDIA Endpoints key alias
+#   NVIDIA_API_KEY                   - public NVIDIA Endpoints key (nvapi-*)
 #   NEMOCLAW_KIMI_USE_MOCK=1         - use the hermetic mock fallback
 #   NEMOCLAW_KIMI_MOCK_PORT         - mock endpoint port (default: 18146)
 #   NEMOCLAW_KIMI_MOCK_ENDPOINT_URL - optional endpoint URL for gateway provider
@@ -109,14 +108,12 @@ use_kimi_mock() {
   [ "${KIMI_USE_MOCK:-0}" = "1" ]
 }
 
-ensure_public_nvidia_key() {
-  if [ -z "${NVIDIA_INFERENCE_API_KEY:-}" ] && [ -n "${NVIDIA_API_KEY:-}" ]; then
+ensure_public_nvidia_api_key() {
+  if [ -n "${NVIDIA_API_KEY:-}" ] && [[ "${NVIDIA_API_KEY}" == nvapi-* ]]; then
+    # NemoClaw's NVIDIA Endpoints provider still reads NVIDIA_INFERENCE_API_KEY.
+    # Source the public Kimi credential from NVIDIA_API_KEY, then mirror it only
+    # for the shared onboarding/provider-registration path.
     export NVIDIA_INFERENCE_API_KEY="$NVIDIA_API_KEY"
-  fi
-  if [ -z "${NVIDIA_API_KEY:-}" ] && [ -n "${NVIDIA_INFERENCE_API_KEY:-}" ]; then
-    export NVIDIA_API_KEY="$NVIDIA_INFERENCE_API_KEY"
-  fi
-  if [ -n "${NVIDIA_INFERENCE_API_KEY:-}" ] && [[ "${NVIDIA_INFERENCE_API_KEY}" == nvapi-* ]]; then
     return 0
   fi
   return 1
@@ -424,8 +421,8 @@ run_kimi_onboard() {
     export NEMOCLAW_PROVIDER=cloud
     unset NEMOCLAW_ENDPOINT_URL NEMOCLAW_COMPAT_MODEL NEMOCLAW_E2E_USE_HOSTED_INFERENCE COMPATIBLE_API_KEY
     unset OPENAI_API_KEY ANTHROPIC_API_KEY GEMINI_API_KEY
-    if ! ensure_public_nvidia_key; then
-      fail "K1: NVIDIA_API_KEY or NVIDIA_INFERENCE_API_KEY must be a public NVIDIA Endpoints nvapi-* key"
+    if ! ensure_public_nvidia_api_key; then
+      fail "K1: NVIDIA_API_KEY must be a public NVIDIA Endpoints nvapi-* key"
       summary
     fi
   fi
@@ -844,10 +841,10 @@ if use_kimi_mock; then
     sed 's/^/    /' "$KIMI_MOCK_LOG" 2>/dev/null || true
     summary
   fi
-elif ensure_public_nvidia_key; then
+elif ensure_public_nvidia_api_key; then
   pass "K0: public NVIDIA Endpoints key is available for Kimi"
 else
-  fail "K0: NVIDIA_API_KEY or NVIDIA_INFERENCE_API_KEY must be a public NVIDIA Endpoints nvapi-* key"
+  fail "K0: NVIDIA_API_KEY must be a public NVIDIA Endpoints nvapi-* key"
   summary
 fi
 

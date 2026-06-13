@@ -47,6 +47,7 @@ const traceTiming = require("../scripts/scorecard/analyze-trace-timing.ts") as T
 const TRACE_SUMMARY_FILE = "cloud-onboard-trace-timing-summary.json";
 const TRUSTED_REF_GUARD = "github.event_name != 'workflow_dispatch' || inputs.target_ref == ''";
 const GUARDED_HOSTED_INFERENCE_SECRET = `\${{ (${TRUSTED_REF_GUARD}) && secrets.NVIDIA_INFERENCE_API_KEY || '' }}`;
+const GUARDED_PUBLIC_NVIDIA_SECRET = `\${{ (${TRUSTED_REF_GUARD}) && secrets.NVIDIA_API_KEY || '' }}`;
 const RAW_HOSTED_INFERENCE_SECRET = "${{ secrets.NVIDIA_INFERENCE_API_KEY }}";
 
 function timingSummary(
@@ -560,6 +561,27 @@ describe("E2E reusable workflow contract", () => {
     expect(uploadStep?.with?.["include-hidden-files"]).toBe(false);
     expect(uploadStep?.with?.["if-no-files-found"]).toBe("ignore");
     expect(uploadStep?.with?.["retention-days"]).toBe(14);
+  });
+
+  it("uses NVIDIA_API_KEY, not NVIDIA_INFERENCE_API_KEY, for the live Kimi E2E", () => {
+    const job = nightlyWorkflow.jobs["kimi-inference-compat-e2e"];
+    const runStep = job.steps?.find(
+      (step) => step.name === "Run Kimi inference compatibility E2E test",
+    );
+    const sanitizeStep = job.steps?.find((step) => step.name === "Sanitize Kimi logs on failure");
+    const script = readFileSync(
+      new URL("./e2e/test-kimi-inference-compat.sh", import.meta.url),
+      "utf8",
+    );
+
+    expect(runStep?.env?.NVIDIA_API_KEY).toBe(GUARDED_PUBLIC_NVIDIA_SECRET);
+    expect(runStep?.env?.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
+    expect(sanitizeStep?.env?.NVIDIA_API_KEY).toBe(GUARDED_PUBLIC_NVIDIA_SECRET);
+    expect(sanitizeStep?.env?.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
+    expect(script).toContain("NVIDIA_API_KEY must be a public NVIDIA Endpoints nvapi-* key");
+    expect(script).not.toContain(
+      "NVIDIA_API_KEY or NVIDIA_INFERENCE_API_KEY must be a public NVIDIA Endpoints nvapi-* key",
+    );
   });
 
   it("authenticates Docker Hub pulls in direct nightly E2E jobs", () => {
