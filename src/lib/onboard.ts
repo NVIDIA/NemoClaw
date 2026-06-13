@@ -2338,6 +2338,7 @@ async function startGatewayForRecovery(options = {}): Promise<void> {
     runCaptureOpenshell,
     runOpenshell,
     startGatewayWithOptions,
+    isLinuxDockerDriverGatewayEnabled,
   });
 }
 

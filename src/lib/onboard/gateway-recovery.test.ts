@@ -8,7 +8,9 @@ import {
   startGatewayForRecovery,
 } from "../../../dist/lib/onboard/gateway-recovery";
 
-function createDeps(): GatewayRecoveryDeps {
+function createDeps(
+  overrides: Partial<GatewayRecoveryDeps> = {},
+): GatewayRecoveryDeps {
   return {
     getGatewayClusterContainerState: () => "missing",
     getGatewayStartEnv: () => ({ OPENSHELL_DRIVERS: "docker" }),
@@ -17,6 +19,10 @@ function createDeps(): GatewayRecoveryDeps {
     startGatewayWithOptions: vi.fn(
       async () => undefined,
     ) as GatewayRecoveryDeps["startGatewayWithOptions"],
+    // Tests assert the plain-CLI fallback path by default; the Linux
+    // Docker-driver branch is opted into explicitly per case.
+    isLinuxDockerDriverGatewayEnabled: () => false,
+    ...overrides,
   };
 }
 
@@ -112,5 +118,16 @@ describe("gateway recovery", () => {
     );
 
     expect(deps.runOpenshell).not.toHaveBeenCalled();
+  });
+
+  it("fails closed on cross-port recovery when the Linux Docker-driver gateway is enabled", async () => {
+    const deps = createDeps({ isLinuxDockerDriverGatewayEnabled: () => true });
+
+    await expect(startGatewayForRecovery({ gatewayName: "nemoclaw-8090" }, deps)).rejects.toThrow(
+      /Cross-port recovery for Linux Docker-driver gateway 'nemoclaw-8090' is not safe/,
+    );
+
+    expect(deps.runOpenshell).not.toHaveBeenCalled();
+    expect(deps.startGatewayWithOptions).not.toHaveBeenCalled();
   });
 });

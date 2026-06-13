@@ -52,6 +52,7 @@ export type GatewayRecoveryDeps = {
   runCaptureOpenshell(args: string[], opts?: RunCaptureOpenshellOptions): string;
   runOpenshell(args: string[], opts?: RunOpenshellOptions): GatewayStartResult;
   startGatewayWithOptions(gpu: never, options: { exitOnFailure: false }): Promise<void>;
+  isLinuxDockerDriverGatewayEnabled?(): boolean;
 };
 
 function isValidGatewayRecoveryPort(port: number | null | undefined): port is number {
@@ -190,6 +191,9 @@ export async function startGatewayForRecovery(
   deps: GatewayRecoveryDeps,
 ): Promise<void> {
   const target = resolveGatewayRecoveryTarget(options);
+  const linuxDockerDriverEnabled = (
+    deps.isLinuxDockerDriverGatewayEnabled ?? isLinuxDockerDriverGatewayEnabled
+  )();
   // The Docker-driver Linux startup path (startGatewayWithOptions →
   // startDockerDriverGateway) restores the runtime-marker, package-managed
   // registration, and sandbox-bridge reachability — none of which a plain
@@ -197,7 +201,7 @@ export async function startGatewayForRecovery(
   // recovery target matches the current process's GATEWAY_PORT (the common
   // case where the user re-runs with the same NEMOCLAW_GATEWAY_PORT).
   if (target.gatewayPort === GATEWAY_PORT) {
-    if (target.gatewayName === resolveDefaultGatewayName() || isLinuxDockerDriverGatewayEnabled()) {
+    if (target.gatewayName === resolveDefaultGatewayName() || linuxDockerDriverEnabled) {
       return deps.startGatewayWithOptions(undefined as never, { exitOnFailure: false });
     }
   }
@@ -208,7 +212,7 @@ export async function startGatewayForRecovery(
   // the host in a half-recovered state. Fail closed instead and direct the
   // operator to re-run with the matching NEMOCLAW_GATEWAY_PORT so the
   // docker-driver path re-stamps the per-port artefacts.
-  if (isLinuxDockerDriverGatewayEnabled() && target.gatewayPort !== GATEWAY_PORT) {
+  if (linuxDockerDriverEnabled && target.gatewayPort !== GATEWAY_PORT) {
     throw new Error(
       `Cross-port recovery for Linux Docker-driver gateway '${target.gatewayName}' is not safe from a process bound to port ${GATEWAY_PORT}. ` +
         `Re-run with NEMOCLAW_GATEWAY_PORT=${target.gatewayPort} so the docker-driver setup can restamp the runtime marker, registration, and sandbox bridge.`,
