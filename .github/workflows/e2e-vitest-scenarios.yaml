@@ -982,17 +982,16 @@ jobs:
 
       - name: Run credential migration live test
         # Migrated from test/e2e/test-credential-migration.sh. This live test
-        # stages the hosted inference credential through legacy credentials.json.
-        # CI uses the compatible-provider route so repository-scoped E2E
-        # credentials do not need an nvapi- prefix.
+        # stages NVIDIA_INFERENCE_API_KEY through legacy credentials.json as the
+        # custom provider's COMPATIBLE_API_KEY. The hosted service behind this
+        # repo-scoped secret is inference-api.nvidia.com, not Build/NVIDIA
+        # Endpoints, so the test must exercise the compatible-provider route.
         env:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
-          NEMOCLAW_E2E_USE_NVIDIA_SECRET_AS_COMPATIBLE: "1"
           NEMOCLAW_PROVIDER: custom
           NEMOCLAW_ENDPOINT_URL: https://inference-api.nvidia.com/v1
           NEMOCLAW_MODEL: nvidia/nvidia/nemotron-3-super-v3
           NEMOCLAW_COMPAT_MODEL: nvidia/nvidia/nemotron-3-super-v3
-          COMPATIBLE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
           npx vitest run --project e2e-scenarios-live \

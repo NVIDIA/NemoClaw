@@ -18,9 +18,10 @@ import { shouldRunLiveE2EScenarios } from "../fixtures/live-project-gate.ts";
 // a successful real onboard registers the migrated value with the OpenShell
 // gateway, the plaintext file is removed after success, credentials list reads
 // from the gateway, and secure unlink removes a planted symlink without touching
-// its target. By default the live onboard follows the legacy NVIDIA Endpoints
-// path. When CI opts into the compatible-provider secret path, the same
-// migration contract runs against COMPATIBLE_API_KEY and compatible-endpoint.
+// its target. The repository secret is named NVIDIA_INFERENCE_API_KEY, but the
+// hosted E2E service is the OpenAI-compatible inference-api.nvidia.com endpoint,
+// so the migration contract stages that value as COMPATIBLE_API_KEY and expects
+// the compatible-endpoint gateway provider.
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const CLI_ENTRYPOINT = path.join(REPO_ROOT, "bin", "nemoclaw.js");
@@ -146,7 +147,7 @@ runCredentialMigrationTest(
     // the only source is ~/.nemoclaw/credentials.json — matching the retired
     // shell lane's migration contract.
     const hostedInference = requireHostedInferenceConfig(secrets, process.env, {
-      nvidiaModel: CREDENTIAL_MIGRATION_MODEL,
+      model: CREDENTIAL_MIGRATION_MODEL,
     });
     const migratedCredentialValue = hostedInference.apiKey;
     const {
@@ -190,7 +191,8 @@ runCredentialMigrationTest(
       contracts: [
         "legacy credentials.json stages allowlisted provider keys into onboard env",
         `successful onboard registers the migrated value with the ${hostedInference.providerName} OpenShell gateway provider`,
-        `onboard uses the ${hostedInference.provider} provider/key/endpoint/policy path`,
+        `${hostedInference.sourceSecretName} is migrated into the ${hostedInference.credentialEnv} provider credential`,
+        `onboard uses the ${hostedInference.provider} provider and ${hostedInference.endpointUrl} endpoint path`,
         "successful onboard removes plaintext credentials.json",
         "tampered non-credential keys do not become gateway providers",
         "credentials list reads providers from the gateway, not disk",

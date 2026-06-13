@@ -1,31 +1,31 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-const COMPATIBLE_INFERENCE_FLAG = "NEMOCLAW_E2E_USE_NVIDIA_SECRET_AS_COMPATIBLE";
-const DEFAULT_COMPATIBLE_BASE_URL = "https://inference-api.nvidia.com/v1";
-const DEFAULT_COMPATIBLE_MODEL = "nvidia/nvidia/nemotron-3-super-v3";
+const HOSTED_INFERENCE_SECRET = "NVIDIA_INFERENCE_API_KEY";
+const HOSTED_INFERENCE_CREDENTIAL_ENV = "COMPATIBLE_API_KEY";
+const HOSTED_INFERENCE_PROVIDER = "custom";
+const HOSTED_INFERENCE_PROVIDER_NAME = "compatible-endpoint";
+const DEFAULT_HOSTED_INFERENCE_BASE_URL = "https://inference-api.nvidia.com/v1";
+const DEFAULT_HOSTED_INFERENCE_MODEL = "nvidia/nvidia/nemotron-3-super-v3";
 
 export interface HostedInferenceSecrets {
   required(name: string): string;
 }
 
 export interface HostedInferenceOptions {
-  nvidiaModel?: string;
+  model?: string;
 }
 
 export interface HostedInferenceConfig {
   apiKey: string;
-  credentialEnv: "NVIDIA_INFERENCE_API_KEY" | "COMPATIBLE_API_KEY";
-  provider: "nvidia" | "compatible";
-  providerName: "nvidia-prod" | "compatible-endpoint";
+  sourceSecretName: typeof HOSTED_INFERENCE_SECRET;
+  credentialEnv: typeof HOSTED_INFERENCE_CREDENTIAL_ENV;
+  provider: typeof HOSTED_INFERENCE_PROVIDER;
+  providerName: typeof HOSTED_INFERENCE_PROVIDER_NAME;
   env: NodeJS.ProcessEnv;
   model: string;
   endpointUrl: string;
   contractLabel: string;
-}
-
-export function usingCiCompatibleInference(env: NodeJS.ProcessEnv = process.env): boolean {
-  return env[COMPATIBLE_INFERENCE_FLAG] === "1";
 }
 
 export function requireHostedInferenceConfig(
@@ -33,47 +33,28 @@ export function requireHostedInferenceConfig(
   env: NodeJS.ProcessEnv = process.env,
   options: HostedInferenceOptions = {},
 ): HostedInferenceConfig {
-  if (usingCiCompatibleInference(env)) {
-    const apiKey = secrets.required("COMPATIBLE_API_KEY");
-    const endpointUrl = env.NEMOCLAW_ENDPOINT_URL || DEFAULT_COMPATIBLE_BASE_URL;
-    const model = env.NEMOCLAW_MODEL || env.NEMOCLAW_COMPAT_MODEL || DEFAULT_COMPATIBLE_MODEL;
-    return {
-      apiKey,
-      credentialEnv: "COMPATIBLE_API_KEY",
-      provider: "compatible",
-      providerName: "compatible-endpoint",
-      endpointUrl,
-      model,
-      env: {
-        NEMOCLAW_PROVIDER: "custom",
-        NEMOCLAW_ENDPOINT_URL: endpointUrl,
-        NEMOCLAW_MODEL: model,
-        NEMOCLAW_COMPAT_MODEL: model,
-        COMPATIBLE_API_KEY: apiKey,
-      },
-      contractLabel: "CI compatible inference credential is present",
-    };
-  }
-
-  const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
-  if (!apiKey.startsWith("nvapi-")) {
-    throw new Error(
-      `NVIDIA_INFERENCE_API_KEY must start with nvapi- unless ${COMPATIBLE_INFERENCE_FLAG}=1 is set`,
-    );
-  }
-
-  const model = options.nvidiaModel ?? env.NEMOCLAW_MODEL ?? "";
+  const apiKey = secrets.required(HOSTED_INFERENCE_SECRET);
+  const endpointUrl = env.NEMOCLAW_ENDPOINT_URL || DEFAULT_HOSTED_INFERENCE_BASE_URL;
+  const model =
+    env.NEMOCLAW_MODEL ||
+    env.NEMOCLAW_COMPAT_MODEL ||
+    options.model ||
+    DEFAULT_HOSTED_INFERENCE_MODEL;
   return {
     apiKey,
-    credentialEnv: "NVIDIA_INFERENCE_API_KEY",
-    provider: "nvidia",
-    providerName: "nvidia-prod",
-    endpointUrl: DEFAULT_COMPATIBLE_BASE_URL,
+    sourceSecretName: HOSTED_INFERENCE_SECRET,
+    credentialEnv: HOSTED_INFERENCE_CREDENTIAL_ENV,
+    provider: HOSTED_INFERENCE_PROVIDER,
+    providerName: HOSTED_INFERENCE_PROVIDER_NAME,
+    endpointUrl,
     model,
     env: {
-      NVIDIA_INFERENCE_API_KEY: apiKey,
-      ...(model ? { NEMOCLAW_MODEL: model } : {}),
+      NEMOCLAW_PROVIDER: HOSTED_INFERENCE_PROVIDER,
+      NEMOCLAW_ENDPOINT_URL: endpointUrl,
+      NEMOCLAW_MODEL: model,
+      NEMOCLAW_COMPAT_MODEL: model,
+      [HOSTED_INFERENCE_CREDENTIAL_ENV]: apiKey,
     },
-    contractLabel: "NVIDIA_INFERENCE_API_KEY is present and nvapi-prefixed",
+    contractLabel: "NVIDIA_INFERENCE_API_KEY is staged as the compatible endpoint credential",
   };
 }

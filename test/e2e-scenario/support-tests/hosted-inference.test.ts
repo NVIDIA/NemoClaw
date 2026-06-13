@@ -16,38 +16,43 @@ function secrets(values: Record<string, string | undefined>) {
 }
 
 describe("hosted inference E2E config", () => {
-  it("requires an nvapi-prefixed NVIDIA key by default", () => {
+  it("uses NVIDIA_INFERENCE_API_KEY as the hosted compatible endpoint source secret", () => {
     const cfg = requireHostedInferenceConfig(
-      secrets({ NVIDIA_INFERENCE_API_KEY: "nvapi-test-key" }),
+      secrets({ NVIDIA_INFERENCE_API_KEY: "repo-hosted-key" }),
       {},
     );
 
-    expect(cfg.provider).toBe("nvidia");
-    expect(cfg.credentialEnv).toBe("NVIDIA_INFERENCE_API_KEY");
-    expect(cfg.env.NVIDIA_INFERENCE_API_KEY).toBe("nvapi-test-key");
+    expect(cfg.sourceSecretName).toBe("NVIDIA_INFERENCE_API_KEY");
+    expect(cfg.provider).toBe("custom");
+    expect(cfg.providerName).toBe("compatible-endpoint");
+    expect(cfg.credentialEnv).toBe("COMPATIBLE_API_KEY");
+    expect(cfg.env.COMPATIBLE_API_KEY).toBe("repo-hosted-key");
   });
 
-  it("rejects a non-NVIDIA key unless the compatible-provider flag is set", () => {
-    expect(() =>
-      requireHostedInferenceConfig(secrets({ NVIDIA_INFERENCE_API_KEY: "sk-compatible-key" }), {}),
-    ).toThrow(/must start with nvapi-/);
-  });
-
-  it("accepts a compatible-provider credential when CI enables the compatibility flag", () => {
+  it("does not require an nvapi-prefixed source secret", () => {
     const cfg = requireHostedInferenceConfig(
       secrets({
-        COMPATIBLE_API_KEY: "sk-compatible-key",
+        NVIDIA_INFERENCE_API_KEY: "sk-compatible-key",
       }),
-      { NEMOCLAW_E2E_USE_NVIDIA_SECRET_AS_COMPATIBLE: "1" },
+      {},
     );
 
-    expect(cfg.provider).toBe("compatible");
+    expect(cfg.apiKey).toBe("sk-compatible-key");
     expect(cfg.credentialEnv).toBe("COMPATIBLE_API_KEY");
+  });
+
+  it("configures the custom provider route for inference-api.nvidia.com", () => {
+    const cfg = requireHostedInferenceConfig(
+      secrets({ NVIDIA_INFERENCE_API_KEY: "repo-hosted-key" }),
+      { NEMOCLAW_MODEL: "nvidia/custom-model" },
+    );
+
     expect(cfg.env).toMatchObject({
       NEMOCLAW_PROVIDER: "custom",
       NEMOCLAW_ENDPOINT_URL: "https://inference-api.nvidia.com/v1",
-      NEMOCLAW_MODEL: "nvidia/nvidia/nemotron-3-super-v3",
-      COMPATIBLE_API_KEY: "sk-compatible-key",
+      NEMOCLAW_MODEL: "nvidia/custom-model",
+      NEMOCLAW_COMPAT_MODEL: "nvidia/custom-model",
+      COMPATIBLE_API_KEY: "repo-hosted-key",
     });
   });
 });
