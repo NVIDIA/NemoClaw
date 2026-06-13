@@ -254,10 +254,10 @@ describe("credentials oclif commands", () => {
     const { CredentialsResetCommand } = loadCommands();
 
     const output = await captureOutput(() =>
-      expectExitCode(() => CredentialsResetCommand.run(["NVIDIA_API_KEY", "--yes"]), 1),
+      expectExitCode(() => CredentialsResetCommand.run(["NVIDIA_INFERENCE_API_KEY", "--yes"]), 1),
     );
 
-    expect(output.stderr).toContain("Could not remove provider 'NVIDIA_API_KEY'.");
+    expect(output.stderr).toContain("Could not remove provider 'NVIDIA_INFERENCE_API_KEY'.");
     expect(output.stderr).toContain("looks like a credential env variable name");
     expect(output.stderr).toContain("provider not found");
   });

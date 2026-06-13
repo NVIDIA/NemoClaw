@@ -1705,9 +1705,9 @@ describe("nim", () => {
     });
 
     it("falls back to process.env.NGC_API_KEY when no opts key is supplied", () => {
-      const prev = { ngc: process.env.NGC_API_KEY, nv: process.env.NVIDIA_API_KEY };
+      const prev = { ngc: process.env.NGC_API_KEY, nv: process.env.NVIDIA_INFERENCE_API_KEY };
       process.env.NGC_API_KEY = "nvapi-env-ngc";
-      delete process.env.NVIDIA_API_KEY;
+      delete process.env.NVIDIA_INFERENCE_API_KEY;
       const run = vi.fn();
       const { nimModule, restore } = loadNimWithMockedRunner(
         vi.fn(() => ""),
@@ -1728,14 +1728,14 @@ describe("nim", () => {
         restore();
         if (prev.ngc === undefined) delete process.env.NGC_API_KEY;
         else process.env.NGC_API_KEY = prev.ngc;
-        if (prev.nv !== undefined) process.env.NVIDIA_API_KEY = prev.nv;
+        if (prev.nv !== undefined) process.env.NVIDIA_INFERENCE_API_KEY = prev.nv;
       }
     });
 
-    it("falls back to process.env.NVIDIA_API_KEY when NGC_API_KEY is unset", () => {
-      const prev = { ngc: process.env.NGC_API_KEY, nv: process.env.NVIDIA_API_KEY };
+    it("falls back to process.env.NVIDIA_INFERENCE_API_KEY when NGC_API_KEY is unset", () => {
+      const prev = { ngc: process.env.NGC_API_KEY, nv: process.env.NVIDIA_INFERENCE_API_KEY };
       delete process.env.NGC_API_KEY;
-      process.env.NVIDIA_API_KEY = "nvapi-env-nvidia";
+      process.env.NVIDIA_INFERENCE_API_KEY = "nvapi-env-nvidia";
       const run = vi.fn();
       const { nimModule, restore } = loadNimWithMockedRunner(
         vi.fn(() => ""),
@@ -1752,15 +1752,15 @@ describe("nim", () => {
       } finally {
         restore();
         if (prev.ngc !== undefined) process.env.NGC_API_KEY = prev.ngc;
-        if (prev.nv === undefined) delete process.env.NVIDIA_API_KEY;
-        else process.env.NVIDIA_API_KEY = prev.nv;
+        if (prev.nv === undefined) delete process.env.NVIDIA_INFERENCE_API_KEY;
+        else process.env.NVIDIA_INFERENCE_API_KEY = prev.nv;
       }
     });
 
     it("omits env flags when no key is available", () => {
-      const prev = { ngc: process.env.NGC_API_KEY, nv: process.env.NVIDIA_API_KEY };
+      const prev = { ngc: process.env.NGC_API_KEY, nv: process.env.NVIDIA_INFERENCE_API_KEY };
       delete process.env.NGC_API_KEY;
-      delete process.env.NVIDIA_API_KEY;
+      delete process.env.NVIDIA_INFERENCE_API_KEY;
       const run = vi.fn();
       const { nimModule, restore } = loadNimWithMockedRunner(
         vi.fn(() => ""),
@@ -1779,7 +1779,7 @@ describe("nim", () => {
       } finally {
         restore();
         if (prev.ngc !== undefined) process.env.NGC_API_KEY = prev.ngc;
-        if (prev.nv !== undefined) process.env.NVIDIA_API_KEY = prev.nv;
+        if (prev.nv !== undefined) process.env.NVIDIA_INFERENCE_API_KEY = prev.nv;
       }
     });
   });

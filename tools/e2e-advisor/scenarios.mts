@@ -73,8 +73,7 @@ export function canonicalDispatchCommand(
     if (!JOB_ID_PATTERN.test(id)) throw new Error(`Invalid Vitest job id: ${id}`);
     return `gh workflow run ${SCENARIO_WORKFLOW} --ref <pr-head-ref> --field jobs=${id}`;
   }
-  if (!SCENARIO_ID_PATTERN.test(id)) throw new Error(`Invalid Vitest scenario id: ${id}`);
-  return `gh workflow run ${SCENARIO_WORKFLOW} --ref <pr-head-ref>`;
+  return `gh workflow run ${SCENARIO_WORKFLOW} --ref <pr-head-ref> --field scenarios=${id}`;
 }
 
 type ArtifactPaths = AdvisorArtifactPaths;
@@ -267,7 +266,7 @@ export function buildSystemPrompt(schema: AdvisorSchema): string {
     "",
     "Decision policy:",
     "- Required (all scenarios): changes to scenario registry, matrix emission, expected-state metadata, live support classification, shared fixtures, or the shared Vitest scenario workflow machinery. Recommend the `e2e-scenarios-all` fan-out through `e2e-vitest-scenarios.yaml`.",
-    "- Required (targeted): fixture, live test, manifest, runtime-support, or scenario changes that affect a specific subset. Recommend the smallest set of live-supported typed scenario IDs that exercises the changed surface, but dispatch them through the default jobs-empty fan-out because `.github/workflows/e2e-vitest-scenarios.yaml` no longer exposes an operator-facing `scenarios` selector.",
+    "- Required (targeted): fixture, live test, manifest, runtime-support, or scenario changes that affect a specific subset. Recommend the smallest set of live-supported typed scenario IDs that exercises the changed surface.",
     "- Required (free-standing job): if a PR wires or changes a discrete live Vitest job in `.github/workflows/e2e-vitest-scenarios.yaml` for a specific `test/e2e-scenario/live/*.test.ts`, prefer that job over `e2e-scenarios-all`. Use selectorType=`job`, id=`<job-id>`, workflow=`e2e-vitest-scenarios.yaml`, and dispatchCommand exactly `gh workflow run e2e-vitest-scenarios.yaml --ref <pr-head-ref> --field jobs=<job-id>`.",
     "- Missing wiring: if a PR adds or changes a free-standing live Vitest file under `test/e2e-scenario/live/*.test.ts` but that file is not referenced by `.github/workflows/e2e-vitest-scenarios.yaml` and is not `registry-scenarios.test.ts`, do not recommend the fan-out as proof. Return no required/optional recommendations and set `noScenarioE2eReason` to say the test must be wired into `e2e-vitest-scenarios.yaml` before it can be dispatched.",
     "- Optional: adjacent scenarios that exercise the same suite on a different platform/onboarding (e.g. macOS, WSL, GPU) but are not the primary target. Special-runner scenarios (`gpu-`, `macos-`, `wsl-`, `brev-`) should usually be optional unless they are the only path that exercises the change.",
@@ -276,7 +275,7 @@ export function buildSystemPrompt(schema: AdvisorSchema): string {
     "Hard rules:",
     "- Only recommend live-supported typed scenario IDs that exist in the registry or the synthetic fan-out id `e2e-scenarios-all`. Do not invent IDs.",
     "- The only allowed workflow is `e2e-vitest-scenarios.yaml`.",
-    "- Each `dispatchCommand` for a typed scenario recommendation MUST use the default fan-out exactly: `gh workflow run e2e-vitest-scenarios.yaml --ref <pr-head-ref>`. Never use a scenarios field; the workflow only accepts the optional `jobs` selector.",
+    "- Each `dispatchCommand` for a single-scenario recommendation MUST be exactly: `gh workflow run e2e-vitest-scenarios.yaml --ref <pr-head-ref> --field scenarios=<id>`.",
     "- Each `dispatchCommand` for a free-standing job recommendation MUST be exactly: `gh workflow run e2e-vitest-scenarios.yaml --ref <pr-head-ref> --field jobs=<id>`.",
     "- For the fan-out, use exactly: `gh workflow run e2e-vitest-scenarios.yaml --ref <pr-head-ref>` and set `id`/`workflow`/`selectorType` to `e2e-scenarios-all`/`e2e-vitest-scenarios.yaml`/`all`.",
     "- The normalizer validates targeted IDs against the trusted advisor checkout's registry/runtime-support modules, not PR-local TypeScript. If a PR adds or newly wires a typed registry scenario that is not live-supported on trusted `main` yet, recommend the `e2e-scenarios-all` fan-out rather than a targeted dispatch. This fallback does not apply to free-standing live test jobs.",
@@ -420,7 +419,7 @@ export function extractFreeStandingVitestJobs(workflowText: string): VitestWorkf
       bodyLines.push(lines[bodyIndex]);
     }
     const body = bodyLines.join("\n");
-    if (!hasSharedJobsSelector(body, id)) continue;
+    if (!body.includes("inputs.jobs") || !body.includes(`,${id},`)) continue;
     const liveTestFiles = uniqueStrings(
       [...body.matchAll(/test\/e2e-scenario\/live\/[A-Za-z0-9._-]+\.test\.ts/g)].map(
         (item) => item[0],
@@ -430,14 +429,6 @@ export function extractFreeStandingVitestJobs(workflowText: string): VitestWorkf
     jobs.push({ id, liveTestFiles });
   }
   return jobs.sort((a, b) => a.id.localeCompare(b.id));
-}
-
-function hasSharedJobsSelector(body: string, id: string): boolean {
-  return (
-    body.includes("inputs.jobs == ''") &&
-    body.includes("contains(format(',{0},', inputs.jobs)") &&
-    body.includes(`,${id},`)
-  );
 }
 
 function findUnwiredFreeStandingLiveTests(
@@ -615,14 +606,6 @@ function stringArrayWithinChanged(value: unknown, changedFiles: string[]): strin
   return value.filter((file): file is string => typeof file === "string" && allowed.has(file));
 }
 
-function scenarioFanoutNote(recommendation: ScenarioRecommendation): string | undefined {
-  if (recommendation.selectorType !== "scenario") return undefined;
-  if (recommendation.dispatchCommand !== `gh workflow run ${SCENARIO_WORKFLOW} --ref <pr-head-ref>`) {
-    return undefined;
-  }
-  return "Typed scenario IDs are metadata-only in this jobs-only workflow: this dispatch runs the full default fan-out (all supported registry scenarios plus all free-standing Vitest jobs), not only this scenario.";
-}
-
 export function renderScenarioSummary(result: ScenarioAdvisorResult): string {
   const lines: string[] = [];
   lines.push("# Vitest E2E Scenario Advisor");
@@ -635,17 +618,9 @@ export function renderScenarioSummary(result: ScenarioAdvisorResult): string {
   if (result.required.length === 0) {
     lines.push(`- _None._ ${result.noScenarioE2eReason || ""}`.trim());
   } else {
-    const seenDispatches = new Set<string>();
     for (const recommendation of result.required) {
       lines.push(`- **${recommendation.id}**: ${recommendation.reason}`);
-      if (seenDispatches.has(recommendation.dispatchCommand)) {
-        lines.push("  - Dispatch: covered by the shared fan-out command above.");
-      } else {
-        seenDispatches.add(recommendation.dispatchCommand);
-        lines.push(`  - Dispatch: \`${recommendation.dispatchCommand}\``);
-      }
-      const fanoutNote = scenarioFanoutNote(recommendation);
-      if (fanoutNote) lines.push(`  - Note: ${fanoutNote}`);
+      lines.push(`  - Dispatch: \`${recommendation.dispatchCommand}\``);
     }
   }
   lines.push("");
@@ -653,17 +628,9 @@ export function renderScenarioSummary(result: ScenarioAdvisorResult): string {
   if (result.optional.length === 0) {
     lines.push("- _None._");
   } else {
-    const seenDispatches = new Set<string>();
     for (const recommendation of result.optional) {
       lines.push(`- **${recommendation.id}**: ${recommendation.reason}`);
-      if (seenDispatches.has(recommendation.dispatchCommand)) {
-        lines.push("  - Dispatch: covered by the shared fan-out command above.");
-      } else {
-        seenDispatches.add(recommendation.dispatchCommand);
-        lines.push(`  - Dispatch: \`${recommendation.dispatchCommand}\``);
-      }
-      const fanoutNote = scenarioFanoutNote(recommendation);
-      if (fanoutNote) lines.push(`  - Note: ${fanoutNote}`);
+      lines.push(`  - Dispatch: \`${recommendation.dispatchCommand}\``);
     }
   }
   lines.push("");

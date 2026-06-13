@@ -366,8 +366,10 @@ describe("redact", () => {
 
   it("masks key assignments in commands", () => {
     const { redact } = require(runnerPath);
-    expect(redact("export NVIDIA_API_KEY=nvapi-realkey12345")).toContain("nvap");
-    expect(redact("export NVIDIA_API_KEY=nvapi-realkey12345")).not.toContain("realkey12345");
+    expect(redact("export NVIDIA_INFERENCE_API_KEY=nvapi-realkey12345")).toContain("nvap");
+    expect(redact("export NVIDIA_INFERENCE_API_KEY=nvapi-realkey12345")).not.toContain(
+      "realkey12345",
+    );
   });
 
   it("masks variables ending in _KEY", () => {
@@ -632,7 +634,7 @@ describe("regression guards", () => {
   });
 
   describe("credential exposure guards (#429)", () => {
-    it("walkthrough.sh does not embed NVIDIA_API_KEY in tmux or sandbox commands", () => {
+    it("walkthrough.sh does not embed NVIDIA_INFERENCE_API_KEY in tmux or sandbox commands", () => {
       const fs = require("fs");
       const src = fs.readFileSync(
         path.join(import.meta.dirname, "..", "scripts", "walkthrough.sh"),
@@ -648,7 +650,7 @@ describe("regression guards", () => {
             (l.includes("tmux") || l.includes("openshell sandbox connect")),
         );
       for (const line of cmdLines) {
-        expect(line.includes("NVIDIA_API_KEY")).toBe(false);
+        expect(line.includes("NVIDIA_INFERENCE_API_KEY")).toBe(false);
       }
     });
 

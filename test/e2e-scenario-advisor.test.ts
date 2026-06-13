@@ -61,11 +61,9 @@ describe("Vitest E2E scenario advisor — prompt construction", () => {
     expect(systemPrompt).toContain("trusted advisor checkout");
     expect(systemPrompt).toContain("recommend the `e2e-scenarios-all` fan-out");
     expect(systemPrompt).toContain("single NemoClaw E2E system");
-    expect(systemPrompt).toContain("workflow only accepts the optional `jobs` selector");
     expect(systemPrompt).not.toContain("non-scenario E2E");
     expect(systemPrompt).not.toContain("e2e-scenarios-all.yaml");
     expect(systemPrompt).not.toContain("e2e-scenarios.yaml");
-    expect(systemPrompt).not.toContain("--field scenarios");
   });
 
   it("exports the Vitest scenario workflow for both targeted and fan-out recommendations", () => {
@@ -118,12 +116,12 @@ describe("Vitest E2E scenario advisor — normalization contract", () => {
     expect(normalized.optional[0]?.dispatchCommand).toBe(
       canonicalDispatchCommand(VITEST_SCENARIO_WORKFLOW, "ubuntu-repo-cloud-openclaw"),
     );
-    // The jobs-only workflow has no scenario selector; typed scenario
-    // recommendations dispatch the default fan-out while preserving scenario
-    // metadata for reviewers.
+    // Canonical fan-out command must not contain a scenarios field.
     expect(normalized.required[0]?.dispatchCommand).not.toContain("--field scenarios=");
-    expect(normalized.optional[0]?.dispatchCommand).toBe(
-      "gh workflow run e2e-vitest-scenarios.yaml --ref <pr-head-ref>",
+    // Canonical single-scenario command must use plural --field scenarios=<id>
+    // and must never contain the legacy suite_filter input.
+    expect(normalized.optional[0]?.dispatchCommand).toContain(
+      "--field scenarios=ubuntu-repo-cloud-openclaw",
     );
     expect(normalized.optional[0]?.dispatchCommand).not.toContain("suite_filter");
   });
@@ -363,7 +361,7 @@ jobs:
     steps:
       - run: npx vitest run --project e2e-scenarios-live test/e2e-scenario/live/registry-scenarios.test.ts
   token-rotation-vitest:
-    if: \${{ inputs.jobs == '' || contains(format(',{0},', inputs.jobs), ',token-rotation-vitest,') }}
+    if: \${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',token-rotation-vitest,') }}
     steps:
       - run: npx vitest run --project e2e-scenarios-live test/e2e-scenario/live/token-rotation.test.ts
 `),
@@ -373,16 +371,6 @@ jobs:
         liveTestFiles: ["test/e2e-scenario/live/token-rotation.test.ts"],
       },
     ]);
-
-    expect(
-      extractFreeStandingVitestJobs(String.raw`
-jobs:
-  token-rotation-vitest:
-    if: \${{ contains(format(',{0},', inputs.jobs), ',token-rotation-vitest,') }}
-    steps:
-      - run: npx vitest run --project e2e-scenarios-live test/e2e-scenario/live/token-rotation.test.ts
-`),
-    ).toEqual([]);
   });
 
   it("prefers a focused free-standing job over fan-out once workflow wiring is present", () => {
@@ -411,7 +399,7 @@ jobs:
         vitestWorkflowText: String.raw`
 jobs:
   token-rotation-vitest:
-    if: \${{ inputs.jobs == '' || contains(format(',{0},', inputs.jobs), ',token-rotation-vitest,') }}
+    if: \${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',token-rotation-vitest,') }}
     steps:
       - run: npx vitest run --project e2e-scenarios-live test/e2e-scenario/live/token-rotation.test.ts
 `,
@@ -448,7 +436,7 @@ jobs:
         vitestWorkflowText: String.raw`
 jobs:
   token-rotation-vitest:
-    if: \${{ inputs.jobs == '' || contains(format(',{0},', inputs.jobs), ',token-rotation-vitest,') }}
+    if: \${{ contains(format(',{0},', inputs.jobs), ',token-rotation-vitest,') }}
     steps:
       - run: npx vitest run --project e2e-scenarios-live test/e2e-scenario/live/token-rotation.test.ts
 `,
@@ -567,30 +555,6 @@ describe("Vitest E2E scenario advisor — summary and comment rendering", () => 
     expect(summary).toContain(
       canonicalDispatchCommand(VITEST_SCENARIO_WORKFLOW, "e2e-scenarios-all"),
     );
-  });
-
-  it("renders duplicate fan-out dispatches as one explicit full-fan-out command", () => {
-    const result = sampleResult();
-    result.required.push({
-      id: "ubuntu-repo-cloud-openclaw",
-      workflow: VITEST_SCENARIO_WORKFLOW,
-      selectorType: "scenario",
-      required: true,
-      reason: "targeted scenario metadata",
-      dispatchCommand: canonicalDispatchCommand(
-        VITEST_SCENARIO_WORKFLOW,
-        "ubuntu-repo-cloud-openclaw",
-      ),
-    });
-
-    const summary = renderScenarioSummary(result);
-    expect(
-      summary.match(/gh workflow run e2e-vitest-scenarios.yaml --ref <pr-head-ref>/g),
-    ).toHaveLength(1);
-    expect(summary).toContain("covered by the shared fan-out command above");
-    expect(summary).toContain("Typed scenario IDs are metadata-only");
-    expect(summary).toContain("full default fan-out");
-    expect(summary).toContain("not only this scenario");
   });
 
   it("builds a sticky scenario comment with the marker and run url", () => {
