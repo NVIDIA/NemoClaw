@@ -2682,6 +2682,7 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   validateOnboardNegativePathsVitestJob(errors, jobs);
   validateSkillAgentVitestJob(errors, jobs);
   validateFreeStandingJobSelector(errors, jobs, "credential-migration-vitest");
+  validateFreeStandingJobSelector(errors, jobs, "sessions-agents-cli-vitest", "sessions-agents-cli");
   validateFreeStandingJobSelector(errors, jobs, "inference-routing-vitest", "inference-routing");
   validateCloudInferenceVitestJob(errors, jobs);
   validateRuntimeOverridesVitestJob(errors, jobs);
