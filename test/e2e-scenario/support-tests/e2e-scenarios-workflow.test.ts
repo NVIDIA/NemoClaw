@@ -12,7 +12,7 @@ import {
   evaluateE2eVitestWorkflowDispatchSelectors,
   readFreeStandingJobsInventory,
   validateE2eVitestScenariosWorkflowBoundary,
-  validateFreeStandingJobsEnvContent,
+  validateFreeStandingWorkflowInventory,
 } from "../../../tools/e2e-scenarios/workflow-boundary.mts";
 
 function readWorkflow(): Record<string, unknown> {
@@ -257,106 +257,102 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
     });
   });
 
-  it("keeps the free-standing inventory internally consistent and data-only", () => {
-    const inventory = fs.readFileSync(
-      path.join(process.cwd(), "tools/e2e-scenarios/free-standing-jobs.env"),
-      "utf-8",
+  it("derives the free-standing inventory from workflow job metadata", () => {
+    const inventory = readFreeStandingJobsInventory();
+    expect(validateFreeStandingWorkflowInventory()).toEqual([]);
+    expect(inventory.allowedJobs).toContain("openshell-version-pin-vitest");
+    expect(inventory.allowedJobs).toContain("gateway-guard-recovery");
+    expect(inventory.scenarioToJob.get("openshell-version-pin")).toBe(
+      "openshell-version-pin-vitest",
     );
-    expect(validateFreeStandingJobsEnvContent(inventory)).toEqual([]);
+    expect(inventory.scenarioToJob.get("credential-migration")).toBeUndefined();
     expect(
-      validateFreeStandingJobsEnvContent(
-        [
-          "allowed_jobs=openshell-version-pin-vitest",
-          "free_standing_scenarios_csv=openshell-version-pin",
-          "free_standing_scenario_jobs_csv=openshell-version-pin:missing-vitest",
-        ].join("\n"),
+      inventory.allowedJobs.every((job) =>
+        Object.keys((readWorkflow().jobs as Record<string, unknown>) ?? {}).includes(job),
       ),
-    ).toContain("free-standing inventory maps openshell-version-pin to unknown job missing-vitest");
-    expect(
-      validateFreeStandingJobsEnvContent(
-        [
-          "allowed_jobs=openshell-version-pin-vitest",
-          "free_standing_scenarios_csv=openshell-version-pin,extra-scenario",
-          "free_standing_scenario_jobs_csv=openshell-version-pin:openshell-version-pin-vitest",
-        ].join("\n"),
-      ),
-    ).toContain(
-      "free_standing_scenarios_csv must exactly match free_standing_scenario_jobs_csv keys",
-    );
-    expect(
-      validateFreeStandingJobsEnvContent(
-        [
-          "allowed_jobs=openshell-version-pin-vitest",
-          "free_standing_scenarios_csv=openshell-version-pin",
-          "free_standing_scenario_jobs_csv=openshell-version-pin:openshell-version-pin-vitest",
-          "export injected=true",
-          "allowed_jobs=$(touch /tmp/nope)",
-        ].join("\n"),
-      ),
-    ).toEqual(
-      expect.arrayContaining([
-        "free-standing jobs inventory line 4 must be data-only key=value",
-        "free-standing jobs inventory line 5 must be data-only key=value",
-      ]),
-    );
+    ).toBe(true);
   });
 
-  it("rejects malformed inventory in the workflow runtime before matrix generation", () => {
-    const malformedInventories = [
-      [
-        "allowed_jobs=openshell-version-pin-vitest",
-        "allowed_jobs=onboard-negative-paths-vitest",
-        "free_standing_scenarios_csv=openshell-version-pin",
-        "free_standing_scenario_jobs_csv=openshell-version-pin:openshell-version-pin-vitest",
-      ],
-      [
-        "allowed_jobs=openshell-version-pin-vitest,openshell-version-pin-vitest",
-        "free_standing_scenarios_csv=openshell-version-pin",
-        "free_standing_scenario_jobs_csv=openshell-version-pin:openshell-version-pin-vitest",
-      ],
-      [
-        "allowed_jobs=bad:job",
-        "free_standing_scenarios_csv=openshell-version-pin",
-        "free_standing_scenario_jobs_csv=openshell-version-pin:bad:job",
-      ],
-      [
-        "allowed_jobs=openshell-version-pin-vitest",
-        "free_standing_scenarios_csv=openshell-version-pin",
-        "free_standing_scenario_jobs_csv=openshell-version-pin:openshell-version-pin-vitest,openshell-version-pin:openshell-version-pin-vitest",
-      ],
+  it("rejects malformed free-standing workflow metadata before matrix generation", () => {
+    const malformedWorkflows = [
+      {
+        body: `
+jobs:
+  openshell-version-pin-vitest:
+    env:
+      FREE_STANDING_VITEST_JOB: "yes"
+      FREE_STANDING_SCENARIO_ID: openshell-version-pin
+`,
+        error: 'openshell-version-pin-vitest job FREE_STANDING_VITEST_JOB must be "1"',
+      },
+      {
+        body: `
+jobs:
+  openshell-version-pin-vitest:
+    env:
+      FREE_STANDING_SCENARIO_ID: openshell-version-pin
+`,
+        error:
+          "openshell-version-pin-vitest job FREE_STANDING_SCENARIO_ID requires FREE_STANDING_VITEST_JOB",
+      },
+      {
+        body: `
+jobs:
+  openshell-version-pin-vitest:
+    env:
+      FREE_STANDING_VITEST_JOB: "1"
+      FREE_STANDING_SCENARIO_ID: "bad:scenario"
+`,
+        error: "openshell-version-pin-vitest job FREE_STANDING_SCENARIO_ID must be a selector id",
+      },
+      {
+        body: `
+jobs:
+  first-vitest:
+    env:
+      FREE_STANDING_VITEST_JOB: "1"
+      FREE_STANDING_SCENARIO_ID: duplicate-scenario
+  second-vitest:
+    env:
+      FREE_STANDING_VITEST_JOB: "1"
+      FREE_STANDING_SCENARIO_ID: duplicate-scenario
+`,
+        error: "free-standing workflow metadata repeats scenario id: duplicate-scenario",
+      },
     ];
 
-    for (const inventory of malformedInventories) {
-      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-vitest-bad-inventory-"));
+    for (const { body, error } of malformedWorkflows) {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-vitest-bad-workflow-"));
+      const workflowPath = path.join(tmp, "workflow.yaml");
       try {
-        fs.mkdirSync(path.join(tmp, "tools", "e2e-scenarios"), { recursive: true });
-        fs.writeFileSync(
-          path.join(tmp, "tools", "e2e-scenarios", "free-standing-jobs.env"),
-          `${inventory.join("\n")}\n`,
-        );
-        const result = spawnSync("bash", ["-c", generateMatrixScript()], {
-          cwd: tmp,
-          encoding: "utf-8",
-          timeout: 10_000,
-          killSignal: "SIGKILL",
-          env: {
-            ...process.env,
-            GITHUB_OUTPUT: path.join(tmp, "github-output"),
-            GITHUB_STEP_SUMMARY: path.join(tmp, "github-summary"),
-            JOBS: "",
-            SCENARIOS: "",
+        fs.writeFileSync(workflowPath, body);
+        expect(validateFreeStandingWorkflowInventory(workflowPath)).toContain(error);
+        const result = spawnSync(
+          "npx",
+          [
+            "tsx",
+            "tools/e2e-scenarios/free-standing-workflow-inventory.mts",
+            "--shell",
+            "--workflow",
+            workflowPath,
+          ],
+          {
+            cwd: process.cwd(),
+            encoding: "utf-8",
+            timeout: 30_000,
+            killSignal: "SIGKILL",
           },
-        });
+        );
         expect(result.signal).toBeNull();
         expect(result.status).not.toBe(0);
-        expect(result.stderr).toContain("::error::");
+        expect(result.stderr).toContain(`::error::${error}`);
       } finally {
         fs.rmSync(tmp, { recursive: true, force: true });
       }
     }
   });
 
-  it("keeps each free-standing scenario out of the registry matrix", { timeout: 15_000 }, () => {
+  it("keeps each free-standing scenario out of the registry matrix", { timeout: 60_000 }, () => {
     const inventory = readFreeStandingJobsInventory();
     for (const job of inventory.allowedJobs) {
       expect(generateMatrixForDispatch({ JOBS: job, SCENARIOS: "" })).toMatchObject({
@@ -633,27 +629,70 @@ jobs:
     }
   });
 
-  it("requires runtime-overrides workflow and report coverage", () => {
+  it("applies boundary checks to newly marked free-standing jobs", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-vitest-workflow-"));
     const workflowPath = path.join(tmp, "workflow.yaml");
+    const workflow = readWorkflow() as {
+      jobs: Record<string, Record<string, unknown>>;
+    };
+    workflow.jobs["ad-hoc-derived-vitest"] = {
+      "runs-on": "ubuntu-latest",
+      needs: "live-scenarios",
+      if: "${{ inputs.scenarios != '' }}",
+      env: {
+        FREE_STANDING_VITEST_JOB: "1",
+        FREE_STANDING_SCENARIO_ID: "ad-hoc-derived",
+        NVIDIA_API_KEY: "${{ secrets.NVIDIA_API_KEY }}",
+      },
+      steps: [
+        { uses: "actions/checkout@v4" },
+        {
+          name: "Run ad hoc",
+          run: "echo ${{ inputs.jobs }} && echo ${{ secrets.NVIDIA_API_KEY }}",
+        },
+      ],
+    };
+    fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+    try {
+      expect(validateE2eVitestScenariosWorkflowBoundary(workflowPath)).toEqual(
+        expect.arrayContaining([
+          "ad-hoc-derived-vitest job must depend on generate-matrix",
+          "ad-hoc-derived-vitest job must use the shared jobs selector condition",
+          "ad-hoc-derived-vitest job env must not include NVIDIA_API_KEY",
+          "ad-hoc-derived-vitest step 'actions/checkout@v4' action must be pinned to a full commit SHA",
+          "step 'Run ad hoc' run script must not interpolate dispatch inputs directly",
+          "ad-hoc-derived-vitest step 'Run ad hoc' run script must not interpolate secrets directly",
+        ]),
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("requires runtime-overrides workflow and report coverage", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-vitest-workflow-"));
+    const renamedWorkflowPath = path.join(tmp, "renamed-workflow.yaml");
+    const missingReportNeedPath = path.join(tmp, "missing-report-need.yaml");
     const workflow = fs.readFileSync(
       path.join(process.cwd(), ".github/workflows/e2e-vitest-scenarios.yaml"),
       "utf8",
     );
     fs.writeFileSync(
-      workflowPath,
-      workflow
-        .replace(/runtime-overrides-vitest/g, "runtime-overrides-missing")
-        .replace(/runtime-overrides/g, "runtime-overrides-missing"),
+      renamedWorkflowPath,
+      workflow.replace(/^  runtime-overrides-vitest:$/m, "  runtime-overrides-missing:"),
+    );
+    fs.writeFileSync(
+      missingReportNeedPath,
+      workflow.replace("        runtime-overrides-vitest,\n", ""),
     );
 
     try {
-      const errors = validateE2eVitestScenariosWorkflowBoundary(workflowPath);
-      expect(errors).toEqual(
-        expect.arrayContaining([
-          "workflow missing runtime-overrides-vitest job",
-          "report-to-pr job must wait for runtime-overrides-vitest",
-        ]),
+      expect(validateE2eVitestScenariosWorkflowBoundary(renamedWorkflowPath)).toContain(
+        "workflow missing runtime-overrides-vitest job",
+      );
+      expect(validateE2eVitestScenariosWorkflowBoundary(missingReportNeedPath)).toContain(
+        "report-to-pr job must wait for runtime-overrides-vitest",
       );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
