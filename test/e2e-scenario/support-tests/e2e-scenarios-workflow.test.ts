@@ -351,6 +351,22 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       selectedFreeStandingJobs: ["gateway-drift-preflight-vitest"],
       registryScenarios: [],
     });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "openclaw-inference-switch" }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["openclaw-inference-switch-vitest"],
+      registryScenarios: [],
+    });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({ jobs: "openclaw-inference-switch-vitest" }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["openclaw-inference-switch-vitest"],
+      registryScenarios: [],
+    });
   });
 
   it("derives the free-standing inventory from workflow job metadata", () => {
