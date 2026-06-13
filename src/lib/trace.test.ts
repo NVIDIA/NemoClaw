@@ -5,11 +5,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { runCurlProbe } from "./adapters/http/probe";
 import {
   addTraceEvent,
   flushTrace,
   getTraceCollector,
   resetTraceForTests,
+  sanitizeTraceAttributes,
   TRACE_DIR_ENV,
   TRACE_ENABLED_ENV,
   TRACE_FILE_ENV,
@@ -96,7 +98,44 @@ describe("onboard trace artifacts", () => {
     });
   });
 
-  it("sanitizes curl probe URLs and nested sensitive event attributes", () => {
+  it("sanitizes curl probe URLs and records status metadata", () => {
+    withTraceFile((traceFile) => {
+      const result = runCurlProbe(
+        [
+          "-sS",
+          "-H",
+          "Authorization: Bearer should-not-appear",
+          "https://example.test/v1/chat/completions?key=secret",
+        ],
+        {
+          spawnSyncImpl: () =>
+            ({
+              status: 0,
+              stdout: "200",
+              stderr: "",
+              error: undefined,
+            }) as never,
+        },
+      );
+
+      expect(result.ok).toBe(true);
+      expect(flushTrace()).toBe(traceFile);
+      const text = fs.readFileSync(traceFile, "utf8");
+      const artifact = JSON.parse(text) as TraceArtifact;
+      const span = artifact.resource_spans[0].scope_spans[0].spans.find(
+        (entry) => entry.name === "nemoclaw.inference.curl_probe",
+      );
+
+      expect(text).not.toContain("should-not-appear");
+      expect(text).not.toContain("key=secret");
+      expect(span?.attributes["http.url"]).toBe(
+        "https://example.test/v1/chat/completions?key=%3CREDACTED%3E",
+      );
+      expect(span?.events[0].attributes).toMatchObject({ ok: true, http_status: 200 });
+    });
+  });
+
+  it("sanitizes nested sensitive span and event attributes", () => {
     withTraceFile((traceFile) => {
       const queryToken = ["ghp", "_"].join("") + "d".repeat(24);
       const slackWebhook = `https://hooks.slack.com/services/${"A".repeat(12)}/${"B".repeat(
@@ -128,6 +167,18 @@ describe("onboard trace artifacts", () => {
       expect(text).not.toContain(queryToken);
       expect(text).not.toContain(slackWebhook);
       expect(text).not.toContain(eventBearer);
+    });
+  });
+
+  it("redacts nested sensitive attributes", () => {
+    expect(
+      sanitizeTraceAttributes({
+        nested: { token: "xoxb-secret", ok: true },
+        credential_env: "NVIDIA_INFERENCE_API_KEY",
+      }),
+    ).toMatchObject({
+      nested: '{"token":"<REDACTED>","ok":true}',
+      credential_env: "NVIDIA_INFERENCE_API_KEY",
     });
   });
 

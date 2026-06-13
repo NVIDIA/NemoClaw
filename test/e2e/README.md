@@ -43,5 +43,8 @@ If the artifact, prior release tag, prior run, or matching trace data is unavail
 Scheduled nightly runs and manual full runs post the scorecard automatically.
 Selective dispatches are silent by default and post only when `post_to_slack=true`, so developers can run targeted checks without notifying Slack.
 The trace timing section is part of the same Slack scorecard message, but it stays compact: total duration, the three largest matching phase changes, and a pointer to the GitHub run summary for the full table.
+The scorecard counts passed, failed, cancelled, and skipped jobs separately.
+Runs with cancellations but no failures stay in the warning state instead of being reported as all passed, including mixed pass and cancelled selective dispatches.
+Slack no longer includes the legacy `Trend` context; trace timing is the only duration comparison in the scorecard.
 Slack does not post raw trace JSON, prompts, credentials, or environment values.
 The uploaded artifact is the trusted timing-only summary, not the raw target-ref trace directory.

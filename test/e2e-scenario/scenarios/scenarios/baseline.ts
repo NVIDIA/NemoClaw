@@ -68,7 +68,7 @@ const canonicalScenarioInputs: CanonicalScenarioInput[] = [
     expectedStateId: "cloud-openclaw-ready",
     suiteIds: ["smoke", "inference", "credentials"],
     description: "Ubuntu repo checkout with Docker and cloud OpenClaw onboarding.",
-    requiredSecrets: ["NVIDIA_API_KEY"],
+    requiredSecrets: ["NVIDIA_INFERENCE_API_KEY"],
   },
   {
     id: "ubuntu-repo-cloud-hermes",
@@ -76,7 +76,7 @@ const canonicalScenarioInputs: CanonicalScenarioInput[] = [
     environment: ubuntuRepoDocker("cloud-hermes"),
     expectedStateId: "cloud-hermes-ready",
     suiteIds: ["smoke", "inference", "hermes-specific"],
-    requiredSecrets: ["NVIDIA_API_KEY"],
+    requiredSecrets: ["NVIDIA_INFERENCE_API_KEY"],
   },
   {
     id: "gpu-repo-local-ollama-openclaw",
@@ -94,7 +94,7 @@ const canonicalScenarioInputs: CanonicalScenarioInput[] = [
     onboardingAssertionIds: ["base-installed"],
     suiteIds: ["platform-macos"],
     runnerRequirements: ["macos-latest"],
-    requiredSecrets: ["NVIDIA_API_KEY"],
+    requiredSecrets: ["NVIDIA_INFERENCE_API_KEY"],
     skippedCapabilities: macosDockerSkipped,
   },
   {
@@ -104,7 +104,7 @@ const canonicalScenarioInputs: CanonicalScenarioInput[] = [
     expectedStateId: "cloud-openclaw-ready",
     suiteIds: ["smoke", "platform-wsl"],
     runnerRequirements: ["windows-latest", "wsl2"],
-    requiredSecrets: ["NVIDIA_API_KEY"],
+    requiredSecrets: ["NVIDIA_INFERENCE_API_KEY"],
   },
   {
     id: "brev-launchable-cloud-openclaw",
@@ -113,7 +113,7 @@ const canonicalScenarioInputs: CanonicalScenarioInput[] = [
     expectedStateId: "cloud-openclaw-ready",
     suiteIds: ["smoke", "inference"],
     runnerRequirements: ["ubuntu-latest", "brev-api-token", "launchable-image"],
-    requiredSecrets: ["NVIDIA_API_KEY"],
+    requiredSecrets: ["NVIDIA_INFERENCE_API_KEY"],
   },
   {
     id: "ubuntu-no-docker-preflight-negative",
@@ -122,7 +122,7 @@ const canonicalScenarioInputs: CanonicalScenarioInput[] = [
     expectedStateId: "preflight-failure-no-sandbox",
     onboardingAssertionIds: ["base-installed", "preflight-expected-failed"],
     suiteIds: [],
-    requiredSecrets: ["NVIDIA_API_KEY"],
+    requiredSecrets: ["NVIDIA_INFERENCE_API_KEY"],
     expectedFailure: {
       phase: "preflight",
       errorClass: "docker-missing",
@@ -144,7 +144,7 @@ const canonicalScenarioInputs: CanonicalScenarioInput[] = [
     environment: ubuntuRepoDockerLifecycle("cloud-openclaw", "rebuild-current-version"),
     expectedStateId: "cloud-openclaw-ready",
     suiteIds: ["smoke", "rebuild", "upgrade"],
-    requiredSecrets: ["NVIDIA_API_KEY"],
+    requiredSecrets: ["NVIDIA_INFERENCE_API_KEY"],
   },
   {
     // Failing-test-first regression scaffold for #4423. After
@@ -178,7 +178,7 @@ const canonicalScenarioInputs: CanonicalScenarioInput[] = [
     environment: ubuntuRepoDockerLifecycle("cloud-openclaw", "post-reboot-recovery"),
     expectedStateId: "post-reboot-recovery-ready",
     suiteIds: ["smoke"],
-    requiredSecrets: ["NVIDIA_API_KEY"],
+    requiredSecrets: ["NVIDIA_INFERENCE_API_KEY"],
     description:
       "Failing-test-first guard for #4423: post-reboot recovery must preserve " +
       "the local registry entry and restart the labeled Docker container.",
@@ -197,7 +197,7 @@ const canonicalScenarioInputs: CanonicalScenarioInput[] = [
     environment: ubuntuRepoDocker("cloud-nvidia-openclaw-brave"),
     expectedStateId: "cloud-openclaw-ready",
     suiteIds: ["smoke"],
-    requiredSecrets: ["NVIDIA_API_KEY", "BRAVE_API_KEY"],
+    requiredSecrets: ["NVIDIA_INFERENCE_API_KEY", "BRAVE_API_KEY"],
   },
   {
     id: "ubuntu-repo-cloud-openclaw-telegram",
@@ -205,7 +205,7 @@ const canonicalScenarioInputs: CanonicalScenarioInput[] = [
     environment: ubuntuRepoDocker("cloud-nvidia-openclaw-telegram"),
     expectedStateId: "cloud-openclaw-ready",
     suiteIds: ["smoke", "messaging-telegram"],
-    requiredSecrets: ["NVIDIA_API_KEY", "TELEGRAM_BOT_TOKEN"],
+    requiredSecrets: ["NVIDIA_INFERENCE_API_KEY", "TELEGRAM_BOT_TOKEN"],
   },
   {
     id: "ubuntu-repo-cloud-openclaw-discord",
@@ -213,7 +213,7 @@ const canonicalScenarioInputs: CanonicalScenarioInput[] = [
     environment: ubuntuRepoDocker("cloud-nvidia-openclaw-discord"),
     expectedStateId: "cloud-openclaw-ready",
     suiteIds: ["smoke", "messaging-discord"],
-    requiredSecrets: ["NVIDIA_API_KEY", "DISCORD_BOT_TOKEN"],
+    requiredSecrets: ["NVIDIA_INFERENCE_API_KEY", "DISCORD_BOT_TOKEN"],
   },
   {
     id: "ubuntu-repo-cloud-openclaw-slack",
@@ -221,7 +221,7 @@ const canonicalScenarioInputs: CanonicalScenarioInput[] = [
     environment: ubuntuRepoDocker("cloud-nvidia-openclaw-slack"),
     expectedStateId: "cloud-openclaw-ready",
     suiteIds: ["smoke", "messaging-slack"],
-    requiredSecrets: ["NVIDIA_API_KEY", "SLACK_BOT_TOKEN"],
+    requiredSecrets: ["NVIDIA_INFERENCE_API_KEY", "SLACK_BOT_TOKEN"],
   },
   {
     id: "ubuntu-repo-cloud-hermes-discord",
@@ -229,7 +229,7 @@ const canonicalScenarioInputs: CanonicalScenarioInput[] = [
     environment: ubuntuRepoDocker("cloud-nvidia-hermes-discord"),
     expectedStateId: "cloud-hermes-ready",
     suiteIds: ["smoke"],
-    requiredSecrets: ["NVIDIA_API_KEY", "DISCORD_BOT_TOKEN"],
+    requiredSecrets: ["NVIDIA_INFERENCE_API_KEY", "DISCORD_BOT_TOKEN"],
   },
   {
     id: "ubuntu-repo-cloud-hermes-slack",
@@ -237,7 +237,7 @@ const canonicalScenarioInputs: CanonicalScenarioInput[] = [
     environment: ubuntuRepoDocker("cloud-nvidia-hermes-slack"),
     expectedStateId: "cloud-hermes-ready",
     suiteIds: ["smoke"],
-    requiredSecrets: ["NVIDIA_API_KEY", "SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"],
+    requiredSecrets: ["NVIDIA_INFERENCE_API_KEY", "SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"],
   },
   {
     id: "ubuntu-repo-cloud-openclaw-resume",
@@ -245,7 +245,7 @@ const canonicalScenarioInputs: CanonicalScenarioInput[] = [
     environment: ubuntuRepoDocker("cloud-nvidia-openclaw-resume-after-interrupt"),
     expectedStateId: "cloud-openclaw-ready",
     suiteIds: ["smoke"],
-    requiredSecrets: ["NVIDIA_API_KEY"],
+    requiredSecrets: ["NVIDIA_INFERENCE_API_KEY"],
   },
   {
     id: "ubuntu-repo-cloud-openclaw-repair",
@@ -253,7 +253,7 @@ const canonicalScenarioInputs: CanonicalScenarioInput[] = [
     environment: ubuntuRepoDocker("cloud-nvidia-openclaw-repair-existing-config"),
     expectedStateId: "cloud-openclaw-ready",
     suiteIds: ["smoke"],
-    requiredSecrets: ["NVIDIA_API_KEY"],
+    requiredSecrets: ["NVIDIA_INFERENCE_API_KEY"],
   },
   {
     id: "ubuntu-repo-cloud-openclaw-double-same-provider",
@@ -261,7 +261,7 @@ const canonicalScenarioInputs: CanonicalScenarioInput[] = [
     environment: ubuntuRepoDocker("cloud-nvidia-openclaw-double-same-provider"),
     expectedStateId: "cloud-openclaw-ready",
     suiteIds: ["smoke"],
-    requiredSecrets: ["NVIDIA_API_KEY"],
+    requiredSecrets: ["NVIDIA_INFERENCE_API_KEY"],
   },
   {
     id: "ubuntu-repo-cloud-openclaw-double-provider-switch",
@@ -269,7 +269,7 @@ const canonicalScenarioInputs: CanonicalScenarioInput[] = [
     environment: ubuntuRepoDocker("cloud-nvidia-openclaw-double-provider-switch"),
     expectedStateId: "cloud-openclaw-ready",
     suiteIds: ["smoke"],
-    requiredSecrets: ["NVIDIA_API_KEY"],
+    requiredSecrets: ["NVIDIA_INFERENCE_API_KEY"],
   },
   {
     id: "ubuntu-repo-cloud-openclaw-token-rotation",
@@ -277,7 +277,7 @@ const canonicalScenarioInputs: CanonicalScenarioInput[] = [
     environment: ubuntuRepoDocker("cloud-nvidia-openclaw-token-rotation"),
     expectedStateId: "cloud-openclaw-ready",
     suiteIds: ["smoke", "messaging-token-rotation"],
-    requiredSecrets: ["NVIDIA_API_KEY"],
+    requiredSecrets: ["NVIDIA_INFERENCE_API_KEY"],
   },
   {
     id: "ubuntu-repo-cloud-openclaw-custom-policies",
@@ -293,7 +293,7 @@ const canonicalScenarioInputs: CanonicalScenarioInput[] = [
       "model-router",
       "snapshot-lifecycle",
     ],
-    requiredSecrets: ["NVIDIA_API_KEY"],
+    requiredSecrets: ["NVIDIA_INFERENCE_API_KEY"],
   },
   {
     id: "ubuntu-invalid-nvidia-key-negative",
@@ -302,7 +302,7 @@ const canonicalScenarioInputs: CanonicalScenarioInput[] = [
     expectedStateId: "onboarding-failure-invalid-nvidia-key",
     onboardingAssertionIds: ["base-installed"],
     suiteIds: [],
-    requiredSecrets: ["NVIDIA_API_KEY"],
+    requiredSecrets: ["NVIDIA_INFERENCE_API_KEY"],
     expectedFailure: {
       phase: "onboarding",
       errorClass: "invalid-nvidia-api-key",
@@ -316,7 +316,7 @@ const canonicalScenarioInputs: CanonicalScenarioInput[] = [
     expectedStateId: "onboarding-failure-gateway-port-conflict",
     onboardingAssertionIds: ["base-installed"],
     suiteIds: [],
-    requiredSecrets: ["NVIDIA_API_KEY"],
+    requiredSecrets: ["NVIDIA_INFERENCE_API_KEY"],
     expectedFailure: {
       phase: "onboarding",
       errorClass: "gateway-port-conflict",
