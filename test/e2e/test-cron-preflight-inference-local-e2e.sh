@@ -19,7 +19,7 @@
 #
 # Prerequisites:
 #   - Docker running
-#   - NVIDIA_API_KEY set (real key, starts with nvapi-)
+#   - NVIDIA_INFERENCE_API_KEY set (real key, starts with nvapi-)
 #   - NEMOCLAW_NON_INTERACTIVE=1, NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1
 #
 # Environment:
@@ -30,7 +30,7 @@
 #
 # Usage:
 #   NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
-#     NVIDIA_API_KEY=nvapi-... bash test/e2e/test-cron-preflight-inference-local-e2e.sh
+#     NVIDIA_INFERENCE_API_KEY=nvapi-... bash test/e2e/test-cron-preflight-inference-local-e2e.sh
 
 set -uo pipefail
 
@@ -99,13 +99,13 @@ if ! command -v jq >/dev/null 2>&1; then
   echo "  Total: $TOTAL  Pass: $PASS  Fail: $FAIL  Skip: $SKIP"
   exit 0
 fi
-if [ -z "${NVIDIA_API_KEY:-}" ]; then
-  skip "NVIDIA_API_KEY not set"
+if [ -z "${NVIDIA_INFERENCE_API_KEY:-}" ]; then
+  skip "NVIDIA_INFERENCE_API_KEY not set"
   echo "  Total: $TOTAL  Pass: $PASS  Fail: $FAIL  Skip: $SKIP"
   exit 0
 fi
-if [ "${NVIDIA_API_KEY:0:6}" != "nvapi-" ]; then
-  skip "NVIDIA_API_KEY does not start with nvapi-"
+if [ "${NVIDIA_INFERENCE_API_KEY:0:6}" != "nvapi-" ]; then
+  skip "NVIDIA_INFERENCE_API_KEY does not start with nvapi-"
   echo "  Total: $TOTAL  Pass: $PASS  Fail: $FAIL  Skip: $SKIP"
   exit 0
 fi

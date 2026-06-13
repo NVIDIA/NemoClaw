@@ -98,9 +98,9 @@ async function onboardSandbox(
         NEMOCLAW_PROVIDER: "cloud",
         NEMOCLAW_SANDBOX_NAME: sandboxName,
         NEMOCLAW_RECREATE_SANDBOX: "1",
-        NVIDIA_API_KEY: process.env.NVIDIA_API_KEY ?? "",
+        NVIDIA_INFERENCE_API_KEY: process.env.NVIDIA_INFERENCE_API_KEY ?? "",
       },
-      redactionValues: [process.env.NVIDIA_API_KEY ?? ""],
+      redactionValues: [process.env.NVIDIA_INFERENCE_API_KEY ?? ""],
       timeoutMs: 20 * 60_000,
     },
   );
@@ -528,7 +528,7 @@ async function assertGatewayRecovery(host: HostCliClient, sandboxName: string): 
 liveTest(
   "sandbox operations preserve list/status/logs/recovery/multi-sandbox contracts",
   async ({ artifacts, cleanup, environment, host, sandbox, secrets, skip }) => {
-    secrets.required("NVIDIA_API_KEY");
+    secrets.required("NVIDIA_INFERENCE_API_KEY");
 
     await artifacts.writeJson("scenario.json", {
       id: "sandbox-operations",

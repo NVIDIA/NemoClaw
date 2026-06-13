@@ -62,7 +62,7 @@ components:
         provider_name: "nvidia-ncp"
         endpoint: ""
         model: "nvidia/nemotron-3-super-120b-a12b"
-        credential_env: "NVIDIA_API_KEY"
+        credential_env: "NVIDIA_INFERENCE_API_KEY"
         dynamic_endpoint: true
 
       nim-local:
@@ -89,7 +89,7 @@ components:
         provider_name: "nvidia-router"
         endpoint: "http://localhost:4000/v1"
         model: "nvidia-routed"
-        credential_env: "NVIDIA_API_KEY"
+        credential_env: "NVIDIA_INFERENCE_API_KEY"
         timeout_secs: 180
 
   router:

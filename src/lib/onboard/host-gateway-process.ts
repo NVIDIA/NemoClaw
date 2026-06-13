@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { sleepMs } from "../core/wait";
+import { waitUntil } from "../core/wait";
 import { clearDockerDriverGatewayRuntimeMarker } from "./docker-driver-gateway-runtime-marker";
 import { hostGatewayCmdlineMatches as sharedHostGatewayCmdlineMatches } from "./gateway-process-identity";
 
@@ -163,11 +163,14 @@ function waitForExit(
   pollIntervalMs: number,
 ): boolean {
   const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (!pidExists(pid, deps)) return true;
-    sleepMs(pollIntervalMs);
-  }
-  return !pidExists(pid, deps);
+  return (
+    waitUntil(() => !pidExists(pid, deps), {
+      deadlineMs: deadline,
+      initialIntervalMs: pollIntervalMs,
+      maxIntervalMs: pollIntervalMs,
+      backoffFactor: 1,
+    }) || !pidExists(pid, deps)
+  );
 }
 
 function clearRuntimeFiles(pidFile: string, stateDir: string): void {

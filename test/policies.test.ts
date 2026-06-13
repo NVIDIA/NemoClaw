@@ -485,7 +485,7 @@ describe("policies", () => {
     it("adds Jira validation guidance that makes blocked versus redirected curl observable", () => {
       const warning = policies.getPresetValidationWarning("jira");
 
-      expect(warning).toContain("curl -s");
+      expect(warning).toContain("inconclusive before or after approval");
       expect(warning).toContain("api.atlassian.com/oauth/token/accessible-resources");
       expect(warning).toContain("401 JSON");
       expect(warning).toContain("Node HTTPS");

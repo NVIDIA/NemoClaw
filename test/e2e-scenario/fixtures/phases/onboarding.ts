@@ -38,6 +38,7 @@ const MISSING_SANDBOX_DELETE_PATTERNS = [
   /sandbox not found/i,
   /sandbox .* not found/i,
   /sandbox .* not present/i,
+  /sandbox .* does not exist/i,
   /sandbox does not exist/i,
   /no such sandbox/i,
 ];
@@ -175,11 +176,11 @@ export class OnboardingPhaseFixture {
       throw new Error("cloud-openclaw onboarding requires an available Docker runtime.");
     }
     const sandboxName = sandboxNameFromOptions(environment.onboarding, options);
-    const apiKey = this.secrets.required("NVIDIA_API_KEY");
+    const apiKey = this.secrets.required("NVIDIA_INFERENCE_API_KEY");
     this.registerSandboxCleanup(sandboxName);
     const result = await this.host.nemoclaw(ONBOARD_ARGS, {
       artifactName: "onboard-cloud-openclaw",
-      env: commandEnv(sandboxName, { NVIDIA_API_KEY: apiKey }),
+      env: commandEnv(sandboxName, { NVIDIA_INFERENCE_API_KEY: apiKey }),
       redactionValues: [apiKey],
       timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     });
@@ -205,14 +206,14 @@ export class OnboardingPhaseFixture {
       );
     }
     const sandboxName = sandboxNameFromOptions(environment.onboarding, options);
-    const apiKey = this.secrets.required("NVIDIA_API_KEY");
+    const apiKey = this.secrets.required("NVIDIA_INFERENCE_API_KEY");
     this.registerSandboxCleanup(sandboxName);
     const shimDir = await mkdtemp(join(tmpdir(), "e2e-no-docker-"));
     const shimPath = join(shimDir, "docker");
     try {
       await writeFile(shimPath, noDockerShim(), "utf8");
       await chmod(shimPath, 0o700);
-      const env = commandEnv(sandboxName, { NVIDIA_API_KEY: apiKey });
+      const env = commandEnv(sandboxName, { NVIDIA_INFERENCE_API_KEY: apiKey });
       env.PATH = prependPath(shimDir, env.PATH);
       const result = await this.host.nemoclaw(ONBOARD_ARGS, {
         artifactName: "onboard-cloud-openclaw-no-docker",
@@ -247,17 +248,23 @@ export class OnboardingPhaseFixture {
     }
   }
 
+  async destroySandbox(sandboxName: string, artifactName?: string): Promise<ShellProbeResult> {
+    validateSandboxName(sandboxName);
+    const result = await this.host.nemoclaw([sandboxName, "destroy", "--yes"], {
+      artifactName: artifactName ?? `cleanup-destroy-${artifactLabel(sandboxName)}`,
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: DEFAULT_TIMEOUT_MS,
+    });
+    if (result.exitCode !== 0 && !hasMissingSandboxDeleteSignature(result)) {
+      assertExitZero(result, `cleanup destroy sandbox ${sandboxName}`);
+    }
+    return result;
+  }
+
   private registerSandboxCleanup(sandboxName: string): void {
     if (!this.cleanup) return;
     this.cleanup.add(`destroy NemoClaw sandbox ${sandboxName}`, async () => {
-      const result = await this.host.nemoclaw([sandboxName, "destroy", "--yes"], {
-        artifactName: `cleanup-destroy-${artifactLabel(sandboxName)}`,
-        env: buildAvailabilityProbeEnv(),
-        timeoutMs: DEFAULT_TIMEOUT_MS,
-      });
-      if (result.exitCode !== 0 && !hasMissingSandboxDeleteSignature(result)) {
-        assertExitZero(result, `cleanup destroy sandbox ${sandboxName}`);
-      }
+      await this.destroySandbox(sandboxName);
     });
   }
 

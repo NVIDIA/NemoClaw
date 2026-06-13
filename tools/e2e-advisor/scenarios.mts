@@ -5,15 +5,22 @@
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-
+// Intentionally resolves relative to the trusted advisor checkout, not the
+// analyzed PR workdir. The workflow runs this script from trusted `main` while
+// `process.cwd()` points at inert PR data, so normalization must not execute
+// PR-local registry/runtime-support code. PRs that add or newly wire scenarios
+// should use the fan-out recommendation until the trusted checkout knows their
+// targeted IDs are live-supported.
+import { getScenario } from "../../test/e2e-scenario/scenarios/registry.ts";
+import { liveScenarioSupport } from "../../test/e2e-scenario/scenarios/runtime-support.ts";
 import { getChangedFiles, getDiff } from "../advisors/git.mts";
 import {
+  type AdvisorArtifactPaths,
   advisorArtifactPaths,
   parseArgs,
   parsePositiveInt,
   readJson,
   writeJson,
-  type AdvisorArtifactPaths,
 } from "../advisors/io.mts";
 import {
   dropUndefinedValues,
@@ -29,14 +36,6 @@ import {
   type RunAdvisorResult,
   runReadOnlyAdvisor,
 } from "../advisors/session.mts";
-// Intentionally resolves relative to the trusted advisor checkout, not the
-// analyzed PR workdir. The workflow runs this script from trusted `main` while
-// `process.cwd()` points at inert PR data, so normalization must not execute
-// PR-local registry/runtime-support code. PRs that add or newly wire scenarios
-// should use the fan-out recommendation until the trusted checkout knows their
-// targeted IDs are live-supported.
-import { getScenario } from "../../test/e2e-scenario/scenarios/registry.ts";
-import { liveScenarioSupport } from "../../test/e2e-scenario/scenarios/runtime-support.ts";
 
 const root = process.cwd();
 const ADVISOR_PROVIDER = DEFAULT_ADVISOR_PROVIDER;
@@ -120,10 +119,7 @@ export type ScenarioAdvisorResult = {
   confidence: Confidence;
 };
 
-if (
-  process.argv[1] &&
-  import.meta.url === pathToFileURL(process.argv[1]).href
-) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch((error: unknown) => {
     console.error(error instanceof Error ? error.message : String(error));
     process.exit(1);
@@ -143,11 +139,16 @@ async function main(): Promise<void> {
     path.join("/tmp", `nemoclaw-e2e-scenario-advisor-config-${process.pid}`);
   const timeoutMs = parsePositiveInt(process.env.E2E_SCENARIO_ADVISOR_TIMEOUT_MS, 900000);
   const heartbeatMs = parsePositiveInt(process.env.E2E_SCENARIO_ADVISOR_HEARTBEAT_MS, 60000);
-  const maxCaptureBytes = parsePositiveInt(process.env.E2E_SCENARIO_ADVISOR_MAX_CAPTURE_BYTES, 5 * 1024 * 1024);
+  const maxCaptureBytes = parsePositiveInt(
+    process.env.E2E_SCENARIO_ADVISOR_MAX_CAPTURE_BYTES,
+    5 * 1024 * 1024,
+  );
 
   fs.mkdirSync(outDir, { recursive: true });
 
-  logProgress(`Starting scenario advisor analysis: base=${baseRef} head=${headRef} outDir=${outDir}`);
+  logProgress(
+    `Starting scenario advisor analysis: base=${baseRef} head=${headRef} outDir=${outDir}`,
+  );
   const schema = readJson<AdvisorSchema>(schemaPath);
   const changedFiles = getChangedFiles(baseRef, headRef);
   logProgress(`Detected ${changedFiles.length} changed file(s)`);
@@ -156,11 +157,15 @@ async function main(): Promise<void> {
   const systemPrompt = buildSystemPrompt(schema);
   const prompt = buildPrompt({ baseRef, headRef, changedFiles, diff });
   fs.writeFileSync(artifacts.prompt, prompt);
-  logProgress(`Wrote scenario advisor prompt: ${prompt.length} character(s) at ${artifacts.prompt}`);
+  logProgress(
+    `Wrote scenario advisor prompt: ${prompt.length} character(s) at ${artifacts.prompt}`,
+  );
 
   const metadata = { baseRef, headRef, changedFiles };
-  const writeFailure = (reason: string): void => writeUnavailableArtifacts(artifacts, metadata, reason, true);
-  const writeUnavailable = (reason: string): void => writeUnavailableArtifacts(artifacts, metadata, reason, false);
+  const writeFailure = (reason: string): void =>
+    writeUnavailableArtifacts(artifacts, metadata, reason, true);
+  const writeUnavailable = (reason: string): void =>
+    writeUnavailableArtifacts(artifacts, metadata, reason, false);
 
   if (process.env.E2E_SCENARIO_ADVISOR_RUN_ANALYSIS === "0") {
     writeUnavailable("E2E_SCENARIO_ADVISOR_RUN_ANALYSIS=0");
@@ -168,7 +173,9 @@ async function main(): Promise<void> {
   }
 
   logProgress(`Launching advisor SDK: provider=${ADVISOR_PROVIDER} model=${ADVISOR_MODEL}`);
-  logProgress(`Advisor tools enabled: ${READ_ONLY_TOOLS.join(",")}; repository commands remain disabled by prompt policy`);
+  logProgress(
+    `Advisor tools enabled: ${READ_ONLY_TOOLS.join(",")}; repository commands remain disabled by prompt policy`,
+  );
 
   let sdkResult: RunAdvisorResult | undefined;
   try {
@@ -337,7 +344,10 @@ export function normalizeScenarioAdvisorResult(
     metadata.changedFiles,
     unwiredFreeStandingLiveTests,
   );
-  const deterministicJobs = deterministicFreeStandingJobRecommendations(metadata.changedFiles, context);
+  const deterministicJobs = deterministicFreeStandingJobRecommendations(
+    metadata.changedFiles,
+    context,
+  );
   const required = suppressFanout
     ? []
     : mergeRecommendations(
@@ -358,7 +368,10 @@ export function normalizeScenarioAdvisorResult(
   const reasonField = object.noScenarioE2eReason;
   const noScenarioE2eReason = suppressFanout
     ? missingFreeStandingLiveWiringReason(unwiredFreeStandingLiveTests)
-    : typeof reasonField === "string" && reasonField.trim() && required.length === 0 && optional.length === 0
+    : typeof reasonField === "string" &&
+        reasonField.trim() &&
+        required.length === 0 &&
+        optional.length === 0
       ? reasonField.trim()
       : required.length === 0 && optional.length === 0
         ? unwiredFreeStandingLiveTests.length > 0
@@ -371,13 +384,23 @@ export function normalizeScenarioAdvisorResult(
     baseRef: metadata.baseRef,
     headRef: metadata.headRef,
     changedFiles: metadata.changedFiles,
-    relevantChangedFiles: stringArrayWithinChanged(object.relevantChangedFiles, metadata.changedFiles),
+    relevantChangedFiles: stringArrayWithinChanged(
+      object.relevantChangedFiles,
+      metadata.changedFiles,
+    ),
     required,
     optional: optional.filter(
-      (candidate) => !required.some((item) => item.id === candidate.id && item.selectorType === candidate.selectorType),
+      (candidate) =>
+        !required.some(
+          (item) => item.id === candidate.id && item.selectorType === candidate.selectorType,
+        ),
     ),
     noScenarioE2eReason,
-    confidence: enumValue<["low", "medium", "high"]>(object.confidence, ["low", "medium", "high"], "medium"),
+    confidence: enumValue<["low", "medium", "high"]>(
+      object.confidence,
+      ["low", "medium", "high"],
+      "medium",
+    ),
   };
 }
 
@@ -389,7 +412,9 @@ function readVitestWorkflowText(): string | undefined {
   }
 }
 
-function buildScenarioNormalizationContext(vitestWorkflowText = readVitestWorkflowText()): ScenarioNormalizationContext {
+function buildScenarioNormalizationContext(
+  vitestWorkflowText = readVitestWorkflowText(),
+): ScenarioNormalizationContext {
   const freeStandingJobs = extractFreeStandingVitestJobs(vitestWorkflowText ?? "");
   const liveTestToJobs = new Map<string, string[]>();
   for (const job of freeStandingJobs) {
@@ -450,9 +475,7 @@ function shouldSuppressFanoutForUnwiredLiveTests(
   if (unwiredFreeStandingLiveTests.length === 0) return false;
   const relevantFiles = changedFiles.filter(isVitestScenarioRelevantFile);
   return relevantFiles.every(
-    (file) =>
-      unwiredFreeStandingLiveTests.includes(file) ||
-      file === SCENARIO_WORKFLOW_PATH,
+    (file) => unwiredFreeStandingLiveTests.includes(file) || file === SCENARIO_WORKFLOW_PATH,
   );
 }
 
