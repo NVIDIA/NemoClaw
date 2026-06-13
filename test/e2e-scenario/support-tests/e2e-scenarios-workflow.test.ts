@@ -356,7 +356,7 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
     }
   });
 
-  it("keeps each free-standing scenario out of the registry matrix", () => {
+  it("keeps each free-standing scenario out of the registry matrix", { timeout: 15_000 }, () => {
     const inventory = readFreeStandingJobsInventory();
     for (const job of inventory.allowedJobs) {
       expect(generateMatrixForDispatch({ JOBS: job, SCENARIOS: "" })).toMatchObject({

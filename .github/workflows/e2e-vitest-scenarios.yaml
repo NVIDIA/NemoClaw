@@ -1441,6 +1441,93 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  messaging-providers-vitest:
+    needs: generate-matrix
+    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',messaging-providers-vitest,') || contains(format(',{0},', inputs.scenarios), ',messaging-providers,') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/messaging-providers
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+      OPENSHELL_GATEWAY: "nemoclaw"
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Authenticate to Docker Hub
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          login_succeeded=0
+          for attempt in 1 2 3; do
+            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
+              login_succeeded=1
+              break
+            fi
+            if [[ "$attempt" -lt 3 ]]; then
+              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
+              sleep 5
+            fi
+          done
+          if [[ "$login_succeeded" -ne 1 ]]; then
+            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
+          fi
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build CLI
+        run: npm run build:cli
+
+      - name: Run messaging providers live Vitest test
+        # Migrated from test/e2e/test-messaging-providers.sh. The test keeps
+        # the legacy fake-token defaults, optional _REAL secret overrides,
+        # provider placeholder redaction checks, and WhatsApp QR-only parity.
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          TELEGRAM_BOT_TOKEN_REAL: ${{ secrets.TELEGRAM_BOT_TOKEN_REAL }}
+          DISCORD_BOT_TOKEN_REAL: ${{ secrets.DISCORD_BOT_TOKEN_REAL }}
+          SLACK_BOT_TOKEN_REAL: ${{ secrets.SLACK_BOT_TOKEN_REAL }}
+          SLACK_APP_TOKEN_REAL: ${{ secrets.SLACK_APP_TOKEN_REAL }}
+          TELEGRAM_ALLOWED_IDS: ${{ secrets.TELEGRAM_ALLOWED_IDS }}
+          TELEGRAM_AUTHORIZED_CHAT_IDS: ${{ secrets.TELEGRAM_AUTHORIZED_CHAT_IDS }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_CHAT_ID_E2E: ${{ secrets.TELEGRAM_CHAT_ID_E2E }}
+          DISCORD_CHANNEL_ID_E2E: ${{ secrets.DISCORD_CHANNEL_ID_E2E }}
+          SLACK_CHANNEL_ID_E2E: ${{ secrets.SLACK_CHANNEL_ID_E2E }}
+        run: |
+          set -euo pipefail
+          npx vitest run --project e2e-scenarios-live \
+            test/e2e-scenario/live/messaging-providers.test.ts \
+            --silent=false --reporter=default
+
+      - name: Upload messaging providers artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-vitest-scenarios-messaging-providers
+          path: e2e-artifacts/vitest/messaging-providers/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
+
   launchable-smoke-vitest:
     needs: generate-matrix
     if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',launchable-smoke-vitest,') }}
@@ -1886,6 +1973,7 @@ jobs:
         rebuild-openclaw-vitest,
         sandbox-rebuild-vitest,
         token-rotation-vitest,
+        messaging-providers-vitest,
         launchable-smoke-vitest,
         double-onboard-vitest,
         model-router-provider-routed-inference-vitest,

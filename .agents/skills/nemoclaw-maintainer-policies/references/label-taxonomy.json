@@ -100,6 +100,17 @@
       "mutually_exclusive_group": null
     },
     {
+      "name": "PRR",
+      "family": "reporting",
+      "item_kinds": ["issue", "pull_request"],
+      "description": "Reserved Product Readiness Review label for reports or follow-up used to assess product readiness and user experience.",
+      "positive_signals": ["maintainer-applied Product Readiness Review report", "dedicated PRR workflow-applied report", "PRR follow-up", "product readiness assessment tied to a PRR", "user experience assessment tied to a PRR"],
+      "negative_signals": ["normal triage output", "generic readiness concern", "ordinary UX bug", "release validation without PRR evidence", "ordinary QA issue", "daily release label or readiness claim"],
+      "application_policy": "Reserved for maintainers or dedicated PRR workflows. Triage agents must not recommend or apply this label during normal triage.",
+      "triage_recommendation_allowed": false,
+      "mutually_exclusive_group": null
+    },
+    {
       "name": "needs: triage",
       "family": "needs",
       "item_kinds": ["issue", "pull_request"],
