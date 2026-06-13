@@ -18,7 +18,7 @@
  *   npx vitest run --project e2e-branch-validation
  *
  * Required env vars:
- *   NVIDIA_API_KEY   — passed to VM for inference config during onboarding
+ *   NVIDIA_INFERENCE_API_KEY   — passed to VM for inference config during onboarding
  *   GITHUB_TOKEN     — passed to VM for OpenShell binary download
  *   INSTANCE_NAME    — Brev instance name (e.g. pr-156-test)
  *
@@ -264,7 +264,7 @@ function sshEnv(
 ): string {
   const gpuE2eModel = process.env.NEMOCLAW_GPU_E2E_MODEL || "qwen3.5:9b";
   const envParts = [
-    `export NVIDIA_API_KEY='${shellEscape(process.env.NVIDIA_API_KEY)}'`,
+    `export NVIDIA_INFERENCE_API_KEY='${shellEscape(process.env.NVIDIA_INFERENCE_API_KEY)}'`,
     `export GITHUB_TOKEN='${shellEscape(process.env.GITHUB_TOKEN)}'`,
     `export NEMOCLAW_NON_INTERACTIVE=1`,
     `export NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1`,
@@ -1028,7 +1028,7 @@ function writeManualRegistry(elapsed: () => string): void {
 
 // --- suite ------------------------------------------------------------------
 
-const REQUIRED_VARS = ["NVIDIA_API_KEY", "GITHUB_TOKEN", "INSTANCE_NAME"];
+const REQUIRED_VARS = ["NVIDIA_INFERENCE_API_KEY", "GITHUB_TOKEN", "INSTANCE_NAME"];
 const hasRequiredVars = REQUIRED_VARS.every((key) => process.env[key]);
 const hasAuthenticatedBrev = (() => {
   try {

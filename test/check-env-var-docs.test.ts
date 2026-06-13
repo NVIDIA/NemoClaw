@@ -49,7 +49,7 @@ describe("findEnvVarReads", () => {
   it.each([
     "const x = process.env.PATH;",
     "const x = process.env.HOME;",
-    "const x = process.env.NVIDIA_API_KEY;",
+    "const x = process.env.NVIDIA_INFERENCE_API_KEY;",
     "const x = process.env.BRAVE_API_KEY;",
     "const x = process.env.TELEGRAM_BOT_TOKEN;",
   ])("ignores non-NEMOCLAW var %s", (code) => {

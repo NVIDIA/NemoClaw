@@ -28,7 +28,7 @@ function readCommandOutput(error: object | null, key: "stdout" | "stderr"): stri
 }
 
 export interface DeployCredentials {
-  NVIDIA_API_KEY?: string | null;
+  NVIDIA_INFERENCE_API_KEY?: string | null;
   OPENAI_API_KEY?: string | null;
   ANTHROPIC_API_KEY?: string | null;
   GEMINI_API_KEY?: string | null;
@@ -117,7 +117,7 @@ export function inferDeployProvider(
   if (explicit) return explicit;
 
   const providerByCredential: Array<[keyof DeployCredentials, string]> = [
-    ["NVIDIA_API_KEY", "build"],
+    ["NVIDIA_INFERENCE_API_KEY", "build"],
     ["OPENAI_API_KEY", "openai"],
     ["ANTHROPIC_API_KEY", "anthropic"],
     ["GEMINI_API_KEY", "gemini"],
@@ -308,7 +308,7 @@ export async function executeDeploy(opts: DeployExecutionOptions): Promise<void>
     exit,
   });
   const credentials: DeployCredentials = {
-    NVIDIA_API_KEY: getCredential("NVIDIA_API_KEY"),
+    NVIDIA_INFERENCE_API_KEY: getCredential("NVIDIA_INFERENCE_API_KEY"),
     OPENAI_API_KEY: getCredential("OPENAI_API_KEY"),
     ANTHROPIC_API_KEY: getCredential("ANTHROPIC_API_KEY"),
     GEMINI_API_KEY: getCredential("GEMINI_API_KEY"),
@@ -328,7 +328,7 @@ export async function executeDeploy(opts: DeployExecutionOptions): Promise<void>
       [
         "  Could not determine which inference provider to configure for remote onboarding.",
         "  Set `NEMOCLAW_PROVIDER` explicitly or provide exactly one matching provider credential.",
-        "  Supported provider credentials: NVIDIA_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY, COMPATIBLE_API_KEY, COMPATIBLE_ANTHROPIC_API_KEY.",
+        "  Supported provider credentials: NVIDIA_INFERENCE_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY, COMPATIBLE_API_KEY, COMPATIBLE_ANTHROPIC_API_KEY.",
       ],
       error,
       exit,

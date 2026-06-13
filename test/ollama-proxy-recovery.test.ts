@@ -167,7 +167,7 @@ console.log(JSON.stringify({ proxySpawns, curlEnv }));
         ...process.env,
         HTTP_PROXY: "http://proxy.invalid:8888",
         HOME: tmpDir,
-        NVIDIA_API_KEY: "must-not-leak",
+        NVIDIA_INFERENCE_API_KEY: "must-not-leak",
         NO_PROXY: "",
       },
     });
@@ -178,7 +178,7 @@ console.log(JSON.stringify({ proxySpawns, curlEnv }));
       proxySpawns: object[];
     }>(result.stdout);
     assert.equal(payload.proxySpawns.length, 0);
-    assert.equal(payload.curlEnv.NVIDIA_API_KEY, undefined);
+    assert.equal(payload.curlEnv.NVIDIA_INFERENCE_API_KEY, undefined);
     assert.equal(payload.curlEnv.HTTP_PROXY, "http://proxy.invalid:8888");
     assert.match(payload.curlEnv.NO_PROXY, /(^|,)127\.0\.0\.1(,|$)/);
     assert.match(payload.curlEnv.NO_PROXY, /(^|,)localhost(,|$)/);

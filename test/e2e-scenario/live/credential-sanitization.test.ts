@@ -199,7 +199,7 @@ function assertCredentialFieldDetectionContract(): void {
     displayName: "should-be-preserved",
     sortKey: "should-also-be-preserved",
     modelName: "nvidia/nemotron-3-super-120b-a12b",
-    keyRef: { source: "env", id: "NVIDIA_API_KEY" },
+    keyRef: { source: "env", id: "NVIDIA_INFERENCE_API_KEY" },
     description: "A secret garden (but not a real secret)",
     tokenizer: "sentencepiece",
     endpoint: "https://api.nvidia.com/v1",
@@ -318,8 +318,10 @@ runCredentialSanitizationTest(
     assertCredentialFieldDetectionContract();
     assertBlueprintDigestContract();
 
-    const apiKey = secrets.required("NVIDIA_API_KEY");
-    expect(apiKey.startsWith("nvapi-"), "NVIDIA_API_KEY must start with nvapi-").toBe(true);
+    const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
+    expect(apiKey.startsWith("nvapi-"), "NVIDIA_INFERENCE_API_KEY must start with nvapi-").toBe(
+      true,
+    );
 
     const docker = await host.command("docker", ["info"], {
       artifactName: "prereq-docker-info-credential-sanitization",
@@ -350,7 +352,7 @@ runCredentialSanitizationTest(
         artifactName: "install-and-onboard-credential-sanitization",
         cwd: REPO_ROOT,
         env: testEnv(home, {
-          NVIDIA_API_KEY: apiKey,
+          NVIDIA_INFERENCE_API_KEY: apiKey,
           NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
           NEMOCLAW_RECREATE_SANDBOX: "1",
         }),

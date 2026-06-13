@@ -239,7 +239,7 @@ describe("docker-gpu-patch", () => {
 
   it("formats sanitized network diagnostics without dumping provider secrets", () => {
     const inspect = inspectFixture();
-    inspect.Config?.Env?.push("NVIDIA_API_KEY=secret");
+    inspect.Config?.Env?.push("NVIDIA_INFERENCE_API_KEY=secret");
 
     const summary = formatDockerInspectNetworkSummary("old-container-id", inspect);
 
@@ -248,7 +248,7 @@ describe("docker-gpu-patch", () => {
     expect(summary).toContain("host.openshell.internal:172.17.0.1");
     expect(summary).toContain("env.OPENSHELL_ENDPOINT=http://host.openshell.internal:8080/");
     expect(summary).toContain("openshell-docker: ip=172.18.0.2 gateway=172.18.0.1");
-    expect(summary).not.toContain("NVIDIA_API_KEY");
+    expect(summary).not.toContain("NVIDIA_INFERENCE_API_KEY");
     expect(summary).not.toContain("secret");
   });
 
