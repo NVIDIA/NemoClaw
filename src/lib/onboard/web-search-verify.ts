@@ -125,8 +125,7 @@ export function verifyWebSearchInsideSandbox(
         // plugins.entries.<provider>.config.webSearch; older configs carried
         // it inline on tools.web.search. Accept both so the probe keeps
         // working across schema generations.
-        const pluginApiKey =
-          parsed?.plugins?.entries?.[search.provider]?.config?.webSearch?.apiKey;
+        const pluginApiKey = parsed?.plugins?.entries?.[search.provider]?.config?.webSearch?.apiKey;
         const apiKey = typeof pluginApiKey === "string" ? pluginApiKey : search.apiKey;
         if (typeof apiKey !== "string" || apiKey.trim() === "") {
           warn("  ⚠ Brave Search is enabled but openclaw.json has no API key placeholder.");
