@@ -329,6 +329,10 @@ async function main(): Promise<void> {
     });
     fs.writeFileSync(artifacts.raw, sdkResult.raw);
     logProgress(`PR review advisor conversation finished: turns=${sdkResult.turnTexts.length}`);
+    if (sdkResult.turnErrors.length > 0) {
+      writeFailure(`PR review advisor SDK provider error: ${sdkResult.turnErrors.join("; ")}`);
+      process.exit(1);
+    }
   } catch (error: unknown) {
     const reason = error instanceof Error ? error.message : String(error);
     fs.writeFileSync(artifacts.raw, `PR review advisor SDK execution failed: ${reason}\n`);

@@ -199,6 +199,10 @@ async function main(): Promise<void> {
         "utf8",
       )}`,
     );
+    if (sdkResult.turnErrors.length > 0) {
+      writeFailure(`Scenario advisor SDK provider error: ${sdkResult.turnErrors.join("; ")}`);
+      process.exit(1);
+    }
   } catch (error: unknown) {
     const reason = error instanceof Error ? error.message : String(error);
     fs.writeFileSync(artifacts.raw, `Scenario advisor SDK execution failed: ${reason}\n`);

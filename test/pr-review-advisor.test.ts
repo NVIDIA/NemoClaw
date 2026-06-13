@@ -7,6 +7,12 @@ import Ajv2020 from "ajv/dist/2020.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { githubGraphql } from "../tools/advisors/github.mts";
 import {
+  ADVISOR_OPENAI_COMPATIBLE_BASE_URL,
+  DEFAULT_ADVISOR_MODEL,
+  DEFAULT_ADVISOR_PROVIDER,
+  openAiAdvisorProviderConfig,
+} from "../tools/advisors/session.mts";
+import {
   buildPromptTurns,
   buildSystemPrompt,
   classifyMonolithDelta,
@@ -128,6 +134,34 @@ describe("PR review advisor", () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
+
+  it("configures the advisor through the hosted OpenAI-compatible service", () => {
+    const config = openAiAdvisorProviderConfig("PR_REVIEW_ADVISOR_API_KEY") as {
+      apiKey: string;
+      baseUrl: string;
+      models: Array<{
+        id: string;
+        compat?: Record<string, unknown>;
+        reasoning: boolean;
+      }>;
+    };
+
+    expect(DEFAULT_ADVISOR_PROVIDER).toBe("openai");
+    expect(DEFAULT_ADVISOR_MODEL).toBe("openai/openai/gpt-5.5");
+    expect(config.apiKey).toBe("PR_REVIEW_ADVISOR_API_KEY");
+    expect(config.baseUrl).toBe(ADVISOR_OPENAI_COMPATIBLE_BASE_URL);
+    expect(config.models[0]?.id).toBe(DEFAULT_ADVISOR_MODEL);
+    expect(config.models[0]?.reasoning).toBe(false);
+    expect(config.models[0]?.compat).toMatchObject({
+      supportsDeveloperRole: false,
+      supportsReasoningEffort: false,
+      supportsStore: false,
+      supportsStrictMode: false,
+      supportsUsageInStreaming: false,
+      maxTokensField: "max_tokens",
+    });
+  });
+
   it("normalizes advisor output into the schema-owned metadata", () => {
     const result = normalizeReviewResult(validResult(), metadata());
 
@@ -662,6 +696,13 @@ jobs:
           ref: refs/pull/\${{ github.event.pull_request.head.sha }}/merge
           path: pr-workdir
           persist-credentials: false
+      - name: Run PR review advisor
+        env:
+          PR_REVIEW_ADVISOR_API_KEY: \${{ secrets.PR_REVIEW_ADVISOR_API_KEY || secrets.PI_PR_REVIEW_ADVISOR_API_KEY }}
+          OPENAI_API_KEY: \${{ secrets.OPENAI_API_KEY }}
+        run: |
+          cd "$ADVISOR_WORKDIR"
+          node "$ADVISOR_DIR/tools/pr-review-advisor/analyze.mts" --schema "$ADVISOR_DIR/tools/pr-review-advisor/schema.json"
 `,
     );
 
@@ -674,6 +715,8 @@ jobs:
           "workflow permissions.contents must be read",
           "review job must not be globally continue-on-error",
           "PR checkout must use the pull request head SHA as inert analysis data",
+          "Run PR review advisor must receive PR_REVIEW_ADVISOR_API_KEY only from secrets.PR_REVIEW_ADVISOR_API_KEY",
+          "Run PR review advisor must not receive OPENAI_API_KEY",
         ]),
       );
       expect(errors.some((error) => error.includes("full commit SHA"))).toBe(true);
