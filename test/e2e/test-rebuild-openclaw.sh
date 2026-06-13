@@ -215,12 +215,29 @@ VERIFY=$(openshell sandbox exec --name "${SANDBOX_NAME}" -- cat "${MARKER_FILE}"
 
 # Register in NemoClaw registry with old version
 python3 -c "
-import json
+import json, os
+sess_path = '${SESSION_FILE}'
+try:
+    with open(sess_path) as f:
+        sess = json.load(f)
+except Exception:
+    sess = {}
+provider = sess.get('provider') or (
+    'compatible-endpoint'
+    if os.environ.get('NEMOCLAW_ENDPOINT_URL') and os.environ.get('COMPATIBLE_API_KEY')
+    else 'nvidia-prod'
+)
+model = (
+    sess.get('model')
+    or os.environ.get('NEMOCLAW_MODEL')
+    or os.environ.get('NEMOCLAW_COMPAT_MODEL')
+    or 'nvidia/nemotron-3-super-120b-a12b'
+)
 reg = {'sandboxes': {'${SANDBOX_NAME}': {
     'name': '${SANDBOX_NAME}',
     'createdAt': '$(date -u +%Y-%m-%dT%H:%M:%SZ)',
-    'model': 'nvidia/nemotron-3-super-120b-a12b',
-    'provider': 'nvidia-prod',
+    'model': model,
+    'provider': provider,
     'gpuEnabled': False,
     'policies': ['npm', 'pypi'],
     'policyTier': None,
@@ -234,12 +251,6 @@ with open('${REGISTRY_FILE}', 'w') as f:
 # Mark preflight and gateway steps as complete so that rebuild's
 # onboard --resume skips them (the gateway is already running and
 # port 8080 is legitimately in use).
-sess_path = '${SESSION_FILE}'
-try:
-    with open(sess_path) as f:
-        sess = json.load(f)
-except Exception:
-    sess = {}
 sess['sandboxName'] = '${SANDBOX_NAME}'
 sess['status'] = 'complete'
 sess['resumable'] = True
