@@ -8,9 +8,7 @@ import {
   startGatewayForRecovery,
 } from "../../../dist/lib/onboard/gateway-recovery";
 
-function createDeps(
-  overrides: Partial<GatewayRecoveryDeps> = {},
-): GatewayRecoveryDeps {
+function createDeps(overrides: Partial<GatewayRecoveryDeps> = {}): GatewayRecoveryDeps {
   return {
     getGatewayClusterContainerState: () => "missing",
     getGatewayStartEnv: () => ({ OPENSHELL_DRIVERS: "docker" }),
