@@ -209,6 +209,20 @@ describe("sandbox gateway state drift guard", () => {
     expect(lookup.output).toContain("sandbox has no spec");
   });
 
+  it("classifies the same gRPC reply as `missing` on the async status-probe path so the live `nemoclaw <sandbox> status` lookup goes through the named-gateway reconciler too", async () => {
+    detectPreflightIssueSpy.mockReturnValue(null);
+    captureOpenshellForStatusSpy.mockResolvedValue({
+      status: 1,
+      output:
+        'status: Internal, message: "sandbox has no spec", details: [], metadata: MetadataMap {}',
+    });
+
+    const lookup = await gatewayState.getSandboxGatewayStateForStatus("alpha");
+
+    expect(lookup.state).toBe("missing");
+    expect(lookup.output).toContain("sandbox has no spec");
+  });
+
   it("selects the sandbox's owning gateway and retries when the active gateway is a sibling that has no spec for it", () => {
     detectPreflightIssueSpy.mockReturnValue(null);
     getSandboxSpy.mockReturnValue({
