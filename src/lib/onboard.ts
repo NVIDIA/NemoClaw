@@ -478,7 +478,6 @@ const policyTierEnv: typeof import("./onboard/policy-tier-env") = require("./onb
 const { ensureUsageNoticeConsent } = require("./onboard/usage-notice");
 const {
   findAvailableDashboardPort,
-  getRegistryOccupiedDashboardPorts,
   preflightDashboardPortRangeAvailability,
   resolveCreateSandboxDashboardPort,
 } = require("./onboard/dashboard-port") as typeof import("./onboard/dashboard-port");
@@ -2546,7 +2545,6 @@ async function createSandbox(
     agentForwardPort: agent?.forwardPort,
     defaultPort: DASHBOARD_PORT,
     forwardListOutput: runCaptureOpenshell(["forward", "list"], { ignoreError: true }),
-    registryOccupiedPorts: getRegistryOccupiedDashboardPorts(sandboxName),
     warn: (message) => console.warn(message),
   });
   const hermesDashboardForwarding = onboardHermesDashboard.createHermesDashboardOnboardForwarding({

@@ -312,12 +312,14 @@ describe("getRegistryOccupiedDashboardPorts", () => {
     assert.equal(occupied.get("18790"), "delta");
   });
 
-  it("returns an empty map when the registry read throws", () => {
-    const occupied = getRegistryOccupiedDashboardPorts("current", () => {
-      throw new Error("registry locked");
-    });
-
-    assert.equal(occupied.size, 0);
+  it("propagates registry read errors so the allocator does not silently hand out a colliding port", () => {
+    assert.throws(
+      () =>
+        getRegistryOccupiedDashboardPorts("current", () => {
+          throw new Error("registry locked");
+        }),
+      /registry locked/,
+    );
   });
 });
 

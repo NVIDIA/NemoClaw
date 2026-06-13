@@ -196,6 +196,12 @@ function mergeOccupiedPorts(
  * `NEMOCLAW_GATEWAY_PORT` gateway cannot see the first gateway's allocations
  * without this view.
  *
+ * `listSandboxes()` already degrades to an empty registry when
+ * `~/.nemoclaw/sandboxes.json` is missing or unparseable, so this helper does
+ * not need an extra catch-all. Any remaining error (e.g. an unreadable
+ * registry file with the wrong filesystem permissions) propagates so the
+ * allocator surfaces it instead of silently handing out a colliding port.
+ *
  * `listSandboxesFn` is an injectable seam for tests; production callers
  * leave it at the default that reads `~/.nemoclaw/sandboxes.json`.
  */
@@ -205,13 +211,7 @@ export function getRegistryOccupiedDashboardPorts(
 ): Map<string, string> {
   const occupied = new Map<string, string>();
   const list = listSandboxesFn ?? (require("../state/registry").listSandboxes as ListSandboxesFn);
-  let entries: SandboxRegistryEntry[];
-  try {
-    entries = list().sandboxes;
-  } catch {
-    return occupied;
-  }
-  for (const entry of entries) {
+  for (const entry of list().sandboxes) {
     if (entry.name === currentSandboxName) continue;
     const port = entry.dashboardPort;
     if (typeof port !== "number" || !Number.isInteger(port) || port <= 0) continue;
@@ -225,7 +225,9 @@ export function findAvailableDashboardPort(
   preferredPort: number,
   forwardListOutput: string | null,
   isPortBoundCheck: (port: number) => boolean = isPortBoundOnHost,
-  registryOccupiedPorts?: ReadonlyMap<string, string>,
+  registryOccupiedPorts: ReadonlyMap<string, string> = getRegistryOccupiedDashboardPorts(
+    sandboxName,
+  ),
 ): number {
   const occupied = mergeOccupiedPorts(getOccupiedPorts(forwardListOutput), registryOccupiedPorts);
   const hostBoundPorts: number[] = [];
