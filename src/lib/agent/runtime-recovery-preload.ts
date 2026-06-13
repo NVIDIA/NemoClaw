@@ -23,17 +23,15 @@ export const GATEWAY_PRELOAD_GUARDS: ReadonlyArray<{
  * Build shell lines that restore and validate the required recovery preloads.
  *
  * The recovery script must not source /tmp/nemoclaw-proxy-env.sh before these
- * lines. This helper validates the env file first, rebuilds it when it is
- * missing or unsafe, then sources only the trusted result. The recovered env is
- * intentionally minimal: it restores the critical Node preload guard chain that
- * recovery itself requires. The normal sandbox entrypoint remains the source of
- * truth for the full proxy/tool/token environment and refreshes that file on a
- * regular sandbox restart.
+ * lines. This helper inspects any existing env file only for diagnostics, then
+ * stages trusted preloads, writes a fresh generated recovery source, and sources
+ * only that generated result. A trusted root-owned proxy env keeps its startup
+ * contract intact; unsafe or incomplete files are regenerated from trusted
+ * preloads.
  */
 export function buildGatewayGuardRecoveryLines(): string[] {
-  const recoveredProxyEnvExports = GATEWAY_PRELOAD_GUARDS.map(
-    ({ tmpPath }) =>
-      `printf '%s\\n' 'export NODE_OPTIONS="\${NODE_OPTIONS:+$NODE_OPTIONS }--require ${tmpPath}"';`,
+  const emitRecoveredProxyEnvRequires = GATEWAY_PRELOAD_GUARDS.map(
+    ({ tmpPath }) => `_nemoclaw_emit_recovery_node_require "$preserve_file" ${tmpPath};`,
   );
   const stageCalls = GATEWAY_PRELOAD_GUARDS.map(
     ({ tmpPath, sourcePath }) =>
@@ -45,7 +43,7 @@ export function buildGatewayGuardRecoveryLines(): string[] {
   );
   const proxyEnvRewriteChecks = GATEWAY_PRELOAD_GUARDS.map(
     ({ tmpPath }) =>
-      `_nemoclaw_node_options_has_require ${tmpPath} || _PROXY_ENV_REWRITE_NEEDED=1;`,
+      `_nemoclaw_proxy_env_file_has_require /tmp/nemoclaw-proxy-env.sh ${tmpPath} || _PROXY_ENV_REWRITE_NEEDED=1;`,
   );
   const guardChecks = GATEWAY_PRELOAD_GUARDS.map(
     ({ tmpPath }) => `_nemoclaw_node_options_has_require ${tmpPath} || _GUARDS_MISSING=1;`,
@@ -77,6 +75,18 @@ export function buildGatewayGuardRecoveryLines(): string[] {
     'local wanted="$1";',
     'if ! _nemoclaw_node_options_has_require "$wanted"; then export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $wanted"; fi;',
     "};",
+    "_nemoclaw_proxy_env_file_has_require() {",
+    'local env_file="$1"; local wanted="$2";',
+    '[ -r "$env_file" ] || return 1;',
+    'grep -F -- "--require $wanted" "$env_file" >/dev/null 2>&1 && return 0;',
+    'grep -F -- "--require=$wanted" "$env_file" >/dev/null 2>&1 && return 0;',
+    "return 1;",
+    "};",
+    "_nemoclaw_emit_recovery_node_require() {",
+    'local preserve_file="$1"; local wanted="$2";',
+    'if [ -n "$preserve_file" ] && _nemoclaw_proxy_env_file_has_require "$preserve_file" "$wanted"; then return 0; fi;',
+    'printf \'%s\\n\' "export NODE_OPTIONS=\\"\\${NODE_OPTIONS:+\\$NODE_OPTIONS }--require $wanted\\"";',
+    "};",
     "_nemoclaw_validate_recovery_preload() {",
     'local file="$1"; local perms owner _msg;',
     'if [ -L "$file" ]; then _msg="[gateway-recovery] ERROR: $file is a symlink - refusing preload install"; _nemoclaw_recovery_log "$_msg"; return 1; fi;',
@@ -93,10 +103,10 @@ export function buildGatewayGuardRecoveryLines(): string[] {
     'local src="$1"; local perms owner _msg;',
     'if [ ! -r "$src" ] || [ -L "$src" ] || [ ! -f "$src" ]; then _msg="[gateway-recovery] ERROR: trusted preload source $src unavailable - refusing preload install"; _nemoclaw_recovery_log "$_msg"; return 1; fi;',
     'perms="$(stat -c %a "$src" 2>/dev/null || stat -f %Lp "$src" 2>/dev/null || echo unknown)";',
+    'if _nemoclaw_mode_group_or_other_writable "$perms"; then _msg="[gateway-recovery] ERROR: trusted preload source $src has unsafe mode=$perms (group/other writable) - refusing preload install"; _nemoclaw_recovery_log "$_msg"; return 1; fi;',
     'if [ "$(id -u)" -eq 0 ]; then',
     'owner="$(stat -c %u "$src" 2>/dev/null || stat -f %u "$src" 2>/dev/null || echo unknown)";',
     'if [ "$owner" != "0" ]; then _msg="[gateway-recovery] ERROR: trusted preload source $src owner_uid=$owner (expected 0) - refusing preload install"; _nemoclaw_recovery_log "$_msg"; return 1; fi;',
-    'if _nemoclaw_mode_group_or_other_writable "$perms"; then _msg="[gateway-recovery] ERROR: trusted preload source $src has unsafe mode=$perms (group/other writable) - refusing preload install"; _nemoclaw_recovery_log "$_msg"; return 1; fi;',
     "fi;",
     "return 0;",
     "};",
@@ -123,12 +133,13 @@ export function buildGatewayGuardRecoveryLines(): string[] {
     'if ! mv -f "$stage" "$tmp"; then rm -f "$stage"; if _nemoclaw_validate_recovery_preload "$tmp"; then return 0; fi; _msg="[gateway-recovery] ERROR: failed to install recovery preload $tmp"; _nemoclaw_recovery_log "$_msg"; return 1; fi;',
     '_nemoclaw_validate_recovery_preload "$tmp";',
     "};",
-    "_nemoclaw_write_recovered_proxy_env() {",
-    "local env_file=/tmp/nemoclaw-proxy-env.sh; local stage _msg;",
+    "_nemoclaw_write_generated_proxy_env() {",
+    'local env_file="$1"; local preserve_file="${2:-}"; local stage _msg;',
     'stage="$(mktemp /tmp/.nemoclaw-proxy-env.sh.tmp.XXXXXX)" || { _msg="[gateway-recovery] ERROR: failed to stage recovered proxy-env.sh"; _nemoclaw_recovery_log "$_msg"; return 1; };',
     "{",
-    "printf '%s\\n' '# Recovered by NemoClaw gateway recovery; sandbox restart refreshes the full proxy env.';",
-    ...recoveredProxyEnvExports,
+    "printf '%s\\n' '# Generated by NemoClaw gateway recovery; do not edit.';",
+    'if [ -n "$preserve_file" ]; then cat "$preserve_file"; fi;',
+    ...emitRecoveredProxyEnvRequires,
     '} > "$stage" || { rm -f "$stage"; _msg="[gateway-recovery] ERROR: failed to write recovered proxy-env.sh"; _nemoclaw_recovery_log "$_msg"; return 1; };',
     'if [ "$(id -u)" -eq 0 ] && ! chown root:root "$stage"; then rm -f "$stage"; _msg="[gateway-recovery] ERROR: failed to chown recovered proxy-env.sh"; _nemoclaw_recovery_log "$_msg"; return 1; fi;',
     'if ! chmod 444 "$stage"; then rm -f "$stage"; _msg="[gateway-recovery] ERROR: failed to chmod recovered proxy-env.sh"; _nemoclaw_recovery_log "$_msg"; return 1; fi;',
@@ -140,20 +151,23 @@ export function buildGatewayGuardRecoveryLines(): string[] {
 
   return [
     helpers,
-    "if _nemoclaw_validate_recovery_proxy_env /tmp/nemoclaw-proxy-env.sh; then . /tmp/nemoclaw-proxy-env.sh; _PE_MISSING=0; else _PE_MISSING=1; fi;",
+    "_PE_MISSING=0; _PROXY_ENV_REWRITE_NEEDED=0; _PROXY_ENV_PRESERVE_FILE=;",
+    "if _nemoclaw_validate_recovery_proxy_env /tmp/nemoclaw-proxy-env.sh; then :; else _PE_MISSING=1; _PROXY_ENV_REWRITE_NEEDED=1; fi;",
+    'if [ "${_PE_MISSING:-0}" = "0" ]; then if [ "$(id -u)" = "0" ]; then _PROXY_ENV_PRESERVE_FILE=/tmp/nemoclaw-proxy-env.sh; else _PE_MISSING=1; _PROXY_ENV_REWRITE_NEEDED=1; fi; fi;',
+    ...proxyEnvRewriteChecks,
     "_NEMOCLAW_CRITICAL_GUARDS_READY=1;",
     ...stageCalls,
     'if [ "$_NEMOCLAW_CRITICAL_GUARDS_READY" = "1" ] && [ "${_PE_MISSING:-0}" = "1" ]; then',
-    '_W="[gateway-recovery] WARNING: /tmp/nemoclaw-proxy-env.sh missing - restoring library guards from packaged preloads (#2478/#2701)"; _nemoclaw_recovery_log "$_W";',
-    "_nemoclaw_write_recovered_proxy_env || _NEMOCLAW_CRITICAL_GUARDS_READY=0;",
-    'if [ "$_NEMOCLAW_CRITICAL_GUARDS_READY" = "1" ]; then . /tmp/nemoclaw-proxy-env.sh; _PE_MISSING=0; fi;',
+    '_W="[gateway-recovery] WARNING: /tmp/nemoclaw-proxy-env.sh missing or unsafe - restoring library guards from packaged preloads (#2478/#2701)"; _nemoclaw_recovery_log "$_W";',
     "fi;",
-    "_PROXY_ENV_REWRITE_NEEDED=0;",
-    ...proxyEnvRewriteChecks,
     'if [ "$_NEMOCLAW_CRITICAL_GUARDS_READY" = "1" ] && [ "${_PE_MISSING:-0}" = "0" ] && [ "${_PROXY_ENV_REWRITE_NEEDED:-0}" = "1" ]; then',
-    '_W="[gateway-recovery] WARNING: /tmp/nemoclaw-proxy-env.sh incomplete - persisting library guards from packaged preloads (#2478/#2701)"; _nemoclaw_recovery_log "$_W";',
-    "_nemoclaw_write_recovered_proxy_env || _NEMOCLAW_CRITICAL_GUARDS_READY=0;",
+    '_W="[gateway-recovery] WARNING: /tmp/nemoclaw-proxy-env.sh incomplete - rewriting library guards from packaged preloads (#2478/#2701)"; _nemoclaw_recovery_log "$_W";',
     "fi;",
+    'if [ "$_NEMOCLAW_CRITICAL_GUARDS_READY" = "1" ]; then',
+    'if [ "${_PE_MISSING:-0}" = "1" ] || [ "${_PROXY_ENV_REWRITE_NEEDED:-0}" = "1" ]; then _nemoclaw_write_generated_proxy_env /tmp/nemoclaw-proxy-env.sh "$_PROXY_ENV_PRESERVE_FILE" || _NEMOCLAW_CRITICAL_GUARDS_READY=0; _NEMOCLAW_RECOVERY_SOURCE_ENV=/tmp/nemoclaw-proxy-env.sh;',
+    'else _NEMOCLAW_RECOVERY_SOURCE_ENV=/tmp/nemoclaw-recovered-proxy-env.sh; _nemoclaw_write_generated_proxy_env "$_NEMOCLAW_RECOVERY_SOURCE_ENV" "$_PROXY_ENV_PRESERVE_FILE" || _NEMOCLAW_CRITICAL_GUARDS_READY=0; fi;',
+    "fi;",
+    'if [ "$_NEMOCLAW_CRITICAL_GUARDS_READY" = "1" ]; then . "$_NEMOCLAW_RECOVERY_SOURCE_ENV"; _PE_MISSING=0; fi;',
     ...appendCalls,
     "_GUARDS_MISSING=0;",
     'if [ "$_NEMOCLAW_CRITICAL_GUARDS_READY" != "1" ]; then _GUARDS_MISSING=1; fi;',
