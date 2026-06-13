@@ -140,8 +140,7 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number || inputs.target_pr }}
           PR_REVIEW_ADVISOR_RUN_ANALYSIS: ${{ github.event_name == 'workflow_dispatch' && inputs.run_analysis == false && '0' || '1' }}
           GH_TOKEN: ${{ github.token }}
-          PR_REVIEW_ADVISOR_API_KEY: ${{ secrets.PR_REVIEW_ADVISOR_API_KEY || secrets.PI_PR_REVIEW_ADVISOR_API_KEY }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          PR_REVIEW_ADVISOR_API_KEY: ${{ secrets.PR_REVIEW_ADVISOR_API_KEY }}
         run: |
           cd "$ADVISOR_WORKDIR"
           if [ ! -f "$ADVISOR_DIR/tools/pr-review-advisor/analyze.mts" ]; then
