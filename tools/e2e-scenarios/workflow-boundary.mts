@@ -15,7 +15,12 @@ const DEFAULT_VITEST_WORKFLOW_PATH = join(
 );
 
 type WorkflowRecord = Record<string, unknown>;
-type WorkflowStep = WorkflowRecord & { name?: string; run?: string; uses?: string; with?: WorkflowRecord };
+type WorkflowStep = WorkflowRecord & {
+  name?: string;
+  run?: string;
+  uses?: string;
+  with?: WorkflowRecord;
+};
 
 export interface FreeStandingJobsInventory {
   allowedJobs: string[];
@@ -25,7 +30,12 @@ export interface FreeStandingJobsInventory {
 
 const SELECTOR_PATTERN = /^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$/;
 const SELECTOR_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
-const FREE_STANDING_JOBS_ENV_PATH = join(REPO_ROOT, "tools", "e2e-scenarios", "free-standing-jobs.env");
+const FREE_STANDING_JOBS_ENV_PATH = join(
+  REPO_ROOT,
+  "tools",
+  "e2e-scenarios",
+  "free-standing-jobs.env",
+);
 const FREE_STANDING_JOBS_ENV_KEYS = [
   "allowed_jobs",
   "free_standing_scenarios_csv",
@@ -57,7 +67,10 @@ function parseFreeStandingJobsEnvContent(content: string): Record<string, string
   for (const rawLine of content.split("\n")) {
     const line = rawLine.trim();
     if (!line || line.startsWith("#")) continue;
-    const [key, value] = line.split(/=(.*)/s).slice(0, 2).map((part) => part.trim());
+    const [key, value] = line
+      .split(/=(.*)/s)
+      .slice(0, 2)
+      .map((part) => part.trim());
     env[key] = value;
   }
   return env;
@@ -74,7 +87,10 @@ export function validateFreeStandingJobsEnvContent(content: string): string[] {
       errors.push(`free-standing jobs inventory line ${index + 1} must be data-only key=value`);
       return;
     }
-    const [key, value] = line.split(/=(.*)/s).slice(0, 2).map((part) => part.trim());
+    const [key, value] = line
+      .split(/=(.*)/s)
+      .slice(0, 2)
+      .map((part) => part.trim());
     if (Object.hasOwn(env, key)) {
       errors.push(`free-standing jobs inventory must not redefine ${key}`);
     }
@@ -89,7 +105,9 @@ export function validateFreeStandingJobsEnvContent(content: string): string[] {
   const allowedJobs = splitEnvCsv(env.allowed_jobs);
   const freeStandingScenarios = splitEnvCsv(env.free_standing_scenarios_csv);
   const scenarioJobEntries = splitEnvCsv(env.free_standing_scenario_jobs_csv);
-  const scenarioJobPairs = scenarioJobEntries.map((entry) => entry.split(":", 2) as [string, string]);
+  const scenarioJobPairs = scenarioJobEntries.map(
+    (entry) => entry.split(":", 2) as [string, string],
+  );
   const scenarioKeys = scenarioJobPairs.map(([scenario]) => scenario);
 
   for (const job of allowedJobs) {
@@ -119,7 +137,9 @@ export function validateFreeStandingJobsEnvContent(content: string): string[] {
   }
 
   if (freeStandingScenarios.join(",") !== scenarioKeys.join(",")) {
-    errors.push("free_standing_scenarios_csv must exactly match free_standing_scenario_jobs_csv keys");
+    errors.push(
+      "free_standing_scenarios_csv must exactly match free_standing_scenario_jobs_csv keys",
+    );
   }
   for (const [scenario, job] of scenarioJobPairs) {
     if (!allowedJobs.includes(job)) {
@@ -262,7 +282,11 @@ function requireInput(errors: string[], inputs: WorkflowRecord, name: string): v
   if (!Object.hasOwn(inputs, name)) errors.push(`workflow_dispatch missing input: ${name}`);
 }
 
-function requireStep(errors: string[], steps: readonly WorkflowStep[], name: string): WorkflowStep | undefined {
+function requireStep(
+  errors: string[],
+  steps: readonly WorkflowStep[],
+  name: string,
+): WorkflowStep | undefined {
   const step = namedStep(steps, name);
   if (!step) errors.push(`run-scenario job missing step: ${name}`);
   return step;
@@ -279,14 +303,22 @@ function requireJobStep(
   return step;
 }
 
-function requireRunContains(errors: string[], step: WorkflowStep | undefined, expected: string): void {
+function requireRunContains(
+  errors: string[],
+  step: WorkflowStep | undefined,
+  expected: string,
+): void {
   if (!step) return;
   if (!stringValue(step.run).includes(expected)) {
     errors.push(`step '${step.name ?? "<unnamed>"}' run script must include ${expected}`);
   }
 }
 
-function requireRunDoesNotContain(errors: string[], step: WorkflowStep | undefined, forbidden: string): void {
+function requireRunDoesNotContain(
+  errors: string[],
+  step: WorkflowStep | undefined,
+  forbidden: string,
+): void {
   if (!step) return;
   if (stringValue(step.run).includes(forbidden)) {
     errors.push(`step '${step.name ?? "<unnamed>"}' run script must not include ${forbidden}`);
@@ -312,7 +344,8 @@ function requireEnvDoesNotExposeSecret(
 
 function requireWorkflowDispatch(errors: string[], triggers: WorkflowRecord): WorkflowRecord {
   const workflowDispatch = asRecord(triggers.workflow_dispatch);
-  if (Object.keys(workflowDispatch).length === 0) errors.push("workflow must support workflow_dispatch");
+  if (Object.keys(workflowDispatch).length === 0)
+    errors.push("workflow must support workflow_dispatch");
   return workflowDispatch;
 }
 
@@ -322,7 +355,11 @@ function rejectAutomaticTriggers(errors: string[], triggers: WorkflowRecord): vo
   }
 }
 
-function requireFullShaAction(errors: string[], step: WorkflowStep | undefined, description: string): void {
+function requireFullShaAction(
+  errors: string[],
+  step: WorkflowStep | undefined,
+  description: string,
+): void {
   if (!step) return;
   if (!/@[0-9a-f]{40}$/i.test(stringValue(step.uses))) {
     errors.push(`${description} action must be pinned to a full commit SHA`);
@@ -388,9 +425,12 @@ function validateFreeStandingInventoryCoverage(
     const jobIf = stringValue(job.if);
     const mappingIsRepresented =
       jobIf.includes(`,${scenario},`) ||
-      (jobId === "hermes-e2e-vitest" && jobIf.includes("needs.generate-matrix.outputs.hermes_selected"));
+      (jobId === "hermes-e2e-vitest" &&
+        jobIf.includes("needs.generate-matrix.outputs.hermes_selected"));
     if (!mappingIsRepresented) {
-      errors.push(`free-standing inventory mapping ${scenario}:${jobId} must match the workflow job selector`);
+      errors.push(
+        `free-standing inventory mapping ${scenario}:${jobId} must match the workflow job selector`,
+      );
     }
   }
 }
@@ -413,14 +453,18 @@ function validateOpenShellVersionPinVitestJob(errors: string[], jobs: WorkflowRe
     errors.push("openshell-version-pin-vitest job must set NEMOCLAW_RUN_E2E_SCENARIOS=1");
   }
   if (
-    jobEnv.E2E_ARTIFACT_DIR !==
-    "${{ github.workspace }}/e2e-artifacts/vitest/openshell-version-pin"
+    jobEnv.E2E_ARTIFACT_DIR !== "${{ github.workspace }}/e2e-artifacts/vitest/openshell-version-pin"
   ) {
     errors.push(
       "openshell-version-pin-vitest job must write artifacts under e2e-artifacts/vitest/openshell-version-pin",
     );
   }
-  requireEnvDoesNotExposeSecret(errors, "openshell-version-pin-vitest job", jobEnv, "NVIDIA_API_KEY");
+  requireEnvDoesNotExposeSecret(
+    errors,
+    "openshell-version-pin-vitest job",
+    jobEnv,
+    "NVIDIA_API_KEY",
+  );
 
   const steps = asSteps(job.steps);
   requireNoDispatchInputInterpolation(errors, steps);
@@ -465,16 +509,19 @@ function validateOpenShellVersionPinVitestJob(errors: string[], jobs: WorkflowRe
   const uploadPath = stringValue(uploadWith.path);
   requireUploadPathContains(errors, uploadPath, "e2e-artifacts/vitest/openshell-version-pin/");
   if (uploadWith["include-hidden-files"] !== false) {
-    errors.push("openshell-version-pin-vitest artifact upload must set include-hidden-files: false");
+    errors.push(
+      "openshell-version-pin-vitest artifact upload must set include-hidden-files: false",
+    );
   }
   if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push("openshell-version-pin-vitest artifact upload must ignore missing fixture artifacts");
+    errors.push(
+      "openshell-version-pin-vitest artifact upload must ignore missing fixture artifacts",
+    );
   }
   if (uploadWith["retention-days"] !== 14) {
     errors.push("openshell-version-pin-vitest artifact upload retention-days must be 14");
   }
 }
-
 
 function validateSkillAgentVitestJob(errors: string[], jobs: WorkflowRecord): void {
   const jobName = "skill-agent-vitest";
@@ -494,7 +541,9 @@ function validateSkillAgentVitestJob(errors: string[], jobs: WorkflowRecord): vo
     errors.push("skill-agent-vitest job must set NEMOCLAW_RUN_E2E_SCENARIOS=1");
   }
   if (jobEnv.E2E_ARTIFACT_DIR !== "${{ github.workspace }}/e2e-artifacts/vitest/skill-agent") {
-    errors.push("skill-agent-vitest job must write artifacts under e2e-artifacts/vitest/skill-agent");
+    errors.push(
+      "skill-agent-vitest job must write artifacts under e2e-artifacts/vitest/skill-agent",
+    );
   }
   if (!stringValue(jobEnv.NEMOCLAW_CLI_BIN).includes("bin/nemoclaw.js")) {
     errors.push("skill-agent-vitest job must point NEMOCLAW_CLI_BIN at the repo CLI");
@@ -525,7 +574,12 @@ function validateSkillAgentVitestJob(errors: string[], jobs: WorkflowRecord): vo
   if (!setupNode) errors.push("skill-agent-vitest job missing step: Set up Node");
   requireFullShaAction(errors, setupNode, "skill-agent-vitest setup-node");
 
-  const installRootDependencies = requireJobStep(errors, jobName, steps, "Install root dependencies");
+  const installRootDependencies = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Install root dependencies",
+  );
   requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
 
   const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
@@ -539,7 +593,11 @@ function validateSkillAgentVitestJob(errors: string[], jobs: WorkflowRecord): vo
   if (runEnv.NVIDIA_API_KEY !== "${{ secrets.NVIDIA_API_KEY }}") {
     errors.push("skill-agent-vitest run step must receive NVIDIA_API_KEY from secrets");
   }
-  requireRunContains(errors, runVitest, 'export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"');
+  requireRunContains(
+    errors,
+    runVitest,
+    'export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"',
+  );
   requireRunContains(errors, runVitest, 'OPENSHELL_BIN="$(command -v openshell)"');
   requireRunContains(errors, runVitest, "export OPENSHELL_BIN");
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-scenarios-live");
@@ -566,7 +624,9 @@ function validateSkillAgentVitestJob(errors: string[], jobs: WorkflowRecord): vo
   }
   for (const line of uploadPath.split("\n")) {
     if (line.trim() === "e2e-artifacts/vitest/skill-agent/") {
-      errors.push("skill-agent-vitest artifact upload path must not list the whole skill-agent artifact directory");
+      errors.push(
+        "skill-agent-vitest artifact upload path must not list the whole skill-agent artifact directory",
+      );
     }
   }
   if (uploadWith["include-hidden-files"] !== false) {
@@ -594,7 +654,9 @@ function validateNetworkPolicyVitestJob(errors: string[], jobs: WorkflowRecord):
     errors.push("network-policy-vitest job must depend on generate-matrix");
   }
   if (job.if !== freeStandingJobIf(jobName, "network-policy")) {
-    errors.push("network-policy-vitest job must map scenarios=network-policy to the network-policy job");
+    errors.push(
+      "network-policy-vitest job must map scenarios=network-policy to the network-policy job",
+    );
   }
 
   const jobEnv = asRecord(job.env);
@@ -612,7 +674,12 @@ function validateNetworkPolicyVitestJob(errors: string[], jobs: WorkflowRecord):
   if (jobEnv.OPENSHELL_GATEWAY !== "nemoclaw") {
     errors.push("network-policy-vitest job must force OPENSHELL_GATEWAY=nemoclaw");
   }
-  for (const secret of ["NVIDIA_API_KEY", "DOCKERHUB_USERNAME", "DOCKERHUB_TOKEN", "GITHUB_TOKEN"]) {
+  for (const secret of [
+    "NVIDIA_API_KEY",
+    "DOCKERHUB_USERNAME",
+    "DOCKERHUB_TOKEN",
+    "GITHUB_TOKEN",
+  ]) {
     requireEnvDoesNotExposeSecret(errors, "network-policy-vitest job", jobEnv, secret);
   }
 
@@ -712,7 +779,6 @@ function validateNetworkPolicyVitestJob(errors: string[], jobs: WorkflowRecord):
   }
 }
 
-
 function validateShieldsConfigVitestJob(errors: string[], jobs: WorkflowRecord): void {
   const jobName = "shields-config-vitest";
   const job = asRecord(jobs[jobName]);
@@ -733,7 +799,9 @@ function validateShieldsConfigVitestJob(errors: string[], jobs: WorkflowRecord):
     errors.push("shields-config-vitest job must set NEMOCLAW_RUN_E2E_SCENARIOS=1");
   }
   if (jobEnv.E2E_ARTIFACT_DIR !== "${{ github.workspace }}/e2e-artifacts/vitest/shields-config") {
-    errors.push("shields-config-vitest job must write artifacts under e2e-artifacts/vitest/shields-config");
+    errors.push(
+      "shields-config-vitest job must write artifacts under e2e-artifacts/vitest/shields-config",
+    );
   }
   if (jobEnv.OPENSHELL_GATEWAY !== "nemoclaw") {
     errors.push("shields-config-vitest job must force OPENSHELL_GATEWAY=nemoclaw");
@@ -790,7 +858,9 @@ function validateShieldsConfigVitestJob(errors: string[], jobs: WorkflowRecord):
   const dockerHubAuth = requireJobStep(errors, jobName, steps, "Authenticate to Docker Hub");
   const dockerHubEnv = asRecord(dockerHubAuth?.env);
   if (dockerHubEnv.DOCKERHUB_USERNAME !== "${{ secrets.DOCKERHUB_USERNAME }}") {
-    errors.push("shields-config-vitest Docker Hub auth must receive DOCKERHUB_USERNAME from secrets");
+    errors.push(
+      "shields-config-vitest Docker Hub auth must receive DOCKERHUB_USERNAME from secrets",
+    );
   }
   if (dockerHubEnv.DOCKERHUB_TOKEN !== "${{ secrets.DOCKERHUB_TOKEN }}") {
     errors.push("shields-config-vitest Docker Hub auth must receive DOCKERHUB_TOKEN from secrets");
@@ -801,7 +871,12 @@ function validateShieldsConfigVitestJob(errors: string[], jobs: WorkflowRecord):
   if (!setupNode) errors.push("shields-config-vitest job missing step: Set up Node");
   requireFullShaAction(errors, setupNode, "shields-config-vitest setup-node");
 
-  const installRootDependencies = requireJobStep(errors, jobName, steps, "Install root dependencies");
+  const installRootDependencies = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Install root dependencies",
+  );
   requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
 
   const runVitest = requireJobStep(errors, jobName, steps, "Run shields-config live test");
@@ -852,7 +927,9 @@ function validateRebuildOpenClawVitestJob(errors: string[], jobs: WorkflowRecord
     errors.push("rebuild-openclaw-vitest job must set NEMOCLAW_RUN_E2E_SCENARIOS=1");
   }
   if (jobEnv.E2E_ARTIFACT_DIR !== "${{ github.workspace }}/e2e-artifacts/vitest/rebuild-openclaw") {
-    errors.push("rebuild-openclaw-vitest job must write artifacts under e2e-artifacts/vitest/rebuild-openclaw");
+    errors.push(
+      "rebuild-openclaw-vitest job must write artifacts under e2e-artifacts/vitest/rebuild-openclaw",
+    );
   }
   if (!stringValue(jobEnv.NEMOCLAW_CLI_BIN).includes("bin/nemoclaw.js")) {
     errors.push("rebuild-openclaw-vitest job must point NEMOCLAW_CLI_BIN at the repo CLI");
@@ -882,10 +959,14 @@ function validateRebuildOpenClawVitestJob(errors: string[], jobs: WorkflowRecord
   const dockerHubAuth = requireJobStep(errors, jobName, steps, "Authenticate to Docker Hub");
   const dockerHubEnv = asRecord(dockerHubAuth?.env);
   if (dockerHubEnv.DOCKERHUB_USERNAME !== "${{ secrets.DOCKERHUB_USERNAME }}") {
-    errors.push("rebuild-openclaw-vitest Docker Hub auth must receive DOCKERHUB_USERNAME from secrets");
+    errors.push(
+      "rebuild-openclaw-vitest Docker Hub auth must receive DOCKERHUB_USERNAME from secrets",
+    );
   }
   if (dockerHubEnv.DOCKERHUB_TOKEN !== "${{ secrets.DOCKERHUB_TOKEN }}") {
-    errors.push("rebuild-openclaw-vitest Docker Hub auth must receive DOCKERHUB_TOKEN from secrets");
+    errors.push(
+      "rebuild-openclaw-vitest Docker Hub auth must receive DOCKERHUB_TOKEN from secrets",
+    );
   }
   requireRunContains(errors, dockerHubAuth, "docker login docker.io");
 
@@ -893,14 +974,24 @@ function validateRebuildOpenClawVitestJob(errors: string[], jobs: WorkflowRecord
   if (!setupNode) errors.push("rebuild-openclaw-vitest job missing step: Set up Node");
   requireFullShaAction(errors, setupNode, "rebuild-openclaw-vitest setup-node");
 
-  const installRootDependencies = requireJobStep(errors, jobName, steps, "Install root dependencies");
+  const installRootDependencies = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Install root dependencies",
+  );
   requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
 
   const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
   requireRunContains(errors, buildCli, "npm run build:cli");
 
   const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell");
-  requireEnvDoesNotExposeSecret(errors, "rebuild-openclaw-vitest step 'Install OpenShell'", asRecord(installOpenShell?.env), "GITHUB_TOKEN");
+  requireEnvDoesNotExposeSecret(
+    errors,
+    "rebuild-openclaw-vitest step 'Install OpenShell'",
+    asRecord(installOpenShell?.env),
+    "GITHUB_TOKEN",
+  );
   requireRunContains(errors, installOpenShell, "bash scripts/install-openshell.sh");
   requireRunContains(errors, installOpenShell, "env -u DOCKER_CONFIG");
   requireRunContains(errors, installOpenShell, "-u DOCKERHUB_USERNAME");
@@ -957,7 +1048,9 @@ function validateSandboxRebuildVitestJob(errors: string[], jobs: WorkflowRecord)
     errors.push("sandbox-rebuild-vitest job must set NEMOCLAW_RUN_E2E_SCENARIOS=1");
   }
   if (jobEnv.E2E_ARTIFACT_DIR !== "${{ github.workspace }}/e2e-artifacts/vitest/sandbox-rebuild") {
-    errors.push("sandbox-rebuild-vitest job must write artifacts under e2e-artifacts/vitest/sandbox-rebuild");
+    errors.push(
+      "sandbox-rebuild-vitest job must write artifacts under e2e-artifacts/vitest/sandbox-rebuild",
+    );
   }
   if (jobEnv.NEMOCLAW_CLI_BIN !== "${{ github.workspace }}/bin/nemoclaw.js") {
     errors.push("sandbox-rebuild-vitest job must point NEMOCLAW_CLI_BIN at the repo CLI");
@@ -965,7 +1058,12 @@ function validateSandboxRebuildVitestJob(errors: string[], jobs: WorkflowRecord)
   if (jobEnv.OPENSHELL_GATEWAY !== "nemoclaw") {
     errors.push("sandbox-rebuild-vitest job must force OPENSHELL_GATEWAY=nemoclaw");
   }
-  for (const secret of ["NVIDIA_API_KEY", "DOCKERHUB_USERNAME", "DOCKERHUB_TOKEN", "GITHUB_TOKEN"]) {
+  for (const secret of [
+    "NVIDIA_API_KEY",
+    "DOCKERHUB_USERNAME",
+    "DOCKERHUB_TOKEN",
+    "GITHUB_TOKEN",
+  ]) {
     requireEnvDoesNotExposeSecret(errors, "sandbox-rebuild-vitest job", jobEnv, secret);
   }
 
@@ -995,7 +1093,9 @@ function validateSandboxRebuildVitestJob(errors: string[], jobs: WorkflowRecord)
   const dockerHubAuth = requireJobStep(errors, jobName, steps, "Authenticate to Docker Hub");
   const dockerHubEnv = asRecord(dockerHubAuth?.env);
   if (dockerHubEnv.DOCKERHUB_USERNAME !== "${{ secrets.DOCKERHUB_USERNAME }}") {
-    errors.push("sandbox-rebuild-vitest Docker Hub auth must receive DOCKERHUB_USERNAME from secrets");
+    errors.push(
+      "sandbox-rebuild-vitest Docker Hub auth must receive DOCKERHUB_USERNAME from secrets",
+    );
   }
   if (dockerHubEnv.DOCKERHUB_TOKEN !== "${{ secrets.DOCKERHUB_TOKEN }}") {
     errors.push("sandbox-rebuild-vitest Docker Hub auth must receive DOCKERHUB_TOKEN from secrets");
@@ -1007,7 +1107,12 @@ function validateSandboxRebuildVitestJob(errors: string[], jobs: WorkflowRecord)
   if (!setupNode) errors.push("sandbox-rebuild-vitest job missing step: Set up Node");
   requireFullShaAction(errors, setupNode, "sandbox-rebuild-vitest setup-node");
 
-  const installRootDependencies = requireJobStep(errors, jobName, steps, "Install root dependencies");
+  const installRootDependencies = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Install root dependencies",
+  );
   requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
 
   const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
@@ -1069,7 +1174,9 @@ function validateTokenRotationVitestJob(errors: string[], jobs: WorkflowRecord):
     errors.push("token-rotation-vitest job must set NEMOCLAW_RUN_E2E_SCENARIOS=1");
   }
   if (jobEnv.E2E_ARTIFACT_DIR !== "${{ github.workspace }}/e2e-artifacts/vitest/token-rotation") {
-    errors.push("token-rotation-vitest job must write artifacts under e2e-artifacts/vitest/token-rotation");
+    errors.push(
+      "token-rotation-vitest job must write artifacts under e2e-artifacts/vitest/token-rotation",
+    );
   }
   if (!stringValue(jobEnv.NEMOCLAW_CLI_BIN).includes("bin/nemoclaw.js")) {
     errors.push("token-rotation-vitest job must point NEMOCLAW_CLI_BIN at the repo CLI");
@@ -1099,7 +1206,9 @@ function validateTokenRotationVitestJob(errors: string[], jobs: WorkflowRecord):
   const dockerHubAuth = requireJobStep(errors, jobName, steps, "Authenticate to Docker Hub");
   const dockerHubEnv = asRecord(dockerHubAuth?.env);
   if (dockerHubEnv.DOCKERHUB_USERNAME !== "${{ secrets.DOCKERHUB_USERNAME }}") {
-    errors.push("token-rotation-vitest Docker Hub auth must receive DOCKERHUB_USERNAME from secrets");
+    errors.push(
+      "token-rotation-vitest Docker Hub auth must receive DOCKERHUB_USERNAME from secrets",
+    );
   }
   if (dockerHubEnv.DOCKERHUB_TOKEN !== "${{ secrets.DOCKERHUB_TOKEN }}") {
     errors.push("token-rotation-vitest Docker Hub auth must receive DOCKERHUB_TOKEN from secrets");
@@ -1110,7 +1219,12 @@ function validateTokenRotationVitestJob(errors: string[], jobs: WorkflowRecord):
   if (!setupNode) errors.push("token-rotation-vitest job missing step: Set up Node");
   requireFullShaAction(errors, setupNode, "token-rotation-vitest setup-node");
 
-  const installRootDependencies = requireJobStep(errors, jobName, steps, "Install root dependencies");
+  const installRootDependencies = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Install root dependencies",
+  );
   requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
 
   const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
@@ -1193,7 +1307,12 @@ function validateOnboardNegativePathsVitestJob(errors: string[], jobs: WorkflowR
       "onboard-negative-paths-vitest job must write artifacts under e2e-artifacts/vitest/onboard-negative-paths",
     );
   }
-  requireEnvDoesNotExposeSecret(errors, "onboard-negative-paths-vitest job", jobEnv, "NVIDIA_API_KEY");
+  requireEnvDoesNotExposeSecret(
+    errors,
+    "onboard-negative-paths-vitest job",
+    jobEnv,
+    "NVIDIA_API_KEY",
+  );
 
   const steps = asSteps(job.steps);
   requireNoDispatchInputInterpolation(errors, steps);
@@ -1241,21 +1360,21 @@ function validateOnboardNegativePathsVitestJob(errors: string[], jobs: WorkflowR
   const uploadPath = stringValue(uploadWith.path);
   requireUploadPathContains(errors, uploadPath, "e2e-artifacts/vitest/onboard-negative-paths/");
   if (uploadWith["include-hidden-files"] !== false) {
-    errors.push("onboard-negative-paths-vitest artifact upload must set include-hidden-files: false");
+    errors.push(
+      "onboard-negative-paths-vitest artifact upload must set include-hidden-files: false",
+    );
   }
   if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push("onboard-negative-paths-vitest artifact upload must ignore missing fixture artifacts");
+    errors.push(
+      "onboard-negative-paths-vitest artifact upload must ignore missing fixture artifacts",
+    );
   }
   if (uploadWith["retention-days"] !== 14) {
     errors.push("onboard-negative-paths-vitest artifact upload retention-days must be 14");
   }
 }
 
-function requireNoDockerHubAuthInRun(
-  errors: string[],
-  owner: string,
-  runScript: string,
-): void {
+function requireNoDockerHubAuthInRun(errors: string[], owner: string, runScript: string): void {
   if (!runScript) return;
   const usesDockerLogin = /\bdocker\s+login\b/i.test(runScript);
   const referencesSecret = /\bsecrets\.[A-Za-z0-9_]+\b|\$\{\{\s*secrets\.[^}]+\}\}/.test(runScript);
@@ -1284,10 +1403,7 @@ function validateDoubleOnboardVitestJob(errors: string[], jobs: WorkflowRecord):
   if (jobEnv.NEMOCLAW_CLI_BIN !== "${{ github.workspace }}/bin/nemoclaw.js") {
     errors.push("double-onboard-vitest job must point NEMOCLAW_CLI_BIN at the repo CLI");
   }
-  if (
-    jobEnv.E2E_ARTIFACT_DIR !==
-    "${{ github.workspace }}/e2e-artifacts/vitest/double-onboard"
-  ) {
+  if (jobEnv.E2E_ARTIFACT_DIR !== "${{ github.workspace }}/e2e-artifacts/vitest/double-onboard") {
     errors.push(
       "double-onboard-vitest job must write artifacts under e2e-artifacts/vitest/double-onboard",
     );
@@ -1324,7 +1440,9 @@ function validateDoubleOnboardVitestJob(errors: string[], jobs: WorkflowRecord):
   const dockerLogin = requireJobStep(errors, jobName, steps, "Authenticate to Docker Hub");
   const dockerLoginEnv = asRecord(dockerLogin?.env);
   if (dockerLoginEnv.DOCKERHUB_USERNAME !== "${{ secrets.DOCKERHUB_USERNAME }}") {
-    errors.push("double-onboard-vitest Docker login step must read DOCKERHUB_USERNAME from secrets");
+    errors.push(
+      "double-onboard-vitest Docker login step must read DOCKERHUB_USERNAME from secrets",
+    );
   }
   if (dockerLoginEnv.DOCKERHUB_TOKEN !== "${{ secrets.DOCKERHUB_TOKEN }}") {
     errors.push("double-onboard-vitest Docker login step must read DOCKERHUB_TOKEN from secrets");
@@ -1372,7 +1490,8 @@ function validateDoubleOnboardVitestJob(errors: string[], jobs: WorkflowRecord):
   if (uploadWith["retention-days"] !== 14) {
     errors.push("double-onboard-vitest artifact upload retention-days must be 14");
   }
-}function validateRuntimeOverridesVitestJob(errors: string[], jobs: WorkflowRecord): void {
+}
+function validateRuntimeOverridesVitestJob(errors: string[], jobs: WorkflowRecord): void {
   const jobName = "runtime-overrides-vitest";
   const job = asRecord(jobs[jobName]);
   if (Object.keys(job).length === 0) {
@@ -1389,11 +1508,20 @@ function validateDoubleOnboardVitestJob(errors: string[], jobs: WorkflowRecord):
   if (jobEnv.NEMOCLAW_RUN_E2E_SCENARIOS !== "1") {
     errors.push("runtime-overrides-vitest job must set NEMOCLAW_RUN_E2E_SCENARIOS=1");
   }
-  if (jobEnv.E2E_ARTIFACT_DIR !== "${{ github.workspace }}/e2e-artifacts/vitest/runtime-overrides") {
-    errors.push("runtime-overrides-vitest job must write artifacts under e2e-artifacts/vitest/runtime-overrides");
+  if (
+    jobEnv.E2E_ARTIFACT_DIR !== "${{ github.workspace }}/e2e-artifacts/vitest/runtime-overrides"
+  ) {
+    errors.push(
+      "runtime-overrides-vitest job must write artifacts under e2e-artifacts/vitest/runtime-overrides",
+    );
   }
   requireEnvDoesNotExposeSecret(errors, "runtime-overrides-vitest job", jobEnv, "NVIDIA_API_KEY");
-  requireEnvDoesNotExposeSecret(errors, "runtime-overrides-vitest job", jobEnv, "DOCKERHUB_USERNAME");
+  requireEnvDoesNotExposeSecret(
+    errors,
+    "runtime-overrides-vitest job",
+    jobEnv,
+    "DOCKERHUB_USERNAME",
+  );
   requireEnvDoesNotExposeSecret(errors, "runtime-overrides-vitest job", jobEnv, "DOCKERHUB_TOKEN");
 
   const steps = asSteps(job.steps);
@@ -1418,7 +1546,12 @@ function validateDoubleOnboardVitestJob(errors: string[], jobs: WorkflowRecord):
   if (!setupNode) errors.push("runtime-overrides-vitest job missing step: Set up Node");
   requireFullShaAction(errors, setupNode, "runtime-overrides-vitest setup-node");
 
-  const installRootDependencies = requireJobStep(errors, jobName, steps, "Install root dependencies");
+  const installRootDependencies = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Install root dependencies",
+  );
   requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
 
   const runVitest = requireJobStep(errors, jobName, steps, "Run runtime overrides live test");
@@ -1510,7 +1643,12 @@ function validateHermesE2EVitestJob(errors: string[], jobs: WorkflowRecord): voi
   if (!setupNode) errors.push("hermes-e2e-vitest job missing step: Set up Node");
   requireFullShaAction(errors, setupNode, "hermes-e2e-vitest setup-node");
 
-  const installRootDependencies = requireJobStep(errors, jobName, steps, "Install root dependencies");
+  const installRootDependencies = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Install root dependencies",
+  );
   requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
 
   const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
@@ -1544,10 +1682,7 @@ function validateHermesE2EVitestJob(errors: string[], jobs: WorkflowRecord): voi
   }
 }
 
-function validateHermesRootEntrypointSmokeVitestJob(
-  errors: string[],
-  jobs: WorkflowRecord,
-): void {
+function validateHermesRootEntrypointSmokeVitestJob(errors: string[], jobs: WorkflowRecord): void {
   const jobName = "hermes-root-entrypoint-smoke-vitest";
   const job = asRecord(jobs[jobName]);
   if (Object.keys(job).length === 0) {
@@ -1643,9 +1778,10 @@ function validateHermesRootEntrypointSmokeVitestJob(
   if (!checkout) errors.push("hermes-root-entrypoint-smoke-vitest job missing checkout step");
   requireFullShaAction(errors, checkout, "hermes-root-entrypoint-smoke-vitest checkout");
   if (asRecord(checkout?.with)["persist-credentials"] !== false) {
-    errors.push("hermes-root-entrypoint-smoke-vitest checkout step must set persist-credentials=false");
+    errors.push(
+      "hermes-root-entrypoint-smoke-vitest checkout step must set persist-credentials=false",
+    );
   }
-
 
   const setupNode = namedStep(steps, "Set up Node");
   if (!setupNode) errors.push("hermes-root-entrypoint-smoke-vitest job missing step: Set up Node");
@@ -1751,7 +1887,12 @@ function validateModelRouterProviderRoutedInferenceVitestJob(
       "model-router-provider-routed-inference-vitest job must force OPENSHELL_GATEWAY=nemoclaw",
     );
   }
-  for (const secret of ["NVIDIA_API_KEY", "DOCKERHUB_USERNAME", "DOCKERHUB_TOKEN", "GITHUB_TOKEN"]) {
+  for (const secret of [
+    "NVIDIA_API_KEY",
+    "DOCKERHUB_USERNAME",
+    "DOCKERHUB_TOKEN",
+    "GITHUB_TOKEN",
+  ]) {
     requireEnvDoesNotExposeSecret(
       errors,
       "model-router-provider-routed-inference-vitest job",
@@ -1822,7 +1963,11 @@ function validateModelRouterProviderRoutedInferenceVitestJob(
   if (!setupNode) {
     errors.push("model-router-provider-routed-inference-vitest job missing step: Set up Node");
   }
-  requireFullShaAction(errors, setupNode, "model-router-provider-routed-inference-vitest setup-node");
+  requireFullShaAction(
+    errors,
+    setupNode,
+    "model-router-provider-routed-inference-vitest setup-node",
+  );
 
   const installRootDependencies = requireJobStep(
     errors,
@@ -1867,7 +2012,9 @@ function validateModelRouterProviderRoutedInferenceVitestJob(
   );
   const uploadWith = asRecord(upload?.with);
   if (uploadWith.name !== "e2e-vitest-scenarios-model-router-provider-routed-inference") {
-    errors.push("model-router-provider-routed-inference-vitest artifact upload name must be stable");
+    errors.push(
+      "model-router-provider-routed-inference-vitest artifact upload name must be stable",
+    );
   }
   const uploadPath = stringValue(uploadWith.path);
   requireUploadPathContains(
@@ -1886,12 +2033,16 @@ function validateModelRouterProviderRoutedInferenceVitestJob(
     );
   }
   if (uploadWith["retention-days"] !== 14) {
-    errors.push("model-router-provider-routed-inference-vitest artifact upload retention-days must be 14");
+    errors.push(
+      "model-router-provider-routed-inference-vitest artifact upload retention-days must be 14",
+    );
   }
 
   const cleanup = requireJobStep(errors, jobName, steps, "Clean up Docker auth");
   if (cleanup?.if !== "always()") {
-    errors.push("model-router-provider-routed-inference-vitest Docker auth cleanup must always run");
+    errors.push(
+      "model-router-provider-routed-inference-vitest Docker auth cleanup must always run",
+    );
   }
   requireRunContains(errors, cleanup, "docker logout docker.io");
   requireRunContains(errors, cleanup, 'rm -rf "${DOCKER_CONFIG}"');
@@ -1932,7 +2083,9 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   }
   const generateSteps = asSteps(generateMatrix.steps);
   requireNoDispatchInputInterpolation(errors, generateSteps);
-  const generateCheckout = generateSteps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
+  const generateCheckout = generateSteps.find((step) =>
+    stringValue(step.uses).startsWith("actions/checkout@"),
+  );
   if (!generateCheckout) errors.push("generate-matrix job missing checkout step");
   requireFullShaAction(errors, generateCheckout, "generate-matrix checkout");
   if (asRecord(generateCheckout?.with)["persist-credentials"] !== false) {
@@ -1951,7 +2104,11 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   }
   requireRunContains(errors, generate, "tools/e2e-scenarios/free-standing-jobs.env");
   requireRunContains(errors, generate, "free-standing jobs inventory must be data-only key=value");
-  requireRunContains(errors, generate, "free_standing_scenarios_csv must match scenario mapping keys");
+  requireRunContains(
+    errors,
+    generate,
+    "free_standing_scenarios_csv must match scenario mapping keys",
+  );
   requireRunContains(errors, generate, "Free-standing scenario maps to unknown job");
   requireRunContains(errors, generate, "Use either scenarios or jobs, not both");
   requireRunContains(errors, generate, "Unknown free-standing Vitest job");
@@ -1967,7 +2124,11 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   requireRunDoesNotContain(errors, generate, "^[A-Za-z0-9._-]+");
   requireRunContains(errors, generate, "hermes_selected=false");
   requireRunContains(errors, generate, "hermes_selected=true");
-  requireRunContains(errors, generate, 'echo "hermes_selected=${hermes_selected}" >> "$GITHUB_OUTPUT"');
+  requireRunContains(
+    errors,
+    generate,
+    'echo "hermes_selected=${hermes_selected}" >> "$GITHUB_OUTPUT"',
+  );
   requireRunContains(errors, generate, "## Vitest E2E Scenario Matrix");
   requireRunContains(errors, generate, "| Scenario | Runner | Label |");
 
@@ -1979,7 +2140,9 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   if (liveScenarios.needs !== "generate-matrix") {
     errors.push("live-scenarios job must depend on generate-matrix");
   }
-  if (liveScenarios.if !== "${{ inputs.jobs == '' && needs.generate-matrix.outputs.matrix != '[]' }}") {
+  if (
+    liveScenarios.if !== "${{ inputs.jobs == '' && needs.generate-matrix.outputs.matrix != '[]' }}"
+  ) {
     errors.push("live-scenarios job must not run when a free-standing jobs selector is supplied");
   }
   const strategy = asRecord(liveScenarios.strategy);
@@ -2054,7 +2217,11 @@ export function validateE2eVitestScenariosWorkflowBoundary(
     errors.push("summary step must pass matrix.label through SCENARIO_LABEL env");
   }
   requireRunContains(errors, summary, "run-plan.json");
-  requireRunContains(errors, summary, 'Path(os.environ["E2E_ARTIFACT_DIR"]) / os.environ["SCENARIO_ID"]');
+  requireRunContains(
+    errors,
+    summary,
+    'Path(os.environ["E2E_ARTIFACT_DIR"]) / os.environ["SCENARIO_ID"]',
+  );
   requireRunContains(errors, summary, "| Scenario | Manifest | Expected state | Suites | Phases |");
   requireRunContains(errors, summary, "SCENARIO_ID");
 
@@ -2065,8 +2232,16 @@ export function validateE2eVitestScenariosWorkflowBoundary(
     errors.push("artifact upload name must include matrix.id");
   }
   const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/vitest/${{ matrix.id }}/run-plan.json");
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/vitest/${{ matrix.id }}/scenario.json");
+  requireUploadPathContains(
+    errors,
+    uploadPath,
+    "e2e-artifacts/vitest/${{ matrix.id }}/run-plan.json",
+  );
+  requireUploadPathContains(
+    errors,
+    uploadPath,
+    "e2e-artifacts/vitest/${{ matrix.id }}/scenario.json",
+  );
   requireUploadPathContains(
     errors,
     uploadPath,
@@ -2144,7 +2319,12 @@ export function validateE2eVitestScenariosWorkflowBoundary(
     }
     validateFreeStandingInventoryCoverage(errors, jobs, needs);
     const reportSteps = asSteps(reportToPr.steps);
-    const report = requireJobStep(errors, "report-to-pr", reportSteps, "Post Vitest scenario results to PR");
+    const report = requireJobStep(
+      errors,
+      "report-to-pr",
+      reportSteps,
+      "Post Vitest scenario results to PR",
+    );
     const reportEnv = asRecord(report?.env);
     if (reportEnv.JOBS !== "${{ inputs.jobs }}") {
       errors.push("report-to-pr step must pass jobs through JOBS env");
@@ -2157,25 +2337,39 @@ export function validateE2eVitestScenariosWorkflowBoundary(
     }
     const reportScript = stringValue(asRecord(report?.with).script ?? report?.run);
     if (!reportScript.includes("process.env.JOBS")) {
-      errors.push("step 'Post Vitest scenario results to PR' run script must include process.env.JOBS");
+      errors.push(
+        "step 'Post Vitest scenario results to PR' run script must include process.env.JOBS",
+      );
     }
     if (!reportScript.includes("process.env.JOB_SCENARIOS")) {
-      errors.push("step 'Post Vitest scenario results to PR' run script must include process.env.JOB_SCENARIOS");
+      errors.push(
+        "step 'Post Vitest scenario results to PR' run script must include process.env.JOB_SCENARIOS",
+      );
     }
     if (!reportScript.includes("selectorValidationPassed")) {
-      errors.push("step 'Post Vitest scenario results to PR' run script must check selector validation before echoing selectors");
+      errors.push(
+        "step 'Post Vitest scenario results to PR' run script must check selector validation before echoing selectors",
+      );
     }
     if (!reportScript.includes("jobsRejected")) {
-      errors.push("step 'Post Vitest scenario results to PR' run script must omit rejected job selectors");
+      errors.push(
+        "step 'Post Vitest scenario results to PR' run script must omit rejected job selectors",
+      );
     }
     if (!reportScript.includes("scenariosRejected")) {
-      errors.push("step 'Post Vitest scenario results to PR' run script must omit rejected scenario selectors");
+      errors.push(
+        "step 'Post Vitest scenario results to PR' run script must omit rejected scenario selectors",
+      );
     }
     if (!reportScript.includes("**Requested jobs:**")) {
-      errors.push("step 'Post Vitest scenario results to PR' run script must include **Requested jobs:**");
+      errors.push(
+        "step 'Post Vitest scenario results to PR' run script must include **Requested jobs:**",
+      );
     }
     if (!reportScript.includes("**Requested scenarios:**")) {
-      errors.push("step 'Post Vitest scenario results to PR' run script must include **Requested scenarios:**");
+      errors.push(
+        "step 'Post Vitest scenario results to PR' run script must include **Requested scenarios:**",
+      );
     }
     for (const forbidden of ["toJSON(inputs.pr_number)", "toJSON(inputs.scenarios)"]) {
       if (reportScript.includes(forbidden)) {

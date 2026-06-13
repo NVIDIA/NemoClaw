@@ -2,15 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
-import http from "node:http";
-import type { AddressInfo } from "node:net";
 import path from "node:path";
-
+import { testTimeoutOptions } from "../../helpers/timeouts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { shouldRunLiveE2EScenarios } from "../fixtures/live-project-gate.ts";
-import { testTimeoutOptions } from "../../helpers/timeouts";
 
 // Focused Vitest replacement coverage for test/e2e/test-token-rotation.sh.
 // Keep this free-standing and direct: the legacy contract is the real CLI +
@@ -54,18 +52,6 @@ type RegistryCredentialBinding = {
   credentialHash?: unknown;
 };
 
-type FakeOpenAIRequest = {
-  method: string;
-  path: string;
-  bodyBytes: number;
-};
-
-type FakeOpenAIEndpoint = {
-  baseUrl: string;
-  requests: FakeOpenAIRequest[];
-  close(): Promise<void>;
-};
-
 type RegistrySandboxEntry = {
   messaging?: {
     plan?: {
@@ -80,92 +66,6 @@ function resultText(result: { stdout: string; stderr: string }): string {
 
 function stripAnsi(value: string): string {
   return value.replace(/\u001B\[[0-?]*[ -/]*[@-~]/g, "");
-}
-
-function jsonResponse(res: http.ServerResponse, status: number, payload: unknown): void {
-  const body = JSON.stringify(payload);
-  res.writeHead(status, {
-    "Content-Type": "application/json",
-    "Content-Length": Buffer.byteLength(body),
-  });
-  res.end(body);
-}
-
-async function startFakeOpenAIEndpoint(): Promise<FakeOpenAIEndpoint> {
-  const requests: FakeOpenAIRequest[] = [];
-  const server = http.createServer((req, res) => {
-    let bodyBytes = 0;
-    req.on("data", (chunk: Buffer) => {
-      bodyBytes += chunk.length;
-    });
-    req.on("end", () => {
-      const requestPath = new URL(req.url ?? "/", "http://fake.local").pathname;
-      requests.push({
-        method: req.method ?? "GET",
-        path: requestPath,
-        bodyBytes,
-      });
-      if (req.method === "GET" && ["/v1/models", "/models"].includes(requestPath)) {
-        jsonResponse(res, 200, {
-          data: [{ id: "test-model", object: "model" }],
-        });
-        return;
-      }
-      if (
-        req.method === "POST" &&
-        ["/v1/chat/completions", "/chat/completions"].includes(requestPath)
-      ) {
-        jsonResponse(res, 200, {
-          id: "chatcmpl-token-rotation-e2e",
-          object: "chat.completion",
-          choices: [
-            {
-              index: 0,
-              message: { role: "assistant", content: "OK" },
-              finish_reason: "stop",
-            },
-          ],
-        });
-        return;
-      }
-      if (req.method === "POST" && ["/v1/responses", "/responses"].includes(requestPath)) {
-        jsonResponse(res, 200, {
-          id: "resp-token-rotation-e2e",
-          object: "response",
-          output: [
-            {
-              type: "message",
-              role: "assistant",
-              content: [{ type: "output_text", text: "OK" }],
-            },
-          ],
-        });
-        return;
-      }
-      jsonResponse(res, 404, { error: { message: "not found" } });
-    });
-  });
-
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(0, "0.0.0.0", () => {
-      server.off("error", reject);
-      resolve();
-    });
-  });
-  const address = server.address();
-  if (!address || typeof address === "string") {
-    throw new Error("fake OpenAI-compatible endpoint did not bind to a TCP port");
-  }
-  const port = (address as AddressInfo).port;
-  return {
-    baseUrl: `http://host.openshell.internal:${port}/v1`,
-    requests,
-    close: () =>
-      new Promise<void>((resolve, reject) => {
-        server.close((error) => (error ? reject(error) : resolve()));
-      }),
-  };
 }
 
 function onboardEnv(endpointUrl: string, tokens: TokenSet): NodeJS.ProcessEnv {
@@ -381,9 +281,14 @@ liveTest(
       skip("Docker is required for token rotation live E2E");
     }
 
-    const fakeOpenAI = await startFakeOpenAIEndpoint();
+    const fakeOpenAI = await startFakeOpenAiCompatibleServer({
+      chatContent: "OK",
+      host: "0.0.0.0",
+      publicHost: "host.openshell.internal",
+      responseText: "OK",
+    });
     cleanup.add("stop fake OpenAI-compatible endpoint for token rotation", async () => {
-      await artifacts.writeJson("fake-openai-compatible-requests.json", fakeOpenAI.requests);
+      await artifacts.writeJson("fake-openai-compatible-requests.json", fakeOpenAI.requests());
       await fakeOpenAI.close();
     });
 
