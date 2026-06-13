@@ -50,7 +50,7 @@ export interface ProviderHealthProbeOptions {
 
 const COMPATIBLE_PROVIDERS = new Set(["compatible-endpoint", "compatible-anthropic-endpoint"]);
 const NVIDIA_MANAGED_PROVIDERS = new Set(["nvidia-prod", "nvidia-nim"]);
-const NVIDIA_HEALTH_CREDENTIAL_ENV = "NVIDIA_API_KEY";
+const NVIDIA_HEALTH_CREDENTIAL_ENV = "NVIDIA_INFERENCE_API_KEY";
 const KIMI_K26_MODEL = "moonshotai/kimi-k2.6";
 const KIMI_STATUS_CONNECT_TIMEOUT_SECONDS = "3";
 const KIMI_STATUS_MAX_TIME_SECONDS = "5";

@@ -48,7 +48,7 @@ redact_file() {
   python3 - "$file" <<'PY'
 import os, sys
 path = sys.argv[1]
-secrets = [os.environ.get("NVIDIA_API_KEY", ""), os.environ.get("NEMOCLAW_PROVIDER_KEY", "")]
+secrets = [os.environ.get("NVIDIA_INFERENCE_API_KEY", ""), os.environ.get("NEMOCLAW_PROVIDER_KEY", "")]
 text = open(path, "r", errors="replace").read()
 for secret in filter(None, secrets):
     text = text.replace(secret, "<REDACTED>")
@@ -71,10 +71,10 @@ else
   exit 1
 fi
 
-if [ -n "${NVIDIA_API_KEY:-}" ] && [[ "${NVIDIA_API_KEY}" == nvapi-* ]]; then
-  pass "NVIDIA_API_KEY is set"
+if [ -n "${NVIDIA_INFERENCE_API_KEY:-}" ] && [[ "${NVIDIA_INFERENCE_API_KEY}" == nvapi-* ]]; then
+  pass "NVIDIA_INFERENCE_API_KEY is set"
 else
-  fail "NVIDIA_API_KEY is required and must start with nvapi-"
+  fail "NVIDIA_INFERENCE_API_KEY is required and must start with nvapi-"
   exit 1
 fi
 
@@ -119,13 +119,13 @@ for path in policy_paths:
         path.write_text(text.replace(needle, needle + additions, 1))
 PY
 env \
-  NEMOCLAW_PROVIDER_KEY="$NVIDIA_API_KEY" \
+  NEMOCLAW_PROVIDER_KEY="$NVIDIA_INFERENCE_API_KEY" \
   NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME" \
   NEMOCLAW_NON_INTERACTIVE=1 \
   NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
   NEMOCLAW_POLICY_MODE="skip" \
   NEMOCLAW_PROVIDER="build" \
-  NVIDIA_API_KEY="$NVIDIA_API_KEY" \
+  NVIDIA_INFERENCE_API_KEY="$NVIDIA_INFERENCE_API_KEY" \
   "$TIMEOUT_CMD" 1500 nemoclaw onboard --fresh --non-interactive --yes-i-accept-third-party-software --agent openclaw --from "$REPO/Dockerfile" \
   >"$ONBOARD_LOG" 2>&1
 onboard_rc=$?

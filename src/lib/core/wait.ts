@@ -8,6 +8,40 @@
 import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
 import { withLocalNoProxy } from "../subprocess-env.js";
 
+export type WaitUntilOptions = {
+  /** Absolute deadline, in milliseconds, using the same clock as `now`. */
+  deadlineMs?: number;
+  /** First delay between failed attempts. */
+  initialIntervalMs?: number;
+  /** Maximum delay between failed attempts after backoff. */
+  maxIntervalMs?: number;
+  /** Multiplier applied to the interval after each failed attempt. */
+  backoffFactor?: number;
+  /** Optional cap on condition attempts, including the first immediate check. */
+  maxAttempts?: number;
+  /** Clock used for deadline comparisons. Defaults to Date.now. */
+  now?: () => number;
+  /** Sleep function. Defaults to sleepMs for waitUntil and sleepMsAsync for waitUntilAsync. */
+  sleep?: (ms: number) => void;
+};
+
+type NormalizedWaitUntilOptions = {
+  deadlineMs: number;
+  intervalMs: number;
+  maxIntervalMs: number;
+  backoffFactor: number;
+  maxAttempts: number;
+  hasAttemptCap: boolean;
+  now: () => number;
+  sleep: (ms: number) => void | Promise<void>;
+};
+
+const DEFAULT_TIMEOUT_SECONDS = 10;
+const DEFAULT_INITIAL_INTERVAL_MS = 250;
+const DEFAULT_MAX_INTERVAL_MS = 5_000;
+const DEFAULT_BACKOFF_FACTOR = 1.5;
+const MIN_UNCAPPED_SLEEP_MS = 1;
+
 /**
  * Build a curl-friendly env that injects NO_PROXY for loopback hosts so that
  * probes against localhost-bound services (Ollama, gateway, dashboard, etc.)
@@ -33,26 +67,205 @@ export function sleepMs(ms: number): void {
 }
 
 /**
+ * Asynchronously sleep for the given number of milliseconds.
+ */
+export function sleepMsAsync(ms: number): Promise<void> {
+  if (ms <= 0 || !Number.isFinite(ms)) return Promise.resolve();
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
  * Synchronously sleep for the given number of seconds.
  */
 export function sleepSeconds(seconds: number): void {
   sleepMs(seconds * 1000);
 }
 
+function positiveFiniteOr(value: number | undefined, fallback: number): number {
+  return value !== undefined && Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function nonNegativeFiniteOr(value: number | undefined, fallback: number): number {
+  return value !== undefined && Number.isFinite(value) && value >= 0 ? value : fallback;
+}
+
+function normalizeWaitUntilOptions(
+  optionsOrTimeout?: WaitUntilOptions | number,
+  pollIntervalMs = DEFAULT_INITIAL_INTERVAL_MS,
+  defaultSleep: (ms: number) => void | Promise<void> = sleepMs,
+): NormalizedWaitUntilOptions {
+  if (typeof optionsOrTimeout === "number" || optionsOrTimeout === undefined) {
+    const now = Date.now;
+    const timeoutSeconds =
+      optionsOrTimeout === undefined
+        ? DEFAULT_TIMEOUT_SECONDS
+        : nonNegativeFiniteOr(optionsOrTimeout, DEFAULT_TIMEOUT_SECONDS);
+    const currentMs = now();
+    const pollMs = nonNegativeFiniteOr(pollIntervalMs, DEFAULT_INITIAL_INTERVAL_MS);
+    return {
+      deadlineMs: Number.isFinite(currentMs)
+        ? currentMs + timeoutSeconds * 1000
+        : Number.NEGATIVE_INFINITY,
+      intervalMs: pollMs,
+      maxIntervalMs: pollMs,
+      backoffFactor: 1,
+      maxAttempts: Number.POSITIVE_INFINITY,
+      hasAttemptCap: false,
+      now,
+      sleep: defaultSleep,
+    };
+  }
+
+  const now = optionsOrTimeout.now ?? Date.now;
+  const maxIntervalMs = nonNegativeFiniteOr(
+    optionsOrTimeout.maxIntervalMs,
+    DEFAULT_MAX_INTERVAL_MS,
+  );
+  const maxAttempts =
+    optionsOrTimeout.maxAttempts !== undefined && Number.isFinite(optionsOrTimeout.maxAttempts)
+      ? Math.max(0, Math.floor(optionsOrTimeout.maxAttempts))
+      : Number.POSITIVE_INFINITY;
+  const hasAttemptCap = Number.isFinite(maxAttempts);
+  const deadlineMs =
+    optionsOrTimeout.deadlineMs === undefined
+      ? Number.POSITIVE_INFINITY
+      : Number(optionsOrTimeout.deadlineMs);
+
+  if (Number.isNaN(deadlineMs) || deadlineMs === Number.NEGATIVE_INFINITY) {
+    throw new TypeError("waitUntil requires a valid deadlineMs");
+  }
+  if (deadlineMs === Number.POSITIVE_INFINITY && !hasAttemptCap) {
+    throw new TypeError("waitUntil requires deadlineMs or maxAttempts");
+  }
+
+  return {
+    deadlineMs,
+    intervalMs: Math.min(
+      nonNegativeFiniteOr(optionsOrTimeout.initialIntervalMs, DEFAULT_INITIAL_INTERVAL_MS),
+      maxIntervalMs,
+    ),
+    maxIntervalMs,
+    backoffFactor: Math.max(
+      1,
+      positiveFiniteOr(optionsOrTimeout.backoffFactor, DEFAULT_BACKOFF_FACTOR),
+    ),
+    maxAttempts,
+    hasAttemptCap,
+    now,
+    sleep: optionsOrTimeout.sleep ?? defaultSleep,
+  };
+}
+
+function boundedSleepDurationMs(
+  intervalMs: number,
+  remainingMs: number,
+  hasAttemptCap: boolean,
+): number {
+  const requestedSleepMs = Math.min(intervalMs, remainingMs);
+  const sleepDurationMs =
+    !hasAttemptCap && requestedSleepMs <= 0 ? MIN_UNCAPPED_SLEEP_MS : requestedSleepMs;
+  return Math.min(sleepDurationMs, remainingMs);
+}
+
 /**
  * Synchronously wait until a condition is met.
  */
+export function waitUntil(conditionFn: () => boolean): boolean;
+export function waitUntil(conditionFn: () => boolean, options: WaitUntilOptions): boolean;
 export function waitUntil(
   conditionFn: () => boolean,
-  timeoutSeconds = 10,
-  pollIntervalMs = 250,
+  timeoutSeconds?: number,
+  pollIntervalMs?: number,
+): boolean;
+export function waitUntil(
+  conditionFn: () => boolean,
+  optionsOrTimeout?: WaitUntilOptions | number,
+  pollIntervalMs?: number,
 ): boolean {
-  const start = Date.now();
-  while (Date.now() - start < timeoutSeconds * 1000) {
+  const options = normalizeWaitUntilOptions(optionsOrTimeout, pollIntervalMs);
+  let attempts = 0;
+  let intervalMs = options.intervalMs;
+
+  for (;;) {
+    const currentMs = options.now();
+    if (!Number.isFinite(currentMs) || currentMs >= options.deadlineMs) {
+      return false;
+    }
+    if (attempts >= options.maxAttempts) {
+      return false;
+    }
+    attempts += 1;
+
     if (conditionFn()) return true;
-    sleepMs(pollIntervalMs);
+    if (attempts >= options.maxAttempts) {
+      return false;
+    }
+
+    const postConditionMs = options.now();
+    if (!Number.isFinite(postConditionMs) || postConditionMs >= options.deadlineMs) {
+      return false;
+    }
+    options.sleep(
+      boundedSleepDurationMs(
+        intervalMs,
+        options.deadlineMs - postConditionMs,
+        options.hasAttemptCap,
+      ),
+    );
+    intervalMs = Math.min(options.maxIntervalMs, intervalMs * options.backoffFactor);
   }
-  return false;
+}
+
+/**
+ * Asynchronously wait until a condition is met.
+ */
+export function waitUntilAsync(conditionFn: () => boolean | Promise<boolean>): Promise<boolean>;
+export function waitUntilAsync(
+  conditionFn: () => boolean | Promise<boolean>,
+  options: WaitUntilOptions,
+): Promise<boolean>;
+export function waitUntilAsync(
+  conditionFn: () => boolean | Promise<boolean>,
+  timeoutSeconds?: number,
+  pollIntervalMs?: number,
+): Promise<boolean>;
+export async function waitUntilAsync(
+  conditionFn: () => boolean | Promise<boolean>,
+  optionsOrTimeout?: WaitUntilOptions | number,
+  pollIntervalMs?: number,
+): Promise<boolean> {
+  const options = normalizeWaitUntilOptions(optionsOrTimeout, pollIntervalMs, sleepMsAsync);
+  let attempts = 0;
+  let intervalMs = options.intervalMs;
+
+  for (;;) {
+    const currentMs = options.now();
+    if (!Number.isFinite(currentMs) || currentMs >= options.deadlineMs) {
+      return false;
+    }
+    if (attempts >= options.maxAttempts) {
+      return false;
+    }
+    attempts += 1;
+
+    if (await conditionFn()) return true;
+    if (attempts >= options.maxAttempts) {
+      return false;
+    }
+
+    const postConditionMs = options.now();
+    if (!Number.isFinite(postConditionMs) || postConditionMs >= options.deadlineMs) {
+      return false;
+    }
+    await options.sleep(
+      boundedSleepDurationMs(
+        intervalMs,
+        options.deadlineMs - postConditionMs,
+        options.hasAttemptCap,
+      ),
+    );
+    intervalMs = Math.min(options.maxIntervalMs, intervalMs * options.backoffFactor);
+  }
 }
 
 // One-shot TCP reachability probe, evaluated in a short-lived Node subprocess.

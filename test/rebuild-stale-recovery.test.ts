@@ -62,7 +62,7 @@ function createStaleFixture(
   } = opts;
   const sandboxName = "my-assistant";
   const provider = "nvidia-prod";
-  const credentialEnv = "NVIDIA_API_KEY";
+  const credentialEnv = "NVIDIA_INFERENCE_API_KEY";
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-4497-"));
   tmpFixtures.push(tmpDir);

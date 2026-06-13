@@ -120,7 +120,7 @@ describe("onboarding phase fixture", () => {
   it("runs cloud OpenClaw onboarding with explicit non-interactive inputs", async () => {
     const runner = new FakeRunner();
     runner.enqueue(shellResult(0, "onboarded\n"));
-    const secrets = new FakeSecrets({ NVIDIA_API_KEY: "secret-token" });
+    const secrets = new FakeSecrets({ NVIDIA_INFERENCE_API_KEY: "secret-token" });
     const onboard = new OnboardingPhaseFixture(new HostCliClient(runner), secrets);
 
     const instance = await onboard.from(ready(), { sandboxName: "e2e-ubuntu-repo-cloud-openclaw" });
@@ -133,7 +133,7 @@ describe("onboarding phase fixture", () => {
       providerEnv: "cloud",
       gatewayUrl: "http://127.0.0.1:18789",
     });
-    expect(secrets.requiredCalls).toEqual(["NVIDIA_API_KEY"]);
+    expect(secrets.requiredCalls).toEqual(["NVIDIA_INFERENCE_API_KEY"]);
     expect(runner.calls).toEqual([
       {
         command: "nemoclaw",
@@ -144,7 +144,7 @@ describe("onboarding phase fixture", () => {
             NEMOCLAW_AGENT: "openclaw",
             NEMOCLAW_PROVIDER: "cloud",
             NEMOCLAW_SANDBOX_NAME: "e2e-ubuntu-repo-cloud-openclaw",
-            NVIDIA_API_KEY: "secret-token",
+            NVIDIA_INFERENCE_API_KEY: "secret-token",
             PATH: expect.any(String),
           }),
           redactionValues: ["secret-token"],
@@ -159,7 +159,7 @@ describe("onboarding phase fixture", () => {
     runner.enqueue(shellResult(42, "provider rejected credential"));
     const onboard = new OnboardingPhaseFixture(
       new HostCliClient(runner),
-      new FakeSecrets({ NVIDIA_API_KEY: "secret" }),
+      new FakeSecrets({ NVIDIA_INFERENCE_API_KEY: "secret" }),
     );
 
     await expect(onboard.from(ready())).rejects.toThrow(
@@ -173,7 +173,7 @@ describe("onboarding phase fixture", () => {
     const cleanup = new FakeCleanup();
     const onboard = new OnboardingPhaseFixture(
       new HostCliClient(runner),
-      new FakeSecrets({ NVIDIA_API_KEY: "secret" }),
+      new FakeSecrets({ NVIDIA_INFERENCE_API_KEY: "secret" }),
       cleanup,
     );
 
@@ -200,7 +200,7 @@ describe("onboarding phase fixture", () => {
     const onboard = new OnboardingPhaseFixture(new HostCliClient(runner), new FakeSecrets());
 
     await expect(onboard.from(ready())).rejects.toThrow(
-      /missing required E2E secret: NVIDIA_API_KEY/,
+      /missing required E2E secret: NVIDIA_INFERENCE_API_KEY/,
     );
     expect(runner.calls).toEqual([]);
   });
@@ -208,7 +208,7 @@ describe("onboarding phase fixture", () => {
   it("requires Docker for cloud OpenClaw onboarding", async () => {
     const onboard = new OnboardingPhaseFixture(
       new HostCliClient(new FakeRunner()),
-      new FakeSecrets({ NVIDIA_API_KEY: "secret" }),
+      new FakeSecrets({ NVIDIA_INFERENCE_API_KEY: "secret" }),
     );
 
     await expect(
@@ -223,7 +223,7 @@ describe("onboarding phase fixture", () => {
   it("rejects invalid sandbox names before cloud OpenClaw side effects", async () => {
     const runner = new FakeRunner();
     const cleanup = new FakeCleanup();
-    const secrets = new FakeSecrets({ NVIDIA_API_KEY: "secret" });
+    const secrets = new FakeSecrets({ NVIDIA_INFERENCE_API_KEY: "secret" });
     const onboard = new OnboardingPhaseFixture(new HostCliClient(runner), secrets, cleanup);
 
     await expect(onboard.from(ready(), { sandboxName: "bad name" })).rejects.toThrow(
@@ -241,7 +241,7 @@ describe("onboarding phase fixture", () => {
     const cleanup = new FakeCleanup();
     const onboard = new OnboardingPhaseFixture(
       new HostCliClient(runner),
-      new FakeSecrets({ NVIDIA_API_KEY: "secret-token" }),
+      new FakeSecrets({ NVIDIA_INFERENCE_API_KEY: "secret-token" }),
       cleanup,
     );
 
@@ -267,7 +267,7 @@ describe("onboarding phase fixture", () => {
   it("runs the no-Docker negative path with a failing Docker shim", async () => {
     const runner = new FakeRunner();
     runner.enqueue(shellResult(7, "Cannot connect to the Docker daemon"));
-    const secrets = new FakeSecrets({ NVIDIA_API_KEY: "secret-token" });
+    const secrets = new FakeSecrets({ NVIDIA_INFERENCE_API_KEY: "secret-token" });
     const cleanup = new FakeCleanup();
     const onboard = new OnboardingPhaseFixture(new HostCliClient(runner), secrets, cleanup);
 
@@ -302,10 +302,10 @@ describe("onboarding phase fixture", () => {
       NEMOCLAW_AGENT: "openclaw",
       NEMOCLAW_PROVIDER: "cloud",
       NEMOCLAW_SANDBOX_NAME: "e2e-no-docker",
-      NVIDIA_API_KEY: "secret-token",
+      NVIDIA_INFERENCE_API_KEY: "secret-token",
     });
     expect(runner.calls[0]?.options?.env?.PATH).toContain("e2e-no-docker-");
-    expect(secrets.requiredCalls).toEqual(["NVIDIA_API_KEY"]);
+    expect(secrets.requiredCalls).toEqual(["NVIDIA_INFERENCE_API_KEY"]);
     expect(cleanup.calls).toHaveLength(1);
     expect(cleanup.calls[0]?.name).toBe("destroy NemoClaw sandbox e2e-no-docker");
   });
@@ -319,7 +319,7 @@ describe("onboarding phase fixture", () => {
       runner.enqueue(shellResult(7, "Docker is required before onboarding with secret-token"));
       const onboard = new OnboardingPhaseFixture(
         new HostCliClient(runner),
-        new FakeSecrets({ NVIDIA_API_KEY: "secret-token" }),
+        new FakeSecrets({ NVIDIA_INFERENCE_API_KEY: "secret-token" }),
       );
 
       await onboard.from(
@@ -349,7 +349,7 @@ describe("onboarding phase fixture", () => {
     runner.enqueue(shellResult(7, "Docker is not reachable. Please fix Docker and try again."));
     const onboard = new OnboardingPhaseFixture(
       new HostCliClient(runner),
-      new FakeSecrets({ NVIDIA_API_KEY: "secret" }),
+      new FakeSecrets({ NVIDIA_INFERENCE_API_KEY: "secret" }),
     );
 
     const instance = await onboard.from(
@@ -370,7 +370,7 @@ describe("onboarding phase fixture", () => {
     const runner = new FakeRunner();
     const onboard = new OnboardingPhaseFixture(
       new HostCliClient(runner),
-      new FakeSecrets({ NVIDIA_API_KEY: "secret" }),
+      new FakeSecrets({ NVIDIA_INFERENCE_API_KEY: "secret" }),
     );
 
     await expect(onboard.from(ready({ onboarding: "cloud-openclaw-no-docker" }))).rejects.toThrow(
@@ -389,7 +389,7 @@ describe("onboarding phase fixture", () => {
       runner.enqueue(shellResult(7, "Docker is required before onboarding"));
       const onboard = new OnboardingPhaseFixture(
         new HostCliClient(runner),
-        new FakeSecrets({ NVIDIA_API_KEY: "secret-token" }),
+        new FakeSecrets({ NVIDIA_INFERENCE_API_KEY: "secret-token" }),
       );
 
       await onboard.from(
@@ -423,7 +423,7 @@ describe("onboarding phase fixture", () => {
     const cleanup = new FakeCleanup();
     const onboard = new OnboardingPhaseFixture(
       new HostCliClient(runner),
-      new FakeSecrets({ NVIDIA_API_KEY: "secret" }),
+      new FakeSecrets({ NVIDIA_INFERENCE_API_KEY: "secret" }),
       cleanup,
     );
 
@@ -457,7 +457,7 @@ describe("onboarding phase fixture", () => {
     runner.enqueue(shellResult(9, "provider rejected credential"));
     const onboard = new OnboardingPhaseFixture(
       new HostCliClient(runner),
-      new FakeSecrets({ NVIDIA_API_KEY: "secret" }),
+      new FakeSecrets({ NVIDIA_INFERENCE_API_KEY: "secret" }),
     );
 
     await expect(
@@ -489,7 +489,7 @@ describe("onboarding phase fixture", () => {
       runner.enqueue(shellResult(0, "onboarded\n"));
       const onboard = new OnboardingPhaseFixture(
         new HostCliClient(runner),
-        new FakeSecrets({ NVIDIA_API_KEY: "secret-token" }),
+        new FakeSecrets({ NVIDIA_INFERENCE_API_KEY: "secret-token" }),
         undefined,
         new ArtifactSink(tmp),
       );
@@ -515,7 +515,7 @@ describe("onboarding phase fixture", () => {
     try {
       const onboard = new OnboardingPhaseFixture(
         new HostCliClient(new FakeRunner()),
-        new FakeSecrets({ NVIDIA_API_KEY: "secret" }),
+        new FakeSecrets({ NVIDIA_INFERENCE_API_KEY: "secret" }),
         undefined,
         new ArtifactSink(tmp),
       );

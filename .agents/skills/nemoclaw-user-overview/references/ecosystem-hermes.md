@@ -91,3 +91,4 @@ Use the following table to decide when to use NemoHermes versus OpenShell alone.
 - [How It Works](how-it-works.md) describes how NemoClaw runs, the blueprint, sandbox creation, routing, and protection layers for Hermes.
 - Architecture (use the `nemoclaw-user-reference` skill) shows the repository structure and technical diagrams.
 - Quickstart with Hermes (use the `nemoclaw-user-get-started` skill) installs NemoClaw and launches your first Hermes sandbox.
+- [NemoClaw Community](https://github.com/NVIDIA/nemoclaw-community) collects community-driven examples, showcases, and integrations that demonstrate complete blueprint patterns.

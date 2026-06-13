@@ -33,13 +33,15 @@ export function getDiff(base: string, head: string, maxChars: number): string {
 }
 
 export function getDiffStat(base: string, head: string): string {
-  return gitOutput(
-    [
-      ["diff", "--stat", `${base}...${head}`],
-      ["diff", "--stat", `${base}..${head}`],
-    ],
-    1024 * 1024,
-  )?.trim() || "<diff stat unavailable>";
+  return (
+    gitOutput(
+      [
+        ["diff", "--stat", `${base}...${head}`],
+        ["diff", "--stat", `${base}..${head}`],
+      ],
+      1024 * 1024,
+    )?.trim() || "<diff stat unavailable>"
+  );
 }
 
 export function getCommits(base: string, head: string): string[] {

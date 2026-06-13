@@ -190,6 +190,19 @@ describe("printSandboxCreateRecoveryHints", () => {
     });
     expect(stderr()).toContain("<built-image>");
   });
+
+  it("prints GPU CDI injection guidance pointing at --no-gpu / NEMOCLAW_SANDBOX_GPU=0", () => {
+    printSandboxCreateRecoveryHints(
+      "Error response from daemon: CDI device injection failed: unresolvable CDI devices nvidia.com/gpu=all",
+    );
+
+    const out = stderr();
+    expect(out).toContain("GPU CDI device injection failed");
+    expect(out).toContain("NEMOCLAW_DOCKER_GPU_PATCH=0 does not bypass");
+    expect(out).toContain("--no-gpu");
+    expect(out).toContain("NEMOCLAW_SANDBOX_GPU=0");
+    expect(out).toContain("onboard --resume --no-gpu");
+  });
 });
 
 describe("reconstructImageRefCreateCommand", () => {

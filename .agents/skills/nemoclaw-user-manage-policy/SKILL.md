@@ -159,12 +159,9 @@ openshell policy set --policy live-policy.yaml my-assistant
 
 Dynamic changes apply only to the current session.
 When the sandbox stops, the running policy resets to the baseline policy plus the presets recorded for the sandbox.
-<AgentOnly variant="openclaw">
-To make a custom policy survive a sandbox recreation, ship the preset file in the repository (Option 1 above; the file under `presets/` persists) or edit `openclaw-sandbox.yaml` and re-run `nemoclaw onboard`.
-</AgentOnly>
-<AgentOnly variant="hermes">
-To make a custom policy survive a sandbox recreation, ship the preset file in the repository (Option 1 above; the file under `presets/` persists) or edit the Hermes policy additions and re-run `nemoclaw onboard`.
-</AgentOnly>
+Custom presets applied through `nemoclaw <sandbox> policy-add --from-file` or `--from-dir` are recorded with the sandbox, including their full YAML content.
+Snapshot restore and rebuild replay those recorded presets, so they survive sandbox recreation even if the original files are no longer on disk.
+For permanent baseline changes that apply to every future sandbox, edit the source policy for the target agent and re-run `nemoclaw onboard`.
 
 ### Approve Requests Interactively
 

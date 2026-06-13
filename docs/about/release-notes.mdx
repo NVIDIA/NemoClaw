@@ -15,6 +15,15 @@ NVIDIA NemoClaw is available in early preview starting March 16, 2026.
 Use this page to track the highlights of the latest release.
 For more detailed release notes, refer to the [NemoClaw GitHub announcements](https://github.com/NVIDIA/NemoClaw/discussions/categories/announcements?discussions_q=is%3Aopen+category%3AAnnouncements).
 
+## v0.0.64
+
+NemoClaw v0.0.64 improves sandbox restore, onboarding stability, inference routing, messaging setup, and release validation:
+
+- Snapshot restore preserves custom policy presets applied with `policy-add --from-file` or `policy-add --from-dir`, so restored sandboxes keep the custom egress rules that were recorded with the source sandbox. For more information, refer to [Backup and Restore](../manage-sandboxes/backup-restore) and [Customize the Network Policy](../network-policy/customize-network-policy).
+- OpenClaw onboarding keeps Brave Search pinned to the NemoClaw-managed runtime and preserves the `BRAVE_API_KEY` placeholder through build doctor. Docker-driver gateway health checks now follow the entrypoint path that actually launches the in-container gateway, which avoids misleading health reports on host-gateway setups. For more information, refer to [NemoClaw CLI Commands Reference](../reference/commands).
+- Inference routes choose chat completions for providers that do not expose `/v1/responses`, including NVIDIA Endpoints, NVIDIA NIM, and Gemini-compatible routes. NemoClaw also adds a targeted Nemotron Ultra 550B compatibility fix for tool-less requests. For more information, refer to [NemoClaw Inference Options](../inference/inference-options).
+- Messaging setup refreshes stale render plans during rebuild, recovers replaced OpenClaw scope-upgrade approvals, and preinstalls Hermes WhatsApp bridge dependencies when the upstream lockfile is present. For more information, refer to [Messaging Channels](../manage-sandboxes/messaging-channels).
+
 ## v0.0.63
 
 NemoClaw v0.0.63 improves sandbox recovery, OpenClaw configuration restore safety, local inference onboarding, messaging safeguards, and release validation:
@@ -123,7 +132,7 @@ NemoClaw v0.0.54 updates messaging activation, Windows WSL onboarding, NemoHerme
 - The Windows bootstrap flow waits for Ubuntu account creation before touching Docker settings, enables Docker Desktop WSL integration for the target distro, avoids changing the global WSL default distro, and adds WSL-specific Docker reachability hints during onboarding. For more information, refer to [Prepare Windows for NemoClaw](../get-started/prerequisites/windows-preparation).
 - Windows-host Ollama setup inside WSL now requires the Docker Desktop WSL integration path. NemoClaw still shows Windows-host Ollama options when it detects them, but labels the Docker Desktop requirement and blocks unsupported native Docker-in-WSL selections before it tries to start or install Ollama. For more information, refer to [Use a Local Inference Server](../inference/use-local-inference).
 - NemoHermes can expose the optional native Hermes web dashboard separately from the OpenAI-compatible API. Set `NEMOCLAW_HERMES_DASHBOARD=1` before onboarding to start and forward the dashboard on port `9119`, with `NEMOCLAW_HERMES_DASHBOARD_PORT` and `NEMOCLAW_HERMES_DASHBOARD_TUI` available for port and TUI tab control. For more information, refer to [NemoClaw Quickstart with Hermes](../../hermes/get-started/quickstart).
-- Onboarding diagnostics include more copy-paste-ready recovery hints. Invalid sandbox names now include a `Try: <suggested-slug>` line when NemoClaw can derive a valid name, and non-interactive NVIDIA Endpoints setup prints the exact `export NVIDIA_API_KEY=nvapi-...` shape when the key is missing. For more information, refer to [NemoClaw CLI Commands Reference](../reference/commands).
+- Onboarding diagnostics include more copy-paste-ready recovery hints. Invalid sandbox names now include a `Try: <suggested-slug>` line when NemoClaw can derive a valid name, and non-interactive NVIDIA Endpoints setup prints the exact `export NVIDIA_INFERENCE_API_KEY=nvapi-...` shape when the key is missing. For more information, refer to [NemoClaw CLI Commands Reference](../reference/commands).
 - Homebrew stays on the Linuxbrew prefix while exposing installed formula commands in sandbox shell sessions, the `/nemoclaw` slash command activates at OpenClaw startup again, Hermes rebuilds tolerate older release tarballs that lack optional UI package lockfiles, and device scope-upgrade approvals recover without being pinned to the old gateway-scoped request. For more information, refer to [Common NemoClaw Integration Policy Examples](../network-policy/integration-policy-examples).
 - The host-gateway allowance for OpenClaw `web_fetch` is confined to the trusted proxy path, while strict and direct paths continue to block host-gateway names. Hermes Provider onboarding skips the host-side smoke probe only for OAuth-backed setup and keeps direct validation for Nous API key setup. For more information, refer to [NemoClaw Inference Options](../inference/inference-options).
 
@@ -162,7 +171,7 @@ NemoClaw v0.0.51 improves messaging controls, local inference setup, sandbox dia
 - `$$nemoclaw onboard` restores the managed vLLM menu entry for DGX Spark and DGX Station hosts, which had been hidden after a previous onboard refactor dropped the `gpu.platform` value the vLLM menu builder relies on.
 - `$$nemoclaw resources` and `NEMOCLAW_RESOURCE_PROFILE` expose sandbox CPU and memory profiles. Profiles can be selected during onboarding, and `NEMOCLAW_CPU` or `NEMOCLAW_RAM` can override the selected profile for scripted runs.
 - Cloudflare named tunnels are supported through `CLOUDFLARE_TUNNEL_TOKEN`. `$$nemoclaw tunnel start` passes the token through the environment and expects the named tunnel route to already point at the dashboard port.
-- Jira policy validation guidance now matches the maintained preset. Use a Node HTTPS status probe for Atlassian API access and an explicit status-only curl probe for `auth.atlassian.com` when validating approved requests manually.
+- Jira policy validation guidance now matches the maintained preset. Use a Node HTTPS status probe for Atlassian API access and the body-visible `api.atlassian.com/oauth/token/accessible-resources` curl probe when validating approved requests manually. Plain `curl -s` against `auth.atlassian.com` can return empty output even when reachable, so it is not a pass/fail signal.
 - Sandbox logs merge OpenClaw gateway output and OpenShell audit events into one stream, and `--tail` applies once to the merged result so policy denials appear beside gateway logs.
 - Onboarding recovers more cleanly across host and runtime edge cases, including root-owned config sync directories, stale dashboard port allocation, unreachable Docker daemons, stale dashboard forwards, default NVIDIA CDI spec directories, and Linux Docker-driver health checks.
 
@@ -319,7 +328,7 @@ NemoClaw v0.0.39 improves several day-two workflows:
 - `$$nemoclaw <name> destroy` preserves the shared gateway by default unless `--cleanup-gateway` is selected.
 - `$$nemoclaw <name> connect` repairs stale `inference.local` DNS proxy routes before opening the session.
 - Windows-host Ollama onboarding relaunches the daemon with the reachable binding after install or restart.
-- Local NVIDIA NIM onboarding passes `NGC_API_KEY` or `NVIDIA_API_KEY` into the managed container without putting the secret in process arguments, detects early container exits during health checks, and prints a per-GPU preflight breakdown on mixed-model hosts.
+- Local NVIDIA NIM onboarding passes `NGC_API_KEY` or `NVIDIA_INFERENCE_API_KEY` into the managed container without putting the secret in process arguments, detects early container exits during health checks, and prints a per-GPU preflight breakdown on mixed-model hosts.
 - The sandbox startup path strips additional Linux capabilities before and during privilege step-down.
 - OpenClaw workspace template files are seeded when bootstrap is skipped and the workspace is still empty.
 - Kimi K2.6 and related NVIDIA-hosted chat-completions paths include model-specific compatibility handling for reasoning output.

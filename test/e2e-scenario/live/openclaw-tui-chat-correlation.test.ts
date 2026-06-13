@@ -485,7 +485,7 @@ async function runLiveIssue2603ReproWithEventCaptureRetry(
 test(
   "openclaw-tui-chat-correlation: rapid TUI/webchat sends stay correlated on a real OpenClaw sandbox (#2603 + #3145)",
   async ({ artifacts, environment, onboard, sandbox, secrets }) => {
-    secrets.required("NVIDIA_API_KEY");
+    secrets.required("NVIDIA_INFERENCE_API_KEY");
 
     await artifacts.writeJson("scenario.json", {
       id: "openclaw-tui-chat-correlation",

@@ -3,7 +3,7 @@
 //
 // Security regression test: credential values must never appear in --credential
 // CLI arguments. OpenShell reads credential values from the environment when
-// only the env-var name is passed (e.g. --credential "NVIDIA_API_KEY"), so
+// only the env-var name is passed (e.g. --credential "NVIDIA_INFERENCE_API_KEY"), so
 // there is no reason to pass the secret itself on the command line where it
 // would be visible in `ps aux` output.
 
@@ -34,13 +34,13 @@ describe("credential exposure in process arguments", () => {
       "create",
       "inference",
       "openai",
-      "NVIDIA_API_KEY",
+      "NVIDIA_INFERENCE_API_KEY",
       "https://api.example.test/v1",
     );
 
     expect(args).toContain("--credential");
-    expect(args).toContain("NVIDIA_API_KEY");
-    expect(args.join(" ")).not.toContain("NVIDIA_API_KEY=");
+    expect(args).toContain("NVIDIA_INFERENCE_API_KEY");
+    expect(args.join(" ")).not.toContain("NVIDIA_INFERENCE_API_KEY=");
     expect(args.join(" ")).not.toContain("nvapi-");
   });
 
@@ -123,20 +123,20 @@ describe("credential exposure in process arguments", () => {
 
   it("subprocess env builder does not spread full process.env into subprocesses", () => {
     const previous = {
-      NVIDIA_API_KEY: process.env.NVIDIA_API_KEY,
+      NVIDIA_INFERENCE_API_KEY: process.env.NVIDIA_INFERENCE_API_KEY,
       PATH: process.env.PATH,
     };
     try {
-      process.env.NVIDIA_API_KEY = "nvapi-secret-should-not-leak";
+      process.env.NVIDIA_INFERENCE_API_KEY = "nvapi-secret-should-not-leak";
       process.env.PATH = `/tmp/nemoclaw-fake-bin:${process.env.PATH || ""}`;
       const env = buildCliSubprocessEnv();
-      expect(env.NVIDIA_API_KEY).toBeUndefined();
+      expect(env.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
       expect(env.PATH).toContain("/tmp/nemoclaw-fake-bin");
     } finally {
-      if (previous.NVIDIA_API_KEY === undefined) {
-        delete process.env.NVIDIA_API_KEY;
+      if (previous.NVIDIA_INFERENCE_API_KEY === undefined) {
+        delete process.env.NVIDIA_INFERENCE_API_KEY;
       } else {
-        process.env.NVIDIA_API_KEY = previous.NVIDIA_API_KEY;
+        process.env.NVIDIA_INFERENCE_API_KEY = previous.NVIDIA_INFERENCE_API_KEY;
       }
       if (previous.PATH === undefined) {
         delete process.env.PATH;

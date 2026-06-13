@@ -64,7 +64,7 @@ The managed install/start vLLM entry appears by default on DGX Spark and DGX Sta
 
 | Option | Description | Curated models |
 |--------|-------------|----------------|
-| NVIDIA Endpoints | Routes to models hosted on [build.nvidia.com](https://build.nvidia.com). You can also enter any model ID from the catalog. Set `NVIDIA_API_KEY`. | Nemotron 3 Super 120B, Nemotron 3 Ultra 550B, GLM-5.1, MiniMax M2.7, GPT-OSS 120B, DeepSeek V4 Pro |
+| NVIDIA Endpoints | Routes to models hosted on [build.nvidia.com](https://build.nvidia.com). You can also enter any model ID from the catalog. Set `NVIDIA_INFERENCE_API_KEY`. | Nemotron 3 Super 120B, Nemotron 3 Ultra 550B, GLM-5.1, MiniMax M2.7, GPT-OSS 120B, DeepSeek V4 Pro |
 | OpenAI | Routes to the OpenAI API. Set `OPENAI_API_KEY`. | `gpt-5.4`, `gpt-5.4-mini`, `gpt-5.4-nano`, `gpt-5.4-pro-2026-03-05` |
 | Other OpenAI-compatible endpoint | Routes to any server that implements `/v1/chat/completions`. NemoClaw uses `/v1/chat/completions` at runtime by default; set `NEMOCLAW_PREFERRED_API=openai-responses` to allow `/v1/responses` for proxies that implement it, such as some llama.cpp builds. The wizard prompts for a base URL and model name. Works with OpenRouter, LocalAI, llama.cpp, or any compatible proxy. When you enable Telegram messaging, onboarding also runs a bounded sandbox-side smoke check through `https://inference.local/v1/chat/completions`. Set `COMPATIBLE_API_KEY`. | You provide the model name. |
 | Anthropic | Routes to the Anthropic Messages API. Set `ANTHROPIC_API_KEY`. | `claude-sonnet-4-6`, `claude-haiku-4-5`, `claude-opus-4-6` |
@@ -109,12 +109,12 @@ models:
   - name: nano
     litellm_model: "openai/nvidia/nvidia/Nemotron-3-Nano-30B-A3B"
     cost_per_m_input_tokens: 0.05
-    api_base: "https://inference-api.nvidia.com"
+    api_base: "https://integrate.api.nvidia.com"
 
   - name: super
     litellm_model: "openai/nvidia/nvidia/nemotron-3-super-v3"
     cost_per_m_input_tokens: 0.10
-    api_base: "https://inference-api.nvidia.com"
+    api_base: "https://integrate.api.nvidia.com"
 ```
 
 The `tolerance` parameter controls the accuracy-cost tradeoff.
@@ -138,7 +138,7 @@ The sandbox never sees raw API keys.
 To use the router in scripted setup, set:
 
 ```bash
-NEMOCLAW_PROVIDER=routed NVIDIA_API_KEY=<your-key> $$nemoclaw onboard --non-interactive
+NEMOCLAW_PROVIDER=routed NVIDIA_INFERENCE_API_KEY=<your-key> $$nemoclaw onboard --non-interactive
 ```
 
 ### Host Python Requirement
@@ -182,7 +182,7 @@ For setup instructions, refer to [Use a Local Inference Server](use-local-infere
 NemoClaw validates the selected provider and model before creating the sandbox.
 If credential validation fails, the wizard asks whether to re-enter the API key, choose a different provider, retry, or exit.
 The wizard retries transient upstream validation failures before it reports a provider failure.
-The `nvapi-` prefix check applies only to `NVIDIA_API_KEY`.
+The `nvapi-` prefix check applies only to `NVIDIA_INFERENCE_API_KEY`.
 Other provider credentials, such as `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, and compatible endpoint keys, use provider-aware validation during retry.
 
 | Provider type | Validation method |
@@ -380,6 +380,20 @@ NEMOCLAW_PROVIDER=install-vllm \
 NemoClaw accepts `HUGGING_FACE_HUB_TOKEN` as an alternative.
 The token check runs on the host before any docker pull, so a missing or empty token aborts onboarding before bandwidth is spent on a 401.
 
+### Add Managed-vLLM Serve Arguments
+
+For advanced vLLM options that are not in the NemoClaw registry yet, export `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` as a JSON array of individual non-blank `vllm serve` tokens.
+NemoClaw trims and validates the array before pulling images or downloading models, shell-quotes each token, and appends the tokens after the registry defaults.
+
+```bash
+NEMOCLAW_PROVIDER=install-vllm \
+  NEMOCLAW_VLLM_EXTRA_ARGS_JSON='["--max-num-seqs","2","--disable-log-requests"]' \
+  $$nemoclaw onboard --non-interactive
+```
+
+Use this for operator-owned tuning only.
+If the selected vLLM image does not support an argument, the managed container exits and NemoClaw prints the vLLM log tail.
+
 ## NVIDIA NIM (Experimental)
 
 NemoClaw can pull, start, and manage a NIM container on hosts with a NIM-capable NVIDIA GPU.
@@ -401,7 +415,7 @@ NVIDIA hosts NIM container images on `nvcr.io`, and `docker pull` requires NGC r
 If Docker is not already logged in to `nvcr.io`, onboard prompts for an [NGC API key](https://org.ngc.nvidia.com/setup/api-key) and runs `docker login nvcr.io` over `--password-stdin` so the key is never written to disk or shell history.
 The prompt masks the key during input and retries one time on a bad key before failing.
 In non-interactive mode, onboard exits with login instructions if Docker is not already authenticated; run `docker login nvcr.io` yourself, then re-run `$$nemoclaw onboard --non-interactive`.
-If `NGC_API_KEY` or `NVIDIA_API_KEY` is already exported, NemoClaw passes it into the managed NIM container through the process environment instead of command-line arguments.
+If `NGC_API_KEY` or `NVIDIA_INFERENCE_API_KEY` is already exported, NemoClaw passes it into the managed NIM container through the process environment instead of command-line arguments.
 If the NIM container exits before the health endpoint becomes ready, onboarding stops early and prints the last container log lines.
 After NIM becomes healthy, NemoClaw reads `/v1/models` and uses the served model id for validation when it differs from the catalog name.
 Unsafe served ids are rejected instead of being written into the sandbox config.

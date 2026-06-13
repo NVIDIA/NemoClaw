@@ -17,7 +17,7 @@ import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import * as agentRuntime from "../../agent/runtime";
 import { G, R } from "../../cli/terminal-style";
 import { DASHBOARD_PORT } from "../../core/ports";
-import { sleepSeconds } from "../../core/wait";
+import { sleepSeconds, waitUntil } from "../../core/wait";
 import { ROOT, shellQuote } from "../../runner";
 import * as registry from "../../state/registry";
 import { parseForwardList } from "../../state/sandbox-session";
@@ -331,34 +331,32 @@ export function waitForRecoveredSandboxGateway(
       ? Math.max(1, Math.floor(timeoutSeconds / intervalSeconds) + 1)
       : Math.max(1, Math.floor(timeoutSeconds) + 1);
 
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    if (probe(sandboxName) === true) {
-      // #4710: a freshly relaunched gateway can serve for ~20s and then drop
-      // its HTTP listener while the process stays alive (a failed in-process
-      // restart triggered by a post-launch config write parks it deaf). One
-      // successful probe inside that window is not proof of recovery — wait
-      // out a settle window and require the gateway to still be serving.
-      // 0 disables the settle confirm.
-      // Source boundary and removal condition for this detection live in
-      // gateway-wedge-diagnostics.ts.
-      const settleSeconds = readNonNegativeNumberEnv(
-        "NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS",
-        25,
-      );
-      if (settleSeconds <= 0) {
-        return true;
-      }
-      if (!options.quiet) {
-        console.log(`  Confirming the gateway stays responsive (~${settleSeconds}s)...`);
-      }
-      sleep(settleSeconds);
-      return probe(sandboxName) === true;
-    }
-    if (attempt < attempts - 1) {
-      sleep(intervalSeconds);
-    }
+  const recovered = waitUntil(() => probe(sandboxName) === true, {
+    initialIntervalMs: intervalSeconds * 1000,
+    maxIntervalMs: intervalSeconds * 1000,
+    backoffFactor: 1,
+    maxAttempts: attempts,
+    sleep: (ms) => sleep(ms / 1000),
+  });
+  if (!recovered) return false;
+
+  // #4710: a freshly relaunched gateway can serve for ~20s and then drop
+  // its HTTP listener while the process stays alive (a failed in-process
+  // restart triggered by a post-launch config write parks it deaf). One
+  // successful probe inside that window is not proof of recovery — wait
+  // out a settle window and require the gateway to still be serving.
+  // 0 disables the settle confirm.
+  // Source boundary and removal condition for this detection live in
+  // gateway-wedge-diagnostics.ts.
+  const settleSeconds = readNonNegativeNumberEnv("NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS", 25);
+  if (settleSeconds <= 0) {
+    return true;
   }
-  return false;
+  if (!options.quiet) {
+    console.log(`  Confirming the gateway stays responsive (~${settleSeconds}s)...`);
+  }
+  sleep(settleSeconds);
+  return probe(sandboxName) === true;
 }
 
 /**

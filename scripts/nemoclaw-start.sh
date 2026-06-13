@@ -10,7 +10,7 @@
 # The config hash is verified at startup to detect tampering.
 #
 # Optional env:
-#   NVIDIA_API_KEY                API key for NVIDIA-hosted inference
+#   NVIDIA_INFERENCE_API_KEY                API key for NVIDIA-hosted inference
 #   CHAT_UI_URL                   Browser origin that will access the forwarded dashboard
 #   NEMOCLAW_DISABLE_DEVICE_AUTH  Build-time only. Set to "1" to skip device-pairing auth.
 #                                  Also auto-disabled when CHAT_UI_URL is non-loopback.
@@ -286,7 +286,38 @@ else
 fi
 PUBLIC_PORT="$_DASHBOARD_PORT"
 export OPENCLAW_GATEWAY_PORT="$_DASHBOARD_PORT"
-export OPENCLAW_GATEWAY_URL="ws://127.0.0.1:${_DASHBOARD_PORT}"
+# Gateway WebSocket URL host. Default to the sandbox's own primary interface
+# address rather than loopback: spawned sub-agent runtimes (sessions_spawn)
+# dial OPENCLAW_GATEWAY_URL from inside the enforced process tree, where the
+# OpenShell L7 proxy transparently intercepts connect() and hard-denies
+# loopback destinations regardless of policy. With a loopback URL every child
+# WebSocket upgrade dies with `1006 abnormal closure (no close frame)` and
+# nothing reaches the gateway log. The gateway listens on 0.0.0.0 and the
+# eth0 address is allowlisted in the base sandbox policy
+# (openclaw_gateway_dialback in openclaw-sandbox.yaml), so the same dial
+# works from both enforced and unenforced contexts. Falls back to loopback
+# when no interface address is detectable (the pre-fix behavior). Override
+# with NEMOCLAW_GATEWAY_WS_HOST.
+_GATEWAY_WS_HOST="${NEMOCLAW_GATEWAY_WS_HOST:-}"
+# Only auto-derive inside a real sandbox (the Dockerfile.base image always
+# has /sandbox); on dev machines and CI runners the loopback default is
+# kept. NEMOCLAW_SANDBOX_ROOT is overridable for tests. `|| true` keeps
+# the assignment safe under `set -o pipefail` when hostname lacks -I.
+if [ -z "$_GATEWAY_WS_HOST" ] && [ -d "${NEMOCLAW_SANDBOX_ROOT:-/sandbox}" ]; then
+  _GATEWAY_WS_HOST="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
+fi
+if [ -z "$_GATEWAY_WS_HOST" ]; then
+  _GATEWAY_WS_HOST="127.0.0.1"
+fi
+export OPENCLAW_GATEWAY_URL="ws://${_GATEWAY_WS_HOST}:${_DASHBOARD_PORT}"
+if [ "$_GATEWAY_WS_HOST" != "127.0.0.1" ]; then
+  # The OpenClaw client refuses plaintext ws:// to non-loopback private
+  # addresses unless this break-glass is set. The sandbox bridge is a
+  # host-local veth pair — frames never leave the machine — and the
+  # alternative (loopback) is unconditionally blocked by the L7 proxy,
+  # which breaks sessions_spawn entirely.
+  export OPENCLAW_ALLOW_INSECURE_PRIVATE_WS=1
+fi
 OPENCLAW="$(command -v openclaw)" # Resolve once, use absolute path everywhere
 _SANDBOX_HOME="/sandbox"          # Home dir for the sandbox user (useradd -d /sandbox in Dockerfile.base)
 _OPENCLAW_STATE_DIR="${_SANDBOX_HOME}/.openclaw"
@@ -1700,7 +1731,11 @@ prepare_gateway_token_for_current_command() {
 
 # Write an auth profile JSON for the NVIDIA API key so the gateway can authenticate.
 write_auth_profile() {
-  if [ -z "${NVIDIA_API_KEY:-}" ]; then
+  if [ -z "${NVIDIA_INFERENCE_API_KEY:-}" ] && [ -n "${NVIDIA_API_KEY:-}" ]; then
+    export NVIDIA_INFERENCE_API_KEY="$NVIDIA_API_KEY"
+  fi
+
+  if [ -z "${NVIDIA_INFERENCE_API_KEY:-}" ]; then
     return
   fi
 
@@ -1723,7 +1758,7 @@ json.dump({
     f'{provider_key}:manual': {
         'type': 'api_key',
         'provider': provider_key,
-        'keyRef': {'source': 'env', 'id': 'NVIDIA_API_KEY'},
+        'keyRef': {'source': 'env', 'id': 'NVIDIA_INFERENCE_API_KEY'},
         'profileId': f'{provider_key}:manual',
     }
 }, open(path, 'w'))
@@ -2217,6 +2252,11 @@ PROXYEOF
     if [ -n "${OPENCLAW_GATEWAY_TOKEN:-}" ]; then
       _escaped_gateway_token="$(printf '%s' "$OPENCLAW_GATEWAY_TOKEN" | sed "s/'/'\\\\''/g")"
       printf "export OPENCLAW_GATEWAY_TOKEN='%s'\n" "$_escaped_gateway_token"
+    fi
+    if [ -n "${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-}" ]; then
+      # Mirrors the gateway-process export above so connect-shell CLI
+      # clients accept the plaintext eth0 ws:// gateway URL too.
+      printf "export OPENCLAW_ALLOW_INSECURE_PRIVATE_WS='1'\n"
     fi
     cat <<'GUARDENVEOF'
 # nemoclaw-configure-guard begin

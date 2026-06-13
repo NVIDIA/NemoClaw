@@ -10,6 +10,7 @@ import {
   printDockerGpuProofFailure,
   shouldApplyDockerGpuPatch,
 } from "./docker-gpu-patch";
+import { isDockerDesktopWslRuntime } from "./docker-gpu-sandbox-create";
 import { executeSandboxCommandForVerification } from "./sandbox-verification-exec";
 
 const {
@@ -39,10 +40,15 @@ type DockerGpuLocalInferenceConfig = {
 
 type DockerGpuLocalInferenceOptions = {
   dockerDriverGateway: boolean;
+  dockerDesktopWsl?: boolean;
   env?: NodeJS.ProcessEnv;
   platform?: NodeJS.Platform;
   log?: (message: string) => void;
 };
+
+function resolveDockerDesktopWsl(options: DockerGpuLocalInferenceOptions): boolean {
+  return options.dockerDesktopWsl ?? isDockerDesktopWslRuntime();
+}
 
 function isLocalInferenceProvider(provider: string | null | undefined): provider is string {
   return Boolean(provider && LOCAL_INFERENCE_PROVIDERS.includes(provider));
@@ -60,6 +66,7 @@ export function shouldUseDockerGpuPatchHostNetwork(
   return (
     shouldApplyDockerGpuPatch(config, {
       dockerDriverGateway: options.dockerDriverGateway,
+      dockerDesktopWsl: resolveDockerDesktopWsl(options),
       env: options.env,
       platform: options.platform,
     }) && getDockerGpuPatchNetworkMode(options.env ?? process.env) === "host"
@@ -263,6 +270,7 @@ export function verifyDockerGpuSandboxLocalInference(
   if (
     !shouldApplyDockerGpuPatch(config, {
       dockerDriverGateway: options.dockerDriverGateway,
+      dockerDesktopWsl: resolveDockerDesktopWsl(options),
       env: options.env,
       platform: options.platform,
     })
@@ -401,8 +409,10 @@ export function verifyGpuSandboxAfterReady(
     throw error;
   }
 
-  // When NEMOCLAW_DOCKER_GPU_PATCH=0, useDockerGpuPatch is false and there is no
-  // GPU-patched sandbox to gate, so skip the local inference reachability gate.
+  // When the resolved create plan disabled the Docker GPU patch (e.g.
+  // NEMOCLAW_DOCKER_GPU_PATCH=0 honoured outside Docker Desktop WSL), there is
+  // no GPU-patched sandbox to gate, so skip the local inference reachability
+  // gate.
   if (!options.useDockerGpuPatch) return;
   const verification = verifyDockerGpuSandboxLocalInference(config, provider, {
     sandboxName: options.sandboxName,
