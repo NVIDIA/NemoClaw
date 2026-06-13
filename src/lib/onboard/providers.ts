@@ -254,6 +254,8 @@ function stageHostedInferenceSourceSecretEnv() {
     HOSTED_INFERENCE_MODEL;
   process.env.NEMOCLAW_MODEL = model;
   process.env.NEMOCLAW_COMPAT_MODEL = (process.env.NEMOCLAW_COMPAT_MODEL || "").trim() || model;
+  process.env.NEMOCLAW_PREFERRED_API =
+    (process.env.NEMOCLAW_PREFERRED_API || "").trim() || "openai-completions";
   process.env[HOSTED_INFERENCE_CREDENTIAL_ENV] = sourceKey;
   return true;
 }

@@ -231,6 +231,7 @@ jobs:
             printf 'NEMOCLAW_ENDPOINT_URL=https://inference-api.nvidia.com/v1\n'
             printf 'NEMOCLAW_MODEL=nvidia/nvidia/nemotron-3-super-v3\n'
             printf 'NEMOCLAW_COMPAT_MODEL=nvidia/nvidia/nemotron-3-super-v3\n'
+            printf 'NEMOCLAW_PREFERRED_API=openai-completions\n'
             printf 'COMPATIBLE_API_KEY=%s\n' "${NVIDIA_INFERENCE_API_KEY}"
           } >> "$GITHUB_ENV"
 

@@ -59,6 +59,7 @@ function withProviderEnv(next: Record<string, string | undefined>, testBody: () 
     "NEMOCLAW_ENDPOINT_URL",
     "NEMOCLAW_MODEL",
     "NEMOCLAW_COMPAT_MODEL",
+    "NEMOCLAW_PREFERRED_API",
     "NEMOCLAW_CLOUD_EXPERIMENTAL_MODEL",
     "NEMOCLAW_E2E_USE_HOSTED_INFERENCE",
     "COMPATIBLE_API_KEY",
@@ -303,7 +304,22 @@ describe("onboard provider helpers", () => {
         expect(process.env.NEMOCLAW_ENDPOINT_URL).toBe(HOSTED_INFERENCE_ENDPOINT_URL);
         expect(process.env.NEMOCLAW_MODEL).toBe(HOSTED_INFERENCE_MODEL);
         expect(process.env.NEMOCLAW_COMPAT_MODEL).toBe(HOSTED_INFERENCE_MODEL);
+        expect(process.env.NEMOCLAW_PREFERRED_API).toBe("openai-completions");
         expect(process.env.COMPATIBLE_API_KEY).toBe("repo-hosted-key");
+      },
+    );
+  });
+
+  it("does not override an explicit hosted inference API preference", () => {
+    withProviderEnv(
+      {
+        NVIDIA_INFERENCE_API_KEY: "repo-hosted-key",
+        NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1",
+        NEMOCLAW_PREFERRED_API: "openai-responses",
+      },
+      () => {
+        expect(stageHostedInferenceSourceSecretEnv()).toBe(true);
+        expect(process.env.NEMOCLAW_PREFERRED_API).toBe("openai-responses");
       },
     );
   });
