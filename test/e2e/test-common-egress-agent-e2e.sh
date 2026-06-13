@@ -11,7 +11,7 @@
 #       and the Hermes agent fetches Wikidata through its API-server agent path.
 #
 # Required env:
-#   NVIDIA_API_KEY                         real NVIDIA Endpoints key for inference
+#   NVIDIA_INFERENCE_API_KEY                         real NVIDIA Endpoints key for inference
 #   NEMOCLAW_NON_INTERACTIVE=1             required
 #   NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 required
 #
@@ -402,11 +402,11 @@ if ! docker info >/dev/null 2>&1; then
 fi
 pass "Docker is running"
 
-if [ -z "${NVIDIA_API_KEY:-}" ] || [[ "${NVIDIA_API_KEY}" != nvapi-* ]]; then
-  fail "NVIDIA_API_KEY not set or invalid"
+if [ -z "${NVIDIA_INFERENCE_API_KEY:-}" ] || [[ "${NVIDIA_INFERENCE_API_KEY}" != nvapi-* ]]; then
+  fail "NVIDIA_INFERENCE_API_KEY not set or invalid"
   summary
 fi
-pass "NVIDIA_API_KEY is set"
+pass "NVIDIA_INFERENCE_API_KEY is set"
 
 if [ "${NEMOCLAW_NON_INTERACTIVE:-}" != "1" ]; then
   fail "NEMOCLAW_NON_INTERACTIVE=1 is required"

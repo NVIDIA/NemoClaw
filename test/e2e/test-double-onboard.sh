@@ -10,7 +10,7 @@
 #
 # This script intentionally uses a local fake OpenAI-compatible endpoint so it
 # matches the current onboarding flow. Older versions of this test relied on a
-# missing/invalid NVIDIA_API_KEY causing a late failure after sandbox creation;
+# missing/invalid NVIDIA_INFERENCE_API_KEY causing a late failure after sandbox creation;
 # that no longer reflects current non-interactive onboarding behavior.
 
 # ShellCheck cannot see EXIT trap invocations of cleanup helpers in this E2E script.

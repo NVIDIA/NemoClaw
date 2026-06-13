@@ -15,7 +15,7 @@ import { testTimeoutOptions } from "../../helpers/timeouts";
 // @openclaw/whatsapp versions bundled by Dockerfile.base and measures the real
 // upstream terminal QR renderer with and without the NemoClaw compact preload.
 // It intentionally does not require a WhatsApp account, phone scan, sandbox,
-// Docker, or NVIDIA_API_KEY: the legacy contract is the renderer boundary.
+// Docker, or NVIDIA_INFERENCE_API_KEY: the legacy contract is the renderer boundary.
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const DOCKERFILE_BASE = path.join(REPO_ROOT, "Dockerfile.base");

@@ -16,7 +16,7 @@
 #
 # Prerequisites:
 #   - Docker running
-#   - NVIDIA_API_KEY set (or fake OpenAI endpoint)
+#   - NVIDIA_INFERENCE_API_KEY set (or fake OpenAI endpoint)
 #   - TELEGRAM_BOT_TOKEN_A and TELEGRAM_BOT_TOKEN_B set (can be fake)
 #   - DISCORD_BOT_TOKEN_A and DISCORD_BOT_TOKEN_B set (can be fake)
 #   - SLACK_BOT_TOKEN_A and SLACK_BOT_TOKEN_B set (can be fake; xoxb- prefix)
@@ -24,7 +24,7 @@
 #
 # Usage:
 #   NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
-#     NVIDIA_API_KEY=nvapi-... \
+#     NVIDIA_INFERENCE_API_KEY=nvapi-... \
 #     TELEGRAM_BOT_TOKEN_A=fake-a TELEGRAM_BOT_TOKEN_B=fake-b \
 #     DISCORD_BOT_TOKEN_A=fake-c DISCORD_BOT_TOKEN_B=fake-d \
 #     SLACK_BOT_TOKEN_A=xoxb-fake-a SLACK_BOT_TOKEN_B=xoxb-fake-b \

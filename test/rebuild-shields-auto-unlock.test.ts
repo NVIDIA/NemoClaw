@@ -98,7 +98,7 @@ function createFixture(opts: { shieldsLocked: boolean }) {
 
   fs.writeFileSync(
     path.join(nemoclawDir, "credentials.json"),
-    JSON.stringify({ NVIDIA_API_KEY: "nvapi-test" }),
+    JSON.stringify({ NVIDIA_INFERENCE_API_KEY: "nvapi-test" }),
     { mode: 0o600 },
   );
 
@@ -120,7 +120,7 @@ function createFixture(opts: { shieldsLocked: boolean }) {
       provider: "nvidia-prod",
       model: "meta/llama-3.3-70b-instruct",
       endpointUrl: null,
-      credentialEnv: "NVIDIA_API_KEY",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
       preferredInferenceApi: null,
       nimContainer: null,
       webSearchConfig: null,

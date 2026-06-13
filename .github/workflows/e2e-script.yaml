@@ -43,7 +43,12 @@ on:
         type: string
         default: ""
       nvidia_api_key:
-        description: Pass the NVIDIA_API_KEY secret to the script.
+        description: Pass the NVIDIA_INFERENCE_API_KEY secret to the script.
+        required: false
+        type: boolean
+        default: false
+      nvidia_secret_as_compatible_api_key:
+        description: Expose NVIDIA_INFERENCE_API_KEY as COMPATIBLE_API_KEY for CI-only OpenAI-compatible inference.
         required: false
         type: boolean
         default: false
@@ -63,7 +68,7 @@ on:
         type: boolean
         default: false
     secrets:
-      NVIDIA_API_KEY:
+      NVIDIA_INFERENCE_API_KEY:
         required: false
       BRAVE_API_KEY:
         required: false
@@ -196,6 +201,28 @@ jobs:
             echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
           fi
 
+      - name: Export CI compatible inference environment
+        if: ${{ inputs.nvidia_secret_as_compatible_api_key }}
+        env:
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -z "${NVIDIA_INFERENCE_API_KEY:-}" ]; then
+            echo "::error::NVIDIA_INFERENCE_API_KEY secret is required for CI compatible inference." >&2
+            exit 1
+          fi
+
+          {
+            printf 'NEMOCLAW_E2E_USE_NVIDIA_SECRET_AS_COMPATIBLE=1\n'
+            printf 'NEMOCLAW_PROVIDER=custom\n'
+            printf 'NEMOCLAW_ENDPOINT_URL=https://inference-api.nvidia.com/v1\n'
+            printf 'NEMOCLAW_MODEL=nvidia/nvidia/nemotron-3-super-v3\n'
+            printf 'NEMOCLAW_COMPAT_MODEL=nvidia/nvidia/nemotron-3-super-v3\n'
+            printf 'COMPATIBLE_API_KEY=%s\n' "${NVIDIA_INFERENCE_API_KEY}"
+          } >> "$GITHUB_ENV"
+
       - name: Run E2E script
         uses: ./workflow-actions/.github/actions/run-e2e-script
         with:
@@ -206,7 +233,7 @@ jobs:
         env:
           BRAVE_API_KEY: ${{ inputs.brave_api_key && secrets.BRAVE_API_KEY || '' }}
           GITHUB_TOKEN: ${{ inputs.github_token && github.token || '' }}
-          NVIDIA_API_KEY: ${{ inputs.nvidia_api_key && secrets.NVIDIA_API_KEY || '' }}
+          NVIDIA_INFERENCE_API_KEY: ${{ inputs.nvidia_api_key && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
           TELEGRAM_BOT_TOKEN_REAL: ${{ inputs.messaging_live_secrets && secrets.TELEGRAM_BOT_TOKEN_REAL || '' }}
           TELEGRAM_CHAT_ID_E2E: ${{ inputs.messaging_live_secrets && secrets.TELEGRAM_CHAT_ID_E2E || '' }}
           DISCORD_BOT_TOKEN_REAL: ${{ inputs.messaging_live_secrets && secrets.DISCORD_BOT_TOKEN_REAL || '' }}

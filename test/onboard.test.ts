@@ -741,13 +741,13 @@ runner.runCapture = (command) => {
 };
 registry.updateSandbox = () => true;
 
-process.env.NVIDIA_API_KEY = "nvapi-secret-value";
+process.env.NVIDIA_INFERENCE_API_KEY = "nvapi-secret-value";
 
 const { setupInference } = require(${onboardPath});
 
 (async () => {
   await setupInference("test-box", "nvidia/nemotron-3-super-120b-a12b", "nvidia-nim");
-  console.log(JSON.stringify({ commands, nvidiaApiKey: process.env.NVIDIA_API_KEY || null }));
+  console.log(JSON.stringify({ commands, nvidiaApiKey: process.env.NVIDIA_INFERENCE_API_KEY || null }));
 })().catch((error) => {
   console.error(error);
   process.exit(1);
@@ -773,7 +773,7 @@ const { setupInference } = require(${onboardPath});
     assert.equal(commands.length, 4);
     assert.match(commands[0].command, /gateway select nemoclaw/);
     assert.match(commands[1].command, /provider get/);
-    assert.match(commands[2].command, /--credential NVIDIA_API_KEY/);
+    assert.match(commands[2].command, /--credential NVIDIA_INFERENCE_API_KEY/);
     assert.doesNotMatch(commands[2].command, /nvapi-secret-value/);
     assert.match(commands[2].command, /provider update/);
     assert.match(commands[3].command, /inference set/);
@@ -2550,7 +2550,7 @@ const { createSandbox } = require(${onboardPath});
     assert.match(createCommand.command, /nemoclaw-start/);
     assert.doesNotMatch(createCommand.command, /--upload/);
     assert.doesNotMatch(createCommand.command, /OPENCLAW_CONFIG_PATH/);
-    assert.doesNotMatch(createCommand.command, /NVIDIA_API_KEY=/);
+    assert.doesNotMatch(createCommand.command, /NVIDIA_INFERENCE_API_KEY=/);
     assert.doesNotMatch(createCommand.command, /DISCORD_BOT_TOKEN=/);
     assert.doesNotMatch(createCommand.command, /SLACK_BOT_TOKEN=/);
     assert.ok(
