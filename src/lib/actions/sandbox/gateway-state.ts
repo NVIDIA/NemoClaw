@@ -348,6 +348,25 @@ export function printGatewayLifecycleHint(
 ): void {
   const cleanOutput = stripAnsi(output);
   const targetGatewayName = getSandboxTargetGatewayName(sandboxName);
+  // The gateway-side gRPC reply `sandbox has no spec` is returned when the
+  // active OpenShell gateway does not know about the sandbox — which on a
+  // multi-instance host typically means a sibling NemoClaw gateway (the one
+  // the sandbox was actually onboarded against) is the owner, and the
+  // current selection has to be switched back before the sandbox is
+  // reachable. Surface a concrete switch-gateway hint rather than letting
+  // the raw gRPC string be the last word.
+  if (/sandbox has no spec/i.test(cleanOutput)) {
+    writer(
+      `  Sandbox '${sandboxName}' is registered against the ${CLI_DISPLAY_NAME} gateway '${targetGatewayName}', but the currently active OpenShell gateway does not know about it.`,
+    );
+    writer(
+      "  On a multi-instance host, this usually means another NemoClaw gateway is the owner of this sandbox.",
+    );
+    writer(
+      `  Select the owning gateway and retry: \`openshell gateway select ${targetGatewayName}\`, then \`${CLI_NAME} ${sandboxName} connect\`.`,
+    );
+    return;
+  }
   if (/No gateway configured/i.test(cleanOutput)) {
     writer(
       `  The selected ${CLI_DISPLAY_NAME} gateway is no longer configured or its metadata/runtime has been lost.`,
