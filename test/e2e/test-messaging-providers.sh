@@ -1828,11 +1828,11 @@ print(account.get('token', ''))
     skip "M9: No Discord token to check"
   fi
 
-  # M9b: Discord Gateway WebSocket routing uses OpenClaw's managed proxy.
-  # Newer OpenClaw starts its own process-wide managed proxy from the top-level
-  # proxy config, so NemoClaw should not bake a Discord-only account.proxy or
-  # launch its temporary loopback helper. The fake Gateway proof in M13b-M13g
-  # exercises the same OpenShell relay path using the generated proxy config.
+  # M9b: Discord Gateway WebSocket routing uses the per-account proxy.
+  # OpenClaw's Discord gateway client only tunnels when the Discord account
+  # proxy is set, while the top-level managed proxy remains configured for the
+  # rest of the channel stack. The fake Gateway proof in M13b-M13g exercises
+  # the same OpenShell relay path using the generated managed proxy config.
   dc_proxy=$(echo "$channel_json" | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
@@ -1849,10 +1849,10 @@ if proxy.get('enabled') is True:
     print(proxy.get('proxyUrl') or '')
 \"" 2>/dev/null || true)
   expected_managed_proxy="http://${NEMOCLAW_PROXY_HOST:-10.200.0.1}:${NEMOCLAW_PROXY_PORT:-3128}"
-  if [ -n "$dc_token" ] && [ -z "$dc_proxy" ] && [ "$managed_proxy_url" = "$expected_managed_proxy" ]; then
-    pass "M9b: Discord relies on OpenClaw managed proxy config, with no per-account loopback proxy"
+  if [ -n "$dc_token" ] && [ "$dc_proxy" = "$expected_managed_proxy" ] && [ "$managed_proxy_url" = "$expected_managed_proxy" ]; then
+    pass "M9b: Discord uses per-account proxy while OpenClaw managed proxy config remains set"
   elif [ -n "$dc_token" ]; then
-    fail "M9b: Discord proxy wiring wrong; expected account.proxy='' and proxy.proxyUrl='${expected_managed_proxy}' (account.proxy='${dc_proxy}', proxy.proxyUrl='${managed_proxy_url}')"
+    fail "M9b: Discord proxy wiring wrong; expected account.proxy='${expected_managed_proxy}' and proxy.proxyUrl='${expected_managed_proxy}' (account.proxy='${dc_proxy}', proxy.proxyUrl='${managed_proxy_url}')"
   else
     skip "M9b: No Discord channel config to check"
   fi
