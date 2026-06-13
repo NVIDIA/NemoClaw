@@ -111,7 +111,33 @@ if ! nemoclaw "$SANDBOX_NAME" status >"$status_log" 2>&1; then
   fail "nemoclaw ${SANDBOX_NAME} status failed before firewall block"
 fi
 if ! grep -Eiq "inference.*healthy|healthy.*inference" "$status_log"; then
-  fail "pre-block status did not report healthy inference"
+  if grep -Eiq "Inference:[[:space:]]*not probed" "$status_log"; then
+    info "status skipped inference reachability; probing inference.local directly"
+  else
+    fail "pre-block status did not report healthy or not-probed inference"
+  fi
+fi
+
+route_log="${CAPTURE_DIR}/openshell-inference-before-block.log"
+if ! route_output=$(openshell inference get 2>&1); then
+  printf '%s\n' "$route_output" >"$route_log"
+  fail "openshell inference get failed before firewall block"
+fi
+printf '%s\n' "$route_output" >"$route_log"
+expected_provider="$(nemoclaw_e2e_expected_route_provider)"
+expected_model="$(nemoclaw_e2e_hosted_inference_model)"
+if ! nemoclaw_e2e_inference_output_matches "$route_output" "$expected_provider" "$expected_model"; then
+  route_plain="$(printf '%s' "$route_output" | nemoclaw_e2e_strip_ansi)"
+  fail "pre-block OpenShell route was not ${expected_provider} / ${expected_model}: ${route_plain:0:240}"
+fi
+
+preblock_probe_log="${CAPTURE_DIR}/inference-local-before-block.log"
+preblock_payload="$(printf '{"model":"%s","messages":[{"role":"user","content":"Reply with OK."}],"max_tokens":8}' "$expected_model")"
+preblock_payload_arg="$(printf '%q' "$preblock_payload")"
+if ! timeout 90 openshell sandbox exec --name "$SANDBOX_NAME" -- sh -lc \
+  "curl -sf --max-time 60 https://inference.local/v1/chat/completions -H 'Content-Type: application/json' -d $preblock_payload_arg >/dev/null" \
+  >"$preblock_probe_log" 2>&1; then
+  fail "inference.local was not reachable from inside the sandbox before firewall block"
 fi
 
 connect_probe_log="${CAPTURE_DIR}/nemoclaw-connect-probe-before-block.log"

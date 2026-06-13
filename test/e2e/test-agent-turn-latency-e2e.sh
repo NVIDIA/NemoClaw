@@ -93,7 +93,7 @@ PY
 }
 
 strip_ansi() {
-  python3 -c 'import re, sys; sys.stdout.write(re.sub(r"\x1b\[[0-9;]*m", "", sys.stdin.read()))'
+  nemoclaw_e2e_strip_ansi
 }
 
 parse_chat_content() {
@@ -138,8 +138,7 @@ assert_route() {
   fi
   plain_output=$(printf '%s' "$output" | strip_ansi)
 
-  if grep -Fq "Provider: ${EXPECTED_ROUTE_PROVIDER}" <<<"$plain_output" \
-    && grep -Fq "Model: ${TURN_MODEL}" <<<"$plain_output"; then
+  if nemoclaw_e2e_inference_output_matches "$plain_output" "$EXPECTED_ROUTE_PROVIDER" "$TURN_MODEL"; then
     pass "${label}: OpenShell route is ${EXPECTED_ROUTE_PROVIDER} / ${TURN_MODEL}"
   else
     fail "${label}: route is not ${EXPECTED_ROUTE_PROVIDER} / ${TURN_MODEL}: ${plain_output:0:400}"
@@ -553,19 +552,14 @@ else
   exit 1
 fi
 
-TURN_MODEL="${NEMOCLAW_TURN_LATENCY_MODEL:-${NEMOCLAW_MODEL:-nvidia/nemotron-3-ultra-550b-a55b}}"
-if nemoclaw_e2e_using_compatible_inference; then
-  TURN_PROVIDER_KEY="${NEMOCLAW_TURN_LATENCY_PROVIDER:-custom}"
-  EXPECTED_ROUTE_PROVIDER="${NEMOCLAW_TURN_LATENCY_ROUTE_PROVIDER:-$(nemoclaw_e2e_expected_route_provider)}"
-else
-  TURN_PROVIDER_KEY="${NEMOCLAW_TURN_LATENCY_PROVIDER:-build}"
-  EXPECTED_ROUTE_PROVIDER="${NEMOCLAW_TURN_LATENCY_ROUTE_PROVIDER:-nvidia-prod}"
-fi
 OPENCLAW_SANDBOX_NAME="${NEMOCLAW_OPENCLAW_TURN_LATENCY_SANDBOX_NAME:-e2e-openclaw-turn-latency}"
 HERMES_SANDBOX_NAME="${NEMOCLAW_HERMES_TURN_LATENCY_SANDBOX_NAME:-e2e-hermes-turn-latency}"
 OPENCLAW_INSTALL_LOG="/tmp/nemoclaw-e2e-openclaw-turn-latency-install.log"
 HERMES_INSTALL_LOG="/tmp/nemoclaw-e2e-hermes-turn-latency-install.log"
 RESULTS_JSON="/tmp/nemoclaw-e2e-agent-turn-latency.json"
+TURN_MODEL=""
+TURN_PROVIDER_KEY=""
+EXPECTED_ROUTE_PROVIDER=""
 
 MAX_TURN_SECONDS="${NEMOCLAW_TURN_LATENCY_MAX_SECONDS:-300}"
 is_positive_int "$MAX_TURN_SECONDS" || MAX_TURN_SECONDS=300
@@ -586,6 +580,16 @@ nemoclaw_e2e_configure_compatible_inference || {
   fail "Hosted CI inference could not be configured"
   finish
 }
+
+if nemoclaw_e2e_using_compatible_inference; then
+  TURN_MODEL="${NEMOCLAW_TURN_LATENCY_MODEL:-$(nemoclaw_e2e_hosted_inference_model)}"
+  TURN_PROVIDER_KEY="${NEMOCLAW_TURN_LATENCY_PROVIDER:-custom}"
+  EXPECTED_ROUTE_PROVIDER="${NEMOCLAW_TURN_LATENCY_ROUTE_PROVIDER:-$(nemoclaw_e2e_expected_route_provider)}"
+else
+  TURN_MODEL="${NEMOCLAW_TURN_LATENCY_MODEL:-${NEMOCLAW_MODEL:-nvidia/nemotron-3-ultra-550b-a55b}}"
+  TURN_PROVIDER_KEY="${NEMOCLAW_TURN_LATENCY_PROVIDER:-build}"
+  EXPECTED_ROUTE_PROVIDER="${NEMOCLAW_TURN_LATENCY_ROUTE_PROVIDER:-nvidia-prod}"
+fi
 
 section "Prerequisites"
 if docker info >/dev/null 2>&1; then

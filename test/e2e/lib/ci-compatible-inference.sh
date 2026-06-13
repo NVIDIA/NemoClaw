@@ -60,6 +60,25 @@ nemoclaw_e2e_expected_route_provider() {
   fi
 }
 
+nemoclaw_e2e_strip_ansi() {
+  if command -v perl >/dev/null 2>&1; then
+    perl -pe 's/\x1b\][^\a]*(?:\a|\x1b\\)//g; s/\x1b\[[0-9;?]*[ -\/]*[@-~]//g'
+  else
+    sed -E $'s/\x1B\\[[0-9;?]*[ -\\/]*[@-~]//g'
+  fi
+}
+
+nemoclaw_e2e_inference_output_matches() {
+  local output="$1"
+  local provider="$2"
+  local model="${3:-}"
+  local plain
+
+  plain="$(printf '%s' "$output" | nemoclaw_e2e_strip_ansi)"
+  grep -Eqi "Provider:[[:space:]]*${provider}" <<<"$plain" || return 1
+  [ -z "$model" ] || grep -Fq "$model" <<<"$plain"
+}
+
 nemoclaw_e2e_note_pass() {
   if declare -F pass >/dev/null 2>&1; then
     pass "$@"

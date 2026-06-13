@@ -274,7 +274,7 @@ jobs:
         /tmp/nemoclaw-e2e-openclaw-turn-latency-install.log
         /tmp/nemoclaw-e2e-hermes-turn-latency-install.log
         /tmp/nemoclaw-e2e-agent-turn-latency.json
-      env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_TURN_LATENCY_MODEL":"nvidia/nemotron-3-ultra-550b-a55b"}'
+      env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_RECREATE_SANDBOX":"1"}'
       nvidia_api_key: true
     secrets: *nightly-e2e-default-secrets
   skill-agent-e2e:

@@ -361,11 +361,15 @@ fi
 # 3d: Inference must be configured by onboard
 if inf_check=$(openshell inference get 2>&1); then
   expected_provider="$(nemoclaw_e2e_expected_route_provider)"
-  if grep -Fq "Provider: ${expected_provider}" <<<"$inf_check" \
-    && { ! nemoclaw_e2e_using_compatible_inference || grep -Fq "$HOSTED_INFERENCE_MODEL" <<<"$inf_check"; }; then
+  expected_model=""
+  if nemoclaw_e2e_using_compatible_inference; then
+    expected_model="$HOSTED_INFERENCE_MODEL"
+  fi
+  if nemoclaw_e2e_inference_output_matches "$inf_check" "$expected_provider" "$expected_model"; then
     pass "Inference configured via onboard (${expected_provider})"
   else
-    fail "Inference not configured - onboard did not set up ${expected_provider}: ${inf_check:0:200}"
+    inf_check_plain="$(printf '%s' "$inf_check" | nemoclaw_e2e_strip_ansi)"
+    fail "Inference not configured - onboard did not set up ${expected_provider}: ${inf_check_plain:0:200}"
   fi
 else
   fail "openshell inference get failed: ${inf_check:0:200}"
