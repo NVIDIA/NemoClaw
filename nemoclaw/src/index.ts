@@ -282,10 +282,12 @@ function registeredProviderForConfig(
   activeModel: string,
   providerCredentialEnv: string,
 ): ProviderPlugin {
-  const authLabel =
-    providerCredentialEnv === "NVIDIA_INFERENCE_API_KEY"
-      ? `NVIDIA API Key (${providerCredentialEnv})`
-      : `OpenAI API Key (${providerCredentialEnv})`;
+  const isNvidiaCredential =
+    providerCredentialEnv === "NVIDIA_INFERENCE_API_KEY" ||
+    providerCredentialEnv === "NVIDIA_API_KEY";
+  const authLabel = isNvidiaCredential
+    ? `NVIDIA API Key (${providerCredentialEnv})`
+    : `OpenAI API Key (${providerCredentialEnv})`;
 
   return {
     id: "inference",

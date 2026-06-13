@@ -424,6 +424,7 @@ async function runScenario(scenario) {
   process.env.NEMOCLAW_PROVIDER = "";
   process.env.NEMOCLAW_MODEL = "";
   process.env.NVIDIA_INFERENCE_API_KEY = "";
+  process.env.NVIDIA_API_KEY = "";
   delete require.cache[require.resolve(${onboardPath})];
   const { setupNim } = require(${onboardPath});
   const originalLog = console.log;

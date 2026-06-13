@@ -35,11 +35,11 @@ while IFS= read -r line; do
   esac
 done <<<"$ps_lines"
 
-# argv-style leak: NAME=<vendor key prefix>. The CI-compatible endpoint secret
-# does not use the public NVIDIA key prefix, so keep this marker optional.
+# argv-style leak: NAME=<first six key characters>. The caller can override or
+# disable this marker with NEMOCLAW_E2E_CLOUD_API_KEY_ARGV_PREFIX.
 _key_argv_prefix_marker="${NEMOCLAW_E2E_CLOUD_API_KEY_ARGV_PREFIX:-}"
-if [ -z "${NEMOCLAW_E2E_CLOUD_API_KEY_ARGV_PREFIX+x}" ] && [ "$_api_key_env_name" = "NVIDIA_INFERENCE_API_KEY" ]; then
-  _key_argv_prefix_marker=$'\x6e\x76\x61\x70\x69\x2d'
+if [ -z "${NEMOCLAW_E2E_CLOUD_API_KEY_ARGV_PREFIX+x}" ]; then
+  _key_argv_prefix_marker="$(printf '%.6s' "$_api_key_value")"
 fi
 if [ -n "$_key_argv_prefix_marker" ]; then
   _key_argv_needle="${_api_key_env_name}=${_key_argv_prefix_marker}"

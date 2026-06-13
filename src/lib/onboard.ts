@@ -3646,11 +3646,11 @@ async function setupNim(
         hydrateCredentialEnv(credentialEnv);
 
         if (selected.key === "build") {
-          // Let NEMOCLAW_PROVIDER_KEY fill the canonical NVIDIA key without
-          // overriding an explicit env or migrated legacy credential.
+          // Let NEMOCLAW_PROVIDER_KEY fill the NVIDIA key without overriding explicit env.
           const _nvProviderKey = (process.env.NEMOCLAW_PROVIDER_KEY || "").trim();
-          const existingNvidiaKey =
-            getCredential("NVIDIA_INFERENCE_API_KEY") || getCredential("NVIDIA_API_KEY") || "";
+          const existingNvidiaKey = ["NVIDIA_INFERENCE_API_KEY", "NVIDIA_API_KEY"]
+            .map((envName) => normalizeCredentialValue(process.env[envName] ?? ""))
+            .find(Boolean);
           if (_nvProviderKey && !existingNvidiaKey) {
             process.env.NVIDIA_INFERENCE_API_KEY = _nvProviderKey;
           }
