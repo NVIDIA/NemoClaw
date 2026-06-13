@@ -65,6 +65,7 @@ Navigate to the following topics to learn more about NemoClaw and how to install
 - [Ecosystem](ecosystem.md) to understand how your agent, OpenShell, and NemoClaw relate in the wider stack, and when to use NemoClaw versus OpenShell.
 - Quickstart with OpenClaw (use the `nemoclaw-user-get-started` skill) to install NemoClaw and run your first OpenClaw sandbox.
 - Agent Skills (use the `nemoclaw-user-agent-skills` skill) to load NemoClaw guidance into an AI coding assistant.
+- [NemoClaw Community](https://github.com/NVIDIA/nemoclaw-community) to explore community-driven blueprint examples, showcases, and integrations.
 - Inference Options (use the `nemoclaw-user-configure-inference` skill) to check the inference providers that NemoClaw supports and how inference routing works.
 
 </AgentOnly>
@@ -74,6 +75,7 @@ Navigate to the following topics to learn more about NemoClaw and how to install
 - [Ecosystem](ecosystem.md) to understand how Hermes, OpenShell, and NemoClaw relate in the wider stack, and when to use NemoClaw versus OpenShell.
 - Quickstart with Hermes (use the `nemoclaw-user-get-started` skill) to install NemoClaw and run your first Hermes sandbox with `nemoclaw`.
 - Agent Skills (use the `nemoclaw-user-agent-skills` skill) to load NemoClaw guidance into an AI coding assistant.
+- [NemoClaw Community](https://github.com/NVIDIA/nemoclaw-community) to explore community-driven blueprint examples, showcases, and integrations.
 - Inference Options (use the `nemoclaw-user-configure-inference` skill) to check the inference providers that NemoClaw supports and how inference routing works.
 
 </AgentOnly>

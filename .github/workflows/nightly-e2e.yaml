@@ -1004,8 +1004,7 @@ jobs:
       timeout_minutes: 30
       artifact_name: "issue-2478-crash-loop-recovery-install-log"
       artifact_path: "/tmp/nemoclaw-e2e-install.log"
-      env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_SANDBOX_NAME":"e2e-2478"}'
-      nvidia_api_key: true
+      env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_E2E_USE_COMPAT_MOCK":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_SANDBOX_NAME":"e2e-2478"}'
       github_token: true
     secrets: *nightly-e2e-default-secrets
   hermes-e2e:

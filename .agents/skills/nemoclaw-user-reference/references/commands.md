@@ -224,6 +224,8 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_NON_INTERACTIVE=1 NEMOC
 
 If the installer cannot prompt for the notice in a terminal and no explicit acceptance is set, it exits before installing Node.js or the NemoClaw CLI.
 
+<AgentOnly variant="openclaw">
+
 To enable Brave Search in non-interactive mode, set:
 
 ```bash
@@ -233,7 +235,17 @@ BRAVE_API_KEY=... \
 
 `BRAVE_API_KEY` enables Brave Search in non-interactive mode and also enables `web_fetch`.
 If Brave Search key validation fails in non-interactive mode, onboarding prints a warning, skips web search setup, and continues with the rest of the sandbox setup.
-After fixing the key, re-enable web search with `nemoclaw config web-search`.
+After fixing the key, rerun onboarding with `BRAVE_API_KEY` set so NemoClaw can validate the key, register the Brave Search provider, and apply the `brave` policy preset.
+If the sandbox already exists without web search, accept the recreate prompt or pass `--recreate-sandbox`.
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+
+Hermes does not use NemoClaw's OpenClaw Brave Search setup.
+If you authenticate Hermes through Nous Portal OAuth, the wizard can prompt for managed Nous tool gateways such as web search.
+API-key mode is inference-only and does not enable managed tool gateways.
+
+</AgentOnly>
 
 The wizard prompts for a sandbox name.
 Names must be 1 to 63 characters, lowercase, start with a letter, contain only letters, numbers, and internal hyphens, and end with a letter or number.
@@ -495,6 +507,44 @@ The exit code is the remote command's exit code.
 | `--workdir <dir>` | Working directory inside the sandbox |
 | `--tty` / `--no-tty` | Allocate a pseudo-terminal; defaults to auto-detection (on when stdin and stdout are terminals) |
 | `--timeout <seconds>` | Timeout in seconds (`0` means no timeout) |
+
+### Advanced Sandbox Maintenance Commands
+
+The following commands are available for targeted host-side maintenance, but they are not part of the top-level public command list.
+
+#### `nemoclaw <name> config get`
+
+Read the sanitized agent configuration from a sandbox.
+The output removes credential-bearing sections such as the OpenClaw gateway token before printing.
+Use `--key` to read one dotpath and `--format` to choose JSON or YAML output.
+
+```bash
+nemoclaw my-assistant config get
+nemoclaw my-assistant config get --key model --format yaml
+```
+
+| Flag | Description |
+|------|-------------|
+| `--key <dotpath>` | Print one value from the sanitized config |
+| `--format json\|yaml` | Output format. Defaults to JSON |
+
+#### `nemoclaw <name> shields`
+
+Manage the sandbox config lockdown posture from the host.
+Use `shields status` to inspect the current state, `shields up` to lock the sandbox config and restore the captured restrictive policy, and `shields down` to temporarily unlock the config for maintenance.
+For the full mutability matrix, see Runtime Controls (use the `nemoclaw-user-manage-sandboxes` skill).
+
+```bash
+nemoclaw my-assistant shields status
+nemoclaw my-assistant shields up
+nemoclaw my-assistant shields down --timeout 5m --reason "maintenance"
+```
+
+| Subcommand | Description |
+|------|-------------|
+| `shields status` | Show whether lockdown is configured, active, temporarily unlocked, or in error |
+| `shields up` | Lock the sandbox config and restore the saved restrictive policy |
+| `shields down` | Temporarily unlock the sandbox config. Supports `--timeout`, `--reason`, and `--policy` |
 
 ### `nemoclaw <name> recover`
 
@@ -1222,6 +1272,55 @@ nemoclaw my-assistant sessions delete agent:main:slack:c-9 --json
 | `--json` | Print the delete result as JSON. |
 | `--verbose` | Print the gateway entry payload after a successful delete. |
 
+### `nemoclaw <name> sessions export [keys...]`
+
+Export the OpenClaw session JSONL from a running sandbox to the host, replacing the two-hop `docker exec kubectl cp` plus `docker cp` workaround.
+
+The command always enumerates the session store through `openclaw sessions list --agent <id> --json` and copies only the matching `<sessionId>.jsonl` (plus optional `<sessionId>.trajectory.jsonl`) files, so the export never picks up `sessions.json`, stale `.jsonl.lock` files, or other store bookkeeping.
+By default it writes a browsable directory of session files (`dir` format); pass `--format tar` for a single `.tgz` bundle suited to sharing or upload.
+With no positional keys, the command exports every session for the agent.
+Pass one or more keys (alias or canonical `agent:<id>:<rest>`) to filter.
+
+```bash
+nemoclaw my-assistant sessions export
+nemoclaw my-assistant sessions export main --agent main
+nemoclaw my-assistant sessions export agent:work:telegram:t-1 --include-trajectory
+nemoclaw my-assistant sessions export --format tar --out ./bundles/alpha.tgz --json
+```
+
+| Flag | Description |
+|------|-------------|
+| `--agent <id>` | Agent id when `<keys>` are aliases rather than the canonical `agent:<id>:<rest>` form. |
+| `--format <dir\|tar>` | `dir` (default) writes a directory of session files; `tar` writes a single `.tgz` bundle for sharing/upload. |
+| `--out <path>` | Host destination. Defaults to `./sessions-<sandbox>/` for `dir`, or `./sessions-<sandbox>-<agent>.tgz` for `tar`. |
+| `--include-trajectory` | Include the (large) `*.trajectory.jsonl` files in the export. Excluded by default. |
+| `--json` | Print the export manifest as JSON instead of a status line. |
+
+Mismatched `--agent` plus canonical-key combinations are refused before any download runs.
+Session keys that begin with `-` are rejected at the command boundary instead of being silently dropped.
+Session JSONL can contain pasted secrets (API keys, tokens), so exported files are written owner-only (`0600`); for `tar` format the in-sandbox staging tarball is additionally created with `umask 077` and removed after the host download completes.
+
+### `nemoclaw <name> download <sandbox-path> [host-dest]`
+
+Host-side wrapper around `openshell sandbox download` that adds a live-sandbox readiness check.
+The source path inside the sandbox and the host destination are forwarded to OpenShell verbatim, so the file-system semantics (single-file vs directory copy, trailing-slash handling, overwrite behaviour) follow the OpenShell transport.
+With no `host-dest` the destination defaults to the current directory.
+
+```bash
+nemoclaw my-assistant download /sandbox/.openclaw/workspace/SOUL.md ./
+nemoclaw my-assistant download /sandbox/.openclaw/agents/main/sessions/ ./sessions/
+```
+
+### `nemoclaw <name> upload <host-path> [sandbox-dest]`
+
+Host-side wrapper around `openshell sandbox upload`, symmetric to the download wrapper.
+With no `sandbox-dest` the destination defaults to `/sandbox/` inside the sandbox.
+
+```bash
+nemoclaw my-assistant upload ./local-file /sandbox/
+nemoclaw my-assistant upload ./backups/SOUL.md /sandbox/.openclaw/workspace/SOUL.md
+```
+
 ### `nemoclaw <name> rebuild`
 
 Upgrade a sandbox to the current agent version while preserving workspace state.
@@ -1549,7 +1648,7 @@ nemoclaw status --json
 
 When at least one sandbox is registered and the named NemoClaw gateway is unreachable, unhealthy, or attached to a different sandbox, the command prints a `gateway: down [state] (reason)` line between the sandbox list and the host-service list.
 The command classifies the failing layer when possible: the named gateway port is not accepting connections, the named gateway is running but not Connected, the active OpenShell gateway points at a different name, or the named gateway is not configured at all.
-It then suggests `openshell gateway start --name nemoclaw` or `nemoclaw onboard --resume` to recover.
+It then suggests `nemoclaw onboard --resume` or equivalent managed-gateway recovery guidance.
 It exits with code `1` so shell scripts and CI can detect the degraded state from `$?`.
 For `--json`, the structured output includes `gatewayHealth`, and the exit code is set after the report is generated.
 A clean machine with no registered sandboxes keeps the legacy `0` exit because no gateway is expected to be configured yet.

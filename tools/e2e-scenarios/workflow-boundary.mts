@@ -13,6 +13,8 @@ const DEFAULT_VITEST_WORKFLOW_PATH = join(
   "workflows",
   "e2e-vitest-scenarios.yaml",
 );
+export const FREE_STANDING_WORKFLOW_INVENTORY_SCRIPT =
+  "tools/e2e-scenarios/free-standing-workflow-inventory.mts";
 
 type WorkflowRecord = Record<string, unknown>;
 type WorkflowStep = WorkflowRecord & { name?: string; run?: string; uses?: string; with?: WorkflowRecord };
@@ -25,21 +27,23 @@ export interface FreeStandingJobsInventory {
 
 const SELECTOR_PATTERN = /^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$/;
 const SELECTOR_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
-const FREE_STANDING_JOBS_ENV_PATH = join(REPO_ROOT, "tools", "e2e-scenarios", "free-standing-jobs.env");
-const FREE_STANDING_JOBS_ENV_KEYS = [
-  "allowed_jobs",
-  "free_standing_scenarios_csv",
-  "free_standing_scenario_jobs_csv",
-] as const;
-const FREE_STANDING_JOBS_ENV_LINE_PATTERN =
-  /^(allowed_jobs|free_standing_scenarios_csv|free_standing_scenario_jobs_csv)=[A-Za-z0-9_:-]+(,[A-Za-z0-9_:-]+)*$/;
-const FREE_STANDING_SCENARIO_JOB_PATTERN = /^[A-Za-z0-9_-]+:[A-Za-z0-9_-]+$/;
+const FREE_STANDING_JOB_MARKER = "FREE_STANDING_VITEST_JOB";
+const FREE_STANDING_SCENARIO_MARKER = "FREE_STANDING_SCENARIO_ID";
+const COMMON_SECRET_ENV_NAMES = [
+  "NVIDIA_API_KEY",
+  "DOCKERHUB_USERNAME",
+  "DOCKERHUB_TOKEN",
+  "GITHUB_TOKEN",
+];
+const FREE_STANDING_SELECTOR_SPECIAL_CASES = new Set([
+  "hermes-e2e-vitest",
+  "hermes-root-entrypoint-smoke-vitest",
+]);
 
-function splitEnvCsv(value: string | undefined): string[] {
-  return (value ?? "")
-    .split(",")
-    .map((part) => part.trim())
-    .filter(Boolean);
+function asRecord(value: unknown): WorkflowRecord {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as WorkflowRecord)
+    : {};
 }
 
 function findDuplicates(values: readonly string[]): string[] {
@@ -52,104 +56,101 @@ function findDuplicates(values: readonly string[]): string[] {
   return [...duplicates].sort();
 }
 
-function parseFreeStandingJobsEnvContent(content: string): Record<string, string> {
-  const env: Record<string, string> = {};
-  for (const rawLine of content.split("\n")) {
-    const line = rawLine.trim();
-    if (!line || line.startsWith("#")) continue;
-    const [key, value] = line.split(/=(.*)/s).slice(0, 2).map((part) => part.trim());
-    env[key] = value;
-  }
-  return env;
-}
-
-export function validateFreeStandingJobsEnvContent(content: string): string[] {
+function deriveFreeStandingJobsInventoryFromJobs(jobs: WorkflowRecord): {
+  errors: string[];
+  inventory: FreeStandingJobsInventory;
+} {
   const errors: string[] = [];
-  const env: Record<string, string> = {};
+  const allowedJobs: string[] = [];
+  const freeStandingScenarios: string[] = [];
+  const scenarioToJob = new Map<string, string>();
 
-  content.split("\n").forEach((rawLine, index) => {
-    const line = rawLine.trim();
-    if (!line || line.startsWith("#")) return;
-    if (!FREE_STANDING_JOBS_ENV_LINE_PATTERN.test(line)) {
-      errors.push(`free-standing jobs inventory line ${index + 1} must be data-only key=value`);
-      return;
-    }
-    const [key, value] = line.split(/=(.*)/s).slice(0, 2).map((part) => part.trim());
-    if (Object.hasOwn(env, key)) {
-      errors.push(`free-standing jobs inventory must not redefine ${key}`);
-    }
-    env[key] = value;
-  });
+  for (const [jobId, rawJob] of Object.entries(jobs)) {
+    const job = asRecord(rawJob);
+    const env = asRecord(job.env);
+    const hasJobMarker = Object.hasOwn(env, FREE_STANDING_JOB_MARKER);
+    const hasScenarioMarker = Object.hasOwn(env, FREE_STANDING_SCENARIO_MARKER);
+    if (!hasJobMarker && !hasScenarioMarker) continue;
 
-  for (const key of FREE_STANDING_JOBS_ENV_KEYS) {
-    if (!env[key]) errors.push(`free-standing jobs inventory must define non-empty ${key}`);
-  }
-  if (errors.length > 0) return errors;
+    if (!SELECTOR_ID_PATTERN.test(jobId)) {
+      errors.push(`free-standing workflow metadata contains invalid job id: ${jobId}`);
+    }
+    if (!hasJobMarker) {
+      errors.push(`${jobId} job ${FREE_STANDING_SCENARIO_MARKER} requires ${FREE_STANDING_JOB_MARKER}`);
+      continue;
+    }
+    if (env[FREE_STANDING_JOB_MARKER] !== "1") {
+      errors.push(`${jobId} job ${FREE_STANDING_JOB_MARKER} must be "1"`);
+      continue;
+    }
 
-  const allowedJobs = splitEnvCsv(env.allowed_jobs);
-  const freeStandingScenarios = splitEnvCsv(env.free_standing_scenarios_csv);
-  const scenarioJobEntries = splitEnvCsv(env.free_standing_scenario_jobs_csv);
-  const scenarioJobPairs = scenarioJobEntries.map((entry) => entry.split(":", 2) as [string, string]);
-  const scenarioKeys = scenarioJobPairs.map(([scenario]) => scenario);
+    allowedJobs.push(jobId);
+    if (!hasScenarioMarker) continue;
 
-  for (const job of allowedJobs) {
-    if (!SELECTOR_ID_PATTERN.test(job)) {
-      errors.push(`free-standing jobs inventory contains invalid job id: ${job}`);
+    const scenario = env[FREE_STANDING_SCENARIO_MARKER];
+    if (typeof scenario !== "string" || !SELECTOR_ID_PATTERN.test(scenario)) {
+      errors.push(`${jobId} job ${FREE_STANDING_SCENARIO_MARKER} must be a selector id`);
+      continue;
     }
-  }
-  for (const scenario of freeStandingScenarios) {
-    if (!SELECTOR_ID_PATTERN.test(scenario)) {
-      errors.push(`free-standing jobs inventory contains invalid scenario id: ${scenario}`);
-    }
-  }
-  for (const entry of scenarioJobEntries) {
-    if (!FREE_STANDING_SCENARIO_JOB_PATTERN.test(entry)) {
-      errors.push(`free-standing jobs inventory contains invalid scenario job mapping: ${entry}`);
-    }
+    freeStandingScenarios.push(scenario);
+    scenarioToJob.set(scenario, jobId);
   }
 
+  if (allowedJobs.length === 0) {
+    errors.push("free-standing workflow metadata must declare at least one job");
+  }
   for (const duplicate of findDuplicates(allowedJobs)) {
-    errors.push(`free-standing jobs inventory repeats job id: ${duplicate}`);
+    errors.push(`free-standing workflow metadata repeats job id: ${duplicate}`);
   }
   for (const duplicate of findDuplicates(freeStandingScenarios)) {
-    errors.push(`free-standing jobs inventory repeats scenario id: ${duplicate}`);
-  }
-  for (const duplicate of findDuplicates(scenarioKeys)) {
-    errors.push(`free-standing jobs inventory repeats scenario mapping: ${duplicate}`);
+    errors.push(`free-standing workflow metadata repeats scenario id: ${duplicate}`);
   }
 
-  if (freeStandingScenarios.join(",") !== scenarioKeys.join(",")) {
-    errors.push("free_standing_scenarios_csv must exactly match free_standing_scenario_jobs_csv keys");
-  }
-  for (const [scenario, job] of scenarioJobPairs) {
-    if (!allowedJobs.includes(job)) {
-      errors.push(`free-standing inventory maps ${scenario} to unknown job ${job}`);
-    }
-  }
-
-  return errors;
-}
-
-export function readFreeStandingJobsInventory(): FreeStandingJobsInventory {
-  const content = readFileSync(FREE_STANDING_JOBS_ENV_PATH, "utf-8");
-  const errors = validateFreeStandingJobsEnvContent(content);
-  if (errors.length > 0) {
-    throw new Error(`Invalid free-standing jobs inventory:\n${errors.join("\n")}`);
-  }
-  const env = parseFreeStandingJobsEnvContent(content);
-  const scenarioJobPairs = splitEnvCsv(env.free_standing_scenario_jobs_csv).map(
-    (entry) => entry.split(":", 2) as [string, string],
-  );
   return {
-    allowedJobs: splitEnvCsv(env.allowed_jobs),
-    freeStandingScenarios: splitEnvCsv(env.free_standing_scenarios_csv),
-    scenarioToJob: new Map(scenarioJobPairs),
+    errors,
+    inventory: {
+      allowedJobs,
+      freeStandingScenarios,
+      scenarioToJob,
+    },
   };
 }
 
-const FREE_STANDING_JOBS_INVENTORY = readFreeStandingJobsInventory();
-const FREE_STANDING_VITEST_JOB_IDS = FREE_STANDING_JOBS_INVENTORY.allowedJobs;
-const FREE_STANDING_VITEST_SCENARIO_TO_JOB = FREE_STANDING_JOBS_INVENTORY.scenarioToJob;
+function readWorkflowRecord(workflowPath: string): WorkflowRecord {
+  return asRecord(YAML.parse(readFileSync(workflowPath, "utf-8")));
+}
+
+export function validateFreeStandingWorkflowInventory(
+  workflowPath = DEFAULT_VITEST_WORKFLOW_PATH,
+): string[] {
+  const workflow = readWorkflowRecord(workflowPath);
+  return deriveFreeStandingJobsInventoryFromJobs(asRecord(workflow.jobs)).errors;
+}
+
+export function readFreeStandingJobsInventory(
+  workflowPath = DEFAULT_VITEST_WORKFLOW_PATH,
+): FreeStandingJobsInventory {
+  const workflow = readWorkflowRecord(workflowPath);
+  const { errors, inventory } = deriveFreeStandingJobsInventoryFromJobs(asRecord(workflow.jobs));
+  if (errors.length > 0) {
+    throw new Error(`Invalid free-standing workflow inventory:\n${errors.join("\n")}`);
+  }
+  return inventory;
+}
+
+export function formatFreeStandingJobsInventoryForShell(
+  inventory: FreeStandingJobsInventory,
+): string {
+  const scenarioJobMappings = [...inventory.scenarioToJob].map(
+    ([scenario, job]) => `${scenario}:${job}`,
+  );
+  return [
+    `allowed_jobs=${inventory.allowedJobs.join(",")}`,
+    `free_standing_scenarios_csv=${inventory.freeStandingScenarios.join(",")}`,
+    `free_standing_scenario_jobs_csv=${scenarioJobMappings.join(",")}`,
+    "",
+  ].join("\n");
+}
 
 export interface WorkflowDispatchSelectorEvaluation {
   valid: boolean;
@@ -157,12 +158,6 @@ export interface WorkflowDispatchSelectorEvaluation {
   selectedFreeStandingJobs: string[];
   registryScenarios: string[];
   liveScenariosRuns: boolean;
-}
-
-function asRecord(value: unknown): WorkflowRecord {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as WorkflowRecord)
-    : {};
 }
 
 function asSteps(value: unknown): WorkflowStep[] {
@@ -186,6 +181,9 @@ export function evaluateE2eVitestWorkflowDispatchSelectors(input: {
   jobs?: string;
   scenarios?: string;
 }): WorkflowDispatchSelectorEvaluation {
+  const inventory = readFreeStandingJobsInventory();
+  const freeStandingVitestJobIds = inventory.allowedJobs;
+  const freeStandingVitestScenarioToJob = inventory.scenarioToJob;
   const jobs = input.jobs ?? "";
   const scenarios = input.scenarios ?? "";
   const errors: string[] = [];
@@ -201,7 +199,7 @@ export function evaluateE2eVitestWorkflowDispatchSelectors(input: {
   }
   if (jobs && SELECTOR_PATTERN.test(jobs)) {
     for (const job of splitSelector(jobs)) {
-      if (!FREE_STANDING_VITEST_JOB_IDS.includes(job)) {
+      if (!freeStandingVitestJobIds.includes(job)) {
         errors.push(`Unknown free-standing Vitest job: ${job}`);
       }
     }
@@ -221,7 +219,7 @@ export function evaluateE2eVitestWorkflowDispatchSelectors(input: {
     return {
       valid: true,
       errors: [],
-      selectedFreeStandingJobs: [...FREE_STANDING_VITEST_JOB_IDS].sort(),
+      selectedFreeStandingJobs: [...freeStandingVitestJobIds].sort(),
       registryScenarios: [],
       liveScenariosRuns: true,
     };
@@ -240,7 +238,7 @@ export function evaluateE2eVitestWorkflowDispatchSelectors(input: {
   const selectedFreeStandingJobs = new Set<string>();
   const registryScenarios: string[] = [];
   for (const scenario of splitSelector(scenarios)) {
-    const job = FREE_STANDING_VITEST_SCENARIO_TO_JOB.get(scenario);
+    const job = freeStandingVitestScenarioToJob.get(scenario);
     if (job) selectedFreeStandingJobs.add(job);
     else registryScenarios.push(scenario);
   }
@@ -365,12 +363,54 @@ function validateFreeStandingJobSelector(
   }
 }
 
+function validateFreeStandingInventoryBoundary(
+  errors: string[],
+  jobs: WorkflowRecord,
+  inventory: FreeStandingJobsInventory,
+): void {
+  const scenarioByJob = new Map(
+    [...inventory.scenarioToJob].map(([scenario, job]) => [job, scenario]),
+  );
+
+  for (const jobName of inventory.allowedJobs) {
+    const job = asRecord(jobs[jobName]);
+    if (Object.keys(job).length === 0) continue;
+
+    if (!FREE_STANDING_SELECTOR_SPECIAL_CASES.has(jobName)) {
+      validateFreeStandingJobSelector(errors, jobs, jobName, scenarioByJob.get(jobName));
+    }
+
+    const jobEnv = asRecord(job.env);
+    for (const secret of COMMON_SECRET_ENV_NAMES) {
+      requireEnvDoesNotExposeSecret(errors, `${jobName} job`, jobEnv, secret);
+    }
+
+    const steps = asSteps(job.steps);
+    requireNoDispatchInputInterpolation(errors, steps);
+    for (const step of steps) {
+      if (step.uses) {
+        requireFullShaAction(
+          errors,
+          step,
+          `${jobName} step '${step.name ?? step.uses}'`,
+        );
+      }
+      if (/\$\{\{\s*secrets\./.test(stringValue(step.run))) {
+        errors.push(
+          `${jobName} step '${step.name ?? step.uses ?? "<unnamed>"}' run script must not interpolate secrets directly`,
+        );
+      }
+    }
+  }
+}
+
 function validateFreeStandingInventoryCoverage(
   errors: string[],
   jobs: WorkflowRecord,
   reportNeeds: readonly unknown[],
+  inventory: FreeStandingJobsInventory,
 ): void {
-  for (const jobId of FREE_STANDING_VITEST_JOB_IDS) {
+  for (const jobId of inventory.allowedJobs) {
     if (!Object.hasOwn(jobs, jobId)) {
       errors.push(`free-standing inventory job missing workflow job: ${jobId}`);
     }
@@ -378,8 +418,8 @@ function validateFreeStandingInventoryCoverage(
       errors.push(`report-to-pr job must wait for ${jobId}`);
     }
   }
-  for (const [scenario, jobId] of FREE_STANDING_VITEST_SCENARIO_TO_JOB) {
-    if (!FREE_STANDING_VITEST_JOB_IDS.includes(jobId)) {
+  for (const [scenario, jobId] of inventory.scenarioToJob) {
+    if (!inventory.allowedJobs.includes(jobId)) {
       errors.push(`free-standing inventory maps ${scenario} to unknown job ${jobId}`);
       continue;
     }
@@ -1900,7 +1940,7 @@ function validateModelRouterProviderRoutedInferenceVitestJob(
 export function validateE2eVitestScenariosWorkflowBoundary(
   workflowPath = DEFAULT_VITEST_WORKFLOW_PATH,
 ): string[] {
-  const workflow = asRecord(YAML.parse(readFileSync(workflowPath, "utf-8")));
+  const workflow = readWorkflowRecord(workflowPath);
   const errors: string[] = [];
   const triggers = asRecord(workflow.on ?? workflow[true as unknown as string]);
 
@@ -1918,6 +1958,10 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   if (permissions.contents !== "read") errors.push("workflow permissions.contents must be read");
 
   const jobs = asRecord(workflow.jobs);
+  const { errors: inventoryErrors, inventory: freeStandingInventory } =
+    deriveFreeStandingJobsInventoryFromJobs(jobs);
+  errors.push(...inventoryErrors);
+  validateFreeStandingInventoryBoundary(errors, jobs, freeStandingInventory);
   const generateMatrix = asRecord(jobs["generate-matrix"]);
   if (Object.keys(generateMatrix).length === 0) errors.push("workflow missing generate-matrix job");
   if (generateMatrix["runs-on"] !== "ubuntu-latest") {
@@ -1949,8 +1993,8 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   if (generateEnv.SCENARIOS !== "${{ inputs.scenarios }}") {
     errors.push("matrix generation step must pass scenarios through SCENARIOS env");
   }
-  requireRunContains(errors, generate, "tools/e2e-scenarios/free-standing-jobs.env");
-  requireRunContains(errors, generate, "free-standing jobs inventory must be data-only key=value");
+  requireRunContains(errors, generate, FREE_STANDING_WORKFLOW_INVENTORY_SCRIPT);
+  requireRunContains(errors, generate, "free-standing workflow inventory must be data-only key=value");
   requireRunContains(errors, generate, "free_standing_scenarios_csv must match scenario mapping keys");
   requireRunContains(errors, generate, "Free-standing scenario maps to unknown job");
   requireRunContains(errors, generate, "Use either scenarios or jobs, not both");
@@ -2142,7 +2186,7 @@ export function validateE2eVitestScenariosWorkflowBoundary(
     for (const required of ["generate-matrix", "live-scenarios"]) {
       if (!needs.includes(required)) errors.push(`report-to-pr job must wait for ${required}`);
     }
-    validateFreeStandingInventoryCoverage(errors, jobs, needs);
+    validateFreeStandingInventoryCoverage(errors, jobs, needs, freeStandingInventory);
     const reportSteps = asSteps(reportToPr.steps);
     const report = requireJobStep(errors, "report-to-pr", reportSteps, "Post Vitest scenario results to PR");
     const reportEnv = asRecord(report?.env);

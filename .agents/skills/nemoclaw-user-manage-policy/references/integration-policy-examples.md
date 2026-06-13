@@ -4,6 +4,7 @@ import { AgentOnly } from "../_components/AgentGuide";
 
 Use these examples when a sandbox is already installed and an integration needs network access.
 This page covers only integrations that NemoClaw currently ships as maintained policy preset YAML under `nemoclaw-blueprint/policies/presets/`.
+For complete blueprint examples that combine a model, agent harness, OpenShell policy, and integration workflow, see [NemoClaw Community](https://github.com/NVIDIA/nemoclaw-community).
 Integration setup usually has two separate parts:
 
 - Configure the integration itself, such as a bot token, OAuth credential, or agent plugin setting.
@@ -202,6 +203,7 @@ nemoclaw my-assistant policy-add jira --yes
 The `jira` preset intentionally allows Node.js access to Atlassian Cloud and does not allow `curl`.
 When validating it manually, avoid plain `curl -s` against `auth.atlassian.com`.
 Atlassian can return an empty redirect body even when the request succeeds.
+An empty `curl -s` output from that endpoint is inconclusive before or after approval; do not use it as a pass/fail signal.
 Use a body-visible API probe instead:
 
 ```bash
