@@ -687,6 +687,44 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
     expect(upsertMock).not.toHaveBeenCalled(); // aborted before registering
   });
 
+  it("slack: a second sandbox on the SAME non-default gateway is blocked", async () => {
+    // Both sandboxes are bound to `nemoclaw-8090`. The credential axis would
+    // not flag distinct tokens, but the gateway axis must — without this case,
+    // `checkSlackSocketModeGatewayConflict` previously checked the default
+    // `nemoclaw` while the provider mutation ran against `nemoclaw-8090` and
+    // left a false negative for two Slack sandboxes sharing the same non-
+    // default gateway.
+    const slackBot = "xoxb-alpha-bot-token";
+    const slackApp = "xapp-alpha-app-token";
+    const alpha = { name: "alpha", gatewayName: "nemoclaw-8090", gatewayPort: 8090 } as never;
+    const bob = makePlanEntry("bob", "slack", [
+      {
+        providerEnvKey: "SLACK_BOT_TOKEN",
+        credentialHash: hashCredential("xoxb-bob-bot") as string,
+      },
+      {
+        providerEnvKey: "SLACK_APP_TOKEN",
+        credentialHash: hashCredential("xapp-bob-app") as string,
+      },
+    ]);
+    (bob as { gatewayName?: string; gatewayPort?: number }).gatewayName = "nemoclaw-8090";
+    (bob as { gatewayName?: string; gatewayPort?: number }).gatewayPort = 8090;
+    arrangeRegistry({ current: alpha, others: [bob] });
+    getCredentialMock.mockImplementation((key: string) =>
+      key === "SLACK_BOT_TOKEN" ? slackBot : key === "SLACK_APP_TOKEN" ? slackApp : null,
+    );
+    promptMock.mockResolvedValue("n");
+
+    await addSandboxChannel("alpha", { channel: "slack" });
+
+    const text = loggedText();
+    expect(text).toContain("Slack Socket Mode is already enabled for sandbox 'bob'");
+    expect(text).not.toContain(slackBot);
+    expect(text).not.toContain(slackApp);
+    expect(conflictPromptShown()).toBe(true);
+    expect(upsertMock).not.toHaveBeenCalled();
+  });
+
   it("slack: shared token on the same gateway reports the credential conflict first (#4953)", async () => {
     // The credential axis runs before the gateway axis, so a shared Slack token
     // surfaces the gateway-independent "same slack credential" warning (more

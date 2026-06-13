@@ -3,7 +3,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { dockerCapture, dockerInspect } from "../../adapters/docker";
+import { dockerCapture } from "../../adapters/docker";
 import {
   captureOpenshell,
   getOpenshellBinary,
@@ -12,15 +12,20 @@ import {
 import { CLI_NAME } from "../../cli/branding";
 import { prompt as askPrompt } from "../../credentials/store";
 import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
+import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import * as policies from "../../policy";
 import { ROOT, run, shellQuote, validateName } from "../../runner";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
 import * as shields from "../../shields";
-import { isGatewayHealthy } from "../../state/gateway";
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import * as sandboxState from "../../state/sandbox";
 import { cleanupShieldsDestroyArtifacts, removeSandboxRegistryEntry } from "./destroy";
+import {
+  probeGatewayRunning,
+  selectSandboxGatewayIfRegistered,
+  usesGatewayMetadataProbe,
+} from "./sandbox-gateway-routing";
 
 const useColor = !process.env.NO_COLOR && !!process.stdout.isTTY;
 const trueColor =
@@ -29,8 +34,6 @@ const G = useColor ? (trueColor ? "\x1b[38;2;118;185;0m" : "\x1b[38;5;148m") : "
 const B = useColor ? "\x1b[1m" : "";
 const D = useColor ? "\x1b[2m" : "";
 const R = useColor ? "\x1b[0m" : "";
-
-const NEMOCLAW_GATEWAY_NAME = "nemoclaw";
 
 export type SnapshotRequest =
   | { kind: "help" }
@@ -116,7 +119,10 @@ function resolveSrcPodImage(
     return registeredImage ?? null;
   }
 
-  const gatewayContainer = `openshell-cluster-${NEMOCLAW_GATEWAY_NAME}`;
+  const srcGatewayName = resolveSandboxGatewayName(
+    srcEntry as { gatewayName?: string | null; gatewayPort?: number | null },
+  );
+  const gatewayContainer = `openshell-cluster-${srcGatewayName}`;
   try {
     const output = dockerCapture(
       [
@@ -207,7 +213,10 @@ async function autoCreateSandboxFromSource(
   const dnsScript = path.join(ROOT, "scripts", "setup-dns-proxy.sh");
   const srcDriver = (srcEntry as { openshellDriver?: string | null }).openshellDriver;
   if (srcDriver === "kubernetes" && fs.existsSync(dnsScript)) {
-    run(["bash", dnsScript, NEMOCLAW_GATEWAY_NAME, dstName], { ignoreError: true });
+    const srcGatewayName = resolveSandboxGatewayName(
+      srcEntry as { gatewayName?: string | null; gatewayPort?: number | null },
+    );
+    run(["bash", dnsScript, srcGatewayName, dstName], { ignoreError: true });
   }
 
   // Register dst in the NemoClaw registry, cloning most fields from src.
@@ -292,40 +301,35 @@ function deleteSandboxForRestore(name: string): void {
   console.log(`  ${G}\u2713${R} '${name}' deleted`);
 }
 
-// Docker/VM-driver sandboxes do not expose the legacy cluster container, so
-// verify gateway health through OpenShell metadata instead.
-function probeGatewayMetadataHealth(): boolean {
-  const status = captureOpenshell(["status"], { ignoreError: true, timeout: 10000 });
-  const namedGatewayInfo = captureOpenshell(["gateway", "info", "-g", NEMOCLAW_GATEWAY_NAME], {
-    ignoreError: true,
-    timeout: 10000,
-  });
-  const activeGatewayInfo = captureOpenshell(["gateway", "info"], {
-    ignoreError: true,
-    timeout: 10000,
-  });
-  return isGatewayHealthy(
-    status.output || "",
-    namedGatewayInfo.output || "",
-    activeGatewayInfo.output || "",
-  );
+function listLiveSandboxesOnSandboxGateway(sandboxName: string): Set<string> | null {
+  if (!selectSandboxGatewayIfRegistered(sandboxName)) return null;
+  if (!probeGatewayRunning(sandboxName)) return null;
+  const isLive = captureOpenshell(["sandbox", "list"], { ignoreError: true });
+  if (isLive.status !== 0) return null;
+  return parseLiveSandboxNames(isLive.output || "");
 }
 
-function usesGatewayMetadataProbe(driver: string | null | undefined): boolean {
-  return driver === "docker" || driver === "vm";
-}
-
-function probeGatewayRunning(sandboxName?: string): boolean {
-  const entry = sandboxName ? registry.getSandbox(sandboxName) : null;
-  if (usesGatewayMetadataProbe(entry?.openshellDriver)) {
-    return probeGatewayMetadataHealth();
+function requireLiveSandboxesOnSandboxGateway(sandboxName: string, error: string): Set<string> {
+  const liveNames = listLiveSandboxesOnSandboxGateway(sandboxName);
+  if (!liveNames) {
+    console.error(error);
+    snapshotExit(1);
   }
-  const container = `openshell-cluster-${NEMOCLAW_GATEWAY_NAME}`;
-  const result = dockerInspect(
-    ["--type", "container", "--format", "{{.State.Running}}", container],
-    { ignoreError: true, suppressOutput: true },
+  return liveNames;
+}
+
+function verifyRestoreDestinationOnOwnGateway(targetSandbox: string): void {
+  const liveNames = requireLiveSandboxesOnSandboxGateway(
+    targetSandbox,
+    `  Cannot verify destination sandbox '${targetSandbox}' on its registered gateway. Aborting restore.`,
   );
-  return result.status === 0 && String(result.stdout || "").trim() === "true";
+  if (!liveNames.has(targetSandbox)) {
+    console.error(
+      `  Destination sandbox '${targetSandbox}' is registered locally, but is not present on its registered gateway.`,
+    );
+    console.error("  Aborting restore before deleting or overwriting local sandbox metadata.");
+    snapshotExit(1);
+  }
 }
 
 function isSnapshotCreationAllowedByShields(sandboxName: string): boolean {
@@ -346,12 +350,15 @@ export async function runSandboxSnapshot(
 ) {
   switch (request.kind) {
     case "create": {
-      if (!probeGatewayRunning(sandboxName)) {
-        console.error("  Failed to query live sandbox state from OpenShell.");
-        snapshotExit(1);
-      }
-      const isLive = captureOpenshell(["sandbox", "list"], { ignoreError: true });
-      const liveNames = parseLiveSandboxNames(isLive.output || "");
+      // Select the sandbox's gateway before the health probe and `sandbox list`
+      // — Docker/VM-driver health and the sandbox listing both require the
+      // sandbox's gateway to be the active one, otherwise a sandbox registered
+      // on a non-default `NEMOCLAW_GATEWAY_PORT` fails health-check before the
+      // subsequent list ever runs.
+      const liveNames = requireLiveSandboxesOnSandboxGateway(
+        sandboxName,
+        "  Failed to query live sandbox state from OpenShell.",
+      );
       if (!liveNames.has(sandboxName)) {
         console.error(`  Sandbox '${sandboxName}' is not running. Cannot create snapshot.`);
         snapshotExit(1);
@@ -412,14 +419,13 @@ export async function runSandboxSnapshot(
       const target = request.to ?? sandboxName;
       const targetSandbox =
         target === sandboxName ? sandboxName : validateName(target, "target sandbox name");
-      if (!probeGatewayRunning(sandboxName)) {
-        console.error("  Failed to query live sandbox state from OpenShell.");
-        snapshotExit(1);
-      }
-      const isLive = captureOpenshell(["sandbox", "list"], { ignoreError: true });
-      const liveNames = parseLiveSandboxNames(isLive.output || "");
+      const sourceLiveNames = requireLiveSandboxesOnSandboxGateway(
+        sandboxName,
+        "  Failed to query live sandbox state from OpenShell.",
+      );
       const isCrossSandboxRestore = targetSandbox !== sandboxName;
-      const targetExists = liveNames.has(targetSandbox);
+      const targetEntry = isCrossSandboxRestore ? registry.getSandbox(targetSandbox) : null;
+      const targetExists = sourceLiveNames.has(targetSandbox) || Boolean(targetEntry);
 
       // #3756 P1 preflight: resolve the snapshot selector AND the source pod
       // image before any destructive action. A bad selector, missing snapshot,
@@ -482,7 +488,7 @@ export async function runSandboxSnapshot(
         // we must be able to clone the source's running pod image. Resolve it
         // upfront so a missing source / unresolvable image cannot delete the
         // destination first (#3756 P1).
-        if (!liveNames.has(sandboxName)) {
+        if (!sourceLiveNames.has(sandboxName)) {
           if (targetExists) {
             console.error(
               `  Cannot recreate '${targetSandbox}' from snapshot: source '${sandboxName}' not found.`,
@@ -520,7 +526,14 @@ export async function runSandboxSnapshot(
               snapshotExit(1);
             }
           }
+          if (targetEntry) {
+            verifyRestoreDestinationOnOwnGateway(targetSandbox);
+          }
           deleteSandboxForRestore(targetSandbox);
+          requireLiveSandboxesOnSandboxGateway(
+            sandboxName,
+            "  Failed to re-select source sandbox gateway after deleting destination.",
+          );
         }
         await autoCreateSandboxFromSource(sandboxName, targetSandbox, srcEntry);
       }

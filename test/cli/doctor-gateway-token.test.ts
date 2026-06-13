@@ -184,6 +184,40 @@ describe("CLI dispatch", () => {
     expect(r.code).toBe(0);
   });
 
+  it("doctor checks the sandbox persisted non-default gateway", () => {
+    const setup = createDoctorTestSetup("nemoclaw-cli-doctor-named-gateway-", [
+      'case "$*" in',
+      '  "status") printf "Server Status\\n\\n  Gateway: nemoclaw-8090\\n  Status: Connected\\n"; exit 0 ;;',
+      '  "gateway info -g nemoclaw-8090") printf "Gateway: nemoclaw-8090\\n"; exit 0 ;;',
+      '  "sandbox list") printf "NAME STATUS\\nalpha Ready\\n"; exit 0 ;;',
+      '  "inference get") printf "Provider: nvidia-prod\\nModel: test-model\\n"; exit 0 ;;',
+      "esac",
+    ]);
+    writeSandboxRegistry(setup.home, "alpha", {
+      gatewayName: "nemoclaw-8090",
+      gatewayPort: 8090,
+      openshellDriver: "docker",
+    });
+    writeHealthyCurlStub(setup);
+
+    const r = setup.runDoctor("alpha doctor --json");
+
+    expect(r.code).toBe(0);
+    const report = JSON.parse(r.out) as {
+      checks: Array<{ group: string; label: string; status: string; detail: string }>;
+    };
+    expect(report.checks.find((check) => check.label === "OpenShell status")).toEqual(
+      expect.objectContaining({
+        group: "Gateway",
+        status: "ok",
+        detail: "connected to nemoclaw-8090",
+      }),
+    );
+    const calls = setup.readCalls();
+    expect(calls).toContain("gateway info -g nemoclaw-8090");
+    expect(calls).not.toContain("gateway info -g nemoclaw");
+  });
+
   it("doctor still inspects the legacy k3s gateway container for the kubernetes driver", () => {
     const setup = createDoctorTestSetup("nemoclaw-cli-doctor-k8s-driver-", [
       'case "$*" in',

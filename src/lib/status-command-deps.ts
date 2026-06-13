@@ -6,7 +6,9 @@ import type { CaptureOpenshellResult } from "./adapters/openshell/client";
 import { captureOpenshellCommand } from "./adapters/openshell/client";
 import { resolveOpenshell } from "./adapters/openshell/resolve";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "./adapters/openshell/timeouts";
+import { GATEWAY_PORT } from "./core/ports";
 import { getNamedGatewayLifecycleState } from "./gateway-runtime-action";
+import { resolveGatewayName } from "./onboard/gateway-binding";
 import { getLiveGatewayInference } from "./inference/live";
 import type { GatewayHealth, MessagingBridgeHealth, ShowStatusCommandDeps } from "./inventory";
 import { detectAllSlackSocketModeGatewayOverlaps, findAllOverlaps } from "./messaging/applier";
@@ -111,14 +113,15 @@ function readGatewayLog(rootDir: string, sandboxName: string): string | null {
 
 function probeGatewayHealth(): GatewayHealth {
   try {
-    const lifecycle = getNamedGatewayLifecycleState();
+    const expectedGateway = resolveGatewayName(GATEWAY_PORT);
+    const lifecycle = getNamedGatewayLifecycleState(expectedGateway);
     if (lifecycle.state === "healthy_named") {
       return { healthy: true, state: lifecycle.state };
     }
     const reasonByState: Record<string, string> = {
       named_unreachable: "host port held or container not running",
       named_unhealthy: "named gateway present but not Connected",
-      connected_other: `connected to '${lifecycle.activeGateway ?? "unknown"}', not 'nemoclaw'`,
+      connected_other: `connected to '${lifecycle.activeGateway ?? "unknown"}', not '${expectedGateway}'`,
       missing_named: "named gateway not configured",
     };
     return {

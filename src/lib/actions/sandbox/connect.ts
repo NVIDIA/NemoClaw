@@ -26,6 +26,8 @@ import {
 import { findReachableOllamaHost, probeLocalProviderHealth } from "../../inference/local";
 import { ensureOllamaAuthProxy, probeOllamaAuthProxyHealth } from "../../inference/ollama/proxy";
 import { LOCAL_INFERENCE_TIMEOUT_SECS } from "../../onboard/env";
+import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
+import { getSandboxTargetGatewayName } from "./gateway-target";
 import { isWsl } from "../../platform";
 import { ROOT } from "../../runner";
 import * as sandboxVersion from "../../sandbox/version";
@@ -53,8 +55,6 @@ import { isDockerRuntimeDown, printDockerRuntimeDownGuidance } from "./gateway-f
 import { ensureLiveSandboxOrExit, printGatewayLifecycleHint } from "./gateway-state";
 import { checkAndRecoverSandboxProcesses } from "./process-recovery";
 import { applyOpenShellVmDnsMonkeypatch, shouldApplyVmDnsMonkeypatch } from "./vm-dns-monkeypatch";
-
-const NEMOCLAW_GATEWAY_NAME = "nemoclaw";
 
 export type SandboxConnectOptions = {
   probeOnly?: boolean;
@@ -253,7 +253,9 @@ function failConnectReadinessGatewayUnavailable(sandboxName: string, detailOutpu
     printGatewayLifecycleHint(detailOutput, sandboxName, console.error);
   }
   console.error("  Recovery:");
-  console.error("    1. Run: openshell gateway start --name nemoclaw");
+  console.error(
+    `    1. Run: openshell gateway start --name ${getSandboxTargetGatewayName(sandboxName)}`,
+  );
   console.error(`    2. If the gateway cannot be restarted, run: ${CLI_NAME} onboard`);
   console.error(`    3. Retry: ${CLI_NAME} ${sandboxName} connect`);
   process.exit(1);
@@ -273,7 +275,8 @@ function failConnectReadinessDockerRuntimeDown(sandboxName: string): never {
 }
 
 function failIfGatewayBlocksConnectReadiness(sandboxName: string): void {
-  const lifecycle = getNamedGatewayLifecycleState();
+  const sb = registry.getSandbox(sandboxName);
+  const lifecycle = getNamedGatewayLifecycleState(resolveSandboxGatewayName(sb));
   if (isBlockingGatewayLifecycle(lifecycle)) {
     failConnectReadinessGatewayUnavailable(
       sandboxName,
@@ -512,7 +515,7 @@ function repairSandboxInferenceRouteIfNeeded(
       reapplyVmInferenceRoute,
       repairLegacyDnsProxy: (name, isQuiet) =>
         runSetupDnsProxy(
-          { gatewayName: NEMOCLAW_GATEWAY_NAME, sandboxName: name },
+          { gatewayName: resolveSandboxGatewayName(sb), sandboxName: name },
           { log: isQuiet ? () => undefined : console.log },
         ),
     },

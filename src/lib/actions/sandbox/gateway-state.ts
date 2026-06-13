@@ -11,6 +11,7 @@ import {
   recoverNamedGatewayRuntime,
 } from "../../gateway-runtime-action";
 import { isTerminalSandboxPhase, parseSandboxPhase } from "../../state/gateway";
+import { gatewayNamePattern, getSandboxTargetGatewayName } from "./gateway-target";
 
 const { pruneKnownHostsEntries } = require("../../onboard") as {
   pruneKnownHostsEntries: (contents: string) => string;
@@ -227,9 +228,10 @@ export function reconcileMissingAgainstNamedGateway(
   sandboxName: string,
   missingLookup: SandboxGatewayState,
 ): SandboxGatewayState {
-  const lifecycle = getNamedGatewayLifecycleState();
+  const targetGatewayName = getSandboxTargetGatewayName(sandboxName);
+  const lifecycle = getNamedGatewayLifecycleState(targetGatewayName);
   if (lifecycle.state === "connected_other") {
-    runOpenshell(["gateway", "select", "nemoclaw"], {
+    runOpenshell(["gateway", "select", targetGatewayName], {
       ignoreError: true,
       timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
     });
@@ -241,12 +243,22 @@ export function reconcileMissingAgainstNamedGateway(
       return retry;
     }
     if (retry.state === "missing") {
-      const after = getNamedGatewayLifecycleState();
+      const after = getNamedGatewayLifecycleState(targetGatewayName);
       if (after.state === "healthy_named") {
         // Even with the right gateway selected, the sandbox is
         // still missing. Try Docker-side recovery before declaring
         // the sandbox truly absent.
         return tryRecoverDockerDriverSandbox(sandboxName, retry);
+      }
+      // The select moved the active gateway off, but the target gateway is
+      // now missing or unreachable. Surface that post-select state so the
+      // caller emits restart guidance, rather than `wrong_gateway_active`
+      // pointing at the now-irrelevant pre-select active gateway.
+      if (after.state === "missing_named") {
+        return { state: "gateway_missing_after_restart", output: after.status };
+      }
+      if (after.state === "named_unreachable" || after.state === "named_unhealthy") {
+        return { state: "gateway_unreachable_after_restart", output: after.status };
       }
     }
     return {
@@ -317,12 +329,14 @@ export function printWrongGatewayActiveGuidance(
   // guidance points back to the workflow the user actually invoked.
   retryCommand = "connect",
 ): void {
-  const other = activeGateway && activeGateway !== "nemoclaw" ? activeGateway : "another gateway";
+  const targetGatewayName = getSandboxTargetGatewayName(sandboxName);
+  const other =
+    activeGateway && activeGateway !== targetGatewayName ? activeGateway : "another gateway";
   writer(
-    `  Sandbox '${sandboxName}' is registered against the ${CLI_DISPLAY_NAME} gateway, but the currently active OpenShell gateway is '${other}'. Your sandbox has NOT been removed.`,
+    `  Sandbox '${sandboxName}' is registered against the ${CLI_DISPLAY_NAME} gateway '${targetGatewayName}', but the currently active OpenShell gateway is '${other}'. Your sandbox has NOT been removed.`,
   );
   writer("  Switch gateways and retry:");
-  writer("      openshell gateway select nemoclaw");
+  writer(`      openshell gateway select ${targetGatewayName}`);
   writer(`  Then re-run: ${CLI_NAME} ${sandboxName} ${retryCommand}`);
 }
 
@@ -333,12 +347,13 @@ export function printGatewayLifecycleHint(
   writer: (message: string) => void = console.error,
 ): void {
   const cleanOutput = stripAnsi(output);
+  const targetGatewayName = getSandboxTargetGatewayName(sandboxName);
   if (/No gateway configured/i.test(cleanOutput)) {
     writer(
       `  The selected ${CLI_DISPLAY_NAME} gateway is no longer configured or its metadata/runtime has been lost.`,
     );
     writer(
-      "  Start the gateway again with `openshell gateway start --name nemoclaw` before expecting existing sandboxes to reconnect.",
+      `  Start the gateway again with \`openshell gateway start --name ${targetGatewayName}\` before expecting existing sandboxes to reconnect.`,
     );
     writer(
       "  If the gateway has to be rebuilt from scratch, recreate the affected sandbox afterward.",
@@ -347,14 +362,14 @@ export function printGatewayLifecycleHint(
   }
   if (
     /Connection refused|client error \(Connect\)|tcp connect error/i.test(cleanOutput) &&
-    /Gateway:\s+nemoclaw/i.test(cleanOutput)
+    gatewayNamePattern(targetGatewayName).test(cleanOutput)
   ) {
     writer(
       "  The selected NemoClaw gateway exists in metadata, but its API is refusing connections after restart.",
     );
     writer("  This usually means the gateway runtime did not come back cleanly after the restart.");
     writer(
-      "  Retry `openshell gateway start --name nemoclaw`; if it stays in this state, rebuild the gateway before expecting existing sandboxes to reconnect.",
+      `  Retry \`openshell gateway start --name ${targetGatewayName}\`; if it stays in this state, rebuild the gateway before expecting existing sandboxes to reconnect.`,
     );
     return;
   }
@@ -397,7 +412,8 @@ export async function getReconciledSandboxGatewayState(
   }
 
   if (lookup.state === "gateway_error") {
-    const recovery = await recoverNamedGatewayRuntime();
+    const targetGatewayName = getSandboxTargetGatewayName(sandboxName);
+    const recovery = await recoverNamedGatewayRuntime({ gatewayName: targetGatewayName });
     if (recovery.recovered) {
       const retried = await getState(sandboxName);
       if (retried.state === "present" || retried.state === "missing") {
@@ -413,7 +429,7 @@ export async function getReconciledSandboxGatewayState(
       }
       return { ...retried, recoveredGateway: true, recoveryVia: recovery.via || null };
     }
-    const latestLifecycle = getNamedGatewayLifecycleState();
+    const latestLifecycle = getNamedGatewayLifecycleState(targetGatewayName);
     const latestStatus = stripAnsi(latestLifecycle.status || "");
     if (/No gateway configured/i.test(latestStatus)) {
       return {
@@ -423,7 +439,7 @@ export async function getReconciledSandboxGatewayState(
     }
     if (
       /Connection refused|client error \(Connect\)|tcp connect error/i.test(latestStatus) &&
-      /Gateway:\s+nemoclaw/i.test(latestStatus)
+      gatewayNamePattern(targetGatewayName).test(latestStatus)
     ) {
       return {
         state: "gateway_unreachable_after_restart",
@@ -478,7 +494,8 @@ export async function ensureLiveSandboxOrExit(
     process.exit(1);
   }
   if (lookup.state === "missing") {
-    const guard = getNamedGatewayLifecycleState();
+    const targetGatewayName = getSandboxTargetGatewayName(sandboxName);
+    const guard = getNamedGatewayLifecycleState(targetGatewayName);
     if (guard.state !== "healthy_named") {
       if (guard.state === "connected_other") {
         printWrongGatewayActiveGuidance(sandboxName, guard.activeGateway, console.error);
@@ -545,7 +562,7 @@ export async function ensureLiveSandboxOrExit(
       console.error(lookup.output);
     }
     console.error(
-      "  Retry `openshell gateway start --name nemoclaw` and verify `openshell status` is healthy before reconnecting.",
+      `  Retry \`openshell gateway start --name ${getSandboxTargetGatewayName(sandboxName)}\` and verify \`openshell status\` is healthy before reconnecting.`,
     );
     console.error(
       "  If the gateway never becomes healthy, rebuild the gateway and then recreate the affected sandbox.",
@@ -560,7 +577,7 @@ export async function ensureLiveSandboxOrExit(
       console.error(lookup.output);
     }
     console.error(
-      "  Start the gateway again with `openshell gateway start --name nemoclaw` before retrying.",
+      `  Start the gateway again with \`openshell gateway start --name ${getSandboxTargetGatewayName(sandboxName)}\` before retrying.`,
     );
     console.error(
       "  If the gateway had to be rebuilt from scratch, recreate the affected sandbox afterward.",
