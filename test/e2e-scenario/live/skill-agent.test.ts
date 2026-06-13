@@ -12,6 +12,7 @@ import {
 } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { shouldRunLiveE2EScenarios } from "../fixtures/live-project-gate.ts";
+import { shellQuote } from "../../../src/lib/core/shell-quote";
 
 // Focused Vitest live replacement coverage for test/e2e/test-skill-agent-e2e.sh.
 // Keep this as a direct live test: the legacy contract is skill fixture
@@ -57,10 +58,6 @@ function resultText(result: { stdout: string; stderr: string }): string {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function shellQuote(value: string): string {
-  return `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
 function isExternalAgentVerificationFlake(text: string): boolean {
