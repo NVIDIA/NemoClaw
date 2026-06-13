@@ -138,7 +138,9 @@ function buildOpenClawOtelConfig(env: Env): JsonObject | undefined {
     throw new Error("NEMOCLAW_OPENCLAW_OTEL_ENDPOINT must not include credentials");
   }
 
-  const serviceName = (env.NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME || DEFAULT_OPENCLAW_OTEL_SERVICE_NAME).trim();
+  const serviceName = (
+    env.NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME || DEFAULT_OPENCLAW_OTEL_SERVICE_NAME
+  ).trim();
   if (!serviceName) {
     throw new Error("NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME must not be empty");
   }
@@ -596,9 +598,7 @@ function validateExtraAgentTools(entry: JsonObject, label: string): JsonObject {
     const value = tools[key];
     if (value === undefined) continue;
     if (!Array.isArray(value) || value.some((token) => typeof token !== "string" || !token)) {
-      throw new Error(
-        `${label}.tools.${key} must be an array of non-empty strings when present.`,
-      );
+      throw new Error(`${label}.tools.${key} must be an array of non-empty strings when present.`);
     }
   }
   if (tools.profile !== undefined && typeof tools.profile !== "string") {
@@ -617,9 +617,7 @@ function validateExtraAgentSubagents(entry: JsonObject, label: string): JsonObje
   rejectUnknownKeys(subagents, ALLOWED_SUBAGENTS_KEYS, `${label}.subagents`);
   const depth = subagents.maxSpawnDepth;
   if (typeof depth !== "number" || !Number.isInteger(depth) || depth < 0) {
-    throw new Error(
-      `${label}.subagents.maxSpawnDepth must be a non-negative integer.`,
-    );
+    throw new Error(`${label}.subagents.maxSpawnDepth must be a non-negative integer.`);
   }
   return pickAllowed(subagents, ALLOWED_SUBAGENTS_KEYS);
 }
@@ -629,9 +627,7 @@ function validateExtraAgents(value: unknown): JsonObject[] {
     return [];
   }
   if (!Array.isArray(value)) {
-    throw new Error(
-      "NEMOCLAW_EXTRA_AGENTS_JSON must decode to a JSON array of agent objects",
-    );
+    throw new Error("NEMOCLAW_EXTRA_AGENTS_JSON must decode to a JSON array of agent objects");
   }
   const seenIds = new Set<string>([MAIN_AGENT_ID]);
   return value.map((entry, index) => {
@@ -661,9 +657,7 @@ function validateExtraAgents(value: unknown): JsonObject[] {
         throw new Error(`${label}.${pathKey} must be a non-empty string`);
       }
       if (!isAbsolute(pathValue)) {
-        throw new Error(
-          `${label}.${pathKey} must be an absolute path, got "${pathValue}"`,
-        );
+        throw new Error(`${label}.${pathKey} must be an absolute path, got "${pathValue}"`);
       }
       const expected = expectedAgentPath(pathKey, id);
       if (resolve(pathValue) !== expected) {
@@ -830,7 +824,6 @@ export function buildConfig(env: Env = process.env): JsonObject {
     inferenceCompat.supportsUsageInStreaming ??= true;
   }
 
-
   const normalizedUrl = normalizeUrlForParse(chatUiUrl);
   const parsed = parseUrl(normalizedUrl);
   const loopbackOrigin = `http://127.0.0.1:${gatewayPort}`;
@@ -963,7 +956,6 @@ export function buildConfig(env: Env = process.env): JsonObject {
       apiKey: "openshell:resolve:env:BRAVE_API_KEY",
     };
   }
-
 
   return config;
 }

@@ -149,7 +149,7 @@ function buildHelperSource(): string {
     "\t\t// Only fall back to a DM when Slack definitively did not deliver the",
     "\t\t// ephemeral. Ambiguous failures (network/HTTP, timeout, service errors)",
     "\t\t// may have been accepted, so a DM there could double-notify the sender.",
-    '\t\tconst ephemeralErrorCode = ephemeralError?.data?.error ?? ephemeralError?.code;',
+    "\t\tconst ephemeralErrorCode = ephemeralError?.data?.error ?? ephemeralError?.code;",
     '\t\tctx?.logger?.warn?.({ err: ephemeralError, channel, code: ephemeralErrorCode }, "nemoclaw: slack denial ephemeral feedback failed (#4752)");',
     '\t\tconst nonDeliveryCodes = ["user_not_in_channel", "not_in_channel", "channel_not_found", "cannot_reply_to_message", "is_archived", "messages_tab_disabled"];',
     "\t\tif (!nonDeliveryCodes.includes(ephemeralErrorCode)) return;",
