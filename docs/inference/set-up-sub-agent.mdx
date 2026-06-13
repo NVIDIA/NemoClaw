@@ -51,6 +51,11 @@ The primary orchestration model remains responsible for conversation, planning, 
 
 ## Update the Sandbox Config
 
+<Note>
+Before you run the `docker exec` commands in this section, finish the [Quickstart](../get-started/quickstart) and start the target sandbox on this host.
+The commands discover the sandbox container from the `openshell.ai/sandbox-name` Docker label, so the sandbox container must exist before `SANDBOX_CTR` can resolve.
+</Note>
+
 Fetch the current OpenClaw config from the sandbox, patch it with your auxiliary provider and `agents.list` changes, then upload it back.
 On Docker-driver sandboxes, run these commands from the host that owns the sandbox containers.
 The container name includes a runtime suffix, so discover it from the OpenShell sandbox label:
@@ -58,6 +63,10 @@ The container name includes a runtime suffix, so discover it from the OpenShell 
 ```bash
 export SANDBOX=my-assistant
 export SANDBOX_CTR=$(docker ps --filter "label=openshell.ai/sandbox-name=$SANDBOX" --format "{{.Names}}" | sed -n '1p')
+if [ -z "$SANDBOX_CTR" ]; then
+  echo "No running sandbox container found for $SANDBOX. Start the sandbox before editing its config."
+  exit 1
+fi
 docker exec --user root "$SANDBOX_CTR" cat /sandbox/.openclaw/openclaw.json > /tmp/openclaw.json
 ```
 
