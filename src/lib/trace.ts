@@ -68,7 +68,19 @@ export const TRACE_DIR_ENV = "NEMOCLAW_TRACE_DIR";
 const DEFAULT_TRACE_DIR = path.join(".e2e", "traces");
 const MAX_ATTRIBUTE_STRING_LENGTH = 240;
 const SENSITIVE_ATTRIBUTE_KEY =
-  /(?:api[_-]?key|token|secret|password|authorization|bearer|cookie|set-cookie)/i;
+  /(?:api[_-]?key|authorization|bearer|credential|password|secret|slack[_-]?webhook|token|webhook|cookie|set-cookie)/i;
+const SENSITIVE_VALUE_PATTERNS: RegExp[] = [
+  /\bBearer\s+[A-Za-z0-9._~+/=-]{12,}/gi,
+  /\b(?:xox[baprs]-|xapp-)[A-Za-z0-9-]{10,}/g,
+  /\bnvapi-[A-Za-z0-9_-]{12,}/gi,
+  /\bgh[pousr]_[A-Za-z0-9_]{20,}/g,
+  /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g,
+  /\b[A-Za-z0-9/+=]{40}\b/g,
+  /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g,
+  /\bya29\.[A-Za-z0-9_-]{20,}\b/g,
+  /\b[a-f0-9]{40,}\b/gi,
+  /https:\/\/hooks\.slack\.com\/services\/[A-Za-z0-9/_-]+/gi,
+];
 
 function nowNs(): bigint {
   return BigInt(Date.now()) * 1_000_000n;
@@ -82,15 +94,20 @@ function randomHex(bytes: number): string {
   return crypto.randomBytes(bytes).toString("hex");
 }
 
+function isSensitiveTraceKey(key: string): boolean {
+  if (key === "credential_env") return false;
+  return SENSITIVE_ATTRIBUTE_KEY.test(key);
+}
+
 function sanitizeAttributeValue(key: string, value: unknown): TraceAttribute | undefined {
   if (value === undefined) return undefined;
   if (value === null || typeof value === "boolean") return value;
   if (typeof value === "number") return Number.isFinite(value) ? value : String(value);
   if (typeof value === "bigint") return String(value);
   if (typeof value === "string") {
-    if (SENSITIVE_ATTRIBUTE_KEY.test(key)) return "<REDACTED>";
+    if (isSensitiveTraceKey(key)) return "<REDACTED>";
     const urlValue = redactUrl(value);
-    const redacted = redactFull(urlValue ?? value);
+    const redacted = redactTraceString(redactFull(urlValue ?? value));
     return redacted.slice(0, MAX_ATTRIBUTE_STRING_LENGTH);
   }
   if (Array.isArray(value)) {
@@ -110,6 +127,29 @@ function sanitizeAttributeValue(key: string, value: unknown): TraceAttribute | u
   } catch {
     return "[unserializable]";
   }
+}
+
+function redactTraceString(value: string): string {
+  let redacted = value;
+  for (const pattern of SENSITIVE_VALUE_PATTERNS) {
+    redacted = redacted.replace(pattern, "<REDACTED>");
+  }
+  return redacted;
+}
+
+function sanitizeTraceArtifactValue(value: unknown, key = ""): unknown {
+  if (isSensitiveTraceKey(key)) return "<REDACTED>";
+  if (typeof value === "string") return redactTraceString(redactFull(value));
+  if (Array.isArray(value)) return value.map((entry) => sanitizeTraceArtifactValue(entry));
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([childKey, childValue]) => [
+        childKey,
+        sanitizeTraceArtifactValue(childValue, childKey),
+      ]),
+    );
+  }
+  return value;
 }
 
 export function sanitizeTraceAttributes(attributes: Record<string, unknown> = {}): TraceAttributes {
@@ -250,7 +290,10 @@ export class TraceCollector {
       },
     };
     fs.mkdirSync(path.dirname(this.outputPath), { recursive: true, mode: 0o700 });
-    fs.writeFileSync(this.outputPath, `${JSON.stringify(artifact, null, 2)}\n`, { mode: 0o600 });
+    const sanitizedArtifact = sanitizeTraceArtifactValue(artifact) as TraceArtifact;
+    fs.writeFileSync(this.outputPath, `${JSON.stringify(sanitizedArtifact, null, 2)}\n`, {
+      mode: 0o600,
+    });
     this.flushed = true;
     return this.outputPath;
   }

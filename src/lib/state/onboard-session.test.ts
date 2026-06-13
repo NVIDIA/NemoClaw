@@ -582,6 +582,49 @@ describe("onboard session", () => {
     expect(loaded.messagingPlan).toEqual(created.messagingPlan);
   });
 
+  it("writes compact messagingPlan derived fields to onboard-session.json", () => {
+    const created = session.createSession();
+    created.messagingPlan = {
+      ...makeMessagingPlan("my-assistant", ["telegram"]),
+      channels: [
+        {
+          ...makeMessagingPlan("my-assistant", ["telegram"]).channels[0],
+          hooks: [
+            {
+              channelId: "telegram",
+              id: "telegram-token-paste",
+              phase: "enroll",
+              handler: "common.tokenPaste",
+            },
+          ],
+        },
+      ],
+      agentRender: [
+        {
+          channelId: "telegram",
+          renderId: "telegram-openclaw-channel",
+          hookId: "telegram-openclaw-channel",
+          handler: "common.staticOutputs",
+          kind: "json-fragment",
+          agent: "openclaw",
+          target: "openclaw.json",
+          path: "channels.telegram",
+          value: { enabled: true },
+          templateRefs: [],
+        },
+      ],
+    };
+
+    session.saveSession(created);
+
+    const raw = JSON.parse(fs.readFileSync(session.SESSION_FILE, "utf-8"));
+    expect(raw.messagingPlan.agentRender).toBeUndefined();
+    expect(raw.messagingPlan.channels[0].hooks).toBeUndefined();
+    const reloadedPlan = requireLoadedSession(session.loadSession()).messagingPlan;
+    expect(reloadedPlan?.agentRender).toEqual([]);
+    expect(reloadedPlan?.channels[0]?.hooks).toEqual([]);
+  });
+
   it("drops malformed persisted messagingPlan on load", () => {
     const created = session.createSession();
     fs.mkdirSync(path.dirname(session.SESSION_FILE), { recursive: true });

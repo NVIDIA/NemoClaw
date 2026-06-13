@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { MessagingHookRegistry } from "../hooks";
+import { hydrateDerivedSandboxMessagingPlanFields } from "../persistence";
+import { parseSandboxMessagingPlan } from "../plan-validation";
 import type {
   ChannelManifestRegistry,
   MessagingAgentId,
@@ -68,7 +70,7 @@ export class MessagingWorkflowPlanner {
       supportedChannelIds: context.supportedChannelIds,
       credentialAvailability: mergeAvailability(
         credentialAvailabilityFromPlan(existingPlan),
-        this.credentialAvailabilityFromSandboxEntry(context.sandboxEntry, [context.channelId]),
+        this.credentialAvailabilityFromSandboxEntry(context, [context.channelId]),
         context.credentialAvailability,
       ),
     });
@@ -101,33 +103,10 @@ export class MessagingWorkflowPlanner {
   ): Promise<SandboxMessagingPlan | null> {
     const existingPlan = readSandboxEntryPlan(context);
     if (existingPlan) {
-      const normalizedPlan = setPlanDisabledChannels(
+      return setPlanDisabledChannels(
         existingPlan,
         disabledChannelsFromSandboxEntry(context.sandboxEntry, existingPlan),
         "rebuild",
-      );
-      if (!planMissingActiveChannelRender(normalizedPlan)) return normalizedPlan;
-
-      const configuredChannels = uniqueChannels(
-        normalizedPlan.channels.map((channel) => channel.channelId),
-      );
-      const refreshedPlan = await this.buildPlan({
-        sandboxName: context.sandboxName,
-        agent: context.agent,
-        workflow: "rebuild",
-        isInteractive: false,
-        configuredChannels,
-        disabledChannels: normalizedPlan.disabledChannels,
-        supportedChannelIds: context.supportedChannelIds,
-        credentialAvailability: mergeAvailability(
-          credentialAvailabilityFromPlan(normalizedPlan),
-          this.credentialAvailabilityFromSandboxEntry(context.sandboxEntry, configuredChannels),
-          context.credentialAvailability,
-        ),
-      });
-      return mergeSandboxMessagingPlans(
-        normalizedPlan,
-        preserveCredentialBindingHashes(normalizedPlan, refreshedPlan),
       );
     }
     return null;
@@ -174,10 +153,10 @@ export class MessagingWorkflowPlanner {
   }
 
   private credentialAvailabilityFromSandboxEntry(
-    sandboxEntry: MessagingWorkflowPlannerSandboxEntry | null | undefined,
+    context: Pick<MessagingWorkflowPlannerSandboxContext, "agent" | "sandboxEntry" | "sandboxName">,
     channelIds: readonly MessagingChannelId[],
   ): MessagingCompilerCredentialAvailability | undefined {
-    const plan = sandboxEntry?.messaging?.plan;
+    const plan = readSandboxEntryPlan(context);
     if (!plan) return undefined;
 
     const availability: Record<string, boolean> = {};
@@ -247,16 +226,11 @@ function onlyConfiguredChannels(
 function readSandboxEntryPlan(
   context: Pick<MessagingWorkflowPlannerSandboxContext, "agent" | "sandboxEntry" | "sandboxName">,
 ): SandboxMessagingPlan | null {
-  const plan = context.sandboxEntry?.messaging?.plan;
-  if (
-    !plan ||
-    plan.schemaVersion !== 1 ||
-    plan.sandboxName !== context.sandboxName ||
-    plan.agent !== context.agent
-  ) {
-    return null;
-  }
-  return clonePlan(plan);
+  const plan = parseSandboxMessagingPlan(context.sandboxEntry?.messaging?.plan, {
+    sandboxName: context.sandboxName,
+    agent: context.agent,
+  });
+  return plan ? hydrateDerivedSandboxMessagingPlanFields(plan) : null;
 }
 
 function disabledChannelsFromSandboxEntry(
@@ -374,39 +348,6 @@ function setPlanDisabledChannels(
     channels,
     disabledChannels,
   });
-}
-
-function preserveCredentialBindingHashes(
-  existing: SandboxMessagingPlan,
-  incoming: SandboxMessagingPlan,
-): SandboxMessagingPlan {
-  const existingHashes = new Map(
-    existing.credentialBindings
-      .filter((binding) => binding.credentialHash)
-      .map((binding) => [credentialBindingKey(binding), binding.credentialHash] as const),
-  );
-  if (existingHashes.size === 0) return incoming;
-
-  return clonePlan({
-    ...incoming,
-    credentialBindings: incoming.credentialBindings.map((binding) => ({
-      ...binding,
-      credentialHash: binding.credentialHash ?? existingHashes.get(credentialBindingKey(binding)),
-    })),
-  });
-}
-
-function credentialBindingKey(
-  binding: Pick<SandboxMessagingPlan["credentialBindings"][number], "channelId" | "providerEnvKey">,
-): string {
-  return binding.channelId + "\0" + binding.providerEnvKey;
-}
-
-function planMissingActiveChannelRender(plan: SandboxMessagingPlan): boolean {
-  const renderedChannels = new Set(plan.agentRender.map((entry) => entry.channelId));
-  return plan.channels.some(
-    (channel) => channel.active && !channel.disabled && !renderedChannels.has(channel.channelId),
-  );
 }
 
 function removePlanChannel(

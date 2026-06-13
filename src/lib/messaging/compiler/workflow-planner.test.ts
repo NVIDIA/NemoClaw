@@ -8,6 +8,7 @@ import {
   createBuiltInRenderTemplateResolver,
 } from "../channels";
 import { createBuiltInMessagingHookRegistry, MessagingHookRegistry } from "../hooks";
+import { createChannelManifestRegistry, type ChannelManifest } from "../manifest";
 import { MessagingWorkflowPlanner } from "./workflow-planner";
 
 const TEST_CREDENTIALS: Readonly<Record<string, string>> = {
@@ -23,6 +24,34 @@ const TEST_WECHAT_LOGIN = {
   baseUrl: "https://ilinkai.wechat.com",
   userId: "test-wechat-user",
 } as const;
+
+const CREDENTIAL_ONLY_MANIFEST: ChannelManifest = {
+  schemaVersion: 1,
+  id: "matrix",
+  displayName: "Matrix",
+  supportedAgents: ["openclaw"],
+  auth: { mode: "none" },
+  inputs: [
+    {
+      id: "botToken",
+      kind: "secret",
+      required: true,
+      envKey: "MATRIX_BOT_TOKEN",
+    },
+  ],
+  credentials: [
+    {
+      id: "botToken",
+      sourceInput: "botToken",
+      providerName: "{sandboxName}-matrix",
+      providerEnvKey: "MATRIX_BOT_TOKEN",
+      placeholder: "MATRIX_BOT_TOKEN",
+    },
+  ],
+  render: [],
+  state: {},
+  hooks: [],
+};
 
 function planner(): MessagingWorkflowPlanner {
   return new MessagingWorkflowPlanner(
@@ -446,55 +475,6 @@ describe("MessagingWorkflowPlanner", () => {
     ]);
   });
 
-  it("refreshes missing manifest render entries from stale rebuild plans", async () => {
-    const existingPlan = await planner().buildPlan({
-      sandboxName: "demo",
-      agent: "hermes",
-      workflow: "onboard",
-      isInteractive: false,
-      configuredChannels: ["discord"],
-      credentialAvailability: {
-        DISCORD_BOT_TOKEN: true,
-      },
-    });
-    const stalePlan = {
-      ...existingPlan,
-      credentialBindings: existingPlan.credentialBindings.map((binding) => ({
-        ...binding,
-        credentialHash: "hash-discord-token",
-      })),
-      agentRender: [],
-      buildSteps: [],
-    };
-
-    const plan = await planner().buildRebuildPlanFromSandboxEntry({
-      sandboxName: "demo",
-      agent: "hermes",
-      sandboxEntry: {
-        name: "demo",
-        agent: "hermes",
-        messaging: { schemaVersion: 1, plan: stalePlan },
-      },
-      supportedChannelIds: ["discord"],
-    });
-
-    expect(plan?.workflow).toBe("rebuild");
-    expect(
-      plan?.credentialBindings.find((binding) => binding.providerEnvKey === "DISCORD_BOT_TOKEN")
-        ?.credentialHash,
-    ).toBe("hash-discord-token");
-    const discordEnvRender = plan?.agentRender.find(
-      (entry) =>
-        entry.channelId === "discord" &&
-        entry.kind === "env-lines" &&
-        entry.target === "~/.hermes/.env",
-    );
-    expect(discordEnvRender).toMatchObject({
-      kind: "env-lines",
-      lines: expect.arrayContaining(["DISCORD_BOT_TOKEN=openshell:resolve:env:DISCORD_BOT_TOKEN"]),
-    });
-  });
-
   it("adds one manifest channel into an existing sandbox entry plan", async () => {
     const existingPlan = await planner().buildPlan({
       sandboxName: "demo",
@@ -576,6 +556,51 @@ describe("MessagingWorkflowPlanner", () => {
       "slack",
       "slack",
     ]);
+  });
+
+  it("does not trust credential availability from mismatched sandbox entry plans", async () => {
+    const registry = createChannelManifestRegistry([CREDENTIAL_ONLY_MANIFEST]);
+    const localPlanner = new MessagingWorkflowPlanner(
+      registry,
+      new MessagingHookRegistry(),
+      createBuiltInRenderTemplateResolver(),
+    );
+    const stalePlan = await localPlanner.buildPlan({
+      sandboxName: "other-sandbox",
+      agent: "openclaw",
+      workflow: "onboard",
+      isInteractive: false,
+      configuredChannels: ["matrix"],
+      credentialAvailability: {
+        MATRIX_BOT_TOKEN: true,
+      },
+    });
+
+    const plan = await localPlanner.buildChannelAddPlanFromSandboxEntry({
+      sandboxName: "demo",
+      agent: "openclaw",
+      sandboxEntry: {
+        name: "demo",
+        messaging: {
+          schemaVersion: 1,
+          plan: stalePlan,
+        },
+      },
+      channelId: "matrix",
+      isInteractive: false,
+      supportedChannelIds: ["matrix"],
+    });
+
+    expect(plan.channels).toHaveLength(1);
+    expect(plan.channels[0]).toMatchObject({
+      channelId: "matrix",
+      active: false,
+      configured: true,
+    });
+    expect(plan.credentialBindings[0]).toMatchObject({
+      channelId: "matrix",
+      credentialAvailable: false,
+    });
   });
 
   it("mutates disabled channel state in an existing sandbox entry plan", async () => {
