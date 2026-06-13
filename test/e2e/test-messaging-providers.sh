@@ -36,11 +36,11 @@
 # Prerequisites:
 #   - Docker running
 #   - NemoClaw installed (install.sh or brev-setup.sh already ran)
-#   - NVIDIA_API_KEY set
+#   - NVIDIA_INFERENCE_API_KEY set
 #   - openshell on PATH
 #
 # Environment variables:
-#   NVIDIA_API_KEY                         — required
+#   NVIDIA_INFERENCE_API_KEY                         — required
 #   NEMOCLAW_NON_INTERACTIVE=1             — required
 #   NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 — required
 #   NEMOCLAW_SANDBOX_NAME                  — sandbox name (default: e2e-msg-provider)
@@ -80,7 +80,7 @@
 #
 # Usage:
 #   NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
-#     NVIDIA_API_KEY=nvapi-... bash test/e2e/test-messaging-providers.sh
+#     NVIDIA_INFERENCE_API_KEY=nvapi-... bash test/e2e/test-messaging-providers.sh
 #
 # See: https://github.com/NVIDIA/NemoClaw/pull/1081
 
@@ -633,11 +633,15 @@ openclaw_message_send_exit_code() {
 # ══════════════════════════════════════════════════════════════════
 section "Phase 0: Prerequisites"
 
-if [ -z "${NVIDIA_API_KEY:-}" ]; then
-  fail "NVIDIA_API_KEY not set"
+if [ -z "${NVIDIA_INFERENCE_API_KEY:-}" ] && [ -n "${NVIDIA_API_KEY:-}" ]; then
+  export NVIDIA_INFERENCE_API_KEY="${NVIDIA_API_KEY}"
+  info "Using legacy NVIDIA_API_KEY as fallback for NVIDIA_INFERENCE_API_KEY"
+fi
+if [ -z "${NVIDIA_INFERENCE_API_KEY:-}" ]; then
+  fail "NVIDIA_INFERENCE_API_KEY not set"
   exit 1
 fi
-pass "NVIDIA_API_KEY is set"
+pass "NVIDIA_INFERENCE_API_KEY is set"
 
 if ! docker info >/dev/null 2>&1; then
   fail "Docker is not running"

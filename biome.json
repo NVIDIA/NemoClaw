@@ -16,6 +16,7 @@
       "nemoclaw/package-lock.json",
       "*.ts",
       "**/*.ts",
+      "**/*.mts",
       "bin/**/*.js",
       "scripts/**/*.js",
       "scripts/**/*.mjs",

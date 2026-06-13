@@ -38,6 +38,18 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
      * freshly-recovered gateway (ref #4504 / #4263).
      */
     autoPairScopeApproval(sandboxName: string): void;
+    /**
+     * Best-effort warm-up that provokes the `operator.write` scope upgrade with
+     * a throwaway in-sandbox `openclaw agent` run, making the request PENDING so
+     * the `autoPairScopeApproval` pass (which must run immediately after) can
+     * clear it before handoff. Without this, the upgrade is only requested by
+     * the user's first real run — after finalization's approval pass already
+     * found nothing pending — causing one silent embedded fallback (#4504-v2).
+     * Order is load-bearing: warm-up (provoke) must run BEFORE
+     * `autoPairScopeApproval` (approve), and after process recovery so the
+     * gateway is live. Never throws; idempotent once operator.write is paired.
+     */
+    warmupScopeUpgrade(sandboxName: string): void;
     getChatUiUrl(): string;
     buildVerifyChain(chatUiUrl: string): VerifyChain;
     verifyDeployment(sandboxName: string, chain: VerifyChain): Promise<VerificationResult>;
@@ -108,6 +120,11 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
   deps.cleanupStaleHostFiles();
   // Policy application can restart the sandbox; recover OpenClaw before verification (#3573).
   deps.checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
+  // #4504-v2: provoke the operator.write scope upgrade now (throwaway agent
+  // run) so the request is PENDING when the approval pass below clears it, and
+  // the user's first real run connects without an embedded fallback.
+  // Best-effort; never blocks. No-op/idempotent once operator.write is paired.
+  deps.warmupScopeUpgrade(sandboxName);
   // Clear any pending allowlisted scope upgrade against the freshly-recovered
   // gateway before verification, so onboard hands off without a stuck pairing
   // request (#4504 / #4263). Best-effort; never blocks.

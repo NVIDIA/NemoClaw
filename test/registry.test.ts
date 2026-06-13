@@ -241,8 +241,24 @@ describe("registry", () => {
     expect(rawSandbox.messagingChannels).toBeUndefined();
     expect(rawSandbox.messagingChannelConfig).toBeUndefined();
     expect(registry.getConfiguredMessagingChannels("messaging")).toEqual(["telegram"]);
+    const hydrated = registry.getHydratedMessagingPlanFromEntry(sb);
+    expect(
+      hydrated.agentRender.some((entry: { channelId: string }) => entry.channelId === "telegram"),
+    ).toBe(true);
+    expect(
+      hydrated.channels[0].hooks.some(
+        (hook: { channelId: string }) => hook.channelId === "telegram",
+      ),
+    ).toBe(true);
     const data = JSON.parse(fs.readFileSync(regFile, "utf-8"));
-    expect(data.sandboxes.messaging.messaging).toEqual({ schemaVersion: 1, plan });
+    expect(data.sandboxes.messaging.messaging.schemaVersion).toBe(1);
+    expect(data.sandboxes.messaging.messaging.plan).toMatchObject({
+      schemaVersion: 1,
+      sandboxName: "messaging",
+      channels: [{ channelId: "telegram" }],
+    });
+    expect(data.sandboxes.messaging.messaging.plan.agentRender).toBeUndefined();
+    expect(data.sandboxes.messaging.messaging.plan.channels[0].hooks).toBeUndefined();
     expect(data.sandboxes.messaging.messagingChannels).toBeUndefined();
     expect(data.sandboxes.messaging.messagingChannelConfig).toBeUndefined();
   });
@@ -265,6 +281,27 @@ describe("registry", () => {
     // Should not throw, returns empty
     const { sandboxes } = registry.listSandboxes();
     expect(sandboxes.length).toBe(0);
+  });
+
+  it("skips malformed sandbox entries while loading the registry", () => {
+    fs.mkdirSync(path.dirname(regFile), { recursive: true });
+    fs.writeFileSync(
+      regFile,
+      JSON.stringify({
+        defaultSandbox: "broken",
+        sandboxes: {
+          good: { name: "good", model: "m1" },
+          broken: null,
+          text: "not-an-entry",
+        },
+      }),
+    );
+
+    expect(registry.getSandbox("broken")).toBe(null);
+    expect(registry.getDefault()).toBe("good");
+    expect(
+      registry.listSandboxes().sandboxes.map((sandbox: { name: string }) => sandbox.name),
+    ).toEqual(["good"]);
   });
 
   it("setChannelDisabled toggles a channel on and off for a sandbox", () => {

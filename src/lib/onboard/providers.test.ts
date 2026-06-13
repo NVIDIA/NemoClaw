@@ -60,8 +60,20 @@ describe("onboard provider helpers", () => {
   });
 
   it("builds update arguments", () => {
-    const args = buildProviderArgs("update", "inference", "openai", "NVIDIA_API_KEY", null);
-    expect(args).toEqual(["provider", "update", "inference", "--credential", "NVIDIA_API_KEY"]);
+    const args = buildProviderArgs(
+      "update",
+      "inference",
+      "openai",
+      "NVIDIA_INFERENCE_API_KEY",
+      null,
+    );
+    expect(args).toEqual([
+      "provider",
+      "update",
+      "inference",
+      "--credential",
+      "NVIDIA_INFERENCE_API_KEY",
+    ]);
   });
 
   it("appends OPENAI_BASE_URL config for openai providers with a base URL", () => {
@@ -69,7 +81,7 @@ describe("onboard provider helpers", () => {
       "create",
       "inference",
       "openai",
-      "NVIDIA_API_KEY",
+      "NVIDIA_INFERENCE_API_KEY",
       "https://api.example.com/v1",
     );
     expect(args).toContain("--config");
@@ -151,7 +163,7 @@ describe("onboard provider helpers", () => {
     const result = upsertProvider(
       "inference",
       "openai",
-      "NVIDIA_API_KEY",
+      "NVIDIA_INFERENCE_API_KEY",
       "https://integrate.api.nvidia.com/v1",
       {},
       (command) => {
@@ -174,7 +186,7 @@ describe("onboard provider helpers", () => {
     const result = upsertProvider(
       "nvidia-prod",
       "openai",
-      "NVIDIA_API_KEY",
+      "NVIDIA_INFERENCE_API_KEY",
       "https://integrate.api.nvidia.com/v1",
       {},
       (command) => {
@@ -213,9 +225,9 @@ describe("onboard provider helpers", () => {
     upsertProvider(
       "nvidia-prod",
       "openai",
-      "NVIDIA_API_KEY",
+      "NVIDIA_INFERENCE_API_KEY",
       null,
-      { NVIDIA_API_KEY: "nvapi-staged" },
+      { NVIDIA_INFERENCE_API_KEY: "nvapi-staged" },
       (command) => {
         commands.push(command.join(" "));
         return { status: 0, stdout: "", stderr: "" };
@@ -224,7 +236,7 @@ describe("onboard provider helpers", () => {
 
     expect(commands).toHaveLength(2);
     expect(commands[1]).toMatch(/^provider update nvidia-prod /);
-    expect(commands[1]).toMatch(/--credential NVIDIA_API_KEY/);
+    expect(commands[1]).toMatch(/--credential NVIDIA_INFERENCE_API_KEY/);
   });
 
   it("returns redacted error details when create or update fails", () => {

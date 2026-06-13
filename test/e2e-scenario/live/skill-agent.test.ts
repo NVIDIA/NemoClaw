@@ -12,6 +12,7 @@ import {
 } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { shouldRunLiveE2EScenarios } from "../fixtures/live-project-gate.ts";
+import { shellQuote } from "../../../src/lib/core/shell-quote";
 
 // Focused Vitest live replacement coverage for test/e2e/test-skill-agent-e2e.sh.
 // Keep this as a direct live test: the legacy contract is skill fixture
@@ -57,10 +58,6 @@ function resultText(result: { stdout: string; stderr: string }): string {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function shellQuote(value: string): string {
-  return `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
 function isExternalAgentVerificationFlake(text: string): boolean {
@@ -223,8 +220,10 @@ runSkillAgentTest(
       skip("Docker is required for skill-agent E2E");
     }
 
-    const apiKey = secrets.required("NVIDIA_API_KEY");
-    expect(apiKey.startsWith("nvapi-"), "NVIDIA_API_KEY must start with nvapi-").toBe(true);
+    const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
+    expect(apiKey.startsWith("nvapi-"), "NVIDIA_INFERENCE_API_KEY must start with nvapi-").toBe(
+      true,
+    );
 
     await artifacts.writeJson("scenario.json", {
       id: "skill-agent",
@@ -233,7 +232,7 @@ runSkillAgentTest(
       legacySource: "test/e2e/test-skill-agent-e2e.sh",
       contract: [
         "Docker is available before onboarding",
-        "NVIDIA_API_KEY is present and nvapi-prefixed",
+        "NVIDIA_INFERENCE_API_KEY is present and nvapi-prefixed",
         "nemoclaw onboard creates/recreates a real OpenClaw sandbox",
         "skill-smoke-fixture is injected into sandbox and home skill roots",
         "openclaw agent reads SKILL.md and returns SKILL_SMOKE_VERIFY_K9X2",
@@ -299,7 +298,7 @@ runSkillAgentTest(
         artifactName: "onboard-skill-agent",
         env: {
           ...buildAvailabilityProbeEnv(),
-          NVIDIA_API_KEY: apiKey,
+          NVIDIA_INFERENCE_API_KEY: apiKey,
           NEMOCLAW_AGENT: "openclaw",
           NEMOCLAW_PROVIDER: "cloud",
           NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
@@ -354,7 +353,7 @@ runSkillAgentTest(
         cwd: REPO_ROOT,
         env: {
           ...buildAvailabilityProbeEnv(),
-          NVIDIA_API_KEY: apiKey,
+          NVIDIA_INFERENCE_API_KEY: apiKey,
           SANDBOX_NAME,
           SKILL_ID,
           VERIFY_TOKEN: VERIFY_PHRASE,

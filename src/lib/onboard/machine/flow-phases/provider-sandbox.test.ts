@@ -43,7 +43,7 @@ describe("provider/sandbox flow phases", () => {
         provider: "nvidia-prod",
         model: "model",
         endpointUrl: "https://example.com/v1",
-        credentialEnv: "NVIDIA_API_KEY",
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
         preferredInferenceApi: "openai-responses",
       },
       result: [advanceTo("inference"), advanceTo("sandbox")],

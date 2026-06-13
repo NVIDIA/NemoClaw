@@ -481,6 +481,8 @@ const {
   preflightDashboardPortRangeAvailability,
   resolveCreateSandboxDashboardPort,
 } = require("./onboard/dashboard-port") as typeof import("./onboard/dashboard-port");
+const { assertDashboardPortNotReserved, buildRequiredPreflightPorts } =
+  require("./onboard/preflight-ports") as typeof import("./onboard/preflight-ports");
 const { tryCleanupOrphanedDashboardForward } =
   require("./onboard/orphaned-dashboard-forward") as typeof import("./onboard/orphaned-dashboard-forward");
 const { destroyGatewayForReuse } =
@@ -1750,22 +1752,14 @@ async function preflight(
   // skip the dashboard port check entirely — ensureDashboardForward will
   // find a free port.
   const dashboardPortToCheck = _preflightDashboardPort ?? null;
-  const requiredPorts = [
-    {
-      port: GATEWAY_PORT,
-      label: "OpenShell gateway",
-      envVar: "NEMOCLAW_GATEWAY_PORT",
-    },
-    ...(dashboardPortToCheck !== null
-      ? [
-          {
-            port: dashboardPortToCheck,
-            label: `${cliDisplayName()} dashboard`,
-            envVar: "NEMOCLAW_DASHBOARD_PORT",
-          },
-        ]
-      : []),
-  ];
+  // #4984 — fail fast on an explicit reserved dashboard port; deferred paths
+  // (CHAT_UI_URL / persisted) are caught at createSandbox.
+  assertDashboardPortNotReserved(dashboardPortToCheck);
+  const requiredPorts = buildRequiredPreflightPorts({
+    gatewayPort: GATEWAY_PORT,
+    dashboardPort: dashboardPortToCheck,
+    dashboardLabel: `${cliDisplayName()} dashboard`,
+  });
   for (const { port, label, envVar } of requiredPorts) {
     const portCheckOptions =
       port === GATEWAY_PORT ? dockerDriverGatewayEnv.getGatewayPortCheckOptions() : undefined;
@@ -3646,17 +3640,16 @@ async function setupNim(
         hydrateCredentialEnv(credentialEnv);
 
         if (selected.key === "build") {
-          // Allow NEMOCLAW_PROVIDER_KEY as a fallback for NVIDIA_API_KEY.
-          // Check raw process.env first — NEMOCLAW_PROVIDER_KEY is a user-facing
-          // override that should take precedence before resolving from credentials.json.
+          // Let NEMOCLAW_PROVIDER_KEY fill the NVIDIA key without overriding explicit env.
           const _nvProviderKey = (process.env.NEMOCLAW_PROVIDER_KEY || "").trim();
-          // check-direct-credential-env-ignore -- intentional: checking if env is already set before applying NEMOCLAW_PROVIDER_KEY override
-          const existingNvidiaKey = normalizeCredentialValue(process.env.NVIDIA_API_KEY ?? "");
+          const existingNvidiaKey = ["NVIDIA_INFERENCE_API_KEY", "NVIDIA_API_KEY"]
+            .map((envName) => normalizeCredentialValue(process.env[envName] ?? ""))
+            .find(Boolean);
           if (_nvProviderKey && !existingNvidiaKey) {
-            process.env.NVIDIA_API_KEY = _nvProviderKey;
+            process.env.NVIDIA_INFERENCE_API_KEY = _nvProviderKey;
           }
           if (isNonInteractive()) {
-            const resolvedNvidiaKey = resolveProviderCredential("NVIDIA_API_KEY");
+            const resolvedNvidiaKey = resolveProviderCredential("NVIDIA_INFERENCE_API_KEY");
             if (resolvedNvidiaKey) {
               const keyError = validateNvidiaApiKeyValue(resolvedNvidiaKey);
               if (keyError) {
@@ -4015,7 +4008,8 @@ async function setupNim(
             // answer falls through to startNimContainerByName's warning so
             // we don't double-fail in non-interactive callers.
             ngcApiKey =
-              hydrateCredentialEnv("NGC_API_KEY") || hydrateCredentialEnv("NVIDIA_API_KEY");
+              hydrateCredentialEnv("NGC_API_KEY") ||
+              hydrateCredentialEnv("NVIDIA_INFERENCE_API_KEY");
             if (!ngcApiKey && !isNonInteractive()) {
               console.log("");
               console.log("  NGC API Key required to download NIM model weights at runtime.");
@@ -4798,11 +4792,11 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
   if (!noticeAccepted) {
     process.exit(1);
   }
-  // Validate NEMOCLAW_PROVIDER early so invalid values fail before
-  // preflight (Docker/OpenShell checks). Without this, users see a
+  // Validate NEMOCLAW_PROVIDER and NEMOCLAW_VLLM_MODEL early so invalid values
+  // fail before preflight (Docker/OpenShell checks). Without this, users see a
   // misleading 'Docker is not reachable' error instead of the real
-  // problem: an unsupported provider value.
-  getRequestedProviderHint();
+  // problem: an unsupported provider value or unrecognised vLLM model slug.
+  resumeConfig.preflightEarlyOnboardEnv();
   const lockResult = onboardSession.acquireOnboardLock(
     `nemoclaw onboard${resume ? " --resume" : ""}${fresh ? " --fresh" : ""}${isNonInteractive() ? " --non-interactive" : ""}${requestedFromDockerfile ? ` --from ${requestedFromDockerfile}` : ""}`,
   );

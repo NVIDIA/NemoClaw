@@ -3,13 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import {
-  chmodSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  writeFileSync,
-} from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -207,12 +201,16 @@ export function applyMessagingAgentRenderToLocalFiles(
   for (const [target, renderEntries] of grouped) {
     const kinds = uniqueStrings(renderEntries.map((entry) => entry.kind));
     if (kinds.length !== 1) {
-      throw new MessagingBuildApplierError(`Cannot apply mixed messaging render kinds to ${target}.`);
+      throw new MessagingBuildApplierError(
+        `Cannot apply mixed messaging render kinds to ${target}.`,
+      );
     }
     if (kinds[0] === "json-fragment") {
       appliedTargets.push(applyJsonRenderEntriesToLocalFile(plan, target, renderEntries, options));
     } else {
-      appliedTargets.push(applyEnvRenderEntriesToLocalFile(plan.agent, target, renderEntries, options));
+      appliedTargets.push(
+        applyEnvRenderEntriesToLocalFile(plan.agent, target, renderEntries, options),
+      );
     }
   }
 
@@ -224,7 +222,9 @@ export function activeChannels(plan: MessagingBuildPlan | null): string[] {
   const seen = new Set<string>();
   const channels: string[] = [];
   for (const item of plan.channels) {
-    const channel = String(item.channelId || "").trim().toLowerCase();
+    const channel = String(item.channelId || "")
+      .trim()
+      .toLowerCase();
     if (!channel || seen.has(channel)) continue;
     if (item.active === true && item.disabled !== true) {
       seen.add(channel);
@@ -276,10 +276,7 @@ export function openClawDoctorEnvOverrides(
   return overrides;
 }
 
-export function installOpenClawMessagingPlugins(
-  plan: MessagingBuildPlan | null,
-  env: Env,
-): void {
+export function installOpenClawMessagingPlugins(plan: MessagingBuildPlan | null, env: Env): void {
   for (const spec of collectOpenClawMessagingPluginInstallSpecs(plan, env)) {
     runCommand(["openclaw", "plugins", "install", spec, "--pin"], env);
   }
@@ -338,7 +335,9 @@ function applyJsonRenderEntriesToLocalFile(
   mkdirSync(dirname(targetPath), { recursive: true });
   writeFileSync(
     targetPath,
-    targetPath.endsWith(".yaml") ? serializeGeneratedYamlObject(config) : `${JSON.stringify(config, null, 2)}\n`,
+    targetPath.endsWith(".yaml")
+      ? serializeGeneratedYamlObject(config)
+      : `${JSON.stringify(config, null, 2)}\n`,
   );
   chmodSync(targetPath, 0o600);
   return targetPath;
@@ -351,7 +350,10 @@ function applyEnvRenderEntriesToLocalFile(
   options: { readonly homeDir?: string },
 ): string {
   const targetPath = resolveAgentRenderTarget(agent, target, options);
-  const envLines = readTextIfExists(targetPath)?.split(/\r?\n/).filter((line) => line.length > 0) ?? [];
+  const envLines =
+    readTextIfExists(targetPath)
+      ?.split(/\r?\n/)
+      .filter((line) => line.length > 0) ?? [];
   for (const render of renderEntries) {
     if (!Array.isArray(render.lines)) {
       throw new MessagingBuildApplierError(
@@ -375,7 +377,9 @@ function applyMessagingRenderEntriesToObject(
   const rules = credentialPlaceholderRules(plan);
   for (const render of renderEntries) {
     if (render.kind !== "json-fragment" || typeof render.path !== "string") {
-      throw new MessagingBuildApplierError(`Messaging render for ${target} must be a JSON fragment with a path.`);
+      throw new MessagingBuildApplierError(
+        `Messaging render for ${target} must be a JSON fragment with a path.`,
+      );
     }
     const value = preserveCredentialPlaceholders(
       requiredSerializableValue(render.value, "render value"),
@@ -395,7 +399,9 @@ function readEnvRenderLines(render: MessagingRenderEntry): readonly string[] {
   for (const line of render.lines) {
     if (/[\r\n]/.test(line)) {
       throw new MessagingBuildApplierError(
-        "Messaging env render '" + (render.renderId ?? render.channelId) + "' must not contain line breaks.",
+        "Messaging env render '" +
+          (render.renderId ?? render.channelId) +
+          "' must not contain line breaks.",
       );
     }
   }
@@ -432,19 +438,26 @@ function resolveAgentRenderTarget(
   let relativePath: string | null = null;
   if (target.startsWith("~/.openclaw/")) {
     if (agent !== "openclaw") {
-      throw new MessagingBuildApplierError(`Messaging render target ${target} does not match ${agent}.`);
+      throw new MessagingBuildApplierError(
+        `Messaging render target ${target} does not match ${agent}.`,
+      );
     }
     relativePath = target.slice("~/.openclaw/".length);
   }
   if (target.startsWith("~/.hermes/")) {
     if (agent !== "hermes") {
-      throw new MessagingBuildApplierError(`Messaging render target ${target} does not match ${agent}.`);
+      throw new MessagingBuildApplierError(
+        `Messaging render target ${target} does not match ${agent}.`,
+      );
     }
     relativePath = target.slice("~/.hermes/".length);
   }
   if (relativePath !== null) {
     const resolvedTarget = resolve(agentRoot, relativePath);
-    if (resolvedTarget !== normalizedRoot && !resolvedTarget.startsWith(`${normalizedRoot}${sep}`)) {
+    if (
+      resolvedTarget !== normalizedRoot &&
+      !resolvedTarget.startsWith(`${normalizedRoot}${sep}`)
+    ) {
       throw new MessagingBuildApplierError(
         `Messaging render target ${target} must stay inside ${agentRoot}.`,
       );
@@ -504,9 +517,10 @@ function applyBuildFileOutputToLocalAgentRoot(
   file: BuildFileOutput,
   options: { readonly homeDir?: string } = {},
 ): string {
-  const root = agent === "hermes"
-    ? join(options.homeDir ?? homedir(), ".hermes")
-    : join(options.homeDir ?? homedir(), ".openclaw");
+  const root =
+    agent === "hermes"
+      ? join(options.homeDir ?? homedir(), ".hermes")
+      : join(options.homeDir ?? homedir(), ".openclaw");
   const relativePath = normalizeBuildFilePath(file.path);
   const target = resolve(root, relativePath);
   const normalizedRoot = resolve(root);
@@ -532,7 +546,9 @@ function mergeBuildFileContent(
   target: string,
 ): string {
   if (!isObject(patch)) {
-    throw new MessagingBuildApplierError(`Messaging build-file merge for ${target} must be an object.`);
+    throw new MessagingBuildApplierError(
+      `Messaging build-file merge for ${target} must be an object.`,
+    );
   }
   const root = parseJsonObject(existing, target);
   mergeJsonObjects(root, patch as JsonObject);
@@ -543,7 +559,9 @@ function parseJsonObject(existing: string | undefined, target: string): JsonObje
   if (!existing || existing.trim().length === 0) return {};
   const parsed = JSON.parse(existing) as unknown;
   if (!isObject(parsed)) {
-    throw new MessagingBuildApplierError(`Messaging build-file target ${target} must contain an object.`);
+    throw new MessagingBuildApplierError(
+      `Messaging build-file target ${target} must contain an object.`,
+    );
   }
   return parsed as JsonObject;
 }
@@ -561,7 +579,9 @@ function readBuildFileOutput(value: MessagingSerializableValue): BuildFileOutput
     throw new MessagingBuildApplierError("Messaging build-file output must include a path");
   }
   if (file.content === undefined && file.merge === undefined) {
-    throw new MessagingBuildApplierError(`Messaging build-file ${file.path} must include content or merge`);
+    throw new MessagingBuildApplierError(
+      `Messaging build-file ${file.path} must include content or merge`,
+    );
   }
   if (file.mode !== undefined && typeof file.mode !== "string") {
     throw new MessagingBuildApplierError(`Messaging build-file ${file.path} mode must be a string`);
@@ -571,11 +591,15 @@ function readBuildFileOutput(value: MessagingSerializableValue): BuildFileOutput
 
 function normalizeBuildFilePath(pathValue: string): string {
   if (pathValue.startsWith("/") || pathValue.includes("\\") || /[\0-\x1F\x7F]/.test(pathValue)) {
-    throw new MessagingBuildApplierError(`Messaging build-file path ${pathValue} must be a safe relative path`);
+    throw new MessagingBuildApplierError(
+      `Messaging build-file path ${pathValue} must be a safe relative path`,
+    );
   }
   const segments = pathValue.split("/");
   if (segments.some((segment) => !segment || segment === "." || segment === "..")) {
-    throw new MessagingBuildApplierError(`Messaging build-file path ${pathValue} must not traverse directories`);
+    throw new MessagingBuildApplierError(
+      `Messaging build-file path ${pathValue} must not traverse directories`,
+    );
   }
   return pathValue;
 }
@@ -588,11 +612,15 @@ function serializeBuildFileContent(value: MessagingSerializableValue | undefined
 
 function parseBuildFileMode(pathValue: string, mode: string): number {
   if (!/^[0-7]{3,4}$/.test(mode) || (mode.length === 4 && mode[0] !== "0")) {
-    throw new MessagingBuildApplierError(`Messaging build-file ${pathValue} mode must be an octal file mode`);
+    throw new MessagingBuildApplierError(
+      `Messaging build-file ${pathValue} mode must be an octal file mode`,
+    );
   }
   const parsed = Number.parseInt(mode, 8);
   if ((parsed & 0o022) !== 0) {
-    throw new MessagingBuildApplierError(`Messaging build-file ${pathValue} mode must not be group/world writable`);
+    throw new MessagingBuildApplierError(
+      `Messaging build-file ${pathValue} mode must not be group/world writable`,
+    );
   }
   return parsed;
 }
@@ -795,7 +823,9 @@ function setJsonPath(root: JsonObject, pathValue: string, value: MessagingSerial
 function mergeJsonObjects(target: JsonObject, patch: JsonObject): void {
   for (const [key, value] of Object.entries(patch)) {
     if (key === "__proto__" || key === "prototype" || key === "constructor") {
-      throw new MessagingBuildApplierError("Messaging object merge rejected unsafe object key " + key);
+      throw new MessagingBuildApplierError(
+        "Messaging object merge rejected unsafe object key " + key,
+      );
     }
     const existing = target[key];
     if (isObject(existing) && isObject(value)) {
@@ -971,7 +1001,11 @@ function parseGeneratedYamlArray(
   return [parsed, index];
 }
 
-function parseGeneratedYamlScalar(value: string, target: string, lineNumber: number): MessagingSerializableValue {
+function parseGeneratedYamlScalar(
+  value: string,
+  target: string,
+  lineNumber: number,
+): MessagingSerializableValue {
   if (value === "[]") return [];
   if (value === "{}") return {};
   if (value === "null") return null;
@@ -994,7 +1028,10 @@ function serializeGeneratedYamlObject(value: JsonObject): string {
   return serializeGeneratedYamlValue(value);
 }
 
-function serializeGeneratedYamlValue(value: MessagingSerializableValue, indent: number = 0): string {
+function serializeGeneratedYamlValue(
+  value: MessagingSerializableValue,
+  indent: number = 0,
+): string {
   const pad = "  ".repeat(indent);
   if (Array.isArray(value)) {
     if (value.length === 0) return `${pad}[]\n`;
@@ -1017,10 +1054,16 @@ function serializeGeneratedYamlValue(value: MessagingSerializableValue, indent: 
     for (const [key, item] of Object.entries(value)) {
       assertSafeObjectKey(key, "Messaging YAML object");
       if (Array.isArray(item)) {
-        out += item.length === 0 ? `${pad}${key}: []\n` : `${pad}${key}:\n${serializeGeneratedYamlValue(item, indent + 1)}`;
+        out +=
+          item.length === 0
+            ? `${pad}${key}: []\n`
+            : `${pad}${key}:\n${serializeGeneratedYamlValue(item, indent + 1)}`;
       } else if (isObject(item)) {
         const entries = Object.entries(item);
-        out += entries.length === 0 ? `${pad}${key}: {}\n` : `${pad}${key}:\n${serializeGeneratedYamlValue(item as MessagingSerializableValue, indent + 1)}`;
+        out +=
+          entries.length === 0
+            ? `${pad}${key}: {}\n`
+            : `${pad}${key}:\n${serializeGeneratedYamlValue(item as MessagingSerializableValue, indent + 1)}`;
       } else {
         out += `${pad}${key}: ${formatGeneratedYamlScalar(item as MessagingSerializableValue)}\n`;
       }
@@ -1122,13 +1165,17 @@ export function describeMessagingBuildPhase(
   plan: MessagingBuildPlan | null,
   phase: MessagingBuildPhase,
   env: Env,
-): BuildCommandResult & { readonly agent: MessagingAgentId | "unknown"; readonly phase: MessagingBuildPhase } {
+): BuildCommandResult & {
+  readonly agent: MessagingAgentId | "unknown";
+  readonly phase: MessagingBuildPhase;
+} {
   return {
     agent: plan?.agent ?? "unknown",
     phase,
     channels: activeChannels(plan),
     doctorEnv: plan?.agent === "openclaw" ? openClawDoctorEnvOverrides(plan, env) : {},
-    installSpecs: plan?.agent === "openclaw" ? collectOpenClawMessagingPluginInstallSpecs(plan, env) : [],
+    installSpecs:
+      plan?.agent === "openclaw" ? collectOpenClawMessagingPluginInstallSpecs(plan, env) : [],
     openclawVersion: env.OPENCLAW_VERSION || "",
   };
 }

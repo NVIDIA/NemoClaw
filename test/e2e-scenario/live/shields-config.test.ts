@@ -245,8 +245,10 @@ RUN_SHIELDS_TEST(
       skip("Docker is required for shields-config live E2E");
     }
 
-    const apiKey = secrets.required("NVIDIA_API_KEY");
-    expect(apiKey.startsWith("nvapi-"), "NVIDIA_API_KEY must start with nvapi-").toBe(true);
+    const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
+    expect(apiKey.startsWith("nvapi-"), "NVIDIA_INFERENCE_API_KEY must start with nvapi-").toBe(
+      true,
+    );
 
     await cleanupSandbox(host, sandbox, "pre-cleanup");
     cleanup.add(`destroy shields-config sandbox ${SANDBOX_NAME}`, async () => {
@@ -259,7 +261,7 @@ RUN_SHIELDS_TEST(
       {
         artifactName: "phase-1-install-shields-config",
         env: commandEnv({
-          NVIDIA_API_KEY: apiKey,
+          NVIDIA_INFERENCE_API_KEY: apiKey,
           NEMOCLAW_RECREATE_SANDBOX: "1",
         }),
         redactionValues: [apiKey],

@@ -206,7 +206,8 @@ describe("inference health", () => {
       let authConfigContent = "";
       const result = probeRemoteProviderHealth("nvidia-prod", {
         model: "moonshotai/kimi-k2.6",
-        getCredentialImpl: (envName) => (envName === "NVIDIA_API_KEY" ? "nvapi-test" : null),
+        getCredentialImpl: (envName) =>
+          envName === "NVIDIA_INFERENCE_API_KEY" ? "nvapi-test" : null,
         runCurlProbeImpl: (argv) => {
           capturedArgv = argv;
           const configIndex = argv.indexOf("--config");
@@ -268,7 +269,7 @@ describe("inference health", () => {
       expect(result?.ok).toBe(true);
       expect(result?.probed).toBe(false);
       expect(result?.endpoint).toBe(`${BUILD_ENDPOINT_URL}/chat/completions`);
-      expect(result?.detail).toContain("NVIDIA_API_KEY");
+      expect(result?.detail).toContain("NVIDIA_INFERENCE_API_KEY");
       expect(result?.detail).toContain("provider-level /models");
     });
 

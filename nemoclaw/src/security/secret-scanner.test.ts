@@ -168,7 +168,7 @@ describe("scanForSecrets", () => {
 
   describe("multiple secrets in one content", () => {
     it("detects multiple different secrets", () => {
-      const content = `NVIDIA_API_KEY=${FAKE.nvidia}\nOPENAI_KEY=${FAKE.openai}`;
+      const content = `NVIDIA_INFERENCE_API_KEY=${FAKE.nvidia}\nOPENAI_KEY=${FAKE.openai}`;
       const matches = scanForSecrets(content);
       expect(matches.length).toBeGreaterThanOrEqual(2);
     });

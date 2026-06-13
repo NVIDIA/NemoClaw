@@ -209,11 +209,11 @@ describe("environment phase fixture", () => {
   });
 
   it("scopes availability probe env instead of inheriting unrelated secrets", async () => {
-    const previousSecret = process.env.NVIDIA_API_KEY;
+    const previousSecret = process.env.NVIDIA_INFERENCE_API_KEY;
     const previousDockerHost = process.env.DOCKER_HOST;
     const previousHome = process.env.HOME;
     const previousPath = process.env.PATH;
-    process.env.NVIDIA_API_KEY = "must-not-leak";
+    process.env.NVIDIA_INFERENCE_API_KEY = "must-not-leak";
     process.env.DOCKER_HOST = "unix:///tmp/e2e-docker.sock";
     process.env.HOME = "/tmp/e2e-home";
     process.env.PATH = "/usr/bin";
@@ -231,15 +231,15 @@ describe("environment phase fixture", () => {
       expect(dockerEnv).toMatchObject({ DOCKER_HOST: "unix:///tmp/e2e-docker.sock" });
       expect(cliEnv?.PATH).toBe("/tmp/e2e-home/.local/bin:/usr/bin");
       expect(dockerEnv?.PATH).toBe("/tmp/e2e-home/.local/bin:/usr/bin");
-      expect(cliEnv).not.toHaveProperty("NVIDIA_API_KEY");
-      expect(dockerEnv).not.toHaveProperty("NVIDIA_API_KEY");
+      expect(cliEnv).not.toHaveProperty("NVIDIA_INFERENCE_API_KEY");
+      expect(dockerEnv).not.toHaveProperty("NVIDIA_INFERENCE_API_KEY");
       expect(runner.calls[0]?.options?.inheritEnv).toBeUndefined();
       expect(runner.calls[1]?.options?.inheritEnv).toBeUndefined();
     } finally {
       if (previousSecret === undefined) {
-        delete process.env.NVIDIA_API_KEY;
+        delete process.env.NVIDIA_INFERENCE_API_KEY;
       } else {
-        process.env.NVIDIA_API_KEY = previousSecret;
+        process.env.NVIDIA_INFERENCE_API_KEY = previousSecret;
       }
       if (previousDockerHost === undefined) {
         delete process.env.DOCKER_HOST;

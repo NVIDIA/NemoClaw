@@ -17,6 +17,7 @@ import {
 import type { ShellProbeResult } from "../shell-probe.ts";
 import { probesForState, requireExpectedState } from "../../scenarios/expected-states.ts";
 import type { ExpectedState, StateProbeId } from "../../scenarios/types.ts";
+import { shellQuote } from "../../../../src/lib/core/shell-quote";
 import type { NemoClawInstance } from "./onboarding.ts";
 
 // Mirror of `src/lib/state/registry.ts::REGISTRY_FILE`. The fixture
@@ -110,10 +111,6 @@ function gatewayBaseEndpoint(gatewayUrl: string): string {
 
 function resultHttpCode(result: ShellProbeResult): string {
   return result.stdout.trim();
-}
-
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, `'"'"'`)}'`;
 }
 
 function resultHasHttpCode(result: ShellProbeResult, allowedCodes: readonly string[]): boolean {
