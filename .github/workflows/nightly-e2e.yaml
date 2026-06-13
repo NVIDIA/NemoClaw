@@ -26,7 +26,7 @@
 #                            through inference.local with a hermetic local mock (#2766).
 #   kimi-inference-compat-e2e
 #                            Validates Kimi K2.6 safe exec splitting through OpenClaw trajectories
-#                            with a hermetic OpenAI-compatible mock (#2620).
+#                            against public NVIDIA Endpoints, with a mock fallback (#2620).
 #   bedrock-runtime-compatible-anthropic-e2e
 #                            Validates the silent Bedrock Runtime custom Anthropic endpoint path
 #                            through a hermetic fake Bedrock Runtime host for OpenClaw and Hermes.
@@ -855,6 +855,8 @@ jobs:
 
       - name: Run Kimi inference compatibility E2E test
         env:
+          # Kimi uses the public NVIDIA Endpoints key intentionally; the script
+          # mirrors it into NVIDIA_INFERENCE_API_KEY for shared onboarding code.
           NVIDIA_API_KEY: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.NVIDIA_API_KEY || '' }}
           NVIDIA_INFERENCE_API_KEY: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.NVIDIA_API_KEY || '' }}
           NEMOCLAW_PROVIDER: cloud

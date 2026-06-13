@@ -502,7 +502,7 @@ fi
 pass "Gateway up (pid=$INIT_PID)"
 
 if gateway_guards_active "$INIT_PID" 30; then
-  pass "Initial gateway has guard chain active (proxy-env exports + gateway preloads loaded)"
+  pass "Initial gateway has guard chain configured (proxy-env exports present)"
 else
   fail "Initial gateway missing library guard chain — fix is not deployed?"
   gateway_diagnostics "$INIT_PID"
@@ -554,7 +554,7 @@ for cycle in $(seq 1 "$CRASH_CYCLES"); do
   pass "Cycle $cycle: gateway respawned (pid $prev_pid → $new_pid)"
 
   if gateway_guards_active "$new_pid" 30 "$guard_log_start"; then
-    pass "Cycle $cycle: respawned gateway retains guard chain (proxy-env + gateway preloads loaded)"
+    pass "Cycle $cycle: respawned gateway retains guard chain configuration (proxy-env exports present)"
   else
     fail "Cycle $cycle: respawned gateway LOST guard chain — recovery hardening regressed"
     gateway_diagnostics "$new_pid"

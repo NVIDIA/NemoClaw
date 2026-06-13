@@ -113,13 +113,21 @@ def _output_mentions_request_id(output, request_id):
     return bool(re.search(r"(?<![0-9A-Za-z_-])" + re.escape(request) + r"(?![0-9A-Za-z_-])", output or ""))
 
 
+def _is_scope_upgrade_approval_compat_failure(output):
+    text = _norm(output).lower()
+    return "scope upgrade pending approval" in text and (
+        "gatewayclientrequesterror" in text or "gateway" in text
+    )
+
+
 def recover_failed_scope_approval(request_id, state_dir=None, approve_output="", original_request=None):
     """Repair a narrow OpenClaw 2026.5.x nonzero scope-upgrade approval state.
 
     OpenClaw can apply, replace, or leave behind an allowlisted CLI/webchat
     operator.write upgrade while returning a gateway-connect failure to the
     caller. This helper only edits local OpenClaw device state when the pending
-    request and paired device are already present, the requested scopes are
+    request and paired device are already present, the approve output matches
+    the known gateway scope-upgrade failure signature, the requested scopes are
     limited to NemoClaw's allowlist, and the device already has
     operator.pairing. It never grants operator.admin.
     """
@@ -189,7 +197,7 @@ def recover_failed_scope_approval(request_id, state_dir=None, approve_output="",
     elif len(candidates) == 1 and not re.search(r"\brequestId\b|\brequest[-_ ]?id\b", approve_output or "", re.IGNORECASE):
         recovery_key = candidates[0][0]
         compatibility = "openclaw-approve-recovered-replacement"
-    elif still_pending and not candidates:
+    elif still_pending and not candidates and _is_scope_upgrade_approval_compat_failure(approve_output):
         recovery_key = original_key
         compatibility = "openclaw-approve-recovered-original"
     else:

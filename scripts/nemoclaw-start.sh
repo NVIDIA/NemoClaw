@@ -2417,6 +2417,12 @@ def output_mentions_request_id(value):
     request = norm(value)
     return bool(request and re.search(r"(?<![0-9A-Za-z_-])" + re.escape(request) + r"(?![0-9A-Za-z_-])", approve_output))
 
+def is_scope_upgrade_approval_compat_failure(output):
+    text = norm(output).lower()
+    return "scope upgrade pending approval" in text and (
+        "gatewayclientrequesterror" in text or "gateway" in text
+    )
+
 requested = scope_set(before)
 device_id = norm(before.get("deviceId"))
 pending = load("pending.json")
@@ -2460,7 +2466,7 @@ if len(mentioned) == 1:
     replacement_key, replacement = mentioned[0]
 elif len(candidates) == 1 and not re.search(r"\brequestId\b|\brequest[-_ ]?id\b", approve_output, re.IGNORECASE):
     replacement_key, replacement = candidates[0]
-elif still_pending and not candidates:
+elif still_pending and not candidates and is_scope_upgrade_approval_compat_failure(approve_output):
     replacement_key = original_pending_key
     compatibility = "openclaw-approve-recovered-original"
 else:
