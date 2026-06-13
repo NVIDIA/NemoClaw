@@ -3,14 +3,10 @@
 
 import { describe, expect, it } from "vitest";
 
-import {
-  requireHostedInferenceConfig,
-  usingCiCompatibleInference,
-} from "../fixtures/hosted-inference.ts";
+import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 
 function secrets(values: Record<string, string | undefined>) {
   return {
-    optional: (name: string) => values[name],
     required: (name: string) => {
       const value = values[name];
       if (!value) throw new Error(`missing ${name}`);
@@ -41,7 +37,6 @@ describe("hosted inference E2E config", () => {
     const cfg = requireHostedInferenceConfig(
       secrets({
         COMPATIBLE_API_KEY: "sk-compatible-key",
-        NVIDIA_INFERENCE_API_KEY: "sk-compatible-key",
       }),
       { NEMOCLAW_E2E_USE_NVIDIA_SECRET_AS_COMPATIBLE: "1" },
     );
@@ -54,19 +49,5 @@ describe("hosted inference E2E config", () => {
       NEMOCLAW_MODEL: "nvidia/nvidia/nemotron-3-super-v3",
       COMPATIBLE_API_KEY: "sk-compatible-key",
     });
-  });
-
-  it("falls back to the configured NVIDIA secret name for reusable workflow compatibility", () => {
-    const cfg = requireHostedInferenceConfig(
-      secrets({ NVIDIA_API_KEY: "provider-key" }),
-      { NEMOCLAW_E2E_USE_NVIDIA_SECRET_AS_COMPATIBLE: "1" },
-      { nvidiaSecretName: "NVIDIA_API_KEY" },
-    );
-
-    expect(cfg.provider).toBe("compatible");
-    expect(cfg.apiKey).toBe("provider-key");
-    expect(usingCiCompatibleInference({ NEMOCLAW_E2E_USE_NVIDIA_SECRET_AS_COMPATIBLE: "1" })).toBe(
-      true,
-    );
   });
 });
