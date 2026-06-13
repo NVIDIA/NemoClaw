@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createRequire } from "node:module";
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 
@@ -240,10 +240,12 @@ beta  127.0.0.1  18789  12345  running`;
 beta  127.0.0.1  18789  12345  running`;
     const previousWaitSeconds = process.env.NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS;
     const previousPollInterval = process.env.NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS;
+    const previousSettleSeconds = process.env.NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS;
     let healthProbeCalls = 0;
 
     process.env.NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS = "2";
     process.env.NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS = "0";
+    process.env.NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS = "0";
 
     try {
       vi.spyOn(childProcess, "spawnSync").mockImplementation(
@@ -294,6 +296,11 @@ beta  127.0.0.1  18789  12345  running`;
         delete process.env.NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS;
       } else {
         process.env.NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS = previousPollInterval;
+      }
+      if (previousSettleSeconds === undefined) {
+        delete process.env.NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS;
+      } else {
+        process.env.NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS = previousSettleSeconds;
       }
     }
   });

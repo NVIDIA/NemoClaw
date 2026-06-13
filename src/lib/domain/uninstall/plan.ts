@@ -34,6 +34,7 @@ export type UninstallPlanAction =
   | { kind: "preserve-openshell-install-paths"; paths: string[] }
   | { kind: "preserve-shim"; reason: string }
   | { kind: "stop-helper-services" }
+  | { kind: "stop-model-router" }
   | { kind: "stop-ollama-auth-proxy" }
   | { kind: "stop-openshell-forward-processes" }
   | { kind: "stop-orphaned-openshell-processes" }
@@ -76,6 +77,7 @@ export function buildUninstallPlan(
           { kind: "stop-openshell-forward-processes" },
           { kind: "stop-orphaned-openshell-processes" },
           { kind: "stop-ollama-auth-proxy" },
+          { kind: "stop-model-router" },
         ],
       },
       {

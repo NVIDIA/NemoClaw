@@ -22,6 +22,7 @@ import { ROOT, shellQuote } from "../../runner";
 import * as registry from "../../state/registry";
 import { parseForwardList } from "../../state/sandbox-session";
 import { classifyForwardHealthWithReachability, isLocalForwardReachable } from "./forward-health";
+import { printGatewayWedgeDiagnostics } from "./gateway-wedge-diagnostics";
 import {
   ensureHermesDashboardPortForwardIfEnabled as ensureHermesDashboardPortForward,
   getHermesDashboardRecoveryConfig,
@@ -310,7 +311,16 @@ function readNonNegativeNumberEnv(name: string, fallback: number): number {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
-function waitForRecoveredSandboxGateway(sandboxName: string): boolean {
+export function waitForRecoveredSandboxGateway(
+  sandboxName: string,
+  options: {
+    probeImpl?: (sandboxName: string) => boolean | null;
+    sleepImpl?: (seconds: number) => void;
+    quiet?: boolean;
+  } = {},
+): boolean {
+  const probe = options.probeImpl ?? isSandboxGatewayRunning;
+  const sleep = options.sleepImpl ?? sleepSeconds;
   const timeoutSeconds = readNonNegativeNumberEnv("NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS", 30);
   const intervalSeconds = readNonNegativeNumberEnv(
     "NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS",
@@ -321,13 +331,32 @@ function waitForRecoveredSandboxGateway(sandboxName: string): boolean {
       ? Math.max(1, Math.floor(timeoutSeconds / intervalSeconds) + 1)
       : Math.max(1, Math.floor(timeoutSeconds) + 1);
 
-  return waitUntil(() => isSandboxGatewayRunning(sandboxName) === true, {
+  const recovered = waitUntil(() => probe(sandboxName) === true, {
     initialIntervalMs: intervalSeconds * 1000,
     maxIntervalMs: intervalSeconds * 1000,
     backoffFactor: 1,
     maxAttempts: attempts,
-    sleep: (ms) => sleepSeconds(ms / 1000),
+    sleep: (ms) => sleep(ms / 1000),
   });
+  if (!recovered) return false;
+
+  // #4710: a freshly relaunched gateway can serve for ~20s and then drop
+  // its HTTP listener while the process stays alive (a failed in-process
+  // restart triggered by a post-launch config write parks it deaf). One
+  // successful probe inside that window is not proof of recovery — wait
+  // out a settle window and require the gateway to still be serving.
+  // 0 disables the settle confirm.
+  // Source boundary and removal condition for this detection live in
+  // gateway-wedge-diagnostics.ts.
+  const settleSeconds = readNonNegativeNumberEnv("NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS", 25);
+  if (settleSeconds <= 0) {
+    return true;
+  }
+  if (!options.quiet) {
+    console.log(`  Confirming the gateway stays responsive (~${settleSeconds}s)...`);
+  }
+  sleep(settleSeconds);
+  return probe(sandboxName) === true;
 }
 
 /**
@@ -487,9 +516,10 @@ export function checkAndRecoverSandboxProcesses(
   if (recovered) {
     // Wait for gateway to bind its HTTP port before declaring success. The
     // recovered process can be alive before the OpenAI-compatible API is ready.
-    if (!waitForRecoveredSandboxGateway(sandboxName)) {
+    if (!waitForRecoveredSandboxGateway(sandboxName, { quiet })) {
       if (!quiet) {
         console.error("  Gateway process started but is not responding.");
+        printGatewayWedgeDiagnostics(sandboxName, executeSandboxExecCommand);
         console.error("  Check /tmp/gateway.log inside the sandbox for details.");
         console.error("  Connect to the sandbox and run manually:");
         console.error(

@@ -121,7 +121,13 @@ export function verifyWebSearchInsideSandbox(
           log("  ✓ Web search is active inside sandbox");
           return;
         }
-        if (typeof search.apiKey !== "string" || search.apiKey.trim() === "") {
+        // Current OpenClaw schema keeps the provider-owned apiKey under
+        // plugins.entries.<provider>.config.webSearch; older configs carried
+        // it inline on tools.web.search. Accept both so the probe keeps
+        // working across schema generations.
+        const pluginApiKey = parsed?.plugins?.entries?.[search.provider]?.config?.webSearch?.apiKey;
+        const apiKey = typeof pluginApiKey === "string" ? pluginApiKey : search.apiKey;
+        if (typeof apiKey !== "string" || apiKey.trim() === "") {
           warn("  ⚠ Brave Search is enabled but openclaw.json has no API key placeholder.");
           return;
         }
@@ -129,7 +135,7 @@ export function verifyWebSearchInsideSandbox(
         // only proves the L7 proxy rewrites a placeholder, so a literal key
         // would expose itself in host/sandbox process listings without
         // testing the thing we care about.
-        if (!/^openshell:resolve:env:[A-Za-z0-9_]+$/.test(search.apiKey.trim())) {
+        if (!/^openshell:resolve:env:[A-Za-z0-9_]+$/.test(apiKey.trim())) {
           warn(
             "  ⚠ Brave Search apiKey in openclaw.json is not an OpenShell placeholder; skipping egress probe.",
           );
@@ -144,7 +150,7 @@ export function verifyWebSearchInsideSandbox(
             "--",
             "sh",
             "-lc",
-            buildBraveEgressProbeCommand(search.apiKey),
+            buildBraveEgressProbeCommand(apiKey),
           ],
           { ignoreError: true, timeout: 30_000 },
         );
