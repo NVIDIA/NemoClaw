@@ -94,8 +94,9 @@ describe("onboard sandbox naming helpers", () => {
       `Allowed format: ${NAME_ALLOWED_FORMAT}.`,
       `Try: ${"a".repeat(63)}`,
     ]);
-    expect(getNameValidationGuidance("sandbox name", "bad name", { includeAllowedFormat: false }))
-      .toEqual(["Sandbox names cannot contain spaces.", "Try: bad-name"]);
+    expect(
+      getNameValidationGuidance("sandbox name", "bad name", { includeAllowedFormat: false }),
+    ).toEqual(["Sandbox names cannot contain spaces.", "Try: bad-name"]);
   });
 
   describe("suggestNameSlug", () => {
@@ -141,15 +142,13 @@ describe("onboard sandbox naming helpers", () => {
     });
   });
 
-  it(
-    "rejects --name MyAssistant at the onboard boundary and prints Try: myassistant",
-    () => {
-      const repoRoot = path.join(import.meta.dirname, "..");
-      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-bad-name-"));
-      const scriptPath = path.join(tmpDir, "onboard-bad-name.js");
-      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+  it("rejects --name MyAssistant at the onboard boundary and prints Try: myassistant", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-bad-name-"));
+    const scriptPath = path.join(tmpDir, "onboard-bad-name.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
 
-      const script = String.raw`
+    const script = String.raw`
 const onboardModule = require(${onboardPath});
 
 (async () => {
@@ -180,25 +179,24 @@ const onboardModule = require(${onboardPath});
   process.exit(2);
 });
 `;
-      fs.writeFileSync(scriptPath, script);
+    fs.writeFileSync(scriptPath, script);
 
-      const result = spawnSync(process.execPath, [scriptPath], {
-        cwd: repoRoot,
-        encoding: "utf-8",
-        env: { ...process.env, HOME: tmpDir },
-      });
-      assert.equal(result.status, 0, result.stderr);
-      const payload = JSON.parse(result.stdout.trim());
-      assert.equal(payload.completed, false);
-      assert.equal(payload.exitCode, 1);
-      assert.ok(
-        payload.lines.some((line: string) => line.includes("Invalid sandbox name: 'MyAssistant'.")),
-        `expected 'Invalid sandbox name' line, got ${JSON.stringify(payload.lines)}`,
-      );
-      assert.ok(
-        payload.lines.some((line: string) => line.trim() === "Try: myassistant"),
-        `expected standalone 'Try: myassistant' line, got ${JSON.stringify(payload.lines)}`,
-      );
-    },
-  );
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: { ...process.env, HOME: tmpDir },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.equal(payload.completed, false);
+    assert.equal(payload.exitCode, 1);
+    assert.ok(
+      payload.lines.some((line: string) => line.includes("Invalid sandbox name: 'MyAssistant'.")),
+      `expected 'Invalid sandbox name' line, got ${JSON.stringify(payload.lines)}`,
+    );
+    assert.ok(
+      payload.lines.some((line: string) => line.trim() === "Try: myassistant"),
+      `expected standalone 'Try: myassistant' line, got ${JSON.stringify(payload.lines)}`,
+    );
+  });
 });

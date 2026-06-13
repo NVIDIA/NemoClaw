@@ -28,6 +28,10 @@ filesystem_policy:
   read_write:
     - /tmp
     - /dev/null
+    - /dev/pts                      # devpts PTY access for the tmux-session flow
+                                    # (#4513). Must mirror the default policy —
+                                    # OpenShell rejects filesystem path removals
+                                    # when `shields down` swaps this policy in.
     - /sandbox/.openclaw
     - /sandbox/.nemoclaw
     - /home/linuxbrew
@@ -46,11 +50,6 @@ network_policies:
     name: nvidia
     endpoints:
       - host: integrate.api.nvidia.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        access: full
-      - host: inference-api.nvidia.com
         port: 443
         protocol: rest
         enforcement: enforce

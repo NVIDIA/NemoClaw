@@ -114,9 +114,7 @@ describe("nightly E2E workflow validation", () => {
       // (github.event_name != 'workflow_dispatch' ||
       //  inputs.jobs == '' ||
       //  contains(format(',{0},', inputs.jobs), ',<job-name>,'))
-      const hasDispatchBypass = condition.includes(
-        "github.event_name != 'workflow_dispatch'",
-      );
+      const hasDispatchBypass = condition.includes("github.event_name != 'workflow_dispatch'");
       const hasEmptySelectionBypass = condition.includes("inputs.jobs == ''");
       const hasExactJobMatch = condition.includes(
         `contains(format(',{0},', inputs.jobs), ',${name},')`,
@@ -181,10 +179,7 @@ describe("nightly E2E workflow validation", () => {
     const invalid: string[] = [];
 
     const runnerJobs = reusableRunner.jobs as Record<string, unknown>;
-    const reusableRefExporter = getJobStep(
-      runnerJobs.run,
-      "Export checked-out ref environment",
-    );
+    const reusableRefExporter = getJobStep(runnerJobs.run, "Export checked-out ref environment");
     if (
       typeof reusableRefExporter?.run !== "string" ||
       !reusableRefExporter.run.includes("git -C repo rev-parse HEAD")
@@ -201,9 +196,7 @@ describe("nightly E2E workflow validation", () => {
           invalid.push(`${jobName} with.ref=${String(jobWith?.ref)}`);
         }
         if (jobWith?.checked_out_ref_env !== "NEMOCLAW_PUBLIC_INSTALL_REF") {
-          invalid.push(
-            `${jobName} checked_out_ref_env=${String(jobWith?.checked_out_ref_env)}`,
-          );
+          invalid.push(`${jobName} checked_out_ref_env=${String(jobWith?.checked_out_ref_env)}`);
         }
         if (typeof jobWith?.env_json === "string") {
           const env = JSON.parse(jobWith.env_json) as Record<string, unknown>;
@@ -227,7 +220,9 @@ describe("nightly E2E workflow validation", () => {
 
       const resolver = getJobStep(
         job,
-        privilegedTrustedScript ? "Resolve trusted public install ref" : "Resolve public install ref",
+        privilegedTrustedScript
+          ? "Resolve trusted public install ref"
+          : "Resolve public install ref",
       );
       if (!resolver) {
         invalid.push(`${jobName} missing resolved-ref step`);
@@ -241,7 +236,7 @@ describe("nightly E2E workflow validation", () => {
           if (env?.TARGET_REF !== "${{ inputs.target_ref }}") {
             invalid.push(`${jobName} resolved-ref TARGET_REF=${String(env?.TARGET_REF)}`);
           }
-          if (!run.includes("trusted_head=\"$(git rev-parse HEAD)\"")) {
+          if (!run.includes('trusted_head="$(git rev-parse HEAD)"')) {
             invalid.push(`${jobName} resolved-ref step does not derive trusted HEAD`);
           }
           if (!run.includes("git merge-base --is-ancestor")) {
@@ -297,14 +292,11 @@ describe("nightly E2E workflow validation", () => {
     const runnerJobs = (reusableRunner.jobs as Record<string, unknown> | undefined) ?? {};
     const runStepEnv = getStepEnv(runnerJobs.run, "Run E2E script") ?? {};
     const jobs = (workflow.jobs as Record<string, unknown> | undefined) ?? {};
-    const messagingJob = jobs["messaging-providers-e2e"] as
-      | Record<string, unknown>
-      | undefined;
+    const messagingJob = jobs["messaging-providers-e2e"] as Record<string, unknown> | undefined;
     if (!messagingJob) {
       missing.push("nightly job messaging-providers-e2e");
     }
-    const messagingSecrets =
-      (messagingJob?.secrets as Record<string, unknown> | undefined) ?? {};
+    const messagingSecrets = (messagingJob?.secrets as Record<string, unknown> | undefined) ?? {};
     const messagingWith = (messagingJob?.with as Record<string, unknown> | undefined) ?? {};
     const trustedRefExpression =
       "${{ github.event_name != 'workflow_dispatch' || inputs.target_ref == '' }}";

@@ -350,10 +350,13 @@ EOF
         { mode: 0o700 },
       );
 
-      const { stderr } = runWithLib(`verify_config_integrity_if_locked ${JSON.stringify(workDir)}`, {
-        env: { PATH: `${fakeBin}:${process.env.PATH || ""}` },
-        expectFail: true,
-      });
+      const { stderr } = runWithLib(
+        `verify_config_integrity_if_locked ${JSON.stringify(workDir)}`,
+        {
+          env: { PATH: `${fakeBin}:${process.env.PATH || ""}` },
+          expectFail: true,
+        },
+      );
       expect(stderr).toContain("Locked config is missing hash file");
     });
   });
@@ -456,7 +459,7 @@ EOF
     // Stub capsh so it is found on PATH (command -v succeeds) but reports
     // CAP_SETPCAP absent, forcing the fall-through that skips the real drop.
     const capshNoSetpcapStub = [
-      'cat >"$TMP/capsh" <<\'STUB\'',
+      "cat >\"$TMP/capsh\" <<'STUB'",
       "#!/bin/sh",
       '[ "$1" = "--has-p=cap_setpcap" ] && exit 1',
       "exit 0",
@@ -484,7 +487,9 @@ EOF
         ].join("\n"),
         { env: { NEMOCLAW_CAPS_DROPPED: "", NEMOCLAW_REQUIRE_CAP_DROP: "" } },
       );
-      expect(stdout).toContain("CAP_SETPCAP not available — cannot drop bounding-set caps via capsh");
+      expect(stdout).toContain(
+        "CAP_SETPCAP not available — cannot drop bounding-set caps via capsh",
+      );
       expect(stdout).toContain(`Dangerous caps remain in bounding set: ${QA_DANGEROUS}`);
       expect(stdout).toContain("SANDBOX_CONTINUED_DESPITE_RESIDUAL_CAPS");
       expect(stdout).not.toContain("Refusing to start sandbox");
@@ -522,7 +527,9 @@ EOF
       );
       const combined = `${stdout}\n${stderr}`;
       expect(combined).toContain("Refusing to start sandbox");
-      expect(combined).toContain(`dangerous caps remain in bounding set (CapBnd=${QA_CAPBND}): ${QA_DANGEROUS}`);
+      expect(combined).toContain(
+        `dangerous caps remain in bounding set (CapBnd=${QA_CAPBND}): ${QA_DANGEROUS}`,
+      );
       expect(combined).not.toContain("SHOULD_NOT_REACH");
     });
 
@@ -667,6 +674,73 @@ EOF
     });
   });
 
+  describe("harden_resource_limits", () => {
+    // Shim `ulimit` (a bash builtin) by overriding it with a function inside the
+    // sourced body. The function records each invocation so we can assert both
+    // the nproc (#809) and nofile (#4527) caps are applied, soft-before-hard.
+    it("applies nproc and nofile soft+hard limits in order", () => {
+      const { stdout } = runWithLib(
+        [
+          // Override the ulimit builtin to record args and succeed.
+          "ulimit() { printf 'ulimit %s\\n' \"$*\"; return 0; }",
+          "harden_resource_limits",
+        ].join("\n"),
+      );
+      const calls = stdout.split("\n").filter((line) => line.startsWith("ulimit "));
+      expect(calls).toEqual([
+        "ulimit -Su 512",
+        "ulimit -Hu 512",
+        "ulimit -Sn 65536",
+        "ulimit -Hn 65536",
+      ]);
+    });
+
+    it("is best-effort: exits 0 and warns when ulimit fails", () => {
+      // Shim ulimit to always fail. The function must not abort (best-effort)
+      // and must emit a [SECURITY] warning for each of the four limits.
+      const { stdout } = runWithLib(
+        ["ulimit() { return 1; }", "harden_resource_limits 2>&1", 'echo "HARDEN_OK"'].join("\n"),
+      );
+      expect(stdout).toContain("HARDEN_OK");
+      expect(stdout).toContain("Could not set soft nproc limit");
+      expect(stdout).toContain("Could not set hard nproc limit");
+      expect(stdout).toContain("Could not set soft nofile limit");
+      expect(stdout).toContain("Could not set hard nofile limit");
+    });
+  });
+
+  describe("entrypoints call harden_resource_limits", () => {
+    // Both entrypoints must delegate RLIMIT hardening to the shared helper and
+    // must no longer carry the pre-#4527 raw inline `ulimit -Su 512` block.
+    for (const rel of ["../scripts/nemoclaw-start.sh", "../agents/hermes/start.sh"]) {
+      it(`${rel} calls harden_resource_limits and has no raw inline nproc block`, () => {
+        const src = readFileSync(join(import.meta.dirname, rel), "utf-8");
+        expect(src).toContain("harden_resource_limits");
+        expect(src).not.toContain("ulimit -Su 512");
+        expect(src).not.toContain("ulimit -Hu 512");
+      });
+    }
+
+    // SECURITY (#4527): the RLIMIT caps are only unraisable if they are set
+    // while still root PID 1, BEFORE drop_capabilities (capsh) and the
+    // setpriv/gosu step-down. A refactor that moved the harden call after the
+    // privilege drop would turn it into dead code (cap set as the unprivileged
+    // agent, hard limit no longer lowered) while every other test stayed green.
+    // Pin the ordering so that regression is caught.
+    for (const rel of ["../scripts/nemoclaw-start.sh", "../agents/hermes/start.sh"]) {
+      it(`${rel} calls harden_resource_limits before drop_capabilities`, () => {
+        const src = readFileSync(join(import.meta.dirname, rel), "utf-8");
+        // Anchor to executable command lines, not free-text, so a comment
+        // mentioning either name cannot satisfy (or break) the ordering check.
+        const hardenIdx = src.match(/^\s*harden_resource_limits\s*$/m)?.index ?? -1;
+        const dropIdx = src.match(/^\s*drop_capabilities\b.*$/m)?.index ?? -1;
+        expect(hardenIdx).toBeGreaterThanOrEqual(0);
+        expect(dropIdx).toBeGreaterThanOrEqual(0);
+        expect(hardenIdx).toBeLessThan(dropIdx);
+      });
+    }
+  });
+
   describe("init_step_down_prefixes", () => {
     it("falls back to gosu when setpriv is unavailable", () => {
       // Source-time init runs before our test body, so re-run it with a
@@ -690,11 +764,11 @@ EOF
       const { stdout } = runWithLib(
         [
           "TMP=$(mktemp -d)",
-          'cat >"$TMP/setpriv" <<\'STUB\'',
+          "cat >\"$TMP/setpriv\" <<'STUB'",
           "#!/bin/sh",
           "exit 0",
           "STUB",
-          'cat >"$TMP/capsh" <<\'STUB\'',
+          "cat >\"$TMP/capsh\" <<'STUB'",
           "#!/bin/sh",
           '[ "$1" = "--has-p=cap_setpcap" ] && exit 0',
           "exit 1",
@@ -832,7 +906,10 @@ EOF
     it("nemoclaw-start.sh sources sandbox-init.sh", () => {
       const src = readFileSync(join(import.meta.dirname, "../scripts/nemoclaw-start.sh"), "utf-8");
       const start = src.indexOf("_SANDBOX_INIT=");
-      const end = src.indexOf("# Harden: limit process count", start);
+      // Bound the source block at the harden_resource_limits call line itself
+      // (executable, stable) rather than a free-text comment that may be reworded.
+      const hardenCallFromStart = src.slice(start).match(/^\s*harden_resource_limits\s*$/m);
+      const end = hardenCallFromStart ? start + (hardenCallFromStart.index ?? 0) : -1;
       if (start === -1 || end === -1 || end <= start) {
         throw new Error("Expected sandbox-init source block in scripts/nemoclaw-start.sh");
       }
@@ -864,6 +941,5 @@ EOF
         rmSync(workDir, { recursive: true, force: true });
       }
     });
-
   });
 });

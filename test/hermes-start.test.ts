@@ -7,11 +7,16 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 
-const START_SCRIPT = path.join(import.meta.dirname, "..", "agents", "hermes", "start.sh");
+import { shellQuote } from "../src/lib/core/shell-quote";
 
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, "'\\''")}'`;
-}
+const START_SCRIPT = path.join(import.meta.dirname, "..", "agents", "hermes", "start.sh");
+const SECRET_BOUNDARY_VALIDATOR_SCRIPT = path.join(
+  import.meta.dirname,
+  "..",
+  "agents",
+  "hermes",
+  "validate-env-secret-boundary.py",
+);
 
 function bashPrintfQ(value: string): string {
   const result = spawnSync("bash", ["-c", "printf '%q' \"$1\"", "bash-printf-q", value], {
@@ -163,10 +168,7 @@ function runHermesPortValidation(opts: {
   }
 }
 
-function runHermesEnvSecretBoundary(opts: {
-  envFile?: string;
-  symlinkEnvFile?: boolean;
-}) {
+function runHermesEnvSecretBoundary(opts: { envFile?: string; symlinkEnvFile?: boolean }) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-env-boundary-"));
   const hermesHome = path.join(tmpDir, ".hermes");
   const envFile = path.join(hermesHome, ".env");
@@ -189,6 +191,7 @@ function runHermesEnvSecretBoundary(opts: {
       "set -euo pipefail",
       extractShellFunctionFromSource(src, "validate_hermes_env_secret_boundary"),
       `HERMES_DIR=${shellQuote(hermesHome)}`,
+      `_HERMES_BOUNDARY_VALIDATOR=${shellQuote(SECRET_BOUNDARY_VALIDATOR_SCRIPT)}`,
       "validate_hermes_env_secret_boundary",
     ].join("\n"),
     { mode: 0o700 },
@@ -215,6 +218,7 @@ function runHermesRuntimeEnvSecretBoundary(envOverrides: Record<string, string>)
       "#!/usr/bin/env bash",
       "set -euo pipefail",
       extractShellFunctionFromSource(src, "validate_hermes_runtime_env_secret_boundary"),
+      `_HERMES_BOUNDARY_VALIDATOR=${shellQuote(SECRET_BOUNDARY_VALIDATOR_SCRIPT)}`,
       "validate_hermes_runtime_env_secret_boundary",
     ].join("\n"),
     { mode: 0o700 },
@@ -227,6 +231,7 @@ function runHermesRuntimeEnvSecretBoundary(envOverrides: Record<string, string>)
       env: {
         HOME: tmpDir,
         PATH: process.env.PATH ?? "",
+        _HERMES_BOUNDARY_VALIDATOR: SECRET_BOUNDARY_VALIDATOR_SCRIPT,
         ...envOverrides,
       },
     });
@@ -235,10 +240,7 @@ function runHermesRuntimeEnvSecretBoundary(envOverrides: Record<string, string>)
   }
 }
 
-function runTirithMarkerBootstrap(opts: {
-  markerReason?: string;
-  symlinkMarker?: boolean;
-}) {
+function runTirithMarkerBootstrap(opts: { markerReason?: string; symlinkMarker?: boolean }) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-tirith-"));
   const hermesHome = path.join(tmpDir, ".hermes");
   const marker = path.join(hermesHome, ".tirith-install-failed");
@@ -323,7 +325,7 @@ function runTirithExplicitCommandDispatch(mode: "non-root" | "root") {
       `HERMES_DIR=${shellQuote(hermesHome)}`,
       `HERMES_HASH_FILE=${shellQuote(path.join(tmpDir, "hermes.config-hash"))}`,
       "STEP_DOWN_PREFIX_SANDBOX=(env)",
-      "NEMOCLAW_CMD=(bash -c 'test ! -e \"$1/.tirith-install-failed\"' bash \"$HERMES_DIR\")",
+      'NEMOCLAW_CMD=(bash -c \'test ! -e "$1/.tirith-install-failed"\' bash "$HERMES_DIR")',
       extractTirithDispatchBlock(src, mode),
     ].join("\n"),
     { mode: 0o700 },
@@ -378,6 +380,7 @@ function lstatIfPresent(entry: string): fs.Stats | null {
 
 function runHermesGatewayRuntimeCleanup(opts: {
   liveGateway?: boolean;
+  liveGatewayArgv?: string[];
   orphanSocat?: boolean;
   orphanDashboardSocat?: boolean;
   staleLock?: boolean;
@@ -426,7 +429,11 @@ function runHermesGatewayRuntimeCleanup(opts: {
   if (opts.stalePid !== false) fs.writeFileSync(runtimePid, "999999\n");
   if (opts.staleLock !== false) fs.writeFileSync(runtimeLock, "stale lock");
   if (opts.liveGateway) {
-    writeFakeProcCmdline(procRoot, 123, ["/usr/local/bin/hermes", "gateway", "run"]);
+    writeFakeProcCmdline(
+      procRoot,
+      123,
+      opts.liveGatewayArgv ?? ["/usr/local/bin/hermes", "gateway", "run"],
+    );
   }
   if (opts.orphanSocat) {
     writeFakeProcCmdline(procRoot, 456, [
@@ -499,9 +506,7 @@ function runHermesGatewayRuntimeCleanup(opts: {
         const entryPath = path.join(hermesHome, entry);
         return [
           entry,
-          fs.existsSync(entryPath)
-            ? (fs.statSync(entryPath).mode & 0o777).toString(8)
-            : "missing",
+          fs.existsSync(entryPath) ? (fs.statSync(entryPath).mode & 0o777).toString(8) : "missing",
         ];
       }),
     );
@@ -632,7 +637,6 @@ describe("agents/hermes/start.sh runtime shell env", () => {
       "Error: 'hermes setup' cannot modify config inside the sandbox.",
     );
   });
-
 });
 
 describe("agents/hermes/start.sh port validation", () => {
@@ -690,6 +694,111 @@ describe("agents/hermes/start.sh port validation", () => {
     expect(dashboardInternalOnApiPublic.stderr).toContain(
       "DASHBOARD_INTERNAL_PORT must not equal PUBLIC_PORT",
     );
+  });
+});
+
+describe("agents/hermes/start.sh validator-path bootstrap", () => {
+  function extractValidatorBootstrapBlock(src: string): string {
+    const startMarker = "# Resolve the standalone secret-boundary validator";
+    const start = src.indexOf(startMarker);
+    if (start < 0) {
+      throw new Error("Expected validator bootstrap comment in agents/hermes/start.sh");
+    }
+    const fiNeedle = "\nfi\n";
+    const end = src.indexOf(fiNeedle, start);
+    if (end < 0) {
+      throw new Error("Expected closing 'fi' in validator bootstrap block");
+    }
+    return src.slice(start, end + fiNeedle.length);
+  }
+
+  it("ignores a caller-supplied _HERMES_BOUNDARY_VALIDATOR and resolves to the installed validator", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-validator-bootstrap-"));
+    const installRoot = path.join(tmpDir, "usr-local-lib-nemoclaw");
+    const installValidator = path.join(installRoot, "validate-hermes-env-secret-boundary.py");
+    const evilValidator = path.join(tmpDir, "evil-validator.py");
+    fs.mkdirSync(installRoot, { recursive: true });
+    fs.writeFileSync(installValidator, "#!/usr/bin/env python3\n");
+    fs.writeFileSync(evilValidator, "#!/usr/bin/env python3\n");
+
+    const src = fs.readFileSync(START_SCRIPT, "utf-8");
+    const bootstrap = extractValidatorBootstrapBlock(src).replaceAll(
+      "/usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py",
+      installValidator,
+    );
+    const scriptPath = path.join(tmpDir, "run.sh");
+    fs.writeFileSync(
+      scriptPath,
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        bootstrap,
+        'printf "FINAL=%s\\n" "$_HERMES_BOUNDARY_VALIDATOR"',
+      ].join("\n"),
+      { mode: 0o700 },
+    );
+
+    try {
+      const result = spawnSync("bash", [scriptPath], {
+        encoding: "utf-8",
+        timeout: 5000,
+        env: {
+          HOME: tmpDir,
+          PATH: process.env.PATH ?? "",
+          _HERMES_BOUNDARY_VALIDATOR: evilValidator,
+        },
+      });
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain(`FINAL=${installValidator}`);
+      expect(result.stdout).not.toContain(`FINAL=${evilValidator}`);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to the script-relative validator when the install path is absent", () => {
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-hermes-validator-bootstrap-fallback-"),
+    );
+    const scriptDir = path.join(tmpDir, "agents", "hermes");
+    const fallbackValidator = path.join(scriptDir, "validate-env-secret-boundary.py");
+    fs.mkdirSync(scriptDir, { recursive: true });
+    fs.writeFileSync(fallbackValidator, "#!/usr/bin/env python3\n");
+
+    const src = fs.readFileSync(START_SCRIPT, "utf-8");
+    const missingInstallPath = path.join(tmpDir, "definitely-not-installed.py");
+    const bootstrap = extractValidatorBootstrapBlock(src).replaceAll(
+      "/usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py",
+      missingInstallPath,
+    );
+    const scriptPath = path.join(scriptDir, "start.sh");
+    fs.writeFileSync(
+      scriptPath,
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        bootstrap,
+        'printf "FINAL=%s\\n" "$_HERMES_BOUNDARY_VALIDATOR"',
+      ].join("\n"),
+      { mode: 0o700 },
+    );
+
+    try {
+      const result = spawnSync("bash", [scriptPath], {
+        encoding: "utf-8",
+        timeout: 5000,
+        env: {
+          HOME: tmpDir,
+          PATH: process.env.PATH ?? "",
+          _HERMES_BOUNDARY_VALIDATOR: "/tmp/evil-via-env",
+        },
+      });
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain(`FINAL=${fallbackValidator}`);
+      expect(result.stdout).not.toContain("/tmp/evil-via-env");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -849,9 +958,7 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
 
     expect(run.historyKind).toBe("symlink");
     expect(run.symlinkTargetContent).toBe("attacker\n");
-    expect(run.result.stderr).toContain(
-      "Refusing Hermes layout repair because",
-    );
+    expect(run.result.stderr).toContain("Refusing Hermes layout repair because");
     expect(run.result.stderr).toContain(".hermes_history is a symlink");
   });
 
@@ -864,9 +971,7 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
     });
 
     expect(run.historyKind).toBe("directory");
-    expect(run.result.stderr).toContain(
-      "Refusing Hermes layout repair because",
-    );
+    expect(run.result.stderr).toContain("Refusing Hermes layout repair because");
     expect(run.result.stderr).toContain(".hermes_history is not a regular file");
   });
 
@@ -902,9 +1007,7 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
     expect(run.result.status).not.toBe(0);
     expect(run.historyKind).toBe("symlink");
     expect(run.symlinkTargetContent).toBe("attacker\n");
-    expect(run.result.stderr).toContain(
-      "Refusing Hermes layout repair because",
-    );
+    expect(run.result.stderr).toContain("Refusing Hermes layout repair because");
     expect(run.result.stderr).toContain(".hermes_history is a symlink");
   });
 
@@ -916,9 +1019,7 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
 
     expect(run.result.status).not.toBe(0);
     expect(run.historyKind).toBe("regular");
-    expect(run.result.stderr).toContain(
-      "Refusing Hermes layout repair because",
-    );
+    expect(run.result.stderr).toContain("Refusing Hermes layout repair because");
     expect(run.result.stderr).toContain("has hard-link count");
     expect(run.configYamlMode).toBe("600");
     expect(run.configYamlContent).toBe("model: test\n");
@@ -932,14 +1033,16 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
 
     expect(run.result.status).not.toBe(0);
     expect(run.historyKind).toBe("directory");
-    expect(run.result.stderr).toContain(
-      "Refusing Hermes layout repair because",
-    );
+    expect(run.result.stderr).toContain("Refusing Hermes layout repair because");
     expect(run.result.stderr).toContain(".hermes_history is not a regular file");
   });
 
   it("kills orphaned socat forwarders when no Hermes gateway is alive", () => {
-    const run = runHermesGatewayRuntimeCleanup({ orphanSocat: true, staleLock: false, stalePid: false });
+    const run = runHermesGatewayRuntimeCleanup({
+      orphanSocat: true,
+      staleLock: false,
+      stalePid: false,
+    });
 
     expect(run.result.status).toBe(0);
     expect(run.killLog.trim()).toBe("456");
@@ -968,12 +1071,24 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
     expect(run.killLog).toBe("");
     expect(run.result.stderr).toContain("Existing Hermes gateway process detected");
   });
+
+  it("preserves Hermes runtime state when the wrapped gateway execs hermes.real", () => {
+    const run = runHermesGatewayRuntimeCleanup({
+      liveGateway: true,
+      liveGatewayArgv: ["/usr/local/bin/hermes.real", "gateway", "run"],
+      orphanSocat: true,
+    });
+
+    expect(run.result.status).toBe(0);
+    expect(run.runtimePidExists).toBe(true);
+    expect(run.runtimeLockExists).toBe(true);
+    expect(run.legacyPidIsSymlink).toBe(true);
+    expect(run.killLog).toBe("");
+    expect(run.result.stderr).toContain("Existing Hermes gateway process detected");
+  });
 });
 
-function runShieldsUpRuntimeEnv(opts: {
-  locked: boolean;
-  presetValue?: string;
-}) {
+function runShieldsUpRuntimeEnv(opts: { locked: boolean; presetValue?: string }) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-shields-env-"));
   const hermesHome = path.join(tmpDir, ".hermes");
   const scriptPath = path.join(tmpDir, "run.sh");
@@ -1031,9 +1146,7 @@ describe("agents/hermes/start.sh shields-up kanban dispatcher override", () => {
 
     expect(run.result.status).toBe(0);
     expect(run.kanbanValue).toBe("0");
-    expect(run.result.stderr).toContain(
-      "Shields-up: HERMES_KANBAN_DISPATCH_IN_GATEWAY=0",
-    );
+    expect(run.result.stderr).toContain("Shields-up: HERMES_KANBAN_DISPATCH_IN_GATEWAY=0");
     expect(run.result.stderr).toContain("embedded kanban dispatcher suspended");
   });
 

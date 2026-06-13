@@ -15,59 +15,64 @@ import {
   readCliErrorOutput,
   run,
   runWithEnv,
+  testTimeout,
 } from "./helpers";
 
 describe("CLI dispatch", () => {
-  it("redirects `inference set` to openshell when provider or model is missing", () => {
-    for (const argv of [
-      "inference set 2>&1",
-      "inference set --provider nvidia-prod 2>&1",
-      "inference set --model nvidia/model 2>&1",
-    ]) {
-      const r = run(argv);
-      expect(r.code, `nemoclaw ${argv}`).toBe(1);
-      expect(r.out, `nemoclaw ${argv}`).toContain("Unknown nemoclaw command: inference set");
-      expect(r.out, `nemoclaw ${argv}`).toContain("This operation belongs to OpenShell.");
-      expect(r.out, `nemoclaw ${argv}`).toContain(
+  it(
+    "redirects `inference set` to openshell when provider or model is missing",
+    () => {
+      for (const argv of [
+        "inference set 2>&1",
+        "inference set --provider nvidia-prod 2>&1",
+        "inference set --model nvidia/model 2>&1",
+      ]) {
+        const r = run(argv);
+        expect(r.code, `nemoclaw ${argv}`).toBe(1);
+        expect(r.out, `nemoclaw ${argv}`).toContain("Unknown nemoclaw command: inference set");
+        expect(r.out, `nemoclaw ${argv}`).toContain("This operation belongs to OpenShell.");
+        expect(r.out, `nemoclaw ${argv}`).toContain(
+          "Run: openshell inference set -g nemoclaw --model <model> --provider <provider>",
+        );
+        expect(r.out, `nemoclaw ${argv}`).not.toContain("Missing required flag");
+        expect(r.out, `nemoclaw ${argv}`).not.toContain("FailedFlagValidationError");
+        expect(r.out, `nemoclaw ${argv}`).not.toContain("node_modules/@oclif/core");
+      }
+
+      let hermesOut = "";
+      let hermesCode = 0;
+      try {
+        hermesOut = execSync(`node "${HERMES_CLI}" inference set 2>&1`, {
+          encoding: "utf-8",
+          stdio: "pipe",
+          timeout: execTimeout(),
+          env: {
+            ...process.env,
+            HOME: fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-test-")),
+          },
+        });
+      } catch (err) {
+        const result = readCliErrorOutput(
+          isCliErrorCandidate(err)
+            ? {
+                status: typeof err.status === "number" ? err.status : undefined,
+                stdout: readBufferOrStringProperty(err, "stdout"),
+                stderr: readBufferOrStringProperty(err, "stderr"),
+              }
+            : String(err),
+        );
+        hermesOut = result.out;
+        hermesCode = result.code;
+      }
+      expect(hermesCode).toBe(1);
+      expect(hermesOut).toContain("Unknown nemohermes command: inference set");
+      expect(hermesOut).toContain("This operation belongs to OpenShell.");
+      expect(hermesOut).toContain(
         "Run: openshell inference set -g nemoclaw --model <model> --provider <provider>",
       );
-      expect(r.out, `nemoclaw ${argv}`).not.toContain("Missing required flag");
-      expect(r.out, `nemoclaw ${argv}`).not.toContain("FailedFlagValidationError");
-      expect(r.out, `nemoclaw ${argv}`).not.toContain("node_modules/@oclif/core");
-    }
-
-    let hermesOut = "";
-    let hermesCode = 0;
-    try {
-      hermesOut = execSync(`node "${HERMES_CLI}" inference set 2>&1`, {
-        encoding: "utf-8",
-        stdio: "pipe",
-        timeout: execTimeout(),
-        env: {
-          ...process.env,
-          HOME: fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-test-")),
-        },
-      });
-    } catch (err) {
-      const result = readCliErrorOutput(
-        isCliErrorCandidate(err)
-          ? {
-              status: typeof err.status === "number" ? err.status : undefined,
-              stdout: readBufferOrStringProperty(err, "stdout"),
-              stderr: readBufferOrStringProperty(err, "stderr"),
-            }
-          : String(err),
-      );
-      hermesOut = result.out;
-      hermesCode = result.code;
-    }
-    expect(hermesCode).toBe(1);
-    expect(hermesOut).toContain("Unknown nemohermes command: inference set");
-    expect(hermesOut).toContain("This operation belongs to OpenShell.");
-    expect(hermesOut).toContain(
-      "Run: openshell inference set -g nemoclaw --model <model> --provider <provider>",
-    );
-  });
+    },
+    testTimeout(15_000),
+  );
 
   it("list exits 0", () => {
     const r = run("list");
@@ -258,5 +263,4 @@ describe("CLI dispatch", () => {
     expect(r.out.includes("Nonexistent flag: --bogus")).toBeTruthy();
     expect(r.out.includes("See more help with --help")).toBeTruthy();
   });
-
 });

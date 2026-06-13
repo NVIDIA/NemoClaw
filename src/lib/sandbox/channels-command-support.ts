@@ -11,8 +11,16 @@ export type ChannelMutationOptions = {
   force?: boolean;
 };
 
-const sandboxNameArg = Args.string({ name: "sandbox", description: "Sandbox name", required: true });
-const channelArg = Args.string({ name: "channel", description: "Messaging channel", required: true });
+const sandboxNameArg = Args.string({
+  name: "sandbox",
+  description: "Sandbox name",
+  required: true,
+});
+const channelArg = Args.string({
+  name: "channel",
+  description: "Messaging channel",
+  required: true,
+});
 
 export function channelMutationOptions(
   channel: string | undefined,

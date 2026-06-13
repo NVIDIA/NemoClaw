@@ -107,7 +107,7 @@ describe("oclif compatibility dispatch", () => {
     }
   });
 
-  it("hands public sandbox execution to oclif as native argv", async () => {
+  it("hands exact public sandbox execution to oclif by command id", async () => {
     const cliPath = require.resolve("../dist/nemoclaw.js");
     const registryPath = require.resolve("../dist/lib/state/registry.js");
     const registryRecoveryPath = require.resolve("../dist/lib/registry-recovery-action.js");
@@ -184,8 +184,20 @@ describe("oclif compatibility dispatch", () => {
       await dispatchCli(["alpha", "status"]);
 
       expect(validateName).toHaveBeenCalledWith("alpha", "sandbox name");
+      expect(runOclifCommandById).toHaveBeenCalledWith(
+        "sandbox:status",
+        ["alpha"],
+        expect.objectContaining({ rootDir: process.cwd() }),
+      );
+      expect(runOclifArgv).not.toHaveBeenCalled();
+
+      runOclifArgv.mockClear();
+      runOclifCommandById.mockClear();
+
+      await dispatchCli(["alpha", "channels", "bogus"]);
+
       expect(runOclifArgv).toHaveBeenCalledWith(
-        ["sandbox", "status", "alpha"],
+        ["sandbox", "channels", "bogus", "alpha"],
         expect.objectContaining({ rootDir: process.cwd() }),
       );
       expect(runOclifCommandById).not.toHaveBeenCalled();
@@ -280,11 +292,12 @@ describe("oclif compatibility dispatch", () => {
 
       expect(validateName).toHaveBeenCalledWith("alpha", "sandbox name");
       expect(recoverRegistryEntries).not.toHaveBeenCalled();
-      expect(runOclifArgv).toHaveBeenCalledWith(
-        ["sandbox", "exec", "alpha", "--", "grep", "--help"],
+      expect(runOclifCommandById).toHaveBeenCalledWith(
+        "sandbox:exec",
+        ["alpha", "--", "grep", "--help"],
         expect.objectContaining({ rootDir: process.cwd() }),
       );
-      expect(runOclifCommandById).not.toHaveBeenCalled();
+      expect(runOclifArgv).not.toHaveBeenCalled();
     } finally {
       if (priorDisableAutoDispatch === undefined) {
         delete process.env.NEMOCLAW_DISABLE_AUTO_DISPATCH;
@@ -301,7 +314,7 @@ describe("oclif compatibility dispatch", () => {
     }
   });
 
-  it("keeps simple global execution on direct command IDs to avoid flexible taxonomy overmatching", async () => {
+  it("keeps exact global execution on direct command IDs to avoid flexible taxonomy overmatching", async () => {
     const cliPath = require.resolve("../dist/nemoclaw.js");
     const runnerPath = require.resolve("../dist/lib/runner.js");
     const publicDispatchPath = require.resolve("../dist/lib/cli/public-dispatch.js");
@@ -343,6 +356,18 @@ describe("oclif compatibility dispatch", () => {
         expect.objectContaining({ rootDir: process.cwd() }),
       );
       expect(runOclifArgv).not.toHaveBeenCalled();
+
+      runOclifArgv.mockClear();
+      runOclifCommandById.mockClear();
+
+      await dispatchCli(["credentials", "reset", "--yes"]);
+
+      expect(runOclifCommandById).toHaveBeenCalledWith(
+        "credentials:reset",
+        ["--yes"],
+        expect.objectContaining({ rootDir: process.cwd() }),
+      );
+      expect(runOclifArgv).not.toHaveBeenCalled();
     } finally {
       if (priorDisableAutoDispatch === undefined) {
         delete process.env.NEMOCLAW_DISABLE_AUTO_DISPATCH;
@@ -356,7 +381,6 @@ describe("oclif compatibility dispatch", () => {
       restoreCache(oclifRunnerPath, priorOclifRunner);
     }
   });
-
 
   it("uses the alias binary name in native oclif help", () => {
     const result = spawnSync(

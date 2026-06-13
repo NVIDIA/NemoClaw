@@ -7,10 +7,7 @@ import { getCredential, prompt, saveCredential } from "../credentials/store";
 import { HOST_QR_LOGIN_HANDLERS } from "../host-qr-handlers";
 import { createBuiltInChannelManifestRegistry, MessagingSetupApplier } from "../messaging";
 import { MESSAGING_SETUP_APPLIER_ENV_KEY } from "../messaging/applier/types";
-import {
-  setupMessagingChannels,
-  setupSelectedMessagingChannels,
-} from "./messaging-channel-setup";
+import { setupMessagingChannels, setupSelectedMessagingChannels } from "./messaging-channel-setup";
 import { validateSlackCredentials } from "../messaging/channels/slack/hooks/credential-validation";
 
 vi.mock("../credentials/store", () => ({
@@ -126,18 +123,14 @@ describe("setupSelectedMessagingChannels", () => {
     });
     const enabled = new Set(["telegram"]);
 
-    const plan = await setupSelectedMessagingChannels(
-      ["telegram"],
-      enabled,
-      manifests("telegram"),
-    );
+    const plan = await setupSelectedMessagingChannels(["telegram"], enabled, manifests("telegram"));
 
     expect(fetchMock).toHaveBeenCalledOnce();
     expect(enabled.has("telegram")).toBe(false);
     expect(plan?.channels[0]).toMatchObject({ channelId: "telegram", active: false });
-    expect(
-      logs.filter((line) => line.includes("Bot token was rejected by Telegram")),
-    ).toHaveLength(1);
+    expect(logs.filter((line) => line.includes("Bot token was rejected by Telegram"))).toHaveLength(
+      1,
+    );
   });
 
   it("accepts Telegram allowlist aliases during manifest channel setup", async () => {
@@ -172,11 +165,7 @@ describe("setupSelectedMessagingChannels", () => {
     });
     const enabled = new Set(["slack"]);
 
-    await setupSelectedMessagingChannels(
-      ["slack"],
-      enabled,
-      manifests("slack"),
-    );
+    await setupSelectedMessagingChannels(["slack"], enabled, manifests("slack"));
 
     expect(enabled.has("slack")).toBe(false);
     expect(saveCredential).not.toHaveBeenCalled();
@@ -200,11 +189,7 @@ describe("setupSelectedMessagingChannels", () => {
     });
     const enabled = new Set(["slack"]);
 
-    const plan = await setupSelectedMessagingChannels(
-      ["slack"],
-      enabled,
-      manifests("slack"),
-    );
+    const plan = await setupSelectedMessagingChannels(["slack"], enabled, manifests("slack"));
 
     expect(enabled.has("slack")).toBe(true);
     expect(plan?.channels[0]).toMatchObject({ channelId: "slack", active: true });
@@ -213,14 +198,8 @@ describe("setupSelectedMessagingChannels", () => {
       "  Slack Member IDs (comma-separated allowlist): ",
       "  Slack Channel IDs (comma-separated allowlist): ",
     ]);
-    expect(saveCredential).toHaveBeenCalledWith(
-      "SLACK_BOT_TOKEN",
-      "xoxb-recovered-token",
-    );
-    expect(saveCredential).not.toHaveBeenCalledWith(
-      "SLACK_APP_TOKEN",
-      "xapp-existing-token",
-    );
+    expect(saveCredential).toHaveBeenCalledWith("SLACK_BOT_TOKEN", "xoxb-recovered-token");
+    expect(saveCredential).not.toHaveBeenCalledWith("SLACK_APP_TOKEN", "xapp-existing-token");
     expect(process.env.SLACK_BOT_TOKEN).toBe("xoxb-recovered-token");
     expect(process.env.SLACK_APP_TOKEN).toBe("xapp-existing-token");
     expect(logs.join("\n")).toContain("Invalid existing slack token ignored");
@@ -267,11 +246,7 @@ describe("setupSelectedMessagingChannels", () => {
       logs.push(String(message));
     });
 
-    await setupSelectedMessagingChannels(
-      ["discord"],
-      new Set(["discord"]),
-      manifests("discord"),
-    );
+    await setupSelectedMessagingChannels(["discord"], new Set(["discord"]), manifests("discord"));
 
     expect(process.env.DISCORD_SERVER_ID).toBe("1491590992753590594");
     expect(process.env.DISCORD_REQUIRE_MENTION).toBe("0");
@@ -287,7 +262,7 @@ describe("setupSelectedMessagingChannels", () => {
       token: "wechat-token",
       extraEnv: {
         WECHAT_ACCOUNT_ID: "wechat-account",
-        WECHAT_BASE_URL: "https://ilinkai.wechat.example",
+        WECHAT_BASE_URL: "https://ilinkai.wechat.com",
         WECHAT_USER_ID: "wechat-user",
       },
       defaultUserId: "wechat-user",
@@ -306,7 +281,7 @@ describe("setupSelectedMessagingChannels", () => {
 
     expect(saveCredential).toHaveBeenCalledWith("WECHAT_BOT_TOKEN", "wechat-token");
     expect(process.env.WECHAT_ACCOUNT_ID).toBe("wechat-account");
-    expect(process.env.WECHAT_BASE_URL).toBe("https://ilinkai.wechat.example");
+    expect(process.env.WECHAT_BASE_URL).toBe("https://ilinkai.wechat.com");
     expect(process.env.WECHAT_USER_ID).toBe("wechat-user");
     expect(process.env.WECHAT_ALLOWED_IDS).toBe("wechat-user");
     expect(plan?.channels[0]).toMatchObject({ channelId: "wechat", active: true });
@@ -451,9 +426,7 @@ describe("setupMessagingChannels", () => {
     });
 
     expect(result).toEqual(["wechat"]);
-    expect(notes).toEqual([
-      "  [non-interactive] Messaging channel inputs detected: wechat",
-    ]);
+    expect(notes).toEqual(["  [non-interactive] Messaging channel inputs detected: wechat"]);
     expect(prompt).not.toHaveBeenCalled();
   });
 
@@ -472,9 +445,7 @@ describe("setupMessagingChannels", () => {
     });
 
     expect(result).toEqual([]);
-    expect(notes).toEqual([
-      "  [non-interactive] Messaging channel inputs detected: slack",
-    ]);
+    expect(notes).toEqual(["  [non-interactive] Messaging channel inputs detected: slack"]);
     expect(logs.join("\n")).toContain("Slack bot tokens start with 'xoxb-'");
     expect(logs.join("\n")).toContain("Skipped slack (invalid token format)");
     expect(prompt).not.toHaveBeenCalled();
@@ -502,11 +473,7 @@ describe("setupMessagingChannels", () => {
       logs.push(String(message));
     });
 
-    await setupSelectedMessagingChannels(
-      ["slack"],
-      enabled,
-      manifests("slack"),
-    );
+    await setupSelectedMessagingChannels(["slack"], enabled, manifests("slack"));
 
     expect(enabled.has("slack")).toBe(false);
     expect(saveCredential).toHaveBeenCalledWith("SLACK_BOT_TOKEN", "xoxb-fake-bot-token");
@@ -536,11 +503,7 @@ describe("setupMessagingChannels", () => {
     });
     const enabled = new Set(["slack"]);
 
-    await setupSelectedMessagingChannels(
-      ["slack"],
-      enabled,
-      manifests("slack"),
-    );
+    await setupSelectedMessagingChannels(["slack"], enabled, manifests("slack"));
 
     expect(enabled.has("slack")).toBe(false);
     expect(saveCredential).toHaveBeenCalledWith("SLACK_BOT_TOKEN", "xoxb-timeout-bot-token");
@@ -568,11 +531,7 @@ describe("setupMessagingChannels", () => {
       logs.push(String(message));
     });
 
-    await setupSelectedMessagingChannels(
-      ["slack"],
-      enabled,
-      manifests("slack"),
-    );
+    await setupSelectedMessagingChannels(["slack"], enabled, manifests("slack"));
 
     expect(enabled.has("slack")).toBe(false);
     expect(prompt).toHaveBeenCalledWith("  Slack Member IDs (comma-separated allowlist): ");

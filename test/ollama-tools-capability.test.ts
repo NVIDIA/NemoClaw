@@ -8,14 +8,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const require = createRequire(import.meta.url);
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const LOCAL_INFERENCE_PATH = path.join(REPO_ROOT, "dist", "lib", "inference", "local.js");
-const ONBOARD_OLLAMA_PROXY_PATH = path.join(REPO_ROOT, "dist", "lib", "inference", "ollama", "proxy.js");
+const ONBOARD_OLLAMA_PROXY_PATH = path.join(
+  REPO_ROOT,
+  "dist",
+  "lib",
+  "inference",
+  "ollama",
+  "proxy.js",
+);
 
 type CapturedCall = { argv: readonly string[]; opts?: Record<string, unknown> };
 
-type CaptureFn = (
-  cmd: string | readonly string[],
-  opts?: Record<string, unknown>,
-) => string;
+type CaptureFn = (cmd: string | readonly string[], opts?: Record<string, unknown>) => string;
 
 interface OllamaCapabilities {
   source: "api" | "unknown";
@@ -30,7 +34,11 @@ interface LocalInferenceModule {
     model: string,
     capture?: CaptureFn,
     isSparkImpl?: () => boolean,
-    captureExImpl?: (cmd: string[]) => { stdout: string; exitCode: number | null; timedOut: boolean },
+    captureExImpl?: (cmd: string[]) => {
+      stdout: string;
+      exitCode: number | null;
+      timedOut: boolean;
+    },
     options?: { allowToolsIncompatible?: boolean },
   ) => { ok: boolean; message?: string };
   setResolvedOllamaHost: (host: string) => void;
@@ -52,9 +60,10 @@ function loadLocalInference(): LocalInferenceModule {
  * Build a scripted capture function that records argv calls and returns
  * scripted output for the first matching response (or "" if none).
  */
-function makeCapture(
-  responses: ReadonlyArray<{ match: RegExp; output: string }> = [],
-): { capture: CaptureFn; calls: CapturedCall[] } {
+function makeCapture(responses: ReadonlyArray<{ match: RegExp; output: string }> = []): {
+  capture: CaptureFn;
+  calls: CapturedCall[];
+} {
   const calls: CapturedCall[] = [];
   const capture: CaptureFn = (cmd, opts) => {
     const argv = Array.isArray(cmd) ? (cmd as readonly string[]) : [String(cmd)];
@@ -110,9 +119,7 @@ describe("probeOllamaModelCapabilities", () => {
   });
 
   it("returns supportsTools=null when /api/show returns malformed JSON", () => {
-    const { capture } = makeCapture([
-      { match: /\/api\/show/, output: "not-json {" },
-    ]);
+    const { capture } = makeCapture([{ match: /\/api\/show/, output: "not-json {" }]);
     const result = localInference.probeOllamaModelCapabilities("phi4", capture);
     expect(result.source).toBe("unknown");
     expect(result.supportsTools).toBeNull();
@@ -179,7 +186,9 @@ describe("validateOllamaModel — tools-capable error mapping", () => {
         }),
       },
     ]);
-    const payload = JSON.stringify({ error: "registry.ollama.ai/library/phi4 does not support tools" });
+    const payload = JSON.stringify({
+      error: "registry.ollama.ai/library/phi4 does not support tools",
+    });
     const captureEx = () => ({ stdout: payload, exitCode: 0, timedOut: false });
     const result = localInference.validateOllamaModel("phi4", capture, () => false, captureEx);
     expect(result.ok).toBe(false);
@@ -525,7 +534,9 @@ describe("validateOllamaModel — no-tools override propagation (#4241)", () => 
   // accepted no-tools model on Spark could silently land on CPU.
   it("Spark CPU-only check still rejects after override is accepted", () => {
     const cpuOnlyApiPs = JSON.stringify({
-      models: [{ name: "tinyllama:1.1b", model: "tinyllama:1.1b", size_vram: 0, processor: "100% CPU" }],
+      models: [
+        { name: "tinyllama:1.1b", model: "tinyllama:1.1b", size_vram: 0, processor: "100% CPU" },
+      ],
     });
     const { capture } = makeCapture([{ match: /\/api\/ps/, output: cpuOnlyApiPs }]);
     const captureEx = captureExReturning(

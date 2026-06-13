@@ -17,8 +17,8 @@ import {
 } from "../../../dist/lib/diagnostics/debug";
 
 describe("redact", () => {
-  it("redacts NVIDIA_API_KEY=value patterns", () => {
-    const key = ["NVIDIA", "API", "KEY"].join("_");
+  it("redacts NVIDIA_INFERENCE_API_KEY=value patterns", () => {
+    const key = ["NVIDIA", "INFERENCE", "API", "KEY"].join("_");
     expect(redact(`${key}=some-value`)).toBe(`${key}=<REDACTED>`);
   });
 
@@ -162,9 +162,7 @@ describe("getDebugCompletionMessages", () => {
 describe("isDmesgPermissionDeniedOutput", () => {
   it("recognizes restricted dmesg stderr", () => {
     expect(
-      isDmesgPermissionDeniedOutput(
-        "dmesg: read kernel buffer failed: Operation not permitted",
-      ),
+      isDmesgPermissionDeniedOutput("dmesg: read kernel buffer failed: Operation not permitted"),
     ).toBe(true);
   });
 

@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-
 import fs from "node:fs";
 import path from "node:path";
 import { buildValidatedCurlCommandArgs } from "../../adapters/http/curl-args";
@@ -19,6 +18,7 @@ import { recoverNamedGatewayRuntime } from "../../gateway-runtime-action";
 import { parseGatewayInference } from "../../inference/config";
 import { type ProviderHealthStatus, probeProviderHealth } from "../../inference/health";
 import { isLinuxDockerDriverGatewayEnabled } from "../../onboard/docker-driver-platform";
+import { resolveGatewayName, resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import { executeSandboxCommandForVerification } from "../../onboard/sandbox-verification-exec";
 import { ROOT } from "../../runner";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
@@ -28,15 +28,15 @@ import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import { buildStatusCommandDeps } from "../../status-command-deps";
 import { readCloudflaredState } from "../../tunnel/services";
+import { runSandboxAutoPairApprovalPass, wrapSandboxShellScript } from "./auto-pair-approval";
 import { buildConfigPermsCheck } from "./doctor-config-perms";
 import {
   buildGatewayInspectFailureChecks,
   type GatewayInspectOptions,
 } from "./doctor-gateway-fallback";
 import { captureHostCommand } from "./doctor-host-command";
+import { buildToolScopeChecks } from "./doctor-tool-scope";
 import { probeSandboxInferenceGatewayHealth } from "./process-recovery";
-
-const NEMOCLAW_GATEWAY_NAME = "nemoclaw";
 
 type DoctorStatus = "ok" | "warn" | "fail" | "info";
 
@@ -57,13 +57,8 @@ export type DoctorReport = {
   checks: DoctorCheck[];
 };
 
-function pushInferenceHealthCheck(
-  checks: DoctorCheck[],
-  probe: ProviderHealthStatus,
-): void {
-  const label = probe.probeLabel
-    ? `Provider health (${probe.probeLabel})`
-    : "Provider health";
+function pushInferenceHealthCheck(checks: DoctorCheck[], probe: ProviderHealthStatus): void {
+  const label = probe.probeLabel ? `Provider health (${probe.probeLabel})` : "Provider health";
   if (!probe.probed) {
     checks.push({ group: "Inference", label, status: "info", detail: probe.detail });
     return;
@@ -195,7 +190,9 @@ function dockerInspectGateway(
     label: "Docker container",
     status: running && healthOk ? "ok" : "fail",
     detail: `${containerName} ${running ? "running" : "stopped"} (${health}; ${image})`,
-    hint: running ? undefined : "restart the gateway with `openshell gateway start --name nemoclaw`",
+    hint: running
+      ? undefined
+      : `restart the gateway with \`openshell gateway start --name ${options.gatewayName ?? "nemoclaw"}\``,
   });
 
   const port = captureHostCommand("docker", ["port", containerName, "30051/tcp"], 5000);
@@ -389,7 +386,10 @@ function channelRuntimeDoctorCheck(
     // Surface that as a warn so a stale rebuild isn't masked by an
     // unreadable log (CodeRabbit on PR #4182). The log-unavailable
     // warning below still runs when configMissing is empty.
-    const { missing: configMissing } = compareChannelSets(enabledChannels, runtime.configuredChannels);
+    const { missing: configMissing } = compareChannelSets(
+      enabledChannels,
+      runtime.configuredChannels,
+    );
     if (configMissing.length > 0) {
       return {
         group: "Messaging",
@@ -422,8 +422,8 @@ function channelRuntimeDoctorCheck(
 }
 
 function messagingDoctorCheck(sandboxName: string, sb: SandboxEntry): DoctorCheck {
-  const registeredChannels = Array.isArray(sb.messagingChannels) ? sb.messagingChannels : [];
-  const disabledChannels = new Set(Array.isArray(sb.disabledChannels) ? sb.disabledChannels : []);
+  const registeredChannels = registry.getConfiguredMessagingChannelsFromEntry(sb);
+  const disabledChannels = new Set(registry.getDisabledMessagingChannelsFromEntry(sb));
   const channels = registeredChannels.filter((channel: string) => !disabledChannels.has(channel));
   const pausedChannels = registeredChannels.filter((channel: string) =>
     disabledChannels.has(channel),
@@ -522,11 +522,16 @@ export async function runSandboxDoctor(
   const unknown = args.filter((arg) => !["--json", "--fix", "--help", "-h"].includes(arg));
   if (helpRequested) {
     console.log(`  Usage: ${CLI_NAME} <name> doctor [--json] [--fix]`);
-    console.log(`  --fix   Restore the mutable OpenClaw config permission contract if it was tightened`);
+    console.log(
+      `  --fix   Restore the mutable OpenClaw config permission contract if it was tightened,`,
+    );
+    console.log(`          and approve pending allowlisted dashboard/CLI tool-scope upgrades`);
     return;
   }
   if (unknown.length > 0) {
-    console.error(`  Unknown doctor argument${unknown.length === 1 ? "" : "s"}: ${unknown.join(" ")}`);
+    console.error(
+      `  Unknown doctor argument${unknown.length === 1 ? "" : "s"}: ${unknown.join(" ")}`,
+    );
     console.error(`  Usage: ${CLI_NAME} <name> doctor [--json] [--fix]`);
     process.exit(1);
   }
@@ -537,12 +542,19 @@ export async function runSandboxDoctor(
   // to repair.
   if (wantsFix && asJson) {
     console.error(`  ${CLI_NAME} doctor: --fix cannot be combined with --json`);
-    console.error(`  Run \`${CLI_NAME} ${sandboxName} doctor --json\` to detect, then \`${CLI_NAME} ${sandboxName} doctor --fix\` to repair`);
+    console.error(
+      `  Run \`${CLI_NAME} ${sandboxName} doctor --json\` to detect, then \`${CLI_NAME} ${sandboxName} doctor --fix\` to repair`,
+    );
     process.exit(1);
   }
 
   const sb = registry.getSandbox(sandboxName);
+  const gatewayName = sb ? resolveSandboxGatewayName(sb) : resolveGatewayName(GATEWAY_PORT);
   const checks: DoctorCheck[] = [];
+  // Tracks whether the named sandbox is present-and-Ready, so live-only probes
+  // (e.g. the #4616 dashboard tool-scope diagnostic) only run when they can
+  // actually reach the sandbox via `openshell sandbox exec`.
+  let sandboxReachable = false;
 
   checks.push({
     group: "Host",
@@ -582,7 +594,7 @@ export async function runSandboxDoctor(
 
   let openshellConnected = false;
   if (openshellBin) {
-    const recovery = await recoverNamedGatewayRuntime();
+    const recovery = await recoverNamedGatewayRuntime({ gatewayName });
     const lifecycle = recovery.after || recovery.before;
     const cleanStatus = stripAnsi(lifecycle?.status || "");
     openshellConnected = lifecycle?.state === "healthy_named";
@@ -591,16 +603,19 @@ export async function runSandboxDoctor(
       label: "OpenShell status",
       status: openshellConnected ? "ok" : "fail",
       detail: openshellConnected
-        ? "connected to nemoclaw"
-        : oneLine(cleanStatus || lifecycle?.gatewayInfo || "not connected to nemoclaw"),
-      hint: openshellConnected ? undefined : "run `openshell gateway select nemoclaw` and retry",
+        ? `connected to ${gatewayName}`
+        : oneLine(cleanStatus || lifecycle?.gatewayInfo || `not connected to ${gatewayName}`),
+      hint: openshellConnected
+        ? undefined
+        : `run \`openshell gateway select ${gatewayName}\` and retry`,
     });
   }
 
   if (shouldInspectLegacyGatewayContainer(sb)) {
     checks.push(
-      ...dockerInspectGateway(`openshell-cluster-${NEMOCLAW_GATEWAY_NAME}`, {
+      ...dockerInspectGateway(`openshell-cluster-${gatewayName}`, {
         namedGatewayConnected: openshellConnected,
+        gatewayName,
       }),
     );
   }
@@ -614,6 +629,7 @@ export async function runSandboxDoctor(
     const present = list.status === 0 && liveNames.has(sandboxName);
     const line = findSandboxListLine(list.output || "", sandboxName);
     const ready = inferSandboxReadyFromLine(line);
+    sandboxReachable = present && ready === true;
     checks.push({
       group: "Sandbox",
       label: "Live sandbox",
@@ -770,15 +786,37 @@ export async function runSandboxDoctor(
     // #4156: bridge the gap between "configured" and "runtime-visible" — the
     // existing messaging check above probes provider attachment, not whether
     // OpenClaw's runtime config actually surfaces each enabled channel.
-    const registeredChannels = Array.isArray(sb.messagingChannels) ? sb.messagingChannels : [];
-    const disabledChannelsSet = new Set(
-      Array.isArray(sb.disabledChannels) ? sb.disabledChannels : [],
-    );
+    const registeredChannels = registry.getConfiguredMessagingChannelsFromEntry(sb);
+    const disabledChannelsSet = new Set(registry.getDisabledMessagingChannelsFromEntry(sb));
     const enabledChannels = registeredChannels.filter(
       (channel: string) => !disabledChannelsSet.has(channel),
     );
     const runtimeCheck = channelRuntimeDoctorCheck(sandboxName, enabledChannels);
     if (runtimeCheck) checks.push(runtimeCheck);
+  }
+
+  // #4616: surface (and, with --fix, repair) late OpenClaw dashboard/tool-call
+  // device-scope approvals. Dashboard-only users never run `connect`, so a
+  // pending tool-scope upgrade — visible as a gateway 1006 close, a "scope
+  // upgrade pending approval" error, and a loopback policy denial — has no
+  // recovery path. The probe is read-only; `--fix` runs the same narrow
+  // allowlisted approval pass that `connect` runs. Only run it when the sandbox
+  // is actually reachable so a stopped sandbox doesn't add noise, and only for
+  // OpenClaw — the `openclaw devices`/auto-pair scope-upgrade mechanism is
+  // OpenClaw-specific. Hermes (device_pairing: false) uses a different tool
+  // gateway, so probing it would emit an inaccurate OpenClaw-only check.
+  // Legacy registry entries with no recorded agent default to OpenClaw.
+  if (sb && sandboxReachable && (sb.agent ?? "openclaw") === "openclaw") {
+    const toolScopeChecks = buildToolScopeChecks(sandboxName, CLI_NAME, wantsFix, {
+      // OpenShell exec rejects multi-line args, so base64-wrap the probe payload.
+      exec: (name, script) =>
+        executeSandboxCommandForVerification(name, wrapSandboxShellScript(script)),
+      runApprovalPass: (name) => {
+        const result = runSandboxAutoPairApprovalPass(name, { capture: true });
+        return { reported: result.reported, approved: result.approved };
+      },
+    });
+    for (const check of toolScopeChecks) checks.push(check);
   }
 
   checks.push(ollamaDoctorCheck(currentProvider));

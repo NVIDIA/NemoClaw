@@ -6,7 +6,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { selectResourceProfileForSandbox } from "../../../dist/lib/onboard/resource-profile-selection.js";
 import type { ResourceProfileSelectionDeps } from "./resource-profile-selection";
 
-function makeDeps(overrides: Partial<ResourceProfileSelectionDeps> = {}): ResourceProfileSelectionDeps {
+function makeDeps(
+  overrides: Partial<ResourceProfileSelectionDeps> = {},
+): ResourceProfileSelectionDeps {
   return {
     isNonInteractive: vi.fn(() => false),
     note: vi.fn(),
@@ -51,7 +53,9 @@ describe("selectResourceProfileForSandbox", () => {
 
     await expect(selectResourceProfileForSandbox(deps)).resolves.toBeNull();
 
-    expect(deps.note).toHaveBeenCalledWith("  Resource profile (env): default (OpenShell defaults)");
+    expect(deps.note).toHaveBeenCalledWith(
+      "  Resource profile (env): default (OpenShell defaults)",
+    );
     expect(deps.promptOrDefault).not.toHaveBeenCalled();
   });
 
@@ -97,16 +101,15 @@ describe("selectResourceProfileForSandbox", () => {
 
     await expect(selectResourceProfileForSandbox(deps)).rejects.toThrow("process.exit(1)");
 
-    expect(errorSpy).toHaveBeenCalledWith("  Invalid resource profile selection '99'. Choose a number from 1 to 6.");
+    expect(errorSpy).toHaveBeenCalledWith(
+      "  Invalid resource profile selection '99'. Choose a number from 1 to 6.",
+    );
   });
 
   it("collects a custom profile and validates CPU and RAM", async () => {
     const deps = makeDeps({
       promptOrDefault: vi.fn().mockResolvedValue("5"),
-      prompt: vi
-        .fn()
-        .mockResolvedValueOnce("25%")
-        .mockResolvedValueOnce("25%"),
+      prompt: vi.fn().mockResolvedValueOnce("25%").mockResolvedValueOnce("25%"),
     });
 
     await expect(selectResourceProfileForSandbox(deps)).resolves.toEqual({
@@ -120,14 +123,13 @@ describe("selectResourceProfileForSandbox", () => {
   it("exits when custom profile validation fails", async () => {
     const deps = makeDeps({
       promptOrDefault: vi.fn().mockResolvedValue("5"),
-      prompt: vi
-        .fn()
-        .mockResolvedValueOnce("101%")
-        .mockResolvedValueOnce("25%"),
+      prompt: vi.fn().mockResolvedValueOnce("101%").mockResolvedValueOnce("25%"),
     });
 
     await expect(selectResourceProfileForSandbox(deps)).rejects.toThrow("process.exit(1)");
 
-    expect(errorSpy).toHaveBeenCalledWith("  Invalid percentage '101%': must be an integer between 1% and 100%");
+    expect(errorSpy).toHaveBeenCalledWith(
+      "  Invalid percentage '101%': must be an integer between 1% and 100%",
+    );
   });
 });

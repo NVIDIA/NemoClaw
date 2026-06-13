@@ -53,11 +53,7 @@ export const ONBOARD_MACHINE_EVENT_TYPES = [
 
 export type OnboardMachineEventType = (typeof ONBOARD_MACHINE_EVENT_TYPES)[number];
 
-export type OnboardMachineTransitionKind =
-  | "advance"
-  | "retry"
-  | "branch"
-  | "failure";
+export type OnboardMachineTransitionKind = "advance" | "retry" | "branch" | "failure";
 
 export interface OnboardMachineTransition {
   from: OnboardMachineState;

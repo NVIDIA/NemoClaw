@@ -81,10 +81,7 @@ describe("dashboard-url command helpers", () => {
       },
     );
 
-    expect(sinks.out).toEqual([
-      "  Dashboard URL:",
-      "  http://127.0.0.1:18789/#token=secret-token",
-    ]);
+    expect(sinks.out).toEqual(["  Dashboard URL:", "  http://127.0.0.1:18789/#token=secret-token"]);
     expect(sinks.err.join("\n")).toContain("Treat this URL like a password");
   });
 

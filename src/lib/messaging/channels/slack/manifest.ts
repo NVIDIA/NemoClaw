@@ -32,7 +32,8 @@ export const slackManifest = {
       required: true,
       envKey: "SLACK_APP_TOKEN",
       formatPattern: "^xapp-[A-Za-z0-9_-]+$",
-      formatHint: "Slack app tokens start with 'xapp-' (e.g. xapp-<version>-<app-id>-<team-id>-<redacted>).",
+      formatHint:
+        "Slack app tokens start with 'xapp-' (e.g. xapp-<version>-<app-id>-<team-id>-<redacted>).",
       prompt: {
         label: "Slack App Token (Socket Mode)",
         help: "Slack API → Your Apps → Basic Information → App-Level Tokens (xapp-...).",
@@ -83,23 +84,40 @@ export const slackManifest = {
   policyPresets: ["slack"],
   render: [
     {
-      id: "slack-openclaw-account",
+      id: "slack-openclaw-channel",
       kind: "json-fragment",
       agent: "openclaw",
       target: "openclaw.json",
       fragment: {
-        path: "channels.slack.accounts.default",
+        path: "channels.slack",
         value: {
-          botToken: "{{credential.slackBotToken.placeholder}}",
-          appToken: "{{credential.slackAppToken.placeholder}}",
           enabled: true,
-          healthMonitor: {
-            enabled: false,
+          accounts: {
+            default: {
+              botToken: "{{credential.slackBotToken.placeholder}}",
+              appToken: "{{credential.slackAppToken.placeholder}}",
+              enabled: true,
+              healthMonitor: {
+                enabled: false,
+              },
+              dmPolicy: "{{allowedIds.slack.dmPolicy}}",
+              allowFrom: "{{allowedIds.slack.values}}",
+              groupPolicy: "{{allowedIds.slack.groupPolicy}}",
+              channels: "{{allowedIds.slack.channels}}",
+            },
           },
-          dmPolicy: "{{allowedIds.slack.dmPolicy}}",
-          allowFrom: "{{allowedIds.slack.values}}",
-          groupPolicy: "{{allowedIds.slack.groupPolicy}}",
-          channels: "{{allowedIds.slack.channels}}",
+        },
+      },
+    },
+    {
+      id: "slack-openclaw-plugin",
+      kind: "json-fragment",
+      agent: "openclaw",
+      target: "openclaw.json",
+      fragment: {
+        path: "plugins.entries.slack",
+        value: {
+          enabled: true,
         },
       },
     },
@@ -112,7 +130,20 @@ export const slackManifest = {
         "SLACK_BOT_TOKEN={{credential.slackBotToken.placeholder}}",
         "SLACK_APP_TOKEN={{credential.slackAppToken.placeholder}}",
         "SLACK_ALLOWED_USERS={{allowedIds.slack.csv}}",
+        "SLACK_ALLOWED_CHANNELS={{slackConfig.allowedChannels.csv}}",
       ],
+    },
+    {
+      id: "slack-hermes-platform",
+      kind: "json-fragment",
+      agent: "hermes",
+      target: "~/.hermes/config.yaml",
+      fragment: {
+        path: "platforms.slack",
+        value: {
+          enabled: true,
+        },
+      },
     },
   ],
   state: {
@@ -132,6 +163,25 @@ export const slackManifest = {
     ],
   },
   hooks: [
+    {
+      id: "slack-openclaw-package-install",
+      phase: "agent-install",
+      handler: "common.staticOutputs",
+      agents: ["openclaw"],
+      outputs: [
+        {
+          id: "openclawPluginPackage",
+          kind: "package-install",
+          required: true,
+          value: {
+            manager: "openclaw-plugin",
+            spec: "npm:@openclaw/slack@{{openclaw.version}}",
+            pin: true,
+          },
+        },
+      ],
+      onFailure: "abort",
+    },
     {
       id: "slack-token-paste",
       phase: "enroll",

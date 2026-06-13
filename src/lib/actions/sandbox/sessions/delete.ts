@@ -66,9 +66,7 @@ export async function deleteSandboxSession(
   if (payload.ok === false || payload.error) {
     const code = payload.error?.code ?? "unknown";
     const message = payload.error?.message ?? "no message";
-    console.error(
-      `  Gateway refused sessions.delete for '${canonicalKey}': [${code}] ${message}`,
-    );
+    console.error(`  Gateway refused sessions.delete for '${canonicalKey}': [${code}] ${message}`);
     process.exit(1);
   }
   if (payload.ok !== true || typeof payload.key !== "string") {
@@ -88,9 +86,7 @@ export async function deleteSandboxSession(
       }),
     );
   } else {
-    const transcriptNote = removedTranscript
-      ? "(transcript removed)"
-      : "(transcript preserved)";
+    const transcriptNote = removedTranscript ? "(transcript removed)" : "(transcript preserved)";
     console.error(
       `  Deleted session '${payload.key}' on agent '${resolvedAgent}' via the OpenClaw gateway ${transcriptNote}.`,
     );

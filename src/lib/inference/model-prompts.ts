@@ -1,13 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import {
-  BACK_TO_SELECTION,
-  type BackToSelection,
-} from "../navigation";
+import { BACK_TO_SELECTION, type BackToSelection } from "../navigation";
 import { isSafeModelId } from "../validation";
 import { CLOUD_MODEL_OPTIONS, HERMES_PROVIDER_MODEL_OPTIONS } from "./config";
 import { validateNvidiaEndpointModel } from "./provider-models";
+
+export { promptVllmModel, type VllmModelPromptOptions } from "./vllm-prompt";
 
 // credentials.ts still uses CommonJS-style exports.
 const { getCredential, prompt } = require("../credentials/store");
@@ -129,7 +128,9 @@ export async function promptManualModelId(
   }
 }
 
-export async function promptCloudModel(options: ModelPromptOptions = {}): Promise<ModelPromptResult> {
+export async function promptCloudModel(
+  options: ModelPromptOptions = {},
+): Promise<ModelPromptResult> {
   const deps = resolvePromptOptions(options);
   const defaultModelId = options.defaultModelId ?? "";
 
@@ -161,14 +162,17 @@ export async function promptCloudModel(options: ModelPromptOptions = {}): Promis
     return deps.cloudModelOptions[index].id;
   }
 
-  const nvidiaApiKey = deps.getCredentialFn("NVIDIA_API_KEY");
+  const nvidiaApiKey = deps.getCredentialFn("NVIDIA_INFERENCE_API_KEY");
   if (!nvidiaApiKey) {
-    deps.errorLine("  NVIDIA_API_KEY is required before validating a custom NVIDIA Endpoints model.");
+    deps.errorLine(
+      "  NVIDIA_INFERENCE_API_KEY is required before validating a custom NVIDIA Endpoints model.",
+    );
     return deps.backToSelection;
   }
 
   // If default is a custom (non-curated) model ID, pre-fill it in the manual prompt
-  const manualDefault = defaultCuratedIdx < 0 && defaultModelId && isSafeModelId(defaultModelId) ? defaultModelId : "";
+  const manualDefault =
+    defaultCuratedIdx < 0 && defaultModelId && isSafeModelId(defaultModelId) ? defaultModelId : "";
   const manualLabel = manualDefault
     ? `  NVIDIA Endpoints model id [${manualDefault}]: `
     : "  NVIDIA Endpoints model id: ";
@@ -204,8 +208,7 @@ export async function promptRemoteModel(
         ? visibleOptions.length + 2
         : null;
   const defaultChoice =
-    currentDefaultChoice ??
-    Math.min(Math.max(visibleOptions.length, 1), visibleOptions.length + 1);
+    currentDefaultChoice ?? Math.min(Math.max(visibleOptions.length, 1), visibleOptions.length + 1);
 
   deps.writeLine("");
   deps.writeLine(`  ${label} models:`);

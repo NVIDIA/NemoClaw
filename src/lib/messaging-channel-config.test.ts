@@ -33,7 +33,7 @@ describe("messaging channel config", () => {
         DISCORD_REQUIRE_MENTION: "0",
         SLACK_ALLOWED_USERS: "  U01ABC2DEF3, U04GHI5JKL6  ",
         SLACK_ALLOWED_CHANNELS: "  C012AB3CD, C987ZY6XW  ",
-        NVIDIA_API_KEY: "not-channel-config",
+        NVIDIA_INFERENCE_API_KEY: "not-channel-config",
       }),
     ).toEqual({
       TELEGRAM_ALLOWED_IDS: "123,456",
@@ -56,6 +56,27 @@ describe("messaging channel config", () => {
         TELEGRAM_CHAT_ID: "8388960805",
       }),
     ).toBeNull();
+  });
+
+  it("normalizes Discord compatibility aliases to canonical channel config", () => {
+    const env: NodeJS.ProcessEnv = {
+      DISCORD_SERVER_IDS: "1491590992753590594",
+      DISCORD_ALLOWED_IDS: "1005536447329222676",
+      DISCORD_REQUIRE_MENTION: "0",
+    };
+
+    expect(readMessagingChannelConfigFromEnv(env)).toEqual({
+      DISCORD_SERVER_ID: "1491590992753590594",
+      DISCORD_USER_ID: "1005536447329222676",
+      DISCORD_REQUIRE_MENTION: "0",
+    });
+    expect(hydrateMessagingChannelConfig(null, env)).toEqual({
+      DISCORD_SERVER_ID: "1491590992753590594",
+      DISCORD_USER_ID: "1005536447329222676",
+      DISCORD_REQUIRE_MENTION: "0",
+    });
+    expect(env.DISCORD_SERVER_ID).toBe("1491590992753590594");
+    expect(env.DISCORD_USER_ID).toBe("1005536447329222676");
   });
 
   it("hydrates missing env values but preserves explicit env overrides", () => {

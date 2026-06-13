@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-
 import type { StdioOptions } from "node:child_process";
 
 import { ROOT } from "../../runner";
@@ -20,6 +19,7 @@ type CommandArgs = string[];
 type RunnerOptions = {
   env?: NodeJS.ProcessEnv;
   stdio?: StdioOptions;
+  input?: string;
   ignoreError?: boolean;
   timeout?: number;
 };
@@ -42,6 +42,7 @@ export function runOpenshell(args: CommandArgs, opts: RunnerOptions = {}) {
     cwd: ROOT,
     env: opts.env,
     stdio: opts.stdio,
+    input: opts.input,
     ignoreError: opts.ignoreError,
     timeout: opts.timeout,
     errorLine: console.error,
@@ -91,9 +92,7 @@ export function isCommandTimeout(result: { error?: Error }) {
   return (result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT";
 }
 
-export function getInstalledOpenshellVersionOrNull(
-  opts: { timeout?: number } = {},
-): string | null {
+export function getInstalledOpenshellVersionOrNull(opts: { timeout?: number } = {}): string | null {
   return getInstalledOpenshellVersion(getOpenshellBinary(), {
     cwd: ROOT,
     timeout: opts.timeout,

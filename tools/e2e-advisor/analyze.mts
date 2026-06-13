@@ -7,9 +7,27 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { getChangedFiles, getDiff } from "../advisors/git.mts";
-import { advisorArtifactPaths, parseArgs, parsePositiveInt, readJson, writeJson, type AdvisorArtifactPaths } from "../advisors/io.mts";
-import { dropUndefinedValues, extractJson, recordItems, stringOrUndefined } from "../advisors/json.mts";
-import { DEFAULT_ADVISOR_MODEL, DEFAULT_ADVISOR_PROVIDER, READ_ONLY_TOOLS, type RunAdvisorResult, runReadOnlyAdvisor } from "../advisors/session.mts";
+import {
+  type AdvisorArtifactPaths,
+  advisorArtifactPaths,
+  parseArgs,
+  parsePositiveInt,
+  readJson,
+  writeJson,
+} from "../advisors/io.mts";
+import {
+  dropUndefinedValues,
+  extractJson,
+  recordItems,
+  stringOrUndefined,
+} from "../advisors/json.mts";
+import {
+  DEFAULT_ADVISOR_MODEL,
+  DEFAULT_ADVISOR_PROVIDER,
+  READ_ONLY_TOOLS,
+  type RunAdvisorResult,
+  runReadOnlyAdvisor,
+} from "../advisors/session.mts";
 
 const root = process.cwd();
 const ADVISOR_PROVIDER = DEFAULT_ADVISOR_PROVIDER;
@@ -80,10 +98,14 @@ async function main(): Promise<void> {
   const artifacts = artifactPaths(outDir);
   // Keep generated advisor credential config outside uploaded artifacts.
   const configDir =
-    process.env.E2E_ADVISOR_CONFIG_DIR || path.join("/tmp", `nemoclaw-e2e-advisor-config-${process.pid}`);
+    process.env.E2E_ADVISOR_CONFIG_DIR ||
+    path.join("/tmp", `nemoclaw-e2e-advisor-config-${process.pid}`);
   const timeoutMs = parsePositiveInt(process.env.E2E_ADVISOR_TIMEOUT_MS, 900000);
   const heartbeatMs = parsePositiveInt(process.env.E2E_ADVISOR_HEARTBEAT_MS, 60000);
-  const maxCaptureBytes = parsePositiveInt(process.env.E2E_ADVISOR_MAX_CAPTURE_BYTES, 5 * 1024 * 1024);
+  const maxCaptureBytes = parsePositiveInt(
+    process.env.E2E_ADVISOR_MAX_CAPTURE_BYTES,
+    5 * 1024 * 1024,
+  );
 
   fs.mkdirSync(outDir, { recursive: true });
 
@@ -99,8 +121,10 @@ async function main(): Promise<void> {
   logProgress(`Wrote advisor prompt: ${prompt.length} character(s) at ${artifacts.prompt}`);
 
   const metadata = { baseRef, headRef, changedFiles };
-  const writeFailure = (reason: string): void => writeUnavailableArtifacts(artifacts, metadata, reason, true);
-  const writeUnavailable = (reason: string): void => writeUnavailableArtifacts(artifacts, metadata, reason, false);
+  const writeFailure = (reason: string): void =>
+    writeUnavailableArtifacts(artifacts, metadata, reason, true);
+  const writeUnavailable = (reason: string): void =>
+    writeUnavailableArtifacts(artifacts, metadata, reason, false);
 
   if (process.env.E2E_ADVISOR_RUN_ANALYSIS === "0") {
     writeUnavailable("E2E_ADVISOR_RUN_ANALYSIS=0");
@@ -108,7 +132,9 @@ async function main(): Promise<void> {
   }
 
   logProgress(`Launching advisor SDK: provider=${ADVISOR_PROVIDER} model=${ADVISOR_MODEL}`);
-  logProgress(`Advisor tools enabled: ${READ_ONLY_TOOLS.join(",")}; repository commands remain disabled by prompt policy`);
+  logProgress(
+    `Advisor tools enabled: ${READ_ONLY_TOOLS.join(",")}; repository commands remain disabled by prompt policy`,
+  );
 
   let sdkResult: RunAdvisorResult | undefined;
   try {
@@ -141,7 +167,10 @@ async function main(): Promise<void> {
 
   let result: AdvisorResult;
   try {
-    result = normalizeAdvisorResult(extractJson(sdkResult.text || sdkResult.raw, artifacts.raw, "e2e_advisor_json"), metadata);
+    result = normalizeAdvisorResult(
+      extractJson(sdkResult.text || sdkResult.raw, artifacts.raw, "e2e_advisor_json"),
+      metadata,
+    );
   } catch (error: unknown) {
     writeFailure(error instanceof Error ? error.message : String(error));
     process.exit(1);
@@ -158,11 +187,24 @@ function artifactPaths(outDir: string): ArtifactPaths {
   return advisorArtifactPaths(outDir, "e2e-advisor");
 }
 
-function writeUnavailableArtifacts(paths: ArtifactPaths, metadata: AdvisorMetadata, reason: string, failed: boolean): void {
+function writeUnavailableArtifacts(
+  paths: ArtifactPaths,
+  metadata: AdvisorMetadata,
+  reason: string,
+  failed: boolean,
+): void {
   const result = unavailableResult(metadata, reason, failed);
-  writeJson(paths.result, failed ? { failed: true, reason, promptPath: paths.prompt, rawPath: paths.raw } : { skipped: true, reason, promptPath: paths.prompt });
+  writeJson(
+    paths.result,
+    failed
+      ? { failed: true, reason, promptPath: paths.prompt, rawPath: paths.raw }
+      : { skipped: true, reason, promptPath: paths.prompt },
+  );
   writeJson(paths.finalResult, result);
-  fs.writeFileSync(paths.summary, `# E2E Recommendation Advisor\n\n${failed ? "Failed" : "Skipped"}: ${reason}\n`);
+  fs.writeFileSync(
+    paths.summary,
+    `# E2E Recommendation Advisor\n\n${failed ? "Failed" : "Skipped"}: ${reason}\n`,
+  );
   if (failed) {
     console.error(`Advisor analysis failed: ${reason}`);
   }
@@ -241,7 +283,10 @@ function normalizeAdvisorResult(result: unknown, metadata: AdvisorMetadata): Adv
     requiredTests: sanitizeTests(object.requiredTests),
     optionalTests: sanitizeTests(object.optionalTests),
     newE2eRecommendations: sanitizeNewRecommendations(object.newE2eRecommendations),
-    noE2eReason: typeof object.noE2eReason === "string" || object.noE2eReason === null ? object.noE2eReason : null,
+    noE2eReason:
+      typeof object.noE2eReason === "string" || object.noE2eReason === null
+        ? object.noE2eReason
+        : null,
     confidence: isConfidence(object.confidence) ? object.confidence : "medium",
   };
 
@@ -259,7 +304,9 @@ function sanitizeDomains(value: unknown): AdvisorDomain[] {
       domain: stringOrUndefined(item.domain),
       reason: stringOrUndefined(item.reason),
       confidence: isConfidence(item.confidence) ? item.confidence : "medium",
-      matchedFiles: Array.isArray(item.matchedFiles) ? item.matchedFiles.filter((file): file is string => typeof file === "string") : [],
+      matchedFiles: Array.isArray(item.matchedFiles)
+        ? item.matchedFiles.filter((file): file is string => typeof file === "string")
+        : [],
     }))
     .filter((item) => item.domain && item.reason);
 }
@@ -346,7 +393,11 @@ function renderSummary(result: AdvisorResult): string {
   return `${lines.join("\n")}\n`;
 }
 
-function unavailableResult(metadata: AdvisorMetadata, reason: string, failed: boolean): AdvisorResult {
+function unavailableResult(
+  metadata: AdvisorMetadata,
+  reason: string,
+  failed: boolean,
+): AdvisorResult {
   return {
     version: 1,
     baseRef: metadata.baseRef,

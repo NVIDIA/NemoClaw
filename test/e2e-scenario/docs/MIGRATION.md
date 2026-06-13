@@ -1,99 +1,106 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# E2E scenario migration notes
+# NemoClaw E2E Migration Notes
 
-This file records the current migration model for contributors. It is not the
-source of truth for per-domain status. Mutable migration state is tracked
-outside the repository in GitHub issues and pull requests so reviewers can
-discuss, update, and close work in one place.
+This file describes how to move coverage into the single Vitest E2E system
+without confusing that work with the retired typed-shell scenario runner or a
+second bash-driven harness. Vitest is the harness, GitHub Actions is the matrix,
+and NemoClaw fixtures may invoke real subprocess and system boundaries when
+those boundaries are the contract.
 
-## Current migration state
+Migration state is tracked outside the repository in GitHub issues and pull
+requests. Use GitHub issues and pull requests as the source of truth for status
+changes, ownership, replacement coverage, and contract-preserving migration
+decisions.
 
-The scenario E2E migration is in a hybrid phase:
+## Current State
 
-- typed scenario builders drive scenario workflow fan-out and dry-run plans;
-- product-facing `NemoClawInstance` manifests describe desired setup and
-  onboarding state;
-- YAML metadata still drives the shell scenario runner and live suite
-  resolution;
-- legacy `test/e2e/test-*.sh` scripts still provide most live nightly and
-  platform coverage.
+The scenario runner cutover is complete:
 
-Do not assume legacy scripts are deletion-ready just because a scenario or suite
-name exists. The final reconciliation phase must show either evidence-complete
-coverage or an explicit audit amendment before legacy executable tests are
-removed.
+- `e2e-vitest-scenarios.yaml` is the scenario workflow.
+- `test/e2e-scenario/live/registry-scenarios.test.ts` is the registry-driven
+  live scenario entrypoint.
+- `test/e2e-scenario/fixtures/` owns phase fixtures, clients, artifact
+  capture, redaction, cleanup, and shell-probe bridges.
+- `test/e2e-scenario/scenarios/run.ts` only lists scenarios and emits the live
+  Vitest matrix.
+- The typed-shell scenario runner, shell validation-suite tree, and retiring
+  scenario workflows are removed. See `RETIREMENT.md`.
 
-## Active issue tracking
+Direct legacy E2E scripts under `test/e2e/test-*.sh` remain in place until they
+are migrated by contract. Some currently test shell, install, platform, process,
+or full user-flow behavior. Preserve those real boundaries by invoking them from
+Vitest tests and fixtures instead of keeping a separate durable E2E runner.
+Issue #5098 tracks family-by-family migration, augmentation, and eventual
+deletion decisions for those scripts.
 
-Use these GitHub issues for status and follow-up work:
+## Target Architecture
 
-| Issue | Purpose |
-| --- | --- |
-| #3588 | Parent architecture epic for layered / hybrid scenario E2E |
-| #4347–#4356 | Domain-specific audit-coverage phases |
-| #4357 | Final audit reconciliation, placeholder cleanup, and deletion-readiness review |
-| #4378 | Friendly `setup_scenarios` aliases for layered test plans |
+The durable E2E system has one execution path:
 
-If a migration discovery needs durable tracking, add it to the relevant issue or
-open a focused child issue. Avoid adding long-lived checklists here.
+- Vitest owns execution, filtering, reporters, timeouts, fixture lifecycle,
+  skip handling, and CI integration.
+- NemoClaw fixtures own setup, onboarding, lifecycle mutations,
+  expected-state probes, assertion helpers, expected-failure evidence,
+  cleanup, artifacts, and secret redaction.
+- `test/e2e-scenario/fixtures/` is fixture/support code, not a test harness
+  or runner.
+- Typed scenario definitions and matrix helpers describe stable scenario IDs
+  and supported combinations without becoming a second runner.
+- Product-facing manifests describe desired setup/onboarding state, not test
+  execution logic.
+- Shell and system-boundary behavior should be exercised from Vitest when it is
+  the contract or lowest-risk adapter.
 
-## What belongs in the repo
+## Migration Governance
 
-Keep durable framework guidance here:
+The former `test/e2e-scenario/migration/legacy-inventory.json` ledger and
+generated legacy assertion inventories are removed because they duplicated live
+GitHub issues and pull requests and quickly became stale sources of truth.
 
-- how to run the scenario runner,
-- where scenario metadata, typed builders, manifests, and suites live,
-- how to add or review a scenario, expected state, assertion, or suite,
-- stable conventions that should not change with every migration batch.
+The useful deletion invariant is deterministic and smaller: the top-level
+legacy bash E2E script set and the scheduled `nightly-e2e.yaml` legacy wiring
+are frozen by workflow contract tests. When a PR intentionally retires a
+nightly-wired legacy script, it removes the script, removes the nightly workflow
+reference, and updates the workflow allowlist test in the same change.
 
-Do not add migration status tables, per-legacy-script checklists, temporary
-coverage counts, or owner queues to this file. Put those in the issue or PR
-that owns the work instead.
+GitHub issues and PRs still explain why a script is migrated or retired, but the
+repository should not depend on a separate PR-body proof format. The
+machine-checkable boundary is the source tree plus workflow tests.
 
-## What to migrate next
+## Migration Pattern
 
-When moving behavior from a legacy E2E script into the scenario framework:
+When moving behavior from a legacy E2E script:
 
-1. Identify the relevant audit issue (#4347–#4356).
-2. Add or update the product-facing manifest only when the desired setup or
-   onboarding state changes.
-3. Add typed scenario registry coverage when the workflow matrix needs a new
-   canonical scenario ID.
-4. Add YAML metadata when the shell runner needs to resolve or execute the plan.
-5. Add reusable suite or assertion helpers instead of copying entire legacy
-   scripts.
-6. Add framework tests that prevent the typed registry, YAML aliases, workflow
-   routes, manifests, and suites from drifting.
-7. Leave legacy executable scripts in place until #4357 records deletion
-   readiness.
+1. Identify the actual contract: CLI behavior, installer behavior, full user
+   journey, process boundary, platform boundary, or another observable behavior.
+2. Add or update manifests only when product setup/onboarding state changes.
+3. Add typed scenario registry coverage when the live matrix needs a stable
+   scenario ID.
+4. Add only the fixture or helper needed for the migration.
+5. Preserve real boundaries. Use `bash`, login shells, `/proc`, process
+   signals, `sudo`, Docker host state, installer scripts, or full journey flows
+   from Vitest when they are the behavior being tested.
+6. Prove equivalence in the PR discussion, then delete the bash harness when the
+   Vitest test preserves the same value. If the script is wired into nightly,
+   remove that workflow reference and update the allowlist test in the same PR.
 
-## Useful commands
+## Useful Commands
 
 ```bash
-# Typed registry inventory and dry-run path
+# Scenario registry and matrix
 npx tsx test/e2e-scenario/scenarios/run.ts --list
-npx tsx test/e2e-scenario/scenarios/run.ts --emit-matrix
-npx tsx test/e2e-scenario/scenarios/run.ts --scenarios <id> --plan-only
-npx tsx test/e2e-scenario/scenarios/run.ts --scenarios <id> --dry-run
+npx tsx test/e2e-scenario/scenarios/run.ts --emit-live-matrix
+npx tsx test/e2e-scenario/scenarios/run.ts --emit-live-matrix --scenarios ubuntu-repo-cloud-openclaw
 
-# YAML/shell resolver and live runner path
-bash test/e2e-scenario/runtime/run-scenario.sh <id> --plan-only
-bash test/e2e-scenario/runtime/run-scenario.sh <id> --dry-run
-bash test/e2e-scenario/runtime/run-scenario.sh <id>
+# Fixture/support tests
+npx vitest run --project e2e-vitest-support --silent=false --reporter=default
 
-# Metadata and framework validation
-bash test/e2e-scenario/runtime/coverage-report.sh
-npx vitest run --project e2e-scenario-framework --silent=false --reporter=default
+# Opt-in live Vitest scenarios
+npm run build:cli
+NEMOCLAW_RUN_E2E_SCENARIOS=1 npx vitest run --project e2e-scenarios-live --silent=false --reporter=default
 ```
 
-## Cleanup rules
-
-- Prefer new scenario-matrix coverage over new legacy-style `test-*.sh` scripts.
-- Do not reintroduce the removed workflow-level parity report unless maintainers
-  explicitly reopen that direction.
-- Do not delete legacy executable E2Es as part of ordinary domain migration PRs;
-  queue deletion candidates for #4357.
-- Keep docs focused on how the framework works now. Put changing progress status
-  in issues and PRs.
+The old `--emit-matrix`, direct `--scenarios` execution, and `--plan-only`
+interfaces are retired.

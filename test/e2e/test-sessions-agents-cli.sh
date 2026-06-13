@@ -20,18 +20,20 @@
 #   TC-SESS-04: `nemoclaw <name> sessions list --json` after reset
 #   TC-AGENT-01: `nemoclaw <name> agents add work --model gpt-4o`
 #               (passthrough wizard; --non-interactive bypass)
+#   TC-AGENT-03: `nemoclaw <name> agents list --json`
+#               (passthrough lister; OpenClaw owns gateway dispatch)
 #   TC-AGENT-02: `nemoclaw <name> agents delete work --force --json`
 #               (passthrough delete; OpenClaw owns workspace removal)
 #   TC-SESS-05: `nemoclaw <name> sessions delete <key>` on a non-main session
 #
 # Prerequisites:
 #   - Docker running
-#   - NVIDIA_API_KEY set (real key or fake OpenAI endpoint)
+#   - NVIDIA_INFERENCE_API_KEY set (real key or fake OpenAI endpoint)
 #   - NEMOCLAW_NON_INTERACTIVE=1, NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1
 #
 # Usage:
 #   NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
-#     NVIDIA_API_KEY=nvapi-... bash test/e2e/test-sessions-agents-cli.sh
+#     NVIDIA_INFERENCE_API_KEY=nvapi-... bash test/e2e/test-sessions-agents-cli.sh
 # =============================================================================
 
 set -uo pipefail
@@ -154,12 +156,12 @@ preflight() {
     print_summary
     exit 1
   fi
-  if [ -z "${NVIDIA_API_KEY:-}" ]; then
-    skip "preflight: NVIDIA_API_KEY not set; sessions/agents E2E requires a working onboard credential"
+  if [ -z "${NVIDIA_INFERENCE_API_KEY:-}" ]; then
+    skip "preflight: NVIDIA_INFERENCE_API_KEY not set; sessions/agents E2E requires a working onboard credential"
     print_summary
     exit 0
   fi
-  pass "preflight: docker + NVIDIA_API_KEY available"
+  pass "preflight: docker + NVIDIA_INFERENCE_API_KEY available"
 }
 
 onboard_sandbox() {
@@ -405,6 +407,47 @@ test_sessions_delete_non_main() {
   pass "TC-SESS-05: sessions delete ${key} succeeded and the key is gone"
 }
 
+test_agents_list_passthrough() {
+  section "TC-AGENT-03: agents list --json (passthrough)"
+  local out
+  if ! out="$(nemoclaw "$SANDBOX_NAME" agents list --json 2>&1)"; then
+    fail "TC-AGENT-03: agents list --json exited non-zero"
+    info "$out"
+    return 1
+  fi
+  if ! is_valid_json "$out"; then
+    fail "TC-AGENT-03: agents list --json did not return parseable JSON"
+    info "$out"
+    return 1
+  fi
+  # The previously added secondary agent must appear in the listing. A pure
+  # exit-status check does not prove the passthrough reached the gateway.
+  # Mirror `is_valid_json`'s prefix-strip so Node warning lines that escape
+  # `NODE_NO_WARNINGS=1` (via openshell sub-invocations) don't break the parse.
+  if ! printf '%s' "$out" | TARGET="$TEST_AGENT_ID" python3 -c "
+import json, os, sys
+raw = sys.stdin.read()
+offset = -1
+cursor = 0
+for line in raw.splitlines(keepends=True):
+  if line.startswith('{') or line.startswith('['):
+    offset = cursor
+    break
+  cursor += len(line)
+if offset < 0:
+  sys.exit(1)
+data = json.loads(raw[offset:])
+entries = data if isinstance(data, list) else data.get('agents', [])
+target = os.environ['TARGET']
+sys.exit(0 if any(entry.get('id') == target for entry in entries) else 1)
+" 2>/dev/null; then
+    fail "TC-AGENT-03: agent '${TEST_AGENT_ID}' not present in agents list --json output"
+    info "$out"
+    return 1
+  fi
+  pass "TC-AGENT-03: agents list --json surfaced agent '${TEST_AGENT_ID}'"
+}
+
 test_agents_delete_passthrough() {
   section "TC-AGENT-02: agents delete ${TEST_AGENT_ID} --force --json"
   local out
@@ -449,6 +492,7 @@ fi
 # Agents add/delete and non-main session delete are feature-critical for this
 # CLI surface — any failure must fail the whole job rather than be skipped.
 test_agents_add_passthrough
+test_agents_list_passthrough
 seed_agent_session
 approve_pending_pairing_requests
 test_sessions_delete_non_main

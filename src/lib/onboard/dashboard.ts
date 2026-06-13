@@ -13,10 +13,15 @@ import { runCapture as defaultRunCapture } from "../runner";
 import { ensureAgentDashboardForward as ensureAgentDashboardForwardForAgent } from "./agent-dashboard-forward";
 import { ensureAgentFixedForward as ensureFixedAgentForward } from "./agent-fixed-forward";
 import * as dashboardAccess from "./dashboard-access";
-import { createSandboxForwardStopper, type DashboardForwardOptions, normalizeDashboardForwardOptions } from "./dashboard-forward-control";
+import {
+  createSandboxForwardStopper,
+  type DashboardForwardOptions,
+  normalizeDashboardForwardOptions,
+} from "./dashboard-forward-control";
 import {
   findAvailableDashboardPort,
   getOccupiedPorts,
+  getRegistryOccupiedDashboardPorts,
   isLiveForwardStatus,
 } from "./dashboard-port";
 import { bestEffortForwardStop } from "./forward-cleanup";
@@ -177,7 +182,10 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
   function getWslHostAddress(
     options: Parameters<typeof dashboardAccess.getWslHostAddress>[0] = {},
   ): string | null {
-    return dashboardAccess.getWslHostAddress({ ...options, runCapture: options.runCapture || runCapture });
+    return dashboardAccess.getWslHostAddress({
+      ...options,
+      runCapture: options.runCapture || runCapture,
+    });
   }
 
   function stopAllDashboardForwards(): void {
@@ -242,7 +250,13 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     }
     let actualPort: number;
     try {
-      actualPort = findAvailableDashboardPort(sandboxName, preferredPort, existingForwards);
+      actualPort = findAvailableDashboardPort(
+        sandboxName,
+        preferredPort,
+        existingForwards,
+        undefined,
+        getRegistryOccupiedDashboardPorts(sandboxName),
+      );
     } catch (err) {
       if (!rollbackSandboxOnFailure) throw err;
       rollbackSandboxAndExit(sandboxName, err);
@@ -250,7 +264,9 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
 
     if (actualPort !== preferredPort) {
       if (!allowPortReallocation) {
-        throw new Error(`Port ${preferredPort} is not available for '${sandboxName}' and cannot be reallocated.`);
+        throw new Error(
+          `Port ${preferredPort} is not available for '${sandboxName}' and cannot be reallocated.`,
+        );
       }
       if (rollbackSandboxOnFailure) {
         const err = new Error(
@@ -280,7 +296,8 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
         deps.openshellArgv(["forward", "start", "--background", actualTarget, sandboxName]),
       ),
       () =>
-        (deps.runCaptureOpenshell(["forward", "list"], { timeout: OPENSHELL_PROBE_TIMEOUT_MS }) ?? "") as string,
+        (deps.runCaptureOpenshell(["forward", "list"], { timeout: OPENSHELL_PROBE_TIMEOUT_MS }) ??
+          "") as string,
       { port: actualPort, sandboxName },
       () => {
         deps.sleep(1);
@@ -310,7 +327,9 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
         console.warn(`  Free the port, then reconnect: ${deps.cliName()} ${sandboxName} connect`);
       } else {
         console.warn(`! Port ${actualPort} forward did not start: ${fwdDiagnostic.slice(0, 240)}`);
-        console.warn(`  Reconnect after resolving the issue: ${deps.cliName()} ${sandboxName} connect`);
+        console.warn(
+          `  Reconnect after resolving the issue: ${deps.cliName()} ${sandboxName} connect`,
+        );
       }
     }
     return actualPort;
@@ -366,7 +385,10 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     const showNim = shouldShowNimLine(nimContainer, nimStat.running);
     const nimLabel = nimStat.running ? "running" : "not running";
     const providerLabel = deps.getProviderLabel(provider);
-    const token = !agent || agent.dashboard.auth === "url_token" ? fetchGatewayAuthTokenFromSandbox(sandboxName) : null;
+    const token =
+      !agent || agent.dashboard.auth === "url_token"
+        ? fetchGatewayAuthTokenFromSandbox(sandboxName)
+        : null;
     const chatUiUrl = process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`;
     const chain = buildChain({
       chatUiUrl,
@@ -433,7 +455,9 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       `    Model:       ${deps.cliName()} inference set --model <model> --provider <provider> --sandbox ${sandboxName}`,
     );
     console.log(`    Policies:    ${deps.cliName()} ${sandboxName} policy-add`);
-    console.log(`    Credentials: ${deps.cliName()} credentials reset <KEY> && ${deps.cliName()} onboard`);
+    console.log(
+      `    Credentials: ${deps.cliName()} credentials reset <KEY> && ${deps.cliName()} onboard`,
+    );
     console.log(`  ${"─".repeat(50)}`);
     console.log("");
   }

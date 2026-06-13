@@ -15,7 +15,8 @@ type TuiState = {
   terminalLines: string[];
 };
 
-const VISIBLE_ERROR_RE = /\b(error|failed|timeout|timed out|unavailable|fetch failed|upstream|connection)\b/i;
+const VISIBLE_ERROR_RE =
+  /\b(error|failed|timeout|timed out|unavailable|fetch failed|upstream|connection)\b/i;
 const CONNECTED_SPINNER_RE =
   /(?:flibbertigibbeting|thinking|waiting|processing).*?\|\s*connected|[0-9]+m\s+[0-9]+s\s*\|\s*connected/i;
 

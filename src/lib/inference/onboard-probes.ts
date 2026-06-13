@@ -5,17 +5,18 @@
 // Inference endpoint probes — validate that a provider's API responds
 // before committing the onboard wizard to a model selection.
 
-const { getCredential, normalizeCredentialValue, resolveProviderCredential } = require("../credentials/store");
+const {
+  getCredential,
+  normalizeCredentialValue,
+  resolveProviderCredential,
+} = require("../credentials/store");
 const { isWsl } = require("../platform");
 const httpProbe = require("../adapters/http/probe");
 const {
   getHostDockerInternalProbeFailure,
   isHijackedDockerInternalUrl,
 } = require("./onboard-host-docker-internal");
-const {
-  isNvcfFunctionNotFoundForAccount,
-  nvcfFunctionNotFoundMessage,
-} = require("../validation");
+const { isNvcfFunctionNotFoundForAccount, nvcfFunctionNotFoundMessage } = require("../validation");
 
 const {
   getCurlTimingArgs,
@@ -96,8 +97,7 @@ function hasValidFunctionCallPayload(value) {
 function isStructuredChatCompletionsToolCall(value) {
   if (!value || typeof value !== "object") return false;
   if (value.type !== "function") return false;
-  const fn = value.function;
-  return hasValidFunctionCallPayload(fn);
+  return hasValidFunctionCallPayload(value.function);
 }
 
 function containsToolCallLikeValue(value) {
@@ -259,8 +259,7 @@ function isProbeTimeout(result) {
   return (
     result &&
     !result.ok &&
-    (result.curlStatus === CURL_TIMEOUT_STATUS ||
-      result.curlStatus === NODE_SPAWN_TIMEOUT_STATUS)
+    (result.curlStatus === CURL_TIMEOUT_STATUS || result.curlStatus === NODE_SPAWN_TIMEOUT_STATUS)
   );
 }
 
@@ -291,7 +290,10 @@ function executeProbeWithHttpRetry(probe) {
         console.log(
           `  ${probe.name} validation returned HTTP ${result.httpStatus}; retrying in ${Math.round(delayMs / 1000)}s...`,
         );
-        trace.addTraceEvent("probe_retry_sleep", { delay_ms: delayMs, http_status: result.httpStatus });
+        trace.addTraceEvent("probe_retry_sleep", {
+          delay_ms: delayMs,
+          http_status: result.httpStatus,
+        });
         sleepSync(delayMs);
         attempt += 1;
         result = probe.execute();
@@ -369,12 +371,12 @@ function probeChatCompletionsToolCalling(endpointUrl, model, apiKey, options = {
   const useQueryParam = options.authMode === "query-param";
   const normalizedKey = apiKey ? normalizeCredentialValue(apiKey) : "";
   const baseUrl = String(endpointUrl).replace(/\/+$/, "");
-  const authHeader = !useQueryParam && normalizedKey
-    ? ["-H", `Authorization: Bearer ${normalizedKey}`]
-    : [];
-  const url = useQueryParam && normalizedKey
-    ? `${baseUrl}/chat/completions?key=${encodeURIComponent(normalizedKey)}`
-    : `${baseUrl}/chat/completions`;
+  const authHeader =
+    !useQueryParam && normalizedKey ? ["-H", `Authorization: Bearer ${normalizedKey}`] : [];
+  const url =
+    useQueryParam && normalizedKey
+      ? `${baseUrl}/chat/completions?key=${encodeURIComponent(normalizedKey)}`
+      : `${baseUrl}/chat/completions`;
   const timingArgs = options.timingArgs ?? getChatCompletionsProbeTimingArgs(model);
   const args = [
     "-sS",
@@ -531,14 +533,8 @@ function getChatCompletionsProbePayload(model) {
   return payload;
 }
 
-export function getChatCompletionsProbeCurlArgs({
-  authHeader,
-  model,
-  url,
-  isWsl: isWslOverride,
-}) {
-  const platformOptions =
-    typeof isWslOverride === "boolean" ? { isWsl: isWslOverride } : undefined;
+export function getChatCompletionsProbeCurlArgs({ authHeader, model, url, isWsl: isWslOverride }) {
+  const platformOptions = typeof isWslOverride === "boolean" ? { isWsl: isWslOverride } : undefined;
   const timingArgs = getChatCompletionsProbeTimingArgs(model, platformOptions);
   return [
     "-sS",
@@ -896,7 +892,10 @@ module.exports = {
   RETRIABLE_HTTP_PROBE_STATUSES,
 };
 
-export function shouldSmokeOpenAiLikeOnboardRoute(provider: string, credentialEnv: string | null = null) {
+export function shouldSmokeOpenAiLikeOnboardRoute(
+  provider: string,
+  credentialEnv: string | null = null,
+) {
   const {
     HERMES_INFERENCE_CREDENTIAL_ENV,
     HERMES_PROVIDER_NAME,
@@ -949,7 +948,9 @@ export function verifyOnboardInferenceSmoke(options: any) {
   console.error(`  Model: ${options.model}`);
   console.error(`  API base: ${endpointUrl}`);
   if (credentialEnv) console.error("  Credential env: configured");
-  console.error(`  Upstream error: ${compactText(redact(probe.message || "unknown inference failure"))}`);
+  console.error(
+    `  Upstream error: ${compactText(redact(probe.message || "unknown inference failure"))}`,
+  );
   process.exit(1);
 }
 

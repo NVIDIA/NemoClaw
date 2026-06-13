@@ -116,7 +116,7 @@ describe("Bedrock Runtime OpenAI adapter", () => {
       yield {
         contentBlockDelta: {
           contentBlockIndex: 0,
-          delta: { toolUse: { input: "{\"city\":\"Seattle\"}" } },
+          delta: { toolUse: { input: '{"city":"Seattle"}' } },
         },
       };
       yield { messageStop: { stopReason: "end_turn" } };
@@ -135,7 +135,9 @@ describe("Bedrock Runtime OpenAI adapter", () => {
       chunks.push(chunk);
     }
 
-    expect(chunks.find((chunk) => chunk.choices[0].delta.tool_calls)?.choices[0].delta.tool_calls).toEqual([
+    expect(
+      chunks.find((chunk) => chunk.choices[0].delta.tool_calls)?.choices[0].delta.tool_calls,
+    ).toEqual([
       {
         index: 0,
         id: "toolu_stream",
@@ -158,11 +160,11 @@ describe("Bedrock Runtime OpenAI adapter", () => {
             {
               id: "toolu_1",
               type: "function",
-              function: { name: "get_weather", arguments: "{\"city\":\"Seattle\"}" },
+              function: { name: "get_weather", arguments: '{"city":"Seattle"}' },
             },
           ],
         },
-        { role: "tool", tool_call_id: "toolu_1", content: "{\"temperature\":55}" },
+        { role: "tool", tool_call_id: "toolu_1", content: '{"temperature":55}' },
       ],
       tools: [
         {
@@ -211,7 +213,7 @@ describe("Bedrock Runtime OpenAI adapter", () => {
       {
         id: "toolu_2",
         type: "function",
-        function: { name: "get_weather", arguments: "{\"city\":\"Portland\"}" },
+        function: { name: "get_weather", arguments: '{"city":"Portland"}' },
       },
     ]);
     expect(response.choices[0].finish_reason).toBe("tool_calls");

@@ -14,7 +14,9 @@ export interface SandboxRegistryMetadataDeps {
 }
 
 export interface SandboxRegistryMetadataHelpers {
-  getSandboxRuntimeRegistryFields(config: SandboxGpuConfig): Pick<
+  getSandboxRuntimeRegistryFields(
+    config: SandboxGpuConfig,
+  ): Pick<
     SandboxEntry,
     | "gpuEnabled"
     | "hostGpuDetected"
@@ -40,7 +42,9 @@ export interface SandboxRegistryMetadataHelpers {
 export function createSandboxRegistryMetadataHelpers(
   deps: SandboxRegistryMetadataDeps,
 ): SandboxRegistryMetadataHelpers {
-  function getSandboxRuntimeRegistryFields(config: SandboxGpuConfig): Pick<
+  function getSandboxRuntimeRegistryFields(
+    config: SandboxGpuConfig,
+  ): Pick<
     SandboxEntry,
     | "gpuEnabled"
     | "hostGpuDetected"

@@ -45,8 +45,7 @@ export class DashboardUrlCommandError extends Error {
   }
 }
 
-const SECURITY_WARNING =
-  "Treat this URL like a password -- do not log, share, or commit it.";
+const SECURITY_WARNING = "Treat this URL like a password -- do not log, share, or commit it.";
 
 function dashboardUrlFail(lines: string | readonly string[], exitCode = 1): never {
   throw new DashboardUrlCommandError(lines, exitCode);

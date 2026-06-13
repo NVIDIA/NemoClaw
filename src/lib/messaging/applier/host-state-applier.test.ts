@@ -4,6 +4,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { SandboxMessagingPlan } from "../manifest";
+import { compactSandboxMessagingPlanForPersistence } from "../persistence";
 import { MessagingHostStateApplier } from "./host-state-applier";
 import { MessagingSetupApplier } from "./setup-applier";
 import * as registry from "../../state/registry";
@@ -53,8 +54,6 @@ describe("MessagingHostStateApplier", () => {
   it("stores only the new messaging state on an existing sandbox entry", () => {
     registryMock.__setSandbox("demo", {
       name: "demo",
-      messagingChannels: ["telegram"],
-      disabledChannels: ["discord"],
     });
     const plan = makePlan(["telegram"]);
 
@@ -68,13 +67,43 @@ describe("MessagingHostStateApplier", () => {
       },
     });
     expect(registryMock.__getSandbox("demo")).toMatchObject({
-      messagingChannels: ["telegram"],
-      disabledChannels: ["discord"],
       messaging: {
         schemaVersion: 1,
         plan,
       },
     });
+  });
+
+  it("hydrates compact existing plans before merging host state", () => {
+    registryMock.__setSandbox("demo", {
+      name: "demo",
+      messaging: {
+        schemaVersion: 1,
+        plan: compactSandboxMessagingPlanForPersistence(makePlan(["telegram"])),
+      },
+    });
+
+    const updated = MessagingHostStateApplier.applyPlanToRegistry(
+      "demo",
+      makePlan(["slack"], {
+        credentialBindings: [
+          makeCredentialBinding("slack", "bot"),
+          makeCredentialBinding("slack", "app"),
+        ],
+      }),
+      { mode: "merge" },
+    );
+
+    expect(updated).toBe(true);
+    const entry = registryMock.__getSandbox("demo");
+    const plan = (entry?.messaging as { plan: SandboxMessagingPlan }).plan;
+    expect(plan.channels.map((channel) => channel.channelId)).toEqual(["telegram", "slack"]);
+    expect(
+      plan.channels
+        .find((channel) => channel.channelId === "telegram")
+        ?.hooks.some((hook) => hook.channelId === "telegram"),
+    ).toBe(true);
+    expect(plan.agentRender.some((entry) => entry.channelId === "telegram")).toBe(true);
   });
 
   it("can merge a single-channel add plan into existing messaging state", () => {
@@ -97,10 +126,7 @@ describe("MessagingHostStateApplier", () => {
     expect(updated).toBe(true);
     const entry = registryMock.__getSandbox("demo");
     const plan = (entry?.messaging as { plan: SandboxMessagingPlan }).plan;
-    expect(plan.channels.map((channel) => channel.channelId)).toEqual([
-      "telegram",
-      "slack",
-    ]);
+    expect(plan.channels.map((channel) => channel.channelId)).toEqual(["telegram", "slack"]);
     expect(plan.credentialBindings.map((binding) => binding.providerEnvKey)).toEqual([
       "TELEGRAM_BOT_TOKEN",
       "SLACK_BOT_TOKEN",

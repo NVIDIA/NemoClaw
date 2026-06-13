@@ -1,23 +1,31 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-
 import fs from "node:fs";
 import path from "node:path";
-import { dockerCapture, dockerInspect } from "../../adapters/docker";
-import { captureOpenshell, getOpenshellBinary, runOpenshell } from "../../adapters/openshell/runtime";
+import { dockerCapture } from "../../adapters/docker";
+import {
+  captureOpenshell,
+  getOpenshellBinary,
+  runOpenshell,
+} from "../../adapters/openshell/runtime";
 import { CLI_NAME } from "../../cli/branding";
 import { prompt as askPrompt } from "../../credentials/store";
 import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
+import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import * as policies from "../../policy";
 import { ROOT, run, shellQuote, validateName } from "../../runner";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
 import * as shields from "../../shields";
-import { isGatewayHealthy } from "../../state/gateway";
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import * as sandboxState from "../../state/sandbox";
 import { cleanupShieldsDestroyArtifacts, removeSandboxRegistryEntry } from "./destroy";
+import {
+  probeGatewayRunning,
+  selectSandboxGatewayIfRegistered,
+  usesGatewayMetadataProbe,
+} from "./sandbox-gateway-routing";
 
 const useColor = !process.env.NO_COLOR && !!process.stdout.isTTY;
 const trueColor =
@@ -26,8 +34,6 @@ const G = useColor ? (trueColor ? "\x1b[38;2;118;185;0m" : "\x1b[38;5;148m") : "
 const B = useColor ? "\x1b[1m" : "";
 const D = useColor ? "\x1b[2m" : "";
 const R = useColor ? "\x1b[0m" : "";
-
-const NEMOCLAW_GATEWAY_NAME = "nemoclaw";
 
 export type SnapshotRequest =
   | { kind: "help" }
@@ -102,7 +108,10 @@ function renderSnapshotTable(
 // have the legacy cluster container — trust the registered imageTag and fail
 // fast if it's missing. Only the "kubernetes" driver falls back to the
 // kubectl probe inside the gateway container.
-function resolveSrcPodImage(srcName: string, srcEntry?: SandboxEntry | { name: string }): string | null {
+function resolveSrcPodImage(
+  srcName: string,
+  srcEntry?: SandboxEntry | { name: string },
+): string | null {
   const registeredImage = (srcEntry as { imageTag?: string | null } | undefined)?.imageTag;
   const registeredDriver = (srcEntry as { openshellDriver?: string | null } | undefined)
     ?.openshellDriver;
@@ -110,7 +119,10 @@ function resolveSrcPodImage(srcName: string, srcEntry?: SandboxEntry | { name: s
     return registeredImage ?? null;
   }
 
-  const gatewayContainer = `openshell-cluster-${NEMOCLAW_GATEWAY_NAME}`;
+  const srcGatewayName = resolveSandboxGatewayName(
+    srcEntry as { gatewayName?: string | null; gatewayPort?: number | null },
+  );
+  const gatewayContainer = `openshell-cluster-${srcGatewayName}`;
   try {
     const output = dockerCapture(
       [
@@ -127,8 +139,7 @@ function resolveSrcPodImage(srcName: string, srcEntry?: SandboxEntry | { name: s
       ],
       { ignoreError: true, timeout: 10000 },
     );
-    const img = output.trim().split(/\s+/)[0];
-    return img || null;
+    return output.trim().split(/\s+/)[0] || null;
   } catch {
     return null;
   }
@@ -202,7 +213,10 @@ async function autoCreateSandboxFromSource(
   const dnsScript = path.join(ROOT, "scripts", "setup-dns-proxy.sh");
   const srcDriver = (srcEntry as { openshellDriver?: string | null }).openshellDriver;
   if (srcDriver === "kubernetes" && fs.existsSync(dnsScript)) {
-    run(["bash", dnsScript, NEMOCLAW_GATEWAY_NAME, dstName], { ignoreError: true });
+    const srcGatewayName = resolveSandboxGatewayName(
+      srcEntry as { gatewayName?: string | null; gatewayPort?: number | null },
+    );
+    run(["bash", dnsScript, srcGatewayName, dstName], { ignoreError: true });
   }
 
   // Register dst in the NemoClaw registry, cloning most fields from src.
@@ -287,40 +301,35 @@ function deleteSandboxForRestore(name: string): void {
   console.log(`  ${G}\u2713${R} '${name}' deleted`);
 }
 
-// Docker/VM-driver sandboxes do not expose the legacy cluster container, so
-// verify gateway health through OpenShell metadata instead.
-function probeGatewayMetadataHealth(): boolean {
-  const status = captureOpenshell(["status"], { ignoreError: true, timeout: 10000 });
-  const namedGatewayInfo = captureOpenshell(["gateway", "info", "-g", NEMOCLAW_GATEWAY_NAME], {
-    ignoreError: true,
-    timeout: 10000,
-  });
-  const activeGatewayInfo = captureOpenshell(["gateway", "info"], {
-    ignoreError: true,
-    timeout: 10000,
-  });
-  return isGatewayHealthy(
-    status.output || "",
-    namedGatewayInfo.output || "",
-    activeGatewayInfo.output || "",
-  );
+function listLiveSandboxesOnSandboxGateway(sandboxName: string): Set<string> | null {
+  if (!selectSandboxGatewayIfRegistered(sandboxName)) return null;
+  if (!probeGatewayRunning(sandboxName)) return null;
+  const isLive = captureOpenshell(["sandbox", "list"], { ignoreError: true });
+  if (isLive.status !== 0) return null;
+  return parseLiveSandboxNames(isLive.output || "");
 }
 
-function usesGatewayMetadataProbe(driver: string | null | undefined): boolean {
-  return driver === "docker" || driver === "vm";
-}
-
-function probeGatewayRunning(sandboxName?: string): boolean {
-  const entry = sandboxName ? registry.getSandbox(sandboxName) : null;
-  if (usesGatewayMetadataProbe(entry?.openshellDriver)) {
-    return probeGatewayMetadataHealth();
+function requireLiveSandboxesOnSandboxGateway(sandboxName: string, error: string): Set<string> {
+  const liveNames = listLiveSandboxesOnSandboxGateway(sandboxName);
+  if (!liveNames) {
+    console.error(error);
+    snapshotExit(1);
   }
-  const container = `openshell-cluster-${NEMOCLAW_GATEWAY_NAME}`;
-  const result = dockerInspect(
-    ["--type", "container", "--format", "{{.State.Running}}", container],
-    { ignoreError: true, suppressOutput: true },
+  return liveNames;
+}
+
+function verifyRestoreDestinationOnOwnGateway(targetSandbox: string): void {
+  const liveNames = requireLiveSandboxesOnSandboxGateway(
+    targetSandbox,
+    `  Cannot verify destination sandbox '${targetSandbox}' on its registered gateway. Aborting restore.`,
   );
-  return result.status === 0 && String(result.stdout || "").trim() === "true";
+  if (!liveNames.has(targetSandbox)) {
+    console.error(
+      `  Destination sandbox '${targetSandbox}' is registered locally, but is not present on its registered gateway.`,
+    );
+    console.error("  Aborting restore before deleting or overwriting local sandbox metadata.");
+    snapshotExit(1);
+  }
 }
 
 function isSnapshotCreationAllowedByShields(sandboxName: string): boolean {
@@ -341,12 +350,15 @@ export async function runSandboxSnapshot(
 ) {
   switch (request.kind) {
     case "create": {
-      if (!probeGatewayRunning(sandboxName)) {
-        console.error("  Failed to query live sandbox state from OpenShell.");
-        snapshotExit(1);
-      }
-      const isLive = captureOpenshell(["sandbox", "list"], { ignoreError: true });
-      const liveNames = parseLiveSandboxNames(isLive.output || "");
+      // Select the sandbox's gateway before the health probe and `sandbox list`
+      // — Docker/VM-driver health and the sandbox listing both require the
+      // sandbox's gateway to be the active one, otherwise a sandbox registered
+      // on a non-default `NEMOCLAW_GATEWAY_PORT` fails health-check before the
+      // subsequent list ever runs.
+      const liveNames = requireLiveSandboxesOnSandboxGateway(
+        sandboxName,
+        "  Failed to query live sandbox state from OpenShell.",
+      );
       if (!liveNames.has(sandboxName)) {
         console.error(`  Sandbox '${sandboxName}' is not running. Cannot create snapshot.`);
         snapshotExit(1);
@@ -367,9 +379,7 @@ export async function runSandboxSnapshot(
         const v = formatSnapshotVersion(entry);
         const nameSuffix = entry.name ? ` name=${entry.name}` : "";
         const itemSummary = `${result.backedUpDirs.length} directories, ${result.backedUpFiles.length} files`;
-        console.log(
-          `  ${G}\u2713${R} Snapshot ${v}${nameSuffix} created (${itemSummary})`,
-        );
+        console.log(`  ${G}\u2713${R} Snapshot ${v}${nameSuffix} created (${itemSummary})`);
         console.log(`    ${manifest.backupPath}`);
       } else {
         if (result.error) {
@@ -409,14 +419,13 @@ export async function runSandboxSnapshot(
       const target = request.to ?? sandboxName;
       const targetSandbox =
         target === sandboxName ? sandboxName : validateName(target, "target sandbox name");
-      if (!probeGatewayRunning(sandboxName)) {
-        console.error("  Failed to query live sandbox state from OpenShell.");
-        snapshotExit(1);
-      }
-      const isLive = captureOpenshell(["sandbox", "list"], { ignoreError: true });
-      const liveNames = parseLiveSandboxNames(isLive.output || "");
+      const sourceLiveNames = requireLiveSandboxesOnSandboxGateway(
+        sandboxName,
+        "  Failed to query live sandbox state from OpenShell.",
+      );
       const isCrossSandboxRestore = targetSandbox !== sandboxName;
-      const targetExists = liveNames.has(targetSandbox);
+      const targetEntry = isCrossSandboxRestore ? registry.getSandbox(targetSandbox) : null;
+      const targetExists = sourceLiveNames.has(targetSandbox) || Boolean(targetEntry);
 
       // #3756 P1 preflight: resolve the snapshot selector AND the source pod
       // image before any destructive action. A bad selector, missing snapshot,
@@ -479,7 +488,7 @@ export async function runSandboxSnapshot(
         // we must be able to clone the source's running pod image. Resolve it
         // upfront so a missing source / unresolvable image cannot delete the
         // destination first (#3756 P1).
-        if (!liveNames.has(sandboxName)) {
+        if (!sourceLiveNames.has(sandboxName)) {
           if (targetExists) {
             console.error(
               `  Cannot recreate '${targetSandbox}' from snapshot: source '${sandboxName}' not found.`,
@@ -517,7 +526,14 @@ export async function runSandboxSnapshot(
               snapshotExit(1);
             }
           }
+          if (targetEntry) {
+            verifyRestoreDestinationOnOwnGateway(targetSandbox);
+          }
           deleteSandboxForRestore(targetSandbox);
+          requireLiveSandboxesOnSandboxGateway(
+            sandboxName,
+            "  Failed to re-select source sandbox gateway after deleting destination.",
+          );
         }
         await autoCreateSandboxFromSource(sandboxName, targetSandbox, srcEntry);
       }
@@ -543,6 +559,33 @@ export async function runSandboxSnapshot(
           console.error(`  Failed files: ${result.failedFiles.join(", ")}`);
         }
         snapshotExit(1);
+      }
+      // #5027/#4538: openclaw.json restores via the generic copy strategy,
+      // which lands it at 0640. The always-on OpenClaw gateway needs the
+      // mutable config contract (setgid dir + group-writable openclaw.json) to
+      // keep writing config at runtime. Rebuild repairs this in its
+      // post-restore sequence; the standalone snapshot-restore path must do the
+      // same. Gated on openclaw.json having been restored (only OpenClaw
+      // declares it) and posture-aware (a no-op for shields-up/non-OpenClaw).
+      if (result.restoredFiles.includes("openclaw.json")) {
+        try {
+          const permRepair = shields.repairMutableConfigPerms(targetSandbox);
+          if (permRepair.applied && permRepair.verified) {
+            console.log(`  ${G}✓${R} OpenClaw config permissions restored`);
+          } else if (!permRepair.applied && permRepair.skipReason === "unreadable") {
+            console.warn(
+              `  Warning: could not verify OpenClaw config permissions: ${permRepair.reason}`,
+            );
+          } else if (permRepair.applied && !permRepair.verified) {
+            console.warn(
+              `  Warning: OpenClaw config permission repair incomplete: ${permRepair.errors.join("; ")}`,
+            );
+          }
+        } catch (err) {
+          console.warn(
+            `  Warning: OpenClaw config permission repair errored: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
       }
       // Reconcile the target's policy presets to match the snapshot manifest
       // exactly — add anything the snapshot recorded but the target is
@@ -587,6 +630,59 @@ export async function runSandboxSnapshot(
           }
           if (failed.length > 0) {
             console.warn(`  Warning: could not reconcile preset(s): ${failed.join("; ")}`);
+          }
+        }
+      }
+      // Reconcile custom policy presets (applied via --from-file/--from-dir).
+      // Their full content travels in the manifest, so re-apply by content
+      // (which also re-records them in the registry). Diff by content + source,
+      // not just name: a same-name preset whose body changed must be re-applied.
+      // Full replacement, mirroring the built-in preset reconcile above; skipped
+      // for legacy snapshots that predate the `customPolicies` field.
+      if (resolvedSnapshot && Array.isArray(resolvedSnapshot.customPolicies)) {
+        const snapshotCustom = resolvedSnapshot.customPolicies;
+        const currentCustom = registry.getCustomPolicies(targetSandbox);
+        const snapshotByName = new Map(snapshotCustom.map((entry) => [entry.name, entry]));
+        const currentByName = new Map(currentCustom.map((entry) => [entry.name, entry]));
+        const toRemove = currentCustom.filter((c) => !snapshotByName.has(c.name));
+        const toAdd = snapshotCustom.filter((sp) => {
+          const current = currentByName.get(sp.name);
+          return !current || current.content !== sp.content || current.sourcePath !== sp.sourcePath;
+        });
+
+        if (toRemove.length > 0 || toAdd.length > 0) {
+          const summary: string[] = [];
+          if (toAdd.length > 0) summary.push(`add ${toAdd.map((c) => c.name).join(", ")}`);
+          if (toRemove.length > 0) summary.push(`remove ${toRemove.map((c) => c.name).join(", ")}`);
+          console.log(`  Reconciling custom policies on '${targetSandbox}': ${summary.join("; ")}`);
+
+          const failed: string[] = [];
+          for (const entry of toRemove) {
+            try {
+              if (!policies.removePreset(targetSandbox, entry.name)) {
+                failed.push(`${entry.name} (remove failed)`);
+              }
+            } catch (err) {
+              const message = err instanceof Error ? err.message : String(err);
+              failed.push(`${entry.name} (remove: ${message})`);
+            }
+          }
+          for (const entry of toAdd) {
+            try {
+              if (
+                !policies.applyPresetContent(targetSandbox, entry.name, entry.content, {
+                  custom: { sourcePath: entry.sourcePath },
+                })
+              ) {
+                failed.push(`${entry.name} (apply failed)`);
+              }
+            } catch (err) {
+              const message = err instanceof Error ? err.message : String(err);
+              failed.push(`${entry.name} (apply: ${message})`);
+            }
+          }
+          if (failed.length > 0) {
+            console.warn(`  Warning: could not reconcile custom policy(ies): ${failed.join("; ")}`);
           }
         }
       }

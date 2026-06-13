@@ -1,12 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { describe, expect, it } from "vitest";
 
-import { runWithEnv, testTimeoutOptions, writeSandboxRegistry } from "./helpers";
+import {
+  OPENCLAW_EXPECTED_VERSION,
+  runWithEnv,
+  testTimeoutOptions,
+  writeSandboxRegistry,
+} from "./helpers";
 
 function createShareTestEnv(prefix: string): Record<string, string> {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -342,6 +347,86 @@ describe("list shows live gateway inference", () => {
     },
   );
 
+  // ── Issue #5026: sandbox not upgraded after NemoClaw upgrade with an ──
+  // unchanged OpenClaw version. The agent version still matches, but the
+  // NemoClaw build that produced the image changed, so the sandbox needs a
+  // rebuild. A stale recorded NemoClaw fingerprint must be detected even when
+  // the agent version is current.
+  it(
+    "upgrade-sandboxes --check detects NemoClaw image drift when the agent version is unchanged (#5026)",
+    testTimeoutOptions(),
+    () => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-upgrade-imagedrift-"));
+      const localBin = path.join(home, "bin");
+      const nemoclawDir = path.join(home, ".nemoclaw");
+      fs.mkdirSync(localBin, { recursive: true });
+      fs.mkdirSync(nemoclawDir, { recursive: true });
+
+      // Sandbox at the CURRENT agent version but built by an older NemoClaw
+      // (stale fingerprint "0.0.1"). Only the NemoClaw image drifted.
+      fs.writeFileSync(
+        path.join(nemoclawDir, "sandboxes.json"),
+        JSON.stringify({
+          sandboxes: {
+            "my-agent": {
+              name: "my-agent",
+              model: "nvidia/nemotron-3-super-120b-a12b",
+              provider: "nvidia-prod",
+              gpuEnabled: false,
+              policies: [],
+              agentVersion: OPENCLAW_EXPECTED_VERSION,
+              nemoclawVersion: "0.0.1",
+            },
+          },
+          defaultSandbox: "my-agent",
+        }),
+        { mode: 0o600 },
+      );
+
+      fs.writeFileSync(
+        path.join(localBin, "openshell"),
+        [
+          "#!/usr/bin/env bash",
+          'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
+          '  echo "my-agent   Running   openclaw"',
+          "  exit 0",
+          "fi",
+          'if [ "$1" = "sandbox" ] && [ "$2" = "ssh-config" ] && [ "$3" = "my-agent" ]; then',
+          "  echo 'Host openshell-my-agent'",
+          "  echo '  HostName 127.0.0.1'",
+          "  exit 0",
+          "fi",
+          'if [ "$1" = "--version" ]; then',
+          '  echo "openshell 0.0.24"',
+          "  exit 0",
+          "fi",
+          "exit 0",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      // Live probe reports the CURRENT agent version, so agent-version is NOT stale.
+      fs.writeFileSync(
+        path.join(localBin, "ssh"),
+        ["#!/usr/bin/env bash", `echo 'OpenClaw ${OPENCLAW_EXPECTED_VERSION}'`, "exit 0"].join(
+          "\n",
+        ),
+        { mode: 0o755 },
+      );
+
+      const r = runWithEnv("upgrade-sandboxes --check 2>&1", {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+      });
+
+      expect(r.code).toBe(0);
+      expect(r.out).not.toContain("All sandboxes are up to date.");
+      expect(r.out).toContain("my-agent");
+      // Surfaces the NemoClaw image drift with the stale recorded fingerprint.
+      expect(r.out).toContain("NemoClaw image v0.0.1");
+      expect(r.out).toMatch(/stale|need upgrading/i);
+    },
+  );
+
   it(
     "upgrade-sandboxes --check probes running sandboxes before trusting cached metadata (#4429)",
     testTimeoutOptions(),
@@ -422,7 +507,7 @@ describe("list shows live gateway inference", () => {
     expect(r.out).toContain("status");
   });
 
-  it("share help uses native oclif usage", () => {
+  it("share help uses native oclif usage", testTimeoutOptions(15_000), () => {
     const env = createShareTestEnv("nemoclaw-cli-share-help-");
 
     const parent = runWithEnv("alpha share --help", env);

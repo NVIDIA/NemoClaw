@@ -15,10 +15,7 @@ import { tmpdir } from "node:os";
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const resolveOpenshellModule = require("../../../dist/lib/adapters/openshell/resolve");
 
-import {
-  stopSandboxChannels,
-  stopAll,
-} from "../../../dist/lib/tunnel/services";
+import { stopSandboxChannels, stopAll } from "../../../dist/lib/tunnel/services";
 
 // ---------------------------------------------------------------------------
 // stopSandboxChannels
@@ -361,13 +358,16 @@ describe("stopAll with sandbox channels", () => {
     logSpy.mockRestore();
   });
 
-  it("uses the effective env-selected sandbox for host-side pid cleanup", () => {
+  it("uses the effective env-selected sandbox for sandbox cleanup with explicit host pidDir", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const savedNemoclaw = process.env.NEMOCLAW_SANDBOX;
     const savedNemoclawName = process.env.NEMOCLAW_SANDBOX_NAME;
     const savedSandbox = process.env.SANDBOX_NAME;
-    const effectivePidDir = "/tmp/nemoclaw-services-name-sandbox";
-    const lowerPriorityPidDir = "/tmp/nemoclaw-services-other-sandbox";
+    const pidRoot = mkdtempSync(join(tmpdir(), "nemoclaw-services-pid-root-"));
+    const effectivePidDir = join(pidRoot, "nemoclaw-services-name-sandbox");
+    const lowerPriorityPidDir = join(pidRoot, "nemoclaw-services-other-sandbox");
+    rmSync(effectivePidDir, { recursive: true, force: true });
+    rmSync(lowerPriorityPidDir, { recursive: true, force: true });
     mkdirSync(effectivePidDir, { recursive: true, mode: 0o700 });
     mkdirSync(lowerPriorityPidDir, { recursive: true, mode: 0o700 });
     writeFileSync(join(effectivePidDir, "cloudflared.pid"), "999999999");
@@ -377,7 +377,7 @@ describe("stopAll with sandbox channels", () => {
     delete process.env.SANDBOX_NAME;
 
     try {
-      stopAll();
+      stopAll({ pidDir: effectivePidDir });
 
       expect(spawnSyncSpy).toHaveBeenCalledWith(
         "/usr/local/bin/openshell",
@@ -393,8 +393,7 @@ describe("stopAll with sandbox channels", () => {
       else delete process.env.NEMOCLAW_SANDBOX_NAME;
       if (savedSandbox !== undefined) process.env.SANDBOX_NAME = savedSandbox;
       else delete process.env.SANDBOX_NAME;
-      rmSync(effectivePidDir, { recursive: true, force: true });
-      rmSync(lowerPriorityPidDir, { recursive: true, force: true });
+      rmSync(pidRoot, { recursive: true, force: true });
       logSpy.mockRestore();
     }
   });

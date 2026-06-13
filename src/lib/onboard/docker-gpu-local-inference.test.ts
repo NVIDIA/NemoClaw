@@ -4,38 +4,32 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  printDockerGpuHostNetworkInferenceVerificationFailure,
+  enforceDockerGpuPatchPreserveNetwork,
+  getSandboxRuntimeInferenceEndpoint,
+  printDockerGpuSandboxInferenceVerificationFailure,
   shouldUseDockerGpuPatchHostNetwork,
-  verifyDockerGpuHostNetworkLocalInference,
+  verifyDockerGpuSandboxLocalInference,
   verifyGpuSandboxAfterReady,
 } from "../../../dist/lib/onboard/docker-gpu-local-inference";
 
 const HOST_NETWORK_ENV = { NEMOCLAW_DOCKER_GPU_PATCH_NETWORK: "host" } as NodeJS.ProcessEnv;
 const GPU_CONFIG = { sandboxGpuEnabled: true };
 
-function hostNetworkOptions(extra: Record<string, unknown> = {}) {
+function gpuPatchOptions(extra: Record<string, unknown> = {}) {
   return {
     sandboxName: "alpha",
     dockerDriverGateway: true,
     platform: "linux" as NodeJS.Platform,
-    env: HOST_NETWORK_ENV,
+    env: {} as NodeJS.ProcessEnv,
     ...extra,
   };
 }
 
-function inspectWithNetworkMode(mode: string): string {
-  return JSON.stringify([{ HostConfig: { NetworkMode: mode } }]);
-}
-
-const CURL_CHECK_PROBE = "command -v curl >/dev/null 2>&1";
-
-// Build a dockerRun mock that reports curl as present and returns `probeResult`
-// for the actual reachability probe (curl -sf ...).
-function dockerRunWithCurl(probeResult: { status: number; stderr?: string }) {
-  return vi.fn((args: readonly string[]) => {
-    if (args.includes(CURL_CHECK_PROBE)) return { status: 0 };
-    return probeResult;
-  });
+// The gate runs a single combined script via `openshell sandbox exec` that
+// emits either `NO_CURL` or `HTTP_<code>`. This mock answers with `stdout`.
+// Typed `(sandboxName, script)` so `.mock.calls[i][1]` (the script) type-checks.
+function execEmitting(stdout: string, { status = 0, stderr = "" } = {}) {
+  return vi.fn((_sandboxName: string, _script: string) => ({ status, stdout, stderr }));
 }
 
 describe("shouldUseDockerGpuPatchHostNetwork", () => {
@@ -47,7 +41,7 @@ describe("shouldUseDockerGpuPatchHostNetwork", () => {
         env: HOST_NETWORK_ENV,
       }),
     ).toBe(true);
-    // Not host network mode.
+    // Default (preserve) network mode.
     expect(
       shouldUseDockerGpuPatchHostNetwork(GPU_CONFIG, {
         dockerDriverGateway: true,
@@ -66,185 +60,203 @@ describe("shouldUseDockerGpuPatchHostNetwork", () => {
   });
 });
 
-describe("verifyDockerGpuHostNetworkLocalInference", () => {
-  it("skips when the host-network GPU patch is not active", () => {
-    const result = verifyDockerGpuHostNetworkLocalInference(
+describe("enforceDockerGpuPatchPreserveNetwork", () => {
+  it("downgrades a LOCAL provider to preserve and re-checks the bridge (#4509)", async () => {
+    const env = { ...HOST_NETWORK_ENV };
+    const log = vi.fn();
+    const reverifyBridgeReachability = vi.fn();
+    const downgraded = await enforceDockerGpuPatchPreserveNetwork("ollama-local", GPU_CONFIG, {
+      dockerDriverGateway: true,
+      platform: "linux",
+      env,
+      log,
+      reverifyBridgeReachability,
+    });
+    expect(downgraded).toBe(true);
+    expect(env.NEMOCLAW_DOCKER_GPU_PATCH_NETWORK).toBe("preserve");
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("OpenShell bridge networking"));
+    // The bridge reachability probe is re-run now that we are committed to it.
+    expect(reverifyBridgeReachability).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves host networking untouched for NON-local providers (cloud/routed/custom)", async () => {
+    const env = { ...HOST_NETWORK_ENV };
+    const reverifyBridgeReachability = vi.fn();
+    expect(
+      await enforceDockerGpuPatchPreserveNetwork("nvidia", GPU_CONFIG, {
+        dockerDriverGateway: true,
+        platform: "linux",
+        env,
+        reverifyBridgeReachability,
+      }),
+    ).toBe(false);
+    expect(env.NEMOCLAW_DOCKER_GPU_PATCH_NETWORK).toBe("host");
+    expect(reverifyBridgeReachability).not.toHaveBeenCalled();
+  });
+
+  it("is a no-op when host networking was not requested", async () => {
+    const env = {} as NodeJS.ProcessEnv;
+    expect(
+      await enforceDockerGpuPatchPreserveNetwork("ollama-local", GPU_CONFIG, {
+        dockerDriverGateway: true,
+        platform: "linux",
+        env,
+        reverifyBridgeReachability: vi.fn(),
+      }),
+    ).toBe(false);
+    expect(env.NEMOCLAW_DOCKER_GPU_PATCH_NETWORK).toBeUndefined();
+  });
+
+  it("is a no-op when the GPU patch does not apply (no sandbox GPU)", async () => {
+    const env = { ...HOST_NETWORK_ENV };
+    expect(
+      await enforceDockerGpuPatchPreserveNetwork(
+        "ollama-local",
+        { sandboxGpuEnabled: false },
+        {
+          dockerDriverGateway: true,
+          platform: "linux",
+          env,
+          reverifyBridgeReachability: vi.fn(),
+        },
+      ),
+    ).toBe(false);
+    expect(env.NEMOCLAW_DOCKER_GPU_PATCH_NETWORK).toBe("host");
+  });
+});
+
+describe("getSandboxRuntimeInferenceEndpoint", () => {
+  it("uses the OpenShell inference route, not a host loopback or gateway alias", () => {
+    expect(getSandboxRuntimeInferenceEndpoint("ollama-local")).toBe(
+      "https://inference.local/v1/models",
+    );
+    expect(getSandboxRuntimeInferenceEndpoint("vllm-local")).toBe(
+      "https://inference.local/v1/models",
+    );
+    expect(getSandboxRuntimeInferenceEndpoint("build")).toBeNull();
+  });
+});
+
+describe("verifyDockerGpuSandboxLocalInference", () => {
+  it("skips when the Docker GPU patch is not active", () => {
+    const result = verifyDockerGpuSandboxLocalInference(
       GPU_CONFIG,
       "ollama-local",
-      hostNetworkOptions({ env: {} }),
+      gpuPatchOptions({ env: { NEMOCLAW_DOCKER_GPU_PATCH: "0" } }),
     );
-    expect(result.status).toBe("skipped");
+    expect(result).toEqual({ status: "skipped", reason: "not-docker-gpu-patch" });
   });
 
   it("skips for non-local providers", () => {
-    const result = verifyDockerGpuHostNetworkLocalInference(
-      GPU_CONFIG,
-      "build",
-      hostNetworkOptions(),
-    );
+    const result = verifyDockerGpuSandboxLocalInference(GPU_CONFIG, "build", gpuPatchOptions());
     expect(result).toEqual({ status: "skipped", reason: "not-local-provider" });
   });
 
-  it("skips when the Docker GPU patch is explicitly disabled", () => {
-    const dockerRun = vi.fn();
-    const result = verifyDockerGpuHostNetworkLocalInference(
-      GPU_CONFIG,
-      "ollama-local",
-      hostNetworkOptions({
-        env: { ...HOST_NETWORK_ENV, NEMOCLAW_DOCKER_GPU_PATCH: "0" },
-        deps: {
-          findContainerIds: () => [],
-          dockerCapture: vi.fn(),
-          dockerRun,
-          sleep: vi.fn(),
-        },
-      }),
-    );
-    expect(result.status).toBe("skipped");
-    // No container lookup or probe is attempted when the patch is opted out.
-    expect(dockerRun).not.toHaveBeenCalled();
-  });
-
-  it("passes when the container is on host network and the probe succeeds", () => {
-    const dockerCapture = vi.fn(() => inspectWithNetworkMode("host"));
-    const dockerRun = dockerRunWithCurl({ status: 0 });
-    const result = verifyDockerGpuHostNetworkLocalInference(
+  it("probes inference.local from the runtime context, never a loopback or docker exec", () => {
+    const execInSandbox = execEmitting("HTTP_200");
+    const result = verifyDockerGpuSandboxLocalInference(
       GPU_CONFIG,
       "vllm-local",
-      hostNetworkOptions({
-        deps: {
-          findContainerIds: () => ["container-abc"],
-          dockerCapture,
-          dockerRun,
-          sleep: vi.fn(),
-        },
-      }),
+      gpuPatchOptions({ deps: { execInSandbox, sleep: vi.fn() } }),
     );
     expect(result.status).toBe("ok");
     if (result.status === "ok") {
-      expect(result.containerId).toBe("container-abc");
-      expect(result.networkMode).toBe("host");
-      expect(result.endpoint).toContain("/v1/models");
+      expect(result.httpCode).toBe("200");
+      expect(result.endpoint).toBe("https://inference.local/v1/models");
     }
-    // Probe runs curl inside the recreated container against the direct URL.
-    expect(dockerRun).toHaveBeenCalledWith(
-      expect.arrayContaining(["exec", "container-abc", "curl", "-sf"]),
-      expect.objectContaining({ ignoreError: true }),
-    );
+    expect(execInSandbox).toHaveBeenCalledWith("alpha", expect.any(String));
+    const script = execInSandbox.mock.calls[0][1];
+    expect(script).toContain("command -v curl");
+    expect(script).toContain("inference.local");
+    expect(script).toContain("%{http_code}");
+    expect(script).not.toContain("127.0.0.1");
+    expect(script).not.toContain("docker exec");
   });
 
-  it("fails when no recreated container is found", () => {
-    const result = verifyDockerGpuHostNetworkLocalInference(
+  it("fails on a 4xx — route reached but not usable (auth/route misconfig), not the #4509 proof", () => {
+    const result = verifyDockerGpuSandboxLocalInference(
       GPU_CONFIG,
       "ollama-local",
-      hostNetworkOptions({
-        deps: {
-          findContainerIds: () => [],
-          dockerCapture: vi.fn(),
-          dockerRun: vi.fn(),
-          sleep: vi.fn(),
-        },
-      }),
+      gpuPatchOptions({ deps: { execInSandbox: execEmitting("HTTP_404"), sleep: vi.fn() } }),
     );
     expect(result.status).toBe("failed");
     if (result.status === "failed") {
-      expect(result.kind).toBe("container-not-found");
+      expect(result.kind).toBe("unreachable");
+      expect(result.detail).toContain("404");
+    }
+  });
+
+  it("fails (unreachable) and retries on HTTP 000 — the #4509 regression", () => {
+    const execInSandbox = execEmitting("HTTP_000");
+    const sleep = vi.fn();
+    const result = verifyDockerGpuSandboxLocalInference(
+      GPU_CONFIG,
+      "ollama-local",
+      gpuPatchOptions({ deps: { execInSandbox, sleep } }),
+    );
+    expect(result.status).toBe("failed");
+    if (result.status === "failed") {
+      expect(result.kind).toBe("unreachable");
+      expect(result.detail).toContain("HTTP 000");
+      expect(result.endpoint).toBe("https://inference.local/v1/models");
       expect(result.recovery.length).toBeGreaterThan(0);
     }
-  });
-
-  it("fails when the recreated container is not on host network", () => {
-    const dockerRun = vi.fn(() => ({ status: 0 }));
-    const result = verifyDockerGpuHostNetworkLocalInference(
-      GPU_CONFIG,
-      "ollama-local",
-      hostNetworkOptions({
-        deps: {
-          findContainerIds: () => ["container-xyz"],
-          dockerCapture: vi.fn(() => inspectWithNetworkMode("openshell-docker")),
-          dockerRun,
-          sleep: vi.fn(),
-        },
-      }),
-    );
-    expect(result.status).toBe("failed");
-    if (result.status === "failed") {
-      expect(result.kind).toBe("network-mode");
-      expect(result.networkMode).toBe("openshell-docker");
-    }
-    // Do not probe when the network mode is already wrong.
-    expect(dockerRun).not.toHaveBeenCalled();
-  });
-
-  it("fails and retries when the direct endpoint probe never succeeds", () => {
-    const dockerRun = dockerRunWithCurl({ status: 7, stderr: "Connection refused" });
-    const sleep = vi.fn();
-    const result = verifyDockerGpuHostNetworkLocalInference(
-      GPU_CONFIG,
-      "ollama-local",
-      hostNetworkOptions({
-        deps: {
-          findContainerIds: () => ["container-xyz"],
-          dockerCapture: vi.fn(() => inspectWithNetworkMode("host")),
-          dockerRun,
-          sleep,
-        },
-      }),
-    );
-    expect(result.status).toBe("failed");
-    if (result.status === "failed") {
-      expect(result.kind).toBe("probe");
-      expect(result.detail).toContain("Connection refused");
-      expect(result.endpoint).toContain("/api/tags");
-    }
-    // 1 curl-availability check + 3 probe attempts.
-    expect(dockerRun).toHaveBeenCalledTimes(4);
+    expect(execInSandbox).toHaveBeenCalledTimes(3);
     expect(sleep).toHaveBeenCalledTimes(2);
   });
 
-  it("soft-skips with a warning when the container image lacks curl", () => {
-    // dockerRun reports curl missing (non-zero for the curl-availability check).
-    const dockerRun = vi.fn(() => ({ status: 1 }));
-    const log = vi.fn();
-    const result = verifyDockerGpuHostNetworkLocalInference(
+  it("fails when the inference route is up but the local backend errors (HTTP 502)", () => {
+    const result = verifyDockerGpuSandboxLocalInference(
       GPU_CONFIG,
       "ollama-local",
-      hostNetworkOptions({
-        log,
+      gpuPatchOptions({ deps: { execInSandbox: execEmitting("HTTP_502"), sleep: vi.fn() } }),
+    );
+    expect(result.status).toBe("failed");
+    if (result.status === "failed") {
+      expect(result.kind).toBe("unreachable");
+      expect(result.detail).toContain("502");
+    }
+  });
+
+  it("soft-skips when the sandbox image genuinely lacks curl (custom --from base)", () => {
+    const log = vi.fn();
+    const result = verifyDockerGpuSandboxLocalInference(
+      GPU_CONFIG,
+      "ollama-local",
+      gpuPatchOptions({ log, deps: { execInSandbox: execEmitting("NO_CURL"), sleep: vi.fn() } }),
+    );
+    expect(result).toEqual({ status: "skipped", reason: "probe-tool-unavailable" });
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("curl is not available"));
+  });
+
+  it("fails (exec) — not soft-skip — when sandbox exec cannot run", () => {
+    const result = verifyDockerGpuSandboxLocalInference(
+      GPU_CONFIG,
+      "ollama-local",
+      gpuPatchOptions({ deps: { execInSandbox: vi.fn(() => null), sleep: vi.fn() } }),
+    );
+    expect(result.status).toBe("failed");
+    if (result.status === "failed") {
+      expect(result.kind).toBe("exec");
+      expect(result.detail).toContain("did not run");
+    }
+  });
+
+  it("fails (exec) when exec runs but emits no sentinel (sandbox Error / exec denied)", () => {
+    const result = verifyDockerGpuSandboxLocalInference(
+      GPU_CONFIG,
+      "ollama-local",
+      gpuPatchOptions({
         deps: {
-          findContainerIds: () => ["container-xyz"],
-          dockerCapture: vi.fn(() => inspectWithNetworkMode("host")),
-          dockerRun,
+          execInSandbox: execEmitting("", { status: 1, stderr: "exec denied" }),
           sleep: vi.fn(),
         },
       }),
     );
-    expect(result).toEqual({ status: "skipped", reason: "probe-tool-unavailable" });
-    // Only the curl-availability check runs; no curl probe is attempted.
-    expect(dockerRun).toHaveBeenCalledTimes(1);
-    expect(log).toHaveBeenCalledWith(expect.stringContaining("curl is not available"));
-  });
-
-  it("surfaces the curl-missing skip warning even without a logger", () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    try {
-      const result = verifyDockerGpuHostNetworkLocalInference(
-        GPU_CONFIG,
-        "ollama-local",
-        hostNetworkOptions({
-          // No log provided — the warning must still reach the operator.
-          deps: {
-            findContainerIds: () => ["container-xyz"],
-            dockerCapture: vi.fn(() => inspectWithNetworkMode("host")),
-            dockerRun: vi.fn(() => ({ status: 1 })),
-            sleep: vi.fn(),
-          },
-        }),
-      );
-      expect(result).toEqual({ status: "skipped", reason: "probe-tool-unavailable" });
-      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("curl is not available"));
-    } finally {
-      warnSpy.mockRestore();
+    expect(result.status).toBe("failed");
+    if (result.status === "failed") {
+      expect(result.kind).toBe("exec");
+      expect(result.detail).toContain("exec denied");
     }
   });
 });
@@ -255,7 +267,7 @@ describe("verifyGpuSandboxAfterReady", () => {
       sandboxName: "alpha",
       dockerDriverGateway: true,
       platform: "linux" as NodeJS.Platform,
-      env: HOST_NETWORK_ENV,
+      env: {} as NodeJS.ProcessEnv,
       useDockerGpuPatch: true,
       verifyDirectSandboxGpu: vi.fn(),
       selectedMode: () => null,
@@ -265,7 +277,7 @@ describe("verifyGpuSandboxAfterReady", () => {
     };
   }
 
-  it("runs the GPU proof and the host-network inference gate when the patch is active", () => {
+  it("runs the GPU proof and the runtime inference gate when the patch is active", () => {
     const log = vi.fn();
     const verifyDirectSandboxGpu = vi.fn();
     verifyGpuSandboxAfterReady(
@@ -274,42 +286,15 @@ describe("verifyGpuSandboxAfterReady", () => {
       baseOptions({
         verifyDirectSandboxGpu,
         log,
-        deps: {
-          findContainerIds: () => ["container-abc"],
-          dockerCapture: vi.fn(() => inspectWithNetworkMode("host")),
-          dockerRun: dockerRunWithCurl({ status: 0 }),
-          sleep: vi.fn(),
-        },
+        deps: { execInSandbox: execEmitting("HTTP_200"), sleep: vi.fn() },
       }),
     );
     expect(verifyDirectSandboxGpu).toHaveBeenCalledWith("alpha");
-    expect(log).toHaveBeenCalledWith(expect.stringContaining("reachable from sandbox"));
-  });
-
-  it("uses Docker GPU patch verifier when supplied", () => {
-    const verifyDirectSandboxGpu = vi.fn();
-    const verifyGpuOrExit = vi.fn((proof: (sandboxName: string) => void) => proof("alpha"));
-    verifyGpuSandboxAfterReady(
-      GPU_CONFIG,
-      "vllm-local",
-      baseOptions({
-        verifyDirectSandboxGpu,
-        verifyGpuOrExit,
-        deps: {
-          findContainerIds: () => ["container-abc"],
-          dockerCapture: vi.fn(() => inspectWithNetworkMode("host")),
-          dockerRun: dockerRunWithCurl({ status: 0 }),
-          sleep: vi.fn(),
-        },
-      }),
-    );
-    expect(verifyGpuOrExit).toHaveBeenCalledWith(verifyDirectSandboxGpu);
-    expect(verifyDirectSandboxGpu).toHaveBeenCalledWith("alpha");
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("reached local inference"));
   });
 
   it("captures the CUDA-usability proof onto the config for status persistence (#4231)", () => {
     const proof = { status: "verified" as const, cudaVerified: true, at: "t" };
-    // Fresh config so the assignment does not leak into the shared GPU_CONFIG.
     const config: { sandboxGpuEnabled: boolean; sandboxGpuProof?: typeof proof | null } = {
       sandboxGpuEnabled: true,
     };
@@ -318,12 +303,7 @@ describe("verifyGpuSandboxAfterReady", () => {
       "vllm-local",
       baseOptions({
         verifyDirectSandboxGpu: vi.fn(() => proof),
-        deps: {
-          findContainerIds: () => ["container-abc"],
-          dockerCapture: vi.fn(() => inspectWithNetworkMode("host")),
-          dockerRun: dockerRunWithCurl({ status: 0 }),
-          sleep: vi.fn(),
-        },
+        deps: { execInSandbox: execEmitting("HTTP_200"), sleep: vi.fn() },
       }),
     );
     expect(config.sandboxGpuProof).toEqual(proof);
@@ -357,12 +337,7 @@ describe("verifyGpuSandboxAfterReady", () => {
           "ollama-local",
           baseOptions({
             logError,
-            deps: {
-              findContainerIds: () => ["container-xyz"],
-              dockerCapture: vi.fn(() => inspectWithNetworkMode("host")),
-              dockerRun: dockerRunWithCurl({ status: 7, stderr: "Connection refused" }),
-              sleep: vi.fn(),
-            },
+            deps: { execInSandbox: execEmitting("HTTP_000"), sleep: vi.fn() },
           }),
         ),
       ).toThrow("process.exit");
@@ -375,8 +350,8 @@ describe("verifyGpuSandboxAfterReady", () => {
     }
   });
 
-  it("skips the inference gate when the Docker GPU patch did not recreate the container", () => {
-    const findContainerIds = vi.fn(() => ["container-abc"]);
+  it("skips the inference gate when the Docker GPU patch did not run", () => {
+    const execInSandbox = vi.fn();
     const verifyDirectSandboxGpu = vi.fn();
     verifyGpuSandboxAfterReady(
       GPU_CONFIG,
@@ -384,37 +359,33 @@ describe("verifyGpuSandboxAfterReady", () => {
       baseOptions({
         useDockerGpuPatch: false,
         verifyDirectSandboxGpu,
-        deps: { findContainerIds, dockerCapture: vi.fn(), dockerRun: vi.fn(), sleep: vi.fn() },
+        deps: { execInSandbox, sleep: vi.fn() },
       }),
     );
     expect(verifyDirectSandboxGpu).toHaveBeenCalledWith("alpha");
-    // No container resolution happens when the patch is not in play.
-    expect(findContainerIds).not.toHaveBeenCalled();
+    expect(execInSandbox).not.toHaveBeenCalled();
   });
 });
 
-describe("printDockerGpuHostNetworkInferenceVerificationFailure", () => {
-  it("surfaces endpoint, network mode, container id, and recovery hints", () => {
+describe("printDockerGpuSandboxInferenceVerificationFailure", () => {
+  it("surfaces endpoint, provider label, detail, and recovery hints", () => {
     const lines: string[] = [];
-    printDockerGpuHostNetworkInferenceVerificationFailure(
+    printDockerGpuSandboxInferenceVerificationFailure(
       {
         status: "failed",
-        kind: "probe",
+        kind: "unreachable",
         provider: "ollama-local",
+        endpoint: "https://inference.local/v1/models",
         message: "unreachable",
-        containerId: "container-xyz",
-        networkMode: "host",
-        endpoint: "http://127.0.0.1:11434/api/tags",
-        detail: "Connection refused",
+        detail: "returned HTTP 000",
         recovery: ["do the thing"],
       },
       (line) => lines.push(line),
     );
     const text = lines.join("\n");
-    expect(text).toContain("container=container-xyz");
-    expect(text).toContain("network_mode=host");
-    expect(text).toContain("endpoint=http://127.0.0.1:11434/api/tags");
+    expect(text).toContain("endpoint=https://inference.local/v1/models");
     expect(text).toContain("Local Ollama");
+    expect(text).toContain("HTTP 000");
     expect(text).toContain("do the thing");
   });
 });

@@ -10,7 +10,7 @@
 #
 # This script intentionally uses a local fake OpenAI-compatible endpoint so it
 # matches the current onboarding flow. Older versions of this test relied on a
-# missing/invalid NVIDIA_API_KEY causing a late failure after sandbox creation;
+# missing/invalid NVIDIA_INFERENCE_API_KEY causing a late failure after sandbox creation;
 # that no longer reflects current non-interactive onboarding behavior.
 
 # ShellCheck cannot see EXIT trap invocations of cleanup helpers in this E2E script.
@@ -63,6 +63,10 @@ phase_elapsed() {
 dump_diagnostics() {
   local phase_label="${1:-unknown}"
   info "=== Diagnostics for ${phase_label} ==="
+  if [ -n "${RUN_ONBOARD_OUTPUT:-}" ]; then
+    info "Captured nemoclaw onboard stdout/stderr (exit=${RUN_ONBOARD_EXIT:-?}):"
+    printf '%s\n' "$RUN_ONBOARD_OUTPUT" | sed 's/^/    /'
+  fi
   info "openshell status:"
   openshell status 2>&1 | sed 's/^/    /' || true
   info "openshell sandbox list:"
@@ -179,11 +183,12 @@ ALT_GATEWAY_NAME="e2e-double-alt"
 REGISTRY="$HOME/.nemoclaw/sandboxes.json"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-FAKE_HOST="127.0.0.1"
-FAKE_PORT="${NEMOCLAW_FAKE_PORT:-18080}"
-FAKE_BASE_URL="http://${FAKE_HOST}:${FAKE_PORT}/v1"
-FAKE_LOG="$(mktemp)"
-FAKE_PID=""
+# shellcheck source=test/e2e/lib/openai-compatible-api-proof.sh
+source "${SCRIPT_DIR}/lib/openai-compatible-api-proof.sh"
+FAKE_OPENAI_HOST="127.0.0.1"
+FAKE_OPENAI_PORT="${NEMOCLAW_FAKE_PORT:-18080}"
+FAKE_OPENAI_LOG="$(mktemp)"
+FAKE_BASE_URL="http://${FAKE_OPENAI_HOST}:${FAKE_OPENAI_PORT}/v1"
 
 if command -v node >/dev/null 2>&1 && [ -f "$REPO_ROOT/bin/nemoclaw.js" ]; then
   NEMOCLAW_CMD=(node "$REPO_ROOT/bin/nemoclaw.js")
@@ -193,81 +198,14 @@ fi
 
 # shellcheck disable=SC2329
 cleanup() {
-  if [ -n "$FAKE_PID" ] && kill -0 "$FAKE_PID" 2>/dev/null; then
-    kill "$FAKE_PID" 2>/dev/null || true
-    wait "$FAKE_PID" 2>/dev/null || true
-  fi
-  rm -f "$FAKE_LOG"
+  stop_fake_openai_compatible_api
+  rm -f "$FAKE_OPENAI_LOG"
 }
 trap cleanup EXIT
 
 start_fake_openai() {
-  python3 - "$FAKE_HOST" "$FAKE_PORT" >"$FAKE_LOG" 2>&1 <<'PY' &
-import json
-import sys
-from http.server import BaseHTTPRequestHandler, HTTPServer
-
-HOST = sys.argv[1]
-PORT = int(sys.argv[2])
-
-
-class Handler(BaseHTTPRequestHandler):
-    def _send(self, status, payload):
-        body = json.dumps(payload).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def log_message(self, format, *args):
-        return
-
-    def do_GET(self):
-        if self.path in ("/v1/models", "/models"):
-            self._send(200, {"data": [{"id": "test-model", "object": "model"}]})
-            return
-        self._send(404, {"error": {"message": "not found"}})
-
-    def do_POST(self):
-        length = int(self.headers.get("Content-Length", "0"))
-        if length:
-            self.rfile.read(length)
-        if self.path in ("/v1/chat/completions", "/chat/completions"):
-            self._send(
-                200,
-                {
-                    "id": "chatcmpl-test",
-                    "object": "chat.completion",
-                    "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}],
-                },
-            )
-            return
-        if self.path in ("/v1/responses", "/responses"):
-            self._send(
-                200,
-                {
-                    "id": "resp-test",
-                    "object": "response",
-                    "output": [{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "ok"}]}],
-                },
-            )
-            return
-        self._send(404, {"error": {"message": "not found"}})
-
-
-HTTPServer((HOST, PORT), Handler).serve_forever()
-PY
-  FAKE_PID=$!
-
-  for _ in $(seq 1 20); do
-    if curl -sf "${FAKE_BASE_URL}/models" >/dev/null 2>&1; then
-      return 0
-    fi
-    sleep 1
-  done
-
-  return 1
+  start_fake_openai_compatible_api || return 1
+  FAKE_BASE_URL="$FAKE_OPENAI_BASE_URL"
 }
 
 # TODO(#2562): replace shell timeout with structured timeout once unified abstraction lands
@@ -438,7 +376,7 @@ if start_fake_openai; then
 else
   fail "Failed to start fake OpenAI-compatible endpoint"
   info "Fake server log:"
-  sed 's/^/    /' "$FAKE_LOG"
+  sed 's/^/    /' "$FAKE_OPENAI_LOG"
   exit 1
 fi
 
@@ -780,38 +718,95 @@ else
   fail "connect removed '$SANDBOX_A' from the registry (must be preserved, #4497)"
 fi
 
-# The preserved entry must still be locatable by the recovery command the
-# status hint recommends: rebuild must get past the dispatcher and into its
-# own flow rather than failing with "does not exist".
+# #4497 (reopened) acceptance gate — the EXACT reporter workflow:
+#   status recommends `rebuild --yes` → connect preserves the registry →
+#   `rebuild --yes` must actually RECOVER the sandbox, not dead-end.
+#
+# The first fix (PR #4647) only stopped connect from deleting the entry; rebuild
+# still aborted at its backup step with "Cannot back up state" whenever the live
+# sandbox was absent — precisely this stale state. A probe that only checks for
+# "does not exist" would pass against that bug, so this drives the full recovery
+# rebuild and asserts it (a) never prints the dead-end errors, (b) reports the
+# stale state and skips the impossible backup, and (c) recreates a live sandbox.
+#
+# The recreate runs `onboard --resume` in-process, so it needs the same provider
+# env the original onboard used. Allow a full phase timeout for the rebuild.
 REBUILD_LOG="$(mktemp)"
 rebuild_exit=0
-run_with_timeout "$RECOVERY_PROBE_TIMEOUT_SECONDS" \
-  env NEMOCLAW_NON_INTERACTIVE=1 "${NEMOCLAW_CMD[@]}" "$SANDBOX_A" rebuild --yes >"$REBUILD_LOG" 2>&1 || rebuild_exit=$?
+run_with_timeout "$PHASE_TIMEOUT" \
+  env \
+  COMPATIBLE_API_KEY=dummy \
+  NEMOCLAW_NON_INTERACTIVE=1 \
+  NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
+  NEMOCLAW_PROVIDER=custom \
+  "NEMOCLAW_ENDPOINT_URL=${FAKE_BASE_URL}" \
+  NEMOCLAW_MODEL=test-model \
+  "NEMOCLAW_SANDBOX_NAME=${SANDBOX_A}" \
+  NEMOCLAW_POLICY_MODE=skip \
+  NEMOCLAW_DASHBOARD_PORT= \
+  CHAT_UI_URL= \
+  "${NEMOCLAW_CMD[@]}" "$SANDBOX_A" rebuild --yes >"$REBUILD_LOG" 2>&1 || rebuild_exit=$?
 rebuild_output="$(cat "$REBUILD_LOG")"
 rm -f "$REBUILD_LOG"
 
-# A timeout (124 from `timeout`/`gtimeout`) must fail, not silently pass: a
-# killed process produces output without "does not exist", so guard the exit
-# code before the content assertion.
+# A timeout (124 from `timeout`/`gtimeout`) must fail, not silently pass.
 if [ "$rebuild_exit" -eq 124 ]; then
-  fail "rebuild probe timed out after ${RECOVERY_PROBE_TIMEOUT_SECONDS}s (possible prompt regression, #4497)"
+  dump_diagnostics "stale rebuild recovery (#4497)"
+  fail "rebuild recovery timed out after ${PHASE_TIMEOUT}s (#4497)"
+fi
+
+# (a) The pre-fix dead-ends must never appear.
+if grep -q "Cannot back up state" <<<"$rebuild_output"; then
+  fail "rebuild dead-ended at 'Cannot back up state' on a stale sandbox (#4497)"
 elif grep -q "does not exist" <<<"$rebuild_output"; then
   fail "rebuild could not locate the preserved sandbox '$SANDBOX_A' (#4497)"
 else
-  pass "rebuild located the preserved sandbox '$SANDBOX_A' (#4497)"
+  pass "rebuild did not dead-end on the stale sandbox (#4497)"
 fi
 
-# #4497: the explicit `destroy` command is the intended way to purge a stale
-# entry now that routine status/connect no longer delete it. Purge it here,
-# while the gateway is still healthy, so the preserved entry does not leak into
-# Phase 7 cleanup (which runs against a stopped gateway and cannot remove it).
+# (b) It must recognize the stale state and skip the impossible backup.
+if grep -q "absent from the live OpenShell gateway" <<<"$rebuild_output" \
+  && grep -q "No live workspace state to back up" <<<"$rebuild_output"; then
+  pass "rebuild reported the stale state and skipped backup (#4497)"
+else
+  dump_diagnostics "stale rebuild recovery markers (#4497)"
+  fail "rebuild did not report the stale-recovery path (#4497)"
+fi
+if grep -q "Creating new sandbox with current image" <<<"$rebuild_output"; then
+  pass "rebuild proceeded to recreate from preserved metadata (#4497)"
+else
+  fail "rebuild did not proceed to recreate the sandbox (#4497)"
+fi
+
+# (c) The recovery must succeed end-to-end: a live sandbox is back and the
+# registry entry survived the whole workflow.
+if [ "$rebuild_exit" -eq 0 ]; then
+  pass "rebuild recovery exited 0 (#4497)"
+else
+  dump_diagnostics "stale rebuild recovery exit=$rebuild_exit (#4497)"
+  fail "rebuild recovery exited $rebuild_exit (expected 0, #4497)"
+fi
+if openshell sandbox get "$SANDBOX_A" >/dev/null 2>&1; then
+  pass "OpenShell reports '$SANDBOX_A' live again after recovery rebuild (#4497)"
+else
+  dump_diagnostics "stale rebuild recovery liveness (#4497)"
+  fail "'$SANDBOX_A' is still absent from OpenShell after recovery rebuild (#4497)"
+fi
+if registry_has "$SANDBOX_A"; then
+  pass "Registry still contains '$SANDBOX_A' after recovery rebuild (#4497)"
+else
+  fail "Recovery rebuild lost the '$SANDBOX_A' registry entry (#4497)"
+fi
+
+# Teardown the now-live sandbox while the gateway is healthy so it does not leak
+# into Phase 7 cleanup (which runs against a stopped gateway).
 run_with_timeout "$RECOVERY_PROBE_TIMEOUT_SECONDS" \
   env NEMOCLAW_NON_INTERACTIVE=1 "${NEMOCLAW_CMD[@]}" "$SANDBOX_A" destroy --yes 2>/dev/null || true
 openshell sandbox delete "$SANDBOX_A" 2>/dev/null || true
 if registry_has "$SANDBOX_A"; then
-  fail "destroy did not purge the stale '$SANDBOX_A' registry entry (#4497)"
+  fail "destroy did not purge the recovered '$SANDBOX_A' registry entry (#4497)"
 else
-  pass "destroy purged the stale '$SANDBOX_A' registry entry (#4497)"
+  pass "destroy purged the recovered '$SANDBOX_A' registry entry (#4497)"
 fi
 
 # ══════════════════════════════════════════════════════════════════

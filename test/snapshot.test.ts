@@ -5,12 +5,11 @@
 //   - validateSnapshotName accepts/rejects names
 //   - listBackups computes virtual v<N> versions by timestamp-ascending position
 //   - findBackup resolves selectors (v<N>, name, exact timestamp)
-
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { describe, it, expect, afterAll, beforeEach } from "vitest";
+import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
 // Override HOME BEFORE importing sandbox-state — it reads process.env.HOME
 // at module-load time to compute REBUILD_BACKUPS_DIR. Captured original is
@@ -19,15 +18,11 @@ import { describe, it, expect, afterAll, beforeEach } from "vitest";
 const ORIGINAL_HOME = process.env.HOME;
 const TMP_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-snap-naming-"));
 process.env.HOME = TMP_HOME;
-
 const REPO_ROOT = path.join(import.meta.dirname, "..");
-
 type BackupScalar = string | number | boolean | null | undefined;
 type BackupValue = BackupScalar | BackupManifestOverrides | BackupValue[];
-
 type SandboxStateModule = typeof import("../dist/lib/state/sandbox.js");
 type SandboxStateModuleCandidate = Partial<SandboxStateModule> | null;
-
 function isSandboxStateModule(value: SandboxStateModuleCandidate): value is SandboxStateModule {
   return (
     value !== null &&
@@ -37,7 +32,6 @@ function isSandboxStateModule(value: SandboxStateModuleCandidate): value is Sand
     typeof value.parseRestoreArgs === "function"
   );
 }
-
 const loadedSandboxState = await import(
   pathToFileURL(path.join(REPO_ROOT, "dist", "lib", "state", "sandbox.js")).href
 );
@@ -46,11 +40,8 @@ if (!isSandboxStateModule(loadedSandboxState)) {
 }
 const sandboxState = loadedSandboxState;
 const { parseRestoreArgs } = sandboxState;
-
 const BACKUPS_ROOT = path.join(TMP_HOME, ".nemoclaw", "rebuild-backups");
-
 type BackupManifestOverrides = { [key: string]: BackupValue };
-
 function writeBackup(
   sandboxName: string,
   dirName: string,
@@ -74,7 +65,6 @@ function writeBackup(
   fs.writeFileSync(path.join(dir, "rebuild-manifest.json"), JSON.stringify(manifest, null, 2));
   return manifest;
 }
-
 afterAll(() => {
   if (ORIGINAL_HOME === undefined) {
     delete process.env.HOME;
@@ -83,15 +73,12 @@ afterAll(() => {
   }
   fs.rmSync(TMP_HOME, { recursive: true, force: true });
 });
-
 beforeEach(() => {
   fs.rmSync(BACKUPS_ROOT, { recursive: true, force: true });
 });
-
 function writeExecutable(filePath: string, source: string): void {
   fs.writeFileSync(filePath, source, { mode: 0o755 });
 }
-
 function writeOpenClawRegistry(sandboxName: string): void {
   fs.mkdirSync(path.join(TMP_HOME, ".nemoclaw"), { recursive: true });
   fs.writeFileSync(
@@ -111,7 +98,6 @@ function writeOpenClawRegistry(sandboxName: string): void {
     }),
   );
 }
-
 function writeFakeOpenshell(binDir: string): string {
   const openshell = path.join(binDir, "openshell");
   writeExecutable(
@@ -127,32 +113,27 @@ process.exit(0);
   );
   return openshell;
 }
-
 describe("validateSnapshotName", () => {
   it("accepts normal names", () => {
     expect(sandboxState.validateSnapshotName("before-upgrade")).toBeNull();
     expect(sandboxState.validateSnapshotName("clean_state.v2")).toBeNull();
     expect(sandboxState.validateSnapshotName("A")).toBeNull();
   });
-
   it("rejects names matching the v<N> version pattern", () => {
     expect(sandboxState.validateSnapshotName("v1")).toMatch(/conflicts with.*v<N>/);
     expect(sandboxState.validateSnapshotName("V42")).toMatch(/conflicts with.*v<N>/);
   });
-
   it("rejects empty, leading-symbol, or too-long names", () => {
     expect(sandboxState.validateSnapshotName("")).toMatch(/Invalid/);
     expect(sandboxState.validateSnapshotName("-foo")).toMatch(/Invalid/);
     expect(sandboxState.validateSnapshotName(".hidden")).toMatch(/Invalid/);
     expect(sandboxState.validateSnapshotName("x".repeat(64))).toMatch(/Invalid/);
   });
-
   it("rejects names with spaces or slashes", () => {
     expect(sandboxState.validateSnapshotName("hello world")).toMatch(/Invalid/);
     expect(sandboxState.validateSnapshotName("foo/bar")).toMatch(/Invalid/);
   });
 });
-
 describe("listBackups computes virtual versions", () => {
   it("assigns v1 to the oldest by timestamp and vN to the newest", () => {
     // Written out of chronological order to verify sort-by-timestamp.
@@ -167,14 +148,12 @@ describe("listBackups computes virtual versions", () => {
       [1, "2026-04-21T14-01-00-000Z"],
     ]);
   });
-
   it("ignores any snapshotVersion persisted in legacy manifests", () => {
     // Old on-disk value should be overridden by position-based virtual version.
     writeBackup("test-sandbox", "2026-04-21T14-00-00-000Z", { snapshotVersion: 99 });
     const [entry] = sandboxState.listBackups("test-sandbox");
     expect(entry.snapshotVersion).toBe(1);
   });
-
   it("surfaces the name field when present", () => {
     writeBackup("test-sandbox", "2026-04-21T14-00-00-000Z", { name: "before-upgrade" });
     const [entry] = sandboxState.listBackups("test-sandbox");
@@ -182,6 +161,46 @@ describe("listBackups computes virtual versions", () => {
     expect(entry.snapshotVersion).toBe(1);
   });
 
+  it("surfaces customPolicies (name + content + sourcePath) through the manifest round-trip", () => {
+    const custom = [
+      {
+        name: "my-custom",
+        content: "version: 1\n\nnetwork_policies: {}\n",
+        sourcePath: "/host/policy.yaml",
+      },
+    ];
+    writeBackup("test-sandbox", "2026-04-21T14-00-00-000Z", { customPolicies: custom });
+    const [entry] = sandboxState.listBackups("test-sandbox");
+    expect(entry.customPolicies).toEqual(custom);
+  });
+
+  it("preserves an empty customPolicies array so restore can distinguish zero-custom from legacy snapshots", () => {
+    writeBackup("test-sandbox", "2026-04-21T14-00-00-000Z", { customPolicies: [] });
+    const [entry] = sandboxState.listBackups("test-sandbox");
+    expect(entry.customPolicies).toEqual([]);
+  });
+
+  it("ignores rebuild manifests with malformed customPolicies (entry missing content)", () => {
+    const dir = path.join(BACKUPS_ROOT, "test-sandbox", "2026-04-21T14-02-00-000Z");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, "rebuild-manifest.json"),
+      JSON.stringify({
+        version: 1,
+        sandboxName: "test-sandbox",
+        timestamp: "2026-04-21T14-02-00-000Z",
+        agentType: "openclaw",
+        agentVersion: null,
+        expectedVersion: null,
+        stateDirs: [],
+        dir: "/sandbox/.openclaw",
+        backupPath: dir,
+        blueprintDigest: null,
+        customPolicies: [{ name: "no-content" }],
+      }),
+    );
+    expect(sandboxState.listBackups("test-sandbox")).toEqual([]);
+  });
   it("preserves legacy manifests created before blueprintDigest existed", () => {
     const dir = path.join(BACKUPS_ROOT, "test-sandbox", "2026-04-21T13-59-00-000Z");
     fs.mkdirSync(dir, { recursive: true });
@@ -199,14 +218,12 @@ describe("listBackups computes virtual versions", () => {
         backupPath: dir,
       }),
     );
-
     const [entry] = sandboxState.listBackups("test-sandbox");
     expect(entry?.timestamp).toBe("2026-04-21T13-59-00-000Z");
     expect(entry?.dir).toBe("/sandbox/.openclaw-data");
     expect(entry?.writableDir).toBe("/sandbox/.openclaw-data");
     expect(entry?.blueprintDigest).toBeNull();
   });
-
   it("ignores rebuild manifests with invalid typed fields", () => {
     const dir = path.join(BACKUPS_ROOT, "test-sandbox", "2026-04-21T14-00-00-000Z");
     fs.mkdirSync(dir, { recursive: true });
@@ -226,28 +243,22 @@ describe("listBackups computes virtual versions", () => {
         policyPresets: [1],
       }),
     );
-
     expect(sandboxState.listBackups("test-sandbox")).toEqual([]);
   });
-
   it("ignores rebuild manifests with unsafe backed-up directory paths", () => {
     writeBackup("test-sandbox", "2026-04-21T14-00-00-000Z", {
       stateDirs: ["workspace"],
       backedUpDirs: ["../outside"],
     });
-
     expect(sandboxState.listBackups("test-sandbox")).toEqual([]);
   });
-
   it("ignores rebuild manifests whose backed-up dirs are not declared state dirs", () => {
     writeBackup("test-sandbox", "2026-04-21T14-00-00-000Z", {
       stateDirs: ["workspace"],
       backedUpDirs: ["workspace", "agents"],
     });
-
     expect(sandboxState.listBackups("test-sandbox")).toEqual([]);
   });
-
   it("does not restore backed-up directory entries that are plain files", () => {
     const manifest = writeBackup("test-sandbox", "2026-04-21T14-00-00-000Z", {
       stateDirs: ["workspace"],
@@ -255,10 +266,7 @@ describe("listBackups computes virtual versions", () => {
     });
     fs.writeFileSync(path.join(String(manifest.backupPath), "workspace"), "not a directory");
 
-    const restore = sandboxState.restoreSandboxState(
-      "test-sandbox",
-      String(manifest.backupPath),
-    );
+    const restore = sandboxState.restoreSandboxState("test-sandbox", String(manifest.backupPath));
 
     expect(restore).toEqual({
       success: true,
@@ -449,6 +457,9 @@ if (cmd.includes("[ -d ")) {
   process.stdout.write(existingDirs.join("\\n") + "\\n");
   process.exit(0);
 }
+if (cmd.includes("openclaw.json") && cmd.includes("cat --")) {
+  process.exit(2);
+}
 if (cmd.includes("find ")) {
   process.exit(0);
 }
@@ -517,6 +528,10 @@ function readStdin() {
 }
 if (cmd.includes("[ -d ")) {
   process.stdout.write(existingDirs.join("\\n") + "\\n");
+  process.exit(0);
+}
+if (cmd.includes("openclaw.json") && cmd.includes("cat --")) {
+  process.stdout.write(JSON.stringify({ gateway: { auth: { token: "fresh" } }, channels: {} }));
   process.exit(0);
 }
 if (cmd.includes("find ")) {
@@ -595,10 +610,7 @@ process.exit(0);
       fs.mkdirSync(path.join(extensionsDir, "stale-user-extension"), { recursive: true });
       fs.writeFileSync(path.join(extensionsDir, "nemoclaw", "marker.txt"), "fresh-nemoclaw\n");
       fs.writeFileSync(path.join(extensionsDir, "openclaw-weixin", "marker.txt"), "fresh-weixin\n");
-      fs.writeFileSync(
-        path.join(extensionsDir, "stale-user-extension", "marker.txt"),
-        "stale\n",
-      );
+      fs.writeFileSync(path.join(extensionsDir, "stale-user-extension", "marker.txt"), "stale\n");
 
       const manifest = writeBackup("alpha", "2026-05-19T12-00-00-000Z", {
         stateDirs: ["extensions"],
@@ -613,7 +625,10 @@ process.exit(0);
         path.join(backupExtensionsDir, "openclaw-weixin", "marker.txt"),
         "old-weixin\n",
       );
-      fs.writeFileSync(path.join(backupExtensionsDir, "user-extension", "marker.txt"), "restored\n");
+      fs.writeFileSync(
+        path.join(backupExtensionsDir, "user-extension", "marker.txt"),
+        "restored\n",
+      );
 
       const openshell = writeFakeOpenshell(binDir);
       writeExecutable(
@@ -666,9 +681,9 @@ process.exit(0);
       const restore = sandboxState.restoreSandboxState("alpha", String(manifest.backupPath));
       expect(restore.success).toBe(true);
       expect(restore.restoredDirs).toEqual(["extensions"]);
-      expect(
-        fs.readFileSync(path.join(extensionsDir, "nemoclaw", "marker.txt"), "utf-8"),
-      ).toBe("fresh-nemoclaw\n");
+      expect(fs.readFileSync(path.join(extensionsDir, "nemoclaw", "marker.txt"), "utf-8")).toBe(
+        "fresh-nemoclaw\n",
+      );
       expect(
         fs.readFileSync(path.join(extensionsDir, "openclaw-weixin", "marker.txt"), "utf-8"),
       ).toBe("fresh-weixin\n");
@@ -682,7 +697,9 @@ process.exit(0);
         .trim()
         .split("\n")
         .map((line) => JSON.parse(line).cmd as string);
-      const cleanupCommand = loggedCommands.find((cmd) => cmd.includes("/sandbox/.openclaw/extensions"));
+      const cleanupCommand = loggedCommands.find((cmd) =>
+        cmd.includes("/sandbox/.openclaw/extensions"),
+      );
       expect(cleanupCommand).not.toContain("rm -rf -- /sandbox/.openclaw/extensions");
       expect(cleanupCommand).toContain("! -name 'nemoclaw'");
       expect(cleanupCommand).toContain("! -name 'openclaw-weixin'");
@@ -1068,6 +1085,13 @@ if (cmd.includes("[ -d ")) {
   process.stdout.write(existingDirs.join("\\n") + "\\n");
   process.exit(0);
 }
+if (cmd.includes("openclaw.json")) {
+  // No openclaw.json in this fixture: the state-file backup command's
+  // \`[ ! -e "$src" ] && exit 2\` fires (missing, not a failure). Handled
+  // before the generic \`find \` matcher below, which would otherwise catch
+  // the command's internal hardlink-check find.
+  process.exit(2);
+}
 if (cmd.includes("find ")) {
   // Simulate a permission-denied subdir: when the audit cmd lacks the
   // \`|| true\` tolerance wrapper (pre-fix shape), exit non-zero so the
@@ -1124,9 +1148,7 @@ process.exit(0);
       // `agents` simulates perm-denied (no rows emitted); `workspace` emits
       // a symlink that is not in the audit allow-list, which must still be
       // caught even when a sibling find exits non-zero.
-      const auditLines = [
-        "l\t/sandbox/.openclaw/workspace/leak\t../openclaw.json",
-      ].join("\n");
+      const auditLines = ["l\t/sandbox/.openclaw/workspace/leak\t../openclaw.json"].join("\n");
 
       const openshell = writeFakeOpenshell(binDir);
       writeExecutable(
@@ -1292,9 +1314,9 @@ process.exit(0);
       expect(fs.readFileSync(path.join(backup.manifest!.backupPath, "SOUL.md"), "utf-8")).toBe(
         "original soul\n",
       );
-      expect(fs.readFileSync(path.join(backup.manifest!.backupPath, ".hermes_history"), "utf-8")).toBe(
-        "original history\n",
-      );
+      expect(
+        fs.readFileSync(path.join(backup.manifest!.backupPath, ".hermes_history"), "utf-8"),
+      ).toBe("original history\n");
       expect(
         fs.readFileSync(path.join(backup.manifest!.backupPath, "runtime", "state.db"), "utf-8"),
       ).toBe("original sqlite backup\n");

@@ -7,10 +7,7 @@ import type { WebSearchConfig } from "../inference/web-search";
 const { LOCAL_INFERENCE_PROVIDERS } = require("./providers") as {
   LOCAL_INFERENCE_PROVIDERS: string[];
 };
-import {
-  isOpenclawAgent,
-  requiredOpenclawOtelPolicyPresets,
-} from "./openclaw-otel-policy-presets";
+import { isOpenclawAgent, requiredOpenclawOtelPolicyPresets } from "./openclaw-otel-policy-presets";
 
 export interface SuggestedPolicyPresetOptions {
   enabledChannels?: string[] | null;
@@ -39,8 +36,7 @@ export function getSuggestedPolicyPresets({
     suggestions.push(...requiredOpenclawOtelPolicyPresets(agent, env));
   }
   const usesExplicitMessagingSelection = Array.isArray(enabledChannels);
-  const nonInteractive =
-    isNonInteractive?.() ?? process.env.NEMOCLAW_NON_INTERACTIVE === "1";
+  const nonInteractive = isNonInteractive?.() ?? process.env.NEMOCLAW_NON_INTERACTIVE === "1";
 
   const maybeSuggestMessagingPreset = (channel: string, envKey: string | null): void => {
     if (usesExplicitMessagingSelection) {

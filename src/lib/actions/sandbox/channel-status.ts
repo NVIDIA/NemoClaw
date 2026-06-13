@@ -15,10 +15,7 @@ import { loadAgent, type AgentDefinition } from "../../agent/defs";
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../../cli/branding";
 import { B, D, G, R, RD, YW } from "../../cli/terminal-style";
 import * as policies from "../../policy";
-import {
-  KNOWN_CHANNELS,
-  knownChannelNames,
-} from "../../sandbox/channels";
+import { KNOWN_CHANNELS, knownChannelNames } from "../../sandbox/channels";
 import {
   evaluateWhatsappDiagnostics,
   parseWhatsappHeartbeat,
@@ -49,7 +46,11 @@ function quotePath(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
-type ExecRunner = (sandboxName: string, command: string, timeoutMs?: number) => {
+type ExecRunner = (
+  sandboxName: string,
+  command: string,
+  timeoutMs?: number,
+) => {
   status: number;
   stdout: string;
   stderr: string;
@@ -152,10 +153,7 @@ function resolveStateDirs(agent: AgentDefinition): string[] {
     // Fallback: probe both shapes even when the manifest does not declare
     // the dir — best-effort but safe because non-existent paths just yield
     // "missing" probe output.
-    candidates.push(
-      `${configDir}/whatsapp`,
-      `${configDir}/platforms/whatsapp/session`,
-    );
+    candidates.push(`${configDir}/whatsapp`, `${configDir}/platforms/whatsapp/session`);
   }
   return Array.from(new Set(candidates));
 }
@@ -333,7 +331,15 @@ function buildWhatsappProbeInput(
   const script = buildProbeScript(stateDirs);
   const probedAt = deps.now().toISOString();
   const exec = deps.execSandbox(sandboxName, script, WHATSAPP_PROBE_TIMEOUT_MS);
-  const parsed = exec ? parseProbeOutput(exec.stdout) : { reachable: false, stateDirPopulated: null, heartbeatRaw: null, logLines: [], bridgeProcessAlive: null };
+  const parsed = exec
+    ? parseProbeOutput(exec.stdout)
+    : {
+        reachable: false,
+        stateDirPopulated: null,
+        heartbeatRaw: null,
+        logLines: [],
+        bridgeProcessAlive: null,
+      };
 
   let heartbeat: WhatsappHeartbeat | null = null;
   let heartbeatParseError: string | null = null;
@@ -347,7 +353,9 @@ function buildWhatsappProbeInput(
   }
 
   const entry = deps.getSandbox(sandboxName);
-  const channelEnabledInRegistry = (entry?.messagingChannels ?? []).includes("whatsapp");
+  const channelEnabledInRegistry = registry
+    .getConfiguredMessagingChannelsFromEntry(entry)
+    .includes("whatsapp");
 
   const appliedPresets = deps.getAppliedPresets(sandboxName);
   const presetInRegistry = appliedPresets.includes("whatsapp");
@@ -375,7 +383,11 @@ function buildWhatsappProbeInput(
   };
 }
 
-function renderReport(report: ChannelStatusReport, asJson: boolean, deps: Required<StatusDeps>): void {
+function renderReport(
+  report: ChannelStatusReport,
+  asJson: boolean,
+  deps: Required<StatusDeps>,
+): void {
   if (asJson) {
     deps.out(JSON.stringify(report, null, 2));
     return;
@@ -430,8 +442,8 @@ function buildBasicChannelReport(
   deps: Required<StatusDeps>,
 ): ChannelStatusReport {
   const entry = deps.getSandbox(sandboxName);
-  const enabled = (entry?.messagingChannels ?? []).includes(channelName);
-  const disabled = (entry?.disabledChannels ?? []).includes(channelName);
+  const enabled = registry.getConfiguredMessagingChannelsFromEntry(entry).includes(channelName);
+  const disabled = registry.getDisabledMessagingChannelsFromEntry(entry).includes(channelName);
   const appliedPresets = deps.getAppliedPresets(sandboxName);
   const presetInRegistry = appliedPresets.includes(channelName);
   const signals: DiagnosticSignal[] = [];
@@ -513,13 +525,12 @@ export async function showSandboxChannelStatus(
 
   let channelName = channelArg;
   if (!channelName) {
-    const enabled = (entry.messagingChannels ?? []).filter(
-      (name: string) => name === "whatsapp",
-    );
+    const configuredChannels = registry.getConfiguredMessagingChannelsFromEntry(entry);
+    const enabled = configuredChannels.filter((name: string) => name === "whatsapp");
     if (enabled.length > 0) {
       channelName = "whatsapp";
-    } else if ((entry.messagingChannels ?? []).length > 0) {
-      channelName = entry.messagingChannels?.[0];
+    } else if (configuredChannels.length > 0) {
+      channelName = configuredChannels[0];
     } else {
       channelName = "whatsapp";
     }
@@ -543,7 +554,7 @@ export async function showSandboxChannelStatus(
 
   const agent = deps.loadAgent(entry.agent || "openclaw");
 
-  const disabledChannels = new Set(entry.disabledChannels ?? []);
+  const disabledChannels = new Set(registry.getDisabledMessagingChannelsFromEntry(entry));
   const channelIsPaused = disabledChannels.has(channelName);
 
   let report: ChannelStatusReport;

@@ -298,9 +298,7 @@ describe("getGatewayReuseState", () => {
   });
 
   it("returns 'foreign-active' when status is empty but active gateway info is foreign", () => {
-    expect(getGatewayReuseState("", GW_INFO_NAMED, GW_INFO_FOREIGN_ACTIVE)).toBe(
-      "foreign-active",
-    );
+    expect(getGatewayReuseState("", GW_INFO_NAMED, GW_INFO_FOREIGN_ACTIVE)).toBe("foreign-active");
   });
 
   it("returns 'stale' when named gateway exists but no active endpoint", () => {
@@ -351,9 +349,7 @@ describe("shouldSelectNamedGatewayForReuse", () => {
   });
 
   it("returns true when status is empty but active gateway info is foreign", () => {
-    expect(shouldSelectNamedGatewayForReuse("", GW_INFO_NAMED, GW_INFO_FOREIGN_ACTIVE)).toBe(
-      true,
-    );
+    expect(shouldSelectNamedGatewayForReuse("", GW_INFO_NAMED, GW_INFO_FOREIGN_ACTIVE)).toBe(true);
   });
 
   it("returns false when the named NemoClaw gateway is already active", () => {

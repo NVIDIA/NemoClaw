@@ -109,9 +109,9 @@ describe("decideReusePolicyPresets (#4621)", () => {
   });
 
   it("ignores env overrides in interactive mode (recorded selection wins)", () => {
-    expect(
-      decideReusePolicyPresets(["dns"], { NEMOCLAW_POLICY_PRESETS: "pypi" }, false),
-    ).toEqual(["dns"]);
+    expect(decideReusePolicyPresets(["dns"], { NEMOCLAW_POLICY_PRESETS: "pypi" }, false)).toEqual([
+      "dns",
+    ]);
   });
 
   it("carries the recorded selection under implicit non-interactive modes", () => {

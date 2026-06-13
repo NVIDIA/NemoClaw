@@ -14,16 +14,14 @@
       "package-lock.json",
       "nemoclaw/package.json",
       "nemoclaw/package-lock.json",
-      "src/**/*.ts",
+      "*.ts",
+      "**/*.ts",
+      "**/*.mts",
       "bin/**/*.js",
       "scripts/**/*.js",
       "scripts/**/*.mjs",
-      "scripts/**/*.ts",
       "test/**/*.js",
-      "test/credentials-shim.test.ts",
-      "test/runner-basic.test.ts",
       "docs/_ext/**/*.js",
-      "nemoclaw/src/**/*.ts",
       "!dist",
       "!nemoclaw/dist",
       "!node_modules",
@@ -107,12 +105,6 @@
             "noUnusedVariables": "error"
           }
         }
-      }
-    },
-    {
-      "includes": ["src/**/*.ts"],
-      "formatter": {
-        "enabled": false
       }
     },
     {

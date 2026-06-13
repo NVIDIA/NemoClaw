@@ -86,9 +86,10 @@ describe("buildHfTokenDockerArgs", () => {
     // Docker reads the value from its inherited environment when -e is given
     // without =value; this keeps the secret out of /proc/<pid>/cmdline for
     // the multi-minute hf-download and long-lived vllm-serve containers.
-    expect(
-      buildHfTokenDockerArgs({ HF_TOKEN: "hf_abc123" } as NodeJS.ProcessEnv),
-    ).toEqual(["-e", "HF_TOKEN"]);
+    expect(buildHfTokenDockerArgs({ HF_TOKEN: "hf_abc123" } as NodeJS.ProcessEnv)).toEqual([
+      "-e",
+      "HF_TOKEN",
+    ]);
   });
 
   it("falls back to HUGGING_FACE_HUB_TOKEN when HF_TOKEN is empty", () => {
@@ -110,9 +111,7 @@ describe("buildHfTokenDockerArgs", () => {
   });
 
   it("ignores tokens that are whitespace-only", () => {
-    expect(
-      buildHfTokenDockerArgs({ HF_TOKEN: "   " } as NodeJS.ProcessEnv),
-    ).toEqual([]);
+    expect(buildHfTokenDockerArgs({ HF_TOKEN: "   " } as NodeJS.ProcessEnv)).toEqual([]);
   });
 });
 
@@ -125,9 +124,9 @@ describe("buildHfTokenForwardEnv", () => {
     // The runner's allowlist (subprocess-env.ts) drops HF_TOKEN by default;
     // this map is what callers pass via `env:` so docker can pick the
     // value up when the argv only carries `-e HF_TOKEN` (key-only).
-    expect(
-      buildHfTokenForwardEnv({ HF_TOKEN: "hf_abc" } as NodeJS.ProcessEnv),
-    ).toEqual({ HF_TOKEN: "hf_abc" });
+    expect(buildHfTokenForwardEnv({ HF_TOKEN: "hf_abc" } as NodeJS.ProcessEnv)).toEqual({
+      HF_TOKEN: "hf_abc",
+    });
   });
 
   it("falls back to HUGGING_FACE_HUB_TOKEN when HF_TOKEN is missing", () => {
