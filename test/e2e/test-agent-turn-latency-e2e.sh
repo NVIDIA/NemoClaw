@@ -582,7 +582,10 @@ HERMES_REPLY=""
 register_sandbox_for_teardown "$OPENCLAW_SANDBOX_NAME"
 register_sandbox_for_teardown "$HERMES_SANDBOX_NAME"
 nemoclaw_ensure_local_bin_on_path
-nemoclaw_e2e_configure_compatible_inference || finish
+nemoclaw_e2e_configure_compatible_inference || {
+  fail "Hosted CI inference could not be configured"
+  finish
+}
 
 section "Prerequisites"
 if docker info >/dev/null 2>&1; then

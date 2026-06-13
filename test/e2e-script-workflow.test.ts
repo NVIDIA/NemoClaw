@@ -535,6 +535,11 @@ describe("E2E reusable workflow contract", () => {
     expect(runStep?.run).toContain("test/e2e-scenario/live/credential-migration.test.ts");
     expect(runStep?.run).not.toContain("test/e2e/test-credential-migration.sh");
     expect(runStep?.env?.NVIDIA_INFERENCE_API_KEY).toBe("${{ secrets.NVIDIA_INFERENCE_API_KEY }}");
+    expect(runStep?.env?.NEMOCLAW_PROVIDER).toBe("custom");
+    expect(runStep?.env?.NEMOCLAW_ENDPOINT_URL).toBe("https://inference-api.nvidia.com/v1");
+    expect(runStep?.env?.NEMOCLAW_MODEL).toBe("nvidia/nvidia/nemotron-3-super-v3");
+    expect(runStep?.env?.NEMOCLAW_COMPAT_MODEL).toBe("nvidia/nvidia/nemotron-3-super-v3");
+    expect(runStep?.env?.COMPATIBLE_API_KEY).toBe("${{ secrets.NVIDIA_INFERENCE_API_KEY }}");
     expect(runStep?.env?.GITHUB_TOKEN).toBeUndefined();
     expect(runStep?.env?.NEMOCLAW_RUN_E2E_SCENARIOS).toBe("1");
     expect(runStep?.env?.NEMOCLAW_SANDBOX_NAME).toBe("e2e-cred-migration");
@@ -902,27 +907,51 @@ describe("E2E reusable workflow contract", () => {
   });
 
   it("routes direct hosted-secret jobs through the hosted custom inference endpoint", () => {
-    const directJobSteps = [
-      ["token-rotation-e2e", "Run token rotation E2E test"],
-      [
-        "issue-4434-tui-unreachable-inference-e2e",
-        "Run issue #4434 TUI unreachable inference E2E test",
-      ],
-      ["launchable-smoke-e2e", "Run launchable install-flow smoke test"],
-      ["credential-sanitization-e2e", "Install NemoClaw and onboard sandbox"],
-      ["telegram-injection-e2e", "Install NemoClaw and onboard sandbox"],
-    ] as const;
+    const directHostedSteps = Object.entries(nightlyWorkflow.jobs).flatMap(([jobName, job]) =>
+      job.uses
+        ? []
+        : (job.steps ?? [])
+            .filter(
+              (step) =>
+                step.env?.NVIDIA_INFERENCE_API_KEY === "${{ secrets.NVIDIA_INFERENCE_API_KEY }}" &&
+                step.env?.NEMOCLAW_PROVIDER === "custom",
+            )
+            .map((step) => ({ jobName, step })),
+    );
+    const directHostedStepNames = directHostedSteps.map(
+      ({ jobName, step }) => `${jobName}:${step.name ?? "<unnamed>"}`,
+    );
 
-    for (const [jobName, stepName] of directJobSteps) {
-      const step = nightlyWorkflow.jobs[jobName].steps?.find(
-        (candidate) => candidate.name === stepName,
-      );
+    expect(directHostedStepNames).toEqual(
+      expect.arrayContaining([
+        "openclaw-tui-chat-correlation-e2e:Run OpenClaw TUI chat correlation E2E test",
+        "issue-4434-tui-unreachable-inference-e2e:Run issue #4434 TUI unreachable inference E2E test",
+        "token-rotation-e2e:Run token rotation E2E test",
+        "sandbox-operations-e2e:Run sandbox operations E2E test",
+        "credential-migration-e2e:Run credential migration Vitest test",
+        "onboard-repair-e2e:Install NemoClaw",
+        "onboard-repair-e2e:Run onboard repair E2E test",
+        "onboard-resume-e2e:Install NemoClaw",
+        "onboard-resume-e2e:Run onboard resume E2E test",
+        "onboard-negative-paths-e2e:Install NemoClaw",
+        "onboard-negative-paths-e2e:Run onboard negative-path E2E test",
+        "runtime-overrides-e2e:Install NemoClaw",
+        "runtime-overrides-e2e:Run runtime overrides E2E test",
+        "credential-sanitization-e2e:Install NemoClaw and onboard sandbox",
+        "telegram-injection-e2e:Install NemoClaw and onboard sandbox",
+        "launchable-smoke-e2e:Run launchable install-flow smoke test",
+      ]),
+    );
+
+    expect(directHostedSteps.length).toBeGreaterThanOrEqual(16);
+    for (const { jobName, step } of directHostedSteps) {
       expect(step?.env?.NVIDIA_INFERENCE_API_KEY, jobName).toBe(
         "${{ secrets.NVIDIA_INFERENCE_API_KEY }}",
       );
-      expect(step?.env?.NEMOCLAW_E2E_USE_HOSTED_INFERENCE, jobName).toBe("1");
-      expect(step?.env?.NEMOCLAW_PROVIDER, jobName).toBe("custom");
-      expect(step?.env?.NEMOCLAW_ENDPOINT_URL, jobName).toBe("https://inference-api.nvidia.com/v1");
+      expect(step.env?.NEMOCLAW_PROVIDER, jobName).toBe("custom");
+      expect(step.env?.NEMOCLAW_ENDPOINT_URL, jobName).toBe("https://inference-api.nvidia.com/v1");
+      expect(step.env?.NEMOCLAW_MODEL, jobName).toBe("nvidia/nvidia/nemotron-3-super-v3");
+      expect(step.env?.NEMOCLAW_COMPAT_MODEL, jobName).toBe("nvidia/nvidia/nemotron-3-super-v3");
       expect(step?.env?.COMPATIBLE_API_KEY, jobName).toBe(
         "${{ secrets.NVIDIA_INFERENCE_API_KEY }}",
       );

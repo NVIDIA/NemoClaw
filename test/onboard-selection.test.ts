@@ -3923,7 +3923,7 @@ const { setupNim } = require(${onboardPath});
     assert.equal(payload.messages.filter((message: string) => /Choose \[/.test(message)).length, 2);
   });
 
-  it("fails early in non-interactive mode when NVIDIA_INFERENCE_API_KEY is not an nvapi- key", () => {
+  it("fails early in non-interactive mode when explicit cloud provider key is not nvapi-", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-build-noninteractive-"));
     const fakeBin = path.join(tmpDir, "bin");
@@ -3964,7 +3964,7 @@ onboardModule._compile(injected, onboardFile);
 const { setupNim, __setNonInteractive } = onboardModule.exports;
 
 (async () => {
-  process.env.NVIDIA_INFERENCE_API_KEY = "sk-test";
+  process.env.NVIDIA_INFERENCE_API_KEY = "sk-test"; process.env.NEMOCLAW_PROVIDER = "cloud";
   __setNonInteractive(true);
   const originalLog = console.log;
   const originalError = console.error;

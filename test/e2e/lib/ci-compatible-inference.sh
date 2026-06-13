@@ -12,7 +12,15 @@ NEMOCLAW_E2E_HOSTED_INFERENCE_PROVIDER_DEFAULT="compatible-endpoint"
 NEMOCLAW_E2E_NVIDIA_INFERENCE_MODEL_DEFAULT="nvidia/nemotron-3-super-120b-a12b"
 
 nemoclaw_e2e_using_compatible_inference() {
-  [ "${NEMOCLAW_E2E_USE_HOSTED_INFERENCE:-}" = "1" ]
+  if [ "${NEMOCLAW_E2E_USE_HOSTED_INFERENCE:-}" = "1" ]; then
+    return 0
+  fi
+  case "${NEMOCLAW_PROVIDER:-}" in
+    build | cloud | nvidia | nvidia-prod)
+      return 1
+      ;;
+  esac
+  [ -n "${NVIDIA_INFERENCE_API_KEY:-}" ] && [[ "${NVIDIA_INFERENCE_API_KEY}" != nvapi-* ]]
 }
 
 nemoclaw_e2e_configure_compatible_inference() {

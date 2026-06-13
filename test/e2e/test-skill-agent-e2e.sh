@@ -101,7 +101,7 @@ RETRY_SLEEP="${E2E_SKILL_AGENT_RETRY_SLEEP_SEC:-15}"
 # shellcheck source=test/e2e/lib/ci-compatible-inference.sh
 . "${E2E_DIR}/lib/ci-compatible-inference.sh"
 register_sandbox_for_teardown "$SANDBOX_NAME"
-nemoclaw_e2e_configure_compatible_inference
+nemoclaw_e2e_configure_compatible_inference || exit 1
 
 # ══════════════════════════════════════════════════════════════════════
 # Phase 1: Install + Prerequisites

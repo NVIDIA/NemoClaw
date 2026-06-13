@@ -74,7 +74,7 @@ SKILL_DESCRIPTION="E2E fixture proving openclaw skills install + list roundtrip"
 # shellcheck source=test/e2e/lib/ci-compatible-inference.sh
 . "${E2E_DIR}/lib/ci-compatible-inference.sh"
 register_sandbox_for_teardown "$SANDBOX_NAME"
-nemoclaw_e2e_configure_compatible_inference
+nemoclaw_e2e_configure_compatible_inference || exit 1
 
 # ══════════════════════════════════════════════════════════════════════
 # Phase 1: Install + Prerequisites

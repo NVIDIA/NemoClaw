@@ -1576,6 +1576,7 @@ jobs:
           NEMOCLAW_ENDPOINT_URL: https://inference-api.nvidia.com/v1
           NEMOCLAW_MODEL: nvidia/nvidia/nemotron-3-super-v3
           NEMOCLAW_COMPAT_MODEL: nvidia/nvidia/nemotron-3-super-v3
+          COMPATIBLE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
           E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/credential-migration
           NEMOCLAW_RUN_E2E_SCENARIOS: "1"
           NEMOCLAW_SANDBOX_NAME: "e2e-cred-migration"
