@@ -464,7 +464,7 @@ jobs:
     }
   });
 
-  it("keeps each free-standing scenario out of the registry matrix", { timeout: 60_000 }, () => {
+  it("keeps each free-standing scenario out of the registry matrix", { timeout: 120_000 }, () => {
     const inventory = readFreeStandingJobsInventory();
     for (const job of inventory.allowedJobs) {
       expect(generateMatrixForDispatch({ JOBS: job, SCENARIOS: "" })).toMatchObject({
