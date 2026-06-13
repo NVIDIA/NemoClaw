@@ -615,6 +615,14 @@ export function printDashboardUi(
  * OpenAI-compatible API surface (Hermes manifest sets
  * `health_probe.port: 8642` alongside `forward_ports: [18789, 8642]`).
  * Any other declared port gets a neutral "additional port" label.
+ *
+ * The URL filter normalises empty `URL.port` results to the scheme
+ * default. `new URL("http://h:80").port` returns `""` because WHATWG
+ * URL elides the default scheme port; a strict `urlPort === String(port)`
+ * comparison would silently drop URLs for ports 80 and 443 even though
+ * the underlying `forward_ports` validation accepts them. The
+ * normalisation keeps the filter sound while still excluding any URL
+ * whose port truly does not match the declared entry.
  */
 function printAdditionalForwardPorts(
   agent: AgentDefinition,
@@ -635,17 +643,48 @@ function printAdditionalForwardPorts(
     const seen = new Set<string>();
     for (const baseUrl of buildControlUiUrls(null, port)) {
       const withoutHash = baseUrl.split("#")[0].replace(/\/$/, "");
-      let urlPort = "";
-      try {
-        urlPort = new URL(withoutHash).port;
-      } catch {
-        urlPort = "";
-      }
-      if (urlPort !== String(port)) continue;
+      const resolvedUrlPort = resolveUrlPort(withoutHash);
+      if (resolvedUrlPort !== port) continue;
       const url = isApi ? `${withoutHash}/v1` : `${withoutHash}/`;
       if (seen.has(url)) continue;
       seen.add(url);
       console.log(`  ${dashboardUrlForDisplay(url)}`);
     }
+  }
+}
+
+/**
+ * Resolve the effective port of `candidate`, normalising the WHATWG
+ * URL behaviour that returns an empty string for the scheme-default
+ * port (`http://h:80` → `""`, `https://h:443` → `""`). Returns the
+ * integer port, or `null` when the input is unparseable or carries no
+ * recoverable port. The mapping is intentionally limited to `http` /
+ * `https` / `ws` / `wss` — the four schemes the dashboard URL builder
+ * emits — so an unknown scheme falls through to `null` instead of
+ * silently mapping to 80 or 443.
+ */
+function resolveUrlPort(candidate: string): number | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(candidate);
+  } catch {
+    return null;
+  }
+  if (parsed.port !== "") {
+    const numeric = Number(parsed.port);
+    return Number.isInteger(numeric) ? numeric : null;
+  }
+  const protocol = parsed.protocol.replace(/:$/, "").toLowerCase();
+  switch (protocol) {
+    case "http":
+      return 80;
+    case "https":
+      return 443;
+    case "ws":
+      return 80;
+    case "wss":
+      return 443;
+    default:
+      return null;
   }
 }
