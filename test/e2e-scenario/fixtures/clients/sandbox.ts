@@ -4,7 +4,12 @@
 import { buildAvailabilityProbeEnv } from "../availability-env.ts";
 import type { ShellProbeResult, ShellProbeRunOptions } from "../shell-probe.ts";
 import { trustedShellCommand } from "../shell-probe.ts";
-import { artifactLabel, assertExitZero, type CommandRunner } from "./command.ts";
+import {
+  artifactLabel,
+  assertExitZero,
+  outputContainsSandbox,
+  type CommandRunner,
+} from "./command.ts";
 
 /**
  * Default env for openshell-targeted spawns. ShellProbe filters env via
@@ -20,6 +25,10 @@ function openshellProbeEnv(): NodeJS.ProcessEnv {
     ...buildAvailabilityProbeEnv(),
     OPENSHELL_GATEWAY: process.env.OPENSHELL_GATEWAY ?? "nemoclaw",
   };
+}
+
+export function sandboxAccessEnv(): NodeJS.ProcessEnv {
+  return openshellProbeEnv();
 }
 
 export interface SandboxClientOptions {
@@ -63,7 +72,10 @@ export class SandboxClient {
   }
 
   list(options: ShellProbeRunOptions = {}): Promise<ShellProbeResult> {
-    return this.openshell(["sandbox", "list"], { artifactName: "sandbox-list", ...options });
+    return this.openshell(["sandbox", "list"], {
+      artifactName: "sandbox-list",
+      ...options,
+    });
   }
 
   status(name: string, options: ShellProbeRunOptions = {}): Promise<ShellProbeResult> {
@@ -116,6 +128,16 @@ export class SandboxClient {
   async expectRunning(name: string, options: ShellProbeRunOptions = {}): Promise<ShellProbeResult> {
     const result = await this.status(name, options);
     assertExitZero(result, `openshell sandbox status ${name}`);
+    return result;
+  }
+
+  async expectListed(name: string, options: ShellProbeRunOptions = {}): Promise<ShellProbeResult> {
+    validateSandboxName(name);
+    const result = await this.list({ env: openshellProbeEnv(), ...options });
+    assertExitZero(result, "openshell sandbox list");
+    if (!outputContainsSandbox(result, name)) {
+      throw new Error(`openshell sandbox list did not include '${name}'.`);
+    }
     return result;
   }
 

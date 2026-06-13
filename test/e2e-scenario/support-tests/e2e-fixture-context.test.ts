@@ -160,7 +160,7 @@ describe("E2E fixture primitives", () => {
   it("secret store redacts sensitive env values and skips missing required secrets", () => {
     const canonicalToken = `${"nv"}${"api"}-${"a".repeat(24)}`;
     const store = new SecretStore(
-      { NVIDIA_API_KEY: "nv-secret", PLAIN_VALUE: "visible" },
+      { NVIDIA_INFERENCE_API_KEY: "nv-secret", PLAIN_VALUE: "visible" },
       (note?: string): never => {
         throw new Error(note ?? "skipped");
       },

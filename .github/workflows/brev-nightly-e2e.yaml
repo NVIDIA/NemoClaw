@@ -49,4 +49,4 @@ jobs:
     secrets:
       BREV_API_KEY: ${{ secrets.BREV_API_KEY }}
       BREV_ORG_ID: ${{ secrets.BREV_ORG_ID }}
-      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+      NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}

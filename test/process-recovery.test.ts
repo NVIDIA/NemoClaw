@@ -230,4 +230,71 @@ beta  127.0.0.1  18789  12345  running`;
       ),
     ).toBe(false);
   });
+
+  it("waits for a recovered sandbox gateway before declaring recovery", () => {
+    const openshellRuntime = requireDist("../dist/lib/adapters/openshell/runtime.js");
+    const agentRuntime = requireDist("../dist/lib/agent/runtime.js");
+    const registry = requireDist("../dist/lib/state/registry.js");
+    const childProcess = requireDist("node:child_process");
+    const runningForward = `SANDBOX  BIND  PORT  PID  STATUS
+beta  127.0.0.1  18789  12345  running`;
+    const previousWaitSeconds = process.env.NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS;
+    const previousPollInterval = process.env.NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS;
+    let healthProbeCalls = 0;
+
+    process.env.NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS = "2";
+    process.env.NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS = "0";
+
+    try {
+      vi.spyOn(childProcess, "spawnSync").mockImplementation(
+        (_command: unknown, rawArgs: unknown) => {
+          const args = Array.isArray(rawArgs) ? rawArgs.map(String) : [];
+          const shellCommand = String(args.at(-1) ?? "");
+          if (shellCommand.includes("HTTP_CODE=$(curl")) {
+            healthProbeCalls += 1;
+            const status = healthProbeCalls >= 3 ? "RUNNING" : "STOPPED";
+            return {
+              status: 0,
+              stdout: `__NEMOCLAW_SANDBOX_EXEC_STARTED__\n${status}\n`,
+              stderr: "",
+            } as never;
+          }
+          return {
+            status: 0,
+            stdout: "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nGATEWAY_PID=123\n",
+            stderr: "",
+          } as never;
+        },
+      );
+      vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue(null);
+      vi.spyOn(registry, "getSandbox").mockReturnValue({
+        name: "beta",
+        agent: "openclaw",
+        dashboardPort: 18789,
+      });
+      vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
+        status: 0,
+        output: runningForward,
+      });
+
+      expect(
+        withFakeOpenshellBinary(() => checkAndRecoverSandboxProcesses("beta", { quiet: true })),
+      ).toEqual({
+        checked: true,
+        wasRunning: false,
+        recovered: true,
+        forwardRecovered: true,
+      });
+      expect(healthProbeCalls).toBe(3);
+    } finally {
+      if (previousWaitSeconds === undefined)
+        delete process.env.NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS;
+      else process.env.NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS = previousWaitSeconds;
+      if (previousPollInterval === undefined) {
+        delete process.env.NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS;
+      } else {
+        process.env.NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS = previousPollInterval;
+      }
+    }
+  });
 });

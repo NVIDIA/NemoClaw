@@ -320,10 +320,10 @@ describe("onboard session", () => {
       sandboxName: "my-assistant",
       endpointUrl:
         "https://alice:super-secret-token@example.com/v1?token=super-secret-token&keep=yes#token=super-secret-token",
-      credentialEnv: "NVIDIA_API_KEY",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
     });
     session.markStepSkipped("openclaw");
-    session.markStepFailed("sandbox", "NVIDIA_API_KEY=super-secret-token");
+    session.markStepFailed("sandbox", "NVIDIA_INFERENCE_API_KEY=super-secret-token");
     session.completeSession({ provider: "ollama-local", credentialEnv: null });
 
     expect(emitted.map((event) => event.type)).toEqual([
@@ -345,7 +345,7 @@ describe("onboard session", () => {
     });
     expect(emitted[1].context).toMatchObject({
       sandboxName: "my-assistant",
-      credentialEnv: "NVIDIA_API_KEY",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
     });
     expect(emitted[1].context.endpointOrigin).toBe("https://example.com");
     expect(emitted[1].metadata.fields).toEqual(["sandboxName", "endpointUrl", "credentialEnv"]);
@@ -353,7 +353,7 @@ describe("onboard session", () => {
       type: "state.failed",
       state: "sandbox",
       step: "sandbox",
-      error: "NVIDIA_API_KEY=<REDACTED>",
+      error: "NVIDIA_INFERENCE_API_KEY=<REDACTED>",
     });
     expect(emitted[5]).toMatchObject({ type: "onboard.failed", state: "failed" });
     expect(emitted.at(-1)).toMatchObject({ type: "onboard.completed", state: "complete" });
@@ -409,7 +409,7 @@ describe("onboard session", () => {
       model: "nvidia/test-model",
       sandboxName: "my-assistant",
       endpointUrl: "https://example.com/v1",
-      credentialEnv: "NVIDIA_API_KEY",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
       preferredInferenceApi: "openai-completions",
       nimContainer: "nim-123",
       policyPresets: ["pypi", "npm"],
@@ -426,7 +426,7 @@ describe("onboard session", () => {
     expect(loaded.model).toBe("nvidia/test-model");
     expect(loaded.sandboxName).toBe("my-assistant");
     expect(loaded.endpointUrl).toBe("https://example.com/v1");
-    expect(loaded.credentialEnv).toBe("NVIDIA_API_KEY");
+    expect(loaded.credentialEnv).toBe("NVIDIA_INFERENCE_API_KEY");
     expect(loaded.preferredInferenceApi).toBe("openai-completions");
     expect(loaded.nimContainer).toBe("nim-123");
     expect(loaded.policyPresets).toEqual(["pypi", "npm"]);
@@ -1000,11 +1000,11 @@ describe("onboard session", () => {
     session.saveSession(session.createSession());
     session.markStepFailed(
       "inference",
-      "provider auth failed with NVIDIA_API_KEY=nvapi-secret Bearer topsecret sk-secret-value-that-is-long-enough ghp_1234567890123456789012345",
+      "provider auth failed with NVIDIA_INFERENCE_API_KEY=nvapi-secret Bearer topsecret sk-secret-value-that-is-long-enough ghp_1234567890123456789012345",
     );
 
     const loaded = requireLoadedSession(session.loadSession());
-    expect(loaded.steps.inference.error).toContain("NVIDIA_API_KEY=<REDACTED>");
+    expect(loaded.steps.inference.error).toContain("NVIDIA_INFERENCE_API_KEY=<REDACTED>");
     expect(loaded.steps.inference.error).toContain("Bearer <REDACTED>");
     expect(loaded.steps.inference.error).not.toContain("nvapi-secret");
     expect(loaded.steps.inference.error).not.toContain("topsecret");

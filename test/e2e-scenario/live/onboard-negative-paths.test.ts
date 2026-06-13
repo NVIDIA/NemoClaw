@@ -16,7 +16,7 @@ import type { HostCliClient } from "../fixtures/clients/host.ts";
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const CLI_DIST_ENTRYPOINT = path.join(REPO_ROOT, "dist", "nemoclaw.js");
 const SESSION_FILE = path.join(process.env.HOME ?? "/tmp", ".nemoclaw", "onboard-session.json");
-const INVALID_NVIDIA_API_KEY = "not-a-nvidia-key";
+const INVALID_NVIDIA_INFERENCE_API_KEY = "not-a-nvidia-key";
 const STACK_TRACE_PATTERNS = [/(^|\s)(TypeError|ReferenceError|SyntaxError):/m, /^\s+at /m];
 
 process.env.NEMOCLAW_CLI_BIN ??= path.join(REPO_ROOT, "bin", "nemoclaw.js");
@@ -123,9 +123,9 @@ liveTest(
           NEMOCLAW_RECREATE_SANDBOX: "1",
           NEMOCLAW_PROVIDER: "cloud",
           NEMOCLAW_POLICY_MODE: "skip",
-          NVIDIA_API_KEY: INVALID_NVIDIA_API_KEY,
+          NVIDIA_INFERENCE_API_KEY: INVALID_NVIDIA_INFERENCE_API_KEY,
         }),
-        redactionValues: [INVALID_NVIDIA_API_KEY],
+        redactionValues: [INVALID_NVIDIA_INFERENCE_API_KEY],
         timeoutMs: 5 * 60_000,
       },
     );

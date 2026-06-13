@@ -10,18 +10,18 @@
 #
 # Prerequisites:
 #   - Docker running
-#   - NVIDIA_API_KEY set (real key, starts with nvapi-)
-#   - Network access to integrate.api.nvidia.com
+#   - NVIDIA_INFERENCE_API_KEY set (real key, starts with nvapi-)
+#   - Network access to inference-api.nvidia.com
 #
 # Environment variables:
 #   NEMOCLAW_NON_INTERACTIVE=1             — required (enables non-interactive install + onboard)
 #   NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 — required for non-interactive install/onboard
 #   NEMOCLAW_SANDBOX_NAME                  — sandbox name (default: e2e-nightly)
 #   NEMOCLAW_RECREATE_SANDBOX=1            — recreate sandbox if it exists from a previous run
-#   NVIDIA_API_KEY                         — required for NVIDIA Endpoints inference
+#   NVIDIA_INFERENCE_API_KEY                         — required for NVIDIA Endpoints inference
 #
 # Usage:
-#   NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 NVIDIA_API_KEY=nvapi-... bash test/e2e/test-full-e2e.sh
+#   NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 NVIDIA_INFERENCE_API_KEY=nvapi-... bash test/e2e/test-full-e2e.sh
 #
 # See: https://github.com/NVIDIA/NemoClaw/issues/71
 
@@ -71,6 +71,8 @@ except Exception as e:
 
 # shellcheck source=test/e2e/lib/openclaw-json.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/openclaw-json.sh"
+# shellcheck source=test/e2e/lib/ci-compatible-inference.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/ci-compatible-inference.sh"
 
 # Determine repo root
 if [ -d /workspace ] && [ -f /workspace/install.sh ]; then
@@ -83,6 +85,7 @@ else
 fi
 
 SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-nightly}"
+nemoclaw_e2e_configure_compatible_inference
 
 # shellcheck source=test/e2e/lib/sandbox-teardown.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox-teardown.sh"
@@ -114,17 +117,18 @@ else
   exit 1
 fi
 
-if [ -n "${NVIDIA_API_KEY:-}" ] && [[ "${NVIDIA_API_KEY}" == nvapi-* ]]; then
-  pass "NVIDIA_API_KEY is set (starts with nvapi-)"
-else
-  fail "NVIDIA_API_KEY not set or invalid — required for live inference"
+if ! nemoclaw_e2e_require_hosted_inference_key; then
   exit 1
 fi
 
-if curl -sf --max-time 10 https://integrate.api.nvidia.com/v1/models >/dev/null 2>&1; then
-  pass "Network access to integrate.api.nvidia.com"
+HOSTED_INFERENCE_BASE_URL="$(nemoclaw_e2e_hosted_inference_base_url)"
+HOSTED_INFERENCE_MODEL="$(nemoclaw_e2e_hosted_inference_model)"
+HOSTED_INFERENCE_KEY="$(nemoclaw_e2e_hosted_inference_key)"
+
+if nemoclaw_e2e_probe_hosted_inference; then
+  pass "Network access to ${HOSTED_INFERENCE_BASE_URL}"
 else
-  fail "Cannot reach integrate.api.nvidia.com"
+  fail "Cannot reach ${HOSTED_INFERENCE_BASE_URL}"
   exit 1
 fi
 
@@ -236,7 +240,14 @@ fi
 # 3c: Inference must be configured by onboard (no fallback — if onboard
 # failed to configure it, that's a bug we want to catch)
 if inf_check=$(openshell inference get 2>&1); then
-  if grep -qi "nvidia-prod" <<<"$inf_check"; then
+  inf_check_plain="$(sed -E $'s/\x1B\\[[0-9;]*[A-Za-z]//g' <<<"$inf_check")"
+  if nemoclaw_e2e_using_compatible_inference; then
+    if grep -Eqi "Provider:[[:space:]]*(custom|compatible-endpoint)" <<<"$inf_check_plain" && grep -Fq "$HOSTED_INFERENCE_MODEL" <<<"$inf_check_plain"; then
+      pass "Inference configured via onboard (CI-compatible endpoint)"
+    else
+      fail "Inference not configured — onboard did not set up CI-compatible provider: ${inf_check_plain:0:200}"
+    fi
+  elif grep -qi "nvidia-prod" <<<"$inf_check_plain"; then
     pass "Inference configured via onboard"
   else
     fail "Inference not configured — onboard did not set up nvidia-prod provider"
@@ -306,13 +317,13 @@ fi
 section "Phase 4: Live inference"
 
 # ── Test 4a: Direct NVIDIA Endpoints ──
-info "[LIVE] Direct API test → integrate.api.nvidia.com..."
+info "[LIVE] Direct API test → ${HOSTED_INFERENCE_BASE_URL}..."
 api_response=$(curl -s --max-time 30 \
-  -X POST https://integrate.api.nvidia.com/v1/chat/completions \
+  -X POST "${HOSTED_INFERENCE_BASE_URL}/chat/completions" \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $NVIDIA_API_KEY" \
+  -H "Authorization: Bearer $HOSTED_INFERENCE_KEY" \
   -d '{
-    "model": "nvidia/nemotron-3-super-120b-a12b",
+    "model": "'"${HOSTED_INFERENCE_MODEL}"'",
     "messages": [{"role": "user", "content": "Reply with exactly one word: PONG"}],
     "max_tokens": 100
   }' 2>/dev/null) || true

@@ -13,13 +13,32 @@
  * netns blocks the syscall). The only manual recovery is a 5-min
  * `nemoclaw <name> rebuild --yes`.
  *
- * This test asserts the desired contract — recovery RESTORES the guard
- * chain before launching, no WARNING line, gateway PID stable. It will fail
- * on `main` (proving the bug), pass once the fix lands.
+ * This test asserts the desired contract — recovery logs that it is restoring
+ * from trusted packaged preloads, RESTORES the guard chain before launching,
+ * and keeps the gateway PID stable. It will fail on `main` (proving the bug),
+ * pass once the fix lands.
  *
  * The contract is platform-independent: we don't need aarch64 to assert
  * "guards are present after recovery." The aarch64 ciao crash is a
  * downstream consequence of the same broken contract.
+ *
+ * #2701 acceptance scope for this PR:
+ *   - Covered: the default OpenClaw production recovery route
+ *     (`nemoclaw <sandbox> connect --probe-only` →
+ *     checkAndRecoverSandboxProcesses() → `openshell sandbox exec -- sh -c`
+ *     buildOpenClawRecoveryScript()) after the pod-recreate-equivalent state
+ *     of an empty guard-chain `/tmp` plus no running gateway process. This
+ *     proves the user no longer needs `nemoclaw <sandbox> rebuild --yes` for
+ *     that recovered runtime state.
+ *   - Deliberately out of scope for this merge gate: physical DGX Spark /
+ *     GB10 / aarch64 hardware, provider breadth beyond `cloud-openclaw`, and
+ *     destructive host reboot / OOM / supervisor crash / manual
+ *     `kubectl delete pod` triggers. The current live Vitest runner exposes a
+ *     Docker-driver OpenShell sandbox and does not provide a stable per-test
+ *     Kubernetes pod handle that can be deleted without destabilizing shared
+ *     gateway state. Those trigger/hardware/provider clauses need a dedicated
+ *     platform-runtime job; this test locks down the shared recovery contract
+ *     they all depend on.
  *
  * The corresponding legacy bash phase remains in
  * `test/e2e/test-issue-2478-crash-loop-recovery.sh` Phase 4 with both the
@@ -53,13 +72,26 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
   secrets,
   cleanup,
 }) => {
-  secrets.required("NVIDIA_API_KEY");
+  secrets.required("NVIDIA_INFERENCE_API_KEY");
 
   await artifacts.writeJson("scenario.json", {
     id: "gateway-guard-recovery",
     runner: "vitest",
     boundary: "sandbox-lifecycle",
     issues: ["#2701", "#2478"],
+    acceptanceCoverage: {
+      covered: [
+        "production connect --probe-only recovery route",
+        "openshell sandbox exec -- sh -c OpenClaw recovery script",
+        "pod-recreate-equivalent empty /tmp guard chain plus missing gateway process",
+        "no rebuild required for the recovered runtime state",
+      ],
+      intentionallyOutOfScope: [
+        "DGX Spark / GB10 / aarch64 hardware matrix",
+        "provider breadth beyond cloud-openclaw",
+        "host reboot / OOM / supervisor crash / manual kubectl delete pod triggers",
+      ],
+    },
   });
 
   // ── Setup ────────────────────────────────────────────────────────
@@ -72,8 +104,10 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
   await gateway.expectGuardChainActive(instance);
 
   // ── Disrupt ──────────────────────────────────────────────────────
-  // Same shape as a fresh container after pod recreate: /tmp is empty of
-  // the guard chain, and the openclaw process tree is gone.
+  // Deterministic pod-recreate-equivalent state: /tmp is empty of the guard
+  // chain, and the OpenClaw process tree is gone. This avoids coupling the
+  // merge gate to a host-specific pod/container delete primitive while still
+  // exercising the production sandbox-exec recovery route below.
   await sandbox.wipeGuardChain(instance.sandboxName);
   await sandbox.killGatewayTree(instance.sandboxName);
 
@@ -101,15 +135,16 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
   });
 
   // ── Assert #2701 contract ────────────────────────────────────────
-  // After recovery completes, the guard chain MUST be restored. Today
-  // this fails: recovery emits a WARNING but launches the gateway
-  // naked, leaving /tmp/nemoclaw-proxy-env.sh absent. After the fix
-  // lands, recovery re-emits the chain before launching.
+  // After recovery completes, the guard chain MUST be restored. Before the
+  // fix, recovery emitted a WARNING but launched the gateway naked, leaving
+  // /tmp/nemoclaw-proxy-env.sh absent. After the fix lands, recovery re-emits
+  // the chain before launching.
   await gateway.expectGuardChainActive(instance);
 
-  // No WARNING line should appear in the gateway log — the fix turns
-  // the warn-and-proceed branch into a re-emit-and-continue branch.
-  await gateway.expectLogDoesNotContain(instance, /\[gateway-recovery\] WARNING/);
+  // A missing proxy-env file is still worth surfacing, but the warning must
+  // describe trusted restoration instead of an unguarded launch.
+  await gateway.expectLogContains(instance, /restoring library guards from packaged preloads/);
+  await gateway.expectLogDoesNotContain(instance, /gateway launching without library guards/);
 
   // Gateway must be steady-state — no crash loop. This assertion is
   // the "would have caught DGX Spark" check, even on x86 runners,

@@ -193,14 +193,14 @@ describe("OnboardRuntime", () => {
     await runtime.updateContext({
       provider: "nvidia-prod",
       endpointUrl: "https://alice:secret@example.com/v1?token=super-secret&keep=yes#token=frag",
-      credentialEnv: "NVIDIA_API_KEY",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
       apiKey: "super-secret",
     } as Parameters<typeof runtime.updateContext>[0] & { apiKey: string });
 
     expect(getSession()).toMatchObject({
       provider: "nvidia-prod",
       endpointUrl: "https://example.com/v1?token=%3CREDACTED%3E&keep=yes",
-      credentialEnv: "NVIDIA_API_KEY",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
     });
     expect("apiKey" in getSession()).toBe(false);
     expect(events).toHaveLength(1);
@@ -295,11 +295,11 @@ describe("OnboardRuntime", () => {
   it("fails non-terminal sessions with redacted failure events", async () => {
     const { runtime, events, getSession } = createHarness(sessionInState("gateway"));
 
-    await runtime.fail("NVIDIA_API_KEY=super-secret", { step: "gateway" });
+    await runtime.fail("NVIDIA_INFERENCE_API_KEY=super-secret", { step: "gateway" });
 
     expect(getSession()).toMatchObject({
       status: "failed",
-      failure: { step: "gateway", message: "NVIDIA_API_KEY=<REDACTED>" },
+      failure: { step: "gateway", message: "NVIDIA_INFERENCE_API_KEY=<REDACTED>" },
       machine: { state: "failed", revision: 8 },
     });
     expect(events.map((event) => event.type)).toEqual(["state.failed", "onboard.failed"]);

@@ -227,6 +227,14 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       flags: "[--yes|-y|--force] [--cleanup-gateway|--no-cleanup-gateway]",
     },
   ],
+  "sandbox:download": [
+    {
+      group: "Sandbox Management",
+      order: 4.6,
+      description: "Download a file or directory from the sandbox to the host",
+      flags: "<sandbox-path> [host-dest]",
+    },
+  ],
   "sandbox:doctor": [
     {
       group: "Sandbox Management",
@@ -240,6 +248,14 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       group: "Sandbox Management",
       order: 4.5,
       flags: "[--workdir <dir>] [--tty|--no-tty] [--timeout <s>] -- <cmd> [args...]",
+    },
+  ],
+  "sandbox:upload": [
+    {
+      group: "Sandbox Management",
+      order: 4.7,
+      description: "Upload a file or directory from the host into the sandbox",
+      flags: "<host-path> [sandbox-dest]",
     },
   ],
   "sandbox:gateway:token": [

@@ -18,6 +18,7 @@ import {
   probeLocalAdapterHealth,
   readLocalAdapterJsonFile,
   readLocalAdapterTextFile,
+  waitForLocalAdapterHealth,
   writeLocalAdapterJsonFile,
   writeLocalAdapterSecretFile,
 } from "../../../dist/lib/inference/local-adapter-lifecycle";
@@ -149,5 +150,39 @@ describe("ensureLocalAdapterStateDir", () => {
     ensureLocalAdapterStateDir(stateDir);
     const stat = fs.statSync(stateDir);
     expect(stat.mode & 0o777).toBe(0o700);
+  });
+});
+
+describe("waitForLocalAdapterHealth", () => {
+  it("retries async health probes until the adapter responds", async () => {
+    let calls = 0;
+
+    await expect(
+      waitForLocalAdapterHealth(
+        async () => {
+          calls += 1;
+          return calls >= 3;
+        },
+        { attempts: 5, intervalMs: 1 },
+      ),
+    ).resolves.toBe(true);
+
+    expect(calls).toBe(3);
+  });
+
+  it("returns false after the configured attempt budget is exhausted", async () => {
+    let calls = 0;
+
+    await expect(
+      waitForLocalAdapterHealth(
+        async () => {
+          calls += 1;
+          return false;
+        },
+        { attempts: 2, intervalMs: 1 },
+      ),
+    ).resolves.toBe(false);
+
+    expect(calls).toBe(2);
   });
 });
