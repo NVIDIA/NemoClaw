@@ -9,7 +9,7 @@ Repository-verifiable acceptance evidence for [PR #5085](https://github.com/NVID
 
 The unit tests in `test/nemotron-inference-fix.test.ts` prove request mutation, Content-Length refresh, and the 12 inject/skip branches via stubbed http + real fetch/undici. They do not prove the upstream model-output behavior the issue's expected result asks for. That requires a live call to NVIDIA Endpoints, which can't run in unit CI without API-key secret infrastructure.
 
-This runbook is the maintained runtime-validation path. Anyone reviewing #4851 acceptance can run it directly against `integrate.api.nvidia.com` and confirm the model returns `content` with both file-creation code and the run command after the preload's system message is injected.
+This runbook is the maintained runtime-validation path. Anyone reviewing #4851 acceptance can run it directly against `inference-api.nvidia.com` and confirm the model returns `content` with both file-creation code and the run command after the preload's system message is injected.
 
 ## When to run
 
@@ -25,7 +25,7 @@ This runbook is the maintained runtime-validation path. Anyone reviewing #4851 a
 Export the key once for the session:
 
 ```bash
-export NVIDIA_API_KEY="nvapi-..."
+export NVIDIA_INFERENCE_API_KEY="nvapi-..."
 ```
 
 ## Scenario A — baseline (no preload, no system message, no tools)
@@ -33,8 +33,8 @@ export NVIDIA_API_KEY="nvapi-..."
 Demonstrates the bug as filed in the issue body.
 
 ```bash
-curl -sS -X POST https://integrate.api.nvidia.com/v1/chat/completions \
-  -H "Authorization: Bearer ${NVIDIA_API_KEY}" \
+curl -sS -X POST https://inference-api.nvidia.com/v1/chat/completions \
+  -H "Authorization: Bearer ${NVIDIA_INFERENCE_API_KEY}" \
   -H "Content-Type: application/json" \
   -d '{
     "model": "nvidia/nemotron-3-ultra-550b-a55b",
@@ -61,8 +61,8 @@ Expected result with `nemotron-3-ultra-550b-a55b` (matches issue body):
 Demonstrates that the existing Nemotron-family kwarg doesn't fix #4851 by itself.
 
 ```bash
-curl -sS -X POST https://integrate.api.nvidia.com/v1/chat/completions \
-  -H "Authorization: Bearer ${NVIDIA_API_KEY}" \
+curl -sS -X POST https://inference-api.nvidia.com/v1/chat/completions \
+  -H "Authorization: Bearer ${NVIDIA_INFERENCE_API_KEY}" \
   -H "Content-Type: application/json" \
   -d '{
     "model": "nvidia/nemotron-3-ultra-550b-a55b",
@@ -80,8 +80,8 @@ Expected: still ≈ 0–60 chars. The kwarg doesn't change the failure mode.
 Demonstrates the fix shipped in this PR.
 
 ```bash
-curl -sS -X POST https://integrate.api.nvidia.com/v1/chat/completions \
-  -H "Authorization: Bearer ${NVIDIA_API_KEY}" \
+curl -sS -X POST https://inference-api.nvidia.com/v1/chat/completions \
+  -H "Authorization: Bearer ${NVIDIA_INFERENCE_API_KEY}" \
   -H "Content-Type: application/json" \
   -d '{
     "model": "nvidia/nemotron-3-ultra-550b-a55b",
@@ -109,7 +109,7 @@ This satisfies the issue's "Expected Result, Option A" (`Model explains it lacks
 
 ## Sanitized acceptance transcript
 
-The transcript below was captured by @cjagwani on 2026-06-09 against `integrate.api.nvidia.com` from a GCP Brev box. Reproduces the bug behavior in Scenarios A/B and the fix behavior in Scenario C. Use this as the durable acceptance baseline; new runs that differ structurally should update this section (and the dated entry below) rather than the unit tests.
+The transcript below was captured by @cjagwani on 2026-06-09 against `inference-api.nvidia.com` from a GCP Brev box. Reproduces the bug behavior in Scenarios A/B and the fix behavior in Scenario C. Use this as the durable acceptance baseline; new runs that differ structurally should update this section (and the dated entry below) rather than the unit tests.
 
 ### Scenario A (baseline) — 2026-06-09
 
@@ -200,6 +200,6 @@ This satisfies the issue's Option A acceptance condition: model explains it lack
 
 ## Live verification log
 
-- 2026-06-09 — verified by @cjagwani on a GCP Brev box against `integrate.api.nvidia.com`. Numbers and content above match this run.
+- 2026-06-09 — verified by @cjagwani on a GCP Brev box against `inference-api.nvidia.com`. Numbers and content above match this run.
 
 When you re-run this runbook, add a dated entry here so the next reviewer can see how recently the upstream behavior was last confirmed. If the response shape differs materially from the sanitized transcript above, update both this log and the transcript.

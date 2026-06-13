@@ -18,7 +18,7 @@ const baseSelection: ProviderSelectionResult = {
   model: "nvidia/test",
   provider: "nvidia-prod",
   endpointUrl: "https://integrate.api.nvidia.com/v1",
-  credentialEnv: "NVIDIA_API_KEY",
+  credentialEnv: "NVIDIA_INFERENCE_API_KEY",
   hermesAuthMethod: null,
   hermesToolGateways: [],
   preferredInferenceApi: "openai-responses",
@@ -159,12 +159,12 @@ describe("handleProviderInferenceState", () => {
       "nvidia/test",
       "nvidia-prod",
       "https://integrate.api.nvidia.com/v1",
-      "NVIDIA_API_KEY",
+      "NVIDIA_INFERENCE_API_KEY",
       null,
       [],
       { allowToolsIncompatible: false },
     );
-    expect(calls.deleteEnv).toHaveBeenCalledWith("NVIDIA_API_KEY");
+    expect(calls.deleteEnv).toHaveBeenCalledWith("NVIDIA_INFERENCE_API_KEY");
     expect(result).toMatchObject({
       sandboxName: "my-assistant",
       model: "nvidia/test",
@@ -374,7 +374,7 @@ describe("handleProviderInferenceState", () => {
       provider: "nvidia-router",
       model: "router/model",
       endpointUrl: "http://localhost:4000/v1",
-      credentialEnv: "NVIDIA_API_KEY",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
     });
     session.steps.provider_selection.status = "complete";
     const { deps, calls } = createDeps({ isInferenceRouteReady: vi.fn(() => true) });
@@ -389,7 +389,7 @@ describe("handleProviderInferenceState", () => {
     expect(calls.reupsertRoutedProvider).toHaveBeenCalledWith(
       "nvidia-router",
       "http://localhost:4000/v1",
-      "NVIDIA_API_KEY",
+      "NVIDIA_INFERENCE_API_KEY",
     );
     expect(calls.setupInference).not.toHaveBeenCalled();
     expect(result.endpointUrl).toBe("http://host.openshell.internal:4000/v1");

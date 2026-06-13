@@ -15,7 +15,7 @@ import { validateName } from "../../../dist/lib/runner";
 describe("inferDeployProvider", () => {
   it("prefers an explicit provider override", () => {
     const provider = inferDeployProvider("openai", {
-      NVIDIA_API_KEY: "nvapi-test",
+      NVIDIA_INFERENCE_API_KEY: "nvapi-test",
     });
 
     expect(provider).toBe("openai");
@@ -31,7 +31,7 @@ describe("inferDeployProvider", () => {
 
   it("returns null when multiple provider credentials are present without an override", () => {
     const provider = inferDeployProvider("", {
-      NVIDIA_API_KEY: "nvapi-test",
+      NVIDIA_INFERENCE_API_KEY: "nvapi-test",
       OPENAI_API_KEY: "sk-openai-test",
     });
 
@@ -49,7 +49,7 @@ describe("buildDeployEnvLines", () => {
       sandboxName: "my-assistant",
       provider: "build",
       credentials: {
-        NVIDIA_API_KEY: "nvapi-test",
+        NVIDIA_INFERENCE_API_KEY: "nvapi-test",
       },
       shellQuote: (value: string) => `'${value}'`,
     });
@@ -60,7 +60,7 @@ describe("buildDeployEnvLines", () => {
     expect(envLines).toContain("NEMOCLAW_PROVIDER='build'");
     expect(envLines).toContain("CHAT_UI_URL='https://chat.example.com'");
     expect(envLines).toContain("NEMOCLAW_POLICY_MODE='suggested'");
-    expect(envLines).toContain("NVIDIA_API_KEY='nvapi-test'");
+    expect(envLines).toContain("NVIDIA_INFERENCE_API_KEY='nvapi-test'");
   });
 
   it("passes ALLOWED_CHAT_IDS through when Telegram is configured", () => {
@@ -85,7 +85,7 @@ describe("buildDeployEnvLines", () => {
       sandboxName: "my-assistant",
       provider: "build",
       credentials: {
-        NVIDIA_API_KEY: "nvapi-test",
+        NVIDIA_INFERENCE_API_KEY: "nvapi-test",
         HF_TOKEN: "hf_abc123",
         HUGGING_FACE_HUB_TOKEN: "hf_def456",
       },
@@ -126,7 +126,7 @@ describe("executeDeploy", () => {
         NEMOCLAW_SANDBOX_NAME: "my-box",
       },
       rootDir: "/repo/root",
-      getCredential: (key: string) => (key === "NVIDIA_API_KEY" ? "nvapi-test" : null),
+      getCredential: (key: string) => (key === "NVIDIA_INFERENCE_API_KEY" ? "nvapi-test" : null),
       validateName: (value: string) => value,
       shellQuote: (value: string) => `'${value}'`,
       run: (command: readonly string[]) => {

@@ -282,7 +282,7 @@ preflight() {
   fi
   log "Docker is running"
 
-  if [[ -z "${NVIDIA_API_KEY:-}" && -z "${OPENAI_API_KEY:-}" && -z "${ANTHROPIC_API_KEY:-}" ]]; then
+  if [[ -z "${NVIDIA_INFERENCE_API_KEY:-}" && -z "${OPENAI_API_KEY:-}" && -z "${ANTHROPIC_API_KEY:-}" ]]; then
     echo -e "${YELLOW}WARNING: No API key detected.${NC}"
   fi
 

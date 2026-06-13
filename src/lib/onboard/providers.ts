@@ -28,7 +28,7 @@ const REMOTE_PROVIDER_CONFIG = {
     label: "NVIDIA Endpoints",
     providerName: "nvidia-prod",
     providerType: "nvidia",
-    credentialEnv: "NVIDIA_API_KEY",
+    credentialEnv: "NVIDIA_INFERENCE_API_KEY",
     endpointUrl: BUILD_ENDPOINT_URL,
     helpUrl: "https://build.nvidia.com/settings/api-keys",
     modelMode: "catalog",

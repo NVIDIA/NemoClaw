@@ -54,11 +54,6 @@ network_policies:
         protocol: rest
         enforcement: enforce
         access: full
-      - host: inference-api.nvidia.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        access: full
     binaries:
       - { path: "/**" }
 
