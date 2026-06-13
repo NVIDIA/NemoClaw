@@ -99,10 +99,10 @@
 # Runs directly on the runner (not inside Docker) because OpenShell bootstraps
 # a K3s cluster inside a privileged Docker container — nesting would break networking.
 #
-# NVIDIA_API_KEY for cloud-e2e:
+# NVIDIA_INFERENCE_API_KEY for cloud-e2e:
 #   - Repository secret: Settings → Secrets and variables → Actions → Repository secrets.
 #   - Environment secret: only available if the job sets `environment: <that environment name>`.
-#     (Storing the key under Environments / NVIDIA_API_KEY without `environment:` here leaves the
+#     (Storing the key under Environments / NVIDIA_INFERENCE_API_KEY without `environment:` here leaves the
 #     variable empty in the job — repository secrets and environment secrets are separate.)
 # Only runs on schedule and manual dispatch — never on PRs (secret protection).
 
@@ -204,9 +204,10 @@ jobs:
       artifact_path: "/tmp/nemoclaw-e2e-install.log"
       env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-nightly"}'
       nvidia_api_key: true
+      nvidia_secret_as_compatible_api_key: true
       github_token: true
     secrets: &nightly-e2e-default-secrets
-      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+      NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
       BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
       DOCKERHUB_USERNAME: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_USERNAME || '' }}
       DOCKERHUB_TOKEN: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_TOKEN || '' }}
@@ -224,6 +225,7 @@ jobs:
       env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_POLICY_MODE":"custom","NEMOCLAW_POLICY_PRESETS":"npm,pypi","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-cloud-onboard"}'
       checked_out_ref_env: "NEMOCLAW_PUBLIC_INSTALL_REF"
       nvidia_api_key: true
+      nvidia_secret_as_compatible_api_key: true
       github_token: true
     secrets: *nightly-e2e-default-secrets
   cloud-inference-e2e:
@@ -240,6 +242,7 @@ jobs:
       artifact_path: "/tmp/nemoclaw-e2e-cloud-inference-install.log"
       env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-cloud-inference"}'
       nvidia_api_key: true
+      nvidia_secret_as_compatible_api_key: true
     secrets: *nightly-e2e-default-secrets
   cron-preflight-inference-local-e2e:
     if: >-
@@ -376,7 +379,7 @@ jobs:
       github_token: true
       messaging_live_secrets: ${{ github.event_name != 'workflow_dispatch' || inputs.target_ref == '' }}
     secrets:
-      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+      NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
       BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
       DOCKERHUB_USERNAME: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_USERNAME || '' }}
       DOCKERHUB_TOKEN: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_TOKEN || '' }}
@@ -461,7 +464,7 @@ jobs:
 
       - name: Run OpenClaw TUI chat correlation E2E test
         env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
           NEMOCLAW_RECREATE_SANDBOX: "1"
@@ -491,7 +494,7 @@ jobs:
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           # This privileged proof mutates host firewall state and receives
-          # NVIDIA_API_KEY. Keep the runner script from the trusted workflow ref;
+          # NVIDIA_INFERENCE_API_KEY. Keep the runner script from the trusted workflow ref;
           # the product under test is selected separately via
           # NEMOCLAW_PUBLIC_INSTALL_REF.
           ref: ${{ github.ref }}
@@ -530,7 +533,7 @@ jobs:
 
       - name: "Run issue #4434 TUI unreachable inference E2E test"
         env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
           NEMOCLAW_ISSUE_4434_LIVE: "1"
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
@@ -544,19 +547,19 @@ jobs:
         if: failure()
         shell: bash
         env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           for file in /tmp/nemoclaw-e2e-issue-4434-install.log /tmp/nemoclaw-issue-4434.*; do
             [ -f "$file" ] || continue
-            if [ -n "${NVIDIA_API_KEY:-}" ]; then
-              perl -0pi -e 's/\Q$ENV{NVIDIA_API_KEY}\E/[REDACTED_NVIDIA_API_KEY]/g' "$file"
+            if [ -n "${NVIDIA_INFERENCE_API_KEY:-}" ]; then
+              perl -0pi -e 's/\Q$ENV{NVIDIA_INFERENCE_API_KEY}\E/[REDACTED_NVIDIA_INFERENCE_API_KEY]/g' "$file"
             fi
             if [ -n "${GITHUB_TOKEN:-}" ]; then
               perl -0pi -e 's/\Q$ENV{GITHUB_TOKEN}\E/[REDACTED_GITHUB_TOKEN]/g' "$file"
             fi
-            perl -0pi -e 's/nvapi-[A-Za-z0-9._-]+/[REDACTED_NVIDIA_API_KEY]/g; s/gh[pousr]_[A-Za-z0-9_]+/[REDACTED_GITHUB_TOKEN]/g' "$file"
+            perl -0pi -e 's/nvapi-[A-Za-z0-9._-]+/[REDACTED_NVIDIA_INFERENCE_API_KEY]/g; s/gh[pousr]_[A-Za-z0-9_]+/[REDACTED_GITHUB_TOKEN]/g' "$file"
           done
 
       - name: "Upload issue #4434 logs on failure"
@@ -697,12 +700,12 @@ jobs:
   #           chooses a `target_ref`. Both paths are "trusted-ref": the
   #           code reached at runtime has already passed maintainer review
   #           or is the default branch itself.
-  #   * `NVIDIA_API_KEY` is the repo-scoped E2E credential — purposefully
+  #   * `NVIDIA_INFERENCE_API_KEY` is the repo-scoped E2E credential — purposefully
   #     not a production key. It is wired only to the inference quota
   #     allocated to this repository's E2E lane, with no IAM / billing
   #     authority outside that quota. Treat exposure as "rotate at the
   #     quota boundary," not "rotate at the production boundary." Audit
-  #     trail: `gh api repos/NVIDIA/NemoClaw/actions/secrets/NVIDIA_API_KEY`
+  #     trail: `gh api repos/NVIDIA/NemoClaw/actions/secrets/NVIDIA_INFERENCE_API_KEY`
   #     shows the secret scope.
   #   * The top-level `github.repository == 'NVIDIA/NemoClaw'` check
   #     additionally guards repo-forked schedules.
@@ -952,7 +955,8 @@ jobs:
 
       - name: Run token rotation E2E test
         env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
+          NEMOCLAW_E2E_USE_NVIDIA_SECRET_AS_COMPATIBLE: "1"
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
           NEMOCLAW_POLICY_TIER: "open"
@@ -1243,7 +1247,7 @@ jobs:
 
       - name: Run sandbox operations E2E test
         env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
           NEMOCLAW_POLICY_TIER: "open"
@@ -1537,11 +1541,11 @@ jobs:
 
       - name: Run credential migration Vitest test
         # Trusted-code boundary: this job runs the checked-out target ref with
-        # NVIDIA_API_KEY because it validates live credential migration into the
+        # NVIDIA_INFERENCE_API_KEY because it validates live credential migration into the
         # OpenShell gateway. Keep checkout credentials disabled, do not pass
         # GITHUB_TOKEN, and rely on reviewed/maintainer-dispatched refs.
         env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
           E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/credential-migration
           NEMOCLAW_RUN_E2E_SCENARIOS: "1"
           NEMOCLAW_SANDBOX_NAME: "e2e-cred-migration"
@@ -1714,13 +1718,13 @@ jobs:
       - *dockerhub-auth-step
       - name: Install NemoClaw
         env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
         run: bash install.sh --non-interactive --yes-i-accept-third-party-software
       - name: Run double onboard E2E test
         env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
         run: |
@@ -1752,13 +1756,13 @@ jobs:
       - *dockerhub-auth-step
       - name: Install NemoClaw
         env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
         run: bash install.sh --non-interactive --yes-i-accept-third-party-software
       - name: Run onboard repair E2E test
         env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
         run: |
@@ -1790,13 +1794,13 @@ jobs:
       - *dockerhub-auth-step
       - name: Install NemoClaw
         env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
         run: bash install.sh --non-interactive --yes-i-accept-third-party-software
       - name: Run onboard resume E2E test
         env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
         run: |
@@ -1828,13 +1832,13 @@ jobs:
       - *dockerhub-auth-step
       - name: Install NemoClaw
         env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
         run: bash install.sh --non-interactive --yes-i-accept-third-party-software
       - name: Run onboard negative-path E2E test
         env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
         run: |
@@ -1867,13 +1871,13 @@ jobs:
       - *dockerhub-auth-step
       - name: Install NemoClaw
         env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
         run: bash install.sh --non-interactive --yes-i-accept-third-party-software
       - name: Run runtime overrides E2E test
         env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
         run: |
@@ -1906,14 +1910,14 @@ jobs:
       - *dockerhub-auth-step
       - name: Install NemoClaw and onboard sandbox
         env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
           NEMOCLAW_SANDBOX_NAME: "e2e-test"
         run: bash install.sh --non-interactive --yes-i-accept-third-party-software
       - name: Run credential sanitization E2E test
         env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
           NEMOCLAW_SANDBOX_NAME: "e2e-test"
@@ -1948,14 +1952,14 @@ jobs:
       - *dockerhub-auth-step
       - name: Install NemoClaw and onboard sandbox
         env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
           NEMOCLAW_SANDBOX_NAME: "e2e-test"
         run: bash install.sh --non-interactive --yes-i-accept-third-party-software
       - name: Run telegram injection E2E test
         env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
           NEMOCLAW_SANDBOX_NAME: "e2e-test"
@@ -2028,7 +2032,7 @@ jobs:
 
       - name: Run launchable install-flow smoke test
         env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
           NEMOCLAW_SANDBOX_NAME: "e2e-launchable"
@@ -2254,13 +2258,13 @@ jobs:
       - *dockerhub-auth-step
       - name: Install NemoClaw
         env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
         run: bash install.sh --non-interactive --yes-i-accept-third-party-software
       - name: Run concurrent gateway ports E2E test
         env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           [ -f "$HOME/.bashrc" ] && source "$HOME/.bashrc" 2>/dev/null || true
           export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"

@@ -81,7 +81,7 @@ Use this provider mapping for non-interactive setup:
 
 | User choice | \`NEMOCLAW_PROVIDER\` | Other required values |
 |---|---|---|
-| NVIDIA Endpoints | \`build\` | \`NVIDIA_API_KEY\` |
+| NVIDIA Endpoints | \`build\` | \`NVIDIA_INFERENCE_API_KEY\` |
 | OpenAI | \`openai\` | \`OPENAI_API_KEY\` |
 | Other OpenAI-compatible endpoint | \`custom\` | \`NEMOCLAW_ENDPOINT_URL\`, \`NEMOCLAW_MODEL\`, \`COMPATIBLE_API_KEY\` |
 | Anthropic | \`anthropic\` | \`ANTHROPIC_API_KEY\` |
@@ -89,7 +89,7 @@ Use this provider mapping for non-interactive setup:
 | Google Gemini | \`gemini\` | \`GEMINI_API_KEY\` |
 | Hermes Provider | \`hermes-provider\` | Hermes-only; ask for the provider credential as documented |
 | Local Ollama | \`ollama\` | Optional \`NEMOCLAW_MODEL\`; set \`NEMOCLAW_YES=1\` only if I approve model download |
-| Model Router | \`routed\` | \`NVIDIA_API_KEY\` |
+| Model Router | \`routed\` | \`NVIDIA_INFERENCE_API_KEY\` |
 
 When you have the approved values, run the installer with the environment variables on the \`bash\` side of the pipe, not before \`curl\`.
 

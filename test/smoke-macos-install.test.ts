@@ -18,22 +18,22 @@ describe.skip("macOS smoke install script guardrails", () => {
     expect(result.stdout).toMatch(/Usage: \.\/scripts\/smoke-macos-install\.sh/);
   });
 
-  it("requires NVIDIA_API_KEY", () => {
+  it("requires NVIDIA_INFERENCE_API_KEY", () => {
     const result = spawnSync("bash", [SMOKE_SCRIPT], {
       cwd: path.join(import.meta.dirname, ".."),
       encoding: "utf-8",
-      env: { ...process.env, NVIDIA_API_KEY: "" },
+      env: { ...process.env, NVIDIA_INFERENCE_API_KEY: "" },
     });
 
     expect(result.status).not.toBe(0);
-    expect(`${result.stdout}${result.stderr}`).toMatch(/NVIDIA_API_KEY must be set/);
+    expect(`${result.stdout}${result.stderr}`).toMatch(/NVIDIA_INFERENCE_API_KEY must be set/);
   });
 
   it("rejects invalid sandbox names", () => {
     const result = spawnSync("bash", [SMOKE_SCRIPT, "--sandbox-name", "Bad Name"], {
       cwd: path.join(import.meta.dirname, ".."),
       encoding: "utf-8",
-      env: { ...process.env, NVIDIA_API_KEY: "nvapi-test" },
+      env: { ...process.env, NVIDIA_INFERENCE_API_KEY: "nvapi-test" },
     });
 
     expect(result.status).not.toBe(0);
@@ -44,7 +44,7 @@ describe.skip("macOS smoke install script guardrails", () => {
     const result = spawnSync("bash", [SMOKE_SCRIPT, "--runtime", "lxc"], {
       cwd: path.join(import.meta.dirname, ".."),
       encoding: "utf-8",
-      env: { ...process.env, NVIDIA_API_KEY: "nvapi-test" },
+      env: { ...process.env, NVIDIA_INFERENCE_API_KEY: "nvapi-test" },
     });
 
     expect(result.status).not.toBe(0);
@@ -57,7 +57,7 @@ describe.skip("macOS smoke install script guardrails", () => {
       encoding: "utf-8",
       env: {
         ...process.env,
-        NVIDIA_API_KEY: "nvapi-test",
+        NVIDIA_INFERENCE_API_KEY: "nvapi-test",
         HOME: "/tmp/nemoclaw-smoke-no-runtime",
       },
     });
@@ -72,7 +72,7 @@ describe.skip("macOS smoke install script guardrails", () => {
       encoding: "utf-8",
       env: {
         ...process.env,
-        NVIDIA_API_KEY: "nvapi-test",
+        NVIDIA_INFERENCE_API_KEY: "nvapi-test",
         HOME: "/tmp/nemoclaw-smoke-no-runtime",
       },
     });
@@ -105,7 +105,7 @@ describe.skip("macOS smoke install script guardrails", () => {
     const result = spawnSync("bash", ["--noprofile", "--norc", "-c", script], {
       cwd: path.join(import.meta.dirname, ".."),
       encoding: "utf-8",
-      env: { ...process.env, NVIDIA_API_KEY: "nvapi-test" },
+      env: { ...process.env, NVIDIA_INFERENCE_API_KEY: "nvapi-test" },
       timeout: 10_000,
     });
 

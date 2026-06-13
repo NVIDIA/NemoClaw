@@ -239,7 +239,7 @@ export interface PhaseAction {
   // spawn. See fixtures/redaction.ts. Each entry must match the
   // secret-key shape; the fixture layer rejects non-secret names so the
   // allowlist-vs-declared-secret boundary stays honest. Cloud install
-  // declares ["NVIDIA_API_KEY"]; slack onboarding declares the slack
+  // declares ["NVIDIA_INFERENCE_API_KEY"]; slack onboarding declares the slack
   // tokens it actually needs; etc.
   secretEnv?: readonly string[];
 }

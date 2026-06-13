@@ -18,13 +18,13 @@
 #
 # Prerequisites:
 #   - Docker running
-#   - NVIDIA_API_KEY set
+#   - NVIDIA_INFERENCE_API_KEY set
 #   - NEMOCLAW_NON_INTERACTIVE=1
 #   - NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1
 #
 # Usage:
 #   NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
-#     NVIDIA_API_KEY=nvapi-... bash test/e2e/test-channels-stop-start.sh
+#     NVIDIA_INFERENCE_API_KEY=nvapi-... bash test/e2e/test-channels-stop-start.sh
 
 set -uo pipefail
 
@@ -831,12 +831,12 @@ run_agent_scenario() {
 
 section "Phase 0: Prerequisites"
 
-if [ -z "${NVIDIA_API_KEY:-}" ]; then
-  msg="C0: NVIDIA_API_KEY is required"
+if [ -z "${NVIDIA_INFERENCE_API_KEY:-}" ]; then
+  msg="C0: NVIDIA_INFERENCE_API_KEY is required"
   fail_msg "$msg"
   print_summary
 fi
-msg="C0: NVIDIA_API_KEY is set"
+msg="C0: NVIDIA_INFERENCE_API_KEY is set"
 pass_msg "$msg"
 
 if [ "${NEMOCLAW_NON_INTERACTIVE:-}" != "1" ]; then

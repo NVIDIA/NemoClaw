@@ -21,10 +21,10 @@
 #   NEMOCLAW_SANDBOX_NAME                    — default: e2e-cloud-experimental
 #   NEMOCLAW_NON_INTERACTIVE                — should be 1 (onboard non-interactive)
 #   NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1  — required for non-interactive onboard/re-onboard
-#   NVIDIA_API_KEY                          — required if onboard reaches cloud inference (restore path)
+#   NVIDIA_INFERENCE_API_KEY                          — required if onboard reaches cloud inference (restore path)
 #
 # Usage:
-#   NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 NVIDIA_API_KEY=nvapi-... bash test/e2e/e2e-cloud-experimental/test-port8080-conflict.sh
+#   NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 NVIDIA_INFERENCE_API_KEY=nvapi-... bash test/e2e/e2e-cloud-experimental/test-port8080-conflict.sh
 
 set -uo pipefail
 

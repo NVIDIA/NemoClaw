@@ -58,7 +58,8 @@
 #   NEMOCLAW_E2E_TIMEOUT_SECONDS           — overall timeout (default: 1500)
 #   NEMOCLAW_E2E_CRASH_CYCLES              — crash-recover cycles (default: 5)
 #   NEMOCLAW_E2E_SOAK_SECONDS              — idle soak window (default: 300)
-#   NVIDIA_API_KEY                         — required only with NEMOCLAW_E2E_USE_COMPAT_MOCK=0
+#   NVIDIA_INFERENCE_API_KEY               — required only with NEMOCLAW_E2E_USE_COMPAT_MOCK=0
+#   NVIDIA_API_KEY                         — legacy fallback for NVIDIA_INFERENCE_API_KEY
 #
 # Usage:
 #   NEMOCLAW_NON_INTERACTIVE=1 \
@@ -533,11 +534,14 @@ if [ "$USE_COMPAT_MOCK" = "1" ]; then
   fi
   pass "Compatible endpoint mock prerequisites available"
 else
-  if [ -z "${NVIDIA_API_KEY:-}" ] || [[ "${NVIDIA_API_KEY}" != nvapi-* ]]; then
-    fail "NVIDIA_API_KEY not set or invalid"
+  if [ -z "${NVIDIA_INFERENCE_API_KEY:-}" ] && [ -n "${NVIDIA_API_KEY:-}" ]; then
+    export NVIDIA_INFERENCE_API_KEY="$NVIDIA_API_KEY"
+  fi
+  if [ -z "${NVIDIA_INFERENCE_API_KEY:-}" ] || [[ "${NVIDIA_INFERENCE_API_KEY}" != nvapi-* ]]; then
+    fail "NVIDIA_INFERENCE_API_KEY not set or invalid"
     exit 1
   fi
-  pass "NVIDIA_API_KEY set"
+  pass "NVIDIA_INFERENCE_API_KEY set"
 fi
 
 if [ "${NEMOCLAW_NON_INTERACTIVE:-}" != "1" ] || [ "${NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE:-}" != "1" ]; then
