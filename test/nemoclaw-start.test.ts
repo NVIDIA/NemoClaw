@@ -983,7 +983,6 @@ exit 1
       fs.rmSync(setup.tmpDir, { recursive: true, force: true });
     }
   });
-
   // #2592 reported the guard did not fire for `openclaw channels add telegram`
   // and `openclaw channels remove telegram` from inside the sandbox. The
   // existing test above only exercises `add slack`. Lock in coverage for every

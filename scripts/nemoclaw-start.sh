@@ -1879,10 +1879,14 @@ def load_approval_policy(path):
         raise RuntimeError('approval policy helper could not be loaded')
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return module.approval_request_decision, module.gateway_approval_env
+    return (
+        module.approval_request_decision,
+        module.gateway_approval_env,
+        getattr(module, 'recover_failed_scope_approval', None),
+    )
 
 
-approval_request_decision, gateway_approval_env = load_approval_policy(APPROVAL_POLICY_FILE)
+approval_request_decision, gateway_approval_env, recover_failed_scope_approval = load_approval_policy(APPROVAL_POLICY_FILE)
 
 OPENCLAW = os.environ.get('OPENCLAW_BIN', 'openclaw')
 
@@ -2011,6 +2015,19 @@ while time.time() < DEADLINE:
                 HANDLED.add(request_id)
                 APPROVED += 1
                 print(f'[auto-pair] approved request={request_id} client={client_id} mode={client_mode}')
+            elif callable(recover_failed_scope_approval):
+                recovered = recover_failed_scope_approval(
+                    request_id,
+                    os.environ.get('OPENCLAW_STATE_DIR') or '/sandbox/.openclaw',
+                    aerr or aout or '',
+                    device,
+                )
+                if recovered:
+                    HANDLED.add(request_id)
+                    APPROVED += 1
+                    print(f'[auto-pair] recovered failed approve request={request_id} client={client_id} mode={client_mode}')
+                elif aout or aerr:
+                    print(f'[auto-pair] approve failed request={request_id}: {(aerr or aout)[:400]}')
             elif aout or aerr:
                 print(f'[auto-pair] approve failed request={request_id}: {(aerr or aout)[:400]}')
         time.sleep(SLOW_INTERVAL if SLOW_MODE else 1)
@@ -2404,7 +2421,12 @@ requested = scope_set(before)
 device_id = norm(before.get("deviceId"))
 pending = load("pending.json")
 paired = load("paired.json")
-still_pending = any(isinstance(item, dict) and item.get("requestId") == request_id for item in pending.values())
+original_pending_key = None
+for key, item in pending.items():
+    if isinstance(item, dict) and item.get("requestId") == request_id:
+        original_pending_key = key
+        break
+still_pending = original_pending_key is not None
 paired_entry = paired.get(device_id) if device_id else None
 paired_scopes = scope_set(paired_entry or {}, "approvedScopes") | scope_set(paired_entry or {})
 # Compatibility boundary: treat a nonzero approve as success only when OpenClaw
@@ -2421,7 +2443,7 @@ if request_id and requested and not still_pending and isinstance(paired_entry, d
 # replacing operator.write approvals with admin-shaped pending requests or
 # exposes a supported approval repair API.
 allowed = {"operator.pairing", "operator.read", "operator.write"}
-if not request_id or not device_id or not requested or not requested.issubset(allowed) or "operator.pairing" not in paired_scopes or still_pending:
+if not request_id or not device_id or not requested or not requested.issubset(allowed) or "operator.pairing" not in paired_scopes:
     raise SystemExit(1)
 replacement_allowed = allowed | {"operator.admin"}
 candidates = []
@@ -2433,10 +2455,14 @@ for key, item in pending.items():
         candidates.append((key, item))
         if output_mentions_request_id(item.get("requestId")):
             mentioned.append((key, item))
+compatibility = "openclaw-approve-recovered-replacement"
 if len(mentioned) == 1:
     replacement_key, replacement = mentioned[0]
 elif len(candidates) == 1 and not re.search(r"\brequestId\b|\brequest[-_ ]?id\b", approve_output, re.IGNORECASE):
     replacement_key, replacement = candidates[0]
+elif still_pending and not candidates:
+    replacement_key = original_pending_key
+    compatibility = "openclaw-approve-recovered-original"
 else:
     raise SystemExit(1)
 approved = set(paired_scopes) | requested
@@ -2457,7 +2483,7 @@ pending.pop(replacement_key, None)
 paired[device_id] = paired_entry
 save("pending.json", pending)
 save("paired.json", paired)
-print(json.dumps({"requestId": request_id, "deviceId": device_id, "approvedScopes": approved_list, "compatibility": "openclaw-approve-recovered-replacement"}, sort_keys=True))
+print(json.dumps({"requestId": request_id, "deviceId": device_id, "approvedScopes": approved_list, "compatibility": compatibility}, sort_keys=True))
 raise SystemExit(0)
 PYAPPROVEAFTER
         return 0

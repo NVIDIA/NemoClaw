@@ -8,7 +8,7 @@
     "test/channels-add-preset.test.ts": 1871,
     "test/generate-openclaw-config.test.ts": 1989,
     "test/install-preflight.test.ts": 4207,
-    "test/nemoclaw-start.test.ts": 5231,
+    "test/nemoclaw-start.test.ts": 5230,
     "test/onboard-messaging.test.ts": 2063,
     "test/onboard-selection.test.ts": 6891,
     "test/onboard.test.ts": 4774,

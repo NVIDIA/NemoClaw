@@ -147,6 +147,7 @@ try:
     exec(compile(policy_source, 'openclaw_device_approval_policy.py', 'exec'), policy_globals)
     approval_request_decision = policy_globals['approval_request_decision']
     gateway_approval_env = policy_globals['gateway_approval_env']
+    recover_failed_scope_approval = policy_globals.get('recover_failed_scope_approval')
 except Exception:
     sys.exit(0)
 
@@ -195,6 +196,15 @@ for device in pending:
         )
         if approve_proc.returncode == 0:
             approved_count += 1
+        elif callable(recover_failed_scope_approval):
+            recovered = recover_failed_scope_approval(
+                request_id,
+                os.environ.get('OPENCLAW_STATE_DIR') or '/sandbox/.openclaw',
+                approve_proc.stderr or approve_proc.stdout or '',
+                device,
+            )
+            if recovered:
+                approved_count += 1
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         continue
 ${summaryLine}PYAPPROVE
