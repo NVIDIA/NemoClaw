@@ -176,11 +176,33 @@ function hasChoiceContent(choice: unknown): boolean {
   if (!choice || typeof choice !== "object") return false;
   const message = (choice as { message?: unknown }).message;
   if (message && typeof message === "object") {
-    const content = (message as { content?: unknown }).content;
+    const content = (message as { content?: unknown; reasoning_content?: unknown }).content;
+    const reasoning = (message as { reasoning_content?: unknown }).reasoning_content;
     if (typeof content === "string" && content.length > 0) return true;
+    if (typeof reasoning === "string" && reasoning.length > 0) return true;
   }
   const text = (choice as { text?: unknown }).text;
   return typeof text === "string" && text.length > 0;
+}
+
+function chatCompletionText(json: unknown): string {
+  if (!json || typeof json !== "object") return "";
+  const choices = (json as { choices?: unknown }).choices;
+  if (!Array.isArray(choices)) return "";
+  const parts: string[] = [];
+  for (const choice of choices) {
+    if (!choice || typeof choice !== "object") continue;
+    const message = (choice as { message?: unknown }).message;
+    if (message && typeof message === "object") {
+      const content = (message as { content?: unknown; reasoning_content?: unknown }).content;
+      const reasoning = (message as { reasoning_content?: unknown }).reasoning_content;
+      if (typeof content === "string") parts.push(content);
+      if (typeof reasoning === "string") parts.push(reasoning);
+    }
+    const text = (choice as { text?: unknown }).text;
+    if (typeof text === "string") parts.push(text);
+  }
+  return parts.join("\n");
 }
 
 function assertChatCompletionShape(json: unknown, label: string): void {
@@ -273,7 +295,9 @@ export class RuntimePhaseFixture {
 
   async expectInferenceLocalChatCompletion(
     instance: NemoClawInstance,
-    options: InferenceRuntimeChatOptions & { readonly route?: InferenceRoute } = {},
+    options: InferenceRuntimeChatOptions & {
+      readonly route?: InferenceRoute;
+    } = {},
   ): Promise<InferenceRuntimeProbeResult> {
     const endpoint = inferenceRouteUrl(options.route, CHAT_COMPLETIONS_PATH);
     const payload = openAiChatPayload(options);
@@ -299,6 +323,38 @@ export class RuntimePhaseFixture {
       "inference.local chat completion",
     );
     return { endpoint, result };
+  }
+
+  async expectInferenceLocalPong(
+    instance: NemoClawInstance,
+    options: InferenceRuntimeChatOptions & {
+      readonly attempts?: number;
+      readonly retryDelayMs?: number;
+      readonly route?: InferenceRoute;
+    } = {},
+  ): Promise<InferenceRuntimeProbeResult> {
+    const attempts = options.attempts ?? 3;
+    const retryDelayMs = options.retryDelayMs ?? 5_000;
+    let last: InferenceRuntimeProbeResult | undefined;
+    let lastText = "";
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      try {
+        last = await this.expectInferenceLocalChatCompletion(instance, {
+          maxTokens: 100,
+          prompt: "Reply with exactly one word: PONG",
+          ...options,
+          artifactName: `${options.artifactName ?? "runtime-inference-local-pong"}-${attempt}`,
+        });
+        lastText = chatCompletionText(parseJsonBody(last.result.stdout, "inference.local PONG"));
+        if (/\bPONG\b/i.test(lastText)) return last;
+      } catch (error) {
+        lastText = error instanceof Error ? error.message : String(error);
+      }
+      if (attempt < attempts) await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+    }
+    throw new Error(
+      `inference.local PONG probe failed after ${attempts} attempts: ${lastText || last?.result.stdout || "empty response"}`,
+    );
   }
 
   async expectInferenceLocalStatus(

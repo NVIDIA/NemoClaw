@@ -67,5 +67,5 @@ export function readIfExists(filePath: string | undefined): string | undefined {
 
 export function readJsonIfExists<T>(filePath: string | undefined): T | undefined {
   const text = readIfExists(filePath);
-  return text ? JSON.parse(text) as T : undefined;
+  return text ? (JSON.parse(text) as T) : undefined;
 }

@@ -4,7 +4,13 @@
 import { buildAvailabilityProbeEnv } from "../availability-env.ts";
 import type { ShellProbeResult, ShellProbeRunOptions } from "../shell-probe.ts";
 import { trustedShellCommand } from "../shell-probe.ts";
-import { artifactLabel, assertExitZero, type CommandRunner } from "./command.ts";
+import {
+  artifactLabel,
+  assertExitZero,
+  outputContainsSandbox,
+  resultText,
+  type CommandRunner,
+} from "./command.ts";
 
 export interface HostClientOptions {
   cliPath?: string;
@@ -59,5 +65,71 @@ export class HostCliClient {
     });
     assertExitZero(result, "nemoclaw --version");
     return result;
+  }
+
+  async expectListed(
+    sandboxName: string,
+    options: ShellProbeRunOptions = {},
+  ): Promise<ShellProbeResult> {
+    const result = await this.nemoclaw(["list"], {
+      artifactName: `nemoclaw-list-${artifactLabel(sandboxName)}`,
+      env: buildAvailabilityProbeEnv(),
+      ...options,
+    });
+    assertExitZero(result, "nemoclaw list");
+    if (!outputContainsSandbox(result, sandboxName)) {
+      throw new Error(`nemoclaw list did not include '${sandboxName}': ${resultText(result)}`);
+    }
+    return result;
+  }
+
+  async expectStatus(
+    sandboxName: string,
+    options: ShellProbeRunOptions = {},
+  ): Promise<ShellProbeResult> {
+    const result = await this.nemoclaw([sandboxName, "status"], {
+      artifactName: `nemoclaw-status-${artifactLabel(sandboxName)}`,
+      env: buildAvailabilityProbeEnv(),
+      ...options,
+    });
+    assertExitZero(result, `nemoclaw ${sandboxName} status`);
+    return result;
+  }
+
+  async destroySandbox(
+    sandboxName: string,
+    options: ShellProbeRunOptions = {},
+  ): Promise<ShellProbeResult> {
+    return await this.nemoclaw([sandboxName, "destroy", "--yes"], {
+      artifactName: `destroy-sandbox-${artifactLabel(sandboxName)}`,
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 15 * 60_000,
+      ...options,
+    });
+  }
+
+  async cleanupSandbox(sandboxName: string, options: ShellProbeRunOptions = {}): Promise<void> {
+    const result = await this.destroySandbox(sandboxName, options);
+    if (result.exitCode === 0) return;
+    const text = resultText(result);
+    if (
+      /Sandbox '.+' does not exist|Run 'nemoclaw onboard' to create one|sandbox .* not found|no such sandbox/i.test(
+        text,
+      )
+    ) {
+      return;
+    }
+    assertExitZero(result, `cleanup destroy sandbox ${sandboxName}`);
+  }
+
+  async bestEffortCleanupSandbox(
+    sandboxName: string,
+    options: ShellProbeRunOptions = {},
+  ): Promise<void> {
+    try {
+      await this.cleanupSandbox(sandboxName, options);
+    } catch {
+      // Best-effort cleanup must not mask the primary setup or assertion failure.
+    }
   }
 }

@@ -19,6 +19,7 @@ export interface SandboxCreateFailure {
     | "image_upload_container_missing"
     | "sandbox_create_incomplete"
     | "tls_cert_mismatch"
+    | "gpu_cdi_injection_failed"
     | "unknown";
   uploadedToGateway: boolean;
 }
@@ -127,6 +128,12 @@ export function classifySandboxCreateFailure(output = ""): SandboxCreateFailure 
   ) {
     return { kind: "image_upload_container_missing", uploadedToGateway };
   }
+  if (
+    /(CDI device injection failed|unresolvable CDI devices?)[^\n]*nvidia\.com\/gpu/i.test(text) ||
+    /nvidia\.com\/gpu[^\n]*(CDI device injection failed|unresolvable CDI devices?)/i.test(text)
+  ) {
+    return { kind: "gpu_cdi_injection_failed", uploadedToGateway };
+  }
   if (/Created sandbox:/i.test(text)) {
     return { kind: "sandbox_create_incomplete", uploadedToGateway: true };
   }
@@ -186,12 +193,13 @@ export function classifyGatewayStartFailure(output = ""): GatewayStartFailure {
 
 export function validateNvidiaApiKeyValue(
   key: string,
-  credentialEnv: string = "NVIDIA_API_KEY",
+  credentialEnv: string = "NVIDIA_INFERENCE_API_KEY",
 ): string | null {
   // The nvapi- prefix check is specific to NVIDIA keys; skip it for keys
   // from other providers (e.g. ANTHROPIC_API_KEY, OPENAI_API_KEY) so that
   // a valid Anthropic key is not rejected with an NVIDIA-specific error.
-  const isNvidia = credentialEnv === "NVIDIA_API_KEY";
+  const isNvidia =
+    credentialEnv === "NVIDIA_INFERENCE_API_KEY" || credentialEnv === "NVIDIA_API_KEY";
   if (!key) {
     return isNvidia ? "  NVIDIA API Key is required." : "  API Key is required.";
   }

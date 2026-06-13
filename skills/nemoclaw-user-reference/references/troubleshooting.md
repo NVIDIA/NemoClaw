@@ -660,6 +660,8 @@ Region errors usually mean the pasted endpoint region, `AWS_REGION`, `AWS_DEFAUL
 
 For Ollama, vLLM, NIM, and compatible-endpoint inference validation, the default timeout is 180 seconds.
 The managed NIM startup health wait uses a separate 15-minute (900-second) default and still exits early if the container stops before it becomes healthy.
+On Docker 29.x or hosts using the containerd image store, managed NIM onboarding resolves and pulls the host-platform image digest when NGC exposes a multi-architecture image index.
+If you still see NGC repository-format or attestation errors, confirm Docker can run `docker manifest inspect` for the selected image and that you are logged in to `nvcr.io`.
 If large prompts still cause timeouts, increase it with `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` before re-running onboard:
 
 ```bash
@@ -668,6 +670,7 @@ nemoclaw onboard
 ```
 
 For local Ollama and vLLM, onboarding retries the container reachability check and can fall back to the host-side health check when the local backend is healthy.
+If Ollama times out during a cold model load, NemoClaw retries once with a 300-second probe budget before failing.
 If all attempts fail, the error includes container reachability diagnostics such as HTTP status and host gateway resolution.
 
 `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` only covers the inference-server validation probe.
@@ -837,7 +840,37 @@ Do not treat a failed `doctor --fix` run as proof that the Discord gateway path 
 If `openclaw doctor` reports that it moved Telegram single-account values under `channels.telegram.accounts.default`, rerun onboarding and rebuild the sandbox rather than trying to patch `openclaw.json` in place.
 Current NemoClaw rebuilds bake Telegram in the account-based layout and set Telegram group chats to `groupPolicy: open`, which avoids the empty `groupAllowFrom` warning path for default group-chat access.
 
-### Discord bot logs in, but the channel still does not work
+### `openclaw doctor --fix` tightened config permissions and the gateway can no longer save config
+
+In a mutable NemoClaw sandbox, the gateway UID and the sandbox UID share the `sandbox` group, so `/sandbox/.openclaw` is setgid and group-writable (`2770`) and `openclaw.json` is group-writable (`660`).
+OpenClaw's `openclaw doctor --fix` enforces its own single-user `700/600` layout, so running it inside the sandbox strips group write and breaks gateway-side config writes (for example, control-UI toggles that mutate `openclaw.json`).
+
+Repair the mutable contract without rebuilding:
+
+```bash
+nemoclaw <sandbox> doctor --fix
+```
+
+`nemoclaw <sandbox> doctor` reports the drift as a `Config permissions` warning, and `--fix` restores `2770/660`.
+Restarting the sandbox repairs the same drift automatically, and NemoClaw's own `rebuild` re-applies the contract after its post-upgrade `openclaw doctor --fix` step.
+
+When verifying gateway write access by hand, step down to the gateway UID with the image's installed mechanism so the `sandbox` group membership is initialized:
+
+```bash
+setpriv --reuid=gateway --regid=gateway --init-groups -- sh -c 'echo ok >> /sandbox/.openclaw/openclaw.json'
+# or, where setpriv is unavailable:
+gosu gateway sh -c 'echo ok >> /sandbox/.openclaw/openclaw.json'
+```
+
+Do not probe with `su -s /bin/sh gateway ...`: `su` does not initialize the gateway's supplementary groups the same way, so a group-write probe can spuriously report `EACCES` even when the mutable contract is intact.
+
+A NemoClaw sandbox has two intentional permission states for `/sandbox/.openclaw`; `700/600` is not one of them:
+
+- **Mutable default:** `/sandbox/.openclaw` is `2770 sandbox:sandbox` and `openclaw.json` is `660 sandbox:sandbox`. Both the sandbox user and the gateway (same `sandbox` group, different UID) can write config, so control-UI toggles persist.
+- **Host-locked state:** `openclaw.json` is read-only for in-sandbox writers and the config dir is owned by `root`, with the immutable bit set where available. No in-sandbox writes are expected; use the host-side `nemoclaw <sandbox> config set` flow described in [`openclaw config set` fails with a permission error on Brev](#openclaw-config-set-fails-with-a-permission-error-on-brev).
+- **`700/600` (drift):** the layout that upstream `openclaw doctor --fix` imposes inside a mutable sandbox. It is not a supported NemoClaw state; recover with `nemoclaw <sandbox> doctor --fix` or a sandbox restart.
+
+## Discord bot logs in, but the channel still does not work
 
 Separate the problem into two parts:
 
@@ -980,8 +1013,9 @@ nemoclaw onboard
 These are build-time settings baked into the sandbox image.
 Changing them after onboarding requires re-running `nemoclaw onboard` to rebuild the image.
 
-When `HTTP_PROXY` or `HTTPS_PROXY` is set on the host, NemoClaw adds `localhost` and `127.0.0.1` to `NO_PROXY` for managed subprocesses.
-This keeps local Ollama health checks and model pulls from being routed through a corporate or desktop proxy while preserving the proxy for external hosts.
+When `HTTP_PROXY` or `HTTPS_PROXY` is set on the host, NemoClaw adds `localhost`, `127.0.0.1`, `::1`, `0.0.0.0`, the container-host aliases `host.docker.internal` and `host.containers.internal`, and the managed inference hostname `inference.local` to `NO_PROXY` for host-side subprocesses and for the env forwarded into `openshell sandbox create`.
+This keeps local Ollama health checks, model pulls, and managed inference traffic from being chained through a corporate or desktop proxy at the sandbox-create boundary, while preserving the proxy for external hosts.
+Inside the running sandbox, processes continue to use the OpenShell L7 proxy for `inference.local` so OpenShell's internal routing, DNS, and audit boundaries stay intact.
 
 ### Agent cannot reach a host-side HTTP service
 
@@ -996,8 +1030,13 @@ Bypassing the proxy with `--noproxy '*'` also bypasses network policy enforcemen
 First, make sure the host-side service listens on a non-loopback address.
 For example, a health endpoint on port `50001` should be reachable from the host IP, not only from `127.0.0.1`:
 
-```console
-$ curl -s http://10.0.0.5:50001/health
+```bash
+curl -s http://10.0.0.5:50001/health
+```
+
+Expected output:
+
+```json
 {"status":"ok"}
 ```
 
@@ -1030,8 +1069,13 @@ nemoclaw my-assistant policy-add --from-file ./host-memory-api.yaml
 
 After you apply the policy, retry the request from inside the sandbox without disabling the proxy:
 
-```console
-$ curl -s http://10.0.0.5:50001/health
+```bash
+curl -s http://10.0.0.5:50001/health
+```
+
+Expected output:
+
+```json
 {"status":"ok"}
 ```
 
@@ -1121,10 +1165,23 @@ OpenShell runs sandboxes inside a k3s network, where `host.docker.internal` is n
 Depending on the platform, it may fail DNS resolution or resolve to an internal gateway/bridge address where the host's port `11434` is not forwarded.
 The sandbox then sees a DNS failure or `connection refused`:
 
-```console
-$ getent hosts host.docker.internal
+```bash
+getent hosts host.docker.internal
+```
+
+Expected output:
+
+```text
 172.17.0.1      host.docker.internal host.openshell.internal
-$ no_proxy=host.docker.internal curl -v http://host.docker.internal:11434/api/tags
+```
+
+```bash
+no_proxy=host.docker.internal curl -v http://host.docker.internal:11434/api/tags
+```
+
+Expected output:
+
+```text
 * connect to 172.17.0.1 port 11434 failed: Connection refused
 ```
 
@@ -1251,6 +1308,9 @@ If onboarding reports `OpenShell supervisor did not reconnect to the GPU-enabled
 The reconnect wait debounces consecutive Error-phase polls before fast-failing, defaulting to fifteen consecutive polls of about 30 seconds in total.
 Increase the debounce window with `NEMOCLAW_DOCKER_GPU_SUPERVISOR_RECONNECT_ERROR_DEBOUNCE` if your host needs more time to re-register the patched container, for example slow WSL2 + Docker Desktop setups.
 Set it to a higher integer such as `30` (about 60 seconds) and rerun onboarding; the value is clamped to a minimum of `1`.
+If reconnect still fails after the GPU patch, NemoClaw attempts to restore the pre-patch CPU container before exiting.
+When rollback succeeds, the output says the pre-patch sandbox was restored.
+When rollback fails, the error says rollback failed and the pre-patch container was not restored, so inspect Docker state before retrying.
 
 ### `pip install` fails with a system-packages error
 
@@ -1319,6 +1379,8 @@ If the process exists but the endpoint is unreachable, use the restart action wh
 
 Ollama configures context length based on your hardware.
 On some GPUs (for example RTX 3500), the default context length is not sufficient for OpenClaw.
+During onboarding, NemoClaw raises loaded-model context lengths below `16384` to `16384` when `NEMOCLAW_CONTEXT_WINDOW` is unset.
+Set the variable manually when you need a different value or when you run Ollama outside the managed onboarding path.
 Force a larger context length:
 
 ```bash
@@ -1456,8 +1518,13 @@ A browser visit to `http://127.0.0.1:8642/` (or any non-API path) returns nothin
 
 Confirm the agent is healthy with the API health endpoint instead:
 
-```console
-$ curl -sf http://127.0.0.1:8642/health
+```bash
+curl -sf http://127.0.0.1:8642/health
+```
+
+Expected output:
+
+```json
 {"status":"ok","platform":"hermes-agent"}
 ```
 
@@ -1478,9 +1545,9 @@ Side-by-side agents are supported, but each sandbox name has one agent type.
 Pick a distinct sandbox name (the Hermes default is `hermes`; a common pattern is `my-hermes`) so Hermes and OpenClaw sandboxes can coexist on the same host.
 To convert an existing sandbox to Hermes instead, destroy and re-onboard:
 
-```console
-$ nemoclaw <name> destroy
-$ NEMOCLAW_AGENT=hermes nemohermes onboard
+```bash
+nemoclaw <name> destroy
+NEMOCLAW_AGENT=hermes nemohermes onboard
 ```
 
 ### `nemohermes: command not found` immediately after install
@@ -1490,16 +1557,16 @@ The installer drops the shim in the same directory as `nemoclaw`; if `nemoclaw` 
 
 Verify the install:
 
-```console
-$ command -v nemoclaw
-$ command -v nemohermes
+```bash
+command -v nemoclaw
+command -v nemohermes
 ```
 
 If only `nemoclaw` resolves, re-run the installer with `NEMOCLAW_AGENT=hermes` set so the shim is published:
 
-```console
-$ export NEMOCLAW_AGENT=hermes
-$ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+```bash
+export NEMOCLAW_AGENT=hermes
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
 Equivalently, every `nemohermes <cmd>` invocation is `NEMOCLAW_AGENT=hermes nemoclaw <cmd>`.
@@ -1511,15 +1578,15 @@ Pick OAuth when you have a Nous Portal account and an interactive terminal; pick
 
 Set the method explicitly so the wizard skips the prompt:
 
-```console
-$ # OAuth (default; interactive)
-$ export NEMOCLAW_HERMES_AUTH_METHOD=oauth
-$ nemohermes onboard
+```bash
+# OAuth (default; interactive)
+export NEMOCLAW_HERMES_AUTH_METHOD=oauth
+nemohermes onboard
 
-$ # API key (non-interactive)
-$ export NEMOCLAW_HERMES_AUTH_METHOD=api-key
-$ export NOUS_API_KEY=nous_...
-$ nemohermes onboard --non-interactive
+# API key (non-interactive)
+export NEMOCLAW_HERMES_AUTH_METHOD=api-key
+export NOUS_API_KEY=nous_...
+nemohermes onboard --non-interactive
 ```
 
 `NEMOCLAW_HERMES_AUTH_METHOD` accepts `oauth`, `nous-portal-oauth`, `api-key`, and `nous-api-key`.
@@ -1528,7 +1595,7 @@ The `NEMOCLAW_HERMES_AUTH` and `NEMOCLAW_NOUS_AUTH_METHOD` variables are back-co
 If OAuth is selected and onboarding cannot open the host's default browser (a headless host or SSH session), the device-code prompt still prints the verification URL and user code to the terminal.
 Copy them to a browser on any other machine to complete the flow.
 
-### API client returns `401 Unauthorized` against port 8642
+## API client returns `401 Unauthorized` against port 8642
 
 Hermes uses bearer-token header authentication for client requests, not an OpenClaw-style URL fragment.
 A request without an `Authorization: Bearer <token>` header (or with an OpenClaw `#token=` fragment appended to the URL) is rejected with `401`.
@@ -1536,8 +1603,8 @@ A request without an `Authorization: Bearer <token>` header (or with an OpenClaw
 Configure your OpenAI-compatible client to pass the Hermes API key in the `Authorization` header.
 Stored credentials (including `NOUS_API_KEY` and `OPENAI_API_KEY`) are listed by:
 
-```console
-$ nemohermes credentials list
+```bash
+nemohermes credentials list
 ```
 
 Reset a specific provider's credentials with `nemohermes credentials reset <provider>` and re-onboard if the stored value is wrong.
@@ -1554,9 +1621,9 @@ Configure Hermes web search from the agent's own configuration inside the sandbo
 This is tracked in [#3581](https://github.com/NVIDIA/NemoClaw/issues/3581).
 For unattended re-onboards, export the messaging env vars first so the wizard skips the prompts:
 
-```console
-$ export TELEGRAM_BOT_TOKEN=...
-$ export DISCORD_BOT_TOKEN=...
-$ export SLACK_BOT_TOKEN=...
-$ nemohermes onboard --resume --non-interactive
+```bash
+export TELEGRAM_BOT_TOKEN=...
+export DISCORD_BOT_TOKEN=...
+export SLACK_BOT_TOKEN=...
+nemohermes onboard --resume --non-interactive
 ```

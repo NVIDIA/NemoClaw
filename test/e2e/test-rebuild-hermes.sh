@@ -19,12 +19,12 @@
 #
 # Prerequisites:
 #   - Docker running
-#   - NVIDIA_API_KEY set (real key, starts with nvapi-)
+#   - NVIDIA_INFERENCE_API_KEY set (real key, starts with nvapi-)
 #
 # Environment variables:
 #   NEMOCLAW_NON_INTERACTIVE=1             — required
 #   NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 — required
-#   NVIDIA_API_KEY                         — required
+#   NVIDIA_INFERENCE_API_KEY                         — required
 
 set -euo pipefail
 
@@ -93,7 +93,7 @@ dump_hermes_sandbox_logs() {
 export NEMOCLAW_REBUILD_VERBOSE=1
 
 # ── Preflight ───────────────────────────────────────────────────────
-[ -n "${NVIDIA_API_KEY:-}" ] || fail "NVIDIA_API_KEY is required"
+[ -n "${NVIDIA_INFERENCE_API_KEY:-}" ] || fail "NVIDIA_INFERENCE_API_KEY is required"
 [ "${NEMOCLAW_NON_INTERACTIVE:-}" = "1" ] || fail "NEMOCLAW_NON_INTERACTIVE=1 is required"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
@@ -247,6 +247,40 @@ echo "$PRE_REBUILD_CONFIG" | grep -Fq "discord:" \
 # Register in NemoClaw registry
 python3 -c "
 import hashlib, json
+credential_hash = hashlib.sha256('${DISCORD_FAKE_TOKEN}'.encode()).hexdigest()
+plan = {
+    'schemaVersion': 1,
+    'sandboxName': '${SANDBOX_NAME}',
+    'agent': 'hermes',
+    'workflow': 'onboard',
+    'channels': [{
+        'channelId': 'discord',
+        'displayName': 'discord',
+        'authMode': 'token-paste',
+        'active': True,
+        'selected': True,
+        'configured': True,
+        'disabled': False,
+        'inputs': [],
+        'hooks': [],
+    }],
+    'disabledChannels': [],
+    'credentialBindings': [{
+        'channelId': 'discord',
+        'credentialId': 'discordBotToken',
+        'sourceInput': 'botToken',
+        'providerName': '${SANDBOX_NAME}-discord-bridge',
+        'providerEnvKey': 'DISCORD_BOT_TOKEN',
+        'placeholder': '${DISCORD_PLACEHOLDER}',
+        'credentialAvailable': True,
+        'credentialHash': credential_hash,
+    }],
+    'networkPolicy': {'presets': ['discord'], 'entries': []},
+    'agentRender': [],
+    'buildSteps': [],
+    'stateUpdates': [],
+    'healthChecks': [],
+}
 reg = {'sandboxes': {'${SANDBOX_NAME}': {
     'name': '${SANDBOX_NAME}',
     'createdAt': '$(date -u +%Y-%m-%dT%H:%M:%SZ)',
@@ -257,9 +291,9 @@ reg = {'sandboxes': {'${SANDBOX_NAME}': {
     'policyTier': None,
     'agent': 'hermes',
     'agentVersion': '${OLD_HERMES_REGISTRY_VERSION}',
-    'messagingChannels': ['discord'],
+    'messaging': {'schemaVersion': 1, 'plan': plan},
     'providerCredentialHashes': {
-        'DISCORD_BOT_TOKEN': hashlib.sha256('${DISCORD_FAKE_TOKEN}'.encode()).hexdigest()
+        'DISCORD_BOT_TOKEN': credential_hash
     }
 }}, 'defaultSandbox': '${SANDBOX_NAME}'}
 with open('${REGISTRY_FILE}', 'w') as f:
@@ -274,7 +308,9 @@ except Exception:
 sess['sandboxName'] = '${SANDBOX_NAME}'
 sess['agent'] = 'hermes'
 sess['status'] = 'complete'
-sess['messagingChannels'] = ['discord']
+for key in ('messagingChannels', 'messagingChannelConfig', 'disabledChannels'):
+    sess.pop(key, None)
+sess['messagingPlan'] = plan
 with open(sess_path, 'w') as f:
     json.dump(sess, f, indent=2)
 print('Registry and session updated')

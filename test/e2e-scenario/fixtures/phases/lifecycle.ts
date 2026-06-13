@@ -3,6 +3,7 @@
 
 import { buildAvailabilityProbeEnv } from "../availability-env.ts";
 import { assertExitZero } from "../clients/command.ts";
+import type { GatewayClient, HostGatewayRuntime } from "../clients/gateway.ts";
 import type { HostCliClient } from "../clients/host.ts";
 import type { SandboxClient } from "../clients/sandbox.ts";
 import type { ShellProbeResult } from "../shell-probe.ts";
@@ -21,6 +22,9 @@ const DOCKER_PROBE_TIMEOUT_MS = 15_000;
 // the gateway recovery path retries. Keep the budget generous; the
 // bug is independent of latency.
 const STATUS_TIMEOUT_MS = 5 * 60_000;
+const REBUILD_TIMEOUT_MS = 20 * 60_000;
+const SANDBOX_READY_ATTEMPTS = 30;
+const SANDBOX_READY_DELAY_MS = 5_000;
 
 export type LifecycleProfile = "post-reboot-recovery";
 
@@ -56,12 +60,100 @@ export interface LifecycleResult {
   steps: Array<{ id: string; results: ShellProbeResult[] }>;
 }
 
+export interface RebuildSandboxOptions {
+  artifactName?: string;
+  env?: NodeJS.ProcessEnv;
+  redactionValues?: string[];
+  timeoutMs?: number;
+  verbose?: boolean;
+}
+
+export interface SandboxReadyAfterRebuildOptions {
+  attempts?: number;
+  delayMs?: number;
+  env?: NodeJS.ProcessEnv;
+  artifactNamePrefix?: string;
+  timeoutMs?: number;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function instanceName(instance: NemoClawInstance | string): string {
+  const name = typeof instance === "string" ? instance : instance.sandboxName;
+  return name;
+}
+
+function stripAnsi(text: string): string {
+  return text.replace(/\u001b\[[0-9;]*m/g, "");
+}
+
+function outputContainsReadySandbox(result: ShellProbeResult, sandboxName: string): boolean {
+  return stripAnsi(`${result.stdout}\n${result.stderr}`)
+    .split(/\r?\n/)
+    .some((line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return false;
+      const [name] = trimmed.split(/\s+/);
+      return name === sandboxName && /\bReady\b/i.test(trimmed);
+    });
+}
+
 export class LifecyclePhaseFixture {
   constructor(
     private readonly host: HostCliClient,
     private readonly sandbox: SandboxClient,
     private readonly cleanup: LifecycleCleanup,
+    private readonly gateway?: GatewayClient,
   ) {}
+
+  async rebuildSandbox(
+    instance: NemoClawInstance | string,
+    options: RebuildSandboxOptions = {},
+  ): Promise<ShellProbeResult> {
+    const sandboxName = instanceName(instance);
+    const args = [sandboxName, "rebuild", "--yes"];
+    if (options.verbose) args.push("--verbose");
+    const result = await this.host.nemoclaw(args, {
+      artifactName: options.artifactName ?? `lifecycle-rebuild-${sandboxName}`,
+      env: {
+        ...buildAvailabilityProbeEnv(),
+        ...(options.env ?? {}),
+      },
+      redactionValues: options.redactionValues,
+      timeoutMs: options.timeoutMs ?? REBUILD_TIMEOUT_MS,
+    });
+    assertExitZero(result, `nemoclaw ${sandboxName} rebuild --yes`);
+    return result;
+  }
+
+  async assertSandboxReadyAfterRebuild(
+    instance: NemoClawInstance | string,
+    options: SandboxReadyAfterRebuildOptions = {},
+  ): Promise<ShellProbeResult> {
+    const sandboxName = instanceName(instance);
+    const attempts = options.attempts ?? SANDBOX_READY_ATTEMPTS;
+    const delayMs = options.delayMs ?? SANDBOX_READY_DELAY_MS;
+    const env = { ...buildAvailabilityProbeEnv(), ...(options.env ?? {}) };
+    let last: ShellProbeResult | undefined;
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      const artifactPrefix = options.artifactNamePrefix ?? `lifecycle-rebuild-ready-${sandboxName}`;
+      last = await this.sandbox.list({
+        artifactName: `${artifactPrefix}-${attempt}`,
+        env,
+        timeoutMs: options.timeoutMs ?? 30_000,
+      });
+      if (last.exitCode === 0 && outputContainsReadySandbox(last, sandboxName)) {
+        return last;
+      }
+      if (attempt < attempts) await sleep(delayMs);
+    }
+    const detail = last ? `${last.stdout}\n${last.stderr}`.trim() : "no probe result";
+    throw new Error(
+      `sandbox ${sandboxName} did not become Ready after rebuild within ${attempts} attempts: ${detail}`,
+    );
+  }
 
   async simulate(
     profile: LifecycleProfile,
@@ -152,7 +244,10 @@ export class LifecyclePhaseFixture {
         timeoutMs: DOCKER_PROBE_TIMEOUT_MS,
       });
       assertExitZero(rename, `docker rename ${originalName} ${backupName}`);
-      steps.push({ id: `docker-rename:${originalName}->${backupName}`, results: [rename] });
+      steps.push({
+        id: `docker-rename:${originalName}->${backupName}`,
+        results: [rename],
+      });
       this.cleanup.add(`lifecycle.docker-rename-back:${backupName}`, async () => {
         await this.host.command("docker", ["rename", backupName, originalName], {
           artifactName: `lifecycle-cleanup-docker-rename-back-${backupName}`,
@@ -174,9 +269,142 @@ export class LifecyclePhaseFixture {
       env: buildAvailabilityProbeEnv(),
       timeoutMs: STATUS_TIMEOUT_MS,
     });
-    steps.push({ id: `nemoclaw-status:${instance.sandboxName}`, results: [statusResult] });
+    steps.push({
+      id: `nemoclaw-status:${instance.sandboxName}`,
+      results: [statusResult],
+    });
 
     return { profile: "post-reboot-recovery", steps };
+  }
+
+  async stopGatewayRuntime(): Promise<HostGatewayRuntime | null> {
+    const runtime = (await this.gateway?.resolveHostRuntime()) ?? null;
+    await this.host.command(
+      "sh",
+      ["-lc", "command -v openshell >/dev/null 2>&1 && openshell forward stop 18789 || true"],
+      {
+        artifactName: "lifecycle-gateway-forward-stop",
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 30_000,
+      },
+    );
+    await this.host.command(
+      "sh",
+      ["-lc", "command -v openshell >/dev/null 2>&1 && openshell gateway stop -g nemoclaw || true"],
+      {
+        artifactName: "lifecycle-gateway-stop",
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 60_000,
+      },
+    );
+
+    const pidFileStop = await this.host.command(
+      "sh",
+      [
+        "-lc",
+        `pid_file="$HOME/.local/state/nemoclaw/openshell-docker-gateway/openshell-gateway.pid"; ` +
+          `if [ -f "$pid_file" ]; then ` +
+          `pid="$(tr -d '[:space:]' <"$pid_file" 2>/dev/null || true)"; ` +
+          `if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then ` +
+          `kill "$pid" 2>/dev/null || true; ` +
+          `for _ in 1 2 3 4 5 6 7 8 9 10; do kill -0 "$pid" 2>/dev/null || exit 0; sleep 1; done; ` +
+          `kill -9 "$pid" 2>/dev/null || true; ` +
+          `fi; fi`,
+      ],
+      {
+        artifactName: "lifecycle-gateway-pid-stop",
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 30_000,
+      },
+    );
+    assertExitZero(pidFileStop, "stop Docker-driver gateway PID");
+
+    const containerStop = await this.host.command(
+      "sh",
+      [
+        "-lc",
+        `cid="$(docker ps -qf 'name=openshell-cluster-nemoclaw' 2>/dev/null | head -1)"; ` +
+          `if [ -n "$cid" ]; then docker stop "$cid" >/dev/null; fi`,
+      ],
+      {
+        artifactName: "lifecycle-gateway-container-stop",
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 60_000,
+      },
+    );
+    assertExitZero(containerStop, "stop OpenShell gateway container");
+    return runtime;
+  }
+
+  async startGatewayRuntime(
+    previousRuntime: HostGatewayRuntime | null,
+    options: { sandboxName?: string } = {},
+  ): Promise<ShellProbeResult> {
+    if (previousRuntime?.kind === "pid") {
+      const args = options.sandboxName ? [options.sandboxName, "status"] : ["status"];
+      return await this.host.nemoclaw(args, {
+        artifactName: options.sandboxName
+          ? `lifecycle-gateway-recover-through-nemoclaw-status-${options.sandboxName}`
+          : "lifecycle-gateway-recover-through-nemoclaw-status",
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 120_000,
+      });
+    }
+    return await this.host.command("openshell", ["gateway", "start", "--name", "nemoclaw"], {
+      artifactName: "lifecycle-gateway-start",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 120_000,
+    });
+  }
+
+  async restartGatewayRuntime(
+    options: { delayMs?: number; sandboxName?: string } = {},
+  ): Promise<HostGatewayRuntime | null> {
+    const previousRuntime = await this.stopGatewayRuntime();
+    if (this.gateway) {
+      await this.gateway.expectHostRuntimeStopped({
+        artifactName: "lifecycle-gateway-stopped",
+      });
+    }
+    const delayMs = options.delayMs ?? 5_000;
+    if (delayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+    await this.startGatewayRuntime(previousRuntime, {
+      sandboxName: options.sandboxName,
+    });
+    return previousRuntime;
+  }
+
+  async waitForGatewayConnected(
+    options: { attempts?: number; intervalMs?: number } = {},
+  ): Promise<void> {
+    const attempts = options.attempts ?? 60;
+    const intervalMs = options.intervalMs ?? 5_000;
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      try {
+        if (this.gateway) {
+          await this.gateway.expectOpenshellStatusConnected("nemoclaw", {
+            artifactName: `lifecycle-gateway-health-${attempt}`,
+          });
+          return;
+        }
+        const status = await this.host.command("openshell", ["status"], {
+          artifactName: `lifecycle-gateway-health-${attempt}`,
+          env: buildAvailabilityProbeEnv(),
+          timeoutMs: 30_000,
+        });
+        assertExitZero(status, "openshell status");
+        if (/connected/i.test(`${status.stdout}\n${status.stderr}`)) return;
+      } catch (error) {
+        lastError = error;
+      }
+      if (attempt < attempts) await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
+    throw new Error(
+      `gateway did not become healthy after restart: ${lastError instanceof Error ? lastError.message : String(lastError ?? "unknown")}`,
+    );
   }
 
   private async discoverLabeledContainerNames(instance: NemoClawInstance): Promise<string[]> {
