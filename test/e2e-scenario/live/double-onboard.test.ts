@@ -2,16 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
-import http from "node:http";
-import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
-import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { shouldRunLiveE2EScenarios } from "../fixtures/live-project-gate.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
@@ -45,12 +43,6 @@ validateSandboxName(SANDBOX_A);
 validateSandboxName(SANDBOX_B);
 if (INSTALL_SANDBOX_NAME) validateSandboxName(INSTALL_SANDBOX_NAME);
 validateSandboxName(ALT_GATEWAY_NAME);
-
-interface FakeOpenAiServer {
-  baseUrl: string;
-  close: () => Promise<void>;
-  requests: () => readonly string[];
-}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -199,77 +191,6 @@ async function cleanupDoubleOnboardState(
       timeoutMs: 60_000,
     }),
   );
-}
-
-async function startFakeOpenAi(artifacts: ArtifactSink): Promise<FakeOpenAiServer> {
-  const requests: string[] = [];
-  const server = http.createServer((req, res) => {
-    requests.push(`${req.method ?? "GET"} ${req.url ?? "/"}`);
-    req.resume();
-    const send = (status: number, payload: unknown) => {
-      const body = JSON.stringify(payload);
-      res.writeHead(status, {
-        "content-type": "application/json",
-        "content-length": Buffer.byteLength(body),
-      });
-      res.end(body);
-    };
-    if (req.method === "GET" && (req.url === "/v1/models" || req.url === "/models")) {
-      send(200, { data: [{ id: "test-model", object: "model" }] });
-      return;
-    }
-    if (
-      req.method === "POST" &&
-      (req.url === "/v1/chat/completions" || req.url === "/chat/completions")
-    ) {
-      send(200, {
-        id: "chatcmpl-test",
-        object: "chat.completion",
-        choices: [
-          {
-            index: 0,
-            message: { role: "assistant", content: "ok" },
-            finish_reason: "stop",
-          },
-        ],
-      });
-      return;
-    }
-    if (req.method === "POST" && (req.url === "/v1/responses" || req.url === "/responses")) {
-      send(200, {
-        id: "resp-test",
-        object: "response",
-        output: [
-          {
-            type: "message",
-            role: "assistant",
-            content: [{ type: "output_text", text: "ok" }],
-          },
-        ],
-      });
-      return;
-    }
-    send(404, { error: { message: "not found" } });
-  });
-
-  const requestedPort = Number(process.env.NEMOCLAW_FAKE_PORT ?? 0);
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(requestedPort, "127.0.0.1", resolve);
-  });
-  const address = server.address() as AddressInfo;
-  const baseUrl = `http://127.0.0.1:${address.port}/v1`;
-  await artifacts.writeJson("fake-openai.json", { baseUrl });
-  return {
-    baseUrl,
-    requests: () => requests,
-    close: async () => {
-      await artifacts.writeJson("fake-openai-requests.json", requests);
-      await new Promise<void>((resolve, reject) => {
-        server.close((error) => (error ? reject(error) : resolve()));
-      });
-    },
-  };
 }
 
 async function gatewayRuntimeId(host: HostCliClient, artifactName: string): Promise<string> {
@@ -502,8 +423,12 @@ liveTest(
       "prereq-nemoclaw",
     );
 
-    const fake = await startFakeOpenAi(artifacts);
+    const fake = await startFakeOpenAiCompatibleServer({
+      port: Number(process.env.NEMOCLAW_FAKE_PORT ?? 0),
+    });
+    await artifacts.writeJson("fake-openai.json", { baseUrl: fake.baseUrl });
     cleanup.add("close fake OpenAI-compatible endpoint", async () => {
+      await artifacts.writeJson("fake-openai-requests.json", fake.requests());
       await fake.close();
     });
     cleanup.add("remove double-onboard sandboxes and gateways", async () => {

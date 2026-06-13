@@ -44,7 +44,7 @@
 #
 # Prerequisites:
 #   - Docker running
-#   - python3 + curl for the local OpenAI-compatible mock endpoint
+#   - node + curl for the local OpenAI-compatible mock endpoint
 #
 # Environment variables:
 #   NEMOCLAW_NON_INTERACTIVE=1             — required
@@ -99,13 +99,15 @@ SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-2478}"
 CRASH_CYCLES="${NEMOCLAW_E2E_CRASH_CYCLES:-5}"
 SOAK_SECONDS="${NEMOCLAW_E2E_SOAK_SECONDS:-300}"
 DASHBOARD_PORT="${NEMOCLAW_DASHBOARD_PORT:-18789}"
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+# shellcheck source=test/e2e/lib/openai-compatible-api-proof.sh
+source "${SCRIPT_DIR}/lib/openai-compatible-api-proof.sh"
 USE_COMPAT_MOCK="${NEMOCLAW_E2E_USE_COMPAT_MOCK:-1}"
 COMPAT_MOCK_PORT="${NEMOCLAW_COMPAT_MOCK_PORT:-18191}"
 COMPAT_MODEL="${NEMOCLAW_COMPAT_MODEL:-test-model}"
 COMPATIBLE_KEY="${COMPATIBLE_API_KEY:-nemoclaw-e2e-compatible-key}"
 COMPAT_MOCK_LOG="${NEMOCLAW_COMPAT_MOCK_LOG:-/tmp/nemoclaw-2478-compatible-endpoint.log}"
-COMPAT_MOCK_PID=""
 
 # ── Helpers ──────────────────────────────────────────────────────
 
@@ -133,134 +135,20 @@ host_ip_for_sandbox() {
 }
 
 stop_compat_mock() {
-  if [ -n "${COMPAT_MOCK_PID:-}" ] && kill -0 "$COMPAT_MOCK_PID" 2>/dev/null; then
-    kill "$COMPAT_MOCK_PID" 2>/dev/null || true
-    wait "$COMPAT_MOCK_PID" 2>/dev/null || true
-  fi
-  COMPAT_MOCK_PID=""
+  stop_fake_openai_compatible_api
 }
 trap stop_compat_mock EXIT
 
 start_compat_mock() {
-  : >"$COMPAT_MOCK_LOG"
-  python3 - "$COMPAT_MOCK_PORT" "$COMPAT_MODEL" "$COMPATIBLE_KEY" >"$COMPAT_MOCK_LOG" 2>&1 <<'PY' &
-import json
-import sys
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-
-port = int(sys.argv[1])
-model = sys.argv[2]
-api_key = sys.argv[3]
-
-
-class Handler(BaseHTTPRequestHandler):
-    def log_message(self, fmt, *args):
-        return
-
-    def _path(self):
-        return self.path.split("?", 1)[0]
-
-    def _send(self, status, payload):
-        body = json.dumps(payload).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def _send_chat_sse(self, content):
-        chunk = json.dumps({
-            "id": "chatcmpl-2478-mock",
-            "object": "chat.completion.chunk",
-            "choices": [{"index": 0, "delta": {"role": "assistant", "content": content}, "finish_reason": None}],
-        })
-        done_chunk = json.dumps({
-            "id": "chatcmpl-2478-mock",
-            "object": "chat.completion.chunk",
-            "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
-        })
-        body = ("data: %s\n\ndata: %s\n\ndata: [DONE]\n\n" % (chunk, done_chunk)).encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "text/event-stream")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def _auth_ok(self):
-        return self.headers.get("Authorization", "") == "Bearer " + api_key
-
-    def do_GET(self):
-        if self._path() in ("/v1/models", "/models"):
-            print("GET %s" % self._path(), flush=True)
-            self._send(200, {"object": "list", "data": [{"id": model, "object": "model"}]})
-            return
-        self._send(404, {"error": {"message": "not found"}})
-
-    def do_POST(self):
-        length = int(self.headers.get("Content-Length", "0") or "0")
-        raw = self.rfile.read(length) if length else b""
-        try:
-            payload = json.loads(raw.decode("utf-8") or "{}")
-        except Exception:
-            payload = {}
-
-        if self._path() in ("/v1/chat/completions", "/chat/completions"):
-            print(
-                "POST %s auth=%s model=%s stream=%s"
-                % (self._path(), "ok" if self._auth_ok() else "missing", payload.get("model"), payload.get("stream")),
-                flush=True,
-            )
-            if not self._auth_ok():
-                self._send(401, {"error": {"message": "missing bearer credential"}})
-                return
-            if payload.get("stream"):
-                self._send_chat_sse("PONG from issue-2478 mock")
-                return
-            self._send(200, {
-                "id": "chatcmpl-2478-mock",
-                "object": "chat.completion",
-                "choices": [{
-                    "index": 0,
-                    "message": {"role": "assistant", "content": "PONG from issue-2478 mock"},
-                    "finish_reason": "stop",
-                }],
-            })
-            return
-
-        if self._path() in ("/v1/responses", "/responses"):
-            print(
-                "POST %s auth=%s stream=%s"
-                % (self._path(), "ok" if self._auth_ok() else "missing", payload.get("stream")),
-                flush=True,
-            )
-            if not self._auth_ok():
-                self._send(401, {"error": {"message": "missing bearer credential"}})
-                return
-            self._send(200, {
-                "id": "resp-2478-mock",
-                "object": "response",
-                "output": [{
-                    "type": "message",
-                    "role": "assistant",
-                    "content": [{"type": "output_text", "text": "PONG from issue-2478 mock"}],
-                }],
-            })
-            return
-
-        self._send(404, {"error": {"message": "not found"}})
-
-
-ThreadingHTTPServer(("0.0.0.0", port), Handler).serve_forever()
-PY
-  COMPAT_MOCK_PID=$!
-
-  for _ in $(seq 1 30); do
-    if curl -sf "http://127.0.0.1:${COMPAT_MOCK_PORT}/v1/models" >/dev/null 2>&1; then
-      return 0
-    fi
-    sleep 1
-  done
-  return 1
+  export FAKE_OPENAI_HOST="0.0.0.0"
+  export FAKE_OPENAI_PORT="$COMPAT_MOCK_PORT"
+  export FAKE_OPENAI_MODEL="$COMPAT_MODEL"
+  export FAKE_OPENAI_API_KEY="$COMPATIBLE_KEY"
+  export FAKE_OPENAI_REQUIRE_AUTH="1"
+  export FAKE_OPENAI_CHAT_CONTENT="PONG from issue-2478 mock"
+  export FAKE_OPENAI_RESPONSE_TEXT="PONG from issue-2478 mock"
+  export FAKE_OPENAI_LOG="$COMPAT_MOCK_LOG"
+  start_fake_openai_compatible_api || return 1
 }
 
 # Run a command inside the sandbox via openshell sandbox exec. Returns
@@ -524,8 +412,12 @@ fi
 pass "Docker running"
 
 if [ "$USE_COMPAT_MOCK" = "1" ]; then
-  if ! command -v python3 >/dev/null 2>&1; then
-    fail "python3 is required for the compatible endpoint mock"
+  if ! command -v node >/dev/null 2>&1; then
+    fail "node is required for the compatible endpoint mock"
+    exit 1
+  fi
+  if ! node --experimental-strip-types -e "" >/dev/null 2>&1; then
+    fail "node with --experimental-strip-types support is required for the compatible endpoint mock"
     exit 1
   fi
   if ! command -v curl >/dev/null 2>&1; then
