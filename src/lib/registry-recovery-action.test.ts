@@ -123,6 +123,68 @@ describe("recoverRegistryEntries (#2753 seed-time guard)", () => {
     expect(result.sandboxes).toEqual([]);
   });
 
+  it("preserves a persisted Hermes agent when the session re-seeds the same sandbox", async () => {
+    // A Hermes sandbox already in the registry must keep `agent: "hermes"`
+    // even when registry-recovery re-seeds from session metadata that has
+    // no agent field. Object.assign in updateSandbox would otherwise clobber
+    // the persisted agent to null, breaking rebuild-time agent resolution
+    // (state paths under /sandbox/.hermes-data versus /sandbox/.openclaw-data).
+    mockRegistryState.sandboxes["my-hermes"] = {
+      name: "my-hermes",
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      gpuEnabled: false,
+      policies: ["npm", "pypi"],
+      nimContainer: null,
+      agent: "hermes",
+      agentVersion: "2026.5.16",
+    };
+    vi.mocked(loadSession).mockReturnValue({
+      sandboxName: "my-hermes",
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      policyPresets: ["npm", "pypi"],
+      nimContainer: null,
+      agent: "hermes",
+      steps: {
+        sandbox: { status: "complete", startedAt: null, completedAt: null, error: null },
+      },
+    } as never);
+
+    await recoverRegistryEntries();
+
+    expect(mockRegistryState.sandboxes["my-hermes"]?.agent).toBe("hermes");
+    expect(mockRegistryState.sandboxes["my-hermes"]?.agentVersion).toBe("2026.5.16");
+  });
+
+  it("does not clobber a persisted agent when session metadata omits it", async () => {
+    // Defensive: even if a stale session has no `agent` field at all (older
+    // session format), recovery must not overwrite the persisted agent.
+    mockRegistryState.sandboxes["my-hermes"] = {
+      name: "my-hermes",
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      gpuEnabled: false,
+      policies: [],
+      nimContainer: null,
+      agent: "hermes",
+    };
+    vi.mocked(loadSession).mockReturnValue({
+      sandboxName: "my-hermes",
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      policyPresets: [],
+      nimContainer: null,
+      steps: {
+        sandbox: { status: "complete", startedAt: null, completedAt: null, error: null },
+      },
+    } as never);
+
+    await recoverRegistryEntries();
+
+    expect(mockRegistryState.sandboxes["my-hermes"]?.agent).toBe("hermes");
+  });
+
   it("does not evict a registered sandbox even when its session step is incomplete (avoids false positives)", async () => {
     // A user with a real registered sandbox alpha and a stale session that
     // happens to record alpha with an incomplete sandbox step (e.g. a

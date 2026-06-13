@@ -127,7 +127,13 @@ describe("buildRecoveryScript", () => {
       internalPort: 19119,
       tuiEnabled: false,
     });
-    expect(script).toContain(". /tmp/nemoclaw-proxy-env.sh");
+    const validationIndex = script.indexOf(
+      "_nemoclaw_validate_recovery_proxy_env /tmp/nemoclaw-proxy-env.sh",
+    );
+    const sourceIndex = script.indexOf('. "$_NEMOCLAW_RECOVERY_SOURCE_ENV"');
+    expect(validationIndex).toBeGreaterThanOrEqual(0);
+    expect(sourceIndex).toBeGreaterThan(validationIndex);
+    expect(script).toContain('. "$_NEMOCLAW_RECOVERY_SOURCE_ENV"');
     expect(script).toContain("/usr/local/bin/hermes");
     expect(script).toContain(
       '"$AGENT_BIN" dashboard --host 127.0.0.1 --port 19119 --skip-build --no-open',
@@ -193,17 +199,17 @@ describe("buildRecoveryScript", () => {
     expect(script).not.toContain("hermes gateway run --profile recovery --port 8642");
   });
 
-  // Regression coverage for #2478. The recovery script must explicitly source
-  // /tmp/nemoclaw-proxy-env.sh (single source of truth for NODE_OPTIONS
-  // library guards) and restore the critical safety-net/ciao preloads from
-  // trusted packaged sources when the file is missing. The pre-fix recovery
-  // path swallowed sourcing errors via `2>/dev/null`, leaving respawned
-  // gateways guard-less and crash-looping on the next library error from ciao,
+  // Regression coverage for #2478. The recovery script must validate
+  // /tmp/nemoclaw-proxy-env.sh, then source a generated recovery env carrying
+  // the critical NODE_OPTIONS library guards. The pre-fix recovery path
+  // swallowed sourcing errors via `2>/dev/null`, leaving respawned gateways
+  // guard-less and crash-looping on the next library error from ciao,
   // model-pricing, or anything else hitting a sandboxed syscall.
   describe("#2478 hardened library-guard preload chain", () => {
-    it("explicitly sources the gateway env file", () => {
+    it("sources the generated recovery env after validating the gateway env file", () => {
       const script = buildRecoveryScript(minimalAgent, 19000);
-      expect(script).toContain(". /tmp/nemoclaw-proxy-env.sh");
+      expect(script).toContain("_nemoclaw_validate_recovery_proxy_env /tmp/nemoclaw-proxy-env.sh");
+      expect(script).toContain('. "$_NEMOCLAW_RECOVERY_SOURCE_ENV"');
     });
 
     it("warns and restores guards when the gateway env file is missing", () => {
