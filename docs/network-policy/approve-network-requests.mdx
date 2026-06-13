@@ -18,6 +18,7 @@ OpenShell intercepts these requests and presents them in the TUI for operator ap
 
 - A running NemoClaw sandbox.
 - The OpenShell CLI on your `PATH`.
+- A local NemoClaw source checkout if you plan to run the walkthrough script.
 
 ## Open the TUI
 
@@ -27,11 +28,14 @@ Start the OpenShell terminal UI to monitor sandbox activity:
 openshell term
 ```
 
-For a remote sandbox, pass the instance name:
+For a remote sandbox, connect to the host that owns the sandbox:
 
 ```bash
-ssh my-gpu-box 'cd ~/nemoclaw && . .env && openshell term'
+SANDBOX_HOST=your-sandbox-host
+ssh "$SANDBOX_HOST" 'cd ~/nemoclaw && . .env && openshell term'
 ```
+
+Replace `your-sandbox-host` with the SSH host or alias where your NemoClaw sandbox is running before you run the command.
 
 The TUI displays the sandbox state, active inference provider, and a live feed of network activity.
 
@@ -47,6 +51,7 @@ The blocked request includes the following details:
 ## Approve or Deny the Request
 
 The TUI presents an approval prompt for each blocked request.
+Select the sandbox that shows the blocked request, then follow the prompt in the TUI to approve or deny it.
 
 - **Approve** the request to add the endpoint to the running policy for the current session.
 - **Deny** the request to keep the endpoint blocked.
@@ -56,6 +61,14 @@ They are not persisted to the baseline policy file.
 To keep an endpoint allowed after a restart, update the policy YAML or apply a preset as described in [Customize the Sandbox Network Policy](customize-network-policy).
 
 ## Run the Walkthrough
+
+The walkthrough script lives in the NemoClaw source repository.
+If you installed NemoClaw from the installer and do not have a source checkout, clone the repository first:
+
+```bash
+git clone https://github.com/NVIDIA/NemoClaw.git
+cd NemoClaw
+```
 
 From the NemoClaw repository root, run the walkthrough script after you have onboarded at least one sandbox and it is reachable:
 
