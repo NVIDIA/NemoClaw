@@ -94,27 +94,6 @@ describe("findAvailableDashboardPort port-conflict detection (#3260)", () => {
     findAvailableDashboardPort("cursor", 18789, "", stub);
     assert.deepEqual(seen, [18789, 18790]);
   });
-
-  it("skips dashboard ports reserved by sibling sandboxes on other gateways (#4865)", () => {
-    // Sandbox 'alpha' was onboarded against the default gateway and recorded
-    // 18789 in the registry; a second onboard with NEMOCLAW_GATEWAY_PORT=8081
-    // queries the new gateway's forward list (empty), so without the registry
-    // reservation it would re-allocate 18789 and both sandboxes would advertise
-    // the same dashboard URL.
-    const reserved = new Map<number, string>([[18789, "alpha"]]);
-    assert.equal(
-      findAvailableDashboardPort("port-test", 18789, "", () => false, reserved),
-      18790,
-    );
-  });
-
-  it("still returns the preferred port when this sandbox owns the registry reservation", () => {
-    const reserved = new Map<number, string>([[18789, "cursor"]]);
-    assert.equal(
-      findAvailableDashboardPort("cursor", 18789, "", () => false, reserved),
-      18789,
-    );
-  });
 });
 
 describe("resolveCreateSandboxDashboardPort", () => {

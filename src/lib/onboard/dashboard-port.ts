@@ -155,21 +155,8 @@ export function findAvailableDashboardPort(
   preferredPort: number,
   forwardListOutput: string | null,
   isPortBoundCheck: (port: number) => boolean = isPortBoundOnHost,
-  registryReservedPorts: ReadonlyMap<number, string> = new Map(),
 ): number {
   const occupied = getOccupiedPorts(forwardListOutput);
-  // Forwards on sibling gateways are invisible to the active gateway's
-  // `forward list`, so a second onboard on a non-default NEMOCLAW_GATEWAY_PORT
-  // can otherwise allocate a dashboard port already in use by an existing
-  // sandbox registered on another gateway. Treat the registry-recorded
-  // dashboard ports of other sandboxes as occupied to keep them distinct.
-  for (const [port, owner] of registryReservedPorts) {
-    if (owner === sandboxName) continue;
-    const key = String(port);
-    if (!occupied.has(key)) {
-      occupied.set(key, owner);
-    }
-  }
   const hostBoundPorts: number[] = [];
   // Try the preferred port first (it may be outside the dashboard range when
   // a caller passes --control-ui-port), then the rest of the range. Each port
