@@ -138,27 +138,32 @@ All git hooks are managed by [prek](https://prek.j178.dev/), a fast, single-bina
 | **commit-msg** | commitlint (Conventional Commits) |
 | **pre-push** | TypeScript type check (`tsc --noEmit` for plugin, JS, and CLI) |
 
-For a full manual check: `npx prek run --all-files`. For scoped runs: `npx prek run --from-ref <base> --to-ref HEAD`.
+For PR preparation, normal commit and push hooks are valid verification when they ran without `--no-verify`.
+If hooks were skipped, missing, failed, or uncertain, use a scoped fallback: `npx prek run --from-ref <base> --to-ref HEAD`.
+Reserve `npx prek run --all-files` for whole-repository baselines, such as hook, formatter, generated-check, or repo-wide validation changes.
 
 For TypeScript changes under `src/`, `test/`, `scripts/`, `bin/`, or
-`nemoclaw-blueprint/scripts/` (and for `tsconfig.cli.json` updates), also run
-`npm run typecheck:cli` before opening a PR. CI runs this unconditionally, and the
-pre-push hook runs it with `tsconfig.cli.json` before pushes.
+`nemoclaw-blueprint/scripts/` (and for `tsconfig.cli.json` updates), the pre-push
+hook runs `npm run typecheck:cli` before the branch is pushed.
+CI runs this unconditionally.
+If the pre-push hook was skipped or unavailable, run `npm run typecheck:cli`
+manually before opening a PR.
 
 If you still have `core.hooksPath` set from an old Husky setup, Git will ignore `.git/hooks`. Run `git config --unset core.hooksPath` in this repo, then `npm install` so `prek install` (via `prepare`) can register the hooks.
 
 `make check` remains the primary documented linter entry point.
 
 For doc-only changes, you do not need to run the full test suite by default.
-Run the docs and hook checks instead:
+Commit and push normally so the hooks run, then run the docs build:
 
 ```bash
-npx prek run --all-files
 npm run docs
 ```
 
 Leave `npm test` unchecked in the PR verification checklist unless you actually ran it.
-Run `npm test` when the change touches code, generated behavior, or anything that affects runtime behavior.
+If hooks were skipped or unavailable, run `npx prek run --from-ref main --to-ref HEAD` before opening the PR.
+For code changes, run targeted tests for the changed behavior.
+Reserve full `npm test` for broad runtime changes, test harness changes, or cases where targeted coverage is hard to justify.
 
 ## Project Structure
 
@@ -241,7 +246,9 @@ Follow these steps to submit a pull request.
 
 1. Create a feature branch from `main`.
 2. Make your changes with tests.
-3. Run the relevant checks. For code changes, run `make check` and `npm test`. For doc-only changes, run `npx prek run --all-files` and `npm run docs`.
+3. Run the relevant checks.
+   Let normal commit and push hooks provide hook verification, run targeted tests for changed behavior, and run `npm run docs` for doc changes.
+   If hooks were skipped or unavailable, run `npx prek run --from-ref main --to-ref HEAD`.
 4. Open a PR.
 
 ### Commit Messages
