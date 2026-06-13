@@ -66,6 +66,48 @@ nemoclaw onboard --from ./my-plugin-sandbox/Dockerfile
 
 If you need a second sandbox alongside an existing one, use a dedicated build directory and rerun onboarding with the sandbox name and ports you intend to use.
 
+## Build Performance
+
+Custom plugin images are normal Docker builds, so build time depends on the build context size and the Docker layer cache rather than on NemoClaw.
+
+Keep the build context small and dedicated.
+The Dockerfile's parent directory is staged as the build context before the Docker build starts, so a broad directory can make onboarding look stuck while Docker is only preparing context.
+A small build directory stages quickly:
+
+```text
+my-plugin-sandbox/        # fast: only what the image needs
+├── Dockerfile
+├── .dockerignore
+└── my-plugin/
+```
+
+A Dockerfile placed in a large tree stages slowly:
+
+```text
+~/                        # slow: stages the whole home directory
+├── Dockerfile
+├── Downloads/
+├── datasets/
+└── models/
+```
+
+Distinguish cold builds from warm rebuilds.
+The first build on a fresh host is a cold build that downloads the base image and package indexes, so it is the slowest run.
+Later warm rebuilds reuse cached layers when the base image and earlier layers are unchanged.
+
+Order Dockerfile instructions from least-changing to most-changing so warm rebuilds reuse cached dependency layers:
+
+1. Base image.
+2. System package installs.
+3. Dependency manifests such as `package.json`.
+4. Dependency install such as `npm ci`.
+5. Application source.
+
+Pin the base image to an explicit tag or digest so warm rebuilds resolve the same cached base instead of pulling a new one.
+
+When a build feels slow, set `NEMOCLAW_TRACE=1` before onboarding to capture phase timings that separate context staging, Docker build, image upload, and sandbox readiness.
+For the full `--from` build-context rules and trace details, refer to [CLI Commands Reference](../reference/commands).
+
 ## Network Access
 
 Plugins still run inside the sandbox policy boundary.
