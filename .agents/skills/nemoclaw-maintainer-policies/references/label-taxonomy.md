@@ -31,6 +31,7 @@ Use labels for:
 
 - Product or code routing.
 - Platform, provider, integration, or reproduction surface.
+- Product Readiness Review reporting.
 - Immediate action queues.
 - Community contribution signals.
 - PR type and PR release activation.
@@ -50,6 +51,16 @@ Apply exactly one PR type label to a non-draft PR when there is enough evidence.
 | `chore` | PR | Docs, CI, dependencies, packaging, policy, or maintenance. | Docs-only, build, CI, dependency, skill policy, automation. | Product behavior change that needs feature or bug-fix. |
 
 `security` can be added as a supplemental risk label to any issue or PR when security review is required.
+
+### Reporting
+
+Reporting labels apply when maintainers need to identify items that feed a recurring review, report, or readiness artifact.
+
+| Label | Applies To | Description | Positive Signals | Negative Signals |
+|---|---|---|---|---|
+| `PRR` | Issue, PR | Reserved Product Readiness Review label for reports or follow-up used to assess product readiness and user experience. | Maintainer-applied or dedicated PRR workflow-applied Product Readiness Review report, PRR follow-up, readiness assessment, or user experience assessment tied to a PRR. | Generic readiness concern, ordinary UX bug, release validation, QA issue, daily release activity, or normal triage output. |
+
+Do not recommend `PRR` during normal triage. It is reserved for maintainers or dedicated PRR workflows, and must not be used as a lifecycle status, release-readiness claim, generic UX label, or substitute for Project Status.
 
 ### Routing Areas
 

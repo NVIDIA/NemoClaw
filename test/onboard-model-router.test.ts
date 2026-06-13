@@ -163,7 +163,7 @@ runner.runCapture = (command) => {
 };
 registry.updateSandbox = () => true;
 
-process.env.NVIDIA_API_KEY = "nvapi-router-secret";
+process.env.NVIDIA_INFERENCE_API_KEY = "nvapi-router-secret";
 
 const { setupInference, getSandboxInferenceConfig } = require(${onboardPath});
 
@@ -173,7 +173,7 @@ const { setupInference, getSandboxInferenceConfig } = require(${onboardPath});
     "nvidia-routed",
     "nvidia-router",
     "http://host.openshell.internal:" + routerPort + "/v1",
-    "NVIDIA_API_KEY",
+    "NVIDIA_INFERENCE_API_KEY",
   );
   console.log(JSON.stringify({
     commands,
@@ -207,13 +207,13 @@ const { setupInference, getSandboxInferenceConfig } = require(${onboardPath});
       );
       assert.ok(providerCommand, JSON.stringify(payload.commands));
       assert.match(providerCommand.command, /--name nvidia-router/);
-      assert.match(providerCommand.command, /--credential NVIDIA_API_KEY/);
+      assert.match(providerCommand.command, /--credential NVIDIA_INFERENCE_API_KEY/);
       assert.match(
         providerCommand.command,
         new RegExp(`OPENAI_BASE_URL=http:\\/\\/host\\.openshell\\.internal:${routerPort}\\/v1`),
       );
       assert.doesNotMatch(providerCommand.command, /nvapi-router-secret/);
-      assert.equal(providerCommand.env?.NVIDIA_API_KEY, "nvapi-router-secret");
+      assert.equal(providerCommand.env?.NVIDIA_INFERENCE_API_KEY, "nvapi-router-secret");
 
       const inferenceCommand = payload.commands.find((entry) =>
         /inference set/.test(entry.command),
@@ -409,7 +409,7 @@ runner.runCapture = (command) => {
 };
 registry.updateSandbox = () => true;
 
-process.env.NVIDIA_API_KEY = "nvapi-router-secret";
+process.env.NVIDIA_INFERENCE_API_KEY = "nvapi-router-secret";
 
 const { setupInference } = require(${onboardPath});
 
@@ -419,7 +419,7 @@ const { setupInference } = require(${onboardPath});
     "nvidia-routed",
     "nvidia-router",
     "http://host.openshell.internal:" + routerPort + "/v1",
-    "NVIDIA_API_KEY",
+    "NVIDIA_INFERENCE_API_KEY",
   );
   console.log(JSON.stringify({ commands }));
 })().catch((error) => {
@@ -599,7 +599,7 @@ runner.runCapture = (command) => {
 };
 registry.updateSandbox = () => true;
 
-process.env.NVIDIA_API_KEY = "nvapi-router-secret";
+process.env.NVIDIA_INFERENCE_API_KEY = "nvapi-router-secret";
 
 const { setupInference } = require(${onboardPath});
 
@@ -609,7 +609,7 @@ const { setupInference } = require(${onboardPath});
     "nvidia-routed",
     "nvidia-router",
     "http://host.openshell.internal:" + routerPort + "/v1",
-    "NVIDIA_API_KEY",
+    "NVIDIA_INFERENCE_API_KEY",
   );
   console.log(JSON.stringify({ commands }));
 })().catch((error) => {
@@ -825,7 +825,7 @@ runner.runCapture = (command) => {
 };
 registry.updateSandbox = () => true;
 
-process.env.NVIDIA_API_KEY = "nvapi-router-secret";
+process.env.NVIDIA_INFERENCE_API_KEY = "nvapi-router-secret";
 
 const { setupInference } = require(${onboardPath});
 
@@ -835,7 +835,7 @@ const { setupInference } = require(${onboardPath});
     "nvidia-routed",
     "nvidia-router",
     "http://host.openshell.internal:" + routerPort + "/v1",
-    "NVIDIA_API_KEY",
+    "NVIDIA_INFERENCE_API_KEY",
   );
   console.log(JSON.stringify({ commands }));
 })().catch((error) => {
@@ -1030,7 +1030,7 @@ runner.runCapture = (command) => {
 };
 registry.updateSandbox = () => true;
 
-process.env.NVIDIA_API_KEY = "nvapi-router-secret";
+process.env.NVIDIA_INFERENCE_API_KEY = "nvapi-router-secret";
 
 const { setupInference } = require(${onboardPath});
 
@@ -1040,7 +1040,7 @@ const { setupInference } = require(${onboardPath});
     "nvidia-routed",
     "nvidia-router",
     "http://host.openshell.internal:" + routerPort + "/v1",
-    "NVIDIA_API_KEY",
+    "NVIDIA_INFERENCE_API_KEY",
   );
   const fpPath = path.join(${JSON.stringify(venvDir)}, ${JSON.stringify(MODEL_ROUTER_FINGERPRINT_FILE)});
   const fpExists = fs.existsSync(fpPath);

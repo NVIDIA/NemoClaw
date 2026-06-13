@@ -45,7 +45,7 @@ function makeConfig(overrides: Partial<NemoClawOnboardConfig> = {}): NemoClawOnb
     ncpPartner: null,
     model: "nvidia/nemotron-3-super-120b-a12b",
     profile: "default",
-    credentialEnv: "NVIDIA_API_KEY",
+    credentialEnv: "NVIDIA_INFERENCE_API_KEY",
     onboardedAt: "2026-03-01T00:00:00.000Z",
     ...overrides,
   };

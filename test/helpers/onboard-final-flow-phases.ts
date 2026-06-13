@@ -147,7 +147,7 @@ export function context(
     model: "nvidia/test",
     provider: "nim",
     endpointUrl: "https://example.test/v1",
-    credentialEnv: "NVIDIA_API_KEY",
+    credentialEnv: "NVIDIA_INFERENCE_API_KEY",
     hermesAuthMethod: null,
     hermesToolGateways: ["local"],
     preferredInferenceApi: "chat",

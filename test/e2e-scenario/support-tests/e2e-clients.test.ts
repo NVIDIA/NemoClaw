@@ -41,7 +41,11 @@ class FakeRunner implements CommandRunner {
     command: TrustedShellCommand,
     options?: ShellProbeRunOptions,
   ): Promise<ShellProbeResult> {
-    this.calls.push({ command: command.command, args: [...command.args], options });
+    this.calls.push({
+      command: command.command,
+      args: [...command.args],
+      options,
+    });
     return {
       command: [command.command, ...command.args],
       exitCode: this.exitCode,
@@ -80,9 +84,28 @@ describe("E2E fixture clients", () => {
     ]);
   });
 
+  it("host client validates list/status and cleans up sandbox destroys", async () => {
+    const runner = new FakeRunner();
+    runner.stdout = "NAME\nassistant\n";
+    const host = new HostCliClient(runner, { cliPath: "nemoclaw" });
+
+    await host.expectListed("assistant");
+    await host.expectStatus("assistant");
+    await host.cleanupSandbox("assistant");
+
+    expect(runner.calls.map((call) => ({ command: call.command, args: call.args }))).toEqual([
+      { command: "nemoclaw", args: ["list"] },
+      { command: "nemoclaw", args: ["assistant", "status"] },
+      { command: "nemoclaw", args: ["assistant", "destroy", "--yes"] },
+    ]);
+  });
+
   it("host client propagates cwd, env, and timeout options", async () => {
     const runner = new FakeRunner();
-    const host = new HostCliClient(runner, { cliPath: "nemoclaw", cwd: "/tmp/project" });
+    const host = new HostCliClient(runner, {
+      cliPath: "nemoclaw",
+      cwd: "/tmp/project",
+    });
 
     await host.nemoclaw(["status"], {
       env: { NEMOCLAW_TEST_VALUE: "1" },
@@ -141,6 +164,37 @@ describe("E2E fixture clients", () => {
     });
   });
 
+  it("gateway client resolves host runtime and validates OpenShell status", async () => {
+    const pidRunner = new FakeRunner();
+    pidRunner.stdout = "12345\n";
+    const pidHost = new HostCliClient(pidRunner, { cliPath: "nemoclaw" });
+    await expect(
+      new GatewayClient(pidHost, new SandboxClient(pidRunner)).resolveHostRuntime(),
+    ).resolves.toEqual({
+      kind: "pid",
+      id: "12345",
+    });
+
+    const containerRunner = new FakeRunner();
+    containerRunner.exitCode = 1;
+    const containerHost = new HostCliClient(containerRunner, {
+      cliPath: "nemoclaw",
+    });
+    const containerGateway = new GatewayClient(containerHost, new SandboxClient(containerRunner));
+    const runtime = containerGateway.resolveHostRuntime();
+    containerRunner.exitCode = 0;
+    containerRunner.stdout = "abc123\n";
+    await expect(runtime).resolves.toEqual({ kind: "container", id: "abc123" });
+
+    const statusRunner = new FakeRunner();
+    statusRunner.stdout = "Connected to nemoclaw\n";
+    const statusHost = new HostCliClient(statusRunner, { cliPath: "nemoclaw" });
+    await new GatewayClient(
+      statusHost,
+      new SandboxClient(statusRunner),
+    ).expectOpenshellStatusConnected();
+  });
+
   it("sandbox client builds OpenShell sandbox commands", async () => {
     const runner = new FakeRunner();
     const sandbox = new SandboxClient(runner, { openshellPath: "openshell" });
@@ -152,6 +206,23 @@ describe("E2E fixture clients", () => {
       args: ["sandbox", "exec", "-n", "assistant", "--", "echo", "ok"],
       options: {
         artifactName: "sandbox-exec-assistant",
+      },
+    });
+  });
+
+  it("sandbox client validates list output using the OpenShell gateway env", async () => {
+    const runner = new FakeRunner();
+    runner.stdout = "NAME\nassistant\n";
+    const sandbox = new SandboxClient(runner, { openshellPath: "openshell" });
+
+    await sandbox.expectListed("assistant");
+
+    expect(runner.calls[0]).toMatchObject({
+      command: "openshell",
+      args: ["sandbox", "list"],
+      options: {
+        artifactName: "sandbox-list",
+        env: expect.objectContaining({ OPENSHELL_GATEWAY: "nemoclaw" }),
       },
     });
   });
@@ -367,10 +438,14 @@ describe("E2E fixture clients", () => {
       }),
     ).toThrow(/not allowed/);
     expect(() =>
-      trustedProviderEndpoint("https://10.0.0.1/models", { allowedHosts: ["10.0.0.1"] }),
+      trustedProviderEndpoint("https://10.0.0.1/models", {
+        allowedHosts: ["10.0.0.1"],
+      }),
     ).toThrow(/private or link-local/);
     expect(() =>
-      trustedProviderEndpoint("https://[fd00::1]/models", { allowedHosts: ["fd00::1"] }),
+      trustedProviderEndpoint("https://[fd00::1]/models", {
+        allowedHosts: ["fd00::1"],
+      }),
     ).toThrow(/private or link-local/);
   });
 
@@ -430,6 +505,18 @@ describe("E2E fixture clients", () => {
     await expect(provider.getJson(endpoint)).rejects.not.toThrow(/query-token-value|api_key/);
   });
 
+  it("shared command helpers match complete sandbox names", async () => {
+    const { outputContainsSandbox, resultText } = await import("../fixtures/clients/index.ts");
+    const result = {
+      stdout: "NAME\nassistant-old\nassistant\n",
+      stderr: "",
+    };
+
+    expect(resultText(result)).toContain("assistant");
+    expect(outputContainsSandbox(result, "assistant")).toBe(true);
+    expect(outputContainsSandbox(result, "assist")).toBe(false);
+  });
+
   it("assertExitZero reports non-zero and signaled commands", () => {
     const result: ShellProbeResult = {
       command: ["cmd"],
@@ -456,7 +543,9 @@ describe("E2E fixture clients", () => {
 
       await expect(state.exists(file)).resolves.toBe(true);
       await expect(state.exists(path.join(tmp, "missing.json"))).resolves.toBe(false);
-      await expect(state.readJson(file)).resolves.toEqual({ sandbox: "assistant" });
+      await expect(state.readJson(file)).resolves.toEqual({
+        sandbox: "assistant",
+      });
       await expect(state.exists(`bad${"\0"}path`)).rejects.toThrow();
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });

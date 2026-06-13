@@ -214,6 +214,7 @@ $$nemoclaw my-assistant policy-add jira --yes
 The `jira` preset intentionally allows Node.js access to Atlassian Cloud and does not allow `curl`.
 When validating it manually, avoid plain `curl -s` against `auth.atlassian.com`.
 Atlassian can return an empty redirect body even when the request succeeds.
+An empty `curl -s` output from that endpoint is inconclusive before or after approval; do not use it as a pass/fail signal.
 Use a body-visible API probe instead:
 
 ```bash

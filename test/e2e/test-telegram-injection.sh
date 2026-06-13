@@ -25,15 +25,15 @@
 # Prerequisites:
 #   - Docker running
 #   - NemoClaw installed and sandbox running (test-full-e2e.sh Phase 0-3)
-#   - NVIDIA_API_KEY set
+#   - NVIDIA_INFERENCE_API_KEY set
 #   - openshell on PATH
 #
 # Environment variables:
 #   NEMOCLAW_SANDBOX_NAME  — sandbox name (default: e2e-test)
-#   NVIDIA_API_KEY         — required
+#   NVIDIA_INFERENCE_API_KEY         — required
 #
 # Usage:
-#   NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 NVIDIA_API_KEY=nvapi-... bash test/e2e/test-telegram-injection.sh
+#   NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 NVIDIA_INFERENCE_API_KEY=nvapi-... bash test/e2e/test-telegram-injection.sh
 #
 # See: https://github.com/NVIDIA/NemoClaw/issues/118
 #      https://github.com/NVIDIA/NemoClaw/pull/119
@@ -145,11 +145,11 @@ sandbox_exec() {
 # ══════════════════════════════════════════════════════════════════
 section "Phase 0: Prerequisites"
 
-if [ -z "${NVIDIA_API_KEY:-}" ]; then
-  fail "NVIDIA_API_KEY not set"
+if [ -z "${NVIDIA_INFERENCE_API_KEY:-}" ]; then
+  fail "NVIDIA_INFERENCE_API_KEY not set"
   exit 1
 fi
-pass "NVIDIA_API_KEY is set"
+pass "NVIDIA_INFERENCE_API_KEY is set"
 
 if ! command -v openshell >/dev/null 2>&1; then
   fail "openshell not found on PATH"
@@ -271,12 +271,12 @@ fi
 # ══════════════════════════════════════════════════════════════════
 section "Phase 3: Parameter Expansion"
 
-# T4: ${NVIDIA_API_KEY} must not expand to the actual key value
-info "T4: Testing \${NVIDIA_API_KEY} expansion..."
+# T4: ${NVIDIA_INFERENCE_API_KEY} must not expand to the actual key value
+info "T4: Testing \${NVIDIA_INFERENCE_API_KEY} expansion..."
 
 ssh_config_t4="$(mktemp)"
 openshell sandbox ssh-config "$SANDBOX_NAME" >"$ssh_config_t4" 2>/dev/null
-PAYLOAD_ENV='${NVIDIA_API_KEY}'
+PAYLOAD_ENV='${NVIDIA_INFERENCE_API_KEY}'
 
 t4_result=$(timeout 30 ssh -F "$ssh_config_t4" \
   -o StrictHostKeyChecking=no \
@@ -287,14 +287,14 @@ t4_result=$(timeout 30 ssh -F "$ssh_config_t4" \
   <<<"$PAYLOAD_ENV" 2>&1) || true
 rm -f "$ssh_config_t4"
 
-# The result should contain the literal string ${NVIDIA_API_KEY}, not a nvapi- value
+# The result should contain the literal string ${NVIDIA_INFERENCE_API_KEY}, not a nvapi- value
 if echo "$t4_result" | grep -q "nvapi-"; then
-  fail "T4: \${NVIDIA_API_KEY} expanded to actual key value — secret leaked!"
-elif echo "$t4_result" | grep -qF '${NVIDIA_API_KEY}'; then
-  pass "T4: \${NVIDIA_API_KEY} treated as literal string (not expanded)"
+  fail "T4: \${NVIDIA_INFERENCE_API_KEY} expanded to actual key value — secret leaked!"
+elif echo "$t4_result" | grep -qF '${NVIDIA_INFERENCE_API_KEY}'; then
+  pass "T4: \${NVIDIA_INFERENCE_API_KEY} treated as literal string (not expanded)"
 else
   # Empty or other result — still safe as long as key not leaked
-  pass "T4: \${NVIDIA_API_KEY} did not expand to key value (result: ${t4_result:0:100})"
+  pass "T4: \${NVIDIA_INFERENCE_API_KEY} did not expand to key value (result: ${t4_result:0:100})"
 fi
 
 # ══════════════════════════════════════════════════════════════════
@@ -302,11 +302,11 @@ fi
 # ══════════════════════════════════════════════════════════════════
 section "Phase 4: Process Table Leak Check"
 
-# T5: NVIDIA_API_KEY must not appear in ps aux output
+# T5: NVIDIA_INFERENCE_API_KEY must not appear in ps aux output
 info "T5: Checking process table for API key leaks..."
 
 # Get truncated key for a safe comparison (first 15 chars of key value)
-API_KEY_PREFIX="${NVIDIA_API_KEY:0:15}"
+API_KEY_PREFIX="${NVIDIA_INFERENCE_API_KEY:0:15}"
 
 # Check both the Brev host and inside the sandbox
 host_ps=$(ps aux 2>/dev/null || true)
@@ -331,9 +331,9 @@ if echo "$sandbox_ps" | grep -qF "$API_KEY_PREFIX"; then
 fi
 
 if [ "$HOST_LEAK" = true ]; then
-  fail "T5: NVIDIA_API_KEY found in HOST process table"
+  fail "T5: NVIDIA_INFERENCE_API_KEY found in HOST process table"
 elif [ "$SANDBOX_LEAK" = true ]; then
-  fail "T5: NVIDIA_API_KEY found in SANDBOX process table"
+  fail "T5: NVIDIA_INFERENCE_API_KEY found in SANDBOX process table"
 else
   pass "T5: API key not visible in process tables (host or sandbox)"
 fi

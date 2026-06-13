@@ -48,7 +48,7 @@ const MODEL_ROUTER_FINGERPRINT_IGNORED_NAMES = new Set([
   "node_modules",
   "venv",
 ]);
-export const DEFAULT_MODEL_ROUTER_CREDENTIAL_ENV = "NVIDIA_API_KEY";
+export const DEFAULT_MODEL_ROUTER_CREDENTIAL_ENV = "NVIDIA_INFERENCE_API_KEY";
 
 export type BlueprintRouterConfig = {
   enabled?: boolean;

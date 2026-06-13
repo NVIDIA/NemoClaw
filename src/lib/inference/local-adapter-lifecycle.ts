@@ -8,6 +8,8 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 
+import { waitUntilAsync } from "../core/wait";
+
 export type JsonObject = Record<string, unknown>;
 
 export type RunCaptureFn = (
@@ -195,9 +197,10 @@ export async function waitForLocalAdapterHealth(
 ): Promise<boolean> {
   const attempts = options.attempts || 20;
   const intervalMs = options.intervalMs || 100;
-  for (let attempt = 0; attempt < attempts; attempt++) {
-    if (await probe()) return true;
-    await new Promise((resolve) => setTimeout(resolve, intervalMs));
-  }
-  return false;
+  return waitUntilAsync(probe, {
+    initialIntervalMs: intervalMs,
+    maxIntervalMs: intervalMs,
+    backoffFactor: 1,
+    maxAttempts: attempts,
+  });
 }

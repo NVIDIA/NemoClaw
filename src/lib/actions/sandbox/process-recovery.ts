@@ -17,7 +17,7 @@ import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import * as agentRuntime from "../../agent/runtime";
 import { G, R } from "../../cli/terminal-style";
 import { DASHBOARD_PORT } from "../../core/ports";
-import { sleepSeconds } from "../../core/wait";
+import { sleepSeconds, waitUntil } from "../../core/wait";
 import { ROOT, shellQuote } from "../../runner";
 import * as registry from "../../state/registry";
 import { parseForwardList } from "../../state/sandbox-session";
@@ -321,15 +321,13 @@ function waitForRecoveredSandboxGateway(sandboxName: string): boolean {
       ? Math.max(1, Math.floor(timeoutSeconds / intervalSeconds) + 1)
       : Math.max(1, Math.floor(timeoutSeconds) + 1);
 
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    if (isSandboxGatewayRunning(sandboxName) === true) {
-      return true;
-    }
-    if (attempt < attempts - 1) {
-      sleepSeconds(intervalSeconds);
-    }
-  }
-  return false;
+  return waitUntil(() => isSandboxGatewayRunning(sandboxName) === true, {
+    initialIntervalMs: intervalSeconds * 1000,
+    maxIntervalMs: intervalSeconds * 1000,
+    backoffFactor: 1,
+    maxAttempts: attempts,
+    sleep: (ms) => sleepSeconds(ms / 1000),
+  });
 }
 
 /**

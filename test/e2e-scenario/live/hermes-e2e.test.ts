@@ -75,7 +75,7 @@ function commandEnv(apiKey?: string): NodeJS.ProcessEnv {
     NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS: ONBOARD_VALIDATION_TIMEOUT_SECONDS,
     NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
   };
-  if (apiKey) env.NVIDIA_API_KEY = apiKey;
+  if (apiKey) env.NVIDIA_INFERENCE_API_KEY = apiKey;
   if (process.env.NEMOCLAW_E2E_HERMES_DASHBOARD) {
     env.NEMOCLAW_E2E_HERMES_DASHBOARD = process.env.NEMOCLAW_E2E_HERMES_DASHBOARD;
   }
@@ -219,8 +219,10 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
   "hermes-e2e: install.sh onboards Hermes and proves health plus live inference",
   { timeout: LIVE_TIMEOUT_MS },
   async ({ artifacts, cleanup, host, provider, sandbox, secrets }) => {
-    const apiKey = secrets.required("NVIDIA_API_KEY");
-    expect(apiKey.startsWith("nvapi-"), "NVIDIA_API_KEY must start with nvapi-").toBe(true);
+    const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
+    expect(apiKey.startsWith("nvapi-"), "NVIDIA_INFERENCE_API_KEY must start with nvapi-").toBe(
+      true,
+    );
 
     await artifacts.writeJson("scenario.json", {
       id: "hermes-e2e",
@@ -277,11 +279,11 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
     expect(fs.existsSync(path.join(REPO_ROOT, "agents", "hermes", "manifest.yaml"))).toBe(true);
 
     const providerModels = await provider.requestJson(
-      trustedProviderEndpoint("https://integrate.api.nvidia.com/v1/models", {
-        allowedHosts: ["integrate.api.nvidia.com"],
+      trustedProviderEndpoint("https://inference-api.nvidia.com/v1/models", {
+        allowedHosts: ["inference-api.nvidia.com"],
       }),
       {
-        artifactName: "phase-1-integrate-models",
+        artifactName: "phase-1-inference-models",
         curlMaxTimeSeconds: 15,
         headers: [`Authorization: Bearer ${apiKey}`],
         env: buildAvailabilityProbeEnv(),
@@ -484,8 +486,8 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       "direct NVIDIA Endpoints chat",
       async (attempt) => {
         const response = await provider.requestJson(
-          trustedProviderEndpoint("https://integrate.api.nvidia.com/v1/chat/completions", {
-            allowedHosts: ["integrate.api.nvidia.com"],
+          trustedProviderEndpoint("https://inference-api.nvidia.com/v1/chat/completions", {
+            allowedHosts: ["inference-api.nvidia.com"],
           }),
           {
             artifactName: `phase-5-direct-nvidia-chat-attempt-${attempt}`,
