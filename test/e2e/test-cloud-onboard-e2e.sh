@@ -13,8 +13,8 @@
 #
 # Prerequisites:
 #   - Docker running
-#   - NVIDIA_API_KEY set (real key, starts with nvapi-)
-#   - Network access to integrate.api.nvidia.com
+#   - NVIDIA_INFERENCE_API_KEY set (real key, starts with nvapi-)
+#   - Network access to inference-api.nvidia.com
 #
 # Environment:
 #   NEMOCLAW_NON_INTERACTIVE=1                         — required for non-interactive install
@@ -32,7 +32,7 @@
 #
 # Usage:
 #   NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
-#     NVIDIA_API_KEY=nvapi-... bash test/e2e/test-cloud-onboard-e2e.sh
+#     NVIDIA_INFERENCE_API_KEY=nvapi-... bash test/e2e/test-cloud-onboard-e2e.sh
 
 set -uo pipefail
 
@@ -88,6 +88,12 @@ PUBLIC_INSTALL_CWD="${NEMOCLAW_PUBLIC_INSTALL_CWD:-}"
 . "${E2E_DIR}/lib/sandbox-teardown.sh"
 # shellcheck source=test/e2e/lib/install-path-refresh.sh
 . "${E2E_DIR}/lib/install-path-refresh.sh"
+# shellcheck source=test/e2e/lib/ci-compatible-inference.sh
+. "${E2E_DIR}/lib/ci-compatible-inference.sh"
+nemoclaw_e2e_configure_compatible_inference
+if nemoclaw_e2e_using_compatible_inference; then
+  CLOUD_MODEL="$(nemoclaw_e2e_hosted_inference_model)"
+fi
 register_sandbox_for_teardown "$SANDBOX_NAME"
 
 # ══════════════════════════════════════════════════════════════════════
@@ -111,17 +117,16 @@ else
   exit 1
 fi
 
-if [ -n "${NVIDIA_API_KEY:-}" ] && [[ "${NVIDIA_API_KEY}" == nvapi-* ]]; then
-  pass "NVIDIA_API_KEY is set (starts with nvapi-)"
-else
-  fail "NVIDIA_API_KEY not set or invalid — required for cloud onboard"
+if ! nemoclaw_e2e_require_hosted_inference_key; then
   exit 1
 fi
 
-if curl -sf --max-time 10 https://integrate.api.nvidia.com/v1/models >/dev/null 2>&1; then
-  pass "Network access to integrate.api.nvidia.com"
+HOSTED_INFERENCE_BASE_URL="$(nemoclaw_e2e_hosted_inference_base_url)"
+
+if nemoclaw_e2e_probe_hosted_inference; then
+  pass "Network access to ${HOSTED_INFERENCE_BASE_URL}"
 else
-  fail "Cannot reach integrate.api.nvidia.com"
+  fail "Cannot reach ${HOSTED_INFERENCE_BASE_URL}"
   exit 1
 fi
 
@@ -152,8 +157,8 @@ section "Phase 3: Install via public URL"
 
 export NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME"
 export NEMOCLAW_EXPERIMENTAL=1
-export NEMOCLAW_PROVIDER=cloud
-export NEMOCLAW_MODEL="$CLOUD_MODEL"
+export NEMOCLAW_PROVIDER="${NEMOCLAW_PROVIDER:-cloud}"
+export NEMOCLAW_MODEL="${NEMOCLAW_MODEL:-$CLOUD_MODEL}"
 export NEMOCLAW_POLICY_MODE="${NEMOCLAW_POLICY_MODE:-custom}"
 export NEMOCLAW_POLICY_PRESETS="${NEMOCLAW_POLICY_PRESETS:-npm,pypi}"
 
@@ -275,7 +280,12 @@ fi
 # ══════════════════════════════════════════════════════════════════════
 section "Phase 4: Sandbox checks (Landlock, security, inference.local)"
 
-export SANDBOX_NAME CLOUD_EXPERIMENTAL_MODEL="$CLOUD_MODEL" REPO NVIDIA_API_KEY
+if nemoclaw_e2e_using_compatible_inference; then
+  export NEMOCLAW_E2E_CLOUD_API_KEY_ENV=COMPATIBLE_API_KEY
+else
+  export NEMOCLAW_E2E_CLOUD_API_KEY_ENV=NVIDIA_INFERENCE_API_KEY
+fi
+export SANDBOX_NAME CLOUD_EXPERIMENTAL_MODEL="$CLOUD_MODEL" REPO NVIDIA_INFERENCE_API_KEY COMPATIBLE_API_KEY
 export PATH="/usr/local/bin:${HOME}/.local/bin:${PATH}"
 
 shopt -s nullglob

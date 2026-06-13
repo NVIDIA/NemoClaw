@@ -22,6 +22,20 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.resetModules();
   vi.unstubAllEnvs();
+  for (const key of [
+    "NVIDIA_INFERENCE_API_KEY",
+    "NVIDIA_API_KEY",
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "GEMINI_API_KEY",
+    "COMPATIBLE_API_KEY",
+    "COMPATIBLE_ANTHROPIC_API_KEY",
+    "TEST_RESOLVE_KEY",
+    "TEST_BOTH_KEY",
+    "NONEXISTENT_KEY",
+  ]) {
+    delete process.env[key];
+  }
   for (const dir of tmpFixtures.splice(0)) {
     try {
       fs.rmSync(dir, { recursive: true, force: true });
@@ -65,7 +79,11 @@ describe("resolveProviderCredential — canonical credential resolution (#2306)"
 
   // Parametric: all 6 remote providers
   const providers = [
-    { name: "NVIDIA Endpoints", credentialEnv: "NVIDIA_API_KEY", value: "nvapi-test-resolve" },
+    {
+      name: "NVIDIA Endpoints",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      value: "nvapi-test-resolve",
+    },
     { name: "OpenAI", credentialEnv: "OPENAI_API_KEY", value: "sk-test-resolve" },
     { name: "Anthropic", credentialEnv: "ANTHROPIC_API_KEY", value: "sk-ant-test-resolve" },
     { name: "Google Gemini", credentialEnv: "GEMINI_API_KEY", value: "gemini-test-resolve" },
@@ -118,17 +136,45 @@ describe("resolveProviderCredential — canonical credential resolution (#2306)"
   });
 
   it("stages legacy credentials through the resolver without deleting the legacy file", async () => {
-    const tmpDir = createFixtureHome("NVIDIA_API_KEY", "nvapi-staged-only");
+    const tmpDir = createFixtureHome("NVIDIA_INFERENCE_API_KEY", "nvapi-staged-only");
     const legacyFile = path.join(tmpDir, ".nemoclaw", "credentials.json");
+    delete process.env["NVIDIA_INFERENCE_API_KEY"];
+
+    const credentials = await importCredentialsModule(tmpDir);
+    const result = credentials.resolveProviderCredential("NVIDIA_INFERENCE_API_KEY");
+
+    expect(result).toBe("nvapi-staged-only");
+    expect(process.env["NVIDIA_INFERENCE_API_KEY"]).toBe("nvapi-staged-only");
+    // Generic lookup cannot prove every legacy value reached the gateway.
+    // Only onboard's verified migration gate may remove this plaintext file.
+    expect(fs.existsSync(legacyFile)).toBe(true);
+  });
+
+  it("maps legacy NVIDIA_API_KEY env to NVIDIA_INFERENCE_API_KEY", async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-2306-env-alias-"));
+    tmpFixtures.push(tmpDir);
+    delete process.env["NVIDIA_INFERENCE_API_KEY"];
+    vi.stubEnv("NVIDIA_API_KEY", "nvapi-legacy-env");
+
+    const credentials = await importCredentialsModule(tmpDir);
+    const result = credentials.resolveProviderCredential("NVIDIA_INFERENCE_API_KEY");
+
+    expect(result).toBe("nvapi-legacy-env");
+    expect(process.env["NVIDIA_INFERENCE_API_KEY"]).toBe("nvapi-legacy-env");
+  });
+
+  it("maps legacy NVIDIA_API_KEY credentials.json entries to NVIDIA_INFERENCE_API_KEY", async () => {
+    const tmpDir = createFixtureHome("NVIDIA_API_KEY", "nvapi-legacy-file");
+    const legacyFile = path.join(tmpDir, ".nemoclaw", "credentials.json");
+    delete process.env["NVIDIA_INFERENCE_API_KEY"];
     delete process.env["NVIDIA_API_KEY"];
 
     const credentials = await importCredentialsModule(tmpDir);
-    const result = credentials.resolveProviderCredential("NVIDIA_API_KEY");
+    const result = credentials.resolveProviderCredential("NVIDIA_INFERENCE_API_KEY");
 
-    expect(result).toBe("nvapi-staged-only");
-    expect(process.env["NVIDIA_API_KEY"]).toBe("nvapi-staged-only");
-    // Generic lookup cannot prove every legacy value reached the gateway.
-    // Only onboard's verified migration gate may remove this plaintext file.
+    expect(result).toBe("nvapi-legacy-file");
+    expect(process.env["NVIDIA_INFERENCE_API_KEY"]).toBe("nvapi-legacy-file");
+    expect(process.env["NVIDIA_API_KEY"]).toBe("nvapi-legacy-file");
     expect(fs.existsSync(legacyFile)).toBe(true);
   });
 
@@ -145,21 +191,21 @@ describe("resolveProviderCredential — canonical credential resolution (#2306)"
   });
 
   it("normalizes whitespace and carriage returns", async () => {
-    // Uses an allowlisted env-key (`NVIDIA_API_KEY`) so the value can
+    // Uses an allowlisted env-key (`NVIDIA_INFERENCE_API_KEY`) so the value can
     // actually be staged from the legacy file. The post-#2554 staging
     // helper rejects entries that aren't in `KNOWN_CREDENTIAL_ENV_KEYS`,
     // which is the security guard that prevents a tampered
     // credentials.json from injecting unrelated env vars (e.g. `PATH`,
     // `NODE_OPTIONS`); the original test fixture used a fake
     // `TEST_WHITESPACE_KEY` that is correctly filtered out.
-    const tmpDir = createFixtureHome("NVIDIA_API_KEY", "  nvapi-whitespace-test \r\n");
+    const tmpDir = createFixtureHome("NVIDIA_INFERENCE_API_KEY", "  nvapi-whitespace-test \r\n");
 
     const credentials = await importCredentialsModule(tmpDir);
-    delete process.env["NVIDIA_API_KEY"];
-    const result = credentials.resolveProviderCredential("NVIDIA_API_KEY");
+    delete process.env["NVIDIA_INFERENCE_API_KEY"];
+    const result = credentials.resolveProviderCredential("NVIDIA_INFERENCE_API_KEY");
 
     expect(result).toBe("nvapi-whitespace-test");
-    expect(process.env["NVIDIA_API_KEY"]).toBe("nvapi-whitespace-test");
+    expect(process.env["NVIDIA_INFERENCE_API_KEY"]).toBe("nvapi-whitespace-test");
   });
 
   it("does not pollute process.env on null resolve", async () => {

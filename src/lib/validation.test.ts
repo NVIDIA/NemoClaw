@@ -340,7 +340,7 @@ describe("validateNvidiaApiKeyValue", () => {
     expect(validateNvidiaApiKeyValue("sk-abc123")).toBeTruthy();
   });
 
-  it("accepts non-nvapi keys when credentialEnv is not NVIDIA_API_KEY", () => {
+  it("accepts non-nvapi keys when credentialEnv is not NVIDIA_INFERENCE_API_KEY", () => {
     expect(validateNvidiaApiKeyValue("sk-ant-abc123", "ANTHROPIC_API_KEY")).toBeNull();
     expect(validateNvidiaApiKeyValue("sk-openai-xyz", "OPENAI_API_KEY")).toBeNull();
     expect(validateNvidiaApiKeyValue("AIza-gemini", "GEMINI_API_KEY")).toBeNull();

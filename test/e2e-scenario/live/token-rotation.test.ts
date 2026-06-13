@@ -255,7 +255,7 @@ function assertTokenPairsDiffer(): void {
 function redactionValues(): string[] {
   return [
     "token-rotation-compatible-e2e",
-    process.env.NVIDIA_API_KEY,
+    process.env.NVIDIA_INFERENCE_API_KEY,
     process.env.GITHUB_TOKEN,
     ...Object.values(TOKEN_A),
     ...Object.values(TOKEN_B),
@@ -399,7 +399,7 @@ liveTest(
         resources: [
           "Docker",
           "install.sh/OpenShell",
-          "NVIDIA_API_KEY or fake OpenAI-compatible endpoint",
+          "NVIDIA_INFERENCE_API_KEY or fake OpenAI-compatible endpoint",
           "fake messaging tokens",
         ],
       },

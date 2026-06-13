@@ -821,12 +821,18 @@ export function startNimContainerByName(
     process.exit(1);
   }
 
-  // Resolve the NGC key: explicit arg wins, then NGC_API_KEY, then NVIDIA_API_KEY
+  // Resolve the NGC key: explicit arg wins, then NGC_API_KEY, then NVIDIA_INFERENCE_API_KEY,
+  // then the legacy NVIDIA_API_KEY alias.
   // (covers users who only set the NVIDIA key for cloud inference but reuse it
   // against NGC). Without this, NIM's in-container model-manifest download
   // returns "Authentication Error" and the container exits 0 a few seconds in.
   // Regression of #210 — see #3333.
-  const ngcApiKey = opts.ngcApiKey ?? process.env.NGC_API_KEY ?? process.env.NVIDIA_API_KEY ?? "";
+  const ngcApiKey =
+    opts.ngcApiKey ??
+    process.env.NGC_API_KEY ??
+    process.env.NVIDIA_INFERENCE_API_KEY ??
+    process.env.NVIDIA_API_KEY ??
+    "";
   // Use `-e KEY` (no value) so the secret never appears in argv; pass the
   // value through the spawn env instead. Docker reads each named var from
   // its own process env and forwards it to the container.

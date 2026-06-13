@@ -22,20 +22,20 @@
 #
 # Prerequisites:
 #   - Docker running
-#   - NVIDIA_API_KEY set (real key, starts with nvapi-)
-#   - Network access to integrate.api.nvidia.com
+#   - NVIDIA_INFERENCE_API_KEY set (real key, starts with nvapi-)
+#   - Network access to inference-api.nvidia.com
 #
 # Environment variables:
 #   NEMOCLAW_NON_INTERACTIVE=1             — required
 #   NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 — required
-#   NVIDIA_API_KEY                         — required for real NVIDIA Endpoints inference
+#   NVIDIA_INFERENCE_API_KEY                         — required for real NVIDIA Endpoints inference
 #   NEMOCLAW_SANDBOX_NAME                  — sandbox name (default: e2e-survival)
 #   NEMOCLAW_E2E_TIMEOUT_SECONDS           — overall timeout (default: 900)
 #
 # Usage:
 #   NEMOCLAW_NON_INTERACTIVE=1 \
 #   NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
-#   NVIDIA_API_KEY=nvapi-... \
+#   NVIDIA_INFERENCE_API_KEY=nvapi-... \
 #     bash test/e2e/test-sandbox-survival.sh
 
 set -uo pipefail
@@ -207,17 +207,17 @@ else
   exit 1
 fi
 
-if [ -n "${NVIDIA_API_KEY:-}" ] && [[ "${NVIDIA_API_KEY}" == nvapi-* ]]; then
-  pass "NVIDIA_API_KEY is set (starts with nvapi-)"
+if [ -n "${NVIDIA_INFERENCE_API_KEY:-}" ] && [[ "${NVIDIA_INFERENCE_API_KEY}" == nvapi-* ]]; then
+  pass "NVIDIA_INFERENCE_API_KEY is set (starts with nvapi-)"
 else
-  fail "NVIDIA_API_KEY not set or invalid — required for live inference"
+  fail "NVIDIA_INFERENCE_API_KEY not set or invalid — required for live inference"
   exit 1
 fi
 
-if curl -sf --max-time 10 https://integrate.api.nvidia.com/v1/models >/dev/null 2>&1; then
-  pass "Network access to integrate.api.nvidia.com"
+if curl -sf --max-time 10 https://inference-api.nvidia.com/v1/models >/dev/null 2>&1; then
+  pass "Network access to inference-api.nvidia.com"
 else
-  fail "Cannot reach integrate.api.nvidia.com"
+  fail "Cannot reach inference-api.nvidia.com"
   exit 1
 fi
 

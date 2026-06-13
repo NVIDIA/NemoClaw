@@ -75,16 +75,6 @@ network_policies:
           - allow: { method: POST, path: "/v1/embeddings" }
           - allow: { method: GET, path: "/v1/models" }
           - allow: { method: GET, path: "/v1/models/**" }
-      - host: inference-api.nvidia.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        rules:
-          - allow: { method: POST, path: "/v1/chat/completions" }
-          - allow: { method: POST, path: "/v1/completions" }
-          - allow: { method: POST, path: "/v1/embeddings" }
-          - allow: { method: GET, path: "/v1/models" }
-          - allow: { method: GET, path: "/v1/models/**" }
     binaries:
       - { path: /usr/local/bin/hermes }
       - { path: /usr/bin/python3* }
