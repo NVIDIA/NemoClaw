@@ -11,7 +11,13 @@
  * warning path, restore the env file, and soak for crash-loop churn.
  */
 
+import http from "node:http";
+import type { AddressInfo } from "node:net";
+
+import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import type { HostCliClient } from "../fixtures/clients/index.ts";
+import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import type { NemoClawInstance } from "../fixtures/phases/onboarding.ts";
 import { ubuntuRepoDocker } from "../scenarios/matrix.ts";
@@ -20,6 +26,14 @@ const ENVIRONMENT = ubuntuRepoDocker("cloud-openclaw");
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-2478";
 const CRASH_CYCLES = positiveInteger(process.env.NEMOCLAW_E2E_CRASH_CYCLES, 5);
 const SOAK_SECONDS = positiveInteger(process.env.NEMOCLAW_E2E_SOAK_SECONDS, 300);
+const COMPATIBLE_MODEL = process.env.NEMOCLAW_COMPAT_MODEL ?? "test-model";
+const COMPATIBLE_AUTH_VALUE = ["nemoclaw", "e2e", "compatible", "mock"].join("-");
+const ONBOARD_ARGS = [
+  "onboard",
+  "--non-interactive",
+  "--yes",
+  "--yes-i-accept-third-party-software",
+];
 
 function positiveInteger(raw: string | undefined, fallback: number): number {
   const parsed = raw ? Number(raw) : fallback;
@@ -30,6 +44,163 @@ function probeEnv(): NodeJS.ProcessEnv {
   return {
     ...buildAvailabilityProbeEnv(),
     OPENSHELL_GATEWAY: process.env.OPENSHELL_GATEWAY ?? "nemoclaw",
+  };
+}
+
+interface FakeOpenAiEndpoint {
+  baseUrl: string;
+  close: () => Promise<void>;
+  requests: () => readonly string[];
+}
+
+function jsonResponse(response: http.ServerResponse, status: number, body: unknown): void {
+  const payload = JSON.stringify(body);
+  response.writeHead(status, {
+    "content-type": "application/json",
+    "content-length": Buffer.byteLength(payload),
+  });
+  response.end(payload);
+}
+
+async function startCompatibleEndpointMock(artifacts: ArtifactSink): Promise<FakeOpenAiEndpoint> {
+  const requests: string[] = [];
+  const server = http.createServer((request, response) => {
+    const chunks: Buffer[] = [];
+    request.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+    request.on("end", () => {
+      const requestPath = request.url?.split("?", 1)[0] ?? "/";
+      const rawBody = Buffer.concat(chunks).toString("utf8");
+      requests.push(`${request.method ?? "GET"} ${requestPath} ${rawBody}`.slice(0, 1_000));
+
+      if (request.method === "GET" && ["/v1/models", "/models"].includes(requestPath)) {
+        jsonResponse(response, 200, {
+          object: "list",
+          data: [{ id: COMPATIBLE_MODEL, object: "model" }],
+        });
+        return;
+      }
+
+      if (
+        request.method === "POST" &&
+        ["/v1/chat/completions", "/chat/completions"].includes(requestPath)
+      ) {
+        jsonResponse(response, 200, {
+          id: "chatcmpl-2478-mock",
+          object: "chat.completion",
+          choices: [
+            {
+              index: 0,
+              message: { role: "assistant", content: "OK" },
+              finish_reason: "stop",
+            },
+          ],
+        });
+        return;
+      }
+
+      if (request.method === "POST" && ["/v1/responses", "/responses"].includes(requestPath)) {
+        jsonResponse(response, 200, {
+          id: "resp-2478-mock",
+          object: "response",
+          output: [
+            {
+              type: "message",
+              role: "assistant",
+              content: [{ type: "output_text", text: "OK" }],
+            },
+          ],
+        });
+        return;
+      }
+
+      jsonResponse(response, 404, { error: { message: "not found" } });
+    });
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "0.0.0.0", () => {
+      server.off("error", reject);
+      resolve();
+    });
+  });
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("issue-2478 compatible endpoint mock did not bind to a TCP port");
+  }
+  const port = (address as AddressInfo).port;
+  const baseUrl = `http://host.openshell.internal:${port}/v1`;
+  await artifacts.writeJson("compatible-endpoint-mock.json", {
+    baseUrl,
+    model: COMPATIBLE_MODEL,
+  });
+
+  return {
+    baseUrl,
+    requests: () => requests,
+    close: () =>
+      new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      }),
+  };
+}
+
+async function cleanupSandbox(host: HostCliClient, sandboxName: string): Promise<void> {
+  const result = await host.nemoclaw([sandboxName, "destroy", "--yes"], {
+    artifactName: `cleanup-destroy-${sandboxName}`,
+    env: probeEnv(),
+    timeoutMs: 15 * 60_000,
+  });
+  if (result.exitCode === 0) return;
+  const text = [result.stdout, result.stderr].filter(Boolean).join("\n");
+  if (
+    /Sandbox '.+' does not exist|Run 'nemoclaw onboard' to create one|sandbox .* not found|no such sandbox/i.test(
+      text,
+    )
+  ) {
+    return;
+  }
+  expect(result.exitCode, `cleanup destroy sandbox ${sandboxName}\n${text}`).toBe(0);
+}
+
+async function onboardWithCompatibleEndpoint(
+  host: HostCliClient,
+  cleanup: CleanupRegistry,
+  sandboxName: string,
+  endpoint: FakeOpenAiEndpoint,
+): Promise<NemoClawInstance> {
+  await cleanupSandbox(host, sandboxName);
+  const result = await host.nemoclaw(ONBOARD_ARGS, {
+    artifactName: "onboard-compatible-openclaw",
+    env: {
+      ...probeEnv(),
+      COMPATIBLE_API_KEY: COMPATIBLE_AUTH_VALUE,
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+      NEMOCLAW_AGENT: "openclaw",
+      NEMOCLAW_ENDPOINT_URL: endpoint.baseUrl,
+      NEMOCLAW_MODEL: COMPATIBLE_MODEL,
+      NEMOCLAW_NON_INTERACTIVE: "1",
+      NEMOCLAW_PROVIDER: "custom",
+      NEMOCLAW_SANDBOX_NAME: sandboxName,
+    },
+    redactionValues: [COMPATIBLE_AUTH_VALUE],
+    timeoutMs: 15 * 60_000,
+  });
+  expect(
+    result.exitCode,
+    `compatible OpenClaw onboard failed\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+  ).toBe(0);
+  cleanup.add(`destroy NemoClaw sandbox ${sandboxName}`, () => cleanupSandbox(host, sandboxName));
+
+  return {
+    onboarding: "cloud-openclaw",
+    sandboxName,
+    agent: "openclaw",
+    provider: "nvidia",
+    providerEnv: "cloud",
+    gatewayUrl: "http://127.0.0.1:18789",
+    result,
   };
 }
 
@@ -308,23 +479,33 @@ test("issue-2478: gateway recovery preserves guard chain and avoids crash loop",
   environment,
   gateway,
   host,
-  onboard,
   runtime,
   sandbox,
-  secrets,
 }) => {
-  secrets.required("NVIDIA_INFERENCE_API_KEY");
-
   await artifacts.writeJson("scenario.json", {
     id: "issue-2478-crash-loop-recovery",
     legacyScript: "test/e2e/test-issue-2478-crash-loop-recovery.sh",
     issues: ["#2478", "#2701"],
     crashCycles: CRASH_CYCLES,
     soakSeconds: SOAK_SECONDS,
+    compatibleEndpointModel: COMPATIBLE_MODEL,
   });
 
-  const ready = await environment.assertReady(ENVIRONMENT);
-  const instance = await onboard.from(ready, { sandboxName: SANDBOX_NAME });
+  const compatibleEndpoint = await startCompatibleEndpointMock(artifacts);
+  cleanup.add("stop issue-2478 compatible endpoint mock", async () => {
+    await artifacts.writeJson("compatible-endpoint-mock-requests.json", [
+      ...compatibleEndpoint.requests(),
+    ]);
+    await compatibleEndpoint.close();
+  });
+
+  await environment.assertReady(ENVIRONMENT);
+  const instance = await onboardWithCompatibleEndpoint(
+    host,
+    cleanup,
+    SANDBOX_NAME,
+    compatibleEndpoint,
+  );
   cleanup.add(`final guard-chain diagnostics ${instance.sandboxName}`, async () => {
     const pid = await gateway.resolveGatewayPid(instance);
     await artifacts.writeJson("final-gateway-pid.json", { pid });

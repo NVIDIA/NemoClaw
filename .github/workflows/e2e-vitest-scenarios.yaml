@@ -841,7 +841,6 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-
   credential-sanitization-vitest:
     needs: generate-matrix
     if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',credential-sanitization-vitest,') || contains(format(',{0},', inputs.scenarios), ',credential-sanitization,') }}
@@ -926,7 +925,6 @@ jobs:
         shell: bash
         run: |
           docker logout docker.io >/dev/null 2>&1 || true
-
 
   credential-migration-vitest:
     needs: generate-matrix
@@ -2588,8 +2586,6 @@ jobs:
         run: bash scripts/install-openshell.sh
 
       - name: "Run issue #2478 crash-loop recovery live Vitest test"
-        env:
-          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
@@ -2666,8 +2662,8 @@ jobs:
         openclaw-tui-chat-correlation-vitest,
         gateway-guard-recovery,
         issue-4434-tui-unreachable-inference-vitest,
-        openclaw-inference-switch-vitest,        issue-2478-crash-loop-recovery-vitest,
-
+        openclaw-inference-switch-vitest,
+        issue-2478-crash-loop-recovery-vitest,
       ]
     if: ${{ always() && github.event_name == 'workflow_dispatch' }}
     permissions:
