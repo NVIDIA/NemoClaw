@@ -16,7 +16,7 @@
 #
 # Prerequisites:
 #   - Docker running
-#   - NVIDIA_API_KEY set (or fake OpenAI endpoint)
+#   - NVIDIA_INFERENCE_API_KEY set (or CI-compatible inference env)
 #   - TELEGRAM_BOT_TOKEN_A and TELEGRAM_BOT_TOKEN_B set (can be fake)
 #   - DISCORD_BOT_TOKEN_A and DISCORD_BOT_TOKEN_B set (can be fake)
 #   - SLACK_BOT_TOKEN_A and SLACK_BOT_TOKEN_B set (can be fake; xoxb- prefix)
@@ -24,7 +24,7 @@
 #
 # Usage:
 #   NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
-#     NVIDIA_API_KEY=nvapi-... \
+#     NVIDIA_INFERENCE_API_KEY=nvapi-... \
 #     TELEGRAM_BOT_TOKEN_A=fake-a TELEGRAM_BOT_TOKEN_B=fake-b \
 #     DISCORD_BOT_TOKEN_A=fake-c DISCORD_BOT_TOKEN_B=fake-d \
 #     SLACK_BOT_TOKEN_A=xoxb-fake-a SLACK_BOT_TOKEN_B=xoxb-fake-b \
@@ -37,6 +37,8 @@ export NEMOCLAW_E2E_DEFAULT_TIMEOUT=2400
 SCRIPT_DIR_TIMEOUT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # shellcheck source=test/e2e/e2e-timeout.sh
 source "${SCRIPT_DIR_TIMEOUT}/e2e-timeout.sh"
+# shellcheck source=test/e2e/lib/ci-compatible-inference.sh
+. "${SCRIPT_DIR_TIMEOUT}/lib/ci-compatible-inference.sh"
 
 PASS=0
 FAIL=0
@@ -94,6 +96,8 @@ fi
 SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-token-rotation}"
 REGISTRY="$HOME/.nemoclaw/sandboxes.json"
 INSTALL_LOG="/tmp/nemoclaw-e2e-install.log"
+
+nemoclaw_e2e_configure_compatible_inference
 
 # ── Prerequisite checks ──────────────────────────────────────────
 

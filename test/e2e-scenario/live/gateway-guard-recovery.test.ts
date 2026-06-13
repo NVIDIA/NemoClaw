@@ -72,7 +72,7 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
   secrets,
   cleanup,
 }) => {
-  secrets.required("NVIDIA_API_KEY");
+  secrets.required("NVIDIA_INFERENCE_API_KEY");
 
   await artifacts.writeJson("scenario.json", {
     id: "gateway-guard-recovery",

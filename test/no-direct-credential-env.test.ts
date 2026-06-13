@@ -19,11 +19,13 @@ import { findDirectCredentialEnvReads } from "../scripts/checks/direct-credentia
 describe("direct credential env guard", () => {
   it.each([
     // Assignments (write context) — allowed
+    'process.env.NVIDIA_INFERENCE_API_KEY = "test";',
     'process.env.NVIDIA_API_KEY = "test";',
     "process.env.OPENAI_API_KEY = value;",
     "process.env[credentialEnv] = providerKey;",
 
     // Deletions (write context) — allowed
+    "delete process.env.NVIDIA_INFERENCE_API_KEY;",
     "delete process.env.NVIDIA_API_KEY;",
     "delete process.env.ANTHROPIC_API_KEY;",
 
@@ -36,25 +38,26 @@ describe("direct credential env guard", () => {
     "const x = process.env.NEMOCLAW_PROVIDER_KEY;",
 
     // Correct patterns — allowed
-    'const key = getCredential("NVIDIA_API_KEY");',
-    'const key = resolveProviderCredential("NVIDIA_API_KEY");',
+    'const key = getCredential("NVIDIA_INFERENCE_API_KEY");',
+    'const key = resolveProviderCredential("NVIDIA_INFERENCE_API_KEY");',
 
     // Bracketed string-literal assignments — allowed
-    'process.env["NVIDIA_API_KEY"] = "test";',
+    'process.env["NVIDIA_INFERENCE_API_KEY"] = "test";',
 
     // Dynamic access with non-credential variable name — allowed
     "const x = process.env[someKey];",
     "const x = process.env[envName];",
 
     // Explicitly suppressed raw-env reads — allowed
-    "// check-direct-credential-env-ignore -- raw env check required\nconst key = process.env.NVIDIA_API_KEY;",
-    "// no-direct-credential-env -- backward-compatible suppression\nconst key = process.env.NVIDIA_API_KEY;",
+    "// check-direct-credential-env-ignore -- raw env check required\nconst key = process.env.NVIDIA_INFERENCE_API_KEY;",
+    "// no-direct-credential-env -- backward-compatible suppression\nconst key = process.env.NVIDIA_INFERENCE_API_KEY;",
   ])("allows %s", (code) => {
     expect(findDirectCredentialEnvReads(code)).toEqual([]);
   });
 
   it.each([
     // Static reads of known credential keys
+    ["const key = process.env.NVIDIA_INFERENCE_API_KEY;", "NVIDIA_INFERENCE_API_KEY"],
     ["const key = process.env.NVIDIA_API_KEY;", "NVIDIA_API_KEY"],
     ["const key = process.env.OPENAI_API_KEY;", "OPENAI_API_KEY"],
     ["const key = process.env.ANTHROPIC_API_KEY;", "ANTHROPIC_API_KEY"],
@@ -63,9 +66,11 @@ describe("direct credential env guard", () => {
     ["const key = process.env.COMPATIBLE_ANTHROPIC_API_KEY;", "COMPATIBLE_ANTHROPIC_API_KEY"],
 
     // Conditional check (read context)
+    ["if (!process.env.NVIDIA_INFERENCE_API_KEY) {}", "NVIDIA_INFERENCE_API_KEY"],
     ["if (!process.env.NVIDIA_API_KEY) {}", "NVIDIA_API_KEY"],
 
     // Bracketed string-literal reads
+    ['const key = process.env["NVIDIA_INFERENCE_API_KEY"];', "NVIDIA_INFERENCE_API_KEY"],
     ['const key = process.env["NVIDIA_API_KEY"];', "NVIDIA_API_KEY"],
     ['if (!process.env["OPENAI_API_KEY"]) {}', "OPENAI_API_KEY"],
 
@@ -75,8 +80,8 @@ describe("direct credential env guard", () => {
 
     // Suppression token inside non-comment text must not suppress.
     [
-      "const marker = 'no-direct-credential-env';\nconst key = process.env.NVIDIA_API_KEY;",
-      "NVIDIA_API_KEY",
+      "const marker = 'no-direct-credential-env';\nconst key = process.env.NVIDIA_INFERENCE_API_KEY;",
+      "NVIDIA_INFERENCE_API_KEY",
     ],
   ])("flags %s", (code, key) => {
     expect(findDirectCredentialEnvReads(code)).toMatchObject([{ key }]);
