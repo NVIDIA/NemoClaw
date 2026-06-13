@@ -230,9 +230,15 @@ function stageHostedInferenceSourceSecretEnv() {
   };
   const normalizedProvider = aliases[rawProvider] || rawProvider;
   const hostedFlag = (process.env.NEMOCLAW_E2E_USE_HOSTED_INFERENCE || "").trim() === "1";
-  const shouldStage =
-    normalizedProvider === "custom" ||
-    (!normalizedProvider && (hostedFlag || !sourceKey.startsWith("nvapi-")));
+  const compatibleKey = normalizeCredentialValue(
+    process.env[HOSTED_INFERENCE_CREDENTIAL_ENV] ?? "",
+  );
+  const explicitHostedCustom =
+    normalizedProvider === "custom" &&
+    (hostedFlag || (!compatibleKey && !sourceKey.startsWith("nvapi-")));
+  const implicitHostedCustom =
+    !normalizedProvider && (hostedFlag || !sourceKey.startsWith("nvapi-"));
+  const shouldStage = explicitHostedCustom || implicitHostedCustom;
 
   if (!shouldStage) return false;
 

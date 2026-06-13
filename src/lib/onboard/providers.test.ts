@@ -323,6 +323,22 @@ describe("onboard provider helpers", () => {
     );
   });
 
+  it("preserves explicit custom provider credentials when NVIDIA_INFERENCE_API_KEY is unrelated", () => {
+    withProviderEnv(
+      {
+        COMPATIBLE_API_KEY: "custom-endpoint-key",
+        NVIDIA_INFERENCE_API_KEY: "repo-hosted-key",
+        NEMOCLAW_PROVIDER: "custom",
+      },
+      () => {
+        expect(stageHostedInferenceSourceSecretEnv()).toBe(false);
+        expect(getRequestedProviderHint(true)).toBe("custom");
+        expect(process.env.COMPATIBLE_API_KEY).toBe("custom-endpoint-key");
+        expect(process.env.NEMOCLAW_ENDPOINT_URL).toBeUndefined();
+      },
+    );
+  });
+
   it("returns redacted error details when create or update fails", () => {
     const result = upsertProvider("bad-provider", "generic", "SOME_KEY", null, {}, (command) => {
       if (command.includes("get")) return { status: 1, stdout: "", stderr: "" };

@@ -221,7 +221,7 @@ jobs:
           set -euo pipefail
 
           if [ -z "${NVIDIA_INFERENCE_API_KEY:-}" ]; then
-            echo "::error::NVIDIA_INFERENCE_API_KEY secret is required for hosted CI inference." >&2
+            echo "::error::NVIDIA_INFERENCE_API_KEY secret is required for hosted CI inference; it is withheld for workflow_dispatch target_ref runs." >&2
             exit 1
           fi
 
