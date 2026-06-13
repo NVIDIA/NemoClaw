@@ -552,6 +552,18 @@ describe("E2E reusable workflow contract", () => {
     }
   });
 
+  it("routes legacy token rotation through the CI compatible inference endpoint", () => {
+    const runStep = nightlyWorkflow.jobs["token-rotation-e2e"].steps?.find(
+      (step) => step.name === "Run token rotation E2E test",
+    );
+    const script = readFileSync(new URL("./e2e/test-token-rotation.sh", import.meta.url), "utf8");
+
+    expect(runStep?.env?.NVIDIA_INFERENCE_API_KEY).toBe("${{ secrets.NVIDIA_INFERENCE_API_KEY }}");
+    expect(runStep?.env?.NEMOCLAW_E2E_USE_NVIDIA_SECRET_AS_COMPATIBLE).toBe("1");
+    expect(script).toContain("lib/ci-compatible-inference.sh");
+    expect(script).toContain("nemoclaw_e2e_configure_compatible_inference");
+  });
+
   it("keeps converted jobs dispatchable through the reusable workflow", () => {
     const cloudJob = nightlyWorkflow.jobs["cloud-e2e"];
 

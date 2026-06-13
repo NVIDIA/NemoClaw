@@ -956,6 +956,7 @@ jobs:
       - name: Run token rotation E2E test
         env:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
+          NEMOCLAW_E2E_USE_NVIDIA_SECRET_AS_COMPATIBLE: "1"
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
           NEMOCLAW_POLICY_TIER: "open"
