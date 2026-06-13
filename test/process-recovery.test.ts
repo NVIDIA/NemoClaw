@@ -353,9 +353,7 @@ hermes-box  127.0.0.1  8642  12346  running`;
       });
 
     expect(
-      withFakeOpenshellBinary(() =>
-        checkAndRecoverSandboxProcesses("hermes-box", { quiet: true }),
-      ),
+      withFakeOpenshellBinary(() => checkAndRecoverSandboxProcesses("hermes-box", { quiet: true })),
     ).toEqual({
       checked: true,
       wasRunning: true,
@@ -363,32 +361,28 @@ hermes-box  127.0.0.1  8642  12346  running`;
       forwardRecovered: true,
     });
 
-    const startedNonPrimary = runOpenshell.mock.calls.some(
-      ([rawArgs]) => {
-        const args = Array.isArray(rawArgs) ? rawArgs.map(String) : [];
-        return (
-          args[0] === "forward" &&
-          args[1] === "start" &&
-          args.includes("--background") &&
-          args.includes("8642") &&
-          args.includes("hermes-box")
-        );
-      },
-    );
+    const startedNonPrimary = runOpenshell.mock.calls.some(([rawArgs]) => {
+      const args = Array.isArray(rawArgs) ? rawArgs.map(String) : [];
+      return (
+        args[0] === "forward" &&
+        args[1] === "start" &&
+        args.includes("--background") &&
+        args.includes("8642") &&
+        args.includes("hermes-box")
+      );
+    });
     expect(startedNonPrimary).toBe(true);
 
-    const startedPrimary = runOpenshell.mock.calls.some(
-      ([rawArgs]) => {
-        const args = Array.isArray(rawArgs) ? rawArgs.map(String) : [];
-        return (
-          args[0] === "forward" &&
-          args[1] === "start" &&
-          args.includes("--background") &&
-          args.includes("18789") &&
-          args.includes("hermes-box")
-        );
-      },
-    );
+    const startedPrimary = runOpenshell.mock.calls.some(([rawArgs]) => {
+      const args = Array.isArray(rawArgs) ? rawArgs.map(String) : [];
+      return (
+        args[0] === "forward" &&
+        args[1] === "start" &&
+        args.includes("--background") &&
+        args.includes("18789") &&
+        args.includes("hermes-box")
+      );
+    });
     expect(startedPrimary).toBe(false);
   });
 });

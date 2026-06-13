@@ -433,17 +433,23 @@ function ensureHermesDashboardPortForwardIfEnabled(sandboxName: string): boolean
 
 /**
  * Re-establish every declared `forward_ports` entry on the active agent
- * manifest that is not the primary dashboard port. The primary dashboard
- * port is owned by `ensureSandboxPortForward`; the optional Hermes web
- * dashboard is owned by `ensureHermesDashboardPortForwardIfEnabled`. Any
- * remaining manifest-declared port (e.g. Hermes' OpenAI-compatible API on
- * 8642) would otherwise be silently dropped after a gateway restart and
- * never re-established by the recovery flow.
+ * manifest that is not already owned by another recovery helper. The
+ * primary dashboard port is owned by `ensureSandboxPortForward`; the
+ * optional Hermes web dashboard port (a registry-recorded per-sandbox
+ * override that the manifest cannot statically declare) is owned by
+ * `ensureHermesDashboardPortForwardIfEnabled`. Skipping both here keeps
+ * the helpers orthogonal and avoids issuing duplicate `forward start`
+ * calls when an operator pins the Hermes dashboard to one of the
+ * manifest-declared ports.
  *
- * Returns true when every non-primary declared port is healthy (probed or
+ * Without this helper, any remaining manifest-declared port (e.g.
+ * Hermes' OpenAI-compatible API on 8642) would be silently dropped after
+ * a gateway restart and never re-established by the recovery flow.
+ *
+ * Returns true when every covered declared port is healthy (probed or
  * re-established), false when at least one declared port could not be
- * re-established, and `null` when there is no active agent or no declared
- * non-primary ports to manage.
+ * re-established, and `null` when there is no active agent or no
+ * declared port left to manage after the skip set is applied.
  */
 function ensureDeclaredAgentForwardPortsHealthy(
   sandboxName: string,
@@ -453,13 +459,18 @@ function ensureDeclaredAgentForwardPortsHealthy(
   if (!agent) return null;
   const declared = (agent as { forward_ports?: unknown }).forward_ports;
   if (!Array.isArray(declared) || declared.length === 0) return null;
-  let sawNonPrimary = false;
+  const hermesDashboard = getHermesDashboardRecoveryConfig(sandboxName);
+  const skipSet = new Set<number>([primaryPort]);
+  if (hermesDashboard && Number.isInteger(hermesDashboard.publicPort)) {
+    skipSet.add(hermesDashboard.publicPort);
+  }
+  let sawCovered = false;
   let allHealthy = true;
   for (const candidate of declared) {
     if (typeof candidate !== "number") continue;
     if (!Number.isInteger(candidate) || candidate < 1 || candidate > 65535) continue;
-    if (candidate === primaryPort) continue;
-    sawNonPrimary = true;
+    if (skipSet.has(candidate)) continue;
+    sawCovered = true;
     const health = isSandboxPortForwardHealthy(sandboxName, candidate);
     if (health === true) continue;
     if (health === "occupied") {
@@ -470,7 +481,7 @@ function ensureDeclaredAgentForwardPortsHealthy(
       allHealthy = false;
     }
   }
-  if (!sawNonPrimary) return null;
+  if (!sawCovered) return null;
   return allHealthy;
 }
 
@@ -523,9 +534,7 @@ export function checkAndRecoverSandboxProcesses(
           );
         }
         if (declaredForwardsRecovered === false) {
-          console.error(
-            "  One or more agent-declared port forwards could not be re-established.",
-          );
+          console.error("  One or more agent-declared port forwards could not be re-established.");
         }
       }
       return {
