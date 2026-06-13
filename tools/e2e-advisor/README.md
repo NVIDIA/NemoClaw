@@ -59,7 +59,7 @@ workflow's `actions: write` permission, not this optional comment token.
 
 ## Artifacts
 
-- `e2e-advisor-prompt.md` — prompt sent to the advisor.
+- `e2e-advisor-prompt.md` — task prompt sent to the advisor. Diff, changed files, metadata, and schema are injected into the Pi session as deterministic synthetic tool results and captured in the session transcript.
 - `e2e-advisor-raw-output.txt` — raw advisor transcript and diagnostics.
 - `e2e-advisor-result.json` — parsed advisor response or execution metadata.
 - `e2e-advisor-session.html` — exported advisor session transcript.

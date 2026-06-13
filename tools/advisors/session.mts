@@ -19,6 +19,14 @@ export const DEFAULT_ADVISOR_MODEL = "openai/openai/gpt-5.5";
 export const READ_ONLY_TOOLS = ["read", "grep", "find", "ls"];
 
 const ZERO_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+const ZERO_USAGE = {
+  input: 0,
+  output: 0,
+  cacheRead: 0,
+  cacheWrite: 0,
+  totalTokens: 0,
+  cost: { ...ZERO_COST, total: 0 },
+};
 
 type AdvisorProviderConfig = Parameters<ModelRegistry["registerProvider"]>[1];
 
@@ -29,9 +37,32 @@ export type RunAdvisorResult = {
   turnTexts: string[];
 };
 
+export type AdvisorSyntheticToolContentType = "diff" | "json" | "text";
+
+export type AdvisorSyntheticToolResult = {
+  /** Synthetic assistant tool-call id. If omitted, runReadOnlyAdvisor derives a stable safe id. */
+  toolCallId?: string;
+  /** Specific synthetic tool name shown to the model and in session exports. */
+  toolName: string;
+  /** Human-readable label for artifacts/transcripts. Defaults to toolName. */
+  label?: string;
+  /** Text content attached to the matching synthetic tool result. */
+  content: string;
+  /** Content language/format for artifacts and fixed tool-call metadata. */
+  contentType: AdvisorSyntheticToolContentType;
+  /** Mark the synthetic tool result as an error. Defaults to false. */
+  isError?: boolean;
+};
+
 export type AdvisorPromptTurn = {
   name: string;
   prompt: string;
+  /**
+   * Deterministic context preloaded as fake assistant tool calls and matching tool results
+   * immediately before this user turn. This avoids relying on the model to request context
+   * tools that the advisor runner already knows are required.
+   */
+  syntheticToolResults?: AdvisorSyntheticToolResult[];
 };
 
 export type RunReadOnlyAdvisorOptions = {
@@ -102,6 +133,10 @@ export async function runReadOnlyAdvisor(
   });
   await resourceLoader.reload();
 
+  const sessionManager = SessionManager.create(
+    options.cwd,
+    path.join(options.configDir, "sessions"),
+  );
   const { session, modelFallbackMessage } = await createAgentSession({
     cwd: options.cwd,
     agentDir: options.configDir,
@@ -111,7 +146,7 @@ export async function runReadOnlyAdvisor(
     thinkingLevel: "medium",
     tools: READ_ONLY_TOOLS,
     resourceLoader,
-    sessionManager: SessionManager.create(options.cwd, path.join(options.configDir, "sessions")),
+    sessionManager,
     settingsManager,
   });
 
@@ -181,6 +216,15 @@ export async function runReadOnlyAdvisor(
       currentTurnText = new CappedBuffer(options.maxCaptureBytes);
       turnTextBuffers.push(currentTurnText);
       const turnIndex = `${index + 1}/${promptTurns.length}`;
+      injectSyntheticToolResults({
+        turn,
+        turnNumber: index + 1,
+        session,
+        sessionManager,
+        model,
+        logPrefix: options.logPrefix,
+        raw,
+      });
       raw.append(`\n[${options.logPrefix}] user_turn_start ${turnIndex} ${turn.name}\n`);
       options.logProgress(`Advisor SDK turn ${turnIndex}: ${turn.name}`);
       await Promise.race([session.prompt(turn.prompt), timeoutPromise]);
@@ -227,6 +271,7 @@ function normalizePromptTurns(promptTurns: AdvisorPromptTurn[]): AdvisorPromptTu
   return promptTurns.map((turn, index) => ({
     name: sanitizeTurnName(turn.name || `turn-${index + 1}`),
     prompt: turn.prompt,
+    syntheticToolResults: turn.syntheticToolResults,
   }));
 }
 
@@ -238,6 +283,117 @@ function sanitizeTurnName(name: string): string {
       .replace(/[^A-Za-z0-9._-]/g, "")
       .slice(0, 80) || "turn"
   );
+}
+
+type AdvisorSession = Awaited<ReturnType<typeof createAgentSession>>["session"];
+type AdvisorModel = NonNullable<ReturnType<ModelRegistry["find"]>>;
+type PersistableAdvisorMessage = Parameters<SessionManager["appendMessage"]>[0];
+
+function injectSyntheticToolResults({
+  turn,
+  turnNumber,
+  session,
+  sessionManager,
+  model,
+  logPrefix,
+  raw,
+}: {
+  turn: AdvisorPromptTurn;
+  turnNumber: number;
+  session: AdvisorSession;
+  sessionManager: SessionManager;
+  model: AdvisorModel;
+  logPrefix: string;
+  raw: CappedBuffer;
+}): void {
+  const syntheticResults = turn.syntheticToolResults ?? [];
+  if (syntheticResults.length === 0) return;
+
+  const usedIds = new Set<string>();
+  const normalized = syntheticResults.map((result, index) => {
+    const toolName = sanitizeToolName(result.toolName);
+    const toolCallId = uniqueToolCallId(
+      result.toolCallId || `${turnNumber}-${turn.name}-${index + 1}-${toolName}`,
+      usedIds,
+      index + 1,
+    );
+    return { ...result, toolName, toolCallId, label: result.label || result.toolName };
+  });
+  const timestamp = Date.now();
+  const assistantMessage = {
+    role: "assistant" as const,
+    content: normalized.map((result) => ({
+      type: "toolCall" as const,
+      id: result.toolCallId,
+      name: result.toolName,
+      arguments: {},
+    })),
+    api: model.api,
+    provider: model.provider,
+    model: model.id,
+    usage: ZERO_USAGE,
+    stopReason: "toolUse" as const,
+    timestamp,
+  };
+  const toolResultMessages = normalized.map((result, index) => ({
+    role: "toolResult" as const,
+    toolCallId: result.toolCallId,
+    toolName: result.toolName,
+    content: [{ type: "text" as const, text: result.content }],
+    details: { synthetic: true, contentType: result.contentType, label: result.label },
+    isError: result.isError === true,
+    timestamp: timestamp + index + 1,
+  }));
+  const messages = [assistantMessage, ...toolResultMessages] as PersistableAdvisorMessage[];
+
+  session.agent.state.messages = [
+    ...session.agent.state.messages,
+    ...(messages as typeof session.agent.state.messages),
+  ];
+  for (const message of messages) sessionManager.appendMessage(message);
+
+  raw.append(
+    `\n[${logPrefix}] synthetic_tool_results_start turn=${turn.name} count=${normalized.length}\n`,
+  );
+  for (const result of normalized) {
+    raw.append(
+      `[${logPrefix}] synthetic_tool_result ${result.toolName} ${result.toolCallId} bytes=${Buffer.byteLength(
+        result.content,
+        "utf8",
+      )}\n`,
+    );
+  }
+  raw.append(`[${logPrefix}] synthetic_tool_results_end turn=${turn.name}\n`);
+}
+
+function sanitizeToolName(name: string): string {
+  return (
+    name
+      .trim()
+      .replace(/\s+/g, "_")
+      .replace(/[^A-Za-z0-9_-]/g, "_")
+      .replace(/_+/g, "_")
+      .slice(0, 64) || "advisor_context"
+  );
+}
+
+function uniqueToolCallId(rawId: string, usedIds: Set<string>, fallbackIndex: number): string {
+  const base =
+    rawId
+      .trim()
+      .replace(/\s+/g, "_")
+      .replace(/[^A-Za-z0-9_-]/g, "_")
+      .replace(/_+/g, "_")
+      .slice(0, 40) || `advisor_context_${fallbackIndex}`;
+  let candidate = base;
+  let suffix = 2;
+  while (usedIds.has(candidate)) {
+    const suffixText = `_${suffix}`;
+    candidate = `${base.slice(0, Math.max(1, 40 - suffixText.length))}${suffixText}`;
+    suffix += 1;
+  }
+  usedIds.add(candidate);
+  return candidate;
 }
 
 export class CappedBuffer {
