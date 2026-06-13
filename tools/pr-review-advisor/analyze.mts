@@ -6,14 +6,30 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { getChangedFiles, getCommits, getDiff, getDiffStat, getHeadSha, gitOutput } from "../advisors/git.mts";
+import {
+  getChangedFiles,
+  getCommits,
+  getDiff,
+  getDiffStat,
+  getHeadSha,
+  gitOutput,
+} from "../advisors/git.mts";
 import { githubRest, githubRestPaginated } from "../advisors/github.mts";
 import { parseArgs, parsePositiveInt, readJson, writeJson } from "../advisors/io.mts";
-import { enumValue, extractJson, getPath, isRecord, recordItems, stringArray, stringOrDefault, stringOrUndefined } from "../advisors/json.mts";
 import {
+  enumValue,
+  extractJson,
+  getPath,
+  isRecord,
+  recordItems,
+  stringArray,
+  stringOrDefault,
+  stringOrUndefined,
+} from "../advisors/json.mts";
+import {
+  type AdvisorPromptTurn,
   DEFAULT_ADVISOR_MODEL,
   DEFAULT_ADVISOR_PROVIDER,
-  type AdvisorPromptTurn,
   type RunAdvisorResult,
   runReadOnlyAdvisor,
 } from "../advisors/session.mts";
@@ -22,7 +38,10 @@ const root = process.cwd();
 const ADVISOR_PROVIDER = DEFAULT_ADVISOR_PROVIDER;
 const ADVISOR_MODEL = DEFAULT_ADVISOR_MODEL;
 const ADVISOR_CREDENTIAL_ENV = ["PR", "REVIEW", "ADVISOR", "API", "KEY"].join("_");
-const SECURITY_REVIEW_SKILL_PATH = ".agents/skills/nemoclaw-maintainer-security-code-review/SKILL.md";
+const OPEN_PR_OVERLAP_LIMIT = 80;
+const OPEN_PR_OVERLAP_CONCURRENCY = 6;
+const SECURITY_REVIEW_SKILL_PATH =
+  ".agents/skills/nemoclaw-maintainer-security-code-review/SKILL.md";
 const TRUSTED_SECURITY_REVIEW_SKILL_PATH = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
@@ -59,10 +78,20 @@ const SUMMARY_RECOMMENDATIONS = [
   "info_only",
 ] as const;
 const CONFIDENCES = ["low", "medium", "high"] as const;
-const TEST_DEPTH_VERDICTS = ["unit_sufficient", "mocks_recommended", "runtime_validation_recommended", "unknown"] as const;
+const TEST_DEPTH_VERDICTS = [
+  "unit_sufficient",
+  "mocks_recommended",
+  "runtime_validation_recommended",
+  "unknown",
+] as const;
 const ACCEPTANCE_STATUSES = ["met", "partial", "missing", "unknown"] as const;
 const SECURITY_VERDICTS = ["pass", "warning", "fail"] as const;
-const SOURCE_OF_TRUTH_STATUSES = ["not_applicable", "satisfied", "needs_followup", "missing"] as const;
+const SOURCE_OF_TRUTH_STATUSES = [
+  "not_applicable",
+  "satisfied",
+  "needs_followup",
+  "missing",
+] as const;
 
 type Confidence = (typeof CONFIDENCES)[number];
 type SummaryRecommendation = (typeof SUMMARY_RECOMMENDATIONS)[number];
@@ -246,14 +275,20 @@ async function main(): Promise<void> {
   const schemaPath = args.schema || "tools/pr-review-advisor/schema.json";
   const artifacts = artifactPaths(outDir);
   const configDir =
-    process.env.PR_REVIEW_ADVISOR_CONFIG_DIR || path.join("/tmp", `nemoclaw-pr-review-advisor-config-${process.pid}`);
+    process.env.PR_REVIEW_ADVISOR_CONFIG_DIR ||
+    path.join("/tmp", `nemoclaw-pr-review-advisor-config-${process.pid}`);
   const timeoutMs = parsePositiveInt(process.env.PR_REVIEW_ADVISOR_TIMEOUT_MS, 900000);
   const heartbeatMs = parsePositiveInt(process.env.PR_REVIEW_ADVISOR_HEARTBEAT_MS, 60000);
-  const maxCaptureBytes = parsePositiveInt(process.env.PR_REVIEW_ADVISOR_MAX_CAPTURE_BYTES, 5 * 1024 * 1024);
+  const maxCaptureBytes = parsePositiveInt(
+    process.env.PR_REVIEW_ADVISOR_MAX_CAPTURE_BYTES,
+    5 * 1024 * 1024,
+  );
 
   fs.mkdirSync(outDir, { recursive: true });
 
-  logProgress(`Starting PR review advisor analysis: base=${baseRef} head=${headRef} outDir=${outDir}`);
+  logProgress(
+    `Starting PR review advisor analysis: base=${baseRef} head=${headRef} outDir=${outDir}`,
+  );
   const schema = readJson<Record<string, unknown>>(schemaPath);
   const changedFiles = getChangedFiles(baseRef, headRef);
   const headSha = getHeadSha(headRef);
@@ -264,15 +299,19 @@ async function main(): Promise<void> {
   const promptTurns = buildPromptTurns({ metadata, diff, schema });
   writePromptArtifacts({ promptDir: artifacts.promptDir, systemPrompt, promptTurns });
 
-  const writeFailure = (reason: string): void => writeUnavailableArtifacts(artifacts, metadata, reason, true);
-  const writeUnavailable = (reason: string): void => writeUnavailableArtifacts(artifacts, metadata, reason, false);
+  const writeFailure = (reason: string): void =>
+    writeUnavailableArtifacts(artifacts, metadata, reason, true);
+  const writeUnavailable = (reason: string): void =>
+    writeUnavailableArtifacts(artifacts, metadata, reason, false);
 
   if (process.env.PR_REVIEW_ADVISOR_RUN_ANALYSIS === "0") {
     writeUnavailable("PR_REVIEW_ADVISOR_RUN_ANALYSIS=0");
     process.exit(0);
   }
 
-  logProgress(`Launching PR review advisor SDK: provider=${ADVISOR_PROVIDER} model=${ADVISOR_MODEL}`);
+  logProgress(
+    `Launching PR review advisor SDK: provider=${ADVISOR_PROVIDER} model=${ADVISOR_MODEL}`,
+  );
   let sdkResult: RunAdvisorResult | undefined;
   try {
     sdkResult = await runReadOnlyAdvisor({
@@ -299,7 +338,15 @@ async function main(): Promise<void> {
 
   let result: ReviewAdvisorResult;
   try {
-    result = normalizeReviewResult(extractJson(sdkResult.text || sdkResult.raw, artifacts.raw, "pr_review_advisor_json", "PR review advisor output"), metadata);
+    result = normalizeReviewResult(
+      extractJson(
+        sdkResult.text || sdkResult.raw,
+        artifacts.raw,
+        "pr_review_advisor_json",
+        "PR review advisor output",
+      ),
+      metadata,
+    );
   } catch (error: unknown) {
     writeFailure(error instanceof Error ? error.message : String(error));
     process.exit(1);
@@ -309,7 +356,10 @@ async function main(): Promise<void> {
   writeJson(artifacts.finalResult, result);
   const summary = renderSummary(result);
   fs.writeFileSync(artifacts.summary, summary);
-  fs.writeFileSync(path.join(outDir, "pr-review-advisor-detailed-review.md"), renderDetailedReview(result));
+  fs.writeFileSync(
+    path.join(outDir, "pr-review-advisor-detailed-review.md"),
+    renderDetailedReview(result),
+  );
   console.log(summary);
 }
 
@@ -333,7 +383,9 @@ function writeUnavailableArtifacts(
   const result = unavailableResult(metadata, reason, failed);
   writeJson(
     paths.result,
-    failed ? { failed: true, reason, promptPath: paths.promptDir, rawPath: paths.raw } : { skipped: true, reason, promptPath: paths.promptDir },
+    failed
+      ? { failed: true, reason, promptPath: paths.promptDir, rawPath: paths.raw }
+      : { skipped: true, reason, promptPath: paths.promptDir },
   );
   writeJson(paths.finalResult, result);
   fs.writeFileSync(paths.summary, renderSummary(result));
@@ -374,16 +426,24 @@ async function collectDeterministicContext(options: {
 function detectRiskyAreas(changedFiles: string[]): string[] {
   const areas = new Set<string>();
   for (const file of changedFiles) {
-    if (/^(install|setup|brev-setup)\.sh$/.test(file) || /^scripts\/.*\.sh$/.test(file)) areas.add("installer/bootstrap shell");
-    if (file === "src/lib/onboard.ts" || file === "bin/nemoclaw.js" || file.startsWith("scripts/")) areas.add("onboarding/host glue");
-    if (file.startsWith("nemoclaw/src/blueprint/") || file.startsWith("nemoclaw-blueprint/")) areas.add("sandbox/policy/SSRF");
-    if (file.startsWith(".github/workflows/") || file.includes("prek") || file.includes("dco")) areas.add("workflow/enforcement");
-    if (/credential|inference|network|approval|provider/i.test(file)) areas.add("credentials/inference/network");
+    if (/^(install|setup|brev-setup)\.sh$/.test(file) || /^scripts\/.*\.sh$/.test(file))
+      areas.add("installer/bootstrap shell");
+    if (file === "src/lib/onboard.ts" || file === "bin/nemoclaw.js" || file.startsWith("scripts/"))
+      areas.add("onboarding/host glue");
+    if (file.startsWith("nemoclaw/src/blueprint/") || file.startsWith("nemoclaw-blueprint/"))
+      areas.add("sandbox/policy/SSRF");
+    if (file.startsWith(".github/workflows/") || file.includes("prek") || file.includes("dco"))
+      areas.add("workflow/enforcement");
+    if (/credential|inference|network|approval|provider/i.test(file))
+      areas.add("credentials/inference/network");
   }
   return [...areas].sort();
 }
 
-export function classifyTestDepth(changedFiles: string[], diff = ""): ReviewAdvisorResult["testDepth"] {
+export function classifyTestDepth(
+  changedFiles: string[],
+  diff = "",
+): ReviewAdvisorResult["testDepth"] {
   const sourceFiles = changedFiles.filter((file) => !isTestFile(file));
   if (changedFiles.length === 0) {
     return { verdict: "unknown", rationale: "No changed files were detected.", suggestedTests: [] };
@@ -391,28 +451,32 @@ export function classifyTestDepth(changedFiles: string[], diff = ""): ReviewAdvi
   if (sourceFiles.length === 0 || sourceFiles.every(isDocsOrTestOnly)) {
     return {
       verdict: "unit_sufficient",
-      rationale: "Changes are limited to tests, documentation, or metadata that cannot affect runtime behavior directly.",
+      rationale:
+        "Changes are limited to tests, documentation, or metadata that cannot affect runtime behavior directly.",
       suggestedTests: ["Run the relevant existing unit/doc validation for the touched files."],
     };
   }
-  const e2eSignals = sourceFiles.filter((file) =>
-    file === "Dockerfile" ||
-    file.endsWith("Dockerfile") ||
-    /(^|\/)(install|setup|brev-setup|nemoclaw-start)\.sh$/.test(file) ||
-    file.startsWith("nemoclaw-blueprint/policies/") ||
-    file.startsWith("nemoclaw/src/blueprint/") ||
-    file.startsWith("test/e2e/") ||
-    file.includes("sandbox") ||
-    file.includes("gateway") ||
-    file.includes("rebuild") ||
-    file.includes("snapshot") ||
-    /\b(execFileSync|execSync|spawnSync|run\(|docker|openshell)\b/.test(diff),
+  const e2eSignals = sourceFiles.filter(
+    (file) =>
+      file === "Dockerfile" ||
+      file.endsWith("Dockerfile") ||
+      /(^|\/)(install|setup|brev-setup|nemoclaw-start)\.sh$/.test(file) ||
+      file.startsWith("nemoclaw-blueprint/policies/") ||
+      file.startsWith("nemoclaw/src/blueprint/") ||
+      file.startsWith("test/e2e/") ||
+      file.includes("sandbox") ||
+      file.includes("gateway") ||
+      file.includes("rebuild") ||
+      file.includes("snapshot") ||
+      /\b(execFileSync|execSync|spawnSync|run\(|docker|openshell)\b/.test(diff),
   );
   if (e2eSignals.length > 0) {
     return {
       verdict: "runtime_validation_recommended",
       rationale: `Runtime/sandbox/infrastructure paths need behavioral runtime validation: ${e2eSignals.slice(0, 8).join(", ")}.`,
-      suggestedTests: ["Add or identify targeted runtime/integration validation for the changed behavior; do not report external E2E job pass/fail here."],
+      suggestedTests: [
+        "Add or identify targeted runtime/integration validation for the changed behavior; do not report external E2E job pass/fail here.",
+      ],
     };
   }
   const mockSignals = sourceFiles.filter((file) =>
@@ -422,7 +486,9 @@ export function classifyTestDepth(changedFiles: string[], diff = ""): ReviewAdvi
     return {
       verdict: "mocks_recommended",
       rationale: `Changed code has I/O, state, credentials, provider, or config behavior that should be covered with behavioral mocks: ${mockSignals.slice(0, 8).join(", ")}.`,
-      suggestedTests: ["Add or confirm behavioral tests with mocked filesystem/network/process boundaries."],
+      suggestedTests: [
+        "Add or confirm behavioral tests with mocked filesystem/network/process boundaries.",
+      ],
     };
   }
   return {
@@ -437,21 +503,39 @@ function isTestFile(file: string): boolean {
 }
 
 function isDocsOrTestOnly(file: string): boolean {
-  return isTestFile(file) || /\.(md|mdx|txt)$/.test(file) || file.startsWith("docs/") || file.startsWith("fern/");
+  return (
+    isTestFile(file) ||
+    /\.(md|mdx|txt)$/.test(file) ||
+    file.startsWith("docs/") ||
+    file.startsWith("fern/")
+  );
 }
 
 function detectWorkflowSignals(changedFiles: string[], diff: string): string[] {
   if (!changedFiles.some((file) => file.startsWith(".github/workflows/"))) return [];
-  const signals: string[] = ["Workflow files changed; review trusted-code boundary, permissions, and pinning."];
-  if (/secrets\./.test(diff) || /GITHUB_TOKEN|GH_TOKEN/.test(diff)) signals.push("Secrets or GitHub tokens appear in workflow diff.");
-  if (/pull_request_target/.test(diff)) signals.push("pull_request_target appears in workflow diff.");
-  if (/permissions:\s*[\s\S]*write/.test(diff)) signals.push("Workflow requests write-scoped permissions.");
-  if (/npm install|pip install|curl .*\|.*sh|uv tool install/.test(diff)) signals.push("Workflow installs runtime dependencies; verify exact pins and disabled lifecycle hooks.");
-  if (/github\.event\.pull_request\.(title|body|head\.ref)/.test(diff)) signals.push("PR-controlled text may be interpolated into workflow expressions; verify shell safety.");
+  const signals: string[] = [
+    "Workflow files changed; review trusted-code boundary, permissions, and pinning.",
+  ];
+  if (/secrets\./.test(diff) || /GITHUB_TOKEN|GH_TOKEN/.test(diff))
+    signals.push("Secrets or GitHub tokens appear in workflow diff.");
+  if (/pull_request_target/.test(diff))
+    signals.push("pull_request_target appears in workflow diff.");
+  if (/permissions:\s*[\s\S]*write/.test(diff))
+    signals.push("Workflow requests write-scoped permissions.");
+  if (/npm install|pip install|curl .*\|.*sh|uv tool install/.test(diff))
+    signals.push(
+      "Workflow installs runtime dependencies; verify exact pins and disabled lifecycle hooks.",
+    );
+  if (/github\.event\.pull_request\.(title|body|head\.ref)/.test(diff))
+    signals.push(
+      "PR-controlled text may be interpolated into workflow expressions; verify shell safety.",
+    );
   return signals;
 }
 
-export function findRetiredE2eMigrationLedgerChanges(diff: string): RetiredE2eMigrationLedgerChange[] {
+export function findRetiredE2eMigrationLedgerChanges(
+  diff: string,
+): RetiredE2eMigrationLedgerChange[] {
   const retiredLedgers = new Set([
     "test/e2e-scenario/migration/legacy-inventory.json",
     "test/e2e/docs/parity-inventory.generated.json",
@@ -467,7 +551,10 @@ export function findRetiredE2eMigrationLedgerChanges(diff: string): RetiredE2eMi
     if (/^deleted file mode\b/m.test(header) || /^\+\+\+ \/dev\/null$/m.test(header)) continue;
     changes.set(file, {
       file,
-      change: /^new file mode\b/m.test(header) || /^--- \/dev\/null$/m.test(header) ? "added" : "modified",
+      change:
+        /^new file mode\b/m.test(header) || /^--- \/dev\/null$/m.test(header)
+          ? "added"
+          : "modified",
     });
   }
   return [...changes.values()].sort((a, b) => a.file.localeCompare(b.file));
@@ -477,11 +564,13 @@ export function detectLocalizedPatchSignals(diff: string): LocalizedPatchSignal[
   const patterns: Array<{ kind: string; regex: RegExp }> = [
     {
       kind: "fallback/recovery/tolerance path",
-      regex: /\b(?:fallback\w*|recover|recovery|best[- ]?effort|workaround|compatibility|legacy|tolerant|repair|self[- ]?heal|degraded)\b/i,
+      regex:
+        /\b(?:fallback\w*|recover|recovery|best[- ]?effort|workaround|compatibility|legacy|tolerant|repair|self[- ]?heal|degraded)\b/i,
     },
     {
       kind: "runtime interception or monkeypatch",
-      regex: /\b(?:NODE_OPTIONS|uncaughtException|unhandledRejection|process\.emit|require\.cache|prototype|monkey[- ]?patch|http\.request|https\.request|networkInterfaces)\b/i,
+      regex:
+        /\b(?:NODE_OPTIONS|uncaughtException|unhandledRejection|process\.emit|require\.cache|prototype|monkey[- ]?patch|http\.request|https\.request|networkInterfaces)\b/i,
     },
     {
       kind: "silent/defaulted error handling",
@@ -516,7 +605,8 @@ export function detectLocalizedPatchSignals(diff: string): LocalizedPatchSignal[
               line: nextLine,
               kind: pattern.kind,
               evidence: content.slice(0, 220),
-              reviewRule: "If this is a localized patch, identify the invalid state, its source boundary, why the source cannot be fixed here, the regression test, and the removal condition.",
+              reviewRule:
+                "If this is a localized patch, identify the invalid state, its source boundary, why the source cannot be fixed here, the regression test, and the removal condition.",
             });
             break;
           }
@@ -543,16 +633,19 @@ export function computeMonolithDeltas(baseRef: string, changedFiles: string[]): 
       return classifyMonolithDelta({ file, baseLines, headLines, delta: headLines - baseLines });
     })
     .filter((delta) => delta.headLines >= 400 || delta.baseLines >= 400 || delta.delta > 0)
-    .sort((a, b) => severityRank(b.severity) - severityRank(a.severity) || Math.abs(b.delta) - Math.abs(a.delta));
+    .sort(
+      (a, b) =>
+        severityRank(b.severity) - severityRank(a.severity) ||
+        Math.abs(b.delta) - Math.abs(a.delta),
+    );
 }
 
-export function classifyMonolithDelta(delta: Omit<MonolithDelta, "severity" | "rationale">): MonolithDelta {
+export function classifyMonolithDelta(
+  delta: Omit<MonolithDelta, "severity" | "rationale">,
+): MonolithDelta {
   const isCurrentMonolith = delta.headLines >= 400 || delta.baseLines >= 400;
-  const severity: MonolithSeverity = !isCurrentMonolith || delta.delta <= 0
-    ? "none"
-    : delta.delta >= 20
-      ? "blocker"
-      : "warning";
+  const severity: MonolithSeverity =
+    !isCurrentMonolith || delta.delta <= 0 ? "none" : delta.delta >= 20 ? "blocker" : "warning";
   const rationale = !isCurrentMonolith
     ? "Changed TypeScript file is not a current large-file hotspot."
     : delta.delta <= 0
@@ -569,12 +662,19 @@ function severityRank(severity: MonolithSeverity): number {
 
 function collectDriftEvidence(baseRef: string, changedFiles: string[]): DriftEvidence[] {
   return changedFiles.slice(0, 50).map((file) => {
-    const recentHistory = (gitOutput([["log", "--oneline", "--follow", "-20", baseRef, "--", file]], 20000) || "")
+    const recentHistory = (
+      gitOutput([["log", "--oneline", "--follow", "-20", baseRef, "--", file]], 20000) || ""
+    )
       .split("\n")
       .map((line) => line.trim())
       .filter(Boolean);
     const normalizedFile = file.replace(/^\.\//, "").replace(/\\/g, "/");
-    const renameHints = (gitOutput([["log", "--oneline", "--name-status", "--find-renames", "-40", baseRef, "--"]], 120000) || "")
+    const renameHints = (
+      gitOutput(
+        [["log", "--oneline", "--name-status", "--find-renames", "-40", baseRef, "--"]],
+        120000,
+      ) || ""
+    )
       .split("\n")
       .map((line) => line.trim())
       .filter((line) => {
@@ -594,7 +694,10 @@ function countLines(text: string): number {
 
 async function collectGitHubContext(): Promise<GitHubReviewContext | null> {
   const repo = process.env.GITHUB_REPOSITORY;
-  const prNumber = Number.parseInt(process.env.PR_NUMBER || process.env.GITHUB_REF_NAME?.match(/^(\d+)\//)?.[1] || "", 10);
+  const prNumber = Number.parseInt(
+    process.env.PR_NUMBER || process.env.GITHUB_REF_NAME?.match(/^(\d+)\//)?.[1] || "",
+    10,
+  );
   const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
   if (!repo || !Number.isFinite(prNumber) || prNumber <= 0 || !token) return null;
 
@@ -603,7 +706,11 @@ async function collectGitHubContext(): Promise<GitHubReviewContext | null> {
     const [pullRequest, issueComments, openPulls] = await Promise.all([
       githubRest<unknown>(`repos/${repo}/pulls/${prNumber}`, token),
       githubRestPaginated<unknown>(`repos/${repo}/issues/${prNumber}/comments`, token, 100),
-      githubRestPaginated<unknown>(`repos/${repo}/pulls?state=open&sort=updated&direction=desc`, token, 100),
+      githubRestPaginated<unknown>(
+        `repos/${repo}/pulls?state=open&sort=updated&direction=desc`,
+        token,
+        100,
+      ),
     ]);
     context.pullRequest = pullRequest;
     context.previousAdvisorReview = extractPreviousAdvisorReview(issueComments);
@@ -611,17 +718,31 @@ async function collectGitHubContext(): Promise<GitHubReviewContext | null> {
       stringOrUndefined(getPath<unknown>(pullRequest, ["title"])),
       stringOrUndefined(getPath<unknown>(pullRequest, ["body"])),
       stringOrUndefined(getPath<unknown>(pullRequest, ["head", "ref"])),
-    ].filter(Boolean).join("\n");
+    ]
+      .filter(Boolean)
+      .join("\n");
     const issueNumbers = extractIssueRefs(prText, prNumber).slice(0, 5);
-    context.linkedIssues = await Promise.all(issueNumbers.map((issue) => collectLinkedIssue(repo, issue, token)));
-    context.openPrOverlaps = await collectOpenPrOverlaps(repo, prNumber, token, openPulls, issueNumbers);
+    context.linkedIssues = await Promise.all(
+      issueNumbers.map((issue) => collectLinkedIssue(repo, issue, token)),
+    );
+    context.openPrOverlaps = await collectOpenPrOverlaps(
+      repo,
+      prNumber,
+      token,
+      openPulls,
+      issueNumbers,
+    );
   } catch (error: unknown) {
     context.fetchError = error instanceof Error ? error.message : String(error);
   }
   return context;
 }
 
-async function collectLinkedIssue(repo: string, number: number, token: string): Promise<LinkedIssue> {
+async function collectLinkedIssue(
+  repo: string,
+  number: number,
+  token: string,
+): Promise<LinkedIssue> {
   try {
     const [issue, comments] = await Promise.all([
       githubRest<unknown>(`repos/${repo}/issues/${number}`, token),
@@ -633,6 +754,25 @@ async function collectLinkedIssue(repo: string, number: number, token: string): 
   }
 }
 
+async function mapWithConcurrency<T, U>(
+  items: readonly T[],
+  concurrency: number,
+  mapper: (item: T, index: number) => Promise<U>,
+): Promise<U[]> {
+  const results = new Array<U>(items.length);
+  let nextIndex = 0;
+  const workerCount = Math.min(Math.max(1, concurrency), items.length);
+  const workers = Array.from({ length: workerCount }, async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await mapper(items[index] as T, index);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
 async function collectOpenPrOverlaps(
   repo: string,
   currentPrNumber: number,
@@ -640,24 +780,45 @@ async function collectOpenPrOverlaps(
   openPulls: unknown[],
   currentLinkedIssues: number[],
 ): Promise<OpenPrOverlap[]> {
-  const currentFiles = new Set<string>((await githubRestPaginated<{ filename?: string }>(`repos/${repo}/pulls/${currentPrNumber}/files`, token, 300))
-    .map((file) => file.filename)
-    .filter((file): file is string => typeof file === "string"));
-  const overlaps = await Promise.all(openPulls
+  const currentFiles = new Set<string>(
+    (
+      await githubRestPaginated<{ filename?: string }>(
+        `repos/${repo}/pulls/${currentPrNumber}/files`,
+        token,
+        300,
+      )
+    )
+      .map((file) => file.filename)
+      .filter((file): file is string => typeof file === "string"),
+  );
+  const candidatePulls = openPulls
     .filter((pull) => getPath<number>(pull, ["number"]) !== currentPrNumber)
-    .slice(0, 80)
-    .map(async (pull): Promise<OpenPrOverlap | null> => {
+    .slice(0, OPEN_PR_OVERLAP_LIMIT);
+  const overlaps = await mapWithConcurrency(
+    candidatePulls,
+    OPEN_PR_OVERLAP_CONCURRENCY,
+    async (pull): Promise<OpenPrOverlap | null> => {
       const number = getPath<number>(pull, ["number"]);
       if (!number) return null;
       const title = stringOrDefault(getPath<unknown>(pull, ["title"]), `PR #${number}`);
       const body = stringOrDefault(getPath<unknown>(pull, ["body"]), "");
-      const labels = recordItems(getPath<unknown>(pull, ["labels"])).map((label) => stringOrUndefined(label.name)).filter((label): label is string => Boolean(label));
+      const labels = recordItems(getPath<unknown>(pull, ["labels"]))
+        .map((label) => stringOrUndefined(label.name))
+        .filter((label): label is string => Boolean(label));
       const linkedIssues = extractIssueRefs(`${title}\n${body}`, number);
-      const duplicateLinkedIssues = linkedIssues.filter((issue) => currentLinkedIssues.includes(issue));
+      const duplicateLinkedIssues = linkedIssues.filter((issue) =>
+        currentLinkedIssues.includes(issue),
+      );
       let sameFiles: string[] = [];
       if (currentFiles.size > 0) {
         try {
-          sameFiles = (await githubRestPaginated<{ filename?: string }>(`repos/${repo}/pulls/${number}/files`, token, 300))
+          sameFiles = (
+            await githubRestPaginated<{ filename?: string }>(
+              `repos/${repo}/pulls/${number}/files`,
+              token,
+              300,
+            )
+          )
             .map((file) => file.filename)
             .filter((file): file is string => typeof file === "string" && currentFiles.has(file));
         } catch {
@@ -666,9 +827,16 @@ async function collectOpenPrOverlaps(
       }
       if (sameFiles.length === 0 && duplicateLinkedIssues.length === 0) return null;
       return { number, title, labels, linkedIssues, sameFiles, duplicateLinkedIssues };
-    }));
-  return overlaps.filter((overlap): overlap is OpenPrOverlap => overlap !== null)
-    .sort((a, b) => b.sameFiles.length - a.sameFiles.length || b.duplicateLinkedIssues.length - a.duplicateLinkedIssues.length || a.number - b.number)
+    },
+  );
+  return overlaps
+    .filter((overlap): overlap is OpenPrOverlap => overlap !== null)
+    .sort(
+      (a, b) =>
+        b.sameFiles.length - a.sameFiles.length ||
+        b.duplicateLinkedIssues.length - a.duplicateLinkedIssues.length ||
+        a.number - b.number,
+    )
     .slice(0, 25);
 }
 
@@ -691,7 +859,9 @@ function extractIssueRefs(text: string, prNumber: number): number[] {
 function extractPreviousAdvisorReview(issueComments: unknown[]): PreviousAdvisorReview | null {
   const bodies = issueComments
     .map((comment) => stringOrUndefined(getPath<unknown>(comment, ["body"])))
-    .filter((body): body is string => Boolean(body && body.includes("<!-- nemoclaw-pr-review-advisor -->")));
+    .filter((body): body is string =>
+      Boolean(body && body.includes("<!-- nemoclaw-pr-review-advisor -->")),
+    );
   const body = bodies.at(-1);
   if (!body) return null;
   const headSha = body.match(/(?:\*\*Analyzed HEAD:\*\*|Analyzed SHA:)\s*`?([^`\n\s]+)`?/)?.[1];
@@ -703,17 +873,21 @@ export function readTrustedSecurityReviewSkill(): string {
     return fs.readFileSync(TRUSTED_SECURITY_REVIEW_SKILL_PATH, "utf8");
   } catch (error: unknown) {
     const reason = error instanceof Error ? error.message : String(error);
-    console.error(`Security review skill unavailable at ${TRUSTED_SECURITY_REVIEW_SKILL_PATH}: ${reason}`);
+    console.error(
+      `Security review skill unavailable at ${TRUSTED_SECURITY_REVIEW_SKILL_PATH}: ${reason}`,
+    );
     return "";
   }
 }
 
 export function buildSystemPrompt(): string {
   const securityReviewSkill = readTrustedSecurityReviewSkill();
-  const securityRubric = securityReviewSkill || [
-    "Trusted security review skill was unavailable; use this built-in 9-category security rubric instead:",
-    ...SECURITY_CATEGORIES.map((category, index) => `${index + 1}. ${category}`),
-  ].join("\n");
+  const securityRubric =
+    securityReviewSkill ||
+    [
+      "Trusted security review skill was unavailable; use this built-in 9-category security rubric instead:",
+      ...SECURITY_CATEGORIES.map((category, index) => `${index + 1}. ${category}`),
+    ].join("\n");
   return [
     "You are the NemoClaw PR Review Advisor for GitHub Actions.",
     "NemoClaw runs OpenClaw assistants inside OpenShell sandboxes. Security boundaries, workflows, credentials, network policy, SSRF validation, Dockerfiles, installers, and sandbox lifecycle code are high risk.",
@@ -753,7 +927,11 @@ export function buildPromptTurns({
   const metadataFields = exactMetadataFields(metadata);
   const driftContext = JSON.stringify(buildDriftTurnContext(metadata.deterministic), null, 2);
   const securityContext = JSON.stringify(buildSecurityTurnContext(metadata.deterministic), null, 2);
-  const validationContext = JSON.stringify(buildValidationTurnContext(metadata.deterministic), null, 2);
+  const validationContext = JSON.stringify(
+    buildValidationTurnContext(metadata.deterministic),
+    null,
+    2,
+  );
   return [
     {
       name: "orient-drift",
@@ -809,7 +987,10 @@ ${fencedBlock(JSON.stringify(schema), "json")}
 }
 
 function fencedBlock(content: string, language = ""): string {
-  const longestBacktickRun = Math.max(0, ...Array.from(content.matchAll(/`+/g), (match) => match[0]?.length ?? 0));
+  const longestBacktickRun = Math.max(
+    0,
+    ...Array.from(content.matchAll(/`+/g), (match) => match[0]?.length ?? 0),
+  );
   const fence = "`".repeat(Math.max(3, longestBacktickRun + 1));
   return `${fence}${language}\n${content}\n${fence}`;
 }
@@ -869,7 +1050,13 @@ export function writePromptArtifacts({
 }
 
 function promptArtifactSlug(name: string): string {
-  return name.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9._-]/g, "").slice(0, 80) || "turn";
+  return (
+    name
+      .toLowerCase()
+      .replace(/\s+/g, "-")
+      .replace(/[^a-z0-9._-]/g, "")
+      .slice(0, 80) || "turn"
+  );
 }
 
 function exactMetadataFields(metadata: ReviewMetadata): string {
@@ -882,7 +1069,10 @@ function exactMetadataFields(metadata: ReviewMetadata): string {
   ].join("\n");
 }
 
-export function normalizeReviewResult(result: unknown, metadata: ReviewMetadata): ReviewAdvisorResult {
+export function normalizeReviewResult(
+  result: unknown,
+  metadata: ReviewMetadata,
+): ReviewAdvisorResult {
   if (!isRecord(result)) throw new Error("PR review advisor returned a non-object result");
   const object = result as Record<string, unknown>;
   const sourceOfTruthReview = sanitizeSourceOfTruthReview(object.sourceOfTruthReview);
@@ -913,12 +1103,17 @@ function sanitizeSummary(value: unknown): ReviewAdvisorResult["summary"] {
     recommendation: enumValue(object.recommendation, SUMMARY_RECOMMENDATIONS, "info_only"),
     confidence: enumValue(object.confidence, CONFIDENCES, "medium"),
     oneLine: stringOrDefault(object.oneLine, "PR review advisor completed with limited summary."),
-    topItem: typeof object.topItem === "string" && object.topItem.trim() ? object.topItem.trim() : undefined,
+    topItem:
+      typeof object.topItem === "string" && object.topItem.trim()
+        ? object.topItem.trim()
+        : undefined,
     sinceLastReview: sanitizeSinceLastReview(object.sinceLastReview),
   };
 }
 
-function sanitizeSinceLastReview(value: unknown): ReviewAdvisorResult["summary"]["sinceLastReview"] {
+function sanitizeSinceLastReview(
+  value: unknown,
+): ReviewAdvisorResult["summary"]["sinceLastReview"] {
   if (!isRecord(value)) return undefined;
   return {
     resolved: nonNegativeInteger(value.resolved),
@@ -932,24 +1127,35 @@ function nonNegativeInteger(value: unknown): number {
 }
 
 function sanitizeFindings(value: unknown): Finding[] {
-  return recordItems(value).map((item) => ({
-    severity: enumValue(item.severity, ["blocker", "warning", "suggestion"] as const, "suggestion"),
-    category: enumValue(item.category, FINDING_CATEGORIES, "correctness"),
-    file: typeof item.file === "string" ? item.file : null,
-    line: typeof item.line === "number" && Number.isInteger(item.line) && item.line > 0 ? item.line : null,
-    title: stringOrDefault(item.title, "Review finding"),
-    description: stringOrDefault(item.description, "No description provided."),
-    recommendation: stringOrDefault(item.recommendation, "Review manually."),
-    evidence: stringOrDefault(item.evidence, "No evidence provided."),
-  })).slice(0, 50);
+  return recordItems(value)
+    .map((item) => ({
+      severity: enumValue(
+        item.severity,
+        ["blocker", "warning", "suggestion"] as const,
+        "suggestion",
+      ),
+      category: enumValue(item.category, FINDING_CATEGORIES, "correctness"),
+      file: typeof item.file === "string" ? item.file : null,
+      line:
+        typeof item.line === "number" && Number.isInteger(item.line) && item.line > 0
+          ? item.line
+          : null,
+      title: stringOrDefault(item.title, "Review finding"),
+      description: stringOrDefault(item.description, "No description provided."),
+      recommendation: stringOrDefault(item.recommendation, "Review manually."),
+      evidence: stringOrDefault(item.evidence, "No evidence provided."),
+    }))
+    .slice(0, 50);
 }
 
 function sanitizeAcceptanceCoverage(value: unknown): AcceptanceCoverage[] {
-  return recordItems(value).map((item) => ({
-    clause: stringOrDefault(item.clause, "Unspecified acceptance clause"),
-    status: enumValue(item.status, ACCEPTANCE_STATUSES, "unknown"),
-    evidence: stringOrDefault(item.evidence, "No evidence provided."),
-  })).slice(0, 100);
+  return recordItems(value)
+    .map((item) => ({
+      clause: stringOrDefault(item.clause, "Unspecified acceptance clause"),
+      status: enumValue(item.status, ACCEPTANCE_STATUSES, "unknown"),
+      evidence: stringOrDefault(item.evidence, "No evidence provided."),
+    }))
+    .slice(0, 100);
 }
 
 function sanitizeSecurityCategories(value: unknown): SecurityCategory[] {
@@ -967,24 +1173,31 @@ function sanitizeSecurityCategories(value: unknown): SecurityCategory[] {
 }
 
 function sanitizeSourceOfTruthReview(value: unknown): SourceOfTruthReview[] {
-  return recordItems(value).map((item) => ({
-    surface: stringOrDefault(item.surface, "Unspecified localized patch surface"),
-    status: enumValue(item.status, SOURCE_OF_TRUTH_STATUSES, "not_applicable"),
-    invalidState: stringOrDefault(item.invalidState, "Not specified."),
-    sourceBoundary: stringOrDefault(item.sourceBoundary, "Not specified."),
-    whyNotSourceFix: stringOrDefault(item.whyNotSourceFix, "Not specified."),
-    regressionTest: stringOrDefault(item.regressionTest, "Not specified."),
-    removalCondition: stringOrDefault(item.removalCondition, "Not specified."),
-    evidence: stringOrDefault(item.evidence, "No evidence provided."),
-  })).slice(0, 50);
+  return recordItems(value)
+    .map((item) => ({
+      surface: stringOrDefault(item.surface, "Unspecified localized patch surface"),
+      status: enumValue(item.status, SOURCE_OF_TRUTH_STATUSES, "not_applicable"),
+      invalidState: stringOrDefault(item.invalidState, "Not specified."),
+      sourceBoundary: stringOrDefault(item.sourceBoundary, "Not specified."),
+      whyNotSourceFix: stringOrDefault(item.whyNotSourceFix, "Not specified."),
+      regressionTest: stringOrDefault(item.regressionTest, "Not specified."),
+      removalCondition: stringOrDefault(item.removalCondition, "Not specified."),
+      evidence: stringOrDefault(item.evidence, "No evidence provided."),
+    }))
+    .slice(0, 50);
 }
 
-function addSourceOfTruthFindings(findings: Finding[], sourceOfTruthReview: SourceOfTruthReview[]): Finding[] {
+function addSourceOfTruthFindings(
+  findings: Finding[],
+  sourceOfTruthReview: SourceOfTruthReview[],
+): Finding[] {
   const injected: Finding[] = [];
   for (const review of sourceOfTruthReview) {
     if (review.status !== "missing" && review.status !== "needs_followup") continue;
     const alreadyCovered = [...injected, ...findings].some((finding) =>
-      `${finding.title}\n${finding.description}\n${finding.evidence}`.toLowerCase().includes(review.surface.toLowerCase()),
+      `${finding.title}\n${finding.description}\n${finding.evidence}`
+        .toLowerCase()
+        .includes(review.surface.toLowerCase()),
     );
     if (alreadyCovered) continue;
     injected.push({
@@ -994,7 +1207,8 @@ function addSourceOfTruthFindings(findings: Finding[], sourceOfTruthReview: Sour
       line: null,
       title: `Source-of-truth review needed: ${review.surface}`,
       description: `The advisor marked localized patch analysis as ${review.status}.`,
-      recommendation: "Identify the invalid state, source boundary, source-fix constraint, regression test, and removal condition before merging the localized behavior.",
+      recommendation:
+        "Identify the invalid state, source boundary, source-fix constraint, regression test, and removal condition before merging the localized behavior.",
       evidence: review.evidence,
     });
   }
@@ -1021,7 +1235,10 @@ function addDeterministicFindings(findings: Finding[], metadata: ReviewMetadata)
   return [...injected, ...findings.slice(0, originalSlots)];
 }
 
-function sanitizeTestDepth(value: unknown, fallback: ReviewAdvisorResult["testDepth"]): ReviewAdvisorResult["testDepth"] {
+function sanitizeTestDepth(
+  value: unknown,
+  fallback: ReviewAdvisorResult["testDepth"],
+): ReviewAdvisorResult["testDepth"] {
   const object = isRecord(value) ? value : {};
   return {
     verdict: enumValue(object.verdict, TEST_DEPTH_VERDICTS, fallback.verdict),
@@ -1034,8 +1251,12 @@ function sanitizeReviewCompleteness(value: unknown): ReviewAdvisorResult["review
   const object = isRecord(value) ? value : {};
   const limitations = stringArray(object.limitations);
   return {
-    limitations: limitations.length > 0 ? limitations : ["Automated review only; human maintainer review is required before merge."],
-    requiresHumanReview: typeof object.requiresHumanReview === "boolean" ? object.requiresHumanReview : true,
+    limitations:
+      limitations.length > 0
+        ? limitations
+        : ["Automated review only; human maintainer review is required before merge."],
+    requiresHumanReview:
+      typeof object.requiresHumanReview === "boolean" ? object.requiresHumanReview : true,
   };
 }
 
@@ -1109,17 +1330,27 @@ function collectTestingFollowups(result: ReviewAdvisorResult): string[] {
   const followups: string[] = [];
   if (result.testDepth.verdict !== "unit_sufficient") {
     for (const suggestion of result.testDepth.suggestedTests.slice(0, 5)) {
-      followups.push(`**${testDepthLabel(result.testDepth.verdict)}** — ${suggestion}. ${result.testDepth.rationale}`);
+      followups.push(
+        `**${testDepthLabel(result.testDepth.verdict)}** — ${suggestion}. ${result.testDepth.rationale}`,
+      );
     }
   }
   for (const finding of result.findings.filter((item) => item.category === "tests").slice(0, 5)) {
     followups.push(`**${finding.title}** — ${finding.recommendation}`);
   }
-  for (const clause of result.acceptanceCoverage.filter((item) => item.status !== "met").slice(0, 5)) {
-    followups.push(`**Acceptance clause:** ${clause.clause} — add test evidence or identify existing coverage. ${clause.evidence}`);
+  for (const clause of result.acceptanceCoverage
+    .filter((item) => item.status !== "met")
+    .slice(0, 5)) {
+    followups.push(
+      `**Acceptance clause:** ${clause.clause} — add test evidence or identify existing coverage. ${clause.evidence}`,
+    );
   }
-  for (const review of result.sourceOfTruthReview.filter((item) => item.status === "missing" || item.status === "needs_followup").slice(0, 5)) {
-    followups.push(`**${review.surface}** — ${review.regressionTest || "add a regression test for the localized behavior"}. ${review.evidence}`);
+  for (const review of result.sourceOfTruthReview
+    .filter((item) => item.status === "missing" || item.status === "needs_followup")
+    .slice(0, 5)) {
+    followups.push(
+      `**${review.surface}** — ${review.regressionTest || "add a regression test for the localized behavior"}. ${review.evidence}`,
+    );
   }
   return [...new Set(followups)].slice(0, 8);
 }
@@ -1136,7 +1367,9 @@ function appendFindings(lines: string[], heading: string, findings: Finding[]): 
     lines.push("- _None._");
   } else {
     for (const finding of findings.slice(0, 20)) {
-      const location = finding.file ? ` (${finding.file}${finding.line ? `:${finding.line}` : ""})` : "";
+      const location = finding.file
+        ? ` (${finding.file}${finding.line ? `:${finding.line}` : ""})`
+        : "";
       lines.push(`- **${finding.title}**${location}: ${finding.description}`);
       lines.push(`  - Recommendation: ${finding.recommendation}`);
       lines.push(`  - Evidence: ${finding.evidence}`);
@@ -1145,7 +1378,11 @@ function appendFindings(lines: string[], heading: string, findings: Finding[]): 
   lines.push("");
 }
 
-function unavailableResult(metadata: ReviewMetadata, reason: string, failed: boolean): ReviewAdvisorResult {
+function unavailableResult(
+  metadata: ReviewMetadata,
+  reason: string,
+  failed: boolean,
+): ReviewAdvisorResult {
   return {
     version: 1,
     baseRef: metadata.baseRef,
@@ -1155,19 +1392,23 @@ function unavailableResult(metadata: ReviewMetadata, reason: string, failed: boo
     summary: {
       recommendation: "info_only",
       confidence: "low",
-      oneLine: failed ? `PR review advisor failed: ${reason}` : `PR review advisor skipped: ${reason}`,
+      oneLine: failed
+        ? `PR review advisor failed: ${reason}`
+        : `PR review advisor skipped: ${reason}`,
     },
     findings: failed
-      ? [{
-          severity: "warning",
-          category: "correctness",
-          file: null,
-          line: null,
-          title: "PR review advisor unavailable",
-          description: `The automated advisor could not complete: ${reason}`,
-          recommendation: "Re-run the PR Review Advisor or perform a manual review.",
-          evidence: reason,
-        }]
+      ? [
+          {
+            severity: "warning",
+            category: "correctness",
+            file: null,
+            line: null,
+            title: "PR review advisor unavailable",
+            description: `The automated advisor could not complete: ${reason}`,
+            recommendation: "Re-run the PR Review Advisor or perform a manual review.",
+            evidence: reason,
+          },
+        ]
       : [],
     acceptanceCoverage: [],
     securityCategories: SECURITY_CATEGORIES.map((category) => ({
@@ -1179,7 +1420,9 @@ function unavailableResult(metadata: ReviewMetadata, reason: string, failed: boo
     testDepth: metadata.deterministic.testDepth,
     positives: [],
     reviewCompleteness: {
-      limitations: [failed ? `Advisor execution failed: ${reason}` : `Advisor execution skipped: ${reason}`],
+      limitations: [
+        failed ? `Advisor execution failed: ${reason}` : `Advisor execution skipped: ${reason}`,
+      ],
       requiresHumanReview: true,
     },
   };

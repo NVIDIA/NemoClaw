@@ -179,11 +179,12 @@ ALT_GATEWAY_NAME="e2e-double-alt"
 REGISTRY="$HOME/.nemoclaw/sandboxes.json"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-FAKE_HOST="127.0.0.1"
-FAKE_PORT="${NEMOCLAW_FAKE_PORT:-18080}"
-FAKE_BASE_URL="http://${FAKE_HOST}:${FAKE_PORT}/v1"
-FAKE_LOG="$(mktemp)"
-FAKE_PID=""
+# shellcheck source=test/e2e/lib/openai-compatible-api-proof.sh
+source "${SCRIPT_DIR}/lib/openai-compatible-api-proof.sh"
+FAKE_OPENAI_HOST="127.0.0.1"
+FAKE_OPENAI_PORT="${NEMOCLAW_FAKE_PORT:-18080}"
+FAKE_OPENAI_LOG="$(mktemp)"
+FAKE_BASE_URL="http://${FAKE_OPENAI_HOST}:${FAKE_OPENAI_PORT}/v1"
 
 if command -v node >/dev/null 2>&1 && [ -f "$REPO_ROOT/bin/nemoclaw.js" ]; then
   NEMOCLAW_CMD=(node "$REPO_ROOT/bin/nemoclaw.js")
@@ -193,81 +194,14 @@ fi
 
 # shellcheck disable=SC2329
 cleanup() {
-  if [ -n "$FAKE_PID" ] && kill -0 "$FAKE_PID" 2>/dev/null; then
-    kill "$FAKE_PID" 2>/dev/null || true
-    wait "$FAKE_PID" 2>/dev/null || true
-  fi
-  rm -f "$FAKE_LOG"
+  stop_fake_openai_compatible_api
+  rm -f "$FAKE_OPENAI_LOG"
 }
 trap cleanup EXIT
 
 start_fake_openai() {
-  python3 - "$FAKE_HOST" "$FAKE_PORT" >"$FAKE_LOG" 2>&1 <<'PY' &
-import json
-import sys
-from http.server import BaseHTTPRequestHandler, HTTPServer
-
-HOST = sys.argv[1]
-PORT = int(sys.argv[2])
-
-
-class Handler(BaseHTTPRequestHandler):
-    def _send(self, status, payload):
-        body = json.dumps(payload).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def log_message(self, format, *args):
-        return
-
-    def do_GET(self):
-        if self.path in ("/v1/models", "/models"):
-            self._send(200, {"data": [{"id": "test-model", "object": "model"}]})
-            return
-        self._send(404, {"error": {"message": "not found"}})
-
-    def do_POST(self):
-        length = int(self.headers.get("Content-Length", "0"))
-        if length:
-            self.rfile.read(length)
-        if self.path in ("/v1/chat/completions", "/chat/completions"):
-            self._send(
-                200,
-                {
-                    "id": "chatcmpl-test",
-                    "object": "chat.completion",
-                    "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}],
-                },
-            )
-            return
-        if self.path in ("/v1/responses", "/responses"):
-            self._send(
-                200,
-                {
-                    "id": "resp-test",
-                    "object": "response",
-                    "output": [{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "ok"}]}],
-                },
-            )
-            return
-        self._send(404, {"error": {"message": "not found"}})
-
-
-HTTPServer((HOST, PORT), Handler).serve_forever()
-PY
-  FAKE_PID=$!
-
-  for _ in $(seq 1 20); do
-    if curl -sf "${FAKE_BASE_URL}/models" >/dev/null 2>&1; then
-      return 0
-    fi
-    sleep 1
-  done
-
-  return 1
+  start_fake_openai_compatible_api || return 1
+  FAKE_BASE_URL="$FAKE_OPENAI_BASE_URL"
 }
 
 # TODO(#2562): replace shell timeout with structured timeout once unified abstraction lands
@@ -438,7 +372,7 @@ if start_fake_openai; then
 else
   fail "Failed to start fake OpenAI-compatible endpoint"
   info "Fake server log:"
-  sed 's/^/    /' "$FAKE_LOG"
+  sed 's/^/    /' "$FAKE_OPENAI_LOG"
   exit 1
 fi
 

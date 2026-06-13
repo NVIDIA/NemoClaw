@@ -127,7 +127,9 @@ async function main(): Promise<void> {
             token,
           });
         } catch (error: unknown) {
-          console.warn(`Could not look up dispatched nightly run: ${error instanceof Error ? error.message : String(error)}`);
+          console.warn(
+            `Could not look up dispatched nightly run: ${error instanceof Error ? error.message : String(error)}`,
+          );
         }
         output = {
           ...plan,
@@ -142,7 +144,9 @@ async function main(): Promise<void> {
     // Do not write exception details to artifacts. This catch can include
     // network-layer failures from the GitHub API dispatch path, and those
     // messages are not needed in uploaded advisor artifacts.
-    console.error(`E2E advisor dispatch failed: ${error instanceof Error ? error.message : String(error)}`);
+    console.error(
+      `E2E advisor dispatch failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
     output = {
       status: "failed",
       reason: "E2E advisor dispatch failed; see workflow logs for details",
@@ -187,7 +191,10 @@ export function planAutoDispatch({
     return { ...base, reason: `event ${eventName || "<unknown>"} is not pull_request` };
   }
   if (repository !== allowedRepository) {
-    return { ...base, reason: `repository ${repository || "<unknown>"} is not ${allowedRepository}` };
+    return {
+      ...base,
+      reason: `repository ${repository || "<unknown>"} is not ${allowedRepository}`,
+    };
   }
   if (!pr) {
     return { ...base, reason: "pull_request payload was not available" };
@@ -209,10 +216,16 @@ export function planAutoDispatch({
 
   const authorAssociation = pr.author_association || "";
   const authorLogin = pr.user?.login || "";
-  const allowedAssociations = parseCsv(env.E2E_ADVISOR_AUTO_DISPATCH_AUTHOR_ASSOCIATIONS || DEFAULT_ALLOWED_AUTHOR_ASSOCIATIONS);
-  const allowedAuthorLogins = parseCsv(env.E2E_ADVISOR_AUTO_DISPATCH_ALLOWED_AUTHORS).map(normalizeLogin);
+  const allowedAssociations = parseCsv(
+    env.E2E_ADVISOR_AUTO_DISPATCH_AUTHOR_ASSOCIATIONS || DEFAULT_ALLOWED_AUTHOR_ASSOCIATIONS,
+  );
+  const allowedAuthorLogins = parseCsv(env.E2E_ADVISOR_AUTO_DISPATCH_ALLOWED_AUTHORS).map(
+    normalizeLogin,
+  );
   const allowedByAssociation = allowedAssociations.includes(authorAssociation);
-  const allowedByAuthorAllowlist = Boolean(authorLogin && allowedAuthorLogins.includes(normalizeLogin(authorLogin)));
+  const allowedByAuthorAllowlist = Boolean(
+    authorLogin && allowedAuthorLogins.includes(normalizeLogin(authorLogin)),
+  );
   if (!allowedByAssociation && !allowedByAuthorAllowlist) {
     return {
       ...base,
@@ -255,7 +268,8 @@ export function planAutoDispatch({
   if (jobs.length === 0) {
     return {
       ...base,
-      reason: "no required advisor recommendations matched dispatchable jobs in the target workflow",
+      reason:
+        "no required advisor recommendations matched dispatchable jobs in the target workflow",
       prNumber: pr.number,
       authorAssociation,
       authorLogin,
@@ -320,12 +334,16 @@ export function extractDispatchableJobs(workflowText: string): string[] {
   return jobs.sort();
 }
 
-export function collectRecommendedJobs(result: AdvisorResult, targetWorkflow = DEFAULT_TARGET_WORKFLOW): string[] {
+export function collectRecommendedJobs(
+  result: AdvisorResult,
+  targetWorkflow = DEFAULT_TARGET_WORKFLOW,
+): string[] {
   const requiredTests = Array.isArray(result.requiredTests) ? result.requiredTests : [];
   const jobs: string[] = [];
   for (const test of requiredTests) {
     const workflow = typeof test.workflow === "string" ? path.basename(test.workflow.trim()) : "";
-    const workflowMatches = !workflow || workflow === targetWorkflow || workflow === path.basename(targetWorkflow);
+    const workflowMatches =
+      !workflow || workflow === targetWorkflow || workflow === path.basename(targetWorkflow);
     if (!workflowMatches) continue;
     if (typeof test.job === "string" && test.job.trim()) jobs.push(test.job.trim());
     if (typeof test.id === "string" && test.id.trim()) jobs.push(test.id.trim());
@@ -375,11 +393,15 @@ async function dispatchWorkflow({
   // same-repository/OWNER-or-MEMBER gating and strict validation of the target
   // workflow, ref, PR number, and comma-separated E2E job names.
   try {
-    await githubApi<void>(`repos/${safeRepo}/actions/workflows/${encodeURIComponent(safeWorkflow)}/dispatches`, token, {
-      method: "POST",
-      body: { ref: safeRef, inputs: safeInputs },
-      userAgent: "nemoclaw-e2e-advisor-dispatcher",
-    });
+    await githubApi<void>(
+      `repos/${safeRepo}/actions/workflows/${encodeURIComponent(safeWorkflow)}/dispatches`,
+      token,
+      {
+        method: "POST",
+        body: { ref: safeRef, inputs: safeInputs },
+        userAgent: "nemoclaw-e2e-advisor-dispatcher",
+      },
+    );
   } catch {
     // Do not include the response body in thrown errors. GitHub API error text
     // is network-controlled and this script records failures to artifact files.
@@ -425,9 +447,13 @@ async function findDispatchedWorkflowRun({
     if (attempt > 0) await delay(2000);
     let data: WorkflowRunSearchResult;
     try {
-      data = await githubApi<WorkflowRunSearchResult>(runsPath, token, { userAgent: "nemoclaw-e2e-advisor-dispatcher" });
+      data = await githubApi<WorkflowRunSearchResult>(runsPath, token, {
+        userAgent: "nemoclaw-e2e-advisor-dispatcher",
+      });
     } catch (error: unknown) {
-      console.warn(`Could not look up dispatched nightly run: ${error instanceof Error ? error.message : String(error)}`);
+      console.warn(
+        `Could not look up dispatched nightly run: ${error instanceof Error ? error.message : String(error)}`,
+      );
       return undefined;
     }
     const match = data.workflow_runs?.find(
@@ -505,7 +531,9 @@ function renderDispatchSummary(result: DispatchPlan): string {
     lines.push(`Jobs: ${result.jobs.map((job) => `\`${job}\``).join(", ")}`);
   }
   if (Array.isArray(result.ignoredJobs) && result.ignoredJobs.length > 0) {
-    lines.push(`Ignored recommendations: ${result.ignoredJobs.map((job) => `\`${job}\``).join(", ")}`);
+    lines.push(
+      `Ignored recommendations: ${result.ignoredJobs.map((job) => `\`${job}\``).join(", ")}`,
+    );
   }
   lines.push("");
   return `${lines.join("\n")}\n`;
