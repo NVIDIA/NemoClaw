@@ -283,7 +283,7 @@ For faster custom builds, plan for Docker cache behavior:
 - A warm rebuild reuses cached layers when the base image and earlier layers are unchanged, so it is much faster than the first build.
 - Order Dockerfile instructions from least-changing to most-changing: base image, system packages, dependency manifests, dependency install, then application source.
   This lets warm rebuilds reuse cached dependency layers instead of reinstalling on every source change.
-- Pin the base image to an explicit tag or release ref so warm rebuilds resolve the same cached base instead of pulling a new one.
+- Pin the base image to an explicit tag or digest so warm rebuilds resolve the same cached base instead of pulling a new one.
 
 To diagnose where a slow build spends time, set `NEMOCLAW_TRACE=1` and read the phase timings in [Onboard Profiling Traces](#onboard-profiling-traces).
 NemoClaw does not guarantee exact build timings.
