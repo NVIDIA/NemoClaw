@@ -108,7 +108,16 @@ process.stdout.write(JSON.stringify(payload));
 describe("Issue #2273 Layer 1: credential hydration from legacy storage", () => {
   // Test each provider's credential env to ensure parametric coverage
   const providers = [
-    { name: "NVIDIA Endpoints", credentialEnv: "NVIDIA_API_KEY", value: "nvapi-test-hydrate" },
+    {
+      name: "NVIDIA Endpoints",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      value: "nvapi-test-hydrate",
+    },
+    {
+      name: "NVIDIA Endpoints legacy alias",
+      credentialEnv: "NVIDIA_API_KEY",
+      value: "nvapi-test-hydrate",
+    },
     { name: "OpenAI", credentialEnv: "OPENAI_API_KEY", value: "sk-test-hydrate" },
     { name: "Anthropic", credentialEnv: "ANTHROPIC_API_KEY", value: "sk-ant-test-hydrate" },
     { name: "Google Gemini", credentialEnv: "GEMINI_API_KEY", value: "gemini-test-hydrate" },

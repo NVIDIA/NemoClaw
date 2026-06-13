@@ -3,11 +3,8 @@
 
 import { spawnSync } from "node:child_process";
 
+import { shellQuote } from "./core/shell-quote";
 import type { SkillPaths } from "./skill-install";
-
-// Re-export shellQuote from runner.ts — a repo-wide test enforces
-// a single definition lives in runner.ts.
-const { shellQuote } = require("./runner");
 
 export { shellQuote };
 

@@ -6,17 +6,11 @@ import { pathToFileURL } from "node:url";
 import { upsertStickyComment } from "../advisors/github.mts";
 import { parseArgs, readIfExists, readJsonIfExists } from "../advisors/io.mts";
 
-import type {
-  ScenarioAdvisorResult,
-  ScenarioRecommendation,
-} from "./scenarios.mts";
+import type { ScenarioAdvisorResult, ScenarioRecommendation } from "./scenarios.mts";
 
 export const SCENARIO_ADVISOR_MARKER = "<!-- nemoclaw-e2e-scenario-advisor -->";
 
-if (
-  process.argv[1] &&
-  import.meta.url === pathToFileURL(process.argv[1]).href
-) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch((error: unknown) => {
     console.error(error instanceof Error ? error.message : String(error));
     process.exit(1);
@@ -27,28 +21,20 @@ async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const repo = args.repo || process.env.GITHUB_REPOSITORY;
   const pr = args.pr || process.env.PR_NUMBER;
-  const summaryPath =
-    args.summary || "artifacts/e2e-advisor/e2e-scenario-advisor-summary.md";
-  const resultPath =
-    args.result || "artifacts/e2e-advisor/e2e-scenario-advisor-result.json";
+  const summaryPath = args.summary || "artifacts/e2e-advisor/e2e-scenario-advisor-summary.md";
+  const resultPath = args.result || "artifacts/e2e-advisor/e2e-scenario-advisor-result.json";
   const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
   const runUrl =
-    process.env.GITHUB_SERVER_URL &&
-    process.env.GITHUB_REPOSITORY &&
-    process.env.GITHUB_RUN_ID
+    process.env.GITHUB_SERVER_URL && process.env.GITHUB_REPOSITORY && process.env.GITHUB_RUN_ID
       ? `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`
       : undefined;
 
   if (!repo || !pr) {
-    console.log(
-      "Skipping E2E scenario advisor comment: repo or PR number not provided",
-    );
+    console.log("Skipping E2E scenario advisor comment: repo or PR number not provided");
     return;
   }
   if (!token) {
-    console.log(
-      "Skipping E2E scenario advisor comment: GITHUB_TOKEN/GH_TOKEN not provided",
-    );
+    console.log("Skipping E2E scenario advisor comment: GITHUB_TOKEN/GH_TOKEN not provided");
     return;
   }
 

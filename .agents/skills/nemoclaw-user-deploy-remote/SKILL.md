@@ -13,7 +13,8 @@ license: "Apache-2.0"
 
 ## Prerequisites
 
-- The [Brev CLI](https://brev.nvidia.com) installed and authenticated.
+- Access to a remote GPU VM that can run Docker and the NVIDIA Container Toolkit.
+- The [Brev CLI](https://brev.nvidia.com) installed and authenticated if you provision the VM with Brev.
 - A provider credential for the inference backend you want to use during onboarding.
 - `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN` exported when your remote vLLM or Hugging Face workflow needs access to gated models.
 - NemoClaw installed locally if you plan to use the deprecated `nemoclaw deploy` wrapper. Otherwise, install NemoClaw directly on the remote host after provisioning it.
@@ -21,14 +22,50 @@ license: "Apache-2.0"
 Run NemoClaw on a remote GPU instance through [Brev](https://brev.nvidia.com).
 The preferred path is to provision the VM, run the standard NemoClaw installer on that host, and then run `nemoclaw onboard`.
 
-## Deploy the Instance
+## Preferred Deployment Path
+
+Provision the remote GPU VM first, then run the normal installer and onboard flow on that VM.
+For Brev, `<instance-name>` is the instance name and SSH alias created by the Brev CLI.
+For another cloud provider, replace the provisioning and SSH commands with that provider's console or CLI workflow.
+
+```bash
+# On your local machine
+brev create <instance-name> --gpu <gpu-type>
+brev ssh <instance-name>
+```
+
+If `brev` is missing or unauthenticated, install or log in to the Brev CLI first, or provision the VM through your cloud console and connect with `ssh <user>@<host>`.
+
+Run the installer on the remote VM:
+
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+```
+
+Set any remote-only environment variables on the VM before onboarding.
+For example, set the browser origin if you will open the dashboard through a Brev public URL, and raise the first-run readiness budget on cold cloud hosts:
+
+```bash
+export CHAT_UI_URL="https://openclaw0-<id>.brevlab.com"
+export NEMOCLAW_SANDBOX_READY_TIMEOUT=600
+nemoclaw onboard
+```
+
+After successful onboarding, you should see output that reports a ready sandbox and the next command to connect:
+
+```text
+✓ Sandbox '<name>' is ready
+Next: nemoclaw <name> connect
+```
+
+## Legacy Brev Compatibility
 
 **Warning:**
 
 The `nemoclaw deploy` command is deprecated.
 Prefer provisioning the remote host separately, then running the standard NemoClaw installer and `nemoclaw onboard` on that host.
 
-Create a Brev instance and run the legacy compatibility flow:
+Use the legacy compatibility wrapper only when you need the older Brev-specific bootstrap flow:
 
 ```bash
 nemoclaw deploy <instance-name>
@@ -51,38 +88,40 @@ If you export `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN`, the wrapper forwards those
 
 ## Connect to the Remote Sandbox
 
-After deployment finishes, the deploy command opens an interactive shell inside the remote sandbox.
-To reconnect after closing the session, run the command again:
+After onboarding finishes, run the host CLI on the remote VM:
 
 ```bash
-nemoclaw deploy <instance-name>
+nemoclaw <name> connect
 ```
+
+If you used the deprecated Brev compatibility wrapper, the wrapper opens an interactive shell inside the remote sandbox.
+To reconnect through that legacy flow, run `nemoclaw deploy <instance-name>` again.
 
 ## Monitor the Remote Sandbox
 
-SSH to the instance and run the OpenShell TUI to monitor activity and approve network requests:
+SSH to the instance and run the OpenShell TUI on the remote VM to monitor activity and approve network requests:
 
 ```bash
-ssh <instance-name> 'cd ~/nemoclaw && set -a && . .env && set +a && openshell term'
+ssh <instance-name> 'openshell term'
 ```
 
 ## Verify Inference
 
-Run a test agent prompt inside the remote sandbox:
+Run a test agent prompt from the remote VM host:
 
 ```bash
-openclaw agent --agent main -m "Hello from the remote sandbox" --session-id test
+nemoclaw <name> exec -- openclaw agent --agent main -m "Hello from the remote sandbox" --session-id test
 ```
 
 ## Remote Dashboard Access
 
 The NemoClaw dashboard validates the browser origin against an allowlist baked into the sandbox image at build time.
 By default, the allowlist only contains `http://127.0.0.1:18789`.
-When you access the dashboard from a remote browser, for example through a Brev public URL or an SSH port-forward, set `CHAT_UI_URL` to the origin the browser uses before running setup:
+When you access the dashboard from a remote browser, for example through a Brev public URL or an SSH port-forward, set `CHAT_UI_URL` to the origin the browser uses before running `nemoclaw onboard` on the remote VM:
 
 ```bash
 export CHAT_UI_URL="https://openclaw0-<id>.brevlab.com"
-nemoclaw deploy <instance-name>
+nemoclaw onboard
 ```
 
 For SSH port-forwarding, the origin is typically the default `http://127.0.0.1:18789`, so you do not need extra configuration.
@@ -134,9 +173,11 @@ Changing the proxy after onboarding requires re-running `nemoclaw onboard`.
 
 ## GPU Configuration
 
-The deploy script uses the `NEMOCLAW_GPU` environment variable to select the GPU type.
+The deprecated Brev compatibility wrapper uses the `NEMOCLAW_GPU` environment variable to select the GPU type.
 The default value is `a2-highgpu-1g:nvidia-tesla-a100:1`.
-Set this variable before running `nemoclaw deploy` to use a different GPU configuration:
+That value is specific to GCP-backed Brev instances.
+Other Brev providers or cloud consoles use different GPU type strings.
+Set this variable before running the deprecated wrapper to use a different GPU configuration:
 
 ```bash
 export NEMOCLAW_GPU="a2-highgpu-1g:nvidia-tesla-a100:2"

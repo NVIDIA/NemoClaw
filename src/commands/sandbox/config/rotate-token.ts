@@ -22,7 +22,7 @@ export default class SandboxConfigRotateTokenCommand extends NemoClawCommand {
   static usage = ["<name> [--from-env <VAR>] [--stdin]"];
   static examples = [
     "<%= config.bin %> sandbox config rotate-token alpha",
-    "<%= config.bin %> sandbox config rotate-token alpha --from-env NVIDIA_API_KEY",
+    "<%= config.bin %> sandbox config rotate-token alpha --from-env NVIDIA_INFERENCE_API_KEY",
   ];
   static args = {
     sandboxName: sandboxNameArg,

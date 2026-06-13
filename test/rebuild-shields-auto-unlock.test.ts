@@ -90,7 +90,6 @@ function createFixture(opts: { shieldsLocked: boolean }) {
           policies: [],
           agent: null,
           openshellDriver: "vm",
-          messagingChannels: null,
         },
       },
     }),
@@ -99,7 +98,7 @@ function createFixture(opts: { shieldsLocked: boolean }) {
 
   fs.writeFileSync(
     path.join(nemoclawDir, "credentials.json"),
-    JSON.stringify({ NVIDIA_API_KEY: "nvapi-test" }),
+    JSON.stringify({ NVIDIA_INFERENCE_API_KEY: "nvapi-test" }),
     { mode: 0o600 },
   );
 
@@ -121,12 +120,12 @@ function createFixture(opts: { shieldsLocked: boolean }) {
       provider: "nvidia-prod",
       model: "meta/llama-3.3-70b-instruct",
       endpointUrl: null,
-      credentialEnv: "NVIDIA_API_KEY",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
       preferredInferenceApi: null,
       nimContainer: null,
       webSearchConfig: null,
       policyPresets: [],
-      messagingChannels: null,
+      messagingPlan: null,
       metadata: { gatewayName: "nemoclaw", fromDockerfile: null },
       steps: {
         preflight: { status: "complete", startedAt: null, completedAt: null, error: null },

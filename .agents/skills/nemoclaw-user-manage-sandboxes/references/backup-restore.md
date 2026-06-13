@@ -31,6 +31,8 @@ Snapshots capture all workspace state directories defined in the agent manifest 
 Agent manifests can also declare durable top-level state files.
 For Hermes, snapshots include `SOUL.md` and the SQLite database behind `.hermes/state.db` using SQLite's online backup API, then restore that database through SQLite instead of copying a live raw database file.
 Treat snapshot directories as private local data: the Hermes database can contain session metadata and message history needed for a faithful restore.
+Snapshots also preserve sandbox registry metadata that affects rebuild behavior, including custom policy presets applied with `policy-add --from-file` or `policy-add --from-dir`.
+When you restore a snapshot, NemoClaw replays those recorded custom presets with their stored YAML content, so you do not need the original preset files on disk for the restored sandbox to keep the same policy state.
 
 ```bash
 nemoclaw my-assistant snapshot create
@@ -68,6 +70,9 @@ nemoclaw my-assistant snapshot restore before-upgrade --to my-assistant-clone --
 The `nemoclaw <name> rebuild` command uses the same snapshot mechanism automatically.
 Snapshot restore performs a targeted repair for legacy `.openclaw-data` symlinks that older images created.
 NemoClaw rejects unsafe symlinks and hard links inside sandbox state during backup creation before they can enter a snapshot.
+Snapshots also preserve user-owned `openclaw.json` settings.
+During rebuild or restore, NemoClaw merges those restored settings with the freshly generated runtime config so current provider placeholders, messaging enablement, and gateway state win over stale snapshot values.
+If the restored config cannot be parsed or applied safely, NemoClaw stops the restore instead of replacing the generated config with an unsafe fallback.
 
 </AgentOnly>
 <AgentOnly variant="hermes">

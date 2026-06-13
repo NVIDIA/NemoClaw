@@ -4,7 +4,6 @@
 import type { AgentDefinition } from "../agent/defs";
 import type { SandboxEntry, SandboxMessagingState } from "../state/registry";
 import * as registry from "../state/registry";
-import type { MessagingChannelConfig } from "../messaging-channel-config";
 import {
   getHermesDashboardRegistryFields,
   type HermesDashboardOnboardState,
@@ -33,11 +32,7 @@ export interface CreatedSandboxRegistryEntryInput {
   imageTag: string | null;
   providerCredentialHashes: Record<string, string>;
   appliedPolicies: string[];
-  configuredMessagingChannels: string[] | null;
-  activeMessagingChannels: string[];
-  messagingChannelConfig: MessagingChannelConfig | null | undefined;
   plannedMessagingState: SandboxMessagingState | undefined;
-  disabledChannels: string[];
   hermesToolGateways: string[];
   hermesDashboardState: HermesDashboardOnboardState;
   dashboardPort: number;
@@ -69,13 +64,7 @@ export function buildCreatedSandboxRegistryEntry(
         ? input.providerCredentialHashes
         : undefined,
     policies: input.appliedPolicies,
-    messagingChannels:
-      input.configuredMessagingChannels != null
-        ? [...new Set(input.configuredMessagingChannels)]
-        : input.activeMessagingChannels,
-    messagingChannelConfig: input.messagingChannelConfig || undefined,
     messaging: messagingState,
-    disabledChannels: input.disabledChannels.length > 0 ? [...input.disabledChannels] : undefined,
     hermesToolGateways:
       input.hermesToolGateways.length > 0 ? [...input.hermesToolGateways] : undefined,
     ...getHermesDashboardRegistryFields(input.hermesDashboardState),

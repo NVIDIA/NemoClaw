@@ -16,12 +16,12 @@
 #
 # Prerequisites:
 #   - Docker running
-#   - NVIDIA_API_KEY set (real key or fake OpenAI endpoint)
+#   - NVIDIA_INFERENCE_API_KEY set (real key or fake OpenAI endpoint)
 #   - NEMOCLAW_NON_INTERACTIVE=1, NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1
 #
 # Usage:
 #   NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
-#     NVIDIA_API_KEY=nvapi-... bash test/e2e/test-channels-add-remove.sh
+#     NVIDIA_INFERENCE_API_KEY=nvapi-... bash test/e2e/test-channels-add-remove.sh
 
 set -uo pipefail
 
@@ -175,20 +175,24 @@ if (!fs.existsSync(registryPath)) fail("registry file not found: " + registryPat
 const registry = JSON.parse(fs.readFileSync(registryPath, "utf8"));
 const entry = registry.sandboxes?.[sandboxName];
 if (!entry) fail("sandbox " + sandboxName + " missing from registry");
-const config = entry.messagingChannelConfig;
-if (!config || typeof config !== "object" || Array.isArray(config)) {
-  fail("messagingChannelConfig missing or not an object");
+const plan = entry.messaging?.plan;
+if (!plan || plan.schemaVersion !== 1) fail("messaging.plan missing or schemaVersion != 1");
+const channel = Array.isArray(plan.channels)
+  ? plan.channels.find((item) => item?.channelId === "telegram")
+  : null;
+if (!channel) fail("telegram channel missing from messaging.plan.channels");
+const inputs = Array.isArray(channel.inputs) ? channel.inputs : [];
+const inputValue = (id) => inputs.find((input) => input?.inputId === id)?.value;
+if (inputValue("allowedIds") !== allowedIds) {
+  fail("allowedIds input expected " + allowedIds + ", got " + JSON.stringify(inputValue("allowedIds")));
 }
-if (config.TELEGRAM_ALLOWED_IDS !== allowedIds) {
-  fail("TELEGRAM_ALLOWED_IDS expected " + allowedIds + ", got " + JSON.stringify(config.TELEGRAM_ALLOWED_IDS));
-}
-if (config.TELEGRAM_REQUIRE_MENTION !== requireMention) {
-  fail("TELEGRAM_REQUIRE_MENTION expected " + requireMention + ", got " + JSON.stringify(config.TELEGRAM_REQUIRE_MENTION));
+if (inputValue("requireMention") !== requireMention) {
+  fail("requireMention input expected " + requireMention + ", got " + JSON.stringify(inputValue("requireMention")));
 }
 ' "$REGISTRY" "$SANDBOX_NAME" "$TELEGRAM_ALLOWED_IDS_VALUE" "$TELEGRAM_REQUIRE_MENTION_VALUE" 2>&1)"; then
-    pass "host registry messagingChannelConfig persists telegram config ${context}"
+    pass "host registry messaging.plan persists telegram config ${context}"
   else
-    fail "host registry messagingChannelConfig missing telegram config ${context}: ${output}"
+    fail "host registry messaging.plan missing telegram config ${context}: ${output}"
   fi
 }
 
@@ -307,11 +311,11 @@ telegram_egress_open() {
 # ══════════════════════════════════════════════════════════════════
 section "Phase 0: Prerequisites"
 
-if [ -z "${NVIDIA_API_KEY:-}" ]; then
-  fail "C0: NVIDIA_API_KEY is required"
+if [ -z "${NVIDIA_INFERENCE_API_KEY:-}" ]; then
+  fail "C0: NVIDIA_INFERENCE_API_KEY is required"
   print_summary
 fi
-pass "C0: NVIDIA_API_KEY is set"
+pass "C0: NVIDIA_INFERENCE_API_KEY is set"
 
 if [ "${NEMOCLAW_NON_INTERACTIVE:-}" != "1" ]; then
   fail "C0: NEMOCLAW_NON_INTERACTIVE=1 is required"
@@ -447,14 +451,14 @@ export TELEGRAM_REQUIRE_MENTION="$TELEGRAM_REQUIRE_MENTION_VALUE"
 maybe_skip_telegram_reachability_for_fake_token
 
 # Gateway-credential reuse gate. Before the fix, the rebuild preflight
-# aborted with "provider credential not found" when NVIDIA_API_KEY was unset
+# aborted with "provider credential not found" when NVIDIA_INFERENCE_API_KEY was unset
 # in the host env even though the inference provider was already registered
 # in the OpenShell gateway. Drop the key from the env around `channels add`
 # + rebuild so the post-add rebuild has to reuse the gateway-stored
 # credential instead of demanding it back on the host.
-NVIDIA_API_KEY_BACKUP="${NVIDIA_API_KEY:-}"
-unset NVIDIA_API_KEY
-info "NVIDIA_API_KEY unset for gateway-credential-reuse gate; gateway must hold the credential"
+NVIDIA_INFERENCE_API_KEY_BACKUP="${NVIDIA_INFERENCE_API_KEY:-}"
+unset NVIDIA_INFERENCE_API_KEY
+info "NVIDIA_INFERENCE_API_KEY unset for gateway-credential-reuse gate; gateway must hold the credential"
 
 if nemoclaw "$SANDBOX_NAME" channels add telegram >/tmp/nc-add.log 2>&1; then
   add_rc=0
@@ -479,8 +483,8 @@ else
   tail -100 /tmp/nc-rebuild-add.log 2>/dev/null || true
   # Restore env before bailing so later phases (and operators rerunning
   # the script interactively) still see the original key.
-  if [ -n "$NVIDIA_API_KEY_BACKUP" ]; then
-    export NVIDIA_API_KEY="$NVIDIA_API_KEY_BACKUP"
+  if [ -n "$NVIDIA_INFERENCE_API_KEY_BACKUP" ]; then
+    export NVIDIA_INFERENCE_API_KEY="$NVIDIA_INFERENCE_API_KEY_BACKUP"
   fi
   print_summary
 fi
@@ -488,17 +492,17 @@ fi
 # Gateway-credential reuse assertion: the rebuild must not have aborted with
 # the "provider credential not found" error.
 if grep -q "provider credential not found" /tmp/nc-rebuild-add.log; then
-  fail "C3c: REGRESSION — rebuild aborted on missing NVIDIA_API_KEY despite gateway-registered credential"
+  fail "C3c: REGRESSION — rebuild aborted on missing NVIDIA_INFERENCE_API_KEY despite gateway-registered credential"
 else
-  pass "C3c: rebuild reused gateway-stored credential without NVIDIA_API_KEY"
+  pass "C3c: rebuild reused gateway-stored credential without NVIDIA_INFERENCE_API_KEY"
 fi
 
 # Restore for the remaining phases — `channels remove` + rebuild should
 # work in the normal env-present case too.
-if [ -n "$NVIDIA_API_KEY_BACKUP" ]; then
-  export NVIDIA_API_KEY="$NVIDIA_API_KEY_BACKUP"
+if [ -n "$NVIDIA_INFERENCE_API_KEY_BACKUP" ]; then
+  export NVIDIA_INFERENCE_API_KEY="$NVIDIA_INFERENCE_API_KEY_BACKUP"
 fi
-unset NVIDIA_API_KEY_BACKUP
+unset NVIDIA_INFERENCE_API_KEY_BACKUP
 
 # ══════════════════════════════════════════════════════════════════
 # Phase 4: Post-add assertions (Test 2 acceptance, regression #3437)
@@ -567,7 +571,6 @@ else
   fail "C5a: channels remove telegram did not unregister"
   tail -20 /tmp/nc-remove.log 2>/dev/null || true
 fi
-assert_host_telegram_config "after channels remove"
 assert_host_telegram_plan "removed" "after channels remove"
 
 info "Rebuilding sandbox to apply the remove..."
@@ -614,6 +617,6 @@ else
   pass "C6c: 'telegram' preset removed from policy list after remove+rebuild"
 fi
 
-assert_host_telegram_config "after remove+rebuild"
+assert_host_telegram_plan "removed" "after remove+rebuild"
 
 print_summary

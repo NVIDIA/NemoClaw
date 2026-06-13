@@ -50,13 +50,13 @@ describe("credentials shim", () => {
   });
 
   it("stages and lists allowlisted credentials from process.env only", () => {
-    credentials.saveCredential("NVIDIA_API_KEY", "  nvapi-js-shim \r\n");
+    credentials.saveCredential("NVIDIA_INFERENCE_API_KEY", "  nvapi-js-shim \r\n");
     credentials.saveCredential("TEST_KEY", "fixture-only");
 
-    expect(credentials.getCredential("NVIDIA_API_KEY")).toBe("nvapi-js-shim");
+    expect(credentials.getCredential("NVIDIA_INFERENCE_API_KEY")).toBe("nvapi-js-shim");
     expect(credentials.getCredential("TEST_KEY")).toBe("fixture-only");
-    expect(credentials.loadCredentials()).toEqual({ NVIDIA_API_KEY: "nvapi-js-shim" });
-    expect(credentials.listCredentialKeys()).toEqual(["NVIDIA_API_KEY"]);
+    expect(credentials.loadCredentials()).toEqual({ NVIDIA_INFERENCE_API_KEY: "nvapi-js-shim" });
+    expect(credentials.listCredentialKeys()).toEqual(["NVIDIA_INFERENCE_API_KEY"]);
   });
 
   it("clears blank values instead of persisting them", () => {
@@ -72,15 +72,17 @@ describe("credentials shim", () => {
     const dir = path.join(tmpDir, ".nemoclaw");
     const file = path.join(dir, "credentials.json");
     fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(file, JSON.stringify({ NVIDIA_API_KEY: "nvapi-from-disk" }), { mode: 0o600 });
+    fs.writeFileSync(file, JSON.stringify({ NVIDIA_INFERENCE_API_KEY: "nvapi-from-disk" }), {
+      mode: 0o600,
+    });
 
-    expect(credentials.getCredential("NVIDIA_API_KEY")).toBe(null);
+    expect(credentials.getCredential("NVIDIA_INFERENCE_API_KEY")).toBe(null);
     expect(credentials.loadCredentials()).toEqual({});
 
-    credentials.saveCredential("NVIDIA_API_KEY", "nvapi-from-env");
+    credentials.saveCredential("NVIDIA_INFERENCE_API_KEY", "nvapi-from-env");
     expect(fs.readFileSync(file, "utf8")).toBe(
-      JSON.stringify({ NVIDIA_API_KEY: "nvapi-from-disk" }),
+      JSON.stringify({ NVIDIA_INFERENCE_API_KEY: "nvapi-from-disk" }),
     );
-    expect(credentials.getCredential("NVIDIA_API_KEY")).toBe("nvapi-from-env");
+    expect(credentials.getCredential("NVIDIA_INFERENCE_API_KEY")).toBe("nvapi-from-env");
   });
 });
