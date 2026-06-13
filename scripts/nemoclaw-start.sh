@@ -1700,6 +1700,10 @@ prepare_gateway_token_for_current_command() {
 
 # Write an auth profile JSON for the NVIDIA API key so the gateway can authenticate.
 write_auth_profile() {
+  if [ -z "${NVIDIA_INFERENCE_API_KEY:-}" ] && [ -n "${NVIDIA_API_KEY:-}" ]; then
+    export NVIDIA_INFERENCE_API_KEY="$NVIDIA_API_KEY"
+  fi
+
   if [ -z "${NVIDIA_INFERENCE_API_KEY:-}" ]; then
     return
   fi

@@ -602,8 +602,9 @@ if [ -d "$REPO/.tmp" ]; then
 fi
 
 NVIDIA_INFERENCE_API_KEY_BACKUP="${NVIDIA_INFERENCE_API_KEY:-}"
-unset NVIDIA_INFERENCE_API_KEY
-info "NVIDIA_INFERENCE_API_KEY unset; gateway must hold the inference credential"
+NVIDIA_API_KEY_BACKUP="${NVIDIA_API_KEY:-}"
+unset NVIDIA_INFERENCE_API_KEY NVIDIA_API_KEY
+info "NVIDIA_INFERENCE_API_KEY and NVIDIA_API_KEY unset; gateway must hold the inference credential"
 
 HERMES_REBUILD_LOG="/tmp/nc-hermes-rebuild-noenv.log"
 if nemoclaw "$SANDBOX_NAME" rebuild --yes >"$HERMES_REBUILD_LOG" 2>&1; then
@@ -624,7 +625,11 @@ fi
 if [ -n "$NVIDIA_INFERENCE_API_KEY_BACKUP" ]; then
   export NVIDIA_INFERENCE_API_KEY="$NVIDIA_INFERENCE_API_KEY_BACKUP"
 fi
+if [ -n "$NVIDIA_API_KEY_BACKUP" ]; then
+  export NVIDIA_API_KEY="$NVIDIA_API_KEY_BACKUP"
+fi
 unset NVIDIA_INFERENCE_API_KEY_BACKUP
+unset NVIDIA_API_KEY_BACKUP
 
 section "Phase 9: Cleanup"
 

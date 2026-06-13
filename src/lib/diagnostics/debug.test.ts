@@ -18,7 +18,7 @@ import {
 
 describe("redact", () => {
   it("redacts NVIDIA_INFERENCE_API_KEY=value patterns", () => {
-    const key = ["NVIDIA", "API", "KEY"].join("_");
+    const key = ["NVIDIA", "INFERENCE", "API", "KEY"].join("_");
     expect(redact(`${key}=some-value`)).toBe(`${key}=<REDACTED>`);
   });
 

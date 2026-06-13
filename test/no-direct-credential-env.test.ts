@@ -20,11 +20,13 @@ describe("direct credential env guard", () => {
   it.each([
     // Assignments (write context) — allowed
     'process.env.NVIDIA_INFERENCE_API_KEY = "test";',
+    'process.env.NVIDIA_API_KEY = "test";',
     "process.env.OPENAI_API_KEY = value;",
     "process.env[credentialEnv] = providerKey;",
 
     // Deletions (write context) — allowed
     "delete process.env.NVIDIA_INFERENCE_API_KEY;",
+    "delete process.env.NVIDIA_API_KEY;",
     "delete process.env.ANTHROPIC_API_KEY;",
 
     // Non-credential env vars — allowed
@@ -56,6 +58,7 @@ describe("direct credential env guard", () => {
   it.each([
     // Static reads of known credential keys
     ["const key = process.env.NVIDIA_INFERENCE_API_KEY;", "NVIDIA_INFERENCE_API_KEY"],
+    ["const key = process.env.NVIDIA_API_KEY;", "NVIDIA_API_KEY"],
     ["const key = process.env.OPENAI_API_KEY;", "OPENAI_API_KEY"],
     ["const key = process.env.ANTHROPIC_API_KEY;", "ANTHROPIC_API_KEY"],
     ["const key = process.env.GEMINI_API_KEY;", "GEMINI_API_KEY"],
@@ -64,9 +67,11 @@ describe("direct credential env guard", () => {
 
     // Conditional check (read context)
     ["if (!process.env.NVIDIA_INFERENCE_API_KEY) {}", "NVIDIA_INFERENCE_API_KEY"],
+    ["if (!process.env.NVIDIA_API_KEY) {}", "NVIDIA_API_KEY"],
 
     // Bracketed string-literal reads
     ['const key = process.env["NVIDIA_INFERENCE_API_KEY"];', "NVIDIA_INFERENCE_API_KEY"],
+    ['const key = process.env["NVIDIA_API_KEY"];', "NVIDIA_API_KEY"],
     ['if (!process.env["OPENAI_API_KEY"]) {}', "OPENAI_API_KEY"],
 
     // Dynamic read with credential-containing variable name

@@ -633,6 +633,10 @@ openclaw_message_send_exit_code() {
 # ══════════════════════════════════════════════════════════════════
 section "Phase 0: Prerequisites"
 
+if [ -z "${NVIDIA_INFERENCE_API_KEY:-}" ] && [ -n "${NVIDIA_API_KEY:-}" ]; then
+  export NVIDIA_INFERENCE_API_KEY="${NVIDIA_API_KEY}"
+  info "Using legacy NVIDIA_API_KEY as fallback for NVIDIA_INFERENCE_API_KEY"
+fi
 if [ -z "${NVIDIA_INFERENCE_API_KEY:-}" ]; then
   fail "NVIDIA_INFERENCE_API_KEY not set"
   exit 1

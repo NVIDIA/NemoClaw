@@ -203,7 +203,9 @@ else
   exit 1
 fi
 
-if curl -sf --max-time 10 https://inference-api.nvidia.com/v1/models >/dev/null 2>&1; then
+if curl -sf --max-time 10 \
+  -H "Authorization: Bearer ${NVIDIA_INFERENCE_API_KEY}" \
+  https://inference-api.nvidia.com/v1/models >/dev/null 2>&1; then
   pass "Network access to inference-api.nvidia.com"
 else
   fail "Cannot reach inference-api.nvidia.com"
