@@ -4,12 +4,12 @@
 #
 # Cron preflight inference.local E2E.
 #
-# Onboards a fresh sandbox against the managed cloud provider (whose base URL
-# resolves through `inference.local`), then loads OpenClaw's cron isolated-agent
-# preflight runtime directly from the in-sandbox dist and invokes
-# `preflightCronModelProvider` against the onboarded provider/model. Asserts
-# the call returns `status: "available"` and never reports `EAI_AGAIN` or the
-# "local provider endpoint is not reachable" message.
+# Onboards a fresh sandbox against the configured hosted inference provider
+# (whose base URL resolves through `inference.local`), then loads OpenClaw's
+# cron isolated-agent preflight runtime directly from the in-sandbox dist and
+# invokes `preflightCronModelProvider` against the onboarded provider/model.
+# Asserts the call returns `status: "available"` and never reports `EAI_AGAIN`
+# or the "local provider endpoint is not reachable" message.
 #
 # This probes the exact runtime path Patch 6 modifies — the cron CLI surfaces
 # (`openclaw cron add` / `openclaw cron run`) need `operator.admin` scope, which
@@ -19,18 +19,18 @@
 #
 # Prerequisites:
 #   - Docker running
-#   - NVIDIA_INFERENCE_API_KEY set (real key, starts with nvapi-)
+#   - NVIDIA_INFERENCE_API_KEY set for hosted inference
 #   - NEMOCLAW_NON_INTERACTIVE=1, NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1
 #
 # Environment:
 #   NEMOCLAW_SANDBOX_NAME                  — sandbox name (default: e2e-cron-preflight)
 #   NEMOCLAW_RECREATE_SANDBOX=1            — destroy + recreate if exists
-#   NEMOCLAW_CRON_PREFLIGHT_MODEL          — cloud model (default: nvidia/nemotron-3-super-120b-a12b)
+#   NEMOCLAW_CRON_PREFLIGHT_MODEL          — model for non-hosted provider runs
 #   NEMOCLAW_CRON_PREFLIGHT_KEEP=1         — keep the sandbox after the test for inspection
 #
 # Usage:
 #   NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
-#     NVIDIA_INFERENCE_API_KEY=nvapi-... bash test/e2e/test-cron-preflight-inference-local-e2e.sh
+#     NVIDIA_INFERENCE_API_KEY=... bash test/e2e/test-cron-preflight-inference-local-e2e.sh
 
 set -uo pipefail
 
@@ -86,6 +86,8 @@ INSTALL_LOG="/tmp/nemoclaw-e2e-cron-preflight-install.log"
 . "${E2E_DIR}/lib/sandbox-teardown.sh"
 # shellcheck source=test/e2e/lib/install-path-refresh.sh
 . "${E2E_DIR}/lib/install-path-refresh.sh"
+# shellcheck source=test/e2e/lib/ci-compatible-inference.sh
+. "${E2E_DIR}/lib/ci-compatible-inference.sh"
 
 # ── Prereqs ──
 section "Prerequisites"
@@ -99,15 +101,27 @@ if ! command -v jq >/dev/null 2>&1; then
   echo "  Total: $TOTAL  Pass: $PASS  Fail: $FAIL  Skip: $SKIP"
   exit 0
 fi
-if [ -z "${NVIDIA_INFERENCE_API_KEY:-}" ]; then
-  skip "NVIDIA_INFERENCE_API_KEY not set"
+if ! nemoclaw_e2e_configure_compatible_inference; then
+  fail "hosted CI inference could not be configured"
   echo "  Total: $TOTAL  Pass: $PASS  Fail: $FAIL  Skip: $SKIP"
-  exit 0
+  exit 1
 fi
-if [ "${NVIDIA_INFERENCE_API_KEY:0:6}" != "nvapi-" ]; then
-  skip "NVIDIA_INFERENCE_API_KEY does not start with nvapi-"
-  echo "  Total: $TOTAL  Pass: $PASS  Fail: $FAIL  Skip: $SKIP"
-  exit 0
+if nemoclaw_e2e_using_compatible_inference; then
+  if ! nemoclaw_e2e_require_hosted_inference_key; then
+    echo "  Total: $TOTAL  Pass: $PASS  Fail: $FAIL  Skip: $SKIP"
+    exit 1
+  fi
+else
+  if [ -z "${NVIDIA_INFERENCE_API_KEY:-}" ]; then
+    skip "NVIDIA_INFERENCE_API_KEY not set"
+    echo "  Total: $TOTAL  Pass: $PASS  Fail: $FAIL  Skip: $SKIP"
+    exit 0
+  fi
+  if [ "${NVIDIA_INFERENCE_API_KEY:0:6}" != "nvapi-" ]; then
+    skip "NVIDIA_INFERENCE_API_KEY does not start with nvapi-"
+    echo "  Total: $TOTAL  Pass: $PASS  Fail: $FAIL  Skip: $SKIP"
+    exit 0
+  fi
 fi
 if [ "${NEMOCLAW_NON_INTERACTIVE:-}" != "1" ]; then
   skip "NEMOCLAW_NON_INTERACTIVE must be 1; refusing to risk an interactive onboard prompt"

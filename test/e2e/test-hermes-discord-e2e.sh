@@ -29,7 +29,7 @@
 #
 # Usage:
 #   NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
-#     NVIDIA_INFERENCE_API_KEY=nvapi-... bash test/e2e/test-hermes-discord-e2e.sh
+#     NVIDIA_INFERENCE_API_KEY=... bash test/e2e/test-hermes-discord-e2e.sh
 
 set -uo pipefail
 
@@ -183,7 +183,10 @@ export DISCORD_REQUIRE_MENTION="${DISCORD_REQUIRE_MENTION:-0}"
 
 # shellcheck source=test/e2e/lib/sandbox-teardown.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox-teardown.sh"
+# shellcheck source=test/e2e/lib/ci-compatible-inference.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/ci-compatible-inference.sh"
 register_sandbox_for_teardown "$SANDBOX_NAME"
+nemoclaw_e2e_configure_compatible_inference || exit 1
 
 # shellcheck source=test/e2e/lib/discord-gateway-proof.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/discord-gateway-proof.sh"
@@ -197,10 +200,7 @@ else
   exit 1
 fi
 
-if [ -n "${NVIDIA_INFERENCE_API_KEY:-}" ] && [[ "${NVIDIA_INFERENCE_API_KEY}" == nvapi-* ]]; then
-  pass "NVIDIA_INFERENCE_API_KEY is set (starts with nvapi-)"
-else
-  fail "NVIDIA_INFERENCE_API_KEY not set or invalid"
+if ! nemoclaw_e2e_require_hosted_inference_key; then
   exit 1
 fi
 

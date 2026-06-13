@@ -8,12 +8,14 @@
 #
 # This mutates host firewall state. Run only on a Linux Docker host you control:
 #
-#   NEMOCLAW_ISSUE_4434_LIVE=1 NVIDIA_INFERENCE_API_KEY=nvapi-... \
+#   NEMOCLAW_ISSUE_4434_LIVE=1 NVIDIA_INFERENCE_API_KEY=... \
 #     bash test/e2e/test-issue-4434-tui-unreachable-inference.sh
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=test/e2e/lib/ci-compatible-inference.sh
+. "${SCRIPT_DIR}/lib/ci-compatible-inference.sh"
 
 SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-issue-4434-tui-unreachable}"
 INSTALL_LOG="${E2E_ISSUE_4434_INSTALL_LOG:-/tmp/nemoclaw-e2e-issue-4434-install.log}"
@@ -71,9 +73,8 @@ for command in docker sudo expect curl timeout perl; do
 done
 docker info >/dev/null 2>&1 || fail "Docker is not running"
 sudo -n true >/dev/null 2>&1 || fail "passwordless sudo is required for non-interactive iptables cleanup"
-if [ -z "${NVIDIA_INFERENCE_API_KEY:-}" ] || [[ "${NVIDIA_INFERENCE_API_KEY}" != nvapi-* ]]; then
-  fail "NVIDIA_INFERENCE_API_KEY must be set and start with nvapi-"
-fi
+nemoclaw_e2e_configure_compatible_inference || fail "hosted CI inference could not be configured"
+nemoclaw_e2e_require_hosted_inference_key || exit 1
 
 mkdir -p "$CAPTURE_DIR"
 CLEANUP_SANDBOX=1
