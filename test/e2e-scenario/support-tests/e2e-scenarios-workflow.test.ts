@@ -183,6 +183,26 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
     });
     expect(
       evaluateE2eVitestWorkflowDispatchSelectors({
+        scenarios: "sessions-agents-cli",
+      }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["sessions-agents-cli-vitest"],
+      registryScenarios: [],
+    });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({
+        jobs: "sessions-agents-cli-vitest",
+      }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["sessions-agents-cli-vitest"],
+      registryScenarios: [],
+    });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({
         jobs: "runtime-overrides-vitest",
       }),
     ).toMatchObject({

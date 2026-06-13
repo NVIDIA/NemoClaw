@@ -4256,6 +4256,12 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   validateFreeStandingJobSelector(
     errors,
     jobs,
+    "sessions-agents-cli-vitest",
+    "sessions-agents-cli",
+  );
+  validateFreeStandingJobSelector(
+    errors,
+    jobs,
     "inference-routing-vitest",
     "inference-routing",
   );
