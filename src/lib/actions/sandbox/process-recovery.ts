@@ -431,6 +431,49 @@ function ensureHermesDashboardPortForwardIfEnabled(sandboxName: string): boolean
   });
 }
 
+/**
+ * Re-establish every declared `forward_ports` entry on the active agent
+ * manifest that is not the primary dashboard port. The primary dashboard
+ * port is owned by `ensureSandboxPortForward`; the optional Hermes web
+ * dashboard is owned by `ensureHermesDashboardPortForwardIfEnabled`. Any
+ * remaining manifest-declared port (e.g. Hermes' OpenAI-compatible API on
+ * 8642) would otherwise be silently dropped after a gateway restart and
+ * never re-established by the recovery flow.
+ *
+ * Returns true when every non-primary declared port is healthy (probed or
+ * re-established), false when at least one declared port could not be
+ * re-established, and `null` when there is no active agent or no declared
+ * non-primary ports to manage.
+ */
+function ensureDeclaredAgentForwardPortsHealthy(
+  sandboxName: string,
+  primaryPort: number,
+): boolean | null {
+  const agent = agentRuntime.getSessionAgent(sandboxName);
+  if (!agent) return null;
+  const declared = (agent as { forward_ports?: unknown }).forward_ports;
+  if (!Array.isArray(declared) || declared.length === 0) return null;
+  let sawNonPrimary = false;
+  let allHealthy = true;
+  for (const candidate of declared) {
+    if (typeof candidate !== "number") continue;
+    if (!Number.isInteger(candidate) || candidate < 1 || candidate > 65535) continue;
+    if (candidate === primaryPort) continue;
+    sawNonPrimary = true;
+    const health = isSandboxPortForwardHealthy(sandboxName, candidate);
+    if (health === true) continue;
+    if (health === "occupied") {
+      allHealthy = false;
+      continue;
+    }
+    if (!ensureSandboxPortForwardForPort(sandboxName, candidate)) {
+      allHealthy = false;
+    }
+  }
+  if (!sawNonPrimary) return null;
+  return allHealthy;
+}
+
 function recoverHermesDashboardProcessIfEnabled(sandboxName: string): boolean | null {
   return recoverHermesDashboardProcess(sandboxName, { executeCommand: executeSandboxCommand });
 }
@@ -466,6 +509,10 @@ export function checkAndRecoverSandboxProcesses(
       }
       const forwardRecovered = ensureSandboxPortForward(sandboxName);
       const dashboardForwardRecovered = ensureHermesDashboardPortForwardIfEnabled(sandboxName);
+      const declaredForwardsRecovered = ensureDeclaredAgentForwardPortsHealthy(
+        sandboxName,
+        recoveryPort,
+      );
       if (!quiet) {
         if (forwardRecovered) {
           console.log(`  ${G}✓${R} Dashboard port forward re-established.`);
@@ -473,6 +520,11 @@ export function checkAndRecoverSandboxProcesses(
           console.error("  Failed to re-establish the dashboard port forward.");
           console.error(
             `  Run \`openshell forward start --background <port> ${sandboxName}\` manually.`,
+          );
+        }
+        if (declaredForwardsRecovered === false) {
+          console.error(
+            "  One or more agent-declared port forwards could not be re-established.",
           );
         }
       }
@@ -483,7 +535,8 @@ export function checkAndRecoverSandboxProcesses(
         forwardRecovered:
           forwardRecovered ||
           dashboardForwardRecovered === true ||
-          dashboardProcessRecovered === true,
+          dashboardProcessRecovered === true ||
+          declaredForwardsRecovered === true,
       };
     }
     if (forwardHealthy === "occupied") {
@@ -495,11 +548,21 @@ export function checkAndRecoverSandboxProcesses(
       return { checked: true, wasRunning: true, recovered: false, forwardRecovered: false };
     }
     const dashboardForwardRecovered = ensureHermesDashboardPortForwardIfEnabled(sandboxName);
+    const declaredForwardsRecovered = ensureDeclaredAgentForwardPortsHealthy(
+      sandboxName,
+      recoveryPort,
+    );
+    if (!quiet && declaredForwardsRecovered === false) {
+      console.error("  One or more agent-declared port forwards could not be re-established.");
+    }
     return {
       checked: true,
       wasRunning: true,
       recovered: false,
-      forwardRecovered: dashboardForwardRecovered === true || dashboardProcessRecovered === true,
+      forwardRecovered:
+        dashboardForwardRecovered === true ||
+        dashboardProcessRecovered === true ||
+        declaredForwardsRecovered === true,
     };
   }
 
@@ -530,6 +593,10 @@ export function checkAndRecoverSandboxProcesses(
     }
     const forwardRecovered = ensureSandboxPortForward(sandboxName);
     const dashboardForwardRecovered = ensureHermesDashboardPortForwardIfEnabled(sandboxName);
+    const declaredForwardsRecovered = ensureDeclaredAgentForwardPortsHealthy(
+      sandboxName,
+      recoveryPort,
+    );
     if (!quiet) {
       console.log(
         `  ${G}✓${R} ${agentRuntime.getAgentDisplayName(recoveryAgent)} gateway restarted inside sandbox.`,
@@ -542,12 +609,18 @@ export function checkAndRecoverSandboxProcesses(
           `  Run \`openshell forward start --background <port> ${sandboxName}\` manually.`,
         );
       }
+      if (declaredForwardsRecovered === false) {
+        console.error("  One or more agent-declared port forwards could not be re-established.");
+      }
     }
     return {
       checked: true,
       wasRunning: false,
       recovered,
-      forwardRecovered: forwardRecovered || dashboardForwardRecovered === true,
+      forwardRecovered:
+        forwardRecovered ||
+        dashboardForwardRecovered === true ||
+        declaredForwardsRecovered === true,
     };
   }
   if (!quiet) {

@@ -188,6 +188,36 @@ describe("printDashboardUi — regression for #2078 (port 8642 is not a chat UI)
     expect(noteSpy).not.toHaveBeenCalled();
   });
 
+  it("announces manifest-declared secondary forward_ports alongside the primary dashboard", () => {
+    const hermesShipped = makeAgent({
+      name: "hermes",
+      displayName: "Hermes Agent",
+      forwardPort: 18789,
+      forward_ports: [18789, 8642],
+      healthProbe: { url: "http://localhost:8642/health", port: 8642, timeout_seconds: 90 },
+      dashboard: {
+        kind: "ui",
+        label: "Dashboard",
+        path: "/",
+        healthPath: "/api/status",
+        auth: "session",
+      },
+    });
+
+    printDashboardUi("hermes-box", null, hermesShipped, {
+      note: noteSpy,
+      buildControlUiUrls: buildUrlsLoopback,
+    });
+
+    const output = logSpy.mock.calls.map((args) => String(args[0])).join("\n");
+    expect(output).toContain("Hermes Agent Dashboard");
+    expect(output).toContain("Port 18789 must be forwarded before opening this URL.");
+    expect(output).toContain("http://127.0.0.1:18789/");
+    expect(output).toContain("Hermes Agent OpenAI-compatible API");
+    expect(output).toContain("Port 8642 must be forwarded before connecting.");
+    expect(output).toContain("http://127.0.0.1:8642/v1");
+  });
+
   it("redacts tokenized URLs for UI-kind agents and shows the token retrieval command", () => {
     const token = "a".repeat(64);
     printDashboardUi("sandbox-y", token, uiAgent, {

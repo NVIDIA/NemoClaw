@@ -569,6 +569,7 @@ export function printDashboardUi(
       console.log(`  ${dashboardUrlForDisplay(url)}`);
     }
     printOptionalDashboardUi(agent, { ...deps, redactUrl: dashboardUrlForDisplay });
+    printAdditionalForwardPorts(agent, info.port, deps.buildControlUiUrls);
     return;
   }
 
@@ -578,6 +579,8 @@ export function printDashboardUi(
     for (const url of deps.buildControlUiUrls(null, info.port)) {
       console.log(`  ${dashboardUrlForDisplay(url)}`);
     }
+    printOptionalDashboardUi(agent, { ...deps, redactUrl: dashboardUrlForDisplay });
+    printAdditionalForwardPorts(agent, info.port, deps.buildControlUiUrls);
     return;
   }
 
@@ -598,4 +601,51 @@ export function printDashboardUi(
     }
   }
   printOptionalDashboardUi(agent, { ...deps, redactUrl: dashboardUrlForDisplay });
+  printAdditionalForwardPorts(agent, info.port, deps.buildControlUiUrls);
+}
+
+/**
+ * Print one block per manifest-declared `forward_ports` entry that is not
+ * the primary dashboard port. Each block announces the port and renders a
+ * loopback URL using the same `buildControlUiUrls` chain as the primary
+ * dashboard so WSL host-address fallbacks remain consistent.
+ *
+ * The label is sourced from the agent's `health_probe.port` match — that
+ * is the only manifest signal today that a declared secondary port is the
+ * OpenAI-compatible API surface (Hermes manifest sets
+ * `health_probe.port: 8642` alongside `forward_ports: [18789, 8642]`).
+ * Any other declared port gets a neutral "additional port" label.
+ */
+function printAdditionalForwardPorts(
+  agent: AgentDefinition,
+  primaryPort: number,
+  buildControlUiUrls: (token: string | null, port: number) => string[],
+): void {
+  const declared = Array.isArray(agent.forward_ports) ? agent.forward_ports : [];
+  if (declared.length === 0) return;
+  const apiPort = agent.healthProbe.port;
+  for (const port of declared) {
+    if (!Number.isInteger(port) || port < 1 || port > 65535) continue;
+    if (port === primaryPort) continue;
+    const isApi = port === apiPort;
+    const sectionLabel = isApi ? "OpenAI-compatible API" : "additional port";
+    console.log("");
+    console.log(`  ${agent.displayName} ${sectionLabel}`);
+    console.log(`  Port ${port} must be forwarded before connecting.`);
+    const seen = new Set<string>();
+    for (const baseUrl of buildControlUiUrls(null, port)) {
+      const withoutHash = baseUrl.split("#")[0].replace(/\/$/, "");
+      let urlPort = "";
+      try {
+        urlPort = new URL(withoutHash).port;
+      } catch {
+        urlPort = "";
+      }
+      if (urlPort !== String(port)) continue;
+      const url = isApi ? `${withoutHash}/v1` : `${withoutHash}/`;
+      if (seen.has(url)) continue;
+      seen.add(url);
+      console.log(`  ${dashboardUrlForDisplay(url)}`);
+    }
+  }
 }

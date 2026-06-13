@@ -304,4 +304,91 @@ beta  127.0.0.1  18789  12345  running`;
       }
     }
   });
+
+  it("re-establishes manifest-declared non-primary forward ports when only the primary is healthy", () => {
+    const openshellRuntime = requireDist("../dist/lib/adapters/openshell/runtime.js");
+    const agentRuntime = requireDist("../dist/lib/agent/runtime.js");
+    const registry = requireDist("../dist/lib/state/registry.js");
+    const forwardHealth = requireDist("../dist/lib/actions/sandbox/forward-health.js");
+    const childProcess = requireDist("node:child_process");
+    const onlyPrimaryForward = `SANDBOX  BIND  PORT  PID  STATUS
+hermes-box  127.0.0.1  18789  12345  running`;
+    const bothForwards = `SANDBOX  BIND  PORT  PID  STATUS
+hermes-box  127.0.0.1  18789  12345  running
+hermes-box  127.0.0.1  8642  12346  running`;
+    let secondaryStarted = false;
+
+    vi.spyOn(childProcess, "spawnSync").mockReturnValue({
+      status: 0,
+      stdout: "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nRUNNING\n",
+      stderr: "",
+    } as never);
+    vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue({
+      name: "hermes",
+      forwardPort: 18789,
+      forward_ports: [18789, 8642],
+    });
+    vi.spyOn(registry, "getSandbox").mockReturnValue({
+      name: "hermes-box",
+      agent: "hermes",
+      dashboardPort: 18789,
+    });
+    vi.spyOn(forwardHealth, "isLocalForwardReachable").mockImplementation((port: unknown) => {
+      if (Number(port) === 18789) return true;
+      if (Number(port) === 8642) return secondaryStarted;
+      return false;
+    });
+    vi.spyOn(openshellRuntime, "captureOpenshell").mockImplementation(() => ({
+      status: 0,
+      output: secondaryStarted ? bothForwards : onlyPrimaryForward,
+    }));
+    const runOpenshell = vi
+      .spyOn(openshellRuntime, "runOpenshell")
+      .mockImplementation((rawArgs: unknown) => {
+        const args = Array.isArray(rawArgs) ? rawArgs.map(String) : [];
+        if (args[0] === "forward" && args[1] === "start" && args.includes("8642")) {
+          secondaryStarted = true;
+        }
+        return { status: 0 } as never;
+      });
+
+    expect(
+      withFakeOpenshellBinary(() =>
+        checkAndRecoverSandboxProcesses("hermes-box", { quiet: true }),
+      ),
+    ).toEqual({
+      checked: true,
+      wasRunning: true,
+      recovered: false,
+      forwardRecovered: true,
+    });
+
+    const startedNonPrimary = runOpenshell.mock.calls.some(
+      ([rawArgs]) => {
+        const args = Array.isArray(rawArgs) ? rawArgs.map(String) : [];
+        return (
+          args[0] === "forward" &&
+          args[1] === "start" &&
+          args.includes("--background") &&
+          args.includes("8642") &&
+          args.includes("hermes-box")
+        );
+      },
+    );
+    expect(startedNonPrimary).toBe(true);
+
+    const startedPrimary = runOpenshell.mock.calls.some(
+      ([rawArgs]) => {
+        const args = Array.isArray(rawArgs) ? rawArgs.map(String) : [];
+        return (
+          args[0] === "forward" &&
+          args[1] === "start" &&
+          args.includes("--background") &&
+          args.includes("18789") &&
+          args.includes("hermes-box")
+        );
+      },
+    );
+    expect(startedPrimary).toBe(false);
+  });
 });
