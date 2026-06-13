@@ -225,9 +225,12 @@ export function findAvailableDashboardPort(
   preferredPort: number,
   forwardListOutput: string | null,
   isPortBoundCheck: (port: number) => boolean = isPortBoundOnHost,
-  registryOccupiedPorts: ReadonlyMap<string, string> = getRegistryOccupiedDashboardPorts(
-    sandboxName,
-  ),
+  // Default to an empty map so unit tests of this allocator do not become
+  // dependent on whatever sandboxes happen to live in the caller's real
+  // `~/.nemoclaw/sandboxes.json`. Production wrappers
+  // (`resolveCreateSandboxDashboardPort`, `ensureDashboardForward`) pass an
+  // explicit `getRegistryOccupiedDashboardPorts(sandboxName)` result.
+  registryOccupiedPorts: ReadonlyMap<string, string> = new Map(),
 ): number {
   const occupied = mergeOccupiedPorts(getOccupiedPorts(forwardListOutput), registryOccupiedPorts);
   const hostBoundPorts: number[] = [];
@@ -328,12 +331,19 @@ export function resolveCreateSandboxDashboardPort(
     input.agentForwardPort ??
     input.defaultPort ??
     DASHBOARD_PORT;
+  // When a caller does not supply an explicit cross-gateway view, read the
+  // persisted registry here so the allocator never silently hands out a
+  // dashboard port that already belongs to a sibling sandbox on a different
+  // NemoClaw gateway. The allocator itself defaults to an empty map to keep
+  // its unit tests independent of the caller's real `~/.nemoclaw/` state.
+  const registryOccupiedPorts =
+    input.registryOccupiedPorts ?? getRegistryOccupiedDashboardPorts(input.sandboxName);
   const effectivePort = (input.findAvailablePort ?? findAvailableDashboardPort)(
     input.sandboxName,
     preferredPort,
     input.forwardListOutput,
     undefined,
-    input.registryOccupiedPorts,
+    registryOccupiedPorts,
   );
   if (effectivePort !== preferredPort) {
     input.warn?.(`  ! Port ${preferredPort} is taken. Using port ${effectivePort} instead.`);

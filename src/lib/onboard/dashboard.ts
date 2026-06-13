@@ -21,6 +21,7 @@ import {
 import {
   findAvailableDashboardPort,
   getOccupiedPorts,
+  getRegistryOccupiedDashboardPorts,
   isLiveForwardStatus,
 } from "./dashboard-port";
 import { bestEffortForwardStop } from "./forward-cleanup";
@@ -249,7 +250,13 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     }
     let actualPort: number;
     try {
-      actualPort = findAvailableDashboardPort(sandboxName, preferredPort, existingForwards);
+      actualPort = findAvailableDashboardPort(
+        sandboxName,
+        preferredPort,
+        existingForwards,
+        undefined,
+        getRegistryOccupiedDashboardPorts(sandboxName),
+      );
     } catch (err) {
       if (!rollbackSandboxOnFailure) throw err;
       rollbackSandboxAndExit(sandboxName, err);
