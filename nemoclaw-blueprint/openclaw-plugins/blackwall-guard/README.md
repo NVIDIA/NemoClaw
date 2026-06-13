@@ -26,7 +26,7 @@ Disabled by default. Enable it for an agent and provide an API key:
 
 | Config | Env | Meaning |
 |---|---|---|
-| `apiKey` | `BLACKWALL_API_KEY` | BLACK_WALL API key (get one at https://blackwalltier.com) |
+| `apiKey` | `BLACKWALL_API_KEY` | BLACK_WALL API key (get one at <https://blackwalltier.com>) |
 | `baseUrl` | — | API base URL (default `https://blackwalltier.com`) |
 | `mode` | — | `observe` (default) or `enforce` |
 | `cautionAction` | — | what a CAUTION verdict does in enforce mode: `approve` (default) → **block** with red-flag detail / `block` → **block** / `allow` → permit. (No approval prompt on NemoClaw — see above.) |

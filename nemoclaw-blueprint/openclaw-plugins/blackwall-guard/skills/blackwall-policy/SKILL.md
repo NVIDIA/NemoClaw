@@ -23,7 +23,7 @@ BLACK_WALL is a pre-action risk gate. Before every tool the agent tries to call,
 | `CAUTION` (medium risk) | In `enforce` mode, the user gets a one-time approval prompt with the named red flags. In `observe` mode, the call is logged and proceeds. |
 | `STOP` (high risk + irreversible) | In `enforce` mode, the tool is **blocked**. The plugin returns `{ block: true, blockReason }`. The agent sees a `failureResult` with the reason. |
 
-Each verdict comes with a cryptographic **Decision Receipt** (Ed25519-signed) that can be verified offline against the published public key at https://blackwalltier.com/.well-known/blackwall-signing-keys.json. See the `/blackwall-verify` skill for offline verification.
+Each verdict comes with a cryptographic **Decision Receipt** (Ed25519-signed) that can be verified offline against the published public key at <https://blackwalltier.com/.well-known/blackwall-signing-keys.json>. See the `/blackwall-verify` skill for offline verification.
 
 ## Why a tool got blocked or flagged
 
@@ -37,7 +37,7 @@ When you see `BLACK_WALL blocked tool "<name>" (risk N/100): <FLAG_CODES>`, the 
 - `AMOUNT_OUT_OF_BAND` — money/quantity outside the normal range
 - `CROSS_ENVIRONMENT` — production target with staging context (or vice versa)
 
-The full catalog: https://blackwalltier.com/failure-modes
+The full catalog: <https://blackwalltier.com/failure-modes>
 
 ## What to tell the user
 
@@ -59,4 +59,4 @@ When asked to summarize the guardrail posture, return:
 - current mode (`observe` / `enforce`)
 - the most recent `forecast_id` if available
 - whether the last call was GO / CAUTION / STOP
-- where to verify the receipt (https://blackwalltier.com/api/v1/receipts/verify)
+- where to verify the receipt (<https://blackwalltier.com/api/v1/receipts/verify>)
