@@ -14,7 +14,10 @@ function usage(): string {
   ].join("\n");
 }
 
-function parseArgs(argv: readonly string[]): { shell: boolean; workflowPath?: string } {
+function parseArgs(argv: readonly string[]): {
+  shell: boolean;
+  workflowPath?: string;
+} {
   const parsed: { shell: boolean; workflowPath?: string } = { shell: false };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];

@@ -1630,7 +1630,9 @@ function validateMessagingCompatibleEndpointVitestJob(
     );
   }
   if (!stringValue(jobEnv.NEMOCLAW_CLI_BIN).includes("bin/nemoclaw.js")) {
-    errors.push("messaging-compatible-endpoint-vitest job must point NEMOCLAW_CLI_BIN at the repo CLI");
+    errors.push(
+      "messaging-compatible-endpoint-vitest job must point NEMOCLAW_CLI_BIN at the repo CLI",
+    );
   }
   if (jobEnv.NEMOCLAW_RUN_E2E_SCENARIOS !== "1") {
     errors.push("messaging-compatible-endpoint-vitest job must set NEMOCLAW_RUN_E2E_SCENARIOS=1");
@@ -1700,7 +1702,9 @@ function validateMessagingCompatibleEndpointVitestJob(
   if (!checkout) errors.push("messaging-compatible-endpoint-vitest job missing checkout step");
   requireFullShaAction(errors, checkout, "messaging-compatible-endpoint-vitest checkout");
   if (asRecord(checkout?.with)["persist-credentials"] !== false) {
-    errors.push("messaging-compatible-endpoint-vitest checkout step must set persist-credentials=false");
+    errors.push(
+      "messaging-compatible-endpoint-vitest checkout step must set persist-credentials=false",
+    );
   }
 
   const setupNode = namedStep(steps, "Set up Node");
@@ -1732,7 +1736,9 @@ function validateMessagingCompatibleEndpointVitestJob(
     "NVIDIA_API_KEY",
   );
   if (runVitestEnv.NEMOCLAW_COMPAT_MOCK_API_KEY !== "fake-compatible-key-e2e") {
-    errors.push("messaging-compatible-endpoint-vitest step must set a fake compatible endpoint key");
+    errors.push(
+      "messaging-compatible-endpoint-vitest step must set a fake compatible endpoint key",
+    );
   }
   if (runVitestEnv.TELEGRAM_BOT_TOKEN !== "test-fake-telegram-token-e2e") {
     errors.push("messaging-compatible-endpoint-vitest step must set a fake Telegram token");
@@ -1759,9 +1765,15 @@ function validateMessagingCompatibleEndpointVitestJob(
     errors.push("messaging-compatible-endpoint-vitest artifact upload name must be stable");
   }
   const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/vitest/messaging-compatible-endpoint/");
+  requireUploadPathContains(
+    errors,
+    uploadPath,
+    "e2e-artifacts/vitest/messaging-compatible-endpoint/",
+  );
   if (uploadWith["include-hidden-files"] !== false) {
-    errors.push("messaging-compatible-endpoint-vitest artifact upload must set include-hidden-files: false");
+    errors.push(
+      "messaging-compatible-endpoint-vitest artifact upload must set include-hidden-files: false",
+    );
   }
   if (uploadWith["if-no-files-found"] !== "ignore") {
     errors.push(
@@ -2652,6 +2664,191 @@ function validateModelRouterProviderRoutedInferenceVitestJob(
   requireRunContains(errors, cleanup, 'rm -rf "${DOCKER_CONFIG}"');
 }
 
+function validateIssue2478CrashLoopRecoveryVitestJob(errors: string[], jobs: WorkflowRecord): void {
+  const jobName = "issue-2478-crash-loop-recovery-vitest";
+  const scenarioName = "issue-2478-crash-loop-recovery";
+  const job = asRecord(jobs[jobName]);
+  if (Object.keys(job).length === 0) {
+    errors.push("workflow missing issue-2478-crash-loop-recovery-vitest job");
+    return;
+  }
+
+  if (job["runs-on"] !== "ubuntu-latest") {
+    errors.push("issue-2478-crash-loop-recovery-vitest job must run on ubuntu-latest");
+  }
+  if (job["timeout-minutes"] !== 30) {
+    errors.push("issue-2478-crash-loop-recovery-vitest job must keep the 30 minute timeout");
+  }
+  validateFreeStandingJobSelector(errors, jobs, jobName, scenarioName);
+
+  const jobEnv = asRecord(job.env);
+  if ("DOCKER_CONFIG" in jobEnv) {
+    errors.push(
+      "issue-2478-crash-loop-recovery-vitest job must not set DOCKER_CONFIG at job level",
+    );
+  }
+  const expectedEnv: Record<string, string> = {
+    FREE_STANDING_VITEST_JOB: "1",
+    FREE_STANDING_SCENARIO_ID: scenarioName,
+    E2E_ARTIFACT_DIR: "${{ github.workspace }}/e2e-artifacts/vitest/issue-2478-crash-loop-recovery",
+    NEMOCLAW_CLI_BIN: "${{ github.workspace }}/bin/nemoclaw.js",
+    NEMOCLAW_RUN_E2E_SCENARIOS: "1",
+    NEMOCLAW_NON_INTERACTIVE: "1",
+    NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+    NEMOCLAW_SANDBOX_NAME: "e2e-2478",
+    OPENSHELL_GATEWAY: "nemoclaw",
+  };
+  for (const [key, value] of Object.entries(expectedEnv)) {
+    if (jobEnv[key] !== value) {
+      errors.push(`issue-2478-crash-loop-recovery-vitest job env ${key} must be ${value}`);
+    }
+  }
+  for (const secret of ["NVIDIA_INFERENCE_API_KEY", ...COMMON_SECRET_ENV_NAMES]) {
+    requireEnvDoesNotExposeSecret(
+      errors,
+      "issue-2478-crash-loop-recovery-vitest job",
+      jobEnv,
+      secret,
+    );
+  }
+
+  const steps = asSteps(job.steps);
+  requireNoDispatchInputInterpolation(errors, steps);
+  for (const step of steps) {
+    const stepName = `issue-2478-crash-loop-recovery-vitest step '${step.name ?? step.uses ?? "<unnamed>"}'`;
+    const stepEnv = asRecord(step.env);
+    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_INFERENCE_API_KEY");
+    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_API_KEY");
+    if (step.name !== "Authenticate to Docker Hub") {
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_USERNAME");
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_TOKEN");
+      requireNoDockerHubAuthInRun(errors, stepName, stringValue(step.run));
+    }
+    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "GITHUB_TOKEN");
+  }
+
+  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
+  if (!checkout) {
+    errors.push("issue-2478-crash-loop-recovery-vitest job missing checkout step");
+  }
+  requireFullShaAction(errors, checkout, "issue-2478-crash-loop-recovery-vitest checkout");
+  if (asRecord(checkout?.with)["persist-credentials"] !== false) {
+    errors.push(
+      "issue-2478-crash-loop-recovery-vitest checkout step must set persist-credentials=false",
+    );
+  }
+
+  const configureDockerAuth = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Configure isolated Docker auth directory",
+  );
+  requireRunContains(
+    errors,
+    configureDockerAuth,
+    'echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-issue-2478-crash-loop-recovery" >> "$GITHUB_ENV"',
+  );
+  requireRunDoesNotContain(errors, configureDockerAuth, "${{ runner.temp }}");
+  requireRunDoesNotContain(errors, configureDockerAuth, "${{ github.workspace }}");
+
+  const dockerLogin = requireJobStep(errors, jobName, steps, "Authenticate to Docker Hub");
+  const dockerLoginEnv = asRecord(dockerLogin?.env);
+  if (dockerLoginEnv.DOCKERHUB_USERNAME !== "${{ secrets.DOCKERHUB_USERNAME }}") {
+    errors.push(
+      "issue-2478-crash-loop-recovery-vitest Docker Hub auth must receive DOCKERHUB_USERNAME from secrets",
+    );
+  }
+  if (dockerLoginEnv.DOCKERHUB_TOKEN !== "${{ secrets.DOCKERHUB_TOKEN }}") {
+    errors.push(
+      "issue-2478-crash-loop-recovery-vitest Docker Hub auth must receive DOCKERHUB_TOKEN from secrets",
+    );
+  }
+  requireRunContains(errors, dockerLogin, 'mkdir -p "${DOCKER_CONFIG}"');
+  requireRunContains(errors, dockerLogin, 'chmod 700 "${DOCKER_CONFIG}"');
+  requireRunContains(errors, dockerLogin, "docker login docker.io");
+  requireRunContains(errors, dockerLogin, "--password-stdin");
+  requireRunContains(errors, dockerLogin, "continuing with anonymous pulls");
+
+  const setupNode = namedStep(steps, "Set up Node");
+  if (!setupNode) {
+    errors.push("issue-2478-crash-loop-recovery-vitest job missing step: Set up Node");
+  }
+  requireFullShaAction(errors, setupNode, "issue-2478-crash-loop-recovery-vitest setup-node");
+
+  const installRootDependencies = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Install root dependencies",
+  );
+  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
+
+  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
+  requireRunContains(errors, buildCli, "npm run build:cli");
+
+  const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell CLI");
+  requireRunContains(errors, installOpenShell, "bash scripts/install-openshell.sh");
+
+  const runVitest = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Run issue #2478 crash-loop recovery live Vitest test",
+  );
+  const runVitestEnv = asRecord(runVitest?.env);
+  requireEnvDoesNotExposeSecret(
+    errors,
+    "issue-2478-crash-loop-recovery-vitest Vitest step",
+    runVitestEnv,
+    "NVIDIA_INFERENCE_API_KEY",
+  );
+  requireRunContains(errors, runVitest, "npx vitest run --project e2e-scenarios-live");
+  requireRunContains(
+    errors,
+    runVitest,
+    "test/e2e-scenario/live/issue-2478-crash-loop-recovery.test.ts",
+  );
+
+  const upload = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Upload issue #2478 crash-loop recovery artifacts",
+  );
+  requireFullShaAction(errors, upload, "issue-2478-crash-loop-recovery-vitest upload-artifact");
+  const uploadWith = asRecord(upload?.with);
+  if (uploadWith.name !== "e2e-vitest-scenarios-issue-2478-crash-loop-recovery") {
+    errors.push("issue-2478-crash-loop-recovery-vitest artifact upload name must be stable");
+  }
+  const uploadPath = stringValue(uploadWith.path);
+  requireUploadPathContains(
+    errors,
+    uploadPath,
+    "e2e-artifacts/vitest/issue-2478-crash-loop-recovery/",
+  );
+  if (uploadWith["include-hidden-files"] !== false) {
+    errors.push(
+      "issue-2478-crash-loop-recovery-vitest artifact upload must set include-hidden-files: false",
+    );
+  }
+  if (uploadWith["if-no-files-found"] !== "ignore") {
+    errors.push(
+      "issue-2478-crash-loop-recovery-vitest artifact upload must ignore missing fixture artifacts",
+    );
+  }
+  if (uploadWith["retention-days"] !== 14) {
+    errors.push("issue-2478-crash-loop-recovery-vitest artifact upload retention-days must be 14");
+  }
+
+  const cleanup = requireJobStep(errors, jobName, steps, "Clean up Docker auth");
+  if (cleanup?.if !== "always()") {
+    errors.push("issue-2478-crash-loop-recovery-vitest Docker auth cleanup must always run");
+  }
+  requireRunContains(errors, cleanup, "docker logout docker.io");
+  requireRunContains(errors, cleanup, 'rm -rf "${DOCKER_CONFIG}"');
+}
+
 function validateChannelsAddRemoveVitestJob(errors: string[], jobs: WorkflowRecord): void {
   const jobName = "channels-add-remove-vitest";
   const scenarioName = "channels-add-remove";
@@ -3331,7 +3528,14 @@ export function validateE2eVitestScenariosWorkflowBoundary(
 
   validateBedrockRuntimeCompatibleAnthropicVitestJob(errors, jobs);
 
-  validateFreeStandingJobSelector(errors, jobs, "gateway-health-honest-vitest", "gateway-health-honest");
+  validateIssue2478CrashLoopRecoveryVitestJob(errors, jobs);
+
+  validateFreeStandingJobSelector(
+    errors,
+    jobs,
+    "gateway-health-honest-vitest",
+    "gateway-health-honest",
+  );
 
   validateChannelsAddRemoveVitestJob(errors, jobs);
 
