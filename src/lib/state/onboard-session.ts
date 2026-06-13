@@ -15,6 +15,7 @@ import { isErrnoException } from "../core/errno";
 import type { JsonObject, JsonValue } from "../core/json-types";
 import type { WebSearchConfig } from "../inference/web-search";
 import type { SandboxMessagingPlan } from "../messaging/manifest";
+import { compactSandboxMessagingPlanForPersistence } from "../messaging/persistence";
 import { parseSandboxMessagingPlan } from "../messaging/plan-validation";
 import {
   createOnboardMachineEvent,
@@ -528,6 +529,15 @@ export function loadSession(): Session | null {
   }
 }
 
+function serializeSessionForDisk(session: Session): Record<string, unknown> {
+  return {
+    ...session,
+    messagingPlan: session.messagingPlan
+      ? compactSandboxMessagingPlanForPersistence(session.messagingPlan)
+      : session.messagingPlan,
+  };
+}
+
 export function saveSession(session: Session): Session {
   const normalized = normalizeSession(session) || createSession();
   normalized.updatedAt = new Date().toISOString();
@@ -536,7 +546,9 @@ export function saveSession(session: Session): Session {
     SESSION_DIR,
     `.onboard-session.${process.pid}.${Date.now()}.${randomUUID()}.tmp`,
   );
-  fs.writeFileSync(tmpFile, JSON.stringify(normalized, null, 2), { mode: 0o600 });
+  fs.writeFileSync(tmpFile, JSON.stringify(serializeSessionForDisk(normalized), null, 2), {
+    mode: 0o600,
+  });
   fs.renameSync(tmpFile, SESSION_FILE);
   return normalized;
 }

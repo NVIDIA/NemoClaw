@@ -3,6 +3,10 @@
 
 import type { SandboxMessagingPlan } from "../messaging/manifest";
 import {
+  compactSandboxMessagingPlanForPersistence,
+  hydrateDerivedSandboxMessagingPlanFields,
+} from "../messaging/persistence";
+import {
   getActiveChannelIdsFromPlan,
   getConfiguredChannelIdsFromPlan,
   getDisabledChannelIdsFromPlan,
@@ -36,11 +40,29 @@ export function cloneSandboxMessagingState(
   return plan ? { schemaVersion: 1, plan } : undefined;
 }
 
+export function serializeSandboxMessagingStateForDisk(
+  messaging: SandboxMessagingState | null | undefined,
+): SandboxMessagingState | undefined {
+  const state = cloneSandboxMessagingState(messaging);
+  if (!state) return undefined;
+  return {
+    schemaVersion: 1,
+    plan: compactSandboxMessagingPlanForPersistence(state.plan) as unknown as SandboxMessagingPlan,
+  };
+}
+
 export function getMessagingPlanFromEntry(
   entry: EntryWithMessaging | null | undefined,
 ): SandboxMessagingPlan | null {
   if (entry?.messaging?.schemaVersion !== 1) return null;
   return parseSandboxMessagingPlan(entry.messaging.plan);
+}
+
+export function getHydratedMessagingPlanFromEntry(
+  entry: EntryWithMessaging | null | undefined,
+): SandboxMessagingPlan | null {
+  const plan = getMessagingPlanFromEntry(entry);
+  return plan ? hydrateDerivedSandboxMessagingPlanFields(plan) : null;
 }
 
 export function getConfiguredMessagingChannelsFromEntry(
