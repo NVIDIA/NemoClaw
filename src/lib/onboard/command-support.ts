@@ -66,10 +66,12 @@ export function buildOnboardFlags(): Record<string, any> {
       description: "Enable direct NVIDIA GPU access inside the sandbox",
     }),
     "no-sandbox-gpu": Flags.boolean({
-      description: "Force CPU sandbox behavior",
+      description:
+        "Force CPU sandbox behavior (equivalent to NEMOCLAW_SANDBOX_GPU=0; alternative to --no-gpu when Docker Desktop WSL CDI injection fails)",
     }),
     "sandbox-gpu-device": Flags.string({
-      description: "OpenShell GPU device selector to pass to sandbox create; requires --sandbox-gpu",
+      description:
+        "OpenShell GPU device selector to pass to sandbox create; requires --sandbox-gpu",
     }),
     agent: Flags.string({ description: "Agent runtime to onboard" }),
     "control-ui-port": Flags.integer({

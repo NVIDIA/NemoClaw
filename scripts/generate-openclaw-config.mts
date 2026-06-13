@@ -14,13 +14,13 @@
 //   NEMOCLAW_INFERENCE_INPUTS, NEMOCLAW_CONTEXT_WINDOW,
 //   NEMOCLAW_MAX_TOKENS, NEMOCLAW_REASONING,
 //   NEMOCLAW_AGENT_TIMEOUT, NEMOCLAW_AGENT_HEARTBEAT_EVERY,
-//   NEMOCLAW_INFERENCE_COMPAT_B64, NEMOCLAW_MESSAGING_CHANNELS_B64,
-//   NEMOCLAW_MESSAGING_ALLOWED_IDS_B64, NEMOCLAW_DISCORD_GUILDS_B64,
-//   NEMOCLAW_TELEGRAM_CONFIG_B64, NEMOCLAW_WECHAT_CONFIG_B64,
-//   NEMOCLAW_SLACK_CONFIG_B64, NEMOCLAW_DISABLE_DEVICE_AUTH,
+//   NEMOCLAW_INFERENCE_COMPAT_B64,
+//   NEMOCLAW_DISABLE_DEVICE_AUTH,
 //   NEMOCLAW_EXTRA_AGENTS_JSON_B64,
 //   NEMOCLAW_PROXY_HOST, NEMOCLAW_PROXY_PORT,
-//   NEMOCLAW_OPENCLAW_MANAGED_PROXY, NEMOCLAW_WEB_SEARCH_ENABLED.
+//   NEMOCLAW_OPENCLAW_MANAGED_PROXY, NEMOCLAW_WEB_SEARCH_ENABLED,
+//   NEMOCLAW_OPENCLAW_OTEL, NEMOCLAW_OPENCLAW_OTEL_ENDPOINT,
+//   NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME, NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE.
 
 import {
   chmodSync,
@@ -33,7 +33,6 @@ import {
 } from "node:fs";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { spawnSync } from "node:child_process";
 
 type Env = Record<string, string | undefined>;
 type JsonObject = Record<string, any>;
@@ -47,6 +46,8 @@ const DEFAULT_DASHBOARD_PORT = 18789;
 const MIN_DASHBOARD_PORT = 1024;
 const MAX_DASHBOARD_PORT = 65535;
 const FALSE_VALUES = new Set(["0", "false", "no", "off"]);
+const DEFAULT_OPENCLAW_OTEL_ENDPOINT = "http://host.openshell.internal:4318";
+const DEFAULT_OPENCLAW_OTEL_SERVICE_NAME = "openclaw-gateway";
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const SCRIPT_DIR = dirname(SCRIPT_PATH);
 
@@ -108,6 +109,54 @@ function truthyEnvDefault(env: Env, name: string, defaultValue: boolean): boolea
     return defaultValue;
   }
   return !FALSE_VALUES.has(raw.trim().toLowerCase());
+}
+
+function parseOpenClawOtelSampleRate(raw: string): number {
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < 0.0 || value > 1.0) {
+    throw new Error("NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE must be between 0.0 and 1.0");
+  }
+  return value;
+}
+
+function buildOpenClawOtelConfig(env: Env): JsonObject | undefined {
+  if (!truthyEnvDefault(env, "NEMOCLAW_OPENCLAW_OTEL", false)) {
+    return undefined;
+  }
+
+  const endpoint = (env.NEMOCLAW_OPENCLAW_OTEL_ENDPOINT || DEFAULT_OPENCLAW_OTEL_ENDPOINT).trim();
+  let parsedEndpoint: URL;
+  try {
+    parsedEndpoint = new URL(endpoint);
+  } catch {
+    throw new Error("NEMOCLAW_OPENCLAW_OTEL_ENDPOINT must be an http(s) OTLP/HTTP endpoint");
+  }
+  if (!["http:", "https:"].includes(parsedEndpoint.protocol) || !parsedEndpoint.host) {
+    throw new Error("NEMOCLAW_OPENCLAW_OTEL_ENDPOINT must be an http(s) OTLP/HTTP endpoint");
+  }
+  if (parsedEndpoint.username || parsedEndpoint.password) {
+    throw new Error("NEMOCLAW_OPENCLAW_OTEL_ENDPOINT must not include credentials");
+  }
+
+  const serviceName = (
+    env.NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME || DEFAULT_OPENCLAW_OTEL_SERVICE_NAME
+  ).trim();
+  if (!serviceName) {
+    throw new Error("NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME must not be empty");
+  }
+
+  return {
+    enabled: true,
+    endpoint,
+    protocol: "http/protobuf",
+    serviceName,
+    traces: true,
+    metrics: false,
+    logs: false,
+    sampleRate: parseOpenClawOtelSampleRate(
+      (env.NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE || "1.0").trim(),
+    ),
+  };
 }
 
 function validateDashboardPort(raw: string, envName: string): number {
@@ -549,9 +598,7 @@ function validateExtraAgentTools(entry: JsonObject, label: string): JsonObject {
     const value = tools[key];
     if (value === undefined) continue;
     if (!Array.isArray(value) || value.some((token) => typeof token !== "string" || !token)) {
-      throw new Error(
-        `${label}.tools.${key} must be an array of non-empty strings when present.`,
-      );
+      throw new Error(`${label}.tools.${key} must be an array of non-empty strings when present.`);
     }
   }
   if (tools.profile !== undefined && typeof tools.profile !== "string") {
@@ -570,9 +617,7 @@ function validateExtraAgentSubagents(entry: JsonObject, label: string): JsonObje
   rejectUnknownKeys(subagents, ALLOWED_SUBAGENTS_KEYS, `${label}.subagents`);
   const depth = subagents.maxSpawnDepth;
   if (typeof depth !== "number" || !Number.isInteger(depth) || depth < 0) {
-    throw new Error(
-      `${label}.subagents.maxSpawnDepth must be a non-negative integer.`,
-    );
+    throw new Error(`${label}.subagents.maxSpawnDepth must be a non-negative integer.`);
   }
   return pickAllowed(subagents, ALLOWED_SUBAGENTS_KEYS);
 }
@@ -582,9 +627,7 @@ function validateExtraAgents(value: unknown): JsonObject[] {
     return [];
   }
   if (!Array.isArray(value)) {
-    throw new Error(
-      "NEMOCLAW_EXTRA_AGENTS_JSON must decode to a JSON array of agent objects",
-    );
+    throw new Error("NEMOCLAW_EXTRA_AGENTS_JSON must decode to a JSON array of agent objects");
   }
   const seenIds = new Set<string>([MAIN_AGENT_ID]);
   return value.map((entry, index) => {
@@ -614,9 +657,7 @@ function validateExtraAgents(value: unknown): JsonObject[] {
         throw new Error(`${label}.${pathKey} must be a non-empty string`);
       }
       if (!isAbsolute(pathValue)) {
-        throw new Error(
-          `${label}.${pathKey} must be an absolute path, got "${pathValue}"`,
-        );
+        throw new Error(`${label}.${pathKey} must be an absolute path, got "${pathValue}"`);
       }
       const expected = expectedAgentPath(pathKey, id);
       if (resolve(pathValue) !== expected) {
@@ -783,113 +824,6 @@ export function buildConfig(env: Env = process.env): JsonObject {
     inferenceCompat.supportsUsageInStreaming ??= true;
   }
 
-  const msgChannels = decodeJsonEnv(env, "NEMOCLAW_MESSAGING_CHANNELS_B64", "W10=");
-  const allowedIds = decodeJsonEnv(env, "NEMOCLAW_MESSAGING_ALLOWED_IDS_B64", "e30=");
-  const discordGuilds = decodeJsonEnv(env, "NEMOCLAW_DISCORD_GUILDS_B64", "e30=");
-  const telegramConfig = decodeJsonEnv(env, "NEMOCLAW_TELEGRAM_CONFIG_B64", "e30=");
-  const slackConfig = decodeJsonEnv(env, "NEMOCLAW_SLACK_CONFIG_B64", "e30=");
-  const rawSlackChannels = isObject(slackConfig) ? slackConfig.allowedChannels : [];
-  const slackAllowedChannels = Array.isArray(rawSlackChannels)
-    ? unique(
-        rawSlackChannels
-          .map((channel) => String(channel).replaceAll("\r", "").replaceAll("\n", "").trim())
-          .filter(Boolean),
-      )
-    : [];
-
-  const tokenKeys: Record<string, string> = {
-    discord: "token",
-    telegram: "botToken",
-    slack: "botToken",
-  };
-  const envKeys: Record<string, string> = {
-    discord: "DISCORD_BOT_TOKEN",
-    telegram: "TELEGRAM_BOT_TOKEN",
-    slack: "SLACK_BOT_TOKEN",
-  };
-
-  function placeholder(channel: string, envKey: string): string {
-    if (channel === "slack" && envKey === "SLACK_BOT_TOKEN") {
-      return `xoxb-OPENSHELL-RESOLVE-ENV-${envKey}`;
-    }
-    if (channel === "slack" && envKey === "SLACK_APP_TOKEN") {
-      return `xapp-OPENSHELL-RESOLVE-ENV-${envKey}`;
-    }
-    return `openshell:resolve:env:${envKey}`;
-  }
-
-  const channelConfig: JsonObject = {};
-  for (const channel of Array.isArray(msgChannels) ? msgChannels : []) {
-    const ch = String(channel);
-    if (ch === "whatsapp") {
-      channelConfig[ch] = {
-        enabled: true,
-        accounts: {
-          default: { enabled: true, healthMonitor: { enabled: false } },
-        },
-      };
-      continue;
-    }
-    if (!(ch in tokenKeys)) {
-      continue;
-    }
-    const account: JsonObject = {
-      [tokenKeys[ch]]: placeholder(ch, envKeys[ch]),
-      enabled: true,
-      healthMonitor: { enabled: false },
-    };
-    if (ch === "slack") {
-      account.appToken = placeholder(ch, "SLACK_APP_TOKEN");
-    }
-    if (ch === "telegram") {
-      account.proxy = proxyUrl;
-      account.groupPolicy = "open";
-    }
-    if (isObject(allowedIds) && ch in allowedIds && allowedIds[ch]) {
-      account.dmPolicy = "allowlist";
-      account.allowFrom = allowedIds[ch];
-      if (ch === "slack") {
-        account.groupPolicy = "allowlist";
-        account.channels = {
-          "*": {
-            enabled: true,
-            requireMention: true,
-            users: allowedIds[ch],
-          },
-        };
-      }
-    }
-    if (ch === "slack" && slackAllowedChannels.length > 0) {
-      account.groupPolicy = "allowlist";
-      const slackChannelConfig: JsonObject = {
-        enabled: true,
-        requireMention: true,
-      };
-      if (isObject(allowedIds) && ch in allowedIds && allowedIds[ch]) {
-        slackChannelConfig.users = allowedIds[ch];
-      }
-      account.channels = Object.fromEntries(
-        slackAllowedChannels.map((channelId) => [channelId, { ...slackChannelConfig }]),
-      );
-    }
-    channelConfig[ch] = { enabled: true, accounts: { default: account } };
-  }
-
-  if (
-    "discord" in channelConfig &&
-    isObject(discordGuilds) &&
-    Object.keys(discordGuilds).length > 0
-  ) {
-    Object.assign(channelConfig.discord, {
-      groupPolicy: "allowlist",
-      guilds: discordGuilds,
-    });
-  }
-
-  if ("telegram" in channelConfig && isObject(telegramConfig) && telegramConfig.requireMention) {
-    channelConfig.telegram.groups = { "*": { requireMention: true } };
-  }
-
   const normalizedUrl = normalizeUrlForParse(chatUiUrl);
   const parsed = parseUrl(normalizedUrl);
   const loopbackOrigin = `http://127.0.0.1:${gatewayPort}`;
@@ -933,13 +867,7 @@ export function buildConfig(env: Env = process.env): JsonObject {
     acpx: { enabled: false },
     bonjour: { enabled: false },
     qqbot: { enabled: false },
-    "openclaw-weixin": { enabled: true },
   };
-  for (const ch of ["discord", "slack", "telegram", "whatsapp"]) {
-    if (ch in channelConfig) {
-      pluginEntries[ch] = { enabled: true };
-    }
-  }
   const bundledProviderPlugins: Record<string, Set<string>> = {
     "amazon-bedrock": new Set(["amazon-bedrock", "bedrock"]),
     "amazon-bedrock-mantle": new Set(["amazon-bedrock-mantle"]),
@@ -957,6 +885,10 @@ export function buildConfig(env: Env = process.env): JsonObject {
     if (!providerKeys.has(providerKey)) {
       pluginEntries[pluginId] = { enabled: false };
     }
+  }
+  const openclawOtel = buildOpenClawOtelConfig(env);
+  if (openclawOtel) {
+    pluginEntries["diagnostics-otel"] = { enabled: true };
   }
 
   const plugins: JsonObject = { entries: pluginEntries };
@@ -982,7 +914,7 @@ export function buildConfig(env: Env = process.env): JsonObject {
   const config: JsonObject = {
     agents: { defaults: agentDefaults, list: buildAgentsList(extraAgents) },
     models: { mode: "merge", providers },
-    channels: { defaults: {}, ...channelConfig },
+    channels: { defaults: {} },
     tools: openclawTools,
     update: { checkOnStart: false },
     plugins,
@@ -1006,16 +938,30 @@ export function buildConfig(env: Env = process.env): JsonObject {
       loopbackMode: "gateway-only",
     };
   }
+  if (openclawOtel) {
+    config.diagnostics = {
+      enabled: true,
+      otel: openclawOtel,
+    };
+  }
 
   const tools = config.tools;
   tools.web ??= {};
   tools.web.fetch = { enabled: true, useTrustedEnvProxy: true };
 
   if (env.NEMOCLAW_WEB_SEARCH_ENABLED === "1") {
-    tools.web.search = {
+    // OpenClaw 2026.5.x: web-search providers are external plugins. The
+    // provider-owned apiKey lives under plugins.entries.<plugin>.config,
+    // not inline in tools.web.search. Writing the legacy inline shape makes
+    // the build-time `openclaw plugins install` exit non-zero during its
+    // pre-install config validation (the brave plugin is not installed yet),
+    // aborting the image build under `set -eu` before `doctor --fix` can
+    // migrate it. Emit the current schema directly so install validates
+    // cleanly. See NemoClaw #5266 (follow-up to #4955 / #3948).
+    tools.web.search = { enabled: true, provider: "brave" };
+    config.plugins.entries.brave = {
       enabled: true,
-      provider: "brave",
-      apiKey: "openshell:resolve:env:BRAVE_API_KEY",
+      config: { webSearch: { apiKey: "openshell:resolve:env:BRAVE_API_KEY" } },
     };
   }
 
@@ -1048,124 +994,17 @@ function preserveExistingPluginInstalls(config: JsonObject, configPath: string):
   Object.assign(currentPlugins.installs, existingInstalls);
 }
 
-function hasPluginInstall(config: JsonObject, pluginId: string): boolean {
-  const plugins = config.plugins;
-  if (!isObject(plugins)) {
-    return false;
-  }
-  const installs = plugins.installs;
-  return isObject(installs) && pluginId in installs;
-}
-
-function readJsonFile(pathValue: string): unknown {
-  return JSON.parse(readFileSync(pathValue, "utf-8"));
-}
-
-function looksLikeWechatPluginMetadata(metadata: unknown, pathValue: string): boolean {
-  return (
-    isObject(metadata) &&
-    (metadata.id === "openclaw-weixin" ||
-      metadata.name === "@tencent-weixin/openclaw-weixin" ||
-      pathValue.toLowerCase().includes("openclaw-weixin"))
-  );
-}
-
-function hasInstalledWechatPluginMetadata(): boolean {
-  const stateDir = expandUser("~/.openclaw");
-  const candidates = [
-    join(stateDir, "extensions", "openclaw-weixin", "openclaw.plugin.json"),
-    join(stateDir, "extensions", "openclaw-weixin", "package.json"),
-    join(
-      stateDir,
-      "npm",
-      "node_modules",
-      "@tencent-weixin",
-      "openclaw-weixin",
-      "openclaw.plugin.json",
-    ),
-    join(stateDir, "npm", "node_modules", "@tencent-weixin", "openclaw-weixin", "package.json"),
-  ];
-  for (const candidate of candidates) {
-    try {
-      if (looksLikeWechatPluginMetadata(readJsonFile(candidate), candidate)) {
-        return true;
-      }
-    } catch {
-      // Keep scanning; stale metadata should not break config generation.
-    }
-  }
-
-  const extensionsDir = join(stateDir, "extensions");
-  if (!existsSync(extensionsDir)) {
-    return false;
-  }
-
-  const ignoredDirs = new Set(["node_modules", "plugin-runtime-deps", ".git"]);
-  const stack = [extensionsDir];
-  while (stack.length > 0) {
-    const dir = stack.pop() as string;
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      if (entry.isDirectory()) {
-        if (!ignoredDirs.has(entry.name)) {
-          stack.push(join(dir, entry.name));
-        }
-        continue;
-      }
-      if (!entry.isFile() || !["openclaw.plugin.json", "package.json"].includes(entry.name)) {
-        continue;
-      }
-      const pathValue = join(dir, entry.name);
-      try {
-        if (looksLikeWechatPluginMetadata(readJsonFile(pathValue), pathValue)) {
-          return true;
-        }
-      } catch {
-        // Keep scanning; corrupt package metadata is ignored like the Python path.
-      }
-    }
-  }
-  return false;
-}
-
-function hasPreinstalledWechatPluginSignal(): boolean {
-  return ["1", "true", "yes", "on"].includes(
-    (process.env.NEMOCLAW_OPENCLAW_WECHAT_PLUGIN_PREINSTALLED || "").trim().toLowerCase(),
-  );
-}
-
-function seedWechatAccountsIfAvailable(config: JsonObject): void {
-  if (
-    !hasPluginInstall(config, "openclaw-weixin") &&
-    !hasInstalledWechatPluginMetadata() &&
-    !hasPreinstalledWechatPluginSignal()
-  ) {
-    return;
-  }
-
-  const seedScript = resolve(SCRIPT_DIR, "seed-wechat-accounts.py");
-  const result = spawnSync("python3", [seedScript], {
-    stdio: "inherit",
-    env: process.env,
-  });
-  if (result.error) {
-    throw result.error;
-  }
-  if (result.status !== null && result.status !== 0) {
-    process.exit(result.status);
-  }
-  if (result.signal) {
-    throw new Error(`${seedScript} terminated with signal ${result.signal}`);
-  }
-}
-
-export function main(): void {
+export function writeOpenClawConfig(): void {
   const config = buildConfig();
   const configPath = expandUser("~/.openclaw/openclaw.json");
   preserveExistingPluginInstalls(config, configPath);
   mkdirSync(dirname(configPath), { recursive: true });
   writeFileSync(configPath, JSON.stringify(config, null, 2));
   chmodSync(configPath, 0o600);
-  seedWechatAccountsIfAvailable(config);
+}
+
+export function main(): void {
+  writeOpenClawConfig();
 }
 
 function isMainModule(): boolean {

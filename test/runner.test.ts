@@ -9,6 +9,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import YAML from "yaml";
 
 import { redact, runCapture } from "../dist/lib/runner";
 
@@ -250,13 +251,7 @@ describe("runner env merging", () => {
       process.env.http_proxy = "http://127.0.0.1:8118";
       delete process.env.NO_PROXY;
       delete process.env.no_proxy;
-      runCaptureEx([
-        "curl",
-        "-sS",
-        "--max-time",
-        "3",
-        "http://localhost:11434/api/ps",
-      ]);
+      runCaptureEx(["curl", "-sS", "--max-time", "3", "http://localhost:11434/api/ps"]);
     } finally {
       if (originalHttpProxy === undefined) delete process.env.http_proxy;
       else process.env.http_proxy = originalHttpProxy;
@@ -371,8 +366,10 @@ describe("redact", () => {
 
   it("masks key assignments in commands", () => {
     const { redact } = require(runnerPath);
-    expect(redact("export NVIDIA_API_KEY=nvapi-realkey12345")).toContain("nvap");
-    expect(redact("export NVIDIA_API_KEY=nvapi-realkey12345")).not.toContain("realkey12345");
+    expect(redact("export NVIDIA_INFERENCE_API_KEY=nvapi-realkey12345")).toContain("nvap");
+    expect(redact("export NVIDIA_INFERENCE_API_KEY=nvapi-realkey12345")).not.toContain(
+      "realkey12345",
+    );
   });
 
   it("masks variables ending in _KEY", () => {
@@ -637,7 +634,7 @@ describe("regression guards", () => {
   });
 
   describe("credential exposure guards (#429)", () => {
-    it("walkthrough.sh does not embed NVIDIA_API_KEY in tmux or sandbox commands", () => {
+    it("walkthrough.sh does not embed NVIDIA_INFERENCE_API_KEY in tmux or sandbox commands", () => {
       const fs = require("fs");
       const src = fs.readFileSync(
         path.join(import.meta.dirname, "..", "scripts", "walkthrough.sh"),
@@ -653,7 +650,7 @@ describe("regression guards", () => {
             (l.includes("tmux") || l.includes("openshell sandbox connect")),
         );
       for (const line of cmdLines) {
-        expect(line.includes("NVIDIA_API_KEY")).toBe(false);
+        expect(line.includes("NVIDIA_INFERENCE_API_KEY")).toBe(false);
       }
     });
 
@@ -860,6 +857,23 @@ describe("regression guards", () => {
     });
   });
 
+  describe("OpenClaw runtime cache hardening", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+
+    it("disables jiti filesystem cache in base, runtime, and connect shells", () => {
+      const baseSrc = fs.readFileSync(path.join(repoRoot, "Dockerfile.base"), "utf-8");
+      const runtimeSrc = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf-8");
+      const startSrc = fs.readFileSync(
+        path.join(repoRoot, "scripts", "nemoclaw-start.sh"),
+        "utf-8",
+      );
+
+      expect(baseSrc).toContain("ENV JITI_FS_CACHE=false");
+      expect(runtimeSrc).toContain("ENV JITI_FS_CACHE=false");
+      expect(startSrc).toContain('export JITI_FS_CACHE="false"');
+    });
+  });
+
   describe("sandbox ships tmux for the bundled tmux-session flow (#4513)", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
 
@@ -901,6 +915,43 @@ describe("regression guards", () => {
       expect(src).toContain("command -v tmux");
       // The smoke must be wired into the run, not just defined.
       expect(src).toMatch(/^\s*test_sbx_09_tmux_session_flow\s*$/m);
+    });
+
+    // The reopened #4513: installing tmux was not enough — the bundled
+    // tmux-session flow still failed with `create window failed: fork failed:
+    // Permission denied`. Root cause: the sandbox landlock filesystem policy
+    // never granted the devpts PTY devices, so forkpty() open of /dev/ptmx
+    // (-> /dev/pts/ptmx) and the /dev/pts/<n> slave was denied with EACCES.
+    for (const policyFile of [
+      path.join("nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
+      path.join("nemoclaw-blueprint", "policies", "openclaw-sandbox-permissive.yaml"),
+      path.join("agents", "openclaw", "policy-permissive.yaml"),
+    ]) {
+      it(`${policyFile} grants /dev/pts so PTY allocation (tmux) works`, () => {
+        const doc = YAML.parse(fs.readFileSync(path.join(repoRoot, policyFile), "utf-8"));
+        const readWrite: string[] = doc.filesystem_policy?.read_write ?? [];
+        // devpts must be writable — tmux opens the master and slave O_RDWR.
+        expect(readWrite).toContain("/dev/pts");
+        // /dev/ptmx is a symlink to pts/ptmx; the supervisor refuses to chown a
+        // symlinked read_write path, so it must NOT be listed directly. The
+        // /dev/pts directory grant already covers ptmx via the landlock
+        // path hierarchy.
+        expect(readWrite).not.toContain("/dev/ptmx");
+      });
+    }
+
+    it("e2e TC-SBX-09 hard-asserts the tmux lifecycle and no longer skips on fork failure", () => {
+      const src = fs.readFileSync(
+        path.join(repoRoot, "test", "e2e", "test-sandbox-operations.sh"),
+        "utf-8",
+      );
+      // The PTY root cause is pinned with an explicit openpty() probe.
+      expect(src).toContain("os.openpty()");
+      // The #4640 soft-skip-on-fork-failure branch must be gone — a fork
+      // failure now means the devpts grant regressed and must fail loudly.
+      const tc09 = src.slice(src.indexOf("test_sbx_09_tmux_session_flow"));
+      const tc09Body = tc09.slice(0, tc09.indexOf("\n}\n"));
+      expect(tc09Body).not.toMatch(/skip "TC-SBX-09"/);
     });
   });
 });

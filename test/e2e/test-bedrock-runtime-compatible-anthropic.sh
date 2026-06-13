@@ -432,7 +432,7 @@ run_bedrock_onboard() {
   unset AWS_WEB_IDENTITY_TOKEN_FILE AWS_CONTAINER_CREDENTIALS_RELATIVE_URI
   unset AWS_CONTAINER_CREDENTIALS_FULL_URI AWS_BEARER_TOKEN_BEDROCK
   unset AWS_REGION AWS_DEFAULT_REGION
-  unset NVIDIA_API_KEY OPENAI_API_KEY ANTHROPIC_API_KEY GEMINI_API_KEY COMPATIBLE_API_KEY
+  unset NVIDIA_INFERENCE_API_KEY OPENAI_API_KEY ANTHROPIC_API_KEY GEMINI_API_KEY COMPATIBLE_API_KEY
   unset TELEGRAM_BOT_TOKEN DISCORD_BOT_TOKEN SLACK_BOT_TOKEN SLACK_APP_TOKEN
 
   destroy_sandbox_best_effort
@@ -650,6 +650,9 @@ if model.get("default") != expected:
     errors.append(f"model.default={model.get('default')!r}")
 if model.get("base_url") != "https://inference.local/v1":
     errors.append(f"model.base_url={model.get('base_url')!r}")
+api_key = model.get("api_key")
+if not isinstance(api_key, str) or not api_key.startswith("sk-"):
+    errors.append(f"model.api_key={api_key!r}")
 if re.search(r"(?ms)^models:\s*\n(?:[ \t].*\n)*?[ \t]+providers:", text):
     errors.append("OpenClaw-style models.providers block present")
 if "openshell:" in text:

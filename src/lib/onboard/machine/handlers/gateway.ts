@@ -6,6 +6,7 @@ import type { GatewayReuseState } from "../../../state/gateway";
 import type { Session } from "../../../state/onboard-session";
 import type { GatewayContainerState } from "../../gateway-container-running";
 import { withGatewayTrace } from "../../tracing";
+import { advanceTo, type OnboardStateTransitionResult } from "../result";
 
 export interface GatewayStateOptions<Gpu> {
   resume: boolean;
@@ -51,12 +52,11 @@ export interface GatewayStateOptions<Gpu> {
     isLinuxDockerDriverGatewayEnabled(): boolean;
     retireLegacyGatewayForDockerDriverUpgrade(): void;
     destroyGatewayRuntimeForGpuReuse(): boolean;
-    skippedStepMessage(
-      stepName: string,
-      detail?: string | null,
-      reason?: "resume" | "reuse",
-    ): void;
-    recordStateSkipped(state: "gateway", metadata?: Record<string, unknown> | null): Promise<Session>;
+    skippedStepMessage(stepName: string, detail?: string | null, reason?: "resume" | "reuse"): void;
+    recordStateSkipped(
+      state: "gateway",
+      metadata?: Record<string, unknown> | null,
+    ): Promise<Session>;
     note(message: string): void;
     startRecordedStep(stepName: string): Promise<void>;
     startGateway(gpu: Gpu, options: { gpuPassthrough: boolean }): Promise<void>;
@@ -68,6 +68,7 @@ export interface GatewayStateOptions<Gpu> {
 export interface GatewayStateResult {
   gatewayReuseState: GatewayReuseState;
   session: Session | null;
+  stateResult: OnboardStateTransitionResult;
 }
 
 export async function handleGatewayState<Gpu>({
@@ -106,7 +107,9 @@ export async function handleGatewayState<Gpu>({
       );
       const recovered = await deps.recoverGatewayRuntime();
       if (recovered) {
-        console.log("  ✓ Gateway recovered without removing volumes; existing sandbox PVC preserved.");
+        console.log(
+          "  ✓ Gateway recovered without removing volumes; existing sandbox PVC preserved.",
+        );
         checkImageDrift = true;
       } else {
         console.log(
@@ -172,14 +175,17 @@ export async function handleGatewayState<Gpu>({
     hostGpuPlatform: (gpu as { platform?: NvidiaPlatform } | null)?.platform ?? null,
     recreateSandbox,
     confirmedDockerDriverGateway:
-      deps.isLinuxDockerDriverGatewayEnabled() && gatewayReuseState === "healthy" && !supportsLifecycleCommands,
+      deps.isLinuxDockerDriverGatewayEnabled() &&
+      gatewayReuseState === "healthy" &&
+      !supportsLifecycleCommands,
     stopDashboardForwards: deps.stopAllDashboardForwards,
     retireLegacyGatewayForDockerDriverUpgrade: deps.retireLegacyGatewayForDockerDriverUpgrade,
     destroyGatewayRuntimeForGpuReuse: deps.destroyGatewayRuntimeForGpuReuse,
   });
 
   const canReuseHealthyGateway = gatewayReuseState === "healthy";
-  const resumeGateway = resume && session?.steps?.gateway?.status === "complete" && canReuseHealthyGateway;
+  const resumeGateway =
+    resume && session?.steps?.gateway?.status === "complete" && canReuseHealthyGateway;
   if (resumeGateway) {
     deps.skippedStepMessage("gateway", "running");
     await deps.recordStateSkipped("gateway", { reason: "resume", reuseState: gatewayReuseState });
@@ -192,9 +198,13 @@ export async function handleGatewayState<Gpu>({
   } else {
     if (resume && session?.steps?.gateway?.status === "complete") {
       if (gatewayReuseState === "active-unnamed") {
-        deps.note("  [resume] Gateway is active but named metadata is missing; recreating it safely.");
+        deps.note(
+          "  [resume] Gateway is active but named metadata is missing; recreating it safely.",
+        );
       } else if (gatewayReuseState === "foreign-active") {
-        deps.note("  [resume] A different OpenShell gateway is active; NemoClaw will not reuse it.");
+        deps.note(
+          "  [resume] A different OpenShell gateway is active; NemoClaw will not reuse it.",
+        );
       } else if (gatewayReuseState === "stale") {
         deps.note("  [resume] Recorded gateway is unhealthy; recreating it.");
       } else {
@@ -202,9 +212,15 @@ export async function handleGatewayState<Gpu>({
       }
     }
     await deps.startRecordedStep("gateway");
-    if (deps.isLinuxDockerDriverGatewayEnabled() && gatewayReuseState !== "missing") {
+    if (
+      deps.isLinuxDockerDriverGatewayEnabled() &&
+      gatewayReuseState !== "missing" &&
+      gatewayReuseState !== "foreign-active"
+    ) {
       deps.note("  Replacing legacy OpenShell gateway metadata with Docker-driver gateway.");
       deps.retireLegacyGatewayForDockerDriverUpgrade();
+      gatewayReuseState = "missing";
+    } else if (gatewayReuseState === "foreign-active") {
       gatewayReuseState = "missing";
     }
     await withGatewayTrace(gatewayReuseState, gpuPassthrough, () =>
@@ -213,5 +229,11 @@ export async function handleGatewayState<Gpu>({
     session = await deps.recordStepComplete("gateway");
   }
 
-  return { gatewayReuseState, session };
+  return {
+    gatewayReuseState,
+    session,
+    stateResult: advanceTo("provider_selection", {
+      metadata: { state: "gateway", gatewayReuseState },
+    }),
+  };
 }

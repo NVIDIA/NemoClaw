@@ -31,6 +31,7 @@ export type CredentialPromptIntent =
 // Exported so tests can import the same source-of-truth list and stay in
 // sync without a second hand-maintained copy.
 export const KNOWN_CREDENTIAL_ENV_KEYS: readonly string[] = [
+  "NVIDIA_INFERENCE_API_KEY",
   "NVIDIA_API_KEY",
   "OPENAI_API_KEY",
   "ANTHROPIC_API_KEY",
@@ -49,12 +50,33 @@ export const KNOWN_CREDENTIAL_ENV_KEYS: readonly string[] = [
   "WECHAT_BOT_TOKEN",
 ];
 
+const LEGACY_CREDENTIAL_ENV_ALIASES: Partial<Record<string, readonly string[]>> = {
+  NVIDIA_INFERENCE_API_KEY: ["NVIDIA_API_KEY"],
+};
+
 // Hard upper bound on the legacy credentials.json size we are willing to
 // read into memory. The largest realistic credential set NemoClaw has ever
 // shipped is well under 1 KiB; the cap exists purely so an attacker who
 // can write to ~/.nemoclaw/ cannot OOM the next onboard by planting a
 // huge file. 1 MiB leaves plenty of headroom over any plausible mutation.
 const LEGACY_CREDS_FILE_MAX_BYTES = 1 * 1024 * 1024;
+
+function noFollowFlag(): number | undefined {
+  return typeof fs.constants.O_NOFOLLOW === "number" ? fs.constants.O_NOFOLLOW : undefined;
+}
+
+function openReadOnlyNoFollow(filePath: string): number {
+  const flag = noFollowFlag();
+  if (flag === undefined) {
+    const stat = fs.lstatSync(filePath);
+    if (stat.isSymbolicLink()) {
+      const error = new Error(`Refusing to follow symlink: ${filePath}`) as NodeJS.ErrnoException;
+      error.code = "ELOOP";
+      throw error;
+    }
+  }
+  return fs.openSync(filePath, fs.constants.O_RDONLY | (flag ?? 0));
+}
 
 /**
  * Resolve the user's home directory and reject obviously unsafe choices
@@ -81,10 +103,7 @@ export function resolveHomeDir(): string {
       );
     }
   } catch (error) {
-    if (
-      !isErrnoException(error) ||
-      error.code !== "ENOENT"
-    ) {
+    if (!isErrnoException(error) || error.code !== "ENOENT") {
       throw error;
     }
   }
@@ -168,6 +187,14 @@ export function getCredential(key: string): string | null {
   return normalized || null;
 }
 
+function getLegacyCredentialAlias(envName: string): string | null {
+  for (const alias of LEGACY_CREDENTIAL_ENV_ALIASES[envName] ?? []) {
+    const value = getCredential(alias);
+    if (value) return value;
+  }
+  return null;
+}
+
 /**
  * Canonical entry point for provider credential resolution (PR #2306).
  * Resolves the credential for `envName` from `process.env`, falling back
@@ -188,10 +215,10 @@ export function getCredential(key: string): string | null {
  * guard inside the staging helper itself.
  */
 export function resolveProviderCredential(envName: string): string | null {
-  let value = getCredential(envName);
+  let value = getCredential(envName) || getLegacyCredentialAlias(envName);
   if (!value) {
     stageLegacyCredentialsToEnv();
-    value = getCredential(envName);
+    value = getCredential(envName) || getLegacyCredentialAlias(envName);
   }
   if (value) {
     process.env[envName] = value;
@@ -235,18 +262,20 @@ export function listCredentialKeys(): string[] {
  * backup tools and same-user processes tend to read.
  */
 function secureUnlink(filePath: string): void {
+  let opened = false;
   try {
-    const stat = fs.lstatSync(filePath);
-    if (stat.isSymbolicLink()) {
-      // The credentials path was a symlink; remove the link itself without
-      // touching whatever it pointed at.
-      fs.unlinkSync(filePath);
+    const flag = noFollowFlag();
+    if (flag === undefined) {
+      const stat = fs.lstatSync(filePath);
+      if (stat.isFile() || stat.isSymbolicLink()) fs.unlinkSync(filePath);
       return;
     }
-    if (!stat.isFile()) return;
-    if (stat.size > 0) {
-      const fd = fs.openSync(filePath, fs.constants.O_RDWR | fs.constants.O_NOFOLLOW);
-      try {
+    const fd = fs.openSync(filePath, fs.constants.O_RDWR | flag);
+    opened = true;
+    try {
+      const stat = fs.fstatSync(fd);
+      if (!stat.isFile()) return;
+      if (stat.size > 0) {
         const chunkSize = Math.min(stat.size, 64 * 1024);
         const zeros = Buffer.alloc(chunkSize);
         let written = 0;
@@ -256,15 +285,18 @@ function secureUnlink(filePath: string): void {
           written += len;
         }
         fs.fsyncSync(fd);
-      } finally {
-        fs.closeSync(fd);
       }
+    } finally {
+      fs.closeSync(fd);
     }
   } catch {
-    // best effort
+    // best effort; a final-component symlink either fails O_NOFOLLOW or is
+    // handled by the no-O_NOFOLLOW lstat fallback without touching its target.
   }
   try {
-    fs.unlinkSync(filePath);
+    if (opened || fs.lstatSync(filePath).isSymbolicLink()) {
+      fs.unlinkSync(filePath);
+    }
   } catch {
     // best effort
   }
@@ -310,7 +342,7 @@ export function stageLegacyCredentialsToEnv(): string[] {
   // symlink planted at the credentials path.
   let fd: number;
   try {
-    fd = fs.openSync(legacyFile, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    fd = openReadOnlyNoFollow(legacyFile);
   } catch {
     return [];
   }
@@ -421,7 +453,7 @@ export function removeLegacyCredentialsFileIfEmpty(): boolean {
 
   let fd: number;
   try {
-    fd = fs.openSync(legacyFile, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    fd = openReadOnlyNoFollow(legacyFile);
   } catch {
     return false;
   }
@@ -665,15 +697,17 @@ export async function readCredentialPrompt(
 }
 
 /**
- * Ensure `NVIDIA_API_KEY` is staged for this process. Returns immediately
+ * Ensure `NVIDIA_INFERENCE_API_KEY` is staged for this process. Returns immediately
  * if it is already in env, otherwise prompts interactively (validating
  * the `nvapi-` prefix) and stages the result. Onboarding registers the
  * value with the OpenShell gateway later in the flow.
  */
 export async function ensureApiKey(): Promise<CredentialPromptIntent> {
-  let key = getCredential("NVIDIA_API_KEY");
+  let key =
+    getCredential("NVIDIA_INFERENCE_API_KEY") ||
+    getLegacyCredentialAlias("NVIDIA_INFERENCE_API_KEY");
   if (key) {
-    process.env.NVIDIA_API_KEY = key;
+    process.env.NVIDIA_INFERENCE_API_KEY = key;
     return { kind: "credential", value: key };
   }
 
@@ -710,8 +744,8 @@ export async function ensureApiKey(): Promise<CredentialPromptIntent> {
     break;
   }
 
-  saveCredential("NVIDIA_API_KEY", key);
-  process.env.NVIDIA_API_KEY = key;
+  saveCredential("NVIDIA_INFERENCE_API_KEY", key);
+  process.env.NVIDIA_INFERENCE_API_KEY = key;
   console.log("");
   console.log("  Key staged for the OpenShell gateway. It is held in process memory only;");
   console.log("  onboarding registers it with the gateway and nothing is written to disk.");

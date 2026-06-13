@@ -8,6 +8,10 @@ export const telegramManifest = {
   id: "telegram",
   displayName: "Telegram",
   description: "Telegram bot messaging",
+  enrollmentNotes: [
+    "For Telegram group chats, disable privacy mode in @BotFather (/setprivacy -> your bot -> Disable).",
+    "After changing privacy mode, remove and re-add the bot to each group before testing @mentions.",
+  ],
   supportedAgents: ["openclaw", "hermes"],
   auth: {
     mode: "token-paste",
@@ -32,6 +36,7 @@ export const telegramManifest = {
       prompt: {
         label: "Telegram User ID (for DM access)",
         help: "Send /start to @userinfobot on Telegram to get your numeric user ID.",
+        emptyValueMessage: "bot will require manual pairing",
       },
     },
     {
@@ -59,22 +64,27 @@ export const telegramManifest = {
   policyPresets: [{ name: "telegram", policyKeys: ["telegram_bot"] }],
   render: [
     {
-      id: "telegram-openclaw-account",
+      id: "telegram-openclaw-channel",
       kind: "json-fragment",
       agent: "openclaw",
       target: "openclaw.json",
       fragment: {
-        path: "channels.telegram.accounts.default",
+        path: "channels.telegram",
         value: {
-          botToken: "{{credential.telegramBotToken.placeholder}}",
           enabled: true,
-          healthMonitor: {
-            enabled: false,
+          accounts: {
+            default: {
+              botToken: "{{credential.telegramBotToken.placeholder}}",
+              enabled: true,
+              healthMonitor: {
+                enabled: false,
+              },
+              proxy: "{{proxyUrl}}",
+              groupPolicy: "open",
+              dmPolicy: "{{allowedIds.telegram.dmPolicy}}",
+              allowFrom: "{{allowedIds.telegram.values}}",
+            },
           },
-          proxy: "{{proxyUrl}}",
-          groupPolicy: "open",
-          dmPolicy: "{{allowedIds.telegram.dmPolicy}}",
-          allowFrom: "{{allowedIds.telegram.values}}",
         },
       },
     },
@@ -83,12 +93,25 @@ export const telegramManifest = {
       kind: "json-fragment",
       agent: "openclaw",
       target: "openclaw.json",
+      when: "{{telegramConfig.requireMention}}",
       fragment: {
         path: "channels.telegram.groups",
         value: {
           "*": {
             requireMention: "{{telegramConfig.requireMention}}",
           },
+        },
+      },
+    },
+    {
+      id: "telegram-openclaw-plugin",
+      kind: "json-fragment",
+      agent: "openclaw",
+      target: "openclaw.json",
+      fragment: {
+        path: "plugins.entries.telegram",
+        value: {
+          enabled: true,
         },
       },
     },
@@ -111,6 +134,18 @@ export const telegramManifest = {
         path: "telegram",
         value: {
           require_mention: "{{telegramConfig.requireMention}}",
+        },
+      },
+    },
+    {
+      id: "telegram-hermes-platform",
+      kind: "json-fragment",
+      agent: "hermes",
+      target: "~/.hermes/config.yaml",
+      fragment: {
+        path: "platforms.telegram",
+        value: {
+          enabled: true,
         },
       },
     },
@@ -146,11 +181,37 @@ export const telegramManifest = {
       onFailure: "skip-channel",
     },
     {
-      id: "telegram-reachability",
+      id: "telegram-allowlist-aliases",
+      phase: "enroll",
+      handler: "telegram.allowlistAliases",
+      outputs: [
+        {
+          id: "allowedIds",
+          kind: "config",
+        },
+      ],
+    },
+    {
+      id: "telegram-config-prompt",
+      phase: "enroll",
+      handler: "common.configPrompt",
+      outputs: [
+        {
+          id: "requireMention",
+          kind: "config",
+        },
+        {
+          id: "allowedIds",
+          kind: "config",
+        },
+      ],
+    },
+    {
+      id: "telegram-get-me-reachability",
       phase: "reachability-check",
       handler: "telegram.getMeReachability",
       inputs: ["botToken"],
-      onFailure: "abort",
+      onFailure: "skip-channel",
     },
   ],
 } as const satisfies ChannelManifest;

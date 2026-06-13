@@ -27,7 +27,12 @@ filesystem_policy:
     - /sandbox
     - /tmp
     - /dev/null
-    - /sandbox/.hermes              # Agent config (lockable via shields up)
+    # Agent config/state root. Shields-up locks config.yaml/.env and the
+    # parent directory, but intentionally leaves /sandbox/.hermes/.hermes_history
+    # as sandbox:sandbox 0660 because prompt_toolkit FileHistory appends there
+    # on every Hermes TUI keypress. Remove that exception if upstream supports
+    # redirecting or disabling file history.
+    - /sandbox/.hermes
 
 landlock:
   compatibility: best_effort
@@ -46,6 +51,8 @@ network_policies:
         enforcement: enforce
         rules:
           - allow: { method: POST, path: "/v1/chat/completions" }
+          - allow: { method: POST, path: "/v1/messages" }
+          - allow: { method: POST, path: "/v1/responses" }
           - allow: { method: POST, path: "/v1/completions" }
           - allow: { method: POST, path: "/v1/embeddings" }
           - allow: { method: GET, path: "/v1/models" }
@@ -68,36 +75,17 @@ network_policies:
           - allow: { method: POST, path: "/v1/embeddings" }
           - allow: { method: GET, path: "/v1/models" }
           - allow: { method: GET, path: "/v1/models/**" }
-      - host: inference-api.nvidia.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        rules:
-          - allow: { method: POST, path: "/v1/chat/completions" }
-          - allow: { method: POST, path: "/v1/completions" }
-          - allow: { method: POST, path: "/v1/embeddings" }
-          - allow: { method: GET, path: "/v1/models" }
-          - allow: { method: GET, path: "/v1/models/**" }
     binaries:
       - { path: /usr/local/bin/hermes }
       - { path: /usr/bin/python3* }
       - { path: /opt/hermes/.venv/bin/python }
 
-  github:
-    name: github
-    endpoints:
-      - host: github.com
-        port: 443
-        access: full
-      - host: api.github.com
-        port: 443
-        access: full
-    binaries:
-      # `gh` was historically whitelisted here, but the Hermes sandbox base
-      # image (agents/hermes/Dockerfile.base) only apt-installs `git`, not
-      # `gh`, so the entry was a phantom — see #2179.
-      - { path: /usr/bin/git }
-      - { path: /opt/hermes/.venv/bin/python }
+  # NOTE: github.com / api.github.com and the git binary used to
+  # live in this base policy and were therefore granted to every
+  # Hermes sandbox regardless of user opt-in. They have been moved
+  # into a discoverable preset (`presets/github.yaml`) so a sandbox
+  # only gets GitHub access when the user explicitly selects the
+  # `github` preset during onboard.
 
   # ── Nous Research — public metadata and agent updates ─────────
   # Nous Portal OAuth, managed inference, and managed tool gateway auth are
@@ -142,7 +130,9 @@ network_policies:
         rules:
           - allow: { method: GET, path: "/**" }
     binaries:
+      - { path: /usr/bin/curl }
       - { path: /usr/local/bin/pip3 }
+      - { path: /usr/local/bin/curl }
       - { path: /usr/bin/python3* }
       - { path: /opt/hermes/.venv/bin/python }
 
@@ -267,9 +257,9 @@ network_policies:
 
   # WeChat (personal) via Tencent's iLink Bot API. The Hermes adapter uses
   # HTTP long-polling (no WebSocket). WEIXIN_TOKEN is L7-resolved at egress
-  # from WECHAT_BOT_TOKEN (same credential slot OpenClaw's bridge uses) — see
-  # agents/hermes/config/messaging-config.ts and
-  # nemoclaw-blueprint/policies/presets/wechat.yaml for the shared host set.
+  # from WECHAT_BOT_TOKEN (same credential slot OpenClaw's bridge uses) via
+  # manifest hook render outputs. See nemoclaw-blueprint/policies/presets/wechat.yaml
+  # for the shared host set.
   wechat_bridge:
     name: wechat_bridge
     endpoints:

@@ -9,6 +9,8 @@ import {
   type HermesDashboardConfig,
   readHermesDashboardConfig,
 } from "../hermes-dashboard";
+import { HERMES_OPENAI_API_PORT } from "../core/ports";
+import { RESERVED_HERMES_DASHBOARD_PORT_MESSAGE } from "./preflight-ports";
 import type { SandboxEntry } from "../state/registry";
 
 export interface HermesDashboardOnboardState {
@@ -29,6 +31,22 @@ export function resolveHermesDashboardOnboardState({
   env: NodeJS.ProcessEnv;
   fail?: (message: string) => never;
 }): HermesDashboardOnboardState {
+  // #4984 — reject the reserved Hermes API port (HERMES_OPENAI_API_PORT) as the
+  // dashboard port for ANY agent, before any sandbox is built. Check both the
+  // resolved effectivePort (covers --control-ui-port / CHAT_UI_URL / persisted)
+  // and the raw env override, which the host otherwise silently drops so
+  // effectivePort never shows it. Message mirrors agents/hermes/start.sh:164.
+  const rawDashboardPort = env.NEMOCLAW_DASHBOARD_PORT?.trim();
+  const requestedDashboardPort = rawDashboardPort ? Number(rawDashboardPort) : undefined;
+  if (
+    effectivePort === HERMES_OPENAI_API_PORT ||
+    requestedDashboardPort === HERMES_OPENAI_API_PORT
+  ) {
+    const message = RESERVED_HERMES_DASHBOARD_PORT_MESSAGE;
+    if (fail) return fail(message);
+    throw new Error(message);
+  }
+
   if (agentName !== "hermes") return { config: null, enabled: false };
 
   let config: HermesDashboardConfig;
@@ -48,6 +66,11 @@ export function resolveHermesDashboardOnboardState({
     }
     if (config.port === config.internalPort) {
       const message = `${HERMES_DASHBOARD_PORT_ENV} must not equal ${HERMES_DASHBOARD_INTERNAL_PORT_ENV}.`;
+      if (fail) return fail(message);
+      throw new Error(message);
+    }
+    if (config.internalPort === effectivePort) {
+      const message = `${HERMES_DASHBOARD_INTERNAL_PORT_ENV} must not equal the Hermes API port (${effectivePort}).`;
       if (fail) return fail(message);
       throw new Error(message);
     }
@@ -128,9 +151,7 @@ export function ensureHermesDashboardForwardIfEnabled({
   return true;
 }
 
-export function formatHermesDashboardForwardFailure(
-  state: HermesDashboardOnboardState,
-): string {
+export function formatHermesDashboardForwardFailure(state: HermesDashboardOnboardState): string {
   const port = state.config?.port ?? "unknown";
   return `Failed to start Hermes dashboard forward on port ${port}. Free the port and re-run onboarding, or set ${HERMES_DASHBOARD_PORT_ENV} to another port.`;
 }

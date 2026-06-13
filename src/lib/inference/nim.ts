@@ -10,17 +10,22 @@ const {
   dockerForceRm,
   dockerLoginPasswordStdin,
   dockerLogs,
+  dockerManifestInspect,
   dockerPort,
   dockerPull,
   dockerRm,
   dockerRunDetached,
   dockerStop,
+  dockerTag,
 } = require("../adapters/docker");
 const { sleepSeconds } = require("../core/wait");
 const nimImages = require("../../../bin/lib/nim-images.json");
 
+import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
 import { VLLM_PORT } from "../core/ports";
+import { isSafeModelId } from "../validation";
 import {
+  type Arm64WslDockerDesktopGpuProver,
   isDenylistedNvidiaGpuName,
   isPlausibleNvidiaGpuName,
   nvidiaHostLooksGenuine,
@@ -28,6 +33,7 @@ import {
 
 const UNIFIED_MEMORY_GPU_TAGS = ["GB10", "Thor", "Orin", "Xavier", "Jetson", "Tegra"];
 const NIM_STATUS_PROBE_TIMEOUT_MS = 5000;
+export const DEFAULT_NIM_HEALTH_TIMEOUT_SECONDS = 1200;
 
 export interface NimModel {
   name: string;
@@ -70,6 +76,50 @@ export interface GpuDetection {
   unifiedMemory?: boolean;
   spark?: boolean;
   platform?: NvidiaPlatform;
+  // `true` for integrated/iGPU class NVIDIA platforms (Jetson Tegra/Thor/Orin)
+  // whose token-generation throughput on 30B+ class Ollama models cannot clear
+  // agent-loop timeouts even when advertised memory ostensibly fits. Mirrored
+  // onto `GpuInfo.computeConstrained` so the Ollama bootstrap-model selector
+  // skips `computeIntensive` registry entries on these hosts.
+  computeConstrained?: boolean;
+  // Set when a denylisted `JMJWOA-Generic-*` placeholder name was accepted only
+  // because a bounded Docker `--gpus` CUDA proof passed (Windows-ARM N1X + WSL2
+  // + Docker Desktop, #4565). Diagnostic marker that this detection cleared a
+  // live proof rather than firmware/name trust. The sandbox GPU preflight still
+  // reaches the Docker Desktop WSL compatibility branch via its own
+  // `detectWslDockerDesktopStatus()` check (consistent because the proof itself
+  // requires Docker Desktop WSL); this flag does not gate that branch.
+  wslDockerDesktopGpuProofPassed?: boolean;
+}
+
+export interface DetectGpuDeps {
+  // Optional accept-path for ARM64 WSL Docker Desktop `JMJWOA-Generic-*` GPUs
+  // (#4565). Injected in tests; in production `detectGpu()` lazily builds the
+  // default prover from the onboard WSL Docker Desktop module only when it is
+  // about to reject a denylisted ARM64 name.
+  proveArm64WslDockerDesktopGpu?: Arm64WslDockerDesktopGpuProver | null;
+}
+
+// Lazily construct the default ARM64 WSL Docker Desktop GPU prover. Kept lazy
+// (and behind a require) so the inference layer does not statically depend on
+// the onboard layer, and so the bounded Docker proof is only wired when we
+// actually reach the denylist-reject path on an ARM64 host.
+function defaultArm64WslDockerDesktopGpuProver(): Arm64WslDockerDesktopGpuProver | null {
+  try {
+    return require("../onboard/wsl-docker-desktop-gpu").createArm64WslDockerDesktopGpuProver();
+  } catch (error) {
+    // Only the optional module-resolution case should degrade to "no prover";
+    // a real bug inside the prover module must bubble up rather than masquerade
+    // as a missing GPU on an otherwise-supported N1X host.
+    if (
+      error &&
+      typeof error === "object" &&
+      (error as NodeJS.ErrnoException).code === "MODULE_NOT_FOUND"
+    ) {
+      return null;
+    }
+    throw error;
+  }
 }
 
 // Group GPUs by their nvidia-smi model name, preserving first-appearance order.
@@ -225,12 +275,9 @@ function hostPathExists(path: string): boolean {
 }
 
 function hasTegraDeviceNodeSignal(): boolean {
-  return [
-    "/dev/nvhost-gpu",
-    "/dev/nvhost-ctrl-gpu",
-    "/dev/nvhost-ctrl",
-    "/dev/nvmap",
-  ].some(hostPathExists);
+  return ["/dev/nvhost-gpu", "/dev/nvhost-ctrl-gpu", "/dev/nvhost-ctrl", "/dev/nvmap"].some(
+    hostPathExists,
+  );
 }
 
 function detectTegraHostGpu(): { name: string; platform: NvidiaPlatform } | null {
@@ -314,18 +361,61 @@ export function canRunNimWithMemory(totalMemoryMB: number): boolean {
   return nimImages.models.some((m: NimModel) => m.minGpuMemoryMB <= totalMemoryMB);
 }
 
-export function detectGpu(): GpuDetection | null {
+// First model id from a NIM `/v1/models` body, or null if absent/unparseable.
+export function parseServedModelId(modelsJson: string): string | null {
+  try {
+    const doc = JSON.parse(modelsJson);
+    const data = Array.isArray(doc?.data) ? doc.data : [];
+    for (const entry of data) {
+      if (typeof entry?.id === "string" && entry.id.length > 0) return entry.id;
+    }
+  } catch {
+    /* not JSON */
+  }
+  return null;
+}
+
+// Model id a running local NIM actually serves; null if unreachable/empty.
+export function getServedModelId(port = VLLM_PORT): string | null {
+  const out = runCapture(
+    [
+      "curl",
+      ...buildValidatedCurlCommandArgs([
+        "-sf",
+        "--connect-timeout",
+        "5",
+        "--max-time",
+        "5",
+        `http://127.0.0.1:${Number(port)}/v1/models`,
+      ]),
+    ],
+    { ignoreError: true },
+  );
+  return out ? parseServedModelId(out) : null;
+}
+
+// Adopt the id NIM serves (from /v1/models) when it differs from the catalog
+// name and is safe; the catalog id otherwise 404s on validation. See #3885.
+export function adoptServedModelId(catalogModel: string | null, port = VLLM_PORT): string | null {
+  const served = getServedModelId(port);
+  if (!served || served === catalogModel) return catalogModel;
+  // /v1/models is local-controlled — refuse an unsafe id; don't echo it (log-injection).
+  if (!isSafeModelId(served)) {
+    console.error(`  NIM reported an invalid model id; keeping "${catalogModel}".`);
+    return catalogModel;
+  }
+  console.log(`  NIM serves "${served}" (catalog "${catalogModel}"); using served id.`);
+  return served;
+}
+
+export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
   // Try NVIDIA first — query name, total, and free VRAM in a single call so
   // the preflight line can show the GPU model alongside the memory size and
   // the bootstrap-model selector can pick a model that fits currently
   // available memory, not just the headline total.
   try {
     const output = runCapture(
-      [
-        "nvidia-smi",
-        "--query-gpu=name,memory.total,memory.free",
-        "--format=csv,noheader,nounits",
-      ],
+      ["nvidia-smi", "--query-gpu=name,memory.total,memory.free", "--format=csv,noheader,nounits"],
       { ignoreError: true },
     );
     if (output) {
@@ -356,20 +446,42 @@ export function detectGpu(): GpuDetection | null {
         // Off Spark/Station/Jetson firmware, layer a denylist check and the
         // trust-tier gate before trusting the nvidia-smi probe. The observed
         // Windows-on-ARM WSL2 nvidia-smi shim emits a `JMJWOA-Generic-*`
-        // placeholder name AND ships no `/proc/driver/nvidia/` directory, so
-        // either signal alone is sufficient to reject. Treat any denylisted
-        // row as a poisoned probe and reject the whole result — partial
-        // filtering would let a mixed-row spoof surface a non-placeholder
-        // row as a real GPU.
+        // placeholder name AND ships no `/proc/driver/nvidia/` directory. A
+        // denylisted row still fails closed by default; the only escape is a
+        // bounded Docker `--gpus` CUDA proof (#4565), which the Snapdragon shim
+        // cannot pass. Without that proof, any denylisted row rejects the whole
+        // probe — partial filtering would let a mixed-row spoof surface a
+        // non-placeholder row as a real GPU.
         const firmwareConfirmsNvidia =
           platform === "spark" || platform === "station" || platform === "jetson";
         let trusted: ParsedGpu[];
+        let wslDockerDesktopGpuProofPassed = false;
         if (firmwareConfirmsNvidia) {
           trusted = parsed;
-        } else {
-          if (parsed.some((p: ParsedGpu) => isDenylistedNvidiaGpuName(p.name))) {
+        } else if (parsed.some((p: ParsedGpu) => isDenylistedNvidiaGpuName(p.name))) {
+          // A denylisted `JMJWOA-Generic-*` placeholder. Both real Windows-ARM
+          // N1X (WSL2 + Docker Desktop) and the Snapdragon nvidia-smi shim emit
+          // this name, so the name and `/proc/driver/nvidia` are insufficient.
+          // Give the host one bounded Docker `--gpus` CUDA proof: only the real
+          // GPU can run the workload, so a pass safely accepts N1X while the
+          // shim keeps failing closed (#4565 without reopening #3988/#4424).
+          const prover =
+            deps.proveArm64WslDockerDesktopGpu === undefined
+              ? defaultArm64WslDockerDesktopGpuProver()
+              : deps.proveArm64WslDockerDesktopGpu;
+          const proof = prover ? prover(parsed.map((p: ParsedGpu) => p.name)) : null;
+          if (!proof || !proof.passed) {
             return null;
           }
+          // The proof confirms a usable GPU, but it does not vouch for every
+          // row. Keep only the placeholder rows it covers plus any plausibly-
+          // named NVIDIA rows; drop unrecognized garbage so a mixed-row spoof
+          // cannot inflate totalMemoryMB with a phantom device.
+          trusted = parsed.filter(
+            (p: ParsedGpu) => isDenylistedNvidiaGpuName(p.name) || isPlausibleNvidiaGpuName(p.name),
+          );
+          wslDockerDesktopGpuProofPassed = true;
+        } else {
           if (!nvidiaHostLooksGenuine()) {
             return null;
           }
@@ -378,10 +490,7 @@ export function detectGpu(): GpuDetection | null {
         if (trusted.length === 0) {
           return null;
         }
-        const totalMemoryMB = trusted.reduce(
-          (sum: number, p: ParsedGpu) => sum + p.memoryMB,
-          0,
-        );
+        const totalMemoryMB = trusted.reduce((sum: number, p: ParsedGpu) => sum + p.memoryMB, 0);
         const availableMemoryMB = trusted.reduce(
           (sum: number, p: ParsedGpu) => sum + p.freeMemoryMB,
           0,
@@ -389,8 +498,7 @@ export function detectGpu(): GpuDetection | null {
         const firstName = trusted[0].name;
         // Only surface a single name when every GPU reports the same model;
         // a mixed-GPU host would otherwise be misreported as `Nx <firstName>`.
-        const allSameName =
-          !!firstName && trusted.every((p: ParsedGpu) => p.name === firstName);
+        const allSameName = !!firstName && trusted.every((p: ParsedGpu) => p.name === firstName);
         return {
           type: "nvidia",
           ...(allSameName ? { name: firstName } : {}),
@@ -402,6 +510,8 @@ export function detectGpu(): GpuDetection | null {
           nimCapable: canRunNimWithMemory(totalMemoryMB),
           platform,
           spark: platform === "spark",
+          ...(platform === "jetson" ? { computeConstrained: true } : {}),
+          ...(wslDockerDesktopGpuProofPassed ? { wslDockerDesktopGpuProofPassed: true } : {}),
         };
       }
     }
@@ -425,14 +535,14 @@ export function detectGpu(): GpuDetection | null {
     // unified-memory one (#3510). When firmware confirms a unified-memory
     // platform, accept whatever name nvidia-smi reports.
     const firmwarePlatform = detectNvidiaPlatform();
-    const firmwareIsUnifiedMemory =
-      firmwarePlatform === "spark" || firmwarePlatform === "jetson";
+    const firmwareIsUnifiedMemory = firmwarePlatform === "spark" || firmwarePlatform === "jetson";
     // Reject placeholder names on hosts where firmware does not vouch for an
     // NVIDIA platform, mirroring the primary path. A WSL2 d3d12/WDDM shim
     // could in principle emit `JMJWOA-Generic-*` on this fallback too.
-    if (!firmwareIsUnifiedMemory && gpuNames.some((name: string) =>
-      isDenylistedNvidiaGpuName(name),
-    )) {
+    if (
+      !firmwareIsUnifiedMemory &&
+      gpuNames.some((name: string) => isDenylistedNvidiaGpuName(name))
+    ) {
       return null;
     }
     const taggedNames = gpuNames.filter((name: string) =>
@@ -470,7 +580,7 @@ export function detectGpu(): GpuDetection | null {
             ? "station"
             : firmwarePlatform === "jetson"
               ? "jetson"
-            : "linux";
+              : "linux";
       // Memory.total is not available on unified-memory devices, so we split
       // the host RAM evenly across the named GPUs for the per-GPU breakdown.
       // Approximation, but the only number nvidia-smi gives us in this path.
@@ -489,6 +599,7 @@ export function detectGpu(): GpuDetection | null {
         nimCapable: canRunNimWithMemory(totalMemoryMB),
         unifiedMemory: true,
         spark: platform === "spark",
+        ...(platform === "jetson" ? { computeConstrained: true } : {}),
         platform,
       };
     }
@@ -513,6 +624,7 @@ export function detectGpu(): GpuDetection | null {
       nimCapable: canRunNimWithMemory(totalMemoryMB),
       unifiedMemory: true,
       spark: false,
+      computeConstrained: tegraGpu.platform === "jetson",
       platform: tegraGpu.platform,
     };
   }
@@ -601,6 +713,87 @@ export function dockerLoginNgc(apiKey: string): boolean {
   return result.status === 0;
 }
 
+// Node's process.arch → OCI manifest "architecture" (x64 → amd64; others match).
+export function nodeArchToOci(arch: string): string {
+  if (arch === "x64") return "amd64";
+  return arch;
+}
+
+interface ManifestPlatform {
+  architecture?: string;
+  os?: string;
+}
+interface ManifestIndexEntry {
+  digest?: string;
+  platform?: ManifestPlatform;
+}
+interface ManifestIndexDoc {
+  manifests?: ManifestIndexEntry[];
+}
+
+// Linux image-manifest digest for `ociArch` from `docker manifest inspect` JSON,
+// or null if not a multi-arch index / no match. Arch+os match skips attestations.
+export function selectPlatformManifestDigest(manifestJson: string, ociArch: string): string | null {
+  let doc: ManifestIndexDoc;
+  try {
+    doc = JSON.parse(manifestJson);
+  } catch {
+    return null;
+  }
+  const manifests = Array.isArray(doc?.manifests) ? doc.manifests : [];
+  for (const entry of manifests) {
+    if (
+      entry?.platform?.architecture === ociArch &&
+      entry?.platform?.os === "linux" &&
+      typeof entry.digest === "string" &&
+      entry.digest.length > 0
+    ) {
+      return entry.digest;
+    }
+  }
+  return null;
+}
+
+// Repository portion of an image ref, dropping `:tag`/`@digest` (port-safe).
+export function imageRepository(imageRef: string): string {
+  const lastSlash = imageRef.lastIndexOf("/");
+  const prefix = lastSlash === -1 ? "" : imageRef.slice(0, lastSlash + 1);
+  const lastSegment = lastSlash === -1 ? imageRef : imageRef.slice(lastSlash + 1);
+  const atIdx = lastSegment.indexOf("@");
+  if (atIdx !== -1) return prefix + lastSegment.slice(0, atIdx);
+  const colonIdx = lastSegment.indexOf(":");
+  if (colonIdx !== -1) return prefix + lastSegment.slice(0, colonIdx);
+  return imageRef;
+}
+
+// Pull `image` avoiding the NIM-on-NGC break: docker's containerd store fetches
+// the index's buildkit attestation manifest, which nvcr.io rejects ("Incorrect
+// Repository Format") after pulling all layers. Pull the host-arch manifest by
+// digest instead (no index walk); plain pull when not a resolvable index. #3885.
+function pullImageResolvingPlatform(image: string): void {
+  let manifestJson = "";
+  try {
+    manifestJson = dockerManifestInspect(image, { ignoreError: true }) || "";
+  } catch {
+    manifestJson = "";
+  }
+  const digest = manifestJson
+    ? selectPlatformManifestDigest(manifestJson, nodeArchToOci(process.arch))
+    : null;
+  if (!digest) {
+    // No resolvable multi-arch index — plain tag pull. On Docker 29.x this can
+    // re-hit the NGC attestation failure (#3885); surface the path taken.
+    console.log(`  No platform manifest resolved; pulling ${image} by tag.`);
+    dockerPull(image);
+    return;
+  }
+  const digestRef = `${imageRepository(image)}@${digest}`;
+  console.log(`  Resolved ${nodeArchToOci(process.arch)} manifest: ${digestRef}`);
+  dockerPull(digestRef);
+  // Tag back to the friendly ref so the run path starts the container by `image`.
+  dockerTag(digestRef, image);
+}
+
 export function pullNimImage(model: string): string {
   const image = getImageForModel(model);
   if (!image) {
@@ -608,7 +801,7 @@ export function pullNimImage(model: string): string {
     process.exit(1);
   }
   console.log(`  Pulling NIM image: ${image}`);
-  dockerPull(image);
+  pullImageResolvingPlatform(image);
   return image;
 }
 
@@ -628,19 +821,23 @@ export function startNimContainerByName(
     process.exit(1);
   }
 
-  // Resolve the NGC key: explicit arg wins, then NGC_API_KEY, then NVIDIA_API_KEY
+  // Resolve the NGC key: explicit arg wins, then NGC_API_KEY, then NVIDIA_INFERENCE_API_KEY,
+  // then the legacy NVIDIA_API_KEY alias.
   // (covers users who only set the NVIDIA key for cloud inference but reuse it
   // against NGC). Without this, NIM's in-container model-manifest download
   // returns "Authentication Error" and the container exits 0 a few seconds in.
   // Regression of #210 — see #3333.
-  const ngcApiKey = opts.ngcApiKey ?? process.env.NGC_API_KEY ?? process.env.NVIDIA_API_KEY ?? "";
+  const ngcApiKey =
+    opts.ngcApiKey ??
+    process.env.NGC_API_KEY ??
+    process.env.NVIDIA_INFERENCE_API_KEY ??
+    process.env.NVIDIA_API_KEY ??
+    "";
   // Use `-e KEY` (no value) so the secret never appears in argv; pass the
   // value through the spawn env instead. Docker reads each named var from
   // its own process env and forwards it to the container.
   const envFlags = ngcApiKey ? ["-e", "NGC_API_KEY", "-e", "NIM_NGC_API_KEY"] : [];
-  const runEnv = ngcApiKey
-    ? { NGC_API_KEY: ngcApiKey, NIM_NGC_API_KEY: ngcApiKey }
-    : undefined;
+  const runEnv = ngcApiKey ? { NGC_API_KEY: ngcApiKey, NIM_NGC_API_KEY: ngcApiKey } : undefined;
   if (!ngcApiKey) {
     console.warn(
       "  No NGC API key available; NIM will fail to download model weights. " +
@@ -675,7 +872,7 @@ export interface WaitForNimHealthOptions {
 
 export function waitForNimHealth(
   port = VLLM_PORT,
-  timeout = 300,
+  timeout = DEFAULT_NIM_HEALTH_TIMEOUT_SECONDS,
   opts: WaitForNimHealthOptions = {},
 ): boolean {
   const start = Date.now();
@@ -689,12 +886,14 @@ export function waitForNimHealth(
       const result = runCapture(
         [
           "curl",
-          "-sf",
-          "--connect-timeout",
-          "5",
-          "--max-time",
-          "5",
-          `http://127.0.0.1:${hostPort}/v1/models`,
+          ...buildValidatedCurlCommandArgs([
+            "-sf",
+            "--connect-timeout",
+            "5",
+            "--max-time",
+            "5",
+            `http://127.0.0.1:${hostPort}/v1/models`,
+          ]),
         ],
         { ignoreError: true },
       );
@@ -707,7 +906,7 @@ export function waitForNimHealth(
     }
     // Short-circuit if the container has already exited — typically NGC auth
     // failure or OOM during model load. Without this, the wizard polls the
-    // full timeout (default 300s) against a dead container. See #3333.
+    // full timeout (default 1200s) against a dead container. See #3333.
     if (container) {
       const state = dockerContainerInspectFormat("{{.State.Status}}", container, {
         ignoreError: true,
@@ -776,12 +975,14 @@ export function nimStatusByName(name: string, port?: number): NimStatus {
       const health = runCapture(
         [
           "curl",
-          "-sf",
-          "--connect-timeout",
-          "5",
-          "--max-time",
-          "5",
-          `http://127.0.0.1:${resolvedHostPort}/v1/models`,
+          ...buildValidatedCurlCommandArgs([
+            "-sf",
+            "--connect-timeout",
+            "5",
+            "--max-time",
+            "5",
+            `http://127.0.0.1:${resolvedHostPort}/v1/models`,
+          ]),
         ],
         { ignoreError: true, timeout: NIM_STATUS_PROBE_TIMEOUT_MS + 1000 },
       );

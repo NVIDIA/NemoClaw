@@ -8,25 +8,20 @@ import path from "node:path";
 import vm from "node:vm";
 import { describe, expect, it } from "vitest";
 
-const PATCH_SCRIPT = path.join(
-  import.meta.dirname,
-  "..",
-  "scripts",
-  "patch-openclaw-chat-send.js",
-);
+const PATCH_SCRIPT = path.join(import.meta.dirname, "..", "scripts", "patch-openclaw-chat-send.js");
 
 function writeChatSendFixture(dist: string): string {
   const fixture = path.join(dist, "chat-fixture.js");
   fs.writeFileSync(
     fixture,
     [
-      'const chatHandlers = {',
+      "const chatHandlers = {",
       '  "chat.send": async ({ params, respond, context, client }) => {',
       "    const p = params;",
       "    const clientRunId = p.idempotencyKey;",
       '    const sessionKey = "issue2603";',
       "    let agentRunStarted = false;",
-      "    measureDiagnosticsTimelineSpan(\"gateway.chat_send.dispatch_inbound\", () => dispatchInboundMessage({",
+      '    measureDiagnosticsTimelineSpan("gateway.chat_send.dispatch_inbound", () => dispatchInboundMessage({',
       "      replyOptions: {",
       "        runId: clientRunId,",
       "        onAgentRunStart: (runId) => {",
@@ -110,6 +105,43 @@ function writeFollowupRunner20260522Fixture(dist: string): string {
       "      resetTriggered: false,",
       "      upstreamAbortSignal: queued.abortSignal",
       "    });",
+      "    const runId = crypto.randomUUID();",
+      "    if (run.sessionKey) registerAgentRunContext(runId, {",
+      "      sessionKey: run.sessionKey,",
+      "      verboseLevel: run.verboseLevel",
+      "    });",
+      "    return runId;",
+      "  }",
+      "}",
+      "",
+    ].join("\n"),
+  );
+  return fixture;
+}
+
+function writeFollowupRunner20260527Fixture(dist: string): string {
+  const fixture = path.join(dist, "agent-runner.fixture.js");
+  fs.writeFileSync(
+    fixture,
+    [
+      "function createFollowupRunner(params) {",
+      "  const { opts, typing, sessionEntry } = params;",
+      "  return async (queued) => {",
+      "    let replyOperation;",
+      "    let run = queued.run;",
+      "    const replySessionKey = queued.run.sessionKey ?? sessionKey;",
+      "    const admission = await admitReplyTurn({",
+      "      sessionId: run.sessionId,",
+      '      sessionKey: replySessionKey ?? "",',
+      '      kind: "queued_followup",',
+      "      resetTriggered: false,",
+      "      upstreamAbortSignal: queued.abortSignal",
+      "    });",
+      '    if (admission.status === "skipped") return;',
+      "    replyOperation = admission.operation;",
+      "    if (replyOperation.sessionId !== run.sessionId) {",
+      "      run = { ...run, sessionId: replyOperation.sessionId };",
+      "    }",
       "    const runId = crypto.randomUUID();",
       "    if (run.sessionKey) registerAgentRunContext(runId, {",
       "      sessionKey: run.sessionKey,",
@@ -211,15 +243,17 @@ async function runPatchedFollowupFixture(
   const context = {
     createReplyOperation: (value: unknown) => value,
     crypto: { randomUUID: () => "fallback-run-id" },
+    admitReplyTurn: async () => ({ status: "admitted", operation: { sessionId: "session" } }),
     registerAgentRunContext: (runId: string) => registeredRuns.push(runId),
     replySessionKey: "reply-session",
+    sessionKey: "fallback-session-key",
   };
   const createFollowupRunner = vm.runInNewContext(
     `${patchedSource}\ncreateFollowupRunner;`,
     context,
-  ) as (params: { opts?: { runId?: string } }) => (
-    queued: FollowupQueuedFixture,
-  ) => Promise<string>;
+  ) as (params: {
+    opts?: { runId?: string };
+  }) => (queued: FollowupQueuedFixture) => Promise<string>;
 
   const runId = await createFollowupRunner(params)(queued);
   return { registeredRuns, runId };
@@ -269,13 +303,13 @@ describe("OpenClaw chat.send compatibility patch", () => {
       expect(rerunPatched.match(/idempotencyKey: clientRunId/g)).toHaveLength(1);
       expect(rerunPatched.match(/suppressing empty final event/g)).toHaveLength(1);
       const rerunPatchedFollowup = fs.readFileSync(followupFixture, "utf-8");
-      expect(rerunPatchedFollowup.match(/preserve chat\.send run ids in followup queue/g)).toHaveLength(
-        1,
-      );
+      expect(
+        rerunPatchedFollowup.match(/preserve chat\.send run ids in followup queue/g),
+      ).toHaveLength(1);
       const rerunPatchedGetReply = fs.readFileSync(getReplyFixture, "utf-8");
-      expect(rerunPatchedGetReply.match(/carry chat\.send run id into queued followup/g)).toHaveLength(
-        1,
-      );
+      expect(
+        rerunPatchedGetReply.match(/carry chat\.send run id into queued followup/g),
+      ).toHaveLength(1);
       expect(rerunPatchedGetReply.match(/force webchat chat\.send queued turns/g)).toHaveLength(1);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
@@ -288,6 +322,47 @@ describe("OpenClaw chat.send compatibility patch", () => {
     fs.mkdirSync(dist);
     writeChatSendFixture(dist);
     const followupFixture = writeFollowupRunner20260522Fixture(dist);
+    writeGetReplyFixture(dist);
+
+    try {
+      const patch = runPatch(dist);
+      expect(patch.status, `${patch.stdout}${patch.stderr}`).toBe(0);
+      const patchedFollowup = fs.readFileSync(followupFixture, "utf-8");
+      expect(patchedFollowup).toContain(
+        "const runId = queued.runId ?? opts?.runId ?? crypto.randomUUID(); // nemoclaw: preserve chat.send run ids in followup queue (#2603, #3145)",
+      );
+      await expect(
+        runPatchedFollowupFixture(
+          patchedFollowup,
+          { opts: { runId: "opts-run-id" } },
+          { runId: "queued-run-id", run: { sessionId: "session", sessionKey: "key" } },
+        ),
+      ).resolves.toMatchObject({ runId: "queued-run-id", registeredRuns: ["queued-run-id"] });
+      await expect(
+        runPatchedFollowupFixture(
+          patchedFollowup,
+          { opts: { runId: "opts-run-id" } },
+          { run: { sessionId: "session", sessionKey: "key" } },
+        ),
+      ).resolves.toMatchObject({ runId: "opts-run-id", registeredRuns: ["opts-run-id"] });
+      await expect(
+        runPatchedFollowupFixture(
+          patchedFollowup,
+          {},
+          { run: { sessionId: "session", sessionKey: "key" } },
+        ),
+      ).resolves.toMatchObject({ runId: "fallback-run-id", registeredRuns: ["fallback-run-id"] });
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("recognizes the 2026.5.27 followup runner admission shape", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-chat-send-527-"));
+    const dist = path.join(tmp, "dist");
+    fs.mkdirSync(dist);
+    writeChatSendFixture(dist);
+    const followupFixture = writeFollowupRunner20260527Fixture(dist);
     writeGetReplyFixture(dist);
 
     try {
@@ -344,7 +419,10 @@ describe("OpenClaw chat.send compatibility patch", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-chat-send-missing-"));
     const dist = path.join(tmp, "dist");
     fs.mkdirSync(dist);
-    fs.writeFileSync(path.join(dist, "chat-fixture.js"), 'const handlers = { "chat.send": true };\n');
+    fs.writeFileSync(
+      path.join(dist, "chat-fixture.js"),
+      'const handlers = { "chat.send": true };\n',
+    );
 
     try {
       const patch = runPatch(dist);

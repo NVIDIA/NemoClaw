@@ -2,17 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { JsonObject, JsonValue } from "../../core/json-types";
+import { getActiveChannelsFromPlan } from "../messaging-plan-session";
 import { redactSensitiveText, redactUrl } from "../../security/redact";
 import type { HermesAuthMethod, Session } from "../../state/onboard-session";
 import {
   ONBOARD_MACHINE_STATE_DEFINITIONS,
   type OnboardMachineStateWithStepDefinition,
 } from "./definition";
-import type {
-  OnboardMachineContext,
-  OnboardMachineEventType,
-  OnboardMachineState,
-} from "./types";
+import type { OnboardMachineContext, OnboardMachineEventType, OnboardMachineState } from "./types";
 
 type OnboardSessionStepDefinition = OnboardMachineStateWithStepDefinition;
 
@@ -47,9 +44,7 @@ export type OnboardMachineEventListener = (event: OnboardMachineEvent) => void;
 
 const listeners = new Set<OnboardMachineEventListener>();
 
-export function addOnboardMachineEventListener(
-  listener: OnboardMachineEventListener,
-): () => void {
+export function addOnboardMachineEventListener(listener: OnboardMachineEventListener): () => void {
   listeners.add(listener);
   return () => {
     listeners.delete(listener);
@@ -134,7 +129,7 @@ export function buildOnboardMachineContext(session: Session): OnboardMachineCont
     hermesAuthMethod: hermesAuthMethod(session.hermesAuthMethod),
     hermesToolGateways: stringArray(session.hermesToolGateways),
     policyPresets: stringArray(session.policyPresets),
-    messagingChannels: stringArray(session.messagingChannels),
+    messagingChannels: getActiveChannelsFromPlan(session.messagingPlan) ?? [],
     gpuPassthrough: booleanValue(session.gpuPassthrough),
   };
 }

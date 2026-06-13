@@ -2,11 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import * as credentials from "../credentials/store";
-import {
-  BACK_TO_SELECTION,
-  type BackToSelection,
-  isBackToSelection,
-} from "../navigation";
+import { BACK_TO_SELECTION, type BackToSelection, isBackToSelection } from "../navigation";
 
 export type BackNavigationResult = BackToSelection | { kind: "back" };
 export type { BackToSelection };

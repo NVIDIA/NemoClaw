@@ -20,15 +20,16 @@ NemoClaw supports both static policy changes that persist across restarts and dy
 
 <Note>
 If the sandbox needs to reach an HTTP service running on the host, expose the service on a host IP that the OpenShell gateway can reach.
-<AgentOnly variant="openclaw">
-Apply a custom NemoClaw preset with `nemoclaw <sandbox> policy-add --from-file`.
-</AgentOnly>
-<AgentOnly variant="hermes">
-Apply a custom NemoClaw preset with `nemohermes <sandbox> policy-add --from-file`.
-</AgentOnly>
+Apply a custom NemoClaw preset with `$$nemoclaw <sandbox> policy-add --from-file`.
 Do not rely on `host.docker.internal` as a general host-service path because it bypasses the OpenShell policy path and may not be reachable in every sandbox runtime.
 See [Agent cannot reach a host-side HTTP service](../reference/troubleshooting#agent-cannot-reach-a-host-side-http-service).
 </Note>
+
+<Warning>
+Adding a host to the egress policy permits the connection only after the endpoint, port, method, and binary rules match.
+OpenShell still applies SSRF protection separately, so a request can be denied if the final address resolves to a loopback, private, link-local, or otherwise blocked internal range.
+If a package installer or browser runtime download still fails with an SSRF-style denial after you add the public host, install that binary into the sandbox image at build time with [`$$nemoclaw onboard --from`](/reference/commands#--from-dockerfile) instead of relying on runtime egress.
+</Warning>
 
 ## Prerequisites
 
@@ -49,17 +50,17 @@ Static changes modify the baseline policy file and take effect after the next sa
 <AgentOnly variant="openclaw">
 Open `nemoclaw-blueprint/policies/openclaw-sandbox.yaml` and add or modify endpoint entries.
 
-If you want a built-in preset to be part of the baseline policy, merge its `network_policies` entries into this file and re-run `nemoclaw onboard`.
+If you want a built-in preset to be part of the baseline policy, merge its `network_policies` entries into this file and re-run `$$nemoclaw onboard`.
 
-If you only need to apply a preset to a running sandbox, use `nemoclaw <name> policy-add` under [Dynamic Changes](#dynamic-changes).
+If you only need to apply a preset to a running sandbox, use `$$nemoclaw <name> policy-add` under [Dynamic Changes](#dynamic-changes).
 That updates the live policy and does not edit `openclaw-sandbox.yaml`.
 </AgentOnly>
 <AgentOnly variant="hermes">
 Open the Hermes policy additions and shared sandbox policy files under `agents/hermes/` and `nemoclaw-blueprint/policies/`, then add or modify endpoint entries.
 
-If you want a built-in preset to be part of the baseline policy, merge its `network_policies` entries into the appropriate policy file and re-run `nemohermes onboard`.
+If you want a built-in preset to be part of the baseline policy, merge its `network_policies` entries into the appropriate policy file and re-run `$$nemoclaw onboard`.
 
-If you only need to apply a preset to a running sandbox, use `nemohermes <name> policy-add` under [Dynamic Changes](#dynamic-changes).
+If you only need to apply a preset to a running sandbox, use `$$nemoclaw <name> policy-add` under [Dynamic Changes](#dynamic-changes).
 That updates the live policy and does not edit the baseline policy files.
 </AgentOnly>
 
@@ -80,16 +81,9 @@ Each entry in the `network` section defines an endpoint group with the following
 
 Apply the updated policy by re-running the onboard wizard:
 
-<AgentOnly variant="openclaw">
 ```bash
-nemoclaw onboard
+$$nemoclaw onboard
 ```
-</AgentOnly>
-<AgentOnly variant="hermes">
-```bash
-nemohermes onboard
-```
-</AgentOnly>
 
 The wizard reads the modified policy file and applies it to the sandbox.
 
@@ -97,16 +91,9 @@ The wizard reads the modified policy file and applies it to the sandbox.
 
 Check that the sandbox is running with the updated policy:
 
-<AgentOnly variant="openclaw">
 ```bash
-nemoclaw <name> status
+$$nemoclaw <name> status
 ```
-</AgentOnly>
-<AgentOnly variant="hermes">
-```bash
-nemohermes <name> status
-```
-</AgentOnly>
 
 ### Add Blueprint Policy Additions
 
@@ -150,20 +137,9 @@ This is the non-destructive path and the only flow NemoClaw supports out of the 
 
 2. Apply it to the running sandbox:
 
-<AgentOnly variant="openclaw">
-
 ```bash
-nemoclaw my-assistant policy-add
+$$nemoclaw my-assistant policy-add
 ```
-
-</AgentOnly>
-<AgentOnly variant="hermes">
-
-```bash
-nemohermes my-assistant policy-add
-```
-
-</AgentOnly>
 
 NemoClaw reads the live policy via `openshell policy get --full`, structurally merges your preset's `network_policies` into it, and writes the merged result back.
 Existing presets and the baseline remain in place.
@@ -188,12 +164,9 @@ openshell policy set --policy live-policy.yaml my-assistant
 
 Dynamic changes apply only to the current session.
 When the sandbox stops, the running policy resets to the baseline policy plus the presets recorded for the sandbox.
-<AgentOnly variant="openclaw">
-To make a custom policy survive a sandbox recreation, ship the preset file in the repository (Option 1 above; the file under `presets/` persists) or edit `openclaw-sandbox.yaml` and re-run `nemoclaw onboard`.
-</AgentOnly>
-<AgentOnly variant="hermes">
-To make a custom policy survive a sandbox recreation, ship the preset file in the repository (Option 1 above; the file under `presets/` persists) or edit the Hermes policy additions and re-run `nemohermes onboard`.
-</AgentOnly>
+Custom presets applied through `$$nemoclaw <sandbox> policy-add --from-file` or `--from-dir` are recorded with the sandbox, including their full YAML content.
+Snapshot restore and rebuild replay those recorded presets, so they survive sandbox recreation even if the original files are no longer on disk.
+For permanent baseline changes that apply to every future sandbox, edit the source policy for the target agent and re-run `$$nemoclaw onboard`.
 
 ### Approve Requests Interactively
 
@@ -236,16 +209,9 @@ Available presets:
 
 To apply a preset to a running sandbox:
 
-<AgentOnly variant="openclaw">
 ```bash
-nemoclaw <name> policy-add
+$$nemoclaw <name> policy-add
 ```
-</AgentOnly>
-<AgentOnly variant="hermes">
-```bash
-nemohermes <name> policy-add
-```
-</AgentOnly>
 
 <Note>
 Preset selection is interactive when you omit a preset name.
@@ -254,71 +220,39 @@ Pass a preset name with `--yes` for scripted workflows.
 
 For example, to interactively add PyPI access to a running sandbox:
 
-<AgentOnly variant="openclaw">
 ```bash
-nemoclaw my-assistant policy-add
+$$nemoclaw my-assistant policy-add
 ```
-</AgentOnly>
-<AgentOnly variant="hermes">
-```bash
-nemohermes my-assistant policy-add
-```
-</AgentOnly>
 
 To list which presets are applied to a sandbox:
 
-<AgentOnly variant="openclaw">
 ```bash
-nemoclaw <name> policy-list
+$$nemoclaw <name> policy-list
 ```
-</AgentOnly>
-<AgentOnly variant="hermes">
-```bash
-nemohermes <name> policy-list
-```
-</AgentOnly>
 
 <AgentOnly variant="openclaw">
-To include a preset in the baseline, merge its entries into `openclaw-sandbox.yaml` and re-run `nemoclaw onboard`.
+To include a preset in the baseline, merge its entries into `openclaw-sandbox.yaml` and re-run `$$nemoclaw onboard`.
 </AgentOnly>
 <AgentOnly variant="hermes">
-To include a preset in the baseline, merge its entries into the Hermes policy additions and re-run `nemohermes onboard`.
+To include a preset in the baseline, merge its entries into the Hermes policy additions and re-run `$$nemoclaw onboard`.
 </AgentOnly>
 
 <Note>
 The `openshell policy set --policy <file> <sandbox-name>` command operates on raw policy files and does not accept the `preset:` metadata block used in preset YAML files.
-<AgentOnly variant="openclaw">
-Use `nemoclaw <name> policy-add` for presets.
-</AgentOnly>
-<AgentOnly variant="hermes">
-Use `nemohermes <name> policy-add` for presets.
-</AgentOnly>
+Use `$$nemoclaw <name> policy-add` for presets.
 </Note>
 
 For scripted workflows, `policy-add` and `policy-remove` accept the preset name as a positional argument:
 
-<AgentOnly variant="openclaw">
 ```bash
-nemoclaw my-assistant policy-add pypi --yes
-nemoclaw my-assistant policy-remove pypi --yes
+$$nemoclaw my-assistant policy-add pypi --yes
+$$nemoclaw my-assistant policy-remove pypi --yes
 ```
-</AgentOnly>
-<AgentOnly variant="hermes">
-```bash
-nemohermes my-assistant policy-add pypi --yes
-nemohermes my-assistant policy-remove pypi --yes
-```
-</AgentOnly>
 
 Set `NEMOCLAW_NON_INTERACTIVE=1` instead of `--yes` to drive the same flow from an environment variable.
-See [Commands](../reference/commands#nemoclaw-name-policy-add) for the full flag reference.
+See [Commands](../reference/commands#$$nemoclaw-name-policy-add) for the full flag reference.
 
-<AgentOnly variant="openclaw">
-`nemoclaw <name> rebuild` reapplies every policy preset to the recreated sandbox, so presets survive an agent-version upgrade without manual reapplication.
-</AgentOnly>
-<AgentOnly variant="hermes">
-`nemohermes <name> rebuild` reapplies every policy preset to the recreated sandbox, so presets survive an agent-version upgrade without manual reapplication.
-</AgentOnly>
+`$$nemoclaw <name> rebuild` reapplies every policy preset to the recreated sandbox, so presets survive an agent-version upgrade without manual reapplication.
 
 ## Custom Preset Files
 
@@ -351,31 +285,17 @@ Rename `preset.name` if NemoClaw refuses to apply the file because of a collisio
 
 ### Apply a Single File
 
-<AgentOnly variant="openclaw">
 ```bash
-nemoclaw my-assistant policy-add --from-file ./presets/my-internal-api.yaml
+$$nemoclaw my-assistant policy-add --from-file ./presets/my-internal-api.yaml
 ```
-</AgentOnly>
-<AgentOnly variant="hermes">
-```bash
-nemohermes my-assistant policy-add --from-file ./presets/my-internal-api.yaml
-```
-</AgentOnly>
 
 Preview the endpoints without applying with `--dry-run`, and skip the confirmation prompt with `--yes` or by exporting `NEMOCLAW_NON_INTERACTIVE=1`.
 
 ### Apply Every File in a Directory
 
-<AgentOnly variant="openclaw">
 ```bash
-nemoclaw my-assistant policy-add --from-dir ./presets/ --yes
+$$nemoclaw my-assistant policy-add --from-dir ./presets/ --yes
 ```
-</AgentOnly>
-<AgentOnly variant="hermes">
-```bash
-nemohermes my-assistant policy-add --from-dir ./presets/ --yes
-```
-</AgentOnly>
 
 Files are processed in lexicographic order.
 Processing stops at the first failure; presets already applied are not rolled back.
@@ -391,23 +311,68 @@ Review every host in a custom preset before applying it, especially when the fil
 NemoClaw records custom presets applied with `--from-file` or `--from-dir` in the sandbox registry alongside their full YAML content.
 You can remove them by name without keeping the original file on disk:
 
-<AgentOnly variant="openclaw">
 ```bash
-nemoclaw my-assistant policy-remove my-internal-api --yes
+$$nemoclaw my-assistant policy-remove my-internal-api --yes
 ```
-</AgentOnly>
-<AgentOnly variant="hermes">
-```bash
-nemohermes my-assistant policy-remove my-internal-api --yes
-```
-</AgentOnly>
 
-<AgentOnly variant="openclaw">
-`policy-remove` accepts both built-in and custom preset names. Run `nemoclaw <name> policy-list` to see every preset currently applied to the sandbox.
-</AgentOnly>
-<AgentOnly variant="hermes">
-`policy-remove` accepts both built-in and custom preset names. Run `nemohermes <name> policy-list` to see every preset currently applied to the sandbox.
-</AgentOnly>
+`policy-remove` accepts both built-in and custom preset names. Run `$$nemoclaw <name> policy-list` to see every preset currently applied to the sandbox.
+
+## Agent Policy Context
+
+When an agent runs in the sandbox, it needs a compact view of the active policy so it can decide whether a host or integration is allowed and what to suggest when something fails.
+`$$nemoclaw <name> policy-explain` prints that view as a redacted summary: the recorded tier, the applied presets and their allowed host categories, the known presets that are not applied, the inspect/add/remove commands that change policy, and the support boundaries between NemoClaw, OpenShell, and the agent.
+
+```bash
+$$nemoclaw my-assistant policy-explain
+```
+
+Pass `--json` to emit the same context as a structured object the agent can read:
+
+```bash
+$$nemoclaw my-assistant policy-explain --json
+```
+
+NemoClaw also seeds the rendered context inside the sandbox at `/sandbox/.openclaw/workspace/POLICY.md` once during onboarding and refreshes it on every `policy-add` or `policy-remove`, so the in-sandbox agent picks it up when it scans the workspace.
+Pass `--write` to refresh that file on demand without changing the policy:
+
+```bash
+$$nemoclaw my-assistant policy-explain --write
+```
+
+The output is intentionally redacted.
+Network policy rule bodies, credential metadata, and binary allowlists are not included; only host stems and category-level summaries appear.
+Host stems that resolve to RFC 1918 ranges (10/8, 172.16/12, 192.168/16), loopback (127/8, `::1`), link-local (169.254/16, `fe80::/10`), cloud metadata (`169.254.169.254`), unique-local IPv6 (`fc00::/7`), reserved zero (0.0.0.0/8), CGNAT (100.64/10), benchmarking (198.18/15), `localhost`, and the internal DNS suffixes `.local`, `.internal`, `.lan`, `.home`, `.home.arpa`, `.corp`, `.intra`, `.intranet`, `.localdomain` are dropped from `allowedHostCategories` and surface as a `redactedHostCount`.
+
+Each active preset also carries a `verification` field that tells the agent whether the OpenShell gateway actually enforces it:
+
+| Status | Meaning |
+|--------|---------|
+| `verified` | Registry lists the preset and the gateway confirms it is enforced. Safe to treat the host stems as allowed. |
+| `registry-only` | Registry lists the preset but the gateway does not enforce it (drift). Treat allowed hosts as unverified; the agent should not assume the traffic will reach the host. |
+| `gateway-only` | Gateway enforces a preset the registry does not list. Reported as active so the agent does not misclassify allowed hosts as blocked. |
+| `gateway-unavailable` | Could not probe the gateway (no live snapshot). The whole report is advisory; rely on `nemoclaw <sandbox> policy-list` once the gateway is reachable. |
+
+The context also documents how the agent should classify a failed host or integration attempt.
+The rules are evaluated in order so HTTP 403 has a single interpretation per call: when the host matches an applied preset the request is treated as an authentication failure, otherwise as a policy denial.
+
+1. `unsupported` — the caller asserts the capability is not offered for this sandbox (for example, a messaging channel that the active agent does not support). The agent should surface the limitation without retrying.
+2. `missing-approval` — the host **is** allowed by an applied preset and the request was refused with HTTP 401. The network path is open; credentials are missing or invalid.
+3. `missing-approval` (low confidence) — the host **is** allowed by an applied preset and the request was refused with HTTP 403. Ambiguous: OpenShell policies enforce by method, path, protocol, and binary, so a 403 on an allowed host can still be a finer-grained policy denial rather than missing credentials. Confirm credentials first, then run `openshell policy get` to check whether the specific method or path is blocked.
+4. `blocked-by-policy` — either the host is **not** allowed by any applied preset and either an existing built-in or custom preset declares it (apply that preset), or the request is refused with a network-block error code (`EHOSTUNREACH`, `ENETUNREACH`, `ENOTFOUND`, `ECONNREFUSED`, `ETIMEDOUT`, `EAI_AGAIN`) or HTTP 403. The same network-block codes also surface as `blocked-by-policy` (low confidence) when the host is on an applied but **unverified** preset (`registry-only` or `gateway-unavailable`), because a block code on a host the registry says should be allowed is the strongest signal that the gateway is not enforcing the preset.
+5. `unknown` — none of the above apply; the agent should surface the underlying error. A network-block code on a host that matches a **verified** preset stays `unknown` because the gateway has confirmed enforcement, so the block must be an upstream connectivity failure rather than a policy denial.
+
+Each classification also carries a `confidence` field set to `high` or `low`. Low-confidence verdicts mean the agent should report multiple possibilities to the user instead of treating the next-step recommendation as authoritative. Common low-confidence triggers are:
+
+- HTTP 403 on an active host (ambiguous between missing credentials and a finer-grained OpenShell denial by method, path, protocol, or binary).
+- The matched preset is `registry-only` (the registry lists it but the gateway does not enforce it) — the agent must not assume the host is reachable.
+- The matched preset is `gateway-unavailable` (no live gateway snapshot was available) — the verdict is registry-derived and advisory.
+
+Callers that already hold a verified gateway snapshot can pass it to the classifier so verdicts about hosts on verified presets stay high-confidence.
+
+Use the classification to pick the next step.
+For `blocked-by-policy`, run `$$nemoclaw <name> policy-add <preset>` or author a [custom preset](#custom-preset-files).
+For `missing-approval`, confirm the API token and scopes for the integration.
+For `unsupported`, surface the limitation to the user without retrying.
 
 ## Related Topics
 

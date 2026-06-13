@@ -45,7 +45,9 @@ describe("handleOllamaProbeFailure (#4365)", () => {
       const errLines = errSpy.mock.calls.map((c) => String(c[0]));
       expect(
         errLines.some((l) =>
-          l.includes("NEMOCLAW_PROVIDER pins onboarding to Ollama but the Ollama model runner is unhealthy"),
+          l.includes(
+            "NEMOCLAW_PROVIDER pins onboarding to Ollama but the Ollama model runner is unhealthy",
+          ),
         ),
       ).toBe(true);
     } finally {
@@ -73,9 +75,7 @@ describe("handleOllamaProbeFailure (#4365)", () => {
         ),
       ).toThrow(/process\.exit:1/);
       const errLines = errSpy.mock.calls.map((c) => String(c[0]));
-      expect(
-        errLines.some((l) => l.includes("Aborting: Ollama daemon is unhealthy")),
-      ).toBe(true);
+      expect(errLines.some((l) => l.includes("Aborting: Ollama daemon is unhealthy"))).toBe(true);
     } finally {
       errSpy.mockRestore();
       logSpy.mockRestore();
@@ -92,16 +92,12 @@ describe("handleOllamaProbeFailure (#4365)", () => {
     try {
       const action = handleOllamaProbeFailure(
         { ok: false, message: "model runner has unexpectedly stopped", daemonFailure: true },
-        "qwen2.5:7b",
+        "qwen3.5:9b",
         () => false,
       );
       expect(action).toBe("back-to-selection");
       const logLines = logSpy.mock.calls.map((c) => String(c[0]));
-      expect(
-        logLines.some((l) =>
-          l.includes("Ollama itself appears unavailable"),
-        ),
-      ).toBe(true);
+      expect(logLines.some((l) => l.includes("Ollama itself appears unavailable"))).toBe(true);
       expect(
         logLines.some((l) =>
           l.includes("Returning to provider selection; choose a non-Ollama provider"),
@@ -122,18 +118,14 @@ describe("handleOllamaProbeFailure (#4365)", () => {
     try {
       const action = handleOllamaProbeFailure(
         { ok: false, message: "model requires more system memory" },
-        "qwen2.5:7b",
+        "qwen3.5:9b",
         () => false,
       );
       expect(action).toBe("continue");
       const logLines = logSpy.mock.calls.map((c) => String(c[0]));
-      expect(
-        logLines.some((l) => l.includes("Choose a different Ollama model")),
-      ).toBe(true);
+      expect(logLines.some((l) => l.includes("Choose a different Ollama model"))).toBe(true);
       // Daemon-escape hint MUST NOT appear in the non-daemon path.
-      expect(
-        logLines.some((l) => l.includes("Ollama itself appears unavailable")),
-      ).toBe(false);
+      expect(logLines.some((l) => l.includes("Ollama itself appears unavailable"))).toBe(false);
     } finally {
       errSpy.mockRestore();
       logSpy.mockRestore();
@@ -153,13 +145,13 @@ describe("handleOllamaProbeFailure (#4365)", () => {
       expect(() =>
         handleOllamaProbeFailure(
           { ok: false, message: "model requires more system memory" },
-          "qwen2.5:7b",
+          "qwen3.5:9b",
           () => true,
         ),
       ).toThrow(/process\.exit:1/);
       const errLines = errSpy.mock.calls.map((c) => String(c[0]));
       expect(
-        errLines.some((l) => l.includes("Aborting: Ollama model 'qwen2.5:7b' unavailable")),
+        errLines.some((l) => l.includes("Aborting: Ollama model 'qwen3.5:9b' unavailable")),
       ).toBe(true);
     } finally {
       errSpy.mockRestore();

@@ -36,11 +36,11 @@
 # Prerequisites:
 #   - Docker running
 #   - NemoClaw installed (install.sh or brev-setup.sh already ran)
-#   - NVIDIA_API_KEY set
+#   - NVIDIA_INFERENCE_API_KEY set
 #   - openshell on PATH
 #
 # Environment variables:
-#   NVIDIA_API_KEY                         — required
+#   NVIDIA_INFERENCE_API_KEY                         — required
 #   NEMOCLAW_NON_INTERACTIVE=1             — required
 #   NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 — required
 #   NEMOCLAW_SANDBOX_NAME                  — sandbox name (default: e2e-msg-provider)
@@ -59,7 +59,7 @@
 #   SLACK_BOT_TOKEN_REVOKED                — optional: revoked xoxb- token to test auth pre-validation (#2340)
 #   SLACK_APP_TOKEN_REVOKED                — optional: paired xapp- token for the revoked bot token
 #   WECHAT_BOT_TOKEN                       — defaults to fake token; presence skips host-side QR login
-#   WECHAT_ACCOUNT_ID                      — defaults to fake iLink account ID (seed-wechat-accounts.py key)
+#   WECHAT_ACCOUNT_ID                      — defaults to fake iLink account ID (manifest hook account key)
 #   WECHAT_BASE_URL                        — defaults to fake iLink baseUrl (per-account API host)
 #   WECHAT_USER_ID                         — defaults to fake operator wechat user ID (seeds DM allowlist)
 #   WECHAT_ALLOWED_IDS                     — optional: comma-separated DM allowlist for wechat
@@ -80,7 +80,7 @@
 #
 # Usage:
 #   NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
-#     NVIDIA_API_KEY=nvapi-... bash test/e2e/test-messaging-providers.sh
+#     NVIDIA_INFERENCE_API_KEY=nvapi-... bash test/e2e/test-messaging-providers.sh
 #
 # See: https://github.com/NVIDIA/NemoClaw/pull/1081
 
@@ -143,30 +143,16 @@ openshell() {
   fi
 }
 
-registry_field() {
-  local field="$1"
-  if [ ! -f "$REGISTRY" ]; then
-    echo "null"
-    return
-  fi
-  if command -v jq >/dev/null 2>&1; then
-    jq -c --arg name "$SANDBOX_NAME" --arg field "$field" \
-      '.sandboxes[$name][$field]' "$REGISTRY" 2>/dev/null || echo "null"
-  else
-    node -e "
-const r = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'));
-const v = (r.sandboxes || {})[process.argv[2]]?.[process.argv[3]];
-process.stdout.write(JSON.stringify(v ?? null));
-" "$REGISTRY" "$SANDBOX_NAME" "$field" 2>/dev/null || echo "null"
-  fi
-}
-
-registry_array_contains() {
-  local field="$1"
-  local item="$2"
-  local value
-  value="$(registry_field "$field")"
-  printf '%s' "$value" | grep -Fq "\"${item}\""
+registry_plan_channel_contains() {
+  local item="$1"
+  node -e '
+const fs = require("fs");
+const [registryPath, sandboxName, channelId] = process.argv.slice(1);
+if (!fs.existsSync(registryPath)) process.exit(1);
+const registry = JSON.parse(fs.readFileSync(registryPath, "utf8"));
+const channels = registry.sandboxes?.[sandboxName]?.messaging?.plan?.channels;
+process.exit(Array.isArray(channels) && channels.some((channel) => channel?.channelId === channelId) ? 0 : 1);
+' "$REGISTRY" "$SANDBOX_NAME" "$item"
 }
 
 assert_openclaw_config_activation() {
@@ -436,7 +422,7 @@ SLACK_IDS="${SLACK_ALLOWED_USERS-U0AR85ATALW,U09E2ESLACK}"
 # made because no token exchange happens at build time.
 WECHAT_TOKEN="${WECHAT_BOT_TOKEN:-test-fake-wechat-token-e2e}"
 WECHAT_ACCOUNT="${WECHAT_ACCOUNT_ID:-e2e-fake-account-12345}"
-WECHAT_BASE="${WECHAT_BASE_URL:-https://ilinkai-fake-e2e.wechat.com}"
+WECHAT_BASE="${WECHAT_BASE_URL:-https://ilinkai.wechat.com}"
 WECHAT_USER="${WECHAT_USER_ID:-wxid_e2efakeoperator}"
 WECHAT_IDS="${WECHAT_ALLOWED_IDS:-${WECHAT_USER}}"
 # WhatsApp is QR-only, but seed host-side decoys to prove they are ignored.
@@ -469,6 +455,31 @@ export WECHAT_ALLOWED_IDS="$WECHAT_IDS"
 export WHATSAPP_TOKEN="$WHATSAPP_TOKEN_DECOY"
 export WHATSAPP_BOT_TOKEN="$WHATSAPP_BOT_TOKEN_DECOY"
 export WHATSAPP_SESSION_SECRET="$WHATSAPP_SESSION_SECRET_DECOY"
+
+# NEMOCLAW_EXTRA_PLACEHOLDER_KEYS — operator-supplied per-profile credentials.
+# The host-side parser at src/lib/onboard/extra-placeholder-keys.ts accepts
+# only entries that extend a canonical channel envKey with a non-empty
+# `_<suffix>`, rejects bare canonical keys, the control env, and arbitrary
+# host secret names. The fixtures below cover three observable outcomes
+# Phase 2c asserts on:
+#
+#   1. TELEGRAM_BOT_TOKEN_AGENT_A — extension + token exported -> provider
+#      row registered, placeholder injected into the sandbox env.
+#   2. TELEGRAM_BOT_TOKEN_AGENT_MISSING — extension + token NOT exported ->
+#      registerExtraPlaceholderProviders pushes a token=null row that
+#      upsertMessagingProviders skips at the gateway; no placeholder is
+#      injected for that key.
+#   3. GITHUB_TOKEN — host secret shape -> rejected at the parser layer
+#      before any provider row is built; the raw value must never reach
+#      the sandbox provider gateway.
+EXTRAS_TELEGRAM_AGENT_A_TOKEN="test-fake-telegram-token-agent-a-e2e"
+EXTRAS_TELEGRAM_AGENT_B_TOKEN="test-fake-telegram-token-agent-b-e2e"
+EXTRAS_GITHUB_DECOY="test-fake-host-secret-that-must-not-leak"
+export NEMOCLAW_EXTRA_PLACEHOLDER_KEYS="TELEGRAM_BOT_TOKEN_AGENT_A TELEGRAM_BOT_TOKEN_AGENT_B TELEGRAM_BOT_TOKEN_AGENT_MISSING GITHUB_TOKEN"
+export TELEGRAM_BOT_TOKEN_AGENT_A="$EXTRAS_TELEGRAM_AGENT_A_TOKEN"
+export TELEGRAM_BOT_TOKEN_AGENT_B="$EXTRAS_TELEGRAM_AGENT_B_TOKEN"
+unset TELEGRAM_BOT_TOKEN_AGENT_MISSING
+export GITHUB_TOKEN="$EXTRAS_GITHUB_DECOY"
 
 # Run a command inside the sandbox via stdin (avoids exposing sensitive args in process list)
 sandbox_exec_stdin() {
@@ -622,11 +633,15 @@ openclaw_message_send_exit_code() {
 # ══════════════════════════════════════════════════════════════════
 section "Phase 0: Prerequisites"
 
-if [ -z "${NVIDIA_API_KEY:-}" ]; then
-  fail "NVIDIA_API_KEY not set"
+if [ -z "${NVIDIA_INFERENCE_API_KEY:-}" ] && [ -n "${NVIDIA_API_KEY:-}" ]; then
+  export NVIDIA_INFERENCE_API_KEY="${NVIDIA_API_KEY}"
+  info "Using legacy NVIDIA_API_KEY as fallback for NVIDIA_INFERENCE_API_KEY"
+fi
+if [ -z "${NVIDIA_INFERENCE_API_KEY:-}" ]; then
+  fail "NVIDIA_INFERENCE_API_KEY not set"
   exit 1
 fi
-pass "NVIDIA_API_KEY is set"
+pass "NVIDIA_INFERENCE_API_KEY is set"
 
 if ! docker info >/dev/null 2>&1; then
   fail "Docker is not running"
@@ -677,14 +692,15 @@ if openshell --version >/dev/null 2>&1; then
 fi
 pass "Pre-cleanup complete"
 
-if [ -z "${NEMOCLAW_SKIP_TELEGRAM_REACHABILITY:-}" ] \
-  && [ -z "${TELEGRAM_BOT_TOKEN_REAL:-}" ] \
-  && [[ "$TELEGRAM_TOKEN" == *fake* ]]; then
-  # This E2E normally uses fake tokens to exercise config plumbing, not the
-  # live Telegram API. Keep real-token runs on the onboard validation path.
-  # Remove once onboard has a hermetic fake Telegram API.
-  export NEMOCLAW_SKIP_TELEGRAM_REACHABILITY=1
-  info "Skipping onboarding Telegram reachability probe for fake-token E2E"
+if [ -z "${NEMOCLAW_SKIP_TELEGRAM_REACHABILITY:-}" ]; then
+  if [ -z "${TELEGRAM_BOT_TOKEN_REAL:-}" ] && [[ "$TELEGRAM_TOKEN" == *fake* ]]; then
+    export NEMOCLAW_SKIP_TELEGRAM_REACHABILITY=1
+    info "Skipping onboarding Telegram reachability probe for fake-token E2E"
+  elif [ -z "${TELEGRAM_BOT_TOKEN_REAL:-}" ] \
+    && ! curl -fsS --max-time 10 https://api.telegram.org/ >/dev/null 2>&1; then
+    export NEMOCLAW_SKIP_TELEGRAM_REACHABILITY=1
+    info "Host cannot reach api.telegram.org; skipping manifest Telegram reachability check"
+  fi
 fi
 if [ -z "${NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION:-}" ] \
   && [ -z "${SLACK_BOT_TOKEN_REAL:-}" ] \
@@ -873,10 +889,10 @@ else
   pass "M-WA1: WhatsApp QR-only channel creates no bridge provider"
 fi
 
-if registry_array_contains messagingChannels "whatsapp"; then
-  pass "M-WA2: registry.messagingChannels contains whatsapp after channel add"
+if registry_plan_channel_contains "whatsapp"; then
+  pass "M-WA2: registry.messaging.plan.channels contains whatsapp after channel add"
 else
-  fail "M-WA2: registry.messagingChannels missing whatsapp after channel add ($(registry_field messagingChannels))"
+  fail "M-WA2: registry.messaging.plan.channels missing whatsapp after channel add"
 fi
 
 whatsapp_policy_pre=$(openshell policy get --full "$SANDBOX_NAME" 2>/dev/null || true)
@@ -917,12 +933,13 @@ else
 fi
 
 # M-WA6b: WhatsApp compact-QR pairing wiring (NemoClaw#4522). The entrypoint
-# installs a NemoClaw-owned preload that forces qrcode-terminal into
+# installs a NemoClaw-owned preload that forces the `qrcode` package (which
+# OpenClaw's renderQrTerminal uses to render the pairing QR) into
 # `{ small: true }` half-block rendering so the in-sandbox pairing QR fits a
-# phone-camera frame, and the openclaw() guard injects it for the single
-# `channels login --channel whatsapp` invocation. Verify both the preload file
-# (root-owned/read-only in root mode; read-only in non-root mode) and the guard
-# wiring are present in the sandbox.
+# phone-camera frame. The preload is wired into the connect-session NODE_OPTIONS
+# and the openclaw() guard injects it for the `channels login --channel whatsapp`
+# invocation. Verify the preload file (root-owned/read-only in root mode;
+# read-only in non-root mode) and the guard wiring are present in the sandbox.
 whatsapp_qr_preload_stat=$(sandbox_exec "stat -c '%U:%a' /tmp/nemoclaw-whatsapp-qr-compact.js 2>/dev/null || echo missing")
 entrypoint_start_log_stat=$(sandbox_exec "stat -c '%U:%a' /tmp/nemoclaw-start.log 2>/dev/null || echo missing")
 if [ "$whatsapp_qr_preload_stat" = "root:444" ]; then
@@ -950,6 +967,64 @@ if [ "${whatsapp_qr_guard_wiring:-0}" -ge 1 ] 2>/dev/null; then
   pass "M-WA6c: openclaw() guard injects compact-QR preload via NODE_OPTIONS for WhatsApp login (#4522)"
 else
   fail "M-WA6c: openclaw() guard missing compact-QR preload --require injection for WhatsApp login (#4522)"
+fi
+
+# M-WA6d: Prove the rendered QR SIZE in the real sandbox, not just that the
+# preload file/wiring exist (NemoClaw#4522). Render a representative WhatsApp
+# pairing payload through the EXACT renderer the channel-login onQr callback
+# uses — `renderQrTerminal` from the baked OpenClaw's plugin-sdk/media-runtime —
+# once with the connect-session NODE_OPTIONS sourced (the preload active, as in
+# the reporter workflow) and once with NODE_OPTIONS cleared. Assert the sourced
+# render is compact and strictly smaller than the cleared baseline.
+#
+# The probe runs from the global node_modules parent so the bare
+# `openclaw/...` specifier resolves against the globally-installed CLI. If the
+# renderer cannot be resolved/executed at all (an infra/resolution issue, not a
+# size regression) the sub-check SKIPs rather than failing the suite — an actual
+# oversized render still yields a number above the ceiling and fails. The
+# hard-gated, version-pinned size proof lives in
+# test/e2e-scenario/live/whatsapp-qr-compact.test.ts.
+WHATSAPP_QR_RENDER_PROBE=$(
+  cat <<'PROBE'
+import { renderQrTerminal } from "openclaw/plugin-sdk/media-runtime";
+const strip = (s) => s.replace(/\x1b\[[0-9;]*m/g, "");
+const qr = "2@" + "ABcd12".repeat(8) + "," + "a8K3".repeat(11) + "=," +
+  "Xy90".repeat(11) + "=," + "Qr5T".repeat(9) + "=";
+const out = strip(await renderQrTerminal(qr));
+process.stdout.write(String(out.split("\n").length));
+PROBE
+)
+whatsapp_qr_render_b64=$(printf '%s' "$WHATSAPP_QR_RENDER_PROBE" | base64 | tr -d '\n')
+# Build a remote command that writes the probe to the global lib dir and runs
+# it twice (preload sourced vs NODE_OPTIONS cleared), printing both row counts.
+whatsapp_qr_render_remote=$(
+  cat <<REMOTE
+set -eu
+GLOBAL_NM="\$(npm root -g 2>/dev/null)" || GLOBAL_NM=""
+[ -n "\$GLOBAL_NM" ] || { echo "RENDER_PROBE_UNAVAILABLE: npm root -g empty"; exit 0; }
+LIBDIR="\$(dirname "\$GLOBAL_NM")"
+PROBE_FILE="\$LIBDIR/nemoclaw-wa-qr-render-probe.mjs"
+printf '%s' '${whatsapp_qr_render_b64}' | base64 -d > "\$PROBE_FILE" 2>/dev/null || { echo "RENDER_PROBE_UNAVAILABLE: write failed"; exit 0; }
+cd "\$LIBDIR" || { echo "RENDER_PROBE_UNAVAILABLE: cd failed"; exit 0; }
+# Compact render: source the connect-session env so the preload is on NODE_OPTIONS.
+COMPACT="\$( [ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh 2>/dev/null; node "\$PROBE_FILE" 2>/dev/null )" || COMPACT=""
+# Baseline render: explicitly clear NODE_OPTIONS so the preload is absent.
+BASELINE="\$( NODE_OPTIONS="" node "\$PROBE_FILE" 2>/dev/null )" || BASELINE=""
+rm -f "\$PROBE_FILE" 2>/dev/null || true
+echo "RENDER_COMPACT=\${COMPACT:-NA} RENDER_BASELINE=\${BASELINE:-NA}"
+REMOTE
+)
+whatsapp_qr_render_out=$(sandbox_exec "$whatsapp_qr_render_remote")
+whatsapp_qr_compact_rows=$(printf '%s' "$whatsapp_qr_render_out" | sed -n 's/.*RENDER_COMPACT=\([0-9]*\).*/\1/p')
+whatsapp_qr_baseline_rows=$(printf '%s' "$whatsapp_qr_render_out" | sed -n 's/.*RENDER_BASELINE=\([0-9]*\).*/\1/p')
+if [ -n "$whatsapp_qr_compact_rows" ] && [ -n "$whatsapp_qr_baseline_rows" ]; then
+  if [ "$whatsapp_qr_compact_rows" -le 40 ] && [ "$whatsapp_qr_compact_rows" -lt "$whatsapp_qr_baseline_rows" ]; then
+    pass "M-WA6d: in-sandbox pairing QR renders compact (${whatsapp_qr_compact_rows} rows, baseline ${whatsapp_qr_baseline_rows}) (#4522)"
+  else
+    fail "M-WA6d: in-sandbox pairing QR not compact (compact=${whatsapp_qr_compact_rows} rows, baseline=${whatsapp_qr_baseline_rows}) (#4522)"
+  fi
+else
+  skip "M-WA6d: in-sandbox QR render probe unavailable (${whatsapp_qr_render_out:0:160}) (#4522)"
 fi
 
 # M1: Verify Telegram provider exists in gateway
@@ -1278,6 +1353,158 @@ if [ -n "$sandbox_fs_wa" ]; then
   fail "M-WA7c: WhatsApp host credential material found on sandbox filesystem: ${sandbox_fs_wa}"
 else
   pass "M-WA7c: No WhatsApp host credential material found on sandbox filesystem"
+fi
+
+# ══════════════════════════════════════════════════════════════════
+# Phase 2c: NEMOCLAW_EXTRA_PLACEHOLDER_KEYS — per-profile credential injection
+#
+# Validates the operator-supplied extra-placeholder-keys hook end-to-end:
+#   - the registered provider row exists in the OpenShell gateway under the
+#     deterministic `${sandbox}-extra-<slug>` name
+#   - the sandbox env exposes the canonical resolve placeholder for an
+#     extension key, never the raw token value
+#   - a listed-but-unset key produces no gateway provider row
+#   - a non-extending host secret name (GITHUB_TOKEN) is refused at the
+#     parser layer, never registered, never present in sandbox env/fs/log
+#   - the NEMOCLAW_EXTRA_PLACEHOLDER_KEYS env arg itself reaches the
+#     container so the in-container revision-collapse refresh sees the
+#     same list the host-side parser produced
+#   - two independent extension keys resolve to two distinct placeholders
+#     (the per-Hermes-profile property the feature exists to enable; the
+#     Hermes-side `.env` substitution is operator-driven and therefore not
+#     observable from an OpenClaw E2E)
+# ══════════════════════════════════════════════════════════════════
+section "Phase 2c: Extra placeholder keys — per-profile credential injection"
+
+# X1: Provider list shows the extension-key row with the slugged sandbox name.
+provider_list=$(openshell provider list 2>/dev/null || true)
+EXTRA_PROVIDER_NAME="${SANDBOX_NAME}-extra-telegram-bot-token-agent-a"
+if echo "$provider_list" | grep -qF "$EXTRA_PROVIDER_NAME"; then
+  pass "X1: Provider '$EXTRA_PROVIDER_NAME' registered for the operator-supplied extension key"
+else
+  fail "X1: Provider '$EXTRA_PROVIDER_NAME' missing from openshell provider list"
+fi
+
+# X2: Listed-but-unset extension key must not produce a provider row.
+MISSING_PROVIDER_NAME="${SANDBOX_NAME}-extra-telegram-bot-token-agent-missing"
+if echo "$provider_list" | grep -qF "$MISSING_PROVIDER_NAME"; then
+  fail "X2: Provider '$MISSING_PROVIDER_NAME' was registered despite the operator never exporting the credential"
+else
+  pass "X2: Missing-credential extension key produced no provider row (upsert skipped null token)"
+fi
+
+# X3: Non-extending host secret name must be refused at the parser layer.
+HOST_SECRET_PROVIDER_NAME="${SANDBOX_NAME}-extra-github-token"
+if echo "$provider_list" | grep -qF "$HOST_SECRET_PROVIDER_NAME"; then
+  fail "X3: Provider '$HOST_SECRET_PROVIDER_NAME' was registered — host secret name leaked past the parser allowlist"
+else
+  pass "X3: GITHUB_TOKEN refused by the parser; no provider row registered"
+fi
+
+# X4a: Sandbox env exposes the canonical resolve placeholder for the
+# first extension key, never the raw operator-supplied token value.
+sandbox_extra_env=$(sandbox_exec "printenv TELEGRAM_BOT_TOKEN_AGENT_A" 2>/dev/null || true)
+if [ -z "$sandbox_extra_env" ]; then
+  fail "X4a: TELEGRAM_BOT_TOKEN_AGENT_A is unset inside the sandbox; placeholder injection failed"
+elif echo "$sandbox_extra_env" | grep -qF "$EXTRAS_TELEGRAM_AGENT_A_TOKEN"; then
+  fail "X4a: Raw operator-supplied token leaked into the sandbox TELEGRAM_BOT_TOKEN_AGENT_A env"
+elif echo "$sandbox_extra_env" | grep -q "^openshell:resolve:env:"; then
+  pass "X4a: Sandbox TELEGRAM_BOT_TOKEN_AGENT_A is the canonical resolve placeholder"
+  info "  placeholder: ${sandbox_extra_env:0:40}..."
+else
+  fail "X4a: Sandbox TELEGRAM_BOT_TOKEN_AGENT_A is neither the placeholder nor empty: ${sandbox_extra_env:0:80}"
+fi
+
+# X4b: A second extension key resolves to its own distinct placeholder, so
+# two Hermes profiles consuming `${TELEGRAM_BOT_TOKEN_AGENT_A}` and
+# `${TELEGRAM_BOT_TOKEN_AGENT_B}` get isolated credentials at L7 egress.
+sandbox_extra_env_b=$(sandbox_exec "printenv TELEGRAM_BOT_TOKEN_AGENT_B" 2>/dev/null || true)
+if [ -z "$sandbox_extra_env_b" ]; then
+  fail "X4b: TELEGRAM_BOT_TOKEN_AGENT_B is unset inside the sandbox; placeholder injection failed for the second extension key"
+elif echo "$sandbox_extra_env_b" | grep -qF "$EXTRAS_TELEGRAM_AGENT_B_TOKEN"; then
+  fail "X4b: Raw operator-supplied token leaked into the sandbox TELEGRAM_BOT_TOKEN_AGENT_B env"
+elif [ "$sandbox_extra_env_b" = "$sandbox_extra_env" ]; then
+  fail "X4b: TELEGRAM_BOT_TOKEN_AGENT_A and TELEGRAM_BOT_TOKEN_AGENT_B resolve to the same placeholder; per-key isolation broken"
+elif echo "$sandbox_extra_env_b" | grep -q "^openshell:resolve:env:"; then
+  pass "X4b: Two extension keys resolve to distinct canonical placeholders"
+else
+  fail "X4b: Sandbox TELEGRAM_BOT_TOKEN_AGENT_B is neither the placeholder nor empty: ${sandbox_extra_env_b:0:80}"
+fi
+
+# X5: The control env NEMOCLAW_EXTRA_PLACEHOLDER_KEYS must reach the
+# nemoclaw-start.sh process inside the container so the
+# refresh_openclaw_provider_placeholders helper sees the per-profile keys
+# at boot. Grep the entrypoint log for the deterministic breadcrumb the
+# refresh helper emits whenever at least one extension key survives the
+# in-container parser — that line only fires after the env arg propagated
+# AND the canonical-prefix mirror accepted the entry.
+start_log=$(openshell sandbox exec --name "$SANDBOX_NAME" -- cat /tmp/nemoclaw-start.log 2>/dev/null || true)
+if [ -z "$start_log" ]; then
+  fail "X5: /tmp/nemoclaw-start.log unavailable; cannot prove extras reached the in-container refresh helper"
+else
+  extras_breadcrumb=$(echo "$start_log" | grep -E "^\[config\] NEMOCLAW_EXTRA_PLACEHOLDER_KEYS accepted [0-9]+ entry\(ies\):" | tail -1 || true)
+  if [ -z "$extras_breadcrumb" ]; then
+    fail "X5: nemoclaw-start did not log an accepted-extras breadcrumb; env arg did not propagate or canonical-prefix mirror rejected it"
+    info "  Last 40 lines of /tmp/nemoclaw-start.log:"
+    echo "$start_log" | tail -40 | while IFS= read -r line; do info "    $line"; done
+  elif ! echo "$extras_breadcrumb" | grep -qw TELEGRAM_BOT_TOKEN_AGENT_A; then
+    fail "X5: accepted-extras breadcrumb missing TELEGRAM_BOT_TOKEN_AGENT_A: $extras_breadcrumb"
+  elif echo "$extras_breadcrumb" | grep -qw GITHUB_TOKEN; then
+    fail "X5: accepted-extras breadcrumb contains GITHUB_TOKEN — host filter bypass"
+  else
+    pass "X5: nemoclaw-start accepted-extras breadcrumb proves NEMOCLAW_EXTRA_PLACEHOLDER_KEYS reached the in-container parser"
+    info "  ${extras_breadcrumb:0:160}"
+  fi
+fi
+
+# X6: The raw operator-supplied token value must not appear on any
+# observable sandbox surface (env dump, process list, filesystem).
+sandbox_env_extras_dump=$(sandbox_exec "env 2>/dev/null" 2>/dev/null || true)
+if [ -z "$sandbox_env_extras_dump" ]; then
+  skip "X6a: Sandbox environment dump is empty"
+elif echo "$sandbox_env_extras_dump" | grep -qF "$EXTRAS_TELEGRAM_AGENT_A_TOKEN"; then
+  fail "X6a: Raw extension-key token found in sandbox environment dump"
+else
+  pass "X6a: Raw extension-key token absent from sandbox environment dump"
+fi
+
+sandbox_ps_extras=$(openshell sandbox exec -n "$SANDBOX_NAME" -- \
+  sh -c 'cat /proc/[0-9]*/cmdline 2>/dev/null | tr "\0" "\n"' 2>/dev/null || true)
+if [ -z "$sandbox_ps_extras" ]; then
+  skip "X6b: Sandbox process list is empty"
+elif echo "$sandbox_ps_extras" | grep -qF "$EXTRAS_TELEGRAM_AGENT_A_TOKEN"; then
+  fail "X6b: Raw extension-key token found in sandbox process list"
+else
+  pass "X6b: Raw extension-key token absent from sandbox process list"
+fi
+
+sandbox_fs_extras=$(sandbox_exec "
+  grep -rIlm1 -F '$EXTRAS_TELEGRAM_AGENT_A_TOKEN' /sandbox /home /etc /tmp /var 2>/dev/null || true
+")
+if [ -n "$sandbox_fs_extras" ]; then
+  fail "X6c: Raw extension-key token found on sandbox filesystem: ${sandbox_fs_extras}"
+else
+  pass "X6c: Raw extension-key token absent from sandbox filesystem"
+fi
+
+# X7: The refused GITHUB_TOKEN value must not reach the sandbox at all —
+# neither as an env var, nor on the filesystem. (The host process exports
+# it for the parser-rejection test; the sandbox-create env allowlist must
+# drop it.)
+sandbox_github_env=$(sandbox_exec "printenv GITHUB_TOKEN" 2>/dev/null || true)
+if echo "$sandbox_github_env" | grep -qF "$EXTRAS_GITHUB_DECOY"; then
+  fail "X7a: Refused GITHUB_TOKEN value reached the sandbox env"
+else
+  pass "X7a: Refused GITHUB_TOKEN value never reached the sandbox env"
+fi
+
+sandbox_fs_github=$(sandbox_exec "
+  grep -rIlm1 -F '$EXTRAS_GITHUB_DECOY' /sandbox /home /etc /tmp /var 2>/dev/null || true
+")
+if [ -n "$sandbox_fs_github" ]; then
+  fail "X7b: Refused GITHUB_TOKEN value found on sandbox filesystem: ${sandbox_fs_github}"
+else
+  pass "X7b: Refused GITHUB_TOKEN value absent from sandbox filesystem"
 fi
 
 # ══════════════════════════════════════════════════════════════════
@@ -1902,8 +2129,8 @@ print(','.join(bad))
   # concrete semver. The upstream plugin loader needs this install metadata
   # after OpenClaw config rewrites (plugins.entries alone is not enough),
   # and a floating spec (e.g. "@latest") would silently bypass the
-  # installer-trust pinning enforced in Dockerfile.base and
-  # scripts/seed-wechat-accounts.py (WECHAT_PLUGIN_SPEC=@2.4.3).
+  # installer-trust pinning enforced by the WeChat package-install allowlist and
+  # wechat.seedOpenClawAccount manifest hook (WECHAT_PLUGIN_SPEC=@2.4.3).
   wechat_plugins_json=$(sandbox_exec "python3 -c \"
 import json
 cfg = json.load(open('/sandbox/.openclaw/openclaw.json'))
@@ -1941,10 +2168,10 @@ sys.exit(0 if ok else 1)
   fi
 
   # M-W8: WeChat channel registered under channels.openclaw-weixin with the
-  # configured accountId enabled. Written by seed-wechat-accounts.py during
-  # image build using NEMOCLAW_WECHAT_CONFIG_B64. Absence here means
-  # NEMOCLAW_WECHAT_CONFIG_B64 was empty or seed-wechat-accounts.py was
-  # skipped — both regressions on the non-interactive QR-skip path.
+  # configured accountId enabled. Written by the manifest post-agent-install
+  # hook during image build. Absence here means WeChat metadata was empty or
+  # the manifest build-file output was skipped — both regressions on the
+  # non-interactive QR-skip path.
   wechat_enabled=$(echo "$channel_json" | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
@@ -1960,16 +2187,16 @@ print(account.get('enabled', False))
 fi
 
 # M-W9: Per-account credential file holds the WECHAT_BOT_TOKEN placeholder,
-# not the real token. seed-wechat-accounts.py writes
+# not the real token. The manifest post-agent-install hook writes
 # <stateDir>/openclaw-weixin/accounts/<accountId>.json with
 # token = "openshell:resolve:env:WECHAT_BOT_TOKEN". A real-token hit
 # would mean someone bypassed the placeholder constant.
 wechat_account_json=$(sandbox_exec "cat /sandbox/.openclaw/openclaw-weixin/accounts/${WECHAT_ACCOUNT}.json 2>/dev/null || true" 2>/dev/null || true)
 if [ -z "$wechat_account_json" ] || echo "$wechat_account_json" | grep -qi "no such file"; then
-  fail "M-W9: WeChat per-account credential file not found (seed-wechat-accounts.py may have been skipped)"
+  fail "M-W9: WeChat per-account credential file not found (manifest post-agent-install hook may have been skipped)"
 else
   if echo "$wechat_account_json" | grep -qF "$WECHAT_TOKEN"; then
-    fail "M-W9: Real WeChat token spliced into accounts/${WECHAT_ACCOUNT}.json — seed-wechat-accounts.py placeholder regression"
+    fail "M-W9: Real WeChat token spliced into accounts/${WECHAT_ACCOUNT}.json — manifest seed placeholder regression"
   elif echo "$wechat_account_json" | grep -qF "openshell:resolve:env:WECHAT_BOT_TOKEN"; then
     pass "M-W9: WeChat per-account credential file uses the L7-resolved placeholder"
   else
@@ -1978,7 +2205,7 @@ else
 fi
 
 # M-W10: Accounts index lists the configured accountId. Written by
-# seed-wechat-accounts.py before the per-account file; the upstream plugin's
+# the manifest post-agent-install hook before the per-account file; the upstream plugin's
 # auth/accounts.ts boots accounts that appear in this index.
 wechat_index_json=$(sandbox_exec "cat /sandbox/.openclaw/openclaw-weixin/accounts.json 2>/dev/null || true" 2>/dev/null || true)
 if [ -z "$wechat_index_json" ] || echo "$wechat_index_json" | grep -qi "no such file"; then
@@ -2661,6 +2888,14 @@ for line in sys.stdin:
     pass "M-S17c: installed OpenClaw Slack send helper drove the host-side fake Slack message"
   else
     fail "M-S17c: Slack proof did not use the installed OpenClaw Slack send helper (proof=${sl_proof_kind:-missing})"
+  fi
+  # M-S17d (#4752): a denied explicit @-mention prepares no command but must
+  # still emit exactly one bounded sender-facing feedback action.
+  if echo "$sl_channel_proof" | grep -q '"deniedFeedbackCount":1' \
+    && echo "$sl_channel_proof" | grep -q '"deniedFeedbackMethod":"chat.postEphemeral"'; then
+    pass "M-S17d: denied Slack @mention sent exactly one bounded sender feedback action"
+  else
+    fail "M-S17d: denied Slack @mention did not send bounded sender feedback: ${sl_channel_proof:0:500}"
   fi
 elif [ "$fake_slack_ready" != "1" ]; then
   skip "M-S17: fake Slack API was not ready"

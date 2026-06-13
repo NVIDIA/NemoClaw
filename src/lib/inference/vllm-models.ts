@@ -6,9 +6,14 @@
  *
  * Each entry pins the model-specific `vllm serve` flags (reasoning parser,
  * tool-call parser, max model length, load format) so the express path can
- * swap models without leaving the wrong flags behind. Users select a model
- * via `NEMOCLAW_VLLM_MODEL=<envValue>` before invoking the installer; the
- * default (when the env var is unset) is the first entry.
+ * swap models without leaving the wrong flags behind.
+ *
+ * Selection precedence in `installVllm`:
+ *   1. `NEMOCLAW_VLLM_MODEL=<envValue-or-HF-id>` for automation overrides.
+ *   2. Interactive picker over the per-platform subset (via
+ *      `modelsForPlatform`), defaulting to the profile's `defaultModel`.
+ *   3. Non-interactive runs without an override use the profile default
+ *      directly, never the first registry entry.
  *
  * Gated entries (e.g. DeepSeek-R1 Distill Llama 70B) require the operator
  * to have accepted the model's licence on Hugging Face AND export a
@@ -16,10 +21,12 @@
  * before the wizard pulls the model weights so the failure is fast and the
  * user knows exactly which token to provision.
  *
- * The registry is deliberately small and additive — extend it when QA
- * adds a model to the express coverage matrix (related: NemoClaw issue
- * tracking the express vLLM model picker).
+ * The registry is deliberately small and additive — extend it only when a
+ * new checkpoint has its `vllm serve` flags, context length, memory
+ * envelope, and tool-call behaviour validated.
  */
+
+export type VllmPlatform = "spark" | "station" | "linux";
 
 export interface VllmModelDef {
   /** Hugging Face model id (also passed to `vllm serve`). */
@@ -34,6 +41,14 @@ export interface VllmModelDef {
   modelArgs: string[];
   /** True when the upstream HF repo requires accepting a licence. */
   gated: boolean;
+  /**
+   * Platforms whose interactive picker should offer this entry. Models with
+   * platform-specific flags (the NVFP4 MoE checkpoint targets `sm_121a` only,
+   * the very large V4 Flash recipe wants Station-class VRAM) appear only on
+   * profiles they can actually run on. Non-interactive callers and direct
+   * `NEMOCLAW_VLLM_MODEL` overrides bypass the filter.
+   */
+  platforms: readonly VllmPlatform[];
   /**
    * Environment variables exported immediately before `vllm serve` (e.g.
    * FlashInfer / MoE-backend selection, target SM arch). Joined as
@@ -50,6 +65,8 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
     envValue: "qwen3.6-27b",
     maxModelLen: 262144,
     modelArgs: [
+      "--gpu-memory-utilization",
+      "0.7",
       "--max-num-seqs",
       "4",
       "--reasoning-parser",
@@ -62,6 +79,7 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
       "--enable-prefix-caching",
     ],
     gated: false,
+    platforms: ["spark", "station", "linux"],
   },
   {
     id: "deepseek-ai/DeepSeek-R1-Distill-Llama-70B",
@@ -69,6 +87,8 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
     envValue: "deepseek-r1-distill-70b",
     maxModelLen: 32768,
     modelArgs: [
+      "--gpu-memory-utilization",
+      "0.7",
       "--max-num-seqs",
       "4",
       "--reasoning-parser",
@@ -78,6 +98,7 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
       "hermes",
     ],
     gated: true,
+    platforms: ["spark", "station", "linux"],
   },
   {
     id: "nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8",
@@ -87,20 +108,63 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
     // example NVIDIA publishes for this checkpoint. The previous value
     // (262000) was an undocumented round-down with no headroom rationale.
     maxModelLen: 262144,
-    modelArgs: ["--load-format", "fastsafetensors"],
+    modelArgs: ["--gpu-memory-utilization", "0.7", "--load-format", "fastsafetensors"],
     gated: false,
+    platforms: ["spark", "station", "linux"],
+  },
+  {
+    id: "deepseek-ai/DeepSeek-V4-Flash",
+    label: "DeepSeek V4 Flash",
+    envValue: "deepseek-v4-flash",
+    maxModelLen: 1048576,
+    modelArgs: [
+      "--kv-cache-dtype",
+      "fp8",
+      "--block-size",
+      "256",
+      "--enable-prefix-caching",
+      "--gpu-memory-utilization",
+      "0.92",
+      "--compilation-config",
+      `'{"cudagraph_mode":"FULL_AND_PIECEWISE","custom_ops":["all"]}'`,
+      "--attention_config.use_fp4_indexer_cache",
+      "True",
+      "--tokenizer-mode",
+      "deepseek_v4",
+      "--tool-call-parser",
+      "deepseek_v4",
+      "--enable-auto-tool-choice",
+      "--reasoning-parser",
+      "deepseek_v4",
+      "--no-disable-hybrid-kv-cache-manager",
+      "--disable-uvicorn-access-log",
+      "--max-cudagraph-capture-size",
+      "128",
+      "--speculative-config",
+      `'{"method":"mtp","num_speculative_tokens":3,"rejection_sample_method":"synthetic","synthetic_acceptance_length":3}'`,
+      "--max-num-batched-tokens",
+      "8192",
+      "--max-num-seqs",
+      "16",
+      "--prefix-cache-retention-interval",
+      "auto",
+    ],
+    gated: false,
+    platforms: ["station"],
   },
   {
     id: "nvidia/Qwen3.6-35B-A3B-NVFP4",
     label: "Qwen3.6 35B-A3B NVFP4",
     envValue: "qwen3.6-35b-a3b-nvfp4",
-    maxModelLen: 65536,
+    maxModelLen: 131072,
     // Additive flags on top of the shared serving defaults. The shared flags
     // already cover --tensor-parallel-size/--pipeline-parallel-size/
     // --data-parallel-size (all 1 — harmless on a single Spark node),
-    // --gpu-memory-utilization 0.7, --port 8000, and --trust-remote-code;
-    // --max-model-len comes from maxModelLen above.
+    // --port 8000, and --trust-remote-code; --max-model-len comes from
+    // maxModelLen above.
     modelArgs: [
+      "--gpu-memory-utilization",
+      "0.7",
       "--dtype",
       "auto",
       "--quantization",
@@ -129,6 +193,7 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
       "fastsafetensors",
     ],
     gated: false,
+    platforms: ["spark"],
     // Arch- and backend-specific knobs required for the NVFP4 MoE checkpoint
     // on DGX Spark (GB10 / sm_121a) with the FlashInfer CUTLASS FP8 path.
     serveEnv: {
@@ -142,7 +207,17 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
 
 export const DEFAULT_VLLM_MODEL: VllmModelDef = VLLM_MODELS[0];
 
+/**
+ * Subset of the registry that should appear in the interactive picker for a
+ * given platform. Order matches registry order so callers can stably annotate
+ * the recommended entry by id rather than position.
+ */
+export function modelsForPlatform(platform: VllmPlatform): readonly VllmModelDef[] {
+  return VLLM_MODELS.filter((model) => model.platforms.includes(platform));
+}
+
 const HF_TOKEN_ENV_KEYS = ["HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"] as const;
+export const VLLM_EXTRA_ARGS_ENV = "NEMOCLAW_VLLM_EXTRA_ARGS_JSON";
 
 /**
  * Look up the requested express-vLLM model from `NEMOCLAW_VLLM_MODEL`.
@@ -157,7 +232,9 @@ const HF_TOKEN_ENV_KEYS = ["HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"] as const;
  * failure.
  */
 export function selectVllmModelFromEnv(env: NodeJS.ProcessEnv = process.env): VllmModelDef | null {
-  const requested = String(env.NEMOCLAW_VLLM_MODEL ?? "").trim().toLowerCase();
+  const requested = String(env.NEMOCLAW_VLLM_MODEL ?? "")
+    .trim()
+    .toLowerCase();
   if (!requested) return null;
   const match = VLLM_MODELS.find(
     (model) => model.envValue.toLowerCase() === requested || model.id.toLowerCase() === requested,
@@ -216,6 +293,7 @@ export function preflightVllmModelEnv(
   env: NodeJS.ProcessEnv = process.env,
 ): PreflightVllmModelResult {
   try {
+    parseVllmExtraServeArgs(env);
     const model = selectVllmModelFromEnv(env);
     if (!model) return { ok: true };
     assertGatedModelAccess(model, env);
@@ -225,9 +303,43 @@ export function preflightVllmModelEnv(
   }
 }
 
+export function parseVllmExtraServeArgs(env: NodeJS.ProcessEnv = process.env): string[] {
+  const raw = String(env[VLLM_EXTRA_ARGS_ENV] ?? "").trim();
+  if (!raw) return [];
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(
+      `${VLLM_EXTRA_ARGS_ENV} must be a JSON array of vLLM serve argument strings: ${
+        (err as Error).message
+      }`,
+    );
+  }
+
+  if (!Array.isArray(parsed)) {
+    throw new Error(`${VLLM_EXTRA_ARGS_ENV} must be a JSON array of strings.`);
+  }
+
+  return parsed.map((value, index) => {
+    if (typeof value !== "string") {
+      throw new Error(`${VLLM_EXTRA_ARGS_ENV}[${String(index)}] must be a string.`);
+    }
+    const trimmed = value.trim();
+    if (trimmed.length === 0) {
+      throw new Error(`${VLLM_EXTRA_ARGS_ENV}[${String(index)}] must not be empty.`);
+    }
+    if (/[\u0000-\u001f\u007f]/.test(trimmed)) {
+      throw new Error(
+        `${VLLM_EXTRA_ARGS_ENV}[${String(index)}] must not contain control characters.`,
+      );
+    }
+    return trimmed;
+  });
+}
+
 const SHARED_VLLM_ARGS: readonly string[] = [
-  "--gpu-memory-utilization",
-  "0.7",
   "--tensor-parallel-size",
   "1",
   "--pipeline-parallel-size",
@@ -239,6 +351,11 @@ const SHARED_VLLM_ARGS: readonly string[] = [
   "--trust-remote-code",
 ] as const;
 
+function shellQuote(value: string): string {
+  if (/^[A-Za-z0-9_@%+=:,./-]+$/.test(value)) return value;
+  return `'${value.replace(/'/g, `'\"'\"'`)}'`;
+}
+
 /**
  * Build the `vllm serve` command line for the supplied model: the shared
  * serving flags merged with the model-specific args from the registry.
@@ -247,7 +364,10 @@ const SHARED_VLLM_ARGS: readonly string[] = [
  * `fastsafetensors` extra so existing express scripts keep working; a model
  * may prepend env exports via `serveEnv`.
  */
-export function buildVllmServeCommand(model: VllmModelDef): string {
+export function buildVllmServeCommand(
+  model: VllmModelDef,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
   const envPrefix = model.serveEnv
     ? `${Object.entries(model.serveEnv)
         .map(([key, value]) => `export ${key}=${value}`)
@@ -259,5 +379,9 @@ export function buildVllmServeCommand(model: VllmModelDef): string {
     String(model.maxModelLen),
     ...model.modelArgs,
   ];
-  return `${envPrefix}pip install vllm[fastsafetensors] && vllm serve ${model.id} ${args.join(" ")}`;
+  const extraArgs = parseVllmExtraServeArgs(env).map(shellQuote);
+  return `${envPrefix}pip install vllm[fastsafetensors] && vllm serve ${model.id} ${[
+    ...args,
+    ...extraArgs,
+  ].join(" ")}`;
 }

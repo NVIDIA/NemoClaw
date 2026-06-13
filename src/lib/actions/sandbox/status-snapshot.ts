@@ -5,10 +5,7 @@ import {
   detectOpenShellStateRpcResultIssue,
   type OpenShellStateRpcIssue,
 } from "../../adapters/openshell/gateway-drift";
-import {
-  captureOpenshellForStatus,
-  isCommandTimeout,
-} from "../../adapters/openshell/runtime";
+import { captureOpenshellForStatus, isCommandTimeout } from "../../adapters/openshell/runtime";
 import { parseGatewayInference } from "../../inference/config";
 import {
   type ProviderHealthProbeOptions,
@@ -18,16 +15,14 @@ import {
 import { parseSandboxPhase } from "../../state/gateway";
 import * as registry from "../../state/registry";
 import { getSandboxDockerRuntime } from "./docker-health";
+import { withStdoutRedirectedToStderr } from "../../cli/stdout-guard";
 import type { SandboxGatewayState } from "./gateway-state";
-import {
-  getReconciledSandboxGatewayState,
-  getSandboxGatewayStateForStatus,
-} from "./gateway-state";
+import { getReconciledSandboxGatewayState, getSandboxGatewayStateForStatus } from "./gateway-state";
 import { probeSandboxInferenceGatewayHealth } from "./process-recovery";
 import {
   getSandboxStatusPreflight,
-  withoutTerminalPhasePreflight,
   type SandboxStatusFailureLayer,
+  withoutTerminalPhasePreflight,
 } from "./status-preflight";
 
 type ProbeProviderHealth = (
@@ -84,6 +79,9 @@ export interface SandboxStatusReport {
   sandboxGpuEnabled: boolean;
   sandboxGpuMode: string | null;
   sandboxGpuDevice: string | null;
+  // Last recorded CUDA-usability proof so `status` can distinguish a configured
+  // GPU from a proven-usable one instead of reporting any GPU as healthy (#4231).
+  sandboxGpuProof: registry.SandboxGpuProofResult | null;
   openshellDriver: string;
   openshellVersion: string;
   policies: string[];
@@ -106,8 +104,11 @@ export interface SandboxStatusSnapshot {
   inferenceHealth: ProviderHealthStatus | null;
 }
 
+type ReconcileSandboxGatewayState = (sandboxName: string) => Promise<SandboxGatewayState>;
+
 interface CollectSandboxStatusSnapshotDeps {
   probeProviderHealthImpl?: ProbeProviderHealth;
+  reconcile?: ReconcileSandboxGatewayState;
 }
 
 export async function collectSandboxStatusSnapshot(
@@ -117,12 +118,16 @@ export async function collectSandboxStatusSnapshot(
     deps?: CollectSandboxStatusSnapshotDeps;
   } = {},
 ): Promise<SandboxStatusSnapshot> {
+  const reconcile =
+    opts.deps?.reconcile ??
+    ((name: string) =>
+      getReconciledSandboxGatewayState(name, {
+        getState: getSandboxGatewayStateForStatus,
+      }));
   const sb = registry.getSandbox(sandboxName);
   let lookup: SandboxGatewayState;
   try {
-    lookup = await getReconciledSandboxGatewayState(sandboxName, {
-      getState: getSandboxGatewayStateForStatus,
-    });
+    lookup = await reconcile(sandboxName);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     lookup = {
@@ -190,20 +195,30 @@ export async function collectSandboxStatusSnapshot(
 
 export async function getSandboxStatusReport(
   sandboxName: string,
+  deps: CollectSandboxStatusSnapshotDeps = {},
+): Promise<SandboxStatusReport> {
+  // The report is the machine-readable (--json) payload the CLI prints on
+  // stdout. Building it reconciles the gateway, and that path prints human
+  // progress to stdout via console.log (step(), gateway-start streaming).
+  // Redirect any such writes to stderr while the report is built so stdout
+  // carries only the JSON document.
+  return withStdoutRedirectedToStderr(() => buildSandboxStatusReport(sandboxName, deps));
+}
+
+async function buildSandboxStatusReport(
+  sandboxName: string,
+  deps: CollectSandboxStatusSnapshotDeps,
 ): Promise<SandboxStatusReport> {
   const preflight = await getSandboxStatusPreflight(registry.getSandbox(sandboxName));
   const snapshot = await collectSandboxStatusSnapshot(sandboxName, {
     suppressInferenceProbe: preflight.suppressInferenceProbe,
+    deps,
   });
   const { sb, lookup, rpcIssue, currentModel, currentProvider, inferenceHealth } = snapshot;
-  const dockerRuntime =
-    lookup.state === "present" ? getSandboxDockerRuntime(sandboxName) : null;
-  const phase =
-    lookup.state === "present" ? parseSandboxPhase(lookup.output || "") : null;
+  const dockerRuntime = lookup.state === "present" ? getSandboxDockerRuntime(sandboxName) : null;
+  const phase = lookup.state === "present" ? parseSandboxPhase(lookup.output || "") : null;
   const effectivePreflight = withoutTerminalPhasePreflight(preflight, phase);
-  const sandboxGpuEnabled = sb
-    ? (sb.sandboxGpuEnabled ?? (sb.gpuEnabled === true))
-    : false;
+  const sandboxGpuEnabled = sb ? (sb.sandboxGpuEnabled ?? sb.gpuEnabled === true) : false;
   const policies =
     sb && Array.isArray(sb.policies)
       ? sb.policies.filter((policy): policy is string => typeof policy === "string")
@@ -222,6 +237,7 @@ export async function getSandboxStatusReport(
     sandboxGpuEnabled,
     sandboxGpuMode: (sb && sb.sandboxGpuMode) || null,
     sandboxGpuDevice: (sb && sb.sandboxGpuDevice) || null,
+    sandboxGpuProof: (sb && sb.sandboxGpuProof) || null,
     openshellDriver: (sb && sb.openshellDriver) || "unknown",
     openshellVersion: (sb && sb.openshellVersion) || "unknown",
     policies,

@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -18,14 +17,12 @@ import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import * as agentRuntime from "../../agent/runtime";
 import { G, R } from "../../cli/terminal-style";
 import { DASHBOARD_PORT } from "../../core/ports";
-import { sleepSeconds } from "../../core/wait";
+import { sleepSeconds, waitUntil } from "../../core/wait";
 import { ROOT, shellQuote } from "../../runner";
 import * as registry from "../../state/registry";
 import { parseForwardList } from "../../state/sandbox-session";
-import {
-  classifyForwardHealthWithReachability,
-  isLocalForwardReachable,
-} from "./forward-health";
+import { classifyForwardHealthWithReachability, isLocalForwardReachable } from "./forward-health";
+import { printGatewayWedgeDiagnostics } from "./gateway-wedge-diagnostics";
 import {
   ensureHermesDashboardPortForwardIfEnabled as ensureHermesDashboardPortForward,
   getHermesDashboardRecoveryConfig,
@@ -61,12 +58,7 @@ export type SandboxForwardHealth = boolean | "occupied" | null;
 const SANDBOX_EXEC_STARTED_MARKER = "__NEMOCLAW_SANDBOX_EXEC_STARTED__";
 
 function isValidPort(value: unknown): value is number {
-  return (
-    typeof value === "number" &&
-    Number.isInteger(value) &&
-    value >= 1 &&
-    value <= 65535
-  );
+  return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 65535;
 }
 
 export function resolveSandboxDashboardPort(
@@ -256,8 +248,7 @@ export async function probeSandboxInferenceGatewayHealth(
   detail: string;
 } | null> {
   const endpoint = "https://inference.local/v1/models";
-  const command =
-    `HTTP_CODE=$(curl -so /dev/null -w '%{http_code}' --max-time 5 ${shellQuote(endpoint)} 2>/dev/null || echo 000); echo "$HTTP_CODE"`;
+  const command = `HTTP_CODE=$(curl -so /dev/null -w '%{http_code}' --max-time 5 ${shellQuote(endpoint)} 2>/dev/null || echo 000); echo "$HTTP_CODE"`;
   const exec = options.execImpl ?? executeSandboxExecCommandForStatus;
   const result = await exec(sandboxName, command);
   if (!result || result.status !== 0) return null;
@@ -320,7 +311,16 @@ function readNonNegativeNumberEnv(name: string, fallback: number): number {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
-function waitForRecoveredSandboxGateway(sandboxName: string): boolean {
+export function waitForRecoveredSandboxGateway(
+  sandboxName: string,
+  options: {
+    probeImpl?: (sandboxName: string) => boolean | null;
+    sleepImpl?: (seconds: number) => void;
+    quiet?: boolean;
+  } = {},
+): boolean {
+  const probe = options.probeImpl ?? isSandboxGatewayRunning;
+  const sleep = options.sleepImpl ?? sleepSeconds;
   const timeoutSeconds = readNonNegativeNumberEnv("NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS", 30);
   const intervalSeconds = readNonNegativeNumberEnv(
     "NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS",
@@ -331,15 +331,32 @@ function waitForRecoveredSandboxGateway(sandboxName: string): boolean {
       ? Math.max(1, Math.floor(timeoutSeconds / intervalSeconds) + 1)
       : Math.max(1, Math.floor(timeoutSeconds) + 1);
 
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    if (isSandboxGatewayRunning(sandboxName) === true) {
-      return true;
-    }
-    if (attempt < attempts - 1) {
-      sleepSeconds(intervalSeconds);
-    }
+  const recovered = waitUntil(() => probe(sandboxName) === true, {
+    initialIntervalMs: intervalSeconds * 1000,
+    maxIntervalMs: intervalSeconds * 1000,
+    backoffFactor: 1,
+    maxAttempts: attempts,
+    sleep: (ms) => sleep(ms / 1000),
+  });
+  if (!recovered) return false;
+
+  // #4710: a freshly relaunched gateway can serve for ~20s and then drop
+  // its HTTP listener while the process stays alive (a failed in-process
+  // restart triggered by a post-launch config write parks it deaf). One
+  // successful probe inside that window is not proof of recovery — wait
+  // out a settle window and require the gateway to still be serving.
+  // 0 disables the settle confirm.
+  // Source boundary and removal condition for this detection live in
+  // gateway-wedge-diagnostics.ts.
+  const settleSeconds = readNonNegativeNumberEnv("NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS", 25);
+  if (settleSeconds <= 0) {
+    return true;
   }
-  return false;
+  if (!options.quiet) {
+    console.log(`  Confirming the gateway stays responsive (~${settleSeconds}s)...`);
+  }
+  sleep(settleSeconds);
+  return probe(sandboxName) === true;
 }
 
 /**
@@ -376,10 +393,7 @@ function isSandboxForwardHealthy(sandboxName: string): SandboxForwardHealth {
   return isSandboxPortForwardHealthy(sandboxName, resolveSandboxDashboardPort(sandboxName));
 }
 
-function isSandboxPortForwardHealthy(
-  sandboxName: string,
-  port: number,
-): SandboxForwardHealth {
+function isSandboxPortForwardHealthy(sandboxName: string, port: number): SandboxForwardHealth {
   const result = captureOpenshell(["forward", "list"], {
     ignoreError: true,
     timeout: OPENSHELL_PROBE_TIMEOUT_MS,
@@ -400,9 +414,12 @@ function ensureSandboxPortForwardForPort(sandboxName: string, port: number): boo
     ignoreError: true,
     stdio: "ignore",
   });
-  const startResult = runOpenshell(["forward", "start", "--background", String(port), sandboxName], {
-    ignoreError: true,
-  });
+  const startResult = runOpenshell(
+    ["forward", "start", "--background", String(port), sandboxName],
+    {
+      ignoreError: true,
+    },
+  );
   if (startResult.status !== 0) return false;
   return isSandboxPortForwardHealthy(sandboxName, port) === true;
 }
@@ -482,8 +499,7 @@ export function checkAndRecoverSandboxProcesses(
       checked: true,
       wasRunning: true,
       recovered: false,
-      forwardRecovered:
-        dashboardForwardRecovered === true || dashboardProcessRecovered === true,
+      forwardRecovered: dashboardForwardRecovered === true || dashboardProcessRecovered === true,
     };
   }
 
@@ -500,9 +516,10 @@ export function checkAndRecoverSandboxProcesses(
   if (recovered) {
     // Wait for gateway to bind its HTTP port before declaring success. The
     // recovered process can be alive before the OpenAI-compatible API is ready.
-    if (!waitForRecoveredSandboxGateway(sandboxName)) {
+    if (!waitForRecoveredSandboxGateway(sandboxName, { quiet })) {
       if (!quiet) {
         console.error("  Gateway process started but is not responding.");
+        printGatewayWedgeDiagnostics(sandboxName, executeSandboxExecCommand);
         console.error("  Check /tmp/gateway.log inside the sandbox for details.");
         console.error("  Connect to the sandbox and run manually:");
         console.error(

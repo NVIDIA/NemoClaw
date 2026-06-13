@@ -2,13 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { HermesBuildSettings } from "./build-env.ts";
-import {
-  applyManagedToolConfig,
-  loadManagedToolGatewayMatrix,
-} from "./managed-tool-gateway.ts";
-import { buildDiscordConfig } from "./messaging-config.ts";
+import { applyManagedToolConfig, loadManagedToolGatewayMatrix } from "./managed-tool-gateway.ts";
 
-const API_SERVER_TOOLSETS = [
+const REMOTE_PLATFORM_TOOLSETS = [
   "web",
   "browser",
   "terminal",
@@ -26,15 +22,40 @@ const API_SERVER_TOOLSETS = [
   "audio",
 ];
 
+function hermesApiMode(inferenceApi: string): string | null {
+  switch (inferenceApi) {
+    case "":
+    case "openai-completions":
+      return null;
+    case "anthropic-messages":
+      return "anthropic_messages";
+    case "openai-responses":
+      return "codex_responses";
+    default:
+      throw new Error(`Unsupported Hermes inference API: ${inferenceApi}`);
+  }
+}
+
 export function buildHermesConfig(settings: HermesBuildSettings): Record<string, unknown> {
-  const apiServerToolsets = [...API_SERVER_TOOLSETS];
+  const remotePlatformToolsets = buildHermesRemotePlatformToolsets(settings);
+  const modelConfig: Record<string, unknown> = {
+    default: settings.model,
+    provider: "custom",
+    base_url: settings.baseUrl,
+    api_key: "sk-OPENSHELL-PROXY-REWRITE",
+  };
+  const apiMode = hermesApiMode(settings.inferenceApi);
+  if (apiMode) modelConfig.api_mode = apiMode;
+
+  const upstream: Record<string, unknown> = {
+    provider: settings.upstreamProvider,
+    model: settings.model,
+  };
+
   const config: Record<string, unknown> = {
     _config_version: 12,
-    model: {
-      default: settings.model,
-      provider: "custom",
-      base_url: settings.baseUrl,
-    },
+    _nemoclaw_upstream: upstream,
+    model: modelConfig,
     terminal: {
       backend: "local",
       timeout: 180,
@@ -58,16 +79,18 @@ export function buildHermesConfig(settings: HermesBuildSettings): Record<string,
       enabled: ["nemoclaw"],
     },
     platform_toolsets: {
-      api_server: apiServerToolsets,
+      api_server: remotePlatformToolsets,
+    },
+    platforms: {
+      api_server: {
+        enabled: true,
+        extra: {
+          port: 18642,
+          host: "127.0.0.1",
+        },
+      },
     },
   };
-
-  // Hermes v2026.4.23+ reads Discord behavior from top-level `discord:`.
-  // Bot tokens and user allowlists stay in .env so config.yaml never carries
-  // real secrets or credential placeholders under platforms.discord.
-  if (settings.messaging.enabledChannels.has("discord")) {
-    config.discord = buildDiscordConfig(settings.messaging.discordGuilds);
-  }
 
   if (settings.managedToolGateways.brokerEnabled) {
     const matrix = loadManagedToolGatewayMatrix();
@@ -78,36 +101,46 @@ export function buildHermesConfig(settings: HermesBuildSettings): Record<string,
       }
       applyManagedToolConfig(config, entry.config);
     }
-    if (
-      settings.managedToolGateways.presets.includes("nous-audio") &&
-      !apiServerToolsets.includes("tts")
-    ) {
-      apiServerToolsets.push("tts");
-    }
   }
-
-  const telegramConfig = settings.messaging.telegramConfig;
-  if (
-    settings.messaging.enabledChannels.has("telegram") &&
-    typeof telegramConfig.requireMention === "boolean"
-  ) {
-    config.telegram = {
-      require_mention: telegramConfig.requireMention,
-    };
-  }
-
-  // API server — internal port only.
-  // Hermes binds to 127.0.0.1 regardless of config (upstream bug).
-  // socat in start.sh forwards 0.0.0.0:8642 -> 127.0.0.1:18642.
-  config.platforms = {
-    api_server: {
-      enabled: true,
-      extra: {
-        port: 18642,
-        host: "127.0.0.1",
-      },
-    },
-  };
 
   return config;
+}
+
+export function finalizeHermesPlatformToolsets(
+  config: Record<string, unknown>,
+  settings: HermesBuildSettings,
+): void {
+  addEnabledPlatformToolsets(config, buildHermesRemotePlatformToolsets(settings));
+}
+
+function buildHermesRemotePlatformToolsets(settings: HermesBuildSettings): string[] {
+  const remotePlatformToolsets = [...REMOTE_PLATFORM_TOOLSETS];
+  if (
+    settings.managedToolGateways.brokerEnabled &&
+    settings.managedToolGateways.presets.includes("nous-audio") &&
+    !remotePlatformToolsets.includes("tts")
+  ) {
+    remotePlatformToolsets.push("tts");
+  }
+  return remotePlatformToolsets;
+}
+
+function addEnabledPlatformToolsets(
+  config: Record<string, unknown>,
+  remotePlatformToolsets: readonly string[],
+): void {
+  const platformToolsets = config.platform_toolsets as Record<string, string[]>;
+  const platforms = config.platforms as Record<string, unknown>;
+  for (const [platform, platformConfig] of Object.entries(platforms)) {
+    if (platform === "api_server" || !isEnabledPlatform(platformConfig)) continue;
+    platformToolsets[platform] = [...remotePlatformToolsets];
+  }
+}
+
+function isEnabledPlatform(value: unknown): boolean {
+  return isObject(value) && value.enabled === true;
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

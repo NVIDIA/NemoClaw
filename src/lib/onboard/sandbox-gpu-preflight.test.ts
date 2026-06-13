@@ -46,9 +46,7 @@ describe("sandbox GPU preflight", () => {
   });
 
   it("parses Docker runtime names from JSON and plain-text output", () => {
-    expect(parseDockerRuntimeNames('{"io.containerd.runc.v2":{},"nvidia":{}}')).toContain(
-      "nvidia",
-    );
+    expect(parseDockerRuntimeNames('{"io.containerd.runc.v2":{},"nvidia":{}}')).toContain("nvidia");
     expect(parseDockerRuntimeNames("runc nvidia io.containerd.runc.v2")).toContain("nvidia");
     expect(parseDockerRuntimeNames("<no value>")).toEqual([]);
   });
@@ -84,6 +82,8 @@ describe("sandbox GPU preflight", () => {
       validateSandboxGpuPreflight(sandboxGpuConfig(), {
         platform: "linux",
         env: {},
+        release: "6.8.0-generic",
+        procVersion: "Linux version 6.8.0-generic",
         dockerInfoFormat: dockerInfo,
         getDockerCdiSpecDirs,
         findReadableNvidiaCdiSpecFiles,
@@ -121,7 +121,9 @@ describe("sandbox GPU preflight", () => {
 
   it("prints neutral WSL remediation when Docker runtime cannot be determined", () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number | string | null) => {
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((
+      code?: number | string | null,
+    ) => {
       throw new Error(`exit:${code}`);
     }) as never);
 
@@ -156,25 +158,152 @@ describe("sandbox GPU preflight", () => {
     );
   });
 
-  it("treats optional direct sandbox GPU proof failures as non-fatal", () => {
+  it("treats optional direct sandbox GPU proof failures as non-fatal and reports unverified", () => {
     const runOpenshell = vi.fn(() => ({ status: 1, stdout: "", stderr: "optional proof failed" }));
     const verifier = createDirectSandboxGpuVerifier({
       runOpenshell,
+      detectNvidiaPlatform: () => "linux",
       buildDirectSandboxGpuProofCommands: vi.fn(() => [
-        { args: ["sandbox", "exec", "demo", "--", "nvidia-smi"], label: "nvidia-smi", optional: true },
-        { args: ["sandbox", "exec", "demo", "--", "false"], label: "fatal proof" },
+        {
+          id: "nvidia-smi",
+          args: ["sandbox", "exec", "demo", "--", "nvidia-smi"],
+          label: "nvidia-smi",
+          optional: true,
+        },
+        {
+          id: "cuda-init",
+          args: ["sandbox", "exec", "demo", "--", "false"],
+          label: "cuda-init",
+          optional: true,
+        },
       ]),
       compactText: (value) => value.trim(),
       redact: (value) => String(value),
     });
 
-    expect(() => verifier("demo")).not.toThrow();
-    expect(runOpenshell).toHaveBeenCalledTimes(1);
+    let result: ReturnType<typeof verifier> | undefined;
+    expect(() => {
+      result = verifier("demo");
+    }).not.toThrow();
+    // Optional failures no longer short-circuit; every optional proof runs so
+    // the CUDA-usability outcome is observed rather than swallowed (#4231).
+    expect(runOpenshell).toHaveBeenCalledTimes(2);
+    expect(result?.status).toBe("unverified");
+    expect(result?.cudaVerified).toBe(false);
+  });
+
+  it("reports failed when the CUDA usability proof reaches the driver and fails (#4231)", () => {
+    const verifier = createDirectSandboxGpuVerifier({
+      runOpenshell: vi.fn((args: string[]) => {
+        if (args.includes("cuda-init-cmd")) {
+          return { status: 1, stdout: "cuInit(0)=999", stderr: "" };
+        }
+        return { status: 0, stdout: "", stderr: "" };
+      }),
+      detectNvidiaPlatform: () => "jetson",
+      buildDirectSandboxGpuProofCommands: vi.fn(() => [
+        {
+          id: "nvidia-smi",
+          args: ["sandbox", "exec", "demo", "--", "nvidia-smi"],
+          label: "nvidia-smi",
+        },
+        {
+          id: "cuda-init",
+          args: ["sandbox", "exec", "demo", "--", "cuda-init-cmd"],
+          label: "cuInit(0)",
+          optional: true,
+        },
+      ]),
+      compactText: (value) => value.trim(),
+      redact: (value) => String(value),
+    });
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const result = verifier("demo");
+      expect(result.status).toBe("failed");
+      expect(result.cudaVerified).toBe(false);
+      expect(result.detail).toContain("cuInit(0)=999");
+      const warnings = warnSpy.mock.calls.map((call) => call[0]).join("\n");
+      expect(warnings).toContain("/dev/nvmap");
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("reports verified when the CUDA usability proof passes", () => {
+    const verifier = createDirectSandboxGpuVerifier({
+      runOpenshell: vi.fn(() => ({ status: 0, stdout: "cuInit(0)=0", stderr: "" })),
+      detectNvidiaPlatform: () => "linux",
+      buildDirectSandboxGpuProofCommands: vi.fn(() => [
+        {
+          id: "cuda-init",
+          args: ["sandbox", "exec", "demo", "--", "cuda"],
+          label: "cuInit(0)",
+          optional: true,
+        },
+      ]),
+      compactText: (value) => value.trim(),
+      redact: (value) => String(value),
+    });
+
+    const result = verifier("demo");
+    expect(result.status).toBe("verified");
+    expect(result.cudaVerified).toBe(true);
+  });
+
+  it("does not report verified when cuda-init exits 0 without the cuInit marker", () => {
+    // A zero exit that never printed `cuInit(0)=` (e.g. a wrapper that swallowed
+    // the real exit code) must not be trusted as CUDA-verified.
+    const verifier = createDirectSandboxGpuVerifier({
+      runOpenshell: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
+      detectNvidiaPlatform: () => "linux",
+      buildDirectSandboxGpuProofCommands: vi.fn(() => [
+        {
+          id: "cuda-init",
+          args: ["sandbox", "exec", "demo", "--", "cuda"],
+          label: "cuInit(0)",
+          optional: true,
+        },
+      ]),
+      compactText: (value) => value.trim(),
+      redact: (value) => String(value),
+    });
+
+    const result = verifier("demo");
+    expect(result.status).toBe("unverified");
+    expect(result.cudaVerified).toBe(false);
+  });
+
+  it("treats a zero exit with a non-zero cuInit code as failed, not verified (#4231)", () => {
+    // A wrapper that swallows the probe's non-zero exit but still prints a
+    // non-zero `cuInit(0)=<err>` reached the driver and CUDA failed; it must not
+    // read as verified just because the process exited 0.
+    const verifier = createDirectSandboxGpuVerifier({
+      runOpenshell: vi.fn(() => ({ status: 0, stdout: "cuInit(0)=999", stderr: "" })),
+      detectNvidiaPlatform: () => "linux",
+      buildDirectSandboxGpuProofCommands: vi.fn(() => [
+        {
+          id: "cuda-init",
+          args: ["sandbox", "exec", "demo", "--", "cuda"],
+          label: "cuInit(0)",
+          optional: true,
+        },
+      ]),
+      compactText: (value) => value.trim(),
+      redact: (value) => String(value),
+    });
+
+    const result = verifier("demo");
+    expect(result.status).toBe("failed");
+    expect(result.cudaVerified).toBe(false);
+    expect(result.detail).toContain("cuInit(0)=999");
   });
 
   it("throws on required direct sandbox GPU proof failures", () => {
     const verifier = createDirectSandboxGpuVerifier({
       runOpenshell: vi.fn(() => ({ status: 1, stdout: "", stderr: "required proof failed" })),
+      detectNvidiaPlatform: () => "linux",
       buildDirectSandboxGpuProofCommands: vi.fn(() => [
         { args: ["sandbox", "exec", "demo", "--", "false"], label: "fatal proof" },
       ]),
@@ -192,6 +321,7 @@ describe("sandbox GPU preflight", () => {
       env: { WSL_DISTRO_NAME: "Ubuntu" },
       dockerInfoFormat: vi.fn(() => '"Docker Desktop"'),
       runOpenshell: vi.fn(() => ({ status: 1, stdout: "", stderr: "required proof failed" })),
+      detectNvidiaPlatform: () => "linux",
       buildDirectSandboxGpuProofCommands: vi.fn(() => [
         { args: ["sandbox", "exec", "demo", "--", "false"], label: "fatal proof" },
       ]),
@@ -212,7 +342,9 @@ describe("sandbox GPU preflight", () => {
 
   it("exits with an explicit Jetson NVIDIA runtime message when runtime support is missing", () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number | string | null) => {
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((
+      code?: number | string | null,
+    ) => {
       throw new Error(`exit:${code}`);
     }) as never);
 

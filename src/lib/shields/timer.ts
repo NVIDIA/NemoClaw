@@ -16,7 +16,8 @@ import { run } from "../runner";
 import { resolveAgentConfig } from "../sandbox/config";
 import { resolveNemoclawStateDir } from "../state/paths";
 import { appendAuditEntry, type ShieldsAuditEntry } from "./audit";
-import { lockAgentConfig } from "./index";
+import * as shields from "./index";
+import { relockAndReconfirm } from "./relock-reconfirm";
 
 interface ShieldsStatePatch {
   shieldsDown?: boolean;
@@ -40,6 +41,8 @@ interface TimerArgs {
   configDir?: string;
   processToken?: string;
 }
+
+type LockAgentConfig = typeof shields.lockAgentConfig;
 
 const STATE_DIR = resolveNemoclawStateDir();
 
@@ -115,6 +118,17 @@ function readTimerMarker(markerPath: string): UnknownRecord | null {
   } catch {
     return null;
   }
+}
+
+function resolveLockAgentConfig(): LockAgentConfig {
+  // The timer is a detached child process that must never mark shields up
+  // unless it can call the lock verifier. Guard the CommonJS export boundary
+  // so packaging/mock drift leaves shields down with an auditable warning.
+  const lockAgentConfig = shields.lockAgentConfig;
+  if (typeof lockAgentConfig !== "function") {
+    throw new Error("Shields lock helper is unavailable; cannot verify auto-restore lock state");
+  }
+  return lockAgentConfig;
 }
 
 function markerMatchesCurrentTimer(args: TimerArgs): boolean {
@@ -229,9 +243,28 @@ function runRestoreTimer(args: TimerArgs): void {
       }
       if (lockTarget) {
         try {
-          const lockResult = lockAgentConfig(args.sandboxName, lockTarget);
-          lockedChattr = lockResult.chattrApplied;
-          lockedHashes = lockResult.fileHashes;
+          const lockAgentConfig = resolveLockAgentConfig();
+          // #4663: a single instantaneous lock+verify cannot prove an
+          // in-sandbox reconciler didn't re-permission .config-hash after the
+          // verified lock returned. Re-confirm the lock held once the gateway
+          // has settled, re-applying if it drifted. This narrows (does not
+          // close) the revert window; fail closed (leave shields DOWN + audit)
+          // when the lock will not re-confirm within the retry budget.
+          const relock = relockAndReconfirm(() => lockAgentConfig(args.sandboxName, lockTarget));
+          if (relock.ok && relock.lastResult) {
+            lockedChattr = relock.lastResult.chattrApplied;
+            lockedHashes = relock.lastResult.fileHashes;
+          } else {
+            lockVerified = false;
+            appendAudit({
+              action: "shields_auto_restore_lock_warning",
+              sandbox: args.sandboxName,
+              timestamp: now,
+              restored_by: "auto_timer",
+              warning: relock.error ?? "Config re-lock did not re-confirm after settle window",
+              lock_verified: false,
+            });
+          }
         } catch (error: unknown) {
           lockVerified = false;
           appendAudit({
@@ -314,9 +347,4 @@ if (require.main === module) {
   main();
 }
 
-export {
-  markerMatchesCurrentTimer,
-  parseTimerArgs,
-  readTimerMarker,
-  runRestoreTimer,
-};
+export { markerMatchesCurrentTimer, parseTimerArgs, readTimerMarker, runRestoreTimer };

@@ -7,6 +7,7 @@ import type {
   MessagingHookRegistration,
 } from "../../../hooks/types";
 import type { MessagingSerializableValue } from "../../../manifest";
+import { normalizeWechatIlinkBaseUrl } from "../ilink-base-url";
 
 export interface WechatLoginCredentials {
   readonly token: string;
@@ -16,7 +17,11 @@ export interface WechatLoginCredentials {
 }
 
 export type WechatLoginResult =
-  | { readonly kind: "ok"; readonly credentials: WechatLoginCredentials }
+  | {
+      readonly kind: "ok";
+      readonly credentials: WechatLoginCredentials;
+      readonly summary?: string;
+    }
   | { readonly kind: "timeout" }
   | { readonly kind: "expired"; readonly reason?: string }
   | { readonly kind: "aborted" }
@@ -28,12 +33,20 @@ export interface WechatIlinkLoginHookOptions {
   readonly env?: NodeJS.ProcessEnv;
   readonly runLogin?: () => Promise<WechatLoginResult>;
   readonly saveCredential?: (key: string, value: string) => void;
+  readonly log?: (message: string) => void;
 }
 
 export function createWechatIlinkLoginHook(
   options: WechatIlinkLoginHookOptions = {},
 ): MessagingHookHandler {
   return async (context) => {
+    if (context.isInteractive === false) {
+      (options.log ?? console.log)(
+        `  Skipped ${context.channelId} (host QR login requires interactive mode)`,
+      );
+      throw new Error("WeChat host QR login requires interactive mode.");
+    }
+
     const runLogin = options.runLogin;
     if (!runLogin) {
       throw new Error(
@@ -42,7 +55,9 @@ export function createWechatIlinkLoginHook(
     }
     const result = await runLogin();
     if (result.kind !== "ok") {
-      throw new Error(`WeChat host QR login failed: ${wechatFailureReason(result)}.`);
+      const reason = wechatFailureReason(result);
+      (options.log ?? console.log)(`  Skipped ${context.channelId} (${reason})`);
+      throw new Error(`WeChat host QR login failed: ${reason}.`);
     }
 
     const env = options.env ?? process.env;
@@ -53,12 +68,15 @@ export function createWechatIlinkLoginHook(
       );
     }
     const { token, accountId, baseUrl, userId } = result.credentials;
+    const normalizedBaseUrl = normalizeWechatIlinkBaseUrl(baseUrl);
 
     saveCredential("WECHAT_BOT_TOKEN", token);
     env.WECHAT_BOT_TOKEN = token;
     env.WECHAT_ACCOUNT_ID = accountId;
-    if (baseUrl) env.WECHAT_BASE_URL = baseUrl;
+    if (normalizedBaseUrl) env.WECHAT_BASE_URL = normalizedBaseUrl;
     if (userId) env.WECHAT_USER_ID = userId;
+    const suffix = result.summary ? ` (${result.summary})` : "";
+    (options.log ?? console.log)(`  ✓ ${context.channelId} token saved${suffix}`);
 
     const outputs: Record<string, MessagingHookOutputMap[string]> = {
       botToken: {
@@ -71,10 +89,10 @@ export function createWechatIlinkLoginHook(
       },
     };
 
-    if (baseUrl) {
+    if (normalizedBaseUrl) {
       outputs.baseUrl = {
         kind: "config",
-        value: baseUrl,
+        value: normalizedBaseUrl,
       };
     }
     if (userId) {
@@ -140,5 +158,9 @@ function normalizeCsvValues(value: string): string[] {
 }
 
 function normalizeCredentialValue(value: string): string {
-  return value.replace(/\r/g, "").trim();
+  const normalized = value.trim();
+  if (/[\r\n]/.test(normalized)) {
+    throw new Error("WeChat config values must not contain line breaks.");
+  }
+  return normalized;
 }

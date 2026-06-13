@@ -22,6 +22,28 @@ RUN set -eu; \
     test -x /usr/local/bin/hermes; \
     /usr/local/bin/hermes --version
 
+# Published base images can lag Dockerfile.base while local feature branches
+# still layer this final image on top. Invalid state: the selected base has
+# Hermes source under /opt/hermes but lacks hermes_cli/web_dist. Prebuild the
+# dashboard bundle here too so `hermes dashboard` never tries to run npm from
+# the sandbox user account. Remove this fallback after all supported base image
+# tags are built from Dockerfile.base with HERMES_WEB_DIST prepopulated.
+RUN set -eu; \
+    hermes_web_dist=/opt/hermes/hermes_cli/web_dist; \
+    hermes_web_dir=/opt/hermes/web; \
+    if [ ! -d "$hermes_web_dist" ]; then \
+        if [ ! -f "$hermes_web_dir/package.json" ]; then \
+            echo "ERROR: Hermes dashboard source missing at $hermes_web_dir" >&2; \
+            exit 1; \
+        fi; \
+        npm ci --prefix "$hermes_web_dir" --prefer-offline --no-audit --no-fund; \
+        npm run build --prefix "$hermes_web_dir"; \
+        rm -rf "$hermes_web_dir/node_modules"; \
+    fi; \
+    test -d "$hermes_web_dist"
+
+ENV HERMES_WEB_DIST="/opt/hermes/hermes_cli/web_dist"
+
 # Harden: remove unnecessary build tools and network probes
 RUN (apt-get remove --purge -y gcc gcc-12 g++ g++-12 cpp cpp-12 make \
         netcat-openbsd netcat-traditional ncat 2>/dev/null || true) \
@@ -46,6 +68,7 @@ RUN _hermes_certifi=$(/opt/hermes/.venv/bin/python -c 'import certifi; print(cer
 # placeholder rewriting, hostname-based policy enforcement, and native
 # WebSocket credential rewrite at the egress boundary.
 ENV HERMES_TELEGRAM_DISABLE_FALLBACK_IPS=1
+ENV HERMES_TUI_DIR="/opt/hermes/ui-tui"
 
 # Copy NemoClaw plugin for Hermes (Python-based)
 COPY agents/hermes/plugin/ /opt/nemoclaw-hermes-plugin/
@@ -55,41 +78,52 @@ RUN chmod -R a+rX /opt/nemoclaw-hermes-plugin/
 COPY agents/hermes/generate-config.ts /opt/nemoclaw-hermes-config/generate-config.ts
 COPY agents/hermes/config/ /opt/nemoclaw-hermes-config/config/
 COPY agents/hermes/host/managed-tool-gateway-matrix.json /opt/nemoclaw-hermes-config/managed-tool-gateway-matrix.json
+COPY src/lib/messaging/ /src/lib/messaging/
 RUN find /opt/nemoclaw-hermes-config -type d -exec chmod 755 {} + \
-    && find /opt/nemoclaw-hermes-config -type f -exec chmod 444 {} +
+    && find /opt/nemoclaw-hermes-config -type f -exec chmod 444 {} + \
+    && chmod -R a+rX /src/lib/messaging
 
 # Copy blueprint (shared infrastructure)
 COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
 # Ensure sandbox user can read blueprint files copied as root
 RUN chmod -R a+rX /opt/nemoclaw-blueprint/
 
-# Copy startup script
+# Copy startup script and the secret-boundary validator. The validator is the
+# single source of truth shared between start.sh (cold start) and the host-side
+# gateway recovery script (src/lib/agent/runtime.ts) so `sandbox recover` enforces
+# the same boundary as the initial entrypoint.
 COPY scripts/lib/sandbox-init.sh /usr/local/lib/nemoclaw/sandbox-init.sh
 COPY agents/hermes/start.sh /usr/local/bin/nemoclaw-start
-RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/lib/nemoclaw/sandbox-init.sh
+COPY agents/hermes/validate-env-secret-boundary.py /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py
+RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/lib/nemoclaw/sandbox-init.sh /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py
+
+# Wrap the hermes CLI so the runtime env secret boundary is enforced for
+# `hermes gateway` no matter how it is invoked. The entrypoint guard alone left
+# a direct `docker exec ... hermes gateway run` able to start the gateway with
+# raw secret-shaped env vars (#4975). Relocate the real binary and install the
+# wrapper in its place; the wrapper reuses the same validator and execs the real
+# binary for every non-gateway subcommand. Re-assert --version through the
+# wrapper so a broken relocation fails the build.
+COPY agents/hermes/hermes-wrapper.sh /usr/local/lib/nemoclaw/hermes-wrapper.sh
+RUN mv /usr/local/bin/hermes /usr/local/bin/hermes.real \
+    && install -m 0755 /usr/local/lib/nemoclaw/hermes-wrapper.sh /usr/local/bin/hermes \
+    && chmod 755 /usr/local/bin/hermes.real \
+    && /usr/local/bin/hermes --version
 
 # Build args for config that varies per deployment.
 ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b
 ARG NEMOCLAW_PROVIDER_KEY=custom
+# User-selected upstream provider name (nvidia-prod, hermes-provider, ...).
+# Distinct from NEMOCLAW_PROVIDER_KEY, which carries the managed route key
+# ("inference" for proxied providers) needed at routing/runtime.
+ARG NEMOCLAW_UPSTREAM_PROVIDER=custom
 ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1
+ARG NEMOCLAW_INFERENCE_API=openai-completions
 # CHAT_UI_URL is a legacy name shared with the OpenClaw build arg. For
-# Hermes this URL points at the OpenAI-compatible API server (port 8642,
-# exposing /v1 and /health), NOT a browser chat UI. Callers authenticate
-# via a bearer token in the Authorization header. See
-# agents/hermes/manifest.yaml (dashboard.kind: api).
-ARG CHAT_UI_URL=http://127.0.0.1:8642
-ARG NEMOCLAW_MESSAGING_CHANNELS_B64=W10=
-ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=e30=
-ARG NEMOCLAW_DISCORD_GUILDS_B64=e30=
-ARG NEMOCLAW_TELEGRAM_CONFIG_B64=e30=
-# Captured by NemoClaw's host-side iLink QR login during onboard (see
-# src/lib/onboard/wechat-config.ts). Carries {accountId, baseUrl, userId} so
-# the Hermes WeChat adapter starts with WEIXIN_ACCOUNT_ID/WEIXIN_BASE_URL
-# already populated from .env; no in-sandbox QR re-scan. The token itself
-# is never baked here — it flows through the OpenShell L7 proxy via the
-# WECHAT_BOT_TOKEN credential slot.
-ARG NEMOCLAW_WECHAT_CONFIG_B64=e30=
-ARG NEMOCLAW_SLACK_CONFIG_B64=e30=
+# Hermes this URL points at the browser dashboard. The OpenAI-compatible
+# API remains exposed separately on port 8642.
+ARG CHAT_UI_URL=http://127.0.0.1:18789
+ARG NEMOCLAW_MESSAGING_PLAN_B64=
 ARG NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER=0
 ARG NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64=W10=
 ARG NEMOCLAW_BUILD_ID=default
@@ -98,14 +132,11 @@ ARG NEMOCLAW_DARWIN_VM_COMPAT=0
 # Promote build-args to env vars for the config generation script.
 ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_PROVIDER_KEY=${NEMOCLAW_PROVIDER_KEY} \
+    NEMOCLAW_UPSTREAM_PROVIDER=${NEMOCLAW_UPSTREAM_PROVIDER} \
     NEMOCLAW_INFERENCE_BASE_URL=${NEMOCLAW_INFERENCE_BASE_URL} \
+    NEMOCLAW_INFERENCE_API=${NEMOCLAW_INFERENCE_API} \
     CHAT_UI_URL=${CHAT_UI_URL} \
-    NEMOCLAW_MESSAGING_CHANNELS_B64=${NEMOCLAW_MESSAGING_CHANNELS_B64} \
-    NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=${NEMOCLAW_MESSAGING_ALLOWED_IDS_B64} \
-    NEMOCLAW_DISCORD_GUILDS_B64=${NEMOCLAW_DISCORD_GUILDS_B64} \
-    NEMOCLAW_TELEGRAM_CONFIG_B64=${NEMOCLAW_TELEGRAM_CONFIG_B64} \
-    NEMOCLAW_WECHAT_CONFIG_B64=${NEMOCLAW_WECHAT_CONFIG_B64} \
-    NEMOCLAW_SLACK_CONFIG_B64=${NEMOCLAW_SLACK_CONFIG_B64} \
+    NEMOCLAW_MESSAGING_PLAN_B64=${NEMOCLAW_MESSAGING_PLAN_B64} \
     NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER=${NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER} \
     NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64=${NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64}
 
@@ -123,9 +154,18 @@ RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0 \
 # code injection via build-arg interpolation (same concern as OpenClaw C-2).
 RUN node --experimental-strip-types /opt/nemoclaw-hermes-config/generate-config.ts
 
+# Apply messaging agent-install hooks before Hermes plugin installation.
+# hadolint ignore=DL3059
+RUN node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent hermes --phase agent-install
+
 # Install NemoClaw plugin into Hermes
+# hadolint ignore=DL3059
 RUN mkdir -p /sandbox/.hermes/plugins/nemoclaw \
     && cp -r /opt/nemoclaw-hermes-plugin/* /sandbox/.hermes/plugins/nemoclaw/
+
+# Apply messaging render and post-agent-install build-file hooks after agent/plugin installation.
+# hadolint ignore=DL3059
+RUN node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent hermes --phase post-agent-install
 
 # Write the default SOUL.md (agent identity) for the sandboxed agent.
 # This is the stock Hermes default soul (hermes_cli/default_soul.py,
@@ -299,7 +339,10 @@ RUN set -eu; \
     && for name in state.db state.db-wal state.db-shm gateway.lock gateway_state.json channel_directory.json; do \
         rm -f "/sandbox/.hermes/${name}"; \
         ln -s "runtime/${name}" "/sandbox/.hermes/${name}"; \
-    done
+    done \
+    && : > /sandbox/.hermes/.hermes_history \
+    && chown sandbox:sandbox /sandbox/.hermes/.hermes_history \
+    && chmod 660 /sandbox/.hermes/.hermes_history
 
 # Pin config hash at build time for integrity verification at startup.
 RUN mkdir -p /etc/nemoclaw \

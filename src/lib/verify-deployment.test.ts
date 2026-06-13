@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, it, expect } from "vitest";
-import { verifyDeployment, formatVerificationDiagnostics } from "../../dist/lib/verify-deployment.js";
+import {
+  verifyDeployment,
+  formatVerificationDiagnostics,
+} from "../../dist/lib/verify-deployment.js";
 import { buildChain } from "../../dist/lib/dashboard/contract.js";
 
 const chain = buildChain();
@@ -13,7 +16,11 @@ const NO_RETRY = { retryDelaysMs: [], sleep: async (_ms: number) => {} };
 
 function makeDeps(overrides: Record<string, unknown> = {}) {
   return {
-    executeSandboxCommand: (_name: string, _script: string) => ({ status: 0, stdout: "200", stderr: "" }),
+    executeSandboxCommand: (_name: string, _script: string) => ({
+      status: 0,
+      stdout: "200",
+      stderr: "",
+    }),
     probeHostPort: (_port: number, _path: string) => 200,
     captureForwardList: () => "my-sandbox  127.0.0.1  18789  12345  running",
     getMessagingChannels: (_name: string) => [] as string[],
@@ -110,7 +117,7 @@ describe("verifyDeployment", () => {
   it("messaging failure is a warning, not a blocker", async () => {
     const deps = makeDeps({
       getMessagingChannels: () => ["slack", "discord"],
-      providerExistsInGateway: (name: string) => name !== "discord",
+      providerExistsInGateway: (name: string) => name !== "my-sandbox-discord-bridge",
     });
     const result = await verifyDeployment("my-sandbox", chain, deps, NO_RETRY);
     expect(result.healthy).toBe(true); // messaging is non-blocking
@@ -156,7 +163,8 @@ describe("verifyDeployment", () => {
         configuredChannels: ["telegram"],
         configuredButNotRunning: ["telegram"],
         logProbeOk: true,
-        detail: "config /sandbox/.openclaw/openclaw.json parsed and gateway log /tmp/gateway.log corroborated",
+        detail:
+          "config /sandbox/.openclaw/openclaw.json parsed and gateway log /tmp/gateway.log corroborated",
       }),
     });
     const result = await verifyDeployment("my-sandbox", chain, deps, NO_RETRY);
@@ -209,7 +217,8 @@ describe("verifyDeployment", () => {
         configuredChannels: ["telegram"],
         configuredButNotRunning: [],
         logProbeOk: false,
-        detail: "config /sandbox/.openclaw/openclaw.json parsed; gateway log /tmp/gateway.log unreadable, runtime confirmation skipped",
+        detail:
+          "config /sandbox/.openclaw/openclaw.json parsed; gateway log /tmp/gateway.log unreadable, runtime confirmation skipped",
       }),
     });
     const result = await verifyDeployment("my-sandbox", chain, deps, NO_RETRY);
@@ -240,7 +249,8 @@ describe("verifyDeployment", () => {
         configuredChannels: [],
         configuredButNotRunning: [],
         logProbeOk: false,
-        detail: "config /sandbox/.openclaw/openclaw.json parsed; gateway log /tmp/gateway.log unreadable, runtime confirmation skipped",
+        detail:
+          "config /sandbox/.openclaw/openclaw.json parsed; gateway log /tmp/gateway.log unreadable, runtime confirmation skipped",
       }),
     });
     const result = await verifyDeployment("my-sandbox", chain, deps, NO_RETRY);
@@ -314,13 +324,13 @@ describe("verifyDeployment", () => {
     const deps = makeDeps({
       executeSandboxCommand: (_name: string, script: string) => {
         if (script.includes("openclaw --version")) {
-          return { status: 0, stdout: "2026.5.22", stderr: "" };
+          return { status: 0, stdout: "2026.5.27", stderr: "" };
         }
         return { status: 0, stdout: "200", stderr: "" };
       },
     });
     const result = await verifyDeployment("my-sandbox", chain, deps, NO_RETRY);
-    expect(result.verification.gatewayVersion).toBe("2026.5.22");
+    expect(result.verification.gatewayVersion).toBe("2026.5.27");
   });
 
   it("reports null version when gateway is down (skips version probe)", async () => {
@@ -369,7 +379,7 @@ describe("verifyDeployment", () => {
     const deps = makeDeps({
       executeSandboxCommand: (_name: string, script: string) => {
         if (script.includes("openclaw --version")) {
-          return { status: 0, stdout: "2026.5.22", stderr: "" };
+          return { status: 0, stdout: "2026.5.27", stderr: "" };
         }
         if (script.includes("inference.local")) {
           return { status: 0, stdout: "200", stderr: "" };
@@ -427,17 +437,22 @@ describe("verifyDeployment", () => {
 
 describe("formatVerificationDiagnostics", () => {
   it("prints success message when healthy", async () => {
-    const result = await verifyDeployment("my-sandbox", chain, makeDeps({
-      executeSandboxCommand: (_name: string, script: string) => {
-        if (script.includes("openclaw --version")) {
-          return { status: 0, stdout: "2026.5.22", stderr: "" };
-        }
-        return { status: 0, stdout: "200", stderr: "" };
-      },
-    }), NO_RETRY);
+    const result = await verifyDeployment(
+      "my-sandbox",
+      chain,
+      makeDeps({
+        executeSandboxCommand: (_name: string, script: string) => {
+          if (script.includes("openclaw --version")) {
+            return { status: 0, stdout: "2026.5.27", stderr: "" };
+          }
+          return { status: 0, stdout: "200", stderr: "" };
+        },
+      }),
+      NO_RETRY,
+    );
     const lines = formatVerificationDiagnostics(result);
     expect(lines.some((l) => l.includes("verified"))).toBe(true);
-    expect(lines.some((l) => l.includes("2026.5.22"))).toBe(true);
+    expect(lines.some((l) => l.includes("2026.5.27"))).toBe(true);
   });
 
   it("prints failure diagnostics with hints when unhealthy", async () => {
@@ -479,6 +494,8 @@ describe("formatVerificationDiagnostics", () => {
     const lines = formatVerificationDiagnostics(result);
     expect(lines.some((l) => l.includes("verified"))).toBe(true);
     expect(lines.some((l) => l.includes("messaging:"))).toBe(true);
-    expect(lines.some((l) => l.includes("configured but not in OpenClaw runtime: telegram"))).toBe(true);
+    expect(lines.some((l) => l.includes("configured but not in OpenClaw runtime: telegram"))).toBe(
+      true,
+    );
   });
 });

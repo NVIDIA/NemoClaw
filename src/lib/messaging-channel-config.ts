@@ -6,18 +6,21 @@ import { listChannels } from "./sandbox/channels";
 export type MessagingChannelConfig = Record<string, string>;
 
 const channels = listChannels();
-const CONFIG_ALIASES: Record<string, readonly string[]> = {
-  TELEGRAM_ALLOWED_IDS: ["TELEGRAM_AUTHORIZED_CHAT_IDS", "TELEGRAM_CHAT_ID"],
-};
-const aliasToCanonicalKey = new Map<string, string>(
-  Object.entries(CONFIG_ALIASES).flatMap(([canonical, aliases]) =>
-    aliases.map((alias) => [alias, canonical] as const),
-  ),
-);
 const requireMentionKeys = new Set(
   channels
     .map((channel) => channel.requireMentionEnvKey)
     .filter((key): key is string => typeof key === "string" && key.length > 0),
+);
+
+const configKeyAliases: Readonly<Record<string, readonly string[]>> = {
+  DISCORD_SERVER_ID: ["DISCORD_SERVER_IDS"],
+  DISCORD_USER_ID: ["DISCORD_ALLOWED_IDS"],
+};
+
+const aliasToCanonical = new Map(
+  Object.entries(configKeyAliases).flatMap(([canonical, aliases]) =>
+    aliases.map((alias) => [alias, canonical] as const),
+  ),
 );
 
 export const MESSAGING_CHANNEL_CONFIG_ENV_KEYS: readonly string[] = [
@@ -43,25 +46,24 @@ export type MessagingChannelConfigEnvResolution = {
 
 function normalizeValue(value: unknown): string | null {
   if (typeof value !== "string") return null;
-  const normalized = value.replace(/[\r\n]/g, "").trim();
+  if (/[\r\n]/.test(value)) {
+    throw new Error("Messaging channel config values must not contain line breaks.");
+  }
+  const normalized = value.trim();
   return normalized || null;
 }
 
 export function getCanonicalMessagingChannelConfigKey(key: string): string | null {
-  if (knownConfigKeys.has(key)) return key;
-  return aliasToCanonicalKey.get(key) ?? null;
+  return knownConfigKeys.has(key) ? key : (aliasToCanonical.get(key) ?? null);
 }
 
 export function getMessagingChannelConfigEnvKeys(key: string): readonly string[] {
   const canonical = getCanonicalMessagingChannelConfigKey(key);
   if (!canonical) return [];
-  return [canonical, ...(CONFIG_ALIASES[canonical] ?? [])];
+  return [canonical, ...(configKeyAliases[canonical] ?? [])];
 }
 
-export function normalizeMessagingChannelConfigValue(
-  key: string,
-  value: unknown,
-): string | null {
+export function normalizeMessagingChannelConfigValue(key: string, value: unknown): string | null {
   const canonical = getCanonicalMessagingChannelConfigKey(key);
   if (!canonical) return null;
   const normalized = normalizeValue(value);

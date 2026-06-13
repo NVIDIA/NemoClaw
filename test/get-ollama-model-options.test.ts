@@ -36,7 +36,9 @@ describe("getOllamaModelOptions host-pinned fallback", () => {
     const models = getOllamaModelOptions(capture);
     expect(models).toEqual([]);
     expect(calls).toHaveLength(1);
-    expect(calls[0].argv.join(" ")).toContain(`http://${OLLAMA_HOST_DOCKER_INTERNAL}:11434/api/tags`);
+    expect(calls[0].argv.join(" ")).toContain(
+      `http://${OLLAMA_HOST_DOCKER_INTERNAL}:11434/api/tags`,
+    );
     expect(calls.some((c) => c.argv.includes("ollama") && c.argv.includes("list"))).toBe(false);
   });
 
@@ -45,7 +47,8 @@ describe("getOllamaModelOptions host-pinned fallback", () => {
     const { capture, calls } = makeCapture([
       {
         match: /ollama list/,
-        output: "NAME           ID            SIZE    MODIFIED\nllama3.2:3b    abc123        2.0 GB  2 days ago\n",
+        output:
+          "NAME           ID            SIZE    MODIFIED\nllama3.2:3b    abc123        2.0 GB  2 days ago\n",
       },
     ]);
     const models = getOllamaModelOptions(capture);
@@ -58,11 +61,11 @@ describe("getOllamaModelOptions host-pinned fallback", () => {
     const { capture, calls } = makeCapture([
       {
         match: /\/api\/tags/,
-        output: JSON.stringify({ models: [{ name: "qwen2.5:7b" }, { name: "gemma2:9b" }] }),
+        output: JSON.stringify({ models: [{ name: "qwen3.5:9b" }, { name: "gemma2:9b" }] }),
       },
     ]);
     const models = getOllamaModelOptions(capture);
-    expect(models).toEqual(["qwen2.5:7b", "gemma2:9b"]);
+    expect(models).toEqual(["qwen3.5:9b", "gemma2:9b"]);
     expect(calls.some((c) => c.argv.includes("list"))).toBe(false);
   });
 });

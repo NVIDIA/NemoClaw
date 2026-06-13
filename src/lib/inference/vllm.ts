@@ -5,31 +5,33 @@
 // offer vLLM at all" lives in onboard.ts; this module owns picking the
 // right profile per platform and running the install.
 
-import {
-  dockerCapture,
-  dockerPullWithProgressWatchdog,
-  dockerSpawn,
-} from "../adapters/docker";
+import { dockerCapture, dockerPullWithProgressWatchdog, dockerSpawn } from "../adapters/docker";
+import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
 import { VLLM_PORT } from "../core/ports";
 import { runCapture, runShell } from "../runner";
 import { getGpuIndicesByName } from "./nim";
 import {
-  DEFAULT_VLLM_MODEL,
+  VLLM_EXTRA_ARGS_ENV,
   VLLM_MODELS,
-  assertGatedModelAccess,
   buildVllmServeCommand,
-  selectVllmModelFromEnv,
+  parseVllmExtraServeArgs,
   type VllmModelDef,
+  type VllmPlatform,
 } from "./vllm-models";
+import { resolveVllmInstallModel } from "./vllm-prompt";
 
 // Per-platform install recipe. Add new platforms by appending an entry to
 // the profile table at the bottom of this file. The menu key in onboard.ts
 // stays "install-vllm" regardless of platform.
 export interface VllmProfile {
-  name: string;            // human label, e.g. "DGX Spark"
-  image: string;           // container image
+  name: string; // human label, e.g. "DGX Spark"
+  // Platform key matched against `VllmModelDef.platforms` when the picker
+  // filters the registry. Decoupled from `name` so future user-facing label
+  // tweaks don't change which models are offered.
+  platform: VllmPlatform;
+  image: string; // container image
   // Default model when NEMOCLAW_VLLM_MODEL is unset. Per-platform default
-  // because Spark/Station can host a 27B model, but generic discrete-GPU
+  // because Spark/Station can host larger recipes, but generic discrete-GPU
   // Linux falls back to the small Nemotron-Nano-4B that fits on consumer
   // cards.
   defaultModel: VllmModelDef;
@@ -49,14 +51,20 @@ export interface VllmProfile {
   loadTimeoutSec: number;
 }
 
-// vllm 0.21.1rc1.dev323+g1fc2cee50
-const UPSTREAM_VLLM_IMAGE =
-  "vllm/vllm-openai:nightly-1fc2cee50a09a094b9f2bbdfcb0ab0cadb536712";
-const NGC_VLLM_IMAGE = "nvcr.io/nvidia/vllm:26.03.post1-py3";
+const VLLM_IMAGES = {
+  ngc2603Post1: "nvcr.io/nvidia/vllm:26.03.post1-py3",
+  ngc2605Post1: "nvcr.io/nvidia/vllm:26.05.post1-py3",
+} as const;
 
 function nemotronNanoModel(): VllmModelDef {
   const match = VLLM_MODELS.find((m) => m.envValue === "nemotron-3-nano-4b");
   if (!match) throw new Error("vllm-models registry is missing the nemotron-3-nano-4b entry");
+  return match;
+}
+
+function qwen27bFP8Model(): VllmModelDef {
+  const match = VLLM_MODELS.find((m) => m.envValue === "qwen3.6-27b");
+  if (!match) throw new Error("vllm-models registry is missing the qwen3.6-27b entry");
   return match;
 }
 
@@ -114,7 +122,8 @@ export function buildHfTokenForwardEnv(
 
 const SPARK_PROFILE: VllmProfile = {
   name: "DGX Spark",
-  image: UPSTREAM_VLLM_IMAGE,
+  platform: "spark",
+  image: VLLM_IMAGES.ngc2605Post1,
   defaultModel: qwen35bNvfp4Model(),
   containerName: "nemoclaw-vllm",
   dockerRunFlags: [
@@ -133,8 +142,9 @@ const SPARK_PROFILE: VllmProfile = {
 // DGX Station.
 const STATION_PROFILE: VllmProfile = {
   name: "DGX Station",
-  image: NGC_VLLM_IMAGE,
-  defaultModel: DEFAULT_VLLM_MODEL,
+  platform: "station",
+  image: VLLM_IMAGES.ngc2605Post1,
+  defaultModel: qwen27bFP8Model(),
   containerName: "nemoclaw-vllm",
   dockerRunFlags: SPARK_PROFILE.dockerRunFlags,
   buildDockerRunFlags: () => {
@@ -163,7 +173,8 @@ const STATION_PROFILE: VllmProfile = {
 // most GPUs.
 const GENERIC_LINUX_PROFILE: VllmProfile = {
   name: "Linux + NVIDIA GPU",
-  image: NGC_VLLM_IMAGE,
+  platform: "linux",
+  image: VLLM_IMAGES.ngc2603Post1,
   defaultModel: nemotronNanoModel(),
   containerName: "nemoclaw-vllm",
   dockerRunFlags: SPARK_PROFILE.dockerRunFlags,
@@ -325,6 +336,23 @@ function downloadModel(
   });
 }
 
+// Build the `docker run` command for the long-lived vLLM inference container.
+// Exported for testing. `--restart unless-stopped` makes the container come
+// back after a host reboot or Docker daemon restart (#4886); without a restart
+// policy the container stays down after a reboot and `nemoclaw inference get`
+// fails until a full `nemoclaw onboard --fresh --gpu` recreates it.
+export function buildVllmRunCommand(
+  profile: VllmProfile,
+  model: VllmModelDef,
+  runFlags: string,
+): string {
+  const extra = runFlags ? ` ${runFlags}` : "";
+  return (
+    `docker run -d --restart unless-stopped${extra} -p ${String(VLLM_PORT)}:8000 ` +
+    `--name ${profile.containerName} --entrypoint /bin/bash ${profile.image} -lc ${JSON.stringify(buildVllmServeCommand(model))}`
+  );
+}
+
 function startContainer(
   profile: VllmProfile,
   model: VllmModelDef,
@@ -346,9 +374,7 @@ function startContainer(
   // the value stays out of /proc/<pid>/cmdline.
   const hfTokenFlags = buildHfTokenDockerArgs().join(" ");
   const flags = [resolvedFlags.join(" "), hfTokenFlags].filter(Boolean).join(" ");
-  const cmd =
-    `docker run -d ${flags} -p ${String(VLLM_PORT)}:8000 ` +
-    `--name ${profile.containerName} --entrypoint /bin/bash ${profile.image} -lc ${JSON.stringify(buildVllmServeCommand(model))}`;
+  const cmd = buildVllmRunCommand(profile, model, flags);
   const result = runShell(cmd, {
     ignoreError: true,
     suppressOutput: true,
@@ -366,7 +392,17 @@ function vllmModelsEndpoint(): string {
 
 function vllmEndpointReady(): boolean {
   const response = runCapture(
-    ["curl", "-sf", "--connect-timeout", "2", "--max-time", "5", vllmModelsEndpoint()],
+    [
+      "curl",
+      ...buildValidatedCurlCommandArgs([
+        "-sf",
+        "--connect-timeout",
+        "2",
+        "--max-time",
+        "5",
+        vllmModelsEndpoint(),
+      ]),
+    ],
     { ignoreError: true },
   ).trim();
   if (!response) return false;
@@ -465,17 +501,19 @@ export async function installVllm(
   profile: VllmProfile,
   opts: InstallVllmOptions,
 ): Promise<{ ok: boolean }> {
-  // Resolve the model to serve: `NEMOCLAW_VLLM_MODEL` override if set, else
-  // the per-platform profile default. The generic-Linux profile defaults to
-  // Nemotron-Nano-4B for VRAM headroom; Station to Qwen3.6-27B; Spark to the
-  // Qwen3.6-35B-A3B NVFP4 checkpoint.
-  // Validate gated-model access (HF_TOKEN required for models like
-  // DeepSeek-R1 Distill 70B) before touching docker so the user does not
-  // burn a multi-minute pull on a 401.
-  let model: VllmModelDef;
+  // Model selection lives in `resolveVllmInstallModel` so this entry point
+  // stays focused on the docker side effects. Gated-model access is checked
+  // there before any docker work happens.
+  const resolved = await resolveVllmInstallModel(profile, {
+    nonInteractive: opts.nonInteractive,
+    promptFn: opts.promptFn,
+  });
+  if (!resolved) return { ok: false };
+  const { model, source: modelSource } = resolved;
+
+  let extraServeArgs: string[];
   try {
-    model = selectVllmModelFromEnv() ?? profile.defaultModel;
-    assertGatedModelAccess(model);
+    extraServeArgs = parseVllmExtraServeArgs();
   } catch (err) {
     console.error(`  vLLM install failed: ${(err as Error).message}`);
     return { ok: false };
@@ -484,7 +522,14 @@ export async function installVllm(
   console.log("");
   console.log(`  vLLM (${profile.name}):`);
   console.log(`    Image: ${profile.image}`);
-  console.log(`    Model: ${model.id}${model.id === profile.defaultModel.id ? "" : " (NEMOCLAW_VLLM_MODEL override)"}`);
+  console.log(
+    `    Model: ${model.id}${modelSource === "env" ? " (NEMOCLAW_VLLM_MODEL override)" : ""}`,
+  );
+  if (extraServeArgs.length > 0) {
+    console.log(
+      `    Extra serve args: ${String(extraServeArgs.length)} token(s) from ${VLLM_EXTRA_ARGS_ENV}`,
+    );
+  }
   if (!opts.hasImage) console.log("    Image download on first run, cached after");
   console.log("    Model download on first run, cached after");
   console.log("");

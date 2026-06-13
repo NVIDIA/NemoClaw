@@ -3,6 +3,7 @@
 
 import type { MessagingHookRegistration } from "../../../hooks/types";
 import { createWechatHealthCheckHookRegistration } from "./health-check";
+import { createDefaultWechatHostQrLoginOptions } from "./host-qr-login-runtime";
 import {
   createWechatIlinkLoginHookRegistration,
   type WechatIlinkLoginHookOptions,
@@ -24,9 +25,21 @@ export interface WechatHookOptions {
 export function createWechatHookRegistrations(
   options: WechatHookOptions = {},
 ): readonly MessagingHookRegistration[] {
+  const ilinkLoginOptions = {
+    ...createDefaultWechatHostQrLoginOptions(),
+    ...withoutUndefinedValues(options.ilinkLogin),
+  };
   return [
-    createWechatIlinkLoginHookRegistration(options.ilinkLogin),
+    createWechatIlinkLoginHookRegistration(ilinkLoginOptions),
     createWechatSeedOpenClawAccountHookRegistration(options.seedOpenClawAccount),
     createWechatHealthCheckHookRegistration(),
   ] as const;
+}
+
+function withoutUndefinedValues(
+  options: WechatIlinkLoginHookOptions | undefined,
+): WechatIlinkLoginHookOptions {
+  return Object.fromEntries(
+    Object.entries(options ?? {}).filter(([, value]) => value !== undefined),
+  ) as WechatIlinkLoginHookOptions;
 }

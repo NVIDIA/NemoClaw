@@ -2,12 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ChannelManifest } from "../../manifest";
+import { WECHAT_PLUGIN_INSTALL_SPEC } from "./hooks/seed-openclaw-account";
 
 export const wechatManifest = {
   schemaVersion: 1,
   id: "wechat",
   displayName: "WeChat",
   description: "WeChat (personal) bot messaging",
+  enrollmentHelp:
+    "Captured automatically via a host-side QR scan during onboard — pair the bot by scanning the QR with WeChat on your phone (Discover → Scan). DM-only.",
   supportedAgents: ["openclaw", "hermes"],
   auth: {
     mode: "host-qr",
@@ -53,6 +56,7 @@ export const wechatManifest = {
       prompt: {
         label: "WeChat User ID(s) (DM allowlist)",
         help: "Optional: restrict who can DM the bot. The WeChat user id of the operator who scanned is added automatically; supply additional ids as a comma-separated list.",
+        emptyValueMessage: "bot will require manual pairing",
       },
     },
   ],
@@ -68,6 +72,18 @@ export const wechatManifest = {
   policyPresets: [{ name: "wechat", policyKeys: ["wechat_bridge"] }],
   render: [
     {
+      id: "wechat-openclaw-plugin",
+      kind: "json-fragment",
+      agent: "openclaw",
+      target: "openclaw.json",
+      fragment: {
+        path: "plugins.entries.openclaw-weixin",
+        value: {
+          enabled: true,
+        },
+      },
+    },
+    {
       id: "wechat-hermes-env",
       kind: "env-lines",
       agent: "hermes",
@@ -78,6 +94,18 @@ export const wechatManifest = {
         "WEIXIN_BASE_URL={{wechatConfig.baseUrl}}",
         "WEIXIN_ALLOWED_USERS={{allowedIds.wechat.csv}}",
       ],
+    },
+    {
+      id: "wechat-hermes-platform",
+      kind: "json-fragment",
+      agent: "hermes",
+      target: "~/.hermes/config.yaml",
+      fragment: {
+        path: "platforms.weixin",
+        value: {
+          enabled: true,
+        },
+      },
     },
   ],
   state: {
@@ -105,6 +133,25 @@ export const wechatManifest = {
     ],
   },
   hooks: [
+    {
+      id: "wechat-openclaw-package-install",
+      phase: "agent-install",
+      handler: "common.staticOutputs",
+      agents: ["openclaw"],
+      outputs: [
+        {
+          id: "openclawPluginPackage",
+          kind: "package-install",
+          required: true,
+          value: {
+            manager: "openclaw-plugin",
+            spec: WECHAT_PLUGIN_INSTALL_SPEC,
+            pin: true,
+          },
+        },
+      ],
+      onFailure: "abort",
+    },
     {
       id: "wechat-host-qr",
       phase: "enroll",
@@ -135,6 +182,17 @@ export const wechatManifest = {
         },
       ],
       onFailure: "skip-channel",
+    },
+    {
+      id: "wechat-config-prompt",
+      phase: "enroll",
+      handler: "common.configPrompt",
+      outputs: [
+        {
+          id: "allowedIds",
+          kind: "config",
+        },
+      ],
     },
     {
       id: "wechat-seed-openclaw-account",

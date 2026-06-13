@@ -95,6 +95,13 @@ describe("handleGatewayState", () => {
     expect(calls.startGateway).toHaveBeenCalledWith({ type: "nvidia" }, { gpuPassthrough: true });
     expect(calls.complete).toHaveBeenCalledWith("gateway");
     expect(result.gatewayReuseState).toBe("missing");
+    expect(result.stateResult).toEqual({
+      type: "transition",
+      next: "provider_selection",
+      transitionKind: "advance",
+      updates: undefined,
+      metadata: { state: "gateway", gatewayReuseState: "missing" },
+    });
   });
 
   it("reuses healthy gateways on fresh runs", async () => {
@@ -223,7 +230,9 @@ describe("handleGatewayState", () => {
   it("refuses to destroy an unknown container state when HTTP is also unavailable", async () => {
     const { deps, calls } = createDeps({
       gatewayCliSupportsLifecycleCommands: vi.fn(() => true),
-      verifyGatewayContainerRunning: vi.fn((_gatewayName: string): GatewayContainerState => "unknown"),
+      verifyGatewayContainerRunning: vi.fn(
+        (_gatewayName: string): GatewayContainerState => "unknown",
+      ),
       waitForGatewayHttpReady: vi.fn(async () => false),
     });
 
@@ -254,7 +263,10 @@ describe("handleGatewayState", () => {
     const { deps, calls } = createDeps({
       gatewayCliSupportsLifecycleCommands: vi.fn(() => true),
       waitForGatewayHttpReady: vi.fn(async () => true),
-      getGatewayClusterImageDrift: vi.fn(() => ({ currentVersion: "0.0.38", expectedVersion: "0.0.39" })),
+      getGatewayClusterImageDrift: vi.fn(() => ({
+        currentVersion: "0.0.38",
+        expectedVersion: "0.0.39",
+      })),
       destroyGatewayForReuse: vi.fn(() => "missing" as GatewayReuseState),
     });
 
@@ -306,5 +318,21 @@ describe("handleGatewayState", () => {
     expect(calls.note).toHaveBeenCalledWith(
       "  Replacing legacy OpenShell gateway metadata with Docker-driver gateway.",
     );
+  });
+
+  it("does not retire a foreign-active Docker-driver gateway (concurrent instances)", async () => {
+    const { deps, calls } = createDeps({
+      isLinuxDockerDriverGatewayEnabled: vi.fn(() => true),
+      reconcileGatewayGpuReuseForGpuIntent: vi.fn(() => "foreign-active" as GatewayReuseState),
+    });
+
+    const result = await handleGatewayState(baseOptions(deps, "foreign-active"));
+
+    expect(calls.retireLegacy).not.toHaveBeenCalled();
+    expect(calls.note).not.toHaveBeenCalledWith(
+      "  Replacing legacy OpenShell gateway metadata with Docker-driver gateway.",
+    );
+    expect(calls.startGateway).toHaveBeenCalledOnce();
+    expect(result.gatewayReuseState).toBe("missing");
   });
 });

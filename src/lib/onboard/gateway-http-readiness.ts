@@ -15,7 +15,7 @@ import http2 from "node:http2";
 
 import { getGatewayHttpEndpoint } from "../core/gateway-address";
 import { GATEWAY_PORT } from "../core/ports";
-import { sleepSeconds } from "../core/wait";
+import { sleepSeconds, waitUntilAsync } from "../core/wait";
 import { addTraceEvent, withTraceSpan } from "../trace";
 import { envInt } from "./env";
 
@@ -75,10 +75,8 @@ export function isGatewayHttpReady(
   url = `${getGatewayHttpEndpoint(GATEWAY_PORT)}/`,
   method: "GET" | "POST" = "GET",
 ): Promise<boolean> {
-  return withTraceSpan(
-    "nemoclaw.gateway.http_probe",
-    { timeout_ms: timeoutMs, url, method },
-    () => isGatewayHttpReadyImpl(timeoutMs, url, method),
+  return withTraceSpan("nemoclaw.gateway.http_probe", { timeout_ms: timeoutMs, url, method }, () =>
+    isGatewayHttpReadyImpl(timeoutMs, url, method),
   );
 }
 
@@ -254,16 +252,24 @@ export async function waitForGatewayHttpReady(
       }
     };
 
-    if (await safeProbe()) {
-      addTraceEvent("ready", { attempt: 1 });
-      return true;
-    }
-    for (let attempt = 1; attempt < maxAttempts; attempt++) {
-      sleeper(intervalSeconds);
-      if (await safeProbe()) {
-        addTraceEvent("ready", { attempt: attempt + 1 });
+    let attempt = 0;
+    const ready = await waitUntilAsync(
+      async () => {
+        attempt += 1;
+        if (!(await safeProbe())) return false;
+        addTraceEvent("ready", { attempt });
         return true;
-      }
+      },
+      {
+        initialIntervalMs: intervalSeconds * 1000,
+        maxIntervalMs: intervalSeconds * 1000,
+        backoffFactor: 1,
+        maxAttempts,
+        sleep: (ms) => sleeper(ms / 1000),
+      },
+    );
+    if (ready) {
+      return true;
     }
     addTraceEvent("not_ready", { attempts: maxAttempts });
     return false;

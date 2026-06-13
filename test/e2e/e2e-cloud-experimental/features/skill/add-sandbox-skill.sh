@@ -20,7 +20,7 @@
 #   test/e2e/e2e-cloud-experimental/fixtures/skill-smoke-template.SKILL.md
 #
 # After deploy, optional: run one agent turn to prove the skill is used:
-#   NVIDIA_API_KEY=nvapi-... SANDBOX_NAME=... SKILL_ID=... bash test/e2e/e2e-cloud-experimental/features/skill/verify-sandbox-skill-via-agent.sh
+#   NVIDIA_INFERENCE_API_KEY=nvapi-... SANDBOX_NAME=... SKILL_ID=... bash test/e2e/e2e-cloud-experimental/features/skill/verify-sandbox-skill-via-agent.sh
 #
 # Exit code:
 #   0 = add + query succeeded

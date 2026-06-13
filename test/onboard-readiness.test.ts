@@ -94,7 +94,10 @@ describe("sandbox readiness parsing", () => {
 
   it("treats Running phase with ANSI codes as alive", () => {
     expect(
-      isSandboxReady("\x1b[1mmy-assistant\x1b[0m   \x1b[33mRunning\x1b[0m   2m ago", "my-assistant"),
+      isSandboxReady(
+        "\x1b[1mmy-assistant\x1b[0m   \x1b[33mRunning\x1b[0m   2m ago",
+        "my-assistant",
+      ),
     ).toBeTruthy();
   });
 

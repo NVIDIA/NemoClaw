@@ -33,7 +33,13 @@ import { loadAgent } from "../agent/defs.js";
 import { isRecord, type UnknownRecord } from "../core/json-types.js";
 import { shellQuote } from "../runner.js";
 import { isSensitiveFile, sanitizeConfigFile } from "../security/credential-filter.js";
+import {
+  buildOpenClawConfigRestoreInputFromSandbox,
+  shouldMergeOpenClawConfigStateFile,
+} from "./openclaw-config-restore-input.js";
+import type { CustomPolicyEntry } from "./registry.js";
 import * as registry from "./registry.js";
+import { runTarListing } from "./tar-listing.js";
 
 const HOME_DIR = path.resolve(process.env.HOME || os.homedir());
 const REBUILD_BACKUPS_DIR = path.join(HOME_DIR, ".nemoclaw", "rebuild-backups");
@@ -64,6 +70,15 @@ export interface RebuildManifest {
   backupPath: string;
   blueprintDigest: string | null;
   policyPresets?: string[];
+  /**
+   * Custom policy presets applied via `--from-file`/`--from-dir`, captured with
+   * full content so they can be re-applied on restore without the source file.
+   * Like `policyPresets`, these live in the gateway policy engine and are
+   * otherwise lost on destroy/recreate. Always present on snapshots created since
+   * this field was added (possibly an empty array, so restore can reconcile a
+   * zero-custom snapshot); absent only on legacy manifests.
+   */
+  customPolicies?: CustomPolicyEntry[];
   instances?: InstanceBackup[];
   // Optional user-provided label for `snapshot restore <name>`.
   name?: string;
@@ -149,6 +164,19 @@ function isInstanceBackup(value: unknown): value is InstanceBackup {
   );
 }
 
+function isCustomPolicyEntryArray(value: unknown): value is CustomPolicyEntry[] {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (entry) =>
+        typeof entry === "object" &&
+        entry !== null &&
+        typeof (entry as { name?: unknown }).name === "string" &&
+        typeof (entry as { content?: unknown }).content === "string",
+    )
+  );
+}
+
 function isRebuildManifest(value: unknown): value is RebuildManifest {
   if (!isRecord(value) || !isStateDirArray(value.stateDirs)) return false;
   return (
@@ -158,8 +186,7 @@ function isRebuildManifest(value: unknown): value is RebuildManifest {
     typeof value.agentType === "string" &&
     (value.agentVersion === null || typeof value.agentVersion === "string") &&
     (value.expectedVersion === null || typeof value.expectedVersion === "string") &&
-    (value.backedUpDirs === undefined ||
-      isBackedUpDirArray(value.backedUpDirs, value.stateDirs)) &&
+    (value.backedUpDirs === undefined || isBackedUpDirArray(value.backedUpDirs, value.stateDirs)) &&
     (typeof value.dir === "string" || typeof value.writableDir === "string") &&
     typeof value.backupPath === "string" &&
     (value.stateFiles === undefined ||
@@ -168,6 +195,7 @@ function isRebuildManifest(value: unknown): value is RebuildManifest {
       value.blueprintDigest === null ||
       typeof value.blueprintDigest === "string") &&
     (value.policyPresets === undefined || isStringArray(value.policyPresets)) &&
+    (value.customPolicies === undefined || isCustomPolicyEntryArray(value.customPolicies)) &&
     (value.instances === undefined ||
       (Array.isArray(value.instances) &&
         value.instances.every((entry) => isInstanceBackup(entry)))) &&
@@ -237,27 +265,18 @@ function rejectSymlinksOnPath(targetPath: string): void {
  * Rejects absolute paths, path traversal (..), and null bytes.
  */
 export function validateTarEntries(tarBuffer: Buffer, targetDir: string): TarValidationResult {
-  const result = spawnSync("tar", ["-tf", "-"], {
-    input: tarBuffer,
-    encoding: "utf-8",
-    stdio: ["pipe", "pipe", "pipe"],
-    timeout: 60000,
+  const entries: string[] = [];
+  const listingFailure = runTarListing(tarBuffer, ["-tf", "-"], "tar listing", (line) => {
+    entries.push(line);
   });
-
-  if (result.status !== 0) {
+  if (listingFailure) {
     return {
       safe: false,
       entries: [],
-      violations: [
-        `tar listing failed (exit ${result.status}): ${(result.stderr || "").substring(0, 200)}`,
-      ],
+      violations: [listingFailure],
     };
   }
 
-  const entries = (result.stdout || "")
-    .trim()
-    .split("\n")
-    .filter((e) => e.length > 0);
   const violations: string[] = [];
 
   for (const entry of entries) {
@@ -371,30 +390,15 @@ function auditExtractedSymlinks(dirPath: string, allowedRoots: string[]): string
  * files outside the extraction root.
  */
 export function rejectHardLinks(tarBuffer: Buffer): string[] {
-  const result = spawnSync("tar", ["-tvf", "-"], {
-    input: tarBuffer,
-    encoding: "utf-8",
-    stdio: ["pipe", "pipe", "pipe"],
-    timeout: 60000,
-  });
-
-  if (result.status !== 0) {
-    return [`tar verbose listing failed (exit ${result.status})`];
-  }
-
   const violations: string[] = [];
-  const lines = (result.stdout || "")
-    .trim()
-    .split("\n")
-    .filter((l) => l.length > 0);
-
-  for (const line of lines) {
+  const listingFailure = runTarListing(tarBuffer, ["-tvf", "-"], "tar verbose listing", (line) => {
     // Both GNU tar and bsdtar prefix hard-link entries with 'h' in verbose mode
     // and include " link to " in the line.
     if (line.startsWith("h") || / link to /.test(line)) {
       violations.push(`hard link: ${line.trim()}`);
     }
-  }
+  });
+  if (listingFailure) return [listingFailure];
 
   return violations;
 }
@@ -561,7 +565,7 @@ function sanitizeBackupDirectory(dirPath: string): void {
 
 const _verbose = () => process.env.NEMOCLAW_REBUILD_VERBOSE === "1";
 
-// Exact symlinks baked into the base image at build time (Dockerfile.base) by
+// Exact symlinks baked into OpenClaw messaging images at build time by
 // `openclaw plugins install`. Source paths are relative to the agent state-dir
 // root (e.g. for OpenClaw, /sandbox/.openclaw); targets are matched exactly
 // against the value of `readlink(source)`. Source-only matching is unsafe: a
@@ -572,10 +576,7 @@ const AUDIT_SYMLINK_WHITELIST: ReadonlyMap<string, string> = new Map([
     "extensions/openclaw-weixin/node_modules/.bin/qrcode-terminal",
     "../qrcode-terminal/bin/qrcode-terminal.js",
   ],
-  [
-    "extensions/openclaw-weixin/node_modules/openclaw",
-    "/usr/local/lib/node_modules/openclaw",
-  ],
+  ["extensions/openclaw-weixin/node_modules/openclaw", "/usr/local/lib/node_modules/openclaw"],
 ]);
 
 const EXTENSION_NPM_BIN_RE = /^extensions\/[^/]+\/node_modules\/\.bin\/[^/]+$/;
@@ -640,7 +641,12 @@ function normalizeStateFilePath(filePath: string): string | null {
 function isSafeStateDirPath(dirPath: string): boolean {
   if (!dirPath || dirPath.includes("\0") || path.isAbsolute(dirPath)) return false;
   const normalized = path.posix.normalize(dirPath.replace(/\\/g, "/"));
-  return normalized === dirPath && normalized !== "." && normalized !== ".." && !normalized.startsWith("../");
+  return (
+    normalized === dirPath &&
+    normalized !== "." &&
+    normalized !== ".." &&
+    !normalized.startsWith("../")
+  );
 }
 
 function isStateDirArray(value: unknown): value is string[] {
@@ -649,7 +655,10 @@ function isStateDirArray(value: unknown): value is string[] {
 
 function isBackedUpDirArray(value: unknown, stateDirs: string[]): value is string[] {
   const stateDirSet = new Set(stateDirs);
-  return isStringArray(value) && value.every((dirName) => isSafeStateDirPath(dirName) && stateDirSet.has(dirName));
+  return (
+    isStringArray(value) &&
+    value.every((dirName) => isSafeStateDirPath(dirName) && stateDirSet.has(dirName))
+  );
 }
 
 function existingBackupDirs(backupPath: string, dirNames: string[]): string[] {
@@ -738,7 +747,9 @@ function normalizeStateFileSpec(spec: AgentStateFile | StateFileSpec): StateFile
   return { path: normalized, strategy: spec.strategy };
 }
 
-function normalizeStateFileSpecs(specs: readonly (AgentStateFile | StateFileSpec)[]): StateFileSpec[] {
+function normalizeStateFileSpecs(
+  specs: readonly (AgentStateFile | StateFileSpec)[],
+): StateFileSpec[] {
   const normalized: StateFileSpec[] = [];
   const seen = new Set<string>();
   for (const spec of specs) {
@@ -817,12 +828,12 @@ function buildStateFileBackupCommand(dir: string, spec: StateFileSpec): string {
   if (spec.strategy === "sqlite_backup") {
     return [
       `src=${quotedRemotePath}`,
-      "[ ! -e \"$src\" ] && exit 2",
+      '[ ! -e "$src" ] && exit 2',
       '[ -f "$src" ] && [ ! -L "$src" ] || { echo "unsafe sqlite state file: $src" >&2; exit 10; }',
       'hardlink_count="$(find "$src" -maxdepth 0 -type f -links +1 -print 2>/dev/null | wc -l | tr -d " ")"',
       '[ "${hardlink_count:-0}" = "0" ] || { echo "hard-linked sqlite state file rejected: $src" >&2; exit 11; }',
       'tmp="$(mktemp /tmp/nemoclaw-sqlite-backup.XXXXXX)"',
-      'trap \'rm -f "$tmp"\' EXIT',
+      "trap 'rm -f \"$tmp\"' EXIT",
       `python3 -c ${shellQuote(SQLITE_BACKUP_PY)} "$src" "$tmp"`,
       'cat -- "$tmp"',
     ].join("; ");
@@ -830,7 +841,7 @@ function buildStateFileBackupCommand(dir: string, spec: StateFileSpec): string {
 
   return [
     `src=${quotedRemotePath}`,
-    "[ ! -e \"$src\" ] && exit 2",
+    '[ ! -e "$src" ] && exit 2',
     '[ -f "$src" ] && [ ! -L "$src" ] || { echo "unsafe state file: $src" >&2; exit 10; }',
     'hardlink_count="$(find "$src" -maxdepth 0 -type f -links +1 -print 2>/dev/null | wc -l | tr -d " ")"',
     '[ "${hardlink_count:-0}" = "0" ] || { echo "hard-linked state file rejected: $src" >&2; exit 11; }',
@@ -873,7 +884,11 @@ function backupStateFile(
   return "backed_up";
 }
 
-function buildStateFileRestoreCommand(dir: string, spec: StateFileSpec): string {
+export function buildStateFileRestoreCommand(
+  dir: string,
+  spec: StateFileSpec,
+  refreshOpenClawConfigHash = false,
+): string {
   const remotePath = stateFileRemotePath(dir, spec.path);
   const quotedRemotePath = shellQuote(remotePath);
   if (spec.strategy === "sqlite_backup") {
@@ -884,25 +899,83 @@ function buildStateFileRestoreCommand(dir: string, spec: StateFileSpec): string 
       '[ ! -L "$dst" ] || { echo "refusing symlinked sqlite target: $dst" >&2; exit 11; }',
       'mkdir -p "$parent"',
       'tmp="$(mktemp /tmp/nemoclaw-sqlite-restore.XXXXXX)"',
-      'trap \'rm -f "$tmp"\' EXIT',
+      "trap 'rm -f \"$tmp\"' EXIT",
       'cat > "$tmp"',
       'chmod 600 "$tmp"',
       `umask 0007; python3 -c ${shellQuote(SQLITE_RESTORE_PY)} "$tmp" "$dst"`,
     ].join("; ");
   }
 
-  return [
+  const steps = [
     `dst=${quotedRemotePath}`,
     'parent="$(dirname "$dst")"',
     '[ ! -L "$parent" ] || { echo "refusing symlinked state parent: $parent" >&2; exit 10; }',
     '[ ! -L "$dst" ] || { echo "refusing symlinked state target: $dst" >&2; exit 11; }',
     'mkdir -p "$parent"',
     'tmp="$(mktemp "${parent}/.nemoclaw-restore.XXXXXX")"',
-    'trap \'rm -f "$tmp"\' EXIT',
+    'trap \'rm -f "$tmp" "${anchor_tmp:-}"\' EXIT',
     'cat > "$tmp"',
     'chmod 640 "$tmp"',
-    'mv -f "$tmp" "$dst"',
-  ].join("; ");
+  ];
+
+  if (refreshOpenClawConfigHash) {
+    // OpenClaw guards openclaw.json with a `.last-good` recovery anchor: on its
+    // config-integrity check it archives any live config that differs from
+    // `.last-good` as `openclaw.json.clobbered.*` and reverts to `.last-good`.
+    // The rebuild restore writes the merged user config directly, so without
+    // refreshing the anchor OpenClaw reverts the restored config back to the
+    // freshly generated baseline captured at first boot (issue #5202). Refresh
+    // the anchor from the staged temp BEFORE swapping the live file so the
+    // integrity watcher never observes a config that disagrees with it. Stage
+    // through a temp + atomic rename and fail closed (before the live swap) so
+    // a partial/failed anchor write never leaves a stale recovery target that
+    // would let OpenClaw revert the restored config.
+    steps.push(
+      'last_good="${dst}.last-good"',
+      '[ ! -L "$last_good" ] || { echo "refusing symlinked last-good target: $last_good" >&2; exit 13; }',
+      'anchor_tmp="$(mktemp "${parent}/.nemoclaw-lastgood.XXXXXX")" || { echo "failed to stage last-good anchor" >&2; exit 14; }',
+      'cat "$tmp" > "$anchor_tmp" || { echo "failed to write last-good anchor" >&2; exit 14; }',
+      'chmod 660 "$anchor_tmp" 2>/dev/null || true',
+      'mv -f "$anchor_tmp" "$last_good" || { echo "failed to install last-good anchor" >&2; exit 14; }',
+    );
+  }
+
+  steps.push('mv -f "$tmp" "$dst"');
+
+  if (refreshOpenClawConfigHash) {
+    steps.push(
+      'hash_file="${parent}/.config-hash"',
+      '[ ! -L "$hash_file" ] || { echo "refusing symlinked config hash target: $hash_file" >&2; exit 12; }',
+      '(cd "$parent" && sha256sum "$(basename "$dst")" > .config-hash)',
+      'chmod 660 "$hash_file" 2>/dev/null || true',
+    );
+  }
+
+  return steps.join("; ");
+}
+
+function buildStateFileRestoreInput(
+  configFile: string,
+  sandboxName: string,
+  dir: string,
+  spec: StateFileSpec,
+  backupPath: string,
+  mergeOpenClawConfig: boolean,
+): Buffer | null {
+  const localPath = path.join(backupPath, spec.path);
+  const backupContents = readFileSync(localPath);
+  if (!mergeOpenClawConfig) return backupContents;
+
+  const result = buildOpenClawConfigRestoreInputFromSandbox({
+    backupContents,
+    dir,
+    log: _log,
+    specPath: spec.path,
+    sshArgs: sshArgs(configFile, sandboxName),
+  });
+  if (result.ok) return result.input;
+  _log(`FAILED: ${result.error}`);
+  return null;
 }
 
 function restoreStateFile(
@@ -911,14 +984,25 @@ function restoreStateFile(
   dir: string,
   spec: StateFileSpec,
   backupPath: string,
+  mergeOpenClawConfig = false,
 ): boolean {
   const localPath = path.join(backupPath, spec.path);
   if (!existsSync(localPath)) return true;
 
-  const command = buildStateFileRestoreCommand(dir, spec);
+  const command = buildStateFileRestoreCommand(dir, spec, mergeOpenClawConfig);
   _log(`Restoring state file ${spec.path} (${spec.strategy})`);
+  const input = buildStateFileRestoreInput(
+    configFile,
+    sandboxName,
+    dir,
+    spec,
+    backupPath,
+    mergeOpenClawConfig,
+  );
+  if (input === null) return false;
+
   const result = spawnSync("ssh", [...sshArgs(configFile, sandboxName), command], {
-    input: readFileSync(localPath),
+    input,
     stdio: ["pipe", "pipe", "pipe"],
     timeout: 120000,
   });
@@ -1000,6 +1084,12 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
   // not on the sandbox filesystem, so they are lost on destroy/recreate.
   const policyPresets: string[] = sb?.policies && sb.policies.length > 0 ? [...sb.policies] : [];
   _log(`policyPresets from registry: [${policyPresets.join(",")}]`);
+  // Custom presets (--from-file/--from-dir) also live only in the gateway policy
+  // engine, so capture their full content for replay. Always record the field
+  // (even empty) so restore can tell a zero-custom snapshot (reconcile, remove
+  // any stale custom presets on the target) from a legacy snapshot (skip).
+  const customPolicies: CustomPolicyEntry[] = sb?.customPolicies ? [...sb.customPolicies] : [];
+  _log(`customPolicies from registry: [${customPolicies.map((c) => c.name).join(",")}]`);
 
   const manifest: RebuildManifest = {
     version: MANIFEST_VERSION,
@@ -1014,6 +1104,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
     backupPath,
     blueprintDigest: computeBlueprintDigest(),
     policyPresets,
+    customPolicies,
     ...(providedName !== null ? { name: providedName } : {}),
   };
 
@@ -1200,7 +1291,9 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
         // Accept exit 0, 1, or 2 when stdout has data — extract what tar produced
         // and determine per-dir success from tar's reported read errors.
         const tarExitedWithData =
-          result.stdout && result.stdout.length > 0 && (result.status === 0 || result.status === 1 || result.status === 2);
+          result.stdout &&
+          result.stdout.length > 0 &&
+          (result.status === 0 || result.status === 1 || result.status === 2);
 
         if (result.status !== 0 && result.stdout && result.stdout.length > 0) {
           _log(
@@ -1491,7 +1584,16 @@ export function restoreSandboxState(sandboxName: string, backupPath: string): Re
     }
 
     for (const spec of localFiles) {
-      if (restoreStateFile(configFile, sandboxName, dir, spec, backupPath)) {
+      if (
+        restoreStateFile(
+          configFile,
+          sandboxName,
+          dir,
+          spec,
+          backupPath,
+          shouldMergeOpenClawConfigStateFile(manifest.agentType, dir, spec),
+        )
+      ) {
         restoredFiles.push(spec.path);
       } else {
         failedFiles.push(spec.path);

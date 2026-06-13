@@ -14,11 +14,12 @@ const REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSIONS = [
   "2026.4.24",
   "2026.5.18",
   "2026.5.22",
+  "2026.5.27",
 ] as const;
-const CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION = "2026.5.22";
+const CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION = "2026.5.27";
 const EXPECTED_OPENCLAW_INTEGRITY =
-  "sha512-m+zgBELGbCHjWB1IWF5WSWNPr480cMKOMff2OF72c8A0AMD4hC/9+qwYtzjYmGkETcffnB711JymlVsQnh2Tow==";
-const REVIEWED_OPENCLAW_2026_5_22_WEB_FETCH_SHAPE = [
+  "sha512-2N93zhdAo88KAbHt6T7KvYXf4s7XIkYXBgv1npYpn7e1Y9FvrtgtpsA38my9rtFW+70uXEojRPX5/OqnuDqJPw==";
+const REVIEWED_OPENCLAW_2026_5_27_WEB_FETCH_SHAPE = [
   "async function fetchWithWebToolsNetworkGuard(params) {",
   "  const { timeoutSeconds, useEnvProxy, ...rest } = params;",
   "  const resolved = {",
@@ -31,7 +32,9 @@ const REVIEWED_OPENCLAW_2026_5_22_WEB_FETCH_SHAPE = [
   "  return fetchWithSsrFGuard(useEnvProxy ? withTrustedEnvProxyGuardedFetchMode(resolved) : withStrictGuardedFetchMode(resolved));",
   "}",
 ].join("\n");
-const REVIEWED_OPENCLAW_2026_5_22_SSRF_POLICY_SHAPE = [
+const REVIEWED_OPENCLAW_2026_5_27_MANAGED_PROXY_SHAPE =
+  "const canUseManagedProxy = mode === GUARDED_FETCH_MODE.STRICT && isManagedProxyActive() && hasProxyEnvConfigured();";
+const REVIEWED_OPENCLAW_2026_5_27_SSRF_POLICY_SHAPE = [
   "function shouldSkipPrivateNetworkChecks(hostname, policy) {",
   "  return isPrivateNetworkAllowedByPolicy(policy) || normalizeHostnameSet(policy?.allowedHostnames).has(hostname);",
   "}",
@@ -40,7 +43,7 @@ const REVIEWED_OPENCLAW_2026_5_22_SSRF_POLICY_SHAPE = [
   '  if (!normalized) throw new Error("Invalid hostname");',
   "  const hostnameAllowlist = normalizeHostnameAllowlist(policy?.hostnameAllowlist);",
   "  const skipPrivateNetworkChecks = shouldSkipPrivateNetworkChecks(normalized, policy);",
-  '  if (!matchesHostnameAllowlist(normalized, hostnameAllowlist)) throw new SsrFBlockedError(`Blocked hostname (not in allowlist): ${hostname}`);',
+  "  if (!matchesHostnameAllowlist(normalized, hostnameAllowlist)) throw new SsrFBlockedError(`Blocked hostname (not in allowlist): ${hostname}`);",
   "  if (!skipPrivateNetworkChecks) assertAllowedHostOrIpOrThrow(normalized, policy);",
   "  return {",
   "    normalized,",
@@ -49,7 +52,7 @@ const REVIEWED_OPENCLAW_2026_5_22_SSRF_POLICY_SHAPE = [
   "}",
 ].join("\n");
 
-function loadReviewedOpenClaw20260522SsrfPolicyShape() {
+function loadReviewedOpenClaw20260527SsrfPolicyShape() {
   return new Function(`
 class SsrFBlockedError extends Error {}
 function normalizeHostname(value) {
@@ -74,7 +77,7 @@ function assertAllowedHostOrIpOrThrow(hostnameOrIp) {
     throw new SsrFBlockedError("blocked " + hostnameOrIp);
   }
 }
-${REVIEWED_OPENCLAW_2026_5_22_SSRF_POLICY_SHAPE}
+${REVIEWED_OPENCLAW_2026_5_27_SSRF_POLICY_SHAPE}
 return { shouldSkipPrivateNetworkChecks, resolveHostnamePolicyChecks };
   `)() as {
     shouldSkipPrivateNetworkChecks: (hostname: string, policy?: Record<string, unknown>) => boolean;
@@ -122,13 +125,17 @@ function readDockerfileBaseOpenClawVersion(): string {
 }
 
 function readDockerfileOpenClawVersion(): string {
-  return readRequiredMatch(DOCKERFILE, /^ARG OPENCLAW_VERSION=([^\s]+)/m, "OpenClaw runtime version");
+  return readRequiredMatch(
+    DOCKERFILE,
+    /^ARG OPENCLAW_VERSION=([^\s]+)/m,
+    "OpenClaw runtime version",
+  );
 }
 
 function readDockerfileBaseOpenClawIntegrity(): string {
   return readRequiredMatch(
     DOCKERFILE_BASE,
-    /^ARG OPENCLAW_2026_5_22_INTEGRITY=([^\s]+)/m,
+    /^ARG OPENCLAW_2026_5_27_INTEGRITY=([^\s]+)/m,
     "OpenClaw base image integrity",
   );
 }
@@ -136,7 +143,7 @@ function readDockerfileBaseOpenClawIntegrity(): string {
 function readDockerfileOpenClawIntegrity(): string {
   return readRequiredMatch(
     DOCKERFILE,
-    /^ARG OPENCLAW_2026_5_22_INTEGRITY=([^\s]+)/m,
+    /^ARG OPENCLAW_2026_5_27_INTEGRITY=([^\s]+)/m,
     "OpenClaw runtime integrity",
   );
 }
@@ -187,12 +194,12 @@ function runOpenClawUpgradeBlock(currentVersion: string) {
     "set -euo pipefail",
     `call_log=${JSON.stringify(log)}`,
     `OPENCLAW_VERSION=${JSON.stringify(openclawVersion)}`,
-    `OPENCLAW_2026_5_22_INTEGRITY=${JSON.stringify(openclawIntegrity)}`,
+    `OPENCLAW_2026_5_27_INTEGRITY=${JSON.stringify(openclawIntegrity)}`,
     `openclaw() { if [ "\${1:-}" = "--version" ]; then printf 'openclaw ${currentVersion}\\n'; else return 127; fi; }`,
     "npm() {",
     '  printf "npm %s\\n" "$*" >> "$call_log";',
     '  if [ "${1:-}" = "view" ] && [ "${2:-}" = "openclaw@${OPENCLAW_VERSION}" ] && [ "${3:-}" = "dist.integrity" ]; then',
-    '    printf "%s\\n" "$OPENCLAW_2026_5_22_INTEGRITY";',
+    '    printf "%s\\n" "$OPENCLAW_2026_5_27_INTEGRITY";',
     "  fi",
     "}",
     'command() { if [ "${1:-}" = "-v" ] && [ "${2:-}" = "codex-acp" ]; then return 0; fi; builtin command "$@"; }',
@@ -247,7 +254,7 @@ function runDockerfilePatchBlock(
   dist: string,
   tmp: string,
   endMarker: string,
-  version = "2026.5.22",
+  version = "2026.5.27",
 ) {
   const command = dockerRunCommandBetween(
     "# Patch OpenClaw media fetch for proxy-only sandbox",
@@ -271,7 +278,7 @@ function runDockerfilePatchBlock(
   });
 }
 
-function runFetchGuardPatchBlock(dist: string, tmp: string, version = "2026.5.22") {
+function runFetchGuardPatchBlock(dist: string, tmp: string, version = "2026.5.27") {
   return runDockerfilePatchBlock(
     dist,
     tmp,
@@ -314,21 +321,21 @@ function webGuardedFetchFixtureSource(): string {
 }
 
 describe("fetch-guard patch regression guard", () => {
-  it("anchors web_fetch host-gateway policy to the reviewed OpenClaw 2026.5.22 SSRF contract", () => {
-    expect(REVIEWED_OPENCLAW_2026_5_22_WEB_FETCH_SHAPE).toContain(
+  it("anchors web_fetch host-gateway policy to the reviewed OpenClaw 2026.5.27 SSRF contract", () => {
+    expect(REVIEWED_OPENCLAW_2026_5_27_WEB_FETCH_SHAPE).toContain(
       "function fetchWithWebToolsNetworkGuard(params)",
     );
-    expect(REVIEWED_OPENCLAW_2026_5_22_WEB_FETCH_SHAPE).toContain(
+    expect(REVIEWED_OPENCLAW_2026_5_27_WEB_FETCH_SHAPE).toContain(
       "withTrustedEnvProxyGuardedFetchMode(resolved)",
     );
-    expect(REVIEWED_OPENCLAW_2026_5_22_SSRF_POLICY_SHAPE).toContain(
+    expect(REVIEWED_OPENCLAW_2026_5_27_SSRF_POLICY_SHAPE).toContain(
       "normalizeHostnameSet(policy?.allowedHostnames).has(hostname)",
     );
-    expect(REVIEWED_OPENCLAW_2026_5_22_SSRF_POLICY_SHAPE).toContain(
+    expect(REVIEWED_OPENCLAW_2026_5_27_SSRF_POLICY_SHAPE).toContain(
       "normalizeHostnameAllowlist(policy?.hostnameAllowlist)",
     );
 
-    const reviewed = loadReviewedOpenClaw20260522SsrfPolicyShape();
+    const reviewed = loadReviewedOpenClaw20260527SsrfPolicyShape();
     expect(
       reviewed.shouldSkipPrivateNetworkChecks("host.openshell.internal", {
         allowedHostnames: ["HOST.OPENSHELL.INTERNAL."],
@@ -357,7 +364,7 @@ describe("fetch-guard patch regression guard", () => {
   it("fails the image build when the NemoClaw OpenClaw plugin cannot install", () => {
     const command = dockerRunCommandBetween(
       "# Install NemoClaw plugin into OpenClaw",
-      "# SECURITY: Clear any gateway auth token",
+      "# Apply messaging render and post-agent-install build-file hooks after agent/plugin installation.",
     );
     const script = [
       "openclaw() {",
@@ -403,9 +410,10 @@ describe("fetch-guard patch regression guard", () => {
       blueprintMinVersion,
       "Dockerfile.base OpenClaw target must satisfy the blueprint minimum.",
     );
-    expect(runtimeVersion, "Dockerfile and Dockerfile.base must build the same OpenClaw target.").toBe(
-      baseImageVersion,
-    );
+    expect(
+      runtimeVersion,
+      "Dockerfile and Dockerfile.base must build the same OpenClaw target.",
+    ).toBe(baseImageVersion);
     expect(readDockerfileBaseOpenClawIntegrity()).toBe(EXPECTED_OPENCLAW_INTEGRITY);
     expect(readDockerfileOpenClawIntegrity()).toBe(EXPECTED_OPENCLAW_INTEGRITY);
     expect([...REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSIONS], reviewMessage).toContain(
@@ -510,9 +518,9 @@ describe("fetch-guard patch regression guard", () => {
         expect(trusted.policy).toEqual({
           allowedHostnames: ["host.openshell.internal"],
         });
-        expect(() => (globalThis as any).assertHostnameAllowedWithPolicy("host.openshell.internal")).toThrow(
-          /blocked host\.openshell\.internal/,
-        );
+        expect(() =>
+          (globalThis as any).assertHostnameAllowedWithPolicy("host.openshell.internal"),
+        ).toThrow(/blocked host\.openshell\.internal/);
         delete process.env.OPENSHELL_SANDBOX;
         await expect(
           (globalThis as any).fetchWithWebToolsNetworkGuard({
@@ -650,7 +658,6 @@ if (!blocked) throw new Error('private IP literal was not blocked');`,
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
-
 
   it("applies the proxy validator patch while the target function still exists", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fetch-guard-proxy-skip-"));
@@ -871,7 +878,9 @@ if (!blocked) throw new Error('private IP literal was not blocked');`,
   });
 
   it("fails closed when the web_fetch trusted-proxy callsite disappears but web fetch refs remain", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fetch-guard-host-gateway-unknown-"));
+    const tmp = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-fetch-guard-host-gateway-unknown-"),
+    );
     const dist = path.join(tmp, "dist");
     fs.mkdirSync(dist, { recursive: true });
     fs.writeFileSync(
@@ -905,7 +914,9 @@ if (!blocked) throw new Error('private IP literal was not blocked');`,
   });
 
   it("fails closed when the web_fetch target disappears but the runtime useEnvProxy symbol remains", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fetch-guard-use-env-proxy-unknown-"));
+    const tmp = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-fetch-guard-use-env-proxy-unknown-"),
+    );
     const dist = path.join(tmp, "dist");
     fs.mkdirSync(dist, { recursive: true });
     fs.writeFileSync(
@@ -1076,6 +1087,331 @@ if (!blocked) throw new Error('private IP literal was not blocked');`,
       expect(patch.stdout).toContain("Patch 2 applied");
       const patched = fs.readFileSync(modulePath, "utf-8");
       expect(patched).toContain("nemoclaw: env-gated bypass");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("activates the managed-proxy path for unconfigured strict fetches only inside the sandbox (#4687)", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fetch-guard-managed-proxy-"));
+    const dist = path.join(tmp, "dist");
+    fs.mkdirSync(dist, { recursive: true });
+    fs.writeFileSync(path.join(tmp, "package.json"), '{"type":"module"}\n');
+    const modulePath = path.join(dist, "fetch-guard-managed-proxy.js");
+    fs.writeFileSync(
+      modulePath,
+      [
+        "const withStrictGuardedFetchMode = Symbol('strict');",
+        "const withTrustedEnvProxyGuardedFetchMode = Symbol('trusted');",
+        "const GUARDED_FETCH_MODE = { STRICT: 'strict' };",
+        "function isManagedProxyActive() { return process.env.OPENCLAW_PROXY_ACTIVE === '1'; }",
+        "function hasProxyEnvConfigured() { return true; }",
+        "function computeCanUseManagedProxy(mode, params) {",
+        `  ${REVIEWED_OPENCLAW_2026_5_27_MANAGED_PROXY_SHAPE}`,
+        "  return canUseManagedProxy;",
+        "}",
+        "export { withStrictGuardedFetchMode as a, withTrustedEnvProxyGuardedFetchMode as b, computeCanUseManagedProxy as g };",
+        "",
+      ].join("\n"),
+    );
+
+    try {
+      const patch = runFetchGuardPatchBlock(
+        dist,
+        tmp,
+        CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION,
+      );
+      expect(patch.status, `${patch.stdout}${patch.stderr}`).toBe(0);
+      expect(patch.stdout).toContain("Patch 4 applied");
+      const patched = fs.readFileSync(modulePath, "utf-8");
+      expect(patched).toContain("nemoclaw: route unconfigured strict fetch");
+
+      const mod = await import(`${modulePath}?${Date.now()}`);
+      const prevSandbox = process.env.OPENSHELL_SANDBOX;
+      const prevManaged = process.env.OPENCLAW_PROXY_ACTIVE;
+      try {
+        // In-sandbox, no explicit dispatcher policy -> reuse the env proxy.
+        process.env.OPENSHELL_SANDBOX = "1";
+        delete process.env.OPENCLAW_PROXY_ACTIVE;
+        expect(mod.g("strict", {})).toBe(true);
+        // In-sandbox but an explicit dispatcher policy is supplied -> untouched.
+        expect(mod.g("strict", { dispatcherPolicy: { mode: "explicit-proxy" } })).toBe(false);
+        // Outside the sandbox -> original strict/direct behavior is preserved.
+        delete process.env.OPENSHELL_SANDBOX;
+        expect(mod.g("strict", {})).toBe(false);
+        // Upstream managed-proxy activation still works regardless of sandbox.
+        process.env.OPENCLAW_PROXY_ACTIVE = "1";
+        expect(mod.g("strict", {})).toBe(true);
+        // Non-strict modes never take the managed-proxy branch.
+        process.env.OPENSHELL_SANDBOX = "1";
+        delete process.env.OPENCLAW_PROXY_ACTIVE;
+        expect(mod.g("trusted_env_proxy", {})).toBe(false);
+      } finally {
+        if (prevSandbox === undefined) delete process.env.OPENSHELL_SANDBOX;
+        else process.env.OPENSHELL_SANDBOX = prevSandbox;
+        if (prevManaged === undefined) delete process.env.OPENCLAW_PROXY_ACTIVE;
+        else process.env.OPENCLAW_PROXY_ACTIVE = prevManaged;
+      }
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("reports Patch 4 not needed when the managed-proxy gate is absent", () => {
+    const tmp = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-fetch-guard-managed-proxy-absent-"),
+    );
+    const dist = path.join(tmp, "dist");
+    fs.mkdirSync(dist, { recursive: true });
+    fs.writeFileSync(
+      path.join(dist, "fetch-guard-no-managed-proxy.js"),
+      [
+        "const withStrictGuardedFetchMode = Symbol('strict');",
+        "const withTrustedEnvProxyGuardedFetchMode = Symbol('trusted');",
+        "export { withStrictGuardedFetchMode as a, withTrustedEnvProxyGuardedFetchMode as b };",
+        "",
+      ].join("\n"),
+    );
+
+    try {
+      const patch = runFetchGuardPatchBlock(dist, tmp, "2026.6.1");
+      expect(patch.status, `${patch.stdout}${patch.stderr}`).toBe(0);
+      expect(patch.stdout).toContain("Patch 4 not needed");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed when the managed-proxy gate drifts but managed-proxy references remain", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fetch-guard-managed-proxy-drift-"));
+    const dist = path.join(tmp, "dist");
+    fs.mkdirSync(dist, { recursive: true });
+    fs.writeFileSync(
+      path.join(dist, "fetch-guard-managed-proxy-drift.js"),
+      [
+        "const withStrictGuardedFetchMode = Symbol('strict');",
+        "const withTrustedEnvProxyGuardedFetchMode = Symbol('trusted');",
+        "function isManagedProxyActive() { return process.env.OPENCLAW_PROXY_ACTIVE === '1'; }",
+        "function proxyEnvSet() { return true; }",
+        // Drifted shape: renamed variables, so the exact reviewed gate is gone.
+        "const canUseManagedProxy = currentMode === 'strict' && isManagedProxyActive() && proxyEnvSet();",
+        "export { withStrictGuardedFetchMode as a, withTrustedEnvProxyGuardedFetchMode as b };",
+        "",
+      ].join("\n"),
+    );
+
+    try {
+      const patch = runFetchGuardPatchBlock(dist, tmp, "2026.6.1");
+      expect(patch.status).toBe(1);
+      expect(patch.stderr).toContain("Patch 4 target missing but managed-proxy references remain");
+      expect(patch.stderr).toContain("Patch 4 cannot safely skip");
+      expect(patch.stderr).toContain("OpenClaw 2026.6.1");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  function reviewedCronPreflightFixture({
+    auditOccurrences = 1,
+    includeFetchWithSsrFGuard = true,
+    includeBuildLocalProviderSsrFPolicy = true,
+    patchedOccurrences = 0,
+  }: {
+    auditOccurrences?: number;
+    includeFetchWithSsrFGuard?: boolean;
+    includeBuildLocalProviderSsrFPolicy?: boolean;
+    patchedOccurrences?: number;
+  } = {}): string {
+    const lines: string[] = [
+      "const PREFLIGHT_TIMEOUT_MS = 2500;",
+      "function buildProbeUrl(api, baseUrl) { return baseUrl + (api === 'ollama' ? '/api/tags' : '/models'); }",
+    ];
+    const policyHelper = includeBuildLocalProviderSsrFPolicy
+      ? "buildLocalProviderSsrFPolicy"
+      : "buildDriftedSsrFPolicy";
+    if (includeBuildLocalProviderSsrFPolicy) {
+      lines.push(
+        "function buildLocalProviderSsrFPolicy(baseUrl) {",
+        "  const parsed = new URL(baseUrl);",
+        "  return { hostnameAllowlist: [parsed.hostname], allowPrivateNetwork: true };",
+        "}",
+      );
+    } else {
+      lines.push(
+        "function buildDriftedSsrFPolicy(baseUrl) {",
+        "  const parsed = new URL(baseUrl);",
+        "  return { hostnameAllowlist: [parsed.hostname] };",
+        "}",
+      );
+    }
+    lines.push("async function probeLocalProviderEndpoint(params) {");
+    for (let index = 0; index < patchedOccurrences; index += 1) {
+      lines.push(
+        `  const ${index === 0 ? "patched" : `patched_${index}`} = await ${
+          includeFetchWithSsrFGuard ? "fetchWithSsrFGuard" : "callPatchedFetch"
+        }({`,
+        `    url: buildProbeUrl(params.api, params.baseUrl),`,
+        `    policy: ${policyHelper}(params.baseUrl),`,
+        `    timeoutMs: PREFLIGHT_TIMEOUT_MS,`,
+        `    mode: "trusted_env_proxy", auditContext: "cron-model-provider-preflight",`,
+        "  });",
+      );
+    }
+    for (let index = 0; index < auditOccurrences - patchedOccurrences; index += 1) {
+      lines.push(
+        `  const ${index === 0 ? "result" : `result_${index}`} = await ${
+          includeFetchWithSsrFGuard ? "fetchWithSsrFGuard" : "callUnpatchedFetch"
+        }({`,
+        `    url: buildProbeUrl(params.api, params.baseUrl),`,
+        `    policy: ${policyHelper}(params.baseUrl),`,
+        `    timeoutMs: PREFLIGHT_TIMEOUT_MS,`,
+        `    auditContext: "cron-model-provider-preflight",`,
+        "  });",
+      );
+    }
+    lines.push(
+      "  return null;",
+      "}",
+      "export { probeLocalProviderEndpoint, preflightCronModelProvider };",
+      "function preflightCronModelProvider() {}",
+      "",
+    );
+    return lines.join("\n");
+  }
+
+  function writeNeighbouringFetchGuardFixtures(dist: string): void {
+    // Earlier patches in the same RUN block (1, 2, 2b, 4) only need the dist to
+    // navigate their "not needed" branches; mirror the shape proven by the
+    // "skips the strict export patch when strict fetch mode is absent" test so
+    // execution reaches Patch 6 without classifying the dist as unknown.
+    fs.writeFileSync(
+      path.join(dist, "media-runtime.js"),
+      "export { readRemoteMediaBuffer, saveRemoteMedia, fetchRemoteMedia };\n",
+    );
+    fs.writeFileSync(
+      path.join(dist, "fetch-guard-neighbour.js"),
+      [
+        "const withTrustedEnvProxyGuardedFetchMode = Symbol('trusted');",
+        "async function fetchGuardedMediaResponse() {",
+        "  return fetchWithSsrFGuard(withTrustedEnvProxyGuardedFetchMode({}));",
+        "}",
+        "export { withTrustedEnvProxyGuardedFetchMode as a };",
+        "",
+      ].join("\n"),
+    );
+  }
+
+  it("applies Patch 6 to a reviewed single-callsite cron preflight fixture", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-patch6-happy-"));
+    const dist = path.join(tmp, "dist");
+    fs.mkdirSync(dist, { recursive: true });
+    writeNeighbouringFetchGuardFixtures(dist);
+    const preflightPath = path.join(dist, "model-preflight.runtime.js");
+    fs.writeFileSync(preflightPath, reviewedCronPreflightFixture());
+    try {
+      const patch = runFetchGuardPatchBlock(dist, tmp);
+      expect(patch.status, `${patch.stdout}${patch.stderr}`).toBe(0);
+      expect(patch.stdout).toContain(
+        "Patch 6 applied to OpenClaw 2026.5.27 cron preflight trusted env-proxy",
+      );
+      const patched = fs.readFileSync(preflightPath, "utf-8");
+      expect(
+        patched.match(/mode: "trusted_env_proxy", auditContext: "cron-model-provider-preflight"/g)
+          ?.length,
+      ).toBe(1);
+      expect(patched).not.toMatch(/(?<!_proxy", )auditContext: "cron-model-provider-preflight"/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("treats an already-patched cron preflight fixture as a no-op", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-patch6-idempotent-"));
+    const dist = path.join(tmp, "dist");
+    fs.mkdirSync(dist, { recursive: true });
+    writeNeighbouringFetchGuardFixtures(dist);
+    const preflightPath = path.join(dist, "model-preflight.runtime.js");
+    const source = reviewedCronPreflightFixture({ auditOccurrences: 1, patchedOccurrences: 1 });
+    fs.writeFileSync(preflightPath, source);
+    try {
+      const patch = runFetchGuardPatchBlock(dist, tmp);
+      expect(patch.status, `${patch.stdout}${patch.stderr}`).toBe(0);
+      expect(patch.stdout).toContain("Patch 6 already present in");
+      expect(patch.stdout).not.toContain("Patch 6 applied to OpenClaw");
+      expect(fs.readFileSync(preflightPath, "utf-8")).toBe(source);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("skips Patch 6 when the dist has no cron preflight references", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-patch6-absent-"));
+    const dist = path.join(tmp, "dist");
+    fs.mkdirSync(dist, { recursive: true });
+    writeNeighbouringFetchGuardFixtures(dist);
+    try {
+      const patch = runFetchGuardPatchBlock(dist, tmp);
+      expect(patch.status, `${patch.stdout}${patch.stderr}`).toBe(0);
+      expect(patch.stdout).toContain(
+        "OpenClaw 2026.5.27 has no cron model-provider preflight; Patch 6 not needed",
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("fails Patch 6 closed when the fetchWithSsrFGuard helper is missing", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-patch6-no-fetch-"));
+    const dist = path.join(tmp, "dist");
+    fs.mkdirSync(dist, { recursive: true });
+    writeNeighbouringFetchGuardFixtures(dist);
+    fs.writeFileSync(
+      path.join(dist, "model-preflight.runtime.js"),
+      reviewedCronPreflightFixture({ includeFetchWithSsrFGuard: false }),
+    );
+    try {
+      const patch = runFetchGuardPatchBlock(dist, tmp);
+      expect(patch.status).toBe(1);
+      expect(patch.stderr).toContain("Patch 6 shape gate: ");
+      expect(patch.stderr).toContain("no fetchWithSsrFGuard call");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("fails Patch 6 closed when the SsrF policy helper is missing", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-patch6-no-policy-"));
+    const dist = path.join(tmp, "dist");
+    fs.mkdirSync(dist, { recursive: true });
+    writeNeighbouringFetchGuardFixtures(dist);
+    fs.writeFileSync(
+      path.join(dist, "model-preflight.runtime.js"),
+      reviewedCronPreflightFixture({ includeBuildLocalProviderSsrFPolicy: false }),
+    );
+    try {
+      const patch = runFetchGuardPatchBlock(dist, tmp);
+      expect(patch.status).toBe(1);
+      expect(patch.stderr).toContain("Patch 6 shape gate: ");
+      expect(patch.stderr).toContain("no buildLocalProviderSsrFPolicy");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("fails Patch 6 closed when the audit context literal is ambiguous (multi-callsite)", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-patch6-ambiguous-"));
+    const dist = path.join(tmp, "dist");
+    fs.mkdirSync(dist, { recursive: true });
+    writeNeighbouringFetchGuardFixtures(dist);
+    fs.writeFileSync(
+      path.join(dist, "model-preflight.runtime.js"),
+      reviewedCronPreflightFixture({ auditOccurrences: 2 }),
+    );
+    try {
+      const patch = runFetchGuardPatchBlock(dist, tmp);
+      expect(patch.status).toBe(1);
+      expect(patch.stderr).toContain("Patch 6 shape gate: ");
+      expect(patch.stderr).toContain("refusing ambiguous multi-callsite rewrite");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

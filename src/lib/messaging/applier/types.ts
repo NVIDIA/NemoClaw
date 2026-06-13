@@ -11,7 +11,11 @@ import type {
   SandboxMessagingHookReferencePlan,
   SandboxMessagingPlan,
 } from "../manifest";
-import type { MessagingHookInputMap, MessagingHookOutputMap, MessagingHookRunResult } from "../hooks";
+import type {
+  MessagingHookInputMap,
+  MessagingHookOutputMap,
+  MessagingHookRunResult,
+} from "../hooks";
 
 export const MESSAGING_SETUP_APPLIER_ENV_KEY = "NEMOCLAW_MESSAGING_PLAN_B64";
 

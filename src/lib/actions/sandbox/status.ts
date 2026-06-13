@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-
 import { printOpenShellStateRpcIssue } from "../../adapters/openshell/gateway-drift";
+import { getSandboxTargetGatewayName } from "./gateway-target";
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import * as agentRuntime from "../../agent/runtime";
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../../cli/branding";
@@ -12,42 +12,37 @@ import * as nim from "../../inference/nim";
 import * as sandboxVersion from "../../sandbox/version";
 import * as shields from "../../shields";
 import { isTerminalSandboxPhase, parseSandboxPhase } from "../../state/gateway";
+import type { SandboxGpuProofResult } from "../../state/registry";
 import * as registry from "../../state/registry";
 import {
   createSystemDeps as createSessionDeps,
   getActiveSandboxSessions,
 } from "../../state/sandbox-session";
 import { getSandboxDockerRuntime } from "./docker-health";
-import {
-  isDockerRuntimeDown,
-  printDockerRuntimeDownGuidance,
-} from "./gateway-failure-classifier";
+import { isDockerRuntimeDown, printDockerRuntimeDownGuidance } from "./gateway-failure-classifier";
 import type { SandboxGatewayState } from "./gateway-state";
-import {
-  printGatewayLifecycleHint,
-  printWrongGatewayActiveGuidance,
-} from "./gateway-state";
+import { printGatewayLifecycleHint, printWrongGatewayActiveGuidance } from "./gateway-state";
 import { isSandboxGatewayRunningForStatus } from "./process-recovery";
-import { collectSandboxStatusSnapshot } from "./status-snapshot";
 import {
   getSandboxStatusPreflight,
   printGatewayFailureLayerHeader,
   printSandboxStatusPreflightHeader,
   withoutTerminalPhasePreflight,
 } from "./status-preflight";
+import { collectSandboxStatusSnapshot } from "./status-snapshot";
 
 export {
+  type ClassifySandboxStatusPreflightFailureDeps,
   classifySandboxContainerFailureForStatus,
   classifySandboxStatusPreflightFailure,
-  isDockerDaemonUnreachableForStatus,
   getSandboxStatusPreflight,
+  isDockerDaemonUnreachableForStatus,
   printGatewayFailureLayerHeader,
   printSandboxStatusPreflightHeader,
-  withoutTerminalPhasePreflight,
-  type ClassifySandboxStatusPreflightFailureDeps,
   type SandboxStatusFailureLayer,
   type SandboxStatusPreflightFailure,
   type SandboxStatusPreflightResult,
+  withoutTerminalPhasePreflight,
 } from "./status-preflight";
 export {
   collectSandboxStatusSnapshot,
@@ -66,6 +61,29 @@ function shouldProbeSandboxRuntimeVersion(
   sandbox: registry.SandboxEntry,
 ): boolean {
   return lookup.state === "present" && Boolean(sandbox.agentVersion);
+}
+
+// True when sandbox GPU is enabled but no CUDA-usability proof has confirmed it
+// (older entries with no recorded proof, or a run whose CUDA proof could not
+// execute). Treated as not-yet-proven rather than healthy (#4231).
+export function sandboxGpuProofUnverified(
+  proof: SandboxGpuProofResult | null | undefined,
+): boolean {
+  return !proof || proof.status === "unverified";
+}
+
+// Render the proof-state suffix appended to the `Sandbox GPU: enabled` line so
+// the status reflects verified/unverified/failed CUDA usability instead of
+// reporting any configured GPU as healthy (#4231).
+export function sandboxGpuProofStatusSuffix(
+  proof: SandboxGpuProofResult | null | undefined,
+): string {
+  if (proof?.status === "verified") return ` ${G}(CUDA verified)${R}`;
+  if (proof?.status === "failed") {
+    const label = proof.label ? `: ${proof.label}` : "";
+    return ` ${RD}(last CUDA proof failed${label})${R}`;
+  }
+  return ` ${YW}(CUDA unverified)${R}`;
 }
 
 /**
@@ -88,9 +106,7 @@ function printInferenceProbeLine(probe: ProviderHealthStatus): void {
   // the auth proxy in `inference/local.ts:probeOllamaAuthProxyHealth`); the
   // `|| "unreachable"` fallback only applies when an upstream forgot to set
   // one. Don't infer the failure mode here — preserve what the probe said. (#3265)
-  console.log(
-    `    ${label}: ${RD}${probe.failureLabel || "unreachable"}${R} (${probe.endpoint})`,
-  );
+  console.log(`    ${label}: ${RD}${probe.failureLabel || "unreachable"}${R} (${probe.endpoint})`);
   console.log(`      ${probe.detail}`);
 }
 
@@ -148,8 +164,7 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
   const { sb, lookup, rpcIssue, currentModel, currentProvider, inferenceHealth } = snapshot;
   // Resolve the docker-driver container once: reused for the paused-container
   // recovery hint (#4495) and the Docker health line below (#3975).
-  const dockerRuntime =
-    lookup.state === "present" ? getSandboxDockerRuntime(sandboxName) : null;
+  const dockerRuntime = lookup.state === "present" ? getSandboxDockerRuntime(sandboxName) : null;
   const phase = lookup.state === "present" ? parseSandboxPhase(lookup.output || "") : null;
   const effectivePreflight = withoutTerminalPhasePreflight(preflight, phase);
   printSandboxStatusPreflightHeader(effectivePreflight);
@@ -179,14 +194,30 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
       console.log("    Inference: not verified (gateway/sandbox state not verified)");
     }
     const hostGpu = sb.hostGpuDetected ? "yes" : "no";
-    const sandboxGpuEnabled = sb.sandboxGpuEnabled ?? (sb.gpuEnabled === true);
+    const sandboxGpuEnabled = sb.sandboxGpuEnabled ?? sb.gpuEnabled === true;
     const sandboxGpu = sandboxGpuEnabled ? "enabled" : "disabled";
     const sandboxGpuMode = sb.sandboxGpuMode ? ` (${sb.sandboxGpuMode})` : "";
     const sandboxGpuDevice = sb.sandboxGpuDevice ? ` device=${sb.sandboxGpuDevice}` : "";
+    const sandboxGpuProofSuffix = sandboxGpuEnabled
+      ? sandboxGpuProofStatusSuffix(sb.sandboxGpuProof)
+      : "";
     const openshellDriver = sb.openshellDriver || "unknown";
     const openshellVersion = sb.openshellVersion || "unknown";
     console.log(`    Host GPU: ${hostGpu}`);
-    console.log(`    Sandbox GPU: ${sandboxGpu}${sandboxGpuMode}${sandboxGpuDevice}`);
+    console.log(
+      `    Sandbox GPU: ${sandboxGpu}${sandboxGpuMode}${sandboxGpuDevice}${sandboxGpuProofSuffix}`,
+    );
+    if (sandboxGpuEnabled && sb.sandboxGpuProof?.status === "failed") {
+      const detail = sb.sandboxGpuProof.detail;
+      if (detail) console.log(`      ${detail}`);
+      console.log(
+        "      CUDA failed a live proof. Recreate with corrected GPU device/group access, or rerun onboard with --no-gpu.",
+      );
+    } else if (sandboxGpuEnabled && sandboxGpuProofUnverified(sb.sandboxGpuProof)) {
+      console.log(
+        "      CUDA usability has not been proven. Rerun onboard to verify, or use --no-gpu for CPU.",
+      );
+    }
     console.log(`    OpenShell: ${openshellVersion} (${openshellDriver})`);
     console.log(`    Policies: ${(sb.policies || []).join(", ") || "none"}`);
 
@@ -243,7 +274,9 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
         versionCheck.expectedVersion
       ) {
         console.log(`    ${YW}Update:   unable to verify sandbox ${agentName} version${R}`);
-        console.log(`              Run \`${CLI_NAME} ${sandboxName} rebuild\` if this sandbox predates the current install`);
+        console.log(
+          `              Run \`${CLI_NAME} ${sandboxName} rebuild\` if this sandbox predates the current install`,
+        );
       }
     } catch {
       /* non-fatal */
@@ -255,6 +288,16 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
     if ("recoveredGateway" in lookup && lookup.recoveredGateway) {
       console.log(
         `  Recovered ${CLI_DISPLAY_NAME} gateway runtime via ${("recoveryVia" in lookup ? lookup.recoveryVia : null) || "gateway reattach"}.`,
+      );
+      console.log("");
+    }
+    if ("recoveredSandbox" in lookup && lookup.recoveredSandbox) {
+      const via =
+        "recoverySandboxVia" in lookup && lookup.recoverySandboxVia
+          ? ` via ${lookup.recoverySandboxVia}`
+          : "";
+      console.log(
+        `  Recovered sandbox '${sandboxName}' from Docker${via}; OpenShell now sees it as live.`,
       );
       console.log("");
     }
@@ -342,7 +385,7 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
       console.log(lookup.output);
     }
     console.log(
-      "  Retry `openshell gateway start --name nemoclaw` and verify `openshell status` is healthy before reconnecting.",
+      `  Retry \`openshell gateway start --name ${getSandboxTargetGatewayName(sandboxName)}\` and verify \`openshell status\` is healthy before reconnecting.`,
     );
     console.log(
       "  If the gateway never becomes healthy, rebuild the gateway and then recreate the affected sandbox.",
@@ -358,7 +401,7 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
       console.log(lookup.output);
     }
     console.log(
-      "  Start the gateway again with `openshell gateway start --name nemoclaw` before retrying.",
+      `  Start the gateway again with \`openshell gateway start --name ${getSandboxTargetGatewayName(sandboxName)}\` before retrying.`,
     );
     console.log(
       "  If the gateway had to be rebuilt from scratch, recreate the affected sandbox afterward.",

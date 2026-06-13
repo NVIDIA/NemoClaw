@@ -15,6 +15,18 @@ vi.mock("../../policy", () => ({
 
 vi.mock("../../state/registry", () => ({
   getSandbox: vi.fn(),
+  getConfiguredMessagingChannelsFromEntry: vi.fn((entry) => {
+    const channels = entry?.messaging?.plan?.channels;
+    return Array.isArray(channels)
+      ? channels
+          .filter((channel) => channel?.configured === true)
+          .map((channel) => channel.channelId)
+      : [];
+  }),
+  getDisabledMessagingChannelsFromEntry: vi.fn((entry) => {
+    const disabled = entry?.messaging?.plan?.disabledChannels;
+    return Array.isArray(disabled) ? [...disabled] : [];
+  }),
 }));
 
 vi.mock("../../agent/defs", () => ({
@@ -108,11 +120,37 @@ function entry(
   messagingChannels: string[] = ["whatsapp"],
   disabledChannels: string[] = [],
 ): SandboxEntry {
+  const disabled = new Set(disabledChannels);
   return {
     name: "alpha",
     agent: "openclaw",
-    messagingChannels,
-    disabledChannels,
+    messaging: {
+      schemaVersion: 1,
+      plan: {
+        schemaVersion: 1,
+        sandboxName: "alpha",
+        agent: "openclaw",
+        workflow: "onboard",
+        channels: messagingChannels.map((channelId) => ({
+          channelId,
+          displayName: channelId,
+          authMode: channelId === "whatsapp" ? "in-sandbox-qr" : "token-paste",
+          active: !disabled.has(channelId),
+          selected: true,
+          configured: true,
+          disabled: disabled.has(channelId),
+          inputs: [],
+          hooks: [],
+        })),
+        disabledChannels,
+        credentialBindings: [],
+        networkPolicy: { presets: [], entries: [] },
+        agentRender: [],
+        buildSteps: [],
+        stateUpdates: [],
+        healthChecks: [],
+      },
+    },
   } as SandboxEntry;
 }
 
@@ -196,11 +234,9 @@ describe("showSandboxChannelStatus (whatsapp)", () => {
       "PROC 1234 openclaw-whatsapp",
       "NEMOCLAW_WA_PROC_DONE",
     ].join("\n");
-    const exitSpy = vi
-      .spyOn(process, "exit")
-      .mockImplementation(((code?: number) => {
-        throw new Error(`process.exit(${code})`);
-      }) as never);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${code})`);
+    }) as never);
     const { deps, out_lines } = makeDeps({
       exec: () => ({ status: 0, stdout, stderr: "" }),
     });
@@ -246,11 +282,9 @@ describe("showSandboxChannelStatus (whatsapp)", () => {
   });
 
   it("returns probe_failed when openshell exec produces no marker", async () => {
-    const exitSpy = vi
-      .spyOn(process, "exit")
-      .mockImplementation(((code?: number) => {
-        throw new Error(`process.exit(${code})`);
-      }) as never);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${code})`);
+    }) as never);
     const { deps } = makeDeps({
       exec: () => ({ status: 1, stdout: "", stderr: "Error: not running" }),
     });
@@ -266,11 +300,9 @@ describe("showSandboxChannelStatus (whatsapp)", () => {
   });
 
   it("returns probe_failed when openshell exec returns null (timeout)", async () => {
-    const exitSpy = vi
-      .spyOn(process, "exit")
-      .mockImplementation(((code?: number) => {
-        throw new Error(`process.exit(${code})`);
-      }) as never);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${code})`);
+    }) as never);
     const { deps } = makeDeps({
       exec: () => null,
     });
@@ -294,11 +326,9 @@ describe("showSandboxChannelStatus (whatsapp)", () => {
       "NEMOCLAW_WA_LOG_BEGIN",
       "NEMOCLAW_WA_LOG_END",
     ].join("\n");
-    const exitSpy = vi
-      .spyOn(process, "exit")
-      .mockImplementation(((code?: number) => {
-        throw new Error(`process.exit(${code})`);
-      }) as never);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${code})`);
+    }) as never);
     const { deps } = makeDeps({
       exec: () => ({ status: 0, stdout, stderr: "" }),
       sandbox: entry([]),
@@ -323,11 +353,9 @@ describe("showSandboxChannelStatus (whatsapp)", () => {
       "NEMOCLAW_WA_LOG_BEGIN",
       "NEMOCLAW_WA_LOG_END",
     ].join("\n");
-    const exitSpy = vi
-      .spyOn(process, "exit")
-      .mockImplementation(((code?: number) => {
-        throw new Error(`process.exit(${code})`);
-      }) as never);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${code})`);
+    }) as never);
     const { deps, out_lines } = makeDeps({
       exec: () => ({ status: 0, stdout, stderr: "" }),
       agentName: "hermes",
@@ -365,11 +393,9 @@ describe("showSandboxChannelStatus (whatsapp)", () => {
       "NEMOCLAW_WA_LOG_END",
       "NEMOCLAW_WA_PROC_DONE",
     ].join("\n");
-    const exitSpy = vi
-      .spyOn(process, "exit")
-      .mockImplementation(((code?: number) => {
-        throw new Error(`process.exit(${code})`);
-      }) as never);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${code})`);
+    }) as never);
     try {
       const { deps: depsNoMatch, out_lines: linesNoMatch } = makeDeps({
         exec: () => ({ status: 0, stdout: stdoutNoMatch, stderr: "" }),
@@ -418,13 +444,15 @@ describe("showSandboxChannelStatus (whatsapp)", () => {
     let capturedCmd: string | null = null;
     const exec = (_sb: string, cmd: string): ExecResult | null => {
       capturedCmd = cmd;
-      return { status: 0, stdout: "NEMOCLAW_WA_DIAG_OK\nDIR /sandbox/.openclaw/whatsapp MISSING\n", stderr: "" };
+      return {
+        status: 0,
+        stdout: "NEMOCLAW_WA_DIAG_OK\nDIR /sandbox/.openclaw/whatsapp MISSING\n",
+        stderr: "",
+      };
     };
-    const exitSpy = vi
-      .spyOn(process, "exit")
-      .mockImplementation(((code?: number) => {
-        throw new Error(`process.exit(${code})`);
-      }) as never);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${code})`);
+    }) as never);
     const { deps } = makeDeps({ exec });
     try {
       await showSandboxChannelStatus("alpha", { deps });

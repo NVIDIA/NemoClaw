@@ -10,10 +10,10 @@
 // token and per-account metadata up front, store the secret in OpenShell
 // as a provider credential, and never persist it inside the sandbox image
 // or its state directory. The captured session is then seeded into the
-// upstream plugin's on-disk account store at image build time (see
-// scripts/seed-wechat-accounts.py), so the upstream plugin starts
-// already-logged-in and never tries to drive its own QR login inside the
-// sandbox.
+// upstream plugin's on-disk account store at image build time via the
+// wechat.seedOpenClawAccount post-agent-install hook, so the upstream
+// plugin starts already logged in and never tries to drive its own QR
+// login inside the sandbox.
 //
 // Endpoints (Tencent iLink CGI, observed against the public gateway):
 //   GET https://ilinkai.weixin.qq.com/ilink/bot/get_bot_qrcode?bot_type=3
@@ -37,7 +37,7 @@ export const WECHAT_ILINK_APP_ID = "bot";
  *  Pinned in lockstep with the @tencent-weixin/openclaw-weixin version
  *  installed in the sandbox image, so the iLink gateway sees the same
  *  client version from both the host login and the in-sandbox plugin.
- *  Bump together with the version pinned in the Dockerfile. */
+ *  Bump together with WECHAT_PLUGIN_SPEC in the messaging WeChat hook. */
 export const WECHAT_ILINK_CLIENT_VERSION = encodeIlinkClientVersion("2.4.3");
 
 /** Client-side ceiling for a single status long-poll. 35s keeps us within
@@ -123,6 +123,10 @@ function ensureTrailingSlash(url: string): string {
   return url.endsWith("/") ? url : `${url}/`;
 }
 
+function statusPollUrlForDebug(url: URL): string {
+  return `${url.origin}${url.pathname}`;
+}
+
 /** Bootstrap a new QR session against the fixed iLink host. The returned
  *  `qrcode` is the cookie used for subsequent polling; `qrcodeUrl` is what
  *  the operator scans in WeChat. */
@@ -135,10 +139,7 @@ export async function fetchWechatQrSession(
   }
   const baseUrl = ensureTrailingSlash(opts.bootstrapBaseUrl ?? WECHAT_ILINK_BOOTSTRAP_BASE_URL);
   const botType = opts.botType ?? WECHAT_ILINK_DEFAULT_BOT_TYPE;
-  const url = new URL(
-    `ilink/bot/get_bot_qrcode?bot_type=${encodeURIComponent(botType)}`,
-    baseUrl,
-  );
+  const url = new URL(`ilink/bot/get_bot_qrcode?bot_type=${encodeURIComponent(botType)}`, baseUrl);
 
   const timeoutMs = opts.timeoutMs ?? WECHAT_QR_BOOTSTRAP_TIMEOUT_MS;
   const controller = new AbortController();
@@ -152,10 +153,7 @@ export async function fetchWechatQrSession(
     });
   } catch (err) {
     if (isAbortError(err)) {
-      throw new WechatQrError(
-        "network",
-        `WeChat QR init request timed out after ${timeoutMs}ms`,
-      );
+      throw new WechatQrError("network", `WeChat QR init request timed out after ${timeoutMs}ms`);
     }
     throw new WechatQrError("network", `WeChat QR init request failed: ${stringify(err)}`);
   } finally {
@@ -163,7 +161,11 @@ export async function fetchWechatQrSession(
   }
   if (!response.ok) {
     const body = await safeText(response);
-    throw new WechatQrError("http", `WeChat QR init returned ${response.status}: ${body}`, response.status);
+    throw new WechatQrError(
+      "http",
+      `WeChat QR init returned ${response.status}: ${body}`,
+      response.status,
+    );
   }
   const text = await response.text();
   let parsed: { qrcode?: unknown; qrcode_img_content?: unknown };
@@ -216,7 +218,7 @@ export async function pollWechatQrStatus(params: {
 
   try {
     let response: Awaited<ReturnType<FetchLike>>;
-    params.onDebug?.(`poll request → ${url.toString()}`);
+    params.onDebug?.(`poll request → ${statusPollUrlForDebug(url)}`);
     try {
       response = await transport(url.toString(), {
         method: "GET",
@@ -253,7 +255,10 @@ export async function pollWechatQrStatus(params: {
     try {
       parsed = JSON.parse(text) as WechatQrStatusResponse;
     } catch (err) {
-      throw new WechatQrError("parse", `WeChat QR status returned non-JSON body: ${stringify(err)}`);
+      throw new WechatQrError(
+        "parse",
+        `WeChat QR status returned non-JSON body: ${stringify(err)}`,
+      );
     }
     if (typeof parsed?.status !== "string") {
       throw new WechatQrError("parse", "WeChat QR status response missing 'status' field");

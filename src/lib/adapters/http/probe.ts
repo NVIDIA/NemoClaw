@@ -11,6 +11,7 @@ import os from "node:os";
 import path from "node:path";
 import { isErrnoException } from "../../core/errno";
 import { compactText } from "../../core/url-utils";
+import { buildCurlProbeSpawnArgs, validateCurlProbeArgs } from "./curl-args";
 import type { ProbeResult } from "../../onboard/types";
 import { ROOT } from "../../state/paths";
 import { addTraceEvent, withTraceSpan } from "../../trace";
@@ -22,6 +23,8 @@ export interface CurlProbeOptions {
   env?: NodeJS.ProcessEnv;
   replaceEnv?: boolean;
   timeoutMs?: number;
+  /** Absolute or cwd-relative curl config files created by trusted NemoClaw callers. */
+  trustedConfigFiles?: readonly string[];
   spawnSyncImpl?: (
     command: string,
     args: readonly string[],
@@ -105,9 +108,7 @@ function resolveCurlProcessTimeoutMs(argv: string[], opts: CurlProbeOptions): nu
 
 function normalizeSpawnErrorCode(error: unknown): number {
   if (isErrnoException(error) && error.code === "ETIMEDOUT") return -110;
-  const rawErrorCode = isErrnoException(error)
-    ? (error.errno ?? error.code)
-    : undefined;
+  const rawErrorCode = isErrnoException(error) ? (error.errno ?? error.code) : undefined;
   return typeof rawErrorCode === "number" ? rawErrorCode : 1;
 }
 
@@ -126,7 +127,10 @@ function sanitizeCurlUrl(value: string): string {
   }
 }
 
-function getCurlProbeTraceAttributes(argv: string[], opts: CurlProbeOptions): Record<string, unknown> {
+function getCurlProbeTraceAttributes(
+  argv: string[],
+  opts: CurlProbeOptions,
+): Record<string, unknown> {
   const url = argv.at(-1) || "";
   const methodIndex = argv.findIndex((arg) => arg === "-X" || arg === "--request");
   const method =
@@ -204,21 +208,24 @@ export function summarizeProbeFailure(body = "", status = 0, curlStatus = 0, std
 }
 
 export function runCurlProbe(argv: string[], opts: CurlProbeOptions = {}): CurlProbeResult {
-  return withTraceSpan("nemoclaw.inference.curl_probe", getCurlProbeTraceAttributes(argv, opts), () =>
-    runCurlProbeImpl(argv, opts),
+  return withTraceSpan(
+    "nemoclaw.inference.curl_probe",
+    getCurlProbeTraceAttributes(argv, opts),
+    () => runCurlProbeImpl(argv, opts),
   );
 }
 
 function runCurlProbeImpl(argv: string[], opts: CurlProbeOptions = {}): CurlProbeResult {
   const bodyFile = secureTempFile("nemoclaw-curl-probe", ".json");
   try {
-    const args = [...argv];
-    const url = args.pop();
+    const { args, url } = validateCurlProbeArgs(argv, opts);
     const spawnSyncImpl = opts.spawnSyncImpl ?? spawnSync;
     const timeout = resolveCurlProcessTimeoutMs(argv, opts);
+    const curlArgs = buildCurlProbeSpawnArgs(args, url, bodyFile, "json");
     const result = spawnSyncImpl(
       "curl",
-      [...args, "-o", bodyFile, "-w", "%{http_code}", String(url || "")],
+      // lgtm[js/file-access-to-http] curlArgs were validated and rebuilt from safe probe fields.
+      curlArgs,
       {
         cwd: opts.cwd ?? ROOT,
         encoding: "utf8",
@@ -320,13 +327,14 @@ function runChatCompletionsStreamingProbeImpl(
 ): CurlProbeResult {
   const bodyFile = secureTempFile("nemoclaw-chat-streaming-probe", ".sse");
   try {
-    const args = [...argv];
-    const url = args.pop();
+    const { args, url } = validateCurlProbeArgs(argv, opts);
     const spawnSyncImpl = opts.spawnSyncImpl ?? spawnSync;
     const timeout = resolveCurlProcessTimeoutMs(argv, opts);
+    const curlArgs = buildCurlProbeSpawnArgs(args, url, bodyFile, "chat-stream");
     const result = spawnSyncImpl(
       "curl",
-      [...args, "-N", "-o", bodyFile, "-w", "%{http_code}", String(url || "")],
+      // lgtm[js/file-access-to-http] curlArgs were validated and rebuilt from safe probe fields.
+      curlArgs,
       {
         cwd: opts.cwd ?? ROOT,
         encoding: "utf8",
@@ -440,26 +448,33 @@ function runStreamingEventProbeImpl(
 ): StreamingProbeResult {
   const bodyFile = secureTempFile("nemoclaw-streaming-probe", ".sse");
   try {
-    const args = [...argv];
-    const url = args.pop();
+    const { args, url } = validateCurlProbeArgs(argv, opts);
     const spawnSyncImpl = opts.spawnSyncImpl ?? spawnSync;
     const timeout = resolveCurlProcessTimeoutMs(argv, opts);
-    const result = spawnSyncImpl("curl", [...args, "-N", "-o", bodyFile, String(url || "")], {
-      cwd: opts.cwd ?? ROOT,
-      encoding: "utf8",
-      timeout,
-      env: {
-        ...process.env,
-        ...opts.env,
+    const curlArgs = buildCurlProbeSpawnArgs(args, url, bodyFile, "event-stream");
+    const result = spawnSyncImpl(
+      "curl",
+      // lgtm[js/file-access-to-http] curlArgs were validated and rebuilt from safe probe fields.
+      curlArgs,
+      {
+        cwd: opts.cwd ?? ROOT,
+        encoding: "utf8",
+        timeout,
+        env: {
+          ...process.env,
+          ...opts.env,
+        },
       },
-    });
+    );
 
     const body = fs.existsSync(bodyFile) ? fs.readFileSync(bodyFile, "utf8") : "";
 
     if (result.error || (result.status !== null && result.status !== 0 && result.status !== 28)) {
       // curl exit 28 = timeout, which is expected — we cap with --max-time
       // and may still have collected enough events before the timeout.
-      const curlStatus = result.error ? normalizeSpawnErrorCode(result.error) : (result.status ?? 1);
+      const curlStatus = result.error
+        ? normalizeSpawnErrorCode(result.error)
+        : (result.status ?? 1);
       const detail = result.error
         ? String(result.error.message || result.error)
         : String(result.stderr || "");
@@ -501,7 +516,11 @@ function runStreamingEventProbeImpl(
       };
     }
 
-    emitCurlResultTraceEvent({ ok: true, missing_events_count: 0, curl_status: result.status ?? 0 });
+    emitCurlResultTraceEvent({
+      ok: true,
+      missing_events_count: 0,
+      curl_status: result.status ?? 0,
+    });
     return { ok: true, missingEvents: [], message: "" };
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);

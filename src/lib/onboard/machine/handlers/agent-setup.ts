@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Session, SessionUpdates } from "../../../state/onboard-session";
+import { advanceTo, type OnboardStateTransitionResult } from "../result";
 
 export interface AgentSetupStateOptions<Agent> {
   agent: Agent | null;
@@ -27,7 +28,10 @@ export interface AgentSetupStateOptions<Agent> {
     recordStepSkipped(stepName: string): Promise<Session>;
     isOpenclawReady(sandboxName: string): boolean;
     skippedStepMessage(stepName: string, detail?: string | null): void;
-    recordStateSkipped(state: "openclaw", metadata?: Record<string, unknown> | null): Promise<Session>;
+    recordStateSkipped(
+      state: "openclaw",
+      metadata?: Record<string, unknown> | null,
+    ): Promise<Session>;
     startRecordedStep(
       stepName: string,
       updates: { sandboxName: string; provider: string; model: string },
@@ -41,6 +45,7 @@ export interface AgentSetupStateOptions<Agent> {
 
 export interface AgentSetupStateResult {
   session: Session | null;
+  stateResult: OnboardStateTransitionResult;
 }
 
 export async function handleAgentSetupState<Agent>({
@@ -66,7 +71,7 @@ export async function handleAgentSetupState<Agent>({
     );
     deps.ensureAgentDashboardForward(sandboxName, agent);
     session = await deps.recordStepSkipped("openclaw");
-    return { session };
+    return { session, stateResult: advanceTo("policies", { metadata: { state: "agent_setup" } }) };
   }
 
   const resumeOpenclaw = resume && sandboxName && deps.isOpenclawReady(sandboxName);
@@ -74,7 +79,7 @@ export async function handleAgentSetupState<Agent>({
     deps.skippedStepMessage("openclaw", sandboxName);
     deps.syncNemoClawConfigInSandbox(sandboxName, provider, model);
     await deps.recordStateSkipped("openclaw", { reason: "resume", sandboxName });
-    session = await deps.recordStepComplete(
+    await deps.recordStepComplete(
       "openclaw",
       deps.toSessionUpdates({ sandboxName, provider, model, hermesAuthMethod, hermesToolGateways }),
     );
@@ -87,5 +92,5 @@ export async function handleAgentSetupState<Agent>({
     );
   }
   session = await deps.recordStepSkipped("agent_setup");
-  return { session };
+  return { session, stateResult: advanceTo("policies", { metadata: { state: "openclaw" } }) };
 }

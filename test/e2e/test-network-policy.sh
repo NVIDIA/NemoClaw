@@ -8,7 +8,7 @@
 #
 # Covers:
 #   TC-NET-01: Deny-by-default egress (blocked URL returns 403)
-#   TC-NET-02: Whitelisted endpoint access (PyPI reachable via pip)
+#   TC-NET-02: Whitelisted endpoint access (PyPI reachable via curl GET; POST blocked)
 #   TC-NET-03: Live policy-add without restart (slack preset)
 #   TC-NET-04: policy-add --dry-run (no changes applied)
 #   TC-NET-05: Hot-reload (policy change without sandbox restart)
@@ -23,7 +23,7 @@
 # Prerequisites:
 #   - Docker running
 #   - NemoClaw installed (or install.sh available)
-#   - NVIDIA_API_KEY for sandbox onboard
+#   - NVIDIA_INFERENCE_API_KEY for sandbox onboard
 # =============================================================================
 
 set -euo pipefail
@@ -92,7 +92,7 @@ install_nemoclaw() {
   fi
   log "=== Installing NemoClaw via install.sh ==="
   NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME" \
-    NVIDIA_API_KEY="${NVIDIA_API_KEY:-nvapi-DUMMY-FOR-INSTALL}" \
+    NVIDIA_INFERENCE_API_KEY="${NVIDIA_INFERENCE_API_KEY:-nvapi-DUMMY-FOR-INSTALL}" \
     NEMOCLAW_NON_INTERACTIVE=1 \
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
     NEMOCLAW_POLICY_TIER="restricted" \
@@ -242,9 +242,9 @@ wait_for_e2e_http_port() {
 
 # ── Onboard sandbox ─────────────────────────────────────────────────────────
 setup_sandbox() {
-  local api_key="${NVIDIA_API_KEY:-}"
+  local api_key="${NVIDIA_INFERENCE_API_KEY:-}"
   if [[ -z "$api_key" ]]; then
-    log "ERROR: NVIDIA_API_KEY not set"
+    log "ERROR: NVIDIA_INFERENCE_API_KEY not set"
     exit 1
   fi
 
@@ -309,19 +309,56 @@ test_net_02_whitelist_access() {
     return
   fi
 
-  log "  Probing PyPI from inside sandbox using pip..."
+  log "  Probing PyPI read-only access from inside sandbox using curl..."
+
+  local pypi_code
+  pypi_code=$(sandbox_exec "curl -sS -o /dev/null -w '%{http_code}' --max-time 20 https://pypi.org/simple/requests/ 2>&1" 2>&1) || true
+  log "  pypi.org GET status: $pypi_code"
+
+  if [ "$pypi_code" = "200" ]; then
+    pass "TC-NET-02: pypi.org reachable via curl GET after preset applied"
+  else
+    fail "TC-NET-02: Whitelist" "curl GET to pypi.org did not return 200: ${pypi_code:0:200}"
+  fi
+
+  # Use a real PyPI artifact instead of a placeholder path. The placeholder
+  # can legitimately return 404, which proves egress but is easy to misread as
+  # a failed GET probe when QA verifies the case manually.
+  local files_code
+  files_code=$(sandbox_exec "curl -LsS -o /dev/null -w '%{http_code}' --max-time 20 https://files.pythonhosted.org/packages/source/r/requests/requests-2.32.5.tar.gz 2>&1" 2>&1) || true
+  log "  files.pythonhosted.org GET status: $files_code"
+
+  if echo "$files_code" | grep -qE "^[23][0-9][0-9]$"; then
+    pass "TC-NET-02: files.pythonhosted.org artifact reachable via curl GET"
+  else
+    fail "TC-NET-02: Whitelist" "curl GET to files.pythonhosted.org artifact did not return 2xx/3xx: ${files_code:0:200}"
+  fi
+
+  local post_code
+  post_code=$(sandbox_exec "curl -sS -o /dev/null -w '%{http_code}' -X POST --max-time 20 https://pypi.org/simple/le/ 2>&1" 2>&1) || true
+  log "  pypi.org POST status: $post_code"
+
+  if [ "$post_code" = "403" ]; then
+    pass "TC-NET-02: PyPI POST remains blocked under read-only preset"
+  else
+    fail "TC-NET-02: Whitelist" "curl POST to pypi.org should remain blocked with 403: ${post_code:0:200}"
+  fi
+
+  # #4014 validates network-policy egress only. Keep pip as a log-only
+  # diagnostic so package-manager behavior cannot fail this regression.
+  log "  Optional diagnostic: probing PyPI from inside sandbox using pip..."
 
   local response
   response=$(sandbox_exec "rm -rf /tmp/pip-test && pip download --no-deps --no-cache-dir --dest /tmp/pip-test requests 2>&1 && echo PIP_OK || echo PIP_FAIL" 2>&1) || true
 
-  log "  Response: ${response:0:300}"
+  log "  pip diagnostic response: ${response:0:300}"
 
   if echo "$response" | grep -q "PIP_OK"; then
-    pass "TC-NET-02: PyPI reachable via pip after preset applied"
+    log "  pip diagnostic succeeded after pypi preset was applied"
   elif echo "$response" | grep -qiE "Downloading|Successfully"; then
-    pass "TC-NET-02: PyPI reachable via pip (download started)"
+    log "  pip diagnostic reached PyPI after pypi preset was applied"
   else
-    fail "TC-NET-02: Whitelist" "pip could not reach PyPI: ${response:0:200}"
+    log "  pip diagnostic did not succeed; ignoring for #4014 because curl egress checks are authoritative: ${response:0:200}"
   fi
 }
 
@@ -644,7 +681,7 @@ test_net_07_inference_exemption() {
   log "  Step 2: Attempt direct connection to provider (should be blocked)..."
   local direct_response
   direct_response=$(sandbox_exec "node -e \"
-fetch('https://integrate.api.nvidia.com/v1/models', {signal: AbortSignal.timeout(15000)})
+fetch('https://inference-api.nvidia.com/v1/models', {signal: AbortSignal.timeout(15000)})
   .then(r => console.log('STATUS_' + r.status))
   .catch(e => console.log('ERROR_' + (e.cause?.code || e.code || e.message)))
 \"" 2>&1) || true

@@ -94,8 +94,7 @@ export const KNOWN_CHANNELS: Record<string, ChannelDef> = {
   wechat: {
     envKey: "WECHAT_BOT_TOKEN",
     description: "WeChat (personal) bot messaging",
-    help:
-      "Captured automatically via a host-side QR scan during onboard — pair the bot by scanning the QR with WeChat on your phone (Discover → Scan). DM-only.",
+    help: "Captured automatically via a host-side QR scan during onboard — pair the bot by scanning the QR with WeChat on your phone (Discover → Scan). DM-only.",
     label: "WeChat Bot Token",
     userIdEnvKey: "WECHAT_ALLOWED_IDS",
     userIdHelp:
@@ -115,7 +114,7 @@ export const KNOWN_CHANNELS: Record<string, ChannelDef> = {
     appTokenHelp: "Slack API → Your Apps → Basic Information → App-Level Tokens (xapp-...).",
     appTokenLabel: "Slack App Token (Socket Mode)",
     appTokenFormat: /^xapp-[A-Za-z0-9_-]+$/,
-    appTokenFormatHint: "Slack app tokens start with 'xapp-' (e.g. xapp-1-A0000-12345-abcdef).",
+    appTokenFormatHint: "Slack app tokens start with 'xapp-'.",
     userIdEnvKey: "SLACK_ALLOWED_USERS",
     userIdHelp:
       "In Slack, open each allowed human user's profile -> More -> Copy member ID. Enter one or more comma-separated member IDs, not the app or bot user ID. Member IDs look like U01ABC2DEF3.",
@@ -131,9 +130,6 @@ export const KNOWN_CHANNELS: Record<string, ChannelDef> = {
     help: "WhatsApp Web pairs via QR code scanned with your phone — no host-side token. After the sandbox is running, connect to it (e.g. `openshell sandbox connect <sandbox>`) and run `openclaw channels login --channel whatsapp` for OpenClaw or `hermes whatsapp` for Hermes. NemoClaw renders the OpenClaw QR in compact (scan-friendly) form and validates the gateway before pairing, so a gateway close (e.g. `1008`) is reported separately from the QR (issue #4522).",
     label: "WhatsApp",
     loginMethod: "in-sandbox-qr",
-    setupNotes: [
-      "After pairing, run `nemoclaw <sandbox> channels status --channel whatsapp` to confirm the bridge is delivering inbound messages — pairing alone does not guarantee inbound delivery (issue #4386).",
-    ],
   },
 };
 

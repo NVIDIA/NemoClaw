@@ -18,7 +18,7 @@
  *   npx vitest run --project e2e-branch-validation
  *
  * Required env vars:
- *   NVIDIA_API_KEY   — passed to VM for inference config during onboarding
+ *   NVIDIA_INFERENCE_API_KEY   — passed to VM for inference config during onboarding
  *   GITHUB_TOKEN     — passed to VM for OpenShell binary download
  *   INSTANCE_NAME    — Brev instance name (e.g. pr-156-test)
  *
@@ -50,10 +50,9 @@
  *   TELEGRAM_CHAT_ID_E2E     — Telegram chat ID for optional sendMessage test
  */
 
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { execSync, execFileSync, spawnSync, type StdioOptions } from "node:child_process";
-import fs from "node:fs";
+import { execFileSync, execSync, type StdioOptions, spawnSync } from "node:child_process";
 import path from "node:path";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 // Instance configuration
 const BREV_MIN_VCPU = parseInt(process.env.BREV_MIN_VCPU || "4", 10);
@@ -241,10 +240,10 @@ function ssh(
   cmd: string,
   { timeout = 120_000, stream = false }: { timeout?: number; stream?: boolean } = {},
 ): string {
-  const escaped = cmd.replace(/'/g, "'\\''");
   const stdio = stream ? STREAM_STDIO : CAPTURE_STDIO;
-  const result = execSync(
-    `ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR "${INSTANCE_NAME}" '${escaped}'`,
+  const result = execFileSync(
+    "ssh",
+    ["-o", "StrictHostKeyChecking=no", "-o", "LogLevel=ERROR", requireInstanceName(), cmd],
     { encoding: "utf-8", timeout, stdio },
   );
   return stream ? "" : result.trim();
@@ -263,9 +262,9 @@ function sshEnv(
   cmd: string,
   { timeout = 600_000, stream = false }: { timeout?: number; stream?: boolean } = {},
 ): string {
-  const gpuE2eModel = process.env.NEMOCLAW_GPU_E2E_MODEL || "qwen2.5:7b";
+  const gpuE2eModel = process.env.NEMOCLAW_GPU_E2E_MODEL || "qwen3.5:9b";
   const envParts = [
-    `export NVIDIA_API_KEY='${shellEscape(process.env.NVIDIA_API_KEY)}'`,
+    `export NVIDIA_INFERENCE_API_KEY='${shellEscape(process.env.NVIDIA_INFERENCE_API_KEY)}'`,
     `export GITHUB_TOKEN='${shellEscape(process.env.GITHUB_TOKEN)}'`,
     `export NEMOCLAW_NON_INTERACTIVE=1`,
     `export NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1`,
@@ -311,7 +310,11 @@ function waitForSsh(maxWaitMs = BREV_SSH_READY_TIMEOUT_MS, intervalMs = 5_000): 
       return;
     } catch (error) {
       lastError = commandErrorOutput(error);
-      if (/Could not resolve hostname|Name or service not known|Temporary failure in name resolution/i.test(lastError)) {
+      if (
+        /Could not resolve hostname|Name or service not known|Temporary failure in name resolution/i.test(
+          lastError,
+        )
+      ) {
         dnsFailures += 1;
       } else {
         dnsFailures = 0;
@@ -393,7 +396,10 @@ function waitForLaunchableReady(maxWaitMs = 1_200_000, pollIntervalMs = 15_000):
   );
 }
 
-function runRemoteTest(scriptPath: string): string {
+function runRemoteCommand(
+  command: string,
+  timeoutMs = GPU_TEST_SUITE ? 1_800_000 : 900_000,
+): string {
   const cmd = [
     `set -o pipefail`,
     `source ~/.nvm/nvm.sh 2>/dev/null || true`,
@@ -401,19 +407,22 @@ function runRemoteTest(scriptPath: string): string {
     `export npm_config_prefix=$HOME/.local`,
     `export PATH=$HOME/.local/bin:$PATH`,
     // Docker socket is chmod 666 by setup script, no sg docker needed.
-
-    `bash ${scriptPath} 2>&1 | tee /tmp/test-output.log`,
+    `${command} 2>&1 | tee /tmp/test-output.log`,
   ].join(" && ");
 
   // Stream test output to CI log AND capture it for assertions
   try {
-    sshEnv(cmd, { timeout: GPU_TEST_SUITE ? 1_800_000 : 900_000, stream: true });
+    sshEnv(cmd, { timeout: timeoutMs, stream: true });
   } catch (error) {
     printRemoteFailureDiagnostics();
     throw error;
   }
   // Retrieve the captured output for assertion checking
   return ssh("cat /tmp/test-output.log", { timeout: 30_000 });
+}
+
+function runRemoteTest(scriptPath: string): string {
+  return runRemoteCommand(`bash ${scriptPath}`);
 }
 
 function printRemoteFailureDiagnostics(): void {
@@ -569,13 +578,9 @@ function summarizeBrevCandidates(output: string, maxLines = 10): string {
  */
 function createBrevInstance(elapsed: () => string): void {
   const instanceKind = GPU_TEST_SUITE ? "gpu" : "cpu";
-  console.log(
-    `[${elapsed()}] Creating ${instanceKind} instance via launchable...`,
-  );
+  console.log(`[${elapsed()}] Creating ${instanceKind} instance via launchable...`);
   console.log(`[${elapsed()}]   setup-script: ${DEFAULT_SETUP_SCRIPT_PATH}`);
-  console.log(
-    `[${elapsed()}]   create timeout: ${Math.round(BREV_CREATE_TIMEOUT_MS / 1000)}s`,
-  );
+  console.log(`[${elapsed()}]   create timeout: ${Math.round(BREV_CREATE_TIMEOUT_MS / 1000)}s`);
   if (GPU_TEST_SUITE) {
     if (BREV_GPU_TYPE) {
       console.log(`[${elapsed()}]   gpu type: ${BREV_GPU_TYPE}`);
@@ -596,7 +601,7 @@ function createBrevInstance(elapsed: () => string): void {
   let setupScriptPath: string;
   if (DEFAULT_SETUP_SCRIPT_PATH.startsWith("http")) {
     setupScriptPath = "/tmp/brev-ci-setup.sh";
-    execSync(`curl -fsSL -o ${setupScriptPath} "${DEFAULT_SETUP_SCRIPT_PATH}"`, {
+    execFileSync("curl", ["-fsSL", "-o", setupScriptPath, DEFAULT_SETUP_SCRIPT_PATH], {
       encoding: "utf-8",
       timeout: 30_000,
     });
@@ -684,13 +689,7 @@ function createBrevInstance(elapsed: () => string): void {
       );
       execFileSync(
         "brev",
-        [
-          "create",
-          requireInstanceName(),
-          "--startup-script",
-          `@${setupScriptPath}`,
-          "--detached",
-        ],
+        ["create", requireInstanceName(), "--startup-script", `@${setupScriptPath}`, "--detached"],
         {
           encoding: "utf-8",
           input: cpuCandidates,
@@ -775,8 +774,22 @@ function bootstrapLaunchable(elapsed: () => string): { remoteDir: string; needsO
 
   // Rsync PR branch code over the launchable's clone
   console.log(`[${elapsed()}] Syncing PR branch code over launchable's clone...`);
-  execSync(
-    `rsync -az --delete --exclude node_modules --exclude .git --exclude dist --exclude .venv "${REPO_DIR}/" "${INSTANCE_NAME}:${resolvedRemoteDir}/"`,
+  execFileSync(
+    "rsync",
+    [
+      "-az",
+      "--delete",
+      "--exclude",
+      "node_modules",
+      "--exclude",
+      ".git",
+      "--exclude",
+      "dist",
+      "--exclude",
+      ".venv",
+      `${REPO_DIR}/`,
+      `${requireInstanceName()}:${resolvedRemoteDir}/`,
+    ],
     { encoding: "utf-8", timeout: 120_000 },
   );
   console.log(`[${elapsed()}] Code synced`);
@@ -1015,7 +1028,7 @@ function writeManualRegistry(elapsed: () => string): void {
 
 // --- suite ------------------------------------------------------------------
 
-const REQUIRED_VARS = ["NVIDIA_API_KEY", "GITHUB_TOKEN", "INSTANCE_NAME"];
+const REQUIRED_VARS = ["NVIDIA_INFERENCE_API_KEY", "GITHUB_TOKEN", "INSTANCE_NAME"];
 const hasRequiredVars = REQUIRED_VARS.every((key) => process.env[key]);
 const hasAuthenticatedBrev = (() => {
   try {
@@ -1068,7 +1081,6 @@ describe("Brev GPU runtime setup", () => {
       `if command -v ufw >/dev/null 2>&1; then sudo ufw allow from ${DOCKER_DEFAULT_BRIDGE_POOL_CIDR} to any port ${OLLAMA_AUTH_PROXY_PORT} proto tcp >/dev/null || echo "warning: could not add UFW Ollama auth proxy allow rule" >&2; fi`,
     );
   });
-
 });
 
 describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
@@ -1229,9 +1241,19 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
   it.runIf(TEST_SUITE === "dashboard-remote-bind")(
     "dashboard forward binds to all interfaces for remote browser origins",
     () => {
-      const output = runRemoteTest("test/e2e/test-dashboard-remote-bind.sh");
-      expect(output).toContain("PASS");
-      expect(output).not.toMatch(/FAIL:/);
+      const output = runRemoteCommand(
+        [
+          `NEMOCLAW_RUN_E2E_SCENARIOS=1`,
+          `NEMOCLAW_E2E_DASHBOARD_REMOTE_BIND=1`,
+          `NEMOCLAW_SANDBOX_NAME=e2e-test`,
+          `npx vitest run --project e2e-scenarios-live`,
+          `test/e2e-scenario/live/dashboard-remote-bind.test.ts`,
+          `--silent=false --reporter=default`,
+        ].join(" "),
+        300_000,
+      );
+      expect(output).toContain("dashboard forward binds all interfaces");
+      expect(output).not.toMatch(/FAIL|Failed/i);
     },
     300_000,
   );

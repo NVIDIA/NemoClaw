@@ -45,7 +45,8 @@ export function checkInstallerRuntime(input: {
   const npmVersion = input.npmVersion.trim();
   const npmMajor = versionMajor(npmVersion);
 
-  if (!SEMVER_RE.test(normalizeVersion(nodeVersion))) return { ok: false, reason: "invalid-node-version" };
+  if (!SEMVER_RE.test(normalizeVersion(nodeVersion)))
+    return { ok: false, reason: "invalid-node-version" };
   if (npmMajor === null) return { ok: false, reason: "invalid-npm-version" };
 
   if (

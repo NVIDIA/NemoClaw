@@ -148,7 +148,10 @@ function isNodeError(error: unknown): error is NodeError {
 }
 
 function shouldIgnorePath(candidatePath: string): boolean {
-  return candidatePath.split(path.sep).some((part) => ignoredDirectoryNames.has(part));
+  return (
+    candidatePath.endsWith(".generated.mdx") ||
+    candidatePath.split(path.sep).some((part) => ignoredDirectoryNames.has(part))
+  );
 }
 
 function scheduleRun(): void {

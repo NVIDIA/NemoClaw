@@ -3,10 +3,7 @@
 
 import { CLI_NAME } from "../../../cli/branding";
 import { captureOpenshell } from "../../../adapters/openshell/runtime";
-import {
-  type GatewayCallPayload,
-  parseGatewayCallPayload,
-} from "./gateway-rpc-envelope";
+import { type GatewayCallPayload, parseGatewayCallPayload } from "./gateway-rpc-envelope";
 
 export { type GatewayCallPayload, parseGatewayCallPayload } from "./gateway-rpc-envelope";
 
@@ -48,9 +45,7 @@ export function callOpenclawGateway<T extends GatewayCallPayload = GatewayCallPa
       `  Failed to reach the OpenClaw gateway in sandbox '${opts.sandboxName}': exit ${result.status}`,
     );
     if (result.output.trim()) console.error(`  ${result.output.trim()}`);
-    console.error(
-      `  Verify the gateway is reachable: \`${CLI_NAME} ${opts.sandboxName} status\`.`,
-    );
+    console.error(`  Verify the gateway is reachable: \`${CLI_NAME} ${opts.sandboxName} status\`.`);
     process.exit(1);
   }
 

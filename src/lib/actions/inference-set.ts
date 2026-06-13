@@ -5,6 +5,7 @@ import type { SpawnSyncReturns } from "node:child_process";
 
 import { runOpenshell } from "../adapters/openshell/runtime";
 import { CLI_NAME } from "../cli/branding";
+import { HERMES_PROXY_API_KEY_PLACEHOLDER } from "../hermes-proxy-api-key";
 import {
   getProviderSelectionConfig,
   getSandboxInferenceConfig,
@@ -24,6 +25,7 @@ import * as onboardSession from "../state/onboard-session";
 import type { SandboxEntry } from "../state/registry";
 import * as registry from "../state/registry";
 import { isSafeModelId } from "../validation";
+import { hermesApiMode, resolveRuntimeInferenceApi } from "./inference-route-api";
 
 export interface InferenceSetOptions {
   provider: string;
@@ -263,13 +265,24 @@ export function patchHermesInferenceConfig(
   config: ConfigObject,
   provider: string,
   model: string,
+  preferredInferenceApi: string | null = null,
 ): { changed: boolean; route: SandboxInferenceConfig } {
   const before = JSON.stringify(config);
-  const route = getSandboxInferenceConfig(model, provider);
+  const route = getSandboxInferenceConfig(model, provider, preferredInferenceApi);
+  const upstream = ensureObject(config, "_nemoclaw_upstream");
+  upstream.provider = provider;
+  upstream.model = model;
   const modelConfig = ensureObject(config, "model");
   modelConfig.default = model;
   modelConfig.base_url = route.inferenceBaseUrl;
   modelConfig.provider = "custom";
+  modelConfig.api_key = HERMES_PROXY_API_KEY_PLACEHOLDER;
+  const apiMode = hermesApiMode(route.inferenceApi);
+  if (apiMode) {
+    modelConfig.api_mode = apiMode;
+  } else {
+    delete modelConfig.api_mode;
+  }
 
   return { changed: before !== JSON.stringify(config), route };
 }
@@ -278,6 +291,7 @@ function updateMatchingOnboardSession(
   sandboxName: string,
   provider: string,
   model: string,
+  route: SandboxInferenceConfig,
   deps: Pick<InferenceSetDeps, "loadSession" | "updateSession">,
 ): boolean {
   const session = deps.loadSession();
@@ -288,6 +302,7 @@ function updateMatchingOnboardSession(
     current.model = model;
     current.endpointUrl =
       getProviderSelectionConfig(provider, model)?.endpointUrl ?? current.endpointUrl;
+    current.preferredInferenceApi = route.inferenceApi;
     return current;
   });
   return true;
@@ -336,7 +351,7 @@ export async function runInferenceSet(
     );
   }
 
-  const { sandboxName, agentName } = resolveTargetSandbox(options.sandboxName, deps);
+  const { sandboxName, entry, agentName } = resolveTargetSandbox(options.sandboxName, deps);
   if (agentName !== "openclaw" && agentName !== "hermes") {
     throw new InferenceSetError(
       `nemoclaw inference set supports OpenClaw and Hermes sandboxes; '${sandboxName}' uses '${agentName}'.`,
@@ -373,10 +388,23 @@ export async function runInferenceSet(
   }
 
   const config = deps.readSandboxConfig(sandboxName, target);
+  const preferredInferenceApi = resolveRuntimeInferenceApi({
+    agentName,
+    config,
+    currentProvider: entry.provider,
+    provider,
+    sandboxName,
+    session: deps.loadSession(),
+  });
   const patched =
     agentName === "hermes"
-      ? patchHermesInferenceConfig(config, provider, model)
-      : patchOpenClawInferenceConfig(config, provider, model, getPreferredInferenceApi(config));
+      ? patchHermesInferenceConfig(config, provider, model, preferredInferenceApi)
+      : patchOpenClawInferenceConfig(
+          config,
+          provider,
+          model,
+          preferredInferenceApi || getPreferredInferenceApi(config),
+        );
 
   deps.log(
     agentName === "hermes"
@@ -414,10 +442,16 @@ export async function runInferenceSet(
       `  Run '${CLI_NAME} ${sandboxName} rebuild' to finish applying the model inside the sandbox.`,
     );
   }
-  const sessionUpdated = updateMatchingOnboardSession(sandboxName, provider, model, deps);
+  const sessionUpdated = updateMatchingOnboardSession(
+    sandboxName,
+    provider,
+    model,
+    patched.route,
+    deps,
+  );
 
   deps.appendAuditEntry({
-    action: "shields_down",
+    action: "inference_set",
     sandbox: sandboxName,
     timestamp: new Date().toISOString(),
     reason: `inference set ${agentName}:${provider}:${model}${

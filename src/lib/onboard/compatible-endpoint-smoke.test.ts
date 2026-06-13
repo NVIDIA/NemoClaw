@@ -41,7 +41,10 @@ describe("compatible endpoint sandbox smoke helpers", () => {
     return configPath;
   }
 
-  function writeFakeCurl(tmpDir: string, bodyForCall: string): { binDir: string; callFile: string } {
+  function writeFakeCurl(
+    tmpDir: string,
+    bodyForCall: string,
+  ): { binDir: string; callFile: string } {
     const binDir = path.join(tmpDir, "bin");
     const callFile = path.join(tmpDir, "curl-calls");
     fs.mkdirSync(binDir, { recursive: true });
@@ -75,9 +78,7 @@ ${bodyForCall}
   }
 
   it("runs only for OpenClaw compatible-endpoint sandboxes with messaging", () => {
-    expect(shouldRunCompatibleEndpointSandboxSmoke("compatible-endpoint", ["telegram"])).toBe(
-      true,
-    );
+    expect(shouldRunCompatibleEndpointSandboxSmoke("compatible-endpoint", ["telegram"])).toBe(true);
     expect(
       shouldRunCompatibleEndpointSandboxSmoke("compatible-endpoint", ["telegram"], {
         name: "openclaw",

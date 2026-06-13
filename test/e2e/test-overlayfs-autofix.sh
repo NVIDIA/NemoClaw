@@ -18,7 +18,7 @@
 # needs entry in the same PR that deletes src/lib/cluster-image-patch.ts.
 #
 # Test phases:
-#   1. Prerequisites — Docker running, NVIDIA_API_KEY, sudo, etc.
+#   1. Prerequisites — Docker running, NVIDIA_INFERENCE_API_KEY, sudo, etc.
 #   2. Setup — flip /etc/docker/daemon.json to enable containerd-snapshotter,
 #      restart Docker, verify the conflict config is active. Auto-skip on
 #      runners whose Docker does not support the feature flag.
@@ -46,12 +46,12 @@
 #   - Docker installed (any version that supports `features.containerd-snapshotter`,
 #     i.e. Docker 23+; the test skips cleanly on older versions)
 #   - Passwordless sudo (for editing /etc/docker/daemon.json + restarting Docker)
-#   - NVIDIA_API_KEY set (real key; required by install.sh)
+#   - NVIDIA_INFERENCE_API_KEY set (real key; required by install.sh)
 #
 # Environment variables:
 #   NEMOCLAW_NON_INTERACTIVE=1                — required
 #   NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1    — required
-#   NVIDIA_API_KEY                            — required
+#   NVIDIA_INFERENCE_API_KEY                            — required
 #   NEMOCLAW_SANDBOX_NAME                     — sandbox name (default: e2e-overlayfs)
 #   NEMOCLAW_E2E_TIMEOUT_SECONDS              — overall timeout (default: 1500)
 #   NEMOCLAW_OVERLAYFS_E2E_NEGATIVE_TIMEOUT   — negative-phase k3s wait (default: 300)
@@ -59,7 +59,7 @@
 # Usage:
 #   NEMOCLAW_NON_INTERACTIVE=1 \
 #   NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
-#   NVIDIA_API_KEY=nvapi-... \
+#   NVIDIA_INFERENCE_API_KEY=nvapi-... \
 #     bash test/e2e/test-overlayfs-autofix.sh
 
 # ShellCheck cannot see EXIT trap invocations of cleanup helpers in this E2E script.
@@ -131,7 +131,7 @@ register_sandbox_for_teardown "$SANDBOX_NAME"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
-if [ "$(uname -s)" = "Linux" ] && grep -q 'return platform === "linux";' "$REPO_ROOT/src/lib/onboard.ts"; then
+if [ "$(uname -s)" = "Linux" ] && grep -q 'platform === "linux"' "$REPO_ROOT/src/lib/onboard/docker-driver-platform.ts"; then
   section "Applicability"
   skip "OpenShell Docker-driver onboarding is active on Linux; k3s overlayfs auto-fix is not in the runtime path"
   print_summary
@@ -172,10 +172,10 @@ else
   exit 1
 fi
 
-if [ -n "${NVIDIA_API_KEY:-}" ] && [[ "${NVIDIA_API_KEY}" == nvapi-* ]]; then
-  pass "NVIDIA_API_KEY is set"
+if [ -n "${NVIDIA_INFERENCE_API_KEY:-}" ] && [[ "${NVIDIA_INFERENCE_API_KEY}" == nvapi-* ]]; then
+  pass "NVIDIA_INFERENCE_API_KEY is set"
 else
-  fail "NVIDIA_API_KEY not set or invalid"
+  fail "NVIDIA_INFERENCE_API_KEY not set or invalid"
   exit 1
 fi
 

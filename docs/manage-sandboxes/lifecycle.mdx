@@ -17,100 +17,58 @@ import { AgentOnly } from "../_components/AgentGuide";
 Use this guide after you finish the [OpenClaw quickstart](../get-started/quickstart).
 </AgentOnly>
 <AgentOnly variant="hermes">
-Use this guide after you finish [Quickstart with Hermes](../get-started/quickstart-hermes).
+Use this guide after you finish [Quickstart with Hermes](../get-started/quickstart).
 </AgentOnly>
 It covers day-two sandbox operations such as listing sandboxes, checking health, managing ports, rebuilding safely, upgrading, and uninstalling.
 <AgentOnly variant="openclaw">
-When a workflow uses the lower-level OpenShell CLI, see [CLI Selection Guide](../reference/cli-selection-guide) for the boundary between `nemoclaw` and `openshell`.
+When a workflow uses the lower-level OpenShell CLI, see [CLI Selection Guide](../reference/cli-selection-guide) for the boundary between `$$nemoclaw` and `openshell`.
 </AgentOnly>
 <AgentOnly variant="hermes">
-When a workflow uses the lower-level OpenShell CLI, see [CLI Selection Guide](../reference/cli-selection-guide) for the boundary between `nemohermes`, `nemoclaw`, and `openshell`.
+When a workflow uses the lower-level OpenShell CLI, see [CLI Selection Guide](../reference/cli-selection-guide) for the boundary between `$$nemoclaw`, `nemoclaw`, and `openshell`.
 </AgentOnly>
 
 ## List Sandboxes
 
 List every sandbox registered on this host:
 
-<AgentOnly variant="openclaw">
 ```bash
-nemoclaw list
+$$nemoclaw list
 ```
-</AgentOnly>
-<AgentOnly variant="hermes">
-```bash
-nemohermes list
-```
-</AgentOnly>
 
 The list shows each sandbox's model, provider, policy presets, active SSH session indicator, and dashboard URL when NemoClaw records a dashboard port.
 Use JSON output for scripts:
 
-<AgentOnly variant="openclaw">
 ```bash
-nemoclaw list --json
+$$nemoclaw list --json
 ```
-</AgentOnly>
-<AgentOnly variant="hermes">
-```bash
-nemohermes list --json
-```
-</AgentOnly>
 
 ## Check Sandbox Health
 
 Check a specific sandbox's health, inference route, active connections, live policy, update status, and messaging-channel overlap warnings:
 
-<AgentOnly variant="openclaw">
 ```bash
-nemoclaw my-assistant status
+$$nemoclaw my-assistant status
 ```
-</AgentOnly>
-<AgentOnly variant="hermes">
-```bash
-nemohermes my-assistant status
-```
-</AgentOnly>
 
 Use the host-level status command when you want the sandbox inventory plus host auxiliary service state, such as cloudflared:
 
-<AgentOnly variant="openclaw">
 ```bash
-nemoclaw status
+$$nemoclaw status
 ```
-</AgentOnly>
-<AgentOnly variant="hermes">
-```bash
-nemohermes status
-```
-</AgentOnly>
 
 ## Inspect Logs
 
 View recent sandbox logs:
 
-<AgentOnly variant="openclaw">
 ```bash
-nemoclaw my-assistant logs
+$$nemoclaw my-assistant logs
 ```
-</AgentOnly>
-<AgentOnly variant="hermes">
-```bash
-nemohermes my-assistant logs
-```
-</AgentOnly>
 
 Stream logs while you reproduce a problem:
 
-<AgentOnly variant="openclaw">
 ```bash
-nemoclaw my-assistant logs --follow
+$$nemoclaw my-assistant logs --follow
 ```
-</AgentOnly>
-<AgentOnly variant="hermes">
-```bash
-nemohermes my-assistant logs --follow
-```
-</AgentOnly>
 
 <AgentOnly variant="openclaw">
 The log command reads both OpenClaw gateway output and OpenShell audit events, so policy denials appear beside gateway logs.
@@ -123,29 +81,15 @@ The log command reads both Hermes gateway output and OpenShell audit events, so 
 
 Collect diagnostics for bug reports or support handoff:
 
-<AgentOnly variant="openclaw">
 ```bash
-nemoclaw debug --sandbox my-assistant --output nemoclaw-debug.tar.gz
+$$nemoclaw debug --sandbox my-assistant --output nemoclaw-debug.tar.gz
 ```
-</AgentOnly>
-<AgentOnly variant="hermes">
-```bash
-nemohermes debug --sandbox my-assistant --output nemoclaw-debug.tar.gz
-```
-</AgentOnly>
 
 Use `--quick` for a smaller local summary:
 
-<AgentOnly variant="openclaw">
 ```bash
-nemoclaw debug --quick --sandbox my-assistant
+$$nemoclaw debug --quick --sandbox my-assistant
 ```
-</AgentOnly>
-<AgentOnly variant="hermes">
-```bash
-nemohermes debug --quick --sandbox my-assistant
-```
-</AgentOnly>
 
 The debug command gathers system information, Docker state, gateway logs, and sandbox status.
 
@@ -167,52 +111,33 @@ openshell forward list
 
 Each sandbox needs its own dashboard port, since `openshell forward` refuses to bind a port that another sandbox is already using.
 <AgentOnly variant="openclaw">
-When the default port is already held by another sandbox, `nemoclaw onboard` scans ports `18789` through `18799` and uses the next free port.
+When the default port is already held by another sandbox, `$$nemoclaw onboard` scans ports `18789` through `18799` and uses the next free port.
 </AgentOnly>
 <AgentOnly variant="hermes">
-When the default API port is already held by another sandbox, `nemohermes onboard` scans for the next free port and records it for the sandbox.
+When the default API port is already held by another sandbox, `$$nemoclaw onboard` scans for the next free port and records it for the sandbox.
 </AgentOnly>
+If you intentionally run separate OpenShell gateways on the same host, set a different `NEMOCLAW_GATEWAY_PORT` before each onboarding run.
+NemoClaw isolates the gateway name and local state by port so one port-specific gateway does not replace another.
+Gateway and dashboard cleanup is scoped by sandbox name and port.
+A later onboarding run that uses a different `NEMOCLAW_GATEWAY_PORT` or `--control-ui-port` does not tear down the first sandbox's gateway or dashboard forward.
 
-<AgentOnly variant="openclaw">
 ```bash
-nemoclaw onboard                                      # first sandbox uses 18789
-nemoclaw onboard                                      # second sandbox uses the next free port, such as 18790
+$$nemoclaw onboard                                      # first sandbox uses 18789
+$$nemoclaw onboard                                      # second sandbox uses the next free port, such as 18790
 ```
-</AgentOnly>
-<AgentOnly variant="hermes">
-```bash
-nemohermes onboard                                      # first sandbox uses 18789
-nemohermes onboard                                      # second sandbox uses the next free port, such as 18790
-```
-</AgentOnly>
 
 To choose a specific port, pass `--control-ui-port`:
 
-<AgentOnly variant="openclaw">
 ```bash
-nemoclaw onboard --control-ui-port 19000
+$$nemoclaw onboard --control-ui-port 19000
 ```
-</AgentOnly>
-<AgentOnly variant="hermes">
-```bash
-nemohermes onboard --control-ui-port 19000
-```
-</AgentOnly>
 
 You can also set `CHAT_UI_URL` or `NEMOCLAW_DASHBOARD_PORT` before onboarding:
 
-<AgentOnly variant="openclaw">
 ```bash
-CHAT_UI_URL=http://127.0.0.1:19000 nemoclaw onboard
-NEMOCLAW_DASHBOARD_PORT=19000 nemoclaw onboard
+CHAT_UI_URL=http://127.0.0.1:19000 $$nemoclaw onboard
+NEMOCLAW_DASHBOARD_PORT=19000 $$nemoclaw onboard
 ```
-</AgentOnly>
-<AgentOnly variant="hermes">
-```bash
-CHAT_UI_URL=http://127.0.0.1:19000 nemohermes onboard
-NEMOCLAW_DASHBOARD_PORT=19000 nemohermes onboard
-```
-</AgentOnly>
 
 For full details on port conflicts and overrides, refer to [Port already in use](../reference/troubleshooting#port-already-in-use).
 
@@ -224,73 +149,40 @@ Recover from a misconfigured sandbox without re-running the full onboard wizard 
 
 Change the active model or provider at runtime without rebuilding the sandbox:
 
-<AgentOnly variant="openclaw">
 ```bash
-nemoclaw inference set --model <model> --provider <provider>
+$$nemoclaw inference set --model <model> --provider <provider>
 ```
-</AgentOnly>
-<AgentOnly variant="hermes">
-```bash
-nemohermes inference set --model <model> --provider <provider>
-```
-</AgentOnly>
 
 Refer to [Switch Inference Providers](../inference/switch-inference-providers) for provider-specific model IDs and API compatibility notes.
 
 ### Restart the Gateway and Port Forward
 
 <AgentOnly variant="openclaw">
-If `nemoclaw <name> status` reports the sandbox is alive but the gateway is not running, run the recover command instead of opening a shell.
+If `$$nemoclaw <name> status` reports the sandbox is alive but the gateway is not running, run the recover command instead of opening a shell.
 </AgentOnly>
 <AgentOnly variant="hermes">
-If `nemohermes <name> status` reports the sandbox is alive but the Hermes gateway is not running, run the recover command instead of opening a shell.
+If `$$nemoclaw <name> status` reports the sandbox is alive but the Hermes gateway is not running, run the recover command instead of opening a shell.
 </AgentOnly>
 
-<AgentOnly variant="openclaw">
 ```bash
-nemoclaw <sandbox-name> recover
+$$nemoclaw <sandbox-name> recover
 ```
-</AgentOnly>
-<AgentOnly variant="hermes">
-```bash
-nemohermes <sandbox-name> recover
-```
-</AgentOnly>
 
 The command restarts the in-sandbox gateway and re-establishes the dashboard port-forward in one step.
 It is idempotent and safe to script.
-<AgentOnly variant="openclaw">
-Refer to [`nemoclaw <name> recover`](../reference/commands#nemoclaw-name-recover) for details.
-</AgentOnly>
-<AgentOnly variant="hermes">
-Refer to the command reference for details on `nemohermes <name> recover`.
-</AgentOnly>
+Refer to [`$$nemoclaw <name> recover`](../reference/commands#$$nemoclaw-name-recover) for details.
 
 ### Reset a Stored Credential
 
 If you entered a provider credential incorrectly during onboarding, clear the gateway-registered value and re-enter it on the next onboard run:
 
-<AgentOnly variant="openclaw">
 ```bash
-nemoclaw credentials list                # see which providers are registered
-nemoclaw credentials reset <PROVIDER>    # clear a single provider, for example nvidia-prod
-nemoclaw onboard                         # re-run to re-enter the cleared provider
+$$nemoclaw credentials list                # see which providers are registered
+$$nemoclaw credentials reset <PROVIDER>    # clear a single provider, for example nvidia-prod
+$$nemoclaw onboard                         # re-run to re-enter the cleared provider
 ```
-</AgentOnly>
-<AgentOnly variant="hermes">
-```bash
-nemohermes credentials list                # see which providers are registered
-nemohermes credentials reset <PROVIDER>    # clear a single provider, for example nvidia-prod
-nemohermes onboard                         # re-run to re-enter the cleared provider
-```
-</AgentOnly>
 
-<AgentOnly variant="openclaw">
-The command reference documents [`nemoclaw credentials reset <PROVIDER>`](../reference/commands#nemoclaw-credentials-reset-provider) in full.
-</AgentOnly>
-<AgentOnly variant="hermes">
-The [Commands reference](../reference/commands) documents the credentials command in full.
-</AgentOnly>
+The command reference documents [`$$nemoclaw credentials reset <PROVIDER>`](../reference/commands#$$nemoclaw-credentials-reset-provider) in full.
 
 ### Rebuild a Sandbox While Preserving Workspace State
 
@@ -301,205 +193,62 @@ If you changed the underlying Dockerfile, upgraded OpenClaw, or want to pick up 
 If you changed the underlying Dockerfile, upgraded Hermes, or want to pick up a new base image without losing your sandbox's state files, use `rebuild` instead of destroying and recreating:
 </AgentOnly>
 
-<AgentOnly variant="openclaw">
 ```bash
-nemoclaw <sandbox-name> rebuild
+$$nemoclaw <sandbox-name> rebuild
 ```
-</AgentOnly>
-<AgentOnly variant="hermes">
-```bash
-nemohermes <sandbox-name> rebuild
-```
-</AgentOnly>
 
 Rebuild preserves the mounted workspace and registered policies while recreating the container.
 If NemoClaw cannot archive any requested state path, it reports the backup failure and stops before deleting the original sandbox.
-<AgentOnly variant="openclaw">
-Refer to [`nemoclaw <name> rebuild`](../reference/commands#nemoclaw-name-rebuild) for flag details.
-</AgentOnly>
-<AgentOnly variant="hermes">
-Refer to the [Commands reference](../reference/commands) for `nemohermes <name> rebuild` flag details.
-</AgentOnly>
+Refer to [`$$nemoclaw <name> rebuild`](../reference/commands#$$nemoclaw-name-rebuild) for flag details.
 
 ### Add a Network Preset After Onboarding
 
 Apply an additional preset, such as Telegram or GitHub, to a running sandbox without re-onboarding:
 
-<AgentOnly variant="openclaw">
 ```bash
-nemoclaw <sandbox-name> policy-add
+$$nemoclaw <sandbox-name> policy-add
 ```
-</AgentOnly>
-<AgentOnly variant="hermes">
-```bash
-nemohermes <sandbox-name> policy-add
-```
-</AgentOnly>
 
-Refer to [`nemoclaw <name> policy-add`](../reference/commands#nemoclaw-name-policy-add) for usage details and flags.
+Refer to [`$$nemoclaw <name> policy-add`](../reference/commands#$$nemoclaw-name-policy-add) for usage details and flags.
 
 Non-interactive re-onboards in the default `suggested` policy mode preserve presets added this way.
 To make a re-onboard authoritative, set `NEMOCLAW_POLICY_MODE=custom` and provide `NEMOCLAW_POLICY_PRESETS` with the exact list to apply; onboarding removes anything else.
-See [`NEMOCLAW_POLICY_MODE`](../reference/commands#nemoclaw-onboard) for the full table.
+See [`NEMOCLAW_POLICY_MODE`](../reference/commands#$$nemoclaw-onboard) for the full table.
 
 ## Update to the Maintained Version
 
-<AgentOnly variant="openclaw">
-When a maintained NemoClaw release becomes available, update the `nemoclaw` CLI on your host and check existing sandboxes for stale agent/runtime versions.
-</AgentOnly>
-<AgentOnly variant="hermes">
-When a maintained NemoClaw release becomes available, update the `nemohermes` CLI on your host and check existing sandboxes for stale agent/runtime versions.
-</AgentOnly>
-The standard installer follows the admin-promoted `lkg` release tag by default, so it can trail the newest semver or `latest` tag while validation completes.
-To pin a specific release in a `curl | bash` install, set `NEMOCLAW_INSTALL_TAG` on the `bash` side of the pipe, or export it before the pipeline:
+When a maintained NemoClaw release becomes available, update the host CLI and then check whether existing sandboxes need rebuilds.
+The standard installer follows the admin-promoted `lkg` release tag by default.
+If you need a specific release, set `NEMOCLAW_INSTALL_TAG` on the `bash` side of the install pipeline.
 
 ```bash
-curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_TAG=v0.0.56 bash
-# or
-export NEMOCLAW_INSTALL_TAG=v0.0.56
-curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_TAG=v0.0.63 bash
+$$nemoclaw upgrade-sandboxes --check
 ```
 
-Do not place `NEMOCLAW_INSTALL_TAG=...` only before `curl`; shell assignment in that position applies to `curl`, not to the installer running under `bash`.
-If the requested ref cannot be fetched, the installer exits with a clear error instead of falling back to `lkg`.
-
-### Update the NemoClaw CLI
-
-Re-run the installer.
-<AgentOnly variant="openclaw">
-Before it onboards anything, the installer calls [`nemoclaw backup-all`](../reference/commands#nemoclaw-backup-all) automatically, storing a snapshot of each running sandbox in `~/.nemoclaw/rebuild-backups/` as a safety net.
-</AgentOnly>
-<AgentOnly variant="hermes">
-Before it onboards anything, the installer calls `nemohermes backup-all` automatically, storing a snapshot of each running sandbox in `~/.nemoclaw/rebuild-backups/` as a safety net.
-</AgentOnly>
-If your existing gateway is from OpenShell earlier than `0.0.37`, the installer prompts before it runs the new automatic gateway upgrade path.
-<AgentOnly variant="openclaw">
-The installer offers the automatic path only when the existing `nemoclaw` CLI supports `backup-all`.
-Older installs must preserve sandbox state manually before retiring the gateway.
-For unattended installs, set `NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE=1`, or manually run `nemoclaw backup-all`, `openshell gateway remove nemoclaw || openshell gateway destroy -g nemoclaw || openshell gateway destroy` (the command tries both verbs so the right one runs on either OpenShell release), and `sudo pkill -f openshell-gateway` if a privileged host gateway remains before rerunning the installer as `curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 bash`.
-</AgentOnly>
-<AgentOnly variant="hermes">
-The installer offers the automatic path only when the existing `nemohermes` CLI supports `backup-all`.
-Older installs must preserve sandbox state manually before retiring the gateway.
-For unattended installs, set `NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE=1`, or manually run `nemohermes backup-all`, `openshell gateway remove nemoclaw || openshell gateway destroy -g nemoclaw || openshell gateway destroy` (the command tries both verbs so the right one runs on either OpenShell release), and `sudo pkill -f openshell-gateway` if a privileged host gateway remains before rerunning the installer as `curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_AGENT=hermes NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 bash`.
-</AgentOnly>
+Before upgrade work, the installer runs `$$nemoclaw backup-all` when the installed CLI supports it.
+For manual upgrade flows, create a snapshot first and then run the update or rebuild command you need:
 
 ```bash
-curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+$$nemoclaw <sandbox-name> snapshot create --name pre-upgrade
+$$nemoclaw update --yes
+$$nemoclaw upgrade-sandboxes --check
 ```
 
-### Upgrade Sandboxes with Stale Agent and Runtime Versions
-
-<AgentOnly variant="openclaw">
-The installer checks registered sandboxes after onboarding succeeds and runs `nemoclaw upgrade-sandboxes --auto` for stale running sandboxes.
-</AgentOnly>
-<AgentOnly variant="hermes">
-The installer checks registered sandboxes after onboarding succeeds and runs `nemohermes upgrade-sandboxes --auto` for stale running sandboxes.
-</AgentOnly>
-Use `upgrade-sandboxes` directly to verify the result, rebuild when you skipped the installer or onboarding step, or handle sandboxes that were stopped or could not be version checked.
-The upgrade flow is non-destructive by default because NemoClaw preserves manifest-defined workspace state, but a manual snapshot before any major upgrade gives you a state restore point.
-
-<AgentOnly variant="openclaw">
-```bash
-nemoclaw <sandbox-name> snapshot create --name pre-upgrade   # optional, recommended
-nemoclaw update --yes                                        # updates CLI through the maintained installer flow
-nemoclaw upgrade-sandboxes --check                            # verify or list remaining stale/unknown sandboxes
-nemoclaw upgrade-sandboxes                                    # manually rebuild remaining stale running sandboxes
-```
-</AgentOnly>
-<AgentOnly variant="hermes">
-```bash
-nemohermes <sandbox-name> snapshot create --name pre-upgrade   # optional, recommended
-nemohermes update --yes                                        # updates CLI through the maintained installer flow
-nemohermes upgrade-sandboxes --check                            # verify or list remaining stale/unknown sandboxes
-nemohermes upgrade-sandboxes                                    # manually rebuild remaining stale running sandboxes
-```
-</AgentOnly>
-
-<AgentOnly variant="openclaw">
-`nemoclaw update` is the CLI wrapper around the same installer path as `curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash`.
-Use `nemoclaw update --check` when you only want to inspect version state and see the maintained update command.
-</AgentOnly>
-<AgentOnly variant="hermes">
-`nemohermes update` is the CLI wrapper around the same installer path with Hermes selected.
-Use `nemohermes update --check` when you only want to inspect version state and see the maintained update command.
-</AgentOnly>
-
-<AgentOnly variant="openclaw">
-For scripted manual rebuilds, use `nemoclaw upgrade-sandboxes --auto` to skip the confirmation prompt.
-</AgentOnly>
-<AgentOnly variant="hermes">
-For scripted manual rebuilds, use `nemohermes upgrade-sandboxes --auto` to skip the confirmation prompt.
-</AgentOnly>
-
-If the upgraded sandbox needs its workspace state reverted, restore the pre-upgrade snapshot into the running sandbox.
-This restores saved state directories only; it does not downgrade the sandbox image or agent/runtime:
-
-<AgentOnly variant="openclaw">
-```bash
-nemoclaw <sandbox-name> snapshot restore pre-upgrade
-```
-</AgentOnly>
-<AgentOnly variant="hermes">
-```bash
-nemohermes <sandbox-name> snapshot restore pre-upgrade
-```
-</AgentOnly>
-
-### What Changes During a Rebuild
-
-Each rebuild destroys the existing container and creates a new one.
-<AgentOnly variant="openclaw">
-NemoClaw protects your data through the same backup-and-restore flow as [`nemoclaw <name> rebuild`](../reference/commands#nemoclaw-name-rebuild):
-
-- NemoClaw preserves manifest-defined workspace state. Before deleting the old container, NemoClaw snapshots the state directories and durable state files defined in the agent manifest, typically `/sandbox/.openclaw/workspace/`; for Hermes this also includes `SOUL.md` and the SQLite database behind `.hermes/state.db`. Stored credentials (`~/.nemoclaw/credentials.json`) and registered policy presets live on the host and are re-applied to the new sandbox automatically.
-- NemoClaw does not preserve runtime changes outside the workspace state directories. This includes packages installed inside the running container with `apt` or `pip`, files in non-workspace paths, and in-memory or process state. If you have customized the running container at runtime, capture that as `Dockerfile` changes for `nemoclaw onboard --from` or a manual `openshell sandbox download` before the rebuild starts.
-</AgentOnly>
-<AgentOnly variant="hermes">
-NemoClaw protects your data through the same backup-and-restore flow as `nemohermes <name> rebuild`:
-
-- NemoClaw preserves manifest-defined Hermes state. Before deleting the old container, NemoClaw snapshots the state directories and durable state files defined in the Hermes manifest, including `SOUL.md` and the SQLite database behind `.hermes/state.db`. Stored credentials (`~/.nemoclaw/credentials.json`) and registered policy presets live on the host and are re-applied to the new sandbox automatically.
-- NemoClaw does not preserve runtime changes outside the manifest-defined state directories. This includes packages installed inside the running container with `apt` or `pip`, files in non-state paths, and in-memory or process state. If you have customized the running container at runtime, capture that as `Dockerfile` changes for `nemohermes onboard --from` or a manual `openshell sandbox download` before the rebuild starts.
-</AgentOnly>
-
-Aborts before the destroy step are non-destructive.
-The flow refuses to proceed past preflight if a credential is missing or past backup if it cannot copy required manifest-defined state, so a failed run leaves the original sandbox intact and ready to retry.
-When a backup command reports partial archive output, NemoClaw keeps the usable entries and reports only the manifest-defined paths that could not be archived.
-
-See [Backup and Restore](backup-restore) for the full list of state-preservation guarantees, snapshot retention, and instructions for manual backups when the auto-flow is not enough.
-
-<Note title="If the rebuild aborts with `Missing credential: <KEY>`">
-<AgentOnly variant="openclaw">
-The rebuild preflight reads the provider credential recorded by your last `nemoclaw onboard` session.
-If you have switched providers since onboarding, for example from a remote API to a local Ollama setup, the preflight can still reference the old key and fail before any destroy step runs.
-
-To recover, re-run `nemoclaw onboard` and select your current provider.
-This refreshes the session metadata.
-</AgentOnly>
-<AgentOnly variant="hermes">
-The rebuild preflight reads the provider credential recorded by your last `nemohermes onboard` session.
-If you have switched providers since onboarding, for example from a remote API to a local Ollama setup, the preflight can still reference the old key and fail before any destroy step runs.
-
-To recover, re-run `nemohermes onboard` and select your current provider.
-This refreshes the session metadata.
-</AgentOnly>
-Your existing container keeps serving traffic until the new image is ready.
-</Note>
+Each rebuild destroys the old container and creates a new one, while preserving the manifest-defined workspace or agent state that NemoClaw knows how to snapshot.
+`upgrade-sandboxes --check` can report a sandbox as stale because the running agent version is behind, because the managed NemoClaw image fingerprint differs from the current CLI, or both.
+Custom-image sandboxes created with `--from <Dockerfile>` are not marked stale solely by image fingerprint, so an upgrade check does not accidentally replace them with the default image.
+Runtime changes outside those state paths, such as packages installed manually in the running container, are not preserved.
+For the full state-preservation contract, snapshot restore behavior, and manual backup workflow, refer to [Backup and Restore](backup-restore).
+For command flags, refer to [`$$nemoclaw update`](../reference/commands#$$nemoclaw-update), [`$$nemoclaw upgrade-sandboxes`](../reference/commands#$$nemoclaw-upgrade-sandboxes), and [`$$nemoclaw <name> rebuild`](../reference/commands#$$nemoclaw-name-rebuild).
 
 ## Uninstall
 
 To remove NemoClaw and all resources created during setup, run the CLI's built-in uninstall command:
 
-<AgentOnly variant="openclaw">
 ```bash
-nemoclaw uninstall
+$$nemoclaw uninstall
 ```
-</AgentOnly>
-<AgentOnly variant="hermes">
-```bash
-nemohermes uninstall
-```
-</AgentOnly>
 
 | Flag               | Effect                                               |
 |--------------------|------------------------------------------------------|
@@ -512,7 +261,7 @@ The uninstall command preserves `~/.nemoclaw/rebuild-backups/` (host-side snapsh
 Uninstall removes every other entry under `~/.nemoclaw/`.
 Interactive runs prompt before they remove the preserved entries; the default answer keeps them.
 For non-interactive runs (`--yes`, `NEMOCLAW_NON_INTERACTIVE=1`, or a non-TTY shell), set `NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1` to acknowledge data loss and remove the preserved entries as well.
-See the [Commands reference](../reference/commands#nemoclaw-uninstall) for the full preservation contract.
+See the [Commands reference](../reference/commands#$$nemoclaw-uninstall) for the full preservation contract.
 </Note>
 
 The CLI uninstall command runs the version-pinned `uninstall.sh` that shipped with your installed CLI, so it does not fetch anything over the network at uninstall time.
@@ -529,7 +278,7 @@ The same `--yes`, `--keep-openshell`, and `--delete-models` flags listed above a
 curl -fsSL https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/main/uninstall.sh | bash -s -- --yes --delete-models
 ```
 
-For a full comparison of the two forms, including what they fetch, what they trust, and when to prefer each, refer to [`nemoclaw uninstall` vs. the hosted `uninstall.sh`](../reference/commands#nemoclaw-uninstall-vs-the-hosted-uninstallsh).
+For a full comparison of the two forms, including what they fetch, what they trust, and when to prefer each, refer to [`$$nemoclaw uninstall` vs. the hosted `uninstall.sh`](../reference/commands#$$nemoclaw-uninstall-vs-the-hosted-uninstallsh).
 
 ## Related Topics
 

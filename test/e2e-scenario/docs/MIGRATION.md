@@ -1,149 +1,106 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# E2E Migration Tracker
+# NemoClaw E2E Migration Notes
 
-This PR migrates all existing `test/e2e/test-*.sh` scripts into the
-scenario-based runner introduced by PR #3363. Full deep migration
-(Strategy B). Legacy scripts remain in the repo during this PR and run
-in parallel for 1–2 nightly cycles after merge; a follow-up PR retires
-them once parity is verified.
+This file describes how to move coverage into the single Vitest E2E system
+without confusing that work with the retired typed-shell scenario runner or a
+second bash-driven harness. Vitest is the harness, GitHub Actions is the matrix,
+and NemoClaw fixtures may invoke real subprocess and system boundaries when
+those boundaries are the contract.
 
-**Merge gate:** All 40 legacy entry points must have a scenario-based
-equivalent that produces the same PASS/FAIL outcomes as the legacy
-script in a side-by-side CI run.
+Migration state is tracked outside the repository in GitHub issues and pull
+requests. Use GitHub issues and pull requests as the source of truth for status
+changes, ownership, replacement coverage, and contract-preserving migration
+decisions.
 
-## Reuse being absorbed
+## Current State
 
-Migrating 40 scripts collapses 13 distinct categories of duplication.
-Each row maps to a Wave 0 item or an existing helper.
+The scenario runner cutover is complete:
 
-| # | Category | Fan-in (legacy) | Target absorber | LOC |
-|---|---|---|---|---:|
-| 1 | Logging helpers (`section` / `info` / `pass` / `fail`) | 28–39 scripts redefine each | `runtime/lib/logging.sh` (Wave 0.B.5) | 1,556 |
-| 2 | Non-interactive env exports | 187 inlined lines across 40 scripts | `runtime/lib/env.sh::e2e_env_apply_noninteractive` + convention 0.G.1 | 175 |
-| 3 | Repo-root / `SCRIPT_DIR` discovery | 37 lines, 4 competing patterns | One convention (Wave 0.G.2) | 25 |
-| 4 | `nemoclaw list` / `status` / gateway state probes | 142 inlined sites | `validation_suites/assert/{gateway,sandbox}-alive.sh` | 500 |
-| 5 | `bash install.sh ...` invocations | 24 scripts | `nemoclaw_scenarios/install/dispatch.sh` dispatcher (Wave 0.C.1) | 300 |
-| 6 | `nemoclaw onboard ...` variants | 42 invocations, 8+ flag incantations | `nemoclaw_scenarios/onboard/dispatch.sh` + profile handlers | 800 |
-| 7 | Docker older-base-image pattern | 3 hand-rolled implementations | `nemoclaw_scenarios/fixtures/older-base-image.sh` (Wave 0.A.1) | 250 |
-| 8 | Trap / cleanup / teardown blocks | 112 lines, ~15 patterns | `runtime/lib/cleanup.sh` + convention 0.G.3 | 400 |
-| 9 | Fake-endpoint inline setups | 3 inline variants | `nemoclaw_scenarios/fixtures/fake-{openai,telegram,discord,slack}.sh` (Wave 0.A.2–5) | 150 |
-| 10 | Sandbox-scoped exec (`nemoclaw shell <sb> -- ...`) | 15 scripts reimplement with drift | `validation_suites/sandbox-exec.sh` (Wave 0.A.6) | 200 |
-| 11 | Hermes/OpenClaw pair-variant scripts | 7 paired scripts share ~70% | Shared suite steps; scenario agent via `expected_state.sandbox.agent` | 800 |
-| 12 | `section "Phase N: X"` markers | Every script inflates logs with phase text | Step-script filename carries the name (convention 0.G.4) | 300 |
-| 13 | Log-capture paths (`/tmp/*.log`) | 25 different conventions; CI artifact upload assumes one | `$E2E_CONTEXT_DIR/logs/` convention 0.G.5 | 300 |
-| **Total** | | | | **~5,556** |
+- `e2e-vitest-scenarios.yaml` is the scenario workflow.
+- `test/e2e-scenario/live/registry-scenarios.test.ts` is the registry-driven
+  live scenario entrypoint.
+- `test/e2e-scenario/fixtures/` owns phase fixtures, clients, artifact
+  capture, redaction, cleanup, and shell-probe bridges.
+- `test/e2e-scenario/scenarios/run.ts` only lists scenarios and emits the live
+  Vitest matrix.
+- The typed-shell scenario runner, shell validation-suite tree, and retiring
+  scenario workflows are removed. See `RETIREMENT.md`.
 
-About **25% LOC reduction** net after legacy retirement. The larger win
-is drift reduction: when `--yes-i-accept-third-party-software` renames
-again, it's a 1-file change instead of a 24-file change.
+Direct legacy E2E scripts under `test/e2e/test-*.sh` remain in place until they
+are migrated by contract. Some currently test shell, install, platform, process,
+or full user-flow behavior. Preserve those real boundaries by invoking them from
+Vitest tests and fixtures instead of keeping a separate durable E2E runner.
+Issue #5098 tracks family-by-family migration, augmentation, and eventual
+deletion decisions for those scripts.
 
-## Status summary
+## Target Architecture
 
-| Bucket | Legacy LOC | Status |
-|---|---:|---|
-| Wave 0 — fixtures, asserts, setup splits, conventions, parity workflow | — | ⬜ not started |
-| Wave 1 — onboarding baseline | 1,101 | ⬜ |
-| Wave 2 — onboarding lifecycle | 2,013 | ⬜ |
-| Wave 3 — sandbox lifecycle | 2,891 | ⬜ |
-| Wave 4 — rebuild / upgrade | 1,292 | ⬜ |
-| Wave 5 — inference variants | 2,593 | ⬜ |
-| Wave 6 — Hermes | 1,646 | ⬜ |
-| Wave 7 — messaging | 3,397 | ⬜ |
-| Wave 8 — security / policy | 2,241 | ⬜ |
-| Wave 9 — runtime / platform services | 1,696 | ⬜ |
-| Wave 10 — platform + remote | 1,589 | ⬜ |
-| Wave 11 — misc | 405 | ⬜ |
-| **Total** | **20,864** | **0 / 40 scripts migrated** |
+The durable E2E system has one execution path:
 
-## Per-script tracker
+- Vitest owns execution, filtering, reporters, timeouts, fixture lifecycle,
+  skip handling, and CI integration.
+- NemoClaw fixtures own setup, onboarding, lifecycle mutations,
+  expected-state probes, assertion helpers, expected-failure evidence,
+  cleanup, artifacts, and secret redaction.
+- `test/e2e-scenario/fixtures/` is fixture/support code, not a test harness
+  or runner.
+- Typed scenario definitions and matrix helpers describe stable scenario IDs
+  and supported combinations without becoming a second runner.
+- Product-facing manifests describe desired setup/onboarding state, not test
+  execution logic.
+- Shell and system-boundary behavior should be exercised from Vitest when it is
+  the contract or lowest-risk adapter.
 
-Legend: ⬜ not started · 🟨 in progress · ✅ migrated · 🔵 parity verified
+## Migration Governance
 
-### Wave 1 — onboarding baseline
+The former `test/e2e-scenario/migration/legacy-inventory.json` ledger and
+generated legacy assertion inventories are removed because they duplicated live
+GitHub issues and pull requests and quickly became stale sources of truth.
 
-- ⬜ `test-full-e2e.sh` (473) → `onboarding/happy-path/` + scenario `ubuntu-curl-cloud-openclaw`
-- ⬜ `test-cloud-onboard-e2e.sh` (337) → `onboarding/public-installer/`
-- ⬜ `test-cloud-inference-e2e.sh` (291) → extends `inference/cloud/`
+The useful deletion invariant is deterministic and smaller: the top-level
+legacy bash E2E script set and the scheduled `nightly-e2e.yaml` legacy wiring
+are frozen by workflow contract tests. When a PR intentionally retires a
+nightly-wired legacy script, it removes the script, removes the nightly workflow
+reference, and updates the workflow allowlist test in the same change.
 
-### Wave 2 — onboarding lifecycle
+GitHub issues and PRs still explain why a script is migrated or retired, but the
+repository should not depend on a separate PR-body proof format. The
+machine-checkable boundary is the source tree plus workflow tests.
 
-- ⬜ `test-double-onboard.sh` (717) → `onboarding/double-onboard/`
-- ⬜ `test-gpu-double-onboard.sh` (571) → `onboarding/double-onboard/` on GPU scenario
-- ⬜ `test-onboard-repair.sh` (372) → `onboarding/repair/`
-- ⬜ `test-onboard-resume.sh` (353) → `onboarding/resume/`
+## Migration Pattern
 
-### Wave 3 — sandbox lifecycle
+When moving behavior from a legacy E2E script:
 
-- ⬜ `test-sandbox-operations.sh` (828) → `sandbox/operations/`
-- ⬜ `test-sandbox-survival.sh` (721) → `sandbox/survival/`
-- ⬜ `test-snapshot-commands.sh` (281) → `sandbox/snapshot/`
-- ⬜ `test-diagnostics.sh` (452) → `sandbox/diagnostics/`
-- ⬜ `test-issue-2478-crash-loop-recovery.sh` (609) → `sandbox/crash-loop-recovery/`
+1. Identify the actual contract: CLI behavior, installer behavior, full user
+   journey, process boundary, platform boundary, or another observable behavior.
+2. Add or update manifests only when product setup/onboarding state changes.
+3. Add typed scenario registry coverage when the live matrix needs a stable
+   scenario ID.
+4. Add only the fixture or helper needed for the migration.
+5. Preserve real boundaries. Use `bash`, login shells, `/proc`, process
+   signals, `sudo`, Docker host state, installer scripts, or full journey flows
+   from Vitest when they are the behavior being tested.
+6. Prove equivalence in the PR discussion, then delete the bash harness when the
+   Vitest test preserves the same value. If the script is wired into nightly,
+   remove that workflow reference and update the allowlist test in the same PR.
 
-### Wave 4 — rebuild / upgrade
+## Useful Commands
 
-- ⬜ `test-rebuild-openclaw.sh` (453) → `sandbox/rebuild-openclaw/` (uses `nemoclaw_scenarios/fixtures/older-base-image.sh`)
-- ⬜ `test-rebuild-hermes.sh` (401) → `sandbox/rebuild-hermes/`
-- ⬜ `test-upgrade-stale-sandbox.sh` (241) → `sandbox/upgrade-stale/`
-- ⬜ `test-sandbox-rebuild.sh` (197) → folded into `sandbox/rebuild-openclaw/`
+```bash
+# Scenario registry and matrix
+npx tsx test/e2e-scenario/scenarios/run.ts --list
+npx tsx test/e2e-scenario/scenarios/run.ts --emit-live-matrix
+npx tsx test/e2e-scenario/scenarios/run.ts --emit-live-matrix --scenarios ubuntu-repo-cloud-openclaw
 
-### Wave 5 — inference variants
+# Fixture/support tests
+npx vitest run --project e2e-vitest-support --silent=false --reporter=default
 
-- ⬜ `test-gpu-e2e.sh` (565) → `inference/ollama-gpu/` (deep port)
-- ⬜ `test-ollama-auth-proxy-e2e.sh` (548) → `inference/ollama-auth-proxy/` (deep port)
-- ⬜ `test-inference-routing.sh` (715) → `inference/routing-errors/`
-- ⬜ `test-kimi-inference-compat.sh` (765) → `inference/kimi-compat/`
+# Opt-in live Vitest scenarios
+npm run build:cli
+NEMOCLAW_RUN_E2E_SCENARIOS=1 npx vitest run --project e2e-scenarios-live --silent=false --reporter=default
+```
 
-### Wave 6 — Hermes
-
-- ⬜ `test-hermes-e2e.sh` (591) → `onboarding/hermes/` (deep port; currently 1-step health)
-- ⬜ `test-hermes-slack-e2e.sh` (537) → `messaging/slack/hermes/`
-- ⬜ `test-hermes-discord-e2e.sh` (518) → `messaging/discord/hermes/`
-
-### Wave 7 — messaging
-
-- ⬜ `test-messaging-providers.sh` (1,677) → `messaging/providers/{telegram,discord,slack}/`
-- ⬜ `test-token-rotation.sh` (575) → `messaging/token-rotation/`
-- ⬜ `test-telegram-injection.sh` (475) → `security/telegram-injection/`
-- ⬜ `test-messaging-compatible-endpoint.sh` (670) → `messaging/compatible-endpoint/`
-
-### Wave 8 — security / policy
-
-- ⬜ `test-shields-config.sh` (550) → `security/shields/`
-- ⬜ `test-network-policy.sh` (579) → `security/network-policy/`
-- ⬜ `test-credential-sanitization.sh` (810) → `security/credentials/sanitization/`
-- ⬜ `test-credential-migration.sh` (302) → `security/credentials/migration/`
-
-### Wave 9 — runtime / platform services
-
-- ⬜ `test-runtime-overrides.sh` (272) → `sandbox/runtime-overrides/`
-- ⬜ `test-overlayfs-autofix.sh` (537) → `sandbox/overlayfs-autofix/`
-- ⬜ `test-device-auth-health.sh` (373) → `lifecycle/device-auth-health/`
-- ⬜ `test-state-backup-restore.sh` (378) → `lifecycle/state-backup-restore/`
-- ⬜ `test-tunnel-lifecycle.sh` (472) → `lifecycle/tunnel-lifecycle/`
-
-### Wave 10 — platform + remote
-
-- ⬜ `test-spark-install.sh` (157) → `platform/spark/`
-- ⬜ `test-launchable-smoke.sh` (589) → `platform/launchable/`
-- ⬜ `brev-e2e.test.ts` (843) → `platform/brev-remote/`
-
-### Wave 11 — misc
-
-- ⬜ `test-skill-agent-e2e.sh` (244) → `onboarding/skill-agent/`
-- ⬜ `test-docs-validation.sh` (161) → `lifecycle/docs-validation/`
-
-## Migration tracking
-
-The old workflow-level parity report has been removed. Migration is tracked by
-coverage domain under issue #3588 and its child issues. For each domain, add the
-missing primitive layer first, then migrate assertions into scenario plans and
-post-onboard suites with stable assertion IDs.
-
-Use the scenario coverage report plus code review to answer:
-
-- which legacy/nightly behaviors are now represented in scenarios,
-- which behaviors remain outstanding for the domain issue, and
-- which legacy behaviors should be retired rather than ported.
+The old `--emit-matrix`, direct `--scenarios` execution, and `--plan-only`
+interfaces are retired.

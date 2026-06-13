@@ -60,7 +60,7 @@ describe("secret redaction consistency (#1736)", () => {
 
   describe("redactor consistency (#2381)", () => {
     it("runner and debug redactors both mask shared token patterns", () => {
-      const text = "provider failed with NVIDIA_API_KEY=nvapi-" + "a".repeat(30);
+      const text = "provider failed with NVIDIA_INFERENCE_API_KEY=nvapi-" + "a".repeat(30);
       expect(runnerRedact(text)).not.toContain("nvapi-");
       expect(debugRedact(text)).not.toContain("nvapi-");
     });
@@ -73,22 +73,26 @@ describe("secret redaction consistency (#1736)", () => {
       mkdirSync(fakeBin);
       writeFileSync(
         join(fakeBin, "date"),
-        "#!/bin/sh\necho NVIDIA_API_KEY=nvapi-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n",
+        "#!/bin/sh\necho NVIDIA_INFERENCE_API_KEY=nvapi-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n",
         { mode: 0o755 },
       );
       try {
-        const result = spawnSync("bash", [join(import.meta.dirname, "..", "scripts", "debug.sh"), "--quick"], {
-          encoding: "utf-8",
-          env: {
-            ...process.env,
-            NEMOCLAW_NODE: process.execPath,
-            TMPDIR: tmp,
-            PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        const result = spawnSync(
+          "bash",
+          [join(import.meta.dirname, "..", "scripts", "debug.sh"), "--quick"],
+          {
+            encoding: "utf-8",
+            env: {
+              ...process.env,
+              NEMOCLAW_NODE: process.execPath,
+              TMPDIR: tmp,
+              PATH: `${fakeBin}:${process.env.PATH || ""}`,
+            },
+            timeout: 30_000,
           },
-          timeout: 30_000,
-        });
+        );
         expect(result.status).toBe(0);
-        expect(result.stdout).toContain("NVIDIA_API_KEY=<REDACTED>");
+        expect(result.stdout).toContain("NVIDIA_INFERENCE_API_KEY=<REDACTED>");
         expect(result.stdout).not.toContain("nvapi-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
       } finally {
         rmSync(tmp, { recursive: true, force: true });
@@ -128,16 +132,20 @@ describe("secret redaction consistency (#1736)", () => {
         { mode: 0o755 },
       );
       try {
-        const result = spawnSync("/bin/bash", [join(import.meta.dirname, "..", "scripts", "debug.sh"), "--quick"], {
-          encoding: "utf-8",
-          env: {
-            ...process.env,
-            NEMOCLAW_NODE: process.execPath,
-            TMPDIR: tmp,
-            PATH: fakeBin,
+        const result = spawnSync(
+          "/bin/bash",
+          [join(import.meta.dirname, "..", "scripts", "debug.sh"), "--quick"],
+          {
+            encoding: "utf-8",
+            env: {
+              ...process.env,
+              NEMOCLAW_NODE: process.execPath,
+              TMPDIR: tmp,
+              PATH: fakeBin,
+            },
+            timeout: 30_000,
           },
-          timeout: 30_000,
-        });
+        );
         expect(result.status).toBe(0);
         expect(result.stdout).toContain("<REDACTED>");
         expect(result.stdout).not.toContain("nvapi-");

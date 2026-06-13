@@ -3,10 +3,20 @@
 
 import { describe, expect, it } from "vitest";
 
-import { classifyNemoclawShim, DEV_SHIM_MARKER, isDevShimContents, isInstallerManagedWrapperContents } from "./shims";
+import {
+  classifyNemoclawShim,
+  DEV_SHIM_MARKER,
+  isDevShimContents,
+  isInstallerManagedWrapperContents,
+} from "./shims";
 
 function wrapper(extra = ""): string {
-  return ["#!/usr/bin/env bash", 'export PATH="/tmp/node-bin:$PATH"', 'exec "/tmp/prefix/bin/nemoclaw" "$@"', extra]
+  return [
+    "#!/usr/bin/env bash",
+    'export PATH="/tmp/node-bin:$PATH"',
+    'exec "/tmp/prefix/bin/nemoclaw" "$@"',
+    extra,
+  ]
     .filter((line) => line !== undefined)
     .join("\n");
 }
@@ -22,7 +32,9 @@ describe("uninstall shim classification", () => {
   it("recognizes installer-managed wrapper files", () => {
     const contents = wrapper("");
     expect(isInstallerManagedWrapperContents(contents)).toBe(true);
-    expect(classifyNemoclawShim({ contents, exists: true, isFile: true, isSymlink: false })).toMatchObject({
+    expect(
+      classifyNemoclawShim({ contents, exists: true, isFile: true, isSymlink: false }),
+    ).toMatchObject({
       kind: "managed-wrapper",
       remove: true,
     });
@@ -38,7 +50,9 @@ describe("uninstall shim classification", () => {
     ].join("\n");
 
     expect(isDevShimContents(contents)).toBe(true);
-    expect(classifyNemoclawShim({ contents, exists: true, isFile: true, isSymlink: false })).toMatchObject({
+    expect(
+      classifyNemoclawShim({ contents, exists: true, isFile: true, isSymlink: false }),
+    ).toMatchObject({
       kind: "managed-dev-shim",
       remove: true,
     });

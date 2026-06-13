@@ -4,6 +4,7 @@
 import type { WebSearchConfig } from "../../../inference/web-search";
 import type { Session, SessionUpdates } from "../../../state/onboard-session";
 import { withInferenceTrace, withProviderSelectionTrace } from "../../tracing";
+import { advanceTo, type OnboardStateTransitionResult, retryTo } from "../result";
 
 export type ProviderInferenceRetry = { retry: "selection" } | { ok: true; retry?: undefined };
 
@@ -74,10 +75,17 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
     ): Promise<Session>;
     recordRepairEvent(
       type: "state.repair.started" | "state.repair.completed" | "state.repair.failed",
-      options?: { state?: "provider_selection" | "inference"; error?: string | null; metadata?: Record<string, unknown> | null },
+      options?: {
+        state?: "provider_selection" | "inference";
+        error?: string | null;
+        metadata?: Record<string, unknown> | null;
+      },
     ): Promise<Session>;
     hydrateCredentialEnv(credentialEnv: string | null): void;
-    repairLocalInferenceSystemdOverrideOrExit(provider: string | null, isNonInteractive: () => boolean): void;
+    repairLocalInferenceSystemdOverrideOrExit(
+      provider: string | null,
+      isNonInteractive: () => boolean,
+    ): void;
     isNonInteractive(): boolean;
     getOpenshellBinary(): string;
     needsBedrockRuntimeAdapter(provider: string, endpointUrl: string | null): boolean;
@@ -104,7 +112,11 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
       sandboxName: string;
       notes: string[];
     }): string;
-    promptYesNoOrDefault(question: string, envVar: string | null, defaultIsYes: boolean): Promise<boolean>;
+    promptYesNoOrDefault(
+      question: string,
+      envVar: string | null,
+      defaultIsYes: boolean,
+    ): Promise<boolean>;
     cliName(): string;
     log(message?: string): void;
     error(message?: string): void;
@@ -125,12 +137,18 @@ export interface ProviderInferenceStateResult {
   nimContainer: string | null;
   webSearchConfig: WebSearchConfig | null;
   session: Session | null;
+  stateResult: OnboardStateTransitionResult;
+  stateResults: OnboardStateTransitionResult[];
+  retryStateResults: OnboardStateTransitionResult[];
 }
 
 function requireSelection(
   provider: string | null,
   model: string | null,
-  deps: Pick<ProviderInferenceStateOptions<unknown, unknown, unknown>["deps"], "error" | "exitProcess">,
+  deps: Pick<
+    ProviderInferenceStateOptions<unknown, unknown, unknown>["deps"],
+    "error" | "exitProcess"
+  >,
 ): { provider: string; model: string } {
   if (typeof provider !== "string" || typeof model !== "string") {
     deps.error("  Inference selection did not yield a provider/model.");
@@ -165,7 +183,8 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   let credentialEnv = initial.credentialEnv;
   let hermesAuthMethod =
     deps.normalizeHermesAuthMethod(initial.hermesAuthMethod) ||
-    (provider === constants.hermesProviderName && credentialEnv === constants.hermesApiKeyCredentialEnv
+    (provider === constants.hermesProviderName &&
+    credentialEnv === constants.hermesApiKeyCredentialEnv
       ? constants.hermesApiKeyAuthMethod
       : null);
   let hermesToolGateways = initial.hermesToolGateways;
@@ -174,6 +193,8 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   const webSearchConfig = initial.webSearchConfig;
   let forceProviderSelection = initialForceProviderSelection;
   let allowToolsIncompatible = false;
+  const stateResults: OnboardStateTransitionResult[] = [];
+  const retryStateResults: OnboardStateTransitionResult[] = [];
 
   while (true) {
     let forceInferenceSetup = false;
@@ -257,6 +278,11 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         }),
       );
     }
+    stateResults.push(
+      advanceTo("inference", {
+        metadata: { state: "provider_selection", provider, model },
+      }),
+    );
     env.NEMOCLAW_OPENSHELL_BIN = deps.getOpenshellBinary();
     const needsBedrockRuntimeAdapter = deps.needsBedrockRuntimeAdapter(provider, endpointUrl);
     const resumeInference =
@@ -293,12 +319,23 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           clearStagedCredentialEnv(deps, credentialEnv);
         }
         if (inferenceResult?.retry === "selection") {
+          const retryStateResult = retryTo("provider_selection", {
+            metadata: { state: "inference", provider, model, reason: "selection_retry" },
+          });
+          retryStateResults.push(retryStateResult);
+          stateResults.push(retryStateResult);
           forceProviderSelection = true;
           continue;
         }
         session = await deps.recordStepComplete(
           "inference",
-          deps.toSessionUpdates({ provider, model, hermesAuthMethod, nimContainer, hermesToolGateways }),
+          deps.toSessionUpdates({
+            provider,
+            model,
+            hermesAuthMethod,
+            nimContainer,
+            hermesToolGateways,
+          }),
         );
         break;
       }
@@ -306,7 +343,9 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         try {
           await deps.reconcileModelRouter();
         } catch (err) {
-          deps.error(`  ✗ Failed to reconcile model router: ${err instanceof Error ? err.message : String(err)}`);
+          deps.error(
+            `  ✗ Failed to reconcile model router: ${err instanceof Error ? err.message : String(err)}`,
+          );
           deps.exitProcess(1);
         }
         // #4564: re-upsert the gateway provider with the sandbox-facing
@@ -314,7 +353,9 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         // repaired on resume instead of surviving and breaking inference.local.
         const reupserted = deps.reupsertRoutedProvider(provider, endpointUrl, credentialEnv);
         if (!reupserted.ok) {
-          deps.error(`  ${reupserted.message ?? "Failed to update the routed inference provider."}`);
+          deps.error(
+            `  ${reupserted.message ?? "Failed to update the routed inference provider."}`,
+          );
           deps.exitProcess(reupserted.status ?? 1);
         }
         endpointUrl = reupserted.endpointUrl;
@@ -328,7 +369,13 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       if (nimContainer && sandboxName) deps.registryUpdateSandbox(sandboxName, { nimContainer });
       session = await deps.recordStepComplete(
         "inference",
-        deps.toSessionUpdates({ provider, model, hermesAuthMethod, nimContainer, hermesToolGateways }),
+        deps.toSessionUpdates({
+          provider,
+          model,
+          hermesAuthMethod,
+          nimContainer,
+          hermesToolGateways,
+        }),
       );
       break;
     }
@@ -386,16 +433,32 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       clearStagedCredentialEnv(deps, credentialEnv);
     }
     if (inferenceResult?.retry === "selection") {
+      const retryStateResult = retryTo("provider_selection", {
+        metadata: { state: "inference", provider, model, reason: "selection_retry" },
+      });
+      retryStateResults.push(retryStateResult);
+      stateResults.push(retryStateResult);
       forceProviderSelection = true;
       continue;
     }
     if (nimContainer && sandboxName) deps.registryUpdateSandbox(sandboxName, { nimContainer });
     session = await deps.recordStepComplete(
       "inference",
-      deps.toSessionUpdates({ provider, model, hermesAuthMethod, nimContainer, hermesToolGateways }),
+      deps.toSessionUpdates({
+        provider,
+        model,
+        hermesAuthMethod,
+        nimContainer,
+        hermesToolGateways,
+      }),
     );
     break;
   }
+
+  const stateResult = advanceTo("sandbox", {
+    metadata: { state: "inference", provider, model },
+  });
+  stateResults.push(stateResult);
 
   return {
     sandboxName,
@@ -409,5 +472,8 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     nimContainer,
     webSearchConfig,
     session,
+    stateResult,
+    stateResults,
+    retryStateResults,
   };
 }

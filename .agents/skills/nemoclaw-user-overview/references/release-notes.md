@@ -1,8 +1,100 @@
-<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
 # Release Notes
 
-NVIDIA NemoClaw is available in early preview starting March 16, 2026. Use this page to track the highlights of the latest release. For more detailed release notes, refer to the [NemoClaw GitHub announcements](https://github.com/NVIDIA/NemoClaw/discussions/categories/announcements?discussions_q=is%3Aopen+category%3AAnnouncements).
+import { AgentOnly } from "../_components/AgentGuide";
+
+NVIDIA NemoClaw is available in early preview starting March 16, 2026.
+Use this page to track the highlights of the latest release.
+For more detailed release notes, refer to the [NemoClaw GitHub announcements](https://github.com/NVIDIA/NemoClaw/discussions/categories/announcements?discussions_q=is%3Aopen+category%3AAnnouncements).
+
+## v0.0.64
+
+NemoClaw v0.0.64 improves sandbox restore, onboarding stability, inference routing, messaging setup, and release validation:
+
+- Snapshot restore preserves custom policy presets applied with `policy-add --from-file` or `policy-add --from-dir`, so restored sandboxes keep the custom egress rules that were recorded with the source sandbox. For more information, refer to Backup and Restore (use the `nemoclaw-user-manage-sandboxes` skill) and Customize the Network Policy (use the `nemoclaw-user-manage-policy` skill).
+- OpenClaw onboarding keeps Brave Search pinned to the NemoClaw-managed runtime and preserves the `BRAVE_API_KEY` placeholder through build doctor. Docker-driver gateway health checks now follow the entrypoint path that actually launches the in-container gateway, which avoids misleading health reports on host-gateway setups. For more information, refer to NemoClaw CLI Commands Reference (use the `nemoclaw-user-reference` skill).
+- Inference routes choose chat completions for providers that do not expose `/v1/responses`, including NVIDIA Endpoints, NVIDIA NIM, and Gemini-compatible routes. NemoClaw also adds a targeted Nemotron Ultra 550B compatibility fix for tool-less requests. For more information, refer to NemoClaw Inference Options (use the `nemoclaw-user-configure-inference` skill).
+- Messaging setup refreshes stale render plans during rebuild, recovers replaced OpenClaw scope-upgrade approvals, and preinstalls Hermes WhatsApp bridge dependencies when the upstream lockfile is present. For more information, refer to Messaging Channels (use the `nemoclaw-user-manage-sandboxes` skill).
+- Release validation expands live Vitest coverage for rebuild, sandbox operations, network policy, credential migration, inference routing, Hermes, WhatsApp QR, dashboard binding, VM driver, docs validation, token rotation, and launch smoke paths.
+
+## v0.0.63
+
+NemoClaw v0.0.63 improves sandbox recovery, OpenClaw configuration restore safety, local inference onboarding, messaging safeguards, and release validation:
+
+- Sandbox lifecycle commands preserve and recover more state. `rebuild --yes` can recreate a locally registered sandbox that is missing from a healthy gateway, Docker-driver sandboxes can restart from OpenShell container labels after a host reboot, and `upgrade-sandboxes` detects recorded NemoClaw image drift even when the agent version itself matches. For more information, refer to Manage Sandbox Lifecycle (use the `nemoclaw-user-manage-sandboxes` skill).
+- Snapshot-backed rebuilds preserve OpenClaw configuration more safely. Rebuilds now carry forward user-owned `openclaw.json` settings, merge restored config with freshly generated runtime state, and fail when restored config cannot be applied safely. For more information, refer to Backup and Restore (use the `nemoclaw-user-manage-sandboxes` skill).
+- Onboarding diagnoses host setup and local inference issues earlier. The installer reports unusual Docker daemon access when a Linux user is outside the `docker` group, host DNS blocks are caught before NVIDIA provider validation, Ollama auth-proxy port conflicts recover during startup, and managed vLLM offers an interactive model picker for supported host profiles. For more information, refer to Use a Local Inference Server (use the `nemoclaw-user-configure-inference` skill).
+- Messaging and Hermes startup paths enforce clearer runtime boundaries. Slack setup validates Socket Mode credentials and warns or blocks duplicate Slack Socket Mode sandboxes on a shared gateway, while Hermes direct gateway launch keeps environment-secret protections active and handles wrapped gateway arguments. For more information, refer to Messaging Channels (use the `nemoclaw-user-manage-sandboxes` skill).
+
+## v0.0.62
+
+NemoClaw v0.0.62 improves onboarding reliability for GPU sandboxes, local inference, gateway pairing, Hermes configuration, and release validation:
+
+- GPU sandbox creation and local inference checks now match the runtime paths agents use. Docker-driver recreation prefers NVIDIA CDI when the host advertises a CDI spec, Jetson/Tegra sandboxes inherit the device-node group needed for CUDA, and local GPU inference is verified through `inference.local` from inside the sandbox runtime before onboarding reports success. For more information, refer to Use a Local Inference Server (use the `nemoclaw-user-configure-inference` skill).
+- Onboarding and recovery fail earlier and stay quieter on common host drift. NemoClaw no longer requires `nc` for port readiness checks, clears pending gateway scope approvals after onboard and recover, preserves install-version fingerprints in package installs without `.git`, and suppresses fresh-sandbox provider cleanup probe noise. For more information, refer to NemoClaw CLI Commands Reference (use the `nemoclaw-user-reference` skill).
+
+<AgentOnly variant="openclaw">
+
+- Sandbox state and OpenClaw operations recover better after direct in-sandbox changes. Startup restores mutable OpenClaw config permissions after a raw in-sandbox `openclaw doctor --fix`, and the host CLI can now run `nemoclaw <name> agents list` alongside the existing agent add and delete passthrough commands. For more information, refer to NemoClaw CLI Commands Reference (use the `nemoclaw-user-reference` skill).
+- WhatsApp pairing uses the compact QR renderer used by the real pairing flow. For more information, refer to Messaging Channels (use the `nemoclaw-user-manage-sandboxes` skill).
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+
+- Hermes setup exposes clearer operator state. Generated Hermes config records the upstream NemoClaw provider and model while still presenting Hermes as a custom proxy route, the provider menu labels Hermes choices more clearly, and NemoClaw rejects the reserved Hermes API port as a dashboard port before sandbox creation. For more information, refer to Messaging Channels (use the `nemoclaw-user-manage-sandboxes` skill).
+
+</AgentOnly>
+
+## v0.0.61
+
+NemoClaw v0.0.61 improves sandbox network visibility, onboarding recovery, Hermes isolation, local inference restart behavior, and release validation:
+
+- Agents and operators can inspect a redacted policy context that lists active presets, allowed host categories, approval paths, and policy drift states. Strict SSRF fetches now route through the sandbox proxy, stale `sandboxes.json` locks held by recycled PIDs are reclaimed, and dashboard tool-scope approvals can recover through doctor after sandbox startup. For more information, refer to Customize the Network Policy (use the `nemoclaw-user-manage-policy` skill).
+- Sandbox hardening now caps open file descriptors at entrypoint, preserves the tunnel service PID directory across restarts, and keeps build-time plugin install state from forcing runtime npm calls offline. NemoClaw also closed coordinated code-scanning findings and consolidated HTTP probe policy handling without changing the operator contract. For more information, refer to Security Best Practices (use the `nemoclaw-user-configure-security` skill).
+- Onboarding and rebuild paths recover more reliably across host and provider drift. ARM64 image-tar upload failures receive a clear classification with an image-reference workaround, rebuild detaches sandbox providers before delete, rebuilt resume snapshots keep session state, and messaging selector key sequences work during onboarding. For more information, refer to NemoClaw CLI Commands Reference (use the `nemoclaw-user-reference` skill).
+- Local inference and Hermes setup cover more restart and configuration edge cases. Managed inference hostnames bypass host proxies, managed vLLM restarts after host reboot, DGX Station managed vLLM defaults to `Qwen/Qwen3.6-27B-FP8`, Hermes rejects dashboard port collisions during configuration, and Hermes recovery enforces the environment-secret boundary. For more information, refer to Use a Local Inference Server (use the `nemoclaw-user-configure-inference` skill).
+- Messaging setup gives clearer feedback and stores more deterministic state. Slack now notifies the sender when a channel `@mention` is denied, operator-supplied placeholder keys can be registered during onboarding, `messagingPlan` persists into resume state, and channel conflict detection now uses the manifest-plan architecture. For more information, refer to Messaging Channels (use the `nemoclaw-user-manage-sandboxes` skill).
+- Release validation now runs real shell-boundary assertions through Vitest E2E support, includes an opt-in live scenario project, shards CLI coverage, adds a docs-only PR fast path, and trims slow CLI subprocess coverage.
+
+## v0.0.60
+
+NemoClaw v0.0.60 improves runtime guidance, sandbox lifecycle reliability, local inference setup, messaging enrollment, and maintainer safeguards:
+
+- OpenClaw runtime guidance stays active without appearing in the visible chat transcript, and sandbox network and filesystem context now tells agents to try allowed in-sandbox actions before reporting them unavailable. OpenClaw device-approval policy also uses the same allowlist and scope behavior during startup and connect. For more information, refer to Architecture (use the `nemoclaw-user-reference` skill).
+- Onboarding and sandbox lifecycle paths preserve more host state. NemoClaw uses the package-managed OpenShell gateway user service when available, scopes gateway and dashboard cleanup by sandbox instance, detects Docker-driver sandboxes without writing the local gateway marker, rolls back failed Docker GPU patches, honors `.dockerignore` for custom `--from <Dockerfile>` contexts, and can skip default workspace-template seeding with `NEMOCLAW_MINIMAL_BOOTSTRAP=1`. For more information, refer to NemoClaw CLI Commands Reference (use the `nemoclaw-user-reference` skill).
+- Local inference setup is more predictable across NVIDIA NIM, Ollama, vLLM, DGX Spark, DGX Station, Anthropic-compatible routes, and Hermes. NemoClaw pulls NIM images by platform digest, uses stable managed-vLLM images and updated DGX model profiles, tightens Ollama fit checks, synchronizes Anthropic route metadata, preserves Hermes proxy API-key placeholders, and serves the prebuilt Hermes dashboard assets from the sandbox image. For more information, refer to NemoClaw Inference Options (use the `nemoclaw-user-configure-inference` skill).
+- Messaging and day-two CLI operations share more common plumbing. Messaging enrollment uses manifest hooks across Telegram, Discord, Slack, WeChat, and WhatsApp, `nemoclaw tunnel status` reports Cloudflare tunnel state directly, global `status` and `list` honor sandbox environment overrides consistently, and installed OpenClaw skills are mirrored into the agent home directory for session startup. For more information, refer to Messaging Channels (use the `nemoclaw-user-manage-sandboxes` skill).
+- Policy and secret-handling safeguards cover more edge cases. Non-interactive `NEMOCLAW_POLICY_TIER` validation fails before side effects, interactive onboarding ignores invalid environment values and prompts normally, safe common egress presets are available where supported, persistent-memory scanning catches additional OpenAI and Slack token shapes, and Hermes remote secrets stay out of sandbox-visible surfaces. For more information, refer to Security Best Practices (use the `nemoclaw-user-configure-security` skill).
+
+## v0.0.59
+
+NemoClaw v0.0.59 improves OpenClaw runtime compatibility, inference setup, credential reuse, messaging safeguards, and sandbox startup diagnostics:
+
+- OpenClaw sandboxes stay aligned with the live gateway and current runtime layout. Sandbox startup reconciles the agent model from the live gateway, refreshes the OpenClaw plugin registry after gateway startup, pins OpenClaw home, state, and workspace paths inside the sandbox, and handles OpenClaw 2026.5.27 approval compatibility. For more information, refer to NemoClaw CLI Commands Reference (use the `nemoclaw-user-reference` skill).
+- Inference setup has newer model choices and longer first-start budgets for local runtimes. NVIDIA Endpoints includes the Nemotron 3 Ultra 550B option, Local Ollama uses `qwen3.5:9b` as the starter fallback, managed vLLM on DGX Spark uses a 128K context window for `nvidia/Qwen3.6-35B-A3B-NVFP4`, and Local NVIDIA NIM waits longer for first container startup while still failing fast when the container exits. For more information, refer to NemoClaw Inference Options (use the `nemoclaw-user-configure-inference` skill).
+- Hermes sandboxes can route Anthropic Messages API traffic through managed inference, and runtime model switches keep the Hermes config synchronized with the OpenShell route. For more information, refer to Switch Inference Models at Runtime (use the `nemoclaw-user-configure-inference` skill).
+- Credential and messaging boundaries are clearer during day-two operations. Rebuild and remote-provider update paths can reuse credentials already stored in the OpenShell gateway when the host environment is empty, `channels add` warns or aborts before multiple sandboxes compete for the same token-based messaging credential, and `status` reports cross-sandbox channel overlaps. For more information, refer to Messaging Channels (use the `nemoclaw-user-manage-sandboxes` skill).
+- Sandbox startup and host preflight failures provide more actionable recovery guidance. NemoClaw heals `~/.nemoclaw` directory and config-file permissions on read paths, detects missing or stale NVIDIA CDI specs before GPU containers fail, probes legacy gateway containers before host-alias operations, and preserves argument validation before runtime probing. For more information, refer to Troubleshooting (use the `nemoclaw-user-reference` skill).
+
+## v0.0.58
+
+NemoClaw v0.0.58 improves GPU proof reporting, local-inference metadata, policy failure handling, Hermes messaging reliability, OpenClaw diagnostics, and release-prep documentation:
+
+- GPU and local-inference setup report more accurate state. WSL Docker Desktop on ARM64 can accept a reported NVIDIA GPU only after a bounded Docker CUDA proof succeeds, `nemoclaw <name> status` shows whether sandbox CUDA usability is verified, unverified, or failed, managed vLLM uses runtime `max_model_len` metadata for the baked context window when available, and DeepSeek managed-vLLM startup receives the runtime keyword arguments it expects. For more information, refer to Use a Local Inference Server (use the `nemoclaw-user-configure-inference` skill).
+- Onboarding and installer failures stop earlier with clearer recovery guidance. The installer checks for `strings` from `binutils` before clone, build, or OpenShell download work; Docker-driver gateway startup fails fast when Docker is unreachable; WSL Docker Desktop diagnostics explain unsupported native Docker-in-WSL routes; Windows-host Ollama detection also checks the installed Windows process when the daemon is stopped; and custom proxy host and port settings are forwarded into the runtime container. For more information, refer to Prerequisites (use the `nemoclaw-user-get-started` skill).
+- Policy and sandbox hardening paths avoid misleading success. `policy-add` refuses to merge a preset when the live policy read returns unparseable output, custom preset application reports when the gateway accepted a preset but the sandbox registry could not record it, and `NEMOCLAW_REQUIRE_CAP_DROP=1` lets operators make entrypoint capability dropping fail closed. For more information, refer to NemoClaw CLI Commands Reference (use the `nemoclaw-user-reference` skill).
+- OpenClaw runtime diagnostics can export conversation traces through the `diagnostics-otel` plugin. Set `NEMOCLAW_OPENCLAW_OTEL=1` before onboarding or rebuilding an OpenClaw sandbox to bake the plugin config and apply the local OTLP policy preset. For more information, refer to NemoClaw CLI Commands Reference (use the `nemoclaw-user-reference` skill).
+- Hermes sandboxes are more reliable across messaging, inference, and startup repair paths. Slack channel rebuilds enable the Hermes Slack platform block, `inference.local` routes include the placeholder API key LiteLLM expects, Telegram pseudo-tool text is normalized only for the active chat platform, the messaging response patch preserves Hermes method binding, retry markers are cleared before explicit command dispatch, and Hermes state repair preserves writable history and background dispatcher behavior in locked runtime state. For more information, refer to Messaging Channels (use the `nemoclaw-user-manage-sandboxes` skill).
+
+## v0.0.57
+
+NemoClaw v0.0.57 improves multi-agent command workflows, local inference setup, messaging channel reliability, sandbox diagnostics, policy persistence, and installer pinning:
+
+- OpenClaw sandboxes can manage conversation sessions and secondary agents from the host CLI. Use `nemoclaw <name> sessions` to list sessions, reset a session key through the OpenClaw gateway, or delete a non-main session, and use `nemoclaw <name> agents add` or `nemoclaw <name> agents delete` to invoke the in-sandbox OpenClaw agent commands. Build-time config also accepts `NEMOCLAW_EXTRA_AGENTS_JSON` so operators can bake validated secondary-agent entries into `agents.list` without replacing the primary `main` agent. For more information, refer to NemoClaw CLI Commands Reference (use the `nemoclaw-user-reference` skill).
+- Local inference setup is more observable and more resilient. Managed vLLM on DGX Spark defaults to `nvidia/Qwen3.6-35B-A3B-NVFP4`, streams Hugging Face model-download progress, polls `/v1/models` for readiness, and uses a progress-aware Docker pull watchdog. Local Ollama routes request streaming usage metadata so OpenClaw token counters can update, and `connect` warns when the recorded inference route diverges from the live gateway route instead of reverting silently. For more information, refer to Use a Local Inference Server (use the `nemoclaw-user-configure-inference` skill).
+- Onboarding and re-onboarding preserve more operator intent. Linux Docker-driver onboarding can auto-apply a narrow UFW rule for the sandbox-to-gateway bridge when `NEMOCLAW_AUTO_FIX_FIREWALL=1`, verifies host-network local-inference reachability before reporting success, reuses healthy containerized gateways, binds gateway state by port, rolls back a freshly-created sandbox when setup is cancelled at the policy preset step, and carries finalized policy preset selections across later re-onboard runs. For more information, refer to NemoClaw CLI Commands Reference (use the `nemoclaw-user-reference` skill).
+- Messaging channel setup fails earlier and leaves fewer partial changes. Slack setup validates both Socket Mode tokens before saving credentials, `channels add` checks the matching built-in policy preset before prompting or persisting channel state, failed preset application rolls back staged bridge changes when possible, WhatsApp pairing renders a compact QR code with clearer gateway diagnostics, and Slack runtime placeholders are normalized before OpenClaw starts. For more information, refer to Messaging Channels (use the `nemoclaw-user-manage-sandboxes` skill).
+- Sandbox status and repair output are more actionable. `nemoclaw <name> status` reports Docker daemon, stopped-container, dashboard-port-conflict, and paused-container layers without running misleading inference probes, `doctor` skips stale Kubernetes-only gateway container checks on Docker-driver installs, and stale local registry entries are preserved so the suggested `rebuild --yes` recovery path still has the metadata it needs. For more information, refer to NemoClaw CLI Commands Reference (use the `nemoclaw-user-reference` skill).
+- Installer and policy guidance tightened. Piped installs show the correct `NEMOCLAW_INSTALL_TAG` placement and fail clearly when a requested ref is unavailable, the `pypi` preset allows the `uv` package manager binary, and Jira validation now uses a body-visible Atlassian API probe so operators can distinguish blocked and approved curl traffic. For more information, refer to Common NemoClaw Integration Policy Examples (use the `nemoclaw-user-manage-policy` skill).
 
 ## v0.0.56
 
@@ -29,9 +121,9 @@ NemoClaw v0.0.55 improves local Ollama onboarding reliability, plugin secret-sca
 NemoClaw v0.0.54 updates messaging activation, Windows WSL onboarding, NemoHermes dashboard access, and sandbox repair paths:
 
 - Generated OpenClaw config now marks Telegram, Discord, Slack, and WhatsApp as enabled at the channel level. Selected messaging plugins are pinned during the image build, and `channels add` verifies Telegram, Discord, and Slack bridge startup after the rebuild instead of leaving silent channel failures for later debugging. For more information, refer to Messaging Channels (use the `nemoclaw-user-manage-sandboxes` skill).
-- The Windows bootstrap flow waits for Ubuntu account creation before touching Docker settings, enables Docker Desktop WSL integration for the target distro, avoids changing the global WSL default distro, and adds WSL-specific Docker reachability hints during onboarding. For more information, refer to Prepare Windows for NemoClaw (use the `nemoclaw-user-get-started` skill).
+- The Windows bootstrap flow waits for Ubuntu account creation before touching Docker settings, enables Docker Desktop WSL integration for the target distro, avoids changing the global WSL default distro, and adds WSL-specific Docker reachability hints during onboarding. For more information, refer to Prepare Windows for NemoClaw.
 - Windows-host Ollama setup inside WSL now requires the Docker Desktop WSL integration path. NemoClaw still shows Windows-host Ollama options when it detects them, but labels the Docker Desktop requirement and blocks unsupported native Docker-in-WSL selections before it tries to start or install Ollama. For more information, refer to Use a Local Inference Server (use the `nemoclaw-user-configure-inference` skill).
-- NemoHermes can expose the optional native Hermes web dashboard separately from the OpenAI-compatible API. Set `NEMOCLAW_HERMES_DASHBOARD=1` before onboarding to start and forward the dashboard on port `9119`, with `NEMOCLAW_HERMES_DASHBOARD_PORT` and `NEMOCLAW_HERMES_DASHBOARD_TUI` available for port and TUI tab control. For more information, refer to NemoClaw Quickstart with Hermes (use the `nemoclaw-user-get-started` skill).
+- NemoHermes can expose the optional native Hermes web dashboard separately from the OpenAI-compatible API. Set `NEMOCLAW_HERMES_DASHBOARD=1` before onboarding to start and forward the dashboard on port `9119`, with `NEMOCLAW_HERMES_DASHBOARD_PORT` and `NEMOCLAW_HERMES_DASHBOARD_TUI` available for port and TUI tab control. For more information, refer to NemoClaw Quickstart with Hermes.
 - Onboarding diagnostics include more copy-paste-ready recovery hints. Invalid sandbox names now include a `Try: <suggested-slug>` line when NemoClaw can derive a valid name, and non-interactive NVIDIA Endpoints setup prints the exact `export NVIDIA_API_KEY=nvapi-...` shape when the key is missing. For more information, refer to NemoClaw CLI Commands Reference (use the `nemoclaw-user-reference` skill).
 - Homebrew stays on the Linuxbrew prefix while exposing installed formula commands in sandbox shell sessions, the `/nemoclaw` slash command activates at OpenClaw startup again, Hermes rebuilds tolerate older release tarballs that lack optional UI package lockfiles, and device scope-upgrade approvals recover without being pinned to the old gateway-scoped request. For more information, refer to Common NemoClaw Integration Policy Examples (use the `nemoclaw-user-manage-policy` skill).
 - The host-gateway allowance for OpenClaw `web_fetch` is confined to the trusted proxy path, while strict and direct paths continue to block host-gateway names. Hermes Provider onboarding skips the host-side smoke probe only for OAuth-backed setup and keeps direct validation for Nous API key setup. For more information, refer to NemoClaw Inference Options (use the `nemoclaw-user-configure-inference` skill).
@@ -71,7 +163,7 @@ NemoClaw v0.0.51 improves messaging controls, local inference setup, sandbox dia
 - `nemoclaw onboard` restores the managed vLLM menu entry for DGX Spark and DGX Station hosts, which had been hidden after a previous onboard refactor dropped the `gpu.platform` value the vLLM menu builder relies on.
 - `nemoclaw resources` and `NEMOCLAW_RESOURCE_PROFILE` expose sandbox CPU and memory profiles. Profiles can be selected during onboarding, and `NEMOCLAW_CPU` or `NEMOCLAW_RAM` can override the selected profile for scripted runs.
 - Cloudflare named tunnels are supported through `CLOUDFLARE_TUNNEL_TOKEN`. `nemoclaw tunnel start` passes the token through the environment and expects the named tunnel route to already point at the dashboard port.
-- Jira policy validation guidance now matches the maintained preset. Use a Node HTTPS status probe for Atlassian API access and an explicit status-only curl probe for `auth.atlassian.com` when validating approved requests manually.
+- Jira policy validation guidance now matches the maintained preset. Use a Node HTTPS status probe for Atlassian API access and the body-visible `api.atlassian.com/oauth/token/accessible-resources` curl probe when validating approved requests manually. Plain `curl -s` against `auth.atlassian.com` can return empty output even when reachable, so it is not a pass/fail signal.
 - Sandbox logs merge OpenClaw gateway output and OpenShell audit events into one stream, and `--tail` applies once to the merged result so policy denials appear beside gateway logs.
 - Onboarding recovers more cleanly across host and runtime edge cases, including root-owned config sync directories, stale dashboard port allocation, unreachable Docker daemons, stale dashboard forwards, default NVIDIA CDI spec directories, and Linux Docker-driver health checks.
 
@@ -124,7 +216,7 @@ NemoClaw v0.0.48 improves onboarding, sandbox builds, local inference, messaging
 
 NemoClaw v0.0.47 focused on release hardening and validation coverage:
 
-- The scenario E2E framework gained baseline onboarding coverage for CLI setup, OpenShell gateway creation, sandbox state, inference routing, and smoke tests.
+- The Vitest E2E fixture layer gained baseline onboarding coverage for CLI setup, OpenShell gateway creation, sandbox state, inference routing, and smoke tests.
 - Messaging provider scenarios now validate provider attachment, placeholder configuration, secret-leak prevention, bridge reachability, Discord gateway routing, Slack provider state, Telegram injection safety, and token-rotation isolation.
 - CLI command registration was refactored so public display defaults stay consistent across sandbox channel, host, log, policy, skill, and snapshot commands.
 - PR review advisor automation was added for maintainers, with deterministic GitHub context gathering and structured review comments.
@@ -249,20 +341,20 @@ NemoClaw v0.0.38 improves several day-two workflows:
 Starting with NemoClaw v0.0.34, the `curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash` installer pipeline no longer auto-accepts the third-party software notice when stdin is piped and `/dev/tty` is unavailable (for example, deeply detached SSH sessions or some container shells).
 In environments without a TTY, accept upfront in the pipe:
 
-```console
-$ curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 bash
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 bash
 ```
 
 Or pass the flag through to the installer:
 
-```console
-$ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- --yes-i-accept-third-party-software
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- --yes-i-accept-third-party-software
 ```
 
 Or re-run from a terminal with a controlling TTY:
 
-```console
-$ bash <(curl -fsSL https://www.nvidia.com/nemoclaw.sh)
+```bash
+bash <(curl -fsSL https://www.nvidia.com/nemoclaw.sh)
 ```
 
 The installer error message in v0.0.35+ surfaces all three invocations directly so users can copy-paste a recovery without leaving the terminal.

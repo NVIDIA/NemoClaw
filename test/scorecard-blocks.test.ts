@@ -20,14 +20,13 @@ type TestSlackBlock = {
 type SlackBuilder = {
   buildBlocks: (data: ScorecardData) => TestSlackBlock[];
   buildFallbackText: (data: ScorecardData) => string;
-  getSlackChannel: (data: ScorecardData) => "ci" | "preview" | "situation-room";
+  getSlackChannel: (data: ScorecardData) => "daily" | "fullrun" | "preview";
   getStatusColor: (data: ScorecardData) => "danger" | "good" | "warning";
 };
 
 const require = createRequire(import.meta.url);
-const { buildBlocks, buildFallbackText, getSlackChannel, getStatusColor } = require(
-  "../scripts/scorecard/build-slack-blocks.ts",
-) as SlackBuilder;
+const { buildBlocks, buildFallbackText, getSlackChannel, getStatusColor } =
+  require("../scripts/scorecard/build-slack-blocks.ts") as SlackBuilder;
 
 function renderBlocks(data: ScorecardData): TestSlackBlock[] {
   return buildBlocks(data);
@@ -51,6 +50,7 @@ function makeData(overrides: Partial<ScorecardData> = {}): ScorecardData {
   return {
     today: "May 25",
     runMode: "Scheduled full nightly",
+    actor: "",
     isSelectiveDispatch: false,
     requestedJobs: [],
     total: 51,
@@ -61,7 +61,8 @@ function makeData(overrides: Partial<ScorecardData> = {}): ScorecardData {
     skipped: 1,
     perfect: true,
     failedJobs: [],
-    trendLine: "Trend: ↗️ Improving (yesterday had failures → today perfect)",
+    traceTimingLine:
+      "Trace: cloud-onboard total 1m 35.3s, increased +12.4s (+15.0%) vs v0.0.56. Top phase changes: sandbox +4.0s; preflight +2.0s; gateway -1.0s. Full phase timing table is in the GitHub run summary.",
     runUrl: "https://github.com/NVIDIA/NemoClaw/actions/runs/12345678",
     ...overrides,
   };
@@ -78,6 +79,11 @@ describe("buildBlocks — perfect scheduled run", () => {
 
   it("does not include a header block inside the attachment", () => {
     expect(blocks.some((block) => block.type === "header")).toBe(false);
+  });
+
+  it("does not append an actor suffix for scheduled runs", () => {
+    const withActor = renderBlocks(makeData({ actor: "hple" }));
+    expect(elementText(withActor[0], 0)).not.toContain("(by");
   });
 
   it("leads the stats line with 'Total ran: <ran>/<total>'", () => {
@@ -111,10 +117,28 @@ describe("buildBlocks — perfect scheduled run", () => {
     );
   });
 
-  it("strips the 'Trend: ' prefix and re-bolds it", () => {
-    const trendCtx = blocks.filter((block) => block.type === "context").pop();
-    expect(elementText(trendCtx, 0)).toMatch(/^\*Trend:\*/);
-    expect(elementText(trendCtx, 0)).not.toMatch(/^Trend: /);
+  it("omits the legacy trend context", () => {
+    const contextText = blocks
+      .filter((block) => block.type === "context")
+      .flatMap((block) => block.elements?.map((element) => element.text ?? "") ?? [])
+      .join("\n");
+    expect(contextText).not.toContain("Trend");
+  });
+
+  it("includes cloud onboard trace timing as a dedicated section", () => {
+    const traceSection = findRequiredBlock(
+      blocks,
+      (block) => block.type === "section" && block.text?.text?.startsWith("*Trace:*") === true,
+    );
+
+    expect(traceSection.text?.text).toContain("cloud-onboard total 1m 35.3s");
+    expect(traceSection.text?.text).toContain("increased +12.4s (+15.0%) vs v0.0.56");
+    expect(traceSection.text?.text).toContain("Top phase changes: sandbox +4.0s");
+    expect(traceSection.text?.text).toContain("preflight +2.0s");
+    expect(traceSection.text?.text).toContain("gateway -1.0s");
+    expect(traceSection.text?.text).toContain(
+      "Full phase timing table is in the GitHub run summary",
+    );
   });
 });
 
@@ -136,7 +160,6 @@ describe("buildBlocks — run with failures", () => {
         // url=null exercises the fallback rendering (no API result for this job)
         { name: "sandbox-operations-e2e", url: null },
       ],
-      trendLine: "Trend: ↘️ Degrading (yesterday perfect → today has failures)",
     }),
   );
 
@@ -182,7 +205,6 @@ describe("buildBlocks — selective dispatch", () => {
       ran: 2,
       success: 2,
       skipped: 0,
-      trendLine: "Trend: ⊘ Not shown for selective dispatches",
     }),
   );
 
@@ -192,23 +214,72 @@ describe("buildBlocks — selective dispatch", () => {
     expect(elementText(blocks[0], 1)).toContain("`hermes-slack-e2e`");
   });
 
-  it("keeps the 'not shown' trend text from the generator", () => {
-    const trendCtx = blocks.filter((block) => block.type === "context").pop();
-    expect(elementText(trendCtx, 0)).toContain("Not shown");
+  it("appends actor suffix on selective dispatch when actor is present", () => {
+    const withActor = renderBlocks(
+      makeData({
+        runMode: "Selective dispatch",
+        isSelectiveDispatch: true,
+        requestedJobs: ["cloud-e2e"],
+        actor: "hple",
+      }),
+    );
+    expect(elementText(withActor[0], 0)).toContain("(by *hple*)");
+  });
+
+  it("does not add a legacy trend context", () => {
+    const contextText = blocks
+      .filter((block) => block.type === "context")
+      .flatMap((block) => block.elements?.map((element) => element.text ?? "") ?? [])
+      .join("\n");
+    expect(contextText).not.toContain("Trend");
+  });
+});
+
+describe("buildBlocks — manual full run with actor", () => {
+  it("appends actor suffix in the run-mode context line", () => {
+    const blocks = renderBlocks(makeData({ runMode: "Manual full run", actor: "hple" }));
+    expect(elementText(blocks[0], 0)).toContain("Manual full run (by *hple*)");
+  });
+
+  it("omits actor suffix when actor is empty", () => {
+    const blocks = renderBlocks(makeData({ runMode: "Manual full run", actor: "" }));
+    expect(elementText(blocks[0], 0)).toBe("*Run mode:* Manual full run");
   });
 });
 
 describe("buildFallbackText", () => {
-  it("renders title with date and sunrise emoji", () => {
+  it("renders schedule title with 🗓️ DAILY segment (uppercase)", () => {
     expect(buildFallbackText(makeData())).toBe(
-      "🌅 *NemoClaw Nightly Scorecard — May 25*",
+      "🌅 *NemoClaw Nightly Scorecard · 🗓️ DAILY · May 25*",
     );
   });
 
-  it("uses the same title regardless of run outcome", () => {
-    // Title is now stable — status detail lives inside the attachment
-    // stats line. Notification preview shows the title; users click to
-    // see the breakdown.
+  it("renders manual full title with 🛠 prefix + actor", () => {
+    expect(buildFallbackText(makeData({ runMode: "Manual full run", actor: "hunglp6d" }))).toBe(
+      "🌅 *NemoClaw Nightly Scorecard · 🛠 Manual full by hunglp6d · May 25*",
+    );
+  });
+
+  it("renders selective title with 🛠 prefix + actor", () => {
+    expect(
+      buildFallbackText(
+        makeData({
+          runMode: "Selective dispatch",
+          isSelectiveDispatch: true,
+          requestedJobs: ["cloud-e2e"],
+          actor: "hunglp6d",
+        }),
+      ),
+    ).toBe("🌅 *NemoClaw Nightly Scorecard · 🛠 Selective by hunglp6d · May 25*");
+  });
+
+  it("omits 'by <actor>' when actor empty on manual full", () => {
+    expect(buildFallbackText(makeData({ runMode: "Manual full run", actor: "" }))).toBe(
+      "🌅 *NemoClaw Nightly Scorecard · 🛠 Manual full · May 25*",
+    );
+  });
+
+  it("uses the same title regardless of run outcome (within same runMode)", () => {
     const perfect = buildFallbackText(makeData());
     const withFailures = buildFallbackText(makeData({ perfect: false, failure: 3 }));
     expect(perfect).toBe(withFailures);
@@ -236,12 +307,12 @@ describe("getStatusColor", () => {
 });
 
 describe("getSlackChannel", () => {
-  it("routes scheduled nightly runs to the situation-room channel", () => {
-    expect(getSlackChannel(makeData())).toBe("situation-room");
+  it("routes scheduled nightly runs to the daily channel", () => {
+    expect(getSlackChannel(makeData())).toBe("daily");
   });
 
-  it("routes manual full runs (workflow_dispatch, empty jobs) to the ci channel", () => {
-    expect(getSlackChannel(makeData({ runMode: "Manual full run" }))).toBe("ci");
+  it("routes manual full runs (workflow_dispatch, empty jobs) to the fullrun channel", () => {
+    expect(getSlackChannel(makeData({ runMode: "Manual full run" }))).toBe("fullrun");
   });
 
   it("routes selective dispatches to the preview channel", () => {

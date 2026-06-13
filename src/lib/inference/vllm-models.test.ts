@@ -5,9 +5,12 @@ import { describe, expect, it } from "vitest";
 
 import {
   DEFAULT_VLLM_MODEL,
+  VLLM_EXTRA_ARGS_ENV,
   VLLM_MODELS,
   assertGatedModelAccess,
   buildVllmServeCommand,
+  modelsForPlatform,
+  parseVllmExtraServeArgs,
   preflightVllmModelEnv,
   selectVllmModelFromEnv,
 } from "../../../dist/lib/inference/vllm-models";
@@ -18,8 +21,7 @@ describe("vllm model registry", () => {
   });
 
   it("exposes a global DEFAULT_VLLM_MODEL for callers that need a baseline", () => {
-    // The platform-specific default is chosen by the profile (Spark/Station
-    // use Qwen, generic Linux uses Nemotron-Nano-4B); this constant only
+    // Platform-specific defaults are chosen by profiles; this constant only
     // documents the registry's first entry.
     expect(DEFAULT_VLLM_MODEL.envValue).toBe("qwen3.6-27b");
   });
@@ -28,7 +30,9 @@ describe("vllm model registry", () => {
     const deepseek = VLLM_MODELS.find((m) => m.envValue === "deepseek-r1-distill-70b");
     expect(deepseek).toBeDefined();
     expect(
-      selectVllmModelFromEnv({ NEMOCLAW_VLLM_MODEL: "DeepSeek-R1-Distill-70B" } as NodeJS.ProcessEnv),
+      selectVllmModelFromEnv({
+        NEMOCLAW_VLLM_MODEL: "DeepSeek-R1-Distill-70B",
+      } as NodeJS.ProcessEnv),
     ).toEqual(deepseek);
   });
 
@@ -37,6 +41,18 @@ describe("vllm model registry", () => {
     expect(
       selectVllmModelFromEnv({
         NEMOCLAW_VLLM_MODEL: "deepseek-ai/DeepSeek-R1-Distill-Llama-70B",
+      } as NodeJS.ProcessEnv),
+    ).toEqual(deepseek);
+  });
+
+  it("registers DeepSeek V4 Flash as a managed-vLLM override", () => {
+    const deepseek = VLLM_MODELS.find((m) => m.envValue === "deepseek-v4-flash");
+    expect(deepseek).toBeDefined();
+    expect(deepseek!.id).toBe("deepseek-ai/DeepSeek-V4-Flash");
+    expect(deepseek!.maxModelLen).toBe(1048576);
+    expect(
+      selectVllmModelFromEnv({
+        NEMOCLAW_VLLM_MODEL: "deepseek-ai/DeepSeek-V4-Flash",
       } as NodeJS.ProcessEnv),
     ).toEqual(deepseek);
   });
@@ -90,6 +106,36 @@ describe("vllm model registry", () => {
     expect(cmd).toContain("--load-format fastsafetensors");
   });
 
+  it("appends validated managed-vLLM extra serve args after registry defaults", () => {
+    const qwen = VLLM_MODELS.find((m) => m.envValue === "qwen3.6-27b");
+    const cmd = buildVllmServeCommand(qwen!, {
+      [VLLM_EXTRA_ARGS_ENV]: JSON.stringify([
+        "--max-num-seqs",
+        "2",
+        "--speculative-config",
+        '{"method":"ngram","num_speculative_tokens":1}',
+        "--served-model-name",
+        "operator test model",
+      ]),
+    } as NodeJS.ProcessEnv);
+
+    expect(cmd).toContain("--max-num-seqs 2");
+    expect(cmd).toContain(`--speculative-config '{"method":"ngram","num_speculative_tokens":1}'`);
+    expect(cmd).toContain("--served-model-name 'operator test model'");
+    expect(cmd.indexOf("--load-format fastsafetensors")).toBeLessThan(
+      cmd.indexOf("--served-model-name 'operator test model'"),
+    );
+  });
+
+  it("quotes single quotes in managed-vLLM extra serve args", () => {
+    const qwen = VLLM_MODELS.find((m) => m.envValue === "qwen3.6-27b");
+    const cmd = buildVllmServeCommand(qwen!, {
+      [VLLM_EXTRA_ARGS_ENV]: JSON.stringify(["--served-model-name", "operator's model"]),
+    } as NodeJS.ProcessEnv);
+
+    expect(cmd).toContain(`--served-model-name 'operator'"'"'s model'`);
+  });
+
   it("uses model-specific max-model-len when building the command", () => {
     const deepseek = VLLM_MODELS.find((m) => m.envValue === "deepseek-r1-distill-70b");
     const cmd = buildVllmServeCommand(deepseek!);
@@ -98,6 +144,41 @@ describe("vllm model registry", () => {
     expect(cmd).toContain("--reasoning-parser deepseek_r1");
     expect(cmd).toContain("--tool-call-parser hermes");
     expect(cmd).not.toContain("--reasoning-parser qwen3");
+  });
+
+  it("builds the DeepSeek V4 Flash serve command with inherited one-GPU defaults", () => {
+    const deepseek = VLLM_MODELS.find((m) => m.envValue === "deepseek-v4-flash");
+    const cmd = buildVllmServeCommand(deepseek!);
+    expect(cmd).toContain("vllm serve deepseek-ai/DeepSeek-V4-Flash");
+    expect(cmd).toContain("--tensor-parallel-size 1");
+    expect(cmd).toContain("--pipeline-parallel-size 1");
+    expect(cmd).toContain("--data-parallel-size 1");
+    expect(cmd).toContain("--port 8000");
+    expect(cmd).toContain("--kv-cache-dtype fp8");
+    expect(cmd).toContain("--trust-remote-code");
+    expect(cmd).toContain("--block-size 256");
+    expect(cmd).toContain("--enable-prefix-caching");
+    expect(cmd).toContain("--gpu-memory-utilization 0.92");
+    expect(cmd).toContain(
+      `--compilation-config '{"cudagraph_mode":"FULL_AND_PIECEWISE","custom_ops":["all"]}'`,
+    );
+    expect(cmd).toContain("--attention_config.use_fp4_indexer_cache True");
+    expect(cmd).toContain("--tokenizer-mode deepseek_v4");
+    expect(cmd).toContain("--tool-call-parser deepseek_v4");
+    expect(cmd).toContain("--enable-auto-tool-choice");
+    expect(cmd).toContain("--reasoning-parser deepseek_v4");
+    expect(cmd).toContain("--no-disable-hybrid-kv-cache-manager");
+    expect(cmd).toContain("--disable-uvicorn-access-log");
+    expect(cmd).toContain("--max-cudagraph-capture-size 128");
+    expect(cmd).toContain(
+      `--speculative-config '{"method":"mtp","num_speculative_tokens":3,"rejection_sample_method":"synthetic","synthetic_acceptance_length":3}'`,
+    );
+    expect(cmd).toContain("--max-model-len 1048576");
+    expect(cmd).toContain("--max-num-batched-tokens 8192");
+    expect(cmd).toContain("--max-num-seqs 16");
+    expect(cmd).toContain("--prefix-cache-retention-interval auto");
+    expect(cmd).toContain("pip install vllm[fastsafetensors]");
+    expect(cmd).not.toContain("--gpu-memory-utilization 0.7");
   });
 
   it("registers the Qwen3.6-35B NVFP4 checkpoint for DGX Spark", () => {
@@ -127,16 +208,95 @@ describe("vllm model registry", () => {
     expect(cmd).toContain("--enable-auto-tool-choice");
     expect(cmd).toContain("--tool-call-parser qwen3_coder");
     expect(cmd).toContain("--reasoning-parser qwen3");
-    expect(cmd).toContain("--max-model-len 65536");
+    expect(cmd).toContain("--max-model-len 131072");
     expect(cmd).toContain(
       `--speculative-config '{"method":"mtp","num_speculative_tokens":3,"moe_backend":"triton"}'`,
     );
-    // Shared defaults are kept: 0.7 utilization and the single-node parallel
-    // flags (harmless on Spark), not a model-specific 0.85 override.
+    // Single-node parallel flags stay shared; 0.7 utilization stays
+    // model-specific, not a stale 0.85 override.
     expect(cmd).toContain("--gpu-memory-utilization 0.7");
     expect(cmd).toContain("--pipeline-parallel-size 1");
     expect(cmd).toContain("--data-parallel-size 1");
     expect(cmd).not.toContain("--gpu-memory-utilization 0.85");
+  });
+});
+
+describe("modelsForPlatform", () => {
+  it("returns the Spark-runnable subset for DGX Spark", () => {
+    const slugs = modelsForPlatform("spark").map((m) => m.envValue);
+    expect(slugs).toContain("qwen3.6-35b-a3b-nvfp4");
+    expect(slugs).toContain("qwen3.6-27b");
+    expect(slugs).toContain("nemotron-3-nano-4b");
+    expect(slugs).toContain("deepseek-r1-distill-70b");
+    expect(slugs).not.toContain("deepseek-v4-flash");
+  });
+
+  it("returns the Station-runnable subset for DGX Station", () => {
+    const slugs = modelsForPlatform("station").map((m) => m.envValue);
+    expect(slugs).toContain("qwen3.6-27b");
+    expect(slugs).toContain("nemotron-3-nano-4b");
+    expect(slugs).toContain("deepseek-r1-distill-70b");
+    expect(slugs).toContain("deepseek-v4-flash");
+    expect(slugs).not.toContain("qwen3.6-35b-a3b-nvfp4");
+  });
+
+  it("omits arch-specific entries from the generic Linux profile", () => {
+    const slugs = modelsForPlatform("linux").map((m) => m.envValue);
+    expect(slugs).toContain("qwen3.6-27b");
+    expect(slugs).toContain("nemotron-3-nano-4b");
+    expect(slugs).toContain("deepseek-r1-distill-70b");
+    expect(slugs).not.toContain("qwen3.6-35b-a3b-nvfp4");
+    expect(slugs).not.toContain("deepseek-v4-flash");
+  });
+
+  it("preserves registry order so callers can stably mark the recommended entry", () => {
+    const registryOrder = VLLM_MODELS.filter((m) => m.platforms.includes("spark")).map(
+      (m) => m.envValue,
+    );
+    expect(modelsForPlatform("spark").map((m) => m.envValue)).toEqual(registryOrder);
+  });
+});
+
+describe("parseVllmExtraServeArgs", () => {
+  it("returns no extra args when the env var is unset or blank", () => {
+    expect(parseVllmExtraServeArgs({} as NodeJS.ProcessEnv)).toEqual([]);
+    expect(parseVllmExtraServeArgs({ [VLLM_EXTRA_ARGS_ENV]: "  " } as NodeJS.ProcessEnv)).toEqual(
+      [],
+    );
+  });
+
+  it("parses a JSON array of extra vLLM serve argument tokens", () => {
+    expect(
+      parseVllmExtraServeArgs({
+        [VLLM_EXTRA_ARGS_ENV]: '[" --max-num-seqs ","2"]',
+      } as NodeJS.ProcessEnv),
+    ).toEqual(["--max-num-seqs", "2"]);
+  });
+
+  it("rejects malformed managed-vLLM extra args before docker work starts", () => {
+    expect(() =>
+      parseVllmExtraServeArgs({
+        [VLLM_EXTRA_ARGS_ENV]: '{"not":"an array"}',
+      } as NodeJS.ProcessEnv),
+    ).toThrow(/JSON array/);
+
+    expect(() =>
+      parseVllmExtraServeArgs({
+        [VLLM_EXTRA_ARGS_ENV]: '["--max-num-seqs",2]',
+      } as NodeJS.ProcessEnv),
+    ).toThrow(/\[1\] must be a string/);
+
+    expect(() =>
+      parseVllmExtraServeArgs({
+        [VLLM_EXTRA_ARGS_ENV]: '["   "]',
+      } as NodeJS.ProcessEnv),
+    ).toThrow(/\[0\] must not be empty/);
+
+    expect(() =>
+      parseVllmExtraServeArgs({
+        [VLLM_EXTRA_ARGS_ENV]: '["line\\nbreak"]',
+      } as NodeJS.ProcessEnv),
+    ).toThrow(/control characters/);
   });
 });
 
@@ -188,6 +348,17 @@ describe("preflightVllmModelEnv", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.message).toMatch(/Unknown NEMOCLAW_VLLM_MODEL='made-up-model'/);
+    }
+  });
+
+  it("fails fast for malformed managed-vLLM extra args", () => {
+    const result = preflightVllmModelEnv({
+      [VLLM_EXTRA_ARGS_ENV]: '["--max-num-seqs",2]',
+    } as NodeJS.ProcessEnv);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.message).toMatch(/NEMOCLAW_VLLM_EXTRA_ARGS_JSON/);
+      expect(result.message).toMatch(/\[1\] must be a string/);
     }
   });
 });

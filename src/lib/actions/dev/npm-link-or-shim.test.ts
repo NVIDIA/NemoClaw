@@ -20,8 +20,8 @@ function setupRepo(): { binPath: string; homeDir: string; repoDir: string; tmpDi
   return { binPath, homeDir, repoDir, tmpDir };
 }
 
-function failingNpm() {
-  return vi.fn(() => ({ status: 1, stdout: "", stderr: "npm error code EACCES\n" }));
+function failingNpm(output = "npm error code EACCES\n") {
+  return vi.fn(() => ({ status: 1, stdout: "", stderr: output }));
 }
 
 describe("runNpmLinkOrShim", () => {
@@ -29,7 +29,10 @@ describe("runNpmLinkOrShim", () => {
     const { homeDir, repoDir } = setupRepo();
     const run = failingNpm();
 
-    const result = runNpmLinkOrShim({ env: { HOME: homeDir, NEMOCLAW_INSTALLING: "1" }, repoRoot: repoDir }, { run });
+    const result = runNpmLinkOrShim(
+      { env: { HOME: homeDir, NEMOCLAW_INSTALLING: "1" }, repoRoot: repoDir },
+      { run },
+    );
 
     expect(result.status).toBe(0);
     expect(run).not.toHaveBeenCalled();
@@ -66,8 +69,39 @@ describe("runNpmLinkOrShim", () => {
     const shim = fs.readFileSync(shimPath, "utf-8");
     expect(shim).toContain(DEV_SHIM_MARKER);
     expect(shim).toContain(`exec "${binPath}" "$@"`);
-    expect(errors.join("\n")).toContain("npm link failed");
-    expect(errors.join("\n")).toContain("Created user-local shim");
+    const logOutput = errors.join("\n");
+    expect(logOutput).toContain("npm link failed");
+    expect(logOutput).toContain("Created user-local shim at ~/.local/bin/nemoclaw");
+    expect(logOutput).not.toContain(homeDir);
+    expect(logOutput).not.toContain(repoDir);
+  });
+
+  it("redacts fallback npm output before logging", () => {
+    const { homeDir, repoDir } = setupRepo();
+    const errors: string[] = [];
+    const token = "nvapi-secret-value";
+
+    const result = runNpmLinkOrShim(
+      { env: { HOME: homeDir }, repoRoot: repoDir },
+      {
+        commandPath: () => process.execPath,
+        logError: (message) => errors.push(message),
+        run: failingNpm(
+          `npm failed in ${repoDir} under ${homeDir}\nNVIDIA_INFERENCE_API_KEY=${token}\nAuthorization: Bearer ${token}\n`,
+        ),
+      },
+    );
+
+    const logOutput = errors.join("\n");
+    expect(result.status).toBe(0);
+    expect(logOutput).toContain("npm link failed");
+    expect(logOutput).toContain("<repo-root>");
+    expect(logOutput).toContain("~");
+    expect(logOutput).toContain("NVIDIA_INFERENCE_API_KEY=[REDACTED]");
+    expect(logOutput).toContain("Bearer [REDACTED]");
+    expect(logOutput).not.toContain(homeDir);
+    expect(logOutput).not.toContain(repoDir);
+    expect(logOutput).not.toContain(token);
   });
 
   it("refuses to overwrite a foreign shim", () => {
@@ -79,7 +113,11 @@ describe("runNpmLinkOrShim", () => {
 
     const result = runNpmLinkOrShim(
       { env: { HOME: homeDir }, repoRoot: repoDir },
-      { commandPath: () => process.execPath, logError: (message) => errors.push(message), run: failingNpm() },
+      {
+        commandPath: () => process.execPath,
+        logError: (message) => errors.push(message),
+        run: failingNpm(),
+      },
     );
 
     expect(result.status).toBe(1);
@@ -113,11 +151,18 @@ describe("runNpmLinkOrShim", () => {
 
     const result = runNpmLinkOrShim(
       { env: { HOME: homeDir }, repoRoot: repoDir },
-      { commandPath: () => process.execPath, logError: (message) => errors.push(message), run: failingNpm() },
+      {
+        commandPath: () => process.execPath,
+        logError: (message) => errors.push(message),
+        run: failingNpm(),
+      },
     );
 
     expect(result.status).toBe(1);
-    expect(errors.join("\n")).toContain("shim creation failed");
+    const logOutput = errors.join("\n");
+    expect(logOutput).toContain("shim creation failed");
+    expect(logOutput).toContain("~/.local/bin");
+    expect(logOutput).not.toContain(homeDir);
     expect(fs.readFileSync(path.join(homeDir, ".local"), "utf-8")).toBe("not-a-directory\n");
   });
 });

@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { shellQuote } from "./core/shell-quote";
+
 /**
  * Probe the OpenClaw runtime channel registry from inside a sandbox.
  *
@@ -141,10 +143,6 @@ export function extractEnabledChannelsFromOpenclawConfig(json: unknown): string[
   return [...visible].sort();
 }
 
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, "'\\''")}'`;
-}
-
 // Sentinel header the gateway-log scan script always echoes when the log
 // file is readable. Distinguishes "log missing entirely" (no stdout) from
 // "log present but no channels matched" (header echoed, no FOUND: lines).
@@ -188,8 +186,7 @@ export function buildGatewayLogScanScript(gatewayLogPath: string): string {
   // quote context, so we escape the embedded single quotes the same way
   // `shellQuote` does — '\'' ends the outer quote, injects a literal,
   // re-enters the quoted segment.
-  const awkProgram =
-    `/${GATEWAY_BOOT_MARKER_REGEX}/ { buf=""; next } { buf = buf $0 ORS } END { printf "%s", buf }`;
+  const awkProgram = `/${GATEWAY_BOOT_MARKER_REGEX}/ { buf=""; next } { buf = buf $0 ORS } END { printf "%s", buf }`;
   const escapedAwkProgram = awkProgram.replace(/'/g, "'\\''");
   // `test -r` handles missing and permission-denied uniformly. The
   // awk-then-grep pipeline reads the file once and emits at most one
@@ -262,7 +259,9 @@ const DEFAULT_GATEWAY_LOG_PATH = "/tmp/gateway.log";
  */
 export function probeChannelRuntimeStatus(deps: ChannelRuntimeStatusDeps): RuntimeChannelStatus {
   const configFilePath = deps.configFilePath;
-  const result = deps.executeSandboxCommand(`cat ${shellQuote(configFilePath)} 2>/dev/null || true`);
+  const result = deps.executeSandboxCommand(
+    `cat ${shellQuote(configFilePath)} 2>/dev/null || true`,
+  );
   if (!result) {
     return {
       ok: false,

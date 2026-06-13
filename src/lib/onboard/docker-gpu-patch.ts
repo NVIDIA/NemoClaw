@@ -14,14 +14,17 @@ import {
   dockerRunDetached,
   dockerStop,
 } from "../adapters/docker";
+import { reconcileSupervisorReconnect } from "./docker-gpu-patch-finalize";
 import {
-  type DockerGpuSupervisorReconnectDeps,
   DOCKER_GPU_SUPERVISOR_RECONNECT_ERROR_DEBOUNCE_ENV,
   DOCKER_GPU_SUPERVISOR_RECONNECT_TIMEOUT_ENV,
+  type DockerGpuSupervisorReconnectDeps,
   getDockerGpuSupervisorReconnectErrorDebouncePolls,
   getDockerGpuSupervisorReconnectTimeoutSecs,
   waitForOpenShellSupervisorReconnect,
 } from "./docker-gpu-supervisor-reconnect";
+
+export type { DockerGpuSupervisorReconnectDeps };
 export {
   DOCKER_GPU_SUPERVISOR_RECONNECT_ERROR_DEBOUNCE_ENV,
   DOCKER_GPU_SUPERVISOR_RECONNECT_TIMEOUT_ENV,
@@ -29,7 +32,6 @@ export {
   getDockerGpuSupervisorReconnectTimeoutSecs,
   waitForOpenShellSupervisorReconnect,
 };
-export type { DockerGpuSupervisorReconnectDeps };
 
 export const OPENSHELL_MANAGED_BY_LABEL = "openshell.ai/managed-by";
 export const OPENSHELL_MANAGED_BY_VALUE = "openshell";
@@ -70,6 +72,7 @@ export type DockerGpuPatchDeps = {
   dockerRunDetached?: DockerRunFn;
   dockerRename?: DockerRenameFn;
   dockerRm?: DockerContainerFn;
+  dockerStart?: DockerContainerFn;
   dockerStop?: DockerContainerFn;
   dockerLogs?: DockerLogsFn;
   runOpenshell?: (args: string[], opts?: Record<string, unknown>) => DockerRunResult;
@@ -78,6 +81,14 @@ export type DockerGpuPatchDeps = {
   homedir?: () => string;
   now?: () => Date;
   detectSandboxFallbackDns?: () => string | null;
+  /**
+   * Resolve the host group ID(s) that own the Jetson/Tegra GPU device nodes
+   * (`/dev/nvmap`, `/dev/nvhost-*`). Used by the Jetson recreate to grant the
+   * sandbox user matching `--group-add` membership so CUDA can open them
+   * (#4231). Injectable so the Jetson permission path is testable without
+   * Tegra hardware.
+   */
+  detectTegraDeviceGroupGids?: () => string[];
   /** Injectable directory lister for unit testing CDI spec discovery. */
   readDir?: (dirPath: string) => string[] | null;
   /** Injectable file reader for unit testing CDI spec content checks. */
@@ -112,14 +123,22 @@ export type DockerGpuPatchFailureContext = {
   backupContainerName?: string | null;
   selectedMode?: DockerGpuPatchMode | null;
   modeAttempts?: DockerGpuPatchModeAttempt[];
+  rolledBack?: boolean;
 };
 
 export type DockerGpuPatchResult = {
   applied: true;
   oldContainerId: string;
   newContainerId: string;
+  originalName: string;
   backupContainerName: string;
   mode: DockerGpuPatchMode;
+  // True when the patch path also confirmed supervisor reconnect AND removed
+  // the backup container. False when the caller deferred the reconnect wait
+  // (via `waitForSupervisor: false`); the backup is still in place and the
+  // caller is responsible for calling `finalizeDockerGpuPatchBackup` after
+  // its own supervisor wait completes.
+  backupRemoved: boolean;
 };
 
 export type DockerGpuCloneRunOptions = {
@@ -127,6 +146,14 @@ export type DockerGpuCloneRunOptions = {
   openshellEndpoint?: string | null;
   sandboxFallbackDns?: string | null;
   openshellSandboxCommand?: readonly string[] | null;
+  /**
+   * Extra supplementary group IDs to add to the recreated container via
+   * `--group-add`. On Jetson these are the host group(s) owning the Tegra GPU
+   * device nodes (`/dev/nvmap`, `/dev/nvhost-*`); granting the sandbox user
+   * membership lets CUDA's nvmap init open them instead of failing with
+   * `NvRmMemInitNvmap ... Permission denied` (#4231).
+   */
+  extraGroupGids?: readonly string[] | null;
 };
 
 export type DockerGpuPatchDiagnostics = {
@@ -237,7 +264,9 @@ export type DockerContainerInspect = {
   } | null;
 };
 
-function depsWithDefaults(deps: DockerGpuPatchDeps): Required<
+function depsWithDefaults(
+  deps: DockerGpuPatchDeps,
+): Required<
   Pick<
     DockerGpuPatchDeps,
     | "dockerCapture"
@@ -251,6 +280,7 @@ function depsWithDefaults(deps: DockerGpuPatchDeps): Required<
     | "homedir"
     | "now"
     | "detectSandboxFallbackDns"
+    | "detectTegraDeviceGroupGids"
   >
 > &
   DockerGpuPatchDeps {
@@ -268,8 +298,65 @@ function depsWithDefaults(deps: DockerGpuPatchDeps): Required<
     homedir: os.homedir,
     now: () => new Date(),
     detectSandboxFallbackDns: () => detectSandboxFallbackDns(),
+    detectTegraDeviceGroupGids: () => detectTegraDeviceGroupGids(),
     ...deps,
   };
+}
+
+// Jetson/Tegra device nodes that CUDA opens during driver initialization.
+// `/dev/nvmap` is the memory manager whose `NvRmMemInitNvmap` failure the
+// reporter hit (#4231); the `nvhost-*`/`nvgpu` nodes are the compute/control
+// channels. On L4T these are owned by a non-root group (typically `video`,
+// mode `crw-rw----`).
+const TEGRA_GPU_DEVICE_NODES = [
+  "/dev/nvmap",
+  "/dev/nvhost-ctrl",
+  "/dev/nvhost-ctrl-gpu",
+  "/dev/nvhost-gpu",
+  "/dev/nvhost-as-gpu",
+  "/dev/nvhost-prof-gpu",
+  "/dev/nvhost-dbg-gpu",
+  "/dev/nvhost-tsg-gpu",
+  "/dev/nvgpu/igpu0/ctrl",
+  "/dev/nvgpu/igpu0/as",
+  "/dev/nvgpu/igpu0/prof",
+] as const;
+
+/**
+ * Resolve the host group ID(s) that own the Jetson/Tegra GPU device nodes.
+ *
+ * The NVIDIA Container Runtime bind-mounts these nodes into the sandbox
+ * preserving the host's numeric owner/group, but the OpenShell sandbox runs
+ * the agent as an unprivileged user that is not a member of that group — so
+ * CUDA's nvmap init fails with `Permission denied` and `cuInit(0)` returns 999
+ * even though the devices are present (#4231). Returning the owning GID(s)
+ * lets the recreate grant the sandbox user matching `--group-add` membership.
+ *
+ * Numeric GIDs (not group names) are returned on purpose: the sandbox image's
+ * group database need not define a `video`/`render` group at the host's GID,
+ * and `docker run --group-add <gid>` adds the supplementary group by ID
+ * regardless of whether a matching name exists inside the container.
+ */
+export function detectTegraDeviceGroupGids(
+  deps: { statDeviceGid?: (path: string) => number | null } = {},
+): string[] {
+  const statGid =
+    deps.statDeviceGid ??
+    ((p: string): number | null => {
+      try {
+        return fs.statSync(p).gid;
+      } catch {
+        return null;
+      }
+    });
+  const gids = new Set<string>();
+  for (const node of TEGRA_GPU_DEVICE_NODES) {
+    const gid = statGid(node);
+    // Skip missing nodes and root-owned (gid 0) nodes: `--group-add 0` would
+    // not help an unprivileged user, and root already has access regardless.
+    if (gid !== null && gid > 0) gids.add(String(gid));
+  }
+  return [...gids].sort((a, b) => Number(a) - Number(b));
 }
 
 function resultText(result: DockerRunResult | null | undefined): string {
@@ -290,7 +377,9 @@ function timestampForPath(now: Date): string {
 }
 
 function dockerContainerName(inspect: DockerContainerInspect): string {
-  const raw = String(inspect.Name || "").replace(/^\/+/, "").trim();
+  const raw = String(inspect.Name || "")
+    .replace(/^\/+/, "")
+    .trim();
   if (!raw) throw new Error("Docker inspect output did not include a container name.");
   return raw;
 }
@@ -317,7 +406,9 @@ function replaceEnvValue(entry: string, key: string, value: string | null | unde
   return `${key}=${value}`;
 }
 
-function openshellSandboxCommandEnvValue(command: readonly string[] | null | undefined): string | null {
+function openshellSandboxCommandEnvValue(
+  command: readonly string[] | null | undefined,
+): string | null {
   const parts = (command || []).map((part) => String(part)).filter((part) => part.length > 0);
   return parts.length > 0 ? parts.join(" ") : null;
 }
@@ -357,7 +448,11 @@ function normalizeGpuDeviceForDocker(device: string | null | undefined): string 
 
 function normalizeGpuDeviceForCdi(device: string | null | undefined): string {
   const dockerDevice = normalizeGpuDeviceForDocker(device);
-  if (String(device || "").trim().startsWith("nvidia.com/gpu=")) {
+  if (
+    String(device || "")
+      .trim()
+      .startsWith("nvidia.com/gpu=")
+  ) {
     return String(device).trim();
   }
   return `nvidia.com/gpu=${dockerDevice || "all"}`;
@@ -406,8 +501,18 @@ export function buildDockerGpuModeCandidates(
   if (options.backend === "jetson") {
     return [buildDockerGpuMode("nvidia-runtime", device, { backend: "jetson" })];
   }
-  const candidates = [buildDockerGpuMode("gpus", device), buildDockerGpuMode("nvidia-runtime", device)];
+  // When the host advertises an NVIDIA CDI spec, prefer the CDI mode
+  // (`--device nvidia.com/gpu=all`) ahead of --gpus. OpenShell's gateway owns
+  // supervisor GPU injection and wires Docker-CDI hosts from that spec; this
+  // NemoClaw patch only chooses the recreate mode while matching that source
+  // boundary. On Docker-CDI hosts `docker create --gpus all` is accepted (the
+  // create-only probe passes), but the legacy --gpus injection diverges from
+  // gateway wiring and the supervisor never reconnects (#4948). Keep --gpus
+  // and the NVIDIA runtime as fallbacks until OpenShell exposes an
+  // authoritative GPU mode contract that can replace CDI-spec probing.
+  const candidates: DockerGpuPatchMode[] = [];
   if (options.cdiAvailable) candidates.push(buildDockerGpuMode("cdi", device));
+  candidates.push(buildDockerGpuMode("gpus", device), buildDockerGpuMode("nvidia-runtime", device));
   return candidates;
 }
 
@@ -417,17 +522,26 @@ export function shouldApplyDockerGpuPatch(
     env?: NodeJS.ProcessEnv;
     platform?: NodeJS.Platform;
     dockerDriverGateway?: boolean;
+    dockerDesktopWsl?: boolean;
+    log?: (message: string) => void;
   } = {},
 ): boolean {
   const env = options.env ?? process.env;
   const platform = options.platform ?? process.platform;
   const dockerDriverGateway = options.dockerDriverGateway ?? platform === "linux";
-  return (
-    config.sandboxGpuEnabled &&
-    platform === "linux" &&
-    dockerDriverGateway &&
-    String(env.NEMOCLAW_DOCKER_GPU_PATCH || "").trim() !== "0"
-  );
+  if (!(config.sandboxGpuEnabled && platform === "linux" && dockerDriverGateway)) {
+    return false;
+  }
+  const optedOut = String(env.NEMOCLAW_DOCKER_GPU_PATCH || "").trim() === "0";
+  if (optedOut && options.dockerDesktopWsl) {
+    const log = options.log ?? ((message: string) => console.warn(message));
+    log(
+      "  NEMOCLAW_DOCKER_GPU_PATCH=0 ignored on Docker Desktop WSL: GPU passthrough on this runtime requires the patch.",
+    );
+    log("  Skip GPU passthrough entirely with --no-gpu or NEMOCLAW_SANDBOX_GPU=0.");
+    return true;
+  }
+  return !optedOut;
 }
 
 export function buildDockerGpuCloneRunOptions(
@@ -482,7 +596,9 @@ export function detectSandboxFallbackDns(
 export function getDockerGpuPatchNetworkMode(
   env: Record<string, string | undefined> = process.env,
 ): "host" | "preserve" {
-  const networkOverride = String(env[DOCKER_GPU_PATCH_NETWORK_ENV] || "").trim().toLowerCase();
+  const networkOverride = String(env[DOCKER_GPU_PATCH_NETWORK_ENV] || "")
+    .trim()
+    .toLowerCase();
   if (networkOverride === "host") return "host";
   if (networkOverride === "preserve" || networkOverride === "bridge") return "preserve";
   return "preserve";
@@ -592,7 +708,20 @@ export function buildDockerGpuCloneRunArgs(
   // survive even when the caller explicitly opts into --network=host via
   // NEMOCLAW_DOCKER_GPU_PATCH_NETWORK=host (#3562, #3568).
   for (const hostEntry of stringArray(host.ExtraHosts)) args.push("--add-host", hostEntry);
-  for (const group of stringArray(host.GroupAdd)) args.push("--group-add", group);
+  const groupAdds = new Set(stringArray(host.GroupAdd));
+  for (const group of groupAdds) args.push("--group-add", group);
+  // Jetson/Tegra: grant the sandbox user membership in the host group(s) that
+  // own /dev/nvmap and the nvhost device nodes so CUDA's nvmap init can open
+  // them. Without this the unprivileged agent user hits EACCES on /dev/nvmap
+  // and cuInit(0) returns 999 even though the GPU devices are mounted (#4231).
+  // Dedupe against any GroupAdd the baseline container already carried.
+  for (const gid of options.extraGroupGids ?? []) {
+    const normalized = String(gid).trim();
+    if (normalized && !groupAdds.has(normalized)) {
+      groupAdds.add(normalized);
+      args.push("--group-add", normalized);
+    }
+  }
   if (networkMode !== "host") {
     const dnsServers = stringArray(host.Dns);
     for (const dns of dnsServers) args.push("--dns", dns);
@@ -665,7 +794,10 @@ export function findOpenShellDockerSandboxContainerIds(
     .filter(Boolean);
 }
 
-function inspectDockerContainer(containerId: string, deps: DockerGpuPatchDeps): DockerContainerInspect {
+function inspectDockerContainer(
+  containerId: string,
+  deps: DockerGpuPatchDeps,
+): DockerContainerInspect {
   const d = depsWithDefaults(deps);
   const output = d.dockerCapture(["inspect", "--type", "container", containerId], {
     ignoreError: true,
@@ -674,7 +806,10 @@ function inspectDockerContainer(containerId: string, deps: DockerGpuPatchDeps): 
   return parseDockerInspectJson(output);
 }
 
-function sameContainerId(left: string | null | undefined, right: string | null | undefined): boolean {
+function sameContainerId(
+  left: string | null | undefined,
+  right: string | null | undefined,
+): boolean {
   if (!left || !right) return false;
   return left.startsWith(right) || right.startsWith(left);
 }
@@ -926,13 +1061,35 @@ export function recreateOpenShellDockerSandboxWithGpu(
       timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
     });
     if (!isZeroStatus(renameResult)) {
-      throw new Error(`Could not move original sandbox container aside: ${resultText(renameResult)}`);
+      throw new Error(
+        `Could not move original sandbox container aside: ${resultText(renameResult)}`,
+      );
     }
 
     const cloneOptions = buildDockerGpuCloneRunOptions(inspect);
     cloneOptions.openshellSandboxCommand = options.openshellSandboxCommand ?? null;
     const sandboxFallbackDns = d.detectSandboxFallbackDns();
     if (sandboxFallbackDns) cloneOptions.sandboxFallbackDns = sandboxFallbackDns;
+    // On Jetson the Tegra GPU device nodes (`/dev/nvmap`, `/dev/nvhost-*`) are
+    // owned by a non-root group, but the sandbox user is not a member — so
+    // CUDA fails with `NvRmMemInitNvmap ... Permission denied` and `cuInit(0)`
+    // returns 999 even though the devices are mounted (#4231). Grant the
+    // sandbox user the owning group(s) so CUDA can initialize.
+    if (options.backend === "jetson") {
+      const tegraGroupGids = d.detectTegraDeviceGroupGids();
+      if (tegraGroupGids.length > 0) {
+        cloneOptions.extraGroupGids = tegraGroupGids;
+        console.log(
+          `  ✓ Granting sandbox user access to Jetson Tegra GPU device nodes via --group-add ${tegraGroupGids.join(
+            ", ",
+          )} (so CUDA can open /dev/nvmap)`,
+        );
+      } else {
+        console.warn(
+          "  ⚠ Could not resolve the group owning Jetson Tegra GPU device nodes (/dev/nvmap); CUDA may fail with NvRmMemInitNvmap permission denied. Confirm /dev/nvmap exists and is group-readable on the host.",
+        );
+      }
+    }
     const cloneArgs = buildDockerGpuCloneRunArgs(inspect, selection.mode, cloneOptions);
     const runResult = d.dockerRunDetached(cloneArgs, {
       ignoreError: true,
@@ -961,30 +1118,38 @@ export function recreateOpenShellDockerSandboxWithGpu(
     }
     context.newContainerId = newContainerId;
 
-    d.dockerRm(backupContainerName, {
-      ignoreError: true,
-      suppressOutput: true,
-      timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
-    });
-
-    if (options.waitForSupervisor !== false) {
-      const execReady = waitForOpenShellSupervisorReconnect(
-        options.sandboxName,
-        options.timeoutSecs ?? DOCKER_GPU_PATCH_WAIT_SECS,
-        deps,
-      );
-      if (!execReady) {
-        throw new Error("OpenShell supervisor did not reconnect to the GPU-enabled container.");
-      }
-    }
-
-    return {
+    const selectedMode = selection.mode;
+    const buildPatchResult = (backupRemoved: boolean): DockerGpuPatchResult => ({
       applied: true,
       oldContainerId,
       newContainerId,
+      originalName,
       backupContainerName,
-      mode: selection.mode,
-    };
+      mode: selectedMode,
+      backupRemoved,
+    });
+
+    // Deferred: caller will run the supervisor wait and call
+    // `finalizeDockerGpuPatchBackup` (success → remove the backup, failure →
+    // roll back to it). Removing the backup here would strand the user with
+    // a deleted-backup / failed-new sandbox if the deferred reconnect fails.
+    if (options.waitForSupervisor === false) return buildPatchResult(false);
+
+    const execReady = waitForOpenShellSupervisorReconnect(
+      options.sandboxName,
+      options.timeoutSecs ?? DOCKER_GPU_PATCH_WAIT_SECS,
+      deps,
+    );
+    const reconcile = reconcileSupervisorReconnect(
+      execReady,
+      { newContainerId, backupContainerName, originalName },
+      deps,
+    );
+    if (!reconcile.execReady) {
+      context.rolledBack = reconcile.rolledBack;
+      throw reconcile.error;
+    }
+    return buildPatchResult(reconcile.backupRemoved);
   } catch (error) {
     const err = error instanceof Error ? error : new Error(String(error));
     throw decoratePatchError(err, context);
@@ -1008,6 +1173,13 @@ export function applyDockerGpuPatchOrExit(
     sandboxName: string;
     gpuDevice?: string | null;
     timeoutSecs: number;
+    // Forwarded to `recreateOpenShellDockerSandboxWithGpu` so the Jetson
+    // backend selects the NVIDIA runtime mode AND grants the Tegra device-node
+    // group(s) to the sandbox user (#4231). Without threading this through, the
+    // `ensureApplied` fallback path would recreate the container without
+    // /dev/nvmap group access.
+    backend?: DockerGpuPatchBackend;
+    openshellSandboxCommand?: readonly string[] | null;
   },
   deps: Pick<DockerGpuPatchDeps, "runOpenshell" | "runCaptureOpenshell" | "sleep">,
 ): DockerGpuPatchResult {
@@ -1087,7 +1259,13 @@ export function printDockerGpuPatchFailureAndExit(
   if (diagnostics) {
     console.error(`  Diagnostics saved: ${diagnostics.dir}`);
   }
-  console.error("  Escape hatch: set NEMOCLAW_DOCKER_GPU_PATCH=0 to skip this patch.");
+  console.error("  Escape hatches:");
+  console.error(
+    "    NEMOCLAW_DOCKER_GPU_PATCH=0  skip this Docker GPU patch (Linux native Docker only; ignored on Docker Desktop WSL where the patch is required).",
+  );
+  console.error(
+    "    NEMOCLAW_SANDBOX_GPU=0      skip GPU passthrough entirely (or rerun with --no-gpu).",
+  );
   printDockerGpuPatchCleanup(sandboxName);
   process.exit(1);
 }
@@ -1213,11 +1391,7 @@ export function formatDockerInspectNetworkSummary(
   return lines.join("\n");
 }
 
-const SANDBOX_FAILURE_PHASE_TOKENS = new Set([
-  "Error",
-  "Failed",
-  "CrashLoopBackOff",
-]);
+const SANDBOX_FAILURE_PHASE_TOKENS = new Set(["Error", "Failed", "CrashLoopBackOff"]);
 
 const SANDBOX_LIVE_PHASE_TOKENS = new Set(["Ready", "Running"]);
 
@@ -1342,10 +1516,10 @@ export function captureDockerGpuPatchSandboxSnapshot(
   if (target) {
     const capture = deps.dockerCapture ?? dockerCapture;
     try {
-      const stateJson = capture(
-        ["inspect", "--format", "{{json .State}}", target],
-        { ignoreError: true, timeout: DOCKER_GPU_PATCH_TIMEOUT_MS },
-      );
+      const stateJson = capture(["inspect", "--format", "{{json .State}}", target], {
+        ignoreError: true,
+        timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
+      });
       patchedContainerState = parseDockerContainerState(stateJson);
     } catch {
       /* best effort */
@@ -1359,7 +1533,8 @@ function describePatchedContainerState(state: DockerContainerState | null): stri
   if (!state) return [];
   const lines: string[] = [];
   if (state.Status) lines.push(`patched_container_status=${state.Status}`);
-  if (typeof state.ExitCode === "number") lines.push(`patched_container_exit_code=${state.ExitCode}`);
+  if (typeof state.ExitCode === "number")
+    lines.push(`patched_container_exit_code=${state.ExitCode}`);
   if (state.OOMKilled) lines.push("patched_container_oom_killed=true");
   if (state.Error) lines.push(`patched_container_error=${state.Error}`);
   if (state.Health?.Status) lines.push(`patched_container_health=${state.Health.Status}`);
@@ -1446,9 +1621,7 @@ export function classifyDockerGpuPatchFailure(
 
   if (options.proofError) {
     const proofText =
-      options.proofError instanceof Error
-        ? options.proofError.message
-        : String(options.proofError);
+      options.proofError instanceof Error ? options.proofError.message : String(options.proofError);
     if (proofText) lines.push(`proof_error=${proofText}`);
   }
   return { kind, headline, summaryLines: lines };
@@ -1498,6 +1671,7 @@ export function collectDockerGpuPatchDiagnostics(
     `old_container_id=${context?.oldContainerId ?? "unknown"}`,
     `new_container_id=${context?.newContainerId ?? "unknown"}`,
     `backup_container_name=${context?.backupContainerName ?? "none"}`,
+    `rolled_back=${context?.rolledBack === true ? "yes" : context?.rolledBack === false ? "failed" : "no"}`,
     "cleanup_commands:",
     ...cleanupCommands.map((command) => `  ${command}`),
   ];
@@ -1551,7 +1725,9 @@ export function collectDockerGpuPatchDiagnostics(
     discoveredContainerIds = [];
   }
   const containerTargets = uniqueStrings([
-    ...(context ? [context.oldContainerId, context.newContainerId, context.backupContainerName] : []),
+    ...(context
+      ? [context.oldContainerId, context.newContainerId, context.backupContainerName]
+      : []),
     ...discoveredContainerIds,
   ]);
   if (containerTargets.length > 0) {

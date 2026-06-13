@@ -17,9 +17,9 @@ describe("credential prompt navigation helpers", () => {
 
     expect(shouldReturnToProviderSelection(BACK_TO_SELECTION, exitOnboard)).toBe(true);
     expect(shouldReturnToProviderSelection({ kind: "back" }, exitOnboard)).toBe(true);
-    expect(shouldReturnToProviderSelection({ kind: "credential", value: "back" }, exitOnboard)).toBe(
-      false,
-    );
+    expect(
+      shouldReturnToProviderSelection({ kind: "credential", value: "back" }, exitOnboard),
+    ).toBe(false);
     expect(exitOnboard).not.toHaveBeenCalled();
   });
 

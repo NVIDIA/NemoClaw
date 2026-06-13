@@ -3,11 +3,14 @@
 
 import { describe, expect, it } from "vitest";
 
-import { createBuiltInChannelManifestRegistry } from "../channels";
+import {
+  createBuiltInChannelManifestRegistry,
+  createBuiltInRenderTemplateResolver,
+} from "../channels";
 import { MessagingWorkflowPlanner } from "../compiler";
 import { createBuiltInMessagingHookRegistry, runMessagingHook } from "../hooks";
-import type { ChannelHookSpec } from "../manifest";
 import type {
+  ChannelHookSpec,
   MessagingAgentId,
   MessagingSerializableObject,
   SandboxMessagingPlan,
@@ -31,11 +34,15 @@ async function withEnv<T>(
   values: Readonly<Record<string, string | undefined>>,
   run: () => Promise<T>,
 ): Promise<T> {
+  const scopedValues = {
+    NEMOCLAW_SKIP_TELEGRAM_REACHABILITY: "1",
+    ...values,
+  };
   const previous = Object.fromEntries(
-    Object.keys(values).map((key) => [key, process.env[key]]),
+    Object.keys(scopedValues).map((key) => [key, process.env[key]]),
   );
   try {
-    for (const [key, value] of Object.entries(values)) {
+    for (const [key, value] of Object.entries(scopedValues)) {
       if (value === undefined) {
         delete process.env[key];
       } else {
@@ -59,11 +66,16 @@ function planner(): MessagingWorkflowPlanner {
     createBuiltInChannelManifestRegistry(),
     createBuiltInMessagingHookRegistry({
       common: {
-        env: {},
         getCredential: (key) => TEST_CREDENTIALS[key] ?? null,
         saveCredential: () => {},
         prompt: async () => "unused",
         log: () => {},
+      },
+      slack: {
+        validateCredentials: {
+          log: () => {},
+          validateCredentials: () => ({ ok: true }),
+        },
       },
       telegram: {
         fetch: async () => ({
@@ -79,8 +91,8 @@ function planner(): MessagingWorkflowPlanner {
       },
       wechat: {
         ilinkLogin: {
-          env: {},
           saveCredential: () => {},
+          log: () => {},
           runLogin: async () => ({
             kind: "timeout",
           }),
@@ -90,6 +102,7 @@ function planner(): MessagingWorkflowPlanner {
         },
       },
     }),
+    createBuiltInRenderTemplateResolver(),
   );
 }
 
@@ -147,7 +160,13 @@ describe("MessagingSetupApplier", () => {
   });
 
   it("lists hook requests by phase without executing hook implementations", async () => {
-    const plan = await buildOnboardPlan({ WECHAT_ACCOUNT_ID: "wechat-account" }, ["wechat"]);
+    const plan = await buildOnboardPlan(
+      {
+        WECHAT_BOT_TOKEN: "wechat-token",
+        WECHAT_ACCOUNT_ID: "wechat-account",
+      },
+      ["wechat"],
+    );
 
     expect(MessagingSetupApplier.listHookRequests(plan, "enroll")).toEqual([
       expect.objectContaining({
@@ -156,6 +175,13 @@ describe("MessagingSetupApplier", () => {
         hookId: "wechat-host-qr",
         phase: "enroll",
         handler: "wechat.ilinkLogin",
+      }),
+      expect.objectContaining({
+        sandboxName: "demo",
+        channelId: "wechat",
+        hookId: "wechat-config-prompt",
+        phase: "enroll",
+        handler: "common.configPrompt",
       }),
     ]);
     expect(MessagingSetupApplier.listHookRequests(plan, "post-agent-install")).toEqual([
@@ -244,9 +270,7 @@ describe("MessagingSetupApplier", () => {
   });
 
   it("redacts OpenShell provider failure output", async () => {
-    const plan = await buildOnboardPlan({ TELEGRAM_BOT_TOKEN: "tokensecretvalue" }, [
-      "telegram",
-    ]);
+    const plan = await buildOnboardPlan({ TELEGRAM_BOT_TOKEN: "tokensecretvalue" }, ["telegram"]);
     const runOpenshell: MessagingOpenShellRunner = (args) => {
       if (args[0] === "provider" && args[1] === "get") {
         return { status: 1 };
@@ -301,15 +325,7 @@ describe("MessagingSetupApplier", () => {
     });
 
     expect(calls.map((call) => call.args)).toEqual([
-      [
-        "sandbox",
-        "exec",
-        "--name",
-        "demo",
-        "--",
-        "cat",
-        "/sandbox/.openclaw/openclaw.json",
-      ],
+      ["sandbox", "exec", "--name", "demo", "--", "cat", "/sandbox/.openclaw/openclaw.json"],
       [
         "sandbox",
         "exec",
@@ -331,14 +347,50 @@ describe("MessagingSetupApplier", () => {
       enabled: true,
       groupPolicy: "open",
     });
-    expect(openclawConfig.channels.telegram.groups["*"]).toEqual({
-      requireMention: "{{telegramConfig.requireMention}}",
-    });
+    expect(openclawConfig.channels.telegram.groups).toBeUndefined();
     expect(result.appliedTargets).toEqual(["/sandbox/.openclaw/openclaw.json"]);
     expect(result.appliedHooks).toEqual([]);
-    expect(result.unresolvedTemplateRefs).toEqual(
-      expect.arrayContaining(["proxyUrl", "telegramConfig.requireMention"]),
-    );
+    expect(result.unresolvedTemplateRefs).toEqual([]);
+  });
+
+  it("preserves runtime-scoped credential placeholders when reapplying render plans", async () => {
+    const plan = await buildOnboardPlan({ TELEGRAM_BOT_TOKEN: "123456:telegram-token" }, [
+      "telegram",
+    ]);
+    const scoped = "openshell:resolve:env:v42_TELEGRAM_BOT_TOKEN";
+    const files: Record<string, string> = {
+      "/sandbox/.openclaw/openclaw.json": JSON.stringify({
+        channels: {
+          telegram: {
+            accounts: {
+              default: {
+                botToken: scoped,
+              },
+            },
+          },
+        },
+      }),
+    };
+    const runOpenshell: MessagingOpenShellRunner = (args, options) => {
+      const target = String(args.at(-1));
+      if (args.includes("cat") && !options?.input) {
+        return { status: files[target] === undefined ? 1 : 0, stdout: files[target] ?? "" };
+      }
+      if (options?.input !== undefined) {
+        files[target] = options.input;
+        return { status: 0 };
+      }
+      return { status: 1 };
+    };
+
+    await MessagingSetupApplier.applyAgentConfigAtOpenShell(plan, { runOpenshell });
+
+    const openclawConfig = JSON.parse(files["/sandbox/.openclaw/openclaw.json"] ?? "{}");
+    expect(openclawConfig.channels.telegram.accounts.default).toMatchObject({
+      botToken: scoped,
+      enabled: true,
+      groupPolicy: "open",
+    });
   });
 
   it("excludes disabled channels at the applier boundary", async () => {
@@ -369,8 +421,15 @@ describe("MessagingSetupApplier", () => {
       "slack",
     ]);
     expect(
-      MessagingSetupApplier.listHookRequests(plan).map((request) => request.channelId),
-    ).toEqual(["slack"]);
+      MessagingSetupApplier.listHookRequests(plan).map(
+        (request) => `${request.channelId}:${request.hookId}`,
+      ),
+    ).toEqual([
+      "slack:slack-openclaw-package-install",
+      "slack:slack-token-paste",
+      "slack:slack-config-prompt",
+      "slack:slack-credential-validation",
+    ]);
 
     const providerCalls: string[][] = [];
     const credentialResult = MessagingSetupApplier.applyCredentialsAtOpenShell(plan, {
@@ -427,40 +486,15 @@ describe("MessagingSetupApplier", () => {
   it("runs post-install hook implementations and writes their build-file outputs", async () => {
     const plan = await buildOnboardPlan(
       {
+        WECHAT_BOT_TOKEN: "wechat-token",
         WECHAT_ACCOUNT_ID: "wechat-account",
-        WECHAT_BASE_URL: "https://ilinkai.wechat.example",
+        WECHAT_BASE_URL: "https://ilinkai.wechat.com",
         WECHAT_USER_ID: "wechat-user",
       },
       ["wechat"],
     );
     const registry = createBuiltInMessagingHookRegistry({
-      common: {
-        env: {},
-        getCredential: (key) => TEST_CREDENTIALS[key] ?? null,
-        saveCredential: () => {},
-        prompt: async () => "unused",
-        log: () => {},
-      },
-      telegram: {
-        fetch: async () => ({
-          ok: true,
-          status: 200,
-          async json() {
-            return { ok: true };
-          },
-          async text() {
-            return "";
-          },
-        }),
-      },
       wechat: {
-        ilinkLogin: {
-          env: {},
-          saveCredential: () => {},
-          runLogin: async () => ({
-            kind: "timeout",
-          }),
-        },
         seedOpenClawAccount: {
           now: () => "2026-01-01T00:00:00.000Z",
         },
@@ -510,16 +544,14 @@ describe("MessagingSetupApplier", () => {
       },
     });
 
-    expect(JSON.parse(files["/sandbox/.openclaw/openclaw-weixin/accounts.json"] ?? "[]")).toEqual(
-      ["wechat-account"],
-    );
+    expect(JSON.parse(files["/sandbox/.openclaw/openclaw-weixin/accounts.json"] ?? "[]")).toEqual([
+      "wechat-account",
+    ]);
     expect(
-      JSON.parse(
-        files["/sandbox/.openclaw/openclaw-weixin/accounts/wechat-account.json"] ?? "{}",
-      ),
+      JSON.parse(files["/sandbox/.openclaw/openclaw-weixin/accounts/wechat-account.json"] ?? "{}"),
     ).toMatchObject({
       token: "openshell:resolve:env:WECHAT_BOT_TOKEN",
-      baseUrl: "https://ilinkai.wechat.example",
+      baseUrl: "https://ilinkai.wechat.com",
       userId: "wechat-user",
     });
     const openclawConfig = JSON.parse(files["/sandbox/.openclaw/openclaw.json"] ?? "{}");
@@ -528,22 +560,28 @@ describe("MessagingSetupApplier", () => {
     expect(openclawConfig.plugins.installs["openclaw-weixin"].spec).toBe(
       "@tencent-weixin/openclaw-weixin@2.4.3",
     );
-    expect(openclawConfig.plugins.load.paths).toEqual([
+    expect(openclawConfig.plugins.load?.paths ?? []).not.toContain(
       "/sandbox/.openclaw/extensions/openclaw-weixin",
-    ]);
+    );
     expect(openclawConfig.channels["openclaw-weixin"].accounts["wechat-account"]).toEqual({
       enabled: true,
     });
     expect(result.appliedTargets).toEqual([
+      "/sandbox/.openclaw/openclaw.json",
       "/sandbox/.openclaw/openclaw-weixin/accounts.json",
       "/sandbox/.openclaw/openclaw-weixin/accounts/wechat-account.json",
-      "/sandbox/.openclaw/openclaw.json",
     ]);
     expect(result.appliedHooks).toEqual(["wechat:wechat-seed-openclaw-account"]);
   });
 
   it("rejects prototype-polluting build-file merge keys", async () => {
-    const plan = await buildOnboardPlan({ WECHAT_ACCOUNT_ID: "wechat-account" }, ["wechat"]);
+    const plan = await buildOnboardPlan(
+      {
+        WECHAT_BOT_TOKEN: "wechat-token",
+        WECHAT_ACCOUNT_ID: "wechat-account",
+      },
+      ["wechat"],
+    );
     const files: Record<string, string> = {
       "/sandbox/.openclaw/openclaw.json": "{}",
     };
@@ -654,7 +692,13 @@ describe("MessagingSetupApplier", () => {
   });
 
   it("rejects unsafe build-file hook output paths and modes", async () => {
-    const plan = await buildOnboardPlan({ WECHAT_ACCOUNT_ID: "wechat-account" }, ["wechat"]);
+    const plan = await buildOnboardPlan(
+      {
+        WECHAT_BOT_TOKEN: "wechat-token",
+        WECHAT_ACCOUNT_ID: "wechat-account",
+      },
+      ["wechat"],
+    );
     const runOpenshell: MessagingOpenShellRunner = (args, options) => {
       if (args.includes("cat") && options?.input === undefined) {
         return { status: 0, stdout: "{}" };

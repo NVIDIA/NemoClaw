@@ -24,6 +24,7 @@ type ReviewAdvisorResult = {
   };
   findings?: Array<{
     severity?: string;
+    category?: string;
     title?: string;
     file?: string | null;
     line?: number | null;
@@ -31,6 +32,22 @@ type ReviewAdvisorResult = {
     recommendation?: string;
     evidence?: string;
   }>;
+  acceptanceCoverage?: Array<{
+    clause?: string;
+    status?: string;
+    evidence?: string;
+  }>;
+  sourceOfTruthReview?: Array<{
+    surface?: string;
+    status?: string;
+    regressionTest?: string;
+    evidence?: string;
+  }>;
+  testDepth?: {
+    verdict?: string;
+    rationale?: string;
+    suggestedTests?: string[];
+  };
   reviewCompleteness?: {
     limitations?: string[];
   };
@@ -48,11 +65,13 @@ async function main(): Promise<void> {
   const repo = args.repo || process.env.GITHUB_REPOSITORY;
   const pr = args.pr || process.env.PR_NUMBER;
   const summaryPath = args.summary || "artifacts/pr-review-advisor/pr-review-advisor-summary.md";
-  const resultPath = args.result || "artifacts/pr-review-advisor/pr-review-advisor-final-result.json";
+  const resultPath =
+    args.result || "artifacts/pr-review-advisor/pr-review-advisor-final-result.json";
   const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
-  const runUrl = process.env.GITHUB_SERVER_URL && process.env.GITHUB_REPOSITORY && process.env.GITHUB_RUN_ID
-    ? `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`
-    : undefined;
+  const runUrl =
+    process.env.GITHUB_SERVER_URL && process.env.GITHUB_REPOSITORY && process.env.GITHUB_RUN_ID
+      ? `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`
+      : undefined;
 
   if (!repo || !pr) {
     console.log("Skipping PR review advisor comment: repo or PR number not provided");
@@ -63,7 +82,9 @@ async function main(): Promise<void> {
     return;
   }
 
-  const summary = readIfExists(summaryPath) || readIfExists("artifacts/pr-review-advisor/pr-review-advisor-summary.md");
+  const summary =
+    readIfExists(summaryPath) ||
+    readIfExists("artifacts/pr-review-advisor/pr-review-advisor-summary.md");
   if (!summary) throw new Error(`No PR review advisor summary found at ${summaryPath}`);
   const result = readJsonIfExists<ReviewAdvisorResult>(resultPath);
   const body = buildComment({ summary, result, runUrl, marker: MARKER });
@@ -82,20 +103,22 @@ export function buildComment({
   runUrl?: string;
   marker?: string;
 }): string {
-  const blockerCount = result?.findings?.filter((finding) => finding.severity === "blocker").length ?? 0;
-  const warningCount = result?.findings?.filter((finding) => finding.severity === "warning").length ?? 0;
-  const suggestionCount = result?.findings?.filter((finding) => finding.severity === "suggestion").length ?? 0;
+  const blockerCount =
+    result?.findings?.filter((finding) => finding.severity === "blocker").length ?? 0;
+  const warningCount =
+    result?.findings?.filter((finding) => finding.severity === "warning").length ?? 0;
+  const suggestionCount =
+    result?.findings?.filter((finding) => finding.severity === "suggestion").length ?? 0;
   const secondary = buildSecondarySummary(result);
   const findingsDetails = renderFindingsDetails(result);
+  const testingFollowupsDetails = renderTestingFollowupsDetails(result);
   const previousReviewDetails = renderPreviousReviewDetails(result);
-  const details = runUrl
-    ? `\n[Workflow run details](${runUrl})`
-    : "";
+  const details = runUrl ? `\n[Workflow run details](${runUrl})` : "";
   return `${marker || MARKER}
 ## PR Review Advisor
 
 **Findings:** ${blockerCount} needs attention, ${warningCount} worth checking, ${suggestionCount} nice ideas
-${secondary}${findingsDetails}${previousReviewDetails}${details}
+${secondary}${findingsDetails}${testingFollowupsDetails}${previousReviewDetails}${details}
 
 This is an automated advisory review. A human maintainer must make the final merge decision.
 
@@ -112,17 +135,28 @@ function buildSecondarySummary(result?: ReviewAdvisorResult): string {
 }
 
 function topFindingTitle(result?: ReviewAdvisorResult): string | undefined {
-  return result?.findings?.find((finding) => finding.severity === "blocker")?.title ||
+  return (
+    result?.findings?.find((finding) => finding.severity === "blocker")?.title ||
     result?.findings?.find((finding) => finding.severity === "warning")?.title ||
-    result?.findings?.find((finding) => finding.severity === "suggestion")?.title;
+    result?.findings?.find((finding) => finding.severity === "suggestion")?.title
+  );
 }
 
 function renderFindingsDetails(result?: ReviewAdvisorResult): string {
   if (!result?.findings?.length) return "";
   const sections = [
-    { summary: "🛠️ Needs attention", findings: result.findings.filter((finding) => finding.severity === "blocker") },
-    { summary: "🔎 Worth checking", findings: result.findings.filter((finding) => finding.severity === "warning") },
-    { summary: "🌱 Nice ideas", findings: result.findings.filter((finding) => finding.severity === "suggestion") },
+    {
+      summary: "🛠️ Needs attention",
+      findings: result.findings.filter((finding) => finding.severity === "blocker"),
+    },
+    {
+      summary: "🔎 Worth checking",
+      findings: result.findings.filter((finding) => finding.severity === "warning"),
+    },
+    {
+      summary: "🌱 Nice ideas",
+      findings: result.findings.filter((finding) => finding.severity === "suggestion"),
+    },
   ];
   const lines: string[] = ["", "<details>", "<summary>Review findings</summary>", ""];
   for (const section of sections) {
@@ -138,6 +172,59 @@ function renderFindingsDetails(result?: ReviewAdvisorResult): string {
   }
   lines.push("</details>", "");
   return `${lines.join("\n")}\n`;
+}
+
+function renderTestingFollowupsDetails(result?: ReviewAdvisorResult): string {
+  const followups = collectTestingFollowups(result);
+  if (followups.length === 0) return "";
+  const lines: string[] = [
+    "",
+    "<details>",
+    "<summary>Consider writing more tests for</summary>",
+    "",
+  ];
+  for (const followup of followups) lines.push(`- ${escapeCommentText(followup)}`);
+  lines.push("", "</details>", "");
+  return `${lines.join("\n")}\n`;
+}
+
+function collectTestingFollowups(result?: ReviewAdvisorResult): string[] {
+  const followups: string[] = [];
+  if (!result) return followups;
+  if (result.testDepth?.verdict && result.testDepth.verdict !== "unit_sufficient") {
+    const label = testDepthLabel(result.testDepth.verdict);
+    const rationale = result.testDepth.rationale ? ` ${result.testDepth.rationale}` : "";
+    for (const suggestion of result.testDepth.suggestedTests?.slice(0, 5) || []) {
+      followups.push(`**${label}** — ${suggestion}.${rationale}`);
+    }
+  }
+  for (const finding of result.findings?.filter((item) => item.category === "tests").slice(0, 5) ||
+    []) {
+    followups.push(
+      `**${finding.title || "Test coverage"}** — ${finding.recommendation || finding.description || "Add targeted coverage for the changed behavior."}`,
+    );
+  }
+  for (const clause of result.acceptanceCoverage
+    ?.filter((item) => item.status && item.status !== "met")
+    .slice(0, 5) || []) {
+    followups.push(
+      `**Acceptance clause:** ${clause.clause || "unspecified"} — add test evidence or identify existing coverage. ${clause.evidence || ""}`.trim(),
+    );
+  }
+  for (const review of result.sourceOfTruthReview
+    ?.filter((item) => item.status === "missing" || item.status === "needs_followup")
+    .slice(0, 5) || []) {
+    followups.push(
+      `**${review.surface || "Localized behavior"}** — ${review.regressionTest || "add a regression test for the localized behavior"}. ${review.evidence || ""}`.trim(),
+    );
+  }
+  return [...new Set(followups)].slice(0, 8);
+}
+
+function testDepthLabel(verdict: string): string {
+  if (verdict === "runtime_validation_recommended") return "Runtime validation";
+  if (verdict === "mocks_recommended") return "Mocked behavioral coverage";
+  return "Test coverage";
 }
 
 function renderPreviousReviewDetails(result?: ReviewAdvisorResult): string {
@@ -162,7 +249,9 @@ function formatFinding(finding: NonNullable<ReviewAdvisorResult["findings"]>[num
   return lines.join("\n");
 }
 
-function formatFindingLocation(finding: NonNullable<ReviewAdvisorResult["findings"]>[number]): string {
+function formatFindingLocation(
+  finding: NonNullable<ReviewAdvisorResult["findings"]>[number],
+): string {
   if (!finding.file) return "";
   const line = Number.isInteger(finding.line) && Number(finding.line) > 0 ? `:${finding.line}` : "";
   return ` (${escapeCommentText(finding.file)}${line})`;

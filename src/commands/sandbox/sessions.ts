@@ -24,7 +24,12 @@ export default class SandboxSessionsCommand extends NemoClawCommand {
   public async run(): Promise<void> {
     this.parsed = true;
     const [sandboxName, ...extraArgs] = this.argv;
-    if (!sandboxName || sandboxName.trim() === "" || sandboxName === "--help" || sandboxName === "-h") {
+    if (
+      !sandboxName ||
+      sandboxName.trim() === "" ||
+      sandboxName === "--help" ||
+      sandboxName === "-h"
+    ) {
       printSessionsPassthroughHelp();
       return;
     }

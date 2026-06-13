@@ -27,7 +27,9 @@ _global_cleanup() {
 }
 trap _global_cleanup EXIT
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+_INSTALLER_SOURCE="${BASH_SOURCE[0]:-$0}"
+SCRIPT_DIR="$(cd "$(dirname "${_INSTALLER_SOURCE}")" && pwd)"
+_INSTALLER_SCRIPT_PATH="${SCRIPT_DIR}/$(basename "${_INSTALLER_SOURCE}")"
 
 resolve_repo_root() {
   local base="${NEMOCLAW_REPO_ROOT:-$SCRIPT_DIR}"
@@ -471,6 +473,35 @@ print_cli_path_refresh_actions() {
   printf "  ${C_DIM}Or open a new terminal after updating your shell profile.${C_RESET}\n"
 }
 
+# Surface the silent agent fallback. When a non-interactive install (a Brev
+# launchable or other automated deploy) completes on the default OpenClaw
+# runtime *because* NEMOCLAW_AGENT was never set, say so loudly. A launchable
+# that meant to provision a different agent (for example Hermes) otherwise looks
+# identical to an OpenClaw deploy and the mistake is only visible from the live
+# page's RUNTIME field. (#5211)
+warn_default_agent_fallback() {
+  local resolved_agent="${1:-}"
+
+  # Only meaningful once a sandbox was actually provisioned.
+  [[ "${ONBOARD_RAN:-false}" == true ]] || return 0
+  # An explicit NEMOCLAW_AGENT (even =openclaw) is an intentional choice — stay
+  # quiet. The bug is the *unset* case falling back to openclaw.
+  [[ -z "${NEMOCLAW_AGENT:-}" ]] || return 0
+  # Only the default-to-openclaw outcome is worth flagging.
+  [[ "$resolved_agent" == "openclaw" || -z "$resolved_agent" ]] || return 0
+  # Interactive users who skipped NEMOCLAW_AGENT chose OpenClaw on purpose; the
+  # silent fallback only traps automated launchable deploys.
+  installer_non_interactive || return 0
+
+  printf "\n"
+  printf "  ${C_YELLOW}${C_BOLD}Note: deployed the default OpenClaw runtime (RUNTIME = OpenClaw).${C_RESET}\n"
+  printf "  ${C_YELLOW}NEMOCLAW_AGENT was not set, so the installer defaulted to OpenClaw.${C_RESET}\n"
+  printf "  ${C_DIM}If you intended a different agent (for example Hermes), the launchable${C_RESET}\n"
+  printf "  ${C_DIM}or environment must export NEMOCLAW_AGENT before install, for example:${C_RESET}\n"
+  printf "  %s\$%s curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_AGENT=hermes bash\n" \
+    "$C_GREEN" "$C_RESET"
+}
+
 print_done() {
   local elapsed=$((SECONDS - _INSTALL_START))
   local _needs_cli_refresh=false
@@ -497,6 +528,7 @@ print_done() {
       fi
       printf "  ${C_DIM}Use the Start chatting section above for browser and terminal options.${C_RESET}\n"
     fi
+    warn_default_agent_fallback "$agent_name"
   elif [[ "$NEMOCLAW_READY_NOW" == true ]]; then
     if [[ "$_needs_cli_refresh" == true ]]; then
       printf "  ${C_YELLOW}%s CLI is installed, but this shell needs PATH refresh before '%s' will run.${C_RESET}\n" "$_CLI_DISPLAY" "$_CLI_BIN"
@@ -541,7 +573,7 @@ usage() {
   printf "    --version, -v        Print installer version and exit\n"
   printf "    --help, -h           Show this help message and exit\n\n"
   printf "  ${C_DIM}Environment:${C_RESET}\n"
-  printf "    NVIDIA_API_KEY                API key (skips credential prompt)\n"
+  printf "    NVIDIA_INFERENCE_API_KEY                API key (skips credential prompt)\n"
   printf "    NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 Same as --yes-i-accept-third-party-software\n"
   printf "    NEMOCLAW_NON_INTERACTIVE=1    Same as --non-interactive\n"
   printf "    NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt Allow sudo prompts during non-interactive onboarding\n"
@@ -1168,6 +1200,21 @@ ensure_supported_runtime() {
   fi
 
   info "Runtime OK: Node.js ${node_version}, npm ${npm_version}"
+}
+
+# Fail fast when a host dependency that scripts/install-openshell.sh relies on
+# is missing, before any clone/build/download work. install-openshell.sh uses
+# `strings` (binutils) to confirm the OpenShell CLI binary carries the
+# credential-rewrite endpoints; without it the install ran for ~5 minutes
+# (Node.js, clone, npm install, tsc build, OpenShell download + checksum)
+# only to abort at the final verification step (#4415). Skip when the OpenShell
+# install is deferred: that flag postpones all OpenShell work to a later phase
+# where install-openshell.sh runs the same `strings` check itself.
+ensure_openshell_build_deps() {
+  if truthy_env "${NEMOCLAW_DEFER_OPENSHELL_INSTALL:-}"; then
+    return 0
+  fi
+  command_exists strings || error "'strings' (from binutils) is required to install and verify OpenShell. Install it first (Debian/Ubuntu: sudo apt-get install -y binutils) and re-run the installer."
 }
 
 # ---------------------------------------------------------------------------
@@ -1833,11 +1880,46 @@ preinstall_backup_and_retire_legacy_gateway() {
 # ---------------------------------------------------------------------------
 # 5. Onboard
 # ---------------------------------------------------------------------------
+repair_installer_stale_nvidia_cdi_spec() {
+  local flagged_file="${1:-}"
+  local service_spec_path="/var/run/cdi/nvidia.yaml"
+  local sudo_cmd=()
+
+  info "Refreshing NVIDIA CDI device spec with NVIDIA's CDI refresh service."
+  info "NVIDIA GPU passthrough uses CDI specs so Docker/OpenShell can request nvidia.com/gpu devices."
+  info "Docker is configured for CDI, but the effective nvidia.com/gpu spec may be stale."
+  info "The refresh service regenerates ${service_spec_path}; re-assessment verifies that effective spec."
+  if [[ -n "$flagged_file" && "$flagged_file" != "$service_spec_path" ]]; then
+    info "The stale ${flagged_file} file is a leftover; the refreshed ${service_spec_path} overrides it."
+  fi
+  if ! command_exists systemctl; then
+    warn "Could not refresh the stale NVIDIA CDI spec automatically because systemctl is unavailable."
+    return 0
+  fi
+  if [[ "$(id -u)" -ne 0 ]]; then
+    sudo_cmd=(sudo)
+    info "You may be asked for your password to authorize these host-level admin changes."
+    info "NemoClaw does not store your password."
+    if ! sudo -v; then
+      warn "Could not obtain sudo credentials for NVIDIA CDI refresh service repair."
+      return 0
+    fi
+  fi
+  if "${sudo_cmd[@]}" systemctl enable --now nvidia-cdi-refresh.path nvidia-cdi-refresh.service >/dev/null 2>&1 \
+    && "${sudo_cmd[@]}" systemctl start nvidia-cdi-refresh.service >/dev/null 2>&1; then
+    ok "Enabled NVIDIA CDI refresh service and refreshed the service-managed NVIDIA CDI device spec."
+    return 0
+  fi
+  warn "Could not refresh the stale NVIDIA CDI spec automatically with nvidia-cdi-refresh.service."
+}
+
 repair_installer_nvidia_cdi_spec() {
   local preflight_module="$1"
+  local repair_plan=""
+  local repair_kind=""
   local spec_path=""
 
-  spec_path="$(
+  repair_plan="$(
     # shellcheck disable=SC2016
     node -e '
       const preflightPath = process.argv[1];
@@ -1849,7 +1931,18 @@ repair_installer_nvidia_cdi_spec() {
           host.cdiNvidiaGpuSpecMissing &&
           !isWslDockerDesktopRuntime(host)
         ) {
-          process.stdout.write(getNvidiaCdiSpecPath(host));
+          process.stdout.write(`missing\t${getNvidiaCdiSpecPath(host)}`);
+        } else if (
+          host &&
+          host.cdiNvidiaGpuSpecStale &&
+          host.cdiNvidiaGpuSpecNeedsRepair &&
+          !host.cdiNvidiaGpuSpecMissing &&
+          host.nvidiaContainerToolkitInstalled &&
+          !isWslDockerDesktopRuntime(host)
+        ) {
+          const mismatch = String(host.cdiNvidiaGpuSpecMismatch || "");
+          const flaggedFilePath = mismatch.trim().split(/\s+/, 1)[0] || "";
+          process.stdout.write(`stale\t${flaggedFilePath}`);
         }
       } catch {
         process.exit(0);
@@ -1857,9 +1950,18 @@ repair_installer_nvidia_cdi_spec() {
     ' "$preflight_module" 2>/dev/null || true
   )"
 
-  if [[ -z "$spec_path" ]]; then
+  if [[ -z "$repair_plan" ]]; then
     return 0
   fi
+
+  repair_kind="${repair_plan%%$'\t'*}"
+  spec_path="${repair_plan#*$'\t'}"
+
+  if [[ "$repair_kind" == "stale" ]]; then
+    repair_installer_stale_nvidia_cdi_spec "$spec_path"
+    return 0
+  fi
+
   if ! command_exists nvidia-ctk; then
     return 0
   fi
@@ -1871,10 +1973,10 @@ repair_installer_nvidia_cdi_spec() {
   fi
 
   local sudo_cmd=()
-  info "Generating missing NVIDIA CDI device spec at ${spec_path}."
+  info "Refreshing NVIDIA CDI device spec at ${spec_path}."
   info "NVIDIA GPU passthrough uses CDI specs so Docker/OpenShell can request nvidia.com/gpu devices."
-  info "Docker is configured for CDI, but the nvidia.com/gpu spec is missing."
-  info "Without it, OpenShell gateway startup would fail before the sandbox can use the GPU."
+  info "Docker is configured for CDI, but the nvidia.com/gpu spec is missing or may be stale."
+  info "Without a refreshed spec, OpenShell gateway startup can fail before the sandbox can use the GPU."
   info "NemoClaw will first enable NVIDIA's CDI refresh service."
   info "If that service does not generate the spec, NemoClaw will run nvidia-ctk cdi generate directly."
   if [[ "$(id -u)" -ne 0 ]]; then
@@ -2121,6 +2223,39 @@ run_onboard() {
 # instructions to relogin/newgrp — Linux only loads group membership at
 # login, so the rest of this script (onboard, etc.) would fail otherwise.
 # Skipped on macOS (Docker Desktop) and inside WSL (host-managed Docker).
+report_unexpected_docker_access() {
+  # If Docker is reachable, installation can continue. Still surface the
+  # unusual QA/security posture where a non-root user outside the docker group
+  # can control the daemon, because that makes "non-docker user denied" checks
+  # non-reproducible on this host.
+  if [ "$(id -u 2>/dev/null || printf 1)" -eq 0 ]; then
+    return 0
+  fi
+
+  local current_user
+  current_user="$(id -un 2>/dev/null || printf unknown)"
+
+  if id -nG "$current_user" 2>/dev/null | tr ' ' '\n' | grep -qx docker; then
+    return 0
+  fi
+  if id -nG 2>/dev/null | tr ' ' '\n' | grep -qx docker; then
+    return 0
+  fi
+
+  info "Docker is reachable even though user '$current_user' is not in the docker group."
+  info "This host grants Docker daemon access through another path, so a negative test that expects 'docker info' to fail for non-docker users will not reproduce here."
+  if [ -n "${DOCKER_HOST:-}" ]; then
+    info "DOCKER_HOST is set to: $DOCKER_HOST"
+  else
+    info "DOCKER_HOST is not set; check for a docker wrapper, socket ACLs, sudo/policy rules, or host-specific daemon access configuration."
+  fi
+  local socket_state
+  socket_state="$(stat -Lc '%a %U %G %n' /var/run/docker.sock 2>/dev/null || true)"
+  if [ -n "$socket_state" ]; then
+    info "Docker socket: $socket_state"
+  fi
+}
+
 ensure_docker() {
   case "$(uname -s)" in
     Darwin | MINGW* | MSYS*) return 0 ;;
@@ -2130,6 +2265,7 @@ ensure_docker() {
   fi
   # Fast path: docker info works → already set up (root, or already-active group).
   if docker info >/dev/null 2>&1; then
+    report_unexpected_docker_access
     return 0
   fi
 
@@ -2205,7 +2341,7 @@ ensure_docker() {
     if installer_non_interactive \
       && [ "${NEMOCLAW_DOCKER_GROUP_REACTIVATED:-}" != "1" ] \
       && command -v sg >/dev/null 2>&1; then
-      local self="${BASH_SOURCE[0]:-$0}"
+      local self="${NEMOCLAW_INSTALLER_STAGED:-${_INSTALLER_SCRIPT_PATH:-${BASH_SOURCE[0]:-$0}}}"
       if [ -n "$self" ] && [ -f "$self" ]; then
         info "Reactivating docker group membership via 'sg docker' to continue non-interactive install."
         export NEMOCLAW_DOCKER_GROUP_REACTIVATED=1
@@ -2457,6 +2593,7 @@ main() {
   preflight_usage_notice_prompt
 
   ensure_docker
+  ensure_openshell_build_deps
 
   # Offer express install on supported platforms (DGX Spark / Station / WSL).
   # Runs AFTER the third-party notice so the user has explicitly accepted the

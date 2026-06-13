@@ -190,7 +190,9 @@ describe("credentials oclif commands", () => {
     });
     const { CredentialsListCommand } = loadCommands();
 
-    const output = await captureOutput(() => expectExitCode(() => CredentialsListCommand.run([]), 1));
+    const output = await captureOutput(() =>
+      expectExitCode(() => CredentialsListCommand.run([]), 1),
+    );
 
     expect(output.stderr).toContain("Could not query OpenShell gateway");
     expect(output.stderr).toContain("openshell gateway start --name nemoclaw");
@@ -204,7 +206,9 @@ describe("credentials oclif commands", () => {
     });
     const { CredentialsListCommand } = loadCommands();
 
-    const output = await captureOutput(() => expectExitCode(() => CredentialsListCommand.run([]), 1));
+    const output = await captureOutput(() =>
+      expectExitCode(() => CredentialsListCommand.run([]), 1),
+    );
 
     expect(output.stderr).toContain("Could not query the NemoClaw OpenShell gateway");
     expect(runOpenshell).not.toHaveBeenCalled();
@@ -250,10 +254,10 @@ describe("credentials oclif commands", () => {
     const { CredentialsResetCommand } = loadCommands();
 
     const output = await captureOutput(() =>
-      expectExitCode(() => CredentialsResetCommand.run(["NVIDIA_API_KEY", "--yes"]), 1),
+      expectExitCode(() => CredentialsResetCommand.run(["NVIDIA_INFERENCE_API_KEY", "--yes"]), 1),
     );
 
-    expect(output.stderr).toContain("Could not remove provider 'NVIDIA_API_KEY'.");
+    expect(output.stderr).toContain("Could not remove provider 'NVIDIA_INFERENCE_API_KEY'.");
     expect(output.stderr).toContain("looks like a credential env variable name");
     expect(output.stderr).toContain("provider not found");
   });

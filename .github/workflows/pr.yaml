@@ -25,7 +25,9 @@ jobs:
       code: ${{ steps.filter.outputs.code }}
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
 
       - name: Detect changed paths
         id: filter
@@ -38,33 +40,360 @@ jobs:
               - '!**/*.md'
               - '!docs/**'
 
-  checks:
+  docs-only-checks:
+    needs: changes
+    if: needs.changes.outputs.code != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
 
-      - name: Run basic checks
-        uses: ./.github/actions/basic-checks
+      - name: Setup Node.js for docs-only checks
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install docs-only check dependencies
+        run: npm install --ignore-scripts
+
+      - name: Fetch checked-out merge base for docs-only checks
+        shell: bash
+        run: |
+          DOCS_ONLY_FROM_REF="${{ github.event.pull_request.base.sha }}"
+          git fetch --no-tags --depth=1 origin "$DOCS_ONLY_FROM_REF"
+          echo "DOCS_ONLY_FROM_REF=$DOCS_ONLY_FROM_REF" >> "$GITHUB_ENV"
+
+      - name: Run docs-only hook checks
+        run: npx prek run --from-ref "$DOCS_ONLY_FROM_REF" --to-ref HEAD
 
       - name: Verify platform matrix is in sync
         run: python3 scripts/generate-platform-docs.py --check
 
+  static-checks:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Checkout trusted CI actions
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .trusted-ci-actions
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/ci-static-checks
+            .github/actions/ci-build-typecheck
+            .github/actions/ci-cli-coverage-shard
+            .github/actions/ci-cli-coverage-merge
+            .github/actions/ci-plugin-coverage
+            .github/actions/ci-installer-integration
+          sparse-checkout-cone-mode: false
+
+      - name: Run static checks
+        uses: ./.trusted-ci-actions/.github/actions/ci-static-checks
+
+  build-typecheck:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Checkout trusted CI actions
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .trusted-ci-actions
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/ci-static-checks
+            .github/actions/ci-build-typecheck
+            .github/actions/ci-cli-coverage-shard
+            .github/actions/ci-cli-coverage-merge
+            .github/actions/ci-plugin-coverage
+            .github/actions/ci-installer-integration
+          sparse-checkout-cone-mode: false
+
+      - name: Run build and type checks
+        uses: ./.trusted-ci-actions/.github/actions/ci-build-typecheck
+
+  installer-integration:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Checkout trusted CI actions
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .trusted-ci-actions
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/ci-installer-integration
+          sparse-checkout-cone-mode: false
+
+      - name: Detect trusted installer integration action
+        id: trusted-installer-integration
+        shell: bash
+        run: |
+          if [ -f .trusted-ci-actions/.github/actions/ci-installer-integration/action.yaml ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run installer integration tests
+        if: ${{ steps.trusted-installer-integration.outputs.available == 'true' }}
+        uses: ./.trusted-ci-actions/.github/actions/ci-installer-integration
+
+      - name: Setup Node.js for installer integration
+        if: ${{ steps.trusted-installer-integration.outputs.available != 'true' }}
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install installer integration dependencies
+        if: ${{ steps.trusted-installer-integration.outputs.available != 'true' }}
+        shell: bash
+        run: |
+          npm install --ignore-scripts
+          cd nemoclaw && npm install --ignore-scripts
+
+      - name: Build installer integration artifacts
+        if: ${{ steps.trusted-installer-integration.outputs.available != 'true' }}
+        shell: bash
+        run: |
+          npm run build:cli
+          cd nemoclaw && npm run build
+
+      - name: Run installer integration tests (bootstrap)
+        if: ${{ steps.trusted-installer-integration.outputs.available != 'true' }}
+        shell: bash
+        run: CI=true npx vitest run --project installer-integration
+
+  cli-test-shards:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Checkout trusted CI actions
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .trusted-ci-actions
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/ci-static-checks
+            .github/actions/ci-build-typecheck
+            .github/actions/ci-cli-coverage-shard
+            .github/actions/ci-cli-coverage-merge
+            .github/actions/ci-plugin-coverage
+            .github/actions/ci-installer-integration
+          sparse-checkout-cone-mode: false
+
+      - name: Run CLI coverage shard
+        uses: ./.trusted-ci-actions/.github/actions/ci-cli-coverage-shard
+        with:
+          shard: ${{ matrix.shard }}
+          shard-count: "5"
+
+  cli-tests:
+    needs:
+      - changes
+      - cli-test-shards
+    if: ${{ always() && needs.changes.outputs.code == 'true' }}
+    permissions:
+      actions: read
+      code-quality: write
+      contents: read
+      pull-requests: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Verify CLI shards completed
+        env:
+          CLI_SHARD_RESULT: ${{ needs['cli-test-shards'].result }}
+        run: |
+          if [ "$CLI_SHARD_RESULT" != "success" ]; then
+            echo "::error title=CLI coverage shards failed::Expected success, got ${CLI_SHARD_RESULT}"
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Checkout trusted CI actions
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .trusted-ci-actions
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/ci-static-checks
+            .github/actions/ci-build-typecheck
+            .github/actions/ci-cli-coverage-shard
+            .github/actions/ci-cli-coverage-merge
+            .github/actions/ci-plugin-coverage
+            .github/actions/ci-installer-integration
+          sparse-checkout-cone-mode: false
+
+      - name: Merge CLI coverage
+        uses: ./.trusted-ci-actions/.github/actions/ci-cli-coverage-merge
+        with:
+          shard-count: "5"
+
+  plugin-tests:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    permissions:
+      code-quality: write
+      contents: read
+      pull-requests: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Checkout trusted CI actions
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .trusted-ci-actions
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/ci-static-checks
+            .github/actions/ci-build-typecheck
+            .github/actions/ci-cli-coverage-shard
+            .github/actions/ci-cli-coverage-merge
+            .github/actions/ci-plugin-coverage
+            .github/actions/ci-installer-integration
+          sparse-checkout-cone-mode: false
+
+      - name: Run plugin coverage
+        uses: ./.trusted-ci-actions/.github/actions/ci-plugin-coverage
+
   test-e2e-ollama-proxy:
-    needs: [checks, changes]
+    needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
       - name: Setup Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
           node-version: "22"
       - name: Run Ollama auth proxy E2E tests
         run: bash test/e2e-ollama-proxy.sh
+
+  checks:
+    needs:
+      - changes
+      - docs-only-checks
+      - static-checks
+      - build-typecheck
+      - installer-integration
+      - cli-tests
+      - plugin-tests
+      - test-e2e-ollama-proxy
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - name: Verify required PR checks
+        env:
+          CODE_CHANGED: ${{ needs.changes.outputs.code }}
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          DOCS_ONLY_RESULT: ${{ needs['docs-only-checks'].result }}
+          STATIC_RESULT: ${{ needs['static-checks'].result }}
+          BUILD_TYPECHECK_RESULT: ${{ needs['build-typecheck'].result }}
+          INSTALLER_INTEGRATION_RESULT: ${{ needs['installer-integration'].result }}
+          CLI_TESTS_RESULT: ${{ needs['cli-tests'].result }}
+          PLUGIN_TESTS_RESULT: ${{ needs['plugin-tests'].result }}
+          E2E_PROXY_RESULT: ${{ needs['test-e2e-ollama-proxy'].result }}
+        run: |
+          set -euo pipefail
+
+          require_success() {
+            local name="$1"
+            local result="$2"
+            if [ "$result" != "success" ]; then
+              echo "::error title=${name} failed::Expected success, got ${result}"
+              exit 1
+            fi
+          }
+
+          allow_success_or_skipped() {
+            local name="$1"
+            local result="$2"
+            case "$result" in
+              success|skipped) ;;
+              *)
+                echo "::error title=${name} failed::Expected success or skipped, got ${result}"
+                exit 1
+                ;;
+            esac
+          }
+
+          require_success "changes" "$CHANGES_RESULT"
+
+          if [ "$CODE_CHANGED" = "true" ]; then
+            allow_success_or_skipped "docs-only-checks" "$DOCS_ONLY_RESULT"
+            require_success "static-checks" "$STATIC_RESULT"
+            require_success "build-typecheck" "$BUILD_TYPECHECK_RESULT"
+            require_success "installer-integration" "$INSTALLER_INTEGRATION_RESULT"
+            require_success "cli-tests" "$CLI_TESTS_RESULT"
+            require_success "plugin-tests" "$PLUGIN_TESTS_RESULT"
+            require_success "test-e2e-ollama-proxy" "$E2E_PROXY_RESULT"
+          else
+            require_success "docs-only-checks" "$DOCS_ONLY_RESULT"
+            allow_success_or_skipped "static-checks" "$STATIC_RESULT"
+            allow_success_or_skipped "build-typecheck" "$BUILD_TYPECHECK_RESULT"
+            allow_success_or_skipped "installer-integration" "$INSTALLER_INTEGRATION_RESULT"
+            allow_success_or_skipped "cli-tests" "$CLI_TESTS_RESULT"
+            allow_success_or_skipped "plugin-tests" "$PLUGIN_TESTS_RESULT"
+            allow_success_or_skipped "test-e2e-ollama-proxy" "$E2E_PROXY_RESULT"
+          fi
 
   # Sandbox image builds and E2E tests have moved to pr-self-hosted.yaml,
   # which runs on NVIDIA self-hosted runners via copy-pr-bot.

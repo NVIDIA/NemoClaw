@@ -3,90 +3,9 @@
     "id": "docs-inference-inference-options-001",
     "question": "I'm choosing an inference option during onboarding. Help me compare hosted providers, local servers, and compatible endpoints so I can select a model path that fits my privacy, cost, and reliability needs.",
     "expected_skill": "nemoclaw-user-configure-inference",
-    "ground_truth": "A NemoClaw-specific answer that helps the user compare hosted providers, local servers, and compatible endpoints and gives enough concrete guidance, decision criteria, verification steps, or risk framing to select a model path that fits my privacy, cost, and reliability needs."
-  },
-  {
-    "id": "docs-inference-inference-options-002",
-    "question": "I'm preparing provider credentials. Help me know which provider capabilities and secrets onboarding requires so I can complete setup without avoidable credential errors.",
-    "expected_skill": "nemoclaw-user-configure-inference",
-    "ground_truth": "A NemoClaw-specific answer that helps the user know which provider capabilities and secrets onboarding requires and gives enough concrete guidance, decision criteria, verification steps, or risk framing to complete setup without avoidable credential errors."
-  },
-  {
-    "id": "docs-inference-inference-options-003",
-    "question": "I'm evaluating routed inference. Help me understand how the sandbox calls models through the gateway so I can trust that model credentials stay outside the sandbox.",
-    "expected_skill": "nemoclaw-user-configure-inference",
-    "ground_truth": "A NemoClaw-specific answer that helps the user understand how the sandbox calls models through the gateway and gives enough concrete guidance, decision criteria, verification steps, or risk framing to trust that model credentials stay outside the sandbox."
-  },
-  {
-    "id": "docs-inference-use-local-inference-001",
-    "question": "I'm connecting a local inference server. Help me route NemoClaw model traffic to Ollama, vLLM, TensorRT-LLM, NIM, or another compatible endpoint so I can meet privacy, latency, or cost goals.",
-    "expected_skill": "nemoclaw-user-configure-inference",
-    "ground_truth": "A NemoClaw-specific answer that helps the user route NemoClaw model traffic to Ollama, vLLM, TensorRT-LLM, NIM, or another compatible endpoint and gives enough concrete guidance, decision criteria, verification steps, or risk framing to meet privacy, latency, or cost goals."
-  },
-  {
-    "id": "docs-inference-use-local-inference-002",
-    "question": "I'm debugging local endpoint reachability. Help me separate NemoClaw routing issues from model-server issues so I can fix the right component first.",
-    "expected_skill": "nemoclaw-user-configure-inference",
-    "ground_truth": "A NemoClaw-specific answer that helps the user separate NemoClaw routing issues from model-server issues and gives enough concrete guidance, decision criteria, verification steps, or risk framing to fix the right component first."
-  },
-  {
-    "id": "docs-inference-use-local-inference-003",
-    "question": "I'm configuring traffic through `inference.local`. Help me understand the required host, port, and model settings so I can make sandboxed inference calls resolve to my local server.",
-    "expected_skill": "nemoclaw-user-configure-inference",
-    "ground_truth": "A NemoClaw-specific answer that helps the user understand the required host, port, and model settings and gives enough concrete guidance, decision criteria, verification steps, or risk framing to make sandboxed inference calls resolve to my local server."
-  },
-  {
-    "id": "docs-inference-switch-inference-providers-001",
-    "question": "I'm switching inference models during a running session. Help me change model behavior without restarting the sandbox so I can adapt to task, cost, or reliability needs quickly.",
-    "expected_skill": "nemoclaw-user-configure-inference",
-    "ground_truth": "A NemoClaw-specific answer that helps the user change model behavior without restarting the sandbox and gives enough concrete guidance, decision criteria, verification steps, or risk framing to adapt to task, cost, or reliability needs quickly."
-  },
-  {
-    "id": "docs-inference-switch-inference-providers-002",
-    "question": "I'm confirming a runtime model change. Help me verify the agent is using the new active model so I can avoid mistaking host configuration changes for live routing changes.",
-    "expected_skill": "nemoclaw-user-configure-inference",
-    "ground_truth": "A NemoClaw-specific answer that helps the user verify the agent is using the new active model and gives enough concrete guidance, decision criteria, verification steps, or risk framing to avoid mistaking host configuration changes for live routing changes."
-  },
-  {
-    "id": "docs-inference-switch-inference-providers-003",
-    "question": "I'm trying a different model during active work. Help me know how to roll back to the previous model so I can experiment without disrupting the assistant workflow.",
-    "expected_skill": "nemoclaw-user-configure-inference",
-    "ground_truth": "A NemoClaw-specific answer that helps the user know how to roll back to the previous model and gives enough concrete guidance, decision criteria, verification steps, or risk framing to experiment without disrupting the assistant workflow."
-  },
-  {
-    "id": "docs-inference-set-up-sub-agent-001",
-    "question": "I'm configuring a task-specific sub-agent. Help me assign a specialized model to work the default agent should not handle so I can improve task fit without changing the whole assistant.",
-    "expected_skill": "nemoclaw-user-configure-inference",
-    "ground_truth": "A NemoClaw-specific answer that helps the user assign a specialized model to work the default agent should not handle and gives enough concrete guidance, decision criteria, verification steps, or risk framing to improve task fit without changing the whole assistant."
-  },
-  {
-    "id": "docs-inference-set-up-sub-agent-002",
-    "question": "I'm editing sub-agent model configuration. Help me understand where files, credentials, and workspace settings live so I can avoid leaking secrets or changing the wrong agent.",
-    "expected_skill": "nemoclaw-user-configure-inference",
-    "ground_truth": "A NemoClaw-specific answer that helps the user understand where files, credentials, and workspace settings live and gives enough concrete guidance, decision criteria, verification steps, or risk framing to avoid leaking secrets or changing the wrong agent."
-  },
-  {
-    "id": "docs-inference-set-up-sub-agent-003",
-    "question": "I'm testing a new sub-agent. Help me send a prompt that exercises the intended routing so I can prove it uses the expected provider and model.",
-    "expected_skill": "nemoclaw-user-configure-inference",
-    "ground_truth": "A NemoClaw-specific answer that helps the user send a prompt that exercises the intended routing and gives enough concrete guidance, decision criteria, verification steps, or risk framing to prove it uses the expected provider and model."
-  },
-  {
-    "id": "docs-inference-tool-calling-reliability-001",
-    "question": "I'm seeing tool calls leak as plain text. Help me diagnose whether the model, server, or parser is incompatible so I can restore reliable tool execution.",
-    "expected_skill": "nemoclaw-user-configure-inference",
-    "ground_truth": "A NemoClaw-specific answer that helps the user diagnose whether the model, server, or parser is incompatible and gives enough concrete guidance, decision criteria, verification steps, or risk framing to restore reliable tool execution."
-  },
-  {
-    "id": "docs-inference-tool-calling-reliability-002",
-    "question": "I'm comparing local inference runtimes. Help me understand whether Ollama, vLLM, or parser settings better support tool calls so I can choose a runtime that matches the agent's tool needs.",
-    "expected_skill": "nemoclaw-user-configure-inference",
-    "ground_truth": "A NemoClaw-specific answer that helps the user understand whether Ollama, vLLM, or parser settings better support tool calls and gives enough concrete guidance, decision criteria, verification steps, or risk framing to choose a runtime that matches the agent's tool needs."
-  },
-  {
-    "id": "docs-inference-tool-calling-reliability-003",
-    "question": "I'm letting an always-on assistant use tools unattended. Help me define the reliability bar for local tool calling so I can avoid silent failures or unsafe plain-text tool outputs.",
-    "expected_skill": "nemoclaw-user-configure-inference",
-    "ground_truth": "A NemoClaw-specific answer that helps the user define the reliability bar for local tool calling and gives enough concrete guidance, decision criteria, verification steps, or risk framing to avoid silent failures or unsafe plain-text tool outputs."
+    "ground_truth": "A NemoClaw-specific answer that helps the user compare hosted providers, local servers, and compatible endpoints and gives enough concrete guidance, decision criteria, verification steps, or risk framing to select a model path that fits my privacy, cost, and reliability needs.",
+    "expected_behavior": [
+      "Uses the expected_skill and does not make up answers if it cannot find the answer from the skill."
+    ]
   }
 ]

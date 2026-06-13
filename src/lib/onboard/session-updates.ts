@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { WebSearchConfig } from "../inference/web-search";
-import type { MessagingChannelConfig } from "../messaging-channel-config";
+import type { SandboxMessagingPlan } from "../messaging/manifest";
 import type { HermesAuthMethod, SessionUpdates } from "../state/onboard-session";
 
 export interface OnboardSessionUpdateInput {
@@ -16,8 +16,7 @@ export interface OnboardSessionUpdateInput {
   nimContainer?: string | null;
   webSearchConfig?: WebSearchConfig | null;
   policyPresets?: string[] | null;
-  messagingChannels?: string[] | null;
-  messagingChannelConfig?: MessagingChannelConfig | null;
+  messagingPlan?: SandboxMessagingPlan | null;
   hermesToolGateways?: string[] | null;
 }
 
@@ -52,11 +51,7 @@ export function toSessionUpdates(updates: OnboardSessionUpdateInput = {}): Sessi
     normalized.nimContainer = toNullableString(updates.nimContainer);
   if (updates.webSearchConfig !== undefined) normalized.webSearchConfig = updates.webSearchConfig;
   if (updates.policyPresets !== undefined) normalized.policyPresets = updates.policyPresets;
-  if (updates.messagingChannels !== undefined)
-    normalized.messagingChannels = updates.messagingChannels;
-  if (updates.messagingChannelConfig !== undefined) {
-    normalized.messagingChannelConfig = updates.messagingChannelConfig;
-  }
+  if (updates.messagingPlan !== undefined) normalized.messagingPlan = updates.messagingPlan;
   if (updates.hermesToolGateways !== undefined)
     normalized.hermesToolGateways = updates.hermesToolGateways;
   return normalized;

@@ -17,11 +17,11 @@ const { help } = require("../actions/root-help");
 const { runOclifArgv, runOclifCommandById } = require("./oclif-runner");
 const {
   canonicalUsageList,
-  directGlobalCommandIds,
   globalCommandTokens,
   sandboxActionTokens,
 } = require("./command-registry");
 import { normalizeArgv, suggestCommand, type NormalizedSandboxArgv } from "./argv-normalizer";
+import { getRegisteredOclifCommandMetadata } from "./oclif-metadata";
 import {
   translatePublicGlobalArgv,
   translatePublicSandboxArgv,
@@ -99,7 +99,9 @@ function hasPublicSandboxHelpFlag(action: string, args: readonly string[]): bool
 
 function findRegisteredSandboxName(tokens: string[]): string | null {
   const registered = new Set(
-    registry().listSandboxes().sandboxes.map((s: { name: string }) => s.name),
+    registry()
+      .listSandboxes()
+      .sandboxes.map((s: { name: string }) => s.name),
   );
   return tokens.find((token) => registered.has(token)) || null;
 }
@@ -167,18 +169,17 @@ function validSandboxActionsText(): string {
   return sandboxActionList().filter(Boolean).join(", ");
 }
 
-// Direct command-ID execution is a bounded fallback for leaf global commands.
-// With oclif flexible taxonomy enabled, native argv like `status bogus` can be
-// interpreted as command ID `status:bogus` instead of command `status` with an
-// unexpected positional arg `bogus`. Derive the leaf set from oclif metadata so
-// adding/removing global commands does not require maintaining a parallel list.
-const DIRECT_OCLIF_COMMAND_ID_GLOBALS = directGlobalCommandIds();
-
-function shouldExecuteViaNativeArgv(result: Extract<PublicTranslationResult, { kind: "nativeArgv" }>): boolean {
-  const helpArgs = result.commandId === "sandbox:exec" ? argsBeforeSeparator(result.args) : result.args;
+function shouldExecuteViaNativeArgv(
+  result: Extract<PublicTranslationResult, { kind: "nativeArgv" }>,
+): boolean {
+  // Native argv remains useful for fabricated unknown child routes so oclif owns
+  // the unknown-command error. Exact public translations should run by command
+  // ID to avoid flexible-taxonomy reinterpreting positional args under WSL.
+  const helpArgs =
+    result.commandId === "sandbox:exec" ? argsBeforeSeparator(result.args) : result.args;
   if (hasHelpFlag(helpArgs)) return false;
-  if (DIRECT_OCLIF_COMMAND_ID_GLOBALS.has(result.commandId)) return false;
   if (result.commandId.startsWith("root:")) return false;
+  if (getRegisteredOclifCommandMetadata(result.commandId)) return false;
   return true;
 }
 function printDispatchUsageError(
@@ -219,14 +220,17 @@ async function recoverRequestedSandboxIfNeeded(
   }
 
   console.error(`  Sandbox '${sandboxName}' does not exist.`);
-  const allNames = registry().listSandboxes().sandboxes.map((s: { name: string }) => s.name);
+  const allNames = registry()
+    .listSandboxes()
+    .sandboxes.map((s: { name: string }) => s.name);
   if (allNames.length > 0) {
     console.error("");
     console.error(`  Registered sandboxes: ${allNames.join(", ")}`);
     console.error(`  Run '${CLI_NAME} list' to see all sandboxes.`);
-    const reorderedCandidate = rawArgsAfterSandboxName[0] === "connect"
-      ? findRegisteredSandboxName(rawArgsAfterSandboxName.slice(1))
-      : null;
+    const reorderedCandidate =
+      rawArgsAfterSandboxName[0] === "connect"
+        ? findRegisteredSandboxName(rawArgsAfterSandboxName.slice(1))
+        : null;
     if (reorderedCandidate) {
       console.error("");
       printConnectOrderHint(reorderedCandidate);
@@ -301,7 +305,9 @@ export async function dispatchCli(argv: string[] = process.argv.slice(2)): Promi
   }
 
   if (normalized.kind === "global") {
-    await runPublicTranslationResult(translatePublicGlobalArgv(normalized.command, normalized.args));
+    await runPublicTranslationResult(
+      translatePublicGlobalArgv(normalized.command, normalized.args),
+    );
     return;
   }
 
@@ -369,7 +375,9 @@ export async function dispatchCli(argv: string[] = process.argv.slice(2)): Promi
   console.error("");
 
   // Check if it looks like a sandbox name with missing action
-  const allNames = registry().listSandboxes().sandboxes.map((s: { name: string }) => s.name);
+  const allNames = registry()
+    .listSandboxes()
+    .sandboxes.map((s: { name: string }) => s.name);
   if (allNames.length > 0) {
     console.error(`  Registered sandboxes: ${allNames.join(", ")}`);
     console.error(`  Try: ${CLI_NAME} <sandbox-name> connect`);

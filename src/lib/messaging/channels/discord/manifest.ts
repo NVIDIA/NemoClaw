@@ -32,6 +32,7 @@ export const discordManifest = {
       prompt: {
         label: "Discord Server ID (for guild workspace access)",
         help: "Enable Developer Mode in Discord, then right-click your server and copy the Server ID.",
+        emptyValueMessage: "guild channels stay disabled",
       },
     },
     {
@@ -40,6 +41,7 @@ export const discordManifest = {
       required: false,
       envKey: "DISCORD_REQUIRE_MENTION",
       statePath: "discordGuilds.requireMention",
+      promptWhenInput: "serverId",
       validValues: ["0", "1"],
       prompt: {
         label: "Discord mention mode",
@@ -52,9 +54,11 @@ export const discordManifest = {
       required: false,
       envKey: "DISCORD_USER_ID",
       statePath: "discordGuilds.userIds",
+      promptWhenInput: "serverId",
       prompt: {
         label: "Discord User ID (optional guild allowlist)",
         help: "Optional: enable Developer Mode in Discord, then right-click your user/avatar and copy the User ID. Leave blank to allow any member of the configured server to message the bot.",
+        emptyValueMessage: "any member in the configured server can message the bot",
       },
     },
   ],
@@ -70,21 +74,26 @@ export const discordManifest = {
   policyPresets: ["discord"],
   render: [
     {
-      id: "discord-openclaw-account",
+      id: "discord-openclaw-channel",
       kind: "json-fragment",
       agent: "openclaw",
       target: "openclaw.json",
       fragment: {
-        path: "channels.discord.accounts.default",
+        path: "channels.discord",
         value: {
-          token: "{{credential.discordBotToken.placeholder}}",
           enabled: true,
-          healthMonitor: {
-            enabled: false,
+          accounts: {
+            default: {
+              token: "{{credential.discordBotToken.placeholder}}",
+              enabled: true,
+              healthMonitor: {
+                enabled: false,
+              },
+              proxy: "{{discordProxyUrl}}",
+              dmPolicy: "{{discord.allowedUsers.dmPolicy}}",
+              allowFrom: "{{discord.allowedUsers.values}}",
+            },
           },
-          proxy: "{{discordProxyUrl}}",
-          dmPolicy: "{{discord.allowedUsers.dmPolicy}}",
-          allowFrom: "{{discord.allowedUsers.values}}",
         },
       },
     },
@@ -93,11 +102,24 @@ export const discordManifest = {
       kind: "json-fragment",
       agent: "openclaw",
       target: "openclaw.json",
+      when: "{{discord.hasGuilds}}",
       fragment: {
         path: "channels.discord",
         value: {
           groupPolicy: "allowlist",
           guilds: "{{discord.guilds}}",
+        },
+      },
+    },
+    {
+      id: "discord-openclaw-plugin",
+      kind: "json-fragment",
+      agent: "openclaw",
+      target: "openclaw.json",
+      fragment: {
+        path: "plugins.entries.discord",
+        value: {
+          enabled: true,
         },
       },
     },
@@ -130,6 +152,18 @@ export const discordManifest = {
         },
       },
     },
+    {
+      id: "discord-hermes-platform",
+      kind: "json-fragment",
+      agent: "hermes",
+      target: "~/.hermes/config.yaml",
+      fragment: {
+        path: "platforms.discord",
+        value: {
+          enabled: true,
+        },
+      },
+    },
   ],
   state: {
     persist: {
@@ -152,6 +186,25 @@ export const discordManifest = {
   },
   hooks: [
     {
+      id: "discord-openclaw-package-install",
+      phase: "agent-install",
+      handler: "common.staticOutputs",
+      agents: ["openclaw"],
+      outputs: [
+        {
+          id: "openclawPluginPackage",
+          kind: "package-install",
+          required: true,
+          value: {
+            manager: "openclaw-plugin",
+            spec: "npm:@openclaw/discord@{{openclaw.version}}",
+            pin: true,
+          },
+        },
+      ],
+      onFailure: "abort",
+    },
+    {
       id: "discord-token-paste",
       phase: "enroll",
       handler: "common.tokenPaste",
@@ -163,6 +216,25 @@ export const discordManifest = {
         },
       ],
       onFailure: "skip-channel",
+    },
+    {
+      id: "discord-config-prompt",
+      phase: "enroll",
+      handler: "common.configPrompt",
+      outputs: [
+        {
+          id: "serverId",
+          kind: "config",
+        },
+        {
+          id: "requireMention",
+          kind: "config",
+        },
+        {
+          id: "userId",
+          kind: "config",
+        },
+      ],
     },
   ],
 } as const satisfies ChannelManifest;

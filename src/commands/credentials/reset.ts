@@ -25,6 +25,7 @@ export default class CredentialsResetCommand extends NemoClawCommand {
     provider: Args.string({
       name: "PROVIDER",
       description: "OpenShell provider name",
+      ignoreStdin: true,
       required: true,
     }),
   };
@@ -47,7 +48,9 @@ export default class CredentialsResetCommand extends NemoClawCommand {
     }
 
     if (!flags.yes) {
-      const answer = (await askPrompt(`  Remove provider '${key}' from the OpenShell gateway? [y/N]: `))
+      const answer = (
+        await askPrompt(`  Remove provider '${key}' from the OpenShell gateway? [y/N]: `)
+      )
         .trim()
         .toLowerCase();
       if (answer !== "y" && answer !== "yes") {

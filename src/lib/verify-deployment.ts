@@ -19,6 +19,7 @@
 
 import type { DashboardDeliveryChain } from "./dashboard/contract";
 import { compareChannelSets, type RuntimeChannelStatus } from "./channel-runtime-status";
+import { getMessagingProviderNamesForChannel } from "./onboard/messaging-reuse";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -70,7 +71,10 @@ export interface VerifyDeploymentResult {
 
 export interface VerifyDeploymentDeps {
   /** Execute a command inside the sandbox via SSH. Returns null if sandbox unreachable. */
-  executeSandboxCommand: (name: string, script: string) => { status: number; stdout: string; stderr: string } | null;
+  executeSandboxCommand: (
+    name: string,
+    script: string,
+  ) => { status: number; stdout: string; stderr: string } | null;
 
   /** Probe an HTTP endpoint on the host. Returns the HTTP status code or 0 on failure. */
   probeHostPort: (port: number, path: string) => number;
@@ -124,6 +128,7 @@ function defaultSleep(ms: number): Promise<void> {
 // HTTP status codes that indicate the gateway process is alive.
 // 401 = device auth is enabled but the gateway is running.
 const GATEWAY_ALIVE_CODES = new Set([200, 401]);
+const TOKENLESS_MESSAGING_CHANNELS = new Set(["whatsapp"]);
 
 // Gateway-failure hint: cover both layers the probe could be failing at.
 // The probe runs curl inside the sandbox against the in-sandbox OpenClaw
@@ -152,9 +157,11 @@ function probeGatewayInSandboxOnce(
   chain: DashboardDeliveryChain,
   deps: VerifyDeploymentDeps,
 ): { reachable: boolean; httpCode: number; detail: string } {
+  const port = chain.gatewayPort ?? chain.port;
+  const endpoint = chain.gatewayHealthEndpoint ?? chain.healthEndpoint;
   const script =
     `curl -so /dev/null -w '%{http_code}' --max-time 3 ` +
-    `http://127.0.0.1:${chain.port}${chain.healthEndpoint} 2>/dev/null || echo 000`;
+    `http://127.0.0.1:${port}${endpoint} 2>/dev/null || echo 000`;
   const result = deps.executeSandboxCommand(sandboxName, script);
   if (!result) {
     return { reachable: false, httpCode: 0, detail: "sandbox unreachable (SSH failed)" };
@@ -186,10 +193,7 @@ async function verifyGatewayInSandbox(
 /**
  * Retrieve the gateway version from inside the sandbox.
  */
-function fetchGatewayVersion(
-  sandboxName: string,
-  deps: VerifyDeploymentDeps,
-): string | null {
+function fetchGatewayVersion(sandboxName: string, deps: VerifyDeploymentDeps): string | null {
   const script = `openclaw --version 2>/dev/null | awk '{print $2}' || echo ''`;
   const result = deps.executeSandboxCommand(sandboxName, script);
   if (!result || !result.stdout.trim()) return null;
@@ -230,7 +234,10 @@ function probeDashboardFromHostOnce(
   chain: DashboardDeliveryChain,
   deps: VerifyDeploymentDeps,
 ): { reachable: boolean; detail: string } {
-  const code = deps.probeHostPort(chain.port, chain.healthEndpoint);
+  const code = deps.probeHostPort(
+    chain.port,
+    chain.dashboardHealthEndpoint ?? chain.healthEndpoint,
+  );
   if (GATEWAY_ALIVE_CODES.has(code)) {
     return { reachable: true, detail: `host probe HTTP ${code}` };
   }
@@ -261,7 +268,8 @@ async function verifyDashboardFromHost(
  */
 function detectAccessMethod(chain: DashboardDeliveryChain): AccessMethod {
   if (chain.bindAddress === "0.0.0.0") return "proxy";
-  if (chain.accessUrl.includes("127.0.0.1") || chain.accessUrl.includes("localhost")) return "localhost";
+  if (chain.accessUrl.includes("127.0.0.1") || chain.accessUrl.includes("localhost"))
+    return "localhost";
   return "ssh-tunnel";
 }
 
@@ -312,7 +320,12 @@ function verifyMessagingBridges(
   }
   const missingProviders: string[] = [];
   for (const channel of channels) {
-    if (!deps.providerExistsInGateway(channel)) {
+    const providerNames = getMessagingProviderNamesForChannel(sandboxName, channel);
+    if (providerNames.length === 0 && TOKENLESS_MESSAGING_CHANNELS.has(channel)) {
+      continue;
+    }
+    const expectedProviders = providerNames.length > 0 ? providerNames : [channel];
+    if (!expectedProviders.every((providerName) => deps.providerExistsInGateway(providerName))) {
       missingProviders.push(channel);
     }
   }

@@ -41,10 +41,15 @@ export interface PrivilegedExec {
 //
 // Coverage tracks the union of state_dirs declared by every shipped agent
 // manifest (agents/openclaw/manifest.yaml, agents/hermes/manifest.yaml).
-// Runtime-mutable subtrees that must keep being writable while shields are
-// up are intentionally omitted:
+// Runtime-mutable subtrees/files that must keep being writable while shields
+// are up are intentionally omitted:
 //   - `sessions` (Hermes top-level) and `agents/*/sessions` (OpenClaw) — the
 //     latter is restored via WRITABLE_RUNTIME_SUBPATHS after the lock loop.
+//   - `.hermes_history` (Hermes top-level file) — prompt_toolkit appends to
+//     this file from the sandbox user on every TUI keypress. It is deliberately
+//     precreated/repaired as `sandbox:sandbox 0660` while the parent config dir
+//     can remain `root:root 0755` under shields-up. Removal condition: upstream
+//     Hermes exposes a supported option to redirect or disable FileHistory.
 //   - `memories`, `logs`, `cache`, `plans` (Hermes) — runtime mutables.
 //   - `openclaw-weixin` is regenerated from envs at image-build time
 //     (see src/lib/actions/sandbox/rebuild.ts) and is not a manifest state_dir.
@@ -119,10 +124,7 @@ interface PreflightResult {
 // `applyStateDirLockMode`. Exposed separately so callers can hoist this
 // before chmod/chown on configPath + sensitiveFiles, keeping the "no
 // mutations until preflight clears" invariant.
-export function preflightStateDirLock(
-  privileged: PrivilegedExec,
-  configDir: string,
-): string[] {
+export function preflightStateDirLock(privileged: PrivilegedExec, configDir: string): string[] {
   const allStateDirs = [...HIGH_RISK_STATE_DIRS, ...CONFIDENTIALITY_STATE_DIRS];
   const preflight = preflightSymlinkedRoots(privileged, configDir, allStateDirs);
   if (preflight.error !== null) {
@@ -471,10 +473,7 @@ function runStateDirLockScript(
 // script (parsed from `restore-failed\t<op>\t<path>` markers) plus a
 // stat-based verification pass that confirms every restored target ends
 // up as `sandbox:sandbox 2770`. Empty list means the carve-out is good.
-function restoreWritableRuntimeSubpaths(
-  privileged: PrivilegedExec,
-  configDir: string,
-): string[] {
+function restoreWritableRuntimeSubpaths(privileged: PrivilegedExec, configDir: string): string[] {
   let stdout = "";
   try {
     stdout = privileged.capture([
@@ -545,7 +544,9 @@ exit 0
     } else if (parts[0] === "restore-verify-mode" && parts[1]) {
       issues.push(`runtime-writable subpath mode=${parts[2]} (expected 2770): ${parts[1]}`);
     } else if (parts[0] === "restore-verify-owner" && parts[1]) {
-      issues.push(`runtime-writable subpath owner=${parts[2]} (expected sandbox:sandbox): ${parts[1]}`);
+      issues.push(
+        `runtime-writable subpath owner=${parts[2]} (expected sandbox:sandbox): ${parts[1]}`,
+      );
     }
   }
   return issues;

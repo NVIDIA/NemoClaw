@@ -4,10 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import type {
-  OnboardDashboardDeps,
-  OnboardDashboardHelpers,
-} from "../src/lib/onboard/dashboard";
+import type { OnboardDashboardDeps, OnboardDashboardHelpers } from "../src/lib/onboard/dashboard";
 
 const { getPortConflictServiceHints } = require("../dist/lib/onboard") as {
   getPortConflictServiceHints: (platform?: string) => string[];
@@ -48,6 +45,7 @@ describe("onboard dashboard helpers", () => {
       redact: (value: unknown) => String(value),
       sleep: vi.fn(),
       printAgentDashboardUi: vi.fn(),
+      listSandboxes: () => ({ sandboxes: [] }),
     });
 
     expect(helpers.ensureDashboardForward("my-sandbox", "http://127.0.0.1:18789")).toBe(18789);
@@ -58,66 +56,89 @@ describe("onboard dashboard helpers", () => {
     expect(
       stopArgs.some(
         (args) =>
-          Array.isArray(args) &&
-          args[0] === "forward" &&
-          args[1] === "stop" &&
-          args.length === 3,
+          Array.isArray(args) && args[0] === "forward" && args[1] === "stop" && args.length === 3,
       ),
     ).toBe(false);
   });
 
-  it("starts a fixed extra agent forward without stopping other sandboxes", () => {
+  it("retries dashboard forward cleanup when the first owner lookup fails", () => {
+    const forwardList =
+      "SANDBOX BIND PORT PID STATUS\n" + "my-sandbox 127.0.0.1 18789 12345 running";
     const runOpenshell = vi.fn((_args: string[], _opts?: Record<string, unknown>) => ({
       status: 0,
     }));
-    const runCaptureOpenshell = vi.fn(() => "hermes-sandbox 127.0.0.1 9119 123 running");
-    const openshellArgv = vi.fn((args: string[]) => [process.execPath, "-e", "", ...args]);
+    let ownerLookupCount = 0;
+    const runCaptureOpenshell = vi.fn((args: string[], opts?: Record<string, unknown>) => {
+      if (args.join(" ") !== "forward list") return "";
+      if (opts && "timeout" in opts) {
+        ownerLookupCount += 1;
+        if (ownerLookupCount === 1) throw new Error("gateway timed out");
+      }
+      return forwardList;
+    });
     const helpers = createOnboardDashboardHelpers({
       runOpenshell,
       runCaptureOpenshell,
-      openshellArgv,
-      cliName: () => "nemohermes",
-      agentProductName: () => "NemoHermes",
+      openshellArgv: (args: string[]) => [process.execPath, "-e", "", ...args],
+      cliName: () => "nemoclaw",
+      agentProductName: () => "NemoClaw",
       getProviderLabel: (provider: string) => provider,
       note: vi.fn(),
       isWsl: () => false,
       redact: (value: unknown) => String(value),
       sleep: vi.fn(),
       printAgentDashboardUi: vi.fn(),
+      listSandboxes: () => ({ sandboxes: [] }),
     });
 
-    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
-    try {
-      expect(helpers.ensureAgentFixedForward("hermes-sandbox", 9119, "Hermes dashboard")).toBe(
-        true,
-      );
-    } finally {
-      vi.unstubAllEnvs();
-    }
+    expect(helpers.ensureDashboardForward("my-sandbox", "http://127.0.0.1:18789")).toBe(18789);
+
+    expect(ownerLookupCount).toBeGreaterThanOrEqual(2);
+    expect(runOpenshell).toHaveBeenCalledWith(["forward", "stop", "18789", "my-sandbox"], {
+      ignoreError: true,
+      suppressOutput: true,
+    });
+  });
+
+  it("starts declared non-dashboard agent port forwards without cleaning up the dashboard forward", () => {
+    const forwardList =
+      "SANDBOX BIND PORT PID STATUS\n" +
+      "my-sandbox 127.0.0.1 18789 12345 running\n" +
+      "my-sandbox 127.0.0.1 8642 12346 running";
+    const runOpenshell = vi.fn((_args: string[], _opts?: Record<string, unknown>) => ({
+      status: 0,
+    }));
+    const runCaptureOpenshell = vi.fn((args: string[], _opts?: Record<string, unknown>) =>
+      args.join(" ") === "forward list" ? forwardList : "",
+    );
+    const helpers = createOnboardDashboardHelpers({
+      runOpenshell,
+      runCaptureOpenshell,
+      openshellArgv: (args: string[]) => [process.execPath, "-e", "", ...args],
+      cliName: () => "nemoclaw",
+      agentProductName: () => "NemoClaw",
+      getProviderLabel: (provider: string) => provider,
+      note: vi.fn(),
+      isWsl: () => false,
+      redact: (value: unknown) => String(value),
+      sleep: vi.fn(),
+      printAgentDashboardUi: vi.fn(),
+      listSandboxes: () => ({ sandboxes: [] }),
+    });
+
+    expect(
+      helpers.ensureAgentDashboardForward("my-sandbox", {
+        forwardPort: 18789,
+        forward_ports: [18789, 8642],
+      }),
+    ).toBe(18789);
 
     const stopArgs = runOpenshell.mock.calls.map(([args]) => args);
-    expect(stopArgs).toContainEqual(["forward", "stop", "9119", "hermes-sandbox"]);
-    expect(openshellArgv).toHaveBeenCalledWith([
-      "forward",
-      "start",
-      "--background",
-      "9119",
-      "hermes-sandbox",
-    ]);
-    for (const args of stopArgs) {
-      if (args[0] === "forward" && args[1] === "stop") {
-        expect(args.at(-1)).toBe("hermes-sandbox");
-      }
-    }
+    expect(stopArgs).toContainEqual(["forward", "stop", "18789", "my-sandbox"]);
+    expect(stopArgs).toContainEqual(["forward", "stop", "8642", "my-sandbox"]);
     expect(
-      stopArgs.some(
-        (args) =>
-          Array.isArray(args) &&
-          args[0] === "forward" &&
-          args[1] === "stop" &&
-          args.length === 3,
-      ),
-    ).toBe(false);
+      stopArgs.filter((args) => args.join(" ") === "forward stop 18789 my-sandbox"),
+    ).toHaveLength(1);
   });
 
   it("prints the dashboard-url command instead of raw gateway-token guidance", () => {
@@ -150,6 +171,7 @@ describe("onboard dashboard helpers", () => {
       redact: (value: unknown) => String(value),
       sleep: vi.fn(),
       printAgentDashboardUi: vi.fn(),
+      listSandboxes: () => ({ sandboxes: [] }),
     });
 
     let output = "";
@@ -190,6 +212,7 @@ describe("onboard dashboard helpers", () => {
       redact: (value: unknown) => String(value),
       sleep: vi.fn(),
       printAgentDashboardUi: vi.fn(),
+      listSandboxes: () => ({ sandboxes: [] }),
     });
 
     let output = "";
@@ -200,7 +223,9 @@ describe("onboard dashboard helpers", () => {
       logSpy.mockRestore();
     }
 
-    expect(note).toHaveBeenCalledWith("  Could not read gateway token from the sandbox (download failed).");
+    expect(note).toHaveBeenCalledWith(
+      "  Could not read gateway token from the sandbox (download failed).",
+    );
     expect(output).toMatch(/Browser:\n\s+https?:\/\/\S+/);
     expect(output).not.toContain("#token=");
     expect(output).not.toContain("dashboard-url --quiet");

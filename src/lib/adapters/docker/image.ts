@@ -43,6 +43,14 @@ export function dockerRmi(imageRef: string, opts: DockerRunOptions = {}): Docker
   return dockerRun(["rmi", imageRef], opts);
 }
 
+export function dockerTag(
+  source: string,
+  target: string,
+  opts: DockerRunOptions = {},
+): DockerRunResult {
+  return dockerRun(["tag", source, target], opts);
+}
+
 export function dockerListImagesFormat(
   reference: string,
   format: string,

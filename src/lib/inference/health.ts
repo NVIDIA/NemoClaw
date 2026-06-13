@@ -11,7 +11,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import type { CurlProbeResult } from "../adapters/http/probe";
+import type { CurlProbeOptions, CurlProbeResult } from "../adapters/http/probe";
 import { runCurlProbe } from "../adapters/http/probe";
 import { normalizeCredentialValue, resolveProviderCredential } from "../credentials/store";
 import { getProviderSelectionConfig } from "./config";
@@ -42,7 +42,7 @@ export interface ProviderHealthStatus {
 }
 
 export interface ProviderHealthProbeOptions {
-  runCurlProbeImpl?: (argv: string[]) => CurlProbeResult;
+  runCurlProbeImpl?: (argv: string[], opts?: CurlProbeOptions) => CurlProbeResult;
   model?: string | null;
   getCredentialImpl?: (envName: string) => string | null | undefined;
   isWsl?: boolean;
@@ -50,7 +50,7 @@ export interface ProviderHealthProbeOptions {
 
 const COMPATIBLE_PROVIDERS = new Set(["compatible-endpoint", "compatible-anthropic-endpoint"]);
 const NVIDIA_MANAGED_PROVIDERS = new Set(["nvidia-prod", "nvidia-nim"]);
-const NVIDIA_HEALTH_CREDENTIAL_ENV = "NVIDIA_API_KEY";
+const NVIDIA_HEALTH_CREDENTIAL_ENV = "NVIDIA_INFERENCE_API_KEY";
 const KIMI_K26_MODEL = "moonshotai/kimi-k2.6";
 const KIMI_STATUS_CONNECT_TIMEOUT_SECONDS = "3";
 const KIMI_STATUS_MAX_TIME_SECONDS = "5";
@@ -92,7 +92,10 @@ function useStatusProbeTiming(argv: string[]): string[] {
 }
 
 function quoteCurlConfigValue(value: string): string {
-  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/[\r\n]+/g, " ");
+  return value
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"')
+    .replace(/[\r\n]+/g, " ");
 }
 
 function createAuthCurlConfig(headerValue: string): string {
@@ -245,6 +248,7 @@ function probeNvidiaKimiK26Health(
     try {
       return runCurlProbeImpl(
         buildKimiStatusProbeCurlArgs(model, endpoint, authConfigPath, options.isWsl),
+        { trustedConfigFiles: [authConfigPath] },
       );
     } finally {
       cleanupAuthCurlConfig(authConfigPath);
