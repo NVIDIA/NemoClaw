@@ -87,7 +87,7 @@ export function createInferenceSelectionValidationHelpers(
   ): void {
     console.error(`  ${label} endpoint validation failed.`);
     if (probe) console.error(`  Validation probe summary: ${summarizeProbeForDisplay(probe)}.`);
-    console.error("  Detailed response bodies were omitted to avoid exposing credentials.");
+    console.error("  Validation details were omitted to avoid exposing credentials.");
   }
 
   async function validateOpenAiLikeSelection(
