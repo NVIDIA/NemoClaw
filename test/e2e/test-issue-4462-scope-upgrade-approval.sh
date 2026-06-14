@@ -57,6 +57,16 @@ section() {
 
 info() { printf '\033[1;34m  [info]\033[0m %s\n' "$1"; }
 
+finish_success() {
+  section "Summary"
+  echo ""
+  printf '  Total: %d | \033[32mPass: %d\033[0m | \033[31mFail: %d\033[0m\n' \
+    "$TOTAL" "$PASS" "$FAIL"
+  echo ""
+  echo "$1"
+  exit 0
+}
+
 if [ -d /workspace ] && [ -f /workspace/install.sh ]; then
   REPO="/workspace"
 elif [ -f "$(cd "${SCRIPT_DIR}/../.." && pwd)/install.sh" ]; then
@@ -864,6 +874,12 @@ else
   if [ -n "$paired_without_write" ]; then
     pass "CLI device is already paired with low scope (${paired_without_write})"
   else
+    paired_with_agent_scopes=$(printf '%s' "$state" | select_cli_paired_with_agent_scopes 2>/dev/null) || paired_with_agent_scopes=""
+    paired_with_admin=$(printf '%s' "$state" | select_cli_paired_with_admin 2>/dev/null) || paired_with_admin=""
+    if [ -n "$paired_with_agent_scopes" ] && [ -z "$paired_with_admin" ]; then
+      pass "CLI device already has operator.read/operator.write without operator.admin (${paired_with_agent_scopes})"
+      finish_success "RESULT: PASSED - #4462 scope-upgrade was already satisfied before pending-state characterization"
+    fi
     fail "No pending or paired low-scope CLI device found after devices list: ${summary}"
     exit 1
   fi
@@ -954,17 +970,16 @@ fi
 
 if [ "$TEST_MODE" = "legacy-repro" ]; then
   legacy_gateway_pinned_approval_characterization "$scope_request_id" || exit 1
-  section "Summary"
-  echo ""
-  printf '  Total: %d | \033[32mPass: %d\033[0m | \033[31mFail: %d\033[0m\n' \
-    "$TOTAL" "$PASS" "$FAIL"
-  echo ""
   if [ "$FAIL" -gt 0 ]; then
+    section "Summary"
+    echo ""
+    printf '  Total: %d | \033[32mPass: %d\033[0m | \033[31mFail: %d\033[0m\n' \
+      "$TOTAL" "$PASS" "$FAIL"
+    echo ""
     echo "RESULT: FAILED - ${FAIL} test(s) failed"
     exit 1
   fi
-  echo "RESULT: PASSED - #4462 legacy gateway-pinned approval behavior characterized and final state handled"
-  exit 0
+  finish_success "RESULT: PASSED - #4462 legacy gateway-pinned approval behavior characterized and final state handled"
 fi
 
 if [ "$TEST_MODE" != "approval" ]; then
@@ -1043,16 +1058,14 @@ fi
 
 pass "approved agent output contains no fallback or pairing markers"
 
-section "Summary"
-echo ""
-printf '  Total: %d | \033[32mPass: %d\033[0m | \033[31mFail: %d\033[0m\n' \
-  "$TOTAL" "$PASS" "$FAIL"
-echo ""
-
 if [ "$FAIL" -gt 0 ]; then
+  section "Summary"
+  echo ""
+  printf '  Total: %d | \033[32mPass: %d\033[0m | \033[31mFail: %d\033[0m\n' \
+    "$TOTAL" "$PASS" "$FAIL"
+  echo ""
   echo "RESULT: FAILED - ${FAIL} test(s) failed"
   exit 1
 fi
 
-echo "RESULT: PASSED - #4462 CLI scope-upgrade approval stays on the gateway path"
-exit 0
+finish_success "RESULT: PASSED - #4462 CLI scope-upgrade approval stays on the gateway path"
