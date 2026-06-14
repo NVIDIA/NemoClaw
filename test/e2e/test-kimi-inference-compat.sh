@@ -678,7 +678,9 @@ assistant_tool_messages = [
     and item.get("message", {}).get("role") == "assistant"
     and any(block.get("type") == "toolCall" for block in item.get("message", {}).get("content", []))
 ]
-source_calls = assistant_tool_messages[-1].get("content", []) if assistant_tool_messages else []
+source_calls = []
+for message in assistant_tool_messages:
+    source_calls.extend(message.get("content", []))
 source_commands = [block.get("arguments", {}).get("command") for block in source_calls]
 messages = [item.get("message", {}) for item in session if item.get("type") == "message"]
 tool_result_indices = [idx for idx, msg in enumerate(messages) if msg.get("role") == "toolResult"]
