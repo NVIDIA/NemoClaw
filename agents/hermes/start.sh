@@ -746,6 +746,57 @@ else
   _SANDBOX_HOME="${HOME:-/sandbox}"
 fi
 
+# ── Node preload guards (#2478) — best-effort, MUST NEVER abort startup ──────────
+# The OpenClaw entrypoint (scripts/nemoclaw-start.sh) installs the sandbox-safety-net
+# and ciao-network-guard NODE_OPTIONS preloads; the Hermes entrypoint did not. The
+# gateway-recovery path refuses to relaunch unless NODE_OPTIONS advertises both
+# guards ("proxy-env present but NODE_OPTIONS missing safety-net preload or ciao
+# preload — refusing unguarded gateway relaunch", #2478), so a Hermes gateway that
+# stops can never be brought back with `recover`. Install the same guards here.
+#
+# This script runs `set -euo pipefail`, so the install is written to be incapable of
+# aborting the entrypoint: it is invoked as `… || true` (errexit suppressed through
+# the whole function), every fallible command sits inside an `if`, all vars are
+# `${x:-}`-safe, and a guard is only added to NODE_OPTIONS once its /tmp copy exists
+# and is non-empty. Worst case it logs a warning and the gateway still starts.
+# NEMOCLAW_GUARD_DIRS overrides the search path (used by tests).
+install_nemoclaw_node_guards() {
+  _SANDBOX_SAFETY_NET=""
+  _CIAO_GUARD_SCRIPT=""
+  _nemoclaw_guard_dir=""
+  # Default search list is image-owned (root, read-only) dirs ONLY — never a
+  # sandbox-writable path, or the in-container agent could plant a malicious
+  # preload that the entrypoint would --require into the gateway. Sandbox/dev
+  # paths must be opted in explicitly via NEMOCLAW_GUARD_DIRS.
+  # shellcheck disable=SC2086  # intentional word-split over the candidate dir list
+  for _gd in ${NEMOCLAW_GUARD_DIRS:-/opt/nemoclaw-blueprint/scripts /usr/local/lib/nemoclaw/preloads}; do
+    if [ -f "$_gd/sandbox-safety-net.js" ] && [ -f "$_gd/ciao-network-guard.js" ]; then
+      _nemoclaw_guard_dir="$_gd"
+      break
+    fi
+  done
+  if [ -z "$_nemoclaw_guard_dir" ]; then
+    echo "[gateway] WARNING: NemoClaw preload guards not found — recover may refuse relaunch (#2478)" >&2
+    return 0
+  fi
+  if emit_sandbox_sourced_file /tmp/nemoclaw-sandbox-safety-net.js < "$_nemoclaw_guard_dir/sandbox-safety-net.js" 2>/dev/null && [ -s /tmp/nemoclaw-sandbox-safety-net.js ]; then
+    _SANDBOX_SAFETY_NET=/tmp/nemoclaw-sandbox-safety-net.js
+    export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_SANDBOX_SAFETY_NET"
+  else
+    echo "[gateway] WARNING: could not install sandbox-safety-net preload (#2478)" >&2
+  fi
+  if emit_sandbox_sourced_file /tmp/nemoclaw-ciao-network-guard.js < "$_nemoclaw_guard_dir/ciao-network-guard.js" 2>/dev/null && [ -s /tmp/nemoclaw-ciao-network-guard.js ]; then
+    _CIAO_GUARD_SCRIPT=/tmp/nemoclaw-ciao-network-guard.js
+    export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_CIAO_GUARD_SCRIPT"
+  else
+    echo "[gateway] WARNING: could not install ciao-network-guard preload (#2478)" >&2
+  fi
+  return 0
+}
+# Invoked with `|| true` so set -e is suppressed for the whole function — a guard
+# failure can never take the gateway down.
+install_nemoclaw_node_guards || true
+
 # SECURITY FIX: Write proxy config to a standalone file via
 # emit_sandbox_sourced_file() (444, root-owned when running as root) instead of
 # appending inline to .bashrc/.profile. The old approach rewrote files under
@@ -792,6 +843,16 @@ hermes() {
 }
 # nemoclaw-configure-guard end
 GUARDENVEOF
+    # Node preload guards for connect + recovery sessions (#2478). The gateway-
+    # recovery path sources this file and refuses to relaunch unless NODE_OPTIONS
+    # advertises the safety-net + ciao guards, so re-export them here (only if
+    # install_nemoclaw_node_guards actually staged them).
+    if [ -n "${_SANDBOX_SAFETY_NET:-}" ]; then
+      echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require ${_SANDBOX_SAFETY_NET}\""
+    fi
+    if [ -n "${_CIAO_GUARD_SCRIPT:-}" ]; then
+      echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require ${_CIAO_GUARD_SCRIPT}\""
+    fi
   } | emit_sandbox_sourced_file "$_PROXY_ENV_FILE"
 }
 
