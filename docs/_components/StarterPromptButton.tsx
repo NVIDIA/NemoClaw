@@ -48,9 +48,11 @@ Use these Markdown documentation pages as the first sources:
 - Full Markdown documentation bundle: https://docs.nvidia.com/nemoclaw/llms-full.txt
 - OpenClaw home: https://docs.nvidia.com/nemoclaw/latest/user-guide/openclaw/home.md
 - OpenClaw prerequisites: https://docs.nvidia.com/nemoclaw/latest/user-guide/openclaw/get-started/prerequisites.md
+- OpenClaw Windows preparation: https://docs.nvidia.com/nemoclaw/latest/user-guide/openclaw/get-started/windows-preparation.md
 - OpenClaw quickstart: https://docs.nvidia.com/nemoclaw/latest/user-guide/openclaw/get-started/quickstart.md
 - Hermes home: https://docs.nvidia.com/nemoclaw/latest/user-guide/hermes/home.md
 - Hermes prerequisites: https://docs.nvidia.com/nemoclaw/latest/user-guide/hermes/get-started/prerequisites.md
+- Hermes Windows preparation: https://docs.nvidia.com/nemoclaw/latest/user-guide/hermes/get-started/windows-preparation.md
 - Hermes quickstart: https://docs.nvidia.com/nemoclaw/latest/user-guide/hermes/get-started/quickstart.md
 
 ## Avoid Getting Stuck on Interactive NemoClaw Prompts
@@ -106,6 +108,20 @@ NEMOCLAW_PROVIDER=ollama NEMOCLAW_MODEL=<approved-model-or-omit-this-variable> N
 \`\`\`
 
 If non-interactive mode cannot cover a later prompt, stop before running the interactive command. Ask me one selection question, then choose either a supported non-interactive environment variable or a rerun plan. Do not leave a command waiting at \`Choose [1]:\`.
+
+## Recover from Cursor Windows Terminal Restrictions
+
+If I use Cursor on Windows and Cursor reports "Legacy Terminal Tool" is disabled, "Run Mode locked to Allowlist with Sandbox", or another message that blocks the command before it starts, treat that as a Cursor security restriction rather than a NemoClaw install failure.
+
+Explain the restriction in plain language and offer exactly two choices:
+
+- I can enable Cursor's terminal access and let you retry the approved command.
+- You can create a one-click Windows installer file for me and walk me through opening it.
+
+Before creating a one-click file, verify Docker Desktop is running or tell me to start it, because NemoClaw still needs Docker from WSL.
+If you create a file, use a temporary or clearly named local \`.bat\` file in my user profile, show me the file path, and include only the approved WSL command.
+After I run it, summarize the expected installer output and choose the next recovery step from the NemoClaw docs.
+Do not repeatedly retry blocked commands in Cursor after the same Run Mode message appears.
 
 ## Configure Messaging Channels after Non-Interactive Onboarding
 

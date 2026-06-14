@@ -76,6 +76,16 @@ If the bootstrap script reports that `winget.exe` is not available (common on Wi
 After you install Docker Desktop, rerun the bootstrap script.
 The script skips the install step after it detects Docker Desktop.
 
+## Recover from Cursor Terminal Restrictions
+
+Cursor can block the starter prompt before NemoClaw runs when Windows terminal automation is restricted.
+If Cursor reports that the Legacy Terminal Tool is disabled, or that Run Mode is locked to **Allowlist with Sandbox**, treat that as a Cursor security setting instead of a NemoClaw installer error.
+
+If your Cursor account allows it, enable the Legacy Terminal Tool in Cursor Settings, choose a Run Mode that permits the approved terminal command, then rerun the starter prompt.
+If those settings are locked by your account or organization, use the Windows bootstrap script above from PowerShell or ask Cursor to create a one-click `.bat` file that runs the approved WSL installer command.
+Before opening a one-click file, start Docker Desktop and wait until it is running.
+NemoClaw still needs Docker Desktop from WSL after Cursor hands off the installer command.
+
 The manual steps below describe the same Windows preparation pieces and are useful when you need to verify or repair WSL, Ubuntu, or Docker Desktop by hand.
 
 ## Enable WSL 2
