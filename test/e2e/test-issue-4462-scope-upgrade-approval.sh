@@ -80,6 +80,13 @@ E2E_DIR="${SCRIPT_DIR}"
 SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-issue-4462-scope-upgrade}"
 OPENSHELL_BIN="${NEMOCLAW_OPENSHELL_BIN:-openshell}"
 TEST_MODE="${NEMOCLAW_4462_MODE:-approval}"
+case "$TEST_MODE" in
+  approval | legacy-repro) ;;
+  *)
+    fail "Unknown NEMOCLAW_4462_MODE=${TEST_MODE}; expected approval or legacy-repro"
+    exit 1
+    ;;
+esac
 INSTALL_LOG="${NEMOCLAW_4462_INSTALL_LOG:-/tmp/nemoclaw-e2e-issue-4462-scope-upgrade-install.log}"
 APPROVAL_LOG="${NEMOCLAW_4462_APPROVAL_LOG:-/tmp/nemoclaw-issue-4462-scope-upgrade-approval.log}"
 AGENT_LOG="${NEMOCLAW_4462_AGENT_LOG:-/tmp/nemoclaw-issue-4462-scope-upgrade-agent.log}"
@@ -100,6 +107,13 @@ AUTO_PAIR_FAST_DEADLINE_SECS="${NEMOCLAW_4462_AUTO_PAIR_FAST_DEADLINE_SECS:-${NE
 AUTO_PAIR_DEADLINE_SECS="${NEMOCLAW_4462_AUTO_PAIR_DEADLINE_SECS:-${NEMOCLAW_AUTO_PAIR_DEADLINE_SECS:-$AUTO_PAIR_DEADLINE_DEFAULT}}"
 AUTO_PAIR_SLOW_INTERVAL_SECS="${NEMOCLAW_4462_AUTO_PAIR_SLOW_INTERVAL_SECS:-${NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS:-$AUTO_PAIR_SLOW_INTERVAL_DEFAULT}}"
 AUTO_PAIR_RUN_TIMEOUT_SECS="${NEMOCLAW_4462_AUTO_PAIR_RUN_TIMEOUT_SECS:-${NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS:-$AUTO_PAIR_RUN_TIMEOUT_DEFAULT}}"
+# Current onboard finalization may warm up and approve the CLI operator.read/write
+# scope-upgrade before this E2E inspects the intermediate low-scope state. That
+# is an acceptable final authorization state only if operator.admin is absent;
+# the script must still prove the final agent turn stays on the gateway path.
+# In legacy-repro mode, a preapproved state leaves no pending upgrade to
+# characterize, so the final result calls that out explicitly instead of
+# claiming the legacy gateway-pinned approve behavior was exercised.
 SCOPE_UPGRADE_ALREADY_SATISFIED=0
 
 # shellcheck source=test/e2e/lib/sandbox-teardown.sh
@@ -991,11 +1005,6 @@ exit 0
     finish_success "RESULT: PASSED - #4462 legacy gateway-pinned approval behavior characterized and final state handled"
   fi
 
-  if [ "$TEST_MODE" != "approval" ]; then
-    fail "Unknown NEMOCLAW_4462_MODE=${TEST_MODE}; expected approval or legacy-repro"
-    exit 1
-  fi
-
   if [ -n "$scope_request_id" ]; then
     approve_request "$scope_request_id" "CLI scope upgrade" 1 || exit 1
   else
@@ -1080,6 +1089,10 @@ if [ "$FAIL" -gt 0 ]; then
   echo ""
   echo "RESULT: FAILED - ${FAIL} test(s) failed"
   exit 1
+fi
+
+if [ "$TEST_MODE" = "legacy-repro" ] && [ "$SCOPE_UPGRADE_ALREADY_SATISFIED" = "1" ]; then
+  finish_success "RESULT: PASSED - #4462 legacy gateway-pinned approval characterization skipped because scope-upgrade was already satisfied; final gateway path verified"
 fi
 
 finish_success "RESULT: PASSED - #4462 CLI scope-upgrade approval stays on the gateway path"
