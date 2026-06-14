@@ -74,6 +74,24 @@ The managed install/start vLLM entry appears by default on DGX Spark and DGX Sta
 | Local Ollama | Routes to a local Ollama instance on `localhost:11434`. NemoClaw detects installed models, offers starter models if none are present, pulls and warms the selected model, and validates it. | Selected during onboarding. For more information, refer to [Use a Local Inference Server](use-local-inference). |
 | Model Router | Starts a host-side router on port `4000`, registers it as an OpenAI-compatible provider, and keeps the sandbox pointed at `inference.local`. Set `NEMOCLAW_PROVIDER=routed` for non-interactive setup. | The router pool defines the model names. |
 
+## Choosing a Model for Your Task
+
+The tables above list *where* inference runs.
+Use the guidance below to choose *which* kind of model fits your workload, then tune the model metadata NemoClaw bakes into the sandbox.
+
+| Your task | Recommended option | Why | Where to configure |
+|---|---|---|---|
+| Tool-heavy or agentic work (several tools, long instructions, multi-turn dispatch) | A managed Nemotron model, or a local server with a tool-call parser such as vLLM | Agent loops need the server to return structured `tool_calls`, not a JSON-looking string in normal assistant text. | [Tool-Calling Reliability](tool-calling-reliability) |
+| Cost-sensitive or mixed workload | Model Router | The router picks the lowest-cost model whose predicted quality stays within the configured `tolerance` threshold. | [Model Router](#model-router) |
+| Long-context prompts | A provider and model that support a large context window | NemoClaw bakes the context window into the sandbox; local vLLM auto-detects `max_model_len` when you do not set one. | Set `NEMOCLAW_CONTEXT_WINDOW`; see [Switch Inference Models](switch-inference-providers#tune-model-metadata) |
+| Multimodal (image input) | A model that accepts image input through your provider | Declare image support so NemoClaw configures the sandbox for multimodal inputs. | Set `NEMOCLAW_INFERENCE_INPUTS=text,image`; see [Switch Inference Models](switch-inference-providers#tune-model-metadata) |
+| Local, offline, or privacy-sensitive | Local Ollama or managed vLLM | Local routes keep inference on the host and do not forward your provider API key into the sandbox. | [Use a Local Inference Server](use-local-inference) |
+
+<Note>
+Relative latency and price depend on the provider, region, and model revision, so this page does not rank models on those axes.
+Use the Model Router when you want NemoClaw to balance quality against cost automatically, and check your provider's catalog for current per-model pricing and context limits.
+</Note>
+
 ## Choosing the Right Option for Nemotron
 
 NVIDIA Nemotron models expose OpenAI-compatible APIs across every supported deployment surface, so two onboarding options can route to Nemotron.
