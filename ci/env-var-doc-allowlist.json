@@ -42,5 +42,17 @@
   {
     "name": "NEMOCLAW_E2E_FORCE_FAIL_AT_STEP",
     "reason": "Internal E2E-only selector naming the onboarding step where deterministic fault injection should exit. Used only with NEMOCLAW_E2E_FAILURE_INJECTION in test scripts."
+  },
+  {
+    "name": "NEMOCLAW_E2E_USE_HOSTED_INFERENCE",
+    "reason": "Internal E2E-only sentinel that tells CI to route the repository NVIDIA_INFERENCE_API_KEY secret through the hosted inference-api.nvidia.com OpenAI-compatible endpoint. Not user-facing."
+  },
+  {
+    "name": "NEMOCLAW_COMPAT_MODEL",
+    "reason": "Internal E2E/test override for the model used by OpenAI-compatible endpoint scenarios. User-facing custom endpoint model selection is collected through onboard prompts or NEMOCLAW_MODEL."
+  },
+  {
+    "name": "NEMOCLAW_CLOUD_EXPERIMENTAL_MODEL",
+    "reason": "Legacy E2E-only model override used by cloud and hosted-inference live test scripts. Not a supported production configuration knob."
   }
 ]

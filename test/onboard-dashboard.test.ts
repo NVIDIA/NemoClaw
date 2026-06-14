@@ -45,6 +45,7 @@ describe("onboard dashboard helpers", () => {
       redact: (value: unknown) => String(value),
       sleep: vi.fn(),
       printAgentDashboardUi: vi.fn(),
+      listSandboxes: () => ({ sandboxes: [] }),
     });
 
     expect(helpers.ensureDashboardForward("my-sandbox", "http://127.0.0.1:18789")).toBe(18789);
@@ -87,6 +88,7 @@ describe("onboard dashboard helpers", () => {
       redact: (value: unknown) => String(value),
       sleep: vi.fn(),
       printAgentDashboardUi: vi.fn(),
+      listSandboxes: () => ({ sandboxes: [] }),
     });
 
     expect(helpers.ensureDashboardForward("my-sandbox", "http://127.0.0.1:18789")).toBe(18789);
@@ -121,6 +123,7 @@ describe("onboard dashboard helpers", () => {
       redact: (value: unknown) => String(value),
       sleep: vi.fn(),
       printAgentDashboardUi: vi.fn(),
+      listSandboxes: () => ({ sandboxes: [] }),
     });
 
     expect(
@@ -168,6 +171,7 @@ describe("onboard dashboard helpers", () => {
       redact: (value: unknown) => String(value),
       sleep: vi.fn(),
       printAgentDashboardUi: vi.fn(),
+      listSandboxes: () => ({ sandboxes: [] }),
     });
 
     let output = "";
@@ -208,6 +212,7 @@ describe("onboard dashboard helpers", () => {
       redact: (value: unknown) => String(value),
       sleep: vi.fn(),
       printAgentDashboardUi: vi.fn(),
+      listSandboxes: () => ({ sandboxes: [] }),
     });
 
     let output = "";

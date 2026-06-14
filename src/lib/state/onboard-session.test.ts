@@ -16,6 +16,8 @@ type OnboardMachineEventsModule = typeof import("../../../dist/lib/onboard/machi
 type OnboardMachineEvent = import("../../../dist/lib/onboard/machine/events").OnboardMachineEvent;
 type LoadedSession = NonNullable<ReturnType<OnboardSessionModule["loadSession"]>>;
 type DebugSummary = NonNullable<ReturnType<OnboardSessionModule["summarizeForDebug"]>>;
+type MessagingPlan = NonNullable<LoadedSession["messagingPlan"]>;
+type MessagingChannelId = MessagingPlan["channels"][number]["channelId"];
 let session: OnboardSessionModule;
 let machineEvents: OnboardMachineEventsModule;
 let tmpDir: string;
@@ -46,6 +48,38 @@ function normalizeLegacySession(
   return session.normalizeSession(
     legacy as Parameters<OnboardSessionModule["normalizeSession"]>[0],
   );
+}
+
+function makeMessagingPlan(
+  sandboxName: string,
+  channels: readonly MessagingChannelId[] = [],
+  disabledChannels: readonly MessagingChannelId[] = [],
+): MessagingPlan {
+  const disabled = new Set(disabledChannels);
+  return {
+    schemaVersion: 1,
+    sandboxName,
+    agent: "openclaw",
+    workflow: "onboard",
+    channels: channels.map((channelId) => ({
+      channelId,
+      displayName: channelId,
+      authMode: "token-paste",
+      active: !disabled.has(channelId),
+      selected: true,
+      configured: true,
+      disabled: disabled.has(channelId),
+      inputs: [],
+      hooks: [],
+    })),
+    disabledChannels: [...disabledChannels],
+    credentialBindings: [],
+    networkPolicy: { presets: [], entries: [] },
+    agentRender: [],
+    buildSteps: [],
+    stateUpdates: [],
+    healthChecks: [],
+  };
 }
 
 beforeEach(() => {
@@ -286,10 +320,10 @@ describe("onboard session", () => {
       sandboxName: "my-assistant",
       endpointUrl:
         "https://alice:super-secret-token@example.com/v1?token=super-secret-token&keep=yes#token=super-secret-token",
-      credentialEnv: "NVIDIA_API_KEY",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
     });
     session.markStepSkipped("openclaw");
-    session.markStepFailed("sandbox", "NVIDIA_API_KEY=super-secret-token");
+    session.markStepFailed("sandbox", "NVIDIA_INFERENCE_API_KEY=super-secret-token");
     session.completeSession({ provider: "ollama-local", credentialEnv: null });
 
     expect(emitted.map((event) => event.type)).toEqual([
@@ -311,7 +345,7 @@ describe("onboard session", () => {
     });
     expect(emitted[1].context).toMatchObject({
       sandboxName: "my-assistant",
-      credentialEnv: "NVIDIA_API_KEY",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
     });
     expect(emitted[1].context.endpointOrigin).toBe("https://example.com");
     expect(emitted[1].metadata.fields).toEqual(["sandboxName", "endpointUrl", "credentialEnv"]);
@@ -319,7 +353,7 @@ describe("onboard session", () => {
       type: "state.failed",
       state: "sandbox",
       step: "sandbox",
-      error: "NVIDIA_API_KEY=<REDACTED>",
+      error: "NVIDIA_INFERENCE_API_KEY=<REDACTED>",
     });
     expect(emitted[5]).toMatchObject({ type: "onboard.failed", state: "failed" });
     expect(emitted.at(-1)).toMatchObject({ type: "onboard.completed", state: "complete" });
@@ -375,7 +409,7 @@ describe("onboard session", () => {
       model: "nvidia/test-model",
       sandboxName: "my-assistant",
       endpointUrl: "https://example.com/v1",
-      credentialEnv: "NVIDIA_API_KEY",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
       preferredInferenceApi: "openai-completions",
       nimContainer: "nim-123",
       policyPresets: ["pypi", "npm"],
@@ -392,7 +426,7 @@ describe("onboard session", () => {
     expect(loaded.model).toBe("nvidia/test-model");
     expect(loaded.sandboxName).toBe("my-assistant");
     expect(loaded.endpointUrl).toBe("https://example.com/v1");
-    expect(loaded.credentialEnv).toBe("NVIDIA_API_KEY");
+    expect(loaded.credentialEnv).toBe("NVIDIA_INFERENCE_API_KEY");
     expect(loaded.preferredInferenceApi).toBe("openai-completions");
     expect(loaded.nimContainer).toBe("nim-123");
     expect(loaded.policyPresets).toEqual(["pypi", "npm"]);
@@ -539,113 +573,107 @@ describe("onboard session", () => {
     expect(loaded.nimContainer).toBeNull();
   });
 
-  it("persists messagingChannels across save/load roundtrips", () => {
+  it("persists messagingPlan across save/load roundtrips", () => {
     const created = session.createSession();
-    created.messagingChannels = ["telegram", "slack"];
+    created.messagingPlan = makeMessagingPlan("my-assistant", ["telegram", "slack"], ["slack"]);
     session.saveSession(created);
 
     const loaded = requireLoadedSession(session.loadSession());
-    expect(loaded.messagingChannels).toEqual(["telegram", "slack"]);
+    expect(loaded.messagingPlan).toEqual(created.messagingPlan);
   });
 
-  it("filters non-string entries out of persisted messagingChannels", () => {
+  it("writes compact messagingPlan derived fields to onboard-session.json", () => {
     const created = session.createSession();
-    fs.mkdirSync(path.dirname(session.SESSION_FILE), { recursive: true });
-    fs.writeFileSync(
-      session.SESSION_FILE,
-      JSON.stringify({
-        ...created,
-        messagingChannels: ["telegram", 42, null, "discord"],
-      }),
-    );
-
-    const loaded = requireLoadedSession(session.loadSession());
-    expect(loaded.messagingChannels).toEqual(["telegram", "discord"]);
-  });
-
-  it("persists disabledChannels across save/load roundtrips", () => {
-    // Regression: `channels stop X` followed by rebuild must carry the paused
-    // set through the destroy/recreate window. The Session mirror is the only
-    // place this can survive, because rebuild destroys the registry entry
-    // before `onboard --resume` reads it back.
-    const created = session.createSession();
-    created.disabledChannels = ["telegram"];
-    session.saveSession(created);
-
-    const loaded = requireLoadedSession(session.loadSession());
-    expect(loaded.disabledChannels).toEqual(["telegram"]);
-  });
-
-  it("filters non-string entries out of persisted disabledChannels", () => {
-    const created = session.createSession();
-    fs.mkdirSync(path.dirname(session.SESSION_FILE), { recursive: true });
-    fs.writeFileSync(
-      session.SESSION_FILE,
-      JSON.stringify({
-        ...created,
-        disabledChannels: ["telegram", 42, null, "discord"],
-      }),
-    );
-
-    const loaded = requireLoadedSession(session.loadSession());
-    expect(loaded.disabledChannels).toEqual(["telegram", "discord"]);
-  });
-
-  it("defaults disabledChannels to null for fresh sessions", () => {
-    const fresh = session.createSession();
-    expect(fresh.disabledChannels).toBeNull();
-  });
-
-  it("filterSafeUpdates passes through disabledChannels and accepts explicit null clear", () => {
-    session.saveSession(session.createSession());
-    session.markStepComplete("provider_selection", { disabledChannels: ["discord"] });
-    expect(requireLoadedSession(session.loadSession()).disabledChannels).toEqual(["discord"]);
-
-    session.markStepComplete("provider_selection", { disabledChannels: null });
-    expect(requireLoadedSession(session.loadSession()).disabledChannels).toBeNull();
-  });
-
-  it("defaults messagingChannels to null for fresh sessions", () => {
-    const fresh = session.createSession();
-    expect(fresh.messagingChannels).toBeNull();
-  });
-
-  it("persists messagingChannelConfig across save/load roundtrips", () => {
-    const created = session.createSession();
-    created.messagingChannelConfig = {
-      TELEGRAM_ALLOWED_IDS: "123,456",
-      TELEGRAM_REQUIRE_MENTION: "1",
+    created.messagingPlan = {
+      ...makeMessagingPlan("my-assistant", ["telegram"]),
+      channels: [
+        {
+          ...makeMessagingPlan("my-assistant", ["telegram"]).channels[0],
+          hooks: [
+            {
+              channelId: "telegram",
+              id: "telegram-token-paste",
+              phase: "enroll",
+              handler: "common.tokenPaste",
+            },
+          ],
+        },
+      ],
+      agentRender: [
+        {
+          channelId: "telegram",
+          renderId: "telegram-openclaw-channel",
+          hookId: "telegram-openclaw-channel",
+          handler: "common.staticOutputs",
+          kind: "json-fragment",
+          agent: "openclaw",
+          target: "openclaw.json",
+          path: "channels.telegram",
+          value: { enabled: true },
+          templateRefs: [],
+        },
+      ],
     };
+
     session.saveSession(created);
 
-    const loaded = requireLoadedSession(session.loadSession());
-    expect(loaded.messagingChannelConfig).toEqual({
-      TELEGRAM_ALLOWED_IDS: "123,456",
-      TELEGRAM_REQUIRE_MENTION: "1",
-    });
+    const raw = JSON.parse(fs.readFileSync(session.SESSION_FILE, "utf-8"));
+    expect(raw.messagingPlan.agentRender).toBeUndefined();
+    expect(raw.messagingPlan.channels[0].hooks).toBeUndefined();
+    const reloadedPlan = requireLoadedSession(session.loadSession()).messagingPlan;
+    expect(reloadedPlan?.agentRender).toEqual([]);
+    expect(reloadedPlan?.channels[0]?.hooks).toEqual([]);
   });
 
-  it("filters malformed messagingChannelConfig entries on load", () => {
+  it("drops malformed persisted messagingPlan on load", () => {
     const created = session.createSession();
     fs.mkdirSync(path.dirname(session.SESSION_FILE), { recursive: true });
     fs.writeFileSync(
       session.SESSION_FILE,
       JSON.stringify({
         ...created,
-        messagingChannelConfig: {
-          TELEGRAM_ALLOWED_IDS: "123",
-          TELEGRAM_REQUIRE_MENTION: "true",
-          DISCORD_REQUIRE_MENTION: "0",
-          NVIDIA_API_KEY: "not-channel-config",
+        messagingPlan: {
+          ...makeMessagingPlan("my-assistant", ["telegram"]),
+          disabledChannels: ["telegram", 42, null],
         },
       }),
     );
 
     const loaded = requireLoadedSession(session.loadSession());
-    expect(loaded.messagingChannelConfig).toEqual({
-      TELEGRAM_ALLOWED_IDS: "123",
-      DISCORD_REQUIRE_MENTION: "0",
+    expect(loaded.messagingPlan).toBeNull();
+  });
+
+  it("persists disabled channel state inside messagingPlan", () => {
+    // Regression: `channels stop X` followed by rebuild must carry the paused
+    // set through the destroy/recreate window. The session plan is the only
+    // place this can survive, because rebuild destroys the registry entry
+    // before `onboard --resume` reads it back.
+    const created = session.createSession();
+    created.messagingPlan = makeMessagingPlan("my-assistant", ["telegram"], ["telegram"]);
+    session.saveSession(created);
+
+    const loaded = requireLoadedSession(session.loadSession());
+    expect(loaded.messagingPlan?.disabledChannels).toEqual(["telegram"]);
+    expect(loaded.messagingPlan?.channels[0]).toMatchObject({
+      channelId: "telegram",
+      active: false,
+      disabled: true,
     });
+  });
+
+  it("filterSafeUpdates passes through messagingPlan and accepts explicit null clear", () => {
+    session.saveSession(session.createSession());
+    const plan = makeMessagingPlan("my-assistant", ["discord"]);
+    session.markStepComplete("provider_selection", { messagingPlan: plan });
+    expect(requireLoadedSession(session.loadSession()).messagingPlan).toEqual(plan);
+
+    session.markStepComplete("provider_selection", { messagingPlan: null });
+    expect(requireLoadedSession(session.loadSession()).messagingPlan).toBeNull();
+  });
+
+  it("defaults messagingPlan to null for fresh sessions", () => {
+    const fresh = session.createSession();
+    expect(fresh.messagingPlan).toBeNull();
   });
 
   it("#1737: persists telegramConfig across save/load roundtrips (requireMention=true)", () => {
@@ -1015,11 +1043,11 @@ describe("onboard session", () => {
     session.saveSession(session.createSession());
     session.markStepFailed(
       "inference",
-      "provider auth failed with NVIDIA_API_KEY=nvapi-secret Bearer topsecret sk-secret-value-that-is-long-enough ghp_1234567890123456789012345",
+      "provider auth failed with NVIDIA_INFERENCE_API_KEY=nvapi-secret Bearer topsecret sk-secret-value-that-is-long-enough ghp_1234567890123456789012345",
     );
 
     const loaded = requireLoadedSession(session.loadSession());
-    expect(loaded.steps.inference.error).toContain("NVIDIA_API_KEY=<REDACTED>");
+    expect(loaded.steps.inference.error).toContain("NVIDIA_INFERENCE_API_KEY=<REDACTED>");
     expect(loaded.steps.inference.error).toContain("Bearer <REDACTED>");
     expect(loaded.steps.inference.error).not.toContain("nvapi-secret");
     expect(loaded.steps.inference.error).not.toContain("topsecret");
@@ -1032,49 +1060,44 @@ describe("onboard session", () => {
     expect(loaded.failure.message).toBe(loaded.steps.inference.error);
   });
 
-  it("round-trips null messagingChannels through normalizeSession", () => {
+  it("round-trips null messagingPlan through normalizeSession", () => {
     const created = session.createSession();
-    expect(created.messagingChannels).toBeNull();
+    expect(created.messagingPlan).toBeNull();
     const saved = session.saveSession(created);
     const loaded = requireLoadedSession(session.loadSession());
-    expect(saved.messagingChannels).toBeNull();
-    expect(loaded.messagingChannels).toBeNull();
+    expect(saved.messagingPlan).toBeNull();
+    expect(loaded.messagingPlan).toBeNull();
   });
 
-  it("round-trips messagingChannels=['telegram'] through normalizeSession", () => {
-    const created = session.createSession({ messagingChannels: ["telegram"] });
-    expect(created.messagingChannels).toEqual(["telegram"]);
+  it("round-trips messagingPlan through normalizeSession", () => {
+    const plan = makeMessagingPlan("my-assistant", ["telegram"]);
+    const created = session.createSession({ messagingPlan: plan });
+    expect(created.messagingPlan).toEqual(plan);
     const saved = session.saveSession(created);
     const loaded = requireLoadedSession(session.loadSession());
-    expect(saved.messagingChannels).toEqual(["telegram"]);
-    expect(loaded.messagingChannels).toEqual(["telegram"]);
+    expect(saved.messagingPlan).toEqual(plan);
+    expect(loaded.messagingPlan).toEqual(plan);
   });
 
-  it("filterSafeUpdates preserves messagingChannels field", () => {
+  it("filterSafeUpdates preserves messagingPlan field", () => {
     session.saveSession(session.createSession());
+    const plan = makeMessagingPlan("my-assistant", ["slack", "discord"]);
     session.markStepComplete("provider_selection", {
-      messagingChannels: ["slack", "discord"],
+      messagingPlan: plan,
     });
 
     const loaded = requireLoadedSession(session.loadSession());
-    expect(loaded.messagingChannels).toEqual(["slack", "discord"]);
+    expect(loaded.messagingPlan).toEqual(plan);
   });
 
-  it("filterSafeUpdates preserves sanitized messagingChannelConfig", () => {
+  it("filterSafeUpdates ignores malformed messagingPlan values", () => {
     session.saveSession(session.createSession());
     session.markStepComplete("provider_selection", {
-      messagingChannelConfig: {
-        TELEGRAM_ALLOWED_IDS: "123",
-        TELEGRAM_REQUIRE_MENTION: "1",
-        DISCORD_REQUIRE_MENTION: "invalid",
-      },
-    });
+      messagingPlan: { sandboxName: "my-assistant" },
+    } as unknown as Parameters<OnboardSessionModule["markStepComplete"]>[1]);
 
     const loaded = requireLoadedSession(session.loadSession());
-    expect(loaded.messagingChannelConfig).toEqual({
-      TELEGRAM_ALLOWED_IDS: "123",
-      TELEGRAM_REQUIRE_MENTION: "1",
-    });
+    expect(loaded.messagingPlan).toBeNull();
   });
 
   it("#1737: filterSafeUpdates routes telegramConfig through markStepComplete", () => {
@@ -1133,20 +1156,19 @@ describe("onboard session", () => {
     expect(loaded.wechatConfig).toBeNull();
   });
 
-  it("createSession with messagingChannels override", () => {
-    const created = session.createSession({ messagingChannels: ["telegram", "slack"] });
-    expect(created.messagingChannels).toEqual(["telegram", "slack"]);
+  it("createSession with messagingPlan override", () => {
+    const plan = makeMessagingPlan("my-assistant", ["telegram", "slack"]);
+    const created = session.createSession({ messagingPlan: plan });
+    expect(created.messagingPlan).toEqual(plan);
     expect(created.provider).toBeNull();
   });
 
   it("filters non-string array entries in createSession overrides", () => {
     const created = session.createSession({
       policyPresets: ["pypi", 7, null, "npm"] as unknown as string[],
-      messagingChannels: ["telegram", 42, null, "discord"] as unknown as string[],
     });
 
     expect(created.policyPresets).toEqual(["pypi", "npm"]);
-    expect(created.messagingChannels).toEqual(["telegram", "discord"]);
   });
 
   it("summarizes the session for debug output", () => {

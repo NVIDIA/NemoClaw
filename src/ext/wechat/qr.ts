@@ -123,6 +123,10 @@ function ensureTrailingSlash(url: string): string {
   return url.endsWith("/") ? url : `${url}/`;
 }
 
+function statusPollUrlForDebug(url: URL): string {
+  return `${url.origin}${url.pathname}`;
+}
+
 /** Bootstrap a new QR session against the fixed iLink host. The returned
  *  `qrcode` is the cookie used for subsequent polling; `qrcodeUrl` is what
  *  the operator scans in WeChat. */
@@ -214,7 +218,7 @@ export async function pollWechatQrStatus(params: {
 
   try {
     let response: Awaited<ReturnType<FetchLike>>;
-    params.onDebug?.(`poll request → ${url.toString()}`);
+    params.onDebug?.(`poll request → ${statusPollUrlForDebug(url)}`);
     try {
       response = await transport(url.toString(), {
         method: "GET",

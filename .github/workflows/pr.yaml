@@ -60,11 +60,15 @@ jobs:
       - name: Install docs-only check dependencies
         run: npm install --ignore-scripts
 
-      - name: Fetch base commit for docs-only checks
-        run: git fetch --no-tags --depth=1 origin "${{ github.event.pull_request.base.sha }}"
+      - name: Fetch checked-out merge base for docs-only checks
+        shell: bash
+        run: |
+          DOCS_ONLY_FROM_REF="${{ github.event.pull_request.base.sha }}"
+          git fetch --no-tags --depth=1 origin "$DOCS_ONLY_FROM_REF"
+          echo "DOCS_ONLY_FROM_REF=$DOCS_ONLY_FROM_REF" >> "$GITHUB_ENV"
 
       - name: Run docs-only hook checks
-        run: npx prek run --from-ref "${{ github.event.pull_request.base.sha }}" --to-ref HEAD
+        run: npx prek run --from-ref "$DOCS_ONLY_FROM_REF" --to-ref HEAD
 
       - name: Verify platform matrix is in sync
         run: python3 scripts/generate-platform-docs.py --check
@@ -229,6 +233,11 @@ jobs:
       - changes
       - cli-test-shards
     if: ${{ always() && needs.changes.outputs.code == 'true' }}
+    permissions:
+      actions: read
+      code-quality: write
+      contents: read
+      pull-requests: read
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -269,6 +278,10 @@ jobs:
   plugin-tests:
     needs: changes
     if: needs.changes.outputs.code == 'true'
+    permissions:
+      code-quality: write
+      contents: read
+      pull-requests: read
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

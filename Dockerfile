@@ -1061,10 +1061,25 @@ RUN set -eu; \
 #           host-side delivery-chain monitoring (verify-deployment.ts, host
 #           port forward, sandbox status).
 #
-# The process pattern matches both `openclaw gateway run` (the launcher
-# command nemoclaw-start runs) and `openclaw-gateway` (the re-execed
-# binary form OpenClaw switches into after startup). This is the same
-# variant set the host-side gateway-stop script in services.ts matches.
+# The pgrep pattern matches both `openclaw gateway run` (the launcher
+# command nemoclaw-start runs) and `openclaw-gateway` (the older re-execed
+# binary form). Recent OpenClaw (v0.0.44 / 2026.5.18+) re-execs the
+# long-running gateway into a process whose argv is plain `openclaw` with
+# no `gateway` token at all (#4952), which that pattern cannot see — so on a
+# marker-present container whose in-container curl probe failed, the stale
+# pattern reported a live gateway as permanently unhealthy.
+#
+# When the pattern misses, fall back to the gateway PID that nemoclaw-start
+# recorded in /tmp/nemoclaw-gateway.pid (record_gateway_pid, written for both
+# the root and non-root launch paths and refreshed on every respawn) and
+# confirm THAT pid is still a live `openclaw` process. This deliberately does
+# not match any process merely named `openclaw`: a bare `pgrep -x openclaw`
+# would keep Docker healthy when the real gateway has died but an unrelated
+# `openclaw` one-shot (e.g. `openclaw agent ...`) happens to be running,
+# defeating restart/self-healing. The recorded-pid check is gateway-specific
+# and survives PID reuse via the comm prefix guard. `ps -o comm=` reads the
+# (15-char) process name, which is `openclaw` for the re-execed gateway and
+# `openclaw-gatewa(y)` for the legacy form — both match `openclaw*`.
 #
 # pgrep uses --ignore-ancestors so it cannot self-match the healthcheck
 # shell that Docker spawns to run this CMD — that shell's argv contains
@@ -1082,7 +1097,11 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
         if [ "$rc" = 0 ]; then exit 0; fi; \
         if [ "$rc" != 7 ]; then exit 1; fi; \
         [ -f /tmp/nemoclaw-gateway-local ] || exit 0; \
-        pgrep --ignore-ancestors -f 'openclaw[ -]gateway' > /dev/null 2>&1 || exit 1; \
+        if ! pgrep --ignore-ancestors -f 'openclaw[ -]gateway' > /dev/null 2>&1; then \
+            gwpid="$(cat /tmp/nemoclaw-gateway.pid 2>/dev/null)"; \
+            case "${gwpid:-x}" in *[!0-9]*) exit 1 ;; esac; \
+            case "$(ps -p "$gwpid" -o comm= 2>/dev/null)" in openclaw*) ;; *) exit 1 ;; esac; \
+        fi; \
         [ -s /tmp/gateway.log ]
 
 # Entrypoint runs as root to start the gateway as the gateway user,

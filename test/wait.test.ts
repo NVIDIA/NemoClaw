@@ -3,8 +3,15 @@
 
 import assert from "node:assert";
 import { createServer, type AddressInfo } from "node:net";
-import { afterEach, describe, it } from "vitest";
-import { buildLoopbackProbeEnv, sleepMs, sleepSeconds, waitForPort } from "../src/lib/core/wait.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  buildLoopbackProbeEnv,
+  sleepMs,
+  sleepSeconds,
+  waitForPort,
+  waitUntil,
+  waitUntilAsync,
+} from "../src/lib/core/wait.js";
 
 describe("wait utility", () => {
   it("sleepMs blocks for approximately the requested time", () => {
@@ -38,6 +45,277 @@ describe("wait utility", () => {
     const end = performance.now();
     const duration = end - start;
     assert.ok(duration < 50, `duration ${duration}ms > 50ms`);
+  });
+
+  it("waitUntil returns immediately when the condition is already true", () => {
+    const sleeps: number[] = [];
+    let attempts = 0;
+
+    const result = waitUntil(
+      () => {
+        attempts += 1;
+        return true;
+      },
+      {
+        deadlineMs: 100,
+        now: () => 0,
+        sleep: (ms) => sleeps.push(ms),
+      },
+    );
+
+    expect(result).toBe(true);
+    expect(attempts).toBe(1);
+    expect(sleeps).toEqual([]);
+  });
+
+  it("waitUntil does not probe when the deadline is already expired", () => {
+    const sleeps: number[] = [];
+    let attempts = 0;
+
+    const result = waitUntil(
+      () => {
+        attempts += 1;
+        return true;
+      },
+      {
+        deadlineMs: 10,
+        now: () => 10,
+        sleep: (ms) => sleeps.push(ms),
+      },
+    );
+
+    expect(result).toBe(false);
+    expect(attempts).toBe(0);
+    expect(sleeps).toEqual([]);
+  });
+
+  it("waitUntil throws when deadlineMs is non-finite and no attempt cap is provided", () => {
+    expect(() =>
+      waitUntil(() => false, {
+        deadlineMs: Number.NaN,
+        now: () => 0,
+        sleep: () => {},
+      }),
+    ).toThrow(TypeError);
+  });
+
+  it("waitUntil retries until the condition succeeds", () => {
+    const sleeps: number[] = [];
+    let attempts = 0;
+    let nowMs = 0;
+
+    const result = waitUntil(
+      () => {
+        attempts += 1;
+        return attempts >= 3;
+      },
+      {
+        deadlineMs: 100,
+        initialIntervalMs: 10,
+        maxIntervalMs: 10,
+        backoffFactor: 1,
+        now: () => nowMs,
+        sleep: (ms) => {
+          sleeps.push(ms);
+          nowMs += ms;
+        },
+      },
+    );
+
+    expect(result).toBe(true);
+    expect(attempts).toBe(3);
+    expect(sleeps).toEqual([10, 10]);
+  });
+
+  it("waitUntil returns false after the deadline passes", () => {
+    const sleeps: number[] = [];
+    let attempts = 0;
+    let nowMs = 0;
+
+    const result = waitUntil(
+      () => {
+        attempts += 1;
+        return false;
+      },
+      {
+        deadlineMs: 25,
+        initialIntervalMs: 10,
+        maxIntervalMs: 10,
+        backoffFactor: 1,
+        now: () => nowMs,
+        sleep: (ms) => {
+          sleeps.push(ms);
+          nowMs += ms;
+        },
+      },
+    );
+
+    expect(result).toBe(false);
+    expect(attempts).toBe(3);
+    expect(sleeps).toEqual([10, 10, 5]);
+  });
+
+  it("waitUntil applies interval backoff up to the configured max interval", () => {
+    const sleeps: number[] = [];
+    let attempts = 0;
+    let nowMs = 0;
+
+    const result = waitUntil(
+      () => {
+        attempts += 1;
+        return attempts >= 5;
+      },
+      {
+        deadlineMs: 100,
+        initialIntervalMs: 5,
+        maxIntervalMs: 20,
+        backoffFactor: 2,
+        now: () => nowMs,
+        sleep: (ms) => {
+          sleeps.push(ms);
+          nowMs += ms;
+        },
+      },
+    );
+
+    expect(result).toBe(true);
+    expect(sleeps).toEqual([5, 10, 20, 20]);
+  });
+
+  it("waitUntil can cap attempts while allowing zero-length intervals", () => {
+    const sleeps: number[] = [];
+    let attempts = 0;
+    let nowMs = 0;
+
+    const result = waitUntil(
+      () => {
+        attempts += 1;
+        return false;
+      },
+      {
+        deadlineMs: 1,
+        initialIntervalMs: 0,
+        maxIntervalMs: 0,
+        maxAttempts: 3,
+        now: () => nowMs,
+        sleep: (ms) => {
+          sleeps.push(ms);
+          nowMs += ms;
+        },
+      },
+    );
+
+    expect(result).toBe(false);
+    expect(attempts).toBe(3);
+    expect(sleeps).toEqual([0, 0]);
+  });
+
+  it("waitUntil can rely on maxAttempts without a deadline", () => {
+    const sleeps: number[] = [];
+    let attempts = 0;
+
+    const result = waitUntil(
+      () => {
+        attempts += 1;
+        return false;
+      },
+      {
+        initialIntervalMs: 0,
+        maxIntervalMs: 0,
+        maxAttempts: 3,
+        now: () => 0,
+        sleep: (ms) => sleeps.push(ms),
+      },
+    );
+
+    expect(result).toBe(false);
+    expect(attempts).toBe(3);
+    expect(sleeps).toEqual([0, 0]);
+  });
+
+  it("waitUntil yields between unbounded zero-interval attempts", () => {
+    const sleeps: number[] = [];
+    let attempts = 0;
+    let nowMs = 0;
+
+    const result = waitUntil(
+      () => {
+        attempts += 1;
+        return false;
+      },
+      {
+        deadlineMs: 3,
+        initialIntervalMs: 0,
+        maxIntervalMs: 0,
+        now: () => nowMs,
+        sleep: (ms) => {
+          sleeps.push(ms);
+          nowMs += ms;
+        },
+      },
+    );
+
+    expect(result).toBe(false);
+    expect(attempts).toBe(3);
+    expect(sleeps).toEqual([1, 1, 1]);
+  });
+
+  it("waitUntilAsync retries until the async condition succeeds", async () => {
+    const sleeps: number[] = [];
+    let attempts = 0;
+    let nowMs = 0;
+
+    const result = await waitUntilAsync(
+      async () => {
+        attempts += 1;
+        return attempts >= 3;
+      },
+      {
+        initialIntervalMs: 5,
+        maxIntervalMs: 5,
+        maxAttempts: 4,
+        now: () => nowMs,
+        sleep: (ms) => {
+          sleeps.push(ms);
+          nowMs += ms;
+        },
+      },
+    );
+
+    expect(result).toBe(true);
+    expect(attempts).toBe(3);
+    expect(sleeps).toEqual([5, 5]);
+  });
+
+  it("waitUntilAsync uses a nonblocking default sleeper", async () => {
+    vi.useFakeTimers();
+    try {
+      let attempts = 0;
+
+      const resultPromise = waitUntilAsync(
+        () => {
+          attempts += 1;
+          return attempts >= 2;
+        },
+        {
+          initialIntervalMs: 10,
+          maxIntervalMs: 10,
+          maxAttempts: 2,
+        },
+      );
+
+      await Promise.resolve();
+      expect(attempts).toBe(1);
+
+      await vi.advanceTimersByTimeAsync(9);
+      expect(attempts).toBe(1);
+
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(resultPromise).resolves.toBe(true);
+      expect(attempts).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

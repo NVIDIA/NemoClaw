@@ -25,7 +25,9 @@ function asRecord(value: unknown): WorkflowRecord {
 }
 
 function asSteps(value: unknown): WorkflowStep[] {
-  return Array.isArray(value) ? (value.filter((entry) => asRecord(entry) === entry) as WorkflowStep[]) : [];
+  return Array.isArray(value)
+    ? (value.filter((entry) => asRecord(entry) === entry) as WorkflowStep[])
+    : [];
 }
 
 function stringValue(value: unknown): string {
@@ -123,7 +125,11 @@ export function validatePrReviewAdvisorWorkflowBoundary(
     errors.push("PR checkout must use the pull request head SHA as inert analysis data");
   }
 
-  const dispatchCheckout = requireStep(errors, steps, "Checkout dispatch workspace (read-only data)");
+  const dispatchCheckout = requireStep(
+    errors,
+    steps,
+    "Checkout dispatch workspace (read-only data)",
+  );
   requireStepWith(errors, dispatchCheckout, "path", "pr-workdir");
   requireStepWith(errors, dispatchCheckout, "persist-credentials", false);
 
@@ -132,9 +138,23 @@ export function validatePrReviewAdvisorWorkflowBoundary(
   requireRunContains(errors, install, "$ADVISOR_DIR/node_modules");
 
   const analyze = requireStep(errors, steps, "Run PR review advisor");
-  requireRunContains(errors, analyze, "cd \"$ADVISOR_WORKDIR\"");
+  requireRunContains(errors, analyze, 'cd "$ADVISOR_WORKDIR"');
   requireRunContains(errors, analyze, "$ADVISOR_DIR/tools/pr-review-advisor/analyze.mts");
   requireRunContains(errors, analyze, "$ADVISOR_DIR/tools/pr-review-advisor/schema.json");
+  if (analyze) {
+    const analyzeEnv = asRecord(analyze.env);
+    if (
+      stringValue(analyzeEnv.PR_REVIEW_ADVISOR_API_KEY).trim() !==
+      "${{ secrets.PR_REVIEW_ADVISOR_API_KEY }}"
+    ) {
+      errors.push(
+        "Run PR review advisor must receive PR_REVIEW_ADVISOR_API_KEY only from secrets.PR_REVIEW_ADVISOR_API_KEY",
+      );
+    }
+    if (Object.hasOwn(analyzeEnv, "OPENAI_API_KEY")) {
+      errors.push("Run PR review advisor must not receive OPENAI_API_KEY");
+    }
+  }
 
   const comment = requireStep(errors, steps, "Post PR review advisor comment");
   requireRunContains(errors, comment, "$ADVISOR_DIR/tools/pr-review-advisor/comment.mts");

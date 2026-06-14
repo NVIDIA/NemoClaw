@@ -47,7 +47,7 @@ describe("NemoClawInstance manifests", () => {
       spec: {
         setup: { install: { source: "repo-current" } },
         onboarding: { agent: "openclaw", provider: "nvidia", apiKey: "nvapi-literal-secret" },
-        state: { credentialRefs: ["NVIDIA_API_KEY"] },
+        state: { credentialRefs: ["NVIDIA_INFERENCE_API_KEY"] },
       },
     };
 

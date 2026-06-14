@@ -17,13 +17,13 @@
 #   NEMOCLAW_POLICY_TIER=open              - auto-set if not already set
 #   NEMOCLAW_SANDBOX_NAME                  - sandbox name (default: e2e-hermes-slack)
 #   NEMOCLAW_RECREATE_SANDBOX=1            - auto-set
-#   NVIDIA_API_KEY                         - required for Hermes onboarding
+#   NVIDIA_INFERENCE_API_KEY                         - required for Hermes onboarding
 #   SLACK_BOT_TOKEN                        - defaults to a fake xoxb- token
 #   SLACK_APP_TOKEN                        - defaults to a fake xapp- token
 #
 # Usage:
 #   NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
-#     NVIDIA_API_KEY=nvapi-... bash test/e2e/test-hermes-slack-e2e.sh
+#     NVIDIA_INFERENCE_API_KEY=... bash test/e2e/test-hermes-slack-e2e.sh
 
 set -uo pipefail
 
@@ -173,7 +173,10 @@ fi
 
 # shellcheck source=test/e2e/lib/sandbox-teardown.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox-teardown.sh"
+# shellcheck source=test/e2e/lib/ci-compatible-inference.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/ci-compatible-inference.sh"
 register_sandbox_for_teardown "$SANDBOX_NAME"
+nemoclaw_e2e_configure_compatible_inference || exit 1
 
 section "Phase 0: Prerequisites"
 
@@ -184,10 +187,7 @@ else
   exit 1
 fi
 
-if [ -n "${NVIDIA_API_KEY:-}" ] && [[ "${NVIDIA_API_KEY}" == nvapi-* ]]; then
-  pass "NVIDIA_API_KEY is set (starts with nvapi-)"
-else
-  fail "NVIDIA_API_KEY not set or invalid"
+if ! nemoclaw_e2e_require_hosted_inference_key; then
   exit 1
 fi
 

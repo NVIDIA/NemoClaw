@@ -19,12 +19,12 @@
 #
 # Prerequisites:
 #   - Docker running
-#   - NVIDIA_API_KEY set (real key, starts with nvapi-)
+#   - NVIDIA_INFERENCE_API_KEY set (real key, starts with nvapi-)
 #
 # Environment variables:
 #   NEMOCLAW_NON_INTERACTIVE=1             — required
 #   NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 — required
-#   NVIDIA_API_KEY                         — required
+#   NVIDIA_INFERENCE_API_KEY                         — required
 
 set -euo pipefail
 
@@ -93,7 +93,7 @@ dump_hermes_sandbox_logs() {
 export NEMOCLAW_REBUILD_VERBOSE=1
 
 # ── Preflight ───────────────────────────────────────────────────────
-[ -n "${NVIDIA_API_KEY:-}" ] || fail "NVIDIA_API_KEY is required"
+[ -n "${NVIDIA_INFERENCE_API_KEY:-}" ] || fail "NVIDIA_INFERENCE_API_KEY is required"
 [ "${NEMOCLAW_NON_INTERACTIVE:-}" = "1" ] || fail "NEMOCLAW_NON_INTERACTIVE=1 is required"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
@@ -246,35 +246,81 @@ echo "$PRE_REBUILD_CONFIG" | grep -Fq "discord:" \
 
 # Register in NemoClaw registry
 python3 -c "
-import hashlib, json
-reg = {'sandboxes': {'${SANDBOX_NAME}': {
-    'name': '${SANDBOX_NAME}',
-    'createdAt': '$(date -u +%Y-%m-%dT%H:%M:%SZ)',
-    'model': 'nvidia/nemotron-3-super-120b-a12b',
-    'provider': 'nvidia-prod',
-    'gpuEnabled': False,
-    'policies': [],
-    'policyTier': None,
-    'agent': 'hermes',
-    'agentVersion': '${OLD_HERMES_REGISTRY_VERSION}',
-    'messagingChannels': ['discord'],
-    'providerCredentialHashes': {
-        'DISCORD_BOT_TOKEN': hashlib.sha256('${DISCORD_FAKE_TOKEN}'.encode()).hexdigest()
-    }
-}}, 'defaultSandbox': '${SANDBOX_NAME}'}
-with open('${REGISTRY_FILE}', 'w') as f:
-    json.dump(reg, f, indent=2)
-
+import hashlib, json, os
 sess_path = '${SESSION_FILE}'
 try:
     with open(sess_path) as f:
         sess = json.load(f)
 except Exception:
     sess = {}
+env_provider = (os.environ.get('NEMOCLAW_PROVIDER') or '').strip()
+if env_provider == 'custom':
+    env_provider = 'compatible-endpoint'
+provider = sess.get('provider') or env_provider or 'compatible-endpoint'
+model = (
+    sess.get('model')
+    or os.environ.get('NEMOCLAW_MODEL')
+    or os.environ.get('NEMOCLAW_COMPAT_MODEL')
+    or 'nvidia/nvidia/nemotron-3-super-v3'
+)
+credential_hash = hashlib.sha256('${DISCORD_FAKE_TOKEN}'.encode()).hexdigest()
+plan = {
+    'schemaVersion': 1,
+    'sandboxName': '${SANDBOX_NAME}',
+    'agent': 'hermes',
+    'workflow': 'onboard',
+    'channels': [{
+        'channelId': 'discord',
+        'displayName': 'discord',
+        'authMode': 'token-paste',
+        'active': True,
+        'selected': True,
+        'configured': True,
+        'disabled': False,
+        'inputs': [],
+        'hooks': [],
+    }],
+    'disabledChannels': [],
+    'credentialBindings': [{
+        'channelId': 'discord',
+        'credentialId': 'discordBotToken',
+        'sourceInput': 'botToken',
+        'providerName': '${SANDBOX_NAME}-discord-bridge',
+        'providerEnvKey': 'DISCORD_BOT_TOKEN',
+        'placeholder': '${DISCORD_PLACEHOLDER}',
+        'credentialAvailable': True,
+        'credentialHash': credential_hash,
+    }],
+    'networkPolicy': {'presets': ['discord'], 'entries': []},
+    'agentRender': [],
+    'buildSteps': [],
+    'stateUpdates': [],
+    'healthChecks': [],
+}
+reg = {'sandboxes': {'${SANDBOX_NAME}': {
+    'name': '${SANDBOX_NAME}',
+    'createdAt': '$(date -u +%Y-%m-%dT%H:%M:%SZ)',
+    'model': model,
+    'provider': provider,
+    'gpuEnabled': False,
+    'policies': [],
+    'policyTier': None,
+    'agent': 'hermes',
+    'agentVersion': '${OLD_HERMES_REGISTRY_VERSION}',
+    'messaging': {'schemaVersion': 1, 'plan': plan},
+    'providerCredentialHashes': {
+        'DISCORD_BOT_TOKEN': credential_hash
+    }
+}}, 'defaultSandbox': '${SANDBOX_NAME}'}
+with open('${REGISTRY_FILE}', 'w') as f:
+    json.dump(reg, f, indent=2)
+
 sess['sandboxName'] = '${SANDBOX_NAME}'
 sess['agent'] = 'hermes'
 sess['status'] = 'complete'
-sess['messagingChannels'] = ['discord']
+for key in ('messagingChannels', 'messagingChannelConfig', 'disabledChannels'):
+    sess.pop(key, None)
+sess['messagingPlan'] = plan
 with open(sess_path, 'w') as f:
     json.dump(sess, f, indent=2)
 print('Registry and session updated')
@@ -354,10 +400,11 @@ fi
 
 # Inference works after rebuild (proves credential chain is intact)
 info "Verifying inference after rebuild..."
+POST_REBUILD_INFERENCE_MODEL="${NEMOCLAW_MODEL:-${NEMOCLAW_COMPAT_MODEL:-nvidia/nvidia/nemotron-3-super-v3}}"
 INFERENCE_RESPONSE=$(openshell sandbox exec --name "${SANDBOX_NAME}" -- \
   curl -s --max-time 60 https://inference.local/v1/chat/completions \
   -H 'Content-Type: application/json' \
-  -d '{"model":"nvidia/nemotron-3-super-120b-a12b","messages":[{"role":"user","content":"Reply with exactly one word: PONG"}],"max_tokens":100}' \
+  -d "{\"model\":\"${POST_REBUILD_INFERENCE_MODEL}\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with exactly one word: PONG\"}],\"max_tokens\":100}" \
   2>&1 || true)
 if echo "${INFERENCE_RESPONSE}" | python3 -c "import json,sys; r=json.load(sys.stdin); c=r['choices'][0]['message']; print(c.get('content',''))" 2>/dev/null | grep -qi "PONG"; then
   pass "Inference works after rebuild (NVIDIA API key + provider chain intact)"

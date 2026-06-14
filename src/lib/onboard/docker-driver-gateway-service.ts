@@ -5,7 +5,7 @@ import { spawnSync, type SpawnSyncOptions } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
-import { sleepSeconds } from "../core/wait";
+import { sleepSeconds, waitUntilAsync } from "../core/wait";
 import { isGatewayHealthy } from "../state/gateway";
 import { envInt } from "./env";
 import { isDockerDriverGatewayHttpReady } from "./gateway-http-readiness";
@@ -323,25 +323,36 @@ export async function startPackageManagedDockerDriverGateway({
 
   const pollCount = healthPollCount ?? envInt("NEMOCLAW_HEALTH_POLL_COUNT", 30);
   const pollInterval = healthPollInterval ?? envInt("NEMOCLAW_HEALTH_POLL_INTERVAL", 2);
-  for (let i = 0; i < pollCount; i += 1) {
-    if (!registerDockerDriverGatewayEndpoint()) {
-      if (i < pollCount - 1) sleepSecondsImpl(pollInterval);
-      continue;
-    }
-    const status = runCaptureOpenshell(["status"], { ignoreError: true });
-    const namedInfo = runCaptureOpenshell(["gateway", "info", "-g", gatewayName], {
-      ignoreError: true,
+  const pollIntervalMs = Math.max(0, pollInterval * 1000);
+  const healthy =
+    pollCount > 0 &&
+    (await waitUntilAsync(
+      async () => {
+        if (!registerDockerDriverGatewayEndpoint()) return false;
+        const status = runCaptureOpenshell(["status"], { ignoreError: true });
+        const namedInfo = runCaptureOpenshell(["gateway", "info", "-g", gatewayName], {
+          ignoreError: true,
+        });
+        const currentInfo = runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
+        return (
+          isGatewayHealthy(status, namedInfo, currentInfo) && (await isDockerDriverGatewayReady())
+        );
+      },
+      {
+        initialIntervalMs: pollIntervalMs,
+        maxIntervalMs: pollIntervalMs,
+        backoffFactor: 1,
+        maxAttempts: pollCount,
+        sleep: (ms) => sleepSecondsImpl(ms / 1000),
+      },
+    ));
+  if (healthy) {
+    clearDockerDriverGatewayRuntimeFiles();
+    await verifySandboxBridgeGatewayReachableOrExit(exitOnFailure, {
+      skip: skipSandboxBridgeReachability,
     });
-    const currentInfo = runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
-    if (isGatewayHealthy(status, namedInfo, currentInfo) && (await isDockerDriverGatewayReady())) {
-      clearDockerDriverGatewayRuntimeFiles();
-      await verifySandboxBridgeGatewayReachableOrExit(exitOnFailure, {
-        skip: skipSandboxBridgeReachability,
-      });
-      console.log("  ✓ OpenShell gateway user service is healthy");
-      return true;
-    }
-    if (i < pollCount - 1) sleepSecondsImpl(pollInterval);
+    console.log("  ✓ OpenShell gateway user service is healthy");
+    return true;
   }
 
   const message = "OpenShell gateway user service started but did not become healthy.";

@@ -52,9 +52,8 @@ Configure this repository secret for review analysis:
 
 - `PR_REVIEW_ADVISOR_API_KEY`
 
-The workflow also accepts the legacy `PI_PR_REVIEW_ADVISOR_API_KEY` secret as a
-fallback. The analyzer uses the fixed `openai/openai/gpt-5.5` advisor model and
-also accepts `OPENAI_API_KEY` for local runs.
+The analyzer uses the fixed `openai/openai/gpt-5.5` advisor model through the
+OpenAI-compatible `https://inference-api.nvidia.com/v1` service.
 
 If advisor credentials are unavailable, the advisor writes a low-confidence unavailable result
 instead of failing closed without artifacts.
@@ -70,9 +69,13 @@ If present, this token is used for sticky PR comments. Otherwise the workflow fa
 
 - `prompts/00-system.md` — system prompt sent to the advisor.
 - `prompts/01-orient-drift.md` — orientation, codebase drift, overlaps, monolith, and localized-patch scan.
+- `prompts/01-orient-drift.synthetic-tool-results/` — deterministic drift context and truncated diff injected as synthetic tool results.
 - `prompts/02-security.md` — security-review turn.
+- `prompts/02-security.synthetic-tool-results/` — deterministic security context injected before the security turn.
 - `prompts/03-acceptance-correctness-tests.md` — acceptance, correctness, tests, and source-of-truth turn.
+- `prompts/03-acceptance-correctness-tests.synthetic-tool-results/` — deterministic validation/GitHub context injected before the validation turn.
 - `prompts/04-synthesize-json.md` — final JSON synthesis turn.
+- `prompts/04-synthesize-json.synthetic-tool-results/` — exact metadata fields and response schema injected before final synthesis.
 - `pr-review-advisor-raw-output.txt` — raw multi-turn advisor transcript and diagnostics.
 - `pr-review-advisor-result.json` — parsed advisor response or execution metadata.
 - `pr-review-advisor-final-result.json` — normalized result used for comments.
@@ -90,7 +93,7 @@ node --experimental-strip-types tools/pr-review-advisor/analyze.mts \
   --out-dir artifacts/pr-review-advisor
 ```
 
-Set `PR_REVIEW_ADVISOR_API_KEY` or `OPENAI_API_KEY` locally, or configure the repository
+Set `PR_REVIEW_ADVISOR_API_KEY` locally, or configure the repository
 `PR_REVIEW_ADVISOR_API_KEY` secret. Run `npm install` first so the Pi SDK dependency is
 available.
 

@@ -17,8 +17,9 @@
 
 ## Verification
 <!-- Check each item you ran and confirmed. Leave unchecked items you skipped. Doc-only changes do not require npm test unless you ran it. -->
-- [ ] `npx prek run --all-files` passes
-- [ ] `npm test` passes
+- [ ] Git hooks passed during commit and push, or `npx prek run --from-ref main --to-ref HEAD` passes
+- [ ] Targeted tests pass for changed behavior
+- [ ] Full `npm test` passes (broad runtime changes only)
 - [ ] Tests added or updated for new or changed behavior
 - [ ] No secrets, API keys, or credentials committed
 - [ ] Docs updated for user-facing behavior changes

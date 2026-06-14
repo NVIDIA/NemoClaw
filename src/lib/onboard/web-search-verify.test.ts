@@ -39,14 +39,16 @@ describe("verifyWebSearchInsideSandbox", () => {
   });
 
   it("verifies OpenClaw Brave Search egress through the subscription-token header", () => {
+    // Current schema: the provider-owned apiKey lives under
+    // plugins.entries.brave.config.webSearch, not inline on tools.web.search.
     const d = deps([
       JSON.stringify({
-        tools: {
-          web: {
-            search: {
+        tools: { web: { search: { enabled: true, provider: "brave" } } },
+        plugins: {
+          entries: {
+            brave: {
               enabled: true,
-              provider: "brave",
-              apiKey: "openshell:resolve:env:BRAVE_API_KEY",
+              config: { webSearch: { apiKey: "openshell:resolve:env:BRAVE_API_KEY" } },
             },
           },
         },
@@ -67,6 +69,28 @@ describe("verifyWebSearchInsideSandbox", () => {
       "-lc",
       expect.stringContaining("X-Subscription-Token: openshell:resolve:env:BRAVE_API_KEY"),
     ]);
+    expect(d.log).toHaveBeenCalledWith("  ✓ Brave Search egress verified inside sandbox");
+  });
+
+  it("still probes legacy configs that carry the apiKey inline on tools.web.search", () => {
+    const d = deps([
+      JSON.stringify({
+        tools: {
+          web: {
+            search: {
+              enabled: true,
+              provider: "brave",
+              apiKey: "openshell:resolve:env:BRAVE_API_KEY",
+            },
+          },
+        },
+      }),
+      JSON.stringify({ web: { results: [{ title: "NVIDIA" }] } }) + "\nHTTP_STATUS:200\n",
+    ]);
+
+    verifyWebSearchInsideSandbox("alpha", { name: "openclaw" }, d);
+
+    expect(d.runCaptureOpenshell).toHaveBeenCalledTimes(2);
     expect(d.log).toHaveBeenCalledWith("  ✓ Brave Search egress verified inside sandbox");
   });
 

@@ -3,6 +3,7 @@
 
 import { CLI_NAME } from "../../cli/branding";
 import { prompt as askPrompt } from "../../credentials/store";
+import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import {
   normalizeRebuildSandboxOptions,
   type RebuildSandboxOptions,
@@ -55,13 +56,13 @@ import {
   MessagingWorkflowPlanner,
   toMessagingAgentId,
 } from "../../messaging";
-import { hydrateMessagingChannelConfig } from "../../messaging-channel-config";
 import { pruneDisabledMessagingPolicyPresets } from "../../onboard/messaging-policy-presets";
 import {
   captureSandboxListWithGatewayRecovery,
   printSandboxListFailureWithRecoveryContext,
 } from "../../openshell-sandbox-list";
 import * as policies from "../../policy";
+import { shellQuote } from "../../runner";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
 import * as sandboxVersion from "../../sandbox/version";
 import { redact } from "../../security/redact";
@@ -88,6 +89,43 @@ import {
   type RebuildShieldsWindow,
   relockRebuildShieldsWindow,
 } from "./rebuild-shields";
+
+export function buildRefreshMutableOpenClawConfigHashCommand(
+  configDir = "/sandbox/.openclaw",
+): string {
+  return [
+    `config_dir=${shellQuote(configDir)}`,
+    'config_file="${config_dir}/openclaw.json"',
+    'hash_file="${config_dir}/.config-hash"',
+    '[ -d "$config_dir" ] || exit 0',
+    '[ ! -L "$config_dir" ] || { echo "refusing symlinked OpenClaw config dir: $config_dir" >&2; exit 10; }',
+    '[ ! -L "$config_file" ] || { echo "refusing symlinked OpenClaw config file: $config_file" >&2; exit 11; }',
+    '[ ! -L "$hash_file" ] || { echo "refusing symlinked OpenClaw config hash: $hash_file" >&2; exit 12; }',
+    'owner="$(stat -c "%U" "$config_dir" 2>/dev/null || echo unknown)"',
+    '[ "$owner" != "root" ] || exit 0',
+    '[ -f "$config_file" ] || exit 0',
+    'cd "$config_dir" || exit 13',
+    "sha256sum openclaw.json > .config-hash",
+    "chmod 660 .config-hash 2>/dev/null || true",
+  ].join("; ");
+}
+
+function refreshMutableOpenClawConfigHashAfterPostRestoreWrites(
+  sandboxName: string,
+  log: (msg: string) => void,
+): boolean {
+  const result = executeSandboxCommand(sandboxName, buildRefreshMutableOpenClawConfigHashCommand());
+  if (result && result.status === 0) {
+    log("Mutable OpenClaw config hash refreshed after post-restore config writes");
+    return true;
+  }
+
+  const detail = result
+    ? [result.stderr, result.stdout].filter(Boolean).join("; ") || `exit ${result.status}`
+    : "could not obtain sandbox SSH config";
+  console.error(`  ${YW}⚠${R} Mutable OpenClaw config hash was not refreshed: ${redact(detail)}`);
+  return false;
+}
 
 /**
  * Emit timestamped rebuild diagnostics when verbose rebuild logging is enabled.
@@ -200,19 +238,22 @@ async function stageMessagingManifestPlanForRebuild(
 ): Promise<SandboxMessagingPlan | null> {
   const agent = loadAgent(rebuildAgent || "openclaw");
   const planner = new MessagingWorkflowPlanner(createBuiltInChannelManifestRegistry());
-  hydrateMessagingChannelConfig(sandboxEntry.messagingChannelConfig);
   const plan = await planner.buildRebuildPlanFromSandboxEntry({
     sandboxName,
     agent: toMessagingAgentId(agent),
     sandboxEntry,
     supportedChannelIds: agent.messagingPlatforms,
   });
-  if (!plan || plan.channels.length === 0) {
+  if (!plan) {
     MessagingSetupApplier.clearPlanEnv();
     log("Messaging manifest rebuild plan: no configured channels");
     return null;
   }
   MessagingSetupApplier.writePlanToEnv(plan);
+  if (plan.channels.length === 0) {
+    log("Messaging manifest rebuild plan staged: no configured channels");
+    return plan;
+  }
   log(
     `Messaging manifest rebuild plan staged: ${plan.channels
       .map((channel) => channel.channelId)
@@ -541,8 +582,11 @@ export async function rebuildSandbox(
   }
 
   // Step 1: Ensure sandbox is live for backup
-  log("Checking sandbox liveness: openshell sandbox list");
-  const liveRecovery = await captureSandboxListWithGatewayRecovery();
+  const recordedGateway = resolveSandboxGatewayName(sb);
+  log(`Checking sandbox liveness on ${recordedGateway}: openshell sandbox list`);
+  const liveRecovery = await captureSandboxListWithGatewayRecovery({
+    gatewayName: recordedGateway,
+  });
   const isLive = liveRecovery.result;
   log(
     `openshell sandbox list exit=${isLive.status}, output=${(isLive.output || "").substring(0, 200)}`,
@@ -579,49 +623,9 @@ export async function rebuildSandbox(
   // customPolicies, every field) is silently dropped or mutated (#4497).
   let staleRegistrySnapshot: ReturnType<typeof registry.load> | null = null;
   if (!liveNames.has(sandboxName)) {
-    // The default-gateway liveness checks below can only authoritatively reason
-    // about the default `nemoclaw` gateway. A sandbox created on a non-default
-    // per-port gateway (#4645, e.g. `nemoclaw-9000`) that is simply not the
-    // active gateway would look absent here, and recreating-from-scratch would
-    // orphan its live workspace. Refuse the destructive path in that case and
-    // point the operator at the sandbox's own gateway. (If that gateway were
-    // active, the sandbox would have appeared in the list above.)
-    const recordedGateway =
-      typeof sb.gatewayName === "string" && sb.gatewayName ? sb.gatewayName : "nemoclaw";
-    if (recordedGateway !== "nemoclaw") {
-      console.error(
-        `  Sandbox '${sandboxName}' is registered on the '${recordedGateway}' OpenShell gateway, which is not the active gateway.`,
-      );
-      console.error(
-        "  Its live state could not be confirmed — your local registry entry has been preserved.",
-      );
-      console.error("  Select that gateway and retry:");
-      console.error(`      openshell gateway select ${recordedGateway}`);
-      console.error(`  Then re-run: ${CLI_NAME} ${sandboxName} rebuild --yes`);
-      bail(
-        `Sandbox '${sandboxName}' is on the non-default gateway '${recordedGateway}'; select it before rebuilding.`,
-      );
-      return;
-    }
-
-    // The active-gateway `sandbox list` does not show this sandbox. That alone
-    // is NOT proof it is gone: a different active gateway (multi-gateway setups,
-    // #4645) would hide a live NemoClaw sandbox, and `sandbox list` can omit a
-    // sandbox that `sandbox get` still resolves. Recreating on that false
-    // signal would destroy live workspace state. So confirm authoritatively
-    // against the NAMED NemoClaw gateway: getReconciledSandboxGatewayState runs
-    // `sandbox get`, re-selecting/recovering nemoclaw as needed, and only
-    // reports "missing" once the named gateway is confirmed healthy and the
-    // sandbox is genuinely absent.
     const reconciled = await getReconciledSandboxGatewayState(sandboxName);
     if (reconciled.state === "present") {
-      // `sandbox get` resolved the sandbox, but that query ran against whatever
-      // gateway is currently active. Only trust it as live when the named
-      // nemoclaw gateway is the active healthy one — otherwise a foreign active
-      // gateway with a same-named sandbox (or a list/get inconsistency) could
-      // send the destructive backup/delete below at the wrong sandbox. If a
-      // foreign gateway is active, abort with guidance instead.
-      const lifecycle = getNamedGatewayLifecycleState();
+      const lifecycle = getNamedGatewayLifecycleState(recordedGateway);
       if (lifecycle.state !== "healthy_named") {
         printWrongGatewayActiveGuidance(
           sandboxName,
@@ -630,7 +634,7 @@ export async function rebuildSandbox(
           "rebuild --yes",
         );
         bail(
-          `Could not confirm '${sandboxName}' against the NemoClaw gateway (gateway '${lifecycle.activeGateway ?? "unknown"}' is active).`,
+          `Could not confirm '${sandboxName}' against gateway '${recordedGateway}' (gateway '${lifecycle.activeGateway ?? "unknown"}' is active).`,
         );
         return;
       }
@@ -669,7 +673,7 @@ export async function rebuildSandbox(
         );
       } else {
         console.error(
-          `  Sandbox '${sandboxName}' is not visible on the NemoClaw gateway and its live state could not be confirmed.`,
+          `  Sandbox '${sandboxName}' is not visible on gateway '${recordedGateway}' and its live state could not be confirmed.`,
         );
         console.error("  Your local registry entry has been preserved — nothing was removed.");
         printGatewayLifecycleHint(reconciled.output || "", sandboxName, console.error);
@@ -830,21 +834,6 @@ export async function rebuildSandbox(
     // Mark session resumable and point at this sandbox; set env var as fallback.
     const sessionBefore = onboardSession.loadSession();
     const sessionMatchesSandbox = sessionBefore?.sandboxName === sandboxName;
-    const registryMessagingChannels = Array.isArray(sb.messagingChannels)
-      ? sb.messagingChannels.filter((value: unknown): value is string => typeof value === "string")
-      : null;
-    const sessionMessagingChannels =
-      sessionMatchesSandbox && Array.isArray(sessionBefore?.messagingChannels)
-        ? sessionBefore.messagingChannels.filter(
-            (value: unknown): value is string => typeof value === "string",
-          )
-        : null;
-    const rebuildMessagingChannels = registryMessagingChannels ?? sessionMessagingChannels ?? [];
-    const sessionMessagingChannelConfig = sessionMatchesSandbox
-      ? (sessionBefore?.messagingChannelConfig ?? null)
-      : null;
-    const rebuildMessagingChannelConfig =
-      sb.messagingChannelConfig ?? sessionMessagingChannelConfig ?? null;
     const rebuildsHermesSandbox = rebuildAgent === "hermes";
     let registryHermesToolGateways: string[] | null = null;
     if (rebuildsHermesSandbox && Array.isArray(sb.hermesToolGateways)) {
@@ -866,23 +855,6 @@ export async function rebuildSandbox(
     const hasRebuildHermesToolGateways =
       rebuildsHermesSandbox &&
       (registryHermesToolGateways !== null || sessionHermesToolGateways !== null);
-    const hasRebuildMessagingChannels =
-      registryMessagingChannels !== null || sessionMessagingChannels !== null;
-    // Snapshot the operator's paused channel set BEFORE `removeSandboxRegistryEntry`
-    // wipes the registry entry. Otherwise the `disabledChannels` filter inside
-    // `createSandbox` (onboard.ts) reads back `[]` from the freshly-empty registry
-    // and the stopped channel comes back live in the rebuilt image. The session
-    // mirror is the only place this list can survive the destroy/recreate window.
-    //
-    // Always re-stash from `sb` — do NOT fall back to a prior session value.
-    // `sb` is loaded fresh from the registry at the top of rebuildSandbox, so it
-    // already reflects the latest `channels stop|start` write. The session mirror
-    // is downstream of the registry; re-stashing on every rebuild keeps a stale
-    // ["telegram"] from a prior stop/rebuild cycle from leaking into the next
-    // start/rebuild and filtering the channel back out.
-    const rebuildDisabledChannels = Array.isArray(sb.disabledChannels)
-      ? sb.disabledChannels.filter((value: unknown): value is string => typeof value === "string")
-      : [];
     log(
       `Session before update: sandboxName=${sessionBefore?.sandboxName}, status=${sessionBefore?.status}, resumable=${sessionBefore?.resumable}, provider=${sessionBefore?.provider}, model=${sessionBefore?.model}, sessionMatch=${sessionMatchesSandbox}`,
     );
@@ -896,9 +868,6 @@ export async function rebuildSandbox(
       s.resumable = true;
       s.status = "in_progress";
       s.agent = rebuildAgent;
-      s.messagingChannels = rebuildMessagingChannels;
-      s.messagingChannelConfig = rebuildMessagingChannelConfig;
-      s.disabledChannels = rebuildDisabledChannels;
       s.messagingPlan = rebuildMessagingPlan;
       s.hermesToolGateways = rebuildsHermesSandbox ? rebuildHermesToolGateways : [];
       // Persist inference selection from the about-to-be-removed registry entry
@@ -1077,9 +1046,6 @@ export async function rebuildSandbox(
     }
 
     const preservedRegistryFields = {
-      ...(hasRebuildMessagingChannels ? { messagingChannels: [...rebuildMessagingChannels] } : {}),
-      disabledChannels:
-        rebuildDisabledChannels.length > 0 ? [...rebuildDisabledChannels] : undefined,
       ...(hasRebuildHermesToolGateways
         ? { hermesToolGateways: [...rebuildHermesToolGateways] }
         : {}),
@@ -1129,6 +1095,7 @@ export async function rebuildSandbox(
     const registryPolicyPresets = Array.isArray(sb.policies)
       ? sb.policies.filter((value: unknown): value is string => typeof value === "string")
       : [];
+    const rebuildDisabledChannels = [...(rebuildMessagingPlan?.disabledChannels ?? [])];
     const savedPresets = pruneDisabledMessagingPolicyPresets(
       backupManifest?.policyPresets ?? registryPolicyPresets,
       rebuildDisabledChannels,
@@ -1171,6 +1138,7 @@ export async function rebuildSandbox(
     // could not verify the contract — the rebuilt sandbox may still EACCES on
     // gateway-side config writes, so the final result is downgraded below.
     let mutablePermsRepairUnverified = false;
+    let mutableConfigHashRefreshUnverified = false;
     if (agentDef.name === "openclaw") {
       // openclaw doctor --fix validates and repairs directory structure.
       // Idempotent and safe — catches structural changes between OpenClaw versions
@@ -1193,6 +1161,16 @@ export async function rebuildSandbox(
       // Reapply the staged plan so channel config and WeChat account seed files
       // remain paired with the restored OpenClaw extension state.
       await reapplyMessagingManifestAfterOpenClawDoctor(sandboxName, rebuildMessagingPlan, log);
+
+      // The post-restore structure repair and seed helper can rewrite
+      // openclaw.json after restoreStateFile has already refreshed
+      // .config-hash. Refresh the mutable hash here so the gateway token and
+      // channel seed changes are integrity-valid before the sandbox is handed
+      // back to the user.
+      log("Refreshing mutable OpenClaw config hash after post-restore config writes");
+      if (!refreshMutableOpenClawConfigHashAfterPostRestoreWrites(sandboxName, log)) {
+        mutableConfigHashRefreshUnverified = true;
+      }
 
       // #4538: `openclaw doctor --fix` enforces a single-user 700/600 state
       // layout, which silently tightens NemoClaw's mutable config contract
@@ -1255,7 +1233,7 @@ export async function rebuildSandbox(
     if (!relockShieldsIfNeeded(true)) return bail("Failed to re-apply shields lockdown.");
 
     console.log("");
-    if (restoreSucceeded && !mutablePermsRepairUnverified) {
+    if (restoreSucceeded && !mutablePermsRepairUnverified && !mutableConfigHashRefreshUnverified) {
       console.log(`  ${G}\u2713${R} Sandbox '${sandboxName}' rebuilt successfully`);
       if (staleRecovery) {
         console.log(
@@ -1281,6 +1259,11 @@ export async function rebuildSandbox(
       if (mutablePermsRepairUnverified) {
         console.log(
           `    Mutable config permissions were not verified \u2014 run \`${CLI_NAME} ${sandboxName} doctor --fix\` to restore the OpenClaw config permission contract`,
+        );
+      }
+      if (mutableConfigHashRefreshUnverified) {
+        console.log(
+          `    Mutable OpenClaw config hash was not refreshed \u2014 restart the sandbox or re-run \`${CLI_NAME} ${sandboxName} rebuild\` before relying on config integrity checks`,
         );
       }
     }

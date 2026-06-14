@@ -23,7 +23,7 @@ function buildRecoveredSandboxEntry(
   name: string,
   metadata: RecoveredSandboxMetadata = {},
 ): SandboxEntry {
-  return {
+  const entry: SandboxEntry = {
     name,
     model: metadata.model || null,
     provider: metadata.provider || null,
@@ -34,8 +34,16 @@ function buildRecoveredSandboxEntry(
         ? metadata.policyPresets
         : [],
     nimContainer: metadata.nimContainer || null,
-    agent: metadata.agent || null,
   };
+  // Only assert `agent` when recovery actually knows it. Object.assign in
+  // updateSandbox would otherwise overwrite a persisted agent (e.g. "hermes")
+  // with null whenever the recovery seed has no source of truth — the live
+  // OpenShell gateway does not surface NemoClaw's agent type, and a session
+  // sandbox seed never set this field, so the existing entry must win.
+  if (metadata.agent !== undefined && metadata.agent !== null) {
+    entry.agent = metadata.agent;
+  }
+  return entry;
 }
 
 function upsertRecoveredSandbox(name: string, metadata: RecoveredSandboxMetadata = {}) {
@@ -109,6 +117,7 @@ function seedRecoveryMetadata(
       provider: session.provider || null,
       nimContainer: session.nimContainer || null,
       policyPresets: session.policyPresets || null,
+      agent: session.agent || null,
     }),
   );
   const sessionSandboxMissing = !current.sandboxes.some(

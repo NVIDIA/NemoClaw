@@ -79,6 +79,11 @@ jobs:
   cli-tests:
     needs: cli-test-shards
     if: ${{ always() }}
+    permissions:
+      actions: read
+      code-quality: write
+      contents: read
+      pull-requests: read
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -102,6 +107,10 @@ jobs:
           shard-count: "5"
 
   plugin-tests:
+    permissions:
+      code-quality: write
+      contents: read
+      pull-requests: read
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

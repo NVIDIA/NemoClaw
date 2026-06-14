@@ -154,6 +154,7 @@ describe("docker helpers", () => {
         "openshell-cluster-nemoclaw",
         "openshell-cluster-nemoclaw-cache",
         "openshell-cluster-nemoclaw-2",
+        "openshell-cluster-nemoclaw2",
         "not-a-match",
         "",
       ].join("\n"),
@@ -165,6 +166,23 @@ describe("docker helpers", () => {
       "openshell-cluster-nemoclaw",
       "openshell-cluster-nemoclaw-cache",
       "openshell-cluster-nemoclaw-2",
+    ]);
+  });
+
+  it("does not match a longer per-port gateway name with the same prefix", () => {
+    runCaptureMock.mockReturnValue(
+      [
+        "openshell-cluster-nemoclaw-8081",
+        "openshell-cluster-nemoclaw-8081-cache",
+        "openshell-cluster-nemoclaw-80810",
+      ].join("\n"),
+    );
+
+    const names = dockerListVolumesByPrefix("openshell-cluster-nemoclaw-8081");
+
+    expect(names).toEqual([
+      "openshell-cluster-nemoclaw-8081",
+      "openshell-cluster-nemoclaw-8081-cache",
     ]);
   });
 

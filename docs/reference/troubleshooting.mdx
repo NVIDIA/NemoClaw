@@ -1389,6 +1389,12 @@ openshell sandbox delete <sandbox-name>
 Fix the NVIDIA Container Toolkit or CDI configuration reported in the diagnostics, clean up the failed sandbox, then rerun onboarding.
 If you do not need GPU access inside the sandbox, rerun with `--no-sandbox-gpu`.
 Set `NEMOCLAW_DOCKER_GPU_PATCH=0` only when you need to bypass this compatibility path during troubleshooting.
+On Docker Desktop WSL the patch is required for GPU passthrough — `NEMOCLAW_DOCKER_GPU_PATCH=0` is ignored on that runtime, and onboarding logs a warning when it is set there.
+To skip GPU passthrough entirely on Docker Desktop WSL, rerun with `--no-gpu` or set `NEMOCLAW_SANDBOX_GPU=0`.
+
+If sandbox creation fails with `CDI device injection failed: unresolvable CDI devices nvidia.com/gpu=all`, the OpenShell gateway tried `docker create --device nvidia.com/gpu=all` and Docker could not resolve the CDI spec.
+This injection happens inside the gateway, so `NEMOCLAW_DOCKER_GPU_PATCH=0` does not bypass it.
+Rerun with `--no-gpu`, or set `NEMOCLAW_SANDBOX_GPU=0` and resume onboarding.
 
 If onboarding reports `OpenShell supervisor did not reconnect to the GPU-enabled container.` even though the diagnostic bundle shows the patched container is running and healthy, the supervisor-reconnect wait is treating a transient Error phase (reported while the OpenShell host re-registers the new container) as fatal.
 The reconnect wait debounces consecutive Error-phase polls before fast-failing, defaulting to fifteen consecutive polls of about 30 seconds in total.
@@ -1617,6 +1623,20 @@ Expected output:
 
 Point an OpenAI-compatible client at `http://127.0.0.1:8642/v1` for chat completions.
 For terminal use, run `nemohermes <name> connect` and then `hermes` inside the sandbox.
+
+### `docker port` shows no mapping for 8642 even though forwarding works
+
+OpenShell port forwards are host-side relays managed by the OpenShell gateway process, not Docker `-p` publish mappings on the sandbox container.
+`docker port openshell-hermes-<id>` reflects only Docker-published ports, so it returns nothing for OpenShell-managed forwards even when the host bind is live.
+
+Use OpenShell's own view as the supported acceptance signal:
+
+```bash
+openshell forward list                       # shows the host bind for each forwarded port
+curl -sf http://127.0.0.1:8642/health        # confirms the relayed endpoint answers
+```
+
+If `openshell forward list` does not show port `8642`, run `nemohermes <name> connect --probe-only` (or `nemohermes <name> recover`) to ask the recovery path to re-establish every manifest-declared agent forward port that has gone missing.
 
 ### `nemohermes` reports `Sandbox 'X' already exists as OpenClaw`
 

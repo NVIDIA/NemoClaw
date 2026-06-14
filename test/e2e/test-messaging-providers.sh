@@ -36,11 +36,11 @@
 # Prerequisites:
 #   - Docker running
 #   - NemoClaw installed (install.sh or brev-setup.sh already ran)
-#   - NVIDIA_API_KEY set
+#   - NVIDIA_INFERENCE_API_KEY set
 #   - openshell on PATH
 #
 # Environment variables:
-#   NVIDIA_API_KEY                         — required
+#   NVIDIA_INFERENCE_API_KEY                         — required
 #   NEMOCLAW_NON_INTERACTIVE=1             — required
 #   NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 — required
 #   NEMOCLAW_SANDBOX_NAME                  — sandbox name (default: e2e-msg-provider)
@@ -80,7 +80,7 @@
 #
 # Usage:
 #   NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
-#     NVIDIA_API_KEY=nvapi-... bash test/e2e/test-messaging-providers.sh
+#     NVIDIA_INFERENCE_API_KEY=nvapi-... bash test/e2e/test-messaging-providers.sh
 #
 # See: https://github.com/NVIDIA/NemoClaw/pull/1081
 
@@ -143,30 +143,16 @@ openshell() {
   fi
 }
 
-registry_field() {
-  local field="$1"
-  if [ ! -f "$REGISTRY" ]; then
-    echo "null"
-    return
-  fi
-  if command -v jq >/dev/null 2>&1; then
-    jq -c --arg name "$SANDBOX_NAME" --arg field "$field" \
-      '.sandboxes[$name][$field]' "$REGISTRY" 2>/dev/null || echo "null"
-  else
-    node -e "
-const r = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'));
-const v = (r.sandboxes || {})[process.argv[2]]?.[process.argv[3]];
-process.stdout.write(JSON.stringify(v ?? null));
-" "$REGISTRY" "$SANDBOX_NAME" "$field" 2>/dev/null || echo "null"
-  fi
-}
-
-registry_array_contains() {
-  local field="$1"
-  local item="$2"
-  local value
-  value="$(registry_field "$field")"
-  printf '%s' "$value" | grep -Fq "\"${item}\""
+registry_plan_channel_contains() {
+  local item="$1"
+  node -e '
+const fs = require("fs");
+const [registryPath, sandboxName, channelId] = process.argv.slice(1);
+if (!fs.existsSync(registryPath)) process.exit(1);
+const registry = JSON.parse(fs.readFileSync(registryPath, "utf8"));
+const channels = registry.sandboxes?.[sandboxName]?.messaging?.plan?.channels;
+process.exit(Array.isArray(channels) && channels.some((channel) => channel?.channelId === channelId) ? 0 : 1);
+' "$REGISTRY" "$SANDBOX_NAME" "$item"
 }
 
 assert_openclaw_config_activation() {
@@ -647,11 +633,15 @@ openclaw_message_send_exit_code() {
 # ══════════════════════════════════════════════════════════════════
 section "Phase 0: Prerequisites"
 
-if [ -z "${NVIDIA_API_KEY:-}" ]; then
-  fail "NVIDIA_API_KEY not set"
+if [ -z "${NVIDIA_INFERENCE_API_KEY:-}" ] && [ -n "${NVIDIA_API_KEY:-}" ]; then
+  export NVIDIA_INFERENCE_API_KEY="${NVIDIA_API_KEY}"
+  info "Using legacy NVIDIA_API_KEY as fallback for NVIDIA_INFERENCE_API_KEY"
+fi
+if [ -z "${NVIDIA_INFERENCE_API_KEY:-}" ]; then
+  fail "NVIDIA_INFERENCE_API_KEY not set"
   exit 1
 fi
-pass "NVIDIA_API_KEY is set"
+pass "NVIDIA_INFERENCE_API_KEY is set"
 
 if ! docker info >/dev/null 2>&1; then
   fail "Docker is not running"
@@ -899,10 +889,10 @@ else
   pass "M-WA1: WhatsApp QR-only channel creates no bridge provider"
 fi
 
-if registry_array_contains messagingChannels "whatsapp"; then
-  pass "M-WA2: registry.messagingChannels contains whatsapp after channel add"
+if registry_plan_channel_contains "whatsapp"; then
+  pass "M-WA2: registry.messaging.plan.channels contains whatsapp after channel add"
 else
-  fail "M-WA2: registry.messagingChannels missing whatsapp after channel add ($(registry_field messagingChannels))"
+  fail "M-WA2: registry.messaging.plan.channels missing whatsapp after channel add"
 fi
 
 whatsapp_policy_pre=$(openshell policy get --full "$SANDBOX_NAME" 2>/dev/null || true)
@@ -1838,11 +1828,11 @@ print(account.get('token', ''))
     skip "M9: No Discord token to check"
   fi
 
-  # M9b: Discord Gateway WebSocket routing uses OpenClaw's managed proxy.
-  # Newer OpenClaw starts its own process-wide managed proxy from the top-level
-  # proxy config, so NemoClaw should not bake a Discord-only account.proxy or
-  # launch its temporary loopback helper. The fake Gateway proof in M13b-M13g
-  # exercises the same OpenShell relay path using the generated proxy config.
+  # M9b: Discord Gateway WebSocket routing uses the per-account proxy.
+  # OpenClaw's Discord gateway client only tunnels when the Discord account
+  # proxy is set, while the top-level managed proxy remains configured for the
+  # rest of the channel stack. The fake Gateway proof in M13b-M13g exercises
+  # the same OpenShell relay path using the generated managed proxy config.
   dc_proxy=$(echo "$channel_json" | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
@@ -1859,10 +1849,10 @@ if proxy.get('enabled') is True:
     print(proxy.get('proxyUrl') or '')
 \"" 2>/dev/null || true)
   expected_managed_proxy="http://${NEMOCLAW_PROXY_HOST:-10.200.0.1}:${NEMOCLAW_PROXY_PORT:-3128}"
-  if [ -n "$dc_token" ] && [ -z "$dc_proxy" ] && [ "$managed_proxy_url" = "$expected_managed_proxy" ]; then
-    pass "M9b: Discord relies on OpenClaw managed proxy config, with no per-account loopback proxy"
+  if [ -n "$dc_token" ] && [ "$dc_proxy" = "$expected_managed_proxy" ] && [ "$managed_proxy_url" = "$expected_managed_proxy" ]; then
+    pass "M9b: Discord uses per-account proxy while OpenClaw managed proxy config remains set"
   elif [ -n "$dc_token" ]; then
-    fail "M9b: Discord proxy wiring wrong; expected account.proxy='' and proxy.proxyUrl='${expected_managed_proxy}' (account.proxy='${dc_proxy}', proxy.proxyUrl='${managed_proxy_url}')"
+    fail "M9b: Discord proxy wiring wrong; expected account.proxy='${expected_managed_proxy}' and proxy.proxyUrl='${expected_managed_proxy}' (account.proxy='${dc_proxy}', proxy.proxyUrl='${managed_proxy_url}')"
   else
     skip "M9b: No Discord channel config to check"
   fi

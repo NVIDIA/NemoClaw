@@ -21,7 +21,9 @@ import {
 import {
   findAvailableDashboardPort,
   getOccupiedPorts,
+  getRegistryOccupiedDashboardPorts,
   isLiveForwardStatus,
+  type ListSandboxesFn,
 } from "./dashboard-port";
 import { bestEffortForwardStop } from "./forward-cleanup";
 import {
@@ -51,6 +53,11 @@ export interface OnboardDashboardDeps {
   isWsl(): boolean;
   redact(value: unknown): string;
   sleep(seconds: number): void;
+  // Sandbox-registry lookup used by `ensureDashboardForward` for the
+  // cross-gateway dashboard port view. Tests inject a stub so the allocator
+  // never reads the runner's real `~/.nemoclaw/sandboxes.json`; production
+  // callers leave it unset and the helper falls back to the live registry.
+  listSandboxes?: ListSandboxesFn;
   printAgentDashboardUi(
     sandboxName: string,
     token: string | null,
@@ -249,7 +256,13 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     }
     let actualPort: number;
     try {
-      actualPort = findAvailableDashboardPort(sandboxName, preferredPort, existingForwards);
+      actualPort = findAvailableDashboardPort(
+        sandboxName,
+        preferredPort,
+        existingForwards,
+        undefined,
+        getRegistryOccupiedDashboardPorts(sandboxName, deps.listSandboxes),
+      );
     } catch (err) {
       if (!rollbackSandboxOnFailure) throw err;
       rollbackSandboxAndExit(sandboxName, err);

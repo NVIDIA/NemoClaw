@@ -8,6 +8,7 @@ import {
   createBuiltInRenderTemplateResolver,
 } from "../channels";
 import { createBuiltInMessagingHookRegistry, MessagingHookRegistry } from "../hooks";
+import { createChannelManifestRegistry, type ChannelManifest } from "../manifest";
 import { MessagingWorkflowPlanner } from "./workflow-planner";
 
 const TEST_CREDENTIALS: Readonly<Record<string, string>> = {
@@ -23,6 +24,34 @@ const TEST_WECHAT_LOGIN = {
   baseUrl: "https://ilinkai.wechat.com",
   userId: "test-wechat-user",
 } as const;
+
+const CREDENTIAL_ONLY_MANIFEST: ChannelManifest = {
+  schemaVersion: 1,
+  id: "matrix",
+  displayName: "Matrix",
+  supportedAgents: ["openclaw"],
+  auth: { mode: "none" },
+  inputs: [
+    {
+      id: "botToken",
+      kind: "secret",
+      required: true,
+      envKey: "MATRIX_BOT_TOKEN",
+    },
+  ],
+  credentials: [
+    {
+      id: "botToken",
+      sourceInput: "botToken",
+      providerName: "{sandboxName}-matrix",
+      providerEnvKey: "MATRIX_BOT_TOKEN",
+      placeholder: "MATRIX_BOT_TOKEN",
+    },
+  ],
+  render: [],
+  state: {},
+  hooks: [],
+};
 
 function planner(): MessagingWorkflowPlanner {
   return new MessagingWorkflowPlanner(
@@ -529,6 +558,51 @@ describe("MessagingWorkflowPlanner", () => {
     ]);
   });
 
+  it("does not trust credential availability from mismatched sandbox entry plans", async () => {
+    const registry = createChannelManifestRegistry([CREDENTIAL_ONLY_MANIFEST]);
+    const localPlanner = new MessagingWorkflowPlanner(
+      registry,
+      new MessagingHookRegistry(),
+      createBuiltInRenderTemplateResolver(),
+    );
+    const stalePlan = await localPlanner.buildPlan({
+      sandboxName: "other-sandbox",
+      agent: "openclaw",
+      workflow: "onboard",
+      isInteractive: false,
+      configuredChannels: ["matrix"],
+      credentialAvailability: {
+        MATRIX_BOT_TOKEN: true,
+      },
+    });
+
+    const plan = await localPlanner.buildChannelAddPlanFromSandboxEntry({
+      sandboxName: "demo",
+      agent: "openclaw",
+      sandboxEntry: {
+        name: "demo",
+        messaging: {
+          schemaVersion: 1,
+          plan: stalePlan,
+        },
+      },
+      channelId: "matrix",
+      isInteractive: false,
+      supportedChannelIds: ["matrix"],
+    });
+
+    expect(plan.channels).toHaveLength(1);
+    expect(plan.channels[0]).toMatchObject({
+      channelId: "matrix",
+      active: false,
+      configured: true,
+    });
+    expect(plan.credentialBindings[0]).toMatchObject({
+      channelId: "matrix",
+      credentialAvailable: false,
+    });
+  });
+
   it("mutates disabled channel state in an existing sandbox entry plan", async () => {
     const existingPlan = await planner().buildPlan({
       sandboxName: "demo",
@@ -651,7 +725,6 @@ describe("MessagingWorkflowPlanner", () => {
           agent: "openclaw",
           sandboxEntry: {
             name: "demo",
-            messagingChannels: ["telegram"],
             messaging: {
               schemaVersion: 1,
               plan: existingPlan,
@@ -673,74 +746,6 @@ describe("MessagingWorkflowPlanner", () => {
             disabled: false,
           },
         );
-      },
-    );
-  });
-
-  it("rebuilds legacy registry entries from messaging channels and provider credential hashes", async () => {
-    await withEnv(
-      {
-        DISCORD_BOT_TOKEN: undefined,
-        DISCORD_SERVER_ID: "1491590992753590594",
-        DISCORD_REQUIRE_MENTION: "0",
-        DISCORD_USER_ID: "1005536447329222676",
-      },
-      async () => {
-        const rebuilt = await planner().buildRebuildPlanFromSandboxEntry({
-          sandboxName: "demo",
-          agent: "hermes",
-          sandboxEntry: {
-            name: "demo",
-            messagingChannels: ["discord"],
-            providerCredentialHashes: {
-              DISCORD_BOT_TOKEN: "sha256-test-discord-token",
-            },
-          },
-        });
-
-        const discordChannel = rebuilt?.channels.find((channel) => channel.channelId === "discord");
-        const discordEnv = rebuilt?.agentRender.find(
-          (render) => render.channelId === "discord" && render.kind === "env-lines",
-        );
-        const discordConfig = rebuilt?.agentRender.find(
-          (render) =>
-            render.channelId === "discord" &&
-            render.kind === "json-fragment" &&
-            render.path === "discord",
-        );
-
-        expect(rebuilt?.workflow).toBe("rebuild");
-        expect(discordChannel).toMatchObject({
-          active: true,
-          disabled: false,
-          configured: true,
-        });
-        expect(
-          rebuilt?.credentialBindings.find(
-            (binding) =>
-              binding.channelId === "discord" && binding.providerEnvKey === "DISCORD_BOT_TOKEN",
-          ),
-        ).toMatchObject({ credentialAvailable: true });
-        expect(discordEnv).toMatchObject({
-          lines: [
-            "DISCORD_BOT_TOKEN=openshell:resolve:env:DISCORD_BOT_TOKEN",
-            "NEMOCLAW_DISCORD_GUILD_IDS=1491590992753590594",
-            "DISCORD_ALLOWED_USERS=1005536447329222676",
-          ],
-        });
-        expect(discordConfig).toMatchObject({
-          value: {
-            require_mention: false,
-          },
-        });
-        expect(
-          rebuilt?.agentRender.find(
-            (render) =>
-              render.channelId === "discord" &&
-              render.kind === "json-fragment" &&
-              render.path === "platforms.discord",
-          ),
-        ).toMatchObject({ value: { enabled: true } });
       },
     );
   });

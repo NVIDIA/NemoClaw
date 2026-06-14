@@ -10,7 +10,7 @@
 # The config hash is verified at startup to detect tampering.
 #
 # Optional env:
-#   NVIDIA_API_KEY                API key for NVIDIA-hosted inference
+#   NVIDIA_INFERENCE_API_KEY                API key for NVIDIA-hosted inference
 #   CHAT_UI_URL                   Browser origin that will access the forwarded dashboard
 #   NEMOCLAW_DISABLE_DEVICE_AUTH  Build-time only. Set to "1" to skip device-pairing auth.
 #                                  Also auto-disabled when CHAT_UI_URL is non-loopback.
@@ -218,6 +218,16 @@ mark_in_container_gateway() {
   : >/tmp/nemoclaw-gateway-local 2>/dev/null || true
 }
 
+# Record the PID of the live in-container gateway so the Docker HEALTHCHECK
+# can confirm the actual gateway process (not merely *some* `openclaw`
+# process) is still alive when the in-container curl probe cannot reach the
+# dashboard port (#4952). Refreshed on every (re)launch so a respawned gateway
+# is tracked and a window where the gateway is down reads as unhealthy.
+# Best-effort: a write failure must never block startup.
+record_gateway_pid() {
+  printf '%s\n' "${1:-}" >/tmp/nemoclaw-gateway.pid 2>/dev/null || true
+}
+
 _chat_ui_url_port() {
   [ -n "${CHAT_UI_URL:-}" ] || return 1
   python3 - "$CHAT_UI_URL" <<'PYPORT'
@@ -286,7 +296,38 @@ else
 fi
 PUBLIC_PORT="$_DASHBOARD_PORT"
 export OPENCLAW_GATEWAY_PORT="$_DASHBOARD_PORT"
-export OPENCLAW_GATEWAY_URL="ws://127.0.0.1:${_DASHBOARD_PORT}"
+# Gateway WebSocket URL host. Default to the sandbox's own primary interface
+# address rather than loopback: spawned sub-agent runtimes (sessions_spawn)
+# dial OPENCLAW_GATEWAY_URL from inside the enforced process tree, where the
+# OpenShell L7 proxy transparently intercepts connect() and hard-denies
+# loopback destinations regardless of policy. With a loopback URL every child
+# WebSocket upgrade dies with `1006 abnormal closure (no close frame)` and
+# nothing reaches the gateway log. The gateway listens on 0.0.0.0 and the
+# eth0 address is allowlisted in the base sandbox policy
+# (openclaw_gateway_dialback in openclaw-sandbox.yaml), so the same dial
+# works from both enforced and unenforced contexts. Falls back to loopback
+# when no interface address is detectable (the pre-fix behavior). Override
+# with NEMOCLAW_GATEWAY_WS_HOST.
+_GATEWAY_WS_HOST="${NEMOCLAW_GATEWAY_WS_HOST:-}"
+# Only auto-derive inside a real sandbox (the Dockerfile.base image always
+# has /sandbox); on dev machines and CI runners the loopback default is
+# kept. NEMOCLAW_SANDBOX_ROOT is overridable for tests. `|| true` keeps
+# the assignment safe under `set -o pipefail` when hostname lacks -I.
+if [ -z "$_GATEWAY_WS_HOST" ] && [ -d "${NEMOCLAW_SANDBOX_ROOT:-/sandbox}" ]; then
+  _GATEWAY_WS_HOST="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
+fi
+if [ -z "$_GATEWAY_WS_HOST" ]; then
+  _GATEWAY_WS_HOST="127.0.0.1"
+fi
+export OPENCLAW_GATEWAY_URL="ws://${_GATEWAY_WS_HOST}:${_DASHBOARD_PORT}"
+if [ "$_GATEWAY_WS_HOST" != "127.0.0.1" ]; then
+  # The OpenClaw client refuses plaintext ws:// to non-loopback private
+  # addresses unless this break-glass is set. The sandbox bridge is a
+  # host-local veth pair — frames never leave the machine — and the
+  # alternative (loopback) is unconditionally blocked by the L7 proxy,
+  # which breaks sessions_spawn entirely.
+  export OPENCLAW_ALLOW_INSECURE_PRIVATE_WS=1
+fi
 OPENCLAW="$(command -v openclaw)" # Resolve once, use absolute path everywhere
 _SANDBOX_HOME="/sandbox"          # Home dir for the sandbox user (useradd -d /sandbox in Dockerfile.base)
 _OPENCLAW_STATE_DIR="${_SANDBOX_HOME}/.openclaw"
@@ -1700,7 +1741,11 @@ prepare_gateway_token_for_current_command() {
 
 # Write an auth profile JSON for the NVIDIA API key so the gateway can authenticate.
 write_auth_profile() {
-  if [ -z "${NVIDIA_API_KEY:-}" ]; then
+  if [ -z "${NVIDIA_INFERENCE_API_KEY:-}" ] && [ -n "${NVIDIA_API_KEY:-}" ]; then
+    export NVIDIA_INFERENCE_API_KEY="$NVIDIA_API_KEY"
+  fi
+
+  if [ -z "${NVIDIA_INFERENCE_API_KEY:-}" ]; then
     return
   fi
 
@@ -1723,7 +1768,7 @@ json.dump({
     f'{provider_key}:manual': {
         'type': 'api_key',
         'provider': provider_key,
-        'keyRef': {'source': 'env', 'id': 'NVIDIA_API_KEY'},
+        'keyRef': {'source': 'env', 'id': 'NVIDIA_INFERENCE_API_KEY'},
         'profileId': f'{provider_key}:manual',
     }
 }, open(path, 'w'))
@@ -1834,10 +1879,14 @@ def load_approval_policy(path):
         raise RuntimeError('approval policy helper could not be loaded')
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return module.approval_request_decision, module.gateway_approval_env
+    return (
+        module.approval_request_decision,
+        module.gateway_approval_env,
+        getattr(module, 'recover_failed_scope_approval', None),
+    )
 
 
-approval_request_decision, gateway_approval_env = load_approval_policy(APPROVAL_POLICY_FILE)
+approval_request_decision, gateway_approval_env, recover_failed_scope_approval = load_approval_policy(APPROVAL_POLICY_FILE)
 
 OPENCLAW = os.environ.get('OPENCLAW_BIN', 'openclaw')
 
@@ -1966,6 +2015,19 @@ while time.time() < DEADLINE:
                 HANDLED.add(request_id)
                 APPROVED += 1
                 print(f'[auto-pair] approved request={request_id} client={client_id} mode={client_mode}')
+            elif callable(recover_failed_scope_approval):
+                recovered = recover_failed_scope_approval(
+                    request_id,
+                    os.environ.get('OPENCLAW_STATE_DIR') or '/sandbox/.openclaw',
+                    aerr or aout or '',
+                    device,
+                )
+                if recovered:
+                    HANDLED.add(request_id)
+                    APPROVED += 1
+                    print(f'[auto-pair] recovered failed approve request={request_id} client={client_id} mode={client_mode}')
+                elif aout or aerr:
+                    print(f'[auto-pair] approve failed request={request_id}: {(aerr or aout)[:400]}')
             elif aout or aerr:
                 print(f'[auto-pair] approve failed request={request_id}: {(aerr or aout)[:400]}')
         time.sleep(SLOW_INTERVAL if SLOW_MODE else 1)
@@ -2218,6 +2280,11 @@ PROXYEOF
       _escaped_gateway_token="$(printf '%s' "$OPENCLAW_GATEWAY_TOKEN" | sed "s/'/'\\\\''/g")"
       printf "export OPENCLAW_GATEWAY_TOKEN='%s'\n" "$_escaped_gateway_token"
     fi
+    if [ -n "${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-}" ]; then
+      # Mirrors the gateway-process export above so connect-shell CLI
+      # clients accept the plaintext eth0 ws:// gateway URL too.
+      printf "export OPENCLAW_ALLOW_INSECURE_PRIVATE_WS='1'\n"
+    fi
     cat <<'GUARDENVEOF'
 # nemoclaw-configure-guard begin
 # #4538: a raw in-sandbox `openclaw doctor --fix` (run directly from a connect
@@ -2252,6 +2319,12 @@ _nemoclaw_restore_mutable_config_perms() {
   chmod -R g+rwX,o-rwx "$_nemoclaw_oc_dir" 2>/dev/null || true
   find "$_nemoclaw_oc_dir" -type d -exec chmod g+s {} + 2>/dev/null || true
   chmod 2770 "$_nemoclaw_oc_dir" 2>/dev/null || true
+  if [ ! -L "$_nemoclaw_oc_dir" ] &&
+    [ ! -L "$_nemoclaw_oc_dir/openclaw.json" ] &&
+    [ ! -L "$_nemoclaw_oc_dir/.config-hash" ] &&
+    [ -f "$_nemoclaw_oc_dir/openclaw.json" ]; then
+    (cd "$_nemoclaw_oc_dir" && sha256sum openclaw.json >.config-hash) 2>/dev/null || true
+  fi
   chmod 660 "$_nemoclaw_oc_dir/openclaw.json" "$_nemoclaw_oc_dir/.config-hash" 2>/dev/null || true
   # Keep the recovery baseline out of the group-writable contract — it is a
   # read-only trust anchor (root:sandbox 0440 when root re-locks it). The
@@ -2344,11 +2417,22 @@ def output_mentions_request_id(value):
     request = norm(value)
     return bool(request and re.search(r"(?<![0-9A-Za-z_-])" + re.escape(request) + r"(?![0-9A-Za-z_-])", approve_output))
 
+def is_scope_upgrade_approval_compat_failure(output):
+    text = norm(output).lower()
+    return "scope upgrade pending approval" in text and (
+        "gatewayclientrequesterror" in text or "gateway" in text
+    )
+
 requested = scope_set(before)
 device_id = norm(before.get("deviceId"))
 pending = load("pending.json")
 paired = load("paired.json")
-still_pending = any(isinstance(item, dict) and item.get("requestId") == request_id for item in pending.values())
+original_pending_key = None
+for key, item in pending.items():
+    if isinstance(item, dict) and item.get("requestId") == request_id:
+        original_pending_key = key
+        break
+still_pending = original_pending_key is not None
 paired_entry = paired.get(device_id) if device_id else None
 paired_scopes = scope_set(paired_entry or {}, "approvedScopes") | scope_set(paired_entry or {})
 # Compatibility boundary: treat a nonzero approve as success only when OpenClaw
@@ -2365,7 +2449,7 @@ if request_id and requested and not still_pending and isinstance(paired_entry, d
 # replacing operator.write approvals with admin-shaped pending requests or
 # exposes a supported approval repair API.
 allowed = {"operator.pairing", "operator.read", "operator.write"}
-if not request_id or not device_id or not requested or not requested.issubset(allowed) or "operator.pairing" not in paired_scopes or still_pending:
+if not request_id or not device_id or not requested or not requested.issubset(allowed) or "operator.pairing" not in paired_scopes:
     raise SystemExit(1)
 replacement_allowed = allowed | {"operator.admin"}
 candidates = []
@@ -2377,10 +2461,14 @@ for key, item in pending.items():
         candidates.append((key, item))
         if output_mentions_request_id(item.get("requestId")):
             mentioned.append((key, item))
+compatibility = "openclaw-approve-recovered-replacement"
 if len(mentioned) == 1:
     replacement_key, replacement = mentioned[0]
 elif len(candidates) == 1 and not re.search(r"\brequestId\b|\brequest[-_ ]?id\b", approve_output, re.IGNORECASE):
     replacement_key, replacement = candidates[0]
+elif still_pending and not candidates and is_scope_upgrade_approval_compat_failure(approve_output):
+    replacement_key = original_pending_key
+    compatibility = "openclaw-approve-recovered-original"
 else:
     raise SystemExit(1)
 approved = set(paired_scopes) | requested
@@ -2401,7 +2489,7 @@ pending.pop(replacement_key, None)
 paired[device_id] = paired_entry
 save("pending.json", pending)
 save("paired.json", paired)
-print(json.dumps({"requestId": request_id, "deviceId": device_id, "approvedScopes": approved_list, "compatibility": "openclaw-approve-recovered-replacement"}, sort_keys=True))
+print(json.dumps({"requestId": request_id, "deviceId": device_id, "approvedScopes": approved_list, "compatibility": compatibility}, sort_keys=True))
 raise SystemExit(0)
 PYAPPROVEAFTER
         return 0
@@ -3384,6 +3472,7 @@ if [ "$(id -u)" -ne 0 ]; then
   mark_in_container_gateway
   nohup "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" >/tmp/gateway.log 2>&1 &
   GATEWAY_PID=$!
+  record_gateway_pid "$GATEWAY_PID"
   echo "[gateway] openclaw gateway launched (pid $GATEWAY_PID)" >&2
   # Diagnostic: mirror gateway log to PID 1's stderr — see root-mode block
   # below for rationale (NVIDIA/NemoClaw#2484).
@@ -3437,6 +3526,7 @@ if [ "$(id -u)" -ne 0 ]; then
     sleep 2
     nohup "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" >>/tmp/gateway.log 2>&1 &
     GATEWAY_PID=$!
+    record_gateway_pid "$GATEWAY_PID"
     # shellcheck disable=SC2034  # read by cleanup_on_signal from sandbox-init.sh
     SANDBOX_WAIT_PID="$GATEWAY_PID"
     SANDBOX_CHILD_PIDS+=("$GATEWAY_PID")
@@ -3609,6 +3699,7 @@ validate_tmp_permissions "$_SANDBOX_SAFETY_NET" "$_PROXY_FIX_SCRIPT" "$_NEMOTRON
 mark_in_container_gateway
 nohup "${STEP_DOWN_PREFIX_GATEWAY[@]}" "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" >/tmp/gateway.log 2>&1 &
 GATEWAY_PID=$!
+record_gateway_pid "$GATEWAY_PID"
 echo "[gateway] openclaw gateway launched as 'gateway' user (pid $GATEWAY_PID)" >&2
 
 # Diagnostic: mirror gateway log to PID 1's stderr so its content surfaces in
@@ -3694,6 +3785,7 @@ while :; do
   sleep 2
   nohup "${STEP_DOWN_PREFIX_GATEWAY[@]}" "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" >>/tmp/gateway.log 2>&1 &
   GATEWAY_PID=$!
+  record_gateway_pid "$GATEWAY_PID"
   # shellcheck disable=SC2034  # read by cleanup_on_signal from sandbox-init.sh
   SANDBOX_WAIT_PID="$GATEWAY_PID"
   SANDBOX_CHILD_PIDS+=("$GATEWAY_PID")
