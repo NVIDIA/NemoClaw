@@ -365,10 +365,6 @@ The preset uses the Gmail REST API over OAuth2 and does not open SMTP or IMAP po
 - An OAuth2 client ID and client secret, or a service account with domain-wide delegation.
 - A `credentials.json` file downloaded from the [Google Cloud Console](https://console.cloud.google.com/apis/credentials).
 
-For App Password authentication (simpler, no OAuth2 flow required):
-
-- A Google account with 2-Step Verification enabled.
-- An App Password generated at [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords).
 
 ### Apply the Preset
 
@@ -432,27 +428,6 @@ for msg in results.get("messages", []):
     print(msg["id"])
 ```
 
-For App Password access using IMAP, install `imaplib` (included in the Python standard library) and read config from the uploaded JSON:
-
-```python
-import imaplib
-import json
-
-with open("/sandbox/gmail_config.json") as f:
-    cfg = json.load(f)
-
-mail = imaplib.IMAP4_SSL("imap.gmail.com")
-mail.login(cfg["email"], cfg["app_password"])
-mail.select("inbox")
-_, data = mail.search(None, "ALL")
-print(data[0].split()[-10:])  # last 10 message IDs
-```
-
-<Warning>
-App Passwords grant full account access.
-Store `gmail_config.json` outside the sandbox and upload it only when needed.
-Do not commit it to version control.
-</Warning>
 
 ### Remove the Preset
 
