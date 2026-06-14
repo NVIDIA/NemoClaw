@@ -100,6 +100,7 @@ AUTO_PAIR_FAST_DEADLINE_SECS="${NEMOCLAW_4462_AUTO_PAIR_FAST_DEADLINE_SECS:-${NE
 AUTO_PAIR_DEADLINE_SECS="${NEMOCLAW_4462_AUTO_PAIR_DEADLINE_SECS:-${NEMOCLAW_AUTO_PAIR_DEADLINE_SECS:-$AUTO_PAIR_DEADLINE_DEFAULT}}"
 AUTO_PAIR_SLOW_INTERVAL_SECS="${NEMOCLAW_4462_AUTO_PAIR_SLOW_INTERVAL_SECS:-${NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS:-$AUTO_PAIR_SLOW_INTERVAL_DEFAULT}}"
 AUTO_PAIR_RUN_TIMEOUT_SECS="${NEMOCLAW_4462_AUTO_PAIR_RUN_TIMEOUT_SECS:-${NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS:-$AUTO_PAIR_RUN_TIMEOUT_DEFAULT}}"
+SCOPE_UPGRADE_ALREADY_SATISFIED=0
 
 # shellcheck source=test/e2e/lib/sandbox-teardown.sh
 . "${E2E_DIR}/lib/sandbox-teardown.sh"
@@ -878,10 +879,11 @@ else
     paired_with_admin=$(printf '%s' "$state" | select_cli_paired_with_admin 2>/dev/null) || paired_with_admin=""
     if [ -n "$paired_with_agent_scopes" ] && [ -z "$paired_with_admin" ]; then
       pass "CLI device already has operator.read/operator.write without operator.admin (${paired_with_agent_scopes})"
-      finish_success "RESULT: PASSED - #4462 scope-upgrade was already satisfied before pending-state characterization"
+      SCOPE_UPGRADE_ALREADY_SATISFIED=1
+    else
+      fail "No pending or paired low-scope CLI device found after devices list: ${summary}"
+      exit 1
     fi
-    fail "No pending or paired low-scope CLI device found after devices list: ${summary}"
-    exit 1
   fi
 fi
 
@@ -890,12 +892,16 @@ state="$(device_state_json 2>&1)" || {
   exit 1
 }
 printf '=== state after initial approval ===\n%s\n' "$state" >>"$STATE_LOG"
-paired_without_write=$(printf '%s' "$state" | select_cli_paired_without_write 2>/dev/null) || paired_without_write=""
-if [ -n "$paired_without_write" ]; then
-  pass "CLI device is paired with operator.pairing but not operator.write"
+if [ "$SCOPE_UPGRADE_ALREADY_SATISFIED" = "1" ]; then
+  pass "initial approval check skipped because CLI scope-upgrade is already satisfied"
 else
-  fail "Initial approval did not leave a low-scope CLI device: $(printf '%s' "$state" | summarize_device_state)"
-  exit 1
+  paired_without_write=$(printf '%s' "$state" | select_cli_paired_without_write 2>/dev/null) || paired_without_write=""
+  if [ -n "$paired_without_write" ]; then
+    pass "CLI device is paired with operator.pairing but not operator.write"
+  else
+    fail "Initial approval did not leave a low-scope CLI device: $(printf '%s' "$state" | summarize_device_state)"
+    exit 1
+  fi
 fi
 
 gateway_list=$(sandbox_exec_sh_script 60 '
@@ -914,14 +920,17 @@ else
   exit 1
 fi
 
-if [ "$TEST_MODE" = "legacy-repro" ]; then
+if [ "$TEST_MODE" = "legacy-repro" ] && [ "$SCOPE_UPGRADE_ALREADY_SATISFIED" != "1" ]; then
   wait_for_auto_pair_watcher_inactive || exit 1
 fi
 
 section "Phase 4: Trigger and approve CLI scope upgrade"
 
-info "Triggering agent operator.write scope upgrade"
-trigger_output=$(sandbox_exec_sh_script 120 '
+if [ "$SCOPE_UPGRADE_ALREADY_SATISFIED" = "1" ]; then
+  info "Skipping trigger/approval because CLI operator.read/operator.write scopes were already approved"
+else
+  info "Triggering agent operator.write scope upgrade"
+  trigger_output=$(sandbox_exec_sh_script 120 '
 set -u
 # shellcheck source=/dev/null
 . /tmp/nemoclaw-proxy-env.sh
@@ -937,60 +946,61 @@ set -e
 printf "__TRIGGER_AGENT_RC__=%s\n" "$agent_rc"
 exit 0
 ' 2>&1)
-printf '=== trigger agent output ===\n%s\n' "$trigger_output" >>"$AGENT_LOG"
+  printf '=== trigger agent output ===\n%s\n' "$trigger_output" >>"$AGENT_LOG"
 
-scope_request_id=""
-auto_approved_device=""
-for _attempt in 1 2 3 4 5; do
-  state="$(device_state_json 2>&1)" || state=""
-  if [ -n "$state" ]; then
-    printf '=== state while waiting for scope upgrade ===\n%s\n' "$state" >>"$STATE_LOG"
-    scope_request_id=$(printf '%s' "$state" | select_cli_request scope-upgrade 2>/dev/null) || scope_request_id=""
-    auto_approved_device=$(printf '%s' "$state" | select_cli_paired_with_agent_scopes 2>/dev/null) || auto_approved_device=""
+  scope_request_id=""
+  auto_approved_device=""
+  for _attempt in 1 2 3 4 5; do
+    state="$(device_state_json 2>&1)" || state=""
+    if [ -n "$state" ]; then
+      printf '=== state while waiting for scope upgrade ===\n%s\n' "$state" >>"$STATE_LOG"
+      scope_request_id=$(printf '%s' "$state" | select_cli_request scope-upgrade 2>/dev/null) || scope_request_id=""
+      auto_approved_device=$(printf '%s' "$state" | select_cli_paired_with_agent_scopes 2>/dev/null) || auto_approved_device=""
+    fi
+    [ -n "$scope_request_id" ] && break
+    if [ "$TEST_MODE" = "approval" ] && [ -n "$auto_approved_device" ]; then
+      break
+    fi
+    sleep 2
+  done
+
+  if [ -z "$scope_request_id" ] && [ "$TEST_MODE" = "legacy-repro" ]; then
+    scope_request_id=$(printf '%s' "$trigger_output" | extract_scope_request_id_from_output) || scope_request_id=""
   fi
-  [ -n "$scope_request_id" ] && break
-  if [ "$TEST_MODE" = "approval" ] && [ -n "$auto_approved_device" ]; then
-    break
-  fi
-  sleep 2
-done
 
-if [ -z "$scope_request_id" ] && [ "$TEST_MODE" = "legacy-repro" ]; then
-  scope_request_id=$(printf '%s' "$trigger_output" | extract_scope_request_id_from_output) || scope_request_id=""
-fi
-
-if [ -n "$scope_request_id" ]; then
-  pass "pending CLI scope-upgrade request exists (${scope_request_id})"
-elif [ "$TEST_MODE" = "approval" ] && [ -n "$auto_approved_device" ]; then
-  pass "auto-pair watcher approved the CLI scope upgrade before pending inspection (${auto_approved_device})"
-else
-  fail "No pending CLI scope-upgrade request appeared after agent trigger. State: $(printf '%s' "${state:-{}}" | summarize_device_state 2>/dev/null || true). Trigger: ${trigger_output:0:500}"
-  exit 1
-fi
-
-if [ "$TEST_MODE" = "legacy-repro" ]; then
-  legacy_gateway_pinned_approval_characterization "$scope_request_id" || exit 1
-  if [ "$FAIL" -gt 0 ]; then
-    section "Summary"
-    echo ""
-    printf '  Total: %d | \033[32mPass: %d\033[0m | \033[31mFail: %d\033[0m\n' \
-      "$TOTAL" "$PASS" "$FAIL"
-    echo ""
-    echo "RESULT: FAILED - ${FAIL} test(s) failed"
+  if [ -n "$scope_request_id" ]; then
+    pass "pending CLI scope-upgrade request exists (${scope_request_id})"
+  elif [ "$TEST_MODE" = "approval" ] && [ -n "$auto_approved_device" ]; then
+    pass "auto-pair watcher approved the CLI scope upgrade before pending inspection (${auto_approved_device})"
+  else
+    fail "No pending CLI scope-upgrade request appeared after agent trigger. State: $(printf '%s' "${state:-{}}" | summarize_device_state 2>/dev/null || true). Trigger: ${trigger_output:0:500}"
     exit 1
   fi
-  finish_success "RESULT: PASSED - #4462 legacy gateway-pinned approval behavior characterized and final state handled"
-fi
 
-if [ "$TEST_MODE" != "approval" ]; then
-  fail "Unknown NEMOCLAW_4462_MODE=${TEST_MODE}; expected approval or legacy-repro"
-  exit 1
-fi
+  if [ "$TEST_MODE" = "legacy-repro" ]; then
+    legacy_gateway_pinned_approval_characterization "$scope_request_id" || exit 1
+    if [ "$FAIL" -gt 0 ]; then
+      section "Summary"
+      echo ""
+      printf '  Total: %d | \033[32mPass: %d\033[0m | \033[31mFail: %d\033[0m\n' \
+        "$TOTAL" "$PASS" "$FAIL"
+      echo ""
+      echo "RESULT: FAILED - ${FAIL} test(s) failed"
+      exit 1
+    fi
+    finish_success "RESULT: PASSED - #4462 legacy gateway-pinned approval behavior characterized and final state handled"
+  fi
 
-if [ -n "$scope_request_id" ]; then
-  approve_request "$scope_request_id" "CLI scope upgrade" 1 || exit 1
-else
-  info "Skipping manual scope-upgrade approval because the auto-pair watcher already granted it"
+  if [ "$TEST_MODE" != "approval" ]; then
+    fail "Unknown NEMOCLAW_4462_MODE=${TEST_MODE}; expected approval or legacy-repro"
+    exit 1
+  fi
+
+  if [ -n "$scope_request_id" ]; then
+    approve_request "$scope_request_id" "CLI scope upgrade" 1 || exit 1
+  else
+    info "Skipping manual scope-upgrade approval because the auto-pair watcher already granted it"
+  fi
 fi
 
 state="$(device_state_json 2>&1)" || {
@@ -1013,7 +1023,11 @@ if [ -n "$paired_with_admin" ]; then
   fail "Unexpected operator.admin approval for CLI device (${paired_with_admin})"
   exit 1
 fi
-pass "scope-upgrade approval grants the CLI device operator.write and operator.read without approving operator.admin"
+if [ "$SCOPE_UPGRADE_ALREADY_SATISFIED" = "1" ]; then
+  pass "preapproved CLI scope-upgrade state has operator.write/operator.read without operator.admin"
+else
+  pass "scope-upgrade approval grants the CLI device operator.write and operator.read without approving operator.admin"
+fi
 
 section "Phase 5: Verify agent stays on gateway path"
 
