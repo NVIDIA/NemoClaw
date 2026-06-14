@@ -293,7 +293,8 @@ RUN set -eu; \
         "$config_dir/platforms/whatsapp/session" \
         "$config_dir/weixin" \
         "$config_dir/weixin/accounts" \
-        "$config_dir/runtime"; \
+        "$config_dir/runtime" \
+        "$config_dir/dashboard-home"; \
     if [ -e "$data_dir" ] || [ -L "$data_dir" ]; then \
         echo "ERROR: legacy data dir still exists after cleanup: $data_dir" >&2; \
         exit 1; \
@@ -342,6 +343,7 @@ RUN set -eu; \
         /sandbox/.hermes/weixin \
         /sandbox/.hermes/weixin/accounts \
         /sandbox/.hermes/runtime \
+        /sandbox/.hermes/dashboard-home \
     && chmod 2770 \
         /sandbox/.hermes/platforms \
         /sandbox/.hermes/platforms/whatsapp \
@@ -379,6 +381,12 @@ RUN if [ "$NEMOCLAW_DARWIN_VM_COMPAT" = "1" ]; then \
         find /sandbox/.hermes -type d -exec chmod a+rwx {} +; \
         chmod a+rw /sandbox/.bashrc /sandbox/.profile; \
     fi
+
+# Run hermes doctor --fix as the final setup step to validate and repair the
+# Hermes installation before the image is locked down. This ensures all
+# initialization is complete and any missing or misconfigured state is corrected.
+# hadolint ignore=DL3059
+RUN HERMES_HOME=/sandbox/.hermes /usr/local/bin/hermes doctor --fix
 
 # start.sh handles privilege separation: runs as root initially, then drops
 # to 'gateway' user via gosu for the agent process. See start.sh.

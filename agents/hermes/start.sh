@@ -181,7 +181,7 @@ if [ "$DASHBOARD_PUBLIC_PORT" -eq "$DASHBOARD_INTERNAL_PORT" ]; then
   DASHBOARD_INTERNAL_PORT=19120
 fi
 HERMES_DASHBOARD_TUI="${NEMOCLAW_HERMES_DASHBOARD_TUI:-${HERMES_DASHBOARD_TUI:-0}}"
-HERMES_DASHBOARD_HOME="${HERMES_DASHBOARD_HOME:-/tmp/hermes-dashboard-home}"
+HERMES_DASHBOARD_HOME="${HERMES_DASHBOARD_HOME:-/sandbox/.hermes/dashboard-home}"
 HERMES="$(command -v hermes)" # Resolve once, use absolute path everywhere
 
 # Hermes resolves config and runtime state relative to HERMES_HOME. The config
