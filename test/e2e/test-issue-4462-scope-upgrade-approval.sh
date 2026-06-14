@@ -111,10 +111,12 @@ AUTO_PAIR_RUN_TIMEOUT_SECS="${NEMOCLAW_4462_AUTO_PAIR_RUN_TIMEOUT_SECS:-${NEMOCL
 # scope-upgrade before this E2E inspects the intermediate low-scope state. That
 # is an acceptable final authorization state only if operator.admin is absent;
 # the script must still prove the final agent turn stays on the gateway path.
-# In legacy-repro mode, a preapproved state leaves no pending upgrade to
-# characterize, so the final result calls that out explicitly instead of
-# claiming the legacy gateway-pinned approve behavior was exercised.
+# In legacy-repro mode, a preapproved state or an agent trigger that succeeds
+# without producing a pending upgrade leaves no gateway-pinned approve request
+# to characterize, so the final result calls that out explicitly instead of
+# claiming the legacy approval behavior was exercised.
 SCOPE_UPGRADE_ALREADY_SATISFIED=0
+LEGACY_SCOPE_UPGRADE_NOT_REPRODUCED=0
 
 # shellcheck source=test/e2e/lib/sandbox-teardown.sh
 . "${E2E_DIR}/lib/sandbox-teardown.sh"
@@ -986,12 +988,18 @@ exit 0
     pass "pending CLI scope-upgrade request exists (${scope_request_id})"
   elif [ "$TEST_MODE" = "approval" ] && [ -n "$auto_approved_device" ]; then
     pass "auto-pair watcher approved the CLI scope upgrade before pending inspection (${auto_approved_device})"
+  elif [ "$TEST_MODE" = "legacy-repro" ] \
+    && grep -q '^__URL_FOR_TRIGGER_AGENT__=ws://' <<<"$trigger_output" \
+    && grep -q '^__TRIGGER_AGENT_RC__=0$' <<<"$trigger_output" \
+    && ! grep -Eiq 'EMBEDDED FALLBACK|scope upgrade pending approval|pairing required|fallbackFrom[": ]+gateway|transport[": ]+embedded' <<<"$trigger_output"; then
+    pass "legacy gateway-pinned scope-upgrade was not reproducible because trigger agent completed through gateway mode"
+    LEGACY_SCOPE_UPGRADE_NOT_REPRODUCED=1
   else
     fail "No pending CLI scope-upgrade request appeared after agent trigger. State: $(printf '%s' "${state:-{}}" | summarize_device_state 2>/dev/null || true). Trigger: ${trigger_output:0:500}"
     exit 1
   fi
 
-  if [ "$TEST_MODE" = "legacy-repro" ]; then
+  if [ "$TEST_MODE" = "legacy-repro" ] && [ "$LEGACY_SCOPE_UPGRADE_NOT_REPRODUCED" != "1" ]; then
     legacy_gateway_pinned_approval_characterization "$scope_request_id" || exit 1
     if [ "$FAIL" -gt 0 ]; then
       section "Summary"
@@ -1024,7 +1032,7 @@ if [ -n "$pending_after_approval" ]; then
   fail "Scope-upgrade request is still pending after approval (${pending_after_approval})"
   exit 1
 fi
-if [ -z "$paired_with_agent_scopes" ]; then
+if [ -z "$paired_with_agent_scopes" ] && [ "$LEGACY_SCOPE_UPGRADE_NOT_REPRODUCED" != "1" ]; then
   fail "No CLI paired device has operator.write and operator.read after approval: $(printf '%s' "$state" | summarize_device_state)"
   exit 1
 fi
@@ -1034,6 +1042,8 @@ if [ -n "$paired_with_admin" ]; then
 fi
 if [ "$SCOPE_UPGRADE_ALREADY_SATISFIED" = "1" ]; then
   pass "preapproved CLI scope-upgrade state has operator.write/operator.read without operator.admin"
+elif [ "$LEGACY_SCOPE_UPGRADE_NOT_REPRODUCED" = "1" ]; then
+  pass "legacy repro trigger left no pending scope-upgrade and no operator.admin grant"
 else
   pass "scope-upgrade approval grants the CLI device operator.write and operator.read without approving operator.admin"
 fi
@@ -1093,6 +1103,9 @@ fi
 
 if [ "$TEST_MODE" = "legacy-repro" ] && [ "$SCOPE_UPGRADE_ALREADY_SATISFIED" = "1" ]; then
   finish_success "RESULT: PASSED - #4462 legacy gateway-pinned approval characterization skipped because scope-upgrade was already satisfied; final gateway path verified"
+fi
+if [ "$TEST_MODE" = "legacy-repro" ] && [ "$LEGACY_SCOPE_UPGRADE_NOT_REPRODUCED" = "1" ]; then
+  finish_success "RESULT: PASSED - #4462 legacy gateway-pinned approval characterization skipped because trigger agent completed without a pending scope-upgrade; final gateway path verified"
 fi
 
 finish_success "RESULT: PASSED - #4462 CLI scope-upgrade approval stays on the gateway path"
