@@ -28,6 +28,55 @@ function secrets(values: Record<string, string | undefined>) {
   };
 }
 
+type ProbeRunOptions = {
+  env?: Record<string, string>;
+  curlExitCode?: number;
+  curlStatus?: string;
+};
+
+function runHostedProbe(options: ProbeRunOptions = {}) {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hosted-probe-"));
+  const callsPath = path.join(tmpDir, "curl.calls");
+  const curlPath = path.join(tmpDir, "curl");
+  const scriptPath = path.join(tmpDir, "run-probe.sh");
+  const curlExitCode = options.curlExitCode ?? 0;
+  const curlStatus = options.curlStatus ?? "404";
+
+  fs.writeFileSync(
+    curlPath,
+    `#!/bin/sh
+for arg in "$@"; do
+  printf 'ARG:%s\n' "$arg" >> ${JSON.stringify(callsPath)}
+done
+printf %s ${JSON.stringify(curlStatus)}
+exit ${curlExitCode}
+`,
+    { mode: 0o755 },
+  );
+  fs.writeFileSync(
+    scriptPath,
+    `#!/usr/bin/env bash
+set -euo pipefail
+. ${JSON.stringify(COMPAT_HELPER)}
+nemoclaw_e2e_probe_hosted_inference
+`,
+    { mode: 0o755 },
+  );
+
+  const result = spawnSync("bash", [scriptPath], {
+    encoding: "utf-8",
+    env: {
+      ...process.env,
+      PATH: `${tmpDir}:${process.env.PATH ?? ""}`,
+      NVIDIA_INFERENCE_API_KEY: "hosted-compatible-key",
+      ...options.env,
+    },
+  });
+  const calls = fs.existsSync(callsPath) ? fs.readFileSync(callsPath, "utf-8") : "";
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+  return { result, calls };
+}
+
 describe("hosted inference E2E config", () => {
   it("uses NVIDIA_INFERENCE_API_KEY as the hosted compatible endpoint source secret", () => {
     const cfg = requireHostedInferenceConfig(
@@ -54,44 +103,48 @@ describe("hosted inference E2E config", () => {
     expect(cfg.credentialEnv).toBe("COMPATIBLE_API_KEY");
   });
 
-  it("uses a lightweight reachability probe instead of spending an inference request", () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hosted-probe-"));
-    try {
-      const curlPath = path.join(tmpDir, "curl");
-      const callsPath = path.join(tmpDir, "curl.calls");
-      fs.writeFileSync(
-        curlPath,
-        `#!/bin/sh
-printf '%s\n' "$*" >> ${JSON.stringify(callsPath)}
-case "$*" in
-  *chat/completions*) exit 88 ;;
-esac
-printf '404'
-exit 0
-`,
-        { mode: 0o755 },
-      );
+  it("uses a lightweight compatible reachability probe without API or auth requests", () => {
+    const { result, calls } = runHostedProbe({
+      env: {
+        NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1",
+        NEMOCLAW_ENDPOINT_URL: "https://inference-api.nvidia.com/v1",
+      },
+    });
 
-      const result = spawnSync(
-        "bash",
-        [
-          "-c",
-          `set -euo pipefail
-export PATH=${JSON.stringify(`${tmpDir}:${process.env.PATH ?? ""}`)}
-export NVIDIA_INFERENCE_API_KEY=hosted-compatible-key
-export NEMOCLAW_E2E_USE_HOSTED_INFERENCE=1
-. ${JSON.stringify(COMPAT_HELPER)}
-nemoclaw_e2e_probe_hosted_inference
-`,
-        ],
-        { encoding: "utf-8" },
-      );
+    expect(result.status).toBe(0);
+    expect(calls).toContain("ARG:https://inference-api.nvidia.com/v1");
+    expect(calls).not.toContain("chat/completions");
+    expect(calls).not.toContain("/models");
+    expect(calls).not.toContain("Authorization");
+    expect(calls).not.toContain("Bearer");
+  });
 
-      expect(result.status).toBe(0);
-      expect(fs.readFileSync(callsPath, "utf-8")).not.toContain("chat/completions");
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
+  it("uses a lightweight nvapi reachability probe without /models or auth", () => {
+    const { result, calls } = runHostedProbe({
+      env: {
+        NVIDIA_INFERENCE_API_KEY: "nvapi-test-key",
+        NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "",
+        NEMOCLAW_PROVIDER: "cloud",
+      },
+    });
+
+    expect(result.status).toBe(0);
+    expect(calls).toContain("ARG:https://inference-api.nvidia.com/v1");
+    expect(calls).not.toContain("/models");
+    expect(calls).not.toContain("Authorization");
+    expect(calls).not.toContain("Bearer");
+  });
+
+  it("fails hosted reachability when curl returns HTTP status 000", () => {
+    const { result } = runHostedProbe({ curlStatus: "000" });
+
+    expect(result.status).not.toBe(0);
+  });
+
+  it("fails hosted reachability when curl exits nonzero", () => {
+    const { result } = runHostedProbe({ curlExitCode: 7, curlStatus: "" });
+
+    expect(result.status).not.toBe(0);
   });
 
   it("configures the custom provider route for inference-api.nvidia.com", () => {
