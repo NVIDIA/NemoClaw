@@ -354,6 +354,114 @@ Then verify the sandbox status:
 $$nemoclaw my-assistant status
 ```
 
+## Gmail
+
+Apply the `gmail` preset when the sandbox needs to read or send email through the Gmail API.
+The preset uses the Gmail REST API over OAuth2 and does not open SMTP or IMAP ports.
+
+### Prerequisites
+
+- A Google Cloud project with the Gmail API enabled.
+- An OAuth2 client ID and client secret, or a service account with domain-wide delegation.
+- A `credentials.json` file downloaded from the [Google Cloud Console](https://console.cloud.google.com/apis/credentials).
+
+For App Password authentication (simpler, no OAuth2 flow required):
+
+- A Google account with 2-Step Verification enabled.
+- An App Password generated at [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords).
+
+### Apply the Preset
+
+```bash
+$$nemoclaw my-assistant policy-add gmail --dry-run
+$$nemoclaw my-assistant policy-add gmail --yes
+```
+
+### Upload Credentials to the Sandbox
+
+Upload your credentials file before running any Gmail script:
+
+```bash
+openshell sandbox upload /path/to/credentials.json /sandbox/credentials.json
+```
+
+For App Password authentication, upload a config file instead:
+
+```bash
+openshell sandbox upload /path/to/gmail_config.json /sandbox/gmail_config.json
+```
+
+A minimal `gmail_config.json` for App Password access:
+
+```json
+{
+  "email": "your-address@gmail.com",
+  "app_password": "xxxx xxxx xxxx xxxx"
+}
+```
+
+### Read and Send Email
+
+Connect to the sandbox and run your Gmail script:
+
+```bash
+$$nemoclaw my-assistant connect
+```
+
+From inside the sandbox, install the Google API client library if needed:
+
+```bash
+pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib
+```
+
+A minimal script to list inbox messages using the Gmail API:
+
+```python
+from googleapiclient.discovery import build
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
+
+SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
+
+flow = InstalledAppFlow.from_client_secrets_file("credentials.json", SCOPES)
+creds = flow.run_local_server(port=0)
+service = build("gmail", "v1", credentials=creds)
+
+results = service.users().messages().list(userId="me", maxResults=10).execute()
+for msg in results.get("messages", []):
+    print(msg["id"])
+```
+
+For App Password access using IMAP, install `imaplib` (included in the Python standard library) and read config from the uploaded JSON:
+
+```python
+import imaplib
+import json
+
+with open("/sandbox/gmail_config.json") as f:
+    cfg = json.load(f)
+
+mail = imaplib.IMAP4_SSL("imap.gmail.com")
+mail.login(cfg["email"], cfg["app_password"])
+mail.select("inbox")
+_, data = mail.search(None, "ALL")
+print(data[0].split()[-10:])  # last 10 message IDs
+```
+
+<Warning>
+App Passwords grant full account access.
+Store `gmail_config.json` outside the sandbox and upload it only when needed.
+Do not commit it to version control.
+</Warning>
+
+### Remove the Preset
+
+Remove Gmail access when the task is complete:
+
+```bash
+$$nemoclaw my-assistant policy-remove gmail --yes
+```
+
 ## Inspect or Replace the Live Policy
 
 Use `policy-list` for normal preset state:
