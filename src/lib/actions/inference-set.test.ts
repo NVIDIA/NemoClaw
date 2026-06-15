@@ -14,6 +14,11 @@ vi.mock("../adapters/openshell/runtime", () => ({
 
 vi.mock("../inference/local", () => ({
   DEFAULT_OLLAMA_MODEL: "llama3.1",
+  validateLocalProvider: vi.fn(() => ({ ok: true })),
+}));
+
+vi.mock("../onboard/local-inference-topology", () => ({
+  ensureLocalProviderReachable: vi.fn(() => true),
 }));
 
 vi.mock("../inference/context-window", () => ({
@@ -31,6 +36,7 @@ vi.mock("../shields/audit", () => ({
   appendAuditEntry: vi.fn(),
 }));
 
+import type { ValidationResult } from "../inference/local";
 import {
   type InferenceSetDeps,
   patchHermesInferenceConfig,
@@ -108,6 +114,8 @@ function createDeps(options: {
   target?: AgentConfigTarget;
   session?: Session | null;
   openshellStatus?: number;
+  localValidation?: ValidationResult;
+  localReachable?: boolean;
   contextWindow?: number | null;
 }): InferenceSetDeps & {
   calls: {
@@ -118,6 +126,8 @@ function createDeps(options: {
     updateSession: ReturnType<typeof vi.fn>;
     appendAuditEntry: ReturnType<typeof vi.fn>;
     log: ReturnType<typeof vi.fn>;
+    validateLocalProvider: ReturnType<typeof vi.fn>;
+    ensureLocalProviderReachable: ReturnType<typeof vi.fn>;
     resolveContextWindowForModel: ReturnType<typeof vi.fn>;
   };
   getSession: () => Session | null;
@@ -142,6 +152,8 @@ function createDeps(options: {
     }),
     appendAuditEntry: vi.fn(),
     log: vi.fn(),
+    validateLocalProvider: vi.fn((): ValidationResult => options.localValidation ?? { ok: true }),
+    ensureLocalProviderReachable: vi.fn(() => options.localReachable ?? true),
     resolveContextWindowForModel: vi.fn((_provider: string, _model: string) =>
       options.contextWindow === undefined ? null : options.contextWindow,
     ),
@@ -161,6 +173,10 @@ function createDeps(options: {
     runOpenshell: calls.runOpenshell,
     appendAuditEntry: calls.appendAuditEntry,
     log: calls.log,
+    isLocalInferenceProvider: (provider) =>
+      provider === "ollama-local" || provider === "vllm-local",
+    validateLocalProvider: calls.validateLocalProvider,
+    ensureLocalProviderReachable: calls.ensureLocalProviderReachable,
     resolveContextWindowForModel: calls.resolveContextWindowForModel,
     calls,
     getSession: () => session,
@@ -935,6 +951,87 @@ describe("runInferenceSet", () => {
     expect(logged).toMatch(/integrity hash/);
     expect(logged).toMatch(/rebuild/);
     expect(logged).not.toMatch(/Inference route synced/);
+  });
+});
+
+describe("runInferenceSet local-provider verification", () => {
+  const localConfig = (): ConfigObject => ({
+    agents: { defaults: { model: { primary: "inference/qwen2.5:7b" } } },
+    models: {
+      providers: {
+        inference: {
+          api: "openai-completions",
+          models: [{ id: "qwen2.5:7b", name: "inference/qwen2.5:7b" }],
+        },
+      },
+    },
+  });
+
+  it("forces --no-verify for a local provider whose host validation passes", async () => {
+    const deps = createDeps({ config: localConfig(), session: baseSession() });
+
+    await runInferenceSet({ provider: "ollama-local", model: "qwen2.5:7b" }, deps);
+
+    expect(deps.calls.validateLocalProvider).toHaveBeenCalledWith("ollama-local");
+    const args = deps.calls.runOpenshell.mock.calls[0][0] as string[];
+    expect(args).toContain("--no-verify");
+    expect(deps.calls.ensureLocalProviderReachable).not.toHaveBeenCalled();
+  });
+
+  it("warns and proceeds with --no-verify when the host stack is reachable despite a failed probe", async () => {
+    const deps = createDeps({
+      config: localConfig(),
+      session: baseSession(),
+      localValidation: {
+        ok: false,
+        message: "Local Ollama is responding on 127.0.0.1, but the container check failed.",
+        diagnostic: "add-host probe timed out",
+      },
+      localReachable: true,
+    });
+
+    await runInferenceSet({ provider: "ollama-local", model: "qwen2.5:7b" }, deps);
+
+    expect(deps.calls.ensureLocalProviderReachable).toHaveBeenCalledWith("ollama-local");
+    const args = deps.calls.runOpenshell.mock.calls[0][0] as string[];
+    expect(args).toContain("--no-verify");
+    const logged = deps.calls.log.mock.calls.map((a) => String(a[0])).join("\n");
+    expect(logged).toMatch(/reachable/);
+  });
+
+  it("aborts without touching the route when the host stack is unreachable", async () => {
+    const deps = createDeps({
+      config: localConfig(),
+      session: baseSession(),
+      localValidation: {
+        ok: false,
+        message: "Local Ollama was selected, but nothing is responding on http://127.0.0.1:11434.",
+      },
+      localReachable: false,
+    });
+
+    await expect(
+      runInferenceSet({ provider: "ollama-local", model: "qwen2.5:7b" }, deps),
+    ).rejects.toThrow(/Cannot reach local provider 'ollama-local'/);
+    expect(deps.calls.runOpenshell).not.toHaveBeenCalled();
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+  });
+
+  it("does not run local validation or force --no-verify for cloud providers", async () => {
+    const deps = createDeps({
+      config: localConfig(),
+      session: baseSession(),
+    });
+
+    await runInferenceSet(
+      { provider: "nvidia-prod", model: "nvidia/nemotron-3-super-120b-a12b" },
+      deps,
+    );
+
+    expect(deps.calls.validateLocalProvider).not.toHaveBeenCalled();
+    expect(deps.calls.ensureLocalProviderReachable).not.toHaveBeenCalled();
+    const args = deps.calls.runOpenshell.mock.calls[0][0] as string[];
+    expect(args).not.toContain("--no-verify");
   });
 });
 
