@@ -41,6 +41,7 @@ export function createSelectOnboardAgent(deps: SelectOnboardAgentDeps) {
   return async function selectOnboardAgent({
     agentFlag = null,
     session = null,
+    resume = false,
     canPrompt = false,
   }: {
     agentFlag?: string | null;
@@ -53,10 +54,15 @@ export function createSelectOnboardAgent(deps: SelectOnboardAgentDeps) {
     const explicitlySelected =
       Boolean(agentFlag) || Boolean(process.env.NEMOCLAW_AGENT) || Boolean(session?.agent);
 
+    // Resuming a session must honor the agent it was created with. The default
+    // OpenClaw path records `session.agent` as null, so without this guard a
+    // resumed OpenClaw session would re-show the picker (an asymmetry with
+    // resumed Hermes sessions) and risk an accidental agent change that clears
+    // agent-scoped resume state.
     // Interactive runs must let the user choose between the available agents
     // (e.g. OpenClaw and Hermes); without this the wizard silently defaulted
     // to OpenClaw and Hermes could only be reached via --agent/NEMOCLAW_AGENT.
-    if (!explicitlySelected && canPrompt && !deps.isNonInteractive()) {
+    if (!explicitlySelected && !resume && canPrompt && !deps.isNonInteractive()) {
       const choices = deps.getAgentChoices();
       if (choices.length > 1) {
         const selected = await promptForAgentChoice(deps, choices);

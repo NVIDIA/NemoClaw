@@ -65,4 +65,16 @@ describe("selectOnboardAgent interactive agent selection", () => {
     assert.equal(agent?.name, "hermes");
     assert.equal(prompt.mock.calls.length, 0);
   });
+
+  it("does not re-prompt when resuming an OpenClaw session", async () => {
+    // Resume honors the recorded agent; the OpenClaw default is stored as a
+    // null session agent, so the picker must stay hidden rather than risk an
+    // accidental agent change.
+    const { select, prompt } = makeSelectOnboardAgent("2");
+
+    const agent = await select({ resume: true, canPrompt: true });
+
+    assert.equal(agent, null);
+    assert.equal(prompt.mock.calls.length, 0);
+  });
 });
