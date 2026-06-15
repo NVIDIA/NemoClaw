@@ -23,9 +23,38 @@ const AGENT_DATA_ROOT = "/sandbox/.openclaw";
 // payload into `NEMOCLAW_EXTRA_AGENTS_JSON_B64` before the build runs. A
 // pre-transport scan keeps obvious credential-named values from ever
 // reaching the staged Dockerfile/build context if an operator accidentally
-// drops `apiKey`, `token`, `secret`, etc. into the YAML.
-const CREDENTIAL_NAME_PATTERN =
-  /^(?:api[-_]?key|token|secret|password|passphrase|credential|bearer|auth)$/i;
+// drops `apiKey`, `token`, `clientSecret`, etc. into the YAML. We normalise
+// the field name (lower-case, strip separators) so composite/camelCase
+// variants such as `accessToken` or `private_key` are caught alongside the
+// exact names.
+const CREDENTIAL_NAME_SUBSTRINGS = [
+  "apikey",
+  "apitoken",
+  "accesskey",
+  "accesstoken",
+  "refreshtoken",
+  "sessiontoken",
+  "bearertoken",
+  "idtoken",
+  "secretkey",
+  "signingkey",
+  "encryptionkey",
+  "privatekey",
+  "publickey",
+  "token",
+  "secret",
+  "password",
+  "passphrase",
+  "credential",
+  "bearer",
+];
+const CREDENTIAL_NAME_EXACT = new Set(["auth", "key"]);
+
+function isCredentialName(key: string): boolean {
+  const normalised = key.toLowerCase().replace(/[-_]/g, "");
+  if (CREDENTIAL_NAME_EXACT.has(normalised)) return true;
+  return CREDENTIAL_NAME_SUBSTRINGS.some((needle) => normalised.includes(needle));
+}
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -34,7 +63,7 @@ function isObject(value: unknown): value is Record<string, unknown> {
 function assertNoCredentialFields(value: unknown, label: string): void {
   if (isObject(value)) {
     for (const [key, child] of Object.entries(value)) {
-      if (CREDENTIAL_NAME_PATTERN.test(key)) {
+      if (isCredentialName(key)) {
         throw new Error(
           `agents manifest field "${label}.${key}" looks like a credential and is not allowed; pass credentials through the OpenShell provider profile instead`,
         );
