@@ -51,6 +51,10 @@ The primary orchestration model remains responsible for conversation, planning, 
 
 ## Update the Sandbox Config
 
+Before running these commands, install NemoClaw and onboard a sandbox such as `my-assistant`.
+The sandbox must be running on the host where you run Docker commands, and its agent container must be discoverable through the OpenShell sandbox label.
+If you have not created a sandbox yet, follow the [Quickstart with OpenClaw](../get-started/quickstart) first.
+
 Fetch the current OpenClaw config from the sandbox, patch it with your auxiliary provider and `agents.list` changes, then upload it back.
 On Docker-driver sandboxes, run these commands from the host that owns the sandbox containers.
 The container name includes a runtime suffix, so discover it from the OpenShell sandbox label:
