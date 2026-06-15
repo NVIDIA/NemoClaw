@@ -537,14 +537,10 @@ function buildHookOutputs(
   hook: ChannelHookSpec,
   channel: SandboxMessagingChannelPlan,
 ): MessagingHookOutputMap {
-  try {
-    return runMessagingHookSync(hook, BUILT_IN_MESSAGING_HOOK_REGISTRY, {
-      channelId: manifest.id,
-      inputs: selectHookInputs(buildHookInputMap(channel, plan.credentialBindings), hook.inputs),
-    }).outputs;
-  } catch {
-    return {};
-  }
+  return runMessagingHookSync(hook, BUILT_IN_MESSAGING_HOOK_REGISTRY, {
+    channelId: manifest.id,
+    inputs: selectHookInputs(buildHookInputMap(channel, plan.credentialBindings), hook.inputs),
+  }).outputs;
 }
 
 function hasFullChannelShape(

@@ -245,7 +245,7 @@ describe("credentials oclif commands", () => {
 
     expect(output.stderr).toContain("per-sandbox messaging bridge");
     expect(output.stderr).toContain("channels remove");
-    expect(output.stderr).toContain("channels remove <channels>");
+    expect(output.stderr).toContain("channels remove <channel>");
     expect(output.stderr).not.toContain("channels remove <discord");
   });
 
