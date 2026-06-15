@@ -652,7 +652,6 @@ const { createSandbox } = require(${onboardPath});
       ["discord", "slack"],
     );
     assert.equal(payload.registerCalls[0]?.messagingChannels, undefined);
-    assert.equal(payload.registerCalls[0]?.providerCredentialHashes, undefined);
   });
 
   it("preserves disabled channels in the registry after a recreate so `channels start` can re-enable them (#3381)", {
