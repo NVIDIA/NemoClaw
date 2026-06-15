@@ -5,7 +5,6 @@ import {
   createBuiltInChannelManifestRegistry,
   createBuiltInRenderTemplateResolver,
 } from "./channels";
-import { buildWechatSeedOpenClawAccountOutputs } from "./channels/wechat/hooks/seed-openclaw-account";
 import { planCredentialBindings } from "./compiler/engines/credential-binding-engine";
 import { planHealthChecks } from "./compiler/engines/health-check-engine";
 import { planNetworkPolicy } from "./compiler/engines/policy-resolver";
@@ -40,6 +39,7 @@ import type {
   SandboxMessagingRuntimeSetupPlan,
 } from "./manifest";
 import type { MessagingHookInputMap, MessagingHookOutputMap } from "./hooks";
+import { BUILT_IN_MESSAGING_HOOK_REGISTRY, runMessagingHookSync } from "./hooks";
 
 export type PersistedSandboxMessagingInputReference = Pick<
   SandboxMessagingInputReference,
@@ -514,8 +514,7 @@ function hookBuildSteps(
         ["build-arg", "build-file", "package-install"].includes(output.kind),
       );
       if (outputs.length === 0) return [];
-      const hookOutputs =
-        active && channel ? buildKnownHookOutputs(plan, manifest, hook, channel) : {};
+      const hookOutputs = active && channel ? buildHookOutputs(plan, manifest, hook, channel) : {};
       return outputs.map((output) => ({
         channelId: manifest.id,
         kind: output.kind as "build-arg" | "build-file" | "package-install",
@@ -532,22 +531,16 @@ function hookBuildSteps(
     });
 }
 
-function buildKnownHookOutputs(
+function buildHookOutputs(
   plan: SandboxMessagingPlan,
-  _manifest: ChannelManifest,
+  manifest: ChannelManifest,
   hook: ChannelHookSpec,
   channel: SandboxMessagingChannelPlan,
 ): MessagingHookOutputMap {
-  if (hook.handler === "wechat.seedOpenClawAccount") {
-    try {
-      return buildWechatSeedOpenClawAccountOutputs(
-        selectHookInputs(buildHookInputMap(channel, plan.credentialBindings), hook.inputs),
-      );
-    } catch {
-      return {};
-    }
-  }
-  return {};
+  return runMessagingHookSync(hook, BUILT_IN_MESSAGING_HOOK_REGISTRY, {
+    channelId: manifest.id,
+    inputs: selectHookInputs(buildHookInputMap(channel, plan.credentialBindings), hook.inputs),
+  }).outputs;
 }
 
 function hasFullChannelShape(
