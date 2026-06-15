@@ -162,8 +162,14 @@ describe("sandbox skill action orchestration", () => {
     skillInstall.checkExisting.mockImplementation((ctx, resolvedPaths) => {
       tempConfig = ctx.configFile;
       expect(resolvedPaths).toBe(paths);
+      expect(path.basename(path.dirname(tempConfig)).startsWith("nemoclaw-ssh-skill-")).toBe(true);
+      expect(path.basename(tempConfig)).toBe("config.conf");
+      expect(fs.statSync(path.dirname(tempConfig)).mode & 0o777).toBe(0o700);
+      expect(fs.statSync(tempConfig).mode & 0o777).toBe(0o600);
+      expect(fs.readFileSync(tempConfig, "utf-8")).toBe("Host openshell-alpha\n");
       return true;
     });
+    const writeFile = vi.spyOn(fs, "writeFileSync");
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
 
     await removeSandboxSkill("alpha", { name: "demo-skill" });
@@ -180,7 +186,12 @@ describe("sandbox skill action orchestration", () => {
       paths,
     );
     expect(log).toHaveBeenCalledWith(expect.stringContaining("Skill 'demo-skill' removed"));
+    expect(writeFile).toHaveBeenCalledWith(tempConfig, "Host openshell-alpha\n", {
+      mode: 0o600,
+      flag: "wx",
+    });
     expect(fs.existsSync(tempConfig)).toBe(false);
+    expect(fs.existsSync(path.dirname(tempConfig))).toBe(false);
     expect(process.exitCode).toBeUndefined();
   });
 
@@ -189,8 +200,14 @@ describe("sandbox skill action orchestration", () => {
     let tempConfig = "";
     skillInstall.checkExisting.mockImplementation((ctx) => {
       tempConfig = ctx.configFile;
+      expect(path.basename(path.dirname(tempConfig)).startsWith("nemoclaw-ssh-skill-")).toBe(true);
+      expect(path.basename(tempConfig)).toBe("config.conf");
+      expect(fs.statSync(path.dirname(tempConfig)).mode & 0o777).toBe(0o700);
+      expect(fs.statSync(tempConfig).mode & 0o777).toBe(0o600);
+      expect(fs.readFileSync(tempConfig, "utf-8")).toBe("Host openshell-alpha\n");
       return null;
     });
+    const writeFile = vi.spyOn(fs, "writeFileSync");
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
 
@@ -215,7 +232,12 @@ describe("sandbox skill action orchestration", () => {
       paths,
     );
     expect(log).toHaveBeenCalledWith(expect.stringContaining("Skill 'demo-skill' installed"));
+    expect(writeFile).toHaveBeenCalledWith(tempConfig, "Host openshell-alpha\n", {
+      mode: 0o600,
+      flag: "wx",
+    });
     expect(fs.existsSync(tempConfig)).toBe(false);
+    expect(fs.existsSync(path.dirname(tempConfig))).toBe(false);
     expect(process.exitCode).toBeUndefined();
   });
 });

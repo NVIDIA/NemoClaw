@@ -72,6 +72,35 @@ export type SkillRemoveRequest = {
   extraArgs?: string[];
 };
 
+type TemporarySshConfig = {
+  configFile: string;
+  dir: string;
+};
+
+function createTemporarySshConfig(contents: string): TemporarySshConfig {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ssh-skill-"));
+  const configFile = path.join(dir, "config.conf");
+  try {
+    fs.writeFileSync(configFile, contents, { mode: 0o600, flag: "wx" });
+  } catch (err) {
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+    } catch {
+      /* ignore */
+    }
+    throw err;
+  }
+  return { configFile, dir };
+}
+
+function removeTemporarySshConfig(temp: TemporarySshConfig): void {
+  try {
+    fs.rmSync(temp.dir, { recursive: true, force: true });
+  } catch {
+    /* ignore */
+  }
+}
+
 export function printPluginInstallHint(): void {
   console.error("  This looks like an OpenClaw plugin, not a SKILL.md agent skill.");
   console.error("  `skill install` only accepts skill directories or direct SKILL.md paths.");
@@ -123,14 +152,10 @@ export async function removeSandboxSkill(
     process.exit(1);
   }
 
-  const tmpSshConfig = path.join(
-    os.tmpdir(),
-    `nemoclaw-ssh-skill-${process.pid}-${Date.now()}.conf`,
-  );
-  fs.writeFileSync(tmpSshConfig, sshConfigResult.output, { mode: 0o600 });
+  const tmpSshConfig = createTemporarySshConfig(sshConfigResult.output);
 
   try {
-    const ctx = { configFile: tmpSshConfig, sandboxName };
+    const ctx = { configFile: tmpSshConfig.configFile, sandboxName };
 
     const existsCheck = skillInstall.checkExisting(ctx, paths);
     if (existsCheck === null) {
@@ -165,11 +190,7 @@ export async function removeSandboxSkill(
       return;
     }
   } finally {
-    try {
-      fs.unlinkSync(tmpSshConfig);
-    } catch {
-      /* ignore */
-    }
+    removeTemporarySshConfig(tmpSshConfig);
   }
 }
 
@@ -291,14 +312,10 @@ export async function installSandboxSkill(
     process.exit(1);
   }
 
-  const tmpSshConfig = path.join(
-    os.tmpdir(),
-    `nemoclaw-ssh-skill-${process.pid}-${Date.now()}.conf`,
-  );
-  fs.writeFileSync(tmpSshConfig, sshConfigResult.output, { mode: 0o600 });
+  const tmpSshConfig = createTemporarySshConfig(sshConfigResult.output);
 
   try {
-    const ctx = { configFile: tmpSshConfig, sandboxName };
+    const ctx = { configFile: tmpSshConfig.configFile, sandboxName };
 
     // 5. Check if skill already exists (update vs fresh install). This probe is
     //    advisory for install only: stale SSH config files and transient remote
@@ -349,10 +366,6 @@ export async function installSandboxSkill(
       process.exit(1);
     }
   } finally {
-    try {
-      fs.unlinkSync(tmpSshConfig);
-    } catch {
-      /* ignore */
-    }
+    removeTemporarySshConfig(tmpSshConfig);
   }
 }
