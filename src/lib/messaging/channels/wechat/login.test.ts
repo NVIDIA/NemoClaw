@@ -3,8 +3,8 @@
 
 import { describe, expect, it } from "vitest";
 
-import { runWechatHostQrLogin } from "../../../dist/ext/wechat/login";
-import type { FetchLike } from "../../../dist/ext/wechat/qr";
+import { runWechatHostQrLogin } from "./login";
+import type { FetchLike } from "./qr";
 
 type StatusBody = {
   status: string;

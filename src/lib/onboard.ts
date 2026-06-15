@@ -114,8 +114,6 @@ const {
 }: typeof import("./onboard/e2e-failure-injection") = require("./onboard/e2e-failure-injection");
 const onboardTracing: typeof import("./onboard/tracing") = require("./onboard/tracing");
 const sandboxReadinessTracing: typeof import("./onboard/sandbox-readiness-tracing") = require("./onboard/sandbox-readiness-tracing");
-const { hasWechatConfigDrift } =
-  require("./onboard/wechat-config") as typeof import("./onboard/wechat-config");
 const {
   setupMessagingChannels: setupMessagingChannelsImpl,
   readMessagingPlanFromEnv,
@@ -408,11 +406,7 @@ const {
   getMessagingChannelForEnvKey,
   getRecordedMessagingChannelsForResume: getRecordedMessagingChannelsForResumeFromState,
 }: typeof import("./onboard/messaging-credentials") = require("./onboard/messaging-credentials");
-const {
-  computeTelegramRequireMention,
-  getStoredMessagingChannelConfig,
-  messagingChannelConfigsEqual,
-} = messagingConfig;
+const { getStoredMessagingChannelConfig, messagingChannelConfigsEqual } = messagingConfig;
 const messagingPlanSession: typeof import("./onboard/messaging-plan-session") =
   require("./onboard/messaging-plan-session");
 const { getChannelsFromPlan } = messagingPlanSession;
@@ -5166,9 +5160,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           hydrateMessagingChannelConfig,
           messagingChannelConfigsEqual,
           getSandboxReuseState,
-          computeTelegramRequireMention,
           hasSandboxGpuDrift,
-          hasWechatConfigDrift,
           getSandboxHermesToolGateways: (name) => registry.getSandbox(name)?.hermesToolGateways,
           normalizeHermesToolGatewaySelections,
           stringSetsEqual,

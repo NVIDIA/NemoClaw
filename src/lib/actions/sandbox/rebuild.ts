@@ -56,6 +56,8 @@ import {
   MessagingWorkflowPlanner,
   toMessagingAgentId,
 } from "../../messaging";
+import { hydrateMessagingChannelConfig } from "../../messaging-channel-config";
+import { getStoredMessagingChannelConfig } from "../../onboard/messaging-config";
 import { pruneDisabledMessagingPolicyPresets } from "../../onboard/messaging-policy-presets";
 import {
   captureSandboxListWithGatewayRecovery,
@@ -387,31 +389,19 @@ export async function rebuildSandbox(
     return;
   }
 
-  // Stash WeChat per-account metadata into process.env before the rebuild
-  // touches anything destructive. The metadata lives in session.wechatConfig
-  // (captured during the original onboard's host-side QR login) — the only
-  // durable source today. Surfacing it as WECHAT_ACCOUNT_ID / WECHAT_BASE_URL
-  // / WECHAT_USER_ID lets the in-process onboard --resume that fires later
-  // see it directly via the wechatConfig builder's process.env path.
-  // `openclaw-weixin/` runtime state is intentionally NOT in state_dirs —
-  // the manifest post-agent-install hook rebuilds account files from these
-  // env-backed config inputs every image build, so keeping the envs here is
-  // what the next image needs to put the right accountId/baseUrl/userId back
-  // into openclaw.json + the accounts state file.
+  // Hydrate non-secret messaging config before the rebuild touches anything
+  // destructive. The manifest plan in registry is the durable source; legacy
+  // session channel fields are read only as compatibility fallback by
+  // getStoredMessagingChannelConfig().
   {
-    // Only hydrate from the session when it belongs to THIS sandbox. The
-    // global session file holds the most recent onboard, which may be for a
-    // different sandbox — pulling its wechatConfig would leak that
-    // sandbox's accountId / baseUrl / userId into this image build.
     const rebuildSession = onboardSession.loadSession();
-    const wc =
-      rebuildSession?.sandboxName === sandboxName ? (rebuildSession.wechatConfig ?? null) : null;
-    if (wc?.accountId && !process.env.WECHAT_ACCOUNT_ID)
-      process.env.WECHAT_ACCOUNT_ID = wc.accountId;
-    if (wc?.baseUrl && !process.env.WECHAT_BASE_URL) process.env.WECHAT_BASE_URL = wc.baseUrl;
-    if (wc?.userId && !process.env.WECHAT_USER_ID) process.env.WECHAT_USER_ID = wc.userId;
-    if (wc?.accountId) {
-      log(`Stashed WeChat account metadata for rebuild: accountId=${wc.accountId}`);
+    const hydratedMessagingConfig = hydrateMessagingChannelConfig(
+      getStoredMessagingChannelConfig(sandboxName, rebuildSession),
+    );
+    if (hydratedMessagingConfig) {
+      log(
+        `Stashed messaging config for rebuild: ${Object.keys(hydratedMessagingConfig).join(",")}`,
+      );
     }
   }
 

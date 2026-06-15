@@ -246,26 +246,26 @@ else
   exit 1
 fi
 
-if echo "$repair_output" | grep -q "\[resume\] Skipping preflight (cached)"; then
+if grep -q "\[resume\] Skipping preflight (cached)" <<<"$repair_output"; then
   pass "Repair resume skipped preflight"
 else
   fail "Repair resume did not skip preflight"
 fi
 
-if echo "$repair_output" | grep -q "\[resume\] Skipping gateway (running)"; then
+if grep -q "\[resume\] Skipping gateway (running)" <<<"$repair_output"; then
   pass "Repair resume skipped gateway"
 else
   fail "Repair resume did not skip gateway"
 fi
 
-if echo "$repair_output" | grep -q "\[resume\] Recorded sandbox state is unavailable; recreating it."; then
+if grep -q "\[resume\] Recorded sandbox state is unavailable; recreating it." <<<"$repair_output"; then
   pass "Repair resume detected missing sandbox"
 else
   fail "Repair resume did not report missing sandbox recreation"
 fi
 
 # The step numbering is [6/8] in the current onboard flow.
-if echo "$repair_output" | grep -q "Creating sandbox"; then
+if grep -q "Creating sandbox" <<<"$repair_output"; then
   pass "Repair resume recreated sandbox"
 else
   fail "Repair resume did not rerun sandbox creation"
