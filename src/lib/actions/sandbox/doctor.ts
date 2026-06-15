@@ -17,6 +17,10 @@ import { GATEWAY_PORT, OLLAMA_PORT } from "../../core/ports";
 import { recoverNamedGatewayRuntime } from "../../gateway-runtime-action";
 import { parseGatewayInference } from "../../inference/config";
 import { type ProviderHealthStatus, probeProviderHealth } from "../../inference/health";
+import {
+  collectBuiltInMessagingChannelDiagnostics,
+  type MessagingChannelDiagnosticSpec,
+} from "../../messaging/diagnostics";
 import { isLinuxDockerDriverGatewayEnabled } from "../../onboard/docker-driver-platform";
 import { resolveGatewayName, resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import { executeSandboxCommandForVerification } from "../../onboard/sandbox-verification-exec";
@@ -37,6 +41,8 @@ import {
 import { captureHostCommand } from "./doctor-host-command";
 import { buildToolScopeChecks } from "./doctor-tool-scope";
 import { probeSandboxInferenceGatewayHealth } from "./process-recovery";
+
+const CHANNEL_STATUS_DIAGNOSTICS = collectBuiltInMessagingChannelDiagnostics();
 
 type DoctorStatus = "ok" | "warn" | "fail" | "info";
 
@@ -447,23 +453,44 @@ function messagingDoctorCheck(sandboxName: string, sb: SandboxEntry): DoctorChec
     };
   }
 
-  const degraded =
-    buildStatusCommandDeps(ROOT).checkMessagingBridgeHealth?.(sandboxName, channels) || [];
+  const statusDeps = buildStatusCommandDeps(ROOT);
+  const degraded = statusDeps.checkMessagingBridgeHealth?.(sandboxName, channels, sb.agent) || [];
+  const overlaps = (statusDeps.findMessagingOverlaps?.() ?? []).filter(
+    (overlap) => channels.includes(overlap.channel) && overlap.sandboxes.includes(sandboxName),
+  );
   const pausedSuffix =
     pausedChannels.length > 0 ? `; paused channels skipped: ${pausedChannels.join(", ")}` : "";
-  if (degraded.length === 0) {
-    // WhatsApp's inbound delivery cannot be inferred from the conflict-signature
-    // heuristic — issue #4386 showed a paired channel with a live Noise
-    // WebSocket that never delivered inbound events, while this check rendered
-    // "ok". Downgrade to "info" with a pointer to `channels status` so doctor
-    // never claims WhatsApp is healthy without running the deep probe.
-    if (channels.includes("whatsapp")) {
+  const warningDetails = [
+    ...degraded.map(
+      (item: { channel: string; conflicts: number }) =>
+        `${item.channel}: ${item.conflicts} conflict(s)`,
+    ),
+    ...overlaps.map(formatMessagingOverlapDoctorDetail),
+  ];
+  if (warningDetails.length === 0) {
+    const deepProbeDiagnostic = channels
+      .map(getChannelStatusDiagnostic)
+      .find((diagnostic) => diagnostic?.doctorWhenNoHealthSignals);
+    if (deepProbeDiagnostic?.doctorWhenNoHealthSignals) {
+      const templateContext = {
+        channel: deepProbeDiagnostic.channelId,
+        channels: channels.join(", "),
+        cli: CLI_NAME,
+        pausedSuffix,
+        sandbox: sandboxName,
+      };
       return {
         group: "Messaging",
         label: "Channels",
         status: "info",
-        detail: `${channels.join(", ")} enabled; whatsapp inbound delivery is not inferred from conflict signatures${pausedSuffix}`,
-        hint: `run \`${CLI_NAME} ${sandboxName} channels status --channel whatsapp\` to probe inbound delivery`,
+        detail: formatDiagnosticTemplate(
+          deepProbeDiagnostic.doctorWhenNoHealthSignals.detail,
+          templateContext,
+        ),
+        hint: formatDiagnosticTemplate(
+          deepProbeDiagnostic.doctorWhenNoHealthSignals.hint,
+          templateContext,
+        ),
       };
     }
     return {
@@ -478,15 +505,41 @@ function messagingDoctorCheck(sandboxName: string, sb: SandboxEntry): DoctorChec
     group: "Messaging",
     label: "Channels",
     status: "warn",
-    detail:
-      degraded
-        .map(
-          (item: { channel: string; conflicts: number }) =>
-            `${item.channel}: ${item.conflicts} conflict(s)`,
-        )
-        .join("; ") + pausedSuffix,
+    detail: warningDetails.join("; ") + pausedSuffix,
     hint: `run \`${CLI_NAME} ${sandboxName} logs --follow\` for enabled bridge details`,
   };
+}
+
+function getChannelStatusDiagnostic(channelName: string): MessagingChannelDiagnosticSpec | null {
+  return (
+    CHANNEL_STATUS_DIAGNOSTICS.find((diagnostic) => diagnostic.channelId === channelName) ?? null
+  );
+}
+
+function formatMessagingOverlapDoctorDetail(overlap: {
+  readonly channel: string;
+  readonly sandboxes: readonly [string, string];
+  readonly message?: string;
+}): string {
+  const detail = overlap.message
+    ? formatDiagnosticTemplate(overlap.message, {
+        channel: overlap.channel,
+        first: overlap.sandboxes[0],
+        second: overlap.sandboxes[1],
+      })
+    : `'${overlap.sandboxes[0]}' and '${overlap.sandboxes[1]}' overlap`;
+  return `${overlap.channel}: ${detail}`;
+}
+
+function formatDiagnosticTemplate(
+  template: string,
+  values: Readonly<Record<string, string>>,
+): string {
+  let result = template;
+  for (const [key, value] of Object.entries(values)) {
+    result = result.replaceAll(`{${key}}`, value);
+  }
+  return result;
 }
 
 /**

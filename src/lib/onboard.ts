@@ -22,6 +22,8 @@ const {
   createInferenceSelectionValidationHelpers,
 }: typeof import("./onboard/inference-selection-validation") = require("./onboard/inference-selection-validation");
 const {
+  applyCloudFallbackSelection,
+  clearNimContainerBeforeRetry,
   createRemoteModelValidator,
 }: typeof import("./onboard/setup-nim-selection") = require("./onboard/setup-nim-selection");
 const inferenceInputCapability = require("./onboard/inference-input-capability");
@@ -114,8 +116,6 @@ const {
 }: typeof import("./onboard/e2e-failure-injection") = require("./onboard/e2e-failure-injection");
 const onboardTracing: typeof import("./onboard/tracing") = require("./onboard/tracing");
 const sandboxReadinessTracing: typeof import("./onboard/sandbox-readiness-tracing") = require("./onboard/sandbox-readiness-tracing");
-const { hasWechatConfigDrift } =
-  require("./onboard/wechat-config") as typeof import("./onboard/wechat-config");
 const {
   setupMessagingChannels: setupMessagingChannelsImpl,
   readMessagingPlanFromEnv,
@@ -408,11 +408,7 @@ const {
   getMessagingChannelForEnvKey,
   getRecordedMessagingChannelsForResume: getRecordedMessagingChannelsForResumeFromState,
 }: typeof import("./onboard/messaging-credentials") = require("./onboard/messaging-credentials");
-const {
-  computeTelegramRequireMention,
-  getStoredMessagingChannelConfig,
-  messagingChannelConfigsEqual,
-} = messagingConfig;
+const { getStoredMessagingChannelConfig, messagingChannelConfigsEqual } = messagingConfig;
 const messagingPlanSession: typeof import("./onboard/messaging-plan-session") =
   require("./onboard/messaging-plan-session");
 const { getChannelsFromPlan } = messagingPlanSession;
@@ -3359,16 +3355,8 @@ async function selectAndValidateOllamaModel(
   }
 }
 
-type SetupNimSelectionState = {
-  model: string | typeof BACK_TO_SELECTION | null;
-  provider: string;
-  endpointUrl: string | null;
-  credentialEnv: string | null;
-  hermesAuthMethod: HermesAuthMethod | null;
-  hermesToolGateways: string[];
-  preferredInferenceApi: string | null;
-  nimContainer: string | null;
-};
+type SetupNimSelectionState =
+  import("./onboard/setup-nim-selection").SetupNimSelectionState<HermesAuthMethod>;
 
 type SetupNimSelectionResult = "selected" | "retry-selection";
 
@@ -3518,6 +3506,7 @@ async function handleNimLocalSelection(
   const models = nim.listModels().filter((m) => m.minGpuMemoryMB <= localGpu.totalMemoryMB);
   if (models.length === 0) {
     console.log("  No NIM models fit your GPU VRAM. Falling back to cloud API.");
+    applyCloudFallbackSelection(state, REMOTE_PROVIDER_CONFIG.build);
     return "selected";
   }
 
@@ -3603,8 +3592,7 @@ async function handleNimLocalSelection(
   console.log("  Waiting for NIM to become healthy...");
   if (!nim.waitForNimHealth(undefined, undefined, { container: nimContainerNameLocal })) {
     console.error("  NIM failed to start. Falling back to cloud API.");
-    state.model = null;
-    state.nimContainer = null;
+    applyCloudFallbackSelection(state, REMOTE_PROVIDER_CONFIG.build);
     return "selected";
   }
 
@@ -3623,8 +3611,14 @@ async function handleNimLocalSelection(
     requireValue(state.model, "Expected a Local NVIDIA NIM model after startup"),
     null,
   );
-  if (validation.retry === "selection" || validation.retry === "model") return "retry-selection";
-  if (!validation.ok) return "retry-selection";
+  if (validation.retry === "selection" || validation.retry === "model") {
+    clearNimContainerBeforeRetry(state);
+    return "retry-selection";
+  }
+  if (!validation.ok) {
+    clearNimContainerBeforeRetry(state);
+    return "retry-selection";
+  }
   if (validation.api !== "openai-completions") {
     console.log("  ℹ Using chat completions API (tool-call-parser requires /v1/chat/completions)");
   }
@@ -5166,9 +5160,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           hydrateMessagingChannelConfig,
           messagingChannelConfigsEqual,
           getSandboxReuseState,
-          computeTelegramRequireMention,
           hasSandboxGpuDrift,
-          hasWechatConfigDrift,
           getSandboxHermesToolGateways: (name) => registry.getSandbox(name)?.hermesToolGateways,
           normalizeHermesToolGatewaySelections,
           stringSetsEqual,

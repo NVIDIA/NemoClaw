@@ -30,6 +30,7 @@ describe("sandbox build context staging", () => {
     }
 
     writeFixture("Dockerfile");
+    writeFixture("tsconfig.runtime-preloads.json", "{}\n");
     for (const fileName of [
       "package.json",
       "package-lock.json",
@@ -84,7 +85,6 @@ describe("sandbox build context staging", () => {
     );
     writeFixture(path.join("scripts", "patch-openclaw-tool-catalog.js"));
     writeFixture(path.join("scripts", "patch-openclaw-chat-send.js"));
-    writeFixture(path.join("scripts", "patch-openclaw-slack-deny-feedback.mts"));
   }
 
   function expectDockerfileScriptCopiesExist(buildCtx: string, stagedDockerfile: string) {
@@ -230,6 +230,7 @@ describe("sandbox build context staging", () => {
     try {
       const { buildCtx, stagedDockerfile } = stageOptimizedSandboxBuildContext(repoRoot, tmpDir);
       expectDockerfileScriptCopiesExist(buildCtx, stagedDockerfile);
+      expect(fs.existsSync(path.join(buildCtx, "tsconfig.runtime-preloads.json"))).toBe(true);
       expect(fs.existsSync(path.join(buildCtx, "nemoclaw-blueprint", ".venv"))).toBe(false);
       expect(fs.existsSync(path.join(buildCtx, "nemoclaw-blueprint", "blueprint.yaml"))).toBe(true);
       expect(
@@ -297,9 +298,6 @@ describe("sandbox build context staging", () => {
       expect(fs.existsSync(path.join(buildCtx, "scripts", "patch-openclaw-chat-send.js"))).toBe(
         true,
       );
-      expect(
-        fs.existsSync(path.join(buildCtx, "scripts", "patch-openclaw-slack-deny-feedback.mts")),
-      ).toBe(true);
       expect(fs.existsSync(path.join(buildCtx, "scripts", "lib", "sandbox-init.sh"))).toBe(true);
       expect(fs.existsSync(path.join(buildCtx, "scripts", "setup.sh"))).toBe(false);
     } finally {

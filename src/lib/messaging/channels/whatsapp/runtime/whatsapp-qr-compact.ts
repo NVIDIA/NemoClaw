@@ -1,7 +1,8 @@
+// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
-// whatsapp-qr-compact.js — force compact, scan-friendly QR rendering during
+// whatsapp-qr-compact.ts — force compact, scan-friendly QR rendering during
 // in-sandbox WhatsApp pairing.
 //
 // THE BUG (NemoClaw#4522): a WhatsApp Web Linked-Devices pairing payload is a
@@ -45,21 +46,21 @@
 // Ref: https://github.com/NVIDIA/NemoClaw/issues/4522
 
 (function () {
-  'use strict';
+  "use strict";
 
   if (process.__nemoclawWhatsappQrCompactInstalled) return;
   try {
-    Object.defineProperty(process, '__nemoclawWhatsappQrCompactInstalled', { value: true });
+    Object.defineProperty(process, "__nemoclawWhatsappQrCompactInstalled", { value: true });
   } catch (_e) {
     process.__nemoclawWhatsappQrCompactInstalled = true;
   }
 
-  var Module = require('module');
+  var Module = require("module");
   var origLoad = Module._load;
 
   function markPatched(mod) {
     try {
-      Object.defineProperty(mod, '__nemoclawCompactPatched', { value: true });
+      Object.defineProperty(mod, "__nemoclawCompactPatched", { value: true });
     } catch (_e) {
       mod.__nemoclawCompactPatched = true;
     }
@@ -76,15 +77,21 @@
   // inherited toString — and needlessly mutate them). The package main exposes
   // its own toString + create; the submodules do not have an own toString.
   function isQrcodePackage(mod) {
-    return hasOwn(mod, 'toString') && typeof mod.toString === 'function' &&
-      typeof mod.create === 'function';
+    return (
+      hasOwn(mod, "toString") &&
+      typeof mod.toString === "function" &&
+      typeof mod.create === "function"
+    );
   }
 
   // `qrcode-terminal` package: exposes its own generate(text, opts, cb) and,
   // unlike `qrcode`, has no create().
   function isQrcodeTerminalPackage(mod) {
-    return hasOwn(mod, 'generate') && typeof mod.generate === 'function' &&
-      typeof mod.create !== 'function';
+    return (
+      hasOwn(mod, "generate") &&
+      typeof mod.generate === "function" &&
+      typeof mod.create !== "function"
+    );
   }
 
   function patchQrcode(mod) {
@@ -92,12 +99,12 @@
     var origToString = mod.toString;
     mod.toString = function (text, opts, cb) {
       // Support toString(text, cb) and toString(text, opts, cb) / (text, opts).
-      if (typeof opts === 'function') {
+      if (typeof opts === "function") {
         cb = opts;
         opts = undefined;
       }
       var merged = {};
-      if (opts && typeof opts === 'object') {
+      if (opts && typeof opts === "object") {
         for (var key in opts) {
           if (Object.prototype.hasOwnProperty.call(opts, key)) merged[key] = opts[key];
         }
@@ -106,7 +113,7 @@
       // to "utf8" in the qrcode package, but the WhatsApp path always passes
       // "terminal" explicitly; force small there and leave every other type
       // (svg/png/utf8 data URIs used elsewhere) exactly as the caller asked.
-      if (merged.type === 'terminal') {
+      if (merged.type === "terminal") {
         merged.small = true;
       }
       return origToString.call(this, text, merged, cb);
@@ -119,12 +126,12 @@
     if (mod.__nemoclawCompactPatched) return mod;
     var origGenerate = mod.generate;
     mod.generate = function (text, opts, cb) {
-      if (typeof opts === 'function') {
+      if (typeof opts === "function") {
         cb = opts;
         opts = undefined;
       }
       var merged = {};
-      if (opts && typeof opts === 'object') {
+      if (opts && typeof opts === "object") {
         for (var key in opts) {
           if (Object.prototype.hasOwnProperty.call(opts, key)) merged[key] = opts[key];
         }
@@ -142,7 +149,7 @@
     // `import("qrcode")` arrives here as the resolved absolute path
     // (…/qrcode/lib/index.js), so match on the path segment too, not just the
     // bare specifier.
-    if (typeof request === 'string' && request.indexOf('qrcode') !== -1) {
+    if (typeof request === "string" && request.indexOf("qrcode") !== -1) {
       try {
         if (isQrcodePackage(loaded)) return patchQrcode(loaded);
         if (isQrcodeTerminalPackage(loaded)) return patchQrcodeTerminal(loaded);
