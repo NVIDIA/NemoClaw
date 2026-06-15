@@ -11,7 +11,13 @@ type RunSandboxDoctor =
 const requireDist = createRequire(import.meta.url);
 const doctorModulePath = "../../../../dist/lib/actions/sandbox/doctor.js";
 
-function createDoctorHarness(): { runSandboxDoctor: RunSandboxDoctor; logSpy: MockInstance } {
+function createDoctorHarness(): {
+  captureHostCommandSpy: MockInstance;
+  getSandboxSpy: MockInstance;
+  logSpy: MockInstance;
+  repairMutableConfigPermsSpy: MockInstance;
+  runSandboxDoctor: RunSandboxDoctor;
+} {
   delete require.cache[requireDist.resolve(doctorModulePath)];
 
   const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
@@ -41,7 +47,7 @@ function createDoctorHarness(): { runSandboxDoctor: RunSandboxDoctor; logSpy: Mo
   const doctorToolScope = requireDist("../../../../dist/lib/actions/sandbox/doctor-tool-scope.js");
   const processRecovery = requireDist("../../../../dist/lib/actions/sandbox/process-recovery.js");
 
-  vi.spyOn(registry, "getSandbox").mockReturnValue({
+  const getSandboxSpy = vi.spyOn(registry, "getSandbox").mockReturnValue({
     name: "alpha",
     agent: "openclaw",
     model: "registry-model",
@@ -72,13 +78,15 @@ function createDoctorHarness(): { runSandboxDoctor: RunSandboxDoctor; logSpy: Mo
     }
     return { status: 0, output: "" };
   });
-  vi.spyOn(doctorHostCommand, "captureHostCommand").mockImplementation((command: unknown) => {
-    if (command === "docker") return { status: 0, stdout: "25.0.0\n", stderr: "" };
-    if (command === "curl") {
-      return { status: 0, stdout: JSON.stringify({ models: [{ name: "m" }] }), stderr: "" };
-    }
-    return { status: 0, stdout: "", stderr: "" };
-  });
+  const captureHostCommandSpy = vi
+    .spyOn(doctorHostCommand, "captureHostCommand")
+    .mockImplementation((command: unknown) => {
+      if (command === "docker") return { status: 0, stdout: "25.0.0\n", stderr: "" };
+      if (command === "curl") {
+        return { status: 0, stdout: JSON.stringify({ models: [{ name: "m" }] }), stderr: "" };
+      }
+      return { status: 0, stdout: "", stderr: "" };
+    });
   vi.spyOn(health, "probeProviderHealth").mockReturnValue({
     ok: true,
     probed: true,
@@ -117,11 +125,13 @@ function createDoctorHarness(): { runSandboxDoctor: RunSandboxDoctor; logSpy: Mo
     configFile: "openclaw.json",
     issues: [],
   });
-  vi.spyOn(shields, "repairMutableConfigPerms").mockReturnValue({
-    applied: true,
-    verified: true,
-    errors: [],
-  });
+  const repairMutableConfigPermsSpy = vi
+    .spyOn(shields, "repairMutableConfigPerms")
+    .mockReturnValue({
+      applied: true,
+      verified: true,
+      errors: [],
+    });
   vi.spyOn(statusCommandDeps, "buildStatusCommandDeps").mockReturnValue({});
   vi.spyOn(tunnelServices, "readCloudflaredState").mockReturnValue({ kind: "running", pid: 1234 });
   vi.spyOn(sandboxVerificationExec, "executeSandboxCommandForVerification").mockReturnValue({
@@ -140,7 +150,13 @@ function createDoctorHarness(): { runSandboxDoctor: RunSandboxDoctor; logSpy: Mo
 
   logSpy.mockClear();
 
-  return { logSpy, runSandboxDoctor: requireDist(doctorModulePath).runSandboxDoctor };
+  return {
+    captureHostCommandSpy,
+    getSandboxSpy,
+    logSpy,
+    repairMutableConfigPermsSpy,
+    runSandboxDoctor: requireDist(doctorModulePath).runSandboxDoctor,
+  };
 }
 
 describe("runSandboxDoctor flow", () => {
@@ -199,5 +215,8 @@ describe("runSandboxDoctor flow", () => {
     );
 
     expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(harness.getSandboxSpy).not.toHaveBeenCalled();
+    expect(harness.captureHostCommandSpy).not.toHaveBeenCalled();
+    expect(harness.repairMutableConfigPermsSpy).not.toHaveBeenCalled();
   });
 });
