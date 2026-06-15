@@ -19,7 +19,16 @@ import { testTimeoutOptions } from "../../helpers/timeouts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const DOCKERFILE_BASE = path.join(REPO_ROOT, "Dockerfile.base");
-const PRELOAD = path.join(REPO_ROOT, "nemoclaw-blueprint", "scripts", "whatsapp-qr-compact.js");
+const PRELOAD = path.join(
+  REPO_ROOT,
+  "src",
+  "lib",
+  "messaging",
+  "channels",
+  "whatsapp",
+  "runtime",
+  "whatsapp-qr-compact.ts",
+);
 const INSTALL_TIMEOUT_MS = 180_000;
 const PROBE_TIMEOUT_MS = 30_000;
 const COMPACT_MAX_ROWS = Number.parseInt(process.env.WHATSAPP_QR_COMPACT_MAX_ROWS ?? "40", 10);

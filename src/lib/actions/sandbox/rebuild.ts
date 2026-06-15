@@ -56,6 +56,8 @@ import {
   MessagingWorkflowPlanner,
   toMessagingAgentId,
 } from "../../messaging";
+import { hydrateMessagingChannelConfig } from "../../messaging-channel-config";
+import { getStoredMessagingChannelConfig } from "../../onboard/messaging-config";
 import { pruneDisabledMessagingPolicyPresets } from "../../onboard/messaging-policy-presets";
 import {
   captureSandboxListWithGatewayRecovery,
@@ -291,6 +293,66 @@ function hookOutputsFromBuildSteps(
   return { outputs };
 }
 
+function countActiveSandboxSessionsForRebuild(sandboxName: string): number {
+  const opsBinRebuild = resolveOpenshell();
+  // Source boundary: active-session detection depends on host process listing
+  // and the OpenShell binary being installed. A failed/unavailable detector is
+  // not evidence of active sessions, and rebuild's safety preflights still run
+  // before destructive work. Keep the prior fail-open prompt behavior here;
+  // remove this fallback only if session detection becomes a required, typed
+  // OpenShell API that can distinguish "zero sessions" from "unavailable".
+  if (!opsBinRebuild) return 0;
+
+  try {
+    const sessionResult = getActiveSandboxSessions(sandboxName, createSessionDeps(opsBinRebuild));
+    return sessionResult.detected ? sessionResult.sessions.length : 0;
+  } catch {
+    return 0;
+  }
+}
+
+async function confirmSandboxRebuildIfNeeded(
+  skipConfirm: boolean,
+  rebuildActiveSessionCount: number,
+): Promise<boolean> {
+  if (skipConfirm) return true;
+
+  if (rebuildActiveSessionCount > 0) {
+    const plural = rebuildActiveSessionCount > 1 ? "sessions" : "session";
+    console.log(
+      `  ${YW}⚠  Active SSH ${plural} detected (${rebuildActiveSessionCount} connection${rebuildActiveSessionCount > 1 ? "s" : ""})${R}`,
+    );
+    console.log(
+      `  Rebuilding will terminate ${rebuildActiveSessionCount === 1 ? "the" : "all"} active ${plural} with a Broken pipe error.`,
+    );
+    console.log("");
+  }
+  console.log("  This will:");
+  console.log("    1. Back up workspace state");
+  console.log("    2. Destroy and recreate the sandbox with the current image");
+  console.log("    3. Restore workspace state into the new sandbox");
+  console.log("");
+  const answer = await askPrompt("  Proceed? [y/N]: ");
+  if (answer.trim().toLowerCase() !== "y" && answer.trim().toLowerCase() !== "yes") {
+    console.log("  Cancelled.");
+    return false;
+  }
+  return true;
+}
+
+function isSingleAgentRebuildSupported(
+  sb: registry.SandboxEntry & { agents?: unknown[] },
+  bail: (msg: string, code?: number) => never,
+): boolean {
+  if (sb.agents && sb.agents.length > 1) {
+    console.error("  Multi-agent sandbox rebuild is not yet supported.");
+    console.error(`  Back up state manually and recreate with \`${CLI_NAME} onboard\`.`);
+    bail("Multi-agent sandbox rebuild is not yet supported.");
+    return false;
+  }
+  return true;
+}
+
 async function reapplyMessagingManifestAfterOpenClawDoctor(
   sandboxName: string,
   plan: SandboxMessagingPlan | null,
@@ -345,18 +407,7 @@ export async function rebuildSandbox(
     : (_msg: string, code = 1) => process.exit(code);
 
   // Active session detection — enrich the confirmation prompt if sessions are active
-  let rebuildActiveSessionCount = 0;
-  const opsBinRebuild = resolveOpenshell();
-  if (opsBinRebuild) {
-    try {
-      const sessionResult = getActiveSandboxSessions(sandboxName, createSessionDeps(opsBinRebuild));
-      if (sessionResult.detected) {
-        rebuildActiveSessionCount = sessionResult.sessions.length;
-      }
-    } catch {
-      /* non-fatal */
-    }
-  }
+  const rebuildActiveSessionCount = countActiveSandboxSessionsForRebuild(sandboxName);
 
   const sb = registry.getSandbox(sandboxName) as any;
   if (!sb) {
@@ -366,12 +417,7 @@ export async function rebuildSandbox(
   }
 
   // Multi-agent guard (temporary — until swarm lands)
-  if (sb.agents && sb.agents.length > 1) {
-    console.error("  Multi-agent sandbox rebuild is not yet supported.");
-    console.error(`  Back up state manually and recreate with \`${CLI_NAME} onboard\`.`);
-    bail("Multi-agent sandbox rebuild is not yet supported.");
-    return;
-  }
+  if (!isSingleAgentRebuildSupported(sb, bail)) return;
 
   const rebuildAgent = sb.agent || null;
   const agent = agentRuntime.getSessionAgent(sandboxName);
@@ -387,31 +433,19 @@ export async function rebuildSandbox(
     return;
   }
 
-  // Stash WeChat per-account metadata into process.env before the rebuild
-  // touches anything destructive. The metadata lives in session.wechatConfig
-  // (captured during the original onboard's host-side QR login) — the only
-  // durable source today. Surfacing it as WECHAT_ACCOUNT_ID / WECHAT_BASE_URL
-  // / WECHAT_USER_ID lets the in-process onboard --resume that fires later
-  // see it directly via the wechatConfig builder's process.env path.
-  // `openclaw-weixin/` runtime state is intentionally NOT in state_dirs —
-  // the manifest post-agent-install hook rebuilds account files from these
-  // env-backed config inputs every image build, so keeping the envs here is
-  // what the next image needs to put the right accountId/baseUrl/userId back
-  // into openclaw.json + the accounts state file.
+  // Hydrate non-secret messaging config before the rebuild touches anything
+  // destructive. The manifest plan in registry is the durable source; legacy
+  // session channel fields are read only as compatibility fallback by
+  // getStoredMessagingChannelConfig().
   {
-    // Only hydrate from the session when it belongs to THIS sandbox. The
-    // global session file holds the most recent onboard, which may be for a
-    // different sandbox — pulling its wechatConfig would leak that
-    // sandbox's accountId / baseUrl / userId into this image build.
     const rebuildSession = onboardSession.loadSession();
-    const wc =
-      rebuildSession?.sandboxName === sandboxName ? (rebuildSession.wechatConfig ?? null) : null;
-    if (wc?.accountId && !process.env.WECHAT_ACCOUNT_ID)
-      process.env.WECHAT_ACCOUNT_ID = wc.accountId;
-    if (wc?.baseUrl && !process.env.WECHAT_BASE_URL) process.env.WECHAT_BASE_URL = wc.baseUrl;
-    if (wc?.userId && !process.env.WECHAT_USER_ID) process.env.WECHAT_USER_ID = wc.userId;
-    if (wc?.accountId) {
-      log(`Stashed WeChat account metadata for rebuild: accountId=${wc.accountId}`);
+    const hydratedMessagingConfig = hydrateMessagingChannelConfig(
+      getStoredMessagingChannelConfig(sandboxName, rebuildSession),
+    );
+    if (hydratedMessagingConfig) {
+      log(
+        `Stashed messaging config for rebuild: ${Object.keys(hydratedMessagingConfig).join(",")}`,
+      );
     }
   }
 
@@ -427,30 +461,11 @@ export async function rebuildSandbox(
   }
   console.log("");
 
-  let rebuildConfirmed = false;
-  if (!skipConfirm) {
-    if (rebuildActiveSessionCount > 0) {
-      const plural = rebuildActiveSessionCount > 1 ? "sessions" : "session";
-      console.log(
-        `  ${YW}⚠  Active SSH ${plural} detected (${rebuildActiveSessionCount} connection${rebuildActiveSessionCount > 1 ? "s" : ""})${R}`,
-      );
-      console.log(
-        `  Rebuilding will terminate ${rebuildActiveSessionCount === 1 ? "the" : "all"} active ${plural} with a Broken pipe error.`,
-      );
-      console.log("");
-    }
-    console.log("  This will:");
-    console.log("    1. Back up workspace state");
-    console.log("    2. Destroy and recreate the sandbox with the current image");
-    console.log("    3. Restore workspace state into the new sandbox");
-    console.log("");
-    const answer = await askPrompt("  Proceed? [y/N]: ");
-    if (answer.trim().toLowerCase() !== "y" && answer.trim().toLowerCase() !== "yes") {
-      console.log("  Cancelled.");
-      return;
-    }
-    rebuildConfirmed = true;
-  }
+  const rebuildConfirmed = await confirmSandboxRebuildIfNeeded(
+    skipConfirm,
+    rebuildActiveSessionCount,
+  );
+  if (!rebuildConfirmed) return;
 
   // Step 0: Preflight — verify recreate preconditions BEFORE destroying
   // anything.  The most common rebuild failure is a missing provider
@@ -1048,9 +1063,6 @@ export async function rebuildSandbox(
     const preservedRegistryFields = {
       ...(hasRebuildHermesToolGateways
         ? { hermesToolGateways: [...rebuildHermesToolGateways] }
-        : {}),
-      ...(sb.providerCredentialHashes
-        ? { providerCredentialHashes: sb.providerCredentialHashes }
         : {}),
     };
     if (Object.keys(preservedRegistryFields).length > 0) {
