@@ -758,8 +758,12 @@ const { summarizeCurlFailure, summarizeProbeFailure } = httpProbe;
 const selectOnboardAgent = createSelectOnboardAgent({
   resolveAgent: agentOnboard.resolveAgent,
   loadAgent: agentDefs.loadAgent,
+  getAgentChoices: agentDefs.getAgentChoices,
   isNonInteractive,
   note,
+  log: (message?: string) => console.log(message ?? ""),
+  prompt,
+  selectFromNumberedMenu: selectFromNumberedMenuOrExit,
 });
 
 const { getTransportRecoveryMessage } = validationRecovery;

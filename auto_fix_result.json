@@ -1,0 +1,19 @@
+{
+  "fix_description": "Issue #5466: the onboarding wizard never presented an agent-selection screen, so it silently configured OpenClaw and Hermes could only be reached via --agent/NEMOCLAW_AGENT. Root cause: createSelectOnboardAgent (src/lib/onboard/agent-selection.ts) ignored the canPrompt signal and always resolved to the default agent without prompting. Fix: when running interactively (canPrompt && not non-interactive) with no explicit agent flag/env/session and more than one agent available, the wizard now renders a numbered picker listing all available agents (OpenClaw first as default, Hermes, etc.) and honors the user's choice; selecting OpenClaw maps to the existing null/default path. Wired the new prompt/log/getAgentChoices/selectFromNumberedMenu dependencies into the call site in src/lib/onboard.ts.",
+  "verification_steps": [
+    "Wrote failing unit test src/lib/onboard/agent-selection.test.ts exercising the real agent registry (agents/openclaw + agents/hermes) via createSelectOnboardAgent; confirmed RED on unfixed dist (Hermes selection returned undefined instead of 'hermes').",
+    "Implemented the interactive picker in src/lib/onboard/agent-selection.ts and wired deps in src/lib/onboard.ts.",
+    "Rebuilt dist (npm run build:cli) and confirmed GREEN: agent-selection.test.ts (3) and hermes-provider-foundation.test.ts (4) all pass.",
+    "Updated test/hermes-provider-foundation.test.ts: the prior 'keeps bare interactive onboard on OpenClaw default' test encoded the buggy silent-default behavior; it now asserts the picker is shown (OpenClaw + Hermes) and added a test that choosing option 2 selects Hermes.",
+    "npm run typecheck:cli: clean. biome check: clean after auto-format.",
+    "Ran onboard machine + lifecycle regression suites (217 tests) and agent/defs/hermes suites (47 tests): all pass."
+  ],
+  "commands_run": [
+    "npm install && npm install --include=dev --ignore-scripts",
+    "npm run build:cli",
+    "npx vitest run src/lib/onboard/agent-selection.test.ts test/hermes-provider-foundation.test.ts",
+    "npm run typecheck:cli",
+    "npx biome check --write src/lib/onboard/agent-selection.ts src/lib/onboard/agent-selection.test.ts test/hermes-provider-foundation.test.ts",
+    "npx vitest run test/onboard-lifecycle.test.ts src/lib/onboard/machine/ src/lib/agent/defs.test.ts src/lib/agent/onboard.test.ts"
+  ]
+}
