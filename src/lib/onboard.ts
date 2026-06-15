@@ -3382,6 +3382,11 @@ async function handleVllmSelection(
     process.exit(1);
   }
 
+  // Source boundary: local vLLM is an external process, so /v1/models can be
+  // unreachable, malformed, empty, or return an unsafe served id. setupNim is
+  // the last safe point before writing provider state, so fail closed here
+  // rather than returning a partially configured local provider. Remove this
+  // local guard only if the vLLM manager owns a typed, validated model probe.
   const vllmModelsRaw = runCapture(["curl", "-sf", `http://127.0.0.1:${VLLM_PORT}/v1/models`], {
     ignoreError: true,
   });
@@ -3726,6 +3731,11 @@ async function handleRemoteProviderSelection(
       try {
         hermesProviderModels = await nousModels.getHermesProviderModelOptions();
       } catch (err) {
+        // Source boundary: Nous model recommendations are advisory network data,
+        // while the user's requested/default model remains the source of truth
+        // for onboarding. Keep Hermes auth/tool-gateway state and continue with
+        // fallback model prompting. Remove this fallback only when the provider
+        // registry can supply recommendations without network failure modes.
         const detail = err instanceof Error ? err.message : String(err);
         console.warn(
           `  Warning: failed to load Nous model recommendations; falling back to the current/default model (${detail}).`,
