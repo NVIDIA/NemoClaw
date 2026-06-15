@@ -1254,7 +1254,7 @@ $$nemoclaw my-assistant agents delete work --force --json
 
 Reconcile the live sandbox roster against a declarative [agents.yaml manifest](../inference/declarative-agents-manifest).
 The verb lists current agents via `openclaw agents list --json`, diffs them against the manifest, and adds missing secondaries or deletes orphan ones through `openclaw agents add|delete`.
-Per-agent `model`, `subagents.*`, top-level `defaults`, and `main` overrides need a sandbox rebuild and are surfaced as warnings rather than silently dropped; rerun `$$nemoclaw onboard --agents <agents.yaml> --recreate-sandbox` to bake those fields.
+Per-agent `model`, `subagents.*`, `tools`, top-level `defaults`, and `main` overrides need a sandbox rebuild and are surfaced as warnings rather than silently dropped; rerun `$$nemoclaw onboard --agents <agents.yaml> --recreate-sandbox` to bake those fields.
 
 ```bash
 $$nemoclaw my-assistant agents apply -f ./agents.yaml

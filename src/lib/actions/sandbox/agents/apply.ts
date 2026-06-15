@@ -33,29 +33,33 @@ export interface AgentsApplyDiff {
 const MAIN_AGENT_ID = "main";
 const PROTECTED_IDS = new Set<string>([MAIN_AGENT_ID]);
 
+function hasNonEmptyFields(value: unknown): boolean {
+  if (value === null || value === undefined) return false;
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === "object") {
+    return Object.keys(value as Record<string, unknown>).length > 0;
+  }
+  return false;
+}
+
 // Manifest fields that v1 apply cannot reconcile without a rebuild.
 // `main.tools`/`main.subagents`, `defaults.subagents.*`, per-agent `model`,
-// and per-agent `subagents.*` all live in baked `openclaw.json` keys that
-// require `openclaw config set` choreography we have not built yet; for now
-// they require `nemoclaw onboard --agents <file> --recreate-sandbox`.
+// per-agent `subagents.*`, and per-agent `tools` all live in baked
+// `openclaw.json` keys that require `openclaw config set` choreography we
+// have not built yet; for now they require `nemoclaw onboard --agents <file>
+// --recreate-sandbox`. The live `openclaw agents add` path does not bake a
+// tool policy, so silently adding an agent that declares `tools` would let a
+// manifest-required security boundary go missing in the sandbox.
 function findRebuildOnlyFields(manifest: {
   agents: unknown[];
   defaults?: unknown;
   main?: unknown;
 }): string[] {
   const findings: string[] = [];
-  if (
-    manifest.defaults &&
-    typeof manifest.defaults === "object" &&
-    Object.keys(manifest.defaults as Record<string, unknown>).length > 0
-  ) {
+  if (hasNonEmptyFields(manifest.defaults)) {
     findings.push("defaults");
   }
-  if (
-    manifest.main &&
-    typeof manifest.main === "object" &&
-    Object.keys(manifest.main as Record<string, unknown>).length > 0
-  ) {
+  if (hasNonEmptyFields(manifest.main)) {
     findings.push("main");
   }
   for (const entry of manifest.agents) {
@@ -65,15 +69,28 @@ function findRebuildOnlyFields(manifest: {
     if (record.model !== undefined) {
       findings.push(`agents[${id}].model`);
     }
-    if (
-      record.subagents &&
-      typeof record.subagents === "object" &&
-      Object.keys(record.subagents as Record<string, unknown>).length > 0
-    ) {
+    if (hasNonEmptyFields(record.subagents)) {
       findings.push(`agents[${id}].subagents`);
+    }
+    if (hasNonEmptyFields(record.tools)) {
+      findings.push(`agents[${id}].tools`);
     }
   }
   return findings;
+}
+
+function findManifestToolsByAgentId(manifestAgents: unknown[]): Set<string> {
+  const ids = new Set<string>();
+  for (const entry of manifestAgents) {
+    if (entry === null || typeof entry !== "object") continue;
+    const record = entry as Record<string, unknown>;
+    const id = record.id;
+    if (typeof id !== "string" || !id) continue;
+    if (hasNonEmptyFields(record.tools)) {
+      ids.add(id);
+    }
+  }
+  return ids;
 }
 
 export function computeAgentsApplyDiff(
@@ -246,11 +263,17 @@ export async function runAgentsApply(
     exit(2);
   }
 
+  const toolsAgentIds = findManifestToolsByAgentId(manifest.agents);
   for (const id of diff.toDelete) {
     log(`  Deleting agent: ${id}`);
     deleteAgent(options.sandboxName, id);
   }
   for (const entry of diff.toAdd) {
+    if (toolsAgentIds.has(entry.id)) {
+      log(
+        `  ⚠  Manifest declares tools for "${entry.id}"; the live add cannot bake a tool policy. Rerun \`nemoclaw onboard --agents <file> --recreate-sandbox\` to apply it.`,
+      );
+    }
     log(`  Adding agent: ${entry.id}`);
     addAgent(options.sandboxName, entry.id, entry.workspace);
   }

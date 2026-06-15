@@ -77,6 +77,21 @@ describe("buildAgentsApplyDiff", () => {
       ["agents[alpha].model", "agents[beta].subagents", "defaults", "main"].sort(),
     );
   });
+
+  it("treats per-agent tools as rebuild-only so a live add cannot drop a tool policy", () => {
+    const diff = buildAgentsApplyDiff([{ id: "main" }], {
+      agents: [
+        { id: "alpha", tools: { allow: ["read"] } },
+        { id: "beta", tools: { allow: [], deny: ["write"] } },
+        { id: "gamma", tools: {} },
+        { id: "delta", tools: [] },
+      ],
+    });
+    expect(diff.toAdd.map((entry) => entry.id)).toEqual(["alpha", "beta", "gamma", "delta"]);
+    expect(diff.rebuildOnlyFields.sort()).toEqual(
+      ["agents[alpha].tools", "agents[beta].tools"].sort(),
+    );
+  });
 });
 
 describe("runAgentsApply", () => {
@@ -166,6 +181,39 @@ describe("runAgentsApply", () => {
       ),
     ).rejects.toThrow("exit:1");
     expect(addAgent).not.toHaveBeenCalled();
+  });
+
+  it("warns before adding a manifest agent that declares a tools policy", async () => {
+    const manifestPath = manifestFile(
+      "tools.yaml",
+      ["agents:", "  - id: alpha", "    tools:", "      allow: [read]", "  - id: bravo", ""].join(
+        "\n",
+      ),
+    );
+    const messages: string[] = [];
+    const addAgent = vi.fn();
+    const deleteAgent = vi.fn();
+    await runAgentsApply(
+      { sandboxName: "my-assistant", manifestPath, yes: true },
+      {
+        ensureLive: async () => undefined,
+        listAgents: () => [{ id: "main" }],
+        addAgent,
+        deleteAgent,
+        log: (message) => messages.push(message),
+      },
+    );
+    expect(messages.some((line) => line.includes("agents[alpha].tools"))).toBe(true);
+    const warningIndex = messages.findIndex((line) =>
+      line.includes('Manifest declares tools for "alpha"'),
+    );
+    const addIndex = messages.findIndex((line) => line === "  Adding agent: alpha");
+    expect(warningIndex).toBeGreaterThanOrEqual(0);
+    expect(addIndex).toBeGreaterThan(warningIndex);
+    expect(messages.some((line) => line.includes('Manifest declares tools for "bravo"'))).toBe(
+      false,
+    );
+    expect(addAgent.mock.calls.map(([, id]) => id)).toEqual(["alpha", "bravo"]);
   });
 
   it("returns cleanly when the roster already matches the manifest", async () => {
