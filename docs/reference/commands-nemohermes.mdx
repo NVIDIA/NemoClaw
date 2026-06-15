@@ -432,6 +432,23 @@ The exit code is the remote command's exit code.
 | `--tty` / `--no-tty` | Allocate a pseudo-terminal; defaults to auto-detection (on when stdin and stdout are terminals) |
 | `--timeout <seconds>` | Timeout in seconds (`0` means no timeout) |
 
+### `nemohermes <name> agent`
+
+Run one OpenClaw agent turn non-interactively in a running sandbox.
+This command forwards every argument verbatim to `openclaw agent ...` inside the sandbox via `openshell sandbox exec`, with `HOME=/sandbox` so the addressed agent profile resolves the same way as `connect`.
+Use this when driving the sandbox programmatically from another process (CI job, multi-agent platform, evaluation harness) rather than from an interactive terminal.
+
+Only OpenClaw sandboxes support the `agent` wrapper today; Hermes sandboxes already expose an OpenAI-compatible HTTP API on port `8642` inside the sandbox, so non-interactive use does not need a wrapper command.
+
+Forward the port and POST chat completions directly:
+
+```bash
+openshell forward start --background 8642 my-hermes
+curl -sN http://127.0.0.1:8642/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"<onboarded-model>","messages":[{"role":"user","content":"What is 2+2?"}],"stream":true}'
+```
+
 ### Advanced Sandbox Maintenance Commands
 
 The following commands are available for targeted host-side maintenance, but they are not part of the top-level public command list.
