@@ -35,6 +35,76 @@ export interface AgentsApplyDiff {
 const MAIN_AGENT_ID = "main";
 const PROTECTED_IDS = new Set<string>([MAIN_AGENT_ID]);
 
+// Mirrors the authoritative build-time gates in
+// scripts/generate-openclaw-config.mts. Live apply runs on the host before
+// the in-sandbox OpenClaw CLI is invoked, so it cannot rely on the build-time
+// validator (which only runs at image-build time inside the container). The
+// gates below are the defensive subset that prevents the live add/delete
+// loop from mutating the sandbox with an unsafe id, non-canonical workspace,
+// or unknown nested key.
+const AGENT_ID_RE = /^[a-z][a-z0-9_-]{0,31}$/;
+const AGENT_DATA_ROOT = "/sandbox/.openclaw";
+const ALLOWED_AGENT_ENTRY_KEYS = new Set<string>([
+  "id",
+  "workspace",
+  "agentDir",
+  "tools",
+  "subagents",
+  "description",
+  "model",
+]);
+
+function expectedAgentPath(kind: "workspace" | "agentDir", id: string): string {
+  const segment = kind === "workspace" ? `workspace-${id}` : `agents/${id}`;
+  return `${AGENT_DATA_ROOT}/${segment}`;
+}
+
+export function validateAgentsManifestForApply(manifestAgents: unknown[]): void {
+  const seenIds = new Set<string>();
+  for (let index = 0; index < manifestAgents.length; index++) {
+    const entry = manifestAgents[index];
+    const label = `agents[${index}]`;
+    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) {
+      throw new Error(`${label} must be a YAML mapping (object)`);
+    }
+    const record = entry as Record<string, unknown>;
+    const id = record.id;
+    if (typeof id !== "string" || !AGENT_ID_RE.test(id)) {
+      throw new Error(
+        `${label}.id ${JSON.stringify(id)} must match ${AGENT_ID_RE} (1-32 chars, lowercase alphanumeric, dash, underscore; must start with a letter)`,
+      );
+    }
+    if (id === MAIN_AGENT_ID) {
+      throw new Error(
+        `${label}.id "${MAIN_AGENT_ID}" is reserved for the primary agent; use a different id`,
+      );
+    }
+    if (seenIds.has(id)) {
+      throw new Error(`${label}.id "${id}" is duplicated; agent ids must be unique`);
+    }
+    seenIds.add(id);
+    for (const key of Object.keys(record)) {
+      if (!ALLOWED_AGENT_ENTRY_KEYS.has(key)) {
+        throw new Error(
+          `${label} contains unsupported field "${key}". Allowed: ${[...ALLOWED_AGENT_ENTRY_KEYS].sort().join(", ")}.`,
+        );
+      }
+    }
+    for (const pathKey of ["workspace", "agentDir"] as const) {
+      const pathValue = record[pathKey];
+      if (typeof pathValue !== "string" || pathValue.length === 0) {
+        throw new Error(`${label}.${pathKey} must be a non-empty string`);
+      }
+      const expected = expectedAgentPath(pathKey, id);
+      if (pathValue !== expected) {
+        throw new Error(
+          `${label}.${pathKey} must equal "${expected}" for agent id "${id}", got "${pathValue}"`,
+        );
+      }
+    }
+  }
+}
+
 function hasNonEmptyFields(value: unknown): boolean {
   if (value === null || value === undefined) return false;
   if (Array.isArray(value)) return value.length > 0;
@@ -245,6 +315,13 @@ export async function runAgentsApply(
   }
 
   const manifest = loadAgentsManifest(options.manifestPath);
+  try {
+    validateAgentsManifestForApply(manifest.agents);
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    log(`  Manifest rejected before mutation: ${reason}`);
+    exit(1);
+  }
   const currentList = listAgents(options.sandboxName);
   const diff = buildAgentsApplyDiff(currentList, manifest);
 

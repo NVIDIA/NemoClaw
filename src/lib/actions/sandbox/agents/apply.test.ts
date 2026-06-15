@@ -7,7 +7,12 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { buildAgentsApplyDiff, computeAgentsApplyDiff, runAgentsApply } from "./apply";
+import {
+  buildAgentsApplyDiff,
+  computeAgentsApplyDiff,
+  runAgentsApply,
+  validateAgentsManifestForApply,
+} from "./apply";
 
 let tmpDir: string;
 
@@ -91,6 +96,114 @@ describe("buildAgentsApplyDiff", () => {
     expect(diff.rebuildOnlyFields.sort()).toEqual(
       ["agents[alpha].tools", "agents[beta].tools"].sort(),
     );
+  });
+});
+
+describe("validateAgentsManifestForApply", () => {
+  it("rejects ids that do not match the AGENT_ID regex", () => {
+    for (const id of [
+      "--help",
+      "-h",
+      "Alpha",
+      "ALPHA",
+      "1leading",
+      "alpha space",
+      "../escape",
+      "alpha/sub",
+      "a".repeat(33),
+    ]) {
+      expect(() =>
+        validateAgentsManifestForApply([
+          {
+            id,
+            workspace: `/sandbox/.openclaw/workspace-${id}`,
+            agentDir: `/sandbox/.openclaw/agents/${id}`,
+          },
+        ]),
+      ).toThrow(/must match/);
+    }
+  });
+
+  it("rejects the reserved `main` id", () => {
+    expect(() =>
+      validateAgentsManifestForApply([
+        {
+          id: "main",
+          workspace: "/sandbox/.openclaw/workspace-main",
+          agentDir: "/sandbox/.openclaw/agents/main",
+        },
+      ]),
+    ).toThrow(/reserved for the primary agent/);
+  });
+
+  it("rejects duplicate ids in the manifest", () => {
+    expect(() =>
+      validateAgentsManifestForApply([
+        {
+          id: "alpha",
+          workspace: "/sandbox/.openclaw/workspace-alpha",
+          agentDir: "/sandbox/.openclaw/agents/alpha",
+        },
+        {
+          id: "alpha",
+          workspace: "/sandbox/.openclaw/workspace-alpha",
+          agentDir: "/sandbox/.openclaw/agents/alpha",
+        },
+      ]),
+    ).toThrow(/duplicated/);
+  });
+
+  it("rejects non-canonical workspace paths", () => {
+    expect(() =>
+      validateAgentsManifestForApply([
+        {
+          id: "alpha",
+          workspace: "/sandbox/.openclaw/openclaw.json",
+          agentDir: "/sandbox/.openclaw/agents/alpha",
+        },
+      ]),
+    ).toThrow(/workspace must equal/);
+  });
+
+  it("rejects non-canonical agentDir paths", () => {
+    expect(() =>
+      validateAgentsManifestForApply([
+        {
+          id: "alpha",
+          workspace: "/sandbox/.openclaw/workspace-alpha",
+          agentDir: "/etc/passwd",
+        },
+      ]),
+    ).toThrow(/agentDir must equal/);
+  });
+
+  it("rejects entries with unsupported top-level keys", () => {
+    expect(() =>
+      validateAgentsManifestForApply([
+        {
+          id: "alpha",
+          workspace: "/sandbox/.openclaw/workspace-alpha",
+          agentDir: "/sandbox/.openclaw/agents/alpha",
+          env: { LEAK: "1" },
+        },
+      ]),
+    ).toThrow(/unsupported field "env"/);
+  });
+
+  it("accepts valid entries with the allowed key set", () => {
+    expect(() =>
+      validateAgentsManifestForApply([
+        {
+          id: "alpha",
+          workspace: "/sandbox/.openclaw/workspace-alpha",
+          agentDir: "/sandbox/.openclaw/agents/alpha",
+          description: "research bot",
+          model: "test-provider/secondary",
+          tools: { allow: ["read"] },
+          subagents: { allowAgents: ["beta"] },
+        },
+      ]),
+    ).not.toThrow();
   });
 });
 
@@ -214,6 +327,41 @@ describe("runAgentsApply", () => {
       false,
     );
     expect(addAgent.mock.calls.map(([, id]) => id)).toEqual(["alpha", "bravo"]);
+  });
+
+  it("refuses to mutate a sandbox when the manifest fails id/workspace validation", async () => {
+    const manifestPath = manifestFile(
+      "bad-id.yaml",
+      [
+        "agents:",
+        '  - id: "--help"',
+        "    workspace: /sandbox/.openclaw/workspace---help",
+        "    agentDir: /sandbox/.openclaw/agents/--help",
+        "",
+      ].join("\n"),
+    );
+    const exit = vi.fn((code: number) => {
+      throw new Error(`exit:${code}`);
+    });
+    const messages: string[] = [];
+    const addAgent = vi.fn();
+    const deleteAgent = vi.fn();
+    await expect(
+      runAgentsApply(
+        { sandboxName: "my-assistant", manifestPath, yes: true },
+        {
+          ensureLive: async () => undefined,
+          listAgents: () => [{ id: "main" }],
+          addAgent,
+          deleteAgent,
+          log: (message) => messages.push(message),
+          exit: exit as unknown as (code: number) => never,
+        },
+      ),
+    ).rejects.toThrow("exit:1");
+    expect(addAgent).not.toHaveBeenCalled();
+    expect(deleteAgent).not.toHaveBeenCalled();
+    expect(messages.some((line) => line.includes("Manifest rejected before mutation"))).toBe(true);
   });
 
   it("refuses to apply against a non-OpenClaw sandbox", async () => {
