@@ -63,6 +63,7 @@ describe("mergeOpenClawRestoredConfig", () => {
       {
         channels: {
           telegram: { accounts: { default: { token: "openshell:resolve:env:v111_TOKEN" } } },
+          whatsapp: { accounts: { default: { session: "stale" } } },
           matrix: { accounts: { default: { room: "#ops" } } },
         },
       },
@@ -74,6 +75,7 @@ describe("mergeOpenClawRestoredConfig", () => {
       channels: { matrix: { accounts: { default: { room: "#ops" } } } },
     });
     expect((merged as { channels: Record<string, unknown> }).channels.telegram).toBeUndefined();
+    expect((merged as { channels: Record<string, unknown> }).channels.whatsapp).toBeUndefined();
   });
 
   it("preserves backup provider and plugin entries when current entry maps are absent", () => {

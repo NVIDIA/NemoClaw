@@ -143,6 +143,14 @@ export function listMessagingProviderNamesForChannel(
   );
 }
 
+export function listMessagingChannelsWithoutCredentials(
+  options: MessagingManifestMetadataOptions = {},
+): string[] {
+  return selectManifests(options)
+    .filter((manifest) => manifest.credentials.length === 0)
+    .map((manifest) => manifest.id);
+}
+
 export function listMessagingConfigEnvMetadata(
   options: MessagingManifestMetadataOptions = {},
 ): MessagingConfigEnvMetadata[] {
@@ -260,6 +268,20 @@ export function getMessagingPolicyPresetValidationWarnings(
     ]);
   }
   return result;
+}
+
+export function listOpenClawManagedChannelNames(
+  options: MessagingManifestMetadataOptions = {},
+): string[] {
+  return uniqueStrings(
+    selectManifests({ ...options, agent: "openclaw" }).flatMap((manifest) =>
+      manifest.render.flatMap((render) => {
+        if (render.agent !== "openclaw" || render.kind !== "json-fragment") return [];
+        const match = render.fragment.path.match(/^channels[.]([^.]+)(?:[.]|$)/);
+        return match?.[1] ? [match[1]] : [];
+      }),
+    ),
+  );
 }
 
 export function listOpenClawRuntimeChannelMetadata(
