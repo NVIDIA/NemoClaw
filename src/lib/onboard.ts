@@ -3153,13 +3153,6 @@ async function createSandbox(
   hermesDashboardForwarding.ensureForState(finalHermesDashboardState, sandboxName, true);
 
   // Register only after confirmed ready — prevents phantom entries
-  const providerCredentialHashes: Record<string, string> = {};
-  for (const { envKey, token } of messagingTokenDefs) {
-    const hash = token ? hashCredential(token) : null;
-    if (hash) {
-      providerCredentialHashes[envKey] = hash;
-    }
-  }
   // openshell tags images with seconds; buildId is ms. Parse actual tag from output. Fixes #2672.
   const resolvedImageTag = resolveSandboxImageTagFromCreateOutput(createResult.output, buildId);
 
@@ -3172,7 +3165,6 @@ async function createSandbox(
     agent,
     agentVersionKnown: !fromDockerfile,
     imageTag: resolvedImageTag,
-    providerCredentialHashes,
     appliedPolicies: initialSandboxPolicy.appliedPresets,
     plannedMessagingState,
     hermesToolGateways,
