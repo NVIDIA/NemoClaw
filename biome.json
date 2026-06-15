@@ -82,6 +82,14 @@
     "enabled": true,
     "rules": {
       "recommended": false,
+      "complexity": {
+        "noExcessiveCognitiveComplexity": {
+          "level": "error",
+          "options": {
+            "maxAllowedComplexity": 255
+          }
+        }
+      },
       "correctness": {
         "noUndeclaredVariables": "error"
       }
