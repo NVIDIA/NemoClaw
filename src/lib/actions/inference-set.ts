@@ -11,6 +11,7 @@ import {
   getSandboxInferenceConfig,
   type SandboxInferenceConfig,
 } from "../inference/config";
+import { resolveContextWindowForModel } from "../inference/context-window";
 import {
   type AgentConfigTarget,
   readSandboxConfig,
@@ -68,6 +69,7 @@ export interface InferenceSetDeps {
   runOpenshell: (args: string[], opts?: { ignoreError?: boolean }) => OpenshellRunResult;
   appendAuditEntry: typeof appendAuditEntry;
   log: (message: string) => void;
+  resolveContextWindowForModel: (provider: string, model: string) => number | null;
 }
 
 export class InferenceSetError extends Error {
@@ -110,6 +112,7 @@ function defaultDeps(): InferenceSetDeps {
     runOpenshell: (args, opts) => runOpenshell(args, opts),
     appendAuditEntry,
     log: console.log,
+    resolveContextWindowForModel,
   };
 }
 
@@ -221,6 +224,7 @@ function buildProviderConfig(
   existing: ConfigObject,
   model: string,
   route: SandboxInferenceConfig,
+  contextWindow?: number,
 ): ConfigObject {
   const firstExistingModel = Array.isArray(existing.models)
     ? cloneConfigObject(existing.models[0])
@@ -228,6 +232,11 @@ function buildProviderConfig(
   delete firstExistingModel.compat;
   firstExistingModel.id = model;
   firstExistingModel.name = route.primaryModelRef;
+  // Recompute for the new model rather than inheriting the prior model's window.
+  // Omitted (undefined) → keep whatever the existing entry had.
+  if (typeof contextWindow === "number") {
+    firstExistingModel.contextWindow = contextWindow;
+  }
   if (route.inferenceCompat) {
     firstExistingModel.compat = asConfigObject(route.inferenceCompat);
   }
@@ -246,6 +255,7 @@ export function patchOpenClawInferenceConfig(
   provider: string,
   model: string,
   preferredInferenceApi: string | null = null,
+  contextWindow?: number,
 ): { changed: boolean; route: SandboxInferenceConfig } {
   const before = JSON.stringify(config);
   const route = getSandboxInferenceConfig(model, provider, preferredInferenceApi);
@@ -256,7 +266,7 @@ export function patchOpenClawInferenceConfig(
   models.mode = "merge";
   const providers = ensureObject(models, "providers");
   const existingProvider = cloneConfigObject(providers[route.providerKey]);
-  providers[route.providerKey] = buildProviderConfig(existingProvider, model, route);
+  providers[route.providerKey] = buildProviderConfig(existingProvider, model, route, contextWindow);
 
   return { changed: before !== JSON.stringify(config), route };
 }
@@ -396,15 +406,29 @@ export async function runInferenceSet(
     sandboxName,
     session: deps.loadSession(),
   });
-  const patched =
-    agentName === "hermes"
-      ? patchHermesInferenceConfig(config, provider, model, preferredInferenceApi)
-      : patchOpenClawInferenceConfig(
-          config,
-          provider,
-          model,
-          preferredInferenceApi || getPreferredInferenceApi(config),
-        );
+  let patched: { changed: boolean; route: SandboxInferenceConfig };
+  if (agentName === "hermes") {
+    patched = patchHermesInferenceConfig(config, provider, model, preferredInferenceApi);
+  } else {
+    // Recompute the context window for the model being switched to, so it does
+    // not inherit the prior model's window (#context-window-on-switch).
+    const contextWindow = deps.resolveContextWindowForModel(provider, model);
+    if (contextWindow != null) {
+      deps.log(`  Context window for '${model}': ${contextWindow} tokens`);
+    } else {
+      deps.log(
+        `  Warning: could not determine the context window for '${model}'; keeping the ` +
+          `existing value. Run '${CLI_NAME} ${sandboxName} rebuild' to re-probe it.`,
+      );
+    }
+    patched = patchOpenClawInferenceConfig(
+      config,
+      provider,
+      model,
+      preferredInferenceApi || getPreferredInferenceApi(config),
+      contextWindow ?? undefined,
+    );
+  }
 
   deps.log(
     agentName === "hermes"
