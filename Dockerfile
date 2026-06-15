@@ -709,7 +709,12 @@ RUN set -eu; \
     fi; \
     if [ "$NEMOCLAW_WEB_SEARCH_ENABLED" = "1" ]; then \
         openclaw plugins install "npm:@openclaw/brave-plugin@${OPENCLAW_VERSION}" --pin; \
-        BRAVE_API_KEY=openshell:resolve:env:BRAVE_API_KEY openclaw doctor --fix --non-interactive; \
+        if ! brave_doctor_out=$(BRAVE_API_KEY=openshell:resolve:env:BRAVE_API_KEY openclaw doctor --fix --non-interactive 2>&1); then \
+            printf '%s\n' "$brave_doctor_out" >&2; \
+            printf '%s' "$brave_doctor_out" | grep -qi "already exists" || exit 1; \
+        else \
+            printf '%s\n' "$brave_doctor_out"; \
+        fi; \
     elif [ "$NEMOCLAW_OPENCLAW_OTEL" = "1" ]; then \
         openclaw doctor --fix --non-interactive; \
     fi
