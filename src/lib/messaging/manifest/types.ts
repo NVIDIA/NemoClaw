@@ -42,7 +42,7 @@ export interface ChannelManifest {
   /** Policy presets needed when this channel is active. */
   readonly policyPresets?: readonly ChannelPolicyPresetReference[];
   readonly render: readonly ChannelRenderSpec[];
-  readonly runtime?: Partial<Record<MessagingAgentId, ChannelRuntimeSpec>>;
+  readonly runtime?: ChannelRuntimeByAgentSpec;
   readonly agentPackages?: readonly ChannelAgentPackageSpec[];
   readonly state: ChannelStateSpec;
   readonly hooks: readonly ChannelHookSpec[];
@@ -141,6 +141,19 @@ export interface ChannelEnvLinesRenderSpec extends ChannelRenderBaseSpec {
 export interface ChannelRenderFragmentSpec {
   readonly path: MessagingStatePath;
   readonly value: MessagingSerializableValue;
+}
+
+/** Agent-runtime metadata consumed by shared runtime setup and diagnostics. */
+export interface ChannelRuntimeByAgentSpec
+  extends Partial<Record<MessagingAgentId, ChannelRuntimeSpec>> {
+  readonly openclaw?: ChannelOpenClawRuntimeSpec;
+  readonly hermes?: ChannelRuntimeSpec;
+}
+
+/** OpenClaw-specific runtime metadata. */
+export interface ChannelOpenClawRuntimeSpec extends ChannelRuntimeSpec {
+  /** Key owned under openclaw.json `channels`, when this manifest manages one. */
+  readonly channelName?: string;
 }
 
 /** Agent-runtime metadata consumed by shared runtime setup and diagnostics. */

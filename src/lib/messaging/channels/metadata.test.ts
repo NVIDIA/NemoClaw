@@ -13,9 +13,11 @@ import {
   getMessagingPolicyPresetValidationWarnings,
   getMessagingProviderSuffixesByChannel,
   listAvailableMessagingChannelIds,
+  listMessagingChannelsWithoutCredentials,
   listMessagingConfigEnvKeys,
   listMessagingPackageInstallSpecs,
   listMessagingProviderNamesForChannel,
+  listOpenClawManagedChannelNames,
   listOpenClawRuntimeChannelMetadata,
   listRequiredCreateTimeMessagingPolicyPresetNames,
 } from "./metadata";
@@ -58,6 +60,7 @@ describe("built-in messaging channel metadata", () => {
       "demo-slack-bridge",
       "demo-slack-app",
     ]);
+    expect(listMessagingChannelsWithoutCredentials()).toEqual(["whatsapp"]);
   });
 
   it("resolves config env keys and aliases from manifest inputs", () => {
@@ -100,6 +103,13 @@ describe("built-in messaging channel metadata", () => {
     expect(getMessagingPolicyPresetValidationWarnings().discord).toContain(
       "https://discord.com/api/v10/gateway or validate the configured",
     );
+    expect(listOpenClawManagedChannelNames()).toEqual([
+      "telegram",
+      "discord",
+      "openclaw-weixin",
+      "slack",
+      "whatsapp",
+    ]);
     expect(
       Object.fromEntries(
         listOpenClawRuntimeChannelMetadata().map((entry) => [entry.channelId, entry.configKeys]),
@@ -153,6 +163,51 @@ describe("built-in messaging channel metadata", () => {
     ]);
   });
 
+  it("derives OpenClaw managed channel names from explicit runtime metadata", () => {
+    const manifests: ChannelManifest[] = [
+      {
+        ...manifestWithPreset("matrix", "matrix"),
+        render: [
+          {
+            kind: "json-fragment",
+            agent: "openclaw",
+            target: "openclaw.json",
+            fragment: { path: "channels.matrix", value: { enabled: true } },
+          },
+          {
+            kind: "json-fragment",
+            agent: "openclaw",
+            target: "openclaw.json",
+            fragment: { path: "channels.matrix.rooms", value: ["#ops"] },
+          },
+          {
+            kind: "json-fragment",
+            agent: "hermes",
+            target: "~/.hermes/config.yaml",
+            fragment: { path: "channels.hermesOnly", value: { enabled: true } },
+          },
+          {
+            kind: "json-fragment",
+            agent: "openclaw",
+            target: "openclaw.json",
+            fragment: { path: "plugins.entries.matrix", value: { enabled: true } },
+          },
+        ],
+        runtime: {
+          openclaw: {
+            channelName: "matrix-runtime",
+            visibility: {
+              configKeys: ["matrix-runtime"],
+              logPatterns: ["matrix"],
+            },
+          },
+        },
+      },
+    ];
+
+    expect(listOpenClawManagedChannelNames({ manifests })).toEqual(["matrix-runtime"]);
+  });
+
   it("lists package installs from manifest agent package metadata", () => {
     const manifests: ChannelManifest[] = [
       {
@@ -170,6 +225,29 @@ describe("built-in messaging channel metadata", () => {
 
     expect(listMessagingPackageInstallSpecs({ manifests })[0]?.agents).toEqual(["openclaw"]);
     expect(listMessagingPackageInstallSpecs({ manifests, agent: "hermes" })).toEqual([]);
+  });
+
+  it("lists channels that do not declare gateway credentials", () => {
+    const manifests: ChannelManifest[] = [
+      {
+        ...manifestWithPreset("matrix", "matrix"),
+        credentials: [
+          {
+            id: "matrixToken",
+            sourceInput: "token",
+            providerName: "{sandboxName}-matrix-bridge",
+            providerEnvKey: "MATRIX_TOKEN",
+            placeholder: "openshell:resolve:env:MATRIX_TOKEN",
+          },
+        ],
+      },
+      {
+        ...manifestWithPreset("sessionOnly", "session-only"),
+        credentials: [],
+      },
+    ];
+
+    expect(listMessagingChannelsWithoutCredentials({ manifests })).toEqual(["sessionOnly"]);
   });
 });
 
