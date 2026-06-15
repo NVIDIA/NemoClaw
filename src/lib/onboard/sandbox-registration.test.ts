@@ -43,7 +43,6 @@ describe("buildCreatedSandboxRegistryEntry", () => {
       dashboardPort: 18789,
       gatewayName: "nemoclaw-19080",
       gatewayPort: 19080,
-      providerCredentialHashes: {},
     });
 
     expect(entry).toMatchObject({
@@ -91,7 +90,6 @@ describe("buildCreatedSandboxRegistryEntry", () => {
       dashboardPort: 18789,
       gatewayName: "nemoclaw",
       gatewayPort: 8080,
-      providerCredentialHashes: {},
     });
 
     expect(entry.model).toBeNull();
@@ -128,7 +126,6 @@ describe("registerCreatedSandbox", () => {
       dashboardPort: 18789,
       gatewayName: "nemoclaw",
       gatewayPort: 8080,
-      providerCredentialHashes: {},
       registerSandbox,
     });
 
