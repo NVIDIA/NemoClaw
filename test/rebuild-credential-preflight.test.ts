@@ -81,9 +81,7 @@ function createFixture(opts: {
   messagingPlanChannels?: string[] | null;
   dockerBuildExitCode?: number;
   providerRegistered?: boolean;
-  sessionSandboxName?: string;
-  wechatConfig?: { accountId?: string; baseUrl?: string; userId?: string } | null;
-  dockerEnvCaptureFile?: string | null;
+  activeSessionCount?: number | null;
 }) {
   const {
     sandboxName = "my-assistant",
@@ -97,9 +95,7 @@ function createFixture(opts: {
     messagingPlanChannels = null,
     dockerBuildExitCode = 0,
     providerRegistered = true,
-    sessionSandboxName = sandboxName,
-    wechatConfig = null,
-    dockerEnvCaptureFile = null,
+    activeSessionCount = 0,
   } = opts;
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-2273-"));
   tmpFixtures.push(tmpDir);
@@ -146,7 +142,7 @@ function createFixture(opts: {
       lastCompletedStep: "policies",
       failure: null,
       agent: null,
-      sandboxName: sessionSandboxName,
+      sandboxName,
       provider,
       model: "meta/llama-3.3-70b-instruct",
       endpointUrl: null,
@@ -158,7 +154,6 @@ function createFixture(opts: {
       policyPresets: [],
       messagingPlan: null,
       metadata: { gatewayName: "nemoclaw", fromDockerfile: null },
-      ...(wechatConfig ? { wechatConfig } : {}),
       steps: {
         preflight: {
           status: "complete",
@@ -242,15 +237,6 @@ function createFixture(opts: {
     path.join(tmpDir, "openshell"),
     `#!/usr/bin/env node
 const a = process.argv.slice(2);
-const capture = ${JSON.stringify(dockerEnvCaptureFile)};
-function captureWechatEnv() {
-  if (!capture) return;
-  require("fs").writeFileSync(capture, JSON.stringify({
-    accountId: process.env.WECHAT_ACCOUNT_ID || null,
-    baseUrl: process.env.WECHAT_BASE_URL || null,
-    userId: process.env.WECHAT_USER_ID || null,
-  }));
-}
 if (a[0]==="sandbox" && a[1]==="list")       { process.stdout.write("${sandboxName}\\n"); process.exit(0); }
 if (a[0]==="sandbox" && a[1]==="ssh-config") { process.stdout.write("${sshConfig}\\n"); process.exit(0); }
 if (a[0]==="sandbox" && a[1]==="delete")     { process.exit(0); }
@@ -259,9 +245,24 @@ if (a[0]==="gateway" && a[1]==="info")       { process.stdout.write("nemoclaw\\n
 if (a[0]==="gateway" && a[1]==="select")     { process.exit(0); }
 if (a[0]==="inference" && a[1]==="get")      { process.stdout.write('{"provider":"${provider}","model":"meta/llama-3.3-70b-instruct"}\\n'); process.exit(0); }
 if (a[0]==="inference" && a[1]==="set")      { process.exit(0); }
-if (a[0]==="provider" && a[1]==="get")       { captureWechatEnv(); process.exit(${providerRegistered ? 0 : 1}); }
+if (a[0]==="provider" && a[1]==="get")       { process.exit(${providerRegistered ? 0 : 1}); }
 if (a[0]==="provider")                       { process.exit(0); }
 if (a[0]==="forward")                        { process.exit(0); }
+process.exit(0);
+`,
+    { mode: 0o755 },
+  );
+
+  // ── Fake ps for active SSH session detection ──────────────────
+  const activeSessionLines = Array.from(
+    { length: activeSessionCount ?? 0 },
+    (_, index) => `${9000 + index} ssh openshell-${sandboxName}`,
+  ).join("\n");
+  fs.writeFileSync(
+    path.join(tmpDir, "ps"),
+    `#!/usr/bin/env node
+if (${activeSessionCount === null ? "true" : "false"}) process.exit(1);
+process.stdout.write(${JSON.stringify(activeSessionLines)} + (${JSON.stringify(activeSessionLines)} ? "\\n" : ""));
 process.exit(0);
 `,
     { mode: 0o755 },
@@ -274,15 +275,6 @@ process.exit(0);
     path.join(tmpDir, "docker"),
     `#!/usr/bin/env node
 const a = process.argv.slice(2);
-const capture = ${JSON.stringify(dockerEnvCaptureFile)};
-const fs = require("fs");
-if (capture && a[0]==="build" && !fs.existsSync(capture)) {
-  fs.writeFileSync(capture, JSON.stringify({
-    accountId: process.env.WECHAT_ACCOUNT_ID || null,
-    baseUrl: process.env.WECHAT_BASE_URL || null,
-    userId: process.env.WECHAT_USER_ID || null,
-  }));
-}
 if (a[0]==="build") { process.exit(${dockerBuildExitCode}); }
 if (a[0]==="image" && a[1]==="inspect") { process.exit(0); }
 if (a[0]==="inspect") { process.stdout.write("true\\n"); process.exit(0); }
@@ -420,6 +412,49 @@ describe("Issue #2273: atomic rebuild", () => {
       expect(output).not.toContain("Proceed? [y/N]:");
       expect(output).not.toContain("Backing up sandbox state");
       expect(registryHasSandbox(f)).toBe(true);
+    });
+
+    it("prints active SSH session warning before interactive confirmation", {
+      timeout: 60_000,
+    }, () => {
+      const f = createFixture({
+        activeSessionCount: 2,
+        savedCredential: {
+          key: "NVIDIA_INFERENCE_API_KEY",
+          value: "nvapi-test-key-for-rebuild",
+        },
+      });
+
+      const result = runRebuild(f, {}, { yes: false, input: "n\n" });
+      const output = (result.stderr || "") + (result.stdout || "");
+
+      expect(result.status).toBe(0);
+      expect(output).toContain("Active SSH sessions detected (2 connections)");
+      expect(output).toContain("terminate all active sessions with a Broken pipe error");
+      expect(output).toContain("Proceed? [y/N]:");
+      expect(output).toContain("Cancelled.");
+      expect(output).not.toContain("Backing up sandbox state");
+    });
+
+    it("omits active SSH warning when detection is unavailable", {
+      timeout: 60_000,
+    }, () => {
+      const f = createFixture({
+        activeSessionCount: null,
+        savedCredential: {
+          key: "NVIDIA_INFERENCE_API_KEY",
+          value: "nvapi-test-key-for-rebuild",
+        },
+      });
+
+      const result = runRebuild(f, {}, { yes: false, input: "n\n" });
+      const output = (result.stderr || "") + (result.stdout || "");
+
+      expect(result.status).toBe(0);
+      expect(output).not.toContain("Active SSH");
+      expect(output).toContain("Proceed? [y/N]:");
+      expect(output).toContain("Cancelled.");
+      expect(output).not.toContain("Backing up sandbox state");
     });
 
     it("aborts rebuild BEFORE destroying sandbox when credential is missing", {
