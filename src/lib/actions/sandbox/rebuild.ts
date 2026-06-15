@@ -403,6 +403,10 @@ async function stageRebuildMessagingPlanOrBail(
   try {
     return await stageMessagingManifestPlanForRebuild(sandboxName, sb, rebuildAgent, log);
   } catch (err) {
+    // Source boundary: registry messaging plans and agent manifests are durable
+    // host-side inputs from prior onboarding. If they drift or become invalid,
+    // rebuild must fail here before backup/delete; remove this boundary only if
+    // manifest staging becomes total over all persisted registry states.
     const message = err instanceof Error ? err.message : String(err);
     console.error("");
     console.error(
@@ -438,6 +442,11 @@ function preflightRebuildCredentials(
   }
 
   const rebuildProvider = sessionMatchesTarget ? session?.provider || sb.provider : sb.provider;
+  // Compatibility boundary for GH #2519: pre-fix local-provider sessions could
+  // persist credentialEnv="OPENAI_API_KEY" even though current local-provider
+  // write paths persist null. Only a session for this sandbox plus a local
+  // target registry provider may bypass the key; keep until legacy sessions are
+  // no longer supported by rebuild migration tests.
   if (
     sessionMatchesTarget &&
     isLocalInferenceProvider(sb.provider) &&
