@@ -14,6 +14,7 @@ import path from "node:path";
 import readline from "node:readline";
 
 import { isErrnoException } from "../core/errno";
+import { listMessagingCredentialMetadata } from "../messaging/channels";
 import { rejectSymlinksOnPath } from "../state/config-io";
 
 const UNSAFE_HOME_PATHS = new Set(["/tmp", "/var/tmp", "/dev/shm", "/"]);
@@ -42,12 +43,8 @@ export const KNOWN_CREDENTIAL_ENV_KEYS: readonly string[] = [
   "GITHUB_TOKEN",
   "HF_TOKEN",
   "HUGGING_FACE_HUB_TOKEN",
-  "TELEGRAM_BOT_TOKEN",
   "ALLOWED_CHAT_IDS",
-  "DISCORD_BOT_TOKEN",
-  "SLACK_BOT_TOKEN",
-  "SLACK_APP_TOKEN",
-  "WECHAT_BOT_TOKEN",
+  ...listMessagingCredentialMetadata().map((credential) => credential.providerEnvKey),
 ];
 
 const LEGACY_CREDENTIAL_ENV_ALIASES: Partial<Record<string, readonly string[]>> = {

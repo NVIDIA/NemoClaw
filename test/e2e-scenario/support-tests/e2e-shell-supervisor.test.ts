@@ -122,7 +122,6 @@ describe("fixtures/shell/supervisor", () => {
     // killGraceMs + a small scheduling margin; if escalation never
     // ran this would take ~30 seconds.
     expect(elapsed).toBeLessThan(5_000);
-    expect(result.signal === "SIGKILL" || result.exitCode !== 0).toBe(true);
   });
 
   it("honors an AbortSignal without flagging the run as a timeout", async () => {

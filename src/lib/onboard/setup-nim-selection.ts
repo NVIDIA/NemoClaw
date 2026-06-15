@@ -3,17 +3,40 @@
 
 export type SetupNimSelectionBackNavigation = Readonly<{ kind: "NEMOCLAW_BACK_TO_SELECTION" }>;
 
-export type SetupNimSelectionState = {
+export type SetupNimSelectionState<THermesAuthMethod = unknown> = {
   model: string | SetupNimSelectionBackNavigation | null;
   provider: string;
   endpointUrl: string | null;
   credentialEnv: string | null;
-  hermesAuthMethod: unknown | null;
+  hermesAuthMethod: THermesAuthMethod | null;
   hermesToolGateways: string[];
   preferredInferenceApi: string | null;
   nimContainer: string | null;
   allowToolsIncompatible: boolean;
 };
+
+export type CloudFallbackConfig = {
+  providerName: string;
+  endpointUrl: string | null;
+  credentialEnv: string | null;
+  defaultModel: string;
+};
+
+export function applyCloudFallbackSelection(
+  state: SetupNimSelectionState,
+  cloudConfig: CloudFallbackConfig,
+): void {
+  state.provider = cloudConfig.providerName;
+  state.endpointUrl = cloudConfig.endpointUrl;
+  state.credentialEnv = cloudConfig.credentialEnv;
+  state.model = cloudConfig.defaultModel;
+  state.preferredInferenceApi = null;
+  state.nimContainer = null;
+}
+
+export function clearNimContainerBeforeRetry(state: SetupNimSelectionState): void {
+  state.nimContainer = null;
+}
 
 type ProviderChoice = {
   key: string;

@@ -61,7 +61,15 @@ export const telegramManifest = {
       placeholder: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
     },
   ],
-  policyPresets: [{ name: "telegram", policyKeys: ["telegram_bot"] }],
+  policyPresets: [
+    {
+      name: "telegram",
+      policyKeys: ["telegram_bot"],
+      agentPolicyKeys: {
+        hermes: ["telegram"],
+      },
+    },
+  ],
   render: [
     {
       id: "telegram-openclaw-channel",
@@ -150,6 +158,24 @@ export const telegramManifest = {
       },
     },
   ],
+  runtime: {
+    openclaw: {
+      visibility: {
+        configKeys: ["telegram"],
+        logPatterns: ["telegram"],
+      },
+      nodePreloads: [
+        {
+          module: "telegram-diagnostics",
+          injectInto: ["boot", "connect"],
+          optional: false,
+          installMessage:
+            "[channels] Installing Telegram diagnostics (provider readiness + inference errors)",
+          installedMessage: "[channels] Telegram diagnostics installed (NODE_OPTIONS updated)",
+        },
+      ],
+    },
+  },
   state: {
     persist: {
       allowedIds: ["allowedIds"],
@@ -212,6 +238,24 @@ export const telegramManifest = {
       handler: "telegram.getMeReachability",
       inputs: ["botToken"],
       onFailure: "skip-channel",
+    },
+    {
+      id: "telegram-openclaw-bridge-health",
+      phase: "health-check",
+      handler: "telegram.openclawBridgeHealth",
+      agents: ["openclaw"],
+      onFailure: "abort",
+    },
+    {
+      id: "telegram-gateway-conflict-status",
+      phase: "status",
+      handler: "telegram.gatewayConflictStatus",
+      outputs: [
+        {
+          id: "bridgeHealth",
+          kind: "status",
+        },
+      ],
     },
   ],
 } as const satisfies ChannelManifest;
