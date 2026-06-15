@@ -160,6 +160,7 @@ export const telegramManifest = {
   ],
   runtime: {
     openclaw: {
+      channelName: "telegram",
       visibility: {
         configKeys: ["telegram"],
         logPatterns: ["telegram"],

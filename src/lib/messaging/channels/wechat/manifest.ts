@@ -109,6 +109,7 @@ export const wechatManifest = {
   ],
   runtime: {
     openclaw: {
+      channelName: "openclaw-weixin",
       visibility: {
         configKeys: ["openclaw-weixin"],
         logPatterns: ["wechat", "openclaw-weixin"],
