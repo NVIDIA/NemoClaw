@@ -41,7 +41,7 @@ The table below maps each commonly changed item to the layer that owns it and th
 | Agents allow-list (`agents.list` in `openclaw.json`) | Runtime. OpenClaw hot-reloads on config change | Prefer agent or NemoClaw commands that keep host and sandbox state aligned |
 | `openclaw.json` keys (general: model, agents.list, web.backend, channel config, and so on) | Mixed. Individual keys still follow the rebuild rules in the rows above, such as provider switch requiring rebuild even after editing the JSON. | Prefer NemoClaw host commands so the host registry and rebuilt image stay aligned |
 
-If a row above conflicts with what you observe, the runtime source of truth inside the sandbox is `/opt/nemoclaw/openclaw.json`; the host registry caches metadata but the image and OpenClaw read from the in-sandbox file.
+If a row above conflicts with what you observe, the runtime source of truth inside the sandbox is `/sandbox/.openclaw/openclaw.json`; the host registry caches metadata but the image and OpenClaw read from the in-sandbox file.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
