@@ -20,6 +20,7 @@
   "scripts": {
     "preinstall": "node scripts/check-node-version.js",
     "test": "vitest run",
+    "coverage:cli:dist-signal": "tsx scripts/coverage-cli-dist-signal.ts",
     "check": "npx prek run --all-files",
     "checks": "tsx scripts/checks/run.ts",
     "lint": "npx @biomejs/biome lint . && npm run checks",
