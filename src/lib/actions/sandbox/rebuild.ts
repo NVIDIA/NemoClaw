@@ -146,8 +146,12 @@ function _rebuildLog(msg: string) {
 /**
  * Resolve the credential environment variable required to recreate a sandbox.
  */
+function isLocalInferenceProvider(provider: string | null | undefined): provider is string {
+  return Boolean(provider && LOCAL_INFERENCE_PROVIDERS.includes(provider));
+}
+
 function getRebuildCredentialEnvFromRegistry(provider: string | null | undefined): string | null {
-  if (!provider || LOCAL_INFERENCE_PROVIDERS.includes(provider)) {
+  if (!provider || isLocalInferenceProvider(provider)) {
     return null;
   }
   const remoteConfig =
@@ -435,15 +439,16 @@ function preflightRebuildCredentials(
 
   const rebuildProvider = sessionMatchesTarget ? session?.provider || sb.provider : sb.provider;
   if (
-    (session?.provider === "ollama-local" || session?.provider === "vllm-local") &&
+    sessionMatchesTarget &&
+    isLocalInferenceProvider(sb.provider) &&
     rebuildCredentialEnv === "OPENAI_API_KEY"
   ) {
     console.log(
-      `  ${D}Note: migrating ${session.provider} sandbox off OPENAI_API_KEY (GH #2519). ` +
+      `  ${D}Note: migrating ${sb.provider} sandbox off OPENAI_API_KEY (GH #2519). ` +
         `Local inference does not require a host API key.${R}`,
     );
     log(
-      `Preflight: legacy ${session.provider} sandbox detected (credentialEnv=OPENAI_API_KEY) — clearing for rebuild`,
+      `Preflight: legacy ${sb.provider} sandbox detected (credentialEnv=OPENAI_API_KEY) — clearing for rebuild`,
     );
     rebuildCredentialEnv = null;
   }
