@@ -254,9 +254,9 @@ describe("rebuildSandbox flow", () => {
       },
     });
 
-    await expect(harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true })).rejects.toThrow(
-      "manifest boom",
-    );
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("manifest boom");
 
     const errors = harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n");
     expect(errors).toContain("messaging manifest plan could not be staged");
