@@ -1589,10 +1589,14 @@ const processRecovery = require(${j("actions/sandbox/process-recovery.js")});
 const execCalls = [];
 processRecovery.executeSandboxExecCommand = (name, command) => {
   execCalls.push({ name, command });
-  if (typeof command === "string" && command.startsWith("cat /sandbox/.openclaw/openclaw.json")) {
+  if (typeof command === "string" && command.includes("/sandbox/.openclaw/openclaw.json")) {
     return { status: 0, stdout: JSON.stringify(global.__testConfig || {}), stderr: "" };
   }
-  if (typeof command === "string" && command.indexOf("tail -n 400 /tmp/gateway.log") !== -1) {
+  if (
+    typeof command === "string" &&
+    command.includes("tail -n 400") &&
+    command.includes("/tmp/gateway.log")
+  ) {
     return { status: 0, stdout: global.__testLog || "", stderr: "" };
   }
   return { status: 0, stdout: "", stderr: "" };
@@ -1698,9 +1702,7 @@ const ctx = module.exports;
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
     const payload = parseResultPayload(result);
     assert.ok(
-      payload.logs.some((line: string) =>
-        line.includes("was not marked enabled in baked openclaw.json"),
-      ),
+      payload.logs.some((line: string) => line.includes("was not marked enabled in baked")),
       `expected enabled-flag warning; got:\n${payload.logs.join("\n")}`,
     );
   });
@@ -1798,9 +1800,7 @@ const ctx = module.exports;
     const payload = parseResultPayload(result);
     assert.equal(payload.execCalls, 0, "verifier must not run any sandbox exec probes for Hermes");
     assert.ok(
-      !payload.logs.some((line: string) =>
-        line.includes("was not marked enabled in baked openclaw.json"),
-      ),
+      !payload.logs.some((line: string) => line.includes("was not marked enabled in baked")),
       `Hermes sandbox should not see OpenClaw-shaped warning; got:\n${payload.logs.join("\n")}`,
     );
     assert.ok(
