@@ -12,7 +12,7 @@ const requireDist = createRequire(import.meta.url);
 const rebuildModulePath = "../../../../dist/lib/actions/sandbox/rebuild.js";
 
 type RebuildFlowOverrides = {
-  applyPreset?: (name: string) => boolean;
+  applyPreset?: (presetName: string) => boolean;
   executeSandboxCommand?: () => { status: number; stdout: string; stderr: string } | null;
   repairMutableConfigPerms?: () =>
     | { applied: false; skipReason: "agent" | "locked" | "unreadable"; reason: string }
@@ -30,6 +30,7 @@ type RebuildFlowHarness = {
   rebuildSandbox: RebuildSandbox;
   applyPresetSpy: MockInstance;
   backupSandboxStateSpy: MockInstance;
+  errorSpy: MockInstance;
   executeSandboxCommandSpy: MockInstance;
   logSpy: MockInstance;
   onboardSpy: MockInstance;
@@ -150,11 +151,14 @@ function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): Rebuild
   vi.spyOn(nim, "stopNimContainer").mockImplementation(() => undefined);
   vi.spyOn(nim, "stopNimContainerByName").mockImplementation(() => undefined);
   const onboardSpy = vi.spyOn(onboardMod, "onboard").mockResolvedValue(undefined);
-  const applyPresetSpy = vi.spyOn(policies, "applyPreset").mockImplementation((name: unknown) => {
-    if (overrides.applyPreset) return overrides.applyPreset(String(name));
-    if (name === "throw") throw new Error("preset boom");
-    return name === "npm";
-  });
+  const applyPresetSpy = vi
+    .spyOn(policies, "applyPreset")
+    .mockImplementation((_sandboxName: unknown, presetName: unknown) => {
+      const normalizedPresetName = String(presetName);
+      if (overrides.applyPreset) return overrides.applyPreset(normalizedPresetName);
+      if (normalizedPresetName === "throw") throw new Error("preset boom");
+      return normalizedPresetName === "npm";
+    });
   const executeSandboxCommandSpy = vi
     .spyOn(processRecovery, "executeSandboxCommand")
     .mockImplementation(
@@ -172,6 +176,7 @@ function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): Rebuild
     rebuildSandbox: requireDist(rebuildModulePath).rebuildSandbox,
     applyPresetSpy,
     backupSandboxStateSpy,
+    errorSpy,
     executeSandboxCommandSpy,
     logSpy,
     onboardSpy,
@@ -224,6 +229,8 @@ describe("rebuildSandbox flow", () => {
       "/tmp/nemoclaw-rebuild-backup",
     );
     expect(harness.applyPresetSpy).toHaveBeenCalledWith("alpha", "npm");
+    expect(harness.applyPresetSpy).toHaveBeenCalledWith("alpha", "bad");
+    expect(harness.applyPresetSpy).toHaveBeenCalledWith("alpha", "throw");
     expect(harness.registryUpdateSpy).toHaveBeenCalledWith("alpha", { agentVersion: "0.2.0" });
     expect(harness.executeSandboxCommandSpy).toHaveBeenCalledWith("alpha", "openclaw doctor --fix");
     expect(harness.relockSpy).toHaveBeenCalledWith("alpha", expect.any(Object), true, "nemoclaw");
@@ -261,6 +268,7 @@ describe("rebuildSandbox flow", () => {
     expect(output).toContain("Mutable OpenClaw config hash was not refreshed");
     expect(harness.applyPresetSpy).toHaveBeenCalledWith("alpha", "bad");
     expect(harness.applyPresetSpy).toHaveBeenCalledWith("alpha", "throw");
+    expect(harness.errorSpy).toHaveBeenCalledWith(expect.stringContaining("bad, throw"));
     expect(harness.relockSpy).toHaveBeenCalledWith("alpha", expect.any(Object), true, "nemoclaw");
   });
 });
