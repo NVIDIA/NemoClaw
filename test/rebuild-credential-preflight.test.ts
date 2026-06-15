@@ -80,6 +80,7 @@ function createFixture(opts: {
   messagingPlanChannels?: string[] | null;
   dockerBuildExitCode?: number;
   providerRegistered?: boolean;
+  activeSessionCount?: number | null;
 }) {
   const {
     sandboxName = "my-assistant",
@@ -92,6 +93,7 @@ function createFixture(opts: {
     messagingPlanChannels = null,
     dockerBuildExitCode = 0,
     providerRegistered = true,
+    activeSessionCount = 0,
   } = opts;
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-2273-"));
   tmpFixtures.push(tmpDir);
@@ -248,6 +250,21 @@ process.exit(0);
     { mode: 0o755 },
   );
 
+  // ── Fake ps for active SSH session detection ──────────────────
+  const activeSessionLines = Array.from(
+    { length: activeSessionCount ?? 0 },
+    (_, index) => `${9000 + index} ssh openshell-${sandboxName}`,
+  ).join("\n");
+  fs.writeFileSync(
+    path.join(tmpDir, "ps"),
+    `#!/usr/bin/env node
+if (${activeSessionCount === null ? "true" : "false"}) process.exit(1);
+process.stdout.write(${JSON.stringify(activeSessionLines)} + (${JSON.stringify(activeSessionLines)} ? "\\n" : ""));
+process.exit(0);
+`,
+    { mode: 0o755 },
+  );
+
   // ── Fake Docker ───────────────────────────────────────────────
   // Hermes rebuild forces a base-image build before backup/delete.
   // This fixture only exercises rebuild session state, so Docker succeeds.
@@ -371,6 +388,49 @@ describe("Issue #2273: atomic rebuild", () => {
       expect(output).not.toContain("Cancelled.");
       expect(output).not.toContain("preflight failed");
       expect(output).toContain("Backing up sandbox state");
+    });
+
+    it("prints active SSH session warning before interactive confirmation", {
+      timeout: 60_000,
+    }, () => {
+      const f = createFixture({
+        activeSessionCount: 2,
+        savedCredential: {
+          key: "NVIDIA_INFERENCE_API_KEY",
+          value: "nvapi-test-key-for-rebuild",
+        },
+      });
+
+      const result = runRebuild(f, {}, { yes: false, input: "n\n" });
+      const output = (result.stderr || "") + (result.stdout || "");
+
+      expect(result.status).toBe(0);
+      expect(output).toContain("Active SSH sessions detected (2 connections)");
+      expect(output).toContain("terminate all active sessions with a Broken pipe error");
+      expect(output).toContain("Proceed? [y/N]:");
+      expect(output).toContain("Cancelled.");
+      expect(output).not.toContain("Backing up sandbox state");
+    });
+
+    it("omits active SSH warning when detection is unavailable", {
+      timeout: 60_000,
+    }, () => {
+      const f = createFixture({
+        activeSessionCount: null,
+        savedCredential: {
+          key: "NVIDIA_INFERENCE_API_KEY",
+          value: "nvapi-test-key-for-rebuild",
+        },
+      });
+
+      const result = runRebuild(f, {}, { yes: false, input: "n\n" });
+      const output = (result.stderr || "") + (result.stdout || "");
+
+      expect(result.status).toBe(0);
+      expect(output).not.toContain("Active SSH");
+      expect(output).toContain("Proceed? [y/N]:");
+      expect(output).toContain("Cancelled.");
+      expect(output).not.toContain("Backing up sandbox state");
     });
 
     it("aborts rebuild BEFORE destroying sandbox when credential is missing", {

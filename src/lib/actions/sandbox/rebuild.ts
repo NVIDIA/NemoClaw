@@ -297,6 +297,12 @@ function hookOutputsFromBuildSteps(
 
 function countActiveSandboxSessionsForRebuild(sandboxName: string): number {
   const opsBinRebuild = resolveOpenshell();
+  // Source boundary: active-session detection depends on host process listing
+  // and the OpenShell binary being installed. A failed/unavailable detector is
+  // not evidence of active sessions, and rebuild's safety preflights still run
+  // before destructive work. Keep the prior fail-open prompt behavior here;
+  // remove this fallback only if session detection becomes a required, typed
+  // OpenShell API that can distinguish "zero sessions" from "unavailable".
   if (!opsBinRebuild) return 0;
 
   try {
