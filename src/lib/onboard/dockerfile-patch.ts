@@ -5,7 +5,8 @@ import fs from "node:fs";
 
 import { getSandboxInferenceConfig } from "../inference/config";
 import type { WebSearchConfig } from "../inference/web-search";
-import { MessagingSetupApplier } from "../messaging";
+import { hydrateDerivedSandboxMessagingPlanFields, MessagingSetupApplier } from "../messaging";
+import { parseSandboxMessagingPlan } from "../messaging/plan-validation";
 
 const SANDBOX_BASE_IMAGE = "ghcr.io/nvidia/nemoclaw/sandbox-base";
 const PROXY_HOST_RE = /^[A-Za-z0-9._-]+$/;
@@ -277,6 +278,9 @@ export function patchStagedDockerfile(
   );
   const messagingPlan = MessagingSetupApplier.readPlanFromEnv();
   if (messagingPlan) {
+    const hydratedMessagingPlan = hydrateDerivedSandboxMessagingPlanFields(
+      parseSandboxMessagingPlan(messagingPlan) ?? messagingPlan,
+    );
     const messagingPlanArgPattern = /^ARG NEMOCLAW_MESSAGING_PLAN_B64=.*$/m;
     if (!messagingPlanArgPattern.test(dockerfile)) {
       throw new Error(
@@ -285,7 +289,7 @@ export function patchStagedDockerfile(
     }
     dockerfile = dockerfile.replace(
       messagingPlanArgPattern,
-      `ARG NEMOCLAW_MESSAGING_PLAN_B64=${sanitizeDockerArg(MessagingSetupApplier.encodePlan(messagingPlan))}`,
+      `ARG NEMOCLAW_MESSAGING_PLAN_B64=${sanitizeDockerArg(MessagingSetupApplier.encodePlan(hydratedMessagingPlan))}`,
     );
   }
   if (hermesToolGateways.length > 0) {

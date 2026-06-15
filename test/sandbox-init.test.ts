@@ -1,22 +1,22 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { execFileSync } from "node:child_process";
 import {
-  mkdtempSync,
-  writeFileSync,
-  readFileSync,
-  mkdirSync,
-  symlinkSync,
-  lstatSync,
   chmodSync,
   existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
   renameSync,
   rmSync,
+  symlinkSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 const SANDBOX_INIT = join(import.meta.dirname, "../scripts/lib/sandbox-init.sh");
 
@@ -850,29 +850,59 @@ EOF
   });
 
   describe("configure_messaging_channels", () => {
-    it("returns silently when no tokens are set", () => {
+    function messagingPlanEnv(channels: string[]): string {
+      return Buffer.from(
+        JSON.stringify({
+          schemaVersion: 1,
+          channels: channels.map((channelId) => ({
+            channelId,
+            active: true,
+            disabled: false,
+          })),
+        }),
+      ).toString("base64");
+    }
+
+    it("returns silently when no messaging plan is set", () => {
       const { stderr } = runWithLib("configure_messaging_channels", {
-        env: {
-          TELEGRAM_BOT_TOKEN: "",
-          DISCORD_BOT_TOKEN: "",
-          SLACK_BOT_TOKEN: "",
-        },
+        env: { NEMOCLAW_MESSAGING_PLAN_B64: "" },
       });
       expect(stderr).not.toContain("[channels]");
     });
 
-    it("logs active channels when tokens are present", () => {
+    it("logs active channels from the messaging plan", () => {
       // configure_messaging_channels writes to stderr; redirect to stdout to capture it
       const { stdout } = runWithLib("configure_messaging_channels 2>&1", {
         env: {
-          TELEGRAM_BOT_TOKEN: "fake-token",
-          DISCORD_BOT_TOKEN: "",
-          SLACK_BOT_TOKEN: "fake-slack",
+          NEMOCLAW_MESSAGING_PLAN_B64: messagingPlanEnv(["telegram", "slack"]),
         },
       });
       expect(stdout).toContain("telegram");
       expect(stdout).toContain("slack");
       expect(stdout).not.toContain("discord");
+    });
+
+    it("logs active channels from the baked runtime artifact when env plan is absent", () => {
+      const workDir = mkdtempSync(join(tmpdir(), "nemoclaw-messaging-artifact-log-"));
+      const artifactPath = join(workDir, "messaging-runtime-plan.json");
+      writeFileSync(
+        artifactPath,
+        Buffer.from(messagingPlanEnv(["telegram", "whatsapp"]), "base64").toString("utf-8"),
+      );
+
+      try {
+        const { stdout } = runWithLib("configure_messaging_channels 2>&1", {
+          env: {
+            NEMOCLAW_MESSAGING_PLAN_B64: "",
+            NEMOCLAW_MESSAGING_RUNTIME_PLAN_PATH: artifactPath,
+          },
+        });
+        expect(stdout).toContain("telegram");
+        expect(stdout).toContain("whatsapp");
+        expect(stdout).not.toContain("discord");
+      } finally {
+        rmSync(workDir, { recursive: true, force: true });
+      }
     });
   });
 

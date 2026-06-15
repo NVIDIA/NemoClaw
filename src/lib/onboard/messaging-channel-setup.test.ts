@@ -4,9 +4,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { getCredential, prompt, saveCredential } from "../credentials/store";
-import { HOST_QR_LOGIN_HANDLERS } from "../host-qr-handlers";
 import { createBuiltInChannelManifestRegistry, MessagingSetupApplier } from "../messaging";
 import { MESSAGING_SETUP_APPLIER_ENV_KEY } from "../messaging/applier/types";
+import { runWechatHostQrLogin } from "../messaging/channels/wechat/login";
 import { setupMessagingChannels, setupSelectedMessagingChannels } from "./messaging-channel-setup";
 import { validateSlackCredentials } from "../messaging/channels/slack/hooks/credential-validation";
 
@@ -19,10 +19,8 @@ vi.mock("../credentials/store", () => ({
   saveCredential: vi.fn(),
 }));
 
-vi.mock("../host-qr-handlers", () => ({
-  HOST_QR_LOGIN_HANDLERS: {
-    wechat: vi.fn(),
-  },
+vi.mock("../messaging/channels/wechat/login", () => ({
+  runWechatHostQrLogin: vi.fn(),
 }));
 
 vi.mock("../messaging/channels/slack/hooks/credential-validation", () => ({
@@ -257,16 +255,14 @@ describe("setupSelectedMessagingChannels", () => {
   });
 
   it("runs WeChat host-QR enrollment through the manifest hook", async () => {
-    vi.mocked(HOST_QR_LOGIN_HANDLERS.wechat).mockResolvedValue({
+    vi.mocked(runWechatHostQrLogin).mockResolvedValue({
       kind: "ok",
-      token: "wechat-token",
-      extraEnv: {
-        WECHAT_ACCOUNT_ID: "wechat-account",
-        WECHAT_BASE_URL: "https://ilinkai.wechat.com",
-        WECHAT_USER_ID: "wechat-user",
+      credentials: {
+        token: "wechat-token",
+        accountId: "wechat-account",
+        baseUrl: "https://ilinkai.wechat.com",
+        userId: "wechat-user",
       },
-      defaultUserId: "wechat-user",
-      summary: "account wechat-account",
     });
     const logs: string[] = [];
     vi.spyOn(console, "log").mockImplementation((message = "") => {

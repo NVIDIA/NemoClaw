@@ -404,7 +404,7 @@ describe("inventory commands", () => {
       log: (message = "") => lines.push(message),
     });
 
-    expect(checkMessagingBridgeHealth).toHaveBeenCalledWith("alpha", ["telegram"]);
+    expect(checkMessagingBridgeHealth).toHaveBeenCalledWith("alpha", ["telegram"], undefined);
     expect(lines).toContain(
       "  ⚠ telegram bridge: degraded (7 conflict errors in /tmp/gateway.log)",
     );
@@ -485,11 +485,15 @@ describe("inventory commands", () => {
 
   it("marks a shared-gateway Slack Socket Mode overlap as conflicted (#4953)", () => {
     const lines: string[] = [];
-    const findMessagingOverlaps = vi
-      .fn()
-      .mockReturnValue([
-        { channel: "slack", sandboxes: ["alice", "bob"], reason: "slack-socket-mode-gateway" },
-      ]);
+    const findMessagingOverlaps = vi.fn().mockReturnValue([
+      {
+        channel: "slack",
+        sandboxes: ["alice", "bob"],
+        reason: "socket-mode-gateway",
+        message:
+          "'{first}' and '{second}' both have Slack Socket Mode enabled on the same gateway; only one sandbox can receive Slack Socket Mode events unless the gateway supports multiplexing.",
+      },
+    ]);
     showStatusCommand({
       listSandboxes: () => ({
         sandboxes: [
