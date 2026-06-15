@@ -60,7 +60,7 @@ jobs:
           allowed_jobs=""
           free_standing_scenarios_csv=""
           free_standing_scenario_jobs_csv=""
-          declare -A seen_inventory_keys=()
+          seen_inventory_keys=","
           while IFS= read -r line || [ -n "${line}" ]; do
             line="${line#"${line%%[![:space:]]*}"}"
             line="${line%"${line##*[![:space:]]}"}"
@@ -73,11 +73,11 @@ jobs:
             fi
             inventory_key="${BASH_REMATCH[1]}"
             inventory_value="${BASH_REMATCH[2]}"
-            if [[ -n "${seen_inventory_keys[${inventory_key}]:-}" ]]; then
+            if [[ "${seen_inventory_keys}" == *",${inventory_key},"* ]]; then
               echo "::error::free-standing workflow inventory must not redefine ${inventory_key}" >&2
               exit 1
             fi
-            seen_inventory_keys["${inventory_key}"]=1
+            seen_inventory_keys="${seen_inventory_keys}${inventory_key},"
             case "${inventory_key}" in
               allowed_jobs) allowed_jobs="${inventory_value}" ;;
               free_standing_scenarios_csv) free_standing_scenarios_csv="${inventory_value}" ;;
@@ -90,34 +90,34 @@ jobs:
               exit 1
             fi
           done
-          declare -A seen_allowed_jobs=()
+          seen_allowed_jobs=","
           IFS=',' read -r -a allowed_job_entries <<< "${allowed_jobs}"
           for job in "${allowed_job_entries[@]}"; do
             if [[ ! "${job}" =~ ^[A-Za-z0-9_-]+$ ]]; then
               echo "::error::free-standing workflow inventory contains invalid job id" >&2
               exit 1
             fi
-            if [[ -n "${seen_allowed_jobs[${job}]:-}" ]]; then
+            if [[ "${seen_allowed_jobs}" == *",${job},"* ]]; then
               echo "::error::free-standing workflow inventory repeats job id" >&2
               exit 1
             fi
-            seen_allowed_jobs["${job}"]=1
+            seen_allowed_jobs="${seen_allowed_jobs}${job},"
           done
-          declare -A seen_free_standing_scenarios=()
+          seen_free_standing_scenarios=","
           IFS=',' read -r -a free_standing_scenario_entries <<< "${free_standing_scenarios_csv}"
           for scenario in "${free_standing_scenario_entries[@]}"; do
             if [[ ! "${scenario}" =~ ^[A-Za-z0-9_-]+$ ]]; then
               echo "::error::free-standing workflow inventory contains invalid scenario id" >&2
               exit 1
             fi
-            if [[ -n "${seen_free_standing_scenarios[${scenario}]:-}" ]]; then
+            if [[ "${seen_free_standing_scenarios}" == *",${scenario},"* ]]; then
               echo "::error::free-standing workflow inventory repeats scenario id" >&2
               exit 1
             fi
-            seen_free_standing_scenarios["${scenario}"]=1
+            seen_free_standing_scenarios="${seen_free_standing_scenarios}${scenario},"
           done
           IFS=',' read -r -a scenario_job_entries <<< "${free_standing_scenario_jobs_csv}"
-          declare -A seen_scenario_mappings=()
+          seen_scenario_mappings=","
           derived_free_standing_scenarios=()
           for entry in "${scenario_job_entries[@]}"; do
             if [[ ! "${entry}" =~ ^[A-Za-z0-9_-]+:[A-Za-z0-9_-]+$ ]]; then
@@ -126,12 +126,12 @@ jobs:
             fi
             scenario="${entry%%:*}"
             job="${entry#*:}"
-            if [[ -n "${seen_scenario_mappings[${scenario}]:-}" ]]; then
+            if [[ "${seen_scenario_mappings}" == *",${scenario},"* ]]; then
               echo "::error::free-standing workflow inventory repeats scenario mapping" >&2
               exit 1
             fi
-            seen_scenario_mappings["${scenario}"]=1
-            if [[ -z "${seen_allowed_jobs[${job}]:-}" ]]; then
+            seen_scenario_mappings="${seen_scenario_mappings}${scenario},"
+            if [[ "${seen_allowed_jobs}" != *",${job},"* ]]; then
               echo "::error::Free-standing scenario maps to unknown job" >&2
               exit 1
             fi

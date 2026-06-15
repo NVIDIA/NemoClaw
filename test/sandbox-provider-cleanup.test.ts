@@ -4,13 +4,13 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  SANDBOX_PROVIDER_SUFFIXES,
   deleteProviderWithRecovery,
   detachSandboxProviders,
   emitProviderDetachResidualHint,
   parseAttachedSandboxes,
   recoverAttachedProvider,
   runSandboxProviderPreDeleteCleanup,
+  SANDBOX_PROVIDER_SUFFIXES,
 } from "../dist/lib/onboard/sandbox-provider-cleanup.js";
 
 type Argv = string[];
@@ -31,14 +31,16 @@ function buildRunOpenshell(
 
 describe("SANDBOX_PROVIDER_SUFFIXES", () => {
   it("covers the full set of per-sandbox messaging and search providers", () => {
-    expect(SANDBOX_PROVIDER_SUFFIXES).toEqual([
-      "telegram-bridge",
-      "discord-bridge",
-      "slack-bridge",
-      "slack-app",
-      "wechat-bridge",
-      "brave-search",
-    ]);
+    expect([...SANDBOX_PROVIDER_SUFFIXES].sort()).toEqual(
+      [
+        "telegram-bridge",
+        "discord-bridge",
+        "wechat-bridge",
+        "slack-bridge",
+        "slack-app",
+        "brave-search",
+      ].sort(),
+    );
   });
 });
 
@@ -51,14 +53,15 @@ describe("detachSandboxProviders", () => {
     const detachCalls = calls.filter(
       (argv) => argv[0] === "sandbox" && argv[1] === "provider" && argv[2] === "detach",
     );
-    expect(detachCalls).toEqual([
-      ["sandbox", "provider", "detach", "spark-nemo", "spark-nemo-telegram-bridge"],
-      ["sandbox", "provider", "detach", "spark-nemo", "spark-nemo-discord-bridge"],
-      ["sandbox", "provider", "detach", "spark-nemo", "spark-nemo-slack-bridge"],
-      ["sandbox", "provider", "detach", "spark-nemo", "spark-nemo-slack-app"],
-      ["sandbox", "provider", "detach", "spark-nemo", "spark-nemo-wechat-bridge"],
-      ["sandbox", "provider", "detach", "spark-nemo", "spark-nemo-brave-search"],
-    ]);
+    expect(detachCalls).toEqual(
+      SANDBOX_PROVIDER_SUFFIXES.map((suffix) => [
+        "sandbox",
+        "provider",
+        "detach",
+        "spark-nemo",
+        `spark-nemo-${suffix}`,
+      ]),
+    );
     expect(result.detached).toHaveLength(SANDBOX_PROVIDER_SUFFIXES.length);
     expect(result.failures).toEqual([]);
   });

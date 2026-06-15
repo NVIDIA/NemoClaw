@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  type MessagingCredentialMetadata,
+  listMessagingCredentialMetadata,
+} from "../messaging/channels";
 import type { InitialSandboxPolicy } from "./initial-policy";
 import type { MessagingChannel } from "./messaging-state";
 import { resolveQrSelectedChannels } from "./messaging-state";
@@ -87,9 +91,7 @@ function resolveActiveMessagingChannels({
   | "messagingTokenDefs"
   | "reusableMessagingChannels"
 >): string[] {
-  const tokensByEnvKey = Object.fromEntries(
-    messagingTokenDefs.map(({ envKey, token }) => [envKey, token]),
-  );
+  const primaryCredentialEnvKeys = getPrimaryCredentialEnvKeys();
   const qrSelectedChannels = resolveQrSelectedChannels(
     channels,
     enabledChannels,
@@ -101,17 +103,40 @@ function resolveActiveMessagingChannels({
         .filter(({ token }) => !!token)
         .flatMap(({ envKey }) => {
           const channel = getMessagingChannelForEnvKey(envKey);
-          if (channel) return [channel];
-          // SLACK_APP_TOKEN alone does not enable slack; bot token is required.
-          if (envKey === "SLACK_APP_TOKEN") {
-            return tokensByEnvKey["SLACK_BOT_TOKEN"] ? ["slack"] : [];
-          }
-          return [];
+          return channel && primaryCredentialEnvKeys.has(envKey) ? [channel] : [];
         }),
       ...reusableMessagingChannels,
       ...qrSelectedChannels,
     ]),
   ];
+}
+
+function getPrimaryCredentialEnvKeys(): Set<string> {
+  const credentialsByChannel = new Map<string, MessagingCredentialMetadata[]>();
+  for (const credential of listMessagingCredentialMetadata()) {
+    const credentials = credentialsByChannel.get(credential.channelId) ?? [];
+    credentials.push(credential);
+    credentialsByChannel.set(credential.channelId, credentials);
+  }
+
+  const envKeys = new Set<string>();
+  for (const credentials of credentialsByChannel.values()) {
+    const primary =
+      credentials.find((credential) => credential.primary) ??
+      [...credentials].sort(compareCredentialsForPrimarySelection)[0];
+    if (primary) envKeys.add(primary.providerEnvKey);
+  }
+  return envKeys;
+}
+
+function compareCredentialsForPrimarySelection(
+  left: MessagingCredentialMetadata,
+  right: MessagingCredentialMetadata,
+): number {
+  return (
+    left.credentialId.localeCompare(right.credentialId) ||
+    left.providerEnvKey.localeCompare(right.providerEnvKey)
+  );
 }
 
 export function prepareSandboxCreatePlan({

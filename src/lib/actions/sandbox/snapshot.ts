@@ -12,6 +12,7 @@ import {
 import { CLI_NAME } from "../../cli/branding";
 import { prompt as askPrompt } from "../../credentials/store";
 import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
+import { listMessagingProviderSuffixes } from "../../messaging/channels";
 import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import * as policies from "../../policy";
 import { ROOT, run, shellQuote, validateName } from "../../runner";
@@ -276,22 +277,16 @@ function deleteSandboxForRestore(name: string): void {
   // Destination-only cleanup so the recreated sandbox does not inherit stale
   // host-side state or hit provider-name conflicts (Codex #3796 P2):
   // - /tmp/nemoclaw-services-<name>: PID dir for this sandbox's services
-  // - OpenShell providers named <name>-{telegram,discord,slack,wechat}-bridge
-  //   and <name>-slack-app: per-sandbox messaging bridges
+  // - OpenShell per-sandbox messaging bridge providers declared by channel
+  //   manifests.
   // - shields-<name>.json + shields timer: per-sandbox shields artifacts
   try {
     fs.rmSync(`/tmp/nemoclaw-services-${name}`, { recursive: true, force: true });
   } catch {
     // PID dir may not exist \u2014 ignore.
   }
-  for (const suffix of [
-    "telegram-bridge",
-    "discord-bridge",
-    "slack-bridge",
-    "slack-app",
-    "wechat-bridge",
-  ]) {
-    runOpenshell(["provider", "delete", `${name}-${suffix}`], {
+  for (const suffix of listMessagingProviderSuffixes()) {
+    runOpenshell(["provider", "delete", `${name}${suffix}`], {
       ignoreError: true,
       stdio: ["ignore", "ignore", "ignore"],
     });
