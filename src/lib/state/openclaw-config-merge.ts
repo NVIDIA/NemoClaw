@@ -4,10 +4,7 @@
 import { isRecord } from "../core/json-types.js";
 import { listOpenClawManagedChannelNames } from "../messaging/channels/index.js";
 
-const LEGACY_MANAGED_OPENCLAW_CHANNELS = ["wechat", "openclaw-weixin"] as const;
-const MANAGED_OPENCLAW_CHANNEL_NAMES = [
-  ...new Set([...listOpenClawManagedChannelNames(), ...LEGACY_MANAGED_OPENCLAW_CHANNELS]),
-] as const;
+const MANAGED_OPENCLAW_CHANNEL_NAMES = listOpenClawManagedChannelNames();
 
 /**
  * Ownership contract for restoring OpenClaw's durable openclaw.json snapshot.
