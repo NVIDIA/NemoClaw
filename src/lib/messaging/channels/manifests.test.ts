@@ -175,7 +175,9 @@ function expectOpenClawRuntimeVisibility(
   manifest: ChannelManifest,
   configKeys: readonly string[],
   logPatterns: readonly string[],
+  channelName = configKeys[0],
 ): void {
+  expect(manifest.runtime?.openclaw?.channelName).toBe(channelName);
   expect(manifest.runtime?.openclaw?.visibility).toEqual({
     configKeys,
     logPatterns,

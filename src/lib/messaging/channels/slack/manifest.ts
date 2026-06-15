@@ -149,6 +149,7 @@ export const slackManifest = {
   ],
   runtime: {
     openclaw: {
+      channelName: "slack",
       visibility: {
         configKeys: ["slack"],
         logPatterns: ["slack"],
