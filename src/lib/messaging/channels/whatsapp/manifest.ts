@@ -87,6 +87,7 @@ export const whatsappManifest = {
   ],
   runtime: {
     openclaw: {
+      channelName: "whatsapp",
       visibility: {
         configKeys: ["whatsapp"],
         logPatterns: ["whatsapp"],
