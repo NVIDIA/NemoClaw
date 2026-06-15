@@ -64,6 +64,25 @@ describe("lib/resolve-openshell", () => {
     ).toBe("/usr/local/bin/openshell");
   });
 
+  it("falls back to /opt/homebrew/bin (Apple Silicon Homebrew prefix, #5334)", () => {
+    expect(
+      resolveOpenshell({
+        commandVResult: null,
+        checkExecutable: (p) => p === "/opt/homebrew/bin/openshell",
+      }),
+    ).toBe("/opt/homebrew/bin/openshell");
+  });
+
+  it("prefers /opt/homebrew/bin over /usr/local/bin (#5334)", () => {
+    expect(
+      resolveOpenshell({
+        commandVResult: null,
+        checkExecutable: (p) =>
+          p === "/opt/homebrew/bin/openshell" || p === "/usr/local/bin/openshell",
+      }),
+    ).toBe("/opt/homebrew/bin/openshell");
+  });
+
   it("falls back to /usr/bin", () => {
     expect(
       resolveOpenshell({

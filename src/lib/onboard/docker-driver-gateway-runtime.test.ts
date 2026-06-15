@@ -286,6 +286,36 @@ describe("docker-driver gateway runtime helpers", () => {
     });
   });
 
+  it("falls back to /opt/homebrew/bin for the standalone gateway binary (#5334)", () => {
+    withEnv({ NEMOCLAW_OPENSHELL_GATEWAY_BIN: undefined }, () => {
+      const { helpers } = makeHelpers({
+        // A cached CLI binary in a directory with no sibling gateway forces the
+        // resolver past sibling resolution into the prefix fallback list.
+        getCachedOpenshellBinary: () => "/nonexistent/dir/openshell",
+      });
+      vi.spyOn(fs, "existsSync").mockImplementation(
+        ((candidate) =>
+          String(candidate) === "/opt/homebrew/bin/openshell-gateway") as typeof fs.existsSync,
+      );
+
+      expect(helpers.resolveOpenShellGatewayBinary()).toBe("/opt/homebrew/bin/openshell-gateway");
+    });
+  });
+
+  it("falls back to /opt/homebrew/bin for the standalone sandbox binary (#5334)", () => {
+    withEnv({ NEMOCLAW_OPENSHELL_SANDBOX_BIN: undefined }, () => {
+      const { helpers } = makeHelpers({
+        getCachedOpenshellBinary: () => "/nonexistent/dir/openshell",
+      });
+      vi.spyOn(fs, "existsSync").mockImplementation(
+        ((candidate) =>
+          String(candidate) === "/opt/homebrew/bin/openshell-sandbox") as typeof fs.existsSync,
+      );
+
+      expect(helpers.resolveOpenShellSandboxBinary()).toBe("/opt/homebrew/bin/openshell-sandbox");
+    });
+  });
+
   it("matches the docker compatibility gateway parent process", () => {
     const pid = 12_348;
     const { helpers, runCapture } = makeHelpers({

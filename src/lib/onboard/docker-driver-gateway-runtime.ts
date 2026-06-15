@@ -120,8 +120,12 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
     if (configured && configured.trim()) return path.resolve(configured.trim());
     const sibling = resolveSiblingBinary("openshell-gateway");
     if (sibling) return sibling;
+    // Keep the standalone gateway fallbacks coherent with the CLI resolver
+    // (resolveOpenshell): `/opt/homebrew/bin` is the Apple Silicon Homebrew
+    // prefix and is often missing from the onboarding shell's PATH (#5334).
     for (const candidate of [
       path.join(os.homedir(), ".local", "bin", "openshell-gateway"),
+      "/opt/homebrew/bin/openshell-gateway",
       "/usr/local/bin/openshell-gateway",
       "/usr/bin/openshell-gateway",
     ]) {
@@ -135,8 +139,10 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
     if (configured && configured.trim()) return path.resolve(configured.trim());
     const sibling = resolveSiblingBinary("openshell-sandbox");
     if (sibling) return sibling;
+    // Apple Silicon Homebrew prefix kept in sync with the other resolvers (#5334).
     for (const candidate of [
       path.join(os.homedir(), ".local", "bin", "openshell-sandbox"),
+      "/opt/homebrew/bin/openshell-sandbox",
       "/usr/local/bin/openshell-sandbox",
       "/usr/bin/openshell-sandbox",
     ]) {
