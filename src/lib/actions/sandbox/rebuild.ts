@@ -444,7 +444,7 @@ function preflightRebuildCredentials(
     );
   }
 
-  const rebuildProvider = sessionMatchesTarget ? session?.provider || sb.provider : sb.provider;
+  const rebuildProvider = sb.provider;
   // Compatibility boundary for GH #2519: pre-fix local-provider sessions could
   // persist credentialEnv="OPENAI_API_KEY" even though current local-provider
   // write paths persist null. Only a session for this sandbox plus a local

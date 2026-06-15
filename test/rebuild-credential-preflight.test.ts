@@ -81,6 +81,7 @@ function createFixture(opts: {
   messagingPlanChannels?: string[] | null;
   dockerBuildExitCode?: number;
   providerRegistered?: boolean;
+  registeredProviders?: string[];
   activeSessionCount?: number | null;
 }) {
   const {
@@ -95,6 +96,7 @@ function createFixture(opts: {
     messagingPlanChannels = null,
     dockerBuildExitCode = 0,
     providerRegistered = true,
+    registeredProviders,
     activeSessionCount = 0,
   } = opts;
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-2273-"));
@@ -233,10 +235,12 @@ function createFixture(opts: {
     "  UserKnownHostsFile /dev/null",
   ].join("\\n");
 
+  const registeredProvidersLiteral = JSON.stringify(registeredProviders ?? null);
   fs.writeFileSync(
     path.join(tmpDir, "openshell"),
     `#!/usr/bin/env node
 const a = process.argv.slice(2);
+const registeredProviders = ${registeredProvidersLiteral};
 if (a[0]==="sandbox" && a[1]==="list")       { process.stdout.write("${sandboxName}\\n"); process.exit(0); }
 if (a[0]==="sandbox" && a[1]==="ssh-config") { process.stdout.write("${sshConfig}\\n"); process.exit(0); }
 if (a[0]==="sandbox" && a[1]==="delete")     { process.exit(0); }
@@ -245,7 +249,10 @@ if (a[0]==="gateway" && a[1]==="info")       { process.stdout.write("nemoclaw\\n
 if (a[0]==="gateway" && a[1]==="select")     { process.exit(0); }
 if (a[0]==="inference" && a[1]==="get")      { process.stdout.write('{"provider":"${provider}","model":"meta/llama-3.3-70b-instruct"}\\n'); process.exit(0); }
 if (a[0]==="inference" && a[1]==="set")      { process.exit(0); }
-if (a[0]==="provider" && a[1]==="get")       { process.exit(${providerRegistered ? 0 : 1}); }
+if (a[0]==="provider" && a[1]==="get")       {
+  if (Array.isArray(registeredProviders)) process.exit(registeredProviders.includes(a[2]) ? 0 : 1);
+  process.exit(${providerRegistered ? 0 : 1});
+}
 if (a[0]==="provider")                       { process.exit(0); }
 if (a[0]==="forward")                        { process.exit(0); }
 process.exit(0);
@@ -616,6 +623,31 @@ describe("Issue #2273: atomic rebuild", () => {
       });
       const sessionPath = path.join(f.nemoclawDir, "onboard-session.json");
       const session = JSON.parse(fs.readFileSync(sessionPath, "utf-8"));
+      session.credentialEnv = null;
+      fs.writeFileSync(sessionPath, JSON.stringify(session), { mode: 0o600 });
+
+      const result = runRebuild(f);
+      const output = (result.stderr || "") + (result.stdout || "");
+
+      expect(result.status).not.toBe(0);
+      expect(output).toContain("preflight failed");
+      expect(output).toContain("requires OPENAI_API_KEY");
+      expect(output).not.toContain("Backing up sandbox state");
+      expect(output).not.toContain("Old sandbox deleted");
+      expect(registryHasSandbox(f)).toBe(true);
+    });
+
+    it("uses the target registry provider when a matching session has a stale registered provider", {
+      timeout: 60_000,
+    }, () => {
+      const f = createFixture({
+        provider: "openai-api",
+        credentialEnv: "OPENAI_API_KEY",
+        registeredProviders: ["nvidia-prod"],
+      });
+      const sessionPath = path.join(f.nemoclawDir, "onboard-session.json");
+      const session = JSON.parse(fs.readFileSync(sessionPath, "utf-8"));
+      session.provider = "nvidia-prod";
       session.credentialEnv = null;
       fs.writeFileSync(sessionPath, JSON.stringify(session), { mode: 0o600 });
 
