@@ -16,6 +16,10 @@ vi.mock("../inference/local", () => ({
   DEFAULT_OLLAMA_MODEL: "llama3.1",
 }));
 
+vi.mock("../inference/context-window", () => ({
+  resolveContextWindowForModel: vi.fn(() => null),
+}));
+
 vi.mock("../sandbox/config", () => ({
   readSandboxConfig: vi.fn(),
   recomputeSandboxConfigHash: vi.fn(),
@@ -104,6 +108,7 @@ function createDeps(options: {
   target?: AgentConfigTarget;
   session?: Session | null;
   openshellStatus?: number;
+  contextWindow?: number | null;
 }): InferenceSetDeps & {
   calls: {
     runOpenshell: ReturnType<typeof vi.fn>;
@@ -113,6 +118,7 @@ function createDeps(options: {
     updateSession: ReturnType<typeof vi.fn>;
     appendAuditEntry: ReturnType<typeof vi.fn>;
     log: ReturnType<typeof vi.fn>;
+    resolveContextWindowForModel: ReturnType<typeof vi.fn>;
   };
   getSession: () => Session | null;
 } {
@@ -136,6 +142,9 @@ function createDeps(options: {
     }),
     appendAuditEntry: vi.fn(),
     log: vi.fn(),
+    resolveContextWindowForModel: vi.fn((_provider: string, _model: string) =>
+      options.contextWindow === undefined ? null : options.contextWindow,
+    ),
   };
   return {
     getDefaultSandbox: () => defaultSandbox,
@@ -152,6 +161,7 @@ function createDeps(options: {
     runOpenshell: calls.runOpenshell,
     appendAuditEntry: calls.appendAuditEntry,
     log: calls.log,
+    resolveContextWindowForModel: calls.resolveContextWindowForModel,
     calls,
     getSession: () => session,
   };
@@ -925,5 +935,51 @@ describe("runInferenceSet", () => {
     expect(logged).toMatch(/integrity hash/);
     expect(logged).toMatch(/rebuild/);
     expect(logged).not.toMatch(/Inference route synced/);
+  });
+});
+
+describe("runInferenceSet context window", () => {
+  const ollamaConfig = (): ConfigObject => ({
+    agents: { defaults: { model: { primary: "inference/llama3.2:3b" } } },
+    models: {
+      providers: {
+        inference: {
+          api: "openai-completions",
+          models: [{ id: "llama3.2:3b", name: "inference/llama3.2:3b", contextWindow: 131072 }],
+        },
+      },
+    },
+  });
+
+  function inferenceModels(config: ConfigObject): Array<Record<string, unknown>> {
+    const models = config.models as { providers: { inference: { models: unknown } } };
+    return models.providers.inference.models as Array<Record<string, unknown>>;
+  }
+
+  it("writes the recomputed context window into the in-sandbox config", async () => {
+    const config = ollamaConfig();
+    const deps = createDeps({ config, session: baseSession(), contextWindow: 16384 });
+
+    await runInferenceSet({ provider: "ollama-local", model: "qwen2.5:7b", noVerify: true }, deps);
+
+    expect(deps.calls.resolveContextWindowForModel).toHaveBeenCalledWith(
+      "ollama-local",
+      "qwen2.5:7b",
+    );
+    expect(inferenceModels(config)[0].contextWindow).toBe(16384);
+    const logged = deps.calls.log.mock.calls.map((a) => String(a[0])).join("\n");
+    expect(logged).toMatch(/Context window for 'qwen2\.5:7b': 16384 tokens/);
+  });
+
+  it("keeps the existing window and warns when it cannot be determined", async () => {
+    const config = ollamaConfig();
+    const deps = createDeps({ config, session: baseSession(), contextWindow: null });
+
+    await runInferenceSet({ provider: "ollama-local", model: "qwen2.5:7b", noVerify: true }, deps);
+
+    expect(inferenceModels(config)[0].contextWindow).toBe(131072);
+    const logged = deps.calls.log.mock.calls.map((a) => String(a[0])).join("\n");
+    expect(logged).toMatch(/could not determine the context window/i);
+    expect(logged).toMatch(/rebuild/);
   });
 });
