@@ -24,6 +24,7 @@ type RebuildFlowOverrides = {
     failedDirs: string[];
     failedFiles: string[];
   };
+  buildMessagingRebuildPlan?: () => Promise<unknown> | unknown;
 };
 
 type RebuildFlowHarness = {
@@ -38,6 +39,7 @@ type RebuildFlowHarness = {
   relockSpy: MockInstance;
   restoreSandboxStateSpy: MockInstance;
   runOpenshellSpy: MockInstance;
+  messagingRebuildPlanSpy: MockInstance;
 };
 
 const originalSandboxName = process.env.NEMOCLAW_SANDBOX_NAME;
@@ -66,6 +68,7 @@ function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): Rebuild
   const nim = requireDist("../../../../dist/lib/inference/nim.js");
   const policies = requireDist("../../../../dist/lib/policy/index.js");
   const processRecovery = requireDist("../../../../dist/lib/actions/sandbox/process-recovery.js");
+  const messaging = requireDist("../../../../dist/lib/messaging/index.js");
   const shields = requireDist("../../../../dist/lib/shields/index.js");
 
   const session = {
@@ -167,6 +170,9 @@ function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): Rebuild
   vi.spyOn(shields, "repairMutableConfigPerms").mockImplementation(
     overrides.repairMutableConfigPerms ?? (() => ({ applied: true, verified: true, errors: [] })),
   );
+  const messagingRebuildPlanSpy = vi
+    .spyOn(messaging.MessagingWorkflowPlanner.prototype, "buildRebuildPlanFromSandboxEntry")
+    .mockImplementation(overrides.buildMessagingRebuildPlan ?? (() => null));
 
   errorSpy.mockClear();
   logSpy.mockClear();
@@ -184,6 +190,7 @@ function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): Rebuild
     relockSpy,
     restoreSandboxStateSpy,
     runOpenshellSpy,
+    messagingRebuildPlanSpy,
   };
 }
 
@@ -238,6 +245,28 @@ describe("rebuildSandbox flow", () => {
     expect(harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
       "rebuilt successfully",
     );
+  });
+
+  it("aborts before backup/delete when messaging manifest staging fails", async () => {
+    const harness = createRebuildFlowHarness({
+      buildMessagingRebuildPlan: () => {
+        throw new Error("manifest boom");
+      },
+    });
+
+    await expect(harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true })).rejects.toThrow(
+      "manifest boom",
+    );
+
+    const errors = harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(errors).toContain("messaging manifest plan could not be staged");
+    expect(errors).toContain("Sandbox is untouched");
+    expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+    expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.anything(),
+    );
+    expect(harness.onboardSpy).not.toHaveBeenCalled();
   });
 
   it("finishes the rebuild while surfacing incomplete post-restore work", async () => {
