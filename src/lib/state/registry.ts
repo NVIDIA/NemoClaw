@@ -81,7 +81,6 @@ export interface SandboxEntry {
   // are never auto-rebuilt onto the default image (#5026).
   nemoclawVersion?: string | null;
   imageTag?: string | null;
-  providerCredentialHashes?: Record<string, string>;
   messaging?: SandboxMessagingState;
   hermesToolGateways?: string[];
   hermesDashboardEnabled?: boolean;
@@ -412,7 +411,6 @@ export function registerSandbox(entry: SandboxEntry): void {
       agentVersion: entry.agentVersion || null,
       nemoclawVersion: entry.nemoclawVersion || null,
       imageTag: entry.imageTag || null,
-      providerCredentialHashes: entry.providerCredentialHashes || undefined,
       messaging: cloneSandboxMessagingState(entry.messaging),
       hermesToolGateways:
         Array.isArray(entry.hermesToolGateways) && entry.hermesToolGateways.length > 0

@@ -33,7 +33,6 @@ describe("buildCreatedSandboxRegistryEntry", () => {
       agent: null,
       agentVersionKnown: true,
       imageTag: "nemoclaw-demo:123",
-      providerCredentialHashes: { SLACK_BOT_TOKEN: "hash-slack-bot" },
       appliedPolicies: ["discord", "slack"],
       plannedMessagingState: plannedMessagingState as any,
       hermesToolGateways: ["filesystem"],
@@ -44,6 +43,7 @@ describe("buildCreatedSandboxRegistryEntry", () => {
       dashboardPort: 18789,
       gatewayName: "nemoclaw-19080",
       gatewayPort: 19080,
+      providerCredentialHashes: {},
     });
 
     expect(entry).toMatchObject({
@@ -51,7 +51,6 @@ describe("buildCreatedSandboxRegistryEntry", () => {
       model: "llama",
       provider: "openai-compatible",
       imageTag: "nemoclaw-demo:123",
-      providerCredentialHashes: { SLACK_BOT_TOKEN: "hash-slack-bot" },
       policies: ["discord", "slack"],
       hermesToolGateways: ["filesystem"],
       hermesDashboardEnabled: true,
@@ -82,7 +81,6 @@ describe("buildCreatedSandboxRegistryEntry", () => {
       agent: null,
       agentVersionKnown: false,
       imageTag: null,
-      providerCredentialHashes: {},
       appliedPolicies: [],
       plannedMessagingState: {
         schemaVersion: 1 as const,
@@ -93,6 +91,7 @@ describe("buildCreatedSandboxRegistryEntry", () => {
       dashboardPort: 18789,
       gatewayName: "nemoclaw",
       gatewayPort: 8080,
+      providerCredentialHashes: {},
     });
 
     expect(entry.model).toBeNull();
@@ -122,7 +121,6 @@ describe("registerCreatedSandbox", () => {
       agent: null,
       agentVersionKnown: true,
       imageTag: null,
-      providerCredentialHashes: {},
       appliedPolicies: [],
       plannedMessagingState: undefined,
       hermesToolGateways: [],
@@ -130,6 +128,7 @@ describe("registerCreatedSandbox", () => {
       dashboardPort: 18789,
       gatewayName: "nemoclaw",
       gatewayPort: 8080,
+      providerCredentialHashes: {},
       registerSandbox,
     });
 
