@@ -36,11 +36,15 @@ describe("selectOnboardAgent interactive agent selection", () => {
   });
 
   it("presents both OpenClaw and Hermes and honors a Hermes selection", async () => {
-    const { select, prompt, log } = makeSelectOnboardAgent("2");
+    // Derive Hermes' menu position from the real registry so the test stays
+    // correct if another agent is later sorted ahead of Hermes.
+    const choices = getAgentChoices();
+    const hermesPosition = choices.findIndex((choice) => choice.name === "hermes") + 1;
+    assert.ok(hermesPosition > 0, "expected Hermes in the agent registry");
+    const { select, prompt, log } = makeSelectOnboardAgent(String(hermesPosition));
 
     const agent = await select({ canPrompt: true });
 
-    // Hermes is the second choice (OpenClaw is sorted first as the default).
     assert.equal(agent?.name, "hermes");
     assert.equal(prompt.mock.calls.length, 1);
     const menu = log.mock.calls.map((call) => call[0]).join("\n");
