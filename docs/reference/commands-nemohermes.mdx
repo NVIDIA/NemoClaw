@@ -432,6 +432,20 @@ The exit code is the remote command's exit code.
 | `--tty` / `--no-tty` | Allocate a pseudo-terminal; defaults to auto-detection (on when stdin and stdout are terminals) |
 | `--timeout <seconds>` | Timeout in seconds (`0` means no timeout) |
 
+### `nemohermes <name> agent`
+
+The `agent` wrapper is an OpenClaw passthrough and rejects Hermes sandboxes with guidance for the Hermes HTTP API.
+Hermes sandboxes expose an OpenAI-compatible API on port `8642` inside the sandbox, so non-interactive use does not need a wrapper command.
+
+Forward the port and POST chat completions directly:
+
+```bash
+openshell forward start --background 8642 my-hermes
+curl -sN http://127.0.0.1:8642/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"<onboarded-model>","messages":[{"role":"user","content":"What is 2+2?"}],"stream":true}'
+```
+
 ### Advanced Sandbox Maintenance Commands
 
 The following commands are available for targeted host-side maintenance, but they are not part of the top-level public command list.
