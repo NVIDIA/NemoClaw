@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
-import { describe, it, expect } from "vitest";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { describe, expect, it } from "vitest";
 
 import { testTimeout } from "./helpers/timeouts";
 
@@ -177,7 +177,7 @@ const prompts = [];
 const saved = [];
 const lines = [];
 const clearCredentialEnv = [
-  "OPENAI_API_KEY",
+  "NVIDIA_API_KEY", "OPENAI_API_KEY",
   "ANTHROPIC_API_KEY",
   "GEMINI_API_KEY",
   "COMPATIBLE_API_KEY",
@@ -3537,7 +3537,7 @@ const { setupNim } = require(${onboardPath});
 
     const script = String.raw`
 const clearCredentialEnv = [
-  "OPENAI_API_KEY",
+  "NVIDIA_API_KEY", "OPENAI_API_KEY",
   "ANTHROPIC_API_KEY",
   "GEMINI_API_KEY",
   "COMPATIBLE_API_KEY",
@@ -4076,8 +4076,7 @@ onboardModule._compile(injected, onboardFile);
 const { setupNim, __setNonInteractive } = onboardModule.exports;
 
 (async () => {
-  delete process.env.NVIDIA_INFERENCE_API_KEY;
-  delete process.env.NEMOCLAW_PROVIDER_KEY;
+  for (const key of ["NVIDIA_API_KEY", "NVIDIA_INFERENCE_API_KEY", "NGC_API_KEY", "NEMOCLAW_PROVIDER_KEY"]) delete process.env[key];
   __setNonInteractive(true);
   const originalLog = console.log;
   const originalError = console.error;
@@ -4122,8 +4121,6 @@ const { setupNim, __setNonInteractive } = onboardModule.exports;
         ...process.env,
         HOME: tmpDir,
         PATH: `${fakeBin}:${process.env.PATH || ""}`,
-        NVIDIA_INFERENCE_API_KEY: "",
-        NEMOCLAW_PROVIDER_KEY: "",
       },
     });
 

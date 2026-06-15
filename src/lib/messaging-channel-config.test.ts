@@ -21,6 +21,10 @@ describe("messaging channel config", () => {
       "WECHAT_ALLOWED_IDS",
       "SLACK_ALLOWED_USERS",
       "SLACK_ALLOWED_CHANNELS",
+      "WHATSAPP_ALLOWED_IDS",
+      "WECHAT_ACCOUNT_ID",
+      "WECHAT_BASE_URL",
+      "WECHAT_USER_ID",
     ]);
   });
 
