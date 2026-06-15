@@ -2,8 +2,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Local end-to-end test for the Slack channel guard (install_slack_channel_guard)
-# from nemoclaw-start.sh.
+# Local end-to-end test for the Slack channel guard runtime preload.
 #
 # Extracts the guard's JS preload from the shell script, then runs Node.js
 # scenarios that simulate Slack-style unhandled rejections and uncaught
@@ -17,7 +16,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-GUARD_SOURCE="$SCRIPT_DIR/../nemoclaw-blueprint/scripts/slack-channel-guard.js"
+GUARD_SOURCE="$SCRIPT_DIR/../src/lib/messaging/channels/slack/runtime/slack-channel-guard.ts"
 PASS=0
 FAIL=0
 
