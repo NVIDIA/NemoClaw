@@ -328,9 +328,11 @@ function verifyRestoreDestinationOnOwnGateway(targetSandbox: string): void {
 }
 
 function isSnapshotCreationAllowedByShields(sandboxName: string): boolean {
-  // Snapshot creation is a shields/policy boundary. If a packaged or mocked
-  // CommonJS interop surface ever omits the helper, fail closed before any
-  // backup side effect instead of throwing an ambiguous TypeError.
+  // Snapshot creation is a shields/policy boundary. Production builds should
+  // always export this helper, but stale compiled artifacts, package-boundary
+  // skew, or test doubles can present a missing CommonJS interop surface. There
+  // is no safe runtime source fix once snapshot creation has started, so keep
+  // this as permanent defense-in-depth and fail closed before backup side effects.
   const isShieldsDown = shields.isShieldsDown;
   if (typeof isShieldsDown !== "function") {
     console.error("  Cannot verify shields state. Refusing to create snapshot.");
