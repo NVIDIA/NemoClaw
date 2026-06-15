@@ -606,6 +606,30 @@ describe("Issue #2273: atomic rebuild", () => {
       expect(output).toContain("Backing up sandbox state");
     }, 60_000);
 
+    it("fails closed when a matching session omits the remote target provider credential", {
+      timeout: 60_000,
+    }, () => {
+      const f = createFixture({
+        provider: "openai-api",
+        credentialEnv: "OPENAI_API_KEY",
+        providerRegistered: false,
+      });
+      const sessionPath = path.join(f.nemoclawDir, "onboard-session.json");
+      const session = JSON.parse(fs.readFileSync(sessionPath, "utf-8"));
+      session.credentialEnv = null;
+      fs.writeFileSync(sessionPath, JSON.stringify(session), { mode: 0o600 });
+
+      const result = runRebuild(f);
+      const output = (result.stderr || "") + (result.stdout || "");
+
+      expect(result.status).not.toBe(0);
+      expect(output).toContain("preflight failed");
+      expect(output).toContain("requires OPENAI_API_KEY");
+      expect(output).not.toContain("Backing up sandbox state");
+      expect(output).not.toContain("Old sandbox deleted");
+      expect(registryHasSandbox(f)).toBe(true);
+    });
+
     it("does not let a mismatched stale local session bypass the target OPENAI_API_KEY preflight", {
       timeout: 60_000,
     }, () => {

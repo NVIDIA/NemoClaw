@@ -428,8 +428,11 @@ function preflightRebuildCredentials(
 ): boolean {
   const session = onboardSession.loadSession();
   const sessionMatchesTarget = session?.sandboxName === sandboxName;
+  // The target registry entry is authoritative when a matching legacy session
+  // omitted credentialEnv; rebuild rewrites provider/model from this entry later,
+  // so remote registry providers must still fail closed before backup/delete.
   let rebuildCredentialEnv = sessionMatchesTarget
-    ? session?.credentialEnv || null
+    ? session?.credentialEnv || getRebuildCredentialEnvFromRegistry(sb.provider)
     : getRebuildCredentialEnvFromRegistry(sb.provider);
   if (!sessionMatchesTarget && session?.sandboxName) {
     log(
