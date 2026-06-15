@@ -76,9 +76,9 @@ function createDestroyHarness(options: DestroyHarnessOptions = {}): DestroyHarne
   const runOpenshellSpy = vi.spyOn(runtime, "runOpenshell").mockImplementation((args: unknown) => {
     const argv = Array.isArray(args) ? args : [];
     if (argv[0] === "sandbox" && argv[1] === "delete") {
-      return { status: options.deleteStatus ?? 0, output: options.deleteOutput ?? "" };
+      return { status: options.deleteStatus ?? 0, stdout: options.deleteOutput ?? "", stderr: "" };
     }
-    return { status: 0, output: "" };
+    return { status: 0, stdout: "", stderr: "" };
   });
   vi.spyOn(runtime, "captureOpenshell").mockReturnValue({ status: 0, output: "" });
   const selectGatewaySpy = vi
