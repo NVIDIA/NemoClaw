@@ -103,6 +103,13 @@ describe("built-in messaging channel metadata", () => {
     expect(getMessagingPolicyPresetValidationWarnings().discord).toContain(
       "https://discord.com/api/v10/gateway or validate the configured",
     );
+    expect(listOpenClawManagedChannelNames()).toEqual([
+      "telegram",
+      "discord",
+      "openclaw-weixin",
+      "slack",
+      "whatsapp",
+    ]);
     expect(
       Object.fromEntries(
         listOpenClawRuntimeChannelMetadata().map((entry) => [entry.channelId, entry.configKeys]),
@@ -156,7 +163,7 @@ describe("built-in messaging channel metadata", () => {
     ]);
   });
 
-  it("derives OpenClaw managed channel names from manifest render fragments", () => {
+  it("derives OpenClaw managed channel names from explicit runtime metadata", () => {
     const manifests: ChannelManifest[] = [
       {
         ...manifestWithPreset("matrix", "matrix"),
@@ -186,10 +193,19 @@ describe("built-in messaging channel metadata", () => {
             fragment: { path: "plugins.entries.matrix", value: { enabled: true } },
           },
         ],
+        runtime: {
+          openclaw: {
+            channelName: "matrix-runtime",
+            visibility: {
+              configKeys: ["matrix-runtime"],
+              logPatterns: ["matrix"],
+            },
+          },
+        },
       },
     ];
 
-    expect(listOpenClawManagedChannelNames({ manifests })).toEqual(["matrix"]);
+    expect(listOpenClawManagedChannelNames({ manifests })).toEqual(["matrix-runtime"]);
   });
 
   it("lists package installs from manifest agent package metadata", () => {

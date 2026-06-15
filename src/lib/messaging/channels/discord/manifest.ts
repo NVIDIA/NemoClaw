@@ -181,6 +181,7 @@ export const discordManifest = {
   ],
   runtime: {
     openclaw: {
+      channelName: "discord",
       visibility: {
         configKeys: ["discord"],
         logPatterns: ["discord"],

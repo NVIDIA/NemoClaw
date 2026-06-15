@@ -275,11 +275,7 @@ export function listOpenClawManagedChannelNames(
 ): string[] {
   return uniqueStrings(
     selectManifests({ ...options, agent: "openclaw" }).flatMap((manifest) =>
-      manifest.render.flatMap((render) => {
-        if (render.agent !== "openclaw" || render.kind !== "json-fragment") return [];
-        const match = render.fragment.path.match(/^channels[.]([^.]+)(?:[.]|$)/);
-        return match?.[1] ? [match[1]] : [];
-      }),
+      manifest.runtime?.openclaw?.channelName ? [manifest.runtime.openclaw.channelName] : [],
     ),
   );
 }
