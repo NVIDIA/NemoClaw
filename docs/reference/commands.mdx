@@ -263,8 +263,12 @@ It also prints a `Try: <suggested-slug>` recovery line whenever it can derive a 
 Names that match global CLI commands (`status`, `list`, `debug`, etc.) are rejected to avoid routing conflicts.
 Use `--agent <name>` to target a specific installed agent profile during onboarding.
 
+<AgentOnly variant="openclaw">
+
 Use `--agents <agents.yaml>` to declare secondary OpenClaw agents, `agents.defaults`, and main-agent overrides in a checked-in manifest that NemoClaw bakes into the sandbox image at build time.
 See [Declarative Multi-Agent Manifest](../inference/declarative-agents-manifest) for the schema and OpenClaw-native sub-agent field semantics.
+
+</AgentOnly>
 
 Use `--control-ui-port <N>` to choose the host dashboard port for a sandbox.
 The value must be an integer from `1024` through `65535`.
@@ -1250,6 +1254,8 @@ $$nemoclaw my-assistant agents delete work
 $$nemoclaw my-assistant agents delete work --force --json
 ```
 
+<AgentOnly variant="openclaw">
+
 ### `$$nemoclaw <name> agents apply`
 
 Reconcile the live sandbox roster against a declarative [agents.yaml manifest](../inference/declarative-agents-manifest).
@@ -1263,6 +1269,8 @@ $$nemoclaw my-assistant agents apply -f ./agents.yaml --yes --non-interactive
 ```
 
 Pass `-f` / `--file <agents.yaml>` to point at the manifest; `--yes` confirms the roster diff above; `--non-interactive` fails fast when `--yes` is absent so scripted callers cannot accidentally hang on a missing prompt.
+
+</AgentOnly>
 
 ### `$$nemoclaw <name> sessions`
 

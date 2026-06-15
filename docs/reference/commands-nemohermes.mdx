@@ -192,9 +192,6 @@ It also prints a `Try: <suggested-slug>` recovery line whenever it can derive a 
 Names that match global CLI commands (`status`, `list`, `debug`, etc.) are rejected to avoid routing conflicts.
 Use `--agent <name>` to target a specific installed agent profile during onboarding.
 
-Use `--agents <agents.yaml>` to declare secondary OpenClaw agents, `agents.defaults`, and main-agent overrides in a checked-in manifest that NemoClaw bakes into the sandbox image at build time.
-See [Declarative Multi-Agent Manifest](../inference/declarative-agents-manifest) for the schema and OpenClaw-native sub-agent field semantics.
-
 Use `--control-ui-port <N>` to choose the host dashboard port for a sandbox.
 The value must be an integer from `1024` through `65535`.
 This flag takes precedence over `CHAT_UI_URL`, `NEMOCLAW_DASHBOARD_PORT`, the previous registry value, and the default port.
@@ -1013,20 +1010,6 @@ Flags accepted by the in-sandbox CLI (`--force`, `--json`) are forwarded verbati
 nemohermes my-assistant agents delete work
 nemohermes my-assistant agents delete work --force --json
 ```
-
-### `nemohermes <name> agents apply`
-
-Reconcile the live sandbox roster against a declarative [agents.yaml manifest](../inference/declarative-agents-manifest).
-The verb lists current agents via `openclaw agents list --json`, diffs them against the manifest, and adds missing secondaries or deletes orphan ones through `openclaw agents add|delete`.
-Per-agent `model`, `subagents.*`, `tools`, top-level `defaults`, and `main` overrides need a sandbox rebuild and are surfaced as warnings rather than silently dropped; rerun `nemohermes onboard --agents <agents.yaml> --recreate-sandbox` to bake those fields.
-
-```bash
-nemohermes my-assistant agents apply -f ./agents.yaml
-nemohermes my-assistant agents apply -f ./agents.yaml --yes
-nemohermes my-assistant agents apply -f ./agents.yaml --yes --non-interactive
-```
-
-Pass `-f` / `--file <agents.yaml>` to point at the manifest; `--yes` confirms the roster diff above; `--non-interactive` fails fast when `--yes` is absent so scripted callers cannot accidentally hang on a missing prompt.
 
 ### `nemohermes <name> sessions`
 

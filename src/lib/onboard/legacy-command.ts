@@ -6,6 +6,7 @@ import path from "node:path";
 
 import { CLI_NAME } from "../cli/branding";
 import { applyAgentsManifestEnv } from "./agents-manifest";
+import { isOpenclawAgent } from "./openclaw-otel-policy-presets";
 
 export interface OnboardCommandOptions {
   nonInteractive: boolean;
@@ -154,6 +155,13 @@ export function parseOnboardArgs(
       agentsValue.startsWith("--")
     ) {
       error("  --agents requires a path to a YAML manifest");
+      printOnboardUsage(error, noticeAcceptFlag);
+      exit(1);
+    }
+    if (!isOpenclawAgent(agent)) {
+      error(
+        `  --agents is OpenClaw-specific and cannot be used with --agent ${agent}; the declarative manifest only drives OpenClaw secondary agents.`,
+      );
       printOnboardUsage(error, noticeAcceptFlag);
       exit(1);
     }

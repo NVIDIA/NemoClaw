@@ -75,6 +75,26 @@ describe("onboard --agents", () => {
     expect(errors.join("\n")).toContain("--agents requires a path to a YAML manifest");
   });
 
+  it("rejects --agents when --agent is set to a non-OpenClaw runtime", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-agents-hermes-"));
+    const manifestPath = path.join(tmpDir, "agents.yaml");
+    fs.writeFileSync(manifestPath, "agents: []\n");
+    const errors: string[] = [];
+    expect(() =>
+      parseOnboardArgs(
+        ["--agent", "hermes", "--agents", manifestPath],
+        "--yes-i-accept-third-party-software",
+        "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE",
+        {
+          env: {},
+          error: (message = "") => errors.push(message),
+          exit: exitWithPrefixedCode,
+        },
+      ),
+    ).toThrow("exit:1");
+    expect(errors.join("\n")).toContain("--agents is OpenClaw-specific");
+  });
+
   it("sets NEMOCLAW_EXTRA_AGENTS_JSON before invoking runOnboard when --agents is supplied", async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-agents-env-"));
     const manifestPath = path.join(tmpDir, "agents.yaml");

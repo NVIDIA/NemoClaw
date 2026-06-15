@@ -216,6 +216,38 @@ describe("runAgentsApply", () => {
     expect(addAgent.mock.calls.map(([, id]) => id)).toEqual(["alpha", "bravo"]);
   });
 
+  it("refuses to apply against a non-OpenClaw sandbox", async () => {
+    const manifestPath = manifestFile(
+      "hermes.yaml",
+      ["agents:", "  - id: alpha", "    tools:", "      allow: [read]", ""].join("\n"),
+    );
+    const exit = vi.fn((code: number) => {
+      throw new Error(`exit:${code}`);
+    });
+    const messages: string[] = [];
+    const addAgent = vi.fn();
+    const deleteAgent = vi.fn();
+    const listAgents = vi.fn();
+    await expect(
+      runAgentsApply(
+        { sandboxName: "hermes-sandbox", manifestPath, yes: true },
+        {
+          ensureLive: async () => undefined,
+          getSandboxAgent: () => "hermes",
+          listAgents,
+          addAgent,
+          deleteAgent,
+          log: (message) => messages.push(message),
+          exit: exit as unknown as (code: number) => never,
+        },
+      ),
+    ).rejects.toThrow("exit:1");
+    expect(listAgents).not.toHaveBeenCalled();
+    expect(addAgent).not.toHaveBeenCalled();
+    expect(deleteAgent).not.toHaveBeenCalled();
+    expect(messages.some((line) => line.includes("OpenClaw-specific"))).toBe(true);
+  });
+
   it("returns cleanly when the roster already matches the manifest", async () => {
     const manifestPath = manifestFile(
       "match.yaml",

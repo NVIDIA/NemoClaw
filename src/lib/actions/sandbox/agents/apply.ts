@@ -4,6 +4,8 @@
 import { spawnSync } from "node:child_process";
 
 import { loadAgentsManifest } from "../../../onboard/agents-manifest";
+import { isOpenclawAgent } from "../../../onboard/openclaw-otel-policy-presets";
+import * as registry from "../../../state/registry";
 import { buildOpenshellExecArgs } from "../exec";
 
 // Lazy-require `ensureLiveSandboxOrExit` because its import chain pulls in
@@ -145,11 +147,17 @@ export interface RunAgentsApplyOptions {
 
 export interface RunAgentsApplyDeps {
   ensureLive?: EnsureLive;
+  getSandboxAgent?: (sandboxName: string) => string | null;
   listAgents?: (sandboxName: string) => OpenClawAgentEntry[];
   addAgent?: (sandboxName: string, id: string, workspace: string | undefined) => void;
   deleteAgent?: (sandboxName: string, id: string) => void;
   log?: (message: string) => void;
   exit?: (code: number) => never;
+}
+
+function defaultGetSandboxAgent(sandboxName: string): string | null {
+  const entry = registry.getSandbox(sandboxName);
+  return entry?.agent ?? null;
 }
 
 function defaultListAgents(sandboxName: string): OpenClawAgentEntry[] {
@@ -221,11 +229,20 @@ export async function runAgentsApply(
   const log = deps.log ?? ((message: string) => console.log(message));
   const exit = deps.exit ?? ((code: number) => process.exit(code));
   const ensureLive = deps.ensureLive ?? lazyEnsureLive();
+  const getSandboxAgent = deps.getSandboxAgent ?? defaultGetSandboxAgent;
   const listAgents = deps.listAgents ?? defaultListAgents;
   const addAgent = deps.addAgent ?? defaultAddAgent;
   const deleteAgent = deps.deleteAgent ?? defaultDeleteAgent;
 
   await ensureLive(options.sandboxName, { allowNonReadyPhase: false });
+
+  const sandboxAgent = getSandboxAgent(options.sandboxName);
+  if (!isOpenclawAgent(sandboxAgent)) {
+    log(
+      `  agents apply is OpenClaw-specific; sandbox "${options.sandboxName}" runs ${sandboxAgent}. Manage agents through the in-sandbox CLI for that runtime.`,
+    );
+    exit(1);
+  }
 
   const manifest = loadAgentsManifest(options.manifestPath);
   const currentList = listAgents(options.sandboxName);
