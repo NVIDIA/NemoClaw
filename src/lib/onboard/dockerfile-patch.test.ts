@@ -208,7 +208,27 @@ describe("dockerfile patch helpers", () => {
     expect(patched).toContain("ARG NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME=nemoclaw-local");
     expect(patched).toContain("ARG NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE=0.5");
     expect(patched).toContain("ARG NEMOCLAW_DISABLE_DEVICE_AUTH=1");
-    assert.deepEqual(readMessagingPlanArg(patched), messagingPlan);
+    const patchedMessagingPlan = readMessagingPlanArg(patched) as {
+      channels?: Array<{ channelId?: string; active?: boolean }>;
+      buildSteps?: unknown;
+      runtimeSetup?: {
+        nodePreloads?: Array<{ channelId?: string; module?: string }>;
+      };
+    };
+    assert.deepEqual(patchedMessagingPlan.buildSteps, messagingPlan.buildSteps);
+    assert.deepEqual(
+      patchedMessagingPlan.channels?.map((channel) => ({
+        channelId: channel.channelId,
+        active: channel.active,
+      })),
+      [{ channelId: "telegram", active: true }],
+    );
+    assert.ok(
+      patchedMessagingPlan.runtimeSetup?.nodePreloads?.some(
+        (entry) => entry.channelId === "telegram" && entry.module === "telegram-diagnostics",
+      ),
+      "expected hydrated Telegram diagnostics preload in Dockerfile messaging plan",
+    );
   });
 
   it("uses the shared sandbox inference mapping", () => {
@@ -489,7 +509,30 @@ describe("dockerfile patch helpers", () => {
         null,
       );
       const patched = fs.readFileSync(dockerfilePath, "utf8");
-      assert.deepEqual(readMessagingPlanArg(patched), messagingPlan);
+      const patchedMessagingPlan = readMessagingPlanArg(patched) as {
+        channels?: Array<{ channelId?: string; active?: boolean }>;
+        agentRender?: unknown;
+        runtimeSetup?: {
+          nodePreloads?: Array<{ channelId?: string; module?: string }>;
+        };
+      };
+      assert.deepEqual(patchedMessagingPlan.agentRender, messagingPlan.agentRender);
+      assert.deepEqual(
+        patchedMessagingPlan.channels?.map((channel) => ({
+          channelId: channel.channelId,
+          active: channel.active,
+        })),
+        [
+          { channelId: "discord", active: true },
+          { channelId: "telegram", active: true },
+        ],
+      );
+      assert.ok(
+        patchedMessagingPlan.runtimeSetup?.nodePreloads?.some(
+          (entry) => entry.channelId === "telegram" && entry.module === "telegram-diagnostics",
+        ),
+        "expected hydrated Telegram diagnostics preload in Dockerfile messaging plan",
+      );
       assert.doesNotMatch(patched, /NEMOCLAW_MESSAGING_CHANNELS_B64/);
       assert.doesNotMatch(patched, /NEMOCLAW_DISCORD_GUILDS_B64/);
       assert.doesNotMatch(patched, /NEMOCLAW_TELEGRAM_CONFIG_B64/);

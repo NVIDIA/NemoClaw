@@ -229,14 +229,51 @@ describe("registry", () => {
   });
 
   it("stores messaging plan state at registration time", () => {
-    const plan = makeMessagingPlan("messaging", ["telegram"]);
+    const basePlan = makeMessagingPlan("messaging", ["telegram"]);
+    const plan = {
+      ...basePlan,
+      channels: [
+        {
+          ...basePlan.channels[0],
+          inputs: [
+            {
+              channelId: "telegram",
+              inputId: "botToken",
+              kind: "secret",
+              required: true,
+              sourceEnv: "TELEGRAM_BOT_TOKEN",
+              credentialAvailable: true,
+            },
+          ],
+        },
+      ],
+      credentialBindings: [
+        {
+          channelId: "telegram",
+          credentialId: "telegramBotToken",
+          sourceInput: "botToken",
+          providerName: "messaging-telegram-bridge",
+          providerEnvKey: "TELEGRAM_BOT_TOKEN",
+          placeholder: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
+          credentialAvailable: true,
+          credentialHash: "hash",
+        },
+      ],
+    };
     registry.registerSandbox({
       name: "messaging",
       messaging: { schemaVersion: 1, plan },
     });
 
     const sb = registry.getSandbox("messaging");
-    expect(sb.messaging).toEqual({ schemaVersion: 1, plan });
+    expect(sb.messaging).toMatchObject({
+      schemaVersion: 1,
+      plan: {
+        schemaVersion: 1,
+        sandboxName: "messaging",
+        channels: [expect.objectContaining({ channelId: "telegram", active: true })],
+      },
+    });
     const rawSandbox = sb as unknown as Record<string, unknown>;
     expect(rawSandbox.messagingChannels).toBeUndefined();
     expect(rawSandbox.messagingChannelConfig).toBeUndefined();
@@ -257,8 +294,31 @@ describe("registry", () => {
       sandboxName: "messaging",
       channels: [{ channelId: "telegram" }],
     });
+    expect(data.sandboxes.messaging.messaging.plan.networkPolicy).toEqual({
+      presets: [],
+      entries: [],
+    });
     expect(data.sandboxes.messaging.messaging.plan.agentRender).toBeUndefined();
+    expect(data.sandboxes.messaging.messaging.plan.buildSteps).toBeUndefined();
+    expect(data.sandboxes.messaging.messaging.plan.runtimeSetup).toBeUndefined();
+    expect(data.sandboxes.messaging.messaging.plan.stateUpdates).toBeUndefined();
+    expect(data.sandboxes.messaging.messaging.plan.healthChecks).toBeUndefined();
+    expect(data.sandboxes.messaging.messaging.plan.channels[0]).toEqual({
+      channelId: "telegram",
+      active: true,
+      configured: true,
+      disabled: false,
+      inputs: [{ inputId: "botToken", credentialAvailable: true }],
+    });
     expect(data.sandboxes.messaging.messaging.plan.channels[0].hooks).toBeUndefined();
+    expect(data.sandboxes.messaging.messaging.plan.credentialBindings).toEqual([
+      {
+        channelId: "telegram",
+        providerEnvKey: "TELEGRAM_BOT_TOKEN",
+        credentialAvailable: true,
+        credentialHash: "hash",
+      },
+    ]);
     expect(data.sandboxes.messaging.messagingChannels).toBeUndefined();
     expect(data.sandboxes.messaging.messagingChannelConfig).toBeUndefined();
   });

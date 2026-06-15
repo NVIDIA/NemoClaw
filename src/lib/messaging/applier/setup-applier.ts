@@ -8,6 +8,12 @@ import {
   applyAgentConfigAtOpenShell as applyAgentConfigPlanAtOpenShell,
   listHookRequests as listPlanHookRequests,
 } from "./agent-config";
+import {
+  applyHealthChecks as applyPlanHealthChecks,
+  applyMessagingHooksForPhase as applyPlanHooksForPhase,
+  applyPreEnableChecks as applyPlanPreEnableChecks,
+  type MessagingHookPhaseOptions,
+} from "./hook-phases";
 import { applyCredentialsAtOpenShell as applyCredentialsPlanAtOpenShell } from "./openshell-provider";
 import { applyPolicyAtOpenShell as applyPolicyPlanAtOpenShell } from "./policy";
 import {
@@ -68,6 +74,41 @@ export class MessagingSetupApplier {
     return listPlanHookRequests(plan, phase);
   }
 
+  static listPreEnableChecks(plan: SandboxMessagingPlan): MessagingHookApplyRequest[] {
+    assertSandboxMessagingPlan(plan);
+    return listPlanHookRequests(plan, "pre-enable");
+  }
+
+  static listHealthChecks(plan: SandboxMessagingPlan): MessagingHookApplyRequest[] {
+    assertSandboxMessagingPlan(plan);
+    return listPlanHookRequests(plan, "health-check");
+  }
+
+  static applyHooksForPhase(
+    plan: SandboxMessagingPlan,
+    phase: ChannelHookPhase,
+    options: MessagingHookPhaseOptions = {},
+  ): ReturnType<typeof applyPlanHooksForPhase> {
+    assertSandboxMessagingPlan(plan);
+    return applyPlanHooksForPhase(plan, phase, options);
+  }
+
+  static applyPreEnableChecks(
+    plan: SandboxMessagingPlan,
+    options: MessagingHookPhaseOptions = {},
+  ): ReturnType<typeof applyPlanPreEnableChecks> {
+    assertSandboxMessagingPlan(plan);
+    return applyPlanPreEnableChecks(plan, options);
+  }
+
+  static applyHealthChecks(
+    plan: SandboxMessagingPlan,
+    options: MessagingHookPhaseOptions = {},
+  ): ReturnType<typeof applyPlanHealthChecks> {
+    assertSandboxMessagingPlan(plan);
+    return applyPlanHealthChecks(plan, options);
+  }
+
   static async applyAgentConfigAtOpenShell(
     plan: SandboxMessagingPlan,
     options: {
@@ -113,6 +154,7 @@ function assertSandboxMessagingPlan(value: unknown): asserts value is SandboxMes
     !isObject(value.networkPolicy) ||
     !Array.isArray(value.agentRender) ||
     !Array.isArray(value.buildSteps) ||
+    !isRuntimeSetup(value.runtimeSetup) ||
     !Array.isArray(value.stateUpdates) ||
     !Array.isArray(value.healthChecks)
   ) {
@@ -122,6 +164,16 @@ function assertSandboxMessagingPlan(value: unknown): asserts value is SandboxMes
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isRuntimeSetup(value: unknown): boolean {
+  if (value === undefined) return true;
+  return (
+    isObject(value) &&
+    Array.isArray(value.nodePreloads) &&
+    Array.isArray(value.envAliases) &&
+    Array.isArray(value.secretScans)
+  );
 }
 
 function assertJsonSerializable(

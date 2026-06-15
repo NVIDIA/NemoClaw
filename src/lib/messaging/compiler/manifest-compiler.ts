@@ -31,6 +31,7 @@ import { planBuildSteps } from "./engines/build-step-engine";
 import { planCredentialBindings } from "./engines/credential-binding-engine";
 import { planHealthChecks } from "./engines/health-check-engine";
 import { planNetworkPolicy } from "./engines/policy-resolver";
+import { planRuntimeSetup } from "./engines/runtime-setup-engine";
 import { planStateUpdates } from "./engines/state-update-engine";
 import type { RenderTemplateReferenceResolver } from "./engines/template";
 import type { ManifestCompilerContext } from "./types";
@@ -91,6 +92,7 @@ export class ManifestCompiler {
         ),
       )
     ).flat();
+    const runtimeSetup = planRuntimeSetup(manifests, context.agent, channels);
     const stateUpdates = manifests.flatMap((manifest) => planStateUpdates(manifest));
     const healthChecks = manifests.flatMap((manifest) => planHealthChecks(manifest));
 
@@ -105,6 +107,7 @@ export class ManifestCompiler {
       networkPolicy,
       agentRender,
       buildSteps,
+      runtimeSetup,
       stateUpdates,
       healthChecks,
     };

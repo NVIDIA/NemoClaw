@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { listMessagingProviderSuffixes } from "../messaging/channels";
 import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../name-validation";
 
 export type SandboxProviderRunOpenshell = (
@@ -34,15 +35,11 @@ export type SandboxRecreateCleanupDeps = DetachSandboxProvidersDeps & {
 };
 
 export const SANDBOX_PROVIDER_SUFFIXES = [
-  "telegram-bridge",
-  "discord-bridge",
-  "slack-bridge",
-  "slack-app",
-  "wechat-bridge",
+  ...listMessagingProviderSuffixes().map((suffix) => suffix.replace(/^-/, "")),
   "brave-search",
-] as const;
+] as readonly string[];
 
-export type SandboxProviderSuffix = (typeof SANDBOX_PROVIDER_SUFFIXES)[number];
+export type SandboxProviderSuffix = string;
 
 const TOLERATED_DETACH_OUTPUT_RE =
   /\bNotAttached\b|\bnot\s+attached\b|provider[^\n]{0,200}?(?:\bNotFound\b|\bnot\s+found\b)/i;
