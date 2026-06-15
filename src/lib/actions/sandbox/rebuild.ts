@@ -56,6 +56,8 @@ import {
   MessagingWorkflowPlanner,
   toMessagingAgentId,
 } from "../../messaging";
+import { hydrateMessagingChannelConfig } from "../../messaging-channel-config";
+import { getStoredMessagingChannelConfig } from "../../onboard/messaging-config";
 import { pruneDisabledMessagingPolicyPresets } from "../../onboard/messaging-policy-presets";
 import {
   captureSandboxListWithGatewayRecovery,
@@ -376,24 +378,6 @@ function isSingleAgentRebuildSupported(
   return true;
 }
 
-function stashWechatMetadataForRebuild(sandboxName: string, log: (msg: string) => void): void {
-  const rebuildSession = onboardSession.loadSession();
-  const wc =
-    rebuildSession?.sandboxName === sandboxName ? (rebuildSession.wechatConfig ?? null) : null;
-  if (wc?.accountId && !process.env.WECHAT_ACCOUNT_ID) {
-    process.env.WECHAT_ACCOUNT_ID = wc.accountId;
-  }
-  if (wc?.baseUrl && !process.env.WECHAT_BASE_URL) {
-    process.env.WECHAT_BASE_URL = wc.baseUrl;
-  }
-  if (wc?.userId && !process.env.WECHAT_USER_ID) {
-    process.env.WECHAT_USER_ID = wc.userId;
-  }
-  if (wc?.accountId) {
-    log(`Stashed WeChat account metadata for rebuild: accountId=${wc.accountId}`);
-  }
-}
-
 async function reapplyMessagingManifestAfterOpenClawDoctor(
   sandboxName: string,
   plan: SandboxMessagingPlan | null,
@@ -462,11 +446,21 @@ export async function rebuildSandbox(
 
   if (!checkRebuildGatewaySchemaPreflight(sandboxName, bail)) return;
 
-  // Stash WeChat per-account metadata into process.env before the rebuild
-  // touches anything destructive. Only hydrate from the session when it belongs
-  // to this sandbox so metadata from a different recent onboard cannot leak into
-  // this image build.
-  stashWechatMetadataForRebuild(sandboxName, log);
+  // Hydrate non-secret messaging config before the rebuild touches anything
+  // destructive. The manifest plan in registry is the durable source; legacy
+  // session channel fields are read only as compatibility fallback by
+  // getStoredMessagingChannelConfig().
+  {
+    const rebuildSession = onboardSession.loadSession();
+    const hydratedMessagingConfig = hydrateMessagingChannelConfig(
+      getStoredMessagingChannelConfig(sandboxName, rebuildSession),
+    );
+    if (hydratedMessagingConfig) {
+      log(
+        `Stashed messaging config for rebuild: ${Object.keys(hydratedMessagingConfig).join(",")}`,
+      );
+    }
+  }
 
   // Version check — show what's changing
   const versionCheck = sandboxVersion.checkAgentVersion(sandboxName);

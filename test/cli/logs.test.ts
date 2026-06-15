@@ -1,17 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect } from "vitest";
 import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { describe, expect, it } from "vitest";
 
 import {
   CLI,
+  createLogsTestSetup,
   FAKE_OPENCLAW_LOG_LINE,
   FAKE_OPENSHELL_LOG_LINE,
-  createLogsTestSetup,
   isChildRunning,
   runWithEnv,
   testTimeout,
@@ -364,14 +364,12 @@ describe("CLI dispatch", () => {
         "  exit 0",
         "fi",
         'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ]; then',
-        '  if [ "$8" = "tail -n 200 /tmp/gateway.log 2>/dev/null | grep -cE \\"getUpdates conflict|409[[:space:]:]+Conflict\\" || true" ]; then',
-        "    echo 1",
-        "    exit 0",
-        "  fi",
-        '  if [ "$8" = "tail -n 10 /tmp/gateway.log 2>/dev/null" ]; then',
-        "    echo 'getUpdates conflict'",
-        "    exit 0",
-        "  fi",
+        '  case "$8" in',
+        '    *"tail -n 200"*"/tmp/gateway.log"*)',
+        "      echo 'getUpdates conflict'",
+        "      exit 0",
+        "      ;;",
+        "  esac",
         "fi",
         "exit 0",
       ].join("\n"),
@@ -386,9 +384,9 @@ describe("CLI dispatch", () => {
     const log = fs.readFileSync(markerFile, "utf8");
     expect(r.code).toBe(0);
     expect(log).toContain(
-      'sandbox exec -n alpha -- sh -c tail -n 200 /tmp/gateway.log 2>/dev/null | grep -cE "getUpdates conflict|409[[:space:]:]+Conflict" || true',
+      "sandbox exec -n alpha -- sh -c tail -n 200 /tmp/gateway.log 2>/dev/null || true",
     );
-    expect(log).toContain("sandbox exec -n alpha -- sh -c tail -n 10 /tmp/gateway.log 2>/dev/null");
+    expect(log).not.toContain("grep -cE");
     expect(log).not.toContain("sandbox exec alpha sh -c");
   });
 

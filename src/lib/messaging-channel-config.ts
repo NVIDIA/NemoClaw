@@ -1,21 +1,28 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { BUILT_IN_CHANNEL_MANIFESTS, getMessagingConfigEnvAliases } from "./messaging/channels";
 import { listChannels } from "./sandbox/channels";
 
 export type MessagingChannelConfig = Record<string, string>;
 
 const channels = listChannels();
+const manifestConfigInputs = BUILT_IN_CHANNEL_MANIFESTS.flatMap((manifest) =>
+  manifest.inputs
+    .filter((input) => input.kind === "config")
+    .map((input) => ({
+      envKey: input.envKey,
+      validValues: "validValues" in input ? input.validValues : undefined,
+    })),
+);
 const requireMentionKeys = new Set(
-  channels
-    .map((channel) => channel.requireMentionEnvKey)
-    .filter((key): key is string => typeof key === "string" && key.length > 0),
+  [
+    ...channels.map((channel) => channel.requireMentionEnvKey),
+    ...manifestConfigInputs.filter(hasBooleanStringValues).map((input) => input.envKey),
+  ].filter((key): key is string => typeof key === "string" && key.length > 0),
 );
 
-const configKeyAliases: Readonly<Record<string, readonly string[]>> = {
-  DISCORD_SERVER_ID: ["DISCORD_SERVER_IDS"],
-  DISCORD_USER_ID: ["DISCORD_ALLOWED_IDS"],
-};
+const configKeyAliases = getMessagingConfigEnvAliases();
 
 const aliasToCanonical = new Map(
   Object.entries(configKeyAliases).flatMap(([canonical, aliases]) =>
@@ -25,18 +32,26 @@ const aliasToCanonical = new Map(
 
 export const MESSAGING_CHANNEL_CONFIG_ENV_KEYS: readonly string[] = [
   ...new Set(
-    channels.flatMap((channel) =>
-      [
+    [
+      ...channels.flatMap((channel) => [
         channel.serverIdEnvKey,
         channel.userIdEnvKey,
         channel.channelIdEnvKey,
         channel.requireMentionEnvKey,
-      ].filter((key): key is string => typeof key === "string" && key.length > 0),
-    ),
+      ]),
+      ...manifestConfigInputs.map((input) => input.envKey),
+      ...BUILT_IN_CHANNEL_MANIFESTS.flatMap(
+        (manifest) => manifest.state.rebuildHydration?.map((hydration) => hydration.env) ?? [],
+      ),
+    ].filter((key): key is string => typeof key === "string" && key.length > 0),
   ),
 ];
 
 const knownConfigKeys = new Set(MESSAGING_CHANNEL_CONFIG_ENV_KEYS);
+
+function hasBooleanStringValues(input: { readonly validValues?: readonly string[] }): boolean {
+  return input.validValues?.includes("0") === true && input.validValues.includes("1");
+}
 
 export type MessagingChannelConfigEnvResolution = {
   canonicalKey: string | null;

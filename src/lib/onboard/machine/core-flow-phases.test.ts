@@ -144,9 +144,7 @@ function createPhases(
       hydrateMessagingChannelConfig: (config) => config,
       messagingChannelConfigsEqual: () => true,
       getSandboxReuseState: () => "missing",
-      computeTelegramRequireMention: () => null,
       hasSandboxGpuDrift: () => false,
-      hasWechatConfigDrift: () => false,
       getSandboxHermesToolGateways: () => [],
       normalizeHermesToolGatewaySelections: (value) => (Array.isArray(value) ? value : []),
       stringSetsEqual: (left, right) =>
