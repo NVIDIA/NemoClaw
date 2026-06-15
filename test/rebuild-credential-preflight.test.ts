@@ -582,6 +582,33 @@ describe("Issue #2273: atomic rebuild", () => {
       expect(output).toContain("Backing up sandbox state");
     }, 60_000);
 
+    it("does not let a mismatched stale local session bypass the target OPENAI_API_KEY preflight", {
+      timeout: 60_000,
+    }, () => {
+      const f = createFixture({
+        provider: "openai-api",
+        credentialEnv: "OPENAI_API_KEY",
+        providerRegistered: false,
+      });
+      const sessionPath = path.join(f.nemoclawDir, "onboard-session.json");
+      const session = JSON.parse(fs.readFileSync(sessionPath, "utf-8"));
+      session.sandboxName = "other-local-sandbox";
+      session.provider = "ollama-local";
+      session.credentialEnv = "OPENAI_API_KEY";
+      fs.writeFileSync(sessionPath, JSON.stringify(session), { mode: 0o600 });
+
+      const result = runRebuild(f);
+      const output = (result.stderr || "") + (result.stdout || "");
+
+      expect(result.status).not.toBe(0);
+      expect(output).toContain("preflight failed");
+      expect(output).toContain("requires OPENAI_API_KEY");
+      expect(output).not.toContain("GH #2519");
+      expect(output).not.toContain("Backing up sandbox state");
+      expect(output).not.toContain("Old sandbox deleted");
+      expect(registryHasSandbox(f)).toBe(true);
+    });
+
     it("preflight works for non-NVIDIA providers (OpenAI, Anthropic, etc.)", {
       timeout: 60_000,
     }, () => {
