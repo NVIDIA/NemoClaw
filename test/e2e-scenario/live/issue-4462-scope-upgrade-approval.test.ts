@@ -161,6 +161,8 @@ if [ -z "$request_id" ]; then
       echo "SCOPE_ALREADY_APPROVED=$(cat /tmp/issue4462-approved-device.txt)"
     elif [ "$trigger_rc" -eq 0 ] && ! grep -Eiq 'EMBEDDED FALLBACK|scope upgrade pending approval|pairing required|fallbackFrom[": ]+gateway|transport[": ]+embedded' /tmp/issue4462-trigger-agent.log; then
       echo "TRIGGER_COMPLETED_WITHOUT_PENDING_SCOPE_UPGRADE"
+      echo "ISSUE_4462_SCOPE_UPGRADE_OK device=already-approved request=auto"
+      exit 0
     else
       echo "NO_SCOPE_REQUEST" >&2
       cat /tmp/issue4462-trigger-agent.log >&2
