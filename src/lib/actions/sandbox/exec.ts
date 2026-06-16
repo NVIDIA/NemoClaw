@@ -23,10 +23,7 @@ export type WorkdirProbeResult = {
 
 export type WorkdirProbeOutcome = "ok" | "missing" | "unclear";
 
-export type WorkdirProbeRunner = (
-  binary: string,
-  args: readonly string[],
-) => WorkdirProbeResult;
+export type WorkdirProbeRunner = (binary: string, args: readonly string[]) => WorkdirProbeResult;
 
 export function buildOpenshellExecArgs(
   sandboxName: string,
@@ -118,10 +115,8 @@ export async function execSandbox(
   if (options.workdir) {
     validateWorkdirOrFail(binary, sandboxName, options.workdir);
   }
-  const result = spawnSync(
-    binary,
-    buildOpenshellExecArgs(sandboxName, command, options),
-    { stdio: "inherit" },
-  );
+  const result = spawnSync(binary, buildOpenshellExecArgs(sandboxName, command, options), {
+    stdio: "inherit",
+  });
   exitWithSpawnResult(result);
 }

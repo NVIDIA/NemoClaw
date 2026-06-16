@@ -167,9 +167,7 @@ describe("evaluateWorkdirProbe", () => {
   });
 
   it("returns 'unclear' when spawn reports a transport error", () => {
-    expect(
-      evaluateWorkdirProbe({ status: null, error: new Error("ENOENT") }),
-    ).toBe("unclear");
+    expect(evaluateWorkdirProbe({ status: null, error: new Error("ENOENT") })).toBe("unclear");
   });
 });
 
@@ -208,9 +206,9 @@ describe("validateWorkdirOrFail", () => {
     }) as never);
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
-    expect(() =>
-      validateWorkdirOrFail("openshell", "alpha", "/sandbox/workspace", run),
-    ).toThrow("exit");
+    expect(() => validateWorkdirOrFail("openshell", "alpha", "/sandbox/workspace", run)).toThrow(
+      "exit",
+    );
     expect(errSpy).toHaveBeenCalledWith(
       "error: --workdir: /sandbox/workspace does not exist inside the sandbox",
     );
