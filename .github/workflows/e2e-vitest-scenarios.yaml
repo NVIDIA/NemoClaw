@@ -1854,6 +1854,71 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  full-e2e-vitest:
+    needs: generate-matrix
+    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',full-e2e-vitest,') || contains(format(',{0},', inputs.scenarios), ',full-e2e,') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    env:
+      FREE_STANDING_VITEST_JOB: "1"
+      FREE_STANDING_SCENARIO_ID: "full-e2e"
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/full-e2e
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+      NEMOCLAW_SANDBOX_NAME: "e2e-full-vitest"
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build CLI
+        run: npm run build:cli
+
+      - name: Install OpenShell CLI
+        run: bash scripts/install-openshell.sh
+
+      - name: Run full-e2e live Vitest test
+        env:
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
+          if command -v openshell >/dev/null 2>&1; then
+            OPENSHELL_BIN="$(command -v openshell)"
+          elif [ -x "$HOME/.local/bin/openshell" ]; then
+            OPENSHELL_BIN="$HOME/.local/bin/openshell"
+          else
+            echo "::error::OpenShell CLI not found after install"
+            exit 1
+          fi
+          export OPENSHELL_BIN
+          "$OPENSHELL_BIN" --version
+          npx vitest run --project e2e-scenarios-live \
+            test/e2e-scenario/live/full-e2e.test.ts \
+            --silent=false --reporter=default
+
+      - name: Upload full-e2e artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-vitest-scenarios-full-e2e
+          path: e2e-artifacts/vitest/full-e2e/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
+
+
   cloud-onboard-vitest:
     needs: generate-matrix
     if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',cloud-onboard-vitest,') || contains(format(',{0},', inputs.scenarios), ',cloud-onboard,') }}
@@ -1918,7 +1983,6 @@ jobs:
           include-hidden-files: false
           if-no-files-found: ignore
           retention-days: 14
-
 
   token-rotation-vitest:
     needs: generate-matrix
@@ -3122,6 +3186,7 @@ jobs:
         messaging-providers-vitest,
         launchable-smoke-vitest,
         double-onboard-vitest,
+        full-e2e-vitest,
         cloud-onboard-vitest,
         onboard-resume-vitest,
         model-router-provider-routed-inference-vitest,
