@@ -213,6 +213,7 @@ liveTest(
       {},
       90_000,
     );
+    expect(logs.exitCode, resultText(logs)).toBe(0);
     expect(resultText(logs).trim().length, resultText(logs)).toBeGreaterThan(0);
 
     await cleanup(host, sandbox);
