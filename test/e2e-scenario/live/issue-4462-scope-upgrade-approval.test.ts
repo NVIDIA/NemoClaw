@@ -259,12 +259,21 @@ liveTest(
     );
     expect(install.exitCode, resultText(install)).toBe(0);
 
-    const probe = await sandbox.exec(SANDBOX_NAME, ["bash", "-lc", scopeUpgradeScript()], {
-      artifactName: "phase-2-scope-upgrade-approval",
-      env: env(),
-      redactionValues: [apiKey],
-      timeoutMs: 12 * 60_000,
-    });
+    const encodedScopeUpgradeScript = Buffer.from(scopeUpgradeScript(), "utf8").toString("base64");
+    const probe = await sandbox.exec(
+      SANDBOX_NAME,
+      [
+        "sh",
+        "-lc",
+        `tmp=$(mktemp); trap 'rm -f "$tmp"' EXIT; printf '%s' '${encodedScopeUpgradeScript}' | base64 -d > "$tmp"; bash "$tmp"`,
+      ],
+      {
+        artifactName: "phase-2-scope-upgrade-approval",
+        env: env(),
+        redactionValues: [apiKey],
+        timeoutMs: 12 * 60_000,
+      },
+    );
     expect(probe.exitCode, resultText(probe)).toBe(0);
     expect(resultText(probe)).toContain("ISSUE_4462_SCOPE_UPGRADE_OK");
 
