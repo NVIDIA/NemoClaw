@@ -87,6 +87,12 @@ export async function resolveRebuildLiveState(
   }
 
   if (reconciled.state === "missing") {
+    // Source boundary: the local registry is the durable NemoClaw intent record,
+    // while OpenShell owns live sandbox presence. A missing live sandbox on a
+    // healthy named gateway can come from external deletion or failed prior
+    // provisioning, so rebuild recovers from registry metadata instead of
+    // treating the preserved local entry as corrupt. Keep until OpenShell exposes
+    // an atomic recreate-from-registry recovery API.
     console.log("");
     console.log(
       `  ${YW}⚠${R} Sandbox '${sandboxName}' is registered locally but absent from the live OpenShell gateway.`,

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { OllamaStartupOutcome } from "./ollama-startup";
 import type { SetupNimSelectionState } from "./setup-nim-selection";
 
 type SetupNimSelectionResult = "selected" | "retry-selection";
@@ -18,10 +19,7 @@ type SetupNimOllamaDeps = {
     ollamaPort: number;
     getLocalProviderBaseUrl: (provider: string) => string | null;
     isNonInteractive: () => boolean;
-  }) =>
-    | { kind: "continue" }
-    | { kind: "fallback"; result: Partial<SetupNimSelectionState> }
-    | { kind: string };
+  }) => OllamaStartupOutcome;
   shouldFrontOllamaWithProxy: () => boolean;
   startOllamaAuthProxy: () => boolean;
   getLocalProviderBaseUrl: (provider: string) => string | null;
@@ -116,6 +114,19 @@ export function createSetupNimOllamaHandlers(deps: SetupNimOllamaDeps): {
       console.error("  Local Ollama base URL could not be determined.");
       deps.process.exit(1);
     }
+  }
+
+  function applyOllamaFallbackState(
+    state: SetupNimSelectionState,
+    result: Extract<OllamaStartupOutcome, { kind: "fallback" }>["result"],
+  ): void {
+    state.provider = result.provider;
+    state.credentialEnv = result.credentialEnv;
+    state.endpointUrl = result.endpointUrl;
+    state.model = result.model;
+    state.preferredInferenceApi = result.preferredInferenceApi;
+    state.nimContainer = null;
+    state.allowToolsIncompatible = false;
   }
 
   async function handleWindowsHostOllamaSelection(
@@ -213,17 +224,27 @@ export function createSetupNimOllamaHandlers(deps: SetupNimOllamaDeps): {
       getLocalProviderBaseUrl: deps.getLocalProviderBaseUrl,
       isNonInteractive: deps.isNonInteractive,
     });
-    if (startup.kind === "continue") return "retry-selection";
-    if (startup.kind === "fallback") {
-      Object.assign(
-        state,
-        (startup as { kind: "fallback"; result: Partial<SetupNimSelectionState> }).result,
-      );
-      return "selected";
+    // Source boundary: ollama-startup owns this closed outcome contract. If a
+    // stale package or test double presents an unknown kind, fail closed before
+    // mutating provider state or starting proxy/model validation work.
+    switch (startup.kind) {
+      case "continue":
+        return "retry-selection";
+      case "fallback":
+        // Fallback crosses a provider boundary, so write a complete safe state
+        // rather than merging over stale cloud/NIM/Ollama selection fields.
+        applyOllamaFallbackState(state, startup.result);
+        return "selected";
+      case "ready":
+        startProxyOrAnnounceDirect();
+        configureOllamaState(state);
+        return selectModel(gpu, state, requestedModel, recoveredModel);
+      default: {
+        const kind = (startup as { kind?: unknown }).kind;
+        console.error(`  Unknown Ollama startup outcome: ${String(kind)}`);
+        deps.process.exit(1);
+      }
     }
-    startProxyOrAnnounceDirect();
-    configureOllamaState(state);
-    return selectModel(gpu, state, requestedModel, recoveredModel);
   }
 
   async function handleInstallOllamaSelection(

@@ -26,12 +26,16 @@ export function applyCloudFallbackSelection(
   state: SetupNimSelectionState,
   cloudConfig: CloudFallbackConfig,
 ): void {
+  // Source boundary: fallback may run after a local Ollama/NIM/vLLM branch
+  // accepted provider-specific tool constraints. Cloud fallback is a fresh
+  // provider selection, so clear local-only compatibility state here.
   state.provider = cloudConfig.providerName;
   state.endpointUrl = cloudConfig.endpointUrl;
   state.credentialEnv = cloudConfig.credentialEnv;
   state.model = cloudConfig.defaultModel;
   state.preferredInferenceApi = null;
   state.nimContainer = null;
+  state.allowToolsIncompatible = false;
 }
 
 export function clearNimContainerBeforeRetry(state: SetupNimSelectionState): void {

@@ -656,9 +656,12 @@ async function runSnapshotRestore(
     }
     snapshotExit(1);
   }
-  // #5027/#4538: openclaw.json restores via the generic copy strategy,
-  // which lands it at 0640. The always-on OpenClaw gateway needs the
-  // mutable config contract; repair it after restore when needed.
+  // Post-restore security-state reconciliation is best-effort by design: the
+  // filesystem restore succeeded and old snapshots may target hosts where policy
+  // providers or mutable-config repair are temporarily unavailable. Surface every
+  // failure as a warning, but keep the restore result tied to state restoration.
+  // #5027/#4538: openclaw.json restores via the generic copy strategy, which
+  // lands it at 0640. Repair the mutable config contract when needed.
   repairRestoredOpenClawConfigPerms(targetSandbox, result);
   // Reconcile the target's policy presets to match the snapshot manifest
   // exactly. Skip legacy snapshots that predate the `policyPresets` field.
