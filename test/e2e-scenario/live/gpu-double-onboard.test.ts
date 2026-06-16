@@ -235,7 +235,7 @@ liveTest(
       [
         "sh",
         "-lc",
-        `curl -fsS --max-time 120 https://inference.local/v1/chat/completions -H 'Content-Type: application/json' --data '${JSON.stringify({ model, messages: [{ role: "user", content: "Reply with exactly one word: PONG" }], max_tokens: 200 })}' | ${parseReplyCommand()}`,
+        `curl -fsS --max-time 120 https://inference.local/v1/chat/completions -H 'Content-Type: application/json' --data '${JSON.stringify({ model, messages: [{ role: "user", content: "What is 6 multiplied by 7? Reply with only the integer, no extra words." }], max_tokens: 200 })}' | ${parseReplyCommand()}`,
       ],
       {
         artifactName: "phase-6-sandbox-inference-after-reonboard",
@@ -244,7 +244,7 @@ liveTest(
       },
     );
     expect(response.exitCode, resultText(response)).toBe(0);
-    expect(response.stdout).toMatch(/PONG/i);
+    expect(response.stdout).toMatch(/(^|[^0-9])42([^0-9]|$)/);
 
     await cleanup(host, sandbox);
     await artifacts.writeJson("scenario-result.json", {
