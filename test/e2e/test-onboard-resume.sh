@@ -379,9 +379,20 @@ NEMOCLAW_NON_INTERACTIVE=1 \
   NEMOCLAW_POLICY_MODE=skip \
   NEMOCLAW_E2E_FAILURE_INJECTION=1 \
   NEMOCLAW_E2E_FORCE_FAIL_AT_STEP=preflight \
-  node "$REPO/bin/nemoclaw.js" onboard --fresh --non-interactive >"$FRESH_LOG" 2>&1 || true
+  node "$REPO/bin/nemoclaw.js" onboard --fresh --non-interactive >"$FRESH_LOG" 2>&1
+fresh_exit=$?
 fresh_output="$(cat "$FRESH_LOG")"
 rm -f "$FRESH_LOG"
+
+# Confirm the run actually executed and aborted at preflight, so the
+# banner-absence assertion below is meaningful (not a vacuous pass from an
+# unrelated early failure).
+if [ $fresh_exit -ne 0 ] && echo "$fresh_output" | grep -q "\[e2e\] Forced onboarding failure at step 'preflight'."; then
+  pass "--fresh run failed fast at preflight as intended"
+else
+  fail "--fresh run did not fail at preflight as expected (exit $fresh_exit)"
+  echo "$fresh_output"
+fi
 
 if echo "$fresh_output" | grep -q "(resume mode)"; then
   fail "--fresh did not suppress auto-resume (unexpected '(resume mode)')"
