@@ -4747,6 +4747,8 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         env: process.env,
         stdinIsTty: Boolean(process.stdin && process.stdin.isTTY),
         stdoutIsTty: Boolean(process.stdout && process.stdout.isTTY),
+        // Auto-detect resume from an interrupted prior attempt (#5470).
+        persistedSessionStatus: onboardSession.loadSession()?.status ?? null,
       },
       {
         isNonInteractive,
