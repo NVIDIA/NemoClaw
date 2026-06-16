@@ -2469,6 +2469,9 @@ function validateSnapshotCommandsVitestJob(errors: string[], jobs: WorkflowRecor
   if (job["runs-on"] !== "ubuntu-latest") {
     errors.push("snapshot-commands-vitest job must run on ubuntu-latest");
   }
+  if (job["timeout-minutes"] !== 40) {
+    errors.push("snapshot-commands-vitest job must keep a 40 minute timeout");
+  }
   validateFreeStandingJobSelector(errors, jobs, jobName, scenarioName);
 
   const jobEnv = asRecord(job.env);

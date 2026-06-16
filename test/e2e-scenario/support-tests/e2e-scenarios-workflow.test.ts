@@ -909,10 +909,11 @@ jobs:
       jobs: Record<string, { env: Record<string, string>; steps: Array<Record<string, unknown>> }>;
     };
     const snapshotJob = parsedWorkflow.jobs["snapshot-commands-vitest"];
+    snapshotJob["timeout-minutes"] = 30;
     snapshotJob.env.DOCKER_CONFIG = "${{ github.workspace }}/.docker-config-shared";
     snapshotJob.env.NVIDIA_API_KEY = "${{ secrets.NVIDIA_API_KEY }}";
     for (const step of snapshotJob.steps) {
-      if (step.uses === "actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10") {
+      if (typeof step.uses === "string" && step.uses.startsWith("actions/checkout@")) {
         step.with = { ...(step.with as Record<string, unknown>), "persist-credentials": true };
       }
       if (step.name === "Configure isolated Docker auth directory") {
@@ -951,6 +952,7 @@ jobs:
     try {
       expect(validateE2eVitestScenariosWorkflowBoundary(workflowPath)).toEqual(
         expect.arrayContaining([
+          "snapshot-commands-vitest job must keep a 40 minute timeout",
           "snapshot-commands-vitest job must not set DOCKER_CONFIG at job level",
           'step \'Configure isolated Docker auth directory\' run script must include echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-snapshot-commands" >> "$GITHUB_ENV"',
           "snapshot-commands-vitest checkout step must set persist-credentials=false",

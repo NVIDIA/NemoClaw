@@ -34,6 +34,8 @@ const MARKER_FILE = "/sandbox/.openclaw/workspace/snapshot-marker.txt";
 const SECOND_MARKER = "/sandbox/.openclaw/workspace/snapshot-marker-2.txt";
 const LIVE_TIMEOUT_MS = 30 * 60_000;
 const INSTALL_ATTEMPTS = process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true" ? 3 : 1;
+const CREDENTIAL_LEAK_PATTERN =
+  /(?:nvapi-|sk-|Bearer |NVIDIA_API_KEY|NVIDIA_INFERENCE_API_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY|COMPATIBLE_API_KEY|NGC_API_KEY|AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY|api[_-]?key|access[_-]?token|secret|bearer[_-]?token)/i;
 
 function resultText(result: Pick<ShellProbeResult, "stdout" | "stderr">): string {
   return [result.stdout, result.stderr].filter(Boolean).join("\n");
@@ -133,7 +135,7 @@ function scanSnapshotCredentialLeaks(root: string): string[] {
         continue;
       }
       const body = fs.readFileSync(fullPath, "utf8");
-      if (/nvapi-|sk-|Bearer /.test(body)) leaks.push(fullPath);
+      if (CREDENTIAL_LEAK_PATTERN.test(body)) leaks.push(fullPath);
     }
   };
   visit(root);
@@ -318,6 +320,16 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       secondContent,
       "phase-6-read-second-marker-after-latest-restore",
     );
+    const firstGoneAfterLatest = await sandbox.exec(
+      SANDBOX_NAME,
+      ["sh", "-lc", `test ! -e ${MARKER_FILE}`],
+      {
+        artifactName: "phase-6-first-marker-absent-after-latest-restore",
+        env: commandEnv(),
+        timeoutMs: 30_000,
+      },
+    );
+    expect(firstGoneAfterLatest.exitCode, resultText(firstGoneAfterLatest)).toBe(0);
 
     const targetedRestore = await host.command(
       "nemoclaw",
