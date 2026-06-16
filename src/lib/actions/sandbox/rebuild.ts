@@ -3,7 +3,6 @@
 
 import { CLI_NAME } from "../../cli/branding";
 import { prompt as askPrompt } from "../../credentials/store";
-import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import {
   normalizeRebuildSandboxOptions,
   type RebuildSandboxOptions,
@@ -32,17 +31,14 @@ const { LOCAL_INFERENCE_PROVIDERS, REMOTE_PROVIDER_CONFIG, providerExistsInGatew
 
 import {
   detectOpenShellStateRpcPreflightIssue,
-  detectOpenShellStateRpcResultIssue,
   printOpenShellStateRpcIssue,
 } from "../../adapters/openshell/gateway-drift";
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import { runOpenshell } from "../../adapters/openshell/runtime";
 import { loadAgent } from "../../agent/defs";
-import { ensureAgentBaseImage } from "../../agent/onboard";
 import * as agentRuntime from "../../agent/runtime";
 import { RD as _RD, B, D, G, R, YW } from "../../cli/terminal-style";
 import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
-import { getNamedGatewayLifecycleState } from "../../gateway-runtime-action";
 import * as nim from "../../inference/nim";
 import type {
   MessagingHookApplyRequest,
@@ -59,13 +55,8 @@ import {
 import { hydrateMessagingChannelConfig } from "../../messaging-channel-config";
 import { getStoredMessagingChannelConfig } from "../../onboard/messaging-config";
 import { pruneDisabledMessagingPolicyPresets } from "../../onboard/messaging-policy-presets";
-import {
-  captureSandboxListWithGatewayRecovery,
-  printSandboxListFailureWithRecoveryContext,
-} from "../../openshell-sandbox-list";
 import * as policies from "../../policy";
 import { shellQuote } from "../../runner";
-import { parseLiveSandboxNames } from "../../runtime-recovery";
 import * as sandboxVersion from "../../sandbox/version";
 import { redact } from "../../security/redact";
 import * as shields from "../../shields";
@@ -78,11 +69,6 @@ import {
   getActiveSandboxSessions,
 } from "../../state/sandbox-session";
 import { removeSandboxRegistryEntry } from "./destroy";
-import {
-  getReconciledSandboxGatewayState,
-  printGatewayLifecycleHint,
-  printWrongGatewayActiveGuidance,
-} from "./gateway-state";
 import { executeSandboxCommand } from "./process-recovery";
 import { buildRebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
 import {
@@ -92,12 +78,7 @@ import {
   resolveRebuildLiveState,
   type RebuildSandboxEntry,
 } from "./rebuild-flow-helpers";
-import {
-  openRebuildShieldsWindow,
-  printRebuildShieldsRecovery,
-  type RebuildShieldsWindow,
-  relockRebuildShieldsWindow,
-} from "./rebuild-shields";
+import { printRebuildShieldsRecovery, relockRebuildShieldsWindow } from "./rebuild-shields";
 
 export function buildRefreshMutableOpenClawConfigHashCommand(
   configDir = "/sandbox/.openclaw",

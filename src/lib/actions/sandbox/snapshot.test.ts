@@ -22,6 +22,16 @@ const captureOpenshellMock = vi.fn(() => ({
 }));
 const dockerInspectMock = vi.fn(() => ({ status: 0, stdout: "true\n" }));
 const findBackupMock = vi.fn();
+const getAppliedPresetsMock = vi.fn(() => [] as string[]);
+const getCustomPoliciesMock = vi.fn(
+  () => [] as Array<{ name: string; content: string; sourcePath?: string }>,
+);
+const getLatestBackupMock = vi.fn(() => null as Record<string, unknown> | null);
+const applyPresetMock = vi.fn((_sandbox: string, _preset: string) => true);
+const applyPresetContentMock = vi.fn(
+  (_sandbox: string, _name: string, _content: string, _options?: unknown) => true,
+);
+const removePresetMock = vi.fn((_sandbox: string, _preset: string) => true);
 const getSandboxMock = vi.fn(() => null);
 const isGatewayHealthyMock = vi.fn(() => true);
 const listBackupsMock = vi.fn<() => Array<Record<string, unknown>>>(() => []);
@@ -47,7 +57,12 @@ vi.mock("../../domain/sandbox/destroy", () => ({
   getSandboxDeleteOutcome: vi.fn(() => ({ alreadyGone: false })),
 }));
 
-vi.mock("../../policy", () => ({}));
+vi.mock("../../policy", () => ({
+  applyPreset: applyPresetMock,
+  applyPresetContent: applyPresetContentMock,
+  getAppliedPresets: getAppliedPresetsMock,
+  removePreset: removePresetMock,
+}));
 
 vi.mock("../../runner", () => ({
   ROOT: "/repo",
@@ -76,6 +91,7 @@ vi.mock("../../state/gateway", () => ({
 }));
 
 vi.mock("../../state/registry", () => ({
+  getCustomPolicies: getCustomPoliciesMock,
   getSandbox: getSandboxMock,
   registerSandbox: vi.fn(),
   removeSandbox: vi.fn(),
@@ -84,7 +100,7 @@ vi.mock("../../state/registry", () => ({
 vi.mock("../../state/sandbox", () => ({
   backupSandboxState: backupSandboxStateMock,
   findBackup: findBackupMock,
-  getLatestBackup: vi.fn(() => null),
+  getLatestBackup: getLatestBackupMock,
   listBackups: listBackupsMock,
   restoreSandboxState: restoreSandboxStateMock,
 }));
@@ -105,6 +121,12 @@ describe("runSandboxSnapshot", () => {
     });
     dockerInspectMock.mockReturnValue({ status: 0, stdout: "true\n" });
     findBackupMock.mockReturnValue({ match: null });
+    getAppliedPresetsMock.mockReturnValue([]);
+    getCustomPoliciesMock.mockReturnValue([]);
+    getLatestBackupMock.mockReturnValue(null);
+    applyPresetMock.mockReturnValue(true);
+    applyPresetContentMock.mockReturnValue(true);
+    removePresetMock.mockReturnValue(true);
     getSandboxMock.mockReturnValue(null);
     isGatewayHealthyMock.mockReturnValue(true);
     listBackupsMock.mockReturnValue([]);
@@ -234,6 +256,60 @@ describe("runSandboxSnapshot", () => {
       name: null,
     });
     expect(consoleError.mock.calls.flat().join("\n")).toContain("tar exploded");
+  });
+
+  it("reconciles snapshot policies after restore and warns without failing on repair misses", async () => {
+    const consoleLog = vi.spyOn(console, "log").mockImplementation(() => {});
+    const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    getLatestBackupMock.mockReturnValue({
+      backupPath: "/tmp/alpha/v2",
+      timestamp: "2026-06-02T00:00:00.000Z",
+      policyPresets: ["npm", "github"],
+      customPolicies: [
+        {
+          name: "team-egress",
+          content: "allow team.example",
+          sourcePath: "/policies/team.yaml",
+        },
+      ],
+    });
+    restoreSandboxStateMock.mockReturnValue({
+      success: true,
+      restoredDirs: ["workspace"],
+      restoredFiles: ["openclaw.json"],
+      failedDirs: [],
+      failedFiles: [],
+    });
+    getAppliedPresetsMock.mockReturnValue(["npm", "old-preset"]);
+    getCustomPoliciesMock.mockReturnValue([
+      { name: "old-custom", content: "allow old.example", sourcePath: "/old.yaml" },
+    ]);
+    removePresetMock.mockImplementation((_sandbox, preset) => preset !== "old-custom");
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await runSandboxSnapshot("alpha", { kind: "restore" });
+
+    expect(restoreSandboxStateMock).toHaveBeenCalledWith("alpha", "/tmp/alpha/v2");
+    expect(removePresetMock).toHaveBeenCalledWith("alpha", "old-preset");
+    expect(applyPresetMock).toHaveBeenCalledWith("alpha", "github");
+    expect(removePresetMock).toHaveBeenCalledWith("alpha", "old-custom");
+    expect(applyPresetContentMock).toHaveBeenCalledWith(
+      "alpha",
+      "team-egress",
+      "allow team.example",
+      { custom: { sourcePath: "/policies/team.yaml" } },
+    );
+    const output = consoleLog.mock.calls.flat().join("\n");
+    expect(output).toContain("✓ Restored 1 directories, 1 files");
+    expect(output).toContain(
+      "Reconciling policy presets on 'alpha': add github; remove old-preset",
+    );
+    expect(output).toContain(
+      "Reconciling custom policies on 'alpha': add team-egress; remove old-custom",
+    );
+    expect(consoleWarn.mock.calls.flat().join("\n")).toContain(
+      "Warning: could not reconcile custom policy(ies): old-custom (remove failed)",
+    );
   });
 
   it("prints failed dirs and files when snapshot creation fails without an error", async () => {
