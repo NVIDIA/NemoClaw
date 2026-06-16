@@ -16,7 +16,7 @@ const {
   setOnboardBrandingAgent,
 }: typeof import("./onboard/branding") = require("./onboard/branding");
 const {
-  createSelectOnboardAgent,
+  createOnboardAgentSelector,
 }: typeof import("./onboard/agent-selection") = require("./onboard/agent-selection");
 const {
   createInferenceSelectionValidationHelpers,
@@ -755,16 +755,7 @@ const { hydrateCredentialEnv }: typeof import("./onboard/credential-env") =
 
 const { summarizeCurlFailure, summarizeProbeFailure } = httpProbe;
 
-const selectOnboardAgent = createSelectOnboardAgent({
-  resolveAgent: agentOnboard.resolveAgent,
-  loadAgent: agentDefs.loadAgent,
-  getAgentChoices: agentDefs.getAgentChoices,
-  isNonInteractive,
-  note,
-  log: (message?: string) => console.log(message ?? ""),
-  prompt,
-  selectFromNumberedMenu: selectFromNumberedMenuOrExit,
-});
+const selectOnboardAgent = createOnboardAgentSelector({ isNonInteractive, note, prompt });
 
 const { getTransportRecoveryMessage } = validationRecovery;
 

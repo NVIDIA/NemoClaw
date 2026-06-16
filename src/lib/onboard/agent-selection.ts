@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { AgentChoice, AgentDefinition } from "../agent/defs";
+import { getAgentChoices, loadAgent } from "../agent/defs";
+import { resolveAgent } from "../agent/onboard";
+import { selectFromNumberedMenuOrExit } from "./prompt-helpers";
 
 export interface SelectOnboardAgentDeps {
   resolveAgent(options: {
@@ -81,4 +84,28 @@ export function createSelectOnboardAgent(deps: SelectOnboardAgentDeps) {
     }
     return agent;
   };
+}
+
+export interface OnboardAgentSelectorHostDeps {
+  isNonInteractive(): boolean;
+  note(message: string): void;
+  prompt(question: string): Promise<string>;
+}
+
+/**
+ * Production wiring for the onboarding agent selector. The static dependencies
+ * (the agent registry and the numbered-menu helper) live here so the
+ * ~12k-line onboard entrypoint only has to supply its host-bound I/O helpers.
+ */
+export function createOnboardAgentSelector(host: OnboardAgentSelectorHostDeps) {
+  return createSelectOnboardAgent({
+    resolveAgent,
+    loadAgent,
+    getAgentChoices,
+    isNonInteractive: host.isNonInteractive,
+    note: host.note,
+    log: (message?: string) => console.log(message ?? ""),
+    prompt: host.prompt,
+    selectFromNumberedMenu: selectFromNumberedMenuOrExit,
+  });
 }
