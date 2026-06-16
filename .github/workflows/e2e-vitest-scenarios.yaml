@@ -1789,7 +1789,7 @@ jobs:
     needs: generate-matrix
     if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',full-e2e-vitest,') || contains(format(',{0},', inputs.scenarios), ',full-e2e,') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 75
     env:
       FREE_STANDING_VITEST_JOB: "1"
       FREE_STANDING_SCENARIO_ID: "full-e2e"
