@@ -280,8 +280,13 @@ describe("runSandboxSnapshot", () => {
       failedDirs: [],
       failedFiles: [],
     });
-    getAppliedPresetsMock.mockReturnValue(["npm", "old-preset"]);
+    getAppliedPresetsMock.mockReturnValue(["npm", "team-egress", "old-preset"]);
     getCustomPoliciesMock.mockReturnValue([
+      {
+        name: "team-egress",
+        content: "allow team.example",
+        sourcePath: "/policies/team.yaml",
+      },
       { name: "old-custom", content: "allow old.example", sourcePath: "/old.yaml" },
     ]);
     removePresetMock.mockImplementation((_sandbox, preset) => preset !== "old-custom");
@@ -293,20 +298,14 @@ describe("runSandboxSnapshot", () => {
     expect(removePresetMock).toHaveBeenCalledWith("alpha", "old-preset");
     expect(applyPresetMock).toHaveBeenCalledWith("alpha", "github");
     expect(removePresetMock).toHaveBeenCalledWith("alpha", "old-custom");
-    expect(applyPresetContentMock).toHaveBeenCalledWith(
-      "alpha",
-      "team-egress",
-      "allow team.example",
-      { custom: { sourcePath: "/policies/team.yaml" } },
-    );
+    expect(removePresetMock).not.toHaveBeenCalledWith("alpha", "team-egress");
+    expect(applyPresetContentMock).not.toHaveBeenCalled();
     const output = consoleLog.mock.calls.flat().join("\n");
     expect(output).toContain("✓ Restored 1 directories, 1 files");
     expect(output).toContain(
       "Reconciling policy presets on 'alpha': add github; remove old-preset",
     );
-    expect(output).toContain(
-      "Reconciling custom policies on 'alpha': add team-egress; remove old-custom",
-    );
+    expect(output).toContain("Reconciling custom policies on 'alpha': remove old-custom");
     expect(consoleWarn.mock.calls.flat().join("\n")).toContain(
       "Warning: could not reconcile custom policy(ies): old-custom (remove failed)",
     );

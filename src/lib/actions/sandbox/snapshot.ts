@@ -415,7 +415,13 @@ function reconcileSnapshotPolicyPresets(
 ): void {
   if (!resolvedSnapshot || !Array.isArray(resolvedSnapshot.policyPresets)) return;
   const snapshotPresets = resolvedSnapshot.policyPresets;
-  const currentPresets = policies.getAppliedPresets(targetSandbox);
+  // getAppliedPresets includes custom-policy names for display/CLI parity.
+  // Built-in preset reconciliation must not remove those; custom policy content
+  // is reconciled separately below from registry.getCustomPolicies().
+  const customPolicyNames = new Set(registry.getCustomPolicies(targetSandbox).map((p) => p.name));
+  const currentPresets = policies
+    .getAppliedPresets(targetSandbox)
+    .filter((preset: string) => !customPolicyNames.has(preset));
   const toRemove = currentPresets.filter((p: string) => !snapshotPresets.includes(p));
   const toAdd = snapshotPresets.filter((p: string) => !currentPresets.includes(p));
   if (toRemove.length === 0 && toAdd.length === 0) return;
