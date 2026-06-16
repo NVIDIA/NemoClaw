@@ -159,9 +159,10 @@ if [ -z "$request_id" ]; then
   if [ -z "$request_id" ]; then
     if printf '%s' "$state" | assert_agent_scopes_without_admin >/tmp/issue4462-approved-device.txt 2>/tmp/issue4462-approved-device.err; then
       echo "SCOPE_ALREADY_APPROVED=$(cat /tmp/issue4462-approved-device.txt)"
-    elif [ "$trigger_rc" -eq 0 ] && ! grep -Eiq 'EMBEDDED FALLBACK|scope upgrade pending approval|pairing required|fallbackFrom[": ]+gateway|transport[": ]+embedded' /tmp/issue4462-trigger-agent.log; then
+    elif [ "$trigger_rc" -eq 0 ] && ! grep -Eiq 'EMBEDDED FALLBACK|scope upgrade pending approval|pairing required|fallbackFrom[": ]+gateway|transport[": ]+embedded' /tmp/issue4462-trigger-agent.log \
+      && grep -Eq '(^|[^0-9])42([^0-9]|$)' /tmp/issue4462-trigger-agent.log; then
       echo "TRIGGER_COMPLETED_WITHOUT_PENDING_SCOPE_UPGRADE"
-      echo "ISSUE_4462_SCOPE_UPGRADE_OK device=already-approved request=auto"
+      echo "ISSUE_4462_SCOPE_UPGRADE_OK device=trigger-completed request=not-reproduced"
       exit 0
     else
       echo "NO_SCOPE_REQUEST" >&2
