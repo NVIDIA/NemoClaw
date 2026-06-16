@@ -24,6 +24,12 @@ type ConnectHarness = {
 
 type ConnectHarnessOptions = {
   listOutput?: string;
+  processCheck?: {
+    checked: boolean;
+    wasRunning?: boolean;
+    recovered?: boolean;
+    forwardRecovered?: boolean;
+  };
   spawnStatus?: number | null;
 };
 
@@ -86,7 +92,7 @@ function createConnectHarness(options: ConnectHarnessOptions = {}): ConnectHarne
   vi.spyOn(sandboxVersion, "formatStalenessWarning").mockReturnValue([]);
   const checkAndRecoverSpy = vi
     .spyOn(processRecovery, "checkAndRecoverSandboxProcesses")
-    .mockReturnValue({ checked: true, wasRunning: true, recovered: false });
+    .mockReturnValue(options.processCheck ?? { checked: true, wasRunning: true, recovered: false });
   const ensureOllamaAuthProxySpy = vi
     .spyOn(ollamaProxy, "ensureOllamaAuthProxy")
     .mockImplementation(() => undefined);
@@ -172,6 +178,43 @@ describe("connectSandbox flow", () => {
 
     expect(harness.checkAndRecoverSpy).toHaveBeenCalledWith("alpha");
     expect(harness.ensureOllamaAuthProxySpy).toHaveBeenCalledTimes(1);
+    expect(harness.spawnSyncSpy).not.toHaveBeenCalledWith(
+      "openshell",
+      ["sandbox", "connect", "alpha"],
+      expect.any(Object),
+    );
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it("probe-only mode reports recovered gateways without opening an interactive shell", async () => {
+    const harness = createConnectHarness({
+      processCheck: { checked: true, wasRunning: false, recovered: true },
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
+
+    expect(harness.checkAndRecoverSpy).toHaveBeenCalledWith("alpha", { quiet: true });
+    expect(harness.runAutoPairSpy).toHaveBeenCalledWith("alpha", expect.any(Object));
+    expect(harness.spawnSyncSpy).not.toHaveBeenCalledWith(
+      "openshell",
+      ["sandbox", "connect", "alpha"],
+      expect.any(Object),
+    );
+    expect(harness.logSpy.mock.calls.flat().join("\n")).toContain(
+      "Probe complete: recovered OpenClaw gateway in 'alpha'.",
+    );
+  });
+
+  it("probe-only mode exits when process inspection cannot run", async () => {
+    const harness = createConnectHarness({
+      processCheck: { checked: false, wasRunning: false, recovered: false },
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(harness.runAutoPairSpy).not.toHaveBeenCalled();
     expect(harness.spawnSyncSpy).not.toHaveBeenCalledWith(
       "openshell",
       ["sandbox", "connect", "alpha"],

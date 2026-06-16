@@ -305,6 +305,26 @@ describe("sandbox build context staging", () => {
     }
   });
 
+  it("build context stats honor filters without descending into excluded directories", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-context-stats-"));
+
+    try {
+      fs.mkdirSync(path.join(tmpDir, "include"), { recursive: true });
+      fs.mkdirSync(path.join(tmpDir, "skip", "nested"), { recursive: true });
+      fs.writeFileSync(path.join(tmpDir, "include", "a.txt"), "1234");
+      fs.writeFileSync(path.join(tmpDir, "skip", "nested", "b.txt"), "567890");
+
+      const stats = collectBuildContextStats(
+        tmpDir,
+        (entryPath) => !entryPath.split(path.sep).includes("skip"),
+      );
+
+      expect(stats).toEqual({ fileCount: 1, totalBytes: 4 });
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("optimized staging is smaller than the legacy build context", { timeout: 120_000 }, () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-context-compare-"));
