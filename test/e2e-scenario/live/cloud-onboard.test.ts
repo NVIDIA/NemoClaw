@@ -42,25 +42,32 @@ function resultText(result: Pick<ShellProbeResult, "stdout" | "stderr">): string
   return [result.stdout, result.stderr].filter(Boolean).join("\n");
 }
 
-async function cleanup(host: HostCliClient, sandbox: SandboxClient): Promise<void> {
-  await host
-    .command(
-      "bash",
-      [path.join(REPO_ROOT, "test/e2e/e2e-cloud-experimental/cleanup.sh"), "--verify"],
-      {
-        artifactName: "cleanup-cloud-experimental",
-        env: env(),
-        timeoutMs: 180_000,
-      },
-    )
-    .catch(() => undefined);
-  await sandbox
-    .openshell(["gateway", "destroy", "-g", "nemoclaw"], {
-      artifactName: "cleanup-openshell-gateway-destroy",
-      env: env(),
-      timeoutMs: 60_000,
-    })
-    .catch(() => undefined);
+async function cleanup(
+  host: HostCliClient,
+  sandbox: SandboxClient,
+  options: { verify: boolean; label: string },
+): Promise<void> {
+  const args = [path.join(REPO_ROOT, "test/e2e/e2e-cloud-experimental/cleanup.sh")];
+  if (options.verify) args.push("--verify");
+  const cleanupResult = await host.command("bash", args, {
+    artifactName: `${options.label}-cloud-experimental-cleanup`,
+    env: env(),
+    timeoutMs: 180_000,
+  });
+  if (options.verify) {
+    expect(cleanupResult.exitCode, resultText(cleanupResult)).toBe(0);
+  }
+
+  const gatewayDestroy = await sandbox.openshell(["gateway", "destroy", "-g", "nemoclaw"], {
+    artifactName: `${options.label}-openshell-gateway-destroy`,
+    env: env(),
+    timeoutMs: 60_000,
+  });
+  if (options.verify && gatewayDestroy.exitCode !== 0) {
+    expect(resultText(gatewayDestroy)).toMatch(
+      /unrecognized subcommand|not found|No active gateway/i,
+    );
+  }
 }
 
 function publicInstallRef(): string {
@@ -104,8 +111,10 @@ liveTest(
       skip(`Docker is required: ${resultText(docker)}`);
     }
 
-    cleanupRegistry.add("remove cloud-onboard sandbox", () => cleanup(host, sandbox));
-    await cleanup(host, sandbox);
+    cleanupRegistry.add("remove cloud-onboard sandbox", () =>
+      cleanup(host, sandbox, { label: "cleanup", verify: true }),
+    );
+    await cleanup(host, sandbox, { label: "pre-cleanup", verify: false });
 
     const install = await host.command(
       "bash",
@@ -169,7 +178,7 @@ liveTest(
       expect(result.exitCode, `${scriptName}: ${resultText(result)}`).toBe(0);
     }
 
-    await cleanup(host, sandbox);
+    await cleanup(host, sandbox, { label: "final-cleanup", verify: true });
     await artifacts.writeJson("scenario-result.json", { id: "cloud-onboard", status: "passed" });
   },
 );
