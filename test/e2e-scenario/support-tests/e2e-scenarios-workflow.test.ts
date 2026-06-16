@@ -906,7 +906,14 @@ jobs:
       "utf8",
     );
     const parsedWorkflow = YAML.parse(workflow) as {
-      jobs: Record<string, { env: Record<string, string>; steps: Array<Record<string, unknown>> }>;
+      jobs: Record<
+        string,
+        {
+          env: Record<string, string>;
+          steps: Array<Record<string, unknown>>;
+          "timeout-minutes"?: number;
+        }
+      >;
     };
     const snapshotJob = parsedWorkflow.jobs["snapshot-commands-vitest"];
     snapshotJob["timeout-minutes"] = 30;
