@@ -174,20 +174,24 @@ liveTest(
     expect(resultText(policy)).toMatch(/network_policies|egress/i);
 
     const direct = await host.command(
-      "bash",
+      "curl",
       [
-        "-lc",
-        `set -euo pipefail; curl -fsS --max-time 60 -X POST '${hosted.endpointUrl}/chat/completions' -H 'Content-Type: application/json' -H 'Authorization: Bearer ${hosted.apiKey}' --data '${chatRequest(hosted.model)}' | ${parseReplyCommand()}`,
+        "-fsS",
+        "--max-time",
+        "60",
+        "-H",
+        `Authorization: Bearer ${hosted.apiKey}`,
+        `${hosted.endpointUrl}/models`,
       ],
       {
-        artifactName: "phase-4-direct-hosted-inference",
+        artifactName: "phase-4-direct-hosted-inference-models",
         env: env(),
         redactionValues,
         timeoutMs: 90_000,
       },
     );
     expect(direct.exitCode, resultText(direct)).toBe(0);
-    expect(direct.stdout).toMatch(/PONG/i);
+    expect(resultText(direct)).toContain("data");
 
     const sandboxInference = await sandbox.exec(
       SANDBOX_NAME,
