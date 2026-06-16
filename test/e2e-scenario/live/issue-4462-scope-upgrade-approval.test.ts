@@ -259,7 +259,10 @@ liveTest(
     );
     expect(install.exitCode, resultText(install)).toBe(0);
 
-    const encodedScopeUpgradeScript = Buffer.from(scopeUpgradeScript(), "utf8").toString("base64");
+    const encodedScopeUpgradeScript = Buffer.from(
+      scopeUpgradeScript().replaceAll("\\${", "${"),
+      "utf8",
+    ).toString("base64");
     const probe = await sandbox.exec(
       SANDBOX_NAME,
       [
