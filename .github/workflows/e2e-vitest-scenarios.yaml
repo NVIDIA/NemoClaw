@@ -1799,6 +1799,10 @@ jobs:
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_SANDBOX_NAME: "e2e-resume"
+      NEMOCLAW_PROVIDER: "custom"
+      NEMOCLAW_ENDPOINT_URL: "https://inference-api.nvidia.com/v1"
+      NEMOCLAW_MODEL: "nvidia/nvidia/nemotron-3-super-v3"
+      NEMOCLAW_COMPAT_MODEL: "nvidia/nvidia/nemotron-3-super-v3"
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
@@ -1821,7 +1825,8 @@ jobs:
 
       - name: Run onboard-resume live Vitest test
         env:
-          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
+          COMPATIBLE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
