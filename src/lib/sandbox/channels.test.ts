@@ -3,15 +3,16 @@
 
 import { describe, expect, it } from "vitest";
 
+import { slackManifest } from "../messaging/channels";
 import {
-  KNOWN_CHANNELS,
+  type ChannelDef,
   channelHasStaticToken,
   channelUsesInSandboxQrPairing,
   getChannelDef,
   getChannelTokenKeys,
+  KNOWN_CHANNELS,
   knownChannelNames,
   listChannels,
-  type ChannelDef,
 } from "./channels";
 
 describe("sandbox-channels KNOWN_CHANNELS", () => {
@@ -29,7 +30,7 @@ describe("sandbox-channels KNOWN_CHANNELS", () => {
   it("classifies channels by login method", () => {
     // Token-paste is the default and stays implicit (undefined). WeChat
     // captures a static token via a host-side QR handshake
-    // (src/ext/wechat/login.ts). WhatsApp pairs entirely inside the sandbox
+    // (src/lib/messaging/channels/wechat/login.ts). WhatsApp pairs entirely inside the sandbox
     // because the bot library owns the live Signal-style session — a
     // host-side capture would yield a stale blob the moment the bot mutates
     // its on-disk state. Onboarding branches on this flag, so flipping any
@@ -49,6 +50,8 @@ describe("sandbox-channels KNOWN_CHANNELS", () => {
 
   it("omits envKey for in-sandbox QR-paired channels (whatsapp)", () => {
     expect(getChannelDef("whatsapp")?.envKey).toBeUndefined();
+    expect(getChannelDef("whatsapp")?.userIdEnvKey).toBe("WHATSAPP_ALLOWED_IDS");
+    expect(getChannelDef("whatsapp")?.allowIdsMode).toBe("dm");
     expect(channelUsesInSandboxQrPairing(KNOWN_CHANNELS.whatsapp)).toBe(true);
     expect(channelUsesInSandboxQrPairing(KNOWN_CHANNELS.wechat)).toBe(false);
     expect(channelUsesInSandboxQrPairing(KNOWN_CHANNELS.slack)).toBe(false);
@@ -80,6 +83,24 @@ describe("sandbox-channels KNOWN_CHANNELS", () => {
     expect(slack?.channelIdEnvKey).toBe("SLACK_ALLOWED_CHANNELS");
     expect(slack?.channelIdLabel).toBe("Slack Channel IDs (comma-separated allowlist)");
     expect(slack?.channelIdHelp).toContain("Slack channel IDs");
+  });
+
+  it("derives Slack credential metadata from the channel manifest", () => {
+    const slack = getChannelDef("slack");
+    const botTokenInput = slackManifest.inputs.find((input) => input.id === "botToken");
+    const appTokenInput = slackManifest.inputs.find((input) => input.id === "appToken");
+    expect(slack?.envKey).toBe(slackManifest.credentials[0]?.providerEnvKey);
+    expect(slack?.label).toBe(botTokenInput?.prompt?.label);
+    expect(slack?.help).toBe(botTokenInput?.prompt?.help);
+    expect(slack?.tokenFormatHint).toBe(botTokenInput?.formatHint);
+    expect(slack?.tokenFormat?.test("xoxb-valid_TOKEN-123")).toBe(true);
+    expect(slack?.tokenFormat?.test("xapp-invalid-token")).toBe(false);
+    expect(slack?.appTokenEnvKey).toBe(slackManifest.credentials[1]?.providerEnvKey);
+    expect(slack?.appTokenLabel).toBe(appTokenInput?.prompt?.label);
+    expect(slack?.appTokenHelp).toBe(appTokenInput?.prompt?.help);
+    expect(slack?.appTokenFormatHint).toBe(appTokenInput?.formatHint);
+    expect(slack?.appTokenFormat?.test("xapp-valid_TOKEN-123")).toBe(true);
+    expect(slack?.appTokenFormat?.test("xoxb-invalid-token")).toBe(false);
   });
 
   it("normalises case and whitespace when resolving a channel name", () => {

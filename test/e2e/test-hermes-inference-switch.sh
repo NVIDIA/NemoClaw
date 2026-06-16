@@ -10,7 +10,7 @@
 #
 # Prerequisites:
 #   - Docker running
-#   - NVIDIA_INFERENCE_API_KEY set (real key, starts with nvapi-)
+#   - NVIDIA_INFERENCE_API_KEY set for hosted inference
 #   - NEMOCLAW_NON_INTERACTIVE=1
 #   - NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1
 
@@ -441,9 +441,16 @@ E2E_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "${E2E_DIR}/lib/inference-switch-retry.sh"
 # shellcheck source=test/e2e/lib/anthropic-switch-provider.sh
 . "${E2E_DIR}/lib/anthropic-switch-provider.sh"
+# shellcheck source=test/e2e/lib/ci-compatible-inference.sh
+. "${E2E_DIR}/lib/ci-compatible-inference.sh"
 SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-hermes-inference-switch}"
-SWITCH_PROVIDER="${NEMOCLAW_SWITCH_PROVIDER:-nvidia-prod}"
-SWITCH_MODEL="${NEMOCLAW_SWITCH_MODEL:-z-ai/glm-5.1}"
+if nemoclaw_e2e_using_compatible_inference; then
+  SWITCH_PROVIDER="${NEMOCLAW_SWITCH_PROVIDER:-$(nemoclaw_e2e_expected_route_provider)}"
+  SWITCH_MODEL="${NEMOCLAW_SWITCH_MODEL:-$(nemoclaw_e2e_hosted_inference_model)}"
+else
+  SWITCH_PROVIDER="${NEMOCLAW_SWITCH_PROVIDER:-nvidia-prod}"
+  SWITCH_MODEL="${NEMOCLAW_SWITCH_MODEL:-z-ai/glm-5.1}"
+fi
 SWITCH_INFERENCE_API="${NEMOCLAW_SWITCH_INFERENCE_API:-openai-completions}"
 # shellcheck disable=SC2034 # consumed by sourced anthropic-switch-provider.sh
 SWITCH_ENDPOINT_URL="${NEMOCLAW_SWITCH_ENDPOINT_URL:-}"
@@ -462,6 +469,7 @@ trap 'stop_mock_anthropic_switch_provider; _nemoclaw_sandbox_teardown' EXIT
 # shellcheck source=test/e2e/lib/install-path-refresh.sh
 . "${E2E_DIR}/lib/install-path-refresh.sh"
 register_sandbox_for_teardown "$SANDBOX_NAME"
+nemoclaw_e2e_configure_compatible_inference || exit 1
 
 section "Phase 0: Pre-cleanup"
 if command -v nemohermes >/dev/null 2>&1; then
@@ -483,10 +491,7 @@ else
   exit 1
 fi
 
-if [ -n "${NVIDIA_INFERENCE_API_KEY:-}" ] && [[ "${NVIDIA_INFERENCE_API_KEY}" == nvapi-* ]]; then
-  pass "NVIDIA_INFERENCE_API_KEY is set"
-else
-  fail "NVIDIA_INFERENCE_API_KEY not set or invalid"
+if ! nemoclaw_e2e_require_hosted_inference_key; then
   exit 1
 fi
 

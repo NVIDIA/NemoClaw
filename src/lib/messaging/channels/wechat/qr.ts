@@ -37,7 +37,8 @@ export const WECHAT_ILINK_APP_ID = "bot";
  *  Pinned in lockstep with the @tencent-weixin/openclaw-weixin version
  *  installed in the sandbox image, so the iLink gateway sees the same
  *  client version from both the host login and the in-sandbox plugin.
- *  Bump together with WECHAT_PLUGIN_SPEC in the messaging WeChat hook. */
+ *  Bump together with the fixed WeChat package spec in the manifest and
+ *  seed hook. */
 export const WECHAT_ILINK_CLIENT_VERSION = encodeIlinkClientVersion("2.4.3");
 
 /** Client-side ceiling for a single status long-poll. 35s keeps us within

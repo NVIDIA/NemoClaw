@@ -43,5 +43,6 @@ Treat `docs/` as the source of truth for published content and generated user sk
 
 - Run `npm run docs:sync-agent-variants` after editing shared variant source pages or navigation.
 - Run `npm run docs` before opening a PR for docs or Fern changes.
-- For doc-only PRs, run `npx prek run --all-files` unless the user asks for a narrower draft.
+- For doc-only PRs, rely on normal commit and push hooks when they ran.
+  If hooks were skipped or unavailable, run `npx prek run --from-ref main --to-ref HEAD`.
 - Leave `npm test` unchecked in the PR verification checklist unless you actually ran it.

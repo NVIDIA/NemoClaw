@@ -30,7 +30,7 @@ type SandboxRegistryEntry = {
   dashboardPort?: number | null;
 };
 
-type ListSandboxesFn = () => { sandboxes: SandboxRegistryEntry[] };
+export type ListSandboxesFn = () => { sandboxes: SandboxRegistryEntry[] };
 
 // Match the broader pattern used by onboard.ts (covers CSI, OSC, and Fe escapes)
 // so colorised `openshell forward list` output parses correctly.

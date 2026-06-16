@@ -58,12 +58,7 @@ on:
         type: string
         default: ""
       nvidia_api_key:
-        description: Pass the NVIDIA_INFERENCE_API_KEY secret to the script.
-        required: false
-        type: boolean
-        default: false
-      nvidia_secret_as_compatible_api_key:
-        description: Expose NVIDIA_INFERENCE_API_KEY as COMPATIBLE_API_KEY for CI-only OpenAI-compatible inference.
+        description: Pass the hosted inference source secret as the CI custom endpoint credential.
         required: false
         type: boolean
         default: false
@@ -217,8 +212,8 @@ jobs:
             echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
           fi
 
-      - name: Export CI compatible inference environment
-        if: ${{ inputs.nvidia_secret_as_compatible_api_key }}
+      - name: Export hosted CI inference environment
+        if: ${{ inputs.nvidia_api_key }}
         env:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         shell: bash
@@ -226,16 +221,17 @@ jobs:
           set -euo pipefail
 
           if [ -z "${NVIDIA_INFERENCE_API_KEY:-}" ]; then
-            echo "::error::NVIDIA_INFERENCE_API_KEY secret is required for CI compatible inference." >&2
+            echo "::error::NVIDIA_INFERENCE_API_KEY secret is required for hosted CI inference; it is withheld for workflow_dispatch target_ref runs." >&2
             exit 1
           fi
 
           {
-            printf 'NEMOCLAW_E2E_USE_NVIDIA_SECRET_AS_COMPATIBLE=1\n'
+            printf 'NEMOCLAW_E2E_USE_HOSTED_INFERENCE=1\n'
             printf 'NEMOCLAW_PROVIDER=custom\n'
             printf 'NEMOCLAW_ENDPOINT_URL=https://inference-api.nvidia.com/v1\n'
             printf 'NEMOCLAW_MODEL=nvidia/nvidia/nemotron-3-super-v3\n'
             printf 'NEMOCLAW_COMPAT_MODEL=nvidia/nvidia/nemotron-3-super-v3\n'
+            printf 'NEMOCLAW_PREFERRED_API=openai-completions\n'
             printf 'COMPATIBLE_API_KEY=%s\n' "${NVIDIA_INFERENCE_API_KEY}"
           } >> "$GITHUB_ENV"
 

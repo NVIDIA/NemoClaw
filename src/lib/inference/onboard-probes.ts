@@ -509,6 +509,7 @@ function getChatCompletionsProbePayload(model) {
   const payload = {
     model,
     messages: [{ role: "user", content: "Reply with exactly: OK" }],
+    max_tokens: 8,
   };
 
   if (isDeepSeekV4ProModel(model)) {

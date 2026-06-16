@@ -193,6 +193,36 @@ describe("MessagingSetupApplier", () => {
         handler: "wechat.seedOpenClawAccount",
       }),
     ]);
+
+    const slackPlan = await buildOnboardPlan(
+      {
+        SLACK_BOT_TOKEN: "xoxb-slack-token",
+        SLACK_APP_TOKEN: "xapp-slack-token",
+      },
+      ["slack"],
+    );
+    expect(MessagingSetupApplier.listPreEnableChecks(slackPlan)).toEqual([
+      expect.objectContaining({
+        channelId: "slack",
+        hookId: "slack-socket-mode-gateway-conflict",
+        phase: "pre-enable",
+      }),
+    ]);
+    expect(slackPlan.runtimeSetup?.nodePreloads).toEqual([
+      expect.objectContaining({
+        channelId: "slack",
+        module: "slack-channel-guard",
+        source: "/usr/local/lib/nemoclaw/preloads/slack-channel-guard.js",
+      }),
+    ]);
+    expect(MessagingSetupApplier.listHealthChecks(slackPlan)).toEqual([
+      expect.objectContaining({
+        channelId: "slack",
+        hookId: "slack-openclaw-bridge-health",
+        phase: "health-check",
+        handler: "slack.openclawBridgeHealth",
+      }),
+    ]);
   });
 
   it("upserts OpenShell generic providers from plan credential bindings", async () => {
@@ -425,7 +455,9 @@ describe("MessagingSetupApplier", () => {
         (request) => `${request.channelId}:${request.hookId}`,
       ),
     ).toEqual([
-      "slack:slack-openclaw-package-install",
+      "slack:slack-socket-mode-gateway-conflict",
+      "slack:slack-openclaw-bridge-health",
+      "slack:slack-socket-mode-gateway-status",
       "slack:slack-token-paste",
       "slack:slack-config-prompt",
       "slack:slack-credential-validation",

@@ -15,10 +15,10 @@
 #   - Docker running
 #   - openshell CLI installed
 #   - Node.js available
-#   - NVIDIA_INFERENCE_API_KEY set to a valid nvapi-* key before starting the test
+#   - NVIDIA_INFERENCE_API_KEY set before starting the test
 #
 # Usage:
-#   NVIDIA_INFERENCE_API_KEY=nvapi-... bash test/e2e/test-onboard-resume.sh
+#   NVIDIA_INFERENCE_API_KEY=... bash test/e2e/test-onboard-resume.sh
 
 set -uo pipefail
 
@@ -77,6 +77,8 @@ fi
 
 # shellcheck source=test/e2e/lib/sandbox-teardown.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox-teardown.sh"
+# shellcheck source=test/e2e/lib/ci-compatible-inference.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/ci-compatible-inference.sh"
 register_sandbox_for_teardown "$SANDBOX_NAME"
 
 SESSION_FILE="$HOME/.nemoclaw/onboard-session.json"
@@ -121,21 +123,24 @@ else
   exit 1
 fi
 
-if [[ -n "$RESTORE_API_KEY" && "$RESTORE_API_KEY" == nvapi-* ]]; then
-  pass "NVIDIA_INFERENCE_API_KEY is set (starts with nvapi-)"
-else
+if [[ -z "$RESTORE_API_KEY" ]]; then
   fail "NVIDIA_INFERENCE_API_KEY not set or invalid — required for resume completion"
   exit 1
 fi
+pass "NVIDIA_INFERENCE_API_KEY is set"
 
-if curl -sf --max-time 10 https://inference-api.nvidia.com/v1/models >/dev/null 2>&1; then
-  pass "Network access to inference-api.nvidia.com"
+export NVIDIA_INFERENCE_API_KEY="$RESTORE_API_KEY"
+nemoclaw_e2e_configure_compatible_inference || exit 1
+HOSTED_INFERENCE_BASE_URL="$(nemoclaw_e2e_hosted_inference_base_url)"
+EXPECTED_PROVIDER="$(nemoclaw_e2e_expected_route_provider)"
+
+if nemoclaw_e2e_probe_hosted_inference; then
+  pass "Network access to ${HOSTED_INFERENCE_BASE_URL}"
 else
-  fail "Cannot reach inference-api.nvidia.com"
+  fail "Cannot reach ${HOSTED_INFERENCE_BASE_URL}"
   exit 1
 fi
 
-export NVIDIA_INFERENCE_API_KEY="$RESTORE_API_KEY"
 pass "Exported NVIDIA_INFERENCE_API_KEY for the resume run (host writes nothing to disk; OpenShell gateway is the system of record)"
 
 # ══════════════════════════════════════════════════════════════════
@@ -212,7 +217,7 @@ section "Phase 3: Resume"
 info "Running onboard --resume with NVIDIA_INFERENCE_API_KEY removed from env..."
 
 RESUME_LOG="$(mktemp)"
-env -u NVIDIA_INFERENCE_API_KEY \
+env -u NVIDIA_INFERENCE_API_KEY -u COMPATIBLE_API_KEY \
   NEMOCLAW_NON_INTERACTIVE=1 \
   NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
   NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME" \
@@ -286,9 +291,10 @@ fi
 node -e '
 const fs = require("fs");
 const file = process.argv[1];
+const expectedProvider = process.argv[2];
 const data = JSON.parse(fs.readFileSync(file, "utf8"));
 if (data.status !== "complete") process.exit(1);
-if (data.provider !== "nvidia-prod") process.exit(2);
+if (data.provider !== expectedProvider) process.exit(2);
 if (data.steps.preflight.status !== "complete") process.exit(3);
 if (data.steps.gateway.status !== "complete") process.exit(4);
 if (data.steps.sandbox.status !== "complete") process.exit(5);
@@ -296,7 +302,7 @@ if (data.steps.provider_selection.status !== "complete") process.exit(6);
 if (data.steps.inference.status !== "complete") process.exit(7);
 if (data.steps.openclaw.status !== "complete") process.exit(8);
 if (data.steps.policies.status !== "complete") process.exit(9);
-' "$SESSION_FILE"
+' "$SESSION_FILE" "$EXPECTED_PROVIDER"
 case $? in
   0) pass "Session file recorded full completion after resume" ;;
   *) fail "Session file did not record the expected completed state after resume" ;;

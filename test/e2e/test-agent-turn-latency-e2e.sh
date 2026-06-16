@@ -4,13 +4,13 @@
 #
 # Real agent turn latency E2E.
 #
-# Installs one OpenClaw sandbox and one Hermes sandbox against NVIDIA Endpoints,
-# verifies that both are configured for the requested model, and times one real
-# model-backed turn through each runtime.
+# Installs one OpenClaw sandbox and one Hermes sandbox against the configured
+# hosted inference endpoint, verifies that both are configured for the requested
+# model, and times one real model-backed turn through each runtime.
 #
 # Prerequisites:
 #   - Docker running
-#   - NVIDIA_INFERENCE_API_KEY set (real key, starts with nvapi-)
+#   - NVIDIA_INFERENCE_API_KEY set for hosted inference
 #   - NEMOCLAW_NON_INTERACTIVE=1
 #   - NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1
 #
@@ -32,6 +32,8 @@ source "${SCRIPT_DIR}/e2e-timeout.sh"
 source "${SCRIPT_DIR}/lib/openclaw-json.sh"
 # shellcheck source=test/e2e/lib/sandbox-teardown.sh
 source "${SCRIPT_DIR}/lib/sandbox-teardown.sh"
+# shellcheck source=test/e2e/lib/ci-compatible-inference.sh
+. "${SCRIPT_DIR}/lib/ci-compatible-inference.sh"
 # shellcheck source=test/e2e/lib/install-path-refresh.sh
 source "${SCRIPT_DIR}/lib/install-path-refresh.sh"
 
@@ -91,7 +93,7 @@ PY
 }
 
 strip_ansi() {
-  python3 -c 'import re, sys; sys.stdout.write(re.sub(r"\x1b\[[0-9;]*m", "", sys.stdin.read()))'
+  nemoclaw_e2e_strip_ansi
 }
 
 parse_chat_content() {
@@ -136,8 +138,7 @@ assert_route() {
   fi
   plain_output=$(printf '%s' "$output" | strip_ansi)
 
-  if grep -Fq "Provider: ${EXPECTED_ROUTE_PROVIDER}" <<<"$plain_output" \
-    && grep -Fq "Model: ${TURN_MODEL}" <<<"$plain_output"; then
+  if nemoclaw_e2e_inference_output_matches "$plain_output" "$EXPECTED_ROUTE_PROVIDER" "$TURN_MODEL"; then
     pass "${label}: OpenShell route is ${EXPECTED_ROUTE_PROVIDER} / ${TURN_MODEL}"
   else
     fail "${label}: route is not ${EXPECTED_ROUTE_PROVIDER} / ${TURN_MODEL}: ${plain_output:0:400}"
@@ -551,14 +552,14 @@ else
   exit 1
 fi
 
-TURN_MODEL="${NEMOCLAW_TURN_LATENCY_MODEL:-${NEMOCLAW_MODEL:-nvidia/nemotron-3-ultra-550b-a55b}}"
-TURN_PROVIDER_KEY="${NEMOCLAW_TURN_LATENCY_PROVIDER:-build}"
-EXPECTED_ROUTE_PROVIDER="${NEMOCLAW_TURN_LATENCY_ROUTE_PROVIDER:-nvidia-prod}"
 OPENCLAW_SANDBOX_NAME="${NEMOCLAW_OPENCLAW_TURN_LATENCY_SANDBOX_NAME:-e2e-openclaw-turn-latency}"
 HERMES_SANDBOX_NAME="${NEMOCLAW_HERMES_TURN_LATENCY_SANDBOX_NAME:-e2e-hermes-turn-latency}"
 OPENCLAW_INSTALL_LOG="/tmp/nemoclaw-e2e-openclaw-turn-latency-install.log"
 HERMES_INSTALL_LOG="/tmp/nemoclaw-e2e-hermes-turn-latency-install.log"
 RESULTS_JSON="/tmp/nemoclaw-e2e-agent-turn-latency.json"
+TURN_MODEL=""
+TURN_PROVIDER_KEY=""
+EXPECTED_ROUTE_PROVIDER=""
 
 MAX_TURN_SECONDS="${NEMOCLAW_TURN_LATENCY_MAX_SECONDS:-300}"
 is_positive_int "$MAX_TURN_SECONDS" || MAX_TURN_SECONDS=300
@@ -575,6 +576,20 @@ HERMES_REPLY=""
 register_sandbox_for_teardown "$OPENCLAW_SANDBOX_NAME"
 register_sandbox_for_teardown "$HERMES_SANDBOX_NAME"
 nemoclaw_ensure_local_bin_on_path
+nemoclaw_e2e_configure_compatible_inference || {
+  fail "Hosted CI inference could not be configured"
+  finish
+}
+
+if nemoclaw_e2e_using_compatible_inference; then
+  TURN_MODEL="${NEMOCLAW_TURN_LATENCY_MODEL:-$(nemoclaw_e2e_hosted_inference_model)}"
+  TURN_PROVIDER_KEY="${NEMOCLAW_TURN_LATENCY_PROVIDER:-custom}"
+  EXPECTED_ROUTE_PROVIDER="${NEMOCLAW_TURN_LATENCY_ROUTE_PROVIDER:-$(nemoclaw_e2e_expected_route_provider)}"
+else
+  TURN_MODEL="${NEMOCLAW_TURN_LATENCY_MODEL:-${NEMOCLAW_MODEL:-nvidia/nemotron-3-ultra-550b-a55b}}"
+  TURN_PROVIDER_KEY="${NEMOCLAW_TURN_LATENCY_PROVIDER:-build}"
+  EXPECTED_ROUTE_PROVIDER="${NEMOCLAW_TURN_LATENCY_ROUTE_PROVIDER:-nvidia-prod}"
+fi
 
 section "Prerequisites"
 if docker info >/dev/null 2>&1; then
@@ -584,10 +599,7 @@ else
   finish
 fi
 
-if [ -n "${NVIDIA_INFERENCE_API_KEY:-}" ] && [[ "${NVIDIA_INFERENCE_API_KEY}" == nvapi-* ]]; then
-  pass "NVIDIA_INFERENCE_API_KEY is set"
-else
-  fail "NVIDIA_INFERENCE_API_KEY not set or invalid"
+if ! nemoclaw_e2e_require_hosted_inference_key; then
   finish
 fi
 

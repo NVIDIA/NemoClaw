@@ -421,6 +421,33 @@ describe("nemoclaw Kimi inference compat plugin", () => {
     expect(result.content.map(toolCommand)).toEqual(["hostname", "date", "uptime"]);
   });
 
+  it("matches the routed inference model ref used in generated OpenClaw config", async () => {
+    const message = toolMessage("hostname; date; uptime");
+    const provider = makeProvider();
+    const wrapper = provider.wrapStreamFn({
+      ...managedKimiCtx(() => ({
+        async result() {
+          return message;
+        },
+      })),
+      modelId: "inference/moonshotai/kimi-k2.6",
+      model: {
+        id: "moonshotai/kimi-k2.6",
+        name: "inference/moonshotai/kimi-k2.6",
+        api: "openai-completions",
+        baseUrl: "https://inference.local/v1",
+      },
+    });
+
+    expect(wrapper).toEqual(expect.any(Function));
+
+    const stream = wrapper({}, {}, {});
+    const result = await stream.result();
+
+    expect(result.content.map(toolCommand)).toEqual(["hostname", "date", "uptime"]);
+    expect(JSON.stringify(result)).not.toContain("hostname; date; uptime");
+  });
+
   it("rewrites object tool-call deltas at their content index without retaining compound commands", () => {
     const event = {
       type: "toolcall_delta",

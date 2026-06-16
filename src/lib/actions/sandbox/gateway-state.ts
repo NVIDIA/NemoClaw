@@ -144,7 +144,13 @@ export function getSandboxGatewayState(sandboxName: string): SandboxGatewayState
     }
     return { state: "present", output };
   }
-  if (/\bNotFound\b|\bNot Found\b|sandbox not found/i.test(output)) {
+  // `sandbox has no spec` is the gRPC reply when the active OpenShell gateway
+  // is reachable but does not know about this sandbox — the multi-instance
+  // case where the active gateway is a sibling of the one the sandbox was
+  // onboarded against. Classify as `missing` so the named-gateway reconciler
+  // selects the sandbox's owning gateway and retries; without this the lookup
+  // would fall to `unknown_error` and exit with a hint instead of recovering.
+  if (/\bNotFound\b|\bNot Found\b|sandbox not found|sandbox has no spec/i.test(output)) {
     return { state: "missing", output };
   }
   if (
@@ -202,7 +208,7 @@ export async function getSandboxGatewayStateForStatus(
     }
     return { state: "present", output };
   }
-  if (/\bNotFound\b|\bNot Found\b|sandbox not found/i.test(output)) {
+  if (/\bNotFound\b|\bNot Found\b|sandbox not found|sandbox has no spec/i.test(output)) {
     return { state: "missing", output };
   }
   if (

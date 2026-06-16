@@ -7,36 +7,88 @@ type RunResult = { status: number; stdout?: string; stderr?: string };
 type RunOptions = { env?: Record<string, string | undefined> };
 type RunOpenshell = (command: string[], opts?: RunOptions) => RunResult;
 
-const { buildProviderArgs, providerExistsInGateway, upsertProvider, upsertMessagingProviders } =
-  require("../../../dist/lib/onboard/providers") as {
-    buildProviderArgs: (
-      action: "create" | "update",
-      name: string,
-      type: string,
-      credentialEnv: string,
-      baseUrl: string | null,
-    ) => string[];
-    providerExistsInGateway: (name: string, runOpenshell: RunOpenshell) => boolean;
-    upsertProvider: (
-      name: string,
-      type: string,
-      credentialEnv: string,
-      baseUrl: string | null,
-      env: Record<string, string | undefined>,
-      runOpenshell: RunOpenshell,
-      options?: { replaceExisting?: boolean },
-    ) => { ok: boolean; status?: number; message?: string };
-    upsertMessagingProviders: (
-      tokenDefs: Array<{
-        name: string;
-        envKey: string;
-        token: string | null;
-        providerType?: string;
-      }>,
-      runOpenshell: RunOpenshell,
-      options?: { replaceExisting?: boolean; bestEffort?: boolean },
-    ) => string[];
-  };
+const {
+  HOSTED_INFERENCE_ENDPOINT_URL,
+  HOSTED_INFERENCE_MODEL,
+  buildProviderArgs,
+  getRequestedModelHint,
+  getRequestedProviderHint,
+  providerExistsInGateway,
+  stageHostedInferenceSourceSecretEnv,
+  upsertProvider,
+  upsertMessagingProviders,
+} = require("../../../dist/lib/onboard/providers") as {
+  HOSTED_INFERENCE_ENDPOINT_URL: string;
+  HOSTED_INFERENCE_MODEL: string;
+  buildProviderArgs: (
+    action: "create" | "update",
+    name: string,
+    type: string,
+    credentialEnv: string,
+    baseUrl: string | null,
+  ) => string[];
+  getRequestedModelHint: (nonInteractive: boolean) => string | null;
+  getRequestedProviderHint: (nonInteractive: boolean) => string | null;
+  providerExistsInGateway: (name: string, runOpenshell: RunOpenshell) => boolean;
+  stageHostedInferenceSourceSecretEnv: () => boolean;
+  upsertProvider: (
+    name: string,
+    type: string,
+    credentialEnv: string,
+    baseUrl: string | null,
+    env: Record<string, string | undefined>,
+    runOpenshell: RunOpenshell,
+    options?: { replaceExisting?: boolean },
+  ) => { ok: boolean; status?: number; message?: string };
+  upsertMessagingProviders: (
+    tokenDefs: Array<{
+      name: string;
+      envKey: string;
+      token: string | null;
+      providerType?: string;
+    }>,
+    runOpenshell: RunOpenshell,
+    options?: { replaceExisting?: boolean; bestEffort?: boolean },
+  ) => string[];
+};
+
+function withProviderEnv(next: Record<string, string | undefined>, testBody: () => void): void {
+  const keys = new Set([
+    "NVIDIA_INFERENCE_API_KEY",
+    "NEMOCLAW_PROVIDER",
+    "NEMOCLAW_ENDPOINT_URL",
+    "NEMOCLAW_MODEL",
+    "NEMOCLAW_COMPAT_MODEL",
+    "NEMOCLAW_PREFERRED_API",
+    "NEMOCLAW_CLOUD_EXPERIMENTAL_MODEL",
+    "NEMOCLAW_E2E_USE_HOSTED_INFERENCE",
+    "COMPATIBLE_API_KEY",
+    ...Object.keys(next),
+  ]);
+  const previous = new Map<string, string | undefined>();
+  for (const key of keys) {
+    previous.set(key, process.env[key]);
+    delete process.env[key];
+  }
+  for (const [key, value] of Object.entries(next)) {
+    if (value === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
+  }
+  try {
+    testBody();
+  } finally {
+    for (const [key, value] of previous.entries()) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  }
+}
 
 describe("onboard provider helpers", () => {
   it("builds create arguments for generic providers", () => {
@@ -237,6 +289,70 @@ describe("onboard provider helpers", () => {
     expect(commands).toHaveLength(2);
     expect(commands[1]).toMatch(/^provider update nvidia-prod /);
     expect(commands[1]).toMatch(/--credential NVIDIA_INFERENCE_API_KEY/);
+  });
+
+  it("stages non-nvapi NVIDIA_INFERENCE_API_KEY as hosted custom inference", () => {
+    withProviderEnv(
+      {
+        NVIDIA_INFERENCE_API_KEY: "  repo-hosted-key  ",
+      },
+      () => {
+        expect(stageHostedInferenceSourceSecretEnv()).toBe(true);
+        expect(getRequestedProviderHint(true)).toBe("custom");
+        expect(getRequestedModelHint(true)).toBe(HOSTED_INFERENCE_MODEL);
+        expect(process.env.NEMOCLAW_PROVIDER).toBe("custom");
+        expect(process.env.NEMOCLAW_ENDPOINT_URL).toBe(HOSTED_INFERENCE_ENDPOINT_URL);
+        expect(process.env.NEMOCLAW_MODEL).toBe(HOSTED_INFERENCE_MODEL);
+        expect(process.env.NEMOCLAW_COMPAT_MODEL).toBe(HOSTED_INFERENCE_MODEL);
+        expect(process.env.NEMOCLAW_PREFERRED_API).toBe("openai-completions");
+        expect(process.env.COMPATIBLE_API_KEY).toBe("repo-hosted-key");
+      },
+    );
+  });
+
+  it("does not override an explicit hosted inference API preference", () => {
+    withProviderEnv(
+      {
+        NVIDIA_INFERENCE_API_KEY: "repo-hosted-key",
+        NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1",
+        NEMOCLAW_PREFERRED_API: "openai-responses",
+      },
+      () => {
+        expect(stageHostedInferenceSourceSecretEnv()).toBe(true);
+        expect(process.env.NEMOCLAW_PREFERRED_API).toBe("openai-responses");
+      },
+    );
+  });
+
+  it("keeps explicit cloud provider selection on the Build provider path", () => {
+    withProviderEnv(
+      {
+        NVIDIA_INFERENCE_API_KEY: "repo-hosted-key",
+        NEMOCLAW_PROVIDER: "cloud",
+      },
+      () => {
+        expect(stageHostedInferenceSourceSecretEnv()).toBe(false);
+        expect(getRequestedProviderHint(true)).toBe("build");
+        expect(process.env.COMPATIBLE_API_KEY).toBeUndefined();
+        expect(process.env.NEMOCLAW_ENDPOINT_URL).toBeUndefined();
+      },
+    );
+  });
+
+  it("preserves explicit custom provider credentials when NVIDIA_INFERENCE_API_KEY is unrelated", () => {
+    withProviderEnv(
+      {
+        COMPATIBLE_API_KEY: "custom-endpoint-key",
+        NVIDIA_INFERENCE_API_KEY: "repo-hosted-key",
+        NEMOCLAW_PROVIDER: "custom",
+      },
+      () => {
+        expect(stageHostedInferenceSourceSecretEnv()).toBe(false);
+        expect(getRequestedProviderHint(true)).toBe("custom");
+        expect(process.env.COMPATIBLE_API_KEY).toBe("custom-endpoint-key");
+        expect(process.env.NEMOCLAW_ENDPOINT_URL).toBeUndefined();
+      },
+    );
   });
 
   it("returns redacted error details when create or update fails", () => {

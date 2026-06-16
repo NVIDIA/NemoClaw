@@ -20,7 +20,7 @@
 # What this tests:
 #   1. Run brev-launchable-ci-cpu.sh with NEMOCLAW_REF=current branch
 #   2. Verify installation artifacts (nemoclaw, openshell, Node.js ≥22, Docker, sentinel)
-#   3. nemoclaw onboard --non-interactive with NVIDIA_INFERENCE_API_KEY (cloud provider)
+#   3. nemoclaw onboard --non-interactive with hosted inference
 #   4. Sandbox health: nemoclaw list, status, gateway running
 #   5. Live inference through the sandbox (same pattern as test-full-e2e.sh Phase 4)
 #   6. Destroy + cleanup
@@ -28,7 +28,7 @@
 # Prerequisites:
 #   - Ubuntu runner (ubuntu-latest)
 #   - Docker running
-#   - NVIDIA_INFERENCE_API_KEY set (real key, starts with nvapi-)
+#   - NVIDIA_INFERENCE_API_KEY set for hosted inference
 #   - Network access to inference-api.nvidia.com
 #   - NEMOCLAW_NON_INTERACTIVE=1
 #   - NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1
@@ -37,12 +37,12 @@
 #   NEMOCLAW_REF              — git ref for brev-launchable-ci-cpu.sh (default: current branch)
 #   NEMOCLAW_SANDBOX_NAME     — sandbox name (default: e2e-launchable)
 #   NEMOCLAW_RECREATE_SANDBOX — set to 1 to recreate if exists
-#   NVIDIA_INFERENCE_API_KEY            — required for NVIDIA Endpoints inference
+#   NVIDIA_INFERENCE_API_KEY            — required for hosted inference
 #   SKIP_DOCKER_PULL          — set to 1 to skip Docker image pre-pulls (speeds up CI)
 #
 # Usage:
 #   NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
-#     NVIDIA_INFERENCE_API_KEY=nvapi-... bash test/e2e/test-launchable-smoke.sh
+#     NVIDIA_INFERENCE_API_KEY=... bash test/e2e/test-launchable-smoke.sh
 #
 # See: https://github.com/NVIDIA/NemoClaw/issues/2599
 
@@ -97,6 +97,9 @@ except Exception as e:
 "
 }
 
+# shellcheck source=test/e2e/lib/ci-compatible-inference.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/ci-compatible-inference.sh"
+
 # Determine repo root
 if [ -f "$(cd "$(dirname "$0")/../.." && pwd)/scripts/brev-launchable-ci-cpu.sh" ]; then
   REPO="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -133,6 +136,10 @@ exec > >(tee -a "$TEST_LOG") 2>&1
 # shellcheck source=test/e2e/lib/sandbox-teardown.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox-teardown.sh"
 register_sandbox_for_teardown "$SANDBOX_NAME"
+nemoclaw_e2e_configure_compatible_inference || exit 1
+HOSTED_INFERENCE_BASE_URL="$(nemoclaw_e2e_hosted_inference_base_url)"
+HOSTED_INFERENCE_MODEL="$(nemoclaw_e2e_hosted_inference_model)"
+HOSTED_INFERENCE_KEY="$(nemoclaw_e2e_hosted_inference_key)"
 
 # ══════════════════════════════════════════════════════════════════
 # Phase 0: Pre-cleanup
@@ -177,17 +184,14 @@ else
   exit 1
 fi
 
-if [ -n "${NVIDIA_INFERENCE_API_KEY:-}" ] && [[ "${NVIDIA_INFERENCE_API_KEY}" == nvapi-* ]]; then
-  pass "NVIDIA_INFERENCE_API_KEY is set (starts with nvapi-)"
-else
-  fail "NVIDIA_INFERENCE_API_KEY not set or invalid — required for live inference"
+if ! nemoclaw_e2e_require_hosted_inference_key; then
   exit 1
 fi
 
-if curl -sf --max-time 10 https://inference-api.nvidia.com/v1/models >/dev/null 2>&1; then
-  pass "Network access to inference-api.nvidia.com"
+if nemoclaw_e2e_probe_hosted_inference; then
+  pass "Network access to ${HOSTED_INFERENCE_BASE_URL}"
 else
-  fail "Cannot reach inference-api.nvidia.com"
+  fail "Cannot reach ${HOSTED_INFERENCE_BASE_URL}"
   exit 1
 fi
 
@@ -341,9 +345,9 @@ else
 fi
 
 # ══════════════════════════════════════════════════════════════════
-# Phase 4: Onboard (non-interactive, cloud provider)
+# Phase 4: Onboard (non-interactive, hosted inference)
 # ══════════════════════════════════════════════════════════════════
-section "Phase 4: Onboard (non-interactive, NVIDIA Endpoints)"
+section "Phase 4: Onboard (non-interactive, hosted inference)"
 
 # Run onboard from the launchable clone directory — this is the real
 # community path: the user's NemoClaw is in ~/NemoClaw, not a CI checkout.
@@ -353,7 +357,7 @@ cd "$NEMOCLAW_CLONE_DIR" || {
 }
 
 info "Running nemoclaw onboard --non-interactive..."
-info "Provider: NVIDIA Endpoints (cloud)"
+info "Provider: ${NEMOCLAW_PROVIDER:-configured hosted inference}"
 info "Sandbox name: $SANDBOX_NAME"
 
 ONBOARD_LOG="/tmp/nemoclaw-launchable-onboard.log"
@@ -403,10 +407,16 @@ fi
 
 # 5c: Inference configured by onboard
 if inf_check=$(openshell inference get 2>&1); then
-  if grep -qi "nvidia-prod" <<<"$inf_check"; then
-    pass "Inference configured via onboard (nvidia-prod)"
+  expected_provider="$(nemoclaw_e2e_expected_route_provider)"
+  expected_model=""
+  if nemoclaw_e2e_using_compatible_inference; then
+    expected_model="$HOSTED_INFERENCE_MODEL"
+  fi
+  if nemoclaw_e2e_inference_output_matches "$inf_check" "$expected_provider" "$expected_model"; then
+    pass "Inference configured via onboard (${expected_provider})"
   else
-    fail "Inference not configured — onboard did not set up nvidia-prod provider"
+    inf_check_plain="$(printf '%s' "$inf_check" | nemoclaw_e2e_strip_ansi)"
+    fail "Inference not configured - onboard did not set up ${expected_provider}: ${inf_check_plain:0:200}"
   fi
 else
   fail "openshell inference get failed: ${inf_check:0:200}"
@@ -424,17 +434,13 @@ fi
 # ══════════════════════════════════════════════════════════════════
 section "Phase 6: Live inference"
 
-# ── Test 6a: Direct NVIDIA Endpoints (sanity check) ──
-info "[LIVE] Direct API test → inference-api.nvidia.com..."
+# ── Test 6a: Direct hosted inference endpoint (sanity check) ──
+info "[LIVE] Direct API test → ${HOSTED_INFERENCE_BASE_URL}..."
 api_response=$(curl -s --max-time 30 \
-  -X POST https://inference-api.nvidia.com/v1/chat/completions \
+  -X POST "${HOSTED_INFERENCE_BASE_URL}/chat/completions" \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $NVIDIA_INFERENCE_API_KEY" \
-  -d '{
-    "model": "nvidia/nemotron-3-super-120b-a12b",
-    "messages": [{"role": "user", "content": "Reply with exactly one word: PONG"}],
-    "max_tokens": 100
-  }' 2>/dev/null) || true
+  -H "Authorization: Bearer $HOSTED_INFERENCE_KEY" \
+  -d "$(printf '{"model":"%s","messages":[{"role":"user","content":"Reply with exactly one word: PONG"}],"max_tokens":100}' "$HOSTED_INFERENCE_MODEL")" 2>/dev/null) || true
 
 if [ -n "$api_response" ]; then
   api_content=$(echo "$api_response" | parse_chat_content 2>/dev/null) || true
@@ -461,7 +467,7 @@ if openshell sandbox ssh-config "$SANDBOX_NAME" >"$ssh_config" 2>/dev/null; then
     "openshell-${SANDBOX_NAME}" \
     "curl -s --max-time 60 https://inference.local/v1/chat/completions \
       -H 'Content-Type: application/json' \
-      -d '{\"model\":\"nvidia/nemotron-3-super-120b-a12b\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with exactly one word: PONG\"}],\"max_tokens\":100}'" \
+      -d '{\"model\":\"$HOSTED_INFERENCE_MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with exactly one word: PONG\"}],\"max_tokens\":100}'" \
     2>&1) || true
 fi
 rm -f "$ssh_config"
@@ -494,14 +500,14 @@ for pong_attempt in 1 2 3; do
       "openshell-${SANDBOX_NAME}" \
       "curl -s --max-time 60 https://inference.local/v1/chat/completions \
         -H 'Content-Type: application/json' \
-        -d '{\"model\":\"nvidia/nemotron-3-super-120b-a12b\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with exactly one word: PONG\"}],\"max_tokens\":100}'" \
+        -d '{\"model\":\"$HOSTED_INFERENCE_MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with exactly one word: PONG\"}],\"max_tokens\":100}'" \
       2>&1) || true
   fi
   rm -f "$ssh_config"
 done
 
 if $pong_ok; then
-  pass "[ROUTING] inference.local: OpenShell routed curl to NVIDIA Endpoints and returned PONG"
+  pass "[ROUTING] inference.local: OpenShell routed curl to the hosted inference endpoint and returned PONG"
 else
   fail "[ROUTING] inference.local: expected PONG after 3 attempts, got: ${sandbox_content:0:200}"
 fi
@@ -576,9 +582,9 @@ echo ""
 echo "  What this tested (issue #2599):"
 echo "    - brev-launchable-ci-cpu.sh bootstrap (Docker, Node.js, OpenShell, NemoClaw)"
 echo "    - Installation artifacts (binaries on PATH, sentinel file, built outputs)"
-echo "    - Onboard via launchable-installed NemoClaw (cloud provider)"
+echo "    - Onboard via launchable-installed NemoClaw (hosted inference)"
 echo "    - Sandbox health (list, status, inference config, gateway)"
-echo "    - Direct NVIDIA Endpoints inference"
+echo "    - Direct hosted inference"
 echo "    - Sandbox inference routing (curl → inference.local)"
 echo "    - openclaw agent mediated inference (the full stack)"
 echo "    - Destroy + cleanup"

@@ -101,9 +101,9 @@ Use the provider variables from [Inference Options](../inference/inference-optio
 
 ## Connect to Hermes
 
-When onboarding completes, NemoClaw prints the sandbox name, model, lifecycle commands, and Hermes dashboard URL.
+When onboarding completes, NemoClaw prints the sandbox name, model, lifecycle commands, the Hermes dashboard URL, and the OpenAI-compatible API URL.
 Hermes exposes its built-in browser dashboard on port `18789`.
-NemoClaw also forwards the OpenAI-compatible API on port `8642` for local clients.
+NemoClaw also forwards the OpenAI-compatible API on port `8642` for local clients, and the summary now announces both URLs.
 NemoClaw builds the Hermes dashboard assets into the sandbox image, so the dashboard starts without running `npm` as the sandbox user under `/opt/hermes`.
 Dashboard chat uses the prebuilt `/opt/hermes/ui-tui` bundle.
 If you need to recover the Hermes dashboard manually, use `hermes dashboard --tui --skip-build` so recovery does not try to rebuild assets under root-owned install paths.
@@ -121,6 +121,10 @@ Access
   Hermes Agent Dashboard
   Port 18789 must be forwarded before opening this URL.
   http://127.0.0.1:18789/
+
+  Hermes Agent OpenAI-compatible API
+  Port 8642 must be forwarded before connecting.
+  http://127.0.0.1:8642/v1
 
 Terminal:
   nemohermes my-hermes connect
