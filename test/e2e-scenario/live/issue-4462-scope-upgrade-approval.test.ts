@@ -3,7 +3,6 @@
 
 /** Live Vitest replacement for test/e2e/test-issue-4462-scope-upgrade-approval.sh. */
 
-import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
