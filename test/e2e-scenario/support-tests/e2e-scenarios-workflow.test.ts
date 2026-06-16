@@ -504,6 +504,22 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       registryScenarios: [],
     });
     expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "concurrent-gateway-ports" }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["concurrent-gateway-ports-vitest"],
+      registryScenarios: [],
+    });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({ jobs: "concurrent-gateway-ports-vitest" }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["concurrent-gateway-ports-vitest"],
+      registryScenarios: [],
+    });
+    expect(
       evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "channels-add-remove" }),
     ).toMatchObject({
       valid: true,

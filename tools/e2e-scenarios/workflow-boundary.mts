@@ -3537,6 +3537,13 @@ export function validateE2eVitestScenariosWorkflowBoundary(
     "gateway-health-honest",
   );
 
+  validateFreeStandingJobSelector(
+    errors,
+    jobs,
+    "concurrent-gateway-ports-vitest",
+    "concurrent-gateway-ports",
+  );
+
   validateChannelsAddRemoveVitestJob(errors, jobs);
 
   const reportToPr = asRecord(jobs["report-to-pr"]);
