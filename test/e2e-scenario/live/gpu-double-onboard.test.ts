@@ -106,13 +106,7 @@ async function httpStatus(host: HostCliClient, url: string, artifactName: string
 }
 
 function parseReplyCommand(): string {
-  return "python3 -c ";
-  import json,
-  sys;
-  d = json.load(sys.stdin);
-  m = d["choices"][0]["message"];
-  print((m.get('content') or m.get('reasoning_content') or m.get('reasoning') or '').strip()
-  )""
+  return String.raw`python3 -c 'import json,sys; d=json.load(sys.stdin); m=d["choices"][0]["message"]; print((m.get("content") or m.get("reasoning_content") or m.get("reasoning") or "").strip())'`;
 }
 
 liveTest(
