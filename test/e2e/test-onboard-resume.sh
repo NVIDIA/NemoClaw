@@ -325,12 +325,18 @@ section "Phase 3.5: Implicit resume from in_progress session"
 # Re-mark the now-complete session as in_progress so a plain `onboard` has
 # something to auto-resume. Everything is already provisioned, so the resume
 # skips every cached step and finishes fast.
+# Mimic an interrupted-but-resumable session: status "in_progress" AND
+# resumable !== false. Phase 3 marks the completed session `resumable: false`,
+# so flipping status alone would (correctly) be rejected as "no resumable
+# session"; resetting resumable reconstructs the interrupted shape the resume
+# machine accepts (session-bootstrap.ts:140).
 set_session_in_progress() {
   node -e '
     const fs = require("fs");
     const file = process.argv[1];
     const data = JSON.parse(fs.readFileSync(file, "utf8"));
     data.status = "in_progress";
+    data.resumable = true;
     fs.writeFileSync(file, JSON.stringify(data, null, 2));
   ' "$SESSION_FILE"
 }
