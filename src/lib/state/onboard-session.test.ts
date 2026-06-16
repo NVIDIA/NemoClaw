@@ -579,7 +579,72 @@ describe("onboard session", () => {
     session.saveSession(created);
 
     const loaded = requireLoadedSession(session.loadSession());
-    expect(loaded.messagingPlan).toEqual(created.messagingPlan);
+    expect(loaded.messagingPlan).toMatchObject({
+      schemaVersion: 1,
+      sandboxName: "my-assistant",
+      agent: "openclaw",
+      workflow: "onboard",
+      disabledChannels: ["slack"],
+      channels: [
+        expect.objectContaining({ channelId: "telegram", configured: true, disabled: false }),
+        expect.objectContaining({ channelId: "slack", configured: true, disabled: true }),
+      ],
+    });
+    expect(loaded.messagingPlan?.channels[0]?.inputs.map((input) => input.inputId)).toContain(
+      "botToken",
+    );
+  });
+
+  it("writes compact messagingPlan derived fields to onboard-session.json", () => {
+    const created = session.createSession();
+    created.messagingPlan = {
+      ...makeMessagingPlan("my-assistant", ["telegram"]),
+      channels: [
+        {
+          ...makeMessagingPlan("my-assistant", ["telegram"]).channels[0],
+          hooks: [
+            {
+              channelId: "telegram",
+              id: "telegram-token-paste",
+              phase: "enroll",
+              handler: "common.tokenPaste",
+            },
+          ],
+        },
+      ],
+      agentRender: [
+        {
+          channelId: "telegram",
+          renderId: "telegram-openclaw-channel",
+          hookId: "telegram-openclaw-channel",
+          handler: "common.staticOutputs",
+          kind: "json-fragment",
+          agent: "openclaw",
+          target: "openclaw.json",
+          path: "channels.telegram",
+          value: { enabled: true },
+          templateRefs: [],
+        },
+      ],
+    };
+
+    session.saveSession(created);
+
+    const raw = JSON.parse(fs.readFileSync(session.SESSION_FILE, "utf-8"));
+    expect(raw.messagingPlan.networkPolicy).toEqual({ presets: [], entries: [] });
+    expect(raw.messagingPlan.agentRender).toBeUndefined();
+    expect(raw.messagingPlan.buildSteps).toBeUndefined();
+    expect(raw.messagingPlan.runtimeSetup).toBeUndefined();
+    expect(raw.messagingPlan.stateUpdates).toBeUndefined();
+    expect(raw.messagingPlan.healthChecks).toBeUndefined();
+    expect(raw.messagingPlan.channels[0].displayName).toBeUndefined();
+    expect(raw.messagingPlan.channels[0].authMode).toBeUndefined();
+    expect(raw.messagingPlan.channels[0].active).toBe(true);
+    expect(raw.messagingPlan.channels[0].selected).toBeUndefined();
+    expect(raw.messagingPlan.channels[0].hooks).toBeUndefined();
+    const reloadedPlan = requireLoadedSession(session.loadSession()).messagingPlan;
+    expect(reloadedPlan?.agentRender).toEqual([]);
+    expect(reloadedPlan?.channels[0]?.hooks).toEqual([]);
   });
 
   it("drops malformed persisted messagingPlan on load", () => {
@@ -622,7 +687,10 @@ describe("onboard session", () => {
     session.saveSession(session.createSession());
     const plan = makeMessagingPlan("my-assistant", ["discord"]);
     session.markStepComplete("provider_selection", { messagingPlan: plan });
-    expect(requireLoadedSession(session.loadSession()).messagingPlan).toEqual(plan);
+    expect(requireLoadedSession(session.loadSession()).messagingPlan).toMatchObject({
+      sandboxName: "my-assistant",
+      channels: [expect.objectContaining({ channelId: "discord", configured: true })],
+    });
 
     session.markStepComplete("provider_selection", { messagingPlan: null });
     expect(requireLoadedSession(session.loadSession()).messagingPlan).toBeNull();
@@ -1033,7 +1101,10 @@ describe("onboard session", () => {
     const saved = session.saveSession(created);
     const loaded = requireLoadedSession(session.loadSession());
     expect(saved.messagingPlan).toEqual(plan);
-    expect(loaded.messagingPlan).toEqual(plan);
+    expect(loaded.messagingPlan).toMatchObject({
+      sandboxName: "my-assistant",
+      channels: [expect.objectContaining({ channelId: "telegram", configured: true })],
+    });
   });
 
   it("filterSafeUpdates preserves messagingPlan field", () => {
@@ -1044,7 +1115,13 @@ describe("onboard session", () => {
     });
 
     const loaded = requireLoadedSession(session.loadSession());
-    expect(loaded.messagingPlan).toEqual(plan);
+    expect(loaded.messagingPlan).toMatchObject({
+      sandboxName: "my-assistant",
+      channels: [
+        expect.objectContaining({ channelId: "slack", configured: true }),
+        expect.objectContaining({ channelId: "discord", configured: true }),
+      ],
+    });
   });
 
   it("filterSafeUpdates ignores malformed messagingPlan values", () => {

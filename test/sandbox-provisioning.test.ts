@@ -544,6 +544,193 @@ describe("sandbox provisioning: image health checks (#1430)", () => {
         expect(probe.calls).not.toContain("pgrep");
       });
     });
+
+    // #4952: recent OpenClaw (v0.0.44 / 2026.5.18+) re-execs the long-running
+    // gateway into a process whose argv is plain `openclaw` — no `gateway`
+    // token at all (see the gateway_pid() helper in
+    // test/e2e/test-issue-2478-crash-loop-recovery.sh). The in-container curl
+    // probe fails (connection refused, exit 7) on runtime shapes where the
+    // dashboard port lives outside this namespace, so the healthcheck falls
+    // back to the in-container gateway-liveness check. A pgrep that only
+    // matches `openclaw[ -]gateway` cannot see the re-execed plain-`openclaw`
+    // process, so the marker-present container is reported permanently
+    // unhealthy even though the gateway is alive and serving.
+    //
+    // The fallback must stay gateway-specific: matching *any* process named
+    // `openclaw` would keep Docker green when the real gateway has died but an
+    // unrelated `openclaw` one-shot (e.g. `openclaw agent ...`) is running,
+    // defeating restart/self-healing. So nemoclaw-start records the live
+    // gateway PID in /tmp/nemoclaw-gateway.pid and the fallback confirms THAT
+    // pid is still a live `openclaw` process.
+    //
+    // Unlike runProductionHealthProbe above (which forces pgrep's exit code
+    // and therefore can never exercise the pattern), this drives a pgrep mock
+    // that matches its pattern against a simulated process table and a ps mock
+    // that resolves the recorded PID — so the probe's outcome depends on the
+    // real argv shape AND on whether the recorded gateway PID is alive.
+    describe("matches the re-execed plain-`openclaw` gateway argv (#4952)", () => {
+      // procTable entries are `comm|args`: `pgrep -f PAT` matches PAT (ERE)
+      // against args; bare `pgrep PAT` matches PAT (ERE) against comm.
+      // psTable maps a recorded PID to the `comm` that `ps -p <pid> -o comm=`
+      // returns (an absent PID models a dead/reused process: empty output).
+      function runHealthProbe({
+        procTable = [],
+        gatewayPid = null,
+        psTable = {},
+        curlExit = 7,
+        gatewayLog = "gateway log line\n",
+      }: {
+        procTable?: string[];
+        gatewayPid?: string | null;
+        psTable?: Record<string, string>;
+        curlExit?: number;
+        gatewayLog?: string;
+      }) {
+        const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");
+        const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-health-argv-"));
+        const logPath = path.join(tmp, "gateway.log");
+        const markerPath = path.join(tmp, "nemoclaw-gateway-local");
+        const pidPath = path.join(tmp, "nemoclaw-gateway.pid");
+        const command = dockerHealthCommandBetween(
+          dockerfile,
+          "# Health check: poll the gateway's /health endpoint",
+          "# Entrypoint runs as root",
+        )
+          .replaceAll("/tmp/gateway.log", logPath)
+          .replaceAll("/tmp/nemoclaw-gateway-local", markerPath)
+          .replaceAll("/tmp/nemoclaw-gateway.pid", pidPath);
+
+        // Gateway is up and the marker is present: this container runs the
+        // in-container gateway, so the liveness fallback is meaningful.
+        if (gatewayLog !== "") {
+          fs.writeFileSync(logPath, gatewayLog);
+        }
+        fs.writeFileSync(markerPath, "");
+        if (gatewayPid !== null) {
+          fs.writeFileSync(pidPath, `${gatewayPid}\n`);
+        }
+
+        const pgrepMock = [
+          "pgrep() {",
+          '  printf "pgrep %s\\n" "$*" >> "$call_log";',
+          "  local use_f=0 exact=0 pat='';",
+          '  for a in "$@"; do',
+          '    case "$a" in',
+          "      --ignore-ancestors) ;;",
+          "      -f) use_f=1 ;;",
+          "      -x) exact=1 ;;",
+          "      -*) ;;",
+          '      *) pat="$a" ;;',
+          "    esac;",
+          "  done;",
+          '  local found=1 oldifs="$IFS" line comm args;',
+          "  IFS=$'\\n';",
+          "  for line in $FAKE_PROCS; do",
+          '    [ -n "$line" ] || continue;',
+          '    comm="${line%%|*}"; args="${line#*|}";',
+          '    if [ "$use_f" = 1 ]; then',
+          '      printf "%s" "$args" | grep -Eq "$pat" && { found=0; break; };',
+          '    elif [ "$exact" = 1 ]; then',
+          '      [ "$comm" = "$pat" ] && { found=0; break; };',
+          "    else",
+          '      printf "%s" "$comm" | grep -Eq "$pat" && { found=0; break; };',
+          "    fi;",
+          "  done;",
+          '  IFS="$oldifs"; return $found;',
+          "}",
+        ].join("\n");
+
+        // `ps -p <pid> -o comm=` → the recorded process name, empty when the
+        // PID is not in the table (dead/reused).
+        const psMock = [
+          "ps() {",
+          '  printf "ps %s\\n" "$*" >> "$call_log";',
+          '  local pid="" prev="";',
+          '  for a in "$@"; do [ "$prev" = "-p" ] && pid="$a"; prev="$a"; done;',
+          "  local line oldifs=\"$IFS\"; IFS=$'\\n';",
+          "  for line in $PS_TABLE; do",
+          '    [ -n "$line" ] || continue;',
+          '    if [ "${line%%=*}" = "$pid" ]; then printf "%s\\n" "${line#*=}"; IFS="$oldifs"; return 0; fi;',
+          "  done;",
+          '  IFS="$oldifs"; return 1;',
+          "}",
+        ].join("\n");
+
+        const psEnv = Object.entries(psTable)
+          .map(([pid, comm]) => `${pid}=${comm}`)
+          .join("\n");
+
+        try {
+          return runLoggedDockerShell(
+            command,
+            tmp,
+            [
+              `curl() { printf "curl %s\\n" "$*" >> "$call_log"; return ${curlExit}; }`,
+              pgrepMock,
+              psMock,
+            ],
+            { FAKE_PROCS: procTable.join("\n"), PS_TABLE: psEnv },
+          );
+        } finally {
+          fs.rmSync(tmp, { recursive: true, force: true });
+        }
+      }
+
+      it("reports healthy when the live gateway re-execed to a plain `openclaw` argv", () => {
+        // The gateway carries no `gateway` token in its argv (the #4952
+        // shape); liveness is proven by the recorded PID resolving to an
+        // `openclaw` process.
+        const probe = runHealthProbe({
+          procTable: ["openclaw|openclaw"],
+          gatewayPid: "4242",
+          psTable: { "4242": "openclaw" },
+        });
+        expect(probe.result.status).toBe(0);
+      });
+
+      it("still reports healthy for the launcher-form `openclaw gateway run` argv", () => {
+        // pgrep matches the gateway-token form directly; no PID lookup needed.
+        const probe = runHealthProbe({ procTable: ["openclaw|openclaw gateway run --port 18789"] });
+        expect(probe.result.status).toBe(0);
+      });
+
+      it("still reports healthy for the legacy re-execed `openclaw-gateway` argv", () => {
+        const probe = runHealthProbe({
+          procTable: ["openclaw-gateway|openclaw-gateway --port 18789"],
+        });
+        expect(probe.result.status).toBe(0);
+      });
+
+      it("reports unhealthy when no openclaw process is alive and no gateway PID was recorded", () => {
+        const probe = runHealthProbe({
+          procTable: ["bash|bash /usr/local/bin/nemoclaw-start"],
+          gatewayPid: null,
+        });
+        expect(probe.result.status).toBe(1);
+      });
+
+      // The tightening that closes the self-healing gap: an unrelated
+      // `openclaw` one-shot is running (a bare `pgrep -x openclaw` would have
+      // matched it and falsely reported healthy), but the recorded gateway PID
+      // is dead. The container must report unhealthy so Docker restarts it.
+      it("reports unhealthy when the recorded gateway PID is dead even if a non-gateway `openclaw` process exists", () => {
+        const probe = runHealthProbe({
+          procTable: ["openclaw|openclaw agent run-task"],
+          gatewayPid: "9999",
+          psTable: {}, // 9999 is gone
+        });
+        expect(probe.result.status).toBe(1);
+      });
+
+      it("reports unhealthy when the recorded gateway PID was reused by a non-openclaw process", () => {
+        const probe = runHealthProbe({
+          procTable: ["bash|bash"],
+          gatewayPid: "4242",
+          psTable: { "4242": "bash" }, // PID reuse
+        });
+        expect(probe.result.status).toBe(1);
+      });
+    });
   });
 
   it.each([

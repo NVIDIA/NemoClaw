@@ -14,10 +14,10 @@
 #   - Docker running
 #   - openshell CLI installed
 #   - Node.js available
-#   - NVIDIA_INFERENCE_API_KEY set to a valid nvapi-* key before starting the test
+#   - NVIDIA_INFERENCE_API_KEY set before starting the test
 #
 # Usage:
-#   NVIDIA_INFERENCE_API_KEY=nvapi-... bash test/e2e/test-onboard-repair.sh
+#   NVIDIA_INFERENCE_API_KEY=... bash test/e2e/test-onboard-repair.sh
 
 set -uo pipefail
 
@@ -73,6 +73,8 @@ fi
 
 # shellcheck source=test/e2e/lib/sandbox-teardown.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox-teardown.sh"
+# shellcheck source=test/e2e/lib/ci-compatible-inference.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/ci-compatible-inference.sh"
 register_sandbox_for_teardown "$SANDBOX_NAME"
 register_sandbox_for_teardown "$OTHER_SANDBOX_NAME"
 if [ -n "$INSTALL_SANDBOX_NAME" ]; then
@@ -148,14 +150,14 @@ else
   exit 1
 fi
 
-if [[ -n "$RESTORE_API_KEY" && "$RESTORE_API_KEY" == nvapi-* ]]; then
-  pass "NVIDIA_INFERENCE_API_KEY is set (starts with nvapi-)"
-else
+if [[ -z "$RESTORE_API_KEY" ]]; then
   fail "NVIDIA_INFERENCE_API_KEY not set or invalid — required for resume completion"
   exit 1
 fi
+pass "NVIDIA_INFERENCE_API_KEY is set"
 
 export NVIDIA_INFERENCE_API_KEY="$RESTORE_API_KEY"
+nemoclaw_e2e_configure_compatible_inference || exit 1
 pass "Exported NVIDIA_INFERENCE_API_KEY for the repair run (host writes nothing to disk; OpenShell gateway is the system of record)"
 
 # ══════════════════════════════════════════════════════════════════
@@ -198,12 +200,16 @@ if echo "$first_output" | grep -q "\[e2e\] Forced onboarding failure at step 'po
   pass "First run failed at policy setup as intended"
 else
   fail "First run did not fail at the expected policy step"
+  info "Captured first-onboard stdout/stderr (exit=$first_exit):"
+  printf '%s\n' "$first_output" | sed 's/^/    /'
 fi
 
 if openshell sandbox get "$SANDBOX_NAME" >/dev/null 2>&1; then
   pass "Sandbox '$SANDBOX_NAME' exists after interrupted run"
 else
   fail "Sandbox '$SANDBOX_NAME' not found after interrupted run"
+  info "Captured first-onboard stdout/stderr (exit=$first_exit):"
+  printf '%s\n' "$first_output" | sed 's/^/    /'
 fi
 
 # ══════════════════════════════════════════════════════════════════
@@ -222,7 +228,7 @@ else
 fi
 
 REPAIR_LOG="$(mktemp)"
-env -u NVIDIA_INFERENCE_API_KEY \
+env -u NVIDIA_INFERENCE_API_KEY -u COMPATIBLE_API_KEY \
   NEMOCLAW_NON_INTERACTIVE=1 \
   NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
   NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME" \
@@ -240,26 +246,26 @@ else
   exit 1
 fi
 
-if echo "$repair_output" | grep -q "\[resume\] Skipping preflight (cached)"; then
+if grep -q "\[resume\] Skipping preflight (cached)" <<<"$repair_output"; then
   pass "Repair resume skipped preflight"
 else
   fail "Repair resume did not skip preflight"
 fi
 
-if echo "$repair_output" | grep -q "\[resume\] Skipping gateway (running)"; then
+if grep -q "\[resume\] Skipping gateway (running)" <<<"$repair_output"; then
   pass "Repair resume skipped gateway"
 else
   fail "Repair resume did not skip gateway"
 fi
 
-if echo "$repair_output" | grep -q "\[resume\] Recorded sandbox state is unavailable; recreating it."; then
+if grep -q "\[resume\] Recorded sandbox state is unavailable; recreating it." <<<"$repair_output"; then
   pass "Repair resume detected missing sandbox"
 else
   fail "Repair resume did not report missing sandbox recreation"
 fi
 
 # The step numbering is [6/8] in the current onboard flow.
-if echo "$repair_output" | grep -q "Creating sandbox"; then
+if grep -q "Creating sandbox" <<<"$repair_output"; then
   pass "Repair resume recreated sandbox"
 else
   fail "Repair resume did not rerun sandbox creation"
@@ -295,7 +301,7 @@ pass "Re-created interrupted session for conflict tests"
 info "Attempting resume with a different sandbox name..."
 
 SANDBOX_CONFLICT_LOG="$(mktemp)"
-env -u NVIDIA_INFERENCE_API_KEY \
+env -u NVIDIA_INFERENCE_API_KEY -u COMPATIBLE_API_KEY \
   NEMOCLAW_NON_INTERACTIVE=1 \
   NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
   NEMOCLAW_SANDBOX_NAME="$OTHER_SANDBOX_NAME" \
@@ -324,7 +330,7 @@ section "Phase 5: Reject conflicting provider and model"
 info "Attempting resume with conflicting provider/model inputs..."
 
 PROVIDER_CONFLICT_LOG="$(mktemp)"
-env -u NVIDIA_INFERENCE_API_KEY \
+env -u NVIDIA_INFERENCE_API_KEY -u COMPATIBLE_API_KEY \
   NEMOCLAW_NON_INTERACTIVE=1 \
   NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
   NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME" \

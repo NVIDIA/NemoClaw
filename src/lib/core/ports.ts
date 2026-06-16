@@ -54,6 +54,8 @@ export const VLLM_PORT = parsePort("NEMOCLAW_VLLM_PORT", 8000);
 export const OLLAMA_PORT = parsePort("NEMOCLAW_OLLAMA_PORT", 11434);
 /** Ollama auth proxy port (default 11435, override via NEMOCLAW_OLLAMA_PROXY_PORT). */
 export const OLLAMA_PROXY_PORT = parsePort("NEMOCLAW_OLLAMA_PROXY_PORT", 11435);
+/** Hermes OpenAI-compatible API port (manifest `forward_ports[1]` / start.sh `PUBLIC_PORT`); reserved — never a valid dashboard port, for any agent. (#4984) */
+export const HERMES_OPENAI_API_PORT = 8642;
 /** Bedrock Runtime adapter port (default 11436, override via NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT). */
 export const BEDROCK_RUNTIME_ADAPTER_PORT = parsePort(
   "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT",

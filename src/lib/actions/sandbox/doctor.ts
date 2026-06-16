@@ -17,7 +17,12 @@ import { GATEWAY_PORT, OLLAMA_PORT } from "../../core/ports";
 import { recoverNamedGatewayRuntime } from "../../gateway-runtime-action";
 import { parseGatewayInference } from "../../inference/config";
 import { type ProviderHealthStatus, probeProviderHealth } from "../../inference/health";
+import {
+  collectBuiltInMessagingChannelDiagnostics,
+  type MessagingChannelDiagnosticSpec,
+} from "../../messaging/diagnostics";
 import { isLinuxDockerDriverGatewayEnabled } from "../../onboard/docker-driver-platform";
+import { resolveGatewayName, resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import { executeSandboxCommandForVerification } from "../../onboard/sandbox-verification-exec";
 import { ROOT } from "../../runner";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
@@ -37,7 +42,7 @@ import { captureHostCommand } from "./doctor-host-command";
 import { buildToolScopeChecks } from "./doctor-tool-scope";
 import { probeSandboxInferenceGatewayHealth } from "./process-recovery";
 
-const NEMOCLAW_GATEWAY_NAME = "nemoclaw";
+const CHANNEL_STATUS_DIAGNOSTICS = collectBuiltInMessagingChannelDiagnostics();
 
 type DoctorStatus = "ok" | "warn" | "fail" | "info";
 
@@ -193,7 +198,7 @@ function dockerInspectGateway(
     detail: `${containerName} ${running ? "running" : "stopped"} (${health}; ${image})`,
     hint: running
       ? undefined
-      : "restart the gateway with `openshell gateway start --name nemoclaw`",
+      : `restart the gateway with \`openshell gateway start --name ${options.gatewayName ?? "nemoclaw"}\``,
   });
 
   const port = captureHostCommand("docker", ["port", containerName, "30051/tcp"], 5000);
@@ -448,23 +453,44 @@ function messagingDoctorCheck(sandboxName: string, sb: SandboxEntry): DoctorChec
     };
   }
 
-  const degraded =
-    buildStatusCommandDeps(ROOT).checkMessagingBridgeHealth?.(sandboxName, channels) || [];
+  const statusDeps = buildStatusCommandDeps(ROOT);
+  const degraded = statusDeps.checkMessagingBridgeHealth?.(sandboxName, channels, sb.agent) || [];
+  const overlaps = (statusDeps.findMessagingOverlaps?.() ?? []).filter(
+    (overlap) => channels.includes(overlap.channel) && overlap.sandboxes.includes(sandboxName),
+  );
   const pausedSuffix =
     pausedChannels.length > 0 ? `; paused channels skipped: ${pausedChannels.join(", ")}` : "";
-  if (degraded.length === 0) {
-    // WhatsApp's inbound delivery cannot be inferred from the conflict-signature
-    // heuristic — issue #4386 showed a paired channel with a live Noise
-    // WebSocket that never delivered inbound events, while this check rendered
-    // "ok". Downgrade to "info" with a pointer to `channels status` so doctor
-    // never claims WhatsApp is healthy without running the deep probe.
-    if (channels.includes("whatsapp")) {
+  const warningDetails = [
+    ...degraded.map(
+      (item: { channel: string; conflicts: number }) =>
+        `${item.channel}: ${item.conflicts} conflict(s)`,
+    ),
+    ...overlaps.map(formatMessagingOverlapDoctorDetail),
+  ];
+  if (warningDetails.length === 0) {
+    const deepProbeDiagnostic = channels
+      .map(getChannelStatusDiagnostic)
+      .find((diagnostic) => diagnostic?.doctorWhenNoHealthSignals);
+    if (deepProbeDiagnostic?.doctorWhenNoHealthSignals) {
+      const templateContext = {
+        channel: deepProbeDiagnostic.channelId,
+        channels: channels.join(", "),
+        cli: CLI_NAME,
+        pausedSuffix,
+        sandbox: sandboxName,
+      };
       return {
         group: "Messaging",
         label: "Channels",
         status: "info",
-        detail: `${channels.join(", ")} enabled; whatsapp inbound delivery is not inferred from conflict signatures${pausedSuffix}`,
-        hint: `run \`${CLI_NAME} ${sandboxName} channels status --channel whatsapp\` to probe inbound delivery`,
+        detail: formatDiagnosticTemplate(
+          deepProbeDiagnostic.doctorWhenNoHealthSignals.detail,
+          templateContext,
+        ),
+        hint: formatDiagnosticTemplate(
+          deepProbeDiagnostic.doctorWhenNoHealthSignals.hint,
+          templateContext,
+        ),
       };
     }
     return {
@@ -479,15 +505,41 @@ function messagingDoctorCheck(sandboxName: string, sb: SandboxEntry): DoctorChec
     group: "Messaging",
     label: "Channels",
     status: "warn",
-    detail:
-      degraded
-        .map(
-          (item: { channel: string; conflicts: number }) =>
-            `${item.channel}: ${item.conflicts} conflict(s)`,
-        )
-        .join("; ") + pausedSuffix,
+    detail: warningDetails.join("; ") + pausedSuffix,
     hint: `run \`${CLI_NAME} ${sandboxName} logs --follow\` for enabled bridge details`,
   };
+}
+
+function getChannelStatusDiagnostic(channelName: string): MessagingChannelDiagnosticSpec | null {
+  return (
+    CHANNEL_STATUS_DIAGNOSTICS.find((diagnostic) => diagnostic.channelId === channelName) ?? null
+  );
+}
+
+function formatMessagingOverlapDoctorDetail(overlap: {
+  readonly channel: string;
+  readonly sandboxes: readonly [string, string];
+  readonly message?: string;
+}): string {
+  const detail = overlap.message
+    ? formatDiagnosticTemplate(overlap.message, {
+        channel: overlap.channel,
+        first: overlap.sandboxes[0],
+        second: overlap.sandboxes[1],
+      })
+    : `'${overlap.sandboxes[0]}' and '${overlap.sandboxes[1]}' overlap`;
+  return `${overlap.channel}: ${detail}`;
+}
+
+function formatDiagnosticTemplate(
+  template: string,
+  values: Readonly<Record<string, string>>,
+): string {
+  let result = template;
+  for (const [key, value] of Object.entries(values)) {
+    result = result.replaceAll(`{${key}}`, value);
+  }
+  return result;
 }
 
 /**
@@ -550,6 +602,7 @@ export async function runSandboxDoctor(
   }
 
   const sb = registry.getSandbox(sandboxName);
+  const gatewayName = sb ? resolveSandboxGatewayName(sb) : resolveGatewayName(GATEWAY_PORT);
   const checks: DoctorCheck[] = [];
   // Tracks whether the named sandbox is present-and-Ready, so live-only probes
   // (e.g. the #4616 dashboard tool-scope diagnostic) only run when they can
@@ -594,7 +647,7 @@ export async function runSandboxDoctor(
 
   let openshellConnected = false;
   if (openshellBin) {
-    const recovery = await recoverNamedGatewayRuntime();
+    const recovery = await recoverNamedGatewayRuntime({ gatewayName });
     const lifecycle = recovery.after || recovery.before;
     const cleanStatus = stripAnsi(lifecycle?.status || "");
     openshellConnected = lifecycle?.state === "healthy_named";
@@ -603,16 +656,19 @@ export async function runSandboxDoctor(
       label: "OpenShell status",
       status: openshellConnected ? "ok" : "fail",
       detail: openshellConnected
-        ? "connected to nemoclaw"
-        : oneLine(cleanStatus || lifecycle?.gatewayInfo || "not connected to nemoclaw"),
-      hint: openshellConnected ? undefined : "run `openshell gateway select nemoclaw` and retry",
+        ? `connected to ${gatewayName}`
+        : oneLine(cleanStatus || lifecycle?.gatewayInfo || `not connected to ${gatewayName}`),
+      hint: openshellConnected
+        ? undefined
+        : `run \`openshell gateway select ${gatewayName}\` and retry`,
     });
   }
 
   if (shouldInspectLegacyGatewayContainer(sb)) {
     checks.push(
-      ...dockerInspectGateway(`openshell-cluster-${NEMOCLAW_GATEWAY_NAME}`, {
+      ...dockerInspectGateway(`openshell-cluster-${gatewayName}`, {
         namedGatewayConnected: openshellConnected,
+        gatewayName,
       }),
     );
   }

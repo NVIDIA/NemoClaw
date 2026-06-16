@@ -950,10 +950,18 @@ export function buildConfig(env: Env = process.env): JsonObject {
   tools.web.fetch = { enabled: true, useTrustedEnvProxy: true };
 
   if (env.NEMOCLAW_WEB_SEARCH_ENABLED === "1") {
-    tools.web.search = {
+    // OpenClaw 2026.5.x: web-search providers are external plugins. The
+    // provider-owned apiKey lives under plugins.entries.<plugin>.config,
+    // not inline in tools.web.search. Writing the legacy inline shape makes
+    // the build-time `openclaw plugins install` exit non-zero during its
+    // pre-install config validation (the brave plugin is not installed yet),
+    // aborting the image build under `set -eu` before `doctor --fix` can
+    // migrate it. Emit the current schema directly so install validates
+    // cleanly. See NemoClaw #5266 (follow-up to #4955 / #3948).
+    tools.web.search = { enabled: true, provider: "brave" };
+    config.plugins.entries.brave = {
       enabled: true,
-      provider: "brave",
-      apiKey: "openshell:resolve:env:BRAVE_API_KEY",
+      config: { webSearch: { apiKey: "openshell:resolve:env:BRAVE_API_KEY" } },
     };
   }
 

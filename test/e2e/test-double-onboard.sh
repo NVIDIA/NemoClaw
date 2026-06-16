@@ -63,6 +63,10 @@ phase_elapsed() {
 dump_diagnostics() {
   local phase_label="${1:-unknown}"
   info "=== Diagnostics for ${phase_label} ==="
+  if [ -n "${RUN_ONBOARD_OUTPUT:-}" ]; then
+    info "Captured nemoclaw onboard stdout/stderr (exit=${RUN_ONBOARD_EXIT:-?}):"
+    printf '%s\n' "$RUN_ONBOARD_OUTPUT" | sed 's/^/    /'
+  fi
   info "openshell status:"
   openshell status 2>&1 | sed 's/^/    /' || true
   info "openshell sandbox list:"

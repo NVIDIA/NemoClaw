@@ -9,17 +9,31 @@ import {
   slackBindings,
   slackChannel,
 } from "../../../test/helpers/messaging-conflict-fixtures";
+import { SLACK_SOCKET_MODE_GATEWAY_CONFLICT_HOOK_HANDLER_ID } from "../messaging/channels/slack/hooks";
 import type { SandboxMessagingPlan } from "../messaging/manifest";
 import { enforceMessagingChannelConflicts } from "./messaging-conflict-guard";
 
 class AbortError extends Error {}
+
+const SLACK_SOCKET_MODE_GATEWAY_CONFLICT_HOOK = {
+  channelId: "slack",
+  id: "slack-socket-mode-gateway-conflict",
+  phase: "pre-enable",
+  handler: SLACK_SOCKET_MODE_GATEWAY_CONFLICT_HOOK_HANDLER_ID,
+  onFailure: "abort",
+} as const satisfies SandboxMessagingPlan["channels"][number]["hooks"][number];
 
 // Distinct per-sandbox token hashes so the credential-sharing axis stays
 // silent and the gateway axis is exercised in isolation: the whole point of
 // #4953 is that *different* Slack apps still collide on a shared gateway.
 function slackPlan(sandboxName: string): SandboxMessagingPlan {
   return makePlan(sandboxName, {
-    channels: [slackChannel()],
+    channels: [
+      {
+        ...slackChannel(),
+        hooks: [SLACK_SOCKET_MODE_GATEWAY_CONFLICT_HOOK],
+      },
+    ],
     credentialBindings: slackBindings(`${sandboxName}-bot`, `${sandboxName}-app`, sandboxName),
   });
 }
@@ -63,7 +77,7 @@ describe("enforceMessagingChannelConflicts — Slack Socket Mode gateway axis (#
       expect.stringContaining("Slack Socket Mode is already enabled for sandbox 'alice'"),
     );
     expect(error).toHaveBeenCalledWith(
-      expect.stringContaining("only one sandbox per gateway can receive Slack Socket Mode events"),
+      expect.stringContaining("resolve the messaging pre-enable conflict above"),
     );
   });
 
@@ -107,6 +121,34 @@ describe("enforceMessagingChannelConflicts — Slack Socket Mode gateway axis (#
       expect.stringContaining("Slack Socket Mode is already enabled"),
     );
     expect(error).not.toHaveBeenCalled();
+  });
+
+  it("rethrows unexpected pre-enable hook infrastructure failures", async () => {
+    const badPlan = makePlan("bob", {
+      channels: [
+        {
+          ...slackChannel(),
+          hooks: [
+            {
+              ...SLACK_SOCKET_MODE_GATEWAY_CONFLICT_HOOK,
+              handler: "slack.missingHandler",
+            },
+          ],
+        },
+      ],
+      credentialBindings: [],
+    });
+    const { deps, log, error, promptContinue } = makeDeps({
+      currentPlan: badPlan,
+      isNonInteractive: () => false,
+    });
+
+    await expect(enforceMessagingChannelConflicts(deps as never)).rejects.toThrow(
+      "Missing messaging hook handler 'slack.missingHandler'",
+    );
+    expect(log).not.toHaveBeenCalled();
+    expect(error).not.toHaveBeenCalled();
+    expect(promptContinue).not.toHaveBeenCalled();
   });
 
   it("is a no-op when the current plan does not enable Slack", async () => {

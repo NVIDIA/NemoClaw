@@ -884,7 +884,7 @@ function backupStateFile(
   return "backed_up";
 }
 
-function buildStateFileRestoreCommand(
+export function buildStateFileRestoreCommand(
   dir: string,
   spec: StateFileSpec,
   refreshOpenClawConfigHash = false,
@@ -913,11 +913,34 @@ function buildStateFileRestoreCommand(
     '[ ! -L "$dst" ] || { echo "refusing symlinked state target: $dst" >&2; exit 11; }',
     'mkdir -p "$parent"',
     'tmp="$(mktemp "${parent}/.nemoclaw-restore.XXXXXX")"',
-    "trap 'rm -f \"$tmp\"' EXIT",
+    'trap \'rm -f "$tmp" "${anchor_tmp:-}"\' EXIT',
     'cat > "$tmp"',
     'chmod 640 "$tmp"',
-    'mv -f "$tmp" "$dst"',
   ];
+
+  if (refreshOpenClawConfigHash) {
+    // OpenClaw guards openclaw.json with a `.last-good` recovery anchor: on its
+    // config-integrity check it archives any live config that differs from
+    // `.last-good` as `openclaw.json.clobbered.*` and reverts to `.last-good`.
+    // The rebuild restore writes the merged user config directly, so without
+    // refreshing the anchor OpenClaw reverts the restored config back to the
+    // freshly generated baseline captured at first boot (issue #5202). Refresh
+    // the anchor from the staged temp BEFORE swapping the live file so the
+    // integrity watcher never observes a config that disagrees with it. Stage
+    // through a temp + atomic rename and fail closed (before the live swap) so
+    // a partial/failed anchor write never leaves a stale recovery target that
+    // would let OpenClaw revert the restored config.
+    steps.push(
+      'last_good="${dst}.last-good"',
+      '[ ! -L "$last_good" ] || { echo "refusing symlinked last-good target: $last_good" >&2; exit 13; }',
+      'anchor_tmp="$(mktemp "${parent}/.nemoclaw-lastgood.XXXXXX")" || { echo "failed to stage last-good anchor" >&2; exit 14; }',
+      'cat "$tmp" > "$anchor_tmp" || { echo "failed to write last-good anchor" >&2; exit 14; }',
+      'chmod 660 "$anchor_tmp" 2>/dev/null || true',
+      'mv -f "$anchor_tmp" "$last_good" || { echo "failed to install last-good anchor" >&2; exit 14; }',
+    );
+  }
+
+  steps.push('mv -f "$tmp" "$dst"');
 
   if (refreshOpenClawConfigHash) {
     steps.push(

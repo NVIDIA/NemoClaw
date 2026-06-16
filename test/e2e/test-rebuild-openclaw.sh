@@ -215,12 +215,28 @@ VERIFY=$(openshell sandbox exec --name "${SANDBOX_NAME}" -- cat "${MARKER_FILE}"
 
 # Register in NemoClaw registry with old version
 python3 -c "
-import json
+import json, os
+sess_path = '${SESSION_FILE}'
+try:
+    with open(sess_path) as f:
+        sess = json.load(f)
+except Exception:
+    sess = {}
+env_provider = (os.environ.get('NEMOCLAW_PROVIDER') or '').strip()
+if env_provider == 'custom':
+    env_provider = 'compatible-endpoint'
+provider = sess.get('provider') or env_provider or 'compatible-endpoint'
+model = (
+    sess.get('model')
+    or os.environ.get('NEMOCLAW_MODEL')
+    or os.environ.get('NEMOCLAW_COMPAT_MODEL')
+    or 'nvidia/nvidia/nemotron-3-super-v3'
+)
 reg = {'sandboxes': {'${SANDBOX_NAME}': {
     'name': '${SANDBOX_NAME}',
     'createdAt': '$(date -u +%Y-%m-%dT%H:%M:%SZ)',
-    'model': 'nvidia/nemotron-3-super-120b-a12b',
-    'provider': 'nvidia-prod',
+    'model': model,
+    'provider': provider,
     'gpuEnabled': False,
     'policies': ['npm', 'pypi'],
     'policyTier': None,
@@ -234,12 +250,6 @@ with open('${REGISTRY_FILE}', 'w') as f:
 # Mark preflight and gateway steps as complete so that rebuild's
 # onboard --resume skips them (the gateway is already running and
 # port 8080 is legitimately in use).
-sess_path = '${SESSION_FILE}'
-try:
-    with open(sess_path) as f:
-        sess = json.load(f)
-except Exception:
-    sess = {}
 sess['sandboxName'] = '${SANDBOX_NAME}'
 sess['status'] = 'complete'
 sess['resumable'] = True
@@ -436,10 +446,11 @@ fi
 
 # Inference works after rebuild (proves credential chain is intact)
 info "Verifying inference after rebuild..."
+POST_REBUILD_INFERENCE_MODEL="${NEMOCLAW_MODEL:-${NEMOCLAW_COMPAT_MODEL:-nvidia/nvidia/nemotron-3-super-v3}}"
 INFERENCE_RESPONSE=$(openshell sandbox exec --name "${SANDBOX_NAME}" -- \
   curl -s --max-time 60 https://inference.local/v1/chat/completions \
   -H 'Content-Type: application/json' \
-  -d '{"model":"nvidia/nemotron-3-super-120b-a12b","messages":[{"role":"user","content":"Reply with exactly one word: PONG"}],"max_tokens":100}' \
+  -d "{\"model\":\"${POST_REBUILD_INFERENCE_MODEL}\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with exactly one word: PONG\"}],\"max_tokens\":100}" \
   2>&1 || true)
 if echo "${INFERENCE_RESPONSE}" | python3 -c "import json,sys; r=json.load(sys.stdin); c=r['choices'][0]['message']; print(c.get('content',''))" 2>/dev/null | grep -qi "PONG"; then
   pass "Inference works after rebuild (NVIDIA API key + provider chain intact)"

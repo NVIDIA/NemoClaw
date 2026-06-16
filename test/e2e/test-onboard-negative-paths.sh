@@ -24,6 +24,8 @@ export NEMOCLAW_E2E_DEFAULT_TIMEOUT=1800
 SCRIPT_DIR_TIMEOUT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # shellcheck source=test/e2e/e2e-timeout.sh
 source "${SCRIPT_DIR_TIMEOUT}/e2e-timeout.sh"
+# shellcheck source=test/e2e/lib/ci-compatible-inference.sh
+. "${SCRIPT_DIR_TIMEOUT}/lib/ci-compatible-inference.sh"
 
 LOG_FILE="${NEMOCLAW_E2E_LOG:-/tmp/nemoclaw-e2e-onboard-negative-paths.log}"
 exec > >(tee "$LOG_FILE") 2>&1
@@ -73,11 +75,35 @@ if ! command -v nemoclaw >/dev/null 2>&1; then
 fi
 
 SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-onboard-negative}"
-CLOUD_MODEL="${NEMOCLAW_ONBOARD_NEGATIVE_MODEL:-nvidia/nemotron-3-super-120b-a12b}"
 PORT_CONFLICT_PORT="${NEMOCLAW_ONBOARD_NEGATIVE_CONFLICT_PORT:-18080}"
 SESSION_FILE="$HOME/.nemoclaw/onboard-session.json"
 REGISTRY_FILE="$HOME/.nemoclaw/sandboxes.json"
 RESTORE_API_KEY="${NVIDIA_INFERENCE_API_KEY:-}"
+if [ -n "$RESTORE_API_KEY" ]; then
+  export NVIDIA_INFERENCE_API_KEY="$RESTORE_API_KEY"
+fi
+nemoclaw_e2e_configure_compatible_inference || {
+  fail "Hosted CI inference could not be configured"
+  exit 1
+}
+CLOUD_MODEL="${NEMOCLAW_ONBOARD_NEGATIVE_MODEL:-$(nemoclaw_e2e_hosted_inference_model)}"
+HOSTED_INFERENCE_BASE_URL="$(nemoclaw_e2e_hosted_inference_base_url)"
+EXPECTED_PROVIDER="$(nemoclaw_e2e_expected_route_provider)"
+ONBOARD_INFERENCE_ENV=(
+  "NEMOCLAW_PROVIDER=cloud"
+  "NEMOCLAW_MODEL=$CLOUD_MODEL"
+  "NVIDIA_INFERENCE_API_KEY=$RESTORE_API_KEY"
+)
+if nemoclaw_e2e_using_compatible_inference; then
+  ONBOARD_INFERENCE_ENV=(
+    "NEMOCLAW_PROVIDER=custom"
+    "NEMOCLAW_ENDPOINT_URL=$HOSTED_INFERENCE_BASE_URL"
+    "NEMOCLAW_MODEL=$CLOUD_MODEL"
+    "NEMOCLAW_COMPAT_MODEL=$CLOUD_MODEL"
+    "COMPATIBLE_API_KEY=$RESTORE_API_KEY"
+    "NVIDIA_INFERENCE_API_KEY=$RESTORE_API_KEY"
+  )
+fi
 
 # shellcheck source=test/e2e/lib/sandbox-teardown.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox-teardown.sh"
@@ -294,10 +320,7 @@ else
   exit 1
 fi
 
-if [[ -n "$RESTORE_API_KEY" && "$RESTORE_API_KEY" == nvapi-* ]]; then
-  pass "NVIDIA_INFERENCE_API_KEY is set"
-else
-  fail "NVIDIA_INFERENCE_API_KEY not set or invalid; required for live onboard scenarios"
+if ! nemoclaw_e2e_require_hosted_inference_key; then
   print_summary
   exit 1
 fi
@@ -333,11 +356,10 @@ section "Phase 3: Entry option validation"
 
 FROM_GUARD_LOG="$(mktemp)"
 env -u NEMOCLAW_SANDBOX_NAME \
+  "${ONBOARD_INFERENCE_ENV[@]}" \
   NEMOCLAW_NON_INTERACTIVE=1 \
   NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
-  NEMOCLAW_PROVIDER=cloud \
   NEMOCLAW_POLICY_MODE=skip \
-  NVIDIA_INFERENCE_API_KEY="$RESTORE_API_KEY" \
   node "$REPO/bin/nemoclaw.js" onboard --non-interactive --from "$REPO/Dockerfile" \
   >"$FROM_GUARD_LOG" 2>&1
 from_guard_exit=$?
@@ -365,12 +387,11 @@ fi
 
 FROM_ENV_NAME_LOG="$(mktemp)"
 env \
+  "${ONBOARD_INFERENCE_ENV[@]}" \
   NEMOCLAW_NON_INTERACTIVE=1 \
   NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
   NEMOCLAW_SANDBOX_NAME="bad name" \
-  NEMOCLAW_PROVIDER=cloud \
   NEMOCLAW_POLICY_MODE=skip \
-  NVIDIA_INFERENCE_API_KEY="$RESTORE_API_KEY" \
   node "$REPO/bin/nemoclaw.js" onboard --non-interactive --from "$REPO/Dockerfile" \
   >"$FROM_ENV_NAME_LOG" 2>&1
 from_env_name_exit=$?
@@ -446,14 +467,14 @@ else
 fi
 
 PORT_CONFLICT_LOG="$(mktemp)"
-NEMOCLAW_NON_INTERACTIVE=1 \
+env \
+  "${ONBOARD_INFERENCE_ENV[@]}" \
+  NEMOCLAW_NON_INTERACTIVE=1 \
   NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
   NEMOCLAW_SANDBOX_NAME="${SANDBOX_NAME}-port" \
   NEMOCLAW_RECREATE_SANDBOX=1 \
   NEMOCLAW_GATEWAY_PORT="$PORT_CONFLICT_PORT" \
-  NEMOCLAW_PROVIDER=cloud \
   NEMOCLAW_POLICY_MODE=skip \
-  NVIDIA_INFERENCE_API_KEY="$RESTORE_API_KEY" \
   node "$REPO/bin/nemoclaw.js" onboard --non-interactive >"$PORT_CONFLICT_LOG" 2>&1
 port_conflict_exit=$?
 port_conflict_output="$(cat "$PORT_CONFLICT_LOG")"
@@ -487,15 +508,14 @@ fi
 section "Phase 6: Live non-interactive onboard honors presets and model"
 
 LIVE_LOG="$(mktemp)"
-NEMOCLAW_NON_INTERACTIVE=1 \
+env \
+  "${ONBOARD_INFERENCE_ENV[@]}" \
+  NEMOCLAW_NON_INTERACTIVE=1 \
   NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
   NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME" \
   NEMOCLAW_RECREATE_SANDBOX=1 \
-  NEMOCLAW_PROVIDER=cloud \
-  NEMOCLAW_MODEL="$CLOUD_MODEL" \
   NEMOCLAW_POLICY_MODE=custom \
   NEMOCLAW_POLICY_PRESETS=npm,pypi \
-  NVIDIA_INFERENCE_API_KEY="$RESTORE_API_KEY" \
   node "$REPO/bin/nemoclaw.js" onboard --non-interactive >"$LIVE_LOG" 2>&1
 live_exit=$?
 live_output="$(cat "$LIVE_LOG")"
@@ -510,20 +530,20 @@ else
   exit 1
 fi
 
-if printf '%s\n' "$live_output" | grep -q "Using NVIDIA Endpoints with model: ${CLOUD_MODEL}"; then
-  pass "Live onboard selected requested cloud model"
+if printf '%s\n' "$live_output" | grep -Fq "$CLOUD_MODEL"; then
+  pass "Live onboard selected requested hosted model"
 else
-  fail "Live onboard output did not confirm requested cloud model"
+  fail "Live onboard output did not confirm requested hosted model"
 fi
 
-if node - "$REGISTRY_FILE" "$SANDBOX_NAME" "$CLOUD_MODEL" <<'NODE'; then
+if node - "$REGISTRY_FILE" "$SANDBOX_NAME" "$CLOUD_MODEL" "$EXPECTED_PROVIDER" <<'NODE'; then
 const fs = require("node:fs");
-const [registryPath, sandboxName, expectedModel] = process.argv.slice(2);
+const [registryPath, sandboxName, expectedModel, expectedProvider] = process.argv.slice(2);
 const registry = JSON.parse(fs.readFileSync(registryPath, "utf8"));
 const sandbox = registry.sandboxes && registry.sandboxes[sandboxName];
 if (!sandbox) throw new Error(`missing sandbox registry entry: ${sandboxName}`);
-if (sandbox.provider !== "nvidia-prod") {
-  throw new Error(`expected provider nvidia-prod, got ${sandbox.provider}`);
+if (sandbox.provider !== expectedProvider) {
+  throw new Error(`expected provider ${expectedProvider}, got ${sandbox.provider}`);
 }
 if (sandbox.model !== expectedModel) {
   throw new Error(`expected model ${expectedModel}, got ${sandbox.model}`);
@@ -540,13 +560,13 @@ else
   fail "Registry did not record requested provider, model, and policy presets"
 fi
 
-if node - "$SESSION_FILE" "$SANDBOX_NAME" "$CLOUD_MODEL" <<'NODE'; then
+if node - "$SESSION_FILE" "$SANDBOX_NAME" "$CLOUD_MODEL" "$EXPECTED_PROVIDER" <<'NODE'; then
 const fs = require("node:fs");
-const [sessionPath, sandboxName, expectedModel] = process.argv.slice(2);
+const [sessionPath, sandboxName, expectedModel, expectedProvider] = process.argv.slice(2);
 const session = JSON.parse(fs.readFileSync(sessionPath, "utf8"));
 if (session.status !== "complete") throw new Error(`session status ${session.status}`);
 if (session.sandboxName !== sandboxName) throw new Error(`session sandbox ${session.sandboxName}`);
-if (session.provider !== "nvidia-prod") throw new Error(`session provider ${session.provider}`);
+if (session.provider !== expectedProvider) throw new Error(`session provider ${session.provider}`);
 if (session.model !== expectedModel) throw new Error(`session model ${session.model}`);
 const presets = Array.isArray(session.policyPresets) ? session.policyPresets : [];
 for (const preset of ["npm", "pypi"]) {

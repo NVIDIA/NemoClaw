@@ -112,7 +112,7 @@ models:
     api_base: "https://integrate.api.nvidia.com"
 
   - name: super
-    litellm_model: "openai/nvidia/nvidia/nemotron-3-super-v3"
+    litellm_model: "openai/nvidia/nemotron-3-super-120b-a12b"
     cost_per_m_input_tokens: 0.10
     api_base: "https://integrate.api.nvidia.com"
 ```
@@ -379,6 +379,20 @@ NEMOCLAW_PROVIDER=install-vllm \
 
 NemoClaw accepts `HUGGING_FACE_HUB_TOKEN` as an alternative.
 The token check runs on the host before any docker pull, so a missing or empty token aborts onboarding before bandwidth is spent on a 401.
+
+### Add Managed-vLLM Serve Arguments
+
+For advanced vLLM options that are not in the NemoClaw registry yet, export `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` as a JSON array of individual non-blank `vllm serve` tokens.
+NemoClaw trims and validates the array before pulling images or downloading models, shell-quotes each token, and appends the tokens after the registry defaults.
+
+```bash
+NEMOCLAW_PROVIDER=install-vllm \
+  NEMOCLAW_VLLM_EXTRA_ARGS_JSON='["--max-num-seqs","2","--disable-log-requests"]' \
+  $$nemoclaw onboard --non-interactive
+```
+
+Use this for operator-owned tuning only.
+If the selected vLLM image does not support an argument, the managed container exits and NemoClaw prints the vLLM log tail.
 
 ## NVIDIA NIM (Experimental)
 

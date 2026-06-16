@@ -30,6 +30,70 @@ function writeExecutable(filePath: string, source: string): void {
   fs.writeFileSync(filePath, source, { mode: 0o755 });
 }
 
+/**
+ * Write fake `openshell` and `ssh` executables that mirror the backup/restore
+ * SSH contract against a local sandbox-root directory, so backupSandboxState /
+ * restoreSandboxState exercise the real code path without a live sandbox.
+ */
+function writeFakeSandboxBins(binDir: string, fakeRoot: string): void {
+  writeExecutable(
+    path.join(binDir, "openshell"),
+    `#!/bin/sh
+if [ "$1" = "sandbox" ] && [ "$2" = "get" ]; then
+  printf '{"name":"%s"}\n' "\${3:-alpha}"
+  exit 0
+fi
+if [ "$1" = "sandbox" ] && [ "$2" = "ssh-config" ]; then
+  printf 'Host openshell-alpha\n  HostName 127.0.0.1\n  User sandbox\n'
+  exit 0
+fi
+exit 0
+`,
+  );
+
+  writeExecutable(
+    path.join(binDir, "ssh"),
+    `#!/usr/bin/env node
+const fs = require("fs");
+const path = require("path");
+const dir = path.join(${JSON.stringify(fakeRoot)}, ".openclaw");
+const cmd = process.argv[process.argv.length - 1] || "";
+function readStdin() {
+  const chunks = [];
+  for (;;) {
+    const buf = Buffer.alloc(65536);
+    let n = 0;
+    try { n = fs.readSync(0, buf, 0, buf.length, null); } catch { break; }
+    if (n === 0) break;
+    chunks.push(buf.subarray(0, n));
+  }
+  return Buffer.concat(chunks);
+}
+if (cmd.includes("[ -d ")) { process.exit(0); }
+if (cmd.includes("openclaw.json") && cmd.includes("cat --")) {
+  process.stdout.write(fs.readFileSync(path.join(dir, "openclaw.json")));
+  process.exit(0);
+}
+if (cmd.includes(".nemoclaw-restore") && cmd.includes("openclaw.json")) {
+  const configPath = path.join(dir, "openclaw.json");
+  const restored = readStdin();
+  // Mirror the real restore command: the OpenClaw .last-good recovery anchor is
+  // refreshed from the staged temp BEFORE the live config is swapped (#5202).
+  if (cmd.includes("last-good")) {
+    fs.writeFileSync(path.join(dir, "openclaw.json.last-good"), restored);
+  }
+  fs.writeFileSync(configPath, restored);
+  if (cmd.includes("sha256sum") && cmd.includes(".config-hash")) {
+    const digest = require("crypto").createHash("sha256").update(fs.readFileSync(configPath)).digest("hex");
+    fs.writeFileSync(path.join(dir, ".config-hash"), digest + "  openclaw.json\\n");
+  }
+  process.exit(0);
+}
+process.exit(0);
+`,
+  );
+}
+
 function writeOpenClawRegistry(sandboxName: string): void {
   fs.mkdirSync(path.join(TMP_HOME, ".nemoclaw"), { recursive: true });
   fs.writeFileSync(
@@ -95,56 +159,7 @@ describe("OpenClaw durable config file (#5027)", () => {
       };
       fs.writeFileSync(path.join(openclawDir, "openclaw.json"), JSON.stringify(original, null, 2));
 
-      writeExecutable(
-        path.join(binDir, "openshell"),
-        `#!/bin/sh
-if [ "$1" = "sandbox" ] && [ "$2" = "get" ]; then
-  printf '{"name":"%s"}\n' "\${3:-alpha}"
-  exit 0
-fi
-if [ "$1" = "sandbox" ] && [ "$2" = "ssh-config" ]; then
-  printf 'Host openshell-alpha\n  HostName 127.0.0.1\n  User sandbox\n'
-  exit 0
-fi
-exit 0
-`,
-      );
-
-      writeExecutable(
-        path.join(binDir, "ssh"),
-        `#!/usr/bin/env node
-const fs = require("fs");
-const path = require("path");
-const dir = path.join(${JSON.stringify(fakeRoot)}, ".openclaw");
-const cmd = process.argv[process.argv.length - 1] || "";
-function readStdin() {
-  const chunks = [];
-  for (;;) {
-    const buf = Buffer.alloc(65536);
-    let n = 0;
-    try { n = fs.readSync(0, buf, 0, buf.length, null); } catch { break; }
-    if (n === 0) break;
-    chunks.push(buf.subarray(0, n));
-  }
-  return Buffer.concat(chunks);
-}
-if (cmd.includes("[ -d ")) { process.exit(0); }
-if (cmd.includes("openclaw.json") && cmd.includes("cat --")) {
-  process.stdout.write(fs.readFileSync(path.join(dir, "openclaw.json")));
-  process.exit(0);
-}
-if (cmd.includes(".nemoclaw-restore") && cmd.includes("openclaw.json")) {
-  const configPath = path.join(dir, "openclaw.json");
-  fs.writeFileSync(configPath, readStdin());
-  if (cmd.includes("sha256sum") && cmd.includes(".config-hash")) {
-    const digest = require("crypto").createHash("sha256").update(fs.readFileSync(configPath)).digest("hex");
-    fs.writeFileSync(path.join(dir, ".config-hash"), digest + "  openclaw.json\\n");
-  }
-  process.exit(0);
-}
-process.exit(0);
-`,
-      );
+      writeFakeSandboxBins(binDir, fakeRoot);
 
       writeOpenClawRegistry("alpha");
       // writeOpenClawRegistry records agent:null → defaults to openclaw.
@@ -217,6 +232,150 @@ process.exit(0);
       expect(fs.readFileSync(path.join(openclawDir, ".config-hash"), "utf-8")).toBe(
         `${expectedHash}  openclaw.json\n`,
       );
+    } finally {
+      if (oldOpenshell === undefined) {
+        delete process.env.NEMOCLAW_OPENSHELL_BIN;
+      } else {
+        process.env.NEMOCLAW_OPENSHELL_BIN = oldOpenshell;
+      }
+      process.env.PATH = oldPath;
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
+  }, 15000);
+
+  it("preserves reporter-owned model metadata and mcp.servers across rebuild (#5202)", async () => {
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-snapshot-5202-"));
+    const oldPath = process.env.PATH;
+    const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
+    try {
+      const binDir = path.join(fixture, "bin");
+      const fakeRoot = path.join(fixture, "sandbox-root");
+      const openclawDir = path.join(fakeRoot, ".openclaw");
+      fs.mkdirSync(binDir, { recursive: true });
+      fs.mkdirSync(openclawDir, { recursive: true });
+
+      // Reporter-shaped v0.0.62 config: a tuned inference provider model plus
+      // top-level mcp.servers, a real inline MCP secret, and a runtime gateway.
+      const original = {
+        models: {
+          mode: "merge",
+          providers: {
+            inference: {
+              baseUrl: "http://127.0.0.1:8789/v1",
+              apiKey: "unused",
+              api: "chat-completions",
+              models: [
+                {
+                  compat: { supportsUsageInStreaming: true, toolCallStyle: "openai" },
+                  id: "moonshotai/kimi-k2",
+                  name: "stale-display-name",
+                  reasoning: true,
+                  input: ["text", "image"],
+                  cost: { input: 0.5, output: 1.5, cacheRead: 0.1, cacheWrite: 0.2 },
+                  contextWindow: 131072,
+                  maxTokens: 32768,
+                },
+              ],
+            },
+          },
+        },
+        mcp: {
+          servers: {
+            filesystem: { command: "npx", args: ["-y", "fs-server", "/work"] },
+            github: {
+              command: "npx",
+              env: { GITHUB_TOKEN: "ghp_raw_secret", NODE_ENV: "production" },
+            },
+          },
+        },
+        gateway: { port: 18789, authToken: "gw-token" },
+      };
+      fs.writeFileSync(path.join(openclawDir, "openclaw.json"), JSON.stringify(original, null, 2));
+
+      writeFakeSandboxBins(binDir, fakeRoot);
+      writeOpenClawRegistry("alpha");
+
+      process.env.NEMOCLAW_OPENSHELL_BIN = path.join(binDir, "openshell");
+      process.env.PATH = `${binDir}:${oldPath || ""}`;
+
+      const backup = sandboxState.backupSandboxState("alpha");
+      expect(backup.success).toBe(true);
+
+      // Local backup keeps non-secret tuning + mcp.servers; secrets are stripped.
+      const backedUp = JSON.parse(
+        fs.readFileSync(path.join(backup.manifest!.backupPath, "openclaw.json"), "utf-8"),
+      );
+      expect(backedUp.models.providers.inference.models[0].reasoning).toBe(true);
+      expect(backedUp.mcp.servers.filesystem.command).toBe("npx");
+      expect(backedUp.mcp.servers.github.env.GITHUB_TOKEN).toBe("[STRIPPED_BY_MIGRATION]");
+      expect(backedUp.mcp.servers.github.env.NODE_ENV).toBe("production");
+      expect(backedUp.gateway).toBeUndefined();
+
+      // Fresh v0.0.63 rebuild output: same provider/model id, reset tuning, a
+      // fresh runtime gateway and a fresh base URL.
+      fs.writeFileSync(
+        path.join(openclawDir, "openclaw.json"),
+        JSON.stringify(
+          {
+            models: {
+              mode: "merge",
+              providers: {
+                inference: {
+                  baseUrl: "http://127.0.0.1:9999/v1",
+                  apiKey: "unused",
+                  api: "chat-completions",
+                  models: [
+                    {
+                      id: "moonshotai/kimi-k2",
+                      name: "fresh-display-name",
+                      reasoning: false,
+                      input: ["text"],
+                      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                      contextWindow: 131072,
+                      maxTokens: 4096,
+                    },
+                  ],
+                },
+              },
+            },
+            gateway: { auth: { token: "fresh-runtime-token" } },
+          },
+          null,
+          2,
+        ),
+      );
+
+      const restore = sandboxState.restoreSandboxState("alpha", backup.manifest!.backupPath);
+      expect(restore.success).toBe(true);
+
+      const after = JSON.parse(fs.readFileSync(path.join(openclawDir, "openclaw.json"), "utf-8"));
+      const model = after.models.providers.inference.models[0];
+      // Reporter-owned tuning is restored.
+      expect(model.reasoning).toBe(true);
+      expect(model.cost).toEqual({ input: 0.5, output: 1.5, cacheRead: 0.1, cacheWrite: 0.2 });
+      expect(model.maxTokens).toBe(32768);
+      expect(model.compat).toEqual({ supportsUsageInStreaming: true, toolCallStyle: "openai" });
+      expect(model.input).toEqual(["text", "image"]);
+      // Fresh runtime routing/credentials win.
+      expect(model.id).toBe("moonshotai/kimi-k2");
+      expect(model.name).toBe("fresh-display-name");
+      expect(after.models.providers.inference.baseUrl).toBe("http://127.0.0.1:9999/v1");
+      expect(after.gateway.auth.token).toBe("fresh-runtime-token");
+      // Durable mcp.servers survives; the raw MCP secret never returns.
+      expect(after.mcp.servers.filesystem).toEqual({
+        command: "npx",
+        args: ["-y", "fs-server", "/work"],
+      });
+      expect(after.mcp.servers.github.env.GITHUB_TOKEN).toBe("[STRIPPED_BY_MIGRATION]");
+
+      // OpenClaw's .last-good recovery anchor is refreshed to the restored
+      // config so its integrity check does not revert the merge (#5202).
+      const lastGood = JSON.parse(
+        fs.readFileSync(path.join(openclawDir, "openclaw.json.last-good"), "utf-8"),
+      );
+      expect(lastGood.models.providers.inference.models[0].reasoning).toBe(true);
+      expect(lastGood.models.providers.inference.models[0].maxTokens).toBe(32768);
+      expect(lastGood.mcp.servers.filesystem.command).toBe("npx");
     } finally {
       if (oldOpenshell === undefined) {
         delete process.env.NEMOCLAW_OPENSHELL_BIN;

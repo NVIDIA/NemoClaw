@@ -141,6 +141,20 @@ export function validatePrReviewAdvisorWorkflowBoundary(
   requireRunContains(errors, analyze, 'cd "$ADVISOR_WORKDIR"');
   requireRunContains(errors, analyze, "$ADVISOR_DIR/tools/pr-review-advisor/analyze.mts");
   requireRunContains(errors, analyze, "$ADVISOR_DIR/tools/pr-review-advisor/schema.json");
+  if (analyze) {
+    const analyzeEnv = asRecord(analyze.env);
+    if (
+      stringValue(analyzeEnv.PR_REVIEW_ADVISOR_API_KEY).trim() !==
+      "${{ secrets.PR_REVIEW_ADVISOR_API_KEY }}"
+    ) {
+      errors.push(
+        "Run PR review advisor must receive PR_REVIEW_ADVISOR_API_KEY only from secrets.PR_REVIEW_ADVISOR_API_KEY",
+      );
+    }
+    if (Object.hasOwn(analyzeEnv, "OPENAI_API_KEY")) {
+      errors.push("Run PR review advisor must not receive OPENAI_API_KEY");
+    }
+  }
 
   const comment = requireStep(errors, steps, "Post PR review advisor comment");
   requireRunContains(errors, comment, "$ADVISOR_DIR/tools/pr-review-advisor/comment.mts");

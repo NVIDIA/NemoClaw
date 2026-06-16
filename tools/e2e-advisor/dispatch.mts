@@ -60,6 +60,7 @@ type DispatchPlan = {
   jobs?: string[];
   ignoredJobs?: string[];
   recommendedJobs?: string[];
+  targetRefSecretBlockedJobs?: string[];
   dispatchableJobCount?: number;
   prNumber?: number;
   targetRef?: string;
@@ -260,16 +261,36 @@ export function planAutoDispatch({
     };
   }
 
-  const dispatchableJobs = extractDispatchableJobs(workflowText);
+  const targetRef = pr.head?.sha || pr.head?.ref || "";
+  const dispatchableJobInfos = extractDispatchableJobInfos(workflowText);
+  const dispatchableJobs = dispatchableJobInfos.map((job) => job.id);
   const recommendedJobs = collectRecommendedJobs(result, targetWorkflow);
-  const jobs = unique(recommendedJobs.filter((job) => dispatchableJobs.includes(job)));
-  const ignoredJobs = unique(recommendedJobs.filter((job) => !dispatchableJobs.includes(job)));
+  const dispatchableRecommendedJobs = unique(
+    recommendedJobs.filter((job) => dispatchableJobs.includes(job)),
+  );
+  const targetRefSecretBlockedJobs =
+    targetRef === ""
+      ? []
+      : dispatchableRecommendedJobs.filter((job) =>
+          dispatchableJobInfos.some((info) => info.id === job && info.targetRefSecretBlocked),
+        );
+  const jobs = unique(
+    dispatchableRecommendedJobs.filter((job) => !targetRefSecretBlockedJobs.includes(job)),
+  );
+  const ignoredJobs = unique([
+    ...recommendedJobs.filter((job) => !dispatchableJobs.includes(job)),
+    ...targetRefSecretBlockedJobs,
+  ]);
 
   if (jobs.length === 0) {
+    const onlyBlockedByTargetRefSecrets =
+      dispatchableRecommendedJobs.length > 0 &&
+      dispatchableRecommendedJobs.every((job) => targetRefSecretBlockedJobs.includes(job));
     return {
       ...base,
-      reason:
-        "no required advisor recommendations matched dispatchable jobs in the target workflow",
+      reason: onlyBlockedByTargetRefSecrets
+        ? "no required advisor recommendations can run with target_ref because hosted inference secrets are withheld"
+        : "no required advisor recommendations matched dispatchable jobs in the target workflow",
       prNumber: pr.number,
       authorAssociation,
       authorLogin,
@@ -277,10 +298,10 @@ export function planAutoDispatch({
       dispatchableJobCount: dispatchableJobs.length,
       recommendedJobs,
       ignoredJobs,
+      targetRefSecretBlockedJobs,
     };
   }
 
-  const targetRef = pr.head?.sha || pr.head?.ref || "";
   const dispatchRef = env.E2E_ADVISOR_AUTO_DISPATCH_REF || pr.base?.ref || DEFAULT_DISPATCH_REF;
   const advisorDispatchId = buildAdvisorDispatchId(pr.number, env);
   const inputs = {
@@ -299,6 +320,7 @@ export function planAutoDispatch({
     inputs,
     jobs,
     ignoredJobs,
+    targetRefSecretBlockedJobs,
     dispatchableJobCount: dispatchableJobs.length,
     prNumber: pr.number,
     targetRef,
@@ -311,11 +333,20 @@ export function planAutoDispatch({
 }
 
 export function extractDispatchableJobs(workflowText: string): string[] {
+  return extractDispatchableJobInfos(workflowText).map((job) => job.id);
+}
+
+type DispatchableJobInfo = {
+  id: string;
+  targetRefSecretBlocked: boolean;
+};
+
+function extractDispatchableJobInfos(workflowText: string): DispatchableJobInfo[] {
   const jobsBlockStart = workflowText.search(/^jobs:\s*$/m);
   if (jobsBlockStart === -1) return [];
 
   const lines = workflowText.slice(jobsBlockStart).split(/\r?\n/);
-  const jobs: string[] = [];
+  const jobs: DispatchableJobInfo[] = [];
   for (let index = 0; index < lines.length; index += 1) {
     const match = lines[index].match(/^  ([A-Za-z0-9_-]+):\s*$/);
     if (!match) continue;
@@ -328,10 +359,26 @@ export function extractDispatchableJobs(workflowText: string): string[] {
     }
     const body = bodyLines.join("\n");
     if (body.includes("inputs.jobs") && body.includes(`,${job},`)) {
-      jobs.push(job);
+      jobs.push({
+        id: job,
+        targetRefSecretBlocked: isTargetRefSecretBlockedJob(body),
+      });
     }
   }
-  return jobs.sort();
+  return jobs.sort((left, right) => left.id.localeCompare(right.id));
+}
+
+function isTargetRefSecretBlockedJob(body: string): boolean {
+  const callsScriptRunnerWithHostedInference =
+    body.includes("uses: ./.github/workflows/e2e-script.yaml") &&
+    /^\s+nvidia_api_key:\s*true\s*$/m.test(body);
+  if (callsScriptRunnerWithHostedInference) return true;
+
+  const hasTargetRefGuardedInferenceSecret =
+    body.includes("inputs.target_ref == ''") && body.includes("secrets.NVIDIA_INFERENCE_API_KEY");
+  const usesHostedInferenceSecret =
+    body.includes("NEMOCLAW_E2E_USE_HOSTED_INFERENCE") || body.includes("COMPATIBLE_API_KEY");
+  return hasTargetRefGuardedInferenceSecret && usesHostedInferenceSecret;
 }
 
 export function collectRecommendedJobs(
@@ -533,6 +580,14 @@ function renderDispatchSummary(result: DispatchPlan): string {
   if (Array.isArray(result.ignoredJobs) && result.ignoredJobs.length > 0) {
     lines.push(
       `Ignored recommendations: ${result.ignoredJobs.map((job) => `\`${job}\``).join(", ")}`,
+    );
+  }
+  if (
+    Array.isArray(result.targetRefSecretBlockedJobs) &&
+    result.targetRefSecretBlockedJobs.length > 0
+  ) {
+    lines.push(
+      `Target-ref secret blocked jobs: ${result.targetRefSecretBlockedJobs.map((job) => `\`${job}\``).join(", ")}`,
     );
   }
   lines.push("");

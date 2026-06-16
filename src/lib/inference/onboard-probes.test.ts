@@ -284,10 +284,19 @@ describe("OpenAI-compatible inference probes", () => {
     });
   });
 
-  it("keeps the default chat-completions probe minimal for other models", () => {
+  it("keeps the default chat-completions probe bounded for other models", () => {
     expect(getChatCompletionsProbePayload("nvidia/nemotron-3-super-120b-a12b")).toEqual({
       model: "nvidia/nemotron-3-super-120b-a12b",
       messages: [{ role: "user", content: "Reply with exactly: OK" }],
+      max_tokens: 8,
+    });
+  });
+
+  it("bounds the hosted compatible inference probe for the served Nemotron model", () => {
+    expect(getChatCompletionsProbePayload("nvidia/nvidia/nemotron-3-super-v3")).toEqual({
+      model: "nvidia/nvidia/nemotron-3-super-v3",
+      messages: [{ role: "user", content: "Reply with exactly: OK" }],
+      max_tokens: 8,
     });
   });
 

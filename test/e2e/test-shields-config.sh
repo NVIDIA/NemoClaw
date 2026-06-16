@@ -19,7 +19,7 @@
 #
 # Prerequisites:
 #   - Docker running
-#   - NVIDIA_INFERENCE_API_KEY set (real key, starts with nvapi-)
+#   - NVIDIA_INFERENCE_API_KEY set for hosted inference
 #
 # Environment variables:
 #   NEMOCLAW_NON_INTERACTIVE=1             — required
@@ -34,6 +34,8 @@ export NEMOCLAW_E2E_DEFAULT_TIMEOUT=900
 SCRIPT_DIR_TIMEOUT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # shellcheck source=test/e2e/e2e-timeout.sh
 source "${SCRIPT_DIR_TIMEOUT}/e2e-timeout.sh"
+# shellcheck source=test/e2e/lib/ci-compatible-inference.sh
+. "${SCRIPT_DIR_TIMEOUT}/lib/ci-compatible-inference.sh"
 
 PASS=0
 FAIL=0
@@ -60,6 +62,7 @@ SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-shields}"
 # shellcheck source=test/e2e/lib/sandbox-teardown.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox-teardown.sh"
 register_sandbox_for_teardown "$SANDBOX_NAME"
+nemoclaw_e2e_configure_compatible_inference || exit 1
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
@@ -79,10 +82,7 @@ else
   exit 1
 fi
 
-if [ -n "${NVIDIA_INFERENCE_API_KEY:-}" ] && [[ "${NVIDIA_INFERENCE_API_KEY}" == nvapi-* ]]; then
-  pass "NVIDIA_INFERENCE_API_KEY is set"
-else
-  fail "NVIDIA_INFERENCE_API_KEY not set or invalid"
+if ! nemoclaw_e2e_require_hosted_inference_key; then
   exit 1
 fi
 

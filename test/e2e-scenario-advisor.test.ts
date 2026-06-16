@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { buildScenarioComment } from "../tools/e2e-advisor/scenario-comment.mts";
 import {
   buildPrompt,
+  buildScenarioPromptTurn,
   buildSystemPrompt,
   canonicalDispatchCommand,
   extractFreeStandingVitestJobs,
@@ -35,28 +36,49 @@ function metadata(
 }
 
 describe("Vitest E2E scenario advisor — prompt construction", () => {
-  it("user prompt embeds the metadata fields the advisor must echo back", () => {
+  it("user prompt refers to synthetic context instead of embedding bulky metadata", () => {
     const prompt = buildPrompt({
       baseRef: "origin/main",
       headRef: "HEAD",
       changedFiles: ["test/e2e-scenario/fixtures/phases/onboarding.ts"],
       diff: "+ echo ok",
     });
-    // Caller of normalizeScenarioAdvisorResult re-injects metadata, but the
-    // prompt must still surface enough context for the model to reason.
-    expect(prompt).toContain("origin/main");
-    expect(prompt).toContain("test/e2e-scenario/fixtures/phases/onboarding.ts");
-    expect(prompt).toContain("+ echo ok");
+    // Caller of normalizeScenarioAdvisorResult re-injects metadata; the prompt
+    // now points at synthetic tool results instead of embedding bulky context.
+    expect(prompt).toContain("tool results");
+    expect(prompt).not.toContain("origin/main");
+    expect(prompt).not.toContain("test/e2e-scenario/fixtures/phases/onboarding.ts");
+    expect(prompt).not.toContain("+ echo ok");
+
+    const turn = buildScenarioPromptTurn({
+      baseRef: "origin/main",
+      headRef: "HEAD",
+      changedFiles: ["test/e2e-scenario/fixtures/phases/onboarding.ts"],
+      diff: "+ echo ok",
+      schema: { $id: "test-schema", type: "object" },
+    });
+    expect(turn.syntheticToolResults?.map((result) => result.toolName)).toEqual([
+      "e2e_scenario_metadata",
+      "e2e_scenario_changed_files",
+      "e2e_scenario_git_diff",
+      "e2e_scenario_response_schema",
+    ]);
+    expect(turn.syntheticToolResults?.[0]?.content).toContain("origin/main");
+    expect(turn.syntheticToolResults?.[1]?.content).toContain(
+      "test/e2e-scenario/fixtures/phases/onboarding.ts",
+    );
+    expect(turn.syntheticToolResults?.[2]?.content).toContain("+ echo ok");
+    expect(turn.syntheticToolResults?.[3]?.content).toContain("test-schema");
   });
 
-  it("system prompt is non-empty and embeds the JSON schema for the model", () => {
-    // The model receives the schema inline; we only assert that the prompt
-    // exists, includes the schema discriminator, and routes scenario
-    // recommendations to the Vitest workflow rather than the legacy
-    // typed-shell dispatch surfaces.
+  it("system prompt is non-empty and points JSON schema lookup at synthetic context", () => {
+    // The model receives the schema through a synthetic tool result; the system
+    // prompt still routes scenario recommendations to the Vitest workflow rather
+    // than the legacy typed-shell dispatch surfaces.
     const systemPrompt = buildSystemPrompt({ $id: "test-schema", type: "object" });
     expect(systemPrompt.length).toBeGreaterThan(0);
-    expect(systemPrompt).toContain("test-schema");
+    expect(systemPrompt).not.toContain("test-schema");
+    expect(systemPrompt).toContain("e2e_scenario_response_schema");
     expect(systemPrompt).toContain(VITEST_SCENARIO_WORKFLOW);
     expect(systemPrompt).toContain("trusted advisor checkout");
     expect(systemPrompt).toContain("recommend the `e2e-scenarios-all` fan-out");

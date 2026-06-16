@@ -3,7 +3,7 @@
 
 import { detectOpenShellStateRpcResultIssue } from "./adapters/openshell/gateway-drift";
 import { stripAnsi } from "./adapters/openshell/client";
-import { captureOpenshell } from "./adapters/openshell/runtime";
+import { captureOpenshell, runOpenshell } from "./adapters/openshell/runtime";
 import { recoverNamedGatewayRuntime } from "./gateway-runtime-action";
 
 type SandboxListResult = ReturnType<typeof captureOpenshell>;
@@ -12,6 +12,10 @@ export type SandboxListRecoveryResult = {
   result: SandboxListResult;
   recoveryAttempted: boolean;
   recoverySucceeded: boolean;
+};
+
+export type CaptureSandboxListWithGatewayRecoveryOptions = {
+  gatewayName?: string;
 };
 
 export function isRecoverableSandboxListGatewayFailure(result: SandboxListResult): boolean {
@@ -24,15 +28,24 @@ export function isRecoverableSandboxListGatewayFailure(result: SandboxListResult
   );
 }
 
-export async function captureSandboxListWithGatewayRecovery(): Promise<SandboxListRecoveryResult> {
+export async function captureSandboxListWithGatewayRecovery(
+  options: CaptureSandboxListWithGatewayRecoveryOptions = {},
+): Promise<SandboxListRecoveryResult> {
+  if (options.gatewayName) {
+    runOpenshell(["gateway", "select", options.gatewayName], { ignoreError: true });
+  }
   const initial = captureOpenshell(["sandbox", "list"]);
   if (!isRecoverableSandboxListGatewayFailure(initial)) {
     return { result: initial, recoveryAttempted: false, recoverySucceeded: false };
   }
 
-  const recovery = await recoverNamedGatewayRuntime({
-    recoverableStates: ["missing_named", "named_unhealthy", "named_unreachable"],
-  });
+  const recoveryOptions: Parameters<typeof recoverNamedGatewayRuntime>[0] = {
+    recoverableStates: ["missing_named", "named_unhealthy", "named_unreachable", "connected_other"],
+  };
+  if (options.gatewayName) {
+    recoveryOptions.gatewayName = options.gatewayName;
+  }
+  const recovery = await recoverNamedGatewayRuntime(recoveryOptions);
   if (!recovery.recovered) {
     return { result: initial, recoveryAttempted: true, recoverySucceeded: false };
   }

@@ -8,6 +8,7 @@ import { captureHostCommand, type CommandCapture } from "./doctor-host-command";
 
 export type GatewayInspectOptions = {
   namedGatewayConnected?: boolean;
+  gatewayName?: string;
 };
 
 type LocalGatewayProbe = {

@@ -1,7 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
@@ -11,6 +15,127 @@ import {
   reusableNightlyJobs,
   type WorkflowJob,
 } from "./helpers/e2e-workflow-contract";
+
+type TraceTimingAnalyzer = {
+  ONBOARD_PHASE_ORDER: readonly string[];
+  TRACE_SUMMARY_FILE: string;
+  buildPhaseRows: (
+    currentPhases: Record<string, number>,
+    priorPhases: Record<string, number>,
+  ) => Array<{ label: string; currentMs: number; priorMs: number; deltaAbsMs: number }>;
+  buildTraceTimingResult: (deps: {
+    context: Record<string, any>;
+    github: Record<string, any>;
+  }) => Promise<{ traceTimingLine: string; traceSummaryLines: string[] }>;
+  formatTopPhaseChanges: (
+    phaseRows: Array<{ label: string; currentMs: number; priorMs: number; deltaAbsMs: number }>,
+  ) => string;
+  selectOnboardTrace: (
+    jsonTexts: string[],
+  ) => { totalMs: number; phases: Record<string, number> } | null;
+  buildTraceSummaryLines: (
+    currentTrace: { totalMs: number },
+    priorTrace: { totalMs: number },
+    priorTag: { name: string },
+    phaseRows: Array<{ label: string; currentMs: number; priorMs: number; deltaAbsMs: number }>,
+  ) => string[];
+};
+
+const require = createRequire(import.meta.url);
+const traceTiming = require("../scripts/scorecard/analyze-trace-timing.ts") as TraceTimingAnalyzer;
+
+const TRACE_SUMMARY_FILE = "cloud-onboard-trace-timing-summary.json";
+const TRUSTED_REF_GUARD = "github.event_name != 'workflow_dispatch' || inputs.target_ref == ''";
+const GUARDED_HOSTED_INFERENCE_SECRET = `\${{ (${TRUSTED_REF_GUARD}) && secrets.NVIDIA_INFERENCE_API_KEY || '' }}`;
+const GUARDED_PUBLIC_NVIDIA_SECRET = `\${{ (${TRUSTED_REF_GUARD}) && secrets.NVIDIA_API_KEY || '' }}`;
+const RAW_HOSTED_INFERENCE_SECRET = "${{ secrets.NVIDIA_INFERENCE_API_KEY }}";
+
+function timingSummary(
+  phases: Record<string, number> = { "nemoclaw.onboard.phase.preflight": 1000 },
+): string {
+  return JSON.stringify({
+    schema_version: "nemoclaw.trace_timing.v1",
+    total_duration_ms: Object.values(phases).reduce((total, value) => total + value, 0) || 1000,
+    phases,
+  });
+}
+
+function zippedTimingSummary(text: string): Buffer {
+  const tempDir = mkdtempSync(path.join(tmpdir(), "nemoclaw-trace-summary-zip-"));
+  try {
+    writeFileSync(path.join(tempDir, TRACE_SUMMARY_FILE), text, "utf8");
+    execFileSync(
+      "python3",
+      [
+        "-c",
+        "import sys, zipfile; z=zipfile.ZipFile(sys.argv[1], 'w'); z.write(sys.argv[2], sys.argv[3]); z.close()",
+        path.join(tempDir, "artifact.zip"),
+        path.join(tempDir, TRACE_SUMMARY_FILE),
+        TRACE_SUMMARY_FILE,
+      ],
+      { encoding: "utf8" },
+    );
+    return readFileSync(path.join(tempDir, "artifact.zip"));
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
+function traceGithubFixture(options: {
+  summariesByRunId?: Record<number, string>;
+  tags?: Array<{ name: string; sha: string }>;
+  runsByHeadSha?: Record<string, Array<{ id: number; status: string }>>;
+}) {
+  const artifactIdsByRunId = new Map<number, number>();
+  const artifactDataById = new Map<number, Buffer>();
+  let nextArtifactId = 100;
+  for (const [runIdText, summary] of Object.entries(options.summariesByRunId ?? {})) {
+    const runId = Number(runIdText);
+    const artifactId = nextArtifactId++;
+    artifactIdsByRunId.set(runId, artifactId);
+    artifactDataById.set(artifactId, zippedTimingSummary(summary));
+  }
+
+  const github: any = {
+    rest: {
+      actions: {
+        listWorkflowRunArtifacts: Symbol("listWorkflowRunArtifacts"),
+        listWorkflowRuns: Symbol("listWorkflowRuns"),
+        downloadArtifact: async ({ artifact_id }: { artifact_id: number }) => ({
+          data: artifactDataById.get(artifact_id) ?? Buffer.alloc(0),
+        }),
+      },
+      repos: {
+        listTags: Symbol("listTags"),
+      },
+    },
+    paginate: async (endpoint: symbol, args: Record<string, any>) => {
+      if (endpoint === github.rest.actions.listWorkflowRunArtifacts) {
+        const artifactId = artifactIdsByRunId.get(Number(args.run_id));
+        return artifactId === undefined ? [] : [{ id: artifactId, name: "cloud-onboard-traces" }];
+      }
+      if (endpoint === github.rest.repos.listTags) {
+        return (options.tags ?? []).map((tag) => ({
+          name: tag.name,
+          commit: { sha: tag.sha },
+        }));
+      }
+      throw new Error(`Unexpected paginate endpoint: ${String(endpoint)}`);
+    },
+  };
+
+  github.rest.actions.listWorkflowRuns = async ({ head_sha }: { head_sha: string }) => ({
+    data: { workflow_runs: options.runsByHeadSha?.[head_sha] ?? [] },
+  });
+
+  return github;
+}
+
+function envReferencesHostedInferenceSecret(env?: Record<string, string>): boolean {
+  return Object.values(env ?? {}).some((value) =>
+    String(value).includes("secrets.NVIDIA_INFERENCE_API_KEY"),
+  );
+}
 
 // Direct legacy bash E2Es are being migrated toward Vitest coverage. Keep the
 // top-level shell suite frozen so new coverage starts in the newer E2E surface
@@ -219,7 +344,11 @@ describe("E2E reusable workflow contract", () => {
     expect(runStep?.env?.E2E_SCRIPT).toBe("${{ inputs.script }}");
     expect(runStep?.run).toContain('case "$E2E_SCRIPT" in');
     expect(runStep?.run).toContain("test/e2e/*.sh");
-    expect(runStep?.run).toContain('bash "$E2E_SCRIPT"');
+    expect(runStep?.run).toContain('setsid bash "$E2E_SCRIPT"');
+    expect(runStep?.run).toContain('wait "$script_pid"');
+    expect(runStep?.run).toContain('kill -TERM -- "-$script_pid"');
+    expect(runStep?.run).toContain('kill -KILL -- "-$script_pid"');
+    expect(runStep?.run).toContain('exit "$script_status"');
     expect(runStep?.run).not.toContain('bash "${{ inputs.script }}"');
   });
 
@@ -266,22 +395,21 @@ describe("E2E reusable workflow contract", () => {
   it("passes only named secrets to reusable nightly jobs", () => {
     const reusableJobs = reusableNightlyJobs(nightlyWorkflow);
     const defaultSecrets = {
-      NVIDIA_INFERENCE_API_KEY: "${{ secrets.NVIDIA_INFERENCE_API_KEY }}",
+      NVIDIA_INFERENCE_API_KEY: GUARDED_HOSTED_INFERENCE_SECRET,
       BRAVE_API_KEY: "${{ secrets.BRAVE_API_KEY }}",
       DOCKERHUB_USERNAME:
         "${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_USERNAME || '' }}",
       DOCKERHUB_TOKEN:
         "${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_TOKEN || '' }}",
     };
-    const trustedRefGuard = "github.event_name != 'workflow_dispatch' || inputs.target_ref == ''";
     const messagingLiveSecrets = {
-      TELEGRAM_BOT_TOKEN_REAL: `\${{ (${trustedRefGuard}) && secrets.TELEGRAM_BOT_TOKEN_REAL || '' }}`,
-      TELEGRAM_CHAT_ID_E2E: `\${{ (${trustedRefGuard}) && secrets.TELEGRAM_CHAT_ID_E2E || '' }}`,
-      DISCORD_BOT_TOKEN_REAL: `\${{ (${trustedRefGuard}) && secrets.DISCORD_BOT_TOKEN_REAL || '' }}`,
-      DISCORD_CHANNEL_ID_E2E: `\${{ (${trustedRefGuard}) && secrets.DISCORD_CHANNEL_ID_E2E || '' }}`,
-      SLACK_BOT_TOKEN_REAL: `\${{ (${trustedRefGuard}) && secrets.SLACK_BOT_TOKEN_REAL || '' }}`,
-      SLACK_APP_TOKEN_REAL: `\${{ (${trustedRefGuard}) && secrets.SLACK_APP_TOKEN_REAL || '' }}`,
-      SLACK_CHANNEL_ID_E2E: `\${{ (${trustedRefGuard}) && secrets.SLACK_CHANNEL_ID_E2E || '' }}`,
+      TELEGRAM_BOT_TOKEN_REAL: `\${{ (${TRUSTED_REF_GUARD}) && secrets.TELEGRAM_BOT_TOKEN_REAL || '' }}`,
+      TELEGRAM_CHAT_ID_E2E: `\${{ (${TRUSTED_REF_GUARD}) && secrets.TELEGRAM_CHAT_ID_E2E || '' }}`,
+      DISCORD_BOT_TOKEN_REAL: `\${{ (${TRUSTED_REF_GUARD}) && secrets.DISCORD_BOT_TOKEN_REAL || '' }}`,
+      DISCORD_CHANNEL_ID_E2E: `\${{ (${TRUSTED_REF_GUARD}) && secrets.DISCORD_CHANNEL_ID_E2E || '' }}`,
+      SLACK_BOT_TOKEN_REAL: `\${{ (${TRUSTED_REF_GUARD}) && secrets.SLACK_BOT_TOKEN_REAL || '' }}`,
+      SLACK_APP_TOKEN_REAL: `\${{ (${TRUSTED_REF_GUARD}) && secrets.SLACK_APP_TOKEN_REAL || '' }}`,
+      SLACK_CHANNEL_ID_E2E: `\${{ (${TRUSTED_REF_GUARD}) && secrets.SLACK_CHANNEL_ID_E2E || '' }}`,
     };
 
     expect(reusableJobs.length).toBeGreaterThan(20);
@@ -415,7 +543,13 @@ describe("E2E reusable workflow contract", () => {
     expect(runStep?.run).toContain("npx vitest run --project e2e-scenarios-live");
     expect(runStep?.run).toContain("test/e2e-scenario/live/credential-migration.test.ts");
     expect(runStep?.run).not.toContain("test/e2e/test-credential-migration.sh");
-    expect(runStep?.env?.NVIDIA_INFERENCE_API_KEY).toBe("${{ secrets.NVIDIA_INFERENCE_API_KEY }}");
+    expect(runStep?.env?.NVIDIA_INFERENCE_API_KEY).toBe(GUARDED_HOSTED_INFERENCE_SECRET);
+    expect(runStep?.env?.NEMOCLAW_PROVIDER).toBe("custom");
+    expect(runStep?.env?.NEMOCLAW_ENDPOINT_URL).toBe("https://inference-api.nvidia.com/v1");
+    expect(runStep?.env?.NEMOCLAW_MODEL).toBe("nvidia/nvidia/nemotron-3-super-v3");
+    expect(runStep?.env?.NEMOCLAW_COMPAT_MODEL).toBe("nvidia/nvidia/nemotron-3-super-v3");
+    expect(runStep?.env?.NEMOCLAW_PREFERRED_API).toBe("openai-completions");
+    expect(runStep?.env?.COMPATIBLE_API_KEY).toBe(GUARDED_HOSTED_INFERENCE_SECRET);
     expect(runStep?.env?.GITHUB_TOKEN).toBeUndefined();
     expect(runStep?.env?.NEMOCLAW_RUN_E2E_SCENARIOS).toBe("1");
     expect(runStep?.env?.NEMOCLAW_SANDBOX_NAME).toBe("e2e-cred-migration");
@@ -427,6 +561,27 @@ describe("E2E reusable workflow contract", () => {
     expect(uploadStep?.with?.["include-hidden-files"]).toBe(false);
     expect(uploadStep?.with?.["if-no-files-found"]).toBe("ignore");
     expect(uploadStep?.with?.["retention-days"]).toBe(14);
+  });
+
+  it("uses NVIDIA_API_KEY, not NVIDIA_INFERENCE_API_KEY, for the live Kimi E2E", () => {
+    const job = nightlyWorkflow.jobs["kimi-inference-compat-e2e"];
+    const runStep = job.steps?.find(
+      (step) => step.name === "Run Kimi inference compatibility E2E test",
+    );
+    const sanitizeStep = job.steps?.find((step) => step.name === "Sanitize Kimi logs on failure");
+    const script = readFileSync(
+      new URL("./e2e/test-kimi-inference-compat.sh", import.meta.url),
+      "utf8",
+    );
+
+    expect(runStep?.env?.NVIDIA_API_KEY).toBe(GUARDED_PUBLIC_NVIDIA_SECRET);
+    expect(runStep?.env?.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
+    expect(sanitizeStep?.env?.NVIDIA_API_KEY).toBe(GUARDED_PUBLIC_NVIDIA_SECRET);
+    expect(sanitizeStep?.env?.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
+    expect(script).toContain("NVIDIA_API_KEY must be a public NVIDIA Endpoints nvapi-* key");
+    expect(script).not.toContain(
+      "NVIDIA_API_KEY or NVIDIA_INFERENCE_API_KEY must be a public NVIDIA Endpoints nvapi-* key",
+    );
   });
 
   it("authenticates Docker Hub pulls in direct nightly E2E jobs", () => {
@@ -494,6 +649,232 @@ describe("E2E reusable workflow contract", () => {
     expect(exportStep?.run).toContain('delimiter = f"EOF_{secrets.token_hex(16)}"');
   });
 
+  it("uploads a trusted cloud onboard trace timing summary as an always-on artifact", () => {
+    const callInputs =
+      runnerWorkflow.on?.workflow_call?.inputs ?? runnerWorkflow.true?.workflow_call?.inputs ?? {};
+    const runStep = runnerWorkflow.jobs.run.steps.find((step) => step.name === "Run E2E script");
+    const sanitizeStep = action.runs.steps.find(
+      (step) => step.name === "Sanitize E2E trace artifacts",
+    );
+    const alwaysUploadStep = action.runs.steps.find((step) => step.name === "Upload E2E artifacts");
+    const workflowActionCheckout = runnerWorkflow.jobs.run.steps.find(
+      (step) => step.name === "Checkout workflow action",
+    );
+    const cloudOnboardJob = nightlyWorkflow.jobs["cloud-onboard-e2e"];
+    const envJson = JSON.parse(cloudOnboardJob.with?.env_json ?? "{}") as Record<string, unknown>;
+
+    expect(callInputs.always_artifact_name?.default).toBe("");
+    expect(callInputs.always_artifact_path?.default).toBe("");
+    expect(callInputs.always_artifact_trace_source_path?.default).toBe("");
+    expect(runStep?.with?.["always-artifact-name"]).toBe("${{ inputs.always_artifact_name }}");
+    expect(runStep?.with?.["always-artifact-path"]).toBe("${{ inputs.always_artifact_path }}");
+    expect(runStep?.with?.["always-artifact-trace-source-path"]).toBe(
+      "${{ inputs.always_artifact_trace_source_path }}",
+    );
+    expect(sanitizeStep).toBeDefined();
+    expect(sanitizeStep?.id).toBe("sanitize-trace-artifacts");
+    expect(sanitizeStep?.run).toContain("sanitize-trace-artifacts.py");
+    expect(sanitizeStep?.env?.E2E_TRACE_SOURCE_PATH).toBe(
+      "${{ inputs.always-artifact-trace-source-path }}",
+    );
+    expect(sanitizeStep?.env?.E2E_TRACE_SUMMARY_DIR).toBeUndefined();
+    expect(sanitizeStep?.run).toContain('trusted_summary_dir="$(mktemp -d');
+    expect(sanitizeStep?.run).toContain('find "$trusted_summary_dir" -mindepth 1');
+    expect(sanitizeStep?.run).toContain("summary-file=%s");
+    expect(workflowActionCheckout?.with?.["sparse-checkout"]).toContain(
+      ".github/actions/run-e2e-script",
+    );
+    expect(alwaysUploadStep?.if).toBe(
+      "always() && inputs.always-artifact-name != '' && inputs.always-artifact-path != '' && inputs.always-artifact-trace-source-path != '' && steps.sanitize-trace-artifacts.outcome == 'success'",
+    );
+    expect(alwaysUploadStep?.with?.path).toBe(
+      "${{ steps.sanitize-trace-artifacts.outputs.summary-file }}",
+    );
+    expect(cloudOnboardJob.with?.always_artifact_name).toBe("cloud-onboard-traces");
+    expect(cloudOnboardJob.with?.always_artifact_path).toBe("/tmp/nemoclaw-trace-summary/");
+    expect(cloudOnboardJob.with?.always_artifact_trace_source_path).toBe("/tmp/nemoclaw-traces/");
+    expect(envJson.NEMOCLAW_TRACE_DIR).toBe("/tmp/nemoclaw-traces");
+  });
+
+  it("compares cloud onboard trace phases against the prior release commit run", () => {
+    const scorecardStep = nightlyWorkflow.jobs.scorecard.steps?.find(
+      (step) => step.name === "Generate nightly scorecard",
+    );
+    const phaseRows = traceTiming.buildPhaseRows(
+      {
+        "nemoclaw.onboard.phase.preflight": 1_000,
+        "nemoclaw.onboard.phase.gateway": 5_000,
+        "nemoclaw.onboard.phase.sandbox": 2_000,
+        "nemoclaw.onboard.phase.renamed": 20_000,
+      },
+      {
+        "nemoclaw.onboard.phase.preflight": 2_000,
+        "nemoclaw.onboard.phase.gateway": 3_000,
+        "nemoclaw.onboard.phase.sandbox": 10_000,
+        "nemoclaw.onboard.phase.old": 20_000,
+      },
+    );
+    const summaryLines = traceTiming.buildTraceSummaryLines(
+      { totalMs: 8_000 },
+      { totalMs: 15_000 },
+      { name: "v0.0.56" },
+      phaseRows,
+    );
+
+    expect(scorecardStep?.with?.script).toContain("scripts/scorecard/analyze-trace-timing.ts");
+    expect(scorecardStep?.with?.script).toContain("traceTiming.buildTraceTimingResult");
+    expect(phaseRows.map((row) => row.label)).toEqual(["preflight", "gateway", "sandbox"]);
+    expect(traceTiming.formatTopPhaseChanges(phaseRows)).toBe(
+      "sandbox -8.0s; gateway +2.0s; preflight -1.0s",
+    );
+    expect(
+      traceTiming.buildTraceSummaryLines({ totalMs: 1 }, { totalMs: 2 }, { name: "v0" }, []),
+    ).toEqual([]);
+    expect(summaryLines).toContain("## Cloud Onboard Trace Timing");
+    expect(summaryLines).toContain("| Phase | Current | Previous | Delta |");
+    expect(summaryLines.join("\n")).toContain("Baseline: latest completed `nightly-e2e.yaml` run");
+    expect(scorecardStep?.with?.script).toContain("lines.push(...traceSummaryLines)");
+  });
+
+  it("keeps trace timing analysis limited to the trusted summary schema", () => {
+    const goodSummary = JSON.stringify({
+      schema_version: "nemoclaw.trace_timing.v1",
+      total_duration_ms: 1000,
+      phases: {
+        "nemoclaw.onboard.phase.preflight": 500,
+      },
+    });
+    const unknownPhaseSummary = JSON.stringify({
+      schema_version: "nemoclaw.trace_timing.v1",
+      total_duration_ms: 1000,
+      phases: {
+        "nemoclaw.onboard.phase.preflight": 500,
+        "nemoclaw.onboard.phase.future": 500,
+      },
+    });
+    const negativeDurationSummary = JSON.stringify({
+      schema_version: "nemoclaw.trace_timing.v1",
+      total_duration_ms: -1,
+      phases: {
+        "nemoclaw.onboard.phase.preflight": 500,
+      },
+    });
+
+    expect(traceTiming.TRACE_SUMMARY_FILE).toBe("cloud-onboard-trace-timing-summary.json");
+    expect(traceTiming.ONBOARD_PHASE_ORDER).toEqual([
+      "nemoclaw.onboard.phase.preflight",
+      "nemoclaw.onboard.phase.gateway",
+      "nemoclaw.onboard.phase.provider_selection",
+      "nemoclaw.onboard.phase.inference",
+      "nemoclaw.onboard.phase.sandbox",
+    ]);
+    expect(traceTiming.selectOnboardTrace([goodSummary])?.totalMs).toBe(1000);
+    expect(traceTiming.selectOnboardTrace([unknownPhaseSummary])).toMatchObject({
+      totalMs: 1000,
+      phases: { "nemoclaw.onboard.phase.preflight": 500 },
+    });
+    expect(traceTiming.selectOnboardTrace([negativeDurationSummary])).toBeNull();
+  });
+
+  it("does not expose raw comparison errors in trace timing output", async () => {
+    const result = await traceTiming.buildTraceTimingResult({
+      context: { repo: { owner: "NVIDIA", repo: "NemoClaw" }, runId: 1 },
+      github: {
+        paginate: async () => {
+          throw new Error("download failed with token=secret");
+        },
+      },
+    });
+
+    expect(result.traceTimingLine).toBe("Trace: ⊘ comparison unavailable");
+    expect(result.traceTimingLine).not.toContain("secret");
+  });
+
+  it("covers trace timing fallback branches with mocked GitHub data", async () => {
+    const context = {
+      repo: { owner: "NVIDIA", repo: "NemoClaw" },
+      runId: 1,
+      ref: "refs/heads/main",
+    };
+
+    await expect(
+      traceTiming.buildTraceTimingResult({
+        context,
+        github: traceGithubFixture({}),
+      }),
+    ).resolves.toMatchObject({
+      traceTimingLine: "Trace: ⊘ cloud-onboard-traces artifact not found for this run",
+    });
+
+    await expect(
+      traceTiming.buildTraceTimingResult({
+        context,
+        github: traceGithubFixture({ summariesByRunId: { 1: timingSummary() } }),
+      }),
+    ).resolves.toMatchObject({
+      traceTimingLine: "Trace: cloud-onboard total 1.0s (no prior release tag found)",
+    });
+
+    await expect(
+      traceTiming.buildTraceTimingResult({
+        context,
+        github: traceGithubFixture({
+          summariesByRunId: { 1: timingSummary() },
+          tags: [{ name: "v0.0.1", sha: "prior-sha" }],
+        }),
+      }),
+    ).resolves.toMatchObject({
+      traceTimingLine: "Trace: cloud-onboard total 1.0s (no nightly-e2e run found for v0.0.1)",
+    });
+
+    await expect(
+      traceTiming.buildTraceTimingResult({
+        context,
+        github: traceGithubFixture({
+          summariesByRunId: { 1: timingSummary() },
+          tags: [{ name: "v0.0.1", sha: "prior-sha" }],
+          runsByHeadSha: { "prior-sha": [{ id: 2, status: "completed" }] },
+        }),
+      }),
+    ).resolves.toMatchObject({
+      traceTimingLine:
+        "Trace: cloud-onboard total 1.0s (no cloud-onboard-traces artifact found for v0.0.1)",
+    });
+
+    await expect(
+      traceTiming.buildTraceTimingResult({
+        context,
+        github: traceGithubFixture({
+          summariesByRunId: { 1: timingSummary(), 2: "{not-json" },
+          tags: [{ name: "v0.0.1", sha: "prior-sha" }],
+          runsByHeadSha: { "prior-sha": [{ id: 2, status: "completed" }] },
+        }),
+      }),
+    ).resolves.toMatchObject({
+      traceTimingLine:
+        "Trace: cloud-onboard total 1.0s (no cloud-onboard-traces artifact found for v0.0.1)",
+    });
+  });
+
+  it("keeps total trace comparison when phase names do not overlap", async () => {
+    const result = await traceTiming.buildTraceTimingResult({
+      context: { repo: { owner: "NVIDIA", repo: "NemoClaw" }, runId: 1 },
+      github: traceGithubFixture({
+        summariesByRunId: {
+          1: timingSummary({ "nemoclaw.onboard.phase.preflight": 1000 }),
+          2: timingSummary({ "nemoclaw.onboard.phase.gateway": 2000 }),
+        },
+        tags: [{ name: "v0.0.1", sha: "prior-sha" }],
+        runsByHeadSha: { "prior-sha": [{ id: 2, status: "completed" }] },
+      }),
+    });
+
+    expect(result.traceTimingLine).toBe(
+      "Trace: cloud-onboard total 1.0s, decreased -1.0s (-50.0%) vs v0.0.1.",
+    );
+    expect(result.traceSummaryLines).toEqual([]);
+  });
+
   it("keeps env_json valid and aligned with target-ref installs", () => {
     const reusableJobs = reusableNightlyJobs(nightlyWorkflow);
 
@@ -524,42 +905,117 @@ describe("E2E reusable workflow contract", () => {
     expect(exportStep?.run).toContain('>> "$GITHUB_ENV"');
   });
 
-  it("can route selected reusable jobs through the CI compatible inference endpoint", () => {
+  it("routes reusable hosted inference jobs through the hosted custom endpoint", () => {
     const exportStep = runnerWorkflow.jobs.run.steps.find(
-      (step) => step.name === "Export CI compatible inference environment",
+      (step) => step.name === "Export hosted CI inference environment",
     );
-    const expectedJobs = ["cloud-e2e", "cloud-onboard-e2e", "cloud-inference-e2e"];
     const workflowCall = runnerWorkflow.on?.workflow_call ?? runnerWorkflow.true?.workflow_call;
+    const hostedJobs = reusableNightlyJobs(nightlyWorkflow).filter(
+      ([, job]) => String(job.with?.nvidia_api_key) === "true",
+    );
 
-    expect(workflowCall?.inputs?.nvidia_secret_as_compatible_api_key).toMatchObject({
+    expect(workflowCall?.inputs?.nvidia_api_key).toMatchObject({
       required: false,
       type: "boolean",
       default: false,
     });
-    expect(exportStep?.if).toBe("${{ inputs.nvidia_secret_as_compatible_api_key }}");
-    expect(exportStep?.env?.NVIDIA_INFERENCE_API_KEY).toBe(
-      "${{ secrets.NVIDIA_INFERENCE_API_KEY }}",
-    );
-    expect(exportStep?.run).toContain("NEMOCLAW_E2E_USE_NVIDIA_SECRET_AS_COMPATIBLE=1");
+    expect(workflowCall?.inputs?.nvidia_secret_as_compatible_api_key).toBeUndefined();
+    expect(exportStep?.if).toBe("${{ inputs.nvidia_api_key }}");
+    expect(exportStep?.env?.NVIDIA_INFERENCE_API_KEY).toBe(RAW_HOSTED_INFERENCE_SECRET);
+    expect(exportStep?.run).toContain("withheld for workflow_dispatch target_ref runs");
+    expect(exportStep?.run).toContain("NEMOCLAW_E2E_USE_HOSTED_INFERENCE=1");
     expect(exportStep?.run).toContain("NEMOCLAW_PROVIDER=custom");
     expect(exportStep?.run).toContain("NEMOCLAW_ENDPOINT_URL=https://inference-api.nvidia.com/v1");
     expect(exportStep?.run).toContain("NEMOCLAW_MODEL=nvidia/nvidia/nemotron-3-super-v3");
     expect(exportStep?.run).toContain("NEMOCLAW_COMPAT_MODEL=nvidia/nvidia/nemotron-3-super-v3");
+    expect(exportStep?.run).toContain("NEMOCLAW_PREFERRED_API=openai-completions");
     expect(exportStep?.run).toContain("COMPATIBLE_API_KEY=%s");
 
-    for (const name of expectedJobs) {
-      expect(nightlyWorkflow.jobs[name].with?.nvidia_secret_as_compatible_api_key, name).toBe(true);
+    expect(hostedJobs.length).toBeGreaterThan(20);
+    for (const [name, job] of hostedJobs) {
+      expect(job.with?.nvidia_secret_as_compatible_api_key, name).toBeUndefined();
     }
   });
 
-  it("routes legacy token rotation through the CI compatible inference endpoint", () => {
+  it("keeps rebuild fixture registry inference aligned with hosted custom inference", () => {
+    const rebuildFixtures = [
+      "test/e2e/test-rebuild-openclaw.sh",
+      "test/e2e/test-rebuild-hermes.sh",
+      "test/e2e/test-upgrade-stale-sandbox.sh",
+    ];
+
+    for (const fixture of rebuildFixtures) {
+      const body = readFileSync(fixture, "utf8");
+      expect(body, fixture).toContain("provider = sess.get('provider')");
+      expect(body, fixture).toContain("if env_provider == 'custom'");
+      expect(body, fixture).toContain("'provider': provider");
+      expect(body, fixture).toContain("'model': model");
+      expect(body, fixture).toContain("nvidia/nvidia/nemotron-3-super-v3");
+      expect(body, fixture).not.toContain("'provider': 'nvidia-prod'");
+      expect(body, fixture).not.toContain("'model': 'nvidia/nemotron-3-super-120b-a12b'");
+    }
+  });
+
+  it("routes direct hosted-secret jobs through the hosted custom inference endpoint", () => {
+    const trustedWorkflowSecretExceptions = new Set([
+      "issue-4434-tui-unreachable-inference-e2e:Sanitize issue #4434 logs on failure",
+    ]);
+    const directSecretSteps = Object.entries(nightlyWorkflow.jobs).flatMap(([jobName, job]) =>
+      job.uses
+        ? []
+        : (job.steps ?? [])
+            .filter((step) => envReferencesHostedInferenceSecret(step.env))
+            .map((step) => ({ jobName, step })),
+    );
+    const directSecretStepNames = directSecretSteps.map(
+      ({ jobName, step }) => `${jobName}:${step.name ?? "<unnamed>"}`,
+    );
+
+    expect(directSecretStepNames).toEqual(
+      expect.arrayContaining([
+        "openclaw-tui-chat-correlation-e2e:Run OpenClaw TUI chat correlation E2E test",
+        "issue-4434-tui-unreachable-inference-e2e:Run issue #4434 TUI unreachable inference E2E test",
+        "issue-4434-tui-unreachable-inference-e2e:Sanitize issue #4434 logs on failure",
+        "token-rotation-e2e:Run token rotation E2E test",
+        "sandbox-operations-e2e:Run sandbox operations E2E test",
+        "credential-migration-e2e:Run credential migration Vitest test",
+        "onboard-repair-e2e:Install NemoClaw",
+        "onboard-repair-e2e:Run onboard repair E2E test",
+        "onboard-resume-e2e:Install NemoClaw",
+        "onboard-resume-e2e:Run onboard resume E2E test",
+        "onboard-negative-paths-e2e:Install NemoClaw",
+        "onboard-negative-paths-e2e:Run onboard negative-path E2E test",
+        "runtime-overrides-e2e:Install NemoClaw",
+        "runtime-overrides-e2e:Run runtime overrides E2E test",
+        "credential-sanitization-e2e:Install NemoClaw and onboard sandbox",
+        "telegram-injection-e2e:Install NemoClaw and onboard sandbox",
+        "launchable-smoke-e2e:Run launchable install-flow smoke test",
+      ]),
+    );
+
+    expect(directSecretSteps.length).toBeGreaterThanOrEqual(17);
+    for (const { jobName, step } of directSecretSteps) {
+      const stepKey = `${jobName}:${step.name ?? "<unnamed>"}`;
+      expect(step.env?.NVIDIA_INFERENCE_API_KEY, stepKey).toBe(GUARDED_HOSTED_INFERENCE_SECRET);
+      if (trustedWorkflowSecretExceptions.has(stepKey)) {
+        expect(step.run, stepKey).toContain("[REDACTED_NVIDIA_INFERENCE_API_KEY]");
+        continue;
+      }
+      expect(step.env?.NEMOCLAW_PROVIDER, jobName).toBe("custom");
+      expect(step.env?.NEMOCLAW_ENDPOINT_URL, jobName).toBe("https://inference-api.nvidia.com/v1");
+      expect(step.env?.NEMOCLAW_MODEL, jobName).toBe("nvidia/nvidia/nemotron-3-super-v3");
+      expect(step.env?.NEMOCLAW_COMPAT_MODEL, jobName).toBe("nvidia/nvidia/nemotron-3-super-v3");
+      expect(step.env?.NEMOCLAW_PREFERRED_API, jobName).toBe("openai-completions");
+      expect(step.env?.COMPATIBLE_API_KEY, jobName).toBe(GUARDED_HOSTED_INFERENCE_SECRET);
+    }
+
     const runStep = nightlyWorkflow.jobs["token-rotation-e2e"].steps?.find(
       (step) => step.name === "Run token rotation E2E test",
     );
     const script = readFileSync(new URL("./e2e/test-token-rotation.sh", import.meta.url), "utf8");
 
-    expect(runStep?.env?.NVIDIA_INFERENCE_API_KEY).toBe("${{ secrets.NVIDIA_INFERENCE_API_KEY }}");
-    expect(runStep?.env?.NEMOCLAW_E2E_USE_NVIDIA_SECRET_AS_COMPATIBLE).toBe("1");
+    expect(runStep?.env?.NVIDIA_INFERENCE_API_KEY).toBe(GUARDED_HOSTED_INFERENCE_SECRET);
+    expect(runStep?.env?.NEMOCLAW_E2E_USE_HOSTED_INFERENCE).toBe("1");
     expect(script).toContain("lib/ci-compatible-inference.sh");
     expect(script).toContain("nemoclaw_e2e_configure_compatible_inference");
   });

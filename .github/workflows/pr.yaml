@@ -233,6 +233,11 @@ jobs:
       - changes
       - cli-test-shards
     if: ${{ always() && needs.changes.outputs.code == 'true' }}
+    permissions:
+      actions: read
+      code-quality: write
+      contents: read
+      pull-requests: read
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -273,6 +278,10 @@ jobs:
   plugin-tests:
     needs: changes
     if: needs.changes.outputs.code == 'true'
+    permissions:
+      code-quality: write
+      contents: read
+      pull-requests: read
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

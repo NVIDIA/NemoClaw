@@ -77,7 +77,9 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
 
   it("evaluates high-risk dispatch selector behavior before secret-bearing jobs run", () => {
     expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "network-policy,../escape" }),
+      evaluateE2eVitestWorkflowDispatchSelectors({
+        scenarios: "network-policy,../escape",
+      }),
     ).toMatchObject({
       valid: false,
       liveScenariosRuns: false,
@@ -94,7 +96,9 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       selectedFreeStandingJobs: [],
     });
     expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "network-policy" }),
+      evaluateE2eVitestWorkflowDispatchSelectors({
+        scenarios: "network-policy",
+      }),
     ).toMatchObject({
       valid: true,
       liveScenariosRuns: false,
@@ -112,7 +116,9 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       registryScenarios: ["ubuntu-repo-cloud-openclaw"],
     });
     expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "openshell-version-pin" }),
+      evaluateE2eVitestWorkflowDispatchSelectors({
+        scenarios: "openshell-version-pin",
+      }),
     ).toMatchObject({
       valid: true,
       liveScenariosRuns: false,
@@ -126,7 +132,9 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       registryScenarios: [],
     });
     expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({ jobs: "skill-agent-vitest" }),
+      evaluateE2eVitestWorkflowDispatchSelectors({
+        jobs: "skill-agent-vitest",
+      }),
     ).toMatchObject({
       valid: true,
       liveScenariosRuns: false,
@@ -134,7 +142,9 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       registryScenarios: [],
     });
     expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "openclaw-skill-cli" }),
+      evaluateE2eVitestWorkflowDispatchSelectors({
+        scenarios: "openclaw-skill-cli",
+      }),
     ).toMatchObject({
       valid: true,
       liveScenariosRuns: false,
@@ -142,7 +152,9 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       registryScenarios: [],
     });
     expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({ jobs: "openclaw-skill-cli-vitest" }),
+      evaluateE2eVitestWorkflowDispatchSelectors({
+        jobs: "openclaw-skill-cli-vitest",
+      }),
     ).toMatchObject({
       valid: true,
       liveScenariosRuns: false,
@@ -150,7 +162,9 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       registryScenarios: [],
     });
     expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "credential-sanitization" }),
+      evaluateE2eVitestWorkflowDispatchSelectors({
+        scenarios: "credential-sanitization",
+      }),
     ).toMatchObject({
       valid: true,
       liveScenariosRuns: false,
@@ -158,7 +172,9 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       registryScenarios: [],
     });
     expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({ jobs: "credential-sanitization-vitest" }),
+      evaluateE2eVitestWorkflowDispatchSelectors({
+        jobs: "credential-sanitization-vitest",
+      }),
     ).toMatchObject({
       valid: true,
       liveScenariosRuns: false,
@@ -166,7 +182,9 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       registryScenarios: [],
     });
     expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "sessions-agents-cli" }),
+      evaluateE2eVitestWorkflowDispatchSelectors({
+        scenarios: "sessions-agents-cli",
+      }),
     ).toMatchObject({
       valid: true,
       liveScenariosRuns: false,
@@ -174,7 +192,9 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       registryScenarios: [],
     });
     expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({ jobs: "sessions-agents-cli-vitest" }),
+      evaluateE2eVitestWorkflowDispatchSelectors({
+        jobs: "sessions-agents-cli-vitest",
+      }),
     ).toMatchObject({
       valid: true,
       liveScenariosRuns: false,
@@ -182,7 +202,9 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       registryScenarios: [],
     });
     expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({ jobs: "runtime-overrides-vitest" }),
+      evaluateE2eVitestWorkflowDispatchSelectors({
+        jobs: "runtime-overrides-vitest",
+      }),
     ).toMatchObject({
       valid: true,
       liveScenariosRuns: false,
@@ -190,7 +212,9 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       registryScenarios: [],
     });
     expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "runtime-overrides" }),
+      evaluateE2eVitestWorkflowDispatchSelectors({
+        scenarios: "runtime-overrides",
+      }),
     ).toMatchObject({
       valid: true,
       liveScenariosRuns: false,
@@ -198,7 +222,29 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       registryScenarios: [],
     });
     expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "inference-routing" }),
+      evaluateE2eVitestWorkflowDispatchSelectors({
+        scenarios: "messaging-compatible-endpoint",
+      }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["messaging-compatible-endpoint-vitest"],
+      registryScenarios: [],
+    });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({
+        jobs: "messaging-compatible-endpoint-vitest",
+      }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["messaging-compatible-endpoint-vitest"],
+      registryScenarios: [],
+    });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({
+        scenarios: "inference-routing",
+      }),
     ).toMatchObject({
       valid: true,
       liveScenariosRuns: false,
@@ -206,7 +252,9 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       registryScenarios: [],
     });
     expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({ jobs: "inference-routing-vitest" }),
+      evaluateE2eVitestWorkflowDispatchSelectors({
+        jobs: "inference-routing-vitest",
+      }),
     ).toMatchObject({
       valid: true,
       liveScenariosRuns: false,
@@ -214,7 +262,9 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       registryScenarios: [],
     });
     expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "cloud-inference" }),
+      evaluateE2eVitestWorkflowDispatchSelectors({
+        scenarios: "cloud-inference",
+      }),
     ).toMatchObject({
       valid: true,
       liveScenariosRuns: false,
@@ -222,7 +272,9 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       registryScenarios: [],
     });
     expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({ jobs: "cloud-inference-vitest" }),
+      evaluateE2eVitestWorkflowDispatchSelectors({
+        jobs: "cloud-inference-vitest",
+      }),
     ).toMatchObject({
       valid: true,
       liveScenariosRuns: false,
@@ -236,7 +288,9 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       registryScenarios: [],
     });
     expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "hermes-root-entrypoint-smoke" }),
+      evaluateE2eVitestWorkflowDispatchSelectors({
+        scenarios: "hermes-root-entrypoint-smoke",
+      }),
     ).toMatchObject({
       valid: true,
       liveScenariosRuns: false,
@@ -244,7 +298,9 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       registryScenarios: [],
     });
     expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({ jobs: "hermes-root-entrypoint-smoke-vitest" }),
+      evaluateE2eVitestWorkflowDispatchSelectors({
+        jobs: "hermes-root-entrypoint-smoke-vitest",
+      }),
     ).toMatchObject({
       valid: true,
       liveScenariosRuns: false,
@@ -252,7 +308,9 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       registryScenarios: [],
     });
     expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "common-egress-agent" }),
+      evaluateE2eVitestWorkflowDispatchSelectors({
+        scenarios: "common-egress-agent",
+      }),
     ).toMatchObject({
       valid: true,
       liveScenariosRuns: false,
@@ -260,7 +318,9 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       registryScenarios: [],
     });
     expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({ jobs: "common-egress-agent-vitest" }),
+      evaluateE2eVitestWorkflowDispatchSelectors({
+        jobs: "common-egress-agent-vitest",
+      }),
     ).toMatchObject({
       valid: true,
       liveScenariosRuns: false,
@@ -268,7 +328,9 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       registryScenarios: [],
     });
     expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "shields-config" }),
+      evaluateE2eVitestWorkflowDispatchSelectors({
+        scenarios: "shields-config",
+      }),
     ).toMatchObject({
       valid: true,
       liveScenariosRuns: false,
@@ -276,7 +338,9 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       registryScenarios: [],
     });
     expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({ jobs: "shields-config-vitest" }),
+      evaluateE2eVitestWorkflowDispatchSelectors({
+        jobs: "shields-config-vitest",
+      }),
     ).toMatchObject({
       valid: true,
       liveScenariosRuns: false,
@@ -284,7 +348,9 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       registryScenarios: [],
     });
     expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "rebuild-openclaw" }),
+      evaluateE2eVitestWorkflowDispatchSelectors({
+        scenarios: "rebuild-openclaw",
+      }),
     ).toMatchObject({
       valid: true,
       liveScenariosRuns: false,
@@ -292,7 +358,9 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       registryScenarios: [],
     });
     expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({ jobs: "rebuild-openclaw-vitest" }),
+      evaluateE2eVitestWorkflowDispatchSelectors({
+        jobs: "rebuild-openclaw-vitest",
+      }),
     ).toMatchObject({
       valid: true,
       liveScenariosRuns: false,
@@ -300,7 +368,9 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       registryScenarios: [],
     });
     expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "state-backup-restore" }),
+      evaluateE2eVitestWorkflowDispatchSelectors({
+        scenarios: "state-backup-restore",
+      }),
     ).toMatchObject({
       valid: true,
       liveScenariosRuns: false,
@@ -308,7 +378,9 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       registryScenarios: [],
     });
     expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({ jobs: "state-backup-restore-vitest" }),
+      evaluateE2eVitestWorkflowDispatchSelectors({
+        jobs: "state-backup-restore-vitest",
+      }),
     ).toMatchObject({
       valid: true,
       liveScenariosRuns: false,
@@ -336,7 +408,9 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       registryScenarios: [],
     });
     expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "gateway-drift-preflight" }),
+      evaluateE2eVitestWorkflowDispatchSelectors({
+        scenarios: "gateway-drift-preflight",
+      }),
     ).toMatchObject({
       valid: true,
       liveScenariosRuns: false,
@@ -344,7 +418,9 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       registryScenarios: [],
     });
     expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({ jobs: "gateway-drift-preflight-vitest" }),
+      evaluateE2eVitestWorkflowDispatchSelectors({
+        jobs: "gateway-drift-preflight-vitest",
+      }),
     ).toMatchObject({
       valid: true,
       liveScenariosRuns: false,
@@ -352,7 +428,9 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       registryScenarios: [],
     });
     expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "openclaw-inference-switch" }),
+      evaluateE2eVitestWorkflowDispatchSelectors({
+        scenarios: "openclaw-inference-switch",
+      }),
     ).toMatchObject({
       valid: true,
       liveScenariosRuns: false,
@@ -360,7 +438,9 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       registryScenarios: [],
     });
     expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({ jobs: "openclaw-inference-switch-vitest" }),
+      evaluateE2eVitestWorkflowDispatchSelectors({
+        jobs: "openclaw-inference-switch-vitest",
+      }),
     ).toMatchObject({
       valid: true,
       liveScenariosRuns: false,
@@ -387,6 +467,60 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       selectedFreeStandingJobs: ["bedrock-runtime-compatible-anthropic-vitest"],
       registryScenarios: [],
     });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({
+        scenarios: "issue-2478-crash-loop-recovery",
+      }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["issue-2478-crash-loop-recovery-vitest"],
+      registryScenarios: [],
+    });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({
+        jobs: "issue-2478-crash-loop-recovery-vitest",
+      }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["issue-2478-crash-loop-recovery-vitest"],
+      registryScenarios: [],
+    });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "gateway-health-honest" }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["gateway-health-honest-vitest"],
+      registryScenarios: [],
+    });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({ jobs: "gateway-health-honest-vitest" }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["gateway-health-honest-vitest"],
+      registryScenarios: [],
+    });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "channels-add-remove" }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["channels-add-remove-vitest"],
+      registryScenarios: [],
+    });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({
+        jobs: "channels-add-remove-vitest",
+      }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["channels-add-remove-vitest"],
+      registryScenarios: [],
+    });
   });
 
   it("derives the free-standing inventory from workflow job metadata", () => {
@@ -405,7 +539,9 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
     ).toBe(true);
   });
 
-  it("rejects malformed free-standing workflow metadata before matrix generation", () => {
+  it("rejects malformed free-standing workflow metadata before matrix generation", {
+    timeout: 60_000,
+  }, () => {
     const malformedWorkflows = [
       {
         body: `
@@ -825,6 +961,70 @@ jobs:
       );
       expect(validateE2eVitestScenariosWorkflowBoundary(missingReportNeedPath)).toContain(
         "report-to-pr job must wait for runtime-overrides-vitest",
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("requires messaging-compatible-endpoint workflow and report coverage", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-vitest-workflow-"));
+    const renamedWorkflowPath = path.join(tmp, "renamed-workflow.yaml");
+    const missingReportNeedPath = path.join(tmp, "missing-report-need.yaml");
+    const workflow = fs.readFileSync(
+      path.join(process.cwd(), ".github/workflows/e2e-vitest-scenarios.yaml"),
+      "utf8",
+    );
+    fs.writeFileSync(
+      renamedWorkflowPath,
+      workflow.replace(/^  messaging-compatible-endpoint-vitest:$/m, "  msg-compatible-missing:"),
+    );
+    fs.writeFileSync(
+      missingReportNeedPath,
+      workflow.replace("        messaging-compatible-endpoint-vitest,\n", ""),
+    );
+
+    try {
+      expect(validateE2eVitestScenariosWorkflowBoundary(renamedWorkflowPath)).toContain(
+        "workflow missing messaging-compatible-endpoint-vitest job",
+      );
+      expect(validateE2eVitestScenariosWorkflowBoundary(missingReportNeedPath)).toContain(
+        "report-to-pr job must wait for messaging-compatible-endpoint-vitest",
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects Docker Hub auth in the messaging-compatible-endpoint job", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-vitest-workflow-"));
+    const workflowPath = path.join(tmp, "workflow.yaml");
+    const workflow = readWorkflow() as {
+      jobs: Record<string, { steps: Array<Record<string, unknown>> }>;
+    };
+    const steps = workflow.jobs["messaging-compatible-endpoint-vitest"]?.steps;
+    expect(steps).toEqual(expect.any(Array));
+    const setupNodeIndex = steps.findIndex((step) => step.name === "Set up Node");
+    expect(setupNodeIndex).toBeGreaterThan(0);
+    steps.splice(setupNodeIndex, 0, {
+      name: "Authenticate to Docker Hub",
+      env: {
+        DOCKERHUB_USERNAME: "${{ secrets.DOCKERHUB_USERNAME }}",
+        DOCKERHUB_TOKEN: "${{ secrets.DOCKERHUB_TOKEN }}",
+      },
+      run: "docker login docker.io --username user --password ${{ secrets.DOCKERHUB_TOKEN }}",
+    });
+    fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+    try {
+      const errors = validateE2eVitestScenariosWorkflowBoundary(workflowPath);
+      expect(errors).toEqual(
+        expect.arrayContaining([
+          "messaging-compatible-endpoint-vitest must not authenticate to Docker Hub before branch-controlled test code runs",
+          "messaging-compatible-endpoint-vitest step 'Authenticate to Docker Hub' env must not include DOCKERHUB_USERNAME",
+          "messaging-compatible-endpoint-vitest step 'Authenticate to Docker Hub' env must not include DOCKERHUB_TOKEN",
+          "messaging-compatible-endpoint-vitest step 'Authenticate to Docker Hub' run script must not use docker login or inline secret interpolation",
+        ]),
       );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });

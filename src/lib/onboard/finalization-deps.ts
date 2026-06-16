@@ -20,4 +20,13 @@ export const finalizationHandlerDeps = {
       require("../actions/sandbox/connect");
     connect.runConnectAutoPairApprovalPass(name);
   },
+  // Provoke the operator.write scope upgrade with a throwaway in-sandbox agent
+  // run so the request is PENDING when the approval pass above clears it,
+  // letting the user's first real run connect without an embedded fallback
+  // (#4504-v2). Best-effort; never throws.
+  warmupScopeUpgrade(name: string): void {
+    const warmup: typeof import("../actions/sandbox/auto-pair-warmup") =
+      require("../actions/sandbox/auto-pair-warmup");
+    warmup.runSandboxScopeWarmupRun(name);
+  },
 };

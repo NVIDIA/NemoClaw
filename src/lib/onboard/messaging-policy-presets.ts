@@ -1,9 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-const REQUIRED_POLICY_PRESETS_BY_MESSAGING_CHANNEL: Record<string, readonly string[]> = {
-  slack: ["slack"],
-};
+import { listRequiredCreateTimeMessagingPolicyPresetsByChannel } from "../messaging/channels";
+
+const REQUIRED_POLICY_PRESETS_BY_MESSAGING_CHANNEL =
+  listRequiredCreateTimeMessagingPolicyPresetsByChannel();
 
 function normalizedNames(values: string[] | null | undefined): string[] {
   if (!Array.isArray(values)) return [];

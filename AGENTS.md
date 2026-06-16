@@ -195,7 +195,9 @@ All hooks managed by [prek](https://prek.j178.dev/) (installed via `npm install`
 ## PR Requirements
 
 - Create feature branch from `main`
-- Run `make check` and `npm test` before submitting
+- Let normal commit and push hooks provide hook verification before submitting
+- Run targeted tests for changed behavior, and run `npm run docs` for doc changes
+- Use `npx prek run --from-ref main --to-ref HEAD` if hooks were skipped or unavailable
 - Follow PR template (`.github/PULL_REQUEST_TEMPLATE.md`)
 - No secrets, API keys, or credentials committed
 - Limit open PRs to fewer than 10

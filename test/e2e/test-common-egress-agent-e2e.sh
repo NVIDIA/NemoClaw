@@ -11,7 +11,7 @@
 #       and the Hermes agent fetches Wikidata through its API-server agent path.
 #
 # Required env:
-#   NVIDIA_INFERENCE_API_KEY                         real NVIDIA Endpoints key for inference
+#   NVIDIA_INFERENCE_API_KEY                         hosted inference credential
 #   NEMOCLAW_NON_INTERACTIVE=1             required
 #   NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 required
 #
@@ -392,6 +392,10 @@ echo "  Common Egress Agent E2E"
 echo "  $(date)"
 echo "============================================================"
 
+# shellcheck source=test/e2e/lib/ci-compatible-inference.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/ci-compatible-inference.sh"
+nemoclaw_e2e_configure_compatible_inference || summary
+
 section "Phase 0: Prerequisites"
 load_shell_path
 info "Repo: $REPO"
@@ -402,11 +406,9 @@ if ! docker info >/dev/null 2>&1; then
 fi
 pass "Docker is running"
 
-if [ -z "${NVIDIA_INFERENCE_API_KEY:-}" ] || [[ "${NVIDIA_INFERENCE_API_KEY}" != nvapi-* ]]; then
-  fail "NVIDIA_INFERENCE_API_KEY not set or invalid"
+if ! nemoclaw_e2e_require_hosted_inference_key; then
   summary
 fi
-pass "NVIDIA_INFERENCE_API_KEY is set"
 
 if [ "${NEMOCLAW_NON_INTERACTIVE:-}" != "1" ]; then
   fail "NEMOCLAW_NON_INTERACTIVE=1 is required"

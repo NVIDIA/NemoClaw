@@ -87,10 +87,8 @@ export interface SandboxInventoryResult {
 export interface MessagingOverlap {
   channel: string;
   sandboxes: [string, string];
-  // "slack-socket-mode-gateway": both sandboxes have Slack Socket Mode active on
-  // the same OpenShell gateway, so only one receives events (#4953) — distinct
-  // from the credential-sharing reasons, which catch a *shared* token.
-  reason?: "matching-token" | "unknown-token" | "slack-socket-mode-gateway";
+  reason?: "matching-token" | "unknown-token" | string;
+  message?: string;
 }
 
 export interface GatewayHealth {
@@ -119,7 +117,11 @@ export interface ShowStatusCommandDeps {
    * detect the degraded state from `$?` (#3386).
    */
   getGatewayHealth?: () => GatewayHealth;
-  checkMessagingBridgeHealth?: (sandboxName: string, channels: string[]) => MessagingBridgeHealth[];
+  checkMessagingBridgeHealth?: (
+    sandboxName: string,
+    channels: string[],
+    agent?: string | null,
+  ) => MessagingBridgeHealth[];
   findMessagingOverlaps?: () => MessagingOverlap[];
   readGatewayLog?: (sandboxName: string) => string | null;
   log?: (message?: string) => void;
@@ -478,11 +480,9 @@ export function showStatusCommand(deps: ShowStatusCommandDeps): void {
     const overlaps = deps.findMessagingOverlaps();
     if (overlaps.length > 0) {
       log("");
-      for (const { channel, sandboxes: pair, reason } of overlaps) {
-        if (reason === "slack-socket-mode-gateway") {
-          log(
-            `  ⚠ '${pair[0]}' and '${pair[1]}' both have Slack Socket Mode enabled on the same gateway; only one sandbox can receive Slack Socket Mode events unless the gateway supports multiplexing.`,
-          );
+      for (const { channel, sandboxes: pair, reason, message } of overlaps) {
+        if (message) {
+          log(`  ⚠ ${formatMessagingOverlapMessage(message, channel, pair)}`);
           continue;
         }
         const detail =
@@ -504,7 +504,11 @@ export function showStatusCommand(deps: ShowStatusCommandDeps): void {
     const defaultEntry = refreshed.find((sb) => sb.name === resolvedDefault);
     const channels = getActiveChannelIdsFromPlan(defaultEntry?.messaging?.plan);
     if (channels.length > 0) {
-      const degraded = deps.checkMessagingBridgeHealth(resolvedDefault, channels);
+      const degraded = deps.checkMessagingBridgeHealth(
+        resolvedDefault,
+        channels,
+        defaultEntry?.agent,
+      );
       if (degraded.length > 0) {
         log("");
         for (const { channel, conflicts } of degraded) {
@@ -528,4 +532,15 @@ export function showStatusCommand(deps: ShowStatusCommandDeps): void {
       }
     }
   }
+}
+
+function formatMessagingOverlapMessage(
+  template: string,
+  channel: string,
+  pair: readonly [string, string],
+): string {
+  return template
+    .replaceAll("{channel}", channel)
+    .replaceAll("{first}", pair[0])
+    .replaceAll("{second}", pair[1]);
 }

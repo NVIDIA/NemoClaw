@@ -67,7 +67,7 @@ describe("onboard Hermes dashboard helpers", () => {
         env: { NEMOCLAW_DASHBOARD_PORT: "8642" },
       }),
     ).toThrow(
-      "[SECURITY] Invalid Hermes dashboard port 8642 - reserved for the Hermes OpenAI-compatible API",
+      "[SECURITY] Invalid dashboard port 8642 - reserved for the Hermes OpenAI-compatible API",
     );
   });
 
@@ -96,7 +96,7 @@ describe("onboard Hermes dashboard helpers", () => {
         env: {},
       }),
     ).toThrow(
-      "[SECURITY] Invalid Hermes dashboard port 8642 - reserved for the Hermes OpenAI-compatible API",
+      "[SECURITY] Invalid dashboard port 8642 - reserved for the Hermes OpenAI-compatible API",
     );
   });
 
@@ -110,14 +110,19 @@ describe("onboard Hermes dashboard helpers", () => {
     ).not.toThrow();
   });
 
-  it("does not apply the #4984 reserved-port guard to non-Hermes agents", () => {
-    expect(
+  it("rejects the reserved Hermes API port 8642 even for non-Hermes agents (#4984)", () => {
+    // A non-hermes onboard that binds 8642 squats the host port and silently
+    // breaks a later `nemoclaw onboard` of hermes (whose API forwards 8642),
+    // so the reserved-port guard is host-side and agent-agnostic.
+    expect(() =>
       resolveHermesDashboardOnboardState({
         agentName: "openclaw",
         effectivePort: 18789,
         env: { NEMOCLAW_DASHBOARD_PORT: "8642" },
       }),
-    ).toEqual({ config: null, enabled: false });
+    ).toThrow(
+      "[SECURITY] Invalid dashboard port 8642 - reserved for the Hermes OpenAI-compatible API",
+    );
   });
 
   it("rolls back and fails when an opted-in dashboard forward cannot start", () => {
