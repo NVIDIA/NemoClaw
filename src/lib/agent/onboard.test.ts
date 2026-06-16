@@ -188,6 +188,100 @@ describe("printDashboardUi — regression for #2078 (port 8642 is not a chat UI)
     expect(noteSpy).not.toHaveBeenCalled();
   });
 
+  it("announces manifest-declared secondary forward_ports alongside the primary dashboard", () => {
+    const hermesShipped = makeAgent({
+      name: "hermes",
+      displayName: "Hermes Agent",
+      forwardPort: 18789,
+      forward_ports: [18789, 8642],
+      healthProbe: { url: "http://localhost:8642/health", port: 8642, timeout_seconds: 90 },
+      dashboard: {
+        kind: "ui",
+        label: "Dashboard",
+        path: "/",
+        healthPath: "/api/status",
+        auth: "session",
+      },
+    });
+
+    printDashboardUi("hermes-box", null, hermesShipped, {
+      note: noteSpy,
+      buildControlUiUrls: buildUrlsLoopback,
+    });
+
+    const output = logSpy.mock.calls.map((args) => String(args[0])).join("\n");
+    expect(output).toContain("Hermes Agent Dashboard");
+    expect(output).toContain("Port 18789 must be forwarded before opening this URL.");
+    expect(output).toContain("http://127.0.0.1:18789/");
+    expect(output).toContain("Hermes Agent OpenAI-compatible API");
+    expect(output).toContain("Port 8642 must be forwarded before connecting.");
+    expect(output).toContain("http://127.0.0.1:8642/v1");
+  });
+
+  it("labels a non-health-probe secondary forward port as 'additional port' rooted at /", () => {
+    const dualAgent = makeAgent({
+      name: "experimental",
+      displayName: "Experimental",
+      forwardPort: 18789,
+      forward_ports: [18789, 9100],
+      healthProbe: { url: "http://localhost:18789/health", port: 18789, timeout_seconds: 30 },
+      dashboard: {
+        kind: "ui",
+        label: "Dashboard",
+        path: "/",
+        healthPath: "/health",
+        auth: "session",
+      },
+    });
+
+    printDashboardUi("agent-box", null, dualAgent, {
+      note: noteSpy,
+      buildControlUiUrls: buildUrlsLoopback,
+    });
+
+    const output = logSpy.mock.calls.map((args) => String(args[0])).join("\n");
+    expect(output).toContain("Experimental additional port");
+    expect(output).toContain("Port 9100 must be forwarded before connecting.");
+    expect(output).toContain("http://127.0.0.1:9100/");
+    expect(output).not.toContain("OpenAI-compatible API");
+    expect(output).not.toContain("http://127.0.0.1:9100/v1");
+  });
+
+  it("emits a URL for a secondary forward port that resolves to the scheme default", () => {
+    // Regression: `new URL("http://h:80").port === ""`. A strict equality
+    // filter against String(port) silently drops the URL line. The helper
+    // must normalise scheme-default ports before filtering.
+    const buildUrlsWithDefaultPort = (_token: string | null, port: number): string[] => {
+      if (port === 80) return ["http://127.0.0.1:80/"];
+      return [`http://127.0.0.1:${port}/`];
+    };
+
+    const httpAgent = makeAgent({
+      name: "experimental",
+      displayName: "Experimental",
+      forwardPort: 18789,
+      forward_ports: [18789, 80],
+      healthProbe: { url: "http://localhost:18789/health", port: 18789, timeout_seconds: 30 },
+      dashboard: {
+        kind: "ui",
+        label: "Dashboard",
+        path: "/",
+        healthPath: "/health",
+        auth: "session",
+      },
+    });
+
+    printDashboardUi("agent-box", null, httpAgent, {
+      note: noteSpy,
+      buildControlUiUrls: buildUrlsWithDefaultPort,
+    });
+
+    const output = logSpy.mock.calls.map((args) => String(args[0])).join("\n");
+    expect(output).toContain("Experimental additional port");
+    expect(output).toContain("Port 80 must be forwarded before connecting.");
+    expect(output).toMatch(/http:\/\/127\.0\.0\.1(:80)?\//);
+  });
+
   it("redacts tokenized URLs for UI-kind agents and shows the token retrieval command", () => {
     const token = "a".repeat(64);
     printDashboardUi("sandbox-y", token, uiAgent, {

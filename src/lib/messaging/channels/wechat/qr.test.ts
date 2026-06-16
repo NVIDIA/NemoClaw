@@ -11,7 +11,7 @@ import {
   WECHAT_ILINK_BOOTSTRAP_BASE_URL,
   WECHAT_ILINK_DEFAULT_BOT_TYPE,
   type FetchLike,
-} from "../../../dist/ext/wechat/qr";
+} from "./qr";
 
 type Capture = { url: string; init?: { method?: string; headers?: Record<string, string> } };
 

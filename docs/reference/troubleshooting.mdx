@@ -1624,6 +1624,20 @@ Expected output:
 Point an OpenAI-compatible client at `http://127.0.0.1:8642/v1` for chat completions.
 For terminal use, run `nemohermes <name> connect` and then `hermes` inside the sandbox.
 
+### `docker port` shows no mapping for 8642 even though forwarding works
+
+OpenShell port forwards are host-side relays managed by the OpenShell gateway process, not Docker `-p` publish mappings on the sandbox container.
+`docker port openshell-hermes-<id>` reflects only Docker-published ports, so it returns nothing for OpenShell-managed forwards even when the host bind is live.
+
+Use OpenShell's own view as the supported acceptance signal:
+
+```bash
+openshell forward list                       # shows the host bind for each forwarded port
+curl -sf http://127.0.0.1:8642/health        # confirms the relayed endpoint answers
+```
+
+If `openshell forward list` does not show port `8642`, run `nemohermes <name> connect --probe-only` (or `nemohermes <name> recover`) to ask the recovery path to re-establish every manifest-declared agent forward port that has gone missing.
+
 ### `nemohermes` reports `Sandbox 'X' already exists as OpenClaw`
 
 Each sandbox name maps to exactly one agent type.

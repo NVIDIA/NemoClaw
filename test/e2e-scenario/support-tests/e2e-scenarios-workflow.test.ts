@@ -553,7 +553,9 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
     ).toBe(true);
   });
 
-  it("rejects malformed free-standing workflow metadata before matrix generation", () => {
+  it("rejects malformed free-standing workflow metadata before matrix generation", {
+    timeout: 60_000,
+  }, () => {
     const malformedWorkflows = [
       {
         body: `

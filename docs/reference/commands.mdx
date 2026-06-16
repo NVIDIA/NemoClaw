@@ -530,6 +530,43 @@ The exit code is the remote command's exit code.
 | `--tty` / `--no-tty` | Allocate a pseudo-terminal; defaults to auto-detection (on when stdin and stdout are terminals) |
 | `--timeout <seconds>` | Timeout in seconds (`0` means no timeout) |
 
+### `$$nemoclaw <name> agent`
+
+Run one OpenClaw agent turn non-interactively in a running sandbox.
+This command forwards every argument verbatim to `openclaw agent ...` inside the sandbox via `openshell sandbox exec`, with `HOME=/sandbox` so the addressed agent profile resolves the same way as `connect`.
+Use this when driving the sandbox programmatically from another process (CI job, multi-agent platform, evaluation harness) rather than from an interactive terminal.
+
+<AgentOnly variant="openclaw">
+
+All flags accepted by the in-sandbox OpenClaw CLI are forwarded verbatim, so the upstream surface stays the single source of truth.
+
+```bash
+$$nemoclaw my-assistant agent -m "Summarise README.md"
+$$nemoclaw my-assistant agent --agent work -m "Status update?"
+$$nemoclaw my-assistant agent --session-id review-42 -m "Any new findings?"
+$$nemoclaw my-assistant agent --json -m 'ping'
+```
+
+The wrapper inherits the remote command's exit code, so host-side pipelines can branch on it. Streaming forwards whatever `openclaw agent` already emits on `stdout`; the wrapper adds no buffering.
+
+Common upstream flags include `-m <text>`, `--session-id <id>`, `--agent <id>`, `--model <id>`, `--thinking <level>`, `--json`, `--deliver`, `--reply-channel <channel>`, and `--timeout <seconds>`. Run `$$nemoclaw <name> agent --help` for the wrapper-level summary, or invoke `$$nemoclaw <name> exec -- openclaw agent --help` to view the upstream OpenClaw help text directly.
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+
+Only OpenClaw sandboxes support the `agent` wrapper today; Hermes sandboxes already expose an OpenAI-compatible HTTP API on port `8642` inside the sandbox, so non-interactive use does not need a wrapper command.
+
+Forward the port and POST chat completions directly:
+
+```bash
+openshell forward start --background 8642 my-hermes
+curl -sN http://127.0.0.1:8642/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"<onboarded-model>","messages":[{"role":"user","content":"What is 2+2?"}],"stream":true}'
+```
+
+</AgentOnly>
+
 ### Advanced Sandbox Maintenance Commands
 
 The following commands are available for targeted host-side maintenance, but they are not part of the top-level public command list.

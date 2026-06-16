@@ -21,6 +21,15 @@ const {
 const {
   createInferenceSelectionValidationHelpers,
 }: typeof import("./onboard/inference-selection-validation") = require("./onboard/inference-selection-validation");
+const {
+  applyCloudFallbackSelection,
+  clearNimContainerBeforeRetry,
+  createRemoteModelValidator,
+  requireProviderChoice,
+}: typeof import("./onboard/setup-nim-selection") = require("./onboard/setup-nim-selection");
+const {
+  createSetupNimOllamaHandlers,
+}: typeof import("./onboard/setup-nim-ollama") = require("./onboard/setup-nim-ollama");
 const inferenceInputCapability = require("./onboard/inference-input-capability");
 const { cleanupTempDir }: typeof import("./onboard/temp-files") = require("./onboard/temp-files");
 const {
@@ -111,8 +120,6 @@ const {
 }: typeof import("./onboard/e2e-failure-injection") = require("./onboard/e2e-failure-injection");
 const onboardTracing: typeof import("./onboard/tracing") = require("./onboard/tracing");
 const sandboxReadinessTracing: typeof import("./onboard/sandbox-readiness-tracing") = require("./onboard/sandbox-readiness-tracing");
-const { hasWechatConfigDrift } =
-  require("./onboard/wechat-config") as typeof import("./onboard/wechat-config");
 const {
   setupMessagingChannels: setupMessagingChannelsImpl,
   readMessagingPlanFromEnv,
@@ -405,11 +412,7 @@ const {
   getMessagingChannelForEnvKey,
   getRecordedMessagingChannelsForResume: getRecordedMessagingChannelsForResumeFromState,
 }: typeof import("./onboard/messaging-credentials") = require("./onboard/messaging-credentials");
-const {
-  computeTelegramRequireMention,
-  getStoredMessagingChannelConfig,
-  messagingChannelConfigsEqual,
-} = messagingConfig;
+const { getStoredMessagingChannelConfig, messagingChannelConfigsEqual } = messagingConfig;
 const messagingPlanSession: typeof import("./onboard/messaging-plan-session") =
   require("./onboard/messaging-plan-session");
 const { getChannelsFromPlan } = messagingPlanSession;
@@ -1033,6 +1036,19 @@ const {
   agentProductName,
   promptValidationRecovery,
 });
+const { validateSelectedRemoteModel } = createRemoteModelValidator({
+  OPENAI_ENDPOINT_URL,
+  ANTHROPIC_ENDPOINT_URL,
+  requireValue,
+  isBackToSelection,
+  validateCustomOpenAiLikeSelection,
+  validateCustomAnthropicSelection,
+  validateAnthropicSelectionWithRetryMessage,
+  validateOpenAiLikeSelection,
+  shouldRequireResponsesToolCalling,
+  shouldSkipResponsesProbe,
+  getProbeAuthMode,
+});
 
 const { promptCloudModel, promptRemoteModel, promptInputModel } = modelPrompts;
 const { validateAnthropicModel, validateOpenAiLikeModel } = providerModels;
@@ -1051,6 +1067,36 @@ const {
   printOllamaExposureWarning,
   prepareOllamaModel,
 } = require("./inference/ollama/proxy");
+
+const {
+  handleWindowsHostOllamaSelection,
+  handleRunningOllamaSelection,
+  handleInstallOllamaSelection,
+} = createSetupNimOllamaHandlers({
+  OLLAMA_PORT,
+  OLLAMA_PROXY_PORT,
+  process,
+  isNonInteractive,
+  prompt,
+  checkOllamaPortsOrWarn,
+  ensureOllamaLoopbackSystemdOverride,
+  runOllamaStartupOrGate,
+  shouldFrontOllamaWithProxy,
+  startOllamaAuthProxy,
+  getLocalProviderBaseUrl,
+  selectAndValidateOllamaModel,
+  printOllamaExposureWarning,
+  switchToWindowsOllamaHost,
+  installOllamaOnWindowsHost,
+  awaitWindowsOllamaReady,
+  setupWindowsOllamaWith0000Binding,
+  printWindowsOllamaTimeoutDiagnostics,
+  resetOllamaHostCache,
+  installOllamaOnMacOS,
+  installOllamaOnLinux,
+  abortNonInteractive,
+  assertOllamaUpgradeApplied,
+});
 
 const ollamaModelSize: typeof import("./inference/ollama/model-size") = require("./inference/ollama/model-size");
 
@@ -3159,13 +3205,6 @@ async function createSandbox(
   hermesDashboardForwarding.ensureForState(finalHermesDashboardState, sandboxName, true);
 
   // Register only after confirmed ready — prevents phantom entries
-  const providerCredentialHashes: Record<string, string> = {};
-  for (const { envKey, token } of messagingTokenDefs) {
-    const hash = token ? hashCredential(token) : null;
-    if (hash) {
-      providerCredentialHashes[envKey] = hash;
-    }
-  }
   // openshell tags images with seconds; buildId is ms. Parse actual tag from output. Fixes #2672.
   const resolvedImageTag = resolveSandboxImageTagFromCreateOutput(createResult.output, buildId);
 
@@ -3178,7 +3217,6 @@ async function createSandbox(
     agent,
     agentVersionKnown: !fromDockerfile,
     imageTag: resolvedImageTag,
-    providerCredentialHashes,
     appliedPolicies: initialSandboxPolicy.appliedPresets,
     plannedMessagingState,
     hermesToolGateways,
@@ -3343,6 +3381,588 @@ async function selectAndValidateOllamaModel(
   }
 }
 
+type SetupNimSelectionState =
+  import("./onboard/setup-nim-selection").SetupNimSelectionState<HermesAuthMethod>;
+
+type SetupNimSelectionResult = "selected" | "retry-selection";
+
+type RemoteProviderSelectionArgs = {
+  selected: ProviderChoice;
+  requestedModel: string | null;
+  recoveredFromSandbox: boolean;
+  recoveredModel: string | null;
+  sandboxName: string | null;
+};
+
+async function handleVllmSelection(
+  state: SetupNimSelectionState,
+): Promise<SetupNimSelectionResult> {
+  console.log(`  ✓ Using existing vLLM on localhost:${VLLM_PORT}`);
+  state.provider = "vllm-local";
+  // Local vLLM uses an internal credential env, no user API key.
+  state.credentialEnv = null;
+  state.endpointUrl = getLocalProviderBaseUrl(state.provider);
+  if (!state.endpointUrl) {
+    console.error("  Local vLLM base URL could not be determined.");
+    process.exit(1);
+  }
+
+  // Source boundary: local vLLM is an external process, so /v1/models can be
+  // unreachable, malformed, empty, or return an unsafe served id. setupNim is
+  // the last safe point before writing provider state, so fail closed here
+  // rather than returning a partially configured local provider. Remove this
+  // local guard only if the vLLM manager owns a typed, validated model probe.
+  const vllmModelsRaw = runCapture(["curl", "-sf", `http://127.0.0.1:${VLLM_PORT}/v1/models`], {
+    ignoreError: true,
+  });
+  let vllmModels: { data?: Array<{ id?: unknown }> } = {};
+  try {
+    vllmModels = JSON.parse(vllmModelsRaw);
+    if (vllmModels.data && vllmModels.data.length > 0) {
+      const detectedModel =
+        typeof vllmModels.data[0]?.id === "string" ? vllmModels.data[0].id : null;
+      state.model = detectedModel;
+      if (!detectedModel || !isSafeModelId(detectedModel)) {
+        console.error(`  Detected model ID contains invalid characters: ${state.model}`);
+        process.exit(1);
+      }
+      console.log(`  Detected model: ${state.model}`);
+    } else {
+      console.error("  Could not detect model from vLLM. Please specify manually.");
+      process.exit(1);
+    }
+  } catch {
+    console.error(
+      `  Could not query vLLM models endpoint. Is vLLM running on localhost:${VLLM_PORT}?`,
+    );
+    process.exit(1);
+  }
+
+  const validationBaseUrl = getLocalProviderValidationBaseUrl(state.provider);
+  if (!validationBaseUrl) {
+    console.error("  Local vLLM validation URL could not be determined.");
+    process.exit(1);
+  }
+  const validation = await validateOpenAiLikeSelection(
+    "Local vLLM",
+    validationBaseUrl,
+    requireValue(state.model as string | null | undefined, "Expected a detected vLLM model"),
+    null,
+  );
+  if (validation.retry === "selection" || validation.retry === "model") {
+    return "retry-selection";
+  }
+  if (!validation.ok) return "retry-selection";
+
+  localInference.applyVllmRuntimeContextWindow(vllmModels, state.model as string);
+  state.preferredInferenceApi = validation.api;
+  // Force chat completions — vLLM's /v1/responses endpoint does not run the
+  // --tool-call-parser, so tool calls arrive as raw text (#976).
+  if (state.preferredInferenceApi !== "openai-completions") {
+    console.log("  ℹ Using chat completions API (tool-call-parser requires /v1/chat/completions)");
+  }
+  state.preferredInferenceApi = "openai-completions";
+  return "selected";
+}
+
+async function handleRoutedSelection(
+  state: SetupNimSelectionState,
+): Promise<SetupNimSelectionResult> {
+  const bp = loadBlueprintProfile("routed");
+  if (!bp || bp.router?.enabled !== true) {
+    console.error("  Router is not enabled in nemoclaw-blueprint/blueprint.yaml.");
+    if (isNonInteractive()) process.exit(1);
+    return "retry-selection";
+  }
+
+  const routerCredentialEnv =
+    bp.router?.credential_env || bp.credential_env || DEFAULT_MODEL_ROUTER_CREDENTIAL_ENV;
+  state.credentialEnv = routerCredentialEnv;
+  const routedCredential =
+    hydrateCredentialEnv(routerCredentialEnv) ||
+    normalizeCredentialValue(bp.credential_default || "");
+  if (routedCredential) {
+    saveCredential(routerCredentialEnv, routedCredential);
+  }
+
+  const _providerKeyHint = (process.env.NEMOCLAW_PROVIDER_KEY || "").trim();
+  if (_providerKeyHint && !resolveProviderCredential(routerCredentialEnv)) {
+    saveCredential(routerCredentialEnv, _providerKeyHint);
+  }
+  if (isNonInteractive()) {
+    if (!resolveProviderCredential(routerCredentialEnv)) {
+      console.error(
+        `  ${routerCredentialEnv} (or NEMOCLAW_PROVIDER_KEY) is required for Model Router in non-interactive mode.`,
+      );
+      process.exit(1);
+    }
+  } else if (!resolveProviderCredential(routerCredentialEnv)) {
+    console.log("");
+    console.log("  Model Router accepts NVIDIA API keys (nvapi-...).");
+    console.log("  Get one at https://build.nvidia.com");
+    console.log("");
+    const routerCredentialResult = await ensureNamedCredential(
+      routerCredentialEnv,
+      "Model Router API key",
+      null,
+    );
+    if (credentialPrompt.returningToProviderSelection(routerCredentialResult)) {
+      return "retry-selection";
+    }
+  }
+
+  state.provider = bp.provider_name || "nvidia-router";
+  state.model = bp.model;
+  const { HOST_GATEWAY_URL } = require("./inference/local");
+  const routerEndpointUrl = bp.endpoint || "";
+  state.endpointUrl = routerEndpointUrl;
+  if (routerEndpointUrl.match(/localhost|127\.0\.0\.1/)) {
+    const u = new URL(routerEndpointUrl);
+    state.endpointUrl = `${HOST_GATEWAY_URL}:${u.port}${u.pathname}`;
+  }
+  state.preferredInferenceApi = "openai-completions";
+  console.log(`  ✓ Using Model Router: ${state.provider} / ${state.model}`);
+  return "selected";
+}
+
+async function handleNimLocalSelection(
+  gpu: ReturnType<typeof nim.detectGpu>,
+  args: Pick<
+    RemoteProviderSelectionArgs,
+    "requestedModel" | "recoveredFromSandbox" | "recoveredModel"
+  >,
+  state: SetupNimSelectionState,
+): Promise<SetupNimSelectionResult> {
+  const localGpu = requireValue(gpu, "GPU details are required for local NIM model selection");
+  const models = nim.listModels().filter((m) => m.minGpuMemoryMB <= localGpu.totalMemoryMB);
+  if (models.length === 0) {
+    console.log("  No NIM models fit your GPU VRAM. Falling back to cloud API.");
+    applyCloudFallbackSelection(state, REMOTE_PROVIDER_CONFIG.build);
+    return "selected";
+  }
+
+  let sel;
+  if (isNonInteractive()) {
+    const targetModel =
+      args.requestedModel || (args.recoveredFromSandbox ? args.recoveredModel : null);
+    if (targetModel) {
+      sel = models.find((m) => m.name === targetModel);
+      if (!sel) {
+        const label = args.requestedModel ? "NEMOCLAW_MODEL for NIM" : "Recorded NIM model";
+        console.error(`  Unsupported ${label}: ${targetModel}`);
+        process.exit(1);
+      }
+    } else {
+      sel = models[0];
+    }
+    note(`  [non-interactive] NIM model: ${sel.name}`);
+  } else {
+    console.log("");
+    console.log("  Models that fit your GPU:");
+    models.forEach((m, i) => {
+      console.log(`    ${i + 1}) ${m.name} (min ${m.minGpuMemoryMB} MB)`);
+    });
+    console.log("");
+
+    const modelChoice = await prompt(`  Choose model [1]: `);
+    sel = selectFromNumberedMenuOrExit(modelChoice, 1, models);
+  }
+  state.model = sel.name;
+
+  let ngcApiKey: string | null = null;
+  if (!nim.isNgcLoggedIn()) {
+    if (isNonInteractive()) {
+      console.error(
+        "  Docker is not logged in to nvcr.io. In non-interactive mode, run `docker login nvcr.io` first and retry.",
+      );
+      process.exit(1);
+    }
+    console.log("");
+    console.log("  NGC API Key required to pull NIM images.");
+    console.log("  Get one from: https://org.ngc.nvidia.com/setup/api-key");
+    console.log("");
+    let ngcKey = await credentialPrompt.readValue("  NGC API Key: ");
+    if (credentialPrompt.returningToProviderSelection(ngcKey)) return "retry-selection";
+    if (!ngcKey) {
+      console.error("  NGC API Key is required for Local NIM.");
+      process.exit(1);
+    }
+    if (!nim.dockerLoginNgc(ngcKey)) {
+      console.error("  Failed to login to NGC registry. Check your API key and try again.");
+      console.log("");
+      ngcKey = await credentialPrompt.readValue("  NGC API Key: ");
+      if (credentialPrompt.returningToProviderSelection(ngcKey)) return "retry-selection";
+      if (!ngcKey || !nim.dockerLoginNgc(ngcKey)) {
+        console.error("  NGC login failed. Cannot pull NIM images.");
+        process.exit(1);
+      }
+    }
+    ngcApiKey = ngcKey;
+  } else {
+    ngcApiKey =
+      hydrateCredentialEnv("NGC_API_KEY") || hydrateCredentialEnv("NVIDIA_INFERENCE_API_KEY");
+    if (!ngcApiKey && !isNonInteractive()) {
+      console.log("");
+      console.log("  NGC API Key required to download NIM model weights at runtime.");
+      console.log("  (Docker is logged in to nvcr.io, but the key was not saved.)");
+      const ngcKey = await credentialPrompt.readValue("  NGC API Key: ");
+      if (credentialPrompt.returningToProviderSelection(ngcKey)) return "retry-selection";
+      ngcApiKey = ngcKey || null;
+    }
+  }
+
+  console.log(`  Pulling NIM image for ${state.model}...`);
+  nim.pullNimImage(state.model);
+
+  console.log("  Starting NIM container...");
+  const nimContainerNameLocal = nim.containerName(GATEWAY_NAME);
+  state.nimContainer = nim.startNimContainerByName(nimContainerNameLocal, state.model, undefined, {
+    ngcApiKey: ngcApiKey ?? undefined,
+  });
+
+  console.log("  Waiting for NIM to become healthy...");
+  if (!nim.waitForNimHealth(undefined, undefined, { container: nimContainerNameLocal })) {
+    console.error("  NIM failed to start. Falling back to cloud API.");
+    applyCloudFallbackSelection(state, REMOTE_PROVIDER_CONFIG.build);
+    return "selected";
+  }
+
+  state.provider = "vllm-local";
+  state.credentialEnv = null;
+  state.endpointUrl = getLocalProviderBaseUrl(state.provider);
+  if (!state.endpointUrl) {
+    console.error("  Local NVIDIA NIM base URL could not be determined.");
+    process.exit(1);
+  }
+  state.model = nim.adoptServedModelId(state.model);
+  const nimValidationUrl = getLocalProviderValidationBaseUrl(state.provider) || state.endpointUrl;
+  const validation = await validateOpenAiLikeSelection(
+    "Local NVIDIA NIM",
+    nimValidationUrl,
+    requireValue(state.model, "Expected a Local NVIDIA NIM model after startup"),
+    null,
+  );
+  if (validation.retry === "selection" || validation.retry === "model") {
+    clearNimContainerBeforeRetry(state);
+    return "retry-selection";
+  }
+  if (!validation.ok) {
+    clearNimContainerBeforeRetry(state);
+    return "retry-selection";
+  }
+  if (validation.api !== "openai-completions") {
+    console.log("  ℹ Using chat completions API (tool-call-parser requires /v1/chat/completions)");
+  }
+  state.preferredInferenceApi = "openai-completions";
+  return "selected";
+}
+
+async function handleRemoteProviderSelection(
+  args: RemoteProviderSelectionArgs,
+  state: SetupNimSelectionState,
+): Promise<SetupNimSelectionResult> {
+  const { selected, requestedModel, recoveredFromSandbox, recoveredModel, sandboxName } = args;
+  const remoteConfig = REMOTE_PROVIDER_CONFIG[selected.key];
+  state.provider = remoteConfig.providerName;
+  state.credentialEnv = remoteConfig.credentialEnv;
+  state.endpointUrl = remoteConfig.endpointUrl;
+  state.preferredInferenceApi = null;
+
+  if (selected.key === "custom" || selected.key === "anthropicCompatible") {
+    const kind = selected.key === "custom" ? "openai" : "anthropic";
+    const _envUrl = (process.env.NEMOCLAW_ENDPOINT_URL || "").trim();
+    const endpointInput = isNonInteractive()
+      ? _envUrl
+      : (await prompt(
+          _envUrl
+            ? `  ${kind === "openai" ? "OpenAI" : "Anthropic"}-compatible base URL [${_envUrl}]: `
+            : kind === "openai"
+              ? "  OpenAI-compatible base URL (e.g., https://openrouter.ai): "
+              : "  Anthropic-compatible base URL (e.g., https://proxy.example.com): ",
+        )) || _envUrl;
+    const navigation = getNavigationChoice(endpointInput);
+    if (navigation === "back") {
+      console.log("  Returning to provider selection.");
+      console.log("");
+      return "retry-selection";
+    }
+    if (navigation === "exit") {
+      exitOnboardFromPrompt();
+    }
+    state.endpointUrl = normalizeProviderBaseUrl(endpointInput, kind);
+    if (!state.endpointUrl) {
+      console.error(
+        selected.key === "custom"
+          ? "  Endpoint URL is required for Other OpenAI-compatible endpoint."
+          : "  Endpoint URL is required for Other Anthropic-compatible endpoint.",
+      );
+      if (isNonInteractive()) {
+        process.exit(1);
+      }
+      console.log("");
+      return "retry-selection";
+    }
+    if (selected.key === "anthropicCompatible") {
+      state.endpointUrl = bedrockRuntimeOnboard.normalizeCustomAnthropicEndpointUrl(
+        state.endpointUrl,
+      );
+    }
+  }
+
+  if (selected.key === "hermesProvider") {
+    const selectedHermesAuthMethod = await promptHermesAuthMethod();
+    if (isBackToSelection(selectedHermesAuthMethod)) {
+      state.hermesAuthMethod = null;
+      console.log("  Returning to provider selection.");
+      console.log("");
+      return "retry-selection";
+    }
+    state.hermesAuthMethod = normalizeHermesAuthMethod(
+      selectedHermesAuthMethod as string | null | undefined,
+    );
+    if (state.hermesAuthMethod === HERMES_AUTH_METHOD_API_KEY) {
+      state.credentialEnv = HERMES_NOUS_API_KEY_CREDENTIAL_ENV;
+      stageNousApiKeyProviderEnv();
+      if (isNonInteractive()) {
+        if (!resolveHermesNousApiKey()) {
+          console.error("  Hermes Provider Nous API Key is required in non-interactive mode.");
+          process.exit(1);
+        }
+      } else {
+        const hermesKeyResult = await ensureHermesNousApiKeyEnv();
+        if (credentialPrompt.returningToProviderSelection(hermesKeyResult)) {
+          return "retry-selection";
+        }
+      }
+    } else {
+      state.credentialEnv = remoteConfig.credentialEnv;
+    }
+    const recordedHermesToolGateways = sandboxName
+      ? normalizeHermesToolGatewaySelections(registry.getSandbox(sandboxName)?.hermesToolGateways)
+      : null;
+    state.hermesToolGateways = await setupHermesToolGateways(
+      state.provider,
+      state.hermesAuthMethod,
+      recordedHermesToolGateways,
+      { prompt, note, isNonInteractive },
+    );
+
+    const defaultModel =
+      requestedModel || (recoveredFromSandbox && recoveredModel) || remoteConfig.defaultModel;
+    if (isNonInteractive()) {
+      state.model = defaultModel;
+    } else {
+      let hermesProviderModels: string[] = [];
+      try {
+        hermesProviderModels = await nousModels.getHermesProviderModelOptions();
+      } catch (err) {
+        // Source boundary: Nous model recommendations are advisory network data,
+        // while the user's requested/default model remains the source of truth
+        // for onboarding. Keep Hermes auth/tool-gateway state and continue with
+        // fallback model prompting. Remove this fallback only when the provider
+        // registry can supply recommendations without network failure modes.
+        const detail = err instanceof Error ? err.message : String(err);
+        console.warn(
+          `  Warning: failed to load Nous model recommendations; falling back to the current/default model (${detail}).`,
+        );
+      }
+      state.model = await promptRemoteModel(remoteConfig.label, selected.key, defaultModel, null, {
+        otherShowsFullList: true,
+        remoteModelOptions: { [selected.key]: hermesProviderModels },
+        topLevelModelLimit: 10,
+      });
+    }
+    if (isBackToSelection(state.model)) {
+      console.log("  Returning to provider selection.");
+      console.log("");
+      return "retry-selection";
+    }
+    state.preferredInferenceApi = "openai-completions";
+    console.log(`  Using ${remoteConfig.label} with model: ${state.model}`);
+    return "selected";
+  }
+
+  hydrateCredentialEnv(state.credentialEnv);
+
+  if (selected.key === "build") {
+    const _nvProviderKey = (process.env.NEMOCLAW_PROVIDER_KEY || "").trim();
+    const existingNvidiaKey = ["NVIDIA_INFERENCE_API_KEY", "NVIDIA_API_KEY"]
+      .map((envName) => normalizeCredentialValue(process.env[envName] ?? ""))
+      .find(Boolean);
+    if (_nvProviderKey && !existingNvidiaKey) {
+      process.env.NVIDIA_INFERENCE_API_KEY = _nvProviderKey;
+    }
+    if (isNonInteractive()) {
+      const resolvedNvidiaKey = resolveProviderCredential("NVIDIA_INFERENCE_API_KEY");
+      if (resolvedNvidiaKey) {
+        const keyError = validateNvidiaApiKeyValue(resolvedNvidiaKey);
+        if (keyError) {
+          console.error(keyError);
+          console.error(`  Get a key from ${REMOTE_PROVIDER_CONFIG.build.helpUrl}`);
+          process.exit(1);
+        }
+      } else if (!providerExistsInGateway(state.provider)) {
+        logMissingNvidiaApiKeyHelp(REMOTE_PROVIDER_CONFIG.build.helpUrl);
+        process.exit(1);
+      }
+    } else {
+      await ensureApiKey();
+    }
+    const _envModel = (process.env.NEMOCLAW_MODEL || "").trim();
+    state.model =
+      requestedModel ||
+      (recoveredFromSandbox && recoveredModel) ||
+      (isNonInteractive()
+        ? DEFAULT_CLOUD_MODEL
+        : await promptCloudModel({ defaultModelId: _envModel || undefined })) ||
+      DEFAULT_CLOUD_MODEL;
+    if (isBackToSelection(state.model)) {
+      console.log("  Returning to provider selection.");
+      console.log("");
+      return "retry-selection";
+    }
+  } else {
+    const _providerKeyHint = (process.env.NEMOCLAW_PROVIDER_KEY || "").trim();
+    if (_providerKeyHint && state.credentialEnv) {
+      const existingCredentialKey = normalizeCredentialValue(
+        process.env[state.credentialEnv] ?? "",
+      );
+      if (!existingCredentialKey) {
+        process.env[state.credentialEnv] = _providerKeyHint;
+      }
+    }
+
+    const _envModelRemote = (process.env.NEMOCLAW_MODEL || "").trim();
+    const defaultModel =
+      requestedModel ||
+      _envModelRemote ||
+      (recoveredFromSandbox && recoveredModel) ||
+      remoteConfig.defaultModel;
+    const selectedCredentialEnv = requireValue(
+      state.credentialEnv,
+      `Missing credential env for ${remoteConfig.label}`,
+    );
+    const bedrockSelection = await bedrockRuntimeOnboard.selectBedrockRuntimeCustomAnthropic({
+      selectedKey: selected.key,
+      endpointUrl: state.endpointUrl,
+      credentialEnv: selectedCredentialEnv,
+      label: remoteConfig.label,
+      helpUrl: remoteConfig.helpUrl,
+      defaultModel,
+      backToSelection: BACK_TO_SELECTION,
+      isNonInteractive,
+      promptInputModel,
+      replaceNamedCredential,
+    });
+    if (bedrockSelection.action === "retry-selection") {
+      console.log("  Returning to provider selection.");
+      console.log("");
+      return "retry-selection";
+    }
+    if (bedrockSelection.action === "selected") {
+      state.model = bedrockSelection.model;
+      state.preferredInferenceApi = bedrockSelection.preferredInferenceApi;
+      return "selected";
+    }
+    if (isNonInteractive()) {
+      if (
+        !resolveProviderCredential(selectedCredentialEnv) &&
+        !providerExistsInGateway(state.provider)
+      ) {
+        console.error(
+          `  Provider credential (or NEMOCLAW_PROVIDER_KEY) is required for ${remoteConfig.label} in non-interactive mode.`,
+        );
+        process.exit(1);
+      }
+    } else {
+      const credentialResult = await ensureNamedCredential(
+        selectedCredentialEnv,
+        `${remoteConfig.label} API key`,
+        remoteConfig.helpUrl,
+      );
+      if (credentialPrompt.returningToProviderSelection(credentialResult)) {
+        return "retry-selection";
+      }
+    }
+    let modelValidator: ((candidate: string) => ModelValidationResult) | null = null;
+    if (selected.key === "openai" || selected.key === "gemini") {
+      const modelAuthMode = getProbeAuthMode(state.provider);
+      modelValidator = (candidate) =>
+        validateOpenAiLikeModel(
+          remoteConfig.label,
+          state.endpointUrl || remoteConfig.endpointUrl,
+          candidate,
+          getCredential(selectedCredentialEnv) || "",
+          ...(modelAuthMode ? [{ authMode: modelAuthMode }] : []),
+        );
+    } else if (selected.key === "anthropic") {
+      modelValidator = (candidate) =>
+        validateAnthropicModel(
+          state.endpointUrl || ANTHROPIC_ENDPOINT_URL,
+          candidate,
+          getCredential(selectedCredentialEnv) || "",
+        );
+    }
+    while (true) {
+      if (isNonInteractive()) {
+        state.model = defaultModel;
+      } else if (remoteConfig.modelMode === "curated") {
+        state.model = await promptRemoteModel(
+          remoteConfig.label,
+          selected.key,
+          defaultModel,
+          modelValidator,
+        );
+      } else {
+        state.model = await promptInputModel(remoteConfig.label, defaultModel, modelValidator);
+      }
+      if (isBackToSelection(state.model)) {
+        console.log("  Returning to provider selection.");
+        console.log("");
+        return "retry-selection";
+      }
+
+      const validationResult = await validateSelectedRemoteModel({
+        selected,
+        remoteConfig,
+        state,
+        selectedCredentialEnv,
+      });
+      if (validationResult === "selected") break;
+      if (validationResult === "retry-selection") return "retry-selection";
+    }
+  }
+
+  if (selected.key === "build") {
+    while (true) {
+      const validation = await validateOpenAiLikeSelection(
+        remoteConfig.label,
+        requireValue(state.endpointUrl, `Missing endpoint URL for ${remoteConfig.label}`),
+        state.model,
+        state.credentialEnv,
+        "Please choose a provider/model again.",
+        remoteConfig.helpUrl,
+        {
+          requireResponsesToolCalling: shouldRequireResponsesToolCalling(state.provider),
+          skipResponsesProbe: shouldSkipResponsesProbe(state.provider),
+          authMode: getProbeAuthMode(state.provider),
+        },
+      );
+      if (validation.ok) {
+        state.preferredInferenceApi = validation.api;
+        break;
+      }
+      if (validation.retry === "credential" || validation.retry === "retry") {
+        continue;
+      }
+      return "retry-selection";
+    }
+  }
+
+  console.log(`  Using ${remoteConfig.label} with model: ${state.model}`);
+  return "selected";
+}
+
 async function setupNim(
   gpu: ReturnType<typeof nim.detectGpu>,
   sandboxName: string | null = null,
@@ -3485,771 +4105,163 @@ async function setupNim(
         });
       }
 
-      if (!selected) {
-        console.error("  No provider was selected.");
-        process.exit(1);
-      }
+      selected = requireProviderChoice(selected);
       if (selected.key !== "hermesProvider") {
         hermesAuthMethod = null;
         hermesToolGateways = [];
       }
 
       if (REMOTE_PROVIDER_CONFIG[selected.key]) {
-        const remoteConfig = REMOTE_PROVIDER_CONFIG[selected.key];
-        provider = remoteConfig.providerName;
-        credentialEnv = remoteConfig.credentialEnv;
-        endpointUrl = remoteConfig.endpointUrl;
-        preferredInferenceApi = null;
-
-        if (selected.key === "custom") {
-          const _envUrl = (process.env.NEMOCLAW_ENDPOINT_URL || "").trim();
-          const endpointInput = isNonInteractive()
-            ? _envUrl
-            : (await prompt(
-                _envUrl
-                  ? `  OpenAI-compatible base URL [${_envUrl}]: `
-                  : "  OpenAI-compatible base URL (e.g., https://openrouter.ai): ",
-              )) || _envUrl;
-          const navigation = getNavigationChoice(endpointInput);
-          if (navigation === "back") {
-            console.log("  Returning to provider selection.");
-            console.log("");
-            continue selectionLoop;
-          }
-          if (navigation === "exit") {
-            exitOnboardFromPrompt();
-          }
-          endpointUrl = normalizeProviderBaseUrl(endpointInput, "openai");
-          if (!endpointUrl) {
-            console.error("  Endpoint URL is required for Other OpenAI-compatible endpoint.");
-            if (isNonInteractive()) {
-              process.exit(1);
-            }
-            console.log("");
-            continue selectionLoop;
-          }
-        } else if (selected.key === "anthropicCompatible") {
-          const _envUrl = (process.env.NEMOCLAW_ENDPOINT_URL || "").trim();
-          const endpointInput = isNonInteractive()
-            ? _envUrl
-            : (await prompt(
-                _envUrl
-                  ? `  Anthropic-compatible base URL [${_envUrl}]: `
-                  : "  Anthropic-compatible base URL (e.g., https://proxy.example.com): ",
-              )) || _envUrl;
-          const navigation = getNavigationChoice(endpointInput);
-          if (navigation === "back") {
-            console.log("  Returning to provider selection.");
-            console.log("");
-            continue selectionLoop;
-          }
-          if (navigation === "exit") {
-            exitOnboardFromPrompt();
-          }
-          endpointUrl = normalizeProviderBaseUrl(endpointInput, "anthropic");
-          if (!endpointUrl) {
-            console.error("  Endpoint URL is required for Other Anthropic-compatible endpoint.");
-            if (isNonInteractive()) {
-              process.exit(1);
-            }
-            console.log("");
-            continue selectionLoop;
-          }
-          endpointUrl = bedrockRuntimeOnboard.normalizeCustomAnthropicEndpointUrl(endpointUrl);
-        }
-
-        if (selected.key === "hermesProvider") {
-          const selectedHermesAuthMethod = await promptHermesAuthMethod();
-          if (isBackToSelection(selectedHermesAuthMethod)) {
-            hermesAuthMethod = null;
-            console.log("  Returning to provider selection.");
-            console.log("");
-            continue selectionLoop;
-          }
-          hermesAuthMethod = normalizeHermesAuthMethod(
-            selectedHermesAuthMethod as string | null | undefined,
-          );
-          if (hermesAuthMethod === HERMES_AUTH_METHOD_API_KEY) {
-            credentialEnv = HERMES_NOUS_API_KEY_CREDENTIAL_ENV;
-            stageNousApiKeyProviderEnv();
-            if (isNonInteractive()) {
-              if (!resolveHermesNousApiKey()) {
-                console.error(
-                  "  Hermes Provider Nous API Key is required in non-interactive mode.",
-                );
-                process.exit(1);
-              }
-            } else {
-              const hermesKeyResult = await ensureHermesNousApiKeyEnv();
-              if (credentialPrompt.returningToProviderSelection(hermesKeyResult))
-                continue selectionLoop;
-            }
-          } else {
-            credentialEnv = remoteConfig.credentialEnv;
-          }
-          const recordedHermesToolGateways = sandboxName
-            ? normalizeHermesToolGatewaySelections(
-                registry.getSandbox(sandboxName)?.hermesToolGateways,
-              )
-            : null;
-          hermesToolGateways = await setupHermesToolGateways(
-            provider,
-            hermesAuthMethod,
-            recordedHermesToolGateways,
-            { prompt, note, isNonInteractive },
-          );
-
-          const defaultModel =
-            requestedModel || (recoveredFromSandbox && recoveredModel) || remoteConfig.defaultModel;
-          if (isNonInteractive()) {
-            model = defaultModel;
-          } else {
-            let hermesProviderModels: string[] = [];
-            try {
-              hermesProviderModels = await nousModels.getHermesProviderModelOptions();
-            } catch (err) {
-              const detail = err instanceof Error ? err.message : String(err);
-              console.warn(
-                `  Warning: failed to load Nous model recommendations; falling back to the current/default model (${detail}).`,
-              );
-            }
-            model = await promptRemoteModel(remoteConfig.label, selected.key, defaultModel, null, {
-              otherShowsFullList: true,
-              remoteModelOptions: { [selected.key]: hermesProviderModels },
-              topLevelModelLimit: 10,
-            });
-          }
-          if (isBackToSelection(model)) {
-            console.log("  Returning to provider selection.");
-            console.log("");
-            continue selectionLoop;
-          }
-          preferredInferenceApi = "openai-completions";
-          console.log(`  Using ${remoteConfig.label} with model: ${model}`);
-          break;
-        }
-
-        // Hydrate from credential env vars set earlier in this process
-        // before checking env, so rebuild and other non-interactive callers
-        // can resolve keys stored during the original interactive onboard.
-        // See #2273.
-        hydrateCredentialEnv(credentialEnv);
-
-        if (selected.key === "build") {
-          // Let NEMOCLAW_PROVIDER_KEY fill the NVIDIA key without overriding explicit env.
-          const _nvProviderKey = (process.env.NEMOCLAW_PROVIDER_KEY || "").trim();
-          const existingNvidiaKey = ["NVIDIA_INFERENCE_API_KEY", "NVIDIA_API_KEY"]
-            .map((envName) => normalizeCredentialValue(process.env[envName] ?? ""))
-            .find(Boolean);
-          if (_nvProviderKey && !existingNvidiaKey) {
-            process.env.NVIDIA_INFERENCE_API_KEY = _nvProviderKey;
-          }
-          if (isNonInteractive()) {
-            const resolvedNvidiaKey = resolveProviderCredential("NVIDIA_INFERENCE_API_KEY");
-            if (resolvedNvidiaKey) {
-              const keyError = validateNvidiaApiKeyValue(resolvedNvidiaKey);
-              if (keyError) {
-                console.error(keyError);
-                console.error(`  Get a key from ${REMOTE_PROVIDER_CONFIG.build.helpUrl}`);
-                process.exit(1);
-              }
-            } else if (!providerExistsInGateway(provider)) {
-              logMissingNvidiaApiKeyHelp(REMOTE_PROVIDER_CONFIG.build.helpUrl);
-              process.exit(1);
-            }
-          } else {
-            await ensureApiKey();
-          }
-          const _envModel = (process.env.NEMOCLAW_MODEL || "").trim();
-          model =
-            requestedModel ||
-            (recoveredFromSandbox && recoveredModel) ||
-            (isNonInteractive()
-              ? DEFAULT_CLOUD_MODEL
-              : await promptCloudModel({ defaultModelId: _envModel || undefined })) ||
-            DEFAULT_CLOUD_MODEL;
-          if (isBackToSelection(model)) {
-            console.log("  Returning to provider selection.");
-            console.log("");
-            continue selectionLoop;
-          }
-        } else {
-          // NEMOCLAW_PROVIDER_KEY is a universal alias: if the specific credential env
-          // isn't already set, use NEMOCLAW_PROVIDER_KEY as the API key for this provider.
-          // Check raw process.env — the override must apply before resolving from credentials.json.
-          const _providerKeyHint = (process.env.NEMOCLAW_PROVIDER_KEY || "").trim();
-          if (_providerKeyHint && credentialEnv) {
-            const existingCredentialKey = normalizeCredentialValue(
-              // check-direct-credential-env-ignore -- intentional: checking if env is already set before applying NEMOCLAW_PROVIDER_KEY override
-              process.env[credentialEnv] ?? "",
-            );
-            if (!existingCredentialKey) {
-              process.env[credentialEnv] = _providerKeyHint;
-            }
-          }
-
-          const _envModelRemote = (process.env.NEMOCLAW_MODEL || "").trim();
-          const defaultModel =
-            requestedModel ||
-            _envModelRemote ||
-            (recoveredFromSandbox && recoveredModel) ||
-            remoteConfig.defaultModel;
-          const selectedCredentialEnv = requireValue(
-            credentialEnv,
-            `Missing credential env for ${remoteConfig.label}`,
-          );
-          const bedrockSelection = await bedrockRuntimeOnboard.selectBedrockRuntimeCustomAnthropic({
-            selectedKey: selected.key,
-            endpointUrl,
-            credentialEnv: selectedCredentialEnv,
-            label: remoteConfig.label,
-            helpUrl: remoteConfig.helpUrl,
-            defaultModel,
-            backToSelection: BACK_TO_SELECTION,
-            isNonInteractive,
-            promptInputModel,
-            replaceNamedCredential,
-          });
-          if (bedrockSelection.action === "retry-selection") {
-            console.log("  Returning to provider selection.");
-            console.log("");
-            continue selectionLoop;
-          }
-          if (bedrockSelection.action === "selected") {
-            model = bedrockSelection.model;
-            preferredInferenceApi = bedrockSelection.preferredInferenceApi;
-            break;
-          }
-          if (isNonInteractive()) {
-            if (
-              !resolveProviderCredential(selectedCredentialEnv) &&
-              !providerExistsInGateway(provider)
-            ) {
-              console.error(
-                `  ${selectedCredentialEnv} (or NEMOCLAW_PROVIDER_KEY) is required for ${remoteConfig.label} in non-interactive mode.`,
-              );
-              process.exit(1);
-            }
-          } else {
-            const credentialResult = await ensureNamedCredential(
-              selectedCredentialEnv,
-              remoteConfig.label + " API key",
-              remoteConfig.helpUrl,
-            );
-            if (credentialPrompt.returningToProviderSelection(credentialResult))
-              continue selectionLoop;
-          }
-          let modelValidator: ((candidate: string) => ModelValidationResult) | null = null;
-          if (selected.key === "openai" || selected.key === "gemini") {
-            const modelAuthMode = getProbeAuthMode(provider);
-            modelValidator = (candidate) =>
-              validateOpenAiLikeModel(
-                remoteConfig.label,
-                endpointUrl || remoteConfig.endpointUrl,
-                candidate,
-                getCredential(selectedCredentialEnv) || "",
-                ...(modelAuthMode ? [{ authMode: modelAuthMode }] : []),
-              );
-          } else if (selected.key === "anthropic") {
-            modelValidator = (candidate) =>
-              validateAnthropicModel(
-                endpointUrl || ANTHROPIC_ENDPOINT_URL,
-                candidate,
-                getCredential(selectedCredentialEnv) || "",
-              );
-          }
-          while (true) {
-            if (isNonInteractive()) {
-              model = defaultModel;
-            } else if (remoteConfig.modelMode === "curated") {
-              model = await promptRemoteModel(
-                remoteConfig.label,
-                selected.key,
-                defaultModel,
-                modelValidator,
-              );
-            } else {
-              model = await promptInputModel(remoteConfig.label, defaultModel, modelValidator);
-            }
-            if (isBackToSelection(model)) {
-              console.log("  Returning to provider selection.");
-              console.log("");
-              continue selectionLoop;
-            }
-
-            if (selected.key === "custom") {
-              const validation = await validateCustomOpenAiLikeSelection(
-                remoteConfig.label,
-                endpointUrl || OPENAI_ENDPOINT_URL,
-                model,
-                selectedCredentialEnv,
-                remoteConfig.helpUrl,
-              );
-              if (validation.ok) {
-                // Force chat completions for all OpenAI-compatible endpoints
-                // unless the user explicitly opted in to responses via env var.
-                // Many backends (Ollama, vLLM, LiteLLM) expose /v1/responses
-                // but do not correctly handle the `developer` role used by the
-                // Responses API — messages with that role are silently dropped,
-                // causing the model to receive no system prompt or tool
-                // definitions. Chat completions uses the `system` role which
-                // is universally supported.
-                // See: https://github.com/NVIDIA/NemoClaw/issues/1932
-                const explicitApi = (process.env.NEMOCLAW_PREFERRED_API || "").trim().toLowerCase();
-                if (
-                  explicitApi &&
-                  explicitApi !== "openai-completions" &&
-                  explicitApi !== "chat-completions"
-                ) {
-                  preferredInferenceApi = validation.api;
-                } else {
-                  if (validation.api !== "openai-completions") {
-                    console.log(
-                      "  ℹ Using chat completions API (compatible endpoints may not support the Responses API developer role)",
-                    );
-                  }
-                  preferredInferenceApi = "openai-completions";
-                }
-                break;
-              }
-              if (
-                validation.retry === "credential" ||
-                validation.retry === "retry" ||
-                validation.retry === "model"
-              ) {
-                continue;
-              }
-              if (validation.retry === "selection") {
-                continue selectionLoop;
-              }
-            } else if (selected.key === "anthropicCompatible") {
-              const validation = await validateCustomAnthropicSelection(
-                remoteConfig.label,
-                endpointUrl || ANTHROPIC_ENDPOINT_URL,
-                model,
-                selectedCredentialEnv,
-                remoteConfig.helpUrl,
-              );
-              if (validation.ok) {
-                preferredInferenceApi = validation.api;
-                break;
-              }
-              if (
-                validation.retry === "credential" ||
-                validation.retry === "retry" ||
-                validation.retry === "model"
-              ) {
-                continue;
-              }
-              if (validation.retry === "selection") {
-                continue selectionLoop;
-              }
-            } else {
-              const retryMessage = "Please choose a provider/model again.";
-              if (selected.key === "anthropic") {
-                const validation = await validateAnthropicSelectionWithRetryMessage(
-                  remoteConfig.label,
-                  endpointUrl || ANTHROPIC_ENDPOINT_URL,
-                  model,
-                  selectedCredentialEnv,
-                  retryMessage,
-                  remoteConfig.helpUrl,
-                );
-                if (validation.ok) {
-                  preferredInferenceApi = validation.api;
-                  break;
-                }
-                if (
-                  validation.retry === "credential" ||
-                  validation.retry === "retry" ||
-                  validation.retry === "model"
-                ) {
-                  continue;
-                }
-              } else {
-                const validation = await validateOpenAiLikeSelection(
-                  remoteConfig.label,
-                  requireValue(endpointUrl, `Missing endpoint URL for ${remoteConfig.label}`),
-                  model,
-                  selectedCredentialEnv,
-                  retryMessage,
-                  remoteConfig.helpUrl,
-                  {
-                    requireResponsesToolCalling: shouldRequireResponsesToolCalling(provider),
-                    skipResponsesProbe: shouldSkipResponsesProbe(provider),
-                    authMode: getProbeAuthMode(provider),
-                  },
-                );
-                if (validation.ok) {
-                  preferredInferenceApi = validation.api;
-                  break;
-                }
-                if (
-                  validation.retry === "credential" ||
-                  validation.retry === "retry" ||
-                  validation.retry === "model"
-                ) {
-                  continue;
-                }
-              }
-              continue selectionLoop;
-            }
-          }
-        }
-
-        if (selected.key === "build") {
-          while (true) {
-            const validation = await validateOpenAiLikeSelection(
-              remoteConfig.label,
-              requireValue(endpointUrl, `Missing endpoint URL for ${remoteConfig.label}`),
-              model,
-              credentialEnv,
-              "Please choose a provider/model again.",
-              remoteConfig.helpUrl,
-              {
-                requireResponsesToolCalling: shouldRequireResponsesToolCalling(provider),
-                skipResponsesProbe: shouldSkipResponsesProbe(provider),
-                authMode: getProbeAuthMode(provider),
-              },
-            );
-            if (validation.ok) {
-              preferredInferenceApi = validation.api;
-              break;
-            }
-            if (validation.retry === "credential" || validation.retry === "retry") {
-              continue;
-            }
-            continue selectionLoop;
-          }
-        }
-
-        console.log(`  Using ${remoteConfig.label} with model: ${model}`);
+        const state: SetupNimSelectionState = {
+          model,
+          provider,
+          endpointUrl,
+          credentialEnv,
+          hermesAuthMethod,
+          hermesToolGateways,
+          preferredInferenceApi,
+          nimContainer,
+          allowToolsIncompatible,
+        };
+        const result = await handleRemoteProviderSelection(
+          { selected, requestedModel, recoveredFromSandbox, recoveredModel, sandboxName },
+          state,
+        );
+        ({
+          model,
+          provider,
+          endpointUrl,
+          credentialEnv,
+          hermesAuthMethod,
+          hermesToolGateways,
+          preferredInferenceApi,
+          allowToolsIncompatible,
+        } = state);
+        if (result === "retry-selection") continue selectionLoop;
         break;
       } else if (selected.key === "nim-local") {
-        const localGpu = requireValue(
+        const state: SetupNimSelectionState = {
+          model,
+          provider,
+          endpointUrl,
+          credentialEnv,
+          hermesAuthMethod,
+          hermesToolGateways,
+          preferredInferenceApi,
+          nimContainer,
+          allowToolsIncompatible,
+        };
+        const result = await handleNimLocalSelection(
           gpu,
-          "GPU details are required for local NIM model selection",
+          { requestedModel, recoveredFromSandbox, recoveredModel },
+          state,
         );
-        // List models that fit GPU VRAM
-        const models = nim.listModels().filter((m) => m.minGpuMemoryMB <= localGpu.totalMemoryMB);
-        if (models.length === 0) {
-          console.log("  No NIM models fit your GPU VRAM. Falling back to cloud API.");
-        } else {
-          let sel;
-          if (isNonInteractive()) {
-            const targetModel = requestedModel || (recoveredFromSandbox ? recoveredModel : null);
-            if (targetModel) {
-              sel = models.find((m) => m.name === targetModel);
-              if (!sel) {
-                const label = requestedModel ? "NEMOCLAW_MODEL for NIM" : "Recorded NIM model";
-                console.error(`  Unsupported ${label}: ${targetModel}`);
-                process.exit(1);
-              }
-            } else {
-              sel = models[0];
-            }
-            note(`  [non-interactive] NIM model: ${sel.name}`);
-          } else {
-            console.log("");
-            console.log("  Models that fit your GPU:");
-            models.forEach((m, i) => {
-              console.log(`    ${i + 1}) ${m.name} (min ${m.minGpuMemoryMB} MB)`);
-            });
-            console.log("");
-
-            const modelChoice = await prompt(`  Choose model [1]: `);
-            sel = selectFromNumberedMenuOrExit(modelChoice, 1, models);
-          }
-          model = sel.name;
-
-          // Ensure Docker is logged in to NGC registry before pulling NIM images.
-          // The key is also forwarded into the NIM container at runtime (#3333),
-          // so we hoist it out of the not-logged-in branch.
-          let ngcApiKey: string | null = null;
-          if (!nim.isNgcLoggedIn()) {
-            if (isNonInteractive()) {
-              console.error(
-                "  Docker is not logged in to nvcr.io. In non-interactive mode, run `docker login nvcr.io` first and retry.",
-              );
-              process.exit(1);
-            }
-            console.log("");
-            console.log("  NGC API Key required to pull NIM images.");
-            console.log("  Get one from: https://org.ngc.nvidia.com/setup/api-key");
-            console.log("");
-            let ngcKey = await credentialPrompt.readValue("  NGC API Key: ");
-            if (credentialPrompt.returningToProviderSelection(ngcKey)) continue selectionLoop;
-            if (!ngcKey) {
-              console.error("  NGC API Key is required for Local NIM.");
-              process.exit(1);
-            }
-            if (!nim.dockerLoginNgc(ngcKey)) {
-              console.error("  Failed to login to NGC registry. Check your API key and try again.");
-              console.log("");
-              ngcKey = await credentialPrompt.readValue("  NGC API Key: ");
-              if (credentialPrompt.returningToProviderSelection(ngcKey)) continue selectionLoop;
-              if (!ngcKey || !nim.dockerLoginNgc(ngcKey)) {
-                console.error("  NGC login failed. Cannot pull NIM images.");
-                process.exit(1);
-              }
-            }
-            ngcApiKey = ngcKey;
-          } else {
-            // Docker is already logged in, but NIM still needs the key in its
-            // container env to download model manifests. Users hit by the
-            // original #3333 bug typically have a cached docker login from
-            // the earlier broken attempt while the NGC key was never saved
-            // anywhere, so a passive lookup would silently reproduce the
-            // failure. Try env first, then prompt interactively; an empty
-            // answer falls through to startNimContainerByName's warning so
-            // we don't double-fail in non-interactive callers.
-            ngcApiKey =
-              hydrateCredentialEnv("NGC_API_KEY") ||
-              hydrateCredentialEnv("NVIDIA_INFERENCE_API_KEY");
-            if (!ngcApiKey && !isNonInteractive()) {
-              console.log("");
-              console.log("  NGC API Key required to download NIM model weights at runtime.");
-              console.log("  (Docker is logged in to nvcr.io, but the key was not saved.)");
-              const ngcKey = await credentialPrompt.readValue("  NGC API Key: ");
-              if (credentialPrompt.returningToProviderSelection(ngcKey)) continue selectionLoop;
-              ngcApiKey = ngcKey || null;
-            }
-          }
-
-          console.log(`  Pulling NIM image for ${model}...`);
-          nim.pullNimImage(model);
-
-          console.log("  Starting NIM container...");
-          const nimContainerNameLocal = nim.containerName(GATEWAY_NAME);
-          nimContainer = nim.startNimContainerByName(nimContainerNameLocal, model, undefined, {
-            ngcApiKey: ngcApiKey ?? undefined,
-          });
-
-          console.log("  Waiting for NIM to become healthy...");
-          if (!nim.waitForNimHealth(undefined, undefined, { container: nimContainerNameLocal })) {
-            console.error("  NIM failed to start. Falling back to cloud API.");
-            model = null;
-            nimContainer = null;
-          } else {
-            provider = "vllm-local";
-            // Local NIM (vLLM under the hood) does not require a host API key —
-            // setupInference registers the gateway provider with an internal
-            // credential env (NEMOCLAW_VLLM_LOCAL_TOKEN). See GH #2519.
-            credentialEnv = null;
-            endpointUrl = getLocalProviderBaseUrl(provider);
-            if (!endpointUrl) {
-              console.error("  Local NVIDIA NIM base URL could not be determined.");
-              process.exit(1);
-            }
-            model = nim.adoptServedModelId(model);
-            const nimValidationUrl = getLocalProviderValidationBaseUrl(provider) || endpointUrl;
-            const validation = await validateOpenAiLikeSelection(
-              "Local NVIDIA NIM",
-              nimValidationUrl,
-              requireValue(model, "Expected a Local NVIDIA NIM model after startup"),
-              null,
-            );
-            if (validation.retry === "selection" || validation.retry === "model") {
-              continue selectionLoop;
-            }
-            if (!validation.ok) {
-              continue selectionLoop;
-            }
-            // NIM (vLLM) mishandles the /v1/responses developer role; force chat completions.
-            if (validation.api !== "openai-completions") {
-              console.log(
-                "  ℹ Using chat completions API (tool-call-parser requires /v1/chat/completions)",
-              );
-            }
-            preferredInferenceApi = "openai-completions";
-          }
-        }
+        ({
+          model,
+          provider,
+          endpointUrl,
+          credentialEnv,
+          hermesAuthMethod,
+          hermesToolGateways,
+          preferredInferenceApi,
+          nimContainer,
+        } = state);
+        if (result === "retry-selection") continue selectionLoop;
         break;
       } else if (selected.key === "ollama") {
         if (rejectWindowsHostOllama(selected.key, isWindowsHostOllama)) {
           continue selectionLoop;
         }
-        if (!checkOllamaPortsOrWarn({ isNonInteractive })) continue selectionLoop;
-        let ollamaReady = ollamaRunning;
-        const overrideState = ensureOllamaLoopbackSystemdOverride({ isNonInteractive });
-        if (overrideState === "ready") {
-          ollamaReady = true;
-        } else if (overrideState === "failed") {
-          console.error(
-            "  Ollama systemd restart did not recover after applying the loopback override.",
-          );
-          process.exit(1);
-        }
-        const ollamaStartup = runOllamaStartupOrGate({
-          ollamaReady,
-          ollamaPort: OLLAMA_PORT,
-          getLocalProviderBaseUrl,
-          isNonInteractive,
-        });
-        if (ollamaStartup.kind === "continue") continue selectionLoop;
-        if (ollamaStartup.kind === "fallback") {
-          ({ provider, credentialEnv, endpointUrl, model, preferredInferenceApi } =
-            ollamaStartup.result);
-          break;
-        }
-        if (shouldFrontOllamaWithProxy()) {
-          if (!startOllamaAuthProxy()) process.exit(1);
-          console.log(
-            `  ✓ Using Ollama on localhost:${OLLAMA_PORT} (proxy on :${OLLAMA_PROXY_PORT})`,
-          );
-        } else {
-          console.log(`  ✓ Using Ollama on localhost:${OLLAMA_PORT}`);
-        }
-        provider = "ollama-local";
-        // Local Ollama needs no user-supplied API key — the auth proxy uses
-        // an internal token (NEMOCLAW_OLLAMA_PROXY_TOKEN, set in setupInference).
-        // Leaving this null prevents the wizard from prompting for / caching
-        // OPENAI_API_KEY and prevents the rebuild preflight from requiring it.
-        // See GH #2519.
-        credentialEnv = null;
-        endpointUrl = getLocalProviderBaseUrl(provider);
-        if (!endpointUrl) {
-          console.error("  Local Ollama base URL could not be determined.");
-          process.exit(1);
-        }
-        {
-          const result = await selectAndValidateOllamaModel(gpu, provider, {
-            requestedModel,
-            recoveredModel: recoveredFromSandbox ? recoveredModel : null,
-          });
-          if (result.outcome === "back-to-selection") continue selectionLoop;
-          ({ model, allowToolsIncompatible } = result);
-          preferredInferenceApi = "openai-completions";
-        }
+        const state: SetupNimSelectionState = {
+          model,
+          provider,
+          endpointUrl,
+          credentialEnv,
+          hermesAuthMethod,
+          hermesToolGateways,
+          preferredInferenceApi,
+          nimContainer,
+          allowToolsIncompatible,
+        };
+        const result = await handleRunningOllamaSelection(
+          gpu,
+          requestedModel,
+          recoveredFromSandbox ? recoveredModel : null,
+          ollamaRunning,
+          state,
+        );
+        ({
+          model,
+          provider,
+          endpointUrl,
+          credentialEnv,
+          preferredInferenceApi,
+          allowToolsIncompatible,
+        } = state);
+        if (result === "retry-selection") continue selectionLoop;
         break;
       } else if (["start-windows-ollama", "install-windows-ollama"].includes(selected.key)) {
         if (rejectWindowsHostOllama(selected.key, true)) {
           continue selectionLoop;
         }
-        if (!checkOllamaPortsOrWarn({ isNonInteractive })) continue selectionLoop;
-        const isInstall = selected.key === "install-windows-ollama";
-        const isSwitch = !isInstall && windowsOllamaReachable;
-        const isRestart = !isInstall && !isSwitch && winOllamaLoopbackOnly;
-        if (!isSwitch) {
-          printOllamaExposureWarning();
-        }
-        const promptMsg = isInstall
-          ? "  Install and launch Ollama on the Windows host with OLLAMA_HOST=0.0.0.0:11434? [Y/n]: "
-          : isSwitch
-            ? "  Use Ollama on the Windows host (already running)? [Y/n]: "
-            : isRestart
-              ? "  Stop the running Ollama and restart it with OLLAMA_HOST=0.0.0.0:11434? [Y/n]: "
-              : "  Launch Ollama on the Windows host with OLLAMA_HOST=0.0.0.0:11434? [Y/n]: ";
-        const proceed = isNonInteractive()
-          ? true
-          : !(await prompt(promptMsg)).trim().toLowerCase().startsWith("n");
-        if (!proceed) {
-          continue selectionLoop;
-        }
-
-        if (isSwitch) {
-          switchToWindowsOllamaHost();
-        } else if (isInstall) {
-          const installResult = await installOllamaOnWindowsHost();
-          if (!installResult.ok) {
-            console.error(
-              "  Install did not produce ollama.exe on PATH. Check the installer output above.",
-            );
-            if (isNonInteractive()) process.exit(1);
-            continue selectionLoop;
-          }
-          if (!awaitWindowsOllamaReady()) {
-            console.log("  Installer did not leave a reachable Ollama daemon; restarting it...");
-            if (
-              !setupWindowsOllamaWith0000Binding({
-                installedPath: installResult.path,
-              })
-            ) {
-              printWindowsOllamaTimeoutDiagnostics();
-              if (isNonInteractive()) process.exit(1);
-              continue selectionLoop;
-            }
-          }
-          console.log(`  ✓ Using Ollama on host.docker.internal:${OLLAMA_PORT}`);
-        } else {
-          if (
-            !setupWindowsOllamaWith0000Binding({
-              announceStop: isRestart,
-              installedPath: winOllamaInstalledPath || undefined,
-            })
-          ) {
-            printWindowsOllamaTimeoutDiagnostics();
-            if (isNonInteractive()) process.exit(1);
-            continue selectionLoop;
-          }
-          console.log(`  ✓ Using Ollama on host.docker.internal:${OLLAMA_PORT}`);
-        }
-        provider = "ollama-local";
-        credentialEnv = null;
-        endpointUrl = getLocalProviderBaseUrl(provider);
-        if (!endpointUrl) {
-          console.error("  Local Ollama base URL could not be determined.");
-          process.exit(1);
-        }
-
-        {
-          const result = await selectAndValidateOllamaModel(gpu, provider, {
-            requestedModel,
-            recoveredModel: null,
-          });
-          if (result.outcome === "back-to-selection") {
-            // The Windows-host action pinned resolved host to
-            // host.docker.internal. Clear it so a subsequent provider pick
-            // (e.g. plain WSL Ollama) starts from a fresh probe.
-            resetOllamaHostCache();
-            continue selectionLoop;
-          }
-          ({ model, allowToolsIncompatible } = result);
-          preferredInferenceApi = "openai-completions";
-        }
+        const state: SetupNimSelectionState = {
+          model,
+          provider,
+          endpointUrl,
+          credentialEnv,
+          hermesAuthMethod,
+          hermesToolGateways,
+          preferredInferenceApi,
+          nimContainer,
+          allowToolsIncompatible,
+        };
+        const result = await handleWindowsHostOllamaSelection(
+          gpu,
+          selected.key,
+          requestedModel,
+          windowsOllamaReachable,
+          winOllamaLoopbackOnly,
+          winOllamaInstalledPath,
+          state,
+        );
+        ({
+          model,
+          provider,
+          endpointUrl,
+          credentialEnv,
+          preferredInferenceApi,
+          allowToolsIncompatible,
+        } = state);
+        if (result === "retry-selection") continue selectionLoop;
         break;
       } else if (selected.key === "install-ollama") {
-        if (!checkOllamaPortsOrWarn({ isNonInteractive })) continue selectionLoop;
-        const isUpgrade = ollamaInstallMenu.hasUpgradableOllama;
-        const installResult =
-          process.platform === "darwin"
-            ? installOllamaOnMacOS({ isNonInteractive, isUpgrade })
-            : installOllamaOnLinux({ isNonInteractive, isUpgrade });
-        if (!installResult.ok) {
-          if (isNonInteractive()) abortNonInteractive("Ollama install failed. See errors above.");
-          continue selectionLoop;
-        }
-        const upgradeCheck = assertOllamaUpgradeApplied(ollamaInstallMenu);
-        if (!upgradeCheck.ok) {
-          console.error(`  ${upgradeCheck.message}`);
-          if (isNonInteractive()) process.exit(1);
-          continue selectionLoop;
-        }
-        if (shouldFrontOllamaWithProxy()) {
-          if (!startOllamaAuthProxy()) process.exit(1);
-          console.log(
-            `  ✓ Using Ollama on localhost:${OLLAMA_PORT} (proxy on :${OLLAMA_PROXY_PORT})`,
-          );
-        } else {
-          console.log(`  ✓ Using Ollama on localhost:${OLLAMA_PORT}`);
-        }
-        provider = "ollama-local";
-        // See above ollama branch — internal proxy token, no user API key.
-        credentialEnv = null;
-        endpointUrl = getLocalProviderBaseUrl(provider);
-        if (!endpointUrl) {
-          console.error("  Local Ollama base URL could not be determined.");
-          process.exit(1);
-        }
-        {
-          const result = await selectAndValidateOllamaModel(gpu, provider, {
-            requestedModel,
-            recoveredModel: recoveredFromSandbox ? recoveredModel : null,
-          });
-          if (result.outcome === "back-to-selection") continue selectionLoop;
-          ({ model, allowToolsIncompatible } = result);
-          preferredInferenceApi = "openai-completions";
-        }
+        const state: SetupNimSelectionState = {
+          model,
+          provider,
+          endpointUrl,
+          credentialEnv,
+          hermesAuthMethod,
+          hermesToolGateways,
+          preferredInferenceApi,
+          nimContainer,
+          allowToolsIncompatible,
+        };
+        const result = await handleInstallOllamaSelection(
+          gpu,
+          requestedModel,
+          recoveredFromSandbox ? recoveredModel : null,
+          state,
+          ollamaInstallMenu,
+        );
+        ({
+          model,
+          provider,
+          endpointUrl,
+          credentialEnv,
+          preferredInferenceApi,
+          allowToolsIncompatible,
+        } = state);
+        if (result === "retry-selection") continue selectionLoop;
         break;
       } else if (selected.key === "install-vllm") {
         if (!vllmProfile) {
@@ -4272,123 +4284,52 @@ async function setupNim(
         // intentional fall-through to the next branch
       }
       if (selected.key === "vllm") {
-        console.log(`  ✓ Using existing vLLM on localhost:${VLLM_PORT}`);
-        provider = "vllm-local";
-        // See NIM branch above — internal credential env, no user API key.
-        credentialEnv = null;
-        endpointUrl = getLocalProviderBaseUrl(provider);
-        if (!endpointUrl) {
-          console.error("  Local vLLM base URL could not be determined.");
-          process.exit(1);
-        }
-        // Query vLLM for the actual model ID
-        const vllmModelsRaw = runCapture(
-          ["curl", "-sf", `http://127.0.0.1:${VLLM_PORT}/v1/models`],
-          {
-            ignoreError: true,
-          },
-        );
-        let vllmModels: { data?: Array<{ id?: unknown }> } = {};
-        try {
-          vllmModels = JSON.parse(vllmModelsRaw);
-          if (vllmModels.data && vllmModels.data.length > 0) {
-            const detectedModel =
-              typeof vllmModels.data[0]?.id === "string" ? vllmModels.data[0].id : null;
-            model = detectedModel;
-            if (!detectedModel || !isSafeModelId(detectedModel)) {
-              console.error(`  Detected model ID contains invalid characters: ${model}`);
-              process.exit(1);
-            }
-            console.log(`  Detected model: ${model}`);
-          } else {
-            console.error("  Could not detect model from vLLM. Please specify manually.");
-            process.exit(1);
-          }
-        } catch {
-          console.error(
-            `  Could not query vLLM models endpoint. Is vLLM running on localhost:${VLLM_PORT}?`,
-          );
-          process.exit(1);
-        }
-        const validationBaseUrl = getLocalProviderValidationBaseUrl(provider);
-        if (!validationBaseUrl) {
-          console.error("  Local vLLM validation URL could not be determined.");
-          process.exit(1);
-        }
-        const validation = await validateOpenAiLikeSelection(
-          "Local vLLM",
-          validationBaseUrl,
-          requireValue(model as string | null | undefined, "Expected a detected vLLM model"),
-          null,
-        );
-        if (validation.retry === "selection" || validation.retry === "model") {
-          continue selectionLoop;
-        }
-        if (!validation.ok) continue selectionLoop;
-        localInference.applyVllmRuntimeContextWindow(vllmModels, model as string);
-        preferredInferenceApi = validation.api;
-        // Force chat completions — vLLM's /v1/responses endpoint does not
-        // run the --tool-call-parser, so tool calls arrive as raw text (#976).
-        if (preferredInferenceApi !== "openai-completions") {
-          console.log(
-            "  ℹ Using chat completions API (tool-call-parser requires /v1/chat/completions)",
-          );
-        }
-        preferredInferenceApi = "openai-completions";
+        const state: SetupNimSelectionState = {
+          model,
+          provider,
+          endpointUrl,
+          credentialEnv,
+          hermesAuthMethod,
+          hermesToolGateways,
+          preferredInferenceApi,
+          nimContainer,
+          allowToolsIncompatible,
+        };
+        const result = await handleVllmSelection(state);
+        ({
+          model,
+          provider,
+          endpointUrl,
+          credentialEnv,
+          preferredInferenceApi,
+          nimContainer,
+          allowToolsIncompatible,
+        } = state);
+        if (result === "retry-selection") continue selectionLoop;
         break;
       } else if (selected.key === "routed") {
-        const bp = loadBlueprintProfile("routed");
-        if (!bp || bp.router?.enabled !== true) {
-          console.error("  Router is not enabled in nemoclaw-blueprint/blueprint.yaml.");
-          if (isNonInteractive()) process.exit(1);
-          continue selectionLoop;
-        }
-        const routerCredentialEnv =
-          bp.router?.credential_env || bp.credential_env || DEFAULT_MODEL_ROUTER_CREDENTIAL_ENV;
-        credentialEnv = routerCredentialEnv;
-        const routedCredential =
-          hydrateCredentialEnv(routerCredentialEnv) ||
-          normalizeCredentialValue(bp.credential_default || "");
-        if (routedCredential) {
-          saveCredential(routerCredentialEnv, routedCredential);
-        }
-        const _providerKeyHint = (process.env.NEMOCLAW_PROVIDER_KEY || "").trim();
-        if (_providerKeyHint && !resolveProviderCredential(routerCredentialEnv)) {
-          saveCredential(routerCredentialEnv, _providerKeyHint);
-        }
-        if (isNonInteractive()) {
-          if (!resolveProviderCredential(routerCredentialEnv)) {
-            console.error(
-              `  ${routerCredentialEnv} (or NEMOCLAW_PROVIDER_KEY) is required for Model Router in non-interactive mode.`,
-            );
-            process.exit(1);
-          }
-        } else {
-          if (!resolveProviderCredential(routerCredentialEnv)) {
-            console.log("");
-            console.log("  Model Router accepts NVIDIA API keys (nvapi-...).");
-            console.log("  Get one at https://build.nvidia.com");
-            console.log("");
-            const routerCredentialResult = await ensureNamedCredential(
-              routerCredentialEnv,
-              "Model Router API key",
-              null,
-            );
-            if (credentialPrompt.returningToProviderSelection(routerCredentialResult))
-              continue selectionLoop;
-          }
-        }
-        provider = bp.provider_name || "nvidia-router";
-        model = bp.model;
-        const { HOST_GATEWAY_URL } = require("./inference/local");
-        const routerEndpointUrl = bp.endpoint || "";
-        endpointUrl = routerEndpointUrl;
-        if (routerEndpointUrl.match(/localhost|127\.0\.0\.1/)) {
-          const u = new URL(routerEndpointUrl);
-          endpointUrl = `${HOST_GATEWAY_URL}:${u.port}${u.pathname}`;
-        }
-        preferredInferenceApi = "openai-completions";
-        console.log(`  ✓ Using Model Router: ${provider} / ${model}`);
+        const state: SetupNimSelectionState = {
+          model,
+          provider,
+          endpointUrl,
+          credentialEnv,
+          hermesAuthMethod,
+          hermesToolGateways,
+          preferredInferenceApi,
+          nimContainer,
+          allowToolsIncompatible,
+        };
+        const result = await handleRoutedSelection(state);
+        ({
+          model,
+          provider,
+          endpointUrl,
+          credentialEnv,
+          preferredInferenceApi,
+          nimContainer,
+          allowToolsIncompatible,
+        } = state);
+        if (result === "retry-selection") continue selectionLoop;
         break;
       }
     }
@@ -5180,9 +5121,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           hydrateMessagingChannelConfig,
           messagingChannelConfigsEqual,
           getSandboxReuseState,
-          computeTelegramRequireMention,
           hasSandboxGpuDrift,
-          hasWechatConfigDrift,
           getSandboxHermesToolGateways: (name) => registry.getSandbox(name)?.hermesToolGateways,
           normalizeHermesToolGatewaySelections,
           stringSetsEqual,

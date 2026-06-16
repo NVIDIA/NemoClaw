@@ -1272,8 +1272,8 @@ describe("generate-openclaw-config.mts: config generation", () => {
       NEMOCLAW_INFERENCE_API: "openai-completions",
       NEMOCLAW_INFERENCE_COMPAT_B64: Buffer.from("null").toString("base64"),
     });
-
     expect(config.models.providers.inference.models[0].compat).toEqual({
+      supportsStore: false,
       requiresStringContent: true,
       maxTokensField: "max_tokens",
       requiresToolResultName: true,

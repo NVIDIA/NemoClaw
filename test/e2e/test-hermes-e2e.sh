@@ -11,7 +11,7 @@
 #
 # Prerequisites:
 #   - Docker running
-#   - NVIDIA_INFERENCE_API_KEY set (real key, starts with nvapi-)
+#   - NVIDIA_INFERENCE_API_KEY set for hosted inference
 #   - Network access to inference-api.nvidia.com
 #
 # Environment variables:
@@ -22,10 +22,10 @@
 #   NEMOCLAW_RECREATE_SANDBOX=1            — recreate sandbox if it exists from a previous run
 #   NEMOCLAW_E2E_HERMES_DASHBOARD=1        — validate the built-in Hermes web dashboard end-to-end
 #   NEMOCLAW_HERMES_DASHBOARD_TUI=1        — enable Hermes' optional in-browser TUI tab during onboard
-#   NVIDIA_INFERENCE_API_KEY                         — required for NVIDIA Endpoints inference
+#   NVIDIA_INFERENCE_API_KEY                         — required for hosted inference
 #
 # Usage:
-#   NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 NVIDIA_INFERENCE_API_KEY=nvapi-... bash test/e2e/test-hermes-e2e.sh
+#   NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 NVIDIA_INFERENCE_API_KEY=... bash test/e2e/test-hermes-e2e.sh
 
 set -uo pipefail
 
@@ -114,6 +114,9 @@ is_truthy_env_value() {
   esac
 }
 
+# shellcheck source=test/e2e/lib/ci-compatible-inference.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/ci-compatible-inference.sh"
+
 hermes_dashboard_e2e_enabled() {
   is_truthy_env_value "${NEMOCLAW_E2E_HERMES_DASHBOARD:-}" \
     || is_truthy_env_value "${NEMOCLAW_HERMES_DASHBOARD:-}"
@@ -159,6 +162,10 @@ fi
 
 SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-hermes}"
 export NEMOCLAW_AGENT="${NEMOCLAW_AGENT:-hermes}"
+nemoclaw_e2e_configure_compatible_inference || exit 1
+HOSTED_INFERENCE_BASE_URL="$(nemoclaw_e2e_hosted_inference_base_url)"
+HOSTED_INFERENCE_MODEL="$(nemoclaw_e2e_hosted_inference_model)"
+HOSTED_INFERENCE_KEY="$(nemoclaw_e2e_hosted_inference_key)"
 
 # shellcheck source=test/e2e/lib/sandbox-teardown.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox-teardown.sh"
@@ -196,19 +203,14 @@ else
   exit 1
 fi
 
-if [ -n "${NVIDIA_INFERENCE_API_KEY:-}" ] && [[ "${NVIDIA_INFERENCE_API_KEY}" == nvapi-* ]]; then
-  pass "NVIDIA_INFERENCE_API_KEY is set (starts with nvapi-)"
-else
-  fail "NVIDIA_INFERENCE_API_KEY not set or invalid — required for live inference"
+if ! nemoclaw_e2e_require_hosted_inference_key; then
   exit 1
 fi
 
-if curl -sf --max-time 10 \
-  -H "Authorization: Bearer ${NVIDIA_INFERENCE_API_KEY}" \
-  https://inference-api.nvidia.com/v1/models >/dev/null 2>&1; then
-  pass "Network access to inference-api.nvidia.com"
+if nemoclaw_e2e_probe_hosted_inference; then
+  pass "Network access to ${HOSTED_INFERENCE_BASE_URL}"
 else
-  fail "Cannot reach inference-api.nvidia.com"
+  fail "Cannot reach ${HOSTED_INFERENCE_BASE_URL}"
   exit 1
 fi
 
@@ -358,10 +360,16 @@ fi
 
 # 3d: Inference must be configured by onboard
 if inf_check=$(openshell inference get 2>&1); then
-  if grep -qi "nvidia-prod" <<<"$inf_check"; then
-    pass "Inference configured via onboard"
+  expected_provider="$(nemoclaw_e2e_expected_route_provider)"
+  expected_model=""
+  if nemoclaw_e2e_using_compatible_inference; then
+    expected_model="$HOSTED_INFERENCE_MODEL"
+  fi
+  if nemoclaw_e2e_inference_output_matches "$inf_check" "$expected_provider" "$expected_model"; then
+    pass "Inference configured via onboard (${expected_provider})"
   else
-    fail "Inference not configured — onboard did not set up nvidia-prod provider"
+    inf_check_plain="$(printf '%s' "$inf_check" | nemoclaw_e2e_strip_ansi)"
+    fail "Inference not configured - onboard did not set up ${expected_provider}: ${inf_check_plain:0:200}"
   fi
 else
   fail "openshell inference get failed: ${inf_check:0:200}"
@@ -600,17 +608,13 @@ rm -f "$ssh_config"
 # ══════════════════════════════════════════════════════════════════
 section "Phase 5: Live inference"
 
-# ── Test 5a: Direct NVIDIA Endpoints ──
-info "[LIVE] Direct API test → inference-api.nvidia.com..."
+# ── Test 5a: Direct hosted inference endpoint ──
+info "[LIVE] Direct API test → ${HOSTED_INFERENCE_BASE_URL}..."
 api_response=$(curl -s --max-time 30 \
-  -X POST https://inference-api.nvidia.com/v1/chat/completions \
+  -X POST "${HOSTED_INFERENCE_BASE_URL}/chat/completions" \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $NVIDIA_INFERENCE_API_KEY" \
-  -d '{
-    "model": "nvidia/nemotron-3-super-120b-a12b",
-    "messages": [{"role": "user", "content": "Reply with exactly one word: PONG"}],
-    "max_tokens": 100
-  }' 2>/dev/null) || true
+  -H "Authorization: Bearer $HOSTED_INFERENCE_KEY" \
+  -d "$(printf '{"model":"%s","messages":[{"role":"user","content":"Reply with exactly one word: PONG"}],"max_tokens":100}' "$HOSTED_INFERENCE_MODEL")" 2>/dev/null) || true
 
 if [ -n "$api_response" ]; then
   api_content=$(echo "$api_response" | parse_chat_content 2>/dev/null) || true
@@ -645,7 +649,7 @@ if openshell sandbox ssh-config "$SANDBOX_NAME" >"$ssh_config" 2>/dev/null; then
     "openshell-${SANDBOX_NAME}" \
     "curl -s --max-time 60 https://inference.local/v1/chat/completions \
       -H 'Content-Type: application/json' \
-      -d '{\"model\":\"nvidia/nemotron-3-super-120b-a12b\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with exactly one word: PONG\"}],\"max_tokens\":100}'" \
+      -d '{\"model\":\"$HOSTED_INFERENCE_MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with exactly one word: PONG\"}],\"max_tokens\":100}'" \
     2>&1) || true
 fi
 rm -f "$ssh_config"
@@ -653,8 +657,8 @@ rm -f "$ssh_config"
 if [ -n "$sandbox_response" ]; then
   sandbox_content=$(echo "$sandbox_response" | parse_chat_content 2>/dev/null) || true
   if grep -qi "PONG" <<<"$sandbox_content"; then
-    pass "[ROUTING] inference.local: OpenShell routed curl to NVIDIA Endpoints and returned PONG"
-    info "Routing path proven: sandbox curl → DNS forwarder → gateway proxy → NVIDIA Endpoints (does not exercise the Hermes agent runtime or openclaw HTTP client)"
+    pass "[ROUTING] inference.local: OpenShell routed curl to the hosted inference endpoint and returned PONG"
+    info "Routing path proven: sandbox curl → DNS forwarder → gateway proxy → hosted inference endpoint (does not exercise the Hermes agent runtime or openclaw HTTP client)"
   else
     fail "[ROUTING] inference.local: expected PONG, got: ${sandbox_content:0:200}"
   fi
