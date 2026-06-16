@@ -174,6 +174,59 @@ export const configB = normalizeConfig("{}");
     expect(textReport).toContain("normalizeConfig");
   });
 
+  it("reports nullable unions by type, file, and exported type fanout", () => {
+    const rootDir = makeProject({
+      "src/config.ts": `export interface UserConfig {
+  owner: string | null;
+  fallbackOwner?: string | null;
+}
+
+export type MaybeConfig = UserConfig | null;
+
+export function normalizeConfig(raw: UserConfig | null): string | null {
+  return raw?.owner ?? null;
+}
+`,
+      "src/use-a.ts": `import type { UserConfig } from "./config";
+
+export const configA = null as UserConfig | null;
+`,
+      "src/use-b.ts": `import type { UserConfig } from "./config";
+
+export function readOwner(value: UserConfig | null): string | null {
+  return value?.owner ?? null;
+}
+`,
+    });
+
+    const report = analyzeTypeSafetyHotspots({
+      rootDir,
+      projectPaths: ["tsconfig.json"],
+    });
+    const textReport = renderTextReport(report, {
+      topFiles: 5,
+      topFunctions: 5,
+      minScore: 1,
+    });
+
+    const stringNull = report.nullableUnions.byType.find((entry) => entry.type === "string | null");
+    const configFile = report.nullableUnions.byFile.find(
+      (entry) => entry.filePath === "src/config.ts",
+    );
+    const exportedConfig = report.nullableUnions.exportedTypes.find(
+      (entry) => entry.name === "UserConfig",
+    );
+
+    expect(report.summary.nullableUnionCount).toBeGreaterThanOrEqual(7);
+    expect(stringNull?.totalCount).toBeGreaterThanOrEqual(4);
+    expect(configFile?.count).toBeGreaterThanOrEqual(5);
+    expect(exportedConfig?.nullableUnionCount).toBe(2);
+    expect(exportedConfig?.referencingFileCount).toBe(3);
+    expect(report.themes.map((theme) => theme.id)).toContain("nullable-unions");
+    expect(textReport).toContain("Top nullable union types");
+    expect(textReport).toContain("Exported nullable types by fanout");
+  });
+
   it("rejects another flag in place of a --root value", () => {
     expect(() => parseArgs(["--root", "--json"])).toThrow(/Missing value for --root/);
   });

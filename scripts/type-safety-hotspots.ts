@@ -27,6 +27,7 @@ type PatternCounts = {
   nonNullAssertionCount: number;
   parserBoundaryCount: number;
   tsDirectiveCount: number;
+  nullableUnionCount: number;
 };
 
 export type FileHotspot = PatternCounts & {
@@ -61,6 +62,57 @@ export type FunctionHotspot = PatternCounts & {
   reasons: string[];
 };
 
+export type NullableUnionOccurrence = {
+  filePath: string;
+  line: number;
+  column: number;
+  kind: "property" | "parameter" | "return" | "variable" | "type-alias" | "other";
+  name: string | null;
+  containerName: string | null;
+  type: string;
+  nonNullType: string;
+};
+
+export type NullableUnionTypeHotspot = {
+  type: string;
+  nonNullType: string;
+  totalCount: number;
+  fileCount: number;
+  fanout: number;
+  files: Array<{
+    filePath: string;
+    count: number;
+    fanIn: number;
+    examples: NullableUnionOccurrence[];
+  }>;
+};
+
+export type NullableUnionFileHotspot = {
+  filePath: string;
+  count: number;
+  fanIn: number;
+  topTypes: Array<{ type: string; count: number }>;
+};
+
+export type NullableExportedTypeFanout = {
+  name: string;
+  declarationKind: "interface" | "type";
+  filePath: string;
+  line: number;
+  nullableUnionCount: number;
+  nullableTypes: Array<{ type: string; count: number }>;
+  referenceCount: number;
+  referencingFileCount: number;
+  fanout: number;
+};
+
+export type NullableUnionReport = {
+  totalCount: number;
+  byType: NullableUnionTypeHotspot[];
+  byFile: NullableUnionFileHotspot[];
+  exportedTypes: NullableExportedTypeFanout[];
+};
+
 type ThemeSummary = {
   id: string;
   title: string;
@@ -82,6 +134,7 @@ export type HotspotReport = {
   summary: ReportSummary;
   files: FileHotspot[];
   functions: FunctionHotspot[];
+  nullableUnions: NullableUnionReport;
   themes: ThemeSummary[];
   scoring: {
     description: string;
@@ -118,6 +171,14 @@ type RawFunctionData = PatternCounts & {
   noCheck: boolean;
 };
 
+type RawNullableExportedType = {
+  name: string;
+  declarationKind: "interface" | "type";
+  filePath: string;
+  line: number;
+  nullableTypes: string[];
+};
+
 type RawFileData = PatternCounts & {
   absPath: string;
   filePath: string;
@@ -128,6 +189,8 @@ type RawFileData = PatternCounts & {
   importSpecifiers: string[];
   noCheck: boolean;
   functions: RawFunctionData[];
+  nullableUnions: NullableUnionOccurrence[];
+  exportedNullableTypes: RawNullableExportedType[];
 };
 
 type CommentDirectiveOccurrence = {
@@ -153,6 +216,7 @@ function createPatternCounts(): PatternCounts {
     nonNullAssertionCount: 0,
     parserBoundaryCount: 0,
     tsDirectiveCount: 0,
+    nullableUnionCount: 0,
   };
 }
 
@@ -190,6 +254,10 @@ function countNonEmptyLines(text: string): number {
 function countMatches(text: string, re: RegExp): number {
   const matches = text.match(re);
   return matches ? matches.length : 0;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function collectDirectiveCommentOccurrences(text: string): CommentDirectiveOccurrence[] {
@@ -423,6 +491,121 @@ function isNodeExported(node: ReportableFunctionNode): boolean {
   }
 
   return false;
+}
+
+function isNullTypeNode(node: ts.TypeNode): boolean {
+  return (
+    node.kind === ts.SyntaxKind.NullKeyword ||
+    (ts.isLiteralTypeNode(node) && node.literal.kind === ts.SyntaxKind.NullKeyword)
+  );
+}
+
+function normalizeTypeText(node: ts.TypeNode, sourceFile: ts.SourceFile): string {
+  return node.getText(sourceFile).replace(/\s+/g, " ").trim();
+}
+
+function normalizeNullableUnionType(
+  node: ts.UnionTypeNode,
+  sourceFile: ts.SourceFile,
+): { type: string; nonNullType: string } {
+  const nonNullParts = node.types
+    .filter((part) => !isNullTypeNode(part))
+    .map((part) => normalizeTypeText(part, sourceFile))
+    .sort((left, right) => left.localeCompare(right));
+  const nonNullType = nonNullParts.join(" | ");
+  return {
+    type: [...nonNullParts, "null"].join(" | "),
+    nonNullType,
+  };
+}
+
+function nullableUnionType(node: ts.Node, sourceFile: ts.SourceFile): string | null {
+  if (!ts.isUnionTypeNode(node) || !node.types.some(isNullTypeNode)) {
+    return null;
+  }
+  return normalizeNullableUnionType(node, sourceFile).type;
+}
+
+function getContainerName(node: ts.Node): string | null {
+  let current: ts.Node | undefined = node;
+  while (current) {
+    if (ts.isInterfaceDeclaration(current) || ts.isTypeAliasDeclaration(current)) {
+      return current.name.text;
+    }
+    if (ts.isClassDeclaration(current)) {
+      return current.name?.text ?? null;
+    }
+    current = current.parent;
+  }
+  return null;
+}
+
+function getNullableUnionKindAndName(
+  node: ts.UnionTypeNode,
+): Pick<NullableUnionOccurrence, "kind" | "name" | "containerName"> {
+  const parent = node.parent;
+
+  if (ts.isPropertySignature(parent) || ts.isPropertyDeclaration(parent)) {
+    return {
+      kind: "property",
+      name: getPropertyNameText(parent.name),
+      containerName: getContainerName(parent.parent),
+    };
+  }
+
+  if (ts.isParameter(parent)) {
+    return {
+      kind: "parameter",
+      name: getPropertyNameText(parent.name),
+      containerName: isReportableFunction(parent.parent)
+        ? getFunctionDisplayName(parent.parent)
+        : null,
+    };
+  }
+
+  if (ts.isVariableDeclaration(parent)) {
+    return { kind: "variable", name: getPropertyNameText(parent.name), containerName: null };
+  }
+
+  if (ts.isTypeAliasDeclaration(parent)) {
+    return { kind: "type-alias", name: parent.name.text, containerName: null };
+  }
+
+  if (isReportableFunction(parent) && parent.type === node) {
+    return { kind: "return", name: "return", containerName: getFunctionDisplayName(parent) };
+  }
+
+  return { kind: "other", name: null, containerName: getContainerName(parent) };
+}
+
+function createNullableUnionOccurrence(
+  node: ts.UnionTypeNode,
+  sourceFile: ts.SourceFile,
+  filePath: string,
+): NullableUnionOccurrence {
+  const position = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
+  return {
+    filePath,
+    line: position.line + 1,
+    column: position.character + 1,
+    ...getNullableUnionKindAndName(node),
+    ...normalizeNullableUnionType(node, sourceFile),
+  };
+}
+
+function collectNullableUnionTypes(node: ts.Node, sourceFile: ts.SourceFile): string[] {
+  const types: string[] = [];
+
+  function visit(current: ts.Node): void {
+    const type = nullableUnionType(current, sourceFile);
+    if (type) {
+      types.push(type);
+    }
+    ts.forEachChild(current, visit);
+  }
+
+  visit(node);
+  return types;
 }
 
 function buildTypeAliasMap(sourceFile: ts.SourceFile): Map<string, ts.TypeNode> {
@@ -829,6 +1012,12 @@ function buildFileReasons(file: RawFileData, fanIn: number): string[] {
   if (file.recordStringUnknownCount > 0) {
     appendReason(reasons, `${String(file.recordStringUnknownCount)} Record<string, unknown>`);
   }
+  if (file.nullableUnionCount > 0) {
+    appendReason(
+      reasons,
+      `${String(file.nullableUnionCount)} nullable ${pluralize(file.nullableUnionCount, "union")}`,
+    );
+  }
   if (file.typeAssertionCount > 0) {
     appendReason(
       reasons,
@@ -878,6 +1067,12 @@ function buildFunctionReasons(fn: RawFunctionData, fileFanIn: number): string[] 
   if (fn.recordStringUnknownCount > 0) {
     appendReason(reasons, `${String(fn.recordStringUnknownCount)} Record<string, unknown>`);
   }
+  if (fn.nullableUnionCount > 0) {
+    appendReason(
+      reasons,
+      `${String(fn.nullableUnionCount)} nullable ${pluralize(fn.nullableUnionCount, "union")}`,
+    );
+  }
   if (fn.typeAssertionCount > 0) {
     appendReason(
       reasons,
@@ -923,6 +1118,8 @@ function analyzeFile(absPath: string, rootDir: string, project: ProjectInfo): Ra
   const fileMetrics = createPatternCounts();
   const functions: RawFunctionData[] = [];
   const functionStack: RawFunctionData[] = [];
+  const nullableUnions: NullableUnionOccurrence[] = [];
+  const exportedNullableTypes: RawNullableExportedType[] = [];
 
   addPattern(fileMetrics, "tsDirectiveCount", countDirectiveComments(directiveOccurrences));
 
@@ -948,6 +1145,29 @@ function analyzeFile(absPath: string, rootDir: string, project: ProjectInfo): Ra
       ts.forEachChild(node, visit);
       functionStack.pop();
       return;
+    }
+
+    if (
+      (ts.isInterfaceDeclaration(node) || ts.isTypeAliasDeclaration(node)) &&
+      hasExportModifier(node)
+    ) {
+      const nullableTypes = collectNullableUnionTypes(node, sourceFile);
+      if (nullableTypes.length > 0) {
+        exportedNullableTypes.push({
+          name: node.name.text,
+          declarationKind: ts.isInterfaceDeclaration(node) ? "interface" : "type",
+          filePath: toPosixRelative(rootDir, absPath),
+          line: sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1,
+          nullableTypes,
+        });
+      }
+    }
+
+    if (ts.isUnionTypeNode(node) && node.types.some(isNullTypeNode)) {
+      nullableUnions.push(
+        createNullableUnionOccurrence(node, sourceFile, toPosixRelative(rootDir, absPath)),
+      );
+      applyPattern("nullableUnionCount");
     }
 
     if (node.kind === ts.SyntaxKind.AnyKeyword) {
@@ -999,6 +1219,148 @@ function analyzeFile(absPath: string, rootDir: string, project: ProjectInfo): Ra
     importSpecifiers: collectImportSpecifiers(sourceFile),
     noCheck,
     functions,
+    nullableUnions,
+    exportedNullableTypes,
+  };
+}
+
+function countByValue(values: readonly string[]): Array<{ type: string; count: number }> {
+  const counts = new Map<string, number>();
+  for (const value of values) {
+    counts.set(value, (counts.get(value) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .map(([type, count]) => ({ type, count }))
+    .sort((left, right) => {
+      if (right.count !== left.count) return right.count - left.count;
+      return left.type.localeCompare(right.type);
+    });
+}
+
+function buildNullableUnionReport(
+  rawFiles: readonly RawFileData[],
+  fanInByFile: ReadonlyMap<string, number>,
+): NullableUnionReport {
+  const byType = new Map<
+    string,
+    {
+      nonNullType: string;
+      totalCount: number;
+      files: Map<string, { count: number; fanIn: number; examples: NullableUnionOccurrence[] }>;
+    }
+  >();
+  const byFile = new Map<string, { count: number; fanIn: number; types: string[] }>();
+
+  for (const file of rawFiles) {
+    for (const occurrence of file.nullableUnions) {
+      const typeEntry = byType.get(occurrence.type) ?? {
+        nonNullType: occurrence.nonNullType,
+        totalCount: 0,
+        files: new Map<
+          string,
+          { count: number; fanIn: number; examples: NullableUnionOccurrence[] }
+        >(),
+      };
+      typeEntry.totalCount += 1;
+      const typeFileEntry = typeEntry.files.get(file.filePath) ?? {
+        count: 0,
+        fanIn: fanInByFile.get(file.filePath) ?? 0,
+        examples: [],
+      };
+      typeFileEntry.count += 1;
+      if (typeFileEntry.examples.length < 3) {
+        typeFileEntry.examples.push(occurrence);
+      }
+      typeEntry.files.set(file.filePath, typeFileEntry);
+      byType.set(occurrence.type, typeEntry);
+
+      const fileEntry = byFile.get(file.filePath) ?? {
+        count: 0,
+        fanIn: fanInByFile.get(file.filePath) ?? 0,
+        types: [],
+      };
+      fileEntry.count += 1;
+      fileEntry.types.push(occurrence.type);
+      byFile.set(file.filePath, fileEntry);
+    }
+  }
+
+  const sourceTextByFile = new Map(
+    rawFiles.map((file) => [file.filePath, fs.readFileSync(file.absPath, "utf8")]),
+  );
+  const exportedTypes = rawFiles
+    .flatMap((file) => file.exportedNullableTypes)
+    .map((candidate): NullableExportedTypeFanout => {
+      const referencePattern = new RegExp(`\\b${escapeRegExp(candidate.name)}\\b`, "g");
+      let referenceCount = 0;
+      let referencingFileCount = 0;
+      for (const sourceText of sourceTextByFile.values()) {
+        const matches = sourceText.match(referencePattern);
+        if (matches) {
+          referenceCount += matches.length;
+          referencingFileCount += 1;
+        }
+      }
+      return {
+        ...candidate,
+        nullableUnionCount: candidate.nullableTypes.length,
+        nullableTypes: countByValue(candidate.nullableTypes),
+        referenceCount,
+        referencingFileCount,
+        fanout: referencingFileCount,
+      };
+    })
+    .sort((left, right) => {
+      if (right.fanout !== left.fanout) return right.fanout - left.fanout;
+      if (right.referenceCount !== left.referenceCount)
+        return right.referenceCount - left.referenceCount;
+      if (right.nullableUnionCount !== left.nullableUnionCount) {
+        return right.nullableUnionCount - left.nullableUnionCount;
+      }
+      return left.name.localeCompare(right.name);
+    });
+
+  return {
+    totalCount: rawFiles.reduce((count, file) => count + file.nullableUnionCount, 0),
+    byType: [...byType.entries()]
+      .map(([type, entry]): NullableUnionTypeHotspot => {
+        const files = [...entry.files.entries()]
+          .map(([filePath, fileEntry]) => ({ filePath, ...fileEntry }))
+          .sort((left, right) => {
+            if (right.count !== left.count) return right.count - left.count;
+            if (right.fanIn !== left.fanIn) return right.fanIn - left.fanIn;
+            return left.filePath.localeCompare(right.filePath);
+          });
+        return {
+          type,
+          nonNullType: entry.nonNullType,
+          totalCount: entry.totalCount,
+          fileCount: entry.files.size,
+          fanout: files.reduce((sum, file) => sum + file.fanIn, 0),
+          files,
+        };
+      })
+      .sort((left, right) => {
+        if (right.totalCount !== left.totalCount) return right.totalCount - left.totalCount;
+        if (right.fileCount !== left.fileCount) return right.fileCount - left.fileCount;
+        if (right.fanout !== left.fanout) return right.fanout - left.fanout;
+        return left.type.localeCompare(right.type);
+      }),
+    byFile: [...byFile.entries()]
+      .map(
+        ([filePath, entry]): NullableUnionFileHotspot => ({
+          filePath,
+          count: entry.count,
+          fanIn: entry.fanIn,
+          topTypes: countByValue(entry.types).slice(0, 5),
+        }),
+      )
+      .sort((left, right) => {
+        if (right.count !== left.count) return right.count - left.count;
+        if (right.fanIn !== left.fanIn) return right.fanIn - left.fanIn;
+        return left.filePath.localeCompare(right.filePath);
+      }),
+    exportedTypes,
   };
 }
 
@@ -1045,6 +1407,26 @@ function buildThemes(files: FileHotspot[], summary: ReportSummary): ThemeSummary
       detail: `${String(summary.weakExportCount)} exported functions still rely on weak signatures.`,
       count: summary.weakExportCount,
       examples: exportExamples,
+    });
+  }
+
+  const nullableExamples = files
+    .filter((file) => file.nullableUnionCount > 0)
+    .sort((left, right) => {
+      if (right.nullableUnionCount !== left.nullableUnionCount) {
+        return right.nullableUnionCount - left.nullableUnionCount;
+      }
+      return left.filePath.localeCompare(right.filePath);
+    })
+    .slice(0, 3)
+    .map((file) => file.filePath);
+  if (summary.nullableUnionCount > 0) {
+    themes.push({
+      id: "nullable-unions",
+      title: "Keep nullable unions at boundaries",
+      detail: `${String(summary.nullableUnionCount)} nullable unions show where raw state can become constrained internal types.`,
+      count: summary.nullableUnionCount,
+      examples: nullableExamples,
     });
   }
 
@@ -1154,6 +1536,7 @@ export function analyzeTypeSafetyHotspots(options: AnalyzeOptions = {}): Hotspot
     });
 
   const fanInByFile = new Map(files.map((file) => [file.filePath, file.fanIn]));
+  const nullableUnions = buildNullableUnionReport(rawFiles, fanInByFile);
   const functions: FunctionHotspot[] = rawFiles
     .flatMap((file) => file.functions)
     .map((fn) => {
@@ -1196,6 +1579,7 @@ export function analyzeTypeSafetyHotspots(options: AnalyzeOptions = {}): Hotspot
       acc.nonNullAssertionCount += file.nonNullAssertionCount;
       acc.parserBoundaryCount += file.parserBoundaryCount;
       acc.tsDirectiveCount += file.tsDirectiveCount;
+      acc.nullableUnionCount += file.nullableUnionCount;
       return acc;
     },
     {
@@ -1213,6 +1597,7 @@ export function analyzeTypeSafetyHotspots(options: AnalyzeOptions = {}): Hotspot
     summary,
     files,
     functions,
+    nullableUnions,
     themes: buildThemes(files, summary),
     scoring: {
       description:
@@ -1276,7 +1661,9 @@ export function renderTextReport(
       report.summary.noCheckFileCount === 1 ? "" : "s"
     }, ${String(report.summary.typeAssertionCount)} casts, ${String(
       report.summary.recordStringUnknownCount,
-    )} Record<string, unknown>, ${String(report.summary.parserBoundaryCount)} parse boundaries.`,
+    )} Record<string, unknown>, ${String(report.summary.parserBoundaryCount)} parse boundaries, ${String(
+      report.summary.nullableUnionCount,
+    )} nullable unions.`,
   );
   lines.push(`Heuristic: ${report.scoring.description}`);
 
@@ -1320,6 +1707,69 @@ export function renderTextReport(
         )}`,
       );
       lines.push(`   ${fn.reasons.join("; ")}`);
+    });
+  }
+
+  lines.push("");
+  lines.push("Top nullable union types");
+  const topNullableTypes = report.nullableUnions.byType.slice(0, Math.min(options.topFiles, 10));
+  if (topNullableTypes.length === 0) {
+    lines.push("- No nullable unions found.");
+  } else {
+    topNullableTypes.forEach((entry, index) => {
+      lines.push(
+        `${String(index + 1)}. ${entry.type} — ${String(entry.totalCount)} occurrence${
+          entry.totalCount === 1 ? "" : "s"
+        } in ${String(entry.fileCount)} file${entry.fileCount === 1 ? "" : "s"}, aggregate fan-in ${String(
+          entry.fanout,
+        )}`,
+      );
+      const fileSummary = entry.files
+        .slice(0, 3)
+        .map((file) => `${file.filePath} (${String(file.count)}, fan-in ${String(file.fanIn)})`)
+        .join("; ");
+      lines.push(`   ${fileSummary}`);
+    });
+  }
+
+  lines.push("");
+  lines.push("Top nullable union files");
+  const topNullableFiles = report.nullableUnions.byFile.slice(0, Math.min(options.topFiles, 10));
+  if (topNullableFiles.length === 0) {
+    lines.push("- No files contain nullable unions.");
+  } else {
+    topNullableFiles.forEach((entry, index) => {
+      lines.push(
+        `${String(index + 1)}. ${entry.filePath} — ${String(entry.count)} nullable union${
+          entry.count === 1 ? "" : "s"
+        }, fan-in ${String(entry.fanIn)}`,
+      );
+      lines.push(
+        `   ${entry.topTypes.map((type) => `${type.type} (${String(type.count)})`).join("; ")}`,
+      );
+    });
+  }
+
+  lines.push("");
+  lines.push("Exported nullable types by fanout");
+  const topExportedNullableTypes = report.nullableUnions.exportedTypes.slice(
+    0,
+    Math.min(options.topFiles, 10),
+  );
+  if (topExportedNullableTypes.length === 0) {
+    lines.push("- No exported interfaces or type aliases contain nullable unions.");
+  } else {
+    topExportedNullableTypes.forEach((entry, index) => {
+      lines.push(
+        `${String(index + 1)}. ${entry.name} (${entry.filePath}:${String(entry.line)}) — ${String(
+          entry.nullableUnionCount,
+        )} nullable union${entry.nullableUnionCount === 1 ? "" : "s"}, referenced in ${String(
+          entry.referencingFileCount,
+        )} file${entry.referencingFileCount === 1 ? "" : "s"}`,
+      );
+      lines.push(
+        `   ${entry.nullableTypes.map((type) => `${type.type} (${String(type.count)})`).join("; ")}`,
+      );
     });
   }
 
