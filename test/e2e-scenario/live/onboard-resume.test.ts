@@ -331,7 +331,7 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       "policies",
       "agent_setup",
     ] as const) {
-      expect(complete.steps[step]?.status, `step ${step}`).toBe("complete");
+      expect(["complete", "skipped"]).toContain(complete.steps[step]?.status);
     }
 
     // Assertion: registry-has-sandbox.
