@@ -78,7 +78,12 @@ async function cleanup(host: HostCliClient, sandbox: SandboxClient): Promise<voi
 function chatRequest(model: string): string {
   return JSON.stringify({
     model,
-    messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
+    messages: [
+      {
+        role: "user",
+        content: "What is 6 multiplied by 7? Reply with only the integer, no extra words.",
+      },
+    ],
     max_tokens: 100,
   });
 }
@@ -199,7 +204,7 @@ liveTest(
       },
     );
     expect(sandboxInference.exitCode, resultText(sandboxInference)).toBe(0);
-    expect(sandboxInference.stdout).toMatch(/PONG/i);
+    expect(sandboxInference.stdout).toMatch(/(^|[^0-9])42([^0-9]|$)/);
 
     const logs = await repoNemoclaw(
       host,
