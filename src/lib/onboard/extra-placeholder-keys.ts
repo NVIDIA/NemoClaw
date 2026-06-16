@@ -18,6 +18,14 @@ export const EXTRA_PLACEHOLDER_KEY_PATTERN = /^[A-Z][A-Z0-9_]{0,127}$/;
 
 export const EXTRA_PLACEHOLDER_KEYS_MAX = 32;
 
+// Opt-in: allow credential keys that do NOT extend a canonical channel envKey (e.g. a custom MCP
+// bearer such as SNOWFLAKE_MCP_BEARER, or GITHUB_TOKEN). The safe default still refuses arbitrary
+// keys; set this to "1" only when a matching egress credential-rewrite policy preset exists for the
+// target host. As with channel tokens, the real value never enters the sandbox — only the
+// `openshell:resolve:env:<KEY>` placeholder does, resolved at the egress boundary.
+export const EXTRA_PLACEHOLDER_KEYS_ALLOW_ARBITRARY_ENV =
+  "NEMOCLAW_EXTRA_PLACEHOLDER_KEYS_ALLOW_ARBITRARY";
+
 export interface ExtraPlaceholderKeysResult {
   readonly keys: readonly string[];
   readonly warnings: readonly string[];
@@ -45,6 +53,7 @@ function findExtendedCanonicalPrefix(
 export function parseExtraPlaceholderKeys(
   raw: string | undefined | null,
   canonicalKeys: ReadonlySet<string> = new Set(),
+  allowArbitrary = false,
 ): ExtraPlaceholderKeysResult {
   if (!raw || !raw.trim()) {
     return { keys: [], warnings: [] };
@@ -66,9 +75,9 @@ export function parseExtraPlaceholderKeys(
       );
       continue;
     }
-    if (!findExtendedCanonicalPrefix(candidate, canonicalKeys)) {
+    if (!allowArbitrary && !findExtendedCanonicalPrefix(candidate, canonicalKeys)) {
       warnings.push(
-        `${EXTRA_PLACEHOLDER_KEYS_ENV}: ignoring "${candidate}" — must extend a canonical channel envKey (e.g. TELEGRAM_BOT_TOKEN_AGENT_A); arbitrary host secrets such as GITHUB_TOKEN are refused so they cannot leak into the sandbox provider gateway`,
+        `${EXTRA_PLACEHOLDER_KEYS_ENV}: ignoring "${candidate}" — must extend a canonical channel envKey (e.g. TELEGRAM_BOT_TOKEN_AGENT_A); arbitrary host secrets such as GITHUB_TOKEN are refused unless ${EXTRA_PLACEHOLDER_KEYS_ALLOW_ARBITRARY_ENV}=1`,
       );
       continue;
     }
@@ -94,9 +103,11 @@ export function registerExtraPlaceholderProviders(
   messagingTokenDefs: MessagingTokenDefShape[],
   log: (message: string) => void = (m) => console.warn(`  ${m}`),
 ): string[] {
+  const allowArbitrary = process.env[EXTRA_PLACEHOLDER_KEYS_ALLOW_ARBITRARY_ENV] === "1";
   const parsed = parseExtraPlaceholderKeys(
     process.env[EXTRA_PLACEHOLDER_KEYS_ENV],
     canonicalPlaceholderKeys(),
+    allowArbitrary,
   );
   for (const warning of parsed.warnings) log(warning);
   for (const envKey of parsed.keys) {

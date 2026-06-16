@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   appendExtraPlaceholderKeysEnvArg,
   canonicalPlaceholderKeys,
+  EXTRA_PLACEHOLDER_KEYS_ALLOW_ARBITRARY_ENV,
   EXTRA_PLACEHOLDER_KEYS_ENV,
   EXTRA_PLACEHOLDER_KEYS_MAX,
   extraPlaceholderProviderSlug,
@@ -102,9 +103,29 @@ describe("parseExtraPlaceholderKeys", () => {
       EXTRA_PLACEHOLDER_KEYS_ENV,
     ]) {
       expect(result.warnings).toContain(
-        `${EXTRA_PLACEHOLDER_KEYS_ENV}: ignoring "${blocked}" — must extend a canonical channel envKey (e.g. TELEGRAM_BOT_TOKEN_AGENT_A); arbitrary host secrets such as GITHUB_TOKEN are refused so they cannot leak into the sandbox provider gateway`,
+        `${EXTRA_PLACEHOLDER_KEYS_ENV}: ignoring "${blocked}" — must extend a canonical channel envKey (e.g. TELEGRAM_BOT_TOKEN_AGENT_A); arbitrary host secrets such as GITHUB_TOKEN are refused unless ${EXTRA_PLACEHOLDER_KEYS_ALLOW_ARBITRARY_ENV}=1`,
       );
     }
+  });
+
+  it("accepts arbitrary host secret env names when allowArbitrary is opted in", () => {
+    // With the explicit opt-in, keys that do not extend a canonical channel envKey are accepted
+    // (the operator is responsible for a matching egress credential-rewrite preset). The format
+    // regex and canonical-collision checks still apply, so a token equal to a canonical envKey is
+    // still refused even under the opt-in.
+    const result = parseExtraPlaceholderKeys(
+      ["GITHUB_TOKEN", "SNOWFLAKE_MCP_BEARER", "lower_case", "SLACK_BOT_TOKEN"].join(" "),
+      CANONICAL_ENVKEYS_FIXTURE,
+      true,
+    );
+    expect(result.keys).toEqual(["GITHUB_TOKEN", "SNOWFLAKE_MCP_BEARER"]);
+    // Still rejects the non-matching pattern and the exact canonical-key collision.
+    expect(result.warnings).toContain(
+      `${EXTRA_PLACEHOLDER_KEYS_ENV}: ignoring "lower_case" — must match /^[A-Z][A-Z0-9_]{0,127}$/`,
+    );
+    expect(result.warnings).toContain(
+      `${EXTRA_PLACEHOLDER_KEYS_ENV}: ignoring "SLACK_BOT_TOKEN" — collides with a canonical channel envKey`,
+    );
   });
 
   it("dedupes repeated tokens without emitting a warning", () => {
