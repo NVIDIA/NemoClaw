@@ -32,6 +32,7 @@ import type { AgentStateFile } from "../agent/defs.js";
 import { loadAgent } from "../agent/defs.js";
 import { isRecord, type UnknownRecord } from "../core/json-types.js";
 import { shellQuote } from "../runner.js";
+import { createTempSshConfig } from "../sandbox/temp-ssh-config.js";
 import { isSensitiveFile, sanitizeConfigFile } from "../security/credential-filter.js";
 import {
   buildOpenClawConfigRestoreInputFromSandbox,
@@ -475,12 +476,6 @@ function getSshConfig(sandboxName: string): string | null {
   });
   if (result.status !== 0) return null;
   return result.output;
-}
-
-function writeTempSshConfig(sshConfig: string): string {
-  const tmpFile = path.join(os.tmpdir(), `nemoclaw-state-${process.pid}-${Date.now()}.conf`);
-  writeFileSync(tmpFile, sshConfig, { mode: 0o600 });
-  return tmpFile;
 }
 
 function sshArgs(configFile: string, sandboxName: string): string[] {
@@ -1135,7 +1130,8 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
   }
   _log(`SSH config obtained (${sshConfig.length} bytes)`);
 
-  const configFile = writeTempSshConfig(sshConfig);
+  const tempSshConfig = createTempSshConfig(sshConfig, "nemoclaw-state-");
+  const configFile = tempSshConfig.file;
   try {
     if (stateDirs.length > 0) {
       // Build tar command that only includes existing directories.
@@ -1359,7 +1355,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
     }
   } finally {
     try {
-      require("node:fs").unlinkSync(configFile);
+      tempSshConfig.cleanup();
     } catch {
       /* ignore */
     }
@@ -1464,7 +1460,8 @@ export function restoreSandboxState(sandboxName: string, backupPath: string): Re
     };
   }
 
-  const configFile = writeTempSshConfig(sshConfig);
+  const tempSshConfig = createTempSshConfig(sshConfig, "nemoclaw-state-");
+  const configFile = tempSshConfig.file;
   try {
     if (localDirs.length > 0) {
       // Upload via tar pipe
@@ -1601,7 +1598,7 @@ export function restoreSandboxState(sandboxName: string, backupPath: string): Re
     }
   } finally {
     try {
-      require("node:fs").unlinkSync(configFile);
+      tempSshConfig.cleanup();
     } catch {
       /* ignore */
     }
