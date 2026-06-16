@@ -154,18 +154,12 @@ async function autoCreateSandboxFromSource(
   srcName: string,
   dstName: string,
   srcEntry: SandboxEntry | { name: string },
+  fromImage: string,
 ): Promise<void> {
   const sandboxCreateStream = require("../../sandbox/create-stream");
   const { isSandboxReady } = require("../../state/gateway");
   const basePolicy = path.join(ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml");
   const openshellBin = getOpenshellBinary();
-
-  const fromImage = resolveSrcPodImage(srcName, srcEntry);
-  if (!fromImage) {
-    console.error(`  Cannot auto-create '${dstName}': could not resolve '${srcName}' pod image.`);
-    console.error(`  Create '${dstName}' manually with '${CLI_NAME} onboard'.`);
-    snapshotExit(1);
-  }
 
   const cmdParts = [
     openshellBin,
@@ -631,7 +625,7 @@ async function runSnapshotRestore(
         "  Failed to re-select source sandbox gateway after deleting destination.",
       );
     }
-    await autoCreateSandboxFromSource(sandboxName, targetSandbox, srcEntry);
+    await autoCreateSandboxFromSource(sandboxName, targetSandbox, srcEntry, fromImage);
   }
   if (targetSandbox !== sandboxName) {
     console.log(`  Restoring snapshot from '${sandboxName}' into '${targetSandbox}'...`);
