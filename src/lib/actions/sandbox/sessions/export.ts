@@ -44,6 +44,7 @@ import path from "node:path";
 import { captureOpenshell, runOpenshell } from "../../../adapters/openshell/runtime";
 import { CLI_NAME } from "../../../cli/branding";
 import { ensureLiveSandboxOrExit } from "../gateway-state";
+import { resolveHostPathFromCwd } from "../host-path";
 import {
   DEFAULT_AGENT_ID,
   parseAgentIdFromSessionKey,
@@ -94,6 +95,14 @@ interface SessionIndexEntry {
 // interpreted as a tar option (`--checkpoint-action=...`, etc.) when appended
 // to the argv. Hyphens and underscores remain permitted as inner characters.
 const SAFE_TOKEN_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+// In-sandbox staging directory for the transient tar bundle. Must live inside
+// the `/sandbox` workspace because `openshell sandbox download` refuses any
+// source path outside it; using the sandbox's `/tmp` (the previous choice)
+// trips that check and aborts the export with a misleading "outside the
+// sandbox workspace" error. The hidden `.nemoclaw-staging` prefix keeps the
+// directory clearly NemoClaw-owned and separate from OpenClaw's own store.
+const STAGING_DIR_IN_SANDBOX = "/sandbox/.nemoclaw-staging";
 
 export async function exportSandboxSessions(
   opts: SessionsExportOptions,
@@ -278,11 +287,14 @@ export function buildSandboxTarArgv(input: {
 
 function buildShellInvocation(tarArgv: readonly string[], tarballRemote: string): string {
   // umask 077 restricts the staging tarball (mode 600) so a concurrent
-  // sandbox user cannot read another agent's session JSONL out of /tmp
-  // between the tar step and the download step.
+  // sandbox user cannot read another agent's session JSONL between the tar
+  // step and the download step. The mkdir + chmod 700 pair guarantees the
+  // staging directory itself is owner-only even if a previous run (or an
+  // unrelated tool) created it with a broader mode.
   const quoted = tarArgv.map(shellQuote).join(" ");
   const quotedTarball = shellQuote(tarballRemote);
-  return `umask 077 && ${quoted} && chmod 600 ${quotedTarball}`;
+  const quotedStagingDir = shellQuote(STAGING_DIR_IN_SANDBOX);
+  return `umask 077 && mkdir -p ${quotedStagingDir} && chmod 700 ${quotedStagingDir} && ${quoted} && chmod 600 ${quotedTarball}`;
 }
 
 function shellQuote(value: string): string {
@@ -487,7 +499,7 @@ function pickIndexArray(parsed: unknown): unknown[] | null {
 
 function stagingTarballPath(agent: string): string {
   const suffix = randomBytes(6).toString("hex");
-  return `/tmp/sessions-export-${agent}-${suffix}.tgz`;
+  return `${STAGING_DIR_IN_SANDBOX}/sessions-export-${agent}-${suffix}.tgz`;
 }
 
 function resolveHostDestination(
@@ -496,8 +508,13 @@ function resolveHostDestination(
   agent: string,
   format: SessionsExportFormat,
 ): string {
-  if (out && out.trim()) return out.trim();
-  // dir is the #3979 default: a browsable `./sessions-<sandbox>/` tree. tar
-  // keeps the single-bundle name for share/upload cases.
-  return format === "tar" ? `./sessions-${sandboxName}-${agent}.tgz` : `./sessions-${sandboxName}/`;
+  if (out && out.trim()) return resolveHostPathFromCwd(out.trim());
+  // dir is the default: a browsable `sessions-<sandbox>/` tree. tar keeps the
+  // single-bundle name for share/upload cases. Both defaults are resolved
+  // against the caller's process.cwd() so the host artefact lands where the
+  // user invoked the CLI from, not inside the install directory that
+  // `runOpenshell` pins as the child's cwd.
+  const fallback =
+    format === "tar" ? `sessions-${sandboxName}-${agent}.tgz` : `sessions-${sandboxName}/`;
+  return resolveHostPathFromCwd(fallback);
 }
