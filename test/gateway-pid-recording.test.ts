@@ -25,6 +25,15 @@ function extractFunction(src: string, name: string): string {
   return src.slice(start, end + 2);
 }
 
+function safeTmpHelpers(src: string): string {
+  const start = src.indexOf("_nemoclaw_safe_replace_tmp_file() {");
+  const end = src.indexOf("_START_LOG=", start);
+  if (start === -1 || end === -1 || end <= start) {
+    throw new Error("Expected safe temp helpers in scripts/nemoclaw-start.sh");
+  }
+  return src.slice(start, end);
+}
+
 describe("nemoclaw-start gateway PID recording for HEALTHCHECK (#4952)", () => {
   it("record_gateway_pid writes the gateway PID to the file the HEALTHCHECK reads", () => {
     const src = fs.readFileSync(START_SCRIPT, "utf-8");
@@ -35,12 +44,18 @@ describe("nemoclaw-start gateway PID recording for HEALTHCHECK (#4952)", () => {
         "/tmp/nemoclaw-gateway.pid",
         pidPath,
       );
-      const script = ["set -euo pipefail", fn, 'record_gateway_pid "12345"'].join("\n");
+      const script = [
+        "set -euo pipefail",
+        safeTmpHelpers(src),
+        fn,
+        'record_gateway_pid "12345"',
+      ].join("\n");
 
       const result = spawnSync("bash", ["-c", script], { encoding: "utf-8", timeout: 5000 });
 
       expect(result.status).toBe(0);
       expect(fs.readFileSync(pidPath, "utf-8").trim()).toBe("12345");
+      expect((fs.statSync(pidPath).mode & 0o777).toString(8)).toBe("600");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -54,7 +69,12 @@ describe("nemoclaw-start gateway PID recording for HEALTHCHECK (#4952)", () => {
       "/tmp/nemoclaw-gateway.pid",
       "/nonexistent-dir/nemoclaw-gateway.pid",
     );
-    const script = ["set -euo pipefail", fn, 'record_gateway_pid "12345"'].join("\n");
+    const script = [
+      "set -euo pipefail",
+      safeTmpHelpers(src),
+      fn,
+      'record_gateway_pid "12345"',
+    ].join("\n");
 
     const result = spawnSync("bash", ["-c", script], { encoding: "utf-8", timeout: 5000 });
 
