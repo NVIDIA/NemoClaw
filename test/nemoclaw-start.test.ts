@@ -2422,10 +2422,7 @@ describe("nemoclaw-start gateway launch signal handling", () => {
         "start_auto_pair() { sleep 30 & AUTO_PAIR_PID=$!; }",
         "start_plugin_registry_refresh() { :; }",
         "cleanup_on_signal() { :; }; record_gateway_pid() { :; }", // record_gateway_pid: #4952
-        extractShellFunctionFromSource(src, "mark_in_container_gateway").replaceAll(
-          "/tmp/nemoclaw-gateway-local",
-          markerPath,
-        ),
+        `mark_in_container_gateway() { : > ${JSON.stringify(markerPath)}; }`,
         "STEP_DOWN_PREFIX_SANDBOX=(gosu sandbox)",
         "STEP_DOWN_PREFIX_GATEWAY=(gosu gateway)",
         launchBlock(kind, gatewayLog),
@@ -3797,6 +3794,7 @@ describe("Telegram diagnostics (#2766)", () => {
         `_CIAO_GUARD_SCRIPT=${JSON.stringify(path.join(tmpDir, "ciao-guard.js"))}`,
         `validate_nemoclaw_tmp_permissions() { validate_tmp_permissions ${JSON.stringify(preloadPath)}; }`,
         "NEMOCLAW_CMD=()",
+        '_nemoclaw_safe_create_tmp_file() { : > "$1"; chmod "$2" "$1"; }',
         preGatewaySetupBlock(kind, gatewayLog, autoPairLog),
       ].join("\n"),
       { mode: 0o700 },
