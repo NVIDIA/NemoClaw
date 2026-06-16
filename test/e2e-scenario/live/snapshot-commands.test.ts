@@ -34,8 +34,11 @@ const MARKER_FILE = "/sandbox/.openclaw/workspace/snapshot-marker.txt";
 const SECOND_MARKER = "/sandbox/.openclaw/workspace/snapshot-marker-2.txt";
 const LIVE_TIMEOUT_MS = 30 * 60_000;
 const INSTALL_ATTEMPTS = process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true" ? 3 : 1;
-const CREDENTIAL_LEAK_PATTERN =
-  /(?:nvapi-|sk-|Bearer |NVIDIA_API_KEY|NVIDIA_INFERENCE_API_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY|COMPATIBLE_API_KEY|NGC_API_KEY|AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY|api[_-]?key|access[_-]?token|secret|bearer[_-]?token)/i;
+const CREDENTIAL_TOKEN_VALUE_PATTERN = /(?:nvapi-|sk-|Bearer )/;
+const CREDENTIAL_ENV_KEY_PATTERN =
+  /\b(?:NVIDIA_API_KEY|NVIDIA_INFERENCE_API_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY|COMPATIBLE_API_KEY|NGC_API_KEY|AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY)\b/i;
+const STRUCTURED_CREDENTIAL_KEY_PATTERN =
+  /["']?(?:apiKey|api_key|accessToken|access_token|secretKey|secret_key|bearerToken|bearer_token)["']?\s*[:=]\s*["'][^"']+["']/i;
 
 function resultText(result: Pick<ShellProbeResult, "stdout" | "stderr">): string {
   return [result.stdout, result.stderr].filter(Boolean).join("\n");
@@ -135,7 +138,13 @@ function scanSnapshotCredentialLeaks(root: string): string[] {
         continue;
       }
       const body = fs.readFileSync(fullPath, "utf8");
-      if (CREDENTIAL_LEAK_PATTERN.test(body)) leaks.push(fullPath);
+      if (
+        CREDENTIAL_TOKEN_VALUE_PATTERN.test(body) ||
+        CREDENTIAL_ENV_KEY_PATTERN.test(body) ||
+        STRUCTURED_CREDENTIAL_KEY_PATTERN.test(body)
+      ) {
+        leaks.push(fullPath);
+      }
     }
   };
   visit(root);
