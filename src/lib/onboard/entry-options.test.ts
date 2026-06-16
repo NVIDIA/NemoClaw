@@ -180,7 +180,7 @@ describe("resolveOnboardEntryOptions", () => {
   it("does not auto-resume when the persisted session is not in_progress (#5470)", () => {
     const deps = createDeps();
 
-    for (const status of ["complete", "failed", null, undefined] as const) {
+    for (const status of ["complete", "failed", "pending", "", null, undefined] as const) {
       const result = resolveOnboardEntryOptions(
         { opts: {}, env: {}, stdinIsTty: true, stdoutIsTty: true, persistedSessionStatus: status },
         deps,
