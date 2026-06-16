@@ -36,7 +36,6 @@ const getSandboxMock = vi.fn(() => null);
 const isGatewayHealthyMock = vi.fn(() => true);
 const listBackupsMock = vi.fn<() => Array<Record<string, unknown>>>(() => []);
 const parseLiveSandboxNamesMock = vi.fn(() => new Set(["alpha"]));
-const getLatestBackupMock = vi.fn();
 const registerSandboxMock = vi.fn();
 const restoreSandboxStateMock = vi.fn();
 
@@ -135,7 +134,6 @@ describe("runSandboxSnapshot", () => {
     getSandboxMock.mockReturnValue(null);
     isGatewayHealthyMock.mockReturnValue(true);
     listBackupsMock.mockReturnValue([]);
-    getLatestBackupMock.mockReturnValue(null);
     registerSandboxMock.mockReset();
     restoreSandboxStateMock.mockReturnValue({
       success: true,
