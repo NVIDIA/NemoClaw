@@ -1122,7 +1122,8 @@ Session JSONL can contain pasted secrets (API keys, tokens), so exported files a
 ### `nemohermes <name> download <sandbox-path> [host-dest]`
 
 Host-side wrapper around `openshell sandbox download` that adds a live-sandbox readiness check.
-The source path inside the sandbox and the host destination are forwarded to OpenShell verbatim, so the file-system semantics (single-file vs directory copy, trailing-slash handling, overwrite behaviour) follow the OpenShell transport.
+The sandbox source path is forwarded to OpenShell verbatim; a relative host destination is resolved against the caller's working directory before it reaches OpenShell, so the downloaded file lands where the user invoked the CLI from rather than inside the install directory.
+Absolute host destinations pass through unchanged, and the OpenShell transport keeps its file-system semantics (single-file vs directory copy, trailing-slash handling, overwrite behaviour).
 With no `host-dest` the destination defaults to the current directory.
 
 ```bash

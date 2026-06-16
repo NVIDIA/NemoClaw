@@ -207,8 +207,18 @@ describe("exportSandboxSessions", () => {
       "/sandbox/.openclaw/agents/main/sessions/sid-a.jsonl",
       expectedSidA,
     ]);
-    // Each downloaded file is locked to owner-only (session JSONL may hold secrets).
+    expect(downloadCalls[1]?.[0]).toEqual([
+      "sandbox",
+      "download",
+      "alpha",
+      "/sandbox/.openclaw/agents/main/sessions/sid-b.jsonl",
+      expectedSidB,
+    ]);
+    // Every downloaded session file is locked to owner-only — the bug observed
+    // in production was inconsistent perms across files in the same export
+    // run, so both files in this two-session fixture must see the chmod.
     expect(chmodSpy).toHaveBeenCalledWith(expectedSidA, 0o600);
+    expect(chmodSpy).toHaveBeenCalledWith(expectedSidB, 0o600);
 
     expect(result.format).toBe("dir");
     expect(result.hostDest).toBe(expectedDir);

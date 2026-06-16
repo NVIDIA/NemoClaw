@@ -143,7 +143,7 @@ export async function exportSandboxSessions(
       // Use ignoreError so the underlying spawn helper does not call
       // process.exit on a non-zero tar/download status. Without that, the
       // finally cleanup below would never run and the staged session JSONL
-      // would survive in the sandbox's /tmp.
+      // would survive in the in-sandbox staging directory.
       const tarResult = runOpenshell(
         [
           "sandbox",
@@ -174,8 +174,8 @@ export async function exportSandboxSessions(
       }
     } finally {
       // Best-effort cleanup of the in-sandbox staging tarball. Runs even when
-      // tar/download fail so a partial export cannot leave a world-readable
-      // bundle of session JSONL in the sandbox's /tmp.
+      // tar/download fail so a partial export cannot leave a bundle of session
+      // JSONL behind in the in-sandbox staging directory.
       runOpenshell(
         ["sandbox", "exec", "--name", opts.sandboxName, "--", "rm", "-f", tarballRemote],
         { ignoreError: true, stdio: "ignore" },
@@ -199,9 +199,9 @@ export async function exportSandboxSessions(
       sizeBytes: null,
     }));
   } else {
-    // dir format (the #3979 default): copy each resolved session file straight
-    // onto the host into a browsable directory. No /tmp staging tarball, so
-    // there is no world-readable staging window to clean up.
+    // dir format default: copy each resolved session file straight onto the
+    // host into a browsable directory. No in-sandbox staging tarball, so
+    // there is no staging window to clean up.
     try {
       fs.mkdirSync(hostDest, { recursive: true });
     } catch (err) {
