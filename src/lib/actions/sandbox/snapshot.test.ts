@@ -23,6 +23,8 @@ const getSandboxMock = vi.fn(() => null);
 const isGatewayHealthyMock = vi.fn(() => true);
 const listBackupsMock = vi.fn<() => Array<Record<string, unknown>>>(() => []);
 const parseLiveSandboxNamesMock = vi.fn(() => new Set(["alpha"]));
+const getLatestBackupMock = vi.fn();
+const registerSandboxMock = vi.fn();
 const restoreSandboxStateMock = vi.fn();
 
 vi.mock("../../adapters/docker", () => ({
@@ -66,18 +68,21 @@ vi.mock("../../shields", () => ({
 
 vi.mock("../../state/gateway", () => ({
   isGatewayHealthy: isGatewayHealthyMock,
+  isSandboxReady: vi.fn((output: string, sandboxName: string) =>
+    output.includes(`${sandboxName} Ready`),
+  ),
 }));
 
 vi.mock("../../state/registry", () => ({
   getSandbox: getSandboxMock,
-  registerSandbox: vi.fn(),
+  registerSandbox: registerSandboxMock,
   removeSandbox: vi.fn(),
 }));
 
 vi.mock("../../state/sandbox", () => ({
   backupSandboxState: backupSandboxStateMock,
   findBackup: findBackupMock,
-  getLatestBackup: vi.fn(() => null),
+  getLatestBackup: getLatestBackupMock,
   listBackups: listBackupsMock,
   restoreSandboxState: restoreSandboxStateMock,
 }));
@@ -98,6 +103,8 @@ describe("runSandboxSnapshot", () => {
     getSandboxMock.mockReturnValue(null);
     isGatewayHealthyMock.mockReturnValue(true);
     listBackupsMock.mockReturnValue([]);
+    getLatestBackupMock.mockReturnValue(null);
+    registerSandboxMock.mockReset();
     restoreSandboxStateMock.mockReturnValue({
       success: true,
       restoredDirs: [],
@@ -183,6 +190,32 @@ describe("runSandboxSnapshot", () => {
     expect(output).toContain("initial");
     expect(output).toContain("/tmp/alpha/v2");
     expect(output).toContain("2 snapshot(s). Restore with:");
+  });
+
+  it("restores the latest snapshot into the source sandbox", async () => {
+    const consoleLog = vi.spyOn(console, "log").mockImplementation(() => {});
+    getLatestBackupMock.mockReturnValue({
+      snapshotVersion: 4,
+      name: "stable",
+      timestamp: "2026-06-15T00:00:00.000Z",
+      backupPath: "/tmp/backup-alpha",
+    });
+    restoreSandboxStateMock.mockReturnValue({
+      success: true,
+      restoredDirs: ["workspace"],
+      restoredFiles: ["user.md"],
+      failedDirs: [],
+      failedFiles: [],
+    });
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await runSandboxSnapshot("alpha", { kind: "restore" });
+
+    expect(restoreSandboxStateMock).toHaveBeenCalledWith("alpha", "/tmp/backup-alpha");
+    const output = consoleLog.mock.calls.flat().join("\n");
+    expect(output).toContain("Using latest snapshot v4 name=stable");
+    expect(output).toContain("Restoring snapshot into 'alpha'");
+    expect(output).toContain("Restored 1 directories, 1 files");
   });
 
   it("refuses snapshot creation before backup when the sandbox is not live", async () => {
