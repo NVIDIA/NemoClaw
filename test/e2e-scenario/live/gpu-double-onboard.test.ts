@@ -109,6 +109,45 @@ function parseReplyCommand(): string {
   return String.raw`python3 -c 'import json,sys; d=json.load(sys.stdin); m=d["choices"][0]["message"]; print((m.get("content") or m.get("reasoning_content") or m.get("reasoning") or "").strip())'`;
 }
 
+function fileMode(pathname: string): string {
+  return (fs.statSync(pathname).mode & 0o777).toString(8).padStart(3, "0");
+}
+
+function chatRequest(model: string): string {
+  return JSON.stringify({
+    model,
+    messages: [
+      {
+        role: "user",
+        content: "What is 6 multiplied by 7? Reply with only the integer, no extra words.",
+      },
+    ],
+    max_tokens: 200,
+  });
+}
+
+async function expectSandboxInference42(
+  sandbox: SandboxClient,
+  model: string,
+  artifactName: string,
+): Promise<void> {
+  const response = await sandbox.exec(
+    SANDBOX_NAME,
+    [
+      "sh",
+      "-lc",
+      `curl -fsS --max-time 120 https://inference.local/v1/chat/completions -H 'Content-Type: application/json' --data '${chatRequest(model)}' | ${parseReplyCommand()}`,
+    ],
+    {
+      artifactName,
+      env: env(),
+      timeoutMs: 150_000,
+    },
+  );
+  expect(response.exitCode, resultText(response)).toBe(0);
+  expect(response.stdout).toMatch(/(^|[^0-9])42([^0-9]|$)/);
+}
+
 liveTest(
   "gpu double onboard keeps Ollama auth proxy token consistent after re-onboard",
   { timeout: LIVE_TIMEOUT_MS },
@@ -187,6 +226,9 @@ liveTest(
     expect(fs.existsSync(TOKEN_FILE), `${TOKEN_FILE} missing`).toBe(true);
     const tokenAfterFirst = fs.readFileSync(TOKEN_FILE, "utf8").trim();
     expect(tokenAfterFirst.length).toBeGreaterThan(10);
+    expect(fileMode(TOKEN_FILE)).toBe("600");
+
+    const model = process.env.NEMOCLAW_MODEL ?? "llama3.2:1b";
 
     const firstTokenStatus = await httpStatus(
       host,
@@ -195,6 +237,7 @@ liveTest(
       tokenAfterFirst,
     );
     expect(firstTokenStatus.stdout.trim(), resultText(firstTokenStatus)).toBe("200");
+    await expectSandboxInference42(sandbox, model, "phase-3-sandbox-inference-first-onboard");
 
     const reonboard = await nemoclaw(
       host,
@@ -207,6 +250,8 @@ liveTest(
     expect(fs.existsSync(TOKEN_FILE), `${TOKEN_FILE} missing after re-onboard`).toBe(true);
     const tokenAfterSecond = fs.readFileSync(TOKEN_FILE, "utf8").trim();
     expect(tokenAfterSecond.length).toBeGreaterThan(10);
+    expect(fileMode(TOKEN_FILE)).toBe("600");
+    expect(tokenAfterSecond).toBe(tokenAfterFirst);
 
     const liveStatus = await httpStatus(
       host,
@@ -218,9 +263,18 @@ liveTest(
       host,
       `http://127.0.0.1:${PROXY_PORT}/v1/models`,
       "phase-5-proxy-persisted-token-status",
-      tokenAfterSecond,
+      tokenAfterFirst,
     );
     expect(authStatus.stdout.trim(), resultText(authStatus)).toBe("200");
+    const unauthPost = await host.command(
+      "bash",
+      [
+        "-lc",
+        `curl -s -o /dev/null -w '%{http_code}' --connect-timeout 5 -X POST 'http://127.0.0.1:${PROXY_PORT}/api/generate' -d '{}'`,
+      ],
+      { artifactName: "phase-5-proxy-unauth-post-status", env: env(), timeoutMs: 30_000 },
+    );
+    expect(unauthPost.stdout.trim()).toBe("401");
     const wrongStatus = await httpStatus(
       host,
       `http://127.0.0.1:${PROXY_PORT}/v1/models`,
@@ -229,24 +283,12 @@ liveTest(
     );
     expect(wrongStatus.stdout.trim()).toBe("401");
 
-    const model = process.env.NEMOCLAW_MODEL ?? "llama3.2:1b";
-    const response = await sandbox.exec(
-      SANDBOX_NAME,
-      [
-        "sh",
-        "-lc",
-        `curl -fsS --max-time 120 https://inference.local/v1/chat/completions -H 'Content-Type: application/json' --data '${JSON.stringify({ model, messages: [{ role: "user", content: "What is 6 multiplied by 7? Reply with only the integer, no extra words." }], max_tokens: 200 })}' | ${parseReplyCommand()}`,
-      ],
-      {
-        artifactName: "phase-6-sandbox-inference-after-reonboard",
-        env: env(),
-        timeoutMs: 150_000,
-      },
-    );
-    expect(response.exitCode, resultText(response)).toBe(0);
-    expect(response.stdout).toMatch(/(^|[^0-9])42([^0-9]|$)/);
+    await expectSandboxInference42(sandbox, model, "phase-6-sandbox-inference-after-reonboard");
 
     await cleanup(host, sandbox);
+    const registryFile = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
+    const registryText = fs.existsSync(registryFile) ? fs.readFileSync(registryFile, "utf8") : "";
+    expect(registryText).not.toContain(SANDBOX_NAME);
     await artifacts.writeJson("scenario-result.json", {
       id: "gpu-double-onboard",
       status: "passed",
