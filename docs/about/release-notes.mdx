@@ -17,7 +17,7 @@ For more detailed release notes, refer to the [NemoClaw GitHub announcements](ht
 
 ## v0.0.65
 
-NemoClaw v0.0.65 improves gateway recovery, sandbox state restore, local inference setup, messaging activation, and release validation:
+NemoClaw v0.0.65 improves gateway recovery, sandbox state restore, local inference setup, and messaging activation:
 
 - Gateway and sandbox recovery now wait for sustained serving state, recover sandboxes whose active gateway has lost its spec, preserve gateway routing state across more rebuilds, and allocate dashboard ports across multiple NemoClaw gateways. For more information, refer to [Manage Sandbox Lifecycle](../manage-sandboxes/lifecycle) and [Troubleshooting](../reference/troubleshooting).
 - Rebuild and restore flows preserve more OpenClaw and registry state. Config restore fails closed when a merge cannot be applied safely, reporter-owned model metadata survives rebuild restore, Shields auto-restore locks are re-confirmed after settle, and persisted agents survive registry recovery. For more information, refer to [Backup and Restore](../manage-sandboxes/backup-restore) and [NemoClaw CLI Commands Reference](../reference/commands).

@@ -8,7 +8,7 @@ For more detailed release notes, refer to the [NemoClaw GitHub announcements](ht
 
 ## v0.0.65
 
-NemoClaw v0.0.65 improves gateway recovery, sandbox state restore, local inference setup, messaging activation, and release validation:
+NemoClaw v0.0.65 improves gateway recovery, sandbox state restore, local inference setup, and messaging activation:
 
 - Gateway and sandbox recovery now wait for sustained serving state, recover sandboxes whose active gateway has lost its spec, preserve gateway routing state across more rebuilds, and allocate dashboard ports across multiple NemoClaw gateways. For more information, refer to Manage Sandbox Lifecycle (use the `nemoclaw-user-manage-sandboxes` skill) and Troubleshooting (use the `nemoclaw-user-reference` skill).
 - Rebuild and restore flows preserve more OpenClaw and registry state. Config restore fails closed when a merge cannot be applied safely, reporter-owned model metadata survives rebuild restore, Shields auto-restore locks are re-confirmed after settle, and persisted agents survive registry recovery. For more information, refer to Backup and Restore (use the `nemoclaw-user-manage-sandboxes` skill) and NemoClaw CLI Commands Reference (use the `nemoclaw-user-reference` skill).
@@ -16,7 +16,6 @@ NemoClaw v0.0.65 improves gateway recovery, sandbox state restore, local inferen
 - Day-two CLI operations gained safer file and session workflows. `nemoclaw <name> download`, `nemoclaw <name> upload`, and `nemoclaw <name> sessions export` wrap the underlying sandbox file transfer and OpenClaw session export paths, while uninstall handles TTY confirmation and model-router teardown more predictably. For more information, refer to NemoClaw CLI Commands Reference (use the `nemoclaw-user-reference` skill) and Manage Sandbox Lifecycle (use the `nemoclaw-user-manage-sandboxes` skill).
 - Messaging activation stores and exposes less credential-adjacent state. NemoClaw avoids logging WeChat QR poll tokens, resolves Discord per-account proxy settings for gateway WebSocket connections, compacts persisted messaging plans, completes manifest-based channel migration, and removes provider credential hashes from sandbox registry entries. For more information, refer to Messaging Channels (use the `nemoclaw-user-manage-sandboxes` skill) and Credential Storage (use the `nemoclaw-user-configure-security` skill).
 - Hermes defaults and sandbox compatibility are narrower and easier to recover. The Hermes baseline policy no longer includes GitHub by default, NemoClaw reserves Hermes port `8642` across agent variants, and spawned OpenClaw sub-agents dial back through the sandbox interface instead of blocked loopback paths. For more information, refer to Network Policies (use the `nemoclaw-user-reference` skill), NemoClaw Quickstart with Hermes (use the `nemoclaw-user-get-started` skill), and Set Up Task-Specific Sub-Agents (use the `nemoclaw-user-configure-inference` skill).
-- Release validation moved more long-running shell scenarios into Vitest-backed E2E coverage, including recovery, rebuild, messaging, inference, credential sanitization, gateway drift, and hosted-nightly paths.
 
 ## v0.0.64
 
