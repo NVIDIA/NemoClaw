@@ -138,13 +138,16 @@ function scanSnapshotCredentialLeaks(root: string): string[] {
         continue;
       }
       const body = fs.readFileSync(fullPath, "utf8");
-      if (
-        CREDENTIAL_TOKEN_VALUE_PATTERN.test(body) ||
-        CREDENTIAL_ENV_ASSIGNMENT_PATTERN.test(body) ||
-        STRUCTURED_CREDENTIAL_KEY_PATTERN.test(body)
-      ) {
-        leaks.push(fullPath);
-      }
+      const tokenValueLeak = CREDENTIAL_TOKEN_VALUE_PATTERN.test(body);
+      const envAssignmentLeak = CREDENTIAL_ENV_ASSIGNMENT_PATTERN.test(body);
+      // openclaw.json may legitimately contain non-secret provider metadata
+      // such as credential env-var references. Still fail it on token-shaped
+      // values or concrete env assignments, but reserve generic structured-key
+      // checks for other env/json files where such keys indicate persisted
+      // credentials rather than configuration schema.
+      const structuredKeyLeak =
+        entry.name !== "openclaw.json" && STRUCTURED_CREDENTIAL_KEY_PATTERN.test(body);
+      if (tokenValueLeak || envAssignmentLeak || structuredKeyLeak) leaks.push(fullPath);
     }
   };
   visit(root);
