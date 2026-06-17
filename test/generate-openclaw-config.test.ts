@@ -503,13 +503,13 @@ describe("generate-openclaw-config.mts: config generation", () => {
     expect(config.channels.telegram.groups).toBeUndefined();
   });
 
-  it("defaults Telegram groupPolicy to 'open' with no groups stanza when telegramConfig is empty (#3022)", () => {
+  it("defaults Telegram group replies to require mentions when telegramConfig is empty (#3022)", () => {
     const channels = Buffer.from(JSON.stringify(["telegram"])).toString("base64");
     const config = runConfigScript({
       NEMOCLAW_MESSAGING_CHANNELS_B64: channels,
     });
     expect(config.channels.telegram.accounts.default.groupPolicy).toBe("open");
-    expect(config.channels.telegram.groups).toBeUndefined();
+    expect(config.channels.telegram.groups).toEqual({ "*": { requireMention: true } });
   });
 
   it("emits OpenClaw-valid Discord guild allowlist config when guilds are provided", () => {
