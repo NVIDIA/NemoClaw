@@ -195,12 +195,23 @@ function runSandboxConnectProbe(sandboxName: string): void {
   }
   if ("secretBoundaryRefused" in processCheck && processCheck.secretBoundaryRefused) {
     console.error("");
-    console.error(
-      `  Probe failed: refused to confirm ${agentName} gateway in '${sandboxName}' — /sandbox/.hermes/.env contains raw secret-shaped values.`,
-    );
-    console.error(
-      "  Replace raw secret values with openshell:resolve:env:<name> placeholders and re-run.",
-    );
+    const reason =
+      "secretBoundaryReason" in processCheck ? processCheck.secretBoundaryReason : undefined;
+    if (reason === "raw-secret") {
+      console.error(
+        `  Probe failed: refused to confirm ${agentName} gateway in '${sandboxName}' — /sandbox/.hermes/.env contains raw secret-shaped values.`,
+      );
+      console.error(
+        "  Replace raw secret values with openshell:resolve:env:<name> placeholders and re-run.",
+      );
+    } else {
+      console.error(
+        `  Probe failed: secret-boundary check did not complete for ${agentName} gateway in '${sandboxName}'.`,
+      );
+      console.error(
+        "  Inspect the validator output above and re-run `nemoclaw <sandbox> recover`.",
+      );
+    }
     process.exit(1);
   }
   if (processCheck.wasRunning) {
