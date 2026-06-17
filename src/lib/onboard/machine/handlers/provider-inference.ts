@@ -18,6 +18,7 @@ export interface ProviderSelectionResult {
   preferredInferenceApi: string | null;
   nimContainer: string | null;
   allowToolsIncompatible?: boolean;
+  skipHostInferenceSmoke?: boolean;
 }
 
 export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
@@ -56,7 +57,7 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
       credentialEnv: string | null,
       hermesAuthMethod: string | null,
       hermesToolGateways: string[],
-      options?: { allowToolsIncompatible?: boolean },
+      options?: { allowToolsIncompatible?: boolean; skipHostInferenceSmoke?: boolean },
     ): Promise<ProviderInferenceRetry>;
     startRecordedStep(
       stepName: string,
@@ -193,6 +194,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   const webSearchConfig = initial.webSearchConfig;
   let forceProviderSelection = initialForceProviderSelection;
   let allowToolsIncompatible = false;
+  let skipHostInferenceSmoke = false;
   const stateResults: OnboardStateTransitionResult[] = [];
   const retryStateResults: OnboardStateTransitionResult[] = [];
 
@@ -255,6 +257,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       preferredInferenceApi = selection.preferredInferenceApi;
       nimContainer = selection.nimContainer;
       allowToolsIncompatible = selection.allowToolsIncompatible === true;
+      skipHostInferenceSmoke = selection.skipHostInferenceSmoke === true;
       shouldRecordProviderSelection = true;
     }
 
@@ -297,6 +300,9 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         try {
           if (!sandboxName) sandboxName = await deps.promptValidatedSandboxName(agent);
           const confirmedSandboxName = sandboxName;
+          const inferenceOptions = skipHostInferenceSmoke
+            ? { allowToolsIncompatible, skipHostInferenceSmoke }
+            : { allowToolsIncompatible };
           await deps.startRecordedStep("inference", { provider, model });
           inferenceResult = await withInferenceTrace(
             confirmedSandboxName,
@@ -312,7 +318,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
                 credentialEnv,
                 hermesAuthMethod,
                 hermesToolGateways,
-                { allowToolsIncompatible },
+                inferenceOptions,
               ),
           );
         } finally {
@@ -411,6 +417,9 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         }
       }
 
+      const inferenceOptions = skipHostInferenceSmoke
+        ? { allowToolsIncompatible, skipHostInferenceSmoke }
+        : { allowToolsIncompatible };
       await deps.startRecordedStep("inference", { provider, model });
       inferenceResult = await withInferenceTrace(
         confirmedSandboxName,
@@ -426,7 +435,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
             credentialEnv,
             hermesAuthMethod,
             hermesToolGateways,
-            { allowToolsIncompatible },
+            inferenceOptions,
           ),
       );
     } finally {

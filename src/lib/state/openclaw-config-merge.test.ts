@@ -63,6 +63,9 @@ describe("mergeOpenClawRestoredConfig", () => {
       {
         channels: {
           telegram: { accounts: { default: { token: "openshell:resolve:env:v111_TOKEN" } } },
+          whatsapp: { accounts: { default: { session: "stale" } } },
+          wechat: { accounts: { default: { accountId: "legacy" } } },
+          "openclaw-weixin": { accounts: { default: { accountId: "stale-current" } } },
           matrix: { accounts: { default: { room: "#ops" } } },
         },
       },
@@ -71,9 +74,16 @@ describe("mergeOpenClawRestoredConfig", () => {
 
     expect(merged).toMatchObject({
       gateway: { auth: { token: "fresh-token" } },
-      channels: { matrix: { accounts: { default: { room: "#ops" } } } },
+      channels: {
+        wechat: { accounts: { default: { accountId: "legacy" } } },
+        matrix: { accounts: { default: { room: "#ops" } } },
+      },
     });
     expect((merged as { channels: Record<string, unknown> }).channels.telegram).toBeUndefined();
+    expect((merged as { channels: Record<string, unknown> }).channels.whatsapp).toBeUndefined();
+    expect(
+      (merged as { channels: Record<string, unknown> }).channels["openclaw-weixin"],
+    ).toBeUndefined();
   });
 
   it("preserves backup provider and plugin entries when current entry maps are absent", () => {

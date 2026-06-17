@@ -52,6 +52,7 @@ const telegramManifest = {
       required: false,
       envKey: "TELEGRAM_REQUIRE_MENTION",
       validValues: ["0", "1"],
+      defaultValue: "1",
       statePath: "telegramConfig.requireMention",
     },
   ],

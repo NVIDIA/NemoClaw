@@ -28,4 +28,12 @@ export const SANDBOX_AGENTS_DISPLAY_LAYOUT: Record<string, readonly PublicDispla
       description: "Delete an OpenClaw agent in the sandbox",
     },
   ],
+  "sandbox:agents:apply": [
+    {
+      group: "Sandbox Management",
+      order: 16.7,
+      flags: "-f <agents.yaml> [--yes] [--non-interactive]",
+      description: "Reconcile sandbox agents against a declarative manifest",
+    },
+  ],
 };

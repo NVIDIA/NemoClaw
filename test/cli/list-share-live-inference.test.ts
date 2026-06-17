@@ -525,15 +525,19 @@ describe("list shows live gateway inference", () => {
     }
   });
 
-  it("share is recognized as a valid sandbox action (not 'Unknown action')", () => {
-    const env = createShareTestEnv("nemoclaw-cli-share-action-");
+  it(
+    "share is recognized as a valid sandbox action (not 'Unknown action')",
+    testTimeoutOptions(15_000),
+    () => {
+      const env = createShareTestEnv("nemoclaw-cli-share-action-");
 
-    const r = runWithEnv("alpha share mount", env);
+      const r = runWithEnv("alpha share mount", env);
 
-    // Will fail because sshfs/sandbox isn't running, but should NOT say "Unknown action"
-    expect(r.code).not.toBe(0);
-    expect(r.out).not.toContain("Unknown action");
-  });
+      // Will fail because sshfs/sandbox isn't running, but should NOT say "Unknown action"
+      expect(r.code).not.toBe(0);
+      expect(r.out).not.toContain("Unknown action");
+    },
+  );
 
   it("unknown share subcommands fail before action dispatch", () => {
     const env = createShareTestEnv("nemoclaw-cli-share-unknown-");

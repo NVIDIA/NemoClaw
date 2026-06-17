@@ -27,7 +27,7 @@ describe("onboard build recreate credential reuse (#5441)", () => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-recreate-"));
       const fakeBin = path.join(tmpDir, "bin");
       const home = path.join(tmpDir, "home");
-      const scriptPath = path.join(tmpDir, "setup-nim-recreate.cjs");
+      const scriptPath = path.join(tmpDir, "build-recreate.cjs");
       const curlLogPath = path.join(tmpDir, "curl-probes.log");
       const onboardPath = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "onboard.js"));
 
@@ -84,11 +84,25 @@ delete process.env.NVIDIA_API_KEY;
 delete process.env.NEMOCLAW_PROVIDER_KEY;
 delete process.env.NEMOCLAW_PROVIDER;
 
-const { setupNim } = require(${onboardPath});
+const { setupNim, setupInference } = require(${onboardPath});
 
 (async () => {
   const result = await setupNim(null, "rg-test-noninter", null);
-  console.log(JSON.stringify({ outcome: "resolved", provider: result.provider }));
+  if (!result.model) throw new Error("setupNim did not select a model");
+  await setupInference(
+    "rg-test-noninter",
+    result.model,
+    result.provider,
+    result.endpointUrl,
+    result.credentialEnv,
+    result.hermesAuthMethod,
+    result.hermesToolGateways,
+    {
+      allowToolsIncompatible: result.allowToolsIncompatible,
+      skipHostInferenceSmoke: result.skipHostInferenceSmoke,
+    },
+  );
+  console.log(JSON.stringify({ outcome: "resolved", provider: result.provider, skipHostInferenceSmoke: result.skipHostInferenceSmoke }));
 })().catch((error) => {
   console.error(error && error.stack ? error.stack : error);
   console.log(JSON.stringify({ outcome: "rejected" }));
@@ -118,12 +132,17 @@ const { setupNim } = require(${onboardPath});
         assert.equal(
           result.status,
           0,
-          `setupNim aborted non-interactive build recreate instead of reusing the gateway credential; output:\n${output}`,
+          `onboarding aborted non-interactive build recreate instead of reusing the gateway credential; output:\n${output}`,
         );
         assert.match(
           output,
           /Reusing existing gateway credential; skipping endpoint re-validation\./,
           `setupNim did not reuse the gateway credential; output:\n${output}`,
+        );
+        assert.match(
+          output,
+          /Reusing existing gateway credential; skipping host inference smoke\./,
+          `setupInference did not skip the host-side smoke probe; output:\n${output}`,
         );
         assert.match(
           output,
@@ -135,11 +154,103 @@ const { setupNim } = require(${onboardPath});
           /"provider":"nvidia-prod"/,
           `setupNim did not select the recovered nvidia-prod provider; output:\n${output}`,
         );
+        assert.match(
+          output,
+          /"skipHostInferenceSmoke":true/,
+          `setupNim did not mark the recovered gateway credential for host-smoke bypass; output:\n${output}`,
+        );
 
         const curlLog = fs.existsSync(curlLogPath) ? fs.readFileSync(curlLogPath, "utf8") : "";
         assert.ok(
           !curlLog.includes("/chat/completions") && !curlLog.includes("/responses"),
-          `setupNim probed the endpoint despite having no local credential; curl log:\n${curlLog}`,
+          `onboarding probed the endpoint despite having no local credential; curl log:\n${curlLog}`,
+        );
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it(
+    "requires a local key for explicit build selection even when a gateway provider exists",
+    testTimeoutOptions(90_000),
+    () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-explicit-"));
+      const fakeBin = path.join(tmpDir, "bin");
+      const home = path.join(tmpDir, "home");
+      const scriptPath = path.join(tmpDir, "build-explicit.cjs");
+      const curlLogPath = path.join(tmpDir, "curl-probes.log");
+      const onboardPath = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "onboard.js"));
+
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.mkdirSync(home, { recursive: true });
+      fs.writeFileSync(
+        path.join(fakeBin, "openshell"),
+        `#!/usr/bin/env bash
+if [ "$1" = "provider" ] && [ "$2" = "get" ]; then
+  exit 0
+fi
+exit 0
+`,
+        { mode: 0o755 },
+      );
+      fs.writeFileSync(
+        path.join(fakeBin, "curl"),
+        `#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "$NEMOCLAW_FAKE_CURL_LOG"
+exit 1
+`,
+        { mode: 0o755 },
+      );
+      fs.writeFileSync(
+        scriptPath,
+        String.raw`
+process.env.NEMOCLAW_NON_INTERACTIVE = "1";
+process.env.NEMOCLAW_PROVIDER = "build";
+delete process.env.NVIDIA_INFERENCE_API_KEY;
+delete process.env.NVIDIA_API_KEY;
+delete process.env.NEMOCLAW_PROVIDER_KEY;
+const { setupNim } = require(${onboardPath});
+setupNim(null, null, null).catch((error) => {
+  console.error(error && error.stack ? error.stack : error);
+  process.exitCode = 3;
+});
+`,
+      );
+
+      try {
+        const result = spawnSync(process.execPath, [scriptPath], {
+          cwd: REPO_ROOT,
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            HOME: home,
+            PATH: `${fakeBin}:${process.env.PATH || ""}`,
+            VITEST: "false",
+            NEMOCLAW_TEST_NO_SLEEP: "1",
+            NEMOCLAW_FAKE_CURL_LOG: curlLogPath,
+            NVIDIA_INFERENCE_API_KEY: "",
+            NVIDIA_API_KEY: "",
+          },
+          timeout: 80_000,
+        });
+
+        const output = `${result.stdout || ""}\n${result.stderr || ""}`;
+        assert.equal(
+          result.status,
+          1,
+          `explicit build selection without a local key should fail instead of silently reusing a gateway provider; output:\n${output}`,
+        );
+        assert.match(
+          output,
+          /NVIDIA_INFERENCE_API_KEY \(or NEMOCLAW_PROVIDER_KEY\) is required/,
+          `explicit build selection did not report the missing local key; output:\n${output}`,
+        );
+        const curlLog = fs.existsSync(curlLogPath) ? fs.readFileSync(curlLogPath, "utf8") : "";
+        assert.equal(
+          curlLog,
+          "",
+          `explicit build selection should fail before probing; curl log:\n${curlLog}`,
         );
       } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
