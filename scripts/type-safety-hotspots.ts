@@ -180,6 +180,12 @@ type RawNullableExportedType = {
   nullableTypes: string[];
 };
 
+type RawImportBinding = {
+  specifier: string;
+  importedName: string;
+  localName: string;
+};
+
 type RawFileData = PatternCounts & {
   absPath: string;
   filePath: string;
@@ -188,6 +194,7 @@ type RawFileData = PatternCounts & {
   exportCount: number;
   weakExportCount: number;
   importSpecifiers: string[];
+  importBindings: RawImportBinding[];
   noCheck: boolean;
   functions: RawFunctionData[];
   nullableUnions: NullableUnionOccurrence[];
@@ -885,6 +892,46 @@ function collectImportSpecifiers(sourceFile: ts.SourceFile): string[] {
   return [...specifiers];
 }
 
+function collectImportBindings(sourceFile: ts.SourceFile): RawImportBinding[] {
+  const bindings: RawImportBinding[] = [];
+
+  for (const statement of sourceFile.statements) {
+    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteralLike(statement.moduleSpecifier)) {
+      continue;
+    }
+    const specifier = statement.moduleSpecifier.text;
+    if (!specifier.startsWith(".")) {
+      continue;
+    }
+
+    const importClause = statement.importClause;
+    if (!importClause) {
+      continue;
+    }
+
+    if (importClause.name) {
+      bindings.push({
+        specifier,
+        importedName: "default",
+        localName: importClause.name.text,
+      });
+    }
+
+    const namedBindings = importClause.namedBindings;
+    if (namedBindings && ts.isNamedImports(namedBindings)) {
+      for (const element of namedBindings.elements) {
+        bindings.push({
+          specifier,
+          importedName: element.propertyName?.text ?? element.name.text,
+          localName: element.name.text,
+        });
+      }
+    }
+  }
+
+  return bindings;
+}
+
 function resolveLocalImport(
   project: ProjectInfo,
   fromFile: string,
@@ -1224,6 +1271,7 @@ function analyzeFile(absPath: string, rootDir: string, project: ProjectInfo): Ra
     exportCount: countExports(sourceFile),
     weakExportCount,
     importSpecifiers: collectImportSpecifiers(sourceFile),
+    importBindings: collectImportBindings(sourceFile),
     noCheck,
     functions,
     nullableUnions,
@@ -1248,7 +1296,7 @@ function countByValue(values: readonly string[]): Array<{ type: string; count: n
 function buildNullableUnionReport(
   rawFiles: readonly RawFileData[],
   fanInByFile: ReadonlyMap<string, number>,
-  importsFromFile: ReadonlyMap<string, ReadonlySet<string>>,
+  importBindingsByFile: ReadonlyMap<string, ReadonlyMap<string, readonly RawImportBinding[]>>,
 ): NullableUnionReport {
   const byType = new Map<
     string,
@@ -1300,11 +1348,19 @@ function buildNullableUnionReport(
       let referenceCount = 0;
       let referencingFileCount = 0;
       for (const file of rawFiles) {
-        if (file.absPath === absPath || !importsFromFile.get(file.absPath)?.has(absPath)) {
+        if (file.absPath === absPath) {
           continue;
         }
-        const fileReferenceCount = file.typeReferenceNames.filter(
-          (typeName) => typeName === candidate.name,
+        const localNames = new Set(
+          (importBindingsByFile.get(file.absPath)?.get(absPath) ?? [])
+            .filter((binding) => binding.importedName === candidate.name)
+            .map((binding) => binding.localName),
+        );
+        if (localNames.size === 0) {
+          continue;
+        }
+        const fileReferenceCount = file.typeReferenceNames.filter((typeName) =>
+          localNames.has(typeName),
         ).length;
         if (fileReferenceCount > 0) {
           referenceCount += fileReferenceCount;
@@ -1492,9 +1548,11 @@ export function analyzeTypeSafetyHotspots(options: AnalyzeOptions = {}): Hotspot
 
   const importersByFile = new Map<string, Set<string>>();
   const importsFromFile = new Map<string, Set<string>>();
+  const importBindingsByFile = new Map<string, Map<string, RawImportBinding[]>>();
   for (const file of rawFiles) {
     importersByFile.set(file.absPath, new Set());
     importsFromFile.set(file.absPath, new Set());
+    importBindingsByFile.set(file.absPath, new Map());
   }
 
   for (const file of rawFiles) {
@@ -1506,6 +1564,10 @@ export function analyzeTypeSafetyHotspots(options: AnalyzeOptions = {}): Hotspot
       importsFromFile.get(file.absPath),
       `Missing import set for analyzed file ${file.absPath}`,
     );
+    const resolvedBindings = requireDefined(
+      importBindingsByFile.get(file.absPath),
+      `Missing import binding map for analyzed file ${file.absPath}`,
+    );
 
     for (const specifier of file.importSpecifiers) {
       const resolved = resolveLocalImport(project, file.absPath, specifier, analyzedFiles);
@@ -1514,6 +1576,10 @@ export function analyzeTypeSafetyHotspots(options: AnalyzeOptions = {}): Hotspot
       }
       resolvedImports.add(resolved);
       importersByFile.get(resolved)?.add(file.absPath);
+      const bindings = file.importBindings.filter((binding) => binding.specifier === specifier);
+      if (bindings.length > 0) {
+        resolvedBindings.set(resolved, [...(resolvedBindings.get(resolved) ?? []), ...bindings]);
+      }
     }
   }
 
@@ -1546,7 +1612,7 @@ export function analyzeTypeSafetyHotspots(options: AnalyzeOptions = {}): Hotspot
     });
 
   const fanInByFile = new Map(files.map((file) => [file.filePath, file.fanIn]));
-  const nullableUnions = buildNullableUnionReport(rawFiles, fanInByFile, importsFromFile);
+  const nullableUnions = buildNullableUnionReport(rawFiles, fanInByFile, importBindingsByFile);
   const functions: FunctionHotspot[] = rawFiles
     .flatMap((file) => file.functions)
     .map((fn) => {

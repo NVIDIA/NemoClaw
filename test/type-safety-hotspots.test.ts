@@ -181,6 +181,10 @@ export const configB = normalizeConfig("{}");
   fallbackOwner?: string | null;
 }
 
+export interface OtherConfig {
+  id: string | null;
+}
+
 export type MaybeConfig = UserConfig | null;
 
 export function normalizeConfig(raw: UserConfig | null): string | null {
@@ -196,6 +200,19 @@ export const configA = null as UserConfig | null;
 export function readOwner(value: UserConfig | null): string | null {
   return value?.owner ?? null;
 }
+`,
+      "src/use-c.ts": `import type { MaybeConfig } from "./config";
+
+interface UserConfig {
+  shadow: string | null;
+}
+
+export const maybe = null as MaybeConfig;
+export const shadow = null as UserConfig | null;
+`,
+      "src/use-d.ts": `import type { UserConfig as ImportedConfig } from "./config";
+
+export const aliased = null as ImportedConfig | null;
 `,
       "src/unrelated.ts": `export interface UserConfig {
   owner: string | null;
@@ -230,8 +247,8 @@ const comment = "UserConfig in a string should not count as fanout";
     expect(stringNull?.totalCount).toBeGreaterThanOrEqual(4);
     expect(configFile?.count).toBeGreaterThanOrEqual(5);
     expect(exportedConfig?.nullableUnionCount).toBe(2);
-    expect(exportedConfig?.referencingFileCount).toBe(2);
-    expect(exportedConfig?.referenceCount).toBe(2);
+    expect(exportedConfig?.referencingFileCount).toBe(3);
+    expect(exportedConfig?.referenceCount).toBe(3);
     expect(unrelatedConfig?.referencingFileCount).toBe(0);
     expect(report.themes.map((theme) => theme.id)).toContain("nullable-unions");
     expect(textReport).toContain("Top nullable union types");
