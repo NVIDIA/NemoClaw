@@ -183,6 +183,33 @@ export function parseSandboxConnectArgs(
   return options;
 }
 
+function exitOnSecretBoundaryRefusal(
+  sandboxName: string,
+  agentName: string,
+  processCheck: Record<string, unknown>,
+  contextLabel: "Probe" | "Connect",
+): never {
+  console.error("");
+  const reason =
+    "secretBoundaryReason" in processCheck
+      ? (processCheck.secretBoundaryReason as "raw-secret" | "inconclusive" | undefined)
+      : undefined;
+  if (reason === "raw-secret") {
+    console.error(
+      `  ${contextLabel} failed: refused to confirm ${agentName} gateway in '${sandboxName}' — /sandbox/.hermes/.env contains raw secret-shaped values.`,
+    );
+    console.error(
+      "  Replace raw secret values with openshell:resolve:env:<name> placeholders and re-run.",
+    );
+  } else {
+    console.error(
+      `  ${contextLabel} failed: secret-boundary check did not complete for ${agentName} gateway in '${sandboxName}'.`,
+    );
+    console.error("  Inspect the validator output above and re-run `nemoclaw <sandbox> recover`.");
+  }
+  process.exit(1);
+}
+
 function runSandboxConnectProbe(sandboxName: string): void {
   const processCheck = checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
   const agent = agentRuntime.getSessionAgent(sandboxName);
@@ -194,25 +221,7 @@ function runSandboxConnectProbe(sandboxName: string): void {
     process.exit(1);
   }
   if ("secretBoundaryRefused" in processCheck && processCheck.secretBoundaryRefused) {
-    console.error("");
-    const reason =
-      "secretBoundaryReason" in processCheck ? processCheck.secretBoundaryReason : undefined;
-    if (reason === "raw-secret") {
-      console.error(
-        `  Probe failed: refused to confirm ${agentName} gateway in '${sandboxName}' — /sandbox/.hermes/.env contains raw secret-shaped values.`,
-      );
-      console.error(
-        "  Replace raw secret values with openshell:resolve:env:<name> placeholders and re-run.",
-      );
-    } else {
-      console.error(
-        `  Probe failed: secret-boundary check did not complete for ${agentName} gateway in '${sandboxName}'.`,
-      );
-      console.error(
-        "  Inspect the validator output above and re-run `nemoclaw <sandbox> recover`.",
-      );
-    }
-    process.exit(1);
+    exitOnSecretBoundaryRefusal(sandboxName, agentName, processCheck, "Probe");
   }
   if (processCheck.wasRunning) {
     ensureSandboxInferenceRoute(sandboxName, { quiet: true });
@@ -882,7 +891,11 @@ export async function connectSandbox(
     /* non-fatal — don't block connect on session detection failure */
   }
 
-  checkAndRecoverSandboxProcesses(sandboxName);
+  const processCheck = checkAndRecoverSandboxProcesses(sandboxName);
+  if ("secretBoundaryRefused" in processCheck && processCheck.secretBoundaryRefused) {
+    const agentName = agentRuntime.getAgentDisplayName(agentRuntime.getSessionAgent(sandboxName));
+    exitOnSecretBoundaryRefusal(sandboxName, agentName, processCheck, "Connect");
+  }
   // Ensure Ollama auth proxy is running (recovers from host reboots)
   ensureOllamaAuthProxy();
 

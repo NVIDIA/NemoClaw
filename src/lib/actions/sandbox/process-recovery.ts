@@ -514,10 +514,12 @@ function printValidatorStderr(stderr: string): void {
  * start would otherwise never be re-evaluated. The check is invoked via
  * `openshell sandbox exec` (root) so the validator's kill snippet can
  * actually signal the gateway-user process when refusing — a sandbox-user
- * SSH shell cannot (test/e2e-gateway-isolation.sh test 13). Validator
- * `[SECURITY]` stderr is surfaced on every refusal path, regardless of
- * `quiet`, so the offending key (e.g. `TELEGRAM_BOT_TOKEN (line N)`)
- * always reaches the operator. Returns `null` only when the persisted
+ * SSH shell cannot (test/e2e-gateway-isolation.sh test 13). Every
+ * refusal diagnostic — validator `[SECURITY]` stderr, the helper's own
+ * context line, and the remediation hint — is written to `console.error`
+ * unconditionally, so the offending key (e.g. `TELEGRAM_BOT_TOKEN (line
+ * N)`) and the reason for refusal always reach the operator, including
+ * on the quiet probe/recover path. Returns `null` only when the persisted
  * sandbox registry entry is not Hermes (no boundary to enforce). When
  * the registry says Hermes but the in-memory agent definition failed to
  * load (`getSessionAgent()` returned `null` from its catch path), the
@@ -532,30 +534,25 @@ function printValidatorStderr(stderr: string): void {
 function enforceHermesSecretBoundaryOnRunningGateway(
   sandboxName: string,
   agent: ReturnType<typeof agentRuntime.getSessionAgent>,
-  { quiet }: { quiet: boolean },
 ): HermesSecretBoundaryEnforcement | null {
   const persistedAgent = registry.getSandbox(sandboxName)?.agent;
   if (persistedAgent !== "hermes") return null;
   if (!isHermesAgent(agent)) {
-    if (!quiet) {
-      console.error("");
-      console.error(
-        `  ${R}Hermes agent definition could not be loaded for sandbox '${sandboxName}'.${R}`,
-      );
-      console.error("  Refusing recovery to keep the validator-enforced boundary intact.");
-    }
+    console.error("");
+    console.error(
+      `  ${R}Hermes agent definition could not be loaded for sandbox '${sandboxName}'.${R}`,
+    );
+    console.error("  Refusing recovery to keep the validator-enforced boundary intact.");
     return { refused: true, reason: "inconclusive", stderr: "" };
   }
   const script = buildHermesEnvFileBoundaryStandaloneCheck();
   const result = executeSandboxExecCommand(sandboxName, script, 30000);
   if (!result) {
-    if (!quiet) {
-      console.error("");
-      console.error(
-        `  ${R}Secret-boundary check could not run against the Hermes gateway in '${sandboxName}'.${R}`,
-      );
-      console.error("  Refusing recovery to keep the validator-enforced boundary intact.");
-    }
+    console.error("");
+    console.error(
+      `  ${R}Secret-boundary check could not run against the Hermes gateway in '${sandboxName}'.${R}`,
+    );
+    console.error("  Refusing recovery to keep the validator-enforced boundary intact.");
     return { refused: true, reason: "inconclusive", stderr: "" };
   }
   const stdoutMarker = result.stdout
@@ -564,34 +561,33 @@ function enforceHermesSecretBoundaryOnRunningGateway(
     .find((line) => line.trim().startsWith("SECRET_BOUNDARY_"));
   if (stdoutMarker === SECRET_BOUNDARY_REFUSED_MARKER) {
     printValidatorStderr(result.stderr);
-    if (!quiet) {
-      console.error("");
-      console.error(
-        `  ${R}Secret-boundary check refused recovery of Hermes gateway in '${sandboxName}'.${R}`,
-      );
-      console.error("  /sandbox/.hermes/.env contains raw secret-shaped values. Replace them with");
-      console.error(
-        "  openshell:resolve:env:<name> placeholders and re-run `nemoclaw <sandbox> recover`.",
-      );
-    }
+    console.error("");
+    console.error(
+      `  ${R}Secret-boundary check refused recovery of Hermes gateway in '${sandboxName}'.${R}`,
+    );
+    console.error("  /sandbox/.hermes/.env contains raw secret-shaped values. Replace them with");
+    console.error(
+      "  openshell:resolve:env:<name> placeholders and re-run `nemoclaw <sandbox> recover`.",
+    );
     return { refused: true, reason: "raw-secret", stderr: result.stderr };
   }
-  if (
-    stdoutMarker === SECRET_BOUNDARY_OK_MARKER ||
-    stdoutMarker === SECRET_BOUNDARY_VALIDATOR_MISSING_MARKER
-  ) {
+  if (stdoutMarker === SECRET_BOUNDARY_OK_MARKER) {
+    return { refused: false };
+  }
+  if (stdoutMarker === SECRET_BOUNDARY_VALIDATOR_MISSING_MARKER) {
+    console.error(
+      `  [boundary] Hermes secret-boundary validator missing in sandbox '${sandboxName}'; recover proceeded without re-evaluating /sandbox/.hermes/.env. Re-image the sandbox to enable per-run enforcement.`,
+    );
     return { refused: false };
   }
   printValidatorStderr(result.stderr);
-  if (!quiet) {
-    console.error("");
-    console.error(
-      `  ${R}Secret-boundary check did not complete cleanly for Hermes gateway in '${sandboxName}'.${R}`,
-    );
-    console.error(
-      "  Refusing recovery; inspect the validator output above before re-running `nemoclaw <sandbox> recover`.",
-    );
-  }
+  console.error("");
+  console.error(
+    `  ${R}Secret-boundary check did not complete cleanly for Hermes gateway in '${sandboxName}'.${R}`,
+  );
+  console.error(
+    "  Refusing recovery; inspect the validator output above before re-running `nemoclaw <sandbox> recover`.",
+  );
   return { refused: true, reason: "inconclusive", stderr: result.stderr };
 }
 
@@ -613,9 +609,7 @@ export function checkAndRecoverSandboxProcesses(
   const recoveryAgent = agentRuntime.getSessionAgent(sandboxName);
   const recoveryPort = resolveSandboxDashboardPort(sandboxName);
   if (running) {
-    const enforcement = enforceHermesSecretBoundaryOnRunningGateway(sandboxName, recoveryAgent, {
-      quiet,
-    });
+    const enforcement = enforceHermesSecretBoundaryOnRunningGateway(sandboxName, recoveryAgent);
     if (enforcement?.refused) {
       return {
         checked: true,

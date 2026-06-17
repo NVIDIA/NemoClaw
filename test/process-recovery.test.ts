@@ -688,6 +688,7 @@ hermes-box  127.0.0.1  8642  12346  running`;
     const agentRuntime = requireDist("../dist/lib/agent/runtime.js");
     const registry = requireDist("../dist/lib/state/registry.js");
     const childProcess = requireDist("node:child_process");
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     let secretBoundaryCalls = 0;
     let forwardListCalls = 0;
 
@@ -739,6 +740,10 @@ hermes-box  127.0.0.1  8642  12346  running`;
     expect(secretBoundaryCalls).toBe(0);
     expect(forwardListCalls).toBe(0);
     expect(captureOpenshell).not.toHaveBeenCalled();
+    const errorOutput = errorSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
+    expect(errorOutput).toContain(
+      "Hermes agent definition could not be loaded for sandbox 'hermes-box'",
+    );
   });
 
   it("falls through to the forward-refresh path when the Hermes secret-boundary check passes", () => {
@@ -806,6 +811,7 @@ hermes-box  127.0.0.1  8642  12346  running`;
     const registry = requireDist("../dist/lib/state/registry.js");
     const forwardHealth = requireDist("../dist/lib/actions/sandbox/forward-health.js");
     const childProcess = requireDist("node:child_process");
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     vi.spyOn(childProcess, "spawnSync").mockImplementation(
       (_command: unknown, rawArgs: unknown) => {
@@ -854,6 +860,11 @@ hermes-box  127.0.0.1  8642  12346  running`;
       recovered: false,
       forwardRecovered: false,
     });
+    const errorOutput = errorSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
+    expect(errorOutput).toContain(
+      "[boundary] Hermes secret-boundary validator missing in sandbox 'hermes-box'",
+    );
+    expect(errorOutput).toContain("Re-image the sandbox to enable per-run enforcement.");
   });
 
   it("does not invoke the Hermes secret-boundary check for an OpenClaw sandbox", () => {
@@ -900,6 +911,7 @@ hermes-box  127.0.0.1  8642  12346  running`;
     const agentRuntime = requireDist("../dist/lib/agent/runtime.js");
     const registry = requireDist("../dist/lib/state/registry.js");
     const childProcess = requireDist("node:child_process");
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     let secretBoundaryCalls = 0;
     let forwardListCalls = 0;
 
@@ -956,6 +968,10 @@ hermes-box  127.0.0.1  8642  12346  running`;
     expect(secretBoundaryCalls).toBe(1);
     expect(forwardListCalls).toBe(0);
     expect(captureOpenshell).not.toHaveBeenCalled();
+    const errorOutput = errorSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
+    expect(errorOutput).toContain(
+      "Secret-boundary check could not run against the Hermes gateway in 'hermes-box'",
+    );
   });
 
   it("treats a non-zero boundary check without the REFUSED marker as inconclusive, not raw-secret", () => {
@@ -963,6 +979,7 @@ hermes-box  127.0.0.1  8642  12346  running`;
     const agentRuntime = requireDist("../dist/lib/agent/runtime.js");
     const registry = requireDist("../dist/lib/state/registry.js");
     const childProcess = requireDist("node:child_process");
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     let secretBoundaryCalls = 0;
 
     vi.spyOn(childProcess, "spawnSync").mockImplementation(
@@ -1015,5 +1032,10 @@ hermes-box  127.0.0.1  8642  12346  running`;
       secretBoundaryReason: "inconclusive",
     });
     expect(secretBoundaryCalls).toBe(1);
+    const errorOutput = errorSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
+    expect(errorOutput).toContain("python3: validator crashed: ImportError: no module named foo");
+    expect(errorOutput).toContain(
+      "Secret-boundary check did not complete cleanly for Hermes gateway in 'hermes-box'",
+    );
   });
 });
