@@ -185,6 +185,11 @@ export interface OtherConfig {
   id: string | null;
 }
 
+interface HiddenConfig {
+  hidden: string | null;
+}
+export type { HiddenConfig };
+
 export type MaybeConfig = UserConfig | null;
 
 export function normalizeConfig(raw: UserConfig | null): string | null {
@@ -220,6 +225,8 @@ export const namespaced = null as Config.UserConfig | null;
 `,
       "src/barrel.ts": `export type { UserConfig } from "./config";
 `,
+      "src/star-barrel.ts": `export * from "./config";
+`,
       "src/use-f.ts": `import type { UserConfig as BarrelConfig } from "./barrel";
 
 export const barreled = null as BarrelConfig | null;
@@ -227,6 +234,14 @@ export const barreled = null as BarrelConfig | null;
       "src/use-g.ts": `import type * as Barrel from "./barrel";
 
 export const namespacedBarrel = null as Barrel.UserConfig | null;
+`,
+      "src/use-h.ts": `import type { UserConfig as StarConfig } from "./star-barrel";
+
+export const starBarreled = null as StarConfig | null;
+`,
+      "src/use-i.ts": `import type { HiddenConfig } from "./config";
+
+export const hidden = null as HiddenConfig | null;
 `,
       "src/unrelated.ts": `export interface UserConfig {
   owner: string | null;
@@ -256,14 +271,19 @@ const comment = "UserConfig in a string should not count as fanout";
     const unrelatedConfig = report.nullableUnions.exportedTypes.find(
       (entry) => entry.name === "UserConfig" && entry.filePath === "src/unrelated.ts",
     );
+    const hiddenConfig = report.nullableUnions.exportedTypes.find(
+      (entry) => entry.name === "HiddenConfig" && entry.filePath === "src/config.ts",
+    );
 
     expect(report.summary.nullableUnionCount).toBeGreaterThanOrEqual(7);
     expect(stringNull?.totalCount).toBeGreaterThanOrEqual(4);
     expect(configFile?.count).toBeGreaterThanOrEqual(5);
     expect(exportedConfig?.nullableUnionCount).toBe(2);
-    expect(exportedConfig?.referencingFileCount).toBe(6);
-    expect(exportedConfig?.referenceCount).toBe(6);
+    expect(exportedConfig?.referencingFileCount).toBe(7);
+    expect(exportedConfig?.referenceCount).toBe(7);
     expect(unrelatedConfig?.referencingFileCount).toBe(0);
+    expect(hiddenConfig?.nullableUnionCount).toBe(1);
+    expect(hiddenConfig?.referencingFileCount).toBe(1);
     expect(report.themes.map((theme) => theme.id)).toContain("nullable-unions");
     expect(textReport).toContain("Top nullable union types");
     expect(textReport).toContain("Exported nullable types by fanout");

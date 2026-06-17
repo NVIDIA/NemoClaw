@@ -974,7 +974,11 @@ function collectReExportBindings(sourceFile: ts.SourceFile): RawImportBinding[] 
     }
 
     const exportClause = statement.exportClause;
-    if (!exportClause || !ts.isNamedExports(exportClause)) {
+    if (!exportClause) {
+      bindings.push({ specifier, importedName: "*", localName: "*" });
+      continue;
+    }
+    if (!ts.isNamedExports(exportClause)) {
       continue;
     }
 
@@ -988,6 +992,25 @@ function collectReExportBindings(sourceFile: ts.SourceFile): RawImportBinding[] 
   }
 
   return bindings;
+}
+
+function collectLocalNamedExportNames(sourceFile: ts.SourceFile): Map<string, string[]> {
+  const names = new Map<string, string[]>();
+
+  for (const statement of sourceFile.statements) {
+    if (ts.isExportDeclaration(statement) && !statement.moduleSpecifier) {
+      const exportClause = statement.exportClause;
+      if (!exportClause || !ts.isNamedExports(exportClause)) {
+        continue;
+      }
+      for (const element of exportClause.elements) {
+        const localName = element.propertyName?.text ?? element.name.text;
+        names.set(localName, [...(names.get(localName) ?? []), element.name.text]);
+      }
+    }
+  }
+
+  return names;
 }
 
 function resolveLocalImport(
@@ -1228,6 +1251,7 @@ function analyzeFile(absPath: string, rootDir: string, project: ProjectInfo): Ra
   const nullableUnions: NullableUnionOccurrence[] = [];
   const exportedNullableTypes: RawNullableExportedType[] = [];
   const typeReferences: RawTypeReference[] = [];
+  const localNamedExportNames = collectLocalNamedExportNames(sourceFile);
 
   addPattern(fileMetrics, "tsDirectiveCount", countDirectiveComments(directiveOccurrences));
 
@@ -1255,20 +1279,23 @@ function analyzeFile(absPath: string, rootDir: string, project: ProjectInfo): Ra
       return;
     }
 
-    if (
-      (ts.isInterfaceDeclaration(node) || ts.isTypeAliasDeclaration(node)) &&
-      hasExportModifier(node)
-    ) {
+    if (ts.isInterfaceDeclaration(node) || ts.isTypeAliasDeclaration(node)) {
+      const exportedNames = new Set<string>(localNamedExportNames.get(node.name.text));
+      if (hasExportModifier(node)) {
+        exportedNames.add(node.name.text);
+      }
       const nullableTypes = collectNullableUnionTypes(node, sourceFile);
-      if (nullableTypes.length > 0) {
-        exportedNullableTypes.push({
-          name: node.name.text,
-          declarationKind: ts.isInterfaceDeclaration(node) ? "interface" : "type",
-          absPath,
-          filePath: toPosixRelative(rootDir, absPath),
-          line: sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1,
-          nullableTypes,
-        });
+      if (exportedNames.size > 0 && nullableTypes.length > 0) {
+        for (const exportedName of exportedNames) {
+          exportedNullableTypes.push({
+            name: exportedName,
+            declarationKind: ts.isInterfaceDeclaration(node) ? "interface" : "type",
+            absPath,
+            filePath: toPosixRelative(rootDir, absPath),
+            line: sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1,
+            nullableTypes,
+          });
+        }
       }
     }
 
@@ -1429,7 +1456,11 @@ function buildNullableUnionReport(
             continue;
           }
           for (const binding of bindings) {
-            if (sourceNames.has(binding.importedName)) {
+            if (binding.importedName === "*") {
+              for (const sourceName of sourceNames) {
+                changed = addName(reExporterPath, sourceName) || changed;
+              }
+            } else if (sourceNames.has(binding.importedName)) {
               changed = addName(reExporterPath, binding.localName) || changed;
             }
           }
