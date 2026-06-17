@@ -1,0 +1,219 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Bridge MCP Servers into a NemoClaw Sandbox"
+sidebar-title: "Set Up MCP Bridge"
+description: "Bridge host-side MCP servers into the sandbox so the OpenClaw agent can use external tools without exposing API keys."
+description-agent: "Covers bridging stdio MCP servers from the host into a sandbox via a stdio-to-HTTP proxy and scoped OpenShell egress, keeping API keys on the host. Use when wiring an MCP server into a NemoClaw sandbox or debugging mcporter connectivity."
+keywords: ["nemoclaw mcp bridge", "mcp server sandbox", "mcporter openclaw", "model context protocol"]
+content:
+  type: "how_to"
+# The MCP bridge is a post-onboarding, on-demand extension. Keep it out of the
+# auto-generated user skill bundles (which target getting NemoClaw running)
+# rather than per-feature integrations added later.
+exclude-from-skills-gen: true
+---
+
+Bridge stdio-based MCP servers from the host into a NemoClaw sandbox so the OpenClaw agent can call external tools without exposing API keys inside the sandbox.
+
+## How It Works
+
+A stdio-to-HTTP proxy runs on the host, spawning the MCP server subprocess with the user's API keys from the host environment.
+The proxy binds to `127.0.0.1` only and is not reachable from the network.
+The sandbox reaches the proxy via `host.docker.internal` through OpenShell's egress proxy.
+An egress rule is approved per MCP server so the sandbox can only reach the specific ports you allow.
+mcporter inside the sandbox connects to the proxy as a standard HTTP MCP server.
+
+```text
+Host                                Sandbox
++------------------------+         +-----------------------+
+|  stdio MCP server      |         |  mcporter             |
+|    |                   |  egress |    |                  |
+|  stdio-to-HTTP proxy   |  rule   |  host.docker.internal |
+|    127.0.0.1:3101      |<--------|    :3101              |
+|                        |         |                       |
+|  API keys stay here    |         |  OpenClaw agent       |
++------------------------+         |    (no API keys)      |
+                                   +-----------------------+
+```
+
+This follows the same pattern as a host-side messaging channel: the proxy runs on the host with credentials, and the sandbox reaches it through a scoped egress policy.
+
+The proxy binds to `127.0.0.1` by design: it spawns the MCP server with your host API keys, so it must not be reachable from the local network or from other containers. Each request is additionally authenticated with a per-bridge bearer token. Reaching a loopback-bound host port through `host.docker.internal` relies on Docker Desktop's host-loopback mapping (macOS and Windows), so the bridge targets a Docker Desktop host running the sandbox locally. On native Linux Docker, `host.docker.internal` resolves to the bridge gateway rather than the host loopback, so the proxy is not reachable without additional host networking — the bridge does not support that topology.
+
+## Prerequisites
+
+- A running NemoClaw sandbox created with the base policy (`--policy` flag).
+- An MCP server command, for example `npx @modelcontextprotocol/server-github`.
+- The required API key exported as an environment variable on the host.
+
+## Add an MCP Server
+
+Pass the API key to the bridge with `-e KEY=VALUE`.
+The value stays on the host — the bridge stores it in the local registry (mode-600 file) and passes it only to the MCP server process.
+The key never enters the sandbox.
+
+```console
+$ nemoclaw <name> mcp add --name github \
+    -e GITHUB_TOKEN=<your-token> \
+    -- npx -y @modelcontextprotocol/server-github
+```
+
+Everything after `--` is the server command and its arguments, run verbatim on the host (no shell).
+Put the executable first, then its arguments — for example `-- npx -y @modelcontextprotocol/server-github`.
+Equivalently, use `--command <exe>` with one `--arg` per argument; `--command` on its own takes a single executable, not a quoted command line.
+
+The `-e KEY=VALUE` shape matches `claude mcp add` so configurations copy across.
+Repeat `-e` to pass multiple environment variables.
+
+This command:
+
+1. Starts the stdio-to-HTTP proxy on the host, bound to `127.0.0.1`.
+2. Triggers a connection from the sandbox to generate a pending egress rule for `host.docker.internal:<port>`.
+3. Approves the egress rule via `openshell rule approve`.
+4. Registers the server in the sandbox mcporter configuration pointing to `http://host.docker.internal:<port>`.
+
+mcporter is pre-baked into the sandbox image, so `mcp add` does not need network access to install it.
+
+## List Bridges
+
+List all MCP bridges for a sandbox with their running status.
+
+```console
+$ nemoclaw <name> mcp list
+```
+
+```text
+MCP Bridges for sandbox "my-assistant":
+
+  * github      :3101  npx @modelcontextprotocol/server-github      env: GITHUB_TOKEN
+  * slack       :3102  npx @anthropic/mcp-server-slack               env: SLACK_TOKEN
+```
+
+A green dot indicates a running proxy.
+A red dot indicates the proxy has stopped and needs to be restarted.
+
+## Remove a Bridge
+
+Stop the proxy and remove the server from the sandbox mcporter configuration.
+
+```console
+$ nemoclaw <name> mcp remove github
+```
+
+## Restart After Reboot
+
+Proxy processes do not survive a host reboot.
+Restart all proxy processes from the saved configuration.
+The sandbox-side mcporter configuration persists and does not need to be rewritten.
+
+```console
+$ nemoclaw <name> mcp restart
+```
+
+To restart a single bridge, pass the server name.
+
+```console
+$ nemoclaw <name> mcp restart github
+```
+
+## Egress Rule Approval
+
+Each MCP bridge requires an egress rule allowing the sandbox to reach `host.docker.internal` on the proxy port.
+The `mcp add` command approves this rule automatically via `openshell rule approve`.
+
+If automatic approval fails, approve manually:
+
+```console
+$ openshell rule get <name>
+$ openshell rule approve --chunk-id <chunk-id> <name>
+```
+
+You can also approve rules through the OpenShell TUI:
+
+```console
+$ openshell term
+```
+
+## CLI Reference
+
+| Command | Description |
+|---------|-------------|
+| `nemoclaw <name> mcp add --name <id> [-e KEY=VALUE ...] [--port PORT] -- <command> [args...]` | Bridge a host MCP server into the sandbox |
+| `nemoclaw <name> mcp list` | List bridges with running status |
+| `nemoclaw <name> mcp remove <id>` | Stop and remove a bridge |
+| `nemoclaw <name> mcp restart [<id>]` | Restart all or one bridge after reboot |
+
+### Flags
+
+`--name <id>`
+: Required. Alphanumeric identifier for the MCP server.
+
+`-- <command> [args...]`
+: Required. The MCP server executable and its arguments, run verbatim on the host with no shell (e.g., `-- npx -y @modelcontextprotocol/server-github`). Place everything after `--`.
+
+`--command <exe>` / `--arg <arg>`
+: Alternative to `--`. `--command` takes a single executable (not a quoted command line); repeat `--arg` once per argument.
+
+`-e KEY=VALUE`
+: Repeatable. An environment variable to pass to the MCP server process.
+  The value is stored inline in the local registry (mode-600 file) and never enters the sandbox.
+
+`--port PORT`
+: Optional. Host port for the proxy (default: auto-assigned from range 3100-3199).
+
+## Manual Setup
+
+The CLI commands above automate these steps.
+Use the manual process if you need to customize the proxy or debug the connection.
+
+### Start the Proxy
+
+The proxy ships as a compiled entrypoint at `dist/mcp-proxy.js` (built from `src/mcp-proxy.ts`).
+
+```console
+$ node dist/mcp-proxy.js \
+    --exe npx \
+    --arg @modelcontextprotocol/server-github \
+    --env GITHUB_TOKEN \
+    --port 3101 &
+```
+
+### Approve the Egress Rule
+
+Trigger a connection attempt from the sandbox and approve the resulting rule:
+
+```console
+$ nemoclaw <name> connect
+sandbox@<name>:~$ curl -s http://host.docker.internal:3101
+sandbox@<name>:~$ exit
+$ openshell rule get <name>
+$ openshell rule approve --chunk-id <id> <name>
+```
+
+### Register in the Sandbox
+
+```console
+$ nemoclaw <name> connect
+sandbox@<name>:~$ mcporter config add github --url http://host.docker.internal:3101 --scope home
+sandbox@<name>:~$ mcporter list github
+```
+
+If the tool list is returned, the bridge is working.
+
+## Security
+
+| Layer | Protection |
+|-------|-----------|
+| API keys | Stored in `~/.nemoclaw/sandboxes.json` (mode 600). Passed to the MCP server process on the host. Never written to the sandbox filesystem. |
+| Proxy binding | Listens on `127.0.0.1` only. Not reachable from the local network. |
+| Egress policy | Each MCP server gets a scoped rule for `host.docker.internal:<port>`. No blanket egress. |
+| Egress approval | Rules require explicit approval via `openshell rule approve` or the TUI. |
+| Proxy auth | Each bridge is provisioned with a random 256-bit bearer token. The proxy rejects any request without the matching `Authorization: Bearer …` header. The token lives only in the host registry and the sandbox-side mcporter config — it is never logged or printed. |
+| Sandbox isolation | Filesystem, network, and process policies still enforced by OpenShell. |
+
+## Next Steps
+
+- [Messaging Channels](../manage-sandboxes/messaging-channels) for another host-side auxiliary service pattern.
+- [Commands](../reference/commands) for the full CLI reference.
+- [Network Policies](../reference/network-policies) for egress control.

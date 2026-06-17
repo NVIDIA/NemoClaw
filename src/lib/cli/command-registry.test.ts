@@ -55,13 +55,14 @@ describe("command-registry", () => {
   });
 
   describe("sandboxCommands()", () => {
-    it("should return exactly 49 entries", () => {
-      // 43 visible + 6 hidden (shields×3 + config get/set/rotate-token).
-      // 43 visible includes the sessions group (root + list + reset + delete +
+    it("should return exactly 53 entries", () => {
+      // 47 visible + 6 hidden (shields×3 + config get/set/rotate-token).
+      // 47 visible includes the sessions group (root + list + reset + delete +
       // export), the agents quartet (add + apply + delete + list), the
-      // singular `agent` passthrough that forwards to `openclaw agent`, and
-      // the download + upload host-side openshell wrappers.
-      expect(sandboxCommands()).toHaveLength(49);
+      // singular `agent` passthrough that forwards to `openclaw agent`, the
+      // download + upload host-side openshell wrappers, and the MCP bridge
+      // quartet (mcp list + add + remove + restart).
+      expect(sandboxCommands()).toHaveLength(53);
     });
 
     it("every entry has scope sandbox", () => {
@@ -109,12 +110,16 @@ describe("command-registry", () => {
     it("requires public leaf commands to have display metadata", () => {
       const metadataById = getRegisteredOclifCommandsMetadata();
       const discoveredIds = Object.keys(metadataById).sort();
-      const displayCommandIds = new Set(COMMANDS.map((command) => command.commandId));
+      const displayCommandIds = new Set(
+        COMMANDS.map((command) => command.commandId),
+      );
 
       for (const commandId of discoveredIds) {
         if (commandId.startsWith("internal:")) continue;
 
-        const hasSubcommands = discoveredIds.some((id) => id.startsWith(`${commandId}:`));
+        const hasSubcommands = discoveredIds.some((id) =>
+          id.startsWith(`${commandId}:`),
+        );
         if (hasSubcommands) continue;
 
         expect(displayCommandIds.has(commandId), commandId).toBe(true);
@@ -122,7 +127,9 @@ describe("command-registry", () => {
     });
 
     it("keeps every public display entry attached to a discovered oclif command", () => {
-      const discoveredIds = new Set(Object.keys(getRegisteredOclifCommandsMetadata()));
+      const discoveredIds = new Set(
+        Object.keys(getRegisteredOclifCommandsMetadata()),
+      );
       for (const command of COMMANDS) {
         expect(discoveredIds.has(command.commandId), command.usage).toBe(true);
       }
@@ -175,7 +182,9 @@ describe("command-registry", () => {
     });
 
     it("uses distinct placeholders for sandbox and skill names", () => {
-      const command = COMMANDS.find((entry) => entry.commandId === "sandbox:skill:remove");
+      const command = COMMANDS.find(
+        (entry) => entry.commandId === "sandbox:skill:remove",
+      );
       expect(command?.usage).toBe("nemoclaw <name> skill remove");
       expect(command?.flags).toBe("<skill>");
     });
@@ -215,9 +224,9 @@ describe("command-registry", () => {
   });
 
   describe("sandboxActionTokens()", () => {
-    it("returns exactly 29 unique action tokens including empty string", () => {
+    it("returns exactly 30 unique action tokens including empty string", () => {
       const tokens = sandboxActionTokens();
-      expect(tokens).toHaveLength(29);
+      expect(tokens).toHaveLength(30);
       // Must contain every first-level sandbox action plus the empty default action.
       const expected = new Set([
         "agent",
@@ -246,6 +255,7 @@ describe("command-registry", () => {
         "shields",
         "config",
         "channels",
+        "mcp",
         "gateway-token",
         "upload",
         "",
@@ -292,6 +302,7 @@ describe("command-registry", () => {
         "Skills",
         "Policy Presets",
         "Messaging Channels",
+        "MCP Bridges",
         "Compatibility Commands",
         "Services",
         "Troubleshooting",

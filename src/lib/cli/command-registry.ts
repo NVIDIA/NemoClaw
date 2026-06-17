@@ -44,6 +44,7 @@ export const GROUP_ORDER: readonly CommandGroup[] = [
   "Skills",
   "Policy Presets",
   "Messaging Channels",
+  "MCP Bridges",
   "Compatibility Commands",
   "Services",
   "Troubleshooting",
@@ -54,7 +55,9 @@ export const GROUP_ORDER: readonly CommandGroup[] = [
   "Cleanup",
 ] as const;
 
-type RegisteredCommandDisplayEntry = PublicCommandDisplayEntry & { commandId: string };
+type RegisteredCommandDisplayEntry = PublicCommandDisplayEntry & {
+  commandId: string;
+};
 
 function displayEntriesFromOclifMetadata(): CommandDef[] {
   const entries: RegisteredCommandDisplayEntry[] = [];

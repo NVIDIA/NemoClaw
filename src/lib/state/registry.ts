@@ -42,6 +42,16 @@ export interface CustomPolicyEntry {
   appliedAt?: string;
 }
 
+export interface McpBridgeEntry {
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+  port: number;
+  /** Bearer token enforced by the proxy. Anything in the sandbox without the token gets 401. */
+  token?: string;
+  addedAt?: string;
+}
+
 // Outcome of the last live sandbox GPU proof run during onboarding/recovery.
 // `status` separates a configured-but-unverified GPU from one whose CUDA
 // usability was actually proven (`verified`) or actively failed a live proof
@@ -107,6 +117,11 @@ export interface SandboxEntry {
   // different NEMOCLAW_GATEWAY_PORT no longer recreates/kills the first (#4422).
   gatewayName?: string | null;
   gatewayPort?: number | null;
+  // Host-to-sandbox MCP bridges keyed by server name. Each entry records the
+  // host command + env the proxy spawns and the egress port the sandbox reaches
+  // via host.docker.internal. API keys live here (mode-600 file), never in the
+  // sandbox. See src/lib/actions/sandbox/mcp-bridge.ts.
+  mcp?: Record<string, McpBridgeEntry>;
 }
 
 export interface SandboxRegistry {
@@ -320,7 +335,10 @@ export function withLock<T>(fn: () => T): T {
 
 export function load(): SandboxRegistry {
   return normalizeRegistry(
-    readConfigFile<SandboxRegistry>(REGISTRY_FILE, { sandboxes: {}, defaultSandbox: null }),
+    readConfigFile<SandboxRegistry>(REGISTRY_FILE, {
+      sandboxes: {},
+      defaultSandbox: null,
+    }),
   );
 }
 
@@ -504,7 +522,10 @@ export function restoreSandboxEntry(
   });
 }
 
-export function listSandboxes(): { sandboxes: SandboxEntry[]; defaultSandbox: string | null } {
+export function listSandboxes(): {
+  sandboxes: SandboxEntry[];
+  defaultSandbox: string | null;
+} {
   const data = load();
   return {
     sandboxes: Object.values(data.sandboxes),
@@ -541,7 +562,10 @@ export function addCustomPolicy(name: string, entry: CustomPolicyEntry): boolean
     const sandbox = data.sandboxes[name];
     if (!sandbox) return false;
     const list = (sandbox.customPolicies ?? []).filter((p) => p.name !== entry.name);
-    list.push({ ...entry, appliedAt: entry.appliedAt ?? new Date().toISOString() });
+    list.push({
+      ...entry,
+      appliedAt: entry.appliedAt ?? new Date().toISOString(),
+    });
     sandbox.customPolicies = list;
     save(data);
     return true;
@@ -572,5 +596,9 @@ export function getConfiguredMessagingChannels(name: string): string[] {
 }
 
 export function setChannelDisabled(name: string, channel: string, disabled: boolean): boolean {
-  return setRegistryChannelDisabled(name, channel, disabled, { load, save, withLock });
+  return setRegistryChannelDisabled(name, channel, disabled, {
+    load,
+    save,
+    withLock,
+  });
 }

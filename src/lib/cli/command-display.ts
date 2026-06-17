@@ -7,6 +7,7 @@ export type CommandGroup =
   | "Skills"
   | "Policy Presets"
   | "Messaging Channels"
+  | "MCP Bridges"
   | "Compatibility Commands"
   | "Services"
   | "Troubleshooting"

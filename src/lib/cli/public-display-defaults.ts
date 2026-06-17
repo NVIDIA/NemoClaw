@@ -181,6 +181,35 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       flags: "[--channel <channel>] [--json]",
     },
   ],
+  "sandbox:mcp": [
+    {
+      group: "MCP Bridges",
+      order: 25.1,
+      usage: "nemoclaw <name> mcp list",
+      description: "List MCP bridges with running status",
+    },
+    {
+      group: "MCP Bridges",
+      order: 25.2,
+      usage: "nemoclaw <name> mcp add",
+      description: "Bridge a host MCP server into the sandbox",
+      flags: "--name <id> [-e KEY=VALUE ...] [--port PORT] -- <command> [args...]",
+    },
+    {
+      group: "MCP Bridges",
+      order: 25.3,
+      usage: "nemoclaw <name> mcp remove",
+      description: "Stop and remove a bridge",
+      flags: "<id>",
+    },
+    {
+      group: "MCP Bridges",
+      order: 25.4,
+      usage: "nemoclaw <name> mcp restart",
+      description: "Restart all or one bridge after reboot",
+      flags: "[<id>]",
+    },
+  ],
   "sandbox:config:get": [
     {
       group: "Sandbox Management",

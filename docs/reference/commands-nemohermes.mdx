@@ -965,6 +965,49 @@ nemohermes my-assistant channels status --channel whatsapp
 
 The probe is bounded by an in-sandbox `openshell sandbox exec` with a hard timeout, captures only short matched bridge log signals (e.g. `connection.open`, `401 unauthorized`, `qr expired`), and never forwards message bodies to the host diagnostic output.
 
+### `nemohermes <name> mcp add`
+
+Bridge a host-side stdio MCP server into the sandbox. A stdio-to-HTTP proxy starts on the host (bound to `127.0.0.1`), an OpenShell egress rule for `host.docker.internal:<port>` is approved, and the server is registered with the sandbox's mcporter configuration. API keys passed with `-e KEY=VALUE` are stored in the host registry (mode 600) and given only to the MCP server process — they never enter the sandbox.
+
+```bash
+nemohermes my-assistant mcp add --name github \
+    -e GITHUB_TOKEN=<your-token> \
+    -- npx -y @modelcontextprotocol/server-github
+```
+
+| Flag | Description |
+|------|-------------|
+| `--name <id>` | Required. Identifier for the MCP server (letters, digits, hyphens, underscores) |
+| `-- <command> [args...]` | Required. The server command and its arguments, run verbatim on the host (no shell). Alternatively use `--command <exe>` with one `--arg` per argument |
+| `-e KEY=VALUE` | Repeatable. Environment variable passed to the MCP server process; stored on the host, never in the sandbox |
+| `--port PORT` | Host proxy port (default: auto-assigned from `3100`–`3199`) |
+
+See [Set Up MCP Bridge](../deployment/set-up-mcp-bridge) for the full walkthrough.
+
+### `nemohermes <name> mcp list`
+
+List the MCP bridges configured for the sandbox with their running status, port, command, and the names (not values) of the environment variables passed to each.
+
+```bash
+nemohermes my-assistant mcp list
+```
+
+### `nemohermes <name> mcp remove`
+
+Stop the proxy for a bridge, remove its sandbox-side mcporter entry, and revoke the scoped egress rule so a future bridge on the same port cannot inherit the prior approval.
+
+```bash
+nemohermes my-assistant mcp remove github
+```
+
+### `nemohermes <name> mcp restart`
+
+Restart proxy processes from the saved configuration after a host reboot (proxies do not survive reboot). With no server name, all bridges restart; pass a server name to restart one. The sandbox-side mcporter configuration persists and is not rewritten.
+
+```bash
+nemohermes my-assistant mcp restart
+```
+
 ### `nemohermes <name> skill install <path>`
 
 Deploy a skill directory to a running sandbox.

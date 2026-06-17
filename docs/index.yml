@@ -120,6 +120,9 @@ navigation:
               - page: "Brev Web UI"
                 path: deployment/brev-web-ui.mdx
                 slug: brev-web-ui
+              - page: "Set Up MCP Bridge"
+                path: deployment/set-up-mcp-bridge.mdx
+                slug: set-up-mcp-bridge
           - section: "Monitoring"
             slug: monitoring
             collapsed: open-by-default

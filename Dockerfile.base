@@ -218,6 +218,16 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
     npm install -g "openclaw@${OPENCLAW_VERSION}" \
     && pip3 install --no-cache-dir --break-system-packages "pyyaml==6.0.3"
 
+# Pre-bake mcporter so `nemoclaw <name> mcp add` doesn't have to npm-install at
+# runtime. mcporter pulls rolldown, whose scoped optional bindings are fetched
+# from URLs containing `%2f` — the OpenShell egress proxy silently resets those
+# connections, making a runtime install hang indefinitely. Baking the binary
+# into the base image sidesteps the proxy quirk entirely and makes `mcp add`
+# near-instant. Mirrors the global-install pattern used for openclaw above.
+# hadolint ignore=DL3059
+ARG MCPORTER_VERSION=0.9.0
+RUN npm install -g --no-audit --no-fund --no-progress "mcporter@${MCPORTER_VERSION}"
+
 
 # Baseline health check. The base image runs no service, so this only
 # verifies the Node.js runtime is functional. Child images that expose
