@@ -197,6 +197,12 @@ export function readOwner(value: UserConfig | null): string | null {
   return value?.owner ?? null;
 }
 `,
+      "src/unrelated.ts": `export interface UserConfig {
+  owner: string | null;
+}
+
+const comment = "UserConfig in a string should not count as fanout";
+`,
     });
 
     const report = analyzeTypeSafetyHotspots({
@@ -214,14 +220,19 @@ export function readOwner(value: UserConfig | null): string | null {
       (entry) => entry.filePath === "src/config.ts",
     );
     const exportedConfig = report.nullableUnions.exportedTypes.find(
-      (entry) => entry.name === "UserConfig",
+      (entry) => entry.name === "UserConfig" && entry.filePath === "src/config.ts",
+    );
+    const unrelatedConfig = report.nullableUnions.exportedTypes.find(
+      (entry) => entry.name === "UserConfig" && entry.filePath === "src/unrelated.ts",
     );
 
     expect(report.summary.nullableUnionCount).toBeGreaterThanOrEqual(7);
     expect(stringNull?.totalCount).toBeGreaterThanOrEqual(4);
     expect(configFile?.count).toBeGreaterThanOrEqual(5);
     expect(exportedConfig?.nullableUnionCount).toBe(2);
-    expect(exportedConfig?.referencingFileCount).toBe(3);
+    expect(exportedConfig?.referencingFileCount).toBe(2);
+    expect(exportedConfig?.referenceCount).toBe(2);
+    expect(unrelatedConfig?.referencingFileCount).toBe(0);
     expect(report.themes.map((theme) => theme.id)).toContain("nullable-unions");
     expect(textReport).toContain("Top nullable union types");
     expect(textReport).toContain("Exported nullable types by fanout");

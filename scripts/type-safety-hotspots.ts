@@ -174,6 +174,7 @@ type RawFunctionData = PatternCounts & {
 type RawNullableExportedType = {
   name: string;
   declarationKind: "interface" | "type";
+  absPath: string;
   filePath: string;
   line: number;
   nullableTypes: string[];
@@ -191,6 +192,7 @@ type RawFileData = PatternCounts & {
   functions: RawFunctionData[];
   nullableUnions: NullableUnionOccurrence[];
   exportedNullableTypes: RawNullableExportedType[];
+  typeReferenceNames: string[];
 };
 
 type CommentDirectiveOccurrence = {
@@ -254,10 +256,6 @@ function countNonEmptyLines(text: string): number {
 function countMatches(text: string, re: RegExp): number {
   const matches = text.match(re);
   return matches ? matches.length : 0;
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function collectDirectiveCommentOccurrences(text: string): CommentDirectiveOccurrence[] {
@@ -606,6 +604,10 @@ function collectNullableUnionTypes(node: ts.Node, sourceFile: ts.SourceFile): st
 
   visit(node);
   return types;
+}
+
+function getTypeReferenceName(node: ts.TypeReferenceNode): string {
+  return ts.isIdentifier(node.typeName) ? node.typeName.text : node.typeName.right.text;
 }
 
 function buildTypeAliasMap(sourceFile: ts.SourceFile): Map<string, ts.TypeNode> {
@@ -1120,6 +1122,7 @@ function analyzeFile(absPath: string, rootDir: string, project: ProjectInfo): Ra
   const functionStack: RawFunctionData[] = [];
   const nullableUnions: NullableUnionOccurrence[] = [];
   const exportedNullableTypes: RawNullableExportedType[] = [];
+  const typeReferenceNames: string[] = [];
 
   addPattern(fileMetrics, "tsDirectiveCount", countDirectiveComments(directiveOccurrences));
 
@@ -1156,6 +1159,7 @@ function analyzeFile(absPath: string, rootDir: string, project: ProjectInfo): Ra
         exportedNullableTypes.push({
           name: node.name.text,
           declarationKind: ts.isInterfaceDeclaration(node) ? "interface" : "type",
+          absPath,
           filePath: toPosixRelative(rootDir, absPath),
           line: sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1,
           nullableTypes,
@@ -1184,8 +1188,11 @@ function analyzeFile(absPath: string, rootDir: string, project: ProjectInfo): Ra
       applyPattern("nonNullAssertionCount");
     }
 
-    if (ts.isTypeReferenceNode(node) && isDirectRecordStringUnknown(node, aliases)) {
-      applyPattern("recordStringUnknownCount");
+    if (ts.isTypeReferenceNode(node)) {
+      typeReferenceNames.push(getTypeReferenceName(node));
+      if (isDirectRecordStringUnknown(node, aliases)) {
+        applyPattern("recordStringUnknownCount");
+      }
     }
 
     if (ts.isCallExpression(node) && isParserBoundaryCall(node)) {
@@ -1221,6 +1228,7 @@ function analyzeFile(absPath: string, rootDir: string, project: ProjectInfo): Ra
     functions,
     nullableUnions,
     exportedNullableTypes,
+    typeReferenceNames: typeReferenceNames.sort(),
   };
 }
 
@@ -1240,6 +1248,7 @@ function countByValue(values: readonly string[]): Array<{ type: string; count: n
 function buildNullableUnionReport(
   rawFiles: readonly RawFileData[],
   fanInByFile: ReadonlyMap<string, number>,
+  importsFromFile: ReadonlyMap<string, ReadonlySet<string>>,
 ): NullableUnionReport {
   const byType = new Map<
     string,
@@ -1285,19 +1294,20 @@ function buildNullableUnionReport(
     }
   }
 
-  const sourceTextByFile = new Map(
-    rawFiles.map((file) => [file.filePath, fs.readFileSync(file.absPath, "utf8")]),
-  );
   const exportedTypes = rawFiles
     .flatMap((file) => file.exportedNullableTypes)
-    .map((candidate): NullableExportedTypeFanout => {
-      const referencePattern = new RegExp(`\\b${escapeRegExp(candidate.name)}\\b`, "g");
+    .map(({ absPath, ...candidate }): NullableExportedTypeFanout => {
       let referenceCount = 0;
       let referencingFileCount = 0;
-      for (const sourceText of sourceTextByFile.values()) {
-        const matches = sourceText.match(referencePattern);
-        if (matches) {
-          referenceCount += matches.length;
+      for (const file of rawFiles) {
+        if (file.absPath === absPath || !importsFromFile.get(file.absPath)?.has(absPath)) {
+          continue;
+        }
+        const fileReferenceCount = file.typeReferenceNames.filter(
+          (typeName) => typeName === candidate.name,
+        ).length;
+        if (fileReferenceCount > 0) {
+          referenceCount += fileReferenceCount;
           referencingFileCount += 1;
         }
       }
@@ -1536,7 +1546,7 @@ export function analyzeTypeSafetyHotspots(options: AnalyzeOptions = {}): Hotspot
     });
 
   const fanInByFile = new Map(files.map((file) => [file.filePath, file.fanIn]));
-  const nullableUnions = buildNullableUnionReport(rawFiles, fanInByFile);
+  const nullableUnions = buildNullableUnionReport(rawFiles, fanInByFile, importsFromFile);
   const functions: FunctionHotspot[] = rawFiles
     .flatMap((file) => file.functions)
     .map((fn) => {
