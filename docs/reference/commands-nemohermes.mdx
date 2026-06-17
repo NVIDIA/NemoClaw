@@ -500,6 +500,10 @@ If the gateway is already running, the command exits zero with a probe message a
 nemohermes my-assistant recover
 ```
 
+`recover` re-evaluates the documented Hermes secret boundary against `/sandbox/.hermes/.env` on every run, including when the gateway is already healthy.
+If the file contains raw secret-shaped values (for example a pasted Telegram, Discord, or Slack bot token in place of the expected `openshell:resolve:env:<name>` placeholder), the command stops the running gateway, exits non-zero, and prints the offending key.
+Replace each flagged value with the `openshell:resolve:env:<name>` placeholder and re-run.
+
 ### `nemohermes <name> status`
 
 Show sandbox status, health, and inference configuration.

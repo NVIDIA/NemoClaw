@@ -11,6 +11,12 @@ import {
   runOpenshell,
 } from "../../adapters/openshell/runtime";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
+import {
+  buildHermesEnvFileBoundaryStandaloneCheck,
+  SECRET_BOUNDARY_OK_MARKER,
+  SECRET_BOUNDARY_REFUSED_MARKER,
+  SECRET_BOUNDARY_VALIDATOR_MISSING_MARKER,
+} from "../../agent/hermes-recovery-boundary";
 import * as agentRuntime from "../../agent/runtime";
 import { G, R } from "../../cli/terminal-style";
 import { DASHBOARD_PORT } from "../../core/ports";
@@ -482,12 +488,71 @@ function recoverHermesDashboardProcessIfEnabled(sandboxName: string): boolean | 
   return recoverHermesDashboardProcess(sandboxName, { executeCommand: executeSandboxCommand });
 }
 
+function isHermesAgent(agent: ReturnType<typeof agentRuntime.getSessionAgent>): boolean {
+  return !!agent && agent.name === "hermes";
+}
+
+/**
+ * Re-run the Hermes env-file secret-boundary validator against a running
+ * gateway, before the probe path returns control to the caller. The
+ * relaunch path already runs the same validator inline as part of
+ * `buildRecoveryScript`, but the probe path returns early as soon as the
+ * gateway is reported healthy, so a poisoned `.env` injected after cold
+ * start would otherwise never be re-evaluated. The check is invoked via
+ * `openshell sandbox exec` (root) so the validator's kill snippet can
+ * actually signal the gateway-user process when refusing — a sandbox-user
+ * SSH shell cannot (test/e2e-gateway-isolation.sh test 13). Returns
+ * `null` when the helper has nothing to evaluate (unknown agent, exec
+ * unreachable, validator missing on this sandbox image); returns
+ * `refused: true` when the validator refused the env file and the
+ * snippet brought the gateway down.
+ */
+function enforceHermesSecretBoundaryOnRunningGateway(
+  sandboxName: string,
+  agent: ReturnType<typeof agentRuntime.getSessionAgent>,
+  { quiet }: { quiet: boolean },
+): { refused: boolean } | null {
+  if (!isHermesAgent(agent)) return null;
+  const script = buildHermesEnvFileBoundaryStandaloneCheck();
+  const result = executeSandboxExecCommand(sandboxName, script, 30000);
+  if (!result) return null;
+  const stdoutMarker = result.stdout
+    .split(/\r?\n/)
+    .reverse()
+    .find((line) => line.trim().startsWith("SECRET_BOUNDARY_"));
+  if (stdoutMarker === SECRET_BOUNDARY_REFUSED_MARKER || result.status !== 0) {
+    if (!quiet) {
+      console.error("");
+      console.error(
+        `  ${R}Secret-boundary check refused recovery of Hermes gateway in '${sandboxName}'.${R}`,
+      );
+      if (result.stderr.trim()) {
+        for (const line of result.stderr.split(/\r?\n/)) {
+          if (line.trim()) console.error(`  ${line}`);
+        }
+      }
+      console.error("  /sandbox/.hermes/.env contains raw secret-shaped values. Replace them with");
+      console.error(
+        "  openshell:resolve:env:<name> placeholders and re-run `nemoclaw <sandbox> recover`.",
+      );
+    }
+    return { refused: true };
+  }
+  if (
+    stdoutMarker === SECRET_BOUNDARY_OK_MARKER ||
+    stdoutMarker === SECRET_BOUNDARY_VALIDATOR_MISSING_MARKER
+  ) {
+    return { refused: false };
+  }
+  return null;
+}
+
 /**
  * Detect and recover from a sandbox that survived a gateway restart but
  * whose OpenClaw processes are not running. Also re-establishes the
  * host-side dashboard port-forward when it has gone dead independently
  * of the gateway. Returns an object describing the outcome:
- * `{ checked, wasRunning, recovered, forwardRecovered }`.
+ * `{ checked, wasRunning, recovered, forwardRecovered, secretBoundaryRefused? }`.
  */
 export function checkAndRecoverSandboxProcesses(
   sandboxName: string,
@@ -499,6 +564,20 @@ export function checkAndRecoverSandboxProcesses(
   }
   const recoveryAgent = agentRuntime.getSessionAgent(sandboxName);
   const recoveryPort = resolveSandboxDashboardPort(sandboxName);
+  if (running && isHermesAgent(recoveryAgent)) {
+    const enforcement = enforceHermesSecretBoundaryOnRunningGateway(sandboxName, recoveryAgent, {
+      quiet,
+    });
+    if (enforcement?.refused) {
+      return {
+        checked: true,
+        wasRunning: true,
+        recovered: false,
+        forwardRecovered: false,
+        secretBoundaryRefused: true,
+      };
+    }
+  }
   if (running) {
     // Gateway is alive but the host-side forward can still be dead or
     // owned by another sandbox. Probe and re-establish only when

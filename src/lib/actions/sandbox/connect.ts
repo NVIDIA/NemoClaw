@@ -27,7 +27,6 @@ import { findReachableOllamaHost, probeLocalProviderHealth } from "../../inferen
 import { ensureOllamaAuthProxy, probeOllamaAuthProxyHealth } from "../../inference/ollama/proxy";
 import { LOCAL_INFERENCE_TIMEOUT_SECS } from "../../onboard/env";
 import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
-import { getSandboxTargetGatewayName } from "./gateway-target";
 import { isWsl } from "../../platform";
 import { ROOT } from "../../runner";
 import * as sandboxVersion from "../../sandbox/version";
@@ -53,6 +52,7 @@ import {
 import { preflightVllmModelEnvOrExit } from "./connect-vllm-preflight";
 import { isDockerRuntimeDown, printDockerRuntimeDownGuidance } from "./gateway-failure-classifier";
 import { ensureLiveSandboxOrExit, printGatewayLifecycleHint } from "./gateway-state";
+import { getSandboxTargetGatewayName } from "./gateway-target";
 import { printGatewayWedgeDiagnostics } from "./gateway-wedge-diagnostics";
 import { checkAndRecoverSandboxProcesses, executeSandboxExecCommand } from "./process-recovery";
 import { applyOpenShellVmDnsMonkeypatch, shouldApplyVmDnsMonkeypatch } from "./vm-dns-monkeypatch";
@@ -190,6 +190,16 @@ function runSandboxConnectProbe(sandboxName: string): void {
   if (!processCheck.checked) {
     console.error(
       `  Probe failed: could not inspect the ${agentName} gateway inside sandbox '${sandboxName}'.`,
+    );
+    process.exit(1);
+  }
+  if ("secretBoundaryRefused" in processCheck && processCheck.secretBoundaryRefused) {
+    console.error("");
+    console.error(
+      `  Probe failed: refused to confirm ${agentName} gateway in '${sandboxName}' — /sandbox/.hermes/.env contains raw secret-shaped values.`,
+    );
+    console.error(
+      "  Replace raw secret values with openshell:resolve:env:<name> placeholders and re-run.",
     );
     process.exit(1);
   }
