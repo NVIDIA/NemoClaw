@@ -332,6 +332,7 @@ NemoClaw also applies additional secret-safety exclusions that override `.docker
 Without a `.dockerignore`, onboarding still skips common large or local-only directories (`node_modules`, `.git`, `.venv`, and `__pycache__`) while staging this context.
 Other build outputs such as `dist/`, `target/`, or `build/` are included unless your `.dockerignore` excludes them.
 If the staged context is larger than 100 MB, onboarding prints a warning before the Docker build starts.
+Move the Dockerfile into a smaller dedicated directory or add `.dockerignore` entries for generated artifacts to shrink the context.
 If the directory contains unreadable files (for example, Windows system files visible in WSL), onboarding exits with an error suggesting you move the Dockerfile to a dedicated directory.
 
 ```bash
@@ -349,6 +350,18 @@ build-dir/
 ├── Dockerfile
 └── files-used-by-COPY/
 ```
+
+For faster custom builds, plan for Docker cache behavior:
+
+- Treat the first build on a fresh host as a cold build.
+  Cold builds download the base image and package indexes, so they take longer than later warm rebuilds even when NemoClaw is healthy.
+- A warm rebuild reuses cached layers when the base image and earlier layers are unchanged, so it is much faster than the first build.
+- Order Dockerfile instructions from least-changing to most-changing: base image, system packages, dependency manifests, dependency install, then application source.
+  This lets warm rebuilds reuse cached dependency layers instead of reinstalling on every source change.
+- Pin the base image to an explicit tag or digest so warm rebuilds resolve the same cached base instead of pulling a new one.
+
+To diagnose where a slow build spends time, set `NEMOCLAW_TRACE=1` and read the phase timings in [Onboard Profiling Traces](#onboard-profiling-traces).
+NemoClaw does not guarantee exact build timings.
 
 All NemoClaw build arguments (`NEMOCLAW_MODEL`, `NEMOCLAW_PROVIDER_KEY`, `NEMOCLAW_INFERENCE_BASE_URL`, etc.) are injected as `ARG` overrides at build time, so declare them in your Dockerfile if you need to reference them.
 
@@ -453,9 +466,9 @@ Set `NEMOCLAW_NO_CONNECT_HINT=1` to suppress the hint in scripted workflows.
 If the sandbox is running an outdated agent version, a non-blocking warning prints before connecting with a `nemoclaw <name> rebuild` hint.
 If another terminal is already connected to the sandbox, `connect` prints a note with the number of existing sessions before proceeding. Multiple concurrent sessions are allowed.
 
-`connect` does not pull or serve a model itself, but it does inspect `NEMOCLAW_VLLM_MODEL` if you exported it for the managed-vLLM install path.
-An unknown slug or a gated model (for example `deepseek-r1-distill-70b`) with no `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN` exits non-zero with the same error the installer would emit, before any sandbox readiness probe or SSH attach.
-Unset the variable, or supply the missing token, before retrying.
+`connect` does not pull or serve a model itself, but it does inspect managed-vLLM install variables such as `NEMOCLAW_VLLM_MODEL` and `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` if you exported them in the same shell.
+An unknown model slug, malformed extra-args JSON, or a gated model (for example `deepseek-r1-distill-70b`) with no `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN` exits non-zero with the same error the installer would emit, before any sandbox readiness probe or SSH attach.
+Unset the managed-vLLM variable, or fix the value, before retrying.
 
 When the live OpenShell gateway inference route differs from the route recorded in the NemoClaw registry, `connect` prints an explicit warning and realigns the shared gateway to the recorded route.
 Use `nemoclaw inference set --provider <provider> --model <model>` to make an intentional route change.
@@ -507,6 +520,43 @@ The exit code is the remote command's exit code.
 | `--workdir <dir>` | Working directory inside the sandbox |
 | `--tty` / `--no-tty` | Allocate a pseudo-terminal; defaults to auto-detection (on when stdin and stdout are terminals) |
 | `--timeout <seconds>` | Timeout in seconds (`0` means no timeout) |
+
+### `nemoclaw <name> agent`
+
+Run one OpenClaw agent turn non-interactively in a running sandbox.
+This command forwards every argument verbatim to `openclaw agent ...` inside the sandbox via `openshell sandbox exec`, with `HOME=/sandbox` so the addressed agent profile resolves the same way as `connect`.
+Use this when driving the sandbox programmatically from another process (CI job, multi-agent platform, evaluation harness) rather than from an interactive terminal.
+
+<AgentOnly variant="openclaw">
+
+All flags accepted by the in-sandbox OpenClaw CLI are forwarded verbatim, so the upstream surface stays the single source of truth.
+
+```bash
+nemoclaw my-assistant agent -m "Summarise README.md"
+nemoclaw my-assistant agent --agent work -m "Status update?"
+nemoclaw my-assistant agent --session-id review-42 -m "Any new findings?"
+nemoclaw my-assistant agent --json -m 'ping'
+```
+
+The wrapper inherits the remote command's exit code, so host-side pipelines can branch on it. Streaming forwards whatever `openclaw agent` already emits on `stdout`; the wrapper adds no buffering.
+
+Common upstream flags include `-m <text>`, `--session-id <id>`, `--agent <id>`, `--model <id>`, `--thinking <level>`, `--json`, `--deliver`, `--reply-channel <channel>`, and `--timeout <seconds>`. Run `nemoclaw <name> agent --help` for the wrapper-level summary, or invoke `nemoclaw <name> exec -- openclaw agent --help` to view the upstream OpenClaw help text directly.
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+
+Only OpenClaw sandboxes support the `agent` wrapper today; Hermes sandboxes already expose an OpenAI-compatible HTTP API on port `8642` inside the sandbox, so non-interactive use does not need a wrapper command.
+
+Forward the port and POST chat completions directly:
+
+```bash
+openshell forward start --background 8642 my-hermes
+curl -sN http://127.0.0.1:8642/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"<onboarded-model>","messages":[{"role":"user","content":"What is 2+2?"}],"stream":true}'
+```
+
+</AgentOnly>
 
 ### Advanced Sandbox Maintenance Commands
 
@@ -1895,6 +1945,7 @@ All ports must be non-privileged integers between 1024 and 65535.
 | `NEMOCLAW_OLLAMA_PORT` | 11434 | Ollama inference |
 | `NEMOCLAW_OLLAMA_PROXY_PORT` | 11435 | Ollama auth proxy |
 | `NEMOCLAW_DASHBOARD_BIND` | *unset* (loopback) | Dashboard or API forward bind address. Set to `0.0.0.0` to opt in to remote bind for SSH-deployed hosts. |
+| `NEMOCLAW_GATEWAY_WS_HOST` | *unset* (auto-derived inside the sandbox; loopback elsewhere) | Host used for the in-sandbox `OPENCLAW_GATEWAY_URL`; inside the sandbox it defaults to the primary interface address so `sessions_spawn` sub-agents can dial the gateway through the enforced network path. |
 
 If a port value is not a valid integer or falls outside the allowed range, the CLI exits with an error.
 `NEMOCLAW_GATEWAY_PORT` also cannot overlap the configured dashboard, vLLM, Ollama, or Ollama proxy ports, and cannot use the dashboard auto-allocation range `18789` through `18799` or the default inference/proxy ports `8000`, `11434`, and `11435`.
@@ -1974,6 +2025,7 @@ Set them before running `nemoclaw onboard`.
 | `NEMOCLAW_INSTALL_REF` | git ref | For internal installer commands: the git ref to install from. Overridden by the `--install-ref` flag. |
 | `NEMOCLAW_INSTALL_TAG` | release tag | For internal installer commands: the release tag to install. Defaults to the admin-promoted `lkg` tag when unset. Overridden by the `--install-tag` flag. |
 | `NEMOCLAW_VLLM_MODEL` | registry slug or Hugging Face model id | Selects the model the managed-vLLM install path serves. Recognised slugs: `qwen3.6-27b`, `qwen3.6-35b-a3b-nvfp4`, `nemotron-3-nano-4b`, `deepseek-v4-flash`, `deepseek-r1-distill-70b`. Unset uses the per-platform profile default. Gated models (e.g. `deepseek-r1-distill-70b`) require `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN`. |
+| `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` | JSON array of non-blank strings | Appends advanced operator-owned tokens to the managed `vllm serve` command after NemoClaw's registry defaults. Example: `["--max-num-seqs","2"]`. Malformed JSON, non-string tokens, or blank tokens fail before Docker work starts. |
 | `NEMOCLAW_MINIMAL_BOOTSTRAP` | `1` to enable | Skips default OpenClaw workspace-template seeding for new pristine workspaces. Existing files are not deleted; see Runtime Controls (use the `nemoclaw-user-manage-sandboxes` skill). |
 | `NEMOCLAW_MODEL_ROUTER_PYTHON` | absolute path | Pins the host Python interpreter used to create the Model Router virtual environment. Strict. NemoClaw probes only that interpreter and aborts with the failure reason if it does not qualify, rather than silently falling back to another python. Relative command names such as `python3.12` are rejected. When unset, NemoClaw probes `python3.13`, `python3.12`, `python3.11`, `python3.10`, and bare `python3`, retains every interpreter whose version is in `[3.10, 3.14)` and whose `ensurepip`, `pyexpat`, `ssl`, and `venv` stdlib modules import cleanly, and tries `python -m venv` on each in priority order until one succeeds. Set the pin when the auto-discovered interpreter is broken (for example, Homebrew `python@3.14` with a `pyexpat` dlopen mismatch on macOS). |
 
@@ -2195,6 +2247,7 @@ These flags change defaults for commands that manage existing sandboxes.
 | `NEMOCLAW_CLEANUP_GATEWAY` | `1`, `true`, or `yes` to enable; `0`, `false`, or `no` to disable | Sets the default for whether `nemoclaw <name> destroy` removes the shared gateway when destroying the last sandbox. Command-line `--cleanup-gateway` and `--no-cleanup-gateway` still take precedence. |
 | `NEMOCLAW_DISABLE_INFERENCE_ROUTE_REPAIR` | `1` to enable | Skips the automatic DNS-proxy repair for stale `inference.local` routes during `nemoclaw <name> connect` and `nemoclaw <name> connect --probe-only`. Use only as a troubleshooting escape hatch. |
 | `NEMOCLAW_SHIELDS_ACCEPT_LEGACY_BASELINE` | `1` to opt in | Allows advanced immutable-config verification to trust the current on-disk bytes for older or partial content baselines. Use only after you have rebuilt or manually inspected the sandbox state and accepted that the baseline is operator-approved. |
+| `NEMOCLAW_SHIELDS_SETTLE_MS` | milliseconds (default `750`, clamped to `0`–`10000`) | Settle window NemoClaw waits after re-applying a config lockdown (during shields auto-restore and `nemoclaw <name> shields up` drift remediation) before re-confirming the lock still holds. Detects when an in-sandbox reconciler changes config file permissions after lockdown and re-applies the lock; if NemoClaw cannot re-confirm the lock within the retry budget, shields stay down. This narrows the window in which a reconciler can revert permissions rather than eliminating it — the best-effort `chattr +i` immutable bit remains the only fully durable lock. Raise it on hosts where the gateway settles slowly. |
 
 <AgentOnly variant="openclaw">
 ### Remote Deployment
