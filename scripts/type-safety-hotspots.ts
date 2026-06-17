@@ -186,6 +186,11 @@ type RawImportBinding = {
   localName: string;
 };
 
+type RawTypeReference = {
+  name: string;
+  qualifier: string | null;
+};
+
 type RawFileData = PatternCounts & {
   absPath: string;
   filePath: string;
@@ -199,7 +204,7 @@ type RawFileData = PatternCounts & {
   functions: RawFunctionData[];
   nullableUnions: NullableUnionOccurrence[];
   exportedNullableTypes: RawNullableExportedType[];
-  typeReferenceNames: string[];
+  typeReferences: RawTypeReference[];
 };
 
 type CommentDirectiveOccurrence = {
@@ -613,8 +618,19 @@ function collectNullableUnionTypes(node: ts.Node, sourceFile: ts.SourceFile): st
   return types;
 }
 
-function getTypeReferenceName(node: ts.TypeReferenceNode): string {
-  return ts.isIdentifier(node.typeName) ? node.typeName.text : node.typeName.right.text;
+function getEntityNameParts(name: ts.EntityName): string[] {
+  if (ts.isIdentifier(name)) {
+    return [name.text];
+  }
+  return [...getEntityNameParts(name.left), name.right.text];
+}
+
+function getTypeReference(node: ts.TypeReferenceNode): RawTypeReference {
+  const parts = getEntityNameParts(node.typeName);
+  return {
+    name: requireDefined(parts[parts.length - 1], "Type reference name is missing"),
+    qualifier: parts.length > 1 ? parts.slice(0, -1).join(".") : null,
+  };
 }
 
 function buildTypeAliasMap(sourceFile: ts.SourceFile): Map<string, ts.TypeNode> {
@@ -918,6 +934,14 @@ function collectImportBindings(sourceFile: ts.SourceFile): RawImportBinding[] {
     }
 
     const namedBindings = importClause.namedBindings;
+    if (namedBindings && ts.isNamespaceImport(namedBindings)) {
+      bindings.push({
+        specifier,
+        importedName: "*",
+        localName: namedBindings.name.text,
+      });
+    }
+
     if (namedBindings && ts.isNamedImports(namedBindings)) {
       for (const element of namedBindings.elements) {
         bindings.push({
@@ -1169,7 +1193,7 @@ function analyzeFile(absPath: string, rootDir: string, project: ProjectInfo): Ra
   const functionStack: RawFunctionData[] = [];
   const nullableUnions: NullableUnionOccurrence[] = [];
   const exportedNullableTypes: RawNullableExportedType[] = [];
-  const typeReferenceNames: string[] = [];
+  const typeReferences: RawTypeReference[] = [];
 
   addPattern(fileMetrics, "tsDirectiveCount", countDirectiveComments(directiveOccurrences));
 
@@ -1236,7 +1260,7 @@ function analyzeFile(absPath: string, rootDir: string, project: ProjectInfo): Ra
     }
 
     if (ts.isTypeReferenceNode(node)) {
-      typeReferenceNames.push(getTypeReferenceName(node));
+      typeReferences.push(getTypeReference(node));
       if (isDirectRecordStringUnknown(node, aliases)) {
         applyPattern("recordStringUnknownCount");
       }
@@ -1276,7 +1300,10 @@ function analyzeFile(absPath: string, rootDir: string, project: ProjectInfo): Ra
     functions,
     nullableUnions,
     exportedNullableTypes,
-    typeReferenceNames: typeReferenceNames.sort(),
+    typeReferences: typeReferences.sort((left, right) => {
+      if (left.name !== right.name) return left.name.localeCompare(right.name);
+      return (left.qualifier ?? "").localeCompare(right.qualifier ?? "");
+    }),
   };
 }
 
@@ -1351,17 +1378,26 @@ function buildNullableUnionReport(
         if (file.absPath === absPath) {
           continue;
         }
+        const importedBindings = importBindingsByFile.get(file.absPath)?.get(absPath) ?? [];
         const localNames = new Set(
-          (importBindingsByFile.get(file.absPath)?.get(absPath) ?? [])
+          importedBindings
             .filter((binding) => binding.importedName === candidate.name)
             .map((binding) => binding.localName),
         );
-        if (localNames.size === 0) {
+        const namespaceNames = new Set(
+          importedBindings
+            .filter((binding) => binding.importedName === "*")
+            .map((binding) => binding.localName),
+        );
+        if (localNames.size === 0 && namespaceNames.size === 0) {
           continue;
         }
-        const fileReferenceCount = file.typeReferenceNames.filter((typeName) =>
-          localNames.has(typeName),
-        ).length;
+        const fileReferenceCount = file.typeReferences.filter((reference) => {
+          if (reference.qualifier) {
+            return reference.name === candidate.name && namespaceNames.has(reference.qualifier);
+          }
+          return localNames.has(reference.name);
+        }).length;
         if (fileReferenceCount > 0) {
           referenceCount += fileReferenceCount;
           referencingFileCount += 1;

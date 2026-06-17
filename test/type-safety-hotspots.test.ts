@@ -214,6 +214,10 @@ export const shadow = null as UserConfig | null;
 
 export const aliased = null as ImportedConfig | null;
 `,
+      "src/use-e.ts": `import type * as Config from "./config";
+
+export const namespaced = null as Config.UserConfig | null;
+`,
       "src/unrelated.ts": `export interface UserConfig {
   owner: string | null;
 }
@@ -247,8 +251,8 @@ const comment = "UserConfig in a string should not count as fanout";
     expect(stringNull?.totalCount).toBeGreaterThanOrEqual(4);
     expect(configFile?.count).toBeGreaterThanOrEqual(5);
     expect(exportedConfig?.nullableUnionCount).toBe(2);
-    expect(exportedConfig?.referencingFileCount).toBe(3);
-    expect(exportedConfig?.referenceCount).toBe(3);
+    expect(exportedConfig?.referencingFileCount).toBe(4);
+    expect(exportedConfig?.referenceCount).toBe(4);
     expect(unrelatedConfig?.referencingFileCount).toBe(0);
     expect(report.themes.map((theme) => theme.id)).toContain("nullable-unions");
     expect(textReport).toContain("Top nullable union types");
