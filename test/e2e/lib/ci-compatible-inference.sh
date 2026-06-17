@@ -105,27 +105,19 @@ nemoclaw_e2e_hosted_inference_model() {
 }
 
 nemoclaw_e2e_probe_hosted_inference() {
-  local base_url key
+  local base_url status
   base_url="$(nemoclaw_e2e_hosted_inference_base_url)"
-  key="$(nemoclaw_e2e_hosted_inference_key)"
 
-  if nemoclaw_e2e_using_compatible_inference; then
-    local model payload
-    model="$(nemoclaw_e2e_hosted_inference_model)"
-    payload=$(
-      printf '{"model":"%s","messages":[{"role":"user","content":"Respond with OK."}],"temperature":0,"max_tokens":8}' "$model"
-    )
-    curl -sf --max-time 30 \
-      -X POST "${base_url}/chat/completions" \
-      -H "Authorization: Bearer $key" \
-      -H "Content-Type: application/json" \
-      -d "$payload" >/dev/null 2>&1
-    return $?
-  fi
-
-  curl -sf --max-time 10 \
-    -H "Authorization: Bearer $key" \
-    "${base_url}/models" >/dev/null 2>&1
+  # This preflight is a network/TLS reachability check only. Do not spend an
+  # inference request here: full parallel nightly runs can otherwise burn CI
+  # quota or trip HTTP 429 before the scenario reaches the behavior under test.
+  # In compatible mode, NEMOCLAW_ENDPOINT_URL is a trusted repo-controlled CI
+  # input from nightly workflow env_json; this probe intentionally validates
+  # only TCP/TLS/HTTP reachability for that base URL, not provider semantics.
+  # Onboarding still performs the authenticated model/API validation with
+  # redaction and retries.
+  status=$(curl -sS --connect-timeout 10 --max-time 20 -o /dev/null -w "%{http_code}" "$base_url" 2>/dev/null) || return $?
+  [ -n "$status" ] && [ "$status" != "000" ]
 }
 
 nemoclaw_e2e_require_hosted_inference_key() {

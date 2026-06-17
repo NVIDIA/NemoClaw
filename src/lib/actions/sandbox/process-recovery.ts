@@ -2,9 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import {
   captureOpenshell,
   captureOpenshellForStatus,
@@ -19,6 +16,7 @@ import { G, R } from "../../cli/terminal-style";
 import { DASHBOARD_PORT } from "../../core/ports";
 import { sleepSeconds, waitUntil } from "../../core/wait";
 import { ROOT, shellQuote } from "../../runner";
+import { createTempSshConfig } from "../../sandbox/temp-ssh-config";
 import * as registry from "../../state/registry";
 import { parseForwardList } from "../../state/sandbox-session";
 import { classifyForwardHealthWithReachability, isLocalForwardReachable } from "./forward-health";
@@ -97,14 +95,13 @@ export function executeSandboxCommand(
   if (sshConfigResult.status !== 0) return null;
   if (!sshConfigResult.output.trim()) return null;
 
-  const tmpFile = path.join(os.tmpdir(), `nemoclaw-ssh-${process.pid}-${Date.now()}.conf`);
-  fs.writeFileSync(tmpFile, sshConfigResult.output, { mode: 0o600 });
+  const tmpSshConfig = createTempSshConfig(sshConfigResult.output, "nemoclaw-ssh-");
   try {
     const result = spawnSync(
       "ssh",
       [
         "-F",
-        tmpFile,
+        tmpSshConfig.file,
         "-o",
         "StrictHostKeyChecking=no",
         "-o",
@@ -126,11 +123,7 @@ export function executeSandboxCommand(
   } catch {
     return null;
   } finally {
-    try {
-      fs.unlinkSync(tmpFile);
-    } catch {
-      /* ignore */
-    }
+    tmpSshConfig.cleanup();
   }
 }
 
