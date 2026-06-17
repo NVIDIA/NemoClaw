@@ -45,6 +45,7 @@ describe("onboard command", () => {
       sandboxGpuDevice: null,
       acceptThirdPartySoftware: true,
       agent: null,
+      agentsManifest: null,
       controlUiPort: null,
       gpu: false,
       noGpu: false,
@@ -94,6 +95,7 @@ describe("onboard command", () => {
       sandboxGpuDevice: null,
       acceptThirdPartySoftware: true,
       agent: null,
+      agentsManifest: null,
       controlUiPort: null,
       gpu: false,
       noGpu: false,
@@ -124,6 +126,7 @@ describe("onboard command", () => {
       sandboxGpuDevice: null,
       acceptThirdPartySoftware: false,
       agent: null,
+      agentsManifest: null,
       controlUiPort: null,
       gpu: false,
       noGpu: false,
@@ -153,6 +156,7 @@ describe("onboard command", () => {
     expect(lines.join("\n")).toContain("node_modules, .git, .venv, __pycache__");
     expect(lines.join("\n")).toContain(".env*, .ssh, .aws");
     expect(lines.join("\n")).toContain("--agent <name>");
+    expect(lines.join("\n")).toContain("--agents <agents.yaml>");
     expect(lines.join("\n")).toContain("--no-gpu");
   });
 
@@ -183,6 +187,7 @@ describe("onboard command", () => {
       sandboxGpuDevice: null,
       acceptThirdPartySoftware: false,
       agent: null,
+      agentsManifest: null,
       controlUiPort: null,
       gpu: false,
       noGpu: false,
@@ -190,6 +195,11 @@ describe("onboard command", () => {
       noOllamaAutostart: false,
     });
   });
+
+  // --agents <agents.yaml> parsing covered by
+  // src/lib/onboard/legacy-command-agents.test.ts to keep this hotspot from
+  // growing further; that file owns the full --agents lifecycle (parse,
+  // missing-path/value rejection, env-var application before runOnboard).
 
   it("parses --fresh and surfaces it as fresh=true", () => {
     expect(
@@ -214,6 +224,7 @@ describe("onboard command", () => {
       sandboxGpuDevice: null,
       acceptThirdPartySoftware: false,
       agent: null,
+      agentsManifest: null,
       controlUiPort: null,
       gpu: false,
       noGpu: false,
@@ -266,6 +277,7 @@ describe("onboard command", () => {
       sandboxGpuDevice: null,
       acceptThirdPartySoftware: false,
       agent: null,
+      agentsManifest: null,
       controlUiPort: null,
       gpu: false,
       noGpu: false,
@@ -407,6 +419,7 @@ describe("onboard command", () => {
       sandboxGpuDevice: null,
       acceptThirdPartySoftware: false,
       agent: "openclaw",
+      agentsManifest: null,
       controlUiPort: null,
       gpu: false,
       noGpu: false,
@@ -580,6 +593,7 @@ describe("onboard command", () => {
       sandboxGpuDevice: null,
       acceptThirdPartySoftware: false,
       agent: null,
+      agentsManifest: null,
       controlUiPort: null,
       gpu: false,
       noGpu: false,

@@ -67,6 +67,7 @@ describe("built-in messaging channel metadata", () => {
     expect(listMessagingConfigEnvKeys()).toEqual([
       "TELEGRAM_ALLOWED_IDS",
       "TELEGRAM_REQUIRE_MENTION",
+      "TELEGRAM_GROUP_POLICY",
       "DISCORD_SERVER_ID",
       "DISCORD_REQUIRE_MENTION",
       "DISCORD_USER_ID",
