@@ -808,3 +808,46 @@ describe("verifySandboxBridgeGatewayReachableOrExit UFW auto-apply (#4265)", () 
     error.mockRestore();
   });
 });
+
+describe("verifySandboxBridgeGatewayReachableOrExit onUnreachable cleanup (#5513)", () => {
+  // host_gateway route so the UFW auto-apply branch (bridge_gateway only) is skipped.
+  const unreachable = {
+    ok: false as const,
+    reason: "tcp_failed" as const,
+    routeKind: "host_gateway" as const,
+    networkName: "openshell-docker",
+  };
+
+  it("invokes onUnreachable before aborting on a genuine unreachable probe", async () => {
+    const onUnreachable = vi.fn();
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await expect(
+      verifySandboxBridgeGatewayReachableOrExit(false, {
+        reachabilityImpl: () => unreachable,
+        onUnreachable,
+      }),
+    ).rejects.toThrow("sandbox-bridge unreachable");
+    expect(onUnreachable).toHaveBeenCalledTimes(1);
+    error.mockRestore();
+  });
+
+  it("does not invoke onUnreachable when the probe succeeds", async () => {
+    const onUnreachable = vi.fn();
+    await verifySandboxBridgeGatewayReachableOrExit(false, {
+      reachabilityImpl: () => ({ ...unreachable, ok: true, reason: "ok" }),
+      onUnreachable,
+    });
+    expect(onUnreachable).not.toHaveBeenCalled();
+  });
+
+  it("does not invoke onUnreachable for a soft probe_unavailable result", async () => {
+    const onUnreachable = vi.fn();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await verifySandboxBridgeGatewayReachableOrExit(false, {
+      reachabilityImpl: () => ({ ...unreachable, reason: "probe_unavailable" }),
+      onUnreachable,
+    });
+    expect(onUnreachable).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+});

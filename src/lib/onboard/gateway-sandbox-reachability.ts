@@ -489,6 +489,13 @@ interface SandboxBridgeVerifierOptions {
   retryAttempts?: number;
   retryDelayMs?: number;
   sleepMsImpl?: (ms: number) => Promise<void>;
+  /**
+   * Invoked once, just before aborting, when the probe proves the gateway is
+   * genuinely unreachable. Not called for a soft `probe_unavailable` skip or a
+   * successful probe. Onboard uses this to tear down a gateway it started this
+   * run so onboarding does not leave it orphaned and bound (#5513).
+   */
+  onUnreachable?: () => Promise<void> | void;
 }
 
 const SILENT_UFW_AUTO_APPLY_REASONS = new Set<UfwAutoApplyResult["reason"]>([
@@ -574,6 +581,12 @@ export async function verifySandboxBridgeGatewayReachableOrExit(
   }
 
   console.error(message);
+  try {
+    await options.onUnreachable?.();
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    console.warn(`  ⚠ Gateway cleanup after sandbox-bridge failure failed: ${detail}`);
+  }
   if (exitOnFailure) {
     process.exit(1);
   }

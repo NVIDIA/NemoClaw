@@ -2173,6 +2173,12 @@ async function startDockerDriverGateway({
   const identityGatewayBin = runtimeIdentity?.identityGatewayBin ?? gatewayBin;
   const { verifySandboxBridgeGatewayReachableOrExit } =
     require("./onboard/gateway-sandbox-reachability") as typeof import("./onboard/gateway-sandbox-reachability");
+  // #5513: stop a gateway this run started/reused/adopted when the probe proves
+  // it unreachable, so onboarding never leaves an orphan bound to loopback.
+  const sandboxBridgeProbeOptions = {
+    skip: skipSandboxBridgeReachability,
+    onUnreachable: stopDockerDriverGatewayProcess,
+  };
   if (
     await dockerDriverGatewayEnv.startPackageManagedDockerDriverGatewayWithEnvOverride({
       clearDockerDriverGatewayRuntimeFiles,
@@ -2206,9 +2212,7 @@ async function startDockerDriverGateway({
     if (drift) {
       restartDockerDriverGatewayProcessForDrift(pidFileGatewayPid, drift.reason);
     } else if (registerDockerDriverGatewayEndpoint() && (await isDockerDriverGatewayHttpReady())) {
-      await verifySandboxBridgeGatewayReachableOrExit(exitOnFailure, {
-        skip: skipSandboxBridgeReachability,
-      });
+      await verifySandboxBridgeGatewayReachableOrExit(exitOnFailure, sandboxBridgeProbeOptions);
       console.log("  ✓ Reusing existing Docker-driver gateway");
       return;
     } else {
@@ -2246,9 +2250,7 @@ async function startDockerDriverGateway({
         isGatewayHealthy(adoptedStatus, adoptedGwInfo, adoptedActiveGatewayInfo) &&
         (await isDockerDriverGatewayHttpReady())
       ) {
-        await verifySandboxBridgeGatewayReachableOrExit(exitOnFailure, {
-          skip: skipSandboxBridgeReachability,
-        });
+        await verifySandboxBridgeGatewayReachableOrExit(exitOnFailure, sandboxBridgeProbeOptions);
         console.log(`  ✓ Reusing existing Docker-driver gateway process (PID ${portListenerPid})`);
         return;
       }
@@ -2335,9 +2337,7 @@ async function startDockerDriverGateway({
       !childExit.exited &&
       isPidAlive(childPid)
     ) {
-      await verifySandboxBridgeGatewayReachableOrExit(exitOnFailure, {
-        skip: skipSandboxBridgeReachability,
-      });
+      await verifySandboxBridgeGatewayReachableOrExit(exitOnFailure, sandboxBridgeProbeOptions);
       console.log("  ✓ Docker-driver gateway is healthy");
       return;
     }
