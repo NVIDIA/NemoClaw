@@ -3,8 +3,17 @@
 
 import fs from "node:fs";
 import os from "node:os";
-import { dockerInfoFormat as defaultDockerInfoFormat } from "../adapters/docker";
 import type { Arm64WslDockerDesktopGpuProver, DockerGpuProofResult } from "../inference/gpu-trust";
+
+// Lazy wrapper so importing this module does not statically pull the Docker
+// adapter (and its `runner` graph) into importers that only need the cheap
+// WSL / Docker-Desktop detection — e.g. the gateway bind-address resolver in
+// docker-driver-gateway-env. The real adapter is required only on an actual
+// Docker Desktop probe (production); tests inject `dockerInfoFormat` instead.
+function defaultDockerInfoFormat(format: string, opts?: Record<string, unknown>): string {
+  const { dockerInfoFormat } = require("../adapters/docker") as typeof import("../adapters/docker");
+  return dockerInfoFormat(format, opts);
+}
 
 const WSL_DOCKER_DESKTOP_DETECTION_TIMEOUT_MS = 30_000;
 // This prover only ever runs on ARM64 (see `createArm64WslDockerDesktopGpuProver`),

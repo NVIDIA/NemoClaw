@@ -10,7 +10,11 @@ import { describe, expect, it, vi } from "vitest";
 import {
   buildDockerDriverGatewayEnv,
   buildDockerGatewayDebEnvFile,
+  getGatewayPortCheckOptions,
+  getGatewayStartNetworkEnv,
+  resolveGatewayBindAddress,
   startPackageManagedDockerDriverGatewayWithEnvOverride,
+  warnIfGatewayWildcardBindAddress,
   writeDockerGatewayDebEnvOverride,
 } from "./docker-driver-gateway-env";
 
@@ -55,6 +59,65 @@ describe("buildDockerDriverGatewayEnv", () => {
     expect(env.OPENSHELL_DOCKER_SUPERVISOR_BIN).toBeUndefined();
     expect(env.OPENSHELL_VM_DRIVER_STATE_DIR).toBeUndefined();
     expect(env.OPENSHELL_DRIVER_DIR).toBeUndefined();
+  });
+});
+
+describe("resolveGatewayBindAddress on Docker Desktop WSL (#5513)", () => {
+  // The detector is injected so these unit tests stay deterministic and do not
+  // load the real Docker-adapter graph; detectWslDockerDesktopStatus itself is
+  // covered by wsl-docker-desktop-gpu's own tests.
+  const dockerDesktopWsl = { detectStatus: () => "docker-desktop" as const };
+  const nativeLinux = { detectStatus: () => "not-docker-desktop" as const };
+
+  it("binds the wildcard address on Docker Desktop WSL so host-gateway reaches the gateway", () => {
+    expect(resolveGatewayBindAddress(dockerDesktopWsl)).toBe("0.0.0.0");
+  });
+
+  it("keeps the loopback bind on native Linux Docker", () => {
+    expect(resolveGatewayBindAddress(nativeLinux)).toBe("127.0.0.1");
+  });
+
+  it("honors an explicit NEMOCLAW_GATEWAY_BIND_ADDRESS override even on Docker Desktop WSL", () => {
+    expect(
+      resolveGatewayBindAddress({
+        ...dockerDesktopWsl,
+        env: { NEMOCLAW_GATEWAY_BIND_ADDRESS: "127.0.0.1" },
+      }),
+    ).toBe("127.0.0.1");
+  });
+
+  it("accepts an explicit wildcard override on native Linux", () => {
+    expect(
+      resolveGatewayBindAddress({
+        ...nativeLinux,
+        env: { NEMOCLAW_GATEWAY_BIND_ADDRESS: "0.0.0.0" },
+      }),
+    ).toBe("0.0.0.0");
+  });
+
+  it("threads the wildcard bind into the gateway start env while advertising loopback to clients", () => {
+    expect(getGatewayStartNetworkEnv(dockerDesktopWsl)).toMatchObject({
+      OPENSHELL_BIND_ADDRESS: "0.0.0.0",
+      // Clients still connect over loopback; only the listen surface widens.
+      OPENSHELL_SSH_GATEWAY_HOST: "127.0.0.1",
+    });
+  });
+
+  it("port-checks the wildcard interface on Docker Desktop WSL", () => {
+    expect(getGatewayPortCheckOptions(dockerDesktopWsl)).toEqual({ host: "0.0.0.0" });
+    expect(getGatewayPortCheckOptions(nativeLinux)).toEqual({ host: "127.0.0.1" });
+  });
+
+  it("warns about the widened bind surface on Docker Desktop WSL", () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    try {
+      warnIfGatewayWildcardBindAddress(dockerDesktopWsl);
+      warnIfGatewayWildcardBindAddress(nativeLinux);
+      const warnings = logSpy.mock.calls.filter(([line]) => /0\.0\.0\.0/.test(String(line)));
+      expect(warnings).toHaveLength(1);
+    } finally {
+      logSpy.mockRestore();
+    }
   });
 });
 

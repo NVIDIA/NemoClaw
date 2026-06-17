@@ -6,21 +6,27 @@ import os from "node:os";
 import path from "node:path";
 
 import {
-  GATEWAY_BIND_ADDRESS,
-  WILDCARD_GATEWAY_BIND_ADDRESS,
+  DEFAULT_GATEWAY_BIND_ADDRESS,
+  type GatewayBindAddress,
   getGatewayConnectHost,
   getGatewayHttpEndpoint,
   getGatewayHttpsEndpoint,
+  parseGatewayBindAddress,
+  WILDCARD_GATEWAY_BIND_ADDRESS,
 } from "../core/gateway-address";
 import { GATEWAY_PORT } from "../core/ports";
 import {
   hasOpenShellGatewayUserService,
-  startPackageManagedDockerDriverGateway,
   type PackageManagedDockerDriverGatewayOptions,
+  startPackageManagedDockerDriverGateway,
 } from "./docker-driver-gateway-service";
+import {
+  detectWslDockerDesktopStatus,
+  type WslDockerDesktopDetectionDeps,
+  type WslDockerDesktopStatus,
+} from "./wsl-docker-desktop-gpu";
 
-export { getGatewayHttpsEndpoint };
-export { startPackageManagedDockerDriverGateway };
+export { getGatewayHttpsEndpoint, startPackageManagedDockerDriverGateway };
 
 export const DOCKER_DRIVER_GATEWAY_RUNTIME_ENV_KEYS = [
   "OPENSHELL_DRIVERS",
@@ -54,15 +60,78 @@ export type PackageManagedDockerDriverGatewayWithEnvOverrideOptions = Omit<
   gatewayEnv: Record<string, string>;
 };
 
-export function getGatewayPortCheckOptions(): { host: string } {
-  return { host: GATEWAY_BIND_ADDRESS };
+export type GatewayBindAddressDeps = WslDockerDesktopDetectionDeps & {
+  /**
+   * Override the Docker Desktop WSL probe (defaults to the real detector).
+   * Tests inject a stub to stay deterministic without invoking `docker info`.
+   */
+  detectStatus?: (deps: WslDockerDesktopDetectionDeps) => WslDockerDesktopStatus;
+};
+
+// Memoized real-host detection so a single onboard run performs at most one
+// `docker info` for the gateway bind decision (the resolver is consulted by the
+// preflight port check, the gateway env build, and the wildcard-bind warning).
+let cachedWslDockerDesktopStatus: WslDockerDesktopStatus | null = null;
+
+function resolveWslDockerDesktopStatus(deps: GatewayBindAddressDeps): WslDockerDesktopStatus {
+  const { detectStatus, ...detectionDeps } = deps;
+  if (detectStatus) return detectStatus(detectionDeps);
+  // Real-host probe: memoize the argless production call so onboard runs
+  // `docker info` at most once; deps-bearing calls bypass the cache. A prior
+  // "unknown" (e.g. docker not yet reachable when the preflight port check ran)
+  // is not sticky — re-probe so a later definitive result still drives the bind.
+  if (Object.keys(detectionDeps).length > 0) return detectWslDockerDesktopStatus(detectionDeps);
+  if (cachedWslDockerDesktopStatus === null || cachedWslDockerDesktopStatus === "unknown") {
+    cachedWslDockerDesktopStatus = detectWslDockerDesktopStatus(detectionDeps);
+  }
+  return cachedWslDockerDesktopStatus;
 }
 
-export function getGatewayStartNetworkEnv(): Record<string, string> {
+export function resetGatewayBindAddressDetectionCacheForTests(): void {
+  cachedWslDockerDesktopStatus = null;
+}
+
+/**
+ * Resolve the effective OpenShell gateway bind address.
+ *
+ * An explicit `NEMOCLAW_GATEWAY_BIND_ADDRESS` always wins. With no override,
+ * Docker Desktop WSL must bind the wildcard address: sandbox containers reach
+ * the gateway via Docker's `host-gateway` route, which Docker Desktop maps to
+ * its own bridge IP rather than the WSL distro loopback, so a 127.0.0.1 bind is
+ * unreachable and the onboard [2/8] sandbox-bridge reachability probe fails
+ * 100% of the time (#5513). The container compatibility path already binds
+ * 0.0.0.0 for the same reason; this brings the host-mode gateway in line.
+ */
+export function resolveGatewayBindAddress(deps: GatewayBindAddressDeps = {}): GatewayBindAddress {
+  const env = deps.env ?? process.env;
+  const explicit = env.NEMOCLAW_GATEWAY_BIND_ADDRESS;
+  if (explicit !== undefined && String(explicit).trim() !== "") {
+    return parseGatewayBindAddress(
+      "NEMOCLAW_GATEWAY_BIND_ADDRESS",
+      DEFAULT_GATEWAY_BIND_ADDRESS,
+      env,
+    );
+  }
+  if (resolveWslDockerDesktopStatus(deps) === "docker-desktop") {
+    return WILDCARD_GATEWAY_BIND_ADDRESS;
+  }
+  return DEFAULT_GATEWAY_BIND_ADDRESS;
+}
+
+export function getGatewayPortCheckOptions(deps: GatewayBindAddressDeps = {}): {
+  host: string;
+} {
+  return { host: resolveGatewayBindAddress(deps) };
+}
+
+export function getGatewayStartNetworkEnv(
+  deps: GatewayBindAddressDeps = {},
+): Record<string, string> {
+  const bindAddress = resolveGatewayBindAddress(deps);
   return {
-    OPENSHELL_BIND_ADDRESS: GATEWAY_BIND_ADDRESS,
+    OPENSHELL_BIND_ADDRESS: bindAddress,
     OPENSHELL_SERVER_PORT: String(GATEWAY_PORT),
-    OPENSHELL_SSH_GATEWAY_HOST: getGatewayConnectHost(),
+    OPENSHELL_SSH_GATEWAY_HOST: getGatewayConnectHost(bindAddress),
     OPENSHELL_SSH_GATEWAY_PORT: String(GATEWAY_PORT),
   };
 }
@@ -71,8 +140,8 @@ export function getDockerDriverGatewayEndpoint(): string {
   return getGatewayHttpEndpoint();
 }
 
-export function warnIfGatewayWildcardBindAddress(): void {
-  if (GATEWAY_BIND_ADDRESS !== WILDCARD_GATEWAY_BIND_ADDRESS) return;
+export function warnIfGatewayWildcardBindAddress(deps: GatewayBindAddressDeps = {}): void {
+  if (resolveGatewayBindAddress(deps) !== WILDCARD_GATEWAY_BIND_ADDRESS) return;
   console.log(
     "  ! OpenShell gateway bind address set to 0.0.0.0; the gateway may be reachable from other hosts on this network.",
   );
