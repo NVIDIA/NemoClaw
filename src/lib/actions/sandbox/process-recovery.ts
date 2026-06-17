@@ -517,12 +517,16 @@ function printValidatorStderr(stderr: string): void {
  * SSH shell cannot (test/e2e-gateway-isolation.sh test 13). Validator
  * `[SECURITY]` stderr is surfaced on every refusal path, regardless of
  * `quiet`, so the offending key (e.g. `TELEGRAM_BOT_TOKEN (line N)`)
- * always reaches the operator. Returns `null` only when the agent is not
- * Hermes (no boundary to enforce); a running Hermes gateway whose root
- * exec channel is unreachable is treated as a fail-safe inconclusive
+ * always reaches the operator. Returns `null` only when the persisted
+ * sandbox registry entry is not Hermes (no boundary to enforce). When
+ * the registry says Hermes but the in-memory agent definition failed to
+ * load (`getSessionAgent()` returned `null` from its catch path), the
+ * helper fails safe with an inconclusive refusal rather than silently
+ * skipping the boundary. A running Hermes gateway whose root exec
+ * channel is unreachable is also treated as a fail-safe inconclusive
  * refusal rather than a healthy path. Non-zero validator status without
- * a `SECRET_BOUNDARY_REFUSED` marker is also reported as inconclusive,
- * not as a raw-secret refusal, so a shell or validator crash does not
+ * a `SECRET_BOUNDARY_REFUSED` marker is reported as inconclusive, not as
+ * a raw-secret refusal, so a shell or validator crash does not
  * masquerade as a poisoned env file.
  */
 function enforceHermesSecretBoundaryOnRunningGateway(
@@ -530,7 +534,18 @@ function enforceHermesSecretBoundaryOnRunningGateway(
   agent: ReturnType<typeof agentRuntime.getSessionAgent>,
   { quiet }: { quiet: boolean },
 ): HermesSecretBoundaryEnforcement | null {
-  if (!isHermesAgent(agent)) return null;
+  const persistedAgent = registry.getSandbox(sandboxName)?.agent;
+  if (persistedAgent !== "hermes") return null;
+  if (!isHermesAgent(agent)) {
+    if (!quiet) {
+      console.error("");
+      console.error(
+        `  ${R}Hermes agent definition could not be loaded for sandbox '${sandboxName}'.${R}`,
+      );
+      console.error("  Refusing recovery to keep the validator-enforced boundary intact.");
+    }
+    return { refused: true, reason: "inconclusive", stderr: "" };
+  }
   const script = buildHermesEnvFileBoundaryStandaloneCheck();
   const result = executeSandboxExecCommand(sandboxName, script, 30000);
   if (!result) {
@@ -597,7 +612,7 @@ export function checkAndRecoverSandboxProcesses(
   }
   const recoveryAgent = agentRuntime.getSessionAgent(sandboxName);
   const recoveryPort = resolveSandboxDashboardPort(sandboxName);
-  if (running && isHermesAgent(recoveryAgent)) {
+  if (running) {
     const enforcement = enforceHermesSecretBoundaryOnRunningGateway(sandboxName, recoveryAgent, {
       quiet,
     });
