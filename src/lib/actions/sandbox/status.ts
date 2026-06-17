@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { printOpenShellStateRpcIssue } from "../../adapters/openshell/gateway-drift";
+import { getSandboxTargetGatewayName } from "./gateway-target";
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import * as agentRuntime from "../../agent/runtime";
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../../cli/branding";
@@ -384,7 +385,7 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
       console.log(lookup.output);
     }
     console.log(
-      "  Retry `openshell gateway start --name nemoclaw` and verify `openshell status` is healthy before reconnecting.",
+      `  Retry \`openshell gateway start --name ${getSandboxTargetGatewayName(sandboxName)}\` and verify \`openshell status\` is healthy before reconnecting.`,
     );
     console.log(
       "  If the gateway never becomes healthy, rebuild the gateway and then recreate the affected sandbox.",
@@ -400,7 +401,7 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
       console.log(lookup.output);
     }
     console.log(
-      "  Start the gateway again with `openshell gateway start --name nemoclaw` before retrying.",
+      `  Start the gateway again with \`openshell gateway start --name ${getSandboxTargetGatewayName(sandboxName)}\` before retrying.`,
     );
     console.log(
       "  If the gateway had to be rebuilt from scratch, recreate the affected sandbox afterward.",

@@ -210,12 +210,12 @@ beforeEach(() => {
   // Downstream rebuild is not under test.
   vi.spyOn(rebuild, "rebuildSandbox").mockResolvedValue(undefined);
 
-  // After a successful interactive add, verifyChannelBridgeAfterRebuild probes
+  // After a successful interactive add, channel health-check hooks can probe
   // the sandbox via executeSandboxExecCommand, which calls getOpenshellBinary()
   // -> process.exit(1) when the openshell binary is absent (e.g. the CI
   // unit-test runner; locally it is installed, so this only bites in CI). Stub
-  // the exec seam so the post-add verification never shells out and never trips
-  // the exit spy. The bridge verification is downstream and not under test here.
+  // the exec path so the post-add verification never shells out and never trips
+  // the exit spy unless a test explicitly overrides it.
   vi.spyOn(processRecovery, "executeSandboxExecCommand").mockReturnValue(null);
   vi.spyOn(processRecovery, "executeSandboxCommand").mockReturnValue(null);
 
@@ -687,6 +687,41 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
     expect(upsertMock).not.toHaveBeenCalled(); // aborted before registering
   });
 
+  it("slack: a second sandbox on the SAME non-default gateway is blocked", async () => {
+    // Both sandboxes are bound to `nemoclaw-8090`. The credential axis would
+    // not flag distinct tokens, but the channel-owned pre-enable gateway axis
+    // must check the same target gateway the provider mutation uses.
+    const slackBot = "xoxb-alpha-bot-token";
+    const slackApp = "xapp-alpha-app-token";
+    const alpha = { name: "alpha", gatewayName: "nemoclaw-8090", gatewayPort: 8090 } as never;
+    const bob = makePlanEntry("bob", "slack", [
+      {
+        providerEnvKey: "SLACK_BOT_TOKEN",
+        credentialHash: hashCredential("xoxb-bob-bot") as string,
+      },
+      {
+        providerEnvKey: "SLACK_APP_TOKEN",
+        credentialHash: hashCredential("xapp-bob-app") as string,
+      },
+    ]);
+    (bob as { gatewayName?: string; gatewayPort?: number }).gatewayName = "nemoclaw-8090";
+    (bob as { gatewayName?: string; gatewayPort?: number }).gatewayPort = 8090;
+    arrangeRegistry({ current: alpha, others: [bob] });
+    getCredentialMock.mockImplementation((key: string) =>
+      key === "SLACK_BOT_TOKEN" ? slackBot : key === "SLACK_APP_TOKEN" ? slackApp : null,
+    );
+    promptMock.mockResolvedValue("n");
+
+    await addSandboxChannel("alpha", { channel: "slack" });
+
+    const text = loggedText();
+    expect(text).toContain("Slack Socket Mode is already enabled for sandbox 'bob'");
+    expect(text).not.toContain(slackBot);
+    expect(text).not.toContain(slackApp);
+    expect(conflictPromptShown()).toBe(true);
+    expect(upsertMock).not.toHaveBeenCalled();
+  });
+
   it("slack: shared token on the same gateway reports the credential conflict first (#4953)", async () => {
     // The credential axis runs before the gateway axis, so a shared Slack token
     // surfaces the gateway-independent "same slack credential" warning (more
@@ -772,8 +807,88 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
 
     await addSandboxChannel("alpha", { channel: "slack" });
 
-    expect(loggedText()).toContain("Could not verify Slack Socket Mode gateway conflicts");
+    expect(loggedText()).toContain("Could not verify messaging pre-enable checks");
     expect(exitMock).not.toHaveBeenCalled();
     expect(upsertMock).toHaveBeenCalledTimes(1);
   });
+
+  it("runs Telegram post-rebuild bridge verification through the channel hook", async () => {
+    arrangeRegistry({ current: { name: "alpha" } as SandboxEntry });
+    getCredentialMock.mockImplementation((key: string) =>
+      key === "TELEGRAM_BOT_TOKEN" ? TELEGRAM_TOKEN : null,
+    );
+    mockBridgeHealthExec({
+      config: {
+        channels: {
+          telegram: {
+            enabled: true,
+            accounts: {
+              default: {
+                dmPolicy: "allowlist",
+                allowFrom: [],
+              },
+            },
+          },
+        },
+      },
+      log: "[telegram] [default] starting provider\n",
+    });
+
+    await addSandboxChannel("alpha", { channel: "telegram" });
+
+    const text = loggedText();
+    expect(text).toContain("'telegram' bridge startup detected");
+    expect(text).toContain("Telegram direct-message allowlist is empty");
+    const execCommands = vi
+      .mocked(processRecovery.executeSandboxExecCommand)
+      .mock.calls.map((call: unknown[]) => String(call[1]));
+    expect(execCommands.some((cmd: string) => cmd.includes("grep"))).toBe(false);
+    expect(
+      execCommands.some(
+        (cmd: string) => cmd.includes("tail -n 400") && cmd.includes("gateway.log"),
+      ),
+    ).toBe(true);
+  });
+
+  it("runs Slack post-rebuild warning detection through the channel hook", async () => {
+    arrangeRegistry({ current: { name: "alpha" } as SandboxEntry });
+    getCredentialMock.mockImplementation((key: string) =>
+      key === "SLACK_BOT_TOKEN"
+        ? "xoxb-alpha-bot"
+        : key === "SLACK_APP_TOKEN"
+          ? "xapp-alpha-app"
+          : null,
+    );
+    mockBridgeHealthExec({
+      config: {
+        channels: {
+          slack: {
+            enabled: true,
+          },
+        },
+      },
+      log: "[channels] [slack] provider failed to start: invalid_auth\n",
+    });
+
+    await addSandboxChannel("alpha", { channel: "slack" });
+
+    const text = loggedText();
+    expect(text).toContain("'slack' bridge logged credential/startup warnings");
+    expect(text).toContain("invalid_auth");
+    expect(exitMock).not.toHaveBeenCalled();
+  });
 });
+
+function mockBridgeHealthExec(options: { config: unknown; log: string }): void {
+  vi.mocked(processRecovery.executeSandboxExecCommand).mockImplementation(
+    (_sandboxName: string, command: string) => {
+      if (command.includes("cat") && command.includes("openclaw.json")) {
+        return { status: 0, stdout: JSON.stringify(options.config), stderr: "" };
+      }
+      if (command.includes("tail -n 400") && command.includes("gateway.log")) {
+        return { status: 0, stdout: options.log, stderr: "" };
+      }
+      return null;
+    },
+  );
+}

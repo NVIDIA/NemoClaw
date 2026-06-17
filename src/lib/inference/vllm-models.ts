@@ -217,6 +217,7 @@ export function modelsForPlatform(platform: VllmPlatform): readonly VllmModelDef
 }
 
 const HF_TOKEN_ENV_KEYS = ["HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"] as const;
+export const VLLM_EXTRA_ARGS_ENV = "NEMOCLAW_VLLM_EXTRA_ARGS_JSON";
 
 /**
  * Look up the requested express-vLLM model from `NEMOCLAW_VLLM_MODEL`.
@@ -292,6 +293,7 @@ export function preflightVllmModelEnv(
   env: NodeJS.ProcessEnv = process.env,
 ): PreflightVllmModelResult {
   try {
+    parseVllmExtraServeArgs(env);
     const model = selectVllmModelFromEnv(env);
     if (!model) return { ok: true };
     assertGatedModelAccess(model, env);
@@ -299,6 +301,42 @@ export function preflightVllmModelEnv(
   } catch (err) {
     return { ok: false, message: (err as Error).message };
   }
+}
+
+export function parseVllmExtraServeArgs(env: NodeJS.ProcessEnv = process.env): string[] {
+  const raw = String(env[VLLM_EXTRA_ARGS_ENV] ?? "").trim();
+  if (!raw) return [];
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(
+      `${VLLM_EXTRA_ARGS_ENV} must be a JSON array of vLLM serve argument strings: ${
+        (err as Error).message
+      }`,
+    );
+  }
+
+  if (!Array.isArray(parsed)) {
+    throw new Error(`${VLLM_EXTRA_ARGS_ENV} must be a JSON array of strings.`);
+  }
+
+  return parsed.map((value, index) => {
+    if (typeof value !== "string") {
+      throw new Error(`${VLLM_EXTRA_ARGS_ENV}[${String(index)}] must be a string.`);
+    }
+    const trimmed = value.trim();
+    if (trimmed.length === 0) {
+      throw new Error(`${VLLM_EXTRA_ARGS_ENV}[${String(index)}] must not be empty.`);
+    }
+    if (/[\u0000-\u001f\u007f]/.test(trimmed)) {
+      throw new Error(
+        `${VLLM_EXTRA_ARGS_ENV}[${String(index)}] must not contain control characters.`,
+      );
+    }
+    return trimmed;
+  });
 }
 
 const SHARED_VLLM_ARGS: readonly string[] = [
@@ -313,6 +351,11 @@ const SHARED_VLLM_ARGS: readonly string[] = [
   "--trust-remote-code",
 ] as const;
 
+function shellQuote(value: string): string {
+  if (/^[A-Za-z0-9_@%+=:,./-]+$/.test(value)) return value;
+  return `'${value.replace(/'/g, `'\"'\"'`)}'`;
+}
+
 /**
  * Build the `vllm serve` command line for the supplied model: the shared
  * serving flags merged with the model-specific args from the registry.
@@ -321,7 +364,10 @@ const SHARED_VLLM_ARGS: readonly string[] = [
  * `fastsafetensors` extra so existing express scripts keep working; a model
  * may prepend env exports via `serveEnv`.
  */
-export function buildVllmServeCommand(model: VllmModelDef): string {
+export function buildVllmServeCommand(
+  model: VllmModelDef,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
   const envPrefix = model.serveEnv
     ? `${Object.entries(model.serveEnv)
         .map(([key, value]) => `export ${key}=${value}`)
@@ -333,5 +379,9 @@ export function buildVllmServeCommand(model: VllmModelDef): string {
     String(model.maxModelLen),
     ...model.modelArgs,
   ];
-  return `${envPrefix}pip install vllm[fastsafetensors] && vllm serve ${model.id} ${args.join(" ")}`;
+  const extraArgs = parseVllmExtraServeArgs(env).map(shellQuote);
+  return `${envPrefix}pip install vllm[fastsafetensors] && vllm serve ${model.id} ${[
+    ...args,
+    ...extraArgs,
+  ].join(" ")}`;
 }

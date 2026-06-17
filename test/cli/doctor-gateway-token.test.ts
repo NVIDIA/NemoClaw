@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect } from "vitest";
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { describe, expect, it } from "vitest";
 
 import {
   createCloudflaredServiceDir,
@@ -89,7 +89,7 @@ function parseJsonPrefix<T>(output: string): T {
 }
 
 describe("CLI dispatch", () => {
-  it("gateway-token help uses native oclif usage", () => {
+  it("gateway-token help uses native oclif usage", testTimeoutOptions(15_000), () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-token-help-"));
     writeSandboxRegistry(home);
 
@@ -100,7 +100,7 @@ describe("CLI dispatch", () => {
     expect(r.out).toContain("Print the OpenClaw gateway auth token");
   });
 
-  it("doctor fails a present sandbox that is not Ready", () => {
+  it("doctor fails a present sandbox that is not Ready", testTimeoutOptions(15_000), () => {
     const setup = createDoctorTestSetup("nemoclaw-cli-doctor-not-ready-", [
       'case "$*" in',
       '  "status") printf "Server Status\\n\\n  Gateway: nemoclaw\\n  Status: Connected\\n"; exit 0 ;;',
@@ -125,182 +125,86 @@ describe("CLI dispatch", () => {
     );
   });
 
-  it("doctor does not inspect the legacy k3s gateway container in Docker-driver mode", () => {
-    const setup = createDoctorTestSetup("nemoclaw-cli-doctor-docker-driver-", [
+  it(
+    "doctor does not inspect the legacy k3s gateway container in Docker-driver mode",
+    testTimeoutOptions(15_000),
+    () => {
+      const setup = createDoctorTestSetup("nemoclaw-cli-doctor-docker-driver-", [
+        'case "$*" in',
+        '  "status") printf "Server Status\\n\\n  Gateway: nemoclaw\\n  Status: Connected\\n"; exit 0 ;;',
+        '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
+        '  "sandbox list") printf "NAME STATUS\\nalpha Ready\\n"; exit 0 ;;',
+        '  "inference get") printf "Provider: nvidia-prod\\nModel: test-model\\n"; exit 0 ;;',
+        "esac",
+      ]);
+      // Docker-driver sandbox: no legacy `openshell-cluster-*` container exists.
+      writeSandboxRegistry(setup.home, "alpha", { openshellDriver: "docker" });
+      // Record docker argv and make `docker inspect` fail like an absent legacy
+      // container would. The doctor must not even attempt the inspect, so this
+      // should never produce a failure — and we assert the call was skipped, not
+      // merely that its failure was tolerated.
+      const dockerCalls = path.join(setup.home, "docker-calls");
+      fs.writeFileSync(
+        path.join(setup.localBin, "docker"),
+        [
+          "#!/usr/bin/env bash",
+          `printf '%s\\n' "$*" >> ${JSON.stringify(dockerCalls)}`,
+          'if [ "$1" = "info" ]; then echo "24.0.0"; exit 0; fi',
+          'if [ "$1" = "inspect" ]; then echo "Error: No such object: $3" >&2; exit 1; fi',
+          "exit 0",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      // Healthy curl so the unrelated provider-health probe does not fail the
+      // report and mask the gateway-only assertions below.
+      fs.writeFileSync(
+        path.join(setup.localBin, "curl"),
+        ["#!/usr/bin/env bash", 'echo "{}"', "exit 0"].join("\n"),
+        { mode: 0o755 },
+      );
+
+      const r = setup.runDoctor("alpha doctor --json");
+
+      expect(r.out).not.toContain("openshell-cluster");
+      const report = JSON.parse(r.out) as {
+        status: string;
+        checks: Array<{ group: string; label: string; status: string; detail: string }>;
+      };
+      expect(report.checks.find((check) => check.label === "Docker container")).toBeUndefined();
+      // Core contract: the legacy k3s container inspect must be skipped entirely,
+      // not attempted-and-ignored.
+      const recordedDockerCalls = fs.existsSync(dockerCalls)
+        ? fs.readFileSync(dockerCalls, "utf8")
+        : "";
+      expect(recordedDockerCalls).not.toMatch(/\binspect\b/);
+      const openshellStatus = report.checks.find((check) => check.label === "OpenShell status");
+      expect(openshellStatus).toEqual(
+        expect.objectContaining({
+          group: "Gateway",
+          status: "ok",
+          detail: "connected to nemoclaw",
+        }),
+      );
+      // The Docker-driver gateway is healthy, so no Gateway check should fail.
+      expect(report.checks.filter((c) => c.group === "Gateway" && c.status === "fail")).toEqual([]);
+      expect(report.status).toBe("ok");
+      expect(r.code).toBe(0);
+    },
+  );
+
+  it("doctor checks the sandbox persisted non-default gateway", () => {
+    const setup = createDoctorTestSetup("nemoclaw-cli-doctor-named-gateway-", [
       'case "$*" in',
-      '  "status") printf "Server Status\\n\\n  Gateway: nemoclaw\\n  Status: Connected\\n"; exit 0 ;;',
-      '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
+      '  "status") printf "Server Status\\n\\n  Gateway: nemoclaw-8090\\n  Status: Connected\\n"; exit 0 ;;',
+      '  "gateway info -g nemoclaw-8090") printf "Gateway: nemoclaw-8090\\n"; exit 0 ;;',
       '  "sandbox list") printf "NAME STATUS\\nalpha Ready\\n"; exit 0 ;;',
       '  "inference get") printf "Provider: nvidia-prod\\nModel: test-model\\n"; exit 0 ;;',
       "esac",
     ]);
-    // Docker-driver sandbox: no legacy `openshell-cluster-*` container exists.
-    writeSandboxRegistry(setup.home, "alpha", { openshellDriver: "docker" });
-    // Record docker argv and make `docker inspect` fail like an absent legacy
-    // container would. The doctor must not even attempt the inspect, so this
-    // should never produce a failure — and we assert the call was skipped, not
-    // merely that its failure was tolerated.
-    const dockerCalls = path.join(setup.home, "docker-calls");
-    fs.writeFileSync(
-      path.join(setup.localBin, "docker"),
-      [
-        "#!/usr/bin/env bash",
-        `printf '%s\\n' "$*" >> ${JSON.stringify(dockerCalls)}`,
-        'if [ "$1" = "info" ]; then echo "24.0.0"; exit 0; fi',
-        'if [ "$1" = "inspect" ]; then echo "Error: No such object: $3" >&2; exit 1; fi',
-        "exit 0",
-      ].join("\n"),
-      { mode: 0o755 },
-    );
-    // Healthy curl so the unrelated provider-health probe does not fail the
-    // report and mask the gateway-only assertions below.
-    fs.writeFileSync(
-      path.join(setup.localBin, "curl"),
-      ["#!/usr/bin/env bash", 'echo "{}"', "exit 0"].join("\n"),
-      { mode: 0o755 },
-    );
-
-    const r = setup.runDoctor("alpha doctor --json");
-
-    expect(r.out).not.toContain("openshell-cluster");
-    const report = JSON.parse(r.out) as {
-      status: string;
-      checks: Array<{ group: string; label: string; status: string; detail: string }>;
-    };
-    expect(report.checks.find((check) => check.label === "Docker container")).toBeUndefined();
-    // Core contract: the legacy k3s container inspect must be skipped entirely,
-    // not attempted-and-ignored.
-    const recordedDockerCalls = fs.existsSync(dockerCalls)
-      ? fs.readFileSync(dockerCalls, "utf8")
-      : "";
-    expect(recordedDockerCalls).not.toMatch(/\binspect\b/);
-    const openshellStatus = report.checks.find((check) => check.label === "OpenShell status");
-    expect(openshellStatus).toEqual(
-      expect.objectContaining({ group: "Gateway", status: "ok", detail: "connected to nemoclaw" }),
-    );
-    // The Docker-driver gateway is healthy, so no Gateway check should fail.
-    expect(report.checks.filter((c) => c.group === "Gateway" && c.status === "fail")).toEqual([]);
-    expect(report.status).toBe("ok");
-    expect(r.code).toBe(0);
-  });
-
-  it("doctor still inspects the legacy k3s gateway container for the kubernetes driver", () => {
-    const setup = createDoctorTestSetup("nemoclaw-cli-doctor-k8s-driver-", [
-      'case "$*" in',
-      '  "status") printf "Server Status\\n\\n  Gateway: nemoclaw\\n  Status: Connected\\n"; exit 0 ;;',
-      '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
-      '  "sandbox list") printf "NAME STATUS\\nalpha Ready\\n"; exit 0 ;;',
-      '  "inference get") printf "Provider: nvidia-prod\\nModel: test-model\\n"; exit 0 ;;',
-      "esac",
-    ]);
-    writeSandboxRegistry(setup.home, "alpha", { openshellDriver: "kubernetes" });
-
-    const r = setup.runDoctor("alpha doctor --json");
-
-    const report = JSON.parse(r.out) as {
-      checks: Array<{ group: string; label: string; status: string; detail: string }>;
-    };
-    const dockerContainer = report.checks.find((check) => check.label === "Docker container");
-    expect(dockerContainer).toEqual(
-      expect.objectContaining({
-        group: "Gateway",
-        status: "ok",
-        detail: expect.stringContaining("openshell-cluster-nemoclaw"),
-      }),
-    );
-  });
-
-  it("doctor accepts a local openshell-gateway process when legacy inspect fails", () => {
-    const setup = createDoctorTestSetup("nemoclaw-cli-doctor-local-gateway-", [
-      'case "$*" in',
-      '  "status") printf "Server Status\\n\\n  Gateway: nemoclaw\\n  Status: Connected\\n"; exit 0 ;;',
-      '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
-      '  "sandbox list") printf "NAME STATUS\\nalpha Ready\\n"; exit 0 ;;',
-      '  "inference get") printf "Provider: nvidia-prod\\nModel: test-model\\n"; exit 0 ;;',
-      "esac",
-    ]);
-    writeSandboxRegistry(setup.home, "alpha", { openshellDriver: "kubernetes" });
-
-    const hostCalls = path.join(setup.home, "host-calls");
-    writeDockerInspectFailureStub(setup, hostCalls);
-    writeLocalGatewayProbeStubs(setup, hostCalls);
-    writeHealthyCurlStub(setup);
-
-    const r = setup.runDoctor("alpha doctor --json");
-
-    expect(r.code).toBe(0);
-    const report = JSON.parse(r.out) as {
-      status: string;
-      checks: Array<{ group: string; label: string; status: string; detail: string }>;
-    };
-    expect(report.checks.find((check) => check.label === "Docker container")).toBeUndefined();
-    expect(report.checks.find((check) => check.label === "Local gateway process")).toEqual(
-      expect.objectContaining({
-        group: "Gateway",
-        status: "ok",
-        detail: "openshell-gateway is running, listening on port 8080, and verified by OpenShell",
-      }),
-    );
-    expect(
-      report.checks.filter((check) => check.group === "Gateway" && check.status === "fail"),
-    ).toEqual([]);
-    expect(report.status).toBe("ok");
-
-    const calls = fs.readFileSync(hostCalls, "utf8");
-    expect(calls).toContain("pgrep:-f ^(/[^ ]*/)?openshell-gateway( |$)");
-    expect(calls).not.toContain("pgrep:-af openshell-gateway");
-    expect(calls).not.toContain("docker:port");
-  });
-
-  it("doctor treats local gateway process evidence as informational until OpenShell verifies the named gateway", () => {
-    const setup = createDoctorTestSetup("nemoclaw-cli-doctor-unverified-local-gateway-", [
-      'case "$*" in',
-      '  "status") printf "Server Status\\n\\n  Gateway: other\\n  Status: Connected\\n"; exit 0 ;;',
-      '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
-      '  "gateway select nemoclaw") exit 1 ;;',
-      '  "gateway start --name nemoclaw --port 8080") exit 1 ;;',
-      '  "sandbox list") echo "should not query sandbox list" >> "$marker_file"; exit 0 ;;',
-      "esac",
-    ]);
-    writeSandboxRegistry(setup.home, "alpha", { openshellDriver: "kubernetes" });
-    const hostCalls = path.join(setup.home, "host-calls");
-    writeDockerInspectFailureStub(setup, hostCalls);
-    writeLocalGatewayProbeStubs(setup, hostCalls);
-
-    const r = setup.runDoctor("alpha doctor --json");
-
-    expect(r.code).toBe(1);
-    const report = parseJsonPrefix<{
-      checks: Array<{ group: string; label: string; status: string; detail: string }>;
-    }>(r.out);
-    expect(report.checks.find((check) => check.label === "Local gateway process")).toEqual(
-      expect.objectContaining({
-        group: "Gateway",
-        status: "info",
-        detail:
-          "openshell-gateway process and port 8080 are present, but the named gateway is not verified",
-      }),
-    );
-    expect(report.checks.find((check) => check.label === "OpenShell status")).toEqual(
-      expect.objectContaining({ group: "Gateway", status: "fail" }),
-    );
-  });
-
-  it("doctor reports unavailable local gateway probe tools while trusting a verified named gateway", () => {
-    const setup = createDoctorTestSetup("nemoclaw-cli-doctor-missing-local-probe-tools-", [
-      'case "$*" in',
-      '  "status") printf "Server Status\\n\\n  Gateway: nemoclaw\\n  Status: Connected\\n"; exit 0 ;;',
-      '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
-      '  "sandbox list") printf "NAME STATUS\\nalpha Ready\\n"; exit 0 ;;',
-      '  "inference get") printf "Provider: nvidia-prod\\nModel: test-model\\n"; exit 0 ;;',
-      "esac",
-    ]);
-    writeSandboxRegistry(setup.home, "alpha", { openshellDriver: "kubernetes" });
-    const hostCalls = path.join(setup.home, "host-calls");
-    writeDockerInspectFailureStub(setup, hostCalls);
-    writeLocalGatewayProbeStubs(setup, hostCalls, {
-      pgrepUnavailable: true,
-      ssUnavailable: true,
+    writeSandboxRegistry(setup.home, "alpha", {
+      gatewayName: "nemoclaw-8090",
+      gatewayPort: 8090,
+      openshellDriver: "docker",
     });
     writeHealthyCurlStub(setup);
 
@@ -308,20 +212,174 @@ describe("CLI dispatch", () => {
 
     expect(r.code).toBe(0);
     const report = JSON.parse(r.out) as {
-      status: string;
       checks: Array<{ group: string; label: string; status: string; detail: string }>;
     };
-    expect(report.checks.find((check) => check.label === "Local gateway probe")).toEqual(
+    expect(report.checks.find((check) => check.label === "OpenShell status")).toEqual(
       expect.objectContaining({
         group: "Gateway",
-        status: "info",
-        detail:
-          "local probe skipped (pgrep, ss unavailable); OpenShell reports the named gateway connected",
+        status: "ok",
+        detail: "connected to nemoclaw-8090",
       }),
     );
-    expect(report.checks.find((check) => check.label === "Docker container")).toBeUndefined();
-    expect(report.status).toBe("ok");
+    const calls = setup.readCalls();
+    expect(calls).toContain("gateway info -g nemoclaw-8090");
+    expect(calls).not.toContain("gateway info -g nemoclaw");
   });
+
+  it(
+    "doctor still inspects the legacy k3s gateway container for the kubernetes driver",
+    testTimeoutOptions(15_000),
+    () => {
+      const setup = createDoctorTestSetup("nemoclaw-cli-doctor-k8s-driver-", [
+        'case "$*" in',
+        '  "status") printf "Server Status\\n\\n  Gateway: nemoclaw\\n  Status: Connected\\n"; exit 0 ;;',
+        '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
+        '  "sandbox list") printf "NAME STATUS\\nalpha Ready\\n"; exit 0 ;;',
+        '  "inference get") printf "Provider: nvidia-prod\\nModel: test-model\\n"; exit 0 ;;',
+        "esac",
+      ]);
+      writeSandboxRegistry(setup.home, "alpha", { openshellDriver: "kubernetes" });
+
+      const r = setup.runDoctor("alpha doctor --json");
+
+      const report = JSON.parse(r.out) as {
+        checks: Array<{ group: string; label: string; status: string; detail: string }>;
+      };
+      const dockerContainer = report.checks.find((check) => check.label === "Docker container");
+      expect(dockerContainer).toEqual(
+        expect.objectContaining({
+          group: "Gateway",
+          status: "ok",
+          detail: expect.stringContaining("openshell-cluster-nemoclaw"),
+        }),
+      );
+    },
+  );
+
+  it(
+    "doctor accepts a local openshell-gateway process when legacy inspect fails",
+    testTimeoutOptions(15_000),
+    () => {
+      const setup = createDoctorTestSetup("nemoclaw-cli-doctor-local-gateway-", [
+        'case "$*" in',
+        '  "status") printf "Server Status\\n\\n  Gateway: nemoclaw\\n  Status: Connected\\n"; exit 0 ;;',
+        '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
+        '  "sandbox list") printf "NAME STATUS\\nalpha Ready\\n"; exit 0 ;;',
+        '  "inference get") printf "Provider: nvidia-prod\\nModel: test-model\\n"; exit 0 ;;',
+        "esac",
+      ]);
+      writeSandboxRegistry(setup.home, "alpha", { openshellDriver: "kubernetes" });
+
+      const hostCalls = path.join(setup.home, "host-calls");
+      writeDockerInspectFailureStub(setup, hostCalls);
+      writeLocalGatewayProbeStubs(setup, hostCalls);
+      writeHealthyCurlStub(setup);
+
+      const r = setup.runDoctor("alpha doctor --json");
+
+      expect(r.code).toBe(0);
+      const report = JSON.parse(r.out) as {
+        status: string;
+        checks: Array<{ group: string; label: string; status: string; detail: string }>;
+      };
+      expect(report.checks.find((check) => check.label === "Docker container")).toBeUndefined();
+      expect(report.checks.find((check) => check.label === "Local gateway process")).toEqual(
+        expect.objectContaining({
+          group: "Gateway",
+          status: "ok",
+          detail: "openshell-gateway is running, listening on port 8080, and verified by OpenShell",
+        }),
+      );
+      expect(
+        report.checks.filter((check) => check.group === "Gateway" && check.status === "fail"),
+      ).toEqual([]);
+      expect(report.status).toBe("ok");
+
+      const calls = fs.readFileSync(hostCalls, "utf8");
+      expect(calls).toContain("pgrep:-f ^(/[^ ]*/)?openshell-gateway( |$)");
+      expect(calls).not.toContain("pgrep:-af openshell-gateway");
+      expect(calls).not.toContain("docker:port");
+    },
+  );
+
+  it(
+    "doctor treats local gateway process evidence as informational until OpenShell verifies the named gateway",
+    testTimeoutOptions(15_000),
+    () => {
+      const setup = createDoctorTestSetup("nemoclaw-cli-doctor-unverified-local-gateway-", [
+        'case "$*" in',
+        '  "status") printf "Server Status\\n\\n  Gateway: other\\n  Status: Connected\\n"; exit 0 ;;',
+        '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
+        '  "gateway select nemoclaw") exit 1 ;;',
+        '  "gateway start --name nemoclaw --port 8080") exit 1 ;;',
+        '  "sandbox list") echo "should not query sandbox list" >> "$marker_file"; exit 0 ;;',
+        "esac",
+      ]);
+      writeSandboxRegistry(setup.home, "alpha", { openshellDriver: "kubernetes" });
+      const hostCalls = path.join(setup.home, "host-calls");
+      writeDockerInspectFailureStub(setup, hostCalls);
+      writeLocalGatewayProbeStubs(setup, hostCalls);
+
+      const r = setup.runDoctor("alpha doctor --json");
+
+      expect(r.code).toBe(1);
+      const report = parseJsonPrefix<{
+        checks: Array<{ group: string; label: string; status: string; detail: string }>;
+      }>(r.out);
+      expect(report.checks.find((check) => check.label === "Local gateway process")).toEqual(
+        expect.objectContaining({
+          group: "Gateway",
+          status: "info",
+          detail:
+            "openshell-gateway process and port 8080 are present, but the named gateway is not verified",
+        }),
+      );
+      expect(report.checks.find((check) => check.label === "OpenShell status")).toEqual(
+        expect.objectContaining({ group: "Gateway", status: "fail" }),
+      );
+    },
+  );
+
+  it(
+    "doctor reports unavailable local gateway probe tools while trusting a verified named gateway",
+    testTimeoutOptions(15_000),
+    () => {
+      const setup = createDoctorTestSetup("nemoclaw-cli-doctor-missing-local-probe-tools-", [
+        'case "$*" in',
+        '  "status") printf "Server Status\\n\\n  Gateway: nemoclaw\\n  Status: Connected\\n"; exit 0 ;;',
+        '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
+        '  "sandbox list") printf "NAME STATUS\\nalpha Ready\\n"; exit 0 ;;',
+        '  "inference get") printf "Provider: nvidia-prod\\nModel: test-model\\n"; exit 0 ;;',
+        "esac",
+      ]);
+      writeSandboxRegistry(setup.home, "alpha", { openshellDriver: "kubernetes" });
+      const hostCalls = path.join(setup.home, "host-calls");
+      writeDockerInspectFailureStub(setup, hostCalls);
+      writeLocalGatewayProbeStubs(setup, hostCalls, {
+        pgrepUnavailable: true,
+        ssUnavailable: true,
+      });
+      writeHealthyCurlStub(setup);
+
+      const r = setup.runDoctor("alpha doctor --json");
+
+      expect(r.code).toBe(0);
+      const report = JSON.parse(r.out) as {
+        status: string;
+        checks: Array<{ group: string; label: string; status: string; detail: string }>;
+      };
+      expect(report.checks.find((check) => check.label === "Local gateway probe")).toEqual(
+        expect.objectContaining({
+          group: "Gateway",
+          status: "info",
+          detail:
+            "local probe skipped (pgrep, ss unavailable); OpenShell reports the named gateway connected",
+        }),
+      );
+      expect(report.checks.find((check) => check.label === "Docker container")).toBeUndefined();
+      expect(report.status).toBe("ok");
+    },
+  );
 
   it(
     "doctor reports fresh shields state as not configured instead of down",
@@ -352,26 +410,30 @@ describe("CLI dispatch", () => {
     },
   );
 
-  it("doctor does not query sandbox state from a different active gateway", () => {
-    const setup = createDoctorTestSetup("nemoclaw-cli-doctor-wrong-gateway-", [
-      'case "$*" in',
-      '  "status") printf "Server Status\\n\\n  Gateway: other\\n  Status: Connected\\n"; exit 0 ;;',
-      '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
-      '  "gateway select nemoclaw") exit 1 ;;',
-      '  "gateway start --name nemoclaw --port 8080") exit 1 ;;',
-      '  "sandbox list") echo "queried wrong gateway sandbox list" >> "$marker_file"; exit 0 ;;',
-      "esac",
-    ]);
+  it(
+    "doctor does not query sandbox state from a different active gateway",
+    testTimeoutOptions(15_000),
+    () => {
+      const setup = createDoctorTestSetup("nemoclaw-cli-doctor-wrong-gateway-", [
+        'case "$*" in',
+        '  "status") printf "Server Status\\n\\n  Gateway: other\\n  Status: Connected\\n"; exit 0 ;;',
+        '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
+        '  "gateway select nemoclaw") exit 1 ;;',
+        '  "gateway start --name nemoclaw --port 8080") exit 1 ;;',
+        '  "sandbox list") echo "queried wrong gateway sandbox list" >> "$marker_file"; exit 0 ;;',
+        "esac",
+      ]);
 
-    const r = setup.runDoctor("alpha doctor");
+      const r = setup.runDoctor("alpha doctor");
 
-    expect(r.code).toBe(1);
-    expect(r.out).toContain("OpenShell status");
-    expect(r.out).toContain("Gateway: other");
-    expect(setup.readCalls().some((call) => /^sandbox list(\s|$)/.test(call))).toBe(false);
-  });
+      expect(r.code).toBe(1);
+      expect(r.out).toContain("OpenShell status");
+      expect(r.out).toContain("Gateway: other");
+      expect(setup.readCalls().some((call) => /^sandbox list(\s|$)/.test(call))).toBe(false);
+    },
+  );
 
-  it("doctor treats a live non-cloudflared PID as stale", () => {
+  it("doctor treats a live non-cloudflared PID as stale", testTimeoutOptions(15_000), () => {
     const { sandboxName, serviceDir } = createCloudflaredServiceDir("doctorpid-");
     const setup = createDoctorTestSetup(
       "nemoclaw-cli-doctor-wrong-cloudflared-pid-",

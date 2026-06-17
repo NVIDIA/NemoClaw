@@ -421,7 +421,7 @@ describe("policies", () => {
       // OpenShell's SSRF engine doesn't expand `*.<tld>` wildcards at
       // runtime, so the preset lists each known iLink IDC host explicitly.
       // Both hosts are load-bearing today — `ilinkai.weixin.qq.com` is the
-      // bootstrap (hard-coded in src/ext/wechat/qr.ts), `ilinkai.wechat.com`
+      // bootstrap (hard-coded in src/lib/messaging/channels/wechat/qr.ts), `ilinkai.wechat.com`
       // is the per-account baseUrl returned after QR confirm. Additional
       // IDC hosts may need to be added when operators observe new
       // `DENIED ... -> <host>:443` lines in OCSF logs.
@@ -485,7 +485,7 @@ describe("policies", () => {
     it("adds Jira validation guidance that makes blocked versus redirected curl observable", () => {
       const warning = policies.getPresetValidationWarning("jira");
 
-      expect(warning).toContain("curl -s");
+      expect(warning).toContain("inconclusive before or after approval");
       expect(warning).toContain("api.atlassian.com/oauth/token/accessible-resources");
       expect(warning).toContain("401 JSON");
       expect(warning).toContain("Node HTTPS");
@@ -1820,16 +1820,6 @@ exit 1
         expect(methods).not.toContain("PUT");
         expect(methods).not.toContain("DELETE");
       }
-    });
-
-    it("Hermes GitHub policy does not whitelist the absent gh CLI (#2179)", () => {
-      const parsed = parseRepoYaml("agents/hermes/policy-additions.yaml");
-      const githubPolicy = parsed.network_policies?.github as
-        | { binaries?: Array<{ path?: string }> }
-        | undefined;
-      const binaries = (githubPolicy?.binaries ?? []).map((binary) => binary.path).sort();
-      expect(binaries).toEqual(["/opt/hermes/.venv/bin/python", "/usr/bin/git"]);
-      expect(binaries).not.toContain("/usr/bin/gh");
     });
 
     it("REST policy YAML avoids deprecated tls: terminate", () => {

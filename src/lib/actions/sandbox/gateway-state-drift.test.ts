@@ -36,6 +36,8 @@ describe("sandbox gateway state drift guard", () => {
   let captureOpenshellForStatusSpy: MockInstance;
   let detectPreflightIssueSpy: MockInstance;
   let getNamedGatewayLifecycleStateSpy: MockInstance;
+  let getSandboxSpy: MockInstance;
+  let recoverNamedGatewayRuntimeSpy: MockInstance;
   let runOpenshellSpy: MockInstance;
   let removeSandboxSpy: MockInstance;
 
@@ -48,6 +50,8 @@ describe("sandbox gateway state drift guard", () => {
     const openshellRuntime = requireDist("../../../../dist/lib/adapters/openshell/runtime.js");
     const gatewayRuntime = requireDist("../../../../dist/lib/gateway-runtime-action.js");
     const registry = requireDist("../../../../dist/lib/state/registry.js");
+
+    getSandboxSpy = vi.spyOn(registry, "getSandbox").mockReturnValue(null);
 
     captureOpenshellSpy = vi
       .spyOn(openshellRuntime, "captureOpenshell")
@@ -69,6 +73,11 @@ describe("sandbox gateway state drift guard", () => {
         state: "healthy_named",
         status: "",
       } as never);
+    recoverNamedGatewayRuntimeSpy = vi
+      .spyOn(gatewayRuntime, "recoverNamedGatewayRuntime")
+      .mockResolvedValue({
+        recovered: false,
+      } as never);
 
     spies.push(
       detectPreflightIssueSpy,
@@ -85,9 +94,8 @@ describe("sandbox gateway state drift guard", () => {
       runOpenshellSpy,
       vi.spyOn(openshellRuntime, "isCommandTimeout").mockReturnValue(false),
       getNamedGatewayLifecycleStateSpy,
-      vi.spyOn(gatewayRuntime, "recoverNamedGatewayRuntime").mockResolvedValue({
-        recovered: false,
-      } as never),
+      getSandboxSpy,
+      recoverNamedGatewayRuntimeSpy,
       removeSandboxSpy,
     );
 
@@ -157,5 +165,96 @@ describe("sandbox gateway state drift guard", () => {
       expect.objectContaining({ ignoreError: true }),
     );
     expect(removeSandboxSpy).not.toHaveBeenCalled();
+  });
+
+  it("routes gateway-error recovery to the sandbox persisted gateway", async () => {
+    detectPreflightIssueSpy.mockReturnValue(null);
+    getSandboxSpy.mockReturnValue({
+      name: "alpha",
+      gatewayName: "nemoclaw-8090",
+      gatewayPort: 8090,
+    });
+    recoverNamedGatewayRuntimeSpy.mockResolvedValue({
+      recovered: true,
+      via: "start",
+    });
+    const getState = vi
+      .fn()
+      .mockResolvedValueOnce({ state: "gateway_error", output: "transport error" })
+      .mockResolvedValueOnce({ state: "present", output: "Sandbox:\n  Name: alpha" });
+
+    const lookup = await gatewayState.getReconciledSandboxGatewayState("alpha", { getState });
+
+    expect(lookup).toEqual(
+      expect.objectContaining({
+        state: "present",
+        recoveredGateway: true,
+        recoveryVia: "start",
+      }),
+    );
+    expect(recoverNamedGatewayRuntimeSpy).toHaveBeenCalledWith({ gatewayName: "nemoclaw-8090" });
+  });
+
+  it("classifies the `sandbox has no spec` gRPC reply as a missing sandbox so the named-gateway reconciler can retry on the owning gateway", () => {
+    detectPreflightIssueSpy.mockReturnValue(null);
+    captureOpenshellSpy.mockReturnValue({
+      status: 1,
+      output:
+        'status: Internal, message: "sandbox has no spec", details: [], metadata: MetadataMap {}',
+    });
+
+    const lookup = gatewayState.getSandboxGatewayState("alpha");
+
+    expect(lookup.state).toBe("missing");
+    expect(lookup.output).toContain("sandbox has no spec");
+  });
+
+  it("classifies the same gRPC reply as `missing` on the async status-probe path so the live `nemoclaw <sandbox> status` lookup goes through the named-gateway reconciler too", async () => {
+    detectPreflightIssueSpy.mockReturnValue(null);
+    captureOpenshellForStatusSpy.mockResolvedValue({
+      status: 1,
+      output:
+        'status: Internal, message: "sandbox has no spec", details: [], metadata: MetadataMap {}',
+    });
+
+    const lookup = await gatewayState.getSandboxGatewayStateForStatus("alpha");
+
+    expect(lookup.state).toBe("missing");
+    expect(lookup.output).toContain("sandbox has no spec");
+  });
+
+  it("selects the sandbox's owning gateway and retries when the active gateway is a sibling that has no spec for it", () => {
+    detectPreflightIssueSpy.mockReturnValue(null);
+    getSandboxSpy.mockReturnValue({
+      name: "instance-a",
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+    });
+    getNamedGatewayLifecycleStateSpy.mockReturnValue({
+      state: "connected_other",
+      activeGateway: "nemoclaw-8081",
+      status: "Gateway: nemoclaw-8081\nStatus: Connected",
+    });
+    captureOpenshellSpy.mockReturnValueOnce({
+      status: 0,
+      output: "Sandbox:\n  Name: instance-a\n  Phase: Ready",
+    });
+
+    const retry = gatewayState.reconcileMissingAgainstNamedGateway("instance-a", {
+      state: "missing",
+      output: 'status: Internal, message: "sandbox has no spec"',
+    });
+
+    expect(retry).toEqual(
+      expect.objectContaining({
+        state: "present",
+        recoveredGateway: true,
+        recoveryVia: "select",
+      }),
+    );
+    expect(runOpenshellSpy).toHaveBeenCalledWith(
+      ["gateway", "select", "nemoclaw"],
+      expect.objectContaining({ ignoreError: true }),
+    );
   });
 });

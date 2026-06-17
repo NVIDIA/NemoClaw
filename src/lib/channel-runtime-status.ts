@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { shellQuote } from "./core/shell-quote";
+
 /**
  * Probe the OpenClaw runtime channel registry from inside a sandbox.
  *
@@ -21,10 +23,9 @@
  *
  *   2. **Runtime layer** (`probeChannelRuntimeStatus`) tails the gateway
  *      log at `/tmp/gateway.log` and checks each channel name. The log is
- *      where the OpenClaw process records its own boot events (the
- *      existing `getUpdates conflict` detection in `status-command-deps.ts`
- *      relies on the same file). If a channel never appears in the log,
- *      the runtime never tried to start it — the exact symptom behind
+ *      where the OpenClaw process records its own boot events. If a
+ *      manifest-declared channel never appears in the log, the runtime
+ *      never tried to start it — the exact symptom behind
  *      "No channels found" in the dashboard.
  *
  * The two signals combine: a channel is "runtime-visible" only when both
@@ -38,20 +39,12 @@
  * comparison logic stays unit-testable without touching a sandbox.
  */
 
-// OpenClaw's openclaw.json uses one key per channel under `channels.*`.
-// Some channels are exposed under their canonical NemoClaw name (telegram,
-// discord, slack, whatsapp); WeChat is bridged through the
-// openclaw-weixin plugin, so the runtime key differs from the registry
-// name. Keep the map narrow on purpose — an unknown channel key under
-// `channels.*` is left out of the visible set rather than guessed at,
-// because the registry side is authoritative for naming.
-const CHANNEL_KEY_TO_NAME: Record<string, string> = {
-  telegram: "telegram",
-  discord: "discord",
-  slack: "slack",
-  whatsapp: "whatsapp",
-  "openclaw-weixin": "wechat",
-};
+import {
+  listOpenClawRuntimeChannelMetadata,
+  type OpenClawRuntimeChannelMetadata,
+} from "./messaging/channels/metadata";
+
+const DEFAULT_RUNTIME_VISIBILITY_METADATA = listOpenClawRuntimeChannelMetadata();
 
 export type RuntimeChannelStatus = {
   /**
@@ -98,10 +91,9 @@ export interface ChannelRuntimeStatusDeps {
   configFilePath: string;
   /**
    * Path to the in-sandbox gateway log. Defaults to `/tmp/gateway.log`
-   * (the path OpenClaw's gateway writes when the agent starts — same
-   * file the existing Telegram-conflict probe in
-   * `src/lib/status-command-deps.ts` reads). Override only when running
-   * an alternate agent layout that ships logs elsewhere.
+   * (the path OpenClaw's gateway writes when the agent starts).
+   * Override only when running an alternate agent layout that ships logs
+   * elsewhere.
    */
   gatewayLogPath?: string;
   /** Sandbox shell exec — returns `null` when the exec itself failed. */
@@ -113,16 +105,17 @@ export interface ChannelRuntimeStatusDeps {
 /**
  * Extract the set of channels with at least one enabled account from a parsed
  * OpenClaw config. Returns a sorted, deduplicated list of canonical channel
- * names (telegram, discord, slack, whatsapp, wechat). Unknown keys under
- * `channels.*` are ignored — registry-side names are authoritative.
+ * names. Unknown keys under `channels.*` are ignored — manifest-side
+ * channel names are authoritative.
  */
 export function extractEnabledChannelsFromOpenclawConfig(json: unknown): string[] {
   if (!json || typeof json !== "object") return [];
   const channels = (json as Record<string, unknown>).channels;
   if (!channels || typeof channels !== "object") return [];
+  const channelKeyToName = runtimeConfigKeyToChannelName(DEFAULT_RUNTIME_VISIBILITY_METADATA);
   const visible = new Set<string>();
   for (const [key, value] of Object.entries(channels as Record<string, unknown>)) {
-    const canonical = CHANNEL_KEY_TO_NAME[key];
+    const canonical = channelKeyToName.get(key);
     if (!canonical) continue;
     if (!value || typeof value !== "object") continue;
     const accounts = (value as Record<string, unknown>).accounts;
@@ -139,10 +132,6 @@ export function extractEnabledChannelsFromOpenclawConfig(json: unknown): string[
     }
   }
   return [...visible].sort();
-}
-
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
 // Sentinel header the gateway-log scan script always echoes when the log
@@ -183,7 +172,9 @@ const GATEWAY_BOOT_MARKER_REGEX = "\\[gateway\\].*(launched|respawning)";
  */
 export function buildGatewayLogScanScript(gatewayLogPath: string): string {
   const quotedPath = shellQuote(gatewayLogPath);
-  const patternAlternation = RUNTIME_LOG_PATTERNS.map((entry) => entry.pattern).join("|");
+  const patternAlternation = runtimeLogPatterns(DEFAULT_RUNTIME_VISIBILITY_METADATA)
+    .map(escapeExtendedRegexLiteral)
+    .join("|");
   // The awk program uses single-quoted strings inside the shell single-
   // quote context, so we escape the embedded single quotes the same way
   // `shellQuote` does — '\'' ends the outer quote, injects a literal,
@@ -212,33 +203,52 @@ export function buildGatewayLogScanScript(gatewayLogPath: string): string {
  */
 export function parseGatewayLogScanOutput(stdout: string): Set<string> {
   const found = new Set<string>();
+  const patternToChannel = runtimeLogPatternToChannelName(DEFAULT_RUNTIME_VISIBILITY_METADATA);
   for (const line of stdout.split(/\r?\n/)) {
     const trimmed = line.trim();
     if (!trimmed.startsWith(LOG_FOUND_PREFIX)) continue;
     const pattern = trimmed.slice(LOG_FOUND_PREFIX.length).toLowerCase();
-    for (const entry of RUNTIME_LOG_PATTERNS) {
-      if (entry.pattern === pattern) {
-        found.add(entry.channel);
-      }
-    }
+    const channel = patternToChannel.get(pattern);
+    if (channel) found.add(channel);
   }
   return found;
 }
 
-// Patterns to search the gateway log for. The first column is the literal
-// token the OpenClaw runtime writes; the second is the canonical channel
-// name the registry uses. WeChat boots through the openclaw-weixin plugin
-// name, so we accept either token. Keep this list tight — the probe greps
-// once per pattern so cost scales with the array length, not log size.
-const RUNTIME_LOG_PATTERNS: readonly { pattern: string; channel: string }[] = [
-  { pattern: "telegram", channel: "telegram" },
-  { pattern: "discord", channel: "discord" },
-  { pattern: "slack", channel: "slack" },
-  { pattern: "whatsapp", channel: "whatsapp" },
-  { pattern: "wechat", channel: "wechat" },
-  { pattern: "openclaw-weixin", channel: "wechat" },
-];
 const DEFAULT_GATEWAY_LOG_PATH = "/tmp/gateway.log";
+
+function runtimeConfigKeyToChannelName(
+  outputs: readonly OpenClawRuntimeChannelMetadata[],
+): ReadonlyMap<string, string> {
+  const aliases = new Map<string, string>();
+  for (const output of outputs) {
+    for (const key of output.configKeys) {
+      aliases.set(key, output.channelId);
+    }
+  }
+  return aliases;
+}
+
+function runtimeLogPatterns(outputs: readonly OpenClawRuntimeChannelMetadata[]): string[] {
+  return [
+    ...new Set(outputs.flatMap((output) => output.logPatterns).filter((entry) => entry.length > 0)),
+  ];
+}
+
+function runtimeLogPatternToChannelName(
+  outputs: readonly OpenClawRuntimeChannelMetadata[],
+): ReadonlyMap<string, string> {
+  const aliases = new Map<string, string>();
+  for (const output of outputs) {
+    for (const pattern of output.logPatterns) {
+      aliases.set(pattern.toLowerCase(), output.channelId);
+    }
+  }
+  return aliases;
+}
+
+function escapeExtendedRegexLiteral(value: string): string {
+  return value.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
+}
 
 /**
  * Read the in-sandbox agent config AND the gateway log to determine which

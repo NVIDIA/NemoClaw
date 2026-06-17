@@ -83,16 +83,6 @@ network_policies:
           - allow: { method: POST, path: "/v1/embeddings" }
           - allow: { method: GET, path: "/v1/models" }
           - allow: { method: GET, path: "/v1/models/**" }
-      - host: inference-api.nvidia.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        rules:
-          - allow: { method: POST, path: "/v1/chat/completions" }
-          - allow: { method: POST, path: "/v1/completions" }
-          - allow: { method: POST, path: "/v1/embeddings" }
-          - allow: { method: GET, path: "/v1/models" }
-          - allow: { method: GET, path: "/v1/models/**" }
     binaries:
       - { path: /usr/local/bin/openclaw }
 
@@ -118,6 +108,45 @@ network_policies:
       - { path: /usr/bin/node }
       - { path: /usr/bin/curl }
       - { path: /usr/bin/python3 }
+
+  # ── Gateway dial-back (sessions_spawn) ──────────────────────────────
+  # Spawned sub-agent runtimes connect back to the OpenClaw gateway over
+  # WebSocket at OPENCLAW_GATEWAY_URL. The L7 proxy intercepts traffic
+  # from the enforced process tree even on the sandbox's own interfaces,
+  # and loopback destinations are always-blocked regardless of policy —
+  # so the dial must target the sandbox's eth0 address (the gateway
+  # listens on 0.0.0.0; nemoclaw-start.sh derives the URL host
+  # accordingly). Raw L4 tunnel (`access: full, tls: skip`): a
+  # `protocol: rest` endpoint would terminate/inspect HTTP and break the
+  # 101 WebSocket upgrade. Without this entry every sessions_spawn child
+  # fails its gateway connection with `1006 abnormal closure (no close
+  # frame)` and multi-agent delegation is unusable.
+  #
+  # Defaults cover the standard sandbox bridge address (10.200.0.2) and
+  # both common gateway ports (18789 default, 18790 NemoClaw onboard).
+  # A custom NEMOCLAW_PROXY_HOST subnet or NEMOCLAW_DASHBOARD_PORT needs
+  # a matching `openshell policy update`.
+  openclaw_gateway_dialback:
+    name: openclaw_gateway_dialback
+    endpoints:
+      - host: 10.200.0.2
+        port: 18789
+        access: full
+        tls: skip
+        allowed_ips:
+          # SSRF guard rejects private resolved addresses unless
+          # explicitly allowlisted (same pattern as local-inference).
+          - 10.200.0.2
+      - host: 10.200.0.2
+        port: 18790
+        access: full
+        tls: skip
+        allowed_ips:
+          - 10.200.0.2
+    binaries:
+      - { path: /usr/local/bin/openclaw }
+      - { path: /usr/local/bin/node }
+      - { path: /usr/bin/node }
 
   # NOTE: github.com / api.github.com and the git/gh binaries used to
   # live in this base policy and were therefore granted to every

@@ -6,8 +6,10 @@ import { describe, expect, it } from "vitest";
 import { buildScenarioComment } from "../tools/e2e-advisor/scenario-comment.mts";
 import {
   buildPrompt,
+  buildScenarioPromptTurn,
   buildSystemPrompt,
   canonicalDispatchCommand,
+  extractFreeStandingVitestJobs,
   normalizeScenarioAdvisorResult,
   renderScenarioSummary,
   SCENARIO_ADVISOR_WORKFLOWS,
@@ -34,28 +36,49 @@ function metadata(
 }
 
 describe("Vitest E2E scenario advisor — prompt construction", () => {
-  it("user prompt embeds the metadata fields the advisor must echo back", () => {
+  it("user prompt refers to synthetic context instead of embedding bulky metadata", () => {
     const prompt = buildPrompt({
       baseRef: "origin/main",
       headRef: "HEAD",
       changedFiles: ["test/e2e-scenario/fixtures/phases/onboarding.ts"],
       diff: "+ echo ok",
     });
-    // Caller of normalizeScenarioAdvisorResult re-injects metadata, but the
-    // prompt must still surface enough context for the model to reason.
-    expect(prompt).toContain("origin/main");
-    expect(prompt).toContain("test/e2e-scenario/fixtures/phases/onboarding.ts");
-    expect(prompt).toContain("+ echo ok");
+    // Caller of normalizeScenarioAdvisorResult re-injects metadata; the prompt
+    // now points at synthetic tool results instead of embedding bulky context.
+    expect(prompt).toContain("tool results");
+    expect(prompt).not.toContain("origin/main");
+    expect(prompt).not.toContain("test/e2e-scenario/fixtures/phases/onboarding.ts");
+    expect(prompt).not.toContain("+ echo ok");
+
+    const turn = buildScenarioPromptTurn({
+      baseRef: "origin/main",
+      headRef: "HEAD",
+      changedFiles: ["test/e2e-scenario/fixtures/phases/onboarding.ts"],
+      diff: "+ echo ok",
+      schema: { $id: "test-schema", type: "object" },
+    });
+    expect(turn.syntheticToolResults?.map((result) => result.toolName)).toEqual([
+      "e2e_scenario_metadata",
+      "e2e_scenario_changed_files",
+      "e2e_scenario_git_diff",
+      "e2e_scenario_response_schema",
+    ]);
+    expect(turn.syntheticToolResults?.[0]?.content).toContain("origin/main");
+    expect(turn.syntheticToolResults?.[1]?.content).toContain(
+      "test/e2e-scenario/fixtures/phases/onboarding.ts",
+    );
+    expect(turn.syntheticToolResults?.[2]?.content).toContain("+ echo ok");
+    expect(turn.syntheticToolResults?.[3]?.content).toContain("test-schema");
   });
 
-  it("system prompt is non-empty and embeds the JSON schema for the model", () => {
-    // The model receives the schema inline; we only assert that the prompt
-    // exists, includes the schema discriminator, and routes scenario
-    // recommendations to the Vitest workflow rather than the legacy
-    // typed-shell dispatch surfaces.
+  it("system prompt is non-empty and points JSON schema lookup at synthetic context", () => {
+    // The model receives the schema through a synthetic tool result; the system
+    // prompt still routes scenario recommendations to the Vitest workflow rather
+    // than the legacy typed-shell dispatch surfaces.
     const systemPrompt = buildSystemPrompt({ $id: "test-schema", type: "object" });
     expect(systemPrompt.length).toBeGreaterThan(0);
-    expect(systemPrompt).toContain("test-schema");
+    expect(systemPrompt).not.toContain("test-schema");
+    expect(systemPrompt).toContain("e2e_scenario_response_schema");
     expect(systemPrompt).toContain(VITEST_SCENARIO_WORKFLOW);
     expect(systemPrompt).toContain("trusted advisor checkout");
     expect(systemPrompt).toContain("recommend the `e2e-scenarios-all` fan-out");
@@ -82,6 +105,7 @@ describe("Vitest E2E scenario advisor — normalization contract", () => {
         {
           id: "e2e-scenarios-all",
           workflow: VITEST_SCENARIO_WORKFLOW,
+          selectorType: "all",
           required: true,
           reason: "shared scenario runtime changed",
           // Model returns a non-canonical command; sanitizer must overwrite it.
@@ -92,6 +116,7 @@ describe("Vitest E2E scenario advisor — normalization contract", () => {
         {
           id: "ubuntu-repo-cloud-openclaw",
           workflow: VITEST_SCENARIO_WORKFLOW,
+          selectorType: "scenario",
           scenario: "ubuntu-repo-cloud-openclaw",
           required: false,
           reason: "smoke confirmation on the canonical scenario",
@@ -161,6 +186,7 @@ describe("Vitest E2E scenario advisor — normalization contract", () => {
           {
             id: "e2e-scenarios-all",
             workflow: VITEST_SCENARIO_WORKFLOW,
+            selectorType: "all",
             reason: "valid Vitest fan-out",
             dispatchCommand: "gh ...",
           },
@@ -180,6 +206,7 @@ describe("Vitest E2E scenario advisor — normalization contract", () => {
           {
             id: "ubuntu-repo-cloud-openclaw",
             workflow: VITEST_SCENARIO_WORKFLOW,
+            selectorType: "scenario",
             // Model claims this required item is actually optional.
             required: false,
             reason: "in required[] but model marked optional",
@@ -190,6 +217,7 @@ describe("Vitest E2E scenario advisor — normalization contract", () => {
           {
             id: "ubuntu-repo-docker-post-reboot-recovery",
             workflow: VITEST_SCENARIO_WORKFLOW,
+            selectorType: "scenario",
             // Model claims this optional item is actually required.
             required: true,
             reason: "in optional[] but model marked required",
@@ -211,18 +239,21 @@ describe("Vitest E2E scenario advisor — normalization contract", () => {
           {
             id: "ubuntu;rm -rf /",
             workflow: VITEST_SCENARIO_WORKFLOW,
+            selectorType: "scenario",
             reason: "shell injection attempt",
             dispatchCommand: "gh ...",
           },
           {
             id: "Ubuntu_Repo_Cloud", // not kebab
             workflow: VITEST_SCENARIO_WORKFLOW,
+            selectorType: "scenario",
             reason: "non-canonical id",
             dispatchCommand: "gh ...",
           },
           {
             id: "ubuntu-repo-cloud-openclaw",
             workflow: VITEST_SCENARIO_WORKFLOW,
+            selectorType: "scenario",
             reason: "valid",
             dispatchCommand: "gh ...",
           },
@@ -241,18 +272,21 @@ describe("Vitest E2E scenario advisor — normalization contract", () => {
         {
           id: "ubuntu-repo-cloud-openclaw",
           workflow: VITEST_SCENARIO_WORKFLOW,
+          selectorType: "scenario",
           reason: "ok",
           dispatchCommand: "gh ...",
         },
         {
           id: "ubuntu-repo-cloud-openclaw",
           workflow: VITEST_SCENARIO_WORKFLOW,
+          selectorType: "scenario",
           reason: "dup",
           dispatchCommand: "gh ...",
         },
         {
           id: "valid-kebab-but-not-in-registry",
           workflow: VITEST_SCENARIO_WORKFLOW,
+          selectorType: "scenario",
           reason: "unknown scenario",
           dispatchCommand: "gh ...",
         },
@@ -273,24 +307,28 @@ describe("Vitest E2E scenario advisor — normalization contract", () => {
         {
           id: "valid-kebab-but-not-in-registry",
           workflow: VITEST_SCENARIO_WORKFLOW,
+          selectorType: "scenario",
           reason: "model invented a scenario",
           dispatchCommand: "gh ...",
         },
         {
           id: "ubuntu-repo-cloud-hermes",
           workflow: VITEST_SCENARIO_WORKFLOW,
+          selectorType: "scenario",
           reason: "registry scenario not wired for live Vitest fixtures",
           dispatchCommand: "gh ...",
         },
         {
           id: "e2e-scenarios-all",
           workflow: VITEST_SCENARIO_WORKFLOW,
+          selectorType: "all",
           reason: "shared scenario runtime changed",
           dispatchCommand: "gh ...",
         },
         {
           id: "ubuntu-repo-cloud-openclaw",
           workflow: VITEST_SCENARIO_WORKFLOW,
+          selectorType: "scenario",
           reason: "known scenario",
           dispatchCommand: "gh ...",
         },
@@ -306,12 +344,142 @@ describe("Vitest E2E scenario advisor — normalization contract", () => {
     ]);
   });
 
+  it("suppresses fan-out for a new free-standing live test that is not workflow-wired", () => {
+    const normalized = normalizeScenarioAdvisorResult(
+      {
+        required: [
+          {
+            id: "e2e-scenarios-all",
+            workflow: VITEST_SCENARIO_WORKFLOW,
+            selectorType: "all",
+            reason: "model tried to fan out for an unwired free-standing test",
+            dispatchCommand: "gh ...",
+          },
+        ],
+        optional: [],
+        noScenarioE2eReason: null,
+        confidence: "high",
+      },
+      metadata({ changedFiles: ["test/e2e-scenario/live/rebuild-openclaw.test.ts"] }),
+      { vitestWorkflowText: "jobs:\n  live-scenarios:\n    steps: []\n" },
+    );
+
+    expect(normalized.required).toEqual([]);
+    expect(normalized.optional).toEqual([]);
+    expect(normalized.noScenarioE2eReason).toContain(
+      "not wired into `.github/workflows/e2e-vitest-scenarios.yaml`",
+    );
+    expect(normalized.noScenarioE2eReason).toContain(
+      "test/e2e-scenario/live/rebuild-openclaw.test.ts",
+    );
+  });
+
+  it("extracts free-standing Vitest jobs from workflow job selectors", () => {
+    expect(
+      extractFreeStandingVitestJobs(String.raw`
+jobs:
+  live-scenarios:
+    if: \${{ inputs.jobs == '' }}
+    steps:
+      - run: npx vitest run --project e2e-scenarios-live test/e2e-scenario/live/registry-scenarios.test.ts
+  token-rotation-vitest:
+    if: \${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',token-rotation-vitest,') }}
+    steps:
+      - run: npx vitest run --project e2e-scenarios-live test/e2e-scenario/live/token-rotation.test.ts
+`),
+    ).toEqual([
+      {
+        id: "token-rotation-vitest",
+        liveTestFiles: ["test/e2e-scenario/live/token-rotation.test.ts"],
+      },
+    ]);
+  });
+
+  it("prefers a focused free-standing job over fan-out once workflow wiring is present", () => {
+    const normalized = normalizeScenarioAdvisorResult(
+      {
+        required: [
+          {
+            id: "e2e-scenarios-all",
+            workflow: VITEST_SCENARIO_WORKFLOW,
+            selectorType: "all",
+            reason: "model tried to fan out for a workflow-wired free-standing test",
+            dispatchCommand: "gh ...",
+          },
+        ],
+        optional: [],
+        noScenarioE2eReason: null,
+        confidence: "high",
+      },
+      metadata({
+        changedFiles: [
+          ".github/workflows/e2e-vitest-scenarios.yaml",
+          "test/e2e-scenario/live/token-rotation.test.ts",
+        ],
+      }),
+      {
+        vitestWorkflowText: String.raw`
+jobs:
+  token-rotation-vitest:
+    if: \${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',token-rotation-vitest,') }}
+    steps:
+      - run: npx vitest run --project e2e-scenarios-live test/e2e-scenario/live/token-rotation.test.ts
+`,
+      },
+    );
+
+    expect(normalized.required.map((item) => [item.selectorType, item.id])).toEqual([
+      ["job", "token-rotation-vitest"],
+    ]);
+    expect(normalized.required[0]?.dispatchCommand).toBe(
+      "gh workflow run e2e-vitest-scenarios.yaml --ref <pr-head-ref> --field jobs=token-rotation-vitest",
+    );
+    expect(normalized.noScenarioE2eReason).toBeNull();
+  });
+
+  it("accepts a model-provided free-standing job recommendation when the job is workflow-wired", () => {
+    const normalized = normalizeScenarioAdvisorResult(
+      {
+        required: [
+          {
+            id: "token-rotation-vitest",
+            workflow: VITEST_SCENARIO_WORKFLOW,
+            selectorType: "job",
+            reason: "focused job covers the changed live test",
+            dispatchCommand: "malicious non-canonical command",
+          },
+        ],
+        optional: [],
+        noScenarioE2eReason: null,
+        confidence: "high",
+      },
+      metadata({ changedFiles: ["test/e2e-scenario/live/token-rotation.test.ts"] }),
+      {
+        vitestWorkflowText: String.raw`
+jobs:
+  token-rotation-vitest:
+    if: \${{ contains(format(',{0},', inputs.jobs), ',token-rotation-vitest,') }}
+    steps:
+      - run: npx vitest run --project e2e-scenarios-live test/e2e-scenario/live/token-rotation.test.ts
+`,
+      },
+    );
+
+    expect(normalized.required.map((item) => [item.selectorType, item.id])).toEqual([
+      ["job", "token-rotation-vitest"],
+    ]);
+    expect(normalized.required[0]?.dispatchCommand).toBe(
+      "gh workflow run e2e-vitest-scenarios.yaml --ref <pr-head-ref> --field jobs=token-rotation-vitest",
+    );
+  });
+
   it("removes optional recommendations whose id duplicates a required one", () => {
     const raw = {
       required: [
         {
           id: "ubuntu-repo-cloud-openclaw",
           workflow: VITEST_SCENARIO_WORKFLOW,
+          selectorType: "scenario",
           required: true,
           reason: "primary",
           dispatchCommand: "gh ...",
@@ -321,6 +489,7 @@ describe("Vitest E2E scenario advisor — normalization contract", () => {
         {
           id: "ubuntu-repo-cloud-openclaw",
           workflow: VITEST_SCENARIO_WORKFLOW,
+          selectorType: "scenario",
           required: false,
           reason: "duplicate fallback",
           dispatchCommand: "gh ...",
@@ -328,6 +497,7 @@ describe("Vitest E2E scenario advisor — normalization contract", () => {
         {
           id: "ubuntu-repo-docker-post-reboot-recovery",
           workflow: VITEST_SCENARIO_WORKFLOW,
+          selectorType: "scenario",
           required: false,
           reason: "adjacent",
           dispatchCommand: "gh ...",
@@ -387,6 +557,7 @@ describe("Vitest E2E scenario advisor — summary and comment rendering", () => 
         {
           id: "e2e-scenarios-all",
           workflow: VITEST_SCENARIO_WORKFLOW,
+          selectorType: "all",
           required: true,
           reason: "scenario workflow changed",
           dispatchCommand: canonicalDispatchCommand(VITEST_SCENARIO_WORKFLOW, "e2e-scenarios-all"),

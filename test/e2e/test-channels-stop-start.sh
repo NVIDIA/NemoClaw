@@ -18,13 +18,13 @@
 #
 # Prerequisites:
 #   - Docker running
-#   - NVIDIA_API_KEY set
+#   - NVIDIA_INFERENCE_API_KEY set
 #   - NEMOCLAW_NON_INTERACTIVE=1
 #   - NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1
 #
 # Usage:
 #   NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
-#     NVIDIA_API_KEY=nvapi-... bash test/e2e/test-channels-stop-start.sh
+#     NVIDIA_INFERENCE_API_KEY=nvapi-... bash test/e2e/test-channels-stop-start.sh
 
 set -uo pipefail
 
@@ -298,7 +298,6 @@ channel_presence() {
 dump_channel_state() {
   info "registry.messaging.plan.channels: $(node -e 'const fs=require("fs"); const [p,n]=process.argv.slice(1); const r=fs.existsSync(p)?JSON.parse(fs.readFileSync(p,"utf8")):{}; const c=r.sandboxes?.[n]?.messaging?.plan?.channels; process.stdout.write(JSON.stringify(Array.isArray(c)?c.map((x)=>x?.channelId):null));' "$REGISTRY" "$ACTIVE_SANDBOX" 2>/dev/null || echo null)"
   info "registry.messaging.plan.disabledChannels: $(node -e 'const fs=require("fs"); const [p,n]=process.argv.slice(1); const r=fs.existsSync(p)?JSON.parse(fs.readFileSync(p,"utf8")):{}; process.stdout.write(JSON.stringify(r.sandboxes?.[n]?.messaging?.plan?.disabledChannels ?? null));' "$REGISTRY" "$ACTIVE_SANDBOX" 2>/dev/null || echo null)"
-  info "registry.providerCredentialHashes: $(registry_field providerCredentialHashes)"
   if [ "$ACTIVE_AGENT" = "openclaw" ]; then
     info "openclaw.json channels:"
     sandbox_exec "python3 -c 'import json; print(list(json.load(open(\"/sandbox/.openclaw/openclaw.json\")).get(\"channels\", {}).keys()))' 2>&1" | head -10 || true
@@ -472,13 +471,8 @@ const credentialBindings = Array.isArray(plan.credentialBindings) ? plan.credent
 if (channelId !== "whatsapp" && !credentialBindings.some((entry) => entry?.channelId === channelId)) {
   fail(channelId + " credential binding missing from messaging.plan");
 }
-const agentRender = Array.isArray(plan.agentRender) ? plan.agentRender : [];
-const buildSteps = Array.isArray(plan.buildSteps) ? plan.buildSteps : [];
-const hasAgentRender = agentRender.some((entry) => entry?.channelId === channelId && entry?.agent === agent);
-const hasBuildStep = buildSteps.some((entry) => entry?.channelId === channelId);
-if (!hasAgentRender && !hasBuildStep) {
-  fail(channelId + " " + agent + " render/build-step entry missing from messaging.plan");
-}
+if (Object.hasOwn(plan, "agentRender")) fail("messaging.plan.agentRender should not be persisted");
+if (channels.some((item) => item && Object.hasOwn(item, "hooks"))) fail("messaging.plan.channels hooks should not be persisted");
 ' "$REGISTRY" "$ACTIVE_SANDBOX" "$ACTIVE_AGENT" "$channel" "$expected" 2>&1)"; then
       msg="${ACTIVE_AGENT}/${channel}: host registry messaging.plan has channel ${expected} ${context}"
       pass_msg "$msg"
@@ -831,12 +825,12 @@ run_agent_scenario() {
 
 section "Phase 0: Prerequisites"
 
-if [ -z "${NVIDIA_API_KEY:-}" ]; then
-  msg="C0: NVIDIA_API_KEY is required"
+if [ -z "${NVIDIA_INFERENCE_API_KEY:-}" ]; then
+  msg="C0: NVIDIA_INFERENCE_API_KEY is required"
   fail_msg "$msg"
   print_summary
 fi
-msg="C0: NVIDIA_API_KEY is set"
+msg="C0: NVIDIA_INFERENCE_API_KEY is set"
 pass_msg "$msg"
 
 if [ "${NEMOCLAW_NON_INTERACTIVE:-}" != "1" ]; then

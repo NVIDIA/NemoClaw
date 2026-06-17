@@ -270,7 +270,7 @@ export function writePlanToEnv(plan: SandboxMessagingPlan): void {
 }
 
 export function getRegistrySandboxMessagingPlan(sandboxName: string): SandboxMessagingPlan | null {
-  return registry.getSandbox(sandboxName)?.messaging?.plan ?? null;
+  return registry.getHydratedMessagingPlanFromEntry(registry.getSandbox(sandboxName));
 }
 
 function resolveMessagingSetupSandboxName(options: SetupSelectedMessagingChannelsOptions): string {

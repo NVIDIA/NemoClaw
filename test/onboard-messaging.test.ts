@@ -263,9 +263,9 @@ const { createSandbox, setupMessagingChannels } = require(${onboardPath});
       "TELEGRAM_BOT_TOKEN must not be in sandbox env",
     );
     assert.equal(
-      createCommand.env.NVIDIA_API_KEY,
+      createCommand.env.NVIDIA_INFERENCE_API_KEY,
       undefined,
-      "NVIDIA_API_KEY must not be in sandbox env",
+      "NVIDIA_INFERENCE_API_KEY must not be in sandbox env",
     );
     assert.equal(createCommand.env.KUBECONFIG, undefined, "KUBECONFIG must not be in sandbox env");
     assert.equal(
@@ -652,7 +652,6 @@ const { createSandbox } = require(${onboardPath});
       ["discord", "slack"],
     );
     assert.equal(payload.registerCalls[0]?.messagingChannels, undefined);
-    assert.equal(payload.registerCalls[0]?.providerCredentialHashes, undefined);
   });
 
   it("preserves disabled channels in the registry after a recreate so `channels start` can re-enable them (#3381)", {

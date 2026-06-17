@@ -42,6 +42,7 @@ const {
 }: typeof import("./permissive-runtime") = require("./permissive-runtime");
 const { cleanupTempDir } = require("../onboard/temp-files");
 const { verifyShieldsLockState }: typeof import("./verify-lock") = require("./verify-lock");
+const { relockAndReconfirm }: typeof import("./relock-reconfirm") = require("./relock-reconfirm");
 const {
   parseSha256Output,
   isHashVerificationIssue,
@@ -794,12 +795,18 @@ function rollbackShieldsDown(
   let rollbackChattrApplied: boolean | null = null;
   let rollbackFileHashes: { [path: string]: string } | null = null;
   if (rollbackResult.status === 0) {
-    try {
-      const lockResult = lockAgentConfig(sandboxName, target);
-      rollbackChattrApplied = lockResult.chattrApplied;
-      rollbackFileHashes = lockResult.fileHashes;
-    } catch {
-      console.error("  Warning: Rollback re-lock could not be verified. Check config manually.");
+    // Re-confirm after the settle window so a reconciler revert cannot leave
+    // the rolled-back config DRIFTED — same fail-closed treatment as the
+    // auto-restore path. Leaves the hashes null (→ "manual intervention"
+    // below) when the lock will not re-confirm.
+    const relock = relockAndReconfirm(() => lockAgentConfig(sandboxName, target));
+    if (relock.ok && relock.lastResult) {
+      rollbackChattrApplied = relock.lastResult.chattrApplied;
+      rollbackFileHashes = relock.lastResult.fileHashes;
+    } else {
+      console.error(
+        "  Warning: Rollback re-lock could not be re-confirmed. Check config manually.",
+      );
     }
   } else {
     console.error("  Warning: Policy restore failed during rollback.");
@@ -850,17 +857,23 @@ function activateLockdownFromSnapshot(
   }
 
   const target = resolveAgentConfig(sandboxName);
-  try {
-    const lockResult = lockAgentConfig(sandboxName, target);
+  // Re-confirm the lock after a settle window. This restore feeds the
+  // auto-restore inline recovery and the `shields up` snapshot path, both of
+  // which mark shields UP on this result — so a reconciler revert here would
+  // otherwise leave the same DRIFTED state #4663 is about. relockAndReconfirm
+  // fails closed (ok:false) when the lock will not hold past the settle window.
+  const relock = relockAndReconfirm(() => lockAgentConfig(sandboxName, target));
+  if (!relock.ok || !relock.lastResult) {
     return {
-      ok: true,
-      chattrApplied: lockResult.chattrApplied,
-      fileHashes: lockResult.fileHashes,
+      ok: false,
+      error: relock.error ?? "config re-lock did not re-confirm after the settle window",
     };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return { ok: false, error: message };
   }
+  return {
+    ok: true,
+    chattrApplied: relock.lastResult.chattrApplied,
+    fileHashes: relock.lastResult.fileHashes,
+  };
 }
 
 function recoverExpiredAutoRestoreInline(
@@ -1256,15 +1269,20 @@ function shieldsUp(sandboxName: string, opts: { throwOnError?: boolean } = {}): 
     // both cases re-applying the lock rewrites perms and captures a
     // fresh, complete seal.
     console.log(`  Lockdown drifted — re-applying lock for ${sandboxName}...`);
-    let lockResult: { chattrApplied: boolean; fileHashes: { [path: string]: string } };
-    try {
-      lockResult = lockAgentConfig(sandboxName, target);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+    // #4663: re-confirm the lock held after the in-sandbox reconciler settles,
+    // re-applying if it reverts perms. A single re-apply here was also being
+    // reverted on DGX Station / DGX Spark, leaving the sandbox DRIFTED. This
+    // narrows (does not close) the revert window; the chattr +i immutable bit
+    // applied inside lockAgentConfig is the only fully durable defense.
+    const relock = relockAndReconfirm(() => lockAgentConfig(sandboxName, target));
+    if (!relock.ok || !relock.lastResult) {
+      const message = relock.error ?? "Config re-lock did not re-confirm after settle window";
       console.error(`  ERROR: ${message}`);
       console.error("  Config remains drifted — manual intervention required.");
       return failShieldsCommand(message, opts.throwOnError);
     }
+    const lockResult: { chattrApplied: boolean; fileHashes: { [path: string]: string } } =
+      relock.lastResult;
     saveShieldsState(sandboxName, {
       shieldsDown: false,
       chattrApplied: lockResult.chattrApplied,

@@ -24,6 +24,7 @@ import {
 } from "./host-service-reachability";
 import {
   doesModelRouterProcessOwnPort,
+  findModelRouterPidForPort,
   isRouterHealthy,
   stopModelRouterProcess,
 } from "./model-router-process";
@@ -48,7 +49,7 @@ const MODEL_ROUTER_FINGERPRINT_IGNORED_NAMES = new Set([
   "node_modules",
   "venv",
 ]);
-export const DEFAULT_MODEL_ROUTER_CREDENTIAL_ENV = "NVIDIA_API_KEY";
+export const DEFAULT_MODEL_ROUTER_CREDENTIAL_ENV = "NVIDIA_INFERENCE_API_KEY";
 
 export type BlueprintRouterConfig = {
   enabled?: boolean;
@@ -506,9 +507,20 @@ export async function reconcileModelRouter(): Promise<void> {
         routerPort,
       );
     } else {
-      throw new Error(
-        `Port ${routerPort} already has a healthy router endpoint, but its credential state is unknown. Stop the existing model-router process and rerun onboarding.`,
-      );
+      // The recorded PID doesn't own the port (stale session or fresh start).
+      // Try to locate the orphaned router via /proc so we can recover without
+      // requiring a manual stop-and-retry. Only stop it if the cmdline
+      // confirms it is actually model-router proxy — never kill an unrelated
+      // service that happens to occupy the port. See issue #5169.
+      const orphanPid = findModelRouterPidForPort(routerPort);
+      if (orphanPid !== null) {
+        console.log(`  Stopping orphaned model router (PID ${orphanPid})...`);
+        await stopModelRouterProcess(orphanPid, routerPort);
+      } else {
+        throw new Error(
+          `Port ${routerPort} already has a healthy router endpoint, but its credential state is unknown. Stop the existing model-router process and rerun onboarding.`,
+        );
+      }
     }
   }
 

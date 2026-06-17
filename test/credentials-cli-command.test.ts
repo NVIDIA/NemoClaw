@@ -245,6 +245,8 @@ describe("credentials oclif commands", () => {
 
     expect(output.stderr).toContain("per-sandbox messaging bridge");
     expect(output.stderr).toContain("channels remove");
+    expect(output.stderr).toContain("channels remove <channel>");
+    expect(output.stderr).not.toContain("channels remove <discord");
   });
 
   it("explains provider-name usage when reset receives an env var name", async () => {
@@ -254,10 +256,10 @@ describe("credentials oclif commands", () => {
     const { CredentialsResetCommand } = loadCommands();
 
     const output = await captureOutput(() =>
-      expectExitCode(() => CredentialsResetCommand.run(["NVIDIA_API_KEY", "--yes"]), 1),
+      expectExitCode(() => CredentialsResetCommand.run(["NVIDIA_INFERENCE_API_KEY", "--yes"]), 1),
     );
 
-    expect(output.stderr).toContain("Could not remove provider 'NVIDIA_API_KEY'.");
+    expect(output.stderr).toContain("Could not remove provider 'NVIDIA_INFERENCE_API_KEY'.");
     expect(output.stderr).toContain("looks like a credential env variable name");
     expect(output.stderr).toContain("provider not found");
   });

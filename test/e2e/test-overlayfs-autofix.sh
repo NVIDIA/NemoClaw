@@ -18,7 +18,7 @@
 # needs entry in the same PR that deletes src/lib/cluster-image-patch.ts.
 #
 # Test phases:
-#   1. Prerequisites — Docker running, NVIDIA_API_KEY, sudo, etc.
+#   1. Prerequisites — Docker running, NVIDIA_INFERENCE_API_KEY, sudo, etc.
 #   2. Setup — flip /etc/docker/daemon.json to enable containerd-snapshotter,
 #      restart Docker, verify the conflict config is active. Auto-skip on
 #      runners whose Docker does not support the feature flag.
@@ -46,12 +46,12 @@
 #   - Docker installed (any version that supports `features.containerd-snapshotter`,
 #     i.e. Docker 23+; the test skips cleanly on older versions)
 #   - Passwordless sudo (for editing /etc/docker/daemon.json + restarting Docker)
-#   - NVIDIA_API_KEY set (real key; required by install.sh)
+#   - NVIDIA_INFERENCE_API_KEY set (real key; required by install.sh)
 #
 # Environment variables:
 #   NEMOCLAW_NON_INTERACTIVE=1                — required
 #   NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1    — required
-#   NVIDIA_API_KEY                            — required
+#   NVIDIA_INFERENCE_API_KEY                            — required
 #   NEMOCLAW_SANDBOX_NAME                     — sandbox name (default: e2e-overlayfs)
 #   NEMOCLAW_E2E_TIMEOUT_SECONDS              — overall timeout (default: 1500)
 #   NEMOCLAW_OVERLAYFS_E2E_NEGATIVE_TIMEOUT   — negative-phase k3s wait (default: 300)
@@ -59,7 +59,7 @@
 # Usage:
 #   NEMOCLAW_NON_INTERACTIVE=1 \
 #   NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
-#   NVIDIA_API_KEY=nvapi-... \
+#   NVIDIA_INFERENCE_API_KEY=... \
 #     bash test/e2e/test-overlayfs-autofix.sh
 
 # ShellCheck cannot see EXIT trap invocations of cleanup helpers in this E2E script.
@@ -70,6 +70,8 @@ export NEMOCLAW_E2E_DEFAULT_TIMEOUT=1500
 SCRIPT_DIR_TIMEOUT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # shellcheck source=test/e2e/e2e-timeout.sh
 source "${SCRIPT_DIR_TIMEOUT}/e2e-timeout.sh"
+# shellcheck source=test/e2e/lib/ci-compatible-inference.sh
+. "${SCRIPT_DIR_TIMEOUT}/lib/ci-compatible-inference.sh"
 
 PASS=0
 FAIL=0
@@ -127,6 +129,7 @@ ONBOARD_LOG_NEGATIVE="/tmp/nemoclaw-e2e-onboard-negative.log"
 # shellcheck source=test/e2e/lib/sandbox-teardown.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox-teardown.sh"
 register_sandbox_for_teardown "$SANDBOX_NAME"
+nemoclaw_e2e_configure_compatible_inference || exit 1
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
@@ -172,10 +175,7 @@ else
   exit 1
 fi
 
-if [ -n "${NVIDIA_API_KEY:-}" ] && [[ "${NVIDIA_API_KEY}" == nvapi-* ]]; then
-  pass "NVIDIA_API_KEY is set"
-else
-  fail "NVIDIA_API_KEY not set or invalid"
+if ! nemoclaw_e2e_require_hosted_inference_key; then
   exit 1
 fi
 

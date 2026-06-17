@@ -8,6 +8,7 @@ import { describe, it } from "vitest";
 import {
   findAvailableDashboardPort,
   findDashboardForwardOwner,
+  getRegistryOccupiedDashboardPorts,
   preflightDashboardPortRangeAvailability,
   resolveCreateSandboxDashboardPort,
 } from "../../../dist/lib/onboard/dashboard-port";
@@ -214,6 +215,111 @@ describe("resolveCreateSandboxDashboardPort", () => {
 
     assert.equal(result.preferredPort, 19000);
     assert.equal(result.chatUiUrl, "http://127.0.0.1:19000");
+  });
+});
+
+describe("findAvailableDashboardPort multi-gateway registry occupancy", () => {
+  const stubBound = (...bound: number[]) => {
+    const set = new Set(bound);
+    return (port: number) => set.has(port);
+  };
+
+  it("treats ports persisted to sibling sandboxes in the registry as occupied even when the active gateway's forward list does not see them", () => {
+    const registryOccupied = new Map<string, string>([["18789", "instance-a"]]);
+
+    assert.equal(
+      findAvailableDashboardPort("instance-b", 18789, "", stubBound(), registryOccupied),
+      18790,
+    );
+  });
+
+  it("does not block the current sandbox from reusing its own registry-persisted port", () => {
+    const registryOccupied = new Map<string, string>([["18789", "instance-a"]]);
+
+    assert.equal(
+      findAvailableDashboardPort("instance-a", 18789, "", stubBound(), registryOccupied),
+      18789,
+    );
+  });
+
+  it("ignores registry entries with null or invalid dashboard ports", () => {
+    const noPorts = new Map<string, string>();
+
+    assert.equal(findAvailableDashboardPort("instance-b", 18789, "", stubBound(), noPorts), 18789);
+  });
+
+  it("includes registry-owned ports in the exhaustion error so the operator can see who holds them", () => {
+    const lines = ["SANDBOX  BIND  PORT  PID  STATUS"];
+    for (let p = 18789; p <= 18798; p++) {
+      lines.push(`forwarded${p}    127.0.0.1  ${p}  ${p}  running`);
+    }
+    const registryOccupied = new Map<string, string>([["18799", "instance-z"]]);
+
+    assert.throws(
+      () =>
+        findAvailableDashboardPort(
+          "instance-y",
+          18789,
+          lines.join("\n"),
+          stubBound(),
+          registryOccupied,
+        ),
+      /18799 → instance-z/,
+    );
+  });
+
+  it("lets the active gateway's forward-list entry win when both views see the same port", () => {
+    const forwardList = [
+      "SANDBOX  BIND  PORT  PID  STATUS",
+      "live     127.0.0.1  18789  111  running",
+    ].join("\n");
+    const registryOccupied = new Map<string, string>([["18789", "stale"]]);
+
+    assert.throws(
+      () => findAvailableDashboardPort("fresh", 18789, forwardList, () => true, registryOccupied),
+      /18789 → live/,
+    );
+  });
+});
+
+describe("getRegistryOccupiedDashboardPorts", () => {
+  it("returns a port→sandbox map for every sibling sandbox with a persisted dashboard port", () => {
+    const occupied = getRegistryOccupiedDashboardPorts("current", () => ({
+      sandboxes: [
+        { name: "alpha", dashboardPort: 18789 },
+        { name: "beta", dashboardPort: 18790 },
+        { name: "current", dashboardPort: 18791 },
+      ],
+    }));
+
+    assert.equal(occupied.size, 2);
+    assert.equal(occupied.get("18789"), "alpha");
+    assert.equal(occupied.get("18790"), "beta");
+    assert.equal(occupied.has("18791"), false);
+  });
+
+  it("skips sandboxes with null, undefined, or non-numeric dashboardPort values", () => {
+    const occupied = getRegistryOccupiedDashboardPorts("current", () => ({
+      sandboxes: [
+        { name: "alpha", dashboardPort: null },
+        { name: "beta", dashboardPort: undefined },
+        { name: "gamma" },
+        { name: "delta", dashboardPort: 18790 },
+      ],
+    }));
+
+    assert.equal(occupied.size, 1);
+    assert.equal(occupied.get("18790"), "delta");
+  });
+
+  it("propagates registry read errors so the allocator does not silently hand out a colliding port", () => {
+    assert.throws(
+      () =>
+        getRegistryOccupiedDashboardPorts("current", () => {
+          throw new Error("registry locked");
+        }),
+      /registry locked/,
+    );
   });
 });
 

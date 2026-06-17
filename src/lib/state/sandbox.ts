@@ -32,6 +32,7 @@ import type { AgentStateFile } from "../agent/defs.js";
 import { loadAgent } from "../agent/defs.js";
 import { isRecord, type UnknownRecord } from "../core/json-types.js";
 import { shellQuote } from "../runner.js";
+import { createTempSshConfig } from "../sandbox/temp-ssh-config.js";
 import { isSensitiveFile, sanitizeConfigFile } from "../security/credential-filter.js";
 import {
   buildOpenClawConfigRestoreInputFromSandbox,
@@ -477,12 +478,6 @@ function getSshConfig(sandboxName: string): string | null {
   return result.output;
 }
 
-function writeTempSshConfig(sshConfig: string): string {
-  const tmpFile = path.join(os.tmpdir(), `nemoclaw-state-${process.pid}-${Date.now()}.conf`);
-  writeFileSync(tmpFile, sshConfig, { mode: 0o600 });
-  return tmpFile;
-}
-
 function sshArgs(configFile: string, sandboxName: string): string[] {
   return [
     "-F",
@@ -884,7 +879,7 @@ function backupStateFile(
   return "backed_up";
 }
 
-function buildStateFileRestoreCommand(
+export function buildStateFileRestoreCommand(
   dir: string,
   spec: StateFileSpec,
   refreshOpenClawConfigHash = false,
@@ -913,11 +908,34 @@ function buildStateFileRestoreCommand(
     '[ ! -L "$dst" ] || { echo "refusing symlinked state target: $dst" >&2; exit 11; }',
     'mkdir -p "$parent"',
     'tmp="$(mktemp "${parent}/.nemoclaw-restore.XXXXXX")"',
-    "trap 'rm -f \"$tmp\"' EXIT",
+    'trap \'rm -f "$tmp" "${anchor_tmp:-}"\' EXIT',
     'cat > "$tmp"',
     'chmod 640 "$tmp"',
-    'mv -f "$tmp" "$dst"',
   ];
+
+  if (refreshOpenClawConfigHash) {
+    // OpenClaw guards openclaw.json with a `.last-good` recovery anchor: on its
+    // config-integrity check it archives any live config that differs from
+    // `.last-good` as `openclaw.json.clobbered.*` and reverts to `.last-good`.
+    // The rebuild restore writes the merged user config directly, so without
+    // refreshing the anchor OpenClaw reverts the restored config back to the
+    // freshly generated baseline captured at first boot (issue #5202). Refresh
+    // the anchor from the staged temp BEFORE swapping the live file so the
+    // integrity watcher never observes a config that disagrees with it. Stage
+    // through a temp + atomic rename and fail closed (before the live swap) so
+    // a partial/failed anchor write never leaves a stale recovery target that
+    // would let OpenClaw revert the restored config.
+    steps.push(
+      'last_good="${dst}.last-good"',
+      '[ ! -L "$last_good" ] || { echo "refusing symlinked last-good target: $last_good" >&2; exit 13; }',
+      'anchor_tmp="$(mktemp "${parent}/.nemoclaw-lastgood.XXXXXX")" || { echo "failed to stage last-good anchor" >&2; exit 14; }',
+      'cat "$tmp" > "$anchor_tmp" || { echo "failed to write last-good anchor" >&2; exit 14; }',
+      'chmod 660 "$anchor_tmp" 2>/dev/null || true',
+      'mv -f "$anchor_tmp" "$last_good" || { echo "failed to install last-good anchor" >&2; exit 14; }',
+    );
+  }
+
+  steps.push('mv -f "$tmp" "$dst"');
 
   if (refreshOpenClawConfigHash) {
     steps.push(
@@ -1112,7 +1130,8 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
   }
   _log(`SSH config obtained (${sshConfig.length} bytes)`);
 
-  const configFile = writeTempSshConfig(sshConfig);
+  const tempSshConfig = createTempSshConfig(sshConfig, "nemoclaw-state-");
+  const configFile = tempSshConfig.file;
   try {
     if (stateDirs.length > 0) {
       // Build tar command that only includes existing directories.
@@ -1336,7 +1355,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
     }
   } finally {
     try {
-      require("node:fs").unlinkSync(configFile);
+      tempSshConfig.cleanup();
     } catch {
       /* ignore */
     }
@@ -1441,7 +1460,8 @@ export function restoreSandboxState(sandboxName: string, backupPath: string): Re
     };
   }
 
-  const configFile = writeTempSshConfig(sshConfig);
+  const tempSshConfig = createTempSshConfig(sshConfig, "nemoclaw-state-");
+  const configFile = tempSshConfig.file;
   try {
     if (localDirs.length > 0) {
       // Upload via tar pipe
@@ -1578,7 +1598,7 @@ export function restoreSandboxState(sandboxName: string, backupPath: string): Re
     }
   } finally {
     try {
-      require("node:fs").unlinkSync(configFile);
+      tempSshConfig.cleanup();
     } catch {
       /* ignore */
     }

@@ -8,6 +8,7 @@ import path from "node:path";
 
 import { dockerSpawnSync } from "../../adapters/docker/exec";
 import { type AgentBranding, getAgentBranding } from "../../cli/branding";
+import { isStdinTty, readLineFromStdin } from "../../core/stdin";
 import { sleepMs } from "../../core/wait";
 import {
   defaultUninstallPaths,
@@ -16,6 +17,7 @@ import {
   type UninstallPaths,
 } from "../../domain/uninstall/paths";
 import { buildUninstallPlan, type UninstallPlan } from "../../domain/uninstall/plan";
+import { isModelRouterCommandLineForPort } from "../../onboard/model-router-process";
 import { stopHostGatewayProcesses } from "../../onboard/host-gateway-process";
 import { stopStaleDashboardListeners } from "../../onboard/stale-gateway-cleanup";
 import { classifyShimPath, type FileSystemDeps } from "./plan";
@@ -90,23 +92,6 @@ function defaultCommandExists(command: string, env: NodeJS.ProcessEnv): boolean 
     }
   }
   return false;
-}
-
-function defaultReadLine(): string | null {
-  const chunks: Buffer[] = [];
-  const byte = Buffer.alloc(1);
-  while (true) {
-    let bytesRead = 0;
-    try {
-      bytesRead = fs.readSync(0, byte, 0, 1, null);
-    } catch {
-      return chunks.length > 0 ? Buffer.concat(chunks).toString("utf-8") : null;
-    }
-    if (bytesRead === 0 || byte[0] === 10) break;
-    chunks.push(Buffer.from(byte));
-  }
-  if (chunks.length === 0) return null;
-  return Buffer.concat(chunks).toString("utf-8").replace(/\r$/, "");
 }
 
 function splitNonEmptyLines(output: string): string[] {
@@ -254,7 +239,9 @@ function buildRuntime(deps: UninstallRunDeps): UninstallRuntime {
     env,
     error: deps.error ?? ((message) => console.error(message)),
     existsSync: deps.existsSync ?? ((target) => fs.existsSync(target)),
-    isTty: deps.isTty ?? !!process.stdin.isTTY,
+    // Side-effect-free TTY check + EAGAIN-tolerant reader; the
+    // process.stdin/non-blocking-fd hazard is documented in core/stdin.ts.
+    isTty: deps.isTty ?? isStdinTty(),
     kill:
       deps.kill ??
       ((pid, signal) => {
@@ -266,7 +253,7 @@ function buildRuntime(deps: UninstallRunDeps): UninstallRuntime {
         }
       }),
     log: deps.log ?? ((message) => console.log(message)),
-    readLine: deps.readLine ?? defaultReadLine,
+    readLine: deps.readLine ?? readLineFromStdin,
     rmSync: deps.rmSync ?? fs.rmSync,
     run: deps.run ?? defaultRun,
     runDocker: deps.runDocker ?? defaultRunDocker,
@@ -311,6 +298,11 @@ function confirm(options: UninstallRunOptions, runtime: UninstallRuntime): boole
   runtime.log("Proceed? [y/N]");
   const reply = runtime.readLine();
   if (reply && /^(y|yes)$/i.test(reply.trim())) return true;
+  if (reply === null) {
+    runtime.log(
+      "No input available on stdin (closed or non-interactive); re-run with --yes to skip this prompt.",
+    );
+  }
   runtime.log("Aborted.");
   return false;
 }
@@ -488,6 +480,87 @@ function stopOllamaAuthProxy(paths: UninstallPaths, runtime: UninstallRuntime): 
   }
 
   if (stopped.size === 0) runtime.log("No Ollama auth proxy processes found");
+}
+
+const DEFAULT_MODEL_ROUTER_PORT = 4000;
+
+function resolveModelRouterPort(_runtime: UninstallRuntime): number {
+  // Routed onboard profiles use blueprint port 4000 by default; a custom port
+  // would require reading the blueprint, which uninstall does not do today.
+  return DEFAULT_MODEL_ROUTER_PORT;
+}
+
+function readOnboardSessionRouterPid(paths: UninstallPaths): number | null {
+  const sessionFile = path.join(paths.nemoclawStateDir, "onboard-session.json");
+  try {
+    const raw = fs.readFileSync(sessionFile, "utf-8");
+    const data = JSON.parse(raw) as { routerPid?: unknown };
+    const pid = data.routerPid;
+    if (typeof pid === "number" && Number.isInteger(pid) && pid > 0) return pid;
+  } catch {
+    /* ignore — State step deletes the file shortly anyway */
+  }
+  return null;
+}
+
+function isModelRouterPid(pid: number, port: number, runtime: UninstallRuntime): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  if (!pidExists(pid, runtime)) return false;
+  const result = runtime.run("ps", ["-p", String(pid), "-o", "args="], { env: runtime.env });
+  if (result.status !== 0) return false;
+  const args = result.stdout.trim().split(/\s+/).filter(Boolean);
+  return isModelRouterCommandLineForPort(args, port);
+}
+
+function tryStopModelRouterPid(pid: number, runtime: UninstallRuntime): boolean {
+  runtime.kill(pid);
+  if (waitForPidExit(pid, runtime, 1000)) {
+    runtime.log(`Stopped model router ${pid}`);
+    return true;
+  }
+  runtime.kill(pid, "SIGKILL");
+  if (waitForPidExit(pid, runtime, 1000)) {
+    runtime.log(`Stopped model router ${pid}`);
+    return true;
+  }
+  runtime.warn(`Failed to stop model router ${pid}`);
+  return false;
+}
+
+function stopModelRouter(paths: UninstallPaths, runtime: UninstallRuntime): void {
+  // The model router is a detached child started during routed onboard that
+  // listens on port 4000 by default. Without this cleanup, uninstall +
+  // reinstall fails with "Port 4000 already has a healthy router endpoint".
+  // The tracked PID lives in ~/.nemoclaw/onboard-session.json (routerPid), not
+  // a dedicated .pid file. Mirrors stopOllamaAuthProxy() and issue #5169.
+  const stopped = new Set<number>();
+  const routerPort = resolveModelRouterPort(runtime);
+
+  const recordedPid = readOnboardSessionRouterPid(paths);
+  if (
+    recordedPid !== null &&
+    pidOwnedByCurrentUser(recordedPid, runtime) &&
+    isModelRouterPid(recordedPid, routerPort, runtime)
+  ) {
+    if (tryStopModelRouterPid(recordedPid, runtime)) stopped.add(recordedPid);
+  }
+
+  if (!runtime.commandExists("lsof")) {
+    if (stopped.size === 0) {
+      runtime.warn("lsof not found; skipping orphan model router scan.");
+    }
+    return;
+  }
+  const lsof = runtime.run("lsof", ["-ti", `:${routerPort}`], { env: runtime.env });
+  const pids = splitNonEmptyLines(lsof.stdout).map(Number).filter(Number.isFinite);
+  for (const pid of pids) {
+    if (stopped.has(pid)) continue;
+    if (!pidOwnedByCurrentUser(pid, runtime)) continue;
+    if (!isModelRouterPid(pid, routerPort, runtime)) continue;
+    if (tryStopModelRouterPid(pid, runtime)) stopped.add(pid);
+  }
+
+  if (stopped.size === 0) runtime.log("No model router processes found");
 }
 
 function stopOrphanedOpenShell(runtime: UninstallRuntime): void {
@@ -797,6 +870,7 @@ function executePlan(
         { logNoProcesses: true },
       );
       stopOllamaAuthProxy(paths, runtime);
+      stopModelRouter(paths, runtime);
     } else if (step.name === "OpenShell resources") {
       removeOpenShellResources(options, runtime);
     } else if (step.name === "NemoClaw CLI") {

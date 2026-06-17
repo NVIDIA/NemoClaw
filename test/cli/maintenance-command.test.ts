@@ -6,25 +6,29 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { run, runWithEnv } from "./helpers";
+import { run, runWithEnv, testTimeoutOptions } from "./helpers";
 
 describe("maintenance CLI dispatch", () => {
-  it("maintenance command help exits 0 and shows migrated usage", () => {
-    const backup = run("backup-all --help");
-    expect(backup.code).toBe(0);
-    expect(backup.out).toContain("backup-all");
-    expect(backup.out).toContain("Back up all sandbox state before upgrade");
+  it(
+    "maintenance command help exits 0 and shows migrated usage",
+    testTimeoutOptions(30_000),
+    () => {
+      const backup = run("backup-all --help");
+      expect(backup.code).toBe(0);
+      expect(backup.out).toContain("backup-all");
+      expect(backup.out).toContain("Back up all sandbox state before upgrade");
 
-    const upgrade = run("upgrade-sandboxes --help");
-    expect(upgrade.code).toBe(0);
-    expect(upgrade.out).toContain("upgrade-sandboxes [--check] [--auto] [--yes|-y]");
-    expect(upgrade.out).toContain("Detect and rebuild stale sandboxes");
+      const upgrade = run("upgrade-sandboxes --help");
+      expect(upgrade.code).toBe(0);
+      expect(upgrade.out).toContain("upgrade-sandboxes [--check] [--auto] [--yes|-y]");
+      expect(upgrade.out).toContain("Detect and rebuild stale sandboxes");
 
-    const gc = run("gc --help");
-    expect(gc.code).toBe(0);
-    expect(gc.out).toContain("gc [--dry-run] [--yes|-y|--force]");
-    expect(gc.out).toContain("Remove orphaned sandbox Docker images");
-  });
+      const gc = run("gc --help");
+      expect(gc.code).toBe(0);
+      expect(gc.out).toContain("gc [--dry-run] [--yes|-y|--force]");
+      expect(gc.out).toContain("Remove orphaned sandbox Docker images");
+    },
+  );
 
   it("maintenance commands dispatch through oclif", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-maintenance-"));

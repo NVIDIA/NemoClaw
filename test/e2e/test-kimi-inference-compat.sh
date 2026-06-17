@@ -4,15 +4,21 @@
 #
 # Kimi inference compatibility E2E (#2620 / #3046)
 #
-# Hermetic path:
-#   - starts a local OpenAI-compatible mock endpoint
-#   - onboards a fresh sandbox with moonshotai/kimi-k2.6 through inference.local
-#   - the mock emits one combined Kimi exec tool call: hostname; date; uptime
+# Live path:
+#   - uses the public NVIDIA Endpoints provider with moonshotai/kimi-k2.6
+#   - onboards a fresh sandbox through the managed inference.local route
+#   - asks Kimi to exercise exec tool calls
 #   - verifies the NemoClaw Kimi plugin splits it into three exec tool calls
 #   - verifies the trajectory records exactly those three tool executions
 #
+# Hermetic fallback:
+#   - set NEMOCLAW_KIMI_USE_MOCK=1 to use the local OpenAI-compatible mock
+#   - the mock emits one combined Kimi exec tool call: hostname; date; uptime
+#
 # Environment:
 #   NEMOCLAW_SANDBOX_NAME            - sandbox name (default: e2e-kimi-compat)
+#   NVIDIA_API_KEY                   - public NVIDIA Endpoints key (nvapi-*)
+#   NEMOCLAW_KIMI_USE_MOCK=1         - use the hermetic mock fallback
 #   NEMOCLAW_KIMI_MOCK_PORT         - mock endpoint port (default: 18146)
 #   NEMOCLAW_KIMI_MOCK_ENDPOINT_URL - optional endpoint URL for gateway provider
 #   NEMOCLAW_E2E_KEEP_SANDBOX=1     - keep sandbox for debugging
@@ -96,6 +102,21 @@ stop_kimi_mock() {
     wait "$KIMI_MOCK_PID" 2>/dev/null || true
   fi
   KIMI_MOCK_PID=""
+}
+
+use_kimi_mock() {
+  [ "${KIMI_USE_MOCK:-0}" = "1" ]
+}
+
+ensure_public_nvidia_api_key() {
+  if [ -n "${NVIDIA_API_KEY:-}" ] && [[ "${NVIDIA_API_KEY}" == nvapi-* ]]; then
+    # NemoClaw's NVIDIA Endpoints provider still reads NVIDIA_INFERENCE_API_KEY.
+    # Source the public Kimi credential from NVIDIA_API_KEY, then mirror it only
+    # for the shared onboarding/provider-registration path.
+    export NVIDIA_INFERENCE_API_KEY="$NVIDIA_API_KEY"
+    return 0
+  fi
+  return 1
 }
 
 start_kimi_mock() {
@@ -387,14 +408,24 @@ run_kimi_onboard() {
   export NEMOCLAW_NON_INTERACTIVE=1
   export NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1
   export NEMOCLAW_YES=1
-  export NEMOCLAW_PROVIDER=custom
-  export NEMOCLAW_ENDPOINT_URL="$KIMI_ENDPOINT_URL"
   export NEMOCLAW_MODEL="$KIMI_MODEL"
   export NEMOCLAW_PREFERRED_API=openai-completions
   export NEMOCLAW_POLICY_TIER=restricted
   export NEMOCLAW_POLICY_MODE=skip
-  export COMPATIBLE_API_KEY="$KIMI_MOCK_API_KEY"
-  unset NVIDIA_API_KEY OPENAI_API_KEY ANTHROPIC_API_KEY GEMINI_API_KEY
+  if use_kimi_mock; then
+    export NEMOCLAW_PROVIDER=custom
+    export NEMOCLAW_ENDPOINT_URL="$KIMI_ENDPOINT_URL"
+    export COMPATIBLE_API_KEY="$KIMI_MOCK_API_KEY"
+    unset NVIDIA_INFERENCE_API_KEY NVIDIA_API_KEY OPENAI_API_KEY ANTHROPIC_API_KEY GEMINI_API_KEY
+  else
+    export NEMOCLAW_PROVIDER=cloud
+    unset NEMOCLAW_ENDPOINT_URL NEMOCLAW_COMPAT_MODEL NEMOCLAW_E2E_USE_HOSTED_INFERENCE COMPATIBLE_API_KEY
+    unset OPENAI_API_KEY ANTHROPIC_API_KEY GEMINI_API_KEY
+    if ! ensure_public_nvidia_api_key; then
+      fail "K1: NVIDIA_API_KEY must be a public NVIDIA Endpoints nvapi-* key"
+      summary
+    fi
+  fi
   unset TELEGRAM_BOT_TOKEN DISCORD_BOT_TOKEN SLACK_BOT_TOKEN SLACK_APP_TOKEN
 
   prepare_source_cli || prep_exit=$?
@@ -411,7 +442,11 @@ run_kimi_onboard() {
     >"$ONBOARD_LOG" 2>&1 || onboard_exit=$?
 
   if [ "$onboard_exit" -eq 0 ]; then
-    pass "K1: onboard completed for Kimi compatible endpoint sandbox"
+    if use_kimi_mock; then
+      pass "K1: onboard completed for Kimi compatible endpoint sandbox"
+    else
+      pass "K1: onboard completed for public NVIDIA Kimi sandbox"
+    fi
   else
     fail "K1: onboard failed (exit $onboard_exit)"
     info "Last 100 lines of onboard log:"
@@ -493,7 +528,11 @@ check_inference_route() {
   local response rc=0
   response=$(openshell sandbox exec --name "$SANDBOX_NAME" -- curl -sk --connect-timeout 5 --max-time 20 https://inference.local/v1/models 2>&1) || rc=$?
   if [ "$rc" -eq 0 ] && echo "$response" | grep -q "$KIMI_MODEL"; then
-    pass "K3: sandbox inference.local models route reaches Kimi mock"
+    if use_kimi_mock; then
+      pass "K3: sandbox inference.local models route reaches Kimi mock"
+    else
+      pass "K3: sandbox inference.local models route reaches public NVIDIA Kimi"
+    fi
   else
     fail "K3: sandbox inference.local models route failed (${response:0:400})"
   fi
@@ -639,7 +678,9 @@ assistant_tool_messages = [
     and item.get("message", {}).get("role") == "assistant"
     and any(block.get("type") == "toolCall" for block in item.get("message", {}).get("content", []))
 ]
-source_calls = assistant_tool_messages[-1].get("content", []) if assistant_tool_messages else []
+source_calls = []
+for message in assistant_tool_messages:
+    source_calls.extend(message.get("content", []))
 source_commands = [block.get("arguments", {}).get("command") for block in source_calls]
 messages = [item.get("message", {}) for item in session if item.get("type") == "message"]
 tool_result_indices = [idx for idx, msg in enumerate(messages) if msg.get("role") == "toolResult"]
@@ -709,7 +750,18 @@ SH
   fi
 }
 
-check_mock_observed_agent_traffic() {
+check_upstream_observed_agent_traffic() {
+  if ! use_kimi_mock; then
+    local route rc=0
+    route=$(openshell inference get -g nemoclaw 2>&1 || openshell inference get 2>&1) || rc=$?
+    if [ "$rc" -eq 0 ] && echo "$route" | grep -q "nvidia-prod" && echo "$route" | grep -q "$KIMI_MODEL"; then
+      pass "K6: OpenShell route is public NVIDIA Kimi"
+    else
+      fail "K6: OpenShell route is not public NVIDIA Kimi (${route:0:400})"
+    fi
+    return
+  fi
+
   local stream_count
   stream_count=$(grep -c "POST /v1/chat/completions auth=ok stream=True" "$KIMI_MOCK_LOG" 2>/dev/null || true)
   if [ "$stream_count" -ge 2 ]; then
@@ -735,6 +787,7 @@ else
 fi
 
 SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-kimi-compat}"
+KIMI_USE_MOCK="${NEMOCLAW_KIMI_USE_MOCK:-0}"
 KIMI_MOCK_PORT="${NEMOCLAW_KIMI_MOCK_PORT:-18146}"
 KIMI_MODEL="${NEMOCLAW_KIMI_MODEL:-moonshotai/kimi-k2.6}"
 KIMI_MOCK_API_KEY="${NEMOCLAW_KIMI_MOCK_API_KEY:-fake-kimi-compatible-key-e2e}"
@@ -773,15 +826,27 @@ load_shell_path
 info "Repo: $REPO"
 info "Sandbox: $SANDBOX_NAME"
 info "Model: $KIMI_MODEL"
-info "Mock endpoint URL for gateway: $KIMI_ENDPOINT_URL"
-
-section "Phase 1: Kimi-compatible mock endpoint"
-if start_kimi_mock; then
-  pass "K0: Kimi-compatible mock endpoint started"
+if use_kimi_mock; then
+  info "Mode: hermetic mock"
+  info "Mock endpoint URL for gateway: $KIMI_ENDPOINT_URL"
 else
-  fail "K0: Kimi-compatible mock endpoint failed to start"
-  info "Mock log:"
-  sed 's/^/    /' "$KIMI_MOCK_LOG" 2>/dev/null || true
+  info "Mode: live public NVIDIA Endpoints via nvidia-prod"
+fi
+
+section "Phase 1: Kimi upstream"
+if use_kimi_mock; then
+  if start_kimi_mock; then
+    pass "K0: Kimi-compatible mock endpoint started"
+  else
+    fail "K0: Kimi-compatible mock endpoint failed to start"
+    info "Mock log:"
+    sed 's/^/    /' "$KIMI_MOCK_LOG" 2>/dev/null || true
+    summary
+  fi
+elif ensure_public_nvidia_api_key; then
+  pass "K0: public NVIDIA Endpoints key is available for Kimi"
+else
+  fail "K0: NVIDIA_API_KEY must be a public NVIDIA Endpoints nvapi-* key"
   summary
 fi
 
@@ -793,7 +858,7 @@ check_openclaw_config
 check_inference_route
 run_agent_prompt
 check_trajectory_acceptance
-check_mock_observed_agent_traffic
+check_upstream_observed_agent_traffic
 
 trap - EXIT
 cleanup

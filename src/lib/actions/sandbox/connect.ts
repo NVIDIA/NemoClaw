@@ -26,6 +26,8 @@ import {
 import { findReachableOllamaHost, probeLocalProviderHealth } from "../../inference/local";
 import { ensureOllamaAuthProxy, probeOllamaAuthProxyHealth } from "../../inference/ollama/proxy";
 import { LOCAL_INFERENCE_TIMEOUT_SECS } from "../../onboard/env";
+import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
+import { getSandboxTargetGatewayName } from "./gateway-target";
 import { isWsl } from "../../platform";
 import { ROOT } from "../../runner";
 import * as sandboxVersion from "../../sandbox/version";
@@ -51,10 +53,9 @@ import {
 import { preflightVllmModelEnvOrExit } from "./connect-vllm-preflight";
 import { isDockerRuntimeDown, printDockerRuntimeDownGuidance } from "./gateway-failure-classifier";
 import { ensureLiveSandboxOrExit, printGatewayLifecycleHint } from "./gateway-state";
-import { checkAndRecoverSandboxProcesses } from "./process-recovery";
+import { printGatewayWedgeDiagnostics } from "./gateway-wedge-diagnostics";
+import { checkAndRecoverSandboxProcesses, executeSandboxExecCommand } from "./process-recovery";
 import { applyOpenShellVmDnsMonkeypatch, shouldApplyVmDnsMonkeypatch } from "./vm-dns-monkeypatch";
-
-const NEMOCLAW_GATEWAY_NAME = "nemoclaw";
 
 export type SandboxConnectOptions = {
   probeOnly?: boolean;
@@ -218,6 +219,10 @@ function runSandboxConnectProbe(sandboxName: string): void {
   console.error(
     `  Probe failed: ${agentName} gateway is not running in '${sandboxName}' and automatic recovery failed.`,
   );
+  // Surface the #4710 wedge signature: recovery ran with quiet=true, so this
+  // is the operator's only window into a gateway that served briefly and
+  // then dropped its listener.
+  printGatewayWedgeDiagnostics(sandboxName, executeSandboxExecCommand);
   console.error("  Check /tmp/gateway.log inside the sandbox for details.");
   process.exit(1);
 }
@@ -253,7 +258,9 @@ function failConnectReadinessGatewayUnavailable(sandboxName: string, detailOutpu
     printGatewayLifecycleHint(detailOutput, sandboxName, console.error);
   }
   console.error("  Recovery:");
-  console.error("    1. Run: openshell gateway start --name nemoclaw");
+  console.error(
+    `    1. Run: openshell gateway start --name ${getSandboxTargetGatewayName(sandboxName)}`,
+  );
   console.error(`    2. If the gateway cannot be restarted, run: ${CLI_NAME} onboard`);
   console.error(`    3. Retry: ${CLI_NAME} ${sandboxName} connect`);
   process.exit(1);
@@ -273,7 +280,8 @@ function failConnectReadinessDockerRuntimeDown(sandboxName: string): never {
 }
 
 function failIfGatewayBlocksConnectReadiness(sandboxName: string): void {
-  const lifecycle = getNamedGatewayLifecycleState();
+  const sb = registry.getSandbox(sandboxName);
+  const lifecycle = getNamedGatewayLifecycleState(resolveSandboxGatewayName(sb));
   if (isBlockingGatewayLifecycle(lifecycle)) {
     failConnectReadinessGatewayUnavailable(
       sandboxName,
@@ -512,7 +520,7 @@ function repairSandboxInferenceRouteIfNeeded(
       reapplyVmInferenceRoute,
       repairLegacyDnsProxy: (name, isQuiet) =>
         runSetupDnsProxy(
-          { gatewayName: NEMOCLAW_GATEWAY_NAME, sandboxName: name },
+          { gatewayName: resolveSandboxGatewayName(sb), sandboxName: name },
           { log: isQuiet ? () => undefined : console.log },
         ),
     },

@@ -147,7 +147,7 @@ export function context(
     model: "nvidia/test",
     provider: "nim",
     endpointUrl: "https://example.test/v1",
-    credentialEnv: "NVIDIA_API_KEY",
+    credentialEnv: "NVIDIA_INFERENCE_API_KEY",
     hermesAuthMethod: null,
     hermesToolGateways: ["local"],
     preferredInferenceApi: "chat",
@@ -246,6 +246,7 @@ export function createPhases(
       removeLegacyCredentialsFile: vi.fn(),
       cleanupStaleHostFiles: vi.fn(),
       checkAndRecoverSandboxProcesses: vi.fn(),
+      warmupScopeUpgrade: vi.fn(),
       autoPairScopeApproval: vi.fn(),
       getChatUiUrl: () => "http://127.0.0.1:45123",
       buildVerifyChain: (): DashboardDeliveryChain => ({

@@ -25,6 +25,13 @@ import {
 const { runCapture } = require("../runner");
 type RunCaptureFn = typeof import("../runner").runCapture;
 
+type SandboxRegistryEntry = {
+  name: string;
+  dashboardPort?: number | null;
+};
+
+export type ListSandboxesFn = () => { sandboxes: SandboxRegistryEntry[] };
+
 // Match the broader pattern used by onboard.ts (covers CSI, OSC, and Fe escapes)
 // so colorised `openshell forward list` output parses correctly.
 const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/g;
@@ -150,13 +157,82 @@ export function findDashboardForwardOwner(
   return getOccupiedPorts(forwardListOutput ?? null).get(portToStop) ?? null;
 }
 
+/**
+ * Merge per-gateway forward-list occupancy with cross-gateway registry
+ * occupancy. `openshell forward list` only reports forwards owned by the
+ * currently selected gateway, so a second NemoClaw gateway on a different
+ * `NEMOCLAW_GATEWAY_PORT` cannot see the first gateway's dashboard forwards
+ * and would happily re-allocate the same dashboard port to a fresh sandbox.
+ * The host-level bind probe also misses Docker-mediated forwards on macOS,
+ * which is exactly the scenario reported on multi-instance hosts.
+ *
+ * The registry persists `dashboardPort` per sandbox and lives at host scope
+ * (one file under `~/.nemoclaw/sandboxes.json`), so consulting it during
+ * allocation closes the gap between gateway namespaces without enumerating
+ * forwards across every NemoClaw gateway. The forward-list value still wins
+ * for sandboxes whose forward exists on the currently selected gateway —
+ * the registry view is a supplementary signal for sandboxes whose owning
+ * gateway is not currently selected.
+ */
+function mergeOccupiedPorts(
+  forwardOccupied: Map<string, string>,
+  registryOccupied: ReadonlyMap<string, string> | undefined,
+): Map<string, string> {
+  if (!registryOccupied) return forwardOccupied;
+  for (const [port, sandbox] of registryOccupied.entries()) {
+    if (!forwardOccupied.has(port)) {
+      forwardOccupied.set(port, sandbox);
+    }
+  }
+  return forwardOccupied;
+}
+
+/**
+ * Build a cross-gateway occupancy map (port → owning sandbox name) from the
+ * persisted sandbox registry, excluding the sandbox currently being allocated
+ * for. The registry is the single host-scope view of dashboard ports across
+ * every NemoClaw gateway — `openshell forward list` only knows about the
+ * currently selected gateway's forwards, so a fresh onboard against a second
+ * `NEMOCLAW_GATEWAY_PORT` gateway cannot see the first gateway's allocations
+ * without this view.
+ *
+ * `listSandboxes()` already degrades to an empty registry when
+ * `~/.nemoclaw/sandboxes.json` is missing or unparseable, so this helper does
+ * not need an extra catch-all. Any remaining error (e.g. an unreadable
+ * registry file with the wrong filesystem permissions) propagates so the
+ * allocator surfaces it instead of silently handing out a colliding port.
+ *
+ * `listSandboxesFn` is an injectable seam for tests; production callers
+ * leave it at the default that reads `~/.nemoclaw/sandboxes.json`.
+ */
+export function getRegistryOccupiedDashboardPorts(
+  currentSandboxName: string,
+  listSandboxesFn?: ListSandboxesFn,
+): Map<string, string> {
+  const occupied = new Map<string, string>();
+  const list = listSandboxesFn ?? (require("../state/registry").listSandboxes as ListSandboxesFn);
+  for (const entry of list().sandboxes) {
+    if (entry.name === currentSandboxName) continue;
+    const port = entry.dashboardPort;
+    if (typeof port !== "number" || !Number.isInteger(port) || port <= 0) continue;
+    occupied.set(String(port), entry.name);
+  }
+  return occupied;
+}
+
 export function findAvailableDashboardPort(
   sandboxName: string,
   preferredPort: number,
   forwardListOutput: string | null,
   isPortBoundCheck: (port: number) => boolean = isPortBoundOnHost,
+  // Default to an empty map so unit tests of this allocator do not become
+  // dependent on whatever sandboxes happen to live in the caller's real
+  // `~/.nemoclaw/sandboxes.json`. Production wrappers
+  // (`resolveCreateSandboxDashboardPort`, `ensureDashboardForward`) pass an
+  // explicit `getRegistryOccupiedDashboardPorts(sandboxName)` result.
+  registryOccupiedPorts: ReadonlyMap<string, string> = new Map(),
 ): number {
-  const occupied = getOccupiedPorts(forwardListOutput);
+  const occupied = mergeOccupiedPorts(getOccupiedPorts(forwardListOutput), registryOccupiedPorts);
   const hostBoundPorts: number[] = [];
   // Try the preferred port first (it may be outside the dashboard range when
   // a caller passes --control-ui-port), then the rest of the range. Each port
@@ -204,6 +280,11 @@ export interface CreateSandboxDashboardPortInput {
   defaultPort?: number;
   findAvailablePort?: typeof findAvailableDashboardPort;
   warn?: (message: string) => void;
+  // Cross-gateway occupancy view derived from the sandbox registry. Lets the
+  // allocator avoid handing out a dashboard port that already belongs to a
+  // sandbox on a different `NEMOCLAW_GATEWAY_PORT`, which the per-gateway
+  // forward-list view cannot see.
+  registryOccupiedPorts?: ReadonlyMap<string, string>;
 }
 
 export interface CreateSandboxDashboardPortResult {
@@ -250,10 +331,19 @@ export function resolveCreateSandboxDashboardPort(
     input.agentForwardPort ??
     input.defaultPort ??
     DASHBOARD_PORT;
+  // When a caller does not supply an explicit cross-gateway view, read the
+  // persisted registry here so the allocator never silently hands out a
+  // dashboard port that already belongs to a sibling sandbox on a different
+  // NemoClaw gateway. The allocator itself defaults to an empty map to keep
+  // its unit tests independent of the caller's real `~/.nemoclaw/` state.
+  const registryOccupiedPorts =
+    input.registryOccupiedPorts ?? getRegistryOccupiedDashboardPorts(input.sandboxName);
   const effectivePort = (input.findAvailablePort ?? findAvailableDashboardPort)(
     input.sandboxName,
     preferredPort,
     input.forwardListOutput,
+    undefined,
+    registryOccupiedPorts,
   );
   if (effectivePort !== preferredPort) {
     input.warn?.(`  ! Port ${preferredPort} is taken. Using port ${effectivePort} instead.`);

@@ -136,9 +136,7 @@ function createDeps(
       hydrateMessagingChannelConfig: (config: MessagingChannelConfig | null) => config,
       messagingChannelConfigsEqual: () => true,
       getSandboxReuseState: () => "missing",
-      computeTelegramRequireMention: () => null,
       hasSandboxGpuDrift: () => false,
-      hasWechatConfigDrift: () => false,
       getSandboxHermesToolGateways: () => [],
       normalizeHermesToolGatewaySelections: (value: unknown) =>
         Array.isArray(value) ? (value as string[]) : [],
@@ -292,12 +290,14 @@ describe("handleSandboxState", () => {
     expect(result.selectedMessagingChannels).toEqual(["slack"]);
   });
 
-  it("removes registry state when Telegram mention-mode drift forces sandbox recreation", async () => {
-    const session = createSession({ telegramConfig: { requireMention: true } });
+  it("removes registry state when messaging config drift forces sandbox recreation", async () => {
+    const session = createSession();
     session.steps.sandbox.status = "complete";
     const { deps, calls } = createDeps({
       getSandboxReuseState: () => "ready",
-      computeTelegramRequireMention: () => false,
+      getStoredMessagingChannelConfig: () => ({ TELEGRAM_REQUIRE_MENTION: "1" }),
+      hydrateMessagingChannelConfig: () => ({ TELEGRAM_REQUIRE_MENTION: "0" }),
+      messagingChannelConfigsEqual: () => false,
     });
 
     await handleSandboxState({
@@ -307,7 +307,7 @@ describe("handleSandboxState", () => {
     });
 
     expect(calls.note).toHaveBeenCalledWith(
-      "  [resume] TELEGRAM_REQUIRE_MENTION changed; recreating sandbox.",
+      "  [resume] Messaging channel configuration changed; recreating sandbox.",
     );
     expect(calls.removeSandbox).toHaveBeenCalledWith("saved");
     expect(calls.createSandbox).toHaveBeenCalled();

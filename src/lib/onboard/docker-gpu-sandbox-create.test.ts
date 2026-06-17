@@ -7,7 +7,11 @@ import type {
   DockerGpuPatchFailureContext,
   DockerGpuPatchResult,
 } from "../../../dist/lib/onboard/docker-gpu-patch";
-import { createDockerGpuSandboxCreatePatch } from "../../../dist/lib/onboard/docker-gpu-sandbox-create";
+import { buildSandboxGpuCreateArgs } from "../../../dist/lib/onboard/sandbox-gpu-create";
+import {
+  createDockerGpuSandboxCreatePatch,
+  resolveDockerGpuSandboxCreatePlan,
+} from "../../../dist/lib/onboard/docker-gpu-sandbox-create";
 
 function deferredCreateResult(): DockerGpuPatchResult {
   return {
@@ -218,5 +222,83 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     patch.waitForSupervisorReconnectIfNeeded();
     expect(waitForSupervisor).not.toHaveBeenCalled();
     expect(finalizeBackup).not.toHaveBeenCalled();
+  });
+});
+
+describe("resolveDockerGpuSandboxCreatePlan Docker Desktop WSL handling", () => {
+  it("keeps useDockerGpuPatch=true on Docker Desktop WSL even when NEMOCLAW_DOCKER_GPU_PATCH=0", () => {
+    const originalEnv = process.env.NEMOCLAW_DOCKER_GPU_PATCH;
+    process.env.NEMOCLAW_DOCKER_GPU_PATCH = "0";
+    try {
+      const plan = resolveDockerGpuSandboxCreatePlan(
+        { sandboxGpuEnabled: true },
+        {
+          dockerDriverGateway: true,
+          detectDockerDesktopWsl: () => true,
+        },
+      );
+      expect(plan.useDockerGpuPatch).toBe(true);
+    } finally {
+      if (originalEnv === undefined) delete process.env.NEMOCLAW_DOCKER_GPU_PATCH;
+      else process.env.NEMOCLAW_DOCKER_GPU_PATCH = originalEnv;
+    }
+  });
+
+  it("honors NEMOCLAW_DOCKER_GPU_PATCH=0 when not on Docker Desktop WSL", () => {
+    const originalEnv = process.env.NEMOCLAW_DOCKER_GPU_PATCH;
+    process.env.NEMOCLAW_DOCKER_GPU_PATCH = "0";
+    try {
+      const plan = resolveDockerGpuSandboxCreatePlan(
+        { sandboxGpuEnabled: true },
+        {
+          dockerDriverGateway: true,
+          detectDockerDesktopWsl: () => false,
+        },
+      );
+      expect(plan.useDockerGpuPatch).toBe(false);
+    } finally {
+      if (originalEnv === undefined) delete process.env.NEMOCLAW_DOCKER_GPU_PATCH;
+      else process.env.NEMOCLAW_DOCKER_GPU_PATCH = originalEnv;
+    }
+  });
+
+  it("suppresses the openshell sandbox create --gpu flag on Docker Desktop WSL when the opt-out is ignored", () => {
+    const originalEnv = process.env.NEMOCLAW_DOCKER_GPU_PATCH;
+    process.env.NEMOCLAW_DOCKER_GPU_PATCH = "0";
+    try {
+      const sandboxGpuConfig = { sandboxGpuEnabled: true };
+      const plan = resolveDockerGpuSandboxCreatePlan(sandboxGpuConfig, {
+        dockerDriverGateway: true,
+        detectDockerDesktopWsl: () => true,
+      });
+      expect(plan.useDockerGpuPatch).toBe(true);
+      const createArgs = buildSandboxGpuCreateArgs(sandboxGpuConfig, {
+        suppressGpuFlag: plan.useDockerGpuPatch,
+      });
+      expect(createArgs).toEqual([]);
+    } finally {
+      if (originalEnv === undefined) delete process.env.NEMOCLAW_DOCKER_GPU_PATCH;
+      else process.env.NEMOCLAW_DOCKER_GPU_PATCH = originalEnv;
+    }
+  });
+
+  it("emits --gpu when the patch is disabled outside Docker Desktop WSL", () => {
+    const originalEnv = process.env.NEMOCLAW_DOCKER_GPU_PATCH;
+    process.env.NEMOCLAW_DOCKER_GPU_PATCH = "0";
+    try {
+      const sandboxGpuConfig = { sandboxGpuEnabled: true };
+      const plan = resolveDockerGpuSandboxCreatePlan(sandboxGpuConfig, {
+        dockerDriverGateway: true,
+        detectDockerDesktopWsl: () => false,
+      });
+      expect(plan.useDockerGpuPatch).toBe(false);
+      const createArgs = buildSandboxGpuCreateArgs(sandboxGpuConfig, {
+        suppressGpuFlag: plan.useDockerGpuPatch,
+      });
+      expect(createArgs).toEqual(["--gpu"]);
+    } finally {
+      if (originalEnv === undefined) delete process.env.NEMOCLAW_DOCKER_GPU_PATCH;
+      else process.env.NEMOCLAW_DOCKER_GPU_PATCH = originalEnv;
+    }
   });
 });

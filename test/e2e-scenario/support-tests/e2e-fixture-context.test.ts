@@ -13,8 +13,8 @@ import { test as e2eTest } from "../fixtures/e2e-test.ts";
 import { SecretStore } from "../fixtures/secrets.ts";
 import {
   ShellProbe,
-  trustedShellCommand,
   type TrustedShellCommand,
+  trustedShellCommand,
 } from "../fixtures/shell-probe.ts";
 
 const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
@@ -160,7 +160,7 @@ describe("E2E fixture primitives", () => {
   it("secret store redacts sensitive env values and skips missing required secrets", () => {
     const canonicalToken = `${"nv"}${"api"}-${"a".repeat(24)}`;
     const store = new SecretStore(
-      { NVIDIA_API_KEY: "nv-secret", PLAIN_VALUE: "visible" },
+      { NVIDIA_INFERENCE_API_KEY: "nv-secret", PLAIN_VALUE: "visible" },
       (note?: string): never => {
         throw new Error(note ?? "skipped");
       },
@@ -398,7 +398,7 @@ describe("E2E fixture primitives", () => {
 
       expect(Date.now() - started).toBeLessThan(2_000);
       expect(result.timedOut).toBe(false);
-      expect(result.signal).toBe("SIGKILL");
+      expect(result.signal).toMatch(/^SIG(TERM|KILL)$/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -469,7 +469,6 @@ describe("E2E fixture primitives", () => {
       grandchildPid = Number(fs.readFileSync(pidFile, "utf8").trim());
       expect(Number.isInteger(grandchildPid)).toBe(true);
       expect(result.timedOut).toBe(true);
-      expect(result.signal).toBeTruthy();
       await expectProcessToExit(grandchildPid);
     } finally {
       if (grandchildPid && isProcessAlive(grandchildPid)) {

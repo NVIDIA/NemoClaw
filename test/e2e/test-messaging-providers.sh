@@ -36,11 +36,11 @@
 # Prerequisites:
 #   - Docker running
 #   - NemoClaw installed (install.sh or brev-setup.sh already ran)
-#   - NVIDIA_API_KEY set
+#   - NVIDIA_INFERENCE_API_KEY set
 #   - openshell on PATH
 #
 # Environment variables:
-#   NVIDIA_API_KEY                         — required
+#   NVIDIA_INFERENCE_API_KEY                         — required
 #   NEMOCLAW_NON_INTERACTIVE=1             — required
 #   NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 — required
 #   NEMOCLAW_SANDBOX_NAME                  — sandbox name (default: e2e-msg-provider)
@@ -80,7 +80,7 @@
 #
 # Usage:
 #   NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
-#     NVIDIA_API_KEY=nvapi-... bash test/e2e/test-messaging-providers.sh
+#     NVIDIA_INFERENCE_API_KEY=nvapi-... bash test/e2e/test-messaging-providers.sh
 #
 # See: https://github.com/NVIDIA/NemoClaw/pull/1081
 
@@ -633,11 +633,15 @@ openclaw_message_send_exit_code() {
 # ══════════════════════════════════════════════════════════════════
 section "Phase 0: Prerequisites"
 
-if [ -z "${NVIDIA_API_KEY:-}" ]; then
-  fail "NVIDIA_API_KEY not set"
+if [ -z "${NVIDIA_INFERENCE_API_KEY:-}" ] && [ -n "${NVIDIA_API_KEY:-}" ]; then
+  export NVIDIA_INFERENCE_API_KEY="${NVIDIA_API_KEY}"
+  info "Using legacy NVIDIA_API_KEY as fallback for NVIDIA_INFERENCE_API_KEY"
+fi
+if [ -z "${NVIDIA_INFERENCE_API_KEY:-}" ]; then
+  fail "NVIDIA_INFERENCE_API_KEY not set"
   exit 1
 fi
-pass "NVIDIA_API_KEY is set"
+pass "NVIDIA_INFERENCE_API_KEY is set"
 
 if ! docker info >/dev/null 2>&1; then
   fail "Docker is not running"
@@ -952,17 +956,19 @@ else
   fail "M-WA6b: WhatsApp compact-QR preload has unexpected owner/mode: ${whatsapp_qr_preload_stat} (entrypoint start log: ${entrypoint_start_log_stat}) (#4522)"
 fi
 
-# Assert on the actual NODE_OPTIONS injection line, not just the filename: the
-# filename also appears in the install banner and the literal path assignment,
-# so a filename-only grep would still pass if the `--require` wiring regressed.
-# The guard body is emitted inside a single-quoted heredoc, so the proxy-env
-# file contains the literal token `--require $_whatsapp_qr_compact`. Escape `$`
-# so the host shell does not expand it before sandbox_exec ships the command.
-whatsapp_qr_guard_wiring=$(sandbox_exec "grep -cF -- '--require \$_whatsapp_qr_compact' /tmp/nemoclaw-proxy-env.sh 2>/dev/null || echo 0")
-if [ "${whatsapp_qr_guard_wiring:-0}" -ge 1 ] 2>/dev/null; then
-  pass "M-WA6c: openclaw() guard injects compact-QR preload via NODE_OPTIONS for WhatsApp login (#4522)"
+# Assert on the generic manifest-runtime wiring, not just the filename: the
+# filename also appears in install banners and path assignments. After the
+# messaging manifest migration, WhatsApp contributes a connect preload entry
+# and the shared openclaw() guard reads that list for WhatsApp login.
+whatsapp_qr_connect_list=$(sandbox_exec "grep -cFx -- '/tmp/nemoclaw-whatsapp-qr-compact.js' /tmp/nemoclaw-messaging-connect-preloads.list 2>/dev/null || echo 0")
+whatsapp_qr_connect_export=$(sandbox_exec "grep -cF -- '--require \$_nemoclaw_preload' /tmp/nemoclaw-proxy-env.sh 2>/dev/null || echo 0")
+whatsapp_qr_guard_wiring=$(sandbox_exec "grep -cF -- '_nemoclaw_messaging_connect_node_options' /tmp/nemoclaw-proxy-env.sh 2>/dev/null || echo 0")
+if [ "${whatsapp_qr_connect_list:-0}" -ge 1 ] 2>/dev/null \
+  && [ "${whatsapp_qr_connect_export:-0}" -ge 1 ] 2>/dev/null \
+  && [ "${whatsapp_qr_guard_wiring:-0}" -ge 1 ] 2>/dev/null; then
+  pass "M-WA6c: openclaw() guard injects manifest connect preloads for WhatsApp login (#4522)"
 else
-  fail "M-WA6c: openclaw() guard missing compact-QR preload --require injection for WhatsApp login (#4522)"
+  fail "M-WA6c: openclaw() guard missing manifest connect preload injection for WhatsApp login (#4522)"
 fi
 
 # M-WA6d: Prove the rendered QR SIZE in the real sandbox, not just that the
@@ -1824,11 +1830,11 @@ print(account.get('token', ''))
     skip "M9: No Discord token to check"
   fi
 
-  # M9b: Discord Gateway WebSocket routing uses OpenClaw's managed proxy.
-  # Newer OpenClaw starts its own process-wide managed proxy from the top-level
-  # proxy config, so NemoClaw should not bake a Discord-only account.proxy or
-  # launch its temporary loopback helper. The fake Gateway proof in M13b-M13g
-  # exercises the same OpenShell relay path using the generated proxy config.
+  # M9b: Discord Gateway WebSocket routing uses the per-account proxy.
+  # OpenClaw's Discord gateway client only tunnels when the Discord account
+  # proxy is set, while the top-level managed proxy remains configured for the
+  # rest of the channel stack. The fake Gateway proof in M13b-M13g exercises
+  # the same OpenShell relay path using the generated managed proxy config.
   dc_proxy=$(echo "$channel_json" | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
@@ -1845,10 +1851,10 @@ if proxy.get('enabled') is True:
     print(proxy.get('proxyUrl') or '')
 \"" 2>/dev/null || true)
   expected_managed_proxy="http://${NEMOCLAW_PROXY_HOST:-10.200.0.1}:${NEMOCLAW_PROXY_PORT:-3128}"
-  if [ -n "$dc_token" ] && [ -z "$dc_proxy" ] && [ "$managed_proxy_url" = "$expected_managed_proxy" ]; then
-    pass "M9b: Discord relies on OpenClaw managed proxy config, with no per-account loopback proxy"
+  if [ -n "$dc_token" ] && [ "$dc_proxy" = "$expected_managed_proxy" ] && [ "$managed_proxy_url" = "$expected_managed_proxy" ]; then
+    pass "M9b: Discord uses per-account proxy while OpenClaw managed proxy config remains set"
   elif [ -n "$dc_token" ]; then
-    fail "M9b: Discord proxy wiring wrong; expected account.proxy='' and proxy.proxyUrl='${expected_managed_proxy}' (account.proxy='${dc_proxy}', proxy.proxyUrl='${managed_proxy_url}')"
+    fail "M9b: Discord proxy wiring wrong; expected account.proxy='${expected_managed_proxy}' and proxy.proxyUrl='${expected_managed_proxy}' (account.proxy='${dc_proxy}', proxy.proxyUrl='${managed_proxy_url}')"
   else
     skip "M9b: No Discord channel config to check"
   fi

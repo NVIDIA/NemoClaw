@@ -85,6 +85,34 @@ export const whatsappManifest = {
       },
     },
   ],
+  runtime: {
+    openclaw: {
+      channelName: "whatsapp",
+      visibility: {
+        configKeys: ["whatsapp"],
+        logPatterns: ["whatsapp"],
+      },
+      nodePreloads: [
+        {
+          module: "whatsapp-qr-compact",
+          injectInto: ["connect"],
+          optional: true,
+          installMessage:
+            "[channels] Installing WhatsApp compact-QR renderer (scan-friendly pairing)",
+        },
+      ],
+    },
+  },
+  agentPackages: [
+    {
+      id: "openclawPluginPackage",
+      agent: "openclaw",
+      manager: "openclaw-plugin",
+      spec: "npm:@openclaw/whatsapp@{{openclaw.version}}",
+      pin: true,
+      required: true,
+    },
+  ],
   state: {
     persist: {
       allowedIds: ["allowedIds"],
@@ -96,25 +124,5 @@ export const whatsappManifest = {
       },
     ],
   },
-  hooks: [
-    {
-      id: "whatsapp-openclaw-package-install",
-      phase: "agent-install",
-      handler: "common.staticOutputs",
-      agents: ["openclaw"],
-      outputs: [
-        {
-          id: "openclawPluginPackage",
-          kind: "package-install",
-          required: true,
-          value: {
-            manager: "openclaw-plugin",
-            spec: "npm:@openclaw/whatsapp@{{openclaw.version}}",
-            pin: true,
-          },
-        },
-      ],
-      onFailure: "abort",
-    },
-  ],
+  hooks: [],
 } as const satisfies ChannelManifest;

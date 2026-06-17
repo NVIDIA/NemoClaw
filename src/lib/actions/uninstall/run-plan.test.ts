@@ -7,7 +7,7 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
-import { buildRunPlan, runUninstallPlan, type RunResult } from "./run-plan";
+import { buildRunPlan, type RunResult, runUninstallPlan } from "./run-plan";
 
 function ok(stdout = ""): RunResult {
   return { status: 0, stdout, stderr: "" };
@@ -18,6 +18,10 @@ function notFound(): RunResult {
 }
 
 const PROXY_CMDLINE = "/usr/bin/node /opt/nemoclaw/scripts/ollama-auth-proxy.js\n";
+// Real-world: model-router is a Python venv script so the OS interposes the
+// interpreter — args[0]=python, args[1]=model-router (issue #5169).
+const MODEL_ROUTER_CMDLINE =
+  "/home/test/.nemoclaw/model-router-venv/bin/python /home/test/.nemoclaw/model-router-venv/bin/model-router proxy --port 4000\n";
 
 function psStub(pidStr: string, opts: { exited: Set<number>; cmdline?: string; owner?: string }) {
   return (args: readonly string[]): RunResult | null => {
@@ -77,6 +81,7 @@ describe("uninstall run plan", () => {
         commandExists: () => true,
         env: {
           HOME: "/tmp/nemoclaw-uninstall-test",
+          NEMOCLAW_AGENT: "",
           TMPDIR: "/tmp/nemoclaw-uninstall-test",
         } as NodeJS.ProcessEnv,
         existsSync: () => false,
@@ -206,7 +211,7 @@ describe("uninstall run plan", () => {
     const result = runUninstallPlan(
       { assumeYes: false, deleteModels: false, keepOpenShell: true },
       {
-        env: { HOME: "/tmp/nemoclaw-uninstall-test" } as NodeJS.ProcessEnv,
+        env: { HOME: "/tmp/nemoclaw-uninstall-test", NEMOCLAW_AGENT: "" } as NodeJS.ProcessEnv,
         existsSync: () => false,
         isTty: true,
         log: (line) => logs.push(line),
@@ -239,6 +244,53 @@ describe("uninstall run plan", () => {
     expect(result.exitCode).toBe(0);
     expect(logs).toContain("Aborted.");
     expect(run).not.toHaveBeenCalled();
+  });
+
+  it("explains how to proceed when stdin yields no input at the confirm prompt", () => {
+    const logs: string[] = [];
+    const run = vi.fn();
+    const result = runUninstallPlan(
+      { assumeYes: false, deleteModels: false, keepOpenShell: true },
+      {
+        env: { HOME: "/tmp/nemoclaw-uninstall-test" } as NodeJS.ProcessEnv,
+        log: (line) => logs.push(line),
+        readLine: () => null,
+        run,
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(logs).toContain(
+      "No input available on stdin (closed or non-interactive); re-run with --yes to skip this prompt.",
+    );
+    expect(logs).toContain("Aborted.");
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("builds the default runtime without touching process.stdin (#5188)", () => {
+    const stdinGet = vi.spyOn(process, "stdin", "get");
+    try {
+      const result = runUninstallPlan(
+        { assumeYes: true, deleteModels: false, keepOpenShell: true },
+        {
+          commandExists: () => false,
+          env: { HOME: "/tmp/nemoclaw-uninstall-test" } as NodeJS.ProcessEnv,
+          existsSync: () => false,
+          kill: () => true,
+          log: () => {},
+          rmSync: vi.fn(),
+          run: vi.fn(() => ok()),
+          runDocker: () => ok(""),
+          // isTty/readLine intentionally not injected: the default
+          // isStdinTty/readLineFromStdin pair must never instantiate
+          // process.stdin, which would flip fd 0 non-blocking (#5188).
+        },
+      );
+      expect(result.exitCode).toBe(0);
+      expect(stdinGet).not.toHaveBeenCalled();
+    } finally {
+      stdinGet.mockRestore();
+    }
   });
 
   it("kills the Ollama auth proxy via the persisted PID file (#2759)", () => {
@@ -469,6 +521,195 @@ describe("uninstall run plan", () => {
     expect(logs).toContain("No Ollama auth proxy processes found");
   });
 
+  it("kills the model router via onboard-session routerPid (#5169)", () => {
+    const logs: string[] = [];
+    const killed: number[] = [];
+    const exited = new Set<number>();
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-test-5169-session-"));
+    const stateDir = path.join(tmpHome, ".nemoclaw");
+    const sessionFile = path.join(stateDir, "onboard-session.json");
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(sessionFile, JSON.stringify({ routerPid: 55432 }));
+
+    try {
+      const stub = psStub("55432", { exited, cmdline: MODEL_ROUTER_CMDLINE });
+      const result = runUninstallPlan(
+        { assumeYes: true, deleteModels: false, keepOpenShell: true },
+        {
+          commandExists: () => true,
+          env: { HOME: tmpHome, LOGNAME: "testuser" } as NodeJS.ProcessEnv,
+          existsSync: () => false,
+          isTty: false,
+          kill: (pid, _signal) => {
+            killed.push(pid);
+            exited.add(pid);
+            return true;
+          },
+          log: (line) => logs.push(line),
+          rmSync: vi.fn(),
+          run: (command, args) => {
+            if (command === "ps") {
+              const result = stub(args);
+              if (result) return result;
+            }
+            if (command === "lsof") return ok("");
+            if (args[0] === "-c") return ok("/fake/bin/tool\n");
+            if (args[0] === "-f") return ok("");
+            return ok();
+          },
+          runDocker: () => ok(""),
+        },
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(killed).toContain(55432);
+      expect(logs).toContain("Stopped model router 55432");
+    } finally {
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
+  it("kills an orphan model router via lsof :4000 when onboard-session is gone", () => {
+    const logs: string[] = [];
+    const killed: number[] = [];
+    const exited = new Set<number>();
+    const stub = psStub("55679", { exited, cmdline: MODEL_ROUTER_CMDLINE });
+    const result = runUninstallPlan(
+      { assumeYes: true, deleteModels: false, keepOpenShell: true },
+      {
+        commandExists: () => true,
+        env: {
+          HOME: "/tmp/nemoclaw-uninstall-test-5169-lsof",
+          LOGNAME: "testuser",
+        } as NodeJS.ProcessEnv,
+        existsSync: () => false,
+        isTty: false,
+        kill: (pid, _signal) => {
+          killed.push(pid);
+          exited.add(pid);
+          return true;
+        },
+        log: (line) => logs.push(line),
+        rmSync: vi.fn(),
+        run: (command, args) => {
+          if (command === "lsof" && args[0] === "-ti" && args[1] === ":4000") {
+            return ok("55679\n");
+          }
+          if (command === "lsof" && args[0] === "-ti" && args[1] === ":11435") {
+            return ok("");
+          }
+          if (command === "ps") {
+            const result = stub(args);
+            if (result) return result;
+          }
+          if (args[0] === "-c") return ok("/fake/bin/tool\n");
+          if (args[0] === "-f") return ok("");
+          return ok();
+        },
+        runDocker: () => ok(""),
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(killed).toContain(55679);
+    expect(logs).toContain("Stopped model router 55679");
+  });
+
+  it("never stops a foreign-owned model router on :4000 even if cmdline matches", () => {
+    const logs: string[] = [];
+    const killed: number[] = [];
+    const stub = psStub("77888", {
+      exited: new Set(),
+      owner: "someone-else",
+      cmdline: MODEL_ROUTER_CMDLINE,
+    });
+    const result = runUninstallPlan(
+      { assumeYes: true, deleteModels: false, keepOpenShell: true },
+      {
+        commandExists: () => true,
+        env: {
+          HOME: "/tmp/nemoclaw-uninstall-test-5169-foreign-owner",
+          LOGNAME: "testuser",
+        } as NodeJS.ProcessEnv,
+        existsSync: () => false,
+        isTty: false,
+        kill: (pid) => {
+          killed.push(pid);
+          return true;
+        },
+        log: (line) => logs.push(line),
+        rmSync: vi.fn(),
+        run: (command, args) => {
+          if (command === "lsof" && args[0] === "-ti" && args[1] === ":4000") {
+            return ok("77888\n");
+          }
+          if (command === "lsof" && args[0] === "-ti" && args[1] === ":11435") {
+            return ok("");
+          }
+          if (command === "ps") {
+            const result = stub(args);
+            if (result) return result;
+          }
+          if (args[0] === "-c") return ok("/fake/bin/tool\n");
+          if (args[0] === "-f") return ok("");
+          return ok();
+        },
+        runDocker: () => ok(""),
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(killed).not.toContain(77888);
+    expect(logs).toContain("No model router processes found");
+  });
+
+  it("never kills a process on :4000 whose cmdline is not the model router", () => {
+    const logs: string[] = [];
+    const killed: number[] = [];
+    const stub = psStub("88888", {
+      exited: new Set(),
+      cmdline: "/usr/sbin/nginx -g daemon off;\n",
+    });
+    const result = runUninstallPlan(
+      { assumeYes: true, deleteModels: false, keepOpenShell: true },
+      {
+        commandExists: () => true,
+        env: {
+          HOME: "/tmp/nemoclaw-uninstall-test-5169-foreign-cmdline",
+          LOGNAME: "testuser",
+        } as NodeJS.ProcessEnv,
+        existsSync: () => false,
+        isTty: false,
+        kill: (pid) => {
+          killed.push(pid);
+          return true;
+        },
+        log: (line) => logs.push(line),
+        rmSync: vi.fn(),
+        run: (command, args) => {
+          if (command === "lsof" && args[0] === "-ti" && args[1] === ":4000") {
+            return ok("88888\n");
+          }
+          if (command === "lsof" && args[0] === "-ti" && args[1] === ":11435") {
+            return ok("");
+          }
+          if (command === "ps") {
+            const result = stub(args);
+            if (result) return result;
+          }
+          if (args[0] === "-c") return ok("/fake/bin/tool\n");
+          if (args[0] === "-f") return ok("");
+          return ok();
+        },
+        runDocker: () => ok(""),
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(killed).not.toContain(88888);
+    expect(logs).toContain("No model router processes found");
+  });
+
   it("escalates to SIGKILL and reports failure when SIGTERM is ignored", () => {
     const logs: string[] = [];
     const warnings: string[] = [];
@@ -580,7 +821,14 @@ describe("uninstall run plan", () => {
       { assumeYes: true, deleteModels: false, keepOpenShell: true },
       {
         commandExists: (command) => command !== "docker" && command !== "pgrep",
-        env: { HOME: "/home/test", TMPDIR: "/tmp/test" } as NodeJS.ProcessEnv,
+        // Neutralize NEMOCLAW_NON_INTERACTIVE: the runtime merges the real
+        // process.env, so a developer shell exporting it would silently flip
+        // this interactive scenario onto the non-interactive path.
+        env: {
+          HOME: "/home/test",
+          NEMOCLAW_NON_INTERACTIVE: "",
+          TMPDIR: "/tmp/test",
+        } as NodeJS.ProcessEnv,
         error: (line) => warnings.push(line),
         existsSync: (target) =>
           target === "/swapfile" || target === "/home/test/.nemoclaw/managed_swap",
@@ -664,7 +912,10 @@ describe("uninstall run plan", () => {
           { assumeYes: true, deleteModels: false, keepOpenShell: true },
           {
             commandExists: () => false,
-            env: { HOME: tmpHome } as NodeJS.ProcessEnv,
+            env: {
+              HOME: tmpHome,
+              NEMOCLAW_UNINSTALL_DESTROY_USER_DATA: "",
+            } as NodeJS.ProcessEnv,
             existsSync: tempScopedExistsSync(tmpHome),
             isTty: false,
             log: (line) => logs.push(line),
@@ -735,7 +986,11 @@ describe("uninstall run plan", () => {
           { assumeYes: false, deleteModels: false, keepOpenShell: true },
           {
             commandExists: () => false,
-            env: { HOME: tmpHome } as NodeJS.ProcessEnv,
+            env: {
+              HOME: tmpHome,
+              NEMOCLAW_NON_INTERACTIVE: "",
+              NEMOCLAW_UNINSTALL_DESTROY_USER_DATA: "",
+            } as NodeJS.ProcessEnv,
             existsSync: tempScopedExistsSync(tmpHome),
             isTty: true,
             log: (line) => logs.push(line),
@@ -763,7 +1018,11 @@ describe("uninstall run plan", () => {
           { assumeYes: false, deleteModels: false, keepOpenShell: true },
           {
             commandExists: () => false,
-            env: { HOME: tmpHome } as NodeJS.ProcessEnv,
+            env: {
+              HOME: tmpHome,
+              NEMOCLAW_NON_INTERACTIVE: "",
+              NEMOCLAW_UNINSTALL_DESTROY_USER_DATA: "",
+            } as NodeJS.ProcessEnv,
             existsSync: tempScopedExistsSync(tmpHome),
             isTty: true,
             log: (line) => logs.push(line),
@@ -799,6 +1058,7 @@ describe("uninstall run plan", () => {
             env: {
               HOME: tmpHome,
               NEMOCLAW_NON_INTERACTIVE: "1",
+              NEMOCLAW_UNINSTALL_DESTROY_USER_DATA: "",
             } as NodeJS.ProcessEnv,
             existsSync: tempScopedExistsSync(tmpHome),
             // Simulate a TTY so we exercise the env-var-only branch (the prior
@@ -850,7 +1110,10 @@ describe("uninstall run plan", () => {
           { assumeYes: true, deleteModels: false, keepOpenShell: true },
           {
             commandExists: () => false,
-            env: { HOME: tmpHome } as NodeJS.ProcessEnv,
+            env: {
+              HOME: tmpHome,
+              NEMOCLAW_UNINSTALL_DESTROY_USER_DATA: "",
+            } as NodeJS.ProcessEnv,
             error: (line) => warnings.push(line),
             existsSync: tempScopedExistsSync(tmpHome),
             isTty: false,

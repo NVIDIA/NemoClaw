@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ChannelManifest } from "../../manifest";
-import { WECHAT_PLUGIN_INSTALL_SPEC } from "./hooks/seed-openclaw-account";
 
 export const wechatManifest = {
   schemaVersion: 1,
@@ -108,6 +107,35 @@ export const wechatManifest = {
       },
     },
   ],
+  runtime: {
+    openclaw: {
+      channelName: "openclaw-weixin",
+      visibility: {
+        configKeys: ["openclaw-weixin"],
+        logPatterns: ["wechat", "openclaw-weixin"],
+      },
+      nodePreloads: [
+        {
+          module: "wechat-diagnostics",
+          injectInto: ["boot", "connect"],
+          optional: false,
+          installMessage:
+            "[channels] Installing WeChat diagnostics (provider readiness + inference errors)",
+          installedMessage: "[channels] WeChat diagnostics installed (NODE_OPTIONS updated)",
+        },
+      ],
+    },
+  },
+  agentPackages: [
+    {
+      id: "openclawPluginPackage",
+      agent: "openclaw",
+      manager: "openclaw-plugin",
+      spec: "npm:@tencent-weixin/openclaw-weixin@2.4.3",
+      pin: true,
+      required: true,
+    },
+  ],
   state: {
     persist: {
       wechatConfig: ["accountId", "baseUrl", "userId"],
@@ -133,25 +161,6 @@ export const wechatManifest = {
     ],
   },
   hooks: [
-    {
-      id: "wechat-openclaw-package-install",
-      phase: "agent-install",
-      handler: "common.staticOutputs",
-      agents: ["openclaw"],
-      outputs: [
-        {
-          id: "openclawPluginPackage",
-          kind: "package-install",
-          required: true,
-          value: {
-            manager: "openclaw-plugin",
-            spec: WECHAT_PLUGIN_INSTALL_SPEC,
-            pin: true,
-          },
-        },
-      ],
-      onFailure: "abort",
-    },
     {
       id: "wechat-host-qr",
       phase: "enroll",

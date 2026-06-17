@@ -6,11 +6,11 @@
 // Runs the actual TypeScript script with controlled env vars and asserts on
 // the generated openclaw.json output.
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { buildConfig, main } from "../scripts/generate-openclaw-config.mts";
 import {
@@ -503,13 +503,13 @@ describe("generate-openclaw-config.mts: config generation", () => {
     expect(config.channels.telegram.groups).toBeUndefined();
   });
 
-  it("defaults Telegram groupPolicy to 'open' with no groups stanza when telegramConfig is empty (#3022)", () => {
+  it("defaults Telegram group replies to require mentions when telegramConfig is empty (#3022)", () => {
     const channels = Buffer.from(JSON.stringify(["telegram"])).toString("base64");
     const config = runConfigScript({
       NEMOCLAW_MESSAGING_CHANNELS_B64: channels,
     });
     expect(config.channels.telegram.accounts.default.groupPolicy).toBe("open");
-    expect(config.channels.telegram.groups).toBeUndefined();
+    expect(config.channels.telegram.groups).toEqual({ "*": { requireMention: true } });
   });
 
   it("emits OpenClaw-valid Discord guild allowlist config when guilds are provided", () => {
@@ -613,10 +613,10 @@ describe("generate-openclaw-config.mts: config generation", () => {
       "openshell:resolve:env:DISCORD_BOT_TOKEN",
     );
     expect(config.channels.telegram.accounts.default.proxy).toBe("http://10.200.0.1:3128");
-    expect(config.channels.discord.accounts.default.proxy).toBeUndefined();
+    expect(config.channels.discord.accounts.default.proxy).toBe("http://10.200.0.1:3128");
   });
 
-  it("#3894: routes Discord gateway traffic through OpenClaw's managed proxy", () => {
+  it("#3894: routes Discord gateway traffic through the per-account proxy", () => {
     const channels = Buffer.from(JSON.stringify(["discord"])).toString("base64");
     const config = runConfigScript({
       NEMOCLAW_MESSAGING_CHANNELS_B64: channels,
@@ -633,10 +633,10 @@ describe("generate-openclaw-config.mts: config generation", () => {
       token: "openshell:resolve:env:DISCORD_BOT_TOKEN",
       enabled: true,
     });
-    expect(config.channels.discord.accounts.default.proxy).toBeUndefined();
+    expect(config.channels.discord.accounts.default.proxy).toBe("http://10.201.0.9:43128");
   });
 
-  it("does not write a Discord account proxy when the managed proxy is configured", () => {
+  it("writes the Discord account proxy alongside the managed proxy", () => {
     const channels = Buffer.from(JSON.stringify(["discord"])).toString("base64");
     const config = runConfigScript({
       NEMOCLAW_MESSAGING_CHANNELS_B64: channels,
@@ -644,7 +644,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
     });
 
     expect(config.proxy.proxyUrl).toBe("http://10.200.0.1:43128");
-    expect(config.channels.discord.accounts.default.proxy).toBeUndefined();
+    expect(config.channels.discord.accounts.default.proxy).toBe("http://10.200.0.1:43128");
   });
 
   it("can defer OpenClaw managed proxy config for build-time doctor", () => {
@@ -655,7 +655,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
     });
 
     expect(config.proxy).toBeUndefined();
-    expect(config.channels.discord.accounts.default.proxy).toBeUndefined();
+    expect(config.channels.discord.accounts.default.proxy).toBe("http://10.200.0.1:3128");
   });
 
   it("ignores the OpenShell loopback proxy env var when using OpenClaw managed proxy", () => {
@@ -667,10 +667,10 @@ describe("generate-openclaw-config.mts: config generation", () => {
     });
 
     expect(config.proxy.proxyUrl).toBe("http://10.200.0.1:3128");
-    expect(config.channels.discord.accounts.default.proxy).toBeUndefined();
+    expect(config.channels.discord.accounts.default.proxy).toBe("http://10.200.0.1:3128");
   });
 
-  it("keeps Telegram on the OpenShell proxy while Discord relies on the managed proxy", () => {
+  it("routes both Telegram and Discord through the per-account proxy", () => {
     const channels = Buffer.from(JSON.stringify(["telegram", "discord"])).toString("base64");
     const config = runConfigScript({
       NEMOCLAW_MESSAGING_CHANNELS_B64: channels,
@@ -680,7 +680,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
 
     expect(config.proxy.proxyUrl).toBe("http://10.201.0.9:43128");
     expect(config.channels.telegram.accounts.default.proxy).toBe("http://10.201.0.9:43128");
-    expect(config.channels.discord.accounts.default.proxy).toBeUndefined();
+    expect(config.channels.discord.accounts.default.proxy).toBe("http://10.201.0.9:43128");
   });
 
   it("emits Bolt-shape placeholders for Slack so the SDK's prefix regex passes", () => {
@@ -796,18 +796,17 @@ describe("generate-openclaw-config.mts: config generation", () => {
     expect(config.tools?.web?.search).toBeUndefined();
   });
 
-  it("enables web search when env is '1'", () => {
+  it("enables web search when env is '1' using the current plugin schema", () => {
     const config = runConfigScript({ NEMOCLAW_WEB_SEARCH_ENABLED: "1" });
     expect(config.tools?.toolSearch).toBe(true);
-    expect(config.tools?.web?.search).toEqual({
+    // #5266: apiKey lives under plugins.entries.brave.config (not inline on
+    // tools.web.search) so build-time `openclaw plugins install` validates.
+    expect(config.tools?.web?.search).toEqual({ enabled: true, provider: "brave" });
+    expect(config.plugins?.entries?.brave).toEqual({
       enabled: true,
-      provider: "brave",
-      apiKey: "openshell:resolve:env:BRAVE_API_KEY",
+      config: { webSearch: { apiKey: "openshell:resolve:env:BRAVE_API_KEY" } },
     });
-    expect(config.tools?.web?.fetch).toEqual({
-      enabled: true,
-      useTrustedEnvProxy: true,
-    });
+    expect(config.tools?.web?.fetch).toEqual({ enabled: true, useTrustedEnvProxy: true });
   });
 
   it("omits web search when env is not set", () => {
@@ -877,7 +876,6 @@ describe("generate-openclaw-config.mts: config generation", () => {
   // without "main" present.
 
   const TOOLS_OK = { profile: "minimal", allow: ["read"], deny: ["exec"] };
-  const SUBAGENTS_OK = { maxSpawnDepth: 0 };
 
   function makeExtra(overrides: Record<string, unknown> = {}): Record<string, unknown> {
     return {
@@ -885,7 +883,6 @@ describe("generate-openclaw-config.mts: config generation", () => {
       workspace: "/sandbox/.openclaw/workspace-research",
       agentDir: "/sandbox/.openclaw/agents/research",
       tools: TOOLS_OK,
-      subagents: SUBAGENTS_OK,
       ...overrides,
     };
   }
@@ -1057,27 +1054,28 @@ describe("generate-openclaw-config.mts: config generation", () => {
     );
   });
 
-  it("rejects extras whose subagents.maxSpawnDepth is missing or invalid", () => {
-    expectBuildConfigError(
-      {
-        NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([makeExtra({ subagents: undefined })]),
-      },
-      /\.subagents must be an object/,
-    );
+  it("treats subagents as optional and omits it when absent or empty", () => {
+    const config = runConfigScript({
+      NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([makeExtra()]),
+    });
+    expect(config.agents.list[1]).not.toHaveProperty("subagents");
+  });
+
+  it("rejects per-agent subagents.maxSpawnDepth with a migration hint", () => {
     expectBuildConfigError(
       {
         NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([
-          makeExtra({ subagents: { maxSpawnDepth: -1 } }),
+          makeExtra({ subagents: { maxSpawnDepth: 2 } }),
         ]),
       },
-      /maxSpawnDepth must be a non-negative integer/,
+      /maxSpawnDepth is not accepted per-agent.*defaults\.subagents\.maxSpawnDepth/,
     );
   });
 
-  it("rejects extras when the payload is not an array", () => {
+  it("rejects extras when the payload is neither array nor object", () => {
     expectBuildConfigError(
-      { NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64({ id: "research" }) },
-      /must decode to a JSON array/,
+      { NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64("not-a-list") },
+      /must decode to a JSON array of agent objects or an object with/,
     );
   });
 
@@ -1106,22 +1104,9 @@ describe("generate-openclaw-config.mts: config generation", () => {
   it("rejects extras that smuggle credential-like keys inside subagents", () => {
     expectBuildConfigError(
       {
-        NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([
-          makeExtra({ subagents: { ...SUBAGENTS_OK, token: "x" } }),
-        ]),
+        NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([makeExtra({ subagents: { token: "x" } })]),
       },
       /\.subagents contains unsupported field\(s\): token/,
-    );
-  });
-
-  it("rejects extras with an operator-supplied model override (currently unsupported)", () => {
-    expectBuildConfigError(
-      {
-        NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([
-          makeExtra({ model: { primary: "evil/model" } }),
-        ]),
-      },
-      /contains unsupported field\(s\): model/,
     );
   });
 
@@ -1144,11 +1129,15 @@ describe("generate-openclaw-config.mts: config generation", () => {
   });
 
   it("strips operator entries to the allowlist when writing agents.list", () => {
-    // Even if the operator includes an unrecognised but harmless-looking
-    // field, the validator must drop it before it reaches the baked image.
-    // (The previous test confirms unknown fields fail; this test guards
-    // against an allowlist drift where an unknown field is accepted but a
-    // known one is dropped.)
+    // The validator must drop unknown keys at every nesting level before
+    // they reach the baked image. (The previous tests confirm unknown
+    // fields fail; this test guards against an allowlist drift where an
+    // unknown field is accepted but a known one is dropped.)
+    const subagentsInput = {
+      delegationMode: "prefer",
+      allowAgents: ["analyst"],
+      requireAgentId: true,
+    };
     const config = runConfigScript({
       NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([
         {
@@ -1156,7 +1145,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
           workspace: "/sandbox/.openclaw/workspace-research",
           agentDir: "/sandbox/.openclaw/agents/research",
           tools: TOOLS_OK,
-          subagents: SUBAGENTS_OK,
+          subagents: subagentsInput,
           description: "Researches things",
         },
       ]),
@@ -1166,7 +1155,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
       workspace: "/sandbox/.openclaw/workspace-research",
       agentDir: "/sandbox/.openclaw/agents/research",
       tools: TOOLS_OK,
-      subagents: SUBAGENTS_OK,
+      subagents: subagentsInput,
       description: "Researches things",
     });
   });
@@ -1191,6 +1180,11 @@ describe("generate-openclaw-config.mts: config generation", () => {
     const resolved = list.find((entry) => entry.default === true)?.id ?? list[0]?.id;
     expect(resolved).toBe("main");
   });
+
+  // ─── agents-manifest extensions ───────────────────────────────────────────
+  // The v1 `{agents,defaults?,main?}` payload shape covered by
+  // test/generate-openclaw-config-agents-manifest.test.ts to keep this file
+  // under the legacy size budget.
 
   it("keeps compatible endpoints on the managed inference.local OpenClaw provider", () => {
     const config = runConfigScript({
@@ -1273,8 +1267,8 @@ describe("generate-openclaw-config.mts: config generation", () => {
       NEMOCLAW_INFERENCE_API: "openai-completions",
       NEMOCLAW_INFERENCE_COMPAT_B64: Buffer.from("null").toString("base64"),
     });
-
     expect(config.models.providers.inference.models[0].compat).toEqual({
+      supportsStore: false,
       requiresStringContent: true,
       maxTokensField: "max_tokens",
       requiresToolResultName: true,

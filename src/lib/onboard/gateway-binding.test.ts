@@ -20,7 +20,9 @@ import {
   BASE_GATEWAY_STATE_DIR_NAME,
   resolveGatewayCompatContainerName,
   resolveGatewayName,
+  resolveGatewayPortFromName,
   resolveGatewayStateDirName,
+  resolveSandboxGatewayName,
 } from "../../../dist/lib/onboard/gateway-binding";
 
 describe("gateway-binding resolver (#4422)", () => {
@@ -34,8 +36,16 @@ describe("gateway-binding resolver (#4422)", () => {
 
   it("suffixes the name, state dir, and compat container for a non-default port", () => {
     expect(resolveGatewayName(8081)).toBe("nemoclaw-8081");
+    expect(resolveGatewayPortFromName("nemoclaw-8081")).toBe(8081);
     expect(resolveGatewayStateDirName(8081)).toBe("openshell-docker-gateway-8081");
     expect(resolveGatewayCompatContainerName(8081)).toBe("nemoclaw-openshell-gateway-8081");
+  });
+
+  it("rejects malformed gateway names when resolving a port", () => {
+    expect(resolveGatewayPortFromName("nemoclaw")).toBe(DEFAULT_GATEWAY_PORT);
+    expect(resolveGatewayPortFromName("nemoclaw-0")).toBeNull();
+    expect(resolveGatewayPortFromName("nemoclaw-65536")).toBeNull();
+    expect(resolveGatewayPortFromName("other-8081")).toBeNull();
   });
 
   it("derives distinct bindings for two different gateway ports", () => {
@@ -44,6 +54,103 @@ describe("gateway-binding resolver (#4422)", () => {
     expect(resolveGatewayName(a)).not.toBe(resolveGatewayName(b));
     expect(resolveGatewayStateDirName(a)).not.toBe(resolveGatewayStateDirName(b));
     expect(resolveGatewayCompatContainerName(a)).not.toBe(resolveGatewayCompatContainerName(b));
+  });
+});
+
+describe("resolveSandboxGatewayName", () => {
+  it("returns the persisted gatewayName when present", () => {
+    expect(resolveSandboxGatewayName({ gatewayName: "nemoclaw-9090", gatewayPort: 9090 })).toBe(
+      "nemoclaw-9090",
+    );
+  });
+
+  it("derives from gatewayPort when a valid persisted gatewayName conflicts", () => {
+    expect(resolveSandboxGatewayName({ gatewayName: "nemoclaw-9090", gatewayPort: 8081 })).toBe(
+      "nemoclaw-8081",
+    );
+  });
+
+  it("derives the gateway name from gatewayPort when gatewayName is absent", () => {
+    expect(resolveSandboxGatewayName({ gatewayPort: 8081 })).toBe("nemoclaw-8081");
+    expect(resolveSandboxGatewayName({ gatewayPort: 8080 })).toBe(BASE_GATEWAY_NAME);
+  });
+
+  it("falls back to the bare base name for legacy sandbox entries with neither field set", () => {
+    expect(resolveSandboxGatewayName({})).toBe(BASE_GATEWAY_NAME);
+    expect(resolveSandboxGatewayName(null)).toBe(BASE_GATEWAY_NAME);
+    expect(resolveSandboxGatewayName(undefined)).toBe(BASE_GATEWAY_NAME);
+  });
+
+  it("ignores null persisted values and falls back through the resolution chain", () => {
+    expect(resolveSandboxGatewayName({ gatewayName: null, gatewayPort: 8081 })).toBe(
+      "nemoclaw-8081",
+    );
+    expect(resolveSandboxGatewayName({ gatewayName: null, gatewayPort: null })).toBe(
+      BASE_GATEWAY_NAME,
+    );
+  });
+
+  it("returns distinct names for sandboxes on different non-default ports", () => {
+    expect(resolveSandboxGatewayName({ gatewayPort: 8081 })).not.toBe(
+      resolveSandboxGatewayName({ gatewayPort: 8090 }),
+    );
+  });
+
+  it("falls through to a valid port when only the persisted gatewayName is out-of-namespace", () => {
+    // A tampered name with a still-valid port resolves from the port so the
+    // operation lands on a real NemoClaw gateway rather than the tampered string.
+    expect(resolveSandboxGatewayName({ gatewayName: "rogue-gateway", gatewayPort: 8081 })).toBe(
+      "nemoclaw-8081",
+    );
+  });
+
+  it("throws on an invalid persisted gatewayName when no valid port is present", () => {
+    // Refuse to silently rewrite destroy/snapshot to the default gateway when
+    // the persisted binding is present but unusable.
+    expect(() => resolveSandboxGatewayName({ gatewayName: "../etc/passwd" })).toThrow(
+      /Invalid persisted sandbox gateway binding/,
+    );
+    expect(() => resolveSandboxGatewayName({ gatewayName: "nemoclaw evil" })).toThrow(
+      /Invalid persisted sandbox gateway binding/,
+    );
+    expect(() => resolveSandboxGatewayName({ gatewayName: "nemoclaw-0" })).toThrow(
+      /Invalid persisted sandbox gateway binding/,
+    );
+    expect(() => resolveSandboxGatewayName({ gatewayName: "nemoclaw-65536" })).toThrow(
+      /Invalid persisted sandbox gateway binding/,
+    );
+  });
+
+  it("throws on an out-of-range or non-integer persisted gatewayPort", () => {
+    expect(() => resolveSandboxGatewayName({ gatewayPort: 0 })).toThrow(
+      /Invalid persisted sandbox gateway binding/,
+    );
+    expect(() => resolveSandboxGatewayName({ gatewayPort: -1 })).toThrow(
+      /Invalid persisted sandbox gateway binding/,
+    );
+    expect(() => resolveSandboxGatewayName({ gatewayPort: 65536 })).toThrow(
+      /Invalid persisted sandbox gateway binding/,
+    );
+    expect(() => resolveSandboxGatewayName({ gatewayPort: 8081.5 })).toThrow(
+      /Invalid persisted sandbox gateway binding/,
+    );
+    expect(() => resolveSandboxGatewayName({ gatewayPort: Number.NaN })).toThrow(
+      /Invalid persisted sandbox gateway binding/,
+    );
+  });
+
+  it("accepts the canonical bare base gateway name", () => {
+    expect(resolveSandboxGatewayName({ gatewayName: "nemoclaw" })).toBe(BASE_GATEWAY_NAME);
+  });
+
+  it("rejects the non-canonical default-port suffix form", () => {
+    // `nemoclaw-8080` matches the namespace regex but is not what
+    // resolveGatewayName(8080) emits (it emits the bare `nemoclaw`). A
+    // sandbox registered against the non-canonical form would target a
+    // gateway name that does not exist.
+    expect(() => resolveSandboxGatewayName({ gatewayName: "nemoclaw-8080" })).toThrow(
+      /Invalid persisted sandbox gateway binding/,
+    );
   });
 });
 

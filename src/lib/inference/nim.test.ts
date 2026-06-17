@@ -12,6 +12,22 @@ const require = createRequire(import.meta.url);
 const NIM_DIST_PATH = require.resolve("../../../dist/lib/inference/nim");
 const RUNNER_PATH = require.resolve("../../../dist/lib/runner");
 const fs = require("fs");
+const NIM_API_KEY_ENV_KEYS = ["NGC_API_KEY", "NVIDIA_INFERENCE_API_KEY", "NVIDIA_API_KEY"];
+function clearNimApiKeyEnv(): Array<[string, string | undefined]> {
+  const snapshot: Array<[string, string | undefined]> = NIM_API_KEY_ENV_KEYS.map((key) => [
+    key,
+    process.env[key],
+  ]);
+  for (const key of NIM_API_KEY_ENV_KEYS) delete process.env[key];
+  return [...snapshot];
+}
+
+function restoreNimApiKeyEnv(snapshot: Array<[string, string | undefined]>): void {
+  for (const [key, value] of snapshot) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+}
 
 function withFirmwareModel(model: string, fn: () => void): void {
   const origReadFileSync = fs.readFileSync;
@@ -1648,12 +1664,6 @@ describe("nim", () => {
   });
 
   describe("startNimContainerByName", () => {
-    // Regression #3333 (and original fix in #219 that was lost in the
-    // string→argv refactor): the NIM container must receive NGC_API_KEY and
-    // NIM_NGC_API_KEY so it can download model manifests from NGC. Without
-    // these the container exits 0 a few seconds in with "Authentication Error".
-    // The value is passed through the spawn env (not argv) so it does not
-    // leak via `ps`/audit logs.
     type RunCall = [string[], { env?: Record<string, string> } | undefined];
 
     function dockerRunCall(run: Mock): RunCall | undefined {
@@ -1693,7 +1703,6 @@ describe("nim", () => {
         const [argv, opts] = call!;
         expect(hasEnvFlag(argv, "NGC_API_KEY")).toBe(true);
         expect(hasEnvFlag(argv, "NIM_NGC_API_KEY")).toBe(true);
-        // Secret must not appear in argv (visible via ps/audit logs).
         expect(argvContainsValue(argv, "nvapi-abc123")).toBe(false);
         expect(opts?.env).toMatchObject({
           NGC_API_KEY: "nvapi-abc123",
@@ -1705,9 +1714,8 @@ describe("nim", () => {
     });
 
     it("falls back to process.env.NGC_API_KEY when no opts key is supplied", () => {
-      const prev = { ngc: process.env.NGC_API_KEY, nv: process.env.NVIDIA_API_KEY };
+      const envSnapshot = clearNimApiKeyEnv();
       process.env.NGC_API_KEY = "nvapi-env-ngc";
-      delete process.env.NVIDIA_API_KEY;
       const run = vi.fn();
       const { nimModule, restore } = loadNimWithMockedRunner(
         vi.fn(() => ""),
@@ -1726,16 +1734,13 @@ describe("nim", () => {
         });
       } finally {
         restore();
-        if (prev.ngc === undefined) delete process.env.NGC_API_KEY;
-        else process.env.NGC_API_KEY = prev.ngc;
-        if (prev.nv !== undefined) process.env.NVIDIA_API_KEY = prev.nv;
+        restoreNimApiKeyEnv(envSnapshot);
       }
     });
 
-    it("falls back to process.env.NVIDIA_API_KEY when NGC_API_KEY is unset", () => {
-      const prev = { ngc: process.env.NGC_API_KEY, nv: process.env.NVIDIA_API_KEY };
-      delete process.env.NGC_API_KEY;
-      process.env.NVIDIA_API_KEY = "nvapi-env-nvidia";
+    it("falls back to process.env.NVIDIA_INFERENCE_API_KEY when NGC_API_KEY is unset", () => {
+      const envSnapshot = clearNimApiKeyEnv();
+      process.env.NVIDIA_INFERENCE_API_KEY = "nvapi-env-nvidia";
       const run = vi.fn();
       const { nimModule, restore } = loadNimWithMockedRunner(
         vi.fn(() => ""),
@@ -1751,16 +1756,12 @@ describe("nim", () => {
         expect(call?.[1]?.env?.NGC_API_KEY).toBe("nvapi-env-nvidia");
       } finally {
         restore();
-        if (prev.ngc !== undefined) process.env.NGC_API_KEY = prev.ngc;
-        if (prev.nv === undefined) delete process.env.NVIDIA_API_KEY;
-        else process.env.NVIDIA_API_KEY = prev.nv;
+        restoreNimApiKeyEnv(envSnapshot);
       }
     });
 
     it("omits env flags when no key is available", () => {
-      const prev = { ngc: process.env.NGC_API_KEY, nv: process.env.NVIDIA_API_KEY };
-      delete process.env.NGC_API_KEY;
-      delete process.env.NVIDIA_API_KEY;
+      const envSnapshot = clearNimApiKeyEnv();
       const run = vi.fn();
       const { nimModule, restore } = loadNimWithMockedRunner(
         vi.fn(() => ""),
@@ -1778,8 +1779,7 @@ describe("nim", () => {
         expect(call?.[1]?.env).toBeUndefined();
       } finally {
         restore();
-        if (prev.ngc !== undefined) process.env.NGC_API_KEY = prev.ngc;
-        if (prev.nv !== undefined) process.env.NVIDIA_API_KEY = prev.nv;
+        restoreNimApiKeyEnv(envSnapshot);
       }
     });
   });

@@ -28,12 +28,12 @@
 #
 # Prerequisites:
 #   - Docker running
-#   - NVIDIA_API_KEY set (real key or fake OpenAI endpoint)
+#   - NVIDIA_INFERENCE_API_KEY set (real key or fake OpenAI endpoint)
 #   - NEMOCLAW_NON_INTERACTIVE=1, NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1
 #
 # Usage:
 #   NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
-#     NVIDIA_API_KEY=nvapi-... bash test/e2e/test-sessions-agents-cli.sh
+#     NVIDIA_INFERENCE_API_KEY=nvapi-... bash test/e2e/test-sessions-agents-cli.sh
 # =============================================================================
 
 set -uo pipefail
@@ -156,12 +156,12 @@ preflight() {
     print_summary
     exit 1
   fi
-  if [ -z "${NVIDIA_API_KEY:-}" ]; then
-    skip "preflight: NVIDIA_API_KEY not set; sessions/agents E2E requires a working onboard credential"
+  if [ -z "${NVIDIA_INFERENCE_API_KEY:-}" ]; then
+    skip "preflight: NVIDIA_INFERENCE_API_KEY not set; sessions/agents E2E requires a working onboard credential"
     print_summary
     exit 0
   fi
-  pass "preflight: docker + NVIDIA_API_KEY available"
+  pass "preflight: docker + NVIDIA_INFERENCE_API_KEY available"
 }
 
 onboard_sandbox() {

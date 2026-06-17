@@ -16,7 +16,7 @@
 #
 # Prerequisites:
 #   - Docker running
-#   - NVIDIA_API_KEY set
+#   - NVIDIA_INFERENCE_API_KEY set
 # =============================================================================
 
 set -euo pipefail
@@ -99,7 +99,7 @@ install_nemoclaw() {
   fi
   log "=== Installing NemoClaw via install.sh ==="
   NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME" \
-    NVIDIA_API_KEY="${NVIDIA_API_KEY:-nvapi-DUMMY-FOR-INSTALL}" \
+    NVIDIA_INFERENCE_API_KEY="${NVIDIA_INFERENCE_API_KEY:-nvapi-DUMMY-FOR-INSTALL}" \
     NEMOCLAW_NON_INTERACTIVE=1 \
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
     bash "$REPO_ROOT/install.sh" --non-interactive --yes-i-accept-third-party-software \
@@ -120,9 +120,9 @@ preflight() {
   fi
   log "Docker is running"
 
-  local api_key="${NVIDIA_API_KEY:-}"
+  local api_key="${NVIDIA_INFERENCE_API_KEY:-}"
   if [[ -z "$api_key" ]]; then
-    log "ERROR: NVIDIA_API_KEY not set"
+    log "ERROR: NVIDIA_INFERENCE_API_KEY not set"
     exit 1
   fi
 
@@ -265,9 +265,9 @@ test_diag_01_debug_tarball() {
     return
   fi
 
-  local real_key="${NVIDIA_API_KEY:-}"
+  local real_key="${NVIDIA_INFERENCE_API_KEY:-}"
   if [[ -z "$real_key" ]]; then
-    skip "TC-DIAG-01: Credential check" "NVIDIA_API_KEY not set"
+    skip "TC-DIAG-01: Credential check" "NVIDIA_INFERENCE_API_KEY not set"
     rm -rf "$debug_dir"
     return
   fi
@@ -387,7 +387,7 @@ test_diag_05_sandbox_config() {
 test_diag_03_credentials() {
   log "=== TC-DIAG-03: Credentials List and Reset ==="
 
-  local real_key="${NVIDIA_API_KEY:-}"
+  local real_key="${NVIDIA_INFERENCE_API_KEY:-}"
 
   log "  Step 1: Running credentials list..."
   local list_output list_rc=0
@@ -411,7 +411,7 @@ test_diag_03_credentials() {
     return
   fi
 
-  if echo "$list_output" | grep -qiE "NVIDIA_API_KEY\|nvidia.api"; then
+  if echo "$list_output" | grep -qiE "NVIDIA_INFERENCE_API_KEY\|nvidia.api"; then
     pass "TC-DIAG-03: credentials list shows key name"
   else
     skip "TC-DIAG-03: Key name" "Expected credential key not found in list"
@@ -424,9 +424,9 @@ test_diag_03_credentials() {
     pass "TC-DIAG-03: credentials list does not expose key values"
   fi
 
-  log "  Step 2: Running credentials reset NVIDIA_API_KEY..."
+  log "  Step 2: Running credentials reset NVIDIA_INFERENCE_API_KEY..."
   local reset_output reset_rc=0
-  reset_output=$(nemoclaw credentials reset NVIDIA_API_KEY --yes 2>&1) || reset_rc=$?
+  reset_output=$(nemoclaw credentials reset NVIDIA_INFERENCE_API_KEY --yes 2>&1) || reset_rc=$?
   log "  Reset output (exit $reset_rc): ${reset_output:0:300}"
 
   if [[ $reset_rc -eq 0 ]]; then
@@ -439,10 +439,10 @@ test_diag_03_credentials() {
   log "  Step 3: Verifying key removed from list..."
   local post_list
   post_list=$(nemoclaw credentials list 2>&1) || true
-  if echo "$post_list" | grep -qiE "NVIDIA_API_KEY"; then
-    fail "TC-DIAG-03: Post-reset" "NVIDIA_API_KEY still in list after reset"
+  if echo "$post_list" | grep -qiE "NVIDIA_INFERENCE_API_KEY"; then
+    fail "TC-DIAG-03: Post-reset" "NVIDIA_INFERENCE_API_KEY still in list after reset"
   else
-    pass "TC-DIAG-03: NVIDIA_API_KEY removed after reset"
+    pass "TC-DIAG-03: NVIDIA_INFERENCE_API_KEY removed after reset"
   fi
 }
 

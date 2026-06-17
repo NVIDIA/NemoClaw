@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
-import { describe, it, expect } from "vitest";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { describe, expect, it } from "vitest";
 
 import { testTimeout } from "./helpers/timeouts";
 
@@ -177,13 +177,13 @@ const prompts = [];
 const saved = [];
 const lines = [];
 const clearCredentialEnv = [
-  "OPENAI_API_KEY",
+  "NVIDIA_API_KEY", "OPENAI_API_KEY",
   "ANTHROPIC_API_KEY",
   "GEMINI_API_KEY",
   "COMPATIBLE_API_KEY",
   "COMPATIBLE_ANTHROPIC_API_KEY",
   "NOUS_API_KEY",
-  "NVIDIA_API_KEY",
+  "NVIDIA_INFERENCE_API_KEY",
   "NGC_API_KEY",
   "NEMOCLAW_PROVIDER_KEY",
 ];
@@ -560,7 +560,7 @@ credentials.prompt = async (message) => {
   messages.push(message);
   return answers.shift() || "";
 };
-credentials.ensureApiKey = async () => { process.env.NVIDIA_API_KEY = "nvapi-test"; };
+credentials.ensureApiKey = async () => { process.env.NVIDIA_INFERENCE_API_KEY = "nvapi-test"; };
 runner.runCapture = (command) => {
   const cmd = Array.isArray(command) ? command.join(" ") : command;
   if (cmd.includes("command -v ollama")) return "";
@@ -663,7 +663,7 @@ credentials.prompt = async (message) => {
   messages.push(message);
   return answers.shift() || "";
 };
-credentials.ensureApiKey = async () => { process.env.NVIDIA_API_KEY = "nvapi-test"; };
+credentials.ensureApiKey = async () => { process.env.NVIDIA_INFERENCE_API_KEY = "nvapi-test"; };
 runner.runCapture = (command) => {
   // Normalize: onboard.ts still sends strings, local-inference.ts sends arrays.
   // Once onboard.ts is migrated to argv (#1889), these mocks can assert Array.isArray.
@@ -761,7 +761,7 @@ credentials.prompt = async (message) => {
   messages.push(message);
   return answers.shift() || "";
 };
-credentials.ensureApiKey = async () => { process.env.NVIDIA_API_KEY = "nvapi-test"; };
+credentials.ensureApiKey = async () => { process.env.NVIDIA_INFERENCE_API_KEY = "nvapi-test"; };
 runner.runCapture = (command) => {
   // Normalize: onboard.ts still sends strings, local-inference.ts sends arrays.
   // Once onboard.ts is migrated to argv (#1889), these mocks can assert Array.isArray.
@@ -1986,7 +1986,7 @@ credentials.prompt = async (message) => {
   messages.push(message);
   return answers.shift() || "";
 };
-credentials.ensureApiKey = async () => { process.env.NVIDIA_API_KEY = "nvapi-good"; };
+credentials.ensureApiKey = async () => { process.env.NVIDIA_INFERENCE_API_KEY = "nvapi-good"; };
 runner.run = () => ({ status: 0 });
 runner.runCapture = (command) => {
   // Normalize: onboard.ts still sends strings, local-inference.ts sends arrays.
@@ -3471,7 +3471,7 @@ credentials.prompt = async (message) => {
   messages.push(message);
   return answers.shift() || "";
 };
-credentials.ensureApiKey = async () => { process.env.NVIDIA_API_KEY = "nvapi-good"; };
+credentials.ensureApiKey = async () => { process.env.NVIDIA_INFERENCE_API_KEY = "nvapi-good"; };
 runner.runCapture = () => "";
 
 const { setupNim } = require(${onboardPath});
@@ -3537,13 +3537,13 @@ const { setupNim } = require(${onboardPath});
 
     const script = String.raw`
 const clearCredentialEnv = [
-  "OPENAI_API_KEY",
+  "NVIDIA_API_KEY", "OPENAI_API_KEY",
   "ANTHROPIC_API_KEY",
   "GEMINI_API_KEY",
   "COMPATIBLE_API_KEY",
   "COMPATIBLE_ANTHROPIC_API_KEY",
   "NOUS_API_KEY",
-  "NVIDIA_API_KEY",
+  "NVIDIA_INFERENCE_API_KEY",
   "NGC_API_KEY",
   "NEMOCLAW_PROVIDER_KEY",
 ];
@@ -3678,7 +3678,7 @@ const { setupNim } = require(${onboardPath});
       name: "Model Router",
       answers: ["back", ""],
       menuSelections: ["Model Router", "NVIDIA Endpoints"],
-      credentialEnv: "NVIDIA_API_KEY",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
       promptPattern: /Model Router API key: /,
     },
     {
@@ -3759,7 +3759,7 @@ credentials.prompt = async (message) => {
   messages.push(message);
   return answers.shift() || "";
 };
-credentials.ensureApiKey = async () => { process.env.NVIDIA_API_KEY = "nvapi-good"; };
+credentials.ensureApiKey = async () => { process.env.NVIDIA_INFERENCE_API_KEY = "nvapi-good"; };
 runner.runCapture = () => "";
 
 const { setupNim } = require(${onboardPath});
@@ -3873,7 +3873,7 @@ credentials.prompt = async (message) => {
   messages.push(message);
   return answers.shift() || "";
 };
-credentials.ensureApiKey = async () => { process.env.NVIDIA_API_KEY = "nvapi-good"; };
+credentials.ensureApiKey = async () => { process.env.NVIDIA_INFERENCE_API_KEY = "nvapi-good"; };
 runner.runCapture = () => "";
 
 const { setupNim } = require(${onboardPath});
@@ -3923,7 +3923,7 @@ const { setupNim } = require(${onboardPath});
     assert.equal(payload.messages.filter((message: string) => /Choose \[/.test(message)).length, 2);
   });
 
-  it("fails early in non-interactive mode when NVIDIA_API_KEY is not an nvapi- key", () => {
+  it("fails early in non-interactive mode when explicit cloud provider key is not nvapi-", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-build-noninteractive-"));
     const fakeBin = path.join(tmpDir, "bin");
@@ -3964,7 +3964,7 @@ onboardModule._compile(injected, onboardFile);
 const { setupNim, __setNonInteractive } = onboardModule.exports;
 
 (async () => {
-  process.env.NVIDIA_API_KEY = "sk-test";
+  process.env.NVIDIA_INFERENCE_API_KEY = "sk-test"; process.env.NEMOCLAW_PROVIDER = "cloud";
   __setNonInteractive(true);
   const originalLog = console.log;
   const originalError = console.error;
@@ -4029,7 +4029,7 @@ const { setupNim, __setNonInteractive } = onboardModule.exports;
     );
   });
 
-  it("fails early in non-interactive mode with copy-paste recovery hints when no NVIDIA_API_KEY is set", () => {
+  it("fails early in non-interactive mode with copy-paste recovery hints when no NVIDIA_INFERENCE_API_KEY is set", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-build-missingkey-"));
     const fakeBin = path.join(tmpDir, "bin");
@@ -4076,8 +4076,7 @@ onboardModule._compile(injected, onboardFile);
 const { setupNim, __setNonInteractive } = onboardModule.exports;
 
 (async () => {
-  delete process.env.NVIDIA_API_KEY;
-  delete process.env.NEMOCLAW_PROVIDER_KEY;
+  for (const key of ["NVIDIA_API_KEY", "NVIDIA_INFERENCE_API_KEY", "NGC_API_KEY", "NEMOCLAW_PROVIDER_KEY"]) delete process.env[key];
   __setNonInteractive(true);
   const originalLog = console.log;
   const originalError = console.error;
@@ -4122,8 +4121,6 @@ const { setupNim, __setNonInteractive } = onboardModule.exports;
         ...process.env,
         HOME: tmpDir,
         PATH: `${fakeBin}:${process.env.PATH || ""}`,
-        NVIDIA_API_KEY: "",
-        NEMOCLAW_PROVIDER_KEY: "",
       },
     });
 
@@ -4135,7 +4132,7 @@ const { setupNim, __setNonInteractive } = onboardModule.exports;
     assert.ok(
       payload.lines.some((line: string) =>
         line.includes(
-          "NVIDIA_API_KEY (or NEMOCLAW_PROVIDER_KEY) is required for NVIDIA Endpoints in non-interactive mode.",
+          "NVIDIA_INFERENCE_API_KEY (or NEMOCLAW_PROVIDER_KEY) is required for NVIDIA Endpoints in non-interactive mode.",
         ),
       ),
     );
@@ -4143,7 +4140,7 @@ const { setupNim, __setNonInteractive } = onboardModule.exports;
     assert.ok(setWithIndex >= 0, "expected a standalone 'Set with:' line");
     assert.equal(
       payload.lines[setWithIndex + 1].trim(),
-      "export NVIDIA_API_KEY=nvapi-...",
+      "export NVIDIA_INFERENCE_API_KEY=nvapi-...",
       "expected the export command on its own line so it can be copy-pasted",
     );
     assert.ok(
@@ -4216,7 +4213,7 @@ runner.runCapture = () => "";
 const { setupNim } = require(${onboardPath});
 
 (async () => {
-  process.env.NVIDIA_API_KEY = "nvapi-bad";
+  process.env.NVIDIA_INFERENCE_API_KEY = "nvapi-bad";
   const originalLog = console.log;
   const originalError = console.error;
   const lines = [];
@@ -4224,7 +4221,7 @@ const { setupNim } = require(${onboardPath});
   console.error = (...args) => lines.push(args.join(" "));
   try {
     const result = await setupNim(null);
-    originalLog(JSON.stringify({ result, messages, prompts, lines, key: process.env.NVIDIA_API_KEY }));
+    originalLog(JSON.stringify({ result, messages, prompts, lines, key: process.env.NVIDIA_INFERENCE_API_KEY }));
   } finally {
     console.log = originalLog;
     console.error = originalError;
@@ -4302,7 +4299,7 @@ runner.runCapture = () => "";
 const { setupNim } = require(${onboardPath});
 
 (async () => {
-  process.env.NVIDIA_API_KEY = "nvapi-bad";
+  process.env.NVIDIA_INFERENCE_API_KEY = "nvapi-bad";
   const originalLog = console.log;
   const originalError = console.error;
   const lines = [];
@@ -4310,7 +4307,7 @@ const { setupNim } = require(${onboardPath});
   console.error = (...args) => lines.push(args.join(" "));
   try {
     const result = await setupNim(null);
-    originalLog(JSON.stringify({ result, messages, lines, key: process.env.NVIDIA_API_KEY }));
+    originalLog(JSON.stringify({ result, messages, lines, key: process.env.NVIDIA_INFERENCE_API_KEY }));
   } finally {
     console.log = originalLog;
     console.error = originalError;

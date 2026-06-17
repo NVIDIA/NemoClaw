@@ -13,7 +13,7 @@ When adapting an OpenClaw sub-agent setup, use these paths inside the sandbox:
 | Path | Purpose |
 |---|---|
 | `/sandbox/.openclaw/openclaw.json` | OpenClaw config, including `models.providers`, `agents.defaults`, and `agents.list`. |
-| `/sandbox/.openclaw/.config-hash` | Hash for `openclaw.json`. Keep it in sync after manual config edits; it becomes a startup-enforced trust anchor only after the file is root-owned and read-only. |
+| `/sandbox/.openclaw/.config-hash` | Hash for `openclaw.json`. Keep it in sync after manual config edits so OpenClaw can detect the updated config. |
 | `/sandbox/.openclaw/agents/<agent-id>/agent/auth-profiles.json` | Per-agent provider credentials. Use this when a sub-agent calls an auxiliary provider directly. |
 | `/sandbox/.openclaw/workspace/` | Writable shared workspace path for files the primary agent passes to the sub-agent. |
 | `/tmp/gateway.log` | OpenClaw gateway log. Use it to confirm config reloads and diagnose sub-agent failures. |
@@ -41,26 +41,30 @@ The primary orchestration model remains responsible for conversation, planning, 
 ## Update the Sandbox Config
 
 Fetch the current OpenClaw config from the sandbox, patch it with your auxiliary provider and `agents.list` changes, then upload it back.
+On Docker-driver sandboxes, run these commands from the host that owns the sandbox containers.
+The container name includes a runtime suffix, so discover it from the OpenShell sandbox label:
 
 ```bash
 export SANDBOX=my-assistant
-export DOCKER_CTR=openshell-cluster-nemoclaw
-docker exec "$DOCKER_CTR" kubectl exec -n openshell "$SANDBOX" -c agent -- cat /sandbox/.openclaw/openclaw.json > /tmp/openclaw.json
+export SANDBOX_CTR=$(docker ps --filter "label=openshell.ai/sandbox-name=$SANDBOX" --format "{{.Names}}" | sed -n '1p')
+docker exec --user root "$SANDBOX_CTR" cat /sandbox/.openclaw/openclaw.json > /tmp/openclaw.json
 ```
 
 Create `/tmp/openclaw.updated.json` with the OpenClaw sub-agent config.
 For the Omni example, the demo provides `vlm-demo/vlm-subagent/openclaw-patch.py`.
 
 Upload the patched config and refresh the hash.
-In the default mutable state, this keeps the local hash consistent but does not make it tamper-proof; lock the config root-owned and read-only afterward if the sandbox should enforce config integrity at startup.
+In the default mutable state, this keeps the local hash consistent but does not make it tamper-proof.
+Use NemoClaw runtime controls when the sandbox needs a hardened config posture after the manual edit.
 
 ```bash
-docker exec "$DOCKER_CTR" kubectl exec -n openshell "$SANDBOX" -c agent -- chmod 644 /sandbox/.openclaw/openclaw.json
-docker exec "$DOCKER_CTR" kubectl exec -n openshell "$SANDBOX" -c agent -- chmod 644 /sandbox/.openclaw/.config-hash
-cat /tmp/openclaw.updated.json | docker exec -i "$DOCKER_CTR" kubectl exec -i -n openshell "$SANDBOX" -c agent -- sh -c 'cat > /sandbox/.openclaw/openclaw.json'
-docker exec "$DOCKER_CTR" kubectl exec -n openshell "$SANDBOX" -c agent -- /bin/bash -c "cd /sandbox/.openclaw && sha256sum openclaw.json > .config-hash"
-docker exec "$DOCKER_CTR" kubectl exec -n openshell "$SANDBOX" -c agent -- chmod 444 /sandbox/.openclaw/openclaw.json
-docker exec "$DOCKER_CTR" kubectl exec -n openshell "$SANDBOX" -c agent -- chmod 444 /sandbox/.openclaw/.config-hash
+docker exec --user root "$SANDBOX_CTR" chmod 644 /sandbox/.openclaw/openclaw.json
+docker exec --user root "$SANDBOX_CTR" chmod 644 /sandbox/.openclaw/.config-hash
+docker exec --user root -i "$SANDBOX_CTR" sh -c 'cat > /sandbox/.openclaw/openclaw.json' < /tmp/openclaw.updated.json
+docker exec --user root "$SANDBOX_CTR" /bin/bash -c "cd /sandbox/.openclaw && sha256sum openclaw.json > .config-hash"
+docker exec --user root "$SANDBOX_CTR" chown sandbox:sandbox /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/.config-hash
+docker exec --user root "$SANDBOX_CTR" chmod 444 /sandbox/.openclaw/openclaw.json
+docker exec --user root "$SANDBOX_CTR" chmod 444 /sandbox/.openclaw/.config-hash
 ```
 
 Check `/tmp/gateway.log` after upload and confirm the gateway hot-reloaded the provider or `agents.list` change.
@@ -78,7 +82,7 @@ Use the same provider ID that appears in `models.providers`, such as `nvidia-omn
 After uploading the auth profile, make sure the sandbox user owns the sub-agent directory:
 
 ```bash
-docker exec "$DOCKER_CTR" kubectl exec -n openshell "$SANDBOX" -c agent -- chown -R sandbox:sandbox /sandbox/.openclaw/agents/vision-operator
+docker exec --user root "$SANDBOX_CTR" chown -R sandbox:sandbox /sandbox/.openclaw/agents/vision-operator
 ```
 
 ## Allow Auxiliary Provider Egress
@@ -87,6 +91,19 @@ If the sub-agent calls a provider directly, update the OpenShell network policy 
 In the Omni demo, the OpenClaw gateway runs as `/usr/local/bin/node`, so the NVIDIA endpoint policy must allow that binary.
 
 Refer to Customize the Network Policy (use the `nemoclaw-user-manage-policy` skill) for policy update workflows.
+
+## Sub-Agent Gateway Connectivity
+
+Spawned sub-agents connect back to the OpenClaw gateway over WebSocket at `OPENCLAW_GATEWAY_URL`.
+Inside the sandbox this connection runs through the enforced process tree, where the OpenShell proxy always blocks loopback destinations.
+NemoClaw therefore points `OPENCLAW_GATEWAY_URL` at the sandbox's own interface address (for example `ws://10.200.0.2:18790`) and allowlists that endpoint in the base sandbox policy (`openclaw_gateway_dialback`).
+
+If `sessions_spawn` returns `gateway closed (1006 abnormal closure (no close frame))` and the gateway log shows no connection attempt, the dial-back path is blocked.
+Check the following:
+
+1. `OPENCLAW_GATEWAY_URL` in the gateway process environment targets the sandbox interface address, not `127.0.0.1`.
+2. The active policy allows that address and port. Custom `NEMOCLAW_DASHBOARD_PORT` or proxy subnet values need a matching `openshell policy update`.
+3. Do not point the dial-back at `127.0.0.1` — the proxy denies loopback regardless of policy.
 
 ## Add Delegation Instructions
 

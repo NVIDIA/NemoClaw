@@ -16,7 +16,26 @@
  * Ref: https://github.com/NVIDIA/NemoClaw/issues/2381
  */
 
-import { TOKEN_PREFIX_PATTERNS, SECRET_PATTERNS } from "./secret-patterns";
+import { listMessagingCredentialMetadata } from "../messaging/channels";
+import { SECRET_PATTERNS, TOKEN_PREFIX_PATTERNS } from "./secret-patterns";
+
+const SENSITIVE_ENV_ASSIGNMENT_KEYS = [
+  "NVIDIA_INFERENCE_API_KEY",
+  "NVIDIA_API_KEY",
+  "NOUS_API_KEY",
+  "OPENAI_API_KEY",
+  "ANTHROPIC_API_KEY",
+  "GEMINI_API_KEY",
+  "COMPATIBLE_API_KEY",
+  "COMPATIBLE_ANTHROPIC_API_KEY",
+  "BRAVE_API_KEY",
+  ...listMessagingCredentialMetadata().map((credential) => credential.providerEnvKey),
+];
+
+const SENSITIVE_ENV_ASSIGNMENT_PATTERN = new RegExp(
+  `(${SENSITIVE_ENV_ASSIGNMENT_KEYS.map(escapeRegExp).join("|")})=\\S+`,
+  "gi",
+);
 
 // ── Partial redaction (runner.ts style) ─────────────────────────
 
@@ -84,7 +103,10 @@ export function writeRedactedResult(
 // ── Full redaction (debug.ts style) ─────────────────────────────
 
 const FULL_REDACT_PATTERNS: [RegExp, string][] = [
-  [/(NVIDIA_API_KEY|API_KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|_KEY)=\S+/gi, "$1=<REDACTED>"],
+  [
+    /(NVIDIA_INFERENCE_API_KEY|NVIDIA_API_KEY|API_KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|_KEY)=\S+/gi,
+    "$1=<REDACTED>",
+  ],
   ...TOKEN_PREFIX_PATTERNS.map((p): [RegExp, string] => [
     new RegExp(p.source, p.flags),
     "<REDACTED>",
@@ -107,16 +129,17 @@ export function redactFull(text: string): string {
 export function redactSensitiveText(value: unknown): string | null {
   if (typeof value !== "string") return null;
   let result = value
-    .replace(
-      /(NVIDIA_API_KEY|NOUS_API_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY|GEMINI_API_KEY|COMPATIBLE_API_KEY|COMPATIBLE_ANTHROPIC_API_KEY|BRAVE_API_KEY|SLACK_BOT_TOKEN|SLACK_APP_TOKEN|DISCORD_BOT_TOKEN|TELEGRAM_BOT_TOKEN)=\S+/gi,
-      "$1=<REDACTED>",
-    )
+    .replace(SENSITIVE_ENV_ASSIGNMENT_PATTERN, "$1=<REDACTED>")
     .replace(/Bearer\s+\S+/gi, "Bearer <REDACTED>");
   for (const pattern of TOKEN_PREFIX_PATTERNS) {
     pattern.lastIndex = 0;
     result = result.replace(pattern, "<REDACTED>");
   }
   return result.slice(0, 240);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 export function redactUrl(value: unknown): string | null {

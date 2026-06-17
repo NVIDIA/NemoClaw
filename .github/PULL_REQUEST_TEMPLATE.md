@@ -17,8 +17,10 @@
 
 ## Verification
 <!-- Check each item you ran and confirmed. Leave unchecked items you skipped. Doc-only changes do not require npm test unless you ran it. -->
-- [ ] `npx prek run --all-files` passes
-- [ ] `npm test` passes
+- [ ] PR description includes the DCO sign-off declaration and every commit appears as `Verified` in GitHub
+- [ ] Git hooks passed during commit and push, or `npx prek run --from-ref main --to-ref HEAD` passes
+- [ ] Targeted tests pass for changed behavior
+- [ ] Full `npm test` passes (broad runtime changes only)
 - [ ] Tests added or updated for new or changed behavior
 - [ ] No secrets, API keys, or credentials committed
 - [ ] Docs updated for user-facing behavior changes
@@ -27,5 +29,5 @@
 - [ ] New doc pages include SPDX header and frontmatter (new pages only)
 
 ---
-<!-- DCO sign-off required by CI. Run: git config user.name && git config user.email -->
+<!-- DCO sign-off is required in this PR description, and every commit must appear as Verified in GitHub. Run: git config user.name && git config user.email -->
 Signed-off-by: Your Name <your-email@example.com>

@@ -3,13 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import {
-  chmodSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  writeFileSync,
-} from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -18,6 +12,7 @@ type Env = Record<string, string | undefined>;
 type JsonObject = Record<string, any>;
 type MessagingAgentId = "openclaw" | "hermes";
 type MessagingHookPhase = "agent-install" | "post-agent-install";
+type MessagingRuntimeSetupKey = "nodePreloads" | "envAliases" | "secretScans";
 type MessagingSerializableValue =
   | string
   | number
@@ -83,10 +78,13 @@ export type MessagingBuildPlan = {
   readonly schemaVersion: 1;
   readonly sandboxName: string;
   readonly agent: MessagingAgentId;
+  readonly workflow?: string;
   readonly channels: readonly MessagingPlanChannel[];
+  readonly disabledChannels?: readonly string[];
   readonly credentialBindings: readonly MessagingCredentialBinding[];
   readonly agentRender: readonly MessagingRenderEntry[];
   readonly buildSteps: readonly MessagingBuildStep[];
+  readonly runtimeSetup?: Partial<Record<MessagingRuntimeSetupKey, readonly JsonObject[]>>;
 };
 
 export type BuildFileOutput = {
@@ -98,22 +96,21 @@ export type BuildFileOutput = {
 
 export type BuildCommandResult = {
   readonly channels: readonly string[];
+  readonly runtimePlanPath: string;
   readonly doctorEnv: Record<string, string>;
   readonly installSpecs: readonly string[];
   readonly openclawVersion: string;
 };
 
+type OpenClawPluginInstall = {
+  readonly spec: string;
+  readonly pin: boolean;
+};
+
 export class MessagingBuildApplierError extends Error {}
 
-const OPENCLAW_VERSIONED_MESSAGING_PLUGIN_PACKAGES: Readonly<Record<string, string>> = {
-  discord: "@openclaw/discord",
-  slack: "@openclaw/slack",
-  whatsapp: "@openclaw/whatsapp",
-};
-
-const OPENCLAW_FIXED_MESSAGING_PLUGIN_INSTALL_SPECS: Readonly<Record<string, string>> = {
-  wechat: "npm:@tencent-weixin/openclaw-weixin@2.4.3",
-};
+export const DEFAULT_MESSAGING_RUNTIME_PLAN_PATH =
+  "/usr/local/share/nemoclaw/messaging-runtime-plan.json";
 
 export function readMessagingBuildPlanFromEnv(
   env: Env,
@@ -207,12 +204,16 @@ export function applyMessagingAgentRenderToLocalFiles(
   for (const [target, renderEntries] of grouped) {
     const kinds = uniqueStrings(renderEntries.map((entry) => entry.kind));
     if (kinds.length !== 1) {
-      throw new MessagingBuildApplierError(`Cannot apply mixed messaging render kinds to ${target}.`);
+      throw new MessagingBuildApplierError(
+        `Cannot apply mixed messaging render kinds to ${target}.`,
+      );
     }
     if (kinds[0] === "json-fragment") {
       appliedTargets.push(applyJsonRenderEntriesToLocalFile(plan, target, renderEntries, options));
     } else {
-      appliedTargets.push(applyEnvRenderEntriesToLocalFile(plan.agent, target, renderEntries, options));
+      appliedTargets.push(
+        applyEnvRenderEntriesToLocalFile(plan.agent, target, renderEntries, options),
+      );
     }
   }
 
@@ -224,7 +225,9 @@ export function activeChannels(plan: MessagingBuildPlan | null): string[] {
   const seen = new Set<string>();
   const channels: string[] = [];
   for (const item of plan.channels) {
-    const channel = String(item.channelId || "").trim().toLowerCase();
+    const channel = String(item.channelId || "")
+      .trim()
+      .toLowerCase();
     if (!channel || seen.has(channel)) continue;
     if (item.active === true && item.disabled !== true) {
       seen.add(channel);
@@ -234,11 +237,176 @@ export function activeChannels(plan: MessagingBuildPlan | null): string[] {
   return channels;
 }
 
+export function messagingRuntimePlanPath(env: Env = process.env): string {
+  const configured = env.NEMOCLAW_MESSAGING_RUNTIME_PLAN_PATH?.trim();
+  return configured || DEFAULT_MESSAGING_RUNTIME_PLAN_PATH;
+}
+
+export function buildMessagingRuntimePlanArtifact(
+  plan: MessagingBuildPlan | null,
+): JsonObject | null {
+  if (!plan) return null;
+  return {
+    schemaVersion: 1,
+    sandboxName: plan.sandboxName,
+    agent: plan.agent,
+    ...(typeof plan.workflow === "string" && plan.workflow ? { workflow: plan.workflow } : {}),
+    channels: sanitizeRuntimeArtifactChannels(plan.channels),
+    disabledChannels: sanitizeStringArray(plan.disabledChannels ?? []),
+    credentialBindings: sanitizeRuntimeArtifactCredentialBindings(plan.credentialBindings),
+    runtimeSetup: sanitizeRuntimeSetup(plan.runtimeSetup),
+  };
+}
+
+export function writeMessagingRuntimePlanArtifact(
+  plan: MessagingBuildPlan | null,
+  targetPath: string,
+): string | null {
+  const artifact = buildMessagingRuntimePlanArtifact(plan);
+  if (!artifact) return null;
+  mkdirSync(dirname(targetPath), { recursive: true });
+  writeFileSync(targetPath, `${JSON.stringify(artifact, null, 2)}\n`);
+  chmodSync(targetPath, 0o644);
+  return targetPath;
+}
+
+function sanitizeRuntimeArtifactChannels(
+  channels: readonly MessagingPlanChannel[],
+): readonly JsonObject[] {
+  return channels.flatMap((channel): JsonObject[] => {
+    const channelId = sanitizeOptionalString(channel.channelId);
+    if (!channelId) return [];
+    return [
+      {
+        channelId,
+        active: channel.active === true,
+        disabled: channel.disabled === true,
+      },
+    ];
+  });
+}
+
+function sanitizeRuntimeArtifactCredentialBindings(
+  bindings: readonly MessagingCredentialBinding[],
+): readonly JsonObject[] {
+  return bindings.flatMap((binding): JsonObject[] => {
+    const channelId = sanitizeOptionalString(binding.channelId);
+    const providerEnvKey = sanitizeOptionalString(binding.providerEnvKey);
+    if (!channelId || !providerEnvKey) return [];
+    return [{ channelId, providerEnvKey }];
+  });
+}
+
+function sanitizeRuntimeSetup(
+  setup: MessagingBuildPlan["runtimeSetup"] | undefined,
+): Record<MessagingRuntimeSetupKey, readonly JsonObject[]> {
+  return {
+    nodePreloads: sanitizeRuntimeSetupEntries(setup?.nodePreloads, [
+      "channelId",
+      "source",
+      "target",
+      "injectInto",
+      "optional",
+      "installMessage",
+      "installedMessage",
+    ]),
+    envAliases: sanitizeRuntimeSetupEntries(setup?.envAliases, [
+      "channelId",
+      "envKey",
+      "match",
+      "value",
+      "message",
+    ]),
+    secretScans: sanitizeRuntimeSetupEntries(setup?.secretScans, [
+      "channelId",
+      "path",
+      "pattern",
+      "message",
+      "exitCode",
+    ]),
+  };
+}
+
+function sanitizeRuntimeSetupEntries(
+  entries: readonly JsonObject[] | undefined,
+  allowedKeys: readonly string[],
+): readonly JsonObject[] {
+  if (!Array.isArray(entries)) return [];
+  return entries.map((entry, index) => {
+    if (!isObject(entry)) {
+      throw new MessagingBuildApplierError(
+        `Messaging runtime setup entry ${index} must be an object`,
+      );
+    }
+    const channelId = sanitizeOptionalString(entry.channelId);
+    if (!channelId) {
+      throw new MessagingBuildApplierError(
+        `Messaging runtime setup entry ${index} must include channelId`,
+      );
+    }
+    const sanitized: JsonObject = { channelId };
+    for (const key of allowedKeys) {
+      if (key === "channelId" || entry[key] === undefined) continue;
+      sanitized[key] = cloneRuntimeArtifactValue(entry[key], `runtime setup entry ${index}.${key}`);
+    }
+    return sanitized;
+  });
+}
+
+function cloneRuntimeArtifactValue(value: unknown, label: string): MessagingSerializableValue {
+  if (
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  ) {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry, index) =>
+      cloneRuntimeArtifactValue(entry, `${label}[${String(index)}]`),
+    );
+  }
+  if (isObject(value)) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => {
+        assertSafeObjectKey(key, label);
+        return [key, cloneRuntimeArtifactValue(entry, `${label}.${key}`)];
+      }),
+    );
+  }
+  throw new MessagingBuildApplierError(`${label} must be JSON-serializable`);
+}
+
+function sanitizeStringArray(values: readonly unknown[]): readonly string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const value of values) {
+    const clean = sanitizeOptionalString(value);
+    if (!clean || seen.has(clean)) continue;
+    seen.add(clean);
+    out.push(clean);
+  }
+  return out;
+}
+
+function sanitizeOptionalString(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
 export function collectOpenClawMessagingPluginInstallSpecs(
   plan: MessagingBuildPlan | null,
   env: Env,
 ): string[] {
-  const specs: string[] = [];
+  return collectOpenClawMessagingPluginInstalls(plan, env).map((install) => install.spec);
+}
+
+function collectOpenClawMessagingPluginInstalls(
+  plan: MessagingBuildPlan | null,
+  env: Env,
+): OpenClawPluginInstall[] {
+  const installs: OpenClawPluginInstall[] = [];
+  const seen = new Set<string>();
   for (const step of enabledBuildStepsForPhase(plan, "agent-install")) {
     if (step.kind !== "package-install") continue;
     if (step.value === undefined) {
@@ -251,10 +419,13 @@ export function collectOpenClawMessagingPluginInstallSpecs(
     }
     const install = readOpenClawPackageInstall(step.value, step.outputId);
     const resolvedSpec = resolveOpenClawPackageSpec(install.spec, env);
-    assertAllowedOpenClawPackageSpec(step.channelId, resolvedSpec, env);
-    specs.push(resolvedSpec);
+    const resolvedInstall = { spec: resolvedSpec, pin: install.pin === true };
+    const key = JSON.stringify(resolvedInstall);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    installs.push(resolvedInstall);
   }
-  return uniqueStrings(specs);
+  return installs;
 }
 
 export function openClawDoctorEnvOverrides(
@@ -276,12 +447,12 @@ export function openClawDoctorEnvOverrides(
   return overrides;
 }
 
-export function installOpenClawMessagingPlugins(
-  plan: MessagingBuildPlan | null,
-  env: Env,
-): void {
-  for (const spec of collectOpenClawMessagingPluginInstallSpecs(plan, env)) {
-    runCommand(["openclaw", "plugins", "install", spec, "--pin"], env);
+export function installOpenClawMessagingPlugins(plan: MessagingBuildPlan | null, env: Env): void {
+  for (const install of collectOpenClawMessagingPluginInstalls(plan, env)) {
+    runCommand(
+      ["openclaw", "plugins", "install", install.spec, ...(install.pin ? ["--pin"] : [])],
+      env,
+    );
   }
 }
 
@@ -338,7 +509,9 @@ function applyJsonRenderEntriesToLocalFile(
   mkdirSync(dirname(targetPath), { recursive: true });
   writeFileSync(
     targetPath,
-    targetPath.endsWith(".yaml") ? serializeGeneratedYamlObject(config) : `${JSON.stringify(config, null, 2)}\n`,
+    targetPath.endsWith(".yaml")
+      ? serializeGeneratedYamlObject(config)
+      : `${JSON.stringify(config, null, 2)}\n`,
   );
   chmodSync(targetPath, 0o600);
   return targetPath;
@@ -351,7 +524,10 @@ function applyEnvRenderEntriesToLocalFile(
   options: { readonly homeDir?: string },
 ): string {
   const targetPath = resolveAgentRenderTarget(agent, target, options);
-  const envLines = readTextIfExists(targetPath)?.split(/\r?\n/).filter((line) => line.length > 0) ?? [];
+  const envLines =
+    readTextIfExists(targetPath)
+      ?.split(/\r?\n/)
+      .filter((line) => line.length > 0) ?? [];
   for (const render of renderEntries) {
     if (!Array.isArray(render.lines)) {
       throw new MessagingBuildApplierError(
@@ -375,7 +551,9 @@ function applyMessagingRenderEntriesToObject(
   const rules = credentialPlaceholderRules(plan);
   for (const render of renderEntries) {
     if (render.kind !== "json-fragment" || typeof render.path !== "string") {
-      throw new MessagingBuildApplierError(`Messaging render for ${target} must be a JSON fragment with a path.`);
+      throw new MessagingBuildApplierError(
+        `Messaging render for ${target} must be a JSON fragment with a path.`,
+      );
     }
     const value = preserveCredentialPlaceholders(
       requiredSerializableValue(render.value, "render value"),
@@ -395,7 +573,9 @@ function readEnvRenderLines(render: MessagingRenderEntry): readonly string[] {
   for (const line of render.lines) {
     if (/[\r\n]/.test(line)) {
       throw new MessagingBuildApplierError(
-        "Messaging env render '" + (render.renderId ?? render.channelId) + "' must not contain line breaks.",
+        "Messaging env render '" +
+          (render.renderId ?? render.channelId) +
+          "' must not contain line breaks.",
       );
     }
   }
@@ -432,19 +612,26 @@ function resolveAgentRenderTarget(
   let relativePath: string | null = null;
   if (target.startsWith("~/.openclaw/")) {
     if (agent !== "openclaw") {
-      throw new MessagingBuildApplierError(`Messaging render target ${target} does not match ${agent}.`);
+      throw new MessagingBuildApplierError(
+        `Messaging render target ${target} does not match ${agent}.`,
+      );
     }
     relativePath = target.slice("~/.openclaw/".length);
   }
   if (target.startsWith("~/.hermes/")) {
     if (agent !== "hermes") {
-      throw new MessagingBuildApplierError(`Messaging render target ${target} does not match ${agent}.`);
+      throw new MessagingBuildApplierError(
+        `Messaging render target ${target} does not match ${agent}.`,
+      );
     }
     relativePath = target.slice("~/.hermes/".length);
   }
   if (relativePath !== null) {
     const resolvedTarget = resolve(agentRoot, relativePath);
-    if (resolvedTarget !== normalizedRoot && !resolvedTarget.startsWith(`${normalizedRoot}${sep}`)) {
+    if (
+      resolvedTarget !== normalizedRoot &&
+      !resolvedTarget.startsWith(`${normalizedRoot}${sep}`)
+    ) {
       throw new MessagingBuildApplierError(
         `Messaging render target ${target} must stay inside ${agentRoot}.`,
       );
@@ -504,9 +691,10 @@ function applyBuildFileOutputToLocalAgentRoot(
   file: BuildFileOutput,
   options: { readonly homeDir?: string } = {},
 ): string {
-  const root = agent === "hermes"
-    ? join(options.homeDir ?? homedir(), ".hermes")
-    : join(options.homeDir ?? homedir(), ".openclaw");
+  const root =
+    agent === "hermes"
+      ? join(options.homeDir ?? homedir(), ".hermes")
+      : join(options.homeDir ?? homedir(), ".openclaw");
   const relativePath = normalizeBuildFilePath(file.path);
   const target = resolve(root, relativePath);
   const normalizedRoot = resolve(root);
@@ -532,7 +720,9 @@ function mergeBuildFileContent(
   target: string,
 ): string {
   if (!isObject(patch)) {
-    throw new MessagingBuildApplierError(`Messaging build-file merge for ${target} must be an object.`);
+    throw new MessagingBuildApplierError(
+      `Messaging build-file merge for ${target} must be an object.`,
+    );
   }
   const root = parseJsonObject(existing, target);
   mergeJsonObjects(root, patch as JsonObject);
@@ -543,7 +733,9 @@ function parseJsonObject(existing: string | undefined, target: string): JsonObje
   if (!existing || existing.trim().length === 0) return {};
   const parsed = JSON.parse(existing) as unknown;
   if (!isObject(parsed)) {
-    throw new MessagingBuildApplierError(`Messaging build-file target ${target} must contain an object.`);
+    throw new MessagingBuildApplierError(
+      `Messaging build-file target ${target} must contain an object.`,
+    );
   }
   return parsed as JsonObject;
 }
@@ -561,7 +753,9 @@ function readBuildFileOutput(value: MessagingSerializableValue): BuildFileOutput
     throw new MessagingBuildApplierError("Messaging build-file output must include a path");
   }
   if (file.content === undefined && file.merge === undefined) {
-    throw new MessagingBuildApplierError(`Messaging build-file ${file.path} must include content or merge`);
+    throw new MessagingBuildApplierError(
+      `Messaging build-file ${file.path} must include content or merge`,
+    );
   }
   if (file.mode !== undefined && typeof file.mode !== "string") {
     throw new MessagingBuildApplierError(`Messaging build-file ${file.path} mode must be a string`);
@@ -571,11 +765,15 @@ function readBuildFileOutput(value: MessagingSerializableValue): BuildFileOutput
 
 function normalizeBuildFilePath(pathValue: string): string {
   if (pathValue.startsWith("/") || pathValue.includes("\\") || /[\0-\x1F\x7F]/.test(pathValue)) {
-    throw new MessagingBuildApplierError(`Messaging build-file path ${pathValue} must be a safe relative path`);
+    throw new MessagingBuildApplierError(
+      `Messaging build-file path ${pathValue} must be a safe relative path`,
+    );
   }
   const segments = pathValue.split("/");
   if (segments.some((segment) => !segment || segment === "." || segment === "..")) {
-    throw new MessagingBuildApplierError(`Messaging build-file path ${pathValue} must not traverse directories`);
+    throw new MessagingBuildApplierError(
+      `Messaging build-file path ${pathValue} must not traverse directories`,
+    );
   }
   return pathValue;
 }
@@ -588,11 +786,15 @@ function serializeBuildFileContent(value: MessagingSerializableValue | undefined
 
 function parseBuildFileMode(pathValue: string, mode: string): number {
   if (!/^[0-7]{3,4}$/.test(mode) || (mode.length === 4 && mode[0] !== "0")) {
-    throw new MessagingBuildApplierError(`Messaging build-file ${pathValue} mode must be an octal file mode`);
+    throw new MessagingBuildApplierError(
+      `Messaging build-file ${pathValue} mode must be an octal file mode`,
+    );
   }
   const parsed = Number.parseInt(mode, 8);
   if ((parsed & 0o022) !== 0) {
-    throw new MessagingBuildApplierError(`Messaging build-file ${pathValue} mode must not be group/world writable`);
+    throw new MessagingBuildApplierError(
+      `Messaging build-file ${pathValue} mode must not be group/world writable`,
+    );
   }
   return parsed;
 }
@@ -647,35 +849,6 @@ function resolveOpenClawPackageSpec(spec: string, env: Env): string {
     throw new MessagingBuildApplierError(`Unresolved package-install template in ${spec}`);
   }
   return resolved;
-}
-
-function assertAllowedOpenClawPackageSpec(channelId: string, resolvedSpec: string, env: Env): void {
-  const allowedSpecs = allowedOpenClawPackageSpecsForChannel(channelId, env);
-  if (!allowedSpecs.includes(resolvedSpec)) {
-    throw new MessagingBuildApplierError(
-      `Messaging package-install spec for ${channelId} is not allowed: ${resolvedSpec}`,
-    );
-  }
-}
-
-function allowedOpenClawPackageSpecsForChannel(channelId: string, env: Env): readonly string[] {
-  const versionedPackage = OPENCLAW_VERSIONED_MESSAGING_PLUGIN_PACKAGES[channelId];
-  if (versionedPackage) {
-    return ["npm:" + versionedPackage + "@" + requiredOpenClawVersion(env)];
-  }
-
-  const fixedSpec = OPENCLAW_FIXED_MESSAGING_PLUGIN_INSTALL_SPECS[channelId];
-  return fixedSpec ? [fixedSpec] : [];
-}
-
-function requiredOpenClawVersion(env: Env): string {
-  const version = (env.OPENCLAW_VERSION || "").trim();
-  if (!version) {
-    throw new MessagingBuildApplierError(
-      "OPENCLAW_VERSION is required when OpenClaw package install hooks are active",
-    );
-  }
-  return version;
 }
 
 function runCommand(args: readonly string[], env: Env): void {
@@ -795,7 +968,9 @@ function setJsonPath(root: JsonObject, pathValue: string, value: MessagingSerial
 function mergeJsonObjects(target: JsonObject, patch: JsonObject): void {
   for (const [key, value] of Object.entries(patch)) {
     if (key === "__proto__" || key === "prototype" || key === "constructor") {
-      throw new MessagingBuildApplierError("Messaging object merge rejected unsafe object key " + key);
+      throw new MessagingBuildApplierError(
+        "Messaging object merge rejected unsafe object key " + key,
+      );
     }
     const existing = target[key];
     if (isObject(existing) && isObject(value)) {
@@ -971,7 +1146,11 @@ function parseGeneratedYamlArray(
   return [parsed, index];
 }
 
-function parseGeneratedYamlScalar(value: string, target: string, lineNumber: number): MessagingSerializableValue {
+function parseGeneratedYamlScalar(
+  value: string,
+  target: string,
+  lineNumber: number,
+): MessagingSerializableValue {
   if (value === "[]") return [];
   if (value === "{}") return {};
   if (value === "null") return null;
@@ -994,7 +1173,10 @@ function serializeGeneratedYamlObject(value: JsonObject): string {
   return serializeGeneratedYamlValue(value);
 }
 
-function serializeGeneratedYamlValue(value: MessagingSerializableValue, indent: number = 0): string {
+function serializeGeneratedYamlValue(
+  value: MessagingSerializableValue,
+  indent: number = 0,
+): string {
   const pad = "  ".repeat(indent);
   if (Array.isArray(value)) {
     if (value.length === 0) return `${pad}[]\n`;
@@ -1017,10 +1199,16 @@ function serializeGeneratedYamlValue(value: MessagingSerializableValue, indent: 
     for (const [key, item] of Object.entries(value)) {
       assertSafeObjectKey(key, "Messaging YAML object");
       if (Array.isArray(item)) {
-        out += item.length === 0 ? `${pad}${key}: []\n` : `${pad}${key}:\n${serializeGeneratedYamlValue(item, indent + 1)}`;
+        out +=
+          item.length === 0
+            ? `${pad}${key}: []\n`
+            : `${pad}${key}:\n${serializeGeneratedYamlValue(item, indent + 1)}`;
       } else if (isObject(item)) {
         const entries = Object.entries(item);
-        out += entries.length === 0 ? `${pad}${key}: {}\n` : `${pad}${key}:\n${serializeGeneratedYamlValue(item as MessagingSerializableValue, indent + 1)}`;
+        out +=
+          entries.length === 0
+            ? `${pad}${key}: {}\n`
+            : `${pad}${key}:\n${serializeGeneratedYamlValue(item as MessagingSerializableValue, indent + 1)}`;
       } else {
         out += `${pad}${key}: ${formatGeneratedYamlScalar(item as MessagingSerializableValue)}\n`;
       }
@@ -1078,13 +1266,17 @@ function formatError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-export type MessagingBuildPhase = "agent-install" | "post-agent-install";
+export type MessagingBuildPhase = "runtime-setup" | "agent-install" | "post-agent-install";
 
 export function applyMessagingBuildPhase(
   plan: MessagingBuildPlan | null,
   phase: MessagingBuildPhase,
   env: Env = process.env,
 ): readonly string[] {
+  if (phase === "runtime-setup") {
+    const target = writeMessagingRuntimePlanArtifact(plan, messagingRuntimePlanPath(env));
+    return target ? [target] : [];
+  }
   if (phase === "agent-install") {
     installMessagingPackages(plan, env);
     return [];
@@ -1122,13 +1314,18 @@ export function describeMessagingBuildPhase(
   plan: MessagingBuildPlan | null,
   phase: MessagingBuildPhase,
   env: Env,
-): BuildCommandResult & { readonly agent: MessagingAgentId | "unknown"; readonly phase: MessagingBuildPhase } {
+): BuildCommandResult & {
+  readonly agent: MessagingAgentId | "unknown";
+  readonly phase: MessagingBuildPhase;
+} {
   return {
     agent: plan?.agent ?? "unknown",
     phase,
     channels: activeChannels(plan),
+    runtimePlanPath: phase === "runtime-setup" ? messagingRuntimePlanPath(env) : "",
     doctorEnv: plan?.agent === "openclaw" ? openClawDoctorEnvOverrides(plan, env) : {},
-    installSpecs: plan?.agent === "openclaw" ? collectOpenClawMessagingPluginInstallSpecs(plan, env) : [],
+    installSpecs:
+      plan?.agent === "openclaw" ? collectOpenClawMessagingPluginInstallSpecs(plan, env) : [],
     openclawVersion: env.OPENCLAW_VERSION || "",
   };
 }
@@ -1196,8 +1393,12 @@ function readAgentArg(value: string | undefined): MessagingAgentId {
 }
 
 function readPhaseArg(value: string | undefined): MessagingBuildPhase {
-  if (value === "agent-install" || value === "post-agent-install") return value;
-  throw new MessagingBuildApplierError("--phase must be 'agent-install' or 'post-agent-install'");
+  if (value === "runtime-setup" || value === "agent-install" || value === "post-agent-install") {
+    return value;
+  }
+  throw new MessagingBuildApplierError(
+    "--phase must be 'runtime-setup', 'agent-install', or 'post-agent-install'",
+  );
 }
 
 function isMainModule(): boolean {

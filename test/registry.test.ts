@@ -229,20 +229,96 @@ describe("registry", () => {
   });
 
   it("stores messaging plan state at registration time", () => {
-    const plan = makeMessagingPlan("messaging", ["telegram"]);
+    const basePlan = makeMessagingPlan("messaging", ["telegram"]);
+    const plan = {
+      ...basePlan,
+      channels: [
+        {
+          ...basePlan.channels[0],
+          inputs: [
+            {
+              channelId: "telegram",
+              inputId: "botToken",
+              kind: "secret",
+              required: true,
+              sourceEnv: "TELEGRAM_BOT_TOKEN",
+              credentialAvailable: true,
+            },
+          ],
+        },
+      ],
+      credentialBindings: [
+        {
+          channelId: "telegram",
+          credentialId: "telegramBotToken",
+          sourceInput: "botToken",
+          providerName: "messaging-telegram-bridge",
+          providerEnvKey: "TELEGRAM_BOT_TOKEN",
+          placeholder: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
+          credentialAvailable: true,
+          credentialHash: "hash",
+        },
+      ],
+    };
     registry.registerSandbox({
       name: "messaging",
       messaging: { schemaVersion: 1, plan },
     });
 
     const sb = registry.getSandbox("messaging");
-    expect(sb.messaging).toEqual({ schemaVersion: 1, plan });
+    expect(sb.messaging).toMatchObject({
+      schemaVersion: 1,
+      plan: {
+        schemaVersion: 1,
+        sandboxName: "messaging",
+        channels: [expect.objectContaining({ channelId: "telegram", active: true })],
+      },
+    });
     const rawSandbox = sb as unknown as Record<string, unknown>;
     expect(rawSandbox.messagingChannels).toBeUndefined();
     expect(rawSandbox.messagingChannelConfig).toBeUndefined();
     expect(registry.getConfiguredMessagingChannels("messaging")).toEqual(["telegram"]);
+    const hydrated = registry.getHydratedMessagingPlanFromEntry(sb);
+    expect(
+      hydrated.agentRender.some((entry: { channelId: string }) => entry.channelId === "telegram"),
+    ).toBe(true);
+    expect(
+      hydrated.channels[0].hooks.some(
+        (hook: { channelId: string }) => hook.channelId === "telegram",
+      ),
+    ).toBe(true);
     const data = JSON.parse(fs.readFileSync(regFile, "utf-8"));
-    expect(data.sandboxes.messaging.messaging).toEqual({ schemaVersion: 1, plan });
+    expect(data.sandboxes.messaging.messaging.schemaVersion).toBe(1);
+    expect(data.sandboxes.messaging.messaging.plan).toMatchObject({
+      schemaVersion: 1,
+      sandboxName: "messaging",
+      channels: [{ channelId: "telegram" }],
+    });
+    expect(data.sandboxes.messaging.messaging.plan.networkPolicy).toEqual({
+      presets: [],
+      entries: [],
+    });
+    expect(data.sandboxes.messaging.messaging.plan.agentRender).toBeUndefined();
+    expect(data.sandboxes.messaging.messaging.plan.buildSteps).toBeUndefined();
+    expect(data.sandboxes.messaging.messaging.plan.runtimeSetup).toBeUndefined();
+    expect(data.sandboxes.messaging.messaging.plan.stateUpdates).toBeUndefined();
+    expect(data.sandboxes.messaging.messaging.plan.healthChecks).toBeUndefined();
+    expect(data.sandboxes.messaging.messaging.plan.channels[0]).toEqual({
+      channelId: "telegram",
+      active: true,
+      configured: true,
+      disabled: false,
+      inputs: [{ inputId: "botToken", credentialAvailable: true }],
+    });
+    expect(data.sandboxes.messaging.messaging.plan.channels[0].hooks).toBeUndefined();
+    expect(data.sandboxes.messaging.messaging.plan.credentialBindings).toEqual([
+      {
+        channelId: "telegram",
+        providerEnvKey: "TELEGRAM_BOT_TOKEN",
+        credentialAvailable: true,
+        credentialHash: "hash",
+      },
+    ]);
     expect(data.sandboxes.messaging.messagingChannels).toBeUndefined();
     expect(data.sandboxes.messaging.messagingChannelConfig).toBeUndefined();
   });
@@ -265,6 +341,27 @@ describe("registry", () => {
     // Should not throw, returns empty
     const { sandboxes } = registry.listSandboxes();
     expect(sandboxes.length).toBe(0);
+  });
+
+  it("skips malformed sandbox entries while loading the registry", () => {
+    fs.mkdirSync(path.dirname(regFile), { recursive: true });
+    fs.writeFileSync(
+      regFile,
+      JSON.stringify({
+        defaultSandbox: "broken",
+        sandboxes: {
+          good: { name: "good", model: "m1" },
+          broken: null,
+          text: "not-an-entry",
+        },
+      }),
+    );
+
+    expect(registry.getSandbox("broken")).toBe(null);
+    expect(registry.getDefault()).toBe("good");
+    expect(
+      registry.listSandboxes().sandboxes.map((sandbox: { name: string }) => sandbox.name),
+    ).toEqual(["good"]);
   });
 
   it("setChannelDisabled toggles a channel on and off for a sandbox", () => {

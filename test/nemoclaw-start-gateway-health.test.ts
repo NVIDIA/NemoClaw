@@ -47,9 +47,19 @@ function extractShellFunction(src: string, name: string): string {
   throw new Error(`Expected closing brace for ${name} in scripts/nemoclaw-start.sh`);
 }
 
+function safeTmpHelpers(src: string): string {
+  const start = src.indexOf("_nemoclaw_safe_replace_tmp_file() {");
+  const end = src.indexOf("_START_LOG=", start);
+  if (start === -1 || end === -1 || end <= start) {
+    throw new Error("Expected safe temp helpers in scripts/nemoclaw-start.sh");
+  }
+  return src.slice(start, end);
+}
+
 function watchdogFunctions(): string {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
   return [
+    safeTmpHelpers(src),
     extractShellFunction(src, "record_gateway_pid"),
     extractShellFunction(src, "gateway_pid_is_openclaw_gateway"),
     extractShellFunction(src, "start_gateway_serving_watchdog"),
@@ -369,6 +379,7 @@ describe("record_gateway_pid", () => {
           "#!/usr/bin/env bash",
           "set -euo pipefail",
           `GATEWAY_PID_FILE=${JSON.stringify(pidFile)}`,
+          safeTmpHelpers(fs.readFileSync(START_SCRIPT, "utf-8")),
           extractShellFunction(fs.readFileSync(START_SCRIPT, "utf-8"), "record_gateway_pid"),
           "record_gateway_pid 4242",
         ].join("\n"),
@@ -393,7 +404,7 @@ describe("record_gateway_pid", () => {
     }
   });
 
-  it("writes the pidfile with 644 permissions, replacing any preexisting file", () => {
+  it("writes the pidfile with 600 permissions, replacing any preexisting file", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-watchdog-pid-"));
     try {
       const pidFile = path.join(tmpDir, "gateway.pid");
@@ -407,6 +418,7 @@ describe("record_gateway_pid", () => {
           "#!/usr/bin/env bash",
           "set -euo pipefail",
           `GATEWAY_PID_FILE=${JSON.stringify(pidFile)}`,
+          safeTmpHelpers(fs.readFileSync(START_SCRIPT, "utf-8")),
           extractShellFunction(fs.readFileSync(START_SCRIPT, "utf-8"), "record_gateway_pid"),
           "record_gateway_pid 4242",
         ].join("\n"),
@@ -416,7 +428,7 @@ describe("record_gateway_pid", () => {
       const result = spawnSync("bash", [script], { encoding: "utf-8", timeout: 5000 });
       expect(result.status, `script failed: ${result.stderr}`).toBe(0);
       expect(fs.readFileSync(pidFile, "utf-8")).toBe("4242\n");
-      expect((fs.statSync(pidFile).mode & 0o777).toString(8)).toBe("644");
+      expect((fs.statSync(pidFile).mode & 0o777).toString(8)).toBe("600");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -495,6 +507,7 @@ describe("healthcheck marker (#4503, #4710)", () => {
       const script = [
         "#!/usr/bin/env bash",
         "set -euo pipefail",
+        safeTmpHelpers(src),
         fnSrc,
         "mark_in_container_gateway",
         "mark_in_container_gateway", // second call must be a no-op
@@ -551,6 +564,7 @@ describe("gateway launch wiring (#4710)", () => {
     fs.writeFileSync(gatewayLog, "gateway booting\n");
 
     const realFunctions = [
+      safeTmpHelpers(src),
       extractShellFunction(src, "mark_in_container_gateway").replaceAll(
         "/tmp/nemoclaw-gateway-local",
         markerPath,
@@ -676,6 +690,7 @@ describe("respawn loop pidfile refresh (#4710)", () => {
         "STEP_DOWN_PREFIX_GATEWAY=(gosu gateway)",
         // The loop sleeps 2s between respawns; keep the test fast.
         "sleep() { command sleep 0.05; }",
+        safeTmpHelpers(src),
         extractShellFunction(src, "record_gateway_pid"),
         "SANDBOX_CHILD_PIDS=()",
         "SANDBOX_WAIT_PID=",
@@ -788,6 +803,7 @@ describe("nemoclaw-start gateway launch signal handling", () => {
         "start_auto_pair() { sleep 30 & AUTO_PAIR_PID=$!; }",
         "start_plugin_registry_refresh() { :; }",
         "cleanup_on_signal() { :; }",
+        safeTmpHelpers(src),
         extractShellFunction(src, "mark_in_container_gateway").replaceAll(
           "/tmp/nemoclaw-gateway-local",
           markerPath,
