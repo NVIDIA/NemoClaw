@@ -183,10 +183,7 @@ const {
   pullAndResolveBaseImageDigest,
 }: typeof import("./onboard/base-image") = require("./onboard/base-image");
 const { requireValue }: typeof import("./core/require-value") = require("./core/require-value");
-const {
-  resolveNonInteractiveBuildCredential,
-  resolveBuildPreferredInferenceApi,
-}: typeof import("./onboard/build-credential-reuse") = require("./onboard/build-credential-reuse");
+const buildCredentialReuse: typeof import("./onboard/build-credential-reuse") = require("./onboard/build-credential-reuse");
 
 type RunnerOptions = {
   env?: NodeJS.ProcessEnv;
@@ -3403,7 +3400,6 @@ async function handleVllmSelection(
   // Local vLLM uses an internal credential env, no user API key.
   state.credentialEnv = null;
   state.endpointUrl = getLocalProviderBaseUrl(state.provider);
-  state.skipHostInferenceSmoke = false;
   if (!state.endpointUrl) {
     console.error("  Local vLLM base URL could not be determined.");
     process.exit(1);
@@ -3523,7 +3519,6 @@ async function handleRoutedSelection(
     state.endpointUrl = `${HOST_GATEWAY_URL}:${u.port}${u.pathname}`;
   }
   state.preferredInferenceApi = "openai-completions";
-  state.skipHostInferenceSmoke = false;
   console.log(`  ✓ Using Model Router: ${state.provider} / ${state.model}`);
   return "selected";
 }
@@ -3633,7 +3628,6 @@ async function handleNimLocalSelection(
   state.provider = "vllm-local";
   state.credentialEnv = null;
   state.endpointUrl = getLocalProviderBaseUrl(state.provider);
-  state.skipHostInferenceSmoke = false;
   if (!state.endpointUrl) {
     console.error("  Local NVIDIA NIM base URL could not be determined.");
     process.exit(1);
@@ -3671,7 +3665,6 @@ async function handleRemoteProviderSelection(
   state.credentialEnv = remoteConfig.credentialEnv;
   state.endpointUrl = remoteConfig.endpointUrl;
   state.preferredInferenceApi = null;
-  state.skipHostInferenceSmoke = false;
 
   if (selected.key === "custom" || selected.key === "anthropicCompatible") {
     const kind = selected.key === "custom" ? "openai" : "anthropic";
@@ -3798,7 +3791,7 @@ async function handleRemoteProviderSelection(
       process.env.NVIDIA_INFERENCE_API_KEY = _nvProviderKey;
     }
     if (isNonInteractive()) {
-      state.skipHostInferenceSmoke = resolveNonInteractiveBuildCredential({
+      state.skipHostInferenceSmoke = buildCredentialReuse.resolveNonInteractiveBuildCredential({
         provider: state.provider,
         helpUrl: REMOTE_PROVIDER_CONFIG.build.helpUrl,
         recoveredFromSandbox,
@@ -3937,8 +3930,8 @@ async function handleRemoteProviderSelection(
       isBackToSelection(state.model) ? null : state.model,
       `Missing model for ${remoteConfig.label}`,
     );
-    const buildValidation = await resolveBuildPreferredInferenceApi({
-      reuseGatewayCredentialWithoutLocalKey: state.skipHostInferenceSmoke,
+    const buildValidation = await buildCredentialReuse.resolveBuildPreferredInferenceApi({
+      reuseGatewayCredentialWithoutLocalKey: state.skipHostInferenceSmoke === true,
       note,
       probe: () =>
         validateOpenAiLikeSelection(
@@ -4124,7 +4117,6 @@ async function setupNim(
           preferredInferenceApi,
           nimContainer,
           allowToolsIncompatible,
-          skipHostInferenceSmoke,
         };
         const result = await handleRemoteProviderSelection(
           { selected, requestedModel, recoveredFromSandbox, recoveredModel, sandboxName },
@@ -4139,10 +4131,9 @@ async function setupNim(
           hermesToolGateways,
           preferredInferenceApi,
           allowToolsIncompatible,
-          skipHostInferenceSmoke,
         } = state);
+        skipHostInferenceSmoke = state.skipHostInferenceSmoke === true;
         if (result === "retry-selection") continue selectionLoop;
-
         break;
       } else if (selected.key === "nim-local") {
         const state: SetupNimSelectionState = {
@@ -4155,7 +4146,6 @@ async function setupNim(
           preferredInferenceApi,
           nimContainer,
           allowToolsIncompatible,
-          skipHostInferenceSmoke,
         };
         const result = await handleNimLocalSelection(
           gpu,
@@ -4188,7 +4178,6 @@ async function setupNim(
           preferredInferenceApi,
           nimContainer,
           allowToolsIncompatible,
-          skipHostInferenceSmoke,
         };
         const result = await handleRunningOllamaSelection(
           gpu,
@@ -4204,7 +4193,6 @@ async function setupNim(
           credentialEnv,
           preferredInferenceApi,
           allowToolsIncompatible,
-          skipHostInferenceSmoke,
         } = state);
         if (result === "retry-selection") continue selectionLoop;
         break;
@@ -4222,7 +4210,6 @@ async function setupNim(
           preferredInferenceApi,
           nimContainer,
           allowToolsIncompatible,
-          skipHostInferenceSmoke,
         };
         const result = await handleWindowsHostOllamaSelection(
           gpu,
@@ -4240,7 +4227,6 @@ async function setupNim(
           credentialEnv,
           preferredInferenceApi,
           allowToolsIncompatible,
-          skipHostInferenceSmoke,
         } = state);
         if (result === "retry-selection") continue selectionLoop;
         break;
@@ -4255,7 +4241,6 @@ async function setupNim(
           preferredInferenceApi,
           nimContainer,
           allowToolsIncompatible,
-          skipHostInferenceSmoke,
         };
         const result = await handleInstallOllamaSelection(
           gpu,
@@ -4271,7 +4256,6 @@ async function setupNim(
           credentialEnv,
           preferredInferenceApi,
           allowToolsIncompatible,
-          skipHostInferenceSmoke,
         } = state);
         if (result === "retry-selection") continue selectionLoop;
         break;
@@ -4306,7 +4290,6 @@ async function setupNim(
           preferredInferenceApi,
           nimContainer,
           allowToolsIncompatible,
-          skipHostInferenceSmoke,
         };
         const result = await handleVllmSelection(state);
         ({
@@ -4331,7 +4314,6 @@ async function setupNim(
           preferredInferenceApi,
           nimContainer,
           allowToolsIncompatible,
-          skipHostInferenceSmoke,
         };
         const result = await handleRoutedSelection(state);
         ({
@@ -4490,11 +4472,9 @@ async function setupInference(
   }
 
   verifyInferenceRoute(provider, model);
-  if (options.skipHostInferenceSmoke === true) {
+  if (options.skipHostInferenceSmoke === true)
     console.log("  Reusing existing gateway credential; skipping host inference smoke.");
-  } else {
-    verifyOnboardInferenceSmoke({ provider, model, endpointUrl, credentialEnv });
-  }
+  else verifyOnboardInferenceSmoke({ provider, model, endpointUrl, credentialEnv });
   if (sandboxName) {
     registry.updateSandbox(sandboxName, { model, provider });
   }

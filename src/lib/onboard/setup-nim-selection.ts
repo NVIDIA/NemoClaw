@@ -13,7 +13,7 @@ export type SetupNimSelectionState<THermesAuthMethod = unknown> = {
   preferredInferenceApi: string | null;
   nimContainer: string | null;
   allowToolsIncompatible: boolean;
-  skipHostInferenceSmoke: boolean;
+  skipHostInferenceSmoke?: boolean;
 };
 
 export type CloudFallbackConfig = {
