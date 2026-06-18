@@ -30,7 +30,7 @@ Covers the daily maintainer cadence (morning standup, daytime loop, evening hand
 ### `nemoclaw-contributor-*` (2 skills)
 
 For contributors to the NemoClaw codebase.
-Covers creating pull requests that follow the project template and drafting documentation updates from recent commits.
+Covers creating pull requests that follow the project template, monitoring CI and automated review feedback after pushing, and drafting documentation updates from recent commits.
 
 ## Skill Catalog
 
@@ -60,7 +60,7 @@ Covers creating pull requests that follow the project template and drafting docu
 | `nemoclaw-maintainer-policies` | Read-only maintainer workflow policy reference for Issue Type, labels, Project fields, daily release labels, triage, duplicates, blocked items, and workflow decisions. |
 | `nemoclaw-maintainer-cross-issue-sweep` | Scan open issues for adjacent fixes or contradiction risks when reviewing a PR. |
 | `nemoclaw-maintainer-day` | Daytime loop: pick the highest-value version-targeted item and execute the right workflow (merge gate, salvage, security sweep, test gaps, hotspot cooling, or sequencing). Designed for `/loop`. |
-| `nemoclaw-maintainer-evening` | End-of-day handoff: check version progress, bump stragglers to the next patch, generate a QA handoff summary, and cut the release tag. |
+| `nemoclaw-maintainer-evening` | End-of-day handoff: check version progress, bump stragglers to the next patch, generate a QA handoff summary, cut the release tag, and hand off release notes. |
 | `nemoclaw-maintainer-cut-release-tag` | Cut an annotated semver tag on a maintainer-confirmed `origin/main` commit; the GitHub workflow moves `latest`, and `lkg` stays manual. |
 | `nemoclaw-maintainer-release-notes` | Draft release notes from live tag/compare data, with the three-paragraph narrative, categorized change list, and external-only contributor thanks. |
 | `nemoclaw-maintainer-find-review-pr` | Find open PRs labeled security + priority-high, link each to its issue, detect duplicates, and present a review summary. |
@@ -73,7 +73,7 @@ Covers creating pull requests that follow the project template and drafting docu
 
 | Skill | Summary |
 |-------|---------|
-| `nemoclaw-contributor-create-pr` | Create GitHub pull requests that follow the NemoClaw PR template, including pre-PR checks, conventional commit titles, and DCO sign-off. |
+| `nemoclaw-contributor-create-pr` | Create GitHub pull requests that follow the NemoClaw PR template, including pre-PR checks, conventional commit titles, DCO sign-off, post-push CI monitoring, and CodeRabbit/PR Review Advisor follow-up. |
 | `nemoclaw-contributor-update-docs` | Scan recent git commits for user-facing changes, draft or update documentation pages, and refresh generated user skills during release prep. |
 
 ## Getting Started

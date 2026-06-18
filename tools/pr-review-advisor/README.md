@@ -35,6 +35,10 @@ It intentionally does not report GitHub mergeability, branch protection, CI stat
 The workflow is advisory and must not be configured as a required status check. Making it required can
 create circular wait behavior and defeats the goal of letting it observe settled required-check state.
 
+## Author and agent follow-up
+
+Authors and coding agents should follow the shared [PR CI and Automated Review Follow-Up](../../.agents/skills/_shared/pr-follow-up.md) workflow after opening a PR or pushing follow-up commits. If SSH, authentication, remote access, authorization, or permission problems prevent reading comments or pushing fixes, follow [Git and GitHub Access Hard Stop](../../.agents/skills/_shared/git-github-hard-stop.md).
+
 ## Safety model
 
 - Static analysis only.
