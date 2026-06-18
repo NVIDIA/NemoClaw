@@ -120,11 +120,14 @@ function main(): void {
   }
 
   if (options.push) {
-    git(["push", "origin", "HEAD"]);
-    if (options.tag) {
-      git(["push", "origin", tagName]);
-      git(["push", "origin", "latest", "--force"]);
-    }
+    git([
+      "push",
+      "--atomic",
+      "origin",
+      "HEAD",
+      `refs/tags/${tagName}:refs/tags/${tagName}`,
+      "+refs/tags/latest:refs/tags/latest",
+    ]);
   }
 
   log(`Version bump complete: ${previousVersion} -> ${options.version}`);
