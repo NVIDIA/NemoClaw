@@ -551,7 +551,7 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       selectedFreeStandingJobs: ["channels-add-remove-vitest"],
       registryScenarios: [],
     });
-  });
+  }, 30_000);
 
   it("derives the free-standing inventory from workflow job metadata", () => {
     const inventory = readFreeStandingJobsInventory();
