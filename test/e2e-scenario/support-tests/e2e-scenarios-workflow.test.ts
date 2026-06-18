@@ -881,6 +881,7 @@ jobs:
           "workflow missing hermes-e2e-vitest job",
           "workflow missing skill-agent-vitest job",
           "workflow missing model-router-provider-routed-inference-vitest job",
+          "workflow missing snapshot-commands-vitest job",
           "report-to-pr job must wait for live-scenarios",
           "report-to-pr step must pass jobs through JOBS env",
           "step 'Post Vitest scenario results to PR' run script must check selector validation before echoing selectors",
@@ -907,6 +908,87 @@ jobs:
     try {
       expect(validateE2eVitestScenariosWorkflowBoundary(workflowPath)).toContain(
         "free-standing inventory mapping sandbox-rebuild:sandbox-rebuild-vitest must match the workflow job selector",
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("requires snapshot commands workflow boundary coverage", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-vitest-workflow-"));
+    const workflowPath = path.join(tmp, "workflow.yaml");
+    const workflow = fs.readFileSync(
+      path.join(process.cwd(), ".github/workflows/e2e-vitest-scenarios.yaml"),
+      "utf8",
+    );
+    const parsedWorkflow = YAML.parse(workflow) as {
+      jobs: Record<
+        string,
+        {
+          env: Record<string, string>;
+          steps: Array<Record<string, unknown>>;
+          "timeout-minutes"?: number;
+        }
+      >;
+    };
+    const snapshotJob = parsedWorkflow.jobs["snapshot-commands-vitest"];
+    snapshotJob["timeout-minutes"] = 30;
+    snapshotJob.env.DOCKER_CONFIG = "${{ github.workspace }}/.docker-config-shared";
+    snapshotJob.env.NVIDIA_API_KEY = "${{ secrets.NVIDIA_API_KEY }}";
+    for (const step of snapshotJob.steps) {
+      if (typeof step.uses === "string" && step.uses.startsWith("actions/checkout@")) {
+        step.with = { ...(step.with as Record<string, unknown>), "persist-credentials": true };
+      }
+      if (step.name === "Configure isolated Docker auth directory") {
+        step.run =
+          'echo "DOCKER_CONFIG=${{ github.workspace }}/.docker-config-shared" >> "$GITHUB_ENV"';
+      }
+      if (step.name === "Set up Node") {
+        step.env = { NVIDIA_API_KEY: "${{ secrets.NVIDIA_API_KEY }}" };
+      }
+      if (step.name === "Install root dependencies") {
+        step.env = {
+          DOCKERHUB_USERNAME: "${{ secrets.DOCKERHUB_USERNAME }}",
+          DOCKERHUB_TOKEN: "${{ secrets.DOCKERHUB_TOKEN }}",
+        };
+        step.run = "npm install";
+      }
+      if (step.name === "Run snapshot commands live test") {
+        step.run = String(step.run).replace(
+          "test/e2e-scenario/live/snapshot-commands.test.ts",
+          "test/e2e-scenario/live/registry-scenarios.test.ts",
+        );
+      }
+      if (step.name === "Upload snapshot commands artifacts") {
+        step.with = {
+          ...(step.with as Record<string, unknown>),
+          path: "e2e-artifacts/vitest/",
+          "include-hidden-files": true,
+        };
+      }
+      if (step.name === "Clean up Docker auth") {
+        step.run = String(step.run).replace('rm -rf "${DOCKER_CONFIG}"', 'echo "missing cleanup"');
+      }
+    }
+    fs.writeFileSync(workflowPath, YAML.stringify(parsedWorkflow));
+
+    try {
+      expect(validateE2eVitestScenariosWorkflowBoundary(workflowPath)).toEqual(
+        expect.arrayContaining([
+          "snapshot-commands-vitest job must keep a 40 minute timeout",
+          "snapshot-commands-vitest job must not set DOCKER_CONFIG at job level",
+          'step \'Configure isolated Docker auth directory\' run script must include echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-snapshot-commands" >> "$GITHUB_ENV"',
+          "snapshot-commands-vitest checkout step must set persist-credentials=false",
+          "snapshot-commands-vitest job env must not include NVIDIA_API_KEY",
+          "snapshot-commands-vitest step 'Set up Node' env must not include NVIDIA_API_KEY",
+          "snapshot-commands-vitest step 'Install root dependencies' env must not include DOCKERHUB_USERNAME",
+          "snapshot-commands-vitest step 'Install root dependencies' env must not include DOCKERHUB_TOKEN",
+          "snapshot-commands-vitest artifact upload must set include-hidden-files: false",
+          "artifact upload path must include e2e-artifacts/vitest/snapshot-commands/",
+          "step 'Clean up Docker auth' run script must include rm -rf \"${DOCKER_CONFIG}\"",
+          "step 'Install root dependencies' run script must include npm ci --ignore-scripts",
+          "step 'Run snapshot commands live test' run script must include test/e2e-scenario/live/snapshot-commands.test.ts",
+        ]),
       );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });

@@ -23,6 +23,7 @@ function makeState(): SetupNimSelectionState {
     preferredInferenceApi: "openai-completions",
     nimContainer: "nemoclaw-nim-test",
     allowToolsIncompatible: false,
+    skipHostInferenceSmoke: false,
   };
 }
 
@@ -48,6 +49,7 @@ describe("setupNim selection state helpers", () => {
       preferredInferenceApi: null,
       nimContainer: null,
       allowToolsIncompatible: false,
+      skipHostInferenceSmoke: false,
     });
   });
 

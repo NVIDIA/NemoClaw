@@ -61,20 +61,51 @@ unset _EARLY_DASHBOARD_PORT_RAW _EARLY_DASHBOARD_PORT _EARLY_DASHBOARD_PORT_VALI
 
 # ── Early stderr/stdout capture ──────────────────────────────────
 # Capture all entrypoint output to /tmp/nemoclaw-start.log so that if
-# the script crashes before touch /tmp/gateway.log (e.g., a Landlock
+# the script crashes before gateway log setup (e.g., a Landlock
 # read failure), the output is still available for diagnostics.
 # The log is written in append mode and also forwarded to the original
 # stderr/stdout via tee so openshell sandbox create can still stream it.
 # SECURITY: restrict permissions before writing — startup diagnostics may
 # include dashboard URLs, but auth tokens must stay redacted in logs.
+_nemoclaw_safe_replace_tmp_file() {
+  local target="$1"
+  local mode="$2"
+  local owner="${3:-}"
+  local chmod_policy="${4:-required}"
+  local dir base tmp
+  dir="$(dirname "$target")"
+  base="$(basename "$target")"
+  tmp="$(mktemp "${dir}/.${base}.tmp.XXXXXX")" || return 1
+
+  if ! cat >"$tmp"; then
+    rm -f "$tmp" 2>/dev/null || true
+    return 1
+  fi
+  if [ -n "$owner" ] && ! chown "$owner" "$tmp"; then
+    rm -f "$tmp" 2>/dev/null || true
+    return 1
+  fi
+  if [ "$chmod_policy" = "best-effort" ]; then
+    chmod "$mode" "$tmp" 2>/dev/null || true
+  elif ! chmod "$mode" "$tmp"; then
+    rm -f "$tmp" 2>/dev/null || true
+    return 1
+  fi
+  if ! mv -f "$tmp" "$target"; then
+    rm -f "$tmp" 2>/dev/null || true
+    return 1
+  fi
+}
+
+_nemoclaw_safe_create_tmp_file() {
+  _nemoclaw_safe_replace_tmp_file "$@" </dev/null
+}
+
 _START_LOG="/tmp/nemoclaw-start.log"
 if [ "$(id -u)" -eq 0 ]; then
-  : >"$_START_LOG"
-  chown root:root "$_START_LOG"
-  chmod 600 "$_START_LOG"
+  _nemoclaw_safe_create_tmp_file "$_START_LOG" 600 root:root
 else
-  : >"$_START_LOG"
-  chmod 600 "$_START_LOG" 2>/dev/null || true
+  _nemoclaw_safe_create_tmp_file "$_START_LOG" 600 "" best-effort
 fi
 exec 3>&1
 exec 4>&2
@@ -215,7 +246,7 @@ NEMOCLAW_CMD=("$@")
 # before their `openclaw gateway run` invocation.
 # Best-effort: a write failure must never block startup.
 mark_in_container_gateway() {
-  : >/tmp/nemoclaw-gateway-local 2>/dev/null || true
+  _nemoclaw_safe_create_tmp_file /tmp/nemoclaw-gateway-local 600 "" best-effort 2>/dev/null || true
 }
 
 # Record the PID of the live in-container gateway so the Docker HEALTHCHECK
@@ -225,7 +256,7 @@ mark_in_container_gateway() {
 # is tracked and a window where the gateway is down reads as unhealthy.
 # Best-effort: a write failure must never block startup.
 record_gateway_pid() {
-  printf '%s\n' "${1:-}" >/tmp/nemoclaw-gateway.pid 2>/dev/null || true
+  printf '%s\n' "${1:-}" | _nemoclaw_safe_replace_tmp_file /tmp/nemoclaw-gateway.pid 600 "" best-effort 2>/dev/null || true
 }
 
 _chat_ui_url_port() {
@@ -3754,14 +3785,10 @@ if [ "$(id -u)" -ne 0 ]; then
 
   # In non-root mode, detach gateway stdout/stderr from the sandbox-create
   # stream so openshell sandbox create can return once the container is ready.
-  # TODO(#2277-P2): migrate to shared emit_restricted_log() helper
-  touch /tmp/gateway.log
-  chmod 644 /tmp/gateway.log
+  _nemoclaw_safe_create_tmp_file /tmp/gateway.log 644
 
   # Separate log for auto-pair in non-root mode as well.
-  # TODO(#2277-P2): migrate to shared emit_restricted_log() helper
-  touch /tmp/auto-pair.log
-  chmod 600 /tmp/auto-pair.log
+  _nemoclaw_safe_create_tmp_file /tmp/auto-pair.log 600
 
   prepare_plugin_refresh_log || exit 1
 
@@ -3890,16 +3917,10 @@ fi
 
 # Gateway log: owned by gateway user, world-readable for diagnostics.
 # The sandbox user can read but not truncate/overwrite (not owner, sticky /tmp).
-# TODO(#2277-P2): migrate to shared emit_restricted_log() helper
-touch /tmp/gateway.log
-chown gateway:gateway /tmp/gateway.log
-chmod 644 /tmp/gateway.log
+_nemoclaw_safe_create_tmp_file /tmp/gateway.log 644 gateway:gateway
 
 # Separate log for auto-pair so sandbox user can write to it
-# TODO(#2277-P2): migrate to shared emit_restricted_log() helper
-touch /tmp/auto-pair.log
-chown sandbox:sandbox /tmp/auto-pair.log
-chmod 600 /tmp/auto-pair.log
+_nemoclaw_safe_create_tmp_file /tmp/auto-pair.log 600 sandbox:sandbox
 
 prepare_plugin_refresh_log || exit 1
 

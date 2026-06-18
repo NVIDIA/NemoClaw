@@ -565,6 +565,12 @@ RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-codex-acp \
 # nemoclaw onboard passes these at image build time.
 ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b
 ARG NEMOCLAW_PROVIDER_KEY=inference
+# User-selected upstream provider (e.g. ollama-local, nim-local, nvidia-prod),
+# carried separately from NEMOCLAW_PROVIDER_KEY which collapses managed routes to
+# "inference". generate-openclaw-config.mts reads this to apply provider-specific
+# config such as the Local Ollama small-context compaction policy (#5468). Empty
+# default keeps prior behavior when onboard does not supply a value.
+ARG NEMOCLAW_UPSTREAM_PROVIDER=
 ARG NEMOCLAW_PRIMARY_MODEL_REF=inference/nvidia/nemotron-3-super-120b-a12b
 # Default dashboard port 18789 — override at runtime via NEMOCLAW_DASHBOARD_PORT.
 ARG CHAT_UI_URL=http://127.0.0.1:18789
@@ -635,6 +641,7 @@ ARG NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE=1.0
 # Direct ARG interpolation into inline source is a code injection vector (C-2).
 ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_PROVIDER_KEY=${NEMOCLAW_PROVIDER_KEY} \
+    NEMOCLAW_UPSTREAM_PROVIDER=${NEMOCLAW_UPSTREAM_PROVIDER} \
     NEMOCLAW_PRIMARY_MODEL_REF=${NEMOCLAW_PRIMARY_MODEL_REF} \
     CHAT_UI_URL=${CHAT_UI_URL} \
     NEMOCLAW_INFERENCE_BASE_URL=${NEMOCLAW_INFERENCE_BASE_URL} \

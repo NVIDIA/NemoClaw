@@ -196,6 +196,10 @@ All hooks managed by [prek](https://prek.j178.dev/) (installed via `npm install`
 
 - Create feature branch from `main`
 - Let normal commit and push hooks provide hook verification before submitting
+- Contributor-owned PRs must self-serve the DCO declaration and GitHub commit verification before opening a PR
+- Every contributor-owned PR description must include a valid `Signed-off-by:` declaration for the contributor, and every commit in the PR must appear as `Verified` in GitHub
+- Contributor agents must stop before `gh pr create` if the PR body will not include the DCO declaration or any commit is missing GitHub verification; tell the contributor to fix the issue before opening a PR
+- If force-push is not allowed and an already-published branch contains an unverified commit, require a fresh branch and fresh PR with a clean compliant history
 - Run targeted tests for changed behavior, and run `npm run docs` for doc changes
 - Use `npx prek run --from-ref main --to-ref HEAD` if hooks were skipped or unavailable
 - Follow PR template (`.github/PULL_REQUEST_TEMPLATE.md`)

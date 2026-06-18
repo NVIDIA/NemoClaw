@@ -2457,6 +2457,162 @@ function validateHermesRootEntrypointSmokeVitestJob(errors: string[], jobs: Work
   }
 }
 
+function validateSnapshotCommandsVitestJob(errors: string[], jobs: WorkflowRecord): void {
+  const jobName = "snapshot-commands-vitest";
+  const scenarioName = "snapshot-commands";
+  const job = asRecord(jobs[jobName]);
+  if (Object.keys(job).length === 0) {
+    errors.push("workflow missing snapshot-commands-vitest job");
+    return;
+  }
+
+  if (job["runs-on"] !== "ubuntu-latest") {
+    errors.push("snapshot-commands-vitest job must run on ubuntu-latest");
+  }
+  if (job["timeout-minutes"] !== 40) {
+    errors.push("snapshot-commands-vitest job must keep a 40 minute timeout");
+  }
+  validateFreeStandingJobSelector(errors, jobs, jobName, scenarioName);
+
+  const jobEnv = asRecord(job.env);
+  if ("DOCKER_CONFIG" in jobEnv) {
+    errors.push("snapshot-commands-vitest job must not set DOCKER_CONFIG at job level");
+  }
+  if (
+    jobEnv.E2E_ARTIFACT_DIR !== "${{ github.workspace }}/e2e-artifacts/vitest/snapshot-commands"
+  ) {
+    errors.push(
+      "snapshot-commands-vitest job must write artifacts under e2e-artifacts/vitest/snapshot-commands",
+    );
+  }
+  if (jobEnv.NEMOCLAW_RUN_E2E_SCENARIOS !== "1") {
+    errors.push("snapshot-commands-vitest job must set NEMOCLAW_RUN_E2E_SCENARIOS=1");
+  }
+  if (jobEnv.NEMOCLAW_NON_INTERACTIVE !== "1") {
+    errors.push("snapshot-commands-vitest job must set NEMOCLAW_NON_INTERACTIVE=1");
+  }
+  if (jobEnv.NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE !== "1") {
+    errors.push("snapshot-commands-vitest job must accept third-party software non-interactively");
+  }
+  if (jobEnv.NEMOCLAW_SANDBOX_NAME !== "e2e-snapshot") {
+    errors.push("snapshot-commands-vitest job must use the stable e2e-snapshot sandbox name");
+  }
+  if (jobEnv.OPENSHELL_GATEWAY !== "nemoclaw") {
+    errors.push("snapshot-commands-vitest job must force OPENSHELL_GATEWAY=nemoclaw");
+  }
+  for (const secret of [
+    "NVIDIA_API_KEY",
+    "DOCKERHUB_USERNAME",
+    "DOCKERHUB_TOKEN",
+    "GITHUB_TOKEN",
+  ]) {
+    requireEnvDoesNotExposeSecret(errors, "snapshot-commands-vitest job", jobEnv, secret);
+  }
+
+  const steps = asSteps(job.steps);
+  requireNoDispatchInputInterpolation(errors, steps);
+  for (const step of steps) {
+    const stepName = `snapshot-commands-vitest step '${step.name ?? step.uses ?? "<unnamed>"}'`;
+    const stepEnv = asRecord(step.env);
+    if (step.name !== "Run snapshot commands live test") {
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_API_KEY");
+    }
+    if (step.name !== "Authenticate to Docker Hub") {
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_USERNAME");
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_TOKEN");
+      requireNoDockerHubAuthInRun(errors, stepName, stringValue(step.run));
+    }
+    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "GITHUB_TOKEN");
+  }
+
+  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
+  if (!checkout) {
+    errors.push("snapshot-commands-vitest job missing checkout step");
+  }
+  requireFullShaAction(errors, checkout, "snapshot-commands-vitest checkout");
+  if (asRecord(checkout?.with)["persist-credentials"] !== false) {
+    errors.push("snapshot-commands-vitest checkout step must set persist-credentials=false");
+  }
+
+  const configureDockerAuth = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Configure isolated Docker auth directory",
+  );
+  requireRunContains(
+    errors,
+    configureDockerAuth,
+    'echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-snapshot-commands" >> "$GITHUB_ENV"',
+  );
+  requireRunDoesNotContain(errors, configureDockerAuth, "${{ runner.temp }}");
+
+  const dockerLogin = requireJobStep(errors, jobName, steps, "Authenticate to Docker Hub");
+  const dockerLoginEnv = asRecord(dockerLogin?.env);
+  if (dockerLoginEnv.DOCKERHUB_USERNAME !== "${{ secrets.DOCKERHUB_USERNAME }}") {
+    errors.push(
+      "snapshot-commands-vitest Docker Hub auth must receive DOCKERHUB_USERNAME from secrets",
+    );
+  }
+  if (dockerLoginEnv.DOCKERHUB_TOKEN !== "${{ secrets.DOCKERHUB_TOKEN }}") {
+    errors.push(
+      "snapshot-commands-vitest Docker Hub auth must receive DOCKERHUB_TOKEN from secrets",
+    );
+  }
+  requireRunContains(errors, dockerLogin, 'mkdir -p "${DOCKER_CONFIG}"');
+  requireRunContains(errors, dockerLogin, 'chmod 700 "${DOCKER_CONFIG}"');
+  requireRunContains(errors, dockerLogin, "docker login docker.io");
+  requireRunContains(errors, dockerLogin, "--password-stdin");
+  requireRunContains(errors, dockerLogin, "continuing with anonymous pulls");
+
+  const setupNode = namedStep(steps, "Set up Node");
+  if (!setupNode) {
+    errors.push("snapshot-commands-vitest job missing step: Set up Node");
+  }
+  requireFullShaAction(errors, setupNode, "snapshot-commands-vitest setup-node");
+
+  const installRootDependencies = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Install root dependencies",
+  );
+  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
+
+  const runVitest = requireJobStep(errors, jobName, steps, "Run snapshot commands live test");
+  const runVitestEnv = asRecord(runVitest?.env);
+  if (runVitestEnv.NVIDIA_API_KEY !== "${{ secrets.NVIDIA_API_KEY }}") {
+    errors.push("snapshot-commands-vitest Vitest step must receive NVIDIA_API_KEY from secrets");
+  }
+  requireRunContains(errors, runVitest, "npx vitest run --project e2e-scenarios-live");
+  requireRunContains(errors, runVitest, "test/e2e-scenario/live/snapshot-commands.test.ts");
+
+  const upload = requireJobStep(errors, jobName, steps, "Upload snapshot commands artifacts");
+  requireFullShaAction(errors, upload, "snapshot-commands-vitest upload-artifact");
+  const uploadWith = asRecord(upload?.with);
+  if (uploadWith.name !== "e2e-vitest-scenarios-snapshot-commands") {
+    errors.push("snapshot-commands-vitest artifact upload name must be stable");
+  }
+  const uploadPath = stringValue(uploadWith.path);
+  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/vitest/snapshot-commands/");
+  if (uploadWith["include-hidden-files"] !== false) {
+    errors.push("snapshot-commands-vitest artifact upload must set include-hidden-files: false");
+  }
+  if (uploadWith["if-no-files-found"] !== "ignore") {
+    errors.push("snapshot-commands-vitest artifact upload must ignore missing fixture artifacts");
+  }
+  if (uploadWith["retention-days"] !== 14) {
+    errors.push("snapshot-commands-vitest artifact upload retention-days must be 14");
+  }
+
+  const cleanup = requireJobStep(errors, jobName, steps, "Clean up Docker auth");
+  if (cleanup?.if !== "always()") {
+    errors.push("snapshot-commands-vitest Docker auth cleanup must always run");
+  }
+  requireRunContains(errors, cleanup, "docker logout docker.io");
+  requireRunContains(errors, cleanup, 'rm -rf "${DOCKER_CONFIG}"');
+}
+
 function validateModelRouterProviderRoutedInferenceVitestJob(
   errors: string[],
   jobs: WorkflowRecord,
@@ -3512,6 +3668,7 @@ export function validateE2eVitestScenariosWorkflowBoundary(
     "issue-4434-tui-unreachable-inference",
   );
   validateModelRouterProviderRoutedInferenceVitestJob(errors, jobs);
+  validateSnapshotCommandsVitestJob(errors, jobs);
   validateFreeStandingJobSelector(
     errors,
     jobs,

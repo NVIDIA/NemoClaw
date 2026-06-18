@@ -183,9 +183,7 @@ const {
   pullAndResolveBaseImageDigest,
 }: typeof import("./onboard/base-image") = require("./onboard/base-image");
 const { requireValue }: typeof import("./core/require-value") = require("./core/require-value");
-const {
-  logMissingNvidiaApiKeyHelp,
-}: typeof import("./onboard/missing-credential-hints") = require("./onboard/missing-credential-hints");
+const buildCredentialReuse: typeof import("./onboard/build-credential-reuse") = require("./onboard/build-credential-reuse");
 
 type RunnerOptions = {
   env?: NodeJS.ProcessEnv;
@@ -3793,18 +3791,12 @@ async function handleRemoteProviderSelection(
       process.env.NVIDIA_INFERENCE_API_KEY = _nvProviderKey;
     }
     if (isNonInteractive()) {
-      const resolvedNvidiaKey = resolveProviderCredential("NVIDIA_INFERENCE_API_KEY");
-      if (resolvedNvidiaKey) {
-        const keyError = validateNvidiaApiKeyValue(resolvedNvidiaKey);
-        if (keyError) {
-          console.error(keyError);
-          console.error(`  Get a key from ${REMOTE_PROVIDER_CONFIG.build.helpUrl}`);
-          process.exit(1);
-        }
-      } else if (!providerExistsInGateway(state.provider)) {
-        logMissingNvidiaApiKeyHelp(REMOTE_PROVIDER_CONFIG.build.helpUrl);
-        process.exit(1);
-      }
+      state.skipHostInferenceSmoke = buildCredentialReuse.resolveNonInteractiveBuildCredential({
+        provider: state.provider,
+        helpUrl: REMOTE_PROVIDER_CONFIG.build.helpUrl,
+        recoveredFromSandbox,
+        providerExistsInGateway,
+      });
     } else {
       await ensureApiKey();
     }
@@ -3934,29 +3926,30 @@ async function handleRemoteProviderSelection(
   }
 
   if (selected.key === "build") {
-    while (true) {
-      const validation = await validateOpenAiLikeSelection(
-        remoteConfig.label,
-        requireValue(state.endpointUrl, `Missing endpoint URL for ${remoteConfig.label}`),
-        state.model,
-        state.credentialEnv,
-        "Please choose a provider/model again.",
-        remoteConfig.helpUrl,
-        {
-          requireResponsesToolCalling: shouldRequireResponsesToolCalling(state.provider),
-          skipResponsesProbe: shouldSkipResponsesProbe(state.provider),
-          authMode: getProbeAuthMode(state.provider),
-        },
-      );
-      if (validation.ok) {
-        state.preferredInferenceApi = validation.api;
-        break;
-      }
-      if (validation.retry === "credential" || validation.retry === "retry") {
-        continue;
-      }
-      return "retry-selection";
-    }
+    const buildModel = requireValue(
+      isBackToSelection(state.model) ? null : state.model,
+      `Missing model for ${remoteConfig.label}`,
+    );
+    const buildValidation = await buildCredentialReuse.resolveBuildPreferredInferenceApi({
+      reuseGatewayCredentialWithoutLocalKey: state.skipHostInferenceSmoke === true,
+      note,
+      probe: () =>
+        validateOpenAiLikeSelection(
+          remoteConfig.label,
+          requireValue(state.endpointUrl, `Missing endpoint URL for ${remoteConfig.label}`),
+          buildModel,
+          state.credentialEnv,
+          "Please choose a provider/model again.",
+          remoteConfig.helpUrl,
+          {
+            requireResponsesToolCalling: shouldRequireResponsesToolCalling(state.provider),
+            skipResponsesProbe: shouldSkipResponsesProbe(state.provider),
+            authMode: getProbeAuthMode(state.provider),
+          },
+        ),
+    });
+    if (buildValidation.retrySelection) return "retry-selection";
+    state.preferredInferenceApi = buildValidation.preferredInferenceApi;
   }
 
   console.log(`  Using ${remoteConfig.label} with model: ${state.model}`);
@@ -3977,6 +3970,7 @@ async function setupNim(
   preferredInferenceApi: string | null;
   nimContainer: string | null;
   allowToolsIncompatible: boolean;
+  skipHostInferenceSmoke: boolean;
 }> {
   step(3, 8, "Configuring inference provider");
 
@@ -3989,6 +3983,7 @@ async function setupNim(
   let hermesToolGateways: string[] = [];
   let preferredInferenceApi: string | null = null;
   let allowToolsIncompatible = false;
+  let skipHostInferenceSmoke = false;
 
   const providerHostState = detectInferenceProviderHostState({
     gpu,
@@ -4137,6 +4132,7 @@ async function setupNim(
           preferredInferenceApi,
           allowToolsIncompatible,
         } = state);
+        skipHostInferenceSmoke = state.skipHostInferenceSmoke === true;
         if (result === "retry-selection") continue selectionLoop;
         break;
       } else if (selected.key === "nim-local") {
@@ -4350,6 +4346,7 @@ async function setupNim(
     preferredInferenceApi,
     nimContainer,
     allowToolsIncompatible,
+    skipHostInferenceSmoke,
   };
 }
 
@@ -4363,7 +4360,7 @@ async function setupInference(
   credentialEnv: string | null = null,
   hermesAuthMethod: HermesAuthMethod | string | null = null,
   hermesToolGateways: string[] = [],
-  options: { allowToolsIncompatible?: boolean } = {},
+  options: { allowToolsIncompatible?: boolean; skipHostInferenceSmoke?: boolean } = {},
 ): Promise<{ ok: true; retry?: undefined } | { retry: "selection" }> {
   step(4, 8, "Setting up inference provider");
   runOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
@@ -4475,7 +4472,9 @@ async function setupInference(
   }
 
   verifyInferenceRoute(provider, model);
-  verifyOnboardInferenceSmoke({ provider, model, endpointUrl, credentialEnv });
+  if (options.skipHostInferenceSmoke === true)
+    console.log("  Reusing existing gateway credential; skipping host inference smoke.");
+  else verifyOnboardInferenceSmoke({ provider, model, endpointUrl, credentialEnv });
   if (sandboxName) {
     registry.updateSandbox(sandboxName, { model, provider });
   }
