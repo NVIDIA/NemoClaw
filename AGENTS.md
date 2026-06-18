@@ -31,6 +31,10 @@ This repo ships agent skills under `.agents/skills/`, organized into three audie
 | `docs/` | MDX/Markdown | User-facing docs (Fern MDX plus legacy MyST source during migration) |
 | `fern/` | YAML/CSS/SVG | Fern site configuration and shared assets |
 
+Package-specific guides:
+
+- Messaging architecture and channel migration guidance: [`src/lib/messaging/AGENTS.md`](src/lib/messaging/AGENTS.md)
+
 ## Quick Reference
 
 | Task | Command |
