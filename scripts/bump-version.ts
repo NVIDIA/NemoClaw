@@ -116,18 +116,10 @@ function main(): void {
 
   if (options.tag) {
     git(["tag", "-a", tagName, "-m", tagName]);
-    updateLatestTag(tagName);
   }
 
   if (options.push) {
-    git([
-      "push",
-      "--atomic",
-      "origin",
-      "HEAD",
-      `refs/tags/${tagName}:refs/tags/${tagName}`,
-      "+refs/tags/latest:refs/tags/latest",
-    ]);
+    git(["push", "--atomic", "origin", "HEAD", `refs/tags/${tagName}:refs/tags/${tagName}`]);
   }
 
   log(`Version bump complete: ${previousVersion} -> ${options.version}`);
@@ -205,9 +197,9 @@ function printUsageAndExit(code: number): never {
     "Usage: npm run bump:version -- <version> [options]",
     "",
     "Options:",
-    "  --push        Push the commit and tags to origin (normal release path)",
+    "  --push        Push the commit and semver tag to origin",
     "  --no-commit   Update files but do not create a commit",
-    "  --no-tag      Update files but do not create vX.Y.Z/latest tags",
+    "  --no-tag      Update files but do not create the vX.Y.Z tag",
     "  --dry-run     Print the release plan and checks without writing files",
     "  --skip-tests  Skip npm test and typecheck verification",
     "  --docs-latest Keep public docs URLs pointed at /latest/",
@@ -441,17 +433,6 @@ function git(args: string[]): void {
   run("git", args);
 }
 
-// Keep automated releases scoped to the semver tag and `latest`.
-// The public installer's `lkg` tag is promoted manually by release admins after validation.
-function updateLatestTag(tagName: string): void {
-  log(`Updating mutable 'latest' tag to ${tagName}`);
-  if (gitRefExists("refs/tags/latest")) {
-    git(["tag", "-fa", "latest", "-m", `latest -> ${tagName}`]);
-  } else {
-    git(["tag", "-a", "latest", "-m", `latest -> ${tagName}`]);
-  }
-}
-
 function gitRefExists(ref: string): boolean {
   return (
     run("git", ["show-ref", "--verify", "--quiet", ref], { allowFailure: true }).exitCode === 0
@@ -569,7 +550,7 @@ function printDryRunPlan(
   } else {
     log("Checks: installer version, build:cli, typecheck:cli, npm test");
   }
-  log("No files were written. No commit, PR, tags, or pushes were performed.");
+  log("No files were written. No commit, tag, or push was performed.");
 }
 
 function log(message: string): void {
