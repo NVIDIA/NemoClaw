@@ -1,0 +1,30 @@
+{
+  "_comment": "Chest CT highlighting all five lung lobes (no tumor). Useful for sanity-checking lung anatomy without controllable tumor conditioning. 256^3 keeps the run ~90s on a 24 GB GPU.",
+  "num_output_samples": 1,
+  "body_region": [
+    "chest"
+  ],
+  "anatomy_list": [
+    "left lung upper lobe",
+    "left lung lower lobe",
+    "right lung upper lobe",
+    "right lung middle lobe",
+    "right lung lower lobe",
+    "heart",
+    "airway"
+  ],
+  "controllable_anatomy_size": [],
+  "output_size": [
+    256,
+    256,
+    256
+  ],
+  "spacing": [
+    1.5,
+    1.5,
+    2.0
+  ],
+  "num_inference_steps": 30,
+  "image_output_ext": ".nii.gz",
+  "label_output_ext": ".nii.gz"
+}

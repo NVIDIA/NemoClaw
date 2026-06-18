@@ -1,0 +1,927 @@
+# Defect Image Generation Workflow — Day 0: Full Pipeline (PCBA, day-0 usd2roi)
+#
+# PCBA use case: day-0 usd2roi (scan_grid + per-cell ROI crops, no real photo)
+#               → image-edit augmentation (Qwen Image Edit, OVSL2SL prompt)
+#               → finetune-or-passthrough → anomalygen inference (labels inline)
+#
+# Per-cell tree threads through usd2roi + augment; staged into the canonical
+# anomalygen layout before inference:
+#   crop/<MATERIAL>/<x*_y*>/normal_img/<NNNN>.png  + cad_mask/<NNNN>_cad_mask.png
+#                              │
+#                              └─[image-edit]──► crop/<MATERIAL>/<cell>/<NNNN>.png  (SL appearance)
+#                                                    │
+#                                                    ▼
+#                              ──[stage + prep_testcase.sh]── <MATERIAL>/clean_image + cad_mask + mask/<defect>/
+#                                                    │
+#                                                    ▼
+#                              ──[run_sdg.sh]── per-defect reconstructed images (labels inline)
+#
+# Submit (single step — the cookbook `assets/cookbooks/pcb/ag_config.yaml` is
+# uploaded as a template and rendered in-pod by yq when use_pretrained_checkpoint=false;
+# passthrough mode omits the finetune group entirely):
+#
+#        STAMP=$(cat /proc/sys/kernel/random/uuid | cut -c1-8)
+#        osmo workflow submit skills/physical-ai-defect-image-generation/assets/configs/texture_defect_generation_day0.yaml \
+#          --pool <pool> \
+#          --set name=texture_defect_gen_day0-$STAMP \
+#                dig_url_root=<dig_url_root> \
+#                image_edit_endpoint=http://qwen-image-edit-nvpcb-ovsl2sl.osmo-nims.svc.cluster.local:8000/v1 \
+#                image_edit_model=nvidia/Qwen-Image-Edit-NVPCB-OVSL2SL \
+#                'anomaly_types_json=[["IC","bridge"],["passive_component","excess_solder"],["passive_component","missing"]]'
+#
+# In finetune mode the in-pod render patches 5 fields (job.group, job.name,
+# dataset paths, val JSONL, NVDINOV2 checkpoint) and drops trainer.early_stop.
+#
+# Prerequisites:
+#   1. No registry credential needed — paidf-* images are public on nvcr.io/nvidia/ (anonymous pull). If image pulls fail: see references/troubleshooting.md -> "nvcr.io image pull failures".
+#   2. osmo credential set hf-token --type GENERIC --payload token="$HF_TOKEN"
+#   3. URL assets exist under dig_url_root:
+#        models/pretrained, models/pcb, datasets/pcb/raw, datasets/pcb/assets
+#   6. image-edit endpoint reachable from OSMO pods (existing endpoint or local
+#      cluster deployment; see references/nim/README.md)
+#   7. If finetuning: datasets/pcb/raw exists. validation.jsonl + amp/ are
+#      produced fresh by the finetune task (anomalygen Phase 1 Step 2)
+#      before torchrun starts.
+#   8. If passthrough: models/pcb checkpoint exists
+#
+# Output: {{ dig_url_root }}/runs/<name>/anomaly — per-defect reconstructed images (labels inline).
+
+
+version: 2
+workflow:
+  name: "{{ workflow_name }}"
+  timeout:
+    exec_timeout: "{{ exec_timeout }}"
+    queue_timeout: "{{ queue_timeout }}"
+
+  resources:
+    gpu-render:
+      gpu: "{{ render_gpu }}"
+      cpu: "{{ render_cpu }}"
+      memory: "{{ render_memory }}"
+      storage: "{{ render_storage }}"
+      platform: "{{ platform }}"
+    gpu-augment:
+      gpu: "{{ augment_gpu }}"
+      cpu: "{{ augment_cpu }}"
+      memory: "{{ augment_memory }}"
+      storage: "{{ augment_storage }}"
+      platform: "{{ platform }}"
+    gpu-infer:
+      gpu: "{{ infer_gpu }}"
+      cpu: "{{ infer_cpu }}"
+      memory: "{{ infer_memory }}"
+      storage: "{{ infer_storage }}"
+      platform: "{{ platform }}"
+    gpu-train:
+      gpu: "{{ train_gpu }}"
+      cpu: "{{ train_cpu }}"
+      memory: "{{ train_memory }}"
+      storage: "{{ train_storage }}"
+      platform: "{{ platform }}"
+
+  groups:
+
+    # ── Group 1: usd2roi day-0 — scan_grid render + per-cell ROI crop ───────────
+    # Inputs: {{ dig_url_root }}/datasets/pcb/assets (full USD asset tree).
+    # Two-stage day-0 pipeline (no real photo, no MI registration):
+    #   Stage 1: sdg_pipeline.py renders a labelled scan_grid (per-cell rgb + seg).
+    #   Stage 2: usd2roi_crop.py emits per-cell ROI crops bucketed by material
+    #            (crop.classes + crop.class_dirs in the cookbook).
+    # Output dataset shape:
+    #   crop/<MATERIAL>/<x*_y*>/normal_img/<NNNN>.png + cad_mask/<NNNN>_cad_mask.png
+    - name: usd2roi-render
+      tasks:
+        - name: usd2roi-replicator
+          lead: true
+          image: "{{ usd2roi_image }}"
+          resource: gpu-render
+          environment:
+            NVIDIA_DRIVER_CAPABILITIES: all
+            MAX_IMAGE_COUNT: "{{ render_patches }}"
+            CROP_MAX_EMIT: "{{ crop_max_emit }}"
+          inputs:
+            - url: "{{ dig_url_root }}/datasets/pcb/assets"
+          command: ["bash"]
+          args: ["/tmp/run.sh"]
+          files:
+            # Cookbooks: USD bindings, SDG render config (with mesh-level semantics
+            # inlined), and per-material crop config. The URL input only ships the
+            # USD asset tree; everything else lives in the cookbook.
+            - localpath: "../cookbooks/pcb/{{ board }}/pcba_target.yaml"
+              path: /tmp/pcba_target.yaml
+            - localpath: "../cookbooks/pcb/{{ board }}/day0_image.yaml"
+              path: /tmp/day0_image.yaml
+            - localpath: "../cookbooks/pcb/{{ board }}/day0_crop.yaml"
+              path: /tmp/day0_crop.yaml
+
+            - path: /tmp/run.sh
+              contents: |
+                set -euo pipefail
+
+                # ── Pod-template preflight (OV task) ───────────────────────────
+                if [ ! -f /usr/share/nvidia/nvoptix.bin ]; then
+                  echo "ERROR: /usr/share/nvidia/nvoptix.bin not mounted; Kit OptiX silently falls back to raw path tracing (noisy output)."
+                  echo "  Update the OSMO pod template — see references/troubleshooting.md."
+                  exit 1
+                fi
+                DSHM_GB=$(df -B1G /dev/shm | tail -1 | awk '{print $2}')
+                if [ "$DSHM_GB" -lt 16 ]; then
+                  echo "ERROR: /dev/shm is ${DSHM_GB}GiB; need >= 16 GiB (32 preferred) for Kit ray-tracer buffers."
+                  exit 1
+                fi
+                # ───────────────────────────────────────────────────────────────
+
+                # Install Mike Farah yq into /tmp (pod /usr/local/bin is non-writable; paidf-simulation ships curl, no wget).
+                [ -x /tmp/yq ] || {
+                  curl -fsSL https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64 -o /tmp/yq
+                  chmod +x /tmp/yq
+                }
+                export PATH=/tmp:$PATH
+
+                ASSETS_IN="{{input:0}}"
+                export OUT="{{output}}"
+                mkdir -p "$OUT"
+
+                # 1. pcba_target.yaml ships in the cookbook (mounted at /tmp/pcba_target.yaml).
+                # Dataset only ships the USD tree — locate the scene file by basename.
+                PCBA_YAML=/tmp/pcba_target.yaml
+                [ -f "$PCBA_YAML" ] || { echo "ERROR: $PCBA_YAML not mounted (cookbook localpath)"; exit 1; }
+
+                # Locate scene USD by passed-in basename.
+                SCENE_USD=$(find "$ASSETS_IN" -name "{{ scene_filename }}" -print -quit)
+                [ -n "$SCENE_USD" ] || { echo "ERROR: scene_filename={{ scene_filename }} not found under $ASSETS_IN"; exit 1; }
+                echo "Assets: pcba_target=$PCBA_YAML scene=$SCENE_USD"
+
+                # Patch scene path in pcba_target.yaml so it points at the dataset-mounted USD
+                PCBA_PATCHED=/tmp/pcba_target_patched.yaml
+                cp "$PCBA_YAML" "$PCBA_PATCHED"
+                SCENE_USD="$SCENE_USD" yq -i '.scene = strenv(SCENE_USD)' "$PCBA_PATCHED"
+
+                # 2. Resolve sentinels in SDG + crop cookbooks
+                SDG_YAML=/tmp/day0_image_resolved.yaml
+                CROP_YAML=/tmp/day0_crop_resolved.yaml
+                cp /tmp/day0_image.yaml  "$SDG_YAML"
+                cp /tmp/day0_crop.yaml   "$CROP_YAML"
+
+                OUT="$OUT" MAX_IMAGE_COUNT="$MAX_IMAGE_COUNT" yq -i '
+                  .output = strenv(OUT) |
+                  .max_image_count = (strenv(MAX_IMAGE_COUNT) | tonumber)
+                ' "$SDG_YAML"
+                OUT="$OUT" yq -i '.output.dir = strenv(OUT)' "$CROP_YAML"
+
+                # Optional: override the cookbook's per-cell crop cap (max_emit).
+                # Empty → use cookbook value. CROP_MAX_EMIT controls the final
+                # output dataset size (per material per cell), not the upstream
+                # render. See SKILL.md §"User intent → knob mapping".
+                if [ -n "${CROP_MAX_EMIT:-}" ]; then
+                  if [ "$CROP_MAX_EMIT" = "null" ]; then
+                    yq -i '.crop.max_emit = null' "$CROP_YAML"
+                  else
+                    CROP_MAX_EMIT="$CROP_MAX_EMIT" yq -i '.crop.max_emit = (strenv(CROP_MAX_EMIT) | tonumber)' "$CROP_YAML"
+                  fi
+                  echo "Patched crop.max_emit -> ${CROP_MAX_EMIT}"
+                fi
+
+                # Some Kit image builds unconditionally read CFG["horizontal_aperture"] at
+                # scene-setup time even though the pcba_target.yaml comment says the
+                # USD-authored aperture is used as fallback. Inject a safe default into
+                # day0_image.yaml if the key is not already set (in either YAML) to
+                # avoid KeyError('horizontal_aperture') at sdg_pipeline.py line 529.
+                if ! grep -qE '^[^#]*horizontal_aperture:' "$SDG_YAML" "$PCBA_PATCHED" 2>/dev/null; then
+                  echo "" >> "$SDG_YAML"
+                  echo "# Camera aperture default (USD-authored value overridden when present)" >> "$SDG_YAML"
+                  echo "horizontal_aperture: 200.0" >> "$SDG_YAML"
+                  echo "Injected horizontal_aperture: 200.0 into $SDG_YAML"
+                fi
+
+                cp "$SDG_YAML" "$OUT/day0_image.yaml"
+                cp "$CROP_YAML" "$OUT/day0_crop.yaml"
+                cp "$PCBA_PATCHED" "$OUT/pcba_target.yaml"
+
+                # 3. Stage 1 — labelled scan_grid render (Kit).
+                # The image's ENTRYPOINT is ignored when OSMO overrides `command:`,
+                # so invoke Kit's base-app launcher directly (equivalent to the
+                # ENTRYPOINT's `/isaac-sim/kit/kit /isaac-sim/apps/isaacsim.exp.base.kit --no-window --exec "$@"`).
+                /isaac-sim/kit/kit /isaac-sim/apps/isaacsim.exp.base.kit \
+                  --no-window --exec \
+                  "/workspace/paidf-simulation/scripts/sdg/standalone/sdg_pipeline.py \
+                   --config $SDG_YAML --pcba-config $PCBA_PATCHED"
+
+                # 4. Stage 2 — multi-cell ROI crop (pure python, no Kit)
+                # Writes $OUT/crop/<MATERIAL>/<x*_y*>/{normal_img,cad_mask}/<NNNN>.png
+                python3 /workspace/paidf-simulation/scripts/usd2roi/usd2roi_crop.py \
+                  --config "$CROP_YAML"
+
+                # 5. Sanity check — at least one populated cell.
+                PAIR_COUNT=$(find "$OUT/crop" -path '*/normal_img/*.png' 2>/dev/null | wc -l)
+                if [ "$PAIR_COUNT" -eq 0 ]; then
+                  echo "ERROR: 0 ROI pairs emitted under $OUT/crop"; exit 1
+                fi
+                MAT_DIRS=$(find "$OUT/crop" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | sort | tr '\n' ' ')
+                CELL_COUNT=$(find "$OUT/crop" -mindepth 2 -maxdepth 2 -type d 2>/dev/null | wc -l)
+                echo "usd2roi-render complete: $PAIR_COUNT ROIs across $CELL_COUNT cell(s); materials: $MAT_DIRS"
+
+          outputs:
+            - url: "{{ dig_url_root }}/runs/{{ name }}/usd2roi-components"
+
+    # ── Group 2: Augmentation — nvidia/Qwen-Image-Edit-NVPCB-OVSL2SL (OV→SL single pass) ──
+    # Replaces the old two-pass cosmos-transfer chain (OV2UL → UL2SL) with a single
+    # image-edit pass via a remote nvidia/Qwen-Image-Edit-NVPCB-OVSL2SL endpoint
+    # (do NOT substitute the generic upstream qwen-image-edit checkpoint). Cookbook lives
+    # at assets/cookbooks/pcb/augmentation_config_ovsl2sl.yaml (mounted by localpath);
+    # endpoint URL + model overlay onto the cookbook at task start from workflow
+    # params, then build_batch_config.py expands `data:` to the per-cell tree.
+    - name: augment-image-edit
+      tasks:
+        - name: image-edit
+          lead: true
+          image: "{{ augmentation_image }}"
+          resource: gpu-augment
+          credentials:
+            hf-token:
+              HF_TOKEN: token
+          environment:
+            IMAGE_EDIT_ENDPOINT: "{{ image_edit_endpoint }}"
+            IMAGE_EDIT_MODEL: "{{ image_edit_model }}"
+          inputs:
+            - task: usd2roi-replicator                   # {{input:0}} crop/<MATERIAL>/<cell>/normal_img/
+          command: ["bash"]
+          args: ["/tmp/run_image_edit.sh"]
+          files:
+            # Cookbook is the OVSL2SL recipe (prompt + image-edit model/parameters).
+            # Mounted read-only; endpoint URL + data: expansion done at runtime so the
+            # cookbook itself stays generic across submits.
+            - localpath: ../cookbooks/pcb/augmentation_config_ovsl2sl.yaml
+              path: /tmp/augmentation_cookbook.yaml
+
+            - path: /tmp/run_image_edit.sh
+              contents: |
+                set -euo pipefail
+                INPUT_DIR="{{input:0}}"
+                OUTPUT_DIR="{{output}}"
+                mkdir -p "$OUTPUT_DIR"
+                MAT_COUNT=$(find "$INPUT_DIR/crop" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l)
+                [ "$MAT_COUNT" -gt 0 ] || { echo "ERROR: no material subdirs under $INPUT_DIR/crop/"; exit 1; }
+
+                uv run python /tmp/build_batch_config.py \
+                  "$INPUT_DIR" "$OUTPUT_DIR" /tmp/augmentation_cookbook.yaml /tmp/augmentation_batch.yaml
+                uv run python /app/modules/cli.py --config /tmp/augmentation_batch.yaml
+
+                EMITTED=$(find "$OUTPUT_DIR/crop" -mindepth 3 \( -name '*.png' -o -name '*.jpg' \) 2>/dev/null | wc -l)
+                [ "$EMITTED" -gt 0 ] || { echo "ERROR: 0 image-edit images emitted"; exit 1; }
+                CELLS=$(find "$OUTPUT_DIR/crop" -mindepth 2 -maxdepth 2 -type d 2>/dev/null | wc -l)
+                echo "image-edit complete: $EMITTED images across $CELLS material/cell dir(s)"
+
+            - path: /tmp/build_batch_config.py
+              contents: |
+                # Expand the augmentation cookbook's `data:` section to walk the per-cell
+                # tree from usd2roi-render, overlay endpoint URL/model from env, and
+                # keep all other cookbook fields (prompt, model params, letterbox,
+                # align_to_reference) verbatim. Output ends up at
+                # <output>/crop/<MATERIAL>/<cell>/<stem>.<ext> (flat per cell).
+                import yaml, os, glob, sys, pathlib
+
+                input_dir, output_dir, cookbook_path, batch_cfg_path = sys.argv[1:]
+
+                with open(cookbook_path) as f:
+                    cfg = yaml.safe_load(f)
+
+                # Overlay endpoint from workflow params (cookbook ships localhost placeholder).
+                endpoint = os.environ.get("IMAGE_EDIT_ENDPOINT", "").strip()
+                model = os.environ.get("IMAGE_EDIT_MODEL", "").strip()
+                if endpoint:
+                    cfg.setdefault("endpoints", {}).setdefault("image_edit", {})["url"] = endpoint
+                if model:
+                    cfg.setdefault("endpoints", {}).setdefault("image_edit", {})["model"] = model
+
+                # Derive sample output extension from the cookbook's single data entry
+                # so we round-trip (.jpg in cookbook → .jpg outputs).
+                template = (cfg.get("data") or [{}])[0]
+                tpl_output = template.get("output", {})
+                video_tpl = tpl_output.get("video", "/tmp/{stem}.png")
+                ext = pathlib.Path(video_tpl).suffix or ".png"
+
+                # usd2roi emits crop/<MATERIAL>/<cell>/normal_img/<NNNN>.png
+                images = sorted(glob.glob(f"{input_dir}/crop/*/*/normal_img/*.png") +
+                                glob.glob(f"{input_dir}/crop/*/*/normal_img/*.jpg"))
+                assert images, f"No per-material/per-cell ROIs found under {input_dir}/crop/*/*/normal_img/"
+                # Dataset size is controlled at the upstream usd2roi-render stage via
+                # `crop_max_emit`. The image-edit task processes every ROI it's handed.
+
+                data = []
+                seen = set()
+                for img_path in images:
+                    parts = pathlib.Path(img_path).parts
+                    material = parts[-4]                       # IC | passive_component
+                    cell = parts[-3]                           # x*_y*
+                    stem = pathlib.Path(img_path).stem         # NNNN
+                    cell_out = f"{output_dir}/crop/{material}/{cell}"
+                    key = (material, cell)
+                    if key not in seen:
+                        os.makedirs(cell_out, exist_ok=True)
+                        seen.add(key)
+                    data.append({
+                        "inputs": {"rgb": img_path},
+                        "output": {
+                            "video":    f"{cell_out}/{stem}{ext}",
+                            "caption":  f"/tmp/cap_{material}_{cell}_{stem}.txt",
+                            "metadata": f"/tmp/meta_{material}_{cell}_{stem}.json",
+                        },
+                    })
+
+                cfg["data"] = data
+                with open(batch_cfg_path, "w") as f:
+                    yaml.dump(cfg, f, default_flow_style=False, allow_unicode=True)
+                print(f"Batch config: {len(images)} ROIs across {len(seen)} material/cell dirs -> {batch_cfg_path}")
+          outputs:
+            - url: "{{ dig_url_root }}/runs/{{ name }}/augment"
+
+    {% if use_pretrained_checkpoint|string|lower not in ["true", "1", "yes"] %}
+    # ── Group 3: Finetune (omitted when use_pretrained_checkpoint=true; in that
+    # mode anomaly-infer reads the checkpoint URL directly) ──────────────────────
+    - name: finetune-job
+      tasks:
+        - name: finetune
+          lead: true
+          image: "{{ anomalygen_image }}"
+          resource: gpu-train
+          credentials:
+            hf-token:
+              HF_TOKEN: token
+          environment:
+            NUM_GPUS: "{{ train_gpu }}"
+            EXP_NAME: "{{ name }}"
+            PRETRAINED_SRC: "{{input:0}}/pretrained"
+            DATASET_DIR: "{{input:1}}"
+          inputs:
+            - url: "{{ dig_url_root }}/models/pretrained"     # {{input:0}} pretrained/ tree
+            - url: "{{ dig_url_root }}/datasets/pcb/raw"      # {{input:1}} raw NGC training data
+          command: ["bash"]
+          args: ["/tmp/finetune.sh"]
+          files:
+            # Cookbook template — rendered in-pod by yq below.
+            - localpath: ../cookbooks/pcb/ag_config.yaml
+              path: /tmp/ag_config_template.yaml
+
+            - path: /tmp/finetune.sh
+              contents: |
+                set -euo pipefail
+
+                # ── Pod-template preflight (training task) ─────────────────────
+                DSHM_GB=$(df -B1G /dev/shm | tail -1 | awk '{print $2}')
+                if [ "$DSHM_GB" -lt 16 ]; then
+                  echo "ERROR: /dev/shm is ${DSHM_GB}GiB; need >= 16 GiB (32 preferred) for torchrun shared-memory."
+                  exit 1
+                fi
+                # ───────────────────────────────────────────────────────────────
+
+                # Install Mike Farah yq into /tmp (pod /usr/local/bin is non-writable; paidf-anomalygen ships wget, no curl).
+                [ -x /tmp/yq ] || {
+                  wget -q https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64 -O /tmp/yq
+                  chmod +x /tmp/yq
+                }
+                export PATH=/tmp:$PATH
+
+                OUTPUT_DIR="{{output}}"
+                mkdir -p "$OUTPUT_DIR"
+
+                TEMPLATE=/tmp/ag_config_template.yaml
+                [ -f "$TEMPLATE" ] || {
+                  echo "ERROR: $TEMPLATE not mounted — cookbook upload failed."
+                  echo "  Confirm assets/cookbooks/pcb/ag_config.yaml exists."
+                  exit 1
+                }
+
+                [ -d "$PRETRAINED_SRC" ] || {
+                  echo "ERROR: pretrained tree not at $PRETRAINED_SRC"
+                  ls -la "$(dirname "$PRETRAINED_SRC")" || true
+                  exit 1
+                }
+
+                # Per-item symlink-replace into the container's checkpoint dir.
+                # IMPORTANT: do NOT wipe the dir — SAM2 + Qwen3-VL ship baked there.
+                cd /workspace/paidf-anomalygen
+                CONTAINER_CKPT_DIR=/workspace/paidf-anomalygen/checkpoints
+                mkdir -p "$CONTAINER_CKPT_DIR"
+                for item in NVDINOV2 nvidia google-t5 facebook C-RADIOv2_B.pth sam2 Qwen; do
+                  if [ -e "$PRETRAINED_SRC/$item" ]; then
+                    rm -rf "$CONTAINER_CKPT_DIR/$item"
+                    ln -s "$PRETRAINED_SRC/$item" "$CONTAINER_CKPT_DIR/$item"
+                  fi
+                done
+
+                [ -d "$DATASET_DIR" ] || {
+                  echo "ERROR: training dataset not at $DATASET_DIR"
+                  exit 1
+                }
+
+                DEFECT_SPEC="$DATASET_DIR/defect_spec.jsonl"
+                [ -f "$DEFECT_SPEC" ] || {
+                  echo "ERROR: $DEFECT_SPEC missing in raw dataset."
+                  echo "  Re-run setup/setup_pcb.yaml for datasets/pcb/raw."
+                  exit 1
+                }
+
+                # anomalygen helper scripts (pinned by image digest).
+                SCRIPTS=/workspace/paidf-anomalygen/scripts/utilities
+                ls "$SCRIPTS/prep_testcase.sh" >/dev/null || {
+                  echo "ERROR: $SCRIPTS/prep_testcase.sh not in image — check digest."
+                  exit 1
+                }
+
+                # ─── Phase 1 Step 1: validate dataset structure ────────────
+                echo "=== Phase 1 Step 1: validate_dataset.py ==="
+                python3 "$SCRIPTS/validate_dataset.py" "$DATASET_DIR"
+
+                NUM_SDG=$(find "$DATASET_DIR" -type f -path "*/mask/*/*" \
+                  \( -name "*.png" -o -name "*.jpg" -o -name "*.jpeg" \) | wc -l)
+                [ "$NUM_SDG" -gt 0 ] || { echo "ERROR: no training masks under $DATASET_DIR/*/mask/"; exit 1; }
+                echo "Total training mask count (num_sdg): $NUM_SDG"
+
+                # ─── Phase 1 Step 2: AMP placement → validation.jsonl ──────
+                VAL_DIR=/tmp/validation
+                rm -rf "$VAL_DIR"
+                mkdir -p "$VAL_DIR/amp"
+                VAL_JSONL="$VAL_DIR/validation.jsonl"
+
+                echo "=== Phase 1 Step 2: prep_testcase.sh (validation_${EXP_NAME}) ==="
+                bash "$SCRIPTS/prep_testcase.sh" \
+                    --name "validation_${EXP_NAME}" \
+                    --num-sdg "$NUM_SDG" \
+                    --dataset-dir "$DATASET_DIR" \
+                    --defect-spec "$DEFECT_SPEC" \
+                    --amp-output-dir "$VAL_DIR/amp" \
+                    --output-jsonl "$VAL_JSONL"
+
+                [ -s "$VAL_JSONL" ] || {
+                  echo "ERROR: prep_testcase.sh produced an empty validation.jsonl"
+                  exit 1
+                }
+                echo "validation.jsonl: $(wc -l < "$VAL_JSONL") rows"
+                echo "validation amp/:  $(find "$VAL_DIR/amp" -type f | wc -l) files"
+
+                # ── Render per-run training config from cookbook template ─────
+                # VAL_JSONL is in scope here (Phase 1 Step 2 just produced it).
+                CONFIG_FILE=/tmp/ag_config.yaml
+                NAME="$EXP_NAME" \
+                JOB_NAME="${EXP_NAME}_training_FP32_lr0.02_bs=2_2b_512x512" \
+                DATASET_DIR="$DATASET_DIR" \
+                VAL_JSONL="$VAL_JSONL" \
+                NVDINOV2_CKPT="checkpoints/NVDINOV2/nv_dinov2_classification_model.ckpt" \
+                  yq '
+                    .job.group = strenv(NAME) |
+                    .job.name  = strenv(JOB_NAME) |
+                    .dataloader_train.dataset.dataset_dir = strenv(DATASET_DIR) |
+                    .dataloader_val.dataset.input_data_path = strenv(VAL_JSONL) |
+                    .model.config.ag_config.mask_encoder.encoder_config.init_cfg.checkpoint = strenv(NVDINOV2_CKPT) |
+                    del(.trainer.early_stop)
+                  ' "$TEMPLATE" > "$CONFIG_FILE"
+                echo "Rendered $CONFIG_FILE from $TEMPLATE (NAME=$EXP_NAME)"
+
+                # Cookbook hygiene — runs after yq render so per-run overrides are seen.
+                # save_iter > max_iter is fatal (no checkpoint ever written).
+                # validation_iter > max_iter degrades pick_best_step.sh to latest-iter
+                # (still warn-only because "just train and pick latest" is legitimate).
+                # save_iter == max_iter is the shipped pattern — trainer saves at iter
+                # == max_iter, so don't warn on that case.
+                MAX_ITER=$(yq        '.trainer.max_iter        // 0' "$CONFIG_FILE")
+                SAVE_ITER=$(yq       '.checkpoint.save_iter    // 0' "$CONFIG_FILE")
+                VALIDATION_ITER=$(yq '.trainer.validation_iter // 0' "$CONFIG_FILE")
+                LOGGING_ITER=$(yq    '.trainer.logging_iter    // 0' "$CONFIG_FILE")
+
+                if [ "$SAVE_ITER" -gt 0 ] && [ "$MAX_ITER" -gt 0 ] && [ "$SAVE_ITER" -gt "$MAX_ITER" ]; then
+                  echo "ERROR: cookbook save_iter=$SAVE_ITER > max_iter=$MAX_ITER — no checkpoint will be saved." >&2
+                  echo "  Fix assets/cookbooks/{{ usecase }}/ag_config.yaml: set save_iter <= max_iter." >&2
+                  exit 1
+                fi
+
+                if [ "$VALIDATION_ITER" -gt 0 ] && [ "$MAX_ITER" -gt 0 ] && [ "$VALIDATION_ITER" -gt "$MAX_ITER" ]; then
+                  echo "WARN: cookbook validation_iter=$VALIDATION_ITER > max_iter=$MAX_ITER — no validation logs; pick_best_step.sh will fall back to latest trained iter (not best-by-nn_score)." >&2
+                fi
+
+                if [ "$LOGGING_ITER" -gt 0 ] && [ "$MAX_ITER" -gt 0 ] && [ "$LOGGING_ITER" -gt "$MAX_ITER" ]; then
+                  echo "WARN: cookbook logging_iter=$LOGGING_ITER > max_iter=$MAX_ITER — no progress logs will be emitted." >&2
+                fi
+
+                mkdir -p ag_configs
+                cp "$CONFIG_FILE" "ag_configs/${EXP_NAME}.yaml"
+
+                EXP="predict2_anomaly_gen_ddp_2b"
+                export IMAGINAIRE_OUTPUT_ROOT="${OUTPUT_DIR}/results"
+                mkdir -p "$IMAGINAIRE_OUTPUT_ROOT"
+                echo "=== torchrun ($EXP_NAME, $NUM_GPUS GPUs, experiment=$EXP) ==="
+                torchrun --nproc_per_node="$NUM_GPUS" --master_port=12341 \
+                  -m scripts.anomaly_gen.ag_train \
+                  --config=cosmos_predict2/configs/base/ag_config.py \
+                  --ag_config="ag_configs/${EXP_NAME}.yaml" \
+                  -- experiment="$EXP"
+                echo "=== Training complete ==="
+          outputs:
+            - url: "{{ dig_url_root }}/runs/{{ name }}/finetune"
+    {% endif %}
+
+    # ── Group 4: AnomalyGen inference (with native labeling) ─────────────────────
+    # Stages the per-cell augmented tree + cad_masks under one <MATERIAL> texture
+    # (filenames composited as <cell>__<stem>.png), renders defect_spec.jsonl
+    # from --set args, then runs the upstream chain:
+    #   prep_testcase.sh → validate_jsonl.py → run_sdg.sh → verify_output.sh
+    - name: anomaly-infer
+      tasks:
+        - name: infer-all-defects
+          lead: true
+          image: "{{ anomalygen_image }}"
+          resource: gpu-infer
+          credentials:
+            hf-token:
+              HF_TOKEN: token
+          environment:
+            ANOMALY_TYPES_JSON: '{{ anomaly_types_json }}'
+            CHECKPOINT_STEP: "{{ checkpoint_step }}"
+            NUM_SDG: "{{ num_sdg }}"
+            DEFAULT_SPATIAL_DEPENDENCY: "{{ default_spatial_dependency }}"
+            EXP_NAME: "{{ name }}"
+            MODEL_SIZE: "{{ model_size }}"
+          inputs:
+            - task: image-edit                                 # {{input:0}} per-cell SL clean images
+            - task: usd2roi-replicator                          # {{input:1}} per-cell cad_masks
+            - url: "{{ dig_url_root }}/datasets/pcb/raw"       # {{input:2}} per-defect submask templates (PCB/<material>/mask/<defect>/)
+            - url: "{{ dig_url_root }}/models/pretrained"      # {{input:3}} pretrained tree
+            {% if use_pretrained_checkpoint|string|lower in ["true", "1", "yes"] %}
+            - url: "{{ dig_url_root }}/models/pcb"             # {{input:4}} shipped checkpoint (no finetune scheduled)
+            {% else %}
+            - task: finetune                                   # {{input:4}} freshly-trained checkpoint
+            {% endif %}
+          command: ["bash"]
+          args: ["/tmp/run_infer.sh"]
+          files:
+            - localpath: ../../scripts/render_defect_spec.py
+              path: /tmp/render_defect_spec.py
+            - localpath: ../../scripts/pick_best_step.sh
+              path: /tmp/pick_best_step.sh
+
+            - path: /tmp/run_infer.sh
+              contents: |
+                set -euo pipefail
+
+                CLEAN_IN="{{input:0}}"
+                MASK_IN="{{input:1}}"
+                SUBMASK_BASE_IN="{{input:2}}"
+                PRETRAINED_SRC_IN="{{input:3}}"
+                CKPT_DATASET="{{input:4}}"
+                # Nest SDG output one level under {{output}} so convert_to_daft_format.py's
+                # default sibling path "<input>_daft_v3" lands inside the writable
+                # /osmo/data/output mount instead of unwritable /osmo/data.
+                OSMO_OUTPUT_ROOT="{{output}}"
+                OUTPUT_DIR="${OSMO_OUTPUT_ROOT}/inference"
+                mkdir -p "$OUTPUT_DIR"
+
+                SCRIPTS=/workspace/paidf-anomalygen/scripts/utilities
+                ls "$SCRIPTS/prep_testcase.sh" >/dev/null || {
+                  echo "ERROR: $SCRIPTS/prep_testcase.sh not in image"; exit 1;
+                }
+
+                # Resolve crop root. Task-chained inputs already root at crop/.
+                # usd2roi emits crop/<MATERIAL>/<cell>/{normal_img,cad_mask}/.
+                find_crop_root () {
+                  local base="$1"
+                  if [ -d "$base/crop" ] && find "$base/crop" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | head -1 | grep -q .; then
+                    echo "$base/crop"; return 0
+                  fi
+                  local hit
+                  hit=$(find "$base" -maxdepth 5 -type d -name crop | head -1 || true)
+                  if [ -n "$hit" ]; then echo "$hit"; return 0; fi
+                  echo ""; return 1
+                }
+                CLEAN_BASE=$(find_crop_root "$CLEAN_IN") || true
+                MASK_BASE=$(find_crop_root "$MASK_IN") || true
+                echo "CLEAN_BASE=$CLEAN_BASE"
+                echo "MASK_BASE=$MASK_BASE"
+                [ -n "$CLEAN_BASE" ] && [ -d "$CLEAN_BASE" ] || { echo "ERROR: clean crop/<MAT>/<cell>/ tree not found under $CLEAN_IN"; exit 1; }
+                [ -n "$MASK_BASE" ]  && [ -d "$MASK_BASE" ]  || { echo "ERROR: cad_mask crop/<MAT>/<cell>/ tree not found under $MASK_IN"; exit 1; }
+
+                # Submask source resolution happens per (material, defect) pair below —
+                # checkpoints with multi-material taxonomies (e.g. the shipped PCBA checkpoint:
+                # IC+bridge, passive_component+excess_solder, passive_component+missing) can't
+                # use a single SUBMASK_BASE.
+                #
+                # Walk up to find the prepared URL root that contains the per-material mask trees.
+                resolve_dataset_root () {
+                  local base="$1"
+                  # If <base>/<material>/mask/<defect> patterns exist for any material, base is the root.
+                  if find "$base" -mindepth 3 -maxdepth 3 -type d -path "*/mask/*" | head -1 | grep -q .; then
+                    echo "$base"; return 0
+                  fi
+                  # Try one level deeper for manually uploaded content that preserved a wrapper dir.
+                  local nested
+                  nested=$(find "$base" -mindepth 1 -maxdepth 1 -type d | head -1 || true)
+                  if [ -n "$nested" ] && find "$nested" -mindepth 3 -maxdepth 3 -type d -path "*/mask/*" | head -1 | grep -q .; then
+                    echo "$nested"; return 0
+                  fi
+                  echo "$base"
+                }
+                SUBMASK_ROOT=$(resolve_dataset_root "$SUBMASK_BASE_IN")
+                echo "SUBMASK_ROOT=$SUBMASK_ROOT"
+
+                # Symlink pretrained checkpoints. Include sam2 + Qwen so text2roi AMP
+                # can reach SAM2 + Qwen3-VL via the pretrained tree.
+                cd /workspace/paidf-anomalygen
+                CKPT_DEST=/workspace/paidf-anomalygen/checkpoints
+                mkdir -p "$CKPT_DEST"
+                set +o pipefail
+                PRETRAINED=$(find "$PRETRAINED_SRC_IN" -maxdepth 4 -type d -name pretrained | head -1)
+                set -o pipefail
+                [ -n "$PRETRAINED" ] || { echo "ERROR: pretrained/ not found"; exit 1; }
+                for item in NVDINOV2 nvidia google-t5 facebook C-RADIOv2_B.pth sam2 Qwen; do
+                  if [ -e "$PRETRAINED/$item" ]; then
+                    rm -rf "$CKPT_DEST/$item"
+                    ln -s "$PRETRAINED/$item" "$CKPT_DEST/$item"
+                  fi
+                done
+
+                # Locate the training config (ag_config.yaml) — shipped checkpoints
+                # keep it flat with iter_*.pt; freshly-trained outputs nest it under
+                # results/anomaly_gen/<NAME>/<JOB_NAME>/.
+                set +o pipefail
+                AG_CONFIG_PATH=$(find "$CKPT_DATASET" -name "ag_config.yaml" -maxdepth 8 | head -1)
+                set -o pipefail
+                [ -n "$AG_CONFIG_PATH" ] || { echo "ERROR: ag_config.yaml not found in checkpoint"; exit 1; }
+                AG_CONFIG_DIR=$(dirname "$AG_CONFIG_PATH")
+                echo "Training config: $AG_CONFIG_PATH"
+
+                # Wrapper: link model-weights iter_*.pt files into the canonical
+                # <wrapper>/checkpoints/model/iter_<step>.pt layout.
+                # Two source layouts:
+                #   Trainer output:  <JOB_NAME>/checkpoints/{model,optim,scheduler,trainer}/iter_<step>.pt
+                #                    — only model/ has the actual weights; the others are
+                #                    optimizer/scheduler/trainer state and must NOT be picked
+                #                    up (a name-collision overwrite would substitute optimizer
+                #                    state for model weights and break anomaly_embedding load).
+                #   Shipped:         flat iter_*.pt next to ag_config.yaml.
+                WRAPPER=/tmp/ag_ckpt_wrapper
+                rm -rf "$WRAPPER"
+                mkdir -p "$WRAPPER/checkpoints/model"
+                set +o pipefail
+                PT_FILES=$(find "$CKPT_DATASET" -maxdepth 10 -path "*/checkpoints/model/iter_*.pt")
+                if [ -z "$PT_FILES" ]; then
+                  PT_FILES=$(find "$AG_CONFIG_DIR" -maxdepth 1 -name "iter_*.pt")
+                fi
+                set -o pipefail
+                [ -n "$PT_FILES" ] || { echo "ERROR: no model iter_*.pt files found under $CKPT_DATASET"; exit 1; }
+                echo "$PT_FILES" | while read -r f; do
+                  ln -sf "$f" "$WRAPPER/checkpoints/model/$(basename "$f")"
+                done
+                cp "$AG_CONFIG_PATH" "$WRAPPER/ag_config.yaml"
+                # Also surface any flat sidecars from the shipped-checkpoint layout
+                # (e.g. tokenizer files) at $WRAPPER root.
+                for f in "$AG_CONFIG_DIR"/*; do
+                  bname=$(basename "$f")
+                  [ "$bname" = "ag_config.yaml" ] && continue
+                  case "$bname" in
+                    iter_*.pt|*.ckpt|*.pt) ;;
+                    *) [ -e "$WRAPPER/$bname" ] || ln -sf "$f" "$WRAPPER/$bname" ;;
+                  esac
+                done
+                echo "Linked $(ls "$WRAPPER/checkpoints/model" | wc -l) checkpoint files into $WRAPPER"
+
+                # Auto-derive the inference step from validation KPIs for freshly-trained
+                # checkpoints (presence of valid/<STEP>/valid_kpi.csv); falls back to
+                # --set checkpoint_step for shipped checkpoints. Per anomalygen contract
+                # (skills/anomalygen/references/finetune.md §"Best checkpoint selection"):
+                # pick the step with the peak average nn_score, not the final iter.
+                CHECKPOINT_STEP=$(bash /tmp/pick_best_step.sh "$CKPT_DATASET" "$CHECKPOINT_STEP")
+                echo "Inference checkpoint step: $CHECKPOINT_STEP"
+
+                python3 "$SCRIPTS/validate_checkpoint.py" "$WRAPPER" --step "$CHECKPOINT_STEP"
+
+                # ── Stage per-material per-cell tree into canonical anomalygen layout ──
+                # usd2roi partitions ROIs by material via crop.class_dirs,
+                # so each cell only contains the components of its declared material. We
+                # walk the on-disk material dirs directly (don't fan out from
+                # anomaly_types_json — that would cross-pollinate IC vs passive_component).
+                # Composite <CELL>__<STEM> filenames keep clean_image and cad_mask in 1:1.
+                STAGE=/tmp/inference_stage
+                rm -rf "$STAGE"
+
+                # Materials declared by the checkpoint taxonomy (for sanity-check only).
+                ATM_MATS=$(python3 -c '
+                import json, sys
+                pairs = json.loads(sys.argv[1])
+                print("\n".join(sorted({m for m, _ in pairs})))
+                ' "$ANOMALY_TYPES_JSON")
+                echo "anomaly_types_json materials: $(echo "$ATM_MATS" | tr "\n" " ")"
+
+                # Materials actually present on disk drive the staging loop.
+                DISK_MATS=$(find "$CLEAN_BASE" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | sort)
+                [ -n "$DISK_MATS" ] || { echo "ERROR: no material dirs under $CLEAN_BASE"; exit 1; }
+                echo "usd2roi-disk materials:        $(echo "$DISK_MATS" | tr "\n" " ")"
+
+                for MAT in $DISK_MATS; do
+                  mkdir -p "$STAGE/$MAT/clean_image" "$STAGE/$MAT/cad_mask" "$STAGE/$MAT/mask"
+                done
+
+                # augmentation preserves the input image resolution, so cad_mask
+                # + augmented clean share dimensions natively. Symlink cad_masks
+                # straight through — no per-image resize pass needed.
+                STAGED=0
+                for MAT in $DISK_MATS; do
+                  for cell_dir in "$CLEAN_BASE/$MAT"/x*_y*; do
+                    [ -d "$cell_dir" ] || continue
+                    CELL=$(basename "$cell_dir")
+                    MASK_CELL_DIR="$MASK_BASE/$MAT/$CELL/cad_mask"
+                    for clean_img in "$cell_dir"/*.png "$cell_dir"/*.jpg "$cell_dir"/*.jpeg; do
+                      [ -f "$clean_img" ] || continue
+                      STEM=$(basename "${clean_img%.*}")
+                      EXT="${clean_img##*.}"
+                      COMPOSITE="${CELL}__${STEM}"
+                      MASK_FILE=""
+                      if [ -d "$MASK_CELL_DIR" ] && [ -f "$MASK_CELL_DIR/${STEM}_cad_mask.png" ]; then
+                        MASK_FILE="$MASK_CELL_DIR/${STEM}_cad_mask.png"
+                      fi
+                      ln -sf "$clean_img" "$STAGE/$MAT/clean_image/${COMPOSITE}.${EXT}"
+                      [ -n "$MASK_FILE" ] && ln -sf "$MASK_FILE" "$STAGE/$MAT/cad_mask/${COMPOSITE}.png" || true
+                      STAGED=$((STAGED + 1))
+                    done
+                  done
+                done
+                echo "Staged $STAGED clean images across $(echo "$DISK_MATS" | wc -w) material(s)"
+                [ "$STAGED" -gt 0 ] || { echo "ERROR: no clean images staged"; exit 1; }
+
+                # Warn (don't fail) if anomaly_types_json mentions a material the usd2roi
+                # output doesn't carry — that pair will just have no SDG inputs.
+                for ATM in $ATM_MATS; do
+                  echo "$DISK_MATS" | grep -qx "$ATM" || \
+                    echo "WARN: anomaly_types_json material '$ATM' missing from $CLEAN_BASE/"
+                done
+
+                # Submasks: per (material, defect) pair, try <root>/<material>/mask/<defect>/
+                # first (canonical anomalygen layout) then <root>/<defect>/ (flat
+                # user upload).
+                while IFS=$'\t' read -r MAT DEFECT; do
+                  [ -n "$MAT" ] && [ -n "$DEFECT" ] || continue
+                  src=""
+                  for candidate in \
+                      "$SUBMASK_ROOT/$MAT/mask/$DEFECT" \
+                      "$SUBMASK_ROOT/$DEFECT"; do
+                    [ -d "$candidate" ] && { src="$candidate"; break; }
+                  done
+                  [ -n "$src" ] || { echo "ERROR: submask dir not found for $MAT+$DEFECT (tried $SUBMASK_ROOT/$MAT/mask/$DEFECT and $SUBMASK_ROOT/$DEFECT)"; exit 1; }
+                  dst="$STAGE/$MAT/mask/$DEFECT"
+                  mkdir -p "$dst"
+                  for f in "$src"/*.png "$src"/*.jpg "$src"/*.jpeg; do
+                    [ -f "$f" ] && ln -sf "$f" "$dst/$(basename "$f")" || true
+                  done
+                  count=$(ls "$dst" 2>/dev/null | wc -l)
+                  echo "submasks/$MAT+$DEFECT: $count files (from $src)"
+                  [ "$count" -gt 0 ] || { echo "ERROR: no submask files in $src"; exit 1; }
+                done < <(python3 -c 'import json,sys
+                for m,d in json.loads(sys.argv[1]): print(f"{m}\t{d}")' "$ANOMALY_TYPES_JSON")
+
+                # Render defect_spec.jsonl (cad / text / free) — Day 0's cad_masks
+                # support cad mode by default since stage emits <MATERIAL>/cad_mask/<composite>.png.
+                python3 /tmp/render_defect_spec.py \
+                  --output "$STAGE/defect_spec.jsonl" \
+                  --pairs "$ANOMALY_TYPES_JSON" \
+                  --spatial-dependency "$DEFAULT_SPATIAL_DEPENDENCY"
+                echo "--- defect_spec.jsonl ---"
+                cat "$STAGE/defect_spec.jsonl"
+                echo "--- end defect_spec ---"
+
+                # cad mode also requires semantic_segmentation_labels.json at the dataset
+                # root — it maps cad_mask RGBA values to class IDs that AMP's CADParser
+                # uses to extract per-class connected components from each cad_mask.
+                #
+                # usd2roi emits ONE global labels JSON at crop/ root.
+                if [ "$DEFAULT_SPATIAL_DEPENDENCY" = "cad" ]; then
+                  GLOBAL_LABELS=$(find "$MASK_IN" -maxdepth 5 -name semantic_segmentation_labels.json -path '*/crop/*' 2>/dev/null | head -1)
+                  if [ -z "$GLOBAL_LABELS" ]; then
+                    echo "ERROR: spatial_dependency=cad but no semantic_segmentation_labels.json under $MASK_IN/crop/"
+                    exit 1
+                  fi
+                  cp "$GLOBAL_LABELS" "$STAGE/semantic_segmentation_labels.json"
+                  echo "Staged labels: $GLOBAL_LABELS"
+                fi
+
+                AMP_OUT=/tmp/amp_output
+                JSONL=/tmp/inference.jsonl
+                mkdir -p "$AMP_OUT"
+
+                echo "=== prep_testcase.sh (num_sdg=$NUM_SDG) ==="
+                bash "$SCRIPTS/prep_testcase.sh" \
+                    --name "${EXP_NAME}_infer" \
+                    --num-sdg "$NUM_SDG" \
+                    --dataset-dir "$STAGE" \
+                    --defect-spec "$STAGE/defect_spec.jsonl" \
+                    --amp-output-dir "$AMP_OUT" \
+                    --output-jsonl "$JSONL"
+
+                python3 "$SCRIPTS/validate_jsonl.py" "$WRAPPER" "$JSONL"
+
+                export IMAGINAIRE_OUTPUT_ROOT="${OUTPUT_DIR}/results"
+                mkdir -p "$IMAGINAIRE_OUTPUT_ROOT"
+                echo "=== run_sdg.sh (checkpoint_step=$CHECKPOINT_STEP, model_size=$MODEL_SIZE) ==="
+                bash "$SCRIPTS/run_sdg.sh" \
+                    --checkpoint_dir "$WRAPPER" \
+                    --step "$CHECKPOINT_STEP" \
+                    --input_jsonl "$JSONL" \
+                    --output_dir "$OUTPUT_DIR" \
+                    --model_size "$MODEL_SIZE" \
+                    --seed 0
+
+                bash "$SCRIPTS/verify_output.sh" "$JSONL" "$OUTPUT_DIR"
+                echo "=== Inference complete: $(ls "$OUTPUT_DIR/reconstructed_image/" 2>/dev/null | wc -l) images ==="
+          outputs:
+            - url: "{{ dig_url_root }}/runs/{{ name }}/anomaly"
+
+default-values:
+  workflow_name: texture_defect_gen_day0
+  exec_timeout: 28h
+  queue_timeout: 2h
+
+  # `name` has no default — every submit must pass `--set name=<flow>-$STAMP`
+  # (see SKILL.md §"Name stamping"). This forces the storage path
+  # `runs/<name>/{usd2roi-components,augment,finetune,anomaly}` to be unique
+  # per submission instead of silently overwriting prior runs.
+  dig_url_root: "s3://osmo-workflows/dig"
+
+  # ── Finetune-or-checkpoint toggle ────────────────────────────────────────────
+  # Defaults to passthrough against the shipped PCBA checkpoint.
+  use_pretrained_checkpoint: "true"
+  checkpoint_step: "14000"
+
+  # ── URL-backed inputs ────────────────────────────────────────────────────────
+  # Defaults read from the setup/ workflows' DIG URL layout:
+  #   models/pretrained, models/pcb, datasets/pcb/raw, datasets/pcb/assets.
+  # Outputs write under runs/<name>/.
+
+  # ── Image-edit augmentation ──────────────────────────────────────────────────
+  # Cookbook at assets/cookbooks/pcb/augmentation_config_ovsl2sl.yaml carries the
+  # prompt + model parameters. Endpoint URL + model come from these knobs.
+  # Default points at the local cluster service from references/nim/.
+  image_edit_endpoint: "http://qwen-image-edit-nvpcb-ovsl2sl.osmo-nims.svc.cluster.local:8000/v1"
+  image_edit_model: "nvidia/Qwen-Image-Edit-NVPCB-OVSL2SL"
+
+  # ── AnomalyGen inference inputs ──────────────────────────────────────────────
+  num_sdg: "30"                                       # total SDG entries across all defects
+  default_spatial_dependency: "cad"                   # one of free|text|cad — cad uses staged cad_masks
+  model_size: "2b"
+  # Shipped PCBA checkpoint trains on these three (material, defect) pairs.
+  # Override with --set anomaly_types_json='[...]' to retarget the anomaly set.
+  anomaly_types_json: '[["IC","bridge"],["passive_component","excess_solder"],["passive_component","missing"]]'
+
+  # Cluster knobs only — training-recipe knobs live in the per-usecase cookbook.
+  anomalygen_image: "nvcr.io/nvidia/paidf-anomalygen:1.0.0"
+  augmentation_image: "nvcr.io/nvidia/paidf-augmentation:1.0.0"
+  usd2roi_image: "nvcr.io/nvidia/paidf-simulation:1.0.0"
+  # Two-stage knobs (see SKILL.md §"User intent → knob mapping"):
+  #   render_patches  → stage 1: raw scan_grid patches from sdg_pipeline.py
+  #                     (NOT the final dataset size — these get cropped further)
+  #   crop_max_emit   → stage 2: per-cell crop cap from usd2roi_crop.py
+  #                     (this is what controls the final per-component dataset size)
+  # For "user wants N output images", set crop_max_emit=N (or leave blank to
+  # use cookbook default). render_patches caps the upstream raw render only.
+  render_patches: "-1"      # -1 = full scan_grid coverage (cover every cell defined by the board's cookbook)
+  crop_max_emit: ""         # blank = use cookbook value; set to N to cap per-cell crops; "null" removes cap
+  # train_gpu / infer_gpu — scale by passing --set train_gpu=N infer_gpu=N at
+  # submit time (set them individually to break symmetry, e.g. 8-GPU train,
+  # 1-GPU infer).
+
+  # ── usd2roi-render: scene + cookbook selection ───────────────────────────────
+  # `datasets/pcb/assets` is the fixed URL — replace its contents at source
+  # (mc upload to s3://.../datasets/pcb/assets/) when running custom data.
+  # The `board` knob picks which per-board cookbook directory under
+  # `assets/cookbooks/pcb/<board>/` to use. Default 0603_H100 matches the
+  # shipped spark scene in `pcb-assets`. To run a different board, add its
+  # cookbook directory and pass `--set board=<dir-name>`.
+  board: "0603_H100"                   # alternate shipped board: 1152819000
+  scene_filename: "spark_lighting.usd" # USD inside assets bundle to use as the scene
+
+  # ── Resources ────────────────────────────────────────────────────────────────
+  render_gpu: "1"
+  render_cpu: "4"
+  render_memory: 32Gi
+  render_storage: 50Gi
+  augment_gpu: "1"
+  augment_cpu: "1"
+  augment_memory: 32Gi
+  augment_storage: 25Gi
+  # infer_gpu / infer_cpu / infer_memory — defaults sized for 1 GPU.
+  # Scale all three together at submit time, e.g.
+  #   --set infer_gpu=4 infer_cpu=16 infer_memory=192Gi
+  # Each rank loads the full 2B + tokenizer + DINOv2 + Cosmos-Predict2 stack
+  # into host RAM, so memory must scale. See references/gpu_sizing.md for the
+  # full per-GPU table.
+  infer_gpu: "1"
+  infer_cpu: "4"
+  infer_memory: 64Gi
+  infer_storage: 200Gi
+  # train_gpu / train_cpu / train_memory — defaults sized for 1 GPU.
+  # Scale all three together at submit time, e.g.
+  #   --set train_gpu=4 train_cpu=32 train_memory=192Gi
+  # See references/gpu_sizing.md for the full per-GPU table and reasoning
+  # (cosmos-predict2-2B rank ~33 GiB host RAM during DDP sync, etc.).
+  train_gpu: "1"
+  train_cpu: "16"
+  train_memory: 64Gi
+  train_storage: 300Gi
+  platform: default

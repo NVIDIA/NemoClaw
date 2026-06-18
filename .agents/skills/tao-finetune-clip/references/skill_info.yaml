@@ -1,0 +1,187 @@
+network_arch: clip
+automl_enabled: true
+container_image: tao_toolkit.pyt
+data_format: default
+gpu_spec_key: train.num_gpus
+actions:
+  train:
+    command: clip train -e {config_path}
+    config_format: yaml
+    inputs:
+      dataset.train.datasets[0].image_dir:
+        type: folder
+        optional: true
+      dataset.train.datasets[0].caption_dir:
+        type: folder
+        optional: true
+      dataset.train.datasets[0].image_list_file:
+        type: file
+        optional: true
+      dataset.train.wds.root_dir:
+        type: folder
+        optional: true
+      dataset.train.wds.shard_list_file:
+        type: file
+        optional: true
+      dataset.val.datasets[0].image_dir:
+        type: folder
+        optional: true
+      dataset.val.datasets[0].caption_dir:
+        type: folder
+        optional: true
+      dataset.val.datasets[0].image_list_file:
+        type: file
+        optional: true
+      train.pretrained_model_path:
+        type: file
+        optional: true
+      train.resume_training_checkpoint_path:
+        type: file
+        optional: true
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  evaluate:
+    command: clip evaluate -e {config_path}
+    config_format: yaml
+    inputs:
+      dataset.val.datasets[0].image_dir:
+        type: folder
+      dataset.val.datasets[0].caption_dir:
+        type: folder
+      dataset.val.datasets[0].image_list_file:
+        type: file
+        optional: true
+      evaluate.checkpoint:
+        type: file
+        optional: true
+      evaluate.trt_engine:
+        type: file
+        optional: true
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  inference:
+    command: clip inference -e {config_path}
+    config_format: yaml
+    inputs:
+      inference.datasets[0].image_dir:
+        type: folder
+        optional: true
+      inference.text_file:
+        type: file
+        optional: true
+      inference.checkpoint:
+        type: file
+        optional: true
+      inference.trt_engine:
+        type: file
+        optional: true
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  export:
+    command: clip export -e {config_path}
+    config_format: yaml
+    inputs:
+      export.checkpoint:
+        type: file
+        optional: true
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  gen_trt_engine:
+    command: clip gen_trt_engine -e {config_path}
+    config_format: yaml
+    inputs:
+      gen_trt_engine.onnx_file:
+        type: file
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+data_sources:
+  train:
+    dataset.train.datasets:
+      source: train_datasets
+      multiple_sources: true
+      optional: true
+      mapping:
+        image_dir:
+          path: images.tar.gz
+        image_list_file:
+          path: image_list.txt
+          optional: true
+        caption_dir:
+          path: captions.tar.gz
+        caption_file_suffix:
+          optional: true
+    dataset.train.wds.root_dir:
+      source: train_wds_dataset
+      multiple_sources: false
+      optional: true
+      path: ''
+    dataset.train.wds.shard_list_file:
+      source: train_wds_dataset
+      multiple_sources: false
+      optional: true
+      path: shards.txt
+    dataset.val.datasets:
+      source: eval_dataset
+      multiple_sources: true
+      optional: true
+      mapping:
+        image_dir:
+          path: images.tar.gz
+        image_list_file:
+          path: image_list.txt
+          optional: true
+        caption_dir:
+          path: captions.tar.gz
+        caption_file_suffix:
+          optional: true
+  evaluate:
+    dataset.val.datasets:
+      source: eval_dataset
+      multiple_sources: true
+      mapping:
+        image_dir:
+          path: images.tar.gz
+        image_list_file:
+          path: image_list.txt
+          optional: true
+        caption_dir:
+          path: captions.tar.gz
+        caption_file_suffix:
+          optional: true
+  inference:
+    inference.datasets:
+      source: inference_dataset
+      multiple_sources: true
+      optional: true
+      mapping:
+        image_dir:
+          path: images.tar.gz
+    inference.text_file:
+      source: inference_dataset
+      multiple_sources: false
+      optional: true
+      path: prompts.txt
+spec_params: {}
+key_defaults: {}
+spec_shorthand_keys:
+  num_epochs: train.num_epochs
+  num_gpus: train.num_gpus
+  batch_size: dataset.train.batch_size
+  model_type: model.type
+  vision_lr: train.optim.vision_lr
+  text_lr: train.optim.text_lr

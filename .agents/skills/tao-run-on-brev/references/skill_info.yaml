@@ -1,0 +1,22 @@
+type: platform
+required_credentials:
+- name: BREV_API_TOKEN
+  source: env_var
+optional_credentials:
+- name: NGC_KEY
+  source: env_var
+- name: ACCESS_KEY
+  source: env_var
+- name: SECRET_KEY
+  source: env_var
+- name: S3_ENDPOINT_URL
+  source: env_var
+- name: S3_BUCKET_NAME
+  source: env_var
+- name: HF_TOKEN
+  source: env_var
+resource_defaults: {}
+cloud_storage:
+  protocol: aws
+  uri_format: s3://{bucket_name}/{path}
+  metadata_key: aws

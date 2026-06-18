@@ -1,0 +1,25 @@
+[
+  {
+    "id": "generate-abdomen-synthetic-ct",
+    "question": "Generate a synthetic abdomen CT and paired segmentation mask from my config at /data/abdomen_request.json using nv-generate-ct-rflow.",
+    "expected_skill": "nv-generate-ct-rflow",
+    "ground_truth": "The agent runs scripts/run_rflow_ct.py with the user config path, NV_GENERATE_ROOT set or checked, --output-dir, and a deterministic --random-seed.",
+    "expected_behavior": [
+      "the command uses skills/nv-generate-ct-rflow/scripts/run_rflow_ct.py",
+      "the first positional argument is the user-provided config path",
+      "the command includes --output-dir and --random-seed",
+      "the agent states the output is synthetic and not production training data without review"
+    ]
+  },
+  {
+    "id": "preflight-before-expensive-run",
+    "question": "Before launching rflow-ct inference, check whether this request is valid and estimate cost.",
+    "expected_skill": "nv-generate-ct-rflow",
+    "ground_truth": "The agent should use --preflight-only and report anatomy/config/CUDA/dataset checks rather than launching full inference.",
+    "expected_behavior": [
+      "the command includes --preflight-only",
+      "the agent does NOT download weights or run full inference unless setup is explicitly requested",
+      "the final answer surfaces estimated runtime or VRAM caveats when present"
+    ]
+  }
+]

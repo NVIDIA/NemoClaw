@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Conversion Report",
+  "type": "object",
+  "required": [
+    "source_asset_path",
+    "source_format",
+    "converter_skill",
+    "converter_tool",
+    "converter_command",
+    "output_directory",
+    "output_usd_path",
+    "generated_files",
+    "sidecar_inputs",
+    "warnings",
+    "errors",
+    "next_step"
+  ],
+  "properties": {
+    "source_asset_path": {
+      "type": "string"
+    },
+    "source_format": {
+      "type": "string"
+    },
+    "converter_skill": {
+      "type": "string"
+    },
+    "converter_reference": {
+      "type": "string"
+    },
+    "converter_tool": {
+      "type": "string"
+    },
+    "converter_command": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "output_directory": {
+      "type": "string"
+    },
+    "output_usd_path": {
+      "type": "string"
+    },
+    "generated_files": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "sidecar_inputs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "errors": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "install_hint": {
+      "type": "string"
+    },
+    "next_step": {
+      "type": "string"
+    }
+  }
+}

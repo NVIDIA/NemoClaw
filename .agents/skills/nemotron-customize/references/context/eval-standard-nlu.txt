@@ -1,0 +1,45 @@
+# Standard Evaluation Context
+
+Use this pack when configuring `eval/model_eval` benchmark selection and
+endpoint behavior.
+
+## Product Contract
+
+- Evaluation consumes an already trained/deployed checkpoint or endpoint and
+  produces benchmark results.
+- Do not treat tiny or limited-sample runs as quality evidence. They only prove
+  wiring.
+- Use checked-in step configs and the evaluator runner before inventing a new
+  launcher.
+
+## Benchmark Selection
+
+| Goal | Benchmark shape |
+|---|---|
+| Instruction following | chat endpoint, deterministic generation, tasks like IFEval |
+| Knowledge/reasoning | chat endpoint, larger `max_new_tokens`, model-card decoding defaults |
+| Multiple-choice logprob | completions endpoint with logprobs and tokenizer |
+| Regression smoke | tiny subset or small benchmark list, explicitly marked non-comparable |
+
+## Required Runtime Inputs
+
+- `evaluation.tasks`: concrete NeMo Evaluator Launcher task entries.
+- `target.api_endpoint.url`: OpenAI-compatible endpoint URL when
+  `deployment.type=none`.
+- `target.api_endpoint.type`: `chat` or `completions`.
+- Tokenizer path/model handle for logprob benchmarks.
+- API key environment variable when the endpoint requires auth.
+
+## Rules
+
+- Match endpoint type to benchmark type. Chat tasks should not be forced through
+  logprob completions, and logprob tasks need completions/logprobs support.
+- Keep generation budgets explicit for reasoning tasks.
+- Preserve result directories per run so before/after comparisons do not
+  overwrite each other.
+
+## Failure Modes
+
+- `wrong_endpoint_type`: switch chat/completions to match the task.
+- `missing_tokenizer_for_logprobs`: provide tokenizer path or choose chat tasks.
+- `no_endpoint`: deploy first or provide an existing endpoint URL.

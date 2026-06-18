@@ -1,0 +1,147 @@
+title: moe_optimization_workflow
+validated_on: "2026-04-01"
+summary: >
+  Systematic 3-phase workflow for optimizing MoE training performance,
+  distilled from the Megatron-Core MoE paper (arXiv:2603.07685). Covers
+  the Three Walls framework, parallel folding, memory optimization stack,
+  FP8 recipe selection, CUDA graphs, and flexible VPP.
+
+source: "https://arxiv.org/abs/2603.07685"
+source_title: "Scalable Training of Mixture-of-Experts Models with Megatron Core"
+
+validation_status:
+  three_walls_framework:
+    - documented
+  optimization_workflow:
+    - documented
+  parallel_folding:
+    - documented
+  memory_optimization_stack:
+    - documented
+  fp8_recipes:
+    - documented
+  cuda_graphs_moe:
+    - documented
+  dsv3_case_study:
+    - measured
+
+core_concepts:
+  three_walls:
+    memory:
+      description: "All E experts stored but only K activate per token"
+      key_metric: "GB per GPU"
+      dsv3_example: "199.5 GB per GPU without optimization (PP4×VPP4×EP64, 256 GPUs)"
+    communication:
+      description: "EP all-to-all dispatches tokens across GPUs"
+      key_metric: "% of step time"
+      dsv3_example: "20-60% of step time depending on hardware topology"
+    compute_efficiency:
+      description: "Small expert GEMMs + host overhead"
+      key_metric: "GPU SM utilization"
+      dsv3_example: "GEMMs <50% of execution time vs ~70% in dense models"
+
+  parameter_compute_mismatch:
+    description: >
+      MoE total params scale with E (expert count) while per-token compute
+      scales only with K (top-k). DSV3: 685B total, 37B active = 18× gap.
+    implication: >
+      More GPUs needed for memory, but per-token compute doesn't grow to
+      match, leaving communication overhead exposed.
+
+  parallel_folding:
+    description: >
+      Decouples attention and MoE parallelism. Attention uses TP×CP×DP×PP;
+      MoE uses ETP×EP×EDP×PP. PP must match. Breaks EP≤DP constraint.
+    key_benefit: "EP can exceed DP by folding across TP×CP groups"
+
+optimization_phases:
+  phase_1_memory:
+    goal: "Fit training in GPU memory"
+    key_action: "Choose parallelism that keeps memory within GPU capacity"
+    quick_test: "--fake-init-process-group for single-GPU emulation"
+  phase_2_parallelism:
+    goal: "Minimize communication overhead"
+    guidelines:
+      - "Minimize model parallelism, maximize DP"
+      - "Keep EP×TP within NVLink domain"
+      - "Use PP for multi-node scaling"
+      - "Prefer EP over TP for experts (Parallel Folding)"
+      - "Enable CP for sequences ≥ 8K"
+  phase_3_bottleneck:
+    goal: "Profile and apply targeted optimizations"
+    approach: "Identify which wall dominates, apply targeted fix, re-profile"
+
+memory_techniques:
+  - name: memory_efficient_permutation
+    overhead: zero
+    savings: "26 GB/GPU on DSV3"
+    mechanism: "Absorbs routing weights into activations before FC2"
+  - name: fp8_activations
+    overhead: low
+    savings: "16 GB/GPU on DSV3 (12% of activation budget)"
+    mechanism: "Store linear layer inputs in FP8"
+  - name: fine_grained_recompute
+    overhead: "<5% compute"
+    savings: "42 GB/GPU on DSV3"
+    targets: "MLA up-proj (30.4 GB), LayerNorm (8.2 GB), SwiGLU (3.8 GB)"
+  - name: fine_grained_offloading
+    overhead: "1.6-2% throughput"
+    savings: "10-18% memory"
+    mechanism: "Module-level D2H/H2D with stream overlap"
+  - name: optimizer_offloading
+    overhead: "0.1-0.2s per iteration"
+    savings: "15-20 GB/GPU on DSV3"
+    best_on: "GB200 with NVLink-C2C"
+  - name: fsdp_for_moe
+    overhead: "communication"
+    mechanism: "Dual DeviceMesh with zero-copy comms"
+
+fp8_recipes:
+  - name: per_tensor_fp8
+    platform: "Hopper, Blackwell"
+    granularity: "1 scale per tensor"
+    use_for: "Starting point, migration to FP8"
+  - name: blockwise_fp8
+    platform: "Hopper"
+    granularity: "128×128 blocks"
+    use_for: "Production on Hopper"
+  - name: mxfp8
+    platform: "Blackwell"
+    granularity: "1×32 elements"
+    use_for: "Default on Blackwell"
+  - name: nvfp4
+    platform: "Blackwell"
+    granularity: "16 elements, 2-level microscaling"
+    use_for: "Maximum throughput on Blackwell"
+    requires: "RHT, 2D scaling, stochastic rounding"
+
+dsv3_case_study:
+  gb200_config:
+    gpus: 256
+    parallelism: "TP1/PP4/EP64, VPP4"
+    precision: MXFP8
+    dispatcher: HybridEP
+    cuda_graphs: enabled
+    ep_overlap: disabled
+    tflops: 1048
+    dominant_bottleneck: "CPU overhead (after FP8 speeds up GEMMs)"
+  h100_config:
+    gpus: 1024
+    parallelism: "TP2/PP8/EP64, VPP4"
+    precision: FP8-Blockwise
+    dispatcher: DeepEP
+    cuda_graphs: disabled
+    ep_overlap: enabled
+    tflops: 368
+    dominant_bottleneck: "Communication (cross-node EP all-to-all)"
+
+key_lessons:
+  - "Platform characteristics drive strategy, not just model architecture"
+  - "Parallel Folding unlocks independent attention/MoE optimization"
+  - "FP8 shifts bottleneck from memory/compute to CPU overhead"
+  - "Optimization is iterative: solving one wall exposes another"
+
+evidence:
+  - "arXiv:2603.07685 — Scalable Training of MoE with Megatron Core"
+  - "Megatron-Core v0.16 benchmarks"
+  - "DSV3 and Qwen3-235B empirical results"

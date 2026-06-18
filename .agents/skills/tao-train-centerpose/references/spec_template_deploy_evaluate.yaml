@@ -1,0 +1,13 @@
+encryption_key: tlt_encode
+results_dir: /results
+evaluate:
+  num_gpus: 1
+  trt_engine: /results/centerpose.engine
+  opencv: false
+  eval_num_symmetry: 1
+  results_dir: /results
+dataset:
+  test_data: <required>
+  num_classes: 1
+  batch_size: 1
+  workers: 4

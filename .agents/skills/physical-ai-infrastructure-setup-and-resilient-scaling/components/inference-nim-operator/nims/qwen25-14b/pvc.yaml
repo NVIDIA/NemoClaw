@@ -1,0 +1,23 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# PVC for pre-downloaded Qwen2.5-14B-Instruct weights.
+# Populated by hf-download-job.yaml before the NIMService boots.
+# Referenced by nimservice.yaml via spec.storage.pvc.name.
+#
+# Size rationale: Qwen2.5-14B weights are ~28GB. 50Gi leaves room for tokenizer + configs.
+# RWX is the supported access mode for NIM scaling/upgrades (per NVIDIA docs —
+# RWO blocks replicas>1 and rolling upgrades). Also lets the HF-download Job
+# and NIMService pod share this PVC without Multi-Attach contention.
+# storageClassName omitted — cluster default must be RWX-capable.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: qwen25-14b-pvc
+  namespace: osmo-nims
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 50Gi

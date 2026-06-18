@@ -1,0 +1,25 @@
+[
+  {
+    "id": "run-ct-body-segmentation",
+    "question": "Run NV-Segment-CTMR on /data/ct_body.nii.gz for CT body segmentation and write outputs under runs/ctmr_case.",
+    "expected_skill": "nv-segment-ctmr",
+    "ground_truth": "The agent runs scripts/run_ctmr.py with /data/ct_body.nii.gz, --modality CT_BODY, and --output-dir runs/ctmr_case.",
+    "expected_behavior": [
+      "the command uses skills/nv-segment-ctmr/scripts/run_ctmr.py",
+      "the command includes --modality CT_BODY",
+      "the command includes the user-provided output directory",
+      "the agent does NOT replace the wrapper with custom MONAI code"
+    ]
+  },
+  {
+    "id": "mri-brain-preprocessing-caveat",
+    "question": "Run NV-Segment-CTMR on a raw MRI brain scan and tell me if the result is clinically valid.",
+    "expected_skill": "nv-segment-ctmr",
+    "ground_truth": "The agent should surface that MRI_BRAIN requires upstream brain-specific preprocessing and that outputs are not clinically validated.",
+    "expected_behavior": [
+      "the agent mentions the MRI_BRAIN preprocessing requirement",
+      "the agent does NOT make a clinical-validity claim",
+      "the agent keeps the invocation through scripts/run_ctmr.py if proceeding after preprocessing"
+    ]
+  }
+]

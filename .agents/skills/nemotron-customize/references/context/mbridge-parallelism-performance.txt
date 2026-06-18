@@ -1,0 +1,48 @@
+# Megatron-Bridge Parallelism And Performance Context
+
+Use this pack only after the selected Megatron-Bridge step and config are known.
+It helps tune distributed shape; it does not replace the step config.
+
+## Product Contract
+
+- Start from the checked-in tiny/default config and change only the parallelism
+  knobs required by the user's hardware and model.
+- Keep tokenizer, packed sequence length, model sequence length, and dataset
+  sequence length aligned.
+- Do not tune for throughput before the job launches, loads data, and saves a
+  small checkpoint successfully.
+
+## Core Knobs
+
+| Knob | Use |
+|---|---|
+| tensor parallelism (TP) | shard large matrix ops; world size must divide cleanly |
+| pipeline parallelism (PP) | shard layers across GPUs; useful for very deep models |
+| context parallelism (CP) | long sequence memory relief |
+| expert parallelism (EP) | MoE expert sharding when the recipe supports it |
+| sequence parallelism (SP) | memory reduction commonly paired with TP |
+| activation recomputation | memory relief at compute cost |
+| distributed optimizer/FSDP | optimizer-state and gradient memory relief |
+
+## Tuning Order
+
+1. Validate the artifact path and tiny data first.
+2. Set TP/PP/CP/EP to a legal shape for the model and GPU count.
+3. Keep micro batch size at 1 until memory is proven.
+4. Enable activation recomputation before reducing sequence length.
+5. Increase global batch size only after the data-parallel size is known.
+6. Add communication overlap only after correctness and checkpointing work.
+
+## SFT/PEFT Notes
+
+- Megatron SFT/PEFT consumes packed Parquet from `data_prep/sft_packing`.
+- `seq_length` must match the packing `pack_size`.
+- For adapter jobs, keep base checkpoint path and adapter output path distinct.
+
+## Failure Modes
+
+- `world_size_not_divisible`: adjust nodes, GPUs per node, TP, PP, CP, or EP.
+- `sequence_length_mismatch`: repack data or align model/dataset sequence
+  length.
+- `oom`: lower micro batch, enable recomputation, increase parallelism, or
+  switch to PEFT.

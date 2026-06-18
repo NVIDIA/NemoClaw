@@ -1,0 +1,29 @@
+results_dir: /results
+dataset:
+  val_dataset:
+    reference: <required>
+    query: <required>
+  pixel_mean:
+  - 0.485
+  - 0.456
+  - 0.406
+  pixel_std:
+  - 0.226
+  - 0.226
+  - 0.226
+gen_trt_engine:
+  gpu_id: 0
+  onnx_file: /models/model.onnx
+  trt_engine: /results/ml-recog.engine
+  tensorrt:
+    data_type: INT8
+    workspace_size: 1024
+    min_batch_size: 1
+    opt_batch_size: 10
+    max_batch_size: 10
+    calibration:
+      cal_cache_file: /results/ml-recog_calibration.cache
+      cal_batch_size: 16
+      cal_batches: 100
+      cal_image_dir:
+      - /data/calibration/images

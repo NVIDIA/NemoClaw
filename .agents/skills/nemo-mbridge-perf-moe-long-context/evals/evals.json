@@ -1,0 +1,17 @@
+[
+  {
+    "id": "moe-long-context-positive-cp-smoke",
+    "question": "Use the nemo-mbridge-perf-moe-long-context skill. Give the CP sizing rule of thumb and the representative DSV3 128K H100, DSV3 256K H100, and Qwen3 235B 128K GB200 long-context MoE layouts.",
+    "expected_skill": "nemo-mbridge-perf-moe-long-context",
+    "expected_script": null,
+    "ground_truth": "The answer should use the MoE long-context skill. It should state the CP sizing rule of thumb: CP ~= seq_len / 4096, rounded to a practical power-of-two, while keeping DP alive if possible. It should prefer selective recompute modules such as up_proj, norm, moe, moe_act, or mlp before full recompute, and avoid SDPA-heavy attention recompute at very long context. It should list DSV3 128K on H100 as TP=1 CP=32 EP=32 PP=8 VPP=4 with DeepEP, FP8-class precision, recompute up_proj/norm/moe/mlp, and optimizer CPU offload; DSV3 256K on H100 as TP=1 CP=64 EP=32 PP=8 EDP=2 VPP=4 with DeepEP and the same recompute/offload pattern; Qwen3 235B 128K on GB200 as TP=4 CP=4 EP=32 PP=4 VPP=12 with HybridEP, BF16 or MXFP8, recompute moe_act/norm, and CUDA graph scopes attn + moe_router + moe_preprocess.",
+    "expected_behavior": [
+      "Read the nemo-mbridge-perf-moe-long-context skill before answering.",
+      "Identify the task as long-context MoE training guidance.",
+      "State the CP ~= seq_len / 4096 sizing rule and DP-budget caveat.",
+      "List the DSV3 128K and 256K H100 layouts.",
+      "List the Qwen3 235B 128K GB200 layout.",
+      "Mention selective recompute and CUDA graph stability constraints."
+    ]
+  }
+]

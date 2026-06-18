@@ -1,0 +1,84 @@
+{
+  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Apply-Restructure Manifest",
+  "description": "Contract for <output_dir>/apply-restructure-manifest.json, the Phase 2f -> Phase 4 handoff. phase4_targets[] is the authoritative list of files Phase 4 must mesh-optimize; the final optimization-report's target_coverage must cover the UNION of every iteration's phase4_targets (see validate_report.py --manifest). A mode=restructure manifest MUST carry a non-empty phase4_targets[], and every entry MUST declare its default-predicate mesh_count so a 'skipped_zero_meshes' disposition cannot be faked.",
+  "type": "object",
+  "required": ["mode", "phase4_targets"],
+  "properties": {
+    "mode": {
+      "type": "string",
+      "enum": ["restructure", "ref_remap"]
+    },
+    "input_stage": { "type": "string" },
+    "output_dir": { "type": "string" },
+    "new_assembly_root": { "type": "string" },
+    "outputs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string" },
+          "kind": {
+            "type": "string",
+            "enum": ["prototype", "shared_layer", "loadable_subasset", "parent_assembly", "new_root"]
+          },
+          "provenance": { "type": "string" },
+          "size_bytes": { "type": "integer", "minimum": 0 },
+          "validate_usd_minimum": { "type": "string", "enum": ["pass", "fail", "skipped"] },
+          "notes": { "type": "string" }
+        }
+      }
+    },
+    "phase4_targets": {
+      "type": "array",
+      "description": "Every written prototype/shared layer/loadable sub-asset that needs Phase 4 mesh optimization, PLUS the assembly root itself when it retains > 0 meshes after extraction.",
+      "items": {
+        "type": "object",
+        "required": ["path", "target_class", "mesh_count"],
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Written file Phase 4 must optimize. This is the reconciliation key against optimization-report.target_coverage[].path."
+          },
+          "target_class": {
+            "type": "string",
+            "enum": ["prototype", "shared_layer", "loadable_subasset", "assembly_root"]
+          },
+          "mesh_count": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Authoritative default-predicate mesh count: len of Usd.PrimRange.Stage(stage, Usd.PrimDefaultPredicate) filtered to UsdGeom.Mesh, measured when the target is opened standalone (matches the apply-restructure Postcondition). The Phase-4 completion gate accepts disposition 'skipped_zero_meshes' only when this is 0."
+          },
+          "dependency_group": {
+            "type": "string",
+            "enum": ["shared_first", "dependent_after", "independent"]
+          },
+          "source": { "type": "string" },
+          "weight_hints": {
+            "type": "object",
+            "description": "Optional pre-extraction estimates for adaptive batching. NON-authoritative; mesh_count above is the authoritative count the gate uses."
+          },
+          "notes": { "type": "string" }
+        }
+      }
+    },
+    "rewrite_steps": { "type": "array" },
+    "material_rewrites": { "type": "array" },
+    "warnings": { "type": "array" }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "mode": { "const": "restructure" } },
+        "required": ["mode"]
+      },
+      "then": {
+        "properties": {
+          "phase4_targets": { "minItems": 1 }
+        },
+        "required": ["phase4_targets"]
+      }
+    }
+  ]
+}

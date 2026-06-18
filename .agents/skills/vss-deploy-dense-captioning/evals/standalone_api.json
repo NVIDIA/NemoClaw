@@ -1,0 +1,44 @@
+{
+  "skills": [
+    "vss-deploy-dense-captioning"
+  ],
+  "resources": {
+    "platforms": {
+      "L40S": {
+        "modes": [
+          "standalone"
+        ]
+      }
+    }
+  },
+  "expects": [
+    {
+      "query": "Use the `/vss-deploy-dense-captioning` skill to deploy and test RT-VLM standalone on {{platform}}. Work from `{{repo_root}}/deploy/docker/services/rtvi/rtvi-vlm`, configure the standalone compose env for a remote OpenAI-compatible VLM backend, activate the Docker Compose profile `bp_developer_alerts_2d_vlm`, start only the `rtvi-vlm` service on http://localhost:8018, verify readiness, models, `/openapi.json`, `/v1/assets/stats`, text-only `/v1/chat/completions`, and the current 26.05 legacy `/v1/completions` HTTP 400 behavior. Do not call `/v1/license` unless the live OpenAPI exposes it; report it as absent if missing. Precheck the RTSP sample stream from `RTSP_SAMPLE_URL` with `ffprobe`, `gst-discoverer-1.0`, or an equivalent RTSP probe and fail fast with a clear message if it is unreachable or reports an unknown/non-video media type, register a temporary RTSP stream with description `rt-vlm-eval-{{mode}}` and URL from `RTSP_SAMPLE_URL`, exercise the CV-style `/v1/stream/get-stream-info` path if the live OpenAPI exposes it, delete that temporary stream, and leave the service running for verifier probes. Run autonomously only for scratch resources created by this eval. Do not stop, replace, or delete any pre-existing container, broker, host path, or other infrastructure; if a pre-existing resource would need modification, report the blocker and fail safe. Clean up the temporary stream before your final reply.\n\n**Environment & prerequisites:** A GPU host matching `{{platform}}` with Docker, NVIDIA Container Toolkit, and the following SECRETS already provisioned by the harness in the environment (never inlined into the prompt, never committed): `NGC_CLI_API_KEY`, `NVIDIA_API_KEY` (or one of `VLM_ENDPOINT_URL` / `VLM_REMOTE_URL`, `VLM_REMOTE_MODEL`). The eval harness must also provide `RTSP_SAMPLE_URL` for a reachable RTSP sample video stream. The eval harness is expected to load these from a secret manager and to scrub them from logs and trajectory artifacts; rotate `NGC_CLI_API_KEY` and `NVIDIA_API_KEY` on a fixed cadence and after every host decommission. This eval deploys ONLY the RT-VLM microservice from `{{repo_root}}/deploy/docker/services/rtvi/rtvi-vlm/rtvi-vlm-docker-compose.yml` using the Docker Compose profile `bp_developer_alerts_2d_vlm`. It does not deploy a full VSS profile and must not use `/vss-deploy-profile` or `scripts/dev-profile.sh`. The agent is permitted to remove an optional `rtvi-vlm.depends_on` block ONLY when Docker Compose rejects references to sibling NIM or broker services that are not part of this single-file project, and only by writing back a normalised copy with `chmod 600` set on any new `.env`; never modify the host-side compose file outside this scratch directory. Use host port 8018, disable Kafka unless a broker is explicitly started, and use a self-contained standalone Kafka broker if Kafka validation is required. Do not assume `deploy/docker/services/infra/compose.yml` validates with a minimal RT-VLM-only env because it includes full-profile SDRC compose fragments. Precheck the RTSP sample stream from `RTSP_SAMPLE_URL` with `ffprobe`, `gst-discoverer-1.0`, or an equivalent RTSP probe before registering it. A successful RTSP precheck must verify that the probe discovered a video stream/caps entry; an exit code of 0 with unknown media type is not sufficient.",
+      "checks": [
+        "The agent did not invoke `/vss-deploy-profile`, `scripts/dev-profile.sh`, or deploy a full VSS profile.",
+        "The agent used `deploy/docker/services/rtvi/rtvi-vlm/rtvi-vlm-docker-compose.yml` and the Docker Compose profile `bp_developer_alerts_2d_vlm` to start `rtvi-vlm` standalone.",
+        "The agent handled standalone compose validation by removing or otherwise neutralizing the optional `rtvi-vlm.depends_on` references to sibling services if Docker Compose rejected the single-file project.",
+        "The standalone env set `RTVI_VLM_PORT=8018`, `RTVI_VLM_MODEL_TO_USE=openai-compat`, a non-empty `RTVI_VLM_ENDPOINT`, a non-empty `VLM_NAME`, and `RTVI_VLM_KAFKA_ENABLED=false` unless the agent also started a Kafka broker.",
+        "The agent verified `RTSP_SAMPLE_URL` is set and non-empty in the harness environment before probing or registering the RTSP sample stream.",
+        "If the agent started Kafka for standalone validation, it used a self-contained broker or first proved the full repo infra compose validated with the available env/config; it did not treat the full infra compose as guaranteed to work with a minimal RT-VLM-only env.",
+        "If Kafka or port 9092 was already in use, the agent confirmed whether to reuse the existing broker or launch/replace a broker before stopping any container or service.",
+        "`curl -sf --max-time 15 http://localhost:8018/v1/health/ready` returns exit 0.",
+        "`curl -sf --max-time 15 http://localhost:8018/v1/models` returns exit 0 and returns JSON with a non-empty model list or model metadata.",
+        "`curl -sf --max-time 15 http://localhost:8018/openapi.json` returns exit 0 and the agent used it as the endpoint source of truth.",
+        "`curl -sf --max-time 15 http://localhost:8018/v1/assets/stats` returns exit 0 when exposed by the live OpenAPI, or the agent clearly reports that the live OpenAPI omitted it.",
+        "`curl -sf --max-time 15 http://localhost:8018/v1/metrics` returns exit 0 without an Authorization header on current 26.05 standalone builds; the agent does not claim that metrics always requires auth.",
+        "The agent did not present `/v1/license` as supported unless `/openapi.json` listed it; on current 26.05 builds it should report that `/v1/license` is absent/404.",
+        "The agent successfully called text-only `POST http://localhost:8018/v1/chat/completions` with a messages array and model.",
+        "The agent called text-only `POST http://localhost:8018/v1/completions` only to verify the documented legacy behavior, and treated HTTP 400 as expected on current 26.05 builds.",
+        "`docker ps --format '{{.Names}}' | grep -qx vss-rtvi-vlm` returns exit 0.",
+        "The agent prechecked the configured `RTSP_SAMPLE_URL` with `ffprobe`, `gst-discoverer-1.0`, or an equivalent RTSP probe before calling `/v1/streams/add`, verified the probe discovered a video stream/caps entry, and would fail fast with a clear message if the stream was unreachable or reported an unknown/non-video media type.",
+        "The agent called `POST http://localhost:8018/v1/streams/add` with `liveStreamUrl` exactly matching the configured `RTSP_SAMPLE_URL` and a description containing `rt-vlm-eval`.",
+        "The agent parsed the RT-VLM stream id from the `results[0].id` field returned by `/v1/streams/add`, not from `.streams[0].id`.",
+        "If `/openapi.json` exposes `/v1/stream/get-stream-info`, the agent checked it separately from plural `/v1/streams/get-stream-info` and did not use a singular CV-style `stream_count:0` result as proof that plural RT-VLM caption stream registration failed.",
+        "The agent called `DELETE http://localhost:8018/v1/streams/delete/<stream_id>` for the temporary `rt-vlm-eval` stream before finishing.",
+        "`curl -sf --max-time 15 http://localhost:8018/v1/streams/get-stream-info` returns exit 0 and the response does not contain `rt-vlm-eval`.",
+        "The agent did not reference or try to run `tests/kafka/test_kafka_consumer.py`."
+      ]
+    }
+  ]
+}

@@ -1,0 +1,152 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "NVGenerateMRBrainOutput",
+  "type": "object",
+  "required": ["skill", "model", "model_repo", "input", "output", "invocation", "runtime", "intended_use_disclaimer"],
+  "properties": {
+    "skill": {"const": "nv_generate_mr_brain"},
+    "model": {"type": "string"},
+    "model_repo": {"type": "string"},
+    "model_weights_repo": {"type": "string"},
+    "license": {"type": "string"},
+    "input": {
+      "type": "object",
+      "required": [
+        "model_config_override_path",
+        "model_config_override",
+        "modality_name",
+        "modality_code",
+        "dim_requested",
+        "spacing_requested",
+        "num_inference_steps_requested",
+        "cfg_guidance_scale_requested",
+        "random_seed",
+        "version"
+      ],
+      "properties": {
+        "model_config_override_path": {"type": ["string", "null"]},
+        "model_config_override": {"type": "object"},
+        "modality_name": {"type": "string"},
+        "modality_code": {"type": "integer"},
+        "dim_requested": {"type": "array", "items": {"type": "integer"}, "minItems": 3, "maxItems": 3},
+        "spacing_requested": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
+        "num_inference_steps_requested": {"type": "integer"},
+        "cfg_guidance_scale_requested": {"type": "number"},
+        "random_seed": {"type": "integer"},
+        "version": {"const": "rflow-mr-brain"}
+      }
+    },
+    "output": {
+      "type": "object",
+      "required": [
+        "directory",
+        "samples",
+        "num_samples",
+        "all_images_readable",
+        "all_shapes_match_requested",
+        "all_spacing_match_requested",
+        "all_images_finite",
+        "all_images_nonconstant",
+        "all_images_nonnegative"
+      ],
+      "properties": {
+        "directory": {"type": "string"},
+        "samples": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["image_path", "image_readable"],
+            "properties": {
+              "image_path": {"type": "string"},
+              "image_bytes": {"type": ["integer", "null"], "minimum": 0},
+              "image_sha256": {"type": "string"},
+              "image_readable": {"type": "boolean"},
+              "image_shape": {"type": "array", "items": {"type": "integer"}},
+              "requested_shape": {"type": "array", "items": {"type": "integer"}},
+              "shape_match_requested": {"type": "boolean"},
+              "image_spacing": {"type": "array", "items": {"type": "number"}},
+              "requested_spacing": {"type": "array", "items": {"type": "number"}},
+              "spacing_match_requested": {"type": "boolean"},
+              "image_affine": {"type": "array"},
+              "finite_fraction": {"type": "number"},
+              "all_finite": {"type": "boolean"},
+              "intensity_min": {"type": "number"},
+              "intensity_max": {"type": "number"},
+              "intensity_mean": {"type": "number"},
+              "intensity_std": {"type": "number"},
+              "image_nonconstant": {"type": "boolean"},
+              "image_nonnegative": {"type": "boolean"},
+              "image_error": {"type": "string"}
+            }
+          }
+        },
+        "num_samples": {"type": "integer", "minimum": 0},
+        "all_images_readable": {"type": "boolean"},
+        "all_shapes_match_requested": {"type": "boolean"},
+        "all_spacing_match_requested": {"type": "boolean"},
+        "all_images_finite": {"type": "boolean"},
+        "all_images_nonconstant": {"type": "boolean"},
+        "all_images_nonnegative": {"type": "boolean"}
+      }
+    },
+    "invocation": {
+      "type": "object",
+      "required": ["official_entrypoint", "upstream_root", "command", "exit_code", "model_inventory"],
+      "properties": {
+        "official_entrypoint": {"type": "string"},
+        "upstream_root": {"type": "string"},
+        "upstream_commit": {"type": "string"},
+        "command": {"type": "array", "items": {"type": "string"}},
+        "exit_code": {"type": "integer"},
+        "subprocess_seconds": {"type": "number"},
+        "model_inventory": {
+          "type": "object",
+          "required": ["all_present", "files"],
+          "properties": {
+            "all_present": {"type": "boolean"},
+            "files": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["path", "present"],
+                "properties": {
+                  "path": {"type": "string"},
+                  "present": {"type": "boolean"},
+                  "bytes": {"type": ["integer", "null"]},
+                  "sha256": {"type": "string"}
+                }
+              }
+            }
+          }
+        },
+        "rendered_model_config": {"type": "object"},
+        "rendered_env_output_dir": {"type": "string"},
+        "rendered_env_output_prefix": {"type": "string"}
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "required": ["subprocess_seconds", "device"],
+      "properties": {
+        "subprocess_seconds": {"type": "number"},
+        "device": {"type": "string"}
+      }
+    },
+    "logs": {
+      "type": "object",
+      "properties": {
+        "stdout_tail": {"type": "string"},
+        "stderr_tail": {"type": "string"}
+      }
+    },
+    "preflight": {
+      "type": "object",
+      "properties": {
+        "warnings": {"type": "array", "items": {"type": "string"}},
+        "estimated_cost": {"type": "object"},
+        "cuda": {"type": "object"}
+      }
+    },
+    "intended_use_disclaimer": {"type": "string"}
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "_comment": "Pelvic CT covering bladder, prostate, iliac vasculature, and the bony pelvis. 256^3 at 1.5/1.5/2.0 mm spacing. ~90s on a 24 GB GPU.",
+  "num_output_samples": 1,
+  "body_region": [
+    "pelvis"
+  ],
+  "anatomy_list": [
+    "bladder",
+    "prostate",
+    "sacrum",
+    "vertebrae S1",
+    "left hip",
+    "right hip",
+    "left iliac artery",
+    "right iliac artery",
+    "left iliac vena",
+    "right iliac vena",
+    "left iliopsoas",
+    "right iliopsoas"
+  ],
+  "controllable_anatomy_size": [],
+  "output_size": [
+    256,
+    256,
+    256
+  ],
+  "spacing": [
+    1.5,
+    1.5,
+    2.0
+  ],
+  "num_inference_steps": 30,
+  "image_output_ext": ".nii.gz",
+  "label_output_ext": ".nii.gz"
+}

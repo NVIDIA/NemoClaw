@@ -1,0 +1,110 @@
+[
+    {
+        "expected_behavior": [
+            "Imports cupynumeric, legate.core, and bisect (bisect is needed even on the uniform fast path so the same task body works heterogeneous-tolerant)",
+            "Reads every shard's .npy header in step 1 and validates dtype + trailing axes match",
+            "Allocates the destination via cn.empty(total_shape, dtype=...) where total_shape[0] equals the sum of per-file rows",
+            "Derives tile_rows from runtime.get_machine().count(...), not from per-file shape",
+            "Calls partition_by_tiling((tile_rows,) + trailing_shape) and create_manual_task with launch domain ceil(total_rows / tile_rows)",
+            "Registers the leaf task with all three variants (VariantCode.CPU, VariantCode.OMP, VariantCode.GPU)",
+            "Issues runtime.issue_execution_fence(block=True) after the launch",
+            "Does not call cn.asarray(dst) inside the @task body and does not slice-assign cn_dst[s] = host_np inside the task body",
+            "Does not import cupy at module scope (cupy is imported inside the GPU branch only)"
+        ],
+        "expected_script": null,
+        "expected_skill": "cupynumeric-parallel-data-load",
+        "ground_truth": "The agent writes a Legate parallel loader following the 5-step recipe in SKILL.md. Step 1 walks every shard_*.npy header (np.load(p, mmap_mode='r')) to recover per_file_rows, trailing_shape, and dtype. Step 2 calls cn.empty((sum(per_file_rows),) + trailing_shape, dtype=dtype). Step 3 derives tile_rows = ceil(total_rows / num_processors) where num_processors = max(machine.count(GPU), machine.count(OMP), machine.count(CPU), 1), then partitions axis 0 by tile_rows. Step 4 registers @task(variants=(VariantCode.CPU, VariantCode.OMP, VariantCode.GPU)) for load_tile(ctx, dst); inside the task it computes [row_start, row_end), bisects cum_rows for the overlapping file range, loads each per-file slice with np.load(p, mmap_mode='r'), wraps with np.ascontiguousarray, and copies into the matching destination slice with cp.from_dlpack(dst)[lo:hi].set(chunk) on GPU or np.asarray(dst)[lo:hi] = chunk on CPU/OMP. Step 5 issues runtime.issue_execution_fence(block=True). The 'Uniform-shard fast path' variant in SKILL.md is acceptable as an additional optimization but the heterogeneous-tolerant body must be the primary code path so the same loader works when shards happen to differ. cupy is imported lazily inside the GPU branch only.",
+        "id": "uniform-001-npy-shards-uniform",
+        "question": "I have 8 .npy shards under /shared/scratch/uniform-demo named shard_0000.npy ... shard_0007.npy. They are all the same shape (1_000_000, 16) and dtype float32. I want to load them into a single cupynumeric array and run downstream math on 8 H100s. Write me a Python script that does the parallel load."
+    },
+    {
+        "expected_behavior": [
+            "Reads every shard's .npy header (cannot assume uniform rows)",
+            "Imports bisect and uses bisect.bisect_right on the cum_rows table inside the @task body",
+            "Builds cum_rows = np.cumsum([0] + per_file_rows, dtype=np.int64)",
+            "Sets total_shape[0] from sum(per_file_rows), not from num_shards * shard_shape[0]",
+            "Calls np.ascontiguousarray on each per-file slice before .set() or the in-place numpy write",
+            "Registers the leaf task with all three variants (CPU, OMP, GPU)",
+            "Does not assume one task per file: launch domain is ceil(total_rows / tile_rows) where tile_rows is derived from processor count",
+            "Does not use the homogeneous total_shape = num_shards * shard_shape[0] formula"
+        ],
+        "expected_script": null,
+        "expected_skill": "cupynumeric-parallel-data-load",
+        "ground_truth": "The agent writes a parallel loader that handles non-uniform shard row counts. The discovery step opens every shard with np.load(mmap_mode='r'), validates dtype and trailing_shape match across files, and accumulates per_file_rows = [hdr.shape[0] for hdr in headers]. It builds cum_rows = np.cumsum([0] + per_file_rows, dtype=np.int64) and sets total_rows = int(cum_rows[-1]). The destination is cn.empty((total_rows,) + trailing_shape, dtype=dtype). tile_rows = ceil(total_rows / num_processors) where num_processors is derived from runtime.get_machine().count(...). partition_by_tiling((tile_rows,) + trailing_shape) and create_manual_task with launch domain (ceil(total_rows / tile_rows),). The @task body builds its consumer view first (cp.from_dlpack on GPU, np.asarray on CPU/OMP) and reads the tile's actual row count from view.shape[0] (PhysicalStore has no .shape), then computes row_start = ctx.task_index[0] * TILE_ROWS, row_end = row_start + view.shape[0], then first_file = bisect.bisect_right(CUM_ROWS, row_start) - 1 and last_file = bisect.bisect_right(CUM_ROWS, row_end - 1) - 1, and iterates the overlapping files copying intersected slices. The 'Uniform-shard fast path' variant from SKILL.md is INCORRECT for this case \u2014 choosing tile_rows = per_file_rows[0] mis-sizes the partition because the shards differ in row counts.",
+        "id": "hetero-001-npy-shards-heterogeneous",
+        "question": "I have 6 .npy shards under /scratch/sim/run42 named shard_0000.npy ... shard_0005.npy. They share dtype float32 and shape[1:] == (256,) but the per-shard row counts vary (the simulation produced different numbers of samples each run). I want to load them into one cupynumeric array on 4 GPUs. Write me a Python script that does the parallel load and handles the non-uniform row counts."
+    },
+    {
+        "expected_behavior": [
+            "Reads the user-supplied sidecar (or recognizes that raw binary needs a sidecar / file-size derivation)",
+            "Uses np.memmap with the documented dtype and shape from the sidecar to read each shard",
+            "Calls np.ascontiguousarray on each per-file slice",
+            "Builds cum_rows from sidecar row counts (or file_size / row_bytes if no sidecar)",
+            "Bisects cum_rows inside the @task body to find overlapping files",
+            "Registers all three variants (CPU, OMP, GPU)",
+            "Does not assume a header \u2014 raw binary has none"
+        ],
+        "expected_script": null,
+        "expected_skill": "cupynumeric-parallel-data-load",
+        "ground_truth": "The agent writes a parallel loader that uses np.memmap inside the @task body. The discovery step reads the user-supplied sidecar (rows_per_shard, dtype, trailing_shape) \u2014 raw binary has no header, so an external schema is mandatory. It builds per_file_rows from the sidecar (or, if no sidecar, from file_size / row_bytes), constructs cum_rows, allocates cn.empty(total_shape, dtype=DTYPE), partitions by tile_rows, and launches via create_manual_task. Inside the @task body, for each overlapping file: arr = np.memmap(PATHS[f], dtype=DTYPE, mode='r', shape=(rows_in_file, *trailing_shape)); chunk = np.ascontiguousarray(arr[file_lo:file_hi]); copied into dst via cp.from_dlpack(dst)[dst_lo:dst_hi].set(chunk) on GPU or np.asarray(dst)[dst_lo:dst_hi] = chunk on CPU/OMP. Reference: SKILL.md 'Other formats' Raw-binary row. legate.core.experimental.io.tile.from_tiles is mentioned as an alternative when the user can guarantee uniform tile shape \u2014 but this fixture is heterogeneous so the custom @task body is the right path.",
+        "id": "hetero-003-raw-binary-no-header",
+        "question": "I have a directory /scratch/data/raw_shards/ with shard_0000.bin ... shard_0007.bin \u2014 fixed-shape float32 records, no header. The schema (rows per shard, dtype, trailing axes) lives in shard_meta.json next to the shards. Write me a parallel cuPyNumeric loader."
+    },
+    {
+        "expected_behavior": [
+            "Uses zarr inside the @task body to open each per-shard store and slice it with [file_lo:file_hi]",
+            "Discovery step opens each store with zarr.open(p, mode='r') to read shape and dtype",
+            "Builds cum_rows from zarr metadata and uses bisect inside the @task body",
+            "Calls np.ascontiguousarray on each per-store slice",
+            "Registers all three variants (CPU, OMP, GPU)",
+            "Does not call legate.core.experimental.io.zarr.read_array on a list of stores \u2014 that helper is a single-store loader"
+        ],
+        "expected_script": null,
+        "expected_skill": "cupynumeric-parallel-data-load",
+        "ground_truth": "The agent writes a parallel loader that delegates byte-decoding to zarr inside the @task body. The discovery step opens each store with arr = zarr.open(p, mode='r'); per_file_rows.append(arr.shape[0]) and validates trailing shape / dtype consistency. It builds cum_rows, allocates cn.empty(total_shape, dtype=dtype), partitions by tile_rows, and launches via create_manual_task. Inside the @task body, for each overlapping file: arr = zarr.open(PATHS[f], mode='r'); chunk = np.ascontiguousarray(arr[file_lo:file_hi]); copied into dst via cp.from_dlpack(dst)[dst_lo:dst_hi].set(chunk) on GPU or np.asarray(dst)[dst_lo:dst_hi] = chunk on CPU/OMP. Reference: SKILL.md 'Other formats' Zarr row. legate.core.experimental.io.zarr.read_array is a single-store helper, not a multi-store one \u2014 it does not apply here.",
+        "id": "zarr-001-store-per-shard",
+        "question": "I have a tree under /scratch/zarr_pool/ with 16 separate Zarr stores (store_00 ... store_15), each holding a single 2D array of float32. Their first-axis lengths vary across stores. Load them all into a single cupynumeric array on 4 GPUs."
+    },
+    {
+        "expected_behavior": [
+            "Does not invoke the parallel-data-load workflow on this prompt",
+            "Recognizes single-file .npy as the trivial case and recommends cupynumeric.load(path)",
+            "Does not write a multi-task partition + manual launch",
+            "Does not register a load_tile @task body for a one-file load",
+            "Does not import bisect or build a cum_rows table"
+        ],
+        "expected_script": null,
+        "expected_skill": null,
+        "ground_truth": "The agent does NOT invoke the cupynumeric-parallel-data-load skill workflow. The right answer for one .npy file is cupynumeric.load(path) \u2014 the skill's 'Why this skill exists' table calls this out: 'Single .npy: cupynumeric.load(path) (NumPy-API parity)'. Spinning up a manual partition + manual task launch for a single file is unnecessary overhead and the skill is explicit about not using its recipe in that case.",
+        "id": "neg-001-single-file-npy",
+        "question": "I have a single file /shared/data/checkpoint.npy that I need to load into a cupynumeric array. What's the simplest way?"
+    },
+    {
+        "expected_behavior": [
+            "Does not invoke the parallel-data-load workflow on this prompt",
+            "Recommends legate.io.hdf5.from_file(path, 'data') (or from_file_batched) as the single-file HDF5 loader",
+            "Does not write a multi-task partition + manual launch",
+            "Does not register a load_tile @task body for a one-file load",
+            "Does not import h5py inside a custom @task body for a one-file case"
+        ],
+        "expected_script": null,
+        "expected_skill": null,
+        "ground_truth": "The agent does NOT invoke the cupynumeric-parallel-data-load skill workflow. The right answer for a single HDF5 file with one dataset is legate.io.hdf5.from_file(path, 'data') (or from_file_batched for streaming) \u2014 the skill's 'Why this skill exists' table calls this out explicitly: 'HDF5 (single file): legate.io.hdf5.from_file / from_file_batched'. The skill is explicitly NOT for single-file loads \u2014 it's for multi-file / sharded layouts where Legate has no built-in loader.",
+        "id": "neg-002-single-file-hdf5",
+        "question": "I have one HDF5 file at /scratch/data/inputs.h5 with a single dataset called 'data'. How do I load it into a cupynumeric array?"
+    },
+    {
+        "expected_behavior": [
+            "Does not invoke the parallel-data-load workflow on this prompt",
+            "Recognizes the request as kernel authoring, not data loading",
+            "Suggests a kernel-building skill / Triton / CuTe / cupynumeric custom-kernel docs",
+            "Does not write a load_tile @task or a partition + manual launch",
+            "Does not pretend the request is a sharded data ingest problem"
+        ],
+        "expected_script": null,
+        "expected_skill": null,
+        "ground_truth": "The agent does NOT invoke the cupynumeric-parallel-data-load skill workflow. Kernel authoring is out of scope for this skill \u2014 the skill is about loading sharded on-disk datasets into a cupynumeric array, not about writing custom CUDA / Triton kernels. The agent declines to apply the parallel-load recipe and redirects to a kernel-authoring skill, Triton, CuTe, or upstream cupynumeric custom-kernel documentation. It does not silently fall back to writing a load_tile @task for a fused-gemm-bias-relu kernel request.",
+        "id": "neg-003-kernel-authoring",
+        "question": "I need to write a fast custom matmul-with-bias-relu CUDA kernel for an inference path. Help me write the Triton kernel \u2014 here's the Python signature: def fused_gemm_bias_relu(a, b, bias, out): ..."
+    }
+]

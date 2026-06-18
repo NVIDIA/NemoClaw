@@ -1,0 +1,28 @@
+results_dir: /results
+gen_trt_engine:
+  onnx_file: /models/model.onnx
+  trt_engine: /results/clip.engine
+  batch_size: -1
+  tensorrt:
+    workspace_size: 4096
+    data_type: fp16
+    min_batch_size: 1
+    opt_batch_size: 1
+    max_batch_size: 16
+dataset:
+  val:
+    datasets:
+    - image_dir: /data/images
+      caption_dir: /data/captions
+      caption_file_suffix: .txt
+      image_list_file: null
+    batch_size: 16
+    num_workers: 8
+evaluate:
+  trt_engine: /results/clip.engine
+  batch_size: 16
+inference:
+  trt_engine: /results/clip.engine
+  batch_size: 16
+  text_file: /data/text.txt
+  datasets: []

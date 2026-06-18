@@ -1,0 +1,200 @@
+# Defect Image Generation — PCB Asset Setup
+#
+# Downloads the PCBA use-case (UC1) finetuned checkpoint, raw dataset, and USD
+# scene tree from Hugging Face into URL-backed OSMO storage artifacts. Pure
+# download / staging only — no GPU work. Validation JSONL + AMP placement
+# happen at finetune / inference time inside the downstream workflows
+# (finetune.yaml, texture_defect_generation_day0.yaml, texture_defect_generation_day1_*.yaml).
+#
+# Three download groups:
+#   - download-pcb-model:  nvidia/Cosmos-AnomalyGen-PCB-2B (HF)
+#                          via scripts/utilities/download_anomalygen_checkpoints.sh
+#   - download-pcb-data:   nvidia/Cosmos-AnomalyGen-PCB-Dataset (HF)
+#                          via scripts.utilities.prepare_dataset_uc1 (PCBA raw tree)
+#   - download-pcb-assets: nvidia/Spark-AnomalyGen-USD (HF, USD scene tree for
+#                          the spark-board family)
+#
+# Pretrained bundle is its own workflow (setup_pretrained.yaml) — submit it in
+# parallel with this one.
+#
+# Output URL artifacts:
+#   {{ dig_url_root }}/models/pcb
+#   {{ dig_url_root }}/datasets/pcb/raw
+#   {{ dig_url_root }}/datasets/pcb/assets
+#
+# Prerequisites:
+#   1. No registry credential needed — the paidf-* workflow image is public on
+#      nvcr.io/nvidia/ (anonymous pull). If image pulls fail, see
+#      references/troubleshooting.md -> "nvcr.io image pull failures".
+#   2. osmo credential set hf-token --type GENERIC --payload token="$HF_TOKEN"
+#      (Required by every group here. Accept the license once per gated HF page:
+#        - https://huggingface.co/nvidia/Cosmos-AnomalyGen-PCB-2B
+#        - https://huggingface.co/datasets/nvidia/Cosmos-AnomalyGen-PCB-Dataset
+#        - https://huggingface.co/datasets/nvidia/Spark-AnomalyGen-USD)
+#
+# Submit:
+#   osmo workflow submit skills/physical-ai-defect-image-generation/assets/configs/setup/setup_pcb.yaml \
+#     --pool <pool>
+
+version: 2
+workflow:
+  name: "{{ workflow_name }}"
+  timeout:
+    exec_timeout: "{{ exec_timeout }}"
+    queue_timeout: "{{ queue_timeout }}"
+
+  resources:
+    cpu-download:
+      cpu: "{{ cpu }}"
+      memory: "{{ memory }}"
+      storage: "{{ storage }}"
+      platform: "{{ platform }}"
+
+  groups:
+
+    # ── Finetuned AnomalyGen checkpoint (HF) ─────────────────────────────────
+    # scripts/utilities/download_anomalygen_checkpoints.sh --uc pcb pulls
+    # nvidia/Cosmos-AnomalyGen-PCB-2B from HF (gated — accept license once).
+    # Writes ag_config.yaml + iter_NNNN.pt into <checkpoint-dir>, matching the
+    # layout downstream flows consume.
+    - name: download-pcb-model
+      tasks:
+        - name: pcb-model
+          lead: true
+          image: "{{ pretrained_image }}"
+          resource: cpu-download
+          credentials:
+            hf-token:
+              HF_TOKEN: token
+          environment:
+            HF_HUB_DISABLE_PROGRESS_BARS: "1"
+          command: ["bash"]
+          args: ["/tmp/run.sh"]
+          files:
+            - path: /tmp/run.sh
+              contents: |
+                set -euo pipefail
+                OUT="{{output}}"
+                mkdir -p "$OUT"
+
+                echo "[HF] download_anomalygen_checkpoints.sh --uc pcb -> $OUT"
+                cd /workspace/paidf-anomalygen
+                bash scripts/utilities/download_anomalygen_checkpoints.sh \
+                  --uc pcb \
+                  --checkpoint-dir "$OUT"
+
+                # Flatten: the download script nests under nvidia/<repo>/,
+                # but downstream workflows expect flat ag_config.yaml +
+                # iter_NNNN.pt at models/pcb/.
+                NESTED_DIR=$(find "$OUT" -mindepth 2 -maxdepth 3 -name "iter_*.pt" -printf '%h\n' 2>/dev/null | head -1)
+                if [ -n "$NESTED_DIR" ] && [ "$NESTED_DIR" != "$OUT" ]; then
+                  echo "[FLATTEN] moving files from $NESTED_DIR -> $OUT"
+                  find "$NESTED_DIR" -maxdepth 1 -type f \( -name 'iter_*.pt' -o -name 'ag_config.yaml' \) \
+                    -exec mv {} "$OUT/" \;
+                  rm -rf "$(dirname "$NESTED_DIR")"
+                fi
+
+                FILE_COUNT=$(find "$OUT" -type f | wc -l)
+                [ "$FILE_COUNT" -gt 0 ] || { echo "ERROR: 0 files in $OUT" >&2; exit 1; }
+                TOTAL_BYTES=$(du -sb "$OUT" | awk '{print $1}')
+                echo "[OK] models/pcb: $FILE_COUNT files, $TOTAL_BYTES bytes"
+          outputs:
+            - url: "{{ dig_url_root }}/models/pcb"
+
+    # ── PCB dataset (UC1, HF) ────────────────────────────────────────────────
+    # nvidia/Cosmos-AnomalyGen-PCB-Dataset (HF dataset repo) — full PCBA raw
+    # tree: anomaly images, submasks, clean images, defect_spec.jsonl,
+    # semantic_segmentation_labels.json. Curated and emitted by the
+    # `prepare_dataset_uc1` script that ships in the anomalygen image.
+    - name: download-pcb-data
+      tasks:
+        - name: pcb-data
+          lead: true
+          image: "{{ pretrained_image }}"
+          resource: cpu-download
+          credentials:
+            hf-token:
+              HF_TOKEN: token
+          environment:
+            HF_HUB_DISABLE_PROGRESS_BARS: "1"
+          command: ["bash"]
+          args: ["/tmp/run.sh"]
+          files:
+            - path: /tmp/run.sh
+              contents: |
+                set -euo pipefail
+                OUT="{{output}}"
+                mkdir -p "$OUT"
+
+                echo "[UC1] prepare_dataset_uc1 -> $OUT"
+                cd /workspace/paidf-anomalygen
+                python3 -m scripts.utilities.prepare_dataset_uc1 "$OUT"
+
+                # Strip HF artifacts leaked into the output
+                rm -f "$OUT/.gitattributes" 2>/dev/null || true
+
+                FILE_COUNT=$(find "$OUT" -type f | wc -l)
+                [ "$FILE_COUNT" -gt 0 ] || { echo "ERROR: 0 files in $OUT" >&2; exit 1; }
+                TOTAL_BYTES=$(du -sb "$OUT" | awk '{print $1}')
+                echo "[OK] datasets/pcb/raw: $FILE_COUNT files, $TOTAL_BYTES bytes"
+          outputs:
+            - url: "{{ dig_url_root }}/datasets/pcb/raw"
+
+    # ── PCBA USD asset bundle (HF) ───────────────────────────────────────────
+    # nvidia/Spark-AnomalyGen-USD ships the USD scene tree for the spark-board
+    # family (spark_lighting.usd + sublayers + materials + ECAD_3D + PCBA).
+    # The per-board cookbooks under assets/cookbooks/pcb/<board>/ supply
+    # pcba_target.yaml / day0_image.yaml / day0_crop.yaml at submit time via
+    # `localpath:` mounts, so the URL artifact only needs the USD tree itself.
+    - name: download-pcb-assets
+      tasks:
+        - name: pcb-assets
+          lead: true
+          image: "{{ pretrained_image }}"
+          resource: cpu-download
+          credentials:
+            hf-token:
+              HF_TOKEN: token
+          environment:
+            HF_HUB_DISABLE_PROGRESS_BARS: "1"
+          command: ["bash"]
+          args: ["/tmp/run.sh"]
+          files:
+            - path: /tmp/run.sh
+              contents: |
+                set -euo pipefail
+                OUT="{{output}}"
+                mkdir -p "$OUT"
+
+                echo "[HF] nvidia/Spark-AnomalyGen-USD -> $OUT"
+                hf download nvidia/Spark-AnomalyGen-USD \
+                  --repo-type dataset \
+                  --local-dir "$OUT"
+
+                # Strip HF cache + dotfiles leaked into the output
+                rm -rf "$OUT/.cache" 2>/dev/null || true
+                rm -f "$OUT/.gitattributes" 2>/dev/null || true
+
+                FILE_COUNT=$(find "$OUT" -type f | wc -l)
+                [ "$FILE_COUNT" -gt 0 ] || { echo "ERROR: 0 files in $OUT" >&2; exit 1; }
+                TOTAL_BYTES=$(du -sb "$OUT" | awk '{print $1}')
+                echo "[OK] datasets/pcb/assets: $FILE_COUNT files, $TOTAL_BYTES bytes"
+          outputs:
+            - url: "{{ dig_url_root }}/datasets/pcb/assets"
+
+default-values:
+  workflow_name: setup_pcb
+  exec_timeout: 1h
+  queue_timeout: 1h
+
+  dig_url_root: "s3://osmo-workflows/dig"
+
+  pretrained_image: "nvcr.io/nvidia/paidf-anomalygen:1.0.0"
+
+  # Resource sizing for the small download groups (model, data, assets). Each
+  # downloads a few-GB to ~20-GB tree from HF; 1 cpu / 2Gi / 10Gi is enough.
+  cpu: "1"
+  memory: 2Gi
+  storage: 10Gi
+
+  platform: default

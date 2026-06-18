@@ -1,0 +1,14 @@
+[
+  {
+    "id": "evo-eval-001-trigger-recognized",
+    "question": "I corrected your last answer because you suggested an API method that doesn't exist in cuopt-routing. You then found the right method. Should you do anything else?",
+    "expected_skill": "cuopt-skill-evolution",
+    "expected_script": null,
+    "ground_truth": "Yes. The user correction is a trigger for the cuopt-skill-evolution workflow. After solving the user's original task, the agent distills the generalizable learning, targets the single highest-impact skill (here cuopt-routing-api-python — the API skill where the missing method lives), and presents a proposal in the four-field format (Target, Trigger, Scored, Diff) for the user to approve before any change is applied.",
+    "expected_behavior": [
+      "Identifies the user correction as a cuopt-skill-evolution trigger and targets the cuopt-routing-api-python skill",
+      "Presents a proposal in the four-field format (Target, Trigger, Scored, Diff) and does not apply the change without user approval",
+      "Does not propose modifying cuopt-skill-evolution itself (self-modify is forbidden)"
+    ]
+  }
+]

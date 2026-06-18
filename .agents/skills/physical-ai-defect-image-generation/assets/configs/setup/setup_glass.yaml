@@ -1,0 +1,216 @@
+# Defect Image Generation — Glass Asset Setup
+#
+# Downloads the glass use-case (UC3) finetuned checkpoint and raw dataset into
+# URL-backed OSMO storage artifacts. Pure download / staging only — no GPU
+# work. Validation JSONL + AMP placement happen at finetune / inference time
+# inside the downstream workflows.
+#
+# Two download groups:
+#   - download-glass-model: nvidia/Cosmos-AnomalyGen-Glass-2B (HF) via
+#                           scripts/utilities/download_anomalygen_checkpoints.sh
+#   - download-glass-data:  nvidia/Cosmos-AnomalyGen-Glass-Masks (masks +
+#                           defect_spec, HF) overlaid with the user-supplied
+#                           Roboflow zip via prepare_dataset_uc3 --masks-from-hf.
+#                           Glass images come from a user-supplied Roboflow
+#                           zip (license-restricted — we don't redistribute);
+#                           masks + defect_spec come from NV derivatives on HF.
+#
+# Pretrained bundle is its own workflow (setup_pretrained.yaml) — submit it in
+# parallel with this one.
+#
+# Output URL artifacts:
+#   {{ dig_url_root }}/models/glass
+#   {{ dig_url_root }}/datasets/glass/raw
+#
+# Prerequisites:
+#   1. No registry credential needed — the paidf-* workflow image is public on
+#      nvcr.io/nvidia/ (anonymous pull). If image pulls fail, see
+#      references/troubleshooting.md -> "nvcr.io image pull failures".
+#   2. osmo credential set hf-token --type GENERIC --payload token="$HF_TOKEN"
+#      (Required by both groups. Accept the license once per gated HF page:
+#        - https://huggingface.co/nvidia/Cosmos-AnomalyGen-Glass-2B
+#        - https://huggingface.co/datasets/nvidia/Cosmos-AnomalyGen-Glass-Masks)
+#   3. ⚠️ The Roboflow zip must be on OSMO storage BEFORE you submit this
+#      workflow. There is no in-workflow download step. Do all three sub-steps
+#      before running `osmo workflow submit`:
+#        a. Download `mobile-screen.coco.zip` once from
+#             https://universe.roboflow.com/vu-thi-thu-huyen/mobile-screen
+#           (license-gated; accept the dataset terms in your browser).
+#        b. Rename it to exactly `mobile_screen.zip` (the workflow looks for
+#           that literal filename inside the staged dir):
+#             mv ./mobile-screen.coco.zip /tmp/mobile_screen.zip
+#        c. Upload to an OSMO URL prefix you control, then verify it landed:
+#             osmo data upload s3://osmo-workflows/dig/uploads/glass-zip/ /tmp/mobile_screen.zip
+#             osmo data list --no-pager s3://osmo-workflows/dig/uploads/glass-zip/
+#           (should show `mobile_screen.zip`).
+#           ⚠ **Use the trailing-slash prefix form** (`.../glass-zip/`), NOT
+#           the key form (`.../glass-zip/mobile_screen.zip`). The OSMO data
+#           adapter (MinIO-compatibility edge case) treats a no-slash key as
+#           a prefix when the filename matches an existing prefix name, and
+#           creates `mobile_screen.zip/mobile_screen.zip` (the outer is a
+#           directory). The workflow's `[ -f "$UC3_ZIP_DIR/mobile_screen.zip" ]`
+#           then fails because `-f` returns false on directories.
+#      Only then submit with `--set uc3_zip_url_root=<that-prefix>`. If the zip
+#      is not at the prefix at submit time, the `glass-data` task fails with
+#      `ERROR: /tmp/uc3_input.zip not present — uc3_zip_url_root may be wrong
+#      or zip missing`.
+#
+# Submit (the upload in step 3 must already be done):
+#   osmo workflow submit skills/physical-ai-defect-image-generation/assets/configs/setup/setup_glass.yaml \
+#     --pool <pool> \
+#     --set uc3_zip_url_root=s3://osmo-workflows/dig/uploads/glass-zip
+
+version: 2
+workflow:
+  name: "{{ workflow_name }}"
+  timeout:
+    exec_timeout: "{{ exec_timeout }}"
+    queue_timeout: "{{ queue_timeout }}"
+
+  resources:
+    cpu-download:
+      cpu: "{{ cpu }}"
+      memory: "{{ memory }}"
+      storage: "{{ storage }}"
+      platform: "{{ platform }}"
+
+  groups:
+
+    # ── Finetuned AnomalyGen checkpoint (HF) ─────────────────────────────────
+    # scripts/utilities/download_anomalygen_checkpoints.sh --uc glass pulls
+    # nvidia/Cosmos-AnomalyGen-Glass-2B from HF (gated — accept license once).
+    - name: download-glass-model
+      tasks:
+        - name: glass-model
+          lead: true
+          image: "{{ pretrained_image }}"
+          resource: cpu-download
+          credentials:
+            hf-token:
+              HF_TOKEN: token
+          environment:
+            HF_HUB_DISABLE_PROGRESS_BARS: "1"
+          command: ["bash"]
+          args: ["/tmp/run.sh"]
+          files:
+            - path: /tmp/run.sh
+              contents: |
+                set -euo pipefail
+                OUT="{{output}}"
+                mkdir -p "$OUT"
+
+                echo "[HF] download_anomalygen_checkpoints.sh --uc glass -> $OUT"
+                cd /workspace/paidf-anomalygen
+                bash scripts/utilities/download_anomalygen_checkpoints.sh \
+                  --uc glass \
+                  --checkpoint-dir "$OUT"
+
+                # Flatten: the download script nests under nvidia/<repo>/,
+                # but downstream workflows expect flat ag_config.yaml +
+                # iter_NNNN.pt at models/glass/.
+                NESTED_DIR=$(find "$OUT" -mindepth 2 -maxdepth 3 -name "iter_*.pt" -printf '%h\n' 2>/dev/null | head -1)
+                if [ -n "$NESTED_DIR" ] && [ "$NESTED_DIR" != "$OUT" ]; then
+                  echo "[FLATTEN] moving files from $NESTED_DIR -> $OUT"
+                  find "$NESTED_DIR" -maxdepth 1 -type f \( -name 'iter_*.pt' -o -name 'ag_config.yaml' \) \
+                    -exec mv {} "$OUT/" \;
+                  rm -rf "$(dirname "$NESTED_DIR")"
+                fi
+
+                FILE_COUNT=$(find "$OUT" -type f | wc -l)
+                [ "$FILE_COUNT" -gt 0 ] || { echo "ERROR: 0 files in $OUT" >&2; exit 1; }
+                TOTAL_BYTES=$(du -sb "$OUT" | awk '{print $1}')
+                echo "[OK] models/glass: $FILE_COUNT files, $TOTAL_BYTES bytes"
+          outputs:
+            - url: "{{ dig_url_root }}/models/glass"
+
+    # ── Glass dataset (UC3, HF masks + user Roboflow zip) ────────────────────
+    # `prepare_dataset_uc3 --masks-from-hf` pulls masks + defect_spec from
+    # nvidia/Cosmos-AnomalyGen-Glass-Masks on HF, then overlays the user's
+    # Roboflow zip's Phone/{anomaly_image,clean_image}/ images.
+    #
+    # We mount the staged zip via OSMO `inputs:` (URL) instead of `localpath:`
+    # because the OSMO CLI reads every `localpath:` file as UTF-8 text during
+    # `validate`/`submit` and chokes on binary zips with
+    #   UnicodeDecodeError: 'utf-8' codec can't decode byte 0xb7 ...
+    # The zip filename inside the staged dir must be `mobile_screen.zip`.
+    - name: download-glass-data
+      tasks:
+        - name: glass-data
+          lead: true
+          image: "{{ pretrained_image }}"
+          resource: cpu-download
+          credentials:
+            hf-token:
+              HF_TOKEN: token
+          environment:
+            HF_HUB_DISABLE_PROGRESS_BARS: "1"
+            UC3_ZIP_DIR: "{{input:0}}"
+          inputs:
+            # {{input:0}} — directory containing `mobile_screen.zip`. URL-mounted
+            # because OSMO `localpath:` cannot ship a binary zip (UTF-8 decode
+            # error on validate). User uploads the zip to this prefix once.
+            - url: "{{ uc3_zip_url_root }}"
+          command: ["bash"]
+          args: ["/tmp/run.sh"]
+          files:
+            - path: /tmp/run.sh
+              contents: |
+                set -euo pipefail
+                OUT="{{output}}"
+                mkdir -p "$OUT"
+
+                # Roboflow zip — URL-mounted via inputs[0]. Copy out to the
+                # canonical /tmp path prepare_dataset_uc3 uses.
+                if [ -f "$UC3_ZIP_DIR/mobile_screen.zip" ]; then
+                  cp "$UC3_ZIP_DIR/mobile_screen.zip" /tmp/uc3_input.zip
+                fi
+                [ -f /tmp/uc3_input.zip ] || {
+                  echo "ERROR: /tmp/uc3_input.zip not present — uc3_zip_url_root may be wrong or zip missing" >&2
+                  ls -la "$UC3_ZIP_DIR" >&2 || true
+                  exit 1
+                }
+
+                # prepare_dataset_uc3 fetches masks + defect_spec.jsonl from
+                # nvidia/Cosmos-AnomalyGen-Glass-Masks (HF) via --masks-from-hf,
+                # then overlays Phone/{anomaly_image,clean_image}/ from the
+                # user's Roboflow zip.
+                echo "[UC3] prepare_dataset_uc3 --zip /tmp/uc3_input.zip --masks-from-hf -> $OUT"
+                cd /workspace/paidf-anomalygen
+                python3 -m scripts.utilities.prepare_dataset_uc3 "$OUT" \
+                  --zip /tmp/uc3_input.zip --masks-from-hf
+
+                # Strip HF artifacts leaked by the HF-internal mask pull
+                rm -rf "$OUT/.cache" 2>/dev/null || true
+                rm -f "$OUT/.gitattributes" 2>/dev/null || true
+
+                FILE_COUNT=$(find "$OUT" -type f | wc -l)
+                [ "$FILE_COUNT" -gt 0 ] || { echo "ERROR: 0 files in $OUT" >&2; exit 1; }
+                TOTAL_BYTES=$(du -sb "$OUT" | awk '{print $1}')
+                echo "[OK] datasets/glass/raw: $FILE_COUNT files, $TOTAL_BYTES bytes"
+          outputs:
+            - url: "{{ dig_url_root }}/datasets/glass/raw"
+
+default-values:
+  workflow_name: setup_glass
+  exec_timeout: 1h
+  queue_timeout: 1h
+
+  dig_url_root: "s3://osmo-workflows/dig"
+
+  # User-supplied Roboflow Mobile-Screen COCO export zip, staged into OSMO
+  # storage (URL-mounted, not `localpath:`, because OSMO CLI reads every
+  # `localpath:` file as UTF-8 during validate/submit and chokes on the
+  # first non-text byte of a zip with
+  #   UnicodeDecodeError: 'utf-8' codec can't decode byte 0xb7 ...
+  # Empty default forces validate to fail when the override is omitted.
+  uc3_zip_url_root: ""
+
+  pretrained_image: "nvcr.io/nvidia/paidf-anomalygen:1.0.0"
+
+  # Resource sizing for the small download groups (model, data). Each
+  # downloads a few-GB tree; 1 cpu / 2Gi / 10Gi is enough.
+  cpu: "1"
+  memory: 2Gi
+  storage: 10Gi
+
+  platform: default

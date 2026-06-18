@@ -1,0 +1,28 @@
+[
+  {
+    "id": "dense-captioning-standalone-deploy",
+    "question": "Deploy standalone RT-VLM dense captioning and verify the service is ready for API calls.",
+    "expected_skill": "vss-deploy-dense-captioning",
+    "ground_truth": "Loads vss-deploy-dense-captioning, follows the standalone RT-VLM deploy reference, uses a writable compose copy, selects the correct RT-VLM image tag for the platform, validates compose before starting rtvi-vlm, verifies readiness/models/OpenAPI on the configured port, and avoids the full VSS profile flow.",
+    "expected_behavior": [
+      "Loads vss-deploy-dense-captioning rather than vss-deploy-profile.",
+      "Copies the RT-VLM compose into a writable standalone directory before editing it.",
+      "Derives RTVI_VLM_IMAGE_TAG from the compose default and chooses the -sbsa variant only for Spark, GB10, or SBSA-class hosts.",
+      "Runs docker compose config before starting rtvi-vlm and checks /v1/health/ready, /v1/models, and /openapi.json after startup.",
+      "Keeps NGC_CLI_API_KEY and RTVI_VLM_API_KEY out of logs and final responses."
+    ]
+  },
+  {
+    "id": "dense-captioning-api-and-kafka-routing",
+    "question": "Use an existing RT-VLM service to generate dense captions for a video and explain how alert captions reach Kafka.",
+    "expected_skill": "vss-deploy-dense-captioning",
+    "ground_truth": "Loads vss-deploy-dense-captioning, treats OpenAPI as authoritative, uploads local videos with POST /v1/files before /v1/generate_captions, uses stream=true for SSE, prechecks RTSP streams before registration, cleans up temporary files or streams, and routes Kafka topic details to references/kafka-workflows.md.",
+    "expected_behavior": [
+      "Checks /openapi.json before relying on optional endpoints such as /v1/license or singular /v1/stream paths.",
+      "Uses POST /v1/files for local video upload and POST /v1/generate_captions with the returned file id.",
+      "Uses the exact model id returned by /v1/models, not a backend selector alias.",
+      "Prechecks RTSP URLs for an actual video stream before /v1/streams/add and deletes temporary streams afterward.",
+      "Explains that Kafka topics are server-side RT-VLM config and points to references/kafka-workflows.md for broker and incident-consumer details."
+    ]
+  }
+]

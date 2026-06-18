@@ -1,0 +1,950 @@
+{
+  "schema_version": "1.0.0",
+  "$comment": "Canonical validator-concept registry for the USD performance-tuning workflow. Single binding layer between agent-facing concept names and runtime rule identity, tier, scope policy, and backing op. Curated by maintainers, not inferred. Resolution key is (module, class_name); category is informational. Tiers/costs are CPU-only worst-case from gb300_03 evidence (batch-additivity-findings.md); gpu_bound concepts relax on CUDA hosts. Governed by validator-concepts.schema.json (added in PR-2).",
+  "concepts": [
+    {
+      "canonical_name": "primvar_indexability",
+      "display_name": "Indexed primvars",
+      "role": "opportunity_detector",
+      "backing_op": "optimizePrimvars",
+      "tier": 2,
+      "cost_class": "cheap",
+      "gpu_bound": false,
+      "scope_policy": "per_target_or_sample",
+      "preferred_provider": "so",
+      "implementations": [
+        {
+          "provider": "so",
+          "module": "omni.scene.optimizer.validators.indexed_primvars_checker",
+          "class_name": "IndexedPrimvarChecker",
+          "category": "Omni:Geometry",
+          "use_for": ["performance_tuning"]
+        },
+        {
+          "provider": "oav",
+          "module": "omni.asset_validator._geometry_checker",
+          "class_name": "IndexedPrimvarChecker",
+          "category": "Geometry",
+          "tier": 3,
+          "use_for": ["conformance_audit"]
+        }
+      ],
+      "notes": "Name collision: SO triage wrapper (0.3 s) vs OAV full audit (376 s). Resolve by module; SO is the perf-tuning default."
+    },
+    {
+      "canonical_name": "primvar_unused",
+      "display_name": "Unused UV/primvar sets",
+      "role": "opportunity_detector",
+      "backing_op": "removeUnusedUVs",
+      "tier": 2,
+      "cost_class": "cheap",
+      "gpu_bound": false,
+      "scope_policy": "per_target_or_sample",
+      "preferred_provider": "so",
+      "implementations": [
+        {
+          "provider": "so",
+          "module": "omni.scene.optimizer.validators.unused_uvs_checker",
+          "class_name": "UnusedUVsChecker",
+          "category": "Usd:Performance",
+          "use_for": ["performance_tuning"]
+        },
+        {
+          "provider": "oav",
+          "module": "omni.asset_validator._geometry_checker",
+          "class_name": "UnusedPrimvarChecker",
+          "category": "Geometry",
+          "use_for": ["conformance_audit"]
+        }
+      ],
+      "notes": "SO is UV-scoped and ties to removeUnusedUVs; OAV covers all primvars."
+    },
+    {
+      "canonical_name": "vertex_weld",
+      "display_name": "Colocated vertices",
+      "role": "opportunity_detector",
+      "backing_op": "meshCleanup",
+      "tier": 2,
+      "cost_class": "medium",
+      "gpu_bound": false,
+      "scope_policy": "per_target_or_sample",
+      "preferred_provider": "so",
+      "implementations": [
+        {
+          "provider": "so",
+          "module": "omni.scene.optimizer.validators.colocated_vertices_checker",
+          "class_name": "ColocatedVerticesChecker",
+          "category": "Omni:Geometry",
+          "use_for": ["performance_tuning"]
+        },
+        {
+          "provider": "oav",
+          "module": "omni.asset_validator._geometry_checker",
+          "class_name": "WeldChecker",
+          "category": "Geometry",
+          "use_for": ["conformance_audit"]
+        }
+      ]
+    },
+    {
+      "canonical_name": "topology_zero_area_faces",
+      "display_name": "Zero-area faces",
+      "role": "opportunity_detector",
+      "backing_op": "meshCleanup",
+      "tier": 2,
+      "cost_class": "medium",
+      "gpu_bound": false,
+      "scope_policy": "per_target_or_sample",
+      "preferred_provider": "so",
+      "implementations": [
+        {
+          "provider": "so",
+          "module": "omni.scene.optimizer.validators.zero_area_faces_checker",
+          "class_name": "ZeroAreaFacesChecker",
+          "category": "Omni:Geometry",
+          "use_for": ["performance_tuning"]
+        },
+        {
+          "provider": "oav",
+          "module": "omni.asset_validator._geometry_checker",
+          "class_name": "ZeroAreaFaceChecker",
+          "category": "Geometry",
+          "use_for": ["conformance_audit"]
+        }
+      ],
+      "notes": "Class-name singular (OAV) vs plural (SO)."
+    },
+    {
+      "canonical_name": "topology_manifold",
+      "display_name": "Non-manifold topology",
+      "role": "opportunity_detector",
+      "backing_op": "meshCleanup",
+      "tier": 3,
+      "cost_class": "stage_dependent",
+      "gpu_bound": false,
+      "scope_policy": "per_target_or_sample",
+      "preferred_provider": "so",
+      "implementations": [
+        {
+          "provider": "so",
+          "module": "omni.scene.optimizer.validators.nonmanifold_checker",
+          "class_name": "NonManifoldChecker",
+          "category": "Omni:Geometry",
+          "use_for": ["performance_tuning"]
+        },
+        {
+          "provider": "oav",
+          "module": "omni.asset_validator._geometry_checker",
+          "class_name": "ManifoldChecker",
+          "category": "Geometry",
+          "use_for": ["conformance_audit"]
+        }
+      ],
+      "notes": "Skip for visualization-only targets; run only for simulation-ready intent. Inverse polarity between impls. Measure before promoting off Tier 3."
+    },
+    {
+      "canonical_name": "normals_validity",
+      "display_name": "Missing/invalid normals",
+      "role": "opportunity_detector",
+      "backing_op": "generateNormals",
+      "tier": 3,
+      "cost_class": "medium",
+      "gpu_bound": false,
+      "scope_policy": "per_target_or_sample",
+      "preferred_provider": "so",
+      "implementations": [
+        {
+          "provider": "so",
+          "module": "omni.scene.optimizer.validators.normals_checker",
+          "class_name": "NormalsChecker",
+          "category": "Usd:Performance",
+          "use_for": ["performance_tuning"]
+        },
+        {
+          "provider": "oav",
+          "module": "omni.asset_validator._geometry_checker",
+          "class_name": "NormalsValidChecker",
+          "category": "Geometry",
+          "use_for": ["conformance_audit"]
+        }
+      ],
+      "notes": "Run as Tier 3 only when normals quality is relevant enough to ask for a targeted check."
+    },
+    {
+      "canonical_name": "normals_winding",
+      "display_name": "Inconsistent face winding",
+      "role": "opportunity_detector",
+      "backing_op": "meshCleanup",
+      "tier": 2,
+      "cost_class": "medium",
+      "gpu_bound": false,
+      "scope_policy": "per_target_or_sample",
+      "preferred_provider": "so",
+      "implementations": [
+        {
+          "provider": "so",
+          "module": "omni.scene.optimizer.validators.windings_checker",
+          "class_name": "WindingsChecker",
+          "category": "Usd:Performance",
+          "use_for": ["performance_tuning"]
+        },
+        {
+          "provider": "oav",
+          "module": "omni.asset_validator._geometry_checker",
+          "class_name": "NormalsWindingsChecker",
+          "category": "Geometry",
+          "use_for": ["conformance_audit"]
+        }
+      ]
+    },
+    {
+      "canonical_name": "primitive_fit",
+      "display_name": "Primitive-fittable meshes",
+      "role": "opportunity_detector",
+      "backing_op": "fitPrimitives",
+      "tier": 2,
+      "cost_class": "cheap",
+      "gpu_bound": false,
+      "scope_policy": "per_target_or_sample",
+      "preferred_provider": "so",
+      "implementations": [
+        {
+          "provider": "so",
+          "module": "omni.scene.optimizer.validators.primitive_fit_checker",
+          "class_name": "PrimitiveFitChecker",
+          "use_for": ["performance_tuning"]
+        }
+      ],
+      "parameter_prerequisite": {
+        "op": "fitPrimitives",
+        "param": "tolerance",
+        "question": "What primitive-fit tolerance is acceptable (max deviation from the original mesh)?"
+      },
+      "notes": "Mandatory default opportunity_detector for CAD/BIM/MEP optimization posture. Highest-value reduction for HOOPS-tessellated converted content. Bounded-loss op gated by tolerance."
+    },
+    {
+      "canonical_name": "geom_duplicates",
+      "display_name": "Duplicate geometry (exact)",
+      "role": "opportunity_detector",
+      "backing_op": "deduplicateGeometry",
+      "tier": 3,
+      "cost_class": "stage_dependent",
+      "gpu_bound": false,
+      "scope_policy": "per_target_or_sample",
+      "preferred_provider": "so",
+      "implementations": [
+        {
+          "provider": "so",
+          "module": "omni.scene.optimizer.validators.duplicate_geometry_checker",
+          "class_name": "DuplicateGeometryChecker",
+          "category": "Usd:Performance",
+          "use_for": ["performance_tuning"]
+        }
+      ],
+      "notes": "2.5 s on gb300 (hash short-circuit) but can be minutes with many similar meshes. Treat as Tier 3 default; promote to Tier 2 only after measuring on target stage."
+    },
+    {
+      "canonical_name": "geom_duplicates_fuzzy",
+      "display_name": "Duplicate geometry (fuzzy)",
+      "role": "opportunity_detector",
+      "backing_op": "deduplicateGeometry",
+      "tier": 3,
+      "cost_class": "stage_dependent",
+      "gpu_bound": false,
+      "scope_policy": "per_target_or_sample",
+      "preferred_provider": "so",
+      "implementations": [
+        {
+          "provider": "so",
+          "module": "omni.scene.optimizer.validators.duplicate_geometry_fuzzy_checker",
+          "class_name": "FuzzyDuplicateGeometryChecker",
+          "category": "Usd:Performance",
+          "use_for": ["performance_tuning"]
+        }
+      ],
+      "notes": "Point-cloud distance comparison; can scale poorly. Same backing op, different threshold."
+    },
+    {
+      "canonical_name": "material_duplicates",
+      "display_name": "Duplicate materials",
+      "role": "opportunity_detector",
+      "backing_op": "optimizeMaterials",
+      "tier": 1,
+      "cost_class": "cheap",
+      "gpu_bound": false,
+      "scope_policy": "whole_stage",
+      "preferred_provider": "so",
+      "implementations": [
+        {
+          "provider": "so",
+          "module": "omni.scene.optimizer.validators.duplicate_materials_checker",
+          "class_name": "DuplicateMaterialsChecker",
+          "use_for": ["performance_tuning"]
+        }
+      ],
+      "notes": "Material-network hash. High value on converted content where materials are duplicated per instance."
+    },
+    {
+      "canonical_name": "topology_duplicate_faces",
+      "display_name": "Duplicate faces",
+      "role": "opportunity_detector",
+      "backing_op": "meshCleanup",
+      "tier": 2,
+      "cost_class": "medium",
+      "gpu_bound": false,
+      "scope_policy": "per_target_or_sample",
+      "preferred_provider": "so",
+      "implementations": [
+        {
+          "provider": "so",
+          "module": "omni.scene.optimizer.validators.duplicate_face_checker",
+          "class_name": "DuplicateFaceChecker",
+          "use_for": ["performance_tuning"]
+        }
+      ]
+    },
+    {
+      "canonical_name": "topology_isolated_vertices",
+      "display_name": "Isolated vertices",
+      "role": "opportunity_detector",
+      "backing_op": "meshCleanup",
+      "tier": 2,
+      "cost_class": "medium",
+      "gpu_bound": false,
+      "scope_policy": "per_target_or_sample",
+      "preferred_provider": "so",
+      "implementations": [
+        {
+          "provider": "so",
+          "module": "omni.scene.optimizer.validators.isolated_vertices_checker",
+          "class_name": "IsolatedVerticesChecker",
+          "use_for": ["performance_tuning"]
+        }
+      ]
+    },
+    {
+      "canonical_name": "extents_zero",
+      "display_name": "Zero-extent meshes",
+      "role": "opportunity_detector",
+      "backing_op": "removeSmallGeometry",
+      "tier": 1,
+      "cost_class": "cheap",
+      "gpu_bound": false,
+      "scope_policy": "whole_stage",
+      "preferred_provider": "so",
+      "implementations": [
+        {
+          "provider": "so",
+          "module": "omni.scene.optimizer.validators.zero_extent_checker",
+          "class_name": "ZeroExtentChecker",
+          "use_for": ["performance_tuning"]
+        }
+      ],
+      "notes": "Use computeExtents first when the cause is stale metadata rather than genuinely empty geometry."
+    },
+    {
+      "canonical_name": "perf_rtx_mesh_count",
+      "display_name": "RTX mesh count",
+      "role": "opportunity_detector",
+      "backing_op": "rtxMeshCount",
+      "tier": 1,
+      "cost_class": "medium",
+      "gpu_bound": false,
+      "scope_policy": "whole_stage",
+      "preferred_provider": "so",
+      "implementations": [
+        {
+          "provider": "so",
+          "module": "omni.scene.optimizer.validators.rtx_mesh_count_checker",
+          "class_name": "RtxMeshCountChecker",
+          "use_for": ["performance_tuning"]
+        }
+      ],
+      "notes": "~94 s on gb300 — slowest Tier 1. Counts meshes through composition."
+    },
+    {
+      "canonical_name": "perf_small_mesh",
+      "display_name": "Small meshes",
+      "role": "opportunity_detector",
+      "backing_op": "removeSmallGeometry",
+      "tier": 1,
+      "cost_class": "cheap",
+      "gpu_bound": false,
+      "scope_policy": "whole_stage",
+      "preferred_provider": "so",
+      "implementations": [
+        {
+          "provider": "so",
+          "module": "omni.scene.optimizer.validators.small_mesh_checker",
+          "class_name": "SmallMeshChecker",
+          "use_for": ["performance_tuning"]
+        }
+      ]
+    },
+    {
+      "canonical_name": "perf_sparse_mesh",
+      "display_name": "Sparse meshes",
+      "role": "opportunity_detector",
+      "backing_op": "sparseMeshes",
+      "tier": 1,
+      "cost_class": "cheap",
+      "gpu_bound": false,
+      "scope_policy": "whole_stage",
+      "preferred_provider": "so",
+      "implementations": [
+        {
+          "provider": "so",
+          "module": "omni.scene.optimizer.validators.sparse_mesh_checker",
+          "class_name": "SparseMeshChecker",
+          "use_for": ["performance_tuning"]
+        }
+      ]
+    },
+    {
+      "canonical_name": "perf_high_vertex_count",
+      "display_name": "High vertex count",
+      "role": "opportunity_detector",
+      "backing_op": "countVertices",
+      "tier": 1,
+      "cost_class": "cheap",
+      "gpu_bound": false,
+      "scope_policy": "whole_stage",
+      "preferred_provider": "so",
+      "implementations": [
+        {
+          "provider": "so",
+          "module": "omni.scene.optimizer.validators.high_vertex_count_checker",
+          "class_name": "HighVertexCountChecker",
+          "use_for": ["performance_tuning"]
+        }
+      ],
+      "notes": "Informational; lossless reducers first, decimateMeshes only after the upfront tolerance prompt."
+    },
+    {
+      "canonical_name": "perf_redundant_timesamples",
+      "display_name": "Redundant time samples",
+      "role": "opportunity_detector",
+      "backing_op": "optimizeTimeSamples",
+      "tier": 1,
+      "cost_class": "cheap",
+      "gpu_bound": false,
+      "scope_policy": "whole_stage",
+      "preferred_provider": "so",
+      "implementations": [
+        {
+          "provider": "so",
+          "module": "omni.scene.optimizer.validators.redundant_timesamples_checker",
+          "class_name": "RedundantTimeSamplesChecker",
+          "use_for": ["performance_tuning"]
+        }
+      ]
+    },
+    {
+      "canonical_name": "structure_empty_leaf",
+      "display_name": "Empty leaf prims",
+      "role": "opportunity_detector",
+      "backing_op": "pruneLeaves",
+      "tier": 1,
+      "cost_class": "cheap",
+      "gpu_bound": false,
+      "scope_policy": "whole_stage",
+      "preferred_provider": "so",
+      "implementations": [
+        {
+          "provider": "so",
+          "module": "omni.scene.optimizer.validators.empty_leaf_checker",
+          "class_name": "EmptyLeafChecker",
+          "use_for": ["performance_tuning"]
+        }
+      ]
+    },
+    {
+      "canonical_name": "structure_flat_hierarchy",
+      "display_name": "Flat hierarchies",
+      "role": "target_scoping",
+      "backing_op": "flattenHierarchy",
+      "tier": 1,
+      "cost_class": "cheap",
+      "gpu_bound": false,
+      "scope_policy": "whole_stage",
+      "preferred_provider": "so",
+      "implementations": [
+        {
+          "provider": "so",
+          "module": "omni.scene.optimizer.validators.flat_hierarchies_checker",
+          "class_name": "FlatHierarchiesChecker",
+          "use_for": ["performance_tuning"]
+        }
+      ],
+      "notes": "Analysis-only signal; fix is the flattenHierarchy operation (specialty follow-up)."
+    },
+    {
+      "canonical_name": "structure_invisible",
+      "display_name": "Invisible prims",
+      "role": "opportunity_detector",
+      "backing_op": "removePrims",
+      "tier": 1,
+      "cost_class": "cheap",
+      "gpu_bound": false,
+      "scope_policy": "whole_stage",
+      "preferred_provider": "so",
+      "implementations": [
+        {
+          "provider": "so",
+          "module": "omni.scene.optimizer.validators.invisible_prims_checker",
+          "class_name": "InvisiblePrimsChecker",
+          "use_for": ["performance_tuning"]
+        }
+      ],
+      "notes": "Confirm intent before removing; invisibility may be deliberate."
+    },
+    {
+      "canonical_name": "spatial_occluded",
+      "display_name": "Occluded (internal) meshes",
+      "role": "opportunity_detector",
+      "backing_op": "findOccludedMeshes",
+      "tier": 3,
+      "cost_class": "expensive",
+      "gpu_bound": true,
+      "scope_policy": "flagged_pairs_only",
+      "preferred_provider": "so",
+      "implementations": [
+        {
+          "provider": "so",
+          "module": "omni.scene.optimizer.validators.occluded_meshes_checker",
+          "class_name": "OccludedMeshesChecker",
+          "use_for": ["performance_tuning"]
+        }
+      ],
+      "notes": "Two-step detect->act: feed occluded paths to removePrims. Scope to SA containment pairs with enclosure_opaque:true. 485 s full-stage on CPU; scope via paths=. Two-stage approval (analysis cost, then deletion)."
+    },
+    {
+      "canonical_name": "spatial_overlapping",
+      "display_name": "Overlapping meshes",
+      "role": "target_scoping",
+      "backing_op": "findOverlappingMeshes",
+      "tier": 3,
+      "cost_class": "expensive",
+      "gpu_bound": true,
+      "scope_policy": "flagged_pairs_only",
+      "preferred_provider": "so",
+      "implementations": [
+        {
+          "provider": "so",
+          "module": "omni.scene.optimizer.validators.find_overlapping_meshes_checker",
+          "class_name": "FindOverlappingMeshesChecker",
+          "use_for": ["performance_tuning"]
+        }
+      ],
+      "notes": ">3,600 s full-stage on CPU; paths=-scoped to 100 meshes = 72 s. Analysis-only; fix is review/merge. Mandatory scoped probe when SA flags routing pairs."
+    },
+    {
+      "canonical_name": "spatial_coinciding",
+      "display_name": "Coinciding geometry",
+      "role": "target_scoping",
+      "backing_op": "findCoincidingGeometry",
+      "tier": 3,
+      "cost_class": "expensive",
+      "gpu_bound": true,
+      "scope_policy": "flagged_pairs_only",
+      "preferred_provider": "so",
+      "implementations": [
+        {
+          "provider": "so",
+          "module": "omni.scene.optimizer.validators.coinciding_geometry_checker",
+          "class_name": "CoincidingGeometryChecker",
+          "use_for": ["performance_tuning"]
+        }
+      ],
+      "notes": "229 s full-stage on CPU. Prefer deduplicateGeometry before destructive deletion."
+    },
+    {
+      "canonical_name": "composition_missing_ref",
+      "display_name": "Missing references",
+      "role": "safety_gate",
+      "backing_op": null,
+      "tier": 1,
+      "cost_class": "cheap",
+      "gpu_bound": false,
+      "scope_policy": "whole_stage",
+      "preferred_provider": "oav",
+      "implementations": [
+        {
+          "provider": "oav",
+          "module": "omni.asset_validator._base_rules",
+          "class_name": "MissingReferenceChecker",
+          "use_for": ["safety_gate", "conformance_audit"]
+        }
+      ],
+      "notes": "Manual fix. Common on converted assets with absolute paths. High-priority safety gate for CAD/BIM conversions."
+    },
+    {
+      "canonical_name": "extents_general",
+      "display_name": "Extents conformance",
+      "role": "opportunity_detector",
+      "backing_op": "computeExtents",
+      "tier": 1,
+      "cost_class": "cheap",
+      "gpu_bound": false,
+      "scope_policy": "whole_stage",
+      "preferred_provider": "oav",
+      "implementations": [
+        {
+          "provider": "oav",
+          "module": "omni.asset_validator._base_rules",
+          "class_name": "ExtentsChecker",
+          "use_for": ["performance_tuning", "conformance_audit"]
+        }
+      ],
+      "notes": "Broader than SO ZeroExtentChecker."
+    },
+    {
+      "canonical_name": "kind_metadata",
+      "display_name": "Kind metadata",
+      "role": "safety_gate",
+      "backing_op": null,
+      "tier": 1,
+      "cost_class": "cheap",
+      "gpu_bound": false,
+      "scope_policy": "whole_stage",
+      "preferred_provider": "oav",
+      "implementations": [
+        {
+          "provider": "oav",
+          "module": "omni.asset_validator._base_rules",
+          "class_name": "KindChecker",
+          "use_for": ["safety_gate", "conformance_audit"]
+        }
+      ],
+      "notes": "Manual fix via USD API."
+    },
+    {
+      "canonical_name": "type_metadata",
+      "display_name": "Prim type metadata",
+      "role": "safety_gate",
+      "backing_op": null,
+      "tier": 1,
+      "cost_class": "cheap",
+      "gpu_bound": false,
+      "scope_policy": "whole_stage",
+      "preferred_provider": "oav",
+      "implementations": [
+        {
+          "provider": "oav",
+          "module": "omni.asset_validator._base_rules",
+          "class_name": "TypeChecker",
+          "use_for": ["safety_gate", "conformance_audit"]
+        }
+      ]
+    },
+    {
+      "canonical_name": "stage_metadata",
+      "display_name": "Stage metadata",
+      "role": "safety_gate",
+      "backing_op": null,
+      "tier": 1,
+      "cost_class": "cheap",
+      "gpu_bound": false,
+      "scope_policy": "whole_stage",
+      "preferred_provider": "oav",
+      "implementations": [
+        {
+          "provider": "oav",
+          "module": "omni.asset_validator._base_rules",
+          "class_name": "StageMetadataChecker",
+          "use_for": ["safety_gate", "conformance_audit"]
+        }
+      ]
+    },
+    {
+      "canonical_name": "prim_encapsulation",
+      "display_name": "Prim encapsulation",
+      "role": "safety_gate",
+      "backing_op": null,
+      "tier": 1,
+      "cost_class": "cheap",
+      "gpu_bound": false,
+      "scope_policy": "whole_stage",
+      "preferred_provider": "oav",
+      "implementations": [
+        {
+          "provider": "oav",
+          "module": "omni.asset_validator._base_rules",
+          "class_name": "PrimEncapsulationChecker",
+          "use_for": ["safety_gate", "conformance_audit"]
+        }
+      ]
+    },
+    {
+      "canonical_name": "layout_default_prim",
+      "display_name": "Default prim",
+      "role": "safety_gate",
+      "backing_op": null,
+      "tier": 1,
+      "cost_class": "cheap",
+      "gpu_bound": false,
+      "scope_policy": "whole_stage",
+      "preferred_provider": "oav",
+      "implementations": [
+        {
+          "provider": "oav",
+          "module": "omni.asset_validator._layout_checker",
+          "class_name": "DefaultPrimChecker",
+          "use_for": ["safety_gate", "conformance_audit"]
+        }
+      ]
+    },
+    {
+      "canonical_name": "layout_dangling_over",
+      "display_name": "Dangling over prims",
+      "role": "safety_gate",
+      "backing_op": null,
+      "tier": 1,
+      "cost_class": "cheap",
+      "gpu_bound": false,
+      "scope_policy": "whole_stage",
+      "preferred_provider": "oav",
+      "implementations": [
+        {
+          "provider": "oav",
+          "module": "omni.asset_validator._layout_checker",
+          "class_name": "DanglingOverPrimChecker",
+          "use_for": ["safety_gate", "conformance_audit"]
+        }
+      ]
+    },
+    {
+      "canonical_name": "material_path",
+      "display_name": "Material asset paths",
+      "role": "safety_gate",
+      "backing_op": null,
+      "tier": 1,
+      "cost_class": "cheap",
+      "gpu_bound": false,
+      "scope_policy": "whole_stage",
+      "preferred_provider": "oav",
+      "implementations": [
+        {
+          "provider": "oav",
+          "module": "omni.asset_validator._material_checker",
+          "class_name": "MaterialPathChecker",
+          "use_for": ["safety_gate", "conformance_audit"]
+        }
+      ],
+      "notes": "info:mdl:sourceAsset pointing at missing files. Common on converted assets."
+    },
+    {
+      "canonical_name": "material_dangling_binding",
+      "display_name": "Dangling material bindings",
+      "role": "safety_gate",
+      "backing_op": null,
+      "tier": 1,
+      "cost_class": "cheap",
+      "gpu_bound": false,
+      "scope_policy": "whole_stage",
+      "preferred_provider": "oav",
+      "implementations": [
+        {
+          "provider": "oav",
+          "module": "omni.asset_validator._material_checker",
+          "class_name": "UsdDanglingMaterialBinding",
+          "use_for": ["safety_gate", "conformance_audit"]
+        }
+      ]
+    },
+    {
+      "canonical_name": "texture_bind",
+      "display_name": "Texture asset paths",
+      "role": "safety_gate",
+      "backing_op": null,
+      "tier": 1,
+      "cost_class": "cheap",
+      "gpu_bound": false,
+      "scope_policy": "whole_stage",
+      "preferred_provider": "oav",
+      "implementations": [
+        {
+          "provider": "oav",
+          "module": "omni.asset_validator._base_rules",
+          "class_name": "TextureChecker",
+          "use_for": ["safety_gate", "conformance_audit"]
+        }
+      ]
+    },
+    {
+      "canonical_name": "texture_normalmap",
+      "display_name": "Normal-map textures",
+      "role": "safety_gate",
+      "backing_op": null,
+      "tier": 1,
+      "cost_class": "cheap",
+      "gpu_bound": false,
+      "scope_policy": "whole_stage",
+      "preferred_provider": "oav",
+      "implementations": [
+        {
+          "provider": "oav",
+          "module": "omni.asset_validator._base_rules",
+          "class_name": "NormalMapTextureChecker",
+          "use_for": ["safety_gate", "conformance_audit"]
+        }
+      ]
+    },
+    {
+      "canonical_name": "layer_spec_health",
+      "display_name": "Layer spec health",
+      "role": "safety_gate",
+      "backing_op": null,
+      "tier": 1,
+      "cost_class": "cheap",
+      "gpu_bound": false,
+      "scope_policy": "whole_stage",
+      "preferred_provider": "oav",
+      "implementations": [
+        {
+          "provider": "oav",
+          "module": "omni.asset_validator._layer_checker",
+          "class_name": "LayerSpecChecker",
+          "use_for": ["safety_gate", "conformance_audit"]
+        }
+      ]
+    },
+    {
+      "canonical_name": "layer_format_perf",
+      "display_name": "ASCII layer performance",
+      "role": "opportunity_detector",
+      "backing_op": null,
+      "tier": 1,
+      "cost_class": "cheap",
+      "gpu_bound": false,
+      "scope_policy": "whole_stage",
+      "preferred_provider": "oav",
+      "implementations": [
+        {
+          "provider": "oav",
+          "module": "omni.asset_validator._layer_checker",
+          "class_name": "UsdAsciiPerformanceChecker",
+          "use_for": ["performance_tuning", "conformance_audit"]
+        }
+      ],
+      "notes": "Flags .usda data layers that should be binary for load performance. Manual/structural fix."
+    },
+    {
+      "canonical_name": "utf8_paths",
+      "display_name": "UTF-8 prim names",
+      "role": "safety_gate",
+      "backing_op": null,
+      "tier": 1,
+      "cost_class": "cheap",
+      "gpu_bound": false,
+      "scope_policy": "whole_stage",
+      "preferred_provider": "oav",
+      "implementations": [
+        {
+          "provider": "oav",
+          "module": "omni.asset_validator._utf8_checker",
+          "class_name": "UnicodeNameChecker",
+          "use_for": ["safety_gate", "conformance_audit"]
+        }
+      ]
+    },
+    {
+      "canonical_name": "subdivision_scheme",
+      "display_name": "Subdivision scheme",
+      "role": "safety_gate",
+      "backing_op": null,
+      "tier": 1,
+      "cost_class": "cheap",
+      "gpu_bound": false,
+      "scope_policy": "whole_stage",
+      "preferred_provider": "oav",
+      "implementations": [
+        {
+          "provider": "oav",
+          "module": "omni.asset_validator._geometry_checker",
+          "class_name": "SubdivisionSchemeChecker",
+          "use_for": ["safety_gate", "conformance_audit"]
+        }
+      ]
+    },
+    {
+      "canonical_name": "topology_general",
+      "display_name": "Topology validity",
+      "role": "safety_gate",
+      "backing_op": null,
+      "tier": 2,
+      "cost_class": "medium",
+      "gpu_bound": false,
+      "scope_policy": "per_target_or_sample",
+      "preferred_provider": "oav",
+      "implementations": [
+        {
+          "provider": "oav",
+          "module": "omni.asset_validator._geometry_checker",
+          "class_name": "ValidateTopologyChecker",
+          "use_for": ["conformance_audit"]
+        }
+      ]
+    },
+    {
+      "canonical_name": "topology_unused_mesh",
+      "display_name": "Unused mesh points",
+      "role": "opportunity_detector",
+      "backing_op": "meshCleanup",
+      "tier": 2,
+      "cost_class": "medium",
+      "gpu_bound": false,
+      "scope_policy": "per_target_or_sample",
+      "preferred_provider": "oav",
+      "implementations": [
+        {
+          "provider": "oav",
+          "module": "omni.asset_validator._geometry_checker",
+          "class_name": "UnusedMeshTopologyChecker",
+          "category": "Geometry",
+          "use_for": ["conformance_audit"]
+        }
+      ],
+      "notes": "meshCleanup removes unreferenced points."
+    },
+    {
+      "canonical_name": "normals_existence",
+      "display_name": "Normals existence",
+      "role": "opportunity_detector",
+      "backing_op": "generateNormals",
+      "tier": 2,
+      "cost_class": "medium",
+      "gpu_bound": false,
+      "scope_policy": "per_target_or_sample",
+      "preferred_provider": "oav",
+      "implementations": [
+        {
+          "provider": "oav",
+          "module": "omni.asset_validator._geometry_checker",
+          "class_name": "NormalsExistChecker",
+          "use_for": ["conformance_audit"]
+        }
+      ]
+    },
+    {
+      "canonical_name": "physics_rigid_body",
+      "display_name": "Rigid body schema",
+      "role": "safety_gate",
+      "backing_op": null,
+      "tier": 1,
+      "cost_class": "cheap",
+      "gpu_bound": false,
+      "scope_policy": "whole_stage",
+      "preferred_provider": "oav",
+      "implementations": [
+        {
+          "provider": "oav",
+          "module": "omni.asset_validator._physics_checker",
+          "class_name": "RigidBodyChecker",
+          "use_for": ["conformance_audit"]
+        }
+      ],
+      "notes": "Physics-tagged stages only. Skip for visualization targets. Representative of the physics_* family (collider/joint/articulation/mass) in _physics_checker; class names to be confirmed against the runtime registry before enabling."
+    }
+  ]
+}

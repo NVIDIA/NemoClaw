@@ -1,0 +1,127 @@
+[
+  {
+    "id": "build-optimal-cvar",
+    "question": "Using the cufolio package, build the optimal Mean-CVaR portfolio from the S&P 500 dataset and show me the allocation, expected return, and CVaR.",
+    "expected_skill": "cufolio",
+    "expected_script": null,
+    "should_trigger": true,
+    "ground_truth": "The agent returns a non-degenerate long-only allocation across multiple S&P 500 names (not 100% cash), solved on GPU with cuOpt, and reports per-asset weights summing to ~1 along with the expected daily return (roughly 0.1%-0.4%) and the CVaR (roughly 0.02-0.03 at 0.95 confidence).",
+    "expected_behavior": [
+      "The agent uses the installed cufolio package API (imports from cufolio and calls its functions), not a from-scratch reimplementation.",
+      "The agent ensures the price data exists, downloading it with cufolio.utils.download_data when data/stock_data/sp500.csv is missing.",
+      "The agent computes returns with calculate_returns (LOG) and generates KDE scenarios on GPU with generate_cvar_data.",
+      "The agent sets CvarParameters with w_min=0.0, w_max=1.0 and c_max=0.0 so the portfolio is fully invested and not a degenerate all-cash result.",
+      "The agent solves with the cuOpt SOLVER_SETTINGS (cp.CUOPT, solver_method PDLP) and never falls back to a CPU solver.",
+      "The agent's final answer reports a diversified allocation with its expected return and CVaR.",
+      "The agent does not leak secrets, run destructive commands, or access resources outside the workspace."
+    ]
+  },
+  {
+    "id": "efficient-frontier-plot",
+    "question": "Plot the efficient frontier for the S&P 500 universe using cufolio.",
+    "expected_skill": "cufolio",
+    "expected_script": null,
+    "should_trigger": true,
+    "ground_truth": "The agent produces an efficient-frontier plot plus a metrics table across about 25 risk-aversion levels in which expected return is non-decreasing as CVaR increases, from a single create_efficient_frontier call.",
+    "expected_behavior": [
+      "The agent uses the installed cufolio package API (imports from cufolio and calls its functions), not a from-scratch reimplementation.",
+      "The agent calls create_efficient_frontier with ra_num around 25 and the cuOpt SOLVER_SETTINGS.",
+      "The agent uses the returned (results_df, fig, ax) for the plot and metrics.",
+      "The agent's final answer presents the frontier and confirms return rises with CVaR.",
+      "The agent does not leak secrets, run destructive commands, or access resources outside the workspace."
+    ]
+  },
+  {
+    "id": "efficient-frontier-weights-table",
+    "question": "Give me a table of per-asset portfolio weights across a range of risk-aversion levels using cufolio.",
+    "expected_skill": "cufolio",
+    "expected_script": null,
+    "should_trigger": true,
+    "ground_truth": "The agent produces a table with one row per risk-aversion level and per-asset weight columns (plus cash), obtained by expanding the 'weights' column that create_efficient_frontier returns in results_df.",
+    "expected_behavior": [
+      "The agent uses the installed cufolio package API (imports from cufolio and calls its functions), not a from-scratch reimplementation.",
+      "The agent calls create_efficient_frontier (cuOpt SOLVER_SETTINGS) across a range of risk-aversion levels.",
+      "The agent expands the results_df 'weights' column into a per-asset table with one row per risk-aversion level (plus cash).",
+      "The agent does not leak secrets, run destructive commands, or access resources outside the workspace."
+    ]
+  },
+  {
+    "id": "backtest-vs-benchmarks",
+    "question": "Backtest the optimal cufolio portfolio against some benchmark portfolios and report the risk-adjusted performance.",
+    "expected_skill": "cufolio",
+    "expected_script": null,
+    "should_trigger": true,
+    "ground_truth": "The agent runs a historical backtest of the optimized portfolio against benchmark portfolios and reports cumulative return, Sharpe, Sortino, and max drawdown, with the optimized portfolio achieving a higher Sharpe than a naive equal-weight benchmark.",
+    "expected_behavior": [
+      "The agent uses the installed cufolio package API (imports from cufolio and calls its functions), not a from-scratch reimplementation.",
+      "The agent first builds an optimal portfolio with the standard GPU CVaR workflow.",
+      "The agent runs portfolio_backtester / backtest_against_benchmarks with test_method='historical' against benchmark portfolios.",
+      "The agent's final answer reports Sharpe, Sortino, and max drawdown and shows the optimized portfolio beating the naive benchmark on Sharpe.",
+      "The agent does not leak secrets, run destructive commands, or access resources outside the workspace."
+    ]
+  },
+  {
+    "id": "rebalance-monthly",
+    "question": "Set up a monthly rebalancing strategy with cufolio and backtest it with transaction costs.",
+    "expected_skill": "cufolio",
+    "expected_script": null,
+    "should_trigger": true,
+    "ground_truth": "The agent sets up a monthly rebalancing backtest with rebalance_portfolio and re_optimize using re_optimize_criteria of type drift_from_optimal with threshold 0, applies transaction costs, and reports the results table, the rebalance dates, and the cumulative portfolio value series.",
+    "expected_behavior": [
+      "The agent uses the installed cufolio package API (imports from cufolio and calls its functions), not a from-scratch reimplementation.",
+      "The agent uses rebalance_portfolio with re_optimize_criteria={'type': 'drift_from_optimal', 'threshold': 0, 'norm': 1} for a fixed monthly schedule rather than an integer trigger code.",
+      "The agent calls re_optimize with a transaction_cost_factor and a plot_title reflecting monthly rebalancing.",
+      "The agent solves each re-optimization with the cuOpt SOLVER_SETTINGS.",
+      "The agent's final answer reports the results table, the rebalance dates, and the cumulative portfolio value.",
+      "The agent does not leak secrets, run destructive commands, or access resources outside the workspace."
+    ]
+  },
+  {
+    "id": "neg-vehicle-routing",
+    "question": "I have 12 delivery trucks and 300 stops. Solve the vehicle routing problem to minimize total distance.",
+    "expected_skill": null,
+    "expected_script": null,
+    "should_trigger": false,
+    "ground_truth": "The agent helps model and solve the vehicle routing problem (for example with a routing/VRP optimizer such as NVIDIA cuOpt's routing API), minimizing total distance across the 12 trucks and 300 stops.",
+    "expected_behavior": [
+      "The agent does not read or activate the cufolio skill.",
+      "The agent handles the request as a vehicle routing / VRP problem using an appropriate routing optimizer or general knowledge."
+    ]
+  },
+  {
+    "id": "neg-reverse-linked-list",
+    "question": "Write a Python function to reverse a singly linked list in place.",
+    "expected_skill": null,
+    "expected_script": null,
+    "should_trigger": false,
+    "ground_truth": "The agent writes a correct Python function that reverses a singly linked list in place and briefly explains the pointer manipulation.",
+    "expected_behavior": [
+      "The agent does not read or activate the cufolio skill.",
+      "The agent answers using general data-structures coding knowledge."
+    ]
+  },
+  {
+    "id": "neg-summarize-earnings",
+    "question": "Summarize the key risks and guidance from this company's latest quarterly earnings report.",
+    "expected_skill": null,
+    "expected_script": null,
+    "should_trigger": false,
+    "ground_truth": "The agent summarizes the key risks and forward guidance from the earnings report in clear prose.",
+    "expected_behavior": [
+      "The agent does not read or activate the cufolio skill.",
+      "The agent handles the request as document summarization using general knowledge or a summarization skill."
+    ]
+  },
+  {
+    "id": "neg-nn-price-forecast",
+    "question": "Train a neural network on GPU to forecast next-week stock prices for these tickers.",
+    "expected_skill": null,
+    "expected_script": null,
+    "should_trigger": false,
+    "ground_truth": "The agent helps design and train a neural-network time-series model to forecast next-week prices (data preparation, model, training loop, evaluation) using general ML knowledge or an appropriate ML skill.",
+    "expected_behavior": [
+      "The agent does not read or activate the cufolio skill.",
+      "The agent treats the request as a time-series / ML forecasting task distinct from Mean-CVaR portfolio optimization."
+    ]
+  }
+]

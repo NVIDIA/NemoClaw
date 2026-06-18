@@ -1,0 +1,78 @@
+name: deformable-detr-deploy
+type: model
+network_arch: deformable_detr
+container_image: tao_toolkit.deploy
+data_format: coco
+actions:
+  gen_trt_engine:
+    command: deformable_detr gen_trt_engine -e {config_path}
+    config_format: yaml
+    inputs:
+      gen_trt_engine.onnx_file:
+        type: file
+      gen_trt_engine.trt_engine:
+        type: file
+    outputs:
+      results_dir:
+        type: folder
+      gen_trt_engine.trt_engine:
+        type: file
+    upload_excludes:
+    - inputs/
+  evaluate:
+    command: deformable_detr evaluate -e {config_path}
+    config_format: yaml
+    inputs:
+      evaluate.trt_engine:
+        type: file
+      dataset.test_data_sources.image_dir:
+        type: folder
+      dataset.test_data_sources.json_file:
+        type: file
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  inference:
+    command: deformable_detr inference -e {config_path}
+    config_format: yaml
+    inputs:
+      inference.trt_engine:
+        type: file
+      dataset.infer_data_sources.image_dir:
+        type: folder
+      dataset.infer_data_sources.classmap:
+        type: file
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+spec_params:
+  gen_trt_engine:
+    results_dir: output_dir
+    gen_trt_engine.onnx_file: parent_model
+    gen_trt_engine.trt_engine: create_engine_file
+  evaluate:
+    results_dir: output_dir
+    evaluate.trt_engine: parent_model
+  inference:
+    results_dir: output_dir
+    inference.trt_engine: parent_model
+spec_shorthand_keys:
+  trt_data_type: gen_trt_engine.tensorrt.data_type
+  trt_engine: gen_trt_engine.trt_engine
+  batch_size: dataset.batch_size
+description: Deformable DETR deploy workflow for gen_trt_engine, evaluate, inference
+  using TAO Deploy.
+spec_templates:
+  gen_trt_engine: spec_template_deploy_gen_trt_engine.yaml
+  evaluate: spec_template_deploy_evaluate.yaml
+  inference: spec_template_deploy_inference.yaml
+notes:
+- Carry `dataset.num_classes` as object classes plus background, matching train/export.
+- Use FP16 for the starter-kit TensorRT engine path; INT8 requires a real calibration
+  image folder and cache path.
+- Keep transformer structure fields such as `model.num_queries`, `model.num_feature_levels`,
+  `model.enc_layers`, and `model.dec_layers` aligned with export.

@@ -1,0 +1,58 @@
+[
+  {
+    "id": "install-eval-001-uv-pangu",
+    "question": "I want to install earth2studio using uv in a new project. I plan to use the Pangu weather model. How do I set this up?",
+    "expected_skill": "earth2studio-install",
+    "expected_script": null,
+    "ground_truth": "Provides uv-based install commands from the live docs including the git source syntax. Adds the pangu extra. Includes verification step with import check. Mentions Python version recommendation.",
+    "expected_behavior": [
+      "Uses uv add or uv pip install with git source syntax (not PyPI)",
+      "Includes the pangu extra in the install command",
+      "Provides a verification command (import earth2studio or check version)",
+      "Fetches or references the live installation docs page",
+      "Mentions Python version recommendation"
+    ]
+  },
+  {
+    "id": "install-eval-002-pip-graphcast",
+    "question": "How do I pip install earth2studio with the graphcast model extra? I'm on Python 3.12 with CUDA 12.",
+    "expected_skill": "earth2studio-install",
+    "expected_script": null,
+    "ground_truth": "Provides pip install command from PyPI with the graphcast extra. Warns about any manual pre-install steps or build requirements specific to pip. Provides a verification step to confirm the install worked.",
+    "expected_behavior": [
+      "Uses pip install earth2studio[graphcast] or equivalent syntax",
+      "Mentions any pip-specific manual steps or build notes for graphcast",
+      "Warns about potential slow build times if applicable",
+      "Fetches or references the live installation docs page",
+      "Provides a verification step to confirm the install worked"
+    ]
+  },
+  {
+    "id": "install-eval-003-uv-multiple-extras",
+    "question": "I want to install earth2studio with uv and add multiple model extras — specifically AIFS, FuXi, and CorrDiff. What's the right way to do this?",
+    "expected_skill": "earth2studio-install",
+    "expected_script": null,
+    "ground_truth": "Provides uv command with multiple --extra flags. Warns about slow builds (flash-attention for AIFS). Lists the extras correctly from the docs. Distinguishes between prognostic and diagnostic extras.",
+    "expected_behavior": [
+      "Includes all three extras (aifs, fuxi, corrdiff) in the install command",
+      "Uses correct uv syntax for multiple extras (--extra flags)",
+      "Warns about flash-attention build time for AIFS",
+      "Fetches or references the live installation docs page",
+      "Distinguishes between prognostic and diagnostic extras"
+    ]
+  },
+  {
+    "id": "install-eval-004-pip-add-stormcast",
+    "question": "I already have a pip-based project and just need to add the stormcast model to my existing earth2studio install. What do I run?",
+    "expected_skill": "earth2studio-install",
+    "expected_script": null,
+    "ground_truth": "Provides pip install command to add the stormcast extra to an existing installation. Mentions any dependencies or build requirements specific to stormcast. Does not suggest reinstalling the entire package from scratch.",
+    "expected_behavior": [
+      "Uses pip install earth2studio[stormcast] or equivalent add-extra syntax",
+      "Mentions any stormcast-specific build requirements or dependencies",
+      "Does not suggest reinstalling the entire package from scratch",
+      "Fetches or references the live installation docs page",
+      "Provides verification that the extra was installed correctly"
+    ]
+  }
+]

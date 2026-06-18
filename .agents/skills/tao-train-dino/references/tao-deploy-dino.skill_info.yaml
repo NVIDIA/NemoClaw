@@ -1,0 +1,98 @@
+name: dino-deploy
+type: model
+network_arch: dino
+container_image: tao_toolkit.deploy
+data_format: coco
+actions:
+  gen_trt_engine:
+    command: dino gen_trt_engine -e {config_path}
+    config_format: yaml
+    inputs:
+      gen_trt_engine.onnx_file:
+        type: file
+    outputs:
+      results_dir:
+        type: folder
+      gen_trt_engine.trt_engine:
+        type: file
+    upload_excludes:
+    - inputs/
+  evaluate:
+    command: dino evaluate -e {config_path}
+    config_format: yaml
+    inputs:
+      evaluate.trt_engine:
+        type: file
+      dataset.test_data_sources.image_dir:
+        type: folder
+      dataset.test_data_sources.json_file:
+        type: file
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  inference:
+    command: dino inference -e {config_path}
+    config_format: yaml
+    inputs:
+      inference.trt_engine:
+        type: file
+      dataset.infer_data_sources.image_dir[0]:
+        type: folder
+      dataset.infer_data_sources.classmap:
+        type: file
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+data_sources:
+  gen_trt_engine:
+    gen_trt_engine.tensorrt.calibration.cal_image_dir:
+      source: calibration_dataset
+      path: images.tar.gz
+      list: true
+      runtime: extracted_folder
+  evaluate:
+    dataset.test_data_sources.image_dir:
+      source: eval_dataset
+      path: images.tar.gz
+      runtime: extracted_folder
+    dataset.test_data_sources.json_file:
+      source: eval_dataset
+      path: annotations.json
+  inference:
+    dataset.infer_data_sources.image_dir:
+      source: inference_dataset
+      path: images.tar.gz
+      list: true
+      runtime: extracted_folder
+    dataset.infer_data_sources.classmap:
+      source: inference_dataset
+      path: label_map.txt
+spec_params:
+  gen_trt_engine:
+    results_dir: output_dir
+    encryption_key: key
+    gen_trt_engine.onnx_file: parent_model
+    gen_trt_engine.trt_engine: create_engine_file
+    gen_trt_engine.tensorrt.calibration.cal_cache_file: create_cal_cache
+  evaluate:
+    results_dir: output_dir
+    encryption_key: key
+    evaluate.trt_engine: parent_model
+  inference:
+    results_dir: output_dir
+    encryption_key: key
+    inference.trt_engine: parent_model
+spec_shorthand_keys:
+  num_classes: dataset.num_classes
+  batch_size: dataset.batch_size
+  trt_data_type: gen_trt_engine.tensorrt.data_type
+  trt_engine: gen_trt_engine.trt_engine
+description: DINO deploy workflow for TensorRT engine generation, TensorRT evaluation, and TensorRT inference using TAO Deploy.
+spec_templates:
+  gen_trt_engine: spec_template_deploy_gen_trt_engine.yaml
+  evaluate: spec_template_deploy_evaluate.yaml
+  inference: spec_template_deploy_inference.yaml

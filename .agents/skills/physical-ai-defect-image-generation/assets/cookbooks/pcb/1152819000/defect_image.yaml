@@ -1,0 +1,118 @@
+pipeline_type: defect
+
+# ─── Run controls ──────────────────────────────────────────────────────────
+seed: 0
+random_seed: 0
+max_image_count: -1
+num_triggers: 1
+
+# ─── Output ────────────────────────────────────────────────────────────────
+output: ${PCB_DIG_ROOT}/sdg_test_output/flow2_defect_image
+
+# ─── Render ────────────────────────────────────────────────────────────────
+resolution: [1920, 1080]
+
+# ─── PathTracing ───────────────────────────────────────────────────────────
+pathtracing:
+  spp: 1
+  total_spp: 32
+  max_bounces: 4
+
+# ─── Scan Grid ─────────────────────────────────────────────────────────────
+scan_grid:
+  x_num: 10
+  y_num: 10
+
+# ─── Defects ───────────────────────────────────────────────────────────────
+# Board-specific: 1152819000 — larger board geometry, distinct scan_grid
+# and lighting defaults from the 0603_H100 spark board.
+# Substring-matched against prim names under pcba_root. IC-only pool: shifts
+# the actual 1152819000 chip-under-test, NOT the surrounding passives.
+component_types:
+  - _115_2819_000_1               # IC under test (substring matches the per-board chip prim)
+
+defects:
+  shift:
+    enabled: true
+    ratio: 1.0                    # only 1 IC instance per board — must be 1.0 to hit it every frame
+    translate_range: 0.2          # mm; max XY translation (+/-)
+    rotate_z_range: 15            # degrees; max Z rotation (+/-)
+  tombstone:
+    enabled: false
+    ratio: 0.2
+    angle_min: 70
+    angle_max: 90
+  sideflip:
+    enabled: false
+    ratio: 0.2
+    angle_min: 70
+    angle_max: 90
+
+# ─── Top-level material / lighting flags ─────────────────────────────────
+vantablack_components: false
+use_scene_lights: true
+preserve_scene_light_color: true
+
+# ─── Lighting Randomization ────────────────────────────────────────────────
+lighting:
+  ring_light: false
+  exposure_range: [0.01, 1.0]
+  cone_angle_range: [90, 150]
+  cone_softness_range: [0.5, 1.0]
+
+  layers:
+    Inner_Red:
+      intensity: [5000, 8000]
+      color_r: [0.95, 1.0]
+      color_g: [0.0,  0.05]
+      color_b: [0.0,  0.05]
+    Middle_Green:
+      intensity: [2000, 4000]
+      color_r: [0.0,  0.05]
+      color_g: [0.95, 1.0]
+      color_b: [0.0,  0.05]
+    Outer_Blue:
+      intensity: [3000, 6000]
+      color_r: [0.0,  0.05]
+      color_g: [0.0,  0.05]
+      color_b: [0.95, 1.0]
+
+  white_light:
+    intensity: [160, 440]
+    color_r:   [0.8,  1.0]
+    color_g:   [0.8,  1.0]
+    color_b:   [0.8,  1.0]
+
+# ─── Camera Randomization ──────────────────────────────────────────────────
+camera_rotation:
+  x_range: [0, 0]
+  y_range: [0, 0]
+  z_fixed: -90
+
+# ─── Augmentation ──────────────────────────────────────────────────────────
+augmentation:
+  motion_blur:
+    probability: 0.8
+    alpha_range: [0.01, 0.3]
+    kernel_choices: [5, 7]
+
+# ─── Writer (semantic_types MUST include `defect` for the defect labels) ──
+writer:
+  rgb: true
+  image_output_format: png
+
+  bounding_box_2d_tight: true
+  bounding_box_2d_loose: false
+  bounding_box_3d: false
+
+  semantic_segmentation: true
+  instance_id_segmentation: false
+  colorize_semantic_segmentation: true
+  colorize_instance_id_segmentation: false
+
+  distance_to_camera: false
+  distance_to_image_plane: false
+  colorize_depth: false
+
+  semantic_types: [defect]
+  frame_padding: 4

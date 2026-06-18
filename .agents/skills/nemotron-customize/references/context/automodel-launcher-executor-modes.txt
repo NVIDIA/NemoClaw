@@ -1,0 +1,55 @@
+# AutoModel Launcher And Executor Context
+
+Use this pack only when a user asks how to run an AutoModel SFT/PEFT step on a
+specific execution backend. It is not the source of the training schema; read
+`../CATALOG.md` and `../COMMANDS.md` first, then verify the selected step config
+and `src/nemotron/steps/_runners/automodel.py` for live run details.
+
+## Contract
+
+- Prefer the repo-native command:
+  `uv run nemotron steps run sft/automodel -c <config>`.
+- For remote execution, use the active env TOML and choose a real profile. Do
+  not infer `--batch` from examples or naming conventions.
+- Do not generate custom launcher Python when a step config plus env profile can
+  express the run.
+- Keep secrets in environment variables referenced by env TOML or the runtime
+  environment, not in generated YAML.
+
+## Backend Selection
+
+| Situation | Use |
+|---|---|
+| Local wiring smoke test | `-c tiny --dry-run` first, then local run only if hardware is available |
+| Lepton or DGX Cloud submission | `--batch <profile>` from `NEMOTRON_ENV_FILE` or repo-root `env*.toml` |
+| Slurm submission | Slurm env TOML profile with the container, mounts, and env vars already defined |
+| Missing env file | Stop and ask for/generate env TOML; do not invent a batch profile |
+
+## Live Verification
+
+After the bundled references select AutoModel, verify:
+
+1. `src/nemotron/steps/sft/automodel/step.toml` or
+   `src/nemotron/steps/peft/automodel/step.toml`.
+2. The selected `config/tiny.yaml` or `config/default.yaml`.
+3. `src/nemotron/steps/_runners/automodel.py` for the exact command shape.
+4. Active env TOML sections when remote execution is requested.
+
+## Config Rules
+
+- AutoModel consumes chat-format JSONL, not packed Parquet.
+- Keep `model.pretrained_model_name_or_path`, dataset path, tokenizer/chat
+  template assumptions, and output directory explicit.
+- Use `peft=lora` or a LoRA block for adapter tuning; use full SFT only when the
+  user has enough GPU memory and wants a full checkpoint.
+- For adapter output, plan `convert/merge_lora` if the final artifact must be a
+  standalone HF checkpoint.
+
+## Failure Modes
+
+- If `uv run nemotron steps run ... --dry-run` cannot locate the config, use the
+  full config path instead of an alias.
+- If a remote submission lacks mounts for data/checkpoint paths, fix the env
+  profile before running the job.
+- If W&B is enabled in the training config or env, require `WANDB_API_KEY` in
+  the environment.

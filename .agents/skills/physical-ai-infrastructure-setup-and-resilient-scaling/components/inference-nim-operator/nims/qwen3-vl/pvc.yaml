@@ -1,0 +1,24 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# PVC for pre-downloaded Qwen3-VL-30B-A3B-Instruct weights.
+# Populated by hf-download-job.yaml before the NIMService boots.
+# Referenced by nimservice.yaml via spec.storage.pvc.name.
+#
+# Size rationale: Qwen3-VL-30B weights are ~60GB. 100Gi leaves headroom for tokenizer, configs,
+# and any future cache artifacts without forcing a PVC resize.
+# RWX is the supported access mode for NIM scaling/upgrades (per NVIDIA docs —
+# RWO blocks replicas>1 and rolling upgrades). Also lets the HF-download Job
+# and NIMService pod share this PVC without Multi-Attach contention.
+# storageClassName omitted — cluster default must be RWX-capable.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: qwen3-vl-pvc
+  namespace: osmo-nims
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 100Gi

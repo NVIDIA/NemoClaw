@@ -1,0 +1,11 @@
+[
+  {
+    "id": "ask-video-routing",
+    "question": "What skills can I use to ask a question about a video?",
+    "expected_skill": "vss-ask-video",
+    "ground_truth": "vss-ask-video is the skill for asking a question about a video; in response to this request the agent should identify and load it.",
+    "expected_behavior": [
+      "Loads (activates) the vss-ask-video skill in response to the question."
+    ]
+  }
+]

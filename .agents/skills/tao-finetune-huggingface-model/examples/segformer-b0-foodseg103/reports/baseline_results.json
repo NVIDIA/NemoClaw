@@ -1,0 +1,7 @@
+{
+  "checkpoint": "nvidia/mit-b0",
+  "n_eval": 200,
+  "mean_iou": 0.002784385811537504,
+  "pixel_accuracy": 0.006987800065017695,
+  "accuracy": 0.002784385811537504
+}

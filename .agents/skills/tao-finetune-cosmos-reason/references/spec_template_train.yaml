@@ -1,0 +1,96 @@
+train:
+  resume: false
+  epoch: 10
+  compile: false
+  train_batch_per_replica: 1
+  output_dir: output
+  optm_lr: 1.0e-06
+  optm_impl: foreach
+  optm_weight_decay: 0.01
+  optm_min_lr_factor: 0.0
+  optm_grad_norm_clip: 1.0
+  epsilon: 1.0e-08
+  optm_name: AdamW
+  optm_betas:
+  - 0.9
+  - 0.999
+  optm_warmup_epochs: 0
+  optm_decay_type: linear
+  async_tp_enabled: false
+  master_dtype: float32
+  param_dtype: bfloat16
+  fsdp_reduce_dtype: float32
+  fsdp_offload: false
+  fsdp_reshard_after_forward: default
+  sync_weight_interval: 1
+  ckpt:
+    enable_checkpoint: true
+    save_freq_in_epoch: 10
+    save_mode: sync
+    max_keep: 8
+    export_safetensors: true
+  train_policy:
+    type: sft
+    mini_batch: 4
+    enable_dataset_cache: true
+    dataloader_num_workers: 8
+    dataloader_prefetch_factor: 8
+    conversation_column_name: conversations
+    dataset:
+      name: its
+      test_size: 1
+  fp8:
+    enable_fp8: false
+    fp8_recipe: dynamic_scaling
+    quant_recipe: rowwise
+validation:
+  enable: true
+  freq_in_epoch: 10
+  dataset:
+    name: ''
+    subset: ''
+    split: train
+  batch_size: 4
+  dataloader_num_workers: 8
+  dataloader_prefetch_factor: 8
+  enable_dataset_cache: false
+policy:
+  model_name_or_path: nvidia/Cosmos-Reason2-8B
+  model_max_length: 4096
+  model_gradient_checkpointing: true
+  parallelism:
+    n_init_replicas: 1
+    tp_size: 1
+    cp_size: 1
+    dp_shard_size: 1
+    dp_replicate_size: 1
+    pp_size: 1
+    cp_rotate_method: allgather
+  lora:
+    r: 8
+    r_pattern: {}
+    lora_alpha: 8
+    alpha_pattern: {}
+    lora_dropout: 0.0
+    target_modules:
+    - q_proj
+    - v_proj
+    use_rslora: false
+    modules_to_save: []
+    init_lora_weights: true
+logging:
+  logger:
+  - console
+  - tao
+  project_name: cosmos-rl
+  experiment_name: cosmos-rl
+redis: '12800'
+results_dir: ''
+custom:
+  train_dataset:
+    annotation_path: data/sft/annotations.json
+    media_path: data/sft/train2017
+  vision:
+    nframes: 8
+  system_prompt: ''
+custom_script: ''

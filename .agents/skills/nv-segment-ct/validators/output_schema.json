@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "Shared segmentation envelope (invocation, output, runtime). Canonical spec: spec/segmentation_output.schema.json. The eval_engine loads this file without an out-of-tree $ref resolver, so the shared required block is reproduced inline here rather than via $ref.",
+  "title": "NVSegmentCTOutput",
+  "type": "object",
+  "required": ["skill", "model", "model_repo", "input", "output", "invocation", "runtime", "intended_use_disclaimer"],
+  "properties": {
+    "skill": {"const": "nv_segment_ct"},
+    "model": {"type": "string"},
+    "model_repo": {"type": "string"},
+    "license": {"type": "string"},
+    "input": {
+      "type": "object",
+      "required": ["path"],
+      "properties": {
+        "path": {"type": "string"},
+        "shape": {"type": "array", "items": {"type": "integer"}},
+        "ndim": {"type": "integer"},
+        "spacing": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
+        "ground_truth_path": {"type": ["string", "null"]}
+      }
+    },
+    "output": {
+      "type": "object",
+      "required": [
+        "path",
+        "shape",
+        "label_prompts_requested",
+        "label_ids_present",
+        "unexpected_label_ids",
+        "label_set_valid",
+        "class_counts",
+        "voxel_volume_ml",
+        "class_volumes_ml",
+        "any_label_present",
+        "geometry"
+      ],
+      "properties": {
+        "path": {"type": ["string", "null"]},
+        "shape": {"type": "array", "items": {"type": "integer"}, "minItems": 3, "maxItems": 3},
+        "label_prompts_requested": {"type": "array", "items": {"type": "integer"}},
+        "label_ids_present": {"type": "array", "items": {"type": "integer"}},
+        "unexpected_label_ids": {"type": "array", "items": {"type": "integer"}},
+        "label_set_valid": {"type": "boolean"},
+        "class_counts": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}},
+        "voxel_volume_ml": {"type": ["number", "null"]},
+        "class_volumes_ml": {"type": "object", "additionalProperties": {"type": "number", "minimum": 0}},
+        "any_label_present": {"type": "boolean"},
+        "geometry": {
+          "type": "object",
+          "required": [
+            "input_shape",
+            "output_shape",
+            "shape_match",
+            "input_spacing",
+            "output_spacing",
+            "spacing_match",
+            "affine_max_abs_diff",
+            "affine_match"
+          ],
+          "properties": {
+            "input_shape": {"type": "array", "items": {"type": "integer"}},
+            "output_shape": {"type": "array", "items": {"type": "integer"}},
+            "shape_match": {"type": "boolean"},
+            "input_spacing": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
+            "output_spacing": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
+            "spacing_match": {"type": "boolean"},
+            "affine_max_abs_diff": {"type": ["number", "null"]},
+            "affine_match": {"type": "boolean"}
+          }
+        }
+      }
+    },
+    "invocation": {
+      "type": "object",
+      "required": ["official_helper"],
+      "properties": {
+        "official_helper": {"type": "string"},
+        "pipeline_name": {"type": "string"},
+        "weights_dir": {"type": "string"}
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "required": ["inference_seconds", "device"],
+      "properties": {
+        "model_load_seconds": {"type": "number"},
+        "inference_seconds": {"type": "number"},
+        "device": {"type": "string"}
+      }
+    },
+    "intended_use_disclaimer": {"type": "string"}
+  }
+}

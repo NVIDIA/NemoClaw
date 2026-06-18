@@ -1,0 +1,109 @@
+# Demo: 0603_H100_day0
+# Source: _demo_config/0603_H100_day0/day0_image.yaml
+# Patched at runtime:
+#   __OUTPUT__             → OSMO task output dir
+
+pipeline_type: good
+
+seed: 0
+random_seed: 0
+max_image_count: __MAX_IMAGE_COUNT__
+num_triggers: 1
+
+rename_to_grid_index: true
+
+output: __OUTPUT__
+
+resolution: [1920, 1080]
+
+pathtracing:
+  spp: 1
+  total_spp: 32
+  max_bounces: 4
+
+scan_grid:
+  x_num: 10
+  y_num: 10
+
+semantics:
+  - match: "**/PASTEMASK_TOP/Geometry/PASTEMASK_TOP__11450_bodies__0"
+    labels: {class: pad}
+
+  - match: "**/_0603_H100/tn__0603_H100*/LibRef/_0603_H100/Geometry/Components/_0603_H100/surface_1_MASTER_MESH"
+    labels: {class: solder}
+  - match: "**/_0603_H100/tn__0603_H100*/LibRef/_0603_H100/Geometry/Components/_0603_H100/surface_2_MASTER_MESH"
+    labels: {class: capacitor}
+  - match: "**/_0603_H100/tn__0603_H100*/LibRef/_0603_H100/Geometry/Components/_0603_H100/surface_4_MASTER_MESH"
+    labels: {class: capacitor}
+  - match: "**/_0603_H100/tn__0603_H100*/LibRef/_0603_H100/Geometry/Components/_0603_H100/surface_6_MASTER_MESH"
+    labels: {class: capacitor}
+  - match: "**/_0603_H100/tn__0603_H100*/LibRef/_0603_H100/Geometry/Components/_0603_H100/surface_5_MASTER_MESH"
+    labels: {class: solder}
+  - match: "**/_0603_H100/tn__0603_H100*/LibRef/_0603_H100/Geometry/Components/_0603_H100/surface_7_MASTER_MESH"
+    labels: {class: solder}
+  - match: "**/_0603_H100/tn__0603_H100*/LibRef/_0603_H100/Geometry/Components/_0603_H100/surface_8_MASTER_MESH"
+    labels: {class: pad}
+
+use_scene_lights: true
+vantablack_components: false
+
+lighting:
+  ring_light: false
+  exposure_range: [0.01, 1.0]
+  cone_angle_range: [90, 150]
+  cone_softness_range: [0.5, 1.0]
+
+  layers:
+    Inner_Red:
+      intensity: [5000, 8000]
+      color_r: [0.95, 1.0]
+      color_g: [0.0,  0.05]
+      color_b: [0.0,  0.05]
+    Middle_Green:
+      intensity: [2000, 4000]
+      color_r: [0.0,  0.05]
+      color_g: [0.95, 1.0]
+      color_b: [0.0,  0.05]
+    Outer_Blue:
+      intensity: [3000, 6000]
+      color_r: [0.0,  0.05]
+      color_g: [0.0,  0.05]
+      color_b: [0.95, 1.0]
+
+  white_light:
+    intensity: [3000, 8000]
+    color_r:   [0.8,  1.0]
+    color_g:   [0.8,  1.0]
+    color_b:   [0.8,  1.0]
+
+camera_rotation:
+  x_range: [0, 0]
+  y_range: [0, 0]
+  z_fixed: -90
+
+augmentation:
+  motion_blur:
+    probability: 0.8
+    alpha_range: [0.01, 0.3]
+    kernel_choices: [5, 7]
+
+writer:
+  rgb: true
+  image_output_format: png
+
+  bounding_box_2d_tight: false
+  bounding_box_2d_loose: false
+  bounding_box_3d: false
+
+  semantic_segmentation: true
+  instance_id_segmentation: false
+  colorize_semantic_segmentation: true
+  colorize_instance_id_segmentation: false
+
+  distance_to_camera: false
+  distance_to_image_plane: false
+  colorize_depth: false
+
+  semantic_types: [class]
+
+  frame_padding: 4

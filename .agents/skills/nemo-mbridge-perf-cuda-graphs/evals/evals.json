@@ -1,0 +1,16 @@
+[
+  {
+    "id": "cuda-graphs-te-scoped-moe-smoke",
+    "question": "Use the nemo-mbridge-perf-cuda-graphs skill. I am training a Megatron Bridge Qwen3 MoE model and want to reduce CPU launch overhead with CUDA graphs. Which cuda_graph_impl and cuda_graph_scope should I start with, and what prerequisites should I set?",
+    "expected_skill": "nemo-mbridge-perf-cuda-graphs",
+    "expected_script": null,
+    "ground_truth": "For most Megatron Bridge training workloads, start with Transformer Engine scoped graphs rather than local full-iteration capture. For a dropless MoE model, use cuda_graph_impl=\"transformer_engine\" with cuda_graph_scope including attn, moe_router, and moe_preprocess. Set cuda_graph_warmup_steps, enable model.use_te_rng_tracker and rng.te_rng_tracker, keep sequence length and micro-batch size static, and compare steady-state replay iterations after warmup and capture. Do not combine moe and moe_router scopes.",
+    "expected_behavior": [
+      "Read the nemo-mbridge-perf-cuda-graphs skill before answering.",
+      "Recommend transformer_engine scoped graphs for the MoE bring-up path.",
+      "Name the relevant MoE scopes: attn, moe_router, and moe_preprocess.",
+      "Mention the TE RNG tracker requirement and static-shape constraint.",
+      "Tell the user to compare replay timing after warmup and capture rather than measuring the capture step."
+    ]
+  }
+]

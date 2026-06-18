@@ -1,0 +1,14 @@
+[
+  {
+    "id": "rt-form-eval-001-tsp-vs-vrp-vs-pdp",
+    "question": "A courier company has 8 trucks and 50 packages to deliver across a city. Some packages must be picked up from one address and dropped off at another. What problem type is this, and what data do I need to collect?",
+    "expected_skill": "cuopt-routing-formulation",
+    "expected_script": null,
+    "ground_truth": "The agent identifies the problem as multi-vehicle PDP (Pickup and Delivery Problem) — not VRP (one-way deliveries from a depot) or TSP (single vehicle). It then walks the user through the data categories needed: locations and a cost/distance matrix, pickup-delivery pairs as the order data, fleet (8 trucks with capacity and depot configuration), and time windows. Does not produce code.",
+    "expected_behavior": [
+      "Identifies the problem type as multi-vehicle PDP, not VRP and not TSP, and explains the pickup-then-deliver pairing as the distinguishing feature",
+      "Lists the data the user needs to collect across locations / orders (pickup-delivery pairs) / fleet (8 trucks with capacity) / time windows",
+      "Does not produce code — this skill is concepts only"
+    ]
+  }
+]

@@ -1,0 +1,36 @@
+results_dir: /results
+model:
+  arch: vit_large_patch16
+  num_classes: 1000
+  drop_path_rate: 0.0
+  global_pool: true
+  decoder_depth: 1
+  decoder_embed_dim: 512
+train:
+  pretrained_model_path: path/to/your/model.pt
+dataset:
+  segment:
+    num_classes: 1000
+export:
+  gpu_id: 0
+  on_cpu: false
+  checkpoint: ${train.pretrained_model_path}
+  onnx_file: /models/model.onnx
+  input_channel: 3
+  input_width: 224
+  input_height: 224
+  batch_size: -1
+  opset_version: 17
+  verbose: true
+gen_trt_engine:
+  gpu_id: 0
+  onnx_file: /models/model.onnx
+  trt_engine: /results/mae.engine
+  batch_size: -1
+  tensorrt:
+    data_type: fp32
+    workspace_size: 1024
+    min_batch_size: 1
+    opt_batch_size: 4
+    max_batch_size: 8
+  verbose: true

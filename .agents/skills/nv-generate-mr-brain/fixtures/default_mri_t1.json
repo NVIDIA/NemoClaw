@@ -1,0 +1,16 @@
+{
+  "_comment": "Default rflow-mr-brain smoke config: whole-brain T1w, 256^3, 1 mm spacing, 30 rectified-flow steps.",
+  "modality": "mri_t1",
+  "dim": [
+    256,
+    256,
+    256
+  ],
+  "spacing": [
+    1.0,
+    1.0,
+    1.0
+  ],
+  "num_inference_steps": 30,
+  "cfg_guidance_scale": 10
+}

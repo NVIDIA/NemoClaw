@@ -1,0 +1,17 @@
+[
+  {
+    "id": "mlm-bridge-training-positive-recipe-smoke",
+    "question": "Use the nemo-mbridge-mlm-bridge-training skill. I need a concise MLM-vs-Bridge correlation smoke checklist. Name the Bridge recipe, Bridge entry point, MLM entry point, launch wrapper, MLM PYTHONPATH, fresh-run cleanup step, and expected BF16 loss agreement.",
+    "expected_skill": "nemo-mbridge-mlm-bridge-training",
+    "expected_script": null,
+    "ground_truth": "The answer should use the MLM-vs-Bridge training skill and recommend vanilla_gpt_pretrain_config for loss-correlation testing. It should name scripts/training/run_recipe.py as the Bridge entry point and 3rdparty/Megatron-LM/pretrain_gpt.py as the Megatron-LM entry point, launched via uv run python -m torch.distributed.run. It should mention MLM needs PYTHONPATH=3rdparty/Megatron-LM:$PYTHONPATH, Bridge should remove stale nemo_experiments before a fresh run, and matched losses should agree within BF16 rounding. It should not tell the user to edit files under 3rdparty/Megatron-LM.",
+    "expected_behavior": [
+      "Read the nemo-mbridge-mlm-bridge-training skill before answering.",
+      "Identify that the task is about running Megatron Bridge or Megatron-LM training, not model conversion or performance tuning alone.",
+      "Recommend vanilla_gpt_pretrain_config for correlation testing.",
+      "Name scripts/training/run_recipe.py and 3rdparty/Megatron-LM/pretrain_gpt.py as the Bridge and MLM entry points.",
+      "Mention uv run python -m torch.distributed.run, MLM PYTHONPATH, and rm -rf nemo_experiments.",
+      "Avoid instructing the user to modify files under 3rdparty/Megatron-LM directly."
+    ]
+  }
+]

@@ -1,0 +1,36 @@
+[
+  {
+    "id": "preflight-flipped-lr-blocks-segmentation",
+    "question": "I have a DICOM series at fixtures/flipped_lr — I plan to run nv_segment_ct on it next. Should I? Use dicom-series-preflight to check first.",
+    "expected_skill": "dicom-series-preflight",
+    "ground_truth": "The skill should detect that this series has reversed L-R orientation (RPI vs LPS). The agent must surface the failure and STOP rather than proceed to segmentation. The orientation gate is the explicit purpose of the negative fixture.",
+    "expected_behavior": [
+      "the skill output reports an orientation issue (axcodes != ['L','P','S'])",
+      "the agent's final recommendation is to NOT proceed to nv_segment_ct, and to fix orientation first",
+      "the agent does NOT propose 'just flip it in post' as a fix — the gate is meant to surface upstream data issues",
+      "the agent does NOT silently re-run with --force or similar to bypass the gate"
+    ]
+  },
+  {
+    "id": "preflight-clean-no-phi-greenlights",
+    "question": "Check the DICOM series in fixtures/clean_no_phi for any issues before I run downstream segmentation.",
+    "expected_skill": "dicom-series-preflight",
+    "ground_truth": "The skill should report a clean preflight: axial orientation, consistent series, no PHI in the standard-tag subset. The agent's recommendation should be to proceed with caveats (engineering verification only, not clinical).",
+    "expected_behavior": [
+      "the skill output reports no orientation issue and no PHI-tag presence",
+      "the agent's recommendation includes the 'engineering verification only' caveat (preflight passing != clinical fitness)",
+      "the agent surfaces that this is the A1 onboarding skill — it covers no GPU, no downstream segmentation quality"
+    ]
+  },
+  {
+    "id": "preflight-clean-axial-flags-phi",
+    "question": "Quick check on the DICOM series in fixtures/clean_axial — is it shareable?",
+    "expected_skill": "dicom-series-preflight",
+    "ground_truth": "Orientation passes, but the series contains synthetic PHI. The agent must surface the PHI flag and recommend a de-identifier (NOT dicom_metadata_extract, which only flags) before any sharing.",
+    "expected_behavior": [
+      "the skill output flags PHI in the standard-tag subset",
+      "the agent does NOT call this series shareable just because orientation passes",
+      "the agent's recommendation includes a step to de-identify before sharing (and notes that no Medical AI Skills skill does that)"
+    ]
+  }
+]

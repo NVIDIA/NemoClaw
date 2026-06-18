@@ -1,0 +1,86 @@
+name: tao-train-oneformer
+network_arch: oneformer
+automl_enabled: true
+container_image: tao_toolkit.pyt
+data_format: coco_panoptic
+gpu_spec_key: train.num_gpus
+actions:
+  train:
+    command: oneformer train -e {config_path}
+    config_format: yaml
+    inputs:
+      dataset.train.images:
+        type: folder
+      dataset.train.annotations:
+        type: file
+      dataset.label_map:
+        type: file
+      dataset.train.panoptic:
+        type: folder
+      dataset.val.images:
+        type: folder
+      dataset.val.annotations:
+        type: file
+      dataset.val.panoptic:
+        type: folder
+      dataset.test.images:
+        type: folder
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  quantize:
+    command: oneformer quantize -e {config_path}
+    config_format: yaml
+    inputs: {}
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  evaluate:
+    command: oneformer evaluate -e {config_path}
+    config_format: yaml
+    inputs: {}
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  export:
+    command: oneformer export -e {config_path}
+    config_format: yaml
+    inputs: {}
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  inference:
+    command: oneformer inference -e {config_path}
+    config_format: yaml
+    inputs: {}
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  gen_trt_engine:
+    command: oneformer gen_trt_engine -e {config_path}
+    config_format: yaml
+    inputs: {}
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+data_sources: {}
+spec_params: {}
+key_defaults: {}
+spec_shorthand_keys:
+  num_epochs: train.num_epochs
+  batch_size: dataset.batch_size
+  learning_rate: train.optim.lr
+description: OneFormer for universal image segmentation. Unifies panoptic, instance, and semantic segmentation with a single
+  architecture using task-conditioned queries.

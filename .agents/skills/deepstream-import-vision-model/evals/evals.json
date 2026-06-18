@@ -1,0 +1,71 @@
+[
+  {
+    "id": "deepstream-import-vision-model-001",
+    "question": "I want to import a HuggingFace object detection model into DeepStream. Describe the end-to-end workflow this skill should follow, including model acquisition, engine build, DeepStream validation, benchmarking, and report generation.",
+    "expected_skill": "deepstream-import-vision-model",
+    "expected_script": null,
+    "ground_truth": "The response should use the import-model workflow: inspect or download model assets, reject unsupported non-detection architectures, export or use ONNX, build TensorRT engines, create parser and nvinfer config, validate with a single-stream DeepStream run and KITTI output, run multi-stream benchmarks, and generate markdown, HTML, and PDF benchmark reports.",
+    "expected_behavior": [
+      "Read the relevant reference document before each phase rather than relying on memory.",
+      "Use the mandatory models/{model_name}/ directory structure.",
+      "Handle HuggingFace or NGC model acquisition and detect unsupported non-detection architectures early.",
+      "Build TensorRT engines with the prescribed naming pattern.",
+      "Run DeepStream validation before benchmarking.",
+      "Generate benchmark_report.md, benchmark_report.html, and benchmark_report_{model_name}.pdf."
+    ]
+  },
+  {
+    "id": "deepstream-import-vision-model-002",
+    "question": "A YOLO object detection model exported from HuggingFace has dynamic ONNX dimensions. Explain how to build and configure it for DeepStream so the engine and nvinfer config are stable.",
+    "expected_skill": "deepstream-import-vision-model",
+    "expected_script": null,
+    "ground_truth": "The answer should inspect the ONNX model, create a static batch variant if needed, build TensorRT engines with batch-specific names, set infer-dims in the nvinfer config, use DeepStream NMS for pre-NMS YOLO outputs, and keep batch-size equal to the number of streams during DeepStream runs.",
+    "expected_behavior": [
+      "Inspect ONNX input and output shapes before engine build.",
+      "Create or use a static batch ONNX when dynamic dimensions would break TensorRT or DeepStream.",
+      "Name engines as {model}_dynamic_b{MAX_BS}.engine.",
+      "Set infer-dims to the explicit C;H;W input dimensions.",
+      "Use cluster-mode 2 for dense pre-NMS YOLO-style outputs.",
+      "Keep DeepStream batch-size equal to the number of input streams."
+    ]
+  },
+  {
+    "id": "deepstream-import-vision-model-003",
+    "question": "During DeepStream validation for an imported detector, KITTI output has zero frames and NVENC is unavailable on the system. What should the skill do before producing a benchmark report?",
+    "expected_skill": "deepstream-import-vision-model",
+    "expected_script": null,
+    "ground_truth": "The skill should fail or stop before Step 7 when KITTI validation has zero frames or detection rate is below the threshold. For video output, it should use nvv4l2h264enc when available, fall back to theoraenc plus oggmux when NVENC is unavailable, or skip video creation if neither path is available, then report which mode was used.",
+    "expected_behavior": [
+      "Do not proceed to multi-stream benchmarking when KITTI frame count is zero.",
+      "Treat detection rate below 90 percent as a validation gate failure.",
+      "Do not use x264enc or openh264enc.",
+      "Use theoraenc plus oggmux as the fallback when NVENC is unavailable.",
+      "Skip video creation if neither NVENC nor theora fallback is available.",
+      "Report the selected video mode in the benchmark output."
+    ]
+  },
+  {
+    "id": "deepstream-import-vision-model-004-negative",
+    "question": "Optimize SQL queries for a PostgreSQL reporting dashboard and add Redis caching. No model import or DeepStream runtime changes are needed.",
+    "expected_skill": null,
+    "expected_script": null,
+    "ground_truth": "The deepstream-import-vision-model skill should not be selected because the request is unrelated to model acquisition, TensorRT build, or DeepStream pipeline validation.",
+    "expected_behavior": [
+      "Do not activate deepstream-import-vision-model for this request.",
+      "Avoid model import, TensorRT, and DeepStream benchmarking instructions.",
+      "Respond with a generic fallback or suggest a relevant database-focused workflow."
+    ]
+  },
+  {
+    "id": "deepstream-import-vision-model-005-negative",
+    "question": "How can I fine-tune a BERT model for sentiment analysis on my own dataset?",
+    "expected_skill": null,
+    "expected_script": null,
+    "ground_truth": "The deepstream-import-vision-model skill should not be selected because this request is unrelated to DeepStream object-detection model import or TensorRT/benchmark workflow.",
+    "expected_behavior": [
+      "Do not activate deepstream-import-vision-model for this request.",
+      "State that this is outside the DeepStream import-vision-model scope.",
+      "Suggest a relevant NLP model fine-tuning path instead."
+    ]
+  }
+]

@@ -1,0 +1,4 @@
+interface:
+  display_name: "USD Performance Tuning"
+  short_description: "Diagnose and optimize OpenUSD scene performance"
+  default_prompt: "Use $omniverse-usd-performance-tuning to diagnose and optimize a USD stage: confirm runtime context, capture baseline evidence, assess structure, route validation, run approved Scene Optimizer work, compare results, and produce the final optimization report."

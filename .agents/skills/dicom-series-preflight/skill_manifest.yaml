@@ -1,0 +1,112 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+id: medagent.dicom_series_preflight
+version: 0.1.0
+upstream_refs:
+  - kind: pypi_package
+    name: pydicom
+    version_constraint: ">=2.4,<4"
+  - kind: pypi_package
+    name: nibabel
+    version_constraint: ">=4.0"
+license: Apache-2.0
+intended_use:
+  summary: >
+    Engineering-time DICOM folder preflight. Header-only scan of a series
+    directory for corruption, orientation, PHI-tag presence, and consistency
+    before conversion or model inference. No GPU required.
+  scope: development
+  not_for:
+    - clinical deployment
+    - regulatory de-identification
+    - autonomous diagnosis
+    - production ingestion without a vetted converter
+inputs:
+  - name: dicom_dir
+    type: directory_path
+    formats: [dicom_series]
+outputs:
+  - name: preflight_json
+    type: json
+    schema: validators/output_schema.json
+runtime:
+  language: python
+  python: ">=3.10"
+  entrypoint: scripts/preflight_series.py
+  args:
+    - "${python}"
+    - "${script}"
+    - "${fixture}"
+  dependencies:
+    pydicom: ">=2.4,<4"
+    nibabel: ">=4.0"
+    numpy: ">=1.23"
+    typer: ">=0.9"
+  side_effects:
+    pip_packages:
+      - pydicom>=2.4,<4
+      - nibabel>=4.0
+      - numpy>=1.23
+      - typer>=0.9
+    local_writes: []
+    home_writes: []
+    network_endpoints: []
+    requires_docker: false
+    requires_gpu: none
+    env_required: []
+paired_verifiers:
+  - id: medagent.verifiers.dicom_preflight_quality_v1
+    status: implemented
+    consumes: evidence_pack_dir
+    purpose: >
+      Second-pass preflight gate with pass/warn/fail verdict and explicit
+      findings list. Surfaces corruption, orientation, PHI, and consistency
+      issues without running conversion or segmentation.
+limitations:
+  - Header-only; does not decode pixel data or detect burnt-in PHI.
+  - Canonical orientation gate assumes LPS-derived CT axcodes L,P,S.
+  - Compressed transfer syntax and multi-frame instances are warned, not decoded.
+  - Single-directory scan; does not reconcile multiple studies in one tree.
+validation:
+  expected_runtime_seconds:
+    max: 15.0
+    inference_path: runtime.scan_seconds
+  sanity_checks:
+    - {path: skill, eq: dicom_series_preflight}
+    - {path: series.single_series, eq: true}
+    - {path: inventory.n_corrupt, eq: 0}
+    - {path: orientation.axcodes_match, eq: true}
+    - {path: preflight.acceptable, eq: true}
+  expected_cost:
+    wall_seconds: {max: 15}
+    cpu_seconds: {max: 15}
+    rss_mb_peak: {max: 300}
+    gpu_seconds: {max: 0}
+    gpu_memory_mb_peak: {max: 0}
+  env_pin:
+    pydicom: ">=2.4,<5"
+  reproducibility:
+    mode: repeat
+    fixture: fixtures/clean_no_phi
+    fixture_builder: fixtures/generate_fixtures.py
+    runs: 2
+negative_fixtures:
+  - path: fixtures/flipped_lr
+    expected_overall: failed
+    expected_failed_gate: sanity
+    failure_reason: >
+      LR-flipped ImageOrientationPatient should fail orientation.axcodes_match
+      and preflight.verdict sanity gates.

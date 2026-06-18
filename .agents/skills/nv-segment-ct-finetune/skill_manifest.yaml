@@ -1,0 +1,305 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+id: medagent.nv_segment_ct_finetune
+version: 0.4.1
+upstream_refs:
+  - kind: huggingface_repo
+    name: nvidia/NV-Segment-CT
+    repo_id: nvidia/NV-Segment-CT
+    revision: afb51518689f71e6abb367ee6301b2cd0225c66a
+  - kind: github_repo
+    name: NVIDIA-Medtech/NV-Segment-CTMR
+    repo_url: https://github.com/NVIDIA-Medtech/NV-Segment-CTMR
+    git_commit: f9f5f51b589e5dc9c23c453cf5138398e4084056
+    notes: compatibility source for staged training configs
+license: Apache-2.0
+intended_use:
+  summary: >
+    Auto-configuring wrapper around NVIDIA-Medtech NV-Segment-CT's
+    continual-learning finetune entry. For the MSD Task06 sanity recipe it
+    follows the DFW single-GPU setting: one GPU, fold-0 validation, label
+    mapping `[[1, 23]]`, automatic class-prompt segmentation, patch
+    `[128,128,128]`, 5 epochs, and original-spacing evaluate.json scoring
+    before and after fine-tuning. Anatomy name -> label_mappings is resolved
+    against `bundle/label_dict.json` so the caller never hand-codes the
+    vista3d global index.
+  scope: development
+  not_for:
+    - clinical deployment
+    - clinical interpretation
+    - autonomous diagnosis
+    - regulatory submission
+    - non-CT modalities
+inputs:
+  - name: dataset_dir
+    type: dir_path
+    description: Root directory referenced by relative image/label paths in datalist.
+    optional_when: smoke == true
+  - name: datalist
+    type: file_path
+    formats: [json]
+    description: MONAI-bundle datalist with `training[].fold` and optional `testing[]`.
+    optional_when: smoke == true
+  - name: target_anatomy
+    type: string
+    description: Anatomy name resolved against bundle/label_dict.json (e.g. "lung tumor").
+    optional: true
+  - name: label_mapping
+    type: json
+    description: Literal `[[user_idx, vista3d_idx], ...]`. Overrides --target-anatomy.
+    optional: true
+  - name: smoke
+    type: bool
+    description: Run one iteration on the bundled spleen_micro fixture. Executable plumbing oracle.
+    optional: true
+    default: false
+  - name: sanity
+    type: bool
+    description: >
+      Tutorial-recipe verification on cached MSD06 Lung Tumor. Mirrors the
+      published DFW NV-Segment-CT finetune tutorial: full 5-fold split
+      (seed 0) on the 63 labeled training cases, label mapping `[[1, 23]]`
+      (MSD cancer label -> vista3d global class index for `lung tumor`),
+      `drop_label_prob=0.0`, `drop_point_prob=1.0` (automatic segmentation),
+      patch `[128,128,128]`, resample `1.5 mm isotropic`, lr=5e-5, 5 epochs.
+      It writes `configs/train_continual_task06_lung.json` and
+      `configs/dfw_no_logging.json`, uses no multi-GPU configs, runs
+      `configs/evaluate.json` on original spacing before and after training,
+      and expects DFW-reference scores near pretrained 0.6697,
+      fine-tuned 0.6836, and training-best 0.6905. The sanity gate fails
+      when reference recovery is not demonstrated or when the best checkpoint
+      is still tensor-identical to the pretrained checkpoint; inspect recorded
+      Python, MONAI, Torch, and CUDA versions before trusting low scores.
+      Requires `.workbench_data/datasets/Task06_Lung/` to be populated unless
+      a Task06 path is supplied.
+    optional: true
+    default: false
+  - name: auto_seg
+    type: bool
+    description: >
+      Force automatic class-prompt finetuning with `drop_label_prob=0.0` and
+      `drop_point_prob=1.0`, matching the DFW Task06 recipe. Enabled
+      automatically by --sanity; optional for caller-provided datasets.
+    optional: true
+    default: false
+  - name: skip_formal_eval
+    type: bool
+    description: Skip the pre/post original-spacing evaluate.json passes.
+    optional: true
+    default: false
+outputs:
+  - name: finetuned_ckpt
+    type: file_path
+    formats: [pytorch]
+    description: >
+      Best-val-dice checkpoint produced by the bundle's `validate#handlers`
+      (model_finetune.pt). With val_at_start=True this can be a reserialized
+      copy of the pretrained weights; inspect
+      output.finetuned_ckpt_matches_pretrained_weights.
+    optional_when: smoke == true
+  - name: result_json
+    type: json
+    schema: validators/output_schema.json
+runtime:
+  language: python
+  python: ">=3.10"
+  entrypoint: scripts/run_finetune.py
+  args:
+    - "${python}"
+    - "${script}"
+    - "${fixture}"
+    - "--output-dir"
+    - "${out}/artifacts"
+  dependencies:
+    # Upstream NV-Segment-CT metadata and requirements pin MONAI 1.4.0.
+    monai: "==1.4.0"
+    torch: ">=2.0"
+    transformers: ">=4.40,<5"
+    nibabel: ">=4.0"
+    numpy: ">=1.23"
+    scipy: ">=1.10"
+    huggingface_hub: "*"
+    safetensors: ">=0.4"
+    mlflow: ">=2.10"
+    typer: ">=0.9"
+  side_effects:
+    pip_packages:
+      - monai==1.4.0
+      - torch>=2.0
+      - "transformers>=4.40,<5"
+      - huggingface_hub
+      - mlflow>=2.10
+      - nibabel>=4.0
+      - numpy>=1.23
+      - safetensors>=0.4
+      - typer>=0.9
+      - scipy>=1.10
+    local_writes:
+      - {path: "skills/nv-segment-ct-finetune/bundle/", approx_mb_max: 1000}
+      - {path: "skills/nv-segment-ct-finetune/bundle/configs/auto_override.json", approx_mb_max: 1}
+      - {path: "skills/nv-segment-ct-finetune/bundle/configs/train_continual_task06_lung.json", approx_mb_max: 1}
+      - {path: "skills/nv-segment-ct-finetune/bundle/configs/dfw_no_logging.json", approx_mb_max: 1}
+      - {path: "<caller-provided --output-dir>", approx_mb_max: 20000}
+    home_writes:
+      - {path: "~/.cache/huggingface/", approx_mb_max: 1500}
+    network_endpoints:
+      - https://huggingface.co
+      - https://raw.githubusercontent.com
+    requires_docker: false
+    requires_gpu: cuda
+    gpu_fallback: cpu
+    environment:
+      clean_environment_required: false
+      clean_environment_recommended: true
+      modifies_active_python_environment: true
+      user_environment_modification_ok: true
+      recommended_isolation: fresh venv or container for benchmarks; caller-selected env for interactive use
+      notes: >
+        Runtime setup commands may install packages into the active Python
+        environment. That is acceptable only when the caller chooses that
+        environment; benchmark and evidence runs should use a fresh per-run
+        environment.
+    env_required: []
+    env_optional:
+      - NPROC_PER_NODE   # overrides auto-detected GPU count (>=2 selects multi-GPU)
+      - CUDA_VISIBLE_DEVICES
+  external_assets:
+    - kind: huggingface_repo
+      repo_id: nvidia/NV-Segment-CT
+      size_mb_approx: 832
+      install_path: bundle/
+      install_command: huggingface-cli download nvidia/NV-Segment-CT --local-dir skills/nv-segment-ct-finetune/bundle/
+      contains:
+        - configs/train.json
+        - configs/train_continual.json
+        - configs/multi_gpu_train.json
+        - configs/evaluate.json
+        - configs/metadata.json
+        - label_dict.json
+        - vista3d_pretrained_model/model.safetensors
+cost:
+  # Per-invocation agent-overhead token cost measured by NeMo Agent Toolkit
+  # (NAT) profiler - the cost an LLM-driven agent pays to call this skill
+  # once (here: --smoke preset, ~30 s GPU). The skill itself emits zero
+  # tokens. See tools/nat_audit/README.md for methodology.
+  token_estimate:
+    common:
+      model: meta/llama-3.3-70b-instruct
+      agent_type: tool_calling_agent
+      measured_at: 2026-05-16
+      methodology: tools/nat_audit/README.md
+    isolated_tool_call:
+      prompt_tokens: 2279
+      completion_tokens: 87
+      total_tokens: 2366
+      llm_calls: 2
+      n_tools_in_workflow: 9
+    end_to_end_workflow:                 # SKILL.md is the largest in Medical AI Skills (~3300 tok)
+      prompt_tokens: 12668
+      completion_tokens: 151
+      total_tokens: 12819
+      llm_calls: 3
+      n_tools_in_workflow: 11
+      scenario: realistic_user_workflow
+
+paired_verifiers:
+  - id: medagent.verifiers.ct_segmentation_finetune_quality_v1
+    status: implemented
+    consumes: evidence_pack_dir
+    purpose: >
+      Audits the finetuned checkpoint at output.finetuned_ckpt (size + cpu
+      torch.load when available), the training trajectory
+      (val_dice_per_epoch, train_loss_finite, no OOM, improvement_over_baseline,
+      sanity_recovery_demonstrated under --sanity), checkpoint tensor comparison
+      against the pretrained checkpoint when present, and the recorded
+      input.dataset_audit (shape / orientation consistency, CT HU range,
+      anatomy-specific volume bounds, label coverage against
+      label_mappings#default). CPU-only; does not re-run training.
+limitations:
+  - Thin wrapper. Training, validation, transforms, and checkpointing are
+    delegated entirely to the upstream bundle in `bundle/`. Do not modify
+    code under `bundle/`.
+  - The auto-derived plan is a heuristic. Caller-provided `--patch-size`,
+    `--cache-rate`, `--epochs`, `--learning-rate` always win.
+  - The Task06 sanity recipe intentionally forces single-GPU execution to
+    match the DFW reference setting. Multi-GPU mode for other datasets requires
+    the host to be able to launch `torchrun` with
+    the chosen `--nproc_per_node`. The wrapper does not allocate or
+    fence GPUs.
+  - Smoke mode is an executable oracle for "pipeline plumbs end to end",
+    not a quality bar - it cannot prove the full-dataset finetune will
+    converge.
+validation:
+  expected_runtime_seconds:
+    # smoke_only on H100 ~= 5s; CPU fallback ~= 120s. Real finetune is
+    # bounded only by the caller's epoch budget - caller should pass a
+    # custom benchmark manifest with wider envelopes for long runs.
+    min: 1.0
+    max: 1800.0
+    inference_path: runtime.wall_seconds
+  sanity_checks:
+    - path: plan.patch_size
+      length_eq: 3
+    - path: invocation.config_stack
+      contains: "configs/train.json"
+    - path: invocation.config_stack
+      contains: "configs/train_continual.json"
+    - path: invocation.command_prefix
+      contains: "monai.bundle"
+    - path: output.oom
+      eq: false
+    - path: output.train_loss_finite
+      eq: true
+    - path: output.finetuned_ckpt_exists
+      eq: true
+    - path: output.regressed
+      eq: false
+  expected_cost:
+    wall_seconds:        {max: 1800}
+    cpu_seconds:         {max: 7200}
+    rss_mb_peak:         {min: 500, max: 32000}
+    gpu_seconds:         {max: 1800}
+    gpu_memory_mb_peak:  {max: 80000}
+  # The wrapper's patch_size ladder (scripts/run_finetune.py::PATCH_LADDER)
+  # is calibrated against measurements on RTX 6000 Ada 48 GB with monai
+  # 1.4.0 / torch 2.11+cu130 and real CT finetune workloads,
+  # cache_rate 0.0, resample_to_spacing 1.5 mm isotropic:
+  #   [64,64,64]    ->  5,510 MiB peak
+  #   [96,96,96]    ->  8,132 MiB
+  #   [128,128,128] -> 13,220 MiB   (bundle default)
+  #   [160,160,160] -> 21,560 MiB
+  #   [192,192,128] -> 24,208 MiB   (finetune.md "larger memory")
+  #   [224,224,224] -> 47,354 MiB   (within 1 GB of OOM on 48 GB)
+  #   [256,256,256] ->  OOM
+  # Values are sub-cubic up to [160,160,160] then super-linear; do not
+  # interpolate naively outside the measured range.
+  # DFW Task06 reference: single GPU, patch [128,128,128], formal pre/post
+  # eval plus 5-epoch finetune peaked at 10381 MiB (10.14 GiB).
+  env_pin:
+    monai: "==1.4.0"
+    torch: ">=2.0,<3"
+    transformers: ">=4.40,<5"
+    huggingface_hub: ">=0.20,<1"
+  reproducibility:
+    mode: preflight
+    fixture: fixtures/spleen_micro
+    runs: 2
+    reason: >
+      Full finetune repeatability must run in the declared MONAI 1.4.0
+      environment and compare the emitted checkpoint hash plus trajectory.
+      The repository audit repeats the fixture/env boundary check so a host
+      with drifted dependencies cannot be mistaken for a verified finetune
+      reproduction.

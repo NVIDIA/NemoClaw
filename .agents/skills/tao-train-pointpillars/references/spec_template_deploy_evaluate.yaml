@@ -1,0 +1,93 @@
+dataset:
+  class_names:
+  - Car
+  - Pedestrian
+  - Cyclist
+  type: GeneralPCDataset
+  data_path: /data
+  data_split:
+    train: train
+    test: val
+  data_info_path: <required>
+  info_path:
+    train:
+    - infos_train.pkl
+    test:
+    - infos_val.pkl
+  balanced_resampling: false
+  point_feature_encoding:
+    encoding_type: absolute_coordinates_encoding
+    used_feature_list:
+    - x
+    - y
+    - z
+    - intensity
+    src_feature_list:
+    - x
+    - y
+    - z
+    - intensity
+  point_cloud_range:
+  - 0
+  - -39.68
+  - -3
+  - 69.12
+  - 39.68
+  - 1
+  data_augmentor:
+    disable_aug_list:
+    - placeholder
+    aug_config_list:
+    - name: gt_sampling
+      db_info_path:
+      - dbinfos_train.pkl
+      preface:
+        filter_by_min_points:
+        - Car:5
+        - Pedestrian:5
+        - Cyclist:5
+      sample_groups:
+      - Car:15
+      - Pedestrian:15
+      - Cyclist:15
+      num_point_features: 4
+      disable_with_fake_lidar: false
+      remove_extra_width:
+      - 0.0
+      - 0.0
+      - 0.0
+      limit_whole_scene: false
+    - name: random_world_flip
+      along_axis_list:
+      - x
+    - name: random_world_rotation
+      world_rot_angle:
+      - -0.78539816
+      - 0.78539816
+    - name: random_world_scaling
+      world_scale_range:
+      - 0.95
+      - 1.05
+  data_processor:
+  - name: mask_points_and_boxes_outside_range
+    remove_outside_boxes: true
+  num_workers: 4
+model:
+  post_processing:
+    recall_thresh_list:
+    - 0.3
+    - 0.5
+    - 0.7
+    score_thresh: 0.1
+    output_raw_score: false
+    eval_metric: kitti
+    nms_config:
+      multi_classes_nms: false
+      nms_type: nms_gpu
+      nms_thresh: 0.01
+      nms_pre_max_size: 4096
+      nms_post_max_size: 500
+evaluate:
+  batch_size: 1
+  trt_engine: /results/pointpillars.engine
+  results_dir: /results

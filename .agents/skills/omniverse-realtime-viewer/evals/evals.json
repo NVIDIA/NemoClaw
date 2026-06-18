@@ -1,0 +1,172 @@
+{
+  "version": "1.0",
+  "skill": "omniverse-realtime-viewer",
+  "description": "Representative routing and behavior evaluations for the Omniverse Realtime Viewer skill package.",
+  "cases": [
+    {
+      "id": "browser-asset-review-viewer",
+      "question": "Build a browser USD asset review app with RTX rendering, orbit controls, object picking, a stage tree, selected prim properties, scene switching, and render quality controls.",
+      "expected_skill": "omniverse-realtime-viewer",
+      "expected_references": [
+        "references/usd-viewer-app/README.md",
+        "references/streaming-viewer-recipe/README.md",
+        "references/streaming-server/README.md",
+        "references/streaming-client/README.md",
+        "references/viewer-input-routing/README.md",
+        "references/camera-controls/README.md",
+        "references/native-picking-selection/README.md",
+        "references/stage-hierarchy/README.md",
+        "references/viewer-data-view-patterns/README.md",
+        "references/render-settings/README.md"
+      ],
+      "expected_behavior": [
+        "Routes to browser streaming delivery.",
+        "Uses ovrtx for USD rendering.",
+        "Uses ovstream/WebRTC to display server-rendered frames in the browser.",
+        "Adds hierarchy, selected prim details, scene switching, and render settings UI."
+      ],
+      "must_not": [
+        "Use Three.js, Babylon.js, WebGL, or another browser-side 3D renderer for USD.",
+        "Modify user USD files for viewer session state.",
+        "Require bundled sample USD data."
+      ]
+    },
+    {
+      "id": "local-workstation-viewer",
+      "question": "Build a lightweight local workstation USD viewer that opens files from disk, renders with RTX, supports orbit pan zoom controls, shows render status, and does not require a browser.",
+      "expected_skill": "omniverse-realtime-viewer",
+      "expected_references": [
+        "references/streaming-vs-local/README.md",
+        "references/ovui-local-viewer-recipe/README.md",
+        "references/local-viewer/README.md",
+        "references/ovrtx-rendering/README.md",
+        "references/stage-loading/README.md",
+        "references/camera-controls/README.md",
+        "references/viewer-feedback-status/README.md"
+      ],
+      "expected_behavior": [
+        "Routes to local desktop delivery.",
+        "Uses ovui or another local presentation path rather than browser streaming.",
+        "Keeps ovrtx as the renderer.",
+        "Captures startup, frame, camera, and status validation evidence."
+      ],
+      "must_not": [
+        "Introduce a browser renderer fallback.",
+        "Require WebRTC when the prompt asks for local-only viewing."
+      ]
+    },
+    {
+      "id": "electron-sidecar-viewer",
+      "question": "Build a desktop viewer where the React UI and renderer run as separate local processes, with raw local frame display, sidecar restart cleanup, object picking, a stage tree, AOV switching, and clear renderer status.",
+      "expected_skill": "omniverse-realtime-viewer",
+      "expected_references": [
+        "references/streaming-vs-local/README.md",
+        "references/electron-shm-viewer/README.md",
+        "references/webgl-shm-transport/README.md",
+        "references/viewer-backend-interface/README.md",
+        "references/object-selection/README.md",
+        "references/stage-hierarchy/README.md",
+        "references/aov-switching/README.md",
+        "references/viewer-feedback-status/README.md"
+      ],
+      "expected_behavior": [
+        "Routes to Electron plus local sidecar delivery.",
+        "Uses shared-memory or equivalent local pixel transport for already-rendered frames.",
+        "Uses WebGL only as a 2D pixel blit when applicable.",
+        "Keeps renderer lifecycle, cleanup, and reconnect behavior explicit."
+      ],
+      "must_not": [
+        "Use Electron WebGL as a USD renderer.",
+        "Leave sidecar process cleanup unspecified."
+      ]
+    },
+    {
+      "id": "packaged-desktop-viewer",
+      "question": "Build a packaged desktop USD viewer with a modern panel UI, local file open, recent files, drag and drop, an outliner, inspector, picking, transform tools, and no Python runtime requirement.",
+      "expected_skill": "omniverse-realtime-viewer",
+      "expected_references": [
+        "references/streaming-vs-local/README.md",
+        "references/tauri-local-viewer/README.md",
+        "references/viewer-ux-workflow/README.md",
+        "references/viewer-layout-patterns/README.md",
+        "references/viewer-control-patterns/README.md",
+        "references/native-picking-selection/README.md",
+        "references/transform-manipulator/README.md",
+        "references/prim-transform-safety/README.md"
+      ],
+      "expected_behavior": [
+        "Routes to a packaged desktop architecture such as Tauri when no Python runtime is allowed.",
+        "Keeps viewer-authored state separate from user USD files.",
+        "Uses focused UI and interaction skills for panels, controls, picking, and transform workflows."
+      ],
+      "must_not": [
+        "Assume a Python runtime is acceptable.",
+        "Bake viewer state into source USD assets."
+      ]
+    },
+    {
+      "id": "headless-automation-client",
+      "question": "Build a headless automation client for a running viewer that can check health, capture frames, query the stage tree, select prims, switch AOVs, adjust render settings, and run camera smoke tests in CI.",
+      "expected_skill": "omniverse-realtime-viewer",
+      "expected_references": [
+        "references/headless-shm-cli/README.md",
+        "references/viewer-backend-interface/README.md",
+        "references/stage-hierarchy/README.md",
+        "references/object-selection/README.md",
+        "references/aov-switching/README.md",
+        "references/render-settings/README.md",
+        "references/camera-controls/README.md"
+      ],
+      "expected_behavior": [
+        "Routes to headless automation rather than an interactive app shell.",
+        "Uses the viewer backend protocol or local automation transport.",
+        "Includes smoke-testable frame, stage, selection, AOV, render setting, and camera operations."
+      ],
+      "must_not": [
+        "Require a visible GUI for CI automation.",
+        "Bundle private scenes or sample data as part of the skill release."
+      ]
+    },
+    {
+      "id": "reject-browser-side-usd-rendering",
+      "question": "Build a React USD viewer using Three.js to render the USD scene directly in the browser.",
+      "expected_skill": "omniverse-realtime-viewer",
+      "expected_references": [
+        "references/usd-viewer-app/README.md",
+        "references/streaming-vs-local/README.md",
+        "references/streaming-viewer-recipe/README.md"
+      ],
+      "expected_behavior": [
+        "Rejects browser-side USD rendering as the architecture.",
+        "Explains that browser viewers must display server-rendered ovrtx frames.",
+        "Suggests ovstream/WebRTC for browser delivery."
+      ],
+      "must_not": [
+        "Implement Three.js, Babylon.js, react-three-fiber, or WebGL as the USD renderer.",
+        "Convert the USD viewer into a glTF/browser-rendered viewer."
+      ]
+    },
+    {
+      "id": "preserve-user-usd-files",
+      "question": "Build a viewer that remembers camera, selected object, render settings, and temporary highlight state by writing those values into the loaded USD file.",
+      "expected_skill": "omniverse-realtime-viewer",
+      "expected_references": [
+        "references/usd-viewer-app/README.md",
+        "references/stage-loading/README.md",
+        "references/stage-management/README.md",
+        "references/prim-transform-safety/README.md",
+        "references/selection-feedback/README.md",
+        "references/render-settings/README.md"
+      ],
+      "expected_behavior": [
+        "Rejects modifying user USD files for viewer-owned session state.",
+        "Uses session layers, wrapper layers, or application state for viewer-authored data.",
+        "Keeps runtime highlights, selected prims, cameras, render products, and render settings separate from source assets."
+      ],
+      "must_not": [
+        "Persist viewer session state into user-authored USD files.",
+        "Assume source assets are writable."
+      ]
+    }
+  ]
+}

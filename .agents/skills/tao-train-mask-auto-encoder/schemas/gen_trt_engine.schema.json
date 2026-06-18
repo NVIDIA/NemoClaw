@@ -1,0 +1,1126 @@
+{
+  "automl_default_parameters": [
+    "train.optim.weight_decay",
+    "train.optim.backbone_multiplier",
+    "train.optim.momentum",
+    "train.optim.lr",
+    "train.optim.warmup_epochs"
+  ],
+  "automl_disabled_parameters": [
+    "train.cudnn",
+    "train.gpu_ids",
+    "wandb.tags",
+    "train.optim.milestones",
+    "evaluate",
+    "inference",
+    "train",
+    "dataset.augmentation",
+    "gen_trt_engine",
+    "gen_trt_engine.tensorrt.layers_precision",
+    "dataset",
+    "gen_trt_engine.tensorrt",
+    "model",
+    "train.freeze",
+    "evaluate.gpu_ids",
+    "train.optim",
+    "dataset.augmentation.std",
+    "export",
+    "wandb",
+    "inference.gpu_ids",
+    "dataset.augmentation.mean"
+  ],
+  "default": {
+    "dataset": {
+      "augmentation": {
+        "auto_aug": "rand-m9-mstd0.5-inc1",
+        "color_jitter": 0.0,
+        "cutmix": 1.0,
+        "hflip": 0.5,
+        "input_size": 224,
+        "interpolation": "bilinear",
+        "max_ratio": 1.33,
+        "max_scale": 2.0,
+        "mean": [
+          0.485,
+          0.456,
+          0.406
+        ],
+        "min_ratio": 0.75,
+        "min_scale": 0.1,
+        "mixup": 0.8,
+        "mixup_mode": "batch",
+        "mixup_prob": 1.0,
+        "mixup_switch_prob": 0.5,
+        "re_prob": 0.0,
+        "smoothing": 0.1,
+        "std": [
+          0.229,
+          0.224,
+          0.225
+        ]
+      },
+      "batch_size": 1,
+      "num_workers_per_gpu": 2,
+      "train_data_sources": "",
+      "val_data_sources": ""
+    },
+    "encryption_key": "",
+    "gen_trt_engine": {
+      "batch_size": -1,
+      "gpu_id": 0,
+      "onnx_file": "???",
+      "results_dir": "",
+      "tensorrt": {
+        "data_type": "fp32,fp16",
+        "layers_precision": [],
+        "max_batch_size": 1,
+        "min_batch_size": 1,
+        "opt_batch_size": 1,
+        "workspace_size": 1024
+      },
+      "timing_cache": "",
+      "trt_engine": "???",
+      "verbose": false
+    },
+    "model": {
+      "arch": "convnextv2_base",
+      "decoder_depth": 1,
+      "decoder_embed_dim": 512,
+      "drop_path_rate": 0.1,
+      "global_pool": true,
+      "num_classes": 1
+    },
+    "model_name": "",
+    "results_dir": "",
+    "train": {
+      "accum_grad_batches": 1,
+      "checkpoint_interval": 1,
+      "checkpoint_interval_unit": "epoch",
+      "cudnn": {
+        "benchmark": false,
+        "deterministic": true
+      },
+      "distributed_strategy": "ddp",
+      "freeze": [],
+      "gpu_ids": [
+        0
+      ],
+      "mask_ratio": 0.75,
+      "norm_pix_loss": true,
+      "num_epochs": 10,
+      "num_gpus": 1,
+      "num_nodes": 1,
+      "optim": {
+        "backbone_multiplier": 0.1,
+        "gamma": 0.1,
+        "layer_decay": 0.75,
+        "lr": 0.0002,
+        "lr_scheduler": "MultiStep",
+        "milestones": [
+          88,
+          96
+        ],
+        "momentum": 0.9,
+        "monitor_name": "train_loss",
+        "type": "AdamW",
+        "warmup_epochs": 1,
+        "weight_decay": 0.05
+      },
+      "precision": "fp32",
+      "pretrained_model_path": "",
+      "results_dir": "",
+      "resume_training_checkpoint_path": "",
+      "seed": 1234,
+      "stage": "pretrain",
+      "validation_interval": 1
+    },
+    "wandb": {
+      "enable": true,
+      "entity": "",
+      "group": "",
+      "name": "TAO Toolkit Training",
+      "project": "TAO Toolkit",
+      "reinit": false,
+      "run_id": "",
+      "save_code": false,
+      "sync_tensorboard": false,
+      "tags": [
+        "tao-toolkit"
+      ]
+    }
+  },
+  "popular": {
+    "evaluate": {
+      "gpu_ids": [
+        0
+      ],
+      "num_gpus": 1,
+      "num_nodes": 1
+    },
+    "gen_trt_engine": {
+      "batch_size": -1,
+      "gpu_id": 0,
+      "tensorrt": {
+        "max_batch_size": 1,
+        "min_batch_size": 1,
+        "opt_batch_size": 1
+      }
+    },
+    "inference": {
+      "gpu_ids": [
+        0
+      ],
+      "num_gpus": 1,
+      "num_nodes": 1
+    },
+    "train": {
+      "checkpoint_interval": 1,
+      "gpu_ids": [
+        0
+      ],
+      "num_epochs": 10,
+      "num_gpus": 1,
+      "num_nodes": 1,
+      "optim": {
+        "backbone_multiplier": 0.1,
+        "layer_decay": 0.75,
+        "momentum": 0.9,
+        "weight_decay": 0.05
+      },
+      "validation_interval": 1
+    }
+  },
+  "properties": {
+    "automl_disabled_parameters": [
+      "wandb",
+      "dataset",
+      "train",
+      "model",
+      "inference",
+      "evaluate",
+      "gen_trt_engine",
+      "export"
+    ],
+    "dataset": {
+      "automl_disabled_parameters": [
+        "dataset.augmentation"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "augmentation": {
+          "auto_aug": "rand-m9-mstd0.5-inc1",
+          "color_jitter": 0.0,
+          "cutmix": 1.0,
+          "hflip": 0.5,
+          "input_size": 224,
+          "interpolation": "bilinear",
+          "max_ratio": 1.33,
+          "max_scale": 2.0,
+          "mean": [
+            0.485,
+            0.456,
+            0.406
+          ],
+          "min_ratio": 0.75,
+          "min_scale": 0.1,
+          "mixup": 0.8,
+          "mixup_mode": "batch",
+          "mixup_prob": 1.0,
+          "mixup_switch_prob": 0.5,
+          "re_prob": 0.0,
+          "smoothing": 0.1,
+          "std": [
+            0.229,
+            0.224,
+            0.225
+          ]
+        },
+        "batch_size": 1,
+        "num_workers_per_gpu": 2,
+        "train_data_sources": "",
+        "val_data_sources": ""
+      },
+      "properties": {
+        "augmentation": {
+          "automl_disabled_parameters": [
+            "dataset.augmentation.mean",
+            "dataset.augmentation.std"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "auto_aug": "rand-m9-mstd0.5-inc1",
+            "color_jitter": 0.0,
+            "cutmix": 1.0,
+            "hflip": 0.5,
+            "input_size": 224,
+            "interpolation": "bilinear",
+            "max_ratio": 1.33,
+            "max_scale": 2.0,
+            "mean": [
+              0.485,
+              0.456,
+              0.406
+            ],
+            "min_ratio": 0.75,
+            "min_scale": 0.1,
+            "mixup": 0.8,
+            "mixup_mode": "batch",
+            "mixup_prob": 1.0,
+            "mixup_switch_prob": 0.5,
+            "re_prob": 0.0,
+            "smoothing": 0.1,
+            "std": [
+              0.229,
+              0.224,
+              0.225
+            ]
+          },
+          "description": "Configuration parameters for data augmentation",
+          "properties": {
+            "auto_aug": {
+              "default": "rand-m9-mstd0.5-inc1",
+              "description": "Auto augmentation settings",
+              "title": "Auto augmentation settings.",
+              "type": "string"
+            },
+            "color_jitter": {
+              "default": 0.0,
+              "description": "Color jittering",
+              "title": "Color jittering.",
+              "type": "float"
+            },
+            "cutmix": {
+              "default": 1.0,
+              "description": "Cutmix augmentation",
+              "title": "Cutmix augmentation.",
+              "type": "float"
+            },
+            "cutmix_minmax": {
+              "description": "Cutmix minmax augmentation",
+              "title": "Cutmix minmax augmentation.",
+              "type": "float"
+            },
+            "hflip": {
+              "default": 0.5,
+              "description": "Horizontal flip probability",
+              "title": "Horizontal flip probability.",
+              "type": "float"
+            },
+            "input_size": {
+              "default": 224,
+              "description": "Input size.",
+              "title": "Input size",
+              "type": "int"
+            },
+            "interpolation": {
+              "default": "bilinear",
+              "description": "Interpolation mode during training",
+              "enum": [
+                "bilinear",
+                "bicubic",
+                "random"
+              ],
+              "title": "Interpolation mode.",
+              "type": "categorical"
+            },
+            "max_ratio": {
+              "default": 1.33,
+              "description": "Max ratio for resizing augmentation",
+              "title": "Max ratio.",
+              "type": "float"
+            },
+            "max_scale": {
+              "default": 2.0,
+              "description": "Max scale for resizing augmentation",
+              "title": "Max scale.",
+              "type": "float"
+            },
+            "mean": {
+              "automl_enabled": false,
+              "default": [
+                0.485,
+                0.456,
+                0.406
+              ],
+              "description": "Image mean.",
+              "title": "Mean for the image normalization",
+              "type": "list"
+            },
+            "min_ratio": {
+              "default": 0.75,
+              "description": "Min ratio for resizing augmentation",
+              "title": "Min ratio.",
+              "type": "float"
+            },
+            "min_scale": {
+              "default": 0.1,
+              "description": "Min scale for resizing augmentation",
+              "title": "Min scale.",
+              "type": "float"
+            },
+            "mixup": {
+              "default": 0.8,
+              "description": "Mixup augmentation",
+              "title": "Mixup augmentation.",
+              "type": "float"
+            },
+            "mixup_mode": {
+              "default": "batch",
+              "description": "Mixup mode",
+              "enum": [
+                "batch",
+                "pair",
+                "elem"
+              ],
+              "title": "Mixup mode.",
+              "type": "categorical"
+            },
+            "mixup_prob": {
+              "default": 1.0,
+              "description": "Mixup probability",
+              "title": "Mixup probability.",
+              "type": "float"
+            },
+            "mixup_switch_prob": {
+              "default": 0.5,
+              "description": "Mixup switch probability",
+              "title": "Mixup switch probability.",
+              "type": "float"
+            },
+            "re_prob": {
+              "default": 0.0,
+              "description": "Random erasing probability",
+              "title": "Random erasing probability.",
+              "type": "float"
+            },
+            "smoothing": {
+              "default": 0.1,
+              "description": "Label smoothing",
+              "title": "Label smoothing.",
+              "type": "float"
+            },
+            "std": {
+              "automl_enabled": false,
+              "default": [
+                0.229,
+                0.224,
+                0.225
+              ],
+              "description": "Standard deviation for the image normalization",
+              "title": "Image standard deviation",
+              "type": "list"
+            }
+          },
+          "title": "augmentation",
+          "type": "collection"
+        },
+        "batch_size": {
+          "default": 1,
+          "description": "Batch size.",
+          "maximum": Infinity,
+          "minimum": 1,
+          "title": "Batch size",
+          "type": "int"
+        },
+        "num_workers_per_gpu": {
+          "default": 2,
+          "description": "Number of workers per GPU",
+          "title": "Number of workers per GPU.",
+          "type": "int"
+        },
+        "test_data_sources": {
+          "title": "Image directory of the test set",
+          "type": "string"
+        },
+        "train_data_sources": {
+          "default": "",
+          "title": "Image directory of the training set",
+          "type": "string"
+        },
+        "val_data_sources": {
+          "default": "",
+          "title": "Image directory of the validation set",
+          "type": "string"
+        }
+      },
+      "type": "collection"
+    },
+    "encryption_key": {
+      "default": "",
+      "description": "Key for encrypting model checkpoints",
+      "title": "Encryption key",
+      "type": "string"
+    },
+    "gen_trt_engine": {
+      "automl_disabled_parameters": [
+        "gen_trt_engine.tensorrt"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "batch_size": -1,
+        "gpu_id": 0,
+        "onnx_file": "???",
+        "results_dir": "",
+        "tensorrt": {
+          "data_type": "fp32,fp16",
+          "layers_precision": [],
+          "max_batch_size": 1,
+          "min_batch_size": 1,
+          "opt_batch_size": 1,
+          "workspace_size": 1024
+        },
+        "timing_cache": "",
+        "trt_engine": "???",
+        "verbose": false
+      },
+      "popular": [
+        "batch_size",
+        "gpu_id",
+        "tensorrt"
+      ],
+      "properties": {
+        "batch_size": {
+          "default": -1,
+          "description": "The batch size of the input Tensor for the engine.\n                    A value of :code:`-1` implies dynamic tensor shapes.",
+          "minimum": -1,
+          "popular": true,
+          "title": "Batch size",
+          "type": "int"
+        },
+        "gpu_id": {
+          "default": 0,
+          "description": "The index of the GPU to build the TensorRT engine.",
+          "minimum": 0,
+          "popular": true,
+          "title": "GPU ID",
+          "type": "int"
+        },
+        "onnx_file": {
+          "default": "???",
+          "description": "\n        Path to the ONNX model file.\n        ",
+          "title": "ONNX file",
+          "type": "string"
+        },
+        "results_dir": {
+          "default": "",
+          "description": "\n        Path to where all the assets generated from a task are stored.\n        ",
+          "title": "Results directory",
+          "type": "string"
+        },
+        "tensorrt": {
+          "automl_disabled_parameters": [
+            "gen_trt_engine.tensorrt.layers_precision"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "data_type": "fp32,fp16",
+            "layers_precision": [],
+            "max_batch_size": 1,
+            "min_batch_size": 1,
+            "opt_batch_size": 1,
+            "workspace_size": 1024
+          },
+          "popular": [
+            "min_batch_size",
+            "opt_batch_size",
+            "max_batch_size"
+          ],
+          "properties": {
+            "data_type": {
+              "default": "fp32,fp16",
+              "description": "Data type",
+              "title": "Data type",
+              "type": "string"
+            },
+            "layers_precision": {
+              "automl_enabled": false,
+              "default": [],
+              "description": "The list to specify layer precision.",
+              "title": "layers_precision",
+              "type": "list"
+            },
+            "max_batch_size": {
+              "default": 1,
+              "description": "The maximum batch size in the optimization profile for\n                    the input tensor of the TensorRT engine.",
+              "minimum": 1,
+              "popular": true,
+              "title": "Maximum batch size",
+              "type": "int"
+            },
+            "min_batch_size": {
+              "default": 1,
+              "description": "The minimum batch size in the optimization profile for\n                    the input tensor of the TensorRT engine.",
+              "minimum": 1,
+              "popular": true,
+              "title": "Min batch size",
+              "type": "int"
+            },
+            "opt_batch_size": {
+              "default": 1,
+              "description": "The optimum batch size in the optimization profile for\n                    the input tensor of the TensorRT engine.",
+              "minimum": 1,
+              "popular": true,
+              "title": "Optimum batch size",
+              "type": "int"
+            },
+            "workspace_size": {
+              "default": 1024,
+              "description": "The size (in MB) of the workspace TensorRT has\n                    to run it's optimization tactics and generate the\n                    TensorRT engine.",
+              "minimum": 0,
+              "title": "Max workspace size",
+              "type": "int"
+            }
+          },
+          "type": "collection"
+        },
+        "timing_cache": {
+          "default": "",
+          "description": "Path to a TensorRT timing cache that speeds up engine generation.\n                    This will be created/read/updated.",
+          "title": "TensorRT timing cache",
+          "type": "string"
+        },
+        "trt_engine": {
+          "default": "???",
+          "description": "Path to the TensorRT engine generated should be stored.\n                    This only works with :code:`tao-deploy`.",
+          "title": "TensorRT engine",
+          "type": "string"
+        },
+        "verbose": {
+          "default": false,
+          "description": "Flag to enable verbose TensorRT logging.",
+          "title": "Verbose",
+          "type": "bool"
+        }
+      },
+      "type": "collection"
+    },
+    "model": {
+      "automl_enabled": false,
+      "default": {
+        "arch": "convnextv2_base",
+        "decoder_depth": 1,
+        "decoder_embed_dim": 512,
+        "drop_path_rate": 0.1,
+        "global_pool": true,
+        "num_classes": 1
+      },
+      "properties": {
+        "arch": {
+          "default": "convnextv2_base",
+          "description": "Model architecture.",
+          "enum": [
+            "convnextv2_atto",
+            "convnextv2_femto",
+            "convnextv2_pico",
+            "convnextv2_nano",
+            "convnextv2_tiny",
+            "convnextv2_base",
+            "convnextv2_large",
+            "convnextv2_huge",
+            "hiera_tiny_224",
+            "hiera_small_224",
+            "hiera_base_224",
+            "hiera_large_224",
+            "hiera_huge_224",
+            "vit_base_patch16",
+            "vit_large_patch16",
+            "vit_huge_patch14"
+          ],
+          "title": "Model arch",
+          "type": "categorical"
+        },
+        "decoder_depth": {
+          "default": 1,
+          "description": "Decoder depth of MAE models.",
+          "title": "Decoder depth",
+          "type": "int"
+        },
+        "decoder_embed_dim": {
+          "default": 512,
+          "type": "int"
+        },
+        "drop_path_rate": {
+          "default": 0.1,
+          "description": "Drop path rate.",
+          "title": "Drop path rate",
+          "type": "float"
+        },
+        "global_pool": {
+          "default": true,
+          "description": "Whether to use global pooling in ViT or Hiera models.",
+          "title": "Global pooling",
+          "type": "bool"
+        },
+        "num_classes": {
+          "default": 1,
+          "description": "Number of classes.",
+          "maximum": Infinity,
+          "minimum": 1,
+          "title": "Number of classes",
+          "type": "int"
+        }
+      },
+      "type": "collection"
+    },
+    "model_name": {
+      "default": "",
+      "description": "Name of model if invoking task via :code:`model_agnostic`",
+      "title": "Model name",
+      "type": "string"
+    },
+    "results_dir": {
+      "default": "",
+      "description": "\n        Path to where all the assets generated from a task are stored.\n        ",
+      "title": "Results directory",
+      "type": "string"
+    },
+    "train": {
+      "automl_disabled_parameters": [
+        "train.gpu_ids",
+        "train.cudnn",
+        "train.optim",
+        "train.freeze"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "accum_grad_batches": 1,
+        "checkpoint_interval": 1,
+        "checkpoint_interval_unit": "epoch",
+        "cudnn": {
+          "benchmark": false,
+          "deterministic": true
+        },
+        "distributed_strategy": "ddp",
+        "freeze": [],
+        "gpu_ids": [
+          0
+        ],
+        "mask_ratio": 0.75,
+        "norm_pix_loss": true,
+        "num_epochs": 10,
+        "num_gpus": 1,
+        "num_nodes": 1,
+        "optim": {
+          "backbone_multiplier": 0.1,
+          "gamma": 0.1,
+          "layer_decay": 0.75,
+          "lr": 0.0002,
+          "lr_scheduler": "MultiStep",
+          "milestones": [
+            88,
+            96
+          ],
+          "momentum": 0.9,
+          "monitor_name": "train_loss",
+          "type": "AdamW",
+          "warmup_epochs": 1,
+          "weight_decay": 0.05
+        },
+        "precision": "fp32",
+        "pretrained_model_path": "",
+        "results_dir": "",
+        "resume_training_checkpoint_path": "",
+        "seed": 1234,
+        "stage": "pretrain",
+        "validation_interval": 1
+      },
+      "popular": [
+        "optim",
+        "validation_interval",
+        "checkpoint_interval",
+        "num_gpus",
+        "num_nodes",
+        "num_epochs",
+        "gpu_ids"
+      ],
+      "properties": {
+        "accum_grad_batches": {
+          "default": 1,
+          "description": "Number of accumulated gradient batches",
+          "maximum": Infinity,
+          "minimum": 1,
+          "title": "Accum gradient batches",
+          "type": "int"
+        },
+        "checkpoint_interval": {
+          "default": 1,
+          "description": "The interval (in epochs) at which a checkpoint will be saved. Helps resume training.",
+          "minimum": 1,
+          "popular": true,
+          "title": "Checkpoint interval",
+          "type": "int"
+        },
+        "checkpoint_interval_unit": {
+          "default": "epoch",
+          "description": "The unit of the checkpoint interval.",
+          "enum": [
+            "epoch",
+            "step"
+          ],
+          "title": "Checkpoint interval unit",
+          "type": "categorical"
+        },
+        "cudnn": {
+          "automl_enabled": false,
+          "default": {
+            "benchmark": false,
+            "deterministic": true
+          },
+          "properties": {
+            "benchmark": {
+              "default": false,
+              "type": "bool"
+            },
+            "deterministic": {
+              "default": true,
+              "type": "bool"
+            }
+          },
+          "type": "collection"
+        },
+        "distributed_strategy": {
+          "default": "ddp",
+          "description": "\n        The multi-GPU training strategy.\n        DDP (Distributed Data Parallel) and Fully Sharded DDP are supported.",
+          "enum": [
+            "ddp",
+            "fsdp"
+          ],
+          "title": "distributed_strategy",
+          "type": "categorical"
+        },
+        "freeze": {
+          "automl_enabled": false,
+          "default": [],
+          "description": "List of layer names to freeze.",
+          "title": "freeze",
+          "type": "list"
+        },
+        "gpu_ids": {
+          "automl_enabled": false,
+          "default": [
+            0
+          ],
+          "description": "\n        List of GPU IDs to run the training on. The length of this list\n        must be equal to the number of gpus in train.num_gpus.",
+          "popular": true,
+          "title": "GPU IDs",
+          "type": "list"
+        },
+        "mask_ratio": {
+          "default": 0.75,
+          "description": "Mask ratio",
+          "title": "Mask ratio.",
+          "type": "float"
+        },
+        "norm_pix_loss": {
+          "default": true,
+          "description": "Whether to normalize pixel loss",
+          "title": "Normalize pixel loss",
+          "type": "bool"
+        },
+        "num_epochs": {
+          "default": 10,
+          "description": "Number of epochs to run the training.",
+          "maximum": Infinity,
+          "minimum": 1,
+          "popular": true,
+          "title": "Number of epochs",
+          "type": "int"
+        },
+        "num_gpus": {
+          "default": 1,
+          "description": "The number of GPUs to run the train job.",
+          "minimum": 1,
+          "popular": true,
+          "title": "Number of GPUs",
+          "type": "int"
+        },
+        "num_nodes": {
+          "default": 1,
+          "description": "Number of nodes to run the training on. If > 1, then multi-node is enabled.",
+          "minimum": 1,
+          "popular": true,
+          "title": "Number of nodes",
+          "type": "int"
+        },
+        "optim": {
+          "automl_default_parameters": [
+            "train.optim.lr",
+            "train.optim.backbone_multiplier",
+            "train.optim.momentum",
+            "train.optim.weight_decay",
+            "train.optim.warmup_epochs"
+          ],
+          "automl_disabled_parameters": [
+            "train.optim.milestones"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "backbone_multiplier": 0.1,
+            "gamma": 0.1,
+            "layer_decay": 0.75,
+            "lr": 0.0002,
+            "lr_scheduler": "MultiStep",
+            "milestones": [
+              88,
+              96
+            ],
+            "momentum": 0.9,
+            "monitor_name": "train_loss",
+            "type": "AdamW",
+            "warmup_epochs": 1,
+            "weight_decay": 0.05
+          },
+          "description": "Hyper parameters to configure the optimizer.",
+          "popular": [
+            "momentum",
+            "weight_decay",
+            "backbone_multiplier",
+            "layer_decay"
+          ],
+          "properties": {
+            "backbone_multiplier": {
+              "automl_enabled": true,
+              "default": 0.1,
+              "description": "A multiplier for backbone learning rate.",
+              "math_cond": "> 0.0",
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "popular": true,
+              "title": "backbone learning rate multiplier",
+              "type": "float"
+            },
+            "gamma": {
+              "default": 0.1,
+              "description": "Multiplicative factor of learning rate decay.",
+              "math_cond": "> 0.0",
+              "title": "gamma",
+              "type": "float"
+            },
+            "layer_decay": {
+              "default": 0.75,
+              "description": "The layer decay coefficient.",
+              "math_cond": "> 0.0",
+              "popular": true,
+              "title": "layer decay",
+              "type": "float"
+            },
+            "lr": {
+              "automl_enabled": true,
+              "default": 0.0002,
+              "description": "The initial learning rate for training the model.",
+              "math_cond": "> 0.0",
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "learning rate",
+              "type": "float"
+            },
+            "lr_scheduler": {
+              "default": "MultiStep",
+              "description": "The learning scheduler:\n                    * MultiStep : Decrease the lr by lr_decay from lr_steps\n                    * cosine : Poly learning rate schedule.",
+              "enum": [
+                "MultiStep",
+                "cosine"
+              ],
+              "title": "learning rate scheduler",
+              "type": "categorical"
+            },
+            "milestones": {
+              "automl_enabled": false,
+              "default": [
+                88,
+                96
+              ],
+              "description": "learning rate decay epochs.",
+              "title": "learning rate decay epochs.",
+              "type": "list"
+            },
+            "momentum": {
+              "automl_enabled": true,
+              "default": 0.9,
+              "description": "The momentum for the AdamW optimizer.",
+              "math_cond": "> 0.0",
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "popular": true,
+              "title": "momentum - AdamW",
+              "type": "float"
+            },
+            "monitor_name": {
+              "default": "train_loss",
+              "description": "The metric value to be monitored for the :code:`AutoReduce` Scheduler.",
+              "enum": [
+                "val_loss",
+                "train_loss"
+              ],
+              "title": "monitor_name",
+              "type": "categorical"
+            },
+            "type": {
+              "default": "AdamW",
+              "description": "Type of optimizer used to train the network.",
+              "enum": [
+                "AdamW"
+              ],
+              "type": "categorical"
+            },
+            "warmup_epochs": {
+              "automl_enabled": true,
+              "default": 1,
+              "description": "Warmup epochs.",
+              "math_cond": ">= 0",
+              "maximum": 100,
+              "minimum": 0,
+              "title": "Warmup epochs",
+              "type": "int"
+            },
+            "weight_decay": {
+              "automl_enabled": true,
+              "default": 0.05,
+              "description": "The weight decay coefficient.",
+              "math_cond": "> 0.0",
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "popular": true,
+              "title": "weight decay",
+              "type": "float"
+            }
+          },
+          "title": "optimizer",
+          "type": "collection"
+        },
+        "precision": {
+          "default": "fp32",
+          "description": "Precision to run the training on.",
+          "enum": [
+            "fp16",
+            "bf16",
+            "fp32"
+          ],
+          "title": "precision",
+          "type": "categorical"
+        },
+        "pretrained_model_path": {
+          "default": "",
+          "description": "Path to the pretrained model",
+          "title": "Pretrained model",
+          "type": "string"
+        },
+        "results_dir": {
+          "default": "",
+          "description": "\n        Path to where all the assets generated from a task are stored.\n        ",
+          "title": "Results directory",
+          "type": "string"
+        },
+        "resume_training_checkpoint_path": {
+          "default": "",
+          "description": "Path to the checkpoint to resume training from.",
+          "title": "Resume checkpoint path",
+          "type": "string"
+        },
+        "seed": {
+          "default": 1234,
+          "description": "The seed for the initializer in PyTorch. If < 0, disable fixed seed.",
+          "maximum": Infinity,
+          "minimum": -1,
+          "title": "Seed for randomization",
+          "type": "int"
+        },
+        "stage": {
+          "default": "pretrain",
+          "description": "Training stage.",
+          "enum": [
+            "pretrain",
+            "finetune"
+          ],
+          "title": "Stage",
+          "type": "categorical"
+        },
+        "validation_interval": {
+          "default": 1,
+          "description": "\n        The interval (in epochs) at which a evaluation\n        will be triggered on the validation dataset.",
+          "minimum": 1,
+          "popular": true,
+          "title": "Validation interval",
+          "type": "int"
+        }
+      },
+      "type": "collection"
+    },
+    "wandb": {
+      "automl_disabled_parameters": [
+        "wandb.tags"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "enable": true,
+        "entity": "",
+        "group": "",
+        "name": "TAO Toolkit Training",
+        "project": "TAO Toolkit",
+        "reinit": false,
+        "run_id": "",
+        "save_code": false,
+        "sync_tensorboard": false,
+        "tags": [
+          "tao-toolkit"
+        ]
+      },
+      "properties": {
+        "enable": {
+          "default": true,
+          "type": "bool"
+        },
+        "entity": {
+          "default": "",
+          "type": "string"
+        },
+        "group": {
+          "default": "",
+          "type": "string"
+        },
+        "name": {
+          "default": "TAO Toolkit Training",
+          "type": "string"
+        },
+        "project": {
+          "default": "TAO Toolkit",
+          "type": "string"
+        },
+        "reinit": {
+          "default": false,
+          "type": "bool"
+        },
+        "run_id": {
+          "default": "",
+          "type": "string"
+        },
+        "save_code": {
+          "default": false,
+          "type": "bool"
+        },
+        "sync_tensorboard": {
+          "default": false,
+          "type": "bool"
+        },
+        "tags": {
+          "automl_enabled": false,
+          "default": [
+            "tao-toolkit"
+          ],
+          "type": "list"
+        }
+      },
+      "type": "collection"
+    }
+  },
+  "type": "object",
+  "x_tao_schema": {
+    "action": "gen_trt_engine",
+    "core_module": "mae",
+    "model": "mae",
+    "network_arch": "mae",
+    "schema_action": "gen_trt_engine",
+    "schema_version": 1,
+    "source": "tao-core dataclass config"
+  }
+}

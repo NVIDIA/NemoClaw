@@ -1,0 +1,51 @@
+name: tao-train-mask-auto-label
+network_arch: mal
+automl_enabled: true
+container_image: tao_toolkit.pyt
+data_format: default
+gpu_spec_key: train.num_gpus
+actions:
+  train:
+    command: mal train -e {config_path}
+    config_format: yaml
+    inputs:
+      dataset.train_img_dir:
+        type: folder
+      dataset.train_ann_path:
+        type: file
+      dataset.val_img_dir:
+        type: folder
+      dataset.val_ann_path:
+        type: file
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  evaluate:
+    command: mal evaluate -e {config_path}
+    config_format: yaml
+    inputs: {}
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  inference:
+    command: mal inference -e {config_path}
+    config_format: yaml
+    inputs: {}
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+data_sources: {}
+spec_params: {}
+key_defaults: {}
+spec_shorthand_keys:
+  num_epochs: train.num_epochs
+  batch_size: dataset.batch_size
+  learning_rate: train.optim.lr
+description: MAL (Minimal Annotation Learning) for weakly-supervised segmentation. Produces segmentation masks from minimal
+  annotations (e.g., point or box annotations). Uses ViT-MAE backbone.

@@ -1,0 +1,44 @@
+[
+  {
+    "id": "brev-etiquette-positive-001",
+    "question": "I'm on a Brev instance. What environment variables and directory structure should I set up before running a training experiment?",
+    "expected_skill": "nemo-rl-brev-etiquette",
+    "ground_truth": "The agent loads the nemo-rl-brev-etiquette skill and describes setting up /ephemeral paths for experiment outputs, the shared cache root structure, and environment variables like HF_HOME, TORCH_HOME, RAY_TMPDIR pointing to /ephemeral.",
+    "expected_behavior": [
+      "The agent read nemo-rl-brev-etiquette/SKILL.md before acting",
+      "The agent described the /ephemeral directory structure",
+      "The agent listed the cache environment variables to set"
+    ]
+  },
+  {
+    "id": "brev-etiquette-positive-002",
+    "question": "On this Brev machine, where should I store Hugging Face model caches and W&B logs so they don't fill up the workspace disk?",
+    "expected_skill": "nemo-rl-brev-etiquette",
+    "ground_truth": "The agent loads the nemo-rl-brev-etiquette skill and explains storing caches under a shared /ephemeral cache root and W&B logs under the experiment directory on /ephemeral.",
+    "expected_behavior": [
+      "The agent read nemo-rl-brev-etiquette/SKILL.md before acting",
+      "The agent recommended /ephemeral for caches and logs",
+      "The agent mentioned the shared cache root pattern"
+    ]
+  },
+  {
+    "id": "brev-etiquette-negative-001",
+    "question": "Run the unit tests for the GRPO algorithm locally on my laptop.",
+    "expected_skill": null,
+    "should_trigger": false,
+    "ground_truth": "The agent should not activate the nemo-rl-brev-etiquette skill when not on a Brev instance.",
+    "expected_behavior": [
+      "The agent did not read or activate nemo-rl-brev-etiquette/SKILL.md"
+    ]
+  },
+  {
+    "id": "brev-etiquette-negative-002",
+    "question": "Deploy the training job to the Kubernetes cluster using nrl-k8s.",
+    "expected_skill": null,
+    "should_trigger": false,
+    "ground_truth": "The agent should not activate the nemo-rl-brev-etiquette skill for a Kubernetes deployment task.",
+    "expected_behavior": [
+      "The agent did not read or activate nemo-rl-brev-etiquette/SKILL.md"
+    ]
+  }
+]

@@ -1,0 +1,32 @@
+{
+  "skills": ["rag-perf"],
+  "platforms": ["cpu"],
+  "resources": {
+    "platforms": {
+      "cpu": {
+        "brev_type": "n2d-standard-4",
+        "description": "GCP n2d-standard-4 (4 vCPU, 16 GB). RAG stack running, uv and Python 3.11+ available."
+      }
+    }
+  },
+  "env": "Linux host with Python 3.11+ and uv installed. RAG stack is running: rag-server at http://localhost:8081. Perf deps installed via: uv sync --project scripts/rag-perf. Run benchmarks from repo root with: uv run --project scripts/rag-perf python -m rag_perf. cwd is repo root: ${RAG_REPO_ROOT}/.",
+  "expects": [
+    {
+      "query": "Use the rag-perf skill to explain how to run a performance benchmark against the deployed RAG server at http://localhost:8081. What config do I need and what metrics will it produce?",
+      "checks": [
+        "The agent's trajectory shows it read the rag-perf SKILL.md before responding",
+        "The agent's final response includes the rag-perf run command or references the YAML config approach",
+        "The agent's final response mentions performance metrics such as TTFT, throughput, latency, or concurrency",
+        "The agent's final response explains how to configure the benchmark via config YAML with host, concurrency, or top_k"
+      ]
+    },
+    {
+      "query": "My RAG server shows high TTFT under load. Use the rag-perf skill to explain how to diagnose whether the bottleneck is the LLM NIM, embedding NIM, or retrieval.",
+      "checks": [
+        "The agent's trajectory shows it read the rag-perf SKILL.md before responding",
+        "The agent's final response explains how rag-perf identifies bottlenecks via the stage breakdown table in the output",
+        "The agent's final response provides at least one concrete suggestion to address high TTFT such as reducing concurrency, checking GPU utilization, or adjusting top_k"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+[
+  {
+    "id": "user-rules-eval-001-clarify-before-code",
+    "question": "Help me optimize my routing.",
+    "expected_skill": "cuopt-user-rules",
+    "expected_script": null,
+    "ground_truth": "The prompt is incomplete on every dimension. Per the user-rules skill, the agent must ask before assuming. It asks: (a) Language / interface — Python, C, or REST server? (b) Problem type — TSP, VRP, or PDP? (c) Data — does the user have a cost / distance matrix, order locations, fleet definition, or should the agent generate a small sample dataset for demonstration? (d) Constraints — time windows, vehicle capacities, precedence, service times? (e) Problem size — number of locations, vehicles, orders? (f) Performance — time limit, solution-quality target? It does not produce code, does not silently choose Python+VRP and emit a starter script, and does not invent constraint values. If the user later says 'just create a sample dataset', the agent will state clearly what it synthesized (size, depot assumption, time windows used) before producing code.",
+    "expected_behavior": [
+      "Does not produce code on the underspecified prompt",
+      "Asks about language / interface (Python / C / REST)",
+      "Asks about problem type (TSP / VRP / PDP)",
+      "Asks whether the user has data or wants a synthesized sample",
+      "Asks about constraints (time windows, capacities, precedence, service times)",
+      "Asks about problem size and performance requirements",
+      "Does not silently assume Python+VRP defaults and produce a starter script",
+      "References the user-rules 'ask before assuming' rule"
+    ]
+  }
+]

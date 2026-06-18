@@ -1,0 +1,105 @@
+model_name: ''
+encryption_key: ''
+results_dir: ''
+wandb:
+  enable: true
+  project: TAO Toolkit
+  entity: ''
+  group: ''
+  tags:
+  - tao-toolkit
+  reinit: false
+  sync_tensorboard: false
+  save_code: false
+  name: TAO Toolkit Training
+  run_id: ''
+model:
+  distill:
+    enable: false
+    disable_masking: false
+    pretrained_non_distill_pl_model_path: ''
+  backbone:
+    teacher_type: vit_l
+    student_type: vit_l
+    num_register_tokens: 0
+    drop_path_rate: 0.4
+    patch_size: 14
+    img_size: 518
+  head:
+    num_layers: 3
+    hidden_dim: 2048
+    bottleneck_dim: 384
+dataset:
+  train_dataset:
+    images_dir: ''
+  test_dataset:
+    images_dir: ''
+  batch_size: 4
+  pin_memory: true
+  workers: 8
+  transform:
+    n_global_crops: 2
+    global_crops_scale:
+    - 0.32
+    - 1.0
+    global_crops_size: 224
+    n_local_crops: 8
+    local_crops_scale:
+    - 0.05
+    - 0.32
+    local_crops_size: 98
+train:
+  num_gpus: 1
+  gpu_ids:
+  - 0
+  num_nodes: 1
+  seed: 1234
+  cudnn:
+    benchmark: false
+    deterministic: true
+  num_epochs: 10
+  checkpoint_interval: 1
+  checkpoint_interval_unit: epoch
+  validation_interval: 1
+  resume_training_checkpoint_path: ''
+  results_dir: ''
+  pretrained_model_path: ''
+  layerwise_decay: 1.0
+  clip_grad_norm: 3.0
+  num_prototypes: 131072
+  precision: 16-mixed
+  use_custom_attention: true
+  schedulers:
+    learning_rate:
+      val_base: 7.07e-06
+      val_final: 1.0e-06
+      val_start: 0.0
+      warm_up_steps: 100000
+      max_decay_steps: 2500000
+    last_layer_learning_rate:
+      val_base: 7.07e-06
+      val_final: 1.0e-06
+      val_start: 0.0
+      warm_up_steps: 100000
+      max_decay_steps: 2500000
+      freeze_steps: 1250
+    weight_decay:
+      val_base: 0.04
+      val_final: 0.2
+      val_start: 0.0
+      warm_up_steps: 0
+      max_decay_steps: 2500000
+    momentum:
+      val_base: 0.994
+      val_final: 1.0
+      val_start: 0.0
+      warm_up_steps: 0
+      max_decay_steps: 2500000
+    teacher_temperature:
+      val_base: 0.07
+      val_final: 0.07
+      val_start: 0.04
+      warm_up_steps: 37500
+      max_decay_steps: 37500
+  optim:
+    optim: adamw

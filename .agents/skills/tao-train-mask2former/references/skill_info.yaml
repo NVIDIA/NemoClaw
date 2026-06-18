@@ -1,0 +1,90 @@
+name: tao-train-mask2former
+network_arch: mask2former
+automl_enabled: true
+container_image: tao_toolkit.pyt
+data_format: coco_panoptic
+gpu_spec_key: train.num_gpus
+actions:
+  train:
+    command: mask2former train -e {config_path}
+    config_format: yaml
+    inputs:
+      dataset.train.img_dir:
+        type: folder
+      dataset.label_map:
+        type: file
+      dataset.train.instance_json:
+        type: file
+      dataset.train.panoptic_json:
+        type: file
+      dataset.train.panoptic_dir:
+        type: folder
+      dataset.val.img_dir:
+        type: folder
+      dataset.val.instance_json:
+        type: file
+      dataset.val.panoptic_json:
+        type: file
+      dataset.val.panoptic_dir:
+        type: folder
+      dataset.test.img_dir:
+        type: folder
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  quantize:
+    command: mask2former quantize -e {config_path}
+    config_format: yaml
+    inputs: {}
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  evaluate:
+    command: mask2former evaluate -e {config_path}
+    config_format: yaml
+    inputs: {}
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  export:
+    command: mask2former export -e {config_path}
+    config_format: yaml
+    inputs: {}
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  inference:
+    command: mask2former inference -e {config_path}
+    config_format: yaml
+    inputs: {}
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  gen_trt_engine:
+    command: mask2former gen_trt_engine -e {config_path}
+    config_format: yaml
+    inputs: {}
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+data_sources: {}
+spec_params: {}
+key_defaults: {}
+spec_shorthand_keys:
+  num_epochs: train.num_epochs
+  batch_size: dataset.batch_size
+  learning_rate: train.optim.lr
+description: Mask2Former for universal image segmentation (panoptic, instance, and semantic). Transformer-based with masked
+  attention for high-quality segmentation results.

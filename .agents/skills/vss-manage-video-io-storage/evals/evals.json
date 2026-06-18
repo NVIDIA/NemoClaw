@@ -1,0 +1,32 @@
+[
+  {
+    "id": "video-io-storage-vios-routing",
+    "question": "List VIOS sensors, find the stream for a named camera, and download a short clip from its recording timeline.",
+    "expected_skill": "vss-manage-video-io-storage",
+    "should_trigger": true,
+    "expected_script": null,
+    "ground_truth": "The agent should load vss-manage-video-io-storage, verify the VST endpoint is reachable, use the VIOS REST API directly, resolve sensorId and streamId from sensor/list and sensor/<sensorId>/streams, fetch timelines before choosing clip timestamps, and use a binary direct storage endpoint for clip download.",
+    "expected_behavior": [
+      "Loads vss-manage-video-io-storage rather than vss-search-archive, vss-ask-video, or vss-summarize-video.",
+      "Checks http://<VST_ENDPOINT>/vst/api/v1/sensor/version before issuing operational calls.",
+      "Resolves missing sensorId or streamId from the VIOS API instead of fabricating identifiers.",
+      "Fetches the stream timeline before selecting startTime and endTime.",
+      "Uses direct binary endpoints for clip or snapshot downloads when possible and avoids printing credentials."
+    ]
+  },
+  {
+    "id": "video-io-storage-nvstreamer-upload",
+    "question": "Upload a sample MP4 to NvStreamer, get the generated RTSP URL, and explain how to register that stream with VIOS.",
+    "expected_skill": "vss-manage-video-io-storage",
+    "should_trigger": true,
+    "expected_script": null,
+    "ground_truth": "The agent should load vss-manage-video-io-storage, distinguish NvStreamer from the VIOS gateway by endpoint and port, upload through the NvStreamer API, read the generated RTSP URL from /sensor/<id>/streams, and use sensorUrl when registering that RTSP URL with VIOS.",
+    "expected_behavior": [
+      "Uses the NvStreamer endpoint for file-to-RTSP operations and the VIOS endpoint for sensor registration or recording operations.",
+      "Does not invoke vss-deploy-profile or a search, Q&A, or summarization skill for API-only VIOS operations.",
+      "Reads generated RTSP URLs from NvStreamer instead of constructing them from hardcoded container paths.",
+      "Uses the sensorUrl field for VIOS POST /sensor/add, not url.",
+      "Cleans up or reports any temporary test sensors or files it creates."
+    ]
+  }
+]

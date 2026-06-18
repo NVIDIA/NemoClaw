@@ -1,0 +1,63 @@
+name: tao-train-foundation-stereo
+network_arch: depth_net_stereo
+automl_enabled: true
+container_image: tao_toolkit.pyt
+data_format: FSD
+gpu_spec_key: train.num_gpus
+actions:
+  train:
+    command: depth_net train -e {config_path}
+    config_format: yaml
+    inputs: {}
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  quantize:
+    command: depth_net quantize -e {config_path}
+    config_format: yaml
+    inputs: {}
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  evaluate:
+    command: depth_net evaluate -e {config_path}
+    config_format: yaml
+    inputs: {}
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  export:
+    command: depth_net export -e {config_path}
+    config_format: yaml
+    inputs: {}
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  inference:
+    command: depth_net inference -e {config_path}
+    config_format: yaml
+    inputs: {}
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+data_sources: {}
+spec_params: {}
+key_defaults: {}
+spec_shorthand_keys:
+  num_epochs: train.num_epochs
+  train_batch_size: dataset.train_dataset.batch_size
+  infer_batch_size: dataset.infer_dataset.batch_size
+  learning_rate: train.optim.lr
+description: Stereo depth estimation using FoundationStereo architecture. Predicts disparity maps from stereo image pairs
+  for 3D reconstruction. Mono and stereo share the unified `depth_net` CLI entrypoint;
+  model family is selected via `model.model_type`.

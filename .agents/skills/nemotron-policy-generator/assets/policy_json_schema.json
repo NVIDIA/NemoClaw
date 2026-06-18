@@ -1,0 +1,88 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Nemotron Content Safety Policy",
+  "type": "object",
+  "required": ["policy_name", "version", "date", "target_models", "use_cases", "taxonomy_mode", "assumptions", "categories"],
+  "properties": {
+    "policy_name": { "type": "string" },
+    "version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
+    "date": { "type": "string", "format": "date" },
+    "owner": { "type": "string" },
+    "target_models": {
+      "type": "array",
+      "items": { "enum": ["ncs", "ncs-vl", "ncs-reasoning", "nemo-guardrails"] }
+    },
+    "use_cases": {
+      "type": "array",
+      "items": { "enum": ["runtime_guardrails", "training_data_labeling", "customer_byo_policy", "eval_rubric"] }
+    },
+    "taxonomy_mode": { "enum": ["clean_v2", "v2_plus_custom", "mostly_custom"] },
+    "severity_model": { "enum": ["binary", "graded_s0_s4"] },
+    "assumptions": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "allow_list": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "response_guidance": {
+      "type": "object",
+      "patternProperties": {
+        "^S[0-4]$": { "type": "string" }
+      }
+    },
+    "jurisdiction_notes": { "type": "string" },
+    "calibration_notes": { "type": "string" },
+    "cot_rules": { "type": "string" },
+    "categories": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["name", "display_name", "definition", "severity", "in_scope", "out_of_scope", "examples_safe", "examples_unsafe", "custom"],
+        "properties": {
+          "name": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+          "display_name": { "type": "string" },
+          "definition": { "type": "string" },
+          "severity": { "enum": ["S0", "S1", "S2", "S3", "S4"] },
+          "custom": { "type": "boolean" },
+          "aegis_parent": { "type": "string", "description": "If custom but cross-linked to an Aegis category" },
+          "in_scope": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string" }
+          },
+          "out_of_scope": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string" }
+          },
+          "examples_safe": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string" }
+          },
+          "examples_unsafe": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string" }
+          },
+          "edge_cases": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["case", "resolution", "reasoning"],
+              "properties": {
+                "case": { "type": "string" },
+                "resolution": { "type": "string" },
+                "reasoning": { "type": "string" }
+              }
+            }
+          },
+          "modality_notes": { "type": "string" }
+        }
+      }
+    }
+  }
+}

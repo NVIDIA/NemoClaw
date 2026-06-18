@@ -1,0 +1,83 @@
+[
+  {
+    "id": "1",
+    "question": "We need to run the full AOI pipeline for our spark PCBA board end-to-end with the shipped PCBA checkpoint to produce annotated anomaly images for IC+bridge, passive_component+excess_solder, and passive_component+missing. The `osmo` CLI is NOT available here \u2014 do not try to run it. Walk me through the plan I would run on my OSMO-equipped workstation: which workflow YAML, which preflight commands and what they check, and the exact `osmo workflow submit` invocation with every required knob. Emit your final plan as a structured response with these labeled sections: **Workflow** (the YAML file), **Preflights** (exact commands with args), **Required URL Artifacts** (enumerated under `<dig_url_root>`), **Submit Command** (complete `osmo workflow submit ... --set ...` block with every required knob), **Output Location** (`<dig_url_root>/runs/<name>/anomaly/` or per-flow override). Do not omit any section.",
+    "expected_skill": "physical-ai-defect-image-generation",
+    "ground_truth": "Response identifies Day 0 Texture Defects (assets/configs/texture_defect_generation_day0.yaml) with the pcb cookbook. It lists scripts/preflight_credentials.sh and scripts/preflight_urls.sh 0 pcb as the preflight commands, and names the four required URL artifacts under dig_url_root: models/pretrained, models/pcb, datasets/pcb/raw, and datasets/pcb/assets. It provides a complete osmo workflow submit invocation for texture_defect_generation_day0.yaml passing --set dig_url_root, image_edit_endpoint, name=<flow>-$STAMP, checkpoint_step=14000, and anomaly_types_json containing IC+bridge, passive_component+excess_solder, and passive_component+missing. It notes labeled output lands at runs/<name>/anomaly and that missing-component is handled natively by AnomalyGen (not routed to structural).",
+    "expected_behavior": [
+      "Response identifies Day 0 Texture Defects as the workflow choice and names assets/configs/texture_defect_generation_day0.yaml.",
+      "Response lists scripts/preflight_urls.sh 0 pcb as the URL preflight command (and mentions scripts/preflight_credentials.sh separately).",
+      "Response names the required URL artifacts: models/pretrained, models/pcb, datasets/pcb/raw (NOT datasets/pcb/processed), and datasets/pcb/assets.",
+      "The submit command passes dig_url_root via --set rather than individual named dataset parameters.",
+      "The submit command sets checkpoint_step=14000 and anomaly_types_json covering IC+bridge, passive_component+excess_solder, and passive_component+missing.",
+      "Response notes that missing-component is handled natively by AnomalyGen in this Day 0 Texture flow (not routed to Day 0 Structural).",
+      "Response describes labeled output landing at runs/<name>/anomaly."
+    ]
+  },
+  {
+    "id": "2",
+    "question": "I have pre-captured clean metal-surface images and ROI masks already under the DIG root. Show me the plan to generate anomaly training data using the shipped metal-surface checkpoint with no finetuning: which workflow YAML, which preflight commands, and the exact `osmo workflow submit` invocation with every required knob. The `osmo` CLI is NOT available in this environment \u2014 do not try to execute it; just produce the recipe. Emit your final plan as a structured response with these labeled sections: **Workflow** (the YAML file), **Preflights** (exact commands with args), **Required URL Artifacts** (enumerated under `<dig_url_root>`), **Submit Command** (complete `osmo workflow submit ... --set ...` block with every required knob), **Output Location** (`<dig_url_root>/runs/<name>/anomaly/` or per-flow override). Do not omit any section.",
+    "expected_skill": "physical-ai-defect-image-generation",
+    "ground_truth": "Response selects Day 1 Manual-ROI (assets/configs/texture_defect_generation_day1_manual_roi.yaml) with usecase=metal_surface. It names scripts/preflight_urls.sh 1 metal_surface as the URL preflight and lists the required artifacts: models/pretrained, models/metal_surface, datasets/metal_surface/raw. It keeps use_pretrained_checkpoint=true (default), sets checkpoint_step=10000, and uses the shipped 5-class MT_* anomaly_types_json (MT_Blowhole, MT_Break, MT_Crack, MT_Fray, MT_Uneven, each paired with metal_surface). It explains labeled output lands at <dig_url_root>/runs/<name>/anomaly.",
+    "expected_behavior": [
+      "Response identifies Day 1 manual-ROI and names assets/configs/texture_defect_generation_day1_manual_roi.yaml.",
+      "Response uses usecase=metal_surface (NOT usecase=metal).",
+      "Response invokes preflight_urls.sh as `1 metal_surface` and lists models/pretrained, models/metal_surface, datasets/metal_surface/raw as the required artifacts.",
+      "Response keeps use_pretrained_checkpoint=true (the default) and sets checkpoint_step=10000.",
+      "Response uses anomaly_types_json covering all 5 shipped classes: MT_Blowhole, MT_Break, MT_Crack, MT_Fray, MT_Uneven (each paired with metal_surface).",
+      "Response describes labeled output at <dig_url_root>/runs/<name>/anomaly."
+    ]
+  },
+  {
+    "id": "3",
+    "question": "I want to finetune anomalygen on our labeled glass-defect data under the DIG root and produce a checkpoint we can reuse later. Walk me through the plan: workflow YAML, preflight invocation, the exact `osmo workflow submit` command, and where the resulting checkpoint will land. The `osmo` CLI is NOT installed here \u2014 do not try to run anything, just produce the recipe. Emit your final plan as a structured response with these labeled sections: **Workflow** (the YAML file), **Preflights** (exact commands with args), **Required URL Artifacts** (enumerated under `<dig_url_root>`), **Submit Command** (complete `osmo workflow submit ... --set ...` block with every required knob), **Output Location** (`<dig_url_root>/runs/<name>/anomaly/` or per-flow override). Do not omit any section.",
+    "expected_skill": "physical-ai-defect-image-generation",
+    "ground_truth": "Response selects the Finetune Only flow (assets/configs/finetune.yaml) and refers to it as 'Finetune Only' (NOT 'Flow C'). It names scripts/preflight_urls.sh finetune glass (NOT 'C glass') as the preflight, verifying models/pretrained and datasets/glass/raw. The submit command is for assets/configs/finetune.yaml with --set dig_url_root and --set usecase=glass. Response explains the cookbook at assets/cookbooks/glass/ag_config.yaml is uploaded as a template and rendered in-pod by yq right after Phase 1 Step 2 produces validation.jsonl (NO pre-submit render step). The resulting checkpoint lands under <dig_url_root>/runs/<name>/finetune and can be copied into models/glass or referenced as a checkpoint URL for Day 0/Day 1 runs.",
+    "expected_behavior": [
+      "Response selects Finetune Only and refers to it as 'Finetune Only' \u2014 NOT 'Flow C'.",
+      "Response invokes preflight_urls.sh as `finetune glass` \u2014 NOT `C glass`.",
+      "Response does NOT claim a pre-submit render of workspaces/finetune/ag_config.yaml; rendering happens in-pod via yq after Phase 1 Step 2.",
+      "The submit command sets dig_url_root and usecase=glass.",
+      "Response explains the checkpoint lands at <dig_url_root>/runs/<name>/finetune and can be copied into models/glass or referenced as a checkpoint URL for Day 0/Day 1 runs."
+    ]
+  },
+  {
+    "id": "4",
+    "question": "I need a batch of clean PCBA images on the 0603_H100 board for our ChangeNet positives \u2014 no defects, just nicely styled clean ROIs. We'll use the local cluster Qwen Image-Edit endpoint. Show me the plan: workflow YAML, preflights, the full `osmo workflow submit` invocation with all required knobs, and the expected output layout. The `osmo` CLI is NOT available in this environment \u2014 recipe only, do not try to execute. Emit your final plan as a structured response with these labeled sections: **Workflow** (the YAML file), **Preflights** (exact commands with args), **Required URL Artifacts** (enumerated under `<dig_url_root>`), **Submit Command** (complete `osmo workflow submit ... --set ...` block with every required knob), **Output Location** (`<dig_url_root>/runs/<name>/anomaly/` or per-flow override). Do not omit any section.",
+    "expected_skill": "physical-ai-defect-image-generation",
+    "ground_truth": "Response selects Day 0 Good Image (assets/configs/good_image_generation.yaml). It names scripts/preflight_credentials.sh and scripts/preflight_urls.sh 0 pcb as preflights and notes only datasets/pcb/assets is required for this flow (no AnomalyGen models). It provides an osmo workflow submit with --set board=0603_H100, dig_url_root, image_edit_endpoint pointing to the in-cluster qwen-image-edit-nvpcb-ovsl2sl service (per references/nim/), and image_edit_model=nvidia/Qwen-Image-Edit-NVPCB-OVSL2SL. It does NOT set anomaly_types_json or checkpoint_step. It describes outputs at runs/<name>/{usd2roi-components,augment}/ with SL-restyled RGBs under augment/crop/<MAT>/<cell>/.",
+    "expected_behavior": [
+      "Response selects Day 0 Good Image (assets/configs/good_image_generation.yaml) \u2014 NOT Day 0 Texture Defects or Day 0 Structural Defects.",
+      "Response does NOT set anomaly_types_json or checkpoint_step (there is no AnomalyGen step in this flow).",
+      "image_edit_model is the OVSL2SL checkpoint nvidia/Qwen-Image-Edit-NVPCB-OVSL2SL (never substituted with the generic qwen-image-edit).",
+      "board=0603_H100 is set explicitly.",
+      "Response describes outputs as the usd2roi tree plus augment/crop/<MAT>/<cell>/ SL-restyled RGBs \u2014 NOT runs/<name>/anomaly (no inference stage in this flow)."
+    ]
+  },
+  {
+    "id": "5",
+    "question": "I need tombstone and shift defect frames for the 0603_H100 board \u2014 just the pose-perturbation kind, not solder bridges. About 60 of them. Walk me through the plan: workflow YAML, preflights, the exact `osmo workflow submit` invocation with the sizing knob set correctly, and the expected output dirs. The `osmo` CLI is NOT installed here \u2014 recipe only. Emit your final plan as a structured response with these labeled sections: **Workflow** (the YAML file), **Preflights** (exact commands with args), **Required URL Artifacts** (enumerated under `<dig_url_root>`), **Submit Command** (complete `osmo workflow submit ... --set ...` block with every required knob), **Output Location** (`<dig_url_root>/runs/<name>/anomaly/` or per-flow override). Do not omit any section.",
+    "expected_skill": "physical-ai-defect-image-generation",
+    "ground_truth": "Response selects Day 0 Structural Defects (assets/configs/structural_defect_generation.yaml). It names scripts/preflight_credentials.sh and scripts/preflight_urls.sh 0 pcb as preflights (only datasets/pcb/assets is required). The submit command sets board=0603_H100, image_edit_endpoint, image_edit_model=nvidia/Qwen-Image-Edit-NVPCB-OVSL2SL, defect_modes=tombstone,shift, and uses render_patches=2 (sized per the ~30-final-crops-per-render_patch heuristic to hit ~60 target crops). Response explicitly avoids crop_max_emit on this flow. It also notes that missing-component is NOT produced here and would be routed to Day 0 Texture Defects (AnomalyGen handles missing via AMP). Outputs land at runs/<name>/structural_defect and runs/<name>/structural_defect_edited.",
+    "expected_behavior": [
+      "Response selects Day 0 Structural Defects (assets/configs/structural_defect_generation.yaml).",
+      "defect_modes is narrowed to the requested subset (tombstone,shift) rather than the full default set.",
+      "Response does NOT use crop_max_emit on this flow \u2014 that knob does not exist on structural; it sizes via render_patches with the ~30-final-crops-per-render_patch heuristic (so render_patches=2 for ~60 target crops).",
+      "Response notes that missing-component frames are NOT produced here and would need to be routed to Day 0 Texture Defects (AnomalyGen handles missing via AMP).",
+      "Response describes outputs at runs/<name>/structural_defect and runs/<name>/structural_defect_edited (NOT runs/<name>/anomaly)."
+    ]
+  },
+  {
+    "id": "6",
+    "question": "Here's a real photo of our 0603_H100 PCBA captured on the AOI machine. I want defects labeled on it using the shipped PCBA checkpoint. Walk me through the plan: workflow YAML, preflights, the exact `osmo workflow submit` invocation with every required knob, the group order the workflow will execute, and where labeled output will land. The `osmo` CLI is NOT installed in this environment \u2014 recipe only; do not try to execute. Emit your final plan as a structured response with these labeled sections: **Workflow** (the YAML file), **Preflights** (exact commands with args), **Required URL Artifacts** (enumerated under `<dig_url_root>`), **Submit Command** (complete `osmo workflow submit ... --set ...` block with every required knob), **Output Location** (`<dig_url_root>/runs/<name>/anomaly/` or per-flow override). Do not omit any section.",
+    "expected_skill": "physical-ai-defect-image-generation",
+    "ground_truth": "Response selects the Day 1 Real-Photo Alignment variant (assets/configs/texture_defect_generation_day1_real_alignment.yaml) as the silent PCBA Day 1 default \u2014 without pausing to ask 'manual or real-alignment?'. It names scripts/preflight_urls.sh 1 pcb real-alignment as the URL preflight and lists models/pretrained, models/pcb, datasets/pcb/raw, and datasets/pcb/assets (the real-alignment variant additionally requires the assets bundle for the USD tree and input_real_image/<board>.jpg). The submit command sets usecase=pcb, board=0603_H100, use_pretrained_checkpoint=true (default), and default_spatial_dependency=cad (default), plus an anomaly_types_json appropriate for PCBA. real_image_filename defaults to input_real_image/0603_H100.jpg from the pcb-assets bundle. Response notes the workflow runs usd2roi-render-day1 \u2192 (optional finetune-job) \u2192 anomaly-infer, and that final labeled output lands at runs/<name>/anomaly.",
+    "expected_behavior": [
+      "Response selects Day 1 Real-Photo Alignment by default (texture_defect_generation_day1_real_alignment.yaml), NOT manual-ROI \u2014 and does NOT pause to ask the user 'manual or real-alignment?' for a PCBA Day 1 request.",
+      "Response invokes preflight_urls.sh with the real-alignment variant: `1 pcb real-alignment`.",
+      "Response sets usecase=pcb and board=0603_H100; real_image_filename defaults to input_real_image/0603_H100.jpg from the pcb-assets bundle.",
+      "default_spatial_dependency=cad is kept as the default (the usd2roi image emits semantic_segmentation_labels.json natively).",
+      "Response describes the workflow as running usd2roi-render-day1 \u2192 (optional finetune-job) \u2192 anomaly-infer, with final labeled output at runs/<name>/anomaly."
+    ]
+  }
+]

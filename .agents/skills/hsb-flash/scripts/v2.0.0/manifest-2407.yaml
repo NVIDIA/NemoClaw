@@ -1,0 +1,31 @@
+hololink:
+  archive:
+    enrollment_date: '2025-01-15T20:17:26.407881+00:00'
+    version: '2407'
+  content:
+    NVIDIA_RTL_License_Agreement.txt:
+      md5: e8c77cea2712a6e3883c49b063ebc816
+      size: 16929
+      url: https://api.ngc.nvidia.com/v2/resources/org/nvidia/team/clara-holoscan/holoscan_sensor_bridge_fpga_ip/2407/files?redirect=true&path=NVIDIA_RTL_License_Agreement.txt
+    fpga_clnx_v2407.bit:
+      md5: 673db16ede425bd77b313bfc40f82588
+      size: 383843
+      url: https://api.ngc.nvidia.com/v2/resources/org/nvidia/team/clara-holoscan/holoscan_sensor_bridge_fpga_ip/2407/files?redirect=true&path=fpga_clnx_v2407.bit
+    fpga_cpnx_v2407.bit:
+      md5: 6ad1a7d71b12ff26bcf7541c80ddd16e
+      size: 1960836
+      url: https://api.ngc.nvidia.com/v2/resources/org/nvidia/team/clara-holoscan/holoscan_sensor_bridge_fpga_ip/2407/files?redirect=true&path=fpga_cpnx_v2407.bit
+    hololink-hdl.zip:
+      md5: 21de471e09dce015946bd11f02bcd2b6
+      size: 1294292
+      url: https://api.ngc.nvidia.com/v2/resources/org/nvidia/team/clara-holoscan/holoscan_sensor_bridge_fpga_ip/2407/files?redirect=true&path=hololink-hdl.zip
+  fpga_uuid:
+  - 889b7ce3-65a5-4247-8b05-4ff1904c3359
+  images:
+  - content: fpga_clnx_v2407.bit
+    context: clnx
+  - content: fpga_cpnx_v2407.bit
+    context: cpnx
+  licenses:
+  - NVIDIA_RTL_License_Agreement.txt
+  strategy: sensor_bridge_10

@@ -1,0 +1,310 @@
+dataset:
+  class_names:
+  - Car
+  - Truck
+  - Van
+  - Tram
+  - Pedestrian
+  - Cyclist
+  - Misc
+  type: GeneralPCDataset
+  data_path: ''
+  data_info_path: ''
+  data_split:
+    test: val
+    train: train
+  info_path:
+    test:
+    - infos_val.pkl
+    train:
+    - infos_train.pkl
+  balanced_resampling: false
+  point_feature_encoding:
+    encoding_type: absolute_coordinates_encoding
+    src_feature_list:
+    - x
+    - y
+    - z
+    - intensity
+    used_feature_list:
+    - x
+    - y
+    - z
+    - intensity
+  point_cloud_range:
+  - 5.245
+  - -25.983
+  - -3.854
+  - 79.485
+  - 48.257
+  - 2.908
+  data_augmentor:
+    disable_aug_list:
+    - placeholder
+    aug_config_list:
+    - db_info_path:
+      - dbinfos_train.pkl
+      disable_with_fake_lidar: false
+      limit_whole_scene: false
+      name: gt_sampling
+      num_point_features: 4
+      preface:
+        filter_by_min_points:
+        - Car:5
+        - Truck:5
+        - Van:5
+        - Tram:5
+        - Pedestrian:5
+        - Cyclist:5
+        - Misc:5
+      remove_extra_width:
+      - 0.0
+      - 0.0
+      - 0.0
+      sample_groups:
+      - Car:15
+      - Truck:15
+      - Van:15
+      - Tram:15
+      - Pedestrian:15
+      - Cyclist:15
+      - Misc:15
+  data_processor:
+  - name: mask_points_and_boxes_outside_range
+    remove_outside_boxes: true
+  - name: shuffle_points
+    shuffle:
+      test: false
+      train: true
+  - max_number_of_voxels:
+      test: 10000
+      train: 16000
+    max_points_per_voxel: 32
+    name: transform_points_to_voxels
+    voxel_size:
+    - 0.16
+    - 0.16
+    - 6.762
+  num_workers: 4
+model:
+  name: PointPillar
+  pretrained_model_path: ''
+  vfe:
+    name: PillarVFE
+    with_distance: false
+    use_absolue_xyz: true
+    use_norm: true
+    num_filters:
+    - 64
+  map_to_bev:
+    name: PointPillarScatter
+    num_bev_features: 64
+  backbone_2d:
+    name: BaseBEVBackbone
+    layer_nums:
+    - 3
+    - 5
+    - 5
+    layer_strides:
+    - 2
+    - 2
+    - 2
+    num_filters:
+    - 64
+    - 128
+    - 256
+    upsample_strides:
+    - 1
+    - 2
+    - 4
+    num_upsample_filters:
+    - 128
+    - 128
+    - 128
+  dense_head:
+    name: AnchorHeadSingle
+    class_agnostic: false
+    use_direction_classifier: true
+    dir_offset: 0.78539
+    dir_limit_offset: 0.0
+    num_dir_bins: 2
+    anchor_generator_config:
+    - class_name: Car
+      anchor_sizes:
+      - - 3.9
+        - 1.6
+        - 1.56
+      anchor_rotations:
+      - 0
+      - 1.57
+      anchor_bottom_heights:
+      - -1.78
+      align_center: false
+      feature_map_stride: 2
+      matched_threshold: 0.6
+      unmatched_threshold: 0.45
+    - class_name: Truck
+      anchor_sizes:
+      - - 3.9
+        - 1.6
+        - 1.56
+      anchor_rotations:
+      - 0
+      - 1.57
+      anchor_bottom_heights:
+      - -1.78
+      align_center: false
+      feature_map_stride: 2
+      matched_threshold: 0.6
+      unmatched_threshold: 0.45
+    - class_name: Van
+      anchor_sizes:
+      - - 3.9
+        - 1.6
+        - 1.56
+      anchor_rotations:
+      - 0
+      - 1.57
+      anchor_bottom_heights:
+      - -1.78
+      align_center: false
+      feature_map_stride: 2
+      matched_threshold: 0.6
+      unmatched_threshold: 0.45
+    - class_name: Tram
+      anchor_sizes:
+      - - 3.9
+        - 1.6
+        - 1.56
+      anchor_rotations:
+      - 0
+      - 1.57
+      anchor_bottom_heights:
+      - -1.78
+      align_center: false
+      feature_map_stride: 2
+      matched_threshold: 0.6
+      unmatched_threshold: 0.45
+    - class_name: Pedestrian
+      anchor_sizes:
+      - - 0.8
+        - 0.6
+        - 1.73
+      anchor_rotations:
+      - 0
+      - 1.57
+      anchor_bottom_heights:
+      - -0.6
+      align_center: false
+      feature_map_stride: 2
+      matched_threshold: 0.5
+      unmatched_threshold: 0.35
+    - class_name: Cyclist
+      anchor_sizes:
+      - - 1.76
+        - 0.6
+        - 1.73
+      anchor_rotations:
+      - 0
+      - 1.57
+      anchor_bottom_heights:
+      - -0.6
+      align_center: false
+      feature_map_stride: 2
+      matched_threshold: 0.5
+      unmatched_threshold: 0.35
+    - class_name: Misc
+      anchor_sizes:
+      - - 0.8
+        - 0.6
+        - 1.73
+      anchor_rotations:
+      - 0
+      - 1.57
+      anchor_bottom_heights:
+      - -0.6
+      align_center: false
+      feature_map_stride: 2
+      matched_threshold: 0.5
+      unmatched_threshold: 0.35
+    target_assigner_config:
+      name: AxisAlignedTargetAssigner
+      pos_fraction: -1.0
+      sample_size: 512
+      norm_by_num_examples: false
+      match_height: false
+      box_coder: ResidualCoder
+    loss_config:
+      loss_weights:
+        cls_weight: 1.0
+        loc_weight: 2.0
+        dir_weight: 0.2
+        code_weights:
+        - 1.0
+        - 1.0
+        - 1.0
+        - 1.0
+        - 1.0
+        - 1.0
+        - 1.0
+  post_processing:
+    recall_thresh_list:
+    - 0.3
+    - 0.5
+    - 0.7
+    - 0.3
+    - 0.3
+    - 0.3
+    - 0.3
+    score_thresh: 0.1
+    output_raw_score: false
+    eval_metric: kitti
+    nms_config:
+      multi_classes_nms: false
+      nms_type: nms_gpu
+      nms_thresh: 0.01
+      nms_pre_max_size: 4096
+      nms_post_max_size: 500
+  sync_bn: false
+train:
+  batch_size: 4
+  num_epochs: 80
+  optimizer: adam_onecycle
+  lr: 0.003
+  weight_decay: 0.01
+  momentum: 0.9
+  moms:
+  - 0.95
+  - 0.85
+  pct_start: 0.4
+  div_factor: 10.0
+  decay_step_list:
+  - 35
+  - 45
+  lr_decay: 0.1
+  lr_clip: 1.0e-07
+  lr_warmup: false
+  warmup_epoch: 1
+  grad_norm_clip: 10.0
+  resume_training_checkpoint_path: ''
+  pruned_model_path: ''
+  tcp_port: 18888
+  checkpoint_interval: 1
+  validation_interval: 1
+  max_checkpoint_save_num: 30
+  merge_all_iters_to_one_epoch: false
+  num_gpus: 1
+  gpu_ids:
+  - 0
+export:
+  gpu_id: 0
+  checkpoint: ''
+  onnx_file: ''
+  cal_data_path: ''
+  cal_cache_file: ''
+  data_type: fp32
+  save_engine: ''
+  batch_size: 1
+  workspace_size: 1024
+local_rank: 0
+results_dir: ''

@@ -1,0 +1,16 @@
+[
+  {
+    "id": "cpu-offloading-positive-optimizer-smoke",
+    "question": "Use the nemo-mbridge-perf-cpu-offloading skill. For a Qwen3-30B-A3B Megatron Bridge run that needs pipeline parallelism and still has GPU memory pressure, should I use activation CPU offloading or optimizer CPU offloading? Include the exact optimizer config knobs and the main activation-offload constraints.",
+    "expected_skill": "nemo-mbridge-perf-cpu-offloading",
+    "expected_script": null,
+    "ground_truth": "The answer should use the CPU offloading skill, choose optimizer CPU offloading for large MoE models that need pipeline parallelism, and explain that layer-level activation CPU offloading requires pipeline_model_parallel_size=1. It should include optimizer.optimizer_cpu_offload=True, optimizer.optimizer_offload_fraction, and optionally optimizer.overlap_cpu_optimizer_d2h_h2d=True. It should mention activation offloading constraints: PP=1, no activation recompute, no CUDA graphs, and cpu_offloading_num_layers in range.",
+    "expected_behavior": [
+      "Read the nemo-mbridge-perf-cpu-offloading skill before answering.",
+      "Choose optimizer CPU offloading for a large MoE model that needs pipeline parallelism.",
+      "List optimizer.optimizer_cpu_offload and optimizer.optimizer_offload_fraction.",
+      "Mention that activation CPU offloading requires PP=1.",
+      "Mention that activation CPU offloading cannot combine with recompute or CUDA graphs."
+    ]
+  }
+]

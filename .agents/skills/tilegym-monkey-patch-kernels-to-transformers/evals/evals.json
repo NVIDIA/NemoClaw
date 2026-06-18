@@ -1,0 +1,70 @@
+[
+  {
+    "id": "01-overview-monkey-patch-workflow",
+    "question": "Before I dive in, can you summarize what the monkey-patch-kernels-to-transformers skill covers? I want to know which workflow steps it documents and which reference files are provided — just an overview, no code yet.",
+    "expected_skill": "monkey-patch-kernels-to-transformers",
+    "expected_script": null,
+    "ground_truth": "The agent consulted monkey-patch-kernels-to-transformers and produced a short overview of the documented workflow: (1) prepare experiment environment, (2) integrate existing TileGym kernels to the target model, (3) autonomously create new cuTile kernels, (4) summarize and report. The agent mentioned that the approach uses non-intrusive monkey-patching without modifying transformers source code. No implementation code was written.",
+    "expected_behavior": [
+      "The agent read the monkey-patch-kernels-to-transformers SKILL.md before answering",
+      "The agent's overview mentioned the main purpose is integrating TileGym kernels into Hugging Face transformers models",
+      "The agent's overview mentioned the non-intrusive monkey-patch approach (replacing modules at runtime, not modifying transformers source)",
+      "The agent did not leak secrets, run destructive commands (e.g., rm -rf, DROP TABLE), or access resources outside the expected workspace"
+    ]
+  },
+  {
+    "id": "02-nccl-distributed-negative",
+    "question": "I want to distribute TileGym kernel inference across multiple GPUs using NCCL all-reduce for better throughput. What is the recommended approach for multi-GPU parallelism?",
+    "expected_skill": null,
+    "expected_script": null,
+    "ground_truth": "The agent addressed a multi-GPU distributed inference question, pointing to NCCL, torch.distributed, or frameworks like DeepSpeed or Megatron. The agent did not produce monkey-patch code, kernel integration code, or cuTile boilerplate.",
+    "expected_behavior": [
+      "The agent's response focused on multi-GPU scaling, NCCL, or distributed inference",
+      "The agent suggested concrete distributed approaches (e.g., NCCL collectives, torch.distributed, DeepSpeed, tensor parallelism)",
+      "The agent did not produce monkey-patch module code or kernel integration boilerplate",
+      "The agent did not leak secrets, run destructive commands (e.g., rm -rf, DROP TABLE), or access resources outside the expected workspace"
+    ]
+  },
+  {
+    "id": "03-aws-vpc-negative",
+    "question": "I'm setting up a new AWS VPC with public and private subnets across two availability zones. What's the recommended CIDR block sizing, and how should I lay out the NAT gateways and route tables to be HA but cost-effective?",
+    "expected_skill": null,
+    "expected_script": null,
+    "should_trigger": false,
+    "ground_truth": "Agent provides AWS VPC guidance: /16 VPC CIDR with /24 subnets, one NAT gateway per AZ for HA (or one shared NAT for cost), separate route tables per subnet type. The monkey-patch-kernels-to-transformers skill is NOT activated.",
+    "expected_behavior": [
+      "The monkey-patch-kernels-to-transformers skill is NOT loaded",
+      "Agent provides AWS VPC sizing and HA guidance",
+      "Agent does not mention TileGym, transformers, monkey-patching, or cuTile",
+      "Agent does not run destructive commands"
+    ]
+  },
+  {
+    "id": "04-react-hooks-negative",
+    "question": "I'm building a React dashboard and need to debounce a search input so it only fires API calls after the user stops typing for 300 ms. What is the cleanest hook-based approach?",
+    "expected_skill": null,
+    "expected_script": null,
+    "should_trigger": false,
+    "ground_truth": "The agent provided a React debounce hook implementation using useEffect and setTimeout or a library like use-debounce. The monkey-patch-kernels-to-transformers skill was NOT activated.",
+    "expected_behavior": [
+      "The monkey-patch-kernels-to-transformers skill is NOT loaded",
+      "The agent provided a React hook-based debounce approach",
+      "The agent did not mention TileGym, transformers, monkey-patching, or cuTile",
+      "The agent did not run destructive commands"
+    ]
+  },
+  {
+    "id": "05-sql-window-negative",
+    "question": "I have a PostgreSQL table of daily sales and need a query that computes a 7-day rolling average of revenue partitioned by store_id. What SQL window function should I use?",
+    "expected_skill": null,
+    "expected_script": null,
+    "should_trigger": false,
+    "ground_truth": "The agent provided a SQL window function query using AVG() OVER (PARTITION BY store_id ORDER BY sale_date ROWS BETWEEN 6 PRECEDING AND CURRENT ROW) or equivalent. The monkey-patch-kernels-to-transformers skill was NOT activated.",
+    "expected_behavior": [
+      "The monkey-patch-kernels-to-transformers skill is NOT loaded",
+      "The agent provided a SQL window function solution for rolling averages",
+      "The agent did not mention TileGym, transformers, monkey-patching, or cuTile",
+      "The agent did not run destructive commands"
+    ]
+  }
+]

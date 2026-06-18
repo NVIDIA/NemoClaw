@@ -1,0 +1,289 @@
+{
+  "actions": {
+    "evaluate": {
+      "automl_default_parameters": [
+        "train.optim.lr_steps"
+      ],
+      "automl_disabled_parameters": [
+        "dataset",
+        "dataset.pixel_mean",
+        "dataset.pixel_std",
+        "evaluate",
+        "evaluate.gpu_ids",
+        "export",
+        "inference",
+        "inference.gpu_ids",
+        "model",
+        "model.stride_size",
+        "re_ranking",
+        "train",
+        "train.cudnn",
+        "train.gpu_ids",
+        "train.optim",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "re_identification",
+      "path": "schemas/evaluate.schema.json",
+      "popular": {
+        "dataset": {
+          "batch_size": 64,
+          "num_classes": 751,
+          "num_instances": 4,
+          "num_workers": 8,
+          "val_batch_size": 128
+        },
+        "evaluate": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "model": {
+          "backbone": "resnet_50"
+        },
+        "re_ranking": {
+          "k1": 20,
+          "k2": 6,
+          "max_rank": 10,
+          "num_query": 10
+        },
+        "train": {
+          "checkpoint_interval": 1,
+          "gpu_ids": [
+            0
+          ],
+          "num_epochs": 10,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "validation_interval": 1
+        }
+      },
+      "schema_action": "evaluate",
+      "spec_template": "references/spec_template_evaluate.yaml"
+    },
+    "export": {
+      "automl_default_parameters": [
+        "train.optim.lr_steps"
+      ],
+      "automl_disabled_parameters": [
+        "dataset",
+        "dataset.pixel_mean",
+        "dataset.pixel_std",
+        "evaluate",
+        "evaluate.gpu_ids",
+        "export",
+        "inference",
+        "inference.gpu_ids",
+        "model",
+        "model.stride_size",
+        "re_ranking",
+        "train",
+        "train.cudnn",
+        "train.gpu_ids",
+        "train.optim",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "re_identification",
+      "path": "schemas/export.schema.json",
+      "popular": {
+        "dataset": {
+          "batch_size": 64,
+          "num_classes": 751,
+          "num_instances": 4,
+          "num_workers": 8,
+          "val_batch_size": 128
+        },
+        "evaluate": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "model": {
+          "backbone": "resnet_50"
+        },
+        "re_ranking": {
+          "k1": 20,
+          "k2": 6,
+          "max_rank": 10,
+          "num_query": 10
+        },
+        "train": {
+          "checkpoint_interval": 1,
+          "gpu_ids": [
+            0
+          ],
+          "num_epochs": 10,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "validation_interval": 1
+        }
+      },
+      "schema_action": "export",
+      "spec_template": "references/spec_template_export.yaml"
+    },
+    "inference": {
+      "automl_default_parameters": [
+        "train.optim.lr_steps"
+      ],
+      "automl_disabled_parameters": [
+        "dataset",
+        "dataset.pixel_mean",
+        "dataset.pixel_std",
+        "evaluate",
+        "evaluate.gpu_ids",
+        "export",
+        "inference",
+        "inference.gpu_ids",
+        "model",
+        "model.stride_size",
+        "re_ranking",
+        "train",
+        "train.cudnn",
+        "train.gpu_ids",
+        "train.optim",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "re_identification",
+      "path": "schemas/inference.schema.json",
+      "popular": {
+        "dataset": {
+          "batch_size": 64,
+          "num_classes": 751,
+          "num_instances": 4,
+          "num_workers": 8,
+          "val_batch_size": 128
+        },
+        "evaluate": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "model": {
+          "backbone": "resnet_50"
+        },
+        "re_ranking": {
+          "k1": 20,
+          "k2": 6,
+          "max_rank": 10,
+          "num_query": 10
+        },
+        "train": {
+          "checkpoint_interval": 1,
+          "gpu_ids": [
+            0
+          ],
+          "num_epochs": 10,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "validation_interval": 1
+        }
+      },
+      "schema_action": "inference",
+      "spec_template": "references/spec_template_inference.yaml"
+    },
+    "train": {
+      "automl_default_parameters": [
+        "train.optim.lr_steps"
+      ],
+      "automl_disabled_parameters": [
+        "dataset",
+        "dataset.pixel_mean",
+        "dataset.pixel_std",
+        "evaluate",
+        "evaluate.gpu_ids",
+        "export",
+        "inference",
+        "inference.gpu_ids",
+        "model",
+        "model.stride_size",
+        "re_ranking",
+        "train",
+        "train.cudnn",
+        "train.gpu_ids",
+        "train.optim",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "re_identification",
+      "path": "schemas/train.schema.json",
+      "popular": {
+        "dataset": {
+          "batch_size": 64,
+          "num_classes": 751,
+          "num_instances": 4,
+          "num_workers": 8,
+          "val_batch_size": 128
+        },
+        "evaluate": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "model": {
+          "backbone": "resnet_50"
+        },
+        "re_ranking": {
+          "k1": 20,
+          "k2": 6,
+          "max_rank": 10,
+          "num_query": 10
+        },
+        "train": {
+          "checkpoint_interval": 1,
+          "gpu_ids": [
+            0
+          ],
+          "num_epochs": 10,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "validation_interval": 1
+        }
+      },
+      "schema_action": "train",
+      "spec_template": "references/spec_template_train.yaml"
+    }
+  },
+  "automl_enabled": true,
+  "failures": {},
+  "model": "re-identification",
+  "network_arch": "re_identification",
+  "schema_version": 1
+}

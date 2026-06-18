@@ -1,0 +1,64 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Qwen2.5-14B-Instruct (text LLM, ~28GB weights).
+# Served via model-free-nim container with HuggingFace weights pre-staged on a manual PVC.
+#
+# Why manual PVC instead of NIMCache: same layout incompatibility as qwen3-vl (see that file
+# for details). Pre-population is done by hf-download-job.yaml in this directory.
+#
+# Text-only — no NVENC, no video-specific env vars required. Fits on a single 48GB GPU.
+apiVersion: apps.nvidia.com/v1alpha1
+kind: NIMService
+metadata:
+  name: qwen25-14b
+  namespace: osmo-nims
+spec:
+  image:
+    repository: nvcr.io/nim/nvidia/model-free-nim
+    tag: "2.0.2"
+    pullPolicy: IfNotPresent
+    pullSecrets:
+      - nvcr-pull-secret
+  authSecret: ngc-api-secret
+  env:
+    - name: NIM_MODEL_PATH
+      value: "hf://Qwen/Qwen2.5-14B-Instruct"
+    # Point NIM + HuggingFace at the pre-downloaded PVC layout and stay offline.
+    - name: NIM_CACHE_PATH
+      value: "/model-store"
+    - name: HF_HOME
+      value: "/model-store/huggingface/hub"
+    - name: HF_HUB_OFFLINE
+      value: "1"
+    # Advertise under the HF id rather than the default "ga-model-free-nim".
+    - name: NIM_SERVED_MODEL_NAME
+      value: "Qwen/Qwen2.5-14B-Instruct"
+    - name: NIM_PROXY_CLIENT_MAX_BODY_SIZE
+      value: "500M"
+  storage:
+    pvc:
+      # Pre-created PVC populated by hf-download-job.yaml before this NIMService boots.
+      name: qwen25-14b-pvc
+  startupProbe:
+    enabled: true
+    probe:
+      httpGet:
+        path: /v1/health/ready
+        port: 8000
+      initialDelaySeconds: 60
+      periodSeconds: 30
+      failureThreshold: 120
+      timeoutSeconds: 5
+  replicas: 1
+  resources:
+    limits:
+      nvidia.com/gpu: 1
+      memory: 48Gi
+    requests:
+      nvidia.com/gpu: 1
+      memory: 48Gi
+  expose:
+    service:
+      type: ClusterIP
+      port: 8000

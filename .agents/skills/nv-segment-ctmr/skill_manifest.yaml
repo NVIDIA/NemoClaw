@@ -1,0 +1,183 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+id: medagent.nv_segment_ctmr
+version: 0.1.0
+upstream_refs:
+  - kind: github_repo
+    name: NVIDIA-Medtech/NV-Segment-CTMR
+    repo_url: https://github.com/NVIDIA-Medtech/NV-Segment-CTMR
+    git_commit: f9f5f51b589e5dc9c23c453cf5138398e4084056
+  - kind: huggingface_repo
+    name: nvidia/NV-Segment-CTMR
+    repo_id: nvidia/NV-Segment-CTMR
+    revision: 4fb8b4a6b2532be9f1c449a3726fe5440ab4213a
+license: Apache-2.0
+intended_use:
+  summary: >
+    Engineering-time wrapper around NVIDIA-Medtech/NV-Segment-CTMR, a
+    CT/MRI VISTA3D-derived segmentation bundle. Invokes the upstream
+    `python -m monai.bundle run --config_file configs/inference.json`
+    entry point and summarizes the produced NIfTI label map.
+  scope: development
+  not_for:
+    - clinical deployment
+    - clinical interpretation
+    - autonomous diagnosis
+    - regulatory submission
+inputs:
+  - name: ct_or_mr_volume
+    type: file_path
+    formats:
+      - nifti
+outputs:
+  - name: label_map
+    type: file_path
+    formats:
+      - nifti
+  - name: result_json
+    type: json
+    schema: validators/output_schema.json
+runtime:
+  language: python
+  python: ">=3.10"
+  entrypoint: scripts/run_ctmr.py
+  args:
+    - "${python}"
+    - "${script}"
+    - "${fixture}"
+    - "--output-dir"
+    - "${out}/segment_ctmr_outputs"
+    - "--modality"
+    - "CT_BODY"
+  dependencies:
+    nibabel: ">=4.0"
+    numpy: ">=1.23"
+    typer: ">=0.9"
+    monai: ">=1.5"
+    torch: ">=2.1"
+    huggingface_hub: ">=0.20"
+  side_effects:
+    pip_packages:
+      - nibabel>=4.0
+      - numpy>=1.23
+      - typer>=0.9
+      - monai>=1.5
+      - torch>=2.1
+      - huggingface_hub>=0.20
+      - hf-transfer>=0.1
+    local_writes:
+      - {path: "<caller-provided --output-dir>", approx_mb_max: 4000}
+    home_writes:
+      - {path: ~/.cache/huggingface/, approx_mb_max: 6000}
+    network_endpoints:
+      - https://github.com
+      - https://huggingface.co
+    requires_docker: false
+    requires_gpu: cuda
+    environment:
+      clean_environment_required: false
+      clean_environment_recommended: true
+      modifies_active_python_environment: true
+      user_environment_modification_ok: true
+      recommended_isolation: fresh venv or container for benchmarks; caller-selected env for interactive use
+      notes: >
+        Runtime setup commands may install packages into the active Python
+        environment. That is acceptable only when the caller chooses that
+        environment; benchmark and evidence runs should use a fresh per-run
+        environment.
+    env_required: []
+    env_optional:
+      - NV_SEGMENT_CTMR_ROOT
+  external_assets:
+    - kind: upstream_repo
+      repo_url: https://github.com/NVIDIA-Medtech/NV-Segment-CTMR
+      install_path: $NV_SEGMENT_CTMR_ROOT
+      install_command: >
+        git clone https://github.com/NVIDIA-Medtech/NV-Segment-CTMR.git $HOME/NV-Segment-CTMR &&
+        export NV_SEGMENT_CTMR_ROOT=$HOME/NV-Segment-CTMR/NV-Segment-CTMR &&
+        pip install -r $NV_SEGMENT_CTMR_ROOT/requirements.txt
+      contains:
+        - configs/inference.json
+        - configs/label_dict.json
+        - configs/metadata.json
+        - scripts/
+        - brain_t1_preprocess/
+    - kind: huggingface_repo
+      repo_id: nvidia/NV-Segment-CTMR
+      install_path: $NV_SEGMENT_CTMR_ROOT/models/
+      install_command: >
+        mkdir -p $NV_SEGMENT_CTMR_ROOT/models &&
+        hf download nvidia/NV-Segment-CTMR --local-dir $NV_SEGMENT_CTMR_ROOT/models/ &&
+        mv $NV_SEGMENT_CTMR_ROOT/models/vista3d_pretrained_model/model.pt
+        $NV_SEGMENT_CTMR_ROOT/models/model.pt
+      contains:
+        - models/model.pt
+paired_verifiers:
+  - id: medagent.verifiers.ct_segmentation_quality_v1
+    status: implemented
+    consumes: evidence_pack_dir
+    purpose: >
+      Converts this wrapper's CT-body geometry/label-set evidence into a
+      CT-segmentation quality floor. MRI-body and MRI-brain outputs need
+      modality-specific second-pass verifiers before clinical-style quality
+      claims.
+limitations:
+  - >
+    This is a thin wrapper. Inference, preprocessing, and postprocessing are
+    delegated entirely to the upstream MONAI bundle under
+    $NV_SEGMENT_CTMR_ROOT or the repo-local fallback at
+    .workbench_data/upstreams/NV-Segment-CTMR/NV-Segment-CTMR.
+  - >
+    The default wrapper path runs automatic "segment everything" inference
+    for CT_BODY, MRI_BODY, or MRI_BRAIN. MRI_BRAIN inputs must already follow
+    the upstream brain preprocessing requirements.
+  - >
+    Label names are loaded from upstream configs when available. If a label
+    dictionary is absent, the wrapper still records label IDs and marks only
+    negative IDs as invalid.
+  - "No clinical, diagnostic, regulatory, or treatment-planning claims."
+validation:
+  expected_runtime_seconds:
+    min: 0.05
+    max: 1800.0
+    inference_path: runtime.subprocess_seconds
+  sanity_checks:
+    - {path: skill, eq: nv_segment_ctmr}
+    - {path: input.ndim, eq: 3}
+    - {path: input.modality, matches: "^(CT_BODY|MRI_BODY|MRI_BRAIN)$"}
+    - {path: invocation.official_entrypoint, eq: "python -m monai.bundle run"}
+    - {path: invocation.exit_code, eq: 0}
+    - {path: invocation.model_inventory.model_pt_present, eq: true}
+    - {path: output.geometry.shape_match, eq: true}
+    - {path: output.geometry.spacing_match, eq: true}
+    - {path: output.geometry.affine_match, eq: true}
+    - {path: output.label_set_valid, eq: true}
+    - {path: output.any_label_present, eq: true}
+  expected_cost:
+    wall_seconds:        {max: 1800}
+    cpu_seconds:         {max: 3600}
+    rss_mb_peak:         {min: 200, max: 32000}
+    gpu_seconds:         {max: 1800}
+    gpu_memory_mb_peak:  {max: 48000}
+  reproducibility:
+    mode: preflight
+    fixture: fixtures/README.md
+    runs: 2
+    reason: >
+      End-to-end CTMR repeatability requires the NV-Segment-CTMR checkout and
+      downloaded model weights. The repository audit repeats the declared
+      input/env boundary check; promoted evidence packs must compare label-map
+      artifact hashes.

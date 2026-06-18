@@ -1,0 +1,38 @@
+{
+  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "SO Probe Snapshot",
+  "description": "Records what a real SO runtime registered when the probe ran. Comparison anchor for manifest since_version fields; reference fixture for scenario authoring.",
+  "type": "object",
+  "required": ["kit_application", "so_extension_version", "so_build_date", "operations_available", "probed_at"],
+  "properties": {
+    "kit_application": {
+      "type": "string",
+      "description": "Friendly name and version of the Kit app the probe ran in (e.g. 'USD Composer 110.1.0')."
+    },
+    "so_extension_version": {
+      "type": "string",
+      "description": "Version reported by omni.scene.optimizer.core (e.g. '110.0.4')."
+    },
+    "so_build_date": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 UTC date the SO extension was built or released. Used as the comparison key when filtering ops by since_version. Filled in manually after capture because the extension does not expose buildTime."
+    },
+    "operations_available": {
+      "type": "array",
+      "items": { "type": "string" },
+      "uniqueItems": true,
+      "description": "Operation keys the SO runtime registers, as returned by the selected operation registry probe. Sorted alphabetically."
+    },
+    "probed_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 UTC timestamp when the probe ran. Reproducibility metadata."
+    },
+    "notes": {
+      "type": "string",
+      "description": "Optional free-text notes about how the snapshot was captured."
+    }
+  }
+}

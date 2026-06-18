@@ -1,0 +1,50 @@
+{
+  "skills": [
+    "vss-deploy-dense-captioning",
+    "vss-deploy-profile"
+  ],
+  "resources": {
+    "platforms": {
+      "L40S": {
+        "modes": [
+          "remote-all"
+        ]
+      }
+    }
+  },
+  "expects": [
+    {
+      "query": "Deploy the VSS **alerts** profile in `real-time` mode on `{{platform}}` via `/vss-deploy-profile -p alerts -m real-time`. Run autonomously.\n\n**Environment & prerequisites:** A GPU host matching `{{platform}}` with Docker + NVIDIA Container Toolkit, `NGC_CLI_API_KEY`, remote LLM/VLM endpoint env vars (`LLM_REMOTE_URL`, `LLM_REMOTE_MODEL`, `VLM_REMOTE_URL`, `VLM_REMOTE_MODEL`), and `RTSP_SAMPLE_URL` for a reachable RTSP sample video stream. The eval harness predeploys the full VSS `alerts` profile in `real-time` mode with remote LLM + remote VLM placement before this task starts; this task tests the RT-VLM microservice directly at http://localhost:8018. Required after predeploy: `rtvi-vlm` healthy on port 8018, `mdx-kafka` running, source-backed RT-VLM Kafka topics visible in the live container env (`KAFKA_TOPIC=mdx-vlm`, `KAFKA_INCIDENT_TOPIC=mdx-vlm-incidents`, `ERROR_MESSAGE_TOPIC=vision-llm-errors` unless the deployment explicitly overrides them), and the RTSP sample stream from `RTSP_SAMPLE_URL` reachable from the host. Precheck the stream with `ffprobe`, `gst-discoverer-1.0`, or an equivalent RTSP probe before registering it, and require the probe to discover a video stream/caps entry.",
+      "checks": [
+        "The agent verified `RTSP_SAMPLE_URL` is set and non-empty in the harness environment before probing or registering the RTSP sample stream.",
+        "`curl -sf --max-time 15 http://localhost:8000/docs` returns exit 0 (Agent REST API responsive)",
+        "`docker ps --format '{{.Names}}' | grep -qx vss-agent` returns exit 0",
+        "`docker ps --format '{{.Names}}' | grep -qx redis` returns exit 0",
+        "`docker ps --format '{{.Names}}' | grep -qx vss-rtvi-vlm` returns exit 0 (real-time VLM processor)"
+      ]
+    },
+    {
+      "query": "The VSS alerts profile is already deployed in real-time mode on {{platform}} with remote LLM and remote VLM endpoints by the previous step of this trial. Use the `/vss-deploy-dense-captioning` skill to test RT-VLM directly at http://localhost:8018: verify readiness, models, `/openapi.json`, `/v1/assets/stats`, text-only `/v1/chat/completions`, and the current 26.05 legacy `/v1/completions` HTTP 400 behavior. Do not call `/v1/license` unless the live OpenAPI exposes it; report it as absent if missing. Precheck the RTSP sample stream from `RTSP_SAMPLE_URL` with `ffprobe`, `gst-discoverer-1.0`, or an equivalent RTSP probe and fail fast with a clear message if it is unreachable or reports an unknown/non-video media type, register a temporary RTSP stream with description `rt-vlm-eval-{{mode}}` and URL from `RTSP_SAMPLE_URL`, delete that temporary stream, confirm `KAFKA_INCIDENT_TOPIC` from the live RT-VLM container env, and show the Kafka incident-consumer command using the VSS Kafka container. Run autonomously and clean up before your final reply.",
+      "checks": [
+        "The agent treated the VSS `alerts` profile in `real-time` mode as already deployed by the eval harness and did not invoke `/vss-deploy-profile` or `scripts/dev-profile.sh` during this task.",
+        "`curl -sf --max-time 15 http://localhost:8018/v1/health/ready` returns exit 0.",
+        "`curl -sf --max-time 15 http://localhost:8018/v1/models` returns exit 0 and returns JSON with a non-empty model list or model metadata.",
+        "`curl -sf --max-time 15 http://localhost:8018/openapi.json` returns exit 0 and the agent used it as the endpoint source of truth.",
+        "`curl -sf --max-time 15 http://localhost:8018/v1/assets/stats` returns exit 0 when exposed by the live OpenAPI, or the agent clearly reports that the live OpenAPI omitted it.",
+        "The agent did not present `/v1/license` as supported unless `/openapi.json` listed it; on current 26.05 builds it should report that `/v1/license` is absent/404.",
+        "The agent successfully called text-only `POST http://localhost:8018/v1/chat/completions` with a messages array and model.",
+        "The agent called text-only `POST http://localhost:8018/v1/completions` only to verify the documented legacy behavior, and treated HTTP 400 as expected on current 26.05 builds.",
+        "`docker ps --format '{{.Names}}' | grep -qx vss-rtvi-vlm` returns exit 0.",
+        "`docker ps --format '{{.Names}}' | grep -qx mdx-kafka` returns exit 0.",
+        "The agent verified `RTSP_SAMPLE_URL` is set and non-empty in the harness environment before probing or registering the RTSP sample stream.",
+        "The agent prechecked the configured `RTSP_SAMPLE_URL` with `ffprobe`, `gst-discoverer-1.0`, or an equivalent RTSP probe before calling `/v1/streams/add`, verified the probe discovered a video stream/caps entry, and would fail fast with a clear message if the stream was unreachable or reported an unknown/non-video media type.",
+        "The agent called `POST http://localhost:8018/v1/streams/add` with `liveStreamUrl` exactly matching the configured `RTSP_SAMPLE_URL` and a description containing `rt-vlm-eval`.",
+        "The agent parsed the RT-VLM stream id from the `results[0].id` field returned by `/v1/streams/add`, not from `.streams[0].id`.",
+        "The agent called `DELETE http://localhost:8018/v1/streams/delete/<stream_id>` for the temporary `rt-vlm-eval` stream before finishing.",
+        "`curl -sf --max-time 15 http://localhost:8018/v1/streams/get-stream-info` returns exit 0 and the response does not contain `rt-vlm-eval`.",
+        "The final reply includes a Kafka incident-consumer command using `docker exec` against `mdx-kafka` and `kafka-console-consumer`, with the incident topic derived from the live `KAFKA_INCIDENT_TOPIC` env or the source-backed alerts/profile default `mdx-vlm-incidents`.",
+        "The agent did not reference or try to run `tests/kafka/test_kafka_consumer.py`."
+      ]
+    }
+  ]
+}

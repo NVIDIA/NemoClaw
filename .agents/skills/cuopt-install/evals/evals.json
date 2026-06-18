@@ -1,0 +1,13 @@
+[
+  {
+    "id": "inst-eval-001-docker-server",
+    "question": "I want to run the cuOpt REST server in a Docker container with GPU access on a CUDA 12 host. What image do I pull and what run command exposes the API on port 8000?",
+    "expected_skill": "cuopt-install",
+    "expected_script": null,
+    "ground_truth": "The agent uses the official NVIDIA cuOpt Docker image tagged for CUDA 12 (e.g. nvidia/cuopt:latest-cuda12.9-py3.13) and provides a docker run command with --gpus all (for GPU access) and -p 8000:8000 (to expose the REST API). The agent does not invent NGC paths like nvcr.io/nvidia/cuopt:latest.",
+    "expected_behavior": [
+      "Uses the nvidia/cuopt Docker image tagged for CUDA 12 (e.g. nvidia/cuopt:latest-cuda12.9-py3.13), not a fabricated nvcr.io/* path",
+      "docker run command includes --gpus all and -p 8000:8000"
+    ]
+  }
+]

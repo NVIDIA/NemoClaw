@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Minimum USD Validation Report",
+  "type": "object",
+  "required": [
+    "asset_path",
+    "validator_skill",
+    "validator_tool",
+    "passed",
+    "checks",
+    "metadata",
+    "warnings",
+    "errors",
+    "next_step"
+  ],
+  "properties": {
+    "asset_path": {
+      "type": "string"
+    },
+    "validator_skill": {
+      "const": "validate-usd-minimum"
+    },
+    "validator_tool": {
+      "type": "string"
+    },
+    "passed": {
+      "type": "boolean"
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "passed",
+          "severity",
+          "message"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "passed": {
+            "type": "boolean"
+          },
+          "severity": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "metadata": {
+      "type": "object"
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "errors": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "next_step": {
+      "type": "string"
+    }
+  }
+}

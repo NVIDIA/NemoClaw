@@ -1,0 +1,73 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
+# USD Performance Tuning Report - {{ asset_name }}
+
+**Stage Optimization Score:** {{ optimization_score }}/10 ({{ score_label }})
+**Verdict:** {{ verdict }}
+**Generated:** {{ timestamp }}
+**Output:** `{{ output_path }}`
+
+{{ executive_summary }}
+
+## Reasoning
+
+{{ reasoning }}
+
+{% if runtime_context %}
+## Runtime Context
+
+| Component | Value |
+|---|---|
+| Kit application | {{ runtime_context.kit.application }} {{ runtime_context.kit.version }} |
+| Kit path | {{ runtime_context.kit.path }} |
+| Kit build | {{ runtime_context.kit.build }} |
+| Scene Optimizer | {{ runtime_context.sceneOptimizer.extension }} {{ runtime_context.sceneOptimizer.version }} |
+| Asset Validator | {{ runtime_context.assetValidator.package }} {{ runtime_context.assetValidator.version }} (via {{ runtime_context.assetValidator.source }}) |
+{% endif %}
+
+## Stage Impact Areas
+
+| Area | Score | Status | Notes |
+|---|---:|---|---|
+{% for group in metric_groups %}
+| {{ group.display_name }} | {{ group.score_display }} | {{ group.status }} | {{ group.summary }} |
+{% endfor %}
+
+> Runtime performance metrics such as RAM, VRAM, FPS, frame time, shader cost,
+> and renderer activity belong in Omniperf or an equivalent runtime profiling
+> dashboard. They are not included in the Stage Optimization Score.
+
+{% if runtime_profiling_items %}
+## Runtime Profiling
+
+| Field | Value |
+|---|---|
+{% for item in runtime_profiling_items %}
+| {{ item.name }} | {{ item.value }} |
+{% endfor %}
+{% endif %}
+
+## Metric Evidence
+
+| Metric | Before | After | Change | Evidence | Verdict |
+|---|---:|---:|---:|---|---|
+{% for metric in metrics %}
+| {{ metric.display_name }} | {{ metric.before }} {{ metric.unit }} | {{ metric.after }} {{ metric.unit }} | {{ metric.change_pct }}% | {{ metric.evidence_type }} | {{ metric.verdict }} |
+{% endfor %}
+
+## Operations
+
+| # | Operation | Method | Result |
+|---:|---|---|---|
+{% for op in operations %}
+| {{ op.order }} | {{ op.name }} | {{ op.method }} | {{ op.result }} |
+{% endfor %}
+
+## Validators
+
+| Validator | Issues | Notes |
+|---|---:|---|
+{% for validator in validators %}
+| {{ validator.name }} | {{ validator.issues }} | {{ validator.notes }} |
+{% endfor %}

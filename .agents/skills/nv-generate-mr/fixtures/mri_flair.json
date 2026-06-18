@@ -1,0 +1,16 @@
+{
+  "_comment": "Generic MRI FLAIR fixture for rflow-mr.",
+  "modality": "mri_flair",
+  "dim": [
+    128,
+    256,
+    256
+  ],
+  "spacing": [
+    1.25,
+    1.0,
+    1.0
+  ],
+  "num_inference_steps": 30,
+  "cfg_guidance_scale": 15
+}

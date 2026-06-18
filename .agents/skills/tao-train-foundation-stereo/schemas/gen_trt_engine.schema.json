@@ -1,0 +1,3280 @@
+{
+  "automl_default_parameters": [
+    "train.optim.lr_step_size",
+    "dataset.infer_dataset.augmentation.yjitter_prob",
+    "dataset.test_dataset.augmentation.crop_min_valid_disp_ratio",
+    "model.corr_radius",
+    "train.optim.weight_decay",
+    "train.optim.lr_decay",
+    "dataset.infer_dataset.augmentation.hshift_prob",
+    "dataset.infer_dataset.augmentation.crop_min_valid_disp_ratio",
+    "dataset.train_dataset.augmentation.eraser_aug_prob",
+    "dataset.val_dataset.augmentation.color_aug_prob",
+    "dataset.val_dataset.augmentation.yjitter_prob",
+    "dataset.train_dataset.augmentation.stretch_prob",
+    "dataset.train_dataset.augmentation.yjitter_prob",
+    "model.volume_dim",
+    "dataset.train_dataset.augmentation.spatial_aug_prob",
+    "dataset.infer_dataset.augmentation.spatial_aug_prob",
+    "dataset.val_dataset.augmentation.h_flip_prob",
+    "dataset.train_dataset.augmentation.color_aug_prob",
+    "dataset.test_dataset.augmentation.h_flip_prob",
+    "dataset.train_dataset.augmentation.hshift_prob",
+    "train.optim.momentum",
+    "dataset.val_dataset.augmentation.crop_min_valid_disp_ratio",
+    "dataset.test_dataset.augmentation.hshift_prob",
+    "dataset.val_dataset.augmentation.v_flip_prob",
+    "dataset.infer_dataset.augmentation.h_flip_prob",
+    "dataset.val_dataset.augmentation.hshift_prob",
+    "dataset.test_dataset.augmentation.stretch_prob",
+    "dataset.val_dataset.augmentation.stretch_prob",
+    "dataset.infer_dataset.augmentation.eraser_aug_prob",
+    "train.optim.min_lr",
+    "model.cv_group",
+    "dataset.infer_dataset.augmentation.stretch_prob",
+    "dataset.train_dataset.augmentation.h_flip_prob",
+    "dataset.test_dataset.augmentation.eraser_aug_prob",
+    "dataset.infer_dataset.augmentation.color_aug_prob",
+    "train.optim.lr",
+    "dataset.test_dataset.augmentation.spatial_aug_prob",
+    "dataset.test_dataset.augmentation.yjitter_prob",
+    "dataset.test_dataset.augmentation.v_flip_prob",
+    "dataset.train_dataset.augmentation.v_flip_prob",
+    "dataset.val_dataset.augmentation.spatial_aug_prob",
+    "dataset.train_dataset.augmentation.crop_min_valid_disp_ratio",
+    "dataset.test_dataset.augmentation.color_aug_prob",
+    "dataset.infer_dataset.augmentation.v_flip_prob",
+    "dataset.val_dataset.augmentation.eraser_aug_prob"
+  ],
+  "automl_disabled_parameters": [
+    "quantize",
+    "train.cudnn",
+    "dataset.val_dataset.data_sources",
+    "quantize.backend_kwargs",
+    "dataset.train_dataset.augmentation",
+    "dataset.test_dataset.augmentation.input_std",
+    "train.gpu_ids",
+    "wandb.tags",
+    "dataset.infer_dataset.augmentation",
+    "dataset.train_dataset.data_sources",
+    "dataset.train_dataset.augmentation.color_aug_saturation",
+    "dataset.infer_dataset.augmentation.color_aug_hue_range",
+    "dataset.train_dataset",
+    "quantize.skip_names",
+    "dataset.infer_dataset.data_sources",
+    "dataset.val_dataset.augmentation.input_std",
+    "inference",
+    "evaluate",
+    "train",
+    "dataset.val_dataset.augmentation.input_mean",
+    "dataset.test_dataset.data_sources",
+    "gen_trt_engine",
+    "dataset.train_dataset.augmentation.input_std",
+    "dataset.train_dataset.augmentation.input_mean",
+    "dataset.test_dataset",
+    "gen_trt_engine.tensorrt.layers_precision",
+    "dataset",
+    "gen_trt_engine.tensorrt",
+    "dataset.val_dataset",
+    "dataset.val_dataset.augmentation.gamma",
+    "quantize.layers",
+    "dataset.infer_dataset",
+    "dataset.test_dataset.augmentation.color_aug_saturation",
+    "dataset.infer_dataset.augmentation.input_mean",
+    "dataset.test_dataset.augmentation",
+    "dataset.train_dataset.augmentation.crop_size",
+    "dataset.infer_dataset.augmentation.gamma",
+    "dataset.infer_dataset.augmentation.crop_size",
+    "dataset.quant_calibration_dataset",
+    "dataset.infer_dataset.augmentation.input_std",
+    "model.stereo_backbone",
+    "model.hidden_dims",
+    "dataset.train_dataset.augmentation.color_aug_hue_range",
+    "model",
+    "train.optim.lr_steps",
+    "dataset.test_dataset.augmentation.gamma",
+    "dataset.val_dataset.augmentation.color_aug_saturation",
+    "evaluate.gpu_ids",
+    "dataset.test_dataset.augmentation.crop_size",
+    "train.optim",
+    "dataset.val_dataset.augmentation.crop_size",
+    "dataset.val_dataset.augmentation",
+    "dataset.test_dataset.augmentation.input_mean",
+    "model.mono_backbone",
+    "dataset.train_dataset.augmentation.gamma",
+    "dataset.test_dataset.augmentation.color_aug_hue_range",
+    "export",
+    "wandb",
+    "dataset.val_dataset.augmentation.color_aug_hue_range",
+    "dataset.infer_dataset.augmentation.color_aug_saturation",
+    "inference.gpu_ids",
+    "train.tile_min_overlap"
+  ],
+  "default": {
+    "dataset": {
+      "baseline": 0.193001,
+      "dataset_name": "StereoDataset",
+      "focal_x": 1998.842,
+      "infer_dataset": {
+        "augmentation": {
+          "color_aug_brightness": 0.4,
+          "color_aug_contrast": 0.4,
+          "color_aug_hue_range": [
+            -0.027777777777777776,
+            0.027777777777777776
+          ],
+          "color_aug_prob": 0.2,
+          "color_aug_saturation": [
+            0.0,
+            1.4
+          ],
+          "crop_min_valid_disp_ratio": 0.0,
+          "crop_size": [
+            518,
+            518
+          ],
+          "do_flip": false,
+          "eraser_aug_prob": 0.5,
+          "gamma": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "h_flip_prob": 0.5,
+          "hshift_prob": 0.5,
+          "input_mean": [
+            0.485,
+            0.456,
+            0.406
+          ],
+          "input_std": [
+            0.229,
+            0.224,
+            0.225
+          ],
+          "max_scale": 0.4,
+          "max_stretch": 0.2,
+          "min_scale": -0.2,
+          "spatial_aug_prob": 1.0,
+          "stretch_prob": 0.8,
+          "v_flip_prob": 0.5,
+          "yjitter_prob": 1.0
+        },
+        "batch_size": 1,
+        "data_sources": [
+          {
+            "data_file": "",
+            "dataset_name": ""
+          }
+        ],
+        "pin_memory": true,
+        "workers": 8
+      },
+      "max_disparity": 416,
+      "normalize_depth": false,
+      "quant_calibration_dataset": {
+        "images_dir": ""
+      },
+      "test_dataset": {
+        "augmentation": {
+          "color_aug_brightness": 0.4,
+          "color_aug_contrast": 0.4,
+          "color_aug_hue_range": [
+            -0.027777777777777776,
+            0.027777777777777776
+          ],
+          "color_aug_prob": 0.2,
+          "color_aug_saturation": [
+            0.0,
+            1.4
+          ],
+          "crop_min_valid_disp_ratio": 0.0,
+          "crop_size": [
+            518,
+            518
+          ],
+          "do_flip": false,
+          "eraser_aug_prob": 0.5,
+          "gamma": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "h_flip_prob": 0.5,
+          "hshift_prob": 0.5,
+          "input_mean": [
+            0.485,
+            0.456,
+            0.406
+          ],
+          "input_std": [
+            0.229,
+            0.224,
+            0.225
+          ],
+          "max_scale": 0.4,
+          "max_stretch": 0.2,
+          "min_scale": -0.2,
+          "spatial_aug_prob": 1.0,
+          "stretch_prob": 0.8,
+          "v_flip_prob": 0.5,
+          "yjitter_prob": 1.0
+        },
+        "batch_size": 1,
+        "data_sources": [
+          {
+            "data_file": "",
+            "dataset_name": ""
+          }
+        ],
+        "pin_memory": true,
+        "workers": 8
+      },
+      "train_dataset": {
+        "augmentation": {
+          "color_aug_brightness": 0.4,
+          "color_aug_contrast": 0.4,
+          "color_aug_hue_range": [
+            -0.027777777777777776,
+            0.027777777777777776
+          ],
+          "color_aug_prob": 0.2,
+          "color_aug_saturation": [
+            0.0,
+            1.4
+          ],
+          "crop_min_valid_disp_ratio": 0.0,
+          "crop_size": [
+            518,
+            518
+          ],
+          "do_flip": false,
+          "eraser_aug_prob": 0.5,
+          "gamma": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "h_flip_prob": 0.5,
+          "hshift_prob": 0.5,
+          "input_mean": [
+            0.485,
+            0.456,
+            0.406
+          ],
+          "input_std": [
+            0.229,
+            0.224,
+            0.225
+          ],
+          "max_scale": 0.4,
+          "max_stretch": 0.2,
+          "min_scale": -0.2,
+          "spatial_aug_prob": 1.0,
+          "stretch_prob": 0.8,
+          "v_flip_prob": 0.5,
+          "yjitter_prob": 1.0
+        },
+        "batch_size": 1,
+        "data_sources": [
+          {
+            "data_file": "",
+            "dataset_name": ""
+          }
+        ],
+        "pin_memory": true,
+        "workers": 8
+      },
+      "val_dataset": {
+        "augmentation": {
+          "color_aug_brightness": 0.4,
+          "color_aug_contrast": 0.4,
+          "color_aug_hue_range": [
+            -0.027777777777777776,
+            0.027777777777777776
+          ],
+          "color_aug_prob": 0.2,
+          "color_aug_saturation": [
+            0.0,
+            1.4
+          ],
+          "crop_min_valid_disp_ratio": 0.0,
+          "crop_size": [
+            518,
+            518
+          ],
+          "do_flip": false,
+          "eraser_aug_prob": 0.5,
+          "gamma": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "h_flip_prob": 0.5,
+          "hshift_prob": 0.5,
+          "input_mean": [
+            0.485,
+            0.456,
+            0.406
+          ],
+          "input_std": [
+            0.229,
+            0.224,
+            0.225
+          ],
+          "max_scale": 0.4,
+          "max_stretch": 0.2,
+          "min_scale": -0.2,
+          "spatial_aug_prob": 1.0,
+          "stretch_prob": 0.8,
+          "v_flip_prob": 0.5,
+          "yjitter_prob": 1.0
+        },
+        "batch_size": 1,
+        "data_sources": [
+          {
+            "data_file": "",
+            "dataset_name": ""
+          }
+        ],
+        "pin_memory": true,
+        "workers": 8
+      }
+    },
+    "encryption_key": "",
+    "gen_trt_engine": {
+      "batch_size": -1,
+      "gpu_id": 0,
+      "onnx_file": "???",
+      "results_dir": "",
+      "tensorrt": {
+        "data_type": "FP32",
+        "layers_precision": [],
+        "max_batch_size": 1,
+        "min_batch_size": 1,
+        "opt_batch_size": 1,
+        "workspace_size": 1024
+      },
+      "timing_cache": "",
+      "trt_engine": "???",
+      "verbose": false
+    },
+    "model": {
+      "corr_levels": 2,
+      "corr_radius": 4,
+      "cv_group": 8,
+      "encoder": "vitl",
+      "hidden_dims": [
+        128,
+        128,
+        128
+      ],
+      "low_memory": 0,
+      "max_disparity": 416,
+      "mixed_precision": false,
+      "model_type": "MetricDepthAnything",
+      "mono_backbone": {
+        "pretrained_path": "",
+        "use_bn": false,
+        "use_clstoken": false
+      },
+      "n_downsample": 2,
+      "n_gru_layers": 3,
+      "stereo_backbone": {
+        "depth_anything_v2_pretrained_path": "",
+        "edgenext_pretrained_path": "",
+        "use_bn": false,
+        "use_clstoken": false
+      },
+      "train_iters": 22,
+      "valid_iters": 22,
+      "volume_dim": 32
+    },
+    "model_name": "",
+    "quantize": {
+      "algorithm": "minmax",
+      "backend": "torchao",
+      "backend_kwargs": {},
+      "device": "cuda",
+      "layers": [],
+      "mode": "weight_only_ptq",
+      "model_path": "",
+      "results_dir": "",
+      "skip_names": []
+    },
+    "results_dir": "",
+    "train": {
+      "activation_checkpoint": false,
+      "checkpoint_interval": 1,
+      "checkpoint_interval_unit": "epoch",
+      "clip_grad_norm": 0.1,
+      "cudnn": {
+        "benchmark": false,
+        "deterministic": true
+      },
+      "dataloader_visualize": false,
+      "distributed_strategy": "ddp",
+      "gpu_ids": [
+        0
+      ],
+      "inference_tile": false,
+      "is_dry_run": false,
+      "log_every_n_steps": 500,
+      "num_epochs": 10,
+      "num_gpus": 1,
+      "num_nodes": 1,
+      "optim": {
+        "lr": 0.0001,
+        "lr_decay": 0.1,
+        "lr_scheduler": "MultiStepLR",
+        "lr_step_size": 1000,
+        "lr_steps": [
+          1000
+        ],
+        "min_lr": 1e-07,
+        "momentum": 0.9,
+        "monitor_name": "val_loss",
+        "optimizer": "AdamW",
+        "warmup_steps": 20,
+        "weight_decay": 0.0001
+      },
+      "precision": "fp32",
+      "pretrained_model_path": "",
+      "results_dir": "",
+      "resume_training_checkpoint_path": "",
+      "seed": 1234,
+      "tile_min_overlap": [
+        16,
+        16
+      ],
+      "tile_wtype": "gaussian",
+      "validation_interval": 1,
+      "vis_step_interval": 10
+    },
+    "wandb": {
+      "enable": true,
+      "entity": "",
+      "group": "",
+      "name": "TAO Toolkit Training",
+      "project": "TAO Toolkit",
+      "reinit": false,
+      "run_id": "",
+      "save_code": false,
+      "sync_tensorboard": false,
+      "tags": [
+        "tao-toolkit"
+      ]
+    }
+  },
+  "popular": {
+    "evaluate": {
+      "gpu_ids": [
+        0
+      ],
+      "num_gpus": 1,
+      "num_nodes": 1
+    },
+    "gen_trt_engine": {
+      "batch_size": -1,
+      "gpu_id": 0,
+      "tensorrt": {
+        "max_batch_size": 1,
+        "min_batch_size": 1,
+        "opt_batch_size": 1
+      }
+    },
+    "inference": {
+      "gpu_ids": [
+        0
+      ],
+      "num_gpus": 1,
+      "num_nodes": 1
+    },
+    "train": {
+      "checkpoint_interval": 1,
+      "gpu_ids": [
+        0
+      ],
+      "num_epochs": 10,
+      "num_gpus": 1,
+      "num_nodes": 1,
+      "validation_interval": 1
+    }
+  },
+  "properties": {
+    "automl_disabled_parameters": [
+      "wandb",
+      "dataset",
+      "model",
+      "inference",
+      "evaluate",
+      "train",
+      "export",
+      "gen_trt_engine",
+      "quantize"
+    ],
+    "dataset": {
+      "automl_disabled_parameters": [
+        "dataset.train_dataset",
+        "dataset.val_dataset",
+        "dataset.test_dataset",
+        "dataset.infer_dataset",
+        "dataset.quant_calibration_dataset"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "baseline": 0.193001,
+        "dataset_name": "StereoDataset",
+        "focal_x": 1998.842,
+        "infer_dataset": {
+          "augmentation": {
+            "color_aug_brightness": 0.4,
+            "color_aug_contrast": 0.4,
+            "color_aug_hue_range": [
+              -0.027777777777777776,
+              0.027777777777777776
+            ],
+            "color_aug_prob": 0.2,
+            "color_aug_saturation": [
+              0.0,
+              1.4
+            ],
+            "crop_min_valid_disp_ratio": 0.0,
+            "crop_size": [
+              518,
+              518
+            ],
+            "do_flip": false,
+            "eraser_aug_prob": 0.5,
+            "gamma": [
+              1,
+              1,
+              1,
+              1
+            ],
+            "h_flip_prob": 0.5,
+            "hshift_prob": 0.5,
+            "input_mean": [
+              0.485,
+              0.456,
+              0.406
+            ],
+            "input_std": [
+              0.229,
+              0.224,
+              0.225
+            ],
+            "max_scale": 0.4,
+            "max_stretch": 0.2,
+            "min_scale": -0.2,
+            "spatial_aug_prob": 1.0,
+            "stretch_prob": 0.8,
+            "v_flip_prob": 0.5,
+            "yjitter_prob": 1.0
+          },
+          "batch_size": 1,
+          "data_sources": [
+            {
+              "data_file": "",
+              "dataset_name": ""
+            }
+          ],
+          "pin_memory": true,
+          "workers": 8
+        },
+        "max_disparity": 416,
+        "normalize_depth": false,
+        "quant_calibration_dataset": {
+          "images_dir": ""
+        },
+        "test_dataset": {
+          "augmentation": {
+            "color_aug_brightness": 0.4,
+            "color_aug_contrast": 0.4,
+            "color_aug_hue_range": [
+              -0.027777777777777776,
+              0.027777777777777776
+            ],
+            "color_aug_prob": 0.2,
+            "color_aug_saturation": [
+              0.0,
+              1.4
+            ],
+            "crop_min_valid_disp_ratio": 0.0,
+            "crop_size": [
+              518,
+              518
+            ],
+            "do_flip": false,
+            "eraser_aug_prob": 0.5,
+            "gamma": [
+              1,
+              1,
+              1,
+              1
+            ],
+            "h_flip_prob": 0.5,
+            "hshift_prob": 0.5,
+            "input_mean": [
+              0.485,
+              0.456,
+              0.406
+            ],
+            "input_std": [
+              0.229,
+              0.224,
+              0.225
+            ],
+            "max_scale": 0.4,
+            "max_stretch": 0.2,
+            "min_scale": -0.2,
+            "spatial_aug_prob": 1.0,
+            "stretch_prob": 0.8,
+            "v_flip_prob": 0.5,
+            "yjitter_prob": 1.0
+          },
+          "batch_size": 1,
+          "data_sources": [
+            {
+              "data_file": "",
+              "dataset_name": ""
+            }
+          ],
+          "pin_memory": true,
+          "workers": 8
+        },
+        "train_dataset": {
+          "augmentation": {
+            "color_aug_brightness": 0.4,
+            "color_aug_contrast": 0.4,
+            "color_aug_hue_range": [
+              -0.027777777777777776,
+              0.027777777777777776
+            ],
+            "color_aug_prob": 0.2,
+            "color_aug_saturation": [
+              0.0,
+              1.4
+            ],
+            "crop_min_valid_disp_ratio": 0.0,
+            "crop_size": [
+              518,
+              518
+            ],
+            "do_flip": false,
+            "eraser_aug_prob": 0.5,
+            "gamma": [
+              1,
+              1,
+              1,
+              1
+            ],
+            "h_flip_prob": 0.5,
+            "hshift_prob": 0.5,
+            "input_mean": [
+              0.485,
+              0.456,
+              0.406
+            ],
+            "input_std": [
+              0.229,
+              0.224,
+              0.225
+            ],
+            "max_scale": 0.4,
+            "max_stretch": 0.2,
+            "min_scale": -0.2,
+            "spatial_aug_prob": 1.0,
+            "stretch_prob": 0.8,
+            "v_flip_prob": 0.5,
+            "yjitter_prob": 1.0
+          },
+          "batch_size": 1,
+          "data_sources": [
+            {
+              "data_file": "",
+              "dataset_name": ""
+            }
+          ],
+          "pin_memory": true,
+          "workers": 8
+        },
+        "val_dataset": {
+          "augmentation": {
+            "color_aug_brightness": 0.4,
+            "color_aug_contrast": 0.4,
+            "color_aug_hue_range": [
+              -0.027777777777777776,
+              0.027777777777777776
+            ],
+            "color_aug_prob": 0.2,
+            "color_aug_saturation": [
+              0.0,
+              1.4
+            ],
+            "crop_min_valid_disp_ratio": 0.0,
+            "crop_size": [
+              518,
+              518
+            ],
+            "do_flip": false,
+            "eraser_aug_prob": 0.5,
+            "gamma": [
+              1,
+              1,
+              1,
+              1
+            ],
+            "h_flip_prob": 0.5,
+            "hshift_prob": 0.5,
+            "input_mean": [
+              0.485,
+              0.456,
+              0.406
+            ],
+            "input_std": [
+              0.229,
+              0.224,
+              0.225
+            ],
+            "max_scale": 0.4,
+            "max_stretch": 0.2,
+            "min_scale": -0.2,
+            "spatial_aug_prob": 1.0,
+            "stretch_prob": 0.8,
+            "v_flip_prob": 0.5,
+            "yjitter_prob": 1.0
+          },
+          "batch_size": 1,
+          "data_sources": [
+            {
+              "data_file": "",
+              "dataset_name": ""
+            }
+          ],
+          "pin_memory": true,
+          "workers": 8
+        }
+      },
+      "description": "Configurable parameters to construct the dataset for a DepthNet experiment.",
+      "properties": {
+        "baseline": {
+          "default": 0.193001,
+          "description": "The baseline for stereo datasets",
+          "maximum": Infinity,
+          "minimum": 0.0,
+          "title": "Stereo baseline",
+          "type": "float"
+        },
+        "dataset_name": {
+          "default": "StereoDataset",
+          "description": "Dataset Name",
+          "enum": [
+            "MonoDataset",
+            "StereoDataset"
+          ],
+          "title": "dataset mame",
+          "type": "categorical"
+        },
+        "focal_x": {
+          "default": 1998.842,
+          "description": "The focal length along x-axis",
+          "maximum": Infinity,
+          "minimum": 0.0,
+          "title": "The focal length along x-axis",
+          "type": "float"
+        },
+        "infer_dataset": {
+          "automl_disabled_parameters": [
+            "dataset.infer_dataset.data_sources",
+            "dataset.infer_dataset.augmentation"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "augmentation": {
+              "color_aug_brightness": 0.4,
+              "color_aug_contrast": 0.4,
+              "color_aug_hue_range": [
+                -0.027777777777777776,
+                0.027777777777777776
+              ],
+              "color_aug_prob": 0.2,
+              "color_aug_saturation": [
+                0.0,
+                1.4
+              ],
+              "crop_min_valid_disp_ratio": 0.0,
+              "crop_size": [
+                518,
+                518
+              ],
+              "do_flip": false,
+              "eraser_aug_prob": 0.5,
+              "gamma": [
+                1,
+                1,
+                1,
+                1
+              ],
+              "h_flip_prob": 0.5,
+              "hshift_prob": 0.5,
+              "input_mean": [
+                0.485,
+                0.456,
+                0.406
+              ],
+              "input_std": [
+                0.229,
+                0.224,
+                0.225
+              ],
+              "max_scale": 0.4,
+              "max_stretch": 0.2,
+              "min_scale": -0.2,
+              "spatial_aug_prob": 1.0,
+              "stretch_prob": 0.8,
+              "v_flip_prob": 0.5,
+              "yjitter_prob": 1.0
+            },
+            "batch_size": 1,
+            "data_sources": [
+              {
+                "data_file": "",
+                "dataset_name": ""
+              }
+            ],
+            "pin_memory": true,
+            "workers": 8
+          },
+          "description": "Configurable parameters to construct the infer dataset for a DepthNet experiment.",
+          "properties": {
+            "augmentation": {
+              "automl_default_parameters": [
+                "dataset.infer_dataset.augmentation.yjitter_prob",
+                "dataset.infer_dataset.augmentation.color_aug_prob",
+                "dataset.infer_dataset.augmentation.eraser_aug_prob",
+                "dataset.infer_dataset.augmentation.spatial_aug_prob",
+                "dataset.infer_dataset.augmentation.stretch_prob",
+                "dataset.infer_dataset.augmentation.h_flip_prob",
+                "dataset.infer_dataset.augmentation.v_flip_prob",
+                "dataset.infer_dataset.augmentation.hshift_prob",
+                "dataset.infer_dataset.augmentation.crop_min_valid_disp_ratio"
+              ],
+              "automl_disabled_parameters": [
+                "dataset.infer_dataset.augmentation.input_mean",
+                "dataset.infer_dataset.augmentation.input_std",
+                "dataset.infer_dataset.augmentation.crop_size",
+                "dataset.infer_dataset.augmentation.gamma",
+                "dataset.infer_dataset.augmentation.color_aug_saturation",
+                "dataset.infer_dataset.augmentation.color_aug_hue_range"
+              ],
+              "automl_enabled": false,
+              "default": {
+                "color_aug_brightness": 0.4,
+                "color_aug_contrast": 0.4,
+                "color_aug_hue_range": [
+                  -0.027777777777777776,
+                  0.027777777777777776
+                ],
+                "color_aug_prob": 0.2,
+                "color_aug_saturation": [
+                  0.0,
+                  1.4
+                ],
+                "crop_min_valid_disp_ratio": 0.0,
+                "crop_size": [
+                  518,
+                  518
+                ],
+                "do_flip": false,
+                "eraser_aug_prob": 0.5,
+                "gamma": [
+                  1,
+                  1,
+                  1,
+                  1
+                ],
+                "h_flip_prob": 0.5,
+                "hshift_prob": 0.5,
+                "input_mean": [
+                  0.485,
+                  0.456,
+                  0.406
+                ],
+                "input_std": [
+                  0.229,
+                  0.224,
+                  0.225
+                ],
+                "max_scale": 0.4,
+                "max_stretch": 0.2,
+                "min_scale": -0.2,
+                "spatial_aug_prob": 1.0,
+                "stretch_prob": 0.8,
+                "v_flip_prob": 0.5,
+                "yjitter_prob": 1.0
+              },
+              "description": "Configuration parameters for data augmentation",
+              "properties": {
+                "color_aug_brightness": {
+                  "default": 0.4,
+                  "description": "The color jitter brightness",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "The color jitter brightness",
+                  "type": "float"
+                },
+                "color_aug_contrast": {
+                  "default": 0.4,
+                  "description": "The color jitter contrast",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "The color jitter contrast",
+                  "type": "float"
+                },
+                "color_aug_hue_range": {
+                  "automl_enabled": false,
+                  "default": [
+                    -0.027777777777777776,
+                    0.027777777777777776
+                  ],
+                  "description": "The hue range in data augmentation",
+                  "title": "hue range augmentaiton",
+                  "type": "list"
+                },
+                "color_aug_prob": {
+                  "automl_enabled": true,
+                  "default": 0.2,
+                  "description": "The probability for asymmetric color augmentation",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "The probability for asymmetric color augmentation",
+                  "type": "float"
+                },
+                "color_aug_saturation": {
+                  "automl_enabled": false,
+                  "default": [
+                    0.0,
+                    1.4
+                  ],
+                  "description": "The color jitter saturation",
+                  "title": "The color jitter saturation",
+                  "type": "list"
+                },
+                "crop_min_valid_disp_ratio": {
+                  "automl_enabled": true,
+                  "default": 0.0,
+                  "description": "The probability for minimum crop valid disparity ratio",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "The probability for min crop valid disparity ratio",
+                  "type": "float"
+                },
+                "crop_size": {
+                  "automl_enabled": false,
+                  "default": [
+                    518,
+                    518
+                  ],
+                  "description": "The crop size for input RGB images [height, width]",
+                  "title": "augmentation crop size",
+                  "type": "list"
+                },
+                "do_flip": {
+                  "default": false,
+                  "description": "A flag specifying whether to perform flip in data augmentation",
+                  "title": "do flip",
+                  "type": "bool"
+                },
+                "eraser_aug_prob": {
+                  "automl_enabled": true,
+                  "default": 0.5,
+                  "description": "The probability for eraser augmentation",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "The probability for eraser augmentation",
+                  "type": "float"
+                },
+                "gamma": {
+                  "automl_enabled": false,
+                  "default": [
+                    1,
+                    1,
+                    1,
+                    1
+                  ],
+                  "description": "Gamma range in data augmentation",
+                  "title": "gamma range",
+                  "type": "list"
+                },
+                "h_flip_prob": {
+                  "automl_enabled": true,
+                  "default": 0.5,
+                  "description": "The probability for horizontal flip augmentation",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "The probability for horizontal flip augmentation",
+                  "type": "float"
+                },
+                "hshift_prob": {
+                  "automl_enabled": true,
+                  "default": 0.5,
+                  "description": "The probability for horizontal shift augmentation",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "The probability for horizontal flip augmentation",
+                  "type": "float"
+                },
+                "input_mean": {
+                  "automl_enabled": false,
+                  "default": [
+                    0.485,
+                    0.456,
+                    0.406
+                  ],
+                  "description": "The input mean for RGB frames",
+                  "title": "input mean per pixel",
+                  "type": "list"
+                },
+                "input_std": {
+                  "automl_enabled": false,
+                  "default": [
+                    0.229,
+                    0.224,
+                    0.225
+                  ],
+                  "description": "The input standard deviation per pixel for RGB frames",
+                  "title": "input std per pixel",
+                  "type": "list"
+                },
+                "max_scale": {
+                  "default": 0.4,
+                  "description": "The maximum scale in data augmentation",
+                  "maximum": 1.0,
+                  "minimum": -0.2,
+                  "title": "max scale",
+                  "type": "float"
+                },
+                "max_stretch": {
+                  "default": 0.2,
+                  "description": "The maximum stretch augmentation",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "The maximum stretch augmentation",
+                  "type": "float"
+                },
+                "min_scale": {
+                  "default": -0.2,
+                  "description": "The minimum scale in data augmentation",
+                  "maximum": 1.0,
+                  "minimum": 0.2,
+                  "title": "min scale",
+                  "type": "float"
+                },
+                "spatial_aug_prob": {
+                  "automl_enabled": true,
+                  "default": 1.0,
+                  "description": "The probability for spatial augmentation",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "The probability for spatial augmentation",
+                  "type": "float"
+                },
+                "stretch_prob": {
+                  "automl_enabled": true,
+                  "default": 0.8,
+                  "description": "The probability for stretch augmentation",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "The probability for stretch augmentation",
+                  "type": "float"
+                },
+                "v_flip_prob": {
+                  "automl_enabled": true,
+                  "default": 0.5,
+                  "description": "The probability for vertical flip augmentation",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "The probability for vertical flip augmentation",
+                  "type": "float"
+                },
+                "yjitter_prob": {
+                  "automl_enabled": true,
+                  "default": 1.0,
+                  "description": "The probability for y jitter",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "The probability for y jitter",
+                  "type": "float"
+                }
+              },
+              "title": "augmentation",
+              "type": "collection"
+            },
+            "batch_size": {
+              "default": 1,
+              "description": "The batch size for training and validation",
+              "maximum": Infinity,
+              "minimum": 1,
+              "title": "batch size",
+              "type": "int"
+            },
+            "data_sources": {
+              "automl_enabled": false,
+              "default": [
+                {
+                  "data_file": "",
+                  "dataset_name": ""
+                }
+              ],
+              "description": "The list of data sources for training:\n                    * dataset_name : The type of the dataset\n                    * data_file : The path of the data file",
+              "title": "train data sources",
+              "type": "list"
+            },
+            "pin_memory": {
+              "default": true,
+              "description": "Flag to enable the dataloader to allocated pagelocked memory for faster\n                    of data between the CPU and GPU.",
+              "title": "pin_memory",
+              "type": "bool"
+            },
+            "workers": {
+              "default": 8,
+              "description": "The number of parallel workers processing data",
+              "maximum": Infinity,
+              "minimum": 1,
+              "title": "batch size",
+              "type": "int"
+            }
+          },
+          "type": "collection"
+        },
+        "max_depth": {
+          "description": "The maximum depth in meters in MetricDepthAnythingV2",
+          "maximum": Infinity,
+          "minimum": 1.0,
+          "title": "max depth in meters",
+          "type": "float"
+        },
+        "max_disparity": {
+          "default": 416,
+          "description": "The maximum allowed disparity for which we compute losses during training",
+          "maximum": 416,
+          "minimum": 1,
+          "title": "maximum dispairty",
+          "type": "int"
+        },
+        "min_depth": {
+          "description": "The minimum depth in meters in MetricDepthAnythingV2",
+          "maximum": Infinity,
+          "minimum": 0.0,
+          "title": "min depth in meters",
+          "type": "float"
+        },
+        "normalize_depth": {
+          "default": false,
+          "description": "Normalize depth",
+          "title": "normalize depth",
+          "type": "bool"
+        },
+        "quant_calibration_dataset": {
+          "automl_enabled": false,
+          "default": {
+            "images_dir": ""
+          },
+          "description": "Configurable parameters for quantization calibration dataset.",
+          "properties": {
+            "images_dir": {
+              "default": "",
+              "description": "Path to the directory containing calibration images.",
+              "title": "calibration images directory",
+              "type": "string"
+            }
+          },
+          "type": "collection"
+        },
+        "test_dataset": {
+          "automl_disabled_parameters": [
+            "dataset.test_dataset.data_sources",
+            "dataset.test_dataset.augmentation"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "augmentation": {
+              "color_aug_brightness": 0.4,
+              "color_aug_contrast": 0.4,
+              "color_aug_hue_range": [
+                -0.027777777777777776,
+                0.027777777777777776
+              ],
+              "color_aug_prob": 0.2,
+              "color_aug_saturation": [
+                0.0,
+                1.4
+              ],
+              "crop_min_valid_disp_ratio": 0.0,
+              "crop_size": [
+                518,
+                518
+              ],
+              "do_flip": false,
+              "eraser_aug_prob": 0.5,
+              "gamma": [
+                1,
+                1,
+                1,
+                1
+              ],
+              "h_flip_prob": 0.5,
+              "hshift_prob": 0.5,
+              "input_mean": [
+                0.485,
+                0.456,
+                0.406
+              ],
+              "input_std": [
+                0.229,
+                0.224,
+                0.225
+              ],
+              "max_scale": 0.4,
+              "max_stretch": 0.2,
+              "min_scale": -0.2,
+              "spatial_aug_prob": 1.0,
+              "stretch_prob": 0.8,
+              "v_flip_prob": 0.5,
+              "yjitter_prob": 1.0
+            },
+            "batch_size": 1,
+            "data_sources": [
+              {
+                "data_file": "",
+                "dataset_name": ""
+              }
+            ],
+            "pin_memory": true,
+            "workers": 8
+          },
+          "description": "Configurable parameters to construct the test dataset for a DepthNet experiment.",
+          "properties": {
+            "augmentation": {
+              "automl_default_parameters": [
+                "dataset.test_dataset.augmentation.yjitter_prob",
+                "dataset.test_dataset.augmentation.color_aug_prob",
+                "dataset.test_dataset.augmentation.eraser_aug_prob",
+                "dataset.test_dataset.augmentation.spatial_aug_prob",
+                "dataset.test_dataset.augmentation.stretch_prob",
+                "dataset.test_dataset.augmentation.h_flip_prob",
+                "dataset.test_dataset.augmentation.v_flip_prob",
+                "dataset.test_dataset.augmentation.hshift_prob",
+                "dataset.test_dataset.augmentation.crop_min_valid_disp_ratio"
+              ],
+              "automl_disabled_parameters": [
+                "dataset.test_dataset.augmentation.input_mean",
+                "dataset.test_dataset.augmentation.input_std",
+                "dataset.test_dataset.augmentation.crop_size",
+                "dataset.test_dataset.augmentation.gamma",
+                "dataset.test_dataset.augmentation.color_aug_saturation",
+                "dataset.test_dataset.augmentation.color_aug_hue_range"
+              ],
+              "automl_enabled": false,
+              "default": {
+                "color_aug_brightness": 0.4,
+                "color_aug_contrast": 0.4,
+                "color_aug_hue_range": [
+                  -0.027777777777777776,
+                  0.027777777777777776
+                ],
+                "color_aug_prob": 0.2,
+                "color_aug_saturation": [
+                  0.0,
+                  1.4
+                ],
+                "crop_min_valid_disp_ratio": 0.0,
+                "crop_size": [
+                  518,
+                  518
+                ],
+                "do_flip": false,
+                "eraser_aug_prob": 0.5,
+                "gamma": [
+                  1,
+                  1,
+                  1,
+                  1
+                ],
+                "h_flip_prob": 0.5,
+                "hshift_prob": 0.5,
+                "input_mean": [
+                  0.485,
+                  0.456,
+                  0.406
+                ],
+                "input_std": [
+                  0.229,
+                  0.224,
+                  0.225
+                ],
+                "max_scale": 0.4,
+                "max_stretch": 0.2,
+                "min_scale": -0.2,
+                "spatial_aug_prob": 1.0,
+                "stretch_prob": 0.8,
+                "v_flip_prob": 0.5,
+                "yjitter_prob": 1.0
+              },
+              "description": "Configuration parameters for data augmentation",
+              "properties": {
+                "color_aug_brightness": {
+                  "default": 0.4,
+                  "description": "The color jitter brightness",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "The color jitter brightness",
+                  "type": "float"
+                },
+                "color_aug_contrast": {
+                  "default": 0.4,
+                  "description": "The color jitter contrast",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "The color jitter contrast",
+                  "type": "float"
+                },
+                "color_aug_hue_range": {
+                  "automl_enabled": false,
+                  "default": [
+                    -0.027777777777777776,
+                    0.027777777777777776
+                  ],
+                  "description": "The hue range in data augmentation",
+                  "title": "hue range augmentaiton",
+                  "type": "list"
+                },
+                "color_aug_prob": {
+                  "automl_enabled": true,
+                  "default": 0.2,
+                  "description": "The probability for asymmetric color augmentation",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "The probability for asymmetric color augmentation",
+                  "type": "float"
+                },
+                "color_aug_saturation": {
+                  "automl_enabled": false,
+                  "default": [
+                    0.0,
+                    1.4
+                  ],
+                  "description": "The color jitter saturation",
+                  "title": "The color jitter saturation",
+                  "type": "list"
+                },
+                "crop_min_valid_disp_ratio": {
+                  "automl_enabled": true,
+                  "default": 0.0,
+                  "description": "The probability for minimum crop valid disparity ratio",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "The probability for min crop valid disparity ratio",
+                  "type": "float"
+                },
+                "crop_size": {
+                  "automl_enabled": false,
+                  "default": [
+                    518,
+                    518
+                  ],
+                  "description": "The crop size for input RGB images [height, width]",
+                  "title": "augmentation crop size",
+                  "type": "list"
+                },
+                "do_flip": {
+                  "default": false,
+                  "description": "A flag specifying whether to perform flip in data augmentation",
+                  "title": "do flip",
+                  "type": "bool"
+                },
+                "eraser_aug_prob": {
+                  "automl_enabled": true,
+                  "default": 0.5,
+                  "description": "The probability for eraser augmentation",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "The probability for eraser augmentation",
+                  "type": "float"
+                },
+                "gamma": {
+                  "automl_enabled": false,
+                  "default": [
+                    1,
+                    1,
+                    1,
+                    1
+                  ],
+                  "description": "Gamma range in data augmentation",
+                  "title": "gamma range",
+                  "type": "list"
+                },
+                "h_flip_prob": {
+                  "automl_enabled": true,
+                  "default": 0.5,
+                  "description": "The probability for horizontal flip augmentation",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "The probability for horizontal flip augmentation",
+                  "type": "float"
+                },
+                "hshift_prob": {
+                  "automl_enabled": true,
+                  "default": 0.5,
+                  "description": "The probability for horizontal shift augmentation",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "The probability for horizontal flip augmentation",
+                  "type": "float"
+                },
+                "input_mean": {
+                  "automl_enabled": false,
+                  "default": [
+                    0.485,
+                    0.456,
+                    0.406
+                  ],
+                  "description": "The input mean for RGB frames",
+                  "title": "input mean per pixel",
+                  "type": "list"
+                },
+                "input_std": {
+                  "automl_enabled": false,
+                  "default": [
+                    0.229,
+                    0.224,
+                    0.225
+                  ],
+                  "description": "The input standard deviation per pixel for RGB frames",
+                  "title": "input std per pixel",
+                  "type": "list"
+                },
+                "max_scale": {
+                  "default": 0.4,
+                  "description": "The maximum scale in data augmentation",
+                  "maximum": 1.0,
+                  "minimum": -0.2,
+                  "title": "max scale",
+                  "type": "float"
+                },
+                "max_stretch": {
+                  "default": 0.2,
+                  "description": "The maximum stretch augmentation",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "The maximum stretch augmentation",
+                  "type": "float"
+                },
+                "min_scale": {
+                  "default": -0.2,
+                  "description": "The minimum scale in data augmentation",
+                  "maximum": 1.0,
+                  "minimum": 0.2,
+                  "title": "min scale",
+                  "type": "float"
+                },
+                "spatial_aug_prob": {
+                  "automl_enabled": true,
+                  "default": 1.0,
+                  "description": "The probability for spatial augmentation",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "The probability for spatial augmentation",
+                  "type": "float"
+                },
+                "stretch_prob": {
+                  "automl_enabled": true,
+                  "default": 0.8,
+                  "description": "The probability for stretch augmentation",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "The probability for stretch augmentation",
+                  "type": "float"
+                },
+                "v_flip_prob": {
+                  "automl_enabled": true,
+                  "default": 0.5,
+                  "description": "The probability for vertical flip augmentation",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "The probability for vertical flip augmentation",
+                  "type": "float"
+                },
+                "yjitter_prob": {
+                  "automl_enabled": true,
+                  "default": 1.0,
+                  "description": "The probability for y jitter",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "The probability for y jitter",
+                  "type": "float"
+                }
+              },
+              "title": "augmentation",
+              "type": "collection"
+            },
+            "batch_size": {
+              "default": 1,
+              "description": "The batch size for training and validation",
+              "maximum": Infinity,
+              "minimum": 1,
+              "title": "batch size",
+              "type": "int"
+            },
+            "data_sources": {
+              "automl_enabled": false,
+              "default": [
+                {
+                  "data_file": "",
+                  "dataset_name": ""
+                }
+              ],
+              "description": "The list of data sources for training:\n                    * dataset_name : The type of the dataset\n                    * data_file : The path of the data file",
+              "title": "train data sources",
+              "type": "list"
+            },
+            "pin_memory": {
+              "default": true,
+              "description": "Flag to enable the dataloader to allocated pagelocked memory for faster\n                    of data between the CPU and GPU.",
+              "title": "pin_memory",
+              "type": "bool"
+            },
+            "workers": {
+              "default": 8,
+              "description": "The number of parallel workers processing data",
+              "maximum": Infinity,
+              "minimum": 1,
+              "title": "batch size",
+              "type": "int"
+            }
+          },
+          "type": "collection"
+        },
+        "train_dataset": {
+          "automl_disabled_parameters": [
+            "dataset.train_dataset.data_sources",
+            "dataset.train_dataset.augmentation"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "augmentation": {
+              "color_aug_brightness": 0.4,
+              "color_aug_contrast": 0.4,
+              "color_aug_hue_range": [
+                -0.027777777777777776,
+                0.027777777777777776
+              ],
+              "color_aug_prob": 0.2,
+              "color_aug_saturation": [
+                0.0,
+                1.4
+              ],
+              "crop_min_valid_disp_ratio": 0.0,
+              "crop_size": [
+                518,
+                518
+              ],
+              "do_flip": false,
+              "eraser_aug_prob": 0.5,
+              "gamma": [
+                1,
+                1,
+                1,
+                1
+              ],
+              "h_flip_prob": 0.5,
+              "hshift_prob": 0.5,
+              "input_mean": [
+                0.485,
+                0.456,
+                0.406
+              ],
+              "input_std": [
+                0.229,
+                0.224,
+                0.225
+              ],
+              "max_scale": 0.4,
+              "max_stretch": 0.2,
+              "min_scale": -0.2,
+              "spatial_aug_prob": 1.0,
+              "stretch_prob": 0.8,
+              "v_flip_prob": 0.5,
+              "yjitter_prob": 1.0
+            },
+            "batch_size": 1,
+            "data_sources": [
+              {
+                "data_file": "",
+                "dataset_name": ""
+              }
+            ],
+            "pin_memory": true,
+            "workers": 8
+          },
+          "description": "Configurable parameters to construct the train dataset for a DepthNet experiment.",
+          "properties": {
+            "augmentation": {
+              "automl_default_parameters": [
+                "dataset.train_dataset.augmentation.yjitter_prob",
+                "dataset.train_dataset.augmentation.color_aug_prob",
+                "dataset.train_dataset.augmentation.eraser_aug_prob",
+                "dataset.train_dataset.augmentation.spatial_aug_prob",
+                "dataset.train_dataset.augmentation.stretch_prob",
+                "dataset.train_dataset.augmentation.h_flip_prob",
+                "dataset.train_dataset.augmentation.v_flip_prob",
+                "dataset.train_dataset.augmentation.hshift_prob",
+                "dataset.train_dataset.augmentation.crop_min_valid_disp_ratio"
+              ],
+              "automl_disabled_parameters": [
+                "dataset.train_dataset.augmentation.input_mean",
+                "dataset.train_dataset.augmentation.input_std",
+                "dataset.train_dataset.augmentation.crop_size",
+                "dataset.train_dataset.augmentation.gamma",
+                "dataset.train_dataset.augmentation.color_aug_saturation",
+                "dataset.train_dataset.augmentation.color_aug_hue_range"
+              ],
+              "automl_enabled": false,
+              "default": {
+                "color_aug_brightness": 0.4,
+                "color_aug_contrast": 0.4,
+                "color_aug_hue_range": [
+                  -0.027777777777777776,
+                  0.027777777777777776
+                ],
+                "color_aug_prob": 0.2,
+                "color_aug_saturation": [
+                  0.0,
+                  1.4
+                ],
+                "crop_min_valid_disp_ratio": 0.0,
+                "crop_size": [
+                  518,
+                  518
+                ],
+                "do_flip": false,
+                "eraser_aug_prob": 0.5,
+                "gamma": [
+                  1,
+                  1,
+                  1,
+                  1
+                ],
+                "h_flip_prob": 0.5,
+                "hshift_prob": 0.5,
+                "input_mean": [
+                  0.485,
+                  0.456,
+                  0.406
+                ],
+                "input_std": [
+                  0.229,
+                  0.224,
+                  0.225
+                ],
+                "max_scale": 0.4,
+                "max_stretch": 0.2,
+                "min_scale": -0.2,
+                "spatial_aug_prob": 1.0,
+                "stretch_prob": 0.8,
+                "v_flip_prob": 0.5,
+                "yjitter_prob": 1.0
+              },
+              "description": "Configuration parameters for data augmentation",
+              "properties": {
+                "color_aug_brightness": {
+                  "default": 0.4,
+                  "description": "The color jitter brightness",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "The color jitter brightness",
+                  "type": "float"
+                },
+                "color_aug_contrast": {
+                  "default": 0.4,
+                  "description": "The color jitter contrast",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "The color jitter contrast",
+                  "type": "float"
+                },
+                "color_aug_hue_range": {
+                  "automl_enabled": false,
+                  "default": [
+                    -0.027777777777777776,
+                    0.027777777777777776
+                  ],
+                  "description": "The hue range in data augmentation",
+                  "title": "hue range augmentaiton",
+                  "type": "list"
+                },
+                "color_aug_prob": {
+                  "automl_enabled": true,
+                  "default": 0.2,
+                  "description": "The probability for asymmetric color augmentation",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "The probability for asymmetric color augmentation",
+                  "type": "float"
+                },
+                "color_aug_saturation": {
+                  "automl_enabled": false,
+                  "default": [
+                    0.0,
+                    1.4
+                  ],
+                  "description": "The color jitter saturation",
+                  "title": "The color jitter saturation",
+                  "type": "list"
+                },
+                "crop_min_valid_disp_ratio": {
+                  "automl_enabled": true,
+                  "default": 0.0,
+                  "description": "The probability for minimum crop valid disparity ratio",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "The probability for min crop valid disparity ratio",
+                  "type": "float"
+                },
+                "crop_size": {
+                  "automl_enabled": false,
+                  "default": [
+                    518,
+                    518
+                  ],
+                  "description": "The crop size for input RGB images [height, width]",
+                  "title": "augmentation crop size",
+                  "type": "list"
+                },
+                "do_flip": {
+                  "default": false,
+                  "description": "A flag specifying whether to perform flip in data augmentation",
+                  "title": "do flip",
+                  "type": "bool"
+                },
+                "eraser_aug_prob": {
+                  "automl_enabled": true,
+                  "default": 0.5,
+                  "description": "The probability for eraser augmentation",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "The probability for eraser augmentation",
+                  "type": "float"
+                },
+                "gamma": {
+                  "automl_enabled": false,
+                  "default": [
+                    1,
+                    1,
+                    1,
+                    1
+                  ],
+                  "description": "Gamma range in data augmentation",
+                  "title": "gamma range",
+                  "type": "list"
+                },
+                "h_flip_prob": {
+                  "automl_enabled": true,
+                  "default": 0.5,
+                  "description": "The probability for horizontal flip augmentation",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "The probability for horizontal flip augmentation",
+                  "type": "float"
+                },
+                "hshift_prob": {
+                  "automl_enabled": true,
+                  "default": 0.5,
+                  "description": "The probability for horizontal shift augmentation",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "The probability for horizontal flip augmentation",
+                  "type": "float"
+                },
+                "input_mean": {
+                  "automl_enabled": false,
+                  "default": [
+                    0.485,
+                    0.456,
+                    0.406
+                  ],
+                  "description": "The input mean for RGB frames",
+                  "title": "input mean per pixel",
+                  "type": "list"
+                },
+                "input_std": {
+                  "automl_enabled": false,
+                  "default": [
+                    0.229,
+                    0.224,
+                    0.225
+                  ],
+                  "description": "The input standard deviation per pixel for RGB frames",
+                  "title": "input std per pixel",
+                  "type": "list"
+                },
+                "max_scale": {
+                  "default": 0.4,
+                  "description": "The maximum scale in data augmentation",
+                  "maximum": 1.0,
+                  "minimum": -0.2,
+                  "title": "max scale",
+                  "type": "float"
+                },
+                "max_stretch": {
+                  "default": 0.2,
+                  "description": "The maximum stretch augmentation",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "The maximum stretch augmentation",
+                  "type": "float"
+                },
+                "min_scale": {
+                  "default": -0.2,
+                  "description": "The minimum scale in data augmentation",
+                  "maximum": 1.0,
+                  "minimum": 0.2,
+                  "title": "min scale",
+                  "type": "float"
+                },
+                "spatial_aug_prob": {
+                  "automl_enabled": true,
+                  "default": 1.0,
+                  "description": "The probability for spatial augmentation",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "The probability for spatial augmentation",
+                  "type": "float"
+                },
+                "stretch_prob": {
+                  "automl_enabled": true,
+                  "default": 0.8,
+                  "description": "The probability for stretch augmentation",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "The probability for stretch augmentation",
+                  "type": "float"
+                },
+                "v_flip_prob": {
+                  "automl_enabled": true,
+                  "default": 0.5,
+                  "description": "The probability for vertical flip augmentation",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "The probability for vertical flip augmentation",
+                  "type": "float"
+                },
+                "yjitter_prob": {
+                  "automl_enabled": true,
+                  "default": 1.0,
+                  "description": "The probability for y jitter",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "The probability for y jitter",
+                  "type": "float"
+                }
+              },
+              "title": "augmentation",
+              "type": "collection"
+            },
+            "batch_size": {
+              "default": 1,
+              "description": "The batch size for training and validation",
+              "maximum": Infinity,
+              "minimum": 1,
+              "title": "batch size",
+              "type": "int"
+            },
+            "data_sources": {
+              "automl_enabled": false,
+              "default": [
+                {
+                  "data_file": "",
+                  "dataset_name": ""
+                }
+              ],
+              "description": "The list of data sources for training:\n                    * dataset_name : The type of the dataset\n                    * data_file : The path of the data file",
+              "title": "train data sources",
+              "type": "list"
+            },
+            "pin_memory": {
+              "default": true,
+              "description": "Flag to enable the dataloader to allocated pagelocked memory for faster\n                    of data between the CPU and GPU.",
+              "title": "pin_memory",
+              "type": "bool"
+            },
+            "workers": {
+              "default": 8,
+              "description": "The number of parallel workers processing data",
+              "maximum": Infinity,
+              "minimum": 1,
+              "title": "batch size",
+              "type": "int"
+            }
+          },
+          "type": "collection"
+        },
+        "val_dataset": {
+          "automl_disabled_parameters": [
+            "dataset.val_dataset.data_sources",
+            "dataset.val_dataset.augmentation"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "augmentation": {
+              "color_aug_brightness": 0.4,
+              "color_aug_contrast": 0.4,
+              "color_aug_hue_range": [
+                -0.027777777777777776,
+                0.027777777777777776
+              ],
+              "color_aug_prob": 0.2,
+              "color_aug_saturation": [
+                0.0,
+                1.4
+              ],
+              "crop_min_valid_disp_ratio": 0.0,
+              "crop_size": [
+                518,
+                518
+              ],
+              "do_flip": false,
+              "eraser_aug_prob": 0.5,
+              "gamma": [
+                1,
+                1,
+                1,
+                1
+              ],
+              "h_flip_prob": 0.5,
+              "hshift_prob": 0.5,
+              "input_mean": [
+                0.485,
+                0.456,
+                0.406
+              ],
+              "input_std": [
+                0.229,
+                0.224,
+                0.225
+              ],
+              "max_scale": 0.4,
+              "max_stretch": 0.2,
+              "min_scale": -0.2,
+              "spatial_aug_prob": 1.0,
+              "stretch_prob": 0.8,
+              "v_flip_prob": 0.5,
+              "yjitter_prob": 1.0
+            },
+            "batch_size": 1,
+            "data_sources": [
+              {
+                "data_file": "",
+                "dataset_name": ""
+              }
+            ],
+            "pin_memory": true,
+            "workers": 8
+          },
+          "description": "Configurable parameters to construct the val dataset for a DepthNet experiment.",
+          "properties": {
+            "augmentation": {
+              "automl_default_parameters": [
+                "dataset.val_dataset.augmentation.yjitter_prob",
+                "dataset.val_dataset.augmentation.color_aug_prob",
+                "dataset.val_dataset.augmentation.eraser_aug_prob",
+                "dataset.val_dataset.augmentation.spatial_aug_prob",
+                "dataset.val_dataset.augmentation.stretch_prob",
+                "dataset.val_dataset.augmentation.h_flip_prob",
+                "dataset.val_dataset.augmentation.v_flip_prob",
+                "dataset.val_dataset.augmentation.hshift_prob",
+                "dataset.val_dataset.augmentation.crop_min_valid_disp_ratio"
+              ],
+              "automl_disabled_parameters": [
+                "dataset.val_dataset.augmentation.input_mean",
+                "dataset.val_dataset.augmentation.input_std",
+                "dataset.val_dataset.augmentation.crop_size",
+                "dataset.val_dataset.augmentation.gamma",
+                "dataset.val_dataset.augmentation.color_aug_saturation",
+                "dataset.val_dataset.augmentation.color_aug_hue_range"
+              ],
+              "automl_enabled": false,
+              "default": {
+                "color_aug_brightness": 0.4,
+                "color_aug_contrast": 0.4,
+                "color_aug_hue_range": [
+                  -0.027777777777777776,
+                  0.027777777777777776
+                ],
+                "color_aug_prob": 0.2,
+                "color_aug_saturation": [
+                  0.0,
+                  1.4
+                ],
+                "crop_min_valid_disp_ratio": 0.0,
+                "crop_size": [
+                  518,
+                  518
+                ],
+                "do_flip": false,
+                "eraser_aug_prob": 0.5,
+                "gamma": [
+                  1,
+                  1,
+                  1,
+                  1
+                ],
+                "h_flip_prob": 0.5,
+                "hshift_prob": 0.5,
+                "input_mean": [
+                  0.485,
+                  0.456,
+                  0.406
+                ],
+                "input_std": [
+                  0.229,
+                  0.224,
+                  0.225
+                ],
+                "max_scale": 0.4,
+                "max_stretch": 0.2,
+                "min_scale": -0.2,
+                "spatial_aug_prob": 1.0,
+                "stretch_prob": 0.8,
+                "v_flip_prob": 0.5,
+                "yjitter_prob": 1.0
+              },
+              "description": "Configuration parameters for data augmentation",
+              "properties": {
+                "color_aug_brightness": {
+                  "default": 0.4,
+                  "description": "The color jitter brightness",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "The color jitter brightness",
+                  "type": "float"
+                },
+                "color_aug_contrast": {
+                  "default": 0.4,
+                  "description": "The color jitter contrast",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "The color jitter contrast",
+                  "type": "float"
+                },
+                "color_aug_hue_range": {
+                  "automl_enabled": false,
+                  "default": [
+                    -0.027777777777777776,
+                    0.027777777777777776
+                  ],
+                  "description": "The hue range in data augmentation",
+                  "title": "hue range augmentaiton",
+                  "type": "list"
+                },
+                "color_aug_prob": {
+                  "automl_enabled": true,
+                  "default": 0.2,
+                  "description": "The probability for asymmetric color augmentation",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "The probability for asymmetric color augmentation",
+                  "type": "float"
+                },
+                "color_aug_saturation": {
+                  "automl_enabled": false,
+                  "default": [
+                    0.0,
+                    1.4
+                  ],
+                  "description": "The color jitter saturation",
+                  "title": "The color jitter saturation",
+                  "type": "list"
+                },
+                "crop_min_valid_disp_ratio": {
+                  "automl_enabled": true,
+                  "default": 0.0,
+                  "description": "The probability for minimum crop valid disparity ratio",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "The probability for min crop valid disparity ratio",
+                  "type": "float"
+                },
+                "crop_size": {
+                  "automl_enabled": false,
+                  "default": [
+                    518,
+                    518
+                  ],
+                  "description": "The crop size for input RGB images [height, width]",
+                  "title": "augmentation crop size",
+                  "type": "list"
+                },
+                "do_flip": {
+                  "default": false,
+                  "description": "A flag specifying whether to perform flip in data augmentation",
+                  "title": "do flip",
+                  "type": "bool"
+                },
+                "eraser_aug_prob": {
+                  "automl_enabled": true,
+                  "default": 0.5,
+                  "description": "The probability for eraser augmentation",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "The probability for eraser augmentation",
+                  "type": "float"
+                },
+                "gamma": {
+                  "automl_enabled": false,
+                  "default": [
+                    1,
+                    1,
+                    1,
+                    1
+                  ],
+                  "description": "Gamma range in data augmentation",
+                  "title": "gamma range",
+                  "type": "list"
+                },
+                "h_flip_prob": {
+                  "automl_enabled": true,
+                  "default": 0.5,
+                  "description": "The probability for horizontal flip augmentation",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "The probability for horizontal flip augmentation",
+                  "type": "float"
+                },
+                "hshift_prob": {
+                  "automl_enabled": true,
+                  "default": 0.5,
+                  "description": "The probability for horizontal shift augmentation",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "The probability for horizontal flip augmentation",
+                  "type": "float"
+                },
+                "input_mean": {
+                  "automl_enabled": false,
+                  "default": [
+                    0.485,
+                    0.456,
+                    0.406
+                  ],
+                  "description": "The input mean for RGB frames",
+                  "title": "input mean per pixel",
+                  "type": "list"
+                },
+                "input_std": {
+                  "automl_enabled": false,
+                  "default": [
+                    0.229,
+                    0.224,
+                    0.225
+                  ],
+                  "description": "The input standard deviation per pixel for RGB frames",
+                  "title": "input std per pixel",
+                  "type": "list"
+                },
+                "max_scale": {
+                  "default": 0.4,
+                  "description": "The maximum scale in data augmentation",
+                  "maximum": 1.0,
+                  "minimum": -0.2,
+                  "title": "max scale",
+                  "type": "float"
+                },
+                "max_stretch": {
+                  "default": 0.2,
+                  "description": "The maximum stretch augmentation",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "The maximum stretch augmentation",
+                  "type": "float"
+                },
+                "min_scale": {
+                  "default": -0.2,
+                  "description": "The minimum scale in data augmentation",
+                  "maximum": 1.0,
+                  "minimum": 0.2,
+                  "title": "min scale",
+                  "type": "float"
+                },
+                "spatial_aug_prob": {
+                  "automl_enabled": true,
+                  "default": 1.0,
+                  "description": "The probability for spatial augmentation",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "The probability for spatial augmentation",
+                  "type": "float"
+                },
+                "stretch_prob": {
+                  "automl_enabled": true,
+                  "default": 0.8,
+                  "description": "The probability for stretch augmentation",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "The probability for stretch augmentation",
+                  "type": "float"
+                },
+                "v_flip_prob": {
+                  "automl_enabled": true,
+                  "default": 0.5,
+                  "description": "The probability for vertical flip augmentation",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "The probability for vertical flip augmentation",
+                  "type": "float"
+                },
+                "yjitter_prob": {
+                  "automl_enabled": true,
+                  "default": 1.0,
+                  "description": "The probability for y jitter",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "The probability for y jitter",
+                  "type": "float"
+                }
+              },
+              "title": "augmentation",
+              "type": "collection"
+            },
+            "batch_size": {
+              "default": 1,
+              "description": "The batch size for training and validation",
+              "maximum": Infinity,
+              "minimum": 1,
+              "title": "batch size",
+              "type": "int"
+            },
+            "data_sources": {
+              "automl_enabled": false,
+              "default": [
+                {
+                  "data_file": "",
+                  "dataset_name": ""
+                }
+              ],
+              "description": "The list of data sources for training:\n                    * dataset_name : The type of the dataset\n                    * data_file : The path of the data file",
+              "title": "train data sources",
+              "type": "list"
+            },
+            "pin_memory": {
+              "default": true,
+              "description": "Flag to enable the dataloader to allocated pagelocked memory for faster\n                    of data between the CPU and GPU.",
+              "title": "pin_memory",
+              "type": "bool"
+            },
+            "workers": {
+              "default": 8,
+              "description": "The number of parallel workers processing data",
+              "maximum": Infinity,
+              "minimum": 1,
+              "title": "batch size",
+              "type": "int"
+            }
+          },
+          "type": "collection"
+        }
+      },
+      "type": "collection"
+    },
+    "encryption_key": {
+      "default": "",
+      "description": "Key for encrypting model checkpoints",
+      "title": "Encryption key",
+      "type": "string"
+    },
+    "gen_trt_engine": {
+      "automl_disabled_parameters": [
+        "gen_trt_engine.tensorrt"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "batch_size": -1,
+        "gpu_id": 0,
+        "onnx_file": "???",
+        "results_dir": "",
+        "tensorrt": {
+          "data_type": "FP32",
+          "layers_precision": [],
+          "max_batch_size": 1,
+          "min_batch_size": 1,
+          "opt_batch_size": 1,
+          "workspace_size": 1024
+        },
+        "timing_cache": "",
+        "trt_engine": "???",
+        "verbose": false
+      },
+      "description": "Configurable parameters to construct the TensorRT engine builder for a DepthNet experiment.",
+      "popular": [
+        "batch_size",
+        "gpu_id",
+        "tensorrt"
+      ],
+      "properties": {
+        "batch_size": {
+          "default": -1,
+          "description": "The batch size of the input Tensor for the engine.\n                    A value of :code:`-1` implies dynamic tensor shapes.",
+          "minimum": -1,
+          "popular": true,
+          "title": "Batch size",
+          "type": "int"
+        },
+        "gpu_id": {
+          "default": 0,
+          "description": "The index of the GPU to build the TensorRT engine.",
+          "minimum": 0,
+          "popular": true,
+          "title": "GPU ID",
+          "type": "int"
+        },
+        "onnx_file": {
+          "default": "???",
+          "description": "\n        Path to the ONNX model file.\n        ",
+          "title": "ONNX file",
+          "type": "string"
+        },
+        "results_dir": {
+          "default": "",
+          "description": "\n        Path to where all the assets generated from a task are stored.\n        ",
+          "title": "Results directory",
+          "type": "string"
+        },
+        "tensorrt": {
+          "automl_disabled_parameters": [
+            "gen_trt_engine.tensorrt.layers_precision"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "data_type": "FP32",
+            "layers_precision": [],
+            "max_batch_size": 1,
+            "min_batch_size": 1,
+            "opt_batch_size": 1,
+            "workspace_size": 1024
+          },
+          "description": "Hyper parameters to configure the TensorRT Engine builder.",
+          "popular": [
+            "min_batch_size",
+            "max_batch_size",
+            "opt_batch_size"
+          ],
+          "properties": {
+            "data_type": {
+              "default": "FP32",
+              "description": "The precision to be set for building the TensorRT engine.",
+              "enum": [
+                "FP32",
+                "FP16"
+              ],
+              "title": "data type",
+              "type": "categorical"
+            },
+            "layers_precision": {
+              "automl_enabled": false,
+              "default": [],
+              "description": "The list to specify layer precision.",
+              "title": "layers_precision",
+              "type": "list"
+            },
+            "max_batch_size": {
+              "default": 1,
+              "description": "The maximum batch size in the optimization profile for\n                    the input tensor of the TensorRT engine.",
+              "minimum": 1,
+              "popular": true,
+              "title": "Maximum batch size",
+              "type": "int"
+            },
+            "min_batch_size": {
+              "default": 1,
+              "description": "The minimum batch size in the optimization profile for\n                    the input tensor of the TensorRT engine.",
+              "minimum": 1,
+              "popular": true,
+              "title": "Min batch size",
+              "type": "int"
+            },
+            "opt_batch_size": {
+              "default": 1,
+              "description": "The optimum batch size in the optimization profile for\n                    the input tensor of the TensorRT engine.",
+              "minimum": 1,
+              "popular": true,
+              "title": "Optimum batch size",
+              "type": "int"
+            },
+            "workspace_size": {
+              "default": 1024,
+              "description": "The size (in MB) of the workspace TensorRT has\n                    to run it's optimization tactics and generate the\n                    TensorRT engine.",
+              "minimum": 0,
+              "title": "Max workspace size",
+              "type": "int"
+            }
+          },
+          "title": "TensorRT hyper params.",
+          "type": "collection"
+        },
+        "timing_cache": {
+          "default": "",
+          "description": "Path to a TensorRT timing cache that speeds up engine generation.\n                    This will be created/read/updated.",
+          "title": "TensorRT timing cache",
+          "type": "string"
+        },
+        "trt_engine": {
+          "default": "???",
+          "description": "Path to the TensorRT engine generated should be stored.\n                    This only works with :code:`tao-deploy`.",
+          "title": "TensorRT engine",
+          "type": "string"
+        },
+        "verbose": {
+          "default": false,
+          "description": "Flag to enable verbose TensorRT logging.",
+          "title": "Verbose",
+          "type": "bool"
+        }
+      },
+      "type": "collection"
+    },
+    "model": {
+      "automl_default_parameters": [
+        "model.corr_radius",
+        "model.cv_group",
+        "model.volume_dim"
+      ],
+      "automl_disabled_parameters": [
+        "model.mono_backbone",
+        "model.stereo_backbone",
+        "model.hidden_dims"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "corr_levels": 2,
+        "corr_radius": 4,
+        "cv_group": 8,
+        "encoder": "vitl",
+        "hidden_dims": [
+          128,
+          128,
+          128
+        ],
+        "low_memory": 0,
+        "max_disparity": 416,
+        "mixed_precision": false,
+        "model_type": "MetricDepthAnything",
+        "mono_backbone": {
+          "pretrained_path": "",
+          "use_bn": false,
+          "use_clstoken": false
+        },
+        "n_downsample": 2,
+        "n_gru_layers": 3,
+        "stereo_backbone": {
+          "depth_anything_v2_pretrained_path": "",
+          "edgenext_pretrained_path": "",
+          "use_bn": false,
+          "use_clstoken": false
+        },
+        "train_iters": 22,
+        "valid_iters": 22,
+        "volume_dim": 32
+      },
+      "description": "Configurable parameters to construct the model for a DepthNet experiment.",
+      "properties": {
+        "corr_levels": {
+          "default": 2,
+          "description": "The number of levels in the correlation pyramid",
+          "maximum": 2,
+          "minimum": 1,
+          "title": "number of correlation pyramid levels",
+          "type": "int"
+        },
+        "corr_radius": {
+          "automl_enabled": true,
+          "default": 4,
+          "description": "The width of the correlation pyramid",
+          "maximum": 8,
+          "minimum": 2,
+          "title": "correlation pyramid width",
+          "type": "int"
+        },
+        "cv_group": {
+          "automl_enabled": true,
+          "default": 8,
+          "description": "cv group",
+          "maximum": 16,
+          "minimum": 4,
+          "title": "cv group",
+          "type": "int"
+        },
+        "encoder": {
+          "default": "vitl",
+          "description": "DepthAnythingV2 Encoder options",
+          "enum": [
+            "vits",
+            "vitb",
+            "vitl",
+            "vitg"
+          ],
+          "type": "categorical"
+        },
+        "hidden_dims": {
+          "automl_enabled": false,
+          "default": [
+            128,
+            128,
+            128
+          ],
+          "description": "The hidden dimensions.",
+          "title": "The hidden dimensions.",
+          "type": "list"
+        },
+        "low_memory": {
+          "default": 0,
+          "description": "reduce memory usage",
+          "maximum": 4,
+          "minimum": 0,
+          "title": "reduce memory usage",
+          "type": "int"
+        },
+        "max_disparity": {
+          "default": 416,
+          "description": "\n        The maximum disparity of the model used in the training of a stereo model\n        ",
+          "title": "max disparity",
+          "type": "int"
+        },
+        "mixed_precision": {
+          "default": false,
+          "description": "A flag specifying whether to use mixed precision training",
+          "title": "Mixed Precision Training",
+          "type": "bool"
+        },
+        "model_type": {
+          "default": "MetricDepthAnything",
+          "description": "Network name",
+          "enum": [
+            "FoundationStereo",
+            "MetricDepthAnything",
+            "RelativeDepthAnything"
+          ],
+          "type": "categorical"
+        },
+        "mono_backbone": {
+          "automl_enabled": false,
+          "default": {
+            "pretrained_path": "",
+            "use_bn": false,
+            "use_clstoken": false
+          },
+          "description": "Network defined paths for Monocular DepthNet Backbone",
+          "properties": {
+            "pretrained_path": {
+              "default": "",
+              "description": "Path to load depth anything v2 as an encoder for Monocular DepthNet",
+              "title": "Pretrained path for mono backbone",
+              "type": "string"
+            },
+            "use_bn": {
+              "default": false,
+              "description": "A flag specifying whether to use batch normalization in Monocular DepthNet",
+              "title": "Batch normalization in Monocular DepthNet",
+              "type": "bool"
+            },
+            "use_clstoken": {
+              "default": false,
+              "description": "A flag specifying whether to use class token",
+              "title": "Class token in Monocular DepthNet",
+              "type": "bool"
+            }
+          },
+          "title": "Mono backbone configuration",
+          "type": "collection"
+        },
+        "n_downsample": {
+          "default": 2,
+          "description": "resolution of the disparity field (1/2^K)",
+          "maximum": 2,
+          "minimum": 1,
+          "title": "disparity field resoultion",
+          "type": "int"
+        },
+        "n_gru_layers": {
+          "default": 3,
+          "description": "The number of hidden GRU levels",
+          "maximum": 3,
+          "minimum": 1,
+          "title": "number of hidden GRU levels",
+          "type": "int"
+        },
+        "stereo_backbone": {
+          "automl_enabled": false,
+          "default": {
+            "depth_anything_v2_pretrained_path": "",
+            "edgenext_pretrained_path": "",
+            "use_bn": false,
+            "use_clstoken": false
+          },
+          "description": "Network defined paths for Edgenext and Depthanythingv2",
+          "properties": {
+            "depth_anything_v2_pretrained_path": {
+              "default": "",
+              "description": "Path to load depth anything v2 as an encoder for Stereo DepthNet (FoundationStereo)",
+              "type": "string"
+            },
+            "edgenext_pretrained_path": {
+              "default": "",
+              "description": "Path to load edgenext encoder for Stereo DepthNet (FoundationStereo)",
+              "type": "string"
+            },
+            "use_bn": {
+              "default": false,
+              "description": "A flag specifying whether to use batch normalization in DepthAnythingV2",
+              "title": "batch normalization in DepthAnythingV2",
+              "type": "bool"
+            },
+            "use_clstoken": {
+              "default": false,
+              "description": "A flag specifying whether to use class token",
+              "title": "class token in DepthAnythingV2",
+              "type": "bool"
+            }
+          },
+          "title": "Stereo backbone configuration",
+          "type": "collection"
+        },
+        "train_iters": {
+          "default": 22,
+          "description": "Train Iteration",
+          "minimum": 1,
+          "title": "train iteration",
+          "type": "int"
+        },
+        "valid_iters": {
+          "default": 22,
+          "description": "Validation Iteration",
+          "minimum": 1,
+          "title": "Validation iteration",
+          "type": "int"
+        },
+        "volume_dim": {
+          "automl_enabled": true,
+          "default": 32,
+          "description": "Volume dimension",
+          "maximum": 64,
+          "minimum": 16,
+          "title": "volume dimension",
+          "type": "int"
+        }
+      },
+      "type": "collection"
+    },
+    "model_name": {
+      "default": "",
+      "description": "Name of model if invoking task via :code:`model_agnostic`",
+      "title": "Model name",
+      "type": "string"
+    },
+    "quantize": {
+      "automl_disabled_parameters": [
+        "quantize.layers",
+        "quantize.skip_names",
+        "quantize.backend_kwargs"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "algorithm": "minmax",
+        "backend": "torchao",
+        "backend_kwargs": {},
+        "device": "cuda",
+        "layers": [],
+        "mode": "weight_only_ptq",
+        "model_path": "",
+        "results_dir": "",
+        "skip_names": []
+      },
+      "description": "Configurable parameters for model quantization.",
+      "properties": {
+        "algorithm": {
+          "default": "minmax",
+          "description": "Calibration/optimization algorithm. Used by ModelOpt backends (modelopt.pytorch and modelopt.onnx). Ignored by torchao backend.",
+          "enum": [
+            "minmax",
+            "max",
+            "entropy",
+            "awq_clip",
+            "awq_lite",
+            "awq_full",
+            "rtn_dq"
+          ],
+          "title": "Calibration algorithm",
+          "type": "categorical"
+        },
+        "backend": {
+          "default": "torchao",
+          "description": "The quantization backend to use",
+          "enum": [
+            "modelopt.pytorch",
+            "torchao",
+            "modelopt.onnx"
+          ],
+          "title": "Quantization backend",
+          "type": "categorical"
+        },
+        "backend_kwargs": {
+          "automl_enabled": false,
+          "description": "Additional keyword arguments to pass to the backend",
+          "title": "Backend kwargs",
+          "type": "collection"
+        },
+        "device": {
+          "default": "cuda",
+          "description": "Device to use for calibration. Accepts 'cuda' (uses default GPU), 'cpu', 'trt' (TensorRT for ONNX backend), or specific GPU device like 'cuda:0', 'cuda:1', etc. If 'cuda' is specified but no GPU is available, the framework will automatically fall back to 'cpu'. Note: 'trt' is only supported by the modelopt.onnx backend for ONNX Runtime with TensorRT execution provider.",
+          "pattern": "^(cuda|cpu|trt|cuda:[0-9]+)$",
+          "title": "Calibration device",
+          "type": "string"
+        },
+        "layers": {
+          "automl_enabled": false,
+          "default": [],
+          "description": "List of per-module quantization configurations. Each entry specifies which modules to quantize and their data types. This is the primary way to configure quantization.",
+          "title": "Layer quantization configs",
+          "type": "list"
+        },
+        "mode": {
+          "default": "weight_only_ptq",
+          "description": "The quantization mode to use",
+          "enum": [
+            "static_ptq",
+            "weight_only_ptq"
+          ],
+          "title": "Quantization mode",
+          "type": "categorical"
+        },
+        "model_path": {
+          "default": "",
+          "description": "Path to the model to be quantized. For ONNX backend, path to ONNX file.",
+          "title": "Model path",
+          "type": "string"
+        },
+        "results_dir": {
+          "default": "",
+          "description": "Path to where all the assets generated from a task are stored.",
+          "title": "Results directory",
+          "type": "string"
+        },
+        "skip_names": {
+          "automl_enabled": false,
+          "default": [],
+          "description": "List of module/layer names or patterns to exclude from quantization",
+          "title": "Skip names",
+          "type": "list"
+        }
+      },
+      "required": [
+        "model_path",
+        "results_dir"
+      ],
+      "type": "collection"
+    },
+    "results_dir": {
+      "default": "",
+      "description": "\n        Path to where all the assets generated from a task are stored.\n        ",
+      "title": "Results directory",
+      "type": "string"
+    },
+    "train": {
+      "automl_disabled_parameters": [
+        "train.gpu_ids",
+        "train.cudnn",
+        "train.optim",
+        "train.tile_min_overlap"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "activation_checkpoint": false,
+        "checkpoint_interval": 1,
+        "checkpoint_interval_unit": "epoch",
+        "clip_grad_norm": 0.1,
+        "cudnn": {
+          "benchmark": false,
+          "deterministic": true
+        },
+        "dataloader_visualize": false,
+        "distributed_strategy": "ddp",
+        "gpu_ids": [
+          0
+        ],
+        "inference_tile": false,
+        "is_dry_run": false,
+        "log_every_n_steps": 500,
+        "num_epochs": 10,
+        "num_gpus": 1,
+        "num_nodes": 1,
+        "optim": {
+          "lr": 0.0001,
+          "lr_decay": 0.1,
+          "lr_scheduler": "MultiStepLR",
+          "lr_step_size": 1000,
+          "lr_steps": [
+            1000
+          ],
+          "min_lr": 1e-07,
+          "momentum": 0.9,
+          "monitor_name": "val_loss",
+          "optimizer": "AdamW",
+          "warmup_steps": 20,
+          "weight_decay": 0.0001
+        },
+        "precision": "fp32",
+        "pretrained_model_path": "",
+        "results_dir": "",
+        "resume_training_checkpoint_path": "",
+        "seed": 1234,
+        "tile_min_overlap": [
+          16,
+          16
+        ],
+        "tile_wtype": "gaussian",
+        "validation_interval": 1,
+        "vis_step_interval": 10
+      },
+      "description": "Configurable parameters to construct the trainer for a DepthNet experiment.",
+      "popular": [
+        "validation_interval",
+        "checkpoint_interval",
+        "num_gpus",
+        "num_nodes",
+        "num_epochs",
+        "gpu_ids"
+      ],
+      "properties": {
+        "activation_checkpoint": {
+          "default": false,
+          "description": "\n        A True value instructs train to recompute in backward pass to save GPU memory,\n        rather than storing activations.",
+          "title": "enable activation checkpointing",
+          "type": "bool"
+        },
+        "checkpoint_interval": {
+          "default": 1,
+          "description": "The interval (in epochs) at which a checkpoint will be saved. Helps resume training.",
+          "minimum": 1,
+          "popular": true,
+          "title": "Checkpoint interval",
+          "type": "int"
+        },
+        "checkpoint_interval_steps": {
+          "description": "The number of steps to save the checkpoint.",
+          "title": "checkpoint interval steps",
+          "type": "int"
+        },
+        "checkpoint_interval_unit": {
+          "default": "epoch",
+          "description": "The unit of the checkpoint interval.",
+          "enum": [
+            "epoch",
+            "step"
+          ],
+          "title": "Checkpoint interval unit",
+          "type": "categorical"
+        },
+        "clip_grad_norm": {
+          "default": 0.1,
+          "description": "\n        Amount to clip the gradient by L2 Norm.\n        A value of 0.0 specifies no clipping.",
+          "math_cond": "> 0.0",
+          "title": "clip gradient norm",
+          "type": "float"
+        },
+        "cudnn": {
+          "automl_enabled": false,
+          "default": {
+            "benchmark": false,
+            "deterministic": true
+          },
+          "properties": {
+            "benchmark": {
+              "default": false,
+              "type": "bool"
+            },
+            "deterministic": {
+              "default": true,
+              "type": "bool"
+            }
+          },
+          "type": "collection"
+        },
+        "dataloader_visualize": {
+          "default": false,
+          "description": "Whether to visualize the dataloader.",
+          "title": "dataloader visualize",
+          "type": "bool"
+        },
+        "distributed_strategy": {
+          "default": "ddp",
+          "description": "\n        The multi-GPU training strategy.\n        DDP (Distributed Data Parallel) and Fully Sharded DDP are supported.",
+          "enum": [
+            "ddp",
+            "fsdp"
+          ],
+          "title": "distributed_strategy",
+          "type": "categorical"
+        },
+        "gpu_ids": {
+          "automl_enabled": false,
+          "default": [
+            0
+          ],
+          "description": "\n        List of GPU IDs to run the training on. The length of this list\n        must be equal to the number of gpus in train.num_gpus.",
+          "popular": true,
+          "title": "GPU IDs",
+          "type": "list"
+        },
+        "inference_tile": {
+          "default": false,
+          "description": "Use tiled inference, particularly for transformers\n                    which expect fixed size of sequences.\n                    ",
+          "title": "tile inference",
+          "type": "bool"
+        },
+        "is_dry_run": {
+          "default": false,
+          "description": "\n        Whether to run the trainer in Dry Run mode. This serves\n        as a good means to validate the spec file and run a sanity check on the trainer\n        without actually initializing and running the trainer.",
+          "title": "Is dry run",
+          "type": "bool"
+        },
+        "log_every_n_steps": {
+          "default": 500,
+          "description": "\n        Interval steps of logging training results and running validation numbers within 1 epoch",
+          "title": "log steps",
+          "type": "int"
+        },
+        "num_epochs": {
+          "default": 10,
+          "description": "Number of epochs to run the training.",
+          "maximum": Infinity,
+          "minimum": 1,
+          "popular": true,
+          "title": "Number of epochs",
+          "type": "int"
+        },
+        "num_gpus": {
+          "default": 1,
+          "description": "The number of GPUs to run the train job.",
+          "minimum": 1,
+          "popular": true,
+          "title": "Number of GPUs",
+          "type": "int"
+        },
+        "num_nodes": {
+          "default": 1,
+          "description": "Number of nodes to run the training on. If > 1, then multi-node is enabled.",
+          "minimum": 1,
+          "popular": true,
+          "title": "Number of nodes",
+          "type": "int"
+        },
+        "optim": {
+          "automl_default_parameters": [
+            "train.optim.lr",
+            "train.optim.momentum",
+            "train.optim.weight_decay",
+            "train.optim.lr_step_size",
+            "train.optim.lr_decay",
+            "train.optim.min_lr"
+          ],
+          "automl_disabled_parameters": [
+            "train.optim.lr_steps"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "lr": 0.0001,
+            "lr_decay": 0.1,
+            "lr_scheduler": "MultiStepLR",
+            "lr_step_size": 1000,
+            "lr_steps": [
+              1000
+            ],
+            "min_lr": 1e-07,
+            "momentum": 0.9,
+            "monitor_name": "val_loss",
+            "optimizer": "AdamW",
+            "warmup_steps": 20,
+            "weight_decay": 0.0001
+          },
+          "description": "Hyper parameters to configure the optimizer.",
+          "properties": {
+            "lr": {
+              "automl_enabled": true,
+              "default": 0.0001,
+              "description": "The initial learning rate for training the model, excluding the backbone.",
+              "math_cond": "> 0.0",
+              "maximum": 0.01,
+              "minimum": 1e-06,
+              "title": "learning rate",
+              "type": "float"
+            },
+            "lr_decay": {
+              "automl_enabled": true,
+              "default": 0.1,
+              "description": "The decreasing factor for the learning rate scheduler.",
+              "math_cond": "> 0.0",
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "learning rate decay",
+              "type": "float"
+            },
+            "lr_scheduler": {
+              "default": "MultiStepLR",
+              "description": "The learning scheduler:\n                    * MultiStepLR : Decrease the lr by lr_decay from lr_steps\n                    * StepLR : Decrease the lr by lr_decay at every lr_step_size.",
+              "enum": [
+                "MultiStep",
+                "StepLR",
+                "CustomMultiStepLRScheduler",
+                "LambdaLR",
+                "PolynomialLR",
+                "OneCycleLR",
+                "CosineAnnealingLR"
+              ],
+              "title": "Learning rate scheduler",
+              "type": "categorical"
+            },
+            "lr_step_size": {
+              "automl_enabled": true,
+              "default": 1000,
+              "description": "The number of steps to decrease the learning rate in the StepLR.",
+              "math_cond": "> 0",
+              "maximum": 10000,
+              "minimum": 1,
+              "title": "learning rate step size",
+              "type": "int"
+            },
+            "lr_steps": {
+              "automl_enabled": false,
+              "default": [
+                1000
+              ],
+              "description": "The steps at which the learning rate must be decreased.\n                    This is applicable only with the MultiStep LR.",
+              "title": "learning rate decay steps",
+              "type": "list"
+            },
+            "min_lr": {
+              "automl_enabled": true,
+              "default": 1e-07,
+              "description": "The minimum learning rate value for the learning rate scheduler.",
+              "math_cond": "> 0.0",
+              "maximum": 0.001,
+              "minimum": 1e-08,
+              "title": "minimum learning rate",
+              "type": "float"
+            },
+            "momentum": {
+              "automl_enabled": true,
+              "default": 0.9,
+              "description": "The momentum for the AdamW optimizer.",
+              "math_cond": "> 0.0",
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "momentum - AdamW",
+              "type": "float"
+            },
+            "monitor_name": {
+              "default": "val_loss",
+              "description": "The metric value to be monitored for the :code:`AutoReduce` Scheduler.",
+              "enum": [
+                "val_loss",
+                "train_loss"
+              ],
+              "title": "monitor_name",
+              "type": "categorical"
+            },
+            "optimizer": {
+              "default": "AdamW",
+              "description": "Type of optimizer used to train the network.",
+              "enum": [
+                "AdamW",
+                "SGD"
+              ],
+              "type": "categorical"
+            },
+            "warmup_steps": {
+              "default": 20,
+              "description": "The number of steps to perform linear learning rate\"                     warm-up before engaging a learning rate scheduler",
+              "maximum": Infinity,
+              "minimum": 0,
+              "title": "Warm up steps",
+              "type": "int"
+            },
+            "weight_decay": {
+              "automl_enabled": true,
+              "default": 0.0001,
+              "description": "The weight decay coefficient.",
+              "math_cond": "> 0.0",
+              "maximum": 0.01,
+              "minimum": 1e-06,
+              "title": "weight decay",
+              "type": "float"
+            }
+          },
+          "title": "optimizer",
+          "type": "collection"
+        },
+        "precision": {
+          "default": "fp32",
+          "description": "Precision to run the training on.",
+          "enum": [
+            "bf16",
+            "fp32",
+            "fp16"
+          ],
+          "title": "precision",
+          "type": "categorical"
+        },
+        "pretrained_model_path": {
+          "default": "",
+          "description": "Path to a pre-trained DepthNet model to initialize the current training from.",
+          "type": "string"
+        },
+        "results_dir": {
+          "default": "",
+          "description": "\n        Path to where all the assets generated from a task are stored.\n        ",
+          "title": "Results directory",
+          "type": "string"
+        },
+        "resume_training_checkpoint_path": {
+          "default": "",
+          "description": "Path to the checkpoint to resume training from.",
+          "title": "Resume checkpoint path",
+          "type": "string"
+        },
+        "seed": {
+          "default": 1234,
+          "description": "The seed for the initializer in PyTorch. If < 0, disable fixed seed.",
+          "maximum": Infinity,
+          "minimum": -1,
+          "title": "Seed for randomization",
+          "type": "int"
+        },
+        "tile_min_overlap": {
+          "automl_enabled": false,
+          "default": [
+            16,
+            16
+          ],
+          "description": "Use tiled inference weight type",
+          "title": "tile weight type",
+          "type": "list"
+        },
+        "tile_wtype": {
+          "default": "gaussian",
+          "description": "Use tiled inference weight type",
+          "title": "tile weight type",
+          "type": "string"
+        },
+        "validation_interval": {
+          "default": 1,
+          "description": "\n        The interval (in epochs) at which a evaluation\n        will be triggered on the validation dataset.",
+          "minimum": 1,
+          "popular": true,
+          "title": "Validation interval",
+          "type": "int"
+        },
+        "vis_step_interval": {
+          "default": 10,
+          "description": "The visualization interval in step.",
+          "title": "visualization interval",
+          "type": "int"
+        }
+      },
+      "type": "collection"
+    },
+    "wandb": {
+      "automl_disabled_parameters": [
+        "wandb.tags"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "enable": true,
+        "entity": "",
+        "group": "",
+        "name": "TAO Toolkit Training",
+        "project": "TAO Toolkit",
+        "reinit": false,
+        "run_id": "",
+        "save_code": false,
+        "sync_tensorboard": false,
+        "tags": [
+          "tao-toolkit"
+        ]
+      },
+      "description": "Configurable parameters to construct the wandb client for a DepthNet experiment.",
+      "properties": {
+        "enable": {
+          "default": true,
+          "type": "bool"
+        },
+        "entity": {
+          "default": "",
+          "type": "string"
+        },
+        "group": {
+          "default": "",
+          "type": "string"
+        },
+        "name": {
+          "default": "TAO Toolkit Training",
+          "type": "string"
+        },
+        "project": {
+          "default": "TAO Toolkit",
+          "type": "string"
+        },
+        "reinit": {
+          "default": false,
+          "type": "bool"
+        },
+        "run_id": {
+          "default": "",
+          "type": "string"
+        },
+        "save_code": {
+          "default": false,
+          "type": "bool"
+        },
+        "sync_tensorboard": {
+          "default": false,
+          "type": "bool"
+        },
+        "tags": {
+          "automl_enabled": false,
+          "default": [
+            "tao-toolkit"
+          ],
+          "type": "list"
+        }
+      },
+      "type": "collection"
+    }
+  },
+  "required": [
+    "quantize"
+  ],
+  "type": "object",
+  "x_tao_schema": {
+    "action": "gen_trt_engine",
+    "core_module": "depth_net",
+    "model": "depth-net-stereo",
+    "network_arch": "depth_net_stereo",
+    "schema_action": "gen_trt_engine",
+    "schema_version": 1,
+    "source": "tao-core dataclass config"
+  }
+}

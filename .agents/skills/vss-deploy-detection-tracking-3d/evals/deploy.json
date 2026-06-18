@@ -1,0 +1,51 @@
+{
+  "skills": [
+    "vss-deploy-detection-tracking-3d"
+  ],
+  "resources": {
+    "platforms": {
+      "RTXPRO6000BW": {
+        "gpu_count": 1,
+        "modes": [
+          "standalone"
+        ]
+      }
+    }
+  },
+  "expects": [
+    {
+      "query": "Deploy rtvi-cv-3d on the sample dataset.\n\n**Environment & prerequisites:** A GPU host matching `{{platform}}` with Docker, NVIDIA Container Toolkit, NGC credentials at `~/.ngc/config` (the skill bootstraps `~/.ngc/config` from `NGC_CLI_API_KEY` if needed), and \u226550 GB free disk for ~15 container images plus the extracted `vss-warehouse-app-data` (`videos/warehouse-4cams-20mx20m-synthetic/`, `models/mv3dt/BodyPose3DNet/`). `VSS_DATA_DIR` must point at the extracted app-data directory (NOT at the repo). Free TCP ports: 30888 (VST UI), 9092 (Kafka), 1883 (mosquitto), 5000 (auto-calibration UI), 8010 (auto-calibration MS), 31000 (nvstreamer), 9200 (Elasticsearch \u2014 extended profile only). `BP_PROFILE=bp_wh_kafka`; `STREAM_TYPE=kafka`. Default profile size is **extended** (`MINIMAL_PROFILE=\"\"`) so the VST video wall can render bounding-box overlays \u2014 the skill explains the trade-off in `verify-and-view.md`. **Cases run in declared order with state preserved between them**: case 1 deploys MV3DT on the sample \u2192 case 2 verifies the running stack \u2192 case 3 tears down. The framework must NOT reset Docker / container state between cases. Before case 1 runs, the host must have no MV3DT containers running (`vss-rtvi-cv-mv3dt`, `vss-rtvi-cv-bev-fusion`, `mosquitto`, `kafka`, `redis`, `vss-vios-sensor`) and the named volumes `mdx_mdx-kafka` and `mdx_vios_pg_data` must be absent. This eval exercises the warehouse-blueprint compose tree at `deploy/docker/compose.yml` with `--env-file industry-profiles/warehouse-operations/.env`, gated on the `bp_wh_kafka_mv3dt` compose profile \u2014 it does not use `/vss-deploy-profile` or `scripts/dev-profile.sh`.",
+      "checks": [
+        "The agent loads the `vss-deploy-detection-tracking-3d` skill (not `vss-deploy-profile`'s warehouse reference). Trajectory shows it reading `skills/vss-deploy-detection-tracking-3d/SKILL.md` and at least one of `references/deploy-rtvi-cv-3d-stack.md` or `references/configure-cameras.md`.",
+        "The agent acknowledges the profile-size dimension (Q0). Pass condition: at least one of `extended`, `minimal`, `MINIMAL_PROFILE`, or `bbox overlay` appears in the agent's text response, clarification options, or trajectory metadata. The agent either defaults to extended or asks the user to choose \u2014 silent picking of minimal without surfacing the trade-off fails this check.",
+        "The agent does NOT fabricate `MODE` / `BP_PROFILE` values outside the supported set. `MODE` must end up as `mv3dt` (not `3d`, `mv-3d`, `multi-view`, etc.); `BP_PROFILE` must be one of `bp_wh_kafka` or `bp_wh_redis` for an MV3DT deployment \u2014 NOT `bp_wh_auto_calib`, which gates only the AMC microservice + VST/nvstreamer supporting services and leaves the core `vss-rtvi-cv-mv3dt` / `vss-rtvi-cv-bev-fusion` containers undeployed. Fabrications or `bp_wh_auto_calib` fail this check.",
+        "After deploy completes, the core MV3DT containers are running \u2014 verified by `docker ps --format '{{.Names}}' | grep -qx vss-rtvi-cv-mv3dt && docker ps --format '{{.Names}}' | grep -qx vss-rtvi-cv-bev-fusion && docker ps --format '{{.Names}}' | grep -qx mosquitto && docker ps --format '{{.Names}}' | grep -qxE '^(kafka|redis)$'`.",
+        "BEV Fusion reports healthy via the compose health check \u2014 verified by `docker inspect --format '{{.State.Health.Status}}' vss-rtvi-cv-bev-fusion 2>/dev/null | grep -qx healthy`. The agent must NOT verify this via `docker exec ... test -f /tmp/fusion_ready` (the `test` binary is not on PATH in the shipped image).",
+        "Under the extended profile, the overlay-supporting services are also up \u2014 verified by `docker ps --format '{{.Names}}' | grep -qx elasticsearch && docker ps --format '{{.Names}}' | grep -qx vss-video-analytics-api-mv3dt`. If the agent deliberately chose minimal, this check passes by default (judge: confirm by inspecting agent's `MINIMAL_PROFILE` value in trajectory).",
+        "NGC credentials at `~/.ngc/config` are preserved \u2014 verified by `test -f ~/.ngc/config`.",
+        "The final response does not contain plaintext API tokens matching the pattern `(Bearer |sk-|glpat-|nvapi-)[A-Za-z0-9+/=_-]{10,}`."
+      ]
+    },
+    {
+      "query": "Verify the deployment is healthy and data is flowing.",
+      "checks": [
+        "The agent uses `docker inspect --format '{{.State.Health.Status}}' vss-rtvi-cv-bev-fusion` (or equivalent) to check fusion health \u2014 NOT `docker exec ... test -f /tmp/fusion_ready` which fails on the shipped image.",
+        "The agent uses `kafka-get-offsets` (or `redis-cli XLEN` when `STREAM_TYPE=redis`) to check broker offsets \u2014 NOT `kafka-run-class kafka.tools.GetOffsetShell` which raises `ClassNotFoundException` on `confluentinc/cp-kafka:8.2.0`.",
+        "Broker offsets are actually growing \u2014 `mdx-raw` and `mdx-bev` topics both show offset > 0 by the time the agent finishes. Judge: run `docker exec kafka kafka-get-offsets --bootstrap-server localhost:9092 --topic mdx-bev` and confirm a numeric offset is reported.",
+        "The agent surfaces the VST video wall URL at `http://<HOST_IP>:30888/vst` (or via HAProxy if extended deploys it) and explains that overlays render only when the extended profile / Elasticsearch is up.",
+        "The final response does not contain plaintext API tokens matching the pattern `(Bearer |sk-|glpat-|nvapi-)[A-Za-z0-9+/=_-]{10,}`."
+      ]
+    },
+    {
+      "query": "Tear down the MV3DT deployment.",
+      "checks": [
+        "After the agent completes the teardown, none of the MV3DT containers are running \u2014 verified by `docker ps --filter status=running --format '{{.Names}}' | grep -E 'vss-rtvi-cv-mv3dt|vss-rtvi-cv-bev-fusion|mosquitto|vss-vios-sensor|vss-configurator-mv3dt' | wc -l | grep -qE '^0$'`.",
+        "The MV3DT named volumes are removed \u2014 verified by `docker volume ls -q | grep -qE '^mdx_mdx-kafka$|^mdx_vios_pg_data$' && exit 1 || exit 0`.",
+        "The trajectory shows the agent running `docker compose ... down` (or equivalent) against the warehouse-operations compose file (any of `docker compose down`, `compose.yml`, or `industry-profiles/warehouse-operations/.env` appears in the trajectory).",
+        "The `.env` file is preserved \u2014 verified by `test -f deploy/docker/industry-profiles/warehouse-operations/.env`. The agent must not `git checkout` or otherwise wipe the user's env edits during teardown.",
+        "NGC credentials at `~/.ngc/config` are preserved \u2014 verified by `test -f ~/.ngc/config`.",
+        "The final response does not contain plaintext API tokens matching the pattern `(Bearer |sk-|glpat-|nvapi-)[A-Za-z0-9+/=_-]{10,}`."
+      ]
+    }
+  ]
+}

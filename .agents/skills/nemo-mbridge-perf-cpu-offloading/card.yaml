@@ -1,0 +1,211 @@
+title: cpu_offloading
+validated_on: "2026-03-30"
+summary: >
+  Megatron Bridge supports two CPU offloading mechanisms: layer-level activation
+  offloading (cpu_offloading) and fractional optimizer state offloading
+  (optimizer_cpu_offload via HybridDeviceOptimizer). Activation offloading requires
+  PP=1, no recompute, no CUDA graphs — impractical for large MoE models. Optimizer
+  offloading works with PP>1 and supports tunable fraction (0-100%) with linear
+  memory-speed tradeoff. Verified on Qwen3-30B-A3B MoE pretrain (TP2 PP2 EP4,
+  2 nodes H100): 25-100% offload saves 3.8-15.3 GB (-8% to -32%) at 1.9x-4.2x
+  slowdown. All variants numerically safe (loss delta < 0.001). D2H/H2D overlap
+  provides ~7% speedup at 100% offload.
+validation_status:
+  activation_offload_pp_constraint:
+    - code_verified  # transformer_config.py:1303-1306
+  activation_offload_recompute_constraint:
+    - code_verified  # transformer_config.py:1308-1310
+  activation_offload_cuda_graph_constraint:
+    - code_verified  # transformer_config.py:1943-1944
+  activation_offload_fine_grained_constraint:
+    - code_verified  # transformer_config.py:1427-1430
+  optimizer_offload_hybrid_optimizer:
+    - code_verified  # optimizer/__init__.py:480-518
+  optimizer_offload_config_fields:
+    - code_verified  # optimizer_config.py
+  bridge_cuda_graph_guard:
+    - code_verified  # gpt_full_te_layer_autocast_spec.py:234
+  bridge_peft_offloading:
+    - code_verified  # peft/utils.py:621-631
+  activation_offload_qwen3_moe:
+    - measured  # OOM at 70.3 GB, PP=1 on H100 80 GB. Jobs 10609511, 10609272
+  optimizer_offload_25pct:
+    - measured  # Qwen3-30B-A3B, TP2 PP2 EP4, 2x H100. Job 10611042
+  optimizer_offload_50pct:
+    - measured  # Job 10611043
+  optimizer_offload_75pct:
+    - measured  # Job 10611045
+  optimizer_offload_100pct:
+    - measured  # Job 10609512
+  optimizer_offload_100pct_overlap:
+    - measured  # Job 10611046
+training_dimensions:
+  speed:
+    effect: "1.9x-4.2x slower step time (scales linearly with offload fraction)"
+    confidence: high
+    rationale: >
+      CPU Adam compute and D2H/H2D transfers add latency. Measured on
+      Qwen3-30B-A3B TP2 PP2 EP4, 2 nodes H100. D2H/H2D overlap reduces
+      100% penalty from 4.2x to 3.9x.
+  memory:
+    effect: "3.8 GB saved per 25% of offload fraction (up to 15.3 GB / 32% at 100%)"
+    confidence: high
+    rationale: >
+      Measured on Qwen3-30B-A3B (47.2 GB baseline). Savings scale linearly.
+  scale:
+    effect: "enables otherwise-OOM configurations"
+    confidence: medium
+    rationale: >
+      Can free memory for larger batch sizes or additional parallelism.
+  convergence:
+    effect: "no change (loss delta < 0.001 across all fractions)"
+    confidence: high
+    rationale: >
+      All fractions produce identical loss across 20 iterations on Qwen3-30B-A3B.
+  stability:
+    effect: "no issues observed"
+    confidence: high
+    rationale: >
+      No errors, hangs, or NCCL issues across 120 total iterations tested.
+enable_when:
+  - GPU memory is tight and throughput regression is acceptable
+  - model requires PP > 1 (use optimizer offloading, not activation offloading)
+  - want tunable memory-speed tradeoff via offload fraction
+avoid_when:
+  - throughput is the primary concern
+  - model already fits comfortably in GPU memory
+  - CUDA graphs are needed (incompatible with activation offloading)
+interactions:
+  required:
+    - optimizer.use_distributed_optimizer (for optimizer offloading)
+  conditional:
+    - pipeline_model_parallel_size must be 1 for activation offloading
+    - recompute_granularity must be None for activation offloading
+  incompatible:
+    - cpu_offloading with pipeline_model_parallel_size > 1
+    - cpu_offloading with recompute_granularity != None
+    - cpu_offloading with fine_grained_activation_offloading
+    - cpu_offloading with cuda_graph_impl != none
+feature_meaning:
+  cpu_offloading: >
+    Master switch for layer-level activation CPU offloading.
+  optimizer_cpu_offload: >
+    Master switch for optimizer state CPU offloading via HybridDeviceOptimizer.
+  optimizer_offload_fraction: >
+    Fraction of optimizer states on CPU. 0.0 = all GPU, 1.0 = all CPU.
+  overlap_cpu_optimizer_d2h_h2d: >
+    Overlap GPU-CPU transfers with compute during optimizer step.
+config_keys:
+  - model.cpu_offloading
+  - model.cpu_offloading_num_layers
+  - model.cpu_offloading_activations
+  - model.cpu_offloading_weights
+  - optimizer.optimizer_cpu_offload
+  - optimizer.optimizer_offload_fraction
+  - optimizer.overlap_cpu_optimizer_d2h_h2d
+recommended_path:
+  optimizer.optimizer_cpu_offload: true_when_memory_constrained
+  optimizer.optimizer_offload_fraction: 0.5_for_balanced_or_1.0_for_max_savings
+  optimizer.overlap_cpu_optimizer_d2h_h2d: true_at_high_fractions
+  model.cpu_offloading: only_for_small_models_where_pp1_fits
+expected_metric_change:
+  - metric: memory_allocated
+    direction: down
+    magnitude: 8-32%
+    conditions: optimizer offloading on Qwen3-30B-A3B MoE
+    evidence: measured_qwen3_30b_a3b
+  - metric: step_time
+    direction: up
+    magnitude: 1.9x-4.2x
+    conditions: optimizer offloading on Qwen3-30B-A3B MoE
+    evidence: measured_qwen3_30b_a3b
+measured_results:
+  - model: Qwen3-30B-A3B
+    config: baseline
+    iter_ms: 996
+    mem_allocated_gb: 47.2
+    job: "10119286"
+    status: success
+  - model: Qwen3-30B-A3B
+    config: optimizer_offload_25pct
+    iter_ms: 1871
+    slowdown: 1.9x
+    mem_allocated_gb: 43.4
+    mem_saved_gb: 3.8
+    loss_match: true
+    job: "10611042"
+    status: success
+  - model: Qwen3-30B-A3B
+    config: optimizer_offload_50pct
+    iter_ms: 2484
+    slowdown: 2.5x
+    mem_allocated_gb: 39.6
+    mem_saved_gb: 7.6
+    loss_match: true
+    job: "10611043"
+    status: success
+  - model: Qwen3-30B-A3B
+    config: optimizer_offload_75pct
+    iter_ms: 3187
+    slowdown: 3.2x
+    mem_allocated_gb: 35.6
+    mem_saved_gb: 11.6
+    loss_match: true
+    job: "10611045"
+    status: success
+  - model: Qwen3-30B-A3B
+    config: optimizer_offload_100pct
+    iter_ms: 4189
+    slowdown: 4.2x
+    mem_allocated_gb: 32.0
+    mem_saved_gb: 15.3
+    loss_match: true
+    job: "10609512"
+    status: success
+  - model: Qwen3-30B-A3B
+    config: optimizer_offload_100pct_overlap
+    iter_ms: 3877
+    slowdown: 3.9x
+    mem_allocated_gb: 32.0
+    overlap_speedup_pct: 7
+    loss_match: true
+    job: "10611046"
+    status: success
+  - model: Qwen3-30B-A3B
+    config: activation_offload_24_layers
+    mem_allocated_gb: 70.3
+    job: "10609511"
+    status: oom
+failure_modes:
+  - name: pp_constraint
+    symptom: "Currently there is no support for Pipeline parallelism with CPU offloading"
+    fix: set PP = 1 or use optimizer offloading
+  - name: recompute_constraint
+    symptom: "CPU offloading does not work when activation recomputation is enabled"
+    fix: set recompute_granularity = null
+  - name: cuda_graph_constraint
+    symptom: "CUDA graphs not supported with CPU offloading"
+    fix: set cuda_graph_impl = none
+  - name: large_model_oom
+    symptom: OOM with activation offloading even with many nodes
+    fix: use optimizer offloading instead
+known_constraints:
+  - cpu_offloading requires PP = 1 (transformer_config.py:1303)
+  - cpu_offloading requires recompute_granularity = None (transformer_config.py:1308)
+  - cpu_offloading incompatible with CUDA graphs (transformer_config.py:1943)
+  - optimizer_cpu_offload requires use_distributed_optimizer (optimizer/__init__.py:682)
+known_limitations:
+  - Activation offloading impractical for large MoE models due to PP=1 constraint
+  - Optimizer offloading throughput penalty scales linearly with fraction
+  - D2H/H2D overlap provides only ~7% improvement
+evidence:
+  - docs/training/cpu-offloading.md
+  - 3rdparty/Megatron-LM/megatron/core/transformer/transformer_config.py
+  - 3rdparty/Megatron-LM/megatron/core/optimizer/optimizer_config.py
+  - 3rdparty/Megatron-LM/megatron/core/optimizer/__init__.py
+  - src/megatron/bridge/models/gpt_full_te_layer_autocast_spec.py
+follow_up_validation:
+  - Test optimizer offload + CUDA graphs combined
+  - Test fine_grained_activation_offloading as alternative
+  - Test with larger GBS to amortize CPU optimizer overhead
+  - Test activation offloading on smaller models where PP=1 fits

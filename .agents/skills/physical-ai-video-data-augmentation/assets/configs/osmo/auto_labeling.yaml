@@ -1,0 +1,136 @@
+workflow:
+  name: "{{dataset}}"
+  timeout:
+    exec_timeout: 24h
+    queue_timeout: 2h
+
+  resources:
+    config_gen:
+      cpu: 4
+      memory: 8Gi
+      storage: 20Gi
+      platform: "{{gpu_platform}}"
+    pl_worker:
+      gpu: 1
+      cpu: 11
+      memory: 128Gi
+      storage: 100Gi
+      platform: "{{gpu_platform}}"
+
+  groups:
+  - name: setup_group
+    tasks:
+
+    - name: setup
+      image: nvcr.io/nvidia/base/ubuntu:22.04_20240212
+      resource: config_gen
+      credentials:
+        nvcr_io:
+          NGC_CLI_API_KEY: auth
+      inputs:
+      - url: "{{storage_url}}/datasets/{{dataset}}"
+      outputs:
+      - url: "{{storage_url}}/datasets/{{dataset}}-outputs/{{run_id}}/setup_b0"
+      files:
+      - localpath: "{{skills_dir}}/scripts/pl_original_worker.sh"
+        path: /tmp/pl_original_worker.sh
+      - localpath: "{{skills_dir}}/scripts/endpoint_common.sh"
+        path: /tmp/endpoint_common.sh
+      - localpath: "{{skills_dir}}/scripts/osmo_barrier.py"
+        path: /tmp/osmo_barrier.py
+      - localpath: "{{skills_dir}}/assets/cookbooks/{{cookbook}}/README.md"
+        path: /tmp/sdg/README.md
+      - localpath: "{{skills_dir}}/assets/cookbooks/{{cookbook}}/augmentation/augmentation.yaml"
+        path: /tmp/sdg/augmentation/augmentation.yaml
+      - localpath: "{{skills_dir}}/assets/cookbooks/{{cookbook}}/augmentation/prompts/prompt_polishing_system_prompt.md"
+        path: /tmp/sdg/augmentation/prompts/prompt_polishing_system_prompt.md
+      - localpath: "{{skills_dir}}/assets/cookbooks/{{cookbook}}/augmentation/prompts/template_generation_system_prompt.md"
+        path: /tmp/sdg/augmentation/prompts/template_generation_system_prompt.md
+      - localpath: "{{skills_dir}}/assets/cookbooks/{{cookbook}}/auto_labeling/prompts/event_analysis.md"
+        path: /tmp/sdg/auto_labeling/prompts/event_analysis.md
+      - localpath: "{{skills_dir}}/assets/cookbooks/{{cookbook}}/auto_labeling/auto_labeling_config.yaml"
+        path: /tmp/sdg/auto_labeling/auto_labeling_config.yaml
+      - localpath: "{{skills_dir}}/assets/cookbooks/{{cookbook}}/auto_labeling/question_bank.json"
+        path: /tmp/sdg/auto_labeling/question_bank.json
+      - localpath: "{{skills_dir}}/assets/cookbooks/{{cookbook}}/workflow_config.yaml"
+        path: /tmp/sdg/workflow_config.yaml
+      command: ["bash", "-c"]
+      args:
+      - |
+        set -euo pipefail
+        cp /tmp/*.sh /tmp/osmo_barrier.py "{{output}}/" && chmod +x "{{output}}"/*.sh
+        mkdir -p "{{output}}/configs"
+        cp -r /tmp/sdg/. "{{output}}/configs/"
+        printf '%s\n' \
+          "ACCEPT_EULA=Y" \
+          "UV_NO_SYNC=1" \
+          "DOWNLOAD_REID=false" \
+          "WAIT_FOR_VLM=1" \
+          "WAIT_FOR_LLM=1" \
+          "LLM_MODEL_STATIC=" \
+          "VLM_MODEL=Qwen/Qwen3-VL-30B-A3B-Instruct" \
+          "SUPER_RESOLUTION_ENABLED=false" \
+          "BARRIER_NUM_NODES=1" \
+          > "{{output}}/.env"
+        cp "{{output}}/.env" "{{output}}/runtime.env"
+        echo "Setup complete."
+
+  - name: auto_labeling_group
+    tasks:
+
+    # =========================================================================
+    # Auto-labeling workers (SR handled inline if SUPER_RESOLUTION_ENABLED=1).
+    # pl_original_worker_0 is lead: true (barrier server, rank 0).
+    # =========================================================================
+    - name: pl_original_worker_0
+      lead: true
+      image: nvcr.io/nvidia/paidf-auto-labeling:1.0.0
+      resource: pl_worker
+      environment:
+        WORKER_ID: "0"
+        VIDEO_NAME: "{{video}}"
+        VLM_URL: "{{vlm_url}}"
+        LLM_URL: "{{llm_url}}"
+        SETUP_DIR: "{{input:0}}"
+        VIDEO_INPUT: "{{input:1}}"
+        MODEL_CACHE_PATH: "{{input:2}}"
+        OUTPUT_DIR: "{{output}}"
+        BARRIER_RANK: "0"
+        BARRIER_HOST: "{{host:pl_original_worker_0}}"
+      credentials:
+        nvcr_io:
+          NGC_CLI_API_KEY: auth
+          VLM_API_KEY: auth
+          LLM_API_KEY: auth
+        hf_token:
+          HUGGING_FACE_HUB_TOKEN: token
+      inputs:
+      - task: setup
+      - url: "{{storage_url}}/datasets/{{dataset}}/{{video}}.mp4"
+      - url: "{{auto_labeling_model_cache_url}}"
+      outputs:
+      - url: "{{storage_url}}/datasets/{{dataset}}-outputs/{{run_id}}/outputs/pseudo_labeled/{{video}}"
+      command: [bash]
+      args: ["{{input:0}}/pl_original_worker.sh"]
+
+default-values:
+  # Cookbook scene name: city_traffic, piazza, warehouse, robot_assembly, trailer_dashcam
+  cookbook: "city_traffic"
+
+  # In-cluster NIM endpoints (override via the same submit --set-string list for external/NVCF endpoints)
+  vlm_url: "http://qwen3-vl.osmo-nims.svc.cluster.local:8000/v1"
+  llm_url: "http://qwen25-14b.osmo-nims.svc.cluster.local:8000/v1"
+  auto_labeling_model_cache_url: "{{storage_url}}/data/models/auto_labeling"
+
+
+  # Required at submit time via one --set-string list (no default — Jinja StrictUndefined raises if omitted):
+  #   storage_url  — URL prefix matching the registered DATA credential profile.
+  #                  e.g. s3://my-bucket, azure://acct/cont, gs://bucket,
+  #                       swift://endpoint/account/container, tos://endpoint/bucket
+  #   dataset      — dataset name (also used as workflow.name). Must match
+  #                  ^[a-zA-Z]([a-zA-Z0-9_-]*[a-zA-Z0-9])?$
+  #   run_id       — unique run identifier
+  #   gpu_platform — OSMO pool platform name for all VDA tasks (config_gen, pl_worker, cosmos_worker)
+  #   skills_dir   — absolute path to skills/physical-ai-video-data-augmentation/
+  #                  on the submitter host
+  #   video        — video stem (filename without .mp4)

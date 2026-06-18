@@ -1,0 +1,651 @@
+{
+  "actions": {
+    "evaluate": {
+      "automl_default_parameters": [
+        "dataset.augmentation.horizontal_flip_prob",
+        "dataset.augmentation.train_random_crop_max",
+        "dataset.augmentation.train_random_crop_min",
+        "dataset.batch_size",
+        "dataset.workers",
+        "model.dec_layers",
+        "model.enc_layers",
+        "model.num_queries",
+        "model.num_select",
+        "train.optim.lr",
+        "train.optim.lr_backbone",
+        "train.optim.lr_decay",
+        "train.optim.lr_linear_proj_mult",
+        "train.optim.lr_step_size",
+        "train.optim.momentum",
+        "train.optim.weight_decay"
+      ],
+      "automl_disabled_parameters": [
+        "dataset",
+        "dataset.augmentation",
+        "dataset.augmentation.input_mean",
+        "dataset.augmentation.input_std",
+        "dataset.augmentation.scales",
+        "dataset.augmentation.test_random_resize",
+        "dataset.augmentation.train_random_resize",
+        "dataset.eval_class_ids",
+        "dataset.infer_data_sources",
+        "dataset.quant_calibration_data_sources",
+        "dataset.test_data_sources",
+        "dataset.train_data_sources",
+        "dataset.val_data_sources",
+        "evaluate",
+        "evaluate.gpu_ids",
+        "export",
+        "gen_trt_engine",
+        "gen_trt_engine.tensorrt",
+        "gen_trt_engine.tensorrt.calibration",
+        "gen_trt_engine.tensorrt.calibration.cal_image_dir",
+        "gen_trt_engine.tensorrt.layers_precision",
+        "inference",
+        "inference.color_map",
+        "inference.gpu_ids",
+        "model",
+        "model.backbone_names",
+        "model.hidden_dim",
+        "model.linear_proj_names",
+        "model.loss_types",
+        "model.return_interm_indices",
+        "quantize",
+        "quantize.backend_kwargs",
+        "quantize.layers",
+        "quantize.skip_names",
+        "train",
+        "train.cudnn",
+        "train.freeze",
+        "train.gpu_ids",
+        "train.optim",
+        "train.optim.lr_steps",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "deformable_detr",
+      "path": "schemas/evaluate.schema.json",
+      "popular": {
+        "evaluate": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "gen_trt_engine": {
+          "batch_size": -1,
+          "gpu_id": 0,
+          "tensorrt": {
+            "calibration": {
+              "cal_batch_size": 1,
+              "cal_batches": 1
+            },
+            "max_batch_size": 1,
+            "min_batch_size": 1,
+            "opt_batch_size": 1
+          }
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "train": {
+          "checkpoint_interval": 1,
+          "gpu_ids": [
+            0
+          ],
+          "num_epochs": 10,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "validation_interval": 1
+        }
+      },
+      "schema_action": "evaluate",
+      "spec_template": "references/spec_template_evaluate.yaml"
+    },
+    "export": {
+      "automl_default_parameters": [
+        "dataset.augmentation.horizontal_flip_prob",
+        "dataset.augmentation.train_random_crop_max",
+        "dataset.augmentation.train_random_crop_min",
+        "dataset.batch_size",
+        "dataset.workers",
+        "model.dec_layers",
+        "model.enc_layers",
+        "model.num_queries",
+        "model.num_select",
+        "train.optim.lr",
+        "train.optim.lr_backbone",
+        "train.optim.lr_decay",
+        "train.optim.lr_linear_proj_mult",
+        "train.optim.lr_step_size",
+        "train.optim.momentum",
+        "train.optim.weight_decay"
+      ],
+      "automl_disabled_parameters": [
+        "dataset",
+        "dataset.augmentation",
+        "dataset.augmentation.input_mean",
+        "dataset.augmentation.input_std",
+        "dataset.augmentation.scales",
+        "dataset.augmentation.test_random_resize",
+        "dataset.augmentation.train_random_resize",
+        "dataset.eval_class_ids",
+        "dataset.infer_data_sources",
+        "dataset.quant_calibration_data_sources",
+        "dataset.test_data_sources",
+        "dataset.train_data_sources",
+        "dataset.val_data_sources",
+        "evaluate",
+        "evaluate.gpu_ids",
+        "export",
+        "gen_trt_engine",
+        "gen_trt_engine.tensorrt",
+        "gen_trt_engine.tensorrt.calibration",
+        "gen_trt_engine.tensorrt.calibration.cal_image_dir",
+        "gen_trt_engine.tensorrt.layers_precision",
+        "inference",
+        "inference.color_map",
+        "inference.gpu_ids",
+        "model",
+        "model.backbone_names",
+        "model.hidden_dim",
+        "model.linear_proj_names",
+        "model.loss_types",
+        "model.return_interm_indices",
+        "quantize",
+        "quantize.backend_kwargs",
+        "quantize.layers",
+        "quantize.skip_names",
+        "train",
+        "train.cudnn",
+        "train.freeze",
+        "train.gpu_ids",
+        "train.optim",
+        "train.optim.lr_steps",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "deformable_detr",
+      "path": "schemas/export.schema.json",
+      "popular": {
+        "evaluate": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "gen_trt_engine": {
+          "batch_size": -1,
+          "gpu_id": 0,
+          "tensorrt": {
+            "calibration": {
+              "cal_batch_size": 1,
+              "cal_batches": 1
+            },
+            "max_batch_size": 1,
+            "min_batch_size": 1,
+            "opt_batch_size": 1
+          }
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "train": {
+          "checkpoint_interval": 1,
+          "gpu_ids": [
+            0
+          ],
+          "num_epochs": 10,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "validation_interval": 1
+        }
+      },
+      "schema_action": "export",
+      "spec_template": "references/spec_template_export.yaml"
+    },
+    "gen_trt_engine": {
+      "automl_default_parameters": [
+        "dataset.augmentation.horizontal_flip_prob",
+        "dataset.augmentation.train_random_crop_max",
+        "dataset.augmentation.train_random_crop_min",
+        "dataset.batch_size",
+        "dataset.workers",
+        "model.dec_layers",
+        "model.enc_layers",
+        "model.num_queries",
+        "model.num_select",
+        "train.optim.lr",
+        "train.optim.lr_backbone",
+        "train.optim.lr_decay",
+        "train.optim.lr_linear_proj_mult",
+        "train.optim.lr_step_size",
+        "train.optim.momentum",
+        "train.optim.weight_decay"
+      ],
+      "automl_disabled_parameters": [
+        "dataset",
+        "dataset.augmentation",
+        "dataset.augmentation.input_mean",
+        "dataset.augmentation.input_std",
+        "dataset.augmentation.scales",
+        "dataset.augmentation.test_random_resize",
+        "dataset.augmentation.train_random_resize",
+        "dataset.eval_class_ids",
+        "dataset.infer_data_sources",
+        "dataset.quant_calibration_data_sources",
+        "dataset.test_data_sources",
+        "dataset.train_data_sources",
+        "dataset.val_data_sources",
+        "evaluate",
+        "evaluate.gpu_ids",
+        "export",
+        "gen_trt_engine",
+        "gen_trt_engine.tensorrt",
+        "gen_trt_engine.tensorrt.calibration",
+        "gen_trt_engine.tensorrt.calibration.cal_image_dir",
+        "gen_trt_engine.tensorrt.layers_precision",
+        "inference",
+        "inference.color_map",
+        "inference.gpu_ids",
+        "model",
+        "model.backbone_names",
+        "model.hidden_dim",
+        "model.linear_proj_names",
+        "model.loss_types",
+        "model.return_interm_indices",
+        "quantize",
+        "quantize.backend_kwargs",
+        "quantize.layers",
+        "quantize.skip_names",
+        "train",
+        "train.cudnn",
+        "train.freeze",
+        "train.gpu_ids",
+        "train.optim",
+        "train.optim.lr_steps",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "deformable_detr",
+      "path": "schemas/gen_trt_engine.schema.json",
+      "popular": {
+        "evaluate": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "gen_trt_engine": {
+          "batch_size": -1,
+          "gpu_id": 0,
+          "tensorrt": {
+            "calibration": {
+              "cal_batch_size": 1,
+              "cal_batches": 1
+            },
+            "max_batch_size": 1,
+            "min_batch_size": 1,
+            "opt_batch_size": 1
+          }
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "train": {
+          "checkpoint_interval": 1,
+          "gpu_ids": [
+            0
+          ],
+          "num_epochs": 10,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "validation_interval": 1
+        }
+      },
+      "schema_action": "gen_trt_engine",
+      "spec_template": "references/spec_template_gen_trt_engine.yaml"
+    },
+    "inference": {
+      "automl_default_parameters": [
+        "dataset.augmentation.horizontal_flip_prob",
+        "dataset.augmentation.train_random_crop_max",
+        "dataset.augmentation.train_random_crop_min",
+        "dataset.batch_size",
+        "dataset.workers",
+        "model.dec_layers",
+        "model.enc_layers",
+        "model.num_queries",
+        "model.num_select",
+        "train.optim.lr",
+        "train.optim.lr_backbone",
+        "train.optim.lr_decay",
+        "train.optim.lr_linear_proj_mult",
+        "train.optim.lr_step_size",
+        "train.optim.momentum",
+        "train.optim.weight_decay"
+      ],
+      "automl_disabled_parameters": [
+        "dataset",
+        "dataset.augmentation",
+        "dataset.augmentation.input_mean",
+        "dataset.augmentation.input_std",
+        "dataset.augmentation.scales",
+        "dataset.augmentation.test_random_resize",
+        "dataset.augmentation.train_random_resize",
+        "dataset.eval_class_ids",
+        "dataset.infer_data_sources",
+        "dataset.quant_calibration_data_sources",
+        "dataset.test_data_sources",
+        "dataset.train_data_sources",
+        "dataset.val_data_sources",
+        "evaluate",
+        "evaluate.gpu_ids",
+        "export",
+        "gen_trt_engine",
+        "gen_trt_engine.tensorrt",
+        "gen_trt_engine.tensorrt.calibration",
+        "gen_trt_engine.tensorrt.calibration.cal_image_dir",
+        "gen_trt_engine.tensorrt.layers_precision",
+        "inference",
+        "inference.color_map",
+        "inference.gpu_ids",
+        "model",
+        "model.backbone_names",
+        "model.hidden_dim",
+        "model.linear_proj_names",
+        "model.loss_types",
+        "model.return_interm_indices",
+        "quantize",
+        "quantize.backend_kwargs",
+        "quantize.layers",
+        "quantize.skip_names",
+        "train",
+        "train.cudnn",
+        "train.freeze",
+        "train.gpu_ids",
+        "train.optim",
+        "train.optim.lr_steps",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "deformable_detr",
+      "path": "schemas/inference.schema.json",
+      "popular": {
+        "evaluate": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "gen_trt_engine": {
+          "batch_size": -1,
+          "gpu_id": 0,
+          "tensorrt": {
+            "calibration": {
+              "cal_batch_size": 1,
+              "cal_batches": 1
+            },
+            "max_batch_size": 1,
+            "min_batch_size": 1,
+            "opt_batch_size": 1
+          }
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "train": {
+          "checkpoint_interval": 1,
+          "gpu_ids": [
+            0
+          ],
+          "num_epochs": 10,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "validation_interval": 1
+        }
+      },
+      "schema_action": "inference",
+      "spec_template": "references/spec_template_inference.yaml"
+    },
+    "quantize": {
+      "automl_default_parameters": [
+        "dataset.augmentation.horizontal_flip_prob",
+        "dataset.augmentation.train_random_crop_max",
+        "dataset.augmentation.train_random_crop_min",
+        "dataset.batch_size",
+        "dataset.workers",
+        "model.dec_layers",
+        "model.enc_layers",
+        "model.num_queries",
+        "model.num_select",
+        "train.optim.lr",
+        "train.optim.lr_backbone",
+        "train.optim.lr_decay",
+        "train.optim.lr_linear_proj_mult",
+        "train.optim.lr_step_size",
+        "train.optim.momentum",
+        "train.optim.weight_decay"
+      ],
+      "automl_disabled_parameters": [
+        "dataset",
+        "dataset.augmentation",
+        "dataset.augmentation.input_mean",
+        "dataset.augmentation.input_std",
+        "dataset.augmentation.scales",
+        "dataset.augmentation.test_random_resize",
+        "dataset.augmentation.train_random_resize",
+        "dataset.eval_class_ids",
+        "dataset.infer_data_sources",
+        "dataset.quant_calibration_data_sources",
+        "dataset.test_data_sources",
+        "dataset.train_data_sources",
+        "dataset.val_data_sources",
+        "evaluate",
+        "evaluate.gpu_ids",
+        "export",
+        "gen_trt_engine",
+        "gen_trt_engine.tensorrt",
+        "gen_trt_engine.tensorrt.calibration",
+        "gen_trt_engine.tensorrt.calibration.cal_image_dir",
+        "gen_trt_engine.tensorrt.layers_precision",
+        "inference",
+        "inference.color_map",
+        "inference.gpu_ids",
+        "model",
+        "model.backbone_names",
+        "model.hidden_dim",
+        "model.linear_proj_names",
+        "model.loss_types",
+        "model.return_interm_indices",
+        "quantize",
+        "quantize.backend_kwargs",
+        "quantize.layers",
+        "quantize.skip_names",
+        "train",
+        "train.cudnn",
+        "train.freeze",
+        "train.gpu_ids",
+        "train.optim",
+        "train.optim.lr_steps",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "deformable_detr",
+      "path": "schemas/quantize.schema.json",
+      "popular": {
+        "evaluate": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "gen_trt_engine": {
+          "batch_size": -1,
+          "gpu_id": 0,
+          "tensorrt": {
+            "calibration": {
+              "cal_batch_size": 1,
+              "cal_batches": 1
+            },
+            "max_batch_size": 1,
+            "min_batch_size": 1,
+            "opt_batch_size": 1
+          }
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "train": {
+          "checkpoint_interval": 1,
+          "gpu_ids": [
+            0
+          ],
+          "num_epochs": 10,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "validation_interval": 1
+        }
+      },
+      "schema_action": "quantize",
+      "spec_template": "references/spec_template_quantize.yaml"
+    },
+    "train": {
+      "automl_default_parameters": [
+        "dataset.augmentation.horizontal_flip_prob",
+        "dataset.augmentation.train_random_crop_max",
+        "dataset.augmentation.train_random_crop_min",
+        "dataset.batch_size",
+        "dataset.workers",
+        "model.dec_layers",
+        "model.enc_layers",
+        "model.num_queries",
+        "model.num_select",
+        "train.optim.lr",
+        "train.optim.lr_backbone",
+        "train.optim.lr_decay",
+        "train.optim.lr_linear_proj_mult",
+        "train.optim.lr_step_size",
+        "train.optim.momentum",
+        "train.optim.weight_decay"
+      ],
+      "automl_disabled_parameters": [
+        "dataset",
+        "dataset.augmentation",
+        "dataset.augmentation.input_mean",
+        "dataset.augmentation.input_std",
+        "dataset.augmentation.scales",
+        "dataset.augmentation.test_random_resize",
+        "dataset.augmentation.train_random_resize",
+        "dataset.eval_class_ids",
+        "dataset.infer_data_sources",
+        "dataset.quant_calibration_data_sources",
+        "dataset.test_data_sources",
+        "dataset.train_data_sources",
+        "dataset.val_data_sources",
+        "evaluate",
+        "evaluate.gpu_ids",
+        "export",
+        "gen_trt_engine",
+        "gen_trt_engine.tensorrt",
+        "gen_trt_engine.tensorrt.calibration",
+        "gen_trt_engine.tensorrt.calibration.cal_image_dir",
+        "gen_trt_engine.tensorrt.layers_precision",
+        "inference",
+        "inference.color_map",
+        "inference.gpu_ids",
+        "model",
+        "model.backbone_names",
+        "model.hidden_dim",
+        "model.linear_proj_names",
+        "model.loss_types",
+        "model.return_interm_indices",
+        "quantize",
+        "quantize.backend_kwargs",
+        "quantize.layers",
+        "quantize.skip_names",
+        "train",
+        "train.cudnn",
+        "train.freeze",
+        "train.gpu_ids",
+        "train.optim",
+        "train.optim.lr_steps",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "deformable_detr",
+      "path": "schemas/train.schema.json",
+      "popular": {
+        "evaluate": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "gen_trt_engine": {
+          "batch_size": -1,
+          "gpu_id": 0,
+          "tensorrt": {
+            "calibration": {
+              "cal_batch_size": 1,
+              "cal_batches": 1
+            },
+            "max_batch_size": 1,
+            "min_batch_size": 1,
+            "opt_batch_size": 1
+          }
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "train": {
+          "checkpoint_interval": 1,
+          "gpu_ids": [
+            0
+          ],
+          "num_epochs": 10,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "validation_interval": 1
+        }
+      },
+      "schema_action": "train",
+      "spec_template": "references/spec_template_train.yaml"
+    }
+  },
+  "automl_enabled": true,
+  "failures": {},
+  "model": "deformable-detr",
+  "network_arch": "deformable_detr",
+  "schema_version": 1
+}

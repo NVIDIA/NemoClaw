@@ -1,0 +1,71 @@
+# Demo: specific_component_day1
+# Source: _demo_config/specific_component_day1/usd2roi_nvpcb.yaml
+# Patched at runtime by day_1_workflow_demo.yaml:
+#   __SCENE__       → temp_scene.usd discovered under datasets/pcb_demo_specific_day1/assets
+#   __REAL_IMAGE__  → input_real_image/115_2819_000.jpg under the assets URL
+#   __OUTPUT__      → OSMO task output dir
+
+scene: __SCENE__
+
+# === Step 1: Semantic rules ===
+# Glob: `**` = any chars (incl. /); `*` = within one segment; `?` = single char.
+semantics:
+  - match: "**/PASTEMASK_TOP/Geometry/PASTEMASK_TOP__11450_bodies__0"
+    labels: {class: pad}
+  - match: "/World/pcba_main_s_detail/PCBA/tn__60014242BASEA04_fM9E/_115_2819_000_1/tn__1152819000_1SC70_5_2_nT8nAc1/LibRef/tn__1152819000_1_zH8/surface_0"
+    labels: {class: ic}
+  - match: "/World/pcba_main_s_detail/PCBA/tn__60014242BASEA04_fM9E/_115_2819_000_1/tn__1152819000_1SC70_5_2_nT8nAc1/LibRef/tn__1152819000_1_zH8/surface_1"
+    labels: {class: solder}
+  - match: "/World/pcba_main_s_detail/PCBA/tn__60014242BASEA04_fM9E/_115_2819_000_1/tn__1152819000_1SC70_5_2_nT8nAc1/LibRef/tn__1152819000_1_zH8/surface_2"
+    labels: {class: ic}
+
+# === Step 2: Single capture (demo's original close-up values) ===
+camera:
+  translate: [-103.5, -77.601]
+  horizontal_aperture: 48.85
+  rotation_xyz: [0.0, 0.0, 0.0]
+resolution: [720, 540]
+
+writer:
+  rgb: true
+  semantic_segmentation: true
+  colorize_semantic_segmentation: true
+  bounding_box_2d_tight: false
+  bounding_box_2d_loose: false
+  semantic_types: [class]                      # must list every label key your rules use
+  frame_padding: 4
+  image_output_format: png
+
+# === Step 3: Registration ===
+real_image: __REAL_IMAGE__
+
+registration:
+  sx_range: [0.95, 1.1, 0.05]                  # [min, max, step] — pyramid refines further
+  sy_range: [0.95, 1.1, 0.05]                 # [min, max, step] — pyramid refines further
+  rot_range_deg: [-0.1, 0.1, 0.05]            # tight: real PCBA image has near-zero rotation
+  shift_range: 100                            # ± px for tx/ty
+  shift_step: 2                               # px (coarse-level; pyramid refines)
+  pyr_levels: 3                               # coarse-to-fine; speeds up 1920×1080 grid scan
+  bins: 64                                    # histogram bins for MI
+  no_resize: true                             # skip pre-resize; preserve sub-pixel detail
+  gpu: true                                   # auto / true / false
+  min_mi: 0                                   # exit 2 if MI after < this; null = disable
+
+# === Step 4: Per-ROI label-based crop ===
+crop:
+  classes: [ic]       # which classes to extract ROIs for
+  morph_kernel: 2                             # px close radius — merge adjacent labelled meshes
+  min_area: 50                                # px²; reject smaller connected components
+  max_area: null                              # px²; null = no upper cap
+  offset: 10                                  # px padding around each ROI bbox
+
+  # Per-class output routing. NNNN counter restarts per subdir.
+  class_dirs:
+    ic: IC
+
+  # Optional pairwise crops covering two nearby ROIs in one bbox.
+  bridge: false                                # turn pairwise bridge crops on
+
+# === Output ===
+output:
+  dir: __OUTPUT__

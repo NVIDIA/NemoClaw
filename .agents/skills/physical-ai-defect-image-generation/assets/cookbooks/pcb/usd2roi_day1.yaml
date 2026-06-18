@@ -1,0 +1,162 @@
+# usd2roi day-1 single-config — USD + real PCBA photo → per-ROI synth+real+seg triples.
+#
+# Mirrors the usd2roi standalone reference at
+# skills/simulation/assets/configs/day1/replicator/usd2roi_target.yaml
+# (spark scene). The workflow patches three runtime sentinels:
+#   __SCENE__        scene USD found inside <dig_url_root>/datasets/pcb/assets
+#   __REAL_IMAGE__   real photo `input_real_image/<board>.jpg` inside <dig_url_root>/datasets/pcb/assets
+#   __OUTPUT__       OSMO task output dir
+#
+# Camera / resolution / registration / crop values are tuned for the shipped
+# spark PCBA scene. For a different board: edit in place; check
+# references/troubleshooting.md (usd2roi MI alignment section) before changing
+# registration ranges.
+
+scene: __SCENE__
+
+# Inline semantics — must produce class names matching the shipped checkpoint's
+# anomaly_types taxonomy. The default crop.classes below (capacitor, solder,
+# pad, ic) align with the Day 0 cookbook's day0_image.yaml semantics block.
+semantics:
+  # --- 0805U_H150 ---
+  - match: "**/_0805U_H150/tn__0805U_H150_*/LibRef/tn__0805U_H040_/surface_0"
+    labels: {class: solder}
+  - match: "**/_0805U_H150/tn__0805U_H150_*/LibRef/tn__0805U_H040_/surface_1"
+    labels: {class: capacitor}
+
+  # --- PASTEMASK pad ---
+  - match: "**/PASTEMASK_TOP/Geometry/PASTEMASK_TOP__11450_bodies__0"
+    labels: {class: pad}
+
+  # --- 0402_H060 ---
+  - match: "**/_0402_H060/tn__0402_H060_*/LibRef/_0402_H060/Geometry/Components/_0402_H060/surface_0_MASTER_MESH"
+    labels: {class: solder}
+  - match: "**/_0402_H060/tn__0402_H060_*/LibRef/_0402_H060/Geometry/Components/_0402_H060/surface_1_MASTER_MESH"
+    labels: {class: capacitor}
+  - match: "**/_0402_H060/tn__0402_H060_*/LibRef/_0402_H060/Geometry/Components/_0402_H060/surface_3_MASTER_MESH"
+    labels: {class: capacitor}
+  - match: "**/_0402_H060/tn__0402_H060_*/LibRef/_0402_H060/Geometry/Components/_0402_H060/surface_4_MASTER_MESH"
+    labels: {class: solder}
+  - match: "**/_0402_H060/tn__0402_H060_*/LibRef/_0402_H060/Geometry/Components/_0402_H060/surface_5_MASTER_MESH"
+    labels: {class: capacitor}
+  - match: "**/_0402_H060/tn__0402_H060_*/LibRef/_0402_H060/Geometry/Components/_0402_H060/surface_6_MASTER_MESH"
+    labels: {class: solder}
+
+  # --- 0402_H040: surface 0,8 -> pad ; 1,5,7 -> solder ; 2,3,4,6 -> capacitor ---
+  - match: "**/_0402_H040/tn__0402_H040_*/LibRef/_0402_H040/Geometry/Components/_0402_H040/surface_0_MASTER_MESH"
+    labels: {class: pad}
+  - match: "**/_0402_H040/tn__0402_H040_*/LibRef/_0402_H040/Geometry/Components/_0402_H040/surface_8_MASTER_MESH"
+    labels: {class: pad}
+  - match: "**/_0402_H040/tn__0402_H040_*/LibRef/_0402_H040/Geometry/Components/_0402_H040/surface_1_MASTER_MESH"
+    labels: {class: solder}
+  - match: "**/_0402_H040/tn__0402_H040_*/LibRef/_0402_H040/Geometry/Components/_0402_H040/surface_5_MASTER_MESH"
+    labels: {class: solder}
+  - match: "**/_0402_H040/tn__0402_H040_*/LibRef/_0402_H040/Geometry/Components/_0402_H040/surface_7_MASTER_MESH"
+    labels: {class: solder}
+  - match: "**/_0402_H040/tn__0402_H040_*/LibRef/_0402_H040/Geometry/Components/_0402_H040/surface_2_MASTER_MESH"
+    labels: {class: capacitor}
+  - match: "**/_0402_H040/tn__0402_H040_*/LibRef/_0402_H040/Geometry/Components/_0402_H040/surface_3_MASTER_MESH"
+    labels: {class: capacitor}
+  - match: "**/_0402_H040/tn__0402_H040_*/LibRef/_0402_H040/Geometry/Components/_0402_H040/surface_4_MASTER_MESH"
+    labels: {class: capacitor}
+  - match: "**/_0402_H040/tn__0402_H040_*/LibRef/_0402_H040/Geometry/Components/_0402_H040/surface_6_MASTER_MESH"
+    labels: {class: capacitor}
+
+  # --- 0402_LARGE_H070 (LibRef path uses _0402_LARGE_H080_) ---
+  - match: "**/_0402_LARGE_H070/tn__0402_LARGE_H070_*/LibRef/tn__0402_LARGE_H080_/surface_0"
+    labels: {class: capacitor}
+  - match: "**/_0402_LARGE_H070/tn__0402_LARGE_H070_*/LibRef/tn__0402_LARGE_H080_/surface_1"
+    labels: {class: solder}
+
+  # --- 115-1581-000_2 IC (whole component) ---
+  - match: "**/_115_1581_000_2/tn__1151581000_2DFN06_P065_020X020_T016X010_D_*"
+    labels: {class: ic}
+
+# === Single ortho capture (matches the real photo's aspect) ===
+camera:
+  translate: [-55.4, 2]                          # [x, y] world coords (mm); z fixed at 5000
+  horizontal_aperture: 97                        # ortho extent in 0.1 × world units (mm * 10)
+resolution: [640, 480]
+
+pathtracing:
+  spp: 1
+  total_spp: 32
+  max_bounces: 4
+
+writer:
+  rgb: true
+  semantic_segmentation: true
+  colorize_semantic_segmentation: true
+  bounding_box_2d_tight: false
+  bounding_box_2d_loose: false
+  semantic_types: [class]
+  frame_padding: 4
+  image_output_format: png
+
+# === Solder-light illumination (matches the AOI machine "solder light" mode) ===
+# usd2roi_render.py may or may not consume this block — the usd2roi day-1 spark
+# template ships without it. Added here to try to push MI above the 0.5 gate
+# against the shipped PCBA assets URL's `temp_scene.usd`. The Inner_Red /
+# Middle_Green / Outer_Blue cones produce the colored specular pattern on
+# solder fillets that the real AOI photo carries.
+lighting:
+  ring_light: true
+  exposure_range: [0.01, 1.0]
+  cone_angle_range: [90, 150]
+  cone_softness_range: [0.5, 1.0]
+
+  layers:
+    Inner_Red:
+      intensity: [5000, 8000]
+      color_r: [0.95, 1.0]
+      color_g: [0.0,  0.05]
+      color_b: [0.0,  0.05]
+    Middle_Green:
+      intensity: [2000, 4000]
+      color_r: [0.0,  0.05]
+      color_g: [0.95, 1.0]
+      color_b: [0.0,  0.05]
+    Outer_Blue:
+      intensity: [3000, 6000]
+      color_r: [0.0,  0.05]
+      color_g: [0.0,  0.05]
+      color_b: [0.95, 1.0]
+
+  white_light:
+    intensity: [3000, 8000]
+    color_r:   [0.8,  1.0]
+    color_g:   [0.8,  1.0]
+    color_b:   [0.8,  1.0]
+
+# === Registration (USD synth → real photo via mutual information) ===
+real_image: __REAL_IMAGE__
+
+registration:
+  sx_range: [0.9, 1.1, 0.02]                    # [min, max, step] — search range for X scale
+  sy_range: [0.9, 1.1, 0.02]                    # [min, max, step] — search range for Y scale
+  rot_range_deg: [-0.1, 0.1, 0.05]              # tight: AOI machine photos have near-zero rotation
+  shift_range: 100                              # ± px for tx/ty
+  shift_step: 1                                 # px
+  pyr_levels: 3                                 # image pyramid levels (coarse → fine)
+  bins: 64                                      # histogram bins for MI
+  no_resize: true                               # skip pre-resize; preserve sub-pixel detail
+  gpu: true
+  min_mi: 0.5                                   # exit 2 if MI after < this; null = disable
+
+# === Per-ROI label-based crop ===
+crop:
+  classes: [capacitor, ic]                      # which classes to extract ROIs for
+  class_dirs:                                   # route usd2roi class → workflow material dir name
+    capacitor: passive_component
+    ic: IC
+  morph_kernel: 1                               # px close radius — merge adjacent labelled meshes
+  min_area: 50                                  # px²; reject smaller connected components
+  max_area: null                                # px²; null = no upper cap
+  offset: 10                                    # px padding around each ROI bbox
+
+  bridge: false                                 # turn pairwise bridge crops on/off
+  bridge_dis: 30                                # px; bbox edge-to-edge distance threshold
+  bridge_classes: [capacitor]                   # only ROIs whose dominant_class is in this list pair
+
+output:
+  dir: __OUTPUT__

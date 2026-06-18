@@ -1,0 +1,85 @@
+name: tao-train-image-classification
+network_arch: classification_pyt
+automl_enabled: true
+container_image: tao_toolkit.pyt
+data_format: classification_pyt
+gpu_spec_key: train.num_gpus
+actions:
+  train:
+    command: classification_pyt train -e {config_path}
+    config_format: yaml
+    inputs:
+      dataset.train_dataset.images_dir:
+        type: folder
+      dataset.classes_file:
+        type: file
+      dataset.val_dataset.images_dir:
+        type: folder
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  distill:
+    command: classification_pyt distill -e {config_path}
+    config_format: yaml
+    inputs: {}
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  quantize:
+    command: classification_pyt quantize -e {config_path}
+    config_format: yaml
+    inputs: {}
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  evaluate:
+    command: classification_pyt evaluate -e {config_path}
+    config_format: yaml
+    inputs: {}
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  export:
+    command: classification_pyt export -e {config_path}
+    config_format: yaml
+    inputs: {}
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  inference:
+    command: classification_pyt inference -e {config_path}
+    config_format: yaml
+    inputs: {}
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  gen_trt_engine:
+    command: classification_pyt gen_trt_engine -e {config_path}
+    config_format: yaml
+    inputs: {}
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+data_sources: {}
+spec_params: {}
+key_defaults: {}
+spec_shorthand_keys:
+  num_epochs: train.num_epochs
+  batch_size: dataset.batch_size
+  learning_rate: train.optim.lr
+description: PyTorch image classification. Supports a wide range of backbones (FAN, EfficientNet, ResNet, etc.) with distillation
+  and quantization for deployment.

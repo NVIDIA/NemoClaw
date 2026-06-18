@@ -1,0 +1,14 @@
+[
+  {
+    "id": "numopt-form-eval-001-parse-production-planning",
+    "question": "A factory operates 3 production lines and employs 50 workers. It plans to produce products A, B, and C next month. Each product has a known per-unit cost and revenue. Determine the monthly production plan. Classify each sentence as parameter, constraint, decision, or objective, and state the (possibly implicit) objective.",
+    "expected_skill": "cuopt-numerical-optimization-formulation",
+    "expected_script": null,
+    "ground_truth": "The agent classifies each sentence with the four-label framework (parameter / constraint / decision / objective), treats the fixed facts (3 production lines, 50 workers, known cost and revenue) as parameters and the production plan as the decision, and identifies the implicit objective as maximize profit (since both costs and revenues are given) — not minimize cost. Does not produce code.",
+    "expected_behavior": [
+      "Classifies each sentence using the four labels (parameter / constraint / decision / objective)",
+      "Identifies the implicit objective as maximize profit (revenue − cost), not minimize cost, since both costs and revenues are given",
+      "Does not produce code or an API call sequence — this skill is concepts only"
+    ]
+  }
+]

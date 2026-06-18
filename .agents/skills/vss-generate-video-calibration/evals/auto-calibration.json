@@ -1,0 +1,132 @@
+{
+  "skills": [
+    "vss-generate-video-calibration"
+  ],
+  "resources": {
+    "platforms": {
+      "RTXPRO6000BW": {
+        "gpu_count": 1
+      }
+    }
+  },
+  "expects": [
+    {
+      "query": "Deploy AMC on {{platform}}, using the `/vss-generate-video-calibration` skill end-to-end and autonomously.\n\n**Environment & prerequisites:** A GPU host matching `{{platform}}` with Docker + NVIDIA container toolkit + `NGC_CLI_API_KEY`. The `/vss-generate-video-calibration` skill handles both deployment (`references/deploy-auto-calibration-service.md`) and calibration (`references/{videos,rtsp,sample-dataset}.md`). Deploy expects in this spec bring up `vss-auto-calibration` (MS, host-networked on `${VSS_AUTO_CALIBRATION_PORT:-8010}`) and `vss-auto-calibration-ui` (UI on `${VSS_AUTO_CALIBRATION_UI_PORT:-5000}`) from the `vss-core` namespace on `nvcr.io` (org per the auto-calibration compose files); calibration expects then run against that running stack. AMC is a service inside the `warehouse-operations` industry profile (env file: `deploy/docker/industry-profiles/warehouse-operations/.env`, enabled only by `auto_calib`, `bp_wh_auto_calib_2d`, `bp_wh_auto_calib_3d`, or `bp_wh_auto_calib_mv3dt`). Project state mounts from `$VSS_APPS_DIR/services/auto-calibration/projects`; optional VGGT model mounts from `$VSS_DATA_DIR/auto-calib/vggt`. For RTSP-mode expects, a warehouse profile with VIOS is also up, commonly `bp_wh_auto_calib_*`, so VIOS responds at `http://localhost:30888/vst/api/v1/sensor/list` and `VIOS_BASE_URL` is auto-wired. For videos-mode expects, the test fixture provides `cam_00.mp4` \u2026 `cam_03.mp4` under `${VIDEO_DIR}` (defaults to `/data/videos/`) plus `alignment_data.json`, `layout.png`, and `GT.zip` under `/data/alignment/`. For sample-dataset-mode expects, `sdg_08_2_sample_data_010926.zip` is present at `assets/`.",
+      "checks": [
+        "The skill loaded `references/deploy-auto-calibration-service.md` (the `deploy` mode)",
+        "`curl -sf --max-time 15 http://localhost:$(grep ^VSS_AUTO_CALIBRATION_PORT $REPO_ROOT/deploy/docker/industry-profiles/warehouse-operations/.env | cut -d= -f2)/v1/ready` returns exit 0",
+        "`curl -sf --max-time 15 http://localhost:$(grep ^VSS_AUTO_CALIBRATION_PORT $REPO_ROOT/deploy/docker/industry-profiles/warehouse-operations/.env | cut -d= -f2)/v1/ready` body matches `\"code\":0`",
+        "`curl -sf -o /dev/null -w '%{http_code}' --max-time 15 http://localhost:$(grep ^VSS_AUTO_CALIBRATION_UI_PORT $REPO_ROOT/deploy/docker/industry-profiles/warehouse-operations/.env | cut -d= -f2)/` returns 200",
+        "`docker ps --format '{{.Names}}' | grep -qx vss-auto-calibration` returns exit 0",
+        "`docker ps --format '{{.Names}}' | grep -qx vss-auto-calibration-ui` returns exit 0",
+        "`docker inspect --format '{{.State.Health.Status}}' vss-auto-calibration` returns `healthy`"
+      ]
+    },
+    {
+      "query": "Deploy AMC on {{platform}} with VGGT model refinement enabled. The user has provided a HuggingFace token and accepted the VGGT license.",
+      "checks": [
+        "The skill loaded `references/deploy-auto-calibration-service.md` and followed its Step 2 VGGT path",
+        "`test -f $VSS_DATA_DIR/auto-calib/vggt/vggt_1B_commercial.pt` returns exit 0",
+        "`docker exec vss-auto-calibration test -f /tmp/vggt_model/vggt_1B_commercial.pt` returns exit 0 (VGGT is mounted read-only into the MS container)",
+        "`curl -sf --max-time 15 http://localhost:$(grep ^VSS_AUTO_CALIBRATION_PORT $REPO_ROOT/deploy/docker/industry-profiles/warehouse-operations/.env | cut -d= -f2)/v1/ready` returns exit 0",
+        "`docker logs vss-auto-calibration 2>&1 | grep -E 'hf_[A-Za-z0-9]{20,}'` returns non-zero exit (HuggingFace token is not echoed into MS logs)"
+      ]
+    },
+    {
+      "query": "Verify a running AMC deployment on {{platform}}. The user thinks AMC is already up but wants to confirm both containers + endpoints before running calibration.",
+      "checks": [
+        "`docker ps --filter 'name=vss-auto-calibration' --filter 'status=running' --format '{{.Names}}' | sort -u | wc -l` returns `2`",
+        "`curl -sf --max-time 15 http://localhost:$(grep ^VSS_AUTO_CALIBRATION_PORT $REPO_ROOT/deploy/docker/industry-profiles/warehouse-operations/.env | cut -d= -f2)/docs` returns exit 0 (Swagger UI responsive)",
+        "`grep -q ^HOST_IP=[0-9] $REPO_ROOT/deploy/docker/industry-profiles/warehouse-operations/.env` returns exit 0 (HOST_IP is set to a numeric address, not unset or `localhost`)",
+        "Reported MS URL is not `http://localhost:` or `http://0.0.0.0:` (UI container couldn't reach it that way)"
+      ]
+    },
+    {
+      "query": "Deploy AMC on {{platform}}, but `NGC_CLI_API_KEY` is not set and the user provides no value when prompted.",
+      "checks": [
+        "Skill detects the missing NGC credentials before running `docker compose up`",
+        "Skill does NOT attempt `docker compose up` (no `vss-auto-calibration` / `vss-auto-calibration-ui` containers created)",
+        "`docker ps --format '{{.Names}}' | grep -qx vss-auto-calibration` returns non-zero exit",
+        "Skill output does NOT contain a literal NGC key matching the pattern `nvapi-[A-Za-z0-9_\\-]{10,}`"
+      ]
+    },
+    {
+      "query": "Calibrate my cameras. Videos are under /data/videos/ (cam_00.mp4 through cam_03.mp4) and I have alignment_data.json + layout.png at /data/alignment/.",
+      "checks": [
+        "The skill loaded `references/videos.md` (NOT rtsp.md or sample-dataset.md) \u2014 input is local MP4s",
+        "The skill called `POST /v1/create_project` and captured the returned `project_id`",
+        "The skill called `POST /v1/upload_video_files/<project_id>` exactly once with the 4 cam_*.mp4 files attached in sorted-by-name order",
+        "The skill called `POST /v1/upload_alignment/<project_id>` with `alignment_data.json` and `POST /v1/upload_layout/<project_id>` with `layout.png` before verifying",
+        "The skill called `POST /v1/verify_project/<project_id>` and confirmed `project_state == \"READY\"` before starting calibration",
+        "After polling, `GET /v1/get_project_info/<project_id>` returns `project_info.project_state == \"COMPLETED\"`",
+        "The skill output did NOT contain bearer tokens matching `Bearer\\s+[A-Za-z0-9\\-._~+/]{20,}` or NGC keys matching `nvapi-[A-Za-z0-9_\\-]{10,}`"
+      ]
+    },
+    {
+      "query": "Calibrate my cameras with ground truth. Videos at /data/videos/, alignment and layout at /data/alignment/, GT.zip at /data/GT.zip, focal lengths 1269.0 and 1099.5.",
+      "checks": [
+        "The skill routed to the `videos` mode (loaded `references/videos.md`)",
+        "The skill called `POST /v1/upload_gt_file/<project_id>` with `GT.zip` before verifying the project",
+        "The skill called `POST /v1/upload_focal_length/<project_id>` with both focal length values (1269.0 and 1099.5)",
+        "After calibration COMPLETED, the skill called `GET /v1/result/<project_id>/evaluation_statistics` and the response included a non-empty `statistics` object",
+        "The reported `Average L2 distance(m)` parses as a float and is `< 1.5`",
+        "The reported `Average reprojection error 0(px)` parses as a float and is `< 10`"
+      ]
+    },
+    {
+      "query": "Calibrate from 3 RTSP streams: rtsp://HOST:31554/cam_00, rtsp://HOST:31555/cam_01, rtsp://HOST:31556/cam_02. Record 180 seconds. Alignment JSON and layout PNG are at /data/alignment/.",
+      "checks": [
+        "The skill loaded `references/rtsp.md` (NOT videos.md or sample-dataset.md) \u2014 input is RTSP URLs",
+        "The skill probed `GET /vst/api/v1/sensor/list` (default port 30888) and confirmed VIOS is reachable before any AMC API calls",
+        "The skill called `POST /v1/rtsp/capture/<project_id>` with a `streams` array of exactly 3 entries and `duration_seconds: 180`",
+        "The skill polled `GET /v1/rtsp/capture/<project_id>/<session_id>` until the response `status` reached `COMPLETED` (handled the STARTING \u2192 RECORDING \u2192 COMPLETED progression)",
+        "The skill called `POST /v1/rtsp/capture/<project_id>/<session_id>/ingest` after the capture session completed (not before)",
+        "After polling, `GET /v1/get_project_info/<project_id>` returns `project_info.project_state == \"COMPLETED\"`",
+        "The skill output did NOT contain bearer tokens matching `Bearer\\s+[A-Za-z0-9\\-._~+/]{20,}` or `vios_token=[A-Za-z0-9\\-._~+/]{10,}`"
+      ]
+    },
+    {
+      "query": "Calibrate from rtsp://HOST:31554/cam_00. MS is up but VIOS is not.",
+      "checks": [
+        "The skill routed to the `rtsp` mode (loaded `references/rtsp.md`)",
+        "The skill probed `GET /vst/api/v1/sensor/list` and detected VIOS is unreachable (connection refused or non-2xx)",
+        "The skill referenced the `vios` skill (or asked the user to deploy VIOS) as the recovery path",
+        "The skill did NOT call `POST /v1/rtsp/capture/<project_id>` while VIOS was unreachable",
+        "The skill did NOT fabricate a `session_id` or claim the capture succeeded"
+      ]
+    },
+    {
+      "query": "Run the sample calibration test. The microservice is already running on port 8010.",
+      "checks": [
+        "The skill loaded `references/sample-dataset.md` (NOT videos.md or rtsp.md)",
+        "The skill probed `GET /v1/ready` and confirmed `{\"code\":0,...}` before any other API calls",
+        "The skill extracted `sdg_08_2_sample_data_010926.zip` into `assets/.cache/sdg_08_2_sample_data_010926/` (idempotent \u2014 re-extraction skipped if cache exists)",
+        "The skill uploaded exactly 4 `cam_*.mp4` files (sample dataset has 4 cameras) sorted alphabetically \u2014 the `len(videos) <= 16` upper bound was respected",
+        "After polling, `GET /v1/get_project_info/<project_id>` returns `project_info.project_state == \"COMPLETED\"` within 30 min",
+        "`GET /v1/result/<project_id>/evaluation_statistics` returns HTTP 200 with a non-empty `statistics` object",
+        "No file named `run_sample_test.py` was written into the repo (heredoc pattern preserved)"
+      ]
+    },
+    {
+      "query": "Launch AMC and run the sample calibration test end-to-end.",
+      "checks": [
+        "The skill loaded `references/deploy-auto-calibration-service.md` first (deploy mode), then `references/sample-dataset.md` (calibration mode) \u2014 in one continuous response",
+        "The skill scanned ports 8000-8009 and 8010 for `/v1/ready`, found none responding, and proceeded with the deploy workflow before attempting the sample test",
+        "After deploy completed, the skill re-probed `/v1/ready` and only proceeded once it responded with `{\"code\":0,...}`",
+        "Both `vss-auto-calibration` and `vss-auto-calibration-ui` are listed in `docker ps --format '{{.Names}}'` once the launch completes",
+        "The skill ran the sample-test sequence in the same response \u2014 did NOT stop after deploy and require a second user prompt"
+      ]
+    },
+    {
+      "query": "Calibrate my cameras. Videos at /data/videos/. Microservice should be at http://localhost:8010 but I don't remember if I started it.",
+      "checks": [
+        "The skill routed to `references/videos.md` (input is local MP4s)",
+        "The skill probed `GET /v1/ready` on port 8010 (and optionally 8000-8009 fallback range) before issuing any upload calls",
+        "On detecting the MS is not running, the skill routed to `references/deploy-auto-calibration-service.md` first to bring up AMC, then resumed the calibration flow",
+        "The skill did NOT call `POST /v1/create_project` against an unreachable endpoint",
+        "The skill did NOT proceed to upload videos / start calibration while the MS readiness probe was failing",
+        "The skill output did NOT contain hardcoded credentials matching `password\\s*[:=]\\s*[\"'][^\"']+` or `secret[_\\-]?key\\s*[:=]\\s*[\"']?[A-Za-z0-9+/=_\\-]{20,}`"
+      ]
+    }
+  ]
+}

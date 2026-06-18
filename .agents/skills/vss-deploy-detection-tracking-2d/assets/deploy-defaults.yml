@@ -1,0 +1,192 @@
+# vss-deploy-detection-tracking-2d deploy defaults
+#
+# Defaults the skill SUGGESTS to the user. The user's choice ALWAYS wins:
+#   • Custom NGC ref for a slot   → replaces resolved `<asset>.source`/`path`
+#   • Local model file (.onnx)    → replaces resolved `usecases.<X>.model`
+#   • Local video file/directory  → replaces resolved `usecases.<X>.videos`
+#
+# This YAML never auto-deploys — it only pre-fills the *Recommended* choice
+# in `AskQuestion` blocks and supplies fall-back values when the user
+# accepts the defaults.
+#
+# Path resolution
+# ───────────────
+# Per-usecase NGC assets (`model`, `videos`, `labels`, `anchor`, …) are
+# objects with two fields:
+#
+#   source : key into `ngc_resources` — which NGC asset the file lives in.
+#            Different assets in the same usecase MAY point at different
+#            resources (e.g. model in `rtdetr_model_pkg`, videos in
+#            `warehouse_videos`).
+#   path   : path RELATIVE TO that resource's `extract_dir`.
+#
+# Resolved to:
+#   host_path      = <paths.resources host-side>/<source.extract_dir>/<path>
+#   container_path = <paths.resources>/<source.extract_dir>/<path>
+#
+# If `path` is just a basename (no `/`) OR the exact relative subpath does
+# not exist after extraction, the skill falls back to discovery:
+# `find <extract_dir> -name <basename(path)>` (Step 9a). Treat `path` as
+# the canonical default and discovery as a safety net for NGC packaging
+# changes.
+#
+# `main_config` / `pgie_config` / `sparse4d_config` are simple strings —
+# paths RELATIVE TO `paths.configs` (these files are baked into the
+# container image).
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 1. Docker image (per arch). Skill picks one based on `uname -m` + Tegra check.
+#    Multi-arch and SBSA tags publish at different cadences — keep separate.
+# ─────────────────────────────────────────────────────────────────────────────
+docker_image:
+  multi_arch: nvcr.io/nvidia/vss-core/vss-rt-cv:3.2.0      # x86_64 dGPU + aarch64 Jetson
+  sbsa:       nvcr.io/nvidia/vss-core/vss-rt-cv:3.2.0-sbsa # SBSA (Spark, Grace-Hopper)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 2. In-container path layout (the image is built around these).
+# ─────────────────────────────────────────────────────────────────────────────
+paths:
+  configs:   /opt/nvidia/deepstream/deepstream/sources/apps/sample_apps/metropolis_perception_app/reference-configs
+  engines:   /opt/storage/engines
+  resources: /opt/storage/resources
+  logs:      /opt/storage/logs
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 3. Runtime knobs the skill applies to every `docker run`.
+#
+#    gpu_id : zero-based GPU index passed as `--gpus '"device=<gpu_id>"'`.
+#             Defaults to 0 (deterministic on single-GPU hosts and avoids
+#             accidentally claiming every device on a multi-GPU workstation,
+#             which `--gpus all` would do). The user can override per-deploy
+#             by saying e.g. "run on gpu 1" in the skill query — that
+#             overrides this YAML value but does NOT mutate the file.
+# ─────────────────────────────────────────────────────────────────────────────
+runtime:
+  gpu_id: 0
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 4. NGC resource catalog. Each entry is declared ONCE here and referenced by
+#    individual assets via `<asset>.source`. A single usecase may pull from
+#    multiple resources (e.g. model from one, videos from another).
+#
+#    kind        : `resource` → `ngc registry resource download-version`
+#                  `model`    → `ngc registry model download-version`
+#    ref         : full NGC ref `<org>/<team>/<name>:<tag>`
+#    extract_dir : directory NGC creates after extraction. Convention:
+#                  `<name>_v<tag>`; if `<tag>` already starts with `v`, the
+#                  result is `_vv...`.
+# ─────────────────────────────────────────────────────────────────────────────
+ngc_resources:
+
+  # Warehouse dataset — ships RT-DETR (2D) + Sparse4D (3D) models AND
+  # both video sets. Reused by warehouse-2d and warehouse-3d.
+  warehouse_dataset:
+    kind:        resource
+    ref:         nvidia/vss-warehouse/vss-warehouse-app-data:3.2.0
+    extract_dir: vss-warehouse-app-data_v3.2.0
+
+  # Smartcity videos. Detection models are SEPARATE entries below
+  # Reused by smartcity-rtdetr and smartcity-gdino.
+  smartcity_dataset:
+    kind:        resource
+    ref:         nvidia/vss-smartcities/vss-smartcities-app-data:3.1.0
+    extract_dir: vss-smartcities-app-data_v3.1.0
+
+  # RT-DETR (2D) model.
+  rtdetr_model:
+    kind:        model
+    ref:         nvidia/tao/trafficcamnet_transformer_lite:deployable_resnet50_v2.0
+    extract_dir: trafficcamnet_transformer_lite_vdeployable_resnet50_v2.0
+
+  # Grounding DINO (open-vocab detector) model.
+  gdino_model:
+    kind:        model
+    ref:         nvidia/tao/mask_grounding_dino:mask_grounding_dino_swin_tiny_commercial_deployable_v2.1_wo_mask_arm
+    extract_dir: mask_grounding_dino_vmask_grounding_dino_swin_tiny_commercial_deployable_v2.1_wo_mask_arm
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 5. Per-usecase defaults.
+#
+#    NGC assets — `model`, `videos`, `labels`, `anchor`:
+#      Object with `source` (key into `ngc_resources`) + `path` (relative to
+#      that resource's `extract_dir`). The skill resolves to host + container
+#      paths. Each asset declares its own source — model and videos are NOT
+#      assumed to live in the same resource. Overridden by user-supplied
+#      local file at runtime.
+#
+#    In-image config files — `main_config`, `pgie_config`:
+#      Plain strings, relative to `paths.configs` (baked into the image).
+#
+#    The skill auto-derives the set of NGC resources to download for a
+#    usecase by collecting unique `source` values across its assets.
+# ─────────────────────────────────────────────────────────────────────────────
+usecases:
+
+  # Warehouse 2D use case.
+  warehouse-2d:
+    description: 2D warehouse multi-camera tracking (RT-DETR + NvDCF, 7 classes)
+    model:
+      source: warehouse_dataset
+      path:   vss-warehouse-app-data/models/mtmc/rtdetr_warehouse_v1.0.2.fp16.onnx
+    videos:
+      source: warehouse_dataset
+      path:   vss-warehouse-app-data/videos/nv-warehouse-4cams
+    main_config: warehouse-2d/ds-main-config.txt
+    pgie_config: warehouse-2d/ds-ppl-analytics-pgie-config.yml
+
+  # Warehouse 3D use case (Sparse4D videotemplate plugin, multi-camera BEV).
+  # Note: `videotemplate` replaces nvinfer, so there is no `pgie_config` —
+  # the Sparse4D `config.yaml` (`sparse4d_config`) drives inference instead.
+  warehouse-3d:
+    description: 3D warehouse multi-camera BEV (Sparse4D, 6 classes)
+    model:
+      source: warehouse_dataset
+      path:   vss-warehouse-app-data/models/sparse4d/ov/sparse4d_warehouse_v2.2.onnx
+    videos:
+      source: warehouse_dataset
+      path:   vss-warehouse-app-data/videos/warehouse-4cams-20mx20m-synthetic
+    labels:
+      source: warehouse_dataset
+      path:   vss-warehouse-app-data/models/sparse4d/ov/labels.txt
+    anchor:
+      source: warehouse_dataset
+      path:   vss-warehouse-app-data/models/sparse4d/ov/_ov_kmeans900_v2.2.npy
+    # `calibration.json` is OPTIONAL in the NGC resource. apply-config picks
+    # the NGC copy if `find` discovers one, otherwise falls back to the
+    # in-image default at <paths.configs>/warehouse-3d/calibration.json.
+    main_config:     warehouse-3d/ds-main-config.txt
+    sparse4d_config: warehouse-3d/config.yaml
+
+  # Smart city 2D use case (RT-DETR / TrafficCamNet via nvinfer).
+  # Model and videos come from DIFFERENT NGC entries — model is a TAO
+  # `kind: model` package, videos live in the smartcity dataset resource.
+  # The TAO model package's internal layout is not version-stable, so the
+  # `path` here is just the ONNX basename — the skill's `find` discovery
+  # locates it under `extract_dir`.
+  smartcity-rtdetr:
+    description: Smart city 2D detection (RT-DETR / TrafficCamNet, 5 classes)
+    model:
+      source: rtdetr_model
+      path:   resnet50_trafficcamnet_rtdetr.fp16.onnx
+    videos:
+      source: smartcity_dataset
+      path:   vss-smartcities-app-data/videos/smc-app
+    main_config: smartcities/rt-detr/run_config-api-rtdetr-protobuf.txt
+    pgie_config: smartcities/rt-detr/rtdetr-960x544.txt
+
+  # Smart city open-vocab use case (Grounding DINO via Triton/nvinferserver).
+  # Same caveat as smartcity-rtdetr: the GDINO TAO package's subdirectory
+  # layout is not version-stable; `path` is the ONNX basename and the
+  # skill's `find` discovery resolves it. `setup_gdino.sh` then copies the
+  # ONNX into the Triton model repo and builds the .plan.
+  smartcity-gdino:
+    description: Smart city open-vocab detection (Grounding DINO via Triton)
+    model:
+      source: gdino_model
+      path:   mgdino_mask_head_pruned_dynamic_batch.onnx
+    videos:
+      source: smartcity_dataset
+      path:   vss-smartcities-app-data/videos/smc-app
+    main_config: smartcities/gdino/run_config-api-rtdetr-protobuf.txt
+    pgie_config: smartcities/gdino/config_triton_nvinferserver_gdino.txt

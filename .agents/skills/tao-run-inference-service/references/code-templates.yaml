@@ -1,0 +1,426 @@
+# Code templates for the TAO Inference Microservice skill (SKILL.md).
+# These are reference implementations — not instructions.
+# SKILL.md sections 6.1, 6.3, 7, and 8 point here for Python code.
+
+job_payload_builder:
+  description: >
+    Build the inner shell command and any env_payload entries needed for
+    docker run. The shape of the command is per-network_arch — there is no
+    generic builder. Pick the block matching the user's network_arch.
+    Secret access_key and secret_key are read from env vars at runtime —
+    never hard-code.
+
+  cosmos-rl:
+    description: >
+      cosmos-rl consumes a single --job '<JSON>' blob plus --docker_env_vars
+      '<JSON>'. The inference container does NOT depend on cloud storage —
+      model weights come from the HuggingFace Hub or a local filesystem path,
+      and request inputs must be sent inline (data: URIs) or via http(s) URLs.
+    python: |
+      import json, uuid, shlex
+
+      job_id       = str(uuid.uuid4())
+      network_arch = "cosmos-rl"
+
+      # model_path: HuggingFace repo id (e.g. "nvidia/Cosmos-Reason1-7B"),
+      # an hf_model://<org>/<model> URI, or a local container path.
+      # Cloud URIs (s3://, gs://, az://) are NOT supported by the inference
+      # service. See references/service.yaml → model_path_protocols.
+      model_path = "hf_model://nvidia/Cosmos-Reason1-7B"
+
+      job_payload = {
+          "job_id":              job_id,
+          "specs": {
+              "model_path":  model_path,
+          },
+          "neural_network_name": network_arch,
+      }
+
+      env_payload = {
+          "TAO_EXECUTION_BACKEND": "local-docker",  # replace with platform value — see Section 4 table
+          "TAO_API_JOB_ID":        job_id,
+          "CLOUD_BASED":           "False",
+      }
+
+      job_json = json.dumps(job_payload, separators=(",", ":"))
+      env_json = json.dumps(env_payload, separators=(",", ":"))
+      inner    = (
+          f"umask 0 && cosmos-rl-inference-microservice "
+          f"--job {shlex.quote(job_json)} --docker_env_vars {shlex.quote(env_json)}"
+      )
+
+      # Resolve image per Section 2: read network config → docker_image_defaults.mapping
+      # value (a versions.yaml dotted key) → tao_sdk.versions.resolve_container_image.
+      from tao_sdk.versions import resolve_container_image
+      image = resolve_container_image("tao_toolkit.cosmos_rl")  # or IMAGE_COSMOS_RL env-var override
+
+  cosmos-predict2.5:
+    description: >
+      cosmos-predict2.5 uses flag-style `cosmos_predict inference_microservice start
+      --<flag> --port` (no `setup.` prefix; CLI uses tyro.conf.OmitArgPrefixes).
+      It does NOT accept --job / --docker_env_vars. The inference container does
+      NOT depend on cloud storage — model weights come from the HuggingFace Hub
+      (via the registered MODEL_KEYS) or a local container path.
+      Per-request params (prompt, inference_type, num_output_frames, guidance,
+      seed, num_steps, negative_prompt) are sent in the chat-completions
+      request body, NOT at startup.
+    python: |
+      import shlex, uuid
+
+      job_id       = str(uuid.uuid4())
+      network_arch = "cosmos-predict2.5"
+
+      # Collect from user via prompt
+      model_path = "hf_model://nvidia/Cosmos-Predict2.5-2B"   # or /local/path
+      output_dir = "/tmp/cosmos-predict2.5-output"            # local path inside container
+
+      # Translate model_path → checkpoint flag (see references/service.yaml →
+      # container_commands.cosmos-predict2.5.placeholders.CHECKPOINT_FLAG).
+      if model_path.startswith("hf_model://"):
+          # hf_model://<org>/<model> — cosmos-predict2.5 doesn't accept this URI directly.
+          # Map to a registered model key (see cosmos_predict2.config.MODEL_KEYS).
+          # Ask the user for the registered key (e.g. "base-2b", "base-14b") —
+          # don't try to derive it from the URI.
+          registered_model_key = "base-2b"   # replace with user-provided value
+          checkpoint_flag = f"--model {shlex.quote(registered_model_key)}"
+      elif model_path.startswith("/"):
+          checkpoint_flag = f"--checkpoint-path {shlex.quote(model_path)}"
+      else:
+          raise ValueError(f"Unsupported model_path scheme for cosmos-predict2.5: {model_path}")
+
+      inner = (
+          "umask 0 && "
+          "cosmos_predict inference_microservice start "
+          f"{checkpoint_flag} "
+          f"--output-dir {shlex.quote(output_dir)} "
+          "--port 8080"
+      )
+
+      # env_vars passed at docker run. HF_TOKEN is required for gated HF models;
+      # follow the SKILL.md "Secrets rule": read from the named env var at runtime.
+      env_payload = {}
+      if model_path.startswith("hf_model://"):
+          env_payload["HF_TOKEN"] = "<HF_TOKEN env var>"   # export HF_TOKEN=...
+
+      # Resolve image per Section 2 (versions.yaml dotted key → concrete URI).
+      from tao_sdk.versions import resolve_container_image
+      image = resolve_container_image("tao_toolkit.cosmos_predict_2_5")  # or IMAGE_COSMOS_PREDICT2_5 env-var override
+
+  tao-dataservices:
+    description: >
+      tao-dataservices uses the same --job '<JSON>' --docker_env_vars '<JSON>' shape
+      as cosmos-rl, but with a different executable: the HuggingFace inference
+      microservice from tao-core. The inference container does NOT depend on
+      cloud storage — model weights come from the HuggingFace Hub or a local
+      filesystem path; request inputs must be sent inline (data: URIs) or via
+      http(s) URLs.
+    python: |
+      import json, uuid, shlex
+
+      job_id       = str(uuid.uuid4())
+      network_arch = "tao-dataservices"
+
+      # model_path: HuggingFace repo id (e.g. "Qwen/Qwen3-VL-8B-Instruct"),
+      # an hf_model://<org>/<model> URI, or a local container path. Cloud URIs
+      # (s3://, gs://, az://) are NOT supported by the inference service.
+      model_path = "hf_model://Qwen/Qwen3-VL-8B-Instruct"
+
+      job_payload = {
+          "job_id":              job_id,
+          "specs": {
+              "model_path":  model_path,
+          },
+          "neural_network_name": network_arch,
+      }
+
+      env_payload = {
+          "TAO_EXECUTION_BACKEND": "local-docker",  # replace with platform value — see Section 4 table
+          "TAO_API_JOB_ID":        job_id,
+          "CLOUD_BASED":           "False",
+      }
+
+      job_json = json.dumps(job_payload, separators=(",", ":"))
+      env_json = json.dumps(env_payload, separators=(",", ":"))
+      inner    = (
+          "umask 0 && "
+          "python -m nvidia_tao_core.microservices.handlers.huggingface_inference_microservice_server "
+          f"--port 8080 "
+          f"--job {shlex.quote(job_json)} --docker_env_vars {shlex.quote(env_json)}"
+      )
+
+      # Resolve image per Section 2 (versions.yaml dotted key → concrete URI).
+      from tao_sdk.versions import resolve_container_image
+      image = resolve_container_image("tao_toolkit.data_services")  # or IMAGE_TAO_DATASERVICES env-var override
+
+registry_write:
+  description: >
+    Write the service registry entry after the platform confirms the container is running.
+    Load the existing state first (shared preamble), then apply the platform-specific block,
+    then write atomically.
+  shared_preamble: |
+    import json, os
+    from datetime import datetime, timezone
+
+    STATE_FILE = "/tmp/tao-inf-ms-state.json"
+
+    try:
+        with open(STATE_FILE) as f:
+            state = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        state = {}
+
+  atomic_write: |
+    # Call this after setting state[job_id] and state["latest"]
+    tmp = STATE_FILE + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(state, f, indent=2)
+    os.replace(tmp, STATE_FILE)
+
+  local_docker:
+    python: |
+      state[job_id] = {
+          "job_id":       job_id,
+          "platform":     "local-docker",
+          "network_arch": network_arch,
+          "host_url":     f"http://localhost:{host_port}",
+          "docker_url":   f"http://{job_id}:8080",   # container-to-container on tao_default network
+          "host_port":    host_port,
+          "started_at":   datetime.now(timezone.utc).isoformat(),
+      }
+      state["latest"] = job_id
+
+  brev:
+    note: >
+      brev_instance_ip comes from `brev ls` after the platform skill starts the container.
+      localhost is not valid — Brev instances are remote VMs.
+    python: |
+      brev_instance_ip = "<hostname or IP from brev ls>"
+      state[job_id] = {
+          "job_id":       job_id,
+          "platform":     "brev",
+          "network_arch": network_arch,
+          "host_url":     f"http://{brev_instance_ip}:{host_port}",
+          "docker_url":   f"http://{job_id}:8080",   # container-to-container within the instance
+          "host_port":    host_port,
+          "started_at":   datetime.now(timezone.utc).isoformat(),
+      }
+      state["latest"] = job_id
+
+  lepton:
+    note: >
+      Poll sdk.get_job_status until Running, then retrieve the endpoint from the
+      Lepton console (Jobs → select job → Endpoint URL) or via `lep job get <job.id>`.
+    python: |
+      import time
+
+      while True:
+          status = sdk.get_job_status(job.id)
+          if status.status == "Running":
+              break
+          if status.status in ("Error", "Canceled"):
+              raise RuntimeError(f"Lepton job failed: {status.status}")
+          time.sleep(15)
+
+      lepton_endpoint = "<endpoint URL from Lepton console or lep CLI>"
+      state[job_id] = {
+          "job_id":          job_id,
+          "platform":        "lepton",
+          "platform_job_id": job.id,
+          "network_arch":    network_arch,
+          "host_url":        lepton_endpoint,
+          "started_at":      datetime.now(timezone.utc).isoformat(),
+      }
+      state["latest"] = job_id
+
+  slurm:
+    note: >
+      After Running, find the allocated node via squeue and open an SSH port-forward
+      so localhost:{host_port} reaches the container on the cluster node.
+    python: |
+      import subprocess, time, os
+
+      slurm_job_id = job.backend_details["slurm_metadata"]["slurm_job_id"]
+
+      while True:
+          status = sdk.get_job_status(job.id)
+          if status.status == "Running":
+              break
+          if status.status in ("Error", "Canceled"):
+              raise RuntimeError(f"SLURM job failed: {status.status}")
+          time.sleep(15)
+
+      node = subprocess.check_output(
+          ["ssh", f"{os.environ['SLURM_USER']}@{os.environ['SLURM_HOSTNAME']}",
+           f"squeue -j {slurm_job_id} -h -o '%N'"],
+          text=True
+      ).strip()
+
+      subprocess.Popen([
+          "ssh", "-N", "-L", f"{host_port}:{node}:8080",
+          f"{os.environ['SLURM_USER']}@{os.environ['SLURM_HOSTNAME']}"
+      ])
+      print(f"Port-forward: localhost:{host_port} -> {node}:8080 via SLURM login node")
+
+      state[job_id] = {
+          "job_id":          job_id,
+          "platform":        "slurm",
+          "platform_job_id": slurm_job_id,
+          "network_arch":    network_arch,
+          "host_url":        f"http://localhost:{host_port}",
+          "slurm_node":      node,
+          "started_at":      datetime.now(timezone.utc).isoformat(),
+      }
+      state["latest"] = job_id
+
+  kubernetes:
+    note: >
+      Expose the job via a LoadBalancer Service, then wait for the external IP.
+    python: |
+      import subprocess, time
+
+      job_name = subprocess.check_output(
+          ["kubectl", "get", "jobs", "-n", namespace, "-o",
+           f"jsonpath={{.items[?(@.metadata.annotations.tao-job-id=='{job_id}')].metadata.name}}"],
+          text=True
+      ).strip() or f"tao-job-{job_id}"
+
+      subprocess.run([
+          "kubectl", "expose", "job", job_name,
+          "--port=8080", "--target-port=8080", "--type=LoadBalancer",
+          f"--namespace={namespace}"
+      ], check=True)
+
+      external_ip = ""
+      for _ in range(24):  # up to ~4 min
+          external_ip = subprocess.check_output(
+              ["kubectl", "get", "svc", job_name, "-n", namespace,
+               "-o", "jsonpath={.status.loadBalancer.ingress[0].ip}"],
+              text=True
+          ).strip()
+          if external_ip:
+              break
+          time.sleep(10)
+
+      if not external_ip:
+          raise RuntimeError("LoadBalancer IP not assigned. Try NodePort, or check cluster ingress.")
+
+      state[job_id] = {
+          "job_id":          job_id,
+          "platform":        "kubernetes",
+          "platform_job_id": job_name,
+          "network_arch":    network_arch,
+          "host_url":        f"http://{external_ip}:8080",
+          "started_at":      datetime.now(timezone.utc).isoformat(),
+      }
+      state["latest"] = job_id
+
+readiness_check:
+  description: >
+    Poll GET /api/v1/health/readiness until 200 (ready), or until the body
+    reports a hard-failure error.type. Used at startup (Section 6.3) and
+    optionally before each request (Section 8.2). BASE_URL = state[job_id]["host_url"].
+
+    HTTP 503 is returned during normal initialization (model download / load),
+    so the status code alone is not a failure signal — inspect body.error.type:
+      retry-while-initializing : server_initializing, model_loading, model_not_ready
+      hard-fail (give up)      : initialization_error, model_load_error
+  python: |
+    import time, requests
+
+    RETRY_TYPES    = {"server_initializing", "model_loading", "model_not_ready"}
+    HARD_FAIL_TYPES = {"initialization_error", "model_load_error"}
+
+    def wait_for_ready(base_url, timeout=600, interval=10):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            try:
+                r = requests.get(f"{base_url}/api/v1/health/readiness", timeout=5)
+                if r.status_code == 200:
+                    print("Service is ready.")
+                    return True
+                try:
+                    err_type = r.json().get("error", {}).get("type", "")
+                except ValueError:
+                    err_type = ""
+                if err_type in HARD_FAIL_TYPES:
+                    raise RuntimeError(f"Service initialization failed: {err_type}")
+                # 202 + 503/model_not_ready and unknown shapes — keep polling
+                print(f"Not ready (HTTP {r.status_code} {err_type or 'unknown'}), retrying in {interval}s...")
+            except requests.exceptions.ConnectionError:
+                print(f"Container not yet reachable, retrying in {interval}s...")
+            time.sleep(interval)
+        raise TimeoutError(f"Service did not become ready within {timeout}s")
+
+    wait_for_ready(BASE_URL)
+    print(f"Ready. Send requests to: {BASE_URL}/v1/chat/completions")
+
+stop:
+  registry_read:
+    description: Read the registry and resolve which job_id to stop.
+    python: |
+      import json
+
+      STATE_FILE = "/tmp/tao-inf-ms-state.json"
+
+      try:
+          with open(STATE_FILE) as f:
+              state = json.load(f)
+      except (FileNotFoundError, json.JSONDecodeError):
+          state = {}
+
+      job_id_to_stop = user_provided_job_id or state.get("latest")
+      if not job_id_to_stop or job_id_to_stop not in state:
+          raise RuntimeError("No running inference service found. Provide a job_id or start a service first.")
+
+      entry = state[job_id_to_stop]
+      print(f"Stopping inference service: job_id={job_id_to_stop}  arch={entry['network_arch']}")
+
+  registry_cleanup:
+    description: >
+      Remove the stopped job from the registry and advance "latest" to the
+      next most recently started service, or remove "latest" if none remain.
+    python: |
+      import json, os
+
+      STATE_FILE = "/tmp/tao-inf-ms-state.json"
+
+      try:
+          with open(STATE_FILE) as f:
+              state = json.load(f)
+
+          state.pop(job_id_to_stop, None)
+
+          if state.get("latest") == job_id_to_stop:
+              remaining = {k: v for k, v in state.items() if k != "latest" and isinstance(v, dict)}
+              if remaining:
+                  state["latest"] = max(remaining, key=lambda k: remaining[k].get("started_at", ""))
+              else:
+                  state.pop("latest", None)
+
+          tmp = STATE_FILE + ".tmp"
+          with open(tmp, "w") as f:
+              json.dump(state, f, indent=2)
+          os.replace(tmp, STATE_FILE)
+          print(f"Removed job {job_id_to_stop} from registry.")
+      except FileNotFoundError:
+          pass  # already gone — no-op
+
+request:
+  registry_read:
+    description: Read the registry and resolve the endpoint for sending a request.
+    python: |
+      import json
+
+      STATE_FILE = "/tmp/tao-inf-ms-state.json"
+
+      with open(STATE_FILE) as f:
+          state = json.load(f)
+
+      job_id = user_provided_job_id or state.get("latest")
+      if not job_id or job_id not in state:
+          raise RuntimeError("No running inference service found. Start a service or provide a job_id.")
+
+      entry    = state[job_id]
+      BASE_URL = entry["host_url"]   # from host — valid for all platforms
+      # BASE_URL = entry["docker_url"]  # container-to-container (local-docker / brev only)
+      print(f"Sending request to job_id={job_id}  url={BASE_URL}")

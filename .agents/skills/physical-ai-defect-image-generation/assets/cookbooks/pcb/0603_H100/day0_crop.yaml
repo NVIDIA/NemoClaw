@@ -1,0 +1,28 @@
+# Demo: 0603_H100_day0
+# Source: _demo_config/0603_H100_day0/day0_crop.yaml
+# Patched at runtime:
+#   __OUTPUT__   → OSMO task output dir
+
+output:
+  dir: __OUTPUT__
+
+crop:
+  source: trigger_0000
+  pattern: 'x*_y*'
+
+  classes: [capacitor]
+
+  morph_kernel: 1
+  min_area: 50
+  max_area: null
+  offset: 10
+
+  edge_skip: true
+  min_coverage: 0.2
+
+  max_emit: 10
+
+  bridge: false
+
+  class_dirs:
+    capacitor: passive_component

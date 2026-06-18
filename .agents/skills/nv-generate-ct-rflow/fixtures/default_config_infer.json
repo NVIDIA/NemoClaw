@@ -1,0 +1,24 @@
+{
+  "_comment": "Medical AI Skills-default override for upstream NV-Generate-CTMR/configs/config_infer.json. Single sample, small output_size to keep evidence packs cheap; matches the upstream defaults otherwise. Override fields are stage-merged into the upstream config by run_rflow_ct.py; unspecified fields fall through to upstream defaults.",
+  "num_output_samples": 1,
+  "body_region": [
+    "chest"
+  ],
+  "anatomy_list": [
+    "lung tumor"
+  ],
+  "controllable_anatomy_size": [],
+  "output_size": [
+    256,
+    256,
+    256
+  ],
+  "spacing": [
+    1.5,
+    1.5,
+    2.0
+  ],
+  "num_inference_steps": 30,
+  "image_output_ext": ".nii.gz",
+  "label_output_ext": ".nii.gz"
+}

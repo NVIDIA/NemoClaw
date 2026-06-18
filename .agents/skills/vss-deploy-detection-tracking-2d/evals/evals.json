@@ -1,0 +1,30 @@
+[
+  {
+    "id": "rtvicv-2d-warehouse-deploy",
+    "question": "Deploy RTVI-CV 2D for the warehouse-2d use case with a headless-safe sink.",
+    "expected_skill": "vss-deploy-detection-tracking-2d",
+    "expected_script": "load_defaults.sh",
+    "should_trigger": true,
+    "ground_truth": "The agent deploys the standalone RTVI-CV 2D container for the supported warehouse-2d use case, resolves the platform defaults, stages the required model and video assets, configures a headless-safe sink, starts the perception app, and reports the deploy result without routing to the full VSS profile stack.",
+    "expected_behavior": [
+      "The agent reads the vss-deploy-detection-tracking-2d skill before acting.",
+      "The agent uses one of the supported 2D use cases and does not fabricate unsupported values such as default, auto, retail, or general.",
+      "The agent uses the skill's staged deploy flow and helper scripts for RTVI-CV 2D rather than routing to vss-deploy-profile, VLM, embedding, or analytics skills.",
+      "The agent uses a headless-safe output sink such as fakesink when no display is required.",
+      "The agent does not print plaintext API tokens or other secrets."
+    ]
+  },
+  {
+    "id": "rtvicv-2d-negative-vlm-summary",
+    "question": "Deploy the VSS VLM service so I can ask natural-language questions about uploaded videos.",
+    "expected_skill": null,
+    "expected_script": null,
+    "should_trigger": false,
+    "ground_truth": "The agent routes the user toward the VSS VLM or profile deployment workflow for video question answering instead of the RTVI-CV 2D detection and tracking microservice.",
+    "expected_behavior": [
+      "The agent does not read or activate vss-deploy-detection-tracking-2d.",
+      "The agent identifies that the request is for VLM video question answering, not RTVI-CV 2D detection and tracking.",
+      "The agent uses general repository context or another appropriate VSS skill rather than the RTVI-CV 2D helper scripts."
+    ]
+  }
+]

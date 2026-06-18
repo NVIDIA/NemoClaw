@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DicomSeriesPreflightOutput",
+  "type": "object",
+  "required": [
+    "skill",
+    "input_dir",
+    "inventory",
+    "series",
+    "orientation",
+    "consistency",
+    "phi",
+    "findings",
+    "preflight",
+    "runtime",
+    "intended_use_disclaimer"
+  ],
+  "properties": {
+    "skill": {"type": "string"},
+    "input_dir": {"type": "string"},
+    "inventory": {"type": "object"},
+    "series": {"type": "object"},
+    "orientation": {"type": "object"},
+    "consistency": {"type": "object"},
+    "phi": {"type": "object"},
+    "transfer_syntax": {"type": "object"},
+    "study": {"type": "object"},
+    "series_metadata": {"type": "object"},
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["level", "code", "message"],
+        "properties": {
+          "level": {"type": "string", "enum": ["pass", "warn", "fail"]},
+          "code": {"type": "string"},
+          "message": {"type": "string"}
+        }
+      }
+    },
+    "preflight": {
+      "type": "object",
+      "required": ["verdict", "acceptable", "n_fail", "n_warn"],
+      "properties": {
+        "verdict": {"type": "string", "enum": ["pass", "warn", "fail"]},
+        "acceptable": {"type": "boolean"},
+        "n_fail": {"type": "integer", "minimum": 0},
+        "n_warn": {"type": "integer", "minimum": 0}
+      }
+    },
+    "runtime": {"type": "object"},
+    "intended_use_disclaimer": {"type": "string"}
+  }
+}

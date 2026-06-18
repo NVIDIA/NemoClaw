@@ -1,0 +1,63 @@
+{
+  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "USD Validation Scope Note",
+  "$comment": "Input plan consumed by the validation reference executor. Concepts are canonical names resolved against validator-concepts.json; raw runtime class names are forbidden by pattern.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["scope", "concepts", "targets", "tier_assignments", "selection_reason", "artifact_paths"],
+  "properties": {
+    "scope": {
+      "enum": ["minimum_openability", "targeted", "masked_stage_spot_check", "approved_full_sweep", "structural_only"]
+    },
+    "concepts": {
+      "type": "array",
+      "minItems": 0,
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9_]*$",
+        "$comment": "Canonical concept name; must resolve in validator-concepts.json (CI cross-check)."
+      }
+    },
+    "targets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["concept"],
+        "properties": {
+          "concept": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+          "paths": { "type": "array", "items": { "type": "string" } },
+          "mask_paths": { "type": "array", "items": { "type": "string" } },
+          "pairs": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": { "type": "string" },
+              "minItems": 2,
+              "maxItems": 2
+            }
+          }
+        }
+      }
+    },
+    "tier_assignments": {
+      "type": "object",
+      "propertyNames": { "pattern": "^[a-z][a-z0-9_]*$" },
+      "additionalProperties": { "enum": [1, 2, 3] }
+    },
+    "selection_reason": { "type": "string", "minLength": 1 },
+    "artifact_paths": { "type": "array", "items": { "type": "string" } },
+    "full_sweep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": { "enum": ["skipped", "approved"] },
+        "reason": { "type": "string" },
+        "approved_by_user": { "type": "boolean" }
+      }
+    },
+    "estimated_time": { "enum": ["fast", "minutes", "long"] }
+  }
+}

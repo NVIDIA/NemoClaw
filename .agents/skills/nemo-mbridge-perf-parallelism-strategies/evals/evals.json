@@ -1,0 +1,16 @@
+[
+  {
+    "id": "parallelism-strategies-positive-model-size-smoke",
+    "question": "Use the nemo-mbridge-perf-parallelism-strategies skill. For a Megatron Bridge MoE config with PP=2, TP=2, CP=1, EP=8, ETP=1, calculate the correct minimum GPU count and explain the dense/MoE DP formulas, the wrong full-product shortcut to avoid, and the sequence-length, SP, CP, and topology rules that matter.",
+    "expected_skill": "nemo-mbridge-perf-parallelism-strategies",
+    "expected_script": null,
+    "ground_truth": "The answer should use the parallelism strategy skill. It should state that minimum GPUs for MoE are PP * max(TP * CP, EP * ETP), not PP * TP * CP * EP * ETP; for PP=2, TP=2, CP=1, EP=8, ETP=1 the correct minimum is 2 * max(2, 8) = 16 GPUs, while the wrong product is 32. It should state dense data_parallel_size = world_size / (TP * PP * CP) and expert_data_parallel_size = world_size / (PP * EP * ETP). It should mention TP should stay within a single NVLink domain, SP requires tensor_model_parallel_size > 1, CP requires seq_length % (2 * context_parallel_size) == 0, sequence length 8K-32K suggests CP=2, and 32K+ suggests CP=4-8 or a2a+p2p for large CP.",
+    "expected_behavior": [
+      "Read the nemo-mbridge-perf-parallelism-strategies skill before answering.",
+      "Compute minimum GPUs with PP * max(TP * CP, EP * ETP).",
+      "Contrast the correct value against the wrong full product.",
+      "List dense DP and expert DP formulas.",
+      "Mention TP topology, SP, and CP sequence-length divisibility rules."
+    ]
+  }
+]

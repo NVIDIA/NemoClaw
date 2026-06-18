@@ -1,0 +1,998 @@
+{
+  "automl_default_parameters": [
+    "dataset.augmentation.reverse_color_prob",
+    "dataset.augmentation.aug_prob",
+    "dataset.augmentation.blur_prob",
+    "dataset.augmentation.rotate_prob",
+    "train.optim.lr"
+  ],
+  "automl_disabled_parameters": [
+    "quantize",
+    "train.cudnn",
+    "gen_trt_engine.tensorrt.calibration.cal_image_dir",
+    "quantize.backend_kwargs",
+    "train.gpu_ids",
+    "wandb.tags",
+    "quantize.skip_names",
+    "evaluate",
+    "inference",
+    "train",
+    "dataset.augmentation",
+    "gen_trt_engine",
+    "dataset.train_dataset_dir",
+    "gen_trt_engine.tensorrt.layers_precision",
+    "dataset",
+    "gen_trt_engine.tensorrt",
+    "quantize.layers",
+    "dataset_convert",
+    "dataset.quant_calibration_dataset",
+    "prune.prune_setting",
+    "model",
+    "train.optim.lr_steps",
+    "evaluate.gpu_ids",
+    "train.optim",
+    "gen_trt_engine.tensorrt.calibration",
+    "dataset.augmentation.gaussian_radius_list",
+    "export",
+    "wandb",
+    "inference.gpu_ids",
+    "prune"
+  ],
+  "default": {
+    "dataset": {
+      "augmentation": {
+        "aug_prob": 0.0,
+        "blur_prob": 0.5,
+        "gaussian_radius_list": [
+          1,
+          2,
+          3,
+          4
+        ],
+        "keep_aspect_ratio": false,
+        "max_rotation_degree": 5,
+        "reverse_color_prob": 0.5,
+        "rotate_prob": 0.5
+      },
+      "batch_size": 16,
+      "character_list_file": "",
+      "max_label_length": 25,
+      "quant_calibration_dataset": {
+        "images_dir": ""
+      },
+      "train_dataset_dir": [],
+      "train_gt_file": "",
+      "val_dataset_dir": "",
+      "val_gt_file": "",
+      "workers": 8
+    },
+    "encryption_key": "",
+    "model": {
+      "TPS": false,
+      "backbone": "ResNet",
+      "feature_channel": 512,
+      "hidden_size": 256,
+      "input_channel": 1,
+      "input_height": 32,
+      "input_width": 100,
+      "num_fiducial": 3,
+      "prediction": "CTC",
+      "pruned_graph_path": "",
+      "quantize": false,
+      "quantize_model_path": "",
+      "sequence": "BiLSTM"
+    },
+    "model_name": "",
+    "quantize": {
+      "algorithm": "minmax",
+      "backend": "torchao",
+      "backend_kwargs": {},
+      "device": "cuda",
+      "layers": [],
+      "mode": "weight_only_ptq",
+      "model_path": "",
+      "results_dir": "",
+      "skip_names": []
+    },
+    "results_dir": "",
+    "train": {
+      "checkpoint_interval": 1,
+      "checkpoint_interval_unit": "epoch",
+      "clip_grad_norm": 5.0,
+      "cudnn": {
+        "benchmark": false,
+        "deterministic": true
+      },
+      "distributed_strategy": "ddp",
+      "gpu_ids": [
+        0
+      ],
+      "model_ema": false,
+      "num_epochs": 10,
+      "num_gpus": 1,
+      "num_nodes": 1,
+      "optim": {
+        "lr": 1.0,
+        "lr_decay": 0.1,
+        "lr_monitor": "val_loss",
+        "lr_scheduler": "MultiStep",
+        "lr_steps": [
+          15,
+          25
+        ],
+        "min_lr": 0.0001,
+        "momentum": 0.9,
+        "name": "adadelta",
+        "patience": 1,
+        "weight_decay": 0.0005
+      },
+      "pretrained_model_path": "",
+      "results_dir": "",
+      "resume_training_checkpoint_path": "",
+      "seed": 1234,
+      "use_distributed_sampler": false,
+      "validation_interval": 1
+    },
+    "wandb": {
+      "enable": true,
+      "entity": "",
+      "group": "",
+      "name": "TAO Toolkit Training",
+      "project": "TAO Toolkit",
+      "reinit": false,
+      "run_id": "",
+      "save_code": false,
+      "sync_tensorboard": false,
+      "tags": [
+        "tao-toolkit"
+      ]
+    }
+  },
+  "popular": {
+    "evaluate": {
+      "gpu_ids": [
+        0
+      ],
+      "num_gpus": 1,
+      "num_nodes": 1
+    },
+    "gen_trt_engine": {
+      "batch_size": -1,
+      "gpu_id": 0,
+      "tensorrt": {
+        "calibration": {
+          "cal_batch_size": 1,
+          "cal_batches": 1
+        },
+        "max_batch_size": 1,
+        "min_batch_size": 1,
+        "opt_batch_size": 1
+      }
+    },
+    "inference": {
+      "gpu_ids": [
+        0
+      ],
+      "num_gpus": 1,
+      "num_nodes": 1
+    },
+    "train": {
+      "checkpoint_interval": 1,
+      "gpu_ids": [
+        0
+      ],
+      "num_epochs": 10,
+      "num_gpus": 1,
+      "num_nodes": 1,
+      "validation_interval": 1
+    }
+  },
+  "properties": {
+    "automl_disabled_parameters": [
+      "wandb",
+      "model",
+      "dataset",
+      "train",
+      "evaluate",
+      "export",
+      "inference",
+      "prune",
+      "dataset_convert",
+      "gen_trt_engine",
+      "quantize"
+    ],
+    "dataset": {
+      "automl_disabled_parameters": [
+        "dataset.quant_calibration_dataset",
+        "dataset.train_dataset_dir",
+        "dataset.augmentation"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "augmentation": {
+          "aug_prob": 0.0,
+          "blur_prob": 0.5,
+          "gaussian_radius_list": [
+            1,
+            2,
+            3,
+            4
+          ],
+          "keep_aspect_ratio": false,
+          "max_rotation_degree": 5,
+          "reverse_color_prob": 0.5,
+          "rotate_prob": 0.5
+        },
+        "batch_size": 16,
+        "character_list_file": "",
+        "max_label_length": 25,
+        "quant_calibration_dataset": {
+          "images_dir": ""
+        },
+        "train_dataset_dir": [],
+        "train_gt_file": "",
+        "val_dataset_dir": "",
+        "val_gt_file": "",
+        "workers": 8
+      },
+      "description": "Configurable parameters for the dataset.",
+      "properties": {
+        "augmentation": {
+          "automl_default_parameters": [
+            "dataset.augmentation.aug_prob",
+            "dataset.augmentation.reverse_color_prob",
+            "dataset.augmentation.rotate_prob",
+            "dataset.augmentation.blur_prob"
+          ],
+          "automl_disabled_parameters": [
+            "dataset.augmentation.gaussian_radius_list"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "aug_prob": 0.0,
+            "blur_prob": 0.5,
+            "gaussian_radius_list": [
+              1,
+              2,
+              3,
+              4
+            ],
+            "keep_aspect_ratio": false,
+            "max_rotation_degree": 5,
+            "reverse_color_prob": 0.5,
+            "rotate_prob": 0.5
+          },
+          "description": "Configurable parameters for augmentation.",
+          "properties": {
+            "aug_prob": {
+              "automl_enabled": true,
+              "default": 0.0,
+              "description": "The probability to augment the input images.",
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "float"
+            },
+            "blur_prob": {
+              "automl_enabled": true,
+              "default": 0.5,
+              "description": "The probability to blur the input images.",
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "float"
+            },
+            "gaussian_radius_list": {
+              "automl_enabled": false,
+              "default": [
+                1,
+                2,
+                3,
+                4
+              ],
+              "description": "The gaussian raidus list for gaussian blur.",
+              "type": "list_2"
+            },
+            "keep_aspect_ratio": {
+              "default": false,
+              "description": "The bool flag to keep aspect ratio in resizing input images.",
+              "type": "bool"
+            },
+            "max_rotation_degree": {
+              "default": 5,
+              "description": "The maximum rotation degree.",
+              "maximum": 360,
+              "minimum": 0,
+              "type": "int"
+            },
+            "reverse_color_prob": {
+              "automl_enabled": true,
+              "default": 0.5,
+              "description": "The probability to reverse the color of input images.",
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "float"
+            },
+            "rotate_prob": {
+              "automl_enabled": true,
+              "default": 0.5,
+              "description": "The probability to rotate the input images.",
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "float"
+            }
+          },
+          "type": "collection"
+        },
+        "batch_size": {
+          "default": 16,
+          "description": "Batch size of model input.",
+          "type": "int"
+        },
+        "character_list_file": {
+          "default": "",
+          "description": "The absolute path to the character list.",
+          "type": "string"
+        },
+        "max_label_length": {
+          "default": 25,
+          "description": "The maximum length of the labels.",
+          "type": "int"
+        },
+        "quant_calibration_dataset": {
+          "automl_enabled": false,
+          "default": {
+            "images_dir": ""
+          },
+          "description": "Configurable parameters for quantization calibration dataset.",
+          "properties": {
+            "images_dir": {
+              "default": "",
+              "description": "Path to the directory containing calibration images.",
+              "title": "calibration images directory",
+              "type": "string"
+            }
+          },
+          "type": "collection"
+        },
+        "train_dataset_dir": {
+          "automl_enabled": false,
+          "default": [],
+          "description": "The absolute path to the train dataset directory.",
+          "type": "list"
+        },
+        "train_gt_file": {
+          "default": "",
+          "description": "The absolute path to the train dataset ground truth file.",
+          "type": "string"
+        },
+        "val_dataset_dir": {
+          "default": "",
+          "description": "The absolute path to the validation dataset directory.",
+          "type": "string"
+        },
+        "val_gt_file": {
+          "default": "",
+          "description": "The absolute path to the validation dataset ground truth file.",
+          "type": "string"
+        },
+        "workers": {
+          "default": 8,
+          "description": "The number of workers to process the dataset.",
+          "type": "int"
+        }
+      },
+      "type": "collection"
+    },
+    "encryption_key": {
+      "default": "",
+      "description": "Key for encrypting model checkpoints",
+      "title": "Encryption key",
+      "type": "string"
+    },
+    "model": {
+      "automl_enabled": false,
+      "default": {
+        "TPS": false,
+        "backbone": "ResNet",
+        "feature_channel": 512,
+        "hidden_size": 256,
+        "input_channel": 1,
+        "input_height": 32,
+        "input_width": 100,
+        "num_fiducial": 3,
+        "prediction": "CTC",
+        "pruned_graph_path": "",
+        "quantize": false,
+        "quantize_model_path": "",
+        "sequence": "BiLSTM"
+      },
+      "description": "Configurable parameters for the model.",
+      "properties": {
+        "TPS": {
+          "default": false,
+          "description": "The bool flag to apply Thin-Plate-Spline interpolation to the model.",
+          "title": "Thin-Plate-Spline interpolation",
+          "type": "bool"
+        },
+        "backbone": {
+          "default": "ResNet",
+          "description": "Backbone of the model.",
+          "enum": [
+            "ResNet",
+            "ResNet2X",
+            "FAN_tiny_2X"
+          ],
+          "title": "backbone",
+          "type": "categorical"
+        },
+        "feature_channel": {
+          "default": 512,
+          "description": "The number of backbone's feature output channel.",
+          "maximum": Infinity,
+          "minimum": 1,
+          "title": "feature channel",
+          "type": "int"
+        },
+        "hidden_size": {
+          "default": 256,
+          "description": "The number of hidden uints in BiLSTM layers.",
+          "maximum": Infinity,
+          "minimum": 1,
+          "title": "hidden_size",
+          "type": "int"
+        },
+        "input_channel": {
+          "default": 1,
+          "description": "The input channel of the model.",
+          "maximum": Infinity,
+          "minimum": 1,
+          "title": "input channel",
+          "type": "int"
+        },
+        "input_height": {
+          "default": 32,
+          "description": "The input height of the model.",
+          "maximum": Infinity,
+          "minimum": 1,
+          "title": "input height",
+          "type": "int"
+        },
+        "input_width": {
+          "default": 100,
+          "description": "The input width of the model.",
+          "maximum": Infinity,
+          "minimum": 1,
+          "title": "input width",
+          "type": "int"
+        },
+        "num_fiducial": {
+          "default": 3,
+          "description": "The number of fiducial/keypoints points for TPS.",
+          "maximum": Infinity,
+          "minimum": 1,
+          "title": "num fiducial",
+          "type": "int"
+        },
+        "prediction": {
+          "default": "CTC",
+          "description": "The sequence decoding method.",
+          "enum": [
+            "CTC",
+            "Attn"
+          ],
+          "title": "prediction",
+          "type": "categorical"
+        },
+        "pruned_graph_path": {
+          "default": "",
+          "description": "The pruned model to be loaded.",
+          "title": "pruned graph path",
+          "type": "string"
+        },
+        "quantize": {
+          "default": false,
+          "description": "The bool flag to apply quantization to the model.",
+          "title": "quantize",
+          "type": "bool"
+        },
+        "quantize_model_path": {
+          "default": "",
+          "description": "The quantized model to be loaded.",
+          "title": "quantize model path",
+          "type": "string"
+        },
+        "sequence": {
+          "default": "BiLSTM",
+          "description": "The sequence fature modeling type.",
+          "enum": [
+            "BiLSTM"
+          ],
+          "title": "sequence",
+          "type": "categorical"
+        }
+      },
+      "type": "collection"
+    },
+    "model_name": {
+      "default": "",
+      "description": "Name of model if invoking task via :code:`model_agnostic`",
+      "title": "Model name",
+      "type": "string"
+    },
+    "quantize": {
+      "automl_disabled_parameters": [
+        "quantize.layers",
+        "quantize.skip_names",
+        "quantize.backend_kwargs"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "algorithm": "minmax",
+        "backend": "torchao",
+        "backend_kwargs": {},
+        "device": "cuda",
+        "layers": [],
+        "mode": "weight_only_ptq",
+        "model_path": "",
+        "results_dir": "",
+        "skip_names": []
+      },
+      "description": "Configurable parameters for model quantization.",
+      "properties": {
+        "algorithm": {
+          "default": "minmax",
+          "description": "Calibration/optimization algorithm. Used by ModelOpt backends (modelopt.pytorch and modelopt.onnx). Ignored by torchao backend.",
+          "enum": [
+            "minmax",
+            "max",
+            "entropy",
+            "awq_clip",
+            "awq_lite",
+            "awq_full",
+            "rtn_dq"
+          ],
+          "title": "Calibration algorithm",
+          "type": "categorical"
+        },
+        "backend": {
+          "default": "torchao",
+          "description": "The quantization backend to use",
+          "enum": [
+            "modelopt.pytorch",
+            "torchao",
+            "modelopt.onnx"
+          ],
+          "title": "Quantization backend",
+          "type": "categorical"
+        },
+        "backend_kwargs": {
+          "automl_enabled": false,
+          "description": "Additional keyword arguments to pass to the backend",
+          "title": "Backend kwargs",
+          "type": "collection"
+        },
+        "device": {
+          "default": "cuda",
+          "description": "Device to use for calibration. Accepts 'cuda' (uses default GPU), 'cpu', 'trt' (TensorRT for ONNX backend), or specific GPU device like 'cuda:0', 'cuda:1', etc. If 'cuda' is specified but no GPU is available, the framework will automatically fall back to 'cpu'. Note: 'trt' is only supported by the modelopt.onnx backend for ONNX Runtime with TensorRT execution provider.",
+          "pattern": "^(cuda|cpu|trt|cuda:[0-9]+)$",
+          "title": "Calibration device",
+          "type": "string"
+        },
+        "layers": {
+          "automl_enabled": false,
+          "default": [],
+          "description": "List of per-module quantization configurations. Each entry specifies which modules to quantize and their data types. This is the primary way to configure quantization.",
+          "title": "Layer quantization configs",
+          "type": "list"
+        },
+        "mode": {
+          "default": "weight_only_ptq",
+          "description": "The quantization mode to use",
+          "enum": [
+            "static_ptq",
+            "weight_only_ptq"
+          ],
+          "title": "Quantization mode",
+          "type": "categorical"
+        },
+        "model_path": {
+          "default": "",
+          "description": "Path to the model to be quantized. For ONNX backend, path to ONNX file.",
+          "title": "Model path",
+          "type": "string"
+        },
+        "results_dir": {
+          "default": "",
+          "description": "Path to where all the assets generated from a task are stored.",
+          "title": "Results directory",
+          "type": "string"
+        },
+        "skip_names": {
+          "automl_enabled": false,
+          "default": [],
+          "description": "List of module/layer names or patterns to exclude from quantization",
+          "title": "Skip names",
+          "type": "list"
+        }
+      },
+      "required": [
+        "model_path",
+        "results_dir"
+      ],
+      "type": "collection"
+    },
+    "results_dir": {
+      "default": "",
+      "description": "\n        Path to where all the assets generated from a task are stored.\n        ",
+      "title": "Results directory",
+      "type": "string"
+    },
+    "train": {
+      "automl_disabled_parameters": [
+        "train.gpu_ids",
+        "train.cudnn",
+        "train.optim"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "checkpoint_interval": 1,
+        "checkpoint_interval_unit": "epoch",
+        "clip_grad_norm": 5.0,
+        "cudnn": {
+          "benchmark": false,
+          "deterministic": true
+        },
+        "distributed_strategy": "ddp",
+        "gpu_ids": [
+          0
+        ],
+        "model_ema": false,
+        "num_epochs": 10,
+        "num_gpus": 1,
+        "num_nodes": 1,
+        "optim": {
+          "lr": 1.0,
+          "lr_decay": 0.1,
+          "lr_monitor": "val_loss",
+          "lr_scheduler": "MultiStep",
+          "lr_steps": [
+            15,
+            25
+          ],
+          "min_lr": 0.0001,
+          "momentum": 0.9,
+          "name": "adadelta",
+          "patience": 1,
+          "weight_decay": 0.0005
+        },
+        "pretrained_model_path": "",
+        "results_dir": "",
+        "resume_training_checkpoint_path": "",
+        "seed": 1234,
+        "use_distributed_sampler": false,
+        "validation_interval": 1
+      },
+      "description": "Configurable parameters for the training.",
+      "popular": [
+        "validation_interval",
+        "checkpoint_interval",
+        "num_gpus",
+        "num_nodes",
+        "num_epochs",
+        "gpu_ids"
+      ],
+      "properties": {
+        "checkpoint_interval": {
+          "default": 1,
+          "description": "The interval (in epochs) at which a checkpoint will be saved. Helps resume training.",
+          "minimum": 1,
+          "popular": true,
+          "title": "Checkpoint interval",
+          "type": "int"
+        },
+        "checkpoint_interval_unit": {
+          "default": "epoch",
+          "description": "The unit of the checkpoint interval.",
+          "enum": [
+            "epoch",
+            "step"
+          ],
+          "title": "Checkpoint interval unit",
+          "type": "categorical"
+        },
+        "clip_grad_norm": {
+          "default": 5.0,
+          "description": "The L2 magnitude of graident to be clipped in the training.",
+          "type": "float"
+        },
+        "cudnn": {
+          "automl_enabled": false,
+          "default": {
+            "benchmark": false,
+            "deterministic": true
+          },
+          "properties": {
+            "benchmark": {
+              "default": false,
+              "type": "bool"
+            },
+            "deterministic": {
+              "default": true,
+              "type": "bool"
+            }
+          },
+          "type": "collection"
+        },
+        "distributed_strategy": {
+          "default": "ddp",
+          "description": "The distributed strategy for multi-gpu training.",
+          "type": "string"
+        },
+        "gpu_ids": {
+          "automl_enabled": false,
+          "default": [
+            0
+          ],
+          "description": "\n        List of GPU IDs to run the training on. The length of this list\n        must be equal to the number of gpus in train.num_gpus.",
+          "popular": true,
+          "title": "GPU IDs",
+          "type": "list"
+        },
+        "model_ema": {
+          "default": false,
+          "description": "The bool flag to enable model EMA.",
+          "type": "bool"
+        },
+        "num_epochs": {
+          "default": 10,
+          "description": "Number of epochs to run the training.",
+          "maximum": Infinity,
+          "minimum": 1,
+          "popular": true,
+          "title": "Number of epochs",
+          "type": "int"
+        },
+        "num_gpus": {
+          "default": 1,
+          "description": "The number of GPUs to run the train job.",
+          "minimum": 1,
+          "popular": true,
+          "title": "Number of GPUs",
+          "type": "int"
+        },
+        "num_nodes": {
+          "default": 1,
+          "description": "Number of nodes to run the training on. If > 1, then multi-node is enabled.",
+          "minimum": 1,
+          "popular": true,
+          "title": "Number of nodes",
+          "type": "int"
+        },
+        "optim": {
+          "automl_default_parameters": [
+            "train.optim.lr"
+          ],
+          "automl_disabled_parameters": [
+            "train.optim.lr_steps"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "lr": 1.0,
+            "lr_decay": 0.1,
+            "lr_monitor": "val_loss",
+            "lr_scheduler": "MultiStep",
+            "lr_steps": [
+              15,
+              25
+            ],
+            "min_lr": 0.0001,
+            "momentum": 0.9,
+            "name": "adadelta",
+            "patience": 1,
+            "weight_decay": 0.0005
+          },
+          "description": "Configurable parameters for the optimizer.",
+          "properties": {
+            "lr": {
+              "automl_enabled": true,
+              "default": 1.0,
+              "description": "Learning rate.",
+              "maximum": Infinity,
+              "minimum": 0.0,
+              "title": "lr",
+              "type": "float"
+            },
+            "lr_decay": {
+              "default": 0.1,
+              "description": "Learning rate decay factor in learning rate scheduler.",
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "float"
+            },
+            "lr_monitor": {
+              "default": "val_loss",
+              "description": "Learning rate monitor for AutoReduce learning rate scheduler.",
+              "enum": [
+                "val_loss",
+                "train_loss"
+              ],
+              "type": "categorical"
+            },
+            "lr_scheduler": {
+              "default": "MultiStep",
+              "description": "Learning rate scheduler.",
+              "enum": [
+                "MultiStep",
+                "AutoReduce"
+              ],
+              "type": "categorical"
+            },
+            "lr_steps": {
+              "automl_enabled": false,
+              "default": [
+                15,
+                25
+              ],
+              "description": "Steps to change learning rate in MultiStep scheduler.",
+              "type": "list"
+            },
+            "min_lr": {
+              "default": 0.0001,
+              "description": "Minimum learning rate.",
+              "maximum": Infinity,
+              "minimum": 0.0,
+              "type": "float"
+            },
+            "momentum": {
+              "default": 0.9,
+              "description": "Momentum coefficient.",
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "float"
+            },
+            "name": {
+              "default": "adadelta",
+              "description": "Name of the optimizer.",
+              "enum": [
+                "adadelta",
+                "adam"
+              ],
+              "title": "name",
+              "type": "categorical"
+            },
+            "patience": {
+              "default": 1,
+              "description": "Number of epochs for AutoReduce learning rate scheduler tolerance.",
+              "type": "int"
+            },
+            "weight_decay": {
+              "default": 0.0005,
+              "description": "Weight decay coefficient for trainng.",
+              "maximum": Infinity,
+              "minimum": 0.0,
+              "type": "float"
+            }
+          },
+          "type": "collection"
+        },
+        "pretrained_model_path": {
+          "default": "",
+          "description": "The absolute path to pretrained model.",
+          "type": "string"
+        },
+        "results_dir": {
+          "default": "",
+          "description": "\n        Path to where all the assets generated from a task are stored.\n        ",
+          "title": "Results directory",
+          "type": "string"
+        },
+        "resume_training_checkpoint_path": {
+          "default": "",
+          "description": "Path to the checkpoint to resume training from.",
+          "title": "Resume checkpoint path",
+          "type": "string"
+        },
+        "seed": {
+          "default": 1234,
+          "description": "The seed for the initializer in PyTorch. If < 0, disable fixed seed.",
+          "maximum": Infinity,
+          "minimum": -1,
+          "title": "Seed for randomization",
+          "type": "int"
+        },
+        "use_distributed_sampler": {
+          "default": false,
+          "description": "Use distributed sampler for multi-GPU training",
+          "type": "bool"
+        },
+        "validation_interval": {
+          "default": 1,
+          "description": "\n        The interval (in epochs) at which a evaluation\n        will be triggered on the validation dataset.",
+          "minimum": 1,
+          "popular": true,
+          "title": "Validation interval",
+          "type": "int"
+        }
+      },
+      "type": "collection"
+    },
+    "wandb": {
+      "automl_disabled_parameters": [
+        "wandb.tags"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "enable": true,
+        "entity": "",
+        "group": "",
+        "name": "TAO Toolkit Training",
+        "project": "TAO Toolkit",
+        "reinit": false,
+        "run_id": "",
+        "save_code": false,
+        "sync_tensorboard": false,
+        "tags": [
+          "tao-toolkit"
+        ]
+      },
+      "properties": {
+        "enable": {
+          "default": true,
+          "type": "bool"
+        },
+        "entity": {
+          "default": "",
+          "type": "string"
+        },
+        "group": {
+          "default": "",
+          "type": "string"
+        },
+        "name": {
+          "default": "TAO Toolkit Training",
+          "type": "string"
+        },
+        "project": {
+          "default": "TAO Toolkit",
+          "type": "string"
+        },
+        "reinit": {
+          "default": false,
+          "type": "bool"
+        },
+        "run_id": {
+          "default": "",
+          "type": "string"
+        },
+        "save_code": {
+          "default": false,
+          "type": "bool"
+        },
+        "sync_tensorboard": {
+          "default": false,
+          "type": "bool"
+        },
+        "tags": {
+          "automl_enabled": false,
+          "default": [
+            "tao-toolkit"
+          ],
+          "type": "list"
+        }
+      },
+      "type": "collection"
+    }
+  },
+  "required": [
+    "quantize"
+  ],
+  "type": "object",
+  "x_tao_schema": {
+    "action": "retrain",
+    "core_module": "ocrnet",
+    "model": "ocrnet",
+    "network_arch": "ocrnet",
+    "schema_action": "retrain",
+    "schema_version": 1,
+    "source": "tao-core dataclass config"
+  }
+}

@@ -1,0 +1,24 @@
+results_dir: /results
+dataset:
+  label_map: /data/label_map.json
+  contiguous_id: true
+  type: ade
+  val:
+    name: ade_val
+    annot_file: /data/annotations.jsonl
+    root_dir: /data
+    batch_size: 1
+    num_workers: 2
+  test:
+    img_dir: /data/images
+    batch_size: 1
+model:
+  object_mask_threshold: 0.0
+  overlap_threshold: 0.8
+  sem_seg_head:
+    norm: GN
+    num_classes: 150
+inference:
+  trt_engine: /results/mask2former.engine
+evaluate:
+  trt_engine: /results/mask2former.engine

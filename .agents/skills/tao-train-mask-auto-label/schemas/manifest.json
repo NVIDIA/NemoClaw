@@ -1,0 +1,162 @@
+{
+  "actions": {
+    "evaluate": {
+      "automl_default_parameters": [],
+      "automl_disabled_parameters": [
+        "dataset",
+        "evaluate",
+        "evaluate.gpu_ids",
+        "inference",
+        "inference.gpu_ids",
+        "model",
+        "model.frozen_stages",
+        "train",
+        "train.cudnn",
+        "train.gpu_ids",
+        "train.margin_rate",
+        "train.mask_thres",
+        "train.optim_betas",
+        "train.test_margin_rate",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "mal",
+      "path": "schemas/evaluate.schema.json",
+      "popular": {
+        "evaluate": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "train": {
+          "checkpoint_interval": 1,
+          "gpu_ids": [
+            0
+          ],
+          "num_epochs": 10,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "validation_interval": 1
+        }
+      },
+      "schema_action": "evaluate",
+      "spec_template": "references/spec_template_evaluate.yaml"
+    },
+    "inference": {
+      "automl_default_parameters": [],
+      "automl_disabled_parameters": [
+        "dataset",
+        "evaluate",
+        "evaluate.gpu_ids",
+        "inference",
+        "inference.gpu_ids",
+        "model",
+        "model.frozen_stages",
+        "train",
+        "train.cudnn",
+        "train.gpu_ids",
+        "train.margin_rate",
+        "train.mask_thres",
+        "train.optim_betas",
+        "train.test_margin_rate",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "mal",
+      "path": "schemas/inference.schema.json",
+      "popular": {
+        "evaluate": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "train": {
+          "checkpoint_interval": 1,
+          "gpu_ids": [
+            0
+          ],
+          "num_epochs": 10,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "validation_interval": 1
+        }
+      },
+      "schema_action": "inference",
+      "spec_template": "references/spec_template_inference.yaml"
+    },
+    "train": {
+      "automl_default_parameters": [],
+      "automl_disabled_parameters": [
+        "dataset",
+        "evaluate",
+        "evaluate.gpu_ids",
+        "inference",
+        "inference.gpu_ids",
+        "model",
+        "model.frozen_stages",
+        "train",
+        "train.cudnn",
+        "train.gpu_ids",
+        "train.margin_rate",
+        "train.mask_thres",
+        "train.optim_betas",
+        "train.test_margin_rate",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "mal",
+      "path": "schemas/train.schema.json",
+      "popular": {
+        "evaluate": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "train": {
+          "checkpoint_interval": 1,
+          "gpu_ids": [
+            0
+          ],
+          "num_epochs": 10,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "validation_interval": 1
+        }
+      },
+      "schema_action": "train",
+      "spec_template": "references/spec_template_train.yaml"
+    }
+  },
+  "automl_enabled": true,
+  "failures": {},
+  "model": "mal",
+  "network_arch": "mal",
+  "schema_version": 1
+}

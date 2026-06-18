@@ -1,0 +1,55 @@
+[
+  {
+    "id": "auto-research-positive-001",
+    "question": "I want to plan an auto-research campaign to improve GRPO accuracy on Qwen 2.5. What recipe should I use and what would the branch naming look like?",
+    "expected_skill": "nemo-rl-auto-research",
+    "ground_truth": "The agent loads the nemo-rl-auto-research skill and identifies the target recipe under examples/configs/recipes/, recommends a branch prefix like autoresearch/YYYY-MM-DD-grpo-qwen2p5, and outlines the workflow of baseline then iterative experiments.",
+    "expected_behavior": [
+      "The agent read nemo-rl-auto-research/SKILL.md before acting",
+      "The agent identified the relevant recipe files in the codebase",
+      "The agent described the branch naming convention from the skill"
+    ]
+  },
+  {
+    "id": "auto-research-positive-002",
+    "question": "What does the auto-research TSV log schema look like? What fields should I track for each experiment?",
+    "expected_skill": "nemo-rl-auto-research",
+    "ground_truth": "The agent loads the nemo-rl-auto-research skill and describes the TSV fields: index, branch, parent commit, commit, recipe, metric name, metric value, memory, elapsed time, launcher, job id, command, log path, status, and description.",
+    "expected_behavior": [
+      "The agent read nemo-rl-auto-research/SKILL.md before acting",
+      "The agent listed the TSV log fields from the skill or references",
+      "The agent mentioned the experiment-log-template reference file"
+    ]
+  },
+  {
+    "id": "auto-research-positive-003",
+    "question": "If I give you a budget of 50 experiments or 10 hours total with 1 hour per experiment, how would you handle the stop conditions?",
+    "expected_skill": "nemo-rl-auto-research",
+    "ground_truth": "The agent loads the nemo-rl-auto-research skill and explains: convert the 10h budget to an absolute deadline, enforce 1h per-experiment timeout, count attempted ideas (not just successes), and stop when either 50 experiments or the 10h deadline is reached.",
+    "expected_behavior": [
+      "The agent read nemo-rl-auto-research/SKILL.md before acting",
+      "The agent explained converting time budget to an absolute deadline",
+      "The agent described monitoring multiple stop conditions simultaneously"
+    ]
+  },
+  {
+    "id": "auto-research-negative-001",
+    "question": "Fix a bug in the GRPO loss calculation where the KL penalty is applied incorrectly.",
+    "expected_skill": null,
+    "should_trigger": false,
+    "ground_truth": "The agent should not activate the nemo-rl-auto-research skill for a bug fix task. It should investigate the bug directly without starting a research campaign.",
+    "expected_behavior": [
+      "The agent did not activate the nemo-rl-auto-research skill"
+    ]
+  },
+  {
+    "id": "auto-research-negative-002",
+    "question": "Add a docstring to the GRPOAlgorithm class.",
+    "expected_skill": null,
+    "should_trigger": false,
+    "ground_truth": "The agent should not activate the nemo-rl-auto-research skill for a documentation task. It should find the class and add the docstring directly.",
+    "expected_behavior": [
+      "The agent did not activate the nemo-rl-auto-research skill"
+    ]
+  }
+]

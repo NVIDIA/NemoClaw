@@ -1,0 +1,13 @@
+[
+  {
+    "id": "search-archive",
+    "question": "Run a natural-language fusion search over archived VSS video, ingesting a clip first if needed.",
+    "expected_skill": "vss-search-archive",
+    "ground_truth": "Loads vss-search-archive and runs top-level VSS fusion search on archived video (or ingests video files / RTSP streams for search); not ad-hoc Q&A or live captioning.",
+    "expected_behavior": [
+      "Loads vss-search-archive and runs fusion search on archived video, ingesting first if needed.",
+      "Does not route to Q&A or live-captioning skills.",
+      "Does not print plaintext API tokens or other secrets."
+    ]
+  }
+]

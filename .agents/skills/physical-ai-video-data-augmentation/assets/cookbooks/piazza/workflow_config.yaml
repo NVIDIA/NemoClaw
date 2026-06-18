@@ -1,0 +1,14 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: CC-BY-4.0 AND Apache-2.0
+
+augmentation:
+  n_augmentations: 1
+  variables:
+    weather:
+      clear: 0.35
+      overcast: 0.35
+      rain: 0.30
+    time_of_day:
+      morning: 0.35
+      midday: 0.35
+      evening: 0.30

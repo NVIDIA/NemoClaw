@@ -1,0 +1,167 @@
+[
+  {
+    "id": "nemotron-speech-model-selection-001",
+    "question": "Which Riva model should I use for real-time call-center transcription with low latency, punctuation, and a path to self-host later?",
+    "expected_skill": "nemotron-speech",
+    "expected_script": null,
+    "ground_truth": "The agent should activate nemotron-speech, use the model-selection reference, detect or ask about cloud versus self-hosting constraints, and verify current ASR model support before recommending Parakeet, Canary, Whisper, or Nemotron ASR variants.",
+    "expected_behavior": [
+      "Read SKILL.md or otherwise confirm routing before deep reference loading.",
+      "Load references/model-selection.md rather than jumping directly to a deployment recipe.",
+      "Check whether NVIDIA_API_KEY or an existing local NIM is available when local context permits.",
+      "Ask or reason about latency, accuracy, privacy, language, and deployment constraints.",
+      "Fetch or instruct verification against the current NVIDIA ASR support matrix before giving exact model IDs or function IDs."
+    ]
+  },
+  {
+    "id": "nemotron-speech-setup-001",
+    "question": "Help me set up a fresh Ubuntu machine for Riva NIMs, including Docker, the NVIDIA Container Toolkit, NGC login, and the Riva Python client.",
+    "expected_skill": "nemotron-speech",
+    "expected_script": null,
+    "ground_truth": "The agent should use the setup reference and provide a safe setup flow for drivers, Docker, Container Toolkit, NGC credentials, nvcr.io login, and nvidia-riva-client installation without exposing secrets.",
+    "expected_behavior": [
+      "Activate nemotron-speech and route to references/setup.md.",
+      "Walk through driver, Docker, Container Toolkit, NGC API key, registry login, and Python client steps in order.",
+      "Avoid asking the user to paste an API key value into chat and avoid echoing secret values.",
+      "Keep Riva command and package names unchanged despite the Nemotron Speech branding.",
+      "Point to current NVIDIA prerequisite docs for release-specific driver, OS, and architecture details."
+    ]
+  },
+  {
+    "id": "nemotron-speech-asr-self-hosted-001",
+    "question": "Deploy a self-hosted Parakeet Riva ASR NIM and show me how to run a WAV through it with gRPC.",
+    "expected_skill": "nemotron-speech",
+    "expected_script": null,
+    "ground_truth": "The agent should use the ASR reference, follow the self-hosted deployment path, verify readiness, and provide gRPC inference guidance while checking current container/model values from NVIDIA sources.",
+    "expected_behavior": [
+      "Route to references/asr.md.",
+      "Confirm self-hosted prerequisites such as NVAIE entitlement, Docker GPU access, NGC auth, and usable VRAM.",
+      "Use the self-hosted ASR flow: set model variables, run the container, verify /v1/health/ready, then run inference.",
+      "Mention WAV format requirements and mono audio conversion when relevant.",
+      "Verify current model names, container tags, ports, and support matrix details before treating examples as final."
+    ]
+  },
+  {
+    "id": "nemotron-speech-asr-cloud-001",
+    "question": "Use build.nvidia.com Riva ASR from Python to transcribe an audio file with Canary, but do not deploy a local container.",
+    "expected_skill": "nemotron-speech",
+    "expected_script": null,
+    "ground_truth": "The agent should use the ASR cloud-hosted flow, require an NVIDIA_API_KEY, avoid local Docker deployment, and verify the current build.nvidia.com function ID for the requested model.",
+    "expected_behavior": [
+      "Route to references/asr.md.",
+      "Choose the cloud-hosted inference path and avoid self-hosted Docker steps.",
+      "Require or check NVIDIA_API_KEY without exposing it.",
+      "Use build.nvidia.com or official NVIDIA docs to verify the current function ID and endpoint.",
+      "Provide a Python client path appropriate for ASR cloud inference."
+    ]
+  },
+  {
+    "id": "nemotron-speech-tts-001",
+    "question": "I need Riva TTS with Magpie. List available voices first, then synthesize text to a WAV file.",
+    "expected_skill": "nemotron-speech",
+    "expected_script": null,
+    "ground_truth": "The agent should use the TTS reference, list voices before choosing one, and avoid hardcoding a stale voice name.",
+    "expected_behavior": [
+      "Route to references/tts.md.",
+      "Choose cloud or self-hosted TTS flow based on the user's environment and constraints.",
+      "List available voices before selecting a voice.",
+      "Avoid hardcoding voice names that were not returned by the current service.",
+      "Verify current TTS model and voice support from NVIDIA sources when needed."
+    ]
+  },
+  {
+    "id": "nemotron-speech-nmt-001",
+    "question": "Translate English to German with Riva NMT and keep the product name NVIDIA untranslated using a DNT tag.",
+    "expected_skill": "nemotron-speech",
+    "expected_script": null,
+    "ground_truth": "The agent should use the NMT reference, verify the language pair, and protect NVIDIA with supported do-not-translate markup.",
+    "expected_behavior": [
+      "Route to references/nmt.md.",
+      "Verify the English-to-German language pair against current NMT support information.",
+      "Use the Riva NMT translation flow rather than ASR or TTS flows.",
+      "Apply DNT markup for the protected product name.",
+      "Keep commands and API names using Riva terminology."
+    ]
+  },
+  {
+    "id": "nemotron-speech-custom-asr-001",
+    "question": "I fine-tuned an ASR model in NeMo and have a .nemo checkpoint. Convert it into a Riva NIM with riva-build and riva-deploy.",
+    "expected_skill": "nemotron-speech",
+    "expected_script": null,
+    "ground_truth": "The agent should use the custom ASR deployment reference and follow the .nemo or .riva to RMIR to model repository to custom NIM flow.",
+    "expected_behavior": [
+      "Route to references/asr-custom.md before giving commands.",
+      "Distinguish .nemo, .riva, RMIR, and deployed model repository artifacts.",
+      "Verify the correct base image and riva-build inline model configuration for the model family.",
+      "Use riva-build and riva-deploy terminology without renaming commands to Nemotron.",
+      "Include readiness and inference verification after launching the custom NIM."
+    ]
+  },
+  {
+    "id": "nemotron-speech-pipelines-001",
+    "question": "Tune a Riva ASR pipeline with Silero VAD, Sortformer diarization, a KenLM language model, and a smaller chunk size for lower latency.",
+    "expected_skill": "nemotron-speech",
+    "expected_script": null,
+    "ground_truth": "The agent should use the pipeline configuration reference and separate build-time riva-build settings from runtime endpointing or custom_configuration parameters.",
+    "expected_behavior": [
+      "Route to references/pipelines.md.",
+      "Separate VAD, diarization, decoder/language-model, endpointing, and chunk-size concerns.",
+      "Distinguish deploy-time riva-build options from runtime-tunable custom_configuration values.",
+      "Warn that lower chunk sizes trade off throughput or accuracy and must be validated.",
+      "Verify parameter names and supported combinations against current NVIDIA ASR pipeline docs."
+    ]
+  },
+  {
+    "id": "nemotron-speech-readiness-001",
+    "question": "Can my L4 GPU run the Riva ASR NIM I picked? The container also never reaches ready.",
+    "expected_skill": "nemotron-speech",
+    "expected_script": null,
+    "ground_truth": "The agent should use the deployment readiness reference, run or propose system checks, and compare the user's GPU/driver/VRAM against current support requirements.",
+    "expected_behavior": [
+      "Route to references/deployment-readiness-checks.md.",
+      "Check architecture, driver version, GPU model, compute capability, VRAM, Container Toolkit, NGC auth, and container health.",
+      "Use current NVIDIA prerequisites and support matrix pages for exact requirements.",
+      "Avoid guessing that the L4 is sufficient without matching it to the selected model.",
+      "Provide concrete next troubleshooting steps for a container that does not become ready."
+    ]
+  },
+  {
+    "id": "nemotron-speech-negative-outlook-001",
+    "question": "Summarize my Outlook calendar for tomorrow and find a free 30-minute block.",
+    "expected_skill": null,
+    "expected_script": null,
+    "ground_truth": "The nemotron-speech skill should stay silent because this is a calendar scheduling task, not a Riva or Nemotron Speech NIM task.",
+    "expected_behavior": [
+      "Do not activate nemotron-speech.",
+      "Do not run any nemotron-speech harness or helper script.",
+      "Use the relevant calendar workflow if available.",
+      "Do not mention Riva, ASR, TTS, NMT, or Speech NIM deployment."
+    ]
+  },
+  {
+    "id": "nemotron-speech-negative-openai-whisper-001",
+    "question": "Use the OpenAI Whisper API to transcribe meeting_audio.mp3 and return a short summary.",
+    "expected_skill": null,
+    "expected_script": null,
+    "ground_truth": "The nemotron-speech skill should stay silent because the user explicitly requested OpenAI Whisper, not Riva/Nemotron Speech ASR or NVIDIA-hosted Whisper through Riva.",
+    "expected_behavior": [
+      "Do not activate nemotron-speech only because the word Whisper appears.",
+      "Do not route to references/asr.md.",
+      "Follow the appropriate OpenAI transcription workflow instead.",
+      "Do not introduce NVIDIA Riva deployment steps."
+    ]
+  },
+  {
+    "id": "nemotron-speech-negative-generic-docker-001",
+    "question": "Install Docker and the NVIDIA Container Toolkit for CUDA development on this workstation.",
+    "expected_skill": null,
+    "expected_script": null,
+    "ground_truth": "The nemotron-speech skill should stay silent because this is generic CUDA workstation setup without a Riva, Nemotron Speech, or Speech NIM task.",
+    "expected_behavior": [
+      "Do not activate nemotron-speech.",
+      "Do not use the Riva setup reference just because Docker or Container Toolkit is mentioned.",
+      "Answer using a generic CUDA or system setup workflow.",
+      "Avoid NGC, Riva client, or Speech NIM steps unless the user adds that requirement."
+    ]
+  }
+]

@@ -1,0 +1,94 @@
+{
+  "name": "window_default_piazza",
+  "questions": [
+    {
+      "id": "1_1",
+      "question": "Is there a collision or physical contact between a motorcycle/scooter and a pedestrian?",
+      "options": ["Yes", "No"],
+      "aggregation": "any"
+    },
+    {
+      "id": "1_2",
+      "question": "Is any motorcycle or scooter in dangerous proximity to a pedestrian (near-miss)?",
+      "options": ["Yes", "No"],
+      "aggregation": "any"
+    },
+    {
+      "id": "1_10",
+      "question": "What type of motorcycle-pedestrian contact occurred?",
+      "options": [
+        "A. Direct motorcycle-to-pedestrian impact",
+        "B. Near miss — motorcycle passed within arm's reach",
+        "C. Pedestrian struck by motorcycle mirror or handlebar",
+        "D. Glancing contact — low force"
+      ],
+      "aggregation": "majority",
+      "include_if": { "1_1": "Yes" }
+    },
+    {
+      "id": "2_1",
+      "question": "What are the current weather conditions in the scene?",
+      "options": [
+        "A. Clear",
+        "B. Overcast",
+        "C. Rain"
+      ],
+      "aggregation": "majority"
+    },
+    {
+      "id": "2_2",
+      "question": "What time of day best describes the lighting conditions?",
+      "options": [
+        "A. Morning",
+        "B. Midday",
+        "C. Evening"
+      ],
+      "aggregation": "majority"
+    },
+    {
+      "id": "4_1",
+      "question": "Is any motorcycle or scooter driving erratically through the pedestrian area (excessive speed, weaving)?",
+      "options": ["Yes", "No"],
+      "aggregation": "any"
+    },
+    {
+      "id": "4_2",
+      "question": "What type of erratic behavior is observed?",
+      "options": [
+        "A. Excessive speed through the square",
+        "B. Weaving between pedestrians or tables",
+        "C. Both"
+      ],
+      "aggregation": "majority",
+      "include_if": { "4_1": "Yes" }
+    },
+    {
+      "id": "4_3",
+      "question": "Is the main pedestrian pathway through the piazza blocked or obstructed?",
+      "options": ["Yes", "No"],
+      "aggregation": "any"
+    },
+    {
+      "id": "5_1",
+      "question": "How busy is the piazza with pedestrian activity?",
+      "options": [
+        "A. Quiet (few or no pedestrians)",
+        "B. Moderate (some pedestrians and diners)",
+        "C. Busy (many pedestrians and most tables occupied)"
+      ],
+      "aggregation": "majority"
+    },
+    {
+      "id": "5_2",
+      "question": "Is any motorcycle or scooter actively moving through the piazza?",
+      "options": ["Yes", "No"],
+      "aggregation": "any"
+    },
+    {
+      "id": "5_3",
+      "question": "Are patrons seated at outdoor café tables under the canopy?",
+      "options": ["Yes", "No"],
+      "aggregation": "any"
+    }
+  ]
+}

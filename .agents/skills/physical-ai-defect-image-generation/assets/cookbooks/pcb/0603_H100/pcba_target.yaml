@@ -1,0 +1,9 @@
+# Demo: 0603_H100_day0
+# Source: _demo_config/0603_H100_day0/pcba_target.yaml
+
+scene: __SCENE__
+
+camera_path: /World/camera_light/Camera
+camera_xform_path: /World/camera_light
+ring_light_root: /World/camera_light/aoi_ring_light
+pcba_root: /World/pcba_main_s_detail/PCBA/tn__60014242BASEA04_fM9E

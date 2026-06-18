@@ -1,0 +1,44 @@
+[
+  {
+    "id": "hsb-app-001",
+    "question": "Run /hsb-app on my devkit ubuntu@hq-agx-orin9 (REMOTE_ROOT=/home/ubuntu/anishag/hololink). I have an AGX Orin with HSB Lattice board and dual IMX274 cameras. Show me compatible apps and help me launch the stereo camera viewer.",
+    "expected_skill": "hsb-app",
+    "ground_truth": "The agent reads the hsb-app SKILL.md, checks for an existing session state, presents the full phase plan (Phases 0-3), states it will scan examples/ filtered by dual IMX274 and AGX Orin, confirms it will not add --headless automatically, and asks for user confirmation before starting Phase 0.",
+    "expected_behavior": [
+      "The agent reads the hsb-app SKILL.md before taking any action",
+      "The agent checks for an existing session state at /tmp/.claude_hsb_app_session/state.sh",
+      "The agent presents the full phase plan (Phases 0-3) before starting",
+      "The agent states it will scan examples/ and filter apps by dual IMX274 and AGX Orin",
+      "The agent confirms it will not add --headless automatically without user request",
+      "The agent asks for user confirmation before starting Phase 0"
+    ]
+  },
+  {
+    "id": "hsb-app-002",
+    "question": "Run /hsb-app on my devkit ubuntu@hq-agx-orin9 (REMOTE_ROOT=/home/ubuntu/anishag/hololink). I'm running an app with my VB1940 camera and it keeps crashing with 'No such device'. What's wrong?",
+    "expected_skill": "hsb-app",
+    "ground_truth": "The agent reads the hsb-app SKILL.md, identifies 'No such device' as a sensor detection failure, identifies that VB1940 requires VB1940-compatible apps, suggests running hololink enumerate to verify detection, and recommends switching to the correct application.",
+    "expected_behavior": [
+      "The agent reads the hsb-app SKILL.md before taking any action",
+      "The agent identifies 'No such device' as a sensor detection failure (not a software bug)",
+      "The agent identifies that the VB1940 requires a VB1940-compatible app, not an IMX274-only app",
+      "The agent suggests running hololink enumerate to verify board and sensor detection",
+      "The agent recommends switching to a VB1940-compatible application",
+      "The agent does not suggest editing driver or kernel code to fix sensor detection"
+    ]
+  },
+  {
+    "id": "hsb-app-003",
+    "question": "Run /hsb-app on my devkit ubuntu@hq-agx-orin9 (REMOTE_ROOT=/home/ubuntu/anishag/hololink). I want to run a latency test on my HSB Lattice board with a 60-second timeout.",
+    "expected_skill": "hsb-app",
+    "ground_truth": "The agent reads the hsb-app SKILL.md, checks for session state (none exists), presents the full phase plan, states it will use a 60-second watchdog timeout, runs the app inside the demo container, and asks for user confirmation before starting Phase 0.",
+    "expected_behavior": [
+      "The agent reads the hsb-app SKILL.md before taking any action",
+      "The agent checks for the session state file at /tmp/.claude_hsb_app_session/state.sh",
+      "The agent presents the full phase plan before starting",
+      "The agent states it will use a 60-second watchdog timeout for the app",
+      "The agent states the app will run inside the demo container using docker run",
+      "The agent asks for user confirmation before starting Phase 0"
+    ]
+  }
+]

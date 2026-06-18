@@ -1,0 +1,24 @@
+encryption_key: tlt_encode
+results_dir: /results
+dataset:
+  segment:
+    dataset: CNDataset
+    root_dir: /data
+    data_name: LEVIR-CD
+    label_transform: norm
+    batch_size: 1
+    workers: 2
+    num_classes: 2
+    img_size: 256
+    image_folder_name: A
+    change_image_folder_name: B
+    list_folder_name: list
+    annotation_folder_name: label
+    test_split: test
+    label_suffix: .png
+evaluate:
+  trt_engine: /results/visual-changenet.engine
+  batch_size: 4
+model:
+  backbone:
+    type: fan_small_12_p4_hybrid

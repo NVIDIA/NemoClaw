@@ -1,0 +1,17 @@
+[
+  {
+    "id": "multi-node-slurm-positive-sbatch-smoke",
+    "question": "Use the nemo-mbridge-multi-node-slurm skill. For a Megatron Bridge recipe that reaches initialize.py, convert my single-node launch to a two-node Slurm sbatch plan. Answer in this order: preferred srun-native launch shape, Bridge-derived distributed variables, shared cache/mount requirements, and the exact first log checks for NCCL timeout debugging.",
+    "expected_skill": "nemo-mbridge-multi-node-slurm",
+    "expected_script": null,
+    "ground_truth": "The answer should use the multi-node Slurm skill and recommend the Bridge srun-native pattern: Slurm launches 8 tasks per node, not torch.distributed.run spawning inside one Slurm task. It should state that Bridge derives RANK, WORLD_SIZE, LOCAL_RANK, MASTER_ADDR, and MASTER_PORT from SLURM env vars, require shared filesystem paths for repo/data/logs/HF_HOME/UV_CACHE_DIR/NEMO_HOME plus container mounts, and give the first timeout-debugging checks: grep for real errors while filtering noise, inspect the first failed rank/node, and check NCCL ncclUniqueId/timeout or rank-0 crash lines.",
+    "expected_behavior": [
+      "Read the nemo-mbridge-multi-node-slurm skill before answering.",
+      "Identify the task as multi-node Slurm launch conversion.",
+      "Recommend the srun-native Bridge approach with Slurm spawning 8 tasks per node.",
+      "Mention that Bridge derives distributed rank and rendezvous variables from SLURM env vars.",
+      "Require shared cache/storage paths and container mounts for multi-node jobs.",
+      "List the first NCCL timeout debugging checks: filtered error grep, first failed rank/node, and ncclUniqueId, timeout, or rank-0 crash lines."
+    ]
+  }
+]

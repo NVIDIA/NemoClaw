@@ -1,0 +1,59 @@
+{
+  "checkpoint": "checkpoints/merged",
+  "n_eval": 100,
+  "exact_match": 0.55,
+  "substring_match": 0.57,
+  "accuracy": 0.55,
+  "sample_predictions": [
+    {
+      "question": "How many giraffe are standing near the building?",
+      "ref": "2",
+      "pred": "4"
+    },
+    {
+      "question": "How many people have sunglasses?",
+      "ref": "4",
+      "pred": "3"
+    },
+    {
+      "question": "What kind of room is this?",
+      "ref": "bathroom",
+      "pred": "kitchen"
+    },
+    {
+      "question": "How many of these women are wearing pants?",
+      "ref": "2",
+      "pred": "2"
+    },
+    {
+      "question": "Does the chair look velvety soft?",
+      "ref": "yes",
+      "pred": "yes"
+    },
+    {
+      "question": "What color is the horse?",
+      "ref": "black and white",
+      "pred": "white and black"
+    },
+    {
+      "question": "How many slices of toast are on the plate?",
+      "ref": "4",
+      "pred": "3"
+    },
+    {
+      "question": "Is there a sandwich on the plate?",
+      "ref": "no",
+      "pred": "no"
+    },
+    {
+      "question": "What time is it on the clock?",
+      "ref": "8:50",
+      "pred": "1:10"
+    },
+    {
+      "question": "What city is this?",
+      "ref": "tokyo",
+      "pred": "japan"
+    }
+  ]
+}

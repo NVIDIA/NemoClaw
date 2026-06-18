@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "skill": { "type": "string" },
+    "input_usd_path": { "type": "string" },
+    "output_dir": { "type": "string" },
+    "selected_calls": { "type": "array", "items": { "type": "string" } },
+    "steps": { "type": "array" },
+    "reports": { "type": "object" },
+    "output_usd_path": { "type": "string" },
+    "materialized_usd_path": { "type": ["string", "null"] },
+    "physics_usd_path": { "type": ["string", "null"] },
+    "textured_usdz_path": { "type": ["string", "null"] },
+    "passed": { "type": "boolean" },
+    "status": { "type": "string" },
+    "errors": { "type": "array" },
+    "warnings": { "type": "array" },
+    "next_step": { "type": "string" }
+  },
+  "required": ["skill", "input_usd_path", "selected_calls", "steps", "reports", "output_usd_path", "passed", "status", "errors", "warnings", "next_step"]
+}

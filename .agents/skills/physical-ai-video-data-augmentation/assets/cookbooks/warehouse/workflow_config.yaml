@@ -1,0 +1,13 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: CC-BY-4.0 AND Apache-2.0
+
+augmentation:
+  n_augmentations: 1
+  variables:
+    lighting:
+      bright: 0.35
+      moderate: 0.35
+      dim: 0.30
+    surface_condition:
+      dry: 0.55
+      wet: 0.45

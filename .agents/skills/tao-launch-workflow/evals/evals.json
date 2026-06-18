@@ -1,0 +1,14 @@
+[
+  {
+    "id": "tao-launch-workflow-basic",
+    "question": "A user request: \"Launch a TAO workflow or action on an execution platform.\" Identify which TAO skill applies and, reading only that skill's documentation, outline the steps it prescribes. Do NOT run any commands, scripts, web searches, or other tools \u2014 describe the plan only.",
+    "expected_skill": "tao-launch-workflow",
+    "expected_script": null,
+    "ground_truth": "Identify tao-launch-workflow as the applicable skill and summarize its documented workflow from SKILL.md without executing anything.",
+    "expected_behavior": [
+      "Identifies tao-launch-workflow as the relevant skill",
+      "Outlines the documented workflow steps from SKILL.md",
+      "Does not run commands, scripts, or web searches"
+    ]
+  }
+]

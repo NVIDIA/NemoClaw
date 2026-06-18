@@ -1,0 +1,57 @@
+[
+  {
+    "id": "digital-health-clinical-asr-setup-001",
+    "question": "I'm setting up the Clinical ASR Flywheel on my work laptop today. Before I do anything, I need to know — does this flywheel send any of my data outside our network? My infosec team will ask.",
+    "expected_skill": "digital-health-clinical-asr-setup",
+    "expected_script": null,
+    "ground_truth": "Surface the full data-disclosure block from SKILL.md, not a generic answer. Two external destinations: (1) NVIDIA NVCF (grpc.nvcf.nvidia.com) — receives every synthesized clinical sentence (Stage 2 TTS text) and every WAV file you transcribe (Stage 3 ASR audio bytes), governed by build.nvidia.com terms; (2) Merriam-Webster (dictionaryapi.com JSON API or merriam-webster.com public site) — receives individual clinical terms one HTTP request per term, governed by their API/site terms. What does NOT leave: PHI of any kind — the flywheel is designed for synthetic audio generated from a user-curated term list, not real patient data. MW is fully optional (skip the key, pipeline falls through to Magpie G2P). NVCF cannot be skipped — if NVCF is off-limits, this skill family is the wrong tool.",
+    "expected_behavior": [
+      "Read digital-health-clinical-asr-setup/SKILL.md before answering",
+      "Named BOTH external destinations explicitly: NVCF (grpc.nvcf.nvidia.com) AND Merriam-Webster (dictionaryapi.com / merriam-webster.com)",
+      "Specified what gets sent to each: NVCF receives synthesized text + audio bytes; MW receives individual term strings",
+      "Stated explicitly that PHI / real patient transcripts / real patient audio do NOT leave (the flywheel is synthetic-only by design)",
+      "Mentioned that MW can be skipped (Magpie G2P fall-through) but NVCF cannot"
+    ]
+  },
+  {
+    "id": "digital-health-clinical-asr-setup-002",
+    "question": "I cloned the skill directory but I can't find install.sh or setup.py — what script do I run to install everything and get going?",
+    "expected_skill": "digital-health-clinical-asr-setup",
+    "expected_script": null,
+    "ground_truth": "There is no install script and no setup.py — the skill family is methodology + inlined recipes only. Each of the four digital-health-clinical-asr-* skills ships SKILL.md plus references/ markdown; no .py or .sh files are part of the skill itself. The 'install' is three steps, all in Stage 1 of SKILL.md: (1a) export NVIDIA_API_KEY; (1b) python3 -m venv .venv && pip install nvidia-riva-client pandas soundfile requests; (1c) run the inlined smoke_test() recipe to confirm the hosted NVCF stack responds. Optional: DICTIONARY_API_KEY for Merriam-Webster, jiwer for WER reference scoring. Do not look for or invent script paths — they don't exist by design, and inventing them sends the user down a dead end.",
+    "expected_behavior": [
+      "Read digital-health-clinical-asr-setup/SKILL.md before answering",
+      "Stated explicitly that NO install script or setup.py ships with the skill",
+      "Walked the user through the three-step Stage 1 install (key export → venv + pip install → smoke_test)",
+      "Did NOT invent or hallucinate script paths (e.g., scripts/install.sh, setup.py)",
+      "Did NOT make extra tool calls (e.g., file listing) to answer this — the answer is in SKILL.md frontmatter and §Instructions"
+    ]
+  },
+  {
+    "id": "digital-health-clinical-asr-setup-003",
+    "question": "I exported NVIDIA_API_KEY in my shell and pip-installed everything from your prereq list. How do I know the hosted NVCF stack actually responds before I start curating clinical terms?",
+    "expected_skill": "digital-health-clinical-asr-setup",
+    "expected_script": null,
+    "ground_truth": "Run the inlined smoke_test(api_key=...) recipe from Step 1c — it synthesizes one short sentence through Magpie TTS at grpc.nvcf.nvidia.com and then transcribes the resulting audio back through Parakeet/Nemotron ASR via the same NVCF endpoint. If the round-trip transcript matches the input within roughly one token, the hosted stack is reachable from this shell with this key. Do not defer this — 'I can run it later' is not an acceptable completion of Stage 1. Common failures: 401/PERMISSION_DENIED means the key is wrong or unexported; 404/INVALID_ARGUMENT means the NVCF function-id is stale (check build.nvidia.com); RESOURCE_EXHAUSTED is a rate limit, retry after 30 s. Once it passes, hand off to /digital-health-clinical-asr-build.",
+    "expected_behavior": [
+      "Read digital-health-clinical-asr-setup/SKILL.md before answering",
+      "Pointed the user at Step 1c's smoke_test(api_key=...) recipe by name",
+      "Described the round-trip behavior: Magpie TTS synth → Parakeet/Nemotron ASR transcribe, verify transcript matches input",
+      "Stated that the smoke test is non-deferrable — must run before advancing to Stage 2",
+      "Named at least one failure mode by error code (401/PERMISSION_DENIED, 404/INVALID_ARGUMENT, RESOURCE_EXHAUSTED) and the appropriate fix",
+      "Recommended /digital-health-clinical-asr-build as the next skill after success"
+    ]
+  },
+  {
+    "id": "digital-health-clinical-asr-setup-neg-001",
+    "question": "What is the capital of France?",
+    "expected_skill": null,
+    "expected_script": null,
+    "ground_truth": "Paris. The agent answers directly without invoking any skill — this is a general-knowledge question, not a clinical-ASR workflow.",
+    "expected_behavior": [
+      "Did NOT invoke digital-health-clinical-asr-setup",
+      "Did NOT invoke any other skill",
+      "Answered conversationally with the correct fact (Paris)"
+    ]
+  }
+]

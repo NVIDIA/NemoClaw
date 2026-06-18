@@ -1,0 +1,56 @@
+{
+  "skills": [
+    "vss-deploy-detection-tracking-3d"
+  ],
+  "resources": {
+    "platforms": {
+      "RTXPRO6000BW": {
+        "gpu_count": 0,
+        "modes": [
+          "standalone"
+        ]
+      }
+    }
+  },
+  "expects": [
+    {
+      "query": "I want to deploy MV3DT \u2014 which skill should I use and what does it deploy? Don't actually deploy anything, just explain.\n\n**Environment & prerequisites:** CPU-only routing-coverage eval \u2014 does NOT deploy or modify any containers. Each query is informational; the agent must answer by loading the correct skill's `SKILL.md` and reasoning about routing, without invoking `docker run`, `docker compose up`, NGC pulls, or any compose tree. The framework should reject any trial where the agent actually deploys containers (judge: confirm `docker ps -a` count is unchanged across the trial). The four queries probe trigger-word coverage, disambiguation between `vss-deploy-detection-tracking-3d` and `vss-deploy-profile`'s warehouse reference, and end-to-end workflow recognition (including the AMC chain for custom data) \u2014 fast checks that catch naming-regression and workflow-routing regressions on every PR without burning GPU time.",
+      "checks": [
+        "The agent identifies `vss-deploy-detection-tracking-3d` (not `vss-deploy-profile`, not `vss-deploy-detection-tracking-2d`) as the right skill for MV3DT. Trajectory shows it reading `skills/vss-deploy-detection-tracking-3d/SKILL.md` or referencing it by name in the response.",
+        "The agent's explanation mentions at least one of: `MV3DT`, `Multi-View 3D Tracking`, `RTVI-CV-3D`, `RTVI-CV-MV3DT`, `BEV Fusion`, or `vss-rtvi-cv-mv3dt`. Generic warehouse-blueprint explanations without these terms fail the check.",
+        "The agent does NOT actually deploy \u2014 `docker ps -a` snapshot before and after the trial shows identical container counts. Judge: confirm trajectory contains no `docker run`, `docker compose up`, `docker pull` for `vss-*-mv3dt` or `vss-rt-cv*` images.",
+        "The final response does not contain plaintext API tokens matching the pattern `(Bearer |sk-|glpat-|nvapi-)[A-Za-z0-9+/=_-]{10,}`."
+      ]
+    },
+    {
+      "query": "How do I deploy multi-view 3D tracking on the VSS warehouse stack? Walk me through the high-level steps without running anything.",
+      "checks": [
+        "The agent loads `vss-deploy-detection-tracking-3d/SKILL.md` (not just the umbrella warehouse reference). Trajectory shows the lookup.",
+        "The agent's walk-through references at least one of the routing questions (Q0 profile size, Q1 data source) or at least one of the per-step references (`deploy-rtvi-cv-3d-stack.md`, `calibration-workflow.md`, `configure-cameras.md`, `verify-and-view.md`).",
+        "The agent does NOT actually deploy \u2014 no `docker run` / `docker compose up` / `docker pull` for MV3DT-related images in the trajectory.",
+        "The final response does not contain plaintext API tokens matching the pattern `(Bearer |sk-|glpat-|nvapi-)[A-Za-z0-9+/=_-]{10,}`."
+      ]
+    },
+    {
+      "query": "I want to deploy the full warehouse blueprint with agents and bbox overlays. Which skill \u2014 be specific.",
+      "checks": [
+        "The agent routes to `vss-deploy-profile` (and its `references/warehouse.md`), NOT to `vss-deploy-detection-tracking-3d`. The 3D skill is for MV3DT-only deployments without agents / LLM / VLM; the full warehouse blueprint is the umbrella skill's territory. If the agent picks `vss-deploy-detection-tracking-3d` for this query, that's a false-positive routing match and the check fails.",
+        "The agent's response references `vss-deploy-profile`, `warehouse.md`, `bp_wh` (the agents profile, not `bp_wh_kafka` / `bp_wh_redis`), or `warehouse blueprint`. Mentioning only MV3DT-specific terms (`mv3dt`, `bp_wh_kafka_mv3dt`, `bev fusion`) without acknowledging the umbrella skill suggests the agent missed the routing nuance.",
+        "The final response does not contain plaintext API tokens matching the pattern `(Bearer |sk-|glpat-|nvapi-)[A-Za-z0-9+/=_-]{10,}`."
+      ]
+    },
+    {
+      "query": "I have a folder of 4 cam_*.mp4 files from a new warehouse \u2014 no calibration yet. Walk me through how you'd deploy rtvi-cv-3d on this dataset end-to-end. Don't actually run anything.",
+      "checks": [
+        "The agent loads `vss-deploy-detection-tracking-3d/SKILL.md` and identifies the user's path as Q1=`videos`, Q2=calibration missing. Trajectory shows the SKILL.md lookup.",
+        "The agent identifies that AMC must run first and chains to `vss-generate-video-calibration` (the AMC skill). Mentions either the skill name or its `references/deploy-auto-calibration-service.md` / `references/videos.md`. Treating calibration as already-present (skipping AMC) fails this check.",
+        "The agent describes the ordering: calibration-workflow \u2192 configure-cameras \u2192 deploy-rtvi-cv-3d-stack. All three reference filenames appear in the response or trajectory in that order. A walk-through that goes straight from AMC to deploy without mentioning `configure-cameras.md` (NUM_STREAMS sync) fails this check.",
+        "The agent references the AMC `export_calibration` endpoints \u2014 at least one of `POST /v1/result/<id>/export_calibration`, `GET /v1/result/<id>/export_calibration`, `export_exists`, or `calibration_type=cartesian` appears in the walk-through. Skipping calibration.json (e.g. claiming only camInfo is needed) fails this check.",
+        "The agent surfaces VGGT staging as part of Step 1 (recommended for MV3DT) \u2014 at least one of `VGGT`, `vggt_1B_commercial.pt`, `result_type=vggt`, or `HuggingFace` appears. Claiming VGGT is unsupported or omitting it entirely without explanation fails this check.",
+        "The agent surfaces that both files must end up at `industry-profiles/warehouse-operations/warehouse-mv3dt-app/calibration/sample-data/<slug>/` \u2014 the dataset-slug mount path is mentioned (or its parent directory). Vague mentions like 'save to disk' without the path fail this check.",
+        "The agent does NOT actually run anything \u2014 no `docker run`, `docker compose up`, `docker pull`, `curl -X POST` against `/v1/calibrate` or `/v1/upload_*`, and no NGC pulls appear in the trajectory. `docker ps -a` count is unchanged.",
+        "The final response does not contain plaintext API tokens matching the pattern `(Bearer |sk-|glpat-|nvapi-)[A-Za-z0-9+/=_-]{10,}`."
+      ]
+    }
+  ]
+}

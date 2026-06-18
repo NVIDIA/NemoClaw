@@ -1,0 +1,39 @@
+{
+  "skills": ["rag-blueprint"],
+  "platforms": ["H100_x2"],
+  "resources": {
+    "platforms": {
+      "H100_x2": {
+        "brev_type": "dmz.h100x2.pcie",
+        "gpu_type": "H100",
+        "gpu_count": 2,
+        "min_vram_gb_per_gpu": 80,
+        "min_root_disk_gb": 500,
+        "min_gpu_driver_version": "560.0",
+        "description": "2x H100 80GB PCIe. Self-hosted RAG with local NIM inference."
+      }
+    }
+  },
+  "env": "Linux host with 2x H100 80GB, driver 560+, Docker + nvidia-container-toolkit installed. Self-hosted deployment — all model inference runs via local NIMs (nim-llm, nemoretriever-embedding-ms, nemoretriever-ranking-ms). Required env var: NGC_API_KEY for pulling NIM containers from nvcr.io. cwd is the repo root: ${RAG_REPO_ROOT}/. Use deploy/compose/.env which is pre-configured for self-hosted endpoints.",
+  "expects": [
+    {
+      "query": "Deploy NVIDIA RAG Blueprint in self-hosted mode using Docker Compose. Start all services including the local NIM containers for LLM and embedding inference. All containers should reach the Up state before reporting success.",
+      "checks": [
+        "The agent's trajectory shows it read the rag-blueprint SKILL.md before taking action",
+        "The agent's trajectory shows it detected the available GPUs and chose self-hosted deployment mode",
+        "`docker ps --format '{{.Names}}' | grep -E '^(rag-server|ingestor-server|milvus-standalone|milvus-etcd|milvus-minio)$' | wc -l` outputs a number greater than or equal to 5",
+        "`docker ps --format '{{.Names}}' | grep -E '^(nim-llm|nemoretriever-embedding-ms)' | wc -l` outputs a number greater than or equal to 1",
+        "`docker ps --format '{{.Names}}\\t{{.Status}}' | grep -E '(rag-server|ingestor-server|milvus-standalone)' | grep -v 'Up' | wc -l` outputs 0"
+      ]
+    },
+    {
+      "query": "Verify the self-hosted RAG stack is fully operational. Check that the rag-server, ingestor-server, and local NIM endpoints are all healthy and responding.",
+      "checks": [
+        "`curl -sf -o /dev/null -w '%{http_code}' http://localhost:8081/v1/health` outputs 200",
+        "`curl -sf -o /dev/null -w '%{http_code}' http://localhost:8082/v1/health` outputs 200",
+        "`docker ps --format '{{.Names}}\\t{{.Status}}' | grep nim-llm | grep -E 'Up|healthy'` returns at least one matching line",
+        "The agent's final output reports the health status of rag-server, ingestor-server, and the local NIM service with clear per-service indicators"
+      ]
+    }
+  ]
+}

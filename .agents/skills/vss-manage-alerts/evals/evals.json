@@ -1,0 +1,102 @@
+[
+  {
+    "id": "alerts-create-realtime-rule",
+    "question": "Watch warehouse_sample for anyone without a safety vest.",
+    "expected_skill": "vss-manage-alerts",
+    "ground_truth": "The agent routes to Workflow D for Alert Bridge realtime subscriptions in VLM real-time mode. It resolves warehouse_sample through VIOS, fetches its RTSP stream, derives a PPE/safety-vest alert_type, and creates the rule by POSTing directly to Alert Bridge at http://${HOST_IP}:9080/api/v1/realtime.",
+    "expected_behavior": [
+      "Loads vss-manage-alerts and uses the Alert Subscriptions workflow, not the generic VSS Agent /generate flow.",
+      "Checks that the deployment is VLM real-time mode or otherwise applies the skill's mode gate before creating a subscription.",
+      "Calls VIOS at http://${HOST_IP}:30888/vst/api/v1/sensor/list to resolve warehouse_sample to its sensorId and name.",
+      "Fetches the sensor's stream URL from http://${HOST_IP}:30888/vst/api/v1/sensor/<sensorId>/streams and uses a live RTSP URL in the payload.",
+      "POSTs to http://${HOST_IP}:9080/api/v1/realtime with live_stream_url, sensor_id, sensor_name, prompt, system_prompt set to a yes/no instruction, chunk_duration 30, and a condition-specific snake_case alert_type such as ppe_vest_violation.",
+      "Does not call rtvi-vlm microservice endpoints directly and does not send this subscription request through POST /generate.",
+      "Reports the returned rule UUID and sensor name to the user without dumping raw JSON."
+    ]
+  },
+  {
+    "id": "alerts-list-active-rules",
+    "question": "Show me all active realtime rules on warehouse_sample.",
+    "expected_skill": "vss-manage-alerts",
+    "ground_truth": "The agent routes to Workflow D list behavior. It fetches rules from Alert Bridge, optionally filters to warehouse_sample by resolving the sensor/stream via VIOS, and renders a readable summary of active rules. An empty result is a successful 'no rules running' response.",
+    "expected_behavior": [
+      "Loads vss-manage-alerts and treats 'active realtime rules' as subscription inventory, not historical incidents.",
+      "Calls Alert Bridge GET http://${HOST_IP}:9080/api/v1/realtime to retrieve active rules.",
+      "Resolves warehouse_sample through VIOS and filters the returned rules by the matching live_stream_url when a sensor filter is present.",
+      "Reverse-resolves RTSP URLs to human-readable sensor names when rendering results.",
+      "Includes sensor, alert_type/tag, prompt, created_at, and rule ID in a readable list or table when rules exist.",
+      "Responds that no realtime alert rules are currently running when the filtered list is empty, rather than treating the empty list as an error.",
+      "Does not route this request to POST /generate or query historical incidents."
+    ]
+  },
+  {
+    "id": "alerts-stop-rule-confirmation",
+    "question": "Stop the PPE alert on warehouse_sample.",
+    "expected_skill": "vss-manage-alerts",
+    "ground_truth": "The agent treats this as the first step of the stop workflow: find the matching realtime rule, then ask for confirmation. It does not DELETE the rule until the user replies yes to the confirmation question.",
+    "expected_behavior": [
+      "Loads vss-manage-alerts and routes to Workflow D stop behavior.",
+      "Fetches active rules from Alert Bridge with GET http://${HOST_IP}:9080/api/v1/realtime.",
+      "Resolves warehouse_sample through VIOS and filters rules by sensor stream plus a PPE-related alert_type match.",
+      "If exactly one matching rule exists, asks a yes/no confirmation question that includes the alert_type, sensor name, and rule ID.",
+      "Does not call DELETE http://${HOST_IP}:9080/api/v1/realtime/<id> in response to the initial stop request.",
+      "If no matching rule exists, reports that no matching rule was found and offers to list currently running rules.",
+      "If multiple rules match, asks the user to be more specific rather than guessing which rule to delete."
+    ]
+  },
+  {
+    "id": "alerts-incident-query-routing",
+    "question": "What alerts have been triggered today for Camera_02?",
+    "expected_skill": "vss-manage-alerts",
+    "ground_truth": "The agent routes this as Workflow C, a historical incident query. It asks the VSS Agent /generate endpoint for incidents rather than listing active Alert Bridge subscription rules.",
+    "expected_behavior": [
+      "Loads vss-manage-alerts and recognizes 'triggered today' as a past-incident query.",
+      "Uses the active VSS Agent endpoint and sends a natural-language incident query through POST $AGENT/generate.",
+      "Scopes the query to Camera_02 and today's time window when forming the request.",
+      "Summarizes returned incidents with readable details such as timestamp, sensor, category, verdict, or description.",
+      "Does not call Alert Bridge GET /api/v1/realtime because that endpoint lists active rules, not historical alerts.",
+      "Does not fabricate incidents if the agent response contains none."
+    ]
+  },
+  {
+    "id": "alerts-slack-webhook-status",
+    "question": "Check if the alert Slack webhook is running.",
+    "expected_skill": "vss-manage-alerts",
+    "ground_truth": "The agent routes Slack-specific webhook requests to Workflow E. It inspects the local alert-notify service on port 9090, not Alert Bridge, and reports status or asks whether to start the webhook if it is down.",
+    "expected_behavior": [
+      "Loads vss-manage-alerts and routes explicit Slack/webhook language to Workflow E.",
+      "Applies the VLM real-time mode gate before using the Slack notification workflow.",
+      "Uses the alert-notify service endpoints such as GET http://localhost:9090/webhook/alert-notify/status or /health.",
+      "Does not touch vss-alert-bridge /api/v1/realtime for Slack webhook operations.",
+      "If the webhook is running, reports running status, active backend details, and relevant notification stats without exposing secrets.",
+      "If the webhook is not reachable, says the alert Slack webhook is not running and asks whether the user wants it started.",
+      "Does not ask for Slack credentials unless it is actually starting or testing the webhook and required values are missing."
+    ]
+  },
+  {
+    "id": "alerts-cv-mode-subscription-refusal",
+    "question": "The alerts deployment is in CV verification mode. Create an alert subscription on warehouse_sample for smoke detection.",
+    "expected_skill": "vss-manage-alerts",
+    "ground_truth": "The agent refuses subscription creation in CV verification mode using the skill's canonical mode-gate message. It does not auto-redeploy or create an Alert Bridge realtime rule.",
+    "expected_behavior": [
+      "Loads vss-manage-alerts and detects that subscription CRUD is Workflow D, which requires VLM real-time mode.",
+      "Refuses with the canonical message that alert subscriptions and Slack notifications are only supported in VLM real-time mode.",
+      "Mentions redeploying with /vss-deploy-profile -p alerts -m real-time and notes that switching tears down current CV monitoring.",
+      "Does not call Alert Bridge POST /api/v1/realtime.",
+      "Does not auto-redeploy or switch modes without user confirmation.",
+      "Does not call rtvi-vlm directly."
+    ]
+  },
+  {
+    "id": "alerts-negative-non-alert-analytics",
+    "question": "Summarize the last hour of warehouse_sample video and create a highlight reel.",
+    "expected_skill": null,
+    "ground_truth": "This is a summarization/video-highlights request, not an alert-management request. The agent does not use vss-manage-alerts and routes to the appropriate video summarization/reporting skill instead.",
+    "expected_behavior": [
+      "Does not load vss-manage-alerts for a non-alert summarization task.",
+      "Does not call Alert Bridge subscription endpoints or alert-notify webhook endpoints.",
+      "Identifies that the request belongs to a video summarization or reporting workflow rather than alert management.",
+      "Asks for missing video/time-range details only if needed by the appropriate non-alert skill."
+    ]
+  }
+]

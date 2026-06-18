@@ -1,0 +1,77 @@
+{
+  "actions": {
+    "evaluate": {
+      "automl_default_parameters": [
+        "evaluate.vision.fps"
+      ],
+      "automl_disabled_parameters": [
+        "evaluate",
+        "evaluate.dataset",
+        "evaluate.evaluation",
+        "evaluate.evaluation.soft_accuracy",
+        "evaluate.generation",
+        "evaluate.metrics",
+        "evaluate.metrics.names",
+        "evaluate.model",
+        "evaluate.results",
+        "evaluate.task",
+        "evaluate.vision"
+      ],
+      "core_module": "cosmos-rl",
+      "path": "schemas/evaluate.schema.json",
+      "popular": {},
+      "schema_action": "evaluate",
+      "spec_template": "references/spec_template_evaluate.yaml"
+    },
+    "train": {
+      "automl_default_parameters": [
+        "custom.vision.fps",
+        "policy.lora.lora_alpha",
+        "policy.lora.lora_dropout",
+        "policy.lora.r",
+        "train.epoch",
+        "train.optm_decay_type",
+        "train.optm_lr"
+      ],
+      "automl_disabled_parameters": [
+        "custom",
+        "custom.train_dataset",
+        "custom.val_dataset",
+        "custom.vision",
+        "logging",
+        "logging.logger",
+        "policy",
+        "policy.lora",
+        "policy.lora.alpha_pattern",
+        "policy.lora.modules_to_save",
+        "policy.lora.r_pattern",
+        "policy.lora.target_modules",
+        "policy.parallelism",
+        "train",
+        "train.ckpt",
+        "train.fp8",
+        "train.optm_betas",
+        "train.train_policy",
+        "train.train_policy.dataset",
+        "validation",
+        "validation.dataset"
+      ],
+      "core_module": "cosmos-rl",
+      "path": "schemas/train.schema.json",
+      "popular": {
+        "train": {
+          "compile": false,
+          "epoch": 10,
+          "train_batch_per_replica": 1
+        }
+      },
+      "schema_action": "train",
+      "spec_template": "references/spec_template_train.yaml"
+    }
+  },
+  "automl_enabled": true,
+  "failures": {},
+  "model": "cosmos-rl",
+  "network_arch": "cosmos-rl",
+  "schema_version": 1
+}

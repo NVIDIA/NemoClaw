@@ -1,0 +1,3 @@
+Placeholder for preflight-only wrapper validation.
+
+Real finetuning requires user-supplied NIfTI volumes referenced by the datalist.

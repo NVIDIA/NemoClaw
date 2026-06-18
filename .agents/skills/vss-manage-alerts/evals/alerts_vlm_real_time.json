@@ -1,0 +1,50 @@
+{
+  "skills": [
+    "vss-manage-alerts",
+    "vss-deploy-profile",
+    "vss-query-analytics"
+  ],
+  "resources": {
+    "platforms": {
+      "L40S": {
+        "gpu_count": 1
+      }
+    }
+  },
+  "expects": [
+    {
+      "query": "Deploy the VSS alerts profile on {{platform}} in real-time (VLM) mode using remote LLM and remote VLM endpoints.",
+      "checks": [
+        "`sh -c 'i=1; while [ \"$i\" -le 12 ]; do curl -sf --max-time 10 http://localhost:8000/docs >/dev/null 2>&1 && exit 0; sleep 5; i=$((i+1)); done; exit 1'` returns exit 0 (VSS Agent REST API responsive; polls up to ~3 min to absorb deploy readiness timing).",
+        "`docker ps --format '{{.Names}}' | grep -qx vss-agent` returns exit 0.",
+        "`docker ps --format '{{.Names}}' | grep -qx vss-rtvi-vlm` returns exit 0 (continuous VLM processor \u2014 required for VLM real-time mode).",
+        "`docker ps --format '{{.Names}}' | grep -qx vss-vios-nvstreamer` returns exit 0 (NVStreamer simulates live cameras).",
+        "`docker ps --format '{{.Names}}' | grep -qx kafka` returns exit 0 (Kafka backplane for alert/incident topics).",
+        "`! docker ps --format '{{.Names}}' | grep -qx vss-rtvi-cv` returns exit 0 (CV-only perception is NOT running \u2014 confirms VLM real-time, not verification)."
+      ]
+    },
+    {
+      "query": "Add the `warehouse_sample.mp4` sample video through NVStreamer so it becomes a live camera that the alerts pipeline can monitor, then start an alert on it for a ladder PPE violation \u2014 anyone on a ladder without a hardhat and safety vest \u2014 which is the condition the warehouse sample footage actually exhibits (see the alerts profile's `alert_type_config.json`), so the VLM reliably produces incidents. Onboard via the NVStreamer file-upload path (PUT the sample file to NVStreamer on port 31000) so the camera is NVStreamer-served, then register that NVStreamer RTSP in VIOS (port 30888) \u2014 even if a `warehouse_sample` entry already exists in VIOS, ensure it is the NVStreamer-served stream (re-onboard through NVStreamer if needed). Start the alert through the VSS Agent's `/generate` endpoint \u2014 do NOT call the `rtvi-vlm` microservice on port 8018 directly. Registering the sensor in VIOS (POST /sensor/add) is REQUIRED \u2014 the task is NOT complete until `warehouse_sample` appears in VIOS. Before finishing, poll until ALL of these hold: NVStreamer (port 31000) lists `warehouse_sample`, VIOS (port 30888) lists `warehouse_sample`, AND rtvi-vlm (`http://localhost:8018/v1/streams/get-stream-info`) shows a live stream; wait and retry for a couple of minutes if any is still propagating.",
+      "checks": [
+        "`sh -c 'i=1; while [ \"$i\" -le 24 ]; do curl -sf --max-time 10 http://localhost:30888/vst/api/v1/sensor/list 2>/dev/null | grep -qi warehouse_sample && exit 0; sleep 5; i=$((i+1)); done; exit 1'` returns exit 0 (warehouse_sample is registered in VIOS; polls up to ~2 min to absorb VIOS registration/propagation delay).",
+        "`sh -c 'i=1; while [ \"$i\" -le 12 ]; do curl -sf --max-time 10 http://localhost:31000/vst/api/v1/sensor/list 2>/dev/null | grep -qi warehouse_sample && exit 0; sleep 5; i=$((i+1)); done; exit 1'` returns exit 0 (warehouse_sample is served by the local NVStreamer instance on port 31000 - confirms onboarding via the NVStreamer file-ingest path, i.e. a file-backed sample stream rather than an arbitrary external camera; polls to absorb upload propagation).",
+        "`sh -c 'i=1; while [ \"$i\" -le 18 ]; do curl -sf --max-time 10 http://localhost:8018/v1/streams/get-stream-info 2>/dev/null | grep -qi rtsp && exit 0; sleep 5; i=$((i+1)); done; exit 1'` returns exit 0 (vss-rtvi-vlm has at least one registered live rtsp stream - confirms the alert was started and wired through the agent path; matches the rtsp scheme rather than a fixed port since the served URL is rewritten to the deployment's external IP, and polls up to ~4 min while the stream registers)."
+      ]
+    },
+    {
+      "query": "List all sensors currently configured in VIOS.",
+      "checks": [
+        "The trajectory issued a `GET http://localhost:30888/vst/api/v1/sensor/list` (or equivalent VIOS sensor-list call) \u2014 not a direct database query, not via NVStreamer's port `31000`.",
+        "`curl -sf http://localhost:30888/vst/api/v1/sensor/list` returns a JSON array containing at least one sensor whose name references the warehouse sample (e.g. `warehouse_sample`, `warehouse_sample.mp4`, or similar) \u2014 confirms the prior NVStreamer onboarding propagated into VIOS.",
+        "The final assistant reply renders the sensor list as readable text/markdown including each sensor's name and state \u2014 not a raw response dump or an error trace."
+      ]
+    },
+    {
+      "query": "How many incidents has the alert recorded for the warehouse sample sensor? Query through the VSS Agent's `POST /generate` endpoint \u2014 the agent dispatches incident lookups to `rtvi_vlm_alert get_incidents`. Report the count (it may be 0 if the VLM has not flagged any yet). Do NOT call the Alert Bridge `/api/v1/realtime` endpoints.",
+      "checks": [
+        "The trajectory issued at least one `POST http://localhost:8000/generate` asking for incidents on the warehouse sample sensor \u2014 the VLM-real-time incident-query path (the agent dispatches it to `rtvi_vlm_alert get_incidents`). It did not answer the count from memory.",
+        "The final assistant reply reports a numeric incident count for the warehouse sample sensor \u2014 a number, which may legitimately be 0 if the VLM has not flagged any incidents yet \u2014 not an error trace and not raw JSON."
+      ]
+    }
+  ]
+}

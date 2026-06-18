@@ -1,0 +1,46 @@
+{
+  "version": "1.0.0",
+  "skill": "physical-ai-infrastructure-setup-and-resilient-scaling",
+  "cases": [
+    {
+      "id": "infra-setup-azure-aks-positive",
+      "question": "Set up resilient Physical AI infrastructure for a video data augmentation workflow on Azure AKS with OSMO and NIM Operator.",
+      "expected_skill": "physical-ai-infrastructure-setup-and-resilient-scaling",
+      "expected_script": null,
+      "ground_truth": "The agent should select the infrastructure setup skill, classify the target as Azure AKS with OSMO and NIM Operator, run selected component preflights first, and stop at the first failed infrastructure gate.",
+      "expected_behavior": [
+        "Reads skills/physical-ai-infrastructure-setup-and-resilient-scaling/SKILL.md.",
+        "Classifies the request as Azure AKS infrastructure setup for a Physical AI workload.",
+        "Loads only the Azure access, Azure cluster, Azure OSMO, NIM Operator, and OSMO CLI component references needed for the target.",
+        "Runs selected preflight scripts before provisioning or workflow submission.",
+        "Reports Kubernetes, OSMO, inference, and workload readiness gates separately."
+      ]
+    },
+    {
+      "id": "infra-setup-osmo-logs-negative",
+      "question": "Summarize recent OSMO workflow logs for workflow abc123 and tell me which task failed.",
+      "expected_skill": null,
+      "expected_script": null,
+      "ground_truth": "This is an OSMO workflow log analysis request, not an infrastructure setup, scaling, validation, or recovery request.",
+      "expected_behavior": [
+        "Does not select physical-ai-infrastructure-setup-and-resilient-scaling unless the prompt also asks to set up, scale, validate, or recover infrastructure.",
+        "Does not run cluster provisioning, Terraform, Helm install, or NIM Operator setup.",
+        "Routes to an OSMO log or workflow troubleshooting reference if available."
+      ]
+    },
+    {
+      "id": "infra-setup-missing-azure-auth-blocked",
+      "question": "Provision the Azure AKS stack for Physical AI, but no Azure login, subscription, or quota details are available.",
+      "expected_skill": "physical-ai-infrastructure-setup-and-resilient-scaling",
+      "expected_script": null,
+      "ground_truth": "The agent should select the infrastructure setup skill, identify missing Azure prerequisites during preflight, and ask for the missing authorization or subscription details instead of attempting provisioning.",
+      "expected_behavior": [
+        "Reads skills/physical-ai-infrastructure-setup-and-resilient-scaling/SKILL.md.",
+        "Loads the Azure access and Azure cluster component references before provisioning.",
+        "Runs or plans Azure preflight checks before Terraform apply.",
+        "Reports missing Azure authentication, subscription, or quota data as blockers.",
+        "Does not claim an AKS cluster or OSMO deployment was created."
+      ]
+    }
+  ]
+}

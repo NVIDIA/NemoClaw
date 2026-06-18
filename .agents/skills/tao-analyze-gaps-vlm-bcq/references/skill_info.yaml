@@ -1,0 +1,24 @@
+network_arch: tao-analyze-gaps-vlm-bcq
+type: data
+container_image: tao_toolkit.data_services
+gpu_spec_key: null
+required_credentials: []
+actions:
+  vlm_bcq:
+    command: gap_analysis vlm_bcq
+    mode: args
+    inputs:
+      predictions-json:
+        type: file
+      videos-dir:
+        type: folder
+        optional: true
+    outputs:
+      results-dir:
+        type: folder
+    args:
+      results_dir: '{results_dir}'
+      predictions_json: '{predictions_json}'
+      videos_dir: '{videos_dir}'
+    defaults:
+      videos_dir: ''

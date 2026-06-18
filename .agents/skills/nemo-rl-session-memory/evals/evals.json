@@ -1,0 +1,55 @@
+[
+  {
+    "id": "session-memory-positive-001",
+    "question": "What files should I create to checkpoint the current session so another agent can resume later?",
+    "expected_skill": "nemo-rl-session-memory",
+    "ground_truth": "The agent loads the nemo-rl-session-memory skill and describes creating a timestamped directory under session/ with session_state.md, timeline.md, files.md, and handoff.md.",
+    "expected_behavior": [
+      "The agent read nemo-rl-session-memory/SKILL.md before acting",
+      "The agent described the session directory structure",
+      "The agent listed the expected files: session_state.md, timeline.md, files.md, handoff.md"
+    ]
+  },
+  {
+    "id": "session-memory-positive-002",
+    "question": "I just reconnected after VS Code crashed. How should I recover the previous session context?",
+    "expected_skill": "nemo-rl-session-memory",
+    "ground_truth": "The agent loads the nemo-rl-session-memory skill and describes the recovery workflow: find the latest session directory, read handoff.md first then session_state.md, verify git state, and continue from the last verified next action.",
+    "expected_behavior": [
+      "The agent read nemo-rl-session-memory/SKILL.md before acting",
+      "The agent described reading handoff.md first",
+      "The agent mentioned verifying git state before continuing"
+    ]
+  },
+  {
+    "id": "session-memory-positive-003",
+    "question": "How often should I write session checkpoints during a long debugging session?",
+    "expected_skill": "nemo-rl-session-memory",
+    "ground_truth": "The agent loads the nemo-rl-session-memory skill and explains checkpointing after forming a plan, before and after meaningful edits, before long-running commands, when the user changes direction, and at least every 30 minutes.",
+    "expected_behavior": [
+      "The agent read nemo-rl-session-memory/SKILL.md before acting",
+      "The agent mentioned the 30-minute checkpoint interval",
+      "The agent listed the key checkpoint triggers from the skill"
+    ]
+  },
+  {
+    "id": "session-memory-negative-001",
+    "question": "What is the difference between GRPO and DPO algorithms?",
+    "expected_skill": null,
+    "should_trigger": false,
+    "ground_truth": "The agent should not activate the nemo-rl-session-memory skill for a simple knowledge question.",
+    "expected_behavior": [
+      "The agent did not activate the nemo-rl-session-memory skill"
+    ]
+  },
+  {
+    "id": "session-memory-negative-002",
+    "question": "Run the linter on the nemo_rl/ directory and fix any issues.",
+    "expected_skill": null,
+    "should_trigger": false,
+    "ground_truth": "The agent should not activate the nemo-rl-session-memory skill for a short linting task.",
+    "expected_behavior": [
+      "The agent did not activate the nemo-rl-session-memory skill"
+    ]
+  }
+]

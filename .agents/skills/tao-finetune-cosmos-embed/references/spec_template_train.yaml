@@ -1,0 +1,94 @@
+results_dir: /results
+
+train:
+  seed: 1234
+  resume_training_checkpoint_path: null
+  max_iter: 3000
+  num_nodes: 1
+  num_gpus: 1
+  gpu_ids: [0]
+  validation_iter: 1000
+  checkpoint_iter: 1000
+  optim:
+    optim: adamw
+    lr: 1e-5
+    weight_decay: 1e-5
+    betas: [0.9, 0.98]
+    warmup_steps: 1000
+    policy: cosine
+    lr_decay_iters: 3000
+  clip_grad_norm: 3.0
+  precision: bf16
+  freeze_visual_encoder: true
+  use_captioning_loss: true
+  use_text_matching_loss: false
+  loss_weights:
+    contrastive_loss: 1.0
+    captioning_loss: 1.0
+    matching_loss: 1.0
+  callbacks:
+    clamp_logit_scale: {}
+    iter_speed: {every_n: 50, save_s3: false}
+    gradient_clip: {clip_norm: 3.0}
+    log_losses: {every_n: 50, verbose: true}
+    validation_eval: {metrics_json_path: auto, embedding_visualization: false}
+
+model:
+  pretrained_model_path: /model/Cosmos-Embed1-224p
+  precision: bf16
+  lora:
+    enabled: false
+    lora_rank: 8
+    lora_alpha: 16
+    lora_dropout: 0.1
+    bias: none
+    use_rslora: false
+    use_dora: false
+  input_hw: [224, 224]
+  network:
+    embed_dim: 256
+    num_query_tokens: 32
+    max_txt_len: 128
+    num_video_frames: 8
+    spatial_resolution: [224, 224]
+    temporal_encoding_type: neighboring_token_propagation
+    contrastive_type: clip
+    qformer_pretrain_ckpt: google-bert/bert-base-uncased
+    query_pooling_type: avg
+    pretrained_text_encoder: false
+    pretrained_visual_encoder: false
+    num_heldout_frames: 0
+    visual_encoder:
+      type: eva_vit_g
+      img_size: 224
+      pretrained: false
+      use_fp8: false
+      transformer_engine: false
+      checkpoint_activations: false
+      checkpoint_attention: false
+
+dataset:
+  train_dataset:
+    dataset_type: msrvtt
+    mp4_urls: /data/video/*.mp4
+    metadata: /data/msrvtt_test_1k.json
+    num_video_frames: 8
+    resolution: [224, 224]
+    batch_size: 4
+    workers: 4
+    split: null
+    random_caption: true
+    skip_missing_files: false
+    caption_to_label: {}
+  val_dataset:
+    dataset_type: msrvtt
+    mp4_urls: /data/video/*.mp4
+    metadata: /data/msrvtt_test_1k.json
+    num_video_frames: 8
+    resolution: [224, 224]
+    batch_size: 32
+    workers: 4
+    split: null
+    random_caption: false
+    skip_missing_files: false
+    caption_to_label: {}

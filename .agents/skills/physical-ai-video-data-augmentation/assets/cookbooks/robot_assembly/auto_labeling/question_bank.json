@@ -1,0 +1,79 @@
+{
+  "name": "window_default_robot_assembly",
+  "questions": [
+    {
+      "id": "1_1",
+      "question": "Does the robot arm make unintended contact with the workpiece, gantry frame, or structural hardware (collision)?",
+      "options": ["Yes", "No"],
+      "aggregation": "any"
+    },
+    {
+      "id": "1_2",
+      "question": "Does any component (panel tile, fastener, bracket) fall or get dropped during assembly?",
+      "options": ["Yes", "No"],
+      "aggregation": "any"
+    },
+    {
+      "id": "1_10",
+      "question": "What type of collision or drop occurred?",
+      "options": [
+        "A. Robot arm hit a structural element",
+        "B. End-effector collided with the panel surface",
+        "C. Component dropped from the arm",
+        "D. Component fell from the assembly"
+      ],
+      "aggregation": "majority",
+      "include_if_any": { "1_1": "Yes", "1_2": "Yes" }
+    },
+    {
+      "id": "2_1",
+      "question": "What best describes the overall lighting level in the assembly cell?",
+      "options": [
+        "A. Bright",
+        "B. Moderate",
+        "C. Dim"
+      ],
+      "aggregation": "majority"
+    },
+    {
+      "id": "4_1",
+      "question": "Does the robot arm exhibit abnormal movement (jerking, freezing, unexpected trajectory)?",
+      "options": ["Yes", "No"],
+      "aggregation": "any"
+    },
+    {
+      "id": "4_2",
+      "question": "Is any component visibly misaligned or incorrectly positioned on the assembly?",
+      "options": ["Yes", "No"],
+      "aggregation": "any"
+    },
+    {
+      "id": "4_3",
+      "question": "Is a human hand, arm, or body visible inside the robot's active workspace?",
+      "options": ["Yes", "No"],
+      "aggregation": "any"
+    },
+    {
+      "id": "5_1",
+      "question": "What is the robot arm currently doing?",
+      "options": [
+        "A. Actively assembling (picking, placing, fastening)",
+        "B. Repositioning or moving between tasks",
+        "C. Idle or parked"
+      ],
+      "aggregation": "majority"
+    },
+    {
+      "id": "5_2",
+      "question": "Is the robot arm's end-effector in contact with the workpiece?",
+      "options": ["Yes", "No"],
+      "aggregation": "any"
+    },
+    {
+      "id": "5_3",
+      "question": "Are panel tiles or components visibly being added to the assembly in this segment?",
+      "options": ["Yes", "No"],
+      "aggregation": "any"
+    }
+  ]
+}

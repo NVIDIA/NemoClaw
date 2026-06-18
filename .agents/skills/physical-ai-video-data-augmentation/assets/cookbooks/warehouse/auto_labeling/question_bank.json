@@ -1,0 +1,88 @@
+{
+  "name": "window_default_warehouse",
+  "questions": [
+    {
+      "id": "1_1",
+      "question": "Is there a collision or physical contact between a worker and moving equipment (scissor lift, falling materials)?",
+      "options": ["Yes", "No"],
+      "aggregation": "any"
+    },
+    {
+      "id": "1_2",
+      "question": "Does any worker fall from a ladder, scaffold, or trip on debris/cables?",
+      "options": ["Yes", "No"],
+      "aggregation": "any"
+    },
+    {
+      "id": "1_10",
+      "question": "What type of contact or fall occurred?",
+      "options": [
+        "A. Worker struck by moving equipment",
+        "B. Worker struck by falling object",
+        "C. Worker fall from height (ladder/scaffold)",
+        "D. Worker trip/fall on floor-level hazard"
+      ],
+      "aggregation": "majority",
+      "include_if": { "1_1": "Yes" }
+    },
+    {
+      "id": "2_1",
+      "question": "What best describes the overall lighting level in the warehouse?",
+      "options": [
+        "A. Bright",
+        "B. Moderate",
+        "C. Dim"
+      ],
+      "aggregation": "majority"
+    },
+    {
+      "id": "2_2",
+      "question": "What best describes the floor surface condition?",
+      "options": [
+        "A. Dry",
+        "B. Wet"
+      ],
+      "aggregation": "majority"
+    },
+    {
+      "id": "4_1",
+      "question": "Is any worker on a ladder in an unsafe manner (bad angle, overreaching, no three-point contact)?",
+      "options": ["Yes", "No"],
+      "aggregation": "any"
+    },
+    {
+      "id": "4_2",
+      "question": "Are cables, extension cords, or hoses creating a visible trip hazard across a walkway?",
+      "options": ["Yes", "No"],
+      "aggregation": "any"
+    },
+    {
+      "id": "4_3",
+      "question": "Is any worker near moving equipment (scissor lift, hoist) without maintaining safe clearance?",
+      "options": ["Yes", "No"],
+      "aggregation": "any"
+    },
+    {
+      "id": "5_1",
+      "question": "How many workers are visible in the scene?",
+      "options": [
+        "A. None",
+        "B. One or two",
+        "C. Three or more"
+      ],
+      "aggregation": "majority"
+    },
+    {
+      "id": "5_2",
+      "question": "Is any powered equipment (scissor lift, hoist) actively in motion?",
+      "options": ["Yes", "No"],
+      "aggregation": "any"
+    },
+    {
+      "id": "5_3",
+      "question": "Is any worker actively using a ladder or working at height?",
+      "options": ["Yes", "No"],
+      "aggregation": "any"
+    }
+  ]
+}

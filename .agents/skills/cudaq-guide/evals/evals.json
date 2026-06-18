@@ -1,0 +1,109 @@
+[
+  {
+    "id": "cudaq-guide-install-001",
+    "question": "I just got access to a Linux box with an NVIDIA GPU. How do I install CUDA-Q and confirm it works?",
+    "expected_skill": "cudaq-guide",
+    "expected_script": null,
+    "ground_truth": "The agent recommends the Python `pip install cudaq` path (with the CUDA Toolkit for GPU targets) and defaults to the `nvidia` target, then validates the install by running the Bell state example and confirming the output is roughly `{ 00:~500 11:~500 }`.",
+    "expected_behavior": [
+      "The agent read skills/cudaq-guide/SKILL.md before answering",
+      "The agent recommended installing CUDA-Q via `pip install cudaq`",
+      "The agent included a validation step that runs the Bell state example and expects roughly { 00:~500 11:~500 }"
+    ]
+  },
+  {
+    "id": "cudaq-guide-test-program-001",
+    "question": "Help me write and run a minimal CUDA-Q program to check my setup is working.",
+    "expected_skill": "cudaq-guide",
+    "expected_script": null,
+    "ground_truth": "The agent guides the user to write a Bell state kernel using `@cudaq.kernel`, `cudaq.qvector`, and a Hadamard + CX, then run it with `cudaq.sample` and read the resulting roughly balanced { 00 11 } measurement histogram.",
+    "expected_behavior": [
+      "The agent read skills/cudaq-guide/SKILL.md before answering",
+      "The agent explained that `@cudaq.kernel` marks a quantum kernel and `cudaq.qvector(N)` allocates qubits",
+      "The agent used `cudaq.sample` to obtain a measurement histogram"
+    ]
+  },
+  {
+    "id": "cudaq-guide-gpu-sim-001",
+    "question": "My CUDA-Q state vector circuit is 34 qubits and won't fit on one GPU. Which simulation target should I use?",
+    "expected_skill": "cudaq-guide",
+    "expected_script": null,
+    "ground_truth": "The agent recommends the `nvidia --target-option mgpu` target, which pools memory across multiple GPUs for circuits that exceed single-GPU memory, and notes that it requires MPI.",
+    "expected_behavior": [
+      "The agent read skills/cudaq-guide/SKILL.md before answering",
+      "The agent recommended the `nvidia --target-option mgpu` target",
+      "The agent noted that the mgpu target requires MPI"
+    ]
+  },
+  {
+    "id": "cudaq-guide-qpu-001",
+    "question": "How do I run my CUDA-Q kernel on real Quantinuum hardware?",
+    "expected_skill": "cudaq-guide",
+    "expected_script": null,
+    "ground_truth": "The agent identifies Quantinuum as an ion-trap provider, points to the ion-trap hardware documentation, and advises testing locally with `emulate=True` before submitting to real hardware.",
+    "expected_behavior": [
+      "The agent read skills/cudaq-guide/SKILL.md before answering",
+      "The agent identified Quantinuum as an ion-trap QPU provider",
+      "The agent advised testing locally with `emulate=True` before submitting to real hardware"
+    ]
+  },
+  {
+    "id": "cudaq-guide-parallelize-001",
+    "question": "I need to run hundreds of independent CUDA-Q circuits as fast as possible across my 8 GPUs. How should I do that?",
+    "expected_skill": "cudaq-guide",
+    "expected_script": null,
+    "ground_truth": "The agent recommends the `nvidia --target-option mqpu` target and asynchronous dispatch with `cudaq.sample_async` / `cudaq.observe_async`, spreading circuits across GPUs via `qpu_id`.",
+    "expected_behavior": [
+      "The agent read skills/cudaq-guide/SKILL.md before answering",
+      "The agent recommended the `nvidia --target-option mqpu` target",
+      "The agent described asynchronous dispatch with `sample_async`/`observe_async` across GPUs"
+    ]
+  },
+  {
+    "id": "cudaq-guide-applications-001",
+    "question": "What kinds of quantum applications can I build with CUDA-Q?",
+    "expected_skill": "cudaq-guide",
+    "expected_script": null,
+    "ground_truth": "The agent surveys CUDA-Q's built-in application areas such as optimization (QAOA), chemistry (VQE), error correction, and standard algorithms (Grover, Shor, QFT).",
+    "expected_behavior": [
+      "The agent read skills/cudaq-guide/SKILL.md before answering",
+      "The agent listed multiple CUDA-Q application domains, such as optimization/QAOA, chemistry/VQE, and error correction"
+    ]
+  },
+  {
+    "id": "cudaq-guide-neg-001",
+    "question": "Write a short poem about the changing seasons.",
+    "expected_skill": null,
+    "expected_script": null,
+    "should_trigger": false,
+    "ground_truth": "The agent writes the poem directly and does not consult the CUDA-Q guide skill.",
+    "expected_behavior": [
+      "The agent did not read skills/cudaq-guide/SKILL.md",
+      "The agent answered the request directly with a poem"
+    ]
+  },
+  {
+    "id": "cudaq-guide-neg-002",
+    "question": "Write a JavaScript function that debounces another function.",
+    "expected_skill": null,
+    "expected_script": null,
+    "should_trigger": false,
+    "ground_truth": "The agent provides a JavaScript debounce implementation without invoking the CUDA-Q guide skill.",
+    "expected_behavior": [
+      "The agent did not read skills/cudaq-guide/SKILL.md",
+      "The agent provided a JavaScript debounce function directly"
+    ]
+  },
+  {
+    "id": "cudaq-guide-neg-003",
+    "question": "Install PyTorch with CUDA support on my Ubuntu machine.",
+    "expected_skill": null,
+    "expected_script": null,
+    "should_trigger": false,
+    "ground_truth": "The agent gives PyTorch + CUDA installation guidance (e.g. the appropriate pip/conda command for the CUDA version) without invoking the CUDA-Q guide skill, since the request is about PyTorch rather than CUDA-Q.",
+    "expected_behavior": [
+      "The agent did not read skills/cudaq-guide/SKILL.md",
+      "The agent provided PyTorch installation steps for the requested CUDA setup"
+    ]
+  }
+]

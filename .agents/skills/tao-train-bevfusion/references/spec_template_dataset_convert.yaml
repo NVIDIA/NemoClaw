@@ -1,0 +1,9 @@
+dataset: kitti
+root_dir: ''
+results_dir: ''
+mode: training
+with_plane: false
+per_sequence: false
+is_synthetic: false
+dimension_order: hwl
+merge_only: false

@@ -1,0 +1,81 @@
+network_arch: visual-changenet
+automl_enabled: true
+container_image: tao_toolkit.pyt
+actions:
+  train:
+    command: visual_changenet train -e {config_path}
+    config_format: yaml
+    inputs:
+    - dataset.classify.train_dataset.csv_path
+    - dataset.classify.train_dataset.images_dir
+    - dataset.classify.validation_dataset.csv_path
+    - dataset.classify.validation_dataset.images_dir
+    outputs:
+    - results_dir
+    upload_excludes:
+    - inputs/
+  evaluate:
+    command: visual_changenet evaluate -e {config_path}
+    config_format: yaml
+    inputs:
+    - dataset.classify.test_dataset.csv_path
+    - dataset.classify.test_dataset.images_dir
+    - evaluate.checkpoint
+    outputs:
+    - results_dir
+    upload_excludes:
+    - inputs/
+  inference:
+    command: visual_changenet inference -e {config_path}
+    config_format: yaml
+    inputs:
+    - dataset.classify.infer_dataset.csv_path
+    - dataset.classify.infer_dataset.images_dir
+    - inference.checkpoint
+    outputs:
+    - results_dir
+    upload_excludes:
+    - inputs/
+  segment_train:
+    command: visual_changenet train -e {config_path}
+    config_format: yaml
+    inputs:
+    - dataset.segment.root_dir
+    outputs:
+    - results_dir
+    upload_excludes:
+    - inputs/
+  segment_evaluate:
+    command: visual_changenet evaluate -e {config_path}
+    config_format: yaml
+    inputs:
+    - dataset.segment.root_dir
+    - evaluate.checkpoint
+    outputs:
+    - results_dir
+    upload_excludes:
+    - inputs/
+  segment_inference:
+    command: visual_changenet inference -e {config_path}
+    config_format: yaml
+    inputs:
+    - dataset.segment.root_dir
+    - inference.checkpoint
+    outputs:
+    - results_dir
+    upload_excludes:
+    - inputs/
+pretrained_models:
+  classify:
+    # HF source for staging; the spec field accepts only LOCAL paths. Download
+    # `nvidia/C-RADIOv2-B`/`model.safetensors` and mount it before training.
+    backbone: hf://nvidia/C-RADIOv2-B/model.safetensors
+    full_model: ngc://nvidia/tao/visual_changenet_classification:visual_changenet_nvpcb_trainable_v1.0
+  segment:
+    full_model: ngc://nvidia/tao/visual_changenet_segmentation_levircd:visual_changenet_levircd_trainable_v1.0
+key_defaults: {}
+spec_shorthand_keys:
+  num_epochs: train.num_epochs
+  num_gpus: train.num_gpus
+  batch_size: dataset.classify.batch_size
+  learning_rate: train.optim.lr

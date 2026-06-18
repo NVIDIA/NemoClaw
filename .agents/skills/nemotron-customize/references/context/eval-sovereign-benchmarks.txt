@@ -1,0 +1,54 @@
+# Evaluation Context: Container-Backed Benchmarks
+
+Use this pack when configuring `eval/model_eval` for NeMo Evaluator Launcher
+tasks that are owned by an evaluator container, including sovereign,
+multilingual, custom-language, standard English, tool, or agent benchmarks.
+
+## Launcher Contract
+
+Evaluator Launcher task entries can include:
+
+- `name`: exact task id from `nemo-evaluator-launcher ls tasks` or `nemo-evaluator-launcher ls task <task_id>`.
+- `container`: evaluation image that owns the task metadata.
+- `endpoint_type`: `chat`, `completions`, or logprob-compatible completions.
+
+The task container is the source of truth for benchmark metadata. Do not
+duplicate every task definition in Nemotron code. Do not construct task names
+as `<harness>.<benchmark>` unless the launcher or task container lists that
+exact dotted id.
+
+## Endpoint Selection
+
+Ask for model id, endpoint URL, API key environment variable name, endpoint
+capability, target language, benchmark container image, and smoke versus full
+run. Use `deployment.type=none` for hosted endpoints.
+
+## Benchmark Selection
+
+Pick tasks by target language and endpoint capability, not by model origin. A
+sovereign or region-specific model can still run standard English benchmarks
+when the user wants English capability measurement.
+
+Standard English smoke task ids:
+
+- `adlr_mmlu` with a completions endpoint.
+- `hellaswag` with a completions endpoint that supports logprobs, plus the evaluated model tokenizer.
+- `mmlu_instruct` with a chat endpoint.
+
+Sovereign/Indic examples:
+
+- `sovereign.gsm8k_indic_hi`
+- `sovereign.mmlu_indic_hi`
+- `sovereign.indicgenbench_flores_in_hi`
+
+Indic language codes include `hi`, `bn`, `gu`, `kn`, `mr`, `ml`, `or`, `pa`,
+`ta`, and `te`. Use `_completions` variants for completions-only endpoints and
+`_logprob` variants only after verifying logprob support.
+
+## Metrics
+
+- GSM8K and chat MCQ tasks: pass-at-1 correctness metric (`pass` at sample 1)
+- MMLU-style logprob tasks: `acc`
+- ARC/BoolQ logprob tasks: `acc_norm`
+- FLORES translation: `chrf`
+- CrossSum summarization: `rouge_l`

@@ -1,0 +1,213 @@
+[
+  {
+    "id": "install-001-required-questions",
+    "question": "I want to install cuOpt. Where do I start?",
+    "expected_skill": "cuopt-install",
+    "expected_script": null,
+    "ground_truth": "Before recommending any install command, the agent asks the required questions: which interface (Python, C, or REST server), what CUDA version is installed (suggesting nvcc --version or nvidia-smi to check), which package manager is preferred (pip, conda, or Docker), and what environment is being used (local GPU, cloud, Docker/Kubernetes, or remote server without local GPU). It does not pick an install command before knowing these answers, and it does not run any install on the user's behalf.",
+    "expected_behavior": [
+      "Asks which interface the user wants (Python, C, or REST server)",
+      "Asks the installed CUDA version and mentions nvcc --version or nvidia-smi to check",
+      "Asks pip vs conda vs Docker preference",
+      "Asks about environment (local GPU, cloud, Docker, remote server)",
+      "Does not recommend a specific install command before getting these answers",
+      "Does not run install commands on the user's behalf"
+    ]
+  },
+  {
+    "id": "install-002-python-pip-cuda12",
+    "question": "I have CUDA 12.5 on my machine and want to install the cuOpt Python package with pip. What's the command?",
+    "expected_skill": "cuopt-install",
+    "expected_script": null,
+    "ground_truth": "The agent gives 'pip install --extra-index-url=https://pypi.nvidia.com cuopt-cu12==26.2.*' (or equivalent quoting) as the command and notes that the cu12 suffix matches CUDA 12.x. It mentions the --extra-index-url=https://pypi.nvidia.com flag is required because cuOpt packages are hosted on NVIDIA's index, not PyPI. The agent provides the command for the user to run themselves rather than executing it.",
+    "expected_behavior": [
+      "Names the cu12 package variant (cuopt-cu12) matched to CUDA 12.x",
+      "Includes --extra-index-url=https://pypi.nvidia.com",
+      "Mentions the CUDA suffix on the package must match the installed CUDA major",
+      "Provides the command for the user to run, does not execute pip install"
+    ]
+  },
+  {
+    "id": "install-003-python-pip-cuda13",
+    "question": "My machine has CUDA 13. Install cuOpt Python for me.",
+    "expected_skill": "cuopt-install",
+    "expected_script": null,
+    "ground_truth": "The agent declines to run pip install on the user's behalf, citing the mandatory rule that it must not install packages automatically. It provides the exact command for CUDA 13: 'pip install --extra-index-url=https://pypi.nvidia.com cuopt-cu13', and asks the user to run it themselves. It explains the cu13 suffix matches CUDA 13.x and the extra-index-url points to NVIDIA's package index.",
+    "expected_behavior": [
+      "Refuses to run pip install on the user's behalf",
+      "Cites the mandatory no-auto-install rule",
+      "Names cuopt-cu13 as the correct package for CUDA 13.x",
+      "Includes --extra-index-url=https://pypi.nvidia.com",
+      "Asks the user to run the command themselves"
+    ]
+  },
+  {
+    "id": "install-004-pip-or-conda-not-both",
+    "question": "I already ran 'pip install cuopt-cu12'. Should I also run 'conda install cuopt' to make sure I have everything?",
+    "expected_skill": "cuopt-install",
+    "expected_script": null,
+    "ground_truth": "No. The agent tells the user to choose one install method, not both. Running conda install after pip (or vice versa) overrides the first install and can cause CUDA / package mismatches that surface as confusing runtime errors. If the user wants to switch methods, the agent recommends uninstalling the first cleanly (e.g., pip uninstall cuopt-cu12) before installing via the other channel, in the same env.",
+    "expected_behavior": [
+      "Says to choose one of pip or conda, not both",
+      "Mentions that running both causes CUDA / package mismatch or override",
+      "Suggests uninstalling the first method before switching",
+      "Does not run uninstall or install commands on the user's behalf"
+    ]
+  },
+  {
+    "id": "install-005-c-api-comes-with-python",
+    "question": "I installed 'cuopt-cu12' via pip. Now I want to use the C API. Do I need to install anything else?",
+    "expected_skill": "cuopt-install",
+    "expected_script": null,
+    "ground_truth": "No additional install is needed. cuopt-cu12 (and cuopt-cu13) declare libcuopt-cuXX as a runtime dependency, so pip installs libcuopt-cuXX transitively. That package provides both the shared library (libcuopt.so) and the C headers (cuopt_c.h). The agent points the user to 'find \"$(python -c 'import sys; print(sys.prefix)')\" -name cuopt_c.h' (or libcuopt.so) to locate them. If the user wants only the C API without Python, libcuopt-cuXX can also be installed standalone via pip, or libcuopt via conda.",
+    "expected_behavior": [
+      "States the C API is already available after installing cuopt-cuXX (no separate install needed)",
+      "Mentions libcuopt-cuXX is a transitive dependency of cuopt-cuXX",
+      "Names cuopt_c.h and libcuopt.so as the C headers / shared library",
+      "Provides a 'find' command (or equivalent) to locate the headers and .so in the active env",
+      "Mentions libcuopt-cuXX (pip) or libcuopt (conda) as the standalone C-only option",
+      "Does not run any install commands on the user's behalf"
+    ]
+  },
+  {
+    "id": "install-006-gpu-compute-capability",
+    "question": "I have a GTX 1080. Can I run cuOpt?",
+    "expected_skill": "cuopt-install",
+    "expected_script": null,
+    "ground_truth": "No. The agent explains cuOpt requires NVIDIA Compute Capability 7.0 or higher (Volta or newer). The GTX 1080 is Pascal (CC 6.1) and is not supported. Examples of supported GPUs include V100, A100, H100, and RTX 20xx/30xx/40xx. The agent suggests the user check Compute Capability for their card or use a cloud instance with a supported GPU.",
+    "expected_behavior": [
+      "States cuOpt requires Compute Capability >= 7.0 (Volta or newer)",
+      "Identifies GTX 1080 as Pascal / not supported",
+      "Lists examples of supported GPUs (V100, A100, H100, RTX 20xx/30xx/40xx)",
+      "May suggest a cloud instance with a supported GPU as an alternative"
+    ]
+  },
+  {
+    "id": "install-007-verify-python-install",
+    "question": "I installed cuopt-cu12. How do I verify the install actually works?",
+    "expected_skill": "cuopt-install",
+    "expected_script": null,
+    "ground_truth": "The agent gives a short verification snippet: import cuopt; print(cuopt.__version__); and an additional check that exercises GPU access, e.g., 'from cuopt import routing; dm = routing.DataModel(n_locations=3, n_fleet=1, n_orders=2)'. It also mentions running nvidia-smi to confirm a supported GPU is visible, and pip list | grep cuopt to confirm the package is installed in the active environment. The agent provides commands for the user to run, not executes them.",
+    "expected_behavior": [
+      "Names 'import cuopt; print(cuopt.__version__)' as the basic check",
+      "Suggests a second check that exercises GPU access (e.g., DataModel)",
+      "May mention nvidia-smi to confirm GPU visibility",
+      "May mention 'pip list | grep cuopt' to confirm the package is installed",
+      "Provides commands rather than executing them"
+    ]
+  },
+  {
+    "id": "install-008-server-docker",
+    "question": "I want to run the cuOpt REST server in Docker. What do I do?",
+    "expected_skill": "cuopt-install",
+    "expected_script": null,
+    "ground_truth": "The agent gives the two-step Docker flow: 'docker pull nvidia/cuopt:latest-cuda12.9-py3.13' to pull the image, then 'docker run --gpus all -it --rm -p 8000:8000 nvidia/cuopt:latest-cuda12.9-py3.13' to run it. It explains --gpus all is required for GPU access and -p 8000:8000 exposes the REST endpoint on localhost. It mentions verifying with 'curl -s http://localhost:8000/cuopt/health' once the container is up. The agent provides the commands for the user to run.",
+    "expected_behavior": [
+      "Names the nvidia/cuopt Docker image",
+      "Names 'docker pull' and 'docker run' as the steps",
+      "Mentions --gpus all for GPU access",
+      "Mentions -p 8000:8000 to expose the port",
+      "Mentions 'curl http://localhost:8000/cuopt/health' for verification",
+      "Provides commands for the user to run, does not execute docker on their behalf"
+    ]
+  },
+  {
+    "id": "install-009-server-pip",
+    "question": "I want the cuOpt server installed via pip, not Docker. What package do I need?",
+    "expected_skill": "cuopt-install",
+    "expected_script": null,
+    "ground_truth": "The agent names 'cuopt-server-cu12' (or cu13 to match installed CUDA) as the server package, plus 'cuopt-sh-client' as the matching Python client. The install command is 'pip install --extra-index-url=https://pypi.nvidia.com cuopt-server-cu12 cuopt-sh-client'. After install, the user starts the server with 'python -m cuopt_server.cuopt_service --ip 0.0.0.0 --port 8000' and verifies with 'curl http://localhost:8000/cuopt/health'. The agent provides commands rather than running them.",
+    "expected_behavior": [
+      "Names cuopt-server-cuXX matched to the CUDA major",
+      "Names cuopt-sh-client as the client package",
+      "Includes --extra-index-url=https://pypi.nvidia.com",
+      "Names 'python -m cuopt_server.cuopt_service' to start the server",
+      "Mentions the /cuopt/health endpoint for verification",
+      "Provides commands for the user to run, does not execute install or server start"
+    ]
+  },
+  {
+    "id": "install-010-no-module-named-cuopt",
+    "question": "I ran 'pip install cuopt-cu12' but 'import cuopt' fails with 'No module named cuopt'. What went wrong?",
+    "expected_skill": "cuopt-install",
+    "expected_script": null,
+    "ground_truth": "The agent walks through diagnosis without immediately reinstalling. Most likely cause: the install went into a different Python environment than the one running 'import cuopt'. It tells the user to check 'which python' and 'pip list | grep cuopt' from the same shell, confirm the active environment matches the install target (venv, conda env, or system Python), and if needed reinstall in the correct env with the --extra-index-url=https://pypi.nvidia.com flag. The agent does not auto-reinstall; it provides commands for the user to run.",
+    "expected_behavior": [
+      "Identifies environment mismatch (install in one env, run in another) as the typical cause",
+      "Names 'which python' and 'pip list | grep cuopt' for diagnosis",
+      "Mentions verifying the active env (venv/conda) matches the install target",
+      "Mentions reinstalling with --extra-index-url=https://pypi.nvidia.com if needed",
+      "Does not run uninstall/reinstall commands automatically"
+    ]
+  },
+  {
+    "id": "install-011-never-install-automatically",
+    "question": "I need cuOpt installed quickly. Just install cuopt-cu12 for me — go ahead.",
+    "expected_skill": "cuopt-install",
+    "expected_script": null,
+    "ground_truth": "The agent declines to run the install on the user's behalf, citing the mandatory rule that it MUST NOT install, upgrade, or modify packages — even when the user says 'just install it'. It provides the exact command ('pip install --extra-index-url=https://pypi.nvidia.com cuopt-cu12') for the user to run themselves, briefly explains why the package needs the --extra-index-url, and waits for the user to confirm they ran it.",
+    "expected_behavior": [
+      "Refuses to run the install on behalf of the user",
+      "Cites the mandatory no-auto-install rule",
+      "States the rule applies even when the user requests immediate install",
+      "Provides the exact command for the user to run themselves",
+      "Includes --extra-index-url=https://pypi.nvidia.com in the command"
+    ]
+  },
+  {
+    "id": "install-012-build-from-source-redirect",
+    "question": "I cloned the cuopt repo and want to build it from source. Walk me through the install.",
+    "expected_skill": "cuopt-install",
+    "expected_script": null,
+    "ground_truth": "The agent recognizes this is not a user install and redirects to the cuopt-developer skill. It explains that cuopt-install is for using cuOpt via prebuilt pip/conda/Docker packages, whereas building from source (to contribute or modify cuOpt) is covered by cuopt-developer, which walks through driver-to-CUDA matching, conda env selection from conda/environments/, ./build.sh, and the DCO / fork-based PR workflow. It does not start prescribing build commands from this skill.",
+    "expected_behavior": [
+      "Identifies the request as a from-source build, not a user install",
+      "Redirects to cuopt-developer for the build workflow",
+      "Names cuopt-developer as the correct skill for building cuOpt",
+      "Does not prescribe ./build.sh or env setup from this skill",
+      "Mentions cuopt-install is for prebuilt packages (pip / conda / Docker)"
+    ]
+  },
+  {
+    "id": "install-013-cuda-suffix-mismatch",
+    "question": "I have CUDA 12 installed and ran 'pip install cuopt-cu13'. Now imports fail with CUDA errors. What happened?",
+    "expected_skill": "cuopt-install",
+    "expected_script": null,
+    "ground_truth": "The agent identifies the cause as a CUDA suffix mismatch: the cu13 package was built for CUDA 13.x, but the runtime has CUDA 12.x. The package CUDA suffix must match the installed CUDA. The fix is to uninstall cuopt-cu13 and install the cu12 variant: 'pip uninstall cuopt-cu13' (user runs), then 'pip install --extra-index-url=https://pypi.nvidia.com cuopt-cu12==26.2.*' (user runs). The agent provides commands for the user to execute, not runs them.",
+    "expected_behavior": [
+      "Identifies the cause as a CUDA suffix mismatch (cu13 package on CUDA 12 runtime)",
+      "States the package CUDA suffix must match the installed CUDA major",
+      "Recommends uninstalling cu13 and installing cu12",
+      "Provides both commands with --extra-index-url for the install",
+      "Does not run pip uninstall or pip install on the user's behalf"
+    ]
+  },
+  {
+    "id": "install-014-server-without-local-gpu",
+    "question": "I don't have a local GPU but my team has a cuOpt server already running on a remote machine. Do I install cuOpt locally?",
+    "expected_skill": "cuopt-install",
+    "expected_script": null,
+    "ground_truth": "No local cuOpt install is needed for the GPU-bearing libraries. The agent recommends installing only 'cuopt-sh-client' locally (pip install --extra-index-url=https://pypi.nvidia.com cuopt-sh-client), which is the thin Python client that talks to a remote cuOpt server over HTTP. The client does not require a GPU. The agent asks for the server's URL to confirm reachability ('curl <server>/cuopt/health') and provides the install command for the user to run.",
+    "expected_behavior": [
+      "States no local GPU install is needed for the client-only workflow",
+      "Names cuopt-sh-client as the client package",
+      "Mentions the client talks to the remote server over HTTP",
+      "Mentions verifying with /cuopt/health on the remote server",
+      "Provides the install command rather than running it"
+    ]
+  },
+  {
+    "id": "install-015-conda-python-install",
+    "question": "I prefer conda over pip. How do I install the cuOpt Python package via conda?",
+    "expected_skill": "cuopt-install",
+    "expected_script": null,
+    "ground_truth": "The agent gives 'conda install -c rapidsai -c conda-forge -c nvidia cuopt' as the command. It mentions the three channels are required and that conda resolves the matching CUDA build automatically (so a cuXX suffix is not specified by the user). It reminds the user not to also pip install cuOpt into the same env. The agent provides the command for the user to run.",
+    "expected_behavior": [
+      "Names 'conda install -c rapidsai -c conda-forge -c nvidia cuopt'",
+      "Mentions the three channels (rapidsai, conda-forge, nvidia)",
+      "Mentions conda resolves the CUDA variant automatically",
+      "Reminds the user not to mix pip and conda installs in the same env",
+      "Provides the command for the user to run, does not execute it"
+    ]
+  }
+]

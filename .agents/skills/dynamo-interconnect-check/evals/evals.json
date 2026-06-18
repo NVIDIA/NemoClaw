@@ -1,0 +1,62 @@
+{
+  "skill": "dynamo-interconnect-check",
+  "cases": [
+    {
+      "id": "confirm-nixl-before-trusting-disagg",
+      "question": "I just brought up a disaggregated recipe. Confirm the NIXL/UCX transport is actually working before I trust the throughput numbers.",
+      "expected_skill": "dynamo-interconnect-check",
+      "expected_script": "scripts/check_interconnect.py",
+      "ground_truth": "Run read-only interconnect checks (transport env vars on the recipe, then runtime NIXL/UCX/NCCL reachability over RDMA/NVLink) and report whether KV transport is on the fast path.",
+      "expected_behavior": [
+        "Check transport env vars on the recipe",
+        "Run read-only runtime interconnect checks",
+        "Report whether NIXL/UCX can reach peer workers over RDMA/NVLink",
+        "Never mutate the cluster or print secrets"
+      ]
+    },
+    {
+      "id": "agg-ok-disagg-slow-suspect-fabric",
+      "question": "Aggregated serving works fine but disaggregated is slow and sometimes hangs — I suspect the fabric, not the model.",
+      "expected_skill": "dynamo-interconnect-check",
+      "expected_script": "scripts/check_interconnect.py",
+      "ground_truth": "Validate the disagg transport path; a deployment can pass an endpoint smoke test while KV transfer silently falls back to a slow/broken path.",
+      "expected_behavior": [
+        "Check transport configuration and runtime reachability",
+        "Determine if KV transfer is on a fallback path",
+        "Report fabric findings"
+      ]
+    },
+    {
+      "id": "rdma-nvlink-readiness-multinode",
+      "question": "Check RDMA/NVLink readiness for my multi-node disagg deployment.",
+      "expected_skill": "dynamo-interconnect-check",
+      "expected_script": "scripts/check_interconnect.py",
+      "ground_truth": "Run the interconnect readiness checks for a multi-node disagg deployment and report transport health.",
+      "expected_behavior": [
+        "Run interconnect readiness checks for multi-node disagg",
+        "Report RDMA/NVLink transport health"
+      ]
+    },
+    {
+      "id": "neg-deploy-disagg-recipe",
+      "question": "Deploy a disaggregated recipe for DeepSeek on my cluster.",
+      "expected_skill": "dynamo-recipe-runner",
+      "ground_truth": "Bringing a recipe up belongs to dynamo-recipe-runner; interconnect-check runs afterward.",
+      "expected_behavior": ["dynamo-interconnect-check stays silent; dynamo-recipe-runner handles it"]
+    },
+    {
+      "id": "neg-disagg-pods-crashing",
+      "question": "My disagg prefill pods are crashing and unschedulable.",
+      "expected_skill": "dynamo-troubleshoot",
+      "ground_truth": "Already-crashing/unschedulable pods are failure diagnosis, which belongs to dynamo-troubleshoot.",
+      "expected_behavior": ["dynamo-interconnect-check stays silent; dynamo-troubleshoot handles it"]
+    },
+    {
+      "id": "neg-switch-router-mode",
+      "question": "Change my router to least-loaded mode.",
+      "expected_skill": "dynamo-router-starter",
+      "ground_truth": "Router mode work belongs to dynamo-router-starter.",
+      "expected_behavior": ["dynamo-interconnect-check stays silent; dynamo-router-starter handles it"]
+    }
+  ]
+}

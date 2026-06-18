@@ -1,0 +1,40 @@
+type: platform
+required_credentials: []
+optional_credentials:
+- name: DOCKER_HOST
+  source: env_var
+- name: DOCKER_NETWORK
+  source: env_var
+- name: DOCKER_USERNAME
+  source: env_var
+- name: DOCKER_PULL_POLICY
+  source: env_var
+- name: DOCKER_AUTO_REMOVE
+  source: env_var
+- name: NGC_KEY
+  source: env_var
+- name: HOST_SSH_PATH
+  source: env_var
+- name: ACCESS_KEY
+  source: env_var
+- name: SECRET_KEY
+  source: env_var
+- name: S3_ENDPOINT_URL
+  source: env_var
+- name: S3_BUCKET_NAME
+  source: env_var
+- name: HF_TOKEN
+  source: env_var
+resource_defaults:
+  num_gpus: 1
+  docker_host: unix:///var/run/docker.sock
+  docker_network: tao_default
+  docker_pull_policy: missing
+  docker_auto_remove: false
+  tmpfs:
+  - /dev/shm
+  remove: false
+cloud_storage:
+  protocol: local
+  uri_format: file://{absolute_path}
+  metadata_key: local

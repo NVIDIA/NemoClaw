@@ -1,0 +1,2045 @@
+{
+  "automl_default_parameters": [
+    "train.optim.lr"
+  ],
+  "automl_disabled_parameters": [
+    "train.cudnn",
+    "dataset.augmentation.crop_size",
+    "model.frustum3d.completion_weights",
+    "train.gpu_ids",
+    "model.sem_seg_head",
+    "wandb.tags",
+    "model.backbone",
+    "dataset.depth_size",
+    "train.optim.milestones",
+    "evaluate",
+    "inference",
+    "train",
+    "dataset.augmentation",
+    "dataset.augmentation.train_crop_size",
+    "gen_trt_engine",
+    "gen_trt_engine.tensorrt.layers_precision",
+    "model.sem_seg_head.in_features",
+    "dataset.target_size",
+    "model.frustum3d",
+    "dataset",
+    "gen_trt_engine.tensorrt",
+    "dataset.reduced_target_size",
+    "model.sem_seg_head.deformable_transformer_encoder_in_features",
+    "dataset.train",
+    "model",
+    "train.freeze",
+    "evaluate.gpu_ids",
+    "dataset.augmentation.train_min_size",
+    "model.mask_former",
+    "train.optim",
+    "dataset.val",
+    "export",
+    "dataset.truncation_range",
+    "wandb",
+    "model.projection",
+    "dataset.occ_truncation_lvl",
+    "inference.gpu_ids",
+    "dataset.test"
+  ],
+  "default": {
+    "dataset": {
+      "augmentation": {
+        "color_aug_ssd": false,
+        "crop_size": [
+          240,
+          240
+        ],
+        "enable_crop": false,
+        "gen_aug_weight": 0.0,
+        "random_flip": "",
+        "random_flip_prob": 0.5,
+        "single_category_max_area": 1.0,
+        "size_divisibility": -1.0,
+        "test_max_size": 960,
+        "test_min_size": 240,
+        "train_crop_size": [
+          240,
+          240
+        ],
+        "train_max_size": 768,
+        "train_min_size": [
+          448
+        ]
+      },
+      "contiguous_id": false,
+      "depth_bound": false,
+      "depth_max": 6.0,
+      "depth_min": 0.4,
+      "depth_scale": 25.0,
+      "depth_size": [
+        120,
+        160
+      ],
+      "downsample_factor": 1,
+      "enable_3d": false,
+      "enable_mp_occ": true,
+      "frustum_mask_path": "meta/frustum_mask.npz",
+      "ignore_label": 255,
+      "img_format": "RGB",
+      "iso_value": 1.0,
+      "label_map": "",
+      "min_instance_pixels": 200,
+      "name": "front3d",
+      "num_thing_classes": 9,
+      "occ_truncation_lvl": [
+        8.0,
+        6.0
+      ],
+      "pin_memory": true,
+      "reduced_target_size": [
+        160,
+        120
+      ],
+      "target_size": [
+        320,
+        240
+      ],
+      "test": {
+        "base_dir": "",
+        "batch_size": 1,
+        "json_path": "",
+        "num_workers": 1
+      },
+      "train": {
+        "base_dir": "",
+        "batch_size": 1,
+        "json_path": "",
+        "num_workers": 1
+      },
+      "truncation_range": [
+        0.0,
+        12.0
+      ],
+      "val": {
+        "base_dir": "",
+        "batch_size": 1,
+        "json_path": "",
+        "num_workers": 1
+      },
+      "workers": 8
+    },
+    "encryption_key": "",
+    "export": {
+      "batch_size": -1,
+      "checkpoint": "???",
+      "format": "onnx",
+      "gpu_id": 0,
+      "input_channel": 3,
+      "input_height": 544,
+      "input_width": 960,
+      "max_voxels": 700000,
+      "on_cpu": false,
+      "onnx_file": "???",
+      "onnx_file_2d": "",
+      "onnx_file_3d": "",
+      "opset_version": 17,
+      "results_dir": "",
+      "verbose": false
+    },
+    "model": {
+      "backbone": {
+        "backbone_type": "vggt",
+        "pretrained_model_path": ""
+      },
+      "frustum3d": {
+        "completion_weights": [
+          50.0,
+          25.0,
+          10.0
+        ],
+        "frustum_dims": 256,
+        "grid_dimensions": 256,
+        "iso_recon_value": 2.0,
+        "panoptic_weight": 25.0,
+        "signed_channel": 3,
+        "surface_weight": 5.0,
+        "truncation": 3.0,
+        "unet_features": 16,
+        "unet_output_channels": 16,
+        "use_multi_scale": false
+      },
+      "mask_former": {
+        "class_weight": 2.0,
+        "dec_layers": 10,
+        "deep_supervision": true,
+        "depth_weight": 5.0,
+        "dice_weight": 5.0,
+        "dim_feedforward": 2048,
+        "dropout": 0.0,
+        "hidden_dim": 256,
+        "importance_sample_ratio": 0.75,
+        "mask_weight": 5.0,
+        "mp_occ_weight": 5.0,
+        "nheads": 8,
+        "no_object_weight": 0.1,
+        "num_object_queries": 100,
+        "oversample_ratio": 3.0,
+        "pre_norm": false,
+        "size_divisibility": 32,
+        "train_num_points": 12544,
+        "transformer_dim_feedforward": 1024
+      },
+      "mode": "panoptic",
+      "object_mask_threshold": 0.4,
+      "overlap_threshold": 0.5,
+      "projection": {
+        "depth_feature_dim": 256,
+        "sign_channel": true,
+        "voxel_size": 0.03
+      },
+      "sem_seg_head": {
+        "common_stride": 4,
+        "convs_dim": 256,
+        "deformable_transformer_encoder_in_features": [
+          "res3",
+          "res4",
+          "res5"
+        ],
+        "depth_dim": 256,
+        "ignore_value": 255,
+        "in_features": [
+          "res2",
+          "res3",
+          "res4",
+          "res5"
+        ],
+        "mask_dim": 256,
+        "norm": "GN",
+        "num_classes": 13,
+        "transformer_enc_layers": 6
+      },
+      "test_topk_per_image": 100
+    },
+    "model_name": "",
+    "results_dir": "",
+    "train": {
+      "activation_checkpoint": true,
+      "checkpoint_2d": "",
+      "checkpoint_3d": "",
+      "checkpoint_interval": 1,
+      "checkpoint_interval_unit": "epoch",
+      "clip_grad_norm": 0.1,
+      "clip_grad_type": "full",
+      "cudnn": {
+        "benchmark": false,
+        "deterministic": true
+      },
+      "distributed_strategy": "ddp",
+      "freeze": [],
+      "gpu_ids": [
+        0
+      ],
+      "is_dry_run": false,
+      "num_epochs": 10,
+      "num_gpus": 1,
+      "num_nodes": 1,
+      "optim": {
+        "backbone_multiplier": 0.1,
+        "gamma": 0.1,
+        "lr": 0.0002,
+        "lr_scheduler": "MultiStep",
+        "max_steps": 160000,
+        "milestones": [
+          88,
+          96
+        ],
+        "momentum": 0.9,
+        "monitor_name": "val_loss",
+        "type": "AdamW",
+        "warmup_factor": 1.0,
+        "warmup_iters": 0,
+        "weight_decay": 0.05
+      },
+      "precision": "fp32",
+      "results_dir": "",
+      "resume_training_checkpoint_path": "",
+      "seed": 1234,
+      "val_check_interval": 5,
+      "validation_interval": 1,
+      "verbose": false
+    },
+    "wandb": {
+      "enable": true,
+      "entity": "",
+      "group": "",
+      "name": "TAO Toolkit Training",
+      "project": "TAO Toolkit",
+      "reinit": false,
+      "run_id": "",
+      "save_code": false,
+      "sync_tensorboard": false,
+      "tags": [
+        "tao-toolkit"
+      ]
+    }
+  },
+  "popular": {
+    "evaluate": {
+      "gpu_ids": [
+        0
+      ],
+      "num_gpus": 1,
+      "num_nodes": 1
+    },
+    "gen_trt_engine": {
+      "batch_size": -1,
+      "gpu_id": 0,
+      "tensorrt": {
+        "max_batch_size": 1,
+        "min_batch_size": 1,
+        "opt_batch_size": 1
+      }
+    },
+    "inference": {
+      "gpu_ids": [
+        0
+      ],
+      "num_gpus": 1,
+      "num_nodes": 1
+    },
+    "model": {
+      "mask_former": {
+        "class_weight": 2.0,
+        "dice_weight": 5.0,
+        "hidden_dim": 256,
+        "importance_sample_ratio": 0.75,
+        "mask_weight": 5.0,
+        "nheads": 8,
+        "num_object_queries": 100
+      },
+      "sem_seg_head": {
+        "convs_dim": 256,
+        "depth_dim": 256,
+        "mask_dim": 256,
+        "transformer_enc_layers": 6
+      }
+    },
+    "train": {
+      "checkpoint_interval": 1,
+      "gpu_ids": [
+        0
+      ],
+      "num_epochs": 10,
+      "num_gpus": 1,
+      "num_nodes": 1,
+      "validation_interval": 1
+    }
+  },
+  "properties": {
+    "automl_disabled_parameters": [
+      "wandb",
+      "model",
+      "dataset",
+      "train",
+      "inference",
+      "evaluate",
+      "export",
+      "gen_trt_engine"
+    ],
+    "dataset": {
+      "automl_disabled_parameters": [
+        "dataset.train",
+        "dataset.val",
+        "dataset.test",
+        "dataset.augmentation",
+        "dataset.target_size",
+        "dataset.reduced_target_size",
+        "dataset.depth_size",
+        "dataset.occ_truncation_lvl",
+        "dataset.truncation_range"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "augmentation": {
+          "color_aug_ssd": false,
+          "crop_size": [
+            240,
+            240
+          ],
+          "enable_crop": false,
+          "gen_aug_weight": 0.0,
+          "random_flip": "",
+          "random_flip_prob": 0.5,
+          "single_category_max_area": 1.0,
+          "size_divisibility": -1.0,
+          "test_max_size": 960,
+          "test_min_size": 240,
+          "train_crop_size": [
+            240,
+            240
+          ],
+          "train_max_size": 768,
+          "train_min_size": [
+            448
+          ]
+        },
+        "contiguous_id": false,
+        "depth_bound": false,
+        "depth_max": 6.0,
+        "depth_min": 0.4,
+        "depth_scale": 25.0,
+        "depth_size": [
+          120,
+          160
+        ],
+        "downsample_factor": 1,
+        "enable_3d": false,
+        "enable_mp_occ": true,
+        "frustum_mask_path": "meta/frustum_mask.npz",
+        "ignore_label": 255,
+        "img_format": "RGB",
+        "iso_value": 1.0,
+        "label_map": "",
+        "min_instance_pixels": 200,
+        "name": "front3d",
+        "num_thing_classes": 9,
+        "occ_truncation_lvl": [
+          8.0,
+          6.0
+        ],
+        "pin_memory": true,
+        "reduced_target_size": [
+          160,
+          120
+        ],
+        "target_size": [
+          320,
+          240
+        ],
+        "test": {
+          "base_dir": "",
+          "batch_size": 1,
+          "json_path": "",
+          "num_workers": 1
+        },
+        "train": {
+          "base_dir": "",
+          "batch_size": 1,
+          "json_path": "",
+          "num_workers": 1
+        },
+        "truncation_range": [
+          0.0,
+          12.0
+        ],
+        "val": {
+          "base_dir": "",
+          "batch_size": 1,
+          "json_path": "",
+          "num_workers": 1
+        },
+        "workers": 8
+      },
+      "description": "Configurable parameters to construct the dataset for the NVPanoptix3D experiment.",
+      "properties": {
+        "augmentation": {
+          "automl_disabled_parameters": [
+            "dataset.augmentation.train_min_size",
+            "dataset.augmentation.train_crop_size",
+            "dataset.augmentation.crop_size"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "color_aug_ssd": false,
+            "crop_size": [
+              240,
+              240
+            ],
+            "enable_crop": false,
+            "gen_aug_weight": 0.0,
+            "random_flip": "",
+            "random_flip_prob": 0.5,
+            "single_category_max_area": 1.0,
+            "size_divisibility": -1.0,
+            "test_max_size": 960,
+            "test_min_size": 240,
+            "train_crop_size": [
+              240,
+              240
+            ],
+            "train_max_size": 768,
+            "train_min_size": [
+              448
+            ]
+          },
+          "description": "Configuration parameters for data augmentation",
+          "properties": {
+            "color_aug_ssd": {
+              "default": false,
+              "description": "Color augmentation.",
+              "title": "color augmentation",
+              "type": "bool"
+            },
+            "crop_size": {
+              "automl_enabled": false,
+              "default": [
+                240,
+                240
+              ],
+              "description": "Size to crop input image.",
+              "title": "input image size crop",
+              "type": "list"
+            },
+            "enable_crop": {
+              "default": false,
+              "description": "Enable cropping for input image.",
+              "title": "enable cropping",
+              "type": "bool"
+            },
+            "gen_aug_weight": {
+              "default": 0.0,
+              "description": "Weight for generated augmentation, 0.0 will disable generated augmentation.",
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "weight for generated augmentation",
+              "type": "float"
+            },
+            "random_flip": {
+              "default": "",
+              "description": "Flip horizontal/vertical.",
+              "title": "flip horizontal/vertical",
+              "type": "string"
+            },
+            "random_flip_prob": {
+              "default": 0.5,
+              "description": "Flip probability.",
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "flip probability",
+              "type": "float"
+            },
+            "single_category_max_area": {
+              "default": 1.0,
+              "description": "Maximum ratio of crop area that can be occupied by a single semantic category.",
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "maximum ratio of crop area",
+              "type": "float"
+            },
+            "size_divisibility": {
+              "default": -1.0,
+              "description": "Size divisibility to pad.",
+              "title": "size divisibility to pad",
+              "type": "float"
+            },
+            "test_max_size": {
+              "default": 960,
+              "description": "The maximum resize size for test.",
+              "maximum": 960,
+              "minimum": 32,
+              "title": "test max size",
+              "type": "int"
+            },
+            "test_min_size": {
+              "default": 240,
+              "description": "The minimum resize size for test data.",
+              "maximum": 960,
+              "minimum": 32,
+              "title": "test min size",
+              "type": "int"
+            },
+            "train_crop_size": {
+              "automl_enabled": false,
+              "default": [
+                240,
+                240
+              ],
+              "description": "The random crop size for training data in [H, W].",
+              "title": "train crop size",
+              "type": "list"
+            },
+            "train_max_size": {
+              "default": 768,
+              "description": "The maximum random crop size for training data.",
+              "maximum": 960,
+              "minimum": 32,
+              "title": "train max size",
+              "type": "int"
+            },
+            "train_min_size": {
+              "automl_enabled": false,
+              "default": [
+                448
+              ],
+              "description": "A list of sizes to perform random resize.",
+              "title": "train min size",
+              "type": "list"
+            }
+          },
+          "type": "collection"
+        },
+        "contiguous_id": {
+          "default": false,
+          "description": "Flag to enable contiguous ids for labels.",
+          "title": "contiguous id",
+          "type": "bool"
+        },
+        "depth_bound": {
+          "default": false,
+          "description": "Enable depth truncation in bounds.",
+          "title": "enable depth truncation",
+          "type": "bool"
+        },
+        "depth_max": {
+          "default": 6.0,
+          "description": "Max depth value.",
+          "title": "max depth value",
+          "type": "float"
+        },
+        "depth_min": {
+          "default": 0.4,
+          "description": "Min depth value.",
+          "title": "min depth value",
+          "type": "float"
+        },
+        "depth_scale": {
+          "default": 25.0,
+          "description": "Depth scale.",
+          "title": "depth scale",
+          "type": "float"
+        },
+        "depth_size": {
+          "automl_enabled": false,
+          "default": [
+            120,
+            160
+          ],
+          "description": "Input depth size to resize.",
+          "title": "input depth size to resize",
+          "type": "list"
+        },
+        "downsample_factor": {
+          "default": 1,
+          "description": "Downsample factor(1: Synthetic & Front3D, 2: Matterport3D).",
+          "title": "downsample factor",
+          "type": "int"
+        },
+        "enable_3d": {
+          "default": false,
+          "description": "Enable 3d for training.",
+          "title": "enable 3d",
+          "type": "bool"
+        },
+        "enable_mp_occ": {
+          "default": true,
+          "description": "Enable multi-plane occupancy.",
+          "title": "enable multi-plane occupancy",
+          "type": "bool"
+        },
+        "frustum_mask_path": {
+          "default": "meta/frustum_mask.npz",
+          "description": "Relative frustum mask path.",
+          "title": "relative frustum mask path",
+          "type": "string"
+        },
+        "ignore_label": {
+          "default": 255,
+          "description": "Ignore label value.",
+          "title": "ignore label value",
+          "type": "int"
+        },
+        "img_format": {
+          "default": "RGB",
+          "description": "Image format.",
+          "title": "image format",
+          "type": "string"
+        },
+        "iso_value": {
+          "default": 1.0,
+          "description": "ISO value to reconstruct mesh from TUDF volume.",
+          "title": "ISO value",
+          "type": "float"
+        },
+        "label_map": {
+          "default": "",
+          "description": "A path to label map file.",
+          "title": "label map path",
+          "type": "string"
+        },
+        "min_instance_pixels": {
+          "default": 200,
+          "description": "Minimum number of pixels required for an instance to be considered valid.",
+          "title": "minimum number of pixels",
+          "type": "int"
+        },
+        "name": {
+          "default": "front3d",
+          "description": "Dataset name.",
+          "enum": [
+            "front3d",
+            "matterport",
+            "synthetic_hospital",
+            "synthetic_warehouse"
+          ],
+          "title": "dataset name",
+          "type": "categorical"
+        },
+        "num_thing_classes": {
+          "default": 9,
+          "description": "Number of thing classes.",
+          "title": "number of thing classes",
+          "type": "int"
+        },
+        "occ_truncation_lvl": {
+          "automl_enabled": false,
+          "default": [
+            8.0,
+            6.0
+          ],
+          "description": "Value to create occuppancy volume from TUDF volume.",
+          "title": "occ truncation level",
+          "type": "list"
+        },
+        "pin_memory": {
+          "default": true,
+          "description": "Flag to allocate pagelocked memory for faster of data between the CPU and GPU.",
+          "title": "pin memory",
+          "type": "bool"
+        },
+        "reduced_target_size": {
+          "automl_enabled": false,
+          "default": [
+            160,
+            120
+          ],
+          "description": "Image size to process at 3D stage.",
+          "title": "image size to process at 3D stage",
+          "type": "list"
+        },
+        "target_size": {
+          "automl_enabled": false,
+          "default": [
+            320,
+            240
+          ],
+          "description": "Input image size to resize.",
+          "title": "input image size to resize",
+          "type": "list"
+        },
+        "test": {
+          "automl_enabled": false,
+          "default": {
+            "base_dir": "",
+            "batch_size": 1,
+            "json_path": "",
+            "num_workers": 1
+          },
+          "description": "Configurable parameters to construct the test dataset.",
+          "properties": {
+            "base_dir": {
+              "default": "",
+              "description": "Root directory of the dataset",
+              "title": "dataset root",
+              "type": "string"
+            },
+            "batch_size": {
+              "default": 1,
+              "description": "Batch size",
+              "math_cond": ">0",
+              "minimum": 1,
+              "title": "batch size",
+              "type": "int"
+            },
+            "json_path": {
+              "default": "",
+              "description": "JSON file in JSON format for image/mask pair.",
+              "title": "annotation file path",
+              "type": "string"
+            },
+            "num_workers": {
+              "default": 1,
+              "description": "Number of workers in the dataloader.",
+              "minimum": 0,
+              "title": "num workers",
+              "type": "int"
+            }
+          },
+          "type": "collection"
+        },
+        "train": {
+          "automl_enabled": false,
+          "default": {
+            "base_dir": "",
+            "batch_size": 1,
+            "json_path": "",
+            "num_workers": 1
+          },
+          "description": "Configurable parameters to construct the train dataset.",
+          "properties": {
+            "base_dir": {
+              "default": "",
+              "description": "Root directory of the dataset",
+              "title": "dataset root",
+              "type": "string"
+            },
+            "batch_size": {
+              "default": 1,
+              "description": "Batch size",
+              "math_cond": ">0",
+              "minimum": 1,
+              "title": "batch size",
+              "type": "int"
+            },
+            "json_path": {
+              "default": "",
+              "description": "JSON file in JSON format for image/mask pair.",
+              "title": "annotation file path",
+              "type": "string"
+            },
+            "num_workers": {
+              "default": 1,
+              "description": "Number of workers in the dataloader.",
+              "minimum": 0,
+              "title": "num workers",
+              "type": "int"
+            }
+          },
+          "type": "collection"
+        },
+        "truncation_range": {
+          "automl_enabled": false,
+          "default": [
+            0.0,
+            12.0
+          ],
+          "description": "truncation range for TUDF volume.",
+          "title": "TUDF truncation range",
+          "type": "list"
+        },
+        "val": {
+          "automl_enabled": false,
+          "default": {
+            "base_dir": "",
+            "batch_size": 1,
+            "json_path": "",
+            "num_workers": 1
+          },
+          "description": "Configurable parameters to construct the validation dataset.",
+          "properties": {
+            "base_dir": {
+              "default": "",
+              "description": "Root directory of the dataset",
+              "title": "dataset root",
+              "type": "string"
+            },
+            "batch_size": {
+              "default": 1,
+              "description": "Batch size",
+              "math_cond": ">0",
+              "minimum": 1,
+              "title": "batch size",
+              "type": "int"
+            },
+            "json_path": {
+              "default": "",
+              "description": "JSON file in JSON format for image/mask pair.",
+              "title": "annotation file path",
+              "type": "string"
+            },
+            "num_workers": {
+              "default": 1,
+              "description": "Number of workers in the dataloader.",
+              "minimum": 0,
+              "title": "num workers",
+              "type": "int"
+            }
+          },
+          "type": "collection"
+        },
+        "workers": {
+          "default": 8,
+          "description": "The number of parallel workers processing data",
+          "minimum": 1,
+          "title": "num workers",
+          "type": "int"
+        }
+      },
+      "type": "collection"
+    },
+    "encryption_key": {
+      "default": "",
+      "description": "Key for encrypting model checkpoints",
+      "title": "Encryption key",
+      "type": "string"
+    },
+    "export": {
+      "automl_enabled": false,
+      "default": {
+        "batch_size": -1,
+        "checkpoint": "???",
+        "format": "onnx",
+        "gpu_id": 0,
+        "input_channel": 3,
+        "input_height": 544,
+        "input_width": 960,
+        "max_voxels": 700000,
+        "on_cpu": false,
+        "onnx_file": "???",
+        "onnx_file_2d": "",
+        "onnx_file_3d": "",
+        "opset_version": 17,
+        "results_dir": "",
+        "verbose": false
+      },
+      "description": "Configurable parameters to construct the exporter for the NVPanoptix3D experiment.",
+      "properties": {
+        "batch_size": {
+          "default": -1,
+          "description": "The batch size of the input Tensor for the engine.\n                    A value of :code:`-1` implies dynamic tensor shapes.",
+          "minimum": -1,
+          "title": "batch size",
+          "type": "int"
+        },
+        "checkpoint": {
+          "default": "???",
+          "description": "Path to the checkpoint file to run export.",
+          "title": "checkpoint",
+          "type": "string"
+        },
+        "format": {
+          "default": "onnx",
+          "description": "File format to export to.",
+          "enum": [
+            "onnx",
+            "xdl"
+          ],
+          "title": "export format",
+          "type": "categorical"
+        },
+        "gpu_id": {
+          "default": 0,
+          "description": "The index of the GPU to build the TensorRT engine.",
+          "title": "GPU ID",
+          "type": "int"
+        },
+        "input_channel": {
+          "default": 3,
+          "description": "Number of channels in the input Tensor.",
+          "enum": [
+            1,
+            3
+          ],
+          "minimum": 1,
+          "title": "input channel",
+          "type": "ordered_int"
+        },
+        "input_height": {
+          "default": 544,
+          "description": "Height of the input image tensor.",
+          "minimum": 32,
+          "title": "input height",
+          "type": "int"
+        },
+        "input_width": {
+          "default": 960,
+          "description": "Width of the input image tensor.",
+          "minimum": 32,
+          "title": "input width",
+          "type": "int"
+        },
+        "max_voxels": {
+          "default": 700000,
+          "description": "The maximum number of voxels in the input Tensor for the engine.",
+          "minimum": 1,
+          "title": "max voxels",
+          "type": "int"
+        },
+        "on_cpu": {
+          "default": false,
+          "description": "Flag to export CPU compatible model.",
+          "title": "on cpu",
+          "type": "bool"
+        },
+        "onnx_file": {
+          "default": "???",
+          "description": "\n        Path to the onnx model file.\n        ",
+          "title": "onnx file",
+          "type": "string"
+        },
+        "onnx_file_2d": {
+          "default": "",
+          "description": "Path to the onnx model 2d file.",
+          "title": "onnx file 2d",
+          "type": "string"
+        },
+        "onnx_file_3d": {
+          "default": "",
+          "description": "Path to the onnx model 3d file.",
+          "title": "onnx file 3d",
+          "type": "string"
+        },
+        "opset_version": {
+          "default": 17,
+          "description": "Operator set version of the ONNX model used to generate\n                    the TensorRT engine.",
+          "minimum": 1,
+          "title": "opset version",
+          "type": "int"
+        },
+        "results_dir": {
+          "default": "",
+          "description": "\n        Path to where all the assets generated from a task are stored.\n        ",
+          "title": "Results directory",
+          "type": "string"
+        },
+        "verbose": {
+          "default": false,
+          "description": "Flag to enable verbose TensorRT logging.",
+          "title": "verbose",
+          "type": "bool"
+        }
+      },
+      "type": "collection"
+    },
+    "model": {
+      "automl_disabled_parameters": [
+        "model.backbone",
+        "model.sem_seg_head",
+        "model.mask_former",
+        "model.frustum3d",
+        "model.projection"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "backbone": {
+          "backbone_type": "vggt",
+          "pretrained_model_path": ""
+        },
+        "frustum3d": {
+          "completion_weights": [
+            50.0,
+            25.0,
+            10.0
+          ],
+          "frustum_dims": 256,
+          "grid_dimensions": 256,
+          "iso_recon_value": 2.0,
+          "panoptic_weight": 25.0,
+          "signed_channel": 3,
+          "surface_weight": 5.0,
+          "truncation": 3.0,
+          "unet_features": 16,
+          "unet_output_channels": 16,
+          "use_multi_scale": false
+        },
+        "mask_former": {
+          "class_weight": 2.0,
+          "dec_layers": 10,
+          "deep_supervision": true,
+          "depth_weight": 5.0,
+          "dice_weight": 5.0,
+          "dim_feedforward": 2048,
+          "dropout": 0.0,
+          "hidden_dim": 256,
+          "importance_sample_ratio": 0.75,
+          "mask_weight": 5.0,
+          "mp_occ_weight": 5.0,
+          "nheads": 8,
+          "no_object_weight": 0.1,
+          "num_object_queries": 100,
+          "oversample_ratio": 3.0,
+          "pre_norm": false,
+          "size_divisibility": 32,
+          "train_num_points": 12544,
+          "transformer_dim_feedforward": 1024
+        },
+        "mode": "panoptic",
+        "object_mask_threshold": 0.4,
+        "overlap_threshold": 0.5,
+        "projection": {
+          "depth_feature_dim": 256,
+          "sign_channel": true,
+          "voxel_size": 0.03
+        },
+        "sem_seg_head": {
+          "common_stride": 4,
+          "convs_dim": 256,
+          "deformable_transformer_encoder_in_features": [
+            "res3",
+            "res4",
+            "res5"
+          ],
+          "depth_dim": 256,
+          "ignore_value": 255,
+          "in_features": [
+            "res2",
+            "res3",
+            "res4",
+            "res5"
+          ],
+          "mask_dim": 256,
+          "norm": "GN",
+          "num_classes": 13,
+          "transformer_enc_layers": 6
+        },
+        "test_topk_per_image": 100
+      },
+      "description": "Configurable parameters to construct the model for the NVPanoptix3D experiment.",
+      "popular": [
+        "mask_former",
+        "sem_seg_head"
+      ],
+      "properties": {
+        "backbone": {
+          "automl_enabled": false,
+          "default": {
+            "backbone_type": "vggt",
+            "pretrained_model_path": ""
+          },
+          "description": "Configuration hyper parameters for the NVPanoptix3D Backbone.",
+          "properties": {
+            "backbone_type": {
+              "default": "vggt",
+              "description": "Type of backbone to use. Available backbone: vggt.",
+              "enum": [
+                "vggt"
+              ],
+              "title": "backbone name",
+              "type": "categorical"
+            },
+            "pretrained_model_path": {
+              "default": "",
+              "description": "Path to a pretrained backbone file.",
+              "title": "pretrained backbone path",
+              "type": "string"
+            }
+          },
+          "title": "backbone",
+          "type": "collection"
+        },
+        "frustum3d": {
+          "automl_disabled_parameters": [
+            "model.frustum3d.completion_weights"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "completion_weights": [
+              50.0,
+              25.0,
+              10.0
+            ],
+            "frustum_dims": 256,
+            "grid_dimensions": 256,
+            "iso_recon_value": 2.0,
+            "panoptic_weight": 25.0,
+            "signed_channel": 3,
+            "surface_weight": 5.0,
+            "truncation": 3.0,
+            "unet_features": 16,
+            "unet_output_channels": 16,
+            "use_multi_scale": false
+          },
+          "description": "Configuration hyper parameters for the Frustum3D model.",
+          "properties": {
+            "completion_weights": {
+              "automl_enabled": false,
+              "default": [
+                50.0,
+                25.0,
+                10.0
+              ],
+              "description": "The weights of the completion loss.",
+              "title": "completion weights",
+              "type": "list"
+            },
+            "frustum_dims": {
+              "default": 256,
+              "description": "The number of frustum dimensions.",
+              "title": "frustum dimensions",
+              "type": "int"
+            },
+            "grid_dimensions": {
+              "default": 256,
+              "description": "The number of grid dimensions.",
+              "title": "grid dimensions",
+              "type": "int"
+            },
+            "iso_recon_value": {
+              "default": 2.0,
+              "description": "The iso recon value.",
+              "title": "iso recon value",
+              "type": "float"
+            },
+            "panoptic_weight": {
+              "default": 25.0,
+              "description": "The weight of the panoptic loss.",
+              "title": "panoptic weight",
+              "type": "float"
+            },
+            "signed_channel": {
+              "default": 3,
+              "description": "The number of signed channel.",
+              "title": "signed channel",
+              "type": "int"
+            },
+            "surface_weight": {
+              "default": 5.0,
+              "description": "The weight of the surface loss.",
+              "title": "surface weight",
+              "type": "float"
+            },
+            "truncation": {
+              "default": 3.0,
+              "description": "The truncation value.",
+              "title": "truncation",
+              "type": "float"
+            },
+            "unet_features": {
+              "default": 16,
+              "description": "The number of features of the UNet.",
+              "title": "unet features",
+              "type": "int"
+            },
+            "unet_output_channels": {
+              "default": 16,
+              "description": "The number of output channels of the UNet.",
+              "title": "unet output channels",
+              "type": "int"
+            },
+            "use_multi_scale": {
+              "default": false,
+              "description": "Whether to use multi-scale.",
+              "title": "use multi-scale",
+              "type": "bool"
+            }
+          },
+          "title": "frustum3d",
+          "type": "collection"
+        },
+        "mask_former": {
+          "automl_enabled": false,
+          "default": {
+            "class_weight": 2.0,
+            "dec_layers": 10,
+            "deep_supervision": true,
+            "depth_weight": 5.0,
+            "dice_weight": 5.0,
+            "dim_feedforward": 2048,
+            "dropout": 0.0,
+            "hidden_dim": 256,
+            "importance_sample_ratio": 0.75,
+            "mask_weight": 5.0,
+            "mp_occ_weight": 5.0,
+            "nheads": 8,
+            "no_object_weight": 0.1,
+            "num_object_queries": 100,
+            "oversample_ratio": 3.0,
+            "pre_norm": false,
+            "size_divisibility": 32,
+            "train_num_points": 12544,
+            "transformer_dim_feedforward": 1024
+          },
+          "description": "Configuration hyper parameters for the Mask2Former model.",
+          "popular": [
+            "hidden_dim",
+            "importance_sample_ratio",
+            "class_weight",
+            "dice_weight",
+            "mask_weight",
+            "nheads",
+            "num_object_queries"
+          ],
+          "properties": {
+            "class_weight": {
+              "default": 2.0,
+              "description": "The relative weight of the classification error in the matching cost.",
+              "maximum": Infinity,
+              "minimum": 0.0,
+              "popular": true,
+              "title": "Class loss coefficient",
+              "type": "float"
+            },
+            "dec_layers": {
+              "default": 10,
+              "description": "Numer of decoder layers in the transformer",
+              "minimum": 1,
+              "title": "decoder layers",
+              "type": "int"
+            },
+            "deep_supervision": {
+              "default": true,
+              "description": "Flag to enable deep supervision.",
+              "title": "deep supervision",
+              "type": "bool"
+            },
+            "depth_weight": {
+              "default": 5.0,
+              "description": "The relative weight of the depth loss in the matching cost.",
+              "maximum": Infinity,
+              "minimum": 0.0,
+              "title": "depth loss coefficient",
+              "type": "float"
+            },
+            "dice_weight": {
+              "default": 5.0,
+              "description": "The relative weight of the focal loss of the binary mask in the matching cost.",
+              "maximum": Infinity,
+              "minimum": 0.0,
+              "popular": true,
+              "title": "focal loss coefficient",
+              "type": "float"
+            },
+            "dim_feedforward": {
+              "default": 2048,
+              "description": "Dimension of the feedforward network",
+              "minimum": 1,
+              "title": "dim feedforward",
+              "type": "int"
+            },
+            "dropout": {
+              "default": 0.0,
+              "description": "The probability to drop out.",
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "drop out ratio",
+              "type": "float"
+            },
+            "hidden_dim": {
+              "default": 256,
+              "description": "Dimension of the hidden units.",
+              "popular": true,
+              "type": "int"
+            },
+            "importance_sample_ratio": {
+              "default": 0.75,
+              "description": "Ratio of points that are sampled via important sampling.",
+              "popular": true,
+              "title": "importance sampling ratio",
+              "type": "float"
+            },
+            "mask_weight": {
+              "default": 5.0,
+              "description": "The relative weight of the dice loss of the binary mask in the matching cost",
+              "maximum": Infinity,
+              "minimum": 0.0,
+              "popular": true,
+              "title": "mask loss coefficient",
+              "type": "float"
+            },
+            "mp_occ_weight": {
+              "default": 5.0,
+              "description": "The relative weight of the mp occ loss in the matching cost.",
+              "maximum": Infinity,
+              "minimum": 0.0,
+              "title": "mp occ loss coefficient",
+              "type": "float"
+            },
+            "nheads": {
+              "default": 8,
+              "description": "Number of heads",
+              "popular": true,
+              "title": "nheads",
+              "type": "int"
+            },
+            "no_object_weight": {
+              "default": 0.1,
+              "description": "The relative classification weight applied to the no-object category.",
+              "title": "no object coefficient",
+              "type": "float"
+            },
+            "num_object_queries": {
+              "default": 100,
+              "description": "The number of queries",
+              "maximum": Infinity,
+              "minimum": 1,
+              "popular": true,
+              "title": "number of queries",
+              "type": "int"
+            },
+            "oversample_ratio": {
+              "default": 3.0,
+              "description": "Oversampling parameter.",
+              "title": "oversampling ratio",
+              "type": "float"
+            },
+            "pre_norm": {
+              "default": false,
+              "description": "Flag to add layer norm in the encoder or not.",
+              "title": "Pre norm",
+              "type": "bool"
+            },
+            "size_divisibility": {
+              "default": 32,
+              "description": "Size divisibility.",
+              "title": "size divisibility",
+              "type": "int"
+            },
+            "train_num_points": {
+              "default": 12544,
+              "description": "The number of points P to sample.",
+              "title": "number of points",
+              "type": "int"
+            },
+            "transformer_dim_feedforward": {
+              "default": 1024,
+              "description": "Dimension of the feedforward network in the transformer",
+              "minimum": 1,
+              "title": "transformer dim feedforward",
+              "type": "int"
+            }
+          },
+          "title": "mask2former",
+          "type": "collection"
+        },
+        "mode": {
+          "default": "panoptic",
+          "description": "Segmentation mode.",
+          "enum": [
+            "panoptic",
+            "instance",
+            "semantic"
+          ],
+          "title": "segmentation mode",
+          "type": "categorical"
+        },
+        "object_mask_threshold": {
+          "default": 0.4,
+          "description": "The value of the threshold to be used when filtering out the object mask.",
+          "title": "object mask threshold",
+          "type": "float"
+        },
+        "overlap_threshold": {
+          "default": 0.5,
+          "description": "The value of the threshold to be used when evaluating overlap.",
+          "title": "overlap threshold",
+          "type": "float"
+        },
+        "projection": {
+          "automl_enabled": false,
+          "default": {
+            "depth_feature_dim": 256,
+            "sign_channel": true,
+            "voxel_size": 0.03
+          },
+          "description": "Configuration hyper parameters for the Projection model.",
+          "properties": {
+            "depth_feature_dim": {
+              "default": 256,
+              "description": "The dimension of the depth feature.",
+              "title": "depth feature dim",
+              "type": "int"
+            },
+            "sign_channel": {
+              "default": true,
+              "description": "Whether to use signed channel.",
+              "title": "sign channel",
+              "type": "bool"
+            },
+            "voxel_size": {
+              "default": 0.03,
+              "description": "The size of the voxel.",
+              "title": "voxel size",
+              "type": "float"
+            }
+          },
+          "title": "projection",
+          "type": "collection"
+        },
+        "sem_seg_head": {
+          "automl_disabled_parameters": [
+            "model.sem_seg_head.deformable_transformer_encoder_in_features",
+            "model.sem_seg_head.in_features"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "common_stride": 4,
+            "convs_dim": 256,
+            "deformable_transformer_encoder_in_features": [
+              "res3",
+              "res4",
+              "res5"
+            ],
+            "depth_dim": 256,
+            "ignore_value": 255,
+            "in_features": [
+              "res2",
+              "res3",
+              "res4",
+              "res5"
+            ],
+            "mask_dim": 256,
+            "norm": "GN",
+            "num_classes": 13,
+            "transformer_enc_layers": 6
+          },
+          "description": "Configuration hyper parameters for the Mask2Former Semantic Segmentation Head.",
+          "popular": [
+            "transformer_enc_layers",
+            "convs_dim",
+            "mask_dim",
+            "depth_dim"
+          ],
+          "properties": {
+            "common_stride": {
+              "default": 4,
+              "description": "Common stride.",
+              "minimum": 2,
+              "title": "Common stride",
+              "type": "int"
+            },
+            "convs_dim": {
+              "default": 256,
+              "description": "Convolutional layer dimension.",
+              "minimum": 1,
+              "popular": true,
+              "title": "conv layer dim.",
+              "type": "int"
+            },
+            "deformable_transformer_encoder_in_features": {
+              "automl_enabled": false,
+              "default": [
+                "res3",
+                "res4",
+                "res5"
+              ],
+              "description": "List of feature names for deformable transformer encoder input.",
+              "title": "transformer encoder in_features",
+              "type": "list"
+            },
+            "depth_dim": {
+              "default": 256,
+              "description": "Depth head dimension.",
+              "minimum": 1,
+              "popular": true,
+              "title": "depth head dim.",
+              "type": "int"
+            },
+            "ignore_value": {
+              "default": 255,
+              "description": "Ignore value.",
+              "maximum": 255,
+              "minimum": 0,
+              "title": "ignore value",
+              "type": "int"
+            },
+            "in_features": {
+              "automl_enabled": false,
+              "default": [
+                "res2",
+                "res3",
+                "res4",
+                "res5"
+              ],
+              "description": "List of input feature names.",
+              "title": "transformer encoder in_features",
+              "type": "list"
+            },
+            "mask_dim": {
+              "default": 256,
+              "description": "Mask head dimension.",
+              "minimum": 1,
+              "popular": true,
+              "title": "mask head dim.",
+              "type": "int"
+            },
+            "norm": {
+              "default": "GN",
+              "description": "Norm layer type.",
+              "title": "norm type",
+              "type": "string"
+            },
+            "num_classes": {
+              "default": 13,
+              "description": "Number of classes.",
+              "minimum": 1,
+              "title": "number of classes.",
+              "type": "int"
+            },
+            "transformer_enc_layers": {
+              "default": 6,
+              "description": "Number of transformer encoder layers.",
+              "minimum": 1,
+              "popular": true,
+              "title": "Number of transformer encoder layers.",
+              "type": "int"
+            }
+          },
+          "title": "segmentation head configs",
+          "type": "collection"
+        },
+        "test_topk_per_image": {
+          "default": 100,
+          "description": "Keep topk instances per image for instance segmentation.",
+          "title": "top k per image",
+          "type": "int"
+        }
+      },
+      "type": "collection"
+    },
+    "model_name": {
+      "default": "",
+      "description": "Name of model if invoking task via :code:`model_agnostic`",
+      "title": "Model name",
+      "type": "string"
+    },
+    "results_dir": {
+      "default": "",
+      "description": "\n        Path to where all the assets generated from a task are stored.\n        ",
+      "title": "Results directory",
+      "type": "string"
+    },
+    "train": {
+      "automl_disabled_parameters": [
+        "train.gpu_ids",
+        "train.cudnn",
+        "train.freeze",
+        "train.optim"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "activation_checkpoint": true,
+        "checkpoint_2d": "",
+        "checkpoint_3d": "",
+        "checkpoint_interval": 1,
+        "checkpoint_interval_unit": "epoch",
+        "clip_grad_norm": 0.1,
+        "clip_grad_type": "full",
+        "cudnn": {
+          "benchmark": false,
+          "deterministic": true
+        },
+        "distributed_strategy": "ddp",
+        "freeze": [],
+        "gpu_ids": [
+          0
+        ],
+        "is_dry_run": false,
+        "num_epochs": 10,
+        "num_gpus": 1,
+        "num_nodes": 1,
+        "optim": {
+          "backbone_multiplier": 0.1,
+          "gamma": 0.1,
+          "lr": 0.0002,
+          "lr_scheduler": "MultiStep",
+          "max_steps": 160000,
+          "milestones": [
+            88,
+            96
+          ],
+          "momentum": 0.9,
+          "monitor_name": "val_loss",
+          "type": "AdamW",
+          "warmup_factor": 1.0,
+          "warmup_iters": 0,
+          "weight_decay": 0.05
+        },
+        "precision": "fp32",
+        "results_dir": "",
+        "resume_training_checkpoint_path": "",
+        "seed": 1234,
+        "val_check_interval": 5,
+        "validation_interval": 1,
+        "verbose": false
+      },
+      "description": "Configurable parameters to construct the trainer for the NVPanoptix3D experiment.",
+      "popular": [
+        "validation_interval",
+        "checkpoint_interval",
+        "num_gpus",
+        "num_nodes",
+        "num_epochs",
+        "gpu_ids"
+      ],
+      "properties": {
+        "activation_checkpoint": {
+          "default": true,
+          "description": "\n        A True value instructs train to recompute in backward pass to save GPU memory,\n        rather than storing activations.",
+          "title": "enable activation checkpointing",
+          "type": "bool"
+        },
+        "checkpoint_2d": {
+          "default": "",
+          "description": "Path to 2D stage checkpoint to initialize the 3D stage training.",
+          "title": "2D stage checkpoint path",
+          "type": "string"
+        },
+        "checkpoint_3d": {
+          "default": "",
+          "description": "Path to 3D stage checkpoint to initialize the 3D stage training.",
+          "title": "3D stage checkpoint path",
+          "type": "string"
+        },
+        "checkpoint_interval": {
+          "default": 1,
+          "description": "The interval (in epochs) at which a checkpoint will be saved. Helps resume training.",
+          "minimum": 1,
+          "popular": true,
+          "title": "Checkpoint interval",
+          "type": "int"
+        },
+        "checkpoint_interval_unit": {
+          "default": "epoch",
+          "description": "The unit of the checkpoint interval.",
+          "enum": [
+            "epoch",
+            "step"
+          ],
+          "title": "Checkpoint interval unit",
+          "type": "categorical"
+        },
+        "clip_grad_norm": {
+          "default": 0.1,
+          "description": "Amount to clip the gradient by L2 Norm.",
+          "math_cond": "> 0.0",
+          "title": "clip gradient norm",
+          "type": "float"
+        },
+        "clip_grad_type": {
+          "default": "full",
+          "description": "Gradient clip type.",
+          "title": "clip gradient type",
+          "type": "string"
+        },
+        "cudnn": {
+          "automl_enabled": false,
+          "default": {
+            "benchmark": false,
+            "deterministic": true
+          },
+          "properties": {
+            "benchmark": {
+              "default": false,
+              "type": "bool"
+            },
+            "deterministic": {
+              "default": true,
+              "type": "bool"
+            }
+          },
+          "type": "collection"
+        },
+        "distributed_strategy": {
+          "default": "ddp",
+          "description": "\n        The multi-GPU training strategy.\n        DDP (Distributed Data Parallel) and Fully Sharded DDP are supported.",
+          "enum": [
+            "ddp",
+            "fsdp"
+          ],
+          "title": "distributed_strategy",
+          "type": "categorical"
+        },
+        "freeze": {
+          "automl_enabled": false,
+          "default": [],
+          "description": "\n        List of layer names to freeze.\n        Example: [\"backbone\", \"transformer.encoder\", \"input_proj\"].",
+          "title": "freeze",
+          "type": "list"
+        },
+        "gpu_ids": {
+          "automl_enabled": false,
+          "default": [
+            0
+          ],
+          "description": "\n        List of GPU IDs to run the training on. The length of this list\n        must be equal to the number of gpus in train.num_gpus.",
+          "popular": true,
+          "title": "GPU IDs",
+          "type": "list"
+        },
+        "is_dry_run": {
+          "default": false,
+          "description": "Whether to run the trainer in Dry Run mode.",
+          "title": "Is dry run",
+          "type": "bool"
+        },
+        "iters_per_epoch": {
+          "description": "Number of iteration per epoch.",
+          "title": "iteration per epoch",
+          "type": "int"
+        },
+        "num_epochs": {
+          "default": 10,
+          "description": "Number of epochs to run the training.",
+          "maximum": Infinity,
+          "minimum": 1,
+          "popular": true,
+          "title": "Number of epochs",
+          "type": "int"
+        },
+        "num_gpus": {
+          "default": 1,
+          "description": "The number of GPUs to run the train job.",
+          "minimum": 1,
+          "popular": true,
+          "title": "Number of GPUs",
+          "type": "int"
+        },
+        "num_nodes": {
+          "default": 1,
+          "description": "Number of nodes to run the training on. If > 1, then multi-node is enabled.",
+          "minimum": 1,
+          "popular": true,
+          "title": "Number of nodes",
+          "type": "int"
+        },
+        "optim": {
+          "automl_default_parameters": [
+            "train.optim.lr"
+          ],
+          "automl_disabled_parameters": [
+            "train.optim.milestones"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "backbone_multiplier": 0.1,
+            "gamma": 0.1,
+            "lr": 0.0002,
+            "lr_scheduler": "MultiStep",
+            "max_steps": 160000,
+            "milestones": [
+              88,
+              96
+            ],
+            "momentum": 0.9,
+            "monitor_name": "val_loss",
+            "type": "AdamW",
+            "warmup_factor": 1.0,
+            "warmup_iters": 0,
+            "weight_decay": 0.05
+          },
+          "description": "Hyper parameters to configure the optimizer.",
+          "properties": {
+            "backbone_multiplier": {
+              "default": 0.1,
+              "description": "A multiplier for backbone learning rate.",
+              "math_cond": "> 0.0",
+              "maximum": 1.0,
+              "minimum": 0.01,
+              "title": "backbone learning rate multiplier",
+              "type": "float"
+            },
+            "gamma": {
+              "default": 0.1,
+              "description": "Multiplicative factor of learning rate decay.",
+              "math_cond": "> 0.0",
+              "title": "gamma",
+              "type": "float"
+            },
+            "lr": {
+              "automl_enabled": true,
+              "default": 0.0002,
+              "description": "The initial learning rate for training the model.",
+              "math_cond": "> 0.0",
+              "maximum": 0.01,
+              "minimum": 1e-06,
+              "title": "learning rate",
+              "type": "float"
+            },
+            "lr_scheduler": {
+              "default": "MultiStep",
+              "description": "The learning scheduler:\n                    * MultiStep : Decrease the lr by lr_decay from lr_steps\n                    * Warmuppoly : Poly learning rate schedule.",
+              "enum": [
+                "MultiStep",
+                "Warmuppoly"
+              ],
+              "title": "learning rate scheduler",
+              "type": "categorical"
+            },
+            "max_steps": {
+              "default": 160000,
+              "description": "The maximum number of steps to train the model.",
+              "math_cond": "> 0",
+              "title": "max steps",
+              "type": "int"
+            },
+            "milestones": {
+              "automl_enabled": false,
+              "default": [
+                88,
+                96
+              ],
+              "description": "learning rate decay epochs.",
+              "title": "learning rate decay epochs.",
+              "type": "list"
+            },
+            "momentum": {
+              "default": 0.9,
+              "description": "The momentum for the AdamW optimizer.",
+              "math_cond": "> 0.0",
+              "maximum": 0.999,
+              "minimum": 0.5,
+              "title": "momentum - AdamW",
+              "type": "float"
+            },
+            "monitor_name": {
+              "default": "val_loss",
+              "description": "The metric value to be monitored for the :code:`AutoReduce` Scheduler.",
+              "enum": [
+                "val_loss",
+                "train_loss"
+              ],
+              "title": "monitor_name",
+              "type": "categorical"
+            },
+            "type": {
+              "default": "AdamW",
+              "description": "Type of optimizer used to train the network.",
+              "enum": [
+                "AdamW"
+              ],
+              "type": "categorical"
+            },
+            "warmup_factor": {
+              "default": 1.0,
+              "description": "The warmup factor for the learning rate scheduler.",
+              "math_cond": "> 0.0",
+              "title": "warmup factor",
+              "type": "float"
+            },
+            "warmup_iters": {
+              "default": 0,
+              "description": "The number of warmup iterations.",
+              "math_cond": "> 0",
+              "title": "warmup iters",
+              "type": "int"
+            },
+            "weight_decay": {
+              "default": 0.05,
+              "description": "The weight decay coefficient.",
+              "math_cond": "> 0.0",
+              "maximum": 0.5,
+              "minimum": 0.0001,
+              "title": "weight decay",
+              "type": "float"
+            }
+          },
+          "title": "optimizer",
+          "type": "collection"
+        },
+        "precision": {
+          "default": "fp32",
+          "description": "Precision to run the training on.",
+          "enum": [
+            "fp16",
+            "fp32"
+          ],
+          "title": "precision",
+          "type": "categorical"
+        },
+        "results_dir": {
+          "default": "",
+          "description": "The folder to save the experiment.",
+          "title": "results directory",
+          "type": "string"
+        },
+        "resume_training_checkpoint_path": {
+          "default": "",
+          "description": "Path to the checkpoint to resume training from.",
+          "title": "Resume checkpoint path",
+          "type": "string"
+        },
+        "seed": {
+          "default": 1234,
+          "description": "The seed for the initializer in PyTorch. If < 0, disable fixed seed.",
+          "maximum": Infinity,
+          "minimum": -1,
+          "title": "Seed for randomization",
+          "type": "int"
+        },
+        "val_check_interval": {
+          "default": 5,
+          "description": "The number of iterations between validation checks.",
+          "math_cond": "> 0",
+          "title": "val check interval",
+          "type": "int"
+        },
+        "validation_interval": {
+          "default": 1,
+          "description": "\n        The interval (in epochs) at which a evaluation\n        will be triggered on the validation dataset.",
+          "minimum": 1,
+          "popular": true,
+          "title": "Validation interval",
+          "type": "int"
+        },
+        "verbose": {
+          "default": false,
+          "description": "Flag to enable printing of detailed learning rate scaling from the optimizer.",
+          "title": "enable verbose logs",
+          "type": "bool"
+        }
+      },
+      "type": "collection"
+    },
+    "wandb": {
+      "automl_disabled_parameters": [
+        "wandb.tags"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "enable": true,
+        "entity": "",
+        "group": "",
+        "name": "TAO Toolkit Training",
+        "project": "TAO Toolkit",
+        "reinit": false,
+        "run_id": "",
+        "save_code": false,
+        "sync_tensorboard": false,
+        "tags": [
+          "tao-toolkit"
+        ]
+      },
+      "properties": {
+        "enable": {
+          "default": true,
+          "type": "bool"
+        },
+        "entity": {
+          "default": "",
+          "type": "string"
+        },
+        "group": {
+          "default": "",
+          "type": "string"
+        },
+        "name": {
+          "default": "TAO Toolkit Training",
+          "type": "string"
+        },
+        "project": {
+          "default": "TAO Toolkit",
+          "type": "string"
+        },
+        "reinit": {
+          "default": false,
+          "type": "bool"
+        },
+        "run_id": {
+          "default": "",
+          "type": "string"
+        },
+        "save_code": {
+          "default": false,
+          "type": "bool"
+        },
+        "sync_tensorboard": {
+          "default": false,
+          "type": "bool"
+        },
+        "tags": {
+          "automl_enabled": false,
+          "default": [
+            "tao-toolkit"
+          ],
+          "type": "list"
+        }
+      },
+      "type": "collection"
+    }
+  },
+  "type": "object",
+  "x_tao_schema": {
+    "action": "export",
+    "core_module": "nvpanoptix3d",
+    "model": "nvpanoptix3d",
+    "network_arch": "nvpanoptix3d",
+    "schema_action": "export",
+    "schema_version": 1,
+    "source": "tao-core dataclass config"
+  }
+}

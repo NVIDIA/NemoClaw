@@ -1,0 +1,16 @@
+{
+  "_comment": "Whole-brain T2w MRI generation fixture.",
+  "modality": "mri_t2",
+  "dim": [
+    256,
+    256,
+    256
+  ],
+  "spacing": [
+    1.0,
+    1.0,
+    1.0
+  ],
+  "num_inference_steps": 30,
+  "cfg_guidance_scale": 10
+}

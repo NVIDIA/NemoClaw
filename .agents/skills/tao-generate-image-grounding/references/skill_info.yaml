@@ -1,0 +1,38 @@
+network_arch: tao-generate-image-grounding
+type: data
+container_image: tao_toolkit.pyt
+gpu_spec_key: null
+required_credentials: []
+actions:
+  generate:
+    command: auto_label generate -e {config_path}
+    config_format: yaml
+    mode: args
+    inputs:
+      input-jsonl:
+        type: file
+      image-root:
+        type: folder
+    outputs:
+      results-dir:
+        type: folder
+    args:
+      results_dir: '{results_dir}'
+      image_grounding.data.input_jsonl: '{input_jsonl}'
+      image_grounding.data.image_root: '{image_root}'
+      image_grounding.vlm.backend: '{vlm_backend}'
+      image_grounding.workflow.steps: '{steps}'
+    defaults:
+      vlm_backend: gemini
+      steps: '["0","1"]'
+tags:
+- image
+- grounding
+- referring-expressions
+- bounding-boxes
+- phrase-grounding
+- vlm
+- auto-label
+description: Two-step image grounding pipeline that extracts referring expressions
+  from (image, caption) pairs and grounds them to pixel-space bounding boxes via a
+  VLM.

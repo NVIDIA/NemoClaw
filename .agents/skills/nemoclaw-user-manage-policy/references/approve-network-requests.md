@@ -1,3 +1,5 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
 # Approve or Deny Agent Network Requests
 
 Review and act on network requests that the agent makes to endpoints not listed in the sandbox policy.
@@ -12,14 +14,14 @@ OpenShell intercepts these requests and presents them in the TUI for operator ap
 
 Start the OpenShell terminal UI to monitor sandbox activity:
 
-```bash
-openshell term
+```console
+$ openshell term
 ```
 
 For a remote sandbox, pass the instance name:
 
-```bash
-ssh my-gpu-box 'cd ~/nemoclaw && . .env && openshell term'
+```console
+$ ssh my-gpu-box 'cd ~/nemoclaw && . .env && openshell term'
 ```
 
 The TUI displays the sandbox state, active inference provider, and a live feed of network activity.
@@ -48,13 +50,12 @@ To keep an endpoint allowed after a restart, update the policy YAML or apply a p
 
 From the NemoClaw repository root, run the walkthrough script after you have onboarded at least one sandbox and it is reachable:
 
-```bash
-./scripts/walkthrough.sh
+```console
+$ ./scripts/walkthrough.sh
 ```
 
 This script opens a split tmux session with the TUI on the left and the agent on the right.
-The walkthrough requires tmux and the `NVIDIA_INFERENCE_API_KEY` environment variable.
-It assumes an existing sandbox to attach to.
+The walkthrough requires tmux and the `NVIDIA_API_KEY` environment variable, and it assumes an existing sandbox to attach to.
 
 ## Related Topics
 

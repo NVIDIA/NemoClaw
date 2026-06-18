@@ -1,0 +1,107 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Qwen3-VL-30B-A3B-Instruct (MoE vision-language model, 3B active params)
+# Served via model-free-nim container with HuggingFace weights pre-staged on a manual PVC.
+#
+# Why manual PVC + download Job instead of NIMCache:
+#   NIMCache with source.hf writes the model in flat --local-dir layout, but model-free-nim:2.0.2
+#   with NIM_MODEL_PATH=hf://... expects HF cache layout (models--<org>--<name>/snapshots/<hash>/).
+#   See hf-download-job.yaml in this directory for the pre-download Job that populates pvc.yaml.
+#
+# Default config targets MicroK8s single-GPU ~96GB (RTX 6000 / H100-96GB). For multi-GPU
+# clusters (AKS 2x H100 80GB, etc.), see the commented "Multi-GPU profile" block below.
+#
+# Known issues & workarounds:
+#   - NIM_DISABLE_CUDA_GRAPH=true: 128-expert MoE OOMs during CUDA graph capture on single 96GB GPU.
+#   - NIM_MAX_MODEL_LEN=131072: default 262K context needs ~24GB KV cache and doesn't fit
+#     alongside ~58GB of weights on one card.
+#   - NIM_SERVED_MODEL_NAME: model-free-nim otherwise advertises "ga-model-free-nim" at /v1/models
+#     regardless of the loaded HF model, which breaks clients that use the HF model id.
+#   - NVIDIA_DRIVER_CAPABILITIES includes "video" so the container-toolkit bind-mounts
+#     libnvidia-encode.so.1 / libnvidia-decode.so.1 from the host driver. Without this, video
+#     inputs fail with "libnvidia-encode.so.1: cannot open shared object file" (bug 6087789).
+#   - NIM_MAX_VIDEOS_PER_PROMPT=1: Qwen VLMs have video OFF by default.
+#   - NIM_MEDIA_IO_KWARGS num_frames=8 + NIM_MM_PROCESSOR_KWARGS: workaround for vLLM 0.18.0
+#     Qwen3-VL video bug "timestamps and tokens_per_frame must have the same length" (fixed in
+#     vllm PR #37439, not yet in any published model-free-nim tag).
+apiVersion: apps.nvidia.com/v1alpha1
+kind: NIMService
+metadata:
+  name: qwen3-vl
+  namespace: osmo-nims
+spec:
+  image:
+    repository: nvcr.io/nim/nvidia/model-free-nim
+    tag: "2.0.2"
+    pullPolicy: IfNotPresent
+    pullSecrets:
+      - nvcr-pull-secret
+  authSecret: ngc-api-secret
+  env:
+    - name: NIM_MODEL_PATH
+      value: "hf://Qwen/Qwen3-VL-30B-A3B-Instruct"
+    # Point NIM + HuggingFace at the pre-downloaded PVC layout and stay offline so the container
+    # reads cached weights instead of re-downloading from HF on every boot.
+    - name: NIM_CACHE_PATH
+      value: "/model-store"
+    - name: HF_HOME
+      value: "/model-store/huggingface/hub"
+    - name: HF_HUB_OFFLINE
+      value: "1"
+    # Advertise under the HF id so clients using Qwen/Qwen3-VL-30B-A3B-Instruct don't get 404s.
+    - name: NIM_SERVED_MODEL_NAME
+      value: "Qwen/Qwen3-VL-30B-A3B-Instruct"
+    # MoE expert parallelism — the only vLLM knob model-free-nim exposes via env var.
+    - name: VLLM_ENABLE_EXPERT_PARALLEL
+      value: "1"
+    # Single-GPU 96GB: disable CUDA graph (MoE OOMs during capture) and cap context.
+    - name: NIM_DISABLE_CUDA_GRAPH
+      value: "true"
+    - name: NIM_MAX_MODEL_LEN
+      value: "131072"
+    # Request NVENC/NVDEC libraries from the host driver (required for video inputs).
+    - name: NVIDIA_DRIVER_CAPABILITIES
+      value: "compute,utility,video"
+    # Video is OFF by default for Qwen VLMs; set to 1 to allow one video per request.
+    - name: NIM_MAX_VIDEOS_PER_PROMPT
+      value: "1"
+    - name: NIM_PROXY_CLIENT_MAX_BODY_SIZE
+      value: "500M"
+    # Work around vLLM 0.18.0 Qwen3-VL timestamps/tokens_per_frame bug (PR #37439) by sampling a
+    # fixed number of frames rather than fps-based variable counts.
+    - name: NIM_MEDIA_IO_KWARGS
+      value: '{"video":{"num_frames":8}}'
+    - name: NIM_MM_PROCESSOR_KWARGS
+      value: '{"videos_kwargs":{"min_pixels":1568,"max_pixels":262144}}'
+    # --- Multi-GPU profile (e.g. AKS 2x H100 80GB) -------------------------------------------
+    # Comment out NIM_DISABLE_CUDA_GRAPH and NIM_MAX_MODEL_LEN above, then bump
+    # resources.{requests,limits}.nvidia.com/gpu to 2 (and memory to 180Gi).
+    # The 2x80GB topology fits full 262K context without the CUDA-graph workaround.
+    # -----------------------------------------------------------------------------------------
+  storage:
+    pvc:
+      # Pre-created PVC populated by hf-download-job.yaml before this NIMService boots.
+      name: qwen3-vl-pvc
+  startupProbe:
+    enabled: true
+    probe:
+      httpGet:
+        path: /v1/health/ready
+        port: 8000
+      initialDelaySeconds: 60
+      periodSeconds: 30
+      failureThreshold: 120
+      timeoutSeconds: 5
+  replicas: 1
+  resources:
+    limits:
+      nvidia.com/gpu: 1
+      memory: 96Gi
+    requests:
+      nvidia.com/gpu: 1
+      memory: 96Gi
+  expose:
+    service:
+      type: ClusterIP
+      port: 8000

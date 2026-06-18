@@ -1,0 +1,30 @@
+[
+  {
+    "id": "hsb-test-001",
+    "question": "Run /hsb-test on my devkit ubuntu@hq-agx-orin9 (REMOTE_ROOT=/home/ubuntu/anishag/hololink). I have an AGX Orin with an HSB Lattice board and dual IMX274 cameras.",
+    "expected_skill": "hsb-test",
+    "ground_truth": "The agent reads the hsb-test SKILL.md, presents the test plan structure, asks the user for the test document (path or URL), states it will filter tests to AGX Orin + Lattice + dual IMX274, distinguishes automatable from manual tests, and asks for confirmation before running anything.",
+    "expected_behavior": [
+      "The agent reads the hsb-test SKILL.md before taking any action",
+      "The agent asks the user to provide the test document path or URL",
+      "The agent presents the test plan structure before starting",
+      "The agent states it will filter tests to AGX Orin with Lattice board and dual IMX274",
+      "The agent states it will distinguish automatable tests from those requiring manual steps",
+      "The agent asks for user confirmation before running any tests"
+    ]
+  },
+  {
+    "id": "hsb-test-002",
+    "question": "Run /hsb-test on my devkit ubuntu@hq-agx-orin9 (REMOTE_ROOT=/home/ubuntu/anishag/hololink). I only want connectivity and FPGA version checks on my AGX Orin with HSB Lattice board — skip the full suite.",
+    "expected_skill": "hsb-test",
+    "ground_truth": "The agent reads the hsb-test SKILL.md, confirms it will run only connectivity and FPGA version checks (ping 192.168.0.2 and read register 0x80), explicitly states it will not run the full test suite, and asks for confirmation before starting.",
+    "expected_behavior": [
+      "The agent reads the hsb-test SKILL.md before taking any action",
+      "The agent confirms it will run only connectivity and FPGA version checks",
+      "The agent states it will ping 192.168.0.2 to verify board connectivity",
+      "The agent states it will read FPGA version register 0x80",
+      "The agent explicitly confirms it will NOT run the full test suite",
+      "The agent asks for user confirmation before starting"
+    ]
+  }
+]

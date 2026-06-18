@@ -1,0 +1,10 @@
+{
+  "name": "nemotron-customize",
+  "description": "Plan and configure repo-native Nemotron customization workflows from existing steps: curate/nemo_curator JSONL cleaning, translate/nemo_curator corpus translation, sft/automodel, peft/automodel, sft/megatron_bridge, peft/megatron_bridge, pretrain/CPT, rl/nemo_rl alignment, byob/mcq benchmarks, convert/megatron_to_hf and other checkpoint conversion, optimize/modelopt, eval/model_eval, env/env_toml profiles, and end-to-end pipelines.",
+  "version": "0.1.1",
+  "author": {
+    "name": "NVIDIA Nemotron Team"
+  },
+  "homepage": "https://github.com/NVIDIA/Nemotron",
+  "skills": ["./"]
+}

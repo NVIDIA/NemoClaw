@@ -1,0 +1,17 @@
+[
+  {
+    "id": "hierarchical-context-parallel-positive-long-context-smoke",
+    "question": "Use the nemo-mbridge-perf-hierarchical-context-parallel skill. For CP=4 hierarchical context parallelism using a2a+p2p, give the exact Bridge config values, divisibility assertions, TE requirement, and log proof that HCP is actually active.",
+    "expected_skill": "nemo-mbridge-perf-hierarchical-context-parallel",
+    "expected_script": null,
+    "ground_truth": "The answer should use the hierarchical context parallel skill. It should set cfg.model.context_parallel_size=4, cfg.model.cp_comm_type=\"a2a+p2p\", and cfg.model.hierarchical_context_parallel_sizes=[2, 2]. It should state prod(hierarchical_context_parallel_sizes) must equal context_parallel_size and seq_length % (2 * context_parallel_size) == 0. It should mention a2a+p2p requires hierarchical_context_parallel_sizes, Transformer Engine >= 1.12.0 is needed for TEDotProductAttention HCP groups, and logs should show HIERARCHICAL_CONTEXT_PARALLEL_GROUPS rather than only CONTEXT_PARALLEL_GROUP.",
+    "expected_behavior": [
+      "Read the nemo-mbridge-perf-hierarchical-context-parallel skill before answering.",
+      "Identify hierarchical context parallelism as the requested feature.",
+      "List context_parallel_size=4, cp_comm_type=a2a+p2p, and hierarchical_context_parallel_sizes=[2, 2].",
+      "Call out product and sequence-length divisibility assertions.",
+      "Mention the Transformer Engine version requirement.",
+      "Require log verification of HIERARCHICAL_CONTEXT_PARALLEL_GROUPS."
+    ]
+  }
+]

@@ -1,0 +1,51 @@
+results_dir: ''
+evaluate:
+  task:
+    type: its_directionality
+  dataset:
+    annotation_path: ''
+    media_dir: ''
+    system_prompt: You are a helpful assistant that can answer questions about a street-view
+      CCTV footage. The vehicles that need attention are marked with bounding boxes
+      and IDs.
+  model:
+    model_name: nvidia/Cosmos-Reason2-8B
+    save_folder: cr1_1_zero_shot
+    tokenizer_model_name: qwen2.5-vl-7b
+    dtype: bfloat16
+    max_length: 128000
+    tp_size: 1
+    enable_lora: false
+    base_model_path: ''
+  evaluation:
+    answer_type: freeform
+    num_processes: 40
+    skip_saved: false
+    seed: 1
+    limit: -1
+    shard_id: 0
+    batch_size: 50
+    soft_accuracy:
+      enabled: true
+      f1_threshold: 0.8
+  vision:
+    nframes: 8
+  generation:
+    max_retries: 10
+    max_tokens: 1024
+    temperature: 0.0
+    repetition_penalty: 1.0
+    presence_penalty: 0.0
+    frequency_penalty: 0.0
+  metrics:
+    names:
+    - bleu
+    - rouge
+    - bertscore
+    bertscore_model: microsoft/deberta-xlarge-mnli
+    bertscore_lang: en
+  results:
+    save_individual_results: true
+    save_confusion_matrix: true
+    save_metrics_summary: true
+  num_gpus: 1

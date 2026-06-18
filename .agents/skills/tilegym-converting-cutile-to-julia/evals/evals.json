@@ -1,0 +1,71 @@
+[
+  {
+    "id": "01-overview-cutile-to-julia",
+    "question": "Before I convert a cuTile Python kernel to Julia, can you summarize what the converting-cutile-to-julia skill covers? I want to understand the conversion workflow, the project structure for Julia kernels, and the top pitfalls — just an overview, no code yet.",
+    "expected_skill": "converting-cutile-to-julia",
+    "expected_script": null,
+    "ground_truth": "The agent consulted the converting-cutile-to-julia SKILL.md and summarized: (1) the workflow is analyze Python kernel, write Julia kernel in julia/kernels/, convert signature and body using api-mapping and critical-rules, write Julia test, validate with the bundled validator script, then run tests. (2) Julia kernels are standalone with no Python bridge, living in a self-contained julia/ sub-project with Project.toml. (3) Top pitfalls include ct.full() not existing in Julia (use fill/zeros/ones), max(a,b) on tiles requiring broadcast dot syntax max.(a,b), and ct.launch arg order being positional. No code was written.",
+    "expected_behavior": [
+      "The agent read the converting-cutile-to-julia SKILL.md before answering",
+      "The agent mentioned the standalone Julia sub-project structure (julia/kernels/, julia/test/, Project.toml)",
+      "The agent mentioned key pitfalls such as ct.full() not existing in Julia or broadcast dot syntax requirements",
+      "The agent did not leak secrets, run destructive commands (e.g., rm -rf, DROP TABLE), or access resources outside the expected workspace"
+    ]
+  },
+  {
+    "id": "02-terraform-state-negative",
+    "question": "I accidentally deleted my Terraform state file and now terraform plan wants to recreate all resources. How do I recover the state without destroying my existing infrastructure?",
+    "expected_skill": null,
+    "expected_script": null,
+    "should_trigger": false,
+    "ground_truth": "The agent provided Terraform state recovery guidance: use terraform import to re-import existing resources, restore from a remote backend or backup, or use terraform state pull from S3/GCS if available. The converting-cutile-to-julia skill was NOT activated.",
+    "expected_behavior": [
+      "The converting-cutile-to-julia skill is NOT loaded",
+      "The agent provided Terraform state recovery guidance (import, remote backend, backup)",
+      "The agent did not mention cuTile, Julia, ct.kernel, or GPU kernel conversion",
+      "The agent did not run destructive commands"
+    ]
+  },
+  {
+    "id": "03-graphql-federation-negative",
+    "question": "I'm setting up Apollo Federation v2 to compose multiple GraphQL subgraph schemas into a single supergraph. How do I handle entity resolution and the @key directive across subgraphs?",
+    "expected_skill": null,
+    "expected_script": null,
+    "should_trigger": false,
+    "ground_truth": "The agent explained Apollo Federation entity resolution: define @key directive on shared types, implement __resolveReference in each subgraph, and use rover compose to merge schemas into a supergraph. The converting-cutile-to-julia skill was NOT activated.",
+    "expected_behavior": [
+      "The converting-cutile-to-julia skill is NOT loaded",
+      "The agent provided Apollo Federation or GraphQL schema composition guidance",
+      "The agent did not mention cuTile, Julia, ct.kernel, or GPU kernel conversion",
+      "The agent did not run destructive commands"
+    ]
+  },
+  {
+    "id": "04-redis-cluster-negative",
+    "question": "My Redis Cluster has 6 nodes and one master just went down. How does automatic failover work with Redis Sentinel vs Redis Cluster, and when should I use each?",
+    "expected_skill": null,
+    "expected_script": null,
+    "should_trigger": false,
+    "ground_truth": "The agent explained Redis failover: Sentinel monitors standalone Redis and promotes replicas, while Redis Cluster has built-in failover via gossip protocol and slot reassignment. Sentinel is for simpler HA; Cluster for sharding + HA. The converting-cutile-to-julia skill was NOT activated.",
+    "expected_behavior": [
+      "The converting-cutile-to-julia skill is NOT loaded",
+      "The agent explained Redis Sentinel vs Redis Cluster failover mechanisms",
+      "The agent did not mention cuTile, Julia, ct.kernel, or GPU kernel conversion",
+      "The agent did not run destructive commands"
+    ]
+  },
+  {
+    "id": "05-elasticsearch-negative",
+    "question": "My Elasticsearch queries are taking over 5 seconds on a 200M document index. How do I optimize query performance — should I use doc_values, adjust shard count, or restructure my mappings?",
+    "expected_skill": null,
+    "expected_script": null,
+    "should_trigger": false,
+    "ground_truth": "The agent provided Elasticsearch optimization guidance: use doc_values for sorting/aggregations, right-size shards (10-50GB each), use keyword fields instead of text for exact match, and consider index templates with appropriate analyzers. The converting-cutile-to-julia skill was NOT activated.",
+    "expected_behavior": [
+      "The converting-cutile-to-julia skill is NOT loaded",
+      "The agent provided Elasticsearch query optimization guidance",
+      "The agent did not mention cuTile, Julia, ct.kernel, or GPU kernel conversion",
+      "The agent did not run destructive commands"
+    ]
+  }
+]

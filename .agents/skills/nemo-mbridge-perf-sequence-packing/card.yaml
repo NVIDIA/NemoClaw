@@ -1,0 +1,93 @@
+title: packed_sequences_long_context
+validated_on: "2026-03-15"
+summary: >
+  Megatron-Bridge currently supports two distinct packing paths: offline packed
+  SFT for text-only finetuning and in-batch packing for some VLM finetuning
+  paths. Long-context training is primarily expressed through context
+  parallelism, long-context Llama recipes, and memory tradeoff knobs like
+  recompute and CPU offloading.
+validation_status:
+  offline_packed_sft_runtime:
+    - code_verified
+  vlm_in_batch_packing_runtime:
+    - code_verified
+  cp_and_packing_validation_rules:
+    - code_verified
+  packed_seq_helper_behavior:
+    - code_verified
+  vlm_packing_helper_behavior:
+    - code_verified
+  packed_cp_functional_smoke_in_tree:
+    - recipe_verified
+  long_context_llama_recipe_coverage:
+    - recipe_verified
+  public_cp_backend_guidance:
+    - doc_only
+  long_context_perf_claims:
+    - unclear
+feature_meaning:
+  offline_packed_sft: >
+    Pre-tokenized packed finetuning datasets built through PackedSequenceSpecs
+    and consumed through THD packed-sequence metadata.
+  vlm_in_batch_packing: >
+    Runtime batch concatenation path for some VLM training flows controlled by
+    pack_sequences_in_batch=True.
+  long_context_training: >
+    Training at longer sequence lengths, primarily enabled through context
+    parallelism plus recipe-specific long-context presets and memory tuning
+    knobs.
+recommended_path:
+  llm_packed_sft:
+    train.micro_batch_size: 1
+    dataset.dataset_kwargs.pad_to_max_length: true
+    dataset.packed_sequence_specs.packed_sequence_size: match_seq_length
+  cp_finetuning:
+    model.calculate_per_token_loss: true
+    ddp.average_in_collective: false
+    dataset.packed_sequence_specs.pad_seq_to_mult: 2 * context_parallel_size
+  vlm_in_batch_packing:
+    dataset.pack_sequences_in_batch: true
+    train.micro_batch_size: ">1"
+known_constraints:
+  - seq_length must be divisible by 2 * context_parallel_size when CP > 1.
+  - Offline packed SFT requires micro_batch_size == 1.
+  - VLM in-batch packing requires micro_batch_size > 1.
+  - For finetuning with CP > 1, calculate_per_token_loss must be true.
+  - For finetuning with CP > 1, ddp.average_in_collective must be false.
+  - pad_cu_seqlens=true also requires pad_to_max_length=true.
+  - Fine-tuning sequence packing is documented as unsupported with MTP.
+known_limitations:
+  - Packing support is model-family-specific rather than universal.
+  - Qwen3-Next SFT disables packed sequences.
+  - GLM-4.5 SFT and PEFT disable packed sequences.
+  - Qwen3.5-VL disables pack_sequences_in_batch.
+  - The repo does not contain checked-in benchmark results validating long-context throughput claims.
+evidence:
+  - docs/training/packed-sequences.md
+  - docs/performance-guide.md
+  - docs/training/multi-token-prediction.md
+  - docs/models/llama/llama3.md
+  - docs/training/hierarchical-context-parallel.md
+  - src/megatron/bridge/data/datasets/packed_sequence.py
+  - src/megatron/bridge/data/datasets/sft.py
+  - src/megatron/bridge/training/utils/packed_seq_utils.py
+  - src/megatron/bridge/training/gpt_step.py
+  - src/megatron/bridge/training/vlm_step.py
+  - src/megatron/bridge/training/config.py
+  - src/megatron/bridge/recipes/utils/finetune_utils.py
+  - src/megatron/bridge/recipes/common.py
+  - src/megatron/bridge/recipes/llama/llama3.py
+  - src/megatron/bridge/recipes/qwen/qwen3_next.py
+  - src/megatron/bridge/recipes/glm/glm45.py
+  - src/megatron/bridge/recipes/qwen_vl/qwen35_vl.py
+  - src/megatron/bridge/models/qwen_vl/modelling_qwen3_vl/model.py
+  - tests/functional_tests/training/test_seqpacking_cp_example.py
+  - tests/unit_tests/training/utils/test_packed_seq_utils.py
+  - tests/unit_tests/training/test_config.py
+  - tests/unit_tests/training/test_vlm_step.py
+  - scripts/performance/utils/overrides.py
+follow_up_validation:
+  - Run the checked-in packed-plus-CP functional test and record whether it still passes on current infrastructure.
+  - Add a tiny no-download end-to-end smoke test for offline packed SFT.
+  - Add a checked-in long-context training smoke for at least one 16K or 64K recipe.
+  - Cross-link public packing docs to model-family opt-outs and the MTP incompatibility note.

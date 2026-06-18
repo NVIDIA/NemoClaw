@@ -1,0 +1,26 @@
+results_dir: /results
+dataset:
+  label_map: /data/label_map.json
+  contiguous_id: true
+  val:
+    annotations: /data/annotations.json
+    images: <required>
+    panoptic: /data/panoptic
+    batch_size: 1
+    num_workers: 2
+  test:
+    images: <required>
+    batch_size: 1
+export:
+  task: semantic
+model:
+  test:
+    object_mask_threshold: 0.5
+    overlap_threshold: 0.8
+  sem_seg_head:
+    norm: GN
+    num_classes: 133
+inference:
+  trt_engine: /results/oneformer.engine
+evaluate:
+  trt_engine: /results/oneformer.engine

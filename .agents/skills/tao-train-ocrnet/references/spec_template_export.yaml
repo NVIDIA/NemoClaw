@@ -1,0 +1,100 @@
+model_name: ''
+encryption_key: ''
+results_dir: ''
+wandb:
+  enable: true
+  project: TAO Toolkit
+  entity: ''
+  group: ''
+  tags:
+  - tao-toolkit
+  reinit: false
+  sync_tensorboard: false
+  save_code: false
+  name: TAO Toolkit Training
+  run_id: ''
+model:
+  TPS: false
+  num_fiducial: 3
+  backbone: ResNet
+  feature_channel: 512
+  sequence: BiLSTM
+  hidden_size: 256
+  prediction: CTC
+  quantize: false
+  input_width: 100
+  input_height: 32
+  input_channel: 1
+  pruned_graph_path: ''
+  quantize_model_path: ''
+dataset:
+  quant_calibration_dataset:
+    images_dir: ''
+  train_dataset_dir: []
+  train_gt_file: ''
+  val_dataset_dir: ''
+  val_gt_file: ''
+  character_list_file: ''
+  max_label_length: 25
+  batch_size: 16
+  workers: 8
+  augmentation:
+    keep_aspect_ratio: false
+    aug_prob: 0.0
+    reverse_color_prob: 0.5
+    rotate_prob: 0.5
+    max_rotation_degree: 5
+    blur_prob: 0.5
+    gaussian_radius_list:
+    - 1
+    - 2
+    - 3
+    - 4
+train:
+  num_gpus: 1
+  gpu_ids:
+  - 0
+  num_nodes: 1
+  seed: 1234
+  cudnn:
+    benchmark: false
+    deterministic: true
+  num_epochs: 10
+  checkpoint_interval: 1
+  checkpoint_interval_unit: epoch
+  validation_interval: 1
+  resume_training_checkpoint_path: ''
+  results_dir: ''
+  pretrained_model_path: ''
+  optim:
+    name: adadelta
+    lr: 1.0
+    momentum: 0.9
+    weight_decay: 0.0005
+    lr_scheduler: MultiStep
+    lr_monitor: val_loss
+    patience: 1
+    min_lr: 0.0001
+    lr_steps:
+    - 15
+    - 25
+    lr_decay: 0.1
+  clip_grad_norm: 5.0
+  distributed_strategy: ddp
+  use_distributed_sampler: false
+  model_ema: false
+export:
+  checkpoint: ???
+  results_dir: ''
+  onnx_file: ''
+  gpu_id: 0
+quantize:
+  backend: torchao
+  mode: weight_only_ptq
+  algorithm: minmax
+  layers: []
+  skip_names: []
+  model_path: ''
+  results_dir: ''
+  backend_kwargs: {}
+  device: cuda

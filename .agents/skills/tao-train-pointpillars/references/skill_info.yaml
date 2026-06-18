@@ -1,0 +1,92 @@
+name: tao-train-pointpillars
+network_arch: pointpillars
+automl_enabled: true
+container_image: tao_toolkit.pyt
+data_format: default
+gpu_spec_key: train.num_gpus
+actions:
+  dataset_convert:
+    command: pointpillars dataset_convert -e {config_path}
+    config_format: yaml
+    inputs: {}
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  train:
+    command: pointpillars train -e {config_path}
+    config_format: yaml
+    inputs:
+      dataset.data_path:
+        type: folder
+      dataset.data_info_path:
+        type: folder
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  prune:
+    command: pointpillars prune -e {config_path}
+    config_format: yaml
+    inputs: {}
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  evaluate:
+    command: pointpillars evaluate -e {config_path}
+    config_format: yaml
+    inputs: {}
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  retrain:
+    command: pointpillars retrain -e {config_path}
+    config_format: yaml
+    inputs: {}
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  export:
+    command: pointpillars export -e {config_path}
+    config_format: yaml
+    inputs: {}
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  inference:
+    command: pointpillars inference -e {config_path}
+    config_format: yaml
+    inputs: {}
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  gen_trt_engine:
+    command: pointpillars gen_trt_engine -e {config_path}
+    config_format: yaml
+    inputs: {}
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+data_sources: {}
+spec_params: {}
+key_defaults: {}
+spec_shorthand_keys:
+  num_epochs: train.num_epochs
+  batch_size: dataset.batch_size
+  learning_rate: train.optim.lr
+description: PointPillars for 3D object detection from LiDAR point clouds. Encodes point clouds into a pseudo-image via pillar-based
+  representation, then applies 2D detection. Used in autonomous driving / robotics.

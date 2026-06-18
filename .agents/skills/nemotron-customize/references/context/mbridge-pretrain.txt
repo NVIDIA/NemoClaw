@@ -1,0 +1,47 @@
+# Megatron-Bridge Pretraining Context
+
+Use this pack when configuring `pretrain/megatron_bridge`.
+
+## Product Contract
+
+- This step trains or continued-pretrains with Megatron-Bridge and produces a
+  Megatron distributed checkpoint.
+- It consumes `binidx` data plus a `blend.json` from
+  `data_prep/pretrain_prep`. It does not consume SFT packed Parquet.
+- Prefer YAML overrides on the existing step config. Do not write custom
+  training loops.
+
+## Required Inputs
+
+- `dataset.data_paths`: path to the emitted `blend.json`.
+- `seq_length`: aligned with tokenizer/data-prep assumptions.
+- Checkpoint mode:
+  - `load_hf_weights=true` for continued pretraining from an HF base.
+  - `checkpoint.pretrained_checkpoint` or equivalent recipe checkpoint field
+    when resuming from a Megatron checkpoint.
+- Output checkpoint directory distinct from input data and source checkpoints.
+
+## When To Pick This Step
+
+| Requirement | Decision |
+|---|---|
+| Megatron checkpoint output | Use `pretrain/megatron_bridge` |
+| Very large distributed training | Use `pretrain/megatron_bridge` |
+| Small HF-native smoke or simple CPT | Consider `pretrain/automodel` |
+| Raw text input | Run `data_prep/pretrain_prep` first |
+
+## Configuration Rules
+
+- Keep global batch size divisible by data-parallel size.
+- Start with micro batch size 1 for new hardware/model shapes.
+- Use lower learning rates and shorter runs for domain CPT on small corpora.
+- Keep train/valid/test split paths from the same data-prep output.
+- Do not mix SFT packed data and pretraining bin/idx data.
+
+## Failure Modes
+
+- `missing_blend_json`: run `data_prep/pretrain_prep`.
+- `sequence_length_mismatch`: align data prep, recipe, and model sequence
+  length.
+- `transformer_engine_userbuffer_failure`: set `UB_SKIPMC=1` in the runtime env
+  when CUDA multicast is unavailable.

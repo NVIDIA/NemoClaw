@@ -1,0 +1,258 @@
+model_name: ''
+encryption_key: ''
+results_dir: ''
+wandb:
+  enable: true
+  project: TAO Toolkit
+  entity: ''
+  group: ''
+  tags:
+  - tao-toolkit
+  reinit: false
+  sync_tensorboard: false
+  save_code: false
+  name: TAO Toolkit Training
+  run_id: ''
+model:
+  sem_seg_head:
+    name: OneFormerHead
+    ignore_value: 255
+    loss_weight: 1.0
+    in_features:
+    - res3
+    - res4
+    - res5
+    common_stride: 4
+    transformer_enc_layers: 6
+    convs_dim: 256
+    mask_dim: 256
+    pixel_decoder_name: MSDeformAttnPixelDecoder
+    deformable_transformer_encoder_in_features:
+    - res3
+    - res4
+    - res5
+    norm: GN
+    num_classes: 133
+  one_former:
+    hidden_dim: 256
+    nheads: 8
+    dim_feedforward: 2048
+    enc_layers: 0
+    dec_layers: 10
+    pre_norm: false
+    enforce_input_proj: false
+    size_divisibility: 32
+    num_object_queries: 150
+    train_num_points: 12544
+    oversample_ratio: 3.0
+    importance_sample_ratio: 0.75
+    mask_weight: 5.0
+    dice_weight: 5.0
+    class_weight: 2.0
+    no_object_weight: 0.1
+    deep_supervision: true
+    dropout: 0.1
+    transformer_decoder_name: ContrastiveMultiScaleMaskedTransformerDecoder
+    transformer_in_feature: multi_scale_pixel_decoder
+    class_dec_layers: 2
+    contrastive_weight: 0.5
+    contrastive_temperature: 0.07
+    use_task_norm: true
+    num_feature_levels: 3
+  text_encoder:
+    context_length: 77
+    vocab_size: 49408
+    width: 256
+    num_layers: 6
+    n_ctx: 16
+    proj_num_layers: 2
+  backbone:
+    name: D2SwinTransformer
+    freeze_at: 0
+    swin:
+      embed_dim: 192
+      depths:
+      - 2
+      - 2
+      - 18
+      - 2
+      num_heads:
+      - 6
+      - 12
+      - 24
+      - 48
+      window_size: 12
+      mlp_ratio: 4.0
+      qkv_bias: true
+      attn_drop_rate: 0.0
+      drop_rate: 0.0
+      drop_path_rate: 0.3
+      ape: false
+      patch_norm: true
+      patch_size: 4
+      pretrain_img_size: 384
+      use_checkpoint: false
+      out_features:
+      - res2
+      - res3
+      - res4
+      - res5
+      out_indices:
+      - 0
+      - 1
+      - 2
+      - 3
+    radio:
+      resolution:
+      - 1024
+      - 1024
+      backbone: vit_base_patch16_224
+      summary_idxs:
+      - 0
+      - 1
+      - 2
+      num_teacher: 4
+      cpe_max_size: 2048
+      register_multiple: 8
+      out_features:
+      - res2
+      - res3
+      - res4
+      - res5
+      use_checkpoint: false
+  export: false
+  test:
+    object_mask_threshold: 0.4
+    overlap_threshold: 0.5
+    test_topk_per_image: 100
+    semantic_on: true
+    instance_on: false
+    panoptic_on: false
+    detection_on: false
+dataset:
+  train:
+    batch_size: 1
+    num_workers: 1
+    images: ''
+    annotations: ''
+    panoptic: ''
+  val:
+    batch_size: 1
+    num_workers: 1
+    images: ''
+    annotations: ''
+    panoptic: ''
+  test:
+    batch_size: 1
+    num_workers: 1
+    images: ''
+    annotations: ''
+    panoptic: ''
+  workers: 8
+  pin_memory: true
+  pixel_mean:
+  - 123.675
+  - 116.28
+  - 103.53
+  pixel_std:
+  - 58.395
+  - 57.12
+  - 57.375
+  augmentation:
+    train_min_size:
+    - 800
+    train_max_size: 1333
+    train_crop_size:
+    - 1024
+    - 1024
+    test_min_size: 800
+    test_max_size: 1333
+  contiguous_id: true
+  label_map: ''
+  task_prob_train:
+    semantic: 0.33
+    instance: 0.66
+    panoptic: 0.01
+  task_prob_val:
+    semantic: 0.33
+    instance: 0.66
+    panoptic: 0.01
+  task_seq_len: 77
+  max_seq_len: 77
+  image_size: 1024
+  min_scale: 0.1
+  max_scale: 2.0
+  cutmix_prob: 0.0
+  quant_calibration_dataset:
+    images_dir: ''
+train:
+  num_gpus: 8
+  gpu_ids:
+  - 0
+  num_nodes: 1
+  seed: 123
+  cudnn:
+    benchmark: false
+    deterministic: true
+  num_epochs: 50
+  checkpoint_interval: 1
+  checkpoint_interval_unit: epoch
+  validation_interval: 1
+  resume_training_checkpoint_path: ''
+  results_dir: ''
+  freeze: []
+  pretrained_model: ''
+  clip_grad_norm: 0.1
+  clip_grad_type: full
+  is_dry_run: false
+  optim:
+    type: AdamW
+    monitor_name: train_loss
+    lr: 1.0e-05
+    backbone_multiplier: 0.1
+    momentum: 0.9
+    weight_decay: 0.05
+    lr_scheduler: Warmuppoly
+    milestones:
+    - 88
+    - 96
+    gamma: 0.1
+    warmup_iters: 1000
+    warmup_factor: 0.001
+    max_iter: 368750
+    steps:
+    - 327778
+    - 355092
+  precision: fp32
+  distributed_strategy: ddp
+  verbose: false
+  accumulate_grad_batches: 1
+  pretrained_backbone: ''
+  clip_gradients:
+    enabled: true
+    clip_type: full_model
+    clip_value: 1.0
+    norm_type: 2.0
+export:
+  results_dir: ''
+  gpu_id: 0
+  checkpoint: ''
+  task: semantic
+  onnx_file: ''
+  on_cpu: false
+  input_channel: 3
+  input_width: 640
+  input_height: 640
+  opset_version: 17
+  batch_size: -1
+  verbose: false
+quantize:
+  backend: torchao
+  mode: weight_only_ptq
+  algorithm: minmax
+  layers: []
+  skip_names: []
+  model_path: ''
+  results_dir: ''
+  backend_kwargs: {}
+  device: cuda

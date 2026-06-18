@@ -1,0 +1,130 @@
+title: moe_dispatcher_selection
+validated_on: "2026-04-01"
+summary: >
+  Empirical guide for selecting MoE token dispatchers (AlltoAll, DeepEP,
+  HybridEP) based on hardware platform, model scale, and EP degree.
+  Backed by measured benchmarks from DSV3, Qwen3, and Qwen3-Next experiments
+  across H100, B200, GB200, and GB300 systems.
+
+validation_status:
+  dsv3_h100_benchmarks:
+    - measured
+  dsv3_gb200_benchmarks:
+    - measured
+  dsv3_gb300_benchmarks:
+    - measured
+  dsv3_b200_benchmarks:
+    - measured
+  qwen3_h100_benchmarks:
+    - measured
+  qwen3_gb200_benchmarks:
+    - measured
+  qwen3_next_gb200_benchmarks:
+    - measured
+
+training_dimensions:
+  speed:
+    effect: "HybridEP ~10-20% faster than DeepEP/AlltoAll on NVL72 systems"
+    confidence: high
+    rationale: >
+      Measured across DSV3 and Qwen3 on GB200/GB300. HybridEP exploits NVLink
+      domain for fused intra/inter-node dispatch.
+  memory:
+    effect: "HybridEP uses ~15% less GPU memory than AlltoAll"
+    confidence: high
+    rationale: >
+      Measured on Qwen3 GB200: HybridEP ~75% vs AlltoAll ~90% memory utilization.
+  scale:
+    effect: "HybridEP advantage grows with EP degree"
+    confidence: medium
+    rationale: >
+      Higher EP means more communication; HybridEP's NVLink optimization
+      benefits more at EP=32+ vs EP=8.
+
+dispatcher_recommendations:
+  h100:
+    recommended: DeepEP
+    rationale: "HybridEP not available; DeepEP outperforms AlltoAll"
+  b200:
+    recommended: DeepEP
+    rationale: "Best measured perf for cross-node EP"
+  gb200_nvl72:
+    recommended: HybridEP
+    rationale: "Exploits NVLink domain; ~8% MFU jump over optimized DeepEP"
+  gb300_nvl72:
+    recommended: HybridEP
+    rationale: "Same NVLink advantage as GB200"
+
+key_tuning_parameters:
+  - name: moe-deepep-num-sms
+    default: 20
+    recommended: "tune per workload"
+    rationale: "Controls SM count for DeepEP communication kernels; default 20 is a starting point"
+  - name: moe-hybridep-num-sms
+    default: 16
+    recommended: "16-32 range, tune per workload"
+    rationale: "Controls SM count for HybridEP communication; recipes default to 16, perf harness uses 32"
+  - name: NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN
+    default: varies
+    recommended: "match NVLink domain size (e.g., 16 for GB200)"
+  - name: moe-router-force-load-balancing
+    recommended: always
+    rationale: "Force balance consistently outperforms dropless by 5–10%"
+  - name: CUDA_DEVICE_MAX_CONNECTIONS
+    default: 1
+    note: "Set to 32 when using EP overlap + CUDA graphs"
+
+best_measured_configs:
+  - model: "DSV3 685B w/ MTP"
+    hardware: "1024×H100"
+    dispatcher: DeepEP
+    precision: FP8-Block
+    mfu: "~19%"
+    tflops: ~370
+    parallelism: "TP2 EP64 PP8 VPP4"
+  - model: "DSV3 671B no MTP"
+    hardware: "256×GB200"
+    dispatcher: HybridEP
+    precision: FP8-MX
+    mfu: "~19%"
+    tflops: ~1000
+    parallelism: "TP1 EP32 PP8 VPP4"
+  - model: "DSV3 685B w/ MTP"
+    hardware: "256×GB200"
+    dispatcher: HybridEP
+    precision: FP8-MX
+    mfu: "~22%"
+    tflops: ~1100
+    parallelism: "TP1 EP64 PP4 VPP4"
+  - model: "DSV3 685B w/ MTP"
+    hardware: "256×GB300"
+    dispatcher: HybridEP
+    precision: FP8-MX
+    mfu: "~25%"
+    tflops: ~1200
+    parallelism: "TP1 EP64 PP4 VPP4"
+  - model: "Qwen3 235B-A22B"
+    hardware: "128×GB200"
+    dispatcher: HybridEP
+    precision: BF16
+    mfu: "~28%"
+    tflops: ~700
+    parallelism: "TP1 EP32 PP4 VPP12"
+  - model: "Qwen3 235B-A22B"
+    hardware: "256×H100"
+    dispatcher: DeepEP
+    precision: BF16
+    mfu: "~30%"
+    tflops: ~300
+    parallelism: "TP2 EP32 PP8 VPP4"
+
+evidence:
+  - "[MoE Perf] MCore Release Performance Tracker - DeepSeek-V3"
+  - "[MoE Perf] MCore Release Performance Tracker - Qwen3"
+  - "[MoE Perf] MCore Release Performance Tracker - Qwen3-Next"
+
+known_limitations:
+  - HybridEP only works on NVL72 systems (GB200, GB300)
+  - DeepEP SM count tuning is hardware-specific
+  - Container version can cause performance regression
+  - 1F1B overlap + DeepEP may regress on some configurations

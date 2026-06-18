@@ -1,0 +1,174 @@
+title: activation_recompute
+validated_on: "2026-04-02"
+summary: >
+  Selective activation recompute trades GPU compute for memory by recomputing
+  specific module outputs during backward instead of storing them. Megatron
+  Bridge exposes recompute_modules (core_attn, mlp, layernorm, moe, moe_act,
+  shared_experts, mla_up_proj) for fine-grained control. Measured on Llama3
+  70B SFT (32x H100, FP8 CS): mlp recompute saves ~3 GB peak memory but
+  costs ~16% GPU utilization; layernorm recompute is nearly free (~0% cost)
+  but saves negligible memory; core_attn recompute is the default and is
+  cheap when Flash Attention is active. Full-layer recompute
+  (recompute_granularity=full) gives the strongest memory reduction but the
+  highest compute overhead.
+validation_status:
+  selective_recompute_config:
+    - code_verified  # transformer_config.py, transformer_block.py
+  full_layer_recompute_config:
+    - code_verified  # transformer_config.py
+  recompute_modules_enum:
+    - code_verified  # transformer_block.py
+  llama3_70b_sft_fp8_cs_experiment:
+    - measured  # PR #3107, 32x H100, TP4 PP4 VPP5 DP2
+training_dimensions:
+  speed:
+    effect: "~0% (core_attn/layernorm) to ~16% slower (mlp)"
+    confidence: high
+    rationale: >
+      Measured on Llama3 70B SFT 32x H100: core_attn recompute costs ~0.8%
+      (704 vs 710 TFLOP/s/GPU); layernorm recompute adds ~0.3% on top;
+      mlp recompute costs ~16% (594 TFLOP/s/GPU) because the FFN
+      (hidden=28672) is expensive to recompute.
+  memory:
+    effect: "~0 GB (layernorm) to ~3 GB (mlp) peak memory reduction"
+    confidence: high
+    rationale: >
+      Measured on Llama3 70B SFT 32x H100: mlp recompute reduced peak from
+      58.8 to 55.6 GB. Layernorm recompute did not measurably reduce peak.
+      core_attn+layernorm together still OOMed at 59.6 GB.
+  scale:
+    effect: "neutral"
+    confidence: medium
+    rationale: >
+      Recompute is per-GPU and does not change communication patterns.
+  convergence:
+    effect: "no change expected (numerically identical forward)"
+    confidence: high
+    rationale: >
+      Recompute replays the same forward computation — no numerical change.
+  stability:
+    effect: "neutral"
+    confidence: high
+    rationale: >
+      No additional failure modes beyond the existing config constraints.
+enable_when:
+  - training OOMs or is close to the GPU memory limit
+  - memory savings from lighter modules (core_attn, layernorm) are enough
+  - throughput loss from mlp recompute is acceptable for the use case
+  - full-layer recompute is needed as a last resort for very tight memory
+avoid_when:
+  - the model already fits with acceptable headroom
+  - mlp recompute cost (~16%) is too high and VPP or parallelism tuning can fix OOM instead
+  - TE-scoped CUDA graphs are enabled with recompute_granularity=full (incompatible)
+  - CPU offloading is available and cheaper (PP=1 only)
+interactions:
+  required: []
+  conditional:
+    - recompute_granularity=full is incompatible with TE-scoped CUDA graphs
+    - recompute_granularity=full with uniform method requires recompute_num_layers
+    - recompute_granularity=selective requires recompute_modules list
+    - mlp recompute combined with core_attn is slightly worse than mlp alone due to double recompute overhead
+  incompatible:
+    - recompute_granularity=full with cuda_graph_impl=transformer_engine
+feature_meaning:
+  recompute_granularity: >
+    Controls scope: null (no recompute), selective (per-module), full
+    (entire transformer layer).
+  recompute_modules: >
+    List of modules to selectively recompute: core_attn, mlp, layernorm,
+    moe, moe_act, shared_experts, mla_up_proj.
+  recompute_method: >
+    For full granularity: uniform (divide layers evenly into blocks) or
+    block (recompute a fixed number of layers per PP stage).
+  recompute_num_layers: >
+    For full granularity: number of layers per recomputation block.
+config_keys:
+  - model.recompute_granularity
+  - model.recompute_modules
+  - model.recompute_method
+  - model.recompute_num_layers
+  - model.distribute_saved_activations
+recommended_path:
+  first_try: "recompute_granularity=selective, recompute_modules=[core_attn]"
+  if_still_oom: "add layernorm (cheap) or mlp (expensive but saves ~3 GB)"
+  last_resort: "recompute_granularity=full, recompute_method=uniform"
+  alternative: "see skills/nemo-mbridge-perf-memory-tuning/ for VPP tuning and other memory strategies"
+expected_metric_change:
+  - metric: peak_memory
+    direction: down
+    magnitude: "~0 GB (layernorm) to ~3 GB (mlp) on Llama3 70B SFT"
+    conditions: Llama3 70B, TP4 PP4 VPP5 DP2, 32x H100 80GB, FP8 CS
+    evidence: measured_pr_3107
+  - metric: gpu_utilization
+    direction: down
+    magnitude: "~0% (core_attn/layernorm) to ~16% (mlp)"
+    conditions: same as peak_memory
+    evidence: measured_pr_3107
+measured_results:
+  - model: Llama3 70B
+    task: sft
+    parallelism: TP4_PP4_VPP5_DP2
+    gpus: 32
+    gpu: H100_80GB
+    precision: FP8_CS
+    seq_length: 4096
+    mbs: 1
+    gbs: 32
+    golden_tflops: 709.93
+    experiments:
+      - name: baseline
+        recompute_modules: ["core_attn"]
+        tflops: 704
+        vs_golden_pct: -0.8
+        peak_mem_gb: 58.8
+        status: OOM_on_rank0
+      - name: mlp_only
+        recompute_modules: ["mlp"]
+        tflops: 593.6
+        vs_golden_pct: -16.4
+        peak_mem_gb: 55.6
+        status: perf_regression
+      - name: mlp_plus_core_attn
+        recompute_modules: ["mlp", "core_attn"]
+        tflops: 586.8
+        vs_golden_pct: -17.3
+        peak_mem_gb: 55.6
+        status: perf_regression
+      - name: core_attn_plus_layernorm
+        recompute_modules: ["core_attn", "layernorm"]
+        tflops: 702
+        vs_golden_pct: -1.1
+        peak_mem_gb: 59.6
+        status: OOM_on_rank0
+failure_modes:
+  - name: mlp_recompute_too_expensive
+    symptom: ">15% GPU utilization drop"
+    likely_cause: FFN hidden dimension is large (e.g. 28672 for Llama3 70B)
+    fix: use VPP tuning or parallelism changes instead
+  - name: layernorm_insufficient_savings
+    symptom: still OOM after adding layernorm recompute
+    likely_cause: layernorm activations are small relative to total peak
+    fix: add mlp recompute or switch to VPP tuning
+  - name: full_recompute_with_te_cuda_graphs
+    symptom: "AssertionError: full recompute is only supported with full iteration CUDA graph"
+    likely_cause: recompute_granularity=full with any TE-scoped CUDA graph (attn, mlp, moe_router, etc.). Common on FP8 CS configs that default to cuda_graph_impl=transformer_engine + scope=mlp (e.g. LLAMA3_70B_SFT_CONFIG_H100_FP8_CS_V1). Enforced in MCore transformer_config.py:2001-2005.
+    fix: use recompute_granularity=selective with recompute_modules, or set cuda_graph_impl=none, or switch to cuda_graph_impl=local + cuda_graph_scope=full_iteration
+known_constraints:
+  - recompute_granularity=selective requires a non-empty recompute_modules list
+  - recompute_granularity=full requires recompute_method and recompute_num_layers
+  - distribute_saved_activations cannot be used with sequence_parallel=True
+  - combining mlp+core_attn is slightly worse than mlp alone due to double overhead
+known_limitations:
+  - per-module memory savings vary significantly by model architecture
+  - no automatic selection of optimal recompute_modules
+  - memory savings from layernorm are negligible on most architectures
+evidence:
+  - docs/training/activation-recomputation.md
+  - "PR #3107 (Llama3 70B SFT OOM fix experiment)"
+  - src/megatron/bridge/recipes/llama/llama3.py
+  - 3rdparty/Megatron-LM/megatron/core/transformer/transformer_config.py
+  - 3rdparty/Megatron-LM/megatron/core/transformer/transformer_block.py
+follow_up_validation:
+  - Measure selective recompute impact on MoE models (moe, moe_act modules).
+  - Measure mla_up_proj recompute impact on DeepSeek-style MLA models.
+  - Test selective recompute + TE-scoped CUDA graphs combined perf impact.

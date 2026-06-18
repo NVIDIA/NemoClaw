@@ -1,0 +1,46 @@
+{
+  "skills": [
+    "vss-summarize-video",
+    "vss-manage-video-io-storage",
+    "vss-deploy-profile"
+  ],
+  "resources": {
+    "platforms": {
+      "RTXPRO6000BW": {
+        "gpu_count": 1
+      }
+    }
+  },
+  "expects": [
+    {
+      "query": "Deploy the VSS **lvs** profile on `{{platform}}` via `/vss-deploy-profile -p lvs`. Run autonomously.\n\n**Environment & prerequisites:** A **full-remote deployed VSS lvs profile** (deploy mode = `remote-all` \u2014 the agent's LLM and the VLM that the video summarization service calls are both served via remote launchpad endpoints, no local NIMs). Run on ONE platform only \u2014 summarization is throughput-bound on the remote VLM, so fanning out across platforms doesn't materially change coverage. Pinned to `RTXPRO6000BW` with `gpu_count: 1` (operator allocation; the lvs profile uses `network_mode: host` so the video summarization container reaches VST via the host IP). Required: video summarization microservice reachable at http://localhost:38111/v1/ready (expect HTTP 200; 503 means still warming up \u2014 retry), VST reachable at http://localhost:30888/vst/api/v1 (for clip URL resolution via vss-manage-video-io-storage), a sample warehouse video pre-uploaded to VIOS (seed via the vss-manage-video-io-storage upload flow before running these checks), AND the Brev secure-link env vars set (BREV_ENV_ID from /etc/environment, BREV_LINK_PREFIX defaulting to 7777 per current Brev secure-link convention \u2014 see skills/vss-deploy-profile/references/brev.md). The video summarization service fetches the clip URL from inside its own container; without the Brev secure link the URL will be http://localhost:... / http://<internal-ip>:... and the request will either 404 or hang.",
+      "checks": [
+        "`curl -sf --max-time 15 http://localhost:8000/docs` returns exit 0 (Agent REST API responsive)",
+        "`curl -sf --max-time 15 http://localhost:38111/v1/ready` returns exit 0 (video summarization API ready)",
+        "`docker ps --format '{{.Names}}' | grep -qx vss-agent` returns exit 0",
+        "`docker ps --format '{{.Names}}' | grep -qx redis` returns exit 0"
+      ]
+    },
+    {
+      "query": "Summarize the uploaded warehouse video with scenario 'warehouse monitoring' and events ['boxes falling', 'forklift stuck', 'person entering restricted area'].",
+      "checks": [
+        "The agent issues exactly one POST http://localhost:38111/v1/summarize call \u2014 not zero, not two, no parallel hedging",
+        "The POST /v1/summarize request body is application/json and contains the keys {url, model, scenario, events, chunk_duration, num_frames_per_second_or_fixed_frames_chunk, use_fps_for_chunking}; scenario equals 'warehouse monitoring' and events equals the three user-supplied strings verbatim",
+        "The video summarization response is HTTP 200 and the body is an OpenAI-style envelope with choices[0].message.content populated as a JSON-encoded string",
+        "Parsing choices[0].message.content as JSON yields an object with non-empty fields {video_summary, events}",
+        "events is a non-empty array and every element has the keys {id, start_time, end_time, type, description}",
+        "The agent renders the video_summary field verbatim in its final reply \u2014 no paraphrasing, no added emojis, no re-voicing",
+        "The agent renders every event returned by the video summarization service (not a subset), preserving the description field in full",
+        "The agent never calls POST /v1/chat/completions on a VLM endpoint directly \u2014 all summarization traffic goes through the video summarization service"
+      ]
+    },
+    {
+      "query": "Summarize the uploaded warehouse video using default scenario and events.",
+      "checks": [
+        "The POST /v1/summarize request body has scenario='activity monitoring' and events=['notable activity']",
+        "The video summarization response is HTTP 200 with a non-empty video_summary and a non-empty events array",
+        "The agent's final reply notes that generic defaults were used and offers to redo the summary with more specific parameters"
+      ]
+    }
+  ]
+}

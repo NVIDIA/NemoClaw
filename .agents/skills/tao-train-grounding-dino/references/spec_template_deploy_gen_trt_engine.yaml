@@ -1,0 +1,18 @@
+results_dir: /results
+dataset:
+  batch_size: 1
+  augmentation:
+    input_std:
+    - 0.229
+    - 0.224
+    - 0.225
+gen_trt_engine:
+  gpu_id: 0
+  onnx_file: /models/model.onnx
+  trt_engine: /results/grounding-dino.engine
+  tensorrt:
+    data_type: FP16
+    workspace_size: 10240
+    min_batch_size: 1
+    opt_batch_size: 4
+    max_batch_size: 4

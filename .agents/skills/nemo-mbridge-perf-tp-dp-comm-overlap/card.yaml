@@ -1,0 +1,51 @@
+title: tp_dp_comm_overlap
+validated_on: "2026-03-15"
+summary: >
+  Megatron-Bridge exposes communication overlap across tensor parallel, data
+  parallel, and pipeline parallel paths through CommOverlapConfig, but the
+  available behavior and defaults differ by mode.
+validation_status:
+  tp_overlap_gating:
+    - code_verified
+  dp_overlap_defaults:
+    - code_verified
+  pp_overlap_auto_selection:
+    - code_verified
+  launch_env_wiring:
+    - code_verified
+  overlap_perf_claims:
+    - doc_only
+feature_meaning:
+  tp_overlap: >
+    Overlap of tensor-parallel communication with GEMM work, typically tied to
+    sequence parallelism.
+  dp_overlap: >
+    Overlap of gradient reduce-scatter and parameter all-gather on the
+    distributed-optimizer path.
+  pp_overlap: >
+    Overlap of pipeline send and receive behavior, especially relevant for
+    interleaved pipeline schedules.
+recommended_path:
+  comm_overlap.tp_comm_overlap: true_when_tp_and_sp_are_enabled
+  ddp.use_distributed_optimizer: true_for_dp_overlap
+known_constraints:
+  - TP overlap requires tensor_model_parallel_size > 1.
+  - TP overlap requires sequence_parallel=True.
+  - TP overlap requires Transformer Engine to be available.
+  - DP overlap is tied to the distributed-optimizer path.
+  - PP overlap behavior depends on the pipeline schedule and is not identical for every PP setup.
+  - Launch-time environment tuning is part of practical overlap behavior.
+known_limitations:
+  - Not every public recipe enables overlap even when the feature exists.
+  - Repo docs do not provide benchmark-backed proof for optimal overlap settings.
+evidence:
+  - docs/training/communication-overlap.md
+  - docs/performance-guide.md
+  - src/megatron/bridge/training/comm_overlap.py
+  - src/megatron/bridge/training/config.py
+  - src/megatron/bridge/training/mixed_precision.py
+  - src/megatron/bridge/recipes/run_plugins.py
+  - tests/unit_tests/training/test_comm_overlap.py
+follow_up_validation:
+  - Add benchmark-backed overlap guidance for at least one representative model family.
+  - Add a functional PP smoke for interleaved pipeline overlap.

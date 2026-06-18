@@ -1,0 +1,14 @@
+[
+  {
+    "id": "srv-py-eval-001-rest-routing-workflow",
+    "question": "I have the cuOpt REST server running locally. List the HTTP endpoints I need to call to submit a routing problem and retrieve the solution, and the key payload field names for VRP with time windows. No full client script.",
+    "expected_skill": "cuopt-server-api-python",
+    "expected_script": null,
+    "ground_truth": "The agent describes the asynchronous submit-then-poll pattern: POST /cuopt/request returns a reqId, then GET /cuopt/solution/{reqId} until the solution is ready. The top-level VRPTW payload fields are cost_matrix_data, travel_time_matrix_data (note: REST uses travel_time_matrix_data, not the Python-API name transit_time_matrix_data), task_data, fleet_data, and solver_config. Does not produce a runnable client script.",
+    "expected_behavior": [
+      "Describes the POST /cuopt/request → reqId → GET /cuopt/solution/{reqId} polling flow",
+      "Names cost_matrix_data, travel_time_matrix_data, task_data, fleet_data, solver_config as the VRPTW payload fields and flags the travel_time_matrix_data (REST) vs transit_time_matrix_data (Python) naming",
+      "Does not produce a full runnable client script"
+    ]
+  }
+]

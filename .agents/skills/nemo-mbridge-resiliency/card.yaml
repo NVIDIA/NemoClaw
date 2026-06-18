@@ -1,0 +1,121 @@
+title: resiliency
+validated_on: "2026-03-16"
+validation_method: file_existence_only
+summary: >
+  Megatron Bridge integrates nvidia-resiliency-ext for fault tolerance (hang
+  detection + auto restart), NVRx straggler detection, in-process restart
+  (experimental), preemption (graceful shutdown), and re-run state machine
+  (experimental NaN attribution). Async checkpoint save and local checkpointing
+  support faster recovery.
+validation_status:
+  fault_tolerance_config:
+    - file_exists
+  fault_tolerance_plugin:
+    - file_exists
+  fault_tolerance_unit_tests:
+    - file_exists
+  fault_tolerance_example:
+    - file_exists
+  nvrx_straggler_config:
+    - file_exists
+  nvrx_straggler_unit_tests:
+    - file_exists
+  nvrx_straggler_functional_test:
+    - file_exists
+  nvrx_straggler_example:
+    - file_exists
+  inprocess_restart_config:
+    - file_exists
+  inprocess_restart_unit_tests:
+    - file_exists
+  inprocess_restart_functional_test:
+    - file_exists
+  preemption_plugin:
+    - file_exists
+  preemption_unit_tests:
+    - file_exists
+  rerun_state_machine_config:
+    - file_exists
+  rerun_state_machine_runtime:
+    - unclear
+  async_checkpoint_save:
+    - file_exists
+  local_checkpointing:
+    - file_exists
+  local_checkpointing_functional_test:
+    - file_exists
+feature_meaning:
+  fault_tolerance: >
+    Hang detection and automatic job restart via ft_launcher and
+    nvidia-resiliency-ext RankMonitorClient. Slurm-only.
+  nvrx_straggler_detection: >
+    GPU performance monitoring that identifies slow ranks and optionally
+    terminates training. Uses nvidia-resiliency-ext attribution module.
+  inprocess_restart: >
+    Experimental restart within the same process using
+    nvidia-resiliency-ext inprocess module. Does not require a new job.
+  preemption: >
+    Graceful shutdown on SIGTERM with checkpoint save before exit.
+    Slurm preemption support via PreemptionPlugin.
+  rerun_state_machine: >
+    Experimental NaN and spiky loss detection with automatic rerun
+    attribution. Alpha-level feature.
+  async_checkpoint_save: >
+    Non-blocking checkpoint writes using persistent workers. Overlaps
+    save I/O with training compute.
+  local_checkpointing: >
+    Fast local checkpoint save/load using nvidia-resiliency-ext local
+    checkpointing with replication strategies.
+recommended_path:
+  fault_tolerance:
+    ft.enable_ft_package: true
+    ft.calc_ft_timeouts: true
+    plugin: FaultTolerancePlugin
+    launcher: ft_launcher
+  straggler_detection:
+    nvrx_straggler.enabled: true
+    nvrx_straggler.report_time_interval: 300.0
+    nvrx_straggler.stop_if_detected: false
+  async_checkpoint:
+    checkpoint.async_save: true
+    checkpoint.ckpt_format: torch_dist
+known_constraints:
+  - Fault tolerance requires Slurm and ft_launcher (not torchrun).
+  - Async save requires ckpt_format=torch_dist.
+  - In-process restart requires PyTorch >= 2.5.1 and NCCL >= 2.26.2.
+  - In-process restart is incompatible with NeMo-Run and Slurm preemption.
+  - NVRx straggler and legacy StragglerDetector should not both be enabled.
+  - NCCL watchdog timeout must exceed in-process restart hard_timeout.
+  - nvidia-resiliency-ext (~0.5.0) is required for FT, straggler, IPR, and local ckpt.
+known_limitations:
+  - No torchrun-based fault tolerance path exists.
+  - Re-run state machine integration is alpha-level.
+  - In-process restart functional test is excluded from default CI.
+  - Not all recipes enable resiliency features by default.
+  - Preemption plugin is Slurm-specific.
+evidence:
+  - docs/training/resiliency.md
+  - docs/training/checkpointing.md
+  - src/megatron/bridge/training/fault_tolerance.py
+  - src/megatron/bridge/training/nvrx_straggler.py
+  - src/megatron/bridge/training/inprocess_restart.py
+  - src/megatron/bridge/training/checkpointing.py
+  - src/megatron/bridge/training/config.py
+  - src/megatron/bridge/training/utils/sig_utils.py
+  - src/megatron/bridge/recipes/run_plugins.py
+  - scripts/performance/nemo-mbridge-resiliency_plugins.py
+  - tests/unit_tests/training/test_fault_tolerance.py
+  - tests/unit_tests/training/test_nvrx_straggler.py
+  - tests/unit_tests/training/test_inprocess_restart.py
+  - tests/unit_tests/recipes/test_run_plugins.py
+  - tests/functional_tests/training/test_nvrx_straggler.py
+  - tests/functional_tests/training/test_inprocess_restart.py
+  - tests/functional_tests/training/test_local_checkpointing.py
+  - examples/training_features/nemo-mbridge-resiliency/fault_tolerance/
+  - examples/training_features/nemo-mbridge-resiliency/straggler_detection/
+follow_up_validation:
+  - Add a Slurm-based FT end-to-end test with actual hang recovery.
+  - Add a checked-in recipe that enables FT + straggler detection by default.
+  - Validate in-process restart on current container and NCCL versions.
+  - Promote re-run state machine from alpha once runtime integration is complete.
+  - Add benchmark for async save overhead vs sync save.

@@ -1,0 +1,15 @@
+hololink:
+  archive:
+    enrollment_date: '2025-08-19T16:03:53.629991+00:00'
+    version: '2507'
+  content:
+    leopard_fpga_clnx_v2507.bit:
+      md5: bd90fcd6d815fa1d7c8c6ba72d289685
+      size: 1953682
+      url: https://www.dropbox.com/scl/fi/6wujqmyshay1skucokqt4/LI-CERTUS-BRG-V1.0-V2.bit?rlkey=58a02jt1r3hxs2mgs1628dzop&dl=1
+  fpga_uuid:
+  - f1627640-b4dc-48af-a360-c55b09b3d230
+  images:
+  - content: leopard_fpga_clnx_v2507.bit
+    context: cpnx
+  strategy: sensor_bridge_10

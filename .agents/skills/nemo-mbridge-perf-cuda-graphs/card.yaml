@@ -1,0 +1,291 @@
+title: cuda_graphs
+validated_on: "2026-05-18"
+summary: >
+  Megatron Bridge supports CUDA graph capture through two implementations:
+  local full-iteration graphs (MCore FullCudaGraphWrapper) and Transformer
+  Engine scoped graphs (TECudaGraphHelper) for fine-grained capture of
+  attention, MLP, and MoE router modules. Requires static tensor shapes
+  and TE RNG tracker. Verified on Qwen3-30B-A3B and GPT-OSS-20B MoE pretrain
+  with TE-scoped graphs, showing roughly 15-25% lower iteration time and
+  20-33% higher throughput when the eager baseline is launch-bound. A later
+  H100 Qwen3-30B-A3B all-to-all short run captured successfully but was
+  neutral/slightly slower in replay, so target-stack validation is required.
+  Large-model rollout remains memory-sensitive (GPT-OSS-120B blocked OOM),
+  and packed-sequence finetuning remains fragile: Qwen3 SFT hits the
+  non-Tensor `packed_seq_params` graph assertion, while GPT-OSS SFT/LoRA were
+  blocked earlier by missing TE packed-sequence attention backends in the
+  tested container.
+validation_status:
+  config_validation:
+    - code_verified  # config.py:1524-1531
+  te_rng_tracker_requirement:
+    - code_verified  # gpt_provider.py:213-217
+  full_iteration_nan_check_constraint:
+    - code_verified  # config.py:1525-1529
+  te_scoped_graph_capture:
+    - code_verified  # train.py:231-255, 338-350
+  delayed_wgrad_cuda_graph_interaction:
+    - code_verified  # comm_overlap.py:522-555
+  moe_moe_router_mutual_exclusion:
+    - code_verified  # MCore transformer_config.py:1928-1931
+  cpu_offloading_incompatible:
+    - code_verified  # MCore transformer_config.py:1907-1908
+  nccl_graph_register_env:
+    - code_verified  # MCore cuda_graphs.py:1428-1435, 1697-1703
+  graph_cleanup:
+    - code_verified  # train.py:1414-1443
+  perf_harness_override:
+    - code_verified  # overrides.py:102-124
+  test_functions_exist:
+    - code_verified  # grep confirmed test function names in test files
+  end_to_end_functional_smoke:
+    - unclear  # test file exists but tests were not executed
+  qwen3_moe_pretrain_te_scoped:
+    - measured  # Qwen3-30B-A3B, TP2 PP2 EP4, 2x H100 nodes
+  qwen3_moe_h100_alltoall_te_scoped_neutral:
+    - measured  # Qwen3-30B-A3B H100 BF16, alltoall, replay 42.00s vs 41.36s eager
+  qwen3_sft_packed_sequence_block:
+    - measured  # packed_seq_params is not a Tensor for TE-scoped graphs
+  gpt_oss_20b_pretrain_te_scoped:
+    - measured  # GPT-OSS-20B, TP2 PP4 EP4, 2x H100 nodes, job 10111169
+  gpt_oss_20b_sft_lora_te_backend_block:
+    - measured  # baseline and graph blocked by missing packed-sequence TE attention backends
+  gpt_oss_120b_pretrain_oom:
+    - measured  # GPT-OSS-120B, TP2 PP4 EP8, 4x H100 nodes, job 10111518
+training_dimensions:
+  speed:
+    effect: "+/-"
+    confidence: medium
+    rationale: >
+      Measured throughput gains on two MoE pretrain workloads with TE-scoped
+      graphs: Qwen3-30B-A3B improves from 623ms to 484ms steady-state and
+      214 to 274 TFLOP/s/GPU; GPT-OSS-20B improves from 467-520ms to
+      391-399ms and 37.9-42.2 to 49.4-50.4 TFLOP/s/GPU. A 2026-05-18
+      Qwen3-30B-A3B H100 BF16 all-to-all run captured 48 TE-scoped graphable
+      layers but replay was slightly slower than eager, so speedup depends on
+      launch overhead and dispatcher/container shape.
+  memory:
+    effect: "-"
+    confidence: medium
+    rationale: >
+      No extra memory was observed in the pre-capture reports for
+      Qwen3-30B-A3B or GPT-OSS-20B, but GPT-OSS-120B OOMed at iteration 2
+      with roughly 69-70 GB already allocated on 79 GB H100s, so rollout is
+      clearly headroom-sensitive.
+  scale:
+    effect: "+/-"
+    confidence: medium
+    rationale: >
+      CUDA graphs can help at scale when launch overhead matters, but larger
+      MoE topologies may fail on memory before capture benefits are realized.
+  convergence:
+    effect: "0"
+    confidence: medium
+    rationale: >
+      Qwen3-30B-A3B pretrain matched baseline within 0.001, but the
+      GPT-OSS-20B loss comparison was inconclusive because the short run used
+      mock data, GBS=4, and a production LR that made the loss curve noisy.
+  stability:
+    effect: "-"
+    confidence: high
+    rationale: >
+      Adds shape, scope, environment, and backend constraints that can block
+      capture or fail before capture starts.
+enable_when:
+  - sequence length and micro-batch size are static across steps
+  - host overhead is a meaningful part of step time
+  - the run has memory headroom for pinned graph buffers
+  - throughput improvement is desired without changing training math
+  - pretrain or other static-shape workloads can avoid packed-sequence paths
+avoid_when:
+  - sequence length or batch shapes vary across steps
+  - CPU offloading is enabled
+  - memory is already tight, especially with pipeline parallelism or large MoE models
+  - unsupported runtime checks or scope combinations are required
+  - TE-scoped graphs must handle packed_sequence=True workloads
+  - the TE/container build lacks the attention backend required by the recipe
+  - full activation recompute with TE-scoped graphs is required
+interactions:
+  required:
+    - model.use_te_rng_tracker
+    - rng.te_rng_tracker
+  conditional:
+    - rerun_state_machine.check_for_nan_in_loss must be false for local + full_iteration
+    - delay_wgrad_compute adds TE/version/fusion constraints for captured attention or moe_router scopes
+    - moe_preprocess requires moe_router
+    - expandable_segments may require NCCL_GRAPH_REGISTER=0
+    - recompute_granularity=full only works with local full_iteration, not TE scoped
+    - packed_sequence=True is incompatible with Qwen3-style TE-scoped graph capture because packed_seq_params is not a Tensor
+    - older TE/container builds may fail packed-sequence attention before any graph-specific behavior is reached
+  incompatible:
+    - cpu_offloading
+    - moe with moe_router
+    - recompute_granularity=full with transformer_engine impl
+feature_meaning:
+  cuda_graph_impl: >
+    Which graph capture backend to use: local (MCore), transformer_engine (TE), or none.
+  cuda_graph_scope: >
+    Which modules to capture: full_iteration, attn, mlp, moe, moe_router, moe_preprocess, mamba.
+  cuda_graph_warmup_steps: >
+    Number of eager warmup steps before graph capture begins (default 3).
+config_keys:
+  - model.cuda_graph_impl
+  - model.cuda_graph_scope
+  - model.cuda_graph_warmup_steps
+  - model.use_te_rng_tracker
+  - rng.te_rng_tracker
+  - rerun_state_machine.check_for_nan_in_loss
+  - ddp.check_for_nan_in_grad
+recommended_path:
+  model.cuda_graph_impl: transformer_engine_for_scoped_or_local_for_full
+  model.cuda_graph_scope: attn_plus_moe_router_moe_preprocess_for_moe_models
+  rng.te_rng_tracker: true
+  model.use_te_rng_tracker: true
+expected_metric_change:
+  - metric: step_time
+    direction: down
+    magnitude: ~15-25%
+    conditions: MoE pretrain, TE scoped (attn+moe_router+moe_preprocess), static shapes
+    evidence: measured_qwen3_30b_a3b_and_gpt_oss_20b
+  - metric: tokens_per_sec
+    direction: up
+    magnitude: ~20-33%
+    conditions: same as step_time
+    evidence: measured_qwen3_30b_a3b_and_gpt_oss_20b
+  - metric: peak_memory
+    direction: neutral_pre_capture_but_headroom_sensitive
+    magnitude: none_observed_pre_capture_on_smaller_runs
+    conditions: TE scoped graphs on H100 80GB
+    evidence: measured_qwen3_30b_a3b_and_gpt_oss_20b_plus_gpt_oss_120b_oom
+measured_results:
+  - model: Qwen3-30B-A3B
+    task: pretrain
+    parallelism: TP2_PP2_EP4
+    nodes: 2
+    gpu: H100_80GB
+    scope: "attn+moe_router+moe_preprocess"
+    impl: transformer_engine
+    baseline_iter_ms: 623
+    graph_iter_ms: 484
+    speedup_pct: 22
+    baseline_tflops: 214
+    graph_tflops: 274
+    loss_match: true
+    loss_max_delta: 0.001
+    graphable_layers_per_pp: 24
+    capture_time_s: 5.6
+    status: success
+  - model: Qwen3-30B-A3B
+    task: sft_packed
+    parallelism: TP2_PP2_EP4
+    nodes: 2
+    gpu: H100_80GB
+    scope: "attn+moe_router+moe_preprocess"
+    impl: transformer_engine
+    baseline_iter_ms: 880
+    status: blocked
+    error: "packed_seq_params not a Tensor; TE-scoped graphs incompatible with packed sequences"
+  - model: GPT-OSS-20B
+    task: pretrain
+    parallelism: TP2_PP4_EP4_CP1
+    nodes: 2
+    gpu: H100_80GB
+    scope: "attn+moe_router+moe_preprocess"
+    impl: transformer_engine
+    baseline_iter_ms_range: "467-520"
+    graph_iter_ms_range: "391-399"
+    speedup_pct_range: "16-24"
+    baseline_tflops_range: "37.9-42.2"
+    graph_tflops_range: "49.4-50.4"
+    loss_match: inconclusive
+    loss_note: "first ~10 post-capture iterations close; later divergence is noise-dominated"
+    graphable_layers_per_pp: 6
+    capture_time_s: 0.95
+    memory_delta: none_observed_pre_capture
+    jobs: "10111169"
+    status: success
+  - model: GPT-OSS-20B
+    task: sft_lora_packed
+    parallelism: recipe_default_packed_sequence_paths
+    nodes: 1
+    gpu: H100_80GB
+    scope: "attn+moe_router+moe_preprocess"
+    impl: transformer_engine
+    status: blocked
+    error: "TE attention backend unavailable in tested container; baseline and graph both fail"
+    jobs: "10111729/10111730"
+  - model: GPT-OSS-120B
+    task: pretrain
+    parallelism: TP2_PP4_EP8_CP1
+    nodes: 4
+    gpu: H100_80GB
+    scope: "attn+moe_router+moe_preprocess"
+    impl: transformer_engine
+    status: blocked
+    error: "OOM on iteration 2 while allocating 1.54 GiB"
+    memory_at_iter1_allocated_gb: "69-70"
+    memory_at_iter1_reserved_gb: "72-73"
+    jobs: "10111518"
+minimal_example:
+  docs_example: docs/training/cuda-graphs.md
+  skill_example: skills/nemo-mbridge-perf-cuda-graphs/SKILL.md
+  test_path: tests/functional_tests/test_groups/recipes/test_llama_recipes_pretrain_cuda_graphs.py
+  cli_path: scripts/performance/run_script.py
+failure_modes:
+  - name: missing_te_rng_tracker
+    symptom: provider assertion before training starts
+    likely_cause: use_te_rng_tracker or rng.te_rng_tracker not enabled
+  - name: illegal_scope_combination
+    symptom: config validation assertion before capture
+    likely_cause: invalid impl and scope pairing or unsupported scope mix
+  - name: full_recompute_with_te_scoped
+    symptom: "AssertionError: full recompute is only supported with full iteration CUDA graph"
+    likely_cause: recompute_granularity=full with any TE-scoped graph (attn, mlp, moe_router, etc.). Common on FP8 CS configs that default to cuda_graph_impl=transformer_engine + scope=mlp.
+    fix: use recompute_granularity=selective with recompute_modules, or disable CUDA graphs (cuda_graph_impl=none), or switch to cuda_graph_impl=local + cuda_graph_scope=full_iteration. See skills/nemo-mbridge-perf-activation-recompute/SKILL.md.
+  - name: packed_sequences_with_te_scoped
+    symptom: "AssertionError: CUDA graph accepts only Tensor inputs. packed_seq_params excluded"
+    likely_cause: packed_sequence=True passes a non-Tensor packed_seq_params input into TE-scoped capture
+    fix: disable packed sequences or use local full-iteration graphs
+  - name: packed_sequence_attention_backend_missing
+    symptom: "Available backends = {FlashAttention=False, FusedAttention=False, UnfusedDotProductAttention=False}"
+    likely_cause: TE/container build does not provide the packed-sequence attention backend required by the recipe
+    fix: upgrade the container or TE build before evaluating CUDA graphs
+  - name: dynamic_shapes
+    symptom: capture or replay failure after warmup
+    likely_cause: sequence length or micro-batch size changes across steps
+  - name: memory_overhead_oom
+    symptom: run fits in eager mode but OOMs after enabling graphs or when close to the memory limit
+    likely_cause: graph buffers remain pinned and reduce headroom
+  - name: allocator_nccl_env_conflict
+    symptom: graph registration or NCCL-related runtime failure
+    likely_cause: incompatible allocator and NCCL graph register settings
+known_constraints:
+  - use_te_rng_tracker must be True when cuda_graph_impl is not none (gpt_provider.py:213).
+  - full_iteration scope only works with cuda_graph_impl local (MCore transformer_config.py:1704).
+  - full_iteration requires check_for_nan_in_loss False (config.py:1525).
+  - moe scope and moe_router scope are mutually exclusive (MCore transformer_config.py:1928).
+  - moe_preprocess scope requires moe_router scope (MCore transformer_config.py:1934).
+  - CPU offloading is incompatible with CUDA graphs (MCore transformer_config.py:1907).
+  - With expandable_segments, NCCL_GRAPH_REGISTER=0 required (MCore cuda_graphs.py:1428, 1697).
+  - MoE recompute unsupported with moe_router scope + TE impl (MCore transformer_config.py:1977).
+  - full recompute (recompute_granularity=full) only works with local full_iteration, not TE scoped.
+known_limitations:
+  - Most public recipes default to cuda_graph_impl none.
+  - Tensor shapes must be static; variable-length sequences break graph replay.
+  - TE-scoped graphs and packed-sequence finetuning remain a fragile combination across model families.
+  - Large-model MoE rollout is memory-headroom-sensitive even when smaller-model TE-scoped graphs work.
+evidence:
+  - docs/training/cuda-graphs.md
+  - docs/performance-guide.md
+  - src/megatron/bridge/training/config.py
+  - src/megatron/bridge/training/train.py
+  - src/megatron/bridge/models/gpt_provider.py
+  - src/megatron/bridge/training/initialize.py
+  - src/megatron/bridge/training/comm_overlap.py
+  - scripts/performance/utils/overrides.py
+  - tests/unit_tests/training/test_config.py
+  - tests/functional_tests/test_groups/recipes/test_llama_recipes_pretrain_cuda_graphs.py
+follow_up_validation:
+  - Re-run GPT-OSS-20B pretrain with lower LR and/or larger GBS for a meaningful loss comparison.
+  - Retry GPT-OSS packed-sequence SFT and LoRA on a newer TE/container build.
+  - Re-test GPT-OSS-120B with more PP or memory-tuning changes before concluding rollout feasibility.

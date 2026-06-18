@@ -1,0 +1,26 @@
+{
+  "skills": [
+    "vss-deploy-profile"
+  ],
+  "resources": {
+    "platforms": {
+      "RTXPRO6000BW": {
+        "gpu_count": 2
+      }
+    }
+  },
+  "expects": [
+    {
+      "query": "Deploy the VSS **alerts** profile on {{platform}} for CV-driven alert generation with VLM-as-verifier. Run end-to-end and autonomously.",
+      "checks": [
+        "`curl -sf --max-time 15 http://localhost:8000/health` returns exit 0 (Agent REST API responsive)",
+        "`docker ps --format '{{.Names}}' | grep -qx vss-agent` returns exit 0 (Agent backend)",
+        "`docker ps --format '{{.Names}}' | grep -qx redis` returns exit 0 (shared message bus)",
+        "`docker ps --format '{{.Names}}' | grep -qx vss-rtvi-cv` returns exit 0 (RT-CV perception \u2014 the 'CV' in this mode)",
+        "`docker ps --format '{{.Names}}' | grep -qx vss-behavior-analytics` returns exit 0 (rule-based alert generation on CV output)",
+        "`docker ps --format '{{.Names}}' | grep -qx vss-alert-bridge` returns exit 0 (routes CV-generated alerts to VLM verifier)",
+        "`docker ps --format '{{.Names}}' | grep -qx vss-vios-nvstreamer` returns exit 0 (video ingestion source)"
+      ]
+    }
+  ]
+}

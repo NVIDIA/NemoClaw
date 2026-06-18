@@ -1,0 +1,9 @@
+{
+  "_comment": "Small CT image-only rflow-ct smoke config. About the upstream default shape.",
+  "dim": [256, 256, 128],
+  "spacing": [1.7, 1.7, 2.0],
+  "top_region_index": [0, 1, 0, 0],
+  "bottom_region_index": [0, 0, 1, 0],
+  "num_inference_steps": 30,
+  "cfg_guidance_scale": 0
+}

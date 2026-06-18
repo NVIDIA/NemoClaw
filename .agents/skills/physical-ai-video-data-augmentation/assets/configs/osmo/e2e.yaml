@@ -1,0 +1,252 @@
+workflow:
+  name: "{{dataset}}"
+  timeout:
+    exec_timeout: 24h
+    queue_timeout: 2h
+
+  resources:
+    config_gen:
+      cpu: 4
+      memory: 8Gi
+      storage: 20Gi
+      platform: "{{gpu_platform}}"
+    pl_worker:
+      gpu: 1
+      cpu: 11
+      memory: 128Gi
+      storage: 100Gi
+      platform: "{{gpu_platform}}"
+    cosmos_worker:
+      gpu: 1
+      cpu: 11
+      memory: 100Gi
+      storage: 100Gi
+      platform: "{{gpu_platform}}"
+
+  groups:
+
+  # =========================================================================
+  # GROUP 1: Setup — copies recipe configs + scripts, runs config generation,
+  # writes .env. Workers reference via input:0 (SETUP_DIR).
+  # =========================================================================
+  - name: setup_group
+    tasks:
+    - name: setup
+      image: nvcr.io/nvidia/base/ubuntu:22.04_20240212
+      resource: config_gen
+      credentials:
+        nvcr_io:
+          NGC_CLI_API_KEY: auth
+      inputs:
+      - url: "{{storage_url}}/datasets/{{dataset}}"
+      outputs:
+      - url: "{{storage_url}}/datasets/{{dataset}}-outputs/{{run_id}}/setup_b0"
+      environment:
+        RUN_ID: "{{run_id}}"
+        DATASET_INPUT: "{{input:0}}"
+      files:
+      - localpath: "{{skills_dir}}/scripts/cosmos_worker.sh"
+        path: /tmp/cosmos_worker.sh
+      - localpath: "{{skills_dir}}/scripts/pl_original_worker.sh"
+        path: /tmp/pl_original_worker.sh
+      - localpath: "{{skills_dir}}/scripts/pl_augmented_worker.sh"
+        path: /tmp/pl_augmented_worker.sh
+      - localpath: "{{skills_dir}}/scripts/endpoint_common.sh"
+        path: /tmp/endpoint_common.sh
+      - localpath: "{{skills_dir}}/scripts/osmo_barrier.py"
+        path: /tmp/osmo_barrier.py
+      - localpath: "{{skills_dir}}/scripts/generate_configs.py"
+        path: /tmp/generate_configs.py
+      - localpath: "{{skills_dir}}/assets/cookbooks/{{cookbook}}/README.md"
+        path: /tmp/sdg/README.md
+      - localpath: "{{skills_dir}}/assets/cookbooks/{{cookbook}}/augmentation/augmentation.yaml"
+        path: /tmp/sdg/augmentation/augmentation.yaml
+      - localpath: "{{skills_dir}}/assets/cookbooks/{{cookbook}}/augmentation/prompts/prompt_polishing_system_prompt.md"
+        path: /tmp/sdg/augmentation/prompts/prompt_polishing_system_prompt.md
+      - localpath: "{{skills_dir}}/assets/cookbooks/{{cookbook}}/augmentation/prompts/template_generation_system_prompt.md"
+        path: /tmp/sdg/augmentation/prompts/template_generation_system_prompt.md
+      - localpath: "{{skills_dir}}/assets/cookbooks/{{cookbook}}/auto_labeling/prompts/event_analysis.md"
+        path: /tmp/sdg/auto_labeling/prompts/event_analysis.md
+      - localpath: "{{skills_dir}}/assets/cookbooks/{{cookbook}}/auto_labeling/auto_labeling_config.yaml"
+        path: /tmp/sdg/auto_labeling/auto_labeling_config.yaml
+      - localpath: "{{skills_dir}}/assets/cookbooks/{{cookbook}}/auto_labeling/question_bank.json"
+        path: /tmp/sdg/auto_labeling/question_bank.json
+      - localpath: "{{skills_dir}}/assets/cookbooks/{{cookbook}}/workflow_config.yaml"
+        path: /tmp/sdg/workflow_config.yaml
+      command: ["bash", "-c"]
+      args:
+      - |
+        set -euo pipefail
+
+        # --- Entrypoint scripts and barrier ---
+        cp /tmp/*.sh /tmp/osmo_barrier.py "{{output}}/"
+        chmod +x "{{output}}"/*.sh
+
+        # --- Recipe config files ---
+        mkdir -p "{{output}}/configs"
+        cp -r /tmp/sdg/. "{{output}}/configs/"
+
+        # --- Per-video augmentation config generation ---
+        echo "=== Config Generation (run ${RUN_ID}) ==="
+        apt-get update -qq && apt-get install -y -qq python3 python3-pip > /dev/null 2>&1
+        pip3 install pyyaml omegaconf --quiet
+        python3 /tmp/generate_configs.py "${DATASET_INPUT}" "{{output}}/configs" "{{output}}/configs"
+        echo "=== Generated configs ===" && ls -la "{{output}}/configs"
+
+        # --- Shared .env ---
+        printf '%s\n' \
+          "ACCEPT_EULA=Y" \
+          "UV_NO_SYNC=1" \
+          "DOWNLOAD_REID=false" \
+          "WAIT_FOR_VLM=1" \
+          "WAIT_FOR_LLM=1" \
+          "LLM_MODEL_STATIC=" \
+          "VLM_MODEL=Qwen/Qwen3-VL-30B-A3B-Instruct" \
+          "SUPER_RESOLUTION_ENABLED=false" \
+          > "{{output}}/.env"
+        cp "{{output}}/.env" "{{output}}/runtime.env"
+        echo "Setup complete."
+
+  # =========================================================================
+  # GROUP 2: Auto-labeling on Original Videos
+  # Each pl_original_worker processes one video. Worker 0 is lead.
+  # =========================================================================
+  - name: auto_labeling_original_group
+    tasks:
+
+    - name: pl_original_worker_0
+      lead: true
+      image: nvcr.io/nvidia/paidf-auto-labeling:1.0.0
+      resource: pl_worker
+      environment:
+        WORKER_ID: "0"
+        VIDEO_NAME: "{{video}}"
+        VLM_URL: "{{vlm_url}}"
+        LLM_URL: "{{llm_url}}"
+        SETUP_DIR: "{{input:0}}"
+        VIDEO_INPUT: "{{input:1}}"
+        MODEL_CACHE_PATH: "{{input:2}}"
+        OUTPUT_DIR: "{{output}}"
+        BARRIER_RANK: "0"
+        BARRIER_NUM_NODES: "1"
+        BARRIER_HOST: "{{host:pl_original_worker_0}}"
+      credentials:
+        nvcr_io:
+          NGC_CLI_API_KEY: auth
+          VLM_API_KEY: auth
+          LLM_API_KEY: auth
+        hf_token:
+          HUGGING_FACE_HUB_TOKEN: token
+      inputs:
+      - task: setup
+      - url: "{{storage_url}}/datasets/{{dataset}}/{{video}}.mp4"
+      - url: "{{auto_labeling_model_cache_url}}"
+      outputs:
+      - url: "{{storage_url}}/datasets/{{dataset}}-outputs/{{run_id}}/outputs/pseudo_labeled/{{video}}"
+      command: [bash]
+      args: ["{{input:0}}/pl_original_worker.sh"]
+
+  # =========================================================================
+  # GROUP 3: Augmentation
+  # Each cosmos_worker processes one (video, aug_index) pair. Worker 0 is lead.
+  # =========================================================================
+  - name: augmentation_group
+    tasks:
+
+    - name: cosmos_worker_0
+      lead: true
+      image: nvcr.io/nvidia/paidf-augmentation:1.0.0
+      resource: cosmos_worker
+      environment:
+        WORKER_ID: "0"
+        VIDEO_NAME: "{{video}}"
+        AUG_INDEX: "0"
+        VLM_URL: "{{vlm_url}}"
+        LLM_URL: "{{llm_url}}"
+        SETUP_DIR: "{{input:0}}"
+        VIDEO_INPUT: "{{input:1}}"
+        HF_HUB_CACHE: "{{input:2}}"
+        OUTPUT_DIR: "{{output}}"
+        COSMOS_BARRIER_RANK: "0"
+        COSMOS_BARRIER_NUM_NODES: "1"
+        COSMOS_BARRIER_HOST: "{{host:cosmos_worker_0}}"
+      credentials:
+        nvcr_io:
+          NGC_CLI_API_KEY: auth
+          VLM_API_KEY: auth
+          LLM_API_KEY: auth
+        hf_token:
+          HUGGING_FACE_HUB_TOKEN: token
+      inputs:
+      - task: setup
+      - url: "{{storage_url}}/datasets/{{dataset}}/{{video}}.mp4"
+      - url: "{{cosmos_model_cache_url}}"
+
+      outputs:
+      - url: "{{storage_url}}/datasets/{{dataset}}-outputs/{{run_id}}/outputs/augmented/{{video}}_aug0"
+      command: [bash]
+      args: ["{{input:0}}/cosmos_worker.sh"]
+
+  # =========================================================================
+  # GROUP 4: Auto-labeling on Augmented Videos
+  # Each pl_augmented_worker processes one augmented video. Worker 0 is lead.
+  # =========================================================================
+  - name: auto_labeling_augmented_group
+    tasks:
+
+    - name: pl_augmented_worker_0
+      lead: true
+      image: nvcr.io/nvidia/paidf-auto-labeling:1.0.0
+      resource: pl_worker
+      environment:
+        WORKER_ID: "0"
+        VIDEO_NAME: "{{video}}"
+        AUG_INDEX: "0"
+        VLM_URL: "{{vlm_url}}"
+        LLM_URL: "{{llm_url}}"
+        SETUP_DIR: "{{input:0}}"
+        COSMOS_INPUT: "{{input:1}}"
+        MODEL_CACHE_PATH: "{{input:2}}"
+        OUTPUT_DIR: "{{output}}"
+        BARRIER_RANK: "0"
+        BARRIER_NUM_NODES: "1"
+        BARRIER_HOST: "{{host:pl_augmented_worker_0}}"
+      credentials:
+        nvcr_io:
+          NGC_CLI_API_KEY: auth
+          VLM_API_KEY: auth
+          LLM_API_KEY: auth
+        hf_token:
+          HUGGING_FACE_HUB_TOKEN: token
+      inputs:
+      - task: setup
+      - task: cosmos_worker_0
+      - url: "{{auto_labeling_model_cache_url}}"
+      outputs:
+      - url: "{{storage_url}}/datasets/{{dataset}}-outputs/{{run_id}}/outputs/pseudo_labeled_augmented/{{video}}_aug0"
+      command: [bash]
+      args: ["{{input:0}}/pl_augmented_worker.sh"]
+
+default-values:
+  # Cookbook scene name: city_traffic, piazza, warehouse, robot_assembly, trailer_dashcam
+  cookbook: "city_traffic"
+
+  # In-cluster NIM endpoints (override via the same submit --set-string list for external/NVCF endpoints)
+  vlm_url: "http://qwen3-vl.osmo-nims.svc.cluster.local:8000/v1"
+  llm_url: "http://qwen25-14b.osmo-nims.svc.cluster.local:8000/v1"
+  cosmos_model_cache_url: "{{storage_url}}/data/models/cosmos_transfer"
+  auto_labeling_model_cache_url: "{{storage_url}}/data/models/auto_labeling"
+
+
+
+  # Required at submit time via one --set-string list (no default — Jinja StrictUndefined raises if omitted):
+  #   storage_url  — URL prefix matching the registered DATA credential profile.
+  #                  e.g. s3://my-bucket, azure://acct/cont, gs://bucket,
+  #                       swift://endpoint/account/container, tos://endpoint/bucket
+  #   dataset      — dataset name (also used as workflow.name). Must match
+  #                  ^[a-zA-Z]([a-zA-Z0-9_-]*[a-zA-Z0-9])?$
+  #   run_id       — unique run identifier
+  #   gpu_platform — OSMO pool platform name for all VDA tasks (config_gen, pl_worker, cosmos_worker)
+  #   skills_dir   — absolute path to skills/physical-ai-video-data-augmentation/
+  #                  on the submitter host
+  #   video        — video stem (filename without .mp4)

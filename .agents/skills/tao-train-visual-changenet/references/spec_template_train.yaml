@@ -1,0 +1,120 @@
+encryption_key: tlt_encode
+task: classify
+train:
+  resume_training_checkpoint_path: null
+  pretrained_model_path: ''
+  classify:
+    loss: ce
+    cls_weight:
+    - 1.0
+    - 10.0
+  num_epochs: 100
+  num_nodes: 1
+  validation_interval: 50
+  checkpoint_interval: 200
+  optim:
+    lr: 1.0e-05
+    optim: adamw
+    policy: linear
+    momentum: 0.9
+    weight_decay: 0.01
+  results_dir: ${results_dir}/train
+  tensorboard:
+    enabled: true
+    infrequent_logging_frequency: 1
+results_dir: ''
+model:
+  backbone:
+    type: c_radio_v2_vit_base_patch16_224
+    # Must be a LOCAL file path the container can read (TAO does not dereference
+    # HTTPS URLs or HF repo ids). Stage from HF before launch — see SKILL.md.
+    pretrained_backbone_path: /data/pretrained_models/C-RADIOv2_B.safetensors
+    freeze_backbone: false
+  classify:
+    train_margin_euclid: 2.0
+    eval_margin: 0.3
+    embedding_vectors: 5
+    embed_dec: 30
+    difference_module: learnable
+    learnable_difference_modules: 4
+  decode_head:
+    use_summary_token: true
+    feature_strides:
+    - 4
+    - 8
+    - 16
+    - 32
+dataset:
+  classify:
+    train_dataset:
+      csv_path: ''
+      images_dir: /workspace/images/
+    validation_dataset:
+      csv_path: ''
+      images_dir: /workspace/images/
+    test_dataset:
+      csv_path: ''
+      images_dir: /workspace/images/
+    infer_dataset:
+      csv_path: ''
+      images_dir: /workspace/images/
+    image_ext: .jpg
+    batch_size: 16
+    workers: 2
+    fpratio_sampling: 0.25
+    num_input: 1
+    input_map:
+      SolderLight: 0
+    concat_type: linear
+    grid_map:
+      x: 2
+      y: 2
+    image_width: 224
+    image_height: 224
+    augmentation_config:
+      rgb_input_mean:
+      - 0.485
+      - 0.456
+      - 0.406
+      rgb_input_std:
+      - 0.229
+      - 0.224
+      - 0.225
+      random_flip:
+        vflip_probability: 0.5
+        hflip_probability: 0.5
+        enable: true
+      random_rotate:
+        rotate_probability: 0.5
+        angle_list:
+        - 90
+        - 180
+        - 270
+        enable: true
+      random_color:
+        brightness: 0.3
+        contrast: 0.3
+        saturation: 0.3
+        hue: 0.3
+        enable: true
+      with_scale_random_crop:
+        enable: true
+      with_random_crop: true
+      with_random_blur: true
+      augment: true
+    num_classes: 2
+evaluate:
+  checkpoint: ${results_dir}/train/changenet_model_classify_latest.pth
+  trt_engine: ${results_dir}/gen_trt_engine/changenet-classify.trt
+  batch_size: ${dataset.classify.batch_size}
+inference:
+  checkpoint: ''
+  trt_engine: ${results_dir}/gen_trt_engine/changenet-classify.trt
+  batch_size: ${dataset.classify.batch_size}
+export:
+  gpu_id: 0
+  checkpoint: ${results_dir}/train/changenet_model_classify_latest.pth
+  onnx_file: ${results_dir}/export/changenet-classify.onnx
+  input_width: 128
+  input_height: 512
+  batch_size: ${dataset.classify.batch_size}

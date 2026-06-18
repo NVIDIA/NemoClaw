@@ -1,0 +1,7 @@
+nibabel>=4.0
+numpy>=1.23
+typer>=0.9
+monai>=1.5
+torch>=2.1
+hf-transfer>=0.1
+huggingface_hub>=0.20

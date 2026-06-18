@@ -1,0 +1,2208 @@
+{
+  "automl_default_parameters": [
+    "train.decay_step_list",
+    "train.momentum",
+    "train.lr_decay",
+    "train.lr_warmup",
+    "train.weight_decay",
+    "train.lr",
+    "train.lr_clip"
+  ],
+  "automl_disabled_parameters": [
+    "model.dense_head.loss_config.loss_weights",
+    "model.backbone_2d",
+    "train.gpu_ids",
+    "model.post_processing.recall_thresh_list",
+    "dataset.data_augmentor.disable_aug_list",
+    "dataset.data_split",
+    "evaluate",
+    "dataset.data_augmentor.aug_config_list",
+    "inference",
+    "model.vfe.num_filters",
+    "train",
+    "model.dense_head.loss_config",
+    "model.post_processing",
+    "gen_trt_engine",
+    "dataset",
+    "dataset.class_names",
+    "model.backbone_2d.num_upsample_filters",
+    "model.backbone_2d.layer_nums",
+    "model.backbone_2d.layer_strides",
+    "dataset.data_processor",
+    "model.backbone_2d.num_filters",
+    "model",
+    "model.dense_head",
+    "dataset.point_cloud_range",
+    "model.post_processing.nms_config",
+    "dataset.point_feature_encoding",
+    "dataset.info_path",
+    "model.vfe",
+    "dataset.data_augmentor",
+    "model.dense_head.anchor_generator_config",
+    "model.dense_head.target_assigner_config",
+    "export",
+    "model.map_to_bev",
+    "prune",
+    "model.backbone_2d.upsample_strides",
+    "train.moms"
+  ],
+  "default": {
+    "dataset": {
+      "balanced_resampling": false,
+      "class_names": [
+        "Car",
+        "Truck",
+        "Van",
+        "Tram",
+        "Pedestrian",
+        "Cyclist",
+        "Misc"
+      ],
+      "data_augmentor": {
+        "aug_config_list": [
+          {
+            "db_info_path": [
+              "dbinfos_train.pkl"
+            ],
+            "disable_with_fake_lidar": false,
+            "limit_whole_scene": false,
+            "name": "gt_sampling",
+            "num_point_features": 4,
+            "preface": {
+              "filter_by_min_points": [
+                "Car:5",
+                "Truck:5",
+                "Van:5",
+                "Tram:5",
+                "Pedestrian:5",
+                "Cyclist:5",
+                "Misc:5"
+              ]
+            },
+            "remove_extra_width": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "sample_groups": [
+              "Car:15",
+              "Truck:15",
+              "Van:15",
+              "Tram:15",
+              "Pedestrian:15",
+              "Cyclist:15",
+              "Misc:15"
+            ]
+          }
+        ],
+        "disable_aug_list": [
+          "placeholder"
+        ]
+      },
+      "data_info_path": "",
+      "data_path": "",
+      "data_processor": [
+        {
+          "name": "mask_points_and_boxes_outside_range",
+          "remove_outside_boxes": true
+        },
+        {
+          "name": "shuffle_points",
+          "shuffle": {
+            "test": false,
+            "train": true
+          }
+        },
+        {
+          "max_number_of_voxels": {
+            "test": 10000,
+            "train": 16000
+          },
+          "max_points_per_voxel": 32,
+          "name": "transform_points_to_voxels",
+          "voxel_size": [
+            0.16,
+            0.16,
+            6.762
+          ]
+        }
+      ],
+      "data_split": {
+        "test": "val",
+        "train": "train"
+      },
+      "info_path": {
+        "test": [
+          "infos_val.pkl"
+        ],
+        "train": [
+          "infos_train.pkl"
+        ]
+      },
+      "num_workers": 4,
+      "point_cloud_range": [
+        5.245,
+        -25.983,
+        -3.854,
+        79.485,
+        48.257,
+        2.908
+      ],
+      "point_feature_encoding": {
+        "encoding_type": "absolute_coordinates_encoding",
+        "src_feature_list": [
+          "x",
+          "y",
+          "z",
+          "intensity"
+        ],
+        "used_feature_list": [
+          "x",
+          "y",
+          "z",
+          "intensity"
+        ]
+      },
+      "type": "GeneralPCDataset"
+    },
+    "local_rank": 0,
+    "model": {
+      "backbone_2d": {
+        "layer_nums": [
+          3,
+          5,
+          5
+        ],
+        "layer_strides": [
+          2,
+          2,
+          2
+        ],
+        "name": "BaseBEVBackbone",
+        "num_filters": [
+          64,
+          128,
+          256
+        ],
+        "num_upsample_filters": [
+          128,
+          128,
+          128
+        ],
+        "upsample_strides": [
+          1,
+          2,
+          4
+        ]
+      },
+      "dense_head": {
+        "anchor_generator_config": [
+          {
+            "align_center": false,
+            "anchor_bottom_heights": [
+              -1.78
+            ],
+            "anchor_rotations": [
+              0,
+              1.57
+            ],
+            "anchor_sizes": [
+              [
+                3.9,
+                1.6,
+                1.56
+              ]
+            ],
+            "class_name": "Car",
+            "feature_map_stride": 2,
+            "matched_threshold": 0.6,
+            "unmatched_threshold": 0.45
+          },
+          {
+            "align_center": false,
+            "anchor_bottom_heights": [
+              -1.78
+            ],
+            "anchor_rotations": [
+              0,
+              1.57
+            ],
+            "anchor_sizes": [
+              [
+                3.9,
+                1.6,
+                1.56
+              ]
+            ],
+            "class_name": "Truck",
+            "feature_map_stride": 2,
+            "matched_threshold": 0.6,
+            "unmatched_threshold": 0.45
+          },
+          {
+            "align_center": false,
+            "anchor_bottom_heights": [
+              -1.78
+            ],
+            "anchor_rotations": [
+              0,
+              1.57
+            ],
+            "anchor_sizes": [
+              [
+                3.9,
+                1.6,
+                1.56
+              ]
+            ],
+            "class_name": "Van",
+            "feature_map_stride": 2,
+            "matched_threshold": 0.6,
+            "unmatched_threshold": 0.45
+          },
+          {
+            "align_center": false,
+            "anchor_bottom_heights": [
+              -1.78
+            ],
+            "anchor_rotations": [
+              0,
+              1.57
+            ],
+            "anchor_sizes": [
+              [
+                3.9,
+                1.6,
+                1.56
+              ]
+            ],
+            "class_name": "Tram",
+            "feature_map_stride": 2,
+            "matched_threshold": 0.6,
+            "unmatched_threshold": 0.45
+          },
+          {
+            "align_center": false,
+            "anchor_bottom_heights": [
+              -0.6
+            ],
+            "anchor_rotations": [
+              0,
+              1.57
+            ],
+            "anchor_sizes": [
+              [
+                0.8,
+                0.6,
+                1.73
+              ]
+            ],
+            "class_name": "Pedestrian",
+            "feature_map_stride": 2,
+            "matched_threshold": 0.5,
+            "unmatched_threshold": 0.35
+          },
+          {
+            "align_center": false,
+            "anchor_bottom_heights": [
+              -0.6
+            ],
+            "anchor_rotations": [
+              0,
+              1.57
+            ],
+            "anchor_sizes": [
+              [
+                1.76,
+                0.6,
+                1.73
+              ]
+            ],
+            "class_name": "Cyclist",
+            "feature_map_stride": 2,
+            "matched_threshold": 0.5,
+            "unmatched_threshold": 0.35
+          },
+          {
+            "align_center": false,
+            "anchor_bottom_heights": [
+              -0.6
+            ],
+            "anchor_rotations": [
+              0,
+              1.57
+            ],
+            "anchor_sizes": [
+              [
+                0.8,
+                0.6,
+                1.73
+              ]
+            ],
+            "class_name": "Misc",
+            "feature_map_stride": 2,
+            "matched_threshold": 0.5,
+            "unmatched_threshold": 0.35
+          }
+        ],
+        "class_agnostic": false,
+        "dir_limit_offset": 0.0,
+        "dir_offset": 0.78539,
+        "loss_config": {
+          "loss_weights": {
+            "cls_weight": 1.0,
+            "code_weights": [
+              1.0,
+              1.0,
+              1.0,
+              1.0,
+              1.0,
+              1.0,
+              1.0
+            ],
+            "dir_weight": 0.2,
+            "loc_weight": 2.0
+          }
+        },
+        "name": "AnchorHeadSingle",
+        "num_dir_bins": 2,
+        "target_assigner_config": {
+          "box_coder": "ResidualCoder",
+          "match_height": false,
+          "name": "AxisAlignedTargetAssigner",
+          "norm_by_num_examples": false,
+          "pos_fraction": -1.0,
+          "sample_size": 512
+        },
+        "use_direction_classifier": true
+      },
+      "map_to_bev": {
+        "name": "PointPillarScatter",
+        "num_bev_features": 64
+      },
+      "name": "PointPillar",
+      "post_processing": {
+        "eval_metric": "kitti",
+        "nms_config": {
+          "multi_classes_nms": false,
+          "nms_post_max_size": 500,
+          "nms_pre_max_size": 4096,
+          "nms_thresh": 0.01,
+          "nms_type": "nms_gpu"
+        },
+        "output_raw_score": false,
+        "recall_thresh_list": [
+          0.3,
+          0.5,
+          0.7,
+          0.3,
+          0.3,
+          0.3,
+          0.3
+        ],
+        "score_thresh": 0.1
+      },
+      "pretrained_model_path": "",
+      "sync_bn": false,
+      "vfe": {
+        "name": "PillarVFE",
+        "num_filters": [
+          64
+        ],
+        "use_absolue_xyz": true,
+        "use_norm": true,
+        "with_distance": false
+      }
+    },
+    "results_dir": "",
+    "train": {
+      "batch_size": 4,
+      "checkpoint_interval": 1,
+      "decay_step_list": [
+        35,
+        45
+      ],
+      "div_factor": 10.0,
+      "gpu_ids": [
+        0
+      ],
+      "grad_norm_clip": 10.0,
+      "lr": 0.003,
+      "lr_clip": 1e-07,
+      "lr_decay": 0.1,
+      "lr_warmup": false,
+      "max_checkpoint_save_num": 30,
+      "merge_all_iters_to_one_epoch": false,
+      "momentum": 0.9,
+      "moms": [
+        0.95,
+        0.85
+      ],
+      "num_epochs": 80,
+      "num_gpus": 1,
+      "optimizer": "adam_onecycle",
+      "pct_start": 0.4,
+      "pruned_model_path": "",
+      "resume_training_checkpoint_path": "",
+      "tcp_port": 18888,
+      "validation_interval": 1,
+      "warmup_epoch": 1,
+      "weight_decay": 0.01
+    }
+  },
+  "properties": {
+    "automl_disabled_parameters": [
+      "dataset",
+      "model",
+      "train",
+      "evaluate",
+      "inference",
+      "export",
+      "gen_trt_engine",
+      "prune"
+    ],
+    "dataset": {
+      "automl_disabled_parameters": [
+        "dataset.class_names",
+        "dataset.data_split",
+        "dataset.info_path",
+        "dataset.point_feature_encoding",
+        "dataset.point_cloud_range",
+        "dataset.data_augmentor",
+        "dataset.data_processor"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "balanced_resampling": false,
+        "class_names": [
+          "Car",
+          "Truck",
+          "Van",
+          "Tram",
+          "Pedestrian",
+          "Cyclist",
+          "Misc"
+        ],
+        "data_augmentor": {
+          "aug_config_list": [
+            {
+              "db_info_path": [
+                "dbinfos_train.pkl"
+              ],
+              "disable_with_fake_lidar": false,
+              "limit_whole_scene": false,
+              "name": "gt_sampling",
+              "num_point_features": 4,
+              "preface": {
+                "filter_by_min_points": [
+                  "Car:5",
+                  "Truck:5",
+                  "Van:5",
+                  "Tram:5",
+                  "Pedestrian:5",
+                  "Cyclist:5",
+                  "Misc:5"
+                ]
+              },
+              "remove_extra_width": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "sample_groups": [
+                "Car:15",
+                "Truck:15",
+                "Van:15",
+                "Tram:15",
+                "Pedestrian:15",
+                "Cyclist:15",
+                "Misc:15"
+              ]
+            }
+          ],
+          "disable_aug_list": [
+            "placeholder"
+          ]
+        },
+        "data_info_path": "",
+        "data_path": "",
+        "data_processor": [
+          {
+            "name": "mask_points_and_boxes_outside_range",
+            "remove_outside_boxes": true
+          },
+          {
+            "name": "shuffle_points",
+            "shuffle": {
+              "test": false,
+              "train": true
+            }
+          },
+          {
+            "max_number_of_voxels": {
+              "test": 10000,
+              "train": 16000
+            },
+            "max_points_per_voxel": 32,
+            "name": "transform_points_to_voxels",
+            "voxel_size": [
+              0.16,
+              0.16,
+              6.762
+            ]
+          }
+        ],
+        "data_split": {
+          "test": "val",
+          "train": "train"
+        },
+        "info_path": {
+          "test": [
+            "infos_val.pkl"
+          ],
+          "train": [
+            "infos_train.pkl"
+          ]
+        },
+        "num_workers": 4,
+        "point_cloud_range": [
+          5.245,
+          -25.983,
+          -3.854,
+          79.485,
+          48.257,
+          2.908
+        ],
+        "point_feature_encoding": {
+          "encoding_type": "absolute_coordinates_encoding",
+          "src_feature_list": [
+            "x",
+            "y",
+            "z",
+            "intensity"
+          ],
+          "used_feature_list": [
+            "x",
+            "y",
+            "z",
+            "intensity"
+          ]
+        },
+        "type": "GeneralPCDataset"
+      },
+      "properties": {
+        "balanced_resampling": {
+          "default": false,
+          "description": "Flag to enable balanced resampling or not.",
+          "title": "balanced_resampling",
+          "type": "bool"
+        },
+        "class_names": {
+          "automl_enabled": false,
+          "default": [
+            "Car",
+            "Truck",
+            "Van",
+            "Tram",
+            "Pedestrian",
+            "Cyclist",
+            "Misc"
+          ],
+          "description": "List of names of object classes.",
+          "title": "class_names",
+          "type": "list"
+        },
+        "data_augmentor": {
+          "automl_disabled_parameters": [
+            "dataset.data_augmentor.disable_aug_list",
+            "dataset.data_augmentor.aug_config_list"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "aug_config_list": [
+              {
+                "db_info_path": [
+                  "dbinfos_train.pkl"
+                ],
+                "disable_with_fake_lidar": false,
+                "limit_whole_scene": false,
+                "name": "gt_sampling",
+                "num_point_features": 4,
+                "preface": {
+                  "filter_by_min_points": [
+                    "Car:5",
+                    "Truck:5",
+                    "Van:5",
+                    "Tram:5",
+                    "Pedestrian:5",
+                    "Cyclist:5",
+                    "Misc:5"
+                  ]
+                },
+                "remove_extra_width": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "sample_groups": [
+                  "Car:15",
+                  "Truck:15",
+                  "Van:15",
+                  "Tram:15",
+                  "Pedestrian:15",
+                  "Cyclist:15",
+                  "Misc:15"
+                ]
+              }
+            ],
+            "disable_aug_list": [
+              "placeholder"
+            ]
+          },
+          "properties": {
+            "aug_config_list": {
+              "automl_enabled": false,
+              "default": [
+                {
+                  "db_info_path": [
+                    "dbinfos_train.pkl"
+                  ],
+                  "disable_with_fake_lidar": false,
+                  "limit_whole_scene": false,
+                  "name": "gt_sampling",
+                  "num_point_features": 4,
+                  "preface": {
+                    "filter_by_min_points": [
+                      "Car:5",
+                      "Truck:5",
+                      "Van:5",
+                      "Tram:5",
+                      "Pedestrian:5",
+                      "Cyclist:5",
+                      "Misc:5"
+                    ]
+                  },
+                  "remove_extra_width": [
+                    0.0,
+                    0.0,
+                    0.0
+                  ],
+                  "sample_groups": [
+                    "Car:15",
+                    "Truck:15",
+                    "Van:15",
+                    "Tram:15",
+                    "Pedestrian:15",
+                    "Cyclist:15",
+                    "Misc:15"
+                  ]
+                }
+              ],
+              "description": "List of configurations of augmentations.",
+              "title": "aug_config_list",
+              "type": "list"
+            },
+            "disable_aug_list": {
+              "automl_enabled": false,
+              "default": [
+                "placeholder"
+              ],
+              "description": "List of disabled augmentations",
+              "title": "disable_aug_list",
+              "type": "list"
+            }
+          },
+          "type": "collection"
+        },
+        "data_info_path": {
+          "default": "",
+          "description": "Path to data info.",
+          "title": "data_info_path",
+          "type": "string"
+        },
+        "data_path": {
+          "default": "",
+          "description": "Path to data.",
+          "title": "data_path",
+          "type": "string"
+        },
+        "data_processor": {
+          "automl_enabled": false,
+          "default": [
+            {
+              "name": "mask_points_and_boxes_outside_range",
+              "remove_outside_boxes": true
+            },
+            {
+              "name": "shuffle_points",
+              "shuffle": {
+                "test": false,
+                "train": true
+              }
+            },
+            {
+              "max_number_of_voxels": {
+                "test": 10000,
+                "train": 16000
+              },
+              "max_points_per_voxel": 32,
+              "name": "transform_points_to_voxels",
+              "voxel_size": [
+                0.16,
+                0.16,
+                6.762
+              ]
+            }
+          ],
+          "description": "Data processor configurations.",
+          "title": "data_processor",
+          "type": "list"
+        },
+        "data_split": {
+          "automl_enabled": false,
+          "default": {
+            "test": "val",
+            "train": "train"
+          },
+          "description": "Split of data.",
+          "title": "data_split",
+          "type": "collection"
+        },
+        "info_path": {
+          "automl_enabled": false,
+          "default": {
+            "test": [
+              "infos_val.pkl"
+            ],
+            "train": [
+              "infos_train.pkl"
+            ]
+          },
+          "description": "Path to info.",
+          "title": "info_path",
+          "type": "collection"
+        },
+        "num_workers": {
+          "default": 4,
+          "description": "Number of workers.",
+          "title": "num_workers",
+          "type": "int"
+        },
+        "point_cloud_range": {
+          "automl_enabled": false,
+          "default": [
+            5.245,
+            -25.983,
+            -3.854,
+            79.485,
+            48.257,
+            2.908
+          ],
+          "description": "Point cloud's coordinate range.",
+          "title": "point_cloud_range",
+          "type": "list"
+        },
+        "point_feature_encoding": {
+          "automl_enabled": false,
+          "default": {
+            "encoding_type": "absolute_coordinates_encoding",
+            "src_feature_list": [
+              "x",
+              "y",
+              "z",
+              "intensity"
+            ],
+            "used_feature_list": [
+              "x",
+              "y",
+              "z",
+              "intensity"
+            ]
+          },
+          "description": "Point feature encoding configurations.",
+          "title": "point_feature_encoding",
+          "type": "collection"
+        },
+        "type": {
+          "default": "GeneralPCDataset",
+          "description": "Type of dataset.",
+          "enum": [
+            "GeneralPCDataset"
+          ],
+          "title": "type",
+          "type": "categorical"
+        }
+      },
+      "type": "collection"
+    },
+    "key": {
+      "description": "Key to encoding/decoding models.",
+      "title": "key",
+      "type": "string"
+    },
+    "local_rank": {
+      "default": 0,
+      "description": "Local rank ID.",
+      "maximum": Infinity,
+      "minimum": 0,
+      "title": "local_rank",
+      "type": "int"
+    },
+    "model": {
+      "automl_disabled_parameters": [
+        "model.vfe",
+        "model.map_to_bev",
+        "model.backbone_2d",
+        "model.dense_head",
+        "model.post_processing"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "backbone_2d": {
+          "layer_nums": [
+            3,
+            5,
+            5
+          ],
+          "layer_strides": [
+            2,
+            2,
+            2
+          ],
+          "name": "BaseBEVBackbone",
+          "num_filters": [
+            64,
+            128,
+            256
+          ],
+          "num_upsample_filters": [
+            128,
+            128,
+            128
+          ],
+          "upsample_strides": [
+            1,
+            2,
+            4
+          ]
+        },
+        "dense_head": {
+          "anchor_generator_config": [
+            {
+              "align_center": false,
+              "anchor_bottom_heights": [
+                -1.78
+              ],
+              "anchor_rotations": [
+                0,
+                1.57
+              ],
+              "anchor_sizes": [
+                [
+                  3.9,
+                  1.6,
+                  1.56
+                ]
+              ],
+              "class_name": "Car",
+              "feature_map_stride": 2,
+              "matched_threshold": 0.6,
+              "unmatched_threshold": 0.45
+            },
+            {
+              "align_center": false,
+              "anchor_bottom_heights": [
+                -1.78
+              ],
+              "anchor_rotations": [
+                0,
+                1.57
+              ],
+              "anchor_sizes": [
+                [
+                  3.9,
+                  1.6,
+                  1.56
+                ]
+              ],
+              "class_name": "Truck",
+              "feature_map_stride": 2,
+              "matched_threshold": 0.6,
+              "unmatched_threshold": 0.45
+            },
+            {
+              "align_center": false,
+              "anchor_bottom_heights": [
+                -1.78
+              ],
+              "anchor_rotations": [
+                0,
+                1.57
+              ],
+              "anchor_sizes": [
+                [
+                  3.9,
+                  1.6,
+                  1.56
+                ]
+              ],
+              "class_name": "Van",
+              "feature_map_stride": 2,
+              "matched_threshold": 0.6,
+              "unmatched_threshold": 0.45
+            },
+            {
+              "align_center": false,
+              "anchor_bottom_heights": [
+                -1.78
+              ],
+              "anchor_rotations": [
+                0,
+                1.57
+              ],
+              "anchor_sizes": [
+                [
+                  3.9,
+                  1.6,
+                  1.56
+                ]
+              ],
+              "class_name": "Tram",
+              "feature_map_stride": 2,
+              "matched_threshold": 0.6,
+              "unmatched_threshold": 0.45
+            },
+            {
+              "align_center": false,
+              "anchor_bottom_heights": [
+                -0.6
+              ],
+              "anchor_rotations": [
+                0,
+                1.57
+              ],
+              "anchor_sizes": [
+                [
+                  0.8,
+                  0.6,
+                  1.73
+                ]
+              ],
+              "class_name": "Pedestrian",
+              "feature_map_stride": 2,
+              "matched_threshold": 0.5,
+              "unmatched_threshold": 0.35
+            },
+            {
+              "align_center": false,
+              "anchor_bottom_heights": [
+                -0.6
+              ],
+              "anchor_rotations": [
+                0,
+                1.57
+              ],
+              "anchor_sizes": [
+                [
+                  1.76,
+                  0.6,
+                  1.73
+                ]
+              ],
+              "class_name": "Cyclist",
+              "feature_map_stride": 2,
+              "matched_threshold": 0.5,
+              "unmatched_threshold": 0.35
+            },
+            {
+              "align_center": false,
+              "anchor_bottom_heights": [
+                -0.6
+              ],
+              "anchor_rotations": [
+                0,
+                1.57
+              ],
+              "anchor_sizes": [
+                [
+                  0.8,
+                  0.6,
+                  1.73
+                ]
+              ],
+              "class_name": "Misc",
+              "feature_map_stride": 2,
+              "matched_threshold": 0.5,
+              "unmatched_threshold": 0.35
+            }
+          ],
+          "class_agnostic": false,
+          "dir_limit_offset": 0.0,
+          "dir_offset": 0.78539,
+          "loss_config": {
+            "loss_weights": {
+              "cls_weight": 1.0,
+              "code_weights": [
+                1.0,
+                1.0,
+                1.0,
+                1.0,
+                1.0,
+                1.0,
+                1.0
+              ],
+              "dir_weight": 0.2,
+              "loc_weight": 2.0
+            }
+          },
+          "name": "AnchorHeadSingle",
+          "num_dir_bins": 2,
+          "target_assigner_config": {
+            "box_coder": "ResidualCoder",
+            "match_height": false,
+            "name": "AxisAlignedTargetAssigner",
+            "norm_by_num_examples": false,
+            "pos_fraction": -1.0,
+            "sample_size": 512
+          },
+          "use_direction_classifier": true
+        },
+        "map_to_bev": {
+          "name": "PointPillarScatter",
+          "num_bev_features": 64
+        },
+        "name": "PointPillar",
+        "post_processing": {
+          "eval_metric": "kitti",
+          "nms_config": {
+            "multi_classes_nms": false,
+            "nms_post_max_size": 500,
+            "nms_pre_max_size": 4096,
+            "nms_thresh": 0.01,
+            "nms_type": "nms_gpu"
+          },
+          "output_raw_score": false,
+          "recall_thresh_list": [
+            0.3,
+            0.5,
+            0.7,
+            0.3,
+            0.3,
+            0.3,
+            0.3
+          ],
+          "score_thresh": 0.1
+        },
+        "pretrained_model_path": "",
+        "sync_bn": false,
+        "vfe": {
+          "name": "PillarVFE",
+          "num_filters": [
+            64
+          ],
+          "use_absolue_xyz": true,
+          "use_norm": true,
+          "with_distance": false
+        }
+      },
+      "properties": {
+        "backbone_2d": {
+          "automl_disabled_parameters": [
+            "model.backbone_2d.layer_nums",
+            "model.backbone_2d.layer_strides",
+            "model.backbone_2d.num_filters",
+            "model.backbone_2d.upsample_strides",
+            "model.backbone_2d.num_upsample_filters"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "layer_nums": [
+              3,
+              5,
+              5
+            ],
+            "layer_strides": [
+              2,
+              2,
+              2
+            ],
+            "name": "BaseBEVBackbone",
+            "num_filters": [
+              64,
+              128,
+              256
+            ],
+            "num_upsample_filters": [
+              128,
+              128,
+              128
+            ],
+            "upsample_strides": [
+              1,
+              2,
+              4
+            ]
+          },
+          "properties": {
+            "layer_nums": {
+              "automl_enabled": false,
+              "default": [
+                3,
+                5,
+                5
+              ],
+              "description": "Number of layers for BaseBEVBackbone module.",
+              "title": "layer_nums",
+              "type": "list"
+            },
+            "layer_strides": {
+              "automl_enabled": false,
+              "default": [
+                2,
+                2,
+                2
+              ],
+              "description": "layer strides for BaseBEVBackbone module.",
+              "title": "layer_strides",
+              "type": "list"
+            },
+            "name": {
+              "default": "BaseBEVBackbone",
+              "description": "BaseBEVBackbone module for PointPillars model.",
+              "enum": [
+                "BaseBEVBackbone"
+              ],
+              "title": "BaseBEVBackbone",
+              "type": "categorical"
+            },
+            "num_filters": {
+              "automl_enabled": false,
+              "default": [
+                64,
+                128,
+                256
+              ],
+              "description": "Number of filters for each layer of BaseBEVBackbone module.",
+              "title": "num_filters",
+              "type": "list"
+            },
+            "num_upsample_filters": {
+              "automl_enabled": false,
+              "default": [
+                128,
+                128,
+                128
+              ],
+              "description": "Number of upsample filters for each layer of BaseBEVBackbone module.",
+              "title": "num_upsample_filters",
+              "type": "list"
+            },
+            "upsample_strides": {
+              "automl_enabled": false,
+              "default": [
+                1,
+                2,
+                4
+              ],
+              "description": "Upsample strides for each layer of BaseBEVBackbone module.",
+              "title": "upsample_strides",
+              "type": "list"
+            }
+          },
+          "type": "collection"
+        },
+        "dense_head": {
+          "automl_disabled_parameters": [
+            "model.dense_head.anchor_generator_config",
+            "model.dense_head.target_assigner_config",
+            "model.dense_head.loss_config"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "anchor_generator_config": [
+              {
+                "align_center": false,
+                "anchor_bottom_heights": [
+                  -1.78
+                ],
+                "anchor_rotations": [
+                  0,
+                  1.57
+                ],
+                "anchor_sizes": [
+                  [
+                    3.9,
+                    1.6,
+                    1.56
+                  ]
+                ],
+                "class_name": "Car",
+                "feature_map_stride": 2,
+                "matched_threshold": 0.6,
+                "unmatched_threshold": 0.45
+              },
+              {
+                "align_center": false,
+                "anchor_bottom_heights": [
+                  -1.78
+                ],
+                "anchor_rotations": [
+                  0,
+                  1.57
+                ],
+                "anchor_sizes": [
+                  [
+                    3.9,
+                    1.6,
+                    1.56
+                  ]
+                ],
+                "class_name": "Truck",
+                "feature_map_stride": 2,
+                "matched_threshold": 0.6,
+                "unmatched_threshold": 0.45
+              },
+              {
+                "align_center": false,
+                "anchor_bottom_heights": [
+                  -1.78
+                ],
+                "anchor_rotations": [
+                  0,
+                  1.57
+                ],
+                "anchor_sizes": [
+                  [
+                    3.9,
+                    1.6,
+                    1.56
+                  ]
+                ],
+                "class_name": "Van",
+                "feature_map_stride": 2,
+                "matched_threshold": 0.6,
+                "unmatched_threshold": 0.45
+              },
+              {
+                "align_center": false,
+                "anchor_bottom_heights": [
+                  -1.78
+                ],
+                "anchor_rotations": [
+                  0,
+                  1.57
+                ],
+                "anchor_sizes": [
+                  [
+                    3.9,
+                    1.6,
+                    1.56
+                  ]
+                ],
+                "class_name": "Tram",
+                "feature_map_stride": 2,
+                "matched_threshold": 0.6,
+                "unmatched_threshold": 0.45
+              },
+              {
+                "align_center": false,
+                "anchor_bottom_heights": [
+                  -0.6
+                ],
+                "anchor_rotations": [
+                  0,
+                  1.57
+                ],
+                "anchor_sizes": [
+                  [
+                    0.8,
+                    0.6,
+                    1.73
+                  ]
+                ],
+                "class_name": "Pedestrian",
+                "feature_map_stride": 2,
+                "matched_threshold": 0.5,
+                "unmatched_threshold": 0.35
+              },
+              {
+                "align_center": false,
+                "anchor_bottom_heights": [
+                  -0.6
+                ],
+                "anchor_rotations": [
+                  0,
+                  1.57
+                ],
+                "anchor_sizes": [
+                  [
+                    1.76,
+                    0.6,
+                    1.73
+                  ]
+                ],
+                "class_name": "Cyclist",
+                "feature_map_stride": 2,
+                "matched_threshold": 0.5,
+                "unmatched_threshold": 0.35
+              },
+              {
+                "align_center": false,
+                "anchor_bottom_heights": [
+                  -0.6
+                ],
+                "anchor_rotations": [
+                  0,
+                  1.57
+                ],
+                "anchor_sizes": [
+                  [
+                    0.8,
+                    0.6,
+                    1.73
+                  ]
+                ],
+                "class_name": "Misc",
+                "feature_map_stride": 2,
+                "matched_threshold": 0.5,
+                "unmatched_threshold": 0.35
+              }
+            ],
+            "class_agnostic": false,
+            "dir_limit_offset": 0.0,
+            "dir_offset": 0.78539,
+            "loss_config": {
+              "loss_weights": {
+                "cls_weight": 1.0,
+                "code_weights": [
+                  1.0,
+                  1.0,
+                  1.0,
+                  1.0,
+                  1.0,
+                  1.0,
+                  1.0
+                ],
+                "dir_weight": 0.2,
+                "loc_weight": 2.0
+              }
+            },
+            "name": "AnchorHeadSingle",
+            "num_dir_bins": 2,
+            "target_assigner_config": {
+              "box_coder": "ResidualCoder",
+              "match_height": false,
+              "name": "AxisAlignedTargetAssigner",
+              "norm_by_num_examples": false,
+              "pos_fraction": -1.0,
+              "sample_size": 512
+            },
+            "use_direction_classifier": true
+          },
+          "properties": {
+            "anchor_generator_config": {
+              "automl_enabled": false,
+              "default": [
+                {
+                  "align_center": false,
+                  "anchor_bottom_heights": [
+                    -1.78
+                  ],
+                  "anchor_rotations": [
+                    0,
+                    1.57
+                  ],
+                  "anchor_sizes": [
+                    [
+                      3.9,
+                      1.6,
+                      1.56
+                    ]
+                  ],
+                  "class_name": "Car",
+                  "feature_map_stride": 2,
+                  "matched_threshold": 0.6,
+                  "unmatched_threshold": 0.45
+                },
+                {
+                  "align_center": false,
+                  "anchor_bottom_heights": [
+                    -1.78
+                  ],
+                  "anchor_rotations": [
+                    0,
+                    1.57
+                  ],
+                  "anchor_sizes": [
+                    [
+                      3.9,
+                      1.6,
+                      1.56
+                    ]
+                  ],
+                  "class_name": "Truck",
+                  "feature_map_stride": 2,
+                  "matched_threshold": 0.6,
+                  "unmatched_threshold": 0.45
+                },
+                {
+                  "align_center": false,
+                  "anchor_bottom_heights": [
+                    -1.78
+                  ],
+                  "anchor_rotations": [
+                    0,
+                    1.57
+                  ],
+                  "anchor_sizes": [
+                    [
+                      3.9,
+                      1.6,
+                      1.56
+                    ]
+                  ],
+                  "class_name": "Van",
+                  "feature_map_stride": 2,
+                  "matched_threshold": 0.6,
+                  "unmatched_threshold": 0.45
+                },
+                {
+                  "align_center": false,
+                  "anchor_bottom_heights": [
+                    -1.78
+                  ],
+                  "anchor_rotations": [
+                    0,
+                    1.57
+                  ],
+                  "anchor_sizes": [
+                    [
+                      3.9,
+                      1.6,
+                      1.56
+                    ]
+                  ],
+                  "class_name": "Tram",
+                  "feature_map_stride": 2,
+                  "matched_threshold": 0.6,
+                  "unmatched_threshold": 0.45
+                },
+                {
+                  "align_center": false,
+                  "anchor_bottom_heights": [
+                    -0.6
+                  ],
+                  "anchor_rotations": [
+                    0,
+                    1.57
+                  ],
+                  "anchor_sizes": [
+                    [
+                      0.8,
+                      0.6,
+                      1.73
+                    ]
+                  ],
+                  "class_name": "Pedestrian",
+                  "feature_map_stride": 2,
+                  "matched_threshold": 0.5,
+                  "unmatched_threshold": 0.35
+                },
+                {
+                  "align_center": false,
+                  "anchor_bottom_heights": [
+                    -0.6
+                  ],
+                  "anchor_rotations": [
+                    0,
+                    1.57
+                  ],
+                  "anchor_sizes": [
+                    [
+                      1.76,
+                      0.6,
+                      1.73
+                    ]
+                  ],
+                  "class_name": "Cyclist",
+                  "feature_map_stride": 2,
+                  "matched_threshold": 0.5,
+                  "unmatched_threshold": 0.35
+                },
+                {
+                  "align_center": false,
+                  "anchor_bottom_heights": [
+                    -0.6
+                  ],
+                  "anchor_rotations": [
+                    0,
+                    1.57
+                  ],
+                  "anchor_sizes": [
+                    [
+                      0.8,
+                      0.6,
+                      1.73
+                    ]
+                  ],
+                  "class_name": "Misc",
+                  "feature_map_stride": 2,
+                  "matched_threshold": 0.5,
+                  "unmatched_threshold": 0.35
+                }
+              ],
+              "description": "Config for anchor generation.",
+              "title": "anchor_generator_config",
+              "type": "list"
+            },
+            "class_agnostic": {
+              "default": false,
+              "description": "Flag to enable class agnostic or not.",
+              "title": "class_agnostic",
+              "type": "bool"
+            },
+            "dir_limit_offset": {
+              "default": 0.0,
+              "description": "Direction limit offset.",
+              "maximum": 0.0,
+              "minimum": 0.0,
+              "title": "dir_limit_offset",
+              "type": "float"
+            },
+            "dir_offset": {
+              "default": 0.78539,
+              "description": "Direction offset.",
+              "maximum": 0.78539,
+              "minimum": 0.78539,
+              "title": "dir_offset",
+              "type": "float"
+            },
+            "loss_config": {
+              "automl_disabled_parameters": [
+                "model.dense_head.loss_config.loss_weights"
+              ],
+              "automl_enabled": false,
+              "default": {
+                "loss_weights": {
+                  "cls_weight": 1.0,
+                  "code_weights": [
+                    1.0,
+                    1.0,
+                    1.0,
+                    1.0,
+                    1.0,
+                    1.0,
+                    1.0
+                  ],
+                  "dir_weight": 0.2,
+                  "loc_weight": 2.0
+                }
+              },
+              "properties": {
+                "loss_weights": {
+                  "automl_enabled": false,
+                  "default": {
+                    "cls_weight": 1.0,
+                    "code_weights": [
+                      1.0,
+                      1.0,
+                      1.0,
+                      1.0,
+                      1.0,
+                      1.0,
+                      1.0
+                    ],
+                    "dir_weight": 0.2,
+                    "loc_weight": 2.0
+                  },
+                  "description": "Weighting factors for loss functions.",
+                  "title": "loss_weights",
+                  "type": "collection"
+                }
+              },
+              "type": "collection"
+            },
+            "name": {
+              "default": "AnchorHeadSingle",
+              "description": "Name of the DenseHead module.",
+              "enum": [
+                "AnchorHeadSingle"
+              ],
+              "title": "name",
+              "type": "categorical"
+            },
+            "num_dir_bins": {
+              "default": 2,
+              "description": "Number of direction bins.",
+              "maximum": 2,
+              "minimum": 2,
+              "title": "num_dir_bins",
+              "type": "int"
+            },
+            "target_assigner_config": {
+              "automl_enabled": false,
+              "default": {
+                "box_coder": "ResidualCoder",
+                "match_height": false,
+                "name": "AxisAlignedTargetAssigner",
+                "norm_by_num_examples": false,
+                "pos_fraction": -1.0,
+                "sample_size": 512
+              },
+              "properties": {
+                "box_coder": {
+                  "default": "ResidualCoder",
+                  "description": "Type of the box coder.",
+                  "enum": [
+                    "ResidualCoder"
+                  ],
+                  "title": "box_coder",
+                  "type": "categorical"
+                },
+                "match_height": {
+                  "default": false,
+                  "description": "Flag to enable match height or not.",
+                  "title": "match_height",
+                  "type": "bool"
+                },
+                "name": {
+                  "default": "AxisAlignedTargetAssigner",
+                  "description": "Name of target assigner module of PointPillars.",
+                  "enum": [
+                    "AxisAlignedTargetAssigner"
+                  ],
+                  "title": "name",
+                  "type": "categorical"
+                },
+                "norm_by_num_examples": {
+                  "default": false,
+                  "description": "Flag to enable normalization by number of examples or not.",
+                  "title": "norm_by_num_examples",
+                  "type": "bool"
+                },
+                "pos_fraction": {
+                  "default": -1.0,
+                  "description": "Positive fraction of target assigner.",
+                  "maximum": -1.0,
+                  "minimum": -1.0,
+                  "title": "pos_fraction",
+                  "type": "float"
+                },
+                "sample_size": {
+                  "default": 512,
+                  "description": "Sample size of target assigner.",
+                  "maximum": 512,
+                  "minimum": 512,
+                  "title": "sample_size",
+                  "type": "int"
+                }
+              },
+              "type": "collection"
+            },
+            "use_direction_classifier": {
+              "default": true,
+              "description": "Flag to use direction classifier or not.",
+              "title": "use_direction_classifier",
+              "type": "bool"
+            }
+          },
+          "type": "collection"
+        },
+        "map_to_bev": {
+          "automl_enabled": false,
+          "default": {
+            "name": "PointPillarScatter",
+            "num_bev_features": 64
+          },
+          "properties": {
+            "name": {
+              "default": "PointPillarScatter",
+              "description": "PointPillarScatter module for PointPillars.",
+              "enum": [
+                "PointPillarScatter"
+              ],
+              "title": "PointPillarScatter",
+              "type": "categorical"
+            },
+            "num_bev_features": {
+              "default": 64,
+              "description": "Number of BEV features for MapToBEV module.",
+              "maximum": 64,
+              "minimum": 64,
+              "title": "num_bev_features",
+              "type": "int"
+            }
+          },
+          "type": "collection"
+        },
+        "name": {
+          "default": "PointPillar",
+          "description": "Name of the PointPillars model.",
+          "enum": [
+            "PointPillar"
+          ],
+          "title": "name",
+          "type": "categorical"
+        },
+        "post_processing": {
+          "automl_disabled_parameters": [
+            "model.post_processing.recall_thresh_list",
+            "model.post_processing.nms_config"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "eval_metric": "kitti",
+            "nms_config": {
+              "multi_classes_nms": false,
+              "nms_post_max_size": 500,
+              "nms_pre_max_size": 4096,
+              "nms_thresh": 0.01,
+              "nms_type": "nms_gpu"
+            },
+            "output_raw_score": false,
+            "recall_thresh_list": [
+              0.3,
+              0.5,
+              0.7,
+              0.3,
+              0.3,
+              0.3,
+              0.3
+            ],
+            "score_thresh": 0.1
+          },
+          "properties": {
+            "eval_metric": {
+              "default": "kitti",
+              "description": "Evaluation metric.",
+              "enum": [
+                "kitti"
+              ],
+              "title": "eval_metric",
+              "type": "categorical"
+            },
+            "nms_config": {
+              "automl_enabled": false,
+              "default": {
+                "multi_classes_nms": false,
+                "nms_post_max_size": 500,
+                "nms_pre_max_size": 4096,
+                "nms_thresh": 0.01,
+                "nms_type": "nms_gpu"
+              },
+              "properties": {
+                "multi_classes_nms": {
+                  "default": false,
+                  "description": "Flag to enable multi-class NMS or not.",
+                  "title": "multi_classes_nms",
+                  "type": "bool"
+                },
+                "nms_post_max_size": {
+                  "default": 500,
+                  "description": "Maximum number of outputs for NMS operation.",
+                  "maximum": Infinity,
+                  "minimum": 1,
+                  "title": "nms_post_max_size",
+                  "type": "int"
+                },
+                "nms_pre_max_size": {
+                  "default": 4096,
+                  "description": "Maximum number of inputs for NMS operation.",
+                  "maximum": Infinity,
+                  "minimum": 1,
+                  "title": "nms_pre_max_size",
+                  "type": "int"
+                },
+                "nms_thresh": {
+                  "default": 0.01,
+                  "description": "NMS threshold.",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "nms_thresh",
+                  "type": "float"
+                },
+                "nms_type": {
+                  "default": "nms_gpu",
+                  "description": "Type of NMS operation.",
+                  "enum": [
+                    "nms_gpu"
+                  ],
+                  "title": "nms_type",
+                  "type": "categorical"
+                }
+              },
+              "type": "collection"
+            },
+            "output_raw_score": {
+              "default": false,
+              "description": "Flag to output raw score or not.",
+              "title": "output_raw_score",
+              "type": "bool"
+            },
+            "recall_thresh_list": {
+              "automl_enabled": false,
+              "default": [
+                0.3,
+                0.5,
+                0.7,
+                0.3,
+                0.3,
+                0.3,
+                0.3
+              ],
+              "description": "List of recall thresholds.",
+              "title": "recall_thresh_list",
+              "type": "list"
+            },
+            "score_thresh": {
+              "default": 0.1,
+              "description": "Score threshold.",
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "score_thresh",
+              "type": "float"
+            }
+          },
+          "type": "collection"
+        },
+        "pretrained_model_path": {
+          "default": "",
+          "description": "Path to pretrained model.",
+          "title": "pretrained_model_path",
+          "type": "string"
+        },
+        "sync_bn": {
+          "default": false,
+          "description": "Flag to use sync BN or not.",
+          "title": "sync_bn",
+          "type": "bool"
+        },
+        "vfe": {
+          "automl_disabled_parameters": [
+            "model.vfe.num_filters"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "name": "PillarVFE",
+            "num_filters": [
+              64
+            ],
+            "use_absolue_xyz": true,
+            "use_norm": true,
+            "with_distance": false
+          },
+          "properties": {
+            "name": {
+              "default": "PillarVFE",
+              "description": "The VFE module for PointPillars model.",
+              "enum": [
+                "PillarVFE"
+              ],
+              "title": "VFE",
+              "type": "categorical"
+            },
+            "num_filters": {
+              "automl_enabled": false,
+              "default": [
+                64
+              ],
+              "description": "Number of filters for VFE module.",
+              "title": "num_filters",
+              "type": "list"
+            },
+            "use_absolue_xyz": {
+              "default": true,
+              "description": "Flag to use absolute xyz or not.",
+              "title": "use_absolue_xyz",
+              "type": "bool"
+            },
+            "use_norm": {
+              "default": true,
+              "description": "Flag to use norm or not.",
+              "title": "use_norm",
+              "type": "bool"
+            },
+            "with_distance": {
+              "default": false,
+              "description": "Flag to enable with_distance for VFE or not.",
+              "title": "with_distancce",
+              "type": "bool"
+            }
+          },
+          "type": "collection"
+        }
+      },
+      "type": "collection"
+    },
+    "results_dir": {
+      "default": "",
+      "description": "Path to directory of results",
+      "title": "results_dir",
+      "type": "string"
+    },
+    "train": {
+      "automl_default_parameters": [
+        "train.lr",
+        "train.weight_decay",
+        "train.momentum",
+        "train.decay_step_list",
+        "train.lr_decay",
+        "train.lr_clip",
+        "train.lr_warmup"
+      ],
+      "automl_disabled_parameters": [
+        "train.moms",
+        "train.gpu_ids"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "batch_size": 4,
+        "checkpoint_interval": 1,
+        "decay_step_list": [
+          35,
+          45
+        ],
+        "div_factor": 10.0,
+        "gpu_ids": [
+          0
+        ],
+        "grad_norm_clip": 10.0,
+        "lr": 0.003,
+        "lr_clip": 1e-07,
+        "lr_decay": 0.1,
+        "lr_warmup": false,
+        "max_checkpoint_save_num": 30,
+        "merge_all_iters_to_one_epoch": false,
+        "momentum": 0.9,
+        "moms": [
+          0.95,
+          0.85
+        ],
+        "num_epochs": 80,
+        "num_gpus": 1,
+        "optimizer": "adam_onecycle",
+        "pct_start": 0.4,
+        "pruned_model_path": "",
+        "resume_training_checkpoint_path": "",
+        "tcp_port": 18888,
+        "validation_interval": 1,
+        "warmup_epoch": 1,
+        "weight_decay": 0.01
+      },
+      "properties": {
+        "batch_size": {
+          "default": 4,
+          "description": "Batch size.",
+          "maximum": Infinity,
+          "minimum": 1,
+          "title": "batch_size",
+          "type": "int"
+        },
+        "checkpoint_interval": {
+          "default": 1,
+          "description": "Interval of epochs to save checkpoints.",
+          "maximum": Infinity,
+          "minimum": 1,
+          "title": "checkpoint_interval",
+          "type": "int"
+        },
+        "decay_step_list": {
+          "automl_enabled": true,
+          "default": [
+            35,
+            45
+          ],
+          "description": "List of steps for decaying learning rate.",
+          "title": "decay_step_list",
+          "type": "list_2"
+        },
+        "div_factor": {
+          "default": 10.0,
+          "description": "div_factor.",
+          "maximum": Infinity,
+          "minimum": 1.0,
+          "title": "div_factor",
+          "type": "float"
+        },
+        "gpu_ids": {
+          "automl_enabled": false,
+          "default": [
+            0
+          ],
+          "description": "GPU IDs.",
+          "title": "gpu_ids",
+          "type": "list"
+        },
+        "grad_norm_clip": {
+          "default": 10.0,
+          "description": "Grad norm clip.",
+          "maximum": Infinity,
+          "minimum": 0.0,
+          "title": "grad_norm_clip",
+          "type": "float"
+        },
+        "lr": {
+          "automl_enabled": true,
+          "default": 0.003,
+          "description": "Learning rate.",
+          "maximum": Infinity,
+          "minimum": 0.0,
+          "title": "lr",
+          "type": "float"
+        },
+        "lr_clip": {
+          "automl_enabled": true,
+          "default": 1e-07,
+          "description": "Learning rate clip.",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "lr_clip",
+          "type": "float"
+        },
+        "lr_decay": {
+          "automl_enabled": true,
+          "default": 0.1,
+          "description": "Learning rate decay.",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "lr_decay",
+          "type": "float"
+        },
+        "lr_warmup": {
+          "automl_enabled": true,
+          "default": false,
+          "description": "Flag to enable learning rate warmup or not.",
+          "title": "lr_warmup",
+          "type": "bool"
+        },
+        "max_checkpoint_save_num": {
+          "default": 30,
+          "description": "Maximum number of checkpoints to save.",
+          "maximum": Infinity,
+          "minimum": 1,
+          "title": "max_checkpoint_save_num",
+          "type": "int"
+        },
+        "merge_all_iters_to_one_epoch": {
+          "default": false,
+          "description": "Flag to merge all iterations into one epoch or not.",
+          "title": "merge_all_iters_to_one_epoch",
+          "type": "bool"
+        },
+        "momentum": {
+          "automl_enabled": true,
+          "default": 0.9,
+          "description": "Momentum.",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "momentum",
+          "type": "float"
+        },
+        "moms": {
+          "automl_enabled": false,
+          "default": [
+            0.95,
+            0.85
+          ],
+          "description": "Moms.",
+          "title": "moms",
+          "type": "list"
+        },
+        "num_epochs": {
+          "default": 80,
+          "description": "Number of epochs to train for.",
+          "maximum": Infinity,
+          "minimum": 1,
+          "title": "num_epochs",
+          "type": "int"
+        },
+        "num_gpus": {
+          "default": 1,
+          "description": "Number of GPUs.",
+          "maximum": Infinity,
+          "minimum": 1,
+          "title": "num_gpus",
+          "type": "int"
+        },
+        "optimizer": {
+          "default": "adam_onecycle",
+          "description": "Type of optimizer.",
+          "enum": [
+            "adam_onecycle"
+          ],
+          "title": "optimizer",
+          "type": "categorical"
+        },
+        "pct_start": {
+          "default": 0.4,
+          "description": "pct_start.",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "pct_start",
+          "type": "float"
+        },
+        "pruned_model_path": {
+          "default": "",
+          "description": "Path to pruned model.",
+          "title": "pruned_model_path",
+          "type": "string"
+        },
+        "random_seed": {
+          "description": "Random seed.",
+          "title": "random_seed",
+          "type": "int"
+        },
+        "resume_training_checkpoint_path": {
+          "default": "",
+          "description": "Path to checkpoint for resuming the training.",
+          "title": "resume_training_checkpoint_path",
+          "type": "string"
+        },
+        "tcp_port": {
+          "default": 18888,
+          "description": "TCP port number.",
+          "maximum": 65535,
+          "minimum": 49152,
+          "title": "tcp_port",
+          "type": "int"
+        },
+        "validation_interval": {
+          "default": 1,
+          "description": "Interval of epochs to save checkpoints.",
+          "maximum": Infinity,
+          "minimum": 1,
+          "title": "checkpoint_interval",
+          "type": "int"
+        },
+        "warmup_epoch": {
+          "default": 1,
+          "description": "Number of epochs for warming up the learning rate.",
+          "maximum": Infinity,
+          "minimum": 0,
+          "title": "warmup_epoch",
+          "type": "int"
+        },
+        "weight_decay": {
+          "automl_enabled": true,
+          "default": 0.01,
+          "description": "Weighting decay factor.",
+          "maximum": 1.0,
+          "minimum": 0.01,
+          "title": "weight_decay",
+          "type": "float"
+        }
+      },
+      "type": "collection"
+    }
+  },
+  "type": "object",
+  "x_tao_schema": {
+    "action": "train",
+    "core_module": "pointpillars",
+    "model": "pointpillars",
+    "network_arch": "pointpillars",
+    "schema_action": "train",
+    "schema_version": 1,
+    "source": "tao-core dataclass config"
+  }
+}

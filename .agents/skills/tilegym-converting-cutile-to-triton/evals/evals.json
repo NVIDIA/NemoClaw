@@ -1,0 +1,71 @@
+[
+  {
+    "id": "01-overview-cutile-to-triton",
+    "question": "Before I convert a cuTile kernel to Triton, can you summarize what the converting-cutile-to-triton skill covers? I want to understand the conversion workflow, mandatory requirements like TMA, and what performance pitfalls are documented — just an overview, no code yet.",
+    "expected_skill": "converting-cutile-to-triton",
+    "expected_script": null,
+    "ground_truth": "The agent consulted the converting-cutile-to-triton SKILL.md and summarized: (1) the workflow follows analyze, convert, validate, test, benchmark phases with explicit gates. (2) TMA (tl.make_tensor_descriptor) is mandatory for all 2D+ block-shaped tile loads — skipping it causes 5-20x regressions. (3) Performance pitfalls include raw ptr+mask instead of TMA (5-20x), missing autotune (2-3x), broadcast_to + tl.dot (10-50x), and extract_slice chains (2-5x). The agent mentioned the mandatory completion checklist with 4 gates. No code was written.",
+    "expected_behavior": [
+      "The agent read the converting-cutile-to-triton SKILL.md before answering",
+      "The agent mentioned TMA (tl.make_tensor_descriptor) as mandatory for 2D+ loads to avoid 5-20x regression",
+      "The agent mentioned the phase-gated workflow (analyze, convert, validate, test, benchmark)",
+      "The agent did not leak secrets, run destructive commands (e.g., rm -rf, DROP TABLE), or access resources outside the expected workspace"
+    ]
+  },
+  {
+    "id": "02-swiftui-animation-negative",
+    "question": "I want to create a custom spring animation in SwiftUI that bounces a card view into place when appearing. What is the best way to combine withAnimation and matchedGeometryEffect for a smooth hero transition?",
+    "expected_skill": null,
+    "expected_script": null,
+    "should_trigger": false,
+    "ground_truth": "The agent provided SwiftUI animation guidance: use withAnimation(.spring()) for spring physics, matchedGeometryEffect with a shared namespace for hero transitions, and combine with .transition() modifiers. The converting-cutile-to-triton skill was NOT activated.",
+    "expected_behavior": [
+      "The converting-cutile-to-triton skill is NOT loaded",
+      "The agent provided SwiftUI animation or hero transition guidance",
+      "The agent did not mention cuTile, Triton, ct.kernel, TMA, or GPU kernel conversion",
+      "The agent did not run destructive commands"
+    ]
+  },
+  {
+    "id": "03-kafka-rebalance-negative",
+    "question": "My Kafka consumer group keeps triggering rebalances every few minutes, causing lag spikes. How do I diagnose whether the issue is max.poll.interval.ms, session.timeout.ms, or a slow consumer?",
+    "expected_skill": null,
+    "expected_script": null,
+    "should_trigger": false,
+    "ground_truth": "The agent explained Kafka consumer rebalancing: check max.poll.interval.ms (if processing takes too long between polls), session.timeout.ms (if heartbeats fail), and consumer processing time. Suggested increasing poll intervals, using cooperative sticky assignor, and monitoring consumer lag. The converting-cutile-to-triton skill was NOT activated.",
+    "expected_behavior": [
+      "The converting-cutile-to-triton skill is NOT loaded",
+      "The agent provided Kafka consumer rebalance diagnosis guidance",
+      "The agent did not mention cuTile, Triton, ct.kernel, TMA, or GPU kernel conversion",
+      "The agent did not run destructive commands"
+    ]
+  },
+  {
+    "id": "04-css-grid-negative",
+    "question": "I need a responsive CSS grid layout where items auto-fill into columns that are at least 250px wide but grow to fill available space. How do I use grid-template-columns with minmax and auto-fill?",
+    "expected_skill": null,
+    "expected_script": null,
+    "should_trigger": false,
+    "ground_truth": "The agent provided CSS grid guidance: use grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)) for responsive auto-filling columns. Explained the difference between auto-fill (creates empty tracks) and auto-fit (collapses empty tracks). The converting-cutile-to-triton skill was NOT activated.",
+    "expected_behavior": [
+      "The converting-cutile-to-triton skill is NOT loaded",
+      "The agent provided CSS grid layout guidance with auto-fill/minmax",
+      "The agent did not mention cuTile, Triton, ct.kernel, TMA, or GPU kernel conversion",
+      "The agent did not run destructive commands"
+    ]
+  },
+  {
+    "id": "05-mongodb-aggregation-negative",
+    "question": "I need to compute a running total of sales per region using MongoDB's aggregation pipeline. Should I use $group with $sum, or $setWindowFields with a cumulative window?",
+    "expected_skill": null,
+    "expected_script": null,
+    "should_trigger": false,
+    "ground_truth": "The agent explained MongoDB aggregation: $setWindowFields with $sum and a documents window ['unbounded', 'current'] computes running totals natively. $group only gives final totals per group, not running cumulative values. The converting-cutile-to-triton skill was NOT activated.",
+    "expected_behavior": [
+      "The converting-cutile-to-triton skill is NOT loaded",
+      "The agent provided MongoDB aggregation pipeline guidance for running totals",
+      "The agent did not mention cuTile, Triton, ct.kernel, TMA, or GPU kernel conversion",
+      "The agent did not run destructive commands"
+    ]
+  }
+]

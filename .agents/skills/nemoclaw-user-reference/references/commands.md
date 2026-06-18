@@ -33,7 +33,7 @@ OpenClaw-specific sections below describe the `/nemoclaw` slash command, the Ope
 Use `nemohermes` for the Hermes variant.
 It selects Hermes by default during onboarding and for other commands.
 Use `--agent hermes` during onboarding or set `NEMOCLAW_AGENT=hermes` when you need the same selection through another entry point.
-Hermes-specific sections below describe the built-in Hermes dashboard, the separate OpenAI-compatible API endpoint, Hermes config under `/sandbox/.hermes`, and provider updates that patch `config.yaml`.
+Hermes-specific sections below describe the OpenAI-compatible API endpoint, optional Hermes dashboard, Hermes config under `/sandbox/.hermes`, and provider updates that patch `config.yaml`.
 
 ```bash
 nemohermes onboard              # selects Hermes by default
@@ -173,10 +173,6 @@ In non-interactive mode, set the tier with `NEMOCLAW_POLICY_TIER` (default: `bal
 NEMOCLAW_POLICY_TIER=restricted nemoclaw onboard --non-interactive --yes-i-accept-third-party-software
 ```
 
-Unset, blank, or whitespace-only `NEMOCLAW_POLICY_TIER` values use the `balanced` default.
-In non-interactive mode, any non-blank value must be one of `restricted`, `balanced`, or `open`; otherwise onboarding exits before preflight, gateway, or inference side effects with an error listing the valid options.
-Interactive onboarding ignores an invalid environment value and shows the normal tier prompt.
-
 `NEMOCLAW_POLICY_MODE` controls how non-interactive onboarding reconciles the tier-derived suggestions against the sandbox's currently-applied presets.
 The default is `suggested`, which is *additive*.
 Onboarding applies tier defaults and preserves any presets you previously added with [`nemoclaw <name> policy-add`](#nemoclaw-name-policy-add) across re-onboards.
@@ -184,12 +180,6 @@ Use `custom` with `NEMOCLAW_POLICY_PRESETS` when you want the explicit list to b
 Onboarding removes any preset that is not in the list.
 `skip` leaves the applied set untouched and does not apply tier defaults.
 NemoClaw filters tier suggestions and resume selections by active agent support, so unsupported presets such as Brave Search are not reapplied to agents that do not support them.
-
-<AgentOnly variant="hermes">
-
-Hermes managed-tool gateway selections add matching Hermes-specific policy presets, such as `nous-web`, `nous-image`, `nous-audio`, `nous-browser`, and `nous-code`, without applying unsupported OpenClaw-only presets.
-
-</AgentOnly>
 
 | Value | Behaviour |
 |-------|-----------|
@@ -224,8 +214,6 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_NON_INTERACTIVE=1 NEMOC
 
 If the installer cannot prompt for the notice in a terminal and no explicit acceptance is set, it exits before installing Node.js or the NemoClaw CLI.
 
-<AgentOnly variant="openclaw">
-
 To enable Brave Search in non-interactive mode, set:
 
 ```bash
@@ -235,17 +223,7 @@ BRAVE_API_KEY=... \
 
 `BRAVE_API_KEY` enables Brave Search in non-interactive mode and also enables `web_fetch`.
 If Brave Search key validation fails in non-interactive mode, onboarding prints a warning, skips web search setup, and continues with the rest of the sandbox setup.
-After fixing the key, rerun onboarding with `BRAVE_API_KEY` set so NemoClaw can validate the key, register the Brave Search provider, and apply the `brave` policy preset.
-If the sandbox already exists without web search, accept the recreate prompt or pass `--recreate-sandbox`.
-
-</AgentOnly>
-<AgentOnly variant="hermes">
-
-Hermes does not use NemoClaw's OpenClaw Brave Search setup.
-If you authenticate Hermes through Nous Portal OAuth, the wizard can prompt for managed Nous tool gateways such as web search.
-API-key mode is inference-only and does not enable managed tool gateways.
-
-</AgentOnly>
+After fixing the key, re-enable web search with `nemoclaw config web-search`.
 
 The wizard prompts for a sandbox name.
 Names must be 1 to 63 characters, lowercase, start with a letter, contain only letters, numbers, and internal hyphens, and end with a letter or number.
@@ -257,12 +235,6 @@ Use `--agent <name>` to target a specific installed agent profile during onboard
 Use `--control-ui-port <N>` to choose the host dashboard port for a sandbox.
 The value must be an integer from `1024` through `65535`.
 This flag takes precedence over `CHAT_UI_URL`, `NEMOCLAW_DASHBOARD_PORT`, the previous registry value, and the default port.
-
-<AgentOnly variant="hermes">
-
-For Hermes sandboxes, do not use port `8642`; NemoClaw reserves it for the Hermes OpenAI-compatible API and rejects it as a dashboard port before sandbox creation.
-
-</AgentOnly>
 
 If you enable Slack during onboarding, the wizard collects both the Bot Token (`SLACK_BOT_TOKEN`) and the App-Level Token (`SLACK_APP_TOKEN`).
 Socket Mode requires both tokens.
@@ -327,12 +299,10 @@ The poll count is clamped to a minimum of `1` so the probe always runs at least 
 
 Build the sandbox image from a custom Dockerfile instead of the stock NemoClaw image.
 The entire parent directory of the specified file is used as the Docker build context, so any files your Dockerfile references (scripts, config, etc.) must live alongside it.
-If that directory contains a `.dockerignore`, onboarding applies those rules while calculating the context size and staging files for Docker.
-NemoClaw also applies additional secret-safety exclusions that override `.dockerignore` negation rules: credential-style files and directories such as `.env*`, `.ssh/`, `.aws/`, `.netrc`, `.npmrc`, `secrets/`, `*.pem`, and `*.key` are still skipped even if `.dockerignore` tries to include them.
-Without a `.dockerignore`, onboarding still skips common large or local-only directories (`node_modules`, `.git`, `.venv`, and `__pycache__`) while staging this context.
-Other build outputs such as `dist/`, `target/`, or `build/` are included unless your `.dockerignore` excludes them.
+Onboarding skips common large directories (`node_modules`, `.git`, `.venv`, and `__pycache__`) while staging this context.
+It also skips credential-style files and directories such as `.env*`, `.ssh/`, `.aws/`, `.netrc`, `.npmrc`, `secrets/`, `*.pem`, and `*.key`.
+Other build outputs such as `dist/`, `target/`, or `build/` are still included.
 If the staged context is larger than 100 MB, onboarding prints a warning before the Docker build starts.
-Move the Dockerfile into a smaller dedicated directory or add `.dockerignore` entries for generated artifacts to shrink the context.
 If the directory contains unreadable files (for example, Windows system files visible in WSL), onboarding exits with an error suggesting you move the Dockerfile to a dedicated directory.
 
 ```bash
@@ -350,18 +320,6 @@ build-dir/
 ├── Dockerfile
 └── files-used-by-COPY/
 ```
-
-For faster custom builds, plan for Docker cache behavior:
-
-- Treat the first build on a fresh host as a cold build.
-  Cold builds download the base image and package indexes, so they take longer than later warm rebuilds even when NemoClaw is healthy.
-- A warm rebuild reuses cached layers when the base image and earlier layers are unchanged, so it is much faster than the first build.
-- Order Dockerfile instructions from least-changing to most-changing: base image, system packages, dependency manifests, dependency install, then application source.
-  This lets warm rebuilds reuse cached dependency layers instead of reinstalling on every source change.
-- Pin the base image to an explicit tag or digest so warm rebuilds resolve the same cached base instead of pulling a new one.
-
-To diagnose where a slow build spends time, set `NEMOCLAW_TRACE=1` and read the phase timings in [Onboard Profiling Traces](#onboard-profiling-traces).
-NemoClaw does not guarantee exact build timings.
 
 All NemoClaw build arguments (`NEMOCLAW_MODEL`, `NEMOCLAW_PROVIDER_KEY`, `NEMOCLAW_INFERENCE_BASE_URL`, etc.) are injected as `ARG` overrides at build time, so declare them in your Dockerfile if you need to reference them.
 
@@ -408,8 +366,6 @@ Use `--gpu` to require GPU passthrough and fail fast if an NVIDIA GPU is not det
 Use `--sandbox-gpu` or `--no-sandbox-gpu` to control only direct NVIDIA GPU access inside the sandbox.
 Use `--sandbox-gpu --sandbox-gpu-device <device>` to pass a specific OpenShell GPU device selector to `openshell sandbox create`; device selectors require explicit sandbox GPU enablement.
 On Linux Docker-driver gateways, NemoClaw can create the sandbox first and then recreate the OpenShell-managed Docker container with NVIDIA GPU access when that compatibility path is needed.
-When this compatibility path recreates the Docker container, NemoClaw uses an available NVIDIA CDI spec before falling back to Docker `--gpus all` or the NVIDIA runtime.
-On Jetson/Tegra hosts, it also adds the host group IDs that own `/dev/nvmap` and `/dev/nvhost-*` so the sandbox user can initialize CUDA.
 If the patch fails, onboarding keeps diagnostics and prints a manual cleanup command rather than deleting the failed sandbox automatically.
 
 Prerequisites:
@@ -431,7 +387,6 @@ List all registered sandboxes with their model, provider, and policy presets.
 Pass `--json` for machine-readable output that includes a `schemaVersion`, the default sandbox, recovery metadata, and the sandbox inventory.
 Sandboxes with an active SSH session are marked with a `●` indicator so you can tell at a glance which sandbox you are already connected to in another terminal.
 When a sandbox has a recorded dashboard port, the output includes its local dashboard URL.
-The default sandbox in text and JSON output honors the same environment override order as host-level status and tunnel commands: `NEMOCLAW_SANDBOX_NAME`, then `NEMOCLAW_SANDBOX`, then `SANDBOX_NAME`, then the registry default.
 
 ```bash
 nemoclaw list [--json]
@@ -466,9 +421,9 @@ Set `NEMOCLAW_NO_CONNECT_HINT=1` to suppress the hint in scripted workflows.
 If the sandbox is running an outdated agent version, a non-blocking warning prints before connecting with a `nemoclaw <name> rebuild` hint.
 If another terminal is already connected to the sandbox, `connect` prints a note with the number of existing sessions before proceeding. Multiple concurrent sessions are allowed.
 
-`connect` does not pull or serve a model itself, but it does inspect managed-vLLM install variables such as `NEMOCLAW_VLLM_MODEL` and `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` if you exported them in the same shell.
-An unknown model slug, malformed extra-args JSON, or a gated model (for example `deepseek-r1-distill-70b`) with no `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN` exits non-zero with the same error the installer would emit, before any sandbox readiness probe or SSH attach.
-Unset the managed-vLLM variable, or fix the value, before retrying.
+`connect` does not pull or serve a model itself, but it does inspect `NEMOCLAW_VLLM_MODEL` if you exported it for the managed-vLLM install path.
+An unknown slug or a gated model (for example `deepseek-r1-distill-70b`) with no `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN` exits non-zero with the same error the installer would emit, before any sandbox readiness probe or SSH attach.
+Unset the variable, or supply the missing token, before retrying.
 
 When the live OpenShell gateway inference route differs from the route recorded in the NemoClaw registry, `connect` prints an explicit warning and realigns the shared gateway to the recorded route.
 Use `nemoclaw inference set --provider <provider> --model <model>` to make an intentional route change.
@@ -520,81 +475,6 @@ The exit code is the remote command's exit code.
 | `--workdir <dir>` | Working directory inside the sandbox |
 | `--tty` / `--no-tty` | Allocate a pseudo-terminal; defaults to auto-detection (on when stdin and stdout are terminals) |
 | `--timeout <seconds>` | Timeout in seconds (`0` means no timeout) |
-
-### `nemoclaw <name> agent`
-
-Run one OpenClaw agent turn non-interactively in a running sandbox.
-This command forwards every argument verbatim to `openclaw agent ...` inside the sandbox via `openshell sandbox exec`, with `HOME=/sandbox` so the addressed agent profile resolves the same way as `connect`.
-Use this when driving the sandbox programmatically from another process (CI job, multi-agent platform, evaluation harness) rather than from an interactive terminal.
-
-<AgentOnly variant="openclaw">
-
-All flags accepted by the in-sandbox OpenClaw CLI are forwarded verbatim, so the upstream surface stays the single source of truth.
-
-```bash
-nemoclaw my-assistant agent -m "Summarise README.md"
-nemoclaw my-assistant agent --agent work -m "Status update?"
-nemoclaw my-assistant agent --session-id review-42 -m "Any new findings?"
-nemoclaw my-assistant agent --json -m 'ping'
-```
-
-The wrapper inherits the remote command's exit code, so host-side pipelines can branch on it. Streaming forwards whatever `openclaw agent` already emits on `stdout`; the wrapper adds no buffering.
-
-Common upstream flags include `-m <text>`, `--session-id <id>`, `--agent <id>`, `--model <id>`, `--thinking <level>`, `--json`, `--deliver`, `--reply-channel <channel>`, and `--timeout <seconds>`. Run `nemoclaw <name> agent --help` for the wrapper-level summary, or invoke `nemoclaw <name> exec -- openclaw agent --help` to view the upstream OpenClaw help text directly.
-
-</AgentOnly>
-<AgentOnly variant="hermes">
-
-Only OpenClaw sandboxes support the `agent` wrapper today; Hermes sandboxes already expose an OpenAI-compatible HTTP API on port `8642` inside the sandbox, so non-interactive use does not need a wrapper command.
-
-Forward the port and POST chat completions directly:
-
-```bash
-openshell forward start --background 8642 my-hermes
-curl -sN http://127.0.0.1:8642/v1/chat/completions \
-  -H 'Content-Type: application/json' \
-  -d '{"model":"<onboarded-model>","messages":[{"role":"user","content":"What is 2+2?"}],"stream":true}'
-```
-
-</AgentOnly>
-
-### Advanced Sandbox Maintenance Commands
-
-The following commands are available for targeted host-side maintenance, but they are not part of the top-level public command list.
-
-#### `nemoclaw <name> config get`
-
-Read the sanitized agent configuration from a sandbox.
-The output removes credential-bearing sections such as the OpenClaw gateway token before printing.
-Use `--key` to read one dotpath and `--format` to choose JSON or YAML output.
-
-```bash
-nemoclaw my-assistant config get
-nemoclaw my-assistant config get --key model --format yaml
-```
-
-| Flag | Description |
-|------|-------------|
-| `--key <dotpath>` | Print one value from the sanitized config |
-| `--format json\|yaml` | Output format. Defaults to JSON |
-
-#### `nemoclaw <name> shields`
-
-Manage the sandbox config lockdown posture from the host.
-Use `shields status` to inspect the current state, `shields up` to lock the sandbox config and restore the captured restrictive policy, and `shields down` to temporarily unlock the config for maintenance.
-For the full mutability matrix, see Runtime Controls (use the `nemoclaw-user-manage-sandboxes` skill).
-
-```bash
-nemoclaw my-assistant shields status
-nemoclaw my-assistant shields up
-nemoclaw my-assistant shields down --timeout 5m --reason "maintenance"
-```
-
-| Subcommand | Description |
-|------|-------------|
-| `shields status` | Show whether lockdown is configured, active, temporarily unlocked, or in error |
-| `shields up` | Lock the sandbox config and restore the saved restrictive policy |
-| `shields down` | Temporarily unlock the sandbox config. Supports `--timeout`, `--reason`, and `--policy` |
 
 ### `nemoclaw <name> recover`
 
@@ -684,15 +564,10 @@ Existing sandboxes do not auto-upgrade when a newer NemoClaw release ships a new
 
 `nemoclaw <name> status` prints the running OpenClaw version on the `Agent` line:
 
-```bash
-nemoclaw my-assistant status
-```
-
-Expected output:
-
-```text
+```console
+$ nemoclaw my-assistant status
 ...
-    Agent:    OpenClaw v2026.5.27
+    Agent:    OpenClaw v2026.5.22
 ...
 ```
 
@@ -710,13 +585,8 @@ Existing sandboxes do not auto-upgrade when a newer NemoClaw release ships a new
 
 `nemohermes <name> status` prints the running Hermes version on the `Agent` line:
 
-```bash
-nemohermes my-assistant status
-```
-
-Expected output:
-
-```text
+```console
+$ nemohermes my-assistant status
 ...
     Agent:    Hermes v2026.5.16
 ...
@@ -736,34 +606,9 @@ Warnings do not make the command fail.
 Failed checks exit non-zero so scripts can use `doctor` as a readiness gate.
 Use `--json` for machine-readable output.
 
-<AgentOnly variant="openclaw">
-
-For OpenClaw sandboxes, `doctor` also checks the mutable config permission contract.
-If `openclaw doctor --fix` was run inside the sandbox, it can tighten `/sandbox/.openclaw` and `openclaw.json` to a single-user `700/600` layout, which stops the gateway from persisting config changes.
-`doctor` reports this as a `Config permissions` warning; pass `--fix` to restore the group-writable `2770/660` contract without rebuilding.
-Restarting the sandbox repairs the same drift automatically.
-
-```bash
-nemoclaw my-assistant doctor [--json | --fix]
-```
-
-| Flag | Description |
-|------|-------------|
-| `--json` | Emit the report as JSON |
-| `--fix` | Restore the mutable OpenClaw config permission contract if it was tightened. Mutually exclusive with `--json` |
-
-</AgentOnly>
-<AgentOnly variant="hermes">
-
 ```bash
 nemoclaw my-assistant doctor [--json]
 ```
-
-| Flag | Description |
-|------|-------------|
-| `--json` | Emit the report as JSON |
-
-</AgentOnly>
 
 ### `nemoclaw <name> logs`
 
@@ -783,9 +628,7 @@ nemoclaw my-assistant logs [--follow] [--tail <lines>|-n <lines>] [--since <dura
 
 <AgentOnly variant="openclaw">
 
-Print the browser dashboard URL for a running sandbox.
-For OpenClaw sandboxes this includes the authenticated URL fragment.
-For agent dashboards that manage their own session, such as Hermes Agent, this prints the plain dashboard URL.
+Print the authenticated OpenClaw dashboard URL for a running sandbox.
 Use this when you are on a remote machine, using an SSH or reverse tunnel, or need a complete URL for a browser session.
 
 ```bash
@@ -804,22 +647,14 @@ URL=$(nemoclaw my-assistant dashboard-url --quiet)
 
 Treat the authenticated dashboard URL like a password.
 Do not log it, share it, or commit it to version control.
-This warning applies when the command prints an OpenClaw tokenized URL.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
 
-Print the browser dashboard URL for a running Hermes sandbox.
-Hermes manages dashboard sessions itself, so this command prints a plain URL without an OpenClaw `#token=` fragment.
-The built-in dashboard is forwarded on port `18789` by default.
-
-```bash
-nemohermes my-assistant dashboard-url
-nemohermes my-assistant dashboard-url --quiet
-```
-
-The Hermes OpenAI-compatible API remains separate on port `8642` and uses `/v1` for OpenAI-compatible clients.
-Use `nemohermes my-assistant status` to see both the dashboard and API endpoints.
+`dashboard-url` is not applicable to Hermes sandboxes because Hermes exposes an OpenAI-compatible API endpoint instead of the OpenClaw dashboard URL.
+Use `nemohermes my-assistant status` to find the forwarded API endpoint.
+The Hermes API remains on port `8642` and uses `/v1` for OpenAI-compatible clients.
+If you enabled `NEMOCLAW_HERMES_DASHBOARD=1`, use the optional Hermes dashboard port from the status output instead.
 
 </AgentOnly>
 
@@ -840,15 +675,6 @@ export OPENCLAW_GATEWAY_TOKEN="$TOKEN"
 The token is written to stdout with no surrounding text.
 A one-line security warning is written to stderr; pass `--quiet` (or `-q`) to suppress it.
 The command exits non-zero with a diagnostic on stderr when the sandbox is not registered or when the token cannot be retrieved (for example, if the sandbox is not running).
-
-The token also authenticates the Control UI config endpoint served by the gateway on the forwarded dashboard port.
-There is no `controlui.bootstrap.config.json` path; the supported endpoint is `/__openclaw/control-ui-config.json`, and it requires the token (unauthenticated requests return `401` with a JSON body):
-
-```bash
-TOKEN=$(nemoclaw my-assistant gateway-token --quiet)
-curl -fsS -H "Authorization: Bearer $TOKEN" \
-  "http://127.0.0.1:18789/__openclaw/control-ui-config.json"
-```
 
 **Warning:**
 
@@ -946,8 +772,6 @@ Custom presets bypass the built-in preset review process and can widen sandbox e
 List available policy presets and show which ones are applied to the sandbox.
 The command cross-references the local registry against the live gateway state (via `openshell policy get`), so it flags presets that are applied in one place but not the other.
 This catches desync caused by external edits to the gateway policy or stale registry entries after a manual rollback.
-Preset summaries come only from the YAML `preset.description` field.
-NemoClaw does not render network-policy rule bodies as prose in `policy-list` output.
 
 ```bash
 nemoclaw my-assistant policy-list
@@ -977,37 +801,6 @@ If the preset is unknown or not currently applied, the command exits non-zero wi
 | `--dry-run` | Preview which endpoints would be removed without applying changes |
 
 Unchecking a preset in the onboard TUI checkbox also removes it from the sandbox.
-
-### `nemoclaw <name> policy-explain`
-
-Print a redacted summary of the active policy context for a sandbox so an agent or operator can reason about what is allowed, what is blocked, and how to request a change.
-The output covers the recorded tier, the applied presets (built-in and custom) with their allowed host categories, the known presets that are not applied, the inspect/add/remove commands that change policy, and the support boundaries between NemoClaw, OpenShell, and the agent.
-Raw policy YAML, rule bodies, and credential metadata are deliberately not included.
-
-```bash
-nemoclaw my-assistant policy-explain
-```
-
-Pass `--json` to emit the same context as a structured object for agent consumption:
-
-```bash
-nemoclaw my-assistant policy-explain --json
-```
-
-NemoClaw refreshes the rendered context inside the sandbox at `/sandbox/.openclaw/workspace/POLICY.md` whenever a preset is added or removed, and once at the end of the onboarding policy step.
-Pass `--write` to refresh that file on demand without changing the policy:
-
-```bash
-nemoclaw my-assistant policy-explain --write
-```
-
-The context also documents how a failed host or integration attempt should be classified.
-The classifications are `blocked-by-policy`, `missing-approval`, `unsupported`, and `unknown`, so the agent can pick a remediation step instead of surfacing a lower-level network error.
-
-| Flag | Description |
-|------|-------------|
-| `--json` | Emit the policy context as a structured JSON object for agent consumption |
-| `--write` | Refresh `/sandbox/.openclaw/workspace/POLICY.md` inside the sandbox in addition to printing |
 
 ### `nemoclaw <name> hosts-add`
 
@@ -1182,9 +975,6 @@ Skill names must contain only alphanumeric characters, dots, hyphens, and unders
 <AgentOnly variant="openclaw">
 
 OpenClaw plugins are a different kind of extension. To install an OpenClaw plugin, see Install OpenClaw Plugins.
-For OpenClaw, the command uploads the skill to the OpenClaw state directory and mirrors it into `$HOME/.openclaw/skills/<name>` when the agent home directory differs from the state directory.
-That mirror makes skills listed by `openclaw skills list` available at session startup.
-If mirror creation fails, NemoClaw prints a warning so you can reinstall or inspect the home directory permissions.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
@@ -1225,18 +1015,6 @@ nemoclaw my-assistant skill remove my-skill
 
 Use the skill name from the `SKILL.md` frontmatter, not the local directory name.
 Skill names must contain only alphanumeric characters, dots, hyphens, and underscores, and cannot be `.` or `..`.
-
-### `nemoclaw <name> agents list`
-
-List the OpenClaw agents configured in the sandbox.
-This is a thin pass-through to `openclaw agents list` via `openshell sandbox exec`; the OpenClaw CLI owns the gateway `agents.list` call, output formatting, and binding summaries.
-Flags accepted by the in-sandbox CLI (`--json`, `--bindings`) are forwarded verbatim.
-
-```bash
-nemoclaw my-assistant agents list
-nemoclaw my-assistant agents list --json
-nemoclaw my-assistant agents list --bindings
-```
 
 ### `nemoclaw <name> agents add`
 
@@ -1322,55 +1100,6 @@ nemoclaw my-assistant sessions delete agent:main:slack:c-9 --json
 | `--json` | Print the delete result as JSON. |
 | `--verbose` | Print the gateway entry payload after a successful delete. |
 
-### `nemoclaw <name> sessions export [keys...]`
-
-Export the OpenClaw session JSONL from a running sandbox to the host, replacing the two-hop `docker exec kubectl cp` plus `docker cp` workaround.
-
-The command always enumerates the session store through `openclaw sessions list --agent <id> --json` and copies only the matching `<sessionId>.jsonl` (plus optional `<sessionId>.trajectory.jsonl`) files, so the export never picks up `sessions.json`, stale `.jsonl.lock` files, or other store bookkeeping.
-By default it writes a browsable directory of session files (`dir` format); pass `--format tar` for a single `.tgz` bundle suited to sharing or upload.
-With no positional keys, the command exports every session for the agent.
-Pass one or more keys (alias or canonical `agent:<id>:<rest>`) to filter.
-
-```bash
-nemoclaw my-assistant sessions export
-nemoclaw my-assistant sessions export main --agent main
-nemoclaw my-assistant sessions export agent:work:telegram:t-1 --include-trajectory
-nemoclaw my-assistant sessions export --format tar --out ./bundles/alpha.tgz --json
-```
-
-| Flag | Description |
-|------|-------------|
-| `--agent <id>` | Agent id when `<keys>` are aliases rather than the canonical `agent:<id>:<rest>` form. |
-| `--format <dir\|tar>` | `dir` (default) writes a directory of session files; `tar` writes a single `.tgz` bundle for sharing/upload. |
-| `--out <path>` | Host destination. Defaults to `./sessions-<sandbox>/` for `dir`, or `./sessions-<sandbox>-<agent>.tgz` for `tar`. |
-| `--include-trajectory` | Include the (large) `*.trajectory.jsonl` files in the export. Excluded by default. |
-| `--json` | Print the export manifest as JSON instead of a status line. |
-
-Mismatched `--agent` plus canonical-key combinations are refused before any download runs.
-Session keys that begin with `-` are rejected at the command boundary instead of being silently dropped.
-Session JSONL can contain pasted secrets (API keys, tokens), so exported files are written owner-only (`0600`); for `tar` format the in-sandbox staging tarball is additionally created with `umask 077` and removed after the host download completes.
-
-### `nemoclaw <name> download <sandbox-path> [host-dest]`
-
-Host-side wrapper around `openshell sandbox download` that adds a live-sandbox readiness check.
-The source path inside the sandbox and the host destination are forwarded to OpenShell verbatim, so the file-system semantics (single-file vs directory copy, trailing-slash handling, overwrite behaviour) follow the OpenShell transport.
-With no `host-dest` the destination defaults to the current directory.
-
-```bash
-nemoclaw my-assistant download /sandbox/.openclaw/workspace/SOUL.md ./
-nemoclaw my-assistant download /sandbox/.openclaw/agents/main/sessions/ ./sessions/
-```
-
-### `nemoclaw <name> upload <host-path> [sandbox-dest]`
-
-Host-side wrapper around `openshell sandbox upload`, symmetric to the download wrapper.
-With no `sandbox-dest` the destination defaults to `/sandbox/` inside the sandbox.
-
-```bash
-nemoclaw my-assistant upload ./local-file /sandbox/
-nemoclaw my-assistant upload ./backups/SOUL.md /sandbox/.openclaw/workspace/SOUL.md
-```
-
 ### `nemoclaw <name> rebuild`
 
 Upgrade a sandbox to the current agent version while preserving workspace state.
@@ -1436,10 +1165,6 @@ When the command is running from a source checkout, it reports that state and do
 Rebuild sandboxes whose base image is older than the one currently pinned by NemoClaw.
 NemoClaw resolves the digest of `ghcr.io/nvidia/nemoclaw/sandbox-base:latest` from the registry, then compares it against the digest each sandbox was created with.
 Sandboxes that match the current digest are left alone.
-NemoClaw also checks the build fingerprint recorded on each managed sandbox image.
-A sandbox needs upgrade when its agent version is stale, when its recorded NemoClaw image fingerprint differs from the running CLI, or both.
-Custom Dockerfile sandboxes are not classified by image drift because rebuilding them onto the default image would drop the custom image.
-Legacy sandboxes without a recorded fingerprint opt into this check after their next rebuild.
 
 ```bash
 nemoclaw upgrade-sandboxes [--check] [--auto] [--yes|-y]
@@ -1543,13 +1268,8 @@ Use this path only when the destination sandbox can be replaced by the selected 
 Mount the sandbox filesystem on the host machine via SSHFS for bidirectional file sharing.
 Files edited on the host appear instantly inside the sandbox, and vice versa.
 
-```bash
-nemoclaw my-assistant share mount
-```
-
-Expected output:
-
-```text
+```console
+$ nemoclaw my-assistant share mount
 ✓ Mounted /sandbox → ~/.nemoclaw/mounts/my-assistant
 ```
 
@@ -1588,13 +1308,8 @@ nemoclaw my-assistant share unmount
 
 Check whether the sandbox filesystem is currently mounted.
 
-```bash
-nemoclaw my-assistant share status
-```
-
-Expected output:
-
-```text
+```console
+$ nemoclaw my-assistant share status
 ● Mounted at ~/.nemoclaw/mounts/my-assistant
 ```
 
@@ -1658,16 +1373,6 @@ nemoclaw tunnel stop
 
 `nemoclaw stop` remains as a deprecated alias that prints a warning and delegates to `tunnel stop`.
 
-### `nemoclaw tunnel status`
-
-Show the current cloudflared public-URL tunnel status for the selected or default sandbox dashboard.
-The output reports whether cloudflared is running, stopped, or stale, and includes the same recovery hint used by `nemoclaw status`.
-Selection honors `NEMOCLAW_SANDBOX_NAME`, then `NEMOCLAW_SANDBOX`, then `SANDBOX_NAME`, then the registry default.
-
-```bash
-nemoclaw tunnel status
-```
-
 ### `nemoclaw start`
 
 **Warning:**
@@ -1689,7 +1394,6 @@ This command remains as a compatibility alias to `nemoclaw tunnel stop`.
 Show the sandbox list and the status of host auxiliary services (for example cloudflared).
 Pass `--json` for machine-readable output with registered sandboxes, service state, inference routes, and messaging health.
 For each listed sandbox, the text output includes the configured inference provider and model plus whether an active SSH session is connected.
-Host-service PID lookup honors `NEMOCLAW_SANDBOX_NAME`, then `NEMOCLAW_SANDBOX`, then `SANDBOX_NAME`, then the registry default.
 
 ```bash
 nemoclaw status
@@ -1698,7 +1402,7 @@ nemoclaw status --json
 
 When at least one sandbox is registered and the named NemoClaw gateway is unreachable, unhealthy, or attached to a different sandbox, the command prints a `gateway: down [state] (reason)` line between the sandbox list and the host-service list.
 The command classifies the failing layer when possible: the named gateway port is not accepting connections, the named gateway is running but not Connected, the active OpenShell gateway points at a different name, or the named gateway is not configured at all.
-It then suggests `nemoclaw onboard --resume` or equivalent managed-gateway recovery guidance.
+It then suggests `openshell gateway start --name nemoclaw` or `nemoclaw onboard --resume` to recover.
 It exits with code `1` so shell scripts and CI can detect the degraded state from `$?`.
 For `--json`, the structured output includes `gatewayHealth`, and the exit code is set after the report is generated.
 A clean machine with no registered sandboxes keeps the legacy `0` exit because no gateway is expected to be configured yet.
@@ -1726,8 +1430,7 @@ For OpenClaw, the patch updates the OpenClaw config provider namespace and selec
 </AgentOnly>
 <AgentOnly variant="hermes">
 
-For Hermes, the patch updates `/sandbox/.hermes/config.yaml` (`model.default`, `model.base_url`, `model.provider: custom`, API-family mode when needed, and the OpenShell proxy API-key placeholder) and does not rebuild or restart the gateway.
-Keeping the placeholder preserves dashboard and API authentication after provider switches.
+For Hermes, the patch updates `/sandbox/.hermes/config.yaml` (`model.default`, `model.base_url`, and `model.provider: custom`) and does not rebuild or restart the gateway.
 Under the `nemohermes` alias, it uses the registered Hermes sandbox when exactly one exists; otherwise pass `--sandbox <name>` to target one explicitly.
 
 </AgentOnly>
@@ -1845,7 +1548,7 @@ Earlier releases only stopped `openshell forward` processes, so those orphans ac
 
 For Local Ollama setups, uninstall also stops matching Ollama auth proxy processes before deleting `~/.nemoclaw` state so stale proxy listeners do not block a later reinstall.
 
-On Linux, uninstall removes `~/.local/state/nemoclaw`, which contains Docker-driver gateway SQLite data, audit logs, VM-driver state, and standalone-fallback gateway PID files.
+On Linux, uninstall removes `~/.local/state/nemoclaw`, which contains Docker-driver gateway PID files, SQLite data, audit logs, and VM-driver state.
 
 | Flag | Effect |
 |---|---|
@@ -1945,7 +1648,6 @@ All ports must be non-privileged integers between 1024 and 65535.
 | `NEMOCLAW_OLLAMA_PORT` | 11434 | Ollama inference |
 | `NEMOCLAW_OLLAMA_PROXY_PORT` | 11435 | Ollama auth proxy |
 | `NEMOCLAW_DASHBOARD_BIND` | *unset* (loopback) | Dashboard or API forward bind address. Set to `0.0.0.0` to opt in to remote bind for SSH-deployed hosts. |
-| `NEMOCLAW_GATEWAY_WS_HOST` | *unset* (auto-derived inside the sandbox; loopback elsewhere) | Host used for the in-sandbox `OPENCLAW_GATEWAY_URL`; inside the sandbox it defaults to the primary interface address so `sessions_spawn` sub-agents can dial the gateway through the enforced network path. |
 
 If a port value is not a valid integer or falls outside the allowed range, the CLI exits with an error.
 `NEMOCLAW_GATEWAY_PORT` also cannot overlap the configured dashboard, vLLM, Ollama, or Ollama proxy ports, and cannot use the dashboard auto-allocation range `18789` through `18799` or the default inference/proxy ports `8000`, `11434`, and `11435`.
@@ -1988,14 +1690,15 @@ For OpenClaw, `NEMOCLAW_DASHBOARD_PORT` controls the OpenClaw dashboard forward.
 </AgentOnly>
 <AgentOnly variant="hermes">
 
-For Hermes, `NEMOCLAW_DASHBOARD_PORT` controls the built-in dashboard forward, which defaults to `18789`.
-The Hermes OpenAI-compatible API remains separate on port `8642` and uses `/v1` for API clients.
-Set `NEMOCLAW_HERMES_DASHBOARD_TUI=1` only when you want Hermes' optional in-browser TUI tab.
+For Hermes, `NEMOCLAW_DASHBOARD_PORT` controls the OpenAI-compatible API forward.
+For Hermes sandboxes, `NEMOCLAW_HERMES_DASHBOARD=1` starts the native Hermes dashboard separately from the OpenAI-compatible API.
+The Hermes API remains on port `8642`; the optional browser dashboard uses `NEMOCLAW_HERMES_DASHBOARD_PORT`.
 
 | Variable | Default | Service |
 |----------|---------|---------|
-| `NEMOCLAW_DASHBOARD_PORT` | 18789 | Hermes built-in dashboard forward port |
-| `NEMOCLAW_HERMES_DASHBOARD_TUI` | 0 | Optional Hermes in-browser TUI tab |
+| `NEMOCLAW_HERMES_DASHBOARD` | 0 | Optional Hermes native web dashboard (`1`, `true`, `yes`, or `on` enables it) |
+| `NEMOCLAW_HERMES_DASHBOARD_PORT` | 9119 | Optional Hermes native web dashboard forward port |
+| `NEMOCLAW_HERMES_DASHBOARD_TUI` | 0 | Optional Hermes in-browser TUI tab when the dashboard is enabled |
 
 </AgentOnly>
 
@@ -2019,14 +1722,10 @@ Set them before running `nemoclaw onboard`.
 | `NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME` | service name | Sets the OTEL `service.name` for OpenClaw gateway spans. Defaults to `openclaw-gateway`. |
 | `NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE` | `0.0` to `1.0` | Sets OpenClaw's root-span sample rate for conversation diagnostics. Defaults to `1.0`. |
 | `NEMOCLAW_OPENSHELL_BIN` | path | Overrides the `openshell` binary the CLI invokes. Defaults to `openshell` (resolved via `PATH`). |
-| `NEMOCLAW_SANDBOX_NAME` | sandbox name | Preferred environment override for the default sandbox. Used by onboarding defaults and host-level commands such as `list`, `status`, `tunnel`, `services`, and `debug`. |
-| `NEMOCLAW_SANDBOX` | sandbox name | Alternate spelling of `NEMOCLAW_SANDBOX_NAME`; used when neither a flag nor `NEMOCLAW_SANDBOX_NAME` is set. |
-| `SANDBOX_NAME` | sandbox name | Compatibility spelling used after `NEMOCLAW_SANDBOX_NAME` and `NEMOCLAW_SANDBOX`. |
+| `NEMOCLAW_SANDBOX` | sandbox name | Alternate spelling of `NEMOCLAW_SANDBOX_NAME`; used by `services` and `debug` lookups when neither a flag nor `NEMOCLAW_SANDBOX_NAME` is set. |
 | `NEMOCLAW_INSTALL_REF` | git ref | For internal installer commands: the git ref to install from. Overridden by the `--install-ref` flag. |
 | `NEMOCLAW_INSTALL_TAG` | release tag | For internal installer commands: the release tag to install. Defaults to the admin-promoted `lkg` tag when unset. Overridden by the `--install-tag` flag. |
-| `NEMOCLAW_VLLM_MODEL` | registry slug or Hugging Face model id | Selects the model the managed-vLLM install path serves. Recognised slugs: `qwen3.6-27b`, `qwen3.6-35b-a3b-nvfp4`, `nemotron-3-nano-4b`, `deepseek-v4-flash`, `deepseek-r1-distill-70b`. Unset uses the per-platform profile default. Gated models (e.g. `deepseek-r1-distill-70b`) require `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN`. |
-| `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` | JSON array of non-blank strings | Appends advanced operator-owned tokens to the managed `vllm serve` command after NemoClaw's registry defaults. Example: `["--max-num-seqs","2"]`. Malformed JSON, non-string tokens, or blank tokens fail before Docker work starts. |
-| `NEMOCLAW_MINIMAL_BOOTSTRAP` | `1` to enable | Skips default OpenClaw workspace-template seeding for new pristine workspaces. Existing files are not deleted; see Runtime Controls (use the `nemoclaw-user-manage-sandboxes` skill). |
+| `NEMOCLAW_VLLM_MODEL` | registry slug or Hugging Face model id | Selects the model the managed-vLLM install path serves. Recognised slugs: `qwen3.6-27b`, `qwen3.6-35b-a3b-nvfp4`, `nemotron-3-nano-4b`, `deepseek-r1-distill-70b`. Unset uses the per-platform profile default. Gated models (e.g. `deepseek-r1-distill-70b`) require `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN`. |
 | `NEMOCLAW_MODEL_ROUTER_PYTHON` | absolute path | Pins the host Python interpreter used to create the Model Router virtual environment. Strict. NemoClaw probes only that interpreter and aborts with the failure reason if it does not qualify, rather than silently falling back to another python. Relative command names such as `python3.12` are rejected. When unset, NemoClaw probes `python3.13`, `python3.12`, `python3.11`, `python3.10`, and bare `python3`, retains every interpreter whose version is in `[3.10, 3.14)` and whose `ensurepip`, `pyexpat`, `ssl`, and `venv` stdlib modules import cleanly, and tries `python -m venv` on each in priority order until one succeeds. Set the pin when the auto-discovered interpreter is broken (for example, Homebrew `python@3.14` with a `pyexpat` dlopen mismatch on macOS). |
 
 <AgentOnly variant="openclaw">
@@ -2052,38 +1751,6 @@ Hermes-specific provider authentication:
 | `NEMOCLAW_HERMES_AUTH_METHOD` | `oauth` | Selects Hermes Provider authentication in non-interactive onboarding. Valid values: `oauth`, `nous-portal-oauth`, `api-key`, `nous-api-key`. |
 | `NEMOCLAW_HERMES_AUTH` | same as `NEMOCLAW_HERMES_AUTH_METHOD` | Back-compatible alias for Hermes Provider authentication selection. |
 | `NEMOCLAW_NOUS_AUTH_METHOD` | same as `NEMOCLAW_HERMES_AUTH_METHOD` | Nous-specific alias for Hermes Provider authentication selection. |
-| `NEMOCLAW_HERMES_TOOL_GATEWAYS` | comma-separated list | Selects managed Hermes tool gateways in non-interactive onboarding. Valid values are `nous-web`, `nous-image`, `nous-audio`, `nous-browser`, and `nous-code`; the `nous-` prefix is optional. Unknown values fail before sandbox creation. |
-| `NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS` | comma-separated list | Back-compatible alias for `NEMOCLAW_HERMES_TOOL_GATEWAYS`. |
-| `NEMOCLAW_EXTRA_PLACEHOLDER_KEYS` | whitespace- or comma-separated list of upper-snake env keys | Adds operator-supplied OpenShell provider rows so per-profile credentials such as `TELEGRAM_BOT_TOKEN_AGENT_A` flow through the same out-of-process placeholder injection that the canonical channel tokens use, instead of being baked into each Hermes profile `.env` as raw text. See [Extra placeholder keys](#extra-placeholder-keys) for the entry shape and validation rules. |
-
-</AgentOnly>
-
-<AgentOnly variant="hermes">
-
-#### Extra placeholder keys
-
-Set `NEMOCLAW_EXTRA_PLACEHOLDER_KEYS` before running `nemoclaw onboard` when one container hosts multiple Hermes profiles and each profile needs its own messaging-bridge credential.
-
-```bash
-export NEMOCLAW_EXTRA_PLACEHOLDER_KEYS="TELEGRAM_BOT_TOKEN_AGENT_A TELEGRAM_BOT_TOKEN_AGENT_B"
-export TELEGRAM_BOT_TOKEN_AGENT_A=<bot-A-token>
-export TELEGRAM_BOT_TOKEN_AGENT_B=<bot-B-token>
-nemoclaw onboard --agent hermes
-```
-
-For each entry, NemoClaw registers a generic OpenShell provider row that resolves the named env to its operator-supplied value at egress time.
-The Hermes profile `.env` files are operator-owned: write `${TELEGRAM_BOT_TOKEN_AGENT_A}` (or the matching placeholder for each entry) into the per-profile `.env` so the in-sandbox Hermes process inherits the OpenShell placeholder instead of a raw token.
-NemoClaw never reads, writes, or rewrites these `.env` files; verify after onboarding that each profile's `.env` references the placeholder and that no raw bot token value sits on disk.
-
-Entries are split on whitespace and commas and must match `^[A-Z][A-Z0-9_]{0,127}$`.
-Each entry must extend a canonical channel envKey with a non-empty `_<suffix>` (for example `TELEGRAM_BOT_TOKEN_AGENT_A`); the canonical envKeys are `TELEGRAM_BOT_TOKEN`, `DISCORD_BOT_TOKEN`, `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `WECHAT_BOT_TOKEN`, and `BRAVE_API_KEY`.
-Bare canonical envKeys, the control env itself, and arbitrary host secret names (`GITHUB_TOKEN`, `AWS_SECRET_ACCESS_KEY`, `KUBECONFIG`, and similar) are refused so they cannot leak into the sandbox provider gateway.
-Duplicates are dropped silently.
-The list is capped at 32 entries per sandbox.
-Offending tokens emit one warning each and are skipped.
-
-If a referenced env is unset at onboard time, the matching provider row is registered with a null token; the `upsertMessagingProviders` helper then skips the row, so no placeholder is attached to the OpenShell gateway and no Hermes profile can resolve it.
-Export the credential before running `nemoclaw onboard` for that profile.
 
 </AgentOnly>
 
@@ -2163,9 +1830,9 @@ These flags toggle optional behaviors during onboarding; set them before running
 | `NEMOCLAW_SANDBOX_GPU` | `auto`, `1`, or `0` | Controls sandbox GPU passthrough during onboarding. `auto` enables GPU passthrough when an NVIDIA GPU is detected, `1` requires GPU passthrough, and `0` forces CPU-only sandbox creation. |
 | `NEMOCLAW_SANDBOX_GPU_DEVICE` | OpenShell GPU device selector | Selects the GPU device passed with `openshell sandbox create --gpu-device`. Requires explicit sandbox GPU enablement with `NEMOCLAW_SANDBOX_GPU=1` (or `--sandbox-gpu` for CLI-driven onboarding); otherwise onboarding rejects the selector instead of treating it as an implicit opt-in. |
 | `NEMOCLAW_DOCKER_GPU_PATCH` | `0` to disable, anything else to keep the default | Controls the Linux Docker-driver GPU sandbox compatibility patch. Set to `0` only as an escape hatch when the patch fails and you need onboarding to continue without patching the GPU sandbox container. |
-| `NEMOCLAW_OPENSHELL_GATEWAY_BIN` | path | Advanced override for the `openshell-gateway` binary used by the Linux Docker-driver standalone fallback. Defaults to the binary next to `openshell`, then common install paths. |
-| `NEMOCLAW_OPENSHELL_SANDBOX_BIN` | path | Advanced override for the `openshell-sandbox` binary used by the Linux Docker-driver standalone fallback. Defaults to the binary next to `openshell`, then common install paths. |
-| `NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR` | path | Advanced override for the Linux Docker-driver gateway SQLite state directory and standalone-fallback PID file. Defaults to `~/.local/state/nemoclaw/openshell-docker-gateway`. |
+| `NEMOCLAW_OPENSHELL_GATEWAY_BIN` | path | Advanced override for the `openshell-gateway` binary used by the Linux Docker-driver gateway. Defaults to the binary next to `openshell`, then common install paths. |
+| `NEMOCLAW_OPENSHELL_SANDBOX_BIN` | path | Advanced override for the `openshell-sandbox` binary passed to the Linux Docker-driver gateway supervisor. Defaults to the binary next to `openshell`, then common install paths. |
+| `NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR` | path | Advanced override for the Linux Docker-driver gateway pid file and SQLite state directory. Defaults to `~/.local/state/nemoclaw/openshell-docker-gateway`. |
 | `NEMOCLAW_AUTO_FIX_FIREWALL` | `1` to enable | Opts in to automatic UFW remediation when Linux Docker-driver sandbox containers cannot reach the host gateway after a proven TCP failure. NemoClaw runs `sudo -n` only, validates the narrow Docker bridge subnet → gateway IP:port rule before invoking UFW, re-probes after applying it, and otherwise falls back to the printed manual command. |
 | `NEMOCLAW_WECHAT_QUIET` | `1` to enable | Silences the `[wechat]` diagnostic lines printed during the host-side WeChat QR login (poll status, IDC redirects, swallowed gateway errors), which are visible by default while the experimental WeChat path stabilizes; set `1` once the flow is reliable in your environment. |
 
@@ -2247,7 +1914,6 @@ These flags change defaults for commands that manage existing sandboxes.
 | `NEMOCLAW_CLEANUP_GATEWAY` | `1`, `true`, or `yes` to enable; `0`, `false`, or `no` to disable | Sets the default for whether `nemoclaw <name> destroy` removes the shared gateway when destroying the last sandbox. Command-line `--cleanup-gateway` and `--no-cleanup-gateway` still take precedence. |
 | `NEMOCLAW_DISABLE_INFERENCE_ROUTE_REPAIR` | `1` to enable | Skips the automatic DNS-proxy repair for stale `inference.local` routes during `nemoclaw <name> connect` and `nemoclaw <name> connect --probe-only`. Use only as a troubleshooting escape hatch. |
 | `NEMOCLAW_SHIELDS_ACCEPT_LEGACY_BASELINE` | `1` to opt in | Allows advanced immutable-config verification to trust the current on-disk bytes for older or partial content baselines. Use only after you have rebuilt or manually inspected the sandbox state and accepted that the baseline is operator-approved. |
-| `NEMOCLAW_SHIELDS_SETTLE_MS` | milliseconds (default `750`, clamped to `0`–`10000`) | Settle window NemoClaw waits after re-applying a config lockdown (during shields auto-restore and `nemoclaw <name> shields up` drift remediation) before re-confirming the lock still holds. Detects when an in-sandbox reconciler changes config file permissions after lockdown and re-applies the lock; if NemoClaw cannot re-confirm the lock within the retry budget, shields stay down. This narrows the window in which a reconciler can revert permissions rather than eliminating it — the best-effort `chattr +i` immutable bit remains the only fully durable lock. Raise it on hosts where the gateway settles slowly. |
 
 <AgentOnly variant="openclaw">
 ### Remote Deployment

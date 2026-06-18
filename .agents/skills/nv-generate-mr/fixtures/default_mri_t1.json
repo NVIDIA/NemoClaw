@@ -1,0 +1,16 @@
+{
+  "_comment": "Default rflow-mr smoke config: MRI T1, upstream default 128x256x256 dim, 1.25x1.0x1.0 mm spacing, 30 rectified-flow steps.",
+  "modality": "mri_t1",
+  "dim": [
+    128,
+    256,
+    256
+  ],
+  "spacing": [
+    1.25,
+    1.0,
+    1.0
+  ],
+  "num_inference_steps": 30,
+  "cfg_guidance_scale": 15
+}

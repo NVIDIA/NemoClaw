@@ -1,0 +1,51 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Cosmos Reason2 8B (spatial reasoning for physical AI)
+# Pre-built NIM container from NGC
+apiVersion: apps.nvidia.com/v1alpha1
+kind: NIMService
+metadata:
+  name: cosmos-reason
+  namespace: osmo-nims
+spec:
+  image:
+    repository: nvcr.io/nim/nvidia/cosmos-reason2-8b
+    tag: "1.7.0"
+    pullPolicy: IfNotPresent
+    pullSecrets:
+      - nvcr-pull-secret
+  authSecret: ngc-api-secret
+  env:
+    - name: NGC_API_KEY
+      valueFrom:
+        secretKeyRef:
+          name: ngc-api-secret
+          key: NGC_API_KEY
+  storage:
+    pvc:
+      create: true
+      size: "50Gi"
+      volumeAccessMode: ReadWriteMany
+  startupProbe:
+    enabled: true
+    probe:
+      httpGet:
+        path: /v1/health/ready
+        port: 8000
+      initialDelaySeconds: 60
+      periodSeconds: 30
+      failureThreshold: 120
+      timeoutSeconds: 5
+  replicas: 1
+  resources:
+    limits:
+      nvidia.com/gpu: 1
+      memory: 48Gi
+    requests:
+      nvidia.com/gpu: 1
+      memory: 48Gi
+  expose:
+    service:
+      type: ClusterIP
+      port: 8000

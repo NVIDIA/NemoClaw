@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": true,
+  "properties": {
+    "asset_path": { "type": "string" },
+    "checks": { "type": "array" },
+    "errors": { "type": "array" },
+    "generated_files": { "type": "array" },
+    "next_step": { "type": "string" },
+    "output_image_path": { "type": "string" },
+    "passed": { "type": "boolean" },
+    "renderer_backend": { "type": "string" },
+    "renderer_endpoint": { "type": ["string", "null"] },
+    "renderer_skill": { "type": "string" }
+  },
+  "required": ["asset_path", "output_image_path", "renderer_skill", "passed", "checks", "errors", "next_step"],
+  "type": "object"
+}

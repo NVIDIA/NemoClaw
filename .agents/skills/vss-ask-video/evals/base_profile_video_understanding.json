@@ -1,0 +1,56 @@
+{
+  "skills": [
+    "vss-ask-video",
+    "vss-deploy-profile"
+  ],
+  "resources": {
+    "platforms": {
+      "L40S": {
+        "gpu_count": 1
+      }
+    }
+  },
+  "expects": [
+    {
+      "query": "Deploy the VSS **base** profile on `{{platform}}` via `/vss-deploy-profile -p base`. Run autonomously.\n\n**Environment & prerequisites:** VSS **base** profile with the **`video_understanding` tool** exposed on the VSS agent. VSS agent HTTP API on **8000** (e.g. `http://localhost:8000/docs`), VST reachable at http://localhost:30888/vst/api/v1. Use **remote-all** (remote LLM + VLM) so no local NIMs are required.Set Brev secure-link env vars if checks validate `localhost` media URLs. The skill's canonical pattern is `POST /generate` with `input_message` that instructs the agent to use **`video_understanding`** to answer a **visual** question about a **named sensor** (see `skills/vss-ask-video/SKILL.md`).",
+      "checks": [
+        "`curl -sf --max-time 15 http://localhost:8000/docs` returns exit 0 (Agent REST API responsive)",
+        "`curl -sf --max-time 15 http://localhost:3000/` returns exit 0 (Agent UI responsive)",
+        "`docker ps --format '{{.Names}}' | grep -qx vss-agent` returns exit 0",
+        "`docker ps --format '{{.Names}}' | grep -qx vss-agent-ui` returns exit 0",
+        "`docker ps --format '{{.Names}}' | grep -qx redis` returns exit 0"
+      ]
+    },
+    {
+      "query": "Check if the warehouse_safety_0001 video is already uploaded on VST. If it doesn't exist, upload the warehouse_safety_0001 video to VIOS with timestamp 2025-01-01T00:00:00.000Z. If it exists, skip the uploading.",
+      "checks": [
+        "Trajectory or reasoning shows probing VST/VIOS for warehouse_safety_0001 **before** deciding to upload\u2014for example listing sensors/streams via the agent tools (or equivalent REST such as curl /vst/api/v1/sensor/list)\u2014not unconditional PUT-only behavior.",
+        "curl -sf http://localhost:30888/vst/api/v1/sensor/list returns a JSON array containing a sensor whose name matches the uploaded video's filename stem",
+        "curl -sf http://localhost:30888/vst/api/v1/sensor/<sensorId>/streams returns a non-empty streams array whose main stream's url is a local file path under /home/vst/... or similar (NOT rtsp://)"
+      ]
+    },
+    {
+      "query": "Verify the VSS stack is ready for the **vss-ask-video** skill. Confirm the agent serves OpenAPI at `/docs` and that VST lists at least one stream.",
+      "checks": [
+        "curl -sf --max-time 10 -o /dev/null -w '%{http_code}' http://localhost:8000/docs returns 200",
+        "curl -sf --max-time 10 http://localhost:30888/vst/api/v1/sensor/streams returns HTTP 200 and a non-empty JSON body"
+      ]
+    },
+    {
+      "query": "Is the worker in warehouse_safety_0001 wearing PPE?",
+      "checks": [
+        "The run performed at least one successful `POST` to `http://localhost:8000/generate` (or equivalent agent base) with `Content-Type: application/json` and a body including `input_message` (HTTP 2xx).",
+        "The `input_message` text asks the user question and includes the sensor id warehouse_safety_0001",
+        "The final assistant reply is answers plain text or light markdown that the worker is wearing PPE according to the user question. There should be no errors included in the final response."
+      ]
+    },
+    {
+      "query": "At what timestamp did the worker climb up the ladder?",
+      "checks": [
+        "The run performed at least one successful `POST` to `http://localhost:8000/generate` (or equivalent agent base) with `Content-Type: application/json` and a body including `input_message` (HTTP 2xx).",
+        "The `input_message` text asks the user question and includes the sensor id warehouse_safety_0001",
+        "The final assistant reply answers the question in plain text or light markdown and includes a timestamp. There should be no errors included in the final response."
+      ]
+    }
+  ]
+}

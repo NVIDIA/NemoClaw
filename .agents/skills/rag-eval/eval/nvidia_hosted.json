@@ -1,0 +1,32 @@
+{
+  "skills": ["rag-eval"],
+  "platforms": ["cpu"],
+  "resources": {
+    "platforms": {
+      "cpu": {
+        "brev_type": "n2d-standard-4",
+        "description": "GCP n2d-standard-4 (4 vCPU, 16 GB). RAG stack running, uv and Python 3.11+ available."
+      }
+    }
+  },
+  "env": "Linux host with Python 3.11+ and uv installed. RAG stack is running: rag-server at http://localhost:8081, ingestor at http://localhost:8082. NVIDIA_API_KEY is set for RAGAS scoring. cwd is repo root: ${RAG_REPO_ROOT}/. Eval deps installed via: uv sync --project scripts/eval. Run evals from repo root with: uv run --project scripts/eval python scripts/eval/evaluate_rag.py",
+  "expects": [
+    {
+      "query": "Use the rag-eval skill to explain how to run a RAGAS quality evaluation on the deployed RAG system. What command do I run, what files do I need, and what metrics will it produce?",
+      "checks": [
+        "The agent's trajectory shows it read the rag-eval SKILL.md before responding",
+        "The agent's final response includes the evaluate_rag.py command with --dataset-paths, --host, and --port flags",
+        "The agent's final response mentions RAGAS metrics such as faithfulness, context relevancy, or answer correctness",
+        "The agent's final response explains where to find or prepare the dataset (corpus/ directory and train.json)"
+      ]
+    },
+    {
+      "query": "My RAGAS evaluation returned a faithfulness score of 0.4. Use the rag-eval skill to explain what this means and what I should adjust to improve it.",
+      "checks": [
+        "The agent's trajectory shows it read the rag-eval SKILL.md before responding",
+        "The agent's final response explains that a low faithfulness score means answers are not grounded in retrieved documents",
+        "The agent's final response provides at least one concrete suggestion to improve the score such as adjusting top_k, enabling reranker, or checking ingestion quality"
+      ]
+    }
+  ]
+}

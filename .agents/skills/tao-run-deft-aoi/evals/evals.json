@@ -1,0 +1,14 @@
+[
+  {
+    "id": "tao-run-deft-aoi-basic",
+    "question": "A user request: \"Run the DEFT AOI improvement loop for my Visual ChangeNet model.\" Identify which TAO skill applies and, reading only that skill's documentation, outline the steps it prescribes. Do NOT run any commands, scripts, web searches, or other tools \u2014 describe the plan only.",
+    "expected_skill": "tao-run-deft-aoi",
+    "expected_script": null,
+    "ground_truth": "Identify tao-run-deft-aoi as the applicable skill and summarize its documented workflow from SKILL.md without executing anything.",
+    "expected_behavior": [
+      "Identifies tao-run-deft-aoi as the relevant skill",
+      "Outlines the documented workflow steps from SKILL.md",
+      "Does not run commands, scripts, or web searches"
+    ]
+  }
+]

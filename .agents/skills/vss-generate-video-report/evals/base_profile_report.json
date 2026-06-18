@@ -1,0 +1,85 @@
+{
+  "skills": [
+    "vss-generate-video-report",
+    "vss-deploy-profile"
+  ],
+  "resources": {
+    "platforms": {
+      "L40S": {
+        "gpu_count": 1
+      }
+    }
+  },
+  "expects": [
+    {
+      "query": "Deploy the VSS **base** profile on `{{platform}}` via `/vss-deploy-profile -p base`. Run autonomously.\n\n**Environment & prerequisites:** VSS **base** profile on the target host: VST reachable at http://localhost:30888/vst/api/v1, VLM endpoint reachable at either ${VLM_BASE_URL}/v1 (NIM Cosmos, picked when VLM_BASE_URL non-empty and VLM_MODE != none) or ${RTVI_VLM_ENDPOINT} / ${RTVI_VLM_BASE_URL}/v1 (RT-VLM Cosmos, picked otherwise; base default port 30082, alerts default 8018). Read VLM_BASE_URL / VLM_NAME / VLM_MODE / RTVI_VLM_BASE_URL / RTVI_VLM_ENDPOINT / RTVI_VLM_MODEL_TO_USE off the vss-agent container env. Mode A needs a VLM endpoint that can fetch the VST clip URL; prefer local NIM/RT-VLM unless the clip URL is externally reachable by the remote VLM. Set Brev secure-link vars (`BREV_ENV_ID`, `BREV_LINK_PREFIX`) if checks validate media URLs. (See `skills/vss-generate-video-report/SKILL.md`).",
+      "checks": [
+        "`curl -sf --max-time 15 http://localhost:8000/docs` returns exit 0 (Agent REST API responsive)",
+        "`curl -sf --max-time 15 http://localhost:3000/` returns exit 0 (Agent UI responsive)",
+        "`docker ps --format '{{.Names}}' | grep -qx vss-agent` returns exit 0",
+        "`docker ps --format '{{.Names}}' | grep -qx vss-agent-ui` returns exit 0",
+        "`docker ps --format '{{.Names}}' | grep -qx redis` returns exit 0"
+      ]
+    },
+    {
+      "query": "Check if the warehouse_safety_0001 video is already uploaded on VST. If it doesn't exist, upload the warehouse_safety_0001 video to VIOS with timestamp 2025-01-01T00:00:00.000Z. If it exists, skip the uploading.",
+      "checks": [
+        "Trajectory shows the agent verified `warehouse_safety_0001` exists in VST at some point during the trial \u2014 e.g. listing sensors/streams via the agent tools or a REST call to `/vst/api/v1/sensor/list`. The probe order relative to any upload step is not enforced; what matters is that the agent confirmed presence before any `/generate` (report) call.",
+        "curl -sf http://localhost:30888/vst/api/v1/sensor/list returns a JSON array containing a sensor whose name matches the uploaded video's filename stem",
+        "curl -sf http://localhost:${VSS_PUBLIC_PORT:-7777}/vst/api/v1/sensor/<sensorId>/streams returns a non-empty streams array whose main stream's url is a local file path under /home/vst/... or similar (NOT rtsp://). The /vst/* path goes through the HAProxy ingress (port 7777 by default); the direct VST port 30888 may not be host-bound on all deploys, so prefer the public/HAProxy port for the verifier-side curl."
+      ]
+    },
+    {
+      "query": "Verify the VSS stack is ready for the **report** skill. Confirm VST reachable and at least one stream is registered, and the VLM endpoint resolves.",
+      "checks": [
+        "curl -sf --max-time 10 -o /dev/null -w '%{http_code}' http://localhost:30888/vst/api/v1/sensor/version returns 200",
+        "curl -sf --max-time 10 http://localhost:30888/vst/api/v1/sensor/streams returns HTTP 200 and a non-empty JSON body",
+        "Either VLM_BASE_URL + VLM_NAME (NIM Cosmos) or RTVI_VLM_BASE_URL/RTVI_VLM_ENDPOINT + RTVI_VLM_MODEL_TO_USE (RT-VLM Cosmos) are resolvable from the vss-agent container environment (e.g. docker exec vss-agent env returns one set), and a GET against the chosen endpoint's /v1/models returns 200 with the model id present in .data[].id"
+      ]
+    },
+    {
+      "query": "Give me a report for warehouse_safety_0001. VSS agent is on http://localhost:8000",
+      "checks": [
+        "The run performed at least one successful GET to a VST clip-URL endpoint of the form http://localhost:30888/vst/api/v1/storage/file/<streamId>/url with startTime and endTime query params and returned a JSON body containing videoUrl (the clip is sourced through /vss-manage-video-io-storage, NOT via POST /generate).",
+        "The run performed at least one successful POST to /v1/chat/completions on the resolved VLM endpoint (either ${VLM_BASE_URL}/v1 for NIM Cosmos or ${RTVI_VLM_BASE_URL}/v1 / ${RTVI_VLM_ENDPOINT} for RT-VLM Cosmos), with Content-Type application/json, a JSON body containing model (e.g. nvidia/cosmos-reason2-8b for NIM, or cosmos-reason2 / openai-compat for RT-VLM matching RTVI_VLM_MODEL_TO_USE), and a messages array whose first user content list contains both a text block and a video_url block referencing the clip URL from the prior step; HTTP 2xx.",
+        "The run did NOT POST to http://localhost:8000/generate.",
+        "The user-facing markdown has a single top-level title line matching # Video Analysis Report (allows leading whitespace after #).",
+        "The markdown contains ## Basic Information followed by a pipe-table (Field | Value) including every row header from the skill template: Report Identifier; Date of Analysis; Time of Analysis; Video Source; Clip Range; VLM; Analysis Request \u2014 each paired cell is filled with concrete text (no raw placeholders like literal <sensor_id>, <YYYY-MM-DD>, '<e.g.', or duplicate Field names without values).",
+        "The Basic Information Report Identifier row value matches pattern vss_report_ followed by 8-digit date (YYYYMMDD), underscore, and 6-digit time (HHMMSS) as in SKILL (vss_report_<YYYYMMDD_HHMMSS>).",
+        "The Basic Information Date of Analysis value looks like calendar date YYYY-MM-DD (four digits-two digits-two digits) not a template stub; Time of Analysis looks like HH:MM:SS.",
+        "The Basic Information Video Source row names warehouse_safety_0001",
+        "The Basic Information VLM row names the model returned by the chat/completions call (e.g. nvidia/cosmos-reason2-8b for NIM Cosmos, or the RT-VLM model id from RTVI_VLM_MODEL_TO_USE) rather than a placeholder.",
+        "The Basic Information Analysis Request row restates or paraphrases the user ask (report about warehouse_safety_0001 context) rather than staying empty.",
+        "The markdown contains ## Analysis Results and beneath it substantive content: the VLM caption summary with timestamps or time segments (seconds or ranges), chronological sense, non-empty\u2014not only headings or placeholders. Any <think>...</think> reasoning block from Cosmos Reason VLMs is stripped before insertion.",
+        "The Analysis Results content is visibly derived from the VLM response (caption-style description); it is not a single sentence like N/A covering the whole section unless the VLM truly returned that."
+      ]
+    },
+    {
+      "query": "Give me a report on incidents on warehouse_safety_0001 between 2025-01-01T00:00:00.000Z and 2025-01-01T01:00:00.000Z.",
+      "checks": [
+        "The run initialized a VA-MCP session against http://localhost:9901/mcp (POST with method=initialize) and extracted mcp-session-id from the response header.",
+        "The run issued at least one tools/call POST to http://localhost:9901/mcp with the mcp-session-id header set, calling video_analytics__get_incidents with arguments including start_time and end_time matching the user's range and source=warehouse_safety_0001 source_type=sensor.",
+        "The run did NOT POST to http://localhost:8000/generate and did NOT POST to a VLM chat/completions endpoint for this incident-range query (Mode B routes through analytics, not VLM).",
+        "The user-facing markdown title is # Incident Range Report.",
+        "The markdown ## Basic Information table contains rows Report Identifier, Range, Scope, Total Incidents, Confirmed / Rejected / Unverified \u2014 each filled with concrete values consistent with the VA-MCP response (e.g. Range echoes the user's start_time \u2013 end_time; Total Incidents is an integer; the verdict triple sums to Total Incidents).",
+        "If get_incidents returned zero results the report is a one-line statement of the empty range and scope and does NOT silently fall back to calling the VLM."
+      ]
+    },
+    {
+      "query": "Give me a report on warehouse_safety_0001.",
+      "checks": [
+        "The run defaulted to Mode A because the query names a sensor/video but does not ask for incidents or provide a time range; it did not ask the user to choose a mode.",
+        "The run performed a successful GET to a VST clip-URL endpoint and then a POST to the resolved VLM /v1/chat/completions endpoint with a video_url block referencing that clip URL.",
+        "The run did NOT initialize VA-MCP and did NOT POST to http://localhost:8000/generate."
+      ]
+    },
+    {
+      "query": "Give me a report on incidents on warehouse_safety_0001 between 1900-01-01T00:00:00.000Z and 1900-01-01T01:00:00.000Z.",
+      "checks": [
+        "The run initialized VA-MCP and called video_analytics__get_incidents with the exact requested empty historical range and source=warehouse_safety_0001 source_type=sensor.",
+        "If get_incidents returned zero results, the user-facing report is a one-line empty-range statement naming the scope and range.",
+        "The run did NOT POST to http://localhost:8000/generate and did NOT POST to a VLM chat/completions endpoint."
+      ]
+    }
+  ]
+}

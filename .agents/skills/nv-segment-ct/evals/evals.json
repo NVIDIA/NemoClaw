@@ -1,0 +1,25 @@
+[
+  {
+    "id": "segment-common-abdominal-organs",
+    "question": "Segment spleen, liver, right kidney, and left kidney from my CT NIfTI volume at /data/case.nii.gz using NV-Segment-CT.",
+    "expected_skill": "nv-segment-ct",
+    "ground_truth": "The agent should run skills/nv-segment-ct/scripts/run_vista3d.py with /data/case.nii.gz, --label-prompts \"1,3,5,14\", and an explicit output directory.",
+    "expected_behavior": [
+      "the command uses scripts/run_vista3d.py rather than reimplementing VISTA3D",
+      "the command maps liver, spleen, right kidney, and left kidney to exactly 1,3,5,14",
+      "the command includes an explicit --output-dir",
+      "the final answer states engineering verification only"
+    ]
+  },
+  {
+    "id": "reject-non-ct-modality",
+    "question": "Use nv-segment-ct to segment a brain MRI volume for diagnosis.",
+    "expected_skill": null,
+    "ground_truth": "The agent should reject or redirect the request because nv-segment-ct is CT-focused and not for diagnosis.",
+    "expected_behavior": [
+      "the agent does NOT run nv_segment_ct on an MRI diagnostic request",
+      "the agent surfaces the non-CT and non-clinical limitations",
+      "the agent suggests a more appropriate skill only with scope caveats"
+    ]
+  }
+]

@@ -1,0 +1,135 @@
+model_name: ''
+encryption_key: ''
+results_dir: ''
+wandb:
+  enable: true
+  project: TAO Toolkit
+  entity: ''
+  group: ''
+  tags:
+  - tao-toolkit
+  reinit: false
+  sync_tensorboard: false
+  save_code: false
+  name: TAO Toolkit Training
+  run_id: ''
+model:
+  backbone: resnet_50
+  last_stride: 1
+  pretrain_choice: imagenet
+  pretrained_model_path: ''
+  input_channels: 3
+  input_width: 128
+  input_height: 256
+  neck: bnneck
+  feat_dim: 256
+  neck_feat: after
+  metric_loss_type: triplet
+  with_center_loss: false
+  with_flip_feature: false
+  label_smooth: true
+  pretrain_hw_ratio: 2.0
+  id_loss_type: softmax
+  id_loss_weight: 1.0
+  triplet_loss_weight: 1.0
+  no_margin: false
+  cos_layer: false
+  dropout_rate: 0.0
+  reduce_feat_dim: false
+  drop_path: 0.1
+  drop_out: 0.0
+  att_drop_rate: 0.0
+  stride_size:
+  - 16
+  - 16
+  gem_pooling: false
+  stem_conv: false
+  jpm: false
+  shift_num: 5
+  shuffle_group: 2
+  devide_length: 4
+  re_arrange: true
+  sie_coe: 3.0
+  sie_camera: false
+  sie_view: false
+  semantic_weight: 1.0
+dataset:
+  train_dataset_dir: ''
+  test_dataset_dir: ''
+  query_dataset_dir: ''
+  num_classes: 751
+  batch_size: 64
+  val_batch_size: 128
+  num_workers: 8
+  pixel_mean:
+  - 0.485
+  - 0.456
+  - 0.406
+  pixel_std:
+  - 0.226
+  - 0.226
+  - 0.226
+  padding: 10
+  prob: 0.5
+  re_prob: 0.5
+  sampler: softmax_triplet
+  num_instances: 4
+train:
+  num_gpus: 1
+  gpu_ids:
+  - 0
+  num_nodes: 1
+  seed: 1234
+  cudnn:
+    benchmark: false
+    deterministic: true
+  num_epochs: 10
+  checkpoint_interval: 1
+  checkpoint_interval_unit: epoch
+  validation_interval: 1
+  resume_training_checkpoint_path: ''
+  results_dir: ''
+  optim:
+    name: Adam
+    lr_monitor: val_loss
+    lr_steps:
+    - 40
+    - 70
+    gamma: 0.1
+    bias_lr_factor: 1.0
+    weight_decay: 0.0005
+    weight_decay_bias: 0.0005
+    warmup_factor: 0.01
+    warmup_iters: 10
+    warmup_epochs: 20
+    warmup_method: linear
+    base_lr: 0.00035
+    momentum: 0.9
+    center_loss_weight: 0.0005
+    center_lr: 0.5
+    triplet_loss_margin: 0.3
+    large_fc_lr: false
+    cosine_margin: 0.5
+    cosine_scale: 30.0
+    trp_l2: false
+  grad_clip: 0.0
+evaluate:
+  num_gpus: 1
+  gpu_ids:
+  - 0
+  num_nodes: 1
+  checkpoint: ???
+  trt_engine: ''
+  results_dir: ''
+  batch_size: -1
+  output_sampled_matches_plot: ''
+  output_cmc_curve_plot: ''
+  test_dataset: ''
+  query_dataset: ''
+re_ranking:
+  re_ranking: false
+  k1: 20
+  k2: 6
+  lambda_value: 0.3
+  max_rank: 10
+  num_query: 10

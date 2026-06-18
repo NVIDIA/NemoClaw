@@ -1,0 +1,44 @@
+[
+  {
+    "id": "data-fetch-eval-001-global-t2m",
+    "question": "I need global 2m temperature data for January 1, 2024 at 00Z. What data sources can provide this in Earth2Studio? Pick the fastest option and write a fetch script.",
+    "expected_skill": "earth2studio-data-fetch",
+    "expected_script": "targets/eval_1_target.py",
+    "ground_truth": "Presents multiple candidate analysis data sources (e.g. GFS, ARCO, WB2ERA5) that support t2m globally, explains tradeoffs, selects one, and generates a correct fetch script using the analysis source call signature.",
+    "expected_behavior": [
+      "Presents at least two candidate data sources that support t2m",
+      "Explains a tradeoff between the options (speed, coverage, auth, resolution)",
+      "Selects one source and justifies the choice",
+      "Generated script uses the correct analysis call signature: ds(time, variable)",
+      "Generated script imports from earth2studio.data and uses datetime objects for time"
+    ]
+  },
+  {
+    "id": "data-fetch-eval-002-forecast-msl",
+    "question": "I need a 48-hour forecast of mean sea level pressure initialized on 2024-01-15 00Z. What forecast sources are available? Select one and write the fetch script.",
+    "expected_skill": "earth2studio-data-fetch",
+    "expected_script": "targets/eval_4_target.py",
+    "ground_truth": "Presents forecast source options (e.g. GFS_FX, IFS_FX, AIFS_FX), explains tradeoffs, selects one, and generates a script using the forecast call signature with a 48h lead time.",
+    "expected_behavior": [
+      "Presents at least two candidate forecast data sources",
+      "Explains a tradeoff between the options (resolution, ensemble, availability)",
+      "Selects one source and uses the forecast signature: ds(time, lead_time, variable)",
+      "Lead time is specified as timedelta(hours=48) or equivalent",
+      "Generated script imports from earth2studio.data and uses datetime/timedelta"
+    ]
+  },
+  {
+    "id": "data-fetch-eval-003-station-obs",
+    "question": "I want surface weather station temperature observations. What dataframe data sources are available in Earth2Studio for ground station data? Pick one and write the fetch script.",
+    "expected_skill": "earth2studio-data-fetch",
+    "expected_script": "targets/eval_7_target.py",
+    "ground_truth": "Presents available observational dataframe sources for surface station data (e.g. ISD, UFSObsConv, NNJAObsConv), selects one, and generates a fetch script.",
+    "expected_behavior": [
+      "Presents at least one dataframe data source for station observations (ISD, UFSObsConv, or NNJAObsConv)",
+      "Explains what type of observations the source provides",
+      "Selects a source and generates a correct fetch script",
+      "Generated script uses the correct DataFrame source call signature: ds(time, variable)",
+      "Generated script imports from earth2studio.data"
+    ]
+  }
+]

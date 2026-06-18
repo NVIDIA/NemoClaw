@@ -1,0 +1,51 @@
+{
+  "_comment": "Reference schema for ${RESULTS_DIR}/deft_state.json. Written with Python/jq (never echo) after every step. Together with results/loop_log.jsonl this is the single source of truth: re-read on startup and before every stage; never trust in-memory state across turns. Example values are aligned to ~/workspace.",
+  "version": 2,
+  "started_at": "2026-05-04T06:46:53+00:00",
+  "kpi_target": "FAR < 10% at recall=100%",
+  "results_dir": "~/workspace/results",
+  "max_iterations": 2,
+  "current_iteration": 0,
+  "config": {
+    "specs_file": "~/workspace/specs/baseline_spec.yaml",
+    "training_csv": "~/workspace/train/base/training_set.csv",
+    "validation_csv": "~/workspace/train/base/validation_set.csv",
+    "kpi_test_csv": "~/workspace/kpi/testing_set.csv",
+    "images_dir": "~/workspace/kpi/images",
+    "backbone_weight_dir": "~/workspace/augmentation/backbone",
+    "train_container": "<resolved from versions.yaml::images.tao_toolkit.pyt at init time>",
+    "num_gpus": 4,
+    "batch_size": 16,
+    "num_epochs": 20,
+    "anomalygen": {
+      "sub_skill": null,
+      "mode": "pregen_ingest",
+      "pregen_dir": "~/workspace/augmentation/anomalygen",
+      "reconstructed_image_dir": "~/workspace/augmentation/anomalygen/reconstructed_image",
+      "original_image_dir": "~/workspace/augmentation/anomalygen/original_image",
+      "defect_spec": "~/workspace/augmentation/anomalygen/defect_spec.jsonl"
+    },
+    "mining_filter": {
+      "sub_skill": "tao-mine-aoi-images",
+      "top_k_per_target": 5,
+      "metric": "cosine",
+      "min_similarity": null
+    }
+  },
+  "iterations": {},
+  "_completed_step_values": [
+    "evaluate",
+    "rca",
+    "anomalygen",
+    "routing",
+    "data_mining",
+    "train",
+    "loop_stop"
+  ],
+  "_status_values": [
+    "pending",
+    "in_progress",
+    "complete",
+    "failed"
+  ]
+}

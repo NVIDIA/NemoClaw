@@ -1,0 +1,55 @@
+# AutoModel SFT And PEFT Context
+
+Use this pack when configuring `sft/automodel` or `peft/automodel`.
+
+## Product Contract
+
+- AutoModel is the HF-native path. It consumes chat-format `training_jsonl` and
+  produces an HF checkpoint for full SFT or a LoRA adapter for PEFT.
+- Do not feed packed Parquet to AutoModel. Packed Parquet is for
+  Megatron-Bridge SFT/PEFT.
+- Prefer YAML overrides against the existing step configs. Do not write a new
+  training script unless the repo runner cannot express the request.
+
+## When To Pick AutoModel
+
+| User constraint | Decision |
+|---|---|
+| HF checkpoint output is required | Prefer AutoModel |
+| 1-4 GPU iteration or smaller model | Prefer AutoModel |
+| Non-Nemotron or custom HF model | Prefer AutoModel unless a Megatron-Bridge recipe exists |
+| Large distributed Megatron checkpoint output | Prefer Megatron-Bridge |
+| Adapter-only tuning on HF data | `peft/automodel` |
+
+## Required Inputs
+
+- `model.pretrained_model_name_or_path`: HF id or local HF checkpoint path.
+- `dataset.path_or_dataset_id`: chat-format JSONL or dataset id.
+- Output directory for checkpoints/adapters.
+- Tokenizer/chat-template expectations if they differ from the model defaults.
+
+## SFT Rules
+
+- Use full SFT only when memory is sufficient and a full HF checkpoint is the
+  desired artifact.
+- Keep batch size, max sequence length, gradient accumulation, and precision
+  explicit in the config for reproducibility.
+- If the dataset does not already have OpenAI-style `messages`, add a data-prep
+  step before AutoModel rather than changing the trainer.
+
+## PEFT Rules
+
+- Record the exact base model with the adapter; `convert/merge_lora` needs the
+  same base checkpoint and tokenizer.
+- Start with modest LoRA rank and alpha for smoke runs. Raise rank only when
+  the task needs more capacity.
+- Treat adapter eval and merged-checkpoint eval as separate validation points.
+
+## Failure Modes
+
+- `packed_parquet_used_with_automodel`: use source JSONL or switch to
+  `sft/megatron_bridge`.
+- `chat_template_missing`: use a tokenizer with chat-template support or
+  normalize the dataset.
+- `oom`: reduce sequence length/batch size, switch to LoRA, or choose a smaller
+  model.

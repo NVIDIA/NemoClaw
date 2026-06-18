@@ -1,0 +1,33 @@
+encryption_key: tlt_encode
+results_dir: /results
+dataset:
+  num_classes: 4
+  batch_size: 1
+  augmentation:
+    input_std:
+    - 0.229
+    - 0.224
+    - 0.225
+model:
+  num_feature_levels: 2
+  dec_layers: 6
+  enc_layers: 6
+  num_queries: 300
+  with_box_refine: true
+  aux_loss: false
+gen_trt_engine:
+  gpu_id: 0
+  onnx_file: /models/model.onnx
+  trt_engine: /results/deformable-detr.engine
+  tensorrt:
+    data_type: FP16
+    workspace_size: 1024
+    min_batch_size: 1
+    opt_batch_size: 10
+    max_batch_size: 10
+    calibration:
+      cal_image_dir:
+      - /data/calibration/images
+      cal_cache_file: /results/deformable-detr_calibration.cache
+      cal_batch_size: 10
+      cal_batches: 1000

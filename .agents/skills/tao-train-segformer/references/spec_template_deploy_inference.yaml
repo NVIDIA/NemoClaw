@@ -1,0 +1,34 @@
+encryption_key: tlt_encode
+results_dir: /results
+model:
+  backbone:
+    type: vit_large_nvdinov2
+  decode_head:
+    feature_strides: [4, 8, 16, 32]
+dataset:
+  segment:
+    dataset: SFDataset
+    root_dir: /data/segformer
+    label_transform: norm
+    batch_size: 1
+    workers: 4
+    num_classes: 2
+    img_size: 224
+    train_split: train
+    validation_split: val
+    test_split: val
+    predict_split: test
+    augmentation:
+      mean: [0.485, 0.456, 0.406]
+      std: [0.229, 0.224, 0.225]
+    palette:
+    - seg_class: foreground
+      rgb: [0, 0, 0]
+      label_id: 0
+      mapping_class: foreground
+    - seg_class: background
+      rgb: [255, 255, 255]
+      label_id: 1
+      mapping_class: background
+inference:
+  trt_engine: /results/segformer.engine

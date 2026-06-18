@@ -1,0 +1,52 @@
+name: tao-train-nvpanoptix3d
+network_arch: nvpanoptix3d
+automl_enabled: true
+container_image: tao_toolkit.pyt
+data_format: front3d
+gpu_spec_key: train.num_gpus
+actions:
+  train:
+    command: nvpanoptix3d train -e {config_path}
+    config_format: yaml
+    inputs: {}
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  evaluate:
+    command: nvpanoptix3d evaluate -e {config_path}
+    config_format: yaml
+    inputs: {}
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  export:
+    command: nvpanoptix3d export -e {config_path}
+    config_format: yaml
+    inputs: {}
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  inference:
+    command: nvpanoptix3d inference -e {config_path}
+    config_format: yaml
+    inputs: {}
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+data_sources: {}
+spec_params: {}
+key_defaults: {}
+spec_shorthand_keys:
+  batch_size: dataset.batch_size
+  learning_rate: train.optim.lr
+description: NVPanoptix3D for panoptic 3D scene reconstruction from posed RGB images. Produces 3D panoptic segmentation (semantic,
+  instance, and panoptic masks) with occupancy completion. Built on VGGT backbone with Mask2Former-style head and 3D frustum
+  reconstruction.

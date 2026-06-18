@@ -1,0 +1,208 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+id: medagent.nv_generate_ct_rflow
+version: 0.1.0
+upstream_refs:
+  - kind: github_repo
+    name: NVIDIA-Medtech/NV-Generate-CTMR
+    repo_url: https://github.com/NVIDIA-Medtech/NV-Generate-CTMR
+    git_commit: 61c4ec709b84cad468852243c48e250bec732074
+  - kind: huggingface_repo
+    name: nvidia/NV-Generate-CT
+    repo_id: nvidia/NV-Generate-CT
+    revision: 75ac080fb1083c403793563477724c038e7d430c
+license: Apache-2.0
+intended_use:
+  summary: >
+    Engineering-time wrapper around NVIDIA-Medtech/NV-Generate-CTMR's
+    rectified-flow CT/mask synthesis pipeline (rflow-ct). Invokes
+    `python -m scripts.inference --version rflow-ct` exactly as the upstream
+    README documents; does not reimplement diffusion, sampling, or
+    autoencoder decoding.
+  scope: development
+  not_for:
+    - clinical deployment
+    - clinical interpretation
+    - autonomous diagnosis
+    - regulatory submission
+    - training data for production models
+
+inputs:
+  - name: config_infer_override
+    type: file_path
+    formats:
+      - json
+    description: >
+      JSON file overriding upstream configs/config_infer.json (allowed keys:
+      num_output_samples, body_region, anatomy_list,
+      controllable_anatomy_size, output_size, spacing, num_inference_steps,
+      and a handful of upstream-defined inference knobs). The sentinel value
+      `default` selects the upstream config verbatim.
+
+outputs:
+  - name: synthetic_ct_volumes
+    type: directory_path
+    description: >
+      Output directory containing sample_<timestamp>_image.nii.gz and
+      sample_<timestamp>_label.nii.gz pairs.
+  - name: result_json
+    type: json
+    schema: validators/output_schema.json
+
+runtime:
+  language: python
+  python: ">=3.10"
+  entrypoint: scripts/run_rflow_ct.py
+  args:
+    - "${python}"
+    - "${script}"
+    - "${fixture}"
+    - "--output-dir"
+    - "${out}/samples"
+  dependencies:
+    nibabel: ">=4.0"
+    numpy: ">=1.23"
+    typer: ">=0.9"
+    torch: ">=2.1"
+    monai: ">=1.5"
+  side_effects:
+    pip_packages:
+      - nibabel>=4.0
+      - numpy>=1.23
+      - typer>=0.9
+      - torch>=2.1
+      - "monai>=1.5"
+      - scipy>=1.10
+      - scikit-image>=0.20
+      - einops>=0.7
+      - huggingface_hub>=0.20
+      - matplotlib>=3.8
+      - tqdm>=4.65
+      - fire>=0.5
+      - tensorboard>=2.14
+      - PyYAML>=6.0
+    local_writes:
+      # Staged configs land under <output-dir>/_staged_configs/ so the
+      # NV_GENERATE_ROOT clone is never mutated.
+      - {path: "<caller-provided --output-dir>", approx_mb_max: 4000}
+    home_writes:
+      - {path: ~/.cache/huggingface/, approx_mb_max: 6000}
+    network_endpoints:
+      - https://huggingface.co
+      - https://github.com
+    requires_docker: false
+    requires_gpu: cuda
+    # rflow-ct is a 3D rectified-flow diffusion model: there is no CPU fallback
+    # in the upstream code path. eval_engine should skip on CPU-only hosts.
+    environment:
+      clean_environment_required: false
+      clean_environment_recommended: true
+      modifies_active_python_environment: true
+      user_environment_modification_ok: true
+      recommended_isolation: fresh venv or container for benchmarks; caller-selected env for interactive use
+      notes: >
+        Runtime setup commands may install packages into the active Python
+        environment. That is acceptable only when the caller chooses that
+        environment; benchmark and evidence runs should use a fresh per-run
+        environment.
+    env_required:
+      - NV_GENERATE_ROOT
+  external_assets:
+    - kind: upstream_repo
+      repo_url: https://github.com/NVIDIA-Medtech/NV-Generate-CTMR
+      install_path: $NV_GENERATE_ROOT
+      install_command: >
+        git clone https://github.com/NVIDIA-Medtech/NV-Generate-CTMR.git $NV_GENERATE_ROOT &&
+        pip install -r $NV_GENERATE_ROOT/requirements.txt
+      contains:
+        - scripts/inference.py
+        - scripts/download_model_data.py
+        - configs/config_network_rflow.json
+        - configs/config_infer.json
+        - configs/environment_rflow-ct.json
+    - kind: huggingface_repo
+      repo_id: nvidia/NV-Generate-CT
+      size_mb_approx: 5500
+      install_path: $NV_GENERATE_ROOT/models/
+      install_command: >
+        cd $NV_GENERATE_ROOT && python -m scripts.download_model_data
+        --version rflow-ct --root_dir ./
+      contains:
+        - models/autoencoder_v1.pt
+        - models/diff_unet_3d_rflow-ct.pt
+        - models/controlnet_3d_rflow-ct.pt
+        - models/mask_generation_autoencoder.pt
+        - models/mask_generation_diffusion_unet.pt
+        - datasets/all_anatomy_size_conditions.json
+        - datasets/candidate_masks_flexible_size_and_spacing_4000.json
+        - datasets/all_masks_flexible_size_and_spacing_4000/
+
+paired_verifiers:
+  - id: medagent.verifiers.ct_synthesis_quality_v1
+    status: implemented
+    consumes: evidence_pack_dir
+    purpose: >
+      Reads the produced image/mask pairs and checks geometry consistency,
+      CT-HU plausibility (image has negative-HU air voxels and bone-range
+      bright voxels, image is non-constant), mask label-set sanity (at
+      least one foreground class present, all label ids in [0, 132]),
+      declared output-label coverage, and lung-lobe HU plausibility. For
+      controllable generation, the saved paired label map uses upstream's
+      local 1..N output-label ids; wrapper evidence maps those ids back to
+      MAISI label ids such as lung tumor=23.
+
+limitations:
+  - >
+    This is a thin wrapper. Inference, sampling, and decoding are delegated
+    entirely to NVIDIA-Medtech/NV-Generate-CTMR's `scripts.inference`. Do not
+    modify code under $NV_GENERATE_ROOT.
+  - >
+    rflow-ct requires CUDA and ≈ 16 GB VRAM minimum for the default 256³
+    output_size. Larger output_size (e.g. 512×512×768) needs an A100/H100.
+  - >
+    Output volumes are synthetic. They are not safe to use as training data
+    for production medtech models without an independent quality review.
+
+validation:
+  expected_runtime_seconds:
+    min: 1.0
+    max: 1800.0
+    inference_path: runtime.subprocess_seconds
+  sanity_checks:
+    - {path: invocation.exit_code, eq: 0}
+    - {path: invocation.model_inventory.all_present, eq: true}
+    - {path: output.num_samples, gte: 1}
+    - {path: output.all_pairs_readable, eq: true}
+    - {path: output.all_geometry_consistent, eq: true}
+    - {path: output.any_foreground_present, eq: true}
+    - {path: output.all_images_nonconstant, eq: true}
+    - {path: output.all_images_hu_like, eq: true}
+    - {path: output.all_effective_anatomy_labels_present, eq: true}
+  expected_cost:
+    wall_seconds:        {max: 1800}
+    cpu_seconds:         {max: 3600}
+    rss_mb_peak:         {min: 500, max: 32000}
+    gpu_seconds:         {max: 1800}
+    gpu_memory_mb_peak:  {max: 48000}
+  reproducibility:
+    mode: preflight
+    fixture: fixtures/default_config_infer.json
+    runs: 2
+    reason: >
+      End-to-end synthetic CT repeatability requires CUDA, the
+      NV-Generate-CTMR checkout, and downloaded model weights. The repository
+      audit repeats the declared config/env boundary check; promoted evidence
+      packs must compare generated image and mask artifact hashes.

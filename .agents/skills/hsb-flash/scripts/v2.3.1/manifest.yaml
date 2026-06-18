@@ -1,0 +1,27 @@
+hololink:
+  archive:
+    enrollment_date: '2025-08-06T01:48:45.145528+00:00'
+    version: '2507'
+  content:
+    NVIDIA_RTL_License_Agreement.txt:
+      md5: e8c77cea2712a6e3883c49b063ebc816
+      size: 16929
+      url: https://edge.urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/hsb/fpga_ip/2507/NVIDIA_RTL_License_Agreement.txt
+    fpga_clnx_v2507.bit:
+      md5: edc29bdb1924e5d04baf53f076413123
+      size: 377554
+      url: https://edge.urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/hsb/fpga_ip/2507/fpga_clnx_v2507.bit
+    fpga_cpnx_v2507.bit:
+      md5: bda589884de672de8ca76321c793b4f0
+      size: 1962051
+      url: https://edge.urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/hsb/fpga_ip/2507/fpga_cpnx_v2507.bit
+  fpga_uuid:
+  - 889b7ce3-65a5-4247-8b05-4ff1904c3359
+  images:
+  - content: fpga_cpnx_v2507.bit
+    context: cpnx
+  - content: fpga_clnx_v2507.bit
+    context: clnx
+  licenses:
+  - NVIDIA_RTL_License_Agreement.txt
+  strategy: sensor_bridge_10

@@ -1,0 +1,4 @@
+interface:
+  display_name: "CAD to SimReady"
+  short_description: "Run the source asset to SimReady pipeline"
+  default_prompt: "Use $omniverse-cad-to-simready to convert a source asset into SimReady output: settle Content Agents readiness first unless property assignment is explicitly skipped, apply material/physics assignment and SimReady conformance, validate the result, and package it when package inputs are provided."

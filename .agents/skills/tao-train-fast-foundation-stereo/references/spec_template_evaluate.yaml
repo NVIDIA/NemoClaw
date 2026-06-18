@@ -1,0 +1,63 @@
+# FastFoundationStereo (FFS) bp2 — pyt evaluate spec template.
+#
+# For raw-bp2 deploy: set evaluate.checkpoint to the bp2 file.
+# For finetuned-ckpt evaluate: drop evaluate.checkpoint (SDK resolves via parent_job_id).
+#
+# For deploy-side evaluate (TRT engine), see tao-deploy-fast-foundation-stereo.md and spec_template_deploy.yaml.
+
+results_dir: <out_dir>
+
+dataset:
+  dataset_name: StereoDataset
+  max_disparity: 192
+  min_depth: 0.0
+  test_dataset:
+    data_sources:
+      - dataset_name: <dataset_name>
+        data_file: <eval_data_root>/annotations.txt
+    batch_size: 1                     # variable-aspect datasets need batch=1
+    workers: 4
+    augmentation:
+      crop_size: [480, 736]           # decorative on pyt; authoritative on deploy
+
+evaluate:
+  num_gpus: 1
+  batch_size: 1
+  checkpoint: <bp2_ckpt_path>          # set explicitly for raw-bp2 use case
+
+model:
+  model_type: FastFoundationStereo
+  encoder: vitl
+  hidden_dims: [128]
+  n_gru_layers: 1
+  corr_radius: 4
+  corr_levels: 2
+  n_downsample: 2
+  max_disparity: 192            # bp2 commercial — must match ckpt training-time value; NOT 416 (schema default)
+  valid_iters: 8
+  train_iters: 22
+  volume_dim: 28               # bp2 ckpt invariant; NOT 32 (schema default for full-FS)
+  mixed_precision: false
+  gwc_feature_normalize: true
+
+  motion_encoder_widths: [56, 96, 16, 12]
+  motion_encoder_final: 48
+  gru_hidden: 60
+  gru_gating_conv_widths: [100, 168]
+  disp_head_input_dim: 60
+  disp_head_intermediate: 36
+  disp_head_pwconv1_widths: [212, 244]
+  mask_widths: [32, 16]
+  stem_2_widths: [12, 16]
+  spx_2_gru_widths: [16, 12, 16, 24]
+  spx_gru_out: 9
+  classifier_mid: 14
+  cnet_conv04_widths: [60, 48]
+  cam_mid_channels: 8
+  cost_agg_conv_patch_padding: [0, 0, 0]
+
+  stereo_backbone:
+    edgenext_pretrained_path: ""
+    depth_anything_v2_pretrained_path: ""
+    use_bn: false
+    use_clstoken: false

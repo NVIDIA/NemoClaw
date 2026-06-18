@@ -1,0 +1,78 @@
+name: ml-recog-deploy
+type: model
+network_arch: ml_recog
+container_image: tao_toolkit.deploy
+data_format: default
+actions:
+  gen_trt_engine:
+    command: ml_recog gen_trt_engine -e {config_path}
+    config_format: yaml
+    inputs:
+      gen_trt_engine.onnx_file:
+        type: file
+      gen_trt_engine.trt_engine:
+        type: file
+      gen_trt_engine.tensorrt.calibration.cal_image_dir:
+        type: folder
+    outputs:
+      results_dir:
+        type: folder
+      gen_trt_engine.trt_engine:
+        type: file
+    upload_excludes:
+    - inputs/
+  evaluate:
+    command: ml_recog evaluate -e {config_path}
+    config_format: yaml
+    inputs:
+      evaluate.trt_engine:
+        type: file
+      dataset.val_dataset.reference:
+        type: folder
+      dataset.val_dataset.query:
+        type: folder
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  inference:
+    command: ml_recog inference -e {config_path}
+    config_format: yaml
+    inputs:
+      inference.trt_engine:
+        type: file
+      dataset.val_dataset.reference:
+        type: folder
+      dataset.val_dataset.query:
+        type: folder
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+spec_params:
+  gen_trt_engine:
+    results_dir: output_dir
+    gen_trt_engine.onnx_file: parent_model
+    gen_trt_engine.trt_engine: create_engine_file
+  evaluate:
+    results_dir: output_dir
+    evaluate.trt_engine: parent_model
+  inference:
+    results_dir: output_dir
+    inference.trt_engine: parent_model
+spec_shorthand_keys:
+  trt_data_type: gen_trt_engine.tensorrt.data_type
+  trt_engine: gen_trt_engine.trt_engine
+  batch_size: dataset.batch_size
+description: MLRecog deploy workflow for gen_trt_engine, evaluate, inference using
+  TAO Deploy.
+spec_templates:
+  gen_trt_engine: spec_template_deploy_gen_trt_engine.yaml
+  evaluate: spec_template_deploy_evaluate.yaml
+  inference: spec_template_deploy_inference.yaml
+notes:
+- The starter-kit deploy flow builds MLRecog engines with INT8, so provide real calibration
+  images and a writable calibration cache path.
+- Keep reference and query sets paired consistently between evaluate and inference.

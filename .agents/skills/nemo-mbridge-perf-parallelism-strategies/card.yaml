@@ -1,0 +1,72 @@
+title: parallelism_strategies
+validated_on: "2026-03-15"
+summary: >
+  Megatron Bridge supports DP, TP, PP, SP, CP, and EP parallelism strategies
+  which can be combined for models from sub-1B to 500B+ parameters. The right
+  combination depends on model size, hardware topology, and sequence length.
+validation_status:
+  dp_ddp_distributed_optimizer:
+    - code_verified
+  tp_config_and_runtime:
+    - code_verified
+  pp_interleaved_schedule:
+    - code_verified
+  sp_activation_partitioning:
+    - code_verified
+  cp_context_parallel:
+    - code_verified
+  ep_expert_parallel:
+    - code_verified
+  combined_parallelism_init:
+    - code_verified
+  sizing_heuristics:
+    - doc_only
+feature_meaning:
+  data_parallel: >
+    Replicate model across GPUs, split data batches, synchronize gradients.
+  tensor_parallel: >
+    Split individual layer tensors across GPUs within a node.
+  pipeline_parallel: >
+    Assign consecutive layer groups to different GPUs, process microbatches
+    in a pipeline.
+  sequence_parallel: >
+    Partition activations along the sequence dimension within TP groups to
+    reduce activation memory.
+  context_parallel: >
+    Split long sequences across GPUs using ring attention or similar
+    communication patterns.
+  expert_parallel: >
+    Distribute MoE experts across GPUs, only applies to expert layers.
+recommended_path:
+  dense_under_1b: DP only
+  dense_1b_to_10b: TP=2-4 + DP
+  dense_10b_to_70b: TP=4-8 + PP=2-4 + DP
+  dense_70b_to_175b: TP=8 + PP=4-8 + DP
+  dense_175b_plus: TP=8 + PP=8-16 + CP=2 + DP
+  moe_under_20b: EP only (TP=1, PP=1)
+  moe_20b_to_100b: TP=1-2 + PP=2-4 + EP=8-16
+  moe_100b_to_500b: TP=2-4 + PP=8-16 + EP=8-32
+  moe_500b_plus: TP=2 + PP=16 + EP=32-64
+known_constraints:
+  - TP should stay within a single NVLink domain for performance.
+  - SP requires tensor_model_parallel_size > 1.
+  - CP requires seq_length divisible by 2 * context_parallel_size.
+  - EP requires num_moe_experts > 0 and expert_model_parallel_size divides num_moe_experts.
+  - PP interleaved schedule requires virtual_pipeline_model_parallel_size > 1.
+  - Total parallelism dimensions must divide evenly into world_size.
+known_limitations:
+  - Model-size-to-parallelism mapping is a heuristic, not a benchmark-proven table.
+  - Not every parallelism combination has the same level of in-repo functional test coverage.
+  - Memory estimates assume standard Adam optimizer and FP16/BF16 parameters.
+evidence:
+  - docs/parallelisms.md
+  - docs/performance-guide.md
+  - docs/training/communication-overlap.md
+  - docs/training/hierarchical-context-parallel.md
+  - src/megatron/bridge/training/initialize.py
+  - src/megatron/bridge/training/config.py
+  - src/megatron/bridge/models/common/unimodal.py
+follow_up_validation:
+  - Add a checked-in combined parallelism functional smoke for TP+PP+CP.
+  - Add benchmark-backed sizing guidance for at least one model family.
+  - Add explicit EP+TP+PP functional smoke for MoE models.

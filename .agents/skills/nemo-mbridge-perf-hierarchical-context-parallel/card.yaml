@@ -1,0 +1,64 @@
+title: hierarchical_context_parallel
+validated_on: "2026-03-14"
+summary: >
+  Megatron-Bridge currently supports hierarchical context parallelism
+  (`cp_comm_type="a2a+p2p"` plus `hierarchical_context_parallel_sizes`) only
+  through the MPU initialization path. The decentralized process-group path
+  remains flat and does not create hierarchical CP groups.
+validation_status:
+  upstream_a2a_p2p_core:
+    - code_verified
+  bridge_mpu_passthrough:
+    - code_verified
+  bridge_mpu_runtime_groups:
+    - code_verified
+  bridge_decentralized_pg_hcp:
+    - code_verified
+  bridge_hcp_recipes_examples:
+    - unclear
+  bridge_hcp_docs:
+    - doc_only
+  bridge_hcp_end_to_end_training:
+    - unclear
+feature_meaning:
+  a2a_p2p: >
+    Megatron-Core hierarchical context-parallel transport path used by
+    Transformer Engine attention and enabled by cp_comm_type="a2a+p2p".
+  hierarchical_context_parallel_sizes: >
+    Per-level subgroup sizes for hierarchical context parallelism. The product
+    must equal context_parallel_size.
+  inner_outer_cp_groups: >
+    Hierarchical CP creates inner and outer context-parallel groups. With
+    a2a+p2p, the inner group uses a2a and the outer group uses p2p.
+recommended_path:
+  model.context_parallel_size: 4
+  model.cp_comm_type: a2a+p2p
+  model.hierarchical_context_parallel_sizes:
+    - 2
+    - 2
+  dist.use_decentralized_pg: false
+known_constraints:
+  - Transformer Engine must be >= 1.12.0 for a2a+p2p.
+  - hierarchical_context_parallel_sizes must be set when cp_comm_type contains a2a+p2p.
+  - The product of hierarchical_context_parallel_sizes must equal context_parallel_size.
+  - seq_length must be divisible by 2 * context_parallel_size when CP > 1.
+  - Bridge HCP is MPU-path only today.
+known_limitations:
+  - The decentralized-PG path initializes flat CP groups and leaves HCP unset.
+  - No checked-in Bridge recipe sets cp_comm_type=a2a+p2p.
+  - No checked-in Bridge functional test runs an end-to-end HCP training step.
+evidence:
+  - src/megatron/bridge/training/initialize.py
+  - src/megatron/bridge/training/config.py
+  - src/megatron/bridge/training/model_load_save.py
+  - docs/performance-guide.md
+  - tests/unit_tests/training/test_decentralized_pg.py
+  - 3rdparty/Megatron-LM/megatron/core/model_parallel_config.py
+  - 3rdparty/Megatron-LM/megatron/core/parallel_state.py
+  - 3rdparty/Megatron-LM/megatron/core/extensions/transformer_engine.py
+  - 3rdparty/Megatron-LM/megatron/training/arguments.py
+follow_up_validation:
+  - Add a positive Bridge functional test that completes at least one HCP training step.
+  - Add Bridge-side validation that rejects HCP-looking config on use_decentralized_pg=true.
+  - Add a checked-in Bridge recipe or example for a2a+p2p.
+  - Validate model-family-specific HCP correctness beyond group initialization.

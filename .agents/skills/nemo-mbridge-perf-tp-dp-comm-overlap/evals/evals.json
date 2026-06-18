@@ -1,0 +1,18 @@
+[
+  {
+    "id": "tp-dp-comm-overlap-positive-smoke",
+    "question": "Use the nemo-mbridge-perf-tp-dp-comm-overlap skill. For Megatron Bridge with TP=4, sequence_parallel=True, PP=4, and VPP=2, what exact TP/DP/PP communication overlap settings should I enable and how should I verify Bridge wired them correctly?",
+    "expected_skill": "nemo-mbridge-perf-tp-dp-comm-overlap",
+    "expected_script": null,
+    "ground_truth": "The answer should use the TP/DP/PP communication overlap skill. It should show CommOverlapConfig(tp_comm_overlap=True), require tensor_model_parallel_size > 1 and sequence_parallel=True for TP overlap, and set DDP overlap_grad_reduce=True plus overlap_param_gather=True with use_distributed_optimizer. It should explain that with PP > 1 and VPP > 1 Bridge selects overlap_p2p_comm=True and batch_p2p_comm=False, and recommend verifying tests or logs such as tests/unit_tests/training/test_comm_overlap.py.",
+    "expected_behavior": [
+      "Read the nemo-mbridge-perf-tp-dp-comm-overlap skill before answering.",
+      "Identify TP, DP, and PP communication overlap as the target feature.",
+      "List CommOverlapConfig(tp_comm_overlap=True).",
+      "Mention sequence_parallel=True as a TP overlap requirement.",
+      "List overlap_grad_reduce and overlap_param_gather for DP overlap.",
+      "Explain PP overlap selection for PP > 1 and VPP > 1.",
+      "Include a concrete verification path."
+    ]
+  }
+]

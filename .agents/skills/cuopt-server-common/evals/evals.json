@@ -1,0 +1,13 @@
+[
+  {
+    "id": "srv-common-eval-001-qp-not-supported-over-rest",
+    "question": "I want to submit a Quadratic Programming (QP) problem to the cuOpt REST server. Can I do that? If yes, walk me through the submission endpoint; if no, explain why and what my options are.",
+    "expected_skill": "cuopt-server-common",
+    "expected_script": null,
+    "ground_truth": "The agent states clearly that QP is NOT supported over the cuOpt REST server. The REST server accepts routing, LP, and MILP problems only. For QP, the user must use a non-REST interface (cuOpt Python API or C API). The agent does not fabricate a QP submission endpoint or pretend QP works via REST.",
+    "expected_behavior": [
+      "States explicitly that QP is NOT supported via the cuOpt REST server (REST accepts routing, LP, MILP only)",
+      "Directs the user to a non-REST interface (cuOpt Python or C API) for QP and does not invent a QP REST endpoint"
+    ]
+  }
+]

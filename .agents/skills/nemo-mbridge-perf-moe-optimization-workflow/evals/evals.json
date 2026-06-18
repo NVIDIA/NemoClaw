@@ -1,0 +1,16 @@
+[
+  {
+    "id": "moe-optimization-workflow-positive-three-walls-smoke",
+    "question": "Use the nemo-mbridge-perf-moe-optimization-workflow skill. Give a concise checklist in the exact fit -> scale -> profile -> retune order, plus the Parallel Folding meshes, dispatcher decision rule, FP8 hardware mapping, and TE-scoped CUDA graph scopes for dropless MoE.",
+    "expected_skill": "nemo-mbridge-perf-moe-optimization-workflow",
+    "expected_script": null,
+    "ground_truth": "The answer should use the MoE optimization workflow skill. It should say fit first, scale second, profile third, then retune. For memory feasibility it should use the smallest model parallelism that fits, prefer selective recompute before full recompute, add offloading only after recompute/parallelism are insufficient, and use --fake-init-process-group for large layout sanity checks. For scale it should maximize DP once fit, keep hot communication inside fast interconnect, use PP+VPP for multi-node scaling, prefer EP over extra TP for experts, and add CP only when long context makes attention memory dominant. It should show Parallel Folding as Attention: TP x CP x DP x PP and MoE: ETP x EP x EDP x PP, use alltoall for safe bring-up, flex+deepep for H100/B200-style systems, flex+hybridep for GB200/GB300/NVL72-style systems, map Hopper to FP8 blockwise and Blackwell to MXFP8, and start dropless MoE CUDA graphs with attn, moe_router, and moe_preprocess.",
+    "expected_behavior": [
+      "Read the nemo-mbridge-perf-moe-optimization-workflow skill before answering.",
+      "Present the fit-scale-profile-retune order.",
+      "Include memory feasibility and parallelism priority details.",
+      "State the Parallel Folding attention and MoE meshes.",
+      "Map dispatcher, FP8, and CUDA graph choices to the skill's exact guidance."
+    ]
+  }
+]

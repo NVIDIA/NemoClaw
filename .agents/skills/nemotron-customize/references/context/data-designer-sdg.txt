@@ -1,0 +1,134 @@
+# NeMo Data Designer Synthetic Data Context
+
+Use this pack when generating stage code for `sdg/data_designer`.
+
+The step builds a Data Designer pipeline from declarative YAML. Customization
+belongs in config (model alias, columns, seed data, output projection) — keep
+`step.py` generic.
+
+## Live Repo Verification
+
+Read `../CATALOG.md`, `../ARTIFACTS.md`, and `../COMMANDS.md` before this pack.
+After the bundled references select `sdg/data_designer`, verify:
+
+- Step manifest: `src/nemotron/steps/sdg/data_designer/step.toml`
+- Per-step README: `src/nemotron/steps/sdg/data_designer/README.md`
+- Default cfg (SFT): `src/nemotron/steps/sdg/data_designer/config/default.yaml`
+- Smoke cfg: `src/nemotron/steps/sdg/data_designer/config/tiny.yaml`
+- Preference cfg (DPO): `src/nemotron/steps/sdg/data_designer/config/rl_pref.yaml`
+- Tool-call SFT cfg: `src/nemotron/steps/sdg/data_designer/config/customer_support_tools.yaml`
+- Seed data: `src/nemotron/steps/sdg/data_designer/data/<*>.jsonl`
+
+## Step.toml contract
+
+- Consumes: `training_jsonl` (optional — high-quality seed records that anchor generation).
+- Produces: `synthetic_jsonl` (chat or preference, depending on the chosen pipeline).
+
+Manifest defaults:
+- `num_records = 1000`.
+- `seed_dataset.path` — path to seed JSONL referenced by `seed`-typed columns.
+
+## Config shape
+
+The default SFT config uses env-var defaulting for the output dir:
+
+```yaml
+output_dir: ${oc.env:SDG_OUTPUT_DIR,${oc.env:NEMO_RUN_DIR,${oc.env:PWD}/output}/sdg}
+output_path: ${output_dir}/sft.jsonl
+num_records: 1000
+
+seed_dataset:
+  path: ${oc.env:PWD}/src/nemotron/steps/sdg/data_designer/data/sft_topic_seeds.jsonl
+  strategy: shuffle           # shuffle | ordered
+  sampler_with_replacement: false
+
+models:
+  - alias: nvidia-text
+    model: nvidia/nemotron-3-nano-30b-a3b
+    provider: nvidia          # cloud (NVIDIA_API_KEY) | openai (vLLM/OpenAI-compatible local)
+    skip_health_check: true
+    inference_parameters:
+      temperature: 0.8
+      top_p: 1.0
+      max_tokens: 1024
+
+columns: []
+output_projection:
+  type: openai_messages
+```
+
+Use `--preview` for prompt/column iteration before generating at scale via
+`client.create()`.
+
+Seed columns (e.g. `topic`) are added automatically when `seed_dataset` is
+set; reference them in prompts as `{{ topic }}` without declaring them
+explicitly.
+
+## Output projections
+
+The repo supports three projection patterns, each ships as its own config:
+
+| Projection | Config | Output JSONL |
+|---|---|---|
+| `openai_messages` | `default.yaml` | `{"messages": [{"role": ..., "content": ...}]}` |
+| `dpo_preference`  | `rl_pref.yaml` | `{"prompt": "...", "chosen": "...", "rejected": "..."}` |
+| `structured_messages` | `customer_support_tools.yaml` | `{"messages": [...], "tools": [...]}` |
+
+Use `structured_messages` for tool-calling SFT data.
+
+## Customer-support tool calls (`customer_support_tools.yaml`)
+
+Generates multi-turn ecommerce support conversations with:
+
+- OpenAI-style `messages`.
+- A `tools` array.
+- Exactly one assistant `tool_calls` message.
+- Exactly one matching `tool` response.
+- Final assistant answer grounded in the tool result.
+
+Validation checks for tool-call data (run before SFT):
+
+- Every assistant tool call has a matching `tool_call_id`.
+- Tool arguments are JSON strings, **not** nested objects (OpenAI compatibility).
+- The final assistant answer reflects the tool response and any policy hint.
+- No markdown in fields meant as customer-support chat content.
+
+## Preference data (`rl_pref.yaml`)
+
+Emits `{"prompt", "chosen", "rejected"}`. Flows into:
+
+```
+sdg/data_designer → data_prep/rl_prep → rl/nemo_rl/dpo
+```
+
+## SFT data (`default.yaml`)
+
+Emits `{"messages": [...]}`. Flows into:
+
+```
+sdg/data_designer → data_prep/sft_packing → sft/megatron_bridge   (Megatron-Bridge SFT)
+sdg/data_designer →                    sft/automodel          (AutoModel SFT, no packing)
+```
+
+Use `data_prep/sft_packing` only for Megatron-Bridge SFT. AutoModel reads JSONL
+directly.
+
+## Patterns to cite
+
+- `sdg-pipeline-versioning` in `../PATTERNS.md` — version SDG configs alongside
+  the data they produce.
+- `data-quality-before-quantity` in `../PATTERNS.md` — small + good beats large
+  + noisy for synthetic data.
+
+## Staleness checks
+
+When this pack drifts:
+
+- Verify projection names (`openai_messages`, `dpo_preference`,
+  `structured_messages`) still match the upstream Data Designer SDK.
+- Refresh manifest defaults (`num_records`, `seed_dataset.path`) from
+  `step.toml`.
+- Refresh model alias / provider examples from the `models:` block in the
+  shipped configs.
+- Keep `step.py` free of customer-support-specific logic.
+- Add a smoke/preview config for any new synthetic recipe.

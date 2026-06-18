@@ -1,0 +1,17 @@
+[
+  {
+    "id": "sequence-packing-positive-sft-smoke",
+    "question": "Use the nemo-mbridge-perf-sequence-packing skill. Compare offline packed SFT and VLM in-batch packing in Megatron Bridge, including the exact micro-batch rules, PackedSequenceSpecs fields, CP padding formula, CUDA-graphs metadata requirement, and finetuning CP settings.",
+    "expected_skill": "nemo-mbridge-perf-sequence-packing",
+    "expected_script": null,
+    "ground_truth": "The answer should use the sequence packing skill. It should say offline packed SFT uses PackedSequenceSpecs with packed_sequence_size, optional pad_seq_to_mult, and usually train.micro_batch_size=1, while VLM in-batch packing uses cfg.dataset.pack_sequences_in_batch=True and requires train.micro_batch_size>1. It should state when CP is enabled, packed lengths must respect 2 * context_parallel_size, set pad_seq_to_mult = cfg.model.context_parallel_size * 2, and if sequence_parallel is also enabled use lcm(2*CP, CP*TP). It should mention CUDA graphs on the packed path need pad_cu_seqlens=True and that this also requires a metadata JSON file plus pad_to_max_length=True. It should mention finetuning with CP requires calculate_per_token_loss=True and ddp.average_in_collective=False, packed THD batches expect micro-batch size 1 for context-parallel slicing, and Qwen3-Next, GLM-4.5, Qwen3.5-VL or MTP have explicit opt-outs/incompatibilities.",
+    "expected_behavior": [
+      "Read the nemo-mbridge-perf-sequence-packing skill before answering.",
+      "Identify packed sequences and long-context training as the task.",
+      "Distinguish offline packed SFT from VLM in-batch packing with opposite micro-batch rules.",
+      "List PackedSequenceSpecs and pack_sequences_in_batch config surfaces.",
+      "State CP padding and lcm formulas.",
+      "Mention CUDA graph metadata and finetuning CP requirements."
+    ]
+  }
+]

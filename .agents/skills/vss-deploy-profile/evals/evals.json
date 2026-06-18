@@ -1,0 +1,68 @@
+[
+  {
+    "id": "base-compose-generate",
+    "question": "Generate the docker compose yaml for a VSS base profile deployment.",
+    "expected_skill": "vss-deploy-profile",
+    "ground_truth": "Loads vss-deploy-profile, routes to the base profile (references/base.md), and produces resolved compose via the dry-run flow: cp dev-profile-base/.env to generated.env (never mutating the checked-in .env), apply env_overrides, then `docker compose --env-file generated.env config > resolved.yml`, normalize_resolved_yml.py, then `up -d`. Uses the base defaults LLM nvidia/nvidia-nemotron-nano-9b-v2 (NIM, port 30081) + VLM nvidia/cosmos-reason2-8b (NIM, port 30082), setting LLM_MODE/VLM_MODE explicitly rather than inferring placement from stray env vars.",
+    "expected_behavior": [
+      "Loads the vss-deploy-profile skill and routes to the base profile (references/base.md), not a standalone vss-deploy-* microservice skill.",
+      "Generates compose via the dry-run flow: copies dev-profile-base/.env to generated.env (does NOT mutate the checked-in .env), applies env_overrides, then `docker compose --env-file generated.env config > resolved.yml` and runs scripts/normalize_resolved_yml.py before `up -d`.",
+      "Uses the base defaults — LLM nvidia/nvidia-nemotron-nano-9b-v2 (NIM, port 30081) and VLM nvidia/cosmos-reason2-8b (NIM, port 30082) — or an explicitly chosen alternate, and sets LLM_MODE/VLM_MODE rather than inferring remote placement from stray endpoint env vars.",
+      "Writes browser-reachable EXTERNAL_IP and HAPROXY_PORT into generated.env (not the source .env).",
+      "Does not print plaintext API tokens (NGC_CLI_API_KEY / NVIDIA_API_KEY)."
+    ]
+  },
+  {
+    "id": "search-compose-generate",
+    "question": "Generate the docker compose yaml for a VSS search profile.",
+    "expected_skill": "vss-deploy-profile",
+    "ground_truth": "Loads vss-deploy-profile, routes to the search profile (references/search.md), and uses the same generated.env dry-run flow. Configures the search stack: Cosmos Embed1 embeddings via RT-Embed (vss-rtvi-embed, port 8017, MODEL_PATH git:huggingface Cosmos-Embed1-448p) indexed in Elasticsearch, with rtvi-cv + rtvi-embed + the LLM (default nvidia/nvidia-nemotron-nano-9b-v2) as the always-on GPU services. A VLM (cosmos-reason2-8b NIM or RT-VLM) is added only when the Critique agent is enabled, and the GPU device split (RT_CV_DEVICE_ID/RT_EMBED_DEVICE_ID/LLM_DEVICE_ID/VLM_DEVICE_ID) is respected.",
+    "expected_behavior": [
+      "Loads the vss-deploy-profile skill and routes to the search profile (references/search.md).",
+      "Follows the same dry-run flow (generated.env -> `config > resolved.yml` -> normalize_resolved_yml.py -> `up -d`), with --env-file pointing at generated.env.",
+      "Configures the search stack: Cosmos Embed1 embeddings via RT-Embed (vss-rtvi-embed, port 8017) indexed in Elasticsearch, with rtvi-cv, rtvi-embed, and the LLM as the always-on GPU services.",
+      "On a multi-GPU host, assigns the device split explicitly (RT_CV_DEVICE_ID, RT_EMBED_DEVICE_ID, LLM_DEVICE_ID, VLM_DEVICE_ID) so the LLM leaves headroom for RT-Embed on the shared GPU — does not leave device assignment to default.",
+      "Adds a VLM (cosmos-reason2-8b NIM or RT-VLM vss-rtvi-vlm) only when the Critique agent is enabled — does not unconditionally deploy a Cosmos VLM NIM in the default integrated path.",
+      "Does not print plaintext API tokens (NGC_CLI_API_KEY / NVIDIA_API_KEY)."
+    ]
+  },
+  {
+    "id": "alerts-compose-generate",
+    "question": "Generate the docker compose yaml for a VSS alerts profile.",
+    "expected_skill": "vss-deploy-profile",
+    "ground_truth": "Loads vss-deploy-profile, routes to the alerts profile (references/alerts.md, blueprint bp_developer_alerts), and uses the same generated.env dry-run flow. The VLM is always served by RT-VLM (vss-rtvi-vlm, port 8018, integrated Cosmos Reason 2 via RTVI_VLM_MODEL_PATH=ngc:nim/nvidia/cosmos-reason2-8b:hf-1208) — there is no standalone Cosmos NIM — so VLM_NAME_SLUG=none and COMPOSE_PROFILES omits the vlm_*_<slug> segment. Selects MODE 2d_cv (verification: RT-CV Grounding DINO -> behavior analytics -> alert-bridge -> per-clip VLM verify) or 2d_vlm (real-time: continuous RT-VLM -> alert-bridge on port 9080). LLM stack is identical to base (nvidia/nvidia-nemotron-nano-9b-v2, port 30081).",
+    "expected_behavior": [
+      "Loads the vss-deploy-profile skill and routes to the alerts profile (references/alerts.md, blueprint bp_developer_alerts).",
+      "Follows the generated.env dry-run flow (config > resolved.yml -> normalize_resolved_yml.py -> up -d).",
+      "Serves the VLM via RT-VLM (vss-rtvi-vlm, port 8018, Cosmos Reason 2) rather than a standalone Cosmos NIM, and sets VLM_NAME_SLUG=none so COMPOSE_PROFILES omits the vlm_*_<slug> segment.",
+      "Selects an alerts MODE explicitly — 2d_cv (verification: RT-CV Grounding DINO -> behavior analytics -> alert-bridge -> per-clip VLM verify) or 2d_vlm (real-time: continuous RT-VLM -> alert-bridge on port 9080) — and does not fabricate MODE values.",
+      "Does not print plaintext API tokens (NGC_CLI_API_KEY / NVIDIA_API_KEY)."
+    ]
+  },
+  {
+    "id": "lvs-compose-generate",
+    "question": "Generate the docker compose yaml for a VSS lvs (long-video summarization) profile.",
+    "expected_skill": "vss-deploy-profile",
+    "ground_truth": "Loads vss-deploy-profile, routes to the lvs profile (references/lvs-profile.md), and uses the same generated.env dry-run flow. The LLM stack is identical to base (nvidia/nvidia-nemotron-nano-9b-v2, port 30081). The VLM is served by RT-VLM (vss-rtvi-vlm, port 8018, default integrated checkpoint ngc:nim/nvidia/cosmos-reason2-8b:hf-1208), not a standalone Cosmos NIM. VLM_NAME must be the RT-VLM /v1/models basename nim_nvidia_cosmos-reason2-8b_hf-1208 — NOT the friendly name nvidia/cosmos-reason2-8b, which makes vss-lvs return 400 BadParameters.",
+    "expected_behavior": [
+      "Loads the vss-deploy-profile skill and routes to the lvs profile (references/lvs-profile.md).",
+      "Follows the generated.env dry-run flow (config > resolved.yml -> normalize_resolved_yml.py -> up -d).",
+      "Serves the VLM via RT-VLM (vss-rtvi-vlm, port 8018, default checkpoint ngc:nim/nvidia/cosmos-reason2-8b:hf-1208), with the LLM stack identical to base (nvidia/nvidia-nemotron-nano-9b-v2, port 30081).",
+      "Sets VLM_NAME to the RT-VLM /v1/models basename nim_nvidia_cosmos-reason2-8b_hf-1208 — NOT the friendly name nvidia/cosmos-reason2-8b (which makes vss-lvs return 400 BadParameters).",
+      "Does not print plaintext API tokens (NGC_CLI_API_KEY / NVIDIA_API_KEY)."
+    ]
+  },
+  {
+    "id": "base-spark-compose-generate",
+    "question": "Generate the docker compose yaml for a VSS base profile on SPARK.",
+    "expected_skill": "vss-deploy-profile",
+    "ground_truth": "Recognizes DGX Spark as edge hardware and routes through references/edge.md. The DGX-Spark NIM (nvcr.io/nim/nvidia/nvidia-nemotron-nano-9b-v2-dgx-spark:1.0.0-variant) is not wired into the compose graph, so it runs as a standalone local NIM on port 30081 with the agent pointed at it via LLM_MODE=remote (LLM_NAME_SLUG=none, LLM_BASE_URL=http://localhost:30081); the VLM still deploys locally. Uses the -dgx-spark image, NOT the standard nvidia-nemotron-nano-9b-v2:1 (arm64 manifest problem), authenticates the NIM with NGC_CLI_API_KEY, and runs the edge cache-cleaner pre-flight. HF_TOKEN is the AGX/IGX Thor Edge-4B path, not DGX Spark.",
+    "expected_behavior": [
+      "Recognizes DGX Spark as edge hardware and routes through references/edge.md (not the generic base flow alone).",
+      "Selects the DGX-Spark NIM image nvcr.io/nim/nvidia/nvidia-nemotron-nano-9b-v2-dgx-spark:1.0.0-variant — NOT the standard nvidia-nemotron-nano-9b-v2:1 image (which has an arm64 manifest problem on Spark).",
+      "Runs that LLM as a standalone local NIM on port 30081 and points the agent at it with LLM_MODE=remote and LLM_BASE_URL=http://localhost:30081 (it is not yet in the compose graph), while the VLM still deploys locally.",
+      "Authenticates the Spark NIM with NGC_CLI_API_KEY and does NOT require HF_TOKEN (HF_TOKEN is the AGX/IGX Thor Edge-4B fallback path, not DGX Spark).",
+      "Runs the edge cache-cleaner pre-flight check and does not print plaintext API tokens."
+    ]
+  }
+]

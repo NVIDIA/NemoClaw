@@ -1,0 +1,669 @@
+{
+  "actions": {
+    "evaluate": {
+      "automl_default_parameters": [
+        "dataset.augmentation.test_max_size",
+        "dataset.augmentation.test_min_size",
+        "dataset.augmentation.train_max_size",
+        "train.optim.backbone_multiplier",
+        "train.optim.lr",
+        "train.optim.momentum",
+        "train.optim.weight_decay"
+      ],
+      "automl_disabled_parameters": [
+        "dataset",
+        "dataset.augmentation",
+        "dataset.augmentation.train_crop_size",
+        "dataset.augmentation.train_min_size",
+        "dataset.pixel_mean",
+        "dataset.pixel_std",
+        "dataset.quant_calibration_dataset",
+        "dataset.task_prob_train",
+        "dataset.task_prob_val",
+        "dataset.test",
+        "dataset.train",
+        "dataset.val",
+        "evaluate",
+        "evaluate.gpu_ids",
+        "export",
+        "gen_trt_engine",
+        "gen_trt_engine.tensorrt",
+        "gen_trt_engine.tensorrt.layers_precision",
+        "inference",
+        "inference.gpu_ids",
+        "inference.image_size",
+        "model",
+        "model.backbone",
+        "model.backbone.radio",
+        "model.backbone.radio.out_features",
+        "model.backbone.radio.resolution",
+        "model.backbone.radio.summary_idxs",
+        "model.backbone.swin",
+        "model.backbone.swin.depths",
+        "model.backbone.swin.num_heads",
+        "model.backbone.swin.out_features",
+        "model.backbone.swin.out_indices",
+        "model.one_former",
+        "model.sem_seg_head",
+        "model.sem_seg_head.deformable_transformer_encoder_in_features",
+        "model.sem_seg_head.in_features",
+        "model.test",
+        "model.text_encoder",
+        "quantize",
+        "quantize.backend_kwargs",
+        "quantize.layers",
+        "quantize.skip_names",
+        "train",
+        "train.clip_gradients",
+        "train.cudnn",
+        "train.freeze",
+        "train.gpu_ids",
+        "train.optim",
+        "train.optim.milestones",
+        "train.optim.steps",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "oneformer",
+      "path": "schemas/evaluate.schema.json",
+      "popular": {
+        "evaluate": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "gen_trt_engine": {
+          "gpu_id": 0,
+          "tensorrt": {
+            "max_batch_size": 1,
+            "min_batch_size": 1,
+            "opt_batch_size": 1
+          }
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "model": {
+          "sem_seg_head": {
+            "convs_dim": 256,
+            "mask_dim": 256,
+            "transformer_enc_layers": 6
+          }
+        },
+        "train": {
+          "gpu_ids": [
+            0
+          ],
+          "optim": {
+            "backbone_multiplier": 0.1,
+            "momentum": 0.9,
+            "weight_decay": 0.05
+          }
+        }
+      },
+      "schema_action": "evaluate",
+      "spec_template": "references/spec_template_evaluate.yaml"
+    },
+    "export": {
+      "automl_default_parameters": [
+        "dataset.augmentation.test_max_size",
+        "dataset.augmentation.test_min_size",
+        "dataset.augmentation.train_max_size",
+        "train.optim.backbone_multiplier",
+        "train.optim.lr",
+        "train.optim.momentum",
+        "train.optim.weight_decay"
+      ],
+      "automl_disabled_parameters": [
+        "dataset",
+        "dataset.augmentation",
+        "dataset.augmentation.train_crop_size",
+        "dataset.augmentation.train_min_size",
+        "dataset.pixel_mean",
+        "dataset.pixel_std",
+        "dataset.quant_calibration_dataset",
+        "dataset.task_prob_train",
+        "dataset.task_prob_val",
+        "dataset.test",
+        "dataset.train",
+        "dataset.val",
+        "evaluate",
+        "evaluate.gpu_ids",
+        "export",
+        "gen_trt_engine",
+        "gen_trt_engine.tensorrt",
+        "gen_trt_engine.tensorrt.layers_precision",
+        "inference",
+        "inference.gpu_ids",
+        "inference.image_size",
+        "model",
+        "model.backbone",
+        "model.backbone.radio",
+        "model.backbone.radio.out_features",
+        "model.backbone.radio.resolution",
+        "model.backbone.radio.summary_idxs",
+        "model.backbone.swin",
+        "model.backbone.swin.depths",
+        "model.backbone.swin.num_heads",
+        "model.backbone.swin.out_features",
+        "model.backbone.swin.out_indices",
+        "model.one_former",
+        "model.sem_seg_head",
+        "model.sem_seg_head.deformable_transformer_encoder_in_features",
+        "model.sem_seg_head.in_features",
+        "model.test",
+        "model.text_encoder",
+        "quantize",
+        "quantize.backend_kwargs",
+        "quantize.layers",
+        "quantize.skip_names",
+        "train",
+        "train.clip_gradients",
+        "train.cudnn",
+        "train.freeze",
+        "train.gpu_ids",
+        "train.optim",
+        "train.optim.milestones",
+        "train.optim.steps",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "oneformer",
+      "path": "schemas/export.schema.json",
+      "popular": {
+        "evaluate": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "gen_trt_engine": {
+          "gpu_id": 0,
+          "tensorrt": {
+            "max_batch_size": 1,
+            "min_batch_size": 1,
+            "opt_batch_size": 1
+          }
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "model": {
+          "sem_seg_head": {
+            "convs_dim": 256,
+            "mask_dim": 256,
+            "transformer_enc_layers": 6
+          }
+        },
+        "train": {
+          "gpu_ids": [
+            0
+          ],
+          "optim": {
+            "backbone_multiplier": 0.1,
+            "momentum": 0.9,
+            "weight_decay": 0.05
+          }
+        }
+      },
+      "schema_action": "export",
+      "spec_template": "references/spec_template_export.yaml"
+    },
+    "gen_trt_engine": {
+      "automl_default_parameters": [
+        "dataset.augmentation.test_max_size",
+        "dataset.augmentation.test_min_size",
+        "dataset.augmentation.train_max_size",
+        "train.optim.backbone_multiplier",
+        "train.optim.lr",
+        "train.optim.momentum",
+        "train.optim.weight_decay"
+      ],
+      "automl_disabled_parameters": [
+        "dataset",
+        "dataset.augmentation",
+        "dataset.augmentation.train_crop_size",
+        "dataset.augmentation.train_min_size",
+        "dataset.pixel_mean",
+        "dataset.pixel_std",
+        "dataset.quant_calibration_dataset",
+        "dataset.task_prob_train",
+        "dataset.task_prob_val",
+        "dataset.test",
+        "dataset.train",
+        "dataset.val",
+        "evaluate",
+        "evaluate.gpu_ids",
+        "export",
+        "gen_trt_engine",
+        "gen_trt_engine.tensorrt",
+        "gen_trt_engine.tensorrt.layers_precision",
+        "inference",
+        "inference.gpu_ids",
+        "inference.image_size",
+        "model",
+        "model.backbone",
+        "model.backbone.radio",
+        "model.backbone.radio.out_features",
+        "model.backbone.radio.resolution",
+        "model.backbone.radio.summary_idxs",
+        "model.backbone.swin",
+        "model.backbone.swin.depths",
+        "model.backbone.swin.num_heads",
+        "model.backbone.swin.out_features",
+        "model.backbone.swin.out_indices",
+        "model.one_former",
+        "model.sem_seg_head",
+        "model.sem_seg_head.deformable_transformer_encoder_in_features",
+        "model.sem_seg_head.in_features",
+        "model.test",
+        "model.text_encoder",
+        "quantize",
+        "quantize.backend_kwargs",
+        "quantize.layers",
+        "quantize.skip_names",
+        "train",
+        "train.clip_gradients",
+        "train.cudnn",
+        "train.freeze",
+        "train.gpu_ids",
+        "train.optim",
+        "train.optim.milestones",
+        "train.optim.steps",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "oneformer",
+      "path": "schemas/gen_trt_engine.schema.json",
+      "popular": {
+        "evaluate": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "gen_trt_engine": {
+          "gpu_id": 0,
+          "tensorrt": {
+            "max_batch_size": 1,
+            "min_batch_size": 1,
+            "opt_batch_size": 1
+          }
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "model": {
+          "sem_seg_head": {
+            "convs_dim": 256,
+            "mask_dim": 256,
+            "transformer_enc_layers": 6
+          }
+        },
+        "train": {
+          "gpu_ids": [
+            0
+          ],
+          "optim": {
+            "backbone_multiplier": 0.1,
+            "momentum": 0.9,
+            "weight_decay": 0.05
+          }
+        }
+      },
+      "schema_action": "gen_trt_engine",
+      "spec_template": "references/spec_template_gen_trt_engine.yaml"
+    },
+    "inference": {
+      "automl_default_parameters": [
+        "dataset.augmentation.test_max_size",
+        "dataset.augmentation.test_min_size",
+        "dataset.augmentation.train_max_size",
+        "train.optim.backbone_multiplier",
+        "train.optim.lr",
+        "train.optim.momentum",
+        "train.optim.weight_decay"
+      ],
+      "automl_disabled_parameters": [
+        "dataset",
+        "dataset.augmentation",
+        "dataset.augmentation.train_crop_size",
+        "dataset.augmentation.train_min_size",
+        "dataset.pixel_mean",
+        "dataset.pixel_std",
+        "dataset.quant_calibration_dataset",
+        "dataset.task_prob_train",
+        "dataset.task_prob_val",
+        "dataset.test",
+        "dataset.train",
+        "dataset.val",
+        "evaluate",
+        "evaluate.gpu_ids",
+        "export",
+        "gen_trt_engine",
+        "gen_trt_engine.tensorrt",
+        "gen_trt_engine.tensorrt.layers_precision",
+        "inference",
+        "inference.gpu_ids",
+        "inference.image_size",
+        "model",
+        "model.backbone",
+        "model.backbone.radio",
+        "model.backbone.radio.out_features",
+        "model.backbone.radio.resolution",
+        "model.backbone.radio.summary_idxs",
+        "model.backbone.swin",
+        "model.backbone.swin.depths",
+        "model.backbone.swin.num_heads",
+        "model.backbone.swin.out_features",
+        "model.backbone.swin.out_indices",
+        "model.one_former",
+        "model.sem_seg_head",
+        "model.sem_seg_head.deformable_transformer_encoder_in_features",
+        "model.sem_seg_head.in_features",
+        "model.test",
+        "model.text_encoder",
+        "quantize",
+        "quantize.backend_kwargs",
+        "quantize.layers",
+        "quantize.skip_names",
+        "train",
+        "train.clip_gradients",
+        "train.cudnn",
+        "train.freeze",
+        "train.gpu_ids",
+        "train.optim",
+        "train.optim.milestones",
+        "train.optim.steps",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "oneformer",
+      "path": "schemas/inference.schema.json",
+      "popular": {
+        "evaluate": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "gen_trt_engine": {
+          "gpu_id": 0,
+          "tensorrt": {
+            "max_batch_size": 1,
+            "min_batch_size": 1,
+            "opt_batch_size": 1
+          }
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "model": {
+          "sem_seg_head": {
+            "convs_dim": 256,
+            "mask_dim": 256,
+            "transformer_enc_layers": 6
+          }
+        },
+        "train": {
+          "gpu_ids": [
+            0
+          ],
+          "optim": {
+            "backbone_multiplier": 0.1,
+            "momentum": 0.9,
+            "weight_decay": 0.05
+          }
+        }
+      },
+      "schema_action": "inference",
+      "spec_template": "references/spec_template_inference.yaml"
+    },
+    "quantize": {
+      "automl_default_parameters": [
+        "dataset.augmentation.test_max_size",
+        "dataset.augmentation.test_min_size",
+        "dataset.augmentation.train_max_size",
+        "train.optim.backbone_multiplier",
+        "train.optim.lr",
+        "train.optim.momentum",
+        "train.optim.weight_decay"
+      ],
+      "automl_disabled_parameters": [
+        "dataset",
+        "dataset.augmentation",
+        "dataset.augmentation.train_crop_size",
+        "dataset.augmentation.train_min_size",
+        "dataset.pixel_mean",
+        "dataset.pixel_std",
+        "dataset.quant_calibration_dataset",
+        "dataset.task_prob_train",
+        "dataset.task_prob_val",
+        "dataset.test",
+        "dataset.train",
+        "dataset.val",
+        "evaluate",
+        "evaluate.gpu_ids",
+        "export",
+        "gen_trt_engine",
+        "gen_trt_engine.tensorrt",
+        "gen_trt_engine.tensorrt.layers_precision",
+        "inference",
+        "inference.gpu_ids",
+        "inference.image_size",
+        "model",
+        "model.backbone",
+        "model.backbone.radio",
+        "model.backbone.radio.out_features",
+        "model.backbone.radio.resolution",
+        "model.backbone.radio.summary_idxs",
+        "model.backbone.swin",
+        "model.backbone.swin.depths",
+        "model.backbone.swin.num_heads",
+        "model.backbone.swin.out_features",
+        "model.backbone.swin.out_indices",
+        "model.one_former",
+        "model.sem_seg_head",
+        "model.sem_seg_head.deformable_transformer_encoder_in_features",
+        "model.sem_seg_head.in_features",
+        "model.test",
+        "model.text_encoder",
+        "quantize",
+        "quantize.backend_kwargs",
+        "quantize.layers",
+        "quantize.skip_names",
+        "train",
+        "train.clip_gradients",
+        "train.cudnn",
+        "train.freeze",
+        "train.gpu_ids",
+        "train.optim",
+        "train.optim.milestones",
+        "train.optim.steps",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "oneformer",
+      "path": "schemas/quantize.schema.json",
+      "popular": {
+        "evaluate": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "gen_trt_engine": {
+          "gpu_id": 0,
+          "tensorrt": {
+            "max_batch_size": 1,
+            "min_batch_size": 1,
+            "opt_batch_size": 1
+          }
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "model": {
+          "sem_seg_head": {
+            "convs_dim": 256,
+            "mask_dim": 256,
+            "transformer_enc_layers": 6
+          }
+        },
+        "train": {
+          "gpu_ids": [
+            0
+          ],
+          "optim": {
+            "backbone_multiplier": 0.1,
+            "momentum": 0.9,
+            "weight_decay": 0.05
+          }
+        }
+      },
+      "schema_action": "quantize",
+      "spec_template": "references/spec_template_quantize.yaml"
+    },
+    "train": {
+      "automl_default_parameters": [
+        "dataset.augmentation.test_max_size",
+        "dataset.augmentation.test_min_size",
+        "dataset.augmentation.train_max_size",
+        "train.optim.backbone_multiplier",
+        "train.optim.lr",
+        "train.optim.momentum",
+        "train.optim.weight_decay"
+      ],
+      "automl_disabled_parameters": [
+        "dataset",
+        "dataset.augmentation",
+        "dataset.augmentation.train_crop_size",
+        "dataset.augmentation.train_min_size",
+        "dataset.pixel_mean",
+        "dataset.pixel_std",
+        "dataset.quant_calibration_dataset",
+        "dataset.task_prob_train",
+        "dataset.task_prob_val",
+        "dataset.test",
+        "dataset.train",
+        "dataset.val",
+        "evaluate",
+        "evaluate.gpu_ids",
+        "export",
+        "gen_trt_engine",
+        "gen_trt_engine.tensorrt",
+        "gen_trt_engine.tensorrt.layers_precision",
+        "inference",
+        "inference.gpu_ids",
+        "inference.image_size",
+        "model",
+        "model.backbone",
+        "model.backbone.radio",
+        "model.backbone.radio.out_features",
+        "model.backbone.radio.resolution",
+        "model.backbone.radio.summary_idxs",
+        "model.backbone.swin",
+        "model.backbone.swin.depths",
+        "model.backbone.swin.num_heads",
+        "model.backbone.swin.out_features",
+        "model.backbone.swin.out_indices",
+        "model.one_former",
+        "model.sem_seg_head",
+        "model.sem_seg_head.deformable_transformer_encoder_in_features",
+        "model.sem_seg_head.in_features",
+        "model.test",
+        "model.text_encoder",
+        "quantize",
+        "quantize.backend_kwargs",
+        "quantize.layers",
+        "quantize.skip_names",
+        "train",
+        "train.clip_gradients",
+        "train.cudnn",
+        "train.freeze",
+        "train.gpu_ids",
+        "train.optim",
+        "train.optim.milestones",
+        "train.optim.steps",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "oneformer",
+      "path": "schemas/train.schema.json",
+      "popular": {
+        "evaluate": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "gen_trt_engine": {
+          "gpu_id": 0,
+          "tensorrt": {
+            "max_batch_size": 1,
+            "min_batch_size": 1,
+            "opt_batch_size": 1
+          }
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "model": {
+          "sem_seg_head": {
+            "convs_dim": 256,
+            "mask_dim": 256,
+            "transformer_enc_layers": 6
+          }
+        },
+        "train": {
+          "gpu_ids": [
+            0
+          ],
+          "optim": {
+            "backbone_multiplier": 0.1,
+            "momentum": 0.9,
+            "weight_decay": 0.05
+          }
+        }
+      },
+      "schema_action": "train",
+      "spec_template": "references/spec_template_train.yaml"
+    }
+  },
+  "automl_enabled": true,
+  "failures": {},
+  "model": "oneformer",
+  "network_arch": "oneformer",
+  "schema_version": 1
+}

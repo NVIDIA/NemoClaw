@@ -1,0 +1,14 @@
+[
+  {
+    "id": "vda-smoke-routing-auto-labeling",
+    "question": "I want to run auto-labeling only on an existing dataset at s3://metro-vda/datasets/city-traffic-raw. Which VDA flow should I use?",
+    "expected_skill": "physical-ai-video-data-augmentation",
+    "expected_script": null,
+    "ground_truth": "The agent routes to assets/configs/osmo/auto_labeling.yaml for labeling originals without augmentation.",
+    "expected_behavior": [
+      "Reads skills/physical-ai-video-data-augmentation/SKILL.md.",
+      "Selects auto_labeling flow (assets/configs/osmo/auto_labeling.yaml).",
+      "Does not choose augmentation_and_al, e2e, or e2e_super_resolution."
+    ]
+  }
+]

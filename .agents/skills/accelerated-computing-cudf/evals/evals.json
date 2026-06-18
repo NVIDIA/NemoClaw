@@ -1,0 +1,158 @@
+[
+  {
+    "id": "cudf-apply-udf__generic",
+    "question": "Task: Row-wise apply, applymap, and column-wise UDFs that should move to vectorized operations or Numba where appropriate\nTask folder: evals/files/cudf-apply-udf/\nPrompt variant: generic\n\nUser prompt: Help me run this on the GPU\n\nUse the provided starter workspace for this task. Modify the starter file(s) under the provided `code/` directory. Run the relevant smoke or validation command from that workspace when practical, and report the changed files and validation result.",
+    "expected_skill": "accelerated-computing-cudf",
+    "expected_script": null,
+    "files": [
+      "evals/files/cudf-apply-udf/code/generate_data.py",
+      "evals/files/cudf-apply-udf/code/udf_pipeline.py"
+    ],
+    "ground_truth": "A successful answer uses the provided cudf-apply-udf starter files, especially code/udf_pipeline.py, to migrate the pandas DataFrame workload to cuDF where supported. It replaces row-wise apply/applymap or column UDF logic with vectorized cuDF expressions, Numba-compatible GPU logic, or a narrow compatibility boundary, preserves representative pandas results, and reports validation performed or the runtime blocker.",
+    "expected_behavior": []
+  },
+  {
+    "id": "cudf-csv-etl__generic",
+    "question": "Task: Basic CSV ETL pipeline \u2014 read, filter, compute columns, groupby aggregate, write to parquet\nTask folder: evals/files/cudf-csv-etl/\nPrompt variant: generic\n\nUser prompt: Help me run this on the GPU\n\nUse the provided starter workspace for this task. Modify the starter file(s) under the provided `code/` directory. Run the relevant smoke or validation command from that workspace when practical, and report the changed files and validation result.",
+    "expected_skill": "accelerated-computing-cudf",
+    "expected_script": null,
+    "files": [
+      "evals/files/cudf-csv-etl/code/etl_pipeline.py",
+      "evals/files/cudf-csv-etl/code/generate_data.py"
+    ],
+    "ground_truth": "A successful answer uses the provided cudf-csv-etl starter files, especially code/etl_pipeline.py, to move CSV read, filtering, computed columns, groupby aggregation, and parquet output to cuDF. It preserves filter predicates, computed-column formulas, grouping keys, aggregate columns, generated data paths, output paths, and reports validation performed or the runtime blocker.",
+    "expected_behavior": []
+  },
+  {
+    "id": "cudf-groupby-agg__generic",
+    "question": "Task: Complex groupby with multiple agg functions, named aggregation, and transform\nTask folder: evals/files/cudf-groupby-agg/\nPrompt variant: generic\n\nUser prompt: Help me run this on the GPU\n\nUse the provided starter workspace for this task. Modify the starter file(s) under the provided `code/` directory. Run the relevant smoke or validation command from that workspace when practical, and report the changed files and validation result.",
+    "expected_skill": "accelerated-computing-cudf",
+    "expected_script": null,
+    "files": [
+      "evals/files/cudf-groupby-agg/code/generate_data.py",
+      "evals/files/cudf-groupby-agg/code/groupby_analysis.py"
+    ],
+    "ground_truth": "A successful answer uses the provided cudf-groupby-agg starter files, especially code/groupby_analysis.py, to run the DataFrame loading and groupby work with cuDF. It preserves grouping keys, sum, mean, std, count, nunique, named aggregation, transform semantics or a documented compatibility boundary, output column names, and reports validation performed or the runtime blocker.",
+    "expected_behavior": []
+  },
+  {
+    "id": "cudf-multi-join__generic",
+    "question": "Task: Three-table join (orders, customers, products) with left/inner joins followed by aggregation\nTask folder: evals/files/cudf-multi-join/\nPrompt variant: generic\n\nUser prompt: Help me run this on the GPU\n\nUse the provided starter workspace for this task. Modify the starter file(s) under the provided `code/` directory. Run the relevant smoke or validation command from that workspace when practical, and report the changed files and validation result.",
+    "expected_skill": "accelerated-computing-cudf",
+    "expected_script": null,
+    "files": [
+      "evals/files/cudf-multi-join/code/generate_data.py",
+      "evals/files/cudf-multi-join/code/multi_join.py"
+    ],
+    "ground_truth": "A successful answer uses the provided cudf-multi-join starter files, especially code/multi_join.py, to migrate the orders, customers, and products joins plus downstream filtering and aggregation to cuDF. It preserves left and inner join types, join keys, suffix behavior, row-count expectations, post-join filters, output schema, and reports validation performed or the runtime blocker.",
+    "expected_behavior": []
+  },
+  {
+    "id": "cudf-null-handling__generic",
+    "question": "Task: DataFrame with many nulls \u2014 fillna strategies, dropna, interpolate, isna masks, conditional fills\nTask folder: evals/files/cudf-null-handling/\nPrompt variant: generic\n\nUser prompt: Help me run this on the GPU\n\nUse the provided starter workspace for this task. Modify the starter file(s) under the provided `code/` directory. Run the relevant smoke or validation command from that workspace when practical, and report the changed files and validation result.",
+    "expected_skill": "accelerated-computing-cudf",
+    "expected_script": null,
+    "files": [
+      "evals/files/cudf-null-handling/code/generate_data.py",
+      "evals/files/cudf-null-handling/code/null_pipeline.py"
+    ],
+    "ground_truth": "A successful answer uses the provided cudf-null-handling starter files, especially code/null_pipeline.py, to move null detection, fill, drop, mask, and conditional fill logic to cuDF where supported. It preserves scalar and dictionary fill rules, subset and threshold drop rules, NA-aware boolean masks, interpolation or other compatibility boundaries, and reports validation performed or the runtime blocker.",
+    "expected_behavior": []
+  },
+  {
+    "id": "cudf-parquet-io__generic",
+    "question": "Task: Read multiple parquet files, concatenate, filter, write partitioned output\nTask folder: evals/files/cudf-parquet-io/\nPrompt variant: generic\n\nUser prompt: Help me run this on the GPU\n\nUse the provided starter workspace for this task. Modify the starter file(s) under the provided `code/` directory. Run the relevant smoke or validation command from that workspace when practical, and report the changed files and validation result.",
+    "expected_skill": "accelerated-computing-cudf",
+    "expected_script": null,
+    "files": [
+      "evals/files/cudf-parquet-io/code/generate_data.py",
+      "evals/files/cudf-parquet-io/code/parquet_pipeline.py"
+    ],
+    "ground_truth": "A successful answer uses the provided cudf-parquet-io starter files, especially code/parquet_pipeline.py, to migrate parquet reads, concatenation, filtering, column selection, dtype handling, and parquet writes to cuDF. It preserves multi-file input handling, partitioned output behavior, generated data paths, output paths, and reports validation performed or the runtime blocker.",
+    "expected_behavior": []
+  },
+  {
+    "id": "cudf-pivot-melt__generic",
+    "question": "Task: Pivot table creation, melt/unpivot, stack/unstack, and cross-tabulation\nTask folder: evals/files/cudf-pivot-melt/\nPrompt variant: generic\n\nUser prompt: Help me run this on the GPU\n\nUse the provided starter workspace for this task. Modify the starter file(s) under the provided `code/` directory. Run the relevant smoke or validation command from that workspace when practical, and report the changed files and validation result.",
+    "expected_skill": "accelerated-computing-cudf",
+    "expected_script": null,
+    "files": [
+      "evals/files/cudf-pivot-melt/code/generate_data.py",
+      "evals/files/cudf-pivot-melt/code/reshape_analysis.py"
+    ],
+    "ground_truth": "A successful answer uses the provided cudf-pivot-melt starter files, especially code/reshape_analysis.py, to move supported reshape operations such as pivot, melt, stack/unstack, or crosstab-style logic to cuDF where practical. It preserves index labels, column labels, fill values, aggregation choices, output schema, compatibility boundaries, and reports validation performed or the runtime blocker.",
+    "expected_behavior": []
+  },
+  {
+    "id": "cudf-string-ops__generic",
+    "question": "Task: Text cleaning pipeline using pandas string accessor \u2014 lowercase, strip, regex extract, contains, replace\nTask folder: evals/files/cudf-string-ops/\nPrompt variant: generic\n\nUser prompt: Help me run this on the GPU\n\nUse the provided starter workspace for this task. Modify the starter file(s) under the provided `code/` directory. Run the relevant smoke or validation command from that workspace when practical, and report the changed files and validation result.",
+    "expected_skill": "accelerated-computing-cudf",
+    "expected_script": null,
+    "files": [
+      "evals/files/cudf-string-ops/code/clean_contacts.py",
+      "evals/files/cudf-string-ops/code/generate_data.py"
+    ],
+    "ground_truth": "A successful answer uses the provided cudf-string-ops starter files, especially code/clean_contacts.py, to migrate string cleaning to cuDF string accessors for lowercase, strip, contains, replace, and extract-style operations. It preserves regex patterns, extracted columns, null handling, string dtype behavior, representative cleaned values, and reports validation performed or the runtime blocker.",
+    "expected_behavior": []
+  },
+  {
+    "id": "cudf-timeseries-resample__generic",
+    "question": "Task: Timestamped sensor data with resample to hourly/daily and rolling statistics\nTask folder: evals/files/cudf-timeseries-resample/\nPrompt variant: generic\n\nUser prompt: Help me run this on the GPU\n\nUse the provided starter workspace for this task. Modify the starter file(s) under the provided `code/` directory. Run the relevant smoke or validation command from that workspace when practical, and report the changed files and validation result.",
+    "expected_skill": "accelerated-computing-cudf",
+    "expected_script": null,
+    "files": [
+      "evals/files/cudf-timeseries-resample/code/generate_data.py",
+      "evals/files/cudf-timeseries-resample/code/timeseries_analysis.py"
+    ],
+    "ground_truth": "A successful answer uses the provided cudf-timeseries-resample starter files, especially code/timeseries_analysis.py, to run datetime parsing, timestamp ordering, bucket creation, aggregation, and rolling computations with cuDF where supported. It preserves hourly and daily grouping semantics, missing buckets, rolling window sizes, output ordering, compatibility boundaries, and reports validation performed or the runtime blocker.",
+    "expected_behavior": []
+  },
+  {
+    "id": "cudf-window-functions__generic",
+    "question": "Task: Ranking, cumulative sums, rolling averages, expanding stats, and shift/lag operations\nTask folder: evals/files/cudf-window-functions/\nPrompt variant: generic\n\nUser prompt: Help me run this on the GPU\n\nUse the provided starter workspace for this task. Modify the starter file(s) under the provided `code/` directory. Run the relevant smoke or validation command from that workspace when practical, and report the changed files and validation result.",
+    "expected_skill": "accelerated-computing-cudf",
+    "expected_script": null,
+    "files": [
+      "evals/files/cudf-window-functions/code/generate_data.py",
+      "evals/files/cudf-window-functions/code/window_analysis.py"
+    ],
+    "ground_truth": "A successful answer uses the provided cudf-window-functions starter files, especially code/window_analysis.py, to migrate ranking, cumulative operations, rolling calculations, expanding calculations, and shift/lag work to cuDF where supported. It preserves group keys, ordering columns, rank methods, window sizes, edge and null behavior, output names, and reports validation performed or the runtime blocker.",
+    "expected_behavior": []
+  },
+  {
+    "id": "source-cudf-null-fillna-semantics__generic",
+    "question": "Task: Preserve pandas nullable dtype and fillna semantics while migrating to cuDF.\nTask folder: evals/files/source-cudf-null-fillna-semantics/\nPrompt variant: generic\n\nUser prompt: Help me move this DataFrame cleanup to the GPU without messing up missing values.\n\nUse the provided starter workspace for this task. Modify the starter file(s) under the provided `code/` directory. Run the relevant smoke or validation command from that workspace when practical, and report the changed files and validation result.",
+    "expected_skill": "accelerated-computing-cudf",
+    "expected_script": null,
+    "files": [
+      "evals/files/source-cudf-null-fillna-semantics/NOTICE.md",
+      "evals/files/source-cudf-null-fillna-semantics/code/null_cleanup.py"
+    ],
+    "ground_truth": "A successful answer uses the provided source-cudf-null-fillna-semantics starter files, especially code/null_cleanup.py, to migrate the cleanup workflow to cuDF without changing missing-value meaning. It preserves nullable integer, string, category-like, mask/where, fillna, and groupby semantics without lossy sentinel conversions, includes or describes pandas-versus-cuDF parity validation, and reports validation performed or the runtime blocker.",
+    "expected_behavior": []
+  },
+  {
+    "id": "cudf-native-stream-handoff-boundary__generic",
+    "question": "Task: Fix a threaded native GPU wrapper so cross-stream handoff and close/free ordering are correct.\nTask folder: evals/files/cudf-native-stream-handoff-boundary/\nPrompt variant: generic\n\nUser prompt: This threaded GPU wrapper sometimes returns stale checksums after one\nworker hands a device buffer to another. Can you make the handoff correct\nwithout blocking the whole device on every transfer, and keep cleanup safe\nfor queued GPU work?\n\nUse the provided starter workspace for this task. Modify the starter file(s) under the provided `code/` directory. Run the relevant smoke or validation command from that workspace when practical, and report the changed files and validation result.",
+    "expected_skill": "accelerated-computing-cudf",
+    "expected_script": null,
+    "files": [
+      "evals/files/cudf-native-stream-handoff-boundary/NOTICE.md",
+      "evals/files/cudf-native-stream-handoff-boundary/code/run_smoke.sh",
+      "evals/files/cudf-native-stream-handoff-boundary/code/threaded_handoff.cu"
+    ],
+    "ground_truth": "A successful answer uses the provided cudf-native-stream-handoff-boundary starter files, especially code/threaded_handoff.cu, to fix cross-thread or cross-stream GPU handoff by tying CUDA event readiness to the object dependency. It orders consumer work after producer writes, orders destruction or free after last stream use, preserves asynchronous overlap where practical, and reports compile or smoke validation performed or the runtime blocker.",
+    "expected_behavior": []
+  },
+  {
+    "id": "negative-deep-learning-training__generic",
+    "question": "Task: Assess whether a PyTorch training performance issue belongs in NVIDIA GPU data science migration guidance.\nTask folder: evals/files/negative-deep-learning-training/\nPrompt variant: generic\n\nUser prompt: This PyTorch training script underutilizes my H100. Help me speed up model\ntraining on the GPU.\n\nUse the provided starter workspace for this task. Modify the starter file(s) under the provided `code/` directory. Run the relevant smoke or validation command from that workspace when practical, and report the changed files and validation result.",
+    "expected_skill": null,
+    "expected_script": null,
+    "files": [
+      "evals/files/negative-deep-learning-training/code/train.py"
+    ],
+    "ground_truth": "A successful answer treats the provided train.py context as a PyTorch/deep-learning training performance task rather than a cuDF migration. It keeps guidance focused on model training, data loading, batching, mixed precision, profiling, or other training-specific tactics, and only mentions cuDF as optional upstream tabular ETL when that is directly relevant.",
+    "expected_behavior": []
+  }
+]

@@ -1,0 +1,6 @@
+{
+  "_comment": "Replace mask_path with a real MAISI-format mask NIfTI before running.",
+  "mask_path": "PATH_TO_MAISI_MASK_WITH_BODY_200.nii.gz",
+  "num_inference_steps": 30,
+  "cfg_guidance_scale": 0
+}

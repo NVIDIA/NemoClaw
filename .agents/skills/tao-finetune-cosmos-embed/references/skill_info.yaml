@@ -1,0 +1,100 @@
+network_arch: cosmos-embed
+automl_enabled: true
+container_image: tao_toolkit.cosmos_embed
+required_credentials:
+- HF_TOKEN
+data_format: msrvtt
+gpu_spec_key: train.num_gpus
+actions:
+  train:
+    command: cosmos-embed1 train -e {config_path}
+    config_format: yaml
+    inputs:
+      model.pretrained_model_path:
+        type: folder
+        optional: true
+      dataset.train_dataset.metadata:
+        type: file
+      dataset.train_dataset.mp4_urls:
+        type: local_glob
+      dataset.val_dataset.metadata:
+        type: file
+      dataset.val_dataset.mp4_urls:
+        type: local_glob
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  evaluate:
+    command: cosmos-embed1 evaluate -e {config_path}
+    config_format: yaml
+    inputs:
+      evaluate.checkpoint:
+        type: file
+      dataset.test_dataset.metadata:
+        type: file
+      dataset.test_dataset.mp4_urls:
+        type: local_glob
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  inference:
+    command: cosmos-embed1 inference -e {config_path}
+    config_format: yaml
+    inputs:
+      inference.checkpoint:
+        type: file
+      dataset.inference_dataset.metadata:
+        type: file
+      dataset.inference_dataset.mp4_urls:
+        type: local_glob
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  export:
+    command: cosmos-embed1 export -e {config_path}
+    config_format: yaml
+    inputs:
+      export.checkpoint:
+        type: file
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+data_sources:
+  train:
+    dataset.train_dataset.metadata:
+      source: train_datasets
+      multiple_sources: false
+      path: msrvtt_test_1k.json
+    dataset.val_dataset.metadata:
+      source: eval_dataset
+      multiple_sources: false
+      path: msrvtt_test_1k.json
+  evaluate:
+    dataset.test_dataset.metadata:
+      source: eval_dataset
+      multiple_sources: false
+      path: msrvtt_test_1k.json
+  inference:
+    dataset.inference_dataset.metadata:
+      source: inference_dataset
+      multiple_sources: false
+      path: msrvtt_test_1k.json
+key_defaults:
+  train.optim.optim: adamw
+  train.validation_iter: 1000
+  train.checkpoint_iter: 1000
+spec_shorthand_keys:
+  num_gpus: train.num_gpus
+  max_iter: train.max_iter
+  batch_size: dataset.train_dataset.batch_size
+  learning_rate: train.optim.lr
+  checkpoint: evaluate.checkpoint
+  query_texts: inference.query.input_texts

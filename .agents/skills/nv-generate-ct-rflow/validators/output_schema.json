@@ -1,0 +1,165 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "NVGenerateCTRflowOutput",
+  "type": "object",
+  "required": ["skill", "model", "model_repo", "input", "output", "invocation", "runtime", "intended_use_disclaimer"],
+  "properties": {
+    "skill": {"const": "nv_generate_ct_rflow"},
+    "model": {"type": "string"},
+    "model_repo": {"type": "string"},
+    "model_weights_repo": {"type": "string"},
+    "license": {"type": "string"},
+    "input": {
+      "type": "object",
+      "required": [
+        "config_infer_override_path",
+        "config_infer_override",
+        "anatomy_list_requested",
+        "body_region_requested",
+        "num_output_samples_requested",
+        "random_seed",
+        "version"
+      ],
+      "properties": {
+        "config_infer_override_path": {"type": ["string", "null"]},
+        "config_infer_override": {"type": "object"},
+        "anatomy_list_requested": {"type": "array"},
+        "effective_anatomy_for_output": {"type": "array", "items": {"type": "string"}},
+        "paired_output_label_semantics": {"type": "string"},
+        "body_region_requested": {"type": ["array", "null"]},
+        "num_output_samples_requested": {"type": ["integer", "null"]},
+        "output_size_requested": {"type": ["array", "null"]},
+        "spacing_requested": {"type": ["array", "null"]},
+        "random_seed": {"type": "integer"},
+        "version": {"enum": ["rflow-ct", "ddpm-ct"]}
+      }
+    },
+    "output": {
+      "type": "object",
+      "required": [
+        "directory",
+        "samples",
+        "num_samples",
+        "all_pairs_readable",
+        "all_geometry_consistent",
+        "any_foreground_present",
+        "all_images_nonconstant",
+        "all_images_hu_like",
+        "union_label_ids_present"
+      ],
+      "properties": {
+        "directory": {"type": "string"},
+        "samples": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["image_path", "image_readable"],
+            "properties": {
+              "image_path": {"type": "string"},
+              "label_path": {"type": ["string", "null"]},
+              "image_bytes": {"type": ["integer", "null"], "minimum": 0},
+              "label_bytes": {"type": ["integer", "null"], "minimum": 0},
+              "image_sha256": {"type": "string"},
+              "label_sha256": {"type": "string"},
+              "image_readable": {"type": "boolean"},
+              "label_readable": {"type": "boolean"},
+              "image_shape": {"type": "array", "items": {"type": "integer"}},
+              "image_spacing": {"type": "array", "items": {"type": "number"}},
+              "image_hu_min": {"type": "number"},
+              "image_hu_max": {"type": "number"},
+              "image_hu_mean": {"type": "number"},
+              "image_hu_negative_present": {"type": "boolean"},
+              "image_hu_bone_present": {"type": "boolean"},
+              "image_nonconstant": {"type": "boolean"},
+              "image_affine": {"type": "array"},
+              "image_error": {"type": "string"},
+              "label_shape": {"type": "array", "items": {"type": "integer"}},
+              "label_spacing": {"type": "array", "items": {"type": "number"}},
+              "label_ids_present": {"type": "array", "items": {"type": "integer"}},
+              "label_id_count": {"type": "integer", "minimum": 0},
+              "label_foreground_voxels": {"type": "integer", "minimum": 0},
+              "label_background_voxels": {"type": "integer", "minimum": 0},
+              "label_error": {"type": "string"},
+              "shape_match": {"type": "boolean"},
+              "spacing_match": {"type": "boolean"},
+              "affine_max_abs_diff": {"type": "number"},
+              "affine_match": {"type": "boolean"}
+            }
+          }
+        },
+        "num_samples": {"type": "integer", "minimum": 0},
+        "all_pairs_readable": {"type": "boolean"},
+        "all_geometry_consistent": {"type": "boolean"},
+        "any_foreground_present": {"type": "boolean"},
+        "all_images_nonconstant": {"type": "boolean"},
+        "all_images_hu_like": {"type": "boolean"},
+        "union_label_ids_present": {"type": "array", "items": {"type": "integer"}},
+        "output_label_mapping": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["anatomy", "maisi_label_id", "output_label_id"],
+            "properties": {
+              "anatomy": {"type": "string"},
+              "maisi_label_id": {"type": "integer"},
+              "output_label_id": {"type": "integer"}
+            }
+          }
+        },
+        "expected_output_label_ids": {"type": "array", "items": {"type": "integer"}},
+        "expected_maisi_label_ids": {"type": "array", "items": {"type": "integer"}},
+        "missing_expected_output_label_ids": {"type": "array", "items": {"type": "integer"}},
+        "all_effective_anatomy_labels_present": {"type": "boolean"}
+      }
+    },
+    "invocation": {
+      "type": "object",
+      "required": ["upstream_root", "command", "exit_code"],
+      "properties": {
+        "upstream_root": {"type": "string"},
+        "upstream_commit": {"type": "string"},
+        "command": {"type": "array", "items": {"type": "string"}},
+        "exit_code": {"type": "integer"},
+        "subprocess_seconds": {"type": "number"},
+        "model_inventory": {
+          "type": "object",
+          "required": ["all_present", "files"],
+          "properties": {
+            "all_present": {"type": "boolean"},
+            "files": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["path", "present"],
+                "properties": {
+                  "path": {"type": "string"},
+                  "present": {"type": "boolean"},
+                  "bytes": {"type": ["integer", "null"]},
+                  "sha256": {"type": "string"}
+                }
+              }
+            }
+          }
+        },
+        "rendered_infer_config": {"type": "object"},
+        "rendered_env_output_dir": {"type": "string"}
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "required": ["subprocess_seconds", "device"],
+      "properties": {
+        "subprocess_seconds": {"type": "number"},
+        "device": {"type": "string"}
+      }
+    },
+    "logs": {
+      "type": "object",
+      "properties": {
+        "stdout_tail": {"type": "string"},
+        "stderr_tail": {"type": "string"}
+      }
+    },
+    "intended_use_disclaimer": {"type": "string"}
+  }
+}

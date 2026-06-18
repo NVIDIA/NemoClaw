@@ -1,0 +1,42 @@
+# Evaluation Deployment Context
+
+Use this pack when `eval/model_eval` needs deployment guidance for hosted
+endpoints or Megatron checkpoints. HF checkpoints require an existing hosted
+endpoint or a conversion path before using the checked-in Megatron deployment
+config.
+
+## Product Contract
+
+- Prefer an existing OpenAI-compatible endpoint when the user provides one.
+- If deployment is part of the eval step, use the checked-in config and env
+  profile. Do not fabricate a deployment service in skill guidance.
+- Keep deployment and evaluation artifacts separate from training outputs.
+
+## Artifact Routing
+
+| Input artifact | Deployment path |
+|---|---|
+| `checkpoint_hf` | Existing hosted endpoint, or convert to a supported deployment format first |
+| `checkpoint_megatron` | `eval/model_eval/config/default.yaml` Megatron deployment path |
+| LoRA adapter | merge or load adapter with base before evaluation, depending on supported serving path |
+| Existing URL | skip deployment and configure evaluator against the URL |
+
+## Endpoint Rules
+
+- Chat/instruction benchmarks need a chat-compatible endpoint.
+- Logprob benchmarks need completions/logprobs support and a matching tokenizer.
+- Keep model name, URL, and API-key env var explicit in config or CLI
+  overrides.
+- Do not print resolved secret values.
+
+## Remote Rules
+
+- For Lepton/Slurm/DGX Cloud, pick the deployment/eval profile from env TOML.
+- Verify mounted checkpoint paths exist inside the runtime container.
+- Use dry-run or a limited benchmark only to validate launch wiring.
+
+## Failure Modes
+
+- `bad_megatron_checkpoint_path`: point at the concrete `iter_*` checkpoint.
+- `endpoint_not_ready`: health-check the service before starting evaluation.
+- `missing_auth`: set the endpoint API key env var in the runtime.

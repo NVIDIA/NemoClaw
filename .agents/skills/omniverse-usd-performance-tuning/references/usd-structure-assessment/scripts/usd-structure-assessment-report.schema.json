@@ -1,0 +1,355 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "usd-structure-assessment-report.schema.json",
+  "title": "USD Structure Assessment Report",
+  "description": "Umbrella schema for the usd-structure-assessment output. Routing-critical objects (summary_counts, validation_scope) are strict; structural reasoning objects (composition, instancing) are permissive to allow agent creativity.",
+  "type": "object",
+  "required": [
+    "stage",
+    "asset_physical_context",
+    "summary_counts",
+    "composition",
+    "instancing",
+    "hierarchy_dedupe",
+    "validation_scope",
+    "phase_recommendation"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "description": "Schema version for forward compatibility"
+    },
+    "stage": {
+      "type": "object",
+      "description": "Stage identity and physical context metadata. metersPerUnit and upAxis are required so downstream tolerance-based operations can derive parameters without re-opening the stage.",
+      "required": [
+        "identifier",
+        "rootLayer",
+        "metersPerUnit",
+        "upAxis"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "identifier": {
+          "type": "string"
+        },
+        "rootLayer": {
+          "type": "string"
+        },
+        "defaultPrim": {
+          "type": "string"
+        },
+        "upAxis": {
+          "type": "string",
+          "enum": [
+            "X",
+            "Y",
+            "Z"
+          ]
+        },
+        "metersPerUnit": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "scale_hint": {
+          "type": "string",
+          "enum": [
+            "meters",
+            "centimeters",
+            "millimeters",
+            "other"
+          ],
+          "description": "Human-readable label derived from metersPerUnit (1.0=meters, 0.01=centimeters, 0.001=millimeters) for downstream branching"
+        }
+      }
+    },
+    "asset_physical_context": {
+      "type": "object",
+      "description": "Physical scale context for tolerance-based operations. Written during SA from stage metadata and prim-type traversal only \u2014 no geometry arrays read. metersPerUnit and upAxis are free stage metadata. mesh_count is a prim-type count (no geometry load).",
+      "required": [
+        "metersPerUnit",
+        "upAxis"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "metersPerUnit": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Duplicated from stage for self-contained downstream consumption"
+        },
+        "upAxis": {
+          "type": "string",
+          "enum": [
+            "X",
+            "Y",
+            "Z"
+          ]
+        },
+        "scale_hint": {
+          "type": "string",
+          "enum": [
+            "meters",
+            "centimeters",
+            "millimeters",
+            "other"
+          ],
+          "description": "Human-readable scale label for agent prompts"
+        },
+        "mesh_count": {
+          "type": "integer",
+          "description": "Total meshes from prim-type traversal (no geometry arrays needed). Copied from summary_counts for self-contained downstream use."
+        }
+      }
+    },
+    "summary_counts": {
+      "type": "object",
+      "description": "Routing-critical counts consumed by usd-validation-runner policy and restructure-decision. Strict: typos rejected.",
+      "required": [
+        "prim_count",
+        "mesh_count",
+        "material_count",
+        "prototype_count",
+        "instance_count",
+        "reference_count",
+        "payload_count"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "prim_count": {
+          "type": "integer"
+        },
+        "mesh_count": {
+          "type": "integer"
+        },
+        "material_count": {
+          "type": "integer"
+        },
+        "prototype_count": {
+          "type": "integer"
+        },
+        "instance_count": {
+          "type": "integer"
+        },
+        "reference_count": {
+          "type": "integer",
+          "description": "Prefer authored reference list-op item count. If the runtime can only report prims-with-authored-references, record that limitation in composition.counting_method."
+        },
+        "payload_count": {
+          "type": "integer",
+          "description": "Prefer authored payload list-op item count. If the runtime can only report prims-with-authored-payloads, record that limitation in composition.counting_method."
+        }
+      }
+    },
+    "composition": {
+      "type": "object",
+      "description": "Composition arc counts. Required fields route Phase 2a classification. Agents may add inherits, specializes, variants, sublayers, etc.",
+      "required": [
+        "layers",
+        "references",
+        "payloads",
+        "counting_method"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "layers": {
+          "type": "integer"
+        },
+        "references": {
+          "type": "integer"
+        },
+        "payloads": {
+          "type": "integer"
+        },
+        "counting_method": {
+          "type": "string",
+          "enum": [
+            "authored_list_op_items",
+            "prims_with_authored_arcs",
+            "mixed_or_unknown"
+          ],
+          "description": "How reference/payload counts were computed. Authored list-op item counts are preferred; prim-level booleans are a fallback."
+        },
+        "inherits": {
+          "type": "integer"
+        },
+        "specializes": {
+          "type": "integer"
+        },
+        "variants": {
+          "type": "integer"
+        },
+        "sublayers": {
+          "oneOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
+        }
+      }
+    },
+    "instancing": {
+      "type": "object",
+      "description": "Instancing metrics for restructure-decision Phase 2d. Agents may add context about instancing readiness.",
+      "required": [
+        "instances",
+        "prototypes",
+        "candidates",
+        "ratio"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "instances": {
+          "type": "integer"
+        },
+        "prototypes": {
+          "type": "integer"
+        },
+        "candidates": {
+          "type": "integer"
+        },
+        "ratio": {
+          "type": "number"
+        }
+      }
+    },
+    "hierarchy_dedupe": {
+      "type": "object",
+      "description": "Hierarchy deduplication gate signal for restructure-decision. 'recommended' is the boolean gate; top_candidates provides detail.",
+      "required": [
+        "recommended",
+        "reason",
+        "top_candidates"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "recommended": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "top_candidates": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "path_pattern",
+              "subtree_prims",
+              "copies",
+              "estimated_prim_savings"
+            ],
+            "additionalProperties": true,
+            "properties": {
+              "path_pattern": {
+                "type": "string"
+              },
+              "subtree_prims": {
+                "type": "integer"
+              },
+              "copies": {
+                "type": "integer"
+              },
+              "estimated_prim_savings": {
+                "type": "integer"
+              }
+            }
+          }
+        }
+      }
+    },
+    "validation_scope": {
+      "type": "object",
+      "description": "Feeds directly into so-run-validators. Strict: these arrays are the handoff contract.",
+      "required": [
+        "per_asset",
+        "cross_component_pairs",
+        "skip"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "per_asset": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "cross_component_pairs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "skip": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "phase_recommendation": {
+      "type": "string",
+      "enum": [
+        "structuring",
+        "optimization",
+        "already_optimized"
+      ],
+      "description": "Routing signal for workflow Phase 2e gate and edit-target planner"
+    },
+    "assets": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "layer_health": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "scale_assessment": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "asset_boundary_suggestions": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "flagged_assets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    },
+    "variants_and_payloads": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "kind_hierarchy": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "prototype_library": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    },
+    "recommended_next_actions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

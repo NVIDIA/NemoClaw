@@ -1,0 +1,50 @@
+results_dir: /results
+
+inference:
+  checkpoint: ${results_dir}/train/cosmos_embed1_model_latest.pth
+  query:
+    input_texts:
+    - a man is singing on stage
+    input_videos: []
+  num_gpus: 1
+  k: 5
+  load_dataset_pkl: null
+  save_dataset_pkl: null
+
+model:
+  pretrained_model_path: null
+  precision: bf16
+  input_hw: [224, 224]
+  network:
+    embed_dim: 256
+    num_query_tokens: 32
+    max_txt_len: 128
+    num_video_frames: 8
+    spatial_resolution: [224, 224]
+    temporal_encoding_type: neighboring_token_propagation
+    contrastive_type: clip
+    qformer_pretrain_ckpt: null
+    query_pooling_type: avg
+    pretrained_text_encoder: false
+    pretrained_visual_encoder: false
+    num_heldout_frames: 0
+    visual_encoder:
+      type: eva_vit_g
+      img_size: 224
+      pretrained: false
+      use_fp8: false
+      transformer_engine: false
+
+dataset:
+  inference_dataset:
+    dataset_type: msrvtt
+    mp4_urls: /data/video/*.mp4
+    metadata: /data/msrvtt_test_1k.json
+    num_video_frames: 8
+    resolution: [224, 224]
+    batch_size: 64
+    workers: 4
+    split: null
+    random_caption: false
+    skip_missing_files: false
+    caption_to_label: {}

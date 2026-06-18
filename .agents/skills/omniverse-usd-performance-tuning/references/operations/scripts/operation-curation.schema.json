@@ -1,0 +1,29 @@
+{
+  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Scene Optimizer Operation Curation (this-repo)",
+  "description": "Sidecar for this-repo-only curation fields. Survives an upstream re-ingest because it never lives upstream. Keyed by op key.",
+  "type": "object",
+  "patternProperties": {
+    "^[a-zA-Z][a-zA-Z0-9]*$": {
+      "type": "object",
+      "required": ["status", "wired_into", "rationale"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["canonical", "specialty", "analysis", "documentary", "deprecated"]
+        },
+        "wired_into": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "rationale": {
+          "type": "string",
+          "pattern": "^(canonical|specialty|analysis|documentary|deprecated):",
+          "description": "Must start with '<status>:' matching the entry's status. Format: '<status>: <clause-citation>: <one-sentence justification>'. See references/operations/CLASSIFICATION.md."
+        }
+      }
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,17 @@
+[
+  {
+    "id": "expert-parallel-overlap-positive-alltoall-smoke",
+    "question": "In Megatron Bridge, my 16x H100 Qwen3-30B-A3B MoE run is dispatch-bound and I want to isolate only expert all-to-all overlap, without flex dispatch or delayed wgrad. Which exact toggles should I set, which convenience flag should I avoid, and what speedup was measured in the short run?",
+    "expected_skill": "nemo-mbridge-perf-expert-parallel-overlap",
+    "expected_script": null,
+    "ground_truth": "The answer should use the expert-parallel overlap skill and focus on the plain alltoall benchmark. It should state the benchmark shape: Qwen3 MoE 30B-A3B SFT, 16 H100 GPUs, EP=16, alltoall, BF16, global batch size 1024, CUDA graphs disabled, moe_permute_fusion=false, with iterations 3-8 as the steady window. It should enable plain EP overlap with --cuda_graph_impl none, --moe_flex_dispatcher_backend None, --moe_a2a_overlap false, comm_overlap.overlap_moe_expert_parallel_comm=true, comm_overlap.delay_wgrad_compute=false, and model.moe_shared_expert_overlap=false. It should warn not to use --moe_a2a_overlap true for this isolation test because the helper enables both overlap_moe_expert_parallel_comm and delay_wgrad_compute. It should quote the timing comparison: no EP overlap 41.25s (1.000x), EP overlap 31.31s (1.317x), EP overlap plus delay_wgrad_compute 31.20s (1.322x), and say delayed wgrad did not show a meaningful independent win in this benchmark.",
+    "expected_behavior": [
+      "Read the nemo-mbridge-perf-expert-parallel-overlap skill before answering.",
+      "Identify the requested path as the plain alltoall EP-overlap benchmark, not flex dispatch.",
+      "List the benchmark shape including model, GPU count, EP, dispatcher, precision, batch size, disabled CUDA graphs, and moe_permute_fusion=false.",
+      "List the exact overrides for plain EP overlap with delay_wgrad_compute=false and moe_shared_expert_overlap=false.",
+      "Warn not to use --moe_a2a_overlap true for the isolation test.",
+      "Quote the 41.25s, 31.31s, and 31.20s timing comparison."
+    ]
+  }
+]

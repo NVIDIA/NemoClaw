@@ -1,0 +1,14 @@
+[
+  {
+    "id": "tao-run-automl-deft-pipeline-basic",
+    "question": "A user request: \"Run the end-to-end AOI workflow (AutoML baseline, DEFT loop, AutoML refinement).\" Identify which TAO skill applies and, reading only that skill's documentation, outline the steps it prescribes. Do NOT run any commands, scripts, web searches, or other tools \u2014 describe the plan only.",
+    "expected_skill": "tao-run-automl-deft-pipeline",
+    "expected_script": null,
+    "ground_truth": "Identify tao-run-automl-deft-pipeline as the applicable skill and summarize its documented workflow from SKILL.md without executing anything.",
+    "expected_behavior": [
+      "Identifies tao-run-automl-deft-pipeline as the relevant skill",
+      "Outlines the documented workflow steps from SKILL.md",
+      "Does not run commands, scripts, or web searches"
+    ]
+  }
+]

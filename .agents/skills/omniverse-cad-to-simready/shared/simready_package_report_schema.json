@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": true,
+  "properties": {
+    "backend": { "type": "string" },
+    "checks": { "type": "array" },
+    "errors": { "type": "array" },
+    "next_step": { "type": "string" },
+    "operation": { "type": "string" },
+    "package_definition_path": { "type": ["string", "null"] },
+    "package_root": { "type": "string" },
+    "passed": { "type": "boolean" },
+    "profile": { "type": "string" },
+    "skill": { "type": "string" },
+    "status": { "type": "string" }
+  },
+  "required": ["package_root", "skill", "operation", "backend", "profile", "passed", "status", "checks", "errors", "next_step"],
+  "type": "object"
+}

@@ -1,0 +1,58 @@
+{
+  "skills": [
+    "vss-manage-alerts",
+    "vss-deploy-profile",
+    "vss-manage-video-io-storage"
+  ],
+  "resources": {
+    "platforms": {
+      "L40S": {
+        "modes": [
+          "remote-all"
+        ]
+      }
+    }
+  },
+  "deploy_mode": "real-time",
+  "description": "End-to-end lifecycle test for references/alert-subscriptions.md: create a rule with a natural-language phrasing, list rules to verify it exists, then stop the rule (with the two-step confirmation protocol).",
+  "expects": [
+    {
+      "query": "Deploy the VSS alerts profile on {{platform}} in real-time (VLM) mode using remote LLM and remote VLM endpoints. Then, so later steps have a camera to target, onboard one sensor into VIOS using the vss-manage-video-io-storage skill: upload the bundled warehouse sample video through NVStreamer (port 31000) as a sensor named `warehouse_sample`, then register the NVStreamer-served RTSP (port 31554) in VIOS (port 30888). Confirm the sensor appears in `GET /sensor/list` with an RTSP stream before finishing. Do NOT finish until the system is fully ready: poll until BOTH the VSS Agent REST API (`curl -sf http://localhost:8000/docs`) and VIOS (`curl -sf http://localhost:30888/vst/api/v1/sensor/list`) respond successfully and `warehouse_sample` is listed — wait and retry for a few minutes if a service is still starting.",
+      "checks": [
+        "`sh -c 'i=1; while [ \"$i\" -le 12 ]; do curl -sf --max-time 10 http://localhost:8000/docs >/dev/null 2>&1 && exit 0; sleep 5; i=$((i+1)); done; exit 1'` returns exit 0 (VSS Agent REST API responsive; polls up to ~3 min to absorb deploy readiness timing).",
+        "`docker ps --format '{{.Names}}' | grep -qx vss-agent` returns exit 0.",
+        "`docker ps --format '{{.Names}}' | grep -qx vss-rtvi-vlm` returns exit 0 (continuous VLM processor \u2014 required for VLM real-time mode).",
+        "`! docker ps --format '{{.Names}}' | grep -qx vss-rtvi-cv` returns exit 0 (CV-only perception is NOT running \u2014 confirms VLM real-time, not verification).",
+        "`sh -c 'i=1; while [ \"$i\" -le 12 ]; do curl -sf --max-time 10 http://localhost:30888/vst/api/v1/sensor/list 2>/dev/null | grep -q warehouse_sample && exit 0; sleep 5; i=$((i+1)); done; exit 1'` returns exit 0 (warehouse_sample onboarded into VIOS; polls to absorb upload/registration delay)."
+      ]
+    },
+    {
+      "query": "Watch warehouse_sample for anyone without a safety vest",
+      "checks": [
+        "The trajectory calls Alert Bridge `POST /api/v1/realtime` with a payload containing `live_stream_url` (RTSP from warehouse_sample) and `prompt` (referencing safety vest or PPE).",
+        "`curl -sf --max-time 15 http://localhost:9080/api/v1/realtime | grep -qi rtsp` returns exit 0 (the created rule carries a real rtsp:// live_stream_url resolved from VIOS for warehouse_sample - host/port may be rewritten to the deployment's external IP, so match the rtsp scheme rather than a fixed port; deterministic end-state probe).",
+        "`curl -sf --max-time 15 http://localhost:9080/api/v1/realtime | jq -e '[.rules[] | select(.sensor_name==\"warehouse_sample\") | select(.chunk_duration == 30 and ((.system_prompt // \"\") | length > 0) and ((.id // \"\") | test(\"[0-9a-fA-F-]{36}\")))] | length >= 1'` returns exit 0 (a stored rule for warehouse_sample exists with the canonical payload defaults \u2014 chunk_duration 30, non-empty system_prompt \u2014 and a UUID id; deterministic end-state probe).",
+        "The agent confirms the rule was created and reports the rule ID and sensor name to the user.",
+        "`curl -sf --max-time 15 http://localhost:9080/api/v1/realtime | jq -e '[.rules[] | select(.sensor_name==\"warehouse_sample\") | select(.alert_type | test(\"ppe|vest\";\"i\"))] | length >= 1'` returns exit 0 (the stored rule's alert_type is a PPE/vest-related tag derived from this request's condition; deterministic end-state probe)."
+      ]
+    },
+    {
+      "query": "Show me all active realtime rules",
+      "checks": [
+        "The trajectory calls Alert Bridge `GET /api/v1/realtime` to fetch the rule list.",
+        "The agent's response includes at least one rule matching the warehouse_sample sensor and PPE-related tag (created in the previous step).",
+        "The agent renders a human-readable table or list \u2014 not raw JSON.",
+        "The RTSP URL in the rule is reverse-resolved to the sensor name `warehouse_sample` (user never sees raw RTSP URLs)."
+      ]
+    },
+    {
+      "query": "Stop the PPE alert on warehouse_sample",
+      "checks": [
+        "The trajectory calls Alert Bridge `GET /api/v1/realtime` to find the matching rule(s).",
+        "Before any DELETE, the agent prompts the user and waits \u2014 EITHER a yes/no confirmation question when exactly one rule matches, OR (when multiple PPE rules match `warehouse_sample`, e.g. leftover rules from earlier runs) a disambiguation question asking which rule to stop. Either branch satisfies the two-step stop protocol in references/alert-subscriptions.md; the key is that it does not delete without first asking the user.",
+        "The agent's confirmation/disambiguation message identifies the rule(s) by ID and names the sensor `warehouse_sample`.",
+        "The agent does NOT immediately call `DELETE /api/v1/realtime/<id>` \u2014 deletion only happens after the user replies (which never arrives in this non-interactive trial, so no DELETE should occur)."
+      ]
+    }
+  ]
+}

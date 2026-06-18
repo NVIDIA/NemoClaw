@@ -1,0 +1,46 @@
+{
+  "skills": [
+    "vss-summarize-video",
+    "vss-deploy-profile"
+  ],
+  "resources": {
+    "platforms": {
+      "RTXPRO6000BW": {
+        "gpu_count": 1
+      }
+    }
+  },
+  "expects": [
+    {
+      "query": "Deploy the VSS **lvs** profile on `{{platform}}` via `/vss-deploy-profile -p lvs`. Run autonomously.\n\n**Environment & prerequisites:** A full-remote deployed VSS lvs profile (deploy mode = `remote-all` - the agent LLM and video summarization VLM dependencies are served by remote endpoints, no local NIMs). Run on one platform only: the video summarization API surface tested here is independent of GPU model once the lvs profile is deployed. Required: video summarization REST API reachable at http://localhost:38111, VSS Agent reachable at http://localhost:8000/docs, Docker available for non-destructive service status checks, and `jq` available for response validation. These checks intentionally avoid full video summarization because `skills/vss-summarize-video/evals/lvs_profile_summarize.json` owns end-to-end summarization coverage.",
+      "checks": [
+        "`curl -sf --max-time 15 http://localhost:8000/docs` returns exit 0 (Agent REST API responsive)",
+        "`curl -sf --max-time 15 http://localhost:38111/v1/ready` returns exit 0 (video summarization API ready)",
+        "`docker ps --format '{{.Names}}' | grep -qx vss-agent` returns exit 0",
+        "`docker ps --format '{{.Names}}' | grep -qx redis` returns exit 0"
+      ]
+    },
+    {
+      "query": "Using the `vss-summarize-video` skill's video summarization API reference, verify the running video summarization service without summarizing a video: check readiness, list available models, request a recommended config for a 300-second video with a 60-second target response time and a 5-second target event duration, fetch metrics, and report the key results.",
+      "checks": [
+        "`curl -sf --max-time 15 http://localhost:38111/v1/ready` returns exit 0",
+        "`curl -sf --max-time 15 http://localhost:38111/models | jq -e '.data | length > 0'` returns exit 0",
+        "`curl -sf --max-time 15 -X POST http://localhost:38111/recommended_config -H 'Content-Type: application/json' -d '{\"video_length\":300,\"target_response_time\":60,\"usecase_event_duration\":5}' | jq -e '(.text // .chunk_size) != null'` returns exit 0",
+        "`curl -sf --max-time 15 http://localhost:38111/metrics | grep -q .` returns exit 0",
+        "The agent trajectory contains API calls to `/v1/ready`, `/models`, `/recommended_config`, and `/metrics` on port 38111.",
+        "The POST `/recommended_config` request body contains exactly the requested numeric values: video_length=300, target_response_time=60, and usecase_event_duration=5.",
+        "The agent does not call `/v1/summarize`, `/summarize`, or any VLM `/v1/chat/completions` endpoint for this query.",
+        "The final response reports video summarization readiness, at least one model id, the recommended chunk size or text returned by `/recommended_config`, and that metrics were reachable."
+      ]
+    },
+    {
+      "query": "Using the `vss-summarize-video` skill's video summarization deployment reference, produce a non-destructive video summarization deployment status report: identify the REST port, readiness endpoint, expected compose profile or container signal, whether the service is currently reachable, and where the detailed deployment runbook lives.",
+      "checks": [
+        "`curl -sf --max-time 15 http://localhost:38111/v1/ready` returns exit 0",
+        "The agent uses a non-destructive status probe such as `docker ps`, `docker compose ps`, `docker logs --tail`, or `curl` readiness checks.",
+        "The agent does not run destructive or state-changing deployment commands such as `docker compose down`, `docker stop`, `docker rm`, `docker compose up`, or `docker compose up --force-recreate`.",
+        "The final response identifies REST port 38111, readiness endpoint `/v1/ready`, and the `bp_developer_lvs_2d` compose profile or the `vss-lvs` / `lvs-server` service signal."
+      ]
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+results_dir: /results
+evaluate:
+  trt_engine: /results/ml-recog.engine
+  batch_size: 8
+  topk: 5
+dataset:
+  val_dataset:
+    reference: <required>
+    query: <required>

@@ -1,0 +1,63 @@
+# FastFoundationStereo (FFS) bp2 — export spec template (static fp32 ONNX).
+#
+# Produces the ONNX file consumed by deploy/spec_template_deploy.yaml gen_trt_engine.
+# The ONNX is fp32 regardless of model.mixed_precision; precision is selected at
+# the gen_trt_engine step.
+
+results_dir: <out_dir>
+
+dataset:
+  dataset_name: StereoDataset
+  max_disparity: 192
+  min_depth: 0.0
+
+model:
+  model_type: FastFoundationStereo
+  encoder: vitl
+  hidden_dims: [128]
+  n_gru_layers: 1
+  corr_radius: 4
+  corr_levels: 2
+  n_downsample: 2
+  max_disparity: 192            # bp2 commercial — must match ckpt training-time value; NOT 416 (schema default)
+  valid_iters: 8
+  train_iters: 22
+  volume_dim: 28               # bp2 ckpt invariant; NOT 32 (schema default for full-FS)
+  mixed_precision: false
+  gwc_feature_normalize: true
+
+  motion_encoder_widths: [56, 96, 16, 12]
+  motion_encoder_final: 48
+  gru_hidden: 60
+  gru_gating_conv_widths: [100, 168]
+  disp_head_input_dim: 60
+  disp_head_intermediate: 36
+  disp_head_pwconv1_widths: [212, 244]
+  mask_widths: [32, 16]
+  stem_2_widths: [12, 16]
+  spx_2_gru_widths: [16, 12, 16, 24]
+  spx_gru_out: 9
+  classifier_mid: 14
+  cnet_conv04_widths: [60, 48]
+  cam_mid_channels: 8
+  cost_agg_conv_patch_padding: [0, 0, 0]
+
+  stereo_backbone:
+    edgenext_pretrained_path: ""
+    depth_anything_v2_pretrained_path: ""
+    use_bn: false
+    use_clstoken: false
+
+export:
+  gpu_id: 0
+  checkpoint: <bp2_ckpt_path>            # set explicitly for raw-bp2 use case
+  onnx_file: <out_dir>/ffs_bp2_static.onnx
+  on_cpu: false
+  input_channel: 3
+  input_height: 480
+  input_width: 736
+  opset_version: 17
+  batch_size: 1                          # positive int → static batch; -1 → dynamic batch axis
+  dynamic_hw: false                      # FFS only: true → dynamic H/W axes (FS/mono ignore w/ warning)
+  valid_iters: 8
+  format: onnx

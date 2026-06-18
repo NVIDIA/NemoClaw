@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "FET000 Core Metadata Repair Report",
+  "type": "object",
+  "required": [
+    "asset_path",
+    "skill",
+    "tool",
+    "passed",
+    "status",
+    "operation",
+    "output_usd_path",
+    "metadata",
+    "custom_layer_key",
+    "custom_layer_written",
+    "sidecar_json_path",
+    "checks",
+    "warnings",
+    "errors",
+    "next_step"
+  ]
+}

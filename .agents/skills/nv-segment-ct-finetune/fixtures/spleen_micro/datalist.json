@@ -1,0 +1,25 @@
+{
+  "training": [
+    {
+      "image": "imagesTr/spleen_00.nii.gz",
+      "label": "labelsTr/spleen_00.nii.gz",
+      "fold": 0
+    },
+    {
+      "image": "imagesTr/spleen_01.nii.gz",
+      "label": "labelsTr/spleen_01.nii.gz",
+      "fold": 1
+    },
+    {
+      "image": "imagesTr/spleen_02.nii.gz",
+      "label": "labelsTr/spleen_02.nii.gz",
+      "fold": 1
+    },
+    {
+      "image": "imagesTr/spleen_03.nii.gz",
+      "label": "labelsTr/spleen_03.nii.gz",
+      "fold": 1
+    }
+  ],
+  "testing": []
+}

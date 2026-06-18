@@ -1,0 +1,93 @@
+name: tao-train-dino
+network_arch: dino
+automl_enabled: true
+container_image: tao_toolkit.pyt
+data_format: coco
+gpu_spec_key: train.num_gpus
+actions:
+  train:
+    command: dino train -e {config_path}
+    config_format: yaml
+    inputs:
+      dataset.train_data_sources[0].image_dir:
+        type: file
+      dataset.train_data_sources[0].json_file:
+        type: file
+      dataset.val_data_sources[0].image_dir:
+        type: file
+      dataset.val_data_sources[0].json_file:
+        type: file
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  distill:
+    command: dino distill -e {config_path}
+    config_format: yaml
+    inputs: {}
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  quantize:
+    command: dino quantize -e {config_path}
+    config_format: yaml
+    inputs: {}
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  evaluate:
+    command: dino evaluate -e {config_path}
+    config_format: yaml
+    inputs:
+      evaluate.checkpoint:
+        type: file
+      dataset.test_data_sources.image_dir:
+        type: file
+      dataset.test_data_sources.json_file:
+        type: file
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  export:
+    command: dino export -e {config_path}
+    config_format: yaml
+    inputs: {}
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  inference:
+    command: dino inference -e {config_path}
+    config_format: yaml
+    inputs: {}
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  gen_trt_engine:
+    command: dino gen_trt_engine -e {config_path}
+    config_format: yaml
+    inputs: {}
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+data_sources: {}
+spec_params: {}
+key_defaults: {}
+spec_shorthand_keys:
+  num_epochs: train.num_epochs
+  batch_size: dataset.batch_size
+  learning_rate: train.optim.lr
+description: DINO (DETR with Improved DeNoising Anchor Boxes) for 2D object detection. Transformer-based detector with denoising
+  training, multi-scale features, and optional distillation support.

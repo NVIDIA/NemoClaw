@@ -1,0 +1,168 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+id: medagent.dicom_series_to_volume
+version: 0.1.0
+upstream_refs:
+  - kind: pypi_package
+    name: pydicom
+    version_constraint: ">=2.4,<4"
+  - kind: pypi_package
+    name: nibabel
+    version_constraint: ">=4.0"
+license: Apache-2.0
+intended_use:
+  summary: Engineering-time conversion of a single-series DICOM directory (CT) to a
+    NIfTI volume in HU, with affine and axcodes computed from the DICOM headers.
+  scope: development
+  not_for:
+    - clinical deployment
+    - autonomous diagnosis
+    - regulatory submission
+    - production inference (use a vetted converter such as dcm2niix for that)
+inputs:
+  - name: dicom_dir
+    type: directory_path
+    formats: [dicom_series]
+outputs:
+  - name: nifti_volume
+    type: file_path
+    formats: [nifti]
+  - name: result_json
+    type: json
+    schema: validators/output_schema.json
+runtime:
+  language: python
+  python: ">=3.10"
+  entrypoint: scripts/series_to_volume.py
+  # Land the NIfTI in the evidence pack; the script falls back to writing
+  # next to the input directory when --output is omitted, so direct script
+  # users keep working.
+  args:
+    - "${python}"
+    - "${script}"
+    - "${fixture}"
+    - "--output"
+    - "${out}/volume.nii.gz"
+  dependencies:
+    pydicom: ">=2.4,<4"
+    nibabel: ">=4.0"
+    numpy: ">=1.23"
+    typer: ">=0.9"
+  side_effects:
+    pip_packages: [pydicom>=2.4,<4, nibabel>=4.0, numpy>=1.23, typer>=0.9]
+    local_writes:
+      - {path: "${out}/volume.nii.gz", approx_mb_max: 500}
+    home_writes: []
+    network_endpoints: []
+    requires_docker: false
+    requires_gpu: none
+    env_required: []
+
+cost:
+  # Per-invocation agent-overhead token cost measured by NeMo Agent Toolkit
+  # (NAT) profiler — the cost an LLM-driven agent pays to call this skill
+  # once. The skill itself emits zero tokens. See tools/nat_audit/README.md
+  # for methodology (pinned model, agent type, tool registry size).
+  token_estimate:
+    common:
+      model: meta/llama-3.3-70b-instruct
+      agent_type: tool_calling_agent
+      measured_at: 2026-05-16
+      methodology: tools/nat_audit/README.md
+    isolated_tool_call:
+      prompt_tokens: 2241
+      completion_tokens: 68
+      total_tokens: 2309
+      llm_calls: 2
+      n_tools_in_workflow: 9
+    end_to_end_workflow:
+      prompt_tokens: 8414
+      completion_tokens: 141
+      total_tokens: 8555
+      llm_calls: 4
+      n_tools_in_workflow: 11
+      scenario: realistic_user_workflow
+
+paired_verifiers:
+  - id: medagent.verifiers.dicom_volume_quality_v1
+    status: implemented
+    consumes: evidence_pack_dir
+    purpose: >
+      Second-pass volume evidence audit. Confirms the source pack passed and
+      the emitted NIfTI artifact matches reported shape, spacing, affine
+      orientation, axcodes, and HU range evidence.
+
+limitations:
+  - Single-series only; multi-series input is rejected at preflight.
+  - Multi-frame DICOM (NumberOfFrames > 1 per file) not supported.
+  - Compressed transfer syntaxes (JPEG / JPEG2000 / RLE) not supported.
+  - No voxel reorientation. The affine is derived from DICOM headers and
+    represented in NIfTI/RAS coordinates; a downstream gate (e.g.
+    expected_axcodes) is expected to assert orientation before this
+    volume is fed to a segmentation model.
+  - Slice-spacing is computed from successive ImagePositionPatient z values;
+    inconsistent spacing is reported but not auto-corrected.
+validation:
+  expected_runtime_seconds:
+    # No min: conversion is I/O bound and a fast SSD can finish 32 slices in
+    # < 20ms. The sanity gates (n_slices > 1, single_series, axcodes) already
+    # protect against the silent-failure shape this would otherwise catch.
+    max: 10.0
+    inference_path: runtime.conversion_seconds
+  sanity_checks:
+    - path: modality
+      eq: CT
+    - path: n_slices
+      gt: 1
+    - path: single_series
+      eq: true
+    - path: inconsistent_shape
+      eq: false
+    - path: output.axcodes
+      eq: ["L", "P", "S"]
+      # Canonical axial CT preserves the DICOM LPS axis directions through to the
+      # NIfTI affine; the converter does NOT auto-reorient to RAS+. A workflow
+      # that needs RAS-canonical input is expected to apply nib.as_closest_canonical
+      # downstream of this gate.
+  expected_cost:
+    # I/O-bound numpy + nibabel; should never approach a CT segmentation
+    # skill's footprint. rss_mb_peak.max catches accidental loading of a
+    # whole multi-series dataset; gpu_*.max=0 enforces this is CPU-only.
+    wall_seconds:        {max: 10}
+    cpu_seconds:         {max: 10}
+    rss_mb_peak:         {max: 500}
+    gpu_seconds:         {max: 0}
+    gpu_memory_mb_peak:  {max: 0}
+  reproducibility:
+    mode: repeat
+    fixture: fixtures/clean_axial
+    fixture_builder: fixtures/generate_fixtures.py
+    runs: 2
+
+# Negative fixtures that exist to *prove the gates fire* on bad inputs.
+# `make verify-skills` and any audit tooling that runs every fixture
+# blindly should consult this list and treat the named expected_overall
+# as the success condition (rather than `passed`). The corresponding
+# fixture lives under fixtures/ alongside the gate-passing one.
+negative_fixtures:
+  - path: fixtures/flipped_lr
+    expected_overall: failed
+    expected_failed_gate: sanity
+    failure_reason: >
+      The flipped_lr fixture has its DICOM ImageOrientationPatient row-direction
+      reversed (RPI vs LPS). The output.axcodes sanity check should fail with
+      ['R','P','I'] != ['L','P','S']. If this fixture passes, the orientation
+      gate is not actually firing.

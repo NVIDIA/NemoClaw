@@ -1,0 +1,13 @@
+[
+  {
+    "id": "summarize-video",
+    "question": "Summarize a recorded video using the LVS summarization microservice.",
+    "expected_skill": "vss-summarize-video",
+    "ground_truth": "Loads vss-summarize-video and summarizes a recorded video via the LVS summarization microservice (HITL-gated) with a VLM fallback; not report generation or live RTSP captioning.",
+    "expected_behavior": [
+      "Loads vss-summarize-video and uses the LVS summarization microservice (HITL-gated, VLM fallback).",
+      "Does not route to report generation or live RTSP captioning skills.",
+      "Does not print plaintext API tokens or other secrets."
+    ]
+  }
+]

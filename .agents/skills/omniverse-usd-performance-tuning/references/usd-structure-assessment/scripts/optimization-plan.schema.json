@@ -1,0 +1,45 @@
+{
+  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "USD Performance Tuning Optimization Plan",
+  "type": "object",
+  "required": ["schemaVersion", "stage", "inputs", "gates", "operations", "outputs"],
+  "properties": {
+    "schemaVersion": { "type": "string" },
+    "stage": {
+      "type": "object",
+      "required": ["identifier"],
+      "properties": {
+        "identifier": { "type": "string" },
+        "rootLayer": { "type": "string" }
+      }
+    },
+    "inputs": {
+      "type": "object",
+      "properties": {
+        "targetBottleneck": { "type": "string" },
+        "auditReport": { "type": "string" },
+        "validationReport": { "type": "string" },
+        "converter": { "type": "object" }
+      }
+    },
+    "gates": {
+      "type": "object",
+      "properties": {
+        "preValidation": { "type": "string" },
+        "postValidation": { "type": "string" },
+        "mutationPolicy": { "type": "string" }
+      }
+    },
+    "operations": { "type": "array", "items": { "type": "object" } },
+    "outputs": {
+      "type": "object",
+      "properties": {
+        "outputDirectory": { "type": "string" },
+        "generatedFiles": { "type": "array", "items": { "type": "string" } },
+        "modifiedLayers": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  },
+  "additionalProperties": true
+}

@@ -1,0 +1,47 @@
+{
+  "skills": [
+    "vss-deploy-detection-tracking-3d",
+    "vss-generate-video-calibration"
+  ],
+  "resources": {
+    "platforms": {
+      "RTXPRO6000BW": {
+        "gpu_count": 1,
+        "modes": [
+          "standalone"
+        ]
+      }
+    }
+  },
+  "expects": [
+    {
+      "query": "deploy rtvi-cv-3d on these videos at /data/videos\n\n**Environment & prerequisites:** End-to-end custom-data calibration chain test. The runner must provide: (a) four time-synchronized videos at `${VIDEO_DIR:-/data/videos}/cam_00.mp4` \u2026 `cam_03.mp4` (5 min each, 1920x1080, 30 FPS recommended); (b) `${VIDEO_DIR}/alignment_data.json` and `${VIDEO_DIR}/layout.png` for AMC's Step 4 alignment input; (c) optional `${VIDEO_DIR}/GT.zip` for evaluation metrics. NGC credentials at `~/.ngc/config` (bootstrapped from `NGC_CLI_API_KEY` if needed). `HF_TOKEN` available in env for VGGT model download (the eval expects the agent to stage VGGT per `calibration-workflow.md` Step 1a). The runner must have \u2265100 GB free disk (extracted `vss-warehouse-app-data` ~30 GB + AMC project state + VGGT model ~4.7 GB + container layers). `VSS_DATA_DIR` points at extracted `vss-warehouse-app-data`. **Cases run in declared order with state preserved**: case 1 chains AMC \u2192 MV3DT \u2192 deploys \u2192 verifies \u2192 case 2 tears everything down. The framework must NOT reset Docker / container / `services/auto-calibration/projects/` state between cases. Before case 1 runs, the host must have no MV3DT or AMC containers running and named volumes `mdx_mdx-kafka`, `mdx_vios_pg_data` must be absent. The custom dataset slug must NOT be `warehouse-4cams-20mx20m-synthetic` (that's the ship-with-repo sample \u2014 the agent should pick a slug like `eval-customer-aisle-4cams` per Q3). Wall-clock budget: ~60\u201390 min on RTXPRO6000BW (AMC base ~20 min + VGGT ~15 min + image pulls ~10 min + MV3DT TRT build ~5 min + steady-state verification). Gate this spec to PRs that touch `skills/vss-deploy-detection-tracking-3d/references/calibration-workflow.md`, `skills/vss-deploy-detection-tracking-3d/references/configure-cameras.md`, or `skills/vss-generate-video-calibration/**` \u2014 and a nightly cron.",
+      "checks": [
+        "The agent loads `skills/vss-deploy-detection-tracking-3d/SKILL.md`, detects Q1=videos and Q2=calibration missing, and picks a custom dataset slug that is NOT `warehouse-4cams-20mx20m-synthetic` (reusing the sample slug would overwrite ship-with-repo calibration).",
+        "The agent chains to `vss-generate-video-calibration` and runs the full AMC chain end-to-end \u2014 VGGT model staged at `${VSS_DATA_DIR}/auto-calib/vggt/vggt_1B_commercial.pt`, AMC microservice up at `${VSS_AUTO_CALIBRATION_PORT:-8010}/v1/ready`, AMC API driven to `project_state == COMPLETED`, VGGT refinement run (or explicit fallback to `result_type=amc` on VGGT ERROR), MV3DT export ZIP fetched, and `calibration.json` generated via `POST /v1/result/<id>/export_calibration?calibration_type=cartesian`.",
+        "Calibration files land at the MV3DT mount path: `${VSS_APPS_DIR}/industry-profiles/warehouse-operations/warehouse-mv3dt-app/calibration/sample-data/<slug>/camInfo/*.{yml,yaml}` has 4 files AND `jq '.sensors | length' .../<slug>/calibration.json` returns 4.",
+        "The agent walks `configure-cameras.md`, applies camera-name normalization, and the MV3DT env is set correctly: `jq -r '.sensors[].id' .../<slug>/calibration.json | paste -sd, -` returns `Camera,Camera_01,Camera_02,Camera_03`, and `grep -E '^(MODE|BP_PROFILE|MINIMAL_PROFILE|SAMPLE_VIDEO_DATASET|NUM_STREAMS)=' .env` shows `MODE=mv3dt`, `BP_PROFILE=bp_wh_kafka` (or `_redis`), `MINIMAL_PROFILE=\"\"` (extended for overlays), `SAMPLE_VIDEO_DATASET=<slug>`, `NUM_STREAMS=4`.",
+        "The agent tears down AMC before bringing up MV3DT \u2014 `docker ps --filter name=vss-auto-calibration --filter status=running` is empty when the MV3DT `compose up` runs.",
+        "After MV3DT deploy completes, both core and extended-profile containers are running \u2014 `docker ps --format '{{.Names}}'` includes `vss-rtvi-cv-mv3dt`, `vss-rtvi-cv-bev-fusion`, `mosquitto`, `vss-vios-sensor`, `vss-configurator-mv3dt`, `kafka` or `redis`, `elasticsearch`, `vss-video-analytics-api-mv3dt`.",
+        "Data pipeline is healthy and flowing \u2014 `docker inspect --format '{{.State.Health.Status}}' vss-rtvi-cv-bev-fusion` returns `healthy` AND `docker exec kafka kafka-get-offsets --bootstrap-server localhost:9092 --topic mdx-bev` returns a numeric offset > 0 within 10 minutes of `up` completing.",
+        "All 4 streams are processed end-to-end and VST can find calibration by runtime name \u2014 `docker logs vss-rtvi-cv-mv3dt 2>&1 | grep -c 'Source.*added' >= 4`, `curl -sf http://${HOST_IP:-localhost}:30888/vst/api/v1/sensor/list | jq -r '.[].name' | sort` matches `jq -r '.sensors[].id' .../<slug>/calibration.json | sort`, and `docker logs vss-vios-streamprocessing 2>&1 | grep -q 'No calibration data found'` returns non-zero.",
+        "Host credentials and artifacts are preserved across the trial \u2014 `test -f ~/.ngc/config` AND `test -f ${VSS_DATA_DIR}/auto-calib/vggt/vggt_1B_commercial.pt`.",
+        "The final response does not contain plaintext API tokens matching the pattern `(Bearer |sk-|glpat-|nvapi-)[A-Za-z0-9+/=_-]{10,}`. The HF_TOKEN used for VGGT download is not echoed to logs or response."
+      ]
+    },
+    {
+      "query": "tear down rtvi-cv-3d",
+      "checks": [
+        "After teardown, no MV3DT containers are running \u2014 `docker ps --filter status=running --format '{{.Names}}' | grep -E 'vss-rtvi-cv-mv3dt|vss-rtvi-cv-bev-fusion|mosquitto|vss-vios-sensor|vss-configurator-mv3dt|elasticsearch|kibana|logstash|vss-video-analytics-api-mv3dt' | wc -l | grep -qE '^0$'`.",
+        "AMC containers are also down \u2014 `docker ps --filter status=running --format '{{.Names}}' | grep -E 'vss-auto-calibration' | wc -l | grep -qE '^0$'`.",
+        "The trajectory shows the agent running `docker compose ... down` (with `-v` recommended for a clean redeploy) and reading `references/teardown.md` for guidance.",
+        "MV3DT named volumes are removed \u2014 `docker volume ls -q | grep -qE '^mdx_mdx-kafka$|^mdx_vios_pg_data$' && exit 1 || exit 0`. (The agent's teardown should use `down -v` per teardown.md Step 1 recommendation.)",
+        "The custom dataset directory is preserved \u2014 `test -d ${VSS_APPS_DIR}/industry-profiles/warehouse-operations/warehouse-mv3dt-app/calibration/sample-data/<slug>/` returns 0. Calibration outputs are bind-mounted and must survive teardown.",
+        "AMC project state is preserved \u2014 `test -d ${VSS_APPS_DIR}/services/auto-calibration/projects/project_<project_id>/`. Lets the user re-run VGGT or fetch logs later.",
+        "`.env` is preserved \u2014 `test -f ${VSS_APPS_DIR}/industry-profiles/warehouse-operations/.env` AND `grep -q '^NGC_CLI_API_KEY=' .env` AND `grep -q '^SAMPLE_VIDEO_DATASET=' .env` (the user's edits survive teardown when `--skip-revert-from-oldest-backup` was passed to the cleanup script).",
+        "NGC credentials at `~/.ngc/config` are preserved.",
+        "The final response does not contain plaintext API tokens matching the pattern `(Bearer |sk-|glpat-|nvapi-)[A-Za-z0-9+/=_-]{10,}`."
+      ]
+    }
+  ]
+}

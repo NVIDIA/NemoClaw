@@ -1,0 +1,1823 @@
+{
+  "automl_default_parameters": [
+    "train.optim.lr_step_size",
+    "model.enc_layers",
+    "dataset.augmentation.distortion_prob",
+    "model.dec_layers",
+    "dataset.batch_size",
+    "train.optim.weight_decay",
+    "train.optim.lr_decay",
+    "dataset.workers",
+    "train.optim.momentum",
+    "dataset.augmentation.iou_crop_prob",
+    "train.ema.decay",
+    "model.num_queries",
+    "train.optim.lr",
+    "train.optim.lr_backbone",
+    "model.num_select"
+  ],
+  "automl_disabled_parameters": [
+    "quantize",
+    "train.cudnn",
+    "gen_trt_engine.tensorrt.calibration.cal_image_dir",
+    "quantize.backend_kwargs",
+    "model.use_encoder_idx",
+    "train.gpu_ids",
+    "model.return_interm_indices",
+    "dataset.train_data_sources",
+    "wandb.tags",
+    "dataset.eval_class_ids",
+    "quantize.skip_names",
+    "model.feat_strides",
+    "inference.color_map",
+    "evaluate",
+    "inference",
+    "train",
+    "model.frozen_fm",
+    "model.loss_types",
+    "dataset.val_data_sources",
+    "distill",
+    "dataset.augmentation",
+    "gen_trt_engine",
+    "dataset.augmentation.train_spatial_size",
+    "gen_trt_engine.tensorrt.layers_precision",
+    "dataset",
+    "gen_trt_engine.tensorrt",
+    "quantize.layers",
+    "dataset.augmentation.eval_spatial_size",
+    "model.backbone_names",
+    "model",
+    "train.optim.lr_steps",
+    "train.freeze",
+    "evaluate.gpu_ids",
+    "train.optim",
+    "train.ema",
+    "gen_trt_engine.tensorrt.calibration",
+    "dataset.augmentation.multi_scales",
+    "model.hidden_dim",
+    "model.linear_proj_names",
+    "export",
+    "model.feat_channels",
+    "wandb",
+    "dataset.infer_data_sources",
+    "inference.gpu_ids",
+    "dataset.test_data_sources",
+    "dataset.quant_calibration_data_sources"
+  ],
+  "default": {
+    "dataset": {
+      "augmentation": {
+        "distortion_prob": 0.8,
+        "eval_spatial_size": [
+          640,
+          640
+        ],
+        "iou_crop_prob": 0.8,
+        "multi_scales": [
+          480,
+          512,
+          544,
+          576,
+          608,
+          640,
+          672,
+          704,
+          736,
+          768,
+          800
+        ],
+        "preserve_aspect_ratio": false,
+        "train_spatial_size": [
+          640,
+          640
+        ]
+      },
+      "batch_size": 4,
+      "dataset_type": "serialized",
+      "eval_class_ids": [
+        1
+      ],
+      "infer_data_sources": {
+        "classmap": "",
+        "image_dir": [
+          ""
+        ]
+      },
+      "num_classes": 80,
+      "pin_memory": true,
+      "quant_calibration_data_sources": {
+        "image_dir": "",
+        "json_file": ""
+      },
+      "remap_mscoco_category": false,
+      "test_data_sources": {
+        "image_dir": "",
+        "json_file": ""
+      },
+      "train_data_sources": [
+        {
+          "image_dir": "",
+          "json_file": ""
+        }
+      ],
+      "val_data_sources": {
+        "image_dir": "",
+        "json_file": ""
+      },
+      "workers": 8
+    },
+    "encryption_key": "",
+    "export": {
+      "batch_size": -1,
+      "checkpoint": "???",
+      "format": "onnx",
+      "gpu_id": 0,
+      "input_channel": 3,
+      "input_height": 544,
+      "input_width": 960,
+      "is_quantized": false,
+      "on_cpu": false,
+      "onnx_file": "???",
+      "opset_version": 17,
+      "results_dir": "",
+      "serialize_nvdsinfer": false,
+      "verbose": false
+    },
+    "model": {
+      "act": "silu",
+      "alpha": 0.75,
+      "aux_loss": true,
+      "backbone": "resnet_50",
+      "backbone_names": [
+        "backbone.0"
+      ],
+      "bbox_cost": 5.0,
+      "bbox_loss_coef": 5.0,
+      "class_cost": 2.0,
+      "clip_max_norm": 0.1,
+      "dec_layers": 6,
+      "depth_mult": 1,
+      "dim_feedforward": 1024,
+      "distillation_loss_coef": 1.0,
+      "dn_number": 100,
+      "dropout_ratio": 0.0,
+      "enc_act": "gelu",
+      "enc_layers": 1,
+      "eval_idx": -1,
+      "expansion": 1,
+      "feat_channels": [
+        256,
+        256,
+        256
+      ],
+      "feat_strides": [
+        8,
+        16,
+        32
+      ],
+      "frozen_fm": {
+        "backbone": "radio_v2-l",
+        "checkpoint": "",
+        "enabled": false
+      },
+      "gamma": 2.0,
+      "giou_cost": 2.0,
+      "giou_loss_coef": 2.0,
+      "hidden_dim": 256,
+      "linear_proj_names": [
+        "reference_points",
+        "sampling_offsets"
+      ],
+      "load_teacher_enc_dec": false,
+      "loss_types": [
+        "vfl",
+        "boxes"
+      ],
+      "nheads": 8,
+      "num_feature_levels": 3,
+      "num_queries": 300,
+      "num_select": 300,
+      "pe_temperature": 10000,
+      "pretrained_backbone_path": "",
+      "return_interm_indices": [
+        1,
+        2,
+        3
+      ],
+      "train_backbone": true,
+      "use_encoder_idx": [
+        2
+      ],
+      "vfl_loss_coef": 1.0
+    },
+    "model_name": "",
+    "quantize": {
+      "algorithm": "minmax",
+      "backend": "torchao",
+      "backend_kwargs": {},
+      "device": "cuda",
+      "layers": [],
+      "mode": "weight_only_ptq",
+      "model_path": "",
+      "results_dir": "",
+      "skip_names": []
+    },
+    "results_dir": "",
+    "train": {
+      "activation_checkpoint": true,
+      "checkpoint_interval": 1,
+      "checkpoint_interval_unit": "epoch",
+      "clip_grad_norm": 0.1,
+      "cudnn": {
+        "benchmark": false,
+        "deterministic": true
+      },
+      "distributed_strategy": "ddp",
+      "ema": {
+        "cpu_offload": false,
+        "decay": 0.999,
+        "every_n_steps": 1,
+        "validate_original_weights": false
+      },
+      "enable_ema": false,
+      "freeze": [],
+      "gpu_ids": [
+        0
+      ],
+      "is_dry_run": false,
+      "num_epochs": 10,
+      "num_gpus": 1,
+      "num_nodes": 1,
+      "optim": {
+        "lr": 0.0001,
+        "lr_backbone": 1e-05,
+        "lr_decay": 0.1,
+        "lr_scheduler": "MultiStep",
+        "lr_step_size": 1000,
+        "lr_steps": [
+          1000
+        ],
+        "momentum": 0.9,
+        "monitor_name": "val_loss",
+        "optimizer": "AdamW",
+        "warmup_steps": 0,
+        "weight_decay": 0.0001
+      },
+      "precision": "fp32",
+      "pretrained_model_path": "",
+      "results_dir": "",
+      "resume_training_checkpoint_path": "",
+      "seed": 1234,
+      "validation_interval": 1
+    },
+    "wandb": {
+      "enable": true,
+      "entity": "",
+      "group": "",
+      "name": "TAO Toolkit Training",
+      "project": "TAO Toolkit",
+      "reinit": false,
+      "run_id": "",
+      "save_code": false,
+      "sync_tensorboard": false,
+      "tags": [
+        "tao-toolkit"
+      ]
+    }
+  },
+  "popular": {
+    "evaluate": {
+      "gpu_ids": [
+        0
+      ],
+      "num_gpus": 1,
+      "num_nodes": 1
+    },
+    "gen_trt_engine": {
+      "batch_size": -1,
+      "gpu_id": 0,
+      "tensorrt": {
+        "calibration": {
+          "cal_batch_size": 1,
+          "cal_batches": 1
+        },
+        "min_batch_size": 1,
+        "opt_batch_size": 1
+      }
+    },
+    "inference": {
+      "gpu_ids": [
+        0
+      ],
+      "num_gpus": 1,
+      "num_nodes": 1
+    },
+    "train": {
+      "checkpoint_interval": 1,
+      "gpu_ids": [
+        0
+      ],
+      "num_epochs": 10,
+      "num_gpus": 1,
+      "num_nodes": 1,
+      "validation_interval": 1
+    }
+  },
+  "properties": {
+    "automl_disabled_parameters": [
+      "wandb",
+      "model",
+      "dataset",
+      "train",
+      "evaluate",
+      "inference",
+      "export",
+      "gen_trt_engine",
+      "distill",
+      "quantize"
+    ],
+    "dataset": {
+      "automl_default_parameters": [
+        "dataset.batch_size",
+        "dataset.workers"
+      ],
+      "automl_disabled_parameters": [
+        "dataset.train_data_sources",
+        "dataset.val_data_sources",
+        "dataset.test_data_sources",
+        "dataset.infer_data_sources",
+        "dataset.quant_calibration_data_sources",
+        "dataset.eval_class_ids",
+        "dataset.augmentation"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "augmentation": {
+          "distortion_prob": 0.8,
+          "eval_spatial_size": [
+            640,
+            640
+          ],
+          "iou_crop_prob": 0.8,
+          "multi_scales": [
+            480,
+            512,
+            544,
+            576,
+            608,
+            640,
+            672,
+            704,
+            736,
+            768,
+            800
+          ],
+          "preserve_aspect_ratio": false,
+          "train_spatial_size": [
+            640,
+            640
+          ]
+        },
+        "batch_size": 4,
+        "dataset_type": "serialized",
+        "eval_class_ids": [
+          1
+        ],
+        "infer_data_sources": {
+          "classmap": "",
+          "image_dir": [
+            ""
+          ]
+        },
+        "num_classes": 80,
+        "pin_memory": true,
+        "quant_calibration_data_sources": {
+          "image_dir": "",
+          "json_file": ""
+        },
+        "remap_mscoco_category": false,
+        "test_data_sources": {
+          "image_dir": "",
+          "json_file": ""
+        },
+        "train_data_sources": [
+          {
+            "image_dir": "",
+            "json_file": ""
+          }
+        ],
+        "val_data_sources": {
+          "image_dir": "",
+          "json_file": ""
+        },
+        "workers": 8
+      },
+      "description": "Configurable parameters to construct the dataset for a RT-DETR experiment.",
+      "properties": {
+        "augmentation": {
+          "automl_default_parameters": [
+            "dataset.augmentation.distortion_prob",
+            "dataset.augmentation.iou_crop_prob"
+          ],
+          "automl_disabled_parameters": [
+            "dataset.augmentation.multi_scales",
+            "dataset.augmentation.train_spatial_size",
+            "dataset.augmentation.eval_spatial_size"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "distortion_prob": 0.8,
+            "eval_spatial_size": [
+              640,
+              640
+            ],
+            "iou_crop_prob": 0.8,
+            "multi_scales": [
+              480,
+              512,
+              544,
+              576,
+              608,
+              640,
+              672,
+              704,
+              736,
+              768,
+              800
+            ],
+            "preserve_aspect_ratio": false,
+            "train_spatial_size": [
+              640,
+              640
+            ]
+          },
+          "description": "Configuration parameters for data augmentation",
+          "properties": {
+            "distortion_prob": {
+              "automl_enabled": true,
+              "default": 0.8,
+              "description": "The probability for RandomPhotometricDistort",
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "distortion probability",
+              "type": "float"
+            },
+            "eval_spatial_size": {
+              "automl_enabled": false,
+              "default": [
+                640,
+                640
+              ],
+              "description": "Input resolution to run evaluation during validation and testing. This is in the [h, w] order.",
+              "title": "evaluation spatial size",
+              "type": "list"
+            },
+            "iou_crop_prob": {
+              "automl_enabled": true,
+              "default": 0.8,
+              "description": "The probability for RandomIoUCrop",
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "iou crop probability",
+              "type": "float"
+            },
+            "multi_scales": {
+              "automl_enabled": false,
+              "default": [
+                480,
+                512,
+                544,
+                576,
+                608,
+                640,
+                672,
+                704,
+                736,
+                768,
+                800
+              ],
+              "description": "A list of sizes to perform random resize.",
+              "title": "multi-scales",
+              "type": "list"
+            },
+            "preserve_aspect_ratio": {
+              "default": false,
+              "description": "Flag to enable resize with preserving the aspect ratio.",
+              "title": "preserve aspect ratio",
+              "type": "bool"
+            },
+            "train_spatial_size": {
+              "automl_enabled": false,
+              "default": [
+                640,
+                640
+              ],
+              "description": "Input resolution to run evaluation during training. This is in the [h, w] order.",
+              "title": "train spatial size",
+              "type": "list"
+            }
+          },
+          "title": "augmentation",
+          "type": "collection"
+        },
+        "batch_size": {
+          "automl_enabled": true,
+          "default": 4,
+          "description": "The batch size for training and validation",
+          "maximum": Infinity,
+          "minimum": 1,
+          "title": "batch size",
+          "type": "int"
+        },
+        "dataset_type": {
+          "default": "serialized",
+          "description": "If set to default, we follow the standard CocoDetection` dataset structure\n                    from the torchvision which loads COCO annotation in every subprocess. This leads to redudant\n                    copy of data and can cause RAM to explod if workers` is high. If set to serialized,\n                    the data is serialized through pickle and torch.Tensor` that allows the data to be shared\n                    across subprocess. As a result, RAM usage can be greatly improved.",
+          "enum": [
+            "serialized",
+            "default"
+          ],
+          "title": "dataset type",
+          "type": "categorical"
+        },
+        "eval_class_ids": {
+          "automl_enabled": false,
+          "default": [
+            1
+          ],
+          "description": "IDs of the classes for evaluation.",
+          "title": "eval class ids",
+          "type": "list"
+        },
+        "infer_data_sources": {
+          "automl_enabled": false,
+          "default": {
+            "classmap": "",
+            "image_dir": [
+              ""
+            ]
+          },
+          "description": "The data source for inference:\n                    * image_dir : The list of directories that contains the inference images\n                    * classmap : The path of the .txt file that contains class names",
+          "title": "infer data sources",
+          "type": "collection"
+        },
+        "num_classes": {
+          "default": 80,
+          "description": "The number of classes in the training data",
+          "math_cond": ">0",
+          "maximum": Infinity,
+          "minimum": 1,
+          "title": "num classes",
+          "type": "int"
+        },
+        "pin_memory": {
+          "default": true,
+          "description": "Flag to enable the dataloader to allocated pagelocked memory for faster\n                    of data between the CPU and GPU.",
+          "title": "pin_memory",
+          "type": "bool"
+        },
+        "quant_calibration_data_sources": {
+          "automl_enabled": false,
+          "default": {
+            "image_dir": "",
+            "json_file": ""
+          },
+          "description": "The data source for quantization calibration:\n                    * image_dir : The directory that contains the quantization calibration images\n                    * json_file(optional) : The path of the JSON file, which uses quantization calibration-                        annotation COCO format",
+          "title": "quantization calibration data sources",
+          "type": "collection"
+        },
+        "remap_mscoco_category": {
+          "default": false,
+          "description": "Flag to enable mapping of MSCOCO 91 classes to 80. Only required if we're directly\n                    training using the original COCO annotation files.\n                    For custom dataset, this value needs to be set False",
+          "title": "remap mscoco category",
+          "type": "bool"
+        },
+        "test_data_sources": {
+          "automl_enabled": false,
+          "default": {
+            "image_dir": "",
+            "json_file": ""
+          },
+          "description": "The data source for testing:\n                    * image_dir : The directory that contains the test images\n                    * json_file : The path of the JSON file, which uses test-annotation COCO format",
+          "title": "test data sources",
+          "type": "collection"
+        },
+        "train_data_sources": {
+          "automl_enabled": false,
+          "default": [
+            {
+              "image_dir": "",
+              "json_file": ""
+            }
+          ],
+          "description": "The list of data sources for training:\n                    * image_dir : The directory that contains the training images\n                    * json_file : The path of the JSON file, which uses training-annotation COCO format",
+          "title": "train data sources",
+          "type": "list"
+        },
+        "val_data_sources": {
+          "automl_enabled": false,
+          "default": {
+            "image_dir": "",
+            "json_file": ""
+          },
+          "description": "The list of data sources for validation:\n                    * image_dir : The directory that contains the validation images\n                    * json_file : The path of the JSON file, which uses validation-annotation COCO format",
+          "title": "validation data sources",
+          "type": "collection"
+        },
+        "workers": {
+          "automl_enabled": true,
+          "default": 8,
+          "description": "The number of parallel workers processing data",
+          "maximum": Infinity,
+          "minimum": 1,
+          "title": "batch size",
+          "type": "int"
+        }
+      },
+      "type": "collection"
+    },
+    "distill": {
+      "automl_enabled": false,
+      "description": "Configurable parameters to construct the distiller for a RT-DETR experiment.",
+      "type": "collection"
+    },
+    "encryption_key": {
+      "default": "",
+      "description": "Key for encrypting model checkpoints",
+      "title": "Encryption key",
+      "type": "string"
+    },
+    "export": {
+      "automl_enabled": false,
+      "default": {
+        "batch_size": -1,
+        "checkpoint": "???",
+        "format": "onnx",
+        "gpu_id": 0,
+        "input_channel": 3,
+        "input_height": 544,
+        "input_width": 960,
+        "is_quantized": false,
+        "on_cpu": false,
+        "onnx_file": "???",
+        "opset_version": 17,
+        "results_dir": "",
+        "serialize_nvdsinfer": false,
+        "verbose": false
+      },
+      "description": "Configurable parameters to construct the exporter for a RT-DETR experiment.",
+      "properties": {
+        "batch_size": {
+          "default": -1,
+          "description": "The batch size of the input Tensor for the engine.\n                    A value of :code:`-1` implies dynamic tensor shapes.",
+          "minimum": -1,
+          "title": "batch size",
+          "type": "int"
+        },
+        "checkpoint": {
+          "default": "???",
+          "description": "Path to the checkpoint file to run export.",
+          "title": "checkpoint",
+          "type": "string"
+        },
+        "format": {
+          "default": "onnx",
+          "description": "File format to export to.",
+          "enum": [
+            "onnx",
+            "xdl"
+          ],
+          "title": "export format",
+          "type": "categorical"
+        },
+        "gpu_id": {
+          "default": 0,
+          "description": "The index of the GPU to build the TensorRT engine.",
+          "title": "GPU ID",
+          "type": "int"
+        },
+        "input_channel": {
+          "default": 3,
+          "description": "Number of channels in the input Tensor.",
+          "enum": [
+            1,
+            3
+          ],
+          "minimum": 1,
+          "title": "input channel",
+          "type": "ordered_int"
+        },
+        "input_height": {
+          "default": 544,
+          "description": "Height of the input image tensor.",
+          "minimum": 32,
+          "title": "input height",
+          "type": "int"
+        },
+        "input_width": {
+          "default": 960,
+          "description": "Width of the input image tensor.",
+          "minimum": 32,
+          "title": "input width",
+          "type": "int"
+        },
+        "is_quantized": {
+          "default": false,
+          "description": "Flag to indicate if the model is quantized",
+          "title": "Flag to indicate if the model is quantized",
+          "type": "bool"
+        },
+        "on_cpu": {
+          "default": false,
+          "description": "Flag to export CPU compatible model.",
+          "title": "on cpu",
+          "type": "bool"
+        },
+        "onnx_file": {
+          "default": "???",
+          "description": "\n        Path to the onnx model file.\n        ",
+          "title": "onnx file",
+          "type": "string"
+        },
+        "opset_version": {
+          "default": 17,
+          "description": "Operator set version of the ONNX model used to generate\n                    the TensorRT engine.",
+          "minimum": 1,
+          "title": "opset version",
+          "type": "int"
+        },
+        "results_dir": {
+          "default": "",
+          "description": "\n        Path to where all the assets generated from a task are stored.\n        ",
+          "title": "Results directory",
+          "type": "string"
+        },
+        "serialize_nvdsinfer": {
+          "default": false,
+          "description": "Flag to enable serializing the required\n                    configs for integrating with DeepStream.",
+          "title": "Serialize DeepStream config.",
+          "type": "bool"
+        },
+        "verbose": {
+          "default": false,
+          "description": "Flag to enable verbose TensorRT logging.",
+          "title": "verbose",
+          "type": "bool"
+        }
+      },
+      "type": "collection"
+    },
+    "model": {
+      "automl_default_parameters": [
+        "model.num_queries",
+        "model.num_select",
+        "model.enc_layers",
+        "model.dec_layers"
+      ],
+      "automl_disabled_parameters": [
+        "model.return_interm_indices",
+        "model.feat_strides",
+        "model.feat_channels",
+        "model.use_encoder_idx",
+        "model.hidden_dim",
+        "model.loss_types",
+        "model.backbone_names",
+        "model.linear_proj_names",
+        "model.frozen_fm"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "act": "silu",
+        "alpha": 0.75,
+        "aux_loss": true,
+        "backbone": "resnet_50",
+        "backbone_names": [
+          "backbone.0"
+        ],
+        "bbox_cost": 5.0,
+        "bbox_loss_coef": 5.0,
+        "class_cost": 2.0,
+        "clip_max_norm": 0.1,
+        "dec_layers": 6,
+        "depth_mult": 1,
+        "dim_feedforward": 1024,
+        "distillation_loss_coef": 1.0,
+        "dn_number": 100,
+        "dropout_ratio": 0.0,
+        "enc_act": "gelu",
+        "enc_layers": 1,
+        "eval_idx": -1,
+        "expansion": 1,
+        "feat_channels": [
+          256,
+          256,
+          256
+        ],
+        "feat_strides": [
+          8,
+          16,
+          32
+        ],
+        "frozen_fm": {
+          "backbone": "radio_v2-l",
+          "checkpoint": "",
+          "enabled": false
+        },
+        "gamma": 2.0,
+        "giou_cost": 2.0,
+        "giou_loss_coef": 2.0,
+        "hidden_dim": 256,
+        "linear_proj_names": [
+          "reference_points",
+          "sampling_offsets"
+        ],
+        "load_teacher_enc_dec": false,
+        "loss_types": [
+          "vfl",
+          "boxes"
+        ],
+        "nheads": 8,
+        "num_feature_levels": 3,
+        "num_queries": 300,
+        "num_select": 300,
+        "pe_temperature": 10000,
+        "pretrained_backbone_path": "",
+        "return_interm_indices": [
+          1,
+          2,
+          3
+        ],
+        "train_backbone": true,
+        "use_encoder_idx": [
+          2
+        ],
+        "vfl_loss_coef": 1.0
+      },
+      "description": "Configurable parameters to construct the model for a RT-DETR experiment.",
+      "properties": {
+        "act": {
+          "default": "silu",
+          "description": "The activation used for top-down FPN and bottom-up PAN.",
+          "title": "activation",
+          "type": "string"
+        },
+        "alpha": {
+          "default": 0.75,
+          "description": "The alpha value in the varifocal loss.",
+          "math_cond": "> 0.0",
+          "title": "alpha",
+          "type": "float"
+        },
+        "aux_loss": {
+          "default": true,
+          "description": "A flag specifying whether to use auxiliary\n                    decoding losses (loss at each decoder layer)",
+          "title": "Auxiliary Loss",
+          "type": "bool"
+        },
+        "backbone": {
+          "default": "resnet_50",
+          "description": "The backbone name of the model.\n                    TAO implementation of RT-DETR support ResNet, EfficientViT, FAN, and ConvNext.",
+          "enum": [
+            "resnet_18",
+            "resnet_34",
+            "resnet_50",
+            "resnet_101",
+            "convnext_tiny",
+            "convnext_small",
+            "convnext_base",
+            "convnext_large",
+            "convnext_xlarge",
+            "fan_tiny",
+            "fan_small",
+            "fan_base",
+            "fan_large",
+            "efficientvit_b0",
+            "efficientvit_b1",
+            "efficientvit_b2",
+            "efficientvit_b3",
+            "efficientvit_l0",
+            "efficientvit_l1",
+            "efficientvit_l2",
+            "efficientvit_l3"
+          ],
+          "title": "backbone",
+          "type": "categorical"
+        },
+        "backbone_names": {
+          "automl_enabled": false,
+          "default": [
+            "backbone.0"
+          ],
+          "description": "Prefix of the tensor names corresponding to the backbone.",
+          "title": "Backbone tensor name prefix",
+          "type": "list"
+        },
+        "bbox_cost": {
+          "default": 5.0,
+          "description": "The relative weight of the L1 error of the bounding box coordinates in the matching cost.",
+          "maximum": Infinity,
+          "minimum": 0.0,
+          "title": "BBox cost coefficient",
+          "type": "float"
+        },
+        "bbox_loss_coef": {
+          "default": 5.0,
+          "description": "The relative weight of the L1 error of the bounding box coordinates in the loss function.",
+          "maximum": Infinity,
+          "minimum": 0.0,
+          "title": "BBox loss coefficient",
+          "type": "float"
+        },
+        "class_cost": {
+          "default": 2.0,
+          "description": "The relative weight of the classification error in the matching cost.",
+          "maximum": Infinity,
+          "minimum": 0.0,
+          "title": "Class cost coefficient",
+          "type": "float"
+        },
+        "clip_max_norm": {
+          "default": 0.1,
+          "title": "clip max norm",
+          "type": "float"
+        },
+        "dec_layers": {
+          "automl_enabled": true,
+          "default": 6,
+          "description": "Numer of decoder layers in the transformer",
+          "minimum": 1,
+          "title": "decoder layers",
+          "type": "int"
+        },
+        "depth_mult": {
+          "default": 1,
+          "description": "The number of RegVGGBlock used in CSPRepLayer.",
+          "maximum": Infinity,
+          "minimum": 1,
+          "title": "expansion",
+          "type": "int"
+        },
+        "dim_feedforward": {
+          "default": 1024,
+          "description": "Dimension of the feedforward network",
+          "minimum": 1,
+          "title": "dim feedforward",
+          "type": "int"
+        },
+        "distillation_loss_coef": {
+          "default": 1.0,
+          "description": "The coefficient for the distillation loss during distill.",
+          "minimum": 0.0,
+          "title": "distillation loss coefficient",
+          "type": "float"
+        },
+        "dn_number": {
+          "default": 100,
+          "description": "The number of denoising queries.",
+          "maximum": Infinity,
+          "minimum": 0,
+          "title": "denoising number",
+          "type": "int"
+        },
+        "dropout_ratio": {
+          "default": 0.0,
+          "description": "The probability to drop hidden units.",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "drop out ratio",
+          "type": "float"
+        },
+        "enc_act": {
+          "default": "gelu",
+          "description": "The activation used for the encoder.",
+          "title": "encoder activation",
+          "type": "string"
+        },
+        "enc_layers": {
+          "automl_enabled": true,
+          "default": 1,
+          "description": "Numer of encoder layers in the transformer",
+          "minimum": 1,
+          "title": "encoder layers",
+          "type": "int"
+        },
+        "eval_idx": {
+          "default": -1,
+          "description": "The index of decoder layer to use for evaluation. By default, use the last decoder layer.",
+          "maximum": Infinity,
+          "minimum": -1,
+          "title": "evaluation index",
+          "type": "int"
+        },
+        "expansion": {
+          "default": 1,
+          "description": "The expansion raito for hidden dimesnion used in CSPRepLayer.",
+          "maximum": Infinity,
+          "minimum": 0,
+          "title": "expansion",
+          "type": "int"
+        },
+        "feat_channels": {
+          "automl_enabled": false,
+          "default": [
+            256,
+            256,
+            256
+          ],
+          "description": "The feature channel sizes in decoder.",
+          "title": "feature channels",
+          "type": "list"
+        },
+        "feat_strides": {
+          "automl_enabled": false,
+          "default": [
+            8,
+            16,
+            32
+          ],
+          "description": "The stride used as grid size of positional embedding at each encoder layer.",
+          "title": "feature strides",
+          "type": "list"
+        },
+        "frozen_fm": {
+          "automl_enabled": false,
+          "default": {
+            "backbone": "radio_v2-l",
+            "checkpoint": "",
+            "enabled": false
+          },
+          "description": "Configurable parameters to construct the frozen foundation model.",
+          "properties": {
+            "backbone": {
+              "default": "radio_v2-l",
+              "description": "Name of the frozen foundation model.",
+              "enum": [
+                "radio_v2-b",
+                "radio_v2-l",
+                "radio_v2-h"
+              ],
+              "title": "Name of the frozen foundation model",
+              "type": "categorical"
+            },
+            "checkpoint": {
+              "default": "",
+              "description": "Path to a pretrained foundation model.",
+              "title": "Pretrained foundation model path or name",
+              "type": "string"
+            },
+            "enabled": {
+              "default": false,
+              "description": "Flag to enable frozen foundation model to be added to RT-DETR.",
+              "title": "Enable frozen FM",
+              "type": "bool"
+            }
+          },
+          "type": "collection"
+        },
+        "gamma": {
+          "default": 2.0,
+          "description": "The gamma value in the varifocal loss.",
+          "math_cond": "> 0.0",
+          "title": "gamma",
+          "type": "float"
+        },
+        "giou_cost": {
+          "default": 2.0,
+          "description": "The relative weight of the GIoU loss of the bounding box in the matching cost.",
+          "maximum": Infinity,
+          "minimum": 0.0,
+          "title": "GIoU cost coefficient",
+          "type": "float"
+        },
+        "giou_loss_coef": {
+          "default": 2.0,
+          "description": "The relative weight of the GIoU loss of the bounding box in the loss function.",
+          "maximum": Infinity,
+          "minimum": 0.0,
+          "title": "GIoU loss coefficient",
+          "type": "float"
+        },
+        "hidden_dim": {
+          "automl_enabled": false,
+          "default": 256,
+          "description": "Dimension of the hidden units.",
+          "type": "int"
+        },
+        "linear_proj_names": {
+          "automl_enabled": false,
+          "default": [
+            "reference_points",
+            "sampling_offsets"
+          ],
+          "description": "Linear projection layer names.",
+          "title": "linear projection names",
+          "type": "list"
+        },
+        "load_teacher_enc_dec": {
+          "default": false,
+          "description": "Flag to load teacher's encoder and decoder weights.",
+          "title": "Load teacher's encoder and decoder weights",
+          "type": "bool"
+        },
+        "loss_types": {
+          "automl_enabled": false,
+          "default": [
+            "vfl",
+            "boxes"
+          ],
+          "description": "Losses to be used during training",
+          "title": "loss_types",
+          "type": "list"
+        },
+        "nheads": {
+          "default": 8,
+          "description": "Number of heads",
+          "title": "nheads",
+          "type": "int"
+        },
+        "num_feature_levels": {
+          "default": 3,
+          "description": "The number of feature levels to use in the model",
+          "maximum": 4,
+          "minimum": 1,
+          "title": "number of feature levels",
+          "type": "int"
+        },
+        "num_queries": {
+          "automl_enabled": true,
+          "default": 300,
+          "description": "The number of queries",
+          "maximum": Infinity,
+          "minimum": 1,
+          "parent_param": "TRUE",
+          "title": "number of queries",
+          "type": "int"
+        },
+        "num_select": {
+          "automl_enabled": true,
+          "default": 300,
+          "depends_on": "model.num_queries",
+          "description": "The number of top-K predictions selected during post-process. Must be < num_queries * num_classes",
+          "maximum": 1000,
+          "minimum": 1,
+          "title": "num select",
+          "type": "int"
+        },
+        "pe_temperature": {
+          "default": 10000,
+          "description": "The temperature applied to the positional sine embedding.",
+          "maximum": Infinity,
+          "minimum": 1,
+          "title": "pe_temperature",
+          "type": "int"
+        },
+        "pretrained_backbone_path": {
+          "default": "",
+          "description": "[Optional] Path to a pretrained backbone file.",
+          "title": "pretrained backbone path",
+          "type": "string"
+        },
+        "return_interm_indices": {
+          "automl_enabled": false,
+          "default": [
+            1,
+            2,
+            3
+          ],
+          "description": "The index of feature levels to use in the model. The length must match `num_feature_levels`.",
+          "title": "return interim indices",
+          "type": "list"
+        },
+        "train_backbone": {
+          "default": true,
+          "description": "Flag to set backbone weights as trainable or frozen.\n                    When set to `False`, the backbone weights will be frozen.",
+          "title": "Train backbone",
+          "type": "bool"
+        },
+        "use_encoder_idx": {
+          "automl_enabled": false,
+          "default": [
+            2
+          ],
+          "description": "The index of multi-scale backbone features to pass to encoder.",
+          "title": "use encoder index",
+          "type": "list"
+        },
+        "vfl_loss_coef": {
+          "default": 1.0,
+          "description": "The relative weight of the varifocal error in the loss function.",
+          "maximum": Infinity,
+          "minimum": 0.0,
+          "title": "varifocal loss coefficient",
+          "type": "float"
+        }
+      },
+      "type": "collection"
+    },
+    "model_name": {
+      "default": "",
+      "description": "Name of model if invoking task via :code:`model_agnostic`",
+      "title": "Model name",
+      "type": "string"
+    },
+    "quantize": {
+      "automl_disabled_parameters": [
+        "quantize.layers",
+        "quantize.skip_names",
+        "quantize.backend_kwargs"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "algorithm": "minmax",
+        "backend": "torchao",
+        "backend_kwargs": {},
+        "device": "cuda",
+        "layers": [],
+        "mode": "weight_only_ptq",
+        "model_path": "",
+        "results_dir": "",
+        "skip_names": []
+      },
+      "description": "Configurable parameters to run model quantization for a RT-DETR experiment.",
+      "properties": {
+        "algorithm": {
+          "default": "minmax",
+          "description": "Calibration/optimization algorithm. Used by ModelOpt backends (modelopt.pytorch and modelopt.onnx). Ignored by torchao backend.",
+          "enum": [
+            "minmax",
+            "max",
+            "entropy",
+            "awq_clip",
+            "awq_lite",
+            "awq_full",
+            "rtn_dq"
+          ],
+          "title": "Calibration algorithm",
+          "type": "categorical"
+        },
+        "backend": {
+          "default": "torchao",
+          "description": "The quantization backend to use",
+          "enum": [
+            "modelopt.pytorch",
+            "torchao",
+            "modelopt.onnx"
+          ],
+          "title": "Quantization backend",
+          "type": "categorical"
+        },
+        "backend_kwargs": {
+          "automl_enabled": false,
+          "description": "Additional keyword arguments to pass to the backend",
+          "title": "Backend kwargs",
+          "type": "collection"
+        },
+        "device": {
+          "default": "cuda",
+          "description": "Device to use for calibration. Accepts 'cuda' (uses default GPU), 'cpu', 'trt' (TensorRT for ONNX backend), or specific GPU device like 'cuda:0', 'cuda:1', etc. If 'cuda' is specified but no GPU is available, the framework will automatically fall back to 'cpu'. Note: 'trt' is only supported by the modelopt.onnx backend for ONNX Runtime with TensorRT execution provider.",
+          "pattern": "^(cuda|cpu|trt|cuda:[0-9]+)$",
+          "title": "Calibration device",
+          "type": "string"
+        },
+        "layers": {
+          "automl_enabled": false,
+          "default": [],
+          "description": "List of per-module quantization configurations. Each entry specifies which modules to quantize and their data types. This is the primary way to configure quantization.",
+          "title": "Layer quantization configs",
+          "type": "list"
+        },
+        "mode": {
+          "default": "weight_only_ptq",
+          "description": "The quantization mode to use",
+          "enum": [
+            "static_ptq",
+            "weight_only_ptq"
+          ],
+          "title": "Quantization mode",
+          "type": "categorical"
+        },
+        "model_path": {
+          "default": "",
+          "description": "Path to the model to be quantized. For ONNX backend, path to ONNX file.",
+          "title": "Model path",
+          "type": "string"
+        },
+        "results_dir": {
+          "default": "",
+          "description": "Path to where all the assets generated from a task are stored.",
+          "title": "Results directory",
+          "type": "string"
+        },
+        "skip_names": {
+          "automl_enabled": false,
+          "default": [],
+          "description": "List of module/layer names or patterns to exclude from quantization",
+          "title": "Skip names",
+          "type": "list"
+        }
+      },
+      "required": [
+        "model_path",
+        "results_dir"
+      ],
+      "type": "collection"
+    },
+    "results_dir": {
+      "default": "",
+      "description": "\n        Path to where all the assets generated from a task are stored.\n        ",
+      "title": "Results directory",
+      "type": "string"
+    },
+    "train": {
+      "automl_disabled_parameters": [
+        "train.gpu_ids",
+        "train.cudnn",
+        "train.freeze",
+        "train.ema",
+        "train.optim"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "activation_checkpoint": true,
+        "checkpoint_interval": 1,
+        "checkpoint_interval_unit": "epoch",
+        "clip_grad_norm": 0.1,
+        "cudnn": {
+          "benchmark": false,
+          "deterministic": true
+        },
+        "distributed_strategy": "ddp",
+        "ema": {
+          "cpu_offload": false,
+          "decay": 0.999,
+          "every_n_steps": 1,
+          "validate_original_weights": false
+        },
+        "enable_ema": false,
+        "freeze": [],
+        "gpu_ids": [
+          0
+        ],
+        "is_dry_run": false,
+        "num_epochs": 10,
+        "num_gpus": 1,
+        "num_nodes": 1,
+        "optim": {
+          "lr": 0.0001,
+          "lr_backbone": 1e-05,
+          "lr_decay": 0.1,
+          "lr_scheduler": "MultiStep",
+          "lr_step_size": 1000,
+          "lr_steps": [
+            1000
+          ],
+          "momentum": 0.9,
+          "monitor_name": "val_loss",
+          "optimizer": "AdamW",
+          "warmup_steps": 0,
+          "weight_decay": 0.0001
+        },
+        "precision": "fp32",
+        "pretrained_model_path": "",
+        "results_dir": "",
+        "resume_training_checkpoint_path": "",
+        "seed": 1234,
+        "validation_interval": 1
+      },
+      "description": "Configurable parameters to construct the trainer for a RT-DETR experiment.",
+      "popular": [
+        "validation_interval",
+        "checkpoint_interval",
+        "num_gpus",
+        "num_nodes",
+        "num_epochs",
+        "gpu_ids"
+      ],
+      "properties": {
+        "activation_checkpoint": {
+          "default": true,
+          "description": "\n        A True value instructs train to recompute in backward pass to save GPU memory,\n        rather than storing activations.",
+          "title": "enable activation checkpointing",
+          "type": "bool"
+        },
+        "checkpoint_interval": {
+          "default": 1,
+          "description": "The interval (in epochs) at which a checkpoint will be saved. Helps resume training.",
+          "minimum": 1,
+          "popular": true,
+          "title": "Checkpoint interval",
+          "type": "int"
+        },
+        "checkpoint_interval_unit": {
+          "default": "epoch",
+          "description": "The unit of the checkpoint interval.",
+          "enum": [
+            "epoch",
+            "step"
+          ],
+          "title": "Checkpoint interval unit",
+          "type": "categorical"
+        },
+        "clip_grad_norm": {
+          "default": 0.1,
+          "description": "\n        Amount to clip the gradient by L2 Norm.\n        A value of 0.0 specifies no clipping.",
+          "math_cond": "> 0.0",
+          "title": "clip gradient norm",
+          "type": "float"
+        },
+        "cudnn": {
+          "automl_enabled": false,
+          "default": {
+            "benchmark": false,
+            "deterministic": true
+          },
+          "properties": {
+            "benchmark": {
+              "default": false,
+              "type": "bool"
+            },
+            "deterministic": {
+              "default": true,
+              "type": "bool"
+            }
+          },
+          "type": "collection"
+        },
+        "distributed_strategy": {
+          "default": "ddp",
+          "description": "\n        The multi-GPU training strategy.\n        DDP (Distributed Data Parallel) and Fully Sharded DDP are supported.",
+          "enum": [
+            "ddp",
+            "fsdp"
+          ],
+          "title": "distributed_strategy",
+          "type": "categorical"
+        },
+        "ema": {
+          "automl_default_parameters": [
+            "train.ema.decay"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "cpu_offload": false,
+            "decay": 0.999,
+            "every_n_steps": 1,
+            "validate_original_weights": false
+          },
+          "description": "Hyper parameters to configure the Exponential Moving Average.",
+          "properties": {
+            "cpu_offload": {
+              "default": false,
+              "description": "Offload EMA calculation to CPU. Note that this will significantly slow down training.",
+              "title": "cpu offload",
+              "type": "bool"
+            },
+            "decay": {
+              "automl_enabled": true,
+              "default": 0.999,
+              "description": "The decreasing factor for the exponential moving average.",
+              "math_cond": "> 0.0",
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "ema decay",
+              "type": "float"
+            },
+            "every_n_steps": {
+              "default": 1,
+              "description": "The number of steps to perform exponential moving average.",
+              "maximum": Infinity,
+              "minimum": 1,
+              "title": "every_n_steps",
+              "type": "int"
+            },
+            "validate_original_weights": {
+              "default": false,
+              "description": "Whether to run evaluation using the non-EMA weight.",
+              "title": "validate original weights",
+              "type": "bool"
+            }
+          },
+          "title": "ema",
+          "type": "collection"
+        },
+        "enable_ema": {
+          "default": false,
+          "description": "Whether to enable Exponential Moving Average during training.",
+          "title": "enable ema",
+          "type": "bool"
+        },
+        "freeze": {
+          "automl_enabled": false,
+          "default": [],
+          "description": "\n        List of layer names to freeze.\n        Example: [\"backbone\", \"encoder\", \"decoder\"].",
+          "title": "freeze",
+          "type": "list"
+        },
+        "gpu_ids": {
+          "automl_enabled": false,
+          "default": [
+            0
+          ],
+          "description": "\n        List of GPU IDs to run the training on. The length of this list\n        must be equal to the number of gpus in train.num_gpus.",
+          "popular": true,
+          "title": "GPU IDs",
+          "type": "list"
+        },
+        "is_dry_run": {
+          "default": false,
+          "description": "\n        Whether to run the trainer in Dry Run mode. This serves\n        as a good means to validate the spec file and run a sanity check on the trainer\n        without actually initializing and running the trainer.",
+          "title": "Is dry run",
+          "type": "bool"
+        },
+        "num_epochs": {
+          "default": 10,
+          "description": "Number of epochs to run the training.",
+          "maximum": Infinity,
+          "minimum": 1,
+          "popular": true,
+          "title": "Number of epochs",
+          "type": "int"
+        },
+        "num_gpus": {
+          "default": 1,
+          "description": "The number of GPUs to run the train job.",
+          "minimum": 1,
+          "popular": true,
+          "title": "Number of GPUs",
+          "type": "int"
+        },
+        "num_nodes": {
+          "default": 1,
+          "description": "Number of nodes to run the training on. If > 1, then multi-node is enabled.",
+          "minimum": 1,
+          "popular": true,
+          "title": "Number of nodes",
+          "type": "int"
+        },
+        "optim": {
+          "automl_default_parameters": [
+            "train.optim.lr",
+            "train.optim.lr_backbone",
+            "train.optim.momentum",
+            "train.optim.weight_decay",
+            "train.optim.lr_step_size",
+            "train.optim.lr_decay"
+          ],
+          "automl_disabled_parameters": [
+            "train.optim.lr_steps"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "lr": 0.0001,
+            "lr_backbone": 1e-05,
+            "lr_decay": 0.1,
+            "lr_scheduler": "MultiStep",
+            "lr_step_size": 1000,
+            "lr_steps": [
+              1000
+            ],
+            "momentum": 0.9,
+            "monitor_name": "val_loss",
+            "optimizer": "AdamW",
+            "warmup_steps": 0,
+            "weight_decay": 0.0001
+          },
+          "description": "Hyper parameters to configure the optimizer.",
+          "properties": {
+            "lr": {
+              "automl_enabled": true,
+              "default": 0.0001,
+              "description": "The initial learning rate for training the model, excluding the backbone.",
+              "math_cond": "> 0.0",
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "learning rate",
+              "type": "float"
+            },
+            "lr_backbone": {
+              "automl_enabled": true,
+              "default": 1e-05,
+              "description": "The initial learning rate for training the backbone.",
+              "math_cond": "> 0.0",
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "learning rate - backbone",
+              "type": "float"
+            },
+            "lr_decay": {
+              "automl_enabled": true,
+              "default": 0.1,
+              "description": "The decreasing factor for the learning rate scheduler.",
+              "math_cond": "> 0.0",
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "learning rate decay",
+              "type": "float"
+            },
+            "lr_scheduler": {
+              "default": "MultiStep",
+              "description": "The learning scheduler:\n                    * MultiStep : Decrease the lr by lr_decay from lr_steps\n                    * StepLR : Decrease the lr by lr_decay at every lr_step_size.",
+              "enum": [
+                "MultiStep",
+                "StepLR"
+              ],
+              "title": "learning rate scheduler",
+              "type": "categorical"
+            },
+            "lr_step_size": {
+              "automl_enabled": true,
+              "default": 1000,
+              "description": "The number of steps to decrease the learning rate in the StepLR.",
+              "math_cond": "> 0",
+              "maximum": 10000,
+              "minimum": 1,
+              "title": "learning rate step size",
+              "type": "int"
+            },
+            "lr_steps": {
+              "automl_enabled": false,
+              "default": [
+                1000
+              ],
+              "description": "The steps at which the learning rate must be decreased.\n                    This is applicable only with the MultiStep LR.",
+              "title": "learning rate decay steps",
+              "type": "list"
+            },
+            "momentum": {
+              "automl_enabled": true,
+              "default": 0.9,
+              "description": "The momentum for the AdamW optimizer.",
+              "math_cond": "> 0.0",
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "momentum - AdamW",
+              "type": "float"
+            },
+            "monitor_name": {
+              "default": "val_loss",
+              "description": "The metric value to be monitored for the :code:`AutoReduce` Scheduler.",
+              "enum": [
+                "val_loss",
+                "train_loss"
+              ],
+              "title": "monitor_name",
+              "type": "categorical"
+            },
+            "optimizer": {
+              "default": "AdamW",
+              "description": "Type of optimizer used to train the network.",
+              "enum": [
+                "AdamW",
+                "SGD"
+              ],
+              "type": "categorical"
+            },
+            "warmup_steps": {
+              "default": 0,
+              "description": "The number of steps to perform linear learning rate warm-up.",
+              "maximum": Infinity,
+              "minimum": 0,
+              "title": "warm up steps",
+              "type": "int"
+            },
+            "weight_decay": {
+              "automl_enabled": true,
+              "default": 0.0001,
+              "description": "The weight decay coefficient.",
+              "math_cond": "> 0.0",
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "weight decay",
+              "type": "float"
+            }
+          },
+          "title": "optimizer",
+          "type": "collection"
+        },
+        "precision": {
+          "default": "fp32",
+          "description": "Precision to run the training on.",
+          "enum": [
+            "bf16",
+            "fp32",
+            "fp16"
+          ],
+          "title": "precision",
+          "type": "categorical"
+        },
+        "pretrained_model_path": {
+          "default": "",
+          "description": "Path to a pre-trained RT-DETR model to initialize the current training from.",
+          "type": "string"
+        },
+        "results_dir": {
+          "default": "",
+          "description": "\n        Path to where all the assets generated from a task are stored.\n        ",
+          "title": "Results directory",
+          "type": "string"
+        },
+        "resume_training_checkpoint_path": {
+          "default": "",
+          "description": "Path to the checkpoint to resume training from.",
+          "title": "Resume checkpoint path",
+          "type": "string"
+        },
+        "seed": {
+          "default": 1234,
+          "description": "The seed for the initializer in PyTorch. If < 0, disable fixed seed.",
+          "maximum": Infinity,
+          "minimum": -1,
+          "title": "Seed for randomization",
+          "type": "int"
+        },
+        "validation_interval": {
+          "default": 1,
+          "description": "\n        The interval (in epochs) at which a evaluation\n        will be triggered on the validation dataset.",
+          "minimum": 1,
+          "popular": true,
+          "title": "Validation interval",
+          "type": "int"
+        }
+      },
+      "type": "collection"
+    },
+    "wandb": {
+      "automl_disabled_parameters": [
+        "wandb.tags"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "enable": true,
+        "entity": "",
+        "group": "",
+        "name": "TAO Toolkit Training",
+        "project": "TAO Toolkit",
+        "reinit": false,
+        "run_id": "",
+        "save_code": false,
+        "sync_tensorboard": false,
+        "tags": [
+          "tao-toolkit"
+        ]
+      },
+      "properties": {
+        "enable": {
+          "default": true,
+          "type": "bool"
+        },
+        "entity": {
+          "default": "",
+          "type": "string"
+        },
+        "group": {
+          "default": "",
+          "type": "string"
+        },
+        "name": {
+          "default": "TAO Toolkit Training",
+          "type": "string"
+        },
+        "project": {
+          "default": "TAO Toolkit",
+          "type": "string"
+        },
+        "reinit": {
+          "default": false,
+          "type": "bool"
+        },
+        "run_id": {
+          "default": "",
+          "type": "string"
+        },
+        "save_code": {
+          "default": false,
+          "type": "bool"
+        },
+        "sync_tensorboard": {
+          "default": false,
+          "type": "bool"
+        },
+        "tags": {
+          "automl_enabled": false,
+          "default": [
+            "tao-toolkit"
+          ],
+          "type": "list"
+        }
+      },
+      "type": "collection"
+    }
+  },
+  "required": [
+    "quantize"
+  ],
+  "type": "object",
+  "x_tao_schema": {
+    "action": "export",
+    "core_module": "rtdetr",
+    "model": "rtdetr",
+    "network_arch": "rtdetr",
+    "schema_action": "export",
+    "schema_version": 1,
+    "source": "tao-core dataclass config"
+  }
+}

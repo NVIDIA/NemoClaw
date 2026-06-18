@@ -1,0 +1,1853 @@
+{
+  "automl_default_parameters": [
+    "train.optimizer.args.weight_decay",
+    "train.optimizer.args.lr"
+  ],
+  "automl_disabled_parameters": [
+    "quantize",
+    "train.cudnn",
+    "train.post_processing.args",
+    "gen_trt_engine.tensorrt.calibration.cal_image_dir",
+    "quantize.backend_kwargs",
+    "dataset.train_dataset.args",
+    "train.gpu_ids",
+    "dataset.validate_dataset",
+    "dataset.validate_dataset.loader",
+    "wandb.tags",
+    "dataset.validate_dataset.data_path",
+    "train.metric",
+    "train.optimizer.args",
+    "dataset.train_dataset.data_path",
+    "quantize.skip_names",
+    "evaluate.post_processing",
+    "dataset.train_dataset",
+    "evaluate",
+    "evaluate.metric",
+    "evaluate.metric.args",
+    "inference",
+    "train",
+    "evaluate.post_processing.args",
+    "gen_trt_engine",
+    "train.post_processing",
+    "gen_trt_engine.tensorrt.layers_precision",
+    "dataset.train_dataset.args.pre_processes",
+    "dataset",
+    "dataset.validate_dataset.args.ignore_tags",
+    "gen_trt_engine.tensorrt",
+    "quantize.layers",
+    "dataset.train_dataset.loader",
+    "dataset.quant_calibration_dataset",
+    "dataset.train_dataset.loader.batch_size",
+    "dataset.validate_dataset.args.filter_keys",
+    "dataset.train_dataset.args.filter_keys",
+    "train.lr_scheduler.args",
+    "train.loss",
+    "model",
+    "inference.post_processing",
+    "evaluate.gpu_ids",
+    "gen_trt_engine.tensorrt.calibration",
+    "train.trainer",
+    "dataset.validate_dataset.args.pre_processes",
+    "train.lr_scheduler",
+    "train.metric.args",
+    "export",
+    "wandb",
+    "inference.post_processing.args",
+    "inference.gpu_ids",
+    "prune",
+    "dataset.validate_dataset.args",
+    "train.optimizer",
+    "dataset.train_dataset.args.ignore_tags"
+  ],
+  "default": {
+    "dataset": {
+      "quant_calibration_dataset": {
+        "images_dir": ""
+      },
+      "train_dataset": {
+        "args": {
+          "filter_keys": [
+            "img_path",
+            "img_name",
+            "text_polys",
+            "texts",
+            "ignore_tags",
+            "shape"
+          ],
+          "ignore_tags": [
+            "*",
+            "###"
+          ],
+          "img_mode": "BGR",
+          "pre_processes": [
+            {
+              "args": {
+                "keep_ratio": true,
+                "max_tries": 50,
+                "size": [
+                  640,
+                  640
+                ]
+              },
+              "type": "EastRandomCropData"
+            },
+            {
+              "args": {
+                "shrink_ratio": 0.4,
+                "thresh_max": 0.7,
+                "thresh_min": 0.3
+              },
+              "type": "MakeBorderMap"
+            },
+            {
+              "args": {
+                "min_text_size": 8,
+                "shrink_ratio": 0.4
+              },
+              "type": "MakeShrinkMap"
+            }
+          ]
+        },
+        "data_name": "ICDAR2015Dataset",
+        "data_path": [],
+        "loader": {
+          "batch_size": 16,
+          "collate_fn": "",
+          "num_workers": 0,
+          "pin_memory": false,
+          "shuffle": true
+        }
+      },
+      "validate_dataset": {
+        "args": {
+          "filter_keys": [
+            ""
+          ],
+          "ignore_tags": [
+            "*",
+            "###"
+          ],
+          "img_mode": "BGR",
+          "pre_processes": [
+            {
+              "args": {
+                "resize_text_polys": true,
+                "short_size": [
+                  1280,
+                  736
+                ]
+              },
+              "type": "Resize2D"
+            }
+          ]
+        },
+        "data_name": "ICDAR2015Dataset",
+        "data_path": [],
+        "loader": {
+          "batch_size": 1,
+          "collate_fn": "ICDARCollateFN",
+          "num_workers": 0,
+          "pin_memory": false,
+          "shuffle": false
+        }
+      }
+    },
+    "encryption_key": "",
+    "model": {
+      "activation_checkpoint": false,
+      "backbone": "deformable_resnet18",
+      "enlarge_feature_map_size": false,
+      "fuse_qkv_proj": true,
+      "head": "DBHead",
+      "in_channels": 3,
+      "inner_channels": 256,
+      "k": 50,
+      "load_pruned_graph": false,
+      "neck": "FPN",
+      "out_channels": 2,
+      "pretrained": false,
+      "pretrained_model_path": "",
+      "pruned_graph_path": "",
+      "quant": false
+    },
+    "model_name": "",
+    "quantize": {
+      "algorithm": "minmax",
+      "backend": "torchao",
+      "backend_kwargs": {},
+      "device": "cuda",
+      "layers": [],
+      "mode": "weight_only_ptq",
+      "model_path": "",
+      "results_dir": "",
+      "skip_names": []
+    },
+    "results_dir": "",
+    "train": {
+      "checkpoint_interval": 1,
+      "checkpoint_interval_unit": "epoch",
+      "cudnn": {
+        "benchmark": false,
+        "deterministic": true
+      },
+      "distributed_strategy": "ddp",
+      "gpu_ids": [
+        0
+      ],
+      "is_dry_run": false,
+      "loss": {
+        "alpha": 5,
+        "beta": 10,
+        "eps": 1e-06,
+        "ohem_ratio": 3,
+        "type": "DBLoss"
+      },
+      "lr_scheduler": {
+        "args": {
+          "warmup_epoch": 3
+        },
+        "type": "WarmupPolyLR"
+      },
+      "metric": {
+        "args": {
+          "is_output_polygon": false
+        },
+        "type": "QuadMetric"
+      },
+      "model_ema": false,
+      "model_ema_decay": 0.9999,
+      "num_epochs": 10,
+      "num_gpus": 1,
+      "num_nodes": 1,
+      "optimizer": {
+        "args": {
+          "amsgrad": true,
+          "eps": 1e-08,
+          "lr": 0.001,
+          "momentum": 0.0,
+          "weight_decay": 0.0
+        },
+        "type": "Adam"
+      },
+      "post_processing": {
+        "args": {
+          "box_thresh": 0.55,
+          "max_candidates": 1000,
+          "thresh": 0.3,
+          "unclip_ratio": 1.5
+        },
+        "type": "SegDetectorRepresenter"
+      },
+      "precision": "fp32",
+      "results_dir": "",
+      "resume_training_checkpoint_path": "",
+      "seed": 1234,
+      "trainer": {
+        "clip_grad_norm": 5.0
+      },
+      "use_distributed_sampler": false,
+      "validation_interval": 1
+    },
+    "wandb": {
+      "enable": true,
+      "entity": "",
+      "group": "",
+      "name": "TAO Toolkit Training",
+      "project": "TAO Toolkit",
+      "reinit": false,
+      "run_id": "",
+      "save_code": false,
+      "sync_tensorboard": false,
+      "tags": [
+        "tao-toolkit"
+      ]
+    }
+  },
+  "popular": {
+    "dataset": {
+      "train_dataset": {
+        "loader": {
+          "batch_size": 16,
+          "num_workers": 0
+        }
+      },
+      "validate_dataset": {
+        "loader": {
+          "batch_size": 1,
+          "num_workers": 0
+        }
+      }
+    },
+    "evaluate": {
+      "batch_size": 1,
+      "gpu_ids": [
+        0
+      ],
+      "num_gpus": 1,
+      "num_nodes": 1,
+      "post_processing": {
+        "args": {
+          "box_thresh": 0.55,
+          "max_candidates": 1000,
+          "thresh": 0.3,
+          "unclip_ratio": 1.5
+        }
+      }
+    },
+    "export": {
+      "height": 736,
+      "opset_version": 11,
+      "width": 1280
+    },
+    "gen_trt_engine": {
+      "batch_size": -1,
+      "gpu_id": 0,
+      "height": 736,
+      "tensorrt": {
+        "calibration": {
+          "cal_batch_size": 1,
+          "cal_batches": 1
+        },
+        "max_batch_size": 1,
+        "min_batch_size": 1,
+        "opt_batch_size": 1
+      },
+      "width": 1280
+    },
+    "inference": {
+      "gpu_ids": [
+        0
+      ],
+      "height": 736,
+      "num_gpus": 1,
+      "num_nodes": 1,
+      "post_processing": {
+        "args": {
+          "box_thresh": 0.55,
+          "max_candidates": 1000,
+          "thresh": 0.3,
+          "unclip_ratio": 1.5
+        }
+      },
+      "width": 1280
+    },
+    "model": {
+      "backbone": "deformable_resnet18"
+    },
+    "train": {
+      "checkpoint_interval": 1,
+      "gpu_ids": [
+        0
+      ],
+      "num_epochs": 10,
+      "num_gpus": 1,
+      "num_nodes": 1,
+      "optimizer": {
+        "args": {
+          "lr": 0.001
+        }
+      },
+      "post_processing": {
+        "args": {
+          "box_thresh": 0.55,
+          "max_candidates": 1000,
+          "thresh": 0.3,
+          "unclip_ratio": 1.5
+        }
+      },
+      "validation_interval": 1
+    }
+  },
+  "properties": {
+    "automl_disabled_parameters": [
+      "wandb",
+      "model",
+      "dataset",
+      "train",
+      "evaluate",
+      "inference",
+      "export",
+      "gen_trt_engine",
+      "prune",
+      "quantize"
+    ],
+    "dataset": {
+      "automl_disabled_parameters": [
+        "dataset.train_dataset",
+        "dataset.validate_dataset",
+        "dataset.quant_calibration_dataset"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "quant_calibration_dataset": {
+          "images_dir": ""
+        },
+        "train_dataset": {
+          "args": {
+            "filter_keys": [
+              "img_path",
+              "img_name",
+              "text_polys",
+              "texts",
+              "ignore_tags",
+              "shape"
+            ],
+            "ignore_tags": [
+              "*",
+              "###"
+            ],
+            "img_mode": "BGR",
+            "pre_processes": [
+              {
+                "args": {
+                  "keep_ratio": true,
+                  "max_tries": 50,
+                  "size": [
+                    640,
+                    640
+                  ]
+                },
+                "type": "EastRandomCropData"
+              },
+              {
+                "args": {
+                  "shrink_ratio": 0.4,
+                  "thresh_max": 0.7,
+                  "thresh_min": 0.3
+                },
+                "type": "MakeBorderMap"
+              },
+              {
+                "args": {
+                  "min_text_size": 8,
+                  "shrink_ratio": 0.4
+                },
+                "type": "MakeShrinkMap"
+              }
+            ]
+          },
+          "data_name": "ICDAR2015Dataset",
+          "data_path": [],
+          "loader": {
+            "batch_size": 16,
+            "collate_fn": "",
+            "num_workers": 0,
+            "pin_memory": false,
+            "shuffle": true
+          }
+        },
+        "validate_dataset": {
+          "args": {
+            "filter_keys": [
+              ""
+            ],
+            "ignore_tags": [
+              "*",
+              "###"
+            ],
+            "img_mode": "BGR",
+            "pre_processes": [
+              {
+                "args": {
+                  "resize_text_polys": true,
+                  "short_size": [
+                    1280,
+                    736
+                  ]
+                },
+                "type": "Resize2D"
+              }
+            ]
+          },
+          "data_name": "ICDAR2015Dataset",
+          "data_path": [],
+          "loader": {
+            "batch_size": 1,
+            "collate_fn": "ICDARCollateFN",
+            "num_workers": 0,
+            "pin_memory": false,
+            "shuffle": false
+          }
+        }
+      },
+      "description": "Configurable parameters to construct the dataset for an OCDNet experiment.",
+      "popular": [
+        "validate_dataset",
+        "train_dataset"
+      ],
+      "properties": {
+        "quant_calibration_dataset": {
+          "automl_enabled": false,
+          "default": {
+            "images_dir": ""
+          },
+          "description": "Configurable parameters for quantization calibration dataset.",
+          "properties": {
+            "images_dir": {
+              "default": "",
+              "description": "Path to the directory containing calibration images.",
+              "title": "calibration images directory",
+              "type": "string"
+            }
+          },
+          "type": "collection"
+        },
+        "train_dataset": {
+          "automl_disabled_parameters": [
+            "dataset.train_dataset.data_path",
+            "dataset.train_dataset.args",
+            "dataset.train_dataset.loader"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "args": {
+              "filter_keys": [
+                "img_path",
+                "img_name",
+                "text_polys",
+                "texts",
+                "ignore_tags",
+                "shape"
+              ],
+              "ignore_tags": [
+                "*",
+                "###"
+              ],
+              "img_mode": "BGR",
+              "pre_processes": [
+                {
+                  "args": {
+                    "keep_ratio": true,
+                    "max_tries": 50,
+                    "size": [
+                      640,
+                      640
+                    ]
+                  },
+                  "type": "EastRandomCropData"
+                },
+                {
+                  "args": {
+                    "shrink_ratio": 0.4,
+                    "thresh_max": 0.7,
+                    "thresh_min": 0.3
+                  },
+                  "type": "MakeBorderMap"
+                },
+                {
+                  "args": {
+                    "min_text_size": 8,
+                    "shrink_ratio": 0.4
+                  },
+                  "type": "MakeShrinkMap"
+                }
+              ]
+            },
+            "data_name": "ICDAR2015Dataset",
+            "data_path": [],
+            "loader": {
+              "batch_size": 16,
+              "collate_fn": "",
+              "num_workers": 0,
+              "pin_memory": false,
+              "shuffle": true
+            }
+          },
+          "description": "Hyper parameters to configure the training dataset.",
+          "popular": [
+            "loader"
+          ],
+          "properties": {
+            "args": {
+              "automl_disabled_parameters": [
+                "dataset.train_dataset.args.filter_keys",
+                "dataset.train_dataset.args.ignore_tags",
+                "dataset.train_dataset.args.pre_processes"
+              ],
+              "automl_enabled": false,
+              "default": {
+                "filter_keys": [
+                  "img_path",
+                  "img_name",
+                  "text_polys",
+                  "texts",
+                  "ignore_tags",
+                  "shape"
+                ],
+                "ignore_tags": [
+                  "*",
+                  "###"
+                ],
+                "img_mode": "BGR",
+                "pre_processes": [
+                  {
+                    "args": {
+                      "keep_ratio": true,
+                      "max_tries": 50,
+                      "size": [
+                        640,
+                        640
+                      ]
+                    },
+                    "type": "EastRandomCropData"
+                  },
+                  {
+                    "args": {
+                      "shrink_ratio": 0.4,
+                      "thresh_max": 0.7,
+                      "thresh_min": 0.3
+                    },
+                    "type": "MakeBorderMap"
+                  },
+                  {
+                    "args": {
+                      "min_text_size": 8,
+                      "shrink_ratio": 0.4
+                    },
+                    "type": "MakeShrinkMap"
+                  }
+                ]
+              },
+              "description": "Configurable parameters to construct the training dataset.",
+              "properties": {
+                "filter_keys": {
+                  "automl_enabled": false,
+                  "default": [
+                    "img_path",
+                    "img_name",
+                    "text_polys",
+                    "texts",
+                    "ignore_tags",
+                    "shape"
+                  ],
+                  "description": "List of ignored keys",
+                  "title": "filter_keys",
+                  "type": "list"
+                },
+                "ignore_tags": {
+                  "automl_enabled": false,
+                  "default": [
+                    "*",
+                    "###"
+                  ],
+                  "description": "List of labels that are not used to train",
+                  "title": "ignore_tags",
+                  "type": "list"
+                },
+                "img_mode": {
+                  "default": "BGR",
+                  "description": "The image mode.",
+                  "enum": [
+                    "BGR",
+                    "RGB",
+                    "GRAY"
+                  ],
+                  "title": "img_mode",
+                  "type": "categorical"
+                },
+                "pre_processes": {
+                  "automl_enabled": false,
+                  "default": [
+                    {
+                      "args": {
+                        "keep_ratio": true,
+                        "max_tries": 50,
+                        "size": [
+                          640,
+                          640
+                        ]
+                      },
+                      "type": "EastRandomCropData"
+                    },
+                    {
+                      "args": {
+                        "shrink_ratio": 0.4,
+                        "thresh_max": 0.7,
+                        "thresh_min": 0.3
+                      },
+                      "type": "MakeBorderMap"
+                    },
+                    {
+                      "args": {
+                        "min_text_size": 8,
+                        "shrink_ratio": 0.4
+                      },
+                      "type": "MakeShrinkMap"
+                    }
+                  ],
+                  "description": "The pre-processing configuration.",
+                  "title": "pre_processes",
+                  "type": "list"
+                }
+              },
+              "type": "collection"
+            },
+            "data_name": {
+              "default": "ICDAR2015Dataset",
+              "description": "The dataset type",
+              "title": "data_name",
+              "type": "string"
+            },
+            "data_path": {
+              "automl_enabled": false,
+              "default": [],
+              "description": "The list of training dataset paths",
+              "title": "data_path",
+              "type": "list"
+            },
+            "loader": {
+              "automl_disabled_parameters": [
+                "dataset.train_dataset.loader.batch_size"
+              ],
+              "automl_enabled": false,
+              "default": {
+                "batch_size": 16,
+                "collate_fn": "",
+                "num_workers": 0,
+                "pin_memory": false,
+                "shuffle": true
+              },
+              "description": "Configurable parameters to construct the training dataloader.",
+              "popular": [
+                "batch_size",
+                "num_workers"
+              ],
+              "properties": {
+                "batch_size": {
+                  "automl_enabled": false,
+                  "default": 16,
+                  "description": "The batch size during training.",
+                  "maximum": Infinity,
+                  "minimum": 1,
+                  "popular": true,
+                  "title": "batch_size",
+                  "type": "int"
+                },
+                "collate_fn": {
+                  "default": "",
+                  "description": "The collate function.",
+                  "type": "string"
+                },
+                "num_workers": {
+                  "default": 0,
+                  "description": "The threads used to load data.",
+                  "maximum": Infinity,
+                  "minimum": 0,
+                  "popular": true,
+                  "title": "num_workers",
+                  "type": "int"
+                },
+                "pin_memory": {
+                  "default": false,
+                  "description": "Flag to enable pinned memory or not",
+                  "title": "pin_memory",
+                  "type": "bool"
+                },
+                "shuffle": {
+                  "default": true,
+                  "description": "Flag to shuffle the data or not.",
+                  "title": "shuffle",
+                  "type": "bool"
+                }
+              },
+              "type": "collection"
+            }
+          },
+          "title": "train_dataset",
+          "type": "collection"
+        },
+        "validate_dataset": {
+          "automl_disabled_parameters": [
+            "dataset.validate_dataset.data_path",
+            "dataset.validate_dataset.args",
+            "dataset.validate_dataset.loader"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "args": {
+              "filter_keys": [
+                ""
+              ],
+              "ignore_tags": [
+                "*",
+                "###"
+              ],
+              "img_mode": "BGR",
+              "pre_processes": [
+                {
+                  "args": {
+                    "resize_text_polys": true,
+                    "short_size": [
+                      1280,
+                      736
+                    ]
+                  },
+                  "type": "Resize2D"
+                }
+              ]
+            },
+            "data_name": "ICDAR2015Dataset",
+            "data_path": [],
+            "loader": {
+              "batch_size": 1,
+              "collate_fn": "ICDARCollateFN",
+              "num_workers": 0,
+              "pin_memory": false,
+              "shuffle": false
+            }
+          },
+          "description": "Hyper parameters to configure the validation dataset.",
+          "popular": [
+            "loader"
+          ],
+          "properties": {
+            "args": {
+              "automl_disabled_parameters": [
+                "dataset.validate_dataset.args.filter_keys",
+                "dataset.validate_dataset.args.ignore_tags",
+                "dataset.validate_dataset.args.pre_processes"
+              ],
+              "automl_enabled": false,
+              "default": {
+                "filter_keys": [
+                  ""
+                ],
+                "ignore_tags": [
+                  "*",
+                  "###"
+                ],
+                "img_mode": "BGR",
+                "pre_processes": [
+                  {
+                    "args": {
+                      "resize_text_polys": true,
+                      "short_size": [
+                        1280,
+                        736
+                      ]
+                    },
+                    "type": "Resize2D"
+                  }
+                ]
+              },
+              "description": "Configurable parameters to construct the validation dataset.",
+              "properties": {
+                "filter_keys": {
+                  "automl_enabled": false,
+                  "default": [
+                    ""
+                  ],
+                  "description": "List of ignored keys",
+                  "title": "filter_keys",
+                  "type": "list"
+                },
+                "ignore_tags": {
+                  "automl_enabled": false,
+                  "default": [
+                    "*",
+                    "###"
+                  ],
+                  "description": "List of labels that are not used to evaluate",
+                  "title": "ignore_tags",
+                  "type": "list"
+                },
+                "img_mode": {
+                  "default": "BGR",
+                  "description": "The image mode.",
+                  "enum": [
+                    "BGR",
+                    "RGB",
+                    "GRAY"
+                  ],
+                  "title": "img_mode",
+                  "type": "categorical"
+                },
+                "pre_processes": {
+                  "automl_enabled": false,
+                  "default": [
+                    {
+                      "args": {
+                        "resize_text_polys": true,
+                        "short_size": [
+                          1280,
+                          736
+                        ]
+                      },
+                      "type": "Resize2D"
+                    }
+                  ],
+                  "description": "The pre-processing configuration.",
+                  "title": "pre_processes",
+                  "type": "list"
+                }
+              },
+              "type": "collection"
+            },
+            "data_name": {
+              "default": "ICDAR2015Dataset",
+              "description": "The dataset type",
+              "title": "data_name",
+              "type": "string"
+            },
+            "data_path": {
+              "automl_enabled": false,
+              "default": [],
+              "description": "The list of training dataset paths",
+              "title": "data_path",
+              "type": "list"
+            },
+            "loader": {
+              "automl_enabled": false,
+              "default": {
+                "batch_size": 1,
+                "collate_fn": "ICDARCollateFN",
+                "num_workers": 0,
+                "pin_memory": false,
+                "shuffle": false
+              },
+              "description": "Configurable parameters to construct the validation dataloader.",
+              "popular": [
+                "batch_size",
+                "num_workers"
+              ],
+              "properties": {
+                "batch_size": {
+                  "default": 1,
+                  "description": "The batch size during evaluation",
+                  "maximum": Infinity,
+                  "minimum": 1,
+                  "popular": true,
+                  "title": "batch_size",
+                  "type": "int"
+                },
+                "collate_fn": {
+                  "default": "ICDARCollateFN",
+                  "description": "The collate function.",
+                  "type": "string"
+                },
+                "num_workers": {
+                  "default": 0,
+                  "description": "The threads used to load data.",
+                  "maximum": Infinity,
+                  "minimum": 0,
+                  "popular": true,
+                  "title": "num_workers",
+                  "type": "int"
+                },
+                "pin_memory": {
+                  "default": false,
+                  "description": "Flag to enable pinned memory or not",
+                  "title": "pin_memory",
+                  "type": "bool"
+                },
+                "shuffle": {
+                  "default": false,
+                  "description": "Flag to shuffle the data or not",
+                  "title": "shuffle",
+                  "type": "bool"
+                }
+              },
+              "type": "collection"
+            }
+          },
+          "title": "validate_dataset",
+          "type": "collection"
+        }
+      },
+      "type": "collection"
+    },
+    "encryption_key": {
+      "default": "",
+      "description": "Key for encrypting model checkpoints",
+      "title": "Encryption key",
+      "type": "string"
+    },
+    "model": {
+      "automl_enabled": false,
+      "default": {
+        "activation_checkpoint": false,
+        "backbone": "deformable_resnet18",
+        "enlarge_feature_map_size": false,
+        "fuse_qkv_proj": true,
+        "head": "DBHead",
+        "in_channels": 3,
+        "inner_channels": 256,
+        "k": 50,
+        "load_pruned_graph": false,
+        "neck": "FPN",
+        "out_channels": 2,
+        "pretrained": false,
+        "pretrained_model_path": "",
+        "pruned_graph_path": "",
+        "quant": false
+      },
+      "description": "Configurable parameters to construct the model for an OCDNet experiment.",
+      "popular": [
+        "backbone"
+      ],
+      "properties": {
+        "activation_checkpoint": {
+          "default": false,
+          "description": "Flag to use activation checkpoints to save GPU memory, only for the FAN-tiny backbone",
+          "title": "activation_checkpoint",
+          "type": "bool"
+        },
+        "backbone": {
+          "default": "deformable_resnet18",
+          "description": "The backbone name of the model.\n                    It supports deformable_resnet18, deformable_resnet50 and fan_tiny_8_p4_hybrid.",
+          "enum": [
+            "deformable_resnet18",
+            "deformable_resnet50",
+            "fan_tiny_8_p4_hybrid"
+          ],
+          "popular": true,
+          "title": "backbone",
+          "type": "categorical"
+        },
+        "enlarge_feature_map_size": {
+          "default": false,
+          "description": "Flag to enlarge the output feature map size of the FAN-tiny backbone",
+          "title": "enlarge_feature_map_size",
+          "type": "bool"
+        },
+        "fuse_qkv_proj": {
+          "default": true,
+          "description": "Flag to fuse the qkv projection",
+          "title": "fuse_qkv_proj",
+          "type": "bool"
+        },
+        "head": {
+          "default": "DBHead",
+          "description": "Head name of the model.",
+          "title": "head",
+          "type": "string"
+        },
+        "in_channels": {
+          "default": 3,
+          "description": "Number of input channels in FPN",
+          "maximum": 3,
+          "minimum": 3,
+          "title": "in_channels",
+          "type": "int"
+        },
+        "inner_channels": {
+          "default": 256,
+          "description": "Number of inner channels in FPN",
+          "maximum": 256,
+          "minimum": 256,
+          "title": "inner_channels",
+          "type": "int"
+        },
+        "k": {
+          "default": 50,
+          "description": "Coefficient of Differentiable Binarization",
+          "maximum": Infinity,
+          "minimum": 1,
+          "title": "k",
+          "type": "int"
+        },
+        "load_pruned_graph": {
+          "default": false,
+          "description": "Flag to load pruned model or not.",
+          "title": "load_pruned_graph",
+          "type": "bool"
+        },
+        "neck": {
+          "default": "FPN",
+          "description": "Neck name of the model.",
+          "enum": [
+            "FPN",
+            "FANNeck"
+          ],
+          "title": "neck",
+          "type": "categorical"
+        },
+        "out_channels": {
+          "default": 2,
+          "description": "Number of out channels",
+          "maximum": 2,
+          "minimum": 2,
+          "title": "out_channels",
+          "type": "int"
+        },
+        "pretrained": {
+          "default": false,
+          "description": "Flag to use pretrained model or not.",
+          "title": "pretrained",
+          "type": "bool"
+        },
+        "pretrained_model_path": {
+          "default": "",
+          "description": "[Optional] Path to a pretrained model file.",
+          "title": "pretrained model path",
+          "type": "string"
+        },
+        "pruned_graph_path": {
+          "default": "",
+          "description": "[Optional] Path to a pruned model file.",
+          "title": "pruned model path",
+          "type": "string"
+        },
+        "quant": {
+          "default": false,
+          "description": "Flag to do quantization",
+          "title": "quant",
+          "type": "bool"
+        }
+      },
+      "type": "collection"
+    },
+    "model_name": {
+      "default": "",
+      "description": "Name of model if invoking task via :code:`model_agnostic`",
+      "title": "Model name",
+      "type": "string"
+    },
+    "quantize": {
+      "automl_disabled_parameters": [
+        "quantize.layers",
+        "quantize.skip_names",
+        "quantize.backend_kwargs"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "algorithm": "minmax",
+        "backend": "torchao",
+        "backend_kwargs": {},
+        "device": "cuda",
+        "layers": [],
+        "mode": "weight_only_ptq",
+        "model_path": "",
+        "results_dir": "",
+        "skip_names": []
+      },
+      "description": "Configurable parameters for model quantization.",
+      "properties": {
+        "algorithm": {
+          "default": "minmax",
+          "description": "Calibration/optimization algorithm. Used by ModelOpt backends (modelopt.pytorch and modelopt.onnx). Ignored by torchao backend.",
+          "enum": [
+            "minmax",
+            "max",
+            "entropy",
+            "awq_clip",
+            "awq_lite",
+            "awq_full",
+            "rtn_dq"
+          ],
+          "title": "Calibration algorithm",
+          "type": "categorical"
+        },
+        "backend": {
+          "default": "torchao",
+          "description": "The quantization backend to use",
+          "enum": [
+            "modelopt.pytorch",
+            "torchao",
+            "modelopt.onnx"
+          ],
+          "title": "Quantization backend",
+          "type": "categorical"
+        },
+        "backend_kwargs": {
+          "automl_enabled": false,
+          "description": "Additional keyword arguments to pass to the backend",
+          "title": "Backend kwargs",
+          "type": "collection"
+        },
+        "device": {
+          "default": "cuda",
+          "description": "Device to use for calibration. Accepts 'cuda' (uses default GPU), 'cpu', 'trt' (TensorRT for ONNX backend), or specific GPU device like 'cuda:0', 'cuda:1', etc. If 'cuda' is specified but no GPU is available, the framework will automatically fall back to 'cpu'. Note: 'trt' is only supported by the modelopt.onnx backend for ONNX Runtime with TensorRT execution provider.",
+          "pattern": "^(cuda|cpu|trt|cuda:[0-9]+)$",
+          "title": "Calibration device",
+          "type": "string"
+        },
+        "layers": {
+          "automl_enabled": false,
+          "default": [],
+          "description": "List of per-module quantization configurations. Each entry specifies which modules to quantize and their data types. This is the primary way to configure quantization.",
+          "title": "Layer quantization configs",
+          "type": "list"
+        },
+        "mode": {
+          "default": "weight_only_ptq",
+          "description": "The quantization mode to use",
+          "enum": [
+            "static_ptq",
+            "weight_only_ptq"
+          ],
+          "title": "Quantization mode",
+          "type": "categorical"
+        },
+        "model_path": {
+          "default": "",
+          "description": "Path to the model to be quantized. For ONNX backend, path to ONNX file.",
+          "title": "Model path",
+          "type": "string"
+        },
+        "results_dir": {
+          "default": "",
+          "description": "Path to where all the assets generated from a task are stored.",
+          "title": "Results directory",
+          "type": "string"
+        },
+        "skip_names": {
+          "automl_enabled": false,
+          "default": [],
+          "description": "List of module/layer names or patterns to exclude from quantization",
+          "title": "Skip names",
+          "type": "list"
+        }
+      },
+      "required": [
+        "model_path",
+        "results_dir"
+      ],
+      "type": "collection"
+    },
+    "results_dir": {
+      "default": "",
+      "description": "\n        Path to where all the assets generated from a task are stored.\n        ",
+      "title": "Results directory",
+      "type": "string"
+    },
+    "train": {
+      "automl_disabled_parameters": [
+        "train.gpu_ids",
+        "train.cudnn",
+        "train.post_processing",
+        "train.metric",
+        "train.trainer",
+        "train.loss",
+        "train.optimizer",
+        "train.lr_scheduler"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "checkpoint_interval": 1,
+        "checkpoint_interval_unit": "epoch",
+        "cudnn": {
+          "benchmark": false,
+          "deterministic": true
+        },
+        "distributed_strategy": "ddp",
+        "gpu_ids": [
+          0
+        ],
+        "is_dry_run": false,
+        "loss": {
+          "alpha": 5,
+          "beta": 10,
+          "eps": 1e-06,
+          "ohem_ratio": 3,
+          "type": "DBLoss"
+        },
+        "lr_scheduler": {
+          "args": {
+            "warmup_epoch": 3
+          },
+          "type": "WarmupPolyLR"
+        },
+        "metric": {
+          "args": {
+            "is_output_polygon": false
+          },
+          "type": "QuadMetric"
+        },
+        "model_ema": false,
+        "model_ema_decay": 0.9999,
+        "num_epochs": 10,
+        "num_gpus": 1,
+        "num_nodes": 1,
+        "optimizer": {
+          "args": {
+            "amsgrad": true,
+            "eps": 1e-08,
+            "lr": 0.001,
+            "momentum": 0.0,
+            "weight_decay": 0.0
+          },
+          "type": "Adam"
+        },
+        "post_processing": {
+          "args": {
+            "box_thresh": 0.55,
+            "max_candidates": 1000,
+            "thresh": 0.3,
+            "unclip_ratio": 1.5
+          },
+          "type": "SegDetectorRepresenter"
+        },
+        "precision": "fp32",
+        "results_dir": "",
+        "resume_training_checkpoint_path": "",
+        "seed": 1234,
+        "trainer": {
+          "clip_grad_norm": 5.0
+        },
+        "use_distributed_sampler": false,
+        "validation_interval": 1
+      },
+      "description": "Configurable parameters to construct the trainer for an OCDNet experiment.",
+      "popular": [
+        "post_processing",
+        "validation_interval",
+        "checkpoint_interval",
+        "num_gpus",
+        "num_nodes",
+        "num_epochs",
+        "optimizer",
+        "gpu_ids"
+      ],
+      "properties": {
+        "checkpoint_interval": {
+          "default": 1,
+          "description": "The interval (in epochs) at which a checkpoint will be saved. Helps resume training.",
+          "minimum": 1,
+          "popular": true,
+          "title": "Checkpoint interval",
+          "type": "int"
+        },
+        "checkpoint_interval_unit": {
+          "default": "epoch",
+          "description": "The unit of the checkpoint interval.",
+          "enum": [
+            "epoch",
+            "step"
+          ],
+          "title": "Checkpoint interval unit",
+          "type": "categorical"
+        },
+        "cudnn": {
+          "automl_enabled": false,
+          "default": {
+            "benchmark": false,
+            "deterministic": true
+          },
+          "properties": {
+            "benchmark": {
+              "default": false,
+              "type": "bool"
+            },
+            "deterministic": {
+              "default": true,
+              "type": "bool"
+            }
+          },
+          "type": "collection"
+        },
+        "distributed_strategy": {
+          "default": "ddp",
+          "description": "The strategy for distributed training",
+          "title": "distributed_strategy",
+          "type": "string"
+        },
+        "gpu_ids": {
+          "automl_enabled": false,
+          "default": [
+            0
+          ],
+          "description": "\n        List of GPU IDs to run the training on. The length of this list\n        must be equal to the number of gpus in train.num_gpus.",
+          "popular": true,
+          "title": "GPU IDs",
+          "type": "list"
+        },
+        "is_dry_run": {
+          "default": false,
+          "description": "Flag to run only one batch for debugging purposes",
+          "title": "is_dry_run",
+          "type": "bool"
+        },
+        "loss": {
+          "automl_enabled": false,
+          "default": {
+            "alpha": 5,
+            "beta": 10,
+            "eps": 1e-06,
+            "ohem_ratio": 3,
+            "type": "DBLoss"
+          },
+          "description": "Hyper parameters to configure the loss.",
+          "properties": {
+            "alpha": {
+              "default": 5,
+              "description": "The alpha coefficient.",
+              "maximum": Infinity,
+              "minimum": 1,
+              "title": "alpha",
+              "type": "int"
+            },
+            "beta": {
+              "default": 10,
+              "description": "The beta coefficient",
+              "maximum": Infinity,
+              "minimum": 1,
+              "title": "beta",
+              "type": "int"
+            },
+            "eps": {
+              "default": 1e-06,
+              "description": "The epsilon coefficient.",
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "epsilon",
+              "type": "float"
+            },
+            "ohem_ratio": {
+              "default": 3,
+              "description": "The ohem_ratio coefficient",
+              "maximum": Infinity,
+              "minimum": 1,
+              "title": "ohem_ratio",
+              "type": "int"
+            },
+            "type": {
+              "default": "DBLoss",
+              "description": "Loss function name.",
+              "title": "type",
+              "type": "string"
+            }
+          },
+          "title": "loss",
+          "type": "collection"
+        },
+        "lr_scheduler": {
+          "automl_disabled_parameters": [
+            "train.lr_scheduler.args"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "args": {
+              "warmup_epoch": 3
+            },
+            "type": "WarmupPolyLR"
+          },
+          "description": "Hyper parameters to configure the learning rate scheduler.",
+          "properties": {
+            "args": {
+              "automl_enabled": false,
+              "default": {
+                "warmup_epoch": 3
+              },
+              "description": "Configurable parameters to construct the learning scheduler.",
+              "properties": {
+                "warmup_epoch": {
+                  "default": 3,
+                  "description": "The warmup epoch to the initial learning rate. Should be different from the num_epochs.",
+                  "maximum": Infinity,
+                  "minimum": 1,
+                  "title": "warmup_epoch",
+                  "type": "int"
+                }
+              },
+              "type": "collection"
+            },
+            "type": {
+              "default": "WarmupPolyLR",
+              "description": "The learning scheduler.",
+              "title": "type",
+              "type": "string"
+            }
+          },
+          "title": "lr_scheduler",
+          "type": "collection"
+        },
+        "metric": {
+          "automl_disabled_parameters": [
+            "train.metric.args"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "args": {
+              "is_output_polygon": false
+            },
+            "type": "QuadMetric"
+          },
+          "description": "Hyper parameters to configure the metric.",
+          "properties": {
+            "args": {
+              "automl_enabled": false,
+              "default": {
+                "is_output_polygon": false
+              },
+              "description": "Configurable parameters to construct the metric computing.",
+              "properties": {
+                "is_output_polygon": {
+                  "default": false,
+                  "description": "Flag to output polygon or BBOX",
+                  "title": "is_output_polygon",
+                  "type": "bool"
+                }
+              },
+              "type": "collection"
+            },
+            "type": {
+              "default": "QuadMetric",
+              "description": "The configuration for metric computing.",
+              "title": "type",
+              "type": "string"
+            }
+          },
+          "title": "metric",
+          "type": "collection"
+        },
+        "model_ema": {
+          "default": false,
+          "description": "Flag to enable model EMA",
+          "title": "model_ema",
+          "type": "bool"
+        },
+        "model_ema_decay": {
+          "default": 0.9999,
+          "description": "The decay of model EMA",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "model_ema_decay",
+          "type": "float"
+        },
+        "num_epochs": {
+          "default": 10,
+          "description": "Number of epochs to run the training.",
+          "maximum": Infinity,
+          "minimum": 1,
+          "popular": true,
+          "title": "Number of epochs",
+          "type": "int"
+        },
+        "num_gpus": {
+          "default": 1,
+          "description": "The number of GPUs to run the train job.",
+          "minimum": 1,
+          "popular": true,
+          "title": "Number of GPUs",
+          "type": "int"
+        },
+        "num_nodes": {
+          "default": 1,
+          "description": "Number of nodes to run the training on. If > 1, then multi-node is enabled.",
+          "minimum": 1,
+          "popular": true,
+          "title": "Number of nodes",
+          "type": "int"
+        },
+        "optimizer": {
+          "automl_disabled_parameters": [
+            "train.optimizer.args"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "args": {
+              "amsgrad": true,
+              "eps": 1e-08,
+              "lr": 0.001,
+              "momentum": 0.0,
+              "weight_decay": 0.0
+            },
+            "type": "Adam"
+          },
+          "description": "Hyper parameters to configure the optimizer.",
+          "popular": [
+            "args"
+          ],
+          "properties": {
+            "args": {
+              "automl_default_parameters": [
+                "train.optimizer.args.lr",
+                "train.optimizer.args.weight_decay"
+              ],
+              "automl_enabled": false,
+              "default": {
+                "amsgrad": true,
+                "eps": 1e-08,
+                "lr": 0.001,
+                "momentum": 0.0,
+                "weight_decay": 0.0
+              },
+              "description": "Configurable parameters to construct the optimizer.",
+              "popular": [
+                "lr"
+              ],
+              "properties": {
+                "amsgrad": {
+                  "default": true,
+                  "description": "Flag to use AMSGrad as stochastic optimization method",
+                  "title": "amsgrad",
+                  "type": "bool"
+                },
+                "eps": {
+                  "default": 1e-08,
+                  "description": "The epsilon coefficient",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "epsilon",
+                  "type": "float"
+                },
+                "lr": {
+                  "automl_enabled": true,
+                  "default": 0.001,
+                  "description": "The initial learning rate",
+                  "math_cond": "> 0.0",
+                  "maximum": Infinity,
+                  "minimum": 0.0,
+                  "popular": true,
+                  "title": "learning rate",
+                  "type": "float"
+                },
+                "momentum": {
+                  "default": 0.0,
+                  "description": "The momentum for the Adam optimizer.",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "momentum - Adam",
+                  "type": "float"
+                },
+                "weight_decay": {
+                  "automl_enabled": true,
+                  "default": 0.0,
+                  "description": "The weight decay coefficient.",
+                  "math_cond": ">= 0.0",
+                  "maximum": Infinity,
+                  "minimum": 0.0,
+                  "title": "weight decay",
+                  "type": "float"
+                }
+              },
+              "type": "collection"
+            },
+            "type": {
+              "default": "Adam",
+              "description": "Optimizer type.",
+              "title": "type",
+              "type": "string"
+            }
+          },
+          "title": "optimizer",
+          "type": "collection"
+        },
+        "post_processing": {
+          "automl_disabled_parameters": [
+            "train.post_processing.args"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "args": {
+              "box_thresh": 0.55,
+              "max_candidates": 1000,
+              "thresh": 0.3,
+              "unclip_ratio": 1.5
+            },
+            "type": "SegDetectorRepresenter"
+          },
+          "description": "Hyper parameters to configure the post_processing.",
+          "popular": [
+            "args"
+          ],
+          "properties": {
+            "args": {
+              "automl_enabled": false,
+              "default": {
+                "box_thresh": 0.55,
+                "max_candidates": 1000,
+                "thresh": 0.3,
+                "unclip_ratio": 1.5
+              },
+              "description": "Configurable parameters to construct the postprocessing.",
+              "popular": [
+                "thresh",
+                "unclip_ratio",
+                "box_thresh",
+                "max_candidates"
+              ],
+              "properties": {
+                "box_thresh": {
+                  "default": 0.55,
+                  "description": "The threshold for BBOX.",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "popular": true,
+                  "title": "box_thresh",
+                  "type": "float"
+                },
+                "max_candidates": {
+                  "default": 1000,
+                  "description": "The maximum candidate BBOX.",
+                  "maximum": Infinity,
+                  "minimum": 1,
+                  "popular": true,
+                  "title": "max_candidates",
+                  "type": "int"
+                },
+                "thresh": {
+                  "default": 0.3,
+                  "description": "The threshold for binarization.",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "popular": true,
+                  "title": "thresh",
+                  "type": "float"
+                },
+                "unclip_ratio": {
+                  "default": 1.5,
+                  "description": "The unclip ratio using the Vatti clipping algorithm.",
+                  "maximum": Infinity,
+                  "minimum": 0.0,
+                  "popular": true,
+                  "title": "unclip_ratio",
+                  "type": "float"
+                }
+              },
+              "type": "collection"
+            },
+            "type": {
+              "default": "SegDetectorRepresenter",
+              "description": "The postprocessing name.",
+              "title": "type",
+              "type": "string"
+            }
+          },
+          "title": "post_processing",
+          "type": "collection"
+        },
+        "precision": {
+          "default": "fp32",
+          "description": "The training precision",
+          "title": "precision",
+          "type": "string"
+        },
+        "results_dir": {
+          "default": "",
+          "description": "\n        Path to where all the assets generated from a task are stored.\n        ",
+          "title": "Results directory",
+          "type": "string"
+        },
+        "resume_training_checkpoint_path": {
+          "default": "",
+          "description": "Path to the checkpoint to resume training from.",
+          "title": "Resume checkpoint path",
+          "type": "string"
+        },
+        "seed": {
+          "default": 1234,
+          "description": "The seed for the initializer in PyTorch. If < 0, disable fixed seed.",
+          "maximum": Infinity,
+          "minimum": -1,
+          "title": "Seed for randomization",
+          "type": "int"
+        },
+        "trainer": {
+          "automl_enabled": false,
+          "default": {
+            "clip_grad_norm": 5.0
+          },
+          "description": "Hyper parameters to configure the trainer.",
+          "properties": {
+            "clip_grad_norm": {
+              "default": 5.0,
+              "description": "\n        Amount to clip the gradient by L2 Norm.\n        A value of 0.0 specifies no clipping.",
+              "maximum": Infinity,
+              "minimum": 0.0,
+              "title": "clip gradient norm",
+              "type": "float"
+            }
+          },
+          "title": "trainer",
+          "type": "collection"
+        },
+        "use_distributed_sampler": {
+          "default": false,
+          "description": "Use distributed sampler for multi-GPU training",
+          "title": "use_distributed_sampler",
+          "type": "bool"
+        },
+        "validation_interval": {
+          "default": 1,
+          "description": "\n        The interval (in epochs) at which a evaluation\n        will be triggered on the validation dataset.",
+          "minimum": 1,
+          "popular": true,
+          "title": "Validation interval",
+          "type": "int"
+        }
+      },
+      "type": "collection"
+    },
+    "wandb": {
+      "automl_disabled_parameters": [
+        "wandb.tags"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "enable": true,
+        "entity": "",
+        "group": "",
+        "name": "TAO Toolkit Training",
+        "project": "TAO Toolkit",
+        "reinit": false,
+        "run_id": "",
+        "save_code": false,
+        "sync_tensorboard": false,
+        "tags": [
+          "tao-toolkit"
+        ]
+      },
+      "properties": {
+        "enable": {
+          "default": true,
+          "type": "bool"
+        },
+        "entity": {
+          "default": "",
+          "type": "string"
+        },
+        "group": {
+          "default": "",
+          "type": "string"
+        },
+        "name": {
+          "default": "TAO Toolkit Training",
+          "type": "string"
+        },
+        "project": {
+          "default": "TAO Toolkit",
+          "type": "string"
+        },
+        "reinit": {
+          "default": false,
+          "type": "bool"
+        },
+        "run_id": {
+          "default": "",
+          "type": "string"
+        },
+        "save_code": {
+          "default": false,
+          "type": "bool"
+        },
+        "sync_tensorboard": {
+          "default": false,
+          "type": "bool"
+        },
+        "tags": {
+          "automl_enabled": false,
+          "default": [
+            "tao-toolkit"
+          ],
+          "type": "list"
+        }
+      },
+      "type": "collection"
+    }
+  },
+  "required": [
+    "quantize"
+  ],
+  "type": "object",
+  "x_tao_schema": {
+    "action": "quantize",
+    "core_module": "ocdnet",
+    "model": "ocdnet",
+    "network_arch": "ocdnet",
+    "schema_action": "quantize",
+    "schema_version": 1,
+    "source": "tao-core dataclass config"
+  }
+}

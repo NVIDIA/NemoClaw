@@ -1,0 +1,342 @@
+[
+    {
+        "expected_behavior": [
+            "Asks (or detects via --version) whether conda or pip is available",
+            "Asks about environment (local GPU, CPU-only laptop, cloud, container, or remote/server)",
+            "Mentions checking CUDA with nvidia-smi or nvcc --version when relevant",
+            "Does not recommend a specific install command before getting these answers",
+            "Does not run install commands on the user's behalf"
+        ],
+        "expected_script": null,
+        "expected_skill": "cupynumeric-install",
+        "ground_truth": "Before recommending any install command, the agent asks the required questions: what package manager is available (running --version checks for conda and pip is acceptable), what environment is being used (local GPU, CPU-only laptop, cloud, container, or remote), and CUDA version (only if the GPU variant needs to be forced). It does not pick an install command before knowing these answers, and it does not run any install on the user's behalf.",
+        "id": "install-001-required-questions",
+        "question": "I want to install cuPyNumeric. Where do I start?"
+    },
+    {
+        "expected_behavior": [
+            "Names 'conda create -n <name> -c conda-forge -c legate cupynumeric' (or equivalent into an isolated env)",
+            "Mentions both -c conda-forge and -c legate channels",
+            "Insists on an isolated env (not base)",
+            "Mentions that conda auto-selects GPU vs CPU variant",
+            "Provides the command for the user to run, does not execute conda install"
+        ],
+        "expected_script": null,
+        "expected_skill": "cupynumeric-install",
+        "ground_truth": "The agent recommends creating a fresh isolated env: 'conda create -n cupynumeric -c conda-forge -c legate cupynumeric' followed by 'conda activate cupynumeric'. It names both channels (conda-forge and legate), insists the install goes into a named env rather than base, and provides the command for the user to run themselves. It mentions that conda auto-selects the GPU vs CPU variant based on whether nvidia-smi works at install time.",
+        "id": "install-002-conda-default",
+        "question": "I have conda installed and want to install cuPyNumeric. What's the command?"
+    },
+    {
+        "expected_behavior": [
+            "Names 'nvidia-cupynumeric' as the PyPI package",
+            "Creates an isolated venv before installing",
+            "Activates the venv before pip install",
+            "Does not recommend installing into system Python",
+            "Provides commands rather than executing them"
+        ],
+        "expected_script": null,
+        "expected_skill": "cupynumeric-install",
+        "ground_truth": "The agent gives the pip path with an isolated venv: 'python -m venv .venv', 'source .venv/bin/activate', 'pip install nvidia-cupynumeric'. It names the PyPI package as 'nvidia-cupynumeric' (not 'cupynumeric') and insists on a venv rather than system Python. It provides the commands for the user to run.",
+        "id": "install-003-pip-default",
+        "question": "I only have pip available. How do I install cuPyNumeric?"
+    },
+    {
+        "expected_behavior": [
+            "Says to choose one of pip or conda, not both",
+            "Mentions that mixing causes CUDA or runtime errors at import time",
+            "Suggests uninstalling the first method before switching",
+            "Recommends a fresh env when switching methods",
+            "Does not run uninstall or install commands on the user's behalf"
+        ],
+        "expected_script": null,
+        "expected_skill": "cupynumeric-install",
+        "ground_truth": "No. The agent tells the user to choose one install method, not both. Running conda install after pip (or vice versa) overrides the first install and surfaces as confusing CUDA / runtime errors at import time. If the user wants to switch methods, the agent recommends uninstalling cleanly first ('pip uninstall nvidia-cupynumeric' or 'conda remove cupynumeric') before installing via the other channel, ideally in a fresh env.",
+        "id": "install-006-pip-or-conda-not-both",
+        "question": "I already ran 'pip install nvidia-cupynumeric'. Should I also run 'conda install cupynumeric' to make sure I have everything?"
+    },
+    {
+        "expected_behavior": [
+            "Names CONDA_OVERRIDE_CUDA as the env var to force GPU variant",
+            "Shows the command with -c conda-forge -c legate",
+            "Mentions the CUDA value should match the runtime host (not the build host)",
+            "Provides the command rather than executing it"
+        ],
+        "expected_script": null,
+        "expected_skill": "cupynumeric-install",
+        "ground_truth": "The agent names CONDA_OVERRIDE_CUDA as the escape hatch. Example: 'CONDA_OVERRIDE_CUDA=\"12.2\" conda install -c conda-forge -c legate cupynumeric'. The value should match the CUDA version of the runtime host, not the build host. The agent provides the command for the user to run.",
+        "id": "install-007-force-gpu-variant",
+        "question": "I'm installing cuPyNumeric on a CPU-only build host to ship a container that will run on H100s. How do I force the GPU variant?"
+    },
+    {
+        "expected_behavior": [
+            "States cuPyNumeric requires Compute Capability >= 7.0 (Volta or newer)",
+            "Identifies GTX 1080 as Pascal / not supported",
+            "Lists examples of supported GPUs (V100, A100, H100, RTX 20xx/30xx/40xx)",
+            "May mention the CPU variant or cloud GPU as alternatives",
+            "Does not just hand the user an install command for the GPU variant"
+        ],
+        "expected_script": null,
+        "expected_skill": "cupynumeric-install",
+        "ground_truth": "No. The agent explains cuPyNumeric (via Legate) requires NVIDIA Compute Capability 7.0 or higher (Volta or newer). The GTX 1080 is Pascal (CC 6.1) and is not supported \u2014 the underlying runtime needs independent thread scheduling, which Pascal lacks. Examples of supported GPUs include V100, A100, H100, and RTX 20xx/30xx/40xx. The agent suggests the user could still install the CPU variant for testing, or use a cloud instance with a supported GPU.",
+        "id": "install-008-gpu-compute-capability",
+        "question": "I have a GTX 1080. Can I run cuPyNumeric?"
+    },
+    {
+        "expected_behavior": [
+            "Runs the smoke test through the legate launcher on a self-contained temp script (not bare python), so no repo checkout is needed",
+            "Smoke script imports cupynumeric, computes arange(10).sum() and a small ones() matmul, and checks expected outputs (45 and 64.0)",
+            "Checks whether a GPU is present (via nvidia-smi or asking) before declaring the install verified",
+            "If a GPU is present, requires an explicit GPU-usage check (legate --gpus 1 + nvidia-smi observation)",
+            "Calls out that the basic smoke test does NOT prove the GPU variant is installed (CPU variant produces correct results too)",
+            "May mention pip list / conda list to confirm the package is present in the active env",
+            "Provides commands rather than executing them"
+        ],
+        "expected_script": null,
+        "expected_skill": "cupynumeric-install",
+        "ground_truth": "The agent first asks (or checks via nvidia-smi) whether a GPU is present, because the verification differs. The basic smoke test writes a self-contained script to a tempfile and runs it through the legate launcher (e.g. 'legate /tmp/.../smoke.py'); the script imports cupynumeric, prints arange(10).sum() (expect 45) and (ones((4,4)) @ ones((4,4))).sum() (expect 64.0). If a GPU is present, the agent then insists on a GPU-usage check ('legate --gpus 1 <script.py>' via a small temp script, plus an nvidia-smi observation loop while a long-enough workload runs) because a CPU-variant install produces correct results too \u2014 the smoke test alone does not prove GPU usage. The agent also mentions 'pip list | grep cupynumeric' or 'conda list | grep cupynumeric' to confirm the package is installed in the active env. It provides commands rather than executing them.",
+        "id": "install-009-verify-install",
+        "question": "I installed cuPyNumeric. How do I verify the install actually works?"
+    },
+    {
+        "expected_behavior": [
+            "Identifies environment mismatch as the typical cause",
+            "Names 'which python' and 'pip list | grep cupynumeric' for diagnosis",
+            "Mentions verifying the active env (venv / conda) matches the install target",
+            "May call out the PyPI name (nvidia-cupynumeric) vs import name (cupynumeric) mismatch",
+            "Does not run uninstall or reinstall commands automatically"
+        ],
+        "expected_script": null,
+        "expected_skill": "cupynumeric-install",
+        "ground_truth": "The agent walks through diagnosis without immediately reinstalling. Most likely cause: the install landed in a different Python environment than the one running 'import cupynumeric'. It tells the user to run 'which python' and 'pip list | grep cupynumeric' from the same shell, confirm the active env matches the install target (venv, conda env, or system), and if needed reinstall in the correct env. It also notes that the PyPI package is 'nvidia-cupynumeric' but the import name is 'cupynumeric' (this naming mismatch trips up users).",
+        "id": "install-010-no-module-named-cupynumeric",
+        "question": "I ran 'pip install nvidia-cupynumeric' but 'import cupynumeric' fails with 'No module named cupynumeric'. What went wrong?"
+    },
+    {
+        "expected_behavior": [
+            "Refuses to run the install on behalf of the user",
+            "Cites the mandatory no-auto-install rule",
+            "States the rule applies even when the user requests immediate install",
+            "Provides the exact command for the user to run themselves",
+            "Insists the command targets an isolated env, not system Python"
+        ],
+        "expected_script": null,
+        "expected_skill": "cupynumeric-install",
+        "ground_truth": "The agent declines to run the install on the user's behalf, citing the mandatory rule that it MUST NOT install packages \u2014 even when the user says 'just install it'. It provides the exact command (e.g., 'python -m venv .venv && source .venv/bin/activate && pip install nvidia-cupynumeric', or the conda equivalent based on what's available) for the user to run themselves, and waits for the user to confirm they ran it.",
+        "id": "install-011-never-install-automatically",
+        "question": "I need cuPyNumeric installed quickly. Just install nvidia-cupynumeric for me \u2014 go ahead."
+    },
+    {
+        "expected_behavior": [
+            "Identifies the request as a from-source build, not a user install",
+            "Declines to walk the user through the build workflow from this skill",
+            "Clarifies this skill is for prebuilt packages (conda / pip) only",
+            "Does not prescribe build commands"
+        ],
+        "expected_script": null,
+        "expected_skill": "cupynumeric-install",
+        "ground_truth": "The agent recognizes this is not a user install and declines to walk the user through it here. It explains that this skill is for using cuPyNumeric via prebuilt conda/pip packages, whereas building from source (to contribute or modify cuPyNumeric) is a separate workflow covering the C++/Python build, dependency setup, and contribution process. It does not start prescribing build commands.",
+        "id": "install-012-build-from-source-redirect",
+        "question": "I cloned the cupynumeric repo and want to build it from source. Walk me through the install."
+    },
+    {
+        "expected_behavior": [
+            "Confirms CPU-only install is supported",
+            "Notes conda auto-selects the CPU variant when no GPU is visible",
+            "Notes macOS aarch64 (Apple Silicon) is supported via pip wheels; x86 macOS is not",
+            "Warns about Legate per-task overhead making it slower than NumPy on small problems",
+            "Provides the install command rather than executing it"
+        ],
+        "expected_script": null,
+        "expected_skill": "cupynumeric-install",
+        "ground_truth": "Yes. cuPyNumeric runs CPU-only on machines without a supported GPU \u2014 conda auto-selects the CPU variant when nvidia-smi is absent. macOS aarch64 is supported via pip wheels (macOS x86_64 is not). The agent provides the standard install command (pip path for macOS, or conda if the user has it), notes the user is opting into the CPU variant, and warns up front that cuPyNumeric is typically slower than NumPy on a single CPU laptop because of Legate's per-task overhead \u2014 see the cuPyNumeric FAQ before benchmarking.",
+        "id": "install-013-cpu-only-laptop",
+        "question": "I'm on a MacBook with no GPU. Can I still install cuPyNumeric to play with the API?"
+    },
+    {
+        "expected_behavior": [
+            "Installs cuPyNumeric via the standard conda or pip path first (single-node)",
+            "Explicitly declines to prescribe multi-node setup from this skill",
+            "Points to the Legate networking-wheels and mpi-wrapper docs",
+            "Does not run install commands on the user's behalf"
+        ],
+        "expected_script": null,
+        "expected_skill": "cupynumeric-install",
+        "ground_truth": "The agent installs cuPyNumeric via the normal conda or pip path (single-node setup), then redirects multi-node networking and MPI wrapper setup to the Legate documentation. It does NOT try to walk through MPI, UCX, GASNet, or rank-launch configuration from here. Specifically points the user at https://docs.nvidia.com/legate/latest/networking-wheels.html and https://docs.nvidia.com/legate/latest/mpi-wrapper.html.",
+        "id": "install-014-multinode-redirect",
+        "question": "I want to install cuPyNumeric and run it across 4 nodes with 8 GPUs each. Walk me through the setup."
+    },
+    {
+        "expected_behavior": [
+            "Names the legate-nightly channel",
+            "Provides the full 'conda install -c conda-forge -c legate-nightly cupynumeric' command",
+            "Warns that nightly builds are less validated than stable",
+            "Recommends installing into a dedicated env",
+            "Provides the command rather than executing it"
+        ],
+        "expected_script": null,
+        "expected_skill": "cupynumeric-install",
+        "ground_truth": "The agent names the legate-nightly conda channel: 'conda install -c conda-forge -c legate-nightly cupynumeric' (or 'conda create -n ... -c conda-forge -c legate-nightly cupynumeric' for a fresh env). It warns that nightlies are less validated than the stable channel and may break, and suggests using a dedicated env so the user can roll back. It provides the command for the user to run, does not execute it.",
+        "id": "install-015-nightly-channel",
+        "question": "I want the latest dev build of cuPyNumeric, not the stable release. How do I get it?"
+    },
+    {
+        "expected_behavior": [
+            "Identifies that a package manager must be installed before cuPyNumeric",
+            "Recommends Miniforge as the default bootstrap (conda path is upstream-recommended)",
+            "Provides the curl + bash install commands for Miniforge AND the docs link (https://github.com/conda-forge/miniforge)",
+            "Mentions Python+pip as the alternative with python.org / OS package manager",
+            "Explicitly declines to run the installer on the user's behalf (curl-pipe-bash requires user trust)",
+            "Notes the user must open a new shell after install so the binary is on PATH",
+            "Does NOT proceed with the cupynumeric install command before the bootstrap is done"
+        ],
+        "expected_script": null,
+        "expected_skill": "cupynumeric-install",
+        "ground_truth": "The agent recognizes the user needs a package manager before installing cuPyNumeric. It recommends Miniforge (full conda with conda-forge as the default channel) as the bootstrap, since the conda path is upstream-recommended for cuPyNumeric. It provides the install commands (`curl -L -O \"https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-$(uname)-$(uname -m).sh\"` then `bash Miniforge3-$(uname)-$(uname -m).sh`) AND the docs link (https://github.com/conda-forge/miniforge), and notes that the curl-pipe-bash pattern requires user trust so the agent will NOT run it. It mentions Python+pip (via OS package manager or python.org) as the alternative for users who prefer the pip ecosystem. After the package manager is installed, the user opens a new shell so the binary is on PATH and proceeds with the standard install path.",
+        "id": "install-016-bootstrap-no-package-manager",
+        "question": "I'm on a fresh Linux VM. I don't have conda or pip installed \u2014 neither command exists. How do I install cuPyNumeric?"
+    },
+    {
+        "expected_behavior": [
+            "States that the basic smoke test does not prove GPU usage (CPU variant produces correct results too)",
+            "Names a 'legate --gpus 1 <script.py>' invocation (writing a small temp script file) as the way to force-request a GPU at launch",
+            "Mentions Legate fails fast with a CUDA / 'no GPUs available' error if the GPU variant isn't installed",
+            "Uses a single-shell approach (workload backgrounded with &, nvidia-smi sampling loop in the foreground) to avoid a second-terminal race",
+            "Recommends a deadline-bounded matmul loop (e.g. ones((10000, 10000)) @ self, calling float(b.sum()) to force sync) so the GPU is busy long enough to sample",
+            "Recommends observing 'nvidia-smi --query-gpu=utilization.gpu,memory.used --format=csv' across multiple samples during the workload",
+            "If GPU is unused, recommends reinstalling with CONDA_OVERRIDE_CUDA or inspecting 'conda list cupynumeric' for the *_gpu (not *_cpu) build variant",
+            "Provides the commands rather than executing them"
+        ],
+        "expected_script": null,
+        "expected_skill": "cupynumeric-install",
+        "ground_truth": "The agent confirms that a passing smoke test is NOT enough on a GPU machine \u2014 a CPU-variant install produces the same correct results. The mandatory GPU-usage check has two parts: (1) launch with an explicit GPU request \u2014 write a small temp script (one line: 'import cupynumeric as np; print(np.ones((4096, 4096)).sum())') and run 'legate --gpus 1 <script.py>'; Legate fails fast with a CUDA or 'no GPUs available' error if the GPU variant isn't installed or no GPU is visible; and (2) run a deadline-bounded matmul loop (e.g. ones((10000, 10000)) @ self for ~20s, with float(b.sum()) inside the loop to force sync) and observe 'nvidia-smi --query-gpu=utilization.gpu,memory.used --format=csv' from the same shell \u2014 workload backgrounded with '&', the nvidia-smi sampling loop in the foreground, no second-terminal race. Expect non-trivial memory.used (GiB range) and non-zero utilization across most samples. If neither moves, the CPU variant is installed; the agent recommends reinstalling with CONDA_OVERRIDE_CUDA or verifying 'conda list cupynumeric' shows the GPU build (*_gpu, not *_cpu). The agent provides the commands rather than executing them.",
+        "id": "install-017-verify-gpu-usage",
+        "question": "I have an A100 in this machine and just installed cuPyNumeric. The basic 'import cupynumeric; arange(10).sum()' check passes \u2014 but how do I confirm it's actually using the GPU and not silently falling back to CPU?"
+    },
+    {
+        "expected_behavior": [
+            "Refuses to recommend 'sudo pip install' into system Python",
+            "Cites the mandatory isolation rule (no installs into system Python, base conda, or shared global envs)",
+            "Redirects to an isolated venv: 'python -m venv .venv' + 'source .venv/bin/activate' + 'pip install nvidia-cupynumeric'",
+            "Explains why isolation matters (avoids polluting system Python and breaking other tools)",
+            "Provides the venv command rather than executing it"
+        ],
+        "expected_script": null,
+        "expected_skill": "cupynumeric-install",
+        "ground_truth": "The agent declines to recommend a system-wide sudo pip install, citing the mandatory isolation rule. It explains that installing into system Python can break OS-managed Python packages and pollute the global env in ways that are hard to undo. It redirects to a venv: 'python -m venv .venv && source .venv/bin/activate && pip install nvidia-cupynumeric', and notes the PyPI package is 'nvidia-cupynumeric'. It provides the commands for the user to run.",
+        "id": "install-018-no-system-python",
+        "question": "Just give me the one-liner: 'sudo pip install nvidia-cupynumeric'. I want it available system-wide on this server."
+    },
+    {
+        "expected_behavior": [
+            "Refuses to recommend installing cuPyNumeric into the base conda env",
+            "Cites the mandatory isolation rule (no installs into base / system Python / shared global envs)",
+            "Recommends a fresh named env: 'conda create -n cupynumeric -c conda-forge -c legate cupynumeric'",
+            "Explains the risk (polluting base breaks future env solves and the conda installer itself)",
+            "Provides the command rather than executing it"
+        ],
+        "expected_script": null,
+        "expected_skill": "cupynumeric-install",
+        "ground_truth": "The agent refuses to install into base, citing the isolation rule. Base is conda's own management env \u2014 installing heavy GPU/CUDA stacks there can break future solves and even the conda CLI itself. It recommends a dedicated env: 'conda create -n cupynumeric -c conda-forge -c legate cupynumeric' followed by 'conda activate cupynumeric', and provides the commands for the user to run.",
+        "id": "install-019-no-base-conda",
+        "question": "I'm already in (base). Can I just 'conda install -c conda-forge -c legate cupynumeric' here? I don't want to bother with env management."
+    },
+    {
+        "expected_behavior": [
+            "States cuPyNumeric requires CUDA 12.2 or newer",
+            "Identifies CUDA 11.x as unsupported",
+            "Suggests upgrading the CUDA toolkit / driver, or installing the CPU variant for testing",
+            "Does not hand the user a GPU-install command for CUDA 11",
+            "Provides commands rather than executing them"
+        ],
+        "expected_script": null,
+        "expected_skill": "cupynumeric-install",
+        "ground_truth": "No, not directly. cuPyNumeric requires CUDA 12.2 or newer; CUDA 11.x is not supported. The agent suggests either upgrading the CUDA driver/toolkit to 12.2+ on the host and then following the standard install path, or installing the CPU variant (e.g. on conda, with no GPU visible, conda auto-selects the CPU build) for testing the API without the GPU runtime. It does not provide a GPU install command for an unsupported CUDA version.",
+        "id": "install-020-cuda-too-old",
+        "question": "My server has CUDA 11.8 installed. Can I install the GPU variant of cuPyNumeric?"
+    },
+    {
+        "expected_behavior": [
+            "States cuPyNumeric requires Python 3.11 or newer (minimum supported version is 3.11)",
+            "Identifies Python 3.10 as unsupported",
+            "Recommends creating a fresh env / venv pinned to a supported Python version (e.g. 'conda create -n cupynumeric python=3.12 ...' or installing a newer Python for the venv)",
+            "Does not recommend installing cuPyNumeric against the 3.10 interpreter",
+            "Provides commands rather than executing them"
+        ],
+        "expected_script": null,
+        "expected_skill": "cupynumeric-install",
+        "ground_truth": "No. cuPyNumeric requires Python 3.11 or newer; Python 3.10 is not supported. (Linux packages cover 3.11 through 3.14; macOS aarch64 pip wheels cover 3.11 through 3.13.) The agent recommends either creating a conda env that pins a supported Python ('conda create -n cupynumeric -c conda-forge -c legate python=3.12 cupynumeric') or installing a newer Python (3.11+) and creating a venv against it before 'pip install nvidia-cupynumeric'. It provides the commands for the user to run.",
+        "id": "install-021-python-too-old",
+        "question": "I have Python 3.10 on this box. Can I just 'pip install nvidia-cupynumeric'?"
+    },
+    {
+        "expected_behavior": [
+            "States that macOS x86_64 (Intel Macs) is NOT supported",
+            "Notes that macOS aarch64 (Apple Silicon) IS supported via pip wheels",
+            "Suggests alternatives: a Linux box / WSL, cloud GPU instance, or remote Linux dev box",
+            "Does not hand the user a pip install command for Intel macOS",
+            "Provides guidance rather than executing commands"
+        ],
+        "expected_script": null,
+        "expected_skill": "cupynumeric-install",
+        "ground_truth": "No. cuPyNumeric supports macOS aarch64 (Apple Silicon) via pip wheels, but macOS x86_64 (Intel Macs) is not supported \u2014 no wheels are published and no conda packages target that platform. The agent suggests alternatives: a Linux machine (x86_64 or aarch64), WSL on a Windows machine, or a cloud Linux instance. It does not give an install command that will fail on Intel macOS.",
+        "id": "install-022-macos-intel-unsupported",
+        "question": "I'm on a 2019 MacBook Pro with an Intel chip. How do I install cuPyNumeric?"
+    },
+    {
+        "expected_behavior": [
+            "States that native Windows is NOT supported",
+            "Redirects to WSL (Windows Subsystem for Linux) as the supported path on Windows hosts",
+            "Suggests the user set up WSL (Ubuntu) and follow the Linux install path from inside WSL",
+            "Does not hand the user a PowerShell / cmd install command",
+            "Provides guidance rather than executing commands"
+        ],
+        "expected_script": null,
+        "expected_skill": "cupynumeric-install",
+        "ground_truth": "Not natively. cuPyNumeric does not support native Windows; the supported path on a Windows host is WSL (Windows Subsystem for Linux, typically Ubuntu). The agent tells the user to install WSL2 + a Linux distro, then follow the standard Linux install path (conda or pip) from inside WSL. It does not provide a PowerShell or cmd install command.",
+        "id": "install-023-windows-native-redirect",
+        "question": "I'm on Windows 11. Give me the PowerShell command to install cuPyNumeric."
+    },
+    {
+        "expected_behavior": [
+            "States that the conda path requires conda >= 24.1",
+            "Identifies conda 23.x as too old (silently breaks variant selection)",
+            "Recommends upgrading conda first ('conda update -n base -c conda-forge conda') OR switching to a fresh Miniforge install",
+            "Does not proceed with the cupynumeric install command before conda is upgraded",
+            "Provides commands rather than executing them"
+        ],
+        "expected_script": null,
+        "expected_skill": "cupynumeric-install",
+        "ground_truth": "Not safely. The conda install path requires conda >= 24.1; older releases silently break GPU/CPU variant selection, so a cupynumeric install on conda 23.x can land on the wrong variant without erroring. The agent recommends upgrading conda first ('conda update -n base -c conda-forge conda') and re-checking 'conda --version', OR installing a fresh Miniforge. Only after conda >= 24.1 should the user run the standard 'conda create -n cupynumeric -c conda-forge -c legate cupynumeric'. The agent provides the commands for the user to run.",
+        "id": "install-024-old-conda-version",
+        "question": "I'm on conda 23.7. Can I just 'conda install -c conda-forge -c legate cupynumeric' or do I need to do something else first?"
+    },
+    {
+        "expected_behavior": [
+            "Identifies the question as runtime / launcher configuration, not install",
+            "Explicitly declines to prescribe runtime tuning from this skill",
+            "Redirects to the Legate launcher docs (legate --help, Legate runtime/configuration docs)",
+            "May suggest 'legate --gpus N --fbmem <MB> ...' exists but does not enumerate flags",
+            "Does not re-run the install or treat this as an install bug"
+        ],
+        "expected_script": null,
+        "expected_skill": "cupynumeric-install",
+        "ground_truth": "The agent recognizes this is a Legate launcher / runtime configuration question, not an install question, and declines to prescribe runtime tuning here. It points the user at 'legate --help' and the Legate runtime configuration docs (https://docs.nvidia.com/legate/latest/) for flags like --gpus, --fbmem, --sysmem, --cpus. It notes that runtime tuning is out of scope (this scope only covers getting a working install in place).",
+        "id": "install-025-runtime-config-out-of-scope",
+        "question": "I have cuPyNumeric installed. How do I configure it to use 4 GPUs with 40GB framebuffer memory each at runtime?"
+    },
+    {
+        "expected_behavior": [
+            "Recognizes the question is about porting NumPy code, not installing cuPyNumeric",
+            "Confirms cuPyNumeric is API-compatible with NumPy (so 'import numpy as np' usually becomes 'import cupynumeric as np')",
+            "Notes that real migration involves API coverage gaps, launcher use, and performance tuning \u2014 out of scope here",
+            "Points the user at the upstream cuPyNumeric API docs for migration guidance",
+            "Does not walk through API substitutions"
+        ],
+        "expected_script": null,
+        "expected_skill": "cupynumeric-install",
+        "ground_truth": "The agent recognizes this is a porting / migration question, not an install question. It confirms cuPyNumeric is NumPy-API-compatible so 'import numpy as np' typically becomes 'import cupynumeric as np', but notes that real migration involves API coverage gaps, launching via 'legate', and performance considerations that are out of scope here. It points the user at the upstream cuPyNumeric API docs and does not start prescribing code substitutions.",
+        "id": "install-026-numpy-migration-redirect",
+        "question": "I installed cuPyNumeric. Now walk me through converting my existing NumPy script to use it."
+    }
+]

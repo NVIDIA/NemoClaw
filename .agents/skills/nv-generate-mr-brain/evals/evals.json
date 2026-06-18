@@ -1,0 +1,25 @@
+[
+  {
+    "id": "generate-brain-mri-t1",
+    "question": "Generate a synthetic T1 brain MRI from /data/brain_request.json using nv-generate-mr-brain.",
+    "expected_skill": "nv-generate-mr-brain",
+    "ground_truth": "The agent runs scripts/run_mr_brain.py with the config path, --modality mri_t1, --output-dir, and --random-seed.",
+    "expected_behavior": [
+      "the command uses skills/nv-generate-mr-brain/scripts/run_mr_brain.py",
+      "the command includes --modality mri_t1",
+      "the command includes an explicit --output-dir",
+      "the agent states the generated image is synthetic and not for clinical interpretation"
+    ]
+  },
+  {
+    "id": "skull-stripped-modality-supported",
+    "question": "Can this skill synthesize a skull-stripped FLAIR brain MRI?",
+    "expected_skill": "nv-generate-mr-brain",
+    "ground_truth": "The agent should answer yes with the supported modality mri_flair_skull_stripped and provide the wrapper command shape.",
+    "expected_behavior": [
+      "the agent names mri_flair_skull_stripped exactly",
+      "the command shape still uses scripts/run_mr_brain.py",
+      "the agent does NOT claim clinical or production-training validity"
+    ]
+  }
+]

@@ -1,0 +1,38 @@
+name: tao-run-automl
+type: workflow
+prerequisites:
+  required:
+  - name: model
+    description: A TAO network skill with train defaults and AutoML/HPO notes.
+  - name: train_dataset_uri
+    description: Training dataset URI accessible from the chosen compute backend.
+  - name: platform
+    description: Compute backend available through the TAO SDK, usually lepton, slurm, kubernetes, docker, or brev.
+  - name: skill_bank_path
+    description: Path to this skill bank so AutoMLRunner can load model skills and train specs.
+  optional:
+  - name: eval_dataset_uri
+    description: Validation or evaluation dataset URI when required by the selected model skill.
+  - name: algorithm
+    description: AutoML search algorithm such as bayesian, hyperband, asha, bohb, llm, hybrid, or autoresearch.
+  - name: llm_endpoint
+    description: Required for LLM-powered AutoML algorithms.
+  - name: llm_model
+    description: Required for LLM-powered AutoML algorithms.
+  - name: llm_api_key
+    description: Required for LLM-powered AutoML algorithms if not already available in the environment.
+actions:
+  run:
+    description: Create a fresh timestamped AutoML runner script and launch TAO HPO through AutoMLRunner.
+  status:
+    description: Inspect an existing AutoML workflow folder, runner log, PID, or SDK state for progress.
+  resume:
+    description: Resume or recover an explicitly requested existing AutoML experiment.
+depends_on:
+  models:
+  - <network>
+  platform:
+  - tao-sdk
+  - lepton
+description: TAO AutoML/HPO workflow for launching model-agnostic hyperparameter optimization through AutoMLRunner while grounding
+  model-specific details in the selected model skill.

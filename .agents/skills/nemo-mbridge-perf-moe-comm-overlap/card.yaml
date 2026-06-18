@@ -1,0 +1,47 @@
+title: moe_comm_overlap
+validated_on: "2026-03-15"
+summary: >
+  Megatron-Bridge supports MoE expert-parallel communication overlap through
+  overlap_moe_expert_parallel_comm, with optional delayed expert wgrad
+  scheduling, but the path depends on dispatcher choice, expert parallelism,
+  precision, and runtime support.
+validation_status:
+  moe_overlap_validation:
+    - code_verified
+  flex_dispatcher_activation:
+    - code_verified
+  deepep_hybridep_helper_behavior:
+    - code_verified
+  end_to_end_recipe_smoke:
+    - unclear
+feature_meaning:
+  moe_overlap: >
+    Overlap of expert-parallel token dispatch communication with expert compute.
+  delay_wgrad_compute: >
+    Delayed expert weight-gradient scheduling layered on top of MoE overlap.
+  flex_dispatcher: >
+    Dispatcher mode used for DeepEP or HybridEP style backends.
+recommended_path:
+  comm_overlap.overlap_moe_expert_parallel_comm: true_for_moe_tuning
+  model.moe_shared_expert_overlap: false_when_overlap_is_enabled
+known_constraints:
+  - expert_model_parallel_size must be greater than 1.
+  - num_moe_experts must be greater than 1.
+  - moe_token_dispatcher_type must be alltoall or flex.
+  - Precision must be BF16 or FP16.
+  - If pipeline parallelism is used, virtual pipeline parallelism is required for the overlap path.
+known_limitations:
+  - Setting moe_flex_dispatcher_backend alone does not activate flex dispatch.
+  - Public recipes are often conservative and leave MoE overlap disabled by default.
+  - Repo evidence is stronger for validation logic than for end-to-end throughput gains.
+evidence:
+  - docs/training/communication-overlap.md
+  - docs/parallelisms.md
+  - src/megatron/bridge/training/comm_overlap.py
+  - src/megatron/bridge/training/flex_dispatcher_backend.py
+  - src/megatron/bridge/training/config.py
+  - tests/unit_tests/training/test_comm_overlap.py
+  - tests/unit_tests/training/test_deepep.py
+follow_up_validation:
+  - Add a positive Bridge functional smoke for overlap_moe_expert_parallel_comm.
+  - Add benchmark-backed guidance for at least one representative MoE family.

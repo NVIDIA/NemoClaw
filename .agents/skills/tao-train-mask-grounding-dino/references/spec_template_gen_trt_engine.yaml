@@ -1,0 +1,201 @@
+model_name: ''
+encryption_key: ''
+results_dir: ''
+wandb:
+  enable: true
+  project: TAO Toolkit
+  entity: ''
+  group: ''
+  tags:
+  - tao-toolkit
+  reinit: false
+  sync_tensorboard: false
+  save_code: false
+  name: TAO Toolkit Training
+  run_id: ''
+model:
+  pretrained_backbone_path: ''
+  backbone: swin_tiny_224_1k
+  num_queries: 900
+  num_feature_levels: 4
+  set_cost_class: 1.0
+  set_cost_bbox: 5.0
+  set_cost_giou: 2.0
+  cls_loss_coef: 2.0
+  bbox_loss_coef: 5.0
+  giou_loss_coef: 2.0
+  num_select: 300
+  interm_loss_coef: 1.0
+  no_interm_box_loss: false
+  pre_norm: false
+  two_stage_type: standard
+  decoder_sa_type: sa
+  embed_init_tgt: true
+  fix_refpoints_hw: -1
+  pe_temperatureH: 20
+  pe_temperatureW: 20
+  return_interm_indices:
+  - 1
+  - 2
+  - 3
+  - 4
+  use_dn: true
+  dn_number: 0
+  dn_box_noise_scale: 1.0
+  dn_label_noise_ratio: 0.5
+  focal_alpha: 0.25
+  focal_gamma: 2.0
+  clip_max_norm: 0.1
+  nheads: 8
+  dropout_ratio: 0.0
+  hidden_dim: 256
+  enc_layers: 6
+  dec_layers: 6
+  dim_feedforward: 2048
+  dec_n_points: 4
+  enc_n_points: 4
+  aux_loss: true
+  dilation: false
+  train_backbone: true
+  text_encoder_type: bert-base-uncased
+  max_text_len: 256
+  class_embed_bias: false
+  log_scale: none
+  loss_types:
+  - labels
+  - boxes
+  - masks
+  backbone_names:
+  - backbone.0
+  - bert
+  linear_proj_names:
+  - reference_points
+  - sampling_offsets
+  has_mask: true
+  num_region_queries: 100
+  mask_loss_coef: 2.0
+  rela_nt_loss_coef: 1.0
+  rela_minimap_loss_coef: 0.5
+  rela_union_mask_loss_coef: 2.0
+  dice_loss_coef: 5.0
+dataset:
+  train_data_sources:
+  - image_dir: ''
+    json_file: ''
+    label_map: ''
+  - image_dir: ''
+    json_file: ''
+  val_data_sources:
+    image_dir: ''
+    json_file: ''
+    data_type: VG
+  test_data_sources:
+    image_dir: ''
+    json_file: ''
+    data_type: ''
+  infer_data_sources:
+    image_dir: ''
+    data_type: ''
+  quant_calibration_data_sources:
+    image_dir: ''
+    json_file: ''
+  batch_size: 4
+  workers: 8
+  pin_memory: true
+  dataset_type: serialized
+  max_labels: 50
+  eval_class_ids:
+  - 1
+  augmentation:
+    scales:
+    - 480
+    - 512
+    - 544
+    - 576
+    - 608
+    - 640
+    - 672
+    - 704
+    - 736
+    - 768
+    - 800
+    input_mean:
+    - 0.485
+    - 0.456
+    - 0.406
+    input_std:
+    - 0.229
+    - 0.224
+    - 0.225
+    train_random_resize:
+    - 400
+    - 500
+    - 600
+    horizontal_flip_prob: 0.5
+    train_random_crop_min: 384
+    train_random_crop_max: 600
+    random_resize_max_size: 1333
+    test_random_resize: 800
+    fixed_padding: true
+    fixed_random_crop: 1024
+  has_mask: true
+train:
+  num_gpus: 1
+  gpu_ids:
+  - 0
+  num_nodes: 1
+  seed: 1234
+  cudnn:
+    benchmark: false
+    deterministic: true
+  num_epochs: 10
+  checkpoint_interval: 1
+  checkpoint_interval_unit: epoch
+  validation_interval: 1
+  resume_training_checkpoint_path: ''
+  results_dir: ''
+  freeze: []
+  pretrained_model_path: ''
+  clip_grad_norm: 0.1
+  is_dry_run: false
+  optim:
+    optimizer: AdamW
+    monitor_name: val_loss
+    lr: 0.0002
+    lr_backbone: 2.0e-05
+    lr_linear_proj_mult: 0.1
+    momentum: 0.9
+    weight_decay: 0.0001
+    lr_scheduler: MultiStep
+    lr_steps:
+    - 10
+    lr_step_size: 10
+    lr_decay: 0.1
+  precision: fp32
+  distributed_strategy: ddp
+  activation_checkpoint: true
+gen_trt_engine:
+  results_dir: ''
+  gpu_id: 0
+  onnx_file: ???
+  trt_engine: ???
+  timing_cache: ''
+  batch_size: -1
+  verbose: false
+  tensorrt:
+    workspace_size: 8192
+    min_batch_size: 1
+    opt_batch_size: 1
+    max_batch_size: 4
+    layers_precision: []
+    data_type: FP32
+quantize:
+  backend: torchao
+  mode: weight_only_ptq
+  algorithm: minmax
+  layers: []
+  skip_names: []
+  model_path: ''
+  results_dir: ''
+  backend_kwargs: {}
+  device: cuda

@@ -1,0 +1,21 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# PVC for pre-downloaded Qwen3-235B-A22B weights.
+# Populated by hf-download-job.yaml before the NIMService boots.
+# Referenced by nimservice.yaml via spec.storage.pvc.name.
+#
+# Size rationale: the upstream HF tree is roughly 470GB. 600Gi leaves room
+# for tokenizer/config files and HuggingFace cache metadata.
+# storageClassName omitted - cluster default must be RWX-capable.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: qwen3-235b-pvc
+  namespace: osmo-nims
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 600Gi

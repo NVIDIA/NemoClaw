@@ -1,0 +1,93 @@
+network_arch: cosmos-rl
+automl_enabled: true
+container_image: tao_toolkit.cosmos_rl
+required_credentials:
+- HF_TOKEN
+data_format: llava
+gpu_spec_key: policy.parallelism.dp_shard_size
+node_spec_key: policy.parallelism.dp_replicate_size
+data_sources:
+  train:
+    custom.train_dataset.annotation_path:
+      source: train_datasets
+      multiple_sources: false
+      path: '{train_dataset_annotation}'
+    custom.train_dataset.media_path:
+      source: train_datasets
+      multiple_sources: false
+      path_from_format:
+        llava:
+        - images.tar.gz
+        - videos.tar.gz
+        '*': images.tar.gz
+    custom.val_dataset.annotation_path:
+      source: eval_dataset
+      multiple_sources: false
+      path: '{eval_dataset_annotation}'
+    custom.val_dataset.media_path:
+      source: eval_dataset
+      multiple_sources: false
+      path_from_format:
+        llava:
+        - images.tar.gz
+        - videos.tar.gz
+        '*': images.tar.gz
+  evaluate:
+    dataset.annotation_path:
+      source: eval_dataset
+      multiple_sources: false
+      path: '{eval_dataset_annotation}'
+    dataset.media_dir:
+      source: eval_dataset
+      multiple_sources: false
+      path_from_format:
+        llava:
+        - images.tar.gz
+        - videos.tar.gz
+        '*': videos.tar.gz
+spec_params: {}
+actions:
+  evaluate:
+    command: cosmos-rl-evaluate --config {config_path}
+    config_format: toml
+    inputs:
+      dataset.annotation_path:
+        type: file
+      dataset.media_dir:
+        type: folder
+        selective:
+          annotation: dataset.annotation_path
+          format: json
+          keys:
+          - video
+      model.model_name:
+        type: folder
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  train:
+    command: cosmos-rl --config {config_path} /opt/cosmos_rl/tao_sft_example.py
+    config_format: toml
+    inputs:
+      custom.train_dataset.annotation_path:
+        type: file
+      custom.train_dataset.media_path:
+        type: folder
+      custom.val_dataset.annotation_path:
+        type: file
+      custom.val_dataset.media_path:
+        type: folder
+    outputs:
+      train.output_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+spec_shorthand_keys:
+  dp_shard_size: policy.parallelism.dp_shard_size
+  dp_replicate_size: policy.parallelism.dp_replicate_size
+  num_epochs: train.epoch
+  batch_size: train.train_batch_per_replica
+  learning_rate: train.optm_lr
+  mini_batch: train.train_policy.mini_batch

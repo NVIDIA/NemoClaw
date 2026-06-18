@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": true,
+  "properties": {
+    "asset_name": { "type": "string" },
+    "assembly_report_path": { "type": "string" },
+    "checks": { "type": "array" },
+    "copied_files": { "type": "array" },
+    "deliverable_root": { "type": "string" },
+    "errors": { "type": "array" },
+    "next_step": { "type": "string" },
+    "operation": { "type": "string" },
+    "output_root": { "type": "string" },
+    "passed": { "type": "boolean" },
+    "pipeline_root": { "type": "string" },
+    "rewritten_paths": { "type": "array" },
+    "root_usd_path": { "type": "string" },
+    "root_usd_relative_path": { "type": "string" },
+    "skill": { "const": "assemble-package-source" },
+    "status": { "type": "string" },
+    "thumbnail_path": { "type": "string" },
+    "warnings": { "type": "array" }
+  },
+  "required": [
+    "skill",
+    "operation",
+    "asset_name",
+    "output_root",
+    "deliverable_root",
+    "root_usd_path",
+    "root_usd_relative_path",
+    "thumbnail_path",
+    "copied_files",
+    "rewritten_paths",
+    "checks",
+    "warnings",
+    "errors",
+    "passed",
+    "status",
+    "next_step"
+  ],
+  "type": "object"
+}

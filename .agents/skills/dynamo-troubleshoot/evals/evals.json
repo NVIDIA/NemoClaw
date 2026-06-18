@@ -1,0 +1,64 @@
+{
+  "skill": "dynamo-troubleshoot",
+  "cases": [
+    {
+      "id": "model-download-job-stuck",
+      "question": "My model-download job has been pending forever and the PVC won't bind. What's going on?",
+      "expected_skill": "dynamo-troubleshoot",
+      "expected_script": "scripts/collect_dynamo_debug_bundle.py",
+      "ground_truth": "Collect a read-only debug bundle, classify as a model-cache/PVC/storage-class problem, identify the strongest signal, and propose the smallest reversible fix.",
+      "expected_behavior": [
+        "Collect a read-only debug bundle (no secrets)",
+        "Classify the failure (model-cache/PVC/storage)",
+        "Check namespace/storageclass/PVC/download job in order",
+        "Propose the smallest reversible fix"
+      ]
+    },
+    {
+      "id": "frontend-crashloop",
+      "question": "The frontend pod is in CrashLoopBackOff after I deployed — collect what you need and tell me why.",
+      "expected_skill": "dynamo-troubleshoot",
+      "expected_script": "scripts/collect_dynamo_debug_bundle.py",
+      "ground_truth": "Gather a read-only bundle including pod describe and logs, classify the failure, and give the likely cause plus next command.",
+      "expected_behavior": [
+        "Collect a read-only bundle for the namespace/deployment",
+        "Inspect pod status, describe, and container logs",
+        "Classify failure and state strongest signal",
+        "Give exact next command"
+      ]
+    },
+    {
+      "id": "dgd-not-reconciling",
+      "question": "My DynamoGraphDeployment isn't reconciling and no pods come up.",
+      "expected_skill": "dynamo-troubleshoot",
+      "expected_script": "scripts/collect_dynamo_debug_bundle.py",
+      "ground_truth": "Check DGD status/events and operator reconciliation, classify as operator/DGD reconciliation, and propose a fix.",
+      "expected_behavior": [
+        "Collect bundle and read DGD status + events",
+        "Classify as operator/DGD reconciliation",
+        "Identify cause and next action"
+      ]
+    },
+    {
+      "id": "neg-deploy-recipe",
+      "question": "Deploy the Qwen vLLM recipe for me.",
+      "expected_skill": "dynamo-recipe-runner",
+      "ground_truth": "Normal bring-up of an existing recipe belongs to dynamo-recipe-runner.",
+      "expected_behavior": ["dynamo-troubleshoot stays silent; dynamo-recipe-runner handles it"]
+    },
+    {
+      "id": "neg-enable-kv-routing",
+      "question": "Turn on KV-aware routing for my frontend.",
+      "expected_skill": "dynamo-router-starter",
+      "ground_truth": "Router mode setup belongs to dynamo-router-starter.",
+      "expected_behavior": ["dynamo-troubleshoot stays silent; dynamo-router-starter handles it"]
+    },
+    {
+      "id": "neg-check-interconnect-ready",
+      "question": "Everything is running and healthy — confirm the NIXL interconnect is actually ready before I trust my disagg benchmark.",
+      "expected_skill": "dynamo-interconnect-check",
+      "ground_truth": "Proactive validation of interconnect readiness on a healthy deployment belongs to dynamo-interconnect-check, not failure diagnosis.",
+      "expected_behavior": ["dynamo-troubleshoot stays silent; dynamo-interconnect-check handles it"]
+    }
+  ]
+}

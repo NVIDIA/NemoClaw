@@ -1,0 +1,25 @@
+{
+  "skills": [
+    "vss-deploy-profile"
+  ],
+  "resources": {
+    "platforms": {
+      "RTXPRO6000BW": {
+        "gpu_count": 2
+      }
+    }
+  },
+  "expects": [
+    {
+      "query": "Deploy the VSS **search** profile on {{platform}}, using the `/vss-deploy-profile` skill end-to-end and autonomously.",
+      "checks": [
+        "`curl -sf --max-time 15 http://localhost:8000/health` returns exit 0 (Agent REST API responsive)",
+        "`curl -sf --max-time 15 http://localhost:3000/` returns exit 0 (Agent UI responsive)",
+        "`docker ps --format '{{.Names}}' | grep -qx vss-agent` returns exit 0",
+        "`docker ps --format '{{.Names}}' | grep -qx vss-agent-ui` returns exit 0",
+        "`docker ps --format '{{.Names}}' | grep -qx redis` returns exit 0",
+        "`docker ps --format '{{.Names}}' | grep -qx phoenix` returns exit 0"
+      ]
+    }
+  ]
+}

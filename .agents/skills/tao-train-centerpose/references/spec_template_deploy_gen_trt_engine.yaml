@@ -1,0 +1,17 @@
+encryption_key: tlt_encode
+results_dir: /results
+gen_trt_engine:
+  gpu_id: 0
+  onnx_file: /models/model.onnx
+  trt_engine: /results/centerpose.engine
+  tensorrt:
+    data_type: fp32
+    workspace_size: 1024
+    min_batch_size: 1
+    opt_batch_size: 1
+    max_batch_size: 4
+    calibration:
+      cal_image_dir: /data/calibration/images
+      cal_cache_file: /results/centerpose_calibration.cache
+      cal_batch_size: 10
+      cal_batches: 1000

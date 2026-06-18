@@ -1,0 +1,49 @@
+[
+  {
+    "id": "nemo-automodel-launcher-config-001-slurm-multinode",
+    "question": "I need to launch a two-node NeMo AutoModel finetuning job on Slurm with 8 GPUs per node. What should the slurm YAML section contain?",
+    "expected_skill": "nemo-automodel-launcher-config",
+    "expected_script": null,
+    "ground_truth": "The agent routes to nemo-automodel-launcher-config and provides a Slurm YAML section with job_name, nodes: 2, ntasks_per_node: 8, time, account or partition, container_image, hf_home, optional extra_mounts, env_vars, and master_port. It explains that the launcher derives WORLD_SIZE from nodes times ntasks_per_node and sets MASTER_ADDR and MASTER_PORT for distributed startup.",
+    "expected_behavior": [
+      "Routes to nemo-automodel-launcher-config",
+      "Provides a slurm YAML section",
+      "Includes nodes: 2 and ntasks_per_node: 8",
+      "Mentions account or partition and time",
+      "Mentions container_image and optional mounts or env_vars",
+      "Explains MASTER_ADDR, MASTER_PORT, and WORLD_SIZE handling"
+    ]
+  },
+  {
+    "id": "nemo-automodel-launcher-config-002-skypilot-spot",
+    "question": "How do I configure NeMo AutoModel to launch on SkyPilot with H100 GPUs and spot instances?",
+    "expected_skill": "nemo-automodel-launcher-config",
+    "expected_script": null,
+    "ground_truth": "The agent routes to nemo-automodel-launcher-config and shows a skypilot YAML section with cloud, accelerators such as H100:8, num_nodes, use_spot: true, disk_size, region, setup, and env_vars. It warns that spot instances can be preempted, recommends checkpointing with short intervals using step_scheduler.checkpoint_interval, and says to resume from the latest checkpoint with restore_from.path.",
+    "expected_behavior": [
+      "Routes to nemo-automodel-launcher-config",
+      "Provides a skypilot YAML section",
+      "Includes accelerators and num_nodes",
+      "Sets use_spot: true",
+      "Mentions setup and env_vars",
+      "Warns about spot preemption and checkpointing",
+      "Mentions step_scheduler.checkpoint_interval and restore_from.path"
+    ]
+  },
+  {
+    "id": "nemo-automodel-launcher-config-003-nsys-slurm",
+    "question": "How do I enable Nsight Systems profiling for a NeMo AutoModel Slurm launch, and what output should I expect?",
+    "expected_skill": "nemo-automodel-launcher-config",
+    "expected_script": null,
+    "ground_truth": "The agent routes to nemo-automodel-launcher-config and explains that Nsight Systems profiling is enabled in the slurm YAML section with nsys_enabled: true. It should say the launcher wraps the training command with nsys profile and produces an .nsys-rep report file. It should also mention this is a Slurm launcher setting and that normal Slurm fields such as job_name, nodes, ntasks_per_node, time, account or partition, and container_image still apply. It should warn that profiling is diagnostic-only, adds overhead and artifacts, should be used for short profiling runs, and should be disabled for normal production training.",
+    "expected_behavior": [
+      "Routes to nemo-automodel-launcher-config",
+      "Mentions slurm.nsys_enabled: true",
+      "Explains that the launcher wraps the command with nsys profile",
+      "Mentions .nsys-rep output",
+      "Recognizes this as a Slurm launcher setting",
+      "Mentions normal Slurm job fields still apply",
+      "Warns profiling is diagnostic-only and should be disabled for normal production training"
+    ]
+  }
+]

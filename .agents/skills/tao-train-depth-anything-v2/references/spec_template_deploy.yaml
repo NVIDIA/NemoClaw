@@ -1,0 +1,52 @@
+results_dir: /results
+model:
+  # Required. Must match the trained model variant.
+  # Options: RelativeDepthAnything (relative variant) | MetricDepthAnything (metric variant).
+  # Omitting this block lets the schema default ("MetricDepthAnything") miscategorize a relative
+  # engine and bypass the LSQ alignment + GT disparity inversion paths in the deploy evaluator.
+  model_type: RelativeDepthAnything
+dataset:
+  dataset_name: MonoDataset
+  infer_dataset:
+    data_sources:
+    - dataset_name: RelativeMonoDataset
+      data_file: /data/annotations.txt
+    batch_size: 1
+    workers: 4
+    augmentation:
+      crop_size: [518, 686]   # MUST match export.input_{height,width}.
+                              # The deploy runtime selects input H/W from this field
+                              # (`evaluate.input_height/input_width` is currently decorative);
+                              # leaving it unset falls back to the [518, 518] default in tao-core,
+                              # which silently overrides the engine shape and produces non-physical KPIs.
+  test_dataset:
+    data_sources:
+    - dataset_name: NYUDV2Relative
+      data_file: /data/annotations.txt
+    batch_size: 1
+    workers: 4
+    augmentation:
+      crop_size: [518, 686]   # match export.input_{height,width}
+inference:
+  trt_engine: /results/depth-net-mono.engine
+  input_width: 686
+  input_height: 518
+evaluate:
+  trt_engine: /results/depth-net-mono.engine
+  input_width: 686
+  input_height: 518
+gen_trt_engine:
+  gpu_id: 0
+  onnx_file: /models/model.onnx
+  trt_engine: /results/depth-net-mono.engine
+  batch_size: -1
+  tensorrt:
+    data_type: bf16   # bf16 recommended for mono on Ampere SM80+ hardware; use fp32 as fallback
+    workspace_size: 1024
+    min_batch_size: 1
+    opt_batch_size: 1
+    max_batch_size: 4
+  verbose: true
+  # Engine input H, W are pinned to the trace shape (from export.input_height /
+  # export.input_width). Mono engines do not support H/W-dynamic profiles —
+  # build a separate engine per (H, W) target.

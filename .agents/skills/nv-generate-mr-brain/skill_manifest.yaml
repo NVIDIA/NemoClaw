@@ -1,0 +1,196 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+id: medagent.nv_generate_mr_brain
+version: 0.1.0
+upstream_refs:
+  - kind: github_repo
+    name: NVIDIA-Medtech/NV-Generate-CTMR
+    repo_url: https://github.com/NVIDIA-Medtech/NV-Generate-CTMR
+    git_commit: 61c4ec709b84cad468852243c48e250bec732074
+  - kind: huggingface_repo
+    name: nvidia/NV-Generate-MR-Brain
+    repo_id: nvidia/NV-Generate-MR-Brain
+    revision: 762ddecc59122081d8e04b9fbec9c0deada973f1
+license: Apache-2.0
+intended_use:
+  summary: >
+    Engineering-time wrapper around NVIDIA-Medtech/NV-Generate-CTMR's
+    rflow-mr-brain image-only synthesis workflow. Invokes
+    `python -m scripts.diff_model_infer` with the upstream
+    rflow-mr-brain configs and summarizes the generated NIfTI volume.
+  scope: development
+  not_for:
+    - clinical deployment
+    - clinical interpretation
+    - autonomous diagnosis
+    - regulatory submission
+    - training data for production models
+
+inputs:
+  - name: model_config_override
+    type: file_path
+    formats:
+      - json
+    description: >
+      JSON file overriding the nested diffusion_unet_inference block in
+      configs/config_maisi_diff_model_rflow-mr-brain.json. The sentinel value
+      `default` selects the upstream config plus CLI modality and random seed.
+
+outputs:
+  - name: synthetic_mr_brain_volumes
+    type: directory_path
+    description: Output directory containing generated MR brain NIfTI volumes.
+  - name: result_json
+    type: json
+    schema: validators/output_schema.json
+
+paired_verifiers:
+  - id: medagent.verifiers.mr_synthesis_quality_v1
+    status: implemented
+    consumes: evidence_pack_dir
+    purpose: >
+      Re-reads generated MR brain NIfTI image artifacts and checks source-pack
+      success, official upstream entrypoint, model inventory, modality/version
+      identity, sample count, shape and spacing consistency, finite
+      nonconstant nonnegative voxel values, aggregate-flag honesty, runtime
+      identity, and non-clinical scope disclosure. This is an engineering
+      floor, not anatomical realism or training-data approval.
+
+runtime:
+  language: python
+  python: ">=3.10"
+  entrypoint: scripts/run_mr_brain.py
+  args:
+    - "${python}"
+    - "${script}"
+    - "${fixture}"
+    - "--output-dir"
+    - "${out}/samples"
+    - "--modality"
+    - "mri_t1"
+  dependencies:
+    nibabel: ">=4.0"
+    numpy: ">=1.23"
+    typer: ">=0.9"
+    torch: ">=2.1"
+    monai: ">=1.5"
+  side_effects:
+    pip_packages:
+      - nibabel>=4.0
+      - numpy>=1.23
+      - typer>=0.9
+      - torch>=2.1
+      - "monai>=1.5"
+      - scipy>=1.10
+      - scikit-image>=0.20
+      - einops>=0.7
+      - huggingface_hub>=0.20
+      - tqdm>=4.65
+      - fire>=0.5
+      - tensorboard>=2.14
+      - PyYAML>=6.0
+    local_writes:
+      - {path: "<caller-provided --output-dir>", approx_mb_max: 4000}
+    home_writes:
+      - {path: ~/.cache/huggingface/, approx_mb_max: 6000}
+    network_endpoints:
+      - https://huggingface.co
+      - https://github.com
+    requires_docker: false
+    requires_gpu: cuda
+    environment:
+      clean_environment_required: false
+      clean_environment_recommended: true
+      modifies_active_python_environment: true
+      user_environment_modification_ok: true
+      recommended_isolation: fresh venv or container for benchmarks; caller-selected env for interactive use
+      notes: >
+        Runtime setup commands may install packages into the active Python
+        environment. That is acceptable only when the caller chooses that
+        environment; benchmark and evidence runs should use a fresh per-run
+        environment.
+    env_required: []
+    env_optional:
+      - NV_GENERATE_ROOT
+  external_assets:
+    - kind: upstream_repo
+      repo_url: https://github.com/NVIDIA-Medtech/NV-Generate-CTMR
+      install_path: $NV_GENERATE_ROOT
+      install_command: >
+        git clone https://github.com/NVIDIA-Medtech/NV-Generate-CTMR.git $NV_GENERATE_ROOT &&
+        pip install -r $NV_GENERATE_ROOT/requirements.txt
+      contains:
+        - scripts/diff_model_infer.py
+        - scripts/download_model_data.py
+        - configs/config_network_rflow.json
+        - configs/environment_maisi_diff_model_rflow-mr-brain.json
+        - configs/config_maisi_diff_model_rflow-mr-brain.json
+        - configs/modality_mapping.json
+    - kind: huggingface_repo
+      repo_id: nvidia/NV-Generate-MR-Brain
+      install_path: $NV_GENERATE_ROOT/models/
+      install_command: >
+        cd $NV_GENERATE_ROOT && python -m scripts.download_model_data
+        --version rflow-mr-brain --root_dir ./ --model_only
+      contains:
+        - models/autoencoder_v1.pt
+        - models/diff_unet_3d_rflow-mr-brain_v0.pt
+
+limitations:
+  - >
+    This is a thin wrapper. Inference, sampling, and decoding are delegated
+    entirely to NVIDIA-Medtech/NV-Generate-CTMR's `scripts.diff_model_infer`.
+    Do not modify code under $NV_GENERATE_ROOT or the repo-local fallback at
+    .workbench_data/upstreams/NV-Generate-CTMR.
+  - >
+    rflow-mr-brain generates image-only synthetic brain MRI volumes. It does
+    not emit paired segmentation masks.
+  - >
+    Output volumes are synthetic. They are not safe as training data for
+    production medtech models without independent quality review.
+
+validation:
+  expected_runtime_seconds:
+    min: 1.0
+    max: 1800.0
+    inference_path: runtime.subprocess_seconds
+  sanity_checks:
+    - {path: skill, eq: nv_generate_mr_brain}
+    - {path: invocation.official_entrypoint, eq: "python -m scripts.diff_model_infer"}
+    - {path: invocation.exit_code, eq: 0}
+    - {path: invocation.model_inventory.all_present, eq: true}
+    - {path: output.num_samples, gte: 1}
+    - {path: output.all_images_readable, eq: true}
+    - {path: output.all_shapes_match_requested, eq: true}
+    - {path: output.all_spacing_match_requested, eq: true}
+    - {path: output.all_images_finite, eq: true}
+    - {path: output.all_images_nonconstant, eq: true}
+    - {path: output.all_images_nonnegative, eq: true}
+  expected_cost:
+    wall_seconds:        {max: 1800}
+    cpu_seconds:         {max: 3600}
+    rss_mb_peak:         {min: 500, max: 32000}
+    gpu_seconds:         {max: 1800}
+    gpu_memory_mb_peak:  {max: 48000}
+  reproducibility:
+    mode: preflight
+    fixture: fixtures/default_mri_t1.json
+    runs: 2
+    reason: >
+      End-to-end MR-brain synthesis repeatability requires CUDA, the
+      NV-Generate-CTMR checkout, and downloaded model weights. The repository
+      audit repeats the declared config/env boundary check; promoted evidence
+      packs must compare generated image artifact hashes.

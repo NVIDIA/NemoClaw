@@ -1,0 +1,391 @@
+# Defect Image Generation Workflow — Good-Image Generation (PCBA, usd2roi + Image-Edit)
+#
+# Procedural clean-PCBA image generation. Renders per-cell ROI crops directly
+# from the PCBA USD asset tree (scan_grid + semantic-aware crop), then runs
+# Qwen Image-Edit (OVSL2SL) for lighting/appearance transfer. **No defects
+# injected, no AnomalyGen inference** — this is the defect-free baseline lane.
+#
+# Identical structure to the first two groups of texture_defect_generation_day0.yaml
+# (usd2roi-render → augment-image-edit), with finetune-job and anomaly-infer
+# trimmed off.
+#
+# Pipeline:
+#
+#   usd2roi-render (usd2roi_image — paidf-simulation)
+#     ├─ Stage 1: Kit + sdg_pipeline.py (scan_grid render w/ per-mesh semantics)
+#     │     → trigger_0000/{rgb_*.png, semantic_segmentation_*.png, ...}
+#     └─ Stage 2: usd2roi_crop.py (semantic-mask-driven multi-cell crops)
+#           → crop/<MATERIAL>/<x*_y*>/{normal_img,cad_mask}/<NNNN>.png
+#       └─ writes runs/<name>/usd2roi-components/
+#                                │
+#                                ▼
+#   augment-image-edit (augmentation_image — paidf-augmentation, Qwen OVSL2SL)
+#     └─ reads usd2roi-components/crop/<MAT>/<cell>/normal_img/
+#     └─ writes runs/<name>/augment/crop/<MAT>/<cell>/<NNNN>.<ext>  (SL-restyled RGB)
+#
+# When to use:
+#   - Building a clean-image training set (ChangeNet golden halves, AnomalyGen
+#     finetune positives, lighting-variant demos).
+#   - Generating per-component ROIs for downstream skill consumption (real photo
+#     pairing, manual inspection, eval reference).
+#
+# For pose defects (shift / tombstone / sideflip), use
+#   structural_defect_generation.yaml.
+# For texture defects (solder bridge / scratch / discoloration / missing
+#   component) and the full anomalygen training/inference loop, use
+#   texture_defect_generation_day0.yaml.
+#
+# Submit:
+#
+#   STAMP=$(cat /proc/sys/kernel/random/uuid | cut -c1-8)
+#   osmo workflow submit skills/physical-ai-defect-image-generation/assets/configs/good_image_generation.yaml \
+#     --pool <pool> \
+#     --set name=good_image_gen-$STAMP \
+#           dig_url_root=<dig_url_root> \
+#           board=0603_H100 \
+#           image_edit_endpoint=http://qwen-image-edit-nvpcb-ovsl2sl.osmo-nims.svc.cluster.local:8000/v1 \
+#           image_edit_model=nvidia/Qwen-Image-Edit-NVPCB-OVSL2SL
+#
+# Prerequisites:
+#   1. No registry credential needed — paidf-* images are public on nvcr.io/nvidia/ (anonymous pull). If image pulls fail: see references/troubleshooting.md -> "nvcr.io image pull failures".
+#   2. osmo credential set hf-token --type GENERIC --payload token="$HF_TOKEN"
+#   3. URL assets: {{ dig_url_root }}/datasets/pcb/assets exists (publish via setup/setup_pcb.yaml)
+#   4. image-edit endpoint reachable from OSMO pods (existing endpoint or local
+#      cluster deployment; see references/nim/README.md)
+#
+# Output: {{ dig_url_root }}/runs/<name>/{usd2roi-components,augment} — clean
+#         and SL-restyled per-cell ROIs.
+
+version: 2
+workflow:
+  name: "{{ workflow_name }}"
+  timeout:
+    exec_timeout: "{{ exec_timeout }}"
+    queue_timeout: "{{ queue_timeout }}"
+
+  resources:
+    gpu-render:
+      gpu: "{{ render_gpu }}"
+      cpu: "{{ render_cpu }}"
+      memory: "{{ render_memory }}"
+      storage: "{{ render_storage }}"
+      platform: "{{ platform }}"
+    gpu-augment:
+      gpu: "{{ augment_gpu }}"
+      cpu: "{{ augment_cpu }}"
+      memory: "{{ augment_memory }}"
+      storage: "{{ augment_storage }}"
+      platform: "{{ platform }}"
+
+  groups:
+
+    # ── Group 1: usd2roi day-0 — scan_grid render + per-cell ROI crop ───────────
+    # Inputs: {{ dig_url_root }}/datasets/pcb/assets (full USD asset tree).
+    # Two-stage day-0 pipeline (no real photo, no MI registration):
+    #   Stage 1: sdg_pipeline.py renders a labelled scan_grid (per-cell rgb + seg).
+    #   Stage 2: usd2roi_crop.py emits per-cell ROI crops bucketed by material
+    #            (crop.classes + crop.class_dirs in the cookbook).
+    # Output dataset shape:
+    #   crop/<MATERIAL>/<x*_y*>/normal_img/<NNNN>.png + cad_mask/<NNNN>_cad_mask.png
+    - name: usd2roi-render
+      tasks:
+        - name: usd2roi-replicator
+          lead: true
+          image: "{{ usd2roi_image }}"
+          resource: gpu-render
+          environment:
+            NVIDIA_DRIVER_CAPABILITIES: all
+            MAX_IMAGE_COUNT: "{{ render_patches }}"
+            CROP_MAX_EMIT: "{{ crop_max_emit }}"
+          inputs:
+            - url: "{{ dig_url_root }}/datasets/pcb/assets"
+          command: ["bash"]
+          args: ["/tmp/run.sh"]
+          files:
+            # Cookbooks: USD bindings, SDG render config (with mesh-level semantics
+            # inlined), and per-material crop config. The URL input only ships the
+            # USD asset tree; everything else lives in the cookbook.
+            - localpath: "../cookbooks/pcb/{{ board }}/pcba_target.yaml"
+              path: /tmp/pcba_target.yaml
+            - localpath: "../cookbooks/pcb/{{ board }}/day0_image.yaml"
+              path: /tmp/day0_image.yaml
+            - localpath: "../cookbooks/pcb/{{ board }}/day0_crop.yaml"
+              path: /tmp/day0_crop.yaml
+
+            - path: /tmp/run.sh
+              contents: |
+                set -euo pipefail
+
+                # ── Pod-template preflight (OV task) ───────────────────────────
+                if [ ! -f /usr/share/nvidia/nvoptix.bin ]; then
+                  echo "ERROR: /usr/share/nvidia/nvoptix.bin not mounted; Kit OptiX silently falls back to raw path tracing (noisy output)."
+                  echo "  Update the OSMO pod template — see references/troubleshooting.md."
+                  exit 1
+                fi
+                DSHM_GB=$(df -B1G /dev/shm | tail -1 | awk '{print $2}')
+                if [ "$DSHM_GB" -lt 16 ]; then
+                  echo "ERROR: /dev/shm is ${DSHM_GB}GiB; need >= 16 GiB (32 preferred) for Kit ray-tracer buffers."
+                  exit 1
+                fi
+                # ───────────────────────────────────────────────────────────────
+
+                # Install Mike Farah yq into /tmp (pod /usr/local/bin is non-writable; paidf-simulation ships curl, no wget).
+                [ -x /tmp/yq ] || {
+                  curl -fsSL https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64 -o /tmp/yq
+                  chmod +x /tmp/yq
+                }
+                export PATH=/tmp:$PATH
+
+                ASSETS_IN="{{input:0}}"
+                export OUT="{{output}}"
+                mkdir -p "$OUT"
+
+                # 1. pcba_target.yaml ships in the cookbook (mounted at /tmp/pcba_target.yaml).
+                # Dataset only ships the USD tree — locate the scene file by basename.
+                PCBA_YAML=/tmp/pcba_target.yaml
+                [ -f "$PCBA_YAML" ] || { echo "ERROR: $PCBA_YAML not mounted (cookbook localpath)"; exit 1; }
+
+                # Locate scene USD by passed-in basename.
+                SCENE_USD=$(find "$ASSETS_IN" -name "{{ scene_filename }}" -print -quit)
+                [ -n "$SCENE_USD" ] || { echo "ERROR: scene_filename={{ scene_filename }} not found under $ASSETS_IN"; exit 1; }
+                echo "Assets: pcba_target=$PCBA_YAML scene=$SCENE_USD"
+
+                # Patch scene path in pcba_target.yaml so it points at the dataset-mounted USD
+                PCBA_PATCHED=/tmp/pcba_target_patched.yaml
+                cp "$PCBA_YAML" "$PCBA_PATCHED"
+                SCENE_USD="$SCENE_USD" yq -i '.scene = strenv(SCENE_USD)' "$PCBA_PATCHED"
+
+                # 2. Resolve sentinels in SDG + crop cookbooks
+                SDG_YAML=/tmp/day0_image_resolved.yaml
+                CROP_YAML=/tmp/day0_crop_resolved.yaml
+                cp /tmp/day0_image.yaml  "$SDG_YAML"
+                cp /tmp/day0_crop.yaml   "$CROP_YAML"
+
+                OUT="$OUT" MAX_IMAGE_COUNT="$MAX_IMAGE_COUNT" yq -i '
+                  .output = strenv(OUT) |
+                  .max_image_count = (strenv(MAX_IMAGE_COUNT) | tonumber)
+                ' "$SDG_YAML"
+                OUT="$OUT" yq -i '.output.dir = strenv(OUT)' "$CROP_YAML"
+
+                # Optional: override the cookbook's per-cell crop cap (max_emit).
+                # Empty → use cookbook value. CROP_MAX_EMIT controls the final
+                # output dataset size (per material per cell), not the upstream
+                # render. See SKILL.md §"User intent → knob mapping".
+                if [ -n "${CROP_MAX_EMIT:-}" ]; then
+                  if [ "$CROP_MAX_EMIT" = "null" ]; then
+                    yq -i '.crop.max_emit = null' "$CROP_YAML"
+                  else
+                    CROP_MAX_EMIT="$CROP_MAX_EMIT" yq -i '.crop.max_emit = (strenv(CROP_MAX_EMIT) | tonumber)' "$CROP_YAML"
+                  fi
+                  echo "Patched crop.max_emit -> ${CROP_MAX_EMIT}"
+                fi
+
+                # Some Kit image builds unconditionally read CFG["horizontal_aperture"] at
+                # scene-setup time even though the pcba_target.yaml comment says the
+                # USD-authored aperture is used as fallback. Inject a safe default into
+                # day0_image.yaml if the key is not already set (in either YAML) to
+                # avoid KeyError('horizontal_aperture') at sdg_pipeline.py line 529.
+                if ! grep -qE '^[^#]*horizontal_aperture:' "$SDG_YAML" "$PCBA_PATCHED" 2>/dev/null; then
+                  echo "" >> "$SDG_YAML"
+                  echo "# Camera aperture default (USD-authored value overridden when present)" >> "$SDG_YAML"
+                  echo "horizontal_aperture: 200.0" >> "$SDG_YAML"
+                  echo "Injected horizontal_aperture: 200.0 into $SDG_YAML"
+                fi
+
+                cp "$SDG_YAML" "$OUT/day0_image.yaml"
+                cp "$CROP_YAML" "$OUT/day0_crop.yaml"
+                cp "$PCBA_PATCHED" "$OUT/pcba_target.yaml"
+
+                # 3. Stage 1 — labelled scan_grid render (Kit).
+                # The image's ENTRYPOINT is ignored when OSMO overrides `command:`,
+                # so invoke Kit's base-app launcher directly (equivalent to the
+                # ENTRYPOINT's `/isaac-sim/kit/kit /isaac-sim/apps/isaacsim.exp.base.kit --no-window --exec "$@"`).
+                /isaac-sim/kit/kit /isaac-sim/apps/isaacsim.exp.base.kit \
+                  --no-window --exec \
+                  "/workspace/paidf-simulation/scripts/sdg/standalone/sdg_pipeline.py \
+                   --config $SDG_YAML --pcba-config $PCBA_PATCHED"
+
+                # 4. Stage 2 — multi-cell ROI crop (pure python, no Kit)
+                # Writes $OUT/crop/<MATERIAL>/<x*_y*>/{normal_img,cad_mask}/<NNNN>.png
+                python3 /workspace/paidf-simulation/scripts/usd2roi/usd2roi_crop.py \
+                  --config "$CROP_YAML"
+
+                # 5. Sanity check — at least one populated cell.
+                PAIR_COUNT=$(find "$OUT/crop" -path '*/normal_img/*.png' 2>/dev/null | wc -l)
+                if [ "$PAIR_COUNT" -eq 0 ]; then
+                  echo "ERROR: 0 ROI pairs emitted under $OUT/crop"; exit 1
+                fi
+                MAT_DIRS=$(find "$OUT/crop" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | sort | tr '\n' ' ')
+                CELL_COUNT=$(find "$OUT/crop" -mindepth 2 -maxdepth 2 -type d 2>/dev/null | wc -l)
+                echo "usd2roi-render complete: $PAIR_COUNT ROIs across $CELL_COUNT cell(s); materials: $MAT_DIRS"
+
+          outputs:
+            - url: "{{ dig_url_root }}/runs/{{ name }}/usd2roi-components"
+
+    # ── Group 2: Augmentation — nvidia/Qwen-Image-Edit-NVPCB-OVSL2SL (OV→SL single pass) ──
+    # Replaces the old two-pass cosmos-transfer chain (OV2UL → UL2SL) with a single
+    # image-edit pass via a remote nvidia/Qwen-Image-Edit-NVPCB-OVSL2SL endpoint
+    # (do NOT substitute the generic upstream qwen-image-edit checkpoint). Cookbook lives
+    # at assets/cookbooks/pcb/augmentation_config_ovsl2sl.yaml (mounted by localpath);
+    # endpoint URL + model overlay onto the cookbook at task start from workflow
+    # params, then build_batch_config.py expands `data:` to the per-cell tree.
+    - name: augment-image-edit
+      tasks:
+        - name: image-edit
+          lead: true
+          image: "{{ augmentation_image }}"
+          resource: gpu-augment
+          credentials:
+            hf-token:
+              HF_TOKEN: token
+          environment:
+            IMAGE_EDIT_ENDPOINT: "{{ image_edit_endpoint }}"
+            IMAGE_EDIT_MODEL: "{{ image_edit_model }}"
+          inputs:
+            - task: usd2roi-replicator                   # {{input:0}} crop/<MATERIAL>/<cell>/normal_img/
+          command: ["bash"]
+          args: ["/tmp/run_image_edit.sh"]
+          files:
+            # Cookbook is the OVSL2SL recipe (prompt + image-edit model/parameters).
+            # Mounted read-only; endpoint URL + data: expansion done at runtime so the
+            # cookbook itself stays generic across submits.
+            - localpath: ../cookbooks/pcb/augmentation_config_ovsl2sl.yaml
+              path: /tmp/augmentation_cookbook.yaml
+
+            - path: /tmp/run_image_edit.sh
+              contents: |
+                set -euo pipefail
+                INPUT_DIR="{{input:0}}"
+                OUTPUT_DIR="{{output}}"
+                mkdir -p "$OUTPUT_DIR"
+                MAT_COUNT=$(find "$INPUT_DIR/crop" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l)
+                [ "$MAT_COUNT" -gt 0 ] || { echo "ERROR: no material subdirs under $INPUT_DIR/crop/"; exit 1; }
+
+                uv run python /tmp/build_batch_config.py \
+                  "$INPUT_DIR" "$OUTPUT_DIR" /tmp/augmentation_cookbook.yaml /tmp/augmentation_batch.yaml
+                uv run python /app/modules/cli.py --config /tmp/augmentation_batch.yaml
+
+                EMITTED=$(find "$OUTPUT_DIR/crop" -mindepth 3 \( -name '*.png' -o -name '*.jpg' \) 2>/dev/null | wc -l)
+                [ "$EMITTED" -gt 0 ] || { echo "ERROR: 0 image-edit images emitted"; exit 1; }
+                CELLS=$(find "$OUTPUT_DIR/crop" -mindepth 2 -maxdepth 2 -type d 2>/dev/null | wc -l)
+                echo "image-edit complete: $EMITTED images across $CELLS material/cell dir(s)"
+
+            - path: /tmp/build_batch_config.py
+              contents: |
+                # Expand the augmentation cookbook's `data:` section to walk the per-cell
+                # tree from usd2roi-render, overlay endpoint URL/model from env, and
+                # keep all other cookbook fields (prompt, model params, letterbox,
+                # align_to_reference) verbatim. Output ends up at
+                # <output>/crop/<MATERIAL>/<cell>/<stem>.<ext> (flat per cell).
+                import yaml, os, glob, sys, pathlib
+
+                input_dir, output_dir, cookbook_path, batch_cfg_path = sys.argv[1:]
+
+                with open(cookbook_path) as f:
+                    cfg = yaml.safe_load(f)
+
+                # Overlay endpoint from workflow params (cookbook ships localhost placeholder).
+                endpoint = os.environ.get("IMAGE_EDIT_ENDPOINT", "").strip()
+                model = os.environ.get("IMAGE_EDIT_MODEL", "").strip()
+                if endpoint:
+                    cfg.setdefault("endpoints", {}).setdefault("image_edit", {})["url"] = endpoint
+                if model:
+                    cfg.setdefault("endpoints", {}).setdefault("image_edit", {})["model"] = model
+
+                # Derive sample output extension from the cookbook's single data entry
+                # so we round-trip (.jpg in cookbook → .jpg outputs).
+                template = (cfg.get("data") or [{}])[0]
+                tpl_output = template.get("output", {})
+                video_tpl = tpl_output.get("video", "/tmp/{stem}.png")
+                ext = pathlib.Path(video_tpl).suffix or ".png"
+
+                # usd2roi emits crop/<MATERIAL>/<cell>/normal_img/<NNNN>.png
+                images = sorted(glob.glob(f"{input_dir}/crop/*/*/normal_img/*.png") +
+                                glob.glob(f"{input_dir}/crop/*/*/normal_img/*.jpg"))
+                assert images, f"No per-material/per-cell ROIs found under {input_dir}/crop/*/*/normal_img/"
+                # Dataset size is controlled at the upstream usd2roi-render stage via
+                # `crop_max_emit`. The image-edit task processes every ROI it's handed.
+
+                data = []
+                seen = set()
+                for img_path in images:
+                    parts = pathlib.Path(img_path).parts
+                    material = parts[-4]                       # IC | passive_component
+                    cell = parts[-3]                           # x*_y*
+                    stem = pathlib.Path(img_path).stem         # NNNN
+                    cell_out = f"{output_dir}/crop/{material}/{cell}"
+                    key = (material, cell)
+                    if key not in seen:
+                        os.makedirs(cell_out, exist_ok=True)
+                        seen.add(key)
+                    data.append({
+                        "inputs": {"rgb": img_path},
+                        "output": {
+                            "video":    f"{cell_out}/{stem}{ext}",
+                            "caption":  f"/tmp/cap_{material}_{cell}_{stem}.txt",
+                            "metadata": f"/tmp/meta_{material}_{cell}_{stem}.json",
+                        },
+                    })
+
+                cfg["data"] = data
+                with open(batch_cfg_path, "w") as f:
+                    yaml.dump(cfg, f, default_flow_style=False, allow_unicode=True)
+                print(f"Batch config: {len(images)} ROIs across {len(seen)} material/cell dirs -> {batch_cfg_path}")
+          outputs:
+            - url: "{{ dig_url_root }}/runs/{{ name }}/augment"
+
+default-values:
+  workflow_name: good_image_gen
+  exec_timeout: 4h
+  queue_timeout: 2h
+
+  # `name` has no default — every submit must pass `--set name=<flow>-$STAMP`
+  # (see SKILL.md §"Name stamping"). Forces unique storage paths under runs/.
+  dig_url_root: "s3://osmo-workflows/dig"
+
+  # ── URL-backed inputs ────────────────────────────────────────────────────────
+  # Defaults read from the setup/ workflows' DIG URL layout:
+  #   datasets/pcb/assets — full USD asset tree.
+  # Outputs write under runs/<name>/{usd2roi-components,augment}.
+
+  # Two-stage knobs (see SKILL.md §"User intent → knob mapping"):
+  #   render_patches → stage 1: raw scan_grid patches from sdg_pipeline.py
+  #                    (NOT the final dataset size — these get cropped further)
+  #   crop_max_emit  → stage 2: per-cell crop cap from usd2roi_crop.py
+  #                    (this is what controls the final per-component dataset size)
+  # For "user wants N output images", set crop_max_emit=N (or leave blank to use
+  # cookbook default). render_patches caps the upstream raw render only.
+  render_patches: "-1"        # -1 = full scan_grid coverage (cover every cell defined by the board's cookbook)
+  crop_max_emit: ""           # blank = use cookbook value; set to N to cap per-cell crops; "null" removes cap
+
+  # ── Image-edit augmentation ──────────────────────────────────────────────────
+  # Cookbook at assets/cookbooks/pcb/augmentation_config_ovsl2sl.yaml carries the
+  # prompt + model parameters. Endpoint URL + model come from these knobs.
+  # Default points at the local cluster service from references/nim/.
+  image_edit_endpoint: "http://qwen-image-edit-nvpcb-ovsl2sl.osmo-nims.svc.cluster.local:8000/v1"
+  image_edit_model: "nvidia/Qwen-Image-Edit-NVPCB-OVSL2SL"
+
+  # ── Container images ─────────────────────────────────────────────────────────
+  augmentation_image: "nvcr.io/nvidia/paidf-augmentation:1.0.0"
+  usd2roi_image: "nvcr.io/nvidia/paidf-simulation:1.0.0"
+
+  # ── usd2roi-render: scene + cookbook selection ───────────────────────────────
+  # `datasets/pcb/assets` is the fixed URL — replace its contents at source
+  # (mc upload to s3://.../datasets/pcb/assets/) when running custom data.
+  # The `board` knob picks which per-board cookbook directory under
+  # `assets/cookbooks/pcb/<board>/` to use. Default 0603_H100 matches the
+  # shipped spark scene in `pcb-assets`. To run a different board, add its
+  # cookbook directory and pass `--set board=<dir-name>`.
+  board: "0603_H100"                   # alternate shipped board: 1152819000
+  scene_filename: "spark_lighting.usd" # USD inside assets bundle to use as the scene
+
+  # ── Resources ────────────────────────────────────────────────────────────────
+  render_gpu: "1"
+  render_cpu: "4"
+  render_memory: 32Gi
+  render_storage: 50Gi
+  augment_gpu: "1"
+  augment_cpu: "1"
+  augment_memory: 32Gi
+  augment_storage: 25Gi
+  platform: default

@@ -1,0 +1,73 @@
+# Image edit (Qwen) — single-image PCBA augmentation, OVSL2SL-style static prompt.
+# Mirrors configs/config_finetuned_CT_OVSL2SL.yaml (data sample, prompt) but
+# routes through the image-edit augmentation model against a Qwen Image Edit
+# endpoint instead of the cosmos-transfer2.5 OVSL2SL checkpoint.
+
+data:
+  - inputs:
+      rgb: "/app/data/ovsl2sl/input.jpg"
+    output:
+      video: "/app/data/ovsl2sl/output/output.jpg"
+      caption: "/app/data/ovsl2sl/output/output.txt"
+      metadata: "/app/data/ovsl2sl/output/metadata.json"
+
+endpoints:
+  image_edit:
+    url: "http://localhost:8000/v1"
+    model: "nvidia/Qwen-Image-Edit-NVPCB-OVSL2SL"
+
+pipeline:
+  retry: 3
+  regenerate_caption_on_retry: false   # Static text prompt — nothing to regenerate.
+  logging:
+    enabled: true
+    level: "INFO"
+
+captioning:
+  llm:
+    text: |
+      Render this PCB component crop in the style of an NVPCB raked-solder-light
+      photograph: dark reddish board with bright orange-red and blue specular
+      highlights on the solder pads, photorealistic textures.
+
+augmentation:
+  model:
+    name: "image-edit"
+    executor_type: "gradio"
+  parameters:
+    num_inference_steps: 30
+    guidance_scale: 4.0
+    seed: 0
+
+data_processing:
+  alignment:
+    # MI-registration: warps the generated image back into the input frame
+    # so downstream tools see a pixel-aligned output.
+    #
+    # Auto-derived from the generated and reference image dimensions
+    # (set explicitly to override):
+    #   sx_range, sy_range  - scale-X / scale-Y search ranges
+    #   shift_range         - tx/ty pixel search half-range
+    #   pyr_levels          - image pyramid levels
+
+    # Range of rotations (in degrees) to search through.
+    # Format: [min, max, step]. The model typically tilts <= 1 degree.
+    rot_range_deg: [-1.0, 1.0, 0.1]
+
+    # Pixel resolution of the translation (tx/ty) grid search.
+    # 1 = finest and most accurate but slowest; 2-4 are usually fine.
+    shift_step: 2
+
+    # Number of histogram bins used to score alignment quality (mutual
+    # information). 64 is a good default for 8-bit images.
+    bins: 64
+
+    # How pixels are sampled when warping the generated image:
+    #   bilinear - smooth interpolation; best for natural photos / RGB
+    #   nearest  - exact pixel values; use for masks or label maps
+    interp: bilinear
+
+    # If true, do not pre-resize the generated image down to the reference
+    # frame; trust the scale search to recover the right ratio.
+    # Leave as true for typical use.
+    no_resize: true

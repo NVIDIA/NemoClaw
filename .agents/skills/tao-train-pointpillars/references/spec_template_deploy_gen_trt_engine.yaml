@@ -1,0 +1,6 @@
+gen_trt_engine:
+  onnx_file: /models/model.onnx
+  save_engine: /results/pointpillars.engine
+  data_type: fp16
+  batch_size: 1
+  workspace_size: 1000

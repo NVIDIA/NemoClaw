@@ -1,0 +1,1297 @@
+{
+  "actions": {
+    "evaluate": {
+      "automl_default_parameters": [
+        "train.optimizer.args.lr",
+        "train.optimizer.args.weight_decay"
+      ],
+      "automl_disabled_parameters": [
+        "dataset",
+        "dataset.quant_calibration_dataset",
+        "dataset.train_dataset",
+        "dataset.train_dataset.args",
+        "dataset.train_dataset.args.filter_keys",
+        "dataset.train_dataset.args.ignore_tags",
+        "dataset.train_dataset.args.pre_processes",
+        "dataset.train_dataset.data_path",
+        "dataset.train_dataset.loader",
+        "dataset.train_dataset.loader.batch_size",
+        "dataset.validate_dataset",
+        "dataset.validate_dataset.args",
+        "dataset.validate_dataset.args.filter_keys",
+        "dataset.validate_dataset.args.ignore_tags",
+        "dataset.validate_dataset.args.pre_processes",
+        "dataset.validate_dataset.data_path",
+        "dataset.validate_dataset.loader",
+        "evaluate",
+        "evaluate.gpu_ids",
+        "evaluate.metric",
+        "evaluate.metric.args",
+        "evaluate.post_processing",
+        "evaluate.post_processing.args",
+        "export",
+        "gen_trt_engine",
+        "gen_trt_engine.tensorrt",
+        "gen_trt_engine.tensorrt.calibration",
+        "gen_trt_engine.tensorrt.calibration.cal_image_dir",
+        "gen_trt_engine.tensorrt.layers_precision",
+        "inference",
+        "inference.gpu_ids",
+        "inference.post_processing",
+        "inference.post_processing.args",
+        "model",
+        "prune",
+        "quantize",
+        "quantize.backend_kwargs",
+        "quantize.layers",
+        "quantize.skip_names",
+        "train",
+        "train.cudnn",
+        "train.gpu_ids",
+        "train.loss",
+        "train.lr_scheduler",
+        "train.lr_scheduler.args",
+        "train.metric",
+        "train.metric.args",
+        "train.optimizer",
+        "train.optimizer.args",
+        "train.post_processing",
+        "train.post_processing.args",
+        "train.trainer",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "ocdnet",
+      "path": "schemas/evaluate.schema.json",
+      "popular": {
+        "dataset": {
+          "train_dataset": {
+            "loader": {
+              "batch_size": 16,
+              "num_workers": 0
+            }
+          },
+          "validate_dataset": {
+            "loader": {
+              "batch_size": 1,
+              "num_workers": 0
+            }
+          }
+        },
+        "evaluate": {
+          "batch_size": 1,
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "post_processing": {
+            "args": {
+              "box_thresh": 0.55,
+              "max_candidates": 1000,
+              "thresh": 0.3,
+              "unclip_ratio": 1.5
+            }
+          }
+        },
+        "export": {
+          "height": 736,
+          "opset_version": 11,
+          "width": 1280
+        },
+        "gen_trt_engine": {
+          "batch_size": -1,
+          "gpu_id": 0,
+          "height": 736,
+          "tensorrt": {
+            "calibration": {
+              "cal_batch_size": 1,
+              "cal_batches": 1
+            },
+            "max_batch_size": 1,
+            "min_batch_size": 1,
+            "opt_batch_size": 1
+          },
+          "width": 1280
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "height": 736,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "post_processing": {
+            "args": {
+              "box_thresh": 0.55,
+              "max_candidates": 1000,
+              "thresh": 0.3,
+              "unclip_ratio": 1.5
+            }
+          },
+          "width": 1280
+        },
+        "model": {
+          "backbone": "deformable_resnet18"
+        },
+        "train": {
+          "checkpoint_interval": 1,
+          "gpu_ids": [
+            0
+          ],
+          "num_epochs": 10,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "optimizer": {
+            "args": {
+              "lr": 0.001
+            }
+          },
+          "post_processing": {
+            "args": {
+              "box_thresh": 0.55,
+              "max_candidates": 1000,
+              "thresh": 0.3,
+              "unclip_ratio": 1.5
+            }
+          },
+          "validation_interval": 1
+        }
+      },
+      "schema_action": "evaluate",
+      "spec_template": "references/spec_template_evaluate.yaml"
+    },
+    "export": {
+      "automl_default_parameters": [
+        "train.optimizer.args.lr",
+        "train.optimizer.args.weight_decay"
+      ],
+      "automl_disabled_parameters": [
+        "dataset",
+        "dataset.quant_calibration_dataset",
+        "dataset.train_dataset",
+        "dataset.train_dataset.args",
+        "dataset.train_dataset.args.filter_keys",
+        "dataset.train_dataset.args.ignore_tags",
+        "dataset.train_dataset.args.pre_processes",
+        "dataset.train_dataset.data_path",
+        "dataset.train_dataset.loader",
+        "dataset.train_dataset.loader.batch_size",
+        "dataset.validate_dataset",
+        "dataset.validate_dataset.args",
+        "dataset.validate_dataset.args.filter_keys",
+        "dataset.validate_dataset.args.ignore_tags",
+        "dataset.validate_dataset.args.pre_processes",
+        "dataset.validate_dataset.data_path",
+        "dataset.validate_dataset.loader",
+        "evaluate",
+        "evaluate.gpu_ids",
+        "evaluate.metric",
+        "evaluate.metric.args",
+        "evaluate.post_processing",
+        "evaluate.post_processing.args",
+        "export",
+        "gen_trt_engine",
+        "gen_trt_engine.tensorrt",
+        "gen_trt_engine.tensorrt.calibration",
+        "gen_trt_engine.tensorrt.calibration.cal_image_dir",
+        "gen_trt_engine.tensorrt.layers_precision",
+        "inference",
+        "inference.gpu_ids",
+        "inference.post_processing",
+        "inference.post_processing.args",
+        "model",
+        "prune",
+        "quantize",
+        "quantize.backend_kwargs",
+        "quantize.layers",
+        "quantize.skip_names",
+        "train",
+        "train.cudnn",
+        "train.gpu_ids",
+        "train.loss",
+        "train.lr_scheduler",
+        "train.lr_scheduler.args",
+        "train.metric",
+        "train.metric.args",
+        "train.optimizer",
+        "train.optimizer.args",
+        "train.post_processing",
+        "train.post_processing.args",
+        "train.trainer",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "ocdnet",
+      "path": "schemas/export.schema.json",
+      "popular": {
+        "dataset": {
+          "train_dataset": {
+            "loader": {
+              "batch_size": 16,
+              "num_workers": 0
+            }
+          },
+          "validate_dataset": {
+            "loader": {
+              "batch_size": 1,
+              "num_workers": 0
+            }
+          }
+        },
+        "evaluate": {
+          "batch_size": 1,
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "post_processing": {
+            "args": {
+              "box_thresh": 0.55,
+              "max_candidates": 1000,
+              "thresh": 0.3,
+              "unclip_ratio": 1.5
+            }
+          }
+        },
+        "export": {
+          "height": 736,
+          "opset_version": 11,
+          "width": 1280
+        },
+        "gen_trt_engine": {
+          "batch_size": -1,
+          "gpu_id": 0,
+          "height": 736,
+          "tensorrt": {
+            "calibration": {
+              "cal_batch_size": 1,
+              "cal_batches": 1
+            },
+            "max_batch_size": 1,
+            "min_batch_size": 1,
+            "opt_batch_size": 1
+          },
+          "width": 1280
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "height": 736,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "post_processing": {
+            "args": {
+              "box_thresh": 0.55,
+              "max_candidates": 1000,
+              "thresh": 0.3,
+              "unclip_ratio": 1.5
+            }
+          },
+          "width": 1280
+        },
+        "model": {
+          "backbone": "deformable_resnet18"
+        },
+        "train": {
+          "checkpoint_interval": 1,
+          "gpu_ids": [
+            0
+          ],
+          "num_epochs": 10,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "optimizer": {
+            "args": {
+              "lr": 0.001
+            }
+          },
+          "post_processing": {
+            "args": {
+              "box_thresh": 0.55,
+              "max_candidates": 1000,
+              "thresh": 0.3,
+              "unclip_ratio": 1.5
+            }
+          },
+          "validation_interval": 1
+        }
+      },
+      "schema_action": "export",
+      "spec_template": "references/spec_template_export.yaml"
+    },
+    "gen_trt_engine": {
+      "automl_default_parameters": [
+        "train.optimizer.args.lr",
+        "train.optimizer.args.weight_decay"
+      ],
+      "automl_disabled_parameters": [
+        "dataset",
+        "dataset.quant_calibration_dataset",
+        "dataset.train_dataset",
+        "dataset.train_dataset.args",
+        "dataset.train_dataset.args.filter_keys",
+        "dataset.train_dataset.args.ignore_tags",
+        "dataset.train_dataset.args.pre_processes",
+        "dataset.train_dataset.data_path",
+        "dataset.train_dataset.loader",
+        "dataset.train_dataset.loader.batch_size",
+        "dataset.validate_dataset",
+        "dataset.validate_dataset.args",
+        "dataset.validate_dataset.args.filter_keys",
+        "dataset.validate_dataset.args.ignore_tags",
+        "dataset.validate_dataset.args.pre_processes",
+        "dataset.validate_dataset.data_path",
+        "dataset.validate_dataset.loader",
+        "evaluate",
+        "evaluate.gpu_ids",
+        "evaluate.metric",
+        "evaluate.metric.args",
+        "evaluate.post_processing",
+        "evaluate.post_processing.args",
+        "export",
+        "gen_trt_engine",
+        "gen_trt_engine.tensorrt",
+        "gen_trt_engine.tensorrt.calibration",
+        "gen_trt_engine.tensorrt.calibration.cal_image_dir",
+        "gen_trt_engine.tensorrt.layers_precision",
+        "inference",
+        "inference.gpu_ids",
+        "inference.post_processing",
+        "inference.post_processing.args",
+        "model",
+        "prune",
+        "quantize",
+        "quantize.backend_kwargs",
+        "quantize.layers",
+        "quantize.skip_names",
+        "train",
+        "train.cudnn",
+        "train.gpu_ids",
+        "train.loss",
+        "train.lr_scheduler",
+        "train.lr_scheduler.args",
+        "train.metric",
+        "train.metric.args",
+        "train.optimizer",
+        "train.optimizer.args",
+        "train.post_processing",
+        "train.post_processing.args",
+        "train.trainer",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "ocdnet",
+      "path": "schemas/gen_trt_engine.schema.json",
+      "popular": {
+        "dataset": {
+          "train_dataset": {
+            "loader": {
+              "batch_size": 16,
+              "num_workers": 0
+            }
+          },
+          "validate_dataset": {
+            "loader": {
+              "batch_size": 1,
+              "num_workers": 0
+            }
+          }
+        },
+        "evaluate": {
+          "batch_size": 1,
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "post_processing": {
+            "args": {
+              "box_thresh": 0.55,
+              "max_candidates": 1000,
+              "thresh": 0.3,
+              "unclip_ratio": 1.5
+            }
+          }
+        },
+        "export": {
+          "height": 736,
+          "opset_version": 11,
+          "width": 1280
+        },
+        "gen_trt_engine": {
+          "batch_size": -1,
+          "gpu_id": 0,
+          "height": 736,
+          "tensorrt": {
+            "calibration": {
+              "cal_batch_size": 1,
+              "cal_batches": 1
+            },
+            "max_batch_size": 1,
+            "min_batch_size": 1,
+            "opt_batch_size": 1
+          },
+          "width": 1280
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "height": 736,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "post_processing": {
+            "args": {
+              "box_thresh": 0.55,
+              "max_candidates": 1000,
+              "thresh": 0.3,
+              "unclip_ratio": 1.5
+            }
+          },
+          "width": 1280
+        },
+        "model": {
+          "backbone": "deformable_resnet18"
+        },
+        "train": {
+          "checkpoint_interval": 1,
+          "gpu_ids": [
+            0
+          ],
+          "num_epochs": 10,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "optimizer": {
+            "args": {
+              "lr": 0.001
+            }
+          },
+          "post_processing": {
+            "args": {
+              "box_thresh": 0.55,
+              "max_candidates": 1000,
+              "thresh": 0.3,
+              "unclip_ratio": 1.5
+            }
+          },
+          "validation_interval": 1
+        }
+      },
+      "schema_action": "gen_trt_engine",
+      "spec_template": "references/spec_template_gen_trt_engine.yaml"
+    },
+    "inference": {
+      "automl_default_parameters": [
+        "train.optimizer.args.lr",
+        "train.optimizer.args.weight_decay"
+      ],
+      "automl_disabled_parameters": [
+        "dataset",
+        "dataset.quant_calibration_dataset",
+        "dataset.train_dataset",
+        "dataset.train_dataset.args",
+        "dataset.train_dataset.args.filter_keys",
+        "dataset.train_dataset.args.ignore_tags",
+        "dataset.train_dataset.args.pre_processes",
+        "dataset.train_dataset.data_path",
+        "dataset.train_dataset.loader",
+        "dataset.train_dataset.loader.batch_size",
+        "dataset.validate_dataset",
+        "dataset.validate_dataset.args",
+        "dataset.validate_dataset.args.filter_keys",
+        "dataset.validate_dataset.args.ignore_tags",
+        "dataset.validate_dataset.args.pre_processes",
+        "dataset.validate_dataset.data_path",
+        "dataset.validate_dataset.loader",
+        "evaluate",
+        "evaluate.gpu_ids",
+        "evaluate.metric",
+        "evaluate.metric.args",
+        "evaluate.post_processing",
+        "evaluate.post_processing.args",
+        "export",
+        "gen_trt_engine",
+        "gen_trt_engine.tensorrt",
+        "gen_trt_engine.tensorrt.calibration",
+        "gen_trt_engine.tensorrt.calibration.cal_image_dir",
+        "gen_trt_engine.tensorrt.layers_precision",
+        "inference",
+        "inference.gpu_ids",
+        "inference.post_processing",
+        "inference.post_processing.args",
+        "model",
+        "prune",
+        "quantize",
+        "quantize.backend_kwargs",
+        "quantize.layers",
+        "quantize.skip_names",
+        "train",
+        "train.cudnn",
+        "train.gpu_ids",
+        "train.loss",
+        "train.lr_scheduler",
+        "train.lr_scheduler.args",
+        "train.metric",
+        "train.metric.args",
+        "train.optimizer",
+        "train.optimizer.args",
+        "train.post_processing",
+        "train.post_processing.args",
+        "train.trainer",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "ocdnet",
+      "path": "schemas/inference.schema.json",
+      "popular": {
+        "dataset": {
+          "train_dataset": {
+            "loader": {
+              "batch_size": 16,
+              "num_workers": 0
+            }
+          },
+          "validate_dataset": {
+            "loader": {
+              "batch_size": 1,
+              "num_workers": 0
+            }
+          }
+        },
+        "evaluate": {
+          "batch_size": 1,
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "post_processing": {
+            "args": {
+              "box_thresh": 0.55,
+              "max_candidates": 1000,
+              "thresh": 0.3,
+              "unclip_ratio": 1.5
+            }
+          }
+        },
+        "export": {
+          "height": 736,
+          "opset_version": 11,
+          "width": 1280
+        },
+        "gen_trt_engine": {
+          "batch_size": -1,
+          "gpu_id": 0,
+          "height": 736,
+          "tensorrt": {
+            "calibration": {
+              "cal_batch_size": 1,
+              "cal_batches": 1
+            },
+            "max_batch_size": 1,
+            "min_batch_size": 1,
+            "opt_batch_size": 1
+          },
+          "width": 1280
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "height": 736,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "post_processing": {
+            "args": {
+              "box_thresh": 0.55,
+              "max_candidates": 1000,
+              "thresh": 0.3,
+              "unclip_ratio": 1.5
+            }
+          },
+          "width": 1280
+        },
+        "model": {
+          "backbone": "deformable_resnet18"
+        },
+        "train": {
+          "checkpoint_interval": 1,
+          "gpu_ids": [
+            0
+          ],
+          "num_epochs": 10,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "optimizer": {
+            "args": {
+              "lr": 0.001
+            }
+          },
+          "post_processing": {
+            "args": {
+              "box_thresh": 0.55,
+              "max_candidates": 1000,
+              "thresh": 0.3,
+              "unclip_ratio": 1.5
+            }
+          },
+          "validation_interval": 1
+        }
+      },
+      "schema_action": "inference",
+      "spec_template": "references/spec_template_inference.yaml"
+    },
+    "prune": {
+      "automl_default_parameters": [
+        "train.optimizer.args.lr",
+        "train.optimizer.args.weight_decay"
+      ],
+      "automl_disabled_parameters": [
+        "dataset",
+        "dataset.quant_calibration_dataset",
+        "dataset.train_dataset",
+        "dataset.train_dataset.args",
+        "dataset.train_dataset.args.filter_keys",
+        "dataset.train_dataset.args.ignore_tags",
+        "dataset.train_dataset.args.pre_processes",
+        "dataset.train_dataset.data_path",
+        "dataset.train_dataset.loader",
+        "dataset.train_dataset.loader.batch_size",
+        "dataset.validate_dataset",
+        "dataset.validate_dataset.args",
+        "dataset.validate_dataset.args.filter_keys",
+        "dataset.validate_dataset.args.ignore_tags",
+        "dataset.validate_dataset.args.pre_processes",
+        "dataset.validate_dataset.data_path",
+        "dataset.validate_dataset.loader",
+        "evaluate",
+        "evaluate.gpu_ids",
+        "evaluate.metric",
+        "evaluate.metric.args",
+        "evaluate.post_processing",
+        "evaluate.post_processing.args",
+        "export",
+        "gen_trt_engine",
+        "gen_trt_engine.tensorrt",
+        "gen_trt_engine.tensorrt.calibration",
+        "gen_trt_engine.tensorrt.calibration.cal_image_dir",
+        "gen_trt_engine.tensorrt.layers_precision",
+        "inference",
+        "inference.gpu_ids",
+        "inference.post_processing",
+        "inference.post_processing.args",
+        "model",
+        "prune",
+        "quantize",
+        "quantize.backend_kwargs",
+        "quantize.layers",
+        "quantize.skip_names",
+        "train",
+        "train.cudnn",
+        "train.gpu_ids",
+        "train.loss",
+        "train.lr_scheduler",
+        "train.lr_scheduler.args",
+        "train.metric",
+        "train.metric.args",
+        "train.optimizer",
+        "train.optimizer.args",
+        "train.post_processing",
+        "train.post_processing.args",
+        "train.trainer",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "ocdnet",
+      "path": "schemas/prune.schema.json",
+      "popular": {
+        "dataset": {
+          "train_dataset": {
+            "loader": {
+              "batch_size": 16,
+              "num_workers": 0
+            }
+          },
+          "validate_dataset": {
+            "loader": {
+              "batch_size": 1,
+              "num_workers": 0
+            }
+          }
+        },
+        "evaluate": {
+          "batch_size": 1,
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "post_processing": {
+            "args": {
+              "box_thresh": 0.55,
+              "max_candidates": 1000,
+              "thresh": 0.3,
+              "unclip_ratio": 1.5
+            }
+          }
+        },
+        "export": {
+          "height": 736,
+          "opset_version": 11,
+          "width": 1280
+        },
+        "gen_trt_engine": {
+          "batch_size": -1,
+          "gpu_id": 0,
+          "height": 736,
+          "tensorrt": {
+            "calibration": {
+              "cal_batch_size": 1,
+              "cal_batches": 1
+            },
+            "max_batch_size": 1,
+            "min_batch_size": 1,
+            "opt_batch_size": 1
+          },
+          "width": 1280
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "height": 736,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "post_processing": {
+            "args": {
+              "box_thresh": 0.55,
+              "max_candidates": 1000,
+              "thresh": 0.3,
+              "unclip_ratio": 1.5
+            }
+          },
+          "width": 1280
+        },
+        "model": {
+          "backbone": "deformable_resnet18"
+        },
+        "train": {
+          "checkpoint_interval": 1,
+          "gpu_ids": [
+            0
+          ],
+          "num_epochs": 10,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "optimizer": {
+            "args": {
+              "lr": 0.001
+            }
+          },
+          "post_processing": {
+            "args": {
+              "box_thresh": 0.55,
+              "max_candidates": 1000,
+              "thresh": 0.3,
+              "unclip_ratio": 1.5
+            }
+          },
+          "validation_interval": 1
+        }
+      },
+      "schema_action": "prune",
+      "spec_template": "references/spec_template_prune.yaml"
+    },
+    "quantize": {
+      "automl_default_parameters": [
+        "train.optimizer.args.lr",
+        "train.optimizer.args.weight_decay"
+      ],
+      "automl_disabled_parameters": [
+        "dataset",
+        "dataset.quant_calibration_dataset",
+        "dataset.train_dataset",
+        "dataset.train_dataset.args",
+        "dataset.train_dataset.args.filter_keys",
+        "dataset.train_dataset.args.ignore_tags",
+        "dataset.train_dataset.args.pre_processes",
+        "dataset.train_dataset.data_path",
+        "dataset.train_dataset.loader",
+        "dataset.train_dataset.loader.batch_size",
+        "dataset.validate_dataset",
+        "dataset.validate_dataset.args",
+        "dataset.validate_dataset.args.filter_keys",
+        "dataset.validate_dataset.args.ignore_tags",
+        "dataset.validate_dataset.args.pre_processes",
+        "dataset.validate_dataset.data_path",
+        "dataset.validate_dataset.loader",
+        "evaluate",
+        "evaluate.gpu_ids",
+        "evaluate.metric",
+        "evaluate.metric.args",
+        "evaluate.post_processing",
+        "evaluate.post_processing.args",
+        "export",
+        "gen_trt_engine",
+        "gen_trt_engine.tensorrt",
+        "gen_trt_engine.tensorrt.calibration",
+        "gen_trt_engine.tensorrt.calibration.cal_image_dir",
+        "gen_trt_engine.tensorrt.layers_precision",
+        "inference",
+        "inference.gpu_ids",
+        "inference.post_processing",
+        "inference.post_processing.args",
+        "model",
+        "prune",
+        "quantize",
+        "quantize.backend_kwargs",
+        "quantize.layers",
+        "quantize.skip_names",
+        "train",
+        "train.cudnn",
+        "train.gpu_ids",
+        "train.loss",
+        "train.lr_scheduler",
+        "train.lr_scheduler.args",
+        "train.metric",
+        "train.metric.args",
+        "train.optimizer",
+        "train.optimizer.args",
+        "train.post_processing",
+        "train.post_processing.args",
+        "train.trainer",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "ocdnet",
+      "path": "schemas/quantize.schema.json",
+      "popular": {
+        "dataset": {
+          "train_dataset": {
+            "loader": {
+              "batch_size": 16,
+              "num_workers": 0
+            }
+          },
+          "validate_dataset": {
+            "loader": {
+              "batch_size": 1,
+              "num_workers": 0
+            }
+          }
+        },
+        "evaluate": {
+          "batch_size": 1,
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "post_processing": {
+            "args": {
+              "box_thresh": 0.55,
+              "max_candidates": 1000,
+              "thresh": 0.3,
+              "unclip_ratio": 1.5
+            }
+          }
+        },
+        "export": {
+          "height": 736,
+          "opset_version": 11,
+          "width": 1280
+        },
+        "gen_trt_engine": {
+          "batch_size": -1,
+          "gpu_id": 0,
+          "height": 736,
+          "tensorrt": {
+            "calibration": {
+              "cal_batch_size": 1,
+              "cal_batches": 1
+            },
+            "max_batch_size": 1,
+            "min_batch_size": 1,
+            "opt_batch_size": 1
+          },
+          "width": 1280
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "height": 736,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "post_processing": {
+            "args": {
+              "box_thresh": 0.55,
+              "max_candidates": 1000,
+              "thresh": 0.3,
+              "unclip_ratio": 1.5
+            }
+          },
+          "width": 1280
+        },
+        "model": {
+          "backbone": "deformable_resnet18"
+        },
+        "train": {
+          "checkpoint_interval": 1,
+          "gpu_ids": [
+            0
+          ],
+          "num_epochs": 10,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "optimizer": {
+            "args": {
+              "lr": 0.001
+            }
+          },
+          "post_processing": {
+            "args": {
+              "box_thresh": 0.55,
+              "max_candidates": 1000,
+              "thresh": 0.3,
+              "unclip_ratio": 1.5
+            }
+          },
+          "validation_interval": 1
+        }
+      },
+      "schema_action": "quantize",
+      "spec_template": "references/spec_template_quantize.yaml"
+    },
+    "retrain": {
+      "automl_default_parameters": [
+        "train.optimizer.args.lr",
+        "train.optimizer.args.weight_decay"
+      ],
+      "automl_disabled_parameters": [
+        "dataset",
+        "dataset.quant_calibration_dataset",
+        "dataset.train_dataset",
+        "dataset.train_dataset.args",
+        "dataset.train_dataset.args.filter_keys",
+        "dataset.train_dataset.args.ignore_tags",
+        "dataset.train_dataset.args.pre_processes",
+        "dataset.train_dataset.data_path",
+        "dataset.train_dataset.loader",
+        "dataset.train_dataset.loader.batch_size",
+        "dataset.validate_dataset",
+        "dataset.validate_dataset.args",
+        "dataset.validate_dataset.args.filter_keys",
+        "dataset.validate_dataset.args.ignore_tags",
+        "dataset.validate_dataset.args.pre_processes",
+        "dataset.validate_dataset.data_path",
+        "dataset.validate_dataset.loader",
+        "evaluate",
+        "evaluate.gpu_ids",
+        "evaluate.metric",
+        "evaluate.metric.args",
+        "evaluate.post_processing",
+        "evaluate.post_processing.args",
+        "export",
+        "gen_trt_engine",
+        "gen_trt_engine.tensorrt",
+        "gen_trt_engine.tensorrt.calibration",
+        "gen_trt_engine.tensorrt.calibration.cal_image_dir",
+        "gen_trt_engine.tensorrt.layers_precision",
+        "inference",
+        "inference.gpu_ids",
+        "inference.post_processing",
+        "inference.post_processing.args",
+        "model",
+        "prune",
+        "quantize",
+        "quantize.backend_kwargs",
+        "quantize.layers",
+        "quantize.skip_names",
+        "train",
+        "train.cudnn",
+        "train.gpu_ids",
+        "train.loss",
+        "train.lr_scheduler",
+        "train.lr_scheduler.args",
+        "train.metric",
+        "train.metric.args",
+        "train.optimizer",
+        "train.optimizer.args",
+        "train.post_processing",
+        "train.post_processing.args",
+        "train.trainer",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "ocdnet",
+      "path": "schemas/retrain.schema.json",
+      "popular": {
+        "dataset": {
+          "train_dataset": {
+            "loader": {
+              "batch_size": 16,
+              "num_workers": 0
+            }
+          },
+          "validate_dataset": {
+            "loader": {
+              "batch_size": 1,
+              "num_workers": 0
+            }
+          }
+        },
+        "evaluate": {
+          "batch_size": 1,
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "post_processing": {
+            "args": {
+              "box_thresh": 0.55,
+              "max_candidates": 1000,
+              "thresh": 0.3,
+              "unclip_ratio": 1.5
+            }
+          }
+        },
+        "export": {
+          "height": 736,
+          "opset_version": 11,
+          "width": 1280
+        },
+        "gen_trt_engine": {
+          "batch_size": -1,
+          "gpu_id": 0,
+          "height": 736,
+          "tensorrt": {
+            "calibration": {
+              "cal_batch_size": 1,
+              "cal_batches": 1
+            },
+            "max_batch_size": 1,
+            "min_batch_size": 1,
+            "opt_batch_size": 1
+          },
+          "width": 1280
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "height": 736,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "post_processing": {
+            "args": {
+              "box_thresh": 0.55,
+              "max_candidates": 1000,
+              "thresh": 0.3,
+              "unclip_ratio": 1.5
+            }
+          },
+          "width": 1280
+        },
+        "model": {
+          "backbone": "deformable_resnet18"
+        },
+        "train": {
+          "checkpoint_interval": 1,
+          "gpu_ids": [
+            0
+          ],
+          "num_epochs": 10,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "optimizer": {
+            "args": {
+              "lr": 0.001
+            }
+          },
+          "post_processing": {
+            "args": {
+              "box_thresh": 0.55,
+              "max_candidates": 1000,
+              "thresh": 0.3,
+              "unclip_ratio": 1.5
+            }
+          },
+          "validation_interval": 1
+        }
+      },
+      "schema_action": "retrain",
+      "spec_template": "references/spec_template_retrain.yaml"
+    },
+    "train": {
+      "automl_default_parameters": [
+        "train.optimizer.args.lr",
+        "train.optimizer.args.weight_decay"
+      ],
+      "automl_disabled_parameters": [
+        "dataset",
+        "dataset.quant_calibration_dataset",
+        "dataset.train_dataset",
+        "dataset.train_dataset.args",
+        "dataset.train_dataset.args.filter_keys",
+        "dataset.train_dataset.args.ignore_tags",
+        "dataset.train_dataset.args.pre_processes",
+        "dataset.train_dataset.data_path",
+        "dataset.train_dataset.loader",
+        "dataset.train_dataset.loader.batch_size",
+        "dataset.validate_dataset",
+        "dataset.validate_dataset.args",
+        "dataset.validate_dataset.args.filter_keys",
+        "dataset.validate_dataset.args.ignore_tags",
+        "dataset.validate_dataset.args.pre_processes",
+        "dataset.validate_dataset.data_path",
+        "dataset.validate_dataset.loader",
+        "evaluate",
+        "evaluate.gpu_ids",
+        "evaluate.metric",
+        "evaluate.metric.args",
+        "evaluate.post_processing",
+        "evaluate.post_processing.args",
+        "export",
+        "gen_trt_engine",
+        "gen_trt_engine.tensorrt",
+        "gen_trt_engine.tensorrt.calibration",
+        "gen_trt_engine.tensorrt.calibration.cal_image_dir",
+        "gen_trt_engine.tensorrt.layers_precision",
+        "inference",
+        "inference.gpu_ids",
+        "inference.post_processing",
+        "inference.post_processing.args",
+        "model",
+        "prune",
+        "quantize",
+        "quantize.backend_kwargs",
+        "quantize.layers",
+        "quantize.skip_names",
+        "train",
+        "train.cudnn",
+        "train.gpu_ids",
+        "train.loss",
+        "train.lr_scheduler",
+        "train.lr_scheduler.args",
+        "train.metric",
+        "train.metric.args",
+        "train.optimizer",
+        "train.optimizer.args",
+        "train.post_processing",
+        "train.post_processing.args",
+        "train.trainer",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "ocdnet",
+      "path": "schemas/train.schema.json",
+      "popular": {
+        "dataset": {
+          "train_dataset": {
+            "loader": {
+              "batch_size": 16,
+              "num_workers": 0
+            }
+          },
+          "validate_dataset": {
+            "loader": {
+              "batch_size": 1,
+              "num_workers": 0
+            }
+          }
+        },
+        "evaluate": {
+          "batch_size": 1,
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "post_processing": {
+            "args": {
+              "box_thresh": 0.55,
+              "max_candidates": 1000,
+              "thresh": 0.3,
+              "unclip_ratio": 1.5
+            }
+          }
+        },
+        "export": {
+          "height": 736,
+          "opset_version": 11,
+          "width": 1280
+        },
+        "gen_trt_engine": {
+          "batch_size": -1,
+          "gpu_id": 0,
+          "height": 736,
+          "tensorrt": {
+            "calibration": {
+              "cal_batch_size": 1,
+              "cal_batches": 1
+            },
+            "max_batch_size": 1,
+            "min_batch_size": 1,
+            "opt_batch_size": 1
+          },
+          "width": 1280
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "height": 736,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "post_processing": {
+            "args": {
+              "box_thresh": 0.55,
+              "max_candidates": 1000,
+              "thresh": 0.3,
+              "unclip_ratio": 1.5
+            }
+          },
+          "width": 1280
+        },
+        "model": {
+          "backbone": "deformable_resnet18"
+        },
+        "train": {
+          "checkpoint_interval": 1,
+          "gpu_ids": [
+            0
+          ],
+          "num_epochs": 10,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "optimizer": {
+            "args": {
+              "lr": 0.001
+            }
+          },
+          "post_processing": {
+            "args": {
+              "box_thresh": 0.55,
+              "max_candidates": 1000,
+              "thresh": 0.3,
+              "unclip_ratio": 1.5
+            }
+          },
+          "validation_interval": 1
+        }
+      },
+      "schema_action": "train",
+      "spec_template": "references/spec_template_train.yaml"
+    }
+  },
+  "automl_enabled": true,
+  "failures": {},
+  "model": "ocdnet",
+  "network_arch": "ocdnet",
+  "schema_version": 1
+}

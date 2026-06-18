@@ -1,0 +1,384 @@
+model_name: ''
+encryption_key: ''
+results_dir: ''
+wandb:
+  enable: true
+  project: TAO Toolkit
+  entity: ''
+  group: ''
+  tags:
+  - tao-toolkit
+  reinit: false
+  sync_tensorboard: false
+  save_code: false
+  name: TAO Toolkit Training
+  run_id: ''
+train:
+  num_gpus: 1
+  gpu_ids:
+  - 0
+  num_nodes: 1
+  seed: 1234
+  cudnn:
+    benchmark: false
+    deterministic: true
+  num_epochs: 10
+  checkpoint_interval: 1
+  checkpoint_interval_unit: epoch
+  validation_interval: 1
+  resume_training_checkpoint_path: ''
+  results_dir: ''
+  pretrained_model_path: ''
+  optim:
+    type: adamw
+    lr: 5.0e-05
+    weight_decay: 0.001
+    momentum: 0.9
+    paramwise_cfg:
+      custom_keys:
+        img_backbone:
+          lr_mult: 0.2
+    grad_clip:
+      max_norm: 25
+      norm_type: L2
+    lr_scheduler:
+      policy: cosine
+      warmup: linear
+      warmup_iters: 500
+      warmup_ratio: 0.333333
+      min_lr_ratio: 0.001
+  precision: bf16
+model:
+  type: sparse4d
+  embed_dims: 256
+  use_grid_mask: true
+  use_deformable_func: true
+  input_shape:
+  - 1408
+  - 512
+  backbone:
+    type: resnet_101
+  neck:
+    type: FPN
+    num_outs: 4
+    start_level: 0
+    out_channels: 256
+    in_channels:
+    - 256
+    - 512
+    - 1024
+    - 2048
+    add_extra_convs: on_output
+    relu_before_extra_convs: true
+  depth_branch:
+    type: dense_depth
+    embed_dims: 256
+    num_depth_layers: 3
+    loss_weight: 0.2
+  head:
+    type: sparse4d
+    num_output: 300
+    cls_threshold_to_reg: 0.05
+    decouple_attn: true
+    return_feature: true
+    use_reid_sampling: false
+    embed_dims: 256
+    reid_dims: 0
+    num_groups: 8
+    num_decoder: 6
+    num_single_frame_decoder: 1
+    drop_out: 0.1
+    temporal: true
+    with_quality_estimation: true
+    operation_order:
+    - deformable
+    - ffn
+    - norm
+    - refine
+    - temp_gnn
+    - gnn
+    - norm
+    - deformable
+    - ffn
+    - norm
+    - refine
+    - temp_gnn
+    - gnn
+    - norm
+    - deformable
+    - ffn
+    - norm
+    - refine
+    - temp_gnn
+    - gnn
+    - norm
+    - deformable
+    - ffn
+    - norm
+    - refine
+    - temp_gnn
+    - gnn
+    - norm
+    - deformable
+    - ffn
+    - norm
+    - refine
+    - temp_gnn
+    - gnn
+    - norm
+    - deformable
+    - ffn
+    - norm
+    - refine
+    visibility_net:
+      type: visibility_net
+      embedding_dim: 256
+      hidden_channels: 32
+    instance_bank:
+      num_anchor: 900
+      anchor: ''
+      num_temp_instances: 600
+      confidence_decay: 0.8
+      feat_grad: false
+      default_time_interval: 0.033333
+      embed_dims: 256
+      use_temporal_align: false
+    anchor_encoder:
+      type: SparseBox3DEncoder
+      vel_dims: 3
+      embed_dims:
+      - 128
+      - 32
+      - 32
+      - 64
+      mode: cat
+      output_fc: false
+      in_loops: 1
+      out_loops: 4
+      pos_embed_only: false
+    sampler:
+      num_dn_groups: 5
+      num_temp_dn_groups: 3
+      dn_noise_scale:
+      - 2.0
+      - 2.0
+      - 2.0
+      - 0.5
+      - 0.5
+      - 0.5
+      - 0.5
+      - 0.5
+      - 0.5
+      - 0.5
+      - 0.5
+      max_dn_gt: 128
+      add_neg_dn: true
+      cls_weight: 2.0
+      box_weight: 0.25
+      reg_weights:
+      - 2.0
+      - 2.0
+      - 2.0
+      - 0.5
+      - 0.5
+      - 0.5
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+      use_temporal_align: false
+      gt_assign_threshold: 0.5
+    reg_weights:
+    - 2.0
+    - 2.0
+    - 2.0
+    - 1.0
+    - 1.0
+    - 1.0
+    - 1.0
+    - 1.0
+    - 1.0
+    - 1.0
+    - 1.0
+    loss:
+      cls:
+        type: focal
+        use_sigmoid: true
+        gamma: 2.0
+        alpha: 0.25
+        loss_weight: 2.0
+      reg:
+        type: sparse_box_3d
+        box_weight: 0.25
+        cls_allow_reverse: []
+      id:
+        type: cross_entropy_label_smooth
+        num_ids: 70
+    bnneck:
+      type: bnneck
+      feat_dim: 256
+      num_ids: 70
+    deformable_model:
+      embed_dims: 256
+      num_groups: 8
+      num_levels: 4
+      attn_drop: 0.15
+      use_deformable_func: true
+      use_camera_embed: false
+      residual_mode: cat
+      num_cams: 6
+      max_num_cams: 20
+      proj_drop: 0.0
+      kps_generator:
+        embed_dims: 256
+        num_learnable_pts: 6
+        fix_scale:
+        - - 0
+          - 0
+          - 0
+        - - 0.45
+          - 0
+          - 0
+        - - -0.45
+          - 0
+          - 0
+        - - 0
+          - 0.45
+          - 0
+        - - 0
+          - -0.45
+          - 0
+        - - 0
+          - 0
+          - 0.45
+        - - 0
+          - 0
+          - -0.45
+    refine_layer:
+      type: sparse_box_3d_refinement_module
+      embed_dims: 256
+      refine_yaw: true
+      with_quality_estimation: true
+    valid_vel_weight: -1.0
+    graph_model:
+      type: MultiheadAttention
+      embed_dims: 512
+      num_heads: 8
+      batch_first: true
+      dropout: 0.1
+    temp_graph_model:
+      type: MultiheadAttention
+      embed_dims: 512
+      num_heads: 8
+      batch_first: true
+      dropout: 0.1
+    decoder:
+      type: SparseBox3DDecoder
+      score_threshold: 0.05
+    norm_layer:
+      type: LN
+      normalized_shape: 256
+    ffn:
+      type: AsymmetricFFN
+      in_channels: 512
+      pre_norm:
+        type: LN
+        normalized_shape: 256
+      embed_dims: 256
+      feedforward_channels: 1024
+      num_fcs: 2
+      ffn_drop: 0.1
+      act_cfg:
+        type: ReLU
+        inplace: true
+  use_temporal_align: false
+dataset:
+  type: omniverse_3d_det_track
+  batch_size: 2
+  use_h5_file_for_rgb: false
+  use_h5_file_for_depth: true
+  num_frames: 200
+  num_bev_groups: 1
+  data_root: ???
+  classes:
+  - person
+  - gr1_t2
+  - agility_digit
+  - nova_carter
+  num_workers: 4
+  num_ids: 70
+  augmentation:
+    resize_lim:
+    - 0.7
+    - 0.77
+    final_dim:
+    - 512
+    - 1408
+    bot_pct_lim:
+    - 0.0
+    - 0.0
+    rot_lim:
+    - -5.4
+    - 5.4
+    image_size:
+    - 1080
+    - 1920
+    rand_flip: true
+    rot3d_range:
+    - -0.3925
+    - 0.3925
+  normalize:
+    mean:
+    - 123.675
+    - 116.28
+    - 103.53
+    std:
+    - 58.395
+    - 57.12
+    - 57.375
+    to_rgb: true
+  sequences:
+    split_num: 100
+    keep_consistent_aug: true
+    same_scene_in_batch: true
+  train_dataset:
+    ann_file: ???
+    test_mode: false
+    use_valid_flag: true
+    with_seq_flag: true
+    sequences_split_num: 100
+    keep_consistent_seq_aug: true
+    same_scene_in_batch: true
+  val_dataset:
+    ann_file: ???
+    test_mode: false
+    use_valid_flag: true
+    tracking: true
+    tracking_threshold: 0.2
+    same_scene_in_batch: true
+  test_dataset:
+    ann_file: ???
+    test_mode: true
+    use_valid_flag: true
+    tracking: true
+    tracking_threshold: 0.2
+    same_scene_in_batch: true
+  quant_calibration_dataset:
+    images_dir: ''
+visualize:
+  show: false
+  vis_dir: ./vis
+  vis_score_threshold: 0.25
+  n_images_col: 6
+  viz_down_sample: 3
+quantize:
+  backend: torchao
+  mode: weight_only_ptq
+  algorithm: minmax
+  layers: []
+  skip_names: []
+  model_path: ''
+  results_dir: ''
+  backend_kwargs: {}
+  device: cuda

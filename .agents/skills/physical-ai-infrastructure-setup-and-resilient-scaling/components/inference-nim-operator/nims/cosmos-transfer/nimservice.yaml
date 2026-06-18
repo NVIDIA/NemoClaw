@@ -1,0 +1,51 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Cosmos Transfer 2.5 2B (video style transfer)
+# Pre-built NIM container from NGC
+apiVersion: apps.nvidia.com/v1alpha1
+kind: NIMService
+metadata:
+  name: cosmos-transfer
+  namespace: osmo-nims
+spec:
+  image:
+    repository: nvcr.io/nim/nvidia/cosmos-transfer2.5-2b
+    tag: "1.0.0"
+    pullPolicy: IfNotPresent
+    pullSecrets:
+      - nvcr-pull-secret
+  authSecret: ngc-api-secret
+  env:
+    - name: NGC_API_KEY
+      valueFrom:
+        secretKeyRef:
+          name: ngc-api-secret
+          key: NGC_API_KEY
+  storage:
+    pvc:
+      create: true
+      size: "150Gi"
+      volumeAccessMode: ReadWriteMany
+  startupProbe:
+    enabled: true
+    probe:
+      httpGet:
+        path: /v1/health/ready
+        port: 8000
+      initialDelaySeconds: 60
+      periodSeconds: 30
+      failureThreshold: 120
+      timeoutSeconds: 5
+  replicas: 1
+  resources:
+    limits:
+      nvidia.com/gpu: 1
+      memory: 96Gi
+    requests:
+      nvidia.com/gpu: 1
+      memory: 96Gi
+  expose:
+    service:
+      type: ClusterIP
+      port: 8000

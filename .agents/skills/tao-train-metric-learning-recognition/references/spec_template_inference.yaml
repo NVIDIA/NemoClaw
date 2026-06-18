@@ -1,0 +1,108 @@
+model_name: ''
+encryption_key: ''
+results_dir: ''
+wandb:
+  enable: true
+  project: TAO Toolkit
+  entity: ''
+  group: ''
+  tags:
+  - tao-toolkit
+  reinit: false
+  sync_tensorboard: false
+  save_code: false
+  name: TAO Toolkit Training
+  run_id: ''
+train:
+  num_gpus: 1
+  gpu_ids:
+  - 0
+  num_nodes: 1
+  seed: 1234
+  cudnn:
+    benchmark: false
+    deterministic: true
+  num_epochs: 10
+  checkpoint_interval: 1
+  checkpoint_interval_unit: epoch
+  validation_interval: 1
+  resume_training_checkpoint_path: ''
+  results_dir: ''
+  optim:
+    name: Adam
+    steps:
+    - 40
+    - 70
+    gamma: 0.1
+    warmup_factor: 0.01
+    warmup_iters: 10
+    warmup_method: linear
+    triplet_loss_margin: 0.3
+    embedder:
+      bias_lr_factor: 1.0
+      base_lr: 0.00035
+      momentum: 0.9
+      weight_decay: 0.0005
+      weight_decay_bias: 0.0005
+    trunk:
+      bias_lr_factor: 1.0
+      base_lr: 0.00035
+      momentum: 0.9
+      weight_decay: 0.0005
+      weight_decay_bias: 0.0005
+    miner_function_margin: 0.1
+  clip_grad_norm: 0.0
+  report_accuracy_per_class: true
+  smooth_loss: true
+  batch_size: 4
+  val_batch_size: 4
+  train_trunk: true
+  train_embedder: true
+model:
+  backbone: resnet_50
+  input_width: 224
+  input_height: 224
+  input_channels: 3
+  feat_dim: 256
+dataset:
+  train_dataset: ''
+  val_dataset: {}
+  workers: 8
+  pixel_mean:
+  - 0.485
+  - 0.456
+  - 0.406
+  pixel_std:
+  - 0.226
+  - 0.226
+  - 0.226
+  prob: 0.5
+  re_prob: 0.5
+  gaussian_blur:
+    enabled: true
+    kernel:
+    - 15
+    - 15
+    sigma:
+    - 0.3
+    - 0.7
+  color_augmentation:
+    enabled: true
+    brightness: 0.5
+    contrast: 0.3
+    saturation: 0.1
+    hue: 0.1
+  random_rotation: false
+  num_instance: 4
+inference:
+  num_gpus: 1
+  gpu_ids:
+  - 0
+  num_nodes: 1
+  checkpoint: ???
+  trt_engine: ''
+  results_dir: ''
+  batch_size: 1
+  input_path: ???
+  inference_input_type: classification_folder
+  topk: 1

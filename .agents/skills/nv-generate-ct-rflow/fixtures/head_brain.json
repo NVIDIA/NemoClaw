@@ -1,0 +1,35 @@
+{
+  "_comment": "Head CT focused on cranial anatomy (brain + skull + upper cervical spine). 256^3 at 1.0 mm spacing produces a head-scale field of view. ~90s on a 24 GB GPU.",
+  "num_output_samples": 1,
+  "body_region": [
+    "head"
+  ],
+  "anatomy_list": [
+    "brain",
+    "skull",
+    "spinal cord",
+    "trachea",
+    "thyroid gland",
+    "vertebrae C1",
+    "vertebrae C2",
+    "vertebrae C3",
+    "vertebrae C4",
+    "vertebrae C5",
+    "vertebrae C6",
+    "vertebrae C7"
+  ],
+  "controllable_anatomy_size": [],
+  "output_size": [
+    256,
+    256,
+    256
+  ],
+  "spacing": [
+    1.0,
+    1.0,
+    1.0
+  ],
+  "num_inference_steps": 30,
+  "image_output_ext": ".nii.gz",
+  "label_output_ext": ".nii.gz"
+}

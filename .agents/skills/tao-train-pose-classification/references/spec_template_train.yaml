@@ -1,0 +1,66 @@
+model_name: ''
+encryption_key: ''
+results_dir: ''
+wandb:
+  enable: true
+  project: TAO Toolkit
+  entity: ''
+  group: ''
+  tags:
+  - tao-toolkit
+  reinit: false
+  sync_tensorboard: false
+  save_code: false
+  name: TAO Toolkit Training
+  run_id: ''
+model:
+  model_type: ST-GCN
+  pretrained_model_path: ''
+  input_channels: 3
+  dropout: 0.5
+  graph_layout: nvidia
+  graph_strategy: spatial
+  edge_importance_weighting: true
+dataset:
+  train_dataset:
+    data_path: ''
+    label_path: ''
+  val_dataset:
+    data_path: ''
+    label_path: ''
+  num_classes: 6
+  random_choose: false
+  random_move: false
+  window_size: -1
+  batch_size: 16
+  num_workers: 1
+train:
+  num_gpus: 1
+  gpu_ids:
+  - 0
+  num_nodes: 1
+  seed: 1234
+  cudnn:
+    benchmark: false
+    deterministic: true
+  num_epochs: 10
+  checkpoint_interval: 1
+  checkpoint_interval_unit: epoch
+  validation_interval: 1
+  resume_training_checkpoint_path: ''
+  results_dir: ''
+  optim:
+    optimizer_type: torch.optim.SGD
+    lr: 0.1
+    momentum: 0.9
+    nesterov: true
+    weight_decay: 0.0001
+    lr_scheduler: MultiStep
+    lr_monitor: val_loss
+    patience: 1
+    min_lr: 0.0001
+    lr_steps:
+    - 10
+    - 60
+    lr_decay: 0.1
+  grad_clip: 0.0

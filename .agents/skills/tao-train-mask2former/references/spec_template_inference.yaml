@@ -1,0 +1,212 @@
+model_name: ''
+encryption_key: ''
+results_dir: ''
+wandb:
+  enable: true
+  project: TAO Toolkit
+  entity: ''
+  group: ''
+  tags:
+  - tao-toolkit
+  reinit: false
+  sync_tensorboard: false
+  save_code: false
+  name: TAO Toolkit Training
+  run_id: ''
+model:
+  export: false
+  backbone:
+    type: swin
+    pretrained_weights: ''
+    swin:
+      type: tiny
+      embed_dim: 96
+      depths:
+      - 2
+      - 2
+      - 6
+      - 2
+      num_heads:
+      - 3
+      - 6
+      - 12
+      - 24
+      patch_size: 4
+      window_size: 7
+      mlp_ratio: 4.0
+      qkv_bias: true
+      drop_rate: 0.0
+      attn_drop_rate: 0.0
+      drop_path_rate: 0.3
+      ape: false
+      patch_norm: true
+      out_indices:
+      - 0
+      - 1
+      - 2
+      - 3
+      pretrain_img_size: 384
+      use_checkpoint: false
+      out_features:
+      - res2
+      - res3
+      - res4
+      - res5
+    efficientvit:
+      name: l0
+      out_indices:
+      - 1
+      - 2
+      - 3
+      pretrain_img_size: 384
+      use_checkpoint: false
+      out_features:
+      - res2
+      - res3
+      - res4
+      - res5
+  sem_seg_head:
+    common_stride: 4
+    transformer_enc_layers: 6
+    convs_dim: 256
+    mask_dim: 256
+    deformable_transformer_encoder_in_features:
+    - res3
+    - res4
+    - res5
+    num_classes: 200
+    norm: GN
+  mask_former:
+    dropout: 0.0
+    nheads: 8
+    num_object_queries: 100
+    hidden_dim: 256
+    dim_feedforward: 2048
+    dec_layers: 10
+    pre_norm: false
+    class_weight: 2.0
+    dice_weight: 5.0
+    mask_weight: 5.0
+    train_num_points: 12544
+    oversample_ratio: 3.0
+    importance_sample_ratio: 0.75
+    deep_supervision: true
+    no_object_weight: 0.1
+  mode: panoptic
+  object_mask_threshold: 0.4
+  overlap_threshold: 0.5
+  test_topk_per_image: 100
+dataset:
+  train:
+    type: ade
+    name: ''
+    panoptic_json: ''
+    instance_json: ''
+    img_dir: ''
+    panoptic_dir: ''
+    root_dir: ''
+    annot_file: ''
+    batch_size: 1
+    num_workers: 1
+    target_size: []
+  val:
+    type: ade
+    name: ''
+    panoptic_json: ''
+    instance_json: ''
+    img_dir: ''
+    panoptic_dir: ''
+    root_dir: ''
+    annot_file: ''
+    batch_size: 1
+    num_workers: 1
+    target_size: []
+  test:
+    type: ade
+    name: ''
+    panoptic_json: ''
+    instance_json: ''
+    img_dir: ''
+    panoptic_dir: ''
+    root_dir: ''
+    annot_file: ''
+    batch_size: 1
+    num_workers: 1
+    target_size: []
+  pin_memory: true
+  pixel_mean:
+  - 0.485
+  - 0.456
+  - 0.406
+  pixel_std:
+  - 0.229
+  - 0.224
+  - 0.225
+  augmentation:
+    train_min_size:
+    - 640
+    train_max_size: 2560
+    train_crop_size:
+    - 640
+    - 640
+    test_min_size: 640
+    test_max_size: 640
+  contiguous_id: false
+  label_map: ''
+  quant_calibration_dataset:
+    images_dir: ''
+train:
+  num_gpus: 1
+  gpu_ids:
+  - 0
+  num_nodes: 1
+  seed: 1234
+  cudnn:
+    benchmark: false
+    deterministic: true
+  num_epochs: 10
+  checkpoint_interval: 1
+  checkpoint_interval_unit: epoch
+  validation_interval: 1
+  resume_training_checkpoint_path: ''
+  results_dir: ''
+  freeze: []
+  pretrained_model_path: ''
+  clip_grad_norm: 0.1
+  clip_grad_type: full
+  is_dry_run: false
+  optim:
+    type: AdamW
+    monitor_name: train_loss
+    lr: 0.0002
+    backbone_multiplier: 0.1
+    momentum: 0.9
+    weight_decay: 0.05
+    lr_scheduler: MultiStep
+    milestones:
+    - 88
+    - 96
+    gamma: 0.1
+  precision: fp32
+  distributed_strategy: ddp
+  activation_checkpoint: false
+  use_distributed_sampler: false
+inference:
+  num_gpus: 1
+  gpu_ids:
+  - 0
+  num_nodes: 1
+  checkpoint: ???
+  trt_engine: ''
+  results_dir: ''
+  batch_size: -1
+quantize:
+  backend: torchao
+  mode: weight_only_ptq
+  algorithm: minmax
+  layers: []
+  skip_names: []
+  model_path: ''
+  results_dir: ''
+  backend_kwargs: {}
+  device: cuda

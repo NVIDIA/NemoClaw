@@ -1,0 +1,312 @@
+{
+  "meshCleanup": {
+    "status": "canonical",
+    "rationale": "canonical: C1+C2: invoked by so-run-operations and the data-quality-baseline / mesh-count-reduction pipelines; loss_class bounded-loss.",
+    "wired_into": [
+      "skills/omniverse-usd-performance-tuning/references/so-run-operations/references/operation-safety.md",
+      "skills/omniverse-usd-performance-tuning/references/so-run-operations/references/pipelines.md",
+      "skills/omniverse-usd-performance-tuning/references/workflow.md"
+    ]
+  },
+  "deduplicateGeometry": {
+    "status": "canonical",
+    "rationale": "canonical: C1+C2: invoked by so-run-operations and safe-cleanup / memory-reduction pipelines; lossless.",
+    "wired_into": [
+      "skills/omniverse-usd-performance-tuning/references/so-run-operations/references/operation-safety.md",
+      "skills/omniverse-usd-performance-tuning/references/so-run-operations/references/pipelines.md",
+      "skills/omniverse-usd-performance-tuning/references/workflow.md"
+    ]
+  },
+  "deduplicateHierarchies": {
+    "status": "canonical",
+    "rationale": "canonical: C1+C2: hierarchy-level instancing via restructure-decision Phase 2e deduplicate-internally path. Requires user confirmation (replaces subtrees with instanceable references to shared prototypes).",
+    "wired_into": [
+      "skills/omniverse-usd-performance-tuning/references/usd-structure-assessment/references/restructure-decision/README.md",
+      "skills/omniverse-usd-performance-tuning/references/so-run-operations/references/operation-safety.md",
+      "skills/omniverse-usd-performance-tuning/references/workflow.md"
+    ]
+  },
+  "pruneLeaves": {
+    "status": "canonical",
+    "rationale": "canonical: C1+C2: invoked by so-run-operations safe-cleanup pipeline; lossless.",
+    "wired_into": [
+      "skills/omniverse-usd-performance-tuning/references/so-run-operations/references/operation-safety.md",
+      "skills/omniverse-usd-performance-tuning/references/so-run-operations/references/pipelines.md",
+      "skills/omniverse-usd-performance-tuning/references/workflow.md"
+    ]
+  },
+  "computeExtents": {
+    "status": "canonical",
+    "rationale": "canonical: C1+C2: invoked by so-run-operations safe-cleanup pipeline; lossless.",
+    "wired_into": [
+      "skills/omniverse-usd-performance-tuning/references/so-run-operations/references/operation-safety.md",
+      "skills/omniverse-usd-performance-tuning/references/so-run-operations/references/pipelines.md"
+    ]
+  },
+  "optimizeMaterials": {
+    "status": "canonical",
+    "rationale": "canonical: C1+C2: invoked by so-run-operations safe-cleanup pipeline; lossless at default (convertToColor=false).",
+    "wired_into": [
+      "skills/omniverse-usd-performance-tuning/references/so-run-operations/references/operation-safety.md",
+      "skills/omniverse-usd-performance-tuning/references/so-run-operations/references/pipelines.md"
+    ]
+  },
+  "optimizeTimeSamples": {
+    "status": "canonical",
+    "rationale": "canonical: C1+C2: invoked by so-run-operations safe-cleanup pipeline; lossless.",
+    "wired_into": [
+      "skills/omniverse-usd-performance-tuning/references/so-run-operations/references/operation-safety.md",
+      "skills/omniverse-usd-performance-tuning/references/so-run-operations/references/pipelines.md"
+    ]
+  },
+  "removeUnusedUVs": {
+    "status": "canonical",
+    "rationale": "canonical: C1+C2: lossless mesh-cleanup op surfaced as a local routing key in pipelines.md for CAD/BIM cleanup (named pipeline recipes live upstream); routing skill points at pipelines.md rather than naming the op directly.",
+    "wired_into": [
+      "skills/omniverse-usd-performance-tuning/references/so-run-operations/references/pipelines.md"
+    ]
+  },
+  "generateNormals": {
+    "status": "canonical",
+    "rationale": "canonical: C1+C2: invoked by data-quality-baseline pipeline; lossless when normals not user-authored.",
+    "wired_into": [
+      "skills/omniverse-usd-performance-tuning/references/so-run-operations/references/pipelines.md",
+      "skills/omniverse-usd-performance-tuning/references/workflow.md"
+    ]
+  },
+  "decimateMeshes": {
+    "status": "specialty",
+    "rationale": "specialty: S1: destructive (drops vertices); listed in so-run-operations operation-safety table with maxMeanError vs reductionFactor guidance.",
+    "wired_into": [
+      "skills/omniverse-usd-performance-tuning/references/so-run-operations/references/operation-safety.md",
+      "skills/omniverse-usd-performance-tuning/references/so-run-operations/references/pipelines.md",
+      "skills/omniverse-usd-performance-tuning/references/workflow.md"
+    ]
+  },
+  "removeSmallGeometry": {
+    "status": "specialty",
+    "rationale": "specialty: S1: bounded-loss (removes prims below screen-space threshold); in so-run-operations operation-safety table.",
+    "wired_into": [
+      "skills/omniverse-usd-performance-tuning/references/so-run-operations/references/operation-safety.md",
+      "skills/omniverse-usd-performance-tuning/references/so-run-operations/references/pipelines.md"
+    ]
+  },
+  "removePrims": {
+    "status": "specialty",
+    "rationale": "specialty: S2: stage-mutating; agent must surface impacted prims before invoking. Used as a cleanup tool in so-run-operations.",
+    "wired_into": [
+      "skills/omniverse-usd-performance-tuning/references/so-run-operations/references/operation-safety.md"
+    ]
+  },
+  "flattenHierarchy": {
+    "status": "specialty",
+    "rationale": "specialty: S1: lossless Xform-collapse cleanup reached for via validator findings (SceneOptimizerFlatHierarchiesChecker -> flattenHierarchy) and local workflow routing. Not a composition-arc flattener despite the name; upstream usd-optimize owns operation mechanics.",
+    "wired_into": [
+      "skills/omniverse-usd-performance-tuning/references/usd-validation-runner/references/so-interpret-validators/references/rule-reference.md"
+    ]
+  },
+  "pythonScript": {
+    "status": "specialty",
+    "rationale": "specialty: S2: escape-hatch op used by so-create-proxy's USD-authoring recipes; not for general flow. JSON example added to pipelines.md by this PR.",
+    "wired_into": [
+      "skills/omniverse-usd-performance-tuning/references/so-run-operations/references/so-create-proxy/README.md",
+      "skills/omniverse-usd-performance-tuning/references/so-run-operations/references/pipelines.md"
+    ]
+  },
+  "mergeVertices": {
+    "status": "specialty",
+    "rationale": "specialty: S2: hidden legacy standalone welder. Prefer canonical meshCleanup for local recommendations; reach for this op only when the user explicitly needs its upstream-documented behavior.",
+    "wired_into": [
+      "skills/omniverse-usd-performance-tuning/references/workflow.md"
+    ]
+  },
+  "findCoincidingGeometry": {
+    "status": "analysis",
+    "rationale": "analysis: A1+A2: lossless coincidence analyzer; wired into the so-interpret-validators interpretation map (SceneOptimizerCoincidingGeometryChecker -> spatial_coinciding) and the workflow analysis-op guidance. Prefer deduplicateGeometry before destructive deletion.",
+    "wired_into": [
+      "skills/omniverse-usd-performance-tuning/references/usd-validation-runner/references/so-interpret-validators/references/rule-reference.md",
+      "skills/omniverse-usd-performance-tuning/references/workflow.md"
+    ]
+  },
+  "findOccludedMeshes": {
+    "status": "canonical",
+    "rationale": "canonical: C1+C2: wired into Phase 4 op chain as first-priority internal geometry removal; analysis-only detection followed by removePrims action. Scoped to SA containment-flagged pairs with opaque enclosures.",
+    "wired_into": [
+      "skills/omniverse-usd-performance-tuning/references/usd-validation-runner/references/so-interpret-validators/references/rule-reference.md",
+      "skills/omniverse-usd-performance-tuning/references/so-run-operations/references/config-from-evidence.md",
+      "skills/omniverse-usd-performance-tuning/references/workflow.md"
+    ]
+  },
+  "findFlatHierarchies": {
+    "status": "analysis",
+    "rationale": "analysis: A1+A2: lossless hierarchy-shape finder; wired into the so-interpret-validators interpretation map (SceneOptimizerFlatHierarchiesChecker -> flattenHierarchy) and the workflow analysis-op guidance.",
+    "wired_into": [
+      "skills/omniverse-usd-performance-tuning/references/usd-validation-runner/references/so-interpret-validators/references/rule-reference.md",
+      "skills/omniverse-usd-performance-tuning/references/workflow.md"
+    ]
+  },
+  "fitPrimitives": {
+    "status": "canonical",
+    "rationale": "canonical: C1+C2: bounded-loss geometry op surfaced as a local routing key in pipelines.md for CAD/BIM cleanup (named pipeline recipes live upstream); critical for CAD/BIM/MEP scenes. Requires user confirmation (replaces meshes with analytic primitives).",
+    "wired_into": [
+      "skills/omniverse-usd-performance-tuning/references/so-run-operations/references/pipelines.md",
+      "skills/omniverse-usd-performance-tuning/references/operations/fitPrimitives.md"
+    ]
+  },
+  "rtxMeshCount": {
+    "status": "analysis",
+    "rationale": "analysis: A1+A2: lossless RTX-bucket counter; mentioned in workflow's analysis-only ops section.",
+    "wired_into": [
+      "skills/omniverse-usd-performance-tuning/references/workflow.md"
+    ]
+  },
+  "printStats": {
+    "status": "analysis",
+    "rationale": "analysis: A1+A2: lossless stats reporter; mentioned in workflow's analysis-only ops section.",
+    "wired_into": [
+      "skills/omniverse-usd-performance-tuning/references/workflow.md"
+    ]
+  },
+  "countVertices": {
+    "status": "analysis",
+    "rationale": "analysis: A1+A2: lossless vertex counter.",
+    "wired_into": []
+  },
+  "boxClip": {
+    "status": "documentary",
+    "rationale": "documentary: D1+D2+D3: no JSON references, no pipeline mention, no workflow recommendation.",
+    "wired_into": []
+  },
+  "deleteHiddenPrims": {
+    "status": "documentary",
+    "rationale": "documentary: D1+D2+D3: never invoked by current flow.",
+    "wired_into": []
+  },
+  "deletePrims": {
+    "status": "documentary",
+    "rationale": "documentary: D1+D2+D3: never invoked by current flow.",
+    "wired_into": []
+  },
+  "diceMeshes": {
+    "status": "documentary",
+    "rationale": "documentary: D1+D2+D3: never invoked by current flow.",
+    "wired_into": []
+  },
+  "editStageMetrics": {
+    "status": "documentary",
+    "rationale": "documentary: D1+D2+D3: stage-metrics editor; outside the optimization flow's scope.",
+    "wired_into": []
+  },
+  "generateAtlasUVs": {
+    "status": "documentary",
+    "rationale": "documentary: D1+D2+D3: UV-atlas authoring; outside scope.",
+    "wired_into": []
+  },
+  "generateProjectionUVs": {
+    "status": "documentary",
+    "rationale": "documentary: D1+D2+D3: projected-UV authoring; outside scope.",
+    "wired_into": []
+  },
+  "generateScene": {
+    "status": "documentary",
+    "rationale": "documentary: D1+D2+D3: scene authoring; outside the optimization flow's scope.",
+    "wired_into": []
+  },
+  "manifoldMeshes": {
+    "status": "documentary",
+    "rationale": "documentary: D1+D2+D3: standalone manifold repair; meshCleanup.makeManifold is the active path.",
+    "wired_into": []
+  },
+  "merge": {
+    "status": "documentary",
+    "rationale": "documentary: D1+D2+D3: static-mesh merge is destructive and has known instancing conflicts; mostly user-initiated for specific GPU-pressure scenarios and not in the canonical CAD/BIM cleanup flow. Upstream usd-optimize owns operation mechanics.",
+    "wired_into": []
+  },
+  "optimizePrimvars": {
+    "status": "specialty",
+    "rationale": "specialty: S2: validator-finding evidence (SceneOptimizerIndexedPrimvarChecker T1 in rule-reference.md) wires it into the so-interpret-validators chain. Upstream usd-optimize owns enum semantics and operation mechanics.",
+    "wired_into": [
+      "skills/omniverse-usd-performance-tuning/references/usd-validation-runner/references/so-interpret-validators/references/rule-reference.md"
+    ]
+  },
+  "optimizeSkelRoots": {
+    "status": "documentary",
+    "rationale": "documentary: D1+D2+D3: skel-specific; outside the CAD-centric focus of the current flow.",
+    "wired_into": []
+  },
+  "organizePrototypes": {
+    "status": "documentary",
+    "rationale": "documentary: D1+D2+D3: prototype-organization; superseded by apply-restructure for most use cases.",
+    "wired_into": [
+      "skills/omniverse-usd-performance-tuning/references/workflow.md"
+    ]
+  },
+  "pivot": {
+    "status": "documentary",
+    "rationale": "documentary: D1+D2+D3: pivot-point authoring; outside scope.",
+    "wired_into": []
+  },
+  "primitivesToMeshes": {
+    "status": "specialty",
+    "rationale": "specialty: S3: load-bearing escape hatch. The canonical CAD flow prefers fitPrimitives (analytic primitives), but primitivesToMeshes is the only path to convert primitives back to UsdGeomMesh for downstream tools that don't accept analytic primitives (some renderers, physics, exporters). Recommend only when the downstream context explicitly requires mesh output.",
+    "wired_into": []
+  },
+  "remeshMeshes": {
+    "status": "documentary",
+    "rationale": "documentary: D1+D2+D3: remeshing; bounded-loss but outside default flow.",
+    "wired_into": []
+  },
+  "removeAttributes": {
+    "status": "documentary",
+    "rationale": "documentary: D1+D2+D3: bulk attribute remover; never invoked by current flow.",
+    "wired_into": []
+  },
+  "removeUntypedPrims": {
+    "status": "documentary",
+    "rationale": "documentary: D1+D2+D3: never invoked by current flow.",
+    "wired_into": []
+  },
+  "sparseMeshes": {
+    "status": "specialty",
+    "rationale": "specialty: S2: validator-finding evidence (SceneOptimizerSparseMeshChecker T2 in rule-reference.md) wires it into the so-interpret-validators chain. Analysis-only op that classifies meshes by spatial density and surfaces split / dice candidates; surfaces from usd-validation-runner Tier 3 policy (outlier_extent-flagged assets). Outside the default canonical flow but actionable when the checker fires.",
+    "wired_into": [
+      "skills/omniverse-usd-performance-tuning/references/usd-validation-runner/references/so-interpret-validators/references/rule-reference.md",
+      "skills/omniverse-usd-performance-tuning/references/workflow.md"
+    ]
+  },
+  "splitMeshes": {
+    "status": "documentary",
+    "rationale": "documentary: D1+D2+D3: splitting; outside default flow.",
+    "wired_into": []
+  },
+  "subdivideMeshes": {
+    "status": "documentary",
+    "rationale": "documentary: D1+D2+D3: subdivision; outside default flow.",
+    "wired_into": []
+  },
+  "triangulateMeshes": {
+    "status": "documentary",
+    "rationale": "documentary: D1+D2+D3: triangulation; outside default flow.",
+    "wired_into": []
+  },
+  "utilityFunction": {
+    "status": "specialty",
+    "rationale": "specialty: S3: provides four useful structural sub-functions not covered by any other op (Deinstance, Unbind Materials, Set Instanceable, Flatten Instances). Used for instancing-state toggles and material-binding cleanup that don't fit the standard mesh-cleanup or geometry-reduction flow. Recommend when the user asks about instancing toggle or material rebinding.",
+    "wired_into": [
+      "skills/omniverse-usd-performance-tuning/references/workflow.md"
+    ]
+  },
+  "findOverlappingMeshes": {
+    "status": "analysis",
+    "rationale": "analysis: A1+A2: lossless overlap analyzer; wired into the so-interpret-validators interpretation map (SceneOptimizerFindOverlappingMeshesChecker -> spatial_overlapping) and the workflow analysis-op guidance.",
+    "wired_into": [
+      "skills/omniverse-usd-performance-tuning/references/usd-validation-runner/references/so-interpret-validators/references/rule-reference.md",
+      "skills/omniverse-usd-performance-tuning/references/workflow.md"
+    ]
+  },
+  "shrinkwrap": {
+    "status": "documentary",
+    "rationale": "documentary: D1+D2+D3: specialty geometry op; use only after live operationsAvailable confirms support.",
+    "wired_into": []
+  }
+}

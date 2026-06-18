@@ -1,0 +1,75 @@
+{
+  "asset_name": "factory_main",
+  "input_path": "/data/factory_main.usd",
+  "output_path": null,
+  "timestamp": "2026-05-28T00:00:00Z",
+  "verdict": "neutral",
+  "workflow_mode": "structural_only",
+  "notes": "Scene Optimizer was unavailable in the selected runtime and the user declined install, so the workflow ran in structural-only mode: structure assessment plus pre-mutation USD validation only. No mesh operations executed and no optimized stage was written, so the verdict is neutral. FPS, frame time, and VRAM are unmeasured; re-run Phase 1a/6a in full mode under Kit / USD Composer / Isaac Sim to graduate the verdict.",
+  "optimization_score": 5.0,
+  "score_scope": "stage_optimization",
+  "score_label": "neutral",
+  "reasoning": "Scene Optimizer could not be loaded, so no mutation was attempted. Structure assessment characterized the stage and pre-mutation USD validation ran, but without SO there is no optimized output to compare against the baseline. The score reflects a neutral, no-change result rather than a measured optimization win.\n\nThe report documents the runtime blocker and the next capture needed so a later full-mode run can produce a real before/after verdict.",
+  "measurement_context": {
+    "profile_mode": "quick USD composition profile",
+    "runtime": "standalone USD Python (no Scene Optimizer)",
+    "score_scope": "stage/composition metrics only"
+  },
+  "runtime_profiling": {
+    "status": "not_run",
+    "recommended_tool": "Omniperf",
+    "dashboard_url": null,
+    "artifact_path": null,
+    "summary": "Runtime profiling was not run for this report.",
+    "caveat": "Use Omniperf for RAM, VRAM, FPS, frame time, shader, renderer, and GPU metrics."
+  },
+  "artifacts": {
+    "json": "/out/factory_main_optimization_report.json",
+    "markdown": "/out/factory_main_optimization_report.md",
+    "html": "/out/factory_main_optimization_report.html"
+  },
+  "metric_groups": [
+    {
+      "id": "composition",
+      "display_name": "Composition Complexity",
+      "score": 5.0,
+      "status": "measured",
+      "weight": 50,
+      "summary": "Composition characterized; no mutation applied in structural-only mode."
+    },
+    {
+      "id": "validation",
+      "display_name": "Validation",
+      "score": 5.0,
+      "status": "measured",
+      "weight": 50,
+      "summary": "Pre-mutation USD validation ran; SO performance rules skipped (SO unavailable)."
+    }
+  ],
+  "metrics": [
+    {
+      "name": "prim_count",
+      "display_name": "Prim Count",
+      "category": "composition",
+      "unit": "prims",
+      "direction": "lower_is_better",
+      "evidence_type": "direct",
+      "before": 184213,
+      "after": 184213,
+      "change_pct": 0.0,
+      "verdict": "neutral"
+    }
+  ],
+  "operations": [],
+  "validators": [
+    {
+      "name": "MinimumOpenability",
+      "issues": 0,
+      "notes": "Stage opens; default prim, up-axis, and metersPerUnit present."
+    }
+  ],
+  "target_coverage": {
+    "complete": true,
+    "entries": []
+  }
+}

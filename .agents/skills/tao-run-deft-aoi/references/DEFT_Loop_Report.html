@@ -1,0 +1,1098 @@
+<!DOCTYPE html>
+<!--
+================================================================================
+  DEFT Loop Final Report — TEMPLATE
+================================================================================
+  This file is the canonical visual template for DEFT_Loop_Report.html.
+  The agent reads this file and renders it by replacing {{ PLACEHOLDER }}
+  tokens with actual run data (plain Python str.replace — no template engine
+  needed). Pre-rendered HTML blocks (table rows, cards, etc.) are injected as
+  single {{ SECTION_HTML }} placeholders built by the agent's Python code.
+
+  RENDERING RECIPE (Python):
+    template = open('references/DEFT_Loop_Report.html').read()
+    html = (template
+        .replace('{{ GENERATED_DATE }}',        generated_date)
+        .replace('{{ KPI_TARGET }}',            kpi_target)
+        ...
+        .replace('{{ FAR_DATA_JSON }}',         json.dumps(far_data))
+        ...)
+    open(f'{RESULTS_DIR}/DEFT_Loop_Report.html', 'w').write(html)
+
+  ── SIMPLE TOKEN REFERENCE ────────────────────────────────────────────────────
+  {{ GENERATED_DATE }}          ISO-8601 datetime, e.g. "2026-04-28 19:13 UTC"
+  {{ KPI_TARGET }}              e.g. "FAR < 10% @ Recall = 100%"
+  {{ ITERATIONS_RUN }}          integer, e.g. 3
+  {{ MAX_ITERATIONS }}          integer, e.g. 3
+  {{ BEST_ITER_LABEL }}         e.g. "Iter 1"
+  {{ BEST_FAR }}                float string, e.g. "49.29"
+  {{ BEST_THRESHOLD }}          float string, e.g. "0.109226"
+  {{ BEST_CHECKPOINT }}         absolute path string
+  {{ KPI_TARGET_PCT }}          numeric KPI line on FAR chart, e.g. 10
+  {{ FAR_Y_MAX }}               chart Y max, e.g. 100
+  {{ FINAL_ITER_COUNT_LABEL }}  e.g. "3 / 3 complete"
+  {{ FINAL_KPI_STATUS }}        Neutral status string. Examples:
+                                "MET"                           — target reached
+                                "2.3pp from target"             — short of target (preferred over "NOT MET")
+                                "IN PROGRESS"                   — loop still running
+  {{ FINAL_KPI_STATUS_CLASS }}  CSS class: "green" (met) or "" (anything else — never "red")
+
+  ── PRE-RENDERED HTML BLOCK REFERENCE ─────────────────────────────────────────
+  {{ KPI_BANNER_HTML }}
+      Conditional banner. Use neutral phrasing when the target is not yet reached
+      (we are the product team — describe the gap, never say "NOT MET"). Example
+      for a run still short of target:
+        <div class="kpi-banner" style="background:rgba(255,188,1,0.10);border-color:rgba(255,188,1,0.35);">
+          <div class="icon" style="background:var(--nvidia-yellow);color:#000">i</div>
+          <div class="content">
+            <div class="title" style="color:var(--nvidia-yellow)">Best result so far</div>
+            <div class="body">After N iterations, best is
+              <strong>Iter X — FAR = Y% @ 100% Recall</strong>
+              (<strong>Zpp from the Wpp target</strong>).
+              <strong>Next lever:</strong> one-liner.
+            </div>
+          </div>
+        </div>
+      KPI MET example (green):
+        <div class="kpi-banner" style="background:rgba(118,185,0,0.12);border-color:rgba(118,185,0,0.4);">
+          <div class="icon" style="background:var(--nvidia-green);color:#000">✓</div>
+          <div class="content">
+            <div class="title" style="color:var(--nvidia-green)">KPI MET</div>
+            <div class="body">Iter X achieved <strong>FAR = Y% @ 100% Recall</strong>.</div>
+          </div>
+        </div>
+
+  {{ ITERATION_TABLE_ROWS_HTML }}
+      One <tr> per iteration. Row template:
+        <tr class="best|regress|''">
+          <td><strong>Label</strong> [<span class="badge best|warn|bad">★ BEST|⚠|BAD</span>]</td>
+          <td class="num pos|neg">FAR%</td>
+          <td class="num pos|neg">Δ pp or "—"</td>
+          <td class="num">threshold</td>
+          <td class="num">training_rows</td>
+          <td class="num">synthetic_rows</td>
+          <td [class="badge warn"] >syn_ratio%</td>
+          <td>note text</td>
+        </tr>
+      CSS guidance:
+        best row  → class="best", FAR in <td class="num pos">
+        regression → class="regress", FAR in <td class="num neg">
+        baseline  → no class, delta = "—"
+        syn_ratio > 50% → wrap in <span class="badge warn">X% ⚠</span>
+
+  {{ RCA_INSIGHT_HTML }}
+      The blue insight box explaining the root cause. Example:
+        <div class="insight">
+          <strong>Why FAR is X%:</strong> explanation with
+          <code>component</code> references and <strong>bold</strong> counts.
+        </div>
+
+  {{ SCORE_DIST_ROWS_HTML }}
+      One <tr> per score bucket (score distribution table). Row template:
+        <tr>
+          <td class="num">[lo, hi)</td>
+          <td class="num">pass_count</td>
+          <td class="num">no_pass_count</td>
+          <td>notes — use <span class="cross">←</span> for worst sample</td>
+        </tr>
+
+  {{ RECALL_FAR_ROWS_HTML }}
+      One <tr> per recall/FAR tradeoff point. Row template:
+        <tr [style="background:rgba(118,185,0,0.06)"] >
+          <td class="num">recall% [<span style="color:var(--text-muted)">(−N FN)</span>]</td>
+          <td class="num pos|neg">far%</td>
+          <td class="num">threshold</td>
+          <td><span class="check|cross">✓|✗</span></td>
+        </tr>
+      Highlight the row that meets KPI (or the best achievable row).
+
+  {{ DEFECT_TYPE_ROWS_HTML }}
+      One <tr> per defect class. Row template:
+        <tr>
+          <td><strong>DefectName</strong></td>
+          <td class="num">count</td>
+          <td class="num">lo – hi score range</td>
+          <td><span class="check|warn|cross">✓|⚠|✗</span> note</td>
+        </tr>
+
+  {{ DATA_SAMPLES_HTML }}
+      Exactly ONE .sample-iter-block with ONE input/output pair. Do not emit a
+      block per iteration — pick a single representative pair from the best
+      iteration (the more samples we show, the more odd-looking crops the user
+      notices; one clean pair is the entire point). Block template:
+        <div class="sample-iter-block">
+          <div class="sample-strip">
+            <div class="sample-col">
+              <div class="sample-col-title">AnomalyGen Input</div>
+              <img class="sample-img" src="..." alt="AG input">
+              [or placeholder when no image — use this div instead of img:]
+              <div class="sample-img-placeholder">No image</div>
+            </div>
+            <div class="sample-col">
+              <div class="sample-col-title">AnomalyGen Output</div>
+              <img class="sample-img" src="..." alt="AG output">
+            </div>
+          </div>
+        </div>
+      Image src paths use base64 data URIs (resize to 256×256 before encoding,
+      since each image now gets twice the screen area) so the file opens offline:
+        src="data:image/jpeg;base64,<b64>"
+      If a source image doesn't exist for a column, emit the .sample-img-placeholder div instead.
+      Columns and order: AnomalyGen Input | AnomalyGen Output
+      Source path guide per column (best iteration only):
+        AnomalyGen Input → anomalygen/inputs/pool_b/dataset/<cat>/anomaly_image/<any>.jpg
+        AnomalyGen Output→ anomalygen/pool_b/original/reconstructed_image/<any>.png
+      Selection rule: take the first existing pair by filename sort. If the best
+      iteration has no AnomalyGen output, fall back to the most recent iteration
+      that does; if none, emit the block with two .sample-img-placeholder divs.
+
+  {{ ITER_CARDS_HTML }}
+      One .iter-card div per iteration (excluding baseline). Card template:
+        <div class="iter-card best|regress|''">
+          <span class="iter-tag">★ Best | Regression | label</span>
+          <div class="iter-title">Iter N</div>
+          <div class="iter-far">XX.XX%</div>
+          <ul>
+            <li>bullet 1</li>
+            <li class="warn">warning bullet</li>
+            ...
+          </ul>
+        </div>
+      CSS: class="best" for best iteration, class="regress" for regression.
+
+  {{ RECOMMENDATIONS_HTML }}
+      One .reco div per recommendation. Example:
+        <div class="reco">
+          <div class="num-badge">N</div>
+          <div class="reco-body">
+            <div class="reco-title">Title</div>
+            <div class="reco-desc">Description with <code>inline code</code>.</div>
+          </div>
+        </div>
+      Last recommendation may span both columns:
+        <div class="reco" style="grid-column: 1 / -1">...</div>
+
+  ── JSON CHART DATA REFERENCE ─────────────────────────────────────────────────
+  {{ FAR_DATA_JSON }}
+      JSON array for the FAR trend chart. Each element:
+        {"label": "Baseline|Iter N", "value": 73.93, "color": "#3498db|#76b900|#c2262d"}
+      Color guide: first point = #3498db (blue), improvement = #76b900 (green),
+                   regression = #c2262d (red)
+
+  {{ MINING_POOL_ROWS_HTML }}
+      One <tr> per iteration (skip baseline — no augmentation). Row template:
+        <tr>
+          <td><strong>Iter N</strong></td>
+          <td class="num">sdg_count</td>
+          <td class="num">mined_count</td>
+          <td class="num pos">total (sdg + mined)</td>
+        </tr>
+      sdg_count   = rows in mining_pool.csv where source == sdg_pool (all AnomalyGen output)
+      mined_count = rows in mining_pool.csv where source == mined (cosine similarity ≥ 0.9)
+      total       = sdg_count + mined_count
+
+  {{ FAR_Y_STEPS_JSON }}
+      JSON array of Y-axis tick values for FAR chart, e.g. [0, 25, 50, 75, 100]
+================================================================================
+-->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DEFT Loop Final Report — PCB AOI ChangeNet</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+  :root {
+    --nvidia-green: #76b900;
+    --nvidia-green-light: #8ed100;
+    --nvidia-yellow: #ffbc01;
+    --nvidia-red: #c2262d;
+    --nvidia-orange: #e67e22;
+    --bg-dark: #1a1a1a;
+    --bg-card: #232323;
+    --bg-panel: #2a2a2a;
+    --bg-panel-2: #2f2f2f;
+    --text-primary: #ffffff;
+    --text-secondary: #b0b0b0;
+    --text-muted: #777777;
+    --grid-line: rgba(255,255,255,0.06);
+    --axis-line: rgba(255,255,255,0.15);
+    --border-soft: rgba(255,255,255,0.06);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Inter', 'NVIDIA Sans', Arial, sans-serif;
+    background: var(--bg-dark);
+    color: var(--text-primary);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 32px;
+    padding: 48px 0;
+    font-size: 16px;
+  }
+
+  .card {
+    width: 1280px;
+    background: var(--bg-card);
+    border-radius: 16px;
+    padding: 36px 48px 40px;
+    box-shadow: 0 8px 40px rgba(0,0,0,0.5);
+    position: relative;
+    overflow: hidden;
+  }
+
+  .card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, var(--nvidia-green), var(--nvidia-green-light));
+  }
+
+  .card.alert::before {
+    background: linear-gradient(90deg, var(--nvidia-red), #e74c3c);
+  }
+
+  .header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 28px;
+  }
+
+  .chart-title {
+    font-size: 34px;
+    font-weight: 800;
+    letter-spacing: -0.5px;
+    color: var(--text-primary);
+    line-height: 1.2;
+  }
+
+  .chart-subtitle {
+    font-size: 17px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    margin-top: 8px;
+  }
+  .chart-subtitle span { color: var(--nvidia-green); font-weight: 600; }
+  .chart-subtitle span.bad { color: var(--nvidia-red); }
+
+  /* ── Hero header ── */
+  .hero {
+    width: 1280px;
+    background: linear-gradient(135deg, #1f1f1f 0%, #2a2a2a 100%);
+    border-radius: 16px;
+    padding: 40px 48px;
+    box-shadow: 0 8px 40px rgba(0,0,0,0.5);
+    position: relative;
+    overflow: hidden;
+  }
+  .hero::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, var(--nvidia-green), var(--nvidia-green-light));
+  }
+  .hero h1 {
+    font-size: 44px;
+    font-weight: 800;
+    letter-spacing: -0.8px;
+    color: var(--text-primary);
+    margin-bottom: 10px;
+  }
+  .hero .meta {
+    display: flex;
+    gap: 32px;
+    font-size: 15px;
+    color: var(--text-secondary);
+    margin-top: 20px;
+    flex-wrap: wrap;
+  }
+  .hero .meta-item strong {
+    color: var(--text-primary);
+    font-weight: 600;
+  }
+  .hero .meta-item .value {
+    color: var(--nvidia-green);
+    font-weight: 700;
+  }
+
+  .kpi-banner {
+    margin-top: 24px;
+    padding: 18px 22px;
+    background: rgba(194,38,45,0.12);
+    border: 1px solid rgba(194,38,45,0.4);
+    border-radius: 10px;
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+  }
+  .kpi-banner .icon {
+    flex-shrink: 0;
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    background: var(--nvidia-red);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 800;
+    font-size: 19px;
+  }
+  .kpi-banner .content { flex: 1; }
+  .kpi-banner .title {
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--nvidia-red);
+    margin-bottom: 6px;
+    letter-spacing: 0.3px;
+  }
+  .kpi-banner .body {
+    font-size: 15px;
+    color: var(--text-secondary);
+    line-height: 1.55;
+  }
+  .kpi-banner .body strong { color: var(--text-primary); font-weight: 600; }
+
+  /* ── Charts ── */
+  .body-row {
+    display: flex;
+    gap: 32px;
+    align-items: stretch;
+  }
+
+  .chart-col { flex: 1; min-width: 0; }
+
+  .chart-wrapper {
+    position: relative;
+    display: flex;
+    align-items: stretch;
+    height: 320px;
+  }
+
+  .y-axis-labels {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    padding: 0 14px 32px 0;
+    width: 44px;
+  }
+  .y-tick {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-muted);
+    text-align: right;
+    line-height: 1;
+  }
+
+  .chart-area {
+    flex: 1;
+    position: relative;
+    border-left: 1px solid var(--axis-line);
+    border-bottom: 1px solid var(--axis-line);
+  }
+
+  .grid-line {
+    position: absolute;
+    left: 0; right: 0;
+    border-top: 1px solid var(--grid-line);
+  }
+
+  .y-label {
+    position: absolute;
+    left: -28px;
+    top: 42%;
+    transform: rotate(-90deg);
+    transform-origin: center center;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-muted);
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+
+  .footnote {
+    margin-top: 18px;
+    font-size: 14px;
+    color: var(--text-muted);
+    font-weight: 500;
+  }
+
+  /* ── Info panels ── */
+  .info-col {
+    width: 320px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .info-section {
+    background: var(--bg-panel);
+    border-radius: 10px;
+    padding: 18px 20px;
+    border: 1px solid var(--border-soft);
+  }
+  .info-section-title {
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--nvidia-green);
+    margin-bottom: 12px;
+  }
+  .info-text {
+    font-size: 15px;
+    font-weight: 400;
+    color: var(--text-secondary);
+    line-height: 1.65;
+  }
+  .info-text strong { color: var(--text-primary); font-weight: 600; }
+  .info-text code {
+    background: rgba(255,255,255,0.08);
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 14px;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    color: var(--nvidia-green);
+  }
+
+  /* ── Tables ── */
+  .data-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 4px;
+    font-size: 15px;
+  }
+  .data-table th {
+    text-align: left;
+    padding: 12px 14px;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    background: var(--bg-panel);
+    border-bottom: 1px solid var(--border-soft);
+  }
+  .data-table td {
+    padding: 13px 14px;
+    color: var(--text-secondary);
+    border-bottom: 1px solid var(--border-soft);
+    vertical-align: middle;
+  }
+  .data-table tr:last-child td { border-bottom: none; }
+  .data-table tr.best { background: rgba(118,185,0,0.06); }
+  .data-table tr.best td { color: var(--text-primary); }
+  .data-table tr.regress { background: rgba(194,38,45,0.05); }
+  .data-table .badge {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 10px;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.3px;
+  }
+  .data-table .badge.best {
+    background: rgba(118,185,0,0.15);
+    color: var(--nvidia-green);
+    border: 1px solid rgba(118,185,0,0.35);
+  }
+  .data-table .badge.warn {
+    background: rgba(255,188,1,0.15);
+    color: var(--nvidia-yellow);
+    border: 1px solid rgba(255,188,1,0.35);
+  }
+  .data-table .badge.bad {
+    background: rgba(194,38,45,0.15);
+    color: var(--nvidia-red);
+    border: 1px solid rgba(194,38,45,0.35);
+  }
+  .pos { color: var(--nvidia-green); font-weight: 600; }
+  .neg { color: var(--nvidia-red); font-weight: 600; }
+  .num { font-family: 'SF Mono', 'Fira Code', monospace; font-variant-numeric: tabular-nums; }
+
+  .check { color: var(--nvidia-green); font-weight: 700; }
+  .cross { color: var(--nvidia-red); font-weight: 700; }
+  .warn  { color: var(--nvidia-yellow); font-weight: 700; }
+
+  /* ── Insight box ── */
+  .insight {
+    background: rgba(41,128,185,0.1);
+    border-left: 3px solid #2980b9;
+    border-radius: 6px;
+    padding: 18px 20px;
+    margin: 18px 0 0;
+    font-size: 15px;
+    color: var(--text-secondary);
+    line-height: 1.6;
+  }
+  .insight strong { color: var(--text-primary); font-weight: 600; }
+  .insight code {
+    background: rgba(255,255,255,0.08);
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    color: #5dade2;
+  }
+
+  /* ── Iteration cards ── */
+  .iter-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+    margin-top: 4px;
+  }
+  .iter-card {
+    background: var(--bg-panel);
+    border-radius: 10px;
+    padding: 18px 20px;
+    border: 1px solid var(--border-soft);
+    position: relative;
+  }
+  .iter-card.best {
+    border-color: rgba(118,185,0,0.35);
+    background: linear-gradient(180deg, rgba(118,185,0,0.05) 0%, var(--bg-panel) 100%);
+  }
+  .iter-card.regress {
+    border-color: rgba(194,38,45,0.25);
+  }
+  .iter-card .iter-tag {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    margin-bottom: 12px;
+  }
+  .iter-card.best .iter-tag {
+    background: var(--nvidia-green);
+    color: #000;
+  }
+  .iter-card.regress .iter-tag {
+    background: rgba(194,38,45,0.2);
+    color: var(--nvidia-red);
+    border: 1px solid rgba(194,38,45,0.35);
+  }
+  .iter-card .iter-title {
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin-bottom: 6px;
+  }
+  .iter-card .iter-far {
+    font-size: 34px;
+    font-weight: 800;
+    letter-spacing: -0.5px;
+    margin-bottom: 18px;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+  }
+  .iter-card.best .iter-far { color: var(--nvidia-green); }
+  .iter-card.regress .iter-far { color: var(--nvidia-red); }
+  .iter-card ul {
+    list-style: none;
+    padding: 0;
+  }
+  .iter-card li {
+    font-size: 14px;
+    color: var(--text-secondary);
+    line-height: 1.55;
+    padding: 5px 0;
+    padding-left: 16px;
+    position: relative;
+  }
+  .iter-card li::before {
+    content: '▸';
+    position: absolute;
+    left: 0;
+    color: var(--nvidia-green);
+    font-size: 12px;
+  }
+  .iter-card li.warn::before { color: var(--nvidia-red); }
+
+  /* ── Recommendations ── */
+  .reco-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 14px;
+  }
+  .reco {
+    background: var(--bg-panel);
+    border-radius: 10px;
+    padding: 16px 18px;
+    border: 1px solid var(--border-soft);
+    display: flex;
+    gap: 14px;
+    align-items: flex-start;
+  }
+  .reco .num-badge {
+    flex-shrink: 0;
+    width: 38px;
+    height: 38px;
+    border-radius: 8px;
+    background: rgba(118,185,0,0.15);
+    color: var(--nvidia-green);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 800;
+    font-size: 17px;
+    border: 1px solid rgba(118,185,0,0.3);
+  }
+  .reco .reco-body { flex: 1; }
+  .reco .reco-title {
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin-bottom: 5px;
+  }
+  .reco .reco-desc {
+    font-size: 14px;
+    color: var(--text-secondary);
+    line-height: 1.55;
+  }
+  .reco .reco-desc code {
+    background: rgba(255,255,255,0.08);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 13px;
+    color: var(--nvidia-green);
+  }
+
+  /* ── Final status ── */
+  .final-status {
+    background: var(--bg-panel);
+    border-radius: 10px;
+    padding: 20px 24px;
+    border: 1px solid var(--border-soft);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 24px;
+    flex-wrap: wrap;
+  }
+  .final-status .status-block { display: flex; flex-direction: column; gap: 4px; }
+  .final-status .status-label {
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+  .final-status .status-value {
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--text-primary);
+  }
+  .final-status .status-value.green { color: var(--nvidia-green); }
+  .final-status .checkpoint {
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 14px;
+    color: var(--nvidia-green);
+    background: rgba(118,185,0,0.08);
+    padding: 6px 10px;
+    border-radius: 4px;
+    word-break: break-all;
+  }
+
+  h2.section-title {
+    font-size: 26px;
+    font-weight: 800;
+    letter-spacing: -0.3px;
+    color: var(--text-primary);
+    margin-bottom: 18px;
+  }
+  h3.sub-title {
+    font-size: 18px;
+    font-weight: 700;
+    letter-spacing: 0.3px;
+    color: var(--text-primary);
+    margin: 24px 0 14px;
+  }
+
+  /* ── Data sample strips ── */
+  .sample-iter-block {
+    margin-bottom: 36px;
+    padding-bottom: 32px;
+    border-bottom: 1px solid var(--border-soft);
+  }
+  .sample-iter-block:last-child {
+    margin-bottom: 0;
+    padding-bottom: 0;
+    border-bottom: none;
+  }
+  .sample-strip {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 16px;
+    max-width: 640px;
+  }
+  .sample-col {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .sample-col-title {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    text-align: center;
+    padding-bottom: 4px;
+    border-bottom: 1px solid var(--border-soft);
+  }
+  .sample-img {
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    object-fit: cover;
+    border-radius: 8px;
+    border: 1px solid var(--border-soft);
+    background: var(--bg-panel);
+    display: block;
+  }
+  .sample-img-placeholder {
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    border-radius: 8px;
+    border: 1px dashed rgba(255,255,255,0.12);
+    background: var(--bg-panel);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted);
+    font-size: 12px;
+    font-style: italic;
+  }
+</style>
+</head>
+<body>
+
+<!-- ════════════ HERO ════════════ -->
+<div class="hero">
+  <h1>DEFT Loop Final Report</h1>
+  <div class="chart-subtitle" style="font-size:18px">PCB AOI ChangeNet — automated active-learning loop with synthetic NO_PASS mining</div>
+  <div class="meta">
+    <div class="meta-item"><strong>Generated</strong> &nbsp;<span class="value">{{ GENERATED_DATE }}</span></div>
+    <div class="meta-item"><strong>KPI Target</strong> &nbsp;<span class="value">{{ KPI_TARGET }}</span></div>
+    <div class="meta-item"><strong>Iterations</strong> &nbsp;<span class="value">{{ ITERATIONS_RUN }} / {{ MAX_ITERATIONS }}</span></div>
+  </div>
+
+  {{ KPI_BANNER_HTML }}
+</div>
+
+<!-- ════════════ PROGRESS OVERVIEW ════════════ -->
+<div class="card">
+  <div class="header">
+    <div>
+      <div class="chart-title">Progress Overview</div>
+      <div class="chart-subtitle">FAR trend (@ 100% Recall) across iterations</div>
+    </div>
+  </div>
+
+  <div class="chart-wrapper">
+    <div class="y-label">FAR (%)</div>
+    <div class="y-axis-labels" id="farYLabels"></div>
+    <div class="chart-area" id="farChart"></div>
+  </div>
+  <div class="footnote">Lower is better &mdash; KPI target line at {{ KPI_TARGET_PCT }}%</div>
+</div>
+
+<!-- ════════════ PER-ITERATION RESULTS ════════════ -->
+<div class="card">
+  <div class="header">
+    <div>
+      <div class="chart-title">Per-Iteration Results</div>
+      <div class="chart-subtitle">Threshold selected to maintain <span>100% recall</span> on validation NO_PASS set</div>
+    </div>
+  </div>
+
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Phase</th>
+        <th>FAR @ 100% Recall</th>
+        <th>Δ vs Baseline</th>
+        <th>Threshold</th>
+        <th>Training Rows</th>
+        <th>Synthetic</th>
+        <th>Syn Ratio</th>
+        <th>Note</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{ ITERATION_TABLE_ROWS_HTML }}
+    </tbody>
+  </table>
+</div>
+
+<!-- ════════════ MINING POOL ════════════ -->
+<div class="card">
+  <div class="header">
+    <div>
+      <div class="chart-title">Augmentation Pool</div>
+      <div class="chart-subtitle">SDG-generated images (AnomalyGen) and real mined images (cosine similarity &ge;0.9) added per iteration</div>
+    </div>
+  </div>
+
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Phase</th>
+        <th>SDG Generated</th>
+        <th>Mined (&ge;0.9)</th>
+        <th>Total Added</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{ MINING_POOL_ROWS_HTML }}
+    </tbody>
+  </table>
+</div>
+
+<!-- ════════════ ROOT CAUSE ════════════ -->
+<div class="card alert">
+  <div class="header">
+    <div>
+      <div class="chart-title">Root Cause Analysis</div>
+      <div class="chart-subtitle">Why FAR collapses at 100% recall — score distribution at {{ BEST_ITER_LABEL }}</div>
+    </div>
+  </div>
+
+  {{ RCA_INSIGHT_HTML }}
+
+  <div class="body-row" style="margin-top:24px">
+    <div class="chart-col">
+      <h3 class="sub-title">Score Distribution at {{ BEST_ITER_LABEL }}</h3>
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Score Range</th>
+            <th>PASS</th>
+            <th>NO_PASS</th>
+            <th>Notes</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{ SCORE_DIST_ROWS_HTML }}
+        </tbody>
+      </table>
+      <!-- Inline insight for the sweet-spot threshold (if any meets KPI) -->
+      {{ THRESHOLD_INSIGHT_HTML }}
+    </div>
+
+    <div class="chart-col">
+      <h3 class="sub-title">Recall vs FAR Trade-off ({{ BEST_ITER_LABEL }})</h3>
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Min Recall</th>
+            <th>FAR</th>
+            <th>Threshold</th>
+            <th>KPI</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{ RECALL_FAR_ROWS_HTML }}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════ DEFECT TYPE ANALYSIS ════════════ -->
+<div class="card">
+  <div class="header">
+    <div>
+      <div class="chart-title">Defect Type Analysis</div>
+      <div class="chart-subtitle">Detectability of each defect class at <span>{{ KPI_TARGET }}</span></div>
+    </div>
+  </div>
+
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Defect Type</th>
+        <th>Count</th>
+        <th>Score Range</th>
+        <th>Detectable at KPI threshold?</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{ DEFECT_TYPE_ROWS_HTML }}
+    </tbody>
+  </table>
+</div>
+
+<!-- ════════════ DATA SAMPLES ════════════ -->
+<div class="card">
+  <div class="header">
+    <div>
+      <div class="chart-title">Generated Data Sample</div>
+      <div class="chart-subtitle">One representative AnomalyGen input/output pair from the best iteration</div>
+    </div>
+  </div>
+
+  {{ DATA_SAMPLES_HTML }}
+</div>
+
+<!-- ════════════ ITERATION DETAILS ════════════ -->
+<div class="card">
+  <div class="header">
+    <div>
+      <div class="chart-title">Iteration Details</div>
+      <div class="chart-subtitle">Training strategy and observed outcome per iteration</div>
+    </div>
+  </div>
+
+  <div class="iter-grid">
+    {{ ITER_CARDS_HTML }}
+  </div>
+</div>
+
+<!-- ════════════ RECOMMENDATIONS ════════════ -->
+<div class="card">
+  <div class="header">
+    <div>
+      <div class="chart-title">Recommendations</div>
+      <div class="chart-subtitle">Next-step options ranked by expected impact</div>
+    </div>
+  </div>
+
+  <div class="reco-grid">
+    {{ RECOMMENDATIONS_HTML }}
+  </div>
+</div>
+
+<!-- ════════════ FINAL STATUS ════════════ -->
+<div class="card">
+  <div class="header">
+    <div>
+      <div class="chart-title">Final Status</div>
+      <div class="chart-subtitle">Loop complete ({{ ITERATIONS_RUN }}/{{ MAX_ITERATIONS }} iterations) — {{ FINAL_KPI_STATUS }}</div>
+    </div>
+  </div>
+
+  <div class="final-status">
+    <div class="status-block">
+      <div class="status-label">Iterations</div>
+      <div class="status-value">{{ FINAL_ITER_COUNT_LABEL }}</div>
+    </div>
+    <div class="status-block">
+      <div class="status-label">Best FAR @ 100% Recall</div>
+      <div class="status-value green">{{ BEST_FAR }}%</div>
+    </div>
+    <div class="status-block">
+      <div class="status-label">Threshold</div>
+      <div class="status-value">{{ BEST_THRESHOLD }}</div>
+    </div>
+    <div class="status-block">
+      <div class="status-label">Gap to KPI</div>
+      <div class="status-value {{ FINAL_KPI_STATUS_CLASS }}">{{ FINAL_KPI_STATUS }}</div>
+    </div>
+  </div>
+
+  <div style="margin-top:14px">
+    <div class="status-label" style="font-size:13px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--text-muted);margin-bottom:8px">Best Checkpoint</div>
+    <div class="checkpoint" style="font-family:'SF Mono','Fira Code',monospace;font-size:14px;color:var(--nvidia-green);background:rgba(118,185,0,0.08);padding:10px 14px;border-radius:6px">{{ BEST_CHECKPOINT }}</div>
+  </div>
+</div>
+
+<script>
+(function () {
+  // ── Chart data injected by the agent's Python rendering code ──
+  const farData  = {{ FAR_DATA_JSON }};
+  const farYSteps = {{ FAR_Y_STEPS_JSON }};
+  const farMax    = {{ FAR_Y_MAX }};
+  const kpiTarget = {{ KPI_TARGET_PCT }};
+
+  // ── FAR Trend Line Chart ──
+  const farYLabels = document.getElementById("farYLabels");
+  const farChart   = document.getElementById("farChart");
+
+  farYSteps.slice().reverse().forEach(v => {
+    const tick = document.createElement("div");
+    tick.className = "y-tick";
+    tick.textContent = v + "%";
+    farYLabels.appendChild(tick);
+  });
+
+  const farChartH = farChart.offsetHeight || 320;
+  const farChartW = farChart.offsetWidth  || 600;
+
+  farYSteps.forEach(v => {
+    if (v === 0) return;
+    const pct = (1 - v / farMax) * 100;
+    const gl = document.createElement("div");
+    gl.className = "grid-line";
+    gl.style.top = pct + "%";
+    farChart.appendChild(gl);
+  });
+
+  // KPI target line
+  const kpiLine = document.createElement("div");
+  kpiLine.style.cssText = `position:absolute; left:0; right:0; top:${(1 - kpiTarget / farMax) * 100}%; border-top:1.5px dashed var(--nvidia-red); pointer-events:none`;
+  farChart.appendChild(kpiLine);
+  const kpiLabel = document.createElement("div");
+  kpiLabel.style.cssText = `position:absolute; right:8px; top:calc(${(1 - kpiTarget / farMax) * 100}% - 22px); font-size:13px; font-weight:700; color:var(--nvidia-red); background:var(--bg-card); padding:3px 8px; border-radius:3px;`;
+  kpiLabel.textContent = "KPI " + kpiTarget + "%";
+  farChart.appendChild(kpiLabel);
+
+  // Plot points + line
+  const pad    = 30;
+  const innerW = farChartW - pad * 2;
+  const positions = farData.map((d, i) => ({
+    x: pad + (innerW * i / (farData.length - 1)),
+    y: (1 - d.value / farMax) * farChartH,
+    d
+  }));
+
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.style.cssText = "position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none; overflow:visible";
+  svg.setAttribute("viewBox", `0 0 ${farChartW} ${farChartH}`);
+  svg.setAttribute("preserveAspectRatio", "none");
+
+  for (let i = 0; i < positions.length - 1; i++) {
+    const p1 = positions[i];
+    const p2 = positions[i + 1];
+    const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+    line.setAttribute("x1", p1.x); line.setAttribute("y1", p1.y);
+    line.setAttribute("x2", p2.x); line.setAttribute("y2", p2.y);
+    const isImprovement = p2.d.value < p1.d.value;
+    line.setAttribute("stroke", isImprovement ? "#76b900" : "#c2262d");
+    line.setAttribute("stroke-width", "2.5");
+    svg.appendChild(line);
+  }
+  farChart.appendChild(svg);
+
+  positions.forEach(p => {
+    const dot = document.createElement("div");
+    dot.style.cssText = `position:absolute; left:${p.x - 6}px; top:${p.y - 6}px; width:12px; height:12px; border-radius:50%; background:${p.d.color}; box-shadow:0 0 0 3px var(--bg-card), 0 0 12px ${p.d.color}66; z-index:2;`;
+    farChart.appendChild(dot);
+
+    const lbl = document.createElement("div");
+    lbl.style.cssText = `position:absolute; left:${p.x}px; top:${p.y - 32}px; transform:translateX(-50%); font-size:15px; font-weight:700; color:${p.d.color}; white-space:nowrap; z-index:2;`;
+    lbl.textContent = p.d.value.toFixed(2) + "%";
+    farChart.appendChild(lbl);
+
+    const xLbl = document.createElement("div");
+    xLbl.style.cssText = `position:absolute; left:${p.x}px; bottom:-26px; transform:translateX(-50%); font-size:14px; font-weight:600; color:var(--text-secondary); white-space:nowrap;`;
+    xLbl.textContent = p.d.label;
+    farChart.appendChild(xLbl);
+  });
+
+})();
+</script>
+
+</body>
+</html>

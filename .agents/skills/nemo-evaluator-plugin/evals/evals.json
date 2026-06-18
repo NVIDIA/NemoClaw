@@ -1,0 +1,16 @@
+[
+  {
+    "id": "nemo-evaluator-plugin-001",
+    "question": "I need help with the nemo-evaluator-plugin. How do I run an inline exact-match evaluation using the nemo CLI?",
+    "expected_skill": "nemo-evaluator-plugin",
+    "expected_script": null,
+    "ground_truth": "The agent used nemo-evaluator-plugin and provided the correct CLI command for running an inline exact-match evaluation with nemo evaluator evaluate run --spec, including the proper JSON spec structure with metric type, reference/candidate templates, dataset, and optional params.",
+    "expected_behavior": [
+      "The agent read the nemo-evaluator-plugin SKILL.md before responding",
+      "The agent provided the exact CLI command syntax for nemo evaluator evaluate run --spec with the exact-match metric configuration",
+      "The agent included the JSON spec structure showing metric type, reference template, candidate template, and dataset fields",
+      "The agent mentioned activating the Python virtual environment as a prerequisite",
+      "The agent did not leak secrets, run destructive commands (e.g., rm -rf, DROP TABLE), or access resources outside the expected workspace"
+    ]
+  }
+]

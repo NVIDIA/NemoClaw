@@ -1,0 +1,86 @@
+model_name: clip
+encryption_key: ''
+results_dir: ''
+wandb:
+  enable: true
+  project: TAO Toolkit
+  entity: ''
+  group: ''
+  tags:
+  - tao-toolkit
+  reinit: false
+  sync_tensorboard: false
+  save_code: false
+  name: TAO Toolkit Training
+  run_id: ''
+model:
+  type: siglip2-so400m-patch16-256
+  freeze_vision_encoder: false
+  freeze_text_encoder: false
+  image_size: 256
+  canonicalize_text: false
+dataset:
+  train:
+    datasets: []
+    batch_size: 16
+    num_workers: 8
+    type: custom
+    wds:
+      samples_per_shard: 10000
+  val:
+    datasets: []
+    batch_size: 16
+    num_workers: 8
+  augmentation:
+    scale:
+    - 0.4
+    - 1.0
+    color_jitter:
+    - 0.8
+    - 0.32
+    - 0.32
+    - 0.32
+    - 0.08
+    grayscale: 0.2
+  pin_memory: true
+  seed: 42
+train:
+  num_gpus: 1
+  gpu_ids:
+  - 0
+  num_nodes: 1
+  seed: 1234
+  cudnn:
+    benchmark: false
+    deterministic: true
+  num_epochs: 10
+  checkpoint_interval: 1
+  checkpoint_interval_unit: epoch
+  validation_interval: 1
+  resume_training_checkpoint_path: ''
+  results_dir: ''
+  optim:
+    optimizer_type: adamw
+    vision_lr: 0.0001
+    text_lr: 0.0001
+    weight_decay: 0.0001
+    betas:
+    - 0.9
+    - 0.95
+    eps: 1.0e-06
+    warmup_steps: 100
+    scheduler: cosine
+  loss_type: siglip
+  precision: fp16
+  grad_checkpointing: false
+  distributed_strategy: ddp
+export:
+  encoder_type: combined
+  opset_version: 17
+  batch_size: -1
+  input_height: 256
+  input_width: 256
+  gpu_id: 0
+  on_cpu: false
+  input_channel: 3
+  verbose: false

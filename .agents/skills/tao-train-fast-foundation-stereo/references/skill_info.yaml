@@ -1,0 +1,66 @@
+name: tao-train-fast-foundation-stereo
+network_arch: depth_net_stereo
+automl_enabled: true
+container_image: tao_toolkit.pyt
+data_format: FSD
+gpu_spec_key: train.num_gpus
+actions:
+  train:
+    command: depth_net train -e {config_path}
+    config_format: yaml
+    inputs: {}
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  evaluate:
+    command: depth_net evaluate -e {config_path}
+    config_format: yaml
+    inputs: {}
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  export:
+    command: depth_net export -e {config_path}
+    config_format: yaml
+    inputs: {}
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  inference:
+    command: depth_net inference -e {config_path}
+    config_format: yaml
+    inputs: {}
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+data_sources: {}
+spec_params: {}
+key_defaults:
+  model.model_type: FastFoundationStereo
+  model.encoder: vitl
+  model.hidden_dims: [128]
+  model.n_gru_layers: 1
+  model.max_disparity: 192
+  model.valid_iters: 8
+  model.mixed_precision: false
+  model.gwc_feature_normalize: true
+spec_shorthand_keys:
+  num_epochs: train.num_epochs
+  train_batch_size: dataset.train_dataset.batch_size
+  infer_batch_size: dataset.infer_dataset.batch_size
+  learning_rate: train.optim.lr
+  bp2_ckpt: train.pretrained_model_path
+spec_templates:
+  train: ../references/spec_template_train.yaml
+  evaluate: ../references/spec_template_evaluate.yaml
+  inference: ../references/spec_template_inference.yaml
+  export: ../references/spec_template_export.yaml
+description: "Real-time stereo depth estimation using FastFoundationStereo (FFS) — distilled bp2 commercial variant of FoundationStereo. Selected via `model.model_type: FastFoundationStereo`; shares the unified `depth_net` CLI with depth-net-stereo and depth-net-mono."

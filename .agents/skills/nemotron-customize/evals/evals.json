@@ -1,0 +1,114 @@
+[
+  {
+    "id": "nemotron-customize-translate-llm-command",
+    "question": "In this repo, give me the command to translate /data/news/*.jsonl from English to Hindi with the translate/nemo_curator step. Use text_field=text, output_dir=/data/news_hi, backend=llm, server URL https://integrate.api.nvidia.com/v1, model nvidia/llama-3.3-nemotron-super-49b-v1, and API key env NVIDIA_API_KEY. I only need the command, not a plan.",
+    "expected_skill": "nemotron-customize",
+    "expected_script": null,
+    "ground_truth": "The answer should use the existing translate/nemo_curator step and return a complete uv run nemotron steps run translate/nemo_curator command with input_path=/data/news/*.jsonl, output_dir=/data/news_hi, source_language=en, target_language=hi, text_field=text, backend=llm, server.url=https://integrate.api.nvidia.com/v1, server.model=nvidia/llama-3.3-nemotron-super-49b-v1, and server.api_key_env=NVIDIA_API_KEY. It should not generate custom Python, route through BYOB, or omit explicit source and target language codes.",
+    "expected_behavior": [
+      "Read skills/nemotron-customize/SKILL.md before answering.",
+      "Use the step catalog or src/nemotron/steps/translate/nemo_curator/step.toml as the source of truth.",
+      "Return a single runnable translate/nemo_curator command because all required inputs were provided.",
+      "Keep source_language and target_language explicit instead of relying on defaults.",
+      "Do not create a custom translation script when the repo already has a step for this workflow."
+    ]
+  },
+  {
+    "id": "nemotron-customize-lepton-profile-blocked",
+    "question": "Submit sft/automodel on Lepton with -c tiny and batch execution. I do not have an env TOML file in this workspace. Give me the remote command.",
+    "expected_skill": "nemotron-customize",
+    "expected_script": null,
+    "ground_truth": "The answer should not invent a Lepton batch profile or emit a remote submission command. It should explain that batch execution requires a reviewed env TOML, usually via NEMOTRON_ENV_FILE, and a concrete profile such as lepton_sft_automodel. It may give the env/env_toml generation command or the local non-batch command, but it should clearly mark the remote command as blocked until the environment file/profile exists.",
+    "expected_behavior": [
+      "Read the skill instructions and environment guidance before answering.",
+      "Identify that Lepton batch execution needs a generated or provided environment TOML.",
+      "Do not guess node groups, mounts, resource shapes, or --batch profile names without an env file.",
+      "Provide the next concrete setup step instead of pretending the remote command is ready.",
+      "Keep the response focused on sft/automodel and do not switch to a different training stack."
+    ]
+  },
+  {
+    "id": "nemotron-customize-byob-translation-routing",
+    "question": "I already generated a BYOB benchmark parquet with multiple-choice questions. I need to translate the benchmark from English to Hindi while preserving the MCQ fields. Which customization workflow should I use and what should the command shape look like?",
+    "expected_skill": "nemotron-customize",
+    "expected_script": null,
+    "ground_truth": "The answer should route this to the BYOB workflow, not generic translate/nemo_curator, because the input is a BYOB benchmark with MCQ structure. It should describe using nemotron steps run byob/mcq with the translation stage or translate-specific BYOB config, set source and target languages explicitly, and preserve MCQ schema fields. It should not flatten the benchmark into a single text column unless the user explicitly asks for generic corpus translation.",
+    "expected_behavior": [
+      "Distinguish benchmark translation from generic corpus translation.",
+      "Inspect BYOB-facing references or manifests instead of assuming translate/nemo_curator is always correct.",
+      "Explain that MCQ schema preservation is the reason to use BYOB translation.",
+      "Ask for missing benchmark path or config values if needed before giving an exact command.",
+      "Do not suggest a lossy conversion that drops answer choices or labels."
+    ]
+  },
+  {
+    "id": "nemotron-customize-sft-megatron-bridge-pipeline",
+    "question": "I have OpenAI-style chat JSONL and want to fine-tune a Nemotron checkpoint with Megatron-Bridge. Tell me the correct step sequence and artifacts before you make any code changes.",
+    "expected_skill": "nemotron-customize",
+    "expected_script": null,
+    "ground_truth": "The answer should propose data_prep/sft_packing followed by sft/megatron_bridge. It should describe the artifact flow from chat JSONL to packed parquet shards to a Megatron checkpoint, call out that sequence length or packing settings must match the training config, and avoid making code changes because the user asked for the sequence first.",
+    "expected_behavior": [
+      "Read the top-level skill and relevant data_prep and sft references.",
+      "Choose Megatron-Bridge because the user explicitly asked for a Nemotron checkpoint with that stack.",
+      "State the artifact handoff between data preparation and training.",
+      "Mention the configuration values that must be aligned before execution.",
+      "Do not edit files or launch training when the user asked for an explanation first."
+    ]
+  },
+  {
+    "id": "nemotron-customize-automodel-lora-choice",
+    "question": "I only have two GPUs and want a quick LoRA run on a Hugging Face model using OpenAI-style chat JSONL. Which Nemotron customization path should I use?",
+    "expected_skill": "nemotron-customize",
+    "expected_script": null,
+    "ground_truth": "The answer should prefer the AutoModel PEFT path, such as peft/automodel, over Megatron-Bridge full SFT. It should explain that AutoModel is the better fit for a small GPU count and Hugging Face model workflow, while Megatron-Bridge is better for larger distributed Nemotron-style training. It should identify the expected input data shape and mention any config values needed before a runnable command can be finalized.",
+    "expected_behavior": [
+      "Map the user's resource constraint and LoRA requirement to peft/automodel.",
+      "Do not choose Megatron-Bridge by default for a two-GPU quick LoRA run.",
+      "Explain the reason for the stack choice in practical terms.",
+      "Call out required inputs such as model id, data path, output directory, and environment profile.",
+      "Avoid inventing paths or secret values."
+    ]
+  },
+  {
+    "id": "nemotron-customize-checkpoint-conversion",
+    "question": "My Megatron training job produced /mnt/lustre-shared/output/sft/megatron_bridge/iter_0001000 and I need a deployable Hugging Face checkpoint under /mnt/lustre-shared/output/sft/hf_export. Which step should I run?",
+    "expected_skill": "nemotron-customize",
+    "expected_script": null,
+    "ground_truth": "The answer should use convert/megatron_to_hf and build the command around the concrete iteration checkpoint path and requested Hugging Face export directory. It should mention that the conversion needs the correct source checkpoint layout and model/config information. It should not point the command at the parent training run directory if the step expects the iteration checkpoint.",
+    "expected_behavior": [
+      "Use the conversion workflow instead of retraining or evaluation.",
+      "Select convert/megatron_to_hf, not convert/hf_to_megatron.",
+      "Use the specific iter_0001000 checkpoint as the source in the command shape.",
+      "Use the requested hf_export path as the output destination.",
+      "Identify missing model/config metadata rather than fabricating it."
+    ]
+  },
+  {
+    "id": "nemotron-customize-eval-existing-endpoint",
+    "question": "I have an OpenAI-compatible endpoint for a customized model and want to evaluate it on IFEval and GPQA. I do not want to deploy anything new. What Nemotron step should I use?",
+    "expected_skill": "nemotron-customize",
+    "expected_script": null,
+    "ground_truth": "The answer should use eval/model_eval against the existing endpoint. It should include the endpoint URL, model name, API key environment variable, and benchmark selection in the command or config overlay. It should not route through training, deployment, or BYOB.",
+    "expected_behavior": [
+      "Choose eval/model_eval because the user asked to evaluate an existing endpoint.",
+      "Preserve the requirement not to deploy a new model.",
+      "Ask for or include endpoint URL, model name, API key env var, and benchmark names.",
+      "Keep IFEval and GPQA as the selected benchmarks.",
+      "Do not suggest unrelated training or data preparation workflows."
+    ]
+  },
+  {
+    "id": "nemotron-customize-curate-before-translation",
+    "question": "Before translating a local JSONL corpus, I want a light Curator smoke test that reads text from the text field and writes cleaned output. I do not want aggressive domain or language filters yet. Which command shape should I use?",
+    "expected_skill": "nemotron-customize",
+    "expected_script": null,
+    "ground_truth": "The answer should use curate/nemo_curator with local input and output paths, text_field=text, and permissive or disabled filters for the first smoke test. It should not add strict language, domain, quality, or dedup filters unless the user asks for them. It should explain that the smoke test validates IO and schema before tightening filters.",
+    "expected_behavior": [
+      "Route corpus cleaning to curate/nemo_curator instead of translation or training.",
+      "Keep the first run permissive because the user requested a smoke test.",
+      "Require concrete input and output paths before giving a fully runnable command.",
+      "Use text_field=text in the command shape.",
+      "Explain that stricter filtering can be added after IO is validated."
+    ]
+  }
+]

@@ -1,0 +1,92 @@
+{
+  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Canonical Validator-Concept Registry",
+  "type": "object",
+  "required": ["schema_version", "concepts"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "type": "string" },
+    "$comment": { "type": "string" },
+    "concepts": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/concept" }
+    }
+  },
+  "$defs": {
+    "tier": { "enum": [1, 2, 3] },
+    "concept": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "canonical_name",
+        "role",
+        "backing_op",
+        "tier",
+        "cost_class",
+        "gpu_bound",
+        "scope_policy",
+        "preferred_provider",
+        "implementations"
+      ],
+      "properties": {
+        "canonical_name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "$comment": "Lowercase snake_case only; never a runtime class name."
+        },
+        "display_name": { "type": "string" },
+        "role": {
+          "enum": ["safety_gate", "opportunity_detector", "target_scoping", "regression_evidence"]
+        },
+        "backing_op": {
+          "type": ["string", "null"],
+          "$comment": "Op key the concept routes to, or null for manual/safety concepts."
+        },
+        "tier": { "$ref": "#/$defs/tier" },
+        "cost_class": { "enum": ["cheap", "medium", "expensive", "stage_dependent"] },
+        "gpu_bound": { "type": "boolean" },
+        "scope_policy": { "enum": ["whole_stage", "per_target_or_sample", "flagged_pairs_only"] },
+        "preferred_provider": { "enum": ["so", "oav"] },
+        "implementations": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/implementation" }
+        },
+        "parameter_prerequisite": { "$ref": "#/$defs/parameter_prerequisite" },
+        "notes": { "type": "string" }
+      }
+    },
+    "implementation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "module", "class_name", "use_for"],
+      "properties": {
+        "provider": { "enum": ["so", "oav"] },
+        "module": { "type": "string", "minLength": 1 },
+        "class_name": { "type": "string", "minLength": 1 },
+        "category": {
+          "type": "string",
+          "$comment": "Informational registry bucket. Resolution is by (module, class_name); category is not required."
+        },
+        "tier": { "$ref": "#/$defs/tier", "$comment": "Per-implementation tier override (e.g. OAV slow variant)." },
+        "use_for": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "enum": ["performance_tuning", "conformance_audit", "safety_gate"] }
+        }
+      }
+    },
+    "parameter_prerequisite": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["op", "param", "question"],
+      "properties": {
+        "op": { "type": "string", "minLength": 1 },
+        "param": { "type": "string", "minLength": 1 },
+        "question": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

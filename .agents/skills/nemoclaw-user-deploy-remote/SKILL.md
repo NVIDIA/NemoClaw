@@ -1,20 +1,22 @@
 ---
 name: "nemoclaw-user-deploy-remote"
-description: "Explains how to run NemoClaw on a remote GPU instance, including the deprecated Brev compatibility path and the preferred installer plus onboard flow. Use when deploying NemoClaw to a remote VM, onboarding a Brev instance, or migrating away from the legacy `nemoclaw deploy` wrapper. Trigger keywords - deploy nemoclaw remote gpu, nemoclaw brev cloud deployment, nemoclaw plugins, openclaw plugins, install openclaw plugin, nemoclaw onboard from dockerfile, nemoclaw dockerignore, nemoclaw brev web ui, nemoclaw getting started, brev quickstart, nvidia nemotron agent, nemoclaw sandbox hardening, container security, docker capabilities, process limits."
+description: "Explains how to run NemoClaw on a remote GPU instance, including the deprecated Brev compatibility path and the preferred installer plus onboard flow. Use when deploying NemoClaw to a remote VM, onboarding a Brev instance, or migrating away from the legacy `nemoclaw deploy` wrapper. Trigger keywords - deploy nemoclaw remote gpu, nemoclaw brev cloud deployment, nemoclaw plugins, openclaw plugins, install openclaw plugin, nemoclaw onboard from dockerfile, nemoclaw brev web ui, nemoclaw getting started, brev quickstart, nvidia nemotron agent, nemoclaw sandbox hardening, container security, docker capabilities, process limits."
 license: "Apache-2.0"
 ---
+
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
 
 # Deploy NemoClaw to a Remote GPU Instance
 
 ## Gotchas
 
 - The `nemoclaw deploy` command is deprecated.
-- On Brev, set `CHAT_UI_URL` in the launchable environment configuration so the installer can read it when it builds the sandbox image.
+- On Brev, set `CHAT_UI_URL` in the launchable environment configuration so it is available when the installer builds the sandbox image.
 
 ## Prerequisites
 
-- Access to a remote GPU VM that can run Docker and the NVIDIA Container Toolkit.
-- The [Brev CLI](https://brev.nvidia.com) installed and authenticated if you provision the VM with Brev.
+- The [Brev CLI](https://brev.nvidia.com) installed and authenticated.
 - A provider credential for the inference backend you want to use during onboarding.
 - `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN` exported when your remote vLLM or Hugging Face workflow needs access to gated models.
 - NemoClaw installed locally if you plan to use the deprecated `nemoclaw deploy` wrapper. Otherwise, install NemoClaw directly on the remote host after provisioning it.
@@ -22,53 +24,31 @@ license: "Apache-2.0"
 Run NemoClaw on a remote GPU instance through [Brev](https://brev.nvidia.com).
 The preferred path is to provision the VM, run the standard NemoClaw installer on that host, and then run `nemoclaw onboard`.
 
-## Preferred Deployment Path
+## Quick Start
 
-Provision the remote GPU VM first, then run the normal installer and onboard flow on that VM.
-For Brev, `<instance-name>` is the instance name and SSH alias created by the Brev CLI.
-For another cloud provider, replace the provisioning and SSH commands with that provider's console or CLI workflow.
+If your Brev instance is already up and has already been onboarded with a sandbox, start with the standard sandbox chat flow:
 
-```bash
-# On your local machine
-brev create <instance-name> --gpu <gpu-type>
-brev ssh <instance-name>
+```console
+$ nemoclaw my-assistant connect
+$ openclaw tui
 ```
 
-If `brev` is missing or unauthenticated, install or log in to the Brev CLI first, or provision the VM through your cloud console and connect with `ssh <user>@<host>`.
+This gets you into the sandbox shell first and opens the OpenClaw chat UI right away.
+If the VM is fresh, run the standard installer on that host and then run `nemoclaw onboard` before trying `nemoclaw my-assistant connect`.
 
-Run the installer on the remote VM:
+If you are connecting from your local machine and still need to provision the remote VM, you can still use `nemoclaw deploy <instance-name>` as the legacy compatibility path described below.
 
-```bash
-curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
-```
-
-Set any remote-only environment variables on the VM before onboarding.
-For example, set the browser origin if you will open the dashboard through a Brev public URL, and raise the first-run readiness budget on cold cloud hosts:
-
-```bash
-export CHAT_UI_URL="https://openclaw0-<id>.brevlab.com"
-export NEMOCLAW_SANDBOX_READY_TIMEOUT=600
-nemoclaw onboard
-```
-
-After successful onboarding, you should see output that reports a ready sandbox and the next command to connect:
-
-```text
-✓ Sandbox '<name>' is ready
-Next: nemoclaw <name> connect
-```
-
-## Legacy Brev Compatibility
+## Deploy the Instance
 
 **Warning:**
 
 The `nemoclaw deploy` command is deprecated.
 Prefer provisioning the remote host separately, then running the standard NemoClaw installer and `nemoclaw onboard` on that host.
 
-Use the legacy compatibility wrapper only when you need the older Brev-specific bootstrap flow:
+Create a Brev instance and run the legacy compatibility flow:
 
-```bash
-nemoclaw deploy <instance-name>
+```console
+$ nemoclaw deploy <instance-name>
 ```
 
 Replace `<instance-name>` with a name for your remote instance, for example `my-gpu-box`.
@@ -81,55 +61,57 @@ The legacy compatibility flow performs the following steps on the VM:
 1. Installs Docker and the NVIDIA Container Toolkit if a GPU is present.
 2. Installs the OpenShell CLI.
 3. Runs `nemoclaw onboard` (the setup wizard) to create the gateway, register providers, and launch the sandbox.
-4. Starts optional host auxiliary services, such as the cloudflared tunnel, when `cloudflared` is available. Onboarding configures channel messaging, and the channels run through OpenShell-managed processes, not through `nemoclaw tunnel start`.
+4. Starts optional host auxiliary services (for example the cloudflared tunnel) when `cloudflared` is available. Channel messaging is configured during onboarding and runs through OpenShell-managed processes, not through `nemoclaw tunnel start`.
 
 By default, the compatibility wrapper asks Brev to provision on `gcp`. Override this with `NEMOCLAW_BREV_PROVIDER` if you need a different Brev cloud provider.
 If you export `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN`, the wrapper forwards those values to the VM so remote setup can pull gated Hugging Face model repositories.
 
 ## Connect to the Remote Sandbox
 
-After onboarding finishes, run the host CLI on the remote VM:
+After deployment finishes, the deploy command opens an interactive shell inside the remote sandbox.
+To reconnect after closing the session, run the command again:
 
-```bash
-nemoclaw <name> connect
+```console
+$ nemoclaw deploy <instance-name>
 ```
-
-If you used the deprecated Brev compatibility wrapper, the wrapper opens an interactive shell inside the remote sandbox.
-To reconnect through that legacy flow, run `nemoclaw deploy <instance-name>` again.
 
 ## Monitor the Remote Sandbox
 
-SSH to the instance and run the OpenShell TUI on the remote VM to monitor activity and approve network requests:
+SSH to the instance and run the OpenShell TUI to monitor activity and approve network requests:
 
-```bash
-ssh <instance-name> 'openshell term'
+```console
+$ ssh <instance-name> 'cd ~/nemoclaw && set -a && . .env && set +a && openshell term'
 ```
 
 ## Verify Inference
 
-Run a test agent prompt from the remote VM host:
+Run a test agent prompt inside the remote sandbox:
 
-```bash
-nemoclaw <name> exec -- openclaw agent --agent main -m "Hello from the remote sandbox" --session-id test
+```console
+$ openclaw agent --agent main -m "Hello from the remote sandbox" --session-id test
 ```
 
 ## Remote Dashboard Access
 
-The NemoClaw dashboard validates the browser origin against an allowlist baked into the sandbox image at build time.
-By default, the allowlist only contains `http://127.0.0.1:18789`.
-When you access the dashboard from a remote browser, for example through a Brev public URL or an SSH port-forward, set `CHAT_UI_URL` to the origin the browser uses before running `nemoclaw onboard` on the remote VM:
+The NemoClaw dashboard validates the browser origin against an allowlist baked
+into the sandbox image at build time.  By default the allowlist only contains
+`http://127.0.0.1:18789`.  When accessing the dashboard from a remote browser
+(for example through a Brev public URL or an SSH port-forward), set
+`CHAT_UI_URL` to the origin the browser will use **before** running setup:
 
-```bash
-export CHAT_UI_URL="https://openclaw0-<id>.brevlab.com"
-nemoclaw onboard
+```console
+$ export CHAT_UI_URL="https://openclaw0-<id>.brevlab.com"
+$ nemoclaw deploy <instance-name>
 ```
 
-For SSH port-forwarding, the origin is typically the default `http://127.0.0.1:18789`, so you do not need extra configuration.
+For SSH port-forwarding, the origin is typically `http://127.0.0.1:18789` (the
+default), so no extra configuration is needed.
 
 **Warning:**
 
-On Brev, set `CHAT_UI_URL` in the launchable environment configuration so the installer can read it when it builds the sandbox image.
-If you do not set `CHAT_UI_URL` on a headless host, the compatibility wrapper prints a warning.
+On Brev, set `CHAT_UI_URL` in the launchable environment configuration so it is
+available when the installer builds the sandbox image. If `CHAT_UI_URL` is not
+set on a headless host, the compatibility wrapper prints a warning.
 
 `NEMOCLAW_DISABLE_DEVICE_AUTH` is also evaluated at image build time.
 When `CHAT_UI_URL` points at a non-loopback origin, NemoClaw disables OpenClaw device pairing in the generated sandbox configuration because browser-only remote users cannot complete terminal-based pairing.
@@ -137,56 +119,54 @@ Any device that can reach the configured dashboard origin can connect without pa
 
 ## First-Run Readiness Budget
 
-On a remote GPU host, the first `nemoclaw onboard` typically does the slowest work of the lifecycle: the host builds the sandbox image locally and uploads it into the OpenShell gateway, which can stream hundreds of MiB over the VM's link before the readiness wait even starts.
-The post-create readiness wait defaults to 180 seconds (`NEMOCLAW_SANDBOX_READY_TIMEOUT`), which fits warm-cache, workstation-class onboarding but can be too short for:
+On a remote GPU host, the first `nemoclaw onboard` typically does the slowest work of the lifecycle: the sandbox image is built locally and uploaded into the OpenShell gateway, which can stream hundreds of MiB over the VM's link before the readiness wait even starts.
+The post-create readiness wait defaults to 180 seconds (`NEMOCLAW_SANDBOX_READY_TIMEOUT`), which is sized for warm-cache, workstation-class onboarding and can be exceeded on:
 
-- DGX Station first runs with large quantized models (70B+ parameter footprints, NVFP4 weights).
+- DGX Station first runs with large quantised models (70B+ parameter footprints, NVFP4 weights).
 - Cloud VMs where the local image-build cache is cold and the upload runs over the public network.
 - Hosts onboarding the Brave Web Search preset on the first run (the egress policy stack adds boot work).
 
 Raise the budget before re-running onboard:
 
-```bash
-export NEMOCLAW_SANDBOX_READY_TIMEOUT=600
-nemoclaw onboard
+```console
+$ export NEMOCLAW_SANDBOX_READY_TIMEOUT=600
+$ nemoclaw onboard
 ```
 
-If onboard ends with `Sandbox '<name>' was created but did not become ready within 180s`, onboard first deletes the partially created sandbox, so the next attempt with the raised budget starts from a clean state.
-For the inference-probe budget that runs earlier in onboarding, refer to `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` (use the `nemoclaw-user-configure-inference` skill).
+If onboard ends with `Sandbox '<name>' was created but did not become ready within 180s`, onboard deletes the partially-created sandbox first, so the next attempt with the raised budget starts from a clean state.
+For the inference-probe budget that runs earlier in onboarding, see `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` (use the `nemoclaw-user-configure-inference` skill).
 
 ## Proxy Configuration
 
 NemoClaw routes sandbox traffic through a gateway proxy that defaults to `10.200.0.1:3128`.
 If your network requires a different proxy, set `NEMOCLAW_PROXY_HOST` and `NEMOCLAW_PROXY_PORT` before onboarding:
 
-```bash
-export NEMOCLAW_PROXY_HOST=proxy.example.com
-export NEMOCLAW_PROXY_PORT=8080
-nemoclaw onboard
+```console
+$ export NEMOCLAW_PROXY_HOST=proxy.example.com
+$ export NEMOCLAW_PROXY_PORT=8080
+$ nemoclaw onboard
 ```
 
-NemoClaw bakes these values into the sandbox image at build time.
-NemoClaw also forwards them into the runtime container during sandbox creation, so `/tmp/nemoclaw-proxy-env.sh` uses the same host and port that the image build used.
-NemoClaw accepts only alphanumeric characters, dots, hyphens, and colons for the host.
+These values are baked into the sandbox image at build time.
+They are also forwarded into the runtime container during sandbox creation, so `/tmp/nemoclaw-proxy-env.sh` uses the same host and port that the image build used.
+Only alphanumeric characters, dots, hyphens, and colons are accepted for the host.
 The port must be numeric (0-65535).
 Changing the proxy after onboarding requires re-running `nemoclaw onboard`.
 
 ## GPU Configuration
 
-The deprecated Brev compatibility wrapper uses the `NEMOCLAW_GPU` environment variable to select the GPU type.
+The deploy script uses the `NEMOCLAW_GPU` environment variable to select the GPU type.
 The default value is `a2-highgpu-1g:nvidia-tesla-a100:1`.
-That value is specific to GCP-backed Brev instances.
-Other Brev providers or cloud consoles use different GPU type strings.
-Set this variable before running the deprecated wrapper to use a different GPU configuration:
+Set this variable before running `nemoclaw deploy` to use a different GPU configuration:
 
-```bash
-export NEMOCLAW_GPU="a2-highgpu-1g:nvidia-tesla-a100:2"
-nemoclaw deploy <instance-name>
+```console
+$ export NEMOCLAW_GPU="a2-highgpu-1g:nvidia-tesla-a100:2"
+$ nemoclaw deploy <instance-name>
 ```
 
 ## References
 
-- **Load [references/install-openclaw-plugins.md](references/install-openclaw-plugins.md)** when users ask how to install, build, or configure OpenClaw plugins under NemoClaw. Explains the difference between OpenClaw plugins and agent skills, and shows the current Dockerfile-based workflow for baking a plugin into a NemoClaw sandbox, including `.dockerignore` handling for custom build contexts.
+- **Load [references/install-openclaw-plugins.md](references/install-openclaw-plugins.md)** when users ask how to install, build, or configure OpenClaw plugins under NemoClaw. Explains the difference between OpenClaw plugins and agent skills, and shows the current Dockerfile-based workflow for baking a plugin into a NemoClaw sandbox.
 - **Load [references/brev-web-ui.md](references/brev-web-ui.md)** when a user wants to try NemoClaw without installing the CLI, or asks how to get started on Brev. Guides users through deploying NemoClaw with the Brev web UI.
 - **Load [references/sandbox-hardening.md](references/sandbox-hardening.md)** when reviewing sandbox image security controls, auditing capability drops, or looking up the runtime resource limits. Includes the sandbox container image hardening reference, covering Docker capabilities and process limits.
 
@@ -194,4 +174,4 @@ nemoclaw deploy <instance-name>
 
 - `nemoclaw-user-manage-sandboxes` — Set Up Messaging Channels (use the `nemoclaw-user-manage-sandboxes` skill) to connect Telegram, Discord, or Slack through OpenShell-managed channel messaging
 - `nemoclaw-user-monitor-sandbox` — Monitor Sandbox Activity (use the `nemoclaw-user-monitor-sandbox` skill) for sandbox monitoring tools
-- `nemoclaw-user-reference` — `nemoclaw deploy` (use the `nemoclaw-user-reference` skill) for the full `deploy` command reference
+- `nemoclaw-user-reference` — Commands (use the `nemoclaw-user-reference` skill) for the full `deploy` command reference

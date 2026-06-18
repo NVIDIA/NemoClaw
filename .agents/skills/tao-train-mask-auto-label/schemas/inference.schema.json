@@ -1,0 +1,829 @@
+{
+  "automl_default_parameters": [],
+  "automl_disabled_parameters": [
+    "train.cudnn",
+    "inference",
+    "evaluate",
+    "train.test_margin_rate",
+    "train",
+    "train.mask_thres",
+    "train.gpu_ids",
+    "model",
+    "wandb",
+    "wandb.tags",
+    "dataset",
+    "inference.gpu_ids",
+    "train.optim_betas",
+    "model.frozen_stages",
+    "train.margin_rate",
+    "evaluate.gpu_ids"
+  ],
+  "default": {
+    "dataset": {
+      "crop_size": 512,
+      "load_mask": true,
+      "max_obj_size": 10000000000.0,
+      "min_obj_size": 2048.0,
+      "num_workers_per_gpu": 2,
+      "train_ann_path": "",
+      "train_img_dir": "",
+      "type": "coco",
+      "val_ann_path": "",
+      "val_img_dir": ""
+    },
+    "encryption_key": "",
+    "inference": {
+      "ann_path": "",
+      "batch_size": 3,
+      "checkpoint": "???",
+      "gpu_ids": [
+        0
+      ],
+      "img_dir": "",
+      "label_dump_path": "instances_val2017_mal.json",
+      "load_mask": false,
+      "num_gpus": 1,
+      "num_nodes": 1,
+      "results_dir": "",
+      "trt_engine": ""
+    },
+    "model": {
+      "arch": "vit-mae-base/16",
+      "frozen_stages": [
+        -1
+      ],
+      "mask_head_hidden_channel": 256,
+      "mask_head_num_convs": 4,
+      "mask_head_out_channel": 256,
+      "mask_scale_ratio": 2.0,
+      "mask_scale_ratio_pre": 1,
+      "not_adjust_scale": false,
+      "teacher_momentum": 0.996,
+      "vit_dpr": 0.0
+    },
+    "model_name": "",
+    "results_dir": "",
+    "train": {
+      "accum_grad_batches": 1,
+      "batch_size": 1,
+      "checkpoint_interval": 1,
+      "checkpoint_interval_unit": "epoch",
+      "crf_kernel_size": 3,
+      "crf_num_iter": 100,
+      "crf_size_ratio": 1,
+      "crf_value_high_thres": 0.9,
+      "crf_value_low_thres": 0.1,
+      "crf_zeta": 0.1,
+      "cudnn": {
+        "benchmark": false,
+        "deterministic": true
+      },
+      "gpu_ids": [
+        0
+      ],
+      "loss_crf_step": 4000,
+      "loss_crf_weight": 0.5,
+      "loss_mil_step": 1000,
+      "loss_mil_weight": 4.0,
+      "lr": 1e-06,
+      "margin_rate": [
+        0,
+        1.2
+      ],
+      "mask_thres": [
+        0.1
+      ],
+      "min_lr": 0.0,
+      "min_lr_rate": 0.02,
+      "num_epochs": 10,
+      "num_gpus": 1,
+      "num_nodes": 1,
+      "num_wave": 1.0,
+      "optim_betas": [
+        0.9,
+        0.9
+      ],
+      "optim_eps": 1e-08,
+      "optim_momentum": 0.9,
+      "optim_type": "adamw",
+      "pretrained_model_path": "",
+      "results_dir": "",
+      "resume_training_checkpoint_path": "",
+      "seed": 1234,
+      "test_margin_rate": [
+        0.6,
+        0.6
+      ],
+      "use_amp": true,
+      "validation_interval": 1,
+      "warmup_epochs": 1,
+      "wd": 0.0005
+    },
+    "wandb": {
+      "enable": true,
+      "entity": "",
+      "group": "",
+      "name": "TAO Toolkit Training",
+      "project": "TAO Toolkit",
+      "reinit": false,
+      "run_id": "",
+      "save_code": false,
+      "sync_tensorboard": false,
+      "tags": [
+        "tao-toolkit"
+      ]
+    }
+  },
+  "popular": {
+    "evaluate": {
+      "gpu_ids": [
+        0
+      ],
+      "num_gpus": 1,
+      "num_nodes": 1
+    },
+    "inference": {
+      "gpu_ids": [
+        0
+      ],
+      "num_gpus": 1,
+      "num_nodes": 1
+    },
+    "train": {
+      "checkpoint_interval": 1,
+      "gpu_ids": [
+        0
+      ],
+      "num_epochs": 10,
+      "num_gpus": 1,
+      "num_nodes": 1,
+      "validation_interval": 1
+    }
+  },
+  "properties": {
+    "automl_disabled_parameters": [
+      "wandb",
+      "dataset",
+      "train",
+      "model",
+      "inference",
+      "evaluate"
+    ],
+    "dataset": {
+      "automl_enabled": false,
+      "default": {
+        "crop_size": 512,
+        "load_mask": true,
+        "max_obj_size": 10000000000.0,
+        "min_obj_size": 2048.0,
+        "num_workers_per_gpu": 2,
+        "train_ann_path": "",
+        "train_img_dir": "",
+        "type": "coco",
+        "val_ann_path": "",
+        "val_img_dir": ""
+      },
+      "properties": {
+        "crop_size": {
+          "default": 512,
+          "maximum": Infinity,
+          "minimum": 256,
+          "type": "int"
+        },
+        "load_mask": {
+          "default": true,
+          "title": "Whether to load segmentation mask in annotation file",
+          "type": "bool"
+        },
+        "max_obj_size": {
+          "default": 10000000000.0,
+          "title": "maximum object size",
+          "type": "float"
+        },
+        "min_obj_size": {
+          "default": 2048.0,
+          "title": "minimum object size",
+          "type": "float"
+        },
+        "num_workers_per_gpu": {
+          "default": 2,
+          "type": "int"
+        },
+        "train_ann_path": {
+          "default": "",
+          "title": "Annotation path of the training set",
+          "type": "string"
+        },
+        "train_img_dir": {
+          "default": "",
+          "title": "Image directory of the training set",
+          "type": "string"
+        },
+        "type": {
+          "default": "coco",
+          "enum": [
+            "coco"
+          ],
+          "title": "dataset type",
+          "type": "categorical"
+        },
+        "val_ann_path": {
+          "default": "",
+          "title": "Annotation path of the validation set",
+          "type": "string"
+        },
+        "val_img_dir": {
+          "default": "",
+          "title": "Image directory of the validation set",
+          "type": "string"
+        }
+      },
+      "type": "collection"
+    },
+    "encryption_key": {
+      "default": "",
+      "description": "Key for encrypting model checkpoints",
+      "title": "Encryption key",
+      "type": "string"
+    },
+    "inference": {
+      "automl_disabled_parameters": [
+        "inference.gpu_ids"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "ann_path": "",
+        "batch_size": 3,
+        "checkpoint": "???",
+        "gpu_ids": [
+          0
+        ],
+        "img_dir": "",
+        "label_dump_path": "instances_val2017_mal.json",
+        "load_mask": false,
+        "num_gpus": 1,
+        "num_nodes": 1,
+        "results_dir": "",
+        "trt_engine": ""
+      },
+      "popular": [
+        "num_gpus",
+        "num_nodes",
+        "gpu_ids"
+      ],
+      "properties": {
+        "ann_path": {
+          "default": "",
+          "type": "string"
+        },
+        "batch_size": {
+          "default": 3,
+          "maximum": Infinity,
+          "minimum": 1,
+          "type": "int"
+        },
+        "checkpoint": {
+          "default": "???",
+          "description": "Path to the checkpoint used for inference.",
+          "title": "Checkpoint path",
+          "type": "string"
+        },
+        "gpu_ids": {
+          "automl_enabled": false,
+          "default": [
+            0
+          ],
+          "description": "\n        List of GPU IDs to run the inference on. The length of this list\n        must be equal to the number of gpus in inference.num_gpus.",
+          "popular": true,
+          "title": "GPU IDs",
+          "type": "list"
+        },
+        "img_dir": {
+          "default": "",
+          "type": "string"
+        },
+        "label_dump_path": {
+          "default": "instances_val2017_mal.json",
+          "type": "string"
+        },
+        "load_mask": {
+          "default": false,
+          "type": "bool"
+        },
+        "num_gpus": {
+          "default": 1,
+          "description": "The number of GPUs to run the inference job.",
+          "minimum": 1,
+          "popular": true,
+          "title": "Number of GPUs",
+          "type": "int"
+        },
+        "num_nodes": {
+          "default": 1,
+          "description": "Number of nodes to run the inference on. If > 1, then multi-node is enabled.",
+          "minimum": 1,
+          "popular": true,
+          "title": "Number of nodes",
+          "type": "int"
+        },
+        "results_dir": {
+          "default": "",
+          "description": "\n        Path to where all the assets generated from a task are stored.\n        ",
+          "title": "Results directory",
+          "type": "string"
+        },
+        "trt_engine": {
+          "default": "",
+          "description": "Path to the TensorRT engine to be used for inference.\n                    This only works with :code:`tao-deploy`.",
+          "title": "TensorRT Engine",
+          "type": "string"
+        }
+      },
+      "type": "collection"
+    },
+    "model": {
+      "automl_disabled_parameters": [
+        "model.frozen_stages"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "arch": "vit-mae-base/16",
+        "frozen_stages": [
+          -1
+        ],
+        "mask_head_hidden_channel": 256,
+        "mask_head_num_convs": 4,
+        "mask_head_out_channel": 256,
+        "mask_scale_ratio": 2.0,
+        "mask_scale_ratio_pre": 1,
+        "not_adjust_scale": false,
+        "teacher_momentum": 0.996,
+        "vit_dpr": 0.0
+      },
+      "properties": {
+        "arch": {
+          "default": "vit-mae-base/16",
+          "enum": [
+            "vit-deit-tiny/16",
+            "vit-deit-small/16",
+            "vit-mae-base/16",
+            "vit-mae-large/16",
+            "vit-mae-huge/14"
+          ],
+          "type": "categorical"
+        },
+        "frozen_stages": {
+          "automl_enabled": false,
+          "default": [
+            -1
+          ],
+          "type": "list_1_backbone"
+        },
+        "mask_head_hidden_channel": {
+          "default": 256,
+          "maximum": Infinity,
+          "minimum": 1,
+          "type": "int"
+        },
+        "mask_head_num_convs": {
+          "default": 4,
+          "maximum": Infinity,
+          "minimum": 1,
+          "type": "int"
+        },
+        "mask_head_out_channel": {
+          "default": 256,
+          "maximum": Infinity,
+          "minimum": 1,
+          "type": "int"
+        },
+        "mask_scale_ratio": {
+          "default": 2.0,
+          "type": "float"
+        },
+        "mask_scale_ratio_pre": {
+          "default": 1,
+          "type": "int"
+        },
+        "not_adjust_scale": {
+          "default": false,
+          "type": "bool"
+        },
+        "teacher_momentum": {
+          "default": 0.996,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "float"
+        },
+        "vit_dpr": {
+          "default": 0.0,
+          "type": "float"
+        }
+      },
+      "type": "collection"
+    },
+    "model_name": {
+      "default": "",
+      "description": "Name of model if invoking task via :code:`model_agnostic`",
+      "title": "Model name",
+      "type": "string"
+    },
+    "results_dir": {
+      "default": "",
+      "description": "\n        Path to where all the assets generated from a task are stored.\n        ",
+      "title": "Results directory",
+      "type": "string"
+    },
+    "train": {
+      "automl_disabled_parameters": [
+        "train.gpu_ids",
+        "train.cudnn",
+        "train.optim_betas",
+        "train.margin_rate",
+        "train.test_margin_rate",
+        "train.mask_thres"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "accum_grad_batches": 1,
+        "batch_size": 1,
+        "checkpoint_interval": 1,
+        "checkpoint_interval_unit": "epoch",
+        "crf_kernel_size": 3,
+        "crf_num_iter": 100,
+        "crf_size_ratio": 1,
+        "crf_value_high_thres": 0.9,
+        "crf_value_low_thres": 0.1,
+        "crf_zeta": 0.1,
+        "cudnn": {
+          "benchmark": false,
+          "deterministic": true
+        },
+        "gpu_ids": [
+          0
+        ],
+        "loss_crf_step": 4000,
+        "loss_crf_weight": 0.5,
+        "loss_mil_step": 1000,
+        "loss_mil_weight": 4.0,
+        "lr": 1e-06,
+        "margin_rate": [
+          0,
+          1.2
+        ],
+        "mask_thres": [
+          0.1
+        ],
+        "min_lr": 0.0,
+        "min_lr_rate": 0.02,
+        "num_epochs": 10,
+        "num_gpus": 1,
+        "num_nodes": 1,
+        "num_wave": 1.0,
+        "optim_betas": [
+          0.9,
+          0.9
+        ],
+        "optim_eps": 1e-08,
+        "optim_momentum": 0.9,
+        "optim_type": "adamw",
+        "pretrained_model_path": "",
+        "results_dir": "",
+        "resume_training_checkpoint_path": "",
+        "seed": 1234,
+        "test_margin_rate": [
+          0.6,
+          0.6
+        ],
+        "use_amp": true,
+        "validation_interval": 1,
+        "warmup_epochs": 1,
+        "wd": 0.0005
+      },
+      "popular": [
+        "validation_interval",
+        "checkpoint_interval",
+        "num_gpus",
+        "num_nodes",
+        "num_epochs",
+        "gpu_ids"
+      ],
+      "properties": {
+        "accum_grad_batches": {
+          "default": 1,
+          "maximum": Infinity,
+          "minimum": 1,
+          "type": "int"
+        },
+        "batch_size": {
+          "default": 1,
+          "maximum": Infinity,
+          "minimum": 1,
+          "type": "int"
+        },
+        "checkpoint_interval": {
+          "default": 1,
+          "description": "The interval (in epochs) at which a checkpoint will be saved. Helps resume training.",
+          "minimum": 1,
+          "popular": true,
+          "title": "Checkpoint interval",
+          "type": "int"
+        },
+        "checkpoint_interval_unit": {
+          "default": "epoch",
+          "description": "The unit of the checkpoint interval.",
+          "enum": [
+            "epoch",
+            "step"
+          ],
+          "title": "Checkpoint interval unit",
+          "type": "categorical"
+        },
+        "crf_kernel_size": {
+          "default": 3,
+          "type": "int"
+        },
+        "crf_num_iter": {
+          "default": 100,
+          "type": "int"
+        },
+        "crf_size_ratio": {
+          "default": 1,
+          "type": "int"
+        },
+        "crf_value_high_thres": {
+          "default": 0.9,
+          "type": "float"
+        },
+        "crf_value_low_thres": {
+          "default": 0.1,
+          "type": "float"
+        },
+        "crf_zeta": {
+          "default": 0.1,
+          "type": "float"
+        },
+        "cudnn": {
+          "automl_enabled": false,
+          "default": {
+            "benchmark": false,
+            "deterministic": true
+          },
+          "properties": {
+            "benchmark": {
+              "default": false,
+              "type": "bool"
+            },
+            "deterministic": {
+              "default": true,
+              "type": "bool"
+            }
+          },
+          "type": "collection"
+        },
+        "gpu_ids": {
+          "automl_enabled": false,
+          "default": [
+            0
+          ],
+          "description": "\n        List of GPU IDs to run the training on. The length of this list\n        must be equal to the number of gpus in train.num_gpus.",
+          "popular": true,
+          "title": "GPU IDs",
+          "type": "list"
+        },
+        "loss_crf_step": {
+          "default": 4000,
+          "type": "int"
+        },
+        "loss_crf_weight": {
+          "default": 0.5,
+          "type": "float"
+        },
+        "loss_mil_step": {
+          "default": 1000,
+          "type": "int"
+        },
+        "loss_mil_weight": {
+          "default": 4.0,
+          "type": "float"
+        },
+        "lr": {
+          "default": 1e-06,
+          "maximum": Infinity,
+          "minimum": 0.0,
+          "type": "float"
+        },
+        "margin_rate": {
+          "automl_enabled": false,
+          "default": [
+            0,
+            1.2
+          ],
+          "type": "list"
+        },
+        "mask_thres": {
+          "automl_enabled": false,
+          "default": [
+            0.1
+          ],
+          "type": "list"
+        },
+        "min_lr": {
+          "default": 0.0,
+          "type": "float"
+        },
+        "min_lr_rate": {
+          "default": 0.02,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "float"
+        },
+        "num_epochs": {
+          "default": 10,
+          "description": "Number of epochs to run the training.",
+          "maximum": Infinity,
+          "minimum": 1,
+          "popular": true,
+          "title": "Number of epochs",
+          "type": "int"
+        },
+        "num_gpus": {
+          "default": 1,
+          "description": "The number of GPUs to run the train job.",
+          "minimum": 1,
+          "popular": true,
+          "title": "Number of GPUs",
+          "type": "int"
+        },
+        "num_nodes": {
+          "default": 1,
+          "description": "Number of nodes to run the training on. If > 1, then multi-node is enabled.",
+          "minimum": 1,
+          "popular": true,
+          "title": "Number of nodes",
+          "type": "int"
+        },
+        "num_wave": {
+          "default": 1.0,
+          "type": "float"
+        },
+        "optim_betas": {
+          "automl_enabled": false,
+          "default": [
+            0.9,
+            0.9
+          ],
+          "type": "list"
+        },
+        "optim_eps": {
+          "default": 1e-08,
+          "type": "float"
+        },
+        "optim_momentum": {
+          "default": 0.9,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "float"
+        },
+        "optim_type": {
+          "default": "adamw",
+          "enum": [
+            "adamw"
+          ],
+          "type": "categorical"
+        },
+        "pretrained_model_path": {
+          "default": "",
+          "type": "string"
+        },
+        "results_dir": {
+          "default": "",
+          "description": "\n        Path to where all the assets generated from a task are stored.\n        ",
+          "title": "Results directory",
+          "type": "string"
+        },
+        "resume_training_checkpoint_path": {
+          "default": "",
+          "description": "Path to the checkpoint to resume training from.",
+          "title": "Resume checkpoint path",
+          "type": "string"
+        },
+        "seed": {
+          "default": 1234,
+          "description": "The seed for the initializer in PyTorch. If < 0, disable fixed seed.",
+          "maximum": Infinity,
+          "minimum": -1,
+          "title": "Seed for randomization",
+          "type": "int"
+        },
+        "test_margin_rate": {
+          "automl_enabled": false,
+          "default": [
+            0.6,
+            0.6
+          ],
+          "type": "list"
+        },
+        "use_amp": {
+          "default": true,
+          "type": "bool"
+        },
+        "validation_interval": {
+          "default": 1,
+          "description": "\n        The interval (in epochs) at which a evaluation\n        will be triggered on the validation dataset.",
+          "minimum": 1,
+          "popular": true,
+          "title": "Validation interval",
+          "type": "int"
+        },
+        "warmup_epochs": {
+          "default": 1,
+          "maximum": Infinity,
+          "minimum": 0,
+          "type": "int"
+        },
+        "wd": {
+          "default": 0.0005,
+          "type": "float"
+        }
+      },
+      "type": "collection"
+    },
+    "wandb": {
+      "automl_disabled_parameters": [
+        "wandb.tags"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "enable": true,
+        "entity": "",
+        "group": "",
+        "name": "TAO Toolkit Training",
+        "project": "TAO Toolkit",
+        "reinit": false,
+        "run_id": "",
+        "save_code": false,
+        "sync_tensorboard": false,
+        "tags": [
+          "tao-toolkit"
+        ]
+      },
+      "properties": {
+        "enable": {
+          "default": true,
+          "type": "bool"
+        },
+        "entity": {
+          "default": "",
+          "type": "string"
+        },
+        "group": {
+          "default": "",
+          "type": "string"
+        },
+        "name": {
+          "default": "TAO Toolkit Training",
+          "type": "string"
+        },
+        "project": {
+          "default": "TAO Toolkit",
+          "type": "string"
+        },
+        "reinit": {
+          "default": false,
+          "type": "bool"
+        },
+        "run_id": {
+          "default": "",
+          "type": "string"
+        },
+        "save_code": {
+          "default": false,
+          "type": "bool"
+        },
+        "sync_tensorboard": {
+          "default": false,
+          "type": "bool"
+        },
+        "tags": {
+          "automl_enabled": false,
+          "default": [
+            "tao-toolkit"
+          ],
+          "type": "list"
+        }
+      },
+      "type": "collection"
+    }
+  },
+  "type": "object",
+  "x_tao_schema": {
+    "action": "inference",
+    "core_module": "mal",
+    "model": "mal",
+    "network_arch": "mal",
+    "schema_action": "inference",
+    "schema_version": 1,
+    "source": "tao-core dataclass config"
+  }
+}

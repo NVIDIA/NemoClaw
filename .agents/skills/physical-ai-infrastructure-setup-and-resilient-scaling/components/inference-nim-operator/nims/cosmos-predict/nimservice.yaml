@@ -1,0 +1,71 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Cosmos Predict1 7B Video2World (world model for video prediction).
+# Pre-built NIM container from NGC.
+#
+# Memory sizing: the official support matrix
+# (https://docs.nvidia.com/nim/cosmos/1.0.0/prerequisites.html) requires
+# >=90GB host RAM. The container loads T5, Siglip, pixtral-fp8, aegis,
+# blocklist filters, and the diffusion model simultaneously. 48Gi triggers
+# OOMKill (exit 137) during Triton model-repo initialization, observed on
+# AKS H100-NVL nodes. 96Gi matches cosmos-transfer and stays within the
+# H100 node's ~320Gi allocatable memory.
+apiVersion: apps.nvidia.com/v1alpha1
+kind: NIMService
+metadata:
+  name: cosmos-predict
+  namespace: osmo-nims
+spec:
+  image:
+    repository: nvcr.io/nim/nvidia/cosmos-predict1-7b-video2world
+    tag: "1.0.0"
+    pullPolicy: IfNotPresent
+    pullSecrets:
+      - nvcr-pull-secret
+  authSecret: ngc-api-secret
+  env:
+    - name: NGC_API_KEY
+      valueFrom:
+        secretKeyRef:
+          name: ngc-api-secret
+          key: NGC_API_KEY
+    # /opt/nim/start_server.sh does `export TRANSFORMERS_CACHE=$NIM_CACHE_PATH`.
+    # NeMo then computes NEMO_NLP_TMP = dirname(TRANSFORMERS_CACHE) + "/nemo_nlp_tmp".
+    # With the operator default NIM_CACHE_PATH=/model-store, that resolves to "/"
+    # and NeMo tries to mkdir "/nemo_nlp_tmp" at the read-only container root →
+    # PermissionError, Triton aborts. Override NIM_CACHE_PATH to a nested path
+    # so dirname lands on the writable PVC: TRANSFORMERS_CACHE=/model-store/cache,
+    # dirname=/model-store, NEMO_NLP_TMP=/model-store/nemo_nlp_tmp.
+    - name: NIM_CACHE_PATH
+      value: /model-store/cache
+  storage:
+    pvc:
+      create: true
+      # RWX is required for NIM multi-node / rolling upgrades:
+      #   https://docs.nvidia.com/nim-operator/latest/multi-node.html
+      # Cluster default StorageClass must be RWX-capable.
+      size: "100Gi"
+      volumeAccessMode: ReadWriteMany
+  startupProbe:
+    enabled: true
+    probe:
+      httpGet:
+        path: /v1/health/ready
+        port: 8000
+      initialDelaySeconds: 60
+      periodSeconds: 30
+      failureThreshold: 120
+      timeoutSeconds: 5
+  replicas: 1
+  resources:
+    limits:
+      nvidia.com/gpu: 1
+      memory: 96Gi
+    requests:
+      nvidia.com/gpu: 1
+      memory: 96Gi
+  expose:
+    service:
+      type: ClusterIP
+      port: 8000

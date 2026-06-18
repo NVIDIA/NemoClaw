@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "NVGenerateVAEFinetuneOutput",
+  "type": "object",
+  "required": [
+    "skill",
+    "model",
+    "model_repo",
+    "input",
+    "output",
+    "invocation",
+    "runtime",
+    "intended_use_disclaimer"
+  ],
+  "properties": {
+    "skill": {"const": "nv_generate_vae_finetune"},
+    "model": {"const": "maisi-vae"},
+    "model_repo": {"type": "string"},
+    "license": {"type": "string"},
+    "input": {
+      "type": "object",
+      "required": [
+        "data_base_dir",
+        "datalist",
+        "training_cases",
+        "validation_cases",
+        "modalities",
+        "default_modality",
+        "epochs",
+        "batch_size",
+        "lr",
+        "cache_rate",
+        "patch_size",
+        "num_gpus",
+        "finetune",
+        "random_seed"
+      ],
+      "properties": {
+        "data_base_dir": {"type": "string"},
+        "datalist": {"type": "string"},
+        "training_cases": {"type": "integer", "minimum": 1},
+        "validation_cases": {"type": "integer", "minimum": 1},
+        "modalities": {"type": "array", "items": {"type": "string"}},
+        "default_modality": {"type": "string"},
+        "epochs": {"type": "integer", "minimum": 1},
+        "batch_size": {"type": "integer", "minimum": 1},
+        "lr": {"type": "number", "exclusiveMinimum": 0},
+        "cache_rate": {"type": "number", "minimum": 0, "maximum": 1},
+        "patch_size": {"type": "array", "items": {"type": "integer"}, "minItems": 3, "maxItems": 3},
+        "val_patch_size": {"type": ["array", "null"], "items": {"type": "integer"}},
+        "num_gpus": {"type": "integer", "minimum": 0},
+        "finetune": {"type": "boolean"},
+        "random_seed": {"type": "integer"}
+      }
+    },
+    "output": {
+      "type": "object",
+      "required": [
+        "directory",
+        "artifacts_dir",
+        "workflow_summary",
+        "autoencoder_checkpoint",
+        "autoencoder_checkpoint_present",
+        "discriminator_checkpoint",
+        "discriminator_checkpoint_present",
+        "best_autoencoder_checkpoints",
+        "num_best_autoencoder_checkpoints",
+        "loss_history"
+      ],
+      "properties": {
+        "directory": {"type": "string"},
+        "artifacts_dir": {"type": "string"},
+        "workflow_summary": {"type": ["string", "null"]},
+        "autoencoder_checkpoint": {"type": ["string", "null"]},
+        "autoencoder_checkpoint_present": {"type": "boolean"},
+        "discriminator_checkpoint": {"type": ["string", "null"]},
+        "discriminator_checkpoint_present": {"type": "boolean"},
+        "best_autoencoder_checkpoints": {"type": "array", "items": {"type": "string"}},
+        "num_best_autoencoder_checkpoints": {"type": "integer", "minimum": 0},
+        "loss_history": {"type": "array"},
+        "tensorboard_dir": {"type": ["string", "null"]}
+      }
+    },
+    "invocation": {
+      "type": "object",
+      "required": [
+        "official_entrypoint",
+        "upstream_root",
+        "upstream_commit",
+        "checked_upstream_roots",
+        "command",
+        "exit_code",
+        "subprocess_seconds"
+      ],
+      "properties": {
+        "official_entrypoint": {"type": "string"},
+        "upstream_root": {"type": ["string", "null"]},
+        "upstream_commit": {"type": "string"},
+        "checked_upstream_roots": {"type": "array", "items": {"type": "string"}},
+        "command": {"type": "array", "items": {"type": "string"}},
+        "exit_code": {"type": "integer"},
+        "subprocess_seconds": {"type": "number"}
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "required": ["subprocess_seconds", "device", "preflight_only"],
+      "properties": {
+        "subprocess_seconds": {"type": "number"},
+        "device": {"type": "string"},
+        "preflight_only": {"type": "boolean"}
+      }
+    },
+    "logs": {
+      "type": "object",
+      "properties": {
+        "stdout_tail": {"type": "string"},
+        "stderr_tail": {"type": "string"}
+      }
+    },
+    "intended_use_disclaimer": {"type": "string"}
+  }
+}

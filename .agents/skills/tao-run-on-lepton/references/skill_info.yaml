@@ -1,0 +1,29 @@
+type: platform
+required_credentials:
+- name: LEPTON_WORKSPACE_ID
+  source: env_var
+- name: LEPTON_AUTH_TOKEN
+  source: env_var
+optional_credentials:
+- name: NGC_KEY
+  source: env_var
+- name: ACCESS_KEY
+  source: env_var
+- name: SECRET_KEY
+  source: env_var
+- name: S3_ENDPOINT_URL
+  source: env_var
+- name: S3_BUCKET_NAME
+  source: env_var
+- name: CLOUD_REGION
+  source: env_var
+resource_defaults:
+  ttl_seconds_after_finished: 259200
+  cpu_shape_preference:
+  - cpu.medium
+  - cpu.large
+  - cpu.small
+cloud_storage:
+  protocol: aws
+  uri_format: s3://{bucket_name}/{path}
+  metadata_key: aws

@@ -1,0 +1,244 @@
+# Model Optimization Context
+
+Use this pack when generating stage code for any of:
+
+- `optimize/modelopt/quantize` — PTQ quantization (FP8/NVFP4/INT)
+- `optimize/modelopt/prune`    — structured pruning
+- `optimize/modelopt/distill`  — teacher-student distillation
+
+These wrap NVIDIA Model Optimizer through Megatron-Bridge. The wrappers stay
+generic; algorithm-specific knobs go in YAML under `args:`. **Don't fork
+upstream scripts into generated projects** unless the user explicitly needs
+custom algorithm code.
+
+## Live Repo Verification
+
+Read `../CATALOG.md`, `../ARTIFACTS.md`, and `../COMMANDS.md` before this pack.
+After the bundled references select a ModelOpt step, verify:
+
+- Manifests: `src/nemotron/steps/optimize/modelopt/<algo>/step.toml`
+- Per-step README: `src/nemotron/steps/optimize/modelopt/<algo>/README.md`
+- Category README: `src/nemotron/steps/optimize/modelopt/README.md`
+- Shared runner: `src/nemotron/steps/_runners/modelopt.py`
+- Configs: `src/nemotron/steps/optimize/modelopt/<algo>/config/default.yaml`
+  plus `tiny.yaml`; quantize also ships `fp8.yaml` and `nvfp4.yaml`.
+
+## Folder choice
+
+Use `optimize/modelopt` as the umbrella — broader than `quantize` because
+distillation can be a quality-recovery or transfer stage, not only a
+compression stage. `compression` would be too narrow.
+
+## Shared wrapper pattern
+
+All three steps drive `torchrun` against an upstream script with three YAML
+sections:
+
+```yaml
+script:
+  path: null              # null = use container default
+  flag_style: hyphen      # quantize uses hyphen; prune & distill use underscore
+args:
+  # Upstream script args go here. Forwarded as --<key> <value>.
+torchrun:
+  nproc_per_node: 8
+extra_args: []            # literal escape hatch for new upstream flags
+```
+
+Generated `run.py` should:
+
+1. Load YAML.
+2. Resolve hydra-style CLI overrides.
+3. Build a `torchrun ... <upstream_script> ...` command.
+4. Print the command.
+5. `os.execvp` it.
+
+Don't hardcode model-specific config in Python. Put ModelOpt controls under
+`args:`; keep Python a launcher only.
+
+## Quantization (`optimize/modelopt/quantize`)
+
+Step.toml contract:
+- Consumes: `checkpoint_hf` (required).
+- Produces: `checkpoint_megatron` (export to HF afterward if needed).
+
+Manifest defaults:
+- `args.export_quant_cfg = "fp8"`  (also: `int8_sq`, `fp8_blockwise`,
+  `int4_awq`, `w4a8_awq`, `nvfp4` per the manifest description).
+- `args.calib_size = 512`.
+- `extra_args = []`.
+
+Strategies (from step.toml):
+- Hopper / H100 → start with `config/fp8.yaml`, `args.export_quant_cfg=fp8`.
+- Blackwell / B200 → start with `config/nvfp4.yaml`, `args.export_quant_cfg=nvfp4`.
+- Need HF output → run `/opt/Megatron-Bridge/examples/quantization/export.py` after.
+
+Default config (`default.yaml`) shape (truncated):
+
+```yaml
+script:
+  path: null
+  flag_style: hyphen
+args:
+  hf_model_id: nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-Base-BF16
+  trust_remote_code: true
+  export_quant_cfg: fp8
+  megatron_save_path: ${oc.env:NEMO_RUN_DIR,${oc.env:PWD}/output}/optimize/quantize/<run-tag>
+  calib_size: 512
+torchrun:
+  nproc_per_node: 8
+extra_args: []
+```
+
+The pre-built `fp8.yaml` and `nvfp4.yaml` set `export_quant_cfg` and
+`calib_size` (NVFP4 typically uses ~2000 calibration samples vs ~512 for FP8).
+
+Calibration guidance:
+- Smoke tests → lower `calib_size`, keep the same command shape.
+- FP8 PTQ flows commonly use ≈256–512 calibration samples.
+- NVFP4 / QAD-oriented flows commonly use ~2000 calibration samples and
+  longer context.
+
+Output: Megatron distributed checkpoint. If the next stage needs HF format,
+add an explicit conversion via the upstream `export.py`.
+
+## Pruning (`optimize/modelopt/prune`)
+
+Step.toml contract:
+- Consumes: `checkpoint_hf` (required).
+- Produces: `checkpoint_hf` (pruned).
+
+Manifest defaults:
+- `args.prune_target_params = 6e9`.
+- `args.prune_export_config` (manual architecture dict; leave unset to use search).
+- `args.hparams_to_skip` (e.g. `num_attention_heads`).
+- `extra_args = []`.
+
+Strategies:
+- Target search: set `args.prune_target_params`, leave `args.prune_export_config: null`.
+- Fixed architecture: set `args.prune_export_config`, set `args.prune_target_params: null`.
+- Layer count not divisible by PP size: use `args.num_layers_in_first_pipeline_stage`
+  / `args.num_layers_in_last_pipeline_stage` for uneven PP.
+
+Default config shape:
+
+```yaml
+script:
+  path: null
+  flag_style: underscore
+args:
+  hf_model_name_or_path: Qwen/Qwen3-8B
+  output_hf_path: ${oc.env:NEMO_RUN_DIR,${oc.env:PWD}/output}/optimize/prune/pruned-hf
+  pp_size: 2
+  prune_target_params: 6e9
+  prune_export_config: null
+  hparams_to_skip: null
+torchrun:
+  nproc_per_node: 2
+extra_args: []
+```
+
+Common fields for `prune_export_config`: `hidden_size`, `ffn_hidden_size`,
+`num_layers`, `num_attention_heads`, `num_query_groups`.
+
+Output: pruned HF checkpoint. Distillation usually follows when quality needs
+recovery — chain `optimize/modelopt/distill` with the original BF16 as teacher
+and the pruned checkpoint as student.
+
+## Distillation (`optimize/modelopt/distill`)
+
+Step.toml contract:
+- Consumes: `checkpoint_hf` (required, teacher + student) + `binidx` (optional, real-data runs).
+- Produces: `checkpoint_megatron`.
+
+Manifest defaults:
+- `args.teacher_hf_path` / `args.student_hf_path` — required.
+- `args.data_paths` — Megatron blend `[weight, prefix, ...]`.
+- `args.use_mock_data = false`.
+- `extra_args = []`.
+
+Strategies:
+- Quality recovery after pruning/quantization → teacher = original BF16/HF
+  checkpoint, student = optimized checkpoint.
+- Smoke test → `args.use_mock_data=true`, `args.seq_length=512`,
+  `args.train_iters=100`, small `args.eval_iters`.
+- Need HF output → set `args.hf_export_path` and `args.student_hf_model`,
+  or convert a saved Megatron iteration later.
+
+Default config shape:
+
+```yaml
+script:
+  path: null
+  flag_style: underscore
+args:
+  teacher_hf_path: Qwen/Qwen3-8B
+  student_hf_path: Qwen/Qwen3-4B
+  tp_size: 8
+  data_paths: null
+  use_mock_data: false
+  seq_length: 8192
+  mbs: 1
+  gbs: 768
+  train_iters: 15000
+  output_dir: ${oc.env:NEMO_RUN_DIR,${oc.env:PWD}/output}/optimize/distill/run
+torchrun:
+  nproc_per_node: 8
+extra_args: []
+```
+
+Real-data runs expect Megatron bin/idx prefixes:
+
+```yaml
+args:
+  data_paths:
+    - 1.0
+    - /data/tokenized/domain_text_document
+```
+
+Use `data_prep/pretrain_prep` first when data starts as HF/local text.
+`use_mock_data: true` is **plumbing only**, not a quality signal.
+
+Distillation patterns:
+- Pruned student: teacher = original BF16/HF, student = pruned HF.
+- Quantized recovery: teacher = original BF16/HF, student = optimized checkpoint.
+- Standalone small model: teacher = larger model, student = smaller HF model.
+
+Output: Megatron checkpoint under `output_dir` (or HF if inline export
+configured).
+
+## Pipeline placement
+
+Common chains:
+
+```
+sft/automodel        → optimize/modelopt/quantize → eval/model_eval
+sft/automodel        → optimize/modelopt/prune    → optimize/modelopt/distill → eval/model_eval
+data_prep/pretrain_prep   → optimize/modelopt/distill  → eval/model_eval
+```
+
+Artifact rules:
+- Quantize:  `checkpoint_hf` → `checkpoint_megatron`.
+- Prune:     `checkpoint_hf` → `checkpoint_hf`.
+- Distill:   `checkpoint_hf` (+ optional `binidx`) → `checkpoint_megatron`.
+- Insert `convert/*` whenever crossing HF / Megatron format boundaries.
+
+## Patterns to cite
+
+- `convert-checkpoint-safety` in `../PATTERNS.md` — quantize / prune / distill from a clean checkpoint, not from training-state files.
+- `eval-before-and-after-training` in `../PATTERNS.md` — measure quantized / pruned / distilled quality against the unoptimized baseline.
+- `byob-benchmark-design` in `../PATTERNS.md` — calibration and quality claims should be scored on a representative held-out benchmark, not on calibration loss alone.
+- `peft-adapter-merge-discipline` in `../PATTERNS.md` — when the optimization input is a LoRA-adapter checkpoint, merge first.
+
+## Staleness checks
+
+When this pack drifts:
+
+- Refresh defaults from each algo's `step.toml` and `config/default.yaml`.
+- Verify the upstream scripts still exist in the container image
+  (`/opt/Megatron-Bridge/examples/quantization/quantize.py`,
+  `/opt/Model-Optimizer/examples/megatron_bridge/prune_minitron.py`,
+  `/opt/Model-Optimizer/examples/megatron_bridge/distill.py`).
+- Check `flag_style` per algo: quantize uses **hyphen**, prune and distill
+  examples use **underscore**.
+- Ensure manifest `[reference]` URLs are intact.

@@ -1,0 +1,204 @@
+title: moe_hardware_configs
+validated_on: "2026-04-01"
+summary: >
+  Best-known MoE training configurations per model family and hardware platform,
+  with measured throughput, MFU, and parallelism settings. Covers DSV3, Qwen3,
+  and Qwen3-Next across H100, B200, GB200, and GB300 systems.
+
+validation_status:
+  dsv3_h100:
+    - measured
+  dsv3_b200:
+    - measured
+  dsv3_gb200:
+    - measured
+  dsv3_gb300:
+    - measured
+  qwen3_235b_h100:
+    - measured
+  qwen3_235b_b200:
+    - measured
+  qwen3_235b_gb200:
+    - measured
+  qwen3_30b_h100:
+    - measured
+  qwen3_next_80b_b200:
+    - measured
+  qwen3_next_80b_gb200:
+    - measured
+  qwen3_next_397b_gb200:
+    - measured
+
+best_configs:
+  dsv3_685b_h100_1024:
+    model: "DSV3 685B w/ MTP"
+    hardware: "1024×H100"
+    precision: FP8-Block
+    dispatcher: DeepEP
+    tflops: ~370
+    mfu: "~19%"
+    parallelism: "TP2 EP64 PP8 VPP4"
+    batch: "MBS1 GBS8192"
+    routing: force_balance
+    recompute: "up_proj, mlp"
+    pp_layout: "Et*3|(tt|)*29m|L"
+    overlap_1f1b: true
+
+  dsv3_685b_b200_256_bf16:
+    model: "DSV3 685B w/ MTP"
+    hardware: "256×B200"
+    precision: BF16
+    dispatcher: DeepEP
+    tflops: ~520
+    mfu: "~21%"
+    parallelism: "TP1 EP32 PP8 EDP2 VPP4"
+    batch: "MBS1 GBS4096"
+    routing: force_balance
+    recompute: "mla_up_proj, mlp, moe_act, layernorm"
+
+  dsv3_685b_b200_256_fp8mx:
+    model: "DSV3 685B w/ MTP"
+    hardware: "256×B200"
+    precision: FP8-MX
+    dispatcher: DeepEP
+    tflops: ~800
+    mfu: "~16%"
+    parallelism: "TP1 EP32 PP8 VPP2"
+    batch: "MBS1 GBS8192"
+    routing: force_balance
+    overlap_1f1b: true
+    note: "--moe-deepep-num-sms 24"
+
+  dsv3_671b_gb200_256:
+    model: "DSV3 671B no MTP"
+    hardware: "256×GB200"
+    precision: FP8-MX
+    dispatcher: HybridEP
+    tflops: ~1000
+    mfu: "~19%"
+    parallelism: "TP1 EP32 PP8 VPP4"
+    batch: "MBS1 GBS2048"
+    routing: force_balance
+    cuda_graph: "attn, moe_router, moe_preprocess"
+
+  dsv3_685b_gb200_256:
+    model: "DSV3 685B w/ MTP"
+    hardware: "256×GB200"
+    precision: FP8-MX
+    dispatcher: HybridEP
+    tflops: ~1100
+    mfu: "~22%"
+    parallelism: "TP1 EP64 PP4 VPP4"
+    batch: "MBS1 GBS8192"
+    routing: force_balance
+    overlap_1f1b: true
+    cuda_graph: "attn, moe_router, moe_preprocess"
+
+  dsv3_685b_gb300_256:
+    model: "DSV3 685B w/ MTP"
+    hardware: "256×GB300"
+    precision: FP8-MX
+    dispatcher: HybridEP
+    tflops: ~1200
+    mfu: "~25%"
+    parallelism: "TP1 EP64 PP4 VPP4"
+    batch: "MBS1 GBS8192"
+    routing: force_balance
+    overlap_1f1b: true
+    cuda_graph: "attn, moe_router, moe_preprocess"
+
+  qwen3_235b_h100_256:
+    model: "Qwen3 235B-A22B"
+    hardware: "256×H100"
+    precision: BF16
+    dispatcher: DeepEP
+    tflops: ~320
+    mfu: "~32%"
+    parallelism: "TP2 EP32 PP8 VPP4"
+    batch: "MBS1 GBS2048"
+    routing: force_balance
+    overlap_1f1b: true
+
+  qwen3_235b_b200_128:
+    model: "Qwen3 235B-A22B"
+    hardware: "128×B200"
+    precision: BF16
+    dispatcher: DeepEP
+    tflops: ~590
+    mfu: "~26%"
+    parallelism: "TP2 EP16 PP4 EDP2 VPP12"
+    batch: "MBS2 GBS2048"
+    routing: force_balance
+    overlap_1f1b: true
+
+  qwen3_235b_gb200_128:
+    model: "Qwen3 235B-A22B"
+    hardware: "128×GB200"
+    precision: BF16
+    dispatcher: HybridEP
+    tflops: ~700
+    mfu: "~28%"
+    parallelism: "TP1 EP32 PP4 VPP12"
+    batch: "MBS1 GBS1024"
+    routing: force_balance
+    cuda_graph: "attn, moe_router, moe_preprocess"
+
+  qwen3_30b_h100_32:
+    model: "Qwen3 30B-A3B"
+    hardware: "32×H100"
+    precision: BF16
+    dispatcher: DeepEP
+    tflops: ~210
+    mfu: "~21%"
+    parallelism: "TP1 EP8 PP1 EDP4"
+    batch: "MBS4 GBS256"
+    routing: force_balance
+    recompute: full
+
+  qwen3_next_80b_gb200_64:
+    model: "Qwen3-Next 80B-A3B"
+    hardware: "64×GB200"
+    precision: BF16
+    dispatcher: HybridEP
+    tflops: ~330
+    parallelism: "TP1 EP32 PP2 VPP4"
+    batch: "MBS2 GBS1024"
+    routing: force_balance
+    cuda_graph: "attn, moe_router, moe_preprocess"
+    note: "native CE, cutlass grouped gemm"
+
+  qwen3_next_397b_gb200_128:
+    model: "Qwen3.5-397B-A17B"
+    hardware: "128×GB200"
+    precision: BF16
+    dispatcher: HybridEP
+    tflops: ~550
+    parallelism: "TP1 EP32 PP4 VPP4"
+    batch: "MBS1 GBS4096"
+    routing: force_balance
+    cuda_graph: "attn, moe_router, moe_preprocess"
+    note: "native CE, cutlass grouped gemm"
+
+optimization_patterns:
+  - name: force_balance_routing
+    impact: "+5-10% MFU over dropless"
+  - name: 1f1b_overlap
+    impact: "+15% on H100, varies on GB200"
+  - name: cuda_graphs
+    impact: "+10-15% with attn+moe_router+moe_preprocess scope"
+  - name: cpu_binding
+    impact: "+15% on GB200"
+  - name: mbs_tuning
+    impact: "up to +15% from MBS sweep"
+
+evidence:
+  - "[MoE Perf] MCore Release Performance Tracker - DeepSeek-V3"
+  - "[MoE Perf] MCore Release Performance Tracker - Qwen3"
+  - "[MoE Perf] MCore Release Performance Tracker - Qwen3-Next"
+  - "[MoE Perf] MCore Release Performance Tracker - DSV3 Long-Context"
+
+known_limitations:
+  - Container versions can cause significant performance regressions
+  - VPP must divide transformer layers evenly across PP stages
+  - FP8 MFU numbers use higher peak FLOPS denominator than BF16
+  - Configs are point-in-time measurements; mcore/TE updates may change results

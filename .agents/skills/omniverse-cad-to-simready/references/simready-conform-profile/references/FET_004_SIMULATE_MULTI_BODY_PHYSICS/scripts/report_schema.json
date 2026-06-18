@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "skill",
+    "passed",
+    "status",
+    "input_usd_path",
+    "output_usd_path",
+    "requirements_repaired",
+    "requirements_blocked",
+    "rigid_body_roots_after",
+    "component_body_candidates",
+    "checks",
+    "errors"
+  ],
+  "properties": {
+    "skill": { "const": "FET_004_SIMULATE_MULTI_BODY_PHYSICS" },
+    "passed": { "type": "boolean" },
+    "status": { "type": "string" },
+    "input_usd_path": { "type": "string" },
+    "output_usd_path": { "type": ["string", "null"] },
+    "requirements_repaired": { "type": "array", "items": { "type": "string" } },
+    "requirements_blocked": { "type": "array", "items": { "type": "string" } },
+    "rigid_body_roots_after": { "type": "array", "items": { "type": "string" } },
+    "component_body_candidates": { "type": "array", "items": { "type": "string" } },
+    "checks": { "type": "array" },
+    "errors": { "type": "array", "items": { "type": "string" } }
+  }
+}

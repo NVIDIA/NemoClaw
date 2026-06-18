@@ -1,0 +1,23 @@
+encryption_key: tlt_encode
+results_dir: /results
+dataset:
+  infer_data_sources:
+    image_dir:
+    - /data/images
+    classmap: /data/label_map.txt
+  num_classes: 4
+  batch_size: 1
+  workers: 8
+inference:
+  trt_engine: /results/deformable-detr.engine
+  conf_threshold: 0.5
+  input_width: 960
+  input_height: 544
+  color_map:
+    person: green
+model:
+  num_feature_levels: 2
+  dec_layers: 6
+  enc_layers: 6
+  num_queries: 300
+  with_box_refine: true

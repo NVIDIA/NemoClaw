@@ -1,0 +1,9 @@
+{
+  "training": [
+    {
+      "image": "imagesTr/placeholder_mri_t1.txt",
+      "modality": "mri_t1"
+    }
+  ],
+  "testing": []
+}

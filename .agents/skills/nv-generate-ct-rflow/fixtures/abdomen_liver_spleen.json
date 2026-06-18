@@ -1,0 +1,34 @@
+{
+  "_comment": "Upper-abdomen CT with the canonical solid-organ set. No tumor; ideal smoke test for abdominal anatomy plausibility (organ_volumes within human population bounds). 256^3 keeps the run ~90s on a 24 GB GPU.",
+  "num_output_samples": 1,
+  "body_region": [
+    "abdomen"
+  ],
+  "anatomy_list": [
+    "liver",
+    "spleen",
+    "pancreas",
+    "right kidney",
+    "left kidney",
+    "right adrenal gland",
+    "left adrenal gland",
+    "gallbladder",
+    "stomach",
+    "aorta",
+    "inferior vena cava"
+  ],
+  "controllable_anatomy_size": [],
+  "output_size": [
+    256,
+    256,
+    256
+  ],
+  "spacing": [
+    1.5,
+    1.5,
+    2.0
+  ],
+  "num_inference_steps": 30,
+  "image_output_ext": ".nii.gz",
+  "label_output_ext": ".nii.gz"
+}

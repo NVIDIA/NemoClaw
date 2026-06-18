@@ -1,0 +1,238 @@
+[
+    {
+        "expected_behavior": [
+            "Recommends HDF5 (legate.io.hdf5) for the single-file HPC use case",
+            "Names `legate.io.hdf5.to_file` for the write and `legate.io.hdf5.from_file` for the read",
+            "Passes the cuPyNumeric ndarray directly to `to_file` (no manual np.array conversion)",
+            "Includes `get_legate_runtime().issue_execution_fence(block=True)` before any external reader",
+            "Mentions h5py is a prerequisite via `conda install -c conda-forge h5py`",
+            "Uses only documented legate.io.hdf5 API names and does not invent functions or parameters"
+        ],
+        "expected_script": null,
+        "expected_skill": "cupynumeric-hdf5",
+        "ground_truth": "The agent recommends HDF5 via `legate.io.hdf5` for single-file, HPC-pipeline output. It names `legate.io.hdf5.to_file(array=arr, path=..., dataset_name=...)` for the write and `legate.io.hdf5.from_file(path, dataset_name=...)` for any read-back, passes the cuPyNumeric ndarray directly (it implements `__legate_data_interface__`, so no manual conversion), and inserts `get_legate_runtime().issue_execution_fence(block=True)` after the write before any external tool opens the file. It notes h5py is a prerequisite (`conda install -c conda-forge h5py`) and, for a GPU run, may mention `LEGATE_IO_USE_VFD_GDS=1` as the recommended GPU I/O path.",
+        "id": "hdf5-001-format-select-single-file",
+        "question": "I have a 200 GB cuPyNumeric array I need to write to disk so an HPC post-processing pipeline on a different cluster can pick it up. The pipeline reads a single file. What format and API should I use?",
+        "should_trigger": true
+    },
+    {
+        "expected_behavior": [
+            "Imports and calls `legate.io.hdf5.to_file(array=..., path=..., dataset_name=...)`",
+            "Passes the cuPyNumeric ndarray directly without converting to NumPy first",
+            "Adds `get_legate_runtime().issue_execution_fence(block=True)` after the write",
+            "Warns that `to_file` overwrites an existing file at `path`",
+            "Does not fabricate parameters beyond array/path/dataset_name"
+        ],
+        "expected_script": null,
+        "expected_skill": "cupynumeric-hdf5",
+        "ground_truth": "The agent shows `from legate.io.hdf5 import to_file` and `to_file(array=arr, path='out.h5', dataset_name='/data')`, passing the cuPyNumeric ndarray straight in. It follows the write with `get_legate_runtime().issue_execution_fence(block=True)` so the file is complete before anything external reads it, and notes that `to_file` overwrites `path` if it already exists and creates missing parent directories.",
+        "id": "hdf5-002-write-to-file",
+        "question": "How do I save a cuPyNumeric array to an .h5 file using Legate's built-in HDF5 support?",
+        "should_trigger": true
+    },
+    {
+        "expected_behavior": [
+            "Names `cupynumeric.asarray(logical_array)` as the conversion",
+            "Shows the one-liner `cn.asarray(from_file(...))`",
+            "Notes the same bridge works for `from_file_batched` chunks",
+            "Does not suggest copying through `np.array(...)`/DLPack or accessing private LogicalArray attributes as the primary path"
+        ],
+        "expected_script": null,
+        "expected_skill": "cupynumeric-hdf5",
+        "ground_truth": "The agent says to wrap it with `cupynumeric.asarray(...)`: `b = cn.asarray(from_file('out.h5', dataset_name='/data'))`. `cn.asarray` is the canonical, zero-copy bridge from a Legate `LogicalArray` (returned by `from_file` and by each `from_file_batched` chunk) back to a cuPyNumeric ndarray. It notes the reverse direction needs no conversion because cuPyNumeric ndarray implements `__legate_data_interface__`.",
+        "id": "hdf5-003-asarray-bridge",
+        "question": "`legate.io.hdf5.from_file('out.h5', dataset_name='/data')` returned an object that prints as `LogicalArray(...)`. How do I turn it into a cuPyNumeric ndarray so I can run NumPy-style ops on it?",
+        "should_trigger": true
+    },
+    {
+        "expected_behavior": [
+            "Identifies the cause as Legate's asynchronous task scheduling, not an HDF5 or h5py bug",
+            "Names `get_legate_runtime().issue_execution_fence(block=True)` as the fix and places it between the write and the h5py open",
+            "Explains the fence is for external observers, not strictly for a later Legate-internal `from_file`",
+            "Does not suggest time.sleep, retry loops, or os.sync as the fix"
+        ],
+        "expected_script": null,
+        "expected_skill": "cupynumeric-hdf5",
+        "ground_truth": "The agent identifies that Legate I/O is asynchronous: `to_file` only queues the write, so h5py may open the file before the write lands. The fix is to insert `legate.core.get_legate_runtime().issue_execution_fence(block=True)` between the `to_file` call and the h5py open. It explains the fence is required whenever an external observer (filesystem, h5py, subprocess) must see a Legate side effect, but a `from_file` issued later in the same Legate program does not need an explicit fence because the runtime preserves ordering. It does not suggest sleeping, retrying, or filesystem syncing.",
+        "id": "hdf5-004-fence-before-external-read",
+        "question": "I just called `legate.io.hdf5.to_file(array=a, path='out.h5', dataset_name='/data')` and the next line opens the file with h5py to inspect it, but the file looks empty or truncated. What's wrong?",
+        "should_trigger": true
+    },
+    {
+        "expected_behavior": [
+            "Names `legate.io.hdf5.from_file_batched(path, dataset_name, chunk_size)` as the streaming reader",
+            "Unpacks each yield as `(chunk, offsets)` and converts the chunk with `cn.asarray`",
+            "Places each chunk by its actual shape/offsets (accounts for clipped boundary chunks)",
+            "Ends with a blocking execution fence",
+            "Clarifies that from_file_batched chunks the file read \u2014 the preallocated array (`cn.empty(shape)`) still has to fit in distributed memory",
+            "Uses only documented legate.io.hdf5 API and does not invent a streaming-write counterpart"
+        ],
+        "expected_script": null,
+        "expected_skill": "cupynumeric-hdf5",
+        "ground_truth": "The agent uses `from_file_batched(path, dataset_name, chunk_size)`, which yields one `LogicalArray` per chunk plus the offsets where that chunk belongs in the global shape. It preallocates the destination with `cn.empty(shape, dtype)` (reading shape/dtype from h5py first), then for each `(chunk, offsets)` places `cn.asarray(chunk)` at `out[r0:r0+chunk.shape[0], ...]` using each chunk's actual shape because boundary chunks are clipped. It ends with `get_legate_runtime().issue_execution_fence(block=True)`. It clarifies that `from_file_batched` chunks the source-file read, not the result \u2014 the preallocated array must still fit in distributed memory. It may note `from_file_batched` raises `ValueError` if `chunk_size` is non-positive or its length differs from the dataset rank.",
+        "id": "hdf5-005-batched-streaming",
+        "question": "I have a very large HDF5 dataset I can't read into host memory in one shot. How do I load it into a distributed cuPyNumeric array a chunk at a time?",
+        "should_trigger": true
+    },
+    {
+        "expected_behavior": [
+            "Identifies the missing dependency as h5py, required at module import time by legate.io.hdf5",
+            "Gives `conda install -c conda-forge h5py` as the fix",
+            "Notes h5py is not in the default cuPyNumeric env",
+            "Recommends the official conda-forge channel rather than an unverified source, and shows the command instead of silently running it for the user"
+        ],
+        "expected_script": null,
+        "expected_skill": "cupynumeric-hdf5",
+        "ground_truth": "The agent explains that `legate.io.hdf5` imports `h5py` at module load, so the whole module fails to import until h5py is installed. The fix is `conda install -c conda-forge h5py`. It notes h5py is not part of the default cuPyNumeric environment.  It does not run the install command itself.",
+        "id": "hdf5-006-h5py-prerequisite",
+        "question": "On a fresh cuPyNumeric env, `from legate.io.hdf5 import to_file` raises `ModuleNotFoundError: No module named 'h5py'`. cuPyNumeric and legate import fine. What do I need?",
+        "should_trigger": true
+    },
+    {
+        "expected_behavior": [
+            "Recommends `LEGATE_IO_USE_VFD_GDS=1` (or `legate --io-use-vfd-gds`) for reading HDF5 into GPU memory",
+            "States the recommendation holds regardless of whether the cluster has GPUDirect-capable storage (cuFile compatibility mode otherwise)",
+            "Explains the default path aborts on GPU arrays larger than the ~128 MB zero-copy-memory (ZCMEM) staging buffer",
+            "Notes the VFD GDS plugin is unnecessary for reads into host/CPU memory (leave it unset)",
+            "Attributes the GDS VFD to nv-legate/vfd-gds over NVIDIA cuFile (not KvikIO) and does not recommend disabling cuFile safety checks"
+        ],
+        "expected_script": null,
+        "expected_skill": "cupynumeric-hdf5",
+        "ground_truth": "The agent says to set `LEGATE_IO_USE_VFD_GDS=1` (or launch `legate --io-use-vfd-gds`) for any run that reads HDF5 into GPU memory, and to do so regardless of whether the cluster has GPUDirect-capable storage. The reason: the default POSIX VFD stages each GPU read through a zero-copy-memory (ZCMEM) buffer that Legate sizes at only 128 MB by default, so GPU reads of arrays larger than ~128 MB abort; the GDS VFD removes that staging buffer. Without GDS hardware, cuFile runs in compatibility mode automatically (`CUFILE_ALLOW_COMPAT_MODE=true`) and `=1` is still correct. For reads into host/CPU memory the VFD GDS plugin is unnecessary and should be left unset. The GDS VFD is the nv-legate/vfd-gds plugin over NVIDIA cuFile (not KvikIO); confirm it engaged via `H5FD__gds_open` in the run log.",
+        "id": "hdf5-007-gds-enable",
+        "question": "I'm running a multi-GPU cuPyNumeric job that reads large HDF5 datasets into GPU memory. What should I set for the HDF5 I/O path, and why?",
+        "should_trigger": true
+    },
+    {
+        "expected_behavior": [
+            "Identifies that the module path changed from `legate.core.io.hdf5` (25.03) to `legate.io.hdf5` (26.01+)",
+            "Gives the corrected import `from legate.io.hdf5 import from_file`",
+            "Notes the function names/signatures themselves are unchanged",
+            "Does not invent a compatibility shim or a third import path"
+        ],
+        "expected_script": null,
+        "expected_skill": "cupynumeric-hdf5",
+        "ground_truth": "The agent explains the HDF5 I/O module moved: it was `legate.core.io.hdf5` in the 25.03 line but is `legate.io.hdf5` in Legate 26.01 and newer. The fix is `from legate.io.hdf5 import from_file` (and `to_file`, `from_file_batched`). The function names and call signatures are otherwise unchanged.",
+        "id": "hdf5-008-import-path-migration",
+        "question": "I'm following an older cuPyNumeric tutorial that does `from legate.core.io.hdf5 import from_file`, but on my current install that raises ModuleNotFoundError. Has the API moved?",
+        "should_trigger": true
+    },
+    {
+        "expected_behavior": [
+            "Identifies that `path` must be a file (e.g. results/data.h5), not a directory, and that a directory raises ValueError",
+            "Notes to_file creates missing parent directories automatically",
+            "Warns that to_file overwrites the file at `path` if it already exists (data-loss risk)",
+            "Provides a corrected to_file call with a file path"
+        ],
+        "expected_script": null,
+        "expected_skill": "cupynumeric-hdf5",
+        "ground_truth": "The agent explains `path` must be a file path such as `results/data.h5`, not a directory; passing a directory raises `ValueError`. `to_file` writes a single HDF5 file (a virtual dataset across ranks), creates any missing parent directories automatically, and overwrites the file if it already exists. The fix is `to_file(array=a, path='results/data.h5', dataset_name='/data')`.",
+        "id": "hdf5-009-to-file-path-must-be-file",
+        "question": "`legate.io.hdf5.to_file(array=a, path='results/', dataset_name='/data')` raises a ValueError. I wanted everything written under the results directory. What's the correct usage?",
+        "should_trigger": true
+    },
+    {
+        "expected_behavior": [
+            "Identifies the in-tree cupynumeric/ package shadowing the installed one via sys.path / cwd",
+            "Tells the user to run from outside the source tree (e.g. cd /tmp)",
+            "States no reinstall is needed",
+            "Does not suggest deleting the in-tree package or globally editing PYTHONPATH"
+        ],
+        "expected_script": null,
+        "expected_skill": "cupynumeric-hdf5",
+        "ground_truth": "The agent explains the in-tree `cupynumeric/` directory in the repo root shadows the installed package, because Python puts the current working directory first on `sys.path`. The fix is to run the script from a directory outside the source tree (e.g. `cd /tmp`). No reinstall is needed and the installed cupynumeric is correct.",
+        "id": "hdf5-010-source-dir-shadowing",
+        "question": "I cloned the cuPyNumeric repo. When I run my HDF5 round-trip script from the repo root I get `ModuleNotFoundError: No module named 'cupynumeric.install_info'`, even though the conda env is active and cupynumeric is installed. What's going on?",
+        "should_trigger": true
+    },
+    {
+        "expected_behavior": [
+            "Explains dataset_name must be the full path to a single array, not a group",
+            "Gives a corrected from_file call with a full array path (e.g. /sim/run0/density)",
+            "Says to call from_file once per dataset to read several arrays",
+            "Suggests traversing the file with h5py to discover dataset paths when unknown",
+            "Uses only the documented from_file plus h5py traversal and does not invent a group or multi-array reader"
+        ],
+        "expected_script": null,
+        "expected_skill": "cupynumeric-hdf5",
+        "ground_truth": "The agent explains `dataset_name` must be the full path to a single array, not a group: `from_file('sim.h5', dataset_name='/sim/run0/density')`. To read multiple datasets, call `from_file` once per dataset path. If the dataset layout is unknown, traverse the file with h5py first (recursing into groups) to discover the full array paths, then call `from_file` for each.",
+        "id": "hdf5-011-dataset-name-full-path",
+        "question": "My HDF5 file has datasets grouped like `/sim/run0/density` and `/sim/run0/velocity`. `from_file('sim.h5', dataset_name='/sim/run0')` doesn't give me an array. How should I specify what to read?",
+        "should_trigger": true
+    },
+    {
+        "expected_behavior": [
+            "Recognizes this is a chunked object-store workflow, not a single-file HDF5 one",
+            "Points toward a chunked/cloud-native format (e.g. Zarr) rather than legate.io.hdf5",
+            "Does not claim legate.io.hdf5.to_file is the right tool for S3 chunked streaming"
+        ],
+        "expected_script": null,
+        "expected_skill": null,
+        "ground_truth": "This is a chunked, object-store use case, not single-file HDF5, so the HDF5 skill should not drive the answer. The useful answer points to a chunked/cloud-native format such as Zarr (handed to the zarr/xarray ecosystem) rather than `legate.io.hdf5`. The agent should not force HDF5 onto an object-store streaming workflow.",
+        "id": "hdf5-neg-001-zarr-object-store",
+        "question": "I want to write a cuPyNumeric array to S3-compatible object storage in chunks so downstream Dask/Xarray jobs can stream from it. What should I use?",
+        "should_trigger": false
+    },
+    {
+        "expected_behavior": [
+            "Answers with plain h5py (`h5py.File(...)` then slice the dataset) for a NumPy array",
+            "Does not introduce legate.io.hdf5, cuPyNumeric, or execution fences into a pure-NumPy/h5py task"
+        ],
+        "expected_script": null,
+        "expected_skill": null,
+        "ground_truth": "There is no cuPyNumeric or Legate in play, so the distributed legate.io.hdf5 skill does not apply. The useful answer is plain h5py: `with h5py.File(path) as f: arr = f['dataset'][:]`. The agent should answer with standard h5py usage and not pull in legate.io.hdf5 or cuPyNumeric.",
+        "id": "hdf5-neg-002-plain-h5py-no-legate",
+        "question": "In a plain Python script with just NumPy and h5py (no cuPyNumeric or Legate anywhere), what's the simplest way to read a dataset from an .h5 file into a NumPy array?",
+        "should_trigger": false
+    },
+    {
+        "expected_behavior": [
+            "Treats this as a cuPyNumeric compute question (fft2 + max normalization)",
+            "Does not bring in legate.io.hdf5, to_file/from_file, or file-I/O fences"
+        ],
+        "expected_script": null,
+        "expected_skill": null,
+        "ground_truth": "This is a compute question about cuPyNumeric array operations (FFT and reduction), not HDF5 file I/O, so the HDF5 skill should not trigger. The useful answer uses `cupynumeric.fft.fft2` and divides by `arr.max()`, with no reference to legate.io.hdf5, to_file/from_file, or execution fences.",
+        "id": "hdf5-neg-003-compute-not-io",
+        "question": "How do I compute a 2D FFT of a large cuPyNumeric array and then normalize it by its max?",
+        "should_trigger": false
+    },
+    {
+        "expected_behavior": [
+            "Recognizes Parquet/tabular output is out of scope for the HDF5 skill",
+            "Routes to the cupynumeric-parallel-data-load skill (or states HDF5 is not the right API) rather than legate.io.hdf5",
+            "Does not recommend the unsupported legate-dataframe package",
+            "Does not claim legate.io.hdf5 produces Parquet files"
+        ],
+        "expected_script": null,
+        "expected_skill": null,
+        "ground_truth": "Parquet/tabular interchange is outside this single-array HDF5 skill. The useful answer routes to the cupynumeric-parallel-data-load skill \u2014 which owns cuPyNumeric's no-built-in-loader paths for Parquet/Arrow/custom layouts \u2014 or simply states that HDF5 is not the right API. It does not recommend legate-dataframe (not supported), and does not suggest writing a Parquet column via the HDF5 API.",
+        "id": "hdf5-neg-004-parquet-cudf",
+        "question": "I have a cuPyNumeric array I want to expose as a column in a Parquet dataset that the cuDF team will load. What's the right path?",
+        "should_trigger": false
+    },
+    {
+        "expected_behavior": [
+            "Loads the archive with `np.load(...)` and bridges each array with `cn.asarray(...)`",
+            "Recognizes .npz is a NumPy zip archive, not HDF5, and does not route it through legate.io.hdf5.from_file"
+        ],
+        "expected_script": null,
+        "expected_skill": null,
+        "ground_truth": "A `.npz` file is a NumPy zip archive, not HDF5, so legate.io.hdf5 does not apply. The useful answer opens it with `np.load('results.npz')` and bridges each array with `cn.asarray(npz[name])`. The agent should not route this through `legate.io.hdf5.from_file`, which reads HDF5 datasets only.",
+        "id": "hdf5-neg-005-npz-archive",
+        "question": "I have a results.npz archive with several named NumPy arrays. How do I load them into cuPyNumeric arrays?",
+        "should_trigger": false
+    },
+    {
+        "expected_behavior": [
+            "Reads the raw bytes with NumPy (`np.fromfile`/`np.frombuffer`) past the header, then bridges with `cn.asarray(...)`",
+            "Recognizes raw flat binary is not HDF5 and does not claim legate.io.hdf5.from_file reads arbitrary binary"
+        ],
+        "expected_script": null,
+        "expected_skill": null,
+        "ground_truth": "A proprietary flat-binary file is not HDF5, so legate.io.hdf5 does not apply. The useful answer reads the bytes with NumPy (`np.fromfile(path, dtype=np.float32, offset=header_bytes)` or `np.frombuffer`), reshapes, and bridges with `cn.asarray(...)`; for large/sharded or distributed loads it routes to the cupynumeric-parallel-data-load skill (which owns raw-binary/custom layouts), not `legate.io.hdf5`. The agent should not claim `from_file` reads arbitrary binary.",
+        "id": "hdf5-neg-006-raw-binary",
+        "question": "I have a proprietary flat binary file: a small header followed by a row-major float32 array. How do I read it into a cuPyNumeric array?",
+        "should_trigger": false
+    }
+]

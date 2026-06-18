@@ -1,0 +1,28 @@
+schema_version: 1
+
+harbor:
+  # Drive eval tasks from evals/evals.json (the dataset in this folder).
+  task_source: evals_json
+  custom_dockerfile_mode: rebase
+  base_image_mode: reuse
+  # P0 smoke settings: keep the suite well under the 1-hour NV-CARPS CI limit.
+  # stop_on_pass + timeout_multiplier 1.0 keep runtime small for first onboarding;
+  # raise n_attempts / timeout_multiplier once the publish path is stable.
+  n_attempts: 3
+  pass_threshold: 0.60
+  stop_on_pass: true
+  n_concurrent: 4
+  max_agents: 2
+  timeout_multiplier: 1.0
+  # No runtime secrets or pre-agent setup: cudaq-guide is read-only (Read/Glob/Grep)
+  # and needs no credentials or external services to run.
+
+skill_workspace:
+  # cudaq-guide is self-contained for eval purposes: every ground_truth here is
+  # answerable from SKILL.md (routing tables + target descriptions), so only the
+  # target skill needs to be staged.
+  mode: isolated
+  include: []
+
+grading:
+  mode: aces_default

@@ -1,0 +1,78 @@
+name: ocrnet-deploy
+type: model
+network_arch: ocrnet
+container_image: tao_toolkit.deploy
+data_format: default
+actions:
+  gen_trt_engine:
+    command: ocrnet gen_trt_engine -e {config_path}
+    config_format: yaml
+    inputs:
+      gen_trt_engine.onnx_file:
+        type: file
+      dataset.character_list_file:
+        type: file
+    outputs:
+      results_dir:
+        type: folder
+      gen_trt_engine.trt_engine:
+        type: file
+    upload_excludes:
+    - inputs/
+  evaluate:
+    command: ocrnet evaluate -e {config_path}
+    config_format: yaml
+    inputs:
+      evaluate.trt_engine:
+        type: file
+      evaluate.test_dataset_dir:
+        type: folder
+      dataset.character_list_file:
+        type: file
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  inference:
+    command: ocrnet inference -e {config_path}
+    config_format: yaml
+    inputs:
+      inference.trt_engine:
+        type: file
+      inference.inference_dataset_dir:
+        type: folder
+      dataset.character_list_file:
+        type: file
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+spec_params:
+  gen_trt_engine:
+    results_dir: output_dir
+    gen_trt_engine.onnx_file: parent_model
+    gen_trt_engine.trt_engine: create_engine_file
+  evaluate:
+    results_dir: output_dir
+    evaluate.trt_engine: parent_model
+  inference:
+    results_dir: output_dir
+    inference.trt_engine: parent_model
+spec_shorthand_keys:
+  trt_data_type: gen_trt_engine.tensorrt.data_type
+  trt_engine: gen_trt_engine.trt_engine
+  batch_size: dataset.batch_size
+description: OCRNet deploy workflow for gen_trt_engine, evaluate, inference using
+  TAO Deploy.
+spec_templates:
+  gen_trt_engine: spec_template_deploy_experiment.yaml
+  evaluate: spec_template_deploy_experiment.yaml
+  inference: spec_template_deploy_experiment.yaml
+notes:
+- OCRNet deploy uses the shared experiment spec for all three actions.
+- Use FP16 for the starter-kit TensorRT engine path when the target hardware supports
+  it.
+- Keep `dataset.input_width`, `dataset.input_height`, `dataset.input_channel`, and
+  `dataset.character_list_file` aligned with training/export.

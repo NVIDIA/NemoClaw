@@ -1,0 +1,7 @@
+{
+  "case_id": "synthetic-cxr-smoke",
+  "image_path": "generated://synthetic_chest_xray",
+  "prompt": "Find abnormalities and support devices.",
+  "mock": true,
+  "mock_response": "Mock NV-Reason-CXR response for a generated synthetic chest X-ray image. No clinical finding is asserted; this response only verifies image handling, prompt wiring, JSON output, and evidence-pack gates."
+}

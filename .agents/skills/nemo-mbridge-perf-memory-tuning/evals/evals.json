@@ -1,0 +1,16 @@
+[
+  {
+    "id": "memory-tuning-positive-oom-smoke",
+    "question": "Use the nemo-mbridge-perf-memory-tuning skill. For a Megatron Bridge Llama3 70B SFT run on 32x H100 with TP=4, PP=4, VPP=5, DP=2 that OOMs around 58.8 GB, what exact memory fix should I try first, and why should I not treat VPP, TP=8, or CPU offloading as the first fix?",
+    "expected_skill": "nemo-mbridge-perf-memory-tuning",
+    "expected_script": null,
+    "ground_truth": "The answer should use the memory tuning skill and say the first fix is export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True because the measured Llama3 70B OOM was fragmentation, not raw capacity. It should state that VPP is a throughput/pipeline-bubble knob and does not materially reduce peak memory, TP=8 is a last resort because it caused a severe throughput regression, PP=8 reduces memory but can lose DP and hurt throughput, and CPU offloading is blocked when pipeline_model_parallel_size > 1. It can mention activation recompute as a later option with throughput cost.",
+    "expected_behavior": [
+      "Read the nemo-mbridge-perf-memory-tuning skill before answering.",
+      "Identify the measured OOM as a fragmentation-style memory problem.",
+      "Recommend PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True as the first fix.",
+      "Explain why VPP is not a peak-memory fix.",
+      "Warn that TP=8, PP=8, CPU offload, and activation recompute have specific throughput or compatibility costs."
+    ]
+  }
+]

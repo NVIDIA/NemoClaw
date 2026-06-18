@@ -1,0 +1,1324 @@
+{
+  "automl_default_parameters": [
+    "train.optim.lr_steps"
+  ],
+  "automl_disabled_parameters": [
+    "train.cudnn",
+    "evaluate",
+    "inference",
+    "train",
+    "re_ranking",
+    "train.gpu_ids",
+    "export",
+    "model",
+    "wandb",
+    "wandb.tags",
+    "dataset",
+    "inference.gpu_ids",
+    "evaluate.gpu_ids",
+    "train.optim",
+    "dataset.pixel_std",
+    "dataset.pixel_mean",
+    "model.stride_size"
+  ],
+  "default": {
+    "dataset": {
+      "batch_size": 64,
+      "num_classes": 751,
+      "num_instances": 4,
+      "num_workers": 8,
+      "padding": 10,
+      "pixel_mean": [
+        0.485,
+        0.456,
+        0.406
+      ],
+      "pixel_std": [
+        0.226,
+        0.226,
+        0.226
+      ],
+      "prob": 0.5,
+      "query_dataset_dir": "",
+      "re_prob": 0.5,
+      "sampler": "softmax_triplet",
+      "test_dataset_dir": "",
+      "train_dataset_dir": "",
+      "val_batch_size": 128
+    },
+    "encryption_key": "",
+    "inference": {
+      "batch_size": -1,
+      "checkpoint": "???",
+      "gpu_ids": [
+        0
+      ],
+      "num_gpus": 1,
+      "num_nodes": 1,
+      "output_file": "",
+      "query_dataset": "",
+      "results_dir": "",
+      "test_dataset": "",
+      "trt_engine": ""
+    },
+    "model": {
+      "att_drop_rate": 0.0,
+      "backbone": "resnet_50",
+      "cos_layer": false,
+      "devide_length": 4,
+      "drop_out": 0.0,
+      "drop_path": 0.1,
+      "dropout_rate": 0.0,
+      "feat_dim": 256,
+      "gem_pooling": false,
+      "id_loss_type": "softmax",
+      "id_loss_weight": 1.0,
+      "input_channels": 3,
+      "input_height": 256,
+      "input_width": 128,
+      "jpm": false,
+      "label_smooth": true,
+      "last_stride": 1,
+      "metric_loss_type": "triplet",
+      "neck": "bnneck",
+      "neck_feat": "after",
+      "no_margin": false,
+      "pretrain_choice": "imagenet",
+      "pretrain_hw_ratio": 2.0,
+      "pretrained_model_path": "",
+      "re_arrange": true,
+      "reduce_feat_dim": false,
+      "semantic_weight": 1.0,
+      "shift_num": 5,
+      "shuffle_group": 2,
+      "sie_camera": false,
+      "sie_coe": 3.0,
+      "sie_view": false,
+      "stem_conv": false,
+      "stride_size": [
+        16,
+        16
+      ],
+      "triplet_loss_weight": 1.0,
+      "with_center_loss": false,
+      "with_flip_feature": false
+    },
+    "model_name": "",
+    "re_ranking": {
+      "k1": 20,
+      "k2": 6,
+      "lambda_value": 0.3,
+      "max_rank": 10,
+      "num_query": 10,
+      "re_ranking": false
+    },
+    "results_dir": "",
+    "train": {
+      "checkpoint_interval": 1,
+      "checkpoint_interval_unit": "epoch",
+      "cudnn": {
+        "benchmark": false,
+        "deterministic": true
+      },
+      "gpu_ids": [
+        0
+      ],
+      "grad_clip": 0.0,
+      "num_epochs": 10,
+      "num_gpus": 1,
+      "num_nodes": 1,
+      "optim": {
+        "base_lr": 0.00035,
+        "bias_lr_factor": 1.0,
+        "center_loss_weight": 0.0005,
+        "center_lr": 0.5,
+        "cosine_margin": 0.5,
+        "cosine_scale": 30.0,
+        "gamma": 0.1,
+        "large_fc_lr": false,
+        "lr_monitor": "val_loss",
+        "lr_steps": [
+          40,
+          70
+        ],
+        "momentum": 0.9,
+        "name": "Adam",
+        "triplet_loss_margin": 0.3,
+        "trp_l2": false,
+        "warmup_epochs": 20,
+        "warmup_factor": 0.01,
+        "warmup_iters": 10,
+        "warmup_method": "linear",
+        "weight_decay": 0.0005,
+        "weight_decay_bias": 0.0005
+      },
+      "results_dir": "",
+      "resume_training_checkpoint_path": "",
+      "seed": 1234,
+      "validation_interval": 1
+    },
+    "wandb": {
+      "enable": true,
+      "entity": "",
+      "group": "",
+      "name": "TAO Toolkit Training",
+      "project": "TAO Toolkit",
+      "reinit": false,
+      "run_id": "",
+      "save_code": false,
+      "sync_tensorboard": false,
+      "tags": [
+        "tao-toolkit"
+      ]
+    }
+  },
+  "popular": {
+    "dataset": {
+      "batch_size": 64,
+      "num_classes": 751,
+      "num_instances": 4,
+      "num_workers": 8,
+      "val_batch_size": 128
+    },
+    "evaluate": {
+      "gpu_ids": [
+        0
+      ],
+      "num_gpus": 1,
+      "num_nodes": 1
+    },
+    "inference": {
+      "gpu_ids": [
+        0
+      ],
+      "num_gpus": 1,
+      "num_nodes": 1
+    },
+    "model": {
+      "backbone": "resnet_50"
+    },
+    "re_ranking": {
+      "k1": 20,
+      "k2": 6,
+      "max_rank": 10,
+      "num_query": 10
+    },
+    "train": {
+      "checkpoint_interval": 1,
+      "gpu_ids": [
+        0
+      ],
+      "num_epochs": 10,
+      "num_gpus": 1,
+      "num_nodes": 1,
+      "validation_interval": 1
+    }
+  },
+  "properties": {
+    "automl_disabled_parameters": [
+      "wandb",
+      "model",
+      "dataset",
+      "train",
+      "evaluate",
+      "inference",
+      "export",
+      "re_ranking"
+    ],
+    "dataset": {
+      "automl_disabled_parameters": [
+        "dataset.pixel_mean",
+        "dataset.pixel_std"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "batch_size": 64,
+        "num_classes": 751,
+        "num_instances": 4,
+        "num_workers": 8,
+        "padding": 10,
+        "pixel_mean": [
+          0.485,
+          0.456,
+          0.406
+        ],
+        "pixel_std": [
+          0.226,
+          0.226,
+          0.226
+        ],
+        "prob": 0.5,
+        "query_dataset_dir": "",
+        "re_prob": 0.5,
+        "sampler": "softmax_triplet",
+        "test_dataset_dir": "",
+        "train_dataset_dir": "",
+        "val_batch_size": 128
+      },
+      "description": "Configurable parameters to construct the dataset for a Re-Identification experiment.",
+      "popular": [
+        "num_instances",
+        "val_batch_size",
+        "batch_size",
+        "num_workers",
+        "num_classes"
+      ],
+      "properties": {
+        "batch_size": {
+          "default": 64,
+          "description": "Batch size.",
+          "maximum": Infinity,
+          "minimum": 1,
+          "popular": true,
+          "title": "Batch Size",
+          "type": "int"
+        },
+        "num_classes": {
+          "default": 751,
+          "description": "Number of classes.",
+          "maximum": Infinity,
+          "minimum": 1,
+          "popular": true,
+          "title": "Number of Classes",
+          "type": "int"
+        },
+        "num_instances": {
+          "default": 4,
+          "description": "Number of instances per class in a batch.",
+          "maximum": Infinity,
+          "minimum": 4,
+          "popular": true,
+          "title": "Number of Instances",
+          "type": "int"
+        },
+        "num_workers": {
+          "default": 8,
+          "description": "Number of workers.",
+          "maximum": Infinity,
+          "minimum": 1,
+          "popular": true,
+          "title": "Workers",
+          "type": "int"
+        },
+        "padding": {
+          "default": 10,
+          "description": "Padding size.",
+          "maximum": 10,
+          "minimum": 0,
+          "title": "Padding",
+          "type": "int"
+        },
+        "pixel_mean": {
+          "automl_enabled": false,
+          "default": [
+            0.485,
+            0.456,
+            0.406
+          ],
+          "description": "Mean values for normalization.",
+          "title": "Pixel Mean",
+          "type": "list"
+        },
+        "pixel_std": {
+          "automl_enabled": false,
+          "default": [
+            0.226,
+            0.226,
+            0.226
+          ],
+          "description": "Standard deviation values for normalization.",
+          "title": "Pixel Standard Deviation",
+          "type": "list"
+        },
+        "prob": {
+          "default": 0.5,
+          "description": "Probability for certain augmentations.",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Probability",
+          "type": "float"
+        },
+        "query_dataset_dir": {
+          "default": "",
+          "description": "Directory for the query dataset.",
+          "title": "Query Dataset Directory",
+          "type": "string"
+        },
+        "re_prob": {
+          "default": 0.5,
+          "description": "Probability for re-augmentation.",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Re-augmentation Probability",
+          "type": "float"
+        },
+        "sampler": {
+          "default": "softmax_triplet",
+          "description": "Type of sampler used for selecting instances.",
+          "title": "Sampler Type",
+          "type": "string"
+        },
+        "test_dataset_dir": {
+          "default": "",
+          "description": "Directory for the testing dataset.",
+          "title": "Testing Dataset Directory",
+          "type": "string"
+        },
+        "train_dataset_dir": {
+          "default": "",
+          "description": "Directory for the training dataset.",
+          "title": "Training Dataset Directory",
+          "type": "string"
+        },
+        "val_batch_size": {
+          "default": 128,
+          "description": "Validation Batch size.",
+          "maximum": Infinity,
+          "minimum": 1,
+          "popular": true,
+          "title": "Validation Batch Size",
+          "type": "int"
+        }
+      },
+      "type": "collection"
+    },
+    "encryption_key": {
+      "default": "",
+      "description": "Key for encrypting model checkpoints",
+      "title": "Encryption key",
+      "type": "string"
+    },
+    "inference": {
+      "automl_disabled_parameters": [
+        "inference.gpu_ids"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "batch_size": -1,
+        "checkpoint": "???",
+        "gpu_ids": [
+          0
+        ],
+        "num_gpus": 1,
+        "num_nodes": 1,
+        "output_file": "",
+        "query_dataset": "",
+        "results_dir": "",
+        "test_dataset": "",
+        "trt_engine": ""
+      },
+      "description": "Configurable parameters to construct the inferencer for a Re-Identification experiment.",
+      "popular": [
+        "num_gpus",
+        "num_nodes",
+        "gpu_ids"
+      ],
+      "properties": {
+        "batch_size": {
+          "default": -1,
+          "description": "The batch size of the input Tensor. This is important if batch_size > 1 for large dataset.",
+          "minimum": -1,
+          "title": "batch size",
+          "type": "int"
+        },
+        "checkpoint": {
+          "default": "???",
+          "description": "Path to the checkpoint used for inference.",
+          "title": "Checkpoint path",
+          "type": "string"
+        },
+        "gpu_ids": {
+          "automl_enabled": false,
+          "default": [
+            0
+          ],
+          "description": "\n        List of GPU IDs to run the inference on. The length of this list\n        must be equal to the number of gpus in inference.num_gpus.",
+          "popular": true,
+          "title": "GPU IDs",
+          "type": "list"
+        },
+        "num_gpus": {
+          "default": 1,
+          "description": "The number of GPUs to run the inference job.",
+          "minimum": 1,
+          "popular": true,
+          "title": "Number of GPUs",
+          "type": "int"
+        },
+        "num_nodes": {
+          "default": 1,
+          "description": "Number of nodes to run the inference on. If > 1, then multi-node is enabled.",
+          "minimum": 1,
+          "popular": true,
+          "title": "Number of nodes",
+          "type": "int"
+        },
+        "output_file": {
+          "default": "",
+          "description": "File path for output json results.",
+          "title": "Output JSON File Path",
+          "type": "string"
+        },
+        "query_dataset": {
+          "default": "",
+          "description": "Directory for the query dataset.",
+          "title": "Query Dataset Directory",
+          "type": "string"
+        },
+        "results_dir": {
+          "default": "",
+          "description": "\n        Path to where all the assets generated from a task are stored.\n        ",
+          "title": "Results directory",
+          "type": "string"
+        },
+        "test_dataset": {
+          "default": "",
+          "description": "Directory for the testing dataset.",
+          "title": "Test Dataset Directory",
+          "type": "string"
+        },
+        "trt_engine": {
+          "default": "",
+          "description": "Path to the TensorRT engine to be used for inference.\n                    This only works with :code:`tao-deploy`.",
+          "title": "TensorRT Engine",
+          "type": "string"
+        }
+      },
+      "type": "collection"
+    },
+    "model": {
+      "automl_disabled_parameters": [
+        "model.stride_size"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "att_drop_rate": 0.0,
+        "backbone": "resnet_50",
+        "cos_layer": false,
+        "devide_length": 4,
+        "drop_out": 0.0,
+        "drop_path": 0.1,
+        "dropout_rate": 0.0,
+        "feat_dim": 256,
+        "gem_pooling": false,
+        "id_loss_type": "softmax",
+        "id_loss_weight": 1.0,
+        "input_channels": 3,
+        "input_height": 256,
+        "input_width": 128,
+        "jpm": false,
+        "label_smooth": true,
+        "last_stride": 1,
+        "metric_loss_type": "triplet",
+        "neck": "bnneck",
+        "neck_feat": "after",
+        "no_margin": false,
+        "pretrain_choice": "imagenet",
+        "pretrain_hw_ratio": 2.0,
+        "pretrained_model_path": "",
+        "re_arrange": true,
+        "reduce_feat_dim": false,
+        "semantic_weight": 1.0,
+        "shift_num": 5,
+        "shuffle_group": 2,
+        "sie_camera": false,
+        "sie_coe": 3.0,
+        "sie_view": false,
+        "stem_conv": false,
+        "stride_size": [
+          16,
+          16
+        ],
+        "triplet_loss_weight": 1.0,
+        "with_center_loss": false,
+        "with_flip_feature": false
+      },
+      "description": "Configurable parameters to construct the model for a Re-Identification experiment.",
+      "popular": [
+        "backbone"
+      ],
+      "properties": {
+        "att_drop_rate": {
+          "default": 0.0,
+          "description": "Attention dropout rate.",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Attention Drop Rate",
+          "type": "float"
+        },
+        "backbone": {
+          "default": "resnet_50",
+          "description": "Backbone type.",
+          "popular": true,
+          "title": "Backbone Type",
+          "type": "string"
+        },
+        "cos_layer": {
+          "default": false,
+          "description": "Whether cosine layer is used for the output.",
+          "title": "Cosine Layer",
+          "type": "bool"
+        },
+        "devide_length": {
+          "default": 4,
+          "description": "Length for division in the re-arrangement process.",
+          "maximum": 4,
+          "minimum": 4,
+          "title": "Divide Length",
+          "type": "int"
+        },
+        "drop_out": {
+          "default": 0.0,
+          "description": "Dropout probability.",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Drop Out",
+          "type": "float"
+        },
+        "drop_path": {
+          "default": 0.1,
+          "description": "Drop path probability.",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Drop Path",
+          "type": "float"
+        },
+        "dropout_rate": {
+          "default": 0.0,
+          "description": "Dropout rate applied in the model.",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Dropout Rate",
+          "type": "float"
+        },
+        "feat_dim": {
+          "default": 256,
+          "description": "Dimension of the feature vector.",
+          "maximum": 768,
+          "minimum": 32,
+          "title": "Feature Dimension",
+          "type": "int"
+        },
+        "gem_pooling": {
+          "default": false,
+          "description": "Whether generalized mean pooling is used.",
+          "title": "GEM Pooling",
+          "type": "bool"
+        },
+        "id_loss_type": {
+          "default": "softmax",
+          "description": "Type of ID loss used.",
+          "title": "ID Loss Type",
+          "type": "string"
+        },
+        "id_loss_weight": {
+          "default": 1.0,
+          "description": "Weight of the ID loss.",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "ID Loss Weight",
+          "type": "float"
+        },
+        "input_channels": {
+          "default": 3,
+          "description": "Number of input channels.",
+          "maximum": 3,
+          "minimum": 3,
+          "title": "Input Channels",
+          "type": "int"
+        },
+        "input_height": {
+          "default": 256,
+          "description": "Height of the input image.",
+          "maximum": 256,
+          "minimum": 256,
+          "title": "Input Height",
+          "type": "int"
+        },
+        "input_width": {
+          "default": 128,
+          "description": "Width of the input image.",
+          "maximum": 128,
+          "minimum": 128,
+          "title": "Input Width",
+          "type": "int"
+        },
+        "jpm": {
+          "default": false,
+          "description": "Whether Joint Part and Global feature learning module is enabled.",
+          "title": "JPM",
+          "type": "bool"
+        },
+        "label_smooth": {
+          "default": true,
+          "description": "Whether label smoothing is applied.",
+          "title": "Label Smooth",
+          "type": "bool"
+        },
+        "last_stride": {
+          "default": 1,
+          "description": "Stride size of the last layer of the backbone.",
+          "maximum": 1,
+          "minimum": 1,
+          "title": "Last Stride",
+          "type": "int"
+        },
+        "metric_loss_type": {
+          "default": "triplet",
+          "description": "Type of metric loss used.",
+          "title": "Metric Loss Type",
+          "type": "string"
+        },
+        "neck": {
+          "default": "bnneck",
+          "description": "Type of neck used in the model architecture.",
+          "title": "Neck Type",
+          "type": "string"
+        },
+        "neck_feat": {
+          "default": "after",
+          "description": "Position of the feature extraction in the neck.",
+          "title": "Neck Feature Position",
+          "type": "string"
+        },
+        "no_margin": {
+          "default": false,
+          "description": "Whether margin is used in loss computation.",
+          "title": "No Margin",
+          "type": "bool"
+        },
+        "pretrain_choice": {
+          "default": "imagenet",
+          "description": "Source of pretraining.",
+          "title": "Pretrain Choice",
+          "type": "string"
+        },
+        "pretrain_hw_ratio": {
+          "default": 2.0,
+          "description": "Height-width ratio of the pretraining model.",
+          "maximum": 2.0,
+          "minimum": 2.0,
+          "title": "Pretrain HW Ratio",
+          "type": "float"
+        },
+        "pretrained_model_path": {
+          "default": "",
+          "description": "Path to the pretrained model file.",
+          "title": "Pretrained Model Path",
+          "type": "string"
+        },
+        "re_arrange": {
+          "default": true,
+          "description": "Whether to re-arrange elements in some pattern.",
+          "title": "Re-arrange",
+          "type": "bool"
+        },
+        "reduce_feat_dim": {
+          "default": false,
+          "description": "Whether feature dimension reduction is applied.",
+          "title": "Reduce Feature Dimension",
+          "type": "bool"
+        },
+        "semantic_weight": {
+          "default": 1.0,
+          "description": "Weight for the semantic component in loss calculation.",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Semantic Weight",
+          "type": "float"
+        },
+        "shift_num": {
+          "default": 5,
+          "description": "Number of positions to shift in shift layer.",
+          "maximum": 5,
+          "minimum": 5,
+          "title": "Shift Number",
+          "type": "int"
+        },
+        "shuffle_group": {
+          "default": 2,
+          "description": "Number of groups for channel shuffling.",
+          "maximum": 2,
+          "minimum": 2,
+          "title": "Shuffle Group",
+          "type": "int"
+        },
+        "sie_camera": {
+          "default": false,
+          "description": "Whether camera-based Spatial Information Enhancement is used.",
+          "title": "SIE Camera",
+          "type": "bool"
+        },
+        "sie_coe": {
+          "default": 3.0,
+          "description": "Coefficient for scaling in SIE module.",
+          "maximum": Infinity,
+          "minimum": 0.0,
+          "title": "SIE Coefficient",
+          "type": "float"
+        },
+        "sie_view": {
+          "default": false,
+          "description": "Whether view-based Spatial Information Enhancement is used.",
+          "title": "SIE View",
+          "type": "bool"
+        },
+        "stem_conv": {
+          "default": false,
+          "description": "Whether a convolutional stem is used at the model input.",
+          "title": "Stem Convolution",
+          "type": "bool"
+        },
+        "stride_size": {
+          "automl_enabled": false,
+          "default": [
+            16,
+            16
+          ],
+          "description": "Size of stride in the convolution layers.",
+          "title": "Stride Size",
+          "type": "list"
+        },
+        "triplet_loss_weight": {
+          "default": 1.0,
+          "description": "Weight of the triplet loss.",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Triplet Loss Weight",
+          "type": "float"
+        },
+        "with_center_loss": {
+          "default": false,
+          "description": "Whether center loss is used.",
+          "title": "Center Loss",
+          "type": "bool"
+        },
+        "with_flip_feature": {
+          "default": false,
+          "description": "Whether flip feature is enabled.",
+          "title": "Flip Feature",
+          "type": "bool"
+        }
+      },
+      "type": "collection"
+    },
+    "model_name": {
+      "default": "",
+      "description": "Name of model if invoking task via :code:`model_agnostic`",
+      "title": "Model name",
+      "type": "string"
+    },
+    "re_ranking": {
+      "automl_enabled": false,
+      "default": {
+        "k1": 20,
+        "k2": 6,
+        "lambda_value": 0.3,
+        "max_rank": 10,
+        "num_query": 10,
+        "re_ranking": false
+      },
+      "description": "Configurable parameters to construct the re-ranking parameters for a Re-Identification experiment.",
+      "popular": [
+        "max_rank",
+        "k1",
+        "num_query",
+        "k2"
+      ],
+      "properties": {
+        "k1": {
+          "default": 20,
+          "description": "The number of top-k candidates in the first round of re-ranking.",
+          "maximum": 20,
+          "minimum": 20,
+          "popular": true,
+          "title": "K1",
+          "type": "int"
+        },
+        "k2": {
+          "default": 6,
+          "description": "The number of top-k candidates in the second round of re-ranking.",
+          "maximum": 6,
+          "minimum": 6,
+          "popular": true,
+          "title": "K2",
+          "type": "int"
+        },
+        "lambda_value": {
+          "default": 0.3,
+          "description": "The lambda value for balancing the original and Jaccard distance in re-ranking.",
+          "maximum": 0.3,
+          "minimum": 0.0,
+          "title": "Lambda Value",
+          "type": "float"
+        },
+        "max_rank": {
+          "default": 10,
+          "description": "The maximum rank considered in re-ranking.",
+          "maximum": 10,
+          "minimum": 10,
+          "popular": true,
+          "title": "Max Rank",
+          "type": "int"
+        },
+        "num_query": {
+          "default": 10,
+          "description": "The number of query images used in re-ranking.",
+          "maximum": 10,
+          "minimum": 10,
+          "popular": true,
+          "title": "Number of Queries",
+          "type": "int"
+        },
+        "re_ranking": {
+          "default": false,
+          "description": "Enable or disable re-ranking.",
+          "title": "Re-Ranking",
+          "type": "bool"
+        }
+      },
+      "type": "collection"
+    },
+    "results_dir": {
+      "default": "",
+      "description": "\n        Path to where all the assets generated from a task are stored.\n        ",
+      "title": "Results directory",
+      "type": "string"
+    },
+    "train": {
+      "automl_disabled_parameters": [
+        "train.gpu_ids",
+        "train.cudnn",
+        "train.optim"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "checkpoint_interval": 1,
+        "checkpoint_interval_unit": "epoch",
+        "cudnn": {
+          "benchmark": false,
+          "deterministic": true
+        },
+        "gpu_ids": [
+          0
+        ],
+        "grad_clip": 0.0,
+        "num_epochs": 10,
+        "num_gpus": 1,
+        "num_nodes": 1,
+        "optim": {
+          "base_lr": 0.00035,
+          "bias_lr_factor": 1.0,
+          "center_loss_weight": 0.0005,
+          "center_lr": 0.5,
+          "cosine_margin": 0.5,
+          "cosine_scale": 30.0,
+          "gamma": 0.1,
+          "large_fc_lr": false,
+          "lr_monitor": "val_loss",
+          "lr_steps": [
+            40,
+            70
+          ],
+          "momentum": 0.9,
+          "name": "Adam",
+          "triplet_loss_margin": 0.3,
+          "trp_l2": false,
+          "warmup_epochs": 20,
+          "warmup_factor": 0.01,
+          "warmup_iters": 10,
+          "warmup_method": "linear",
+          "weight_decay": 0.0005,
+          "weight_decay_bias": 0.0005
+        },
+        "results_dir": "",
+        "resume_training_checkpoint_path": "",
+        "seed": 1234,
+        "validation_interval": 1
+      },
+      "description": "Configurable parameters to construct the trainer for a Re-Identification experiment.",
+      "popular": [
+        "validation_interval",
+        "checkpoint_interval",
+        "num_gpus",
+        "num_nodes",
+        "num_epochs",
+        "gpu_ids"
+      ],
+      "properties": {
+        "checkpoint_interval": {
+          "default": 1,
+          "description": "The interval (in epochs) at which a checkpoint will be saved. Helps resume training.",
+          "minimum": 1,
+          "popular": true,
+          "title": "Checkpoint interval",
+          "type": "int"
+        },
+        "checkpoint_interval_unit": {
+          "default": "epoch",
+          "description": "The unit of the checkpoint interval.",
+          "enum": [
+            "epoch",
+            "step"
+          ],
+          "title": "Checkpoint interval unit",
+          "type": "categorical"
+        },
+        "cudnn": {
+          "automl_enabled": false,
+          "default": {
+            "benchmark": false,
+            "deterministic": true
+          },
+          "properties": {
+            "benchmark": {
+              "default": false,
+              "type": "bool"
+            },
+            "deterministic": {
+              "default": true,
+              "type": "bool"
+            }
+          },
+          "type": "collection"
+        },
+        "gpu_ids": {
+          "automl_enabled": false,
+          "default": [
+            0
+          ],
+          "description": "\n        List of GPU IDs to run the training on. The length of this list\n        must be equal to the number of gpus in train.num_gpus.",
+          "popular": true,
+          "title": "GPU IDs",
+          "type": "list"
+        },
+        "grad_clip": {
+          "default": 0.0,
+          "description": "Maximum norm of the gradients for clipping.",
+          "maximum": Infinity,
+          "minimum": 0.0,
+          "title": "Gradient Clipping",
+          "type": "float"
+        },
+        "num_epochs": {
+          "default": 10,
+          "description": "Number of epochs to run the training.",
+          "maximum": Infinity,
+          "minimum": 1,
+          "popular": true,
+          "title": "Number of epochs",
+          "type": "int"
+        },
+        "num_gpus": {
+          "default": 1,
+          "description": "The number of GPUs to run the train job.",
+          "minimum": 1,
+          "popular": true,
+          "title": "Number of GPUs",
+          "type": "int"
+        },
+        "num_nodes": {
+          "default": 1,
+          "description": "Number of nodes to run the training on. If > 1, then multi-node is enabled.",
+          "minimum": 1,
+          "popular": true,
+          "title": "Number of nodes",
+          "type": "int"
+        },
+        "optim": {
+          "automl_default_parameters": [
+            "train.optim.lr_steps"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "base_lr": 0.00035,
+            "bias_lr_factor": 1.0,
+            "center_loss_weight": 0.0005,
+            "center_lr": 0.5,
+            "cosine_margin": 0.5,
+            "cosine_scale": 30.0,
+            "gamma": 0.1,
+            "large_fc_lr": false,
+            "lr_monitor": "val_loss",
+            "lr_steps": [
+              40,
+              70
+            ],
+            "momentum": 0.9,
+            "name": "Adam",
+            "triplet_loss_margin": 0.3,
+            "trp_l2": false,
+            "warmup_epochs": 20,
+            "warmup_factor": 0.01,
+            "warmup_iters": 10,
+            "warmup_method": "linear",
+            "weight_decay": 0.0005,
+            "weight_decay_bias": 0.0005
+          },
+          "description": "Training optimization config.",
+          "properties": {
+            "base_lr": {
+              "default": 0.00035,
+              "description": "Base learning rate.",
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "Base Learning Rate",
+              "type": "float"
+            },
+            "bias_lr_factor": {
+              "default": 1.0,
+              "description": "Learning rate factor for bias parameters.",
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "Bias LR Factor",
+              "type": "float"
+            },
+            "center_loss_weight": {
+              "default": 0.0005,
+              "description": "Weight of the center loss in the loss function.",
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "Center Loss Weight",
+              "type": "float"
+            },
+            "center_lr": {
+              "default": 0.5,
+              "description": "Learning rate for center loss parameters.",
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "Center Learning Rate",
+              "type": "float"
+            },
+            "cosine_margin": {
+              "default": 0.5,
+              "description": "Margin for cosine similarity in losses.",
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "Cosine Margin",
+              "type": "float"
+            },
+            "cosine_scale": {
+              "default": 30.0,
+              "description": "Scaling factor for cosine similarity.",
+              "maximum": Infinity,
+              "minimum": 1.0,
+              "title": "Cosine Scale",
+              "type": "float"
+            },
+            "gamma": {
+              "default": 0.1,
+              "description": "Factor by which the learning rate will decrease.",
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "LR Decay Factor",
+              "type": "float"
+            },
+            "large_fc_lr": {
+              "default": false,
+              "description": "Use a larger learning rate for the fully connected layer.",
+              "title": "Large FC Learning Rate",
+              "type": "bool"
+            },
+            "lr_monitor": {
+              "default": "val_loss",
+              "description": "Metric to monitor for learning rate adjustments.",
+              "title": "LR Monitor Metric",
+              "type": "string"
+            },
+            "lr_steps": {
+              "automl_enabled": true,
+              "default": [
+                40,
+                70
+              ],
+              "description": "Epochs at which the learning rate will decrease.",
+              "title": "LR Decay Steps",
+              "type": "list_2"
+            },
+            "momentum": {
+              "default": 0.9,
+              "description": "Momentum factor for optimization.",
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "Momentum",
+              "type": "float"
+            },
+            "name": {
+              "default": "Adam",
+              "description": "Name of the optimizer.",
+              "title": "Optimizer Name",
+              "type": "string"
+            },
+            "triplet_loss_margin": {
+              "default": 0.3,
+              "description": "Margin for triplet loss.",
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "Triplet Loss Margin",
+              "type": "float"
+            },
+            "trp_l2": {
+              "default": false,
+              "description": "Apply L2 normalization in triplet loss calculation.",
+              "title": "Triplet L2 Normalization",
+              "type": "bool"
+            },
+            "warmup_epochs": {
+              "default": 20,
+              "description": "Number of epochs for warm-up.",
+              "maximum": Infinity,
+              "minimum": 0,
+              "title": "Warmup Epochs",
+              "type": "int"
+            },
+            "warmup_factor": {
+              "default": 0.01,
+              "description": "Initial learning rate as a factor of the base learning rate during warm-up.",
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "Warmup Factor",
+              "type": "float"
+            },
+            "warmup_iters": {
+              "default": 10,
+              "description": "Number of iterations for warm-up.",
+              "maximum": Infinity,
+              "minimum": 0,
+              "title": "Warmup Iterations",
+              "type": "int"
+            },
+            "warmup_method": {
+              "default": "linear",
+              "description": "Method used for warm-up (e.g., 'linear', 'exp').",
+              "title": "Warmup Method",
+              "type": "string"
+            },
+            "weight_decay": {
+              "default": 0.0005,
+              "description": "Weight decay for regularization.",
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "Weight Decay",
+              "type": "float"
+            },
+            "weight_decay_bias": {
+              "default": 0.0005,
+              "description": "Weight decay for bias regularization.",
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "Weight Decay for Bias",
+              "type": "float"
+            }
+          },
+          "title": "Optimization config",
+          "type": "collection"
+        },
+        "results_dir": {
+          "default": "",
+          "description": "\n        Path to where all the assets generated from a task are stored.\n        ",
+          "title": "Results directory",
+          "type": "string"
+        },
+        "resume_training_checkpoint_path": {
+          "default": "",
+          "description": "Path to the checkpoint to resume training from.",
+          "title": "Resume checkpoint path",
+          "type": "string"
+        },
+        "seed": {
+          "default": 1234,
+          "description": "The seed for the initializer in PyTorch. If < 0, disable fixed seed.",
+          "maximum": Infinity,
+          "minimum": -1,
+          "title": "Seed for randomization",
+          "type": "int"
+        },
+        "validation_interval": {
+          "default": 1,
+          "description": "\n        The interval (in epochs) at which a evaluation\n        will be triggered on the validation dataset.",
+          "minimum": 1,
+          "popular": true,
+          "title": "Validation interval",
+          "type": "int"
+        }
+      },
+      "type": "collection"
+    },
+    "wandb": {
+      "automl_disabled_parameters": [
+        "wandb.tags"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "enable": true,
+        "entity": "",
+        "group": "",
+        "name": "TAO Toolkit Training",
+        "project": "TAO Toolkit",
+        "reinit": false,
+        "run_id": "",
+        "save_code": false,
+        "sync_tensorboard": false,
+        "tags": [
+          "tao-toolkit"
+        ]
+      },
+      "properties": {
+        "enable": {
+          "default": true,
+          "type": "bool"
+        },
+        "entity": {
+          "default": "",
+          "type": "string"
+        },
+        "group": {
+          "default": "",
+          "type": "string"
+        },
+        "name": {
+          "default": "TAO Toolkit Training",
+          "type": "string"
+        },
+        "project": {
+          "default": "TAO Toolkit",
+          "type": "string"
+        },
+        "reinit": {
+          "default": false,
+          "type": "bool"
+        },
+        "run_id": {
+          "default": "",
+          "type": "string"
+        },
+        "save_code": {
+          "default": false,
+          "type": "bool"
+        },
+        "sync_tensorboard": {
+          "default": false,
+          "type": "bool"
+        },
+        "tags": {
+          "automl_enabled": false,
+          "default": [
+            "tao-toolkit"
+          ],
+          "type": "list"
+        }
+      },
+      "type": "collection"
+    }
+  },
+  "type": "object",
+  "x_tao_schema": {
+    "action": "inference",
+    "core_module": "re_identification",
+    "model": "re-identification",
+    "network_arch": "re_identification",
+    "schema_action": "inference",
+    "schema_version": 1,
+    "source": "tao-core dataclass config"
+  }
+}

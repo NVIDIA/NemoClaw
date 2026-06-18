@@ -1,0 +1,97 @@
+[
+  {
+    "id": "deepstream-dev-001",
+    "question": "Using DeepStream SDK 9.0 and the pyservicemaker Python API, generate a pipeline that reads a local video file, runs primary inference with nvinfer using the ResNet18 TrafficCamNet detector shipped with DeepStream, draws bounding boxes with nvosdbin, and renders to the screen. The user did not ask for tracking or Kafka.",
+    "expected_skill": "deepstream-dev",
+    "expected_script": null,
+    "ground_truth": "A minimal pipeline using nvurisrcbin, nvstreammux, nvinfer, nvosdbin, and a platform-appropriate sink. It must avoid nvtracker, secondary GIEs, nvmsgbroker, and other optional components that were not requested.",
+    "expected_behavior": [
+      "Use nvurisrcbin as the source for a local video file.",
+      "Batch streams through nvstreammux.",
+      "Use the sink_%u request-pad template when linking sources into nvstreammux.",
+      "Reference the bundled ResNet18 TrafficCamNet ONNX model path.",
+      "Do not add nvtracker because tracking was not requested.",
+      "Do not add nvmsgbroker or Kafka messaging because messaging was not requested."
+    ]
+  },
+  {
+    "id": "deepstream-dev-002",
+    "question": "Build a DeepStream 9.0 pyservicemaker pipeline that ingests two RTSP cameras, runs primary detection, tracks objects across frames, displays the result in a tiled view, and publishes detection metadata to a Kafka broker. Cover the live-source and tee-split requirements.",
+    "expected_skill": "deepstream-dev",
+    "expected_script": null,
+    "ground_truth": "The pipeline uses nvurisrcbin for each RTSP source, sets live-source=1 on nvstreammux, includes nvtracker because tracking was requested, splits display and broker output with tee, sends metadata to nvmsgbroker, and sets async=0 on sinks.",
+    "expected_behavior": [
+      "Configure nvstreammux with live-source=1 for RTSP input.",
+      "Include nvtracker because the user explicitly requested tracking.",
+      "Use tee to feed both display and broker branches.",
+      "Use nvmsgbroker for Kafka publishing.",
+      "Set async=0 on sinks in the tee branches to avoid state-transition deadlocks.",
+      "Use sync=0 on the live renderer path."
+    ]
+  },
+  {
+    "id": "deepstream-dev-003",
+    "question": "Generate an nvinfer YAML config for a YOLOv11 model with 640x640 input exported from Ultralytics with dynamic=True. The model outputs a raw pre-NMS tensor of shape [batch, 84, 8400].",
+    "expected_skill": "deepstream-dev",
+    "expected_script": null,
+    "ground_truth": "The nvinfer YAML uses a property section, sets infer-dims=3;640;640 so TensorRT does not see dynamic -1 dimensions, and uses cluster-mode: 2 for DeepStream NMS because the output tensor is pre-NMS.",
+    "expected_behavior": [
+      "Use the property section for the nvinfer YAML.",
+      "Set infer-dims to 3;640;640 for the dynamic ONNX input shape.",
+      "Use cluster-mode: 2 because YOLOv11 output is pre-NMS.",
+      "Do not set is-classifier for an object detector."
+    ]
+  },
+  {
+    "id": "deepstream-dev-004",
+    "question": "Write a DeepStream pipeline that just plays a video file through inference and shows it on screen. Keep it as minimal as possible.",
+    "expected_skill": "deepstream-dev",
+    "expected_script": null,
+    "ground_truth": "A minimal video inference pipeline with nvurisrcbin, nvstreammux, nvinfer, nvosdbin, and a renderer. It should not add tracking, analytics, secondary classifiers, metadata brokers, or other optional elements that the user did not request.",
+    "expected_behavior": [
+      "Do not add nvtracker when tracking was not requested.",
+      "Do not add nvdsanalytics when line crossing, ROI, or analytics were not requested.",
+      "Do not add a secondary GIE when secondary classification was not requested.",
+      "Do not add nvmsgbroker or nvmsgconv when messaging was not requested.",
+      "Still include nvinfer for the requested inference stage."
+    ]
+  },
+  {
+    "id": "deepstream-dev-005",
+    "question": "My pyservicemaker probe runs len(frame.object_items) to count detections and I am installing my app inside a fresh python3 -m venv. It fails with ModuleNotFoundError: pyservicemaker and the probe raises 'iterator has no len()'. Fix both.",
+    "expected_skill": "deepstream-dev",
+    "expected_script": null,
+    "ground_truth": "Explain that frame.object_items and frame.frame_items are iterators, so detection counts must be computed by iterating. Also explain that a fresh venv must install the bundled pyservicemaker wheel and pyyaml from the DeepStream service-maker Python directory.",
+    "expected_behavior": [
+      "State that object_items and frame_items are iterators and cannot be counted with len().",
+      "Show or describe counting by iterating over object_items.",
+      "Tell the user to install the bundled pyservicemaker wheel inside the venv.",
+      "Reference the DeepStream service-maker Python wheel directory under /opt/nvidia/deepstream/deepstream/service-maker/python/.",
+      "Also install pyyaml in the venv so YAML nvinfer configs can load."
+    ]
+  },
+  {
+    "id": "deepstream-dev-006-negative",
+    "question": "Train a custom image classifier from scratch in PyTorch and export it to CoreML for iOS. I do not need any DeepStream pipeline setup.",
+    "expected_skill": null,
+    "expected_script": null,
+    "ground_truth": "The deepstream-dev skill should not be selected for this request because it is outside DeepStream pipeline and SDK usage scope.",
+    "expected_behavior": [
+      "Do not activate deepstream-dev for this request.",
+      "Avoid DeepStream-specific pipeline guidance and plugin recommendations.",
+      "Respond with a generic fallback or suggest a more relevant non-DeepStream path."
+    ]
+  },
+  {
+    "id": "deepstream-dev-007-negative",
+    "question": "How do I configure a MySQL replication slave on Ubuntu 22.04?",
+    "expected_skill": null,
+    "expected_script": null,
+    "ground_truth": "The deepstream-dev skill should not be selected because this request is unrelated to DeepStream SDK development or pipeline operations.",
+    "expected_behavior": [
+      "Do not activate deepstream-dev for this request.",
+      "State that the request is outside DeepStream scope and avoid pipeline or plugin guidance.",
+      "Suggest a MySQL-focused resource or workflow."
+    ]
+  }
+]

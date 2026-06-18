@@ -1,0 +1,78 @@
+name: tao-train-deformable-detr
+network_arch: deformable_detr
+automl_enabled: true
+container_image: tao_toolkit.pyt
+data_format: coco
+gpu_spec_key: train.num_gpus
+actions:
+  train:
+    command: deformable_detr train -e {config_path}
+    config_format: yaml
+    inputs:
+      dataset.train_data_sources[0].image_dir:
+        type: folder
+      dataset.train_data_sources[0].json_file:
+        type: file
+      dataset.val_data_sources[0].image_dir:
+        type: folder
+      dataset.val_data_sources[0].json_file:
+        type: file
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  quantize:
+    command: deformable_detr quantize -e {config_path}
+    config_format: yaml
+    inputs: {}
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  evaluate:
+    command: deformable_detr evaluate -e {config_path}
+    config_format: yaml
+    inputs: {}
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  export:
+    command: deformable_detr export -e {config_path}
+    config_format: yaml
+    inputs: {}
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  inference:
+    command: deformable_detr inference -e {config_path}
+    config_format: yaml
+    inputs: {}
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  gen_trt_engine:
+    command: deformable_detr gen_trt_engine -e {config_path}
+    config_format: yaml
+    inputs: {}
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+data_sources: {}
+spec_params: {}
+key_defaults: {}
+spec_shorthand_keys:
+  num_epochs: train.num_epochs
+  batch_size: dataset.batch_size
+  learning_rate: train.optim.lr
+description: Deformable DETR for 2D object detection. Uses deformable attention for efficient multi-scale feature processing.
+  Lighter than DINO with competitive accuracy.

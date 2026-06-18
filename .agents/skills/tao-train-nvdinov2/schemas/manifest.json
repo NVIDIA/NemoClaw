@@ -1,0 +1,609 @@
+{
+  "actions": {
+    "distill": {
+      "automl_default_parameters": [
+        "dataset.batch_size",
+        "dataset.workers"
+      ],
+      "automl_disabled_parameters": [
+        "dataset",
+        "dataset.test_dataset",
+        "dataset.train_dataset",
+        "dataset.transform",
+        "dataset.transform.global_crops_scale",
+        "dataset.transform.local_crops_scale",
+        "export",
+        "gen_trt_engine",
+        "gen_trt_engine.tensorrt",
+        "gen_trt_engine.tensorrt.layers_precision",
+        "inference",
+        "inference.gpu_ids",
+        "model",
+        "model.backbone",
+        "model.distill",
+        "model.head",
+        "train",
+        "train.cudnn",
+        "train.gpu_ids",
+        "train.optim",
+        "train.schedulers",
+        "train.schedulers.last_layer_learning_rate",
+        "train.schedulers.learning_rate",
+        "train.schedulers.momentum",
+        "train.schedulers.teacher_temperature",
+        "train.schedulers.weight_decay",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "nvdinov2",
+      "path": "schemas/distill.schema.json",
+      "popular": {
+        "dataset": {
+          "batch_size": 4,
+          "pin_memory": true,
+          "transform": {
+            "global_crops_scale": [
+              0.32,
+              1.0
+            ],
+            "global_crops_size": 224,
+            "local_crops_scale": [
+              0.05,
+              0.32
+            ],
+            "local_crops_size": 98,
+            "n_global_crops": 2,
+            "n_local_crops": 8
+          },
+          "workers": 8
+        },
+        "gen_trt_engine": {
+          "batch_size": -1,
+          "gpu_id": 0,
+          "tensorrt": {
+            "max_batch_size": 1,
+            "min_batch_size": 1,
+            "opt_batch_size": 1
+          }
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "model": {
+          "backbone": {
+            "drop_path_rate": 0.4,
+            "img_size": 518,
+            "num_register_tokens": 0,
+            "patch_size": 14
+          },
+          "distill": {
+            "disable_masking": false,
+            "enable": false
+          },
+          "head": {
+            "bottleneck_dim": 384,
+            "hidden_dim": 2048,
+            "num_layers": 3
+          }
+        },
+        "train": {
+          "checkpoint_interval": 1,
+          "clip_grad_norm": 3.0,
+          "gpu_ids": [
+            0
+          ],
+          "layerwise_decay": 1.0,
+          "num_epochs": 10,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "num_prototypes": 131072,
+          "optim": {
+            "optim": "adamw"
+          },
+          "precision": "16-mixed",
+          "schedulers": {
+            "last_layer_learning_rate": {
+              "freeze_steps": 1250,
+              "max_decay_steps": 2500000,
+              "val_base": 7.07e-06,
+              "val_final": 1e-06,
+              "val_start": 0.0,
+              "warm_up_steps": 100000
+            },
+            "learning_rate": {
+              "max_decay_steps": 2500000,
+              "val_base": 7.07e-06,
+              "val_final": 1e-06,
+              "val_start": 0.0,
+              "warm_up_steps": 100000
+            },
+            "momentum": {
+              "max_decay_steps": 2500000,
+              "val_base": 0.994,
+              "val_final": 1.0,
+              "val_start": 0.0,
+              "warm_up_steps": 0
+            },
+            "teacher_temperature": {
+              "max_decay_steps": 37500,
+              "val_base": 0.07,
+              "val_final": 0.07,
+              "val_start": 0.04,
+              "warm_up_steps": 37500
+            },
+            "weight_decay": {
+              "max_decay_steps": 2500000,
+              "val_base": 0.04,
+              "val_final": 0.2,
+              "val_start": 0.0,
+              "warm_up_steps": 0
+            }
+          },
+          "use_custom_attention": true,
+          "validation_interval": 1
+        }
+      },
+      "schema_action": "distill",
+      "spec_template": "references/spec_template_distill.yaml"
+    },
+    "export": {
+      "automl_default_parameters": [
+        "dataset.batch_size",
+        "dataset.workers"
+      ],
+      "automl_disabled_parameters": [
+        "dataset",
+        "dataset.test_dataset",
+        "dataset.train_dataset",
+        "dataset.transform",
+        "dataset.transform.global_crops_scale",
+        "dataset.transform.local_crops_scale",
+        "export",
+        "gen_trt_engine",
+        "gen_trt_engine.tensorrt",
+        "gen_trt_engine.tensorrt.layers_precision",
+        "inference",
+        "inference.gpu_ids",
+        "model",
+        "model.backbone",
+        "model.distill",
+        "model.head",
+        "train",
+        "train.cudnn",
+        "train.gpu_ids",
+        "train.optim",
+        "train.schedulers",
+        "train.schedulers.last_layer_learning_rate",
+        "train.schedulers.learning_rate",
+        "train.schedulers.momentum",
+        "train.schedulers.teacher_temperature",
+        "train.schedulers.weight_decay",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "nvdinov2",
+      "path": "schemas/export.schema.json",
+      "popular": {
+        "dataset": {
+          "batch_size": 4,
+          "pin_memory": true,
+          "transform": {
+            "global_crops_scale": [
+              0.32,
+              1.0
+            ],
+            "global_crops_size": 224,
+            "local_crops_scale": [
+              0.05,
+              0.32
+            ],
+            "local_crops_size": 98,
+            "n_global_crops": 2,
+            "n_local_crops": 8
+          },
+          "workers": 8
+        },
+        "gen_trt_engine": {
+          "batch_size": -1,
+          "gpu_id": 0,
+          "tensorrt": {
+            "max_batch_size": 1,
+            "min_batch_size": 1,
+            "opt_batch_size": 1
+          }
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "model": {
+          "backbone": {
+            "drop_path_rate": 0.4,
+            "img_size": 518,
+            "num_register_tokens": 0,
+            "patch_size": 14
+          },
+          "distill": {
+            "disable_masking": false,
+            "enable": false
+          },
+          "head": {
+            "bottleneck_dim": 384,
+            "hidden_dim": 2048,
+            "num_layers": 3
+          }
+        },
+        "train": {
+          "checkpoint_interval": 1,
+          "clip_grad_norm": 3.0,
+          "gpu_ids": [
+            0
+          ],
+          "layerwise_decay": 1.0,
+          "num_epochs": 10,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "num_prototypes": 131072,
+          "optim": {
+            "optim": "adamw"
+          },
+          "precision": "16-mixed",
+          "schedulers": {
+            "last_layer_learning_rate": {
+              "freeze_steps": 1250,
+              "max_decay_steps": 2500000,
+              "val_base": 7.07e-06,
+              "val_final": 1e-06,
+              "val_start": 0.0,
+              "warm_up_steps": 100000
+            },
+            "learning_rate": {
+              "max_decay_steps": 2500000,
+              "val_base": 7.07e-06,
+              "val_final": 1e-06,
+              "val_start": 0.0,
+              "warm_up_steps": 100000
+            },
+            "momentum": {
+              "max_decay_steps": 2500000,
+              "val_base": 0.994,
+              "val_final": 1.0,
+              "val_start": 0.0,
+              "warm_up_steps": 0
+            },
+            "teacher_temperature": {
+              "max_decay_steps": 37500,
+              "val_base": 0.07,
+              "val_final": 0.07,
+              "val_start": 0.04,
+              "warm_up_steps": 37500
+            },
+            "weight_decay": {
+              "max_decay_steps": 2500000,
+              "val_base": 0.04,
+              "val_final": 0.2,
+              "val_start": 0.0,
+              "warm_up_steps": 0
+            }
+          },
+          "use_custom_attention": true,
+          "validation_interval": 1
+        }
+      },
+      "schema_action": "export",
+      "spec_template": "references/spec_template_export.yaml"
+    },
+    "inference": {
+      "automl_default_parameters": [
+        "dataset.batch_size",
+        "dataset.workers"
+      ],
+      "automl_disabled_parameters": [
+        "dataset",
+        "dataset.test_dataset",
+        "dataset.train_dataset",
+        "dataset.transform",
+        "dataset.transform.global_crops_scale",
+        "dataset.transform.local_crops_scale",
+        "export",
+        "gen_trt_engine",
+        "gen_trt_engine.tensorrt",
+        "gen_trt_engine.tensorrt.layers_precision",
+        "inference",
+        "inference.gpu_ids",
+        "model",
+        "model.backbone",
+        "model.distill",
+        "model.head",
+        "train",
+        "train.cudnn",
+        "train.gpu_ids",
+        "train.optim",
+        "train.schedulers",
+        "train.schedulers.last_layer_learning_rate",
+        "train.schedulers.learning_rate",
+        "train.schedulers.momentum",
+        "train.schedulers.teacher_temperature",
+        "train.schedulers.weight_decay",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "nvdinov2",
+      "path": "schemas/inference.schema.json",
+      "popular": {
+        "dataset": {
+          "batch_size": 4,
+          "pin_memory": true,
+          "transform": {
+            "global_crops_scale": [
+              0.32,
+              1.0
+            ],
+            "global_crops_size": 224,
+            "local_crops_scale": [
+              0.05,
+              0.32
+            ],
+            "local_crops_size": 98,
+            "n_global_crops": 2,
+            "n_local_crops": 8
+          },
+          "workers": 8
+        },
+        "gen_trt_engine": {
+          "batch_size": -1,
+          "gpu_id": 0,
+          "tensorrt": {
+            "max_batch_size": 1,
+            "min_batch_size": 1,
+            "opt_batch_size": 1
+          }
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "model": {
+          "backbone": {
+            "drop_path_rate": 0.4,
+            "img_size": 518,
+            "num_register_tokens": 0,
+            "patch_size": 14
+          },
+          "distill": {
+            "disable_masking": false,
+            "enable": false
+          },
+          "head": {
+            "bottleneck_dim": 384,
+            "hidden_dim": 2048,
+            "num_layers": 3
+          }
+        },
+        "train": {
+          "checkpoint_interval": 1,
+          "clip_grad_norm": 3.0,
+          "gpu_ids": [
+            0
+          ],
+          "layerwise_decay": 1.0,
+          "num_epochs": 10,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "num_prototypes": 131072,
+          "optim": {
+            "optim": "adamw"
+          },
+          "precision": "16-mixed",
+          "schedulers": {
+            "last_layer_learning_rate": {
+              "freeze_steps": 1250,
+              "max_decay_steps": 2500000,
+              "val_base": 7.07e-06,
+              "val_final": 1e-06,
+              "val_start": 0.0,
+              "warm_up_steps": 100000
+            },
+            "learning_rate": {
+              "max_decay_steps": 2500000,
+              "val_base": 7.07e-06,
+              "val_final": 1e-06,
+              "val_start": 0.0,
+              "warm_up_steps": 100000
+            },
+            "momentum": {
+              "max_decay_steps": 2500000,
+              "val_base": 0.994,
+              "val_final": 1.0,
+              "val_start": 0.0,
+              "warm_up_steps": 0
+            },
+            "teacher_temperature": {
+              "max_decay_steps": 37500,
+              "val_base": 0.07,
+              "val_final": 0.07,
+              "val_start": 0.04,
+              "warm_up_steps": 37500
+            },
+            "weight_decay": {
+              "max_decay_steps": 2500000,
+              "val_base": 0.04,
+              "val_final": 0.2,
+              "val_start": 0.0,
+              "warm_up_steps": 0
+            }
+          },
+          "use_custom_attention": true,
+          "validation_interval": 1
+        }
+      },
+      "schema_action": "inference",
+      "spec_template": "references/spec_template_inference.yaml"
+    },
+    "train": {
+      "automl_default_parameters": [
+        "dataset.batch_size",
+        "dataset.workers"
+      ],
+      "automl_disabled_parameters": [
+        "dataset",
+        "dataset.test_dataset",
+        "dataset.train_dataset",
+        "dataset.transform",
+        "dataset.transform.global_crops_scale",
+        "dataset.transform.local_crops_scale",
+        "export",
+        "gen_trt_engine",
+        "gen_trt_engine.tensorrt",
+        "gen_trt_engine.tensorrt.layers_precision",
+        "inference",
+        "inference.gpu_ids",
+        "model",
+        "model.backbone",
+        "model.distill",
+        "model.head",
+        "train",
+        "train.cudnn",
+        "train.gpu_ids",
+        "train.optim",
+        "train.schedulers",
+        "train.schedulers.last_layer_learning_rate",
+        "train.schedulers.learning_rate",
+        "train.schedulers.momentum",
+        "train.schedulers.teacher_temperature",
+        "train.schedulers.weight_decay",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "nvdinov2",
+      "path": "schemas/train.schema.json",
+      "popular": {
+        "dataset": {
+          "batch_size": 4,
+          "pin_memory": true,
+          "transform": {
+            "global_crops_scale": [
+              0.32,
+              1.0
+            ],
+            "global_crops_size": 224,
+            "local_crops_scale": [
+              0.05,
+              0.32
+            ],
+            "local_crops_size": 98,
+            "n_global_crops": 2,
+            "n_local_crops": 8
+          },
+          "workers": 8
+        },
+        "gen_trt_engine": {
+          "batch_size": -1,
+          "gpu_id": 0,
+          "tensorrt": {
+            "max_batch_size": 1,
+            "min_batch_size": 1,
+            "opt_batch_size": 1
+          }
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "model": {
+          "backbone": {
+            "drop_path_rate": 0.4,
+            "img_size": 518,
+            "num_register_tokens": 0,
+            "patch_size": 14
+          },
+          "distill": {
+            "disable_masking": false,
+            "enable": false
+          },
+          "head": {
+            "bottleneck_dim": 384,
+            "hidden_dim": 2048,
+            "num_layers": 3
+          }
+        },
+        "train": {
+          "checkpoint_interval": 1,
+          "clip_grad_norm": 3.0,
+          "gpu_ids": [
+            0
+          ],
+          "layerwise_decay": 1.0,
+          "num_epochs": 10,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "num_prototypes": 131072,
+          "optim": {
+            "optim": "adamw"
+          },
+          "precision": "16-mixed",
+          "schedulers": {
+            "last_layer_learning_rate": {
+              "freeze_steps": 1250,
+              "max_decay_steps": 2500000,
+              "val_base": 7.07e-06,
+              "val_final": 1e-06,
+              "val_start": 0.0,
+              "warm_up_steps": 100000
+            },
+            "learning_rate": {
+              "max_decay_steps": 2500000,
+              "val_base": 7.07e-06,
+              "val_final": 1e-06,
+              "val_start": 0.0,
+              "warm_up_steps": 100000
+            },
+            "momentum": {
+              "max_decay_steps": 2500000,
+              "val_base": 0.994,
+              "val_final": 1.0,
+              "val_start": 0.0,
+              "warm_up_steps": 0
+            },
+            "teacher_temperature": {
+              "max_decay_steps": 37500,
+              "val_base": 0.07,
+              "val_final": 0.07,
+              "val_start": 0.04,
+              "warm_up_steps": 37500
+            },
+            "weight_decay": {
+              "max_decay_steps": 2500000,
+              "val_base": 0.04,
+              "val_final": 0.2,
+              "val_start": 0.0,
+              "warm_up_steps": 0
+            }
+          },
+          "use_custom_attention": true,
+          "validation_interval": 1
+        }
+      },
+      "schema_action": "train",
+      "spec_template": "references/spec_template_train.yaml"
+    }
+  },
+  "automl_enabled": true,
+  "failures": {},
+  "model": "nvdinov2",
+  "network_arch": "nvdinov2",
+  "schema_version": 1
+}

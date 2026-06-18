@@ -1,0 +1,49 @@
+# Megatron-Bridge SFT And PEFT Context
+
+Use this pack for:
+
+- `sft/megatron_bridge`: full or LoRA SFT on packed Parquet.
+- `peft/megatron_bridge`: LoRA adapter training on packed Parquet.
+
+## Product Contract
+
+- These steps consume `packed_parquet` from `data_prep/sft_packing`.
+- `sft/megatron_bridge` produces a Megatron checkpoint.
+- `peft/megatron_bridge` produces a LoRA adapter. Plan conversion/merge when an
+  HF deployment artifact is required.
+- Prefer YAML overrides on existing configs. Do not fork Megatron-Bridge scripts
+  for normal SFT/PEFT.
+
+## Required Wiring
+
+- `dataset.packed_sequence_specs.packed_train_data_path`: training Parquet glob.
+- Validation/test packed paths when the config schedules validation.
+- `seq_length` equal to the data-prep `pack_size`.
+- `checkpoint.pretrained_checkpoint` when adapting a Megatron base.
+- Distinct output directories for base checkpoint, adapter, and final merged
+  artifact.
+
+## Backend Choice
+
+| Need | Step |
+|---|---|
+| Full large-scale SFT with Megatron checkpoint output | `sft/megatron_bridge` |
+| Adapter tuning on Megatron checkpoint | `peft/megatron_bridge` |
+| HF-native checkpoint with JSONL data | `sft/automodel` or `peft/automodel` |
+| Memory is too tight for full SFT | PEFT/LoRA first |
+
+## Config Rules
+
+- Start with micro batch size 1 for new shapes.
+- Keep global batch size divisible by data-parallel size.
+- Use `load_hf_weights=false` when starting from a Megatron checkpoint.
+- For adapter reliability, prefer simple checkpoint saves over async/optimizer
+  saves unless the user explicitly needs them.
+
+## Failure Modes
+
+- `missing_packed_data`: run `data_prep/sft_packing`.
+- `sequence_length_mismatch`: repack data or align `seq_length`.
+- `missing_base_checkpoint`: set the Megatron base checkpoint for PEFT.
+- `oom`: lower micro batch, enable recomputation, increase parallelism, or use
+  LoRA.

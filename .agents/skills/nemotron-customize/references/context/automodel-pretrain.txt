@@ -1,0 +1,147 @@
+# AutoModel Pretraining Context
+
+Use this pack when generating stage code for `pretrain/automodel` (continued
+pretraining or from-scratch causal-LM training with NeMo-AutoModel).
+
+## When AutoModel is the right choice
+
+**AutoModel is the path for non-Nemotron models, and for any HF model that
+isn't covered by a native Megatron-Bridge recipe.** Pick AutoModel when:
+
+- The base model is **not Nemotron** (Llama, Mistral, Qwen, Gemma, Phi,
+  internal customer models, third-party HF checkpoints, etc.) **and** has no
+  matching `megatron.bridge.recipes.<family>.*` module. Megatron-Bridge ships
+  recipes for a curated set of model families (nemotronh / Nano3 / Super3,
+  llama, qwen, mixtral, deepseek, kimi, gpt_oss, etc.); anything outside
+  that set goes through AutoModel.
+- The base model **is** in the MB recipe set but the user wants HF-native
+  outputs, single-node iteration speed, or doesn't need TP/PP/CP/EP scaling.
+- The deployment target consumes HuggingFace-format checkpoints
+  (`checkpoint_hf`) directly, with no Megatron conversion in the path.
+
+Route to **`pretrain/megatron_bridge`** instead when:
+
+- The base model has a native MB recipe (Nemotron + the families above) AND
+- The training scale needs distributed parallelism (TP/PP/CP/EP) AND
+- A `checkpoint_megatron` output is acceptable (or a `convert/megatron_to_hf`
+  step is added downstream).
+
+The same rule applies on the SFT/PEFT side: AutoModel SFT/PEFT
+(`sft/automodel`, `peft/automodel`) is the path for models without an MB
+recipe; Megatron-Bridge SFT/PEFT (`sft/megatron_bridge`, `peft/megatron_bridge`)
+requires both an MB recipe and the parallelism / packed-Parquet workflow.
+
+## Live Repo Verification
+
+Read `../CATALOG.md`, `../ARTIFACTS.md`, and `../COMMANDS.md` before this pack.
+After the bundled references select `pretrain/automodel`, verify:
+
+- Step manifest: `src/nemotron/steps/pretrain/automodel/step.toml`
+- Step entry: `src/nemotron/steps/pretrain/automodel/step.py`
+- Shared runner: `src/nemotron/steps/_runners/automodel.py`
+- Default cfg: `src/nemotron/steps/pretrain/automodel/config/default.yaml`
+- Smoke cfg: `src/nemotron/steps/pretrain/automodel/config/tiny.yaml`
+
+The step is wired through the shared AutoModel runner used by sft/peft/pretrain.
+
+## Recipe selection (the non-obvious part)
+
+The runner picks the recipe class as follows:
+
+1. If the YAML has top-level `_step_recipe: "module.path:ClassName"` use that.
+2. Else if the YAML has a top-level `recipe:` (e.g. `TrainPretrainRecipeForNextTokenPrediction`),
+   AutoModel's own config loader picks it up.
+3. Else fall back to the Python-side `DEFAULT_TARGET` in `step.py`, which is
+   `nemo_automodel.recipes.llm.train_ft:TrainFinetuneRecipeForNextTokenPrediction`.
+
+Implication: the Python `DEFAULT_TARGET` is a finetune class, but the
+**default config** sets `recipe: TrainPretrainRecipeForNextTokenPrediction`,
+so a default-config run trains as pretraining. **Override with `_step_recipe`
+not `recipe._target_`** — the runner deliberately avoids the `_target_` slot
+because AutoModel's own config loader treats `_target_` values as
+`file/path.py:ClassName`, which collides.
+
+Generated stage code should:
+
+1. Load the YAML (let AutoModel's `parse_args_and_load_config` handle it via the runner).
+2. Resolve recipe class through `_step_recipe` if set; else from the YAML; else from `DEFAULT_TARGET`.
+3. Instantiate the recipe and call `setup()` then `run_train_validation_loop()`.
+
+Don't put model-family-specific logic in the wrapper.
+
+## Data: bin/idx pretraining shards
+
+The step consumes `binidx` produced by `data_prep/pretrain_prep` (Megatron-format
+shards plus `blend.json`). The default config wires it through the
+`MegatronPretraining` dataset:
+
+```yaml
+dataset:
+  _target_: nemo_automodel.components.datasets.llm.megatron_dataset.MegatronPretraining
+  paths: ${oc.env:PRETRAIN_BLEND_PATH}    # blend.json path from data_prep/pretrain_prep
+  index_mapping_dir: ./index_mapping/train
+  tokenizer:
+    _target_: nemo_automodel._transformers.auto_tokenizer.NeMoAutoTokenizer.from_pretrained
+    pretrained_model_name_or_path: <tokenizer-id>
+```
+
+Validation uses a separate `validation_dataset:` block of the same shape.
+
+The tokenizer must match what `data_prep/pretrain_prep` used — see
+`src/nemotron/steps/patterns/prep-data-is-tokenizer-locked.md`.
+
+## CPT vs from scratch
+
+Step.toml strategies:
+
+- **CPT**: `load_weights=true`, lr 1e-5 to 5e-5.
+- **From scratch**: `load_weights=false`, warmup + cosine schedule sized to
+  the token budget.
+
+Default `model.pretrained_model_name_or_path` in this repo is
+`Qwen/Qwen3-30B-A3B` (MoE backbone example; minimum 8 GPUs per
+`[[models]]`). Override at CLI:
+
+```bash
+nemotron steps run pretrain/automodel -c default \
+  model.pretrained_model_name_or_path=<your-hf-id>
+```
+
+## Distributed defaults
+
+AutoModel pretraining's default config uses FSDP2 with explicit parallelism:
+
+```yaml
+distributed:
+  _target_: nemo_automodel.components.distributed.config.FSDP2Config
+  dp_size: none
+  tp_size: 1
+  cp_size: 1
+  pp_size: 1
+  ep_size: 8                    # MoE expert parallelism for Qwen3-30B-A3B
+  sequence_parallel: false
+  activation_checkpointing: false
+```
+
+For dense (non-MoE) backbones drop `ep_size` (or set it to 1). Increase
+tensor/context parallelism only when model size or sequence length requires it.
+
+AutoModel is the **smaller-cluster** path compared with
+`pretrain/megatron_bridge`. If the user wants TP/PP/CP at scale, route them
+to Megatron-Bridge instead.
+
+## Output
+
+Produces `checkpoint_hf` (HuggingFace safetensors). Add `convert/hf_to_megatron`
+if the next consumer expects Megatron format.
+
+## Staleness checks (when this pack drifts)
+
+When the upstream/repo defaults change:
+
+- Update the dataset `_target_` if AutoModel renames `megatron_dataset`.
+- Update the recipe-class names if `train_ft.py` / `train_pretrain.py` rename.
+- Refresh the default model id and `min_gpus` from
+  `src/nemotron/steps/pretrain/automodel/step.toml [[models]]`.
+- Re-verify the FSDP2 field names and the env-var name `PRETRAIN_BLEND_PATH`.
+- Keep `_step_recipe` separate from `recipe._target_` (collision rule above).

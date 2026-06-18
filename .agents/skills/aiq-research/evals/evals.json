@@ -1,0 +1,46 @@
+[
+  {
+    "id": "aiq-research-001-health",
+    "question": "Use AI-Q to check whether the local research backend is healthy.",
+    "expected_skill": "aiq-research",
+    "expected_script": "scripts/aiq.py",
+    "ground_truth": "The agent routes to aiq-research, resolves AIQ_SERVER_URL or the default local backend, runs the helper health command, and reports the checked URL with a concise status.",
+    "expected_behavior": [
+      "Routes to aiq-research",
+      "Uses AIQ_SERVER_URL when set, otherwise the localhost default",
+      "Runs scripts/aiq.py health",
+      "Reports the URL that was checked"
+    ]
+  },
+  {
+    "id": "aiq-research-002-cuda-x-report",
+    "question": "Please create a short deep research report on Nvidia's cuda-x and how the different libraries relate to one another.",
+    "expected_skill": "aiq-research",
+    "expected_script": "scripts/aiq.py",
+    "ground_truth": "The agent routes the research request to aiq-research, checks that an AI-Q backend is reachable, preserves the user's CUDA-X prompt, uses scripts/aiq.py for the research flow, and presents the final report with citations intact when the job completes.",
+    "expected_behavior": [
+      "Routes to aiq-research",
+      "Checks AIQ_SERVER_URL or the default local backend before research",
+      "Preserves the user's CUDA-X prompt",
+      "Uses scripts/aiq.py for the research flow",
+      "Polls if AI-Q returns an async job ID",
+      "Presents the final report when the job completes",
+      "Does not truncate citations or source URLs"
+    ]
+  },
+  {
+    "id": "aiq-research-003-weather-santa-clara",
+    "question": "What is the weather like today in Santa Clara, CA?",
+    "expected_skill": "aiq-research",
+    "expected_script": "scripts/aiq.py",
+    "ground_truth": "The agent routes the current-weather question to aiq-research, checks that an AI-Q backend is reachable, sends the user's exact prompt through the routed chat flow, and returns a concise answer for Santa Clara, CA.",
+    "expected_behavior": [
+      "Routes to aiq-research",
+      "Checks AIQ_SERVER_URL or the default local backend before the request",
+      "Preserves the user's Santa Clara weather prompt",
+      "Uses scripts/aiq.py chat for the routed request",
+      "Returns a concise answer for Santa Clara, CA",
+      "Does not force a deep_researcher job unless AI-Q returns an async job ID"
+    ]
+  }
+]

@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["skill", "n_slices", "single_series", "modality", "dicom_metadata", "output", "runtime"],
+  "properties": {
+    "skill": {"const": "dicom_series_to_volume"},
+    "n_slices": {"type": "integer", "minimum": 0},
+    "single_series": {"type": "boolean"},
+    "series_instance_uid": {"type": ["string", "null"]},
+    "series_instance_uid_count": {"type": "integer", "minimum": 0},
+    "modality": {"type": ["string", "null"]},
+    "modalities": {"type": "array", "items": {"type": "string"}},
+    "dicom_metadata": {
+      "type": "object",
+      "properties": {
+        "Modality": {"type": "string"},
+        "BodyPartExamined": {"type": "string"},
+        "StudyInstanceUID": {"type": "string"},
+        "SeriesInstanceUID": {"type": "string"},
+        "StudyDescription": {"type": "string"},
+        "SeriesDescription": {"type": "string"},
+        "StudyDate": {"type": "string"}
+      }
+    },
+    "input_dir": {"type": "string"},
+    "output": {
+      "type": "object",
+      "required": ["path", "shape", "spacing", "affine", "axcodes"],
+      "properties": {
+        "path": {"type": ["string", "null"]},
+        "shape": {"type": "array", "items": {"type": "integer"}, "minItems": 3, "maxItems": 3},
+        "spacing": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
+        "affine": {
+          "type": "array",
+          "items": {"type": "array", "items": {"type": "number"}, "minItems": 4, "maxItems": 4},
+          "minItems": 4,
+          "maxItems": 4
+        },
+        "axcodes": {"type": "array", "items": {"type": "string"}, "minItems": 3, "maxItems": 3}
+      }
+    },
+    "hu_range": {"type": "array", "items": {"type": ["number", "null"]}, "minItems": 2, "maxItems": 2},
+    "inconsistent_shape": {"type": "boolean"},
+    "runtime": {
+      "type": "object",
+      "required": ["conversion_seconds"],
+      "properties": {
+        "conversion_seconds": {"type": "number", "minimum": 0}
+      }
+    },
+    "intended_use_disclaimer": {"type": "string"}
+  }
+}

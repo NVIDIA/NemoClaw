@@ -1,0 +1,898 @@
+{
+  "actions": {
+    "distill": {
+      "automl_default_parameters": [
+        "dataset.augmentation.random_aug.enable",
+        "dataset.augmentation.random_color.brightness",
+        "dataset.augmentation.random_color.color_probability",
+        "dataset.augmentation.random_color.contrast",
+        "dataset.augmentation.random_color.enable",
+        "dataset.augmentation.random_color.hue",
+        "dataset.augmentation.random_color.saturation",
+        "dataset.augmentation.random_erase.enable",
+        "dataset.augmentation.random_erase.erase_probability",
+        "dataset.augmentation.random_flip.enable",
+        "dataset.augmentation.random_flip.hflip_probability",
+        "dataset.augmentation.random_flip.vflip_probability",
+        "dataset.augmentation.random_rotate.enable",
+        "dataset.augmentation.random_rotate.rotate_probability",
+        "dataset.augmentation.with_scale_random_crop.enable",
+        "dataset.batch_size",
+        "dataset.workers",
+        "distill.teacher.backbone.freeze_backbone",
+        "distill.teacher.backbone.freeze_norm",
+        "model.backbone.freeze_backbone",
+        "model.backbone.freeze_norm",
+        "train.optim.betas",
+        "train.optim.lr",
+        "train.optim.momentum",
+        "train.optim.weight_decay"
+      ],
+      "automl_disabled_parameters": [
+        "dataset",
+        "dataset.augmentation",
+        "dataset.augmentation.mean",
+        "dataset.augmentation.random_aug",
+        "dataset.augmentation.random_color",
+        "dataset.augmentation.random_erase",
+        "dataset.augmentation.random_flip",
+        "dataset.augmentation.random_rotate",
+        "dataset.augmentation.random_rotate.angle_list",
+        "dataset.augmentation.std",
+        "dataset.augmentation.with_scale_random_crop",
+        "dataset.augmentation.with_scale_random_crop.scale_range",
+        "dataset.quant_calibration_dataset",
+        "dataset.test_dataset",
+        "dataset.train_dataset",
+        "dataset.train_nolabel",
+        "dataset.val_dataset",
+        "distill",
+        "distill.teacher",
+        "distill.teacher.backbone",
+        "distill.teacher.head",
+        "distill.teacher.head.custom_args",
+        "distill.teacher.head.loss",
+        "distill.teacher.head.topk",
+        "evaluate",
+        "evaluate.gpu_ids",
+        "export",
+        "gen_trt_engine",
+        "gen_trt_engine.tensorrt",
+        "gen_trt_engine.tensorrt.calibration",
+        "gen_trt_engine.tensorrt.calibration.cal_image_dir",
+        "gen_trt_engine.tensorrt.layers_precision",
+        "inference",
+        "inference.gpu_ids",
+        "model",
+        "model.backbone",
+        "model.head",
+        "model.head.custom_args",
+        "model.head.loss",
+        "model.head.topk",
+        "quantize",
+        "quantize.backend_kwargs",
+        "quantize.layers",
+        "quantize.skip_names",
+        "train",
+        "train.cudnn",
+        "train.gpu_ids",
+        "train.optim",
+        "train.optim.policy_params",
+        "train.optim.skip_names",
+        "train.tensorboard",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "classification_pyt",
+      "path": "schemas/distill.schema.json",
+      "popular": {
+        "evaluate": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "gen_trt_engine": {
+          "batch_size": -1,
+          "gpu_id": 0,
+          "tensorrt": {
+            "calibration": {
+              "cal_batch_size": 1,
+              "cal_batches": 1
+            },
+            "max_batch_size": 1,
+            "min_batch_size": 1,
+            "opt_batch_size": 1
+          }
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "train": {
+          "checkpoint_interval": 1,
+          "gpu_ids": [
+            0
+          ],
+          "num_epochs": 10,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "validation_interval": 1
+        }
+      },
+      "schema_action": "distill",
+      "spec_template": "references/spec_template_distill.yaml"
+    },
+    "evaluate": {
+      "automl_default_parameters": [
+        "dataset.augmentation.random_aug.enable",
+        "dataset.augmentation.random_color.brightness",
+        "dataset.augmentation.random_color.color_probability",
+        "dataset.augmentation.random_color.contrast",
+        "dataset.augmentation.random_color.enable",
+        "dataset.augmentation.random_color.hue",
+        "dataset.augmentation.random_color.saturation",
+        "dataset.augmentation.random_erase.enable",
+        "dataset.augmentation.random_erase.erase_probability",
+        "dataset.augmentation.random_flip.enable",
+        "dataset.augmentation.random_flip.hflip_probability",
+        "dataset.augmentation.random_flip.vflip_probability",
+        "dataset.augmentation.random_rotate.enable",
+        "dataset.augmentation.random_rotate.rotate_probability",
+        "dataset.augmentation.with_scale_random_crop.enable",
+        "dataset.batch_size",
+        "dataset.workers",
+        "distill.teacher.backbone.freeze_backbone",
+        "distill.teacher.backbone.freeze_norm",
+        "model.backbone.freeze_backbone",
+        "model.backbone.freeze_norm",
+        "train.optim.betas",
+        "train.optim.lr",
+        "train.optim.momentum",
+        "train.optim.weight_decay"
+      ],
+      "automl_disabled_parameters": [
+        "dataset",
+        "dataset.augmentation",
+        "dataset.augmentation.mean",
+        "dataset.augmentation.random_aug",
+        "dataset.augmentation.random_color",
+        "dataset.augmentation.random_erase",
+        "dataset.augmentation.random_flip",
+        "dataset.augmentation.random_rotate",
+        "dataset.augmentation.random_rotate.angle_list",
+        "dataset.augmentation.std",
+        "dataset.augmentation.with_scale_random_crop",
+        "dataset.augmentation.with_scale_random_crop.scale_range",
+        "dataset.quant_calibration_dataset",
+        "dataset.test_dataset",
+        "dataset.train_dataset",
+        "dataset.train_nolabel",
+        "dataset.val_dataset",
+        "distill",
+        "distill.teacher",
+        "distill.teacher.backbone",
+        "distill.teacher.head",
+        "distill.teacher.head.custom_args",
+        "distill.teacher.head.loss",
+        "distill.teacher.head.topk",
+        "evaluate",
+        "evaluate.gpu_ids",
+        "export",
+        "gen_trt_engine",
+        "gen_trt_engine.tensorrt",
+        "gen_trt_engine.tensorrt.calibration",
+        "gen_trt_engine.tensorrt.calibration.cal_image_dir",
+        "gen_trt_engine.tensorrt.layers_precision",
+        "inference",
+        "inference.gpu_ids",
+        "model",
+        "model.backbone",
+        "model.head",
+        "model.head.custom_args",
+        "model.head.loss",
+        "model.head.topk",
+        "quantize",
+        "quantize.backend_kwargs",
+        "quantize.layers",
+        "quantize.skip_names",
+        "train",
+        "train.cudnn",
+        "train.gpu_ids",
+        "train.optim",
+        "train.optim.policy_params",
+        "train.optim.skip_names",
+        "train.tensorboard",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "classification_pyt",
+      "path": "schemas/evaluate.schema.json",
+      "popular": {
+        "evaluate": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "gen_trt_engine": {
+          "batch_size": -1,
+          "gpu_id": 0,
+          "tensorrt": {
+            "calibration": {
+              "cal_batch_size": 1,
+              "cal_batches": 1
+            },
+            "max_batch_size": 1,
+            "min_batch_size": 1,
+            "opt_batch_size": 1
+          }
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "train": {
+          "checkpoint_interval": 1,
+          "gpu_ids": [
+            0
+          ],
+          "num_epochs": 10,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "validation_interval": 1
+        }
+      },
+      "schema_action": "evaluate",
+      "spec_template": "references/spec_template_evaluate.yaml"
+    },
+    "export": {
+      "automl_default_parameters": [
+        "dataset.augmentation.random_aug.enable",
+        "dataset.augmentation.random_color.brightness",
+        "dataset.augmentation.random_color.color_probability",
+        "dataset.augmentation.random_color.contrast",
+        "dataset.augmentation.random_color.enable",
+        "dataset.augmentation.random_color.hue",
+        "dataset.augmentation.random_color.saturation",
+        "dataset.augmentation.random_erase.enable",
+        "dataset.augmentation.random_erase.erase_probability",
+        "dataset.augmentation.random_flip.enable",
+        "dataset.augmentation.random_flip.hflip_probability",
+        "dataset.augmentation.random_flip.vflip_probability",
+        "dataset.augmentation.random_rotate.enable",
+        "dataset.augmentation.random_rotate.rotate_probability",
+        "dataset.augmentation.with_scale_random_crop.enable",
+        "dataset.batch_size",
+        "dataset.workers",
+        "distill.teacher.backbone.freeze_backbone",
+        "distill.teacher.backbone.freeze_norm",
+        "model.backbone.freeze_backbone",
+        "model.backbone.freeze_norm",
+        "train.optim.betas",
+        "train.optim.lr",
+        "train.optim.momentum",
+        "train.optim.weight_decay"
+      ],
+      "automl_disabled_parameters": [
+        "dataset",
+        "dataset.augmentation",
+        "dataset.augmentation.mean",
+        "dataset.augmentation.random_aug",
+        "dataset.augmentation.random_color",
+        "dataset.augmentation.random_erase",
+        "dataset.augmentation.random_flip",
+        "dataset.augmentation.random_rotate",
+        "dataset.augmentation.random_rotate.angle_list",
+        "dataset.augmentation.std",
+        "dataset.augmentation.with_scale_random_crop",
+        "dataset.augmentation.with_scale_random_crop.scale_range",
+        "dataset.quant_calibration_dataset",
+        "dataset.test_dataset",
+        "dataset.train_dataset",
+        "dataset.train_nolabel",
+        "dataset.val_dataset",
+        "distill",
+        "distill.teacher",
+        "distill.teacher.backbone",
+        "distill.teacher.head",
+        "distill.teacher.head.custom_args",
+        "distill.teacher.head.loss",
+        "distill.teacher.head.topk",
+        "evaluate",
+        "evaluate.gpu_ids",
+        "export",
+        "gen_trt_engine",
+        "gen_trt_engine.tensorrt",
+        "gen_trt_engine.tensorrt.calibration",
+        "gen_trt_engine.tensorrt.calibration.cal_image_dir",
+        "gen_trt_engine.tensorrt.layers_precision",
+        "inference",
+        "inference.gpu_ids",
+        "model",
+        "model.backbone",
+        "model.head",
+        "model.head.custom_args",
+        "model.head.loss",
+        "model.head.topk",
+        "quantize",
+        "quantize.backend_kwargs",
+        "quantize.layers",
+        "quantize.skip_names",
+        "train",
+        "train.cudnn",
+        "train.gpu_ids",
+        "train.optim",
+        "train.optim.policy_params",
+        "train.optim.skip_names",
+        "train.tensorboard",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "classification_pyt",
+      "path": "schemas/export.schema.json",
+      "popular": {
+        "evaluate": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "gen_trt_engine": {
+          "batch_size": -1,
+          "gpu_id": 0,
+          "tensorrt": {
+            "calibration": {
+              "cal_batch_size": 1,
+              "cal_batches": 1
+            },
+            "max_batch_size": 1,
+            "min_batch_size": 1,
+            "opt_batch_size": 1
+          }
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "train": {
+          "checkpoint_interval": 1,
+          "gpu_ids": [
+            0
+          ],
+          "num_epochs": 10,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "validation_interval": 1
+        }
+      },
+      "schema_action": "export",
+      "spec_template": "references/spec_template_export.yaml"
+    },
+    "gen_trt_engine": {
+      "automl_default_parameters": [
+        "dataset.augmentation.random_aug.enable",
+        "dataset.augmentation.random_color.brightness",
+        "dataset.augmentation.random_color.color_probability",
+        "dataset.augmentation.random_color.contrast",
+        "dataset.augmentation.random_color.enable",
+        "dataset.augmentation.random_color.hue",
+        "dataset.augmentation.random_color.saturation",
+        "dataset.augmentation.random_erase.enable",
+        "dataset.augmentation.random_erase.erase_probability",
+        "dataset.augmentation.random_flip.enable",
+        "dataset.augmentation.random_flip.hflip_probability",
+        "dataset.augmentation.random_flip.vflip_probability",
+        "dataset.augmentation.random_rotate.enable",
+        "dataset.augmentation.random_rotate.rotate_probability",
+        "dataset.augmentation.with_scale_random_crop.enable",
+        "dataset.batch_size",
+        "dataset.workers",
+        "distill.teacher.backbone.freeze_backbone",
+        "distill.teacher.backbone.freeze_norm",
+        "model.backbone.freeze_backbone",
+        "model.backbone.freeze_norm",
+        "train.optim.betas",
+        "train.optim.lr",
+        "train.optim.momentum",
+        "train.optim.weight_decay"
+      ],
+      "automl_disabled_parameters": [
+        "dataset",
+        "dataset.augmentation",
+        "dataset.augmentation.mean",
+        "dataset.augmentation.random_aug",
+        "dataset.augmentation.random_color",
+        "dataset.augmentation.random_erase",
+        "dataset.augmentation.random_flip",
+        "dataset.augmentation.random_rotate",
+        "dataset.augmentation.random_rotate.angle_list",
+        "dataset.augmentation.std",
+        "dataset.augmentation.with_scale_random_crop",
+        "dataset.augmentation.with_scale_random_crop.scale_range",
+        "dataset.quant_calibration_dataset",
+        "dataset.test_dataset",
+        "dataset.train_dataset",
+        "dataset.train_nolabel",
+        "dataset.val_dataset",
+        "distill",
+        "distill.teacher",
+        "distill.teacher.backbone",
+        "distill.teacher.head",
+        "distill.teacher.head.custom_args",
+        "distill.teacher.head.loss",
+        "distill.teacher.head.topk",
+        "evaluate",
+        "evaluate.gpu_ids",
+        "export",
+        "gen_trt_engine",
+        "gen_trt_engine.tensorrt",
+        "gen_trt_engine.tensorrt.calibration",
+        "gen_trt_engine.tensorrt.calibration.cal_image_dir",
+        "gen_trt_engine.tensorrt.layers_precision",
+        "inference",
+        "inference.gpu_ids",
+        "model",
+        "model.backbone",
+        "model.head",
+        "model.head.custom_args",
+        "model.head.loss",
+        "model.head.topk",
+        "quantize",
+        "quantize.backend_kwargs",
+        "quantize.layers",
+        "quantize.skip_names",
+        "train",
+        "train.cudnn",
+        "train.gpu_ids",
+        "train.optim",
+        "train.optim.policy_params",
+        "train.optim.skip_names",
+        "train.tensorboard",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "classification_pyt",
+      "path": "schemas/gen_trt_engine.schema.json",
+      "popular": {
+        "evaluate": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "gen_trt_engine": {
+          "batch_size": -1,
+          "gpu_id": 0,
+          "tensorrt": {
+            "calibration": {
+              "cal_batch_size": 1,
+              "cal_batches": 1
+            },
+            "max_batch_size": 1,
+            "min_batch_size": 1,
+            "opt_batch_size": 1
+          }
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "train": {
+          "checkpoint_interval": 1,
+          "gpu_ids": [
+            0
+          ],
+          "num_epochs": 10,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "validation_interval": 1
+        }
+      },
+      "schema_action": "gen_trt_engine",
+      "spec_template": "references/spec_template_gen_trt_engine.yaml"
+    },
+    "inference": {
+      "automl_default_parameters": [
+        "dataset.augmentation.random_aug.enable",
+        "dataset.augmentation.random_color.brightness",
+        "dataset.augmentation.random_color.color_probability",
+        "dataset.augmentation.random_color.contrast",
+        "dataset.augmentation.random_color.enable",
+        "dataset.augmentation.random_color.hue",
+        "dataset.augmentation.random_color.saturation",
+        "dataset.augmentation.random_erase.enable",
+        "dataset.augmentation.random_erase.erase_probability",
+        "dataset.augmentation.random_flip.enable",
+        "dataset.augmentation.random_flip.hflip_probability",
+        "dataset.augmentation.random_flip.vflip_probability",
+        "dataset.augmentation.random_rotate.enable",
+        "dataset.augmentation.random_rotate.rotate_probability",
+        "dataset.augmentation.with_scale_random_crop.enable",
+        "dataset.batch_size",
+        "dataset.workers",
+        "distill.teacher.backbone.freeze_backbone",
+        "distill.teacher.backbone.freeze_norm",
+        "model.backbone.freeze_backbone",
+        "model.backbone.freeze_norm",
+        "train.optim.betas",
+        "train.optim.lr",
+        "train.optim.momentum",
+        "train.optim.weight_decay"
+      ],
+      "automl_disabled_parameters": [
+        "dataset",
+        "dataset.augmentation",
+        "dataset.augmentation.mean",
+        "dataset.augmentation.random_aug",
+        "dataset.augmentation.random_color",
+        "dataset.augmentation.random_erase",
+        "dataset.augmentation.random_flip",
+        "dataset.augmentation.random_rotate",
+        "dataset.augmentation.random_rotate.angle_list",
+        "dataset.augmentation.std",
+        "dataset.augmentation.with_scale_random_crop",
+        "dataset.augmentation.with_scale_random_crop.scale_range",
+        "dataset.quant_calibration_dataset",
+        "dataset.test_dataset",
+        "dataset.train_dataset",
+        "dataset.train_nolabel",
+        "dataset.val_dataset",
+        "distill",
+        "distill.teacher",
+        "distill.teacher.backbone",
+        "distill.teacher.head",
+        "distill.teacher.head.custom_args",
+        "distill.teacher.head.loss",
+        "distill.teacher.head.topk",
+        "evaluate",
+        "evaluate.gpu_ids",
+        "export",
+        "gen_trt_engine",
+        "gen_trt_engine.tensorrt",
+        "gen_trt_engine.tensorrt.calibration",
+        "gen_trt_engine.tensorrt.calibration.cal_image_dir",
+        "gen_trt_engine.tensorrt.layers_precision",
+        "inference",
+        "inference.gpu_ids",
+        "model",
+        "model.backbone",
+        "model.head",
+        "model.head.custom_args",
+        "model.head.loss",
+        "model.head.topk",
+        "quantize",
+        "quantize.backend_kwargs",
+        "quantize.layers",
+        "quantize.skip_names",
+        "train",
+        "train.cudnn",
+        "train.gpu_ids",
+        "train.optim",
+        "train.optim.policy_params",
+        "train.optim.skip_names",
+        "train.tensorboard",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "classification_pyt",
+      "path": "schemas/inference.schema.json",
+      "popular": {
+        "evaluate": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "gen_trt_engine": {
+          "batch_size": -1,
+          "gpu_id": 0,
+          "tensorrt": {
+            "calibration": {
+              "cal_batch_size": 1,
+              "cal_batches": 1
+            },
+            "max_batch_size": 1,
+            "min_batch_size": 1,
+            "opt_batch_size": 1
+          }
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "train": {
+          "checkpoint_interval": 1,
+          "gpu_ids": [
+            0
+          ],
+          "num_epochs": 10,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "validation_interval": 1
+        }
+      },
+      "schema_action": "inference",
+      "spec_template": "references/spec_template_inference.yaml"
+    },
+    "quantize": {
+      "automl_default_parameters": [
+        "dataset.augmentation.random_aug.enable",
+        "dataset.augmentation.random_color.brightness",
+        "dataset.augmentation.random_color.color_probability",
+        "dataset.augmentation.random_color.contrast",
+        "dataset.augmentation.random_color.enable",
+        "dataset.augmentation.random_color.hue",
+        "dataset.augmentation.random_color.saturation",
+        "dataset.augmentation.random_erase.enable",
+        "dataset.augmentation.random_erase.erase_probability",
+        "dataset.augmentation.random_flip.enable",
+        "dataset.augmentation.random_flip.hflip_probability",
+        "dataset.augmentation.random_flip.vflip_probability",
+        "dataset.augmentation.random_rotate.enable",
+        "dataset.augmentation.random_rotate.rotate_probability",
+        "dataset.augmentation.with_scale_random_crop.enable",
+        "dataset.batch_size",
+        "dataset.workers",
+        "distill.teacher.backbone.freeze_backbone",
+        "distill.teacher.backbone.freeze_norm",
+        "model.backbone.freeze_backbone",
+        "model.backbone.freeze_norm",
+        "train.optim.betas",
+        "train.optim.lr",
+        "train.optim.momentum",
+        "train.optim.weight_decay"
+      ],
+      "automl_disabled_parameters": [
+        "dataset",
+        "dataset.augmentation",
+        "dataset.augmentation.mean",
+        "dataset.augmentation.random_aug",
+        "dataset.augmentation.random_color",
+        "dataset.augmentation.random_erase",
+        "dataset.augmentation.random_flip",
+        "dataset.augmentation.random_rotate",
+        "dataset.augmentation.random_rotate.angle_list",
+        "dataset.augmentation.std",
+        "dataset.augmentation.with_scale_random_crop",
+        "dataset.augmentation.with_scale_random_crop.scale_range",
+        "dataset.quant_calibration_dataset",
+        "dataset.test_dataset",
+        "dataset.train_dataset",
+        "dataset.train_nolabel",
+        "dataset.val_dataset",
+        "distill",
+        "distill.teacher",
+        "distill.teacher.backbone",
+        "distill.teacher.head",
+        "distill.teacher.head.custom_args",
+        "distill.teacher.head.loss",
+        "distill.teacher.head.topk",
+        "evaluate",
+        "evaluate.gpu_ids",
+        "export",
+        "gen_trt_engine",
+        "gen_trt_engine.tensorrt",
+        "gen_trt_engine.tensorrt.calibration",
+        "gen_trt_engine.tensorrt.calibration.cal_image_dir",
+        "gen_trt_engine.tensorrt.layers_precision",
+        "inference",
+        "inference.gpu_ids",
+        "model",
+        "model.backbone",
+        "model.head",
+        "model.head.custom_args",
+        "model.head.loss",
+        "model.head.topk",
+        "quantize",
+        "quantize.backend_kwargs",
+        "quantize.layers",
+        "quantize.skip_names",
+        "train",
+        "train.cudnn",
+        "train.gpu_ids",
+        "train.optim",
+        "train.optim.policy_params",
+        "train.optim.skip_names",
+        "train.tensorboard",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "classification_pyt",
+      "path": "schemas/quantize.schema.json",
+      "popular": {
+        "evaluate": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "gen_trt_engine": {
+          "batch_size": -1,
+          "gpu_id": 0,
+          "tensorrt": {
+            "calibration": {
+              "cal_batch_size": 1,
+              "cal_batches": 1
+            },
+            "max_batch_size": 1,
+            "min_batch_size": 1,
+            "opt_batch_size": 1
+          }
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "train": {
+          "checkpoint_interval": 1,
+          "gpu_ids": [
+            0
+          ],
+          "num_epochs": 10,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "validation_interval": 1
+        }
+      },
+      "schema_action": "quantize",
+      "spec_template": "references/spec_template_quantize.yaml"
+    },
+    "train": {
+      "automl_default_parameters": [
+        "dataset.augmentation.random_aug.enable",
+        "dataset.augmentation.random_color.brightness",
+        "dataset.augmentation.random_color.color_probability",
+        "dataset.augmentation.random_color.contrast",
+        "dataset.augmentation.random_color.enable",
+        "dataset.augmentation.random_color.hue",
+        "dataset.augmentation.random_color.saturation",
+        "dataset.augmentation.random_erase.enable",
+        "dataset.augmentation.random_erase.erase_probability",
+        "dataset.augmentation.random_flip.enable",
+        "dataset.augmentation.random_flip.hflip_probability",
+        "dataset.augmentation.random_flip.vflip_probability",
+        "dataset.augmentation.random_rotate.enable",
+        "dataset.augmentation.random_rotate.rotate_probability",
+        "dataset.augmentation.with_scale_random_crop.enable",
+        "dataset.batch_size",
+        "dataset.workers",
+        "distill.teacher.backbone.freeze_backbone",
+        "distill.teacher.backbone.freeze_norm",
+        "model.backbone.freeze_backbone",
+        "model.backbone.freeze_norm",
+        "train.optim.betas",
+        "train.optim.lr",
+        "train.optim.momentum",
+        "train.optim.weight_decay"
+      ],
+      "automl_disabled_parameters": [
+        "dataset",
+        "dataset.augmentation",
+        "dataset.augmentation.mean",
+        "dataset.augmentation.random_aug",
+        "dataset.augmentation.random_color",
+        "dataset.augmentation.random_erase",
+        "dataset.augmentation.random_flip",
+        "dataset.augmentation.random_rotate",
+        "dataset.augmentation.random_rotate.angle_list",
+        "dataset.augmentation.std",
+        "dataset.augmentation.with_scale_random_crop",
+        "dataset.augmentation.with_scale_random_crop.scale_range",
+        "dataset.quant_calibration_dataset",
+        "dataset.test_dataset",
+        "dataset.train_dataset",
+        "dataset.train_nolabel",
+        "dataset.val_dataset",
+        "distill",
+        "distill.teacher",
+        "distill.teacher.backbone",
+        "distill.teacher.head",
+        "distill.teacher.head.custom_args",
+        "distill.teacher.head.loss",
+        "distill.teacher.head.topk",
+        "evaluate",
+        "evaluate.gpu_ids",
+        "export",
+        "gen_trt_engine",
+        "gen_trt_engine.tensorrt",
+        "gen_trt_engine.tensorrt.calibration",
+        "gen_trt_engine.tensorrt.calibration.cal_image_dir",
+        "gen_trt_engine.tensorrt.layers_precision",
+        "inference",
+        "inference.gpu_ids",
+        "model",
+        "model.backbone",
+        "model.head",
+        "model.head.custom_args",
+        "model.head.loss",
+        "model.head.topk",
+        "quantize",
+        "quantize.backend_kwargs",
+        "quantize.layers",
+        "quantize.skip_names",
+        "train",
+        "train.cudnn",
+        "train.gpu_ids",
+        "train.optim",
+        "train.optim.policy_params",
+        "train.optim.skip_names",
+        "train.tensorboard",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "classification_pyt",
+      "path": "schemas/train.schema.json",
+      "popular": {
+        "evaluate": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "gen_trt_engine": {
+          "batch_size": -1,
+          "gpu_id": 0,
+          "tensorrt": {
+            "calibration": {
+              "cal_batch_size": 1,
+              "cal_batches": 1
+            },
+            "max_batch_size": 1,
+            "min_batch_size": 1,
+            "opt_batch_size": 1
+          }
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "train": {
+          "checkpoint_interval": 1,
+          "gpu_ids": [
+            0
+          ],
+          "num_epochs": 10,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "validation_interval": 1
+        }
+      },
+      "schema_action": "train",
+      "spec_template": "references/spec_template_train.yaml"
+    }
+  },
+  "automl_enabled": true,
+  "failures": {},
+  "model": "classification-pyt",
+  "network_arch": "classification_pyt",
+  "schema_version": 1
+}

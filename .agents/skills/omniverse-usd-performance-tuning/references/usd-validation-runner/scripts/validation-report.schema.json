@@ -1,0 +1,94 @@
+{
+  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "USD Performance Tuning Validation Report",
+  "$comment": "Output of the validation reference executor. Strict/closed. The coverage_ledger is required and machine-enforces the completion gate: the run cannot declare done while a flagged target is unresolved.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "stage", "phase", "validators", "summary", "coverage_ledger"],
+  "properties": {
+    "schemaVersion": { "type": "string" },
+    "phase": { "enum": ["baseline", "after"] },
+    "stage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["identifier"],
+      "properties": {
+        "identifier": { "type": "string" },
+        "rootLayer": { "type": "string" }
+      }
+    },
+    "validators": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/validator_entry" }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "errorCount", "warningCount"],
+      "properties": {
+        "status": { "enum": ["PASS", "FAIL", "BLOCKED"] },
+        "errorCount": { "type": "integer", "minimum": 0 },
+        "warningCount": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "coverage_ledger": { "$ref": "#/$defs/coverage_ledger" },
+    "findings": { "type": "array", "items": { "type": "object" } },
+    "artifacts": { "type": "object" },
+    "runtime_context": { "type": "object" },
+    "generated_at": { "type": "string" }
+  },
+  "$defs": {
+    "validator_entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "kind", "status"],
+      "properties": {
+        "name": { "type": "string" },
+        "kind": { "enum": ["openability", "rule"] },
+        "status": { "enum": ["PASS", "FAIL", "SKIPPED", "TIMEOUT", "BLOCKED"] },
+        "canonical_name": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+        "module": { "type": "string" },
+        "class_name": { "type": "string" },
+        "issues": { "type": "integer", "minimum": 0 },
+        "notes": { "type": "string" }
+      },
+      "allOf": [
+        {
+          "$comment": "Rule entries must carry resolved identity — proof the collision-safe resolver ran. Never a bare name.",
+          "if": { "properties": { "kind": { "const": "rule" } } },
+          "then": { "required": ["canonical_name", "module", "class_name"] }
+        }
+      ]
+    },
+    "coverage_ledger": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["complete", "entries"],
+      "properties": {
+        "complete": {
+          "type": "boolean",
+          "$comment": "true only when no flagged target is unresolved. The completion gate keys on this field."
+        },
+        "entries": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ledger_entry" }
+        }
+      }
+    },
+    "ledger_entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["target", "concept", "tier", "status"],
+      "properties": {
+        "target": { "type": "string", "minLength": 1 },
+        "concept": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+        "tier": { "enum": [1, 2, 3] },
+        "status": {
+          "enum": ["probed_with_findings", "probed_clean", "user_declined", "timeout_recorded", "blocked_validation_runtime"]
+        },
+        "reason": { "type": "string" }
+      }
+    }
+  }
+}

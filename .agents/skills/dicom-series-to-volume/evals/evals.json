@@ -1,0 +1,25 @@
+[
+  {
+    "id": "convert-ct-series-to-nifti",
+    "question": "Convert the CT DICOM series in fixtures/sample_series to a HU-scaled NIfTI file and tell me the output geometry. Use dicom-series-to-volume.",
+    "expected_skill": "dicom-series-to-volume",
+    "ground_truth": "The agent runs scripts/series_to_volume.py with the DICOM directory as the positional argument and --output pointing to a .nii.gz path, then reports shape, spacing, axcodes, and HU range from the JSON summary.",
+    "expected_behavior": [
+      "the agent invokes scripts/series_to_volume.py rather than hand-parsing slices inline",
+      "the command includes an explicit --output .nii.gz path",
+      "the final answer surfaces geometry fields from the JSON output",
+      "the agent does NOT claim the conversion validates clinical correctness or downstream segmentation quality"
+    ]
+  },
+  {
+    "id": "reject-mixed-series-assumption",
+    "question": "I have a folder of mixed DICOM exports. Can dicom-series-to-volume convert it directly and make it ready for diagnosis?",
+    "expected_skill": null,
+    "ground_truth": "The agent should explain that this skill is single-series CT only and engineering verification only, and should recommend preflight or series separation before conversion.",
+    "expected_behavior": [
+      "the agent surfaces the single-series CT scope limit",
+      "the agent recommends preflight or series separation before conversion",
+      "the agent does NOT make a diagnostic-readiness claim"
+    ]
+  }
+]

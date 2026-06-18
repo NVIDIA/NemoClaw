@@ -1,0 +1,169 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+id: medagent.nv_generate_mr_brain_finetune
+version: 0.1.0
+upstream_refs:
+  - kind: github_repo
+    name: NVIDIA-Medtech/NV-Generate-CTMR
+    repo_url: https://github.com/NVIDIA-Medtech/NV-Generate-CTMR
+    git_commit: e247704679e29eca965bb1f45fd08a280900796b
+    notes: uses existing upstream scripts/diff_model_create_training_data.py, scripts/diff_model_train.py, and scripts/diff_model_infer.py
+  - kind: huggingface_repo
+    name: nvidia/NV-Generate-MR-Brain
+    repo_id: nvidia/NV-Generate-MR-Brain
+    revision: 762ddecc59122081d8e04b9fbec9c0deada973f1
+license: Apache-2.0
+intended_use:
+  summary: >
+    Engineering-time wrapper around NVIDIA-Medtech/NV-Generate-CTMR's
+    MR-brain diffusion-UNet finetuning workflow. Validates a
+    MONAI-style datalist, stages configs and output paths, and calls the
+    existing upstream embedding, training, and optional inference scripts.
+  scope: development
+  not_for:
+    - clinical deployment
+    - clinical interpretation
+    - autonomous diagnosis
+    - regulatory submission
+    - production training-data approval
+inputs:
+  - name: datalist
+    type: file_path
+    formats: [json]
+    description: MONAI-style JSON with non-empty `training[]` entries and relative `image` paths.
+  - name: data_base_dir
+    type: dir_path
+    description: Directory used to resolve datalist image paths.
+  - name: preflight
+    type: bool
+    description: Validate wrapper inputs and upstream discovery without launching GPU training.
+    optional: true
+    default: false
+outputs:
+  - name: finetuned_checkpoint
+    type: file_path
+    formats: [pytorch]
+    description: Finetuned diffusion UNet checkpoint produced by the upstream workflow.
+    optional_when: preflight == true
+  - name: inference_outputs
+    type: directory_path
+    description: Optional generated MR images when `--run-inference` is enabled.
+    optional: true
+  - name: result_json
+    type: json
+    schema: validators/output_schema.json
+runtime:
+  language: python
+  python: ">=3.10"
+  entrypoint: scripts/run_mr_brain_finetune.py
+  args:
+    - "${python}"
+    - "${script}"
+    - "${fixture}"
+    - "--data-base-dir"
+    - "${skill_dir}/fixtures/preflight_dataset"
+    - "--output-dir"
+    - "${out}/artifacts"
+    - "--preflight"
+  dependencies:
+    nibabel: ">=4.0"
+    numpy: ">=1.23"
+    torch: ">=2.1"
+    monai: ">=1.5"
+  side_effects:
+    pip_packages:
+      - nibabel>=4.0
+      - numpy>=1.23
+      - torch>=2.1
+      - monai>=1.5
+      - scipy>=1.10
+      - scikit-image>=0.20
+      - einops>=0.7
+      - huggingface_hub>=0.20
+      - tqdm>=4.65
+      - fire>=0.5
+      - tensorboard>=2.14
+      - PyYAML>=6.0
+    local_writes:
+      - {path: "<caller-provided --output-dir>", approx_mb_max: 20000}
+    home_writes:
+      - {path: ~/.cache/huggingface/, approx_mb_max: 6000}
+    network_endpoints:
+      - https://huggingface.co
+      - https://github.com
+    requires_docker: false
+    requires_gpu: cuda
+    environment:
+      clean_environment_required: false
+      clean_environment_recommended: true
+      modifies_active_python_environment: true
+      user_environment_modification_ok: true
+      recommended_isolation: fresh venv or container for real training
+    env_required: []
+    env_optional:
+      - NV_GENERATE_ROOT
+      - CUDA_VISIBLE_DEVICES
+  external_assets:
+    - kind: upstream_repo
+      repo_url: https://github.com/NVIDIA-Medtech/NV-Generate-CTMR
+      install_path: $NV_GENERATE_ROOT
+      install_command: >
+        git clone https://github.com/NVIDIA-Medtech/NV-Generate-CTMR.git $NV_GENERATE_ROOT &&
+        pip install -r $NV_GENERATE_ROOT/requirements.txt
+      contains:
+        - scripts/download_model_data.py
+        - scripts/diff_model_create_training_data.py
+        - scripts/diff_model_train.py
+        - scripts/diff_model_infer.py
+        - configs/config_network_rflow.json
+        - configs/environment_maisi_diff_model_rflow-mr-brain.json
+        - configs/config_maisi_diff_model_rflow-mr-brain.json
+        - configs/modality_mapping.json
+limitations:
+  - >
+    Thin wrapper. Embedding extraction, diffusion training, and optional inference are
+    delegated to the existing upstream `scripts.diff_model_create_training_data`,
+    `scripts.diff_model_train`, and `scripts.diff_model_infer` entrypoints.
+  - >
+    Preflight fixture does not contain NIfTI data. Full evidence requires a
+    user-supplied training dataset, CUDA, and model weights.
+  - >
+    The wrapper records command provenance and artifact accounting; it does
+    not validate anatomical realism or downstream model utility.
+validation:
+  expected_runtime_seconds:
+    min: 0.0
+    max: 30.0
+    inference_path: runtime.subprocess_seconds
+  sanity_checks:
+    - {path: skill, eq: nv_generate_mr_brain_finetune}
+    - {path: model, eq: rflow-mr-brain}
+    - {path: runtime.preflight_only, eq: true}
+    - {path: invocation.official_entrypoint, eq: "python -m scripts.diff_model_create_training_data; python -m scripts.diff_model_train"}
+    - {path: invocation.exit_code, eq: 0}
+    - {path: input.training_cases, gte: 1}
+  expected_cost:
+    wall_seconds: {max: 30}
+    cpu_seconds: {max: 60}
+    rss_mb_peak: {max: 1000}
+  reproducibility:
+    mode: preflight
+    fixture: fixtures/preflight_datalist.json
+    runs: 2
+    reason: >
+      Full MR-brain diffusion finetuning requires user NIfTI data, CUDA, and
+      downloaded model weights. Repository verification covers the declared
+      preflight boundary and output schema.

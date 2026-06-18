@@ -1,0 +1,55 @@
+[
+  {
+    "id": "launch-nemo-rl-positive-001",
+    "question": "What is the difference between ephemeral and long-lived mode in nrl-k8s? When should I use each?",
+    "expected_skill": "launch-nemo-rl",
+    "ground_truth": "The agent loads the launch-nemo-rl skill and explains ephemeral mode (default, one-shot RayJob, auto-teardown) vs long-lived mode (--raycluster, reuses cluster, good for iteration).",
+    "expected_behavior": [
+      "The agent read launch-nemo-rl/SKILL.md before acting",
+      "The agent explained both ephemeral and long-lived modes",
+      "The agent described when to use each mode"
+    ]
+  },
+  {
+    "id": "launch-nemo-rl-positive-002",
+    "question": "How do I get the driver logs for a training job that already finished on the cluster?",
+    "expected_skill": "launch-nemo-rl",
+    "ground_truth": "The agent loads the launch-nemo-rl skill and explains using kubectl port-forward to the head service and curling the Ray dashboard API at /api/jobs/<submission_id>/logs.",
+    "expected_behavior": [
+      "The agent read launch-nemo-rl/SKILL.md before acting",
+      "The agent described using kubectl port-forward and the Ray dashboard API",
+      "The agent mentioned the difference between DRIVER and SUBMISSION job types"
+    ]
+  },
+  {
+    "id": "launch-nemo-rl-positive-003",
+    "question": "What Kubernetes prerequisites do I need to verify before applying an infra YAML with nrl-k8s?",
+    "expected_skill": "launch-nemo-rl",
+    "ground_truth": "The agent loads the launch-nemo-rl skill and lists checking the PVC, secrets (wandb, image pull), and service account exist in the target namespace.",
+    "expected_behavior": [
+      "The agent read launch-nemo-rl/SKILL.md before acting",
+      "The agent mentioned checking PVC, secrets, and service account",
+      "The agent provided kubectl commands to verify prerequisites"
+    ]
+  },
+  {
+    "id": "launch-nemo-rl-negative-001",
+    "question": "Add a new config field to the GRPOConfig TypedDict for controlling the entropy bonus.",
+    "expected_skill": null,
+    "should_trigger": false,
+    "ground_truth": "The agent should not activate the launch-nemo-rl skill for a code change task.",
+    "expected_behavior": [
+      "The agent did not read or activate launch-nemo-rl/SKILL.md"
+    ]
+  },
+  {
+    "id": "launch-nemo-rl-negative-002",
+    "question": "Review PR #1234 for correctness issues in the reward calculation.",
+    "expected_skill": null,
+    "should_trigger": false,
+    "ground_truth": "The agent should not activate the launch-nemo-rl skill for a code review task.",
+    "expected_behavior": [
+      "The agent did not read or activate launch-nemo-rl/SKILL.md"
+    ]
+  }
+]

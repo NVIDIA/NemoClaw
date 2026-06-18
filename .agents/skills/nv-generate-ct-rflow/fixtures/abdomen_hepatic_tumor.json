@@ -1,0 +1,40 @@
+{
+  "_comment": "Demonstrates controllable_anatomy_size: a hepatic tumor at scale 0.3 with liver at scale 0.7. Only one tumor entry is allowed per request (upstream constraint in scripts/sample.py). Spend ~90s on a 24 GB GPU at 256^3.",
+  "num_output_samples": 1,
+  "body_region": [
+    "abdomen"
+  ],
+  "anatomy_list": [
+    "liver",
+    "hepatic tumor",
+    "hepatic vessel",
+    "spleen",
+    "right kidney",
+    "left kidney",
+    "aorta",
+    "inferior vena cava"
+  ],
+  "controllable_anatomy_size": [
+    [
+      "liver",
+      0.7
+    ],
+    [
+      "hepatic tumor",
+      0.3
+    ]
+  ],
+  "output_size": [
+    256,
+    256,
+    256
+  ],
+  "spacing": [
+    1.5,
+    1.5,
+    2.0
+  ],
+  "num_inference_steps": 30,
+  "image_output_ext": ".nii.gz",
+  "label_output_ext": ".nii.gz"
+}

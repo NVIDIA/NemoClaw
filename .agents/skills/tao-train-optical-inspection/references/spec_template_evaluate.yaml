@@ -1,0 +1,115 @@
+model_name: ''
+encryption_key: ''
+results_dir: ''
+wandb:
+  enable: true
+  project: TAO Toolkit
+  entity: ''
+  group: ''
+  tags:
+  - tao-toolkit
+  reinit: false
+  sync_tensorboard: false
+  save_code: false
+  name: TAO Toolkit Training
+  run_id: ''
+model:
+  model_type: Siamese_3
+  margin: 2.0
+  model_backbone: custom
+  embedding_vectors: 5
+  imagenet_pretrained: false
+dataset:
+  train_dataset:
+    csv_path: ???
+    images_dir: ???
+  validation_dataset:
+    csv_path: ???
+    images_dir: ???
+  test_dataset:
+    csv_path: ???
+    images_dir: ???
+  infer_dataset:
+    csv_path: ???
+    images_dir: ???
+  image_ext: .jpg
+  batch_size: 8
+  workers: 1
+  fpratio_sampling: 0.1
+  num_input: 4
+  input_map:
+    LowAngleLight: 0
+    SolderLight: 1
+    UniformLight: 2
+    WhiteLight: 3
+  grid_map:
+    x: 2
+    y: 2
+  concat_type: linear
+  image_width: 128
+  image_height: 128
+  augmentation_config:
+    rgb_input_mean:
+    - 0.485
+    - 0.456
+    - 0.406
+    rgb_input_std:
+    - 0.226
+    - 0.226
+    - 0.226
+    random_flip:
+      vflip_probability: 0.5
+      hflip_probability: 0.5
+      enable: true
+    random_rotate:
+      rotate_probability: 0.5
+      angle_list:
+      - 90
+      - 180
+      - 270
+      enable: true
+    random_color:
+      brightness: 0.3
+      contrast: 0.3
+      saturation: 0.3
+      hue: 0.3
+      enable: true
+      color_probability: 0.5
+    with_random_blur: true
+    with_random_crop: true
+    augment: false
+train:
+  num_gpus: 1
+  gpu_ids:
+  - 0
+  num_nodes: 1
+  seed: 1234
+  cudnn:
+    benchmark: false
+    deterministic: true
+  num_epochs: 10
+  checkpoint_interval: 1
+  checkpoint_interval_unit: epoch
+  validation_interval: 1
+  resume_training_checkpoint_path: ''
+  results_dir: ''
+  optim:
+    type: Adam
+    lr: 0.0005
+    momentum: 0.9
+    weight_decay: 0.0005
+  loss: contrastive
+  clip_grad_norm: 1.0
+  tensorboard:
+    enabled: false
+    infrequent_logging_frequency: 2
+  pretrained_model_path: ''
+evaluate:
+  num_gpus: 1
+  gpu_ids:
+  - 0
+  num_nodes: 1
+  checkpoint: ???
+  trt_engine: ''
+  results_dir: ''
+  batch_size: 8

@@ -1,0 +1,27 @@
+encryption_key: "tlt_encode"
+results_dir: "/results"
+dataset:
+  test_data_sources:
+    image_dir: "/data/eval/images"
+    json_file: "/data/eval/annotations.json"
+  num_classes: 91
+  batch_size: 1
+  workers: 8
+  eval_class_ids: [1]
+  augmentation:
+    input_mean: [0.485, 0.456, 0.406]
+    input_std: [0.229, 0.224, 0.225]
+evaluate:
+  trt_engine: "/results/dino.engine"
+  conf_threshold: 0.0
+  input_width: 960
+  input_height: 544
+model:
+  backbone: fan_small
+  num_feature_levels: 4
+  dec_layers: 6
+  enc_layers: 6
+  num_queries: 300
+  num_select: 100
+  dropout_ratio: 0.0
+  dim_feedforward: 2048

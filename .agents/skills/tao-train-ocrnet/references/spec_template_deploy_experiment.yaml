@@ -1,0 +1,70 @@
+results_dir: /results
+encryption_key: tlt_encode
+model:
+  TPS: false
+  backbone: ResNet
+  feature_channel: 512
+  sequence: BiLSTM
+  hidden_size: 256
+  prediction: CTC
+dataset:
+  train_dataset_dir:
+  - <required>
+  val_dataset_dir: <required>
+  character_list_file: /data/character_list.txt
+  input_width: 100
+  input_height: 32
+  input_channel: 1
+  max_label_length: 25
+  batch_size: 32
+  workers: 4
+  augmentation:
+    keep_aspect_ratio: false
+train:
+  seed: 1111
+  gpu_ids:
+  - 0
+  optim:
+    name: adadelta
+    lr: 1.0
+  clip_grad_norm: 5.0
+  num_epochs: 12
+  checkpoint_interval: 1
+  validation_interval: 1
+evaluate:
+  gpu_ids:
+  - 0
+  checkpoint: <required>
+  test_dataset_dir: /data/test
+  trt_engine: /results/ocrnet.engine
+inference:
+  gpu_ids:
+  - 0
+  checkpoint: <required>
+  inference_dataset_dir: /data/inference
+  trt_engine: /results/ocrnet.engine
+export:
+  gpu_id: 0
+  checkpoint: <required>
+prune:
+  gpu_id: 0
+  checkpoint: <required>
+  results_dir: /results
+  prune_setting:
+    mode: amount
+    amount: 0.4
+    granularity: 8
+    raw_prune_score: L1
+dataset_convert:
+  input_img_dir: <required>
+  gt_file: <required>
+  results_dir: /results
+gen_trt_engine:
+  onnx_file: /models/model.onnx
+  trt_engine: /results/ocrnet.engine
+  tensorrt:
+    data_type: fp16
+    workspace_size: 1024
+    min_batch_size: 1
+    opt_batch_size: 32
+    max_batch_size: 32

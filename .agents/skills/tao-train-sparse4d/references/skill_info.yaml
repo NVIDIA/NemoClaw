@@ -1,0 +1,70 @@
+name: tao-train-sparse4d
+network_arch: sparse4d
+automl_enabled: true
+container_image: tao_toolkit.pyt
+data_format: ovpkl
+gpu_spec_key: train.num_gpus
+actions:
+  dataset_convert:
+    command: sparse4d dataset_convert -e {config_path}
+    config_format: yaml
+    inputs: {}
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  train:
+    command: sparse4d train -e {config_path}
+    config_format: yaml
+    inputs: {}
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  quantize:
+    command: sparse4d quantize -e {config_path}
+    config_format: yaml
+    inputs: {}
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  evaluate:
+    command: sparse4d evaluate -e {config_path}
+    config_format: yaml
+    inputs: {}
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  export:
+    command: sparse4d export -e {config_path}
+    config_format: yaml
+    inputs: {}
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  inference:
+    command: sparse4d inference -e {config_path}
+    config_format: yaml
+    inputs: {}
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+data_sources: {}
+spec_params: {}
+key_defaults: {}
+spec_shorthand_keys:
+  num_epochs: train.num_epochs
+  batch_size: dataset.batch_size
+  learning_rate: train.optim.lr
+description: Sparse4D for multi-camera temporal 3D object detection and tracking. Uses sparse queries with deformable attention
+  across camera views and time for end-to-end 3D perception. Includes instance bank for temporal tracking.

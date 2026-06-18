@@ -1,0 +1,7 @@
+version: 1
+provider: openai
+mode: default
+entrypoint: SKILL.md
+notes:
+  - Task-level orchestration skill for VDA workflows.
+  - Deep references are under references/flows/, references/nim/, and references/setup.md.

@@ -1,0 +1,67 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Qwen3-235B-A22B (MoE text LLM).
+# Served via model-free-nim with HuggingFace weights pre-staged on a manual PVC.
+#
+# This profile targets an 8x H100 80GB node. The model is far too large for the
+# single-GPU profile used by smaller Qwen manifests.
+apiVersion: apps.nvidia.com/v1alpha1
+kind: NIMService
+metadata:
+  name: qwen3-235b
+  namespace: osmo-nims
+spec:
+  image:
+    repository: nvcr.io/nim/nvidia/model-free-nim
+    tag: "2.0.2"
+    pullPolicy: IfNotPresent
+    pullSecrets:
+      - nvcr-pull-secret
+  authSecret: ngc-api-secret
+  env:
+    - name: NIM_MODEL_PATH
+      value: "hf://Qwen/Qwen3-235B-A22B"
+    - name: NIM_CACHE_PATH
+      value: "/model-store"
+    - name: HF_HOME
+      value: "/model-store/huggingface/hub"
+    - name: HF_HUB_OFFLINE
+      value: "1"
+    - name: NIM_SERVED_MODEL_NAME
+      value: "Qwen/Qwen3-235B-A22B"
+    - name: NIM_TENSOR_PARALLEL_SIZE
+      value: "8"
+    - name: VLLM_ENABLE_EXPERT_PARALLEL
+      value: "1"
+    - name: NIM_DISABLE_CUDA_GRAPH
+      value: "true"
+    - name: NIM_MAX_MODEL_LEN
+      value: "32768"
+    - name: NIM_PROXY_CLIENT_MAX_BODY_SIZE
+      value: "500M"
+  storage:
+    pvc:
+      name: qwen3-235b-pvc
+  startupProbe:
+    enabled: true
+    probe:
+      httpGet:
+        path: /v1/health/ready
+        port: 8000
+      initialDelaySeconds: 60
+      periodSeconds: 30
+      failureThreshold: 180
+      timeoutSeconds: 5
+  replicas: 1
+  resources:
+    limits:
+      nvidia.com/gpu: 8
+      memory: 512Gi
+    requests:
+      nvidia.com/gpu: 8
+      memory: 512Gi
+  expose:
+    service:
+      type: ClusterIP
+      port: 8000

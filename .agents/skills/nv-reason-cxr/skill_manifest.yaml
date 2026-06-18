@@ -1,0 +1,209 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+id: medagent.nv_reason_cxr
+version: 0.1.0
+license: Apache-2.0
+upstream_refs:
+  - kind: github_repo
+    name: NVIDIA-Medtech/NV-Reason-CXR
+    repo_url: https://github.com/NVIDIA-Medtech/NV-Reason-CXR
+    git_commit: 83a4d51c9fbbff68156a5f01796f04e26519b6ad
+  - kind: huggingface_repo
+    name: nvidia/NV-Reason-CXR-3B
+    repo_id: nvidia/NV-Reason-CXR-3B
+    revision: 056bd0383b35226554da9dc5866e095df174ae19
+license_restrictions:
+  code: Apache-2.0
+  weights: NVIDIA OneWay Noncommercial License Agreement
+  usage: research_and_development_only
+intended_use:
+  summary: >
+    Engineering-time wrapper around NVIDIA-Medtech/NV-Reason-CXR-3B
+    inference for a user-provided chest X-ray PNG/JPEG image. Supports the
+    local upstream Hugging Face Transformers model path and the public
+    Hugging Face Space API path, and emits structured JSON with input image
+    metadata, prompt, response text, runtime identity, and limitations.
+  scope: development
+  not_for:
+    - clinical deployment
+    - clinical interpretation
+    - autonomous diagnosis
+    - treatment decisions
+    - triage
+    - patient-facing report generation
+    - regulatory submission
+
+inputs:
+  - name: chest_xray_image_or_fixture
+    type: file_path
+    formats:
+      - png
+      - jpeg
+      - json
+    description: >
+      Direct use accepts a PNG/JPEG chest X-ray image path for either local
+      Transformers inference or the public Hugging Face Space API backend.
+      The eval fixture is a JSON file that can point to an image or request a
+      generated synthetic PNG plus deterministic mock response.
+
+outputs:
+  - name: result_json
+    type: json
+    schema: validators/output_schema.json
+
+runtime:
+  language: python
+  python: ">=3.10"
+  entrypoint: scripts/run_nv_reason_cxr.py
+  args:
+    - "${python}"
+    - "${script}"
+    - "${fixture}"
+    - "--out-dir"
+    - "${out}/artifacts"
+  dependencies:
+    torch: "==2.7.1"
+    torchvision: "==0.22.1"
+    transformers: "==4.56.1"
+    Pillow: ">=10.0"
+    huggingface_hub: ">=0.30"
+  env_optional:
+    - MOCK_NV_REASON_CXR
+    - NV_REASON_CXR_MODEL
+    - HF_HOME
+    - HF_TOKEN
+    - TRANSFORMERS_OFFLINE
+    - HF_HUB_OFFLINE
+  env_conditional:
+    mock_call: MOCK_NV_REASON_CXR
+    local_call_optional:
+      - HF_HOME
+      - HF_TOKEN
+      - TRANSFORMERS_OFFLINE
+  external_assets:
+    - kind: upstream_repo
+      repo_url: https://github.com/NVIDIA-Medtech/NV-Reason-CXR
+      contains:
+        - README.md
+        - LICENSE
+    - kind: huggingface_repo
+      repo_id: nvidia/NV-Reason-CXR-3B
+      install_command: >
+        python -c "from transformers import AutoModelForImageTextToText,
+        AutoProcessor; AutoProcessor.from_pretrained('nvidia/NV-Reason-CXR-3B');
+        AutoModelForImageTextToText.from_pretrained('nvidia/NV-Reason-CXR-3B',
+        torch_dtype='auto')"
+    - kind: huggingface_space
+      repo_id: nvidia/nv-reason-cxr
+      public: true
+  side_effects:
+    pip_packages:
+      - torch==2.7.1
+      - torchvision==0.22.1
+      - transformers==4.56.1
+      - Pillow>=10.0
+      - huggingface_hub>=0.30
+    local_writes:
+      - {path: "<optional caller-provided --out-dir for generated fixture artifacts>", approx_mb_max: 5}
+    home_writes:
+      - {path: ~/.cache/huggingface/, approx_mb_max: 8000}
+    network_endpoints:
+      - https://huggingface.co
+      - https://github.com
+      - "https://*.hf.space"
+    requires_docker: false
+    requires_gpu: local_backend_cuda
+    gpu_fallback: public_api_backend_or_cpu_or_mock
+    environment:
+      clean_environment_required: false
+      clean_environment_recommended: true
+      modifies_active_python_environment: true
+      user_environment_modification_ok: true
+      recommended_isolation: fresh venv or container for benchmarks; caller-selected env for interactive use
+      notes: >
+        Runtime setup commands may install packages into the active Python
+        environment. That is acceptable only when the caller chooses that
+        environment; benchmark and evidence runs should use a fresh per-run
+        environment. The hf-space-api backend is public and uses only the
+        Python standard library, with no local PyTorch, Transformers, CUDA,
+        model cache, or Hugging Face token required.
+    env_required: []
+    env_optional:
+      - MOCK_NV_REASON_CXR
+      - NV_REASON_CXR_MODEL
+      - HF_HOME
+      - HF_TOKEN
+      - TRANSFORMERS_OFFLINE
+      - HF_HUB_OFFLINE
+
+paired_verifiers:
+  - id: medagent.verifiers.nv_reason_cxr_quality_v1
+    status: implemented
+    consumes: evidence_pack_dir
+    purpose: >
+      Recomputes source-pack success, fixture case/prompt binding,
+      generated/read image artifact hash, NV-Reason-CXR runtime identity,
+      response text shape, limitation disclosure, and conservative forbidden
+      overreach checks from the evidence pack. This is an engineering trust
+      floor for wrapper behavior, not a clinical correctness review.
+
+limitations:
+  - >
+    This is a thin wrapper. Image preprocessing, model inference, and decoding
+    are delegated to Hugging Face Transformers and the NV-Reason-CXR-3B model.
+  - >
+    Output is not a diagnosis, clinical report, treatment recommendation, or
+    triage decision. It is engineering evidence and must be reviewed by a
+    qualified professional before any medical use.
+  - >
+    The model may hallucinate findings, miss subtle abnormalities, misread
+    support devices, or produce overconfident prose.
+  - >
+    The committed fixture uses a generated synthetic PNG and deterministic
+    mock response so CI can verify wrapper behavior without downloading model
+    weights. Mock mode is not a substitute for model inference.
+  - >
+    The public Hugging Face Space API backend depends on remote service
+    availability and the current exposed Gradio /chat schema.
+
+validation:
+  expected_runtime_seconds:
+    min: 0.0
+    max: 900.0
+    inference_path: runtime.inference_seconds
+
+  sanity_checks:
+    - {path: skill, eq: "nv_reason_cxr"}
+    - {path: input.image.format, matches: "^(png|jpeg)$"}
+    - {path: input.image.width, gte: 1}
+    - {path: input.image.height, gte: 1}
+    - {path: input.image.sha256, matches: "^[0-9a-f]{64}$"}
+    - {path: output.response_text, length_gte: 1}
+    - {path: runtime.model, eq: "nvidia/NV-Reason-CXR-3B"}
+    - {path: runtime.mode, matches: "^(mock|hf_transformers|hf_space_api)$"}
+
+  expected_cost:
+    wall_seconds:        {max: 900}
+    cpu_seconds:         {max: 900}
+    rss_mb_peak:         {max: 16000}
+    gpu_seconds:         {max: 900}
+    gpu_memory_mb_peak:  {max: 24000}
+  reproducibility:
+    mode: repeat
+    fixture: fixtures/synthetic_cxr_input.json
+    runs: 2
+    env:
+      MOCK_NV_REASON_CXR: "1"

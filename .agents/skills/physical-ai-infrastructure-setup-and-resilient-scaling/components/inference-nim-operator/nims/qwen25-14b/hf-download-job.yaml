@@ -1,0 +1,52 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# One-shot Job that pre-downloads Qwen2.5-14B-Instruct weights from HuggingFace into the
+# qwen25-14b-pvc PVC in HF cache layout. See ../qwen3-vl/hf-download-job.yaml for context
+# on why we use a manual Job rather than NIMCache.
+#
+# install.sh applies this after pvc.yaml and before nimservice.yaml, then waits for
+# condition=complete. Manual: kubectl wait -n osmo-nims --for=condition=complete job/qwen25-14b-hf-download --timeout=60m
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: qwen25-14b-hf-download
+  namespace: osmo-nims
+spec:
+  backoffLimit: 2
+  # Auto-delete the Job (and its pod) 60s after successful completion so the pod releases its
+  # hold on the ReadWriteOnce PVC. Without this, a Completed pod keeps the volume attached on
+  # its node, producing "Multi-Attach error" when the NIMService tries to mount the same PVC.
+  ttlSecondsAfterFinished: 60
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: hf-download
+          image: python:3.11-slim
+          env:
+            - name: HF_HOME
+              value: /model-store/huggingface
+            - name: HF_HUB_ENABLE_HF_TRANSFER
+              value: "1"
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: hf-token-secret
+                  key: HF_TOKEN
+          command: ["bash", "-c"]
+          args:
+            - |
+              set -euo pipefail
+              pip install --quiet 'huggingface_hub[cli,hf_transfer]'
+              echo "=== Downloading Qwen/Qwen2.5-14B-Instruct to $HF_HOME/hub ==="
+              hf download Qwen/Qwen2.5-14B-Instruct
+              echo "=== Download complete ==="
+              du -sh "$HF_HOME"/hub/models--Qwen--Qwen2.5-14B-Instruct || true
+          volumeMounts:
+            - name: model-store
+              mountPath: /model-store
+      volumes:
+        - name: model-store
+          persistentVolumeClaim:
+            claimName: qwen25-14b-pvc

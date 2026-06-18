@@ -1,0 +1,202 @@
+# Context-pack index. Authored extracts of upstream library docs that the Act
+# phase loads when generating stage code for a given step.
+#
+# One row per (step_id, intent) — the Act sub-agent picks the matching pack.
+# When a step has no row here, the agent reads:
+#   - ../CATALOG.md (when/why and first-line params/strategies)
+#   - ../ARTIFACTS.md (type compatibility)
+#   - ../COMMANDS.md (run shape)
+#   - src/nemotron/steps/<cat>/<step>/step.toml (live params, strategies, errors)
+#   - src/nemotron/steps/<cat>/<step>/step.py + _runners/* (code shape)
+#   - URLs in step.toml [reference] for upstream library detail
+#
+# Don't add new packs unless they survive the "<250 line authored extract" bar.
+
+[[packs]]
+id = "byob-mcq-generate"
+step = "byob/mcq"
+intent = "generate"
+file = "byob-benchmark-curator-translation.txt"
+description = "Generate or translate BYOB MCQ benchmarks — domain corpus inputs, MCQ schema, Curator semantic deduplication, experimental translation, and round-trip metrics."
+
+[[packs]]
+id = "curate-nemo-curator-acquire"
+step = "curate/nemo_curator"
+intent = "acquire"
+file = "curator-data-acquisition.txt"
+description = "Acquire and load text data with NeMo Curator — Common Crawl, custom sources, and existing datasets."
+
+[[packs]]
+id = "curate-nemo-curator-process"
+step = "curate/nemo_curator"
+intent = "process"
+file = "curator-processing-language-quality.txt"
+description = "Process text data with NeMo Curator — language filtering, quality assessment, and related pipelines."
+
+[[packs]]
+id = "eval-model-eval-generate"
+step = "eval/model_eval"
+intent = "generate"
+file = "eval-standard-nlu.txt"
+description = "Generate evaluation stage code for standard NLU benchmarks — benchmark catalog, run modes, and parameter patterns."
+
+[[packs]]
+id = "eval-model-eval-deploy"
+step = "eval/model_eval"
+intent = "deploy"
+file = "eval-deploy-formats.txt"
+description = "Configure evaluator deployment targets and model formats — NIM, vLLM, Hugging Face, and Megatron-Bridge inputs."
+
+[[packs]]
+id = "eval-model-eval-container"
+step = "eval/model_eval"
+intent = "container"
+file = "eval-sovereign-benchmarks.txt"
+description = "Configure NeMo Evaluator Launcher container-backed tasks — sovereign, multilingual, custom-language, standard English, tool, or agent benchmark containers."
+
+[[packs]]
+id = "convert-hf-to-megatron-generate"
+step = "convert/hf_to_megatron"
+intent = "generate"
+file = "checkpoint-conversion.txt"
+description = "Convert a clean Hugging Face checkpoint to Megatron distributed layout for Megatron-Bridge consumers."
+
+[[packs]]
+id = "convert-megatron-to-hf-generate"
+step = "convert/megatron_to_hf"
+intent = "generate"
+file = "checkpoint-conversion.txt"
+description = "Export a concrete Megatron iter_* checkpoint to Hugging Face safetensors for evaluation, deployment, or merge flows."
+
+[[packs]]
+id = "convert-merge-lora-generate"
+step = "convert/merge_lora"
+intent = "generate"
+file = "checkpoint-conversion.txt"
+description = "Merge a LoRA adapter with its exact HF base model to produce a standalone HF checkpoint."
+
+[[packs]]
+id = "optimize-modelopt-distill-generate"
+step = "optimize/modelopt/distill"
+intent = "generate"
+file = "modelopt-optimization.txt"
+description = "ModelOpt distillation — teacher/student setup, bin/idx data, mock-data smoke tests, quality recovery."
+
+[[packs]]
+id = "optimize-modelopt-prune-generate"
+step = "optimize/modelopt/prune"
+intent = "generate"
+file = "modelopt-optimization.txt"
+description = "ModelOpt pruning — Minitron target search, fixed architecture pruning, HF checkpoint output."
+
+[[packs]]
+id = "optimize-modelopt-quantize-generate"
+step = "optimize/modelopt/quantize"
+intent = "generate"
+file = "modelopt-optimization.txt"
+description = "ModelOpt quantization — FP8/NVFP4 recipes, calibration, parallelism, Megatron checkpoint output."
+
+[[packs]]
+id = "peft-megatron-bridge-generate"
+step = "peft/megatron_bridge"
+intent = "generate"
+file = "mbridge-sft.txt"
+description = "Megatron-Bridge PEFT/LoRA — adapter dim/alpha, packed Parquet input, base checkpoint binding, adapter-only checkpoint discipline."
+
+[[packs]]
+id = "data-prep-generate"
+step = "data_prep/sft_packing"
+intent = "generate"
+file = "nemotron-data-prep.txt"
+description = "SFT packing stage — chat templates, sequence packing, shard sizing, packed Parquet."
+
+[[packs]]
+id = "data-prep-pretrain-generate"
+step = "data_prep/pretrain_prep"
+intent = "generate"
+file = "nemotron-data-prep.txt"
+description = "Pretraining data prep — HF/local blends, bin/idx tokenization, split blends, tokenizer lock-in."
+
+[[packs]]
+id = "data-prep-rl-generate"
+step = "data_prep/rl_prep"
+intent = "generate"
+file = "nemotron-data-prep.txt"
+description = "RL data prep — HF placeholder resolution, sharded JSONL, DPO/RLVR/RLHF schemas."
+
+[[packs]]
+id = "pretrain-automodel-generate"
+step = "pretrain/automodel"
+intent = "generate"
+file = "automodel-pretrain.txt"
+description = "AutoModel pretraining/CPT — recipe override, bin/idx data, FSDP2, HF checkpoint output."
+
+[[packs]]
+id = "pretrain-megatron-bridge-generate"
+step = "pretrain/megatron_bridge"
+intent = "generate"
+file = "mbridge-pretrain.txt"
+description = "Generate Megatron-Bridge pretraining stage code — model docs, training loop, configs, and checkpointing patterns."
+
+[[packs]]
+id = "rl-nemo-rl-dpo-generate"
+step = "rl/nemo_rl/dpo"
+intent = "generate"
+file = "nemo-rl-alignment.txt"
+description = "NeMo-RL DPO — preference JSONL, reference-policy KL, aligned checkpoint output."
+
+[[packs]]
+id = "rl-nemo-rl-rlhf-generate"
+step = "rl/nemo_rl/rlhf"
+intent = "generate"
+file = "nemo-rl-alignment.txt"
+description = "NeMo-RL RLHF — prompt data, reward model, KL/reward clipping, GRPO reward-model flow."
+
+[[packs]]
+id = "rl-nemo-rl-rlvr-generate"
+step = "rl/nemo_rl/rlvr"
+intent = "generate"
+file = "nemo-rl-alignment.txt"
+description = "NeMo-RL RLVR/GRPO — verifier fields, rollout groups, reward-variance guidance."
+
+[[packs]]
+id = "sdg-data-designer-generate"
+step = "sdg/data_designer"
+intent = "generate"
+file = "data-designer-sdg.txt"
+description = "Data Designer synthetic data — column specs, seed data, output projections, preference data, tool-call SFT."
+
+[[packs]]
+id = "sft-automodel-generate"
+step = "sft/automodel"
+intent = "generate"
+file = "automodel-sft-peft-core.txt"
+description = "Generate AutoModel SFT stage code — dataset, finetune, PEFT, and core launcher patterns."
+
+[[packs]]
+id = "sft-automodel-launch"
+step = "sft/automodel"
+intent = "launch"
+file = "automodel-launcher-executor-modes.txt"
+description = "Choose AutoModel launcher and executor mode — local workstation, NeMo Run, SkyPilot, and Slurm."
+
+[[packs]]
+id = "sft-megatron-bridge-generate"
+step = "sft/megatron_bridge"
+intent = "generate"
+file = "mbridge-sft.txt"
+description = "Megatron-Bridge SFT — recipe selection, packed Parquet wiring, MoE/parallelism knobs, full SFT vs LoRA. Use this for Nemotron + MB-recipe-supported models; for non-MB models route to AutoModel SFT."
+
+[[packs]]
+id = "sft-megatron-bridge-tune-performance"
+step = "sft/megatron_bridge"
+intent = "tune-performance"
+file = "mbridge-parallelism-performance.txt"
+description = "Tune Megatron-Bridge parallelism and performance — TP/PP/FSDP, overlap, recomputation, and sequence packing."
+
+[[packs]]
+id = "translate-curator-generate"
+step = "translate/nemo_curator"
+intent = "generate"
+file = "curator-translation-faith.txt"
+description = "Generate translation stage code with NeMo Curator — JSONL/Parquet I/O, structured fields, and FAITH evaluation."

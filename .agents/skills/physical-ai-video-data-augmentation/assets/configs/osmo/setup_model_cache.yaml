@@ -1,0 +1,205 @@
+# Setup Model Cache — OSMO workflow
+#
+# Downloads Cosmos + auto-labeling weights inline (bash + python heredoc). OSMO uploads
+# Cosmos model artifacts are pulled from HuggingFace repositories.
+# This setup workflow does NOT deploy Cosmos as a NIM endpoint.
+# task output to the output URL on exit.
+
+
+workflow:
+  name: setup_model_cache
+
+  resources:
+    default:
+      cpu: 4
+      memory: 16Gi
+      storage: 200Gi
+
+  tasks:
+  # Cosmos cache: Transfer2.5, Predict2.5, Reason1, Qwen3Guard, SigLIP (HF layout)
+  - name: download_cosmos_cache
+    image: nvcr.io/nvidia/base/ubuntu:22.04_20240212
+    resource: default
+    credentials:
+      nvcr_io:
+        NGC_CLI_API_KEY: auth
+      hf_token:
+        HF_TOKEN: token
+    outputs:
+    - url: "{{storage_url}}/{{path}}"
+    command: ["bash", "-c"]
+    args:
+      - |
+        set -e
+        export HF_HOME="{{output}}/models/cosmos_transfer"
+        echo "=== Cosmos model cache ==="
+        apt-get update -qq && apt-get install -y -qq python3 python3-pip > /dev/null 2>&1
+        pip3 install -q huggingface_hub
+        mkdir -p "$HF_HOME"
+        python3 <<'PY'
+        import os
+        from huggingface_hub import hf_hub_download, snapshot_download
+
+        REPO_T2 = "nvidia/Cosmos-Transfer2.5-2B"
+        TRANSFER2 = [
+            ("b67b64abda3801a9aceddbff2bdb86126c06db74", "general/edge/61f5694b-0ad5-4ecd-8ad7-c8545627d125_ema_bf16.pt"),
+            ("dea7737ca29dd8d9086413c6dc5724b8250a0bb4", "general/depth/626e6618-bfcd-4d9a-a077-1409e2ce353f_ema_bf16.pt"),
+            ("eb5325b77d358944da58a690157dd2b8071bbf85", "general/blur/ba2f44f2-c726-4fe7-949f-597069d9b91c_ema_bf16.pt"),
+            ("23057a4167b89de89a4a397fdbf3887994d115eb", "general/seg/5136ef49-6d8d-42e8-8abf-7dac722a304a_ema_bf16.pt"),
+            ("00c591edab119e8a6ca06e6e091351a04ce0ecc9", "auto/multiview/4ecc66e9-df19-4aed-9802-0d11e057287a_ema_bf16.pt"),
+        ]
+        REPO_P2 = "nvidia/Cosmos-Predict2.5-2B"
+        PREDICT2 = [
+            ("f176dc95b4a70f53ce01c4b302851595e7322b00", "tokenizer.pth"),
+            ("f176dc95b4a70f53ce01c4b302851595e7322b00", "base/pre-trained/d20b7120-df3e-4911-919d-db6e08bad31c_ema_bf16.pt"),
+        ]
+        FULL = [
+            ("nvidia/Cosmos-Reason1-7B", "3210bec0495fdc7a8d3dbb8d58da5711eab4b423"),
+            ("nvidia/Cosmos-Guardrail1", "d6d4bfa899a71454a700907664f3e88f503950cf"),
+            ("Qwen/Qwen3Guard-Gen-0.6B", "fada3b2f655b89601929198343c94cd2f64d93cc"),
+            ("google/siglip-so400m-patch14-384", "9fdffc58afc957d1a03a25b10dba0329ab15c2a3"),
+            ("google/siglip2-so400m-patch16-naflex", "cc24074f717b612951c2dead130904ab9b65a81e"),
+        ]
+
+        root = os.environ["HF_HOME"]
+        print(f"Cache directory: {root}\n")
+        print(f"Transfer2.5 ({REPO_T2})")
+        for rev, fn in TRANSFER2:
+            print(f"  {fn}")
+            hf_hub_download(repo_id=REPO_T2, repo_type="model", revision=rev, filename=fn)
+        print(f"\nPredict2.5 ({REPO_P2})")
+        for rev, fn in PREDICT2:
+            print(f"  {fn}")
+            hf_hub_download(repo_id=REPO_P2, repo_type="model", revision=rev, filename=fn)
+        print("\nFull-repo snapshots (reason1, guardrails, siglip)")
+        for repo_id, rev in FULL:
+            print(f"  {repo_id} @ {rev[:12]}...")
+            snapshot_download(repo_id=repo_id, repo_type="model", revision=rev)
+        print("Done.")
+        PY
+        # Resolve HF hub symlinks → real files so Swift upload preserves them.
+        # HF stores blobs at hub/blobs/{hash} and snapshots/{rev}/{file} → ../../blobs/{hash}.
+        # Swift doesn't preserve symlinks, so we replace each symlink with a copy of its target.
+        echo "=== Resolving symlinks in hub cache ==="
+        find "$HF_HOME/hub" -type l | while IFS= read -r link; do
+            target=$(readlink -f "$link")
+            if [ -f "$target" ]; then
+                rm "$link"
+                cp "$target" "$link"
+            fi
+        done
+        echo "=== Symlinks resolved ==="
+        echo "=== Cosmos cache written to $HF_HOME ==="
+
+  # Auto-labeling: SeedVR2 (HF) + Vehicle CLIP ReID (Drive). Layout: seedvr2/*.pth, reid/clip_vehicleid.pt
+  - name: download_auto_labeling_cache
+    image: nvcr.io/nvidia/base/ubuntu:22.04_20240212
+    resource: default
+    credentials:
+      nvcr_io:
+        NGC_CLI_API_KEY: auth
+      hf_token:
+        HF_TOKEN: token
+    outputs:
+    - url: "{{storage_url}}/{{path}}"
+    command: ["bash", "-c"]
+    args:
+      - |
+        set -e
+        export OUT_DIR="{{output}}/models/auto_labeling"
+        echo "=== Auto-labeling model cache ==="
+        apt-get update -qq && apt-get install -y -qq python3 python3-pip > /dev/null 2>&1
+        pip3 install -q huggingface_hub
+        mkdir -p "$OUT_DIR"
+        python3 <<'PY'
+        import os
+        import urllib.request
+        from huggingface_hub import hf_hub_download
+
+        REID_GDRIVE = "".join(("168BLegHHxNqatW5", "wx1YyL2REaThWoof5"))
+        SEEDVR2 = {
+            "none": None,
+            "3b": ("ByteDance-Seed/SeedVR2-3B", ("ema_vae.pth", "seedvr2_ema_3b.pth")),
+            "7b": ("ByteDance-Seed/SeedVR2-7B", ("ema_vae.pth", "seedvr2_ema_7b.pth")),
+            "7b_sharp": ("ByteDance-Seed/SeedVR2-7B", ("ema_vae.pth", "seedvr2_ema_7b_sharp.pth")),
+        }
+
+        out = os.environ["OUT_DIR"]
+        seed = os.environ.get("SEEDVR_VARIANT", "7b")
+        seedvr2_dir = os.path.join(out, "seedvr2")
+        reid_dir = os.path.join(out, "reid")
+        os.makedirs(seedvr2_dir, exist_ok=True)
+        os.makedirs(reid_dir, exist_ok=True)
+        token = os.environ.get("HF_TOKEN") or None
+
+        def pull(repo: str, fn: str) -> None:
+            hf_hub_download(
+                repo_id=repo,
+                filename=fn,
+                local_dir=seedvr2_dir,
+                local_dir_use_symlinks=False,
+                token=token,
+            )
+            print(f"  {fn}")
+
+        print(f"SeedVR2 ({seed})")
+        if seed not in SEEDVR2:
+            raise SystemExit(f"Unknown SEEDVR_VARIANT={seed!r}; expected one of {list(SEEDVR2)}")
+        spec = SEEDVR2[seed]
+        if spec is None:
+            print("  (skipped)")
+        else:
+            repo, files = spec
+            for fn in files:
+                pull(repo, fn)
+            print("SeedVR2 done.")
+        print()
+        reid_pt = os.path.join(reid_dir, "clip_vehicleid.pt")
+        if os.path.exists(reid_pt):
+            print("Vehicle CLIP ReID: clip_vehicleid.pt (already present)")
+        else:
+            print("Vehicle CLIP ReID (Google Drive)")
+            url = f"https://drive.usercontent.google.com/download?id={REID_GDRIVE}&export=download&confirm=t"
+            part = reid_pt + ".partial"
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                with open(part, "wb") as f:
+                    import shutil
+                    shutil.copyfileobj(resp, f)
+            os.rename(part, reid_pt)
+            print("  clip_vehicleid.pt")
+
+        rfdetr_dir = os.path.join(out, "rfdetr")
+        os.makedirs(rfdetr_dir, exist_ok=True)
+        rfdetr_pt = os.path.join(rfdetr_dir, "rf-detr-base.pth")
+        if os.path.exists(rfdetr_pt):
+            print("RFDeTR: rf-detr-base.pth (already present)")
+        else:
+            print("RFDeTR (Google Storage)")
+            url = "https://storage.googleapis.com/rfdetr/rf-detr-base-coco.pth"
+            part = rfdetr_pt + ".partial"
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=300) as resp:
+                with open(part, "wb") as f:
+                    import shutil
+                    shutil.copyfileobj(resp, f)
+            os.rename(part, rfdetr_pt)
+            print("  rf-detr-base.pth")
+        print("Done.")
+        PY
+        echo "=== Auto-labeling cache written to $OUT_DIR ==="
+
+default-values:
+
+  # Object-storage path within the bucket. Defaults to "data" so the cache lands at
+  # {{storage_url}}/data/models/... — the location the VDA flows expect via their
+  # cosmos_model_cache_url / auto_labeling_model_cache_url defaults. Override only if
+  # you relocate the cache (the flow *_model_cache_url defaults must then match).
+  path: "data"
+
+  # Required at submit time via one --set-string list (no default — Jinja StrictUndefined raises if omitted).
+  # Same pattern as the flow workflows (e2e.yaml, auto_labeling.yaml, ...): --set-string supplies
+  # the value for {{storage_url}} interpolation, so no default-values entry is needed.
+  #   storage_url  — URL prefix matching the registered DATA credential profile.
+  #                  e.g. s3://my-bucket, azure://acct/cont, gs://bucket,
+  #                       swift://endpoint/account/container, tos://endpoint/bucket

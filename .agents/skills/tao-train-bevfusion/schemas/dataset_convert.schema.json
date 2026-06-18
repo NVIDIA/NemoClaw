@@ -1,0 +1,100 @@
+{
+  "automl_default_parameters": [],
+  "automl_disabled_parameters": [],
+  "default": {
+    "dataset": "kitti",
+    "dimension_order": "hwl",
+    "is_synthetic": false,
+    "merge_only": false,
+    "mode": "training",
+    "per_sequence": false,
+    "results_dir": "",
+    "root_dir": "",
+    "with_plane": false
+  },
+  "properties": {
+    "dataset": {
+      "default": "kitti",
+      "description": "Dataset name for 3D Fusion",
+      "enum": [
+        "kitti",
+        "tao3d"
+      ],
+      "title": "Dataset Name",
+      "type": "categorical"
+    },
+    "dimension_order": {
+      "default": "hwl",
+      "description": "3D ground truth dimension order.",
+      "title": "3D dimension order",
+      "type": "string"
+    },
+    "is_synthetic": {
+      "default": false,
+      "description": "Whether data is generated synthetically from Omniverse or not.",
+      "title": "is synthetic",
+      "type": "bool"
+    },
+    "merge_only": {
+      "default": false,
+      "description": "Whether to merge only per sequence pkl without generating per seuqence pkl.",
+      "title": "merge only",
+      "type": "bool"
+    },
+    "mode": {
+      "default": "training",
+      "description": "Data mode to generate output pkl file",
+      "enum": [
+        "training",
+        "validation",
+        "testing"
+      ],
+      "title": "data convert mode",
+      "type": "categorical"
+    },
+    "output_prefix": {
+      "description": "Output prefix to append for output pkl file.",
+      "title": "output prefix",
+      "type": "string"
+    },
+    "per_sequence": {
+      "default": false,
+      "description": "Whether to save results in per sequence format.",
+      "title": "is per sequence",
+      "type": "bool"
+    },
+    "results_dir": {
+      "default": "",
+      "description": "A directory to save data convert output.",
+      "title": "results directory",
+      "type": "string"
+    },
+    "root_dir": {
+      "default": "",
+      "description": "A path to the root directory of the given dataset.",
+      "title": "root directory of the dataset",
+      "type": "string"
+    },
+    "sequence_list": {
+      "description": "Sequence list to process per sequence.",
+      "title": "sequence list",
+      "type": "string"
+    },
+    "with_plane": {
+      "default": false,
+      "description": "Whether to use plane data from kitti.",
+      "title": "is with plane",
+      "type": "bool"
+    }
+  },
+  "type": "object",
+  "x_tao_schema": {
+    "action": "dataset_convert",
+    "core_module": "bevfusion",
+    "model": "bevfusion",
+    "network_arch": "bevfusion",
+    "schema_action": "dataset_convert",
+    "schema_version": 1,
+    "source": "tao-core dataclass config"
+  }
+}

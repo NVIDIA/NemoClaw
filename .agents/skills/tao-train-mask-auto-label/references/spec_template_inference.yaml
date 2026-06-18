@@ -1,0 +1,100 @@
+model_name: ''
+encryption_key: ''
+results_dir: ''
+wandb:
+  enable: true
+  project: TAO Toolkit
+  entity: ''
+  group: ''
+  tags:
+  - tao-toolkit
+  reinit: false
+  sync_tensorboard: false
+  save_code: false
+  name: TAO Toolkit Training
+  run_id: ''
+dataset:
+  type: coco
+  train_ann_path: ''
+  train_img_dir: ''
+  val_ann_path: ''
+  val_img_dir: ''
+  min_obj_size: 2048.0
+  max_obj_size: 10000000000.0
+  num_workers_per_gpu: 2
+  load_mask: true
+  crop_size: 512
+train:
+  num_gpus: 1
+  gpu_ids:
+  - 0
+  num_nodes: 1
+  seed: 1234
+  cudnn:
+    benchmark: false
+    deterministic: true
+  num_epochs: 10
+  checkpoint_interval: 1
+  checkpoint_interval_unit: epoch
+  validation_interval: 1
+  resume_training_checkpoint_path: ''
+  results_dir: ''
+  batch_size: 1
+  accum_grad_batches: 1
+  use_amp: true
+  pretrained_model_path: ''
+  optim_type: adamw
+  optim_momentum: 0.9
+  lr: 1.0e-06
+  min_lr: 0.0
+  min_lr_rate: 0.02
+  num_wave: 1.0
+  wd: 0.0005
+  optim_eps: 1.0e-08
+  optim_betas:
+  - 0.9
+  - 0.9
+  warmup_epochs: 1
+  margin_rate:
+  - 0
+  - 1.2
+  test_margin_rate:
+  - 0.6
+  - 0.6
+  mask_thres:
+  - 0.1
+  loss_mil_weight: 4.0
+  loss_crf_weight: 0.5
+  crf_zeta: 0.1
+  crf_kernel_size: 3
+  crf_num_iter: 100
+  loss_crf_step: 4000
+  loss_mil_step: 1000
+  crf_size_ratio: 1
+  crf_value_high_thres: 0.9
+  crf_value_low_thres: 0.1
+model:
+  arch: vit-mae-base/16
+  frozen_stages:
+  - -1
+  mask_head_num_convs: 4
+  mask_head_hidden_channel: 256
+  mask_head_out_channel: 256
+  teacher_momentum: 0.996
+  not_adjust_scale: false
+  mask_scale_ratio_pre: 1
+  mask_scale_ratio: 2.0
+  vit_dpr: 0.0
+inference:
+  num_gpus: 1
+  gpu_ids:
+  - 0
+  num_nodes: 1
+  checkpoint: ???
+  trt_engine: ''
+  results_dir: ''
+  batch_size: 3
+  ann_path: ''
+  img_dir: ''
+  label_dump_path: instances_val2017_mal.json
+  load_mask: false

@@ -1,0 +1,22 @@
+encryption_key: tlt_encode
+results_dir: /results
+dataset:
+  test_data_sources:
+    image_dir: /data/images
+    json_file: /data/annotations.json
+  num_classes: 4
+  batch_size: 1
+  workers: 8
+  eval_class_ids:
+  - 1
+model:
+  num_feature_levels: 2
+  dec_layers: 6
+  enc_layers: 6
+  num_queries: 300
+  with_box_refine: true
+evaluate:
+  trt_engine: /results/deformable-detr.engine
+  conf_threshold: 0.0
+  input_width: 960
+  input_height: 544

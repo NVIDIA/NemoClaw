@@ -1,0 +1,16 @@
+[
+  {
+    "id": "moe-dispatcher-selection-positive-smoke",
+    "question": "Use the nemo-mbridge-perf-moe-dispatcher-selection skill. In Megatron Bridge, give the exact MoE dispatcher selection checklist for H100 versus GB200/NVL72, including the flex backend config names, default DeepEP/HybridEP SM knobs, and what to conclude if the backend package import fails.",
+    "expected_skill": "nemo-mbridge-perf-moe-dispatcher-selection",
+    "expected_script": null,
+    "ground_truth": "The answer should use MoE dispatcher selection guidance. It should recommend alltoall for first bring-up or missing packages, DeepEP as the first tuned choice for H100/B200 when the package is installed, and HybridEP for GB200/GB300 NVL72 or large EP/memory-tight runs. It should state that DeepEP and HybridEP use moe_token_dispatcher_type=\"flex\" with moe_flex_dispatcher_backend=\"deepep\" or \"hybridep\", mention starting knobs --moe-deepep-num-sms 20 and --moe-hybridep-num-sms 16, and say backend import failures are environment limitations, not throughput data.",
+    "expected_behavior": [
+      "Read the nemo-mbridge-perf-moe-dispatcher-selection skill before answering.",
+      "Compare alltoall, DeepEP, and HybridEP by hardware and EP scale.",
+      "Name the flex dispatcher backend settings for DeepEP and HybridEP.",
+      "Mention the DeepEP and HybridEP SM tuning knobs and defaults.",
+      "Warn that backend import failures mean the environment is missing a package, not that the dispatcher is slow."
+    ]
+  }
+]

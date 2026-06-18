@@ -1,0 +1,97 @@
+[
+  {
+    "id": "digital-health-clinical-asr-eval-001",
+    "question": "After scoring a manifest with this flywheel, what's the structure of the leaderboard I get back — what sections show up, in what order, and which one is the headline I should read first?",
+    "expected_skill": "digital-health-clinical-asr-eval",
+    "expected_script": null,
+    "ground_truth": "The five-section leaderboard, in fixed order: (1) Headline — overall WER/CER/KER/SER. (2) KER by entity_category. (3) KER by ipa_source — this is the headline diagnostic section, the merriam-webster vs magpie_g2p delta is the proof the SSML override pipeline is working. (4) KER by noise_level. (5) Per-term KER, worst-first. Overall, KER is the clinical headline metric, not aggregate WER.",
+    "expected_behavior": [
+      "Listed the five leaderboard sections in roughly the correct order",
+      "Identified the KER-by-ipa_source split as the headline diagnostic section (the merriam-webster vs magpie_g2p delta is the canonical clinical-flywheel signal)",
+      "Treated KER as the clinical headline metric over aggregate WER"
+    ]
+  },
+  {
+    "id": "digital-health-clinical-asr-eval-002",
+    "question": "Eval shows KER 0.05 on rows tagged merriam-webster but 0.40 on rows tagged magpie_g2p. Should I fine-tune?",
+    "expected_skill": "digital-health-clinical-asr-eval",
+    "expected_script": null,
+    "ground_truth": "No — this is a pronunciation-hint coverage gap, not a model-capacity gap. The right move is to route back to /digital-health-clinical-asr-build (specifically the IPA QA step) to append verified IPA to pronunciation_overrides.csv. Reconsider /digital-health-clinical-asr-finetune only after that rebuild, if the gap persists.",
+    "expected_behavior": [
+      "Diagnosed the merriam-webster vs magpie_g2p delta as a pronunciation-coverage gap rather than a model-capacity gap",
+      "Routed back to the IPA QA / pronunciation-override loop in /digital-health-clinical-asr-build before considering fine-tuning",
+      "Made clear fine-tuning is the wrong first move for this specific signal shape"
+    ]
+  },
+  {
+    "id": "digital-health-clinical-asr-eval-001-paraphrase-a",
+    "question": "What does the leaderboard look like once I've scored a cycle? Walk me through which sections it has and which one I should be paying attention to first.",
+    "expected_skill": "digital-health-clinical-asr-eval",
+    "expected_script": null,
+    "ground_truth": "The five-section leaderboard, in fixed order: (1) Headline — overall WER/CER/KER/SER. (2) KER by entity_category. (3) KER by ipa_source — this is the headline diagnostic section, the merriam-webster vs magpie_g2p delta is the proof the SSML override pipeline is working. (4) KER by noise_level. (5) Per-term KER, worst-first. Overall, KER is the clinical headline metric, not aggregate WER.",
+    "expected_behavior": [
+      "Listed the five leaderboard sections in roughly the correct order",
+      "Identified the KER-by-ipa_source split as the headline diagnostic section (the merriam-webster vs magpie_g2p delta is the canonical clinical-flywheel signal)",
+      "Treated KER as the clinical headline metric over aggregate WER"
+    ]
+  },
+  {
+    "id": "digital-health-clinical-asr-eval-001-paraphrase-b",
+    "question": "I just ran an eval — what's in the report and which number tells me whether the pronunciation pipeline actually worked?",
+    "expected_skill": "digital-health-clinical-asr-eval",
+    "expected_script": null,
+    "ground_truth": "The five-section leaderboard, in fixed order: (1) Headline — overall WER/CER/KER/SER. (2) KER by entity_category. (3) KER by ipa_source — this is the headline diagnostic section, the merriam-webster vs magpie_g2p delta is the proof the SSML override pipeline is working. (4) KER by noise_level. (5) Per-term KER, worst-first. Overall, KER is the clinical headline metric, not aggregate WER.",
+    "expected_behavior": [
+      "Listed the five leaderboard sections in roughly the correct order",
+      "Identified the KER-by-ipa_source split as the headline diagnostic section (the merriam-webster vs magpie_g2p delta is the canonical clinical-flywheel signal)",
+      "Treated KER as the clinical headline metric over aggregate WER"
+    ]
+  },
+  {
+    "id": "digital-health-clinical-asr-eval-002-paraphrase-a",
+    "question": "My merriam-webster-tagged rows are scoring well but the magpie_g2p ones are tanking — is that the cue to start fine-tuning?",
+    "expected_skill": "digital-health-clinical-asr-eval",
+    "expected_script": null,
+    "ground_truth": "No — this is a pronunciation-hint coverage gap, not a model-capacity gap. The right move is to route back to /digital-health-clinical-asr-build (specifically the IPA QA step) to append verified IPA to pronunciation_overrides.csv. Reconsider /digital-health-clinical-asr-finetune only after that rebuild, if the gap persists.",
+    "expected_behavior": [
+      "Diagnosed the merriam-webster vs magpie_g2p delta as a pronunciation-coverage gap rather than a model-capacity gap",
+      "Routed back to the IPA QA / pronunciation-override loop in /digital-health-clinical-asr-build before considering fine-tuning",
+      "Made clear fine-tuning is the wrong first move for this specific signal shape"
+    ]
+  },
+  {
+    "id": "digital-health-clinical-asr-eval-002-paraphrase-b",
+    "question": "Big gap in KER between the rows I have MW respellings for and the ones falling through to neural G2P. What should I do next?",
+    "expected_skill": "digital-health-clinical-asr-eval",
+    "expected_script": null,
+    "ground_truth": "No — this is a pronunciation-hint coverage gap, not a model-capacity gap. The right move is to route back to /digital-health-clinical-asr-build (specifically the IPA QA step) to append verified IPA to pronunciation_overrides.csv. Reconsider /digital-health-clinical-asr-finetune only after that rebuild, if the gap persists.",
+    "expected_behavior": [
+      "Diagnosed the merriam-webster vs magpie_g2p delta as a pronunciation-coverage gap rather than a model-capacity gap",
+      "Routed back to the IPA QA / pronunciation-override loop in /digital-health-clinical-asr-build before considering fine-tuning",
+      "Made clear fine-tuning is the wrong first move for this specific signal shape"
+    ]
+  },
+  {
+    "id": "digital-health-clinical-asr-eval-003",
+    "question": "How does this flywheel's KER scoring handle a transcription like 'cefa zolin' when the reference term is 'cefazolin' — is that a hit or a miss, and why was it scored that way?",
+    "expected_skill": "digital-health-clinical-asr-eval",
+    "expected_script": null,
+    "ground_truth": "Miss. KER uses a strict contiguous-match rule: the term's words must appear in order, adjacent, in the normalized hypothesis. 'cefa zolin' fails the contiguity check because there's a word boundary inside the term. The strictness is clinically defensible — a downstream pharmacy lookup or e-prescription system will also fail on the split token, so KER's pessimism matches the deployment reality.",
+    "expected_behavior": [
+      "Identified the example as a KER miss (not a hit)",
+      "Cited the strict contiguous-match rule — term words must be adjacent in the normalized hypothesis",
+      "Justified the strictness with the downstream-clinical-system rationale (pharmacy / e-prescription lookups also fail on the split token)"
+    ]
+  },
+  {
+    "id": "digital-health-clinical-asr-eval-neg-001",
+    "question": "How do I authenticate with the Riva ASR gRPC endpoint?",
+    "expected_skill": null,
+    "expected_script": null,
+    "ground_truth": "This is general /riva-asr territory — auth, gRPC, protocol details. The agent treats it as out-of-scope for the eval skill (which inlines only the simplest offline call shape) and routes to /riva-asr, or otherwise stays at a conversational level without engaging the scoring workflow.",
+    "expected_behavior": [
+      "Treated the question as out-of-scope for digital-health-clinical-asr-eval and did not start a scoring workflow",
+      "Routed to /riva-asr (the canonical owner of ASR protocol/auth/streaming details), or otherwise pointed the user at the ASR-skill family"
+    ]
+  }
+]

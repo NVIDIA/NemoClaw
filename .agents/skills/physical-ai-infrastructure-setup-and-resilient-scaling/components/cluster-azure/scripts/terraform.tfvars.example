@@ -1,0 +1,22 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+subscription_id = "YOUR_SUBSCRIPTION_ID"
+location        = "eastus2"
+resource_prefix = "nvpai"
+environment     = "dev"
+
+# SECURITY: AKS API server restricted to these CIDRs.
+allowed_cidr = ["YOUR_IP/32"]
+
+# Instance types
+system_vm_size = "Standard_D16ds_v5"
+gpu_vm_size    = "Standard_NC40ads_H100_v5"
+gpu_priority   = "Regular"
+gpu_min        = 4
+gpu_max        = 4
+
+tags = {
+  project    = "nvpai"
+  managed-by = "terraform"
+}

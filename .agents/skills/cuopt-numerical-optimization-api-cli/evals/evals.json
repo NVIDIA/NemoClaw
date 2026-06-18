@@ -1,0 +1,18 @@
+[
+  {
+    "id": "numopt-cli-eval-001-mps-sections-and-cli-command",
+    "question": "I have an LP problem I want to solve with cuopt_cli from an MPS file, with a 60-second time limit and 1% MIP gap (in case I add integers later). List the MPS sections in required order, and the cuopt_cli command line.",
+    "expected_skill": "cuopt-numerical-optimization-api-cli",
+    "expected_script": null,
+    "ground_truth": "The agent lists the MPS sections in the required order: NAME, ROWS (N row for the objective, L/G/E rows for constraints), COLUMNS (variable-name, row-name, coefficient triples), RHS (right-hand-side values), BOUNDS (optional — LO/UP/FX/BV/LI/UI), ENDATA. For integer variables, integer markers are 'MARKER' 'INTORG' before and 'MARKER' 'INTEND' after the integer columns. The cuopt_cli invocation is: cuopt_cli problem.mps --time-limit 60 --mip-relative-tolerance 0.01. The agent mentions cuopt_cli --help as the canonical source for all flags. Does not invent flags like --max-time or --gap that are not in the skill. Notes that cuopt_cli ships with the cuopt Python package (install via pip or conda first if not present).",
+    "expected_behavior": [
+      "Lists MPS sections in required order: NAME, ROWS, COLUMNS, RHS, [BOUNDS], ENDATA",
+      "Mentions N row for objective and L/G/E for constraint types",
+      "Mentions integer markers ('MARKER' 'INTORG' / 'INTEND') for integer columns",
+      "Gives the cuopt_cli command with --time-limit 60 and --mip-relative-tolerance 0.01",
+      "References cuopt_cli --help as the canonical flag source",
+      "Does not invent flag names that are not in the skill (e.g. --max-time, --gap)",
+      "Mentions that cuopt_cli ships with the cuopt Python package"
+    ]
+  }
+]

@@ -1,0 +1,39 @@
+network_arch: tao-generate-video-reasoning-annotations
+type: data
+container_image: tao_toolkit.data_services
+gpu_spec_key: null
+required_credentials: []
+actions:
+  generate:
+    command: auto_label generate -e {config_path}
+    config_format: yaml
+    mode: args
+    inputs:
+      video-root:
+        type: folder
+      input-jsonl-files:
+        type: file
+    outputs:
+      results-dir:
+        type: folder
+    args:
+      results_dir: '{results_dir}'
+      video_reasoning_annotation.data.video_root: '{video_root}'
+      video_reasoning_annotation.data.input_jsonl_files: '{input_jsonl_files}'
+      video_reasoning_annotation.vlm.backend: '{vlm_backend}'
+      video_reasoning_annotation.llm.backend: '{llm_backend}'
+      video_reasoning_annotation.workflow.steps: '{steps}'
+      video_reasoning_annotation.workflow.mode: '{mode}'
+      video_reasoning_annotation.workflow.qa_types: '{qa_types}'
+      video_reasoning_annotation.prompts_module: '{prompts_module}'
+      video_reasoning_annotation.license: '{license}'
+      video_reasoning_annotation.description_extra: '{description_extra}'
+    defaults:
+      vlm_backend: gemini
+      llm_backend: gemini
+      steps: '["0","1a","1b","1c","2","3","4"]'
+      mode: auto
+      qa_types: '["mcq","bcq","open_qa","causal_linkage","temporal_localization","temporal_event_desc","scene_description","event_summary"]'
+      prompts_module: ''
+      license: ''
+      description_extra: ''

@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CAD To USD Conversion Report",
+  "type": "object",
+  "required": [
+    "source_asset_path",
+    "source_format",
+    "converter_skill",
+    "converter_tool",
+    "converter_command",
+    "output_directory",
+    "output_usd_path",
+    "generated_files",
+    "sidecar_inputs",
+    "warnings",
+    "errors",
+    "next_step"
+  ],
+  "properties": {
+    "install_hint": {
+      "type": "string"
+    }
+  }
+}

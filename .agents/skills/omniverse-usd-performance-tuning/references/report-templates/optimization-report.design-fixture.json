@@ -1,0 +1,191 @@
+{
+  "asset_name": "Factory_Performance_Review",
+  "input_path": "/tmp/factory.usd",
+  "output_path": "/tmp/factory.optimized.usdc",
+  "timestamp": "2026-05-14T00:00:00Z",
+  "verdict": "improved",
+  "optimization_score": 8.2,
+  "score_scope": "stage_optimization",
+  "score_label": "strong",
+  "executive_summary": "Stage cleanup landed strongly: composition is leaner, traversal is cheaper, and duplicate structure was collapsed. Runtime performance remains an Omniperf follow-up rather than part of this stage score.",
+  "reasoning": "The tuning plan prioritized composition and instanceability because the baseline evidence pointed to stage-open overhead rather than renderer throughput: cold and warm open times were high, layer count was excessive, and repeated assemblies dominated the scene graph. Flattening the composition selectively, authoring extents, and converting safe repeated assemblies to instanceable references attacked those costs without changing the asset's visual intent.\n\nStorage footprint was treated as a secondary signal because the optimized artifact is a self-contained USDC while the baseline stage depends on many referenced layers. Runtime metrics were left out of the score because they need a controlled Omniperf run with matched Kit, renderer, driver, viewport, camera, and cache state.",
+  "measurement_context": {
+    "profile_mode": "quick USD composition profile",
+    "runtime": "standalone USD Python",
+    "cache_state": "cold and warm USD opens measured; renderer cache not applicable",
+    "sample_count": 5,
+    "score_scope": "stage/composition metrics only"
+  },
+  "runtime_profiling": {
+    "status": "not_run",
+    "recommended_tool": "Omniperf",
+    "dashboard_url": null,
+    "artifact_path": null,
+    "summary": "Runtime profiling was not run for this report. Use Omniperf for RAM, VRAM, FPS, frame time, renderer, shader, and GPU metrics.",
+    "caveat": "Compare runtime metrics only when Kit app/version, renderer, GPU, driver, viewport, camera, cache state, sample count, and profiling path match."
+  },
+  "artifacts": {
+    "json": "/tmp/Factory_Performance_Review_optimization_report.json",
+    "markdown": "/tmp/Factory_Performance_Review_optimization_report.md",
+    "html": "/tmp/Factory_Performance_Review_optimization_report.html"
+  },
+  "metric_groups": [
+    {
+      "id": "load_time",
+      "display_name": "Composition Load",
+      "score": 9.1,
+      "status": "measured",
+      "weight": 35,
+      "summary": "Cold open improved 70%, warm open improved 65.6%.",
+      "caveat": "Measured with USD stage-open profiling, not full Kit startup."
+    },
+    {
+      "id": "composition",
+      "display_name": "Composition Complexity",
+      "score": 9.4,
+      "status": "measured",
+      "weight": 25,
+      "summary": "Layer count dropped from 182 to 12 and the reference graph became much shallower.",
+      "caveat": "Composition metrics are direct stage-health signals and proxy evidence for runtime load cost."
+    },
+    {
+      "id": "instancing",
+      "display_name": "Instancing",
+      "score": 7.4,
+      "status": "measured",
+      "weight": 15,
+      "summary": "Repeated assemblies were converted to instanceable references where safe.",
+      "caveat": "Instancing benefits still depend on downstream renderer and payload policy."
+    },
+    {
+      "id": "storage_proxy",
+      "display_name": "Storage Footprint",
+      "score": 4.8,
+      "status": "proxy",
+      "weight": 10,
+      "summary": "Flattened output grew 5.5%, so storage was not the winning dimension.",
+      "caveat": "Storage is a proxy; compare full referenced footprint, not root-layer size only."
+    },
+    {
+      "id": "validation",
+      "display_name": "Validation",
+      "score": 7.0,
+      "status": "measured",
+      "weight": 15,
+      "summary": "No new validation issues were introduced; known mesh-cleanup issues remain.",
+      "caveat": "Validation score reflects issue movement and residual risk, not render speed."
+    }
+  ],
+  "metrics": [
+    {
+      "name": "cold_open_ms",
+      "display_name": "Cold Open",
+      "category": "load_time",
+      "unit": "ms",
+      "direction": "lower_is_better",
+      "evidence_type": "direct",
+      "before": 2400.0,
+      "after": 720.0,
+      "change_pct": -70.0,
+      "verdict": "improved"
+    },
+    {
+      "name": "warm_open_ms",
+      "display_name": "Warm Open",
+      "category": "load_time",
+      "unit": "ms",
+      "direction": "lower_is_better",
+      "evidence_type": "direct",
+      "before": 900.0,
+      "after": 310.0,
+      "change_pct": -65.6,
+      "verdict": "improved"
+    },
+    {
+      "name": "layer_count",
+      "display_name": "Layer Count",
+      "category": "composition",
+      "unit": "layers",
+      "direction": "lower_is_better",
+      "evidence_type": "direct",
+      "before": 182.0,
+      "after": 12.0,
+      "change_pct": -93.4,
+      "verdict": "improved",
+      "notes": "Direct evidence for composition complexity and file-open overhead."
+    },
+    {
+      "name": "instanceable_reference_count",
+      "display_name": "Instanceable References",
+      "category": "instancing",
+      "unit": "refs",
+      "direction": "higher_is_better",
+      "evidence_type": "direct",
+      "before": 0.0,
+      "after": 86.0,
+      "change_pct": 0.0,
+      "verdict": "improved",
+      "notes": "Percentage change is undefined from a zero baseline; verdict reflects the new instanceable-reference coverage."
+    },
+    {
+      "name": "file_size_mb",
+      "display_name": "File Size",
+      "category": "storage_proxy",
+      "unit": "MB",
+      "direction": "lower_is_better",
+      "evidence_type": "proxy",
+      "before": 640.0,
+      "after": 675.0,
+      "change_pct": 5.5,
+      "verdict": "regressed",
+      "notes": "Slight storage regression after flatten/export; not direct RAM or VRAM evidence."
+    }
+  ],
+  "operations": [
+    {
+      "order": 1,
+      "name": "Flatten composition",
+      "method": "USD export to optimized USDC",
+      "result": "Reduced layer count from 182 to 12."
+    },
+    {
+      "order": 2,
+      "name": "computeExtents",
+      "method": "Scene Optimizer safe-cleanup pipeline",
+      "result": "Authored extents for renderer culling."
+    }
+  ],
+  "validators": [
+    {
+      "name": "Layer count health",
+      "issues": 182,
+      "notes": "High layer count before optimization; resolved in optimized artifact."
+    },
+    {
+      "name": "Mesh cleanup",
+      "issues": 0,
+      "notes": "No mesh-quality issues found in the sampled path."
+    }
+  ],
+  "target_coverage": {
+    "complete": true,
+    "source_manifests": ["optimization-report.design-fixture.manifest.json"],
+    "entries": [
+      {
+        "path": "/tmp/factory/prototypes/rack_unit.usd",
+        "role": "prototype",
+        "mesh_count": 412,
+        "disposition": "optimized",
+        "operations": ["meshCleanup", "fitPrimitives", "deduplicateGeometry", "decimateMeshes", "optimizeMaterials", "computeExtents"]
+      },
+      {
+        "path": "/tmp/factory/factory.optimized.usdc",
+        "role": "assembly_root",
+        "mesh_count": 1840,
+        "disposition": "optimized",
+        "operations": ["meshCleanup", "fitPrimitives", "deduplicateGeometry", "decimateMeshes", "optimizeMaterials", "computeExtents"],
+        "notes": "Assembly-root remainder (meshes left after extraction) processed through the per-target op chain, not left to stage-level cleanup."
+      }
+    ]
+  }
+}

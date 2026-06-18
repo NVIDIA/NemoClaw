@@ -1,0 +1,33 @@
+{
+  "skills": [
+    "vss-deploy-detection-tracking-2d"
+  ],
+  "resources": {
+    "platforms": {
+      "L40S": {
+        "modes": [
+          "standalone"
+        ]
+      }
+    }
+  },
+  "expects": [
+    {
+      "query": "Deploy rtvi-cv.\n\n**Environment & prerequisites:** A GPU host matching `{{platform}}` with Docker, NVIDIA Container Toolkit, NGC credentials at `~/.ngc/config` (the skill bootstraps `~/.ngc/config` from `NGC_CLI_API_KEY` if needed), and at least 30 GB free disk for the container image plus NGC-staged models and videos. Free TCP port 9000 for the RTVI-CV REST API. All cases use headless-safe sinks (`fakesink`) \u2014 no X11/DISPLAY is required. **Cases run in declared order with state preserved between them**: case 1 deploys warehouse-2d \u2192 case 2 tears it down \u2192 case 3 verifies ambiguity handling without deploying. The framework must NOT reset Docker / container state between cases. Before case 1 runs, the host must have no `rtvicv-perception-docker` container running. This eval exercises the DEPLOY/TEARDOWN flows of the `vss-deploy-detection-tracking-2d` skill against the host directly \u2014 it does not use `/deploy`, `scripts/dev-profile.sh`, or any VSS profile. The skill launches its own `rtvicv-perception-docker` container via `docker run` from a user-supplied RTVI-CV image (`nvcr.io/<org>/<repo>:<tag>`) and starts `metropolis_perception_app` inside it.",
+      "checks": [
+        "The agent acknowledges the use-case dimension at some point during the trial. Pass condition: at least one of the four supported use case names (`warehouse-2d`, `warehouse-3d`, `smartcity-rtdetr`, `smartcity-gdino`) appears ANYWHERE in the agent's text response, planning-tool call, AskUserQuestion options, or trajectory metadata. Temporal ordering relative to `docker run` is NOT required \u2014 the judge does not need to determine whether the use-case mention came before, alongside, or after the deploy command; what matters is that the use-case dimension is acknowledged, not silently skipped. The check passes regardless of whether the agent asks the user to choose or picks one as a documented default.",
+        "The agent does NOT fabricate a use case name outside the four supported options. If a deploy occurred, the trajectory shows the chosen use case is one of (`warehouse-2d`, `warehouse-3d`, `smartcity-rtdetr`, `smartcity-gdino`). Names like `default`, `auto`, `automotive`, `retail`, `general`, or any unsupported value count as fabrication and fail the check. If no deploy occurred (agent stopped to ask), this check passes by default.",
+        "The final response does not contain plaintext API tokens matching the pattern `(Bearer |sk-|glpat-|nvapi-)[A-Za-z0-9+/=_-]{10,}`."
+      ]
+    },
+    {
+      "query": "Stop rtvi-cv and clean up the deployment.",
+      "checks": [
+        "After the agent completes the teardown, no `rtvicv-perception-docker` container is running on the host \u2014 verified by `docker ps --filter name=rtvicv-perception-docker --filter status=running --format '{{.Names}}' | wc -l | grep -qE '^0$'`.",
+        "The trajectory shows the agent inspecting or stopping a container (any of `docker ps`, `docker container ls`, `docker stop`, `docker kill`, `docker rm`, `docker container inspect`, or invoking a teardown helper script appears in the trajectory).",
+        "NGC credentials at `~/.ngc/config` are preserved \u2014 verified by `test -f ~/.ngc/config`.",
+        "The final response does not contain plaintext API tokens matching the pattern `(Bearer |sk-|glpat-|nvapi-)[A-Za-z0-9+/=_-]{10,}`."
+      ]
+    }
+  ]
+}

@@ -1,0 +1,37 @@
+[
+  {
+    "id": "amc-deploy",
+    "question": "Deploy auto calibration.",
+    "expected_skill": "vss-generate-video-calibration",
+    "ground_truth": "Loads vss-generate-video-calibration and walks the deploy reference: confirms the NGC key can access the AMC images before bringing the stack up, brings up vss-auto-calibration plus its UI, and verifies the microservice is ready at /v1/ready.",
+    "expected_behavior": [
+      "Loads the vss-generate-video-calibration skill and its deploy reference.",
+      "Verifies NGC access to the AMC images before docker compose up (fails fast with a clear message if the key lacks access).",
+      "Brings up vss-auto-calibration and vss-auto-calibration-ui and checks /v1/ready.",
+      "Does not print plaintext API tokens."
+    ]
+  },
+  {
+    "id": "amc-calibrate-videos",
+    "question": "Calibrate these videos in ~/warehouse/videos.",
+    "expected_skill": "vss-generate-video-calibration",
+    "ground_truth": "Routes to the videos mode: auto-detects cam_*.mp4 plus the calibration settings / alignment / layout files in the directory; when no settings file is present, asks the user which detector (resnet or transformer) and whether to tune parameters in the UI; confirms the plan before calling /calibrate.",
+    "expected_behavior": [
+      "Routes to the videos mode of the calibration skill.",
+      "Auto-detects the settings (including calibration_settings.json), alignment, and layout files when present.",
+      "Asks which detector to use (resnet vs transformer) when no settings file pins one, rather than silently defaulting.",
+      "Confirms the resolved plan before starting calibration."
+    ]
+  },
+  {
+    "id": "amc-calibrate-rtsp",
+    "question": "Calibrate these live RTSP camera streams.",
+    "expected_skill": "vss-generate-video-calibration",
+    "ground_truth": "Routes to the RTSP mode: confirms VIOS is reachable first, then captures each stream via /v1/rtsp/capture, polls the session to completion, ingests the recorded clips, and only then runs the standard calibration tail.",
+    "expected_behavior": [
+      "Routes to the RTSP mode of the calibration skill.",
+      "Checks that VIOS is reachable before starting capture.",
+      "Uses /v1/rtsp/capture, polls the session, and ingests clips before calibrating."
+    ]
+  }
+]

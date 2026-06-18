@@ -1,0 +1,173 @@
+title: memory_tuning
+validated_on: "2026-04-06"
+summary: >
+  Techniques for reducing peak GPU memory to fix OOM or increase headroom.
+  Current coverage: expandable segments (fragmentation fix), parallelism
+  resizing, activation recompute, CPU offloading constraints. The most
+  common OOM fix is setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,
+  which eliminates memory fragmentation at zero throughput cost. Measured on
+  Llama3 70B SFT (32x H100, FP8 CS): expandable_segments eliminated the
+  baseline OOM without any parallelism changes. By contrast, doubling PP
+  (4→8) cost ~6% and halved DP, while doubling TP (4→8) caused -28%
+  regression. CPU offloading is blocked when PP > 1.
+validation_status:
+  expandable_segments:
+    - verified  # standard PyTorch allocator option
+  cpu_offloading_pp_incompatibility:
+    - code_verified  # MCore transformer_config.py
+  llama3_70b_sft_fp8_cs_experiment:
+    - measured  # PR #3107, 32x H100, TP4 PP4 DP2
+training_dimensions:
+  speed:
+    effect: "zero cost for expandable_segments; parallelism changes vary"
+    confidence: high
+    rationale: >
+      expandable_segments:True has no throughput impact. Parallelism resizing
+      (TP, PP) can cost 6-28% depending on the strategy.
+  memory:
+    effect: "eliminates fragmentation-induced OOM"
+    confidence: high
+    rationale: >
+      The baseline OOM at 58.8 GB was caused by memory fragmentation, not
+      insufficient capacity. expandable_segments:True eliminated the OOM
+      without any model or parallelism changes. VPP changes do not
+      meaningfully affect peak memory.
+  scale:
+    effect: "neutral for expandable_segments; parallelism changes affect scale"
+    confidence: high
+    rationale: >
+      expandable_segments is a per-process allocator setting with no
+      distributed implications.
+  convergence:
+    effect: "no change expected"
+    confidence: high
+    rationale: >
+      Allocator settings do not affect computation or numerics.
+  stability:
+    effect: "improved — reduces fragmentation-induced OOM"
+    confidence: high
+    rationale: >
+      expandable_segments reduces the likelihood of OOM from memory
+      fragmentation, which is the most common cause of borderline OOM.
+enable_when:
+  - training OOMs or is close to the GPU memory limit
+  - OOM occurs on a single rank while others have headroom (fragmentation)
+  - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True is not yet set
+avoid_when:
+  - using --use-nccl-ub (NCCL user-buffer registration is incompatible with expandable allocator)
+interactions:
+  required: []
+  conditional:
+    - "with CUDA graphs: set NCCL_GRAPH_REGISTER=0 when using expandable_segments (required on pre-Blackwell GPUs)"
+    - "with NCCL UB: expandable_segments is incompatible with --use-nccl-ub"
+  incompatible:
+    - "--use-nccl-ub with expandable_segments:True"
+feature_meaning:
+  PYTORCH_CUDA_ALLOC_CONF: >
+    PyTorch CUDA allocator configuration. expandable_segments:True uses
+    expandable memory segments that reduce fragmentation by allowing the
+    allocator to grow segments rather than allocating fixed-size blocks.
+config_keys:
+  - "env: PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True"
+recommended_path:
+  first_try: "set PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True"
+  second: "add selective activation recompute (core_attn)"
+  third: "increase PP or use distributed optimizer"
+  last_resort: "increase TP (severe throughput cost)"
+expected_metric_change:
+  - metric: peak_memory
+    direction: down
+    magnitude: "eliminates fragmentation overhead (variable, often 2-10 GB effective)"
+    conditions: any model, any GPU
+    evidence: measured_pr_3107
+  - metric: gpu_utilization
+    direction: unchanged
+    magnitude: "0%"
+    conditions: expandable_segments only
+    evidence: measured_pr_3107
+measured_results:
+  - model: Llama3 70B
+    task: sft
+    precision: FP8_CS
+    gpus: 32
+    gpu: H100_80GB
+    seq_length: 4096
+    mbs: 1
+    gbs: 32
+    golden_tflops: 709.93
+    regression_threshold_pct: 5
+    experiments:
+      - name: baseline_without_expandable_segments
+        tp: 4
+        pp: 4
+        vpp: 5
+        dp: 2
+        tflops: 704
+        vs_golden_pct: -0.8
+        peak_mem_gb: 58.8
+        status: OOM
+        note: "OOM caused by memory fragmentation"
+      - name: baseline_with_expandable_segments
+        tp: 4
+        pp: 4
+        vpp: 5
+        dp: 2
+        tflops: 704
+        vs_golden_pct: -0.8
+        peak_mem_gb: ~59
+        status: passed
+        note: "expandable_segments eliminated fragmentation-induced OOM"
+      - name: more_pp
+        tp: 4
+        pp: 8
+        vpp: 5
+        dp: 1
+        tflops: 668.0
+        vs_golden_pct: -5.9
+        peak_mem_gb: 53.2
+        status: passed_mem_borderline_perf
+        note: "halved DP (2→1) means 32 gradient accumulation steps"
+      - name: more_tp
+        tp: 8
+        pp: 4
+        vpp: 5
+        dp: 1
+        tflops: 508.7
+        vs_golden_pct: -28.4
+        peak_mem_gb: 50.2
+        status: severe_perf_regression
+        note: "doubling TP increases all-reduce comm volume, DP=1 means no micro-batch overlap"
+  - name: cpu_offloading_blocked
+    note: >
+      CPU activation offloading (cpu_offloading=True) was tested as an
+      alternative but is incompatible with PP > 1. All experiments raised
+      ValueError. This approach is blocked for any model using PP > 1.
+failure_modes:
+  - name: fragmentation_oom
+    symptom: "OOM on a single rank despite headroom on other ranks"
+    likely_cause: memory fragmentation from default allocator
+    fix: "set PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True"
+  - name: expandable_segments_nccl_ub_conflict
+    symptom: "RuntimeError with --use-nccl-ub"
+    likely_cause: expandable allocator incompatible with NCCL UB registration
+    fix: "remove expandable_segments:True or disable --use-nccl-ub"
+  - name: pp_increase_loses_dp
+    symptom: throughput drop despite lower memory
+    likely_cause: increasing PP reduces DP, increasing gradient accumulation steps
+    fix: try expandable_segments first before resizing parallelism
+known_constraints:
+  - expandable_segments is incompatible with --use-nccl-ub
+  - CPU offloading requires pipeline_model_parallel_size = 1
+  - with CUDA graphs, set NCCL_GRAPH_REGISTER=0 alongside expandable_segments
+known_limitations:
+  - expandable_segments fixes fragmentation but not genuine capacity limits
+  - parallelism resizing (TP/PP) has significant throughput costs
+  - no automatic memory profiling to recommend the optimal strategy
+evidence:
+  - docs/parallelisms.md
+  - docs/performance-guide.md
+  - "PR #3107 (Llama3 70B SFT OOM fix experiment)"
+  - 3rdparty/Megatron-LM/megatron/core/transformer/moe/README.md
+follow_up_validation:
+  - Quantify expandable_segments memory savings across different model sizes.
+  - Measure interaction between expandable_segments and CUDA graph memory overhead.

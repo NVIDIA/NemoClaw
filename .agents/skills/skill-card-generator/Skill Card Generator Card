@@ -1,0 +1,58 @@
+## Description
+The Skill Card Generator skill reads an agent skill's source files and surrounding repository context to produce a fully populated NVIDIA skill card and an accompanying human-review table. Given a target skill directory, it runs a discovery script, builds a Jinja-template context from extracted signals, renders the card deterministically, and flags every inferred or incomplete field for owner verification before submission to NVCARPS.
+
+This skill is ready for commercial/non-commercial use.
+
+## Owner
+NVIDIA 
+
+### License/Terms of Use
+Apache 2.0/CCBY 4.0 
+
+## Use Case
+For NVIDIA developers, Trustworthy AI practitioners, and governance/documentation teams who need to generate or refresh NVIDIA skill cards — particularly before legal, safety, or compliance review, or after changes to a skill's source files.
+
+### Compatible Agents
+Any agent that can invoke Python 3 scripts and write files:
+Claude Code, 
+Cursor,
+Goose,  
+Roo Code
+
+### Requirements/Dependencies
+Python 3 
+Jinja2 
+File system read/write access 
+Properly structured skill directory (scripts/, references/) 
+
+### Release Management
+NVIDIA GitHub (https://github.com/NVIDIA/Trustworthy-AI) 
+
+### Deployment Geography for Use:
+Global
+
+## Known Technical Limitations
+Requires shell execution (agents without Python subprocess support cannot use this skill)
+Target directory must conform to expected layout
+Inferred fields (owner, license, compatibility) are bounded by source-file completeness
+Renderer refuses to produce output if required context fields are missing or mistyped
+No automatic version stamping
+
+## Known Risks and Mitigations
+Inferred-field inaccuracy → Verify markers + human review gate + pre-submission validator
+Prompt susceptibility from crafted source-file content → require human sign-off
+Dependency risk (Jinja2, script paths) → pin dependencies in skill package
+Skipped validation → Require validate_submission.py before release
+
+## Skill-Specific Fail Safes
+Human-In-the-Loop: Step 7 requires owner to clear all VERIFY/SELECT markers
+Policy Enforcement: validate_submission.py exits non-zero if any marker remains
+
+## Output
+<skill-name>-skill-card.md — rendered governance card
+<skill-name>-review-needed.md — per-field review table
+
+## Ethical Considerations:
+NVIDIA believes Trustworthy AI is a shared responsibility and we have established policies and practices to enable development for a wide array of AI applications.  Developers should work with their internal model team to ensure this model meets requirements for the relevant industry and use case and addresses unforeseen product misuse. <br>
+
+Please report model quality, risk, security vulnerabilities or NVIDIA AI Concerns [here](https://www.nvidia.com/en-us/support/submit-security-vulnerability/).  <br>

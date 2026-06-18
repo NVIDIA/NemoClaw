@@ -1,0 +1,25 @@
+{
+  "skills": [
+    "vss-deploy-profile"
+  ],
+  "resources": {
+    "platforms": {
+      "RTXPRO6000BW": {
+        "gpu_count": 2
+      }
+    }
+  },
+  "expects": [
+    {
+      "query": "Deploy the VSS **alerts** profile on {{platform}} for continuous VLM-driven alert generation. Run end-to-end and autonomously.",
+      "checks": [
+        "`curl -sf --max-time 15 http://localhost:8000/health` returns exit 0 (Agent REST API responsive)",
+        "`docker ps --format '{{.Names}}' | grep -qx vss-agent` returns exit 0 (Agent backend)",
+        "`docker ps --format '{{.Names}}' | grep -qx redis` returns exit 0 (shared message bus)",
+        "`docker ps --format '{{.Names}}' | grep -qx vss-rtvi-vlm` returns exit 0 (continuous VLM processor \u2014 the 'VLM' in this mode)",
+        "`docker ps --format '{{.Names}}' | grep -qx vss-vios-nvstreamer` returns exit 0 (video ingestion source)",
+        "`! docker ps --format '{{.Names}}' | grep -qx vss-rtvi-cv` returns exit 0 (real-time mode does NOT run the CV perception pipeline)"
+      ]
+    }
+  ]
+}

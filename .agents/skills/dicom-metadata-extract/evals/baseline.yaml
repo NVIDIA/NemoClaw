@@ -1,0 +1,68 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+schema_version: "0.1.0"
+scenario_id: extract-modality-and-phi-flag
+skill: dicom-metadata-extract
+description: >
+  Baseline paired comparison for the reference DICOM metadata extractor.
+  The mock with-skill arm is expected to satisfy every assertion, while the
+  mock without-skill arm must fail at least one assertion so the runner proves
+  it can detect lift.
+task: >
+  I have a DICOM file at fixtures/sample_ct.dcm. Extract its metadata - I
+  specifically need to know the modality, the study UID, and whether it
+  contains any PHI before I share it externally.
+fixture: skills/dicom-metadata-extract/fixtures/sample_ct.dcm
+assertions:
+  - id: modality-is-ct
+    kind: json_path_value
+    params:
+      path: modality
+      expected: CT
+  - id: study-uid-present
+    kind: json_path_value
+    params:
+      path: study.StudyInstanceUID
+      expected: __truthy__
+  - id: phi-present
+    kind: json_path_value
+    params:
+      path: phi_present
+      expected: true
+  - id: patient-name-flagged
+    kind: json_path_contains
+    params:
+      path: phi_tags_found
+      expected: PatientName
+  - id: patient-id-flagged
+    kind: json_path_contains
+    params:
+      path: phi_tags_found
+      expected: PatientID
+  - id: scope-caveat-present
+    kind: text_contains
+    params:
+      substring: Private tags
+  - id: no-deidentified-claim
+    kind: text_not_contains
+    params:
+      substring: de-identified
+with_skill_docs:
+  - skills/dicom-metadata-extract/SKILL.md
+  - skills/dicom-metadata-extract/skill_manifest.yaml
+without_skill_docs: []
+backend:
+  name: mock

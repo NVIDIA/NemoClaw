@@ -1,0 +1,37 @@
+[
+  {
+    "id": "mv3dt-route-and-env",
+    "question": "Deploy RTVI-CV-3D (MV3DT) on the bundled sample dataset.",
+    "expected_skill": "vss-deploy-detection-tracking-3d",
+    "ground_truth": "Loads vss-deploy-detection-tracking-3d, recognizes the sample dataset ships calibration in-tree (no calibration run needed), and configures MODE=mv3dt with BP_PROFILE=bp_wh_kafka (or bp_wh_redis) — not bp_wh_auto_calib, and not the full warehouse blueprint from vss-deploy-profile.",
+    "expected_behavior": [
+      "Loads the vss-deploy-detection-tracking-3d skill rather than the vss-deploy-profile warehouse reference.",
+      "Sets MODE=mv3dt and BP_PROFILE to bp_wh_kafka or bp_wh_redis; does not fabricate MODE values or use bp_wh_auto_calib.",
+      "Notes the sample dataset ships calibration in-tree, so no calibration run is needed.",
+      "Does not print plaintext API tokens."
+    ]
+  },
+  {
+    "id": "mv3dt-profile-size-overlays",
+    "question": "I'm deploying MV3DT and want bounding-box overlays on the VST video wall. Which profile should I use?",
+    "expected_skill": "vss-deploy-detection-tracking-3d",
+    "ground_truth": "Recommends the extended profile (MINIMAL_PROFILE=\"\") because overlays require the ELK + video-analytics-api + import-calibration services to be populated; explains that minimal mode shows raw streams without overlays and that there is no minimal-plus-ELK middle path.",
+    "expected_behavior": [
+      "Chooses the extended profile (MINIMAL_PROFILE empty) for overlays.",
+      "Explains overlays need Elasticsearch / video-analytics-api, which minimal mode omits.",
+      "Does not claim a 'minimal + ELK only' middle path exists."
+    ]
+  },
+  {
+    "id": "mv3dt-calibration-chain-videos",
+    "question": "Run MV3DT on my own 4-camera warehouse videos. I don't have calibration yet.",
+    "expected_skill": "vss-deploy-detection-tracking-3d",
+    "ground_truth": "Routes to the videos flow, detects that calibration is missing, and chains to vss-generate-video-calibration to produce it; lands the output at the MV3DT calibration mount path before deploying.",
+    "expected_behavior": [
+      "Identifies the videos data source and checks for calibration on disk.",
+      "Chains to vss-generate-video-calibration when calibration is missing.",
+      "Lands calibration at the warehouse-mv3dt-app calibration/sample-data/<dataset> path before deploying.",
+      "Deploys MV3DT only after calibration is in place."
+    ]
+  }
+]

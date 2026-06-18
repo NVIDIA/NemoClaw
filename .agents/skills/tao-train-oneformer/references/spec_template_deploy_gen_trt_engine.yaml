@@ -1,0 +1,13 @@
+results_dir: /results
+gen_trt_engine:
+  gpu_id: 0
+  onnx_file: /models/model.onnx
+  trt_engine: /results/oneformer.engine
+  batch_size: 1
+  verbose: true
+  tensorrt:
+    data_type: fp16
+    workspace_size: 8192
+    max_batch_size: 1
+    opt_batch_size: 1
+    min_batch_size: 1

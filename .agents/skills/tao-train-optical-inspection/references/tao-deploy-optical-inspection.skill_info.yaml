@@ -1,0 +1,76 @@
+name: optical-inspection-deploy
+type: model
+network_arch: optical_inspection
+container_image: tao_toolkit.deploy
+data_format: default
+actions:
+  gen_trt_engine:
+    command: optical_inspection gen_trt_engine -e {config_path}
+    config_format: yaml
+    inputs:
+      gen_trt_engine.onnx_file:
+        type: file
+      gen_trt_engine.trt_engine:
+        type: file
+    outputs:
+      results_dir:
+        type: folder
+      gen_trt_engine.trt_engine:
+        type: file
+    upload_excludes:
+    - inputs/
+  evaluate:
+    command: optical_inspection evaluate -e {config_path}
+    config_format: yaml
+    inputs:
+      evaluate.trt_engine:
+        type: file
+      dataset.test_dataset.csv_path:
+        type: file
+      dataset.test_dataset.images_dir:
+        type: folder
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  inference:
+    command: optical_inspection inference -e {config_path}
+    config_format: yaml
+    inputs:
+      inference.trt_engine:
+        type: file
+      dataset.infer_dataset.csv_path:
+        type: file
+      dataset.infer_dataset.images_dir:
+        type: folder
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+spec_params:
+  gen_trt_engine:
+    results_dir: output_dir
+    gen_trt_engine.onnx_file: parent_model
+    gen_trt_engine.trt_engine: create_engine_file
+  evaluate:
+    results_dir: output_dir
+    evaluate.trt_engine: parent_model
+  inference:
+    results_dir: output_dir
+    inference.trt_engine: parent_model
+spec_shorthand_keys:
+  trt_data_type: gen_trt_engine.tensorrt.data_type
+  trt_engine: gen_trt_engine.trt_engine
+  batch_size: dataset.batch_size
+description: Optical Inspection deploy workflow for gen_trt_engine, evaluate, inference
+  using TAO Deploy.
+spec_templates:
+  gen_trt_engine: spec_template_deploy_experiment.yaml
+  evaluate: spec_template_deploy_experiment.yaml
+  inference: spec_template_deploy_experiment.yaml
+notes:
+- The starter-kit deploy flow uses FP16 for Optical Inspection TensorRT builds.
+- Keep `dataset.num_input`, `dataset.input_map`, `dataset.concat_type`, and grid layout
+  aligned with the trained AOI model.

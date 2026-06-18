@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "Structured output from skills/nv-reason-cxr/scripts/run_nv_reason_cxr.py.",
+  "type": "object",
+  "required": ["skill", "input", "output", "runtime", "limitations"],
+  "properties": {
+    "skill": {
+      "const": "nv_reason_cxr"
+    },
+    "input": {
+      "type": "object",
+      "required": ["case_id", "prompt", "image"],
+      "properties": {
+        "case_id": {"type": "string", "minLength": 1},
+        "prompt": {"type": "string", "minLength": 1},
+        "image": {
+          "type": "object",
+          "required": [
+            "path",
+            "source",
+            "format",
+            "width",
+            "height",
+            "sha256"
+          ],
+          "properties": {
+            "path": {"type": "string", "minLength": 1},
+            "source": {
+              "enum": ["file", "fixture_file", "generated_fixture"]
+            },
+            "format": {
+              "enum": ["png", "jpeg"]
+            },
+            "width": {"type": "integer", "minimum": 1},
+            "height": {"type": "integer", "minimum": 1},
+            "sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "output": {
+      "type": "object",
+      "required": ["response_text", "text_chars"],
+      "properties": {
+        "response_text": {"type": "string", "minLength": 1},
+        "text_chars": {"type": "integer", "minimum": 1}
+      },
+      "additionalProperties": false
+    },
+    "runtime": {
+      "type": "object",
+      "required": [
+        "model",
+        "mode",
+        "mock",
+        "device",
+        "torch_dtype",
+        "max_new_tokens",
+        "inference_seconds",
+        "local_files_only",
+        "generated_tokens",
+        "truncated_by_max_new_tokens"
+      ],
+      "properties": {
+        "model": {"type": "string", "minLength": 1},
+        "mode": {"enum": ["mock", "hf_transformers", "hf_space_api"]},
+        "mock": {"type": "boolean"},
+        "device": {"type": "string", "minLength": 1},
+        "torch_dtype": {"type": "string", "minLength": 1},
+        "max_new_tokens": {"type": ["integer", "null"], "minimum": 1},
+        "inference_seconds": {"type": "number", "minimum": 0},
+        "local_files_only": {"type": "boolean"},
+        "generated_tokens": {"type": ["integer", "null"], "minimum": 0},
+        "truncated_by_max_new_tokens": {"type": ["boolean", "null"]},
+        "transformers_version": {"type": ["string", "null"]},
+        "torch_version": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false
+    },
+    "limitations": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "minItems": 1
+    }
+  },
+  "additionalProperties": false
+}

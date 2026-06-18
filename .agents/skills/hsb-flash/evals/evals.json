@@ -1,0 +1,46 @@
+[
+  {
+    "id": "hsb-flash-001",
+    "question": "Run /hsb-flash on my devkit ubuntu@hq-agx-orin9 (REMOTE_ROOT=/home/ubuntu/anishag/hololink). My HSB Lattice board is at FPGA 2507 and I want to flash it to 2510.",
+    "expected_skill": "hsb-flash",
+    "ground_truth": "The agent reads the hsb-flash SKILL.md, presents the full phase plan, identifies this as a single-step upgrade using v2.5.0 with program_lattice_cpnx100 and --force --accept-eula, and asks for user confirmation before starting.",
+    "expected_behavior": [
+      "The agent reads the hsb-flash SKILL.md before taking any action",
+      "The agent presents the full phase plan before starting",
+      "The agent identifies this as a single-step upgrade (2507 to 2510, no gateway needed)",
+      "The agent specifies it will use program_lattice_cpnx100 (not program_leopard_cpnx100)",
+      "The agent specifies it will use the v2.5.0 manifest with --force and --accept-eula",
+      "The agent asks for user confirmation before starting"
+    ]
+  },
+  {
+    "id": "hsb-flash-002",
+    "question": "Run /hsb-flash on my devkit ubuntu@hq-agx-orin9 (REMOTE_ROOT=/home/ubuntu/anishag/hololink). I have a Leopard Imaging VB1940 camera at FPGA 2510 and need to downgrade it to 2507.",
+    "expected_skill": "hsb-flash",
+    "ground_truth": "The agent reads the hsb-flash SKILL.md, identifies the board as VB1940, specifies program_leopard_cpnx100 and the v2.3.0 manifest, identifies this as a single-step operation with no v2.0.0 interim repo, and asks for confirmation before starting.",
+    "expected_behavior": [
+      "The agent reads the hsb-flash SKILL.md before taking any action",
+      "The agent identifies the board as VB1940 (not Lattice)",
+      "The agent specifies it will use program_leopard_cpnx100 (not program_lattice_cpnx100)",
+      "The agent identifies this as a single-step downgrade (no gateway version for VB1940)",
+      "The agent specifies it will use the v2.3.0 manifest for FPGA 2507",
+      "The agent states it will NOT check out a v2.0.0 interim repo",
+      "The agent asks for explicit user confirmation before starting"
+    ]
+  },
+  {
+    "id": "hsb-flash-003",
+    "question": "Run /hsb-flash on my devkit ubuntu@hq-agx-orin9 (REMOTE_ROOT=/home/ubuntu/anishag/hololink). My HSB Lattice board is at FPGA 2407 and I want to get to 2510.",
+    "expected_skill": "hsb-flash",
+    "ground_truth": "The agent reads the hsb-flash SKILL.md and identifies this as a two-step upgrade: step 1 uses the v2.0.0 repo to flash 2407 to 2412 (gateway), step 2 uses v2.5.0 to flash 2412 to 2510. A power cycle is required between steps. Step 1 uses hololink --force fpga_version to read the version, and the v2.0.0 CLI syntax places --force before the subcommand.",
+    "expected_behavior": [
+      "The agent reads the hsb-flash SKILL.md before taking any action",
+      "The agent identifies this as a two-step upgrade through gateway version 2412",
+      "The agent states step 1 uses hololink --force fpga_version to read version on a 2407 board",
+      "The agent states step 1 uses CLI syntax: hololink --force program scripts/manifest.yaml --accept-eula",
+      "The agent states a power cycle is required between step 1 and step 2",
+      "The agent states step 2 uses the v2.5.0 repo and manifest",
+      "The agent asks for user confirmation before starting"
+    ]
+  }
+]

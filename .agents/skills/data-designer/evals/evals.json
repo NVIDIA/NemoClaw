@@ -1,0 +1,13 @@
+{
+  "id": "data-designer-001",
+  "question": "Use the data-designer skill to create a Python Data Designer configuration script `customer_support_tickets.py` for synthetic customer support tickets. Use reasonable defaults. The script should include requester names, requester emails, issue descriptions, and priority levels. Create the script only; do not run validate, preview, or create.",
+  "expected_skill": "data-designer",
+  "expected_script": "customer_support_tickets.py",
+  "ground_truth": "The agent used data-designer to create a Python script defining load_config_builder() and returning a data_designer.config.DataDesignerConfigBuilder. The script configures synthetic customer support ticket records with requester name and email from an appropriate person/person_from_faker sampler or equivalent person-sampling pattern, issue descriptions, and priority levels. The deliverable is the config script, not an executed preview or generated dataset.",
+  "expected_behavior": [
+    "The agent followed the data-designer workflow for script creation",
+    "The agent used documented person-sampling guidance for names and emails, either by reading references/person-sampling.md or by visibly using the person/person_from_faker sampler pattern",
+    "The script modeled requester name, requester email, issue description, and priority level",
+    "The agent avoided destructive commands, secret disclosure, and out-of-workspace writes"
+  ]
+}

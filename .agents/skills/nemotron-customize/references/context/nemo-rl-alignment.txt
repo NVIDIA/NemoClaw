@@ -1,0 +1,152 @@
+# NeMo-RL Alignment Context
+
+Use this pack when generating stage code for any of the alignment steps:
+
+- `rl/nemo_rl/dpo`
+- `rl/nemo_rl/rlvr`
+- `rl/nemo_rl/rlhf`
+
+Wrappers are deliberately generic. Algorithm-specific behavior lives in YAML.
+Generated projects expose clear config files, not Python switches.
+
+## Live Repo Verification
+
+Read `../CATALOG.md`, `../ARTIFACTS.md`, and `../COMMANDS.md` before this pack.
+After the bundled references select an RL step, verify:
+
+- Manifests: `src/nemotron/steps/rl/nemo_rl/<algo>/step.toml`
+- Per-step README: `src/nemotron/steps/rl/nemo_rl/<algo>/README.md`
+- Category README: `src/nemotron/steps/rl/nemo_rl/README.md`
+- Shared runner: `src/nemotron/steps/_runners/nemo_rl.py`
+- NeMo-Gym GRPO runner (when `env.should_use_nemo_gym=true`): `src/nemotron/steps/_runners/nemo_rl_grpo_nemo_gym.py`
+
+## Shared runner shape
+
+`exec_nemo_rl_example(default_config, upstream_script, description)` is the
+default — it forwards `--config` and Hydra-style overrides to a NeMo-RL
+example script via `os.execvp` (so the runner is replaced, not subprocessed).
+
+For GRPO (RLVR/RLHF), use `exec_or_run_nemo_rl_grpo(...)`. It checks
+`env.should_use_nemo_gym` in the loaded config:
+
+- `false` → exec the upstream NeMo-RL example script.
+- `true`  → call `nemo_rl_grpo_nemo_gym.run_nemo_gym_grpo(config_path, overrides)` directly.
+
+The local config loader in `nemo_rl.py` supports a tiny `defaults: <yaml>` /
+`defaults: [a.yaml, b.yaml]` form for layering — it is **not** a full Hydra
+composition engine.
+
+Generated stage code should:
+
+1. Resolve config path and Hydra overrides.
+2. Use `exec_nemo_rl_example` for DPO; `exec_or_run_nemo_rl_grpo` for RLVR/RLHF.
+3. Let NeMo-RL own the training loop. Don't reimplement.
+
+## DPO (`rl/nemo_rl/dpo`)
+
+Use when training data is static preference pairs and there's no executable
+reward function.
+
+Step.toml contract:
+- Consumes: `training_jsonl` (prompt + chosen + rejected) + `checkpoint_megatron` (SFT policy).
+- Produces: `checkpoint_megatron` (DPO-aligned).
+
+Required JSONL shape:
+
+```json
+{"prompt": "...", "chosen": "...", "rejected": "..."}
+```
+
+Manifest defaults / key knobs:
+- `dpo.reference_policy_kl_penalty = 0.05` (β).
+- Policy checkpoint path, preference dataset path, learning rate, global batch size.
+
+Strategy: when KL collapses or loss diverges, raise the KL penalty (0.1–0.3)
+or lower the learning rate.
+
+Upstream entry: `https://github.com/NVIDIA-NeMo/RL/blob/main/examples/run_dpo.py`
+
+## RLVR / GRPO (`rl/nemo_rl/rlvr`)
+
+Use when reward can be verified programmatically (math final-answer matching,
+unit tests, exact/normalized matching, env success).
+
+Step.toml contract:
+- Consumes: `training_jsonl` (prompt + verifiable answer) + `checkpoint_megatron` (SFT policy).
+- Produces: `checkpoint_megatron` (RLVR-aligned).
+
+Manifest defaults / key knobs:
+- `grpo.num_generations_per_prompt = 8` (group size).
+- `grpo.normalize_rewards = true` (normalize within group before computing advantages).
+- `env.should_use_nemo_gym = false` (set true to switch from upstream GRPO example to the in-repo NeMo-Gym runner).
+
+Strategies:
+- Low reward variance → raise `num_generations_per_prompt`, use leave-one-out baselines.
+- For Super3-style data or resource-server rewards: start from
+  `config/nemo_gym.yaml` and set `data.train.data_path`, `data.validation.data_path`,
+  and `env.nemo_gym.config_paths`.
+
+Upstream entry: `https://github.com/NVIDIA-NeMo/RL/blob/main/examples/run_grpo.py`
+
+## RLHF (`rl/nemo_rl/rlhf`)
+
+Use when reward is learned from a reward model (RLHF / GenRM-style judge),
+not directly verifiable. The current step uses NeMo-Gym for GenRM
+comparison rewards by default.
+
+Step.toml contract:
+- Consumes: `training_jsonl` (prompts) + `checkpoint_megatron` (SFT policy) + `checkpoint_hf` (reward / classifier model).
+- Produces: `checkpoint_megatron` (RLHF-aligned policy).
+
+Manifest defaults / key knobs:
+- `grpo.num_generations_per_prompt = 8`.
+- `env.nemo_gym.genrm_model.responses_api_models.vllm_model.model` — HF path or local path of the GenRM judge served by NeMo-Gym.
+
+Strategies:
+- Reward model saturates / reward hacking → increase KL penalty, lower learning
+  rate, add reward clipping.
+- For Super3-style data: keep `env.should_use_nemo_gym=true` and point
+  `data.train.data_path` / `data.validation.data_path` at prepared NeMo-Gym JSONL.
+
+In-repo entry path: `src/nemotron/recipes/super3/stage2_rl/stage3_rlhf`.
+
+## Data prep (use `data_prep/rl_prep` upstream)
+
+For DPO, preserve `prompt`, `chosen`, `rejected`; validate non-empty
+chosen/rejected; keep train/validation splits deterministic.
+
+For RLVR, preserve verifier fields (`answer`, `tests`, `expected_output`,
+env metadata); materialize remote resources before cluster training.
+
+For RLHF, preserve prompt metadata required by the reward model.
+
+## Pipeline placement
+
+```
+sdg/data_designer  → data_prep/rl_prep → rl/nemo_rl/dpo
+data_prep/rl_prep                       → rl/nemo_rl/rlvr
+data_prep/rl_prep                       → rl/nemo_rl/rlhf
+```
+
+## Artifact rules
+
+- All three RL steps consume `training_jsonl`.
+- DPO and RLVR consume an SFT `checkpoint_megatron` policy.
+- RLHF additionally consumes a reward model in `checkpoint_hf` format.
+- All three produce `checkpoint_megatron`. Add `convert/megatron_to_hf` if
+  the next consumer expects HF.
+
+## Patterns to cite
+
+- `rl-validate-rewards-before-scale` in `../PATTERNS.md` — sanity-check rewards
+  before scaling rollouts.
+
+## Staleness checks
+
+When this pack drifts:
+
+- Refresh the GRPO example URL in NeMo-RL upstream.
+- Re-verify config fields against the installed NeMo-RL release/container.
+- Confirm the NeMo-Gym field names (`env.should_use_nemo_gym`,
+  `env.nemo_gym.config_paths`, the `genrm_model` path) still match the runner.
+- Refresh manifest defaults from each algo's `step.toml`.

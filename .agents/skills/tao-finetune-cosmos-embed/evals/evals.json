@@ -1,0 +1,14 @@
+[
+  {
+    "id": "tao-finetune-cosmos-embed-basic",
+    "question": "A user request: \"Fine-tune Cosmos-Embed1\" Identify which TAO skill applies and, reading only that skill's documentation, outline the steps it prescribes. Do NOT run any commands, scripts, web searches, or other tools \u2014 describe the plan only.",
+    "expected_skill": "tao-finetune-cosmos-embed",
+    "expected_script": null,
+    "ground_truth": "Identify tao-finetune-cosmos-embed as the applicable skill and summarize its documented workflow from SKILL.md without executing anything.",
+    "expected_behavior": [
+      "Identifies tao-finetune-cosmos-embed as the relevant skill",
+      "Outlines the documented workflow steps from SKILL.md",
+      "Does not run commands, scripts, or web searches"
+    ]
+  }
+]

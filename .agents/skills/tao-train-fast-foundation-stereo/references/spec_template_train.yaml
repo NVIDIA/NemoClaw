@@ -1,0 +1,88 @@
+# FastFoundationStereo (FFS) bp2 — train spec template (1ep finetune from bp2 ckpt).
+#
+# Use this template for the "finetune on user data" use case. For raw-bp2 deploy
+# (no train), use spec_template_evaluate.yaml / spec_template_inference.yaml /
+# spec_template_export.yaml directly with the bp2 ckpt as the action checkpoint.
+#
+# Replace placeholders:
+#   <bp2_ckpt_path>  — absolute path to model_best_bp2_serialize.pth in the container
+#   <train_data_root>, <val_data_root> — dataset roots
+#   <out_dir>        — results_dir
+#   <dataset_name>   — Middlebury / Kitti / Eth3d / FSD / IsaacRealDataset / Crestereo / GenericDataset
+
+results_dir: <out_dir>
+
+dataset:
+  dataset_name: StereoDataset
+  max_disparity: 192               # bp2 commercial; do not change for FFS-bp2
+  min_depth: 0.0
+  train_dataset:
+    data_sources:
+      - dataset_name: <dataset_name>
+        data_file: <train_data_root>/annotations.txt
+    batch_size: 1
+    workers: 4
+    augmentation:
+      crop_size: [320, 736]
+  val_dataset:
+    data_sources:
+      - dataset_name: <dataset_name>
+        data_file: <val_data_root>/annotations.txt
+    batch_size: 1
+    workers: 4
+    augmentation:
+      crop_size: [320, 736]
+
+train:
+  num_gpus: 1
+  num_epochs: 1
+  num_nodes: 1
+  log_every_n_steps: 1
+  validation_interval: 1
+  checkpoint_interval: 1
+  precision: fp32                  # bf16 unsupported by FS trainer; fp16 also valid
+  pretrained_model_path: <bp2_ckpt_path>
+  optim:
+    optimizer: AdamW
+    lr_scheduler: MultiStepLR
+    lr: 1.0e-5
+    lr_decay: 0.1
+    warmup_steps: 0
+
+model:
+  model_type: FastFoundationStereo
+  encoder: vitl
+  hidden_dims: [128]
+  n_gru_layers: 1
+  corr_radius: 4
+  corr_levels: 2
+  n_downsample: 2
+  max_disparity: 192               # bp2 commercial — must match ckpt training-time value; NOT 416 (schema default)
+  valid_iters: 8
+  train_iters: 22
+  volume_dim: 28               # bp2 ckpt invariant; NOT 32 (schema default for full-FS)
+  mixed_precision: false
+  gwc_feature_normalize: true
+
+  # 15 bp2 distilled width overrides (do not modify for FFS-bp2)
+  motion_encoder_widths: [56, 96, 16, 12]
+  motion_encoder_final: 48
+  gru_hidden: 60
+  gru_gating_conv_widths: [100, 168]
+  disp_head_input_dim: 60
+  disp_head_intermediate: 36
+  disp_head_pwconv1_widths: [212, 244]
+  mask_widths: [32, 16]
+  stem_2_widths: [12, 16]
+  spx_2_gru_widths: [16, 12, 16, 24]
+  spx_gru_out: 9
+  classifier_mid: 14
+  cnet_conv04_widths: [60, 48]
+  cam_mid_channels: 8
+  cost_agg_conv_patch_padding: [0, 0, 0]
+
+  stereo_backbone:
+    edgenext_pretrained_path: ""        # bp2 ckpt holds backbone weights inline
+    depth_anything_v2_pretrained_path: ""
+    use_bn: false
+    use_clstoken: false

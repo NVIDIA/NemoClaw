@@ -1,0 +1,128 @@
+# BYOB Benchmark Context
+
+Use this context pack when generating project code around the `byob` step.
+
+## Intent
+
+BYOB creates benchmark artifacts from user-provided domain documents. It is not a
+general training-corpus translation step. The current registered family is `mcq`,
+with a family runtime that stays easy for coding agents to extend to other
+families such as GSM8K.
+
+## Step Contract
+
+- Step id: `byob/mcq`
+- CLI: `nemotron steps run byob/mcq`
+- Source package: `src/nemotron/steps/byob/`
+- Step manifest: `src/nemotron/steps/byob/mcq/step.toml`
+- Generic dispatcher: `src/nemotron/steps/byob/scripts/runtime.py`
+- MCQ orchestration: `src/nemotron/steps/byob/runtime/benchmark_families/mcq/pipeline.py`
+- Optional dependency extra: `byob` (`uv sync --extra byob` or `pip install ".[byob]"`)
+- Generation config: `src/nemotron/steps/byob/mcq/config/default.yaml`
+- Tiny smoke config: `src/nemotron/steps/byob/mcq/config/tiny.yaml`
+- Translation config: `src/nemotron/steps/byob/mcq/config/translate.yaml`
+- Produces: `mcq_benchmark_parquet`
+- Optional translation produces: `translated_mcq_benchmark_parquet`
+
+## Generation Flow
+
+The MCQ family reads source documents grouped by target subject, samples few-shot
+examples from supported Hugging Face benchmarks, generates candidate MCQs, runs
+quality gates, and exports:
+
+- `output_dir/expt_name/stage_cache/*.parquet`
+- `output_dir/expt_name/benchmark_raw.parquet`
+- `output_dir/expt_name/benchmark.parquet`
+
+Semantic deduplication uses Curator's embedding, KMeans, pairwise, and duplicate
+identification stages. The BYOB runtime computes embeddings first, then runs
+semantic deduplication over those embeddings:
+
+```python
+from nemo_curator.backends.ray_data import RayDataExecutor
+from nemo_curator.backends.ray_actor_pool import RayActorPoolExecutor
+from nemo_curator.stages.deduplication.semantic import SemanticDeduplicationWorkflow
+```
+
+Use `RayDataExecutor` for embedding and pairwise stages, `RayActorPoolExecutor`
+for KMeans, and package-level `SemanticDeduplicationWorkflow` for orchestration.
+
+Final MCQ parquet columns must remain:
+
+- `question_id`
+- `question`
+- `options`
+- `answer_index`
+- `answer`
+- `cot_content`
+- `src`
+- `category`
+
+## Translation Flow
+
+BYOB translation uses Curator experimental translation as the only text translation engine. Import
+translation stages from `nemo_curator.stages.text.experimental.translation`.
+
+Preserve this division of responsibility:
+
+- BYOB flattens MCQ questions/options into text rows.
+- Curator experimental `TranslationStage` translates source language to target language.
+- BYOB reassembles translated rows back into MCQ schema and answer indexes.
+- Curator experimental `TranslationStage` runs again for target-to-source backtranslation.
+- Curator experimental `TextQualityMetricStage` computes round-trip metrics.
+- BYOB writes final translated `benchmark_raw.parquet` and `benchmark.parquet`.
+
+The BYOB translate stage should therefore create two Curator `TranslationStage`
+runs in a full translation flow: one forward translation and one backtranslation.
+Quality metrics use `TextQualityMetricStage`; they do not call `TranslationStage`.
+
+## Translation Quality
+
+Use explicit round-trip quality metrics:
+
+- `sacrebleu`
+- `chrf`
+- `ter`
+
+FAITH evaluation is not part of the BYOB MCQ translation flow. Keep Curator
+inline filtering disabled during translation; row dropping happens only after
+BYOB has reassembled the benchmark schema and only when `remove_low_quality` is
+enabled.
+
+## Config Rules
+
+The base Nemotron install should not pull BYOB's heavy runtime dependencies.
+Agents preparing a BYOB environment must select the optional `byob` extra.
+
+Translation configs must use:
+
+```yaml
+translation_model_config:
+  backend_type: llm
+```
+
+BYOB translation can also pass Curator controls through
+`translation_model_config.stage.translation_prompt_path` and
+`translation_model_config.segment_stage` fields such as
+`max_concurrent_requests`, `health_check`, `dry_run`, and `dry_run_log_count`.
+FAITH controls are not part of BYOB translation; use backtranslation metrics.
+
+Do not generate a translation mode selector or Data Designer translation fallback for BYOB.
+Data Designer is still used by MCQ generation and judging stages, but not for translation.
+
+NVIDIA-hosted OpenAI-compatible translation uses `NGC_API_KEY` or
+`NVIDIA_API_KEY`. Do not embed API keys in generated code or checked-in configs.
+
+## Agent Modification Rules
+
+- Do not merge BYOB runtime into `scripts/runtime.py`; that dispatcher should
+  stay thin.
+- Put family-specific logic under `runtime/benchmark_families/<family>/`.
+- Put staged family orchestration in `<family>/pipeline.py`; do not recreate
+  top-level `runtime/pipeline.py`.
+- For a new benchmark family, answer `references/new-family-checklist.md` before
+  editing code.
+- Keep MCQ-only logic such as distractor expansion and answer-letter validation
+  out of non-MCQ families.
+- Use `adapter.py` only for schema bridging when composing BYOB with other
+  steps. 

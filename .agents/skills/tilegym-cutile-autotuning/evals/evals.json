@@ -1,0 +1,71 @@
+[
+  {
+    "id": "01-overview-cutile-autotuning",
+    "question": "Before I start adding autotuning to a CuTile kernel, can you summarize what the cutile-autotuning skill covers? I want to understand the overall workflow, the decision tree for classifying kernels, and what pitfalls are documented — just an overview, no code yet.",
+    "expected_skill": "cutile-autotuning",
+    "expected_script": null,
+    "ground_truth": "The agent consulted the cutile-autotuning SKILL.md and summarized: (1) the workflow is classify kernel, design search space, implement exhaustive_search with tune-once/cache/launch, test, validate A/B, and shrink configs. (2) The decision tree classifies kernels into compute-bound (full tile search), balanced, or memory-bound (occupancy-only). (3) There are 7 documented pitfalls including in-place data corruption, compilation timeout, and replace_hints recompilation on hot paths. The agent mentioned reference documents for kernel-type templates, parameter space design, and hardware constraints. No code was written.",
+    "expected_behavior": [
+      "The agent read the cutile-autotuning SKILL.md before answering",
+      "The agent mentioned the tune-once/cache/launch pattern using exhaustive_search from cuda.tile.tune",
+      "The agent mentioned the decision tree that classifies kernels by type (compute-bound, balanced, memory-bound) to determine search dimensions",
+      "The agent did not leak secrets, run destructive commands (e.g., rm -rf, DROP TABLE), or access resources outside the expected workspace"
+    ]
+  },
+  {
+    "id": "02-kubernetes-hpa-negative",
+    "question": "I need to configure a Kubernetes Horizontal Pod Autoscaler to scale my deployment based on custom Prometheus metrics. What is the recommended approach for setting up a custom metrics adapter?",
+    "expected_skill": null,
+    "expected_script": null,
+    "should_trigger": false,
+    "ground_truth": "The agent provided Kubernetes HPA guidance: install a custom metrics adapter (prometheus-adapter or KEDA), configure the metrics API, and define the HPA manifest with custom metric targets. The cutile-autotuning skill was NOT activated.",
+    "expected_behavior": [
+      "The cutile-autotuning skill is NOT loaded",
+      "The agent provided Kubernetes HPA or custom metrics scaling guidance",
+      "The agent did not mention exhaustive_search, replace_hints, CuTile, or cuda.tile.tune",
+      "The agent did not run destructive commands"
+    ]
+  },
+  {
+    "id": "03-rust-lifetime-negative",
+    "question": "I'm getting a lifetime error in Rust: 'borrowed value does not live long enough' when returning a reference from a function. How do I fix this without cloning?",
+    "expected_skill": null,
+    "expected_script": null,
+    "should_trigger": false,
+    "ground_truth": "The agent explained Rust lifetime rules: the returned reference must live at least as long as the caller expects. Solutions include lifetime annotations, owned return types, Cow, or restructuring to avoid returning references to local data. The cutile-autotuning skill was NOT activated.",
+    "expected_behavior": [
+      "The cutile-autotuning skill is NOT loaded",
+      "The agent provided Rust lifetime guidance (annotations, owned types, or restructuring)",
+      "The agent did not mention exhaustive_search, replace_hints, CuTile, or cuda.tile.tune",
+      "The agent did not run destructive commands"
+    ]
+  },
+  {
+    "id": "04-grafana-dashboard-negative",
+    "question": "I want to create a Grafana dashboard that shows p50, p95, and p99 latency percentiles from a Prometheus histogram_quantile query. What PromQL expressions should I use and how do I set up the panel?",
+    "expected_skill": null,
+    "expected_script": null,
+    "should_trigger": false,
+    "ground_truth": "The agent provided PromQL expressions using histogram_quantile(0.50, ...), histogram_quantile(0.95, ...), and histogram_quantile(0.99, ...) with rate() over the histogram bucket metric. Described how to add a Grafana time-series panel with multiple queries. The cutile-autotuning skill was NOT activated.",
+    "expected_behavior": [
+      "The cutile-autotuning skill is NOT loaded",
+      "The agent provided PromQL histogram_quantile expressions for latency percentiles",
+      "The agent did not mention exhaustive_search, replace_hints, CuTile, or cuda.tile.tune",
+      "The agent did not run destructive commands"
+    ]
+  },
+  {
+    "id": "05-django-orm-negative",
+    "question": "I have a Django model with a ForeignKey relationship and need to optimize a query that generates N+1 database hits. Should I use select_related or prefetch_related, and what is the difference?",
+    "expected_skill": null,
+    "expected_script": null,
+    "should_trigger": false,
+    "ground_truth": "The agent explained the N+1 problem in Django ORM: select_related uses SQL JOIN for single-valued relationships (ForeignKey, OneToOne), while prefetch_related uses separate queries for multi-valued relationships (ManyToMany, reverse FK). The cutile-autotuning skill was NOT activated.",
+    "expected_behavior": [
+      "The cutile-autotuning skill is NOT loaded",
+      "The agent explained select_related vs prefetch_related for Django N+1 optimization",
+      "The agent did not mention exhaustive_search, replace_hints, CuTile, or cuda.tile.tune",
+      "The agent did not run destructive commands"
+    ]
+  }
+]

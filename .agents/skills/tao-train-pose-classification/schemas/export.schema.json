@@ -1,0 +1,812 @@
+{
+  "automl_default_parameters": [
+    "train.optim.patience",
+    "train.optim.weight_decay",
+    "train.optim.lr_decay",
+    "model.dropout",
+    "train.optim.momentum",
+    "dataset.window_size",
+    "train.grad_clip",
+    "train.optim.lr"
+  ],
+  "automl_disabled_parameters": [
+    "train.cudnn",
+    "evaluate.test_dataset",
+    "train.gpu_ids",
+    "inference.test_dataset",
+    "wandb.tags",
+    "dataset.train_dataset",
+    "evaluate",
+    "inference",
+    "train",
+    "dataset",
+    "dataset.val_dataset",
+    "dataset_convert",
+    "dataset.label_map",
+    "model",
+    "train.optim.lr_steps",
+    "evaluate.gpu_ids",
+    "train.optim",
+    "export",
+    "wandb",
+    "inference.gpu_ids"
+  ],
+  "default": {
+    "dataset": {
+      "batch_size": 16,
+      "num_classes": 6,
+      "num_workers": 1,
+      "random_choose": false,
+      "random_move": false,
+      "train_dataset": {
+        "data_path": "",
+        "label_path": ""
+      },
+      "val_dataset": {
+        "data_path": "",
+        "label_path": ""
+      },
+      "window_size": -1
+    },
+    "encryption_key": "",
+    "export": {
+      "checkpoint": "",
+      "gpu_id": 0,
+      "onnx_file": "",
+      "results_dir": ""
+    },
+    "model": {
+      "dropout": 0.5,
+      "edge_importance_weighting": true,
+      "graph_layout": "nvidia",
+      "graph_strategy": "spatial",
+      "input_channels": 3,
+      "model_type": "ST-GCN",
+      "pretrained_model_path": ""
+    },
+    "model_name": "",
+    "results_dir": "",
+    "train": {
+      "checkpoint_interval": 1,
+      "checkpoint_interval_unit": "epoch",
+      "cudnn": {
+        "benchmark": false,
+        "deterministic": true
+      },
+      "gpu_ids": [
+        0
+      ],
+      "grad_clip": 0.0,
+      "num_epochs": 10,
+      "num_gpus": 1,
+      "num_nodes": 1,
+      "optim": {
+        "lr": 0.1,
+        "lr_decay": 0.1,
+        "lr_monitor": "val_loss",
+        "lr_scheduler": "MultiStep",
+        "lr_steps": [
+          10,
+          60
+        ],
+        "min_lr": 0.0001,
+        "momentum": 0.9,
+        "nesterov": true,
+        "optimizer_type": "torch.optim.SGD",
+        "patience": 1,
+        "weight_decay": 0.0001
+      },
+      "results_dir": "",
+      "resume_training_checkpoint_path": "",
+      "seed": 1234,
+      "validation_interval": 1
+    },
+    "wandb": {
+      "enable": true,
+      "entity": "",
+      "group": "",
+      "name": "TAO Toolkit Training",
+      "project": "TAO Toolkit",
+      "reinit": false,
+      "run_id": "",
+      "save_code": false,
+      "sync_tensorboard": false,
+      "tags": [
+        "tao-toolkit"
+      ]
+    }
+  },
+  "popular": {
+    "evaluate": {
+      "gpu_ids": [
+        0
+      ],
+      "num_gpus": 1,
+      "num_nodes": 1
+    },
+    "inference": {
+      "gpu_ids": [
+        0
+      ],
+      "num_gpus": 1,
+      "num_nodes": 1
+    },
+    "train": {
+      "checkpoint_interval": 1,
+      "gpu_ids": [
+        0
+      ],
+      "num_epochs": 10,
+      "num_gpus": 1,
+      "num_nodes": 1,
+      "validation_interval": 1
+    }
+  },
+  "properties": {
+    "automl_disabled_parameters": [
+      "wandb",
+      "model",
+      "dataset",
+      "train",
+      "inference",
+      "evaluate",
+      "export",
+      "dataset_convert"
+    ],
+    "dataset": {
+      "automl_default_parameters": [
+        "dataset.window_size"
+      ],
+      "automl_disabled_parameters": [
+        "dataset.train_dataset",
+        "dataset.val_dataset",
+        "dataset.label_map"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "batch_size": 16,
+        "num_classes": 6,
+        "num_workers": 1,
+        "random_choose": false,
+        "random_move": false,
+        "train_dataset": {
+          "data_path": "",
+          "label_path": ""
+        },
+        "val_dataset": {
+          "data_path": "",
+          "label_path": ""
+        },
+        "window_size": -1
+      },
+      "description": "The configuration for dataset.",
+      "properties": {
+        "batch_size": {
+          "default": 16,
+          "description": "The batch size for training and validation.",
+          "maximum": Infinity,
+          "minimum": 1,
+          "title": "batch size",
+          "type": "int"
+        },
+        "label_map": {
+          "automl_enabled": false,
+          "description": "A dict that maps the class names to indices.",
+          "title": "label map",
+          "type": "collection"
+        },
+        "num_classes": {
+          "default": 6,
+          "description": "The number of action classes.",
+          "maximum": Infinity,
+          "minimum": 1,
+          "title": "number of classes",
+          "type": "int"
+        },
+        "num_workers": {
+          "default": 1,
+          "description": "The number of parallel workers processing data.",
+          "maximum": Infinity,
+          "minimum": 1,
+          "title": "number of workers",
+          "type": "int"
+        },
+        "random_choose": {
+          "default": false,
+          "description": "Specifies whether to randomly choose a portion of the input sequence.",
+          "title": "random choose",
+          "type": "bool"
+        },
+        "random_move": {
+          "default": false,
+          "description": "Specifies whether to randomly move the input sequence.",
+          "title": "random move",
+          "type": "bool"
+        },
+        "train_dataset": {
+          "automl_enabled": false,
+          "default": {
+            "data_path": "",
+            "label_path": ""
+          },
+          "description": "The data path to the data in a NumPy array and label path to the labels in a pickle file for training.",
+          "properties": {
+            "data_path": {
+              "default": "",
+              "description": "The path to the data file.",
+              "title": "data path",
+              "type": "string"
+            },
+            "label_path": {
+              "default": "",
+              "description": "The path to the label file.",
+              "title": "label path",
+              "type": "string"
+            }
+          },
+          "title": "train dataset.",
+          "type": "collection"
+        },
+        "val_dataset": {
+          "automl_enabled": false,
+          "default": {
+            "data_path": "",
+            "label_path": ""
+          },
+          "description": "The data path to the data in a NumPy array and label path to the labels in a pickle file for validation.",
+          "properties": {
+            "data_path": {
+              "default": "",
+              "description": "The path to the data file.",
+              "title": "data path",
+              "type": "string"
+            },
+            "label_path": {
+              "default": "",
+              "description": "The path to the label file.",
+              "title": "label path",
+              "type": "string"
+            }
+          },
+          "title": "validation dataset.",
+          "type": "collection"
+        },
+        "window_size": {
+          "automl_enabled": true,
+          "default": -1,
+          "description": "The length of the output sequence. A value of -1 specifies the original length.",
+          "maximum": Infinity,
+          "minimum": -1,
+          "title": "window size",
+          "type": "int"
+        }
+      },
+      "title": "dataset configuration",
+      "type": "collection"
+    },
+    "encryption_key": {
+      "default": "",
+      "description": "Key for encrypting model checkpoints",
+      "title": "Encryption key",
+      "type": "string"
+    },
+    "export": {
+      "automl_enabled": false,
+      "default": {
+        "checkpoint": "",
+        "gpu_id": 0,
+        "onnx_file": "",
+        "results_dir": ""
+      },
+      "description": "The configuration for exporting.",
+      "properties": {
+        "checkpoint": {
+          "default": "",
+          "description": "The .tlt model.",
+          "title": "checkpoint",
+          "type": "string"
+        },
+        "gpu_id": {
+          "default": 0,
+          "description": "The GPU index used to run the evaluation. You can specify the GPU index used to run evaluation\n                    when the machine has multiple GPUs installed. Note that evaluation can only run on a single GPU.",
+          "maximum": Infinity,
+          "minimum": 0,
+          "title": "GPU ID",
+          "type": "int"
+        },
+        "onnx_file": {
+          "default": "",
+          "description": "The path to save the exported model to. The default path is in the same directory as the .tlt model.",
+          "title": "ONNX file",
+          "type": "string"
+        },
+        "results_dir": {
+          "default": "",
+          "description": "The path to a folder where the experiment outputs should be written.",
+          "title": "results directory",
+          "type": "string"
+        }
+      },
+      "required": [
+        "onnx_file"
+      ],
+      "title": "exporting configuration",
+      "type": "collection"
+    },
+    "model": {
+      "automl_default_parameters": [
+        "model.dropout"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "dropout": 0.5,
+        "edge_importance_weighting": true,
+        "graph_layout": "nvidia",
+        "graph_strategy": "spatial",
+        "input_channels": 3,
+        "model_type": "ST-GCN",
+        "pretrained_model_path": ""
+      },
+      "description": "The configuration for modeling.",
+      "properties": {
+        "dropout": {
+          "automl_enabled": true,
+          "default": 0.5,
+          "description": "The probability to drop hidden units.",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "dropout",
+          "type": "float"
+        },
+        "edge_importance_weighting": {
+          "default": true,
+          "description": "Specifies whether to enable edge importance weighting.",
+          "title": "edge importance weighting",
+          "type": "bool"
+        },
+        "graph_layout": {
+          "default": "nvidia",
+          "description": "The layout of the graph for modeling skeletons. It can be nvidia, openpose, human3.6m, ntu-rgb+d, ntu_edge, or coco.",
+          "enum": [
+            "nvidia",
+            "openpose",
+            "human3.6m",
+            "ntu-rgb+d",
+            "ntu_edge",
+            "coco"
+          ],
+          "title": "graph layout",
+          "type": "categorical"
+        },
+        "graph_strategy": {
+          "default": "spatial",
+          "description": "The strategy of the graph for modeling skeletons. It can be uniform, distance, or spatial.",
+          "enum": [
+            "uniform",
+            "distance",
+            "spatial"
+          ],
+          "title": "graph strategy",
+          "type": "categorical"
+        },
+        "input_channels": {
+          "default": 3,
+          "description": "The number of input channels (dimension of body poses).",
+          "maximum": Infinity,
+          "minimum": 1,
+          "title": "input channels",
+          "type": "int"
+        },
+        "model_type": {
+          "default": "ST-GCN",
+          "description": "The type of model, which can only be ST-GCN for now. Newer architectures will be supported in the future.",
+          "enum": [
+            "ST-GCN"
+          ],
+          "title": "model type",
+          "type": "categorical"
+        },
+        "pretrained_model_path": {
+          "default": "",
+          "description": "The path to the pre-trained model.",
+          "title": "pretrained model path",
+          "type": "string"
+        }
+      },
+      "title": "model configuration",
+      "type": "collection"
+    },
+    "model_name": {
+      "default": "",
+      "description": "Name of model if invoking task via :code:`model_agnostic`",
+      "title": "Model name",
+      "type": "string"
+    },
+    "results_dir": {
+      "default": "",
+      "description": "\n        Path to where all the assets generated from a task are stored.\n        ",
+      "title": "Results directory",
+      "type": "string"
+    },
+    "train": {
+      "automl_default_parameters": [
+        "train.grad_clip"
+      ],
+      "automl_disabled_parameters": [
+        "train.gpu_ids",
+        "train.cudnn",
+        "train.optim"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "checkpoint_interval": 1,
+        "checkpoint_interval_unit": "epoch",
+        "cudnn": {
+          "benchmark": false,
+          "deterministic": true
+        },
+        "gpu_ids": [
+          0
+        ],
+        "grad_clip": 0.0,
+        "num_epochs": 10,
+        "num_gpus": 1,
+        "num_nodes": 1,
+        "optim": {
+          "lr": 0.1,
+          "lr_decay": 0.1,
+          "lr_monitor": "val_loss",
+          "lr_scheduler": "MultiStep",
+          "lr_steps": [
+            10,
+            60
+          ],
+          "min_lr": 0.0001,
+          "momentum": 0.9,
+          "nesterov": true,
+          "optimizer_type": "torch.optim.SGD",
+          "patience": 1,
+          "weight_decay": 0.0001
+        },
+        "results_dir": "",
+        "resume_training_checkpoint_path": "",
+        "seed": 1234,
+        "validation_interval": 1
+      },
+      "description": "The configuration for training.",
+      "popular": [
+        "validation_interval",
+        "checkpoint_interval",
+        "num_gpus",
+        "num_nodes",
+        "num_epochs",
+        "gpu_ids"
+      ],
+      "properties": {
+        "checkpoint_interval": {
+          "default": 1,
+          "description": "The interval (in epochs) at which a checkpoint will be saved. Helps resume training.",
+          "minimum": 1,
+          "popular": true,
+          "title": "Checkpoint interval",
+          "type": "int"
+        },
+        "checkpoint_interval_unit": {
+          "default": "epoch",
+          "description": "The unit of the checkpoint interval.",
+          "enum": [
+            "epoch",
+            "step"
+          ],
+          "title": "Checkpoint interval unit",
+          "type": "categorical"
+        },
+        "cudnn": {
+          "automl_enabled": false,
+          "default": {
+            "benchmark": false,
+            "deterministic": true
+          },
+          "properties": {
+            "benchmark": {
+              "default": false,
+              "type": "bool"
+            },
+            "deterministic": {
+              "default": true,
+              "type": "bool"
+            }
+          },
+          "type": "collection"
+        },
+        "gpu_ids": {
+          "automl_enabled": false,
+          "default": [
+            0
+          ],
+          "description": "\n        List of GPU IDs to run the training on. The length of this list\n        must be equal to the number of gpus in train.num_gpus.",
+          "popular": true,
+          "title": "GPU IDs",
+          "type": "list"
+        },
+        "grad_clip": {
+          "automl_enabled": true,
+          "default": 0.0,
+          "description": "The amount to clip the gradient by the L2 norm. A value of 0.0 specifies no clipping.",
+          "maximum": Infinity,
+          "minimum": 0.0,
+          "title": "gradient clip",
+          "type": "float"
+        },
+        "num_epochs": {
+          "default": 10,
+          "description": "Number of epochs to run the training.",
+          "maximum": Infinity,
+          "minimum": 1,
+          "popular": true,
+          "title": "Number of epochs",
+          "type": "int"
+        },
+        "num_gpus": {
+          "default": 1,
+          "description": "The number of GPUs to run the train job.",
+          "minimum": 1,
+          "popular": true,
+          "title": "Number of GPUs",
+          "type": "int"
+        },
+        "num_nodes": {
+          "default": 1,
+          "description": "Number of nodes to run the training on. If > 1, then multi-node is enabled.",
+          "minimum": 1,
+          "popular": true,
+          "title": "Number of nodes",
+          "type": "int"
+        },
+        "optim": {
+          "automl_default_parameters": [
+            "train.optim.lr",
+            "train.optim.momentum",
+            "train.optim.weight_decay",
+            "train.optim.patience",
+            "train.optim.lr_decay"
+          ],
+          "automl_disabled_parameters": [
+            "train.optim.lr_steps"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "lr": 0.1,
+            "lr_decay": 0.1,
+            "lr_monitor": "val_loss",
+            "lr_scheduler": "MultiStep",
+            "lr_steps": [
+              10,
+              60
+            ],
+            "min_lr": 0.0001,
+            "momentum": 0.9,
+            "nesterov": true,
+            "optimizer_type": "torch.optim.SGD",
+            "patience": 1,
+            "weight_decay": 0.0001
+          },
+          "description": "The configuration for the SGD optimizer, including the learning rate, learning scheduler, weight decay, etc.",
+          "properties": {
+            "lr": {
+              "automl_enabled": true,
+              "default": 0.1,
+              "description": "The initial learning rate for the training.",
+              "maximum": Infinity,
+              "minimum": 0.0,
+              "title": "learning rate",
+              "type": "float"
+            },
+            "lr_decay": {
+              "automl_enabled": true,
+              "default": 0.1,
+              "description": "The decreasing factor for the learning rate scheduler.",
+              "maximum": Infinity,
+              "minimum": 0.0,
+              "title": "learning rate decay",
+              "type": "float"
+            },
+            "lr_monitor": {
+              "default": "val_loss",
+              "description": "The monitor value for the AutoReduce scheduler.",
+              "enum": [
+                "val_loss",
+                "train_loss"
+              ],
+              "title": "learning rate monitor",
+              "type": "categorical"
+            },
+            "lr_scheduler": {
+              "default": "MultiStep",
+              "description": "The learning scheduler. Two schedulers are provided:\n* MultiStep : Decrease the lr by lr_decay at setting steps.\n* AutoReduce : Decrease the lr by lr_decay while lr_monitor doesn't decline more than 0.1 percent of the previous value.",
+              "enum": [
+                "AutoReduce",
+                "MultiStep"
+              ],
+              "title": "learning rate scheduler",
+              "type": "categorical"
+            },
+            "lr_steps": {
+              "automl_enabled": false,
+              "default": [
+                10,
+                60
+              ],
+              "description": "The steps to decrease the learning rate for the MultiStep scheduler.",
+              "title": "learning rate steps",
+              "type": "list_2"
+            },
+            "min_lr": {
+              "default": 0.0001,
+              "description": "The minimum learning rate in the training.",
+              "maximum": Infinity,
+              "minimum": 0.0,
+              "title": "minimum learning rate",
+              "type": "float"
+            },
+            "momentum": {
+              "automl_enabled": true,
+              "default": 0.9,
+              "description": "The momentum for the SGD optimizer.",
+              "maximum": Infinity,
+              "minimum": 0.0,
+              "title": "momentum",
+              "type": "float"
+            },
+            "nesterov": {
+              "default": true,
+              "description": "Specifies whether to enable Nesterov momentum.",
+              "title": "nesterov",
+              "type": "bool"
+            },
+            "optimizer_type": {
+              "default": "torch.optim.SGD",
+              "description": "The type of the optimizer.",
+              "enum": [
+                "torch.optim.SGD",
+                "torch.optim.Adam",
+                "torch.optim.Adamax"
+              ],
+              "title": "optimizer type",
+              "type": "categorical"
+            },
+            "patience": {
+              "automl_enabled": true,
+              "default": 1,
+              "description": "The number of epochs with no improvement, after which learning rate will be reduced.",
+              "maximum": Infinity,
+              "minimum": 1,
+              "title": "patience",
+              "type": "int"
+            },
+            "weight_decay": {
+              "automl_enabled": true,
+              "default": 0.0001,
+              "description": "The weight decay coefficient.",
+              "maximum": Infinity,
+              "minimum": 0.0,
+              "title": "weight decay",
+              "type": "float"
+            }
+          },
+          "title": "optimization configuration",
+          "type": "collection"
+        },
+        "results_dir": {
+          "default": "",
+          "description": "\n        Path to where all the assets generated from a task are stored.\n        ",
+          "title": "Results directory",
+          "type": "string"
+        },
+        "resume_training_checkpoint_path": {
+          "default": "",
+          "description": "Path to the checkpoint to resume training from.",
+          "title": "Resume checkpoint path",
+          "type": "string"
+        },
+        "seed": {
+          "default": 1234,
+          "description": "The seed for the initializer in PyTorch. If < 0, disable fixed seed.",
+          "maximum": Infinity,
+          "minimum": -1,
+          "title": "Seed for randomization",
+          "type": "int"
+        },
+        "validation_interval": {
+          "default": 1,
+          "description": "\n        The interval (in epochs) at which a evaluation\n        will be triggered on the validation dataset.",
+          "minimum": 1,
+          "popular": true,
+          "title": "Validation interval",
+          "type": "int"
+        }
+      },
+      "title": "training configuration",
+      "type": "collection"
+    },
+    "wandb": {
+      "automl_disabled_parameters": [
+        "wandb.tags"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "enable": true,
+        "entity": "",
+        "group": "",
+        "name": "TAO Toolkit Training",
+        "project": "TAO Toolkit",
+        "reinit": false,
+        "run_id": "",
+        "save_code": false,
+        "sync_tensorboard": false,
+        "tags": [
+          "tao-toolkit"
+        ]
+      },
+      "properties": {
+        "enable": {
+          "default": true,
+          "type": "bool"
+        },
+        "entity": {
+          "default": "",
+          "type": "string"
+        },
+        "group": {
+          "default": "",
+          "type": "string"
+        },
+        "name": {
+          "default": "TAO Toolkit Training",
+          "type": "string"
+        },
+        "project": {
+          "default": "TAO Toolkit",
+          "type": "string"
+        },
+        "reinit": {
+          "default": false,
+          "type": "bool"
+        },
+        "run_id": {
+          "default": "",
+          "type": "string"
+        },
+        "save_code": {
+          "default": false,
+          "type": "bool"
+        },
+        "sync_tensorboard": {
+          "default": false,
+          "type": "bool"
+        },
+        "tags": {
+          "automl_enabled": false,
+          "default": [
+            "tao-toolkit"
+          ],
+          "type": "list"
+        }
+      },
+      "type": "collection"
+    }
+  },
+  "required": [
+    "export"
+  ],
+  "type": "object",
+  "x_tao_schema": {
+    "action": "export",
+    "core_module": "pose_classification",
+    "model": "pose-classification",
+    "network_arch": "pose_classification",
+    "schema_action": "export",
+    "schema_version": 1,
+    "source": "tao-core dataclass config"
+  }
+}

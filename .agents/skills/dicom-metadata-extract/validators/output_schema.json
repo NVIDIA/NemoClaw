@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DicomMetadataExtractOutput",
+  "type": "object",
+  "required": [
+    "path",
+    "transfer_syntax",
+    "modality",
+    "study",
+    "series",
+    "image",
+    "phi_present",
+    "phi_tags_found",
+    "phi_scope_disclaimer"
+  ],
+  "properties": {
+    "path": {"type": "string"},
+    "transfer_syntax": {
+      "type": "object",
+      "required": ["uid", "name"],
+      "properties": {
+        "uid": {"type": ["string", "null"]},
+        "name": {"type": ["string", "null"]}
+      }
+    },
+    "modality": {"type": ["string", "null"]},
+    "study": {
+      "type": "object",
+      "required": ["StudyInstanceUID", "StudyDate", "StudyTime", "StudyDescription", "AccessionNumber"],
+      "properties": {
+        "StudyInstanceUID": {"type": ["string", "null"]},
+        "StudyDate": {"type": ["string", "null"]},
+        "StudyTime": {"type": ["string", "null"]},
+        "StudyDescription": {"type": ["string", "null"]},
+        "AccessionNumber": {"type": ["string", "null"]}
+      }
+    },
+    "series": {
+      "type": "object",
+      "required": ["SeriesInstanceUID", "SeriesNumber", "SeriesDescription", "Modality", "BodyPartExamined"],
+      "properties": {
+        "SeriesInstanceUID": {"type": ["string", "null"]},
+        "SeriesNumber": {"type": ["string", "null"]},
+        "SeriesDescription": {"type": ["string", "null"]},
+        "Modality": {"type": ["string", "null"]},
+        "BodyPartExamined": {"type": ["string", "null"]}
+      }
+    },
+    "image": {
+      "type": "object",
+      "required": ["SOPInstanceUID", "InstanceNumber", "Rows", "Columns", "BitsAllocated", "PixelRepresentation", "PhotometricInterpretation", "NumberOfFrames"],
+      "properties": {
+        "SOPInstanceUID": {"type": ["string", "null"]},
+        "InstanceNumber": {"type": ["string", "null"]},
+        "Rows": {"type": ["integer", "null"]},
+        "Columns": {"type": ["integer", "null"]},
+        "BitsAllocated": {"type": ["integer", "null"]},
+        "PixelRepresentation": {"type": ["integer", "null"]},
+        "PhotometricInterpretation": {"type": ["string", "null"]},
+        "NumberOfFrames": {"type": ["integer", "string", "null"]}
+      }
+    },
+    "phi_present": {"type": "boolean"},
+    "phi_tags_found": {"type": "array", "items": {"type": "string"}},
+    "phi_scope_disclaimer": {"type": "string"}
+  }
+}

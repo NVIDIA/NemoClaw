@@ -1,0 +1,77 @@
+{
+  "skills": [
+    "vss-manage-alerts",
+    "vss-deploy-profile",
+    "vss-manage-video-io-storage"
+  ],
+  "resources": {
+    "platforms": {
+      "L40S": {
+        "modes": [
+          "remote-all"
+        ]
+      }
+    }
+  },
+  "deploy_mode": "real-time",
+  "description": "Phrasing diversity test for alert rule creation (references/alert-subscriptions.md). Each entry uses a different sentence structure to request 'create a realtime alert rule'. Checks verify correct extraction of sensor_name, prompt (verbatim), and alert_type (snake_case tag), plus correct payload structure.",
+  "expects": [
+    {
+      "query": "Deploy the VSS alerts profile on {{platform}} in real-time (VLM) mode using remote LLM and remote VLM endpoints. Then, so later steps have cameras to target, onboard two sensors into VIOS using the vss-manage-video-io-storage skill: upload the bundled warehouse sample video through NVStreamer (port 31000) twice \u2014 once as a sensor named `warehouse_sample` and once as a sensor named `Camera_02` \u2014 then register each NVStreamer-served RTSP (port 31554) in VIOS (port 30888). Confirm both sensors appear in `GET /sensor/list` with an RTSP stream before finishing. Do NOT finish until the system is fully ready: poll until BOTH the VSS Agent REST API (`curl -sf http://localhost:8000/docs`) and VIOS (`curl -sf http://localhost:30888/vst/api/v1/sensor/list`) respond successfully and BOTH `warehouse_sample` and `Camera_02` are listed \u2014 wait and retry for a few minutes if a service is still starting.",
+      "checks": [
+        "`sh -c 'i=1; while [ \"$i\" -le 12 ]; do curl -sf --max-time 10 http://localhost:8000/docs >/dev/null 2>&1 && exit 0; sleep 5; i=$((i+1)); done; exit 1'` returns exit 0 (VSS Agent REST API responsive; polls up to ~3 min to absorb deploy readiness timing).",
+        "`docker ps --format '{{.Names}}' | grep -qx vss-agent` returns exit 0.",
+        "`docker ps --format '{{.Names}}' | grep -qx vss-rtvi-vlm` returns exit 0 (continuous VLM processor \u2014 required for VLM real-time mode).",
+        "`! docker ps --format '{{.Names}}' | grep -qx vss-rtvi-cv` returns exit 0 (CV-only perception is NOT running \u2014 confirms VLM real-time, not verification).",
+        "`sh -c 'i=1; while [ \"$i\" -le 12 ]; do curl -sf --max-time 10 http://localhost:30888/vst/api/v1/sensor/list 2>/dev/null | grep -q warehouse_sample && exit 0; sleep 5; i=$((i+1)); done; exit 1'` returns exit 0 (warehouse_sample onboarded into VIOS; polls to absorb upload/registration delay).",
+        "`sh -c 'i=1; while [ \"$i\" -le 12 ]; do curl -sf --max-time 10 http://localhost:30888/vst/api/v1/sensor/list 2>/dev/null | grep -q Camera_02 && exit 0; sleep 5; i=$((i+1)); done; exit 1'` returns exit 0 (Camera_02 onboarded into VIOS; polls to absorb upload/registration delay)."
+      ]
+    },
+    {
+      "_phrasing": "canonical: 'send me alerts for <condition> in camera <sensor>'",
+      "_extraction": {
+        "sensor_name": "warehouse_sample",
+        "prompt_must_contain": "fallen boxes",
+        "alert_type_pattern": "fallen_box*|box_drop*|drop*box*"
+      },
+      "query": "Send me alerts for fallen boxes in camera warehouse_sample",
+      "checks": [
+        "The trajectory calls Alert Bridge `POST /api/v1/realtime`.",
+        "`curl -sf --max-time 15 http://localhost:9080/api/v1/realtime | grep -qi 'fallen.box'` returns exit 0 (a created rule's prompt contains 'fallen box', confirming the agent preserved the user's detection condition verbatim; deterministic end-state probe).",
+        "`curl -sf --max-time 15 http://localhost:9080/api/v1/realtime | grep -qi rtsp` returns exit 0 (a created rule's live_stream_url is a real rtsp:// stream resolved from VIOS (host/port may be rewritten to the deployment's external IP, so match the rtsp scheme, not a fixed port) - confirms live_stream_url/sensor_id came from the live sensor list, not a fabricated or 'camera_'-prefixed name; deterministic end-state probe).",
+        "`curl -sf --max-time 15 http://localhost:9080/api/v1/realtime | grep -qi warehouse_sample` returns exit 0 (a realtime rule is registered against the warehouse_sample sensor).",
+        "`curl -sf --max-time 15 http://localhost:9080/api/v1/realtime | jq -e '[.rules[] | select(.sensor_name==\"warehouse_sample\") | select(.alert_type | test(\"fallen|box|drop\";\"i\"))] | length >= 1'` returns exit 0 (the stored rule for warehouse_sample carries a condition-specific alert_type related to fallen boxes, not a generic or sensor-derived tag; deterministic end-state probe).",
+        "`curl -sf --max-time 15 http://localhost:9080/api/v1/realtime | jq -e '[.rules[] | select(.sensor_name==\"warehouse_sample\") | select(.chunk_duration == 30 and ((.system_prompt // \"\") | length > 0) and ((.id // \"\") | test(\"[0-9a-fA-F-]{36}\")))] | length >= 1'` returns exit 0 (the stored rule uses the canonical payload defaults \u2014 chunk_duration 30, a non-empty system_prompt \u2014 and has a UUID id; deterministic end-state probe)."
+      ]
+    },
+    {
+      "_phrasing": "imperative: 'create alert for <condition> on <sensor>'",
+      "_extraction": {
+        "sensor_name": "Camera_02",
+        "prompt_must_contain": "smoke",
+        "alert_type_pattern": "smoke*|fire_smoke*"
+      },
+      "query": "Create alert for smoke detection on Camera_02",
+      "checks": [
+        "The trajectory calls Alert Bridge `POST /api/v1/realtime`.",
+        "`curl -sf --max-time 15 http://localhost:9080/api/v1/realtime | grep -qi smoke` returns exit 0 (a created rule's prompt contains 'smoke', confirming the agent extracted the detection condition correctly, not the sensor name; deterministic end-state probe).",
+        "`curl -sf --max-time 15 http://localhost:9080/api/v1/realtime | grep -qi rtsp` returns exit 0 (a created rule's live_stream_url is a real rtsp:// stream resolved from VIOS (host/port may be rewritten to the deployment's external IP, so match the rtsp scheme, not a fixed port) - confirms live_stream_url/sensor_id came from the live sensor list; deterministic end-state probe).",
+        "`curl -sf --max-time 15 http://localhost:9080/api/v1/realtime | grep -qi camera_02` returns exit 0 (a realtime rule is registered against the Camera_02 sensor).",
+        "`curl -sf --max-time 15 http://localhost:9080/api/v1/realtime | jq -e '[.rules[] | select(.sensor_name==\"Camera_02\") | select(.alert_type | test(\"smoke|fire\";\"i\"))] | length >= 1'` returns exit 0 (the stored rule for Camera_02 carries a smoke-related alert_type, not a sensor-derived tag; deterministic end-state probe).",
+        "`curl -sf --max-time 15 http://localhost:9080/api/v1/realtime | jq -e '[.rules[] | select(.sensor_name==\"Camera_02\") | select(.chunk_duration == 30 and ((.system_prompt // \"\") | length > 0) and ((.id // \"\") | test(\"[0-9a-fA-F-]{36}\")))] | length >= 1'` returns exit 0 (the stored rule uses the canonical payload defaults \u2014 chunk_duration 30, a non-empty system_prompt \u2014 and has a UUID id; deterministic end-state probe)."
+      ]
+    },
+    {
+      "_phrasing": "verification: list all rules to confirm correct extraction across all phrasings",
+      "query": "Show me all active realtime rules",
+      "checks": [
+        "The trajectory calls Alert Bridge `GET /api/v1/realtime`.",
+        "The response contains at least 2 rules (from the previous create entries).",
+        "The listed rules span BOTH sensors (`warehouse_sample` and `Camera_02`) \u2014 confirming that sensor extraction was correct across the two phrasings.",
+        "The two rules created in this run are present with condition-specific snake_case `alert_type` tags \u2014 a `warehouse_sample` rule whose tag relates to fallen boxes (e.g. `fallen_boxes` / `box_drop`) and a `Camera_02` rule whose tag relates to smoke (e.g. `smoke_detection`) \u2014 i.e. tags derived from the detection condition, not generic (`alert`) or sensor-derived. (Leftover/pre-existing rules from other runs may also appear on the shared backend; this check concerns the rules this run created, not global uniqueness across all listed rules.)",
+        "The RTSP URLs are reverse-resolved to human-readable sensor names in the agent's output.",
+        "The agent renders a readable table or list \u2014 not raw JSON."
+      ]
+    }
+  ]
+}

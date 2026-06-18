@@ -1,0 +1,11 @@
+{
+  "api_params": {
+    "image": "TAO_DATASERVICES"
+  },
+  "spec_params": {
+    "inference": {
+      "results_dir": "output_dir",
+      "model_path": "huggingface_model_or_folder"
+    }
+  }
+}

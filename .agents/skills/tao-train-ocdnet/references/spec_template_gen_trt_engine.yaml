@@ -1,0 +1,180 @@
+model_name: ''
+encryption_key: ''
+results_dir: ''
+wandb:
+  enable: true
+  project: TAO Toolkit
+  entity: ''
+  group: ''
+  tags:
+  - tao-toolkit
+  reinit: false
+  sync_tensorboard: false
+  save_code: false
+  name: TAO Toolkit Training
+  run_id: ''
+model:
+  backbone: deformable_resnet18
+  pretrained: false
+  in_channels: 3
+  neck: FPN
+  inner_channels: 256
+  head: DBHead
+  out_channels: 2
+  k: 50
+  load_pruned_graph: false
+  pruned_graph_path: ''
+  pretrained_model_path: ''
+  enlarge_feature_map_size: false
+  activation_checkpoint: false
+  quant: false
+  fuse_qkv_proj: true
+dataset:
+  train_dataset:
+    data_name: ICDAR2015Dataset
+    data_path: []
+    args:
+      img_mode: BGR
+      filter_keys:
+      - img_path
+      - img_name
+      - text_polys
+      - texts
+      - ignore_tags
+      - shape
+      ignore_tags:
+      - '*'
+      - '###'
+      pre_processes:
+      - args:
+          keep_ratio: true
+          max_tries: 50
+          size:
+          - 640
+          - 640
+        type: EastRandomCropData
+      - args:
+          shrink_ratio: 0.4
+          thresh_max: 0.7
+          thresh_min: 0.3
+        type: MakeBorderMap
+      - args:
+          shrink_ratio: 0.4
+          min_text_size: 8
+        type: MakeShrinkMap
+    loader:
+      batch_size: 16
+      shuffle: true
+      pin_memory: false
+      num_workers: 0
+      collate_fn: ''
+  validate_dataset:
+    data_name: ICDAR2015Dataset
+    data_path: []
+    args:
+      img_mode: BGR
+      filter_keys:
+      - ''
+      ignore_tags:
+      - '*'
+      - '###'
+      pre_processes:
+      - args:
+          resize_text_polys: true
+          short_size:
+          - 1280
+          - 736
+        type: Resize2D
+    loader:
+      batch_size: 1
+      shuffle: false
+      pin_memory: false
+      num_workers: 0
+      collate_fn: ICDARCollateFN
+  quant_calibration_dataset:
+    images_dir: ''
+train:
+  num_gpus: 1
+  gpu_ids:
+  - 0
+  num_nodes: 1
+  seed: 1234
+  cudnn:
+    benchmark: false
+    deterministic: true
+  num_epochs: 10
+  checkpoint_interval: 1
+  checkpoint_interval_unit: epoch
+  validation_interval: 1
+  resume_training_checkpoint_path: ''
+  results_dir: ''
+  post_processing:
+    type: SegDetectorRepresenter
+    args:
+      thresh: 0.3
+      box_thresh: 0.55
+      max_candidates: 1000
+      unclip_ratio: 1.5
+  metric:
+    type: QuadMetric
+    args:
+      is_output_polygon: false
+  trainer:
+    clip_grad_norm: 5.0
+  loss:
+    type: DBLoss
+    alpha: 5
+    beta: 10
+    ohem_ratio: 3
+    eps: 1.0e-06
+  optimizer:
+    type: Adam
+    args:
+      lr: 0.001
+      weight_decay: 0.0
+      amsgrad: true
+      momentum: 0.0
+      eps: 1.0e-08
+  lr_scheduler:
+    type: WarmupPolyLR
+    args:
+      warmup_epoch: 3
+  precision: fp32
+  distributed_strategy: ddp
+  is_dry_run: false
+  use_distributed_sampler: false
+  model_ema: false
+  model_ema_decay: 0.9999
+gen_trt_engine:
+  results_dir: ''
+  gpu_id: 0
+  onnx_file: ???
+  trt_engine: ???
+  timing_cache: ''
+  batch_size: -1
+  verbose: false
+  width: 1280
+  height: 736
+  img_mode: BGR
+  tensorrt:
+    workspace_size: 1024
+    min_batch_size: 1
+    opt_batch_size: 1
+    max_batch_size: 1
+    layers_precision: []
+    data_type: FP32
+    calibration:
+      cal_image_dir: ???
+      cal_cache_file: ???
+      cal_batch_size: 1
+      cal_batches: 1
+quantize:
+  backend: torchao
+  mode: weight_only_ptq
+  algorithm: minmax
+  layers: []
+  skip_names: []
+  model_path: ''
+  results_dir: ''
+  backend_kwargs: {}
+  device: cuda

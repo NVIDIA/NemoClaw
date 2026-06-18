@@ -1,0 +1,69 @@
+# FastFoundationStereo (FFS) bp2 — deploy spec template (TRT engine + TRT eval/infer).
+#
+# Three-action deploy chain:
+#   gen_trt_engine: ONNX → fp16 (or fp32) TRT engine
+#   evaluate:       TRT engine + GT annotations → EPE / bp metrics
+#   inference:      TRT engine + 2-col annotations → disparity outputs
+#
+# Use the static-shape fp16 deploy path by default; see tao-deploy-fast-foundation-stereo.md for the
+# dynamic-shape deploy path (fp32 default; fp16 also supported with caveats).
+
+results_dir: /results
+
+model:
+  model_type: FastFoundationStereo
+
+dataset:
+  dataset_name: StereoDataset
+  infer_dataset:
+    data_sources:
+    - dataset_name: GenericDataset       # 2-col annotations (no GT)
+      data_file: /data/annotations.txt
+    batch_size: 1
+    workers: 4
+  test_dataset:
+    data_sources:
+    - dataset_name: GenericDataset       # for eval, swap to dataset-specific class with 3-col GT
+      data_file: /data/annotations.txt
+    batch_size: 1
+    workers: 4
+    augmentation:
+      crop_size: [480, 736]              # match export.input_height/width
+
+inference:
+  trt_engine: /results/depth-net-fast-stereo.engine
+  input_width: 736
+  input_height: 480
+
+evaluate:
+  trt_engine: /results/depth-net-fast-stereo.engine
+  input_width: 736
+  input_height: 480
+  # Do NOT enable evaluate.native_padded with a TRT 10.13 dynamic engine —
+  # triggers Cask Pooling Runner Execute Failure (silent disparity corruption,
+  # EPE inflated to ~40-60 px). See tao-deploy-fast-foundation-stereo.md "Common errors".
+  # For variable-aspect inputs: pre-pad each input to a stride-32 multiple at
+  # preprocess and rely on a dynamic engine without native_padded.
+
+gen_trt_engine:
+  gpu_id: 0
+  onnx_file: /models/ffs_bp2_static.onnx
+  trt_engine: /results/depth-net-fast-stereo.engine
+  batch_size: 1                          # static-shape deploy; -1 enables dynamic batch axis
+  tensorrt:
+    data_type: fp16                      # static-shape FFS = fp16 recommended; dynamic-shape = fp32 default or fp16 (see tao-deploy-fast-foundation-stereo.md)
+    workspace_size: 4096                 # MB; FFS needs more than the 1024 default
+    min_batch_size: 1
+    opt_batch_size: 1
+    max_batch_size: 1
+  verbose: true
+  # Optional dynamic H/W profile (dynamic-shape deploy; tensorrt.data_type can be fp32 or fp16).
+  # Size max_height/max_width to ≥ the largest input you'll inference at;
+  # the defaults below cover most variable-aspect public stereo datasets
+  # with ~30 % headroom.
+  # min_height: 320
+  # opt_height: 480
+  # max_height: 1024
+  # min_width: 320
+  # opt_width: 736
+  # max_width: 1536

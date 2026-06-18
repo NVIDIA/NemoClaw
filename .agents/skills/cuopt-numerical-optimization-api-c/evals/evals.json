@@ -1,0 +1,54 @@
+[
+  {
+    "id": "numopt-c-eval-001-milp-api-call-sequence",
+    "question": "I want to solve a small MILP (some integer variables, linear objective, linear constraints) with the cuOpt C API. List the C functions and structs I need in order — names only, one line each, no full source.",
+    "expected_skill": "cuopt-numerical-optimization-api-c",
+    "expected_script": null,
+    "ground_truth": "The agent produces an ordered list of C API entry points without writing a full source file: include cuopt/linear_programming/cuopt_c.h, then call cuOptCreateRangedProblem with sense CUOPT_MINIMIZE or CUOPT_MAXIMIZE, then cuOptSolve(problem, settings, &solution), then cuOptGetObjectiveValue.",
+    "expected_behavior": [
+      "Lists C API call sequence without writing a complete source file",
+      "Names cuOptCreateRangedProblem, cuOptSolve, cuOptGetObjectiveValue in order"
+    ]
+  },
+  {
+    "id": "numopt-c-eval-002-parameter-function-wrong-name",
+    "question": "I am setting a time limit on my cuOpt C API solver with this call: cuOptSetIntParameter(settings, CUOPT_TIME_LIMIT, 60.0). My colleague says the function name is wrong. What is the correct function, and what other parameter-setting functions does the C API provide?",
+    "expected_skill": "cuopt-numerical-optimization-api-c",
+    "expected_script": null,
+    "ground_truth": "The function name cuOptSetIntParameter does not exist in the cuOpt C API — it is a common mistake. The correct function for float parameters (including CUOPT_TIME_LIMIT, tolerances) is cuOptSetFloatParameter. The C API provides three parameter-setting functions: cuOptSetFloatParameter for float params such as time limits and tolerances, cuOptSetIntegerParameter (not cuOptSetIntParameter) for integer params such as CUOPT_LOG_TO_CONSOLE and method selection, and cuOptSetParameter for string params. CUOPT_TIME_LIMIT is a float parameter so the correct call is cuOptSetFloatParameter(settings, CUOPT_TIME_LIMIT, 60.0).",
+    "expected_behavior": [
+      "Identifies cuOptSetIntParameter as a non-existent function — the correct name is cuOptSetIntegerParameter",
+      "States CUOPT_TIME_LIMIT is a float parameter requiring cuOptSetFloatParameter, not cuOptSetIntegerParameter",
+      "Names all three parameter functions: cuOptSetFloatParameter, cuOptSetIntegerParameter, cuOptSetParameter",
+      "Does not produce a full source file — answers the question about function names only"
+    ]
+  },
+  {
+    "id": "numopt-c-eval-003-csr-constraint-matrix",
+    "question": "I am building the constraint matrix for a cuOpt C LP. The problem has 2 constraints and 2 variables. Constraint 1: 3x1 + 4x2 <= 5.4. Constraint 2: 2.7x1 + 10.1x2 <= 4.9. Show me the row_offsets, col_indices, and values arrays for the CSR representation, and explain what each array means.",
+    "expected_skill": "cuopt-numerical-optimization-api-c",
+    "expected_script": null,
+    "ground_truth": "The CSR (Compressed Sparse Row) format uses three arrays. row_offsets has length num_constraints+1 = 3: {0, 2, 4}. Element i gives the starting index in col_indices/values for row i; the last element is the total number of nonzeros (4 here). col_indices = {0, 1, 0, 1}: the column index of each nonzero, ordered by row. values = {3.0, 4.0, 2.7, 10.1}: the nonzero values in the same order. Constraint upper bounds are {5.4, 4.9} and lower bounds are {-CUOPT_INFINITY, -CUOPT_INFINITY} since both constraints are <=. These arrays are passed to cuOptCreateRangedProblem.",
+    "expected_behavior": [
+      "Gives row_offsets = {0, 2, 4} and explains it as start indices per row plus total nnz at the end",
+      "Gives col_indices = {0, 1, 0, 1} matching the column of each nonzero by row",
+      "Gives values = {3.0, 4.0, 2.7, 10.1} in row-major order",
+      "Explains that constraint_lower_bounds should be -CUOPT_INFINITY for <= constraints",
+      "Names cuOptCreateRangedProblem as the function that receives these arrays"
+    ]
+  },
+  {
+    "id": "numopt-c-eval-004-qp-restrictions",
+    "question": "I want to solve a QP with integer variables using the cuOpt C API. A colleague says this is not supported. Is that correct, and what are the restrictions for QP in the cuOpt C API?",
+    "expected_skill": "cuopt-numerical-optimization-api-c",
+    "expected_script": null,
+    "ground_truth": "The colleague is correct — integer QP is not supported in the cuOpt C API. The QP restrictions are: (1) minimization only — CUOPT_MINIMIZE is required; to maximize a quadratic objective, negate all objective coefficients and Q matrix entries; (2) continuous variables only — all variables must use CUOPT_CONTINUOUS, integer variables are not supported for QP; (3) the Q matrix should be positive semi-definite (PSD) for a convex, well-posed problem. The same library, include paths, and build pattern as LP/MILP are used; only the problem-creation call differs for QP.",
+    "expected_behavior": [
+      "Confirms integer QP is not supported — all QP variables must be CUOPT_CONTINUOUS",
+      "States QP only supports CUOPT_MINIMIZE, not CUOPT_MAXIMIZE",
+      "Explains how to maximize: negate objective coefficients and Q entries",
+      "Mentions Q should be positive semi-definite (PSD) for a convex problem",
+      "Notes the same library/headers/build pattern as LP/MILP — only the problem creation call differs"
+    ]
+  }
+]

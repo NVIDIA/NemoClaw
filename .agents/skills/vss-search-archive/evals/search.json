@@ -1,0 +1,78 @@
+{
+  "skills": [
+    "vss-search-archive",
+    "vss-deploy-profile"
+  ],
+  "resources": {
+    "platforms": {
+      "RTXPRO6000BW": {
+        "gpu_count": 2
+      }
+    }
+  },
+  "expects": [
+    {
+      "query": "Deploy the VSS **search** profile on `{{platform}}` via `/vss-deploy-profile -p search`. Run autonomously.\n\n**Environment & prerequisites:** A **full-remote deployed VSS search profile** (deploy mode = `remote-all` \u2014 LLM and VLM both via remote launchpad endpoints, no local NIMs; Cosmos Embed1 still runs locally on the GPU, so the profile requires a GPU host even in remote-all). Run on ONE platform only \u2014 the search answers come from Cosmos Embed1 and Elasticsearch, which are hardware-agnostic and the LLM/VLM run remotely, so fanning out discovers nothing new. Pinned to `RTXPRO6000BW` with `gpu_count: 2` (operator allocation). Required: VSS agent reachable at http://localhost:8000/docs (OpenAPI visible), VST reachable at http://localhost:30888/vst/api/v1, Elasticsearch reachable at http://localhost:9200, the Brev secure-link env vars set (BREV_ENV_ID from /etc/environment, BREV_LINK_PREFIX defaulting to 7777 per current Brev secure-link convention \u2014 see skills/vss-deploy-profile/references/brev.md), AND all sample videos downloaded from ngc registry resource download-version nvidia/vss-developer/dev-profile-sample-data:3.2.0 then extracted with tar -xzvf then pre-ingested using the agent video ingest handshake (`POST /api/v1/videos` \u2192 chunked VST upload URL \u2192 `POST /api/v1/videos/{sensorId}/complete`) according to the `File upload — universal three-step flow` section of the SKILL.md, before running these checks.",
+      "checks": [
+        "`curl -sf --max-time 15 http://localhost:8000/docs` returns exit 0 (Agent REST API responsive)",
+        "`docker ps --format '{{.Names}}' | grep -qx vss-agent` returns exit 0",
+        "`docker ps --format '{{.Names}}' | grep -qx redis` returns exit 0"
+      ]
+    },
+    {
+      "query": "Find all instances of forklifts in the airport video. Agent backend is on localhost.",
+      "checks": [
+        "The agent listed the available video sources via a `GET http://localhost:30888/vst/api/v1/sensor/list` call (per the vss-manage-video-io-storage skill's guidance on resolving unknown source names) before attempting any search",
+        "The agent's final reply explicitly acknowledges that no `airport` video is registered in VST and asks the user to clarify which source to search or to ingest the airport video first \u2014 it did NOT silently fall back to a similar-sounding registered source (e.g. the warehouse video) and did NOT fabricate search hits for a video it never queried",
+        "The agent did NOT start the video ingest handshake (`POST /api/v1/videos` or `POST /api/v1/videos/{sensorId}/complete`) during this step \u2014 ingesting a video on the user's behalf is an explicit opt-in action"
+      ]
+    },
+    {
+      "query": "Find all instances of forklifts in the sample warehouse video. Agent backend is on localhost.",
+      "checks": [
+        "The agent issued exactly one `POST http://localhost:8000/generate` call AND no parallel calls with separate underlying embed / attribute endpoints",
+        "The POST /generate request body contained an `input_message` field whose value paraphrases or contains `forklifts` \u2014 not a different user query, not a paraphrase that dropped the object noun",
+        "The /generate response returned HTTP 200 with a body that contains a non-empty array of search hits (each hit has similarity score and timestamped clip metadata)",
+        "The agent's final reply is formatted as an inspection report titled `Video Search Results` with clear section headers \u2014 not a raw JSON dump, not a chat-style bullet list",
+        "Every search hit rendered in the report cites its start time, end time, similarity score, screenshot url or clip url verbatim from the /generate response \u2014 no fabricated timestamps, no paraphrased similarity scores",
+        "Every screenshot_url / clip_url cited in the agent's final report matches the Brev secure-link pattern: https://<BREV_LINK_PREFIX>-<BREV_ENV_ID>.brevlab.com/... (NOT http://localhost:... and NOT http://<internal-ip>:...) \u2014 otherwise the user cannot open them from outside the Brev box",
+        "Each search result in the report displays a critic result outcome column, and also a criteria column listing all evaluation criteria relevant to that result (formatted with \u2713 for true and \u2717 for false).",
+        "The agent's final reply includes a `Verification Step` offer at the end of the report, telling the user that screenshots can be downloaded and inspected \u2014 it does NOT silently download screenshots without opt-in",
+        "The agent did NOT start the video ingest handshake (`POST /api/v1/videos` or `POST /api/v1/videos/{sensorId}/complete`) during this step, it considered the video was in the system already"
+      ]
+    },
+    {
+      "query": "Find a person wearing a white jacket climbing a ladder in sample-warehouse-ladder. Agent backend is on localhost. You are pre-authorized to run the Verification Step autonomously, without asking for confirmation.",
+      "checks": [
+        "The agent issued exactly one `POST http://localhost:8000/generate` call AND no parallel calls with separate underlying embed / attribute endpoints",
+        "The POST /generate request body contained an `input_message` that preserves both halves of the fused query \u2014 it contains the appearance attribute (`white jacket`) AND the action (`climbing a ladder`) \u2014 the agent did NOT silently drop one half to simplify the search",
+        "The /generate response returned HTTP 200 with a body that contains a non-empty array of search hits (each hit has similarity score and timestamped clip metadata)",
+        "The agent's final reply is formatted as an inspection report titled `Video Search Results` with clear section headers \u2014 not a raw JSON dump, not a chat-style bullet list",
+        "Every search hit rendered in the report cites its start time, end time, similarity score, screenshot url or clip url verbatim from the /generate response \u2014 no fabricated timestamps, no paraphrased similarity scores",
+        "Every screenshot_url / clip_url cited in the agent's final report matches the Brev secure-link pattern: https://<BREV_LINK_PREFIX>-<BREV_ENV_ID>.brevlab.com/... (NOT http://localhost:... and NOT http://<internal-ip>:...) \u2014 otherwise the user cannot open them from outside the Brev box",
+        "The agent did NOT pause to re-ask the user for consent before running the Verification Step \u2014 the query pre-authorized it, so the agent proceeded autonomously to download and inspect screenshots instead of re-offering the `Verification Step` as an opt-in",
+        "The trajectory shows the agent running curl against each `screenshot_url` returned in the /generate response to save it under `/tmp/`, AND then reading the saved image file with its image-inspection capability \u2014 a well-formed download is not sufficient, the agent must actually look at the pixels",
+        "The agent's final `Video Search Results` report includes, for every inspected hit, an explicit verdict (confirmed match / rejected / uncertain) grounded in the screenshot content \u2014 not just the raw similarity score echoed from /generate"
+      ]
+    },
+    {
+      "query": "Find a neon-pink monster truck in the ingested sample warehouse video. Agent backend is on localhost.",
+      "checks": [
+        "The agent issued a `POST http://localhost:8000/generate` call with `input_message` containing `neon-pink monster truck` (or an equivalent paraphrase) \u2014 it did NOT refuse the query up front",
+        "The /generate response returned zero hits because this object is not present in the video (i.e. the embed stage found nothing or the default-enabled critic rejected the low-confidence candidates). The agent did NOT claim success, did NOT fabricate matches, and did NOT silently return an empty report \u2014 per the skill's mandatory workflow, zero matches trigger the troubleshooting loop",
+        "The agent's final reply explicitly acknowledges the zero-hit outcome and explains why (e.g. the query may be too specific, the object may not be present, or suggests the user loosen the query / lower similarity threshold) \u2014 per the troubleshooting.md guidance"
+      ]
+    },
+    {
+      "query": "Delete the video sample-warehouse-ladder. Agent backend is on localhost.",
+      "checks": [
+        "The agent resolved `sample-warehouse-ladder` to its VIOS sensor/video UUID by listing registered sources before deleting it",
+        "The agent deleted the video according to the `Delete source \u2014 agent-backed cleanup` section of `SKILL.md`: it issued `DELETE http://localhost:8000/api/v1/videos/<video_id>` using the resolved UUID",
+        "The agent did NOT delete the video through bare VIOS endpoints such as `DELETE http://localhost:30888/vst/api/v1/sensor/<video_id>` or `DELETE http://localhost:30888/vst/api/v1/storage/file/<video_id>` as the primary cleanup path",
+        "After deletion, the agent verified that `sample-warehouse-ladder` no longer appears in `GET http://localhost:30888/vst/api/v1/sensor/list`",
+        "After deletion, the agent verified that search index data for the deleted source was removed from Elasticsearch (for example, zero matching docs in `mdx-embed-filtered-2025-01-01` for the video UUID, and zero matching behavior/raw docs for `sample-warehouse-ladder`)",
+        "The agent's final reply reports the video deletion outcome and the VIOS / Elasticsearch cleanup verification results"
+      ]
+    }
+  ]
+}

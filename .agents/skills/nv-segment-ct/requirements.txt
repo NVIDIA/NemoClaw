@@ -1,0 +1,23 @@
+# Runtime requirements for the nv-segment-ct skill (VISTA3D inference + helper).
+#
+# These are the only deps the skill's documented command installs from
+# scratch. The skill explicitly does NOT assume a "prepared Medical AI Skills env"
+# — `python skills/nv-segment-ct/scripts/run_vista3d.py` must work after
+# `pip install -r skills/nv-segment-ct/requirements.txt` against a bare
+# Python 3.12 venv (no host site-packages).
+#
+# Ranges chosen to match versions verified working on Medical AI Skills host:
+#   nibabel 5.4.2, numpy 2.4.6, torch 2.12.0+cu130, typer 0.25.1,
+#   monai 1.5.2, transformers 4.57.6, huggingface_hub 0.36.2,
+#   safetensors 0.7.0.
+#
+# Major-version upper bounds prevent silent API breaks; minor-version
+# floors are conservative.
+nibabel>=5.0,<6
+numpy>=2.0,<3
+torch>=2.4,<3
+typer>=0.15,<1
+monai>=1.4,<2
+transformers>=4.40,<5
+huggingface_hub>=0.30,<1
+safetensors>=0.4,<1

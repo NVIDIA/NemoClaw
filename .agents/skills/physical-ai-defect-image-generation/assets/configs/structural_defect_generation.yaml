@@ -1,0 +1,404 @@
+# Defect Image Generation Workflow — Structural-Defect Generation (PCBA)
+#
+# Procedural pose-defect generation via IsaacSim (sdg_pipeline.py with
+# pipeline_type=defect). Defect modes:
+#   - shift           — XY translation + Z rotation (misalignment)
+#   - tombstone       — Y-axis tilt (component stands on one pad edge)
+#   - sideflip        — X-axis flip
+#
+# Selection is non-overlapping across modes — each defect type independently
+# picks its components from the remaining pool. Sibling workflow:
+#   - good_image_generation.yaml — clean (defect-free) PCBA renders
+# Texture defects (solder bridge, scratch, discoloration, AND missing-component)
+# remain in texture_defect_generation_day{0,1}.yaml — anomalygen handles those
+# via AMP/SDG mask injection, NOT here.
+#
+# Pipeline:
+#   isaac-render-defect (paidf-simulation) — single task, one pod:
+#     1. Kit + sdg_pipeline.py (pipeline_type=defect)  → trigger_NNNN/{rgb_*.png, semantic_segmentation_*.png, bbox, ...}
+#     2. python3 + crop_components.py → cropped/{rgb,semantic_segmentation,component_instance}/<NNNN>.png
+#     └─ writes runs/<name>/structural_defect/ (raw + cropped in one upload; no MinIO round-trip)
+#        ▼
+#   augment-image-edit (cosmos_augmentation image, Qwen OVSL2SL)
+#     └─ reads structural_defect/cropped/rgb/, writes runs/<name>/structural_defect_edited/rgb/<NNNN>.png
+#
+# `image_edit_endpoint` must be reachable from OSMO pods (use the in-cluster
+# service from references/nim/ or an existing endpoint). OVSL2SL is appearance-
+# only — the pose perturbation from the upstream render is preserved.
+#
+# Reference manual-run (matches what this workflow does inside OSMO):
+#
+#   export PCB="$HOME/pcb-aoi"   # adjust to wherever you've cloned the repo locally
+#   export IMAGE=nvcr.io/nvidia/paidf-simulation:1.0.0
+#   docker run --rm --gpus all --network host \
+#     -v /usr/share/nvidia/nvoptix.bin:/usr/share/nvidia/nvoptix.bin:ro \
+#     -v $PCB:/workspace/paidf-simulation $IMAGE \
+#     "scripts/sdg/standalone/sdg_pipeline.py \
+#        --config _config/flow2_defect_image/defect_image.yaml \
+#        --pcba-config _config/flow2_defect_image/pcba_target.yaml"
+#   docker run --rm -v $PCB:/workspace/paidf-simulation --entrypoint python3 $IMAGE \
+#     scripts/postprocess/crop_components.py \
+#       --input  /workspace/paidf-simulation/sdg_test_output/flow2_defect_image/trigger_0000 \
+#       --output /workspace/paidf-simulation/sdg_test_output/flow2_defect_image/cropped \
+#       --crops  rgb semantic_segmentation component_instance \
+#       --offset 10
+#
+# Prerequisites (per worker):
+#   1. /usr/share/nvidia/nvoptix.bin present on the OSMO pool node (OptiX
+#      denoiser binary — without it, IsaacSim silently degrades to noisy raw
+#      path tracing). Validate via the `physical-ai-infrastructure-setup-and-resilient-scaling` skill's pod-template gate
+#      before submitting.
+#   2. No registry credential needed — paidf-* images are public on nvcr.io/nvidia/
+#      (anonymous pull). If image pulls fail: see references/troubleshooting.md
+#      -> "nvcr.io image pull failures".
+#   3. osmo credential set hf-token --type GENERIC --payload token="$HF_TOKEN"
+#      (the augment-image-edit task needs HF access for the Qwen weights)
+#   4. <dig_url_root>/datasets/pcb/assets exists with the USD asset tree
+#      (publish via setup/setup_pcb.yaml or upload your own).
+#   5. image_edit_endpoint reachable from OSMO pods (existing endpoint or
+#      local cluster deployment — see references/nim/README.md).
+#
+# Submit:
+#
+#   STAMP=$(cat /proc/sys/kernel/random/uuid | cut -c1-8)
+#   osmo workflow submit skills/physical-ai-defect-image-generation/assets/configs/structural_defect_generation.yaml \
+#     --pool <pool> \
+#     --set name=structural_defect_gen-$STAMP \
+#           dig_url_root=<dig_url_root> \
+#           board=0603_H100 \
+#           image_edit_endpoint=http://qwen-image-edit-nvpcb-ovsl2sl.osmo-nims.svc.cluster.local:8000/v1 \
+#           image_edit_model=nvidia/Qwen-Image-Edit-NVPCB-OVSL2SL
+#
+# Variants:
+#   - defect_modes="tombstone"           render only tombstone defects (others
+#                                         set to enabled=false at task start)
+#   - defect_modes="shift,tombstone"     subset; comma-separated
+#   - render_patches=N                  cap render at N frames (default 5 from cookbook)
+#   - board=1152819000                   alternate per-board pcba_target (pure-digit
+#                                          name avoids Jinja PEP-515 numeric cast —
+#                                          see references/setup.md §"Bring your own data")
+#
+# Outputs:
+#   {{ dig_url_root }}/runs/<name>/structural_defect/                  — render + crop bundle
+#     ├── trigger_0000/                                                  full-frame pose-defect renders
+#     ├── cropped/{rgb,semantic_segmentation,component_instance}/         per-component crops
+#     └── {render_config,pcba_target}.yaml                               resolved-config snapshots
+#   {{ dig_url_root }}/runs/<name>/structural_defect_edited  — Qwen OVSL2SL-restyled RGB crops
+
+
+version: 2
+workflow:
+  name: "{{ workflow_name }}"
+  timeout:
+    exec_timeout: "{{ exec_timeout }}"
+    queue_timeout: "{{ queue_timeout }}"
+
+  resources:
+    gpu-render:
+      gpu: "{{ render_gpu }}"
+      cpu: "{{ render_cpu }}"
+      memory: "{{ render_memory }}"
+      storage: "{{ render_storage }}"
+      platform: "{{ platform }}"
+    gpu-augment:
+      gpu: "{{ augment_gpu }}"
+      cpu: "{{ augment_cpu }}"
+      memory: "{{ augment_memory }}"
+      storage: "{{ augment_storage }}"
+      platform: "{{ platform }}"
+
+  groups:
+
+    # ── Group 1: IsaacSim defect render + per-component crop (one pod) ────────
+    # Single task runs Kit + sdg_pipeline.py (pipeline_type=defect) then
+    # crop_components.py on the same pod — no MinIO round-trip between render
+    # and crop. When `defect_modes` is non-default, defect_image.yaml is patched
+    # at task start to set defects.<mode>.enabled=false for any mode NOT in the
+    # requested subset.
+    # Output tree:
+    #   $OUT/trigger_NNNN/{rgb,semantic_segmentation,bbox}_*.{png,npy}    raw frames
+    #   $OUT/cropped/{rgb,semantic_segmentation,component_instance}/*.png  per-component crops
+    #   $OUT/{render_config,pcba_target}.yaml                              resolved-config snapshots
+    - name: isaac-render-defect
+      tasks:
+        - name: sdg-and-crop
+          lead: true
+          image: "{{ isaac_render_image }}"
+          resource: gpu-render
+          environment:
+            NVIDIA_DRIVER_CAPABILITIES: all
+            MAX_IMAGE_COUNT: "{{ render_patches }}"
+            DEFECT_MODES: "{{ defect_modes }}"
+            CROP_OFFSET: "{{ crop_offset }}"
+          inputs:
+            - url: "{{ dig_url_root }}/datasets/pcb/assets"
+          command: ["bash"]
+          args: ["/tmp/run_render.sh"]
+          files:
+            - localpath: "../cookbooks/pcb/{{ board }}/pcba_target.yaml"
+              path: /tmp/pcba_target.yaml
+            - localpath: "../cookbooks/pcb/{{ board }}/defect_image.yaml"
+              path: /tmp/render_config.yaml
+
+            - path: /tmp/run_render.sh
+              contents: |
+                set -euo pipefail
+
+                # ── Pod-template preflight (OV task) ───────────────────────────
+                if [ ! -f /usr/share/nvidia/nvoptix.bin ]; then
+                  echo "ERROR: /usr/share/nvidia/nvoptix.bin not mounted; Kit OptiX silently falls back to raw path tracing (noisy output)."
+                  echo "  Update the OSMO pod template — see references/troubleshooting.md."
+                  exit 1
+                fi
+                DSHM_GB=$(df -B1G /dev/shm | tail -1 | awk '{print $2}')
+                if [ "$DSHM_GB" -lt 16 ]; then
+                  echo "ERROR: /dev/shm is ${DSHM_GB}GiB; need >= 16 GiB (32 preferred) for Kit ray-tracer buffers."
+                  exit 1
+                fi
+                # ───────────────────────────────────────────────────────────────
+
+                # Install Mike Farah yq into /tmp (pod /usr/local/bin is non-writable; paidf-simulation ships curl, no wget).
+                [ -x /tmp/yq ] || {
+                  curl -fsSL https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64 -o /tmp/yq
+                  chmod +x /tmp/yq
+                }
+                export PATH=/tmp:$PATH
+
+                ASSETS_IN="{{input:0}}"
+                FINAL_OUT="{{output}}"
+                # Stage to a writable tempdir owned by the container user (UID
+                # 1234 = isaac-sim). `/osmo/data/output` is root-owned by the
+                # OSMO host, so we can't chmod it and some pipeline sub-steps
+                # need a fully writable working dir; we mirror to $FINAL_OUT at
+                # the end via `cp -r`.
+                export OUT="/tmp/work_out"
+                rm -rf "$OUT"
+                mkdir -p "$OUT"
+
+                # Locate scene USD by basename.
+                SCENE_USD=$(find "$ASSETS_IN" -name "{{ scene_filename }}" -print -quit)
+                [ -n "$SCENE_USD" ] || { echo "ERROR: scene_filename={{ scene_filename }} not found under $ASSETS_IN"; exit 1; }
+                echo "Scene: $SCENE_USD"
+
+                # Patch pcba_target.yaml's `scene:` to the dataset-mounted USD.
+                PCBA_PATCHED=/tmp/pcba_target_patched.yaml
+                cp /tmp/pcba_target.yaml "$PCBA_PATCHED"
+                SCENE_USD="$SCENE_USD" yq -i '.scene = strenv(SCENE_USD)' "$PCBA_PATCHED"
+
+                # Patch render config: output dir, render_patches, and the
+                # per-mode `defects.<mode>.enabled` flags from $DEFECT_MODES.
+                RENDER_YAML=/tmp/render_config_resolved.yaml
+                cp /tmp/render_config.yaml "$RENDER_YAML"
+                OUT="$OUT" MAX_IMAGE_COUNT="$MAX_IMAGE_COUNT" yq -i '
+                  .output = strenv(OUT) |
+                  .max_image_count = (strenv(MAX_IMAGE_COUNT) | tonumber)
+                ' "$RENDER_YAML"
+
+                # If defect_modes is not the default "all", toggle the per-mode
+                # `defects.<mode>.enabled` flags from the requested subset.
+                if [ "${DEFECT_MODES}" != "all" ]; then
+                  ALL_MODES="shift tombstone sideflip"
+                  for m in $(echo "${DEFECT_MODES}" | tr ',' ' '); do
+                    case " $ALL_MODES " in *" $m "*) ;; *) echo "ERROR: unknown defect_modes: $m (expected subset of: $ALL_MODES)"; exit 1 ;; esac
+                  done
+                  ENABLED_LIST="" DISABLED_LIST=""
+                  for mode in $ALL_MODES; do
+                    if [[ ",${DEFECT_MODES}," == *",$mode,"* ]]; then
+                      MODE="$mode" yq -i '.defects[strenv(MODE)].enabled = true' "$RENDER_YAML"
+                      ENABLED_LIST="$ENABLED_LIST $mode"
+                    else
+                      MODE="$mode" yq -i '.defects[strenv(MODE)].enabled = false' "$RENDER_YAML"
+                      DISABLED_LIST="$DISABLED_LIST $mode"
+                    fi
+                  done
+                  echo "defect_modes: enabled=[${ENABLED_LIST# }], disabled=[${DISABLED_LIST# }]"
+                fi
+
+                # Persist resolved configs alongside the render output.
+                cp "$RENDER_YAML"   "$OUT/render_config.yaml"
+                cp "$PCBA_PATCHED"  "$OUT/pcba_target.yaml"
+
+                # ── Stage 1: Kit + sdg_pipeline.py (pose-defect render) ─────
+                /isaac-sim/kit/kit /isaac-sim/apps/isaacsim.exp.base.kit \
+                  --no-window --exec \
+                  "/workspace/paidf-simulation/scripts/sdg/standalone/sdg_pipeline.py \
+                   --config $RENDER_YAML --pcba-config $PCBA_PATCHED"
+
+                TRIGGERS=$(find "$OUT" -mindepth 1 -maxdepth 1 -type d -name 'trigger_*' | wc -l)
+                FRAMES=$(find "$OUT" -path '*/trigger_*/rgb_*.png' 2>/dev/null | wc -l)
+                [ "$TRIGGERS" -gt 0 ] && [ "$FRAMES" -gt 0 ] || {
+                  echo "ERROR: sdg_pipeline.py produced no frames under $OUT"; exit 1; }
+                echo "render complete: $FRAMES frames across $TRIGGERS trigger(s)"
+
+                # ── Stage 2: crop_components.py (per-component crops) ───────
+                python3 /workspace/paidf-simulation/scripts/postprocess/crop_components.py \
+                  --input  "$OUT/trigger_0000" \
+                  --output "$OUT/cropped" \
+                  --crops  rgb semantic_segmentation component_instance \
+                  --offset "${CROP_OFFSET}"
+
+                # crop_components.py emits per-mode subdirs for structural_defect:
+                #   $OUT/cropped/<mode>/rgb/*.png  (mode ∈ shift|tombstone|sideflip)
+                # so count recursively (mindepth 2 to skip $OUT/cropped/rgb if ever flat).
+                CROPS=$(find "$OUT/cropped" -mindepth 2 -path '*/rgb/*.png' 2>/dev/null | wc -l)
+                [ "$CROPS" -gt 0 ] || { echo "ERROR: crop_components.py produced no per-mode rgb crops under $OUT/cropped/"; ls -laR "$OUT/cropped" 2>/dev/null | head -40; exit 1; }
+                echo "crop complete: $CROPS per-component crops at $OUT/cropped/"
+                find "$OUT/cropped" -mindepth 1 -maxdepth 1 -type d -printf '  mode=%f\n' 2>/dev/null
+
+                # Mirror staged output to the OSMO output mount. Use `cp -r`
+                # (not `cp -a`) — `-a` preserves timestamps via utime(), which
+                # fails for the non-root container user against the root-owned
+                # /osmo/data/output mount. Files copy fine; we just don't carry
+                # over timestamps/perms (irrelevant downstream).
+                mkdir -p "$FINAL_OUT"
+                cp -r "$OUT"/. "$FINAL_OUT"/
+                echo "Mirrored $OUT to $FINAL_OUT"
+          outputs:
+            - url: "{{ dig_url_root }}/runs/{{ name }}/structural_defect"
+
+    # ── Group 3: Qwen Image-Edit lighting transfer ─────────────────────────────
+    # Same adapter as good_image_generation.yaml — walks <input>/rgb/*.png
+    # (flat) and writes to <output>/rgb/<stem>.png. OVSL2SL is appearance-only,
+    # so the geometric pose defect from the upstream render is preserved.
+    - name: augment-image-edit
+      tasks:
+        - name: image-edit
+          lead: true
+          image: "{{ augmentation_image }}"
+          resource: gpu-augment
+          credentials:
+            hf-token:
+              HF_TOKEN: token
+          environment:
+            IMAGE_EDIT_ENDPOINT: "{{ image_edit_endpoint }}"
+            IMAGE_EDIT_MODEL: "{{ image_edit_model }}"
+          inputs:
+            - task: sdg-and-crop                            # {{input:0}} structural_defect (contains cropped/ subdir)
+          command: ["bash"]
+          args: ["/tmp/run_image_edit.sh"]
+          files:
+            - localpath: ../cookbooks/pcb/augmentation_config_ovsl2sl.yaml
+              path: /tmp/augmentation_cookbook.yaml
+
+            - path: /tmp/run_image_edit.sh
+              contents: |
+                set -euo pipefail
+                INPUT_DIR="{{input:0}}"
+                OUTPUT_DIR="{{output}}"
+                mkdir -p "$OUTPUT_DIR"
+                RGB_COUNT=$(find "$INPUT_DIR/cropped" -mindepth 2 -path '*/rgb/*' \( -name '*.png' -o -name '*.jpg' \) 2>/dev/null | wc -l)
+                [ "$RGB_COUNT" -gt 0 ] || { echo "ERROR: no per-mode rgb crops under $INPUT_DIR/cropped/<mode>/rgb/"; ls -laR "$INPUT_DIR/cropped" 2>/dev/null | head -40; exit 1; }
+
+                uv run python /tmp/build_batch_config.py \
+                  "$INPUT_DIR" "$OUTPUT_DIR" /tmp/augmentation_cookbook.yaml /tmp/augmentation_batch.yaml
+                uv run python /app/modules/cli.py --config /tmp/augmentation_batch.yaml
+
+                EMITTED=$(find "$OUTPUT_DIR" -mindepth 3 -path '*/rgb/*' \( -name '*.png' -o -name '*.jpg' \) 2>/dev/null | wc -l)
+                [ "$EMITTED" -gt 0 ] || { echo "ERROR: 0 image-edit images emitted"; exit 1; }
+                echo "image-edit complete: $EMITTED images at $OUTPUT_DIR/<mode>/rgb/"
+
+            - path: /tmp/build_batch_config.py
+              contents: |
+                # Adapter for the flat IsaacSim-crop layout (<input>/rgb/<NNNN>.png).
+                # Identical to good_image_generation.yaml's adapter — kept inline
+                # so each workflow YAML is self-contained.
+                import yaml, os, glob, sys, pathlib
+
+                input_dir, output_dir, cookbook_path, batch_cfg_path = sys.argv[1:]
+
+                with open(cookbook_path) as f:
+                    cfg = yaml.safe_load(f)
+
+                endpoint = os.environ.get("IMAGE_EDIT_ENDPOINT", "").strip()
+                model = os.environ.get("IMAGE_EDIT_MODEL", "").strip()
+                if endpoint:
+                    cfg.setdefault("endpoints", {}).setdefault("image_edit", {})["url"] = endpoint
+                if model:
+                    cfg.setdefault("endpoints", {}).setdefault("image_edit", {})["model"] = model
+
+                template = (cfg.get("data") or [{}])[0]
+                tpl_output = template.get("output", {})
+                video_tpl = tpl_output.get("video", "/tmp/{stem}.png")
+                ext = pathlib.Path(video_tpl).suffix or ".png"
+
+                # structural_defect crop layout: <input>/cropped/<mode>/rgb/<NNNN>.png
+                # We keep the per-mode prefix in the emitted filename so the
+                # restyled outputs preserve their defect class downstream.
+                images = []
+                for mode_dir in sorted(glob.glob(f"{input_dir}/cropped/*/rgb")):
+                    mode = pathlib.Path(mode_dir).parent.name
+                    for p in sorted(glob.glob(f"{mode_dir}/*.png") + glob.glob(f"{mode_dir}/*.jpg")):
+                        images.append((mode, p))
+                assert images, f"No RGB crops under {input_dir}/cropped/<mode>/rgb/"
+
+                data = []
+                modes_seen = set()
+                for mode, img_path in images:
+                    stem = pathlib.Path(img_path).stem
+                    out_stem = f"{mode}__{stem}"
+                    os.makedirs(f"{output_dir}/{mode}/rgb", exist_ok=True)
+                    modes_seen.add(mode)
+                    data.append({
+                        "inputs": {"rgb": img_path},
+                        "output": {
+                            "video":    f"{output_dir}/{mode}/rgb/{stem}{ext}",
+                            "caption":  f"/tmp/cap_{out_stem}.txt",
+                            "metadata": f"/tmp/meta_{out_stem}.json",
+                        },
+                    })
+
+                cfg["data"] = data
+                with open(batch_cfg_path, "w") as f:
+                    yaml.dump(cfg, f, default_flow_style=False, allow_unicode=True)
+                print(f"Batch config: {len(images)} RGB crops -> {batch_cfg_path}")
+          outputs:
+            - url: "{{ dig_url_root }}/runs/{{ name }}/structural_defect_edited"
+
+
+default-values:
+  # ── Identity ─────────────────────────────────────────────────────────────────
+  workflow_name: structural_defect_gen
+  # `name` has no default — every submit must pass `--set name=<flow>-$STAMP`
+  # (see SKILL.md §"Name stamping"). Forces unique storage paths under runs/.
+  exec_timeout: 4h
+  queue_timeout: 4h
+
+  # ── URL-backed inputs ────────────────────────────────────────────────────────
+  dig_url_root: "s3://osmo-workflows/dig"
+
+  # ── Per-board selector ──────────────────────────────────────────────────────
+  board: "0603_H100"                          # alternate: 1152819000
+
+  # ── Defect-mode selector ────────────────────────────────────────────────────
+  # "all" (default) keeps every defect type from the cookbook enabled. Override
+  # with a comma-separated subset of {shift, tombstone, sideflip} to render only
+  # those modes; the workflow patches defects.<mode>.enabled at task start.
+  defect_modes: "all"
+
+  # ── Render knobs ────────────────────────────────────────────────────────────
+  scene_filename: "spark_lighting.usd"
+  render_patches: "5"                        # cookbook default; -1 = full scan_grid coverage. For board=1152819000 (IC-narrow cookbook), prefer -1 — 5 frames is too few to defect the narrowed component set.
+
+  # ── Crop knobs ──────────────────────────────────────────────────────────────
+  crop_offset: "10"
+
+  # ── Container images ────────────────────────────────────────────────────────
+  isaac_render_image: "nvcr.io/nvidia/paidf-simulation:1.0.0"
+  augmentation_image: "nvcr.io/nvidia/paidf-augmentation:1.0.0"
+
+  # ── Image-edit endpoint ─────────────────────────────────────────────────────
+  image_edit_endpoint: "http://qwen-image-edit-nvpcb-ovsl2sl.osmo-nims.svc.cluster.local:8000/v1"
+  image_edit_model: "nvidia/Qwen-Image-Edit-NVPCB-OVSL2SL"
+
+  # ── Resources ───────────────────────────────────────────────────────────────
+  render_gpu: "1"
+  render_cpu: "4"
+  render_memory: 32Gi
+  render_storage: 50Gi
+
+  augment_gpu: "1"
+  augment_cpu: "1"
+  augment_memory: 32Gi
+  augment_storage: 25Gi
+
+  platform: default

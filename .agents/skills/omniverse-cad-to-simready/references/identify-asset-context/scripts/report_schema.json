@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": true,
+  "properties": {
+    "asset_path": { "type": "string" },
+    "errors": { "type": "array" },
+    "file_name": { "type": "string" },
+    "local_identifiers": { "type": "array" },
+    "material_physics_prompt_seed": { "type": "string" },
+    "next_step": { "type": "string" },
+    "passed": { "type": "boolean" },
+    "recommended_web_queries": { "type": "array" },
+    "source_format": { "type": "string" },
+    "suffix": { "type": "string" },
+    "warnings": { "type": "array" }
+  },
+  "required": ["asset_path", "source_format", "suffix", "file_name", "local_identifiers", "recommended_web_queries", "passed", "errors", "next_step"],
+  "type": "object"
+}

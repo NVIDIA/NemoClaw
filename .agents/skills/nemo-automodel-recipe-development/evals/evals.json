@@ -1,0 +1,48 @@
+[
+  {
+    "id": "nemo-automodel-recipe-development-001-new-finetune-recipe",
+    "question": "I need to add a new NeMo AutoModel finetuning recipe variant. What steps should I follow?",
+    "expected_skill": "nemo-automodel-recipe-development",
+    "expected_script": null,
+    "ground_truth": "The agent routes to nemo-automodel-recipe-development, tells the user to find the closest recipe under nemo_automodel/recipes, copy and adapt it, update model/dataset/optimizer/loss/scheduler/checkpoint builders, register a CLI route if adding a new command, add an example YAML under examples, add a tiny CPU-compatible unit test, and test locally with automodel finetune llm -c <config.yaml>.",
+    "expected_behavior": [
+      "Routes to nemo-automodel-recipe-development",
+      "Starts from the closest existing recipe",
+      "Mentions builder functions for model, dataset or dataloader, optimizer, loss, scheduler, and checkpoint config",
+      "Mentions CLI route registration when adding a command or domain alias",
+      "Mentions adding example YAML under examples",
+      "Mentions adding a tiny CPU-compatible unit test and running automodel finetune llm -c <config.yaml>"
+    ]
+  },
+  {
+    "id": "nemo-automodel-recipe-development-002-yaml-target-pattern",
+    "question": "In a NeMo AutoModel recipe YAML, how does the _target_ field work for optimizer and dataset sections?",
+    "expected_skill": "nemo-automodel-recipe-development",
+    "expected_script": null,
+    "ground_truth": "The agent routes to nemo-automodel-recipe-development and explains that _target_ is a fully qualified Python callable and the remaining YAML keys become keyword arguments to that callable. It should give optimizer and dataset examples and mention that command-line overrides can update nested config values such as --optimizer.lr.",
+    "expected_behavior": [
+      "Routes to nemo-automodel-recipe-development",
+      "Explains _target_ as a fully qualified Python callable",
+      "Explains remaining YAML keys as keyword arguments",
+      "Gives an optimizer example such as torch.optim.AdamW",
+      "Gives a dataset example using a NeMo AutoModel dataset target",
+      "Mentions CLI overrides for nested config values"
+    ]
+  },
+  {
+    "id": "nemo-automodel-recipe-development-003-validation-checkpointing",
+    "question": "In a NeMo AutoModel recipe, where do I configure validation cadence, checkpoint save cadence, and restore_from?",
+    "expected_skill": "nemo-automodel-recipe-development",
+    "expected_script": null,
+    "ground_truth": "The agent routes to nemo-automodel-recipe-development and explains that validation cadence is controlled by step_scheduler.val_check_interval, checkpoint save cadence is controlled by step_scheduler.checkpoint_interval, validation uses validation_dataset to build the validation dataloader, and resume uses restore_from.path pointing at a checkpoint directory. It should include or describe a minimal YAML snippet for those keys and mention that checkpointing defaults to consolidated safetensors for HF ecosystem compatibility.",
+    "expected_behavior": [
+      "Routes to nemo-automodel-recipe-development",
+      "Mentions step_scheduler.val_check_interval",
+      "Mentions step_scheduler.checkpoint_interval",
+      "Mentions validation_dataset for the validation dataloader",
+      "Mentions restore_from.path for resuming",
+      "Provides or describes a YAML snippet tying those keys together",
+      "Mentions consolidated safetensors checkpoint format"
+    ]
+  }
+]

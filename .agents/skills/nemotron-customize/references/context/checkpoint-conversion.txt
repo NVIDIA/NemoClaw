@@ -1,0 +1,44 @@
+# Checkpoint Conversion Context
+
+Use this pack for the `convert/*` steps.
+
+## Product Contract
+
+- Conversion is an explicit pipeline stage. Do not silently change downstream
+  steps to consume a different checkpoint layout.
+- Keep source and destination paths separate so a failed conversion cannot
+  corrupt the input checkpoint.
+- Verify tokenizer/config files travel with HF outputs.
+
+## Step Map
+
+| Step | Input | Output | Use when |
+|---|---|---|---|
+| `convert/hf_to_megatron` | `checkpoint_hf` | `checkpoint_megatron` | A Megatron-Bridge consumer needs distributed checkpoint layout |
+| `convert/megatron_to_hf` | `checkpoint_megatron` | `checkpoint_hf` | HF-native eval, deployment, merge, or optimization needs safetensors layout |
+| `convert/merge_lora` | `checkpoint_lora` + `checkpoint_hf` | `checkpoint_hf` | Adapter must become a standalone HF checkpoint |
+
+## Rules
+
+- For Megatron export, point at the concrete `iter_*` checkpoint directory, not
+  only the parent run directory.
+- For HF import, point at a clean HF model directory with config, tokenizer, and
+  weights.
+- For LoRA merge, use the exact base model used during adapter training.
+- Keep `trust_remote_code=true` only when the HF architecture requires it and
+  the source is trusted.
+
+## Pipeline Patterns
+
+- `peft/automodel` -> `convert/merge_lora` for standalone HF output.
+- `sft/megatron_bridge` -> `convert/megatron_to_hf` for HF-native eval or
+  deployment.
+- `sft/automodel` -> `convert/hf_to_megatron` only when a Megatron-only
+  downstream step requires it.
+
+## Failure Modes
+
+- `source_not_clean_hf_checkpoint`: use a real HF model directory, not trainer
+  logs or adapter-only output.
+- `bad_megatron_checkpoint_path`: use the fully written `iter_*` directory.
+- `base_model_mismatch`: merge adapters only with their original base.

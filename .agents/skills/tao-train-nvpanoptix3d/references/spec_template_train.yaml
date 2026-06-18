@@ -1,0 +1,189 @@
+model_name: ''
+encryption_key: ''
+results_dir: ''
+wandb:
+  enable: true
+  project: TAO Toolkit
+  entity: ''
+  group: ''
+  tags:
+  - tao-toolkit
+  reinit: false
+  sync_tensorboard: false
+  save_code: false
+  name: TAO Toolkit Training
+  run_id: ''
+model:
+  backbone:
+    backbone_type: vggt
+    pretrained_model_path: ''
+  sem_seg_head:
+    common_stride: 4
+    transformer_enc_layers: 6
+    convs_dim: 256
+    mask_dim: 256
+    depth_dim: 256
+    ignore_value: 255
+    deformable_transformer_encoder_in_features:
+    - res3
+    - res4
+    - res5
+    num_classes: 13
+    norm: GN
+    in_features:
+    - res2
+    - res3
+    - res4
+    - res5
+  mask_former:
+    dropout: 0.0
+    nheads: 8
+    num_object_queries: 100
+    hidden_dim: 256
+    transformer_dim_feedforward: 1024
+    dim_feedforward: 2048
+    dec_layers: 10
+    pre_norm: false
+    class_weight: 2.0
+    dice_weight: 5.0
+    mask_weight: 5.0
+    depth_weight: 5.0
+    mp_occ_weight: 5.0
+    train_num_points: 12544
+    oversample_ratio: 3.0
+    importance_sample_ratio: 0.75
+    deep_supervision: true
+    no_object_weight: 0.1
+    size_divisibility: 32
+  frustum3d:
+    truncation: 3.0
+    iso_recon_value: 2.0
+    panoptic_weight: 25.0
+    completion_weights:
+    - 50.0
+    - 25.0
+    - 10.0
+    surface_weight: 5.0
+    unet_output_channels: 16
+    unet_features: 16
+    use_multi_scale: false
+    grid_dimensions: 256
+    frustum_dims: 256
+    signed_channel: 3
+  projection:
+    voxel_size: 0.03
+    sign_channel: true
+    depth_feature_dim: 256
+  mode: panoptic
+  object_mask_threshold: 0.4
+  overlap_threshold: 0.5
+  test_topk_per_image: 100
+dataset:
+  train:
+    base_dir: ''
+    json_path: ''
+    batch_size: 1
+    num_workers: 1
+  val:
+    base_dir: ''
+    json_path: ''
+    batch_size: 1
+    num_workers: 1
+  test:
+    base_dir: ''
+    json_path: ''
+    batch_size: 1
+    num_workers: 1
+  workers: 8
+  pin_memory: true
+  augmentation:
+    train_min_size:
+    - 448
+    train_max_size: 768
+    train_crop_size:
+    - 240
+    - 240
+    test_min_size: 240
+    test_max_size: 960
+    color_aug_ssd: false
+    enable_crop: false
+    crop_size:
+    - 240
+    - 240
+    single_category_max_area: 1.0
+    random_flip: ''
+    random_flip_prob: 0.5
+    size_divisibility: -1.0
+    gen_aug_weight: 0.0
+  contiguous_id: false
+  label_map: ''
+  name: front3d
+  downsample_factor: 1
+  iso_value: 1.0
+  ignore_label: 255
+  min_instance_pixels: 200
+  img_format: RGB
+  target_size:
+  - 320
+  - 240
+  reduced_target_size:
+  - 160
+  - 120
+  depth_size:
+  - 120
+  - 160
+  depth_bound: false
+  depth_min: 0.4
+  depth_max: 6.0
+  frustum_mask_path: meta/frustum_mask.npz
+  occ_truncation_lvl:
+  - 8.0
+  - 6.0
+  truncation_range:
+  - 0.0
+  - 12.0
+  enable_3d: false
+  enable_mp_occ: true
+  depth_scale: 25.0
+  num_thing_classes: 9
+train:
+  num_gpus: 1
+  gpu_ids:
+  - 0
+  num_nodes: 1
+  seed: 1234
+  cudnn:
+    benchmark: false
+    deterministic: true
+  num_epochs: 10
+  checkpoint_interval: 1
+  checkpoint_interval_unit: epoch
+  validation_interval: 1
+  resume_training_checkpoint_path: ''
+  results_dir: ''
+  checkpoint_2d: ''
+  checkpoint_3d: ''
+  val_check_interval: 5
+  freeze: []
+  clip_grad_norm: 0.1
+  clip_grad_type: full
+  is_dry_run: false
+  optim:
+    type: AdamW
+    monitor_name: val_loss
+    lr: 0.0002
+    backbone_multiplier: 0.1
+    momentum: 0.9
+    weight_decay: 0.05
+    lr_scheduler: MultiStep
+    milestones:
+    - 88
+    - 96
+    gamma: 0.1
+    max_steps: 160000
+    warmup_factor: 1.0
+    warmup_iters: 0
+  precision: fp32
+  distributed_strategy: ddp
+  activation_checkpoint: true
+  verbose: false

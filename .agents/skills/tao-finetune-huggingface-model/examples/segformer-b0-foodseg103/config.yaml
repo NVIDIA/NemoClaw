@@ -1,0 +1,65 @@
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# tao-finetune-huggingface-model — SegFormer MiT-B0 on FoodSeg103 (semantic-segmentation)
+# qualification: ACCEPT (CV semantic-segmentation, AutoConfig OK)
+# Note: dataset switched from segments/sidewalk-semantic (gated) → EduardoPacheco/FoodSeg103 (public).
+
+research_sources:
+  - https://huggingface.co/nvidia/mit-b0/raw/main/README.md
+  - https://raw.githubusercontent.com/huggingface/transformers/main/examples/pytorch/semantic-segmentation/run_semantic_segmentation.py
+  - https://raw.githubusercontent.com/huggingface/transformers/main/docs/source/en/tasks/semantic_segmentation.md
+  - https://arxiv.org/abs/2105.15203
+
+model_id: nvidia/mit-b0
+model_short_name: segformer-b0-foodseg103
+task: semantic-segmentation
+auto_model_class: AutoModelForSemanticSegmentation
+ignore_mismatched_sizes: true
+
+dataset_id: EduardoPacheco/FoodSeg103
+n_train: 1000
+n_eval: 200
+num_labels: 104                     # 103 food + background
+image_column: image
+label_column: label
+
+output_dir: ./checkpoints
+num_train_epochs: 5
+per_device_train_batch_size: 8
+per_device_eval_batch_size: 8
+gradient_accumulation_steps: 2
+learning_rate: 6.0e-5
+warmup_ratio: 0.1
+weight_decay: 0.0
+bf16: true
+gradient_checkpointing: false
+dataloader_num_workers: 4
+remove_unused_columns: false
+
+eval_strategy: epoch
+save_strategy: epoch
+save_total_limit: 1
+load_best_model_at_end: true
+metric_for_best_model: eval_loss
+greater_is_better: false
+
+report_to: wandb
+logging_steps: 10
+logging_first_step: true
+logging_strategy: steps
+disable_tqdm: true
+
+push_to_hub: false
+ngc_image: nvcr.io/nvidia/pytorch:25.01-py3

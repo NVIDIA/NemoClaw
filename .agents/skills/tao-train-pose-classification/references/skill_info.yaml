@@ -1,0 +1,60 @@
+name: tao-train-pose-classification
+network_arch: pose_classification
+automl_enabled: true
+container_image: tao_toolkit.pyt
+data_format: default
+gpu_spec_key: train.num_gpus
+actions:
+  train:
+    command: pose_classification train -e {config_path}
+    config_format: yaml
+    inputs:
+      dataset.train_dataset.data_path:
+        type: file
+      dataset.train_dataset.label_path:
+        type: file
+      dataset.val_dataset.data_path:
+        type: file
+      dataset.val_dataset.label_path:
+        type: file
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  evaluate:
+    command: pose_classification evaluate -e {config_path}
+    config_format: yaml
+    inputs: {}
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  export:
+    command: pose_classification export -e {config_path}
+    config_format: yaml
+    inputs: {}
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  inference:
+    command: pose_classification inference -e {config_path}
+    config_format: yaml
+    inputs: {}
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+data_sources: {}
+spec_params: {}
+key_defaults: {}
+spec_shorthand_keys:
+  num_epochs: train.num_epochs
+  batch_size: dataset.batch_size
+  learning_rate: train.optim.lr
+description: Pose classification using ST-GCN (Spatial Temporal Graph Convolutional Network). Classifies skeleton sequences
+  into action categories from pose keypoint data.

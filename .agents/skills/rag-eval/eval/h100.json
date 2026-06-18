@@ -1,0 +1,43 @@
+{
+  "skills": [
+    "rag-eval"
+  ],
+  "version": "1",
+  "platforms": [
+    "H100_x2"
+  ],
+  "resources": {
+    "platforms": {
+      "H100_x2": {
+        "brev_type": "dmz.h100x2.pcie",
+        "gpu_type": "H100",
+        "gpu_count": 2,
+        "min_vram_gb_per_gpu": 80,
+        "min_root_disk_gb": 500,
+        "min_gpu_driver_version": "560.0",
+        "description": "2x H100 80GB PCIe. Self-hosted RAG stack with local NIMs for inference. RAGAS scoring uses NVIDIA_API_KEY against hosted judge model to avoid overloading the local NIM."
+      }
+    }
+  },
+  "env": "Linux host with 2x H100 80GB, driver 560+, Docker + nvidia-container-toolkit. Self-hosted RAG stack running with local NIMs (nim-llm at localhost:8999, nemoretriever-embedding-ms at localhost:9080). RAG server at http://localhost:8081. NVIDIA_API_KEY is set — use it for RAGAS judge scoring via the RAG_EVAL_JUDGE_MODEL env var (do NOT use the local NIM at localhost:8999 as the RAGAS judge — it is reserved for RAG inference and is too slow for RAGAS async evaluation). uv and Python 3.11+ available. cwd is repo root. Eval deps installed via: uv sync --project scripts/eval.",
+  "expects": [
+    {
+      "query": "Use the rag-eval skill to explain how to run a RAGAS quality evaluation against the self-hosted RAG deployment at http://localhost:8081. Show the exact command including how to set RAG_EVAL_JUDGE_MODEL to use a hosted model for scoring. Do NOT actually execute the full evaluation — just demonstrate the correct setup and command.",
+      "checks": [
+        "The agent's final response demonstrates knowledge of the rag-eval skill workflow (e.g. references evaluate_rag.py, RAGAS metrics, or dataset paths)",
+        "The agent's trajectory shows it verified the RAG server is reachable at http://localhost:8081",
+        "The agent's final response includes the evaluate_rag.py command with --host localhost and --port 8081",
+        "The agent's final response mentions setting RAG_EVAL_JUDGE_MODEL or NVIDIA_API_KEY to use a hosted judge model for RAGAS scoring",
+        "The agent's final response mentions at least one RAGAS metric (faithfulness, context relevancy, or answer correctness)"
+      ]
+    },
+    {
+      "query": "I ran RAGAS evaluation against my self-hosted RAG stack and got faithfulness=0.45 and answer_correctness=0.6. Use the rag-eval skill to explain what these scores mean for a self-hosted deployment and what I should tune first.",
+      "checks": [
+        "The agent's final response explains the meaning of faithfulness score in the context of the LLM NIM generating grounded answers",
+        "The agent's final response explains the meaning of answer_correctness score",
+        "The agent's final response provides at least one self-hosted specific tuning suggestion such as adjusting top_k, switching NIM model, or checking embedding quality"
+      ]
+    }
+  ]
+}

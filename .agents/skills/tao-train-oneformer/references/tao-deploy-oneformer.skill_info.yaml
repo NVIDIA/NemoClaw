@@ -1,0 +1,79 @@
+name: oneformer-deploy
+type: model
+network_arch: oneformer
+container_image: tao_toolkit.deploy
+data_format: coco_panoptic
+actions:
+  gen_trt_engine:
+    command: oneformer gen_trt_engine -e {config_path}
+    config_format: yaml
+    inputs:
+      gen_trt_engine.onnx_file:
+        type: file
+      gen_trt_engine.trt_engine:
+        type: file
+    outputs:
+      results_dir:
+        type: folder
+      gen_trt_engine.trt_engine:
+        type: file
+    upload_excludes:
+    - inputs/
+  evaluate:
+    command: oneformer evaluate -e {config_path}
+    config_format: yaml
+    inputs:
+      evaluate.trt_engine:
+        type: file
+      dataset.val.annotations:
+        type: file
+      dataset.val.images:
+        type: file
+      dataset.val.panoptic:
+        type: file
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  inference:
+    command: oneformer inference -e {config_path}
+    config_format: yaml
+    inputs:
+      inference.trt_engine:
+        type: file
+      dataset.test.images:
+        type: file
+      dataset.label_map:
+        type: file
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+spec_params:
+  gen_trt_engine:
+    results_dir: output_dir
+    gen_trt_engine.onnx_file: parent_model
+    gen_trt_engine.trt_engine: create_engine_file
+  evaluate:
+    results_dir: output_dir
+    evaluate.trt_engine: parent_model
+  inference:
+    results_dir: output_dir
+    inference.trt_engine: parent_model
+spec_shorthand_keys:
+  trt_data_type: gen_trt_engine.tensorrt.data_type
+  trt_engine: gen_trt_engine.trt_engine
+  batch_size: dataset.batch_size
+description: OneFormer deploy workflow for gen_trt_engine, evaluate, inference using
+  TAO Deploy.
+spec_templates:
+  gen_trt_engine: spec_template_deploy_gen_trt_engine.yaml
+  evaluate: spec_template_deploy_evaluate.yaml
+  inference: spec_template_deploy_inference.yaml
+notes:
+- Carry `model.sem_seg_head.num_classes` from train/export; the starter-kit COCO panoptic
+  path uses 133.
+- Evaluate and inference share the deploy infer template but use different top-level
+  engine fields.

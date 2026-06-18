@@ -1,0 +1,11 @@
+[
+  {
+    "id": "query-analytics-routing",
+    "question": "What skill can I use to query analytics from my video data?",
+    "expected_skill": "vss-query-analytics",
+    "ground_truth": "vss-query-analytics is the skill for querying video-analytics metrics, incidents, and alerts; in response to this request the agent should identify and load it.",
+    "expected_behavior": [
+      "Loads (activates) the vss-query-analytics skill in response to the question."
+    ]
+  }
+]

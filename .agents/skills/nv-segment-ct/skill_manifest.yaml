@@ -1,0 +1,218 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+id: medagent.nv_segment_ct
+version: 0.2.0
+upstream_refs:
+  - kind: huggingface_repo
+    name: nvidia/NV-Segment-CT
+    repo_id: nvidia/NV-Segment-CT
+    revision: afb51518689f71e6abb367ee6301b2cd0225c66a
+license: Apache-2.0
+# Benchmarks this skill participates in (optional). Each entry must name a
+# manifest under benchmarks/<id>.benchmark.yaml. Consumed by
+# eval_engine/render_baselines.py to assemble the cross-skill matrix.
+benchmarks:
+  - ct_segmentation_spleen_msd09
+intended_use:
+  summary: Engineering-time wrapper around NVIDIA-Medtech NV-Segment-CT (VISTA3D 132-class
+    CT seg foundation model). Invokes the official `HuggingFacePipelineHelper` from
+    https://huggingface.co/nvidia/NV-Segment-CT exactly as the model card recommends.
+  scope: development
+  not_for:
+  - clinical deployment
+  - clinical interpretation
+  - autonomous diagnosis
+  - regulatory submission
+inputs:
+- name: ct_volume
+  type: file_path
+  formats:
+  - nifti
+outputs:
+- name: label_map
+  type: file_path
+  formats:
+  - nifti
+- name: result_json
+  type: json
+  schema: validators/output_schema.json
+runtime:
+  language: python
+  python: '>=3.10'
+  entrypoint: scripts/run_vista3d.py
+  args:
+    - "${python}"
+    - "${script}"
+    - "${fixture}"
+  dependencies:
+    monai: '>=1.4'
+    torch: '>=2.0'
+    transformers: '>=4.40,<5'
+    nibabel: '>=4.0'
+    numpy: '>=1.23'
+    huggingface_hub: '*'
+    safetensors: '>=0.4'
+    typer: '>=0.9'
+  side_effects:
+    pip_packages:
+      - monai>=1.4
+      - torch>=2.0
+      - "transformers>=4.40,<5"
+      - huggingface_hub
+      - nibabel>=4.0
+      - numpy>=1.23
+      - safetensors>=0.4
+      - typer>=0.9
+    local_writes:
+      - {path: skills/nv-segment-ct/bundle/, approx_mb_max: 1000}
+    home_writes:
+      - {path: ~/.cache/huggingface/, approx_mb_max: 1500}
+    network_endpoints:
+      - https://huggingface.co
+      - https://msd-for-monai.s3-us-west-2.amazonaws.com
+    requires_docker: false
+    requires_gpu: cuda
+    # The HuggingFace pipeline auto-detects device and falls back to CPU
+    # when CUDA is absent (it is much slower on CPU but produces the same
+    # mask). Declaring gpu_fallback lets the eval_engine's environment
+    # preflight know that a CPU-only host should run this skill rather
+    # than skip it.
+    gpu_fallback: cpu
+    environment:
+      clean_environment_required: false
+      clean_environment_recommended: true
+      modifies_active_python_environment: true
+      user_environment_modification_ok: true
+      recommended_isolation: fresh venv or container for benchmarks; caller-selected env for interactive use
+      notes: >
+        Runtime setup commands may install packages into the active Python
+        environment. That is acceptable only when the caller chooses that
+        environment; benchmark and evidence runs should use a fresh per-run
+        environment.
+    env_required: []
+  external_assets:
+  - kind: huggingface_repo
+    repo_id: nvidia/NV-Segment-CT
+    size_mb_approx: 832
+    install_path: bundle/
+    install_command: huggingface-cli download nvidia/NV-Segment-CT --local-dir skills/nv-segment-ct/bundle/
+    contains:
+    - hugging_face_pipeline.py
+    - vista3d_pipeline.py
+    - vista3d_model.py
+    - vista3d_config.py
+    - inference.json
+    - metadata.json
+    - label_dict.json
+    - scripts/
+    - vista3d_pretrained_model/model.safetensors
+
+cost:
+  # Per-invocation agent-overhead token cost measured by NeMo Agent Toolkit
+  # (NAT) profiler — the cost an LLM-driven agent pays to call this skill
+  # once. The skill itself emits zero tokens. See tools/nat_audit/README.md
+  # for methodology (pinned model, agent type, tool registry size).
+  token_estimate:
+    common:
+      model: meta/llama-3.3-70b-instruct
+      agent_type: tool_calling_agent
+      measured_at: 2026-05-16
+      methodology: tools/nat_audit/README.md
+    isolated_tool_call:
+      prompt_tokens: 2247
+      completion_tokens: 47
+      total_tokens: 2294
+      llm_calls: 2
+      n_tools_in_workflow: 9
+    end_to_end_workflow:
+      prompt_tokens: 5143
+      completion_tokens: 99
+      total_tokens: 5242
+      llm_calls: 3
+      n_tools_in_workflow: 11
+      scenario: realistic_user_workflow
+
+paired_verifiers:
+  - id: medagent.verifiers.ct_segmentation_quality_v1
+    status: implemented
+    consumes: evidence_pack_dir
+    purpose: >
+      Converts this wrapper's geometry/label-set evidence into a CT-segmentation
+      quality floor. The verifier reads the produced label-map NIfTI, computes
+      per-class physical volume from the NIfTI header spacing plus
+      connected-component statistics, checks anatomy plausibility (organ volume
+      bounds, bilateral symmetry, liver > spleen), and optionally computes
+      per-class Dice / IoU if `input.ground_truth_path` is present in the
+      evidence pack.
+
+limitations:
+- This is a thin wrapper. Inference, preprocessing, and postprocessing are
+  delegated entirely to the official `hugging_face_pipeline.HuggingFacePipelineHelper`
+  in bundle/. Do not modify code under bundle/.
+- transformers must be a 4.x release; the HF model code uses pre-5.x idioms
+  (e.g. `_tied_weights_keys`).
+- Device auto-detected (cuda if available, else cpu); `--device` flag overrides.
+- Output may be schema-valid but semantically empty (e.g. label prompts that
+  do not match the input anatomy). Sanity gates assert at least one foreground
+  voxel per requested anatomy.
+- "Licensing: NVIDIA Open Model License (commercial-friendly) for the model; this wrapper Apache-2.0."
+validation:
+  expected_runtime_seconds:
+    # min protects against silent-failure shapes (zero-time forward) while
+    # still allowing real GPU runs on tiny synthetic fixtures (~0.3s).
+    min: 0.05
+    max: 60.0
+    inference_path: runtime.inference_seconds
+  sanity_checks:
+  - path: input.ndim
+    eq: 3
+  - path: output.geometry.shape_match
+    eq: true
+  - path: output.geometry.spacing_match
+    eq: true
+  - path: output.geometry.affine_match
+    eq: true
+  - path: output.label_set_valid
+    eq: true
+  - path: output.unexpected_label_ids
+    length_eq: 0
+  - path: output.any_label_present
+    eq: true
+  - path: invocation.official_helper
+    eq: hugging_face_pipeline.HuggingFacePipelineHelper
+  expected_cost:
+    # VISTA3D is a 132-class foundation model — bounds need headroom for
+    # both GPU (sub-second on H100) and CPU fallback (~30s wall, ~4 GB
+    # RSS on the bundled spleen_03 fixture). cpu_seconds is wide because
+    # PyTorch CPU mode parallelizes across cores; the canonical
+    # silent-failure detector here is rss_mb_peak.min combined with the
+    # sanity gate (class_counts.spleen > 0).
+    wall_seconds:        {max: 90}
+    cpu_seconds:         {max: 600}
+    rss_mb_peak:         {min: 200, max: 8000}
+    gpu_seconds:         {max: 90}
+    gpu_memory_mb_peak:  {max: 32000}
+  reproducibility:
+    mode: preflight
+    fixture: fixtures/preflight_synthetic_ct.nii.gz
+    fixture_builder: fixtures/generate_preflight_fixture.py
+    runs: 2
+    reason: >
+      Full repeatability for this wrapper requires the external HuggingFace
+      model bundle and a CUDA-capable runtime. Repository verification repeats
+      the NIfTI/env boundary check on a tiny generated synthetic CT fixture;
+      full evidence packs should be compared separately after staging
+      `fixtures/spleen_03.nii.gz` and the model bundle.

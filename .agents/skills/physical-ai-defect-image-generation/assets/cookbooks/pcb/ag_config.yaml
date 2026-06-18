@@ -1,0 +1,50 @@
+# DDP config template (default, use with predict2_anomaly_gen_ddp_{2b,14b}).
+# Placeholders in <angle-brackets> are filled by scripts/generate_config.py.
+# Keep sections minimal — the experiment provides defaults for everything else.
+job:
+  project: anomaly_gen
+  group: UC1_exp_75k_val2k
+  name: UC1_exp_75k_val2k_training_FP32_lr0.02_bs=2_2B_512x512
+optimizer:
+  lr: 0.02
+checkpoint:
+  save_iter: 2000
+trainer:
+  max_iter: 2000
+  logging_iter: 10
+  validation_iter: 2000
+  run_validation: True
+  early_stop:
+    enabled: false
+    metric: nn
+    patience: 5
+    min_delta: 0
+    min_delta_mode: rel
+dataloader_train:
+  batch_size: 2
+  dataset:
+    dataset_dir: datasets/UC1_data
+    image_size:
+      - 512
+      - 512
+    anomaly_types: [[IC, bridge], [passive_component, excess_solder], [passive_component, missing]]
+    seed: 1
+    data_augprob: 0.5
+    aug_type: random_ratio_crop
+    ratio_range: [1.5, 8.0]
+dataloader_val:
+  batch_size: 32
+  dataset:
+    input_data_path: ag_inference/validation_UC1_exp/testcase.jsonl
+model:
+  config:
+    ag_config:
+      ad_precision: float32
+      t5_model_name: checkpoints/google-t5/t5-large
+      anomaly_embedding:
+        anomaly_types: [[IC, bridge], [passive_component, excess_solder], [passive_component, missing]]
+        freeze: False
+      mask_encoder:
+        encoder_config:
+          init_cfg:
+            checkpoint: checkpoints/NVDINOV2/nv_dinov2_classification_model.ckpt

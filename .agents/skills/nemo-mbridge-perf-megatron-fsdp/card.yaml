@@ -1,0 +1,50 @@
+title: megatron_fsdp
+validated_on: "2026-03-14"
+summary: >
+  Megatron FSDP is the practical FSDP path in Megatron-Bridge today. PyTorch
+  FSDP2 exists in code, but remains experimental and failed at runtime during
+  live validation on the current branch.
+validation_status:
+  megatron_fsdp_core:
+    - code_verified
+  megatron_fsdp_runtime_smoke:
+    - code_verified
+  megatron_fsdp_recipe_defaults:
+    - unclear
+  megatron_fsdp_performance_claims:
+    - doc_only
+  torch_fsdp2_runtime:
+    - known_failure
+feature_meaning:
+  megatron_fsdp: >
+    Megatron-Core custom FSDP path enabled through use_megatron_fsdp and
+    checkpointed through fsdp_dtensor.
+  torch_fsdp2: >
+    Megatron-Core wrapper around PyTorch fully_shard enabled through
+    use_torch_fsdp2.
+recommended_path:
+  dist.use_megatron_fsdp: true
+  ddp.use_megatron_fsdp: true
+  ddp.data_parallel_sharding_strategy: optim_grads_params
+  checkpoint.ckpt_format: fsdp_dtensor
+known_constraints:
+  - Megatron FSDP and Torch FSDP2 are mutually exclusive.
+  - Megatron FSDP save/load requires fsdp_dtensor.
+  - Megatron FSDP does not support use_tp_pp_dp_mapping.
+  - FSDP2 is upstream-blocked with PP, EP, distributed optimizer, and FP16.
+  - CPU offloading does not support PP>1 or activation recomputation.
+known_limitations:
+  - Public recipes often expose use_megatron_fsdp but still default to torch_dist checkpoints.
+  - Bridge does not expose torch_dcp or the FSDP2 reshard_after_forward knob.
+  - Live validation of the current branch hit a Torch FSDP2 runtime TypeError from pg_collection.
+evidence:
+  - src/megatron/bridge/training/config.py
+  - src/megatron/bridge/models/common/unimodal.py
+  - src/megatron/bridge/training/checkpointing.py
+  - tests/functional_tests/training/test_megatron_fsdp.py
+  - 3rdparty/Megatron-LM/megatron/training/arguments.py
+follow_up_validation:
+  - Add a positive Bridge functional test for FSDP2.
+  - Fix recipe defaults to switch to fsdp_dtensor when Megatron FSDP is enabled.
+  - Benchmark DDP vs distributed optimizer vs Megatron FSDP.
+  - Validate TP / PP / CP / EP compatibility matrix explicitly.

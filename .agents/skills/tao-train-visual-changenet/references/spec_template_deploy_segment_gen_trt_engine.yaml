@@ -1,0 +1,20 @@
+encryption_key: tlt_encode
+results_dir: /results
+dataset:
+  segment:
+    num_classes: 2
+    batch_size: 1
+model:
+  backbone:
+    type: fan_small_12_p4_hybrid
+gen_trt_engine:
+  gpu_id: 0
+  onnx_file: /models/model.onnx
+  trt_engine: /results/visual-changenet.engine
+  batch_size: -1
+  tensorrt:
+    data_type: fp16
+    workspace_size: 1024
+    min_batch_size: 1
+    opt_batch_size: 10
+    max_batch_size: 10

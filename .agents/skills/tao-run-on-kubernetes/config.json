@@ -1,0 +1,65 @@
+{
+  "name": "kubernetes",
+  "type": "platform",
+  "required_credentials": [],
+  "optional_credentials": [
+    {
+      "name": "KUBECONFIG",
+      "source": "env_var"
+    },
+    {
+      "name": "TAO_K8S_NAMESPACE",
+      "source": "env_var"
+    },
+    {
+      "name": "TAO_K8S_CONTEXT",
+      "source": "env_var"
+    },
+    {
+      "name": "NGC_KEY",
+      "source": "env_var"
+    },
+    {
+      "name": "ACCESS_KEY",
+      "source": "env_var"
+    },
+    {
+      "name": "SECRET_KEY",
+      "source": "env_var"
+    },
+    {
+      "name": "S3_ENDPOINT_URL",
+      "source": "env_var"
+    },
+    {
+      "name": "S3_BUCKET_NAME",
+      "source": "env_var"
+    },
+    {
+      "name": "CLOUD_REGION",
+      "source": "env_var"
+    },
+    {
+      "name": "HF_TOKEN",
+      "source": "env_var"
+    }
+  ],
+  "resource_defaults": {
+    "num_nodes": 1,
+    "num_gpus": 1,
+    "namespace": "default"
+  },
+  "cloud_storage": {
+    "protocol": "aws",
+    "uri_format": "s3://{bucket_name}/{path}",
+    "metadata_key": "aws"
+  },
+  "tags": [
+    "gpu",
+    "compute",
+    "kubernetes",
+    "k8s",
+    "remote"
+  ],
+  "description": "Kubernetes Job execution on a configured GPU cluster using kubeconfig or in-cluster service account authentication."
+}

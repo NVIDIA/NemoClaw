@@ -1,0 +1,276 @@
+# Reference data for the TAO Inference Microservice skill (SKILL.md).
+# This file contains only data: image mappings, schema definitions, valid values,
+# env var names, and secrets classification. All behavioural instructions live in SKILL.md.
+# Update this file when deployment defaults change; update SKILL.md when behaviour changes.
+
+skill:
+  name: inference_microservice
+
+docker_image_defaults:
+  env_overrides:
+    COSMOS_RL: IMAGE_COSMOS_RL
+    COSMOS_PREDICT2_5: IMAGE_COSMOS_PREDICT2_5
+    TAO_DATASERVICES: IMAGE_TAO_DATASERVICES
+  # Values are versions.yaml dotted keys (preferred) — resolved at runtime via
+  # tao_sdk.versions.resolve_container_image. Absolute image URIs also work for
+  # one-off / experimental overrides without a manifest bump.
+  mapping:
+    COSMOS_RL: tao_toolkit.cosmos_rl
+    COSMOS_PREDICT2_5: tao_toolkit.cosmos_predict_2_5
+    TAO_DATASERVICES: tao_toolkit.data_services
+
+network_config_files:
+  convention: "{network_arch}.config.json"
+  lookup_key: network_arch lowercased (e.g. cosmos-rl -> cosmos-rl.config.json)
+  fields_used_for_inference_microservice:
+    api_params.image: key into docker_image_defaults.mapping
+    spec_params.inference.model_path: folder-vs-file path resolution (substring "folder" checked)
+  example_cosmos_rl_fragment:
+    api_params:
+      image: COSMOS_RL
+    spec_params:
+      inference:
+        results_dir: output_dir
+        model_path: parent_model
+
+valid_network_arch_config_basenames:
+  - cosmos-rl
+  - cosmos-predict2.5
+  - tao-dataservices
+
+container_commands:
+  description: >
+    Inner command executed inside the container at startup. The shape is
+    per-network_arch — there is NO generic uniform template. Look up by
+    network_arch and substitute the listed placeholders. If a network_arch
+    is not present here, it is not supported by this skill; stop and ask
+    the user before generating any command.
+
+  cosmos-rl:
+    template: |
+      umask 0 &&
+      cosmos-rl-inference-microservice --job '<JOB_JSON>' --docker_env_vars '<ENV_JSON>'
+    executable: cosmos-rl-inference-microservice
+    consumes_job_payload: true
+    placeholders:
+      JOB_JSON: |
+        Single shell-quoted JSON string. Build via:
+          json_str = json.dumps(job_payload, separators=(",", ":"))
+          shlex.quote(json_str)
+        See `job_payload` block below for the schema.
+      ENV_JSON: |
+        Single shell-quoted JSON string of the env_payload dict.
+        Same json.dumps + shlex.quote treatment as JOB_JSON.
+    cloud_credentials_handling: >
+      The inference container does not depend on cloud storage. Model weights
+      come from the HuggingFace Hub (HF_TOKEN env var for gated models) or a
+      local filesystem path. Do NOT pass cloud_metadata / results_dir /
+      TAO_CLOUD_* — they are no longer accepted by the inference service.
+
+  cosmos-predict2.5:
+    template: |
+      umask 0 &&
+      cosmos_predict inference_microservice start
+      <CHECKPOINT_FLAG>
+      --output-dir '<OUTPUT_DIR>'
+      --port 8080
+    executable: cosmos_predict
+    consumes_job_payload: false
+    cli_prefix_note: >
+      The CLI uses `tyro.conf.OmitArgPrefixes`, so SetupArguments fields are
+      flattened: pass `--output-dir`, `--checkpoint-path`, `--model`, etc.
+      (NOT `--setup.<field>`). The bind host is hardcoded to 0.0.0.0 by the
+      tao-core base server, so `--host` is not exposed.
+    placeholders:
+      CHECKPOINT_FLAG: |
+        Translate `model_path` from the user input by URI scheme:
+          /absolute/local/path          -> --checkpoint-path '<model_path>'
+          hf_model://<org>/<model>      -> --model '<registered_model_key>'
+        For HuggingFace, use `--model` with a registered key (e.g. `base-2b`,
+        `base-14b`, `auto-multiview`) — see MODEL_KEYS in cosmos_predict2/config.py.
+        HF_TOKEN must be set in env_vars for gated models. Cloud URIs (s3://,
+        gs://, az://) are NOT accepted — the inference service has no cloud
+        storage dependency.
+      OUTPUT_DIR: |
+        Local container path for setup artifacts (e.g. `/tmp/cosmos-predict2.5-output`).
+        Generated video is returned inline in the chat-completions response as
+        a base64 `data:video/mp4;base64,...` URI; nothing is written to cloud
+        storage.
+    optional_flags:
+      --idle-timeout-minutes <float>: shut down after N minutes of inactivity (post model-load)
+      --context-parallel-size <int>: defaults to WORLD_SIZE (torchrun)
+      --disable-guardrails: skip text and video guardrails
+      --offload-guardrail-models: offload guardrail models to CPU
+      --offload-diffusion-model: offload diffusion model to CPU
+      --pid-file <path>: PID file for the `stop` subcommand (default /tmp/cosmos_predict2_microservice.pid)
+    per_request_params_note: >
+      prompt, inference_type (text2world | image2world | video2world),
+      input_path/media, num_output_frames, num_steps, seed, guidance,
+      negative_prompt are NOT startup args — they are sent in the
+      chat-completions request body at request time. See request.yaml
+      → network_arch_constraints.cosmos-predict2.5.
+    cloud_credentials_handling: |
+      The inference container does not depend on cloud storage. The only
+      cred-bearing env var that ever applies is HF_TOKEN, read by the
+      HuggingFace SDK for gated models. Do NOT set AWS_* / TAO_CLOUD_* —
+      they are not consumed. TAO_EXECUTION_BACKEND / TAO_API_JOB_ID /
+      CLOUD_BASED from Section 4 are not consumed by cosmos-predict2.5 and
+      may be omitted.
+
+  tao-dataservices:
+    template: |
+      umask 0 &&
+      python -m nvidia_tao_core.microservices.handlers.huggingface_inference_microservice_server
+      --port 8080
+      --job '<JOB_JSON>'
+      --docker_env_vars '<ENV_JSON>'
+    executable: python -m nvidia_tao_core.microservices.handlers.huggingface_inference_microservice_server
+    consumes_job_payload: true
+    placeholders:
+      JOB_JSON: |
+        Single shell-quoted JSON string. Same shape as cosmos-rl (job_id,
+        specs.model_path, neural_network_name). Build via:
+          json_str = json.dumps(job_payload, separators=(",", ":"))
+          shlex.quote(json_str)
+        See `job_payload` block below for the schema.
+      ENV_JSON: |
+        Single shell-quoted JSON string of env_payload. Same shape as cosmos-rl
+        (TAO_EXECUTION_BACKEND, TAO_API_JOB_ID, CLOUD_BASED).
+    optional_flags:
+      --idle_timeout_minutes <int>: minutes of inactivity before auto-deletion (default 30 in the entrypoint)
+      --disable_auto_deletion: disable idle auto-deletion
+    handler: nvidia_tao_core.microservices.handlers.huggingface_inference_microservice_server.HuggingFaceInferenceMicroserviceServer
+    cloud_credentials_handling: >
+      Same as cosmos-rl — the inference container does not depend on cloud
+      storage. Model weights come from HuggingFace Hub (HF_TOKEN env var for
+      gated models) or a local filesystem path. Do NOT pass cloud_metadata /
+      results_dir / TAO_CLOUD_*.
+    notes: >
+      The HuggingFace inference path is a generic loader that auto-detects model type
+      (LLM, VLM, diffusion, image-classification) from the model_path. Generated
+      artifacts are returned in the HTTP reply; no cloud-storage save.
+
+model_path_protocols:
+  description: >
+    Valid URI schemes for specs.model_path. The inference service does not
+    depend on cloud storage; cloud URIs (s3://, gs://, az://, cs://, aws://)
+    are rejected.
+  schemes:
+    hf_model://:  HuggingFace model repo, format `hf_model://<org>/<model>`. HF_TOKEN env var is read directly by the container. Note `hf://` is NOT recognized.
+    /local/path:  Local container filesystem path. Pre-stage the checkpoint into the image or mount it.
+
+job_payload:
+  required_keys:
+    job_id: UUID string
+    specs:
+      minimum_keys:
+        - model_path
+    neural_network_name: same string as network_arch
+
+runtime_env_minimal_no_callbacks:
+  required:
+    TAO_EXECUTION_BACKEND: "<platform value>"
+    TAO_API_JOB_ID: "<same UUID as job_payload.job_id>"
+    CLOUD_BASED: "False"
+  forbidden_for_this_skill:
+    - TAO_LOGGING_SERVER_URL
+    - TAO_ADMIN_KEY
+
+optional_gpu_host_env:
+  nvidia_runtime_mode:
+    NVIDIA_DRIVER_CAPABILITIES: all
+    NVIDIA_VISIBLE_DEVICES: comma-separated GPU ids or "all"
+
+docker_run_reference:
+  network_env: DOCKER_NETWORK
+  network_default: tao_default
+  common_flags:
+    - "--tmpfs /dev/shm"
+    - "--detach"
+    - "--rm (optional)"
+    - "--gpus <n> OR --runtime=nvidia with NVIDIA_VISIBLE_DEVICES"
+
+service_registry:
+  state_file: /tmp/tao-inf-ms-state.json
+  entry_schema:
+    job_id: UUID string (TAO-generated)
+    platform: "local-docker" | "brev" | "lepton" | "slurm" | "kubernetes"
+    platform_job_id: platform-native job identifier (omitted for local-docker/brev where job_id is the container name)
+    network_arch: string
+    host_url: reachable URL from agent host (varies by platform)
+    docker_url: "http://{job_id}:8080" — container-to-container on Docker network (local-docker/brev only)
+    host_port: integer (local-docker, brev, slurm only)
+    slurm_node: allocated compute node hostname (slurm only)
+    started_at: ISO-8601 UTC timestamp
+  example_entry:
+    latest: "afacee21-2666-481d-b008-c83df2d6fd7f"
+    afacee21-2666-481d-b008-c83df2d6fd7f:
+      job_id: "afacee21-2666-481d-b008-c83df2d6fd7f"
+      platform: "local-docker"
+      network_arch: "cosmos-rl"
+      host_url: "http://localhost:8080"
+      docker_url: "http://afacee21-2666-481d-b008-c83df2d6fd7f:8080"
+      host_port: 8080
+      started_at: "2026-05-03T23:30:00Z"
+
+allowed_docker_env_var_names:
+  # SECRET
+  - HF_TOKEN
+  - WANDB_API_KEY
+  - CLEARML_API_ACCESS_KEY
+  - CLEARML_API_SECRET_KEY
+  - TAO_API_KEY
+  - TAO_USER_KEY
+  - TAO_ADMIN_KEY        # forbidden for this skill; listed for completeness
+
+  # non-secret config
+  - WANDB_BASE_URL
+  - WANDB_USERNAME
+  - WANDB_ENTITY
+  - WANDB_PROJECT
+  - WANDB_INSECURE_LOGGING
+  - CLEARML_WEB_HOST
+  - CLEARML_API_HOST
+  - CLEARML_FILES_HOST
+  - TAO_API_SERVER
+  - CLOUD_BASED
+  - TAO_EXECUTION_BACKEND
+  - TAO_LOGGING_SERVER_URL  # forbidden for this skill
+  - TAO_API_JOB_ID
+  - TAO_API_RESULTS_DIR
+  - TAO_LOG_LEVEL
+  - TAO_TELEMETRY_SERVER
+  - TAO_CLIENT_TYPE
+  - TAO_AUTOML_TRIGGERED
+  - TELEMETRY_OPT_OUT
+  - JOB_ID
+  - AUTOML_EXPERIMENT_NUMBER
+  - RETAIN_CHECKPOINTS_FOR_RESUME
+  - EARLY_STOP_EPOCH
+  - DEBUG_ENABLED
+  - RECURSIVE_DATASET_FILE_DOWNLOAD
+  - ORCHESTRATION_API_NETWORK
+  - ORCHESTRATION_API_ACTION
+  - CUDA_OVERRIDE_VERSION
+  - LEPTON_SHARED_MEMORY_SIZE
+
+secrets_handling:
+  secret_env_vars:
+    HF_TOKEN: HuggingFace registry authentication variable for gated models
+    WANDB_API_KEY: Weights & Biases API key
+    CLEARML_API_ACCESS_KEY: ClearML API access key
+    CLEARML_API_SECRET_KEY: ClearML API secret key
+    TAO_API_KEY: TAO API key
+    TAO_USER_KEY: TAO user key
+  non_secret_inputs_safe_to_collect_in_prompt:
+    - model_path
+    - network_arch
+    - num_gpus
+    - prompt
+    - WANDB_BASE_URL
+    - WANDB_USERNAME
+    - WANDB_ENTITY
+    - WANDB_PROJECT
+    - CLEARML_WEB_HOST
+    - CLEARML_API_HOST
+    - CLEARML_FILES_HOST

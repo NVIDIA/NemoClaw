@@ -1,0 +1,9 @@
+gen_trt_engine:
+  onnx_file: /models/model.onnx
+  trt_engine: /results/classification-pyt.engine
+  tensorrt:
+    data_type: fp16
+    min_batch_size: 1
+    opt_batch_size: 1
+    max_batch_size: 8
+results_dir: /results

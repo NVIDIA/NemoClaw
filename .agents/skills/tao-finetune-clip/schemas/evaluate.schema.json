@@ -1,0 +1,921 @@
+{
+  "automl_default_parameters": [],
+  "automl_disabled_parameters": [
+    "train.cudnn",
+    "dataset.train.datasets",
+    "inference.datasets",
+    "train.gpu_ids",
+    "wandb.tags",
+    "dataset.augmentation.color_jitter",
+    "evaluate",
+    "inference",
+    "train.optim.betas",
+    "train",
+    "dataset.train.wds",
+    "dataset.val.datasets",
+    "dataset.augmentation",
+    "gen_trt_engine",
+    "gen_trt_engine.tensorrt.layers_precision",
+    "dataset",
+    "gen_trt_engine.tensorrt",
+    "dataset.train",
+    "model",
+    "evaluate.gpu_ids",
+    "train.optim",
+    "dataset.val",
+    "dataset.augmentation.scale",
+    "export",
+    "wandb",
+    "evaluate.datasets",
+    "inference.gpu_ids"
+  ],
+  "default": {
+    "dataset": {
+      "augmentation": {
+        "color_jitter": [
+          0.8,
+          0.32,
+          0.32,
+          0.32,
+          0.08
+        ],
+        "grayscale": 0.2,
+        "scale": [
+          0.4,
+          1.0
+        ]
+      },
+      "pin_memory": true,
+      "seed": 42,
+      "train": {
+        "batch_size": 16,
+        "datasets": [],
+        "num_workers": 8,
+        "type": "custom",
+        "wds": {
+          "samples_per_shard": 10000
+        }
+      },
+      "val": {
+        "batch_size": 16,
+        "datasets": [],
+        "num_workers": 8
+      }
+    },
+    "encryption_key": "",
+    "evaluate": {
+      "batch_size": 16,
+      "datasets": [],
+      "gpu_ids": [
+        0
+      ],
+      "num_gpus": 1,
+      "num_workers": 8
+    },
+    "model": {
+      "canonicalize_text": false,
+      "freeze_text_encoder": false,
+      "freeze_vision_encoder": false,
+      "image_size": 256,
+      "type": "siglip2-so400m-patch16-256"
+    },
+    "model_name": "clip",
+    "results_dir": "",
+    "train": {
+      "checkpoint_interval": 1,
+      "checkpoint_interval_unit": "epoch",
+      "cudnn": {
+        "benchmark": false,
+        "deterministic": true
+      },
+      "distributed_strategy": "ddp",
+      "gpu_ids": [
+        0
+      ],
+      "grad_checkpointing": false,
+      "loss_type": "siglip",
+      "num_epochs": 10,
+      "num_gpus": 1,
+      "num_nodes": 1,
+      "optim": {
+        "betas": [
+          0.9,
+          0.95
+        ],
+        "eps": 1e-06,
+        "optimizer_type": "adamw",
+        "scheduler": "cosine",
+        "text_lr": 0.0001,
+        "vision_lr": 0.0001,
+        "warmup_steps": 100,
+        "weight_decay": 0.0001
+      },
+      "precision": "fp16",
+      "results_dir": "",
+      "resume_training_checkpoint_path": "",
+      "seed": 1234,
+      "validation_interval": 1
+    },
+    "wandb": {
+      "enable": true,
+      "entity": "",
+      "group": "",
+      "name": "TAO Toolkit Training",
+      "project": "TAO Toolkit",
+      "reinit": false,
+      "run_id": "",
+      "save_code": false,
+      "sync_tensorboard": false,
+      "tags": [
+        "tao-toolkit"
+      ]
+    }
+  },
+  "popular": {
+    "gen_trt_engine": {
+      "batch_size": -1,
+      "gpu_id": 0,
+      "tensorrt": {
+        "max_batch_size": 16,
+        "min_batch_size": 1,
+        "opt_batch_size": 1
+      }
+    },
+    "train": {
+      "checkpoint_interval": 1,
+      "gpu_ids": [
+        0
+      ],
+      "num_epochs": 10,
+      "num_gpus": 1,
+      "num_nodes": 1,
+      "validation_interval": 1
+    }
+  },
+  "properties": {
+    "automl_disabled_parameters": [
+      "wandb",
+      "model",
+      "dataset",
+      "train",
+      "evaluate",
+      "inference",
+      "export",
+      "gen_trt_engine"
+    ],
+    "dataset": {
+      "automl_disabled_parameters": [
+        "dataset.train",
+        "dataset.val",
+        "dataset.augmentation"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "augmentation": {
+          "color_jitter": [
+            0.8,
+            0.32,
+            0.32,
+            0.32,
+            0.08
+          ],
+          "grayscale": 0.2,
+          "scale": [
+            0.4,
+            1.0
+          ]
+        },
+        "pin_memory": true,
+        "seed": 42,
+        "train": {
+          "batch_size": 16,
+          "datasets": [],
+          "num_workers": 8,
+          "type": "custom",
+          "wds": {
+            "samples_per_shard": 10000
+          }
+        },
+        "val": {
+          "batch_size": 16,
+          "datasets": [],
+          "num_workers": 8
+        }
+      },
+      "description": "Dataset config.",
+      "properties": {
+        "augmentation": {
+          "automl_disabled_parameters": [
+            "dataset.augmentation.scale",
+            "dataset.augmentation.color_jitter"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "color_jitter": [
+              0.8,
+              0.32,
+              0.32,
+              0.32,
+              0.08
+            ],
+            "grayscale": 0.2,
+            "scale": [
+              0.4,
+              1.0
+            ]
+          },
+          "description": "Data augmentation configuration.",
+          "properties": {
+            "color_jitter": {
+              "automl_enabled": false,
+              "default": [
+                0.8,
+                0.32,
+                0.32,
+                0.32,
+                0.08
+              ],
+              "description": "Color jitter [prob, brightness, contrast, saturation, hue]. Set to [] to disable.",
+              "title": "Color Jitter",
+              "type": "list"
+            },
+            "grayscale": {
+              "default": 0.2,
+              "description": "Probability of grayscale conversion. Set to 0.0 to disable.",
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "Grayscale",
+              "type": "float"
+            },
+            "scale": {
+              "automl_enabled": false,
+              "default": [
+                0.4,
+                1.0
+              ],
+              "description": "Scale range [min, max] for random resized crop. Set to [1.0, 1.0] to disable.",
+              "title": "Scale Range",
+              "type": "list"
+            }
+          },
+          "type": "collection"
+        },
+        "pin_memory": {
+          "default": true,
+          "description": "Pin memory in DataLoader for faster GPU transfer.",
+          "title": "Pin Memory",
+          "type": "bool"
+        },
+        "seed": {
+          "default": 42,
+          "description": "Random seed for data loading and shuffling.",
+          "title": "Random Seed",
+          "type": "int"
+        },
+        "train": {
+          "automl_disabled_parameters": [
+            "dataset.train.datasets",
+            "dataset.train.wds"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "batch_size": 16,
+            "datasets": [],
+            "num_workers": 8,
+            "type": "custom",
+            "wds": {
+              "samples_per_shard": 10000
+            }
+          },
+          "description": "Training dataset configuration.",
+          "properties": {
+            "batch_size": {
+              "default": 16,
+              "description": "Training batch size per GPU.",
+              "minimum": 1,
+              "title": "Batch Size",
+              "type": "int"
+            },
+            "datasets": {
+              "automl_enabled": false,
+              "default": [],
+              "description": "List of dataset path configurations.",
+              "title": "Datasets",
+              "type": "list"
+            },
+            "num_workers": {
+              "default": 8,
+              "description": "Number of data loading worker processes.",
+              "minimum": 0,
+              "title": "Number of Workers",
+              "type": "int"
+            },
+            "type": {
+              "default": "custom",
+              "description": "Dataset type: 'custom' for filesystem-based or 'wds' for WebDataset.",
+              "enum": [
+                "wds",
+                "custom"
+              ],
+              "title": "Dataset Type",
+              "type": "categorical"
+            },
+            "wds": {
+              "automl_enabled": false,
+              "default": {
+                "samples_per_shard": 10000
+              },
+              "description": "WebDataset configuration (used when type='wds').",
+              "properties": {
+                "root_dir": {
+                  "description": "Root directory containing WebDataset shards (required when type='wds').",
+                  "title": "Root Directory",
+                  "type": "string"
+                },
+                "samples_per_shard": {
+                  "default": 10000,
+                  "description": "Number of samples per shard (used for progress tracking).",
+                  "minimum": 1,
+                  "title": "Samples per Shard",
+                  "type": "int"
+                },
+                "shard_list_file": {
+                  "description": "Path to text file listing shard URLs/paths.",
+                  "title": "Shard List File",
+                  "type": "string"
+                }
+              },
+              "type": "collection"
+            }
+          },
+          "type": "collection"
+        },
+        "val": {
+          "automl_disabled_parameters": [
+            "dataset.val.datasets"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "batch_size": 16,
+            "datasets": [],
+            "num_workers": 8
+          },
+          "description": "Validation dataset configuration.",
+          "properties": {
+            "batch_size": {
+              "default": 16,
+              "description": "Batch size per GPU.",
+              "minimum": 1,
+              "title": "Batch Size",
+              "type": "int"
+            },
+            "datasets": {
+              "automl_enabled": false,
+              "default": [],
+              "description": "List of dataset path configurations.",
+              "title": "Datasets",
+              "type": "list"
+            },
+            "num_workers": {
+              "default": 8,
+              "description": "Number of data loading worker processes.",
+              "minimum": 0,
+              "title": "Number of Workers",
+              "type": "int"
+            }
+          },
+          "type": "collection"
+        }
+      },
+      "type": "collection"
+    },
+    "encryption_key": {
+      "default": "",
+      "description": "Key for encrypting model checkpoints",
+      "title": "Encryption key",
+      "type": "string"
+    },
+    "evaluate": {
+      "automl_disabled_parameters": [
+        "evaluate.datasets",
+        "evaluate.gpu_ids"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "batch_size": 16,
+        "datasets": [],
+        "gpu_ids": [
+          0
+        ],
+        "num_gpus": 1,
+        "num_workers": 8
+      },
+      "description": "Evaluation config.",
+      "properties": {
+        "batch_size": {
+          "default": 16,
+          "description": "Batch size per GPU.",
+          "minimum": 1,
+          "title": "Batch Size",
+          "type": "int"
+        },
+        "checkpoint": {
+          "description": "Path to trained model checkpoint (.ckpt or .pth). Not required for TRT-based evaluation.",
+          "title": "Checkpoint Path",
+          "type": "string"
+        },
+        "datasets": {
+          "automl_enabled": false,
+          "default": [],
+          "description": "List of dataset path configurations.",
+          "title": "Datasets",
+          "type": "list"
+        },
+        "gpu_ids": {
+          "automl_enabled": false,
+          "default": [
+            0
+          ],
+          "description": "List of GPU device IDs to use.",
+          "title": "GPU IDs",
+          "type": "list"
+        },
+        "num_gpus": {
+          "default": 1,
+          "description": "Number of GPUs to use.",
+          "minimum": 1,
+          "title": "Number of GPUs",
+          "type": "int"
+        },
+        "num_workers": {
+          "default": 8,
+          "description": "Number of data loading worker processes.",
+          "minimum": 0,
+          "title": "Number of Workers",
+          "type": "int"
+        },
+        "results_dir": {
+          "description": "Directory to save inference/evaluation results.",
+          "title": "Results Directory",
+          "type": "string"
+        },
+        "text_file": {
+          "description": "Path to text file with prompts for text embedding extraction.",
+          "title": "Text File",
+          "type": "string"
+        },
+        "trt_engine": {
+          "description": "Path to TensorRT engine for TRT-based evaluation/inference.",
+          "title": "TRT Engine Path",
+          "type": "string"
+        }
+      },
+      "type": "collection"
+    },
+    "model": {
+      "automl_enabled": false,
+      "default": {
+        "canonicalize_text": false,
+        "freeze_text_encoder": false,
+        "freeze_vision_encoder": false,
+        "image_size": 256,
+        "type": "siglip2-so400m-patch16-256"
+      },
+      "description": "Model config.",
+      "properties": {
+        "adaptor_name": {
+          "description": "Text adaptor for C-RADIO models (ignored for other model types). 'siglip' (SigLIP2 text encoder) or 'clip' (DFN CLIP text encoder). When None, defaults to 'siglip' at runtime.",
+          "title": "Adaptor Name",
+          "type": "string"
+        },
+        "canonicalize_text": {
+          "default": false,
+          "description": "Apply text canonicalization (lowercase + punctuation removal) before tokenization. Set to True to match Google big_vision/SigLIP zero-shot classification preprocessing. Set to False (default) to preserve punctuation, which is better for retrieval tasks and matches original CLIP/OpenCLIP behavior.",
+          "title": "Canonicalize Text",
+          "type": "bool"
+        },
+        "freeze_text_encoder": {
+          "default": false,
+          "description": "If True, freeze text encoder weights during training.",
+          "title": "Freeze Text Encoder",
+          "type": "bool"
+        },
+        "freeze_vision_encoder": {
+          "default": false,
+          "description": "If True, freeze vision encoder weights during training.",
+          "title": "Freeze Vision Encoder",
+          "type": "bool"
+        },
+        "image_size": {
+          "default": 256,
+          "description": "Input image resolution for training transforms. Common values: 224 (RADIO/OpenCLIP), 384 (SigLIP2-g), 256 (SigLIP2-so400m). Must be a multiple of the model's patch size (typically 14 or 16).",
+          "title": "Image Size",
+          "type": "int"
+        },
+        "init_logit_bias": {
+          "description": "Override for the initial logit bias. When None, automatically set from train.loss_type: -10.0 (SigLIP) or 0.0 (CLIP). Set manually only with caution, as incorrect values can destabilize training.",
+          "title": "Initial Logit Bias",
+          "type": "float"
+        },
+        "init_logit_scale": {
+          "description": "Override for the initial logit scale (log-space). When None, automatically set from train.loss_type: 2.3026 (SigLIP) or 2.6592 (CLIP). Set manually only with caution, as incorrect values can destabilize training.",
+          "title": "Initial Logit Scale",
+          "type": "float"
+        },
+        "type": {
+          "default": "siglip2-so400m-patch16-256",
+          "description": "CLIP model type. C-RADIO: c-radio_v3-h, c-radio_v3-l, c-radio_v3-b, c-radio_v3-g; SigLIP2: siglip2-so400m-patch16-naflex (NaFlex), siglip2-so400m-patch14-224, siglip2-so400m-patch14-384, siglip2-so400m-patch16-256, siglip2-so400m-patch16-384, siglip2-so400m-patch16-512; OpenCLIP: ViT-L-14-SigLIP-CLIPA-224, ViT-L-14-SigLIP-CLIPA-336, ViT-H-14-SigLIP-CLIPA-224.",
+          "title": "Model Type",
+          "type": "string"
+        }
+      },
+      "type": "collection"
+    },
+    "model_name": {
+      "default": "clip",
+      "description": "Name of model for task invocation.",
+      "title": "Model Name",
+      "type": "string"
+    },
+    "results_dir": {
+      "default": "",
+      "description": "\n        Path to where all the assets generated from a task are stored.\n        ",
+      "title": "Results directory",
+      "type": "string"
+    },
+    "train": {
+      "automl_disabled_parameters": [
+        "train.gpu_ids",
+        "train.cudnn",
+        "train.optim"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "checkpoint_interval": 1,
+        "checkpoint_interval_unit": "epoch",
+        "cudnn": {
+          "benchmark": false,
+          "deterministic": true
+        },
+        "distributed_strategy": "ddp",
+        "gpu_ids": [
+          0
+        ],
+        "grad_checkpointing": false,
+        "loss_type": "siglip",
+        "num_epochs": 10,
+        "num_gpus": 1,
+        "num_nodes": 1,
+        "optim": {
+          "betas": [
+            0.9,
+            0.95
+          ],
+          "eps": 1e-06,
+          "optimizer_type": "adamw",
+          "scheduler": "cosine",
+          "text_lr": 0.0001,
+          "vision_lr": 0.0001,
+          "warmup_steps": 100,
+          "weight_decay": 0.0001
+        },
+        "precision": "fp16",
+        "results_dir": "",
+        "resume_training_checkpoint_path": "",
+        "seed": 1234,
+        "validation_interval": 1
+      },
+      "description": "Training config.",
+      "popular": [
+        "validation_interval",
+        "checkpoint_interval",
+        "num_gpus",
+        "num_nodes",
+        "num_epochs",
+        "gpu_ids"
+      ],
+      "properties": {
+        "checkpoint_interval": {
+          "default": 1,
+          "description": "The interval (in epochs) at which a checkpoint will be saved. Helps resume training.",
+          "minimum": 1,
+          "popular": true,
+          "title": "Checkpoint interval",
+          "type": "int"
+        },
+        "checkpoint_interval_unit": {
+          "default": "epoch",
+          "description": "The unit of the checkpoint interval.",
+          "enum": [
+            "epoch",
+            "step"
+          ],
+          "title": "Checkpoint interval unit",
+          "type": "categorical"
+        },
+        "cudnn": {
+          "automl_enabled": false,
+          "default": {
+            "benchmark": false,
+            "deterministic": true
+          },
+          "properties": {
+            "benchmark": {
+              "default": false,
+              "type": "bool"
+            },
+            "deterministic": {
+              "default": true,
+              "type": "bool"
+            }
+          },
+          "type": "collection"
+        },
+        "distributed_strategy": {
+          "default": "ddp",
+          "description": "Distributed training strategy: 'ddp' or 'fsdp' (fully sharded).",
+          "enum": [
+            "ddp",
+            "fsdp"
+          ],
+          "title": "Distributed Strategy",
+          "type": "categorical"
+        },
+        "gpu_ids": {
+          "automl_enabled": false,
+          "default": [
+            0
+          ],
+          "description": "\n        List of GPU IDs to run the training on. The length of this list\n        must be equal to the number of gpus in train.num_gpus.",
+          "popular": true,
+          "title": "GPU IDs",
+          "type": "list"
+        },
+        "grad_checkpointing": {
+          "default": false,
+          "description": "Enable gradient checkpointing to reduce memory at cost of speed.",
+          "title": "Gradient Checkpointing",
+          "type": "bool"
+        },
+        "grad_clip_norm": {
+          "description": "Maximum gradient norm for clipping. Set to None to disable.",
+          "title": "Gradient Clip Norm",
+          "type": "float"
+        },
+        "loss_type": {
+          "default": "siglip",
+          "description": "Contrastive loss function: 'siglip' (sigmoid) or 'clip' (softmax).",
+          "enum": [
+            "siglip",
+            "clip"
+          ],
+          "title": "Loss Type",
+          "type": "categorical"
+        },
+        "num_epochs": {
+          "default": 10,
+          "description": "Number of epochs to run the training.",
+          "maximum": Infinity,
+          "minimum": 1,
+          "popular": true,
+          "title": "Number of epochs",
+          "type": "int"
+        },
+        "num_gpus": {
+          "default": 1,
+          "description": "The number of GPUs to run the train job.",
+          "minimum": 1,
+          "popular": true,
+          "title": "Number of GPUs",
+          "type": "int"
+        },
+        "num_nodes": {
+          "default": 1,
+          "description": "Number of nodes to run the training on. If > 1, then multi-node is enabled.",
+          "minimum": 1,
+          "popular": true,
+          "title": "Number of nodes",
+          "type": "int"
+        },
+        "optim": {
+          "automl_disabled_parameters": [
+            "train.optim.betas"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "betas": [
+              0.9,
+              0.95
+            ],
+            "eps": 1e-06,
+            "optimizer_type": "adamw",
+            "scheduler": "cosine",
+            "text_lr": 0.0001,
+            "vision_lr": 0.0001,
+            "warmup_steps": 100,
+            "weight_decay": 0.0001
+          },
+          "description": "Optimizer configuration with per-tower learning rates.",
+          "properties": {
+            "betas": {
+              "automl_enabled": false,
+              "default": [
+                0.9,
+                0.95
+              ],
+              "description": "Adam/LAMB beta parameters [beta1, beta2] for momentum.",
+              "title": "Betas",
+              "type": "list"
+            },
+            "eps": {
+              "default": 1e-06,
+              "description": "Epsilon for numerical stability.",
+              "minimum": 0.0,
+              "title": "Epsilon",
+              "type": "float"
+            },
+            "optimizer_type": {
+              "default": "adamw",
+              "description": "Optimizer type: 'adamw' (AdamW) or 'lamb' (LAMB).",
+              "enum": [
+                "adamw",
+                "lamb"
+              ],
+              "title": "Optimizer Type",
+              "type": "categorical"
+            },
+            "scheduler": {
+              "default": "cosine",
+              "description": "LR schedule after warmup: 'cosine' (cosine decay to 0), 'constant' (hold at base LR), 'linear' (linear decay to 0).",
+              "enum": [
+                "cosine",
+                "constant",
+                "linear"
+              ],
+              "title": "LR Scheduler",
+              "type": "categorical"
+            },
+            "text_lr": {
+              "default": 0.0001,
+              "description": "Learning rate for the text encoder.",
+              "maximum": Infinity,
+              "minimum": 0.0,
+              "title": "Text LR",
+              "type": "float"
+            },
+            "vision_lr": {
+              "default": 0.0001,
+              "description": "Learning rate for the vision encoder.",
+              "maximum": Infinity,
+              "minimum": 0.0,
+              "title": "Vision LR",
+              "type": "float"
+            },
+            "warmup_steps": {
+              "default": 100,
+              "description": "Number of linear warmup steps for learning rate.",
+              "minimum": 0,
+              "title": "Warmup Steps",
+              "type": "int"
+            },
+            "weight_decay": {
+              "default": 0.0001,
+              "description": "Weight decay (L2 regularization) coefficient.",
+              "maximum": Infinity,
+              "minimum": 0.0,
+              "title": "Weight Decay",
+              "type": "float"
+            }
+          },
+          "type": "collection"
+        },
+        "precision": {
+          "default": "fp16",
+          "description": "Training precision: fp16 (mixed), fp32 (full), or bf16 (bfloat16).",
+          "enum": [
+            "fp16",
+            "fp32",
+            "bf16"
+          ],
+          "title": "Precision",
+          "type": "categorical"
+        },
+        "pretrained_model_path": {
+          "description": "Path to pretrained model checkpoint for fine-tuning.",
+          "title": "Pretrained Model Path",
+          "type": "string"
+        },
+        "results_dir": {
+          "default": "",
+          "description": "\n        Path to where all the assets generated from a task are stored.\n        ",
+          "title": "Results directory",
+          "type": "string"
+        },
+        "resume_training_checkpoint_path": {
+          "default": "",
+          "description": "Path to the checkpoint to resume training from.",
+          "title": "Resume checkpoint path",
+          "type": "string"
+        },
+        "seed": {
+          "default": 1234,
+          "description": "The seed for the initializer in PyTorch. If < 0, disable fixed seed.",
+          "maximum": Infinity,
+          "minimum": -1,
+          "title": "Seed for randomization",
+          "type": "int"
+        },
+        "val_check_interval": {
+          "description": "Run validation every N training steps. If None, validates at end of epoch.",
+          "title": "Validation Check Interval",
+          "type": "int"
+        },
+        "validation_interval": {
+          "default": 1,
+          "description": "\n        The interval (in epochs) at which a evaluation\n        will be triggered on the validation dataset.",
+          "minimum": 1,
+          "popular": true,
+          "title": "Validation interval",
+          "type": "int"
+        }
+      },
+      "type": "collection"
+    },
+    "wandb": {
+      "automl_disabled_parameters": [
+        "wandb.tags"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "enable": true,
+        "entity": "",
+        "group": "",
+        "name": "TAO Toolkit Training",
+        "project": "TAO Toolkit",
+        "reinit": false,
+        "run_id": "",
+        "save_code": false,
+        "sync_tensorboard": false,
+        "tags": [
+          "tao-toolkit"
+        ]
+      },
+      "properties": {
+        "enable": {
+          "default": true,
+          "type": "bool"
+        },
+        "entity": {
+          "default": "",
+          "type": "string"
+        },
+        "group": {
+          "default": "",
+          "type": "string"
+        },
+        "name": {
+          "default": "TAO Toolkit Training",
+          "type": "string"
+        },
+        "project": {
+          "default": "TAO Toolkit",
+          "type": "string"
+        },
+        "reinit": {
+          "default": false,
+          "type": "bool"
+        },
+        "run_id": {
+          "default": "",
+          "type": "string"
+        },
+        "save_code": {
+          "default": false,
+          "type": "bool"
+        },
+        "sync_tensorboard": {
+          "default": false,
+          "type": "bool"
+        },
+        "tags": {
+          "automl_enabled": false,
+          "default": [
+            "tao-toolkit"
+          ],
+          "type": "list"
+        }
+      },
+      "type": "collection"
+    }
+  },
+  "type": "object",
+  "x_tao_schema": {
+    "action": "evaluate",
+    "core_module": "clip",
+    "model": "clip",
+    "network_arch": "clip",
+    "schema_action": "evaluate",
+    "schema_version": 1,
+    "source": "tao-core dataclass config"
+  }
+}

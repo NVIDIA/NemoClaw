@@ -1,0 +1,49 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# RWX Azure Files Premium over NFS v4.1 with nconnect=4.
+#
+# Dynamic file-share provisioning against a PRE-CREATED storage account
+# (`${NFS_STORAGE_ACCOUNT}` in `${NFS_RESOURCE_GROUP}`, managed by
+# skills/physical-ai-infrastructure-setup-and-resilient-scaling/components/cluster-azure/scripts/main.tf
+# -> azurerm_storage_account.nfs). The `storageAccount:`
+# parameter prevents the driver from auto-creating an SA in our RG (which
+# would be outside TF state and block `terraform destroy` on the RG).
+# Rendered by this component's scripts/setup.sh via envsubst before kubectl apply.
+#   Driver parameter reference:
+#     https://github.com/kubernetes-sigs/azurefile-csi-driver/blob/master/docs/driver-parameters.md
+#
+# Why NFS (not SMB) is the default on this cluster:
+#   - NIM scaling/upgrades need RWX — NIM Operator multi-node prereqs:
+#     https://docs.nvidia.com/nim-operator/latest/multi-node.html
+#     "The volume must be at least 700GB with VolumeAccessMode set to
+#      ReadWriteMany."
+#   - SMB Multichannel (max_channels=4) would be the equivalent parallelism
+#     knob on SMB, but Azure Files needs Ubuntu 22.04 kernel 6.8.0-1044+ to
+#     enable it on Linux. AKS Ubuntu 22.04 nodes here ship 5.15.
+#     https://learn.microsoft.com/en-us/azure/storage/files/smb-performance
+#   - NFS nconnect requires kernel ≥ 5.3, which we exceed.
+#     https://learn.microsoft.com/en-us/azure/storage/files/nfs-performance
+#
+# Mount options: `nconnect=4` is the key perf knob. `actimeo=30` caches
+# attrs for 30 s to reduce metadata RTTs. The driver forces
+# `vers=4,minorversion=1,sec=sys` — don't try to override those.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: azurefile-nfs-premium
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "true"
+provisioner: file.csi.azure.com
+allowVolumeExpansion: true
+reclaimPolicy: Delete
+volumeBindingMode: Immediate
+parameters:
+  protocol: nfs
+  resourceGroup: ${NFS_RESOURCE_GROUP}    # SA lives here (same as AKS cluster RG)
+  storageAccount: ${NFS_STORAGE_ACCOUNT}  # pre-created Premium FileStorage; driver creates shares in this SA only
+mountOptions:
+  - nconnect=4
+  - actimeo=30
+  - rsize=1048576
+  - wsize=1048576

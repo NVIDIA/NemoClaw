@@ -1,0 +1,42 @@
+[
+    {
+      "id": "video-report-routing-mode-a",
+      "question": "Which skill should I use to generate a structured report for a recorded video clip?",
+      "expected_skill": "vss-generate-video-report",
+      "ground_truth": "Loads vss-generate-video-report and explains that recorded video or sensor report requests use Mode A: /vss-manage-video-io-storage to resolve a clip URL, a VLM chat/completions call for analysis, and assets/video-analysis-report.md for the final report. It should mention that /generate is not used.",
+      "expected_behavior": [
+        "Loads vss-generate-video-report.",
+        "Identifies Mode A for recorded video clip reports.",
+        "Mentions the clip URL plus VLM chat/completions path.",
+        "Mentions assets/video-analysis-report.md as the output template.",
+        "States that POST /generate is not the report path."
+      ]
+    },
+    {
+      "id": "video-report-routing-mode-b",
+      "question": "Which skill should handle a report on incidents for a sensor between two timestamps?",
+      "expected_skill": "vss-generate-video-report",
+      "ground_truth": "Loads vss-generate-video-report and explains that incident-range report requests use Mode B: /vss-query-analytics with video_analytics__get_incidents, then assets/incident-range-report.md for the final report. It should note that Mode B does not call the VLM and does not use POST /generate.",
+      "expected_behavior": [
+        "Loads vss-generate-video-report.",
+        "Identifies Mode B for incident range reports.",
+        "Mentions /vss-query-analytics and video_analytics__get_incidents.",
+        "Mentions assets/incident-range-report.md as the output template.",
+        "States that Mode B does not use the VLM chat path or POST /generate."
+      ]
+    },
+    {
+      "id": "video-report-empty-range-policy",
+      "question": "How should a video incident report behave when analytics returns zero incidents?",
+      "expected_skill": "vss-generate-video-report",
+      "ground_truth": "Loads vss-generate-video-report and states that a zero-result Mode B analytics query should produce a concise one-line no-incidents report naming the range and scope. It should not invent incidents and should not fall back to Mode A.",
+      "expected_behavior": [
+        "Loads vss-generate-video-report.",
+        "Identifies this as the Mode B empty-result policy.",
+        "Returns a one-line no-incidents report when the result set is empty.",
+        "States not to invent incidents.",
+        "States not to fall back to Mode A or call the VLM for an empty incident range."
+      ]
+    }
+  ]
+  

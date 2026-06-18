@@ -1,0 +1,7 @@
+{
+  "checkpoint": "checkpoints/final",
+  "n_eval": 200,
+  "mean_iou": 0.039491765201091766,
+  "pixel_accuracy": 0.5566502380371093,
+  "accuracy": 0.039491765201091766
+}

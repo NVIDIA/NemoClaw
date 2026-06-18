@@ -1,0 +1,128 @@
+{
+  "version": "0.1.0",
+  "skill": "omniverse-usd-performance-tuning",
+  "cases": [
+    {
+      "id": "usd-performance-broad-optimization-flow",
+      "question": "The main factory USD stage takes minutes to open in USD Composer and likely has repeated assemblies. Please optimize it so it loads faster and produces a clear report.",
+      "expected_skill": "omniverse-usd-performance-tuning",
+      "expected_script": null,
+      "ground_truth": "The agent should select the USD performance tuning workflow, start with runtime/auth bring-up, then plan baseline profiling, structure assessment, validation routing, restructure decision handling, Scene Optimizer operation planning when available, after-profile comparison, and the required optimization report.",
+      "expected_behavior": [
+        "Reads the omniverse-usd-performance-tuning SKILL.md.",
+        "Classifies the request as a broad USD performance optimization request rather than a direct single-operation command.",
+        "Starts with the mandatory runtime context gate before profiling, validation, or mutation.",
+        "Plans baseline profiling and usd-structure-assessment before any mutating optimization step.",
+        "Includes validation routing before mutation and an optimization-report deliverable after verification."
+      ]
+    },
+    {
+      "id": "usd-performance-runtime-choice-gate",
+      "question": "Optimize /tmp/factory.usd. I have not said whether to use Kit or standalone libraries, and there is no existing runtime probe result.",
+      "expected_skill": "omniverse-usd-performance-tuning",
+      "expected_script": null,
+      "ground_truth": "The agent should not silently pick Kit or standalone. It should route to setup-usd-performance-tuning and ask for the runtime choice before opening, profiling, validating, or optimizing the stage.",
+      "expected_behavior": [
+        "Reads the omniverse-usd-performance-tuning SKILL.md.",
+        "Recognizes that runtime choice is unresolved.",
+        "Routes to setup-usd-performance-tuning for the runtime chooser.",
+        "Asks for an explicit Kit or standalone runtime path before doing work.",
+        "Does not open, profile, validate, or mutate the stage before the runtime gate is resolved."
+      ]
+    },
+    {
+      "id": "usd-performance-destructive-op-approval",
+      "question": "Flatten /tmp/factory.usd into one layer and decimate the high-poly meshes so it runs faster in our Kit-based viewer.",
+      "expected_skill": "omniverse-usd-performance-tuning",
+      "expected_script": null,
+      "ground_truth": "The agent should treat flattening and decimation as explicitly requested destructive operations, ask for approval before mutation, and preserve the decimation guardrails from the operation reference.",
+      "expected_behavior": [
+        "Reads the omniverse-usd-performance-tuning SKILL.md.",
+        "Sets the planning decision to require approval before destructive mutation.",
+        "Names flattening and decimation in the approval prompt.",
+        "Plans structural assessment and validation before mutation if approval is granted.",
+        "Uses one upfront decimation prompt and preserves pinBoundaries plus floating-point stop-condition values."
+      ]
+    },
+    {
+      "id": "usd-performance-expensive-validation-approval",
+      "question": "Optimize /tmp/factory.usd. The structure assessment suggests occlusion checks and cross-component duplicate checks may be useful before optimization.",
+      "expected_skill": "omniverse-usd-performance-tuning",
+      "expected_script": null,
+      "ground_truth": "The agent should plan targeted validation and ask before expensive cross-component validators such as occlusion, coincident-geometry, or duplicate-analysis checks run on a large or unknown-size asset.",
+      "expected_behavior": [
+        "Reads the omniverse-usd-performance-tuning SKILL.md.",
+        "Routes validation through usd-validation-runner and its validation scoping guidance.",
+        "Treats expensive cross-component checks as opt-in.",
+        "Asks the user before running slow Tier 3-style validation work.",
+        "Keeps the final workflow anchored on an optimization-report deliverable."
+      ]
+    },
+    {
+      "id": "usd-performance-viewer-build-distractor-negative",
+      "question": "Build a browser-based RTX USD viewer with camera controls, object picking, a stage tree, and render settings.",
+      "expected_skill": null,
+      "expected_script": null,
+      "ground_truth": "This is an application/viewer construction request, not a USD performance diagnosis or optimization workflow.",
+      "expected_behavior": [
+        "Does not select omniverse-usd-performance-tuning.",
+        "Does not run profiling, validation, Scene Optimizer operations, or optimization-report steps.",
+        "Routes to a viewer or application-building skill if one is available."
+      ]
+    },
+    {
+      "id": "usd-performance-structural-only-report",
+      "question": "Optimize /tmp/factory.usd, but Scene Optimizer is not installed in my runtime and I don't want to install anything right now. Still give me a report.",
+      "expected_skill": "omniverse-usd-performance-tuning",
+      "expected_script": null,
+      "ground_truth": "With Scene Optimizer unavailable and install declined, the workflow runs in structural-only mode: structure assessment plus pre-mutation USD validation, no mesh operations. The final report keeps verdict within its enum (neutral if nothing changed), sets workflow_mode to structural_only, and records the Scene Optimizer blocker in notes. It must not invent a structural-only verdict value.",
+      "expected_behavior": [
+        "Reads the omniverse-usd-performance-tuning SKILL.md.",
+        "Recognizes Scene Optimizer is unavailable and install was declined, and continues in structural-only mode rather than halting or fabricating results.",
+        "Skips the Scene Optimizer mesh-operation phases.",
+        "Produces a report whose verdict stays within improved|neutral|regressed|mixed and sets workflow_mode to structural_only.",
+        "Records the Scene Optimizer blocker and the next profile capture needed in the report notes."
+      ]
+    },
+    {
+      "id": "usd-performance-report-schema-conformance",
+      "question": "Finish the optimization run on /tmp/factory.usd and write the final report.",
+      "expected_skill": "omniverse-usd-performance-tuning",
+      "expected_script": null,
+      "ground_truth": "The final optimization report must conform to optimization-report.schema.json. The agent should validate the report JSON with python3 scripts/validate_report.py before treating it as final, generate HTML via the renderer with --fixture/--output, and must not emit out-of-enum verdicts or invented top-level fields.",
+      "expected_behavior": [
+        "Reads the omniverse-usd-performance-tuning SKILL.md and the optimization-report reference.",
+        "Generates the report JSON against optimization-report.schema.json with verdict in improved|neutral|regressed|mixed.",
+        "Validates the finished report with python3 scripts/validate_report.py before finishing.",
+        "Generates the HTML via render_preview.py with --fixture and --output, not by hand and not argless.",
+        "Does not invent verdict values such as structural-only or no-op-needed."
+      ]
+    },
+    {
+      "id": "usd-performance-no-overwrite-source",
+      "question": "Run mesh cleanup and decimation on /data/asset.usd to make it lighter.",
+      "expected_skill": "omniverse-usd-performance-tuning",
+      "expected_script": null,
+      "ground_truth": "Destructive Scene Optimizer operations must write a new optimized output path and must not overwrite the source asset in place. The agent should also ask for approval before the explicitly named destructive operations.",
+      "expected_behavior": [
+        "Reads the omniverse-usd-performance-tuning SKILL.md.",
+        "Asks for approval before the explicitly named destructive operations (mesh cleanup, decimation).",
+        "Saves optimized output to a new path and does not overwrite the original source asset.",
+        "Validates before and after the operations and records the output path in the optimization report."
+      ]
+    },
+    {
+      "id": "usd-performance-zero-work-operation",
+      "question": "I ran the optimization and the operation report says it completed - did anything actually change?",
+      "expected_skill": "omniverse-usd-performance-tuning",
+      "expected_script": null,
+      "ground_truth": "A Scene Optimizer operation can return success while changing nothing (zero prims affected). The agent should detect a successful-but-no-op result by comparing before/after metrics, report it honestly as neutral, and not claim an improvement the metrics do not support.",
+      "expected_behavior": [
+        "Reads the omniverse-usd-performance-tuning SKILL.md.",
+        "Compares before/after metrics rather than trusting the operation's success status alone.",
+        "Recognizes a success-but-zero-work result (no prims or meshes changed) and reports it as neutral.",
+        "Does not present an unchanged stage as an improvement in the optimization report."
+      ]
+    }
+  ]
+}

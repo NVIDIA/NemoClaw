@@ -1,0 +1,2074 @@
+{
+  "automl_default_parameters": [
+    "dataset.augmentation.random_color.hue",
+    "dataset.batch_size",
+    "dataset.augmentation.random_erase.enable",
+    "train.optim.weight_decay",
+    "dataset.augmentation.random_aug.enable",
+    "train.optim.betas",
+    "dataset.workers",
+    "train.optim.momentum",
+    "dataset.augmentation.random_flip.vflip_probability",
+    "dataset.augmentation.random_color.enable",
+    "dataset.augmentation.random_rotate.rotate_probability",
+    "model.backbone.freeze_backbone",
+    "distill.teacher.backbone.freeze_norm",
+    "dataset.augmentation.random_color.saturation",
+    "dataset.augmentation.random_color.contrast",
+    "model.backbone.freeze_norm",
+    "train.optim.lr",
+    "dataset.augmentation.random_color.color_probability",
+    "dataset.augmentation.random_rotate.enable",
+    "dataset.augmentation.with_scale_random_crop.enable",
+    "dataset.augmentation.random_color.brightness",
+    "distill.teacher.backbone.freeze_backbone",
+    "dataset.augmentation.random_flip.enable",
+    "dataset.augmentation.random_erase.erase_probability",
+    "dataset.augmentation.random_flip.hflip_probability"
+  ],
+  "automl_disabled_parameters": [
+    "quantize",
+    "dataset.augmentation.with_scale_random_crop.scale_range",
+    "train.cudnn",
+    "gen_trt_engine.tensorrt.calibration.cal_image_dir",
+    "distill.teacher.head.custom_args",
+    "quantize.backend_kwargs",
+    "train.gpu_ids",
+    "wandb.tags",
+    "model.backbone",
+    "distill.teacher.backbone",
+    "distill.teacher.head.loss",
+    "quantize.skip_names",
+    "train.tensorboard",
+    "dataset.augmentation.random_rotate",
+    "dataset.train_dataset",
+    "distill.teacher.head.topk",
+    "evaluate",
+    "inference",
+    "train",
+    "distill",
+    "dataset.augmentation",
+    "dataset.augmentation.random_erase",
+    "dataset.test_dataset",
+    "gen_trt_engine",
+    "gen_trt_engine.tensorrt.layers_precision",
+    "dataset",
+    "gen_trt_engine.tensorrt",
+    "train.optim.policy_params",
+    "dataset.val_dataset",
+    "quantize.layers",
+    "dataset.quant_calibration_dataset",
+    "model.head",
+    "dataset.augmentation.random_color",
+    "model",
+    "model.head.topk",
+    "model.head.custom_args",
+    "evaluate.gpu_ids",
+    "train.optim",
+    "dataset.augmentation.with_scale_random_crop",
+    "distill.teacher",
+    "gen_trt_engine.tensorrt.calibration",
+    "distill.teacher.head",
+    "dataset.augmentation.random_aug",
+    "train.optim.skip_names",
+    "dataset.train_nolabel",
+    "dataset.augmentation.std",
+    "export",
+    "dataset.augmentation.random_rotate.angle_list",
+    "wandb",
+    "inference.gpu_ids",
+    "dataset.augmentation.random_flip",
+    "model.head.loss",
+    "dataset.augmentation.mean"
+  ],
+  "default": {
+    "dataset": {
+      "augmentation": {
+        "mean": [
+          0.485,
+          0.456,
+          0.406
+        ],
+        "mixup_alpha": 0.4,
+        "mixup_cutmix": false,
+        "random_aug": {
+          "enable": true
+        },
+        "random_color": {
+          "brightness": 0.3,
+          "color_probability": 0.5,
+          "contrast": 0.3,
+          "enable": true,
+          "hue": 0.0,
+          "saturation": 0.3
+        },
+        "random_erase": {
+          "enable": true,
+          "erase_probability": 0.2
+        },
+        "random_flip": {
+          "enable": true,
+          "hflip_probability": 0.5,
+          "vflip_probability": 0.5
+        },
+        "random_rotate": {
+          "angle_list": [
+            90,
+            180,
+            270
+          ],
+          "enable": true,
+          "rotate_probability": 0.5
+        },
+        "std": [
+          0.229,
+          0.224,
+          0.225
+        ],
+        "with_random_blur": true,
+        "with_random_crop": true,
+        "with_scale_random_crop": {
+          "enable": true,
+          "scale_range": [
+            1,
+            1.2
+          ]
+        }
+      },
+      "batch_size": 8,
+      "classes_file": "",
+      "dataset": "CLDataset",
+      "img_size": 224,
+      "num_classes": 20,
+      "quant_calibration_dataset": {
+        "images_dir": ""
+      },
+      "root_dir": "",
+      "shuffle": true,
+      "test_dataset": {
+        "images_dir": ""
+      },
+      "train_dataset": {
+        "images_dir": ""
+      },
+      "train_nolabel": {
+        "folder_path": ""
+      },
+      "val_dataset": {
+        "images_dir": ""
+      },
+      "workers": 1
+    },
+    "distill": {
+      "loss_lambda": 0.5,
+      "loss_type": "KL",
+      "mlp_hidden_size": 1024,
+      "mlp_num_inner": 0,
+      "mode": "auto",
+      "pretrained_teacher_model_path": "???",
+      "results_dir": "",
+      "teacher": {
+        "backbone": {
+          "freeze_backbone": false,
+          "freeze_norm": false,
+          "pretrained_backbone_path": "",
+          "type": "fan_small_12_p4_hybrid"
+        },
+        "head": {
+          "binary": false,
+          "in_channels": 448,
+          "loss": {
+            "label_smooth_val": 0.0,
+            "type": "CrossEntropyLoss"
+          },
+          "topk": [
+            1
+          ],
+          "type": "TAOLinearClsHead"
+        }
+      },
+      "use_mlp": true
+    },
+    "encryption_key": "",
+    "model": {
+      "backbone": {
+        "freeze_backbone": false,
+        "freeze_norm": false,
+        "pretrained_backbone_path": "",
+        "type": "fan_small_12_p4_hybrid"
+      },
+      "head": {
+        "binary": false,
+        "in_channels": 448,
+        "loss": {
+          "label_smooth_val": 0.0,
+          "type": "CrossEntropyLoss"
+        },
+        "topk": [
+          1
+        ],
+        "type": "TAOLinearClsHead"
+      }
+    },
+    "model_name": "",
+    "quantize": {
+      "algorithm": "minmax",
+      "backend": "torchao",
+      "backend_kwargs": {},
+      "device": "cuda",
+      "layers": [],
+      "mode": "weight_only_ptq",
+      "model_path": "",
+      "results_dir": "",
+      "skip_names": []
+    },
+    "results_dir": "",
+    "train": {
+      "checkpoint_interval": 1,
+      "checkpoint_interval_unit": "epoch",
+      "clip_grad_norm": 2.0,
+      "cudnn": {
+        "benchmark": false,
+        "deterministic": true
+      },
+      "ema_decay": 0.998,
+      "enable_ema": false,
+      "gpu_ids": [
+        0
+      ],
+      "num_epochs": 10,
+      "num_gpus": 1,
+      "num_nodes": 1,
+      "optim": {
+        "betas": [
+          0.9,
+          0.999
+        ],
+        "lr": 6e-05,
+        "momentum": 0.9,
+        "monitor_name": "val_loss",
+        "optim": "adamw",
+        "policy": "linear",
+        "policy_params": {
+          "gamma": 0.1,
+          "step_size": 30
+        },
+        "skip_names": [],
+        "warmup_epochs": 0,
+        "weight_decay": 0.01
+      },
+      "precision": "fp32",
+      "pretrained_model_path": "",
+      "results_dir": "",
+      "resume_training_checkpoint_path": "",
+      "seed": 1234,
+      "tensorboard": {
+        "enabled": false,
+        "infrequent_logging_frequency": 2
+      },
+      "validation_interval": 1
+    },
+    "wandb": {
+      "enable": true,
+      "entity": "",
+      "group": "",
+      "name": "TAO Toolkit Training",
+      "project": "TAO Toolkit",
+      "reinit": false,
+      "run_id": "",
+      "save_code": false,
+      "sync_tensorboard": false,
+      "tags": [
+        "tao-toolkit"
+      ]
+    }
+  },
+  "popular": {
+    "evaluate": {
+      "gpu_ids": [
+        0
+      ],
+      "num_gpus": 1,
+      "num_nodes": 1
+    },
+    "gen_trt_engine": {
+      "batch_size": -1,
+      "gpu_id": 0,
+      "tensorrt": {
+        "calibration": {
+          "cal_batch_size": 1,
+          "cal_batches": 1
+        },
+        "max_batch_size": 1,
+        "min_batch_size": 1,
+        "opt_batch_size": 1
+      }
+    },
+    "inference": {
+      "gpu_ids": [
+        0
+      ],
+      "num_gpus": 1,
+      "num_nodes": 1
+    },
+    "train": {
+      "checkpoint_interval": 1,
+      "gpu_ids": [
+        0
+      ],
+      "num_epochs": 10,
+      "num_gpus": 1,
+      "num_nodes": 1,
+      "validation_interval": 1
+    }
+  },
+  "properties": {
+    "automl_disabled_parameters": [
+      "wandb",
+      "model",
+      "dataset",
+      "train",
+      "evaluate",
+      "inference",
+      "export",
+      "gen_trt_engine",
+      "distill",
+      "quantize"
+    ],
+    "dataset": {
+      "automl_default_parameters": [
+        "dataset.batch_size",
+        "dataset.workers"
+      ],
+      "automl_disabled_parameters": [
+        "dataset.augmentation",
+        "dataset.train_dataset",
+        "dataset.train_nolabel",
+        "dataset.val_dataset",
+        "dataset.test_dataset",
+        "dataset.quant_calibration_dataset"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "augmentation": {
+          "mean": [
+            0.485,
+            0.456,
+            0.406
+          ],
+          "mixup_alpha": 0.4,
+          "mixup_cutmix": false,
+          "random_aug": {
+            "enable": true
+          },
+          "random_color": {
+            "brightness": 0.3,
+            "color_probability": 0.5,
+            "contrast": 0.3,
+            "enable": true,
+            "hue": 0.0,
+            "saturation": 0.3
+          },
+          "random_erase": {
+            "enable": true,
+            "erase_probability": 0.2
+          },
+          "random_flip": {
+            "enable": true,
+            "hflip_probability": 0.5,
+            "vflip_probability": 0.5
+          },
+          "random_rotate": {
+            "angle_list": [
+              90,
+              180,
+              270
+            ],
+            "enable": true,
+            "rotate_probability": 0.5
+          },
+          "std": [
+            0.229,
+            0.224,
+            0.225
+          ],
+          "with_random_blur": true,
+          "with_random_crop": true,
+          "with_scale_random_crop": {
+            "enable": true,
+            "scale_range": [
+              1,
+              1.2
+            ]
+          }
+        },
+        "batch_size": 8,
+        "classes_file": "",
+        "dataset": "CLDataset",
+        "img_size": 224,
+        "num_classes": 20,
+        "quant_calibration_dataset": {
+          "images_dir": ""
+        },
+        "root_dir": "",
+        "shuffle": true,
+        "test_dataset": {
+          "images_dir": ""
+        },
+        "train_dataset": {
+          "images_dir": ""
+        },
+        "train_nolabel": {
+          "folder_path": ""
+        },
+        "val_dataset": {
+          "images_dir": ""
+        },
+        "workers": 1
+      },
+      "properties": {
+        "augmentation": {
+          "automl_disabled_parameters": [
+            "dataset.augmentation.random_flip",
+            "dataset.augmentation.random_rotate",
+            "dataset.augmentation.random_color",
+            "dataset.augmentation.random_erase",
+            "dataset.augmentation.random_aug",
+            "dataset.augmentation.with_scale_random_crop",
+            "dataset.augmentation.mean",
+            "dataset.augmentation.std"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "mean": [
+              0.485,
+              0.456,
+              0.406
+            ],
+            "mixup_alpha": 0.4,
+            "mixup_cutmix": false,
+            "random_aug": {
+              "enable": true
+            },
+            "random_color": {
+              "brightness": 0.3,
+              "color_probability": 0.5,
+              "contrast": 0.3,
+              "enable": true,
+              "hue": 0.0,
+              "saturation": 0.3
+            },
+            "random_erase": {
+              "enable": true,
+              "erase_probability": 0.2
+            },
+            "random_flip": {
+              "enable": true,
+              "hflip_probability": 0.5,
+              "vflip_probability": 0.5
+            },
+            "random_rotate": {
+              "angle_list": [
+                90,
+                180,
+                270
+              ],
+              "enable": true,
+              "rotate_probability": 0.5
+            },
+            "std": [
+              0.229,
+              0.224,
+              0.225
+            ],
+            "with_random_blur": true,
+            "with_random_crop": true,
+            "with_scale_random_crop": {
+              "enable": true,
+              "scale_range": [
+                1,
+                1.2
+              ]
+            }
+          },
+          "properties": {
+            "mean": {
+              "automl_enabled": false,
+              "default": [
+                0.485,
+                0.456,
+                0.406
+              ],
+              "description": "Mean for the augmentation",
+              "title": "Mean",
+              "type": "list"
+            },
+            "mixup_alpha": {
+              "default": 0.4,
+              "description": "Mixup alpha",
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "float"
+            },
+            "mixup_cutmix": {
+              "default": false,
+              "description": "Flag to enable mixup and cutmix. Not recommended for binary classification.",
+              "type": "bool"
+            },
+            "random_aug": {
+              "automl_default_parameters": [
+                "dataset.augmentation.random_aug.enable"
+              ],
+              "automl_enabled": false,
+              "default": {
+                "enable": true
+              },
+              "properties": {
+                "enable": {
+                  "automl_enabled": true,
+                  "default": true,
+                  "description": "Flag to enable Random Aug",
+                  "type": "bool"
+                }
+              },
+              "type": "collection"
+            },
+            "random_color": {
+              "automl_default_parameters": [
+                "dataset.augmentation.random_color.brightness",
+                "dataset.augmentation.random_color.contrast",
+                "dataset.augmentation.random_color.saturation",
+                "dataset.augmentation.random_color.hue",
+                "dataset.augmentation.random_color.enable",
+                "dataset.augmentation.random_color.color_probability"
+              ],
+              "automl_enabled": false,
+              "default": {
+                "brightness": 0.3,
+                "color_probability": 0.5,
+                "contrast": 0.3,
+                "enable": true,
+                "hue": 0.0,
+                "saturation": 0.3
+              },
+              "properties": {
+                "brightness": {
+                  "automl_enabled": true,
+                  "default": 0.3,
+                  "description": "Random Color Brightness",
+                  "math_cond": "> 0.0",
+                  "maximum": 2.0,
+                  "minimum": 0.0,
+                  "type": "float"
+                },
+                "color_probability": {
+                  "automl_enabled": true,
+                  "default": 0.5,
+                  "description": "Random Color Probability",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "type": "float"
+                },
+                "contrast": {
+                  "automl_enabled": true,
+                  "default": 0.3,
+                  "description": "Random Color Contrast",
+                  "math_cond": "> 0.0",
+                  "maximum": 2.0,
+                  "minimum": 0.0,
+                  "type": "float"
+                },
+                "enable": {
+                  "automl_enabled": true,
+                  "default": true,
+                  "description": "Flag to enable Random Color",
+                  "type": "bool"
+                },
+                "hue": {
+                  "automl_enabled": true,
+                  "default": 0.0,
+                  "description": "Random Color Hue",
+                  "math_cond": "> 0.0",
+                  "maximum": 0.5,
+                  "minimum": 0.0,
+                  "type": "float"
+                },
+                "saturation": {
+                  "automl_enabled": true,
+                  "default": 0.3,
+                  "description": "Random Color Saturation",
+                  "math_cond": "> 0.0",
+                  "maximum": 2.0,
+                  "minimum": 0.0,
+                  "type": "float"
+                }
+              },
+              "type": "collection"
+            },
+            "random_erase": {
+              "automl_default_parameters": [
+                "dataset.augmentation.random_erase.enable",
+                "dataset.augmentation.random_erase.erase_probability"
+              ],
+              "automl_enabled": false,
+              "default": {
+                "enable": true,
+                "erase_probability": 0.2
+              },
+              "properties": {
+                "enable": {
+                  "automl_enabled": true,
+                  "default": true,
+                  "description": "Flag to enable Random Erase",
+                  "type": "bool"
+                },
+                "erase_probability": {
+                  "automl_enabled": true,
+                  "default": 0.2,
+                  "description": "Random Erase Probability",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "type": "float"
+                }
+              },
+              "type": "collection"
+            },
+            "random_flip": {
+              "automl_default_parameters": [
+                "dataset.augmentation.random_flip.vflip_probability",
+                "dataset.augmentation.random_flip.hflip_probability",
+                "dataset.augmentation.random_flip.enable"
+              ],
+              "automl_enabled": false,
+              "default": {
+                "enable": true,
+                "hflip_probability": 0.5,
+                "vflip_probability": 0.5
+              },
+              "properties": {
+                "enable": {
+                  "automl_enabled": true,
+                  "default": true,
+                  "description": "Flag to enable augmentation",
+                  "type": "bool"
+                },
+                "hflip_probability": {
+                  "automl_enabled": true,
+                  "default": 0.5,
+                  "description": "Horizontal Flip probability",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "type": "float"
+                },
+                "vflip_probability": {
+                  "automl_enabled": true,
+                  "default": 0.5,
+                  "description": "Vertical Flip probability",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "type": "float"
+                }
+              },
+              "type": "collection"
+            },
+            "random_rotate": {
+              "automl_default_parameters": [
+                "dataset.augmentation.random_rotate.rotate_probability",
+                "dataset.augmentation.random_rotate.enable"
+              ],
+              "automl_disabled_parameters": [
+                "dataset.augmentation.random_rotate.angle_list"
+              ],
+              "automl_enabled": false,
+              "default": {
+                "angle_list": [
+                  90,
+                  180,
+                  270
+                ],
+                "enable": true,
+                "rotate_probability": 0.5
+              },
+              "properties": {
+                "angle_list": {
+                  "automl_enabled": false,
+                  "default": [
+                    90,
+                    180,
+                    270
+                  ],
+                  "description": "Random rotate angle probability",
+                  "type": "list"
+                },
+                "enable": {
+                  "automl_enabled": true,
+                  "default": true,
+                  "description": "Flag to enable augmentation",
+                  "type": "bool"
+                },
+                "rotate_probability": {
+                  "automl_enabled": true,
+                  "default": 0.5,
+                  "description": "Random Rotate probability",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "type": "float"
+                }
+              },
+              "type": "collection"
+            },
+            "std": {
+              "automl_enabled": false,
+              "default": [
+                0.229,
+                0.224,
+                0.225
+              ],
+              "description": "Standard deviation for the augmentation",
+              "title": "Standard Deviation",
+              "type": "list"
+            },
+            "with_random_blur": {
+              "default": true,
+              "description": "Flag to enable with_random_blur",
+              "type": "bool"
+            },
+            "with_random_crop": {
+              "default": true,
+              "description": "Flag to enable with_random_crop",
+              "type": "bool"
+            },
+            "with_scale_random_crop": {
+              "automl_default_parameters": [
+                "dataset.augmentation.with_scale_random_crop.enable"
+              ],
+              "automl_disabled_parameters": [
+                "dataset.augmentation.with_scale_random_crop.scale_range"
+              ],
+              "automl_enabled": false,
+              "default": {
+                "enable": true,
+                "scale_range": [
+                  1,
+                  1.2
+                ]
+              },
+              "properties": {
+                "enable": {
+                  "automl_enabled": true,
+                  "default": true,
+                  "description": "Flag to enable Random Crop with Scale",
+                  "type": "bool"
+                },
+                "scale_range": {
+                  "automl_enabled": false,
+                  "default": [
+                    1,
+                    1.2
+                  ],
+                  "description": "Random Scale range",
+                  "type": "list"
+                }
+              },
+              "type": "collection"
+            }
+          },
+          "type": "collection"
+        },
+        "batch_size": {
+          "automl_enabled": true,
+          "default": 8,
+          "description": "Batch size",
+          "maximum": Infinity,
+          "minimum": 1,
+          "title": "Batch Size",
+          "type": "int"
+        },
+        "classes_file": {
+          "default": "",
+          "description": "Path to the classes file",
+          "type": "string"
+        },
+        "dataset": {
+          "default": "CLDataset",
+          "description": "dataset class",
+          "enum": [
+            "Dataset"
+          ],
+          "type": "categorical"
+        },
+        "img_size": {
+          "default": 224,
+          "description": "The input image size",
+          "type": "int"
+        },
+        "num_classes": {
+          "default": 20,
+          "description": "The number of classes in the training data",
+          "math_cond": ">=0",
+          "maximum": Infinity,
+          "minimum": 0,
+          "type": "int"
+        },
+        "quant_calibration_dataset": {
+          "automl_enabled": false,
+          "default": {
+            "images_dir": ""
+          },
+          "description": "Configuration for the quantization calibration dataset path",
+          "properties": {
+            "images_dir": {
+              "default": "",
+              "description": "Path to images directory for dataset",
+              "title": "image directory",
+              "type": "string"
+            }
+          },
+          "title": "Quantization Calibration Dataset",
+          "type": "collection"
+        },
+        "root_dir": {
+          "default": "",
+          "description": "Path to folder that contains classes.txt which indicate class name and train ID.         Can be optional then the mapping will be generated from pipeline.",
+          "type": "string"
+        },
+        "shuffle": {
+          "default": true,
+          "description": "Shuffle dataloader",
+          "type": "bool"
+        },
+        "test_dataset": {
+          "automl_enabled": false,
+          "default": {
+            "images_dir": ""
+          },
+          "description": "Configuration for the testing dataset path",
+          "properties": {
+            "images_dir": {
+              "default": "",
+              "description": "Path to images directory for dataset",
+              "title": "image directory",
+              "type": "string"
+            }
+          },
+          "title": "Testing Dataset",
+          "type": "collection"
+        },
+        "train_dataset": {
+          "automl_enabled": false,
+          "default": {
+            "images_dir": ""
+          },
+          "description": "Configuration for the training dataset path",
+          "properties": {
+            "images_dir": {
+              "default": "",
+              "description": "Path to images directory for dataset",
+              "title": "image directory",
+              "type": "string"
+            }
+          },
+          "title": "Training Dataset",
+          "type": "collection"
+        },
+        "train_nolabel": {
+          "automl_enabled": false,
+          "default": {
+            "folder_path": ""
+          },
+          "properties": {
+            "folder_path": {
+              "default": "",
+              "description": "Dataset directory path",
+              "type": "string"
+            }
+          },
+          "type": "collection"
+        },
+        "val_dataset": {
+          "automl_enabled": false,
+          "default": {
+            "images_dir": ""
+          },
+          "description": "Configuration for the validation dataset path",
+          "properties": {
+            "images_dir": {
+              "default": "",
+              "description": "Path to images directory for dataset",
+              "title": "image directory",
+              "type": "string"
+            }
+          },
+          "title": "Validation Dataset",
+          "type": "collection"
+        },
+        "workers": {
+          "automl_enabled": true,
+          "default": 1,
+          "description": "Workers",
+          "maximum": Infinity,
+          "minimum": 0,
+          "title": "Workers",
+          "type": "int"
+        }
+      },
+      "type": "collection"
+    },
+    "distill": {
+      "automl_disabled_parameters": [
+        "distill.teacher"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "loss_lambda": 0.5,
+        "loss_type": "KL",
+        "mlp_hidden_size": 1024,
+        "mlp_num_inner": 0,
+        "mode": "auto",
+        "pretrained_teacher_model_path": "???",
+        "results_dir": "",
+        "teacher": {
+          "backbone": {
+            "freeze_backbone": false,
+            "freeze_norm": false,
+            "pretrained_backbone_path": "",
+            "type": "fan_small_12_p4_hybrid"
+          },
+          "head": {
+            "binary": false,
+            "in_channels": 448,
+            "loss": {
+              "label_smooth_val": 0.0,
+              "type": "CrossEntropyLoss"
+            },
+            "topk": [
+              1
+            ],
+            "type": "TAOLinearClsHead"
+          }
+        },
+        "use_mlp": true
+      },
+      "properties": {
+        "loss_lambda": {
+          "default": 0.5,
+          "description": "The weight to be applied to the distillation loss as compared to task loss",
+          "math_cond": "> 0.0 <= 1.0",
+          "title": "distill weight",
+          "type": "float"
+        },
+        "loss_type": {
+          "default": "KL",
+          "description": "Loss function for logits distillation.",
+          "enum": [
+            "\nKL(KLdivergence)",
+            "\nCE(crossentropy)",
+            "\nL1(L1loss)",
+            "\nL2(L2loss)",
+            "\nFD(smoothL1)",
+            "\nCS(cosinesimilarity)",
+            "\nBALANCED(balancedfeatureloss)",
+            "\nMSE(meansquarederror)"
+          ],
+          "title": "Distillation loss type",
+          "type": "categorical"
+        },
+        "mlp_hidden_size": {
+          "default": 1024,
+          "description": "MLP hidden size",
+          "maximum": Infinity,
+          "minimum": 0,
+          "type": "int"
+        },
+        "mlp_num_inner": {
+          "default": 0,
+          "description": "MLP number of inner layers",
+          "maximum": 10,
+          "minimum": 0,
+          "type": "int"
+        },
+        "mode": {
+          "default": "auto",
+          "description": "Distillation mode",
+          "enum": [
+            "logits",
+            "summary",
+            "spatial",
+            "auto"
+          ],
+          "type": "categorical"
+        },
+        "pretrained_teacher_model_path": {
+          "default": "???",
+          "description": "Path to the pre-trained teacher model.",
+          "title": "Pretrained teacher model path",
+          "type": "string"
+        },
+        "results_dir": {
+          "default": "",
+          "description": "Path to where all the assets generated from a task are stored.",
+          "title": "Results directory",
+          "type": "string"
+        },
+        "teacher": {
+          "automl_disabled_parameters": [
+            "distill.teacher.backbone",
+            "distill.teacher.head"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "backbone": {
+              "freeze_backbone": false,
+              "freeze_norm": false,
+              "pretrained_backbone_path": "",
+              "type": "fan_small_12_p4_hybrid"
+            },
+            "head": {
+              "binary": false,
+              "in_channels": 448,
+              "loss": {
+                "label_smooth_val": 0.0,
+                "type": "CrossEntropyLoss"
+              },
+              "topk": [
+                1
+              ],
+              "type": "TAOLinearClsHead"
+            }
+          },
+          "properties": {
+            "backbone": {
+              "automl_default_parameters": [
+                "distill.teacher.backbone.freeze_backbone",
+                "distill.teacher.backbone.freeze_norm"
+              ],
+              "automl_enabled": false,
+              "default": {
+                "freeze_backbone": false,
+                "freeze_norm": false,
+                "pretrained_backbone_path": "",
+                "type": "fan_small_12_p4_hybrid"
+              },
+              "properties": {
+                "freeze_backbone": {
+                  "automl_enabled": true,
+                  "default": false,
+                  "description": "Flag to freeze backbone",
+                  "type": "bool"
+                },
+                "freeze_norm": {
+                  "automl_enabled": true,
+                  "default": false,
+                  "description": "Flag to freeze norm",
+                  "type": "bool"
+                },
+                "pretrained_backbone_path": {
+                  "default": "",
+                  "description": "Path to the pretrained model",
+                  "type": "string"
+                },
+                "type": {
+                  "default": "fan_small_12_p4_hybrid",
+                  "description": "Backbone architure",
+                  "enum": [
+                    "faster_vit_0_224",
+                    "faster_vit_1_224",
+                    "faster_vit_2_224",
+                    "faster_vit_3_224",
+                    "faster_vit_4_224",
+                    "faster_vit_5_224",
+                    "faster_vit_6_224",
+                    "faster_vit_4_21k_224",
+                    "faster_vit_4_21k_384",
+                    "faster_vit_4_21k_512",
+                    "faster_vit_4_21k_768",
+                    "fan_tiny_12_p16_224",
+                    "fan_small_12_p16_224_se_attn",
+                    "fan_small_12_p16_224",
+                    "fan_base_18_p16_224",
+                    "fan_large_24_p16_224",
+                    "fan_tiny_8_p4_hybrid",
+                    "fan_small_12_p4_hybrid",
+                    "fan_base_16_p4_hybrid",
+                    "fan_large_16_p4_hybrid",
+                    "fan_xlarge_16_p4_hybrid",
+                    "fan_swin_tiny_patch4_window7_224",
+                    "fan_swin_small_patch4_window7_224",
+                    "fan_swin_base_patch4_window7_224",
+                    "fan_swin_large_patch4_window7_224",
+                    "vit_large_patch14_dinov2_swiglu",
+                    "vit_large_patch14_dinov2_swiglu_legacy",
+                    "vit_giant_patch14_reg4_dinov2_swiglu",
+                    "efficientvit_b0",
+                    "efficientvit_b1",
+                    "efficientvit_b2",
+                    "efficientvit_b3",
+                    "efficientvit_l0",
+                    "efficientvit_l1",
+                    "efficientvit_l2",
+                    "efficientvit_l3",
+                    "vit_base_patch16",
+                    "vit_large_patch16",
+                    "vit_huge_patch14",
+                    "convnext_tiny",
+                    "convnext_small",
+                    "convnext_base",
+                    "convnext_large",
+                    "convnext_xlarge",
+                    "convnextv2_atto",
+                    "convnextv2_femto",
+                    "convnextv2_pico",
+                    "convnextv2_nano",
+                    "convnextv2_tiny",
+                    "convnextv2_base",
+                    "convnextv2_large",
+                    "convnextv2_huge",
+                    "hiera_tiny_224",
+                    "hiera_small_224",
+                    "hiera_base_224",
+                    "hiera_base_plus_224",
+                    "hiera_large_224",
+                    "hiera_huge_224",
+                    "resnet_18",
+                    "resnet_34",
+                    "resnet_50",
+                    "resnet_101",
+                    "resnet_152",
+                    "resnet_18d",
+                    "resnet_34d",
+                    "resnet_50d",
+                    "resnet_101d",
+                    "resnet_152d",
+                    "swin_tiny_patch4_window7_224",
+                    "swin_small_patch4_window7_224",
+                    "swin_base_patch4_window7_224",
+                    "swin_large_patch4_window7_224",
+                    "swin_base_patch4_window12_384",
+                    "swin_large_patch4_window12_384",
+                    "gc_vit_xxtiny",
+                    "gc_vit_xtiny",
+                    "gc_vit_tiny",
+                    "gc_vit_small",
+                    "gc_vit_base",
+                    "gc_vit_large",
+                    "gc_vit_base_384",
+                    "gc_vit_large_384",
+                    "edgenext_xx_small",
+                    "edgenext_x_small",
+                    "edgenext_small",
+                    "edgenext_base",
+                    "edgenext_xx_small_bn_hs",
+                    "edgenext_x_small_bn_hs",
+                    "edgenext_small_bn_hs",
+                    "c_radio_p1_vit_huge_patch16_mlpnorm",
+                    "c_radio_p2_vit_huge_patch16_mlpnorm",
+                    "c_radio_p3_vit_huge_patch16_mlpnorm",
+                    "c_radio_v2_vit_base_patch16",
+                    "c_radio_v2_vit_large_patch16",
+                    "c_radio_v2_vit_huge_patch16",
+                    "c_radio_v3_vit_large_patch16_reg4_dinov2",
+                    "c_radio_v3_vit_base_patch16_reg4_dinov2",
+                    "c_radio_v3_vit_huge_patch16_reg4_dinov2",
+                    "vit_l_14_siglip_clipa_224",
+                    "vit_l_14_siglip_clipa_336",
+                    "vit_h_14_siglip_clipa_224",
+                    "mit_b0",
+                    "mit_b1",
+                    "mit_b2",
+                    "mit_b3",
+                    "mit_b4",
+                    "mit_b5"
+                  ],
+                  "title": "Backbone architectures",
+                  "type": "categorical"
+                }
+              },
+              "type": "collection"
+            },
+            "head": {
+              "automl_disabled_parameters": [
+                "distill.teacher.head.custom_args",
+                "distill.teacher.head.loss",
+                "distill.teacher.head.topk"
+              ],
+              "automl_enabled": false,
+              "default": {
+                "binary": false,
+                "in_channels": 448,
+                "loss": {
+                  "label_smooth_val": 0.0,
+                  "type": "CrossEntropyLoss"
+                },
+                "topk": [
+                  1
+                ],
+                "type": "TAOLinearClsHead"
+              },
+              "properties": {
+                "binary": {
+                  "default": false,
+                  "description": "Flag to specify binary classification",
+                  "type": "bool"
+                },
+                "custom_args": {
+                  "automl_enabled": false,
+                  "description": "custom head arguments",
+                  "type": "collection"
+                },
+                "in_channels": {
+                  "default": 448,
+                  "description": "Number of backbone input channels to head",
+                  "type": "int"
+                },
+                "loss": {
+                  "automl_enabled": false,
+                  "default": {
+                    "label_smooth_val": 0.0,
+                    "type": "CrossEntropyLoss"
+                  },
+                  "properties": {
+                    "label_smooth_val": {
+                      "default": 0.0,
+                      "description": "Label smoothing value",
+                      "maximum": 1.0,
+                      "minimum": 0.0,
+                      "type": "float"
+                    },
+                    "type": {
+                      "default": "CrossEntropyLoss",
+                      "description": "Loss type",
+                      "enum": [
+                        "CrossEntropyLoss"
+                      ],
+                      "type": "categorical"
+                    }
+                  },
+                  "type": "collection"
+                },
+                "topk": {
+                  "automl_enabled": false,
+                  "default": [
+                    1
+                  ],
+                  "description": "k value for Topk accuracy",
+                  "type": "list"
+                },
+                "type": {
+                  "default": "TAOLinearClsHead",
+                  "description": "Type of classification head",
+                  "enum": [
+                    "TAOLinearClsHead",
+                    "LogisticRegressionHead"
+                  ],
+                  "type": "categorical"
+                }
+              },
+              "type": "collection"
+            }
+          },
+          "title": "teacher",
+          "type": "collection"
+        },
+        "use_mlp": {
+          "default": true,
+          "description": "Flag to use MLP for projection",
+          "type": "bool"
+        }
+      },
+      "type": "collection"
+    },
+    "encryption_key": {
+      "default": "",
+      "description": "Key for encrypting model checkpoints",
+      "title": "Encryption key",
+      "type": "string"
+    },
+    "model": {
+      "automl_disabled_parameters": [
+        "model.backbone",
+        "model.head"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "backbone": {
+          "freeze_backbone": false,
+          "freeze_norm": false,
+          "pretrained_backbone_path": "",
+          "type": "fan_small_12_p4_hybrid"
+        },
+        "head": {
+          "binary": false,
+          "in_channels": 448,
+          "loss": {
+            "label_smooth_val": 0.0,
+            "type": "CrossEntropyLoss"
+          },
+          "topk": [
+            1
+          ],
+          "type": "TAOLinearClsHead"
+        }
+      },
+      "properties": {
+        "backbone": {
+          "automl_default_parameters": [
+            "model.backbone.freeze_backbone",
+            "model.backbone.freeze_norm"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "freeze_backbone": false,
+            "freeze_norm": false,
+            "pretrained_backbone_path": "",
+            "type": "fan_small_12_p4_hybrid"
+          },
+          "properties": {
+            "freeze_backbone": {
+              "automl_enabled": true,
+              "default": false,
+              "description": "Flag to freeze backbone",
+              "type": "bool"
+            },
+            "freeze_norm": {
+              "automl_enabled": true,
+              "default": false,
+              "description": "Flag to freeze norm",
+              "type": "bool"
+            },
+            "pretrained_backbone_path": {
+              "default": "",
+              "description": "Path to the pretrained model",
+              "type": "string"
+            },
+            "type": {
+              "default": "fan_small_12_p4_hybrid",
+              "description": "Backbone architure",
+              "enum": [
+                "faster_vit_0_224",
+                "faster_vit_1_224",
+                "faster_vit_2_224",
+                "faster_vit_3_224",
+                "faster_vit_4_224",
+                "faster_vit_5_224",
+                "faster_vit_6_224",
+                "faster_vit_4_21k_224",
+                "faster_vit_4_21k_384",
+                "faster_vit_4_21k_512",
+                "faster_vit_4_21k_768",
+                "fan_tiny_12_p16_224",
+                "fan_small_12_p16_224_se_attn",
+                "fan_small_12_p16_224",
+                "fan_base_18_p16_224",
+                "fan_large_24_p16_224",
+                "fan_tiny_8_p4_hybrid",
+                "fan_small_12_p4_hybrid",
+                "fan_base_16_p4_hybrid",
+                "fan_large_16_p4_hybrid",
+                "fan_xlarge_16_p4_hybrid",
+                "fan_swin_tiny_patch4_window7_224",
+                "fan_swin_small_patch4_window7_224",
+                "fan_swin_base_patch4_window7_224",
+                "fan_swin_large_patch4_window7_224",
+                "vit_large_patch14_dinov2_swiglu",
+                "vit_large_patch14_dinov2_swiglu_legacy",
+                "vit_giant_patch14_reg4_dinov2_swiglu",
+                "efficientvit_b0",
+                "efficientvit_b1",
+                "efficientvit_b2",
+                "efficientvit_b3",
+                "efficientvit_l0",
+                "efficientvit_l1",
+                "efficientvit_l2",
+                "efficientvit_l3",
+                "vit_base_patch16",
+                "vit_large_patch16",
+                "vit_huge_patch14",
+                "convnext_tiny",
+                "convnext_small",
+                "convnext_base",
+                "convnext_large",
+                "convnext_xlarge",
+                "convnextv2_atto",
+                "convnextv2_femto",
+                "convnextv2_pico",
+                "convnextv2_nano",
+                "convnextv2_tiny",
+                "convnextv2_base",
+                "convnextv2_large",
+                "convnextv2_huge",
+                "hiera_tiny_224",
+                "hiera_small_224",
+                "hiera_base_224",
+                "hiera_base_plus_224",
+                "hiera_large_224",
+                "hiera_huge_224",
+                "resnet_18",
+                "resnet_34",
+                "resnet_50",
+                "resnet_101",
+                "resnet_152",
+                "resnet_18d",
+                "resnet_34d",
+                "resnet_50d",
+                "resnet_101d",
+                "resnet_152d",
+                "swin_tiny_patch4_window7_224",
+                "swin_small_patch4_window7_224",
+                "swin_base_patch4_window7_224",
+                "swin_large_patch4_window7_224",
+                "swin_base_patch4_window12_384",
+                "swin_large_patch4_window12_384",
+                "gc_vit_xxtiny",
+                "gc_vit_xtiny",
+                "gc_vit_tiny",
+                "gc_vit_small",
+                "gc_vit_base",
+                "gc_vit_large",
+                "gc_vit_base_384",
+                "gc_vit_large_384",
+                "edgenext_xx_small",
+                "edgenext_x_small",
+                "edgenext_small",
+                "edgenext_base",
+                "edgenext_xx_small_bn_hs",
+                "edgenext_x_small_bn_hs",
+                "edgenext_small_bn_hs",
+                "c_radio_p1_vit_huge_patch16_mlpnorm",
+                "c_radio_p2_vit_huge_patch16_mlpnorm",
+                "c_radio_p3_vit_huge_patch16_mlpnorm",
+                "c_radio_v2_vit_base_patch16",
+                "c_radio_v2_vit_large_patch16",
+                "c_radio_v2_vit_huge_patch16",
+                "c_radio_v3_vit_large_patch16_reg4_dinov2",
+                "c_radio_v3_vit_base_patch16_reg4_dinov2",
+                "c_radio_v3_vit_huge_patch16_reg4_dinov2",
+                "vit_l_14_siglip_clipa_224",
+                "vit_l_14_siglip_clipa_336",
+                "vit_h_14_siglip_clipa_224",
+                "mit_b0",
+                "mit_b1",
+                "mit_b2",
+                "mit_b3",
+                "mit_b4",
+                "mit_b5"
+              ],
+              "title": "Backbone architectures",
+              "type": "categorical"
+            }
+          },
+          "type": "collection"
+        },
+        "head": {
+          "automl_disabled_parameters": [
+            "model.head.custom_args",
+            "model.head.loss",
+            "model.head.topk"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "binary": false,
+            "in_channels": 448,
+            "loss": {
+              "label_smooth_val": 0.0,
+              "type": "CrossEntropyLoss"
+            },
+            "topk": [
+              1
+            ],
+            "type": "TAOLinearClsHead"
+          },
+          "properties": {
+            "binary": {
+              "default": false,
+              "description": "Flag to specify binary classification",
+              "type": "bool"
+            },
+            "custom_args": {
+              "automl_enabled": false,
+              "description": "custom head arguments",
+              "type": "collection"
+            },
+            "in_channels": {
+              "default": 448,
+              "description": "Number of backbone input channels to head",
+              "type": "int"
+            },
+            "loss": {
+              "automl_enabled": false,
+              "default": {
+                "label_smooth_val": 0.0,
+                "type": "CrossEntropyLoss"
+              },
+              "properties": {
+                "label_smooth_val": {
+                  "default": 0.0,
+                  "description": "Label smoothing value",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "type": "float"
+                },
+                "type": {
+                  "default": "CrossEntropyLoss",
+                  "description": "Loss type",
+                  "enum": [
+                    "CrossEntropyLoss"
+                  ],
+                  "type": "categorical"
+                }
+              },
+              "type": "collection"
+            },
+            "topk": {
+              "automl_enabled": false,
+              "default": [
+                1
+              ],
+              "description": "k value for Topk accuracy",
+              "type": "list"
+            },
+            "type": {
+              "default": "TAOLinearClsHead",
+              "description": "Type of classification head",
+              "enum": [
+                "TAOLinearClsHead",
+                "LogisticRegressionHead"
+              ],
+              "type": "categorical"
+            }
+          },
+          "type": "collection"
+        }
+      },
+      "type": "collection"
+    },
+    "model_name": {
+      "default": "",
+      "description": "Name of model if invoking task via :code:`model_agnostic`",
+      "title": "Model name",
+      "type": "string"
+    },
+    "quantize": {
+      "automl_disabled_parameters": [
+        "quantize.layers",
+        "quantize.skip_names",
+        "quantize.backend_kwargs"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "algorithm": "minmax",
+        "backend": "torchao",
+        "backend_kwargs": {},
+        "device": "cuda",
+        "layers": [],
+        "mode": "weight_only_ptq",
+        "model_path": "",
+        "results_dir": "",
+        "skip_names": []
+      },
+      "properties": {
+        "algorithm": {
+          "default": "minmax",
+          "description": "Calibration/optimization algorithm. Used by ModelOpt backends (modelopt.pytorch and modelopt.onnx). Ignored by torchao backend.",
+          "enum": [
+            "minmax",
+            "max",
+            "entropy",
+            "awq_clip",
+            "awq_lite",
+            "awq_full",
+            "rtn_dq"
+          ],
+          "title": "Calibration algorithm",
+          "type": "categorical"
+        },
+        "backend": {
+          "default": "torchao",
+          "description": "The quantization backend to use",
+          "enum": [
+            "modelopt.pytorch",
+            "torchao",
+            "modelopt.onnx"
+          ],
+          "title": "Quantization backend",
+          "type": "categorical"
+        },
+        "backend_kwargs": {
+          "automl_enabled": false,
+          "description": "Additional keyword arguments to pass to the backend",
+          "title": "Backend kwargs",
+          "type": "collection"
+        },
+        "device": {
+          "default": "cuda",
+          "description": "Device to use for calibration. Accepts 'cuda' (uses default GPU), 'cpu', 'trt' (TensorRT for ONNX backend), or specific GPU device like 'cuda:0', 'cuda:1', etc. If 'cuda' is specified but no GPU is available, the framework will automatically fall back to 'cpu'. Note: 'trt' is only supported by the modelopt.onnx backend for ONNX Runtime with TensorRT execution provider.",
+          "pattern": "^(cuda|cpu|trt|cuda:[0-9]+)$",
+          "title": "Calibration device",
+          "type": "string"
+        },
+        "layers": {
+          "automl_enabled": false,
+          "default": [],
+          "description": "List of per-module quantization configurations. Each entry specifies which modules to quantize and their data types. This is the primary way to configure quantization.",
+          "title": "Layer quantization configs",
+          "type": "list"
+        },
+        "mode": {
+          "default": "weight_only_ptq",
+          "description": "The quantization mode to use",
+          "enum": [
+            "static_ptq",
+            "weight_only_ptq"
+          ],
+          "title": "Quantization mode",
+          "type": "categorical"
+        },
+        "model_path": {
+          "default": "",
+          "description": "Path to the model to be quantized. For ONNX backend, path to ONNX file.",
+          "title": "Model path",
+          "type": "string"
+        },
+        "results_dir": {
+          "default": "",
+          "description": "Path to where all the assets generated from a task are stored.",
+          "title": "Results directory",
+          "type": "string"
+        },
+        "skip_names": {
+          "automl_enabled": false,
+          "default": [],
+          "description": "List of module/layer names or patterns to exclude from quantization",
+          "title": "Skip names",
+          "type": "list"
+        }
+      },
+      "required": [
+        "model_path",
+        "results_dir"
+      ],
+      "type": "collection"
+    },
+    "results_dir": {
+      "default": "",
+      "description": "\n        Path to where all the assets generated from a task are stored.\n        ",
+      "title": "Results directory",
+      "type": "string"
+    },
+    "train": {
+      "automl_disabled_parameters": [
+        "train.gpu_ids",
+        "train.cudnn",
+        "train.optim",
+        "train.tensorboard"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "checkpoint_interval": 1,
+        "checkpoint_interval_unit": "epoch",
+        "clip_grad_norm": 2.0,
+        "cudnn": {
+          "benchmark": false,
+          "deterministic": true
+        },
+        "ema_decay": 0.998,
+        "enable_ema": false,
+        "gpu_ids": [
+          0
+        ],
+        "num_epochs": 10,
+        "num_gpus": 1,
+        "num_nodes": 1,
+        "optim": {
+          "betas": [
+            0.9,
+            0.999
+          ],
+          "lr": 6e-05,
+          "momentum": 0.9,
+          "monitor_name": "val_loss",
+          "optim": "adamw",
+          "policy": "linear",
+          "policy_params": {
+            "gamma": 0.1,
+            "step_size": 30
+          },
+          "skip_names": [],
+          "warmup_epochs": 0,
+          "weight_decay": 0.01
+        },
+        "precision": "fp32",
+        "pretrained_model_path": "",
+        "results_dir": "",
+        "resume_training_checkpoint_path": "",
+        "seed": 1234,
+        "tensorboard": {
+          "enabled": false,
+          "infrequent_logging_frequency": 2
+        },
+        "validation_interval": 1
+      },
+      "popular": [
+        "validation_interval",
+        "checkpoint_interval",
+        "num_gpus",
+        "num_nodes",
+        "num_epochs",
+        "gpu_ids"
+      ],
+      "properties": {
+        "checkpoint_interval": {
+          "default": 1,
+          "description": "The interval (in epochs) at which a checkpoint will be saved. Helps resume training.",
+          "minimum": 1,
+          "popular": true,
+          "title": "Checkpoint interval",
+          "type": "int"
+        },
+        "checkpoint_interval_unit": {
+          "default": "epoch",
+          "description": "The unit of the checkpoint interval.",
+          "enum": [
+            "epoch",
+            "step"
+          ],
+          "title": "Checkpoint interval unit",
+          "type": "categorical"
+        },
+        "clip_grad_norm": {
+          "default": 2.0,
+          "description": "Gradient Norm",
+          "title": "Grad norm",
+          "type": "float"
+        },
+        "cudnn": {
+          "automl_enabled": false,
+          "default": {
+            "benchmark": false,
+            "deterministic": true
+          },
+          "properties": {
+            "benchmark": {
+              "default": false,
+              "type": "bool"
+            },
+            "deterministic": {
+              "default": true,
+              "type": "bool"
+            }
+          },
+          "type": "collection"
+        },
+        "ema_decay": {
+          "default": 0.998,
+          "description": "EMA decay",
+          "title": "EMA decay",
+          "type": "float"
+        },
+        "enable_ema": {
+          "default": false,
+          "description": "Flag to enable EMA",
+          "type": "bool"
+        },
+        "gpu_ids": {
+          "automl_enabled": false,
+          "default": [
+            0
+          ],
+          "description": "\n        List of GPU IDs to run the training on. The length of this list\n        must be equal to the number of gpus in train.num_gpus.",
+          "popular": true,
+          "title": "GPU IDs",
+          "type": "list"
+        },
+        "num_epochs": {
+          "default": 10,
+          "description": "Number of epochs to run the training.",
+          "maximum": Infinity,
+          "minimum": 1,
+          "popular": true,
+          "title": "Number of epochs",
+          "type": "int"
+        },
+        "num_gpus": {
+          "default": 1,
+          "description": "The number of GPUs to run the train job.",
+          "minimum": 1,
+          "popular": true,
+          "title": "Number of GPUs",
+          "type": "int"
+        },
+        "num_nodes": {
+          "default": 1,
+          "description": "Number of nodes to run the training on. If > 1, then multi-node is enabled.",
+          "minimum": 1,
+          "popular": true,
+          "title": "Number of nodes",
+          "type": "int"
+        },
+        "optim": {
+          "automl_default_parameters": [
+            "train.optim.lr",
+            "train.optim.momentum",
+            "train.optim.weight_decay",
+            "train.optim.betas"
+          ],
+          "automl_disabled_parameters": [
+            "train.optim.policy_params",
+            "train.optim.skip_names"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "betas": [
+              0.9,
+              0.999
+            ],
+            "lr": 6e-05,
+            "momentum": 0.9,
+            "monitor_name": "val_loss",
+            "optim": "adamw",
+            "policy": "linear",
+            "policy_params": {
+              "gamma": 0.1,
+              "step_size": 30
+            },
+            "skip_names": [],
+            "warmup_epochs": 0,
+            "weight_decay": 0.01
+          },
+          "properties": {
+            "betas": {
+              "automl_enabled": true,
+              "default": [
+                0.9,
+                0.999
+              ],
+              "description": "coefficients used for computing running averages on adamw",
+              "type": "list"
+            },
+            "lr": {
+              "automl_enabled": true,
+              "default": 6e-05,
+              "description": "Optimizer learning rate",
+              "maximum": Infinity,
+              "minimum": 0.0,
+              "type": "float"
+            },
+            "momentum": {
+              "automl_enabled": true,
+              "default": 0.9,
+              "description": "The momentum for the AdamW optimizer.",
+              "math_cond": "> 0.0",
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "momentum - AdamW",
+              "type": "float"
+            },
+            "monitor_name": {
+              "default": "val_loss",
+              "description": "Monitor Name",
+              "type": "string"
+            },
+            "optim": {
+              "default": "adamw",
+              "description": "Optimizer",
+              "enum": [
+                "adamw",
+                "adam",
+                "sgd"
+              ],
+              "type": "categorical"
+            },
+            "policy": {
+              "default": "linear",
+              "description": "Optimizer policy",
+              "enum": [
+                "linear",
+                "step",
+                "cosine",
+                "multistep"
+              ],
+              "type": "categorical"
+            },
+            "policy_params": {
+              "automl_enabled": false,
+              "default": {
+                "gamma": 0.1,
+                "step_size": 30
+              },
+              "description": "Optimizer policy parameters",
+              "type": "collection"
+            },
+            "skip_names": {
+              "automl_enabled": false,
+              "default": [],
+              "description": "layers names which do not need weight decay",
+              "type": "list"
+            },
+            "warmup_epochs": {
+              "default": 0,
+              "description": "Warmup epochs.",
+              "maximum": Infinity,
+              "minimum": 0,
+              "type": "int"
+            },
+            "weight_decay": {
+              "automl_enabled": true,
+              "default": 0.01,
+              "description": "The weight decay coefficient.",
+              "math_cond": "> 0.0",
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "weight decay",
+              "type": "float"
+            }
+          },
+          "type": "collection"
+        },
+        "precision": {
+          "default": "fp32",
+          "description": "Precision",
+          "enum": [
+            "fp16",
+            "fp32"
+          ],
+          "type": "categorical"
+        },
+        "pretrained_model_path": {
+          "default": "",
+          "description": "Pretrained model path",
+          "title": "pretrained model path",
+          "type": "string"
+        },
+        "results_dir": {
+          "default": "",
+          "description": "\n        Path to where all the assets generated from a task are stored.\n        ",
+          "title": "Results directory",
+          "type": "string"
+        },
+        "resume_training_checkpoint_path": {
+          "default": "",
+          "description": "Path to the checkpoint to resume training from.",
+          "title": "Resume checkpoint path",
+          "type": "string"
+        },
+        "seed": {
+          "default": 1234,
+          "description": "The seed for the initializer in PyTorch. If < 0, disable fixed seed.",
+          "maximum": Infinity,
+          "minimum": -1,
+          "title": "Seed for randomization",
+          "type": "int"
+        },
+        "tensorboard": {
+          "automl_enabled": false,
+          "default": {
+            "enabled": false,
+            "infrequent_logging_frequency": 2
+          },
+          "properties": {
+            "enabled": {
+              "default": false,
+              "description": "Flag to enable tensorboard",
+              "type": "bool"
+            },
+            "infrequent_logging_frequency": {
+              "default": 2,
+              "description": "infrequent_logging_frequency",
+              "maximum": Infinity,
+              "minimum": 0,
+              "type": "int"
+            }
+          },
+          "type": "collection"
+        },
+        "validation_interval": {
+          "default": 1,
+          "description": "\n        The interval (in epochs) at which a evaluation\n        will be triggered on the validation dataset.",
+          "minimum": 1,
+          "popular": true,
+          "title": "Validation interval",
+          "type": "int"
+        }
+      },
+      "type": "collection"
+    },
+    "wandb": {
+      "automl_disabled_parameters": [
+        "wandb.tags"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "enable": true,
+        "entity": "",
+        "group": "",
+        "name": "TAO Toolkit Training",
+        "project": "TAO Toolkit",
+        "reinit": false,
+        "run_id": "",
+        "save_code": false,
+        "sync_tensorboard": false,
+        "tags": [
+          "tao-toolkit"
+        ]
+      },
+      "properties": {
+        "enable": {
+          "default": true,
+          "type": "bool"
+        },
+        "entity": {
+          "default": "",
+          "type": "string"
+        },
+        "group": {
+          "default": "",
+          "type": "string"
+        },
+        "name": {
+          "default": "TAO Toolkit Training",
+          "type": "string"
+        },
+        "project": {
+          "default": "TAO Toolkit",
+          "type": "string"
+        },
+        "reinit": {
+          "default": false,
+          "type": "bool"
+        },
+        "run_id": {
+          "default": "",
+          "type": "string"
+        },
+        "save_code": {
+          "default": false,
+          "type": "bool"
+        },
+        "sync_tensorboard": {
+          "default": false,
+          "type": "bool"
+        },
+        "tags": {
+          "automl_enabled": false,
+          "default": [
+            "tao-toolkit"
+          ],
+          "type": "list"
+        }
+      },
+      "type": "collection"
+    }
+  },
+  "required": [
+    "quantize"
+  ],
+  "type": "object",
+  "x_tao_schema": {
+    "action": "distill",
+    "core_module": "classification_pyt",
+    "model": "classification-pyt",
+    "network_arch": "classification_pyt",
+    "schema_action": "distill",
+    "schema_version": 1,
+    "source": "tao-core dataclass config"
+  }
+}

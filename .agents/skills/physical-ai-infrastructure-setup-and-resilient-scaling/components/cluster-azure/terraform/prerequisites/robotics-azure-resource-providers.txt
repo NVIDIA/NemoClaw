@@ -1,0 +1,14 @@
+Microsoft.Authorization
+Microsoft.Compute
+Microsoft.ContainerRegistry
+Microsoft.ContainerService
+Microsoft.Insights
+Microsoft.KeyVault
+Microsoft.Kubernetes
+Microsoft.KubernetesConfiguration
+Microsoft.ManagedIdentity
+Microsoft.MachineLearningServices
+Microsoft.Network
+Microsoft.OperationalInsights
+Microsoft.Resources
+Microsoft.Storage

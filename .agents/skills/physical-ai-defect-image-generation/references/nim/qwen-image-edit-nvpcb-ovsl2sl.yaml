@@ -1,0 +1,98 @@
+# Qwen Image Edit NVPCB OVSL2SL endpoint.
+#
+# This is NOT an official NGC NIM image. It uses NIM Operator's generic
+# spec.command / spec.args support to run the same `vllm serve` invocation
+# that the standalone Deployment previously used, while still benefiting from
+# operator-managed PVC, probes, service, and lifecycle.
+#
+# NIM Operator mounts spec.storage.pvc at /model-store in the container and
+# auto-sets NIM_CACHE_PATH=/model-store. We point HF_HOME at a subdir so model
+# weights persist on the PVC across pod restarts.
+apiVersion: apps.nvidia.com/v1alpha1
+kind: NIMService
+metadata:
+  name: qwen-image-edit-nvpcb-ovsl2sl
+  namespace: osmo-nims
+  labels:
+    app.kubernetes.io/name: qwen-image-edit-nvpcb-ovsl2sl
+    app.kubernetes.io/component: image-edit-endpoint
+spec:
+  labels:
+    app.kubernetes.io/name: qwen-image-edit-nvpcb-ovsl2sl
+    app.kubernetes.io/component: image-edit-endpoint
+  image:
+    repository: vllm/vllm-omni
+    tag: "v0.20.0"
+    pullPolicy: IfNotPresent
+  # NIMService requires authSecret even for non-NGC images. The vLLM container
+  # ignores NGC_API_KEY; HF_TOKEN below is what grants model access.
+  authSecret: ngc-api-secret
+  command:
+    - vllm
+    - serve
+  args:
+    - nvidia/Qwen-Image-Edit-NVPCB-OVSL2SL
+    - --omni
+    - --host
+    - 0.0.0.0
+    - --port
+    - "8000"
+  env:
+    - name: HF_TOKEN
+      valueFrom:
+        secretKeyRef:
+          name: hf-token-secret
+          key: HF_TOKEN
+    - name: HF_HOME
+      value: /model-store/huggingface
+  storage:
+    pvc:
+      create: true
+      size: "150Gi"
+      volumeAccessMode: ReadWriteMany
+    sharedMemorySizeLimit: "32Gi"
+  startupProbe:
+    enabled: true
+    probe:
+      httpGet:
+        path: /v1/models
+        port: 8000
+      initialDelaySeconds: 60
+      periodSeconds: 30
+      failureThreshold: 120
+      timeoutSeconds: 5
+  readinessProbe:
+    enabled: true
+    probe:
+      httpGet:
+        path: /v1/models
+        port: 8000
+      initialDelaySeconds: 60
+      periodSeconds: 30
+      failureThreshold: 120
+      timeoutSeconds: 5
+  livenessProbe:
+    enabled: true
+    probe:
+      tcpSocket:
+        port: 8000
+      initialDelaySeconds: 180
+      periodSeconds: 30
+      failureThreshold: 10
+      timeoutSeconds: 5
+  replicas: 1
+  userID: 0
+  groupID: 0
+  resources:
+    limits:
+      nvidia.com/gpu: 1
+      memory: 128Gi
+      ephemeral-storage: 50Gi
+    requests:
+      nvidia.com/gpu: 1
+      memory: 128Gi
+      ephemeral-storage: 50Gi
+  expose:
+    service:
+      type: ClusterIP
+      port: 8000

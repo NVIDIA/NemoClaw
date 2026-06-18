@@ -1,0 +1,57 @@
+# Curator Data Acquisition Context
+
+Use this pack for `curate/nemo_curator` when the user needs to materialize raw
+text before downstream curation, translation, pretraining prep, or SFT prep.
+
+## Product Contract
+
+- The current step is a lightweight text curation wrapper. It reads local JSONL
+  or an optional Hugging Face snapshot, applies configured filters, and writes
+  JSONL.
+- Do not implement a full Common Crawl downloader unless the repo step cannot
+  satisfy the user request and the user approves Explorer-mode code.
+- Keep Curator reader/writer stages as the default I/O path.
+
+## Local JSONL Path
+
+Use this when the user already has files:
+
+- Set `dataset=null`.
+- Set `input_glob` to the JSONL file or shard glob visible inside the runtime.
+- Set `output_dir` to a new directory.
+- Start permissive: `language_codes=[]`, `domains=[]`, `quality_filters={}`.
+- Add filters only after reader/writer output is verified.
+
+## Hugging Face Snapshot Path
+
+Use this when the user names a dataset:
+
+- Set `dataset.repo_id`, `dataset.repo_type`, `dataset.local_dir`, and
+  `allow_patterns` as needed.
+- Point `input_glob` inside `dataset.local_dir`.
+- Use only approved `dataset.repo_id` values and pinned revisions when
+  production reproducibility or supply-chain risk matters.
+- Validate checksums or snapshot metadata when available, scan downloaded
+  content before downstream processing, and restrict production outbound network
+  access to approved Hugging Face domains.
+- Ensure `HF_TOKEN` and `HF_HOME` are available in the runtime when needed.
+  Treat `HF_TOKEN` as a secret bearer token: inject it through a secrets manager
+  or environment vault, never hardcode, print, echo, or log it, scope access to
+  minimum required permissions, and rotate it after shared-environment use.
+
+## Operational Rules
+
+- Split one huge JSONL into shards before Curator reads it if memory pressure is
+  expected.
+- For Lepton or other remote runs, make sure input/output paths live on a
+  mounted shared filesystem.
+- Set `ray.num_cpus` in YAML or via env profile when the default CPU count is
+  not enough.
+
+## Failure Modes
+
+- `input_glob_no_matches`: verify the path inside the container, not only on
+  the submit host.
+- `large_file_oom`: shard input before retrying.
+- `empty_or_tiny_output`: disable filters first, then re-enable one gate at a
+  time.

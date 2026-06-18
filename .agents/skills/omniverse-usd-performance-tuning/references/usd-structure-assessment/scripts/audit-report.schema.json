@@ -1,0 +1,37 @@
+{
+  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "USD Performance Tuning Composition Audit Report",
+  "description": "Composition sub-shape of the umbrella usd-structure-assessment-report.schema.json. Covers the composition slice only (detailed arrays). The umbrella schema uses counts for routing; this schema provides the full arc lists for tools that need them. Casing note: this standalone sub-shape intentionally keeps camelCase keys (e.g. usedLayers, instanceablePrims, unresolvedAssetPaths, recommendedNextActions) to preserve compatibility with external tools/pipelines that consume the composition slice in isolation. The umbrella SA report is itself mixed-case (snake_case SA-domain fields alongside camelCase USD-native stage keys like rootLayer/upAxis/metersPerUnit); do not rename these keys without coordinating with those standalone consumers.",
+  "type": "object",
+  "required": ["schemaVersion", "stage", "composition", "findings", "recommendedNextActions"],
+  "properties": {
+    "schemaVersion": { "type": "string" },
+    "stage": {
+      "type": "object",
+      "required": ["identifier", "rootLayer", "openedWith"],
+      "properties": {
+        "identifier": { "type": "string" },
+        "rootLayer": { "type": "string" },
+        "defaultPrim": { "type": "string" },
+        "openedWith": { "type": "string" }
+      }
+    },
+    "composition": {
+      "type": "object",
+      "required": ["usedLayers", "references", "payloads", "variants"],
+      "properties": {
+        "usedLayers": { "type": "array", "items": { "type": "string" } },
+        "sublayers": { "type": "array", "items": { "type": "string" } },
+        "references": { "type": "array", "items": { "type": "object" } },
+        "payloads": { "type": "array", "items": { "type": "object" } },
+        "variants": { "type": "array", "items": { "type": "object" } },
+        "instanceablePrims": { "type": "array", "items": { "type": "string" } },
+        "unresolvedAssetPaths": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "findings": { "type": "array", "items": { "type": "object" } },
+    "recommendedNextActions": { "type": "array", "items": { "type": "string" } }
+  },
+  "additionalProperties": true
+}

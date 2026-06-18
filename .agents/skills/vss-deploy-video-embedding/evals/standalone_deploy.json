@@ -1,0 +1,30 @@
+{
+  "skills": [
+    "vss-deploy-video-embedding"
+  ],
+  "resources": {
+    "platforms": {
+      "L40S": {
+        "modes": [
+          "standalone"
+        ]
+      }
+    }
+  },
+  "expects": [
+    {
+      "query": "Use the `/vss-deploy-video-embedding` skill to bring up RT-Embed standalone on {{platform}}. Work from `{{repo_root}}/deploy/docker/services/rtvi/rtvi-embed`, configure the standalone compose env for local Cosmos-Embed1-448p execution, activate the Docker Compose profile `bp_developer_search_2d`, start only the `rtvi-embed` service on http://localhost:8017, wait for `/v1/ready` to return 200 (allow up to 20 minutes on first boot for model download + Triton repo build), and confirm `/v1/models` reports `cosmos-embed1-448p`. Run autonomously and leave the service running for verifier probes.\n\n**Environment & prerequisites:** A GPU host matching `{{platform}}` with Docker, NVIDIA Container Toolkit, `NGC_API_KEY` (and `docker login nvcr.io` already completed), and optionally `HF_TOKEN` to avoid Hugging Face 429 rate-limit errors when pulling the `nvidia/Cosmos-Embed1-448p` weights on a cold `rtvi-hf-cache` volume. This eval deploys only the RT-Embed microservice from `{{repo_root}}/deploy/docker/services/rtvi/rtvi-embed/rtvi-embed-docker-compose.yml` using the Docker Compose profile `bp_developer_search_2d`. It does not deploy a full VSS profile and must not use `/vss-deploy-profile` or `scripts/dev-profile.sh`. For standalone compose validation, remove the optional `rtvi-embed.depends_on` block if Docker Compose rejects references to sibling broker, Redis, or OTel services that are not part of this single-file project. The compose file unconditionally bind-mounts `${VSS_DATA_DIR}/data_log/vst/clip_storage` into the container, so `VSS_DATA_DIR` must be set to a writable host path (e.g. a temporary directory) with the `data_log/vst/clip_storage` subdirectory pre-created before `docker compose up`; otherwise the variable expands to empty and Compose attempts to mount `/data_log/vst/clip_storage` from the filesystem root. Use host port 8017, disable Kafka and Redis error messages unless those peers are explicitly started, and allow up to 20 minutes for the first-boot Cosmos-Embed1 download + Triton model-repo build (`start_period: 1200s`).",
+      "checks": [
+        "The agent did not invoke `/vss-deploy-profile`, `scripts/dev-profile.sh`, or deploy a full VSS profile.",
+        "The agent used `deploy/docker/services/rtvi/rtvi-embed/rtvi-embed-docker-compose.yml` and the Docker Compose profile `bp_developer_search_2d` to start `rtvi-embed` standalone.",
+        "The agent handled standalone compose validation by removing or otherwise neutralizing optional `rtvi-embed.depends_on` references to sibling services when Docker Compose rejected the single-file project, or confirmed the compose file has no such block and brought up `rtvi-embed` standalone successfully.",
+        "The standalone env set `RTVI_EMBED_PORT=8017`, `VSS_DATA_DIR` to a writable host path with the `data_log/vst/clip_storage` subdirectory pre-created (e.g. a temporary directory) so the unconditional clip-storage bind mount resolves to a real path rather than `/data_log/vst/clip_storage`, optionally `HF_TOKEN` to avoid Hugging Face 429 rate-limit errors when fetching the `nvidia/Cosmos-Embed1-448p` weights, `RTVI_EMBED_KAFKA_ENABLED=false` unless the agent also started a Kafka broker, and did not enable `ENABLE_REDIS_ERROR_MESSAGES` without a Redis peer.",
+        "The agent did not shorten the `start_period: 1200s` healthcheck and waited for the model download + Triton model-repo build to complete before declaring the service ready.",
+        "`curl -sf --max-time 15 http://localhost:8017/v1/ready` returns exit 0.",
+        "`curl -sf --max-time 15 http://localhost:8017/v1/models` returns exit 0 and the response contains `cosmos-embed1-448p`.",
+        "`docker ps --format '{{.Names}}' | grep -qx vss-rtvi-embed` returns exit 0.",
+        "The agent did not fabricate `HF_TOKEN`, `NGC_API_KEY`, or other credential values, and did not echo full token strings in its final reply."
+      ]
+    }
+  ]
+}

@@ -1,0 +1,76 @@
+results_dir: /results
+encryption_key: tlt_encode
+model:
+  model_type: Siamese_3
+  model_backbone: custom
+  embedding_vectors: 5
+  margin: 2.0
+dataset:
+  train_dataset:
+    csv_path: /data/metadata.csv
+    images_dir: /data/images
+  validation_dataset:
+    csv_path: /data/metadata.csv
+    images_dir: /data/images
+  test_dataset:
+    csv_path: /data/metadata.csv
+    images_dir: /data/images
+  infer_dataset:
+    csv_path: /data/metadata.csv
+    images_dir: /data/images
+  image_ext: .jpg
+  batch_size: 32
+  workers: 64
+  fpratio_sampling: 0.1
+  num_input: 4
+  input_map:
+    LowAngleLight: 0
+    SolderLight: 1
+    UniformLight: 2
+    WhiteLight: 3
+  concat_type: linear
+  grid_map:
+    x: 2
+    y: 2
+  image_width: 100
+  image_height: 100
+  augmentation_config:
+    rgb_input_mean:
+    - 0.485
+    - 0.456
+    - 0.406
+    rgb_input_std:
+    - 0.229
+    - 0.224
+    - 0.225
+train:
+  optim:
+    type: Adam
+    lr: 0.0005
+  loss: contrastive
+  num_epochs: 15
+  checkpoint_interval: 5
+evaluate:
+  gpu_ids:
+  - 0
+  checkpoint: <required>
+  trt_engine: /results/optical-inspection.engine
+export:
+  checkpoint: <required>
+  onnx_file: /models/model.onnx
+inference:
+  gpu_ids:
+  - 0
+  checkpoint: <required>
+  trt_engine: /results/optical-inspection.engine
+  batch_size: ${dataset.batch_size}
+gen_trt_engine:
+  onnx_file: /models/model.onnx
+  trt_engine: /results/optical-inspection.engine
+  batch_size: ${dataset.batch_size}
+  tensorrt:
+    data_type: fp16
+    workspace_size: 1024
+    min_batch_size: 1
+    opt_batch_size: 32
+    max_batch_size: 32

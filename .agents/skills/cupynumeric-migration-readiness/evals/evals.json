@@ -1,0 +1,452 @@
+[
+    {
+        "expected_behavior": [
+            "The agent reads evals/files/scales_well.py with the Read tool before giving a verdict.",
+            "The agent loads assets/api-support.md and confirms np.matmul, np.where, np.sqrt, np.sum, np.add, np.multiply are listed as multi-GPU.",
+            "The agent classifies the SCALES idioms (R001/R002/R003/R004/R005/R006/R007) and names the functions (jacobi_step, residual, vectorized_update, matmul_chain, fused_with_out).",
+            "The agent reports no BLOCKS and no REFACTOR findings for this file.",
+            "The agent walks Gate 1 (H100 satisfies compute capability >= 7.0), Gate 2 (~10M clears the 65,536 floor), and Gate 4 (stencil/GEMM), marking each pass.",
+            "The agent produces all 8 report sections in the documented order.",
+            "The agent returns the verdict word READY exactly.",
+            "The agent ends by directing the user to enable cuPyNumeric Doctor (CUPYNUMERIC_DOCTOR=1) on the first real run.",
+            "The agent performs a static read-only review: it does not execute the code, modify files, or print secrets or environment variables."
+        ],
+        "expected_script": null,
+        "expected_skill": "cupynumeric-migration-readiness",
+        "ground_truth": "The agent reads evals/files/scales_well.py and produces the 8-section report. It classifies the SCALES idioms against references/idioms-that-scale.md: R005 stencil slicing in jacobi_step, R002 reduction in residual (np.sqrt/np.sum), R005 plus R006 buffer swap in solve, R001 vectorized elementwise plus R004 np.where in vectorized_update, R003 chained np.matmul in matmul_chain, R007 boolean-mask write in masked_assign, and R006 out= fused ops in fused_with_out. Via assets/api-support.md it confirms np.matmul, np.where, np.sqrt, np.sum, np.add, np.multiply are all multi-GPU. It finds no BLOCKS and no REFACTOR. It walks the gates: Gate 1 pass (H100 satisfies compute capability >= 7.0), Gate 2 pass (~10M elements clears the 65,536 per-GPU floor and reaches the single-GPU speedup tier), Gate 4 pass (stencil plus GEMM are strong patterns). The verdict is READY with the action to swap the import and benchmark. It ends by directing the user to run cuPyNumeric Doctor (CUPYNUMERIC_DOCTOR=1) on the first run, and does not invent mpi4py or element-loop findings the code does not contain.",
+        "id": "ready-001-stencil-small-canonical",
+        "question": "I'm thinking about porting this 2D Jacobi stencil to cuPyNumeric. The hot arrays are about 10M elements on a single H100. Will it scale? File: evals/files/scales_well.py",
+        "should_trigger": true
+    },
+    {
+        "expected_behavior": [
+            "The agent reads evals/files/jacobi_heat.py with the Read tool.",
+            "The agent loads assets/api-support.md and confirms np.zeros and np.zeros_like are multi-GPU.",
+            "The agent identifies R005 stencil slicing and R006 buffer swap, and explicitly states the np.zeros allocations are outside the loop (no R201).",
+            "The agent mentions halo exchange and leading-axis partitioning in the multi-GPU reading.",
+            "The agent walks Gate 1, Gate 2, and Gate 4 for the ~268M-element 4xH100 workload.",
+            "The agent references references/case-studies.md Case 1 as the recognized pattern.",
+            "The agent produces all 8 report sections and returns the verdict word READY exactly.",
+            "The agent directs the user to enable cuPyNumeric Doctor on the first run.",
+            "The agent performs a static read-only review: it does not execute the code, modify files, or print secrets or environment variables."
+        ],
+        "expected_script": null,
+        "expected_skill": "cupynumeric-migration-readiness",
+        "ground_truth": "The agent reads evals/files/jacobi_heat.py and recognizes the canonical 2D Jacobi pattern (references/case-studies.md Case 1). It identifies R005 stencil slicing and R006 buffer swap in solve, and explicitly recognizes the np.zeros and np.zeros_like allocations as hoisted OUTSIDE the iteration loop, so they are NOT R201. It gives the multi-GPU reading: each 16384^2 float32 array is about 1 GiB, two arrays fit comfortably across 4 H100s; halo exchange is one row (~64 KiB) per neighbor per step over NVLink, a vanishing fraction of step time; leading-axis partitioning is automatic for stencil shapes. It walks Gate 1 (H100 pass), Gate 2 (~268M elements per step puts it in the multi-GPU regime, pass), Gate 4 (stencil is the strongest case, pass). The verdict is READY with the action to swap the import, verify allclose on small n, and scale to 4 GPUs. It confirms np.zeros and np.zeros_like are multi-GPU, points to RR-converge if a convergence check is added later, and directs the user to cuPyNumeric Doctor on the first run.",
+        "id": "ready-002-jacobi-case-study",
+        "question": "Pre-port assessment for this 2D heat-equation solver. We plan to run a 16384x16384 grid on 4 H100s in one node. File: evals/files/jacobi_heat.py",
+        "should_trigger": true
+    },
+    {
+        "expected_behavior": [
+            "The agent reads evals/files/dense_linalg.py with the Read tool.",
+            "The agent loads assets/api-support.md and confirms np.matmul/np.einsum/np.linalg.solve/np.linalg.norm are multi-GPU and np.linalg.svd/np.linalg.qr are single-GPU only.",
+            "The agent classifies R003 (matmul/einsum) and R002 (reductions) as SCALES.",
+            "The agent records INFO findings: R302 single-device svd/qr (2D-only; cuPyNumeric does not support stacked/batched svd/qr) and R305 batched solve (multi-GPU above the cuSolverMp size threshold).",
+            "The agent lists np.linalg.svd/qr under API gaps as single-GPU-only that matter only for multi-node, and notes the single-node target makes them acceptable.",
+            "The agent reports no BLOCKS and no REFACTOR findings.",
+            "The agent produces all 8 report sections and returns the verdict word READY exactly.",
+            "The agent performs a static read-only review: it does not execute the code, modify files, or print secrets or environment variables."
+        ],
+        "expected_script": null,
+        "expected_skill": "cupynumeric-migration-readiness",
+        "ground_truth": "The agent reads evals/files/dense_linalg.py. SCALES: R003 matrix multiply via np.matmul/np.einsum in gram_matrix and normal_equations, R002 reductions via np.sum/np.mean/np.linalg.norm in residual_norms, and R006 out= ops. Checking assets/api-support.md it confirms np.matmul, np.einsum, np.linalg.solve, np.linalg.norm are multi-GPU, while np.linalg.svd and np.linalg.qr are single-GPU only. INFO findings: R305, np.linalg.solve on the stacked batch in batched_solve is implemented for batched inputs and is multi-GPU only above a size threshold (cuSolverMp), data-parallel across the batch axis; R302, the np.linalg.svd in svd_energy and np.linalg.qr in qr_factor are single-device and 2D-only (cuPyNumeric does not yet support stacked/batched svd or qr, so they cannot be parallelized across a leading axis), making them a single-GPU bottleneck. The API-gaps section lists svd/qr as single-GPU-only, which matters only for multi-node; the target is single-node, so it is acceptable. No BLOCKS, no REFACTOR. Gates 1/2/4 pass (dense linear algebra, large). The verdict is READY with those INFO caveats, and it directs the user to cuPyNumeric Doctor.",
+        "id": "ready-003-dense-linalg-info",
+        "question": "We're preparing to move a dense linear-algebra pipeline (normal equations, batched solves, an SVD-based energy step) to cuPyNumeric on a single-node box with H100s. The matrices are large. Is it ready to port? File: evals/files/dense_linalg.py",
+        "should_trigger": true
+    },
+    {
+        "expected_behavior": [
+            "The agent reads evals/files/monte_carlo_good.py with the Read tool.",
+            "The agent confirms the np.random.randn draw and all allocations are outside the loop, so there is no R201 and no per-step RNG draw in the hot loop.",
+            "The agent loads assets/api-support.md and confirms np.random.randn, np.exp, np.maximum, np.mean are multi-GPU.",
+            "The agent cites R304 as an INFO note (RNG not bit-identical across --gpus N) that does not block the verdict.",
+            "The agent classifies R001/R002 as SCALES and reports no BLOCKS and no REFACTOR.",
+            "The agent produces all 8 report sections and returns the verdict word READY exactly.",
+            "The agent directs the user to enable cuPyNumeric Doctor on the first run.",
+            "The agent performs a static read-only review: it does not execute the code, modify files, or print secrets or environment variables."
+        ],
+        "expected_script": null,
+        "expected_skill": "cupynumeric-migration-readiness",
+        "ground_truth": "The agent reads evals/files/monte_carlo_good.py. It identifies R001 vectorized elementwise and R002 reduction (np.mean payoff) as SCALES, and confirms the random draw np.random.randn((n_steps, n_paths)) is hoisted ONCE before the loop and the buffers (np.full/np.empty) are allocated outside the loop, with the loop body being out= ops, so there is NO R201 alloc-in-loop and NO per-step RNG draw. Via assets/api-support.md it confirms np.random.randn, np.exp, np.maximum, np.mean are multi-GPU (and that the code correctly avoids np.random.standard_normal, which is not implemented). INFO: R304, RNG results are not bit-identical across different --gpus N counts; this is a reproducibility note, not a blocker. No BLOCKS, no REFACTOR. Gates 1/2/4 pass (data-parallel Monte Carlo, large). The verdict is READY, contrasting with the alloc-in-loop anti-pattern, and it notes weak scaling (paths grow with GPU count) and directs the user to cuPyNumeric Doctor.",
+        "id": "ready-004-monte-carlo-good",
+        "question": "Here's a Black-Scholes Monte Carlo pricer I want to run much faster on GPUs, about 50M paths, scaling to 8 H100s eventually. Will this code parallelize well as-is? File: evals/files/monte_carlo_good.py",
+        "should_trigger": true
+    },
+    {
+        "expected_behavior": [
+            "The agent reads evals/files/dense_with_scipy_boundary.py with the Read tool.",
+            "The agent classifies the dense hot path (fir_smooth, normalize_rows, band_energy) as SCALES with multi-GPU ops.",
+            "The agent records R301 as an INFO cost-note: scipy.signal.butter is a one-time host boundary (acceptable), pointing to RR-host-fallback only if it moves into the loop.",
+            "The agent does NOT flag the small `for k in range(n_taps)` tap loop as R101, recognizing it as the small-count loop with a vectorized body exception.",
+            "The agent notes Gate 5 (boundary cost) is acceptable and reports no BLOCKS and no REFACTOR.",
+            "The agent produces all 8 report sections and returns the verdict word READY exactly.",
+            "The agent performs a static read-only review: it does not execute the code, modify files, or print secrets or environment variables."
+        ],
+        "expected_script": null,
+        "expected_skill": "cupynumeric-migration-readiness",
+        "ground_truth": "The agent reads evals/files/dense_with_scipy_boundary.py. SCALES: the hot path is dense vectorized cuPyNumeric, R001/R006 out= ops in fir_smooth and normalize_rows and R002 reductions in band_energy (np.mean/np.sum/np.square/np.sqrt), all multi-GPU. INFO: R301, scipy.signal.butter is called exactly ONCE at the preprocessing boundary in design_taps (a one-time host round-trip), which is acceptable; if it were moved into the hot loop the fix is RR-host-fallback. The small `for k in range(n_taps)` loop in fir_smooth iterates over a handful of filter coefficients with each iteration a full-array slab op via out=, so it is the documented R101 exception (small-count loop with a vectorized body) and the agent does NOT flag it as R101. Gate 5 (boundary cost) is acceptable because SciPy is one-time. No BLOCKS, no REFACTOR. The verdict is READY with the R301 INFO note, and it directs the user to cuPyNumeric Doctor.",
+        "id": "ready-005-scipy-boundary",
+        "question": "Before I port this FIR band-energy signal pipeline to cuPyNumeric, I'm worried about the SciPy filter-design call. The signal batches are large. Does the SciPy dependency block GPU scaling? File: evals/files/dense_with_scipy_boundary.py",
+        "should_trigger": true
+    },
+    {
+        "expected_behavior": [
+            "The agent reads evals/files/monte_carlo_bs.py with the Read tool.",
+            "The agent identifies the per-step np.random.randn inside the for loop as R201 and points to RR-alloc with a before/after sketch.",
+            "The agent cites R304 as an INFO note (RNG cross-gpu non-determinism).",
+            "The agent classifies R001 and R002 as the SCALES findings.",
+            "The agent does not flag R101, R104, or mpi4py, because none are present.",
+            "The agent references references/case-studies.md Case 2.",
+            "The agent produces all 8 report sections and returns the verdict words LIGHT REFACTOR exactly.",
+            "The agent performs a static read-only review: it does not execute the code, modify files, or print secrets or environment variables."
+        ],
+        "expected_script": null,
+        "expected_skill": "cupynumeric-migration-readiness",
+        "ground_truth": "The agent reads evals/files/monte_carlo_bs.py and identifies the per-step z = np.random.randn(n_paths) allocation INSIDE the for t in range(1, n_steps + 1) loop as R201 (alloc-in-loop, REFACTOR), pointing to RR-alloc. SCALES: R001 vectorized elementwise update (np.exp/np.sqrt) and R002 reduction (np.mean payoff). INFO: R304, the Monte-Carlo statistic is not bit-identical across different --gpus N counts. Via assets/api-support.md it confirms np.random.randn, np.exp, np.maximum, np.mean are multi-GPU. No BLOCKS: there are no Python element loops, no .item() in the loop, and no mpi4py. The verdict is LIGHT REFACTOR (only a REFACTOR pattern, per the heuristic), with the action to apply RR-alloc by hoisting the per-step draw to a pre-allocated buffer or drawing all timesteps at once. It references case-studies.md Case 2 (Monte-Carlo, go after light refactor), provides a before/after snippet, notes bit-identical cross-gpu results are not achievable, and directs the user to cuPyNumeric Doctor.",
+        "id": "light-001-monte-carlo-alloc-in-loop",
+        "question": "Pre-migration check on this Monte Carlo Black-Scholes pricer. We want to run 10M paths on a single H100, then later scale to 8 GPUs. File: evals/files/monte_carlo_bs.py",
+        "should_trigger": true
+    },
+    {
+        "expected_behavior": [
+            "The agent reads evals/files/needs_refactor.py with the Read tool.",
+            "The agent identifies R201 at alloc_in_loop (RR-alloc), R202 at rebind_in_loop (RR-inplace), R203 at stack_in_loop (RR-stack), R204 at nonzero_then_index (RR-mask), and R206 at reshape_in_hot_loop (RR-reshape).",
+            "The agent groups the REFACTOR section by recipe.",
+            "The agent reports no BLOCKS findings (R101-R111).",
+            "The agent produces all 8 report sections and returns the verdict words LIGHT REFACTOR exactly.",
+            "The agent performs a static read-only review: it does not execute the code, modify files, or print secrets or environment variables."
+        ],
+        "expected_script": null,
+        "expected_skill": "cupynumeric-migration-readiness",
+        "ground_truth": "The agent reads evals/files/needs_refactor.py and surfaces five REFACTOR-class findings, grouped by recipe: R201 alloc-in-loop at alloc_in_loop, fixed by RR-alloc; R202 rebind (x = x + y) at rebind_in_loop, fixed by RR-inplace; R203 vstack-in-loop at stack_in_loop, fixed by RR-stack; R204 nonzero-then-index at nonzero_then_index, fixed by RR-mask; R206 reshape-in-hot-loop at reshape_in_hot_loop, fixed by RR-reshape. Each gets a brief before/after. There are no BLOCKS (no R101-R111). The verdict is LIGHT REFACTOR (only REFACTOR patterns, per the heuristic), with the action to apply the five recipes mechanically, re-walk, and reach READY. The REFACTOR section is grouped by recipe, all 8 sections are present, and it directs the user to cuPyNumeric Doctor.",
+        "id": "light-002-refactor-fixture-five-patterns",
+        "question": "Walk through this code and tell me what I have to change before porting to cuPyNumeric. File: evals/files/needs_refactor.py",
+        "should_trigger": true
+    },
+    {
+        "expected_behavior": [
+            "The agent reads evals/files/convergence_loop.py with the Read tool.",
+            "The agent classifies R005 stencil and R006 buffer swap as SCALES and notes the allocations are hoisted (no R201).",
+            "The agent identifies the while-loop array-reduction condition as R105 and points to RR-converge / RR-sync.",
+            "The agent reports R105 as the only BLOCK (so a LIGHT verdict, not SIGNIFICANT).",
+            "The agent produces all 8 report sections and returns the verdict words LIGHT REFACTOR exactly.",
+            "The agent performs a static read-only review: it does not execute the code, modify files, or print secrets or environment variables."
+        ],
+        "expected_script": null,
+        "expected_skill": "cupynumeric-migration-readiness",
+        "ground_truth": "The agent reads evals/files/convergence_loop.py. SCALES: R005 stencil in jacobi_step and R006 buffer swap in solve, with the arrays allocated once outside the loop (no R201). It flags the single BLOCK: R105, the while np.max(np.abs(u - work)) > tol loop condition is an array reduction tested every iteration, forcing a host sync per step. It points to RR-converge / RR-sync, checking convergence every N iterations with a Python bool. One recipe-fixable BLOCK gives the verdict LIGHT REFACTOR (per the heuristic for one or two recipe-fixable BLOCKS). There are no other BLOCKS. All 8 sections are present and it directs the user to cuPyNumeric Doctor.",
+        "id": "light-003-convergence-sync",
+        "question": "I have an iterative Jacobi/Poisson solver that loops until the residual drops below a tolerance. I want to run it on a GPU with cuPyNumeric. Anything I need to change first? File: evals/files/convergence_loop.py",
+        "should_trigger": true
+    },
+    {
+        "expected_behavior": [
+            "The agent reads evals/files/cupy_mixed.py with the Read tool.",
+            "The agent identifies the per-iteration cupynumeric<->cupy conversion in diffuse as R111 and explains the D2H+H2D host round-trip cost.",
+            "The agent recommends choosing one runtime in the hot loop or converting once outside it, and notes the manifest may already cover the needed function as multi-GPU.",
+            "The agent reports no other BLOCKS (the out= op is not R201/R202).",
+            "The agent produces all 8 report sections and returns the verdict words LIGHT REFACTOR exactly.",
+            "The agent performs a static read-only review: it does not execute the code, modify files, or print secrets or environment variables."
+        ],
+        "expected_script": null,
+        "expected_skill": "cupynumeric-migration-readiness",
+        "ground_truth": "The agent reads evals/files/cupy_mixed.py and flags R111: mixing cuPyNumeric and CuPy in the hot loop (diffuse converts between the two runtimes with cp.asarray and cp.asnumpy every iteration). The two runtimes use separate GPU memory pools and do not share device pointers, so each hop is a D2H plus H2D round-trip through host NumPy, the same scaling killer as .item() in a loop. It recommends the fix: pick one runtime for the hot loop, or convert once outside it, and notes that many functions are multi-GPU in the manifest so the CuPy hop may be unnecessary. The cuPyNumeric op uses out=, so there is no R201 or R202. One recipe-fixable BLOCK gives the verdict LIGHT REFACTOR. All 8 sections are present and it directs the user to cuPyNumeric Doctor.",
+        "id": "light-004-cupy-mixed",
+        "question": "This diffusion step mixes cupynumeric and cupy inside the loop because I needed a cupy routine once. Planning to run on 4 GPUs. What does that cost me, and is it portable as-is? File: evals/files/cupy_mixed.py",
+        "should_trigger": true
+    },
+    {
+        "expected_behavior": [
+            "The agent reads evals/files/api_gap_hotpath.py with the Read tool.",
+            "The agent loads assets/api-support.md and identifies numpy.interp as not implemented (a gap) used on the hot path in resample, listing it under API gaps.",
+            "The agent applies the missing-API-on-hot-path heuristic to demote the otherwise-READY code one tier.",
+            "The agent recommends replacing np.interp with a supported vectorized equivalent.",
+            "The agent does not flag the one-time float(np.max(...)) as R104 (a boundary materialization, not in a loop) and confirms Gate 2 passes at 16M.",
+            "The agent produces all 8 report sections and returns the verdict words LIGHT REFACTOR exactly.",
+            "The agent performs a static read-only review: it does not execute the code, modify files, or print secrets or environment variables."
+        ],
+        "expected_script": null,
+        "expected_skill": "cupynumeric-migration-readiness",
+        "ground_truth": "The agent reads evals/files/api_gap_hotpath.py. The pipeline is otherwise clean and large (N_SAMPLES is 16M, clearing Gate 2): R001/R002 vectorized ops (np.mean/np.sqrt/np.exp/np.where, all multi-GPU). BUT it calls np.interp on the hot path in resample, and assets/api-support.md lists numpy.interp as not implemented on the distributed path. Per the heuristic that a missing API on the hot path demotes the verdict one tier, the otherwise-READY verdict is demoted to LIGHT REFACTOR: the API-gaps section lists np.interp as not implemented and the action is to replace it with a supported equivalent (for example a manual vectorized linear interpolation) before porting. The one-time float(np.max(...)) at the end is a boundary materialization, not R104. Gate 2 passes (16M) and there are no element loops. The verdict is LIGHT REFACTOR (a demotion, not a clean READY). All 8 sections are present and it directs the user to cuPyNumeric Doctor.",
+        "id": "light-005-api-gap-demotion",
+        "question": "This signal-resampling pipeline is fully vectorized and the arrays are about 16M elements, so I expect a clean READY for cuPyNumeric on H100. Can you confirm? File: evals/files/api_gap_hotpath.py",
+        "should_trigger": true
+    },
+    {
+        "expected_behavior": [
+            "The agent reads evals/files/item_sync.py with the Read tool.",
+            "The agent identifies the per-iteration float(np.max(...)) materialization as R104 and explains the per-step host-sync cost.",
+            "The agent points to RR-sync (materialize/print every N iterations).",
+            "The agent classifies R005/R006 as SCALES and notes the allocations are hoisted (no R201).",
+            "The agent reports R104 as a single BLOCK (so a LIGHT verdict, not SIGNIFICANT).",
+            "The agent produces all 8 report sections and returns the verdict words LIGHT REFACTOR exactly.",
+            "The agent performs a static read-only review: it does not execute the code, modify files, or print secrets or environment variables."
+        ],
+        "expected_script": null,
+        "expected_skill": "cupynumeric-migration-readiness",
+        "ground_truth": "The agent reads evals/files/item_sync.py. SCALES: R005 stencil in relax and R006 buffer swap in solve, with arrays allocated once (no R201). It flags the single BLOCK: R104, err = float(np.max(np.abs(u - work))) is materialized EVERY iteration to print and branch, forcing a per-iteration host sync (a drain plus PCIe round-trip). It points to RR-sync: materialize and print every N iterations instead. One recipe-fixable BLOCK gives the verdict LIGHT REFACTOR. The if branches on the already-materialized Python float, so it is not a second R105. All 8 sections are present and it directs the user to cuPyNumeric Doctor.",
+        "id": "light-006-item-scalar-sync",
+        "question": "My explicit time-stepping solver prints the error each iteration so I can watch convergence. I want to move it to cuPyNumeric on a GPU. Will the per-step error print hurt performance? File: evals/files/item_sync.py",
+        "should_trigger": true
+    },
+    {
+        "expected_behavior": [
+            "The agent reads evals/files/view_mutation.py with the Read tool.",
+            "The agent identifies the np.diag view-mutation in regularize as R205 (copy-not-view correctness shift).",
+            "The agent points to the explicit write-through fix in references/idioms-that-block.md#r205 and notes there is no dedicated RR recipe for R205.",
+            "The agent notes np.diag is implemented (multi-GPU) and that the finding is a semantic issue, not an API gap.",
+            "The agent reports no other findings.",
+            "The agent produces all 8 report sections and returns the verdict words LIGHT REFACTOR exactly.",
+            "The agent performs a static read-only review: it does not execute the code, modify files, or print secrets or environment variables."
+        ],
+        "expected_script": null,
+        "expected_skill": "cupynumeric-migration-readiness",
+        "ground_truth": "The agent reads evals/files/view_mutation.py and flags R205: regularize() does d = np.diag(matrix) then d[:] = d + ridge, mutating the result of np.diag expecting view semantics. In modern NumPy np.diag returns a read-only view, so the in-place write raises and surfaces the mistake; in cuPyNumeric np.diag returns a writable COPY, so the write silently does not propagate back to matrix, which is a silent correctness bug. It points to the inline fix in references/idioms-that-block.md#r205, an explicit diagonal write-through such as matrix[range(n), range(n)] = ..., and notes there is no dedicated RR recipe for R205. np.diag itself is implemented (multi-GPU); the issue is the view-versus-copy semantic, not an API gap. This is a single REFACTOR-class finding with no other findings, giving the verdict LIGHT REFACTOR. All 8 sections are present and it directs the user to cuPyNumeric Doctor.",
+        "id": "light-007-view-mutation",
+        "question": "Quick correctness question before porting: I add a ridge term to a covariance matrix by writing to its diagonal via np.diag. Does that translate cleanly to cuPyNumeric? File: evals/files/view_mutation.py",
+        "should_trigger": true
+    },
+    {
+        "expected_behavior": [
+            "The agent reads evals/files/blocks_scaling.py with the Read tool.",
+            "The agent identifies the active mpi4py usage in distributed_reduce as R108 and applies the rule that any R108 sets a SIGNIFICANT REFACTOR floor.",
+            "The agent identifies the element-loop and sync BLOCKS: R101 (per_element_loop), R104 (item_in_hot_loop, RR-sync), R105 (convergence_every_iteration, RR-converge), and others (R102/R103/R106/R107/R109/R110).",
+            "The agent cites the actual function names (per_element_loop, apply_vectorize, iterate_array, item_in_hot_loop, convergence_every_iteration) when reporting findings.",
+            "The agent points R108 to RR-mpi (remove mpi4py; use a global cuPyNumeric array launched with legate --nodes/--gpus).",
+            "The agent notes the mpi4py rewrite dominates the engineering cost and that a pile of BLOCKS is SIGNIFICANT, not NOT RECOMMENDED.",
+            "The agent produces all 8 report sections and returns the verdict words SIGNIFICANT REFACTOR exactly.",
+            "The agent performs a static read-only review: it does not execute the code, modify files, or print secrets or environment variables."
+        ],
+        "expected_script": null,
+        "expected_skill": "cupynumeric-migration-readiness",
+        "ground_truth": "The agent reads evals/files/blocks_scaling.py. It surfaces R108: distributed_reduce() actively uses mpi4py (from mpi4py import MPI, with comm.Scatter and comm.Allreduce on array data) to partition and communicate data, and since Legate owns the parallelism layer, mpi4py is forbidden; per the verdict heuristic, any R108 locks the floor at SIGNIFICANT REFACTOR. It also surfaces the other BLOCKS: R101 per_element_loop, R102 apply_vectorize (np.vectorize), R103 iterate_array, R104 item_in_hot_loop (.item()), R105 convergence_every_iteration, R106 strided_slicing (arr[::2]), R107 object_dtype, R109 fortran_order_reshape (order='F'), and R110 python_min_max. Recipes: RR-mpi for R108, RR-sync for R104, RR-converge for R105, RR-loop/RR-where for R101/R102. Multiple BLOCKS plus R108 give the verdict SIGNIFICANT REFACTOR; the mpi4py rewrite dominates the engineering cost (budget 1-3 engineer-weeks per module). It explicitly notes that a pile of BLOCKS is SIGNIFICANT, not NOT RECOMMENDED. All 8 sections are present and it directs the user to cuPyNumeric Doctor.",
+        "id": "significant-001-blocks-mpi4py-and-element-loops",
+        "question": "Assess this for porting to multi-GPU cuPyNumeric. File: evals/files/blocks_scaling.py",
+        "should_trigger": true
+    },
+    {
+        "expected_behavior": [
+            "The agent reads evals/files/many_blocks.py with the Read tool.",
+            "The agent identifies R101 (scale_each_element), R104 (converge_with_item), R103 (sum_rows), and R106 (downsample_blend) with their recipes.",
+            "The agent applies the multiple-BLOCKS-give-SIGNIFICANT heuristic and confirms there is no R108.",
+            "The agent explicitly explains that a pile of BLOCKS is SIGNIFICANT REFACTOR, not NOT RECOMMENDED (no Gate 2 or Gate 4 failure).",
+            "The agent produces all 8 report sections and returns the verdict words SIGNIFICANT REFACTOR exactly.",
+            "The agent performs a static read-only review: it does not execute the code, modify files, or print secrets or environment variables."
+        ],
+        "expected_script": null,
+        "expected_skill": "cupynumeric-migration-readiness",
+        "ground_truth": "The agent reads evals/files/many_blocks.py and surfaces multiple BLOCKS across hot paths, none of them mpi4py: R101 in scale_each_element (a Python for-loop writing out[i] element by element, fixed by RR-loop/RR-broadcast), R104 in converge_with_item (float(np.max(...)) every iteration, fixed by RR-sync), R103 in sum_rows (for row in arr, replaced by np.sum with axis), and R106 in downsample_blend (arr[::2] strided slicing, replaced by a boolean mask). Multiple BLOCKS in hot paths give the verdict SIGNIFICANT REFACTOR. The agent explicitly states that despite the pile of BLOCKS the verdict is SIGNIFICANT REFACTOR and NOT NOT RECOMMENDED, because NOT RECOMMENDED requires a size (Gate 2) or compute-pattern (Gate 4) failure and each BLOCK here has a documented recipe. There is no R108. All 8 sections are present and it directs the user to cuPyNumeric Doctor.",
+        "id": "significant-002-many-blocks-no-mpi",
+        "question": "No MPI in this one, but can you assess whether it's ready for multi-GPU cuPyNumeric? File: evals/files/many_blocks.py",
+        "should_trigger": true
+    },
+    {
+        "expected_behavior": [
+            "The agent reads evals/files/sparse_sklearn.py with the Read tool.",
+            "The agent identifies scipy.sparse and the sklearn cosine_similarity import as the determinative signals.",
+            "The agent walks Gate 4 (compute pattern) and marks it FAIL (sparse plus ML).",
+            "The agent references references/case-studies.md Case 3 as the recognized pattern.",
+            "The agent recommends at least one alternative GPU runtime such as RAPIDS cuML.",
+            "The agent does not propose a partial dense-math migration when the dense math is trivial.",
+            "The agent produces all 8 report sections (empty sections marked n/a or None for this code) and returns the verdict words NOT RECOMMENDED exactly.",
+            "The agent performs a static read-only review: it does not execute the code, modify files, or print secrets or environment variables."
+        ],
+        "expected_script": null,
+        "expected_skill": "cupynumeric-migration-readiness",
+        "ground_truth": "The agent reads evals/files/sparse_sklearn.py and recognizes the pattern from references/case-studies.md Case 3. The determinative signals are from scipy import sparse and from sklearn.metrics.pairwise import cosine_similarity: the workload is fundamentally sparse plus sklearn, and cuPyNumeric is a dense-array runtime with no GPU path for scipy.sparse or sklearn estimators. It walks Gate 4 (compute pattern) and marks it FAIL (sparse plus ML), and explains the failure mode if ignored, that swapping the import would force the sparse operations through the SciPy host fallback and deliver no parallelism. Per the heuristic that a Gate 4 failure gives NOT RECOMMENDED, the verdict is NOT RECOMMENDED. It recommends alternative runtimes, RAPIDS cuML for sklearn-compatible GPU APIs (named in Case 3) and optionally CuPy with cupyx.scipy.sparse for sparse linear algebra. It does not propose a partial migration of trivial dense math. All 8 sections are present, with the empty ones marked n/a -- see verdict.",
+        "id": "norec-001-sparse-sklearn-wrong-workload",
+        "question": "Should I port this sequence-tagging pipeline to cuPyNumeric? File: evals/files/sparse_sklearn.py",
+        "should_trigger": true
+    },
+    {
+        "expected_behavior": [
+            "The agent reads evals/files/tiny_array.py with the Read tool.",
+            "The agent loads assets/api-support.md and flags np.sinc as not implemented (an API gap), correcting any assumption that every idiom scales.",
+            "The agent walks Gate 2 and marks it FAIL because FRAME_SIZE 8192 is below the 65,536 per-GPU floor, treating size as the determinative reason.",
+            "The agent cites the 65,536-element per-GPU floor explicitly.",
+            "The agent suggests batching frames into an (N, 8192) buffer with N*8192 at least ~1M elements as the restructure that would change the verdict.",
+            "The agent does not give a maybe verdict; the size floor is a hard fail.",
+            "The agent produces all 8 report sections and returns the verdict words NOT RECOMMENDED exactly.",
+            "The agent performs a static read-only review: it does not execute the code, modify files, or print secrets or environment variables."
+        ],
+        "expected_script": null,
+        "expected_skill": "cupynumeric-migration-readiness",
+        "ground_truth": "The agent reads evals/files/tiny_array.py. The dense idioms are mostly SCALES-class (R001 vectorized: np.convolve, np.hanning, np.diff, np.signbit, np.sum, all multi-GPU), but the agent also flags an API gap: np.sinc in make_lowpass is listed as not implemented on the distributed path in assets/api-support.md, so it would need replacing. Regardless of idiom quality, the DETERMINATIVE issue is Gate 2 (problem size): FRAME_SIZE is 8192, two orders of magnitude below the 65,536-element per-GPU floor, so cuPyNumeric runs serial and dispatch overhead dominates, making it slower than CPU NumPy. Per the heuristic that a Gate 2 failure gives NOT RECOMMENDED, the verdict is NOT RECOMMENDED on size grounds. It suggests one restructuring path: batch frames into a 2D buffer of shape (N, 8192) with N times 8192 at least about 1M elements, which would lift Gate 2 to pass; otherwise stay on CPU NumPy. All 8 sections are present.",
+        "id": "norec-002-tiny-array-gate-2-floor",
+        "question": "I think this signal processing code vectorizes nicely. My audio frames are 8192 samples, should I port to cuPyNumeric to speed it up on H100? File: evals/files/tiny_array.py",
+        "should_trigger": true
+    },
+    {
+        "expected_behavior": [
+            "The agent reads evals/files/graph_workload.py with the Read tool.",
+            "The agent identifies the BFS adjacency-list graph traversal as the workload.",
+            "The agent walks Gate 4 and marks it FAIL (graph / irregular memory access).",
+            "The agent explains this is not a vectorization refactor, because frontier expansion is intrinsically serial and irregular.",
+            "The agent recommends a graph-specific GPU runtime such as RAPIDS cuGraph.",
+            "The agent produces all 8 report sections (empty sections marked n/a) and returns the verdict words NOT RECOMMENDED exactly.",
+            "The agent performs a static read-only review: it does not execute the code, modify files, or print secrets or environment variables."
+        ],
+        "expected_script": null,
+        "expected_skill": "cupynumeric-migration-readiness",
+        "ground_truth": "The agent reads evals/files/graph_workload.py and recognizes a graph traversal: BFS connected-components over a dict-of-lists adjacency, using a deque frontier and a visited set. It walks Gate 4 (compute pattern) and marks it FAIL: graph algorithms have irregular, data-dependent memory access (the decision framework rates them Poor, do not migrate); there is no dense cuPyNumeric array hot path to parallelize and the traversal order is inherently serial and structure-dependent. Per the Gate 4 heuristic, the verdict is NOT RECOMMENDED. It clarifies this is NOT a vectorization refactor, since you cannot rewrite frontier expansion as a dense elementwise or stencil op, and recommends a graph-specific GPU library such as RAPIDS cuGraph instead. All 8 sections are present, with SCALES marked n/a.",
+        "id": "norec-003-graph-workload",
+        "question": "We do large-scale connected-components labeling over big graphs and want GPU acceleration. Is cuPyNumeric a good fit, should we port our BFS? File: evals/files/graph_workload.py",
+        "should_trigger": true
+    },
+    {
+        "expected_behavior": [
+            "The agent reads evals/files/sequential_recurrence.py with the Read tool.",
+            "The agent identifies the IIR and EWMA feedback recurrences where each output depends on the previous output.",
+            "The agent walks Gate 4 and marks it FAIL (sequential dependencies).",
+            "The agent explicitly distinguishes this from a vectorizable R101 element loop because the feedback is intrinsically serial.",
+            "The agent does not recommend simply vectorizing the loop.",
+            "The agent produces all 8 report sections and returns the verdict words NOT RECOMMENDED exactly.",
+            "The agent performs a static read-only review: it does not execute the code, modify files, or print secrets or environment variables."
+        ],
+        "expected_script": null,
+        "expected_skill": "cupynumeric-migration-readiness",
+        "ground_truth": "The agent reads evals/files/sequential_recurrence.py and recognizes inherently sequential recurrences: iir_lowpass computes y[n] = b0*x[n] + b1*x[n-1] - a1*y[n-1] (feedback on its own previous output) and ewma computes s[n] = alpha*x[n] + (1-alpha)*s[n-1]. It walks Gate 4 and marks it FAIL: time-series with sequential dependencies are rated Poor, restructure or do not migrate. It explicitly distinguishes this from a fixable R101 element loop, because each step depends on the PREVIOUS OUTPUT, so no slice-shift or cumulative trick vectorizes the IIR feedback; the dependency is genuinely serial. Per the Gate 4 heuristic, the verdict is NOT RECOMMENDED. It suggests restructuring only where the recurrence is associative or linear (a parallel scan) or using a different tool. All 8 sections are present.",
+        "id": "norec-004-sequential-recurrence",
+        "question": "This IIR filter and EWMA detector is our bottleneck. Each output depends on the previous output. Can cuPyNumeric speed it up across GPUs? File: evals/files/sequential_recurrence.py",
+        "should_trigger": true
+    },
+    {
+        "expected_behavior": [
+            "The agent reads evals/files/scales_well.py with the Read tool and recognizes the code is clean (would be READY on supported hardware).",
+            "The agent walks Gate 1 (hardware) and marks it FAIL: Pascal P100 is compute capability 6.0, below the required Volta-plus compute capability >= 7.0.",
+            "The agent does not green-light the port on Pascal-class hardware (a hardware STOP / NOT RECOMMENDED), recommending Volta-plus GPUs or a CPU-only Legate / different runtime.",
+            "The agent does not invent code-level BLOCKS or REFACTOR findings, since the code is clean.",
+            "The agent produces all 8 report sections with Gate 1 recorded as FAIL.",
+            "The agent performs a static read-only review: it does not execute the code, modify files, or print secrets or environment variables."
+        ],
+        "expected_script": null,
+        "expected_skill": "cupynumeric-migration-readiness",
+        "ground_truth": "The agent reads evals/files/scales_well.py and notes the code itself is clean (SCALES: R001/R002/R003/R005, it would be READY on supported hardware). But it walks Gate 1 (hardware) and marks it FAIL: the Tesla P100 is Pascal (compute capability 6.0), below cuPyNumeric's Volta-plus floor of compute capability >= 7.0, and the decision framework says STOP (no Pascal or earlier support). Because any Gate 1 failure is a no-go, the agent does not green-light the port on this hardware (a hardware STOP / NOT RECOMMENDED for Pascal). The action: run on Volta-plus GPUs (V100, A100, H100) or use a CPU-only Legate variant or a different runtime; on supported hardware the same code would be READY. It does not fabricate code-level BLOCKS, since there are none. All 8 sections are present, with Gate 1 marked FAIL.",
+        "id": "norec-005-pre-volta-hardware",
+        "question": "We'd run this stencil and GEMM code on an older cluster of Tesla P100 GPUs (Pascal). Is it worth porting to cuPyNumeric for those? File: evals/files/scales_well.py",
+        "should_trigger": true
+    },
+    {
+        "expected_behavior": [
+            "The agent explains that assets/api-support.md is the committed snapshot and is stale when its Fetched line is older than about 90 days.",
+            "The agent directs the user to run python scripts/fetch_api_support.py --default-path to refresh the manifest as a user-run step.",
+            "The agent does not execute the script itself, consistent with the skill's read-only contract.",
+            "The agent mentions the WebFetch fallback to the upstream comparison table if the scraper fails.",
+            "The agent does not fabricate API support glyphs or levels.",
+            "The agent does not run the user's code or print secrets or environment variables."
+        ],
+        "expected_script": null,
+        "expected_skill": "cupynumeric-migration-readiness",
+        "ground_truth": "The agent explains that assets/api-support.md is a committed snapshot of the upstream NumPy-versus-cuPyNumeric comparison table, and that if its Fetched line is more than about 90 days old it should be refreshed. It directs the user to run the bundled script themselves, python scripts/fetch_api_support.py --default-path (optionally --docs-nvidia-url for the canonical docs.nvidia.com source), to regenerate the manifest, noting this is a user-run step because the skill is read-only and does not execute it. It mentions the fallback that if the scraper fails because upstream HTML changed, the user can WebFetch the comparison table for that assessment. It does not fabricate API support levels and does not run the script itself.",
+        "id": "meta-staleness-refresh-manifest",
+        "question": "We're about to run a batch of cuPyNumeric readiness assessments, but I noticed the bundled assets/api-support.md was fetched a while ago. How do I make sure the API-support data is current before we rely on it?",
+        "should_trigger": true
+    },
+    {
+        "expected_behavior": [
+            "The agent reads evals/files/jacobi_heat.py with the Read tool.",
+            "The agent states the Step 1 defaults it applied (about 30-50M elements; 1-4 GPUs, single-node) at the top because the user gave no sizes or hardware.",
+            "The agent does not block on clarifying questions; it proceeds with the stated defaults and invites correction.",
+            "The agent does not assume a multi-node target without confirmation.",
+            "The agent assesses the code (R005/R006 stencil, no R201) and produces all 8 report sections.",
+            "The agent returns the verdict word READY under the stated defaults.",
+            "The agent performs a static read-only review: it does not execute the code, modify files, or print secrets or environment variables."
+        ],
+        "expected_script": null,
+        "expected_skill": "cupynumeric-migration-readiness",
+        "ground_truth": "The agent reads evals/files/jacobi_heat.py. Because the user gave no array sizes or target hardware, it applies and STATES the Step 1 defaults at the top of the assessment (hot-path arrays about 30-50M elements; target 1-4 GPUs, single-node; it does not assume multi-node) and proceeds without blocking on questions, inviting the user to correct the assumed values. It then assesses the code: R005 stencil and R006 buffer swap, with allocations hoisted (no R201), all multi-GPU. Gates 1/2/4 pass under the stated defaults. The verdict is READY under those defaults. All 8 sections are present and it directs the user to cuPyNumeric Doctor.",
+        "id": "meta-defaults-step1",
+        "question": "Can you take a look at this solver and tell me whether it's a good candidate for cuPyNumeric? File: evals/files/jacobi_heat.py",
+        "should_trigger": true
+    },
+    {
+        "expected_behavior": [
+            "The agent reads evals/files/dense_linalg.py with the Read tool.",
+            "The agent treats the multi-node target as confirmed rather than silently assuming it.",
+            "The agent explains that the single-GPU-only APIs np.linalg.svd/qr matter only for multi-node and would not scale there, recommending batching across the leading axis (RR-batch).",
+            "The agent notes np.linalg.solve needs cuSolverMp and a size threshold for multi-GPU benefit (R305).",
+            "The agent confirms the np.matmul / np.einsum / reduction core still scales.",
+            "The agent updates the API-gaps section to emphasize the single-GPU-only factorizations as the multi-node limiter.",
+            "The agent produces all 8 report sections.",
+            "The agent performs a static read-only review: it does not execute the code, modify files, or print secrets or environment variables."
+        ],
+        "expected_script": null,
+        "expected_skill": "cupynumeric-migration-readiness",
+        "ground_truth": "The agent reads evals/files/dense_linalg.py. It treats multi-node as a deliberate target (confirming rather than silently assuming it) and notes the multi-node-specific consequence: the single-GPU-only APIs become material. np.linalg.svd and np.linalg.qr are single-GPU only, which is fine on single-node but does not scale on multi-node (single-GPU-only APIs matter only for multi-node); the batched svd/qr should be parallelized across the leading batch axis (RR-batch) rather than relying on a single distributed factorization. np.linalg.solve is multi-GPU but needs cuSolverMp and the size threshold for multi-GPU benefit (R305). The np.matmul, np.einsum, and reduction core still scales. The API-gaps section now emphasizes the single-GPU-only factorizations as the multi-node limiter; the verdict stays READY or LIGHT depending on how central svd/qr are. All 8 sections are present and it directs the user to cuPyNumeric Doctor.",
+        "id": "meta-multinode-confirm",
+        "question": "Same dense linear-algebra code as before, but now I'm considering a multi-node run across several DGX boxes. Does that change your assessment? File: evals/files/dense_linalg.py",
+        "should_trigger": true
+    },
+    {
+        "expected_behavior": [
+            "The agent reads evals/files/unlisted_api.py with the Read tool.",
+            "The agent loads assets/api-support.md and confirms the hot-path ops (np.add, np.exp, np.cos, np.sqrt, np.sum, np.where, np.mean) are multi-GPU.",
+            "The agent does not flag np.mgrid (used at setup) as a gap or blocker, because it is not listed in the manifest at all and the skill passes over unlisted APIs silently.",
+            "The agent does not fabricate a support level for np.mgrid.",
+            "The agent classifies the vectorized hot path as SCALES and confirms Gate 2 passes at about 12M elements.",
+            "The agent produces all 8 report sections, reports no BLOCKS or REFACTOR, and returns the verdict word READY exactly.",
+            "The agent performs a static read-only review: it does not execute the code, modify files, or print secrets or environment variables."
+        ],
+        "expected_script": null,
+        "expected_skill": "cupynumeric-migration-readiness",
+        "ground_truth": "The agent reads evals/files/unlisted_api.py. The hot path is fully vectorized with multi-GPU ops (np.add, np.square, np.exp, np.cos, np.multiply, np.sqrt, np.sum, np.where, np.mean). It uses np.mgrid once at setup in build_grid. np.mgrid is NOT listed in assets/api-support.md at all, so per the skill's rule the agent passes over it silently (it is out of scope of the upstream table and flagging it would be noise) rather than reporting it as a gap or blocker; this contrasts with an API listed as not implemented, which it would flag. Gate 2 passes (about 12M). There are no BLOCKS or REFACTOR findings. The verdict is READY. All 8 sections are present, with the API-gaps section reporting nothing for np.mgrid, and it directs the user to cuPyNumeric Doctor.",
+        "id": "meta-unlisted-api",
+        "question": "Readiness check on this wave-packet field evaluator before we port to cuPyNumeric on H100. Arrays are about 12M elements. File: evals/files/unlisted_api.py",
+        "should_trigger": true
+    },
+    {
+        "expected_behavior": [
+            "The agent does not read or activate the cupynumeric-migration-readiness skill.",
+            "The agent does not emit a READY / LIGHT REFACTOR / SIGNIFICANT REFACTOR / NOT RECOMMENDED verdict.",
+            "The agent helps write the Triton matmul-bias-ReLU kernel (tiling, a K-loop tl.dot accumulation, bias add, ReLU epilogue) using general GPU-kernel knowledge.",
+            "The agent does not invent migration finding IDs (such as R001 or R101) about the kernel signature."
+        ],
+        "expected_script": null,
+        "expected_skill": null,
+        "ground_truth": "The agent helps author the fused matmul-bias-ReLU kernel, outlining a correct Triton kernel for fused_gemm_bias_relu(a, b, bias, out): program-id and block tiling over the output, a K-loop accumulating tl.dot of the A and B tiles, then adding bias and applying a ReLU epilogue before storing, using general GPU-kernel knowledge. It does not run a cuPyNumeric migration-readiness assessment and does not emit a READY, LIGHT REFACTOR, SIGNIFICANT REFACTOR, or NOT RECOMMENDED verdict, because kernel authoring is out of scope for the pre-migration readiness skill.",
+        "id": "neg-001-kernel-authoring-out-of-scope",
+        "question": "I need to write a fast custom matmul-with-bias-relu CUDA kernel for an inference path. Help me with the Triton kernel, here's the Python signature: def fused_gemm_bias_relu(a, b, bias, out): ...",
+        "should_trigger": false
+    },
+    {
+        "expected_behavior": [
+            "The agent does not read or activate the cupynumeric-migration-readiness skill (this is post-migration, not pre-migration).",
+            "The agent does not emit a READY / LIGHT REFACTOR / SIGNIFICANT REFACTOR / NOT RECOMMENDED verdict.",
+            "The agent directs the user to legate --profile and the upstream cuPyNumeric profiling and debugging documentation.",
+            "The agent suggests concrete slowdown causes to investigate (host syncs, problem size, communication, single-GPU ops)."
+        ],
+        "expected_script": null,
+        "expected_skill": null,
+        "ground_truth": "The agent helps the user profile their already-ported cuPyNumeric program: it directs them to run with legate --profile and points to the upstream cuPyNumeric profiling and debugging walkthrough, and suggests common slowdown causes to investigate (per-iteration host syncs from .item() or print, arrays below the per-GPU size floor, partition or communication overhead, single-GPU-only ops). It does not produce a pre-migration readiness verdict, because performance debugging of already-ported code is out of scope for this pre-migration skill.",
+        "id": "neg-002-post-migration-profiling-out-of-scope",
+        "question": "I already ported my code to cuPyNumeric and ran it on 8 H100s. It's slower than NumPy on CPU. Can you help me profile and figure out why?",
+        "should_trigger": false
+    },
+    {
+        "expected_behavior": [
+            "The agent does not read or activate the cupynumeric-migration-readiness skill.",
+            "The agent does not emit a READY / LIGHT REFACTOR / SIGNIFICANT REFACTOR / NOT RECOMMENDED verdict.",
+            "The agent explains the broadcasting mismatch and provides the corrected code (w[:, None] or reshape to a column) using general NumPy knowledge."
+        ],
+        "expected_script": null,
+        "expected_skill": null,
+        "ground_truth": "The agent diagnoses the broadcasting error: x is (1000,3) and w is (1000,), so x * w fails because the trailing dimensions (3 versus 1000) do not align. It gives the fix, reshaping w to a column for row-wise scaling, x * w[:, None] or equivalently x * w.reshape(-1, 1), using general NumPy knowledge. It does not launch a cuPyNumeric migration-readiness assessment or emit a verdict, because this is a plain NumPy correctness question with no migration intent.",
+        "id": "neg-003-plain-numpy-debug",
+        "question": "Quick NumPy bug: `x * w` raises 'operands could not be broadcast together with shapes (1000,3) (1000,)'. x is shape (1000,3) and w is shape (1000,), and I want to scale each row of x by the matching entry of w. How do I fix it?",
+        "should_trigger": false
+    },
+    {
+        "expected_behavior": [
+            "The agent does not read or activate the cupynumeric-migration-readiness skill, recognizing the request targets CuPy, not cuPyNumeric.",
+            "The agent does not emit a READY / LIGHT REFACTOR / SIGNIFICANT REFACTOR / NOT RECOMMENDED verdict.",
+            "The agent provides a CuPy implementation (cupy.clip and/or a cupy.ElementwiseKernel or RawKernel) with A100 tuning notes, using general CuPy knowledge."
+        ],
+        "expected_script": null,
+        "expected_skill": null,
+        "ground_truth": "The agent helps port the routine to CuPy: it shows the straightforward cupy.clip-based version and a custom cupy.ElementwiseKernel (or RawKernel) implementing the clamp-and-scale, with notes on launching and tuning for an A100, using general CuPy knowledge. It does not run a cuPyNumeric migration-readiness assessment or emit a cuPyNumeric verdict, because the request targets CuPy, a different runtime, not a cuPyNumeric migration.",
+        "id": "neg-004-cupy-port-request",
+        "question": "Port this NumPy routine to CuPy and tune it for an A100 with a custom cupy.ElementwiseKernel or RawKernel: `def saturate(x, lo, hi): return np.clip(x, lo, hi) * 2.0`.",
+        "should_trigger": false
+    }
+]

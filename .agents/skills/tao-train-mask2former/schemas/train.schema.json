@@ -1,0 +1,2148 @@
+{
+  "automl_default_parameters": [
+    "dataset.augmentation.test_min_size",
+    "model.mask_former.hidden_dim",
+    "dataset.augmentation.test_max_size",
+    "model.mask_former.num_object_queries",
+    "train.optim.weight_decay",
+    "train.optim.backbone_multiplier",
+    "model.mask_former.dec_layers",
+    "dataset.augmentation.train_max_size",
+    "train.optim.momentum",
+    "train.optim.lr"
+  ],
+  "automl_disabled_parameters": [
+    "quantize",
+    "train.cudnn",
+    "model.backbone.swin.out_features",
+    "quantize.backend_kwargs",
+    "train.gpu_ids",
+    "model.backbone.swin.depths",
+    "wandb.tags",
+    "model.sem_seg_head",
+    "model.backbone.swin.num_heads",
+    "model.backbone",
+    "model.backbone.swin.out_indices",
+    "quantize.skip_names",
+    "dataset.pixel_mean",
+    "dataset.val.target_size",
+    "train.optim.milestones",
+    "evaluate",
+    "inference",
+    "train",
+    "dataset.augmentation",
+    "dataset.augmentation.train_crop_size",
+    "gen_trt_engine",
+    "gen_trt_engine.tensorrt.layers_precision",
+    "model.backbone.efficientvit.out_indices",
+    "dataset",
+    "gen_trt_engine.tensorrt",
+    "dataset.pixel_std",
+    "quantize.layers",
+    "dataset.quant_calibration_dataset",
+    "model.backbone.efficientvit.out_features",
+    "model.sem_seg_head.deformable_transformer_encoder_in_features",
+    "dataset.train",
+    "model",
+    "train.freeze",
+    "dataset.test.target_size",
+    "model.backbone.efficientvit",
+    "evaluate.gpu_ids",
+    "dataset.augmentation.train_min_size",
+    "model.mask_former",
+    "train.optim",
+    "dataset.val",
+    "dataset.train.target_size",
+    "model.backbone.swin",
+    "export",
+    "wandb",
+    "inference.gpu_ids",
+    "dataset.test"
+  ],
+  "default": {
+    "dataset": {
+      "augmentation": {
+        "test_max_size": 640,
+        "test_min_size": 640,
+        "train_crop_size": [
+          640,
+          640
+        ],
+        "train_max_size": 2560,
+        "train_min_size": [
+          640
+        ]
+      },
+      "contiguous_id": false,
+      "label_map": "",
+      "pin_memory": true,
+      "pixel_mean": [
+        0.485,
+        0.456,
+        0.406
+      ],
+      "pixel_std": [
+        0.229,
+        0.224,
+        0.225
+      ],
+      "quant_calibration_dataset": {
+        "images_dir": ""
+      },
+      "test": {
+        "annot_file": "",
+        "batch_size": 1,
+        "img_dir": "",
+        "instance_json": "",
+        "name": "",
+        "num_workers": 1,
+        "panoptic_dir": "",
+        "panoptic_json": "",
+        "root_dir": "",
+        "target_size": [],
+        "type": "ade"
+      },
+      "train": {
+        "annot_file": "",
+        "batch_size": 1,
+        "img_dir": "",
+        "instance_json": "",
+        "name": "",
+        "num_workers": 1,
+        "panoptic_dir": "",
+        "panoptic_json": "",
+        "root_dir": "",
+        "target_size": [],
+        "type": "ade"
+      },
+      "val": {
+        "annot_file": "",
+        "batch_size": 1,
+        "img_dir": "",
+        "instance_json": "",
+        "name": "",
+        "num_workers": 1,
+        "panoptic_dir": "",
+        "panoptic_json": "",
+        "root_dir": "",
+        "target_size": [],
+        "type": "ade"
+      }
+    },
+    "encryption_key": "",
+    "model": {
+      "backbone": {
+        "efficientvit": {
+          "name": "l0",
+          "out_features": [
+            "res2",
+            "res3",
+            "res4",
+            "res5"
+          ],
+          "out_indices": [
+            1,
+            2,
+            3
+          ],
+          "pretrain_img_size": 384,
+          "use_checkpoint": false
+        },
+        "pretrained_weights": "",
+        "swin": {
+          "ape": false,
+          "attn_drop_rate": 0.0,
+          "depths": [
+            2,
+            2,
+            6,
+            2
+          ],
+          "drop_path_rate": 0.3,
+          "drop_rate": 0.0,
+          "embed_dim": 96,
+          "mlp_ratio": 4.0,
+          "num_heads": [
+            3,
+            6,
+            12,
+            24
+          ],
+          "out_features": [
+            "res2",
+            "res3",
+            "res4",
+            "res5"
+          ],
+          "out_indices": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "patch_norm": true,
+          "patch_size": 4,
+          "pretrain_img_size": 384,
+          "qkv_bias": true,
+          "type": "tiny",
+          "use_checkpoint": false,
+          "window_size": 7
+        },
+        "type": "swin"
+      },
+      "export": false,
+      "mask_former": {
+        "class_weight": 2.0,
+        "dec_layers": 10,
+        "deep_supervision": true,
+        "dice_weight": 5.0,
+        "dim_feedforward": 2048,
+        "dropout": 0.0,
+        "hidden_dim": 256,
+        "importance_sample_ratio": 0.75,
+        "mask_weight": 5.0,
+        "nheads": 8,
+        "no_object_weight": 0.1,
+        "num_object_queries": 100,
+        "oversample_ratio": 3.0,
+        "pre_norm": false,
+        "train_num_points": 12544
+      },
+      "mode": "panoptic",
+      "object_mask_threshold": 0.4,
+      "overlap_threshold": 0.5,
+      "sem_seg_head": {
+        "common_stride": 4,
+        "convs_dim": 256,
+        "deformable_transformer_encoder_in_features": [
+          "res3",
+          "res4",
+          "res5"
+        ],
+        "mask_dim": 256,
+        "norm": "GN",
+        "num_classes": 200,
+        "transformer_enc_layers": 6
+      },
+      "test_topk_per_image": 100
+    },
+    "model_name": "",
+    "quantize": {
+      "algorithm": "minmax",
+      "backend": "torchao",
+      "backend_kwargs": {},
+      "device": "cuda",
+      "layers": [],
+      "mode": "weight_only_ptq",
+      "model_path": "",
+      "results_dir": "",
+      "skip_names": []
+    },
+    "results_dir": "",
+    "train": {
+      "activation_checkpoint": false,
+      "checkpoint_interval": 1,
+      "checkpoint_interval_unit": "epoch",
+      "clip_grad_norm": 0.1,
+      "clip_grad_type": "full",
+      "cudnn": {
+        "benchmark": false,
+        "deterministic": true
+      },
+      "distributed_strategy": "ddp",
+      "freeze": [],
+      "gpu_ids": [
+        0
+      ],
+      "is_dry_run": false,
+      "num_epochs": 10,
+      "num_gpus": 1,
+      "num_nodes": 1,
+      "optim": {
+        "backbone_multiplier": 0.1,
+        "gamma": 0.1,
+        "lr": 0.0002,
+        "lr_scheduler": "MultiStep",
+        "milestones": [
+          88,
+          96
+        ],
+        "momentum": 0.9,
+        "monitor_name": "train_loss",
+        "type": "AdamW",
+        "weight_decay": 0.05
+      },
+      "precision": "fp32",
+      "pretrained_model_path": "",
+      "results_dir": "",
+      "resume_training_checkpoint_path": "",
+      "seed": 1234,
+      "use_distributed_sampler": false,
+      "validation_interval": 1
+    },
+    "wandb": {
+      "enable": true,
+      "entity": "",
+      "group": "",
+      "name": "TAO Toolkit Training",
+      "project": "TAO Toolkit",
+      "reinit": false,
+      "run_id": "",
+      "save_code": false,
+      "sync_tensorboard": false,
+      "tags": [
+        "tao-toolkit"
+      ]
+    }
+  },
+  "popular": {
+    "evaluate": {
+      "gpu_ids": [
+        0
+      ],
+      "num_gpus": 1,
+      "num_nodes": 1
+    },
+    "gen_trt_engine": {
+      "batch_size": -1,
+      "gpu_id": 0,
+      "tensorrt": {
+        "max_batch_size": 1,
+        "min_batch_size": 1,
+        "opt_batch_size": 1
+      }
+    },
+    "inference": {
+      "gpu_ids": [
+        0
+      ],
+      "num_gpus": 1,
+      "num_nodes": 1
+    },
+    "model": {
+      "mask_former": {
+        "class_weight": 2.0,
+        "dice_weight": 5.0,
+        "hidden_dim": 256,
+        "importance_sample_ratio": 0.75,
+        "mask_weight": 5.0,
+        "nheads": 8,
+        "num_object_queries": 100
+      },
+      "sem_seg_head": {
+        "convs_dim": 256,
+        "mask_dim": 256,
+        "transformer_enc_layers": 6
+      }
+    },
+    "train": {
+      "checkpoint_interval": 1,
+      "gpu_ids": [
+        0
+      ],
+      "num_epochs": 10,
+      "num_gpus": 1,
+      "num_nodes": 1,
+      "optim": {
+        "backbone_multiplier": 0.1,
+        "momentum": 0.9,
+        "weight_decay": 0.05
+      },
+      "validation_interval": 1
+    }
+  },
+  "properties": {
+    "automl_disabled_parameters": [
+      "wandb",
+      "model",
+      "dataset",
+      "train",
+      "inference",
+      "evaluate",
+      "export",
+      "gen_trt_engine",
+      "quantize"
+    ],
+    "dataset": {
+      "automl_disabled_parameters": [
+        "dataset.train",
+        "dataset.val",
+        "dataset.test",
+        "dataset.pixel_mean",
+        "dataset.pixel_std",
+        "dataset.augmentation",
+        "dataset.quant_calibration_dataset"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "augmentation": {
+          "test_max_size": 640,
+          "test_min_size": 640,
+          "train_crop_size": [
+            640,
+            640
+          ],
+          "train_max_size": 2560,
+          "train_min_size": [
+            640
+          ]
+        },
+        "contiguous_id": false,
+        "label_map": "",
+        "pin_memory": true,
+        "pixel_mean": [
+          0.485,
+          0.456,
+          0.406
+        ],
+        "pixel_std": [
+          0.229,
+          0.224,
+          0.225
+        ],
+        "quant_calibration_dataset": {
+          "images_dir": ""
+        },
+        "test": {
+          "annot_file": "",
+          "batch_size": 1,
+          "img_dir": "",
+          "instance_json": "",
+          "name": "",
+          "num_workers": 1,
+          "panoptic_dir": "",
+          "panoptic_json": "",
+          "root_dir": "",
+          "target_size": [],
+          "type": "ade"
+        },
+        "train": {
+          "annot_file": "",
+          "batch_size": 1,
+          "img_dir": "",
+          "instance_json": "",
+          "name": "",
+          "num_workers": 1,
+          "panoptic_dir": "",
+          "panoptic_json": "",
+          "root_dir": "",
+          "target_size": [],
+          "type": "ade"
+        },
+        "val": {
+          "annot_file": "",
+          "batch_size": 1,
+          "img_dir": "",
+          "instance_json": "",
+          "name": "",
+          "num_workers": 1,
+          "panoptic_dir": "",
+          "panoptic_json": "",
+          "root_dir": "",
+          "target_size": [],
+          "type": "ade"
+        }
+      },
+      "description": "Configurable parameters to construct the dataset for a Mask2former experiment.",
+      "properties": {
+        "augmentation": {
+          "automl_default_parameters": [
+            "dataset.augmentation.train_max_size",
+            "dataset.augmentation.test_min_size",
+            "dataset.augmentation.test_max_size"
+          ],
+          "automl_disabled_parameters": [
+            "dataset.augmentation.train_min_size",
+            "dataset.augmentation.train_crop_size"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "test_max_size": 640,
+            "test_min_size": 640,
+            "train_crop_size": [
+              640,
+              640
+            ],
+            "train_max_size": 2560,
+            "train_min_size": [
+              640
+            ]
+          },
+          "description": "Configuration parameters for data augmentation",
+          "properties": {
+            "test_max_size": {
+              "automl_enabled": true,
+              "default": 640,
+              "description": "The maximum resize size for test",
+              "maximum": Infinity,
+              "minimum": 32,
+              "title": "Test max size",
+              "type": "int"
+            },
+            "test_min_size": {
+              "automl_enabled": true,
+              "default": 640,
+              "description": "The minimum resize size for test data",
+              "maximum": Infinity,
+              "minimum": 32,
+              "title": "Test min size",
+              "type": "int"
+            },
+            "train_crop_size": {
+              "automl_enabled": false,
+              "default": [
+                640,
+                640
+              ],
+              "description": "The random crop size for training data in [H, W]",
+              "title": "Train crop size",
+              "type": "list"
+            },
+            "train_max_size": {
+              "automl_enabled": true,
+              "default": 2560,
+              "description": "The maximum random crop size for training data",
+              "maximum": Infinity,
+              "minimum": 32,
+              "title": "Train max size",
+              "type": "int"
+            },
+            "train_min_size": {
+              "automl_enabled": false,
+              "default": [
+                640
+              ],
+              "description": "A list of sizes to perform random resize.",
+              "title": "Train min size",
+              "type": "list"
+            }
+          },
+          "type": "collection"
+        },
+        "contiguous_id": {
+          "default": false,
+          "description": "Flag to enable contiguous ids for labels.",
+          "title": "contiguous id",
+          "type": "bool"
+        },
+        "label_map": {
+          "default": "",
+          "description": "A path to label map file",
+          "title": "label map",
+          "type": "string"
+        },
+        "pin_memory": {
+          "default": true,
+          "description": "Flag to enable the dataloader to allocate pagelocked memory for faster\n                    of data between the CPU and GPU.",
+          "title": "pin_memory",
+          "type": "bool"
+        },
+        "pixel_mean": {
+          "automl_enabled": false,
+          "default": [
+            0.485,
+            0.456,
+            0.406
+          ],
+          "description": "The input mean for RGB frames",
+          "title": "input mean per pixel",
+          "type": "list"
+        },
+        "pixel_std": {
+          "automl_enabled": false,
+          "default": [
+            0.229,
+            0.224,
+            0.225
+          ],
+          "description": "The input standard deviation per pixel for RGB frames",
+          "title": "input std per pixel",
+          "type": "list"
+        },
+        "quant_calibration_dataset": {
+          "automl_enabled": false,
+          "default": {
+            "images_dir": ""
+          },
+          "description": "Configurable parameters for the quantization calibration dataset.",
+          "properties": {
+            "images_dir": {
+              "default": "",
+              "description": "Path to images directory for quantization calibration",
+              "title": "images directory",
+              "type": "string"
+            }
+          },
+          "type": "collection"
+        },
+        "test": {
+          "automl_disabled_parameters": [
+            "dataset.test.target_size"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "annot_file": "",
+            "batch_size": 1,
+            "img_dir": "",
+            "instance_json": "",
+            "name": "",
+            "num_workers": 1,
+            "panoptic_dir": "",
+            "panoptic_json": "",
+            "root_dir": "",
+            "target_size": [],
+            "type": "ade"
+          },
+          "description": "Configurable parameters to construct the test dataset.",
+          "properties": {
+            "annot_file": {
+              "default": "",
+              "description": "JSON file in JSONL format for image/mask pair",
+              "title": "Annotatioin file for semantic data",
+              "type": "string"
+            },
+            "batch_size": {
+              "default": 1,
+              "description": "Batch size",
+              "math_cond": ">0",
+              "maximum": Infinity,
+              "minimum": 1,
+              "title": "batch size",
+              "type": "int"
+            },
+            "img_dir": {
+              "default": "",
+              "description": "Image directory (can be relative path to root_dir)",
+              "title": "Raw image directory",
+              "type": "string"
+            },
+            "instance_json": {
+              "default": "",
+              "description": "JSON file in COCO format",
+              "title": "COCO Instance JSON",
+              "type": "string"
+            },
+            "name": {
+              "default": "",
+              "description": "Dataset name",
+              "title": "Dataset name",
+              "type": "string"
+            },
+            "num_workers": {
+              "default": 1,
+              "description": "Number of workers",
+              "maximum": Infinity,
+              "minimum": 0,
+              "title": "Number of workers",
+              "type": "int"
+            },
+            "panoptic_dir": {
+              "default": "",
+              "description": "Directory of panoptic segmentation annotation images",
+              "title": "Panoptic image directory",
+              "type": "string"
+            },
+            "panoptic_json": {
+              "default": "",
+              "description": "JSON file in COCO panoptic format",
+              "title": "COCO Panoptic JSON",
+              "type": "string"
+            },
+            "root_dir": {
+              "default": "",
+              "description": "Root image directory",
+              "title": "Root image directory",
+              "type": "string"
+            },
+            "target_size": {
+              "automl_enabled": false,
+              "default": [],
+              "description": "Target size for resizing.",
+              "title": "Target size",
+              "type": "list"
+            },
+            "type": {
+              "default": "ade",
+              "description": "Dataset type",
+              "enum": [
+                "coco",
+                "ade",
+                "coco_panoptic"
+              ],
+              "type": "categorical"
+            }
+          },
+          "type": "collection"
+        },
+        "train": {
+          "automl_disabled_parameters": [
+            "dataset.train.target_size"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "annot_file": "",
+            "batch_size": 1,
+            "img_dir": "",
+            "instance_json": "",
+            "name": "",
+            "num_workers": 1,
+            "panoptic_dir": "",
+            "panoptic_json": "",
+            "root_dir": "",
+            "target_size": [],
+            "type": "ade"
+          },
+          "description": "Configurable parameters to construct the train dataset.",
+          "properties": {
+            "annot_file": {
+              "default": "",
+              "description": "JSON file in JSONL format for image/mask pair",
+              "title": "Annotatioin file for semantic data",
+              "type": "string"
+            },
+            "batch_size": {
+              "default": 1,
+              "description": "Batch size",
+              "math_cond": ">0",
+              "maximum": Infinity,
+              "minimum": 1,
+              "title": "batch size",
+              "type": "int"
+            },
+            "img_dir": {
+              "default": "",
+              "description": "Image directory (can be relative path to root_dir)",
+              "title": "Raw image directory",
+              "type": "string"
+            },
+            "instance_json": {
+              "default": "",
+              "description": "JSON file in COCO format",
+              "title": "COCO Instance JSON",
+              "type": "string"
+            },
+            "name": {
+              "default": "",
+              "description": "Dataset name",
+              "title": "Dataset name",
+              "type": "string"
+            },
+            "num_workers": {
+              "default": 1,
+              "description": "Number of workers",
+              "maximum": Infinity,
+              "minimum": 0,
+              "title": "Number of workers",
+              "type": "int"
+            },
+            "panoptic_dir": {
+              "default": "",
+              "description": "Directory of panoptic segmentation annotation images",
+              "title": "Panoptic image directory",
+              "type": "string"
+            },
+            "panoptic_json": {
+              "default": "",
+              "description": "JSON file in COCO panoptic format",
+              "title": "COCO Panoptic JSON",
+              "type": "string"
+            },
+            "root_dir": {
+              "default": "",
+              "description": "Root image directory",
+              "title": "Root image directory",
+              "type": "string"
+            },
+            "target_size": {
+              "automl_enabled": false,
+              "default": [],
+              "description": "Target size for resizing.",
+              "title": "Target size",
+              "type": "list"
+            },
+            "type": {
+              "default": "ade",
+              "description": "Dataset type",
+              "enum": [
+                "coco",
+                "ade",
+                "coco_panoptic"
+              ],
+              "type": "categorical"
+            }
+          },
+          "type": "collection"
+        },
+        "val": {
+          "automl_disabled_parameters": [
+            "dataset.val.target_size"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "annot_file": "",
+            "batch_size": 1,
+            "img_dir": "",
+            "instance_json": "",
+            "name": "",
+            "num_workers": 1,
+            "panoptic_dir": "",
+            "panoptic_json": "",
+            "root_dir": "",
+            "target_size": [],
+            "type": "ade"
+          },
+          "description": "Configurable parameters to construct the validation dataset.",
+          "properties": {
+            "annot_file": {
+              "default": "",
+              "description": "JSON file in JSONL format for image/mask pair",
+              "title": "Annotatioin file for semantic data",
+              "type": "string"
+            },
+            "batch_size": {
+              "default": 1,
+              "description": "Batch size",
+              "math_cond": ">0",
+              "maximum": Infinity,
+              "minimum": 1,
+              "title": "batch size",
+              "type": "int"
+            },
+            "img_dir": {
+              "default": "",
+              "description": "Image directory (can be relative path to root_dir)",
+              "title": "Raw image directory",
+              "type": "string"
+            },
+            "instance_json": {
+              "default": "",
+              "description": "JSON file in COCO format",
+              "title": "COCO Instance JSON",
+              "type": "string"
+            },
+            "name": {
+              "default": "",
+              "description": "Dataset name",
+              "title": "Dataset name",
+              "type": "string"
+            },
+            "num_workers": {
+              "default": 1,
+              "description": "Number of workers",
+              "maximum": Infinity,
+              "minimum": 0,
+              "title": "Number of workers",
+              "type": "int"
+            },
+            "panoptic_dir": {
+              "default": "",
+              "description": "Directory of panoptic segmentation annotation images",
+              "title": "Panoptic image directory",
+              "type": "string"
+            },
+            "panoptic_json": {
+              "default": "",
+              "description": "JSON file in COCO panoptic format",
+              "title": "COCO Panoptic JSON",
+              "type": "string"
+            },
+            "root_dir": {
+              "default": "",
+              "description": "Root image directory",
+              "title": "Root image directory",
+              "type": "string"
+            },
+            "target_size": {
+              "automl_enabled": false,
+              "default": [],
+              "description": "Target size for resizing.",
+              "title": "Target size",
+              "type": "list"
+            },
+            "type": {
+              "default": "ade",
+              "description": "Dataset type",
+              "enum": [
+                "coco",
+                "ade",
+                "coco_panoptic"
+              ],
+              "type": "categorical"
+            }
+          },
+          "type": "collection"
+        }
+      },
+      "type": "collection"
+    },
+    "encryption_key": {
+      "default": "",
+      "description": "Key for encrypting model checkpoints",
+      "title": "Encryption key",
+      "type": "string"
+    },
+    "model": {
+      "automl_disabled_parameters": [
+        "model.backbone",
+        "model.sem_seg_head",
+        "model.mask_former"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "backbone": {
+          "efficientvit": {
+            "name": "l0",
+            "out_features": [
+              "res2",
+              "res3",
+              "res4",
+              "res5"
+            ],
+            "out_indices": [
+              1,
+              2,
+              3
+            ],
+            "pretrain_img_size": 384,
+            "use_checkpoint": false
+          },
+          "pretrained_weights": "",
+          "swin": {
+            "ape": false,
+            "attn_drop_rate": 0.0,
+            "depths": [
+              2,
+              2,
+              6,
+              2
+            ],
+            "drop_path_rate": 0.3,
+            "drop_rate": 0.0,
+            "embed_dim": 96,
+            "mlp_ratio": 4.0,
+            "num_heads": [
+              3,
+              6,
+              12,
+              24
+            ],
+            "out_features": [
+              "res2",
+              "res3",
+              "res4",
+              "res5"
+            ],
+            "out_indices": [
+              0,
+              1,
+              2,
+              3
+            ],
+            "patch_norm": true,
+            "patch_size": 4,
+            "pretrain_img_size": 384,
+            "qkv_bias": true,
+            "type": "tiny",
+            "use_checkpoint": false,
+            "window_size": 7
+          },
+          "type": "swin"
+        },
+        "export": false,
+        "mask_former": {
+          "class_weight": 2.0,
+          "dec_layers": 10,
+          "deep_supervision": true,
+          "dice_weight": 5.0,
+          "dim_feedforward": 2048,
+          "dropout": 0.0,
+          "hidden_dim": 256,
+          "importance_sample_ratio": 0.75,
+          "mask_weight": 5.0,
+          "nheads": 8,
+          "no_object_weight": 0.1,
+          "num_object_queries": 100,
+          "oversample_ratio": 3.0,
+          "pre_norm": false,
+          "train_num_points": 12544
+        },
+        "mode": "panoptic",
+        "object_mask_threshold": 0.4,
+        "overlap_threshold": 0.5,
+        "sem_seg_head": {
+          "common_stride": 4,
+          "convs_dim": 256,
+          "deformable_transformer_encoder_in_features": [
+            "res3",
+            "res4",
+            "res5"
+          ],
+          "mask_dim": 256,
+          "norm": "GN",
+          "num_classes": 200,
+          "transformer_enc_layers": 6
+        },
+        "test_topk_per_image": 100
+      },
+      "description": "Configurable parameters to construct the model for a Mask2former experiment.",
+      "popular": [
+        "mask_former",
+        "sem_seg_head"
+      ],
+      "properties": {
+        "backbone": {
+          "automl_disabled_parameters": [
+            "model.backbone.swin",
+            "model.backbone.efficientvit"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "efficientvit": {
+              "name": "l0",
+              "out_features": [
+                "res2",
+                "res3",
+                "res4",
+                "res5"
+              ],
+              "out_indices": [
+                1,
+                2,
+                3
+              ],
+              "pretrain_img_size": 384,
+              "use_checkpoint": false
+            },
+            "pretrained_weights": "",
+            "swin": {
+              "ape": false,
+              "attn_drop_rate": 0.0,
+              "depths": [
+                2,
+                2,
+                6,
+                2
+              ],
+              "drop_path_rate": 0.3,
+              "drop_rate": 0.0,
+              "embed_dim": 96,
+              "mlp_ratio": 4.0,
+              "num_heads": [
+                3,
+                6,
+                12,
+                24
+              ],
+              "out_features": [
+                "res2",
+                "res3",
+                "res4",
+                "res5"
+              ],
+              "out_indices": [
+                0,
+                1,
+                2,
+                3
+              ],
+              "patch_norm": true,
+              "patch_size": 4,
+              "pretrain_img_size": 384,
+              "qkv_bias": true,
+              "type": "tiny",
+              "use_checkpoint": false,
+              "window_size": 7
+            },
+            "type": "swin"
+          },
+          "properties": {
+            "efficientvit": {
+              "automl_disabled_parameters": [
+                "model.backbone.efficientvit.out_indices",
+                "model.backbone.efficientvit.out_features"
+              ],
+              "automl_enabled": false,
+              "default": {
+                "name": "l0",
+                "out_features": [
+                  "res2",
+                  "res3",
+                  "res4",
+                  "res5"
+                ],
+                "out_indices": [
+                  1,
+                  2,
+                  3
+                ],
+                "pretrain_img_size": 384,
+                "use_checkpoint": false
+              },
+              "properties": {
+                "name": {
+                  "default": "l0",
+                  "description": "efficient vit name.",
+                  "title": "efficient vit name",
+                  "type": "string"
+                },
+                "out_features": {
+                  "automl_enabled": false,
+                  "default": [
+                    "res2",
+                    "res3",
+                    "res4",
+                    "res5"
+                  ],
+                  "description": "List of output feature names for swin backbone.",
+                  "title": "output features",
+                  "type": "list"
+                },
+                "out_indices": {
+                  "automl_enabled": false,
+                  "default": [
+                    1,
+                    2,
+                    3
+                  ],
+                  "description": "Output from which stages.",
+                  "title": "output indices",
+                  "type": "list"
+                },
+                "pretrain_img_size": {
+                  "default": 384,
+                  "description": "Input image size for training the pretrained model.",
+                  "title": "pretrained imaeg size",
+                  "type": "int"
+                },
+                "use_checkpoint": {
+                  "default": false,
+                  "description": "Whether to use checkpointing to save memory.",
+                  "title": "use checkpointing",
+                  "type": "bool"
+                }
+              },
+              "title": "efficient vit",
+              "type": "collection"
+            },
+            "pretrained_weights": {
+              "default": "",
+              "description": "[Optional] Path to a pretrained backbone file.",
+              "title": "pretrained backbone path",
+              "type": "string"
+            },
+            "swin": {
+              "automl_disabled_parameters": [
+                "model.backbone.swin.depths",
+                "model.backbone.swin.num_heads",
+                "model.backbone.swin.out_indices",
+                "model.backbone.swin.out_features"
+              ],
+              "automl_enabled": false,
+              "default": {
+                "ape": false,
+                "attn_drop_rate": 0.0,
+                "depths": [
+                  2,
+                  2,
+                  6,
+                  2
+                ],
+                "drop_path_rate": 0.3,
+                "drop_rate": 0.0,
+                "embed_dim": 96,
+                "mlp_ratio": 4.0,
+                "num_heads": [
+                  3,
+                  6,
+                  12,
+                  24
+                ],
+                "out_features": [
+                  "res2",
+                  "res3",
+                  "res4",
+                  "res5"
+                ],
+                "out_indices": [
+                  0,
+                  1,
+                  2,
+                  3
+                ],
+                "patch_norm": true,
+                "patch_size": 4,
+                "pretrain_img_size": 384,
+                "qkv_bias": true,
+                "type": "tiny",
+                "use_checkpoint": false,
+                "window_size": 7
+              },
+              "properties": {
+                "ape": {
+                  "default": false,
+                  "description": "If True, add absolute position embedding to the patch embedding.",
+                  "title": "absolute position embedding",
+                  "type": "bool"
+                },
+                "attn_drop_rate": {
+                  "default": 0.0,
+                  "description": "Attention dropout rate.",
+                  "title": "attention dropout rate",
+                  "type": "float"
+                },
+                "depths": {
+                  "automl_enabled": false,
+                  "default": [
+                    2,
+                    2,
+                    6,
+                    2
+                  ],
+                  "description": "Depths of each Swin Transformer stage.",
+                  "title": "swin transformer depth",
+                  "type": "list"
+                },
+                "drop_path_rate": {
+                  "default": 0.3,
+                  "description": "Stochastic drop rate",
+                  "title": "stochastic drop rate",
+                  "type": "float"
+                },
+                "drop_rate": {
+                  "default": 0.0,
+                  "description": "Dropout rate.",
+                  "title": "dropout rate",
+                  "type": "float"
+                },
+                "embed_dim": {
+                  "default": 96,
+                  "description": "Number of input channels.",
+                  "title": "embedding dimensions",
+                  "type": "int"
+                },
+                "mlp_ratio": {
+                  "default": 4.0,
+                  "description": "Ratio of mlp hidden dim to embedding dim.",
+                  "title": "mlp ratio",
+                  "type": "float"
+                },
+                "num_heads": {
+                  "automl_enabled": false,
+                  "default": [
+                    3,
+                    6,
+                    12,
+                    24
+                  ],
+                  "description": "Number of attention head of each stage.",
+                  "title": "number of heads",
+                  "type": "list"
+                },
+                "out_features": {
+                  "automl_enabled": false,
+                  "default": [
+                    "res2",
+                    "res3",
+                    "res4",
+                    "res5"
+                  ],
+                  "description": "List of output feature names for swin backbone.",
+                  "title": "output features",
+                  "type": "list"
+                },
+                "out_indices": {
+                  "automl_enabled": false,
+                  "default": [
+                    0,
+                    1,
+                    2,
+                    3
+                  ],
+                  "description": "Output from which stages.",
+                  "title": "output indices",
+                  "type": "list"
+                },
+                "patch_norm": {
+                  "default": true,
+                  "description": "If True, add normalization after patch embedding.",
+                  "title": "patch normalization",
+                  "type": "bool"
+                },
+                "patch_size": {
+                  "default": 4,
+                  "description": "Patch size for swin transformer.",
+                  "title": "patch size",
+                  "type": "int"
+                },
+                "pretrain_img_size": {
+                  "default": 384,
+                  "description": "Input image size for training the pretrained model.",
+                  "title": "pretrained image size",
+                  "type": "int"
+                },
+                "qk_scale": {
+                  "description": "Override default qk scale of head_dim ** -0.5 if set.",
+                  "title": "qk scale",
+                  "type": "float"
+                },
+                "qkv_bias": {
+                  "default": true,
+                  "description": "If True, add a learnable bias to query, key, value.",
+                  "title": "qkv bias",
+                  "type": "bool"
+                },
+                "type": {
+                  "default": "tiny",
+                  "description": "Swin Transformer type",
+                  "title": "swin transformer type",
+                  "type": "string"
+                },
+                "use_checkpoint": {
+                  "default": false,
+                  "description": "Whether to use checkpointing to save memory.",
+                  "title": "use checkpointing",
+                  "type": "bool"
+                },
+                "window_size": {
+                  "default": 7,
+                  "description": "Window size for Swin Transformer.",
+                  "title": "window size",
+                  "type": "int"
+                }
+              },
+              "title": "swin",
+              "type": "collection"
+            },
+            "type": {
+              "default": "swin",
+              "description": "backbone name.",
+              "title": "backbone name",
+              "type": "string"
+            }
+          },
+          "title": "backbone",
+          "type": "collection"
+        },
+        "export": {
+          "default": false,
+          "description": "A flag to enable export mode.",
+          "title": "export",
+          "type": "bool"
+        },
+        "mask_former": {
+          "automl_default_parameters": [
+            "model.mask_former.num_object_queries",
+            "model.mask_former.hidden_dim",
+            "model.mask_former.dec_layers"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "class_weight": 2.0,
+            "dec_layers": 10,
+            "deep_supervision": true,
+            "dice_weight": 5.0,
+            "dim_feedforward": 2048,
+            "dropout": 0.0,
+            "hidden_dim": 256,
+            "importance_sample_ratio": 0.75,
+            "mask_weight": 5.0,
+            "nheads": 8,
+            "no_object_weight": 0.1,
+            "num_object_queries": 100,
+            "oversample_ratio": 3.0,
+            "pre_norm": false,
+            "train_num_points": 12544
+          },
+          "popular": [
+            "hidden_dim",
+            "importance_sample_ratio",
+            "class_weight",
+            "dice_weight",
+            "mask_weight",
+            "nheads",
+            "num_object_queries"
+          ],
+          "properties": {
+            "class_weight": {
+              "default": 2.0,
+              "description": "The relative weight of the classification error in the matching cost.",
+              "maximum": Infinity,
+              "minimum": 0.0,
+              "popular": true,
+              "title": "Class loss coefficient",
+              "type": "float"
+            },
+            "dec_layers": {
+              "automl_enabled": true,
+              "default": 10,
+              "description": "Numer of decoder layers in the transformer",
+              "maximum": 50,
+              "minimum": 1,
+              "title": "decoder layers",
+              "type": "int"
+            },
+            "deep_supervision": {
+              "default": true,
+              "description": "Flag to enable deep supervision.",
+              "title": "deep supervision",
+              "type": "bool"
+            },
+            "dice_weight": {
+              "default": 5.0,
+              "description": "The relative weight of the focal loss of the binary mask in the matching cost.",
+              "maximum": Infinity,
+              "minimum": 0.0,
+              "popular": true,
+              "title": "focal loss coefficient",
+              "type": "float"
+            },
+            "dim_feedforward": {
+              "default": 2048,
+              "description": "Dimension of the feedforward network",
+              "minimum": 1,
+              "title": "dim feedforward",
+              "type": "int"
+            },
+            "dropout": {
+              "default": 0.0,
+              "description": "The probability to drop out.",
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "drop out ratio",
+              "type": "float"
+            },
+            "hidden_dim": {
+              "automl_enabled": true,
+              "default": 256,
+              "description": "Dimension of the hidden units.",
+              "math_cond": "/ 8",
+              "maximum": 1024,
+              "minimum": 64,
+              "popular": true,
+              "type": "int"
+            },
+            "importance_sample_ratio": {
+              "default": 0.75,
+              "description": "Ratio of points that are sampled via importnace sampling.",
+              "popular": true,
+              "title": "importance sampling ratio",
+              "type": "float"
+            },
+            "mask_weight": {
+              "default": 5.0,
+              "description": "The relative weight of the dice loss of the binary mask in the matching cost",
+              "maximum": Infinity,
+              "minimum": 0.0,
+              "popular": true,
+              "title": "mask loss coefficient",
+              "type": "float"
+            },
+            "nheads": {
+              "default": 8,
+              "description": "Number of heads",
+              "popular": true,
+              "title": "nheads",
+              "type": "int"
+            },
+            "no_object_weight": {
+              "default": 0.1,
+              "description": "The relative classification weight applied to the no-object category.",
+              "title": "no object coefficient",
+              "type": "float"
+            },
+            "num_object_queries": {
+              "automl_enabled": true,
+              "default": 100,
+              "description": "The number of queries",
+              "maximum": Infinity,
+              "minimum": 1,
+              "popular": true,
+              "title": "number of queries",
+              "type": "int"
+            },
+            "oversample_ratio": {
+              "default": 3.0,
+              "description": "Oversampling parameter.",
+              "title": "oversampling ratio",
+              "type": "float"
+            },
+            "pre_norm": {
+              "default": false,
+              "description": "Flag to add layer norm in the encoder or not.",
+              "title": "Pre norm",
+              "type": "bool"
+            },
+            "train_num_points": {
+              "default": 12544,
+              "description": "The number of points P to sample.",
+              "title": "number of points",
+              "type": "int"
+            }
+          },
+          "title": "mask2former",
+          "type": "collection"
+        },
+        "mode": {
+          "default": "panoptic",
+          "description": "Segmentation mode.",
+          "enum": [
+            "panoptic",
+            "instance",
+            "semantic"
+          ],
+          "title": "segmentation mode",
+          "type": "categorical"
+        },
+        "object_mask_threshold": {
+          "default": 0.4,
+          "description": "The value of the threshold to be used when\n                    filtering out the object mask.",
+          "title": "object mask threshold",
+          "type": "float"
+        },
+        "overlap_threshold": {
+          "default": 0.5,
+          "description": "The value of the threshold to be used when\n                    evaluating overlap.",
+          "title": "overlap threshold",
+          "type": "float"
+        },
+        "sem_seg_head": {
+          "automl_disabled_parameters": [
+            "model.sem_seg_head.deformable_transformer_encoder_in_features"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "common_stride": 4,
+            "convs_dim": 256,
+            "deformable_transformer_encoder_in_features": [
+              "res3",
+              "res4",
+              "res5"
+            ],
+            "mask_dim": 256,
+            "norm": "GN",
+            "num_classes": 200,
+            "transformer_enc_layers": 6
+          },
+          "popular": [
+            "transformer_enc_layers",
+            "convs_dim",
+            "mask_dim"
+          ],
+          "properties": {
+            "common_stride": {
+              "default": 4,
+              "description": "Common stride.",
+              "minimum": 2,
+              "title": "Common stride",
+              "type": "int"
+            },
+            "convs_dim": {
+              "default": 256,
+              "description": "Convolutional layer dimension.",
+              "minimum": 1,
+              "popular": true,
+              "title": "conv layer dim.",
+              "type": "int"
+            },
+            "deformable_transformer_encoder_in_features": {
+              "automl_enabled": false,
+              "default": [
+                "res3",
+                "res4",
+                "res5"
+              ],
+              "description": "List of feature names for deformable transformer encoder input.",
+              "title": "transformer encoder in_features",
+              "type": "list"
+            },
+            "mask_dim": {
+              "default": 256,
+              "description": "Mask head dimension.",
+              "minimum": 1,
+              "popular": true,
+              "title": "mask head dim.",
+              "type": "int"
+            },
+            "norm": {
+              "default": "GN",
+              "description": "Norm layer type.",
+              "title": "norm type",
+              "type": "string"
+            },
+            "num_classes": {
+              "default": 200,
+              "description": "Number of classes.",
+              "minimum": 1,
+              "title": "number of classes.",
+              "type": "int"
+            },
+            "transformer_enc_layers": {
+              "default": 6,
+              "description": "Number of transformer encoder layers.",
+              "minimum": 1,
+              "popular": true,
+              "title": "Number of transformer encoder layers.",
+              "type": "int"
+            }
+          },
+          "title": "head",
+          "type": "collection"
+        },
+        "test_topk_per_image": {
+          "default": 100,
+          "description": " keep topk instances per image for instance segmentation.",
+          "title": "top k per image",
+          "type": "int"
+        }
+      },
+      "type": "collection"
+    },
+    "model_name": {
+      "default": "",
+      "description": "Name of model if invoking task via :code:`model_agnostic`",
+      "title": "Model name",
+      "type": "string"
+    },
+    "quantize": {
+      "automl_disabled_parameters": [
+        "quantize.layers",
+        "quantize.skip_names",
+        "quantize.backend_kwargs"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "algorithm": "minmax",
+        "backend": "torchao",
+        "backend_kwargs": {},
+        "device": "cuda",
+        "layers": [],
+        "mode": "weight_only_ptq",
+        "model_path": "",
+        "results_dir": "",
+        "skip_names": []
+      },
+      "description": "Configurable parameters to run model quantization for a Mask2Former experiment.",
+      "properties": {
+        "algorithm": {
+          "default": "minmax",
+          "description": "Calibration/optimization algorithm. Used by ModelOpt backends (modelopt.pytorch and modelopt.onnx). Ignored by torchao backend.",
+          "enum": [
+            "minmax",
+            "max",
+            "entropy",
+            "awq_clip",
+            "awq_lite",
+            "awq_full",
+            "rtn_dq"
+          ],
+          "title": "Calibration algorithm",
+          "type": "categorical"
+        },
+        "backend": {
+          "default": "torchao",
+          "description": "The quantization backend to use",
+          "enum": [
+            "modelopt.pytorch",
+            "torchao",
+            "modelopt.onnx"
+          ],
+          "title": "Quantization backend",
+          "type": "categorical"
+        },
+        "backend_kwargs": {
+          "automl_enabled": false,
+          "description": "Additional keyword arguments to pass to the backend",
+          "title": "Backend kwargs",
+          "type": "collection"
+        },
+        "device": {
+          "default": "cuda",
+          "description": "Device to use for calibration. Accepts 'cuda' (uses default GPU), 'cpu', 'trt' (TensorRT for ONNX backend), or specific GPU device like 'cuda:0', 'cuda:1', etc. If 'cuda' is specified but no GPU is available, the framework will automatically fall back to 'cpu'. Note: 'trt' is only supported by the modelopt.onnx backend for ONNX Runtime with TensorRT execution provider.",
+          "pattern": "^(cuda|cpu|trt|cuda:[0-9]+)$",
+          "title": "Calibration device",
+          "type": "string"
+        },
+        "layers": {
+          "automl_enabled": false,
+          "default": [],
+          "description": "List of per-module quantization configurations. Each entry specifies which modules to quantize and their data types. This is the primary way to configure quantization.",
+          "title": "Layer quantization configs",
+          "type": "list"
+        },
+        "mode": {
+          "default": "weight_only_ptq",
+          "description": "The quantization mode to use",
+          "enum": [
+            "static_ptq",
+            "weight_only_ptq"
+          ],
+          "title": "Quantization mode",
+          "type": "categorical"
+        },
+        "model_path": {
+          "default": "",
+          "description": "Path to the model to be quantized. For ONNX backend, path to ONNX file.",
+          "title": "Model path",
+          "type": "string"
+        },
+        "results_dir": {
+          "default": "",
+          "description": "Path to where all the assets generated from a task are stored.",
+          "title": "Results directory",
+          "type": "string"
+        },
+        "skip_names": {
+          "automl_enabled": false,
+          "default": [],
+          "description": "List of module/layer names or patterns to exclude from quantization",
+          "title": "Skip names",
+          "type": "list"
+        }
+      },
+      "required": [
+        "model_path",
+        "results_dir"
+      ],
+      "type": "collection"
+    },
+    "results_dir": {
+      "default": "",
+      "description": "\n        Path to where all the assets generated from a task are stored.\n        ",
+      "title": "Results directory",
+      "type": "string"
+    },
+    "train": {
+      "automl_disabled_parameters": [
+        "train.gpu_ids",
+        "train.cudnn",
+        "train.freeze",
+        "train.optim"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "activation_checkpoint": false,
+        "checkpoint_interval": 1,
+        "checkpoint_interval_unit": "epoch",
+        "clip_grad_norm": 0.1,
+        "clip_grad_type": "full",
+        "cudnn": {
+          "benchmark": false,
+          "deterministic": true
+        },
+        "distributed_strategy": "ddp",
+        "freeze": [],
+        "gpu_ids": [
+          0
+        ],
+        "is_dry_run": false,
+        "num_epochs": 10,
+        "num_gpus": 1,
+        "num_nodes": 1,
+        "optim": {
+          "backbone_multiplier": 0.1,
+          "gamma": 0.1,
+          "lr": 0.0002,
+          "lr_scheduler": "MultiStep",
+          "milestones": [
+            88,
+            96
+          ],
+          "momentum": 0.9,
+          "monitor_name": "train_loss",
+          "type": "AdamW",
+          "weight_decay": 0.05
+        },
+        "precision": "fp32",
+        "pretrained_model_path": "",
+        "results_dir": "",
+        "resume_training_checkpoint_path": "",
+        "seed": 1234,
+        "use_distributed_sampler": false,
+        "validation_interval": 1
+      },
+      "description": "Configurable parameters to construct the trainer for a Mask2former experiment.",
+      "popular": [
+        "optim",
+        "validation_interval",
+        "checkpoint_interval",
+        "num_gpus",
+        "num_nodes",
+        "num_epochs",
+        "gpu_ids"
+      ],
+      "properties": {
+        "activation_checkpoint": {
+          "default": false,
+          "description": "\n        A True value instructs train to recompute in backward pass to save GPU memory,\n        rather than storing activations. Note: activation checkpointing is incompatible\n        with find_unused_parameters in DDP and may cause errors if the model has unused\n        parameters.",
+          "title": "enable activation checkpointing",
+          "type": "bool"
+        },
+        "checkpoint_interval": {
+          "default": 1,
+          "description": "The interval (in epochs) at which a checkpoint will be saved. Helps resume training.",
+          "minimum": 1,
+          "popular": true,
+          "title": "Checkpoint interval",
+          "type": "int"
+        },
+        "checkpoint_interval_unit": {
+          "default": "epoch",
+          "description": "The unit of the checkpoint interval.",
+          "enum": [
+            "epoch",
+            "step"
+          ],
+          "title": "Checkpoint interval unit",
+          "type": "categorical"
+        },
+        "clip_grad_norm": {
+          "default": 0.1,
+          "description": "\n        Amount to clip the gradient by L2 Norm.\n        A value of 0.0 specifies no clipping.",
+          "math_cond": "> 0.0",
+          "title": "clip gradient norm",
+          "type": "float"
+        },
+        "clip_grad_type": {
+          "default": "full",
+          "description": "Gradient clip type.",
+          "title": "clip gradient type",
+          "type": "string"
+        },
+        "cudnn": {
+          "automl_enabled": false,
+          "default": {
+            "benchmark": false,
+            "deterministic": true
+          },
+          "properties": {
+            "benchmark": {
+              "default": false,
+              "type": "bool"
+            },
+            "deterministic": {
+              "default": true,
+              "type": "bool"
+            }
+          },
+          "type": "collection"
+        },
+        "distributed_strategy": {
+          "default": "ddp",
+          "description": "\n        The multi-GPU training strategy.\n        DDP (Distributed Data Parallel) and Fully Sharded DDP are supported.",
+          "enum": [
+            "ddp",
+            "fsdp"
+          ],
+          "title": "distributed_strategy",
+          "type": "categorical"
+        },
+        "freeze": {
+          "automl_enabled": false,
+          "default": [],
+          "description": "\n        List of layer names to freeze.\n        Example: [\"backbone\", \"transformer.encoder\", \"input_proj\"].",
+          "title": "freeze",
+          "type": "list"
+        },
+        "gpu_ids": {
+          "automl_enabled": false,
+          "default": [
+            0
+          ],
+          "description": "\n        List of GPU IDs to run the training on. The length of this list\n        must be equal to the number of gpus in train.num_gpus.",
+          "popular": true,
+          "title": "GPU IDs",
+          "type": "list"
+        },
+        "is_dry_run": {
+          "default": false,
+          "description": "\n        Whether to run the trainer in Dry Run mode. This serves\n        as a good means to validate the spec file and run a sanity check on the trainer\n        without actually initializing and running the trainer.",
+          "title": "Is dry run",
+          "type": "bool"
+        },
+        "iters_per_epoch": {
+          "description": "Number of iteration per epoch.",
+          "title": "iteration per epoch",
+          "type": "int"
+        },
+        "num_epochs": {
+          "default": 10,
+          "description": "Number of epochs to run the training.",
+          "maximum": Infinity,
+          "minimum": 1,
+          "popular": true,
+          "title": "Number of epochs",
+          "type": "int"
+        },
+        "num_gpus": {
+          "default": 1,
+          "description": "The number of GPUs to run the train job.",
+          "minimum": 1,
+          "popular": true,
+          "title": "Number of GPUs",
+          "type": "int"
+        },
+        "num_nodes": {
+          "default": 1,
+          "description": "Number of nodes to run the training on. If > 1, then multi-node is enabled.",
+          "minimum": 1,
+          "popular": true,
+          "title": "Number of nodes",
+          "type": "int"
+        },
+        "optim": {
+          "automl_default_parameters": [
+            "train.optim.lr",
+            "train.optim.backbone_multiplier",
+            "train.optim.momentum",
+            "train.optim.weight_decay"
+          ],
+          "automl_disabled_parameters": [
+            "train.optim.milestones"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "backbone_multiplier": 0.1,
+            "gamma": 0.1,
+            "lr": 0.0002,
+            "lr_scheduler": "MultiStep",
+            "milestones": [
+              88,
+              96
+            ],
+            "momentum": 0.9,
+            "monitor_name": "train_loss",
+            "type": "AdamW",
+            "weight_decay": 0.05
+          },
+          "description": "Hyper parameters to configure the optimizer.",
+          "popular": [
+            "momentum",
+            "weight_decay",
+            "backbone_multiplier"
+          ],
+          "properties": {
+            "backbone_multiplier": {
+              "automl_enabled": true,
+              "default": 0.1,
+              "description": "A multiplier for backbone learning rate.",
+              "math_cond": "> 0.0",
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "popular": true,
+              "title": "backbone learning rate multiplier",
+              "type": "float"
+            },
+            "gamma": {
+              "default": 0.1,
+              "description": "Multiplicative factor of learning rate decay.",
+              "math_cond": "> 0.0",
+              "title": "gamma",
+              "type": "float"
+            },
+            "lr": {
+              "automl_enabled": true,
+              "default": 0.0002,
+              "description": "The initial learning rate for training the model.",
+              "math_cond": "> 0.0",
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "learning rate",
+              "type": "float"
+            },
+            "lr_scheduler": {
+              "default": "MultiStep",
+              "description": "The learning scheduler:\n                    * MultiStep : Decrease the lr by lr_decay from lr_steps\n                    * Warmuppoly : Poly learning rate schedule.",
+              "enum": [
+                "MultiStep",
+                "Warmuppoly"
+              ],
+              "title": "learning rate scheduler",
+              "type": "categorical"
+            },
+            "milestones": {
+              "automl_enabled": false,
+              "default": [
+                88,
+                96
+              ],
+              "description": "learning rate decay epochs.",
+              "title": "learning rate decay epochs.",
+              "type": "list"
+            },
+            "momentum": {
+              "automl_enabled": true,
+              "default": 0.9,
+              "description": "The momentum for the AdamW optimizer.",
+              "math_cond": "> 0.0",
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "popular": true,
+              "title": "momentum - AdamW",
+              "type": "float"
+            },
+            "monitor_name": {
+              "default": "train_loss",
+              "description": "The metric value to be monitored for the :code:`AutoReduce` Scheduler.",
+              "enum": [
+                "val_loss",
+                "train_loss"
+              ],
+              "title": "monitor_name",
+              "type": "categorical"
+            },
+            "type": {
+              "default": "AdamW",
+              "description": "Type of optimizer used to train the network.",
+              "enum": [
+                "AdamW"
+              ],
+              "type": "categorical"
+            },
+            "weight_decay": {
+              "automl_enabled": true,
+              "default": 0.05,
+              "description": "The weight decay coefficient.",
+              "math_cond": "> 0.0",
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "popular": true,
+              "title": "weight decay",
+              "type": "float"
+            }
+          },
+          "title": "optimizer",
+          "type": "collection"
+        },
+        "precision": {
+          "default": "fp32",
+          "description": "Precision to run the training on.",
+          "enum": [
+            "fp16",
+            "fp32"
+          ],
+          "title": "precision",
+          "type": "categorical"
+        },
+        "pretrained_model_path": {
+          "default": "",
+          "description": "Path to a pre-trained Mask2Former model to initialize the current training from.",
+          "type": "string"
+        },
+        "results_dir": {
+          "default": "",
+          "description": "\n        Path to where all the assets generated from a task are stored.\n        ",
+          "title": "Results directory",
+          "type": "string"
+        },
+        "resume_training_checkpoint_path": {
+          "default": "",
+          "description": "Path to the checkpoint to resume training from.",
+          "title": "Resume checkpoint path",
+          "type": "string"
+        },
+        "seed": {
+          "default": 1234,
+          "description": "The seed for the initializer in PyTorch. If < 0, disable fixed seed.",
+          "maximum": Infinity,
+          "minimum": -1,
+          "title": "Seed for randomization",
+          "type": "int"
+        },
+        "use_distributed_sampler": {
+          "default": false,
+          "description": "Use distributed sampler for multi-GPU training.",
+          "title": "use distributed sampler",
+          "type": "bool"
+        },
+        "validation_interval": {
+          "default": 1,
+          "description": "\n        The interval (in epochs) at which a evaluation\n        will be triggered on the validation dataset.",
+          "minimum": 1,
+          "popular": true,
+          "title": "Validation interval",
+          "type": "int"
+        }
+      },
+      "type": "collection"
+    },
+    "wandb": {
+      "automl_disabled_parameters": [
+        "wandb.tags"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "enable": true,
+        "entity": "",
+        "group": "",
+        "name": "TAO Toolkit Training",
+        "project": "TAO Toolkit",
+        "reinit": false,
+        "run_id": "",
+        "save_code": false,
+        "sync_tensorboard": false,
+        "tags": [
+          "tao-toolkit"
+        ]
+      },
+      "properties": {
+        "enable": {
+          "default": true,
+          "type": "bool"
+        },
+        "entity": {
+          "default": "",
+          "type": "string"
+        },
+        "group": {
+          "default": "",
+          "type": "string"
+        },
+        "name": {
+          "default": "TAO Toolkit Training",
+          "type": "string"
+        },
+        "project": {
+          "default": "TAO Toolkit",
+          "type": "string"
+        },
+        "reinit": {
+          "default": false,
+          "type": "bool"
+        },
+        "run_id": {
+          "default": "",
+          "type": "string"
+        },
+        "save_code": {
+          "default": false,
+          "type": "bool"
+        },
+        "sync_tensorboard": {
+          "default": false,
+          "type": "bool"
+        },
+        "tags": {
+          "automl_enabled": false,
+          "default": [
+            "tao-toolkit"
+          ],
+          "type": "list"
+        }
+      },
+      "type": "collection"
+    }
+  },
+  "required": [
+    "quantize"
+  ],
+  "type": "object",
+  "x_tao_schema": {
+    "action": "train",
+    "core_module": "mask2former",
+    "model": "mask2former",
+    "network_arch": "mask2former",
+    "schema_action": "train",
+    "schema_version": 1,
+    "source": "tao-core dataclass config"
+  }
+}

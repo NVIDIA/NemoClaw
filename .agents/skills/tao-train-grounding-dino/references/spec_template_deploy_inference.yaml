@@ -1,0 +1,23 @@
+dataset:
+  infer_data_sources:
+    image_dir:
+    - /data/images
+    captions:
+    - person
+  batch_size: 1
+  workers: 8
+inference:
+  conf_threshold: 0.5
+  color_map:
+    head: green
+    helmet: red
+    person: blue
+  trt_engine: /results/grounding-dino.engine
+model:
+  backbone: swin_tiny_224_1k
+  num_feature_levels: 4
+  dec_layers: 6
+  enc_layers: 6
+  num_queries: 900
+  dropout_ratio: 0.0
+  dim_feedforward: 2048

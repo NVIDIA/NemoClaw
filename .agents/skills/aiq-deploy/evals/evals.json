@@ -1,0 +1,31 @@
+[
+  {
+    "id": "aiq-deploy-001-install-asks-mode",
+    "question": "I want to install AI-Q.",
+    "expected_skill": "aiq-deploy",
+    "expected_script": null,
+    "ground_truth": "The agent treats this as an ambiguous deployment request and asks how the user wants to run AI-Q before starting services.",
+    "expected_behavior": [
+      "Routes to aiq-deploy",
+      "Asks the deployment mode selection question",
+      "Includes Skill backend, CLI, UI, and Custom as choices",
+      "Does not start services before the user chooses a mode"
+    ]
+  },
+  {
+    "id": "aiq-deploy-002-skill-backend",
+    "question": "Deploy AI-Q as a Skill backend so aiq-research can use it.",
+    "expected_skill": "aiq-deploy",
+    "expected_script": null,
+    "ground_truth": "The agent routes to aiq-deploy, follows the Skill backend deployment path, prepares deploy/.env only if needed, avoids printing secrets, starts a backend-only AI-Q service, runs basic validation, and returns AIQ_SERVER_URL for aiq-research.",
+    "expected_behavior": [
+      "Routes to aiq-deploy",
+      "Locates or clones the AI-Q repository",
+      "Creates deploy/.env from deploy/.env.example only when missing",
+      "Checks secret presence without printing secret values",
+      "Starts a backend-only service without requiring the browser UI",
+      "Runs basic validation",
+      "Reports the verified AIQ_SERVER_URL"
+    ]
+  }
+]

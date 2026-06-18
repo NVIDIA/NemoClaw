@@ -1,0 +1,73 @@
+name: tao-train-optical-inspection
+network_arch: optical_inspection
+automl_enabled: true
+container_image: tao_toolkit.pyt
+data_format: default
+gpu_spec_key: train.num_gpus
+actions:
+  train:
+    command: optical_inspection train -e {config_path}
+    config_format: yaml
+    inputs:
+      dataset.train_dataset.images_dir:
+        type: folder
+      dataset.train_dataset.csv_path:
+        type: file
+      dataset.validation_dataset.images_dir:
+        type: folder
+      dataset.validation_dataset.csv_path:
+        type: file
+      dataset.test_dataset.images_dir:
+        type: folder
+      dataset.test_dataset.csv_path:
+        type: file
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  evaluate:
+    command: optical_inspection evaluate -e {config_path}
+    config_format: yaml
+    inputs: {}
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  export:
+    command: optical_inspection export -e {config_path}
+    config_format: yaml
+    inputs: {}
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  inference:
+    command: optical_inspection inference -e {config_path}
+    config_format: yaml
+    inputs: {}
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  gen_trt_engine:
+    command: optical_inspection gen_trt_engine -e {config_path}
+    config_format: yaml
+    inputs: {}
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+data_sources: {}
+spec_params: {}
+key_defaults: {}
+spec_shorthand_keys:
+  num_epochs: train.num_epochs
+  batch_size: dataset.batch_size
+  learning_rate: train.optim.lr
+description: Optical inspection for defect detection using Siamese networks. Compares image pairs to detect manufacturing
+  defects, anomalies, or quality issues.

@@ -1,0 +1,283 @@
+# Defect Image Generation Workflow — Finetune Only
+#
+# Trains anomalygen on a labeled anomaly dataset and produces a checkpoint
+# usable as input to Day 0 or Day 1 with use_pretrained_checkpoint=true.
+#
+# The finetune task runs anomalygen Phase 1 end-to-end inside one pod:
+#   Step 1 — validate_dataset.py            (structural sanity + mask counting)
+#   Step 2 — prep_testcase.sh               (AMP placement, n_seeds=1 per mask)
+#            → /tmp/validation/validation.jsonl + /tmp/validation/amp/
+#   Step 3 — torchrun ag_train              (dataloader_val reads the jsonl above)
+#
+# Submit (single step — no pre-submit render needed; the per-usecase cookbook
+# `assets/cookbooks/<usecase>/ag_config.yaml` is uploaded as a template and
+# rendered in-pod by yq right after Phase 1 Step 2 produces validation.jsonl):
+#
+#   STAMP=$(cat /proc/sys/kernel/random/uuid | cut -c1-8)
+#   osmo workflow submit skills/physical-ai-defect-image-generation/assets/configs/finetune.yaml \
+#     --pool <pool> \
+#     --set name=finetune-$STAMP \
+#           dig_url_root=<dig_url_root> \
+#           usecase=<usecase>
+#
+# The in-pod render patches 5 fields (job.group, job.name, dataset paths,
+# val JSONL, NVDINOV2 checkpoint) and drops the trainer.early_stop block
+# (which the image's TrainerConfig rejects). Everything else (lr, batch_size,
+# anomaly_types, aug knobs) flows through unchanged from the cookbook — which
+# is the *exact* config the shipped checkpoint was trained against.
+#
+# Validation set is produced fresh inside this task by `prep_testcase.sh`
+# (anomalygen Phase 1 Step 2) before torchrun starts — no pre-baked
+# validation.jsonl / amp/ is consumed from the dataset URL.
+#
+# All anomalygen helper scripts are baked into the image at
+# /workspace/paidf-anomalygen/scripts/utilities/ (exposed via
+# ${ANOMALYGEN_SCRIPTS}); no OSMO localpath script mounts needed.
+#
+# Prerequisites (run once per shell):
+#   - bash scripts/preflight_credentials.sh   # NGC + HF env vars + OSMO credentials
+#   - bash scripts/preflight_urls.sh finetune <usecase>
+#   - models/pretrained and datasets/<usecase>/raw URL artifacts exist. Re-run
+#     setup/setup_pretrained.yaml and/or the relevant setup/setup_<case>.yaml
+#     if either is missing.
+#   - POD_TEMPLATE has dshm (32 GiB):  osmo config show POD_TEMPLATE | grep -A3 dshm
+#
+# Output: {{ dig_url_root }}/runs/<name>/finetune — use as checkpoint input in Day 0/Day 1.
+# See references/flows/finetune.md for the full walkthrough.
+
+
+version: 2
+workflow:
+  name: "{{ workflow_name }}"
+  timeout:
+    exec_timeout: "{{ exec_timeout }}"
+    queue_timeout: "{{ queue_timeout }}"
+
+  resources:
+    gpu-train:
+      gpu: "{{ train_gpu }}"
+      cpu: "{{ train_cpu }}"
+      memory: "{{ train_memory }}"
+      storage: "{{ train_storage }}"
+      platform: "{{ platform }}"
+
+  groups:
+
+    # ── Finetune ─────────────────────────────────────────────────────────────────
+    - name: finetune-job
+      tasks:
+        - name: finetune
+          lead: true
+          image: "{{ anomalygen_image }}"
+          resource: gpu-train
+          credentials:
+            hf-token:
+              HF_TOKEN: token
+          environment:
+            NUM_GPUS: "{{ train_gpu }}"
+            EXP_NAME: "{{ name }}"
+            PRETRAINED_SRC: "{{input:0}}/pretrained"
+            DATASET_DIR: "{{input:1}}"
+          inputs:
+            - url: "{{ dig_url_root }}/models/pretrained"            # {{input:0}} pretrained/ tree
+            - url: "{{ dig_url_root }}/datasets/{{ usecase }}/raw"   # {{input:1}} raw NGC training data
+          command: ["bash"]
+          args: ["/tmp/finetune.sh"]
+          files:
+            # Cookbook template — mounted read-only and rendered in-pod by yq below.
+            - localpath: ../cookbooks/{{ usecase }}/ag_config.yaml
+              path: /tmp/ag_config_template.yaml
+
+            - path: /tmp/finetune.sh
+              contents: |
+                set -euo pipefail
+
+                # ── Pod-template preflight (training task) ─────────────────────
+                DSHM_GB=$(df -B1G /dev/shm | tail -1 | awk '{print $2}')
+                if [ "$DSHM_GB" -lt 16 ]; then
+                  echo "ERROR: /dev/shm is ${DSHM_GB}GiB; need >= 16 GiB (32 preferred) for torchrun shared-memory."
+                  exit 1
+                fi
+                # ───────────────────────────────────────────────────────────────
+
+                # Install Mike Farah yq into /tmp (pod /usr/local/bin is non-writable; paidf-anomalygen ships wget, no curl).
+                [ -x /tmp/yq ] || {
+                  wget -q https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64 -O /tmp/yq
+                  chmod +x /tmp/yq
+                }
+                export PATH=/tmp:$PATH
+
+                TEMPLATE=/tmp/ag_config_template.yaml
+                [ -f "$TEMPLATE" ] || {
+                  echo "ERROR: $TEMPLATE not mounted — cookbook upload failed."
+                  echo "  Confirm assets/cookbooks/{{ usecase }}/ag_config.yaml exists."
+                  exit 1
+                }
+
+                [ -d "$PRETRAINED_SRC" ] || {
+                  echo "ERROR: pretrained tree not at $PRETRAINED_SRC"
+                  ls -la "$(dirname "$PRETRAINED_SRC")" || true
+                  exit 1
+                }
+
+                # Per-item symlink-replace into the container's checkpoint dir.
+                # IMPORTANT: do NOT wipe the dir — SAM2 + Qwen3-VL ship baked
+                # there and are referenced by other tools in the image even
+                # though this workflow itself only runs torchrun.
+                cd /workspace/paidf-anomalygen
+                CONTAINER_CKPT_DIR=/workspace/paidf-anomalygen/checkpoints
+                mkdir -p "$CONTAINER_CKPT_DIR"
+                for item in NVDINOV2 nvidia google-t5 facebook C-RADIOv2_B.pth sam2 Qwen; do
+                  if [ -e "$PRETRAINED_SRC/$item" ]; then
+                    rm -rf "$CONTAINER_CKPT_DIR/$item"
+                    ln -s "$PRETRAINED_SRC/$item" "$CONTAINER_CKPT_DIR/$item"
+                  fi
+                done
+
+                [ -d "$DATASET_DIR" ] || {
+                  echo "ERROR: training dataset not at $DATASET_DIR"
+                  exit 1
+                }
+
+                DEFECT_SPEC="$DATASET_DIR/defect_spec.jsonl"
+                [ -f "$DEFECT_SPEC" ] || {
+                  echo "ERROR: $DEFECT_SPEC missing in raw dataset."
+                  echo "  Re-run setup/setup_{{ usecase }}.yaml (or setup/setup_metal.yaml for metal_surface) for datasets/{{ usecase }}/raw."
+                  exit 1
+                }
+
+                # anomalygen helper scripts (pinned by image digest).
+                SCRIPTS=/workspace/paidf-anomalygen/scripts/utilities
+                ls "$SCRIPTS/prep_testcase.sh" >/dev/null || {
+                  echo "ERROR: $SCRIPTS/prep_testcase.sh not in image — check digest."
+                  exit 1
+                }
+
+                # ─── Phase 1 Step 1: validate dataset structure ────────────
+                echo "=== Phase 1 Step 1: validate_dataset.py ==="
+                python3 "$SCRIPTS/validate_dataset.py" "$DATASET_DIR"
+
+                NUM_SDG=$(find "$DATASET_DIR" -type f -path "*/mask/*/*" \
+                  \( -name "*.png" -o -name "*.jpg" -o -name "*.jpeg" \) | wc -l)
+                [ "$NUM_SDG" -gt 0 ] || { echo "ERROR: no training masks under $DATASET_DIR/*/mask/"; exit 1; }
+                echo "Total training mask count (num_sdg): $NUM_SDG"
+
+                # ─── Phase 1 Step 2: AMP placement → validation.jsonl ──────
+                # n_seeds=1: each training mask AMP-placed onto a clean image
+                # exactly once. Writes mask PNGs to amp/ + a manifest jsonl
+                # whose paths are absolute (no sentinel rewrite needed — the
+                # paths inside refer to this same pod's filesystem).
+                VAL_DIR=/tmp/validation
+                rm -rf "$VAL_DIR"
+                mkdir -p "$VAL_DIR/amp"
+                VAL_JSONL="$VAL_DIR/validation.jsonl"
+
+                echo "=== Phase 1 Step 2: prep_testcase.sh (validation_${EXP_NAME}) ==="
+                bash "$SCRIPTS/prep_testcase.sh" \
+                    --name "validation_${EXP_NAME}" \
+                    --num-sdg "$NUM_SDG" \
+                    --dataset-dir "$DATASET_DIR" \
+                    --defect-spec "$DEFECT_SPEC" \
+                    --amp-output-dir "$VAL_DIR/amp" \
+                    --output-jsonl "$VAL_JSONL"
+
+                [ -s "$VAL_JSONL" ] || {
+                  echo "ERROR: prep_testcase.sh produced an empty validation.jsonl"
+                  exit 1
+                }
+                echo "validation.jsonl: $(wc -l < "$VAL_JSONL") rows"
+                echo "validation amp/:  $(find "$VAL_DIR/amp" -type f | wc -l) files"
+
+                # ── Render per-run training config from cookbook template ─────
+                # VAL_JSONL is in scope here (Phase 1 Step 2 just produced it).
+                CONFIG_FILE=/tmp/ag_config.yaml
+                NAME="$EXP_NAME" \
+                JOB_NAME="${EXP_NAME}_training_FP32_lr0.02_bs=2_2b_512x512" \
+                DATASET_DIR="$DATASET_DIR" \
+                VAL_JSONL="$VAL_JSONL" \
+                NVDINOV2_CKPT="checkpoints/NVDINOV2/nv_dinov2_classification_model.ckpt" \
+                  yq '
+                    .job.group = strenv(NAME) |
+                    .job.name  = strenv(JOB_NAME) |
+                    .dataloader_train.dataset.dataset_dir = strenv(DATASET_DIR) |
+                    .dataloader_val.dataset.input_data_path = strenv(VAL_JSONL) |
+                    .model.config.ag_config.mask_encoder.encoder_config.init_cfg.checkpoint = strenv(NVDINOV2_CKPT) |
+                    del(.trainer.early_stop)
+                  ' "$TEMPLATE" > "$CONFIG_FILE"
+                echo "Rendered $CONFIG_FILE from $TEMPLATE (NAME=$EXP_NAME)"
+
+                # Cookbook hygiene — runs after yq render so per-run overrides are seen.
+                # save_iter > max_iter is fatal (no checkpoint ever written).
+                # validation_iter > max_iter degrades pick_best_step.sh to latest-iter
+                # (still warn-only because "just train and pick latest" is legitimate).
+                # save_iter == max_iter is the shipped pattern — trainer saves at iter
+                # == max_iter, so don't warn on that case.
+                MAX_ITER=$(yq        '.trainer.max_iter        // 0' "$CONFIG_FILE")
+                SAVE_ITER=$(yq       '.checkpoint.save_iter    // 0' "$CONFIG_FILE")
+                VALIDATION_ITER=$(yq '.trainer.validation_iter // 0' "$CONFIG_FILE")
+                LOGGING_ITER=$(yq    '.trainer.logging_iter    // 0' "$CONFIG_FILE")
+
+                if [ "$SAVE_ITER" -gt 0 ] && [ "$MAX_ITER" -gt 0 ] && [ "$SAVE_ITER" -gt "$MAX_ITER" ]; then
+                  echo "ERROR: cookbook save_iter=$SAVE_ITER > max_iter=$MAX_ITER — no checkpoint will be saved." >&2
+                  echo "  Fix assets/cookbooks/{{ usecase }}/ag_config.yaml: set save_iter <= max_iter." >&2
+                  exit 1
+                fi
+
+                if [ "$VALIDATION_ITER" -gt 0 ] && [ "$MAX_ITER" -gt 0 ] && [ "$VALIDATION_ITER" -gt "$MAX_ITER" ]; then
+                  echo "WARN: cookbook validation_iter=$VALIDATION_ITER > max_iter=$MAX_ITER — no validation logs; pick_best_step.sh will fall back to latest trained iter (not best-by-nn_score)." >&2
+                fi
+
+                if [ "$LOGGING_ITER" -gt 0 ] && [ "$MAX_ITER" -gt 0 ] && [ "$LOGGING_ITER" -gt "$MAX_ITER" ]; then
+                  echo "WARN: cookbook logging_iter=$LOGGING_ITER > max_iter=$MAX_ITER — no progress logs will be emitted." >&2
+                fi
+
+                # Stage rendered config alongside the trainer code.
+                mkdir -p ag_configs
+                cp "$CONFIG_FILE" "ag_configs/${EXP_NAME}.yaml"
+
+                EXP="predict2_anomaly_gen_ddp_2b"
+                export IMAGINAIRE_OUTPUT_ROOT="{{output}}/results"
+                mkdir -p "$IMAGINAIRE_OUTPUT_ROOT"
+                echo "=== torchrun ($EXP_NAME, $NUM_GPUS GPUs, experiment=$EXP) ==="
+                torchrun --nproc_per_node="$NUM_GPUS" --master_port=12341 \
+                  -m scripts.anomaly_gen.ag_train \
+                  --config=cosmos_predict2/configs/base/ag_config.py \
+                  --ag_config="ag_configs/${EXP_NAME}.yaml" \
+                  -- experiment="$EXP"
+                echo "=== Training complete ==="
+          outputs:
+            - url: "{{ dig_url_root }}/runs/{{ name }}/finetune"
+
+default-values:
+  workflow_name: finetune
+  exec_timeout: 28h
+  queue_timeout: 2h
+
+  # `name` has no default — every submit must pass `--set name=<flow>-$STAMP`
+  # (see SKILL.md §"Name stamping"). This forces the storage path
+  # `runs/<name>/finetune` to be unique per submission instead of silently
+  # overwriting prior runs.
+  dig_url_root: "s3://osmo-workflows/dig"
+  usecase: pcb
+
+  anomalygen_image: "nvcr.io/nvidia/paidf-anomalygen:1.0.0"
+
+  # URL inputs — defaults align with the layout the setup/ workflows write.
+  # The raw training URL contains the NGC-shipped tree (anomaly_image/, mask/,
+  # clean_image/, defect_spec.jsonl). validation.jsonl + amp/ are produced
+  # fresh inside this task (Phase 1 Step 1 + Step 2) before torchrun starts.
+
+  # Cluster knobs only — training-recipe knobs (lr, max_iter, etc.) live in
+  # the per-usecase cookbook at assets/cookbooks/<usecase>/ag_config.yaml and
+  # are inherited from the shipped checkpoint's config unless yq overrides them
+  # at render time.
+  # train_gpu / train_cpu / train_memory — defaults below are sized for the
+  # 1-GPU case. Scale by passing all three at submit time, e.g.
+  #   --set train_gpu=4 train_cpu=32 train_memory=192Gi
+  # See references/gpu_sizing.md for the full per-GPU scaling table and the
+  # reasoning (cosmos-predict2-2B rank ~33 GiB host RAM during DDP sync, etc.).
+  train_gpu: "1"
+  train_cpu: "16"
+  train_memory: 64Gi
+  train_storage: 300Gi
+  platform: default

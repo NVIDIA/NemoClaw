@@ -1,0 +1,394 @@
+{
+  "actions": {
+    "evaluate": {
+      "automl_default_parameters": [
+        "train.optim.backbone_multiplier",
+        "train.optim.lr",
+        "train.optim.momentum",
+        "train.optim.warmup_epochs",
+        "train.optim.weight_decay"
+      ],
+      "automl_disabled_parameters": [
+        "dataset",
+        "dataset.augmentation",
+        "dataset.augmentation.mean",
+        "dataset.augmentation.std",
+        "evaluate",
+        "evaluate.gpu_ids",
+        "export",
+        "gen_trt_engine",
+        "gen_trt_engine.tensorrt",
+        "gen_trt_engine.tensorrt.layers_precision",
+        "inference",
+        "inference.gpu_ids",
+        "model",
+        "train",
+        "train.cudnn",
+        "train.freeze",
+        "train.gpu_ids",
+        "train.optim",
+        "train.optim.milestones",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "mae",
+      "path": "schemas/evaluate.schema.json",
+      "popular": {
+        "evaluate": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "gen_trt_engine": {
+          "batch_size": -1,
+          "gpu_id": 0,
+          "tensorrt": {
+            "max_batch_size": 1,
+            "min_batch_size": 1,
+            "opt_batch_size": 1
+          }
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "train": {
+          "checkpoint_interval": 1,
+          "gpu_ids": [
+            0
+          ],
+          "num_epochs": 10,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "optim": {
+            "backbone_multiplier": 0.1,
+            "layer_decay": 0.75,
+            "momentum": 0.9,
+            "weight_decay": 0.05
+          },
+          "validation_interval": 1
+        }
+      },
+      "schema_action": "evaluate",
+      "spec_template": "references/spec_template_evaluate.yaml"
+    },
+    "export": {
+      "automl_default_parameters": [
+        "train.optim.backbone_multiplier",
+        "train.optim.lr",
+        "train.optim.momentum",
+        "train.optim.warmup_epochs",
+        "train.optim.weight_decay"
+      ],
+      "automl_disabled_parameters": [
+        "dataset",
+        "dataset.augmentation",
+        "dataset.augmentation.mean",
+        "dataset.augmentation.std",
+        "evaluate",
+        "evaluate.gpu_ids",
+        "export",
+        "gen_trt_engine",
+        "gen_trt_engine.tensorrt",
+        "gen_trt_engine.tensorrt.layers_precision",
+        "inference",
+        "inference.gpu_ids",
+        "model",
+        "train",
+        "train.cudnn",
+        "train.freeze",
+        "train.gpu_ids",
+        "train.optim",
+        "train.optim.milestones",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "mae",
+      "path": "schemas/export.schema.json",
+      "popular": {
+        "evaluate": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "gen_trt_engine": {
+          "batch_size": -1,
+          "gpu_id": 0,
+          "tensorrt": {
+            "max_batch_size": 1,
+            "min_batch_size": 1,
+            "opt_batch_size": 1
+          }
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "train": {
+          "checkpoint_interval": 1,
+          "gpu_ids": [
+            0
+          ],
+          "num_epochs": 10,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "optim": {
+            "backbone_multiplier": 0.1,
+            "layer_decay": 0.75,
+            "momentum": 0.9,
+            "weight_decay": 0.05
+          },
+          "validation_interval": 1
+        }
+      },
+      "schema_action": "export",
+      "spec_template": "references/spec_template_export.yaml"
+    },
+    "gen_trt_engine": {
+      "automl_default_parameters": [
+        "train.optim.backbone_multiplier",
+        "train.optim.lr",
+        "train.optim.momentum",
+        "train.optim.warmup_epochs",
+        "train.optim.weight_decay"
+      ],
+      "automl_disabled_parameters": [
+        "dataset",
+        "dataset.augmentation",
+        "dataset.augmentation.mean",
+        "dataset.augmentation.std",
+        "evaluate",
+        "evaluate.gpu_ids",
+        "export",
+        "gen_trt_engine",
+        "gen_trt_engine.tensorrt",
+        "gen_trt_engine.tensorrt.layers_precision",
+        "inference",
+        "inference.gpu_ids",
+        "model",
+        "train",
+        "train.cudnn",
+        "train.freeze",
+        "train.gpu_ids",
+        "train.optim",
+        "train.optim.milestones",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "mae",
+      "path": "schemas/gen_trt_engine.schema.json",
+      "popular": {
+        "evaluate": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "gen_trt_engine": {
+          "batch_size": -1,
+          "gpu_id": 0,
+          "tensorrt": {
+            "max_batch_size": 1,
+            "min_batch_size": 1,
+            "opt_batch_size": 1
+          }
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "train": {
+          "checkpoint_interval": 1,
+          "gpu_ids": [
+            0
+          ],
+          "num_epochs": 10,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "optim": {
+            "backbone_multiplier": 0.1,
+            "layer_decay": 0.75,
+            "momentum": 0.9,
+            "weight_decay": 0.05
+          },
+          "validation_interval": 1
+        }
+      },
+      "schema_action": "gen_trt_engine",
+      "spec_template": "references/spec_template_gen_trt_engine.yaml"
+    },
+    "inference": {
+      "automl_default_parameters": [
+        "train.optim.backbone_multiplier",
+        "train.optim.lr",
+        "train.optim.momentum",
+        "train.optim.warmup_epochs",
+        "train.optim.weight_decay"
+      ],
+      "automl_disabled_parameters": [
+        "dataset",
+        "dataset.augmentation",
+        "dataset.augmentation.mean",
+        "dataset.augmentation.std",
+        "evaluate",
+        "evaluate.gpu_ids",
+        "export",
+        "gen_trt_engine",
+        "gen_trt_engine.tensorrt",
+        "gen_trt_engine.tensorrt.layers_precision",
+        "inference",
+        "inference.gpu_ids",
+        "model",
+        "train",
+        "train.cudnn",
+        "train.freeze",
+        "train.gpu_ids",
+        "train.optim",
+        "train.optim.milestones",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "mae",
+      "path": "schemas/inference.schema.json",
+      "popular": {
+        "evaluate": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "gen_trt_engine": {
+          "batch_size": -1,
+          "gpu_id": 0,
+          "tensorrt": {
+            "max_batch_size": 1,
+            "min_batch_size": 1,
+            "opt_batch_size": 1
+          }
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "train": {
+          "checkpoint_interval": 1,
+          "gpu_ids": [
+            0
+          ],
+          "num_epochs": 10,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "optim": {
+            "backbone_multiplier": 0.1,
+            "layer_decay": 0.75,
+            "momentum": 0.9,
+            "weight_decay": 0.05
+          },
+          "validation_interval": 1
+        }
+      },
+      "schema_action": "inference",
+      "spec_template": "references/spec_template_inference.yaml"
+    },
+    "train": {
+      "automl_default_parameters": [
+        "train.optim.backbone_multiplier",
+        "train.optim.lr",
+        "train.optim.momentum",
+        "train.optim.warmup_epochs",
+        "train.optim.weight_decay"
+      ],
+      "automl_disabled_parameters": [
+        "dataset",
+        "dataset.augmentation",
+        "dataset.augmentation.mean",
+        "dataset.augmentation.std",
+        "evaluate",
+        "evaluate.gpu_ids",
+        "export",
+        "gen_trt_engine",
+        "gen_trt_engine.tensorrt",
+        "gen_trt_engine.tensorrt.layers_precision",
+        "inference",
+        "inference.gpu_ids",
+        "model",
+        "train",
+        "train.cudnn",
+        "train.freeze",
+        "train.gpu_ids",
+        "train.optim",
+        "train.optim.milestones",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "mae",
+      "path": "schemas/train.schema.json",
+      "popular": {
+        "evaluate": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "gen_trt_engine": {
+          "batch_size": -1,
+          "gpu_id": 0,
+          "tensorrt": {
+            "max_batch_size": 1,
+            "min_batch_size": 1,
+            "opt_batch_size": 1
+          }
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "train": {
+          "checkpoint_interval": 1,
+          "gpu_ids": [
+            0
+          ],
+          "num_epochs": 10,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "optim": {
+            "backbone_multiplier": 0.1,
+            "layer_decay": 0.75,
+            "momentum": 0.9,
+            "weight_decay": 0.05
+          },
+          "validation_interval": 1
+        }
+      },
+      "schema_action": "train",
+      "spec_template": "references/spec_template_train.yaml"
+    }
+  },
+  "automl_enabled": true,
+  "failures": {},
+  "model": "mae",
+  "network_arch": "mae",
+  "schema_version": 1
+}

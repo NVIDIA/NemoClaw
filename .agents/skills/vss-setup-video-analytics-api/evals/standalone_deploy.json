@@ -1,0 +1,30 @@
+{
+  "skills": [
+    "vss-setup-video-analytics-api"
+  ],
+  "resources": {
+    "platforms": {
+      "ANY": {
+        "gpu_count": 0
+      }
+    }
+  },
+  "expects": [
+    {
+      "query": "Deploy `vss-video-analytics-api` standalone using the `/vss-setup-video-analytics-api` skill end-to-end and autonomously. Use the compose file's default service-shipped config at `services/analytics/video-analytics-api/configs/vss-video-analytics-api-config.json`; do NOT swap to the image-baked default config or mount a custom config. Bring up Elasticsearch if it is not already reachable, but do not require Kafka. Leave the API running for verifier probes.\n\n**Environment & prerequisites:** A bare Brev host with Docker + `NGC_CLI_API_KEY` for image pull. This spec exercises the skill's standalone-deploy flow against `deploy/docker/services/analytics/video-analytics-api/compose.yml`. `vss-video-analytics-api` is CPU-only. The API requires Elasticsearch at `http://localhost:9200` for `/livez`; if it is not already reachable, start only the `elasticsearch` service from `deploy/docker/services/infra/compose.yml` and wait for `/_cluster/health`. Kafka is optional: do not require it, and do not fail solely because `localhost:9092` is absent. Set `VSS_APPS_DIR={{repo_root}}/deploy/docker` and set `VSS_DATA_DIR` to a writable host path with `data_log/vss_video_analytics_api` pre-created so the default data-log bind mount is valid. `gpu_count: 0` means to skip the GPU-type / GPU-count enforcement; the `ANY` platform key is a no-constraint pool selector.",
+      "checks": [
+        "The agent used `deploy/docker/services/analytics/video-analytics-api/compose.yml` to start only `vss-video-analytics-api` standalone, not a full VSS profile.",
+        "The agent set `VSS_APPS_DIR` to `{{repo_root}}/deploy/docker` and set `VSS_DATA_DIR` to a writable host path with `data_log/vss_video_analytics_api` present before `docker compose up`.",
+        "`curl -sf --max-time 15 http://localhost:9200/_cluster/health` returns exit 0 (Elasticsearch is reachable before declaring the API ready)",
+        "`docker ps -a --format '{{.Names}}' | grep -qx video-analytics-api-vss-video-analytics-api-1` returns exit 0 (the container was created - Compose auto-name is `<project>-<service>-<index>`; project defaults to the compose file's parent dir `video-analytics-api`, service is `vss-video-analytics-api`)",
+        "`docker inspect video-analytics-api-vss-video-analytics-api-1 --format '{{.Config.Image}}' | grep -q 'vss-video-analytics-api'` returns exit 0 (correct image was pulled)",
+        "`docker inspect video-analytics-api-vss-video-analytics-api-1 --format '{{join .Config.Cmd \" \"}}' | grep -q 'node index.js --config /opt/mdx/vss-video-analytics-api/configs/vss-video-analytics-api-config.json'` returns exit 0 (default service-shipped config is used, not the image-baked default or a custom config)",
+        "`docker inspect video-analytics-api-vss-video-analytics-api-1 --format '{{.HostConfig.NetworkMode}}' | grep -qx host` returns exit 0 (host networking preserved from the compose file)",
+        "`docker inspect video-analytics-api-vss-video-analytics-api-1 --format '{{.HostConfig.RestartPolicy.Name}}' | grep -qx always` returns exit 0 (restart policy preserved from the compose file)",
+        "`docker inspect video-analytics-api-vss-video-analytics-api-1 --format '{{range .Mounts}}{{println .Destination}}{{end}}' | grep -qx /opt/mdx/vss-video-analytics-api/configs/vss-video-analytics-api-config.json` returns exit 0 (service-shipped config bind mount preserved)",
+        "`docker inspect video-analytics-api-vss-video-analytics-api-1 --format '{{range .Mounts}}{{println .Destination}}{{end}}' | grep -qx /web-api-app/files` returns exit 0 (data-log bind mount preserved)",
+        "`curl -sf --max-time 15 http://localhost:8081/livez` returns exit 0 (API is live on the default port)"
+      ]
+    }
+  ]
+}

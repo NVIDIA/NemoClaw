@@ -1,0 +1,51 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Qwen Image Edit 2511 Visual GenAI NIM.
+# Official container documented at:
+# https://docs.nvidia.com/nim/visual-genai/latest/getting-started.html
+apiVersion: apps.nvidia.com/v1alpha1
+kind: NIMService
+metadata:
+  name: qwen-image-edit
+  namespace: osmo-nims
+spec:
+  image:
+    repository: nvcr.io/nim/qwen/qwen-image-edit
+    tag: "1.0.0-variant"
+    pullPolicy: IfNotPresent
+    pullSecrets:
+      - nvcr-pull-secret
+  authSecret: ngc-api-secret
+  env:
+    - name: NIM_MODEL_VERSION
+      value: "qwen-image-edit-2511"
+    - name: NIM_SERVED_MODEL_NAME
+      value: "qwen/qwen-image-edit-2511"
+  storage:
+    pvc:
+      create: true
+      size: "120Gi"
+      volumeAccessMode: ReadWriteMany
+  startupProbe:
+    enabled: true
+    probe:
+      httpGet:
+        path: /v1/health/ready
+        port: 8000
+      initialDelaySeconds: 60
+      periodSeconds: 30
+      failureThreshold: 120
+      timeoutSeconds: 5
+  replicas: 1
+  resources:
+    limits:
+      nvidia.com/gpu: 1
+      memory: 128Gi
+    requests:
+      nvidia.com/gpu: 1
+      memory: 128Gi
+  expose:
+    service:
+      type: ClusterIP
+      port: 8000

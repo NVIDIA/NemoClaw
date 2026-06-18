@@ -1,0 +1,765 @@
+{
+  "actions": {
+    "dataset_convert": {
+      "automl_default_parameters": [
+        "dataset.augmentation.aug_prob",
+        "dataset.augmentation.blur_prob",
+        "dataset.augmentation.reverse_color_prob",
+        "dataset.augmentation.rotate_prob",
+        "train.optim.lr"
+      ],
+      "automl_disabled_parameters": [
+        "dataset",
+        "dataset.augmentation",
+        "dataset.augmentation.gaussian_radius_list",
+        "dataset.quant_calibration_dataset",
+        "dataset.train_dataset_dir",
+        "dataset_convert",
+        "evaluate",
+        "evaluate.gpu_ids",
+        "export",
+        "gen_trt_engine",
+        "gen_trt_engine.tensorrt",
+        "gen_trt_engine.tensorrt.calibration",
+        "gen_trt_engine.tensorrt.calibration.cal_image_dir",
+        "gen_trt_engine.tensorrt.layers_precision",
+        "inference",
+        "inference.gpu_ids",
+        "model",
+        "prune",
+        "prune.prune_setting",
+        "quantize",
+        "quantize.backend_kwargs",
+        "quantize.layers",
+        "quantize.skip_names",
+        "train",
+        "train.cudnn",
+        "train.gpu_ids",
+        "train.optim",
+        "train.optim.lr_steps",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "ocrnet",
+      "path": "schemas/dataset_convert.schema.json",
+      "popular": {
+        "evaluate": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "gen_trt_engine": {
+          "batch_size": -1,
+          "gpu_id": 0,
+          "tensorrt": {
+            "calibration": {
+              "cal_batch_size": 1,
+              "cal_batches": 1
+            },
+            "max_batch_size": 1,
+            "min_batch_size": 1,
+            "opt_batch_size": 1
+          }
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "train": {
+          "checkpoint_interval": 1,
+          "gpu_ids": [
+            0
+          ],
+          "num_epochs": 10,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "validation_interval": 1
+        }
+      },
+      "schema_action": "dataset_convert",
+      "spec_template": "references/spec_template_dataset_convert.yaml"
+    },
+    "evaluate": {
+      "automl_default_parameters": [
+        "dataset.augmentation.aug_prob",
+        "dataset.augmentation.blur_prob",
+        "dataset.augmentation.reverse_color_prob",
+        "dataset.augmentation.rotate_prob",
+        "train.optim.lr"
+      ],
+      "automl_disabled_parameters": [
+        "dataset",
+        "dataset.augmentation",
+        "dataset.augmentation.gaussian_radius_list",
+        "dataset.quant_calibration_dataset",
+        "dataset.train_dataset_dir",
+        "dataset_convert",
+        "evaluate",
+        "evaluate.gpu_ids",
+        "export",
+        "gen_trt_engine",
+        "gen_trt_engine.tensorrt",
+        "gen_trt_engine.tensorrt.calibration",
+        "gen_trt_engine.tensorrt.calibration.cal_image_dir",
+        "gen_trt_engine.tensorrt.layers_precision",
+        "inference",
+        "inference.gpu_ids",
+        "model",
+        "prune",
+        "prune.prune_setting",
+        "quantize",
+        "quantize.backend_kwargs",
+        "quantize.layers",
+        "quantize.skip_names",
+        "train",
+        "train.cudnn",
+        "train.gpu_ids",
+        "train.optim",
+        "train.optim.lr_steps",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "ocrnet",
+      "path": "schemas/evaluate.schema.json",
+      "popular": {
+        "evaluate": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "gen_trt_engine": {
+          "batch_size": -1,
+          "gpu_id": 0,
+          "tensorrt": {
+            "calibration": {
+              "cal_batch_size": 1,
+              "cal_batches": 1
+            },
+            "max_batch_size": 1,
+            "min_batch_size": 1,
+            "opt_batch_size": 1
+          }
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "train": {
+          "checkpoint_interval": 1,
+          "gpu_ids": [
+            0
+          ],
+          "num_epochs": 10,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "validation_interval": 1
+        }
+      },
+      "schema_action": "evaluate",
+      "spec_template": "references/spec_template_evaluate.yaml"
+    },
+    "export": {
+      "automl_default_parameters": [
+        "dataset.augmentation.aug_prob",
+        "dataset.augmentation.blur_prob",
+        "dataset.augmentation.reverse_color_prob",
+        "dataset.augmentation.rotate_prob",
+        "train.optim.lr"
+      ],
+      "automl_disabled_parameters": [
+        "dataset",
+        "dataset.augmentation",
+        "dataset.augmentation.gaussian_radius_list",
+        "dataset.quant_calibration_dataset",
+        "dataset.train_dataset_dir",
+        "dataset_convert",
+        "evaluate",
+        "evaluate.gpu_ids",
+        "export",
+        "gen_trt_engine",
+        "gen_trt_engine.tensorrt",
+        "gen_trt_engine.tensorrt.calibration",
+        "gen_trt_engine.tensorrt.calibration.cal_image_dir",
+        "gen_trt_engine.tensorrt.layers_precision",
+        "inference",
+        "inference.gpu_ids",
+        "model",
+        "prune",
+        "prune.prune_setting",
+        "quantize",
+        "quantize.backend_kwargs",
+        "quantize.layers",
+        "quantize.skip_names",
+        "train",
+        "train.cudnn",
+        "train.gpu_ids",
+        "train.optim",
+        "train.optim.lr_steps",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "ocrnet",
+      "path": "schemas/export.schema.json",
+      "popular": {
+        "evaluate": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "gen_trt_engine": {
+          "batch_size": -1,
+          "gpu_id": 0,
+          "tensorrt": {
+            "calibration": {
+              "cal_batch_size": 1,
+              "cal_batches": 1
+            },
+            "max_batch_size": 1,
+            "min_batch_size": 1,
+            "opt_batch_size": 1
+          }
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "train": {
+          "checkpoint_interval": 1,
+          "gpu_ids": [
+            0
+          ],
+          "num_epochs": 10,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "validation_interval": 1
+        }
+      },
+      "schema_action": "export",
+      "spec_template": "references/spec_template_export.yaml"
+    },
+    "gen_trt_engine": {
+      "automl_default_parameters": [
+        "dataset.augmentation.aug_prob",
+        "dataset.augmentation.blur_prob",
+        "dataset.augmentation.reverse_color_prob",
+        "dataset.augmentation.rotate_prob",
+        "train.optim.lr"
+      ],
+      "automl_disabled_parameters": [
+        "dataset",
+        "dataset.augmentation",
+        "dataset.augmentation.gaussian_radius_list",
+        "dataset.quant_calibration_dataset",
+        "dataset.train_dataset_dir",
+        "dataset_convert",
+        "evaluate",
+        "evaluate.gpu_ids",
+        "export",
+        "gen_trt_engine",
+        "gen_trt_engine.tensorrt",
+        "gen_trt_engine.tensorrt.calibration",
+        "gen_trt_engine.tensorrt.calibration.cal_image_dir",
+        "gen_trt_engine.tensorrt.layers_precision",
+        "inference",
+        "inference.gpu_ids",
+        "model",
+        "prune",
+        "prune.prune_setting",
+        "quantize",
+        "quantize.backend_kwargs",
+        "quantize.layers",
+        "quantize.skip_names",
+        "train",
+        "train.cudnn",
+        "train.gpu_ids",
+        "train.optim",
+        "train.optim.lr_steps",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "ocrnet",
+      "path": "schemas/gen_trt_engine.schema.json",
+      "popular": {
+        "evaluate": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "gen_trt_engine": {
+          "batch_size": -1,
+          "gpu_id": 0,
+          "tensorrt": {
+            "calibration": {
+              "cal_batch_size": 1,
+              "cal_batches": 1
+            },
+            "max_batch_size": 1,
+            "min_batch_size": 1,
+            "opt_batch_size": 1
+          }
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "train": {
+          "checkpoint_interval": 1,
+          "gpu_ids": [
+            0
+          ],
+          "num_epochs": 10,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "validation_interval": 1
+        }
+      },
+      "schema_action": "gen_trt_engine",
+      "spec_template": "references/spec_template_gen_trt_engine.yaml"
+    },
+    "inference": {
+      "automl_default_parameters": [
+        "dataset.augmentation.aug_prob",
+        "dataset.augmentation.blur_prob",
+        "dataset.augmentation.reverse_color_prob",
+        "dataset.augmentation.rotate_prob",
+        "train.optim.lr"
+      ],
+      "automl_disabled_parameters": [
+        "dataset",
+        "dataset.augmentation",
+        "dataset.augmentation.gaussian_radius_list",
+        "dataset.quant_calibration_dataset",
+        "dataset.train_dataset_dir",
+        "dataset_convert",
+        "evaluate",
+        "evaluate.gpu_ids",
+        "export",
+        "gen_trt_engine",
+        "gen_trt_engine.tensorrt",
+        "gen_trt_engine.tensorrt.calibration",
+        "gen_trt_engine.tensorrt.calibration.cal_image_dir",
+        "gen_trt_engine.tensorrt.layers_precision",
+        "inference",
+        "inference.gpu_ids",
+        "model",
+        "prune",
+        "prune.prune_setting",
+        "quantize",
+        "quantize.backend_kwargs",
+        "quantize.layers",
+        "quantize.skip_names",
+        "train",
+        "train.cudnn",
+        "train.gpu_ids",
+        "train.optim",
+        "train.optim.lr_steps",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "ocrnet",
+      "path": "schemas/inference.schema.json",
+      "popular": {
+        "evaluate": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "gen_trt_engine": {
+          "batch_size": -1,
+          "gpu_id": 0,
+          "tensorrt": {
+            "calibration": {
+              "cal_batch_size": 1,
+              "cal_batches": 1
+            },
+            "max_batch_size": 1,
+            "min_batch_size": 1,
+            "opt_batch_size": 1
+          }
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "train": {
+          "checkpoint_interval": 1,
+          "gpu_ids": [
+            0
+          ],
+          "num_epochs": 10,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "validation_interval": 1
+        }
+      },
+      "schema_action": "inference",
+      "spec_template": "references/spec_template_inference.yaml"
+    },
+    "prune": {
+      "automl_default_parameters": [
+        "dataset.augmentation.aug_prob",
+        "dataset.augmentation.blur_prob",
+        "dataset.augmentation.reverse_color_prob",
+        "dataset.augmentation.rotate_prob",
+        "train.optim.lr"
+      ],
+      "automl_disabled_parameters": [
+        "dataset",
+        "dataset.augmentation",
+        "dataset.augmentation.gaussian_radius_list",
+        "dataset.quant_calibration_dataset",
+        "dataset.train_dataset_dir",
+        "dataset_convert",
+        "evaluate",
+        "evaluate.gpu_ids",
+        "export",
+        "gen_trt_engine",
+        "gen_trt_engine.tensorrt",
+        "gen_trt_engine.tensorrt.calibration",
+        "gen_trt_engine.tensorrt.calibration.cal_image_dir",
+        "gen_trt_engine.tensorrt.layers_precision",
+        "inference",
+        "inference.gpu_ids",
+        "model",
+        "prune",
+        "prune.prune_setting",
+        "quantize",
+        "quantize.backend_kwargs",
+        "quantize.layers",
+        "quantize.skip_names",
+        "train",
+        "train.cudnn",
+        "train.gpu_ids",
+        "train.optim",
+        "train.optim.lr_steps",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "ocrnet",
+      "path": "schemas/prune.schema.json",
+      "popular": {
+        "evaluate": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "gen_trt_engine": {
+          "batch_size": -1,
+          "gpu_id": 0,
+          "tensorrt": {
+            "calibration": {
+              "cal_batch_size": 1,
+              "cal_batches": 1
+            },
+            "max_batch_size": 1,
+            "min_batch_size": 1,
+            "opt_batch_size": 1
+          }
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "train": {
+          "checkpoint_interval": 1,
+          "gpu_ids": [
+            0
+          ],
+          "num_epochs": 10,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "validation_interval": 1
+        }
+      },
+      "schema_action": "prune",
+      "spec_template": "references/spec_template_prune.yaml"
+    },
+    "quantize": {
+      "automl_default_parameters": [
+        "dataset.augmentation.aug_prob",
+        "dataset.augmentation.blur_prob",
+        "dataset.augmentation.reverse_color_prob",
+        "dataset.augmentation.rotate_prob",
+        "train.optim.lr"
+      ],
+      "automl_disabled_parameters": [
+        "dataset",
+        "dataset.augmentation",
+        "dataset.augmentation.gaussian_radius_list",
+        "dataset.quant_calibration_dataset",
+        "dataset.train_dataset_dir",
+        "dataset_convert",
+        "evaluate",
+        "evaluate.gpu_ids",
+        "export",
+        "gen_trt_engine",
+        "gen_trt_engine.tensorrt",
+        "gen_trt_engine.tensorrt.calibration",
+        "gen_trt_engine.tensorrt.calibration.cal_image_dir",
+        "gen_trt_engine.tensorrt.layers_precision",
+        "inference",
+        "inference.gpu_ids",
+        "model",
+        "prune",
+        "prune.prune_setting",
+        "quantize",
+        "quantize.backend_kwargs",
+        "quantize.layers",
+        "quantize.skip_names",
+        "train",
+        "train.cudnn",
+        "train.gpu_ids",
+        "train.optim",
+        "train.optim.lr_steps",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "ocrnet",
+      "path": "schemas/quantize.schema.json",
+      "popular": {
+        "evaluate": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "gen_trt_engine": {
+          "batch_size": -1,
+          "gpu_id": 0,
+          "tensorrt": {
+            "calibration": {
+              "cal_batch_size": 1,
+              "cal_batches": 1
+            },
+            "max_batch_size": 1,
+            "min_batch_size": 1,
+            "opt_batch_size": 1
+          }
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "train": {
+          "checkpoint_interval": 1,
+          "gpu_ids": [
+            0
+          ],
+          "num_epochs": 10,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "validation_interval": 1
+        }
+      },
+      "schema_action": "quantize",
+      "spec_template": "references/spec_template_quantize.yaml"
+    },
+    "retrain": {
+      "automl_default_parameters": [
+        "dataset.augmentation.aug_prob",
+        "dataset.augmentation.blur_prob",
+        "dataset.augmentation.reverse_color_prob",
+        "dataset.augmentation.rotate_prob",
+        "train.optim.lr"
+      ],
+      "automl_disabled_parameters": [
+        "dataset",
+        "dataset.augmentation",
+        "dataset.augmentation.gaussian_radius_list",
+        "dataset.quant_calibration_dataset",
+        "dataset.train_dataset_dir",
+        "dataset_convert",
+        "evaluate",
+        "evaluate.gpu_ids",
+        "export",
+        "gen_trt_engine",
+        "gen_trt_engine.tensorrt",
+        "gen_trt_engine.tensorrt.calibration",
+        "gen_trt_engine.tensorrt.calibration.cal_image_dir",
+        "gen_trt_engine.tensorrt.layers_precision",
+        "inference",
+        "inference.gpu_ids",
+        "model",
+        "prune",
+        "prune.prune_setting",
+        "quantize",
+        "quantize.backend_kwargs",
+        "quantize.layers",
+        "quantize.skip_names",
+        "train",
+        "train.cudnn",
+        "train.gpu_ids",
+        "train.optim",
+        "train.optim.lr_steps",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "ocrnet",
+      "path": "schemas/retrain.schema.json",
+      "popular": {
+        "evaluate": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "gen_trt_engine": {
+          "batch_size": -1,
+          "gpu_id": 0,
+          "tensorrt": {
+            "calibration": {
+              "cal_batch_size": 1,
+              "cal_batches": 1
+            },
+            "max_batch_size": 1,
+            "min_batch_size": 1,
+            "opt_batch_size": 1
+          }
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "train": {
+          "checkpoint_interval": 1,
+          "gpu_ids": [
+            0
+          ],
+          "num_epochs": 10,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "validation_interval": 1
+        }
+      },
+      "schema_action": "retrain",
+      "spec_template": "references/spec_template_retrain.yaml"
+    },
+    "train": {
+      "automl_default_parameters": [
+        "dataset.augmentation.aug_prob",
+        "dataset.augmentation.blur_prob",
+        "dataset.augmentation.reverse_color_prob",
+        "dataset.augmentation.rotate_prob",
+        "train.optim.lr"
+      ],
+      "automl_disabled_parameters": [
+        "dataset",
+        "dataset.augmentation",
+        "dataset.augmentation.gaussian_radius_list",
+        "dataset.quant_calibration_dataset",
+        "dataset.train_dataset_dir",
+        "dataset_convert",
+        "evaluate",
+        "evaluate.gpu_ids",
+        "export",
+        "gen_trt_engine",
+        "gen_trt_engine.tensorrt",
+        "gen_trt_engine.tensorrt.calibration",
+        "gen_trt_engine.tensorrt.calibration.cal_image_dir",
+        "gen_trt_engine.tensorrt.layers_precision",
+        "inference",
+        "inference.gpu_ids",
+        "model",
+        "prune",
+        "prune.prune_setting",
+        "quantize",
+        "quantize.backend_kwargs",
+        "quantize.layers",
+        "quantize.skip_names",
+        "train",
+        "train.cudnn",
+        "train.gpu_ids",
+        "train.optim",
+        "train.optim.lr_steps",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "ocrnet",
+      "path": "schemas/train.schema.json",
+      "popular": {
+        "evaluate": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "gen_trt_engine": {
+          "batch_size": -1,
+          "gpu_id": 0,
+          "tensorrt": {
+            "calibration": {
+              "cal_batch_size": 1,
+              "cal_batches": 1
+            },
+            "max_batch_size": 1,
+            "min_batch_size": 1,
+            "opt_batch_size": 1
+          }
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "train": {
+          "checkpoint_interval": 1,
+          "gpu_ids": [
+            0
+          ],
+          "num_epochs": 10,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "validation_interval": 1
+        }
+      },
+      "schema_action": "train",
+      "spec_template": "references/spec_template_train.yaml"
+    }
+  },
+  "automl_enabled": true,
+  "failures": {},
+  "model": "ocrnet",
+  "network_arch": "ocrnet",
+  "schema_version": 1
+}

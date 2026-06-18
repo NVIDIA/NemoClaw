@@ -1,0 +1,102 @@
+title: moe_vlm_training
+validated_on: "2026-04-01"
+summary: >
+  Training strategies for MoE vision-language models (VLMs), comparing FSDP
+  vs 3D Parallel approaches. Backed by empirical data from Qwen3-VL 235B
+  and Qwen3.5-35B multimodal experiments on GB200 and B200.
+
+validation_status:
+  qwen3_vl_fsdp_gb200:
+    - measured
+  qwen3_vl_fsdp_b200:
+    - measured
+  qwen3_vl_3d_parallel_gb200:
+    - measured
+  qwen3_next_35b_multimodal_gb200:
+    - measured
+
+training_dimensions:
+  speed:
+    effect: "FSDP ~470 TFLOPS vs 3D Parallel ~440 TFLOPS (with MBS=4 tuning)"
+    confidence: medium
+    rationale: >
+      FSDP is slightly faster out of the box. 3D Parallel approaches FSDP
+      with MBS tuning but requires more configuration.
+  memory:
+    effect: "FSDP shards more aggressively; 3D Parallel needs recompute"
+    confidence: medium
+    rationale: >
+      3D Parallel with real vision data needs full recompute to fit in memory.
+  scale:
+    effect: "Both approaches tested at 64–128 GPUs"
+    confidence: medium
+
+best_configs:
+  qwen3_vl_fsdp_gb200:
+    model: "Qwen3-VL 235B-A22B"
+    hardware: "64×GB200"
+    approach: FSDP
+    precision: BF16
+    dispatcher: HybridEP
+    tflops: ~470
+    mfu: "~19%"
+    parallelism: "EP64 DP=64"
+    batch: "MBS4 GBS256"
+    recompute: full
+
+  qwen3_vl_fsdp_b200:
+    model: "Qwen3-VL 235B-A22B"
+    hardware: "128×B200"
+    approach: FSDP
+    precision: BF16
+    dispatcher: AlltoAll
+    tflops: ~460
+    mfu: "~18%"
+    parallelism: "EP8 ETP16 DP=128"
+    batch: "MBS8 GBS1024"
+    recompute: full
+    note: "freeze vision_model, vision_projection"
+
+  qwen3_vl_3d_gb200:
+    model: "Qwen3-VL 235B-A22B"
+    hardware: "64×GB200"
+    approach: "3D Parallel"
+    precision: BF16
+    dispatcher: HybridEP
+    tflops: ~440
+    mfu: "~18%"
+    parallelism: "EP8 ETP8 PP1 DP=8"
+    batch: "MBS4 GBS1024"
+    recompute: full
+    cuda_graph: mlp
+
+  qwen3_next_35b_gb200:
+    model: "Qwen3.5-35B-A3B"
+    hardware: "32×GB200"
+    approach: "FSDP + EDP"
+    precision: BF16
+    dispatcher: HybridEP
+    tflops: ~260
+    parallelism: "EP8 EDP4 PP1 VPP4"
+    batch: "MBS16 GBS4096"
+    cuda_graph: "attn, moe_router, moe_preprocess"
+
+key_findings:
+  - name: mock_data_overestimates
+    finding: "Mock data (no images) gives ~2× higher TFLOPS than real data"
+  - name: freeze_vision_helps
+    finding: "Freezing vision encoder gives +5% throughput"
+  - name: mbs_critical_for_3d
+    finding: "MBS=4 nearly doubles 3D Parallel throughput vs MBS=1"
+  - name: fsdp_simpler_setup
+    finding: "FSDP reaches near-best performance with fewer tuning knobs"
+
+evidence:
+  - "[MoE Perf] MCore Release Performance Tracker - Qwen3-VL"
+  - "[MoE Perf] MCore Release Performance Tracker - Qwen3-Next (Qwen3.5-35B)"
+
+known_limitations:
+  - FP8 not yet tested for VLM MoE training
+  - Long context (CP) not tested for VLM MoE
+  - 3D Parallel results are with specific mcore_encoder; different encoder may differ
+  - Only Qwen3-VL and Qwen3.5 architectures tested

@@ -1,0 +1,159 @@
+# Defect Image Generation — Metal Surface Asset Setup
+#
+# Downloads the metal-surface use-case (UC2) finetuned checkpoint and raw
+# dataset into URL-backed OSMO storage artifacts. Pure download / staging
+# only — no GPU work. Validation JSONL + AMP placement happen at finetune /
+# inference time inside the downstream workflows.
+#
+# Two download groups:
+#   - download-metal_surface-model: nvidia/Cosmos-AnomalyGen-Metal-2B (HF)
+#                                   via scripts/utilities/download_anomalygen_checkpoints.sh
+#   - download-metal_surface-data:  abin24/Magnetic-tile-defect-datasets. (public GitHub;
+#                                   repo slug ends with a literal '.')
+#                                   via scripts.utilities.prepare_dataset_uc2.
+#                                   HF has no pre-packaged metal dataset per the
+#                                   anomalygen skill's UC2 contract.
+#
+# Pretrained bundle is its own workflow (setup_pretrained.yaml) — submit it in
+# parallel with this one.
+#
+# Output URL artifacts:
+#   {{ dig_url_root }}/models/metal_surface
+#   {{ dig_url_root }}/datasets/metal_surface/raw
+#
+# Prerequisites:
+#   1. No registry credential needed — the paidf-* workflow image is public on
+#      nvcr.io/nvidia/ (anonymous pull). If image pulls fail, see
+#      references/troubleshooting.md -> "nvcr.io image pull failures".
+#   2. osmo credential set hf-token --type GENERIC --payload token="$HF_TOKEN"
+#      (Required by the model group. Accept the license once at
+#        https://huggingface.co/nvidia/Cosmos-AnomalyGen-Metal-2B.
+#      The data group fetches from public GitHub and does not need hf-token —
+#      the pod does need outbound internet to github.com.)
+#
+# Submit:
+#   osmo workflow submit skills/physical-ai-defect-image-generation/assets/configs/setup/setup_metal.yaml \
+#     --pool <pool>
+
+version: 2
+workflow:
+  name: "{{ workflow_name }}"
+  timeout:
+    exec_timeout: "{{ exec_timeout }}"
+    queue_timeout: "{{ queue_timeout }}"
+
+  resources:
+    cpu-download:
+      cpu: "{{ cpu }}"
+      memory: "{{ memory }}"
+      storage: "{{ storage }}"
+      platform: "{{ platform }}"
+
+  groups:
+
+    # ── Finetuned AnomalyGen checkpoint (HF) ─────────────────────────────────
+    # scripts/utilities/download_anomalygen_checkpoints.sh --uc metal pulls
+    # nvidia/Cosmos-AnomalyGen-Metal-2B from HF (gated — accept license once).
+    # Note --uc metal (script-internal short name), output dir naming uses
+    # metal_surface (skill convention).
+    - name: download-metal_surface-model
+      tasks:
+        - name: metal_surface-model
+          lead: true
+          image: "{{ pretrained_image }}"
+          resource: cpu-download
+          credentials:
+            hf-token:
+              HF_TOKEN: token
+          environment:
+            HF_HUB_DISABLE_PROGRESS_BARS: "1"
+          command: ["bash"]
+          args: ["/tmp/run.sh"]
+          files:
+            - path: /tmp/run.sh
+              contents: |
+                set -euo pipefail
+                OUT="{{output}}"
+                mkdir -p "$OUT"
+
+                echo "[HF] download_anomalygen_checkpoints.sh --uc metal -> $OUT"
+                cd /workspace/paidf-anomalygen
+                bash scripts/utilities/download_anomalygen_checkpoints.sh \
+                  --uc metal \
+                  --checkpoint-dir "$OUT"
+
+                # Flatten: the download script nests under nvidia/<repo>/,
+                # but downstream workflows expect flat ag_config.yaml +
+                # iter_NNNN.pt at models/metal_surface/.
+                NESTED_DIR=$(find "$OUT" -mindepth 2 -maxdepth 3 -name "iter_*.pt" -printf '%h\n' 2>/dev/null | head -1)
+                if [ -n "$NESTED_DIR" ] && [ "$NESTED_DIR" != "$OUT" ]; then
+                  echo "[FLATTEN] moving files from $NESTED_DIR -> $OUT"
+                  find "$NESTED_DIR" -maxdepth 1 -type f \( -name 'iter_*.pt' -o -name 'ag_config.yaml' \) \
+                    -exec mv {} "$OUT/" \;
+                  rm -rf "$(dirname "$NESTED_DIR")"
+                fi
+
+                FILE_COUNT=$(find "$OUT" -type f | wc -l)
+                [ "$FILE_COUNT" -gt 0 ] || { echo "ERROR: 0 files in $OUT" >&2; exit 1; }
+                TOTAL_BYTES=$(du -sb "$OUT" | awk '{print $1}')
+                echo "[OK] models/metal_surface: $FILE_COUNT files, $TOTAL_BYTES bytes"
+          outputs:
+            - url: "{{ dig_url_root }}/models/metal_surface"
+
+    # ── Metal dataset (UC2, public GitHub) ───────────────────────────────────
+    # `prepare_dataset_uc2` downloads the public abin24/Magnetic-tile-defect-datasets.
+    # GitHub repo (slug ends with a literal '.') and curates the reference UC2 subset: 5 anomaly images + 5
+    # masks per defect × 5 defects (MT_Blowhole, MT_Break, MT_Crack, MT_Fray,
+    # MT_Uneven) + 20 clean images.
+    # Output layout:
+    #   metal_surface/
+    #     anomaly_image/<defect>/   5 images each
+    #     mask/<defect>/            5 masks each
+    #     clean_image/              20 images
+    #   defect_spec.jsonl
+    #
+    # No credentials needed: the GitHub download is unauthenticated and the
+    # paidf-* image is public on nvcr.io/nvidia/ (anonymous pull). Pod still
+    # needs outbound internet to github.com.
+    - name: download-metal_surface-data
+      tasks:
+        - name: metal_surface-data
+          lead: true
+          image: "{{ pretrained_image }}"
+          resource: cpu-download
+          command: ["bash"]
+          args: ["/tmp/run.sh"]
+          files:
+            - path: /tmp/run.sh
+              contents: |
+                set -euo pipefail
+                OUT="{{output}}"
+                mkdir -p "$OUT"
+
+                echo "[UC2] prepare_dataset_uc2 -> $OUT"
+                cd /workspace/paidf-anomalygen
+                python3 -m scripts.utilities.prepare_dataset_uc2 "$OUT"
+
+                FILE_COUNT=$(find "$OUT" -type f | wc -l)
+                [ "$FILE_COUNT" -gt 0 ] || { echo "ERROR: 0 files in $OUT" >&2; exit 1; }
+                TOTAL_BYTES=$(du -sb "$OUT" | awk '{print $1}')
+                echo "[OK] datasets/metal_surface/raw: $FILE_COUNT files, $TOTAL_BYTES bytes"
+          outputs:
+            - url: "{{ dig_url_root }}/datasets/metal_surface/raw"
+
+default-values:
+  workflow_name: setup_metal
+  exec_timeout: 1h
+  queue_timeout: 1h
+
+  dig_url_root: "s3://osmo-workflows/dig"
+
+  pretrained_image: "nvcr.io/nvidia/paidf-anomalygen:1.0.0"
+
+  # Resource sizing for the small download groups (model, data). Each
+  # downloads a few-GB tree; 1 cpu / 2Gi / 10Gi is enough.
+  cpu: "1"
+  memory: 2Gi
+  storage: 10Gi
+
+  platform: default

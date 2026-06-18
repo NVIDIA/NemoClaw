@@ -1,0 +1,17 @@
+[
+  {
+    "id": "moe-comm-overlap-positive-dispatch-combine-smoke",
+    "question": "Use the nemo-mbridge-perf-moe-comm-overlap skill. Give the exact MoE dispatch/combine overlap knobs, PP/VPP and flex-dispatcher constraints, and the measured inter-node alltoall baseline numbers from the skill.",
+    "expected_skill": "nemo-mbridge-perf-moe-comm-overlap",
+    "expected_script": null,
+    "ground_truth": "The answer should use the MoE communication overlap skill. It should set cfg.comm_overlap.overlap_moe_expert_parallel_comm=True, optionally cfg.comm_overlap.delay_wgrad_compute=True after basic overlap is stable, and cfg.model.moe_shared_expert_overlap=False. It should require num_moe_experts>1, moe_token_dispatcher_type of alltoall or flex, and VPP when PP is active. It should state moe_flex_dispatcher_backend alone is insufficient unless moe_token_dispatcher_type=\"flex\" is set. It should say full recompute is not a good companion, selective recompute is safer, and delayed wgrad adds CUDA-graph constraints. It should include the measured EP=16 alltoall example: no overlap 41.25s, EP overlap 31.31s, EP overlap plus delay_wgrad_compute 31.20s over iterations 3-8.",
+    "expected_behavior": [
+      "Read the nemo-mbridge-perf-moe-comm-overlap skill before answering.",
+      "Identify MoE expert communication overlap as the target feature.",
+      "List overlap_moe_expert_parallel_comm, delay_wgrad_compute, and moe_shared_expert_overlap.",
+      "Mention PP requires VPP and flex requires moe_token_dispatcher_type=flex.",
+      "Mention recompute and CUDA graph interactions.",
+      "Quote the 41.25s, 31.31s, and 31.20s timing comparison."
+    ]
+  }
+]

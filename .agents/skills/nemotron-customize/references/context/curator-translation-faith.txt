@@ -1,0 +1,70 @@
+# NeMo Curator Translation + FAITH Context
+
+Use this context when generating a `translate/nemo_curator` stage.
+
+## Product Contract
+
+- This stage translates training corpora, not benchmarks.
+- Use NeMo Curator's reader -> `TranslationStage` -> writer pipeline.
+- Default to Curator-native file I/O. Do not write custom pandas chunking unless the user has one huge single file and explicitly needs row-level chunking.
+- Translate natural-language fields and preserve structured payloads such as valid JSON strings, tool payloads, fenced code, and markup-like blocks.
+- For OpenAI-style chat records, use `messages.*.content` and enable `reconstruct_messages` so the user can inspect `translated_messages`.
+- FAITH is optional translation quality evaluation. If enabled, it needs an LLM client even when translation itself uses `nmt`, `aws`, or `google`.
+
+## Reference Implementation
+
+- Step wrapper: `src/nemotron/steps/translate/nemo_curator/step.py`
+- Step config: `src/nemotron/steps/translate/nemo_curator/config/default.yaml`
+- CLI command: `nemotron steps run translate/nemo_curator`
+- Curator stage: `nemo_curator.stages.text.experimental.translation.TranslationStage`
+- Curator I/O: `JsonlReader`, `ParquetReader`, `JsonlWriter`, `ParquetWriter`
+
+## Configuration Guidance
+
+- `source_language` and `target_language` are required ISO 639-1 language codes.
+- Ask for source and target language explicitly. Do not silently default to English or Hindi.
+- `backend=llm` uses an OpenAI-compatible endpoint through `AsyncOpenAIClient`; require `server.url`, `server.model`, and `server.api_key` or `server.api_key_env`.
+- `backend=nmt` uses a local HTTP translation service; require `nmt.server_url` and confirm the service accepts `POST /translate` with `texts`, `src_lang`, and `tgt_lang`.
+- `backend=aws` uses Amazon Translate; require AWS credentials in the environment or role and choose `aws.region`.
+- `backend=google` uses Google Cloud Translation; require Google credentials, `google.api_version`, and `google.project_id` for v3.
+- `output_mode=both` is the safest default for generated projects because it keeps translated fields and metadata.
+- FAITH scoring follows the same translated segments produced by the translation stage, then merges scores back onto output records.
+- Optional controls: `translation_prompt_path`, `generation_config`,
+  `max_concurrent_requests`, `health_check`, `dry_run`, `dry_run_log_count`,
+  plus FAITH-specific `faith_eval.prompt_path`, `faith_eval.generation_config`,
+  and `faith_eval.max_concurrent_requests`.
+
+## Questions To Ask Before Generation
+
+Ask only what is missing from the user's request or available config.
+
+1. Input path and format: JSONL or Parquet?
+2. Which field path should be translated? Use `messages.*.content` for OpenAI-style chat.
+3. What are the explicit source and target ISO 639-1 language codes?
+4. Which backend should run translation: `llm`, `nmt`, `google`, or `aws`?
+5. For `llm`: endpoint URL, model name, and API key environment variable.
+6. For `nmt`: server URL, batch size, timeout, and supported language-code format.
+7. For `google`: API version, project ID if using v3, location, and credentials environment.
+8. For `aws`: region and credential source.
+9. Should FAITH run? If yes, choose model, threshold, and whether to filter failed rows.
+10. Should output replace the original fields, keep raw metadata, or keep both?
+11. Is this one huge file that needs a generated preprocessing chunk step?
+
+## Backend Selection
+
+| Backend | Use when | Required config |
+|---------|----------|-----------------|
+| `llm` | Hosted or self-hosted OpenAI-compatible translation model. Best for structured/chat data and low setup friction. | `server.url`, `server.model`, `server.api_key_env` or `server.api_key` |
+| `nmt` | A local/domain translation service is available and throughput matters. | `nmt.server_url`, optional `nmt.batch_size`, `nmt.timeout` |
+| `google` | User wants managed Google Cloud Translation. | Google credentials, `google.api_version`, `google.project_id` for v3, `google.location` |
+| `aws` | User wants managed Amazon Translate. | AWS credentials or role, `aws.region` |
+
+If `faith_eval.enabled=true`, also configure the LLM `server` fields even when translation uses `nmt`, `google`, or `aws`.
+
+## Gotchas
+
+- `faith_eval.enabled=true` requires `server.model` plus `server.api_key` or the configured `server.api_key_env`.
+- Hosted model names can be retired. For real runs, verify the configured model exists before running translation.
+- Directories passed as `input_path` should not mix `.jsonl` and `.parquet`.
+- If a single huge JSONL or Parquet file is too large for Curator's default reader behavior, generate a small preprocessing stage that writes row chunks, then point this translation step at the chunk directory.
+- Curator owns the translation runtime for this step.

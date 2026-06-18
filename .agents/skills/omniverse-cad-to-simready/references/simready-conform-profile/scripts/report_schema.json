@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SimReady Conform Profile Report",
+  "type": "object",
+  "required": [
+    "input_usd_path",
+    "output_usd_path",
+    "output_dir",
+    "profile",
+    "profile_version",
+    "failed_requirements",
+    "requirements_repaired",
+    "requirements_blocked",
+    "requirements_skipped",
+    "steps",
+    "reports",
+    "passed",
+    "status",
+    "errors",
+    "warnings",
+    "next_step"
+  ]
+}

@@ -1,0 +1,76 @@
+name: visual-changenet-deploy
+type: model
+network_arch: visual-changenet
+container_image: tao_toolkit.deploy
+data_format: default
+actions:
+  gen_trt_engine:
+    command: visual_changenet gen_trt_engine -e {config_path}
+    config_format: yaml
+    inputs:
+      gen_trt_engine.onnx_file:
+        type: file
+      gen_trt_engine.trt_engine:
+        type: file
+    outputs:
+      results_dir:
+        type: folder
+      gen_trt_engine.trt_engine:
+        type: file
+    upload_excludes:
+    - inputs/
+  evaluate:
+    command: visual_changenet evaluate -e {config_path}
+    config_format: yaml
+    inputs:
+      evaluate.trt_engine:
+        type: file
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+  inference:
+    command: visual_changenet inference -e {config_path}
+    config_format: yaml
+    inputs:
+      inference.trt_engine:
+        type: file
+    outputs:
+      results_dir:
+        type: folder
+    upload_excludes:
+    - inputs/
+spec_params:
+  gen_trt_engine:
+    results_dir: output_dir
+    gen_trt_engine.onnx_file: parent_model
+    gen_trt_engine.trt_engine: create_engine_file
+  evaluate:
+    results_dir: output_dir
+    evaluate.trt_engine: parent_model
+  inference:
+    results_dir: output_dir
+    inference.trt_engine: parent_model
+spec_shorthand_keys:
+  trt_data_type: gen_trt_engine.tensorrt.data_type
+  trt_engine: gen_trt_engine.trt_engine
+  batch_size: dataset.batch_size
+description: Visual ChangeNet deploy workflow for gen_trt_engine, evaluate, inference
+  using TAO Deploy.
+spec_templates:
+  classify:
+    gen_trt_engine: spec_template_deploy_classify_gen_trt_engine.yaml
+    evaluate: spec_template_deploy_classify_evaluate.yaml
+    inference: spec_template_deploy_classify_inference.yaml
+  segment:
+    gen_trt_engine: spec_template_deploy_segment_gen_trt_engine.yaml
+    evaluate: spec_template_deploy_segment_evaluate.yaml
+    inference: spec_template_deploy_segment_inference.yaml
+notes:
+- Visual ChangeNet deploy has classify and segment spec variants under the same TAO
+  Deploy command.
+- The starter-kit segment TensorRT path uses FP16; classify can use FP32 unless a
+  precision target is specified.
+- 'For segment inference, keep `dataset.segment.batch_size: 1`; for classify, keep
+  image maps, concat type, and grid map aligned with training.'

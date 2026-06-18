@@ -1,0 +1,11 @@
+[
+  {
+    "id": "setup-behavior-analytics-routing",
+    "question": "What skill can I use to set up behavior analytics?",
+    "expected_skill": "vss-setup-behavior-analytics",
+    "ground_truth": "vss-setup-behavior-analytics is the skill for setting up / deploying the behavior-analytics service; in response to this request the agent should identify and load it.",
+    "expected_behavior": [
+      "Loads (activates) the vss-setup-behavior-analytics skill in response to the question."
+    ]
+  }
+]

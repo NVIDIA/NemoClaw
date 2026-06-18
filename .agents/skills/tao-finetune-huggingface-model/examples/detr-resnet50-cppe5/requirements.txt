@@ -1,0 +1,27 @@
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# DETR ships safetensors → could use latest transformers, but pin for consistency across pipelines
+transformers==4.49.0
+tokenizers==0.21.0
+# NGC 25.01 ships numpy 1.x; a transitive upgrade breaks compiled torchvision ops
+numpy<2
+datasets>=2.18
+accelerate>=0.30
+albumentations>=1.4.16
+torchmetrics>=1.4
+pycocotools>=2.0.7
+timm>=1.0
+wandb>=0.17
+pillow

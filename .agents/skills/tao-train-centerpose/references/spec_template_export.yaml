@@ -1,0 +1,147 @@
+model_name: ''
+encryption_key: ''
+results_dir: ''
+wandb:
+  enable: true
+  project: TAO Toolkit
+  entity: ''
+  group: ''
+  tags:
+  - tao-toolkit
+  reinit: false
+  sync_tensorboard: false
+  save_code: false
+  name: TAO Toolkit Training
+  run_id: ''
+dataset:
+  train_data: ''
+  test_data: ''
+  val_data: ''
+  inference_data: ''
+  batch_size: 4
+  workers: 8
+  pin_memory: true
+  num_classes: 1
+  num_joints: 8
+  max_objs: 10
+  mean:
+  - 0.40789654
+  - 0.44719302
+  - 0.47026115
+  std:
+  - 0.28863828
+  - 0.27408164
+  - 0.27809835
+  _eig_val:
+  - 0.2141788
+  - 0.01817699
+  - 0.00341571
+  _eig_vec:
+  - - -0.58752847
+    - -0.69563484
+    - 0.41340352
+  - - -0.5832747
+    - 0.00994535
+    - -0.81221408
+  - - -0.56089297
+    - 0.71832671
+    - 0.41158938
+  category: cereal_box
+  num_symmetry: 1
+  mse_loss: false
+  center_3D: false
+  obj_scale: true
+  use_absolute_scale: false
+  obj_scale_uncertainty: false
+  dense_hp: false
+  hps_uncertainty: false
+  reg_bbox: true
+  reg_offset: true
+  hm_hp: true
+  reg_hp_offset: true
+  flip_idx:
+  - - 1
+    - 5
+  - - 3
+    - 7
+  - - 2
+    - 6
+  - - 4
+    - 8
+  no_color_aug: false
+  not_rand_crop: false
+  aug_rot: 0
+  flip: 0.5
+  input_res: 512
+  output_res: 128
+train:
+  num_gpus: 1
+  gpu_ids:
+  - 0
+  num_nodes: 1
+  seed: 1234
+  cudnn:
+    benchmark: false
+    deterministic: true
+  num_epochs: 10
+  checkpoint_interval: 1
+  checkpoint_interval_unit: epoch
+  validation_interval: 1
+  resume_training_checkpoint_path: ''
+  results_dir: ''
+  pretrained_model_path: ''
+  clip_grad_val: 100.0
+  is_dry_run: false
+  precision: fp32
+  optim:
+    lr: 6.0e-05
+    lr_scheduler: MultiStep
+    lr_steps:
+    - 90
+    - 120
+    lr_decay: 0.1
+  loss_config:
+    mse_loss: false
+    dense_hp: false
+    reg_loss: l1
+    num_stacks: 1
+    hps_uncertainty: false
+    wh_weight: 0.1
+    reg_bbox: true
+    reg_offset: true
+    reg_hp_offset: true
+    obj_scale: true
+    obj_scale_weight: 1
+    obj_scale_uncertainty: false
+    use_residual: false
+    dimension_ref: ''
+    off_weight: 1
+    hm_hp: true
+    hm_hp_weight: 1
+    hm_weight: 1
+    hp_weight: 1
+model:
+  down_ratio: 4
+  final_kernel: 1
+  last_level: 5
+  head_conv: 256
+  out_channel: 0
+  use_convGRU: true
+  use_pretrained: false
+  backbone:
+    model_type: fan_small
+    pretrained_backbone_path: ''
+export:
+  results_dir: ''
+  gpu_id: 0
+  checkpoint: ''
+  onnx_file: ''
+  on_cpu: false
+  input_channel: 3
+  input_width: 512
+  input_height: 512
+  opset_version: 16
+  batch_size: -1
+  verbose: false
+  num_select: 100
+  do_constant_folding: true

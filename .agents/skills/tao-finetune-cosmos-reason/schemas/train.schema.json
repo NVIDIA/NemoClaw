@@ -1,0 +1,1183 @@
+{
+  "automl_default_parameters": [
+    "custom.vision.fps",
+    "policy.lora.r",
+    "policy.lora.lora_alpha",
+    "train.optm_lr",
+    "train.optm_decay_type",
+    "policy.lora.lora_dropout",
+    "train.epoch"
+  ],
+  "automl_disabled_parameters": [
+    "policy.parallelism",
+    "policy",
+    "custom.vision",
+    "custom.train_dataset",
+    "policy.lora",
+    "train.fp8",
+    "train",
+    "train.train_policy.dataset",
+    "policy.lora.alpha_pattern",
+    "custom.val_dataset",
+    "custom",
+    "validation.dataset",
+    "train.ckpt",
+    "logging",
+    "policy.lora.modules_to_save",
+    "policy.lora.target_modules",
+    "validation",
+    "policy.lora.r_pattern",
+    "train.optm_betas",
+    "train.train_policy",
+    "logging.logger"
+  ],
+  "default": {
+    "custom": {
+      "system_prompt": "",
+      "train_dataset": {
+        "annotation_path": "data/sft/annotations.json",
+        "media_path": "data/sft/train2017"
+      },
+      "vision": {
+        "nframes": 8
+      }
+    },
+    "custom_script": "",
+    "logging": {
+      "experiment_name": "cosmos-rl",
+      "logger": [
+        "console",
+        "tao"
+      ],
+      "project_name": "cosmos-rl"
+    },
+    "policy": {
+      "lora": {
+        "alpha_pattern": {},
+        "init_lora_weights": true,
+        "lora_alpha": 8,
+        "lora_dropout": 0.0,
+        "modules_to_save": [],
+        "r": 8,
+        "r_pattern": {},
+        "target_modules": [
+          "q_proj",
+          "v_proj"
+        ],
+        "use_rslora": false
+      },
+      "model_gradient_checkpointing": true,
+      "model_max_length": 4096,
+      "model_name_or_path": "nvidia/Cosmos-Reason2-8B",
+      "parallelism": {
+        "cp_rotate_method": "allgather",
+        "cp_size": 1,
+        "dp_replicate_size": 1,
+        "dp_shard_size": 1,
+        "n_init_replicas": 1,
+        "pp_size": 1,
+        "tp_size": 1
+      }
+    },
+    "redis": "12800",
+    "results_dir": "",
+    "train": {
+      "async_tp_enabled": false,
+      "ckpt": {
+        "enable_checkpoint": true,
+        "export_safetensors": true,
+        "max_keep": 8,
+        "save_freq_in_epoch": 10,
+        "save_mode": "sync"
+      },
+      "compile": false,
+      "epoch": 10,
+      "epsilon": 1e-08,
+      "fp8": {
+        "enable_fp8": false,
+        "fp8_recipe": "dynamic_scaling",
+        "quant_recipe": "rowwise"
+      },
+      "fsdp_offload": false,
+      "fsdp_reduce_dtype": "float32",
+      "fsdp_reshard_after_forward": "default",
+      "master_dtype": "float32",
+      "optm_betas": [
+        0.9,
+        0.999
+      ],
+      "optm_decay_type": "linear",
+      "optm_grad_norm_clip": 1.0,
+      "optm_impl": "foreach",
+      "optm_lr": 1e-06,
+      "optm_min_lr_factor": 0.0,
+      "optm_name": "AdamW",
+      "optm_warmup_epochs": 0,
+      "optm_weight_decay": 0.01,
+      "output_dir": "output",
+      "param_dtype": "bfloat16",
+      "resume": false,
+      "sync_weight_interval": 1,
+      "train_batch_per_replica": 1,
+      "train_policy": {
+        "conversation_column_name": "conversations",
+        "dataloader_num_workers": 8,
+        "dataloader_prefetch_factor": 8,
+        "dataset": {
+          "name": "its",
+          "test_size": 1
+        },
+        "enable_dataset_cache": true,
+        "mini_batch": 4,
+        "type": "sft"
+      }
+    },
+    "validation": {
+      "batch_size": 4,
+      "dataloader_num_workers": 8,
+      "dataloader_prefetch_factor": 8,
+      "dataset": {
+        "name": "",
+        "split": "train",
+        "subset": ""
+      },
+      "enable": true,
+      "enable_dataset_cache": false,
+      "freq_in_epoch": 10
+    }
+  },
+  "popular": {
+    "train": {
+      "compile": false,
+      "epoch": 10,
+      "train_batch_per_replica": 1
+    }
+  },
+  "properties": {
+    "automl_disabled_parameters": [
+      "train",
+      "validation",
+      "policy",
+      "logging",
+      "custom"
+    ],
+    "custom": {
+      "automl_disabled_parameters": [
+        "custom.train_dataset",
+        "custom.val_dataset",
+        "custom.vision"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "system_prompt": "",
+        "train_dataset": {
+          "annotation_path": "data/sft/annotations.json",
+          "media_path": "data/sft/train2017"
+        },
+        "vision": {
+          "nframes": 8
+        }
+      },
+      "description": "Custom config.",
+      "properties": {
+        "system_prompt": {
+          "default": "",
+          "description": "System prompt.",
+          "title": "System prompt",
+          "type": "string"
+        },
+        "train_dataset": {
+          "automl_enabled": false,
+          "default": {
+            "annotation_path": "data/sft/annotations.json",
+            "media_path": "data/sft/train2017"
+          },
+          "description": "Training dataset config.",
+          "properties": {
+            "annotation_path": {
+              "default": "data/sft/annotations.json",
+              "description": "Path to the annotation file",
+              "title": "Annotation path",
+              "type": "string"
+            },
+            "media_path": {
+              "default": "data/sft/train2017",
+              "description": "Path to the media directory",
+              "title": "Media directory path",
+              "type": "string"
+            }
+          },
+          "type": "collection"
+        },
+        "val_dataset": {
+          "automl_enabled": false,
+          "description": "Validation dataset config (optional).",
+          "type": "collection"
+        },
+        "vision": {
+          "automl_default_parameters": [
+            "custom.vision.fps"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "nframes": 8
+          },
+          "description": "Vision config.",
+          "properties": {
+            "fps": {
+              "automl_enabled": true,
+              "description": "Frames per second for vision processing.",
+              "maximum": 3,
+              "minimum": 1,
+              "title": "FPS",
+              "type": "int"
+            },
+            "nframes": {
+              "default": 8,
+              "description": "Number of frames for vision processing.",
+              "maximum": 8,
+              "minimum": 1,
+              "title": "Number of frames",
+              "type": "int"
+            },
+            "total_pixels": {
+              "description": "Total number of pixels for vision processing.",
+              "maximum": Infinity,
+              "minimum": 1,
+              "title": "Total pixels",
+              "type": "int"
+            }
+          },
+          "type": "collection"
+        }
+      },
+      "type": "collection"
+    },
+    "custom_script": {
+      "default": "",
+      "description": "Custom script.",
+      "title": "Custom script",
+      "type": "string"
+    },
+    "logging": {
+      "automl_disabled_parameters": [
+        "logging.logger"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "experiment_name": "cosmos-rl",
+        "logger": [
+          "console",
+          "tao"
+        ],
+        "project_name": "cosmos-rl"
+      },
+      "description": "Logging config.",
+      "properties": {
+        "experiment_name": {
+          "default": "cosmos-rl",
+          "description": "Experiment name.",
+          "title": "Experiment name",
+          "type": "string"
+        },
+        "logger": {
+          "automl_enabled": false,
+          "default": [
+            "console",
+            "tao"
+          ],
+          "description": "Logger to use.",
+          "enum": [
+            "console",
+            "tao"
+          ],
+          "title": "Logger",
+          "type": "list"
+        },
+        "project_name": {
+          "default": "cosmos-rl",
+          "description": "Project name.",
+          "title": "Project name",
+          "type": "string"
+        }
+      },
+      "type": "collection"
+    },
+    "policy": {
+      "automl_disabled_parameters": [
+        "policy.parallelism",
+        "policy.lora"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "lora": {
+          "alpha_pattern": {},
+          "init_lora_weights": true,
+          "lora_alpha": 8,
+          "lora_dropout": 0.0,
+          "modules_to_save": [],
+          "r": 8,
+          "r_pattern": {},
+          "target_modules": [
+            "q_proj",
+            "v_proj"
+          ],
+          "use_rslora": false
+        },
+        "model_gradient_checkpointing": true,
+        "model_max_length": 4096,
+        "model_name_or_path": "nvidia/Cosmos-Reason2-8B",
+        "parallelism": {
+          "cp_rotate_method": "allgather",
+          "cp_size": 1,
+          "dp_replicate_size": 1,
+          "dp_shard_size": 1,
+          "n_init_replicas": 1,
+          "pp_size": 1,
+          "tp_size": 1
+        }
+      },
+      "description": "Policy config.",
+      "properties": {
+        "lora": {
+          "automl_default_parameters": [
+            "policy.lora.r",
+            "policy.lora.lora_alpha",
+            "policy.lora.lora_dropout"
+          ],
+          "automl_disabled_parameters": [
+            "policy.lora.r_pattern",
+            "policy.lora.alpha_pattern",
+            "policy.lora.target_modules",
+            "policy.lora.modules_to_save"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "alpha_pattern": {},
+            "init_lora_weights": true,
+            "lora_alpha": 8,
+            "lora_dropout": 0.0,
+            "modules_to_save": [],
+            "r": 8,
+            "r_pattern": {},
+            "target_modules": [
+              "q_proj",
+              "v_proj"
+            ],
+            "use_rslora": false
+          },
+          "description": "LoRA config.",
+          "properties": {
+            "alpha_pattern": {
+              "automl_enabled": false,
+              "description": "Per-module overrides for lora_alpha. Keys are regex patterns; evaluated in insertion order, first match wins. Example: {'visual\\..*': 32.0, 'attn.*': 16.0}",
+              "title": "LoRA alpha pattern",
+              "type": "collection"
+            },
+            "init_lora_weights": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "enum": [
+                    "gaussian",
+                    "eva",
+                    "olora",
+                    "pissa",
+                    "pissa_niter_[number of iters]"
+                  ],
+                  "type": "string"
+                }
+              ],
+              "default": true,
+              "description": "How to initialize the weights of the adapter layers. Passing True (default) results in the default initialization from the reference implementation from Microsoft, with the LoRA B weight being set to 0. This means that without further training, the LoRA adapter will be a no-op. Setting the initialization to False leads to random initialization of LoRA A and B, meaning that LoRA is not a no-op before training; this setting is intended for debugging purposes. Passing 'gaussian' results in Gaussian initialization scaled by the LoRA rank for linear and layers. Pass 'loftq' to use LoftQ initialization. Passing 'eva' results in a data-driven initialization of Explained Variance Adaptation. EVA initializes LoRA based on the SVD of layer input activations and achieves SOTA performance due to its ability to adapt to the finetuning data. Pass 'olora' to use OLoRA initialization. Passing 'pissa' results in the initialization of https://huggingface.co/papers/2404.02948",
+              "enum": [
+                "true",
+                "false",
+                "gaussian",
+                "eva",
+                "olora",
+                "pissa",
+                "pissa_niter_[numberofiters]"
+              ],
+              "title": "Initialize LoRA weights"
+            },
+            "lora_alpha": {
+              "automl_enabled": true,
+              "default": 8,
+              "description": "LoRA alpha (must be power of 2)",
+              "math_cond": "^ 2",
+              "maximum": 1024,
+              "minimum": 1,
+              "title": "LoRA alpha",
+              "type": "int"
+            },
+            "lora_dropout": {
+              "automl_enabled": true,
+              "default": 0.0,
+              "description": "LoRA dropout",
+              "maximum": 0.1,
+              "minimum": 0.0,
+              "title": "LoRA dropout",
+              "type": "float"
+            },
+            "modules_to_save": {
+              "automl_enabled": false,
+              "default": [],
+              "description": "List of modules apart from LoRA layers to be set as trainable and saved in the final checkpoint. Can be None or ['visual']",
+              "enum": [
+                "visual"
+              ],
+              "parent_param": "TRUE",
+              "title": "Modules to save",
+              "type": "optional_list"
+            },
+            "r": {
+              "automl_enabled": true,
+              "default": 8,
+              "description": "LoRA rank (must be power of 2)",
+              "math_cond": "^ 2",
+              "maximum": 256,
+              "minimum": 1,
+              "title": "LoRA rank",
+              "type": "int"
+            },
+            "r_pattern": {
+              "automl_enabled": false,
+              "description": "Per-module overrides for LoRA rank r. Keys are regex patterns; evaluated in insertion order, first match wins. Example: {'visual\\..*': 16, 'attn.*': 8}",
+              "title": "LoRA rank pattern",
+              "type": "collection"
+            },
+            "target_modules": {
+              "automl_enabled": false,
+              "default": [
+                "q_proj",
+                "v_proj"
+              ],
+              "depends_on": "policy.lora.modules_to_save",
+              "description": "LoRA target modules, subset of valid options. Can be a list of strings or 'all-linear'. Cannot include attn.qkv or attn.proj if modules_to_save contains 'visual'",
+              "enum": [
+                "q_proj",
+                "k_proj",
+                "v_proj",
+                "o_proj",
+                "up_proj",
+                "gate_proj",
+                "down_proj",
+                "attn.qkv",
+                "attn.proj",
+                "all-linear"
+              ],
+              "title": "LoRA target modules",
+              "type": "subset_list"
+            },
+            "use_rslora": {
+              "default": false,
+              "description": "When set to True, uses Rank-Stabilized LoRA which sets the adapter scaling factor to lora_alpha/math.sqrt(r), since it was proven to work better. Otherwise, it will use the original default value of lora_alpha/r.",
+              "title": "Use RSLoRA",
+              "type": "bool"
+            }
+          },
+          "type": "collection"
+        },
+        "model_gradient_checkpointing": {
+          "default": true,
+          "description": "Enable gradient checkpointing to save memory during training.",
+          "title": "Model gradient checkpointing",
+          "type": "bool"
+        },
+        "model_max_length": {
+          "default": 4096,
+          "description": "Model max length.",
+          "maximum": Infinity,
+          "minimum": 1,
+          "title": "Model max length",
+          "type": "int"
+        },
+        "model_name_or_path": {
+          "default": "nvidia/Cosmos-Reason2-8B",
+          "description": "Model name or path.",
+          "title": "Model name or path",
+          "type": "string"
+        },
+        "parallelism": {
+          "automl_enabled": false,
+          "default": {
+            "cp_rotate_method": "allgather",
+            "cp_size": 1,
+            "dp_replicate_size": 1,
+            "dp_shard_size": 1,
+            "n_init_replicas": 1,
+            "pp_size": 1,
+            "tp_size": 1
+          },
+          "description": "Policy parallelism config.",
+          "properties": {
+            "cp_rotate_method": {
+              "default": "allgather",
+              "description": "Context parallelism rotation method.",
+              "enum": [
+                "allgather",
+                "p2p"
+              ],
+              "title": "CP rotate method",
+              "type": "categorical"
+            },
+            "cp_size": {
+              "default": 1,
+              "description": "CP size.",
+              "maximum": Infinity,
+              "minimum": 1,
+              "title": "CP size",
+              "type": "int"
+            },
+            "dp_replicate_size": {
+              "default": 1,
+              "description": "DP replicate size.",
+              "maximum": Infinity,
+              "minimum": 1,
+              "title": "DP replicate size",
+              "type": "int"
+            },
+            "dp_shard_size": {
+              "default": 1,
+              "description": "DP shard size.",
+              "maximum": Infinity,
+              "minimum": 1,
+              "title": "DP shard size",
+              "type": "int"
+            },
+            "n_init_replicas": {
+              "default": 1,
+              "description": "Number of initial replicas.",
+              "maximum": Infinity,
+              "minimum": 1,
+              "title": "N init replicas",
+              "type": "int"
+            },
+            "pp_size": {
+              "default": 1,
+              "description": "PP size.",
+              "maximum": Infinity,
+              "minimum": 1,
+              "title": "PP size",
+              "type": "int"
+            },
+            "tp_size": {
+              "default": 1,
+              "description": "TP size.",
+              "maximum": Infinity,
+              "minimum": 1,
+              "title": "TP size",
+              "type": "int"
+            }
+          },
+          "type": "collection"
+        }
+      },
+      "type": "collection"
+    },
+    "redis": {
+      "default": "12800",
+      "description": "Redis.",
+      "title": "Redis",
+      "type": "string"
+    },
+    "results_dir": {
+      "default": "",
+      "description": "Output directory.",
+      "title": "Output directory",
+      "type": "string"
+    },
+    "train": {
+      "automl_default_parameters": [
+        "train.epoch",
+        "train.optm_lr",
+        "train.optm_decay_type"
+      ],
+      "automl_disabled_parameters": [
+        "train.optm_betas",
+        "train.ckpt",
+        "train.train_policy",
+        "train.fp8"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "async_tp_enabled": false,
+        "ckpt": {
+          "enable_checkpoint": true,
+          "export_safetensors": true,
+          "max_keep": 8,
+          "save_freq_in_epoch": 10,
+          "save_mode": "sync"
+        },
+        "compile": false,
+        "epoch": 10,
+        "epsilon": 1e-08,
+        "fp8": {
+          "enable_fp8": false,
+          "fp8_recipe": "dynamic_scaling",
+          "quant_recipe": "rowwise"
+        },
+        "fsdp_offload": false,
+        "fsdp_reduce_dtype": "float32",
+        "fsdp_reshard_after_forward": "default",
+        "master_dtype": "float32",
+        "optm_betas": [
+          0.9,
+          0.999
+        ],
+        "optm_decay_type": "linear",
+        "optm_grad_norm_clip": 1.0,
+        "optm_impl": "foreach",
+        "optm_lr": 1e-06,
+        "optm_min_lr_factor": 0.0,
+        "optm_name": "AdamW",
+        "optm_warmup_epochs": 0,
+        "optm_weight_decay": 0.01,
+        "output_dir": "output",
+        "param_dtype": "bfloat16",
+        "resume": false,
+        "sync_weight_interval": 1,
+        "train_batch_per_replica": 1,
+        "train_policy": {
+          "conversation_column_name": "conversations",
+          "dataloader_num_workers": 8,
+          "dataloader_prefetch_factor": 8,
+          "dataset": {
+            "name": "its",
+            "test_size": 1
+          },
+          "enable_dataset_cache": true,
+          "mini_batch": 4,
+          "type": "sft"
+        }
+      },
+      "description": "Train config.",
+      "popular": [
+        "train_batch_per_replica",
+        "compile",
+        "epoch"
+      ],
+      "properties": {
+        "async_tp_enabled": {
+          "default": false,
+          "description": "Enable asynchronous tensor parallelism.",
+          "title": "Async TP enabled",
+          "type": "bool"
+        },
+        "ckpt": {
+          "automl_enabled": false,
+          "default": {
+            "enable_checkpoint": true,
+            "export_safetensors": true,
+            "max_keep": 8,
+            "save_freq_in_epoch": 10,
+            "save_mode": "sync"
+          },
+          "description": "Train checkpoint config.",
+          "properties": {
+            "enable_checkpoint": {
+              "default": true,
+              "description": "Enable checkpoint.",
+              "title": "Enable checkpoint",
+              "type": "bool"
+            },
+            "export_safetensors": {
+              "default": true,
+              "description": "Export HuggingFace compatible format.",
+              "title": "Export safetensors",
+              "type": "bool"
+            },
+            "max_keep": {
+              "default": 8,
+              "description": "Maximum number of checkpoints to keep. If set to -1, all checkpoints will be kept.",
+              "maximum": Infinity,
+              "minimum": -1,
+              "title": "Max keep",
+              "type": "int"
+            },
+            "save_freq_in_epoch": {
+              "default": 10,
+              "description": "Save every N epochs.",
+              "maximum": Infinity,
+              "minimum": 1,
+              "title": "Save frequency",
+              "type": "int"
+            },
+            "save_mode": {
+              "default": "sync",
+              "description": "Checkpoint save mode for training.",
+              "enum": [
+                "async",
+                "sync"
+              ],
+              "title": "Save mode",
+              "type": "categorical"
+            }
+          },
+          "type": "collection"
+        },
+        "compile": {
+          "default": false,
+          "description": "Whether to compile the model.",
+          "popular": true,
+          "title": "Compile",
+          "type": "bool"
+        },
+        "epoch": {
+          "automl_enabled": true,
+          "default": 10,
+          "description": "The number of epochs.",
+          "maximum": 20,
+          "minimum": 1,
+          "parent_param": "TRUE",
+          "popular": true,
+          "title": "Number of Epochs",
+          "type": "int"
+        },
+        "epsilon": {
+          "default": 1e-08,
+          "description": "Epsilon value for optimizer.",
+          "maximum": Infinity,
+          "minimum": 0.0,
+          "title": "Epsilon",
+          "type": "float"
+        },
+        "fp8": {
+          "automl_enabled": false,
+          "default": {
+            "enable_fp8": false,
+            "fp8_recipe": "dynamic_scaling",
+            "quant_recipe": "rowwise"
+          },
+          "description": "Train FP8 config.",
+          "properties": {
+            "enable_fp8": {
+              "default": false,
+              "description": "Enable FP8.",
+              "title": "Enable FP8",
+              "type": "bool"
+            },
+            "fp8_recipe": {
+              "default": "dynamic_scaling",
+              "description": "Recipe for weight scale calculation.",
+              "enum": [
+                "dynamic_scaling",
+                "delayed_scaling"
+              ],
+              "title": "FP8 recipe",
+              "type": "categorical"
+            },
+            "quant_recipe": {
+              "default": "rowwise",
+              "description": "Quantization strategy for weight.",
+              "enum": [
+                "rowwise",
+                "tensorwise"
+              ],
+              "title": "Quant recipe",
+              "type": "categorical"
+            }
+          },
+          "type": "collection"
+        },
+        "fsdp_offload": {
+          "default": false,
+          "description": "Enable FSDP parameter offloading.",
+          "title": "FSDP offload",
+          "type": "bool"
+        },
+        "fsdp_reduce_dtype": {
+          "default": "float32",
+          "description": "Data type for FSDP reduction operations.",
+          "enum": [
+            "float32",
+            "float16",
+            "bfloat16"
+          ],
+          "title": "FSDP reduce dtype",
+          "type": "categorical"
+        },
+        "fsdp_reshard_after_forward": {
+          "default": "default",
+          "description": "FSDP reshard after forward pass.",
+          "enum": [
+            "default",
+            "true",
+            "false"
+          ],
+          "title": "FSDP reshard after forward",
+          "type": "categorical"
+        },
+        "master_dtype": {
+          "default": "float32",
+          "description": "Master data type for training.",
+          "enum": [
+            "float32",
+            "float16",
+            "bfloat16"
+          ],
+          "title": "Master dtype",
+          "type": "categorical"
+        },
+        "optm_betas": {
+          "automl_enabled": false,
+          "default": [
+            0.9,
+            0.999
+          ],
+          "description": "Beta parameters for Adam/AdamW optimizer.",
+          "maximum": [
+            0.95,
+            0.999
+          ],
+          "minimum": [
+            0.8,
+            0.9
+          ],
+          "title": "Optimizer betas",
+          "type": "list_2"
+        },
+        "optm_decay_type": {
+          "automl_enabled": true,
+          "default": "linear",
+          "description": "Type of decay for learning rate scheduler. Weights: none=0.4, cosine=0.4, linear=0.1, sqrt=0.1",
+          "enum": [
+            "linear",
+            "sqrt",
+            "cosine",
+            "none"
+          ],
+          "option_weights": [
+            0.1,
+            0.1,
+            0.4,
+            0.4
+          ],
+          "title": "Decay type",
+          "type": "categorical"
+        },
+        "optm_grad_norm_clip": {
+          "default": 1.0,
+          "description": "Gradient norm clip.",
+          "maximum": Infinity,
+          "minimum": 0.0,
+          "title": "Gradient norm clip",
+          "type": "float"
+        },
+        "optm_impl": {
+          "default": "foreach",
+          "description": "Implementation type for optimizer. More info: https://pytorch.org/docs/stable/optim.html",
+          "enum": [
+            "fused",
+            "foreach",
+            "for-loop"
+          ],
+          "title": "Implementation type",
+          "type": "categorical"
+        },
+        "optm_lr": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "array"
+            }
+          ],
+          "automl_enabled": true,
+          "default": 1e-06,
+          "description": "Learning rate for optimizer. Can be a single float (applied to whole model) or a list of 2-4 floats [llm_lr, vision_lr, projector_lr, lm_head_lr] for separate learning rates for each model part during full SFT finetuning. List length must match number of model parts (set via num_model_parts).",
+          "maximum": Infinity,
+          "minimum": 0.0,
+          "title": "Learning rate"
+        },
+        "optm_min_lr_factor": {
+          "default": 0.0,
+          "description": "Minimum learning rate factor.",
+          "maximum": Infinity,
+          "minimum": 0.0,
+          "title": "Minimum learning rate factor",
+          "type": "float"
+        },
+        "optm_name": {
+          "default": "AdamW",
+          "description": "Name of the optimizer to use.",
+          "enum": [
+            "AdamW",
+            "Adam"
+          ],
+          "title": "Optimizer name",
+          "type": "categorical"
+        },
+        "optm_warmup_epochs": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "default": 0,
+          "depends_on": "train.epoch",
+          "description": "Number of warmup epochs for learning rate scheduler (epochs / 2).",
+          "math_cond": "/ 2",
+          "maximum": Infinity,
+          "minimum": 0,
+          "title": "Warmup epochs"
+        },
+        "optm_weight_decay": {
+          "default": 0.01,
+          "description": "Weight decay.",
+          "maximum": Infinity,
+          "minimum": 0.0,
+          "title": "Weight decay",
+          "type": "float"
+        },
+        "output_dir": {
+          "default": "output",
+          "description": "Output directory.",
+          "title": "Output directory",
+          "type": "string"
+        },
+        "param_dtype": {
+          "default": "bfloat16",
+          "description": "Parameter data type for training.",
+          "enum": [
+            "float32",
+            "float16",
+            "bfloat16"
+          ],
+          "title": "Parameter dtype",
+          "type": "categorical"
+        },
+        "resume": {
+          "default": false,
+          "description": "Whether to resume training.",
+          "title": "Resume",
+          "type": "bool"
+        },
+        "sync_weight_interval": {
+          "default": 1,
+          "description": "Interval for weight synchronization.",
+          "maximum": Infinity,
+          "minimum": 1,
+          "title": "Sync weight interval",
+          "type": "int"
+        },
+        "train_batch_per_replica": {
+          "default": 1,
+          "description": "The number of batches per replica during training.",
+          "maximum": Infinity,
+          "minimum": 1,
+          "popular": true,
+          "title": "Train batch per replica",
+          "type": "int"
+        },
+        "train_policy": {
+          "automl_disabled_parameters": [
+            "train.train_policy.dataset"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "conversation_column_name": "conversations",
+            "dataloader_num_workers": 8,
+            "dataloader_prefetch_factor": 8,
+            "dataset": {
+              "name": "its",
+              "test_size": 1
+            },
+            "enable_dataset_cache": true,
+            "mini_batch": 4,
+            "type": "sft"
+          },
+          "description": "Train policy config.",
+          "properties": {
+            "conversation_column_name": {
+              "default": "conversations",
+              "description": "Name of the column containing conversations in the dataset.",
+              "title": "Conversation column name",
+              "type": "string"
+            },
+            "dataloader_num_workers": {
+              "default": 8,
+              "description": "Number of worker processes for data loading.",
+              "maximum": Infinity,
+              "minimum": 0,
+              "title": "Dataloader num workers",
+              "type": "int"
+            },
+            "dataloader_prefetch_factor": {
+              "default": 8,
+              "description": "Number of batches to prefetch per worker.",
+              "maximum": Infinity,
+              "minimum": 1,
+              "title": "Dataloader prefetch factor",
+              "type": "int"
+            },
+            "dataset": {
+              "automl_enabled": false,
+              "default": {
+                "name": "its",
+                "test_size": 1
+              },
+              "description": "Dataset config.",
+              "properties": {
+                "name": {
+                  "default": "its",
+                  "description": "Name of the dataset.",
+                  "title": "Dataset name",
+                  "type": "string"
+                },
+                "test_size": {
+                  "default": 1,
+                  "description": "Size of the test dataset.",
+                  "maximum": Infinity,
+                  "minimum": 1,
+                  "title": "Test size",
+                  "type": "int"
+                }
+              },
+              "type": "collection"
+            },
+            "enable_dataset_cache": {
+              "default": true,
+              "description": "Enable dataset caching for faster loading.",
+              "title": "Enable dataset cache",
+              "type": "bool"
+            },
+            "mini_batch": {
+              "default": 4,
+              "description": "Mini batch.",
+              "maximum": Infinity,
+              "minimum": 1,
+              "title": "Mini batch",
+              "type": "int"
+            },
+            "type": {
+              "default": "sft",
+              "description": "Type of policy.",
+              "enum": [
+                "sft"
+              ],
+              "title": "Type",
+              "type": "categorical"
+            }
+          },
+          "type": "collection"
+        }
+      },
+      "type": "collection"
+    },
+    "validation": {
+      "automl_disabled_parameters": [
+        "validation.dataset"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "batch_size": 4,
+        "dataloader_num_workers": 8,
+        "dataloader_prefetch_factor": 8,
+        "dataset": {
+          "name": "",
+          "split": "train",
+          "subset": ""
+        },
+        "enable": true,
+        "enable_dataset_cache": false,
+        "freq_in_epoch": 10
+      },
+      "description": "Validation config.",
+      "properties": {
+        "batch_size": {
+          "default": 4,
+          "description": "Batch size.",
+          "maximum": Infinity,
+          "minimum": 1,
+          "title": "Batch size",
+          "type": "int"
+        },
+        "dataloader_num_workers": {
+          "default": 8,
+          "description": "Number of worker processes for data loading.",
+          "maximum": Infinity,
+          "minimum": 0,
+          "title": "Dataloader num workers",
+          "type": "int"
+        },
+        "dataloader_prefetch_factor": {
+          "default": 8,
+          "description": "Number of batches to prefetch per worker.",
+          "maximum": Infinity,
+          "minimum": 1,
+          "title": "Dataloader prefetch factor",
+          "type": "int"
+        },
+        "dataset": {
+          "automl_enabled": false,
+          "default": {
+            "name": "",
+            "split": "train",
+            "subset": ""
+          },
+          "description": "Validation dataset config.",
+          "properties": {
+            "name": {
+              "default": "",
+              "description": "Name of the dataset.",
+              "title": "Dataset name",
+              "type": "string"
+            },
+            "split": {
+              "default": "train",
+              "description": "Split of the dataset.",
+              "title": "Dataset split",
+              "type": "string"
+            },
+            "subset": {
+              "default": "",
+              "description": "Subset of the dataset.",
+              "title": "Dataset subset",
+              "type": "string"
+            }
+          },
+          "type": "collection"
+        },
+        "enable": {
+          "default": true,
+          "description": "Whether to enable validation.",
+          "title": "Enable validation",
+          "type": "bool"
+        },
+        "enable_dataset_cache": {
+          "default": false,
+          "description": "Enable dataset caching for validation. Set to False (recommended) to avoid potential segfaults during validation. If not set, uses the training setting.",
+          "title": "Enable validation dataset cache",
+          "type": "bool"
+        },
+        "freq_in_epoch": {
+          "default": 10,
+          "description": "Validation frequency.",
+          "maximum": Infinity,
+          "minimum": 1,
+          "title": "Validation frequency",
+          "type": "int"
+        }
+      },
+      "type": "collection"
+    }
+  },
+  "type": "object",
+  "x_tao_schema": {
+    "action": "train",
+    "core_module": "cosmos-rl",
+    "model": "cosmos-rl",
+    "network_arch": "cosmos-rl",
+    "schema_action": "train",
+    "schema_version": 1,
+    "source": "tao-core dataclass config"
+  }
+}

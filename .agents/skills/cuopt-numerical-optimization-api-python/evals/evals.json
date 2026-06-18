@@ -1,0 +1,62 @@
+[
+  {
+    "id": "numopt-py-eval-001-lp-api-call-sequence",
+    "question": "I want to solve a small LP (continuous variables only, maximize a linear objective with linear constraints) using the cuOpt Python API. List the API calls in order \u2014 name each method, one line per method, no full runnable script.",
+    "expected_skill": "cuopt-numerical-optimization-api-python",
+    "expected_script": null,
+    "ground_truth": "The agent produces an ordered list of API calls without a runnable script. The list, in order: (1) Import Problem, CONTINUOUS, and MAXIMIZE from cuopt.linear_programming.problem, and SolverSettings from cuopt.linear_programming.solver_settings. (2) Construct Problem('name'). (3) For each decision variable, call problem.addVariable(lb=..., vtype=CONTINUOUS, name=...). (4) For each constraint, call problem.addConstraint(<linear expression> <= or >= or == <rhs>, name=...). (5) Call problem.setObjective(<linear expression>, sense=MAXIMIZE). (6) Construct SolverSettings(); call set_parameter('time_limit', ...) for time budget. (7) Call problem.solve(settings). (8) Check problem.Status.name in ['Optimal', 'PrimalFeasible'] (PascalCase status names \u2014 case-sensitive). (9) Read problem.ObjValue for the objective, and each variable's .getValue() for its optimal value. The agent uses LP (not MILP / QP) because all variables are continuous and the objective is linear. Mentions that status names are PascalCase (Optimal, not OPTIMAL or optimal) \u2014 case sensitivity matters.",
+    "expected_behavior": [
+      "Selects LP (not MILP or QP) given continuous variables and a linear objective",
+      "Lists the API calls in order without producing a full runnable script",
+      "Names Problem, addVariable (with vtype=CONTINUOUS), addConstraint, setObjective (sense=MAXIMIZE)",
+      "Names SolverSettings, set_parameter('time_limit', ...), and problem.solve(settings)",
+      "Names problem.Status.name and the PascalCase status values (Optimal / PrimalFeasible / FeasibleFound)",
+      "Names problem.ObjValue and variable.getValue() for reading results",
+      "Mentions that status names are case-sensitive (PascalCase)",
+      "Does not invent method names that are not in the skill"
+    ]
+  },
+  {
+    "id": "numopt-py-eval-002-status-case-sensitivity",
+    "question": "My cuOpt Python LP solve runs without error but the result block never executes. Here is the check I wrote: if problem.Status.name == 'OPTIMAL': print(problem.ObjValue). What is wrong and how do I fix it?",
+    "expected_skill": "cuopt-numerical-optimization-api-python",
+    "expected_script": null,
+    "ground_truth": "The check silently fails because cuOpt status names use PascalCase, not ALL_CAPS. The string 'OPTIMAL' never matches. The correct LP status values to check are 'Optimal' and 'PrimalFeasible'. The fixed check is: if problem.Status.name in ['Optimal', 'PrimalFeasible']: print(problem.ObjValue). For MILP the correct values are 'Optimal' and 'FeasibleFound'. This is a common silent bug \u2014 the solve completes successfully but the code path that reads results is skipped because the string comparison always returns False.",
+    "expected_behavior": [
+      "Identifies the bug as a case mismatch \u2014 'OPTIMAL' is wrong, 'Optimal' is correct",
+      "States that cuOpt status names are PascalCase, not ALL_CAPS",
+      "Gives the correct LP check: problem.Status.name in ['Optimal', 'PrimalFeasible']",
+      "Notes that for MILP the passing status is 'FeasibleFound' not 'FEASIBLE_FOUND' or 'FEASIBLEFOUND'",
+      "Explains why this is a silent failure \u2014 no exception is raised, the block just never executes"
+    ]
+  },
+  {
+    "id": "numopt-py-eval-003-integer-vs-continuous-workers",
+    "question": "I am modeling a staffing problem where I need to decide how many nurses to assign to each ward. Should the nurse count variables be INTEGER or CONTINUOUS in the cuOpt Python API, and what vtype constant do I use for each?",
+    "expected_skill": "cuopt-numerical-optimization-api-python",
+    "expected_script": null,
+    "ground_truth": "Nurse counts should be INTEGER because nurses are discrete countable entities \u2014 you cannot assign 2.7 nurses to a ward. The vtype constant is INTEGER (imported from cuopt.linear_programming.problem). The addVariable call would be: problem.addVariable(lb=0, vtype=INTEGER, name='ward_a_nurses'). This makes the problem a MILP, not an LP. CONTINUOUS would be wrong here because it allows fractional values, which are meaningless for headcounts. The rule is: 'how many things' (people, vehicles, machines) \u2192 INTEGER; 'how much of something' (hours, tonnes, dollars) \u2192 CONTINUOUS.",
+    "expected_behavior": [
+      "States nurse counts must be INTEGER because nurses are discrete countable entities",
+      "Names the correct vtype constant: INTEGER (imported from cuopt.linear_programming.problem)",
+      "Shows or describes the addVariable call with vtype=INTEGER",
+      "States this makes the problem MILP, not LP",
+      "Explains why CONTINUOUS is wrong \u2014 it allows fractional nurse counts",
+      "States the rule: countable things \u2192 INTEGER, measurable amounts \u2192 CONTINUOUS"
+    ]
+  },
+  {
+    "id": "numopt-py-eval-004-qp-maximize-workaround",
+    "question": "I want to maximize a quadratic objective using the cuOpt Python QP API. When I pass sense=MAXIMIZE to setObjective, I get an error. What is the correct approach?",
+    "expected_skill": "cuopt-numerical-optimization-api-python",
+    "expected_script": null,
+    "ground_truth": "The cuOpt QP solver only supports MINIMIZE \u2014 MAXIMIZE is rejected for quadratic objectives. The correct workaround is to negate all coefficients in the objective and minimize the negated expression. For example, to maximize -0.04*x1*x1 - 0.02*x2*x2 (a concave quadratic with NSD Q), minimize 0.04*x1*x1 + 0.02*x2*x2 with sense=MINIMIZE. The resulting problem.ObjValue will be the negated maximum; multiply by -1 to recover the true maximum. All variables must remain CONTINUOUS \u2014 integer QP is not supported. The Q matrix of the original maximization problem must be negative semi-definite (NSD) for the problem to be concave and have a finite maximum; after negation it becomes PSD, which is what the solver expects. Maximizing a convex quadratic (positive coefficients) is unbounded and not a meaningful use case.",
+    "expected_behavior": [
+      "States QP only supports MINIMIZE \u2014 MAXIMIZE is rejected",
+      "Gives the correct workaround: negate all objective coefficients and use sense=MINIMIZE",
+      "Notes that problem.ObjValue will be negated and must be multiplied by -1 to get the true maximum",
+      "Reminds that all variables must be CONTINUOUS \u2014 integer QP is not supported",
+      "Does not suggest a non-existent MAXIMIZE_QP or similar invented API"
+    ]
+  }
+]

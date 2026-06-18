@@ -1,0 +1,72 @@
+[
+  {
+    "id": "discover-eval-001-ensemble-forecast",
+    "question": "I want to run a 10-day global weather forecast with uncertainty estimates. I have a single H100 80GB GPU. Which Earth2Studio models and data sources should I use?",
+    "expected_skill": "earth2studio-discover",
+    "expected_script": null,
+    "ground_truth": "Recommends medium-range (MR) ensemble-capable prognostic models like FuXi, Pangu, or GenBiE. Suggests ERA5-based data sources (ARCO or CDS) or GFS for initialization. Points to medium-range ensemble examples. Verifies data source compatibility via lexicon/variable coverage.",
+    "expected_behavior": [
+      "Recommends at least one model with Class badge MR",
+      "Mentions ensemble or probabilistic forecasting capability",
+      "Suggests a compatible analysis data source for initialization (e.g. ARCO, CDS, or GFS)",
+      "Verifies data source compatibility via lexicon/variable coverage",
+      "Cites at least one link to the Earth2Studio documentation"
+    ]
+  },
+  {
+    "id": "discover-eval-002-downscaling",
+    "question": "I need to downscale coarse global model output to 2km resolution over the continental US for wind energy assessment. What does Earth2Studio offer for this?",
+    "expected_skill": "earth2studio-discover",
+    "expected_script": null,
+    "ground_truth": "Recommends diagnostic (DS) downscaling models like CorrDiff or CBottle. Suggests chaining a prognostic model (for coarse forecast) with a diagnostic downscaler. Points to downscaling examples in the gallery. Identifies region coverage (NA or Global) for the suggested models.",
+    "expected_behavior": [
+      "Recommends at least one model with Class badge DS",
+      "Mentions CorrDiff or CBottle as a downscaling option",
+      "Explains the px -> dx chaining pattern for downscaling workflows",
+      "Identifies region coverage (NA or Global) for the suggested models",
+      "Points to at least one downscaling example from the gallery"
+    ]
+  },
+  {
+    "id": "discover-eval-003-nowcasting",
+    "question": "We're building a real-time severe weather alerting system for the next 6 hours over CONUS. What nowcasting models are available in Earth2Studio and what data do they need?",
+    "expected_skill": "earth2studio-discover",
+    "expected_script": null,
+    "ground_truth": "Recommends nowcasting (NWC) models like StormCast or StormScope. Suggests HRRR or MRMS as compatible data sources for high-resolution CONUS coverage. Points to nowcasting examples. Mentions temporal resolution appropriate for nowcasting (hourly or sub-hourly).",
+    "expected_behavior": [
+      "Recommends at least one model with Class badge NWC",
+      "Identifies the model's region as NA or CONUS-specific",
+      "Suggests HRRR or another high-resolution data source for initialization",
+      "Mentions temporal resolution appropriate for nowcasting (hourly or sub-hourly)",
+      "Points to at least one nowcasting example from the gallery"
+    ]
+  },
+  {
+    "id": "discover-eval-004-seasonal",
+    "question": "I'm a climate researcher interested in subseasonal-to-seasonal prediction, specifically predicting MJO and ENSO patterns 4-6 weeks out. What's available?",
+    "expected_skill": "earth2studio-discover",
+    "expected_script": null,
+    "ground_truth": "Recommends seasonal/subseasonal (S2S) models like DLESyM or SFNO-based seasonal models. Suggests ERA5 or CDS data sources for long historical initialization. Points to seasonal examples. Discusses forecast lead time capability of weeks to months.",
+    "expected_behavior": [
+      "Recommends at least one model with Class badge S2S or CM",
+      "Discusses forecast lead time capability of weeks to months",
+      "Suggests a data source with long historical coverage (e.g. ERA5 via CDS or ARCO)",
+      "Mentions relevant climate variables or indices",
+      "Points to at least one seasonal or climate example from the gallery"
+    ]
+  },
+  {
+    "id": "discover-eval-005-data-assimilation",
+    "question": "I have surface weather station observations and want to blend them with a forecast model to improve local accuracy. I'm interested in data assimilation approaches in Earth2Studio.",
+    "expected_skill": "earth2studio-discover",
+    "expected_script": null,
+    "ground_truth": "Recommends data assimilation (DA) models like HealDA or StormCast SDA. Suggests dataframe data sources for observation ingestion. Explains how DA models combine observations with model state. Points to data assimilation examples.",
+    "expected_behavior": [
+      "Recommends at least one model with Class badge DA",
+      "Explains the data assimilation concept of combining observations with model state",
+      "Mentions dataframe data sources for observation handling",
+      "Identifies what observation variables or formats are supported",
+      "Points to at least one data assimilation example from the gallery"
+    ]
+  }
+]

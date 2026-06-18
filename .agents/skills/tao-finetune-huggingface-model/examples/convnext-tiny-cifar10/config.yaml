@@ -1,0 +1,63 @@
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# tao-finetune-huggingface-model — ConvNeXt-tiny on CIFAR-10 (subset)
+# qualification: ACCEPT (CV image-classification, AutoConfig OK)
+
+research_sources:
+  - https://huggingface.co/facebook/convnext-tiny-224/raw/main/README.md
+  - https://raw.githubusercontent.com/huggingface/transformers/main/examples/pytorch/image-classification/run_image_classification.py
+  - https://raw.githubusercontent.com/huggingface/transformers/main/docs/source/en/tasks/image_classification.md
+  - https://arxiv.org/abs/2201.03545
+
+model_id: facebook/convnext-tiny-224
+model_short_name: convnext-tiny-cifar10
+task: image-classification
+auto_model_class: AutoModelForImageClassification
+ignore_mismatched_sizes: true        # classifier 1000 -> 10
+
+dataset_id: cifar10
+label_column: label
+image_column_src: img                 # source column; renamed to "image" in prepare_data
+n_train: 5000
+n_eval: 1000
+
+output_dir: ./checkpoints
+num_train_epochs: 3
+per_device_train_batch_size: 32
+per_device_eval_batch_size: 64
+gradient_accumulation_steps: 2
+learning_rate: 5.0e-5
+warmup_ratio: 0.1
+weight_decay: 0.01
+bf16: true
+gradient_checkpointing: false
+dataloader_num_workers: 4
+remove_unused_columns: false
+
+eval_strategy: epoch
+save_strategy: epoch
+save_total_limit: 1
+load_best_model_at_end: true
+metric_for_best_model: accuracy
+greater_is_better: true
+
+report_to: wandb
+logging_steps: 10
+logging_first_step: true
+logging_strategy: steps
+disable_tqdm: true
+
+push_to_hub: false
+ngc_image: nvcr.io/nvidia/pytorch:25.01-py3

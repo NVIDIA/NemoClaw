@@ -1,0 +1,410 @@
+model_name: ''
+encryption_key: ''
+results_dir: ''
+wandb:
+  enable: true
+  project: TAO Toolkit
+  entity: ''
+  group: ''
+  tags:
+  - tao-toolkit
+  reinit: false
+  sync_tensorboard: false
+  save_code: false
+  name: TAO Toolkit Training
+  run_id: ''
+default_scope: mmdet3d
+default_hooks:
+  timer:
+    type: IterTimerHook
+  logger:
+    type: LoggerHook
+    interval: 1
+    log_metric_by_epoch: true
+  param_scheduler:
+    type: ParamSchedulerHook
+  checkpoint:
+    type: CheckpointHook
+    by_epoch: true
+    interval: 1
+  sampler_seed:
+    type: DistSamplerSeedHook
+  visualization:
+    type: Det3DVisualizationHook
+logger_hook: TAOBEVFusionLoggerHook
+input_modality:
+  use_lidar: true
+  use_camera: true
+  use_radar: false
+  use_map: false
+  use_external: false
+model:
+  type: BEVFusion
+  point_cloud_range:
+  - 0
+  - -40
+  - -3
+  - 70.4
+  - 40
+  - 1
+  voxel_size:
+  - 0.05
+  - 0.05
+  - 0.1
+  post_center_range:
+  - -61.2
+  - -61.2
+  - -20.0
+  - 61.2
+  - 61.2
+  - 20.0
+  grid_size:
+  - 1440
+  - 1440
+  - 41
+  data_preprocessor:
+    type: Det3DDataPreprocessor
+    mean:
+    - 123.675
+    - 116.28
+    - 103.53
+    std:
+    - 58.395
+    - 57.12
+    - 57.375
+    bgr_to_rgb: false
+    pad_size_divisor: 32
+    voxelize_cfg:
+      max_num_points: 10
+      max_voxels:
+      - 120000
+      - 160000
+      voxelize_reduce: true
+  img_backbone:
+    type: mmdet.SwinTransformer
+    embed_dims: 96
+    depths:
+    - 2
+    - 2
+    - 6
+    - 2
+    num_heads:
+    - 3
+    - 6
+    - 12
+    - 24
+    window_size: 7
+    mlp_ratio: 4
+    qkv_bias: true
+    drop_rate: 0.0
+    attn_drop_rate: 0.0
+    drop_path_rate: 0.2
+    patch_norm: true
+    out_indices:
+    - 1
+    - 2
+    - 3
+    with_cp: false
+    convert_weights: true
+    init_cfg: {}
+  img_neck:
+    type: GeneralizedLSSFPN
+    in_channels:
+    - 192
+    - 384
+    - 768
+    out_channels: 256
+    start_level: 0
+    num_outs: 0
+    norm_cfg:
+      type: BN2d
+      requires_grad: true
+    act_cfg:
+      type: ReLU
+      inplace: true
+    upsample_cfg:
+      mode: bilinear
+      align_corners: false
+  view_transform:
+    type: DepthLSSTransform
+    in_channels: 256
+    out_channels: 80
+    image_size:
+    - 256
+    - 704
+    feature_size:
+    - 32
+    - 88
+    xbound:
+    - -54.0
+    - 54.0
+    - 0.3
+    ybound:
+    - -54.0
+    - 54.0
+    - 0.3
+    zbound:
+    - -10.0
+    - 10.0
+    - 20.0
+    dbound:
+    - 1.0
+    - 60.0
+    - 0.5
+    downsample: 2
+  pts_backbone:
+    type: SECOND
+    in_channels: 256
+    out_channels:
+    - 128
+    - 256
+    layer_nums:
+    - 5
+    - 5
+    layer_strides:
+    - 1
+    - 2
+    norm_cfg:
+      type: BN
+      eps: 0.001
+      momentum: 0.01
+    conv_cfg:
+      type: Conv2d
+      bias: false
+  pts_voxel_encoder:
+    type: HardSimpleVFE
+    num_features: 4
+  pts_middle_encoder:
+    type: BEVFusionSparseEncoder
+    in_channels: 4
+    sparse_shape:
+    - 1440
+    - 1440
+    - 41
+    order:
+    - conv
+    - norm
+    - act
+    norm_cfg:
+      type: BN1d
+      eps: 0.001
+      momentum: 0.01
+    block_type: basicblock
+  pts_neck:
+    type: SECONDFPN
+    in_channels:
+    - 128
+    - 256
+    out_channels:
+    - 256
+    - 256
+    upsample_strides:
+    - 1
+    - 2
+    norm_cfg:
+      type: BN
+      eps: 0.001
+      momentum: 0.01
+    upsample_cfg:
+      type: deconv
+      bias: false
+    use_conv_for_no_stride: true
+  fusion_layer:
+    type: ConvFuser
+    in_channels:
+    - 80
+    - 256
+    out_channels: 256
+  bbox_head:
+    type: BEVFusionHead
+    num_proposals: 200
+    auxiliary: true
+    in_channels: 512
+    hidden_channel: 128
+    num_classes: 1
+    nms_kernel_size: 3
+    bn_momentum: 0.1
+    num_decoder_layers: 1
+    out_size_factor: 8
+    bbox_coder:
+      type: TAO3DBBoxCoder
+      score_threshold: 0.0
+      code_size: 12
+    decoder_layer:
+      type: TransformerDecoderLayer
+      self_attn_cfg:
+        embed_dims: 128
+        num_heads: 8
+        dropout: 0.1
+      cross_attn_cfg:
+        embed_dims: 128
+        num_heads: 8
+        dropout: 0.1
+      ffn_cfg:
+        embed_dims: 128
+        feedforward_channels: 256
+        num_fcs: 2
+        ffn_drop: 0.1
+        act_cfg:
+          type: ReLU
+          inplace: true
+      norm_cfg:
+        type: LN
+      pos_encoding_cfg:
+        input_channel: 2
+        num_pos_feats: 128
+    code_weights:
+    - 1.0
+    - 1.0
+    - 1.0
+    - 1.0
+    - 1.0
+    - 1.0
+    - 1.0
+    - 1.0
+    - 1.0
+    - 1.0
+    - 1.0
+    - 1.0
+    assigner:
+      type: HungarianAssigner3D
+      iou_calculator:
+        type: BboxOverlaps3D
+        coordinate: lidar
+      cls_cost:
+        type: mmdet.FocalLossCost
+        gamma: 2.0
+        alpha: 0.25
+        weight: 0.15
+      reg_cost:
+        type: BBoxBEVL1Cost
+        weight: 0.25
+      iou_cost:
+        type: IoU3DCost
+        weight: 0.25
+    common_heads:
+      center:
+      - 2
+      - 2
+      height:
+      - 1
+      - 2
+      dim:
+      - 3
+      - 2
+      rot:
+      - 6
+      - 2
+    loss_cls:
+      type: mmdet.FocalLoss
+      use_sigmoid: true
+      gamma: 2.0
+      alpha: 0.25
+      reduction: mean
+      loss_weight: 1.0
+    loss_heatmap:
+      type: mmdet.GaussianFocalLoss
+      reduction: mean
+      loss_weight: 1.0
+    loss_bbox:
+      type: mmdet.L1Loss
+      reduction: mean
+      loss_weight: 0.25
+dataset:
+  type: KittiPersonDataset
+  root_dir: ''
+  classes:
+  - person
+  box_type_3d: lidar
+  gt_box_type: camera
+  origin:
+  - 0.5
+  - 1.0
+  - 0.5
+  default_cam_key: CAM2
+  per_sequence: false
+  num_views: 1
+  point_cloud_dim: 4
+  train_dataset:
+    data_prefix: &id001
+      pts: training/lidar_reduced
+      img: training/images/
+    sampler: DefaultSampler
+    batch_size: 4
+    num_workers: 8
+    pin_memory: true
+  val_dataset:
+    data_prefix: *id001
+    sampler: DefaultSampler
+    batch_size: 4
+    num_workers: 8
+    pin_memory: true
+  test_dataset:
+    data_prefix: *id001
+    sampler: DefaultSampler
+    batch_size: 4
+    num_workers: 8
+    pin_memory: true
+train:
+  num_gpus: 1
+  gpu_ids:
+  - 0
+  num_nodes: 1
+  seed: 1234
+  cudnn:
+    benchmark: false
+    deterministic: true
+  num_epochs: 10
+  checkpoint_interval: 1
+  checkpoint_interval_unit: epoch
+  validation_interval: 1
+  resume_training_checkpoint_path: ''
+  results_dir: ''
+  by_epoch: true
+  logging_interval: 1
+  resume: false
+  pretrained_checkpoint: ''
+  optimizer:
+    type: AdamW
+    lr: 0.0002
+    weight_decay: 0.01
+    betas:
+    - 0.9
+    - 0.999
+    clip_grad:
+      max_norm: 35
+      norm_type: 2
+    wrapper_type: OptimWrapper
+  lr_scheduler:
+  - type: LinearLR
+    start_factor: 0.33333333
+    by_epoch: false
+    begin: 0
+    end: 500
+  - type: CosineAnnealingLR
+    T_max: 10
+    eta_min_ratio: 0.0001
+    begin: 0
+    end: 10
+    by_epoch: true
+  - type: CosineAnnealingMomentum
+    eta_min: 0.8947
+    begin: 0
+    end: 2.4
+    by_epoch: true
+  - type: CosineAnnealingMomentum
+    eta_min: 1
+    begin: 2.4
+    end: 10
+    by_epoch: true
+inference:
+  num_gpus: 1
+  gpu_ids:
+  - 0
+  num_nodes: 1
+  checkpoint: ???
+  trt_engine: ''
+  results_dir: ''
+  batch_size: -1
+  conf_threshold: 0.5
+  show: false

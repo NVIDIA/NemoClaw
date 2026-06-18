@@ -1,0 +1,14 @@
+results_dir: /results
+model:
+  input_channels: 3
+  input_width: 224
+  input_height: 224
+inference:
+  trt_engine: /results/ml-recog.engine
+  batch_size: 10
+  inference_input_type: classification_folder
+  topk: 10
+dataset:
+  val_dataset:
+    reference: <required>
+    query: <required>

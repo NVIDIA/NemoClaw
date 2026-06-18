@@ -1,0 +1,4 @@
+interface:
+  display_name: "Omniverse Realtime Viewer"
+  short_description: "Build RTX-rendered USD viewer apps with the OV skill package."
+  default_prompt: "Build an Omniverse Realtime Viewer app using ovrtx for USD rendering and the appropriate focused references for delivery, UI, interaction, and validation."

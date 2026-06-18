@@ -1,0 +1,19 @@
+[
+  {
+    "id": "rt-py-eval-001-vrptw-api-call-sequence",
+    "question": "For a VRP with time windows in cuopt (Python), list the API calls I need in order — name each method on routing.DataModel and routing.Solve, and one-line what each does. Don't write a full runnable script.",
+    "expected_skill": "cuopt-routing-api-python",
+    "expected_script": null,
+    "ground_truth": "The agent produces an ordered list of API calls without writing executable code. The list, in order: (1) Construct routing.DataModel(n_locations, n_fleet, n_orders). (2) add_cost_matrix(cost_matrix) — pass as a cudf.DataFrame with float32 dtype. (3) add_transit_time_matrix(transit_time_matrix) — required when time windows are used; omitting it causes Solve to return a non-zero status. (4) set_order_locations(series) — cudf.Series of int32 node indices. (5) set_order_time_windows(earliest, latest) — two int32 cudf.Series. (6) Construct routing.SolverSettings(); call set_time_limit() and optionally set_verbose_mode(). (7) Call routing.Solve(dm, ss) to get a solution object. (8) Check solution.get_status() == 0 before reading the route; on a non-zero status, inspect solution.get_error_message() and solution.get_infeasible_orders().to_list(). (9) On success, retrieve the route via solution.get_route() or display it via solution.display_routes(). The agent mentions explicit dtypes (float32 for the matrices, int32 for index series) as a class-level note. Does not embed full executable code, does not invent method names that aren't in the skill (e.g. no fictitious set_time_windows or add_vehicle), and flags that the user must supply real numeric data.",
+    "expected_behavior": [
+      "Lists the API methods in order without producing a full executable script",
+      "Names routing.DataModel with n_locations / n_fleet / n_orders",
+      "Names add_cost_matrix and add_transit_time_matrix, and flags that transit_time_matrix is required for time windows",
+      "Names set_order_locations and set_order_time_windows",
+      "Names routing.SolverSettings (and set_time_limit) and routing.Solve",
+      "Mentions checking solution.get_status() == 0, and get_error_message / get_infeasible_orders for the failure path",
+      "Mentions explicit dtypes (float32 for matrices, int32 for index series)",
+      "Does not invent method names that are not in the skill"
+    ]
+  }
+]

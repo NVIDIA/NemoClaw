@@ -1,0 +1,47 @@
+title: mlm_bridge_training
+validated_on: "2026-03-17"
+summary: >
+  Operational guide for running Megatron-LM (pretrain_gpt.py) and Megatron
+  Bridge (run_recipe.py) training side by side, including correlation testing,
+  arg mapping, and the translation script.
+validation_status:
+  mlm_pretrain_gpt_launch:
+    - code_verified
+  bridge_run_recipe_launch:
+    - code_verified
+  vanilla_gpt_correlation:
+    - code_verified
+  translation_script:
+    - code_verified
+  arg_mapping_tables:
+    - doc_only
+feature_meaning:
+  vanilla_gpt_pretrain_config: >
+    Bare GPTModelProvider recipe with no model-specific overrides. Matches MLM
+    pretrain_gpt.py defaults for loss-correlation testing.
+  translate_mlm_to_bridge: >
+    Script that converts Megatron-LM YAML configs or raw CLI args into Bridge
+    overrides, launch commands, or standalone recipe files.
+recommended_path:
+  correlation_testing: vanilla_gpt_pretrain_config
+  arg_mapping_reference: docs/megatron-lm-to-megatron-bridge.md
+known_constraints:
+  - MLM requires --eval-iters and --eval-interval (no defaults).
+  - Bridge scheduler asserts lr_warmup_iters < lr_decay_iters.
+  - Use dataset.sequence_length (not dataset.seq_length) in CLI overrides.
+  - MLM requires PYTHONPATH to include 3rdparty/Megatron-LM.
+  - Bridge auto-resumes from nemo_experiments/ if previous checkpoint exists.
+known_limitations:
+  - Not all MLM CLI flags have a direct Bridge equivalent.
+  - Model-specific recipes carry their own vocab_size which may not match the tokenizer.
+  - Translation script covers common args but may not handle all edge cases.
+evidence:
+  - docs/megatron-lm-to-megatron-bridge.md
+  - scripts/training/run_recipe.py
+  - scripts/translate_mlm_to_bridge.py
+  - 3rdparty/Megatron-LM/pretrain_gpt.py
+  - src/megatron/bridge/training/config.py
+  - src/megatron/bridge/recipes/common.py
+follow_up_validation:
+  - Add a checked-in CI job that runs MLM vs Bridge correlation and asserts loss match.
+  - Extend translation script coverage to recompute and CUDA-graph args.

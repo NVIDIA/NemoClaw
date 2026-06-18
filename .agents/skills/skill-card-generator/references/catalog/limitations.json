@@ -1,0 +1,14 @@
+[
+  {
+    "id": "llm_only",
+    "label": "Supports large language models only; vision-language models (VLMs), diffusion models, and other non-LLM architectures are not yet supported."
+  },
+  {
+    "id": "prefill_only",
+    "label": "Produces prefill-only models; decode-path (KV cache, incremental generation) is handled separately."
+  },
+  {
+    "id": "requires_hf_access",
+    "label": "Requires HuggingFace access; this skill may fail behind restrictive firewalls or if the model repository is gated/private without a valid HF token."
+  }
+]

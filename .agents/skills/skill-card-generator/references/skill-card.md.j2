@@ -1,0 +1,131 @@
+{#-
+Skill Card Jinja template.
+Renders a skill card from a validated context JSON.
+
+The context's shape is defined by the style guide. Literal template fields
+(pipeline-filled scores, legal boilerplate, ethical considerations) appear
+as text in this template and are never touched by the agent.
+
+Verify markers:
+  - Red VERIFY spans wrap inferred or defaulted values (owner, license).
+  - `scripts/validate_submission.py` fails if any marker remains in the
+    rendered card at submission time.
+-#}
+{%- set evaluation = evaluation | default({}) -%}
+
+## Description: <br>
+{{ description_sentence }} <br>
+
+{% if usage_posture == "commercial" -%}
+This skill is ready for commercial/non-commercial use. <br>
+{%- elif usage_posture == "research_dev" -%}
+This skill is for research and development only. <br>
+{%- elif usage_posture == "demonstration" -%}
+This skill is for demonstration purposes and not for production usage. <br>
+{%- endif %}
+
+{% if owner.kind == "nvidia" -%}
+## Owner
+{% if owner.verify -%}
+<span style="color:#d73a49">NVIDIA</span> <!-- VERIFY: {{ owner.verify_reason or "inferred or defaulted; confirm or correct before submission" }} --> <br>
+{%- else -%}
+NVIDIA <br>
+{%- endif %}
+{%- else -%}
+## Third-Party Community Consideration
+{% if owner.verify -%}
+<span style="color:#d73a49">This skill is not owned or developed by NVIDIA. This skill has been developed and built to a third-party's requirements for this application and use case; see link to Non-NVIDIA [{{ owner.name }} Agent Card]({{ owner.card_link }}).</span> <!-- VERIFY: {{ owner.verify_reason or "third-party ownership inferred; confirm vendor name and card link" }} --> <br>
+{%- else -%}
+This skill is not owned or developed by NVIDIA. This skill has been developed and built to a third-party's requirements for this application and use case; see link to Non-NVIDIA [{{ owner.name }} Agent Card]({{ owner.card_link }}). <br>
+{%- endif %}
+{%- endif %}
+
+### License/Terms of Use: <br>
+{% if license_identifier -%}
+{% if license_verify -%}
+<span style="color:#d73a49">{{ license_identifier }}</span> <!-- VERIFY: {{ license_verify_reason or "license not extracted verbatim from a documentation file; confirm terms before submission" }} --> <br>
+{% else -%}
+{{ license_identifier }} <br>
+{% endif -%}
+{% endif -%}
+
+## Use Case: <br>
+{{ use_case }} <br>
+
+### Deployment Geography for Use: <br>
+{{ deployment_geography }} <br>
+
+## Known Risks and Mitigations: <br>
+Risk: Review before execution as proposals could introduce incorrect or misleading guidance into skills. <br>
+Mitigation: Review and scan skill before deployment. <br>
+
+## Reference(s): <br>
+{% for ref in references -%}
+- [{{ ref.label }}]({{ ref.url }}) <br>
+{% endfor %}
+
+## Skill Output: <br>
+**Output Type(s):** [{{ output.types | join(", ") }}] <br>
+**Output Format:** [{{ output.format }}] <br>
+**Output Parameters:** [{{ output.parameters }}] <br>
+**Other Properties Related to Output:** [{{ output.other_properties }}] <br>
+
+{% if evaluation.get("agents") or evaluation.get("agent") -%}
+## Evaluation Agents Used: <br>
+{% if evaluation.get("agents") -%}
+{% for agent in evaluation.agents -%}
+- {{ agent }} <br>
+{% endfor %}
+{% else -%}
+- {{ evaluation.agent }} <br>
+{% endif %}
+
+{% endif -%}
+{% if evaluation.get("tasks") -%}
+## Evaluation Tasks: <br>
+{{ evaluation.tasks }} <br>
+
+{% endif -%}
+{% if evaluation.get("metrics") -%}
+## Evaluation Metrics Used: <br>
+{% set metrics = evaluation.metrics -%}
+{% if metrics is mapping -%}
+{% if metrics.get("dimensions") -%}
+Reported benchmark dimensions: <br>
+{% for metric in metrics.dimensions -%}
+- {{ metric.name }}: {{ metric.description }} <br>
+{% endfor %}
+{% endif -%}
+{% if metrics.get("signals") -%}
+Underlying evaluation signals used in this run: <br>
+{% for signal in metrics.signals -%}
+- `{{ signal.name }}`: {{ signal.description }} <br>
+{% endfor %}
+{% endif -%}
+{% else -%}
+{{ metrics }} <br>
+{% endif %}
+
+{% endif -%}
+{% if evaluation.get("results_markdown") -%}
+## Evaluation Results: <br>
+{{ evaluation.results_markdown }}
+
+{% endif -%}
+{% if evaluation.get("testing_completed") -%}
+## Testing Completed: <br>
+**[{% if evaluation.testing_completed.agent_red_teaming %}x{% else %} {% endif %}] Agent Red-Teaming** <br>
+**[{% if evaluation.testing_completed.network_security %}x{% else %} {% endif %}] Network Security** <br>
+**[{% if evaluation.testing_completed.product_security %}x{% else %} {% endif %}] Product Security** <br>
+
+{% endif -%}
+## Skill Version(s): <br>
+{{ skill_version }} <br>
+
+{% if owner.kind == "nvidia" -%}
+## Ethical Considerations: <br>
+NVIDIA believes Trustworthy AI is a shared responsibility and we have established policies and practices to enable development for a wide array of AI applications. When downloaded or used in accordance with our terms of service, developers should work with their internal team to ensure this skill meets requirements for the relevant industry and use case and addresses unforeseen product misuse. <br>
+
+(For Release on NVIDIA Platforms Only) <br>
+Please report quality, risk, security vulnerabilities or NVIDIA AI Concerns [here](https://app.intigriti.com/programs/nvidia/nvidiavdp/detail). <br>
+{%- endif %}

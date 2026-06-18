@@ -1,0 +1,42 @@
+{
+  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Scene Optimizer Operation Manifest",
+  "description": "Machine-readable catalog for SO ops this skill pack documents. Used to generate references/operations/README.md and to audit routing-critical metadata mirrored in per-op guide frontmatter. This-repo recommendation posture (status, wired_into, rationale) lives in _curation.json.",
+  "type": "object",
+  "required": ["operations"],
+  "properties": {
+    "schema": {
+      "type": "string",
+      "description": "Optional historical identifier kept for compatibility with the pre-existing manifest shape."
+    },
+    "source": {
+      "type": "string",
+      "description": "Optional note describing how catalog data relates to per-op guide frontmatter mirrors."
+    },
+    "operations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["key", "since_version", "requires_extension"],
+        "properties": {
+          "key": {
+            "type": "string",
+            "pattern": "^[a-zA-Z][a-zA-Z0-9]*$",
+            "description": "Canonical op key as registered in scene-optimizer-core."
+          },
+          "since_version": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 UTC date the op first appeared in scene-optimizer-core. Used as the comparison key against probe-snapshot so_build_date. Use 2026-02-10T00:00:00Z for ops present in the initial public source dump."
+          },
+          "requires_extension": {
+            "type": "string",
+            "description": "Kit extension that owns the op (e.g. 'omni.scene.optimizer.core')."
+          }
+        }
+      },
+      "uniqueItems": true
+    }
+  }
+}

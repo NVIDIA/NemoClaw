@@ -1,0 +1,153 @@
+# Nemotron Data Prep Context
+
+Use this pack when generating stage code for any of the data_prep steps:
+
+- `data_prep/sft_packing`     → produces `packed_parquet`
+- `data_prep/pretrain_prep`   → produces `binidx` + `blend.json`
+- `data_prep/rl_prep`         → produces `training_jsonl` (sharded)
+
+The step family wraps `src/nemotron/data_prep` recipes. Generated stage code
+should be a thin wrapper around the recipe entry point — no schema knowledge
+in Python.
+
+## Live Repo Verification
+
+Read `../CATALOG.md`, `../ARTIFACTS.md`, and `../COMMANDS.md` before this pack.
+After the bundled references select a data prep step, verify:
+
+- Manifests: `src/nemotron/steps/data_prep/<step>/step.toml`
+- Per-step README: `src/nemotron/steps/data_prep/<step>/README.md`
+- Category README: `src/nemotron/steps/data_prep/README.md`
+- Shared helpers: `src/nemotron/steps/data_prep/_common.py`
+
+## Shared helpers (`data_prep/_common.py`)
+
+Use these in every data_prep stage wrapper:
+
+- `resolve_blend_path(cfg, *, step_dir, default_name="blend_tiny.json")` —
+  resolve blend path from config, falling back to a step-bundled default.
+- `resolve_output_dir(value)` — turn a config value into an absolute output path.
+- `chdir_to_scratch(prefix)` — switch CWD into the scratch dir; **must be
+  called after** path resolution so the resolved paths stay valid.
+- `config_dataclass(cls, block)` — convert a config block to a typed dataclass.
+- `init_prep_wandb(tags)` — optional W&B init for prep runs.
+
+Order in your `run.py`:
+
+1. Resolve all paths (input blend, output dir).
+2. Optionally `init_prep_wandb(...)` if the user opted into tracking.
+3. `chdir_to_scratch(...)` only after all paths are resolved.
+4. Call the recipe.
+
+## Shared principles across data_prep steps
+
+- **Tokenizer-locked outputs.** Repack on tokenizer / template / seq_length
+  change. See `prep-data-is-tokenizer-locked` in `../PATTERNS.md`.
+- **Deterministic splits.** Always emit named splits (`train`, `valid`, `test`)
+  with stable shard manifests so re-runs are bit-comparable.
+- **HF dataset interop.** A blend entry should describe HF dataset id, split,
+  text/messages field mapping, optional sampling limit, and accept local JSONL/
+  parquet paths. Keep schema-mapping in YAML, not the wrapper.
+- **Receipts near the output.** Manifests / blend.json / split metadata land
+  next to the produced shards so downstream stages can validate.
+
+## SFT packing (`data_prep/sft_packing`)
+
+Consumes OpenAI chat-format JSONL, emits packed Parquet for
+Megatron-Bridge SFT/PEFT.
+
+Manifest defaults from `step.toml`:
+- `tokenizer = "nvidia/NVIDIA-Nemotron-Nano-9B-v2"`
+- `pack_size = 4096`
+- `algorithm = "first_fit_shuffle"` (also `first_fit_decreasing`, `concatenative`)
+- `chat_template = "nano3"`
+- `num_shards = 128`
+
+**Hard rules** (from step.toml strategies + errors):
+- `pack_size` MUST equal downstream `seq_length` / `packed_sequence_size`.
+  Mismatch → `seq_length_mismatch` error.
+- `tokenizer` + `chat_template` MUST equal the downstream training model's.
+- For small datasets, lower `num_shards` so each shard stays usefully sized
+  (recovery for `too_many_tiny_shards`).
+- Skip this step before AutoModel SFT/PEFT — those read JSONL directly.
+
+Use this **before**:
+- `sft/megatron_bridge`
+- `peft/megatron_bridge`
+
+Skip this **before**:
+- `sft/automodel`, `peft/automodel` (read `training_jsonl` directly).
+
+## Pretraining prep (`data_prep/pretrain_prep`)
+
+Consumes curated text (HF datasets or local parquet/jsonl), emits Megatron
+bin/idx shards plus `blend.json`.
+
+Manifest defaults from `step.toml`:
+- `tokenizer.model = "nvidia/NVIDIA-Nemotron-Nano-9B-v2"`
+- `num_shards = 128`
+- `max_doc_tokens` (optional per-document truncation)
+
+**Hard rules**:
+- `tokenizer.model` MUST match the downstream pretraining tokenizer (recovery
+  for `tokenizer_mismatch`).
+- HF references in the blend YAML are first-class — no manual download needed
+  when the cluster has Hub access.
+- Schema versioning matters: `blend.json` from a fresh prep run must come from
+  the same Nemotron release as the trainer that consumes it.
+
+Use this **before**:
+- `pretrain/megatron_bridge`
+- `pretrain/automodel` (the env var `PRETRAIN_BLEND_PATH` points at the produced `blend.json`)
+- `optimize/modelopt/distill` (real-data runs, not `use_mock_data`)
+
+## RL prep (`data_prep/rl_prep`)
+
+Consumes a blend referencing HF or local prompt/preference datasets, emits
+sharded JSONL ready for `rl/nemo_rl/{dpo,rlvr,rlhf}`.
+
+Manifest defaults from `step.toml`:
+- `num_shards_per_split = 1`
+- `resolve_hf_placeholders = true`
+
+**Hard rules** (from step.toml strategies):
+- Set `resolve_hf_placeholders=true` whenever the training cluster may not
+  reach HF Hub — placeholders are materialized into local JSONL.
+- For RLVR, every prompt must carry a verifiable answer field
+  (e.g. `answer` for math).
+
+Schema preserved per algorithm:
+
+| Step | Required fields |
+|---|---|
+| `rl/nemo_rl/dpo` | `prompt`, `chosen`, `rejected` |
+| `rl/nemo_rl/rlvr` | `prompt`, plus verifier fields (`answer`, `tests`, `expected_output`, env metadata) |
+| `rl/nemo_rl/rlhf` | `prompt` + metadata required by the reward model |
+
+## Pipeline placement
+
+```
+curate/nemo_curator → data_prep/pretrain_prep → pretrain/{megatron_bridge,automodel}
+curate/nemo_curator → translate/nemo_curator → data_prep/sft_packing → sft/megatron_bridge
+                                              ↓
+                                          (skip packing) → sft/automodel
+sdg/data_designer       → data_prep/sft_packing → sft/megatron_bridge
+sdg/data_designer       → data_prep/rl_prep     → rl/nemo_rl/dpo
+data_prep/pretrain_prep → optimize/modelopt/distill
+```
+
+## Verification
+
+```bash
+uv run pytest tests/steps/data_prep -q     # focused
+uv run pytest tests/steps -q          # full step-family suite
+```
+
+## Staleness checks
+
+When updating data_prep steps:
+
+- Verify downstream artifact type still matches (`packed_parquet`, `binidx`, `training_jsonl`).
+- Verify output path is resolved **before** the scratch chdir.
+- Verify config comments mention tokenizer lock-in (see pattern file above).
+- Refresh defaults in this pack from each step's `step.toml`.

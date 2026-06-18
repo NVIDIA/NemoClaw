@@ -1,0 +1,23 @@
+{
+  "skills": [
+    "vss-setup-behavior-analytics"
+  ],
+  "resources": {
+    "platforms": {
+      "ANY": {
+        "gpu_count": 0
+      }
+    }
+  },
+  "expects": [
+    {
+      "query": "Deploy `vss-behavior-analytics` standalone using the `/vss-setup-behavior-analytics` skill end-to-end and autonomously. Use the compose file's default entrypoint (Analytics 2D + warehouse_2d_config); do NOT swap entrypoints or mount a custom config. No calibration is needed.\n\n**Environment & prerequisites:** A bare Brev host with Docker + `NGC_CLI_API_KEY` for image pull. This spec exercises the skill's standalone-deploy flow against `deploy/docker/services/analytics/behavior-analytics/compose.yml`. `behavior-analytics` is **CPU-only**. `gpu_count: 0` means to skip the GPU-type / GPU-count enforcement; the `ANY` platform key is a no-constraint pool selector.",
+      "checks": [
+        "`docker ps -a --format '{{.Names}}' | grep -qx behavior-analytics-vss-behavior-analytics-base-1` returns exit 0 (the container was created \u2014 Compose auto-name is `<project>-<service>-<index>`; project defaults to the compose file's parent dir `behavior-analytics`, service is `vss-behavior-analytics-base`)",
+        "`docker inspect behavior-analytics-vss-behavior-analytics-base-1 --format '{{.Config.Image}}' | grep -q 'vss-behavior-analytics'` returns exit 0 (correct image was pulled)",
+        "`docker inspect behavior-analytics-vss-behavior-analytics-base-1 --format '{{join .Config.Cmd \" \"}}' | grep -q 'apps/analytics/main_analytics_2d_app.py'` returns exit 0 (default Analytics 2D entrypoint, not a swapped one)",
+        "`docker inspect behavior-analytics-vss-behavior-analytics-base-1 --format '{{.HostConfig.RestartPolicy.Name}}' | grep -qx always` returns exit 0 (restart policy preserved from the compose file)"
+      ]
+    }
+  ]
+}

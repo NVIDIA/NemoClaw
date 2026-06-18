@@ -1,0 +1,22 @@
+encryption_key: tlt_encode
+model:
+  backbone:
+    type: vit_l
+    drop_path_rate: 0.4
+    patch_size: 14
+    img_size: 518
+  head:
+    num_layers: 3
+    hidden_dim: 2048
+    bottleneck_dim: 384
+gen_trt_engine:
+  gpu_id: 0
+  onnx_file: /models/model.onnx
+  trt_engine: /results/nvdinov2.engine
+  batch_size: -1
+  tensorrt:
+    data_type: FP32
+    workspace_size: 1024
+    min_batch_size: 1
+    opt_batch_size: 10
+    max_batch_size: 10

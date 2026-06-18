@@ -1,0 +1,125 @@
+title: moe_long_context
+validated_on: "2026-04-01"
+summary: >
+  Empirical guide for scaling MoE model training to long context lengths
+  (16K–256K) using context parallelism. Includes CP sizing, memory patterns,
+  and throughput data from DSV3, Qwen3, and Qwen3-Next experiments.
+
+validation_status:
+  dsv3_h100_cp_scaling:
+    - measured
+  dsv3_gb300_long_context:
+    - measured
+  qwen3_next_gb200_long_context:
+    - measured
+  qwen3_gb200_long_context:
+    - measured
+
+training_dimensions:
+  speed:
+    effect: "Large models hold MFU with CP scaling; smaller models degrade significantly"
+    confidence: high
+    rationale: >
+      DSV3 685B H100: ~15% MFU at 4K → ~15% at 256K (nearly flat, peaks ~16%
+      at 32K). Qwen3-Next 80B drops ~60% throughput from 8K to 64K.
+  memory:
+    effect: "Activations scale linearly with seq_len; optimizer offload required"
+    confidence: high
+    rationale: >
+      All DSV3 long-context configs require --optimizer-cpu-offload.
+      Qwen3-Next 80B memory goes from ~135 GB (32K) to ~160 GB (64K).
+  scale:
+    effect: "Larger models scale CP more efficiently"
+    confidence: high
+    rationale: >
+      DSV3 685B MFU stays nearly flat from 4K to 256K. Qwen3-Next 80B loses
+      ~60% throughput from 8K to 64K.
+
+cp_scaling_data:
+  - model: "DSV3 685B w/ MTP"
+    hardware: "256×H100"
+    precision: FP8-Block
+    dispatcher: DeepEP
+    entries:
+      - seq_len: 4096
+        cp: 1
+        dp: 32
+        tflops: ~300
+        mfu: "~15%"
+      - seq_len: 16384
+        cp: 4
+        dp: 8
+        tflops: ~320
+        mfu: "~16%"
+      - seq_len: 32768
+        cp: 8
+        dp: 4
+        tflops: ~320
+        mfu: "~16%"
+      - seq_len: 65536
+        cp: 16
+        dp: 2
+        tflops: ~310
+        mfu: "~16%"
+      - seq_len: 131072
+        cp: 32
+        dp: 1
+        tflops: ~300
+        mfu: "~15%"
+      - seq_len: 262144
+        cp: 64
+        dp: 1
+        gpus: 512
+        tflops: ~300
+        mfu: "~15%"
+  - model: "Qwen3-Next 80B-A3B"
+    hardware: "32×GB200"
+    precision: BF16
+    dispatcher: HybridEP
+    entries:
+      - seq_len: 8192
+        cp: 1
+        tflops: ~270
+        mem: "~150 GB"
+      - seq_len: 32768
+        cp: 4
+        tflops: ~230
+        mem: "~135 GB"
+      - seq_len: 65536
+        cp: 16
+        tflops: ~100
+        mem: "~160 GB"
+  - model: "Qwen3 235B-A22B"
+    hardware: "128×GB200"
+    precision: BF16
+    dispatcher: HybridEP
+    entries:
+      - seq_len: 4096
+        cp: 1
+        tflops: ~700
+        mfu: "~28%"
+      - seq_len: 131072
+        cp: 4
+        tp: 4
+        tflops: ~1100
+        mfu: "~45%"
+
+sizing_rules:
+  - "CP = seq_len / 4096 as starting point"
+  - "Keep DP ≥ 1; CP × EP × TP × PP ≤ total GPUs"
+  - "Use selective recompute (up_proj, norm, moe, mlp) over full recompute"
+  - "TP can substitute for CP on NVLink systems (GB200/GB300)"
+  - "Always enable optimizer CPU offload for 128K+"
+  - "GBS = DP × MBS × GA; adjust as DP shrinks"
+
+evidence:
+  - "[MoE Perf] MCore Release Performance Tracker - DSV3 Long-Context"
+  - "[MoE Perf] MCore Release Performance Tracker - DeepSeek-V3"
+  - "[MoE Perf] MCore Release Performance Tracker - Qwen3-Next"
+  - "[MoE Perf] MCore Release Performance Tracker - Qwen3"
+
+known_limitations:
+  - CP does not reduce EP degree; they are independent dimensions
+  - Variable sequence lengths break CUDA graphs
+  - Smaller models (80B) scale CP much less efficiently than larger ones (685B)
+  - 128K+ may require specialized containers with CP-related TE patches

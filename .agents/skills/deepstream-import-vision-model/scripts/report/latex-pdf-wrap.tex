@@ -1,0 +1,53 @@
+% SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+% SPDX-License-Identifier: Apache-2.0
+%
+% Licensed under the Apache License, Version 2.0 (the "License");
+% you may not use this file except in compliance with the License.
+% You may obtain a copy of the License at
+%
+% http://www.apache.org/licenses/LICENSE-2.0
+%
+% Unless required by applicable law or agreed to in writing, software
+% distributed under the License is distributed on an "AS IS" BASIS,
+% WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+% See the License for the specific language governing permissions and
+% limitations under the License.
+
+% PDF layout fixes for pandoc -> pdflatex (agent-design-document).
+% Code: listings wraps long lines. Pandoc's default syntax-highlighted Verbatim does NOT
+% break inside a single \NormalTok{...} token.
+
+\usepackage{listings}
+\usepackage{xcolor}
+
+\definecolor{codebg}{gray}{0.94}
+\lstset{
+  backgroundcolor=\color{codebg},
+  basicstyle=\ttfamily\footnotesize,
+  breaklines=true,
+  breakatwhitespace=false,
+  columns=fullflexible,
+  keepspaces=true,
+  tabsize=2,
+  showstringspaces=false,
+  xleftmargin=0.4em,
+  framexleftmargin=0.4em,
+  frame=single,
+  framerule=0.4pt,
+  rulecolor=\color{black!25}
+}
+
+% Ragged-right body text: avoids huge inter-word spaces and overfull lines from justification
+\usepackage{ragged2e}
+\AtBeginDocument{\RaggedRight}
+\emergencystretch=12em
+\sloppy
+
+% Extra break points for \url/\path if hyperref/xurl loaded by pandoc (after preamble)
+\makeatletter
+\AtBeginDocument{%
+  \@ifundefined{UrlBreaks}{}{%
+    \g@addto@macro\UrlBreaks{\do\/\do\-\do\_\do\.\do\:}%
+  }%
+}
+\makeatother

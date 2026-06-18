@@ -1,0 +1,89 @@
+{
+  "name": "window_default_city_traffic",
+  "questions": [
+    {
+      "id": "1_1",
+      "question": "Is there a collision or physical contact between any two vehicles, or between a vehicle and a pedestrian or cyclist?",
+      "options": ["Yes", "No"],
+      "aggregation": "any"
+    },
+    {
+      "id": "1_2",
+      "question": "Is any vehicle in dangerous proximity to another vehicle, cyclist, or pedestrian (near-miss)?",
+      "options": ["Yes", "No"],
+      "aggregation": "any"
+    },
+    {
+      "id": "1_10",
+      "question": "What type of collision or contact occurred?",
+      "options": [
+        "A. Vehicle-to-vehicle collision in the intersection",
+        "B. Sideswipe during turning or lane change",
+        "C. Vehicle-to-pedestrian or cyclist contact",
+        "D. No collision"
+      ],
+      "aggregation": "majority",
+      "include_if": { "1_1": "Yes" }
+    },
+    {
+      "id": "2_1",
+      "question": "What are the current weather conditions in the scene?",
+      "options": [
+        "A. Clear",
+        "B. Overcast",
+        "C. Rain"
+      ],
+      "aggregation": "majority"
+    },
+    {
+      "id": "2_2",
+      "question": "What time of day best describes the lighting conditions?",
+      "options": [
+        "A. Morning",
+        "B. Midday",
+        "C. Evening"
+      ],
+      "aggregation": "majority"
+    },
+    {
+      "id": "4_1",
+      "question": "Does any vehicle appear to run a red light or enter the intersection against the signal?",
+      "options": ["Yes", "No"],
+      "aggregation": "any"
+    },
+    {
+      "id": "4_2",
+      "question": "Does any vehicle make an illegal turn (wrong lane, U-turn where prohibited, cutting across lanes)?",
+      "options": ["Yes", "No"],
+      "aggregation": "any"
+    },
+    {
+      "id": "4_3",
+      "question": "Does a pedestrian cross outside a marked crosswalk or against the signal?",
+      "options": ["Yes", "No"],
+      "aggregation": "any"
+    },
+    {
+      "id": "5_1",
+      "question": "How busy is the intersection with traffic?",
+      "options": [
+        "A. Light (few vehicles)",
+        "B. Moderate (steady flow)",
+        "C. Heavy (congested or queued)"
+      ],
+      "aggregation": "majority"
+    },
+    {
+      "id": "5_2",
+      "question": "Are motorcycles or scooters visible in the intersection?",
+      "options": ["Yes", "No"],
+      "aggregation": "any"
+    },
+    {
+      "id": "5_3",
+      "question": "Does any vehicle brake suddenly or perform emergency stopping in the intersection?",
+      "options": ["Yes", "No"],
+      "aggregation": "any"
+    }
+  ]
+}

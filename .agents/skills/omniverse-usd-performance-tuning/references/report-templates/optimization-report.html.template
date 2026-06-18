@@ -1,0 +1,270 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>USD Performance Tuning Report - {{ asset_name }}</title>
+  <style>
+    :root {
+      --bg: #0d1016;
+      --panel: #171c22;
+      --panel-2: #222934;
+      --ink: #f4f7fb;
+      --muted: #b2becd;
+      --line: #34404d;
+      --good: #76b900;
+      --warn: #f6c85f;
+      --bad: #ff7f7f;
+      --unknown: #8793a1;
+      --accent: #7dd3fc;
+      --score-deg: {{ score_degrees }}deg;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: linear-gradient(180deg, #0d1016 0%, #111820 42%, #0d1016 100%);
+      color: var(--ink);
+      font: 14px/1.5 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    main { max-width: 1180px; margin: 0 auto; padding: 32px 28px 48px; }
+    header {
+      display: grid;
+      grid-template-columns: 220px 1fr;
+      gap: 28px;
+      align-items: center;
+      padding: 28px;
+      border: 1px solid var(--line);
+      background: linear-gradient(135deg, #171c22 0%, #192536 48%, #16261f 100%);
+      border-radius: 10px;
+      box-shadow: 0 18px 55px rgba(0, 0, 0, .28);
+    }
+    h1, h2, h3, p { margin-top: 0; }
+    h1 { margin-bottom: 8px; font-size: 30px; line-height: 1.12; letter-spacing: 0; }
+    h2 { margin: 34px 0 14px; font-size: 18px; letter-spacing: 0; }
+    h3 { margin-bottom: 6px; font-size: 14px; letter-spacing: 0; color: var(--muted); }
+    .subtle { color: var(--muted); }
+    .report-kicker {
+      margin-bottom: 10px;
+      color: var(--good);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+    .reasoning {
+      max-width: 940px;
+      color: var(--muted);
+      font-size: 15px;
+    }
+    .reasoning p { margin-bottom: 12px; }
+    .score-ring {
+      width: 184px;
+      height: 184px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      background:
+        radial-gradient(circle at center, #111820 0 58%, transparent 59%),
+        conic-gradient(var(--good) 0 var(--score-deg), #303846 var(--score-deg) 360deg);
+      border: 1px solid var(--line);
+    }
+    .score-number { font-size: 42px; font-weight: 760; line-height: 1; }
+    .score-caption { color: var(--muted); font-size: 13px; text-transform: uppercase; letter-spacing: .08em; }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      height: 24px;
+      padding: 0 10px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: #263040;
+      color: var(--ink);
+      font-size: 12px;
+      font-weight: 650;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }
+    .badge.good { color: #07140d; background: var(--good); border-color: var(--good); }
+    .badge.warn { color: #211600; background: var(--warn); border-color: var(--warn); }
+    .badge.bad { color: #230707; background: var(--bad); border-color: var(--bad); }
+    .grid { display: grid; gap: 14px; }
+    .impact-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      padding: 16px;
+      min-width: 0;
+      box-shadow: 0 10px 26px rgba(0, 0, 0, .18);
+    }
+    .metric-score { font-size: 26px; font-weight: 740; }
+    .bar {
+      height: 8px;
+      margin-top: 10px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: #323946;
+    }
+    .bar > span {
+      display: block;
+      height: 100%;
+      width: var(--bar-width);
+      background: var(--bar-color);
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+    }
+    th, td {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+    th { color: var(--muted); background: var(--panel-2); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+    tr:last-child td { border-bottom: 0; }
+    .change.improved { color: var(--good); }
+    .change.neutral { color: var(--muted); }
+    .change.regressed { color: var(--bad); }
+    .note {
+      border-left: 3px solid var(--warn);
+      background: #2b2417;
+      padding: 12px 14px;
+      color: #f7e7ba;
+      border-radius: 6px;
+    }
+    code { color: var(--accent); }
+    @media (max-width: 860px) {
+      main { padding: 20px 16px 36px; }
+      header { grid-template-columns: 1fr; }
+      .impact-grid { grid-template-columns: 1fr 1fr; }
+    }
+    @media (max-width: 560px) {
+      .impact-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div class="score-ring" aria-label="Stage optimization score {{ optimization_score }} out of 10">
+        <div>
+          <div class="score-number">{{ optimization_score }}</div>
+          <div class="score-caption">stage score</div>
+        </div>
+      </div>
+      <div>
+        <div class="report-kicker">USD Performance Tuning Report</div>
+        <div class="badge good">{{ score_label }}</div>
+        <h1>{{ asset_name }}</h1>
+        <p class="subtle">{{ executive_summary }}</p>
+        <p class="subtle">
+          Verdict: <strong>{{ verdict }}</strong> · Generated {{ timestamp }}<br>
+          Output: <code>{{ output_path }}</code>
+        </p>
+      </div>
+    </header>
+
+    <h2>Reasoning</h2>
+    <section class="reasoning">
+      {% for paragraph in reasoning_paragraphs %}
+      <p>{{ paragraph }}</p>
+      {% endfor %}
+    </section>
+
+    <h2>Stage Impact Areas</h2>
+    <section class="grid impact-grid">
+      {% for group in metric_groups %}
+      <article class="card">
+        <h3>{{ group.display_name }}</h3>
+        {% if group.status == "not_measured" %}
+        <div class="metric-score subtle">Not measured</div>
+        <div class="bar"><span style="--bar-width: 100%; --bar-color: var(--unknown);"></span></div>
+        {% else %}
+        <div class="metric-score">{{ group.score_display }}</div>
+        <div class="bar"><span style="--bar-width: {{ group.score_percent }}%; --bar-color: var(--good);"></span></div>
+        {% endif %}
+        <p class="subtle">{{ group.summary }}</p>
+        {% if group.caveat %}<p class="subtle">{{ group.caveat }}</p>{% endif %}
+      </article>
+      {% endfor %}
+    </section>
+
+    <h2>Measurement Context</h2>
+    <div class="note">
+      This score measures stage/composition optimization effectiveness. Runtime performance metrics such as RAM, VRAM, FPS, frame time, shader cost, and renderer activity should be captured with Omniperf or an equivalent runtime profiler and reviewed separately.
+    </div>
+    <table>
+      <tbody>
+        {% for item in measurement_context_items %}
+        <tr><th>{{ item.name }}</th><td>{{ item.value }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    {% if runtime_profiling_items %}
+    <h2>Runtime Profiling</h2>
+    <table>
+      <tbody>
+        {% for item in runtime_profiling_items %}
+        <tr><th>{{ item.name }}</th><td>{{ item.value }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+
+    <h2>Metric Evidence</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Metric</th>
+          <th>Before</th>
+          <th>After</th>
+          <th>Change</th>
+          <th>Evidence</th>
+          <th>Verdict</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for metric in metrics %}
+        <tr>
+          <td>{{ metric.display_name }}</td>
+          <td>{{ metric.before }} {{ metric.unit }}</td>
+          <td>{{ metric.after }} {{ metric.unit }}</td>
+          <td class="change {{ metric.verdict }}">{{ metric.change_pct }}%</td>
+          <td>{{ metric.evidence_type }}</td>
+          <td>{{ metric.verdict }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <h2>Operations</h2>
+    <table>
+      <thead><tr><th>#</th><th>Operation</th><th>Method</th><th>Result</th></tr></thead>
+      <tbody>
+        {% for op in operations %}
+        <tr><td>{{ op.order }}</td><td>{{ op.name }}</td><td>{{ op.method }}</td><td>{{ op.result }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <h2>Validators</h2>
+    <table>
+      <thead><tr><th>Validator</th><th>Issues</th><th>Notes</th></tr></thead>
+      <tbody>
+        {% for validator in validators %}
+        <tr><td>{{ validator.name }}</td><td>{{ validator.issues }}</td><td>{{ validator.notes }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </main>
+</body>
+</html>

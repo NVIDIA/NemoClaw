@@ -1,0 +1,1459 @@
+{
+  "automl_default_parameters": [
+    "train.optim.lr_decay",
+    "train.optim.lr"
+  ],
+  "automl_disabled_parameters": [
+    "train.cudnn",
+    "gen_trt_engine.tensorrt.calibration.cal_image_dir",
+    "train.gpu_ids",
+    "wandb.tags",
+    "model.backbone",
+    "dataset.std",
+    "evaluate",
+    "inference",
+    "train.loss_config",
+    "train",
+    "gen_trt_engine",
+    "gen_trt_engine.tensorrt.layers_precision",
+    "dataset",
+    "gen_trt_engine.tensorrt",
+    "dataset._eig_val",
+    "dataset.mean",
+    "model",
+    "train.optim.lr_steps",
+    "dataset.flip_idx",
+    "evaluate.gpu_ids",
+    "train.optim",
+    "gen_trt_engine.tensorrt.calibration",
+    "dataset._eig_vec",
+    "export",
+    "wandb",
+    "inference.gpu_ids"
+  ],
+  "default": {
+    "dataset": {
+      "_eig_val": [
+        0.2141788,
+        0.01817699,
+        0.00341571
+      ],
+      "_eig_vec": [
+        [
+          -0.58752847,
+          -0.69563484,
+          0.41340352
+        ],
+        [
+          -0.5832747,
+          0.00994535,
+          -0.81221408
+        ],
+        [
+          -0.56089297,
+          0.71832671,
+          0.41158938
+        ]
+      ],
+      "aug_rot": 0,
+      "batch_size": 4,
+      "category": "cereal_box",
+      "center_3D": false,
+      "dense_hp": false,
+      "flip": 0.5,
+      "flip_idx": [
+        [
+          1,
+          5
+        ],
+        [
+          3,
+          7
+        ],
+        [
+          2,
+          6
+        ],
+        [
+          4,
+          8
+        ]
+      ],
+      "hm_hp": true,
+      "hps_uncertainty": false,
+      "inference_data": "",
+      "input_res": 512,
+      "max_objs": 10,
+      "mean": [
+        0.40789654,
+        0.44719302,
+        0.47026115
+      ],
+      "mse_loss": false,
+      "no_color_aug": false,
+      "not_rand_crop": false,
+      "num_classes": 1,
+      "num_joints": 8,
+      "num_symmetry": 1,
+      "obj_scale": true,
+      "obj_scale_uncertainty": false,
+      "output_res": 128,
+      "pin_memory": true,
+      "reg_bbox": true,
+      "reg_hp_offset": true,
+      "reg_offset": true,
+      "std": [
+        0.28863828,
+        0.27408164,
+        0.27809835
+      ],
+      "test_data": "",
+      "train_data": "",
+      "use_absolute_scale": false,
+      "val_data": "",
+      "workers": 8
+    },
+    "encryption_key": "",
+    "gen_trt_engine": {
+      "batch_size": -1,
+      "gpu_id": 0,
+      "onnx_file": "???",
+      "results_dir": "",
+      "tensorrt": {
+        "calibration": {
+          "cal_batch_size": 1,
+          "cal_batches": 1,
+          "cal_cache_file": "???",
+          "cal_image_dir": "???"
+        },
+        "data_type": "FP32",
+        "layers_precision": [],
+        "max_batch_size": 8,
+        "min_batch_size": 1,
+        "opt_batch_size": 4,
+        "workspace_size": 1024
+      },
+      "timing_cache": "",
+      "trt_engine": "???",
+      "verbose": false
+    },
+    "model": {
+      "backbone": {
+        "model_type": "fan_small",
+        "pretrained_backbone_path": ""
+      },
+      "down_ratio": 4,
+      "final_kernel": 1,
+      "head_conv": 256,
+      "last_level": 5,
+      "out_channel": 0,
+      "use_convGRU": true,
+      "use_pretrained": false
+    },
+    "model_name": "",
+    "results_dir": "",
+    "train": {
+      "checkpoint_interval": 1,
+      "checkpoint_interval_unit": "epoch",
+      "clip_grad_val": 100.0,
+      "cudnn": {
+        "benchmark": false,
+        "deterministic": true
+      },
+      "gpu_ids": [
+        0
+      ],
+      "is_dry_run": false,
+      "loss_config": {
+        "dense_hp": false,
+        "dimension_ref": "",
+        "hm_hp": true,
+        "hm_hp_weight": 1,
+        "hm_weight": 1,
+        "hp_weight": 1,
+        "hps_uncertainty": false,
+        "mse_loss": false,
+        "num_stacks": 1,
+        "obj_scale": true,
+        "obj_scale_uncertainty": false,
+        "obj_scale_weight": 1,
+        "off_weight": 1,
+        "reg_bbox": true,
+        "reg_hp_offset": true,
+        "reg_loss": "l1",
+        "reg_offset": true,
+        "use_residual": false,
+        "wh_weight": 0.1
+      },
+      "num_epochs": 10,
+      "num_gpus": 1,
+      "num_nodes": 1,
+      "optim": {
+        "lr": 6e-05,
+        "lr_decay": 0.1,
+        "lr_scheduler": "MultiStep",
+        "lr_steps": [
+          90,
+          120
+        ]
+      },
+      "precision": "fp32",
+      "pretrained_model_path": "",
+      "results_dir": "",
+      "resume_training_checkpoint_path": "",
+      "seed": 1234,
+      "validation_interval": 1
+    },
+    "wandb": {
+      "enable": true,
+      "entity": "",
+      "group": "",
+      "name": "TAO Toolkit Training",
+      "project": "TAO Toolkit",
+      "reinit": false,
+      "run_id": "",
+      "save_code": false,
+      "sync_tensorboard": false,
+      "tags": [
+        "tao-toolkit"
+      ]
+    }
+  },
+  "popular": {
+    "evaluate": {
+      "gpu_ids": [
+        0
+      ],
+      "num_gpus": 1,
+      "num_nodes": 1
+    },
+    "gen_trt_engine": {
+      "batch_size": -1,
+      "gpu_id": 0,
+      "tensorrt": {
+        "calibration": {
+          "cal_batch_size": 1,
+          "cal_batches": 1
+        },
+        "max_batch_size": 8,
+        "min_batch_size": 1,
+        "opt_batch_size": 4
+      }
+    },
+    "inference": {
+      "gpu_ids": [
+        0
+      ],
+      "num_gpus": 1,
+      "num_nodes": 1
+    },
+    "train": {
+      "checkpoint_interval": 1,
+      "gpu_ids": [
+        0
+      ],
+      "num_epochs": 10,
+      "num_gpus": 1,
+      "num_nodes": 1,
+      "validation_interval": 1
+    }
+  },
+  "properties": {
+    "automl_disabled_parameters": [
+      "wandb",
+      "dataset",
+      "train",
+      "model",
+      "inference",
+      "export",
+      "evaluate",
+      "gen_trt_engine"
+    ],
+    "dataset": {
+      "automl_disabled_parameters": [
+        "dataset.mean",
+        "dataset.std",
+        "dataset._eig_val",
+        "dataset._eig_vec",
+        "dataset.flip_idx"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "_eig_val": [
+          0.2141788,
+          0.01817699,
+          0.00341571
+        ],
+        "_eig_vec": [
+          [
+            -0.58752847,
+            -0.69563484,
+            0.41340352
+          ],
+          [
+            -0.5832747,
+            0.00994535,
+            -0.81221408
+          ],
+          [
+            -0.56089297,
+            0.71832671,
+            0.41158938
+          ]
+        ],
+        "aug_rot": 0,
+        "batch_size": 4,
+        "category": "cereal_box",
+        "center_3D": false,
+        "dense_hp": false,
+        "flip": 0.5,
+        "flip_idx": [
+          [
+            1,
+            5
+          ],
+          [
+            3,
+            7
+          ],
+          [
+            2,
+            6
+          ],
+          [
+            4,
+            8
+          ]
+        ],
+        "hm_hp": true,
+        "hps_uncertainty": false,
+        "inference_data": "",
+        "input_res": 512,
+        "max_objs": 10,
+        "mean": [
+          0.40789654,
+          0.44719302,
+          0.47026115
+        ],
+        "mse_loss": false,
+        "no_color_aug": false,
+        "not_rand_crop": false,
+        "num_classes": 1,
+        "num_joints": 8,
+        "num_symmetry": 1,
+        "obj_scale": true,
+        "obj_scale_uncertainty": false,
+        "output_res": 128,
+        "pin_memory": true,
+        "reg_bbox": true,
+        "reg_hp_offset": true,
+        "reg_offset": true,
+        "std": [
+          0.28863828,
+          0.27408164,
+          0.27809835
+        ],
+        "test_data": "",
+        "train_data": "",
+        "use_absolute_scale": false,
+        "val_data": "",
+        "workers": 8
+      },
+      "description": "Configurable parameters to construct the dataset for a CenterPose experiment.",
+      "properties": {
+        "_eig_val": {
+          "automl_enabled": false,
+          "default": [
+            0.2141788,
+            0.01817699,
+            0.00341571
+          ],
+          "description": "Eigenvalues for color data augmentation from CenterNet.",
+          "type": "list"
+        },
+        "_eig_vec": {
+          "automl_enabled": false,
+          "default": [
+            [
+              -0.58752847,
+              -0.69563484,
+              0.41340352
+            ],
+            [
+              -0.5832747,
+              0.00994535,
+              -0.81221408
+            ],
+            [
+              -0.56089297,
+              0.71832671,
+              0.41158938
+            ]
+          ],
+          "description": "Eigenvectors for color data augmentation from CenterNet.",
+          "type": "list"
+        },
+        "aug_rot": {
+          "default": 0,
+          "description": "Rotation angle for data augmentation.",
+          "maximum": Infinity,
+          "minimum": 0,
+          "title": "Rotation Angle",
+          "type": "int"
+        },
+        "batch_size": {
+          "default": 4,
+          "description": "Batch size.",
+          "maximum": Infinity,
+          "minimum": 1,
+          "title": "Batch Size",
+          "type": "int"
+        },
+        "category": {
+          "default": "cereal_box",
+          "description": "Category of the object.",
+          "title": "Category",
+          "type": "string"
+        },
+        "center_3D": {
+          "default": false,
+          "description": "Use 3D center loss for the object.",
+          "title": "3D Center",
+          "type": "bool"
+        },
+        "dense_hp": {
+          "default": false,
+          "description": "Use dense heatmaps.",
+          "title": "Dense Heatmaps",
+          "type": "bool"
+        },
+        "flip": {
+          "default": 0.5,
+          "description": "Flip probability for data augmentation.",
+          "maximum": 1.0,
+          "minimum": 0.1,
+          "title": "Flip Probability",
+          "type": "float"
+        },
+        "flip_idx": {
+          "automl_enabled": false,
+          "default": [
+            [
+              1,
+              5
+            ],
+            [
+              3,
+              7
+            ],
+            [
+              2,
+              6
+            ],
+            [
+              4,
+              8
+            ]
+          ],
+          "description": "Flipping indices for keypoints.",
+          "type": "list"
+        },
+        "hm_hp": {
+          "default": true,
+          "description": "Use heatmaps for keypoints.",
+          "title": "Heatmaps for Keypoints",
+          "type": "bool"
+        },
+        "hps_uncertainty": {
+          "default": false,
+          "description": "Use heatmaps uncertainty loss.",
+          "title": "Heatmaps Uncertainty",
+          "type": "bool"
+        },
+        "inference_data": {
+          "default": "",
+          "description": "Path to inference data.",
+          "title": "Inference Data",
+          "type": "string"
+        },
+        "input_res": {
+          "default": 512,
+          "description": "Input resolution.",
+          "maximum": 512,
+          "minimum": 512,
+          "title": "Input Resolution",
+          "type": "int"
+        },
+        "max_objs": {
+          "default": 10,
+          "description": "Maximum detected number of objects.",
+          "maximum": Infinity,
+          "minimum": 1,
+          "title": "Maximum Detected Objects",
+          "type": "int"
+        },
+        "mean": {
+          "automl_enabled": false,
+          "default": [
+            0.40789654,
+            0.44719302,
+            0.47026115
+          ],
+          "description": "Mean values for normalization.",
+          "title": "Mean",
+          "type": "list"
+        },
+        "mse_loss": {
+          "default": false,
+          "description": "Use mean squared error loss.",
+          "title": "Mean Squared Error Loss",
+          "type": "bool"
+        },
+        "no_color_aug": {
+          "default": false,
+          "description": "No color augmentation.",
+          "title": "No Color Augmentation",
+          "type": "bool"
+        },
+        "not_rand_crop": {
+          "default": false,
+          "description": "No random cropping.",
+          "title": "No Random Cropping",
+          "type": "bool"
+        },
+        "num_classes": {
+          "default": 1,
+          "description": "Number of classes.",
+          "maximum": Infinity,
+          "minimum": 1,
+          "title": "Number of Classes",
+          "type": "int"
+        },
+        "num_joints": {
+          "default": 8,
+          "description": "Number of 3D bounding box keypoints.",
+          "maximum": 8,
+          "minimum": 8,
+          "title": "Number of Keypoints",
+          "type": "int"
+        },
+        "num_symmetry": {
+          "default": 1,
+          "description": "Number of the object symmetries.",
+          "maximum": Infinity,
+          "minimum": 1,
+          "title": "Number of Symmetries",
+          "type": "int"
+        },
+        "obj_scale": {
+          "default": true,
+          "description": "Use object scale loss.",
+          "title": "Object Scale",
+          "type": "bool"
+        },
+        "obj_scale_uncertainty": {
+          "default": false,
+          "description": "Use object scale uncertainty loss.",
+          "title": "Object Scale Uncertainty",
+          "type": "bool"
+        },
+        "output_res": {
+          "default": 128,
+          "description": "Output resolution.",
+          "maximum": 128,
+          "minimum": 128,
+          "title": "Output Resolution",
+          "type": "int"
+        },
+        "pin_memory": {
+          "default": true,
+          "description": "Pin memory.",
+          "title": "Pin Memory",
+          "type": "bool"
+        },
+        "reg_bbox": {
+          "default": true,
+          "description": "Use bounding box regression loss.",
+          "title": "Bounding Box Regression",
+          "type": "bool"
+        },
+        "reg_hp_offset": {
+          "default": true,
+          "description": "Use offset regression loss for keypoints.",
+          "title": "Offset Regression for Keypoints",
+          "type": "bool"
+        },
+        "reg_offset": {
+          "default": true,
+          "description": "Use offset regression loss.",
+          "title": "Offset Regression",
+          "type": "bool"
+        },
+        "std": {
+          "automl_enabled": false,
+          "default": [
+            0.28863828,
+            0.27408164,
+            0.27809835
+          ],
+          "description": "Standard deviation values for normalization.",
+          "title": "Standard Deviation",
+          "type": "list"
+        },
+        "test_data": {
+          "default": "",
+          "description": "Path to testing data.",
+          "title": "Testing Data",
+          "type": "string"
+        },
+        "train_data": {
+          "default": "",
+          "description": "Path to training data.",
+          "title": "Training Data",
+          "type": "string"
+        },
+        "use_absolute_scale": {
+          "default": false,
+          "description": "Use absolute scale loss.",
+          "title": "Absolute Scale",
+          "type": "bool"
+        },
+        "val_data": {
+          "default": "",
+          "description": "Path to validation data.",
+          "title": "Validation Data",
+          "type": "string"
+        },
+        "workers": {
+          "default": 8,
+          "description": "Number of workers.",
+          "maximum": Infinity,
+          "minimum": 1,
+          "title": "Workers",
+          "type": "int"
+        }
+      },
+      "type": "collection"
+    },
+    "encryption_key": {
+      "default": "",
+      "description": "Key for encrypting model checkpoints",
+      "title": "Encryption key",
+      "type": "string"
+    },
+    "gen_trt_engine": {
+      "automl_disabled_parameters": [
+        "gen_trt_engine.tensorrt"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "batch_size": -1,
+        "gpu_id": 0,
+        "onnx_file": "???",
+        "results_dir": "",
+        "tensorrt": {
+          "calibration": {
+            "cal_batch_size": 1,
+            "cal_batches": 1,
+            "cal_cache_file": "???",
+            "cal_image_dir": "???"
+          },
+          "data_type": "FP32",
+          "layers_precision": [],
+          "max_batch_size": 8,
+          "min_batch_size": 1,
+          "opt_batch_size": 4,
+          "workspace_size": 1024
+        },
+        "timing_cache": "",
+        "trt_engine": "???",
+        "verbose": false
+      },
+      "description": "Configurable parameters to generate TensorRT engine.",
+      "popular": [
+        "batch_size",
+        "gpu_id",
+        "tensorrt"
+      ],
+      "properties": {
+        "batch_size": {
+          "default": -1,
+          "description": "The batch size of the input Tensor for the engine.\n                    A value of :code:`-1` implies dynamic tensor shapes.",
+          "minimum": -1,
+          "popular": true,
+          "title": "Batch size",
+          "type": "int"
+        },
+        "gpu_id": {
+          "default": 0,
+          "description": "The index of the GPU to build the TensorRT engine.",
+          "minimum": 0,
+          "popular": true,
+          "title": "GPU ID",
+          "type": "int"
+        },
+        "onnx_file": {
+          "default": "???",
+          "description": "\n        Path to the ONNX model file.\n        ",
+          "title": "ONNX file",
+          "type": "string"
+        },
+        "results_dir": {
+          "default": "",
+          "description": "\n        Path to where all the assets generated from a task are stored.\n        ",
+          "title": "Results directory",
+          "type": "string"
+        },
+        "tensorrt": {
+          "automl_disabled_parameters": [
+            "gen_trt_engine.tensorrt.layers_precision",
+            "gen_trt_engine.tensorrt.calibration"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "calibration": {
+              "cal_batch_size": 1,
+              "cal_batches": 1,
+              "cal_cache_file": "???",
+              "cal_image_dir": "???"
+            },
+            "data_type": "FP32",
+            "layers_precision": [],
+            "max_batch_size": 8,
+            "min_batch_size": 1,
+            "opt_batch_size": 4,
+            "workspace_size": 1024
+          },
+          "description": "Hyper parameters to configure the TensorRT Engine builder.",
+          "popular": [
+            "min_batch_size",
+            "max_batch_size",
+            "calibration",
+            "opt_batch_size"
+          ],
+          "properties": {
+            "calibration": {
+              "automl_disabled_parameters": [
+                "gen_trt_engine.tensorrt.calibration.cal_image_dir"
+              ],
+              "automl_enabled": false,
+              "default": {
+                "cal_batch_size": 1,
+                "cal_batches": 1,
+                "cal_cache_file": "???",
+                "cal_image_dir": "???"
+              },
+              "description": "The configuration elements to define the\n                    TensorRT calibrator for int8 PTQ.",
+              "popular": [
+                "cal_batch_size",
+                "cal_batches"
+              ],
+              "properties": {
+                "cal_batch_size": {
+                  "default": 1,
+                  "description": "The batch size of the input TensorRT to run calibration on.",
+                  "minimum": 1,
+                  "popular": true,
+                  "title": "Calibration batch size",
+                  "type": "int"
+                },
+                "cal_batches": {
+                  "default": 1,
+                  "description": "The number of input tensor batches to run calibration on.\n                    It is recommended to use atleast 10% of the training images.",
+                  "minimum": 1,
+                  "popular": true,
+                  "title": "Number of calibration batches",
+                  "type": "int"
+                },
+                "cal_cache_file": {
+                  "default": "???",
+                  "description": "The path to save the calibration cache file containing\n                    scales that were generated during Post Training Quantization.",
+                  "title": "Calibration cache file",
+                  "type": "string"
+                },
+                "cal_image_dir": {
+                  "automl_enabled": false,
+                  "default": "???",
+                  "description": "List of image directories to be used for calibration\n                    when running Post Training Quantization using TensorRT.",
+                  "title": "Calibration image directories",
+                  "type": "list"
+                }
+              },
+              "type": "collection"
+            },
+            "data_type": {
+              "default": "FP32",
+              "description": "The precision to be set for building the TensorRT engine.",
+              "enum": [
+                "FP32",
+                "FP16",
+                "INT8"
+              ],
+              "title": "data type",
+              "type": "categorical"
+            },
+            "layers_precision": {
+              "automl_enabled": false,
+              "default": [],
+              "description": "The list to specify layer precision.",
+              "title": "layers_precision",
+              "type": "list"
+            },
+            "max_batch_size": {
+              "default": 8,
+              "description": "The maximum batch size in the optimization profile for\n                    the input tensor of the TensorRT engine.",
+              "minimum": 8,
+              "popular": true,
+              "title": "Maximum batch size",
+              "type": "int"
+            },
+            "min_batch_size": {
+              "default": 1,
+              "description": "The minimum batch size in the optimization profile for\n                    the input tensor of the TensorRT engine.",
+              "minimum": 1,
+              "popular": true,
+              "title": "Min batch size",
+              "type": "int"
+            },
+            "opt_batch_size": {
+              "default": 4,
+              "description": "The optimum batch size in the optimization profile for\n                    the input tensor of the TensorRT engine.",
+              "minimum": 4,
+              "popular": true,
+              "title": "Optimum batch size",
+              "type": "int"
+            },
+            "workspace_size": {
+              "default": 1024,
+              "description": "The size (in MB) of the workspace TensorRT has\n                    to run it's optimization tactics and generate the\n                    TensorRT engine.",
+              "minimum": 0,
+              "title": "Max workspace size",
+              "type": "int"
+            }
+          },
+          "title": "TensorRT hyper params.",
+          "type": "collection"
+        },
+        "timing_cache": {
+          "default": "",
+          "description": "Path to a TensorRT timing cache that speeds up engine generation.\n                    This will be created/read/updated.",
+          "title": "TensorRT timing cache",
+          "type": "string"
+        },
+        "trt_engine": {
+          "default": "???",
+          "description": "Path to the TensorRT engine generated should be stored.\n                    This only works with :code:`tao-deploy`.",
+          "title": "TensorRT engine",
+          "type": "string"
+        },
+        "verbose": {
+          "default": false,
+          "description": "Flag to enable verbose TensorRT logging.",
+          "title": "Verbose",
+          "type": "bool"
+        }
+      },
+      "type": "collection"
+    },
+    "model": {
+      "automl_disabled_parameters": [
+        "model.backbone"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "backbone": {
+          "model_type": "fan_small",
+          "pretrained_backbone_path": ""
+        },
+        "down_ratio": 4,
+        "final_kernel": 1,
+        "head_conv": 256,
+        "last_level": 5,
+        "out_channel": 0,
+        "use_convGRU": true,
+        "use_pretrained": false
+      },
+      "description": "Configurable parameters to build the CenterPose model.",
+      "properties": {
+        "backbone": {
+          "automl_enabled": false,
+          "default": {
+            "model_type": "fan_small",
+            "pretrained_backbone_path": ""
+          },
+          "description": "Backbone model config.",
+          "properties": {
+            "model_type": {
+              "default": "fan_small",
+              "description": "Model type.",
+              "title": "Model Type",
+              "type": "string"
+            },
+            "pretrained_backbone_path": {
+              "default": "",
+              "description": "Path to the pretrained backbone model.",
+              "title": "Pretrained Backbone Model",
+              "type": "string"
+            }
+          },
+          "title": "Backbone Model",
+          "type": "collection"
+        },
+        "down_ratio": {
+          "default": 4,
+          "description": "Down ratio.",
+          "maximum": 4,
+          "minimum": 4,
+          "title": "Down Ratio",
+          "type": "int"
+        },
+        "final_kernel": {
+          "default": 1,
+          "description": "Final kernel size.",
+          "maximum": 1,
+          "minimum": 1,
+          "title": "Final Kernel Size",
+          "type": "int"
+        },
+        "head_conv": {
+          "default": 256,
+          "description": "Head convolution.",
+          "maximum": 256,
+          "minimum": 256,
+          "title": "Head Convolution",
+          "type": "int"
+        },
+        "last_level": {
+          "default": 5,
+          "description": "Last level.",
+          "maximum": 5,
+          "minimum": 5,
+          "title": "Last Level",
+          "type": "int"
+        },
+        "out_channel": {
+          "default": 0,
+          "description": "Output channel.",
+          "maximum": 0,
+          "minimum": 0,
+          "title": "Output Channel",
+          "type": "int"
+        },
+        "use_convGRU": {
+          "default": true,
+          "description": "Use convolutional GRU.",
+          "title": "Convolutional GRU",
+          "type": "bool"
+        },
+        "use_pretrained": {
+          "default": false,
+          "description": "Use pretrained model.",
+          "title": "Pretrained Model",
+          "type": "bool"
+        }
+      },
+      "type": "collection"
+    },
+    "model_name": {
+      "default": "",
+      "description": "Name of model if invoking task via :code:`model_agnostic`",
+      "title": "Model name",
+      "type": "string"
+    },
+    "results_dir": {
+      "default": "",
+      "description": "\n        Path to where all the assets generated from a task are stored.\n        ",
+      "title": "Results directory",
+      "type": "string"
+    },
+    "train": {
+      "automl_disabled_parameters": [
+        "train.gpu_ids",
+        "train.cudnn",
+        "train.optim",
+        "train.loss_config"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "checkpoint_interval": 1,
+        "checkpoint_interval_unit": "epoch",
+        "clip_grad_val": 100.0,
+        "cudnn": {
+          "benchmark": false,
+          "deterministic": true
+        },
+        "gpu_ids": [
+          0
+        ],
+        "is_dry_run": false,
+        "loss_config": {
+          "dense_hp": false,
+          "dimension_ref": "",
+          "hm_hp": true,
+          "hm_hp_weight": 1,
+          "hm_weight": 1,
+          "hp_weight": 1,
+          "hps_uncertainty": false,
+          "mse_loss": false,
+          "num_stacks": 1,
+          "obj_scale": true,
+          "obj_scale_uncertainty": false,
+          "obj_scale_weight": 1,
+          "off_weight": 1,
+          "reg_bbox": true,
+          "reg_hp_offset": true,
+          "reg_loss": "l1",
+          "reg_offset": true,
+          "use_residual": false,
+          "wh_weight": 0.1
+        },
+        "num_epochs": 10,
+        "num_gpus": 1,
+        "num_nodes": 1,
+        "optim": {
+          "lr": 6e-05,
+          "lr_decay": 0.1,
+          "lr_scheduler": "MultiStep",
+          "lr_steps": [
+            90,
+            120
+          ]
+        },
+        "precision": "fp32",
+        "pretrained_model_path": "",
+        "results_dir": "",
+        "resume_training_checkpoint_path": "",
+        "seed": 1234,
+        "validation_interval": 1
+      },
+      "description": "Configurable parameters to train the CenterPose model.",
+      "popular": [
+        "validation_interval",
+        "checkpoint_interval",
+        "num_gpus",
+        "num_nodes",
+        "num_epochs",
+        "gpu_ids"
+      ],
+      "properties": {
+        "checkpoint_interval": {
+          "default": 1,
+          "description": "The interval (in epochs) at which a checkpoint will be saved. Helps resume training.",
+          "minimum": 1,
+          "popular": true,
+          "title": "Checkpoint interval",
+          "type": "int"
+        },
+        "checkpoint_interval_unit": {
+          "default": "epoch",
+          "description": "The unit of the checkpoint interval.",
+          "enum": [
+            "epoch",
+            "step"
+          ],
+          "title": "Checkpoint interval unit",
+          "type": "categorical"
+        },
+        "clip_grad_val": {
+          "default": 100.0,
+          "description": "Gradient clipping value.",
+          "maximum": Infinity,
+          "minimum": 1.0,
+          "title": "Gradient Clipping Value",
+          "type": "float"
+        },
+        "cudnn": {
+          "automl_enabled": false,
+          "default": {
+            "benchmark": false,
+            "deterministic": true
+          },
+          "properties": {
+            "benchmark": {
+              "default": false,
+              "type": "bool"
+            },
+            "deterministic": {
+              "default": true,
+              "type": "bool"
+            }
+          },
+          "type": "collection"
+        },
+        "gpu_ids": {
+          "automl_enabled": false,
+          "default": [
+            0
+          ],
+          "description": "\n        List of GPU IDs to run the training on. The length of this list\n        must be equal to the number of gpus in train.num_gpus.",
+          "popular": true,
+          "title": "GPU IDs",
+          "type": "list"
+        },
+        "is_dry_run": {
+          "default": false,
+          "description": "Run a training iteration without model saving.",
+          "title": "Dry Run",
+          "type": "bool"
+        },
+        "loss_config": {
+          "automl_enabled": false,
+          "default": {
+            "dense_hp": false,
+            "dimension_ref": "",
+            "hm_hp": true,
+            "hm_hp_weight": 1,
+            "hm_weight": 1,
+            "hp_weight": 1,
+            "hps_uncertainty": false,
+            "mse_loss": false,
+            "num_stacks": 1,
+            "obj_scale": true,
+            "obj_scale_uncertainty": false,
+            "obj_scale_weight": 1,
+            "off_weight": 1,
+            "reg_bbox": true,
+            "reg_hp_offset": true,
+            "reg_loss": "l1",
+            "reg_offset": true,
+            "use_residual": false,
+            "wh_weight": 0.1
+          },
+          "description": "Model loss configuration.",
+          "properties": {
+            "dense_hp": {
+              "default": false,
+              "description": "Use dense heatmaps.",
+              "title": "Dense Heatmaps",
+              "type": "bool"
+            },
+            "dimension_ref": {
+              "default": "",
+              "description": "Dimension reference.",
+              "title": "Dimension Reference",
+              "type": "string"
+            },
+            "hm_hp": {
+              "default": true,
+              "description": "Use heatmaps for keypoints.",
+              "title": "Heatmaps for Keypoints",
+              "type": "bool"
+            },
+            "hm_hp_weight": {
+              "default": 1,
+              "description": "Weight for heatmaps for keypoints.",
+              "maximum": 1,
+              "minimum": 1,
+              "title": "Heatmaps for Keypoints Weight",
+              "type": "int"
+            },
+            "hm_weight": {
+              "default": 1,
+              "description": "Weight for heatmaps.",
+              "maximum": 1,
+              "minimum": 1,
+              "title": "Heatmaps Weight",
+              "type": "int"
+            },
+            "hp_weight": {
+              "default": 1,
+              "description": "Weight for keypoints.",
+              "maximum": 1,
+              "minimum": 1,
+              "title": "Keypoints Weight",
+              "type": "int"
+            },
+            "hps_uncertainty": {
+              "default": false,
+              "description": "Use heatmaps uncertainty loss.",
+              "title": "Heatmaps Uncertainty",
+              "type": "bool"
+            },
+            "mse_loss": {
+              "default": false,
+              "description": "Use mean squared error loss.",
+              "title": "Mean Squared Error Loss",
+              "type": "bool"
+            },
+            "num_stacks": {
+              "default": 1,
+              "description": "Number of stacks.",
+              "maximum": 1,
+              "minimum": 1,
+              "title": "Number of Stacks",
+              "type": "int"
+            },
+            "obj_scale": {
+              "default": true,
+              "description": "Use object scale loss.",
+              "title": "Object Scale",
+              "type": "bool"
+            },
+            "obj_scale_uncertainty": {
+              "default": false,
+              "description": "Use object scale uncertainty loss.",
+              "title": "Object Scale Uncertainty",
+              "type": "bool"
+            },
+            "obj_scale_weight": {
+              "default": 1,
+              "description": "Weight for object scale loss.",
+              "maximum": 1,
+              "minimum": 1,
+              "title": "Object Scale Weight",
+              "type": "int"
+            },
+            "off_weight": {
+              "default": 1,
+              "description": "Weight for offset loss.",
+              "maximum": 1,
+              "minimum": 1,
+              "title": "Offset Weight",
+              "type": "int"
+            },
+            "reg_bbox": {
+              "default": true,
+              "description": "Use bounding box regression loss.",
+              "title": "Bounding Box Regression",
+              "type": "bool"
+            },
+            "reg_hp_offset": {
+              "default": true,
+              "description": "Use offset regression loss for keypoints.",
+              "title": "Offset Regression for Keypoints",
+              "type": "bool"
+            },
+            "reg_loss": {
+              "default": "l1",
+              "description": "Regression loss function.",
+              "title": "Regression Loss Function",
+              "type": "string"
+            },
+            "reg_offset": {
+              "default": true,
+              "description": "Use offset regression loss.",
+              "title": "Offset Regression",
+              "type": "bool"
+            },
+            "use_residual": {
+              "default": false,
+              "description": "Use residual loss.",
+              "title": "Residual Loss",
+              "type": "bool"
+            },
+            "wh_weight": {
+              "default": 0.1,
+              "description": "Weight for width and height loss.",
+              "maximum": 0.1,
+              "minimum": 0.1,
+              "title": "Width and Height Weight",
+              "type": "float"
+            }
+          },
+          "title": "Loss Config",
+          "type": "collection"
+        },
+        "num_epochs": {
+          "default": 10,
+          "description": "Number of epochs to run the training.",
+          "maximum": Infinity,
+          "minimum": 1,
+          "popular": true,
+          "title": "Number of epochs",
+          "type": "int"
+        },
+        "num_gpus": {
+          "default": 1,
+          "description": "The number of GPUs to run the train job.",
+          "minimum": 1,
+          "popular": true,
+          "title": "Number of GPUs",
+          "type": "int"
+        },
+        "num_nodes": {
+          "default": 1,
+          "description": "Number of nodes to run the training on. If > 1, then multi-node is enabled.",
+          "minimum": 1,
+          "popular": true,
+          "title": "Number of nodes",
+          "type": "int"
+        },
+        "optim": {
+          "automl_default_parameters": [
+            "train.optim.lr",
+            "train.optim.lr_decay"
+          ],
+          "automl_disabled_parameters": [
+            "train.optim.lr_steps"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "lr": 6e-05,
+            "lr_decay": 0.1,
+            "lr_scheduler": "MultiStep",
+            "lr_steps": [
+              90,
+              120
+            ]
+          },
+          "description": "Model optimizer configuration.",
+          "properties": {
+            "lr": {
+              "automl_enabled": true,
+              "default": 6e-05,
+              "description": "Learning rate.",
+              "maximum": Infinity,
+              "minimum": 0.0,
+              "title": "Learning Rate",
+              "type": "float"
+            },
+            "lr_decay": {
+              "automl_enabled": true,
+              "default": 0.1,
+              "description": "Learning rate decay.",
+              "maximum": Infinity,
+              "minimum": 0.0,
+              "title": "Learning Rate Decay",
+              "type": "float"
+            },
+            "lr_scheduler": {
+              "default": "MultiStep",
+              "description": "Learning rate scheduler.",
+              "title": "Learning Rate Scheduler",
+              "type": "string"
+            },
+            "lr_steps": {
+              "automl_enabled": false,
+              "default": [
+                90,
+                120
+              ],
+              "description": "Learning rate steps.",
+              "title": "Learning Rate Steps",
+              "type": "list"
+            }
+          },
+          "title": "Optimizer Config",
+          "type": "collection"
+        },
+        "precision": {
+          "default": "fp32",
+          "description": "Training precision.",
+          "title": "Precision",
+          "type": "string"
+        },
+        "pretrained_model_path": {
+          "default": "",
+          "description": "Path to the pretrained model.",
+          "title": "Pretrained Model",
+          "type": "string"
+        },
+        "results_dir": {
+          "default": "",
+          "description": "\n        Path to where all the assets generated from a task are stored.\n        ",
+          "title": "Results directory",
+          "type": "string"
+        },
+        "resume_training_checkpoint_path": {
+          "default": "",
+          "description": "Path to the checkpoint to resume training from.",
+          "title": "Resume checkpoint path",
+          "type": "string"
+        },
+        "seed": {
+          "default": 1234,
+          "description": "The seed for the initializer in PyTorch. If < 0, disable fixed seed.",
+          "maximum": Infinity,
+          "minimum": -1,
+          "title": "Seed for randomization",
+          "type": "int"
+        },
+        "validation_interval": {
+          "default": 1,
+          "description": "\n        The interval (in epochs) at which a evaluation\n        will be triggered on the validation dataset.",
+          "minimum": 1,
+          "popular": true,
+          "title": "Validation interval",
+          "type": "int"
+        }
+      },
+      "type": "collection"
+    },
+    "wandb": {
+      "automl_disabled_parameters": [
+        "wandb.tags"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "enable": true,
+        "entity": "",
+        "group": "",
+        "name": "TAO Toolkit Training",
+        "project": "TAO Toolkit",
+        "reinit": false,
+        "run_id": "",
+        "save_code": false,
+        "sync_tensorboard": false,
+        "tags": [
+          "tao-toolkit"
+        ]
+      },
+      "properties": {
+        "enable": {
+          "default": true,
+          "type": "bool"
+        },
+        "entity": {
+          "default": "",
+          "type": "string"
+        },
+        "group": {
+          "default": "",
+          "type": "string"
+        },
+        "name": {
+          "default": "TAO Toolkit Training",
+          "type": "string"
+        },
+        "project": {
+          "default": "TAO Toolkit",
+          "type": "string"
+        },
+        "reinit": {
+          "default": false,
+          "type": "bool"
+        },
+        "run_id": {
+          "default": "",
+          "type": "string"
+        },
+        "save_code": {
+          "default": false,
+          "type": "bool"
+        },
+        "sync_tensorboard": {
+          "default": false,
+          "type": "bool"
+        },
+        "tags": {
+          "automl_enabled": false,
+          "default": [
+            "tao-toolkit"
+          ],
+          "type": "list"
+        }
+      },
+      "type": "collection"
+    }
+  },
+  "type": "object",
+  "x_tao_schema": {
+    "action": "gen_trt_engine",
+    "core_module": "centerpose",
+    "model": "centerpose",
+    "network_arch": "centerpose",
+    "schema_action": "gen_trt_engine",
+    "schema_version": 1,
+    "source": "tao-core dataclass config"
+  }
+}

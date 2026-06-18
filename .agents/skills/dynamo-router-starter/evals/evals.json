@@ -1,0 +1,63 @@
+{
+  "skill": "dynamo-router-starter",
+  "cases": [
+    {
+      "id": "enable-kv-routing",
+      "question": "Enable KV-aware routing on my Dynamo frontend and prove it's serving.",
+      "expected_skill": "dynamo-router-starter",
+      "expected_script": "scripts/check_router_health.py",
+      "ground_truth": "Set the frontend to KV router mode (DYN_ROUTER_MODE=kv, or approximate mode if workers don't publish KV events), then smoke-test /v1/models and one chat completion.",
+      "expected_behavior": [
+        "Establish or locate the frontend",
+        "Set KV router mode (or approximate mode if no KV events)",
+        "Run check_router_health.py against the frontend",
+        "Report mode and smoke-test result"
+      ]
+    },
+    {
+      "id": "compare-roundrobin-vs-kv",
+      "question": "Compare round-robin against KV routing for my endpoint.",
+      "expected_skill": "dynamo-router-starter",
+      "expected_script": "scripts/check_router_health.py",
+      "ground_truth": "Run the same model/workers/prompts under each mode, label it a smoke comparison, and avoid throughput claims from a single request.",
+      "expected_behavior": [
+        "Hold model/workers/prompts constant across modes",
+        "Run a smoke check under each mode",
+        "Label as smoke comparison; no throughput claim from one request"
+      ]
+    },
+    {
+      "id": "router-health-check",
+      "question": "Is my router-backed endpoint actually serving requests right now?",
+      "expected_skill": "dynamo-router-starter",
+      "expected_script": "scripts/check_router_health.py",
+      "ground_truth": "Run check_router_health.py against the frontend base URL; verify /v1/models and one chat completion.",
+      "expected_behavior": [
+        "Run check_router_health.py against the base URL",
+        "Verify /v1/models and one chat completion",
+        "Report health result"
+      ]
+    },
+    {
+      "id": "neg-deploy-recipe",
+      "question": "Deploy the Llama sglang aggregated recipe on my cluster.",
+      "expected_skill": "dynamo-recipe-runner",
+      "ground_truth": "Recipe deployment belongs to dynamo-recipe-runner.",
+      "expected_behavior": ["dynamo-router-starter stays silent; dynamo-recipe-runner handles it"]
+    },
+    {
+      "id": "neg-router-500s-workers-missing",
+      "question": "My router endpoint is returning 500s and half the workers are missing — fix it.",
+      "expected_skill": "dynamo-troubleshoot",
+      "ground_truth": "An endpoint that is failing with missing workers is failure diagnosis, which belongs to dynamo-troubleshoot, not normal router setup.",
+      "expected_behavior": ["dynamo-router-starter stays silent; dynamo-troubleshoot handles it"]
+    },
+    {
+      "id": "neg-validate-nixl",
+      "question": "Confirm the NIXL/RDMA transport is healthy for my disaggregated deployment.",
+      "expected_skill": "dynamo-interconnect-check",
+      "ground_truth": "Validating the disagg KV transport belongs to dynamo-interconnect-check.",
+      "expected_behavior": ["dynamo-router-starter stays silent; dynamo-interconnect-check handles it"]
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+{
+  "_comment": "Chest CT with a controllable lung tumor (scale 0.5). Tumor size is on a [0, 1] scale relative to the per-anatomy quantile distribution in upstream's all_anatomy_size_conditions.json. Lung tumor requests below ~0.5 can produce absent or tiny label-23 components in some seeds. ~90s on a 24 GB GPU.",
+  "num_output_samples": 1,
+  "body_region": [
+    "chest"
+  ],
+  "anatomy_list": [
+    "lung tumor",
+    "left lung upper lobe",
+    "left lung lower lobe",
+    "right lung upper lobe",
+    "right lung middle lobe",
+    "right lung lower lobe",
+    "heart"
+  ],
+  "controllable_anatomy_size": [
+    [
+      "lung tumor",
+      0.5
+    ]
+  ],
+  "output_size": [
+    256,
+    256,
+    256
+  ],
+  "spacing": [
+    1.5,
+    1.5,
+    2.0
+  ],
+  "num_inference_steps": 30,
+  "image_output_ext": ".nii.gz",
+  "label_output_ext": ".nii.gz"
+}

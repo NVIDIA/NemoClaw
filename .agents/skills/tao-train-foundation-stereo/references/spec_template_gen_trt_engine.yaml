@@ -1,0 +1,291 @@
+model_name: ''
+encryption_key: ''
+results_dir: ''
+wandb:
+  enable: true
+  project: TAO Toolkit
+  entity: ''
+  group: ''
+  tags:
+  - tao-toolkit
+  reinit: false
+  sync_tensorboard: false
+  save_code: false
+  name: TAO Toolkit Training
+  run_id: ''
+dataset:
+  dataset_name: StereoDataset
+  normalize_depth: false
+  max_disparity: 416
+  baseline: 0.193001
+  focal_x: 1998.842
+  train_dataset:
+    data_sources: &id001
+    - dataset_name: ''
+      data_file: ''
+    batch_size: 1
+    workers: 8
+    pin_memory: true
+    augmentation:
+      input_mean:
+      - 0.485
+      - 0.456
+      - 0.406
+      input_std:
+      - 0.229
+      - 0.224
+      - 0.225
+      crop_size:
+      - 518
+      - 518
+      min_scale: -0.2
+      max_scale: 0.4
+      do_flip: false
+      yjitter_prob: 1.0
+      gamma:
+      - 1
+      - 1
+      - 1
+      - 1
+      color_aug_prob: 0.2
+      color_aug_brightness: 0.4
+      color_aug_contrast: 0.4
+      color_aug_saturation:
+      - 0.0
+      - 1.4
+      color_aug_hue_range:
+      - -0.027777777777777776
+      - 0.027777777777777776
+      eraser_aug_prob: 0.5
+      spatial_aug_prob: 1.0
+      stretch_prob: 0.8
+      max_stretch: 0.2
+      h_flip_prob: 0.5
+      v_flip_prob: 0.5
+      hshift_prob: 0.5
+      crop_min_valid_disp_ratio: 0.0
+  val_dataset:
+    data_sources: *id001
+    batch_size: 1
+    workers: 8
+    pin_memory: true
+    augmentation:
+      input_mean:
+      - 0.485
+      - 0.456
+      - 0.406
+      input_std:
+      - 0.229
+      - 0.224
+      - 0.225
+      crop_size:
+      - 518
+      - 518
+      min_scale: -0.2
+      max_scale: 0.4
+      do_flip: false
+      yjitter_prob: 1.0
+      gamma:
+      - 1
+      - 1
+      - 1
+      - 1
+      color_aug_prob: 0.2
+      color_aug_brightness: 0.4
+      color_aug_contrast: 0.4
+      color_aug_saturation:
+      - 0.0
+      - 1.4
+      color_aug_hue_range:
+      - -0.027777777777777776
+      - 0.027777777777777776
+      eraser_aug_prob: 0.5
+      spatial_aug_prob: 1.0
+      stretch_prob: 0.8
+      max_stretch: 0.2
+      h_flip_prob: 0.5
+      v_flip_prob: 0.5
+      hshift_prob: 0.5
+      crop_min_valid_disp_ratio: 0.0
+  test_dataset:
+    data_sources: *id001
+    batch_size: 1
+    workers: 8
+    pin_memory: true
+    augmentation:
+      input_mean:
+      - 0.485
+      - 0.456
+      - 0.406
+      input_std:
+      - 0.229
+      - 0.224
+      - 0.225
+      crop_size:
+      - 518
+      - 518
+      min_scale: -0.2
+      max_scale: 0.4
+      do_flip: false
+      yjitter_prob: 1.0
+      gamma:
+      - 1
+      - 1
+      - 1
+      - 1
+      color_aug_prob: 0.2
+      color_aug_brightness: 0.4
+      color_aug_contrast: 0.4
+      color_aug_saturation:
+      - 0.0
+      - 1.4
+      color_aug_hue_range:
+      - -0.027777777777777776
+      - 0.027777777777777776
+      eraser_aug_prob: 0.5
+      spatial_aug_prob: 1.0
+      stretch_prob: 0.8
+      max_stretch: 0.2
+      h_flip_prob: 0.5
+      v_flip_prob: 0.5
+      hshift_prob: 0.5
+      crop_min_valid_disp_ratio: 0.0
+  infer_dataset:
+    data_sources: *id001
+    batch_size: 1
+    workers: 8
+    pin_memory: true
+    augmentation:
+      input_mean:
+      - 0.485
+      - 0.456
+      - 0.406
+      input_std:
+      - 0.229
+      - 0.224
+      - 0.225
+      crop_size:
+      - 518
+      - 518
+      min_scale: -0.2
+      max_scale: 0.4
+      do_flip: false
+      yjitter_prob: 1.0
+      gamma:
+      - 1
+      - 1
+      - 1
+      - 1
+      color_aug_prob: 0.2
+      color_aug_brightness: 0.4
+      color_aug_contrast: 0.4
+      color_aug_saturation:
+      - 0.0
+      - 1.4
+      color_aug_hue_range:
+      - -0.027777777777777776
+      - 0.027777777777777776
+      eraser_aug_prob: 0.5
+      spatial_aug_prob: 1.0
+      stretch_prob: 0.8
+      max_stretch: 0.2
+      h_flip_prob: 0.5
+      v_flip_prob: 0.5
+      hshift_prob: 0.5
+      crop_min_valid_disp_ratio: 0.0
+  quant_calibration_dataset:
+    images_dir: ''
+model:
+  model_type: MetricDepthAnything
+  mono_backbone:
+    pretrained_path: ''
+    use_bn: false
+    use_clstoken: false
+  stereo_backbone:
+    depth_anything_v2_pretrained_path: ''
+    edgenext_pretrained_path: ''
+    use_bn: false
+    use_clstoken: false
+  hidden_dims:
+  - 128
+  - 128
+  - 128
+  corr_radius: 4
+  cv_group: 8
+  train_iters: 22
+  valid_iters: 22
+  volume_dim: 32
+  low_memory: 0
+  mixed_precision: false
+  n_gru_layers: 3
+  corr_levels: 2
+  n_downsample: 2
+  encoder: vitl
+  max_disparity: 416
+train:
+  num_gpus: 1
+  gpu_ids:
+  - 0
+  num_nodes: 1
+  seed: 1234
+  cudnn:
+    benchmark: false
+    deterministic: true
+  num_epochs: 10
+  checkpoint_interval: 1
+  checkpoint_interval_unit: epoch
+  validation_interval: 1
+  resume_training_checkpoint_path: ''
+  results_dir: ''
+  pretrained_model_path: ''
+  clip_grad_norm: 0.1
+  dataloader_visualize: false
+  vis_step_interval: 10
+  is_dry_run: false
+  optim:
+    optimizer: AdamW
+    monitor_name: val_loss
+    lr: 0.0001
+    momentum: 0.9
+    weight_decay: 0.0001
+    lr_scheduler: MultiStepLR
+    lr_steps:
+    - 1000
+    lr_step_size: 1000
+    lr_decay: 0.1
+    min_lr: 1.0e-07
+    warmup_steps: 20
+  precision: fp32
+  distributed_strategy: ddp
+  activation_checkpoint: false
+  inference_tile: false
+  tile_wtype: gaussian
+  tile_min_overlap:
+  - 16
+  - 16
+  log_every_n_steps: 500
+gen_trt_engine:
+  results_dir: ''
+  gpu_id: 0
+  onnx_file: ???
+  trt_engine: ???
+  timing_cache: ''
+  batch_size: -1
+  verbose: false
+  tensorrt:
+    workspace_size: 1024
+    min_batch_size: 1
+    opt_batch_size: 1
+    max_batch_size: 1
+    layers_precision: []
+    data_type: FP32
+quantize:
+  backend: torchao
+  mode: weight_only_ptq
+  algorithm: minmax
+  layers: []
+  skip_names: []
+  model_path: ''
+  results_dir: ''
+  backend_kwargs: {}
+  device: cuda

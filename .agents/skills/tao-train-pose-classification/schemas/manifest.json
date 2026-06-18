@@ -1,0 +1,265 @@
+{
+  "actions": {
+    "evaluate": {
+      "automl_default_parameters": [
+        "dataset.window_size",
+        "model.dropout",
+        "train.grad_clip",
+        "train.optim.lr",
+        "train.optim.lr_decay",
+        "train.optim.momentum",
+        "train.optim.patience",
+        "train.optim.weight_decay"
+      ],
+      "automl_disabled_parameters": [
+        "dataset",
+        "dataset.label_map",
+        "dataset.train_dataset",
+        "dataset.val_dataset",
+        "dataset_convert",
+        "evaluate",
+        "evaluate.gpu_ids",
+        "evaluate.test_dataset",
+        "export",
+        "inference",
+        "inference.gpu_ids",
+        "inference.test_dataset",
+        "model",
+        "train",
+        "train.cudnn",
+        "train.gpu_ids",
+        "train.optim",
+        "train.optim.lr_steps",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "pose_classification",
+      "path": "schemas/evaluate.schema.json",
+      "popular": {
+        "evaluate": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "train": {
+          "checkpoint_interval": 1,
+          "gpu_ids": [
+            0
+          ],
+          "num_epochs": 10,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "validation_interval": 1
+        }
+      },
+      "schema_action": "evaluate",
+      "spec_template": "references/spec_template_evaluate.yaml"
+    },
+    "export": {
+      "automl_default_parameters": [
+        "dataset.window_size",
+        "model.dropout",
+        "train.grad_clip",
+        "train.optim.lr",
+        "train.optim.lr_decay",
+        "train.optim.momentum",
+        "train.optim.patience",
+        "train.optim.weight_decay"
+      ],
+      "automl_disabled_parameters": [
+        "dataset",
+        "dataset.label_map",
+        "dataset.train_dataset",
+        "dataset.val_dataset",
+        "dataset_convert",
+        "evaluate",
+        "evaluate.gpu_ids",
+        "evaluate.test_dataset",
+        "export",
+        "inference",
+        "inference.gpu_ids",
+        "inference.test_dataset",
+        "model",
+        "train",
+        "train.cudnn",
+        "train.gpu_ids",
+        "train.optim",
+        "train.optim.lr_steps",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "pose_classification",
+      "path": "schemas/export.schema.json",
+      "popular": {
+        "evaluate": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "train": {
+          "checkpoint_interval": 1,
+          "gpu_ids": [
+            0
+          ],
+          "num_epochs": 10,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "validation_interval": 1
+        }
+      },
+      "schema_action": "export",
+      "spec_template": "references/spec_template_export.yaml"
+    },
+    "inference": {
+      "automl_default_parameters": [
+        "dataset.window_size",
+        "model.dropout",
+        "train.grad_clip",
+        "train.optim.lr",
+        "train.optim.lr_decay",
+        "train.optim.momentum",
+        "train.optim.patience",
+        "train.optim.weight_decay"
+      ],
+      "automl_disabled_parameters": [
+        "dataset",
+        "dataset.label_map",
+        "dataset.train_dataset",
+        "dataset.val_dataset",
+        "dataset_convert",
+        "evaluate",
+        "evaluate.gpu_ids",
+        "evaluate.test_dataset",
+        "export",
+        "inference",
+        "inference.gpu_ids",
+        "inference.test_dataset",
+        "model",
+        "train",
+        "train.cudnn",
+        "train.gpu_ids",
+        "train.optim",
+        "train.optim.lr_steps",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "pose_classification",
+      "path": "schemas/inference.schema.json",
+      "popular": {
+        "evaluate": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "train": {
+          "checkpoint_interval": 1,
+          "gpu_ids": [
+            0
+          ],
+          "num_epochs": 10,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "validation_interval": 1
+        }
+      },
+      "schema_action": "inference",
+      "spec_template": "references/spec_template_inference.yaml"
+    },
+    "train": {
+      "automl_default_parameters": [
+        "dataset.window_size",
+        "model.dropout",
+        "train.grad_clip",
+        "train.optim.lr",
+        "train.optim.lr_decay",
+        "train.optim.momentum",
+        "train.optim.patience",
+        "train.optim.weight_decay"
+      ],
+      "automl_disabled_parameters": [
+        "dataset",
+        "dataset.label_map",
+        "dataset.train_dataset",
+        "dataset.val_dataset",
+        "dataset_convert",
+        "evaluate",
+        "evaluate.gpu_ids",
+        "evaluate.test_dataset",
+        "export",
+        "inference",
+        "inference.gpu_ids",
+        "inference.test_dataset",
+        "model",
+        "train",
+        "train.cudnn",
+        "train.gpu_ids",
+        "train.optim",
+        "train.optim.lr_steps",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "pose_classification",
+      "path": "schemas/train.schema.json",
+      "popular": {
+        "evaluate": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "train": {
+          "checkpoint_interval": 1,
+          "gpu_ids": [
+            0
+          ],
+          "num_epochs": 10,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "validation_interval": 1
+        }
+      },
+      "schema_action": "train",
+      "spec_template": "references/spec_template_train.yaml"
+    }
+  },
+  "automl_enabled": true,
+  "failures": {},
+  "model": "pose-classification",
+  "network_arch": "pose_classification",
+  "schema_version": 1
+}

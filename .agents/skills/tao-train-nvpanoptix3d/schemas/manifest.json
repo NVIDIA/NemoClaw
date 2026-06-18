@@ -1,0 +1,413 @@
+{
+  "actions": {
+    "evaluate": {
+      "automl_default_parameters": [
+        "train.optim.lr"
+      ],
+      "automl_disabled_parameters": [
+        "dataset",
+        "dataset.augmentation",
+        "dataset.augmentation.crop_size",
+        "dataset.augmentation.train_crop_size",
+        "dataset.augmentation.train_min_size",
+        "dataset.depth_size",
+        "dataset.occ_truncation_lvl",
+        "dataset.reduced_target_size",
+        "dataset.target_size",
+        "dataset.test",
+        "dataset.train",
+        "dataset.truncation_range",
+        "dataset.val",
+        "evaluate",
+        "evaluate.gpu_ids",
+        "export",
+        "gen_trt_engine",
+        "gen_trt_engine.tensorrt",
+        "gen_trt_engine.tensorrt.layers_precision",
+        "inference",
+        "inference.gpu_ids",
+        "model",
+        "model.backbone",
+        "model.frustum3d",
+        "model.frustum3d.completion_weights",
+        "model.mask_former",
+        "model.projection",
+        "model.sem_seg_head",
+        "model.sem_seg_head.deformable_transformer_encoder_in_features",
+        "model.sem_seg_head.in_features",
+        "train",
+        "train.cudnn",
+        "train.freeze",
+        "train.gpu_ids",
+        "train.optim",
+        "train.optim.milestones",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "nvpanoptix3d",
+      "path": "schemas/evaluate.schema.json",
+      "popular": {
+        "evaluate": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "gen_trt_engine": {
+          "batch_size": -1,
+          "gpu_id": 0,
+          "tensorrt": {
+            "max_batch_size": 1,
+            "min_batch_size": 1,
+            "opt_batch_size": 1
+          }
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "model": {
+          "mask_former": {
+            "class_weight": 2.0,
+            "dice_weight": 5.0,
+            "hidden_dim": 256,
+            "importance_sample_ratio": 0.75,
+            "mask_weight": 5.0,
+            "nheads": 8,
+            "num_object_queries": 100
+          },
+          "sem_seg_head": {
+            "convs_dim": 256,
+            "depth_dim": 256,
+            "mask_dim": 256,
+            "transformer_enc_layers": 6
+          }
+        },
+        "train": {
+          "checkpoint_interval": 1,
+          "gpu_ids": [
+            0
+          ],
+          "num_epochs": 10,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "validation_interval": 1
+        }
+      },
+      "schema_action": "evaluate",
+      "spec_template": "references/spec_template_evaluate.yaml"
+    },
+    "export": {
+      "automl_default_parameters": [
+        "train.optim.lr"
+      ],
+      "automl_disabled_parameters": [
+        "dataset",
+        "dataset.augmentation",
+        "dataset.augmentation.crop_size",
+        "dataset.augmentation.train_crop_size",
+        "dataset.augmentation.train_min_size",
+        "dataset.depth_size",
+        "dataset.occ_truncation_lvl",
+        "dataset.reduced_target_size",
+        "dataset.target_size",
+        "dataset.test",
+        "dataset.train",
+        "dataset.truncation_range",
+        "dataset.val",
+        "evaluate",
+        "evaluate.gpu_ids",
+        "export",
+        "gen_trt_engine",
+        "gen_trt_engine.tensorrt",
+        "gen_trt_engine.tensorrt.layers_precision",
+        "inference",
+        "inference.gpu_ids",
+        "model",
+        "model.backbone",
+        "model.frustum3d",
+        "model.frustum3d.completion_weights",
+        "model.mask_former",
+        "model.projection",
+        "model.sem_seg_head",
+        "model.sem_seg_head.deformable_transformer_encoder_in_features",
+        "model.sem_seg_head.in_features",
+        "train",
+        "train.cudnn",
+        "train.freeze",
+        "train.gpu_ids",
+        "train.optim",
+        "train.optim.milestones",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "nvpanoptix3d",
+      "path": "schemas/export.schema.json",
+      "popular": {
+        "evaluate": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "gen_trt_engine": {
+          "batch_size": -1,
+          "gpu_id": 0,
+          "tensorrt": {
+            "max_batch_size": 1,
+            "min_batch_size": 1,
+            "opt_batch_size": 1
+          }
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "model": {
+          "mask_former": {
+            "class_weight": 2.0,
+            "dice_weight": 5.0,
+            "hidden_dim": 256,
+            "importance_sample_ratio": 0.75,
+            "mask_weight": 5.0,
+            "nheads": 8,
+            "num_object_queries": 100
+          },
+          "sem_seg_head": {
+            "convs_dim": 256,
+            "depth_dim": 256,
+            "mask_dim": 256,
+            "transformer_enc_layers": 6
+          }
+        },
+        "train": {
+          "checkpoint_interval": 1,
+          "gpu_ids": [
+            0
+          ],
+          "num_epochs": 10,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "validation_interval": 1
+        }
+      },
+      "schema_action": "export",
+      "spec_template": "references/spec_template_export.yaml"
+    },
+    "inference": {
+      "automl_default_parameters": [
+        "train.optim.lr"
+      ],
+      "automl_disabled_parameters": [
+        "dataset",
+        "dataset.augmentation",
+        "dataset.augmentation.crop_size",
+        "dataset.augmentation.train_crop_size",
+        "dataset.augmentation.train_min_size",
+        "dataset.depth_size",
+        "dataset.occ_truncation_lvl",
+        "dataset.reduced_target_size",
+        "dataset.target_size",
+        "dataset.test",
+        "dataset.train",
+        "dataset.truncation_range",
+        "dataset.val",
+        "evaluate",
+        "evaluate.gpu_ids",
+        "export",
+        "gen_trt_engine",
+        "gen_trt_engine.tensorrt",
+        "gen_trt_engine.tensorrt.layers_precision",
+        "inference",
+        "inference.gpu_ids",
+        "model",
+        "model.backbone",
+        "model.frustum3d",
+        "model.frustum3d.completion_weights",
+        "model.mask_former",
+        "model.projection",
+        "model.sem_seg_head",
+        "model.sem_seg_head.deformable_transformer_encoder_in_features",
+        "model.sem_seg_head.in_features",
+        "train",
+        "train.cudnn",
+        "train.freeze",
+        "train.gpu_ids",
+        "train.optim",
+        "train.optim.milestones",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "nvpanoptix3d",
+      "path": "schemas/inference.schema.json",
+      "popular": {
+        "evaluate": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "gen_trt_engine": {
+          "batch_size": -1,
+          "gpu_id": 0,
+          "tensorrt": {
+            "max_batch_size": 1,
+            "min_batch_size": 1,
+            "opt_batch_size": 1
+          }
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "model": {
+          "mask_former": {
+            "class_weight": 2.0,
+            "dice_weight": 5.0,
+            "hidden_dim": 256,
+            "importance_sample_ratio": 0.75,
+            "mask_weight": 5.0,
+            "nheads": 8,
+            "num_object_queries": 100
+          },
+          "sem_seg_head": {
+            "convs_dim": 256,
+            "depth_dim": 256,
+            "mask_dim": 256,
+            "transformer_enc_layers": 6
+          }
+        },
+        "train": {
+          "checkpoint_interval": 1,
+          "gpu_ids": [
+            0
+          ],
+          "num_epochs": 10,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "validation_interval": 1
+        }
+      },
+      "schema_action": "inference",
+      "spec_template": "references/spec_template_inference.yaml"
+    },
+    "train": {
+      "automl_default_parameters": [
+        "train.optim.lr"
+      ],
+      "automl_disabled_parameters": [
+        "dataset",
+        "dataset.augmentation",
+        "dataset.augmentation.crop_size",
+        "dataset.augmentation.train_crop_size",
+        "dataset.augmentation.train_min_size",
+        "dataset.depth_size",
+        "dataset.occ_truncation_lvl",
+        "dataset.reduced_target_size",
+        "dataset.target_size",
+        "dataset.test",
+        "dataset.train",
+        "dataset.truncation_range",
+        "dataset.val",
+        "evaluate",
+        "evaluate.gpu_ids",
+        "export",
+        "gen_trt_engine",
+        "gen_trt_engine.tensorrt",
+        "gen_trt_engine.tensorrt.layers_precision",
+        "inference",
+        "inference.gpu_ids",
+        "model",
+        "model.backbone",
+        "model.frustum3d",
+        "model.frustum3d.completion_weights",
+        "model.mask_former",
+        "model.projection",
+        "model.sem_seg_head",
+        "model.sem_seg_head.deformable_transformer_encoder_in_features",
+        "model.sem_seg_head.in_features",
+        "train",
+        "train.cudnn",
+        "train.freeze",
+        "train.gpu_ids",
+        "train.optim",
+        "train.optim.milestones",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "nvpanoptix3d",
+      "path": "schemas/train.schema.json",
+      "popular": {
+        "evaluate": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "gen_trt_engine": {
+          "batch_size": -1,
+          "gpu_id": 0,
+          "tensorrt": {
+            "max_batch_size": 1,
+            "min_batch_size": 1,
+            "opt_batch_size": 1
+          }
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "model": {
+          "mask_former": {
+            "class_weight": 2.0,
+            "dice_weight": 5.0,
+            "hidden_dim": 256,
+            "importance_sample_ratio": 0.75,
+            "mask_weight": 5.0,
+            "nheads": 8,
+            "num_object_queries": 100
+          },
+          "sem_seg_head": {
+            "convs_dim": 256,
+            "depth_dim": 256,
+            "mask_dim": 256,
+            "transformer_enc_layers": 6
+          }
+        },
+        "train": {
+          "checkpoint_interval": 1,
+          "gpu_ids": [
+            0
+          ],
+          "num_epochs": 10,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "validation_interval": 1
+        }
+      },
+      "schema_action": "train",
+      "spec_template": "references/spec_template_train.yaml"
+    }
+  },
+  "automl_enabled": true,
+  "failures": {},
+  "model": "nvpanoptix3d",
+  "network_arch": "nvpanoptix3d",
+  "schema_version": 1
+}

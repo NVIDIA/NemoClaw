@@ -1,0 +1,17 @@
+[
+  {
+    "id": "moe-vlm-training-positive-fsdp-vs-3d-smoke",
+    "question": "Use the nemo-mbridge-perf-moe-vlm-training skill. For Qwen3-VL-style MoE VLM training on GB200, compare the FSDP-first and 3D-parallel paths, including representative TP/CP/PP/EP layout, dispatcher, CUDA graph guidance, and VLM-specific pitfalls.",
+    "expected_skill": "nemo-mbridge-perf-moe-vlm-training",
+    "expected_script": null,
+    "ground_truth": "The answer should use the MoE VLM training skill. It should say FSDP is the simplest first bring-up and memory-first path, especially with awkward PP boundaries, while 3D parallel has the higher ceiling after the model has a clean PP layout and time for deeper sweeps. It should list the FSDP-first GB200 path as TP=1 CP=1 PP=1, EP sized to expert topology, HybridEP on GB200-class systems; and the 3D-parallel GB200 path as TP=1 CP=1 PP=1 or modest PP, EP and ETP sized to expert topology, HybridEP, and CUDA graphs started narrow then widened after the real-data path is stable. It should mention freezing the vision stack for decoder-focused work, aggressive MBS sweeps, matching CUDA graph scope to workload such as attn/moe_router/moe_preprocess only when stable, using ETP only when EP is insufficient, and normalizing metrics by useful tokens rather than only step time.",
+    "expected_behavior": [
+      "Read the nemo-mbridge-perf-moe-vlm-training skill before answering.",
+      "Identify that the task is about MoE VLM training.",
+      "Compare FSDP-first and 3D-parallel GB200 paths.",
+      "List representative TP/CP/PP/EP or ETP layout and HybridEP.",
+      "Mention CUDA graph scope stability and MBS sensitivity.",
+      "Call out VLM-specific validation pitfalls such as useful-token normalization."
+    ]
+  }
+]

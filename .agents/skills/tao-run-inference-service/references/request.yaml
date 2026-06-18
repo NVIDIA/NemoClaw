@@ -1,0 +1,281 @@
+# Reference data for the TAO Inference Request skill (SKILL.md).
+# This file contains only data: endpoint definitions, request schema, and response shapes.
+# All behavioural instructions live in SKILL.md Section 8.
+
+skill:
+  name: inference_request
+  targets_running_microservice: true
+
+service_registry:
+  state_file: /tmp/tao-inf-ms-state.json
+
+readiness_check:
+  endpoint: "GET {base_url}/api/v1/health/readiness"
+  ready_response:
+    http_status: 200
+  not_ready_responses:
+    http_202:
+      error:
+        type: "server_initializing | model_loading"
+    http_503:
+      error:
+        type: "initialization_error | model_load_error | model_not_ready"
+
+http_container:
+  method: POST
+  url_pattern: "{base_url}/v1/chat/completions"
+  default_api_port: 8080
+  headers:
+    Content-Type: application/json
+  client_timeout_seconds_recommended: 300
+
+chat_completions_request_body:
+  fields:
+    messages:
+      type: list
+      required: true
+      supported_roles: [system, user]
+      content_item_types:
+        - {type: video_url, url_field: video_url.url}
+        - {type: image_url, url_field: image_url.url}
+        - {type: text,      text_field: text}
+      media_uri_formats:
+        # Inline data: URIs and plain http(s) URLs are the only supported
+        # forms. Cloud URIs (s3://, gs://, az://) are rejected — the
+        # inference service has no cloud-storage dependency.
+        http_url:  "http://... or https://..."
+        data_uri:  "data:<media_type>;base64,<base64-encoded bytes>"
+    # vLLM-style sampling fields. SKILL.md Section 7.1 REQUIRES the agent to
+    # explicitly prompt the user for each applicable field before sending a
+    # request, with the default shown and the option to skip / accept the
+    # default per-field. The agent must never silently apply defaults.
+    sampling_prompt_policy:
+      must_prompt_user: true
+      per_field_skip_allowed: true
+      apply_defaults_only_when_skipped: true
+      omit_from_body_if_unsupported_by_network_arch: true
+      see: "SKILL.md Section 7.1 (REQUIRED user prompt before each request)"
+    max_tokens:
+      type: int
+      required: false
+      default: 8192
+      prompt_user_before_each_request: true
+      note: "For cosmos-predict2.5 this controls num_output_frames, not text tokens."
+    top_p:
+      type: float
+      required: false
+      default: 0.8
+      prompt_user_before_each_request: true
+      note: "Nucleus sampling. Not consumed by cosmos-predict2.5 (diffusion model) — skip the prompt and omit from body for that arch."
+    temperature:
+      type: float
+      required: false
+      default: 0.7
+      range: [0.0, 2.0]
+      prompt_user_before_each_request: true
+      note: "Not consumed by cosmos-predict2.5 — use `guidance` instead; skip the prompt and omit from body for that arch."
+
+network_arch_constraints:
+  description: >
+    Per-network constraints and known issues observed at runtime. The base
+    request schema (above) describes the API surface, but individual model
+    containers may reject otherwise-valid shapes. Update this list as new
+    constraints are confirmed against a running service.
+  cosmos-rl:
+    media_required:
+      rule: "Every request MUST include at least one image_url or video_url content item."
+      symptom: 'HTTP 500 "Cosmos requires ''media'' parameter"'
+      reason: "Cosmos-Reason2-8B is a vision-language model; the inference handler raises ValueError when media is empty (cosmos_rl/inference/infer_microservices.py)."
+    cloud_uris_unsupported:
+      rule: "Pass media as data:<mime>;base64,… URIs or http(s)://… URLs. Cloud URIs (s3://, gs://, az://) are rejected by the inference service."
+      symptom: 'HTTP 500 with ValueError "Cloud-storage URIs are not supported by the inference service"'
+      reason: |
+        The inference container no longer authenticates to any cloud — media
+        must be self-contained in the request (inline base64 or fetchable via
+        plain http(s)).
+    supported_extensions:
+      images: [".jpg", ".jpeg", ".png", ".bmp", ".tiff"]
+      videos: [".mp4", ".mkv", ".webm", ".avi", ".mov"]
+    max_tokens:
+      type: int
+      default: 1024
+    temperature:
+      type: float
+      range: [0.0, 2.0]
+      default: 0.7
+  cosmos-predict2.5:
+    media_optional:
+      rule: |
+        Media is optional, but the inference type is determined by the content of the first
+        user message. Text-only prompt → TEXT2WORLD. Image content item → IMAGE2WORLD.
+        Video content item → VIDEO2WORLD. Only the first user message is processed.
+      reason: "cosmos_predict2/config.py defines TEXT2WORLD/IMAGE2WORLD/VIDEO2WORLD inference types; only TEXT2WORLD permits no media input."
+    data_uris_supported:
+      rule: "data:<mime>;base64,… URIs are supported in addition to http(s):// URLs and local paths. Cloud URIs (s3://, gs://, az://) are rejected by the inference service."
+      reason: "cosmos_predict2/microservice.py::_decode_media_uri decodes base64 data URIs to a temp file before the inference handler runs."
+    supported_extensions:
+      images: [".png", ".jpg", ".jpeg", ".webp"]
+      videos: [".mp4"]
+    supported_mime_types:
+      - image/jpeg
+      - image/jpg
+      - image/png
+      - image/webp
+      - video/mp4
+    max_tokens:
+      # Repurposed by cosmos-predict2.5 — controls the number of generated video frames, not text tokens.
+      role: num_output_frames
+      type: int
+      default: 77
+    temperature:
+      unsupported: true
+      note: "cosmos-predict2.5 does not consume `temperature`. Diffusion guidance is controlled by `guidance` (range [0, 7], default 7). `num_steps` (default 35) and `seed` (default 0) are also model-side params, not OpenAI fields."
+    response_shape:
+      note: |
+        On success the generated video is returned as a base64-encoded
+        `data:video/mp4;base64,...` URI inside choices[0].message.content,
+        not as plain text.
+  tao-dataservices:
+    media_optional:
+      rule: |
+        Whether media is required depends on the loaded HuggingFace model. The endpoint
+        accepts text-only requests; the underlying run_inference() may reject them for
+        VLM/diffusion model types. Pass-through to the model's expectations.
+      reason: |
+        BaseInferenceMicroserviceServer.chat_completions (tao-core
+        nvidia_tao_core/microservices/handlers/base_inference_microservice_server.py,
+        added on the `inference` branch in commit 33bff58) collects media_uris and
+        prompt then calls self.run_inference(media=media, prompt=prompt, ...). The
+        HuggingFace subclass auto-detects model type from model_path — VLMs require
+        media, LLMs do not, diffusion models generate from prompt alone.
+    data_uris_supported:
+      rule: "data:<mime>;base64,… URIs are supported in addition to http(s):// URLs and local paths. Cloud URIs (s3://, gs://, az://) are rejected by the inference service."
+      reason: |
+        The chat-completions handler decodes data: URIs to a temp file via _EXT_MAP
+        before calling run_inference(); cleanup happens in a finally block.
+    supported_extensions:
+      images: [".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tiff"]
+      videos: [".mp4", ".avi", ".webm", ".mkv", ".mov"]
+    supported_mime_types:
+      - image/jpeg
+      - image/png
+      - image/webp
+      - image/gif
+      - image/bmp
+      - image/tiff
+      - video/mp4
+      - video/avi
+      - video/webm
+      - video/mkv
+      - video/x-matroska
+      - video/mov
+    max_tokens:
+      type: int
+      default: 1024
+    temperature:
+      type: float
+      default: 0.7
+      note: "No documented hard range; depends on the loaded model's generation config."
+    response_shape:
+      note: |
+        choices[0].message.content holds the model's generated text. For diffusion
+        models or other non-text outputs, the response shape is whatever
+        run_inference() returns serialized as a string — verify against the loaded
+        model type before consuming downstream.
+
+container_response_shapes:
+  200:
+    object: chat.completion
+    choices[0].message.role: assistant
+    choices[0].finish_reason: stop
+  202:
+    error.type: "server_initializing | model_loading"
+  503:
+    error.type: "initialization_error | model_load_error | model_not_ready"
+  400:
+    error.type: invalid_request
+  500:
+    error.type: internal_error
+
+code_examples:
+  description: >
+    Ready-to-run snippets for sending a multimodal inference request.
+    Replace BASE_URL with host_url from the service registry.
+
+  python: |
+    import base64, json
+    import urllib.request
+
+    # BASE_URL must be loaded from the local service registry written at startup
+    # (see code-templates.yaml → request.registry_read). The endpoint is the
+    # OpenAI-compatible /v1/chat/completions API of the inference microservice
+    # this skill itself launched — not an arbitrary external URL.
+    BASE_URL = "http://localhost:8080"  # replace with host_url from service registry
+
+    with open("my_video.mp4", "rb") as f:
+        video_b64 = base64.b64encode(f.read()).decode()
+
+    body = json.dumps({
+        "messages": [
+            {"role": "system", "content": "You are a helpful vision assistant."},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "video_url", "video_url": {"url": f"data:video/mp4;base64,{video_b64}"}},
+                    {"type": "text", "text": "Describe what is happening in this video."},
+                ],
+            },
+        ],
+        "max_tokens":  8192,   # user-overridable; SKILL.md §7.1
+        "top_p":       0.8,
+        "temperature": 0.7,
+    }).encode()
+
+    def post_to_microservice(base_url: str, path: str, payload: bytes) -> dict:
+        # Reject anything that isn't the registered local microservice URL.
+        # Allowed schemes: plain http to the host_url written by registry_write.
+        if not (base_url.startswith("http://") or base_url.startswith("https://")):
+            raise ValueError(f"Refusing non-http(s) base_url: {base_url!r}")
+        endpoint = f"{base_url}{path}"
+        req = urllib.request.Request(
+            endpoint,
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=300) as resp:  # local microservice only
+            return json.loads(resp.read())
+
+    result = post_to_microservice(BASE_URL, "/v1/chat/completions", body)
+    print(result["choices"][0]["message"]["content"])
+
+  curl: |
+    BASE_URL="http://localhost:8080"   # replace with host_url from service registry
+
+    # Step 1 — encode the video
+    VIDEO_B64=$(base64 -w0 my_video.mp4)    # Linux
+    # VIDEO_B64=$(base64 -i my_video.mp4)   # macOS
+
+    # Step 2 — send the request and save the response
+    curl -s \
+      -H "Content-Type: application/json" \
+      --data-raw '{
+        "messages": [
+          {"role": "system", "content": "You are a helpful vision assistant."},
+          {"role": "user", "content": [
+            {"type": "video_url", "video_url": {"url": "data:video/mp4;base64,'"$VIDEO_B64"'"}},
+            {"type": "text", "text": "Describe what is happening in this video."}
+          ]}
+        ],
+        "max_tokens": 8192,
+        "top_p": 0.8,
+        "temperature": 0.7
+      }' \
+      "${BASE_URL}/v1/chat/completions" > response.json
+
+    # Step 3 — extract the generated text
+    python3 - <<'EOF'
+    import json, sys
+    data = json.load(open("response.json"))
+    print(data["choices"][0]["message"]["content"])
+    EOF

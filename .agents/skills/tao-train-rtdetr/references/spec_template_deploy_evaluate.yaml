@@ -1,0 +1,24 @@
+encryption_key: tlt_encode
+results_dir: /results
+dataset:
+  test_data_sources:
+    image_dir: /data/images
+    json_file: /data/annotations.json
+  num_classes: 4
+  batch_size: 10
+  workers: 8
+  eval_class_ids:
+  - 1
+evaluate:
+  trt_engine: /results/rtdetr.engine
+  conf_threshold: 0.0
+  input_width: 640
+  input_height: 640
+model:
+  backbone: fan_small
+  num_feature_levels: 4
+  dec_layers: 6
+  enc_layers: 6
+  num_queries: 900
+  dropout_ratio: 0.0
+  dim_feedforward: 2048

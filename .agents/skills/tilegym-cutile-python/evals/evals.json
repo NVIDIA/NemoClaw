@@ -1,0 +1,48 @@
+[
+  {
+    "id": "01-write-rmsnorm-cutile-kernel",
+    "question": "Write a cuTile Python kernel that performs RMSNorm on a 2-D input tensor `x` of shape `(M, N)` along the last dimension (each row is normalized independently). Inputs are `float16`; accumulate in `float32` and cast back to `float16` for the output. The kernel should follow cuTile best practices: use `@ct.kernel`, `ct.load`/`ct.store` for memory access, and `ct.reduce` (or equivalent) for the row-wise mean-square reduction. Include a brief launcher wrapper in Python that allocates the output and calls `ct.launch()`.",
+    "expected_skill": "cutile-python",
+    "expected_script": null,
+    "ground_truth": "Agent writes a correct cuTile RMSNorm kernel using `@ct.kernel`, with explicit `ct.load`/`ct.store`, fp32 accumulation, and `ct.reduce` (or equivalent reduction). The launcher computes `grid = (M,)` (one program per row) and calls `ct.launch(stream, grid, kernel, args)`. Agent does NOT fabricate non-existent cuTile APIs and does NOT use Triton-only constructs like `tl.dot` or `tl.load`.",
+    "expected_behavior": [
+      "Agent reads the cutile-python SKILL.md and the `guidelines/01_implementation_lessons.md` / `guidelines/02_code_generation_rules.md`",
+      "Agent uses `@ct.kernel` (not `@triton.jit`)",
+      "Agent uses `ct.load` / `ct.store` for memory access (not pointer arithmetic + masks)",
+      "Agent accumulates in fp32 and casts the final result back to fp16 (avoids precision loss)",
+      "Agent uses a cuTile reduction primitive (e.g. `ct.reduce` or `ct.sum`) for the row-wise mean-square step",
+      "Agent's launcher uses `ct.launch(stream, grid, kernel, args)` syntax",
+      "Agent does NOT fabricate non-existent cuTile APIs (no invented names not in the cuTile language spec)"
+    ]
+  },
+  {
+    "id": "02-write-softmax-cutile-kernel",
+    "question": "Write a cuTile Python kernel that performs numerically stable softmax on a 2-D input tensor `x` of shape `(M, N)` along the last dimension (each row independently). Use the standard trick: subtract the row max before exp. Inputs are `float16`; accumulate the max/sum reductions in `float32`. Include the launcher wrapper.",
+    "expected_skill": "cutile-python",
+    "expected_script": null,
+    "ground_truth": "Agent writes a correct cuTile softmax kernel using `@ct.kernel`, with `ct.load`/`ct.store`, fp32 accumulation for max and sum, and the numerically stable pattern (subtract row max). The launcher computes `grid = (M,)` and calls `ct.launch(stream, grid, kernel, args)`.",
+    "expected_behavior": [
+      "Agent reads the cutile-python SKILL.md and searches existing examples (TileGym src/tilegym/ops/cutile/softmax.py) before implementing",
+      "Agent uses `@ct.kernel` (not `@triton.jit`)",
+      "Agent uses `ct.load` / `ct.store` for memory access",
+      "Agent implements the numerically stable softmax pattern (subtract row max before exp)",
+      "Agent accumulates reductions in fp32 to avoid precision loss",
+      "Agent's launcher uses `ct.launch(stream, grid, kernel, args)` syntax",
+      "Agent does NOT fabricate non-existent cuTile APIs"
+    ]
+  },
+  {
+    "id": "03-kubernetes-yaml-negative",
+    "question": "I need a Kubernetes Deployment YAML that runs 3 replicas of an nginx container on port 80, with a liveness probe on `/healthz` and resource limits of 256Mi memory and 500m CPU. Include a matching Service of type ClusterIP.",
+    "expected_skill": null,
+    "expected_script": null,
+    "should_trigger": false,
+    "ground_truth": "Agent provides a Kubernetes Deployment + Service YAML with the requested specs. The cutile-python skill is NOT activated because the question is about Kubernetes infrastructure, not GPU kernels.",
+    "expected_behavior": [
+      "The cutile-python skill is NOT loaded",
+      "Agent provides valid Kubernetes YAML with Deployment and Service",
+      "Agent does not mention cuTile, `@ct.kernel`, GPU kernels, or TileGym",
+      "Agent does not run destructive commands"
+    ]
+  }
+]

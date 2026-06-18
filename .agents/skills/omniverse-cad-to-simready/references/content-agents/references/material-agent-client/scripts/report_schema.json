@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": true,
+  "properties": {
+    "agent": { "type": "string" },
+    "artifacts": { "type": "array" },
+    "asset_path": { "type": "string" },
+    "base_url": { "type": ["string", "null"] },
+    "checks": { "type": "array" },
+    "errors": { "type": "array" },
+    "next_step": { "type": "string" },
+    "output_usd_path": { "type": ["string", "null"] },
+    "passed": { "type": "boolean" },
+    "session_id": { "type": ["string", "null"] },
+    "skill": { "type": "string" },
+    "status": { "type": "string" }
+  },
+  "required": ["asset_path", "skill", "agent", "passed", "status", "checks", "errors", "next_step"],
+  "type": "object"
+}

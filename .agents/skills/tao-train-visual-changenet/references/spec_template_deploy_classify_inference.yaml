@@ -1,0 +1,50 @@
+encryption_key: tlt_encode
+results_dir: /results
+inference:
+  trt_engine: /results/visual-changenet.engine
+  batch_size: 4
+model:
+  backbone:
+    type: fan_small_12_p4_hybrid
+  classify:
+    eval_margin: 0.3
+    diff_module: euclidean
+dataset:
+  classify:
+    train_dataset:
+      csv_path: /data/metadata.csv
+      images_dir: /data/images
+    validation_dataset:
+      csv_path: /data/metadata.csv
+      images_dir: /data/images
+    test_dataset:
+      csv_path: /data/metadata.csv
+      images_dir: /data/images
+    infer_dataset:
+      csv_path: /data/metadata.csv
+      images_dir: /data/images
+    image_ext: .jpg
+    batch_size: 32
+    workers: 64
+    fpratio_sampling: 0.1
+    num_input: 4
+    input_map:
+      LowAngleLight: 0
+      SolderLight: 1
+      UniformLight: 2
+      WhiteLight: 3
+    concat_type: linear
+    grid_map:
+      x: 2
+      y: 2
+    image_width: 128
+    image_height: 128
+    augmentation_config:
+      rgb_input_mean:
+      - 0.485
+      - 0.456
+      - 0.406
+      rgb_input_std:
+      - 0.229
+      - 0.224
+      - 0.225

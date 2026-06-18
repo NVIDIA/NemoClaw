@@ -1,0 +1,46 @@
+[
+  {
+    "id": "clear-match-external-aero",
+    "question": "I want to build a surrogate for external aerodynamics on car\ngeometry that predicts surface pressure. What should I use in\nPhysicsNeMo?",
+    "expected_skill": "physicsnemo-discover",
+    "expected_script": null,
+    "ground_truth": "PhysicsNeMo has at least two model families that target external\naerodynamics surrogates on car geometry: DoMINO (transformer-based,\noperates directly on surface meshes) and AeroGraphNet (GNN-based).\nBoth live under physicsnemo/models/ and are independently swappable\nalong the (model \u00d7 datapipe \u00d7 training strategy \u00d7 config) product.\nA reference end-to-end instantiation lives at\nexamples/cfd/external_aerodynamics/ (typically using DoMINO + a\nVTK datapipe + single-GPU or DDP training). The datapipe is\northogonal to model choice and is the right starting point for\nadapting to user-supplied geometry. The answer should name both\nmodel families (since \u22652 apply to the same data shape) rather\nthan collapsing to a single recommendation.",
+    "expected_behavior": [
+      "Every absolute path cited in the final message exists on disk.",
+      "Every absolute path cited in the final message appears as a verbatim substring of some tool input or tool result captured this turn.",
+      "Cite at least one path under one of: 'examples/cfd/external_aerodynamics/'."
+    ]
+  },
+  {
+    "id": "abstention-rl-molecular",
+    "question": "I want to do reinforcement learning for molecular design in\nPhysicsNeMo. Where should I start?",
+    "expected_skill": "physicsnemo-discover",
+    "expected_script": null,
+    "ground_truth": "PhysicsNeMo targets SciML / AI4Science (surrogates, forecasting,\nphysics-informed methods, inverse problems, generative models for\nphysical systems) and does not have direct support for either\nreinforcement learning or molecular design. The response should\nopen with an explicit \"PhysicsNeMo does not have direct support\nfor reinforcement learning on molecular design\" statement, then\nname better-fitting tools: NVIDIA BioNeMo Framework (and MolMIM\nwithin it) for molecular generation, plus general-purpose RL\nlibraries (RLlib, Stable Baselines3, TorchRL) optionally combined\nwith RDKit. A subclass-this-base-class fallback inside PhysicsNeMo\nis acceptable as a last resort but should not be the lead answer.\nThe response must NOT list adjacent-but-wrong examples\n(active_learning/, molecular_dynamics/) as if they were a menu.",
+    "expected_behavior": [
+      "Every absolute path cited in the final message exists on disk.",
+      "Every absolute path cited in the final message appears as a verbatim substring of some tool input or tool result captured this turn.",
+      "Final message matches at least one of 7 acceptable phrasings (case-insensitive regex).",
+      "[efficient_path] Did the assistant stay on task? No created-then-deleted files, no wide tangential reads, no excess tool calls beyond what the case required.",
+      "[recovered_from_error] When a tool call returned empty or errored (Glob no-match, Read not-found, Bash non-zero), did the assistant recover gracefully rather than panicking or fabricating past the error?",
+      "[abstained_appropriately] Did the assistant explicitly state that PhysicsNeMo does not have direct support for the user's task class (RL for molecular design), per the abstention output template in SKILL.md?",
+      "[named_better_fit] Did the assistant name a concrete better-fitting tool \u2014 a sibling NVIDIA framework (BioNeMo, NeMo, Earth-2 Studio) or an external library \u2014 per the abstention output's \"Where to look instead\" section in SKILL.md?"
+    ]
+  },
+  {
+    "id": "discover-skip-general-nlp",
+    "question": "How do I fine-tune a BERT model on my dataset for sentiment\nclassification? Which framework should I use?",
+    "expected_skill": null,
+    "expected_script": null,
+    "ground_truth": null,
+    "expected_behavior": []
+  },
+  {
+    "id": "discover-skip-cuda-debug",
+    "question": "My CUDA kernel is throwing \"illegal memory access\" at line 47.\nCan you help me debug it?",
+    "expected_skill": null,
+    "expected_script": null,
+    "ground_truth": null,
+    "expected_behavior": []
+  }
+]

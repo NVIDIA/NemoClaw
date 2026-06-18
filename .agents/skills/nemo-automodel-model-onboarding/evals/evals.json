@@ -1,0 +1,50 @@
+[
+  {
+    "id": "nemo-automodel-model-onboarding-001-new-dense-llm",
+    "question": "I want to add support for a new dense Hugging Face causal LM in NeMo AutoModel. What are the phases and files I should touch?",
+    "expected_skill": "nemo-automodel-model-onboarding",
+    "expected_script": null,
+    "ground_truth": "The agent routes to nemo-automodel-model-onboarding, starts with config discovery from Hugging Face config.json, identifies dense LLM indicators, creates components/models/<name>/ with model.py and state_dict_adapter.py plus optional config.py, registers the architecture in _transformers/registry.py, adds example YAML, and adds unit tests with tiny configs and layer equivalence tests when layers are rewritten.",
+    "expected_behavior": [
+      "Routes to nemo-automodel-model-onboarding",
+      "Starts with Hugging Face config.json discovery",
+      "Classifies dense LLMs using ForCausalLM and absence of expert fields",
+      "Names components/models/<name>/model.py and state_dict_adapter.py",
+      "Mentions MODEL_ARCH_MAPPING in _transformers/registry.py",
+      "Mentions example YAML and unit tests"
+    ]
+  },
+  {
+    "id": "nemo-automodel-model-onboarding-002-moe-state-dict",
+    "question": "For a new MoE model in NeMo AutoModel, what should I watch for when adapting the Hugging Face state dict?",
+    "expected_skill": "nemo-automodel-model-onboarding",
+    "expected_script": null,
+    "ground_truth": "The agent routes to nemo-automodel-model-onboarding, points to the MoE pattern guidance, and describes mapping router, expert, shared-expert, gate, and up/down projection weights carefully while preserving routed-expert index order. It should recommend adapter tests that compare expected key mappings and numerical equivalence on tiny configs, and it should warn not to rely only on model loading or silent tensor reshapes.",
+    "expected_behavior": [
+      "Routes to nemo-automodel-model-onboarding",
+      "Identifies MoE indicators such as expert fields in config",
+      "Mentions router and expert weight mapping",
+      "Mentions preserving routed-expert index order",
+      "Mentions gate/up/down projection mapping where applicable",
+      "Mentions shared experts when present",
+      "Recommends adapter tests for key mappings",
+      "Recommends tiny-config validation before full-size checkpoints",
+      "Warns not to rely only on model loading or silent reshapes"
+    ]
+  },
+  {
+    "id": "nemo-automodel-model-onboarding-003-vlm-onboarding",
+    "question": "I am adding a new Hugging Face VLM with vision_config and text_config to NeMo AutoModel. How should I classify it and what implementation pieces should I check?",
+    "expected_skill": "nemo-automodel-model-onboarding",
+    "expected_script": null,
+    "ground_truth": "The agent routes to nemo-automodel-model-onboarding, classifies the model as a VLM because the config has vision_config and text_config and a ForConditionalGeneration-style architecture, points to vlm-patterns.md and existing VLM implementations such as mistral4, kimivl, or kimi_k25_vl, and checks the text backbone, vision tower, projector, processor assumptions, state_dict_adapter.py mappings for text and vision weights, registry registration, and tiny image-text tests before full checkpoints.",
+    "expected_behavior": [
+      "Routes to nemo-automodel-model-onboarding",
+      "Classifies VLMs using vision_config plus text_config and conditional-generation architecture",
+      "Mentions vlm-patterns.md or existing VLM implementations",
+      "Mentions text backbone, vision tower, projector, and processor assumptions",
+      "Mentions state_dict_adapter.py mappings for text and vision weights",
+      "Mentions registry registration and tiny image-text tests before full checkpoints"
+    ]
+  }
+]

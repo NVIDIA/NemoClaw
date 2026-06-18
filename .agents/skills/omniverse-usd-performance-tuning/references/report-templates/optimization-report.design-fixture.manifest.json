@@ -1,0 +1,22 @@
+{
+  "mode": "restructure",
+  "input_stage": "/tmp/factory.usd",
+  "output_dir": "/tmp/factory",
+  "new_assembly_root": "/tmp/factory/factory.optimized.usdc",
+  "phase4_targets": [
+    {
+      "path": "/tmp/factory/prototypes/rack_unit.usd",
+      "target_class": "prototype",
+      "mesh_count": 412,
+      "dependency_group": "shared_first",
+      "source": "/World/Racks/Rack_01"
+    },
+    {
+      "path": "/tmp/factory/factory.optimized.usdc",
+      "target_class": "assembly_root",
+      "mesh_count": 1840,
+      "dependency_group": "dependent_after",
+      "source": "/World"
+    }
+  ]
+}

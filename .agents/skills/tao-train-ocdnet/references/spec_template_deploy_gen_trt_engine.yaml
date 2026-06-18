@@ -1,0 +1,17 @@
+gen_trt_engine:
+  width: 1280
+  height: 736
+  img_mode: BGR
+  onnx_file: /models/model.onnx
+  trt_engine: /results/ocdnet.engine
+  tensorrt:
+    data_type: INT8
+    min_batch_size: 1
+    opt_batch_size: 1
+    max_batch_size: 1
+    calibration:
+      cal_image_dir:
+      - /data/calibration/images
+      cal_cache_file: /results/ocdnet_calibration.cache
+      cal_batch_size: 8
+      cal_batches: 2

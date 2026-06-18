@@ -1,0 +1,66 @@
+{
+  "skill": "dynamo-recipe-runner",
+  "cases": [
+    {
+      "id": "deploy-qwen-vllm-disagg",
+      "question": "Deploy the Qwen vLLM disaggregated recipe to my cluster in namespace dynamo-demo.",
+      "expected_skill": "dynamo-recipe-runner",
+      "expected_script": "scripts/recipe_tool.py",
+      "ground_truth": "Select the existing recipes/<qwen>/vllm/disagg recipe, validate it, patch only cluster-specific values (storage class, image tag, HF secret, GPU count), apply model-cache then deploy.yaml, then smoke-test /v1/models and one chat completion.",
+      "expected_behavior": [
+        "Run read-only preflight (recipe_tool.py list, kubectl context/storageclass/nodes/secret)",
+        "Select an existing recipe matching qwen + vllm + disagg",
+        "Validate the recipe and resolve reported blockers before applying",
+        "Patch only the minimal cluster-specific values",
+        "Apply model-cache, wait for download, then apply deploy.yaml",
+        "Smoke-test the frontend endpoint"
+      ]
+    },
+    {
+      "id": "list-sglang-recipes",
+      "question": "Which Dynamo recipes do you have for sglang, and which fit a single 8xB200 node?",
+      "expected_skill": "dynamo-recipe-runner",
+      "expected_script": "scripts/recipe_tool.py",
+      "ground_truth": "Run recipe_tool.py list filtered to framework sglang and report matching recipes with their GPU-count hints; do not invent new recipes.",
+      "expected_behavior": [
+        "Run recipe_tool.py list --framework sglang --format table",
+        "Report matching existing recipes and GPU-count hints",
+        "Do not author new manifests"
+      ]
+    },
+    {
+      "id": "bring-up-nemotron-end-to-end",
+      "question": "Get Nemotron running end to end on my cluster from one of the existing recipes.",
+      "expected_skill": "dynamo-recipe-runner",
+      "expected_script": "scripts/recipe_tool.py",
+      "ground_truth": "Select the existing Nemotron recipe, validate, patch minimal values, deploy, and prove a healthy OpenAI-compatible endpoint.",
+      "expected_behavior": [
+        "Select the existing Nemotron recipe",
+        "Validate and resolve blockers",
+        "Deploy model-cache then deploy.yaml",
+        "Smoke-test the endpoint"
+      ]
+    },
+    {
+      "id": "neg-switch-router-mode",
+      "question": "Switch my running deployment's router to KV-aware mode.",
+      "expected_skill": "dynamo-router-starter",
+      "ground_truth": "Router-only mode work belongs to dynamo-router-starter, not recipe deployment.",
+      "expected_behavior": ["dynamo-recipe-runner stays silent; dynamo-router-starter handles it"]
+    },
+    {
+      "id": "neg-pods-crashlooping",
+      "question": "I deployed a recipe but the worker pods are in CrashLoopBackOff — what's wrong?",
+      "expected_skill": "dynamo-troubleshoot",
+      "ground_truth": "Diagnosing a broken/failed deployment belongs to dynamo-troubleshoot.",
+      "expected_behavior": ["dynamo-recipe-runner stays silent; dynamo-troubleshoot handles it"]
+    },
+    {
+      "id": "neg-author-cuda-kernel",
+      "question": "Write a new CUDA attention kernel to speed up Dynamo.",
+      "expected_skill": null,
+      "ground_truth": "Authoring kernels is unrelated to running existing recipes; the skill should not activate.",
+      "expected_behavior": ["dynamo-recipe-runner stays silent"]
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+[
+  {
+    "id": "prompt_injection_evolution",
+    "risk": "Prompt injection could attempt to use the evolution workflow to weaken guardrails.",
+    "mitigation": "Implement non-negotiable security rules."
+  },
+  {
+    "id": "review_before_execution",
+    "risk": "Proposals could introduce incorrect or misleading guidance into skills.",
+    "mitigation": "Review and scan skill before deployment."
+  }
+]

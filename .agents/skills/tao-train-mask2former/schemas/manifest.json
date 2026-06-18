@@ -1,0 +1,741 @@
+{
+  "actions": {
+    "evaluate": {
+      "automl_default_parameters": [
+        "dataset.augmentation.test_max_size",
+        "dataset.augmentation.test_min_size",
+        "dataset.augmentation.train_max_size",
+        "model.mask_former.dec_layers",
+        "model.mask_former.hidden_dim",
+        "model.mask_former.num_object_queries",
+        "train.optim.backbone_multiplier",
+        "train.optim.lr",
+        "train.optim.momentum",
+        "train.optim.weight_decay"
+      ],
+      "automl_disabled_parameters": [
+        "dataset",
+        "dataset.augmentation",
+        "dataset.augmentation.train_crop_size",
+        "dataset.augmentation.train_min_size",
+        "dataset.pixel_mean",
+        "dataset.pixel_std",
+        "dataset.quant_calibration_dataset",
+        "dataset.test",
+        "dataset.test.target_size",
+        "dataset.train",
+        "dataset.train.target_size",
+        "dataset.val",
+        "dataset.val.target_size",
+        "evaluate",
+        "evaluate.gpu_ids",
+        "export",
+        "gen_trt_engine",
+        "gen_trt_engine.tensorrt",
+        "gen_trt_engine.tensorrt.layers_precision",
+        "inference",
+        "inference.gpu_ids",
+        "model",
+        "model.backbone",
+        "model.backbone.efficientvit",
+        "model.backbone.efficientvit.out_features",
+        "model.backbone.efficientvit.out_indices",
+        "model.backbone.swin",
+        "model.backbone.swin.depths",
+        "model.backbone.swin.num_heads",
+        "model.backbone.swin.out_features",
+        "model.backbone.swin.out_indices",
+        "model.mask_former",
+        "model.sem_seg_head",
+        "model.sem_seg_head.deformable_transformer_encoder_in_features",
+        "quantize",
+        "quantize.backend_kwargs",
+        "quantize.layers",
+        "quantize.skip_names",
+        "train",
+        "train.cudnn",
+        "train.freeze",
+        "train.gpu_ids",
+        "train.optim",
+        "train.optim.milestones",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "mask2former",
+      "path": "schemas/evaluate.schema.json",
+      "popular": {
+        "evaluate": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "gen_trt_engine": {
+          "batch_size": -1,
+          "gpu_id": 0,
+          "tensorrt": {
+            "max_batch_size": 1,
+            "min_batch_size": 1,
+            "opt_batch_size": 1
+          }
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "model": {
+          "mask_former": {
+            "class_weight": 2.0,
+            "dice_weight": 5.0,
+            "hidden_dim": 256,
+            "importance_sample_ratio": 0.75,
+            "mask_weight": 5.0,
+            "nheads": 8,
+            "num_object_queries": 100
+          },
+          "sem_seg_head": {
+            "convs_dim": 256,
+            "mask_dim": 256,
+            "transformer_enc_layers": 6
+          }
+        },
+        "train": {
+          "checkpoint_interval": 1,
+          "gpu_ids": [
+            0
+          ],
+          "num_epochs": 10,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "optim": {
+            "backbone_multiplier": 0.1,
+            "momentum": 0.9,
+            "weight_decay": 0.05
+          },
+          "validation_interval": 1
+        }
+      },
+      "schema_action": "evaluate",
+      "spec_template": "references/spec_template_evaluate.yaml"
+    },
+    "export": {
+      "automl_default_parameters": [
+        "dataset.augmentation.test_max_size",
+        "dataset.augmentation.test_min_size",
+        "dataset.augmentation.train_max_size",
+        "model.mask_former.dec_layers",
+        "model.mask_former.hidden_dim",
+        "model.mask_former.num_object_queries",
+        "train.optim.backbone_multiplier",
+        "train.optim.lr",
+        "train.optim.momentum",
+        "train.optim.weight_decay"
+      ],
+      "automl_disabled_parameters": [
+        "dataset",
+        "dataset.augmentation",
+        "dataset.augmentation.train_crop_size",
+        "dataset.augmentation.train_min_size",
+        "dataset.pixel_mean",
+        "dataset.pixel_std",
+        "dataset.quant_calibration_dataset",
+        "dataset.test",
+        "dataset.test.target_size",
+        "dataset.train",
+        "dataset.train.target_size",
+        "dataset.val",
+        "dataset.val.target_size",
+        "evaluate",
+        "evaluate.gpu_ids",
+        "export",
+        "gen_trt_engine",
+        "gen_trt_engine.tensorrt",
+        "gen_trt_engine.tensorrt.layers_precision",
+        "inference",
+        "inference.gpu_ids",
+        "model",
+        "model.backbone",
+        "model.backbone.efficientvit",
+        "model.backbone.efficientvit.out_features",
+        "model.backbone.efficientvit.out_indices",
+        "model.backbone.swin",
+        "model.backbone.swin.depths",
+        "model.backbone.swin.num_heads",
+        "model.backbone.swin.out_features",
+        "model.backbone.swin.out_indices",
+        "model.mask_former",
+        "model.sem_seg_head",
+        "model.sem_seg_head.deformable_transformer_encoder_in_features",
+        "quantize",
+        "quantize.backend_kwargs",
+        "quantize.layers",
+        "quantize.skip_names",
+        "train",
+        "train.cudnn",
+        "train.freeze",
+        "train.gpu_ids",
+        "train.optim",
+        "train.optim.milestones",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "mask2former",
+      "path": "schemas/export.schema.json",
+      "popular": {
+        "evaluate": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "gen_trt_engine": {
+          "batch_size": -1,
+          "gpu_id": 0,
+          "tensorrt": {
+            "max_batch_size": 1,
+            "min_batch_size": 1,
+            "opt_batch_size": 1
+          }
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "model": {
+          "mask_former": {
+            "class_weight": 2.0,
+            "dice_weight": 5.0,
+            "hidden_dim": 256,
+            "importance_sample_ratio": 0.75,
+            "mask_weight": 5.0,
+            "nheads": 8,
+            "num_object_queries": 100
+          },
+          "sem_seg_head": {
+            "convs_dim": 256,
+            "mask_dim": 256,
+            "transformer_enc_layers": 6
+          }
+        },
+        "train": {
+          "checkpoint_interval": 1,
+          "gpu_ids": [
+            0
+          ],
+          "num_epochs": 10,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "optim": {
+            "backbone_multiplier": 0.1,
+            "momentum": 0.9,
+            "weight_decay": 0.05
+          },
+          "validation_interval": 1
+        }
+      },
+      "schema_action": "export",
+      "spec_template": "references/spec_template_export.yaml"
+    },
+    "gen_trt_engine": {
+      "automl_default_parameters": [
+        "dataset.augmentation.test_max_size",
+        "dataset.augmentation.test_min_size",
+        "dataset.augmentation.train_max_size",
+        "model.mask_former.dec_layers",
+        "model.mask_former.hidden_dim",
+        "model.mask_former.num_object_queries",
+        "train.optim.backbone_multiplier",
+        "train.optim.lr",
+        "train.optim.momentum",
+        "train.optim.weight_decay"
+      ],
+      "automl_disabled_parameters": [
+        "dataset",
+        "dataset.augmentation",
+        "dataset.augmentation.train_crop_size",
+        "dataset.augmentation.train_min_size",
+        "dataset.pixel_mean",
+        "dataset.pixel_std",
+        "dataset.quant_calibration_dataset",
+        "dataset.test",
+        "dataset.test.target_size",
+        "dataset.train",
+        "dataset.train.target_size",
+        "dataset.val",
+        "dataset.val.target_size",
+        "evaluate",
+        "evaluate.gpu_ids",
+        "export",
+        "gen_trt_engine",
+        "gen_trt_engine.tensorrt",
+        "gen_trt_engine.tensorrt.layers_precision",
+        "inference",
+        "inference.gpu_ids",
+        "model",
+        "model.backbone",
+        "model.backbone.efficientvit",
+        "model.backbone.efficientvit.out_features",
+        "model.backbone.efficientvit.out_indices",
+        "model.backbone.swin",
+        "model.backbone.swin.depths",
+        "model.backbone.swin.num_heads",
+        "model.backbone.swin.out_features",
+        "model.backbone.swin.out_indices",
+        "model.mask_former",
+        "model.sem_seg_head",
+        "model.sem_seg_head.deformable_transformer_encoder_in_features",
+        "quantize",
+        "quantize.backend_kwargs",
+        "quantize.layers",
+        "quantize.skip_names",
+        "train",
+        "train.cudnn",
+        "train.freeze",
+        "train.gpu_ids",
+        "train.optim",
+        "train.optim.milestones",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "mask2former",
+      "path": "schemas/gen_trt_engine.schema.json",
+      "popular": {
+        "evaluate": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "gen_trt_engine": {
+          "batch_size": -1,
+          "gpu_id": 0,
+          "tensorrt": {
+            "max_batch_size": 1,
+            "min_batch_size": 1,
+            "opt_batch_size": 1
+          }
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "model": {
+          "mask_former": {
+            "class_weight": 2.0,
+            "dice_weight": 5.0,
+            "hidden_dim": 256,
+            "importance_sample_ratio": 0.75,
+            "mask_weight": 5.0,
+            "nheads": 8,
+            "num_object_queries": 100
+          },
+          "sem_seg_head": {
+            "convs_dim": 256,
+            "mask_dim": 256,
+            "transformer_enc_layers": 6
+          }
+        },
+        "train": {
+          "checkpoint_interval": 1,
+          "gpu_ids": [
+            0
+          ],
+          "num_epochs": 10,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "optim": {
+            "backbone_multiplier": 0.1,
+            "momentum": 0.9,
+            "weight_decay": 0.05
+          },
+          "validation_interval": 1
+        }
+      },
+      "schema_action": "gen_trt_engine",
+      "spec_template": "references/spec_template_gen_trt_engine.yaml"
+    },
+    "inference": {
+      "automl_default_parameters": [
+        "dataset.augmentation.test_max_size",
+        "dataset.augmentation.test_min_size",
+        "dataset.augmentation.train_max_size",
+        "model.mask_former.dec_layers",
+        "model.mask_former.hidden_dim",
+        "model.mask_former.num_object_queries",
+        "train.optim.backbone_multiplier",
+        "train.optim.lr",
+        "train.optim.momentum",
+        "train.optim.weight_decay"
+      ],
+      "automl_disabled_parameters": [
+        "dataset",
+        "dataset.augmentation",
+        "dataset.augmentation.train_crop_size",
+        "dataset.augmentation.train_min_size",
+        "dataset.pixel_mean",
+        "dataset.pixel_std",
+        "dataset.quant_calibration_dataset",
+        "dataset.test",
+        "dataset.test.target_size",
+        "dataset.train",
+        "dataset.train.target_size",
+        "dataset.val",
+        "dataset.val.target_size",
+        "evaluate",
+        "evaluate.gpu_ids",
+        "export",
+        "gen_trt_engine",
+        "gen_trt_engine.tensorrt",
+        "gen_trt_engine.tensorrt.layers_precision",
+        "inference",
+        "inference.gpu_ids",
+        "model",
+        "model.backbone",
+        "model.backbone.efficientvit",
+        "model.backbone.efficientvit.out_features",
+        "model.backbone.efficientvit.out_indices",
+        "model.backbone.swin",
+        "model.backbone.swin.depths",
+        "model.backbone.swin.num_heads",
+        "model.backbone.swin.out_features",
+        "model.backbone.swin.out_indices",
+        "model.mask_former",
+        "model.sem_seg_head",
+        "model.sem_seg_head.deformable_transformer_encoder_in_features",
+        "quantize",
+        "quantize.backend_kwargs",
+        "quantize.layers",
+        "quantize.skip_names",
+        "train",
+        "train.cudnn",
+        "train.freeze",
+        "train.gpu_ids",
+        "train.optim",
+        "train.optim.milestones",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "mask2former",
+      "path": "schemas/inference.schema.json",
+      "popular": {
+        "evaluate": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "gen_trt_engine": {
+          "batch_size": -1,
+          "gpu_id": 0,
+          "tensorrt": {
+            "max_batch_size": 1,
+            "min_batch_size": 1,
+            "opt_batch_size": 1
+          }
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "model": {
+          "mask_former": {
+            "class_weight": 2.0,
+            "dice_weight": 5.0,
+            "hidden_dim": 256,
+            "importance_sample_ratio": 0.75,
+            "mask_weight": 5.0,
+            "nheads": 8,
+            "num_object_queries": 100
+          },
+          "sem_seg_head": {
+            "convs_dim": 256,
+            "mask_dim": 256,
+            "transformer_enc_layers": 6
+          }
+        },
+        "train": {
+          "checkpoint_interval": 1,
+          "gpu_ids": [
+            0
+          ],
+          "num_epochs": 10,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "optim": {
+            "backbone_multiplier": 0.1,
+            "momentum": 0.9,
+            "weight_decay": 0.05
+          },
+          "validation_interval": 1
+        }
+      },
+      "schema_action": "inference",
+      "spec_template": "references/spec_template_inference.yaml"
+    },
+    "quantize": {
+      "automl_default_parameters": [
+        "dataset.augmentation.test_max_size",
+        "dataset.augmentation.test_min_size",
+        "dataset.augmentation.train_max_size",
+        "model.mask_former.dec_layers",
+        "model.mask_former.hidden_dim",
+        "model.mask_former.num_object_queries",
+        "train.optim.backbone_multiplier",
+        "train.optim.lr",
+        "train.optim.momentum",
+        "train.optim.weight_decay"
+      ],
+      "automl_disabled_parameters": [
+        "dataset",
+        "dataset.augmentation",
+        "dataset.augmentation.train_crop_size",
+        "dataset.augmentation.train_min_size",
+        "dataset.pixel_mean",
+        "dataset.pixel_std",
+        "dataset.quant_calibration_dataset",
+        "dataset.test",
+        "dataset.test.target_size",
+        "dataset.train",
+        "dataset.train.target_size",
+        "dataset.val",
+        "dataset.val.target_size",
+        "evaluate",
+        "evaluate.gpu_ids",
+        "export",
+        "gen_trt_engine",
+        "gen_trt_engine.tensorrt",
+        "gen_trt_engine.tensorrt.layers_precision",
+        "inference",
+        "inference.gpu_ids",
+        "model",
+        "model.backbone",
+        "model.backbone.efficientvit",
+        "model.backbone.efficientvit.out_features",
+        "model.backbone.efficientvit.out_indices",
+        "model.backbone.swin",
+        "model.backbone.swin.depths",
+        "model.backbone.swin.num_heads",
+        "model.backbone.swin.out_features",
+        "model.backbone.swin.out_indices",
+        "model.mask_former",
+        "model.sem_seg_head",
+        "model.sem_seg_head.deformable_transformer_encoder_in_features",
+        "quantize",
+        "quantize.backend_kwargs",
+        "quantize.layers",
+        "quantize.skip_names",
+        "train",
+        "train.cudnn",
+        "train.freeze",
+        "train.gpu_ids",
+        "train.optim",
+        "train.optim.milestones",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "mask2former",
+      "path": "schemas/quantize.schema.json",
+      "popular": {
+        "evaluate": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "gen_trt_engine": {
+          "batch_size": -1,
+          "gpu_id": 0,
+          "tensorrt": {
+            "max_batch_size": 1,
+            "min_batch_size": 1,
+            "opt_batch_size": 1
+          }
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "model": {
+          "mask_former": {
+            "class_weight": 2.0,
+            "dice_weight": 5.0,
+            "hidden_dim": 256,
+            "importance_sample_ratio": 0.75,
+            "mask_weight": 5.0,
+            "nheads": 8,
+            "num_object_queries": 100
+          },
+          "sem_seg_head": {
+            "convs_dim": 256,
+            "mask_dim": 256,
+            "transformer_enc_layers": 6
+          }
+        },
+        "train": {
+          "checkpoint_interval": 1,
+          "gpu_ids": [
+            0
+          ],
+          "num_epochs": 10,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "optim": {
+            "backbone_multiplier": 0.1,
+            "momentum": 0.9,
+            "weight_decay": 0.05
+          },
+          "validation_interval": 1
+        }
+      },
+      "schema_action": "quantize",
+      "spec_template": "references/spec_template_quantize.yaml"
+    },
+    "train": {
+      "automl_default_parameters": [
+        "dataset.augmentation.test_max_size",
+        "dataset.augmentation.test_min_size",
+        "dataset.augmentation.train_max_size",
+        "model.mask_former.dec_layers",
+        "model.mask_former.hidden_dim",
+        "model.mask_former.num_object_queries",
+        "train.optim.backbone_multiplier",
+        "train.optim.lr",
+        "train.optim.momentum",
+        "train.optim.weight_decay"
+      ],
+      "automl_disabled_parameters": [
+        "dataset",
+        "dataset.augmentation",
+        "dataset.augmentation.train_crop_size",
+        "dataset.augmentation.train_min_size",
+        "dataset.pixel_mean",
+        "dataset.pixel_std",
+        "dataset.quant_calibration_dataset",
+        "dataset.test",
+        "dataset.test.target_size",
+        "dataset.train",
+        "dataset.train.target_size",
+        "dataset.val",
+        "dataset.val.target_size",
+        "evaluate",
+        "evaluate.gpu_ids",
+        "export",
+        "gen_trt_engine",
+        "gen_trt_engine.tensorrt",
+        "gen_trt_engine.tensorrt.layers_precision",
+        "inference",
+        "inference.gpu_ids",
+        "model",
+        "model.backbone",
+        "model.backbone.efficientvit",
+        "model.backbone.efficientvit.out_features",
+        "model.backbone.efficientvit.out_indices",
+        "model.backbone.swin",
+        "model.backbone.swin.depths",
+        "model.backbone.swin.num_heads",
+        "model.backbone.swin.out_features",
+        "model.backbone.swin.out_indices",
+        "model.mask_former",
+        "model.sem_seg_head",
+        "model.sem_seg_head.deformable_transformer_encoder_in_features",
+        "quantize",
+        "quantize.backend_kwargs",
+        "quantize.layers",
+        "quantize.skip_names",
+        "train",
+        "train.cudnn",
+        "train.freeze",
+        "train.gpu_ids",
+        "train.optim",
+        "train.optim.milestones",
+        "wandb",
+        "wandb.tags"
+      ],
+      "core_module": "mask2former",
+      "path": "schemas/train.schema.json",
+      "popular": {
+        "evaluate": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "gen_trt_engine": {
+          "batch_size": -1,
+          "gpu_id": 0,
+          "tensorrt": {
+            "max_batch_size": 1,
+            "min_batch_size": 1,
+            "opt_batch_size": 1
+          }
+        },
+        "inference": {
+          "gpu_ids": [
+            0
+          ],
+          "num_gpus": 1,
+          "num_nodes": 1
+        },
+        "model": {
+          "mask_former": {
+            "class_weight": 2.0,
+            "dice_weight": 5.0,
+            "hidden_dim": 256,
+            "importance_sample_ratio": 0.75,
+            "mask_weight": 5.0,
+            "nheads": 8,
+            "num_object_queries": 100
+          },
+          "sem_seg_head": {
+            "convs_dim": 256,
+            "mask_dim": 256,
+            "transformer_enc_layers": 6
+          }
+        },
+        "train": {
+          "checkpoint_interval": 1,
+          "gpu_ids": [
+            0
+          ],
+          "num_epochs": 10,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "optim": {
+            "backbone_multiplier": 0.1,
+            "momentum": 0.9,
+            "weight_decay": 0.05
+          },
+          "validation_interval": 1
+        }
+      },
+      "schema_action": "train",
+      "spec_template": "references/spec_template_train.yaml"
+    }
+  },
+  "automl_enabled": true,
+  "failures": {},
+  "model": "mask2former",
+  "network_arch": "mask2former",
+  "schema_version": 1
+}

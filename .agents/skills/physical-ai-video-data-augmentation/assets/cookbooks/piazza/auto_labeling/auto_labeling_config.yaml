@@ -1,0 +1,116 @@
+# Auto-labeling pipeline config for piazza dataset.
+# Scene: fixed elevated camera overlooking an outdoor European cobblestone piazza.
+# Pedestrians, outdoor café diners, parked motorcycles/scooters, historic stone buildings.
+# Primary output: structured VLM QA via vlm_json (pedestrian/motorcycle events, near-misses)
+#
+# Delta from base auto_labeling.yaml:
+#   - detection_and_tracking.classes: person + motorcycle (primary subjects in piazza)
+#   - detection_and_tracking.max_age: 30 (relatively static scene, subjects don't re-enter)
+#   - vlm_json.frame_fps: 3 (slow-moving pedestrians; lower fps saves tokens)
+#   - mcq_generation.window_metadata_extraction.sampling_fps: 3
+
+pipeline:
+  model_cache_path: ckpts
+  gpu_ids: all
+  use_multi_gpu: false
+  empty_output_policy: warn
+  daft_validate: true
+
+# list format required — CLI overrides data.0.inputs.video_path and data.0.output.out_dir
+data:
+  - inputs:
+      video_path: ../input
+    output:
+      out_dir: ../output/pipeline_full_piazza
+      config_path: ${.out_dir}/config.yaml
+
+endpoints:
+  vlm:
+    url: ""
+    model: ""
+  llm:
+    url: ""
+    model: ""
+
+super_resolution:
+  enabled: false
+  # Elevated piazza camera; wide-angle overhead view — SR not beneficial.
+  variant: seedvr2_7b
+  seed: 42
+  res_h: 720
+  res_w: 1280
+  window_frames: 128
+  overlap_frames: 64
+  window_timeout: 3600
+
+detection_and_tracking:
+  enabled: true
+  model: rfdetr
+  threshold: 0.2
+  iou_threshold: 0.3
+  # COCO-80 classes for piazza monitoring.
+  # person: pedestrians walking through the square and diners seated at café tables.
+  # motorcycle: parked and moving motorcycles/scooters in the piazza.
+  classes: ["person", "motorcycle"]
+  tracker: boosttrack
+  use_reid: true
+  reid_weights: ""
+  per_class: true
+  asso_func: diou
+  # Lower max_age: relatively static scene; pedestrians exit and rarely re-enter.
+  min_hits: 3
+  max_age: 30
+  min_track_frames: 5
+  save_vis: false
+  save_video: true
+  save_video_red_id: true
+  save_rgb: false
+  cross_class_iou_threshold: 0.9
+  dedup_iou_threshold: 0.3
+  dedup_priority: prev_iou
+
+vlm_json:
+  enabled: false
+  split_json_calls: true
+  # Piazza safety prompt — two-JSON format (JSON 1: metadata, JSON 2: events array).
+  # sub_category values: collision (motorcycle_pedestrian_contact, pedestrian_collision),
+  #   near_miss (near_miss_motorcycle, pedestrian_close_call),
+  #   anomaly (erratic_motorcycle, pathway_obstruction),
+  #   normal_traffic (pedestrian_flow, outdoor_dining, motorcycle_parking).
+  scene_prompt_file:
+  events_prompt_file:
+  frame_fps: 3        # slow-moving pedestrians; lower fps saves tokens
+  resolution: 360
+  max_frames: 24
+  max_tokens: 8192
+  timeout: 600
+  rate_limit: 0
+
+mcq_generation:
+  enabled: true
+  mode: question-driven-vlm-llm
+  window_metadata_extraction:
+    question_bank_file: /workspace/configs/window_default.json
+    scene_prompt_file: null
+    mcq_prompt_file: null
+    qd_vlm_scene_prompt_template_file: null
+    qd_mcq_mapper_prompt_template_file: null
+    window_frames: 60
+    single_window: false
+    sampling_fps: 3      # match vlm_json.frame_fps for consistent temporal coverage
+    resolution: 480
+    max_frames: 100
+    vlm_max_tokens: 8192
+    llm_max_tokens: 8192
+    timeout: 600
+    rate_limit: 0
+    aggregate_windows: true
+    write_empty_mcq_marker: true
+    skip_existing: false
+    retry_missing_questions: true
+    retry_missing_max_rounds: 2
+    vlm_verify_enabled: true
+    vlm_verify_apply_corrections: false
+    vlm_verify_prompt_file: null
+    vlm_verify_max_tokens: 8192
+    vlm_verify_temperature: 0.0

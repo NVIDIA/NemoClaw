@@ -1,0 +1,42 @@
+type: platform
+required_credentials: []  # Auth via kubeconfig (~/.kube/config) or in-cluster service account
+optional_credentials:
+- name: TAO_K8S_NAMESPACE
+  source: env_var
+  description: Default namespace for Job submission (defaults to 'default').
+- name: TAO_K8S_CONTEXT
+  source: env_var
+  description: kubeconfig context name to switch clusters.
+- name: KUBECONFIG
+  source: env_var
+  description: Alternate kubeconfig path (defaults to ~/.kube/config).
+- name: NGC_KEY
+  source: env_var
+  description: For nvcr.io image pulls (use with image_pull_secret).
+- name: ACCESS_KEY
+  source: env_var
+- name: SECRET_KEY
+  source: env_var
+- name: S3_ENDPOINT_URL
+  source: env_var
+- name: S3_BUCKET_NAME
+  source: env_var
+- name: CLOUD_REGION
+  source: env_var
+- name: HF_TOKEN
+  source: env_var
+resource_defaults:
+  ttl_seconds_after_finished: 3600  # auto-clean Jobs 1h after terminal state
+  backoff_limit: 0  # no auto-retry; surface failure to the user
+  restart_policy: Never
+  num_nodes: 1  # single-pod only in v1
+cloud_storage:
+  protocol: aws
+  uri_format: s3://{bucket_name}/{path}
+  metadata_key: aws
+sdk_module: tao_sdk.platforms.kubernetes.sdk
+features:
+- gpu-scheduling
+- failure-analysis
+- log-streaming
+- pod-diagnostics

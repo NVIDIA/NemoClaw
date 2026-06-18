@@ -1,0 +1,7 @@
+results_dir: /results
+inference:
+  trt_engine: /results/classification-pyt.engine
+  batch_size: 1
+dataset:
+  test_dataset:
+    images_dir: /data/images

@@ -1,0 +1,16 @@
+[
+  {
+    "id": "hsb-setup-001",
+    "question": "Run /hsb-setup on my AGX Orin. My devkit is ubuntu@hq-agx-orin9 with REMOTE_ROOT=/home/ubuntu/anishag/hololink.",
+    "expected_skill": "hsb-setup",
+    "ground_truth": "The agent reads the hsb-setup SKILL.md, prints the resolved SSH_TARGET and REMOTE_ROOT, identifies AGX Orin as always using --igpu (no question needed), presents the full 6-phase plan, runs the token-budget preflight, and asks for user confirmation before starting Phase 0.",
+    "expected_behavior": [
+      "The agent reads the hsb-setup SKILL.md before taking any action",
+      "The agent prints the resolved SSH_TARGET (ubuntu@hq-agx-orin9) and REMOTE_ROOT (/home/ubuntu/anishag/hololink)",
+      "The agent identifies AGX Orin as always using --igpu without asking the user",
+      "The agent presents the full phase plan (Phases 0-6) before starting",
+      "The agent runs the token-budget preflight check",
+      "The agent asks for user confirmation before starting Phase 0"
+    ]
+  }
+]

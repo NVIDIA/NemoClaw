@@ -1,0 +1,20 @@
+model:
+  load_pruned_graph: false
+  pruned_graph_path: ''
+inference:
+  checkpoint: <required>
+  input_folder: /data/images
+  width: 1280
+  height: 736
+  img_mode: BGR
+  polygon: false
+  show: false
+  results_dir: /results
+  post_processing:
+    type: SegDetectorRepresenter
+    args:
+      thresh: 0.3
+      box_thresh: 0.55
+      max_candidates: 1000
+      unclip_ratio: 1.5
+  trt_engine: /results/ocdnet.engine

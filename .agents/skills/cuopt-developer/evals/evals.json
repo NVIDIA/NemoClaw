@@ -1,0 +1,44 @@
+[
+  {
+    "id": "dev-eval-001-dco-signoff-and-pr-workflow",
+    "question": "I made two commits to fix a bug but forgot to add the DCO sign-off to both. How do I fix this before opening a PR, and what is the correct PR workflow for contributing to cuOpt as an agent?",
+    "expected_skill": "cuopt-developer",
+    "expected_script": null,
+    "ground_truth": "To fix missing DCO sign-off: for the most recent commit use 'git commit --amend -s'; for multiple older commits use an interactive rebase ('git rebase -i HEAD~N') and add the Signed-off-by line to each. Never use --no-verify to bypass the DCO check. For the PR workflow: contributors (including agents) must use the fork workflow — never push branches directly to NVIDIA/cuopt. Add your fork as a remote ('git remote add fork https://github.com/<username>/cuopt.git'), push the branch there, then open a PR from the fork to the upstream base branch. When an AI agent opens the PR it must be a draft PR ('gh pr create --draft') so the developer can review before reviewers are pinged. The developer marks it ready for review when satisfied.",
+    "expected_behavior": [
+      "States 'git commit --amend -s' fixes the most recent commit's missing sign-off",
+      "States an interactive rebase is needed to fix sign-off on multiple older commits",
+      "Explicitly says --no-verify must NOT be used to bypass the DCO check",
+      "States contributors must use the fork workflow — never push to the upstream repo directly",
+      "States that agent-created PRs must be draft PRs (gh pr create --draft)"
+    ]
+  },
+  {
+    "id": "dev-eval-002-add-dependency-wrong-file",
+    "question": "I need to add a new Python test dependency to cuOpt. A colleague says I should edit conda/environments/all_cuda-132_arch-x86_64.yaml directly. Is that correct? What is the right approach?",
+    "expected_skill": "cuopt-developer",
+    "expected_script": null,
+    "ground_truth": "The colleague is wrong. All cuOpt dependencies are managed exclusively through the top-level dependencies.yaml — the conda/environments/*.yaml and pyproject.toml files are auto-generated and must never be edited by hand. The correct steps are: (1) Find the appropriate group in dependencies.yaml (for a Python test dependency, likely test_python_common). (2) Add the package entry under the right output_types. (3) Run 'pre-commit run --all-files' — the RAPIDS dependency-file-generator hook regenerates conda/environments/*.yaml and pyproject.toml automatically. (4) Verify the regenerated files were updated and commit them together with dependencies.yaml.",
+    "expected_behavior": [
+      "States that directly editing conda/environments/*.yaml is wrong",
+      "Names dependencies.yaml as the only file that should be edited by hand",
+      "Mentions finding the correct group (e.g., test_python_common) for a test dependency",
+      "States that 'pre-commit run --all-files' regenerates the downstream files via the RAPIDS hook",
+      "Mentions committing the regenerated files together with dependencies.yaml"
+    ]
+  },
+  {
+    "id": "dev-eval-003-cuda-memory-and-error-handling",
+    "question": "I am adding a new C++ function to cuOpt that allocates a GPU buffer and calls a CUDA kernel. A colleague wrote the allocation as 'int* d_buf = new int[N];' and error-checked the kernel with 'if (cudaGetLastError() != cudaSuccess) return;'. What is wrong with both, and what should they be replaced with?",
+    "expected_skill": "cuopt-developer",
+    "expected_script": null,
+    "ground_truth": "Both are wrong. Raw 'new'/'delete' for GPU memory is forbidden in cuOpt — RMM (RAPIDS Memory Manager) allocators must be used instead. The correct pattern is to use rmm::device_uvector or rmm::device_buffer (e.g., rmm::device_uvector<int> d_buf(N, stream)) which handles allocation and deallocation safely and respects CUDA stream ordering. For CUDA error checking, bare 'if (cudaGetLastError() != cudaSuccess) return;' is insufficient — cuOpt uses RAFT_CUDA_TRY which throws on error and provides a proper message: RAFT_CUDA_TRY(cudaMemcpy(...)). Runtime assertion failures should use CUOPT_EXPECTS(condition, \"message\") rather than manual if-checks. The device buffer variable name should follow the d_ prefix convention (e.g. d_buf) which is already done here, but the allocation pattern must change.",
+    "expected_behavior": [
+      "States that raw 'new'/'delete' for GPU memory is forbidden — RMM allocators must be used",
+      "Names rmm::device_uvector or rmm::device_buffer as the correct replacement",
+      "States that RAFT_CUDA_TRY is the correct macro for CUDA error checking",
+      "Mentions CUOPT_EXPECTS for runtime assertion-style error handling",
+      "Does not suggest keeping 'new int[N]' with any workaround — the replacement is mandatory"
+    ]
+  }
+]

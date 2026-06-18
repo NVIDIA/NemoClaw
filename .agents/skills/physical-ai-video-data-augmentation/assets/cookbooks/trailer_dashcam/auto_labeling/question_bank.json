@@ -1,0 +1,89 @@
+{
+  "name": "window_default_trailer_dashcam",
+  "questions": [
+    {
+      "id": "1_1",
+      "question": "Is there a collision or physical contact between the trailer and another vehicle, person, or fixed object?",
+      "options": ["Yes", "No"],
+      "aggregation": "any"
+    },
+    {
+      "id": "1_2",
+      "question": "Does any vehicle approach dangerously close to the trailer without contact (near-miss)?",
+      "options": ["Yes", "No"],
+      "aggregation": "any"
+    },
+    {
+      "id": "1_10",
+      "question": "What type of contact or near-miss occurred?",
+      "options": [
+        "A. Rear-end collision from following vehicle",
+        "B. Contact during backing maneuver",
+        "C. Near-miss from close following",
+        "D. Near-miss during lane change"
+      ],
+      "aggregation": "majority",
+      "include_if": { "1_1": "Yes" }
+    },
+    {
+      "id": "2_1",
+      "question": "What are the current weather conditions in the scene?",
+      "options": [
+        "A. Clear",
+        "B. Overcast",
+        "C. Rain"
+      ],
+      "aggregation": "majority"
+    },
+    {
+      "id": "2_2",
+      "question": "What time of day best describes the lighting conditions?",
+      "options": [
+        "A. Morning",
+        "B. Midday",
+        "C. Evening"
+      ],
+      "aggregation": "majority"
+    },
+    {
+      "id": "4_1",
+      "question": "Does the trailer exhibit visible lateral sway or fishtailing?",
+      "options": ["Yes", "No"],
+      "aggregation": "any"
+    },
+    {
+      "id": "4_2",
+      "question": "Is there a visible issue with the tow hitch or coupler (excessive bounce, abnormal angle, loose chains)?",
+      "options": ["Yes", "No"],
+      "aggregation": "any"
+    },
+    {
+      "id": "4_3",
+      "question": "Does the trailer pass dangerously close to a fixed object (post, curb, parked car) during a turn or maneuver?",
+      "options": ["Yes", "No"],
+      "aggregation": "any"
+    },
+    {
+      "id": "5_1",
+      "question": "What is the towing vehicle currently doing?",
+      "options": [
+        "A. Moving forward on a road",
+        "B. Backing up",
+        "C. Stationary"
+      ],
+      "aggregation": "majority"
+    },
+    {
+      "id": "5_2",
+      "question": "Are other vehicles visible behind or beside the trailer?",
+      "options": ["Yes", "No"],
+      "aggregation": "any"
+    },
+    {
+      "id": "5_3",
+      "question": "Is the road surface wet or showing signs of rain?",
+      "options": ["Yes", "No"],
+      "aggregation": "any"
+    }
+  ]
+}

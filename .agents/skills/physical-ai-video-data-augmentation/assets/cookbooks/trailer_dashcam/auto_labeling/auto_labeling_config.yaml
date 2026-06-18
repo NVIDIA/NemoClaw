@@ -1,0 +1,121 @@
+# Auto-labeling pipeline config for trailer_dashcam dataset.
+# Scene: rear-facing wide-angle dashcam on a vehicle towing an enclosed trailer.
+# The trailer and hitch dominate the frame; other vehicles, pedestrians, and road
+# surroundings are visible behind and beside the trailer.
+# Primary output: structured VLM QA via vlm_json (towing safety events, near-misses)
+#
+# Delta from base auto_labeling.yaml:
+#   - detection_and_tracking.classes: car, truck, person, bicycle, motorcycle (road users behind trailer)
+#   - detection_and_tracking.max_age: 45 (vehicles pass behind trailer, may re-appear)
+#   - vlm_json.frame_fps: 6 (vehicle speeds; need to catch rapid sway or close-following)
+#   - mcq_generation.window_metadata_extraction.sampling_fps: 6
+
+pipeline:
+  model_cache_path: ckpts
+  gpu_ids: all
+  use_multi_gpu: false
+  empty_output_policy: warn
+  daft_validate: true
+
+# list format required — CLI overrides data.0.inputs.video_path and data.0.output.out_dir
+data:
+  - inputs:
+      video_path: ../input
+    output:
+      out_dir: ../output/pipeline_full_trailer_dashcam
+      config_path: ${.out_dir}/config.yaml
+
+endpoints:
+  vlm:
+    url: ""
+    model: ""
+  llm:
+    url: ""
+    model: ""
+
+super_resolution:
+  enabled: false
+  # Rear dashcam with wide-angle lens; trailer dominates the frame — SR not beneficial.
+  variant: seedvr2_7b
+  seed: 42
+  res_h: 720
+  res_w: 1280
+  window_frames: 128
+  overlap_frames: 64
+  window_timeout: 3600
+
+detection_and_tracking:
+  enabled: true
+  model: rfdetr
+  threshold: 0.2
+  iou_threshold: 0.3
+  # COCO-80 classes for trailer-towing dashcam monitoring.
+  # car: following or passing vehicles visible behind/beside the trailer.
+  # truck: large vehicles following or the trailer itself (may be detected as truck).
+  # person: pedestrians near the road, especially during backing maneuvers.
+  # bicycle: cyclists sharing the road behind the trailer.
+  # motorcycle: motorcyclists visible behind or passing the trailer.
+  classes: ["car", "truck", "person", "bicycle", "motorcycle"]
+  tracker: boosttrack
+  use_reid: true
+  reid_weights: ""
+  per_class: true
+  asso_func: diou
+  # Moderate max_age: vehicles behind the trailer may be occluded by the trailer body
+  # then re-appear on either side.
+  min_hits: 3
+  max_age: 45
+  min_track_frames: 5
+  save_vis: false
+  save_video: true
+  save_video_red_id: true
+  save_rgb: false
+  cross_class_iou_threshold: 0.9
+  dedup_iou_threshold: 0.3
+  dedup_priority: prev_iou
+
+vlm_json:
+  enabled: false
+  split_json_calls: true
+  # Trailer dashcam safety prompt — two-JSON format (JSON 1: metadata, JSON 2: events array).
+  # sub_category values: collision (rear_collision, backing_contact),
+  #   near_miss (near_miss_following, near_miss_lane_change, obstacle_proximity),
+  #   anomaly (trailer_sway, hitch_issue),
+  #   normal_traffic (normal_towing, normal_backing).
+  scene_prompt_file:
+  events_prompt_file:
+  frame_fps: 6        # vehicle speeds; higher fps catches rapid sway and close-following
+  resolution: 360
+  max_frames: 24
+  max_tokens: 8192
+  timeout: 600
+  rate_limit: 0
+
+mcq_generation:
+  enabled: true
+  mode: question-driven-vlm-llm
+  window_metadata_extraction:
+    question_bank_file: /workspace/configs/window_default.json
+    scene_prompt_file: null
+    mcq_prompt_file: null
+    qd_vlm_scene_prompt_template_file: null
+    qd_mcq_mapper_prompt_template_file: null
+    window_frames: 60
+    single_window: false
+    sampling_fps: 6      # match vlm_json.frame_fps for consistent temporal coverage
+    resolution: 480
+    max_frames: 100
+    vlm_max_tokens: 8192
+    llm_max_tokens: 8192
+    timeout: 600
+    rate_limit: 0
+    aggregate_windows: true
+    write_empty_mcq_marker: true
+    skip_existing: false
+    retry_missing_questions: true
+    retry_missing_max_rounds: 2
+    vlm_verify_enabled: true
+    vlm_verify_apply_corrections: false
+    vlm_verify_prompt_file: null
+    vlm_verify_max_tokens: 8192
+    vlm_verify_temperature: 0.0

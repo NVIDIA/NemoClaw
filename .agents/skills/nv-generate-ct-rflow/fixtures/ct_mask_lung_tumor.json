@@ -1,0 +1,8 @@
+{
+  "_comment": "Standalone raw MAISI mask generation request for the lung tumor label-space diagnostic. Uses scale 0.5 because smaller lung-tumor requests can produce absent or tiny label-23 components in some seeds.",
+  "num_output_samples": 1,
+  "controllable_anatomy_size": [["lung tumor", 0.5]],
+  "output_size": [256, 256, 256],
+  "spacing": [1.5, 1.5, 1.5],
+  "mask_generation_num_inference_steps": 1000
+}

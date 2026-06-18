@@ -1,0 +1,169 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+id: medagent.nv_generate_vae_finetune
+version: 0.1.0
+upstream_refs:
+  - kind: github_repo
+    name: NVIDIA-Medtech/NV-Generate-CTMR
+    repo_url: https://github.com/NVIDIA-Medtech/NV-Generate-CTMR
+    git_commit: 61c4ec709b84cad468852243c48e250bec732074
+    notes: uses existing upstream VAE configs plus scripts/transforms.py and scripts/utils.py; upstream has no scripts/train_vae.py entrypoint
+license: Apache-2.0
+intended_use:
+  summary: >
+    Engineering-time wrapper around NVIDIA-Medtech/NV-Generate-CTMR's MAISI
+    VAE finetuning workflow. Validates a MONAI-style datalist, stages VAE
+    configs and output paths, and runs a skill-owned VAE training runner that
+    uses existing upstream transforms, network definitions, and utility APIs.
+  scope: development
+  not_for:
+    - clinical deployment
+    - clinical interpretation
+    - autonomous diagnosis
+    - regulatory submission
+    - production training-data approval
+inputs:
+  - name: datalist
+    type: file_path
+    formats: [json]
+    description: MONAI-style JSON with non-empty `training[]` and `validation[]` or `testing[]` entries. Each entry has a relative `image` path and optional `class` or `modality` of `ct` or `mri`.
+  - name: data_base_dir
+    type: dir_path
+    description: Directory used to resolve datalist image paths.
+  - name: preflight
+    type: bool
+    description: Validate wrapper inputs, upstream discovery, and staged configs without launching GPU training.
+    optional: true
+    default: false
+outputs:
+  - name: autoencoder_checkpoint
+    type: file_path
+    formats: [pytorch]
+    description: Finetuned VAE/autoencoder checkpoint produced by the skill runner.
+    optional_when: preflight == true
+  - name: discriminator_checkpoint
+    type: file_path
+    formats: [pytorch]
+    description: Discriminator checkpoint from adversarial VAE training.
+    optional_when: preflight == true
+  - name: result_json
+    type: json
+    schema: validators/output_schema.json
+runtime:
+  language: python
+  python: ">=3.10"
+  entrypoint: scripts/run_vae_finetune.py
+  args:
+    - "${python}"
+    - "${script}"
+    - "${fixture}"
+    - "--data-base-dir"
+    - "${skill_dir}/fixtures/preflight_dataset"
+    - "--output-dir"
+    - "${out}/artifacts"
+    - "--preflight"
+  dependencies:
+    nibabel: ">=4.0"
+    numpy: ">=1.23"
+    torch: ">=2.1"
+    monai: ">=1.5"
+  side_effects:
+    pip_packages:
+      - nibabel>=4.0
+      - numpy>=1.23
+      - torch>=2.1
+      - monai>=1.5
+      - scipy>=1.10
+      - scikit-image>=0.20
+      - einops>=0.7
+      - huggingface_hub>=0.20
+      - tqdm>=4.65
+      - fire>=0.5
+      - tensorboard>=2.14
+      - lpips>=0.1
+      - PyYAML>=6.0
+    local_writes:
+      - {path: "<caller-provided --output-dir>", approx_mb_max: 20000}
+    home_writes:
+      - {path: ~/.cache/huggingface/, approx_mb_max: 6000}
+      - {path: ~/.cache/torch/, approx_mb_max: 2000}
+    network_endpoints:
+      - https://huggingface.co
+      - https://github.com
+      - https://download.pytorch.org
+    requires_docker: false
+    requires_gpu: cuda
+    environment:
+      clean_environment_required: false
+      clean_environment_recommended: true
+      modifies_active_python_environment: true
+      user_environment_modification_ok: true
+      recommended_isolation: fresh venv or container for real training
+    env_required: []
+    env_optional:
+      - NV_GENERATE_ROOT
+      - CUDA_VISIBLE_DEVICES
+  external_assets:
+    - kind: upstream_repo
+      repo_url: https://github.com/NVIDIA-Medtech/NV-Generate-CTMR
+      install_path: $NV_GENERATE_ROOT
+      install_command: >
+        git clone https://github.com/NVIDIA-Medtech/NV-Generate-CTMR.git $NV_GENERATE_ROOT &&
+        pip install -r $NV_GENERATE_ROOT/requirements.txt
+      contains:
+        - scripts/download_model_data.py
+        - scripts/transforms.py
+        - scripts/utils.py
+        - configs/config_network_rflow.json
+        - configs/environment_maisi_vae_train.json
+        - configs/config_maisi_vae_train.json
+limitations:
+  - >
+    Upstream provides the VAE tutorial as a notebook and reusable helper APIs,
+    but no dedicated `scripts.train_vae` command. This skill owns the runner
+    glue and delegates transforms, network construction, KL loss, and dynamic
+    inference to the upstream APIs.
+  - >
+    Preflight fixture does not contain NIfTI data. Full evidence requires a
+    user-supplied CT/MRI training and validation dataset, CUDA, and model weights.
+  - >
+    The wrapper records command provenance and artifact accounting; it does
+    not validate anatomical realism, reconstruction quality, or downstream
+    diffusion-model utility.
+validation:
+  expected_runtime_seconds:
+    min: 0.0
+    max: 30.0
+    inference_path: runtime.subprocess_seconds
+  sanity_checks:
+    - {path: skill, eq: nv_generate_vae_finetune}
+    - {path: model, eq: maisi-vae}
+    - {path: runtime.preflight_only, eq: true}
+    - {path: invocation.official_entrypoint, eq: "python skills/nv-generate-vae-finetune/scripts/run_vae_finetune.py"}
+    - {path: invocation.exit_code, eq: 0}
+    - {path: input.training_cases, gte: 1}
+    - {path: input.validation_cases, gte: 1}
+  expected_cost:
+    wall_seconds: {max: 30}
+    cpu_seconds: {max: 60}
+    rss_mb_peak: {max: 1000}
+  reproducibility:
+    mode: preflight
+    fixture: fixtures/preflight_datalist.json
+    runs: 2
+    reason: >
+      Full VAE finetuning requires user NIfTI data, CUDA, and model weights.
+      Repository verification covers the declared preflight boundary and output schema.

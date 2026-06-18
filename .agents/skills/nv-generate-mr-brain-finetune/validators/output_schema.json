@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "NVGenerateMRBrainFinetuneOutput",
+  "type": "object",
+  "required": [
+    "skill",
+    "model",
+    "model_repo",
+    "input",
+    "output",
+    "invocation",
+    "runtime",
+    "intended_use_disclaimer"
+  ],
+  "properties": {
+    "skill": {"const": "nv_generate_mr_brain_finetune"},
+    "model": {"const": "rflow-mr-brain"},
+    "model_repo": {"type": "string"},
+    "license": {"type": "string"},
+    "input": {
+      "type": "object",
+      "required": [
+        "data_base_dir",
+        "datalist",
+        "training_cases",
+        "testing_cases",
+        "modalities",
+        "default_modality",
+        "epochs",
+        "num_gpus",
+        "amp",
+        "modality",
+        "run_inference",
+        "train_from_scratch"
+      ],
+      "properties": {
+        "data_base_dir": {"type": "string"},
+        "datalist": {"type": "string"},
+        "training_cases": {"type": "integer", "minimum": 1},
+        "testing_cases": {"type": "integer", "minimum": 0},
+        "modalities": {"type": "array", "items": {"type": "string"}},
+        "default_modality": {"type": "string"},
+        "epochs": {"type": "integer", "minimum": 1},
+        "num_gpus": {"type": "integer", "minimum": 0},
+        "amp": {"type": "boolean"},
+        "modality": {"type": "string"},
+        "run_inference": {"type": "boolean"},
+        "train_from_scratch": {"type": "boolean"}
+      }
+    },
+    "output": {
+      "type": "object",
+      "required": [
+        "directory",
+        "artifacts_dir",
+        "workflow_summary",
+        "checkpoint",
+        "checkpoint_present",
+        "checkpoint_bytes",
+        "embedding_sidecars",
+        "num_embedding_sidecars",
+        "inference_outputs",
+        "num_inference_outputs",
+        "all_inference_outputs_present"
+      ],
+      "properties": {
+        "directory": {"type": "string"},
+        "artifacts_dir": {"type": "string"},
+        "workflow_summary": {"type": ["string", "null"]},
+        "checkpoint": {"type": ["string", "null"]},
+        "checkpoint_present": {"type": "boolean"},
+        "checkpoint_bytes": {"type": ["integer", "null"], "minimum": 0},
+        "embedding_sidecars": {"type": "array", "items": {"type": "string"}},
+        "num_embedding_sidecars": {"type": "integer", "minimum": 0},
+        "inference_outputs": {"type": "array", "items": {"type": "string"}},
+        "num_inference_outputs": {"type": "integer", "minimum": 0},
+        "all_inference_outputs_present": {"type": "boolean"}
+      }
+    },
+    "invocation": {
+      "type": "object",
+      "required": [
+        "official_entrypoint",
+        "upstream_root",
+        "upstream_commit",
+        "checked_upstream_roots",
+        "command",
+        "exit_code",
+        "subprocess_seconds"
+      ],
+      "properties": {
+        "official_entrypoint": {"type": "string"},
+        "upstream_root": {"type": ["string", "null"]},
+        "upstream_commit": {"type": "string"},
+        "checked_upstream_roots": {"type": "array", "items": {"type": "string"}},
+        "command": {"type": "array", "items": {"type": "string"}},
+        "command_plan": {"type": "array", "items": {"type": "array", "items": {"type": "string"}}},
+        "exit_code": {"type": "integer"},
+        "subprocess_seconds": {"type": "number"}
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "required": ["subprocess_seconds", "device", "preflight_only"],
+      "properties": {
+        "subprocess_seconds": {"type": "number"},
+        "device": {"type": "string"},
+        "preflight_only": {"type": "boolean"}
+      }
+    },
+    "logs": {
+      "type": "object",
+      "properties": {
+        "stdout_tail": {"type": "string"},
+        "stderr_tail": {"type": "string"}
+      }
+    },
+    "intended_use_disclaimer": {"type": "string"}
+  }
+}

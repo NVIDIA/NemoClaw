@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "NVSegmentCTMROutput",
+  "type": "object",
+  "required": ["skill", "model", "model_repo", "input", "output", "invocation", "runtime", "intended_use_disclaimer"],
+  "properties": {
+    "skill": {"const": "nv_segment_ctmr"},
+    "model": {"type": "string"},
+    "model_repo": {"type": "string"},
+    "license": {"type": "string"},
+    "input": {
+      "type": "object",
+      "required": ["path", "shape", "ndim", "spacing", "modality", "ground_truth_path"],
+      "properties": {
+        "path": {"type": "string"},
+        "shape": {"type": "array", "items": {"type": "integer"}},
+        "ndim": {"type": "integer"},
+        "spacing": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
+        "modality": {"enum": ["CT_BODY", "MRI_BODY", "MRI_BRAIN"]},
+        "ground_truth_path": {"type": ["string", "null"]}
+      }
+    },
+    "output": {
+      "type": "object",
+      "required": [
+        "path",
+        "shape",
+        "label_prompts_requested",
+        "label_ids_present",
+        "unexpected_label_ids",
+        "label_set_valid",
+        "label_map_loaded",
+        "label_map_source",
+        "class_counts",
+        "voxel_volume_ml",
+        "class_volumes_ml",
+        "any_label_present",
+        "geometry"
+      ],
+      "properties": {
+        "path": {"type": ["string", "null"]},
+        "shape": {"type": "array", "items": {"type": "integer"}},
+        "label_prompts_requested": {"type": ["array", "null"], "items": {"type": "integer"}},
+        "label_ids_present": {"type": "array", "items": {"type": "integer"}},
+        "unexpected_label_ids": {"type": "array", "items": {"type": "integer"}},
+        "label_set_valid": {"type": "boolean"},
+        "label_map_loaded": {"type": "boolean"},
+        "label_map_source": {"type": ["string", "null"]},
+        "class_counts": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}},
+        "voxel_volume_ml": {"type": ["number", "null"]},
+        "class_volumes_ml": {"type": "object", "additionalProperties": {"type": "number", "minimum": 0}},
+        "any_label_present": {"type": "boolean"},
+        "geometry": {
+          "type": "object",
+          "required": [
+            "input_shape",
+            "output_shape",
+            "shape_match",
+            "input_spacing",
+            "output_spacing",
+            "spacing_match",
+            "affine_max_abs_diff",
+            "affine_match"
+          ],
+          "properties": {
+            "input_shape": {"type": "array", "items": {"type": "integer"}},
+            "output_shape": {"type": "array", "items": {"type": "integer"}},
+            "shape_match": {"type": "boolean"},
+            "input_spacing": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
+            "output_spacing": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
+            "spacing_match": {"type": "boolean"},
+            "affine_max_abs_diff": {"type": ["number", "null"]},
+            "affine_match": {"type": "boolean"}
+          }
+        }
+      }
+    },
+    "invocation": {
+      "type": "object",
+      "required": ["official_entrypoint", "upstream_root", "config_file", "output_dir", "modality", "command", "exit_code", "model_inventory"],
+      "properties": {
+        "official_entrypoint": {"type": "string"},
+        "upstream_root": {"type": "string"},
+        "upstream_commit": {"type": "string"},
+        "config_file": {"type": "string"},
+        "output_dir": {"type": "string"},
+        "modality": {"enum": ["CT_BODY", "MRI_BODY", "MRI_BRAIN"]},
+        "label_prompts": {"type": ["array", "null"], "items": {"type": "integer"}},
+        "command": {"type": "array", "items": {"type": "string"}},
+        "exit_code": {"type": "integer"},
+        "model_inventory": {
+          "type": "object",
+          "required": ["model_pt_present"],
+          "properties": {
+            "model_pt_present": {"type": "boolean"},
+            "model_pt_path": {"type": "string"},
+            "label_map_present": {"type": "boolean"},
+            "label_map_path": {"type": ["string", "null"]}
+          }
+        }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "required": ["subprocess_seconds", "device"],
+      "properties": {
+        "subprocess_seconds": {"type": "number"},
+        "device": {"type": "string"}
+      }
+    },
+    "logs": {
+      "type": "object",
+      "properties": {
+        "stdout_tail": {"type": "string"},
+        "stderr_tail": {"type": "string"}
+      }
+    },
+    "intended_use_disclaimer": {"type": "string"}
+  }
+}

@@ -1,0 +1,52 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# One-shot Job that pre-downloads Qwen3-235B-A22B weights from HuggingFace into
+# qwen3-235b-pvc in HF cache layout.
+#
+# install.sh applies this after pvc.yaml and before nimservice.yaml, then waits
+# for condition=complete.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: qwen3-235b-hf-download
+  namespace: osmo-nims
+spec:
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 60
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: hf-download
+          image: python:3.11-slim
+          env:
+            - name: HF_HOME
+              value: /model-store/huggingface
+            - name: HF_HUB_ENABLE_HF_TRANSFER
+              value: "1"
+            - name: HF_HUB_DISABLE_XET
+              value: "1"
+            - name: HF_XET_DISABLE
+              value: "1"
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: hf-token-secret
+                  key: HF_TOKEN
+          command: ["bash", "-c"]
+          args:
+            - |
+              set -euo pipefail
+              pip install --quiet 'huggingface_hub[cli,hf_transfer]'
+              echo "=== Downloading Qwen/Qwen3-235B-A22B to $HF_HOME/hub ==="
+              hf download Qwen/Qwen3-235B-A22B
+              echo "=== Download complete ==="
+              du -sh "$HF_HOME"/hub/models--Qwen--Qwen3-235B-A22B || true
+          volumeMounts:
+            - name: model-store
+              mountPath: /model-store
+      volumes:
+        - name: model-store
+          persistentVolumeClaim:
+            claimName: qwen3-235b-pvc

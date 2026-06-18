@@ -1,0 +1,163 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "NVSegmentCTFinetuneOutput",
+  "type": "object",
+  "required": [
+    "skill", "model", "model_repo", "input", "environment",
+    "plan", "invocation", "output", "runtime", "intended_use_disclaimer"
+  ],
+  "properties": {
+    "skill": {"const": "nv_segment_ct_finetune"},
+    "model": {"type": "string"},
+    "model_repo": {"type": "string"},
+    "version": {"type": ["string", "number"]},
+    "input": {
+      "type": "object",
+      "required": ["dataset_dir", "datalist", "label_mappings", "smoke"],
+      "properties": {
+        "dataset_dir": {"type": "string"},
+        "datalist": {"type": "string"},
+        "n_train_cases": {"type": "integer", "minimum": 0},
+        "label_mappings": {
+          "type": "object",
+          "required": ["default"],
+          "properties": {
+            "default": {
+              "type": "array",
+              "items": {"type": "array", "items": {"type": "integer"}, "minItems": 2, "maxItems": 2}
+            }
+          }
+        },
+        "label_mapping_resolution": {"type": "object"},
+        "dataset_audit": {
+          "type": "object",
+          "properties": {
+            "datalist_source": {"type": "string"},
+            "n_pairs": {"type": "integer", "minimum": 0},
+            "shape_consistent": {"type": "boolean"},
+            "affine_max_drift_max": {"type": "number"},
+            "label_uniques_sampled": {"type": "array"},
+            "user_label_idx_present_in_sample": {"type": "boolean"},
+            "orientation_codes_seen": {"type": "array", "items": {"type": "string"}},
+            "orientation_consistent": {"type": "boolean"},
+            "image_dtypes_seen": {"type": "array"},
+            "label_dtypes_seen": {"type": "array"},
+            "image_hu_range_seen": {"type": ["array", "null"]},
+            "image_looks_like_ct": {"type": "boolean"},
+            "fg_volumes_ml_seen": {"type": "array"},
+            "fg_components_seen": {"type": "array"},
+            "anatomy": {"type": ["string", "null"]},
+            "anatomy_volume_all_in_range": {"type": ["boolean", "null"]},
+            "anatomy_components_all_match": {"type": ["boolean", "null"]},
+            "per_sample": {"type": "array"}
+          },
+          "additionalProperties": true
+        },
+        "smoke": {"type": "boolean"}
+      }
+    },
+    "environment": {
+      "type": "object",
+      "required": ["gpu_count", "gpu_total_mb", "gpu_free_mb", "host_ram_mb", "cuda_available"],
+      "properties": {
+        "gpu_count": {"type": "integer", "minimum": 0},
+        "gpu_name": {"type": "string"},
+        "gpu_total_mb": {"type": "integer", "minimum": 0},
+        "gpu_free_mb": {"type": "integer", "minimum": 0},
+        "host_ram_mb": {"type": "integer", "minimum": 0},
+        "cuda_available": {"type": "boolean"}
+      }
+    },
+    "plan": {
+      "type": "object",
+      "required": ["patch_size", "train_dataset_cache_rate", "epochs", "nproc_per_node", "multi_gpu", "rationale"],
+      "properties": {
+        "patch_size": {"type": "array", "items": {"type": "integer"}, "minItems": 3, "maxItems": 3},
+        "train_dataset_cache_rate": {"type": "number"},
+        "epochs": {"type": "integer", "minimum": 1},
+        "learning_rate": {"type": "number"},
+        "nproc_per_node": {"type": "integer", "minimum": 1},
+        "multi_gpu": {"type": "boolean"},
+        "rationale": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "invocation": {
+      "type": "object",
+      "required": ["command", "command_prefix", "config_stack", "multi_gpu", "cwd"],
+      "properties": {
+        "command": {"type": "string"},
+        "command_prefix": {"type": "string"},
+        "config_stack": {"type": "array", "items": {"type": "string"}, "minItems": 3},
+        "multi_gpu": {"type": "boolean"},
+        "cwd": {"type": "string"},
+        "override_file": {"type": "string"}
+      }
+    },
+    "output": {
+      "type": "object",
+      "required": ["finetuned_ckpt_exists", "oom", "train_loss_finite", "val_dice_per_epoch"],
+      "properties": {
+        "finetuned_ckpt": {"type": ["string", "null"]},
+        "finetuned_ckpt_exists": {"type": "boolean"},
+        "pretrained_ckpt": {"type": "string"},
+        "recommended_ckpt": {"type": ["string", "null"]},
+        "checkpoint_comparisons_to_pretrained": {"type": "object"},
+        "finetuned_ckpt_matches_pretrained_weights": {"type": ["boolean", "null"]},
+        "baseline_val_dice": {"type": ["number", "null"]},
+        "best_val_dice": {"type": ["number", "null"]},
+        "best_epoch_index": {"type": ["integer", "null"]},
+        "improvement_over_baseline": {"type": ["number", "null"]},
+        "regressed": {"type": ["boolean", "null"]},
+        "improved": {"type": ["boolean", "null"]},
+        "sanity_recovery_demonstrated": {"type": ["boolean", "null"]},
+        "training_start_val_dice": {"type": ["number", "null"]},
+        "training_best_val_dice": {"type": ["number", "null"]},
+        "training_best_epoch_index": {"type": ["integer", "null"]},
+        "formal_eval_enabled": {"type": "boolean"},
+        "formal_pretrained_val_dice": {"type": ["number", "null"]},
+        "formal_finetuned_val_dice": {"type": ["number", "null"]},
+        "formal_improvement_over_pretrained": {"type": ["number", "null"]},
+        "formal_regressed": {"type": ["boolean", "null"]},
+        "formal_improved": {"type": ["boolean", "null"]},
+        "val_dice_per_epoch": {"type": "array", "items": {"type": "number"}},
+        "train_loss_first": {"type": ["number", "null"]},
+        "train_loss_last": {"type": ["number", "null"]},
+        "train_loss_finite": {"type": "boolean"},
+        "oom": {"type": "boolean"}
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "required": ["wall_seconds", "return_code"],
+      "properties": {
+        "wall_seconds": {"type": "number", "minimum": 0},
+        "peak_gpu_mb": {"type": "integer", "minimum": 0},
+        "phase_peak_gpu_mb": {"type": "object"},
+        "return_code": {"type": "integer"},
+        "log_path": {"type": "string"},
+        "log_tail": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "cost": {
+      "type": "object",
+      "required": ["steps", "total_seconds"],
+      "properties": {
+        "steps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["step", "seconds"],
+            "properties": {
+              "step": {"type": "string"},
+              "label": {"type": "string"},
+              "seconds": {"type": "number", "minimum": 0},
+              "peak_gpu_mb": {"type": "integer", "minimum": 0}
+            }
+          }
+        },
+        "total_seconds": {"type": "number", "minimum": 0}
+      }
+    },
+    "intended_use_disclaimer": {"type": "string"}
+  }
+}

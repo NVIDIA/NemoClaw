@@ -1,0 +1,55 @@
+[
+  {
+    "id": "docs-positive-001",
+    "question": "I just added a new markdown file at docs/async_rl.md. What else do I need to update?",
+    "expected_skill": "nemo-rl-docs",
+    "ground_truth": "The agent loads the nemo-rl-docs skill and tells the user to update docs/index.md to include the new document in the appropriate section.",
+    "expected_behavior": [
+      "The agent read nemo-rl-docs/SKILL.md before acting",
+      "The agent identified that docs/index.md needs to be updated",
+      "The agent suggested placing the new doc in the most appropriate section of the index"
+    ]
+  },
+  {
+    "id": "docs-positive-002",
+    "question": "What docstring format should I use for a new public class in nemo_rl/algorithms/?",
+    "expected_skill": "nemo-rl-docs",
+    "ground_truth": "The agent loads the nemo-rl-docs skill and recommends Google style docstrings that are parseable by Sphinx.",
+    "expected_behavior": [
+      "The agent read nemo-rl-docs/SKILL.md before acting",
+      "The agent recommended Google style docstrings",
+      "The agent mentioned that docstrings are preferred over comments for public interfaces"
+    ]
+  },
+  {
+    "id": "docs-positive-003",
+    "question": "I'm adding a new SFT feature. Do I need to write documentation for it?",
+    "expected_skill": "nemo-rl-docs",
+    "ground_truth": "The agent loads the nemo-rl-docs skill and confirms that new features require documentation in the docs/ directory and an update to docs/index.md.",
+    "expected_behavior": [
+      "The agent read nemo-rl-docs/SKILL.md before acting",
+      "The agent confirmed documentation is required for new features",
+      "The agent mentioned updating docs/index.md"
+    ]
+  },
+  {
+    "id": "docs-negative-001",
+    "question": "Fix the flaky test in test_grpo_algorithm.py that times out intermittently.",
+    "expected_skill": null,
+    "should_trigger": false,
+    "ground_truth": "The agent should not activate the nemo-rl-docs skill for a test fix.",
+    "expected_behavior": [
+      "The agent did not read or activate nemo-rl-docs/SKILL.md"
+    ]
+  },
+  {
+    "id": "docs-negative-002",
+    "question": "Bump the version of Ray in pyproject.toml from 2.51 to 2.52.",
+    "expected_skill": null,
+    "should_trigger": false,
+    "ground_truth": "The agent should not activate the nemo-rl-docs skill for a dependency version bump.",
+    "expected_behavior": [
+      "The agent did not read or activate nemo-rl-docs/SKILL.md"
+    ]
+  }
+]

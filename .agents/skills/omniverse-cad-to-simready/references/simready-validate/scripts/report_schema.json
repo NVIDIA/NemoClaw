@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SimReady Profile Validation Report",
+  "type": "object",
+  "required": [
+    "asset_path",
+    "validator_skill",
+    "validator_tool",
+    "passed",
+    "status",
+    "profile_name",
+    "profile_target",
+    "command",
+    "available_profiles",
+    "profile_results",
+    "feature_results",
+    "requirement_counts",
+    "issue_counts",
+    "issues",
+    "warnings",
+    "errors",
+    "next_step"
+  ]
+}

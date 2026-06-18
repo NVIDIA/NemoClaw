@@ -1,0 +1,16 @@
+[
+  {
+    "id": "activation-recompute-positive-memory-smoke",
+    "question": "Use the nemo-mbridge-perf-activation-recompute skill. My Megatron Bridge model is close to OOM and an FP8 config already uses TE-scoped CUDA graphs. Give a concise checklist with the first environment fix, the exact selective-to-full recompute order, the required full-recompute config fields, and the CUDA-graph assertion workaround.",
+    "expected_skill": "nemo-mbridge-perf-activation-recompute",
+    "expected_script": null,
+    "ground_truth": "The answer should use the activation recompute skill. It should say to try PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True first, then start with recompute_granularity=\"selective\" and recompute_modules=[\"core_attn\"], optionally add layernorm, and use full recompute only if selective still does not fit. It should state full recompute requires recompute_method and recompute_num_layers, and that full/layer-level recompute is incompatible with TE-scoped CUDA graph scopes such as attn, mlp, or moe_router. It should give valid workarounds: use selective recompute, disable CUDA graphs with cuda_graph_impl=\"none\", or switch to cuda_graph_impl=\"local\" with cuda_graph_scope=\"full_iteration\".",
+    "expected_behavior": [
+      "Read the nemo-mbridge-perf-activation-recompute skill before answering.",
+      "Recommend PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True before recompute changes.",
+      "Prefer selective recompute with core_attn and optionally layernorm before full recompute.",
+      "State that full recompute requires recompute_method and recompute_num_layers.",
+      "Explain the TE-scoped CUDA graph incompatibility and list a valid workaround."
+    ]
+  }
+]

@@ -1,0 +1,116 @@
+# Auto-labeling pipeline config for robot_assembly dataset.
+# Scene: fixed close-up camera inside an industrial robotic assembly cell.
+# Robot arm working on blue tiled panel arrays (solar panels) on a metal gantry frame.
+# Primary output: structured VLM QA via vlm_json (assembly events, collisions, malfunctions)
+#
+# Delta from base auto_labeling.yaml:
+#   - detection_and_tracking.classes: person only (safety concern: human entering robot workspace)
+#   - detection_and_tracking.max_age: 30 (static close-up scene; no re-entry pattern)
+#   - vlm_json.frame_fps: 6 (robot arm moves quickly; need to catch rapid events)
+#   - mcq_generation.window_metadata_extraction.sampling_fps: 6
+
+pipeline:
+  model_cache_path: ckpts
+  gpu_ids: all
+  use_multi_gpu: false
+  empty_output_policy: warn
+  daft_validate: true
+
+# list format required — CLI overrides data.0.inputs.video_path and data.0.output.out_dir
+data:
+  - inputs:
+      video_path: ../input
+    output:
+      out_dir: ../output/pipeline_full_robot_assembly
+      config_path: ${.out_dir}/config.yaml
+
+endpoints:
+  vlm:
+    url: ""
+    model: ""
+  llm:
+    url: ""
+    model: ""
+
+super_resolution:
+  enabled: false
+  # Close-up assembly cell camera; robot arm and panel fill the frame — SR not needed.
+  variant: seedvr2_7b
+  seed: 42
+  res_h: 720
+  res_w: 1280
+  window_frames: 128
+  overlap_frames: 64
+  window_timeout: 3600
+
+detection_and_tracking:
+  enabled: true
+  model: rfdetr
+  threshold: 0.2
+  iou_threshold: 0.3
+  # COCO-80 classes for robot assembly cell monitoring.
+  # person: safety-critical — detect humans entering the robot's active workspace.
+  # No COCO-80 class for robot arms, solar panels, or gantry structures.
+  classes: ["person"]
+  tracker: boosttrack
+  use_reid: true
+  reid_weights: ""
+  per_class: true
+  asso_func: diou
+  # Low max_age: static close-up scene, no exit/re-entry pattern.
+  min_hits: 3
+  max_age: 30
+  min_track_frames: 5
+  save_vis: false
+  save_video: true
+  save_video_red_id: true
+  save_rgb: false
+  cross_class_iou_threshold: 0.9
+  dedup_iou_threshold: 0.3
+  dedup_priority: prev_iou
+
+vlm_json:
+  enabled: false
+  split_json_calls: true
+  # Robot assembly safety prompt — two-JSON format (JSON 1: metadata, JSON 2: events array).
+  # sub_category values: collision (arm_workpiece_contact, component_drop),
+  #   near_miss (near_miss_arm, human_zone_intrusion),
+  #   anomaly (arm_malfunction, misalignment),
+  #   normal_traffic (normal_assembly, arm_idle).
+  scene_prompt_file:
+  events_prompt_file:
+  frame_fps: 6        # robot arm moves quickly; higher fps catches rapid events
+  resolution: 360
+  max_frames: 24
+  max_tokens: 8192
+  timeout: 600
+  rate_limit: 0
+
+mcq_generation:
+  enabled: true
+  mode: question-driven-vlm-llm
+  window_metadata_extraction:
+    question_bank_file: /workspace/configs/window_default.json
+    scene_prompt_file: null
+    mcq_prompt_file: null
+    qd_vlm_scene_prompt_template_file: null
+    qd_mcq_mapper_prompt_template_file: null
+    window_frames: 60
+    single_window: false
+    sampling_fps: 6      # match vlm_json.frame_fps for consistent temporal coverage
+    resolution: 480
+    max_frames: 100
+    vlm_max_tokens: 8192
+    llm_max_tokens: 8192
+    timeout: 600
+    rate_limit: 0
+    aggregate_windows: true
+    write_empty_mcq_marker: true
+    skip_existing: false
+    retry_missing_questions: true
+    retry_missing_max_rounds: 2
+    vlm_verify_enabled: true
+    vlm_verify_apply_corrections: false
+    vlm_verify_prompt_file: null
+    vlm_verify_max_tokens: 8192
+    vlm_verify_temperature: 0.0

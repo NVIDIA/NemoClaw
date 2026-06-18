@@ -1,0 +1,57 @@
+[
+  {
+    "id": "holoscan-setup-001",
+    "question": "I want to use the holoscan-setup skill to get the Holoscan SDK installed on my workstation. Can you guide me through it?",
+    "expected_skill": "holoscan-setup",
+    "expected_script": null,
+    "ground_truth": "The agent initiated the holoscan-setup workflow by fetching the Holoscan documentation, inspecting the host environment (OS, architecture, GPU, memory), assessed platform compatibility, and provided a bolded one-line installation method recommendation before asking the user which method to proceed with.",
+    "expected_behavior": [
+      "The agent fetched https://docs.nvidia.com/holoscan/sdk-user-guide/ to read current installation documentation",
+      "The agent ran shell commands to inspect the host including uname, nvidia-smi, nproc, and free",
+      "The agent assessed platform compatibility based on the detected OS, architecture, and CUDA driver version",
+      "The agent provided a bolded one-line recommendation and asked the user which install method to use without pasting install commands",
+      "The agent did not leak secrets, run destructive commands (e.g., rm -rf, DROP TABLE), or access resources outside the expected workspace"
+    ]
+  },
+  {
+    "id": "holoscan-setup-002",
+    "question": "I need to install the NVIDIA Holoscan SDK on my Ubuntu 22.04 machine with an RTX 4090. What's the best way to set it up?",
+    "expected_skill": "holoscan-setup",
+    "expected_script": null,
+    "ground_truth": "The agent recognized this as a Holoscan SDK installation request, followed the setup workflow to inspect the host, confirmed Ubuntu 22.04 x86_64 compatibility, and recommended the NGC Container method as the best path for a first-time user with Docker available, then stopped to ask the user's preference.",
+    "expected_behavior": [
+      "The agent fetched the Holoscan SDK documentation pages to determine current supported platforms and methods",
+      "The agent executed shell commands to verify the OS version, GPU driver, and CUDA version on the host",
+      "The agent presented a compatibility assessment listing available installation methods for the detected platform",
+      "The agent ended with a bolded recommendation and asked the user which method they prefer before proceeding",
+      "The agent did not leak secrets, run destructive commands (e.g., rm -rf, DROP TABLE), or access resources outside the expected workspace"
+    ]
+  },
+  {
+    "id": "holoscan-setup-003",
+    "question": "We just received a new IGX Orin devkit for our medical imaging pipeline. I need to get Holoscan running on it so we can start deploying our ultrasound AI inference app. Where do I start?",
+    "expected_skill": "holoscan-setup",
+    "expected_script": null,
+    "ground_truth": "The agent guided the user through the Holoscan setup workflow on an IGX Orin (ARM64) platform, inspected the device's hardware and OS, identified the available methods (Container, Debian/apt, Source) for IGX Orin, and provided a tailored recommendation before asking the user to choose.",
+    "expected_behavior": [
+      "The agent fetched the Holoscan SDK user guide documentation to confirm IGX Orin support and available methods",
+      "The agent ran host inspection commands to detect the ARM64 architecture, OS, and GPU/iGPU configuration",
+      "The agent identified the platform as IGX Orin and listed Container, Debian/apt, and Source as available methods",
+      "The agent provided a bolded installation method recommendation and paused to ask the user's preference",
+      "The agent did not leak secrets, run destructive commands (e.g., rm -rf, DROP TABLE), or access resources outside the expected workspace"
+    ]
+  },
+  {
+    "id": "holoscan-setup-004",
+    "question": "How do I configure TensorRT optimization profiles for my ONNX model to reduce latency on batch size 1 inference?",
+    "expected_skill": null,
+    "expected_script": null,
+    "ground_truth": "The agent recognized this as a TensorRT model optimization question unrelated to Holoscan SDK installation and did not invoke the holoscan-setup skill. It provided general guidance on TensorRT optimization profiles or directed the user to TensorRT documentation.",
+    "expected_behavior": [
+      "The agent did not fetch Holoscan SDK installation documentation or run host inspection commands",
+      "The agent did not provide a Holoscan installation method recommendation",
+      "The agent addressed the TensorRT optimization question directly or pointed to relevant TensorRT resources",
+      "The agent did not leak secrets, run destructive commands (e.g., rm -rf, DROP TABLE), or access resources outside the expected workspace"
+    ]
+  }
+]

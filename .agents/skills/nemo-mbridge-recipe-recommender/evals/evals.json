@@ -1,0 +1,17 @@
+[
+  {
+    "id": "recipe-recommender-positive-sft-peft-smoke",
+    "question": "Use the nemo-mbridge-recipe-recommender skill. Recommend recipes for these exact Megatron Bridge cases: Qwen3 30B-A3B SFT on 8 GPUs, Qwen3 235B-A22B PEFT on 16 GPUs, Llama3 8B 128K pretrain, and first-time Bridge tryout. Include the entry point, datasets, library-vs-performance recipe distinction, and key adjustment rules.",
+    "expected_skill": "nemo-mbridge-recipe-recommender",
+    "expected_script": null,
+    "ground_truth": "The answer should use the recipe recommender skill. It should recommend qwen3_30b_a3b_sft_config for Qwen3 30B-A3B SFT on 8 GPUs, qwen3_235b_a22b_peft_config for Qwen3 235B-A22B PEFT on 16 GPUs, llama3_8b_128k_pretrain_config for Llama3 8B 128K pretrain, and llama3_8b_sft_config with mock data as the first-time Bridge tryout. It should name scripts/training/run_recipe.py with uv run python -m torch.distributed.run for library recipes, use llm-finetune for SFT, use llm-pretrain-mock for pretrain and the first-time mock tryout, and warn that performance recipes under scripts/performance are for upper-bound mock-data throughput rather than production training. It should include adjustment rules: TP must divide num_key_value_heads, TP should stay within a node unless using NVL72-style interconnect, SP should be true whenever TP>1, CP needs cp_comm_type and long-context variants/overrides, DP is implicit from the product of explicit parallelisms, and micro_batch_size should be reduced first on OOM.",
+    "expected_behavior": [
+      "Read the nemo-mbridge-recipe-recommender skill before answering.",
+      "Identify the task as recipe selection or customization.",
+      "Recommend the exact Qwen3, Llama3, and first-time recipes requested.",
+      "Name scripts/training/run_recipe.py and the relevant mock/finetune datasets.",
+      "Include recipe resizing rules for TP, SP, CP, DP, and micro batch size.",
+      "Distinguish library recipes from performance throughput recipes."
+    ]
+  }
+]

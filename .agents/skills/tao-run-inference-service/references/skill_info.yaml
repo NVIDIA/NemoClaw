@@ -1,0 +1,40 @@
+name: tao-run-inference-service
+type: application
+
+required_credentials:
+  - TAO_CLOUD_ACCESS_KEY   # cloud storage access key — never prompt; set as env var
+  - TAO_CLOUD_SECRET_KEY   # cloud storage secret key — never prompt; set as env var
+  # TAO_CLOUD_ENDPOINT_URL is optional — set when using a non-AWS S3-compatible endpoint
+
+prerequisites:
+  required:
+  - name: network_arch
+    description: >-
+      Model architecture identifier (e.g. "cosmos-rl"). Must match a valid
+      network config basename — see valid_network_arch_config_basenames in
+      references/service.yaml.
+  - name: model_path
+    description: >-
+      Cloud URI to the trained model checkpoint (e.g. s3://bucket/path/to/checkpoint).
+      The container fetches this at startup using cloud_metadata credentials — a local
+      filesystem path will not work.
+  - name: cloud_type
+    description: Cloud storage provider (e.g. "aws", "azure", "gcs").
+  - name: bucket
+    description: Cloud storage bucket or container name.
+  - name: region
+    description: Cloud storage region (e.g. "us-east-1").
+  - name: platform
+    description: >-
+      Compute backend where the container will run. One of: local-docker, brev,
+      lepton, slurm, kubernetes.
+
+  optional:
+  - name: num_gpus
+    description: Number of GPUs to allocate for inference.
+    default: 1
+  - name: host_port
+    description: Host-side port to bind for local-docker and brev platforms.
+    default: 8080
+  - name: results_dir
+    description: Cloud URI for container output. Defaults to s3://{bucket}/results/{job_id}.

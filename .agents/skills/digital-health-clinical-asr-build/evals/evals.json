@@ -1,0 +1,57 @@
+[
+  {
+    "id": "digital-health-clinical-asr-build-001",
+    "question": "I'm building an audiology ASR eval. I'd like to add 'audiogram-pattern' (for things like SNHL, mixed, conductive) and 'hearing-aid-model' as new entity categories so KER breaks down per device. Can the flywheel support that?",
+    "expected_skill": "digital-health-clinical-asr-build",
+    "expected_script": null,
+    "ground_truth": "Push back: the entity_category vocabulary is fixed at exactly six values — drug, procedure, anatomy, condition, lab, role — and KER's per-category breakdown keys off that vocab. Map 'audiogram-pattern' rows to condition (SNHL / mixed / conductive hearing loss are conditions). 'hearing-aid-model' has no clean home in the six; either treat the device name as a procedure (the fitting/programming workflow) or accept that the methodology needs a deliberate extension (a future-cycle decision, not an ad-hoc add). Do not silently accept a new category — downstream leaderboard sections and Stage 4 fine-tune scripts all key off the vocab.",
+    "expected_behavior": [
+      "Read digital-health-clinical-asr-build/SKILL.md before answering",
+      "Cited the six fixed entity_category values verbatim (drug, procedure, anatomy, condition, lab, role)",
+      "Refused to silently accept 'audiogram-pattern' or 'hearing-aid-model' as new categories",
+      "Proposed a mapping into the existing six (e.g., audiogram-pattern → condition)",
+      "Framed any vocab extension as a deliberate methodology change, not a one-off"
+    ]
+  },
+  {
+    "id": "digital-health-clinical-asr-build-002",
+    "question": "I have 200 terms × 3 voices × 3 noise levels × 4 contexts = 7,200 synthesis rows queued up. Magpie is fast — let's just fire off the full Cartesian now. If the leaderboard shows bad KER on some terms in Stage 3, I'll go back and audition those specific clips then.",
+    "expected_skill": "digital-health-clinical-asr-build",
+    "expected_script": null,
+    "ground_truth": "Push back: the QA-mode audition gate at Step 2d is explicit and fail-closed. Synthesize ONE wav per term (200 QA clips) first and audition them with the user before any full Cartesian. Post-hoc spot-checking from the Stage 3 leaderboard does NOT satisfy the gate: Magpie can silently mispronounce a term whose IPA passes phoneme-set validation but doesn't match the intended pronunciation, and those rows will corrupt the KER signal without being obviously wrong. Magpie-validating an IPA proves it's in the phoneme inventory; only the user's ears prove it matches the intended pronunciation. Either run QA-mode first, or the user must explicitly opt out in deliberate language (\"skip audition, accept the KER-dilution risk, log as cycle-N caveat\") — not as a side-effect of impatience.",
+    "expected_behavior": [
+      "Read digital-health-clinical-asr-build/SKILL.md before answering",
+      "Refused to fire the full 7,200-row Cartesian without auditioning",
+      "Named the Step 2d HITL audition gate and described it as fail-closed",
+      "Explained why post-hoc spot-checking misses silent mispronunciations (phoneme-set validation ≠ intended pronunciation)",
+      "Required either QA-mode-first OR explicit deliberate opt-out language to skip"
+    ]
+  },
+  {
+    "id": "digital-health-clinical-asr-build-003",
+    "question": "Cycle-1 is done — I have manifest.jsonl, audio/, and a pronunciation_overrides.csv with verified IPA for 5 drug names. For cycle-2 I want to add 10 new terms and re-test. Do I need to re-run anything from cycle-1, and do I have to copy the existing overrides somewhere new?",
+    "expected_skill": "digital-health-clinical-asr-build",
+    "expected_script": null,
+    "ground_truth": "No re-run of cycle-1 — cycle isolation is intentional so leaderboards diff cycle-N vs cycle-N+1 cleanly. Append the 10 new terms to term_seed.csv, run Steps 2a–2e for the new terms only, and append the new rows to the existing manifest.jsonl (don't create a separate cycle-2 manifest unless you want isolation). The existing pronunciation_overrides.csv is append-only across cycles: re-running the build picks up its existing rows automatically, so the 5 verified IPAs apply to any future cycle that mentions those drug names. Don't regenerate audio for cycle-1 rows — that breaks cycle isolation and re-spends Magpie credits for no signal gain.",
+    "expected_behavior": [
+      "Read digital-health-clinical-asr-build/SKILL.md before answering",
+      "Confirmed cycle isolation: do NOT regenerate cycle-1 audio",
+      "Described the append-only pattern for both manifest.jsonl and pronunciation_overrides.csv",
+      "Confirmed the existing overrides.csv is read automatically by future cycles — no copying needed",
+      "Limited Steps 2a–2e re-execution to the new terms only"
+    ]
+  },
+  {
+    "id": "digital-health-clinical-asr-build-neg-001",
+    "question": "How do I authenticate to the Magpie TTS NVCF gRPC endpoint? I want to know what bearer-token header format Riva expects and whether streaming vs offline calls differ.",
+    "expected_skill": null,
+    "acceptable_skills": ["riva-tts", "riva-asr"],
+    "expected_script": null,
+    "ground_truth": "This is a /riva-tts (or /riva-asr) question, not a build question. The digital-health-clinical-asr-build skill uses Magpie TTS but does not own the protocol/auth surface — that lives in the Riva skill family. The agent should route immediately to /riva-tts (or /riva-asr for the analogous ASR-side question) and not attempt to answer Riva-protocol details itself, even if it knows them, because the canonical owner is the Riva skill.",
+    "expected_behavior": [
+      "Did NOT activate digital-health-clinical-asr-build",
+      "Routed to /riva-tts or /riva-asr as the canonical owner of NVCF auth / gRPC protocol details",
+      "Did NOT recap auth / streaming / offline call patterns from general knowledge — explicit handoff only"
+    ]
+  }
+]

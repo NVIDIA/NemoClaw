@@ -1,0 +1,158 @@
+# Defect Image Generation — Pretrained Bundle Setup
+#
+# Assembles the pretrained/ tree that Day 0, Day 1, and finetune tasks expect
+# through URL inputs. Pure download / staging — no GPU work. Submit alongside
+# whichever case-specific setup_<case>.yaml workflows you need; they run in
+# parallel and have no inter-workflow dependencies.
+#
+# Inside the paidf-anomalygen container image (baked at /workspace/paidf-anomalygen):
+#   1. `python -m scripts.download_checkpoints --model_sizes <sizes>` pulls the
+#      Cosmos-Predict2 base model + T5 + dinov2-large from HF.
+#   2. Container-baked checkpoints (NVDINOV2, SAM2, Qwen3-VL) are copied from
+#      /workspace/paidf-anomalygen/checkpoints/ into the output tree.
+#   3. C-RADIOv3-B `model.safetensors` is pulled from HF into
+#      nvidia/C-RADIO-V3/ (the local dir name Day 0's finetune task looks
+#      for — note HF repo id is `nvidia/C-RADIOv3-B`, not `C-RADIO-V3`).
+#
+# Output URL artifact:
+#   {{ dig_url_root }}/models/pretrained
+#
+# Prerequisites:
+#   1. No registry credential needed — the paidf-* workflow image is public on
+#      nvcr.io/nvidia/ (anonymous pull). If image pulls fail, see
+#      references/troubleshooting.md -> "nvcr.io image pull failures".
+#   2. osmo credential set hf-token --type GENERIC --payload token="$HF_TOKEN"
+#      (Required for the Cosmos-Predict2 HF pull. Accept the license once at
+#      https://huggingface.co/nvidia/Cosmos-Predict2-2B-Text2Image — and the
+#      14B page too if `pretrained_model_sizes` includes 14B.)
+#
+# Submit:
+#   osmo workflow submit skills/physical-ai-defect-image-generation/assets/configs/setup/setup_pretrained.yaml \
+#     --pool <pool>
+#
+# To include the 14B Cosmos-Predict2 checkpoint (+64 GB on disk; raise
+# `storage_large` to >=300Gi when doing so):
+#   --set pretrained_model_sizes="2B 14B" storage_large=300Gi
+
+version: 2
+workflow:
+  name: "{{ workflow_name }}"
+  timeout:
+    exec_timeout: "{{ exec_timeout }}"
+    queue_timeout: "{{ queue_timeout }}"
+
+  resources:
+    cpu-download-large:
+      cpu: "{{ cpu_large }}"
+      memory: "{{ memory_large }}"
+      storage: "{{ storage_large }}"
+      platform: "{{ platform }}"
+
+  groups:
+
+    - name: download-pretrained
+      tasks:
+        - name: pretrained
+          lead: true
+          image: "{{ pretrained_image }}"
+          resource: cpu-download-large
+          credentials:
+            hf-token:
+              HF_TOKEN: token
+          environment:
+            MODEL_SIZES: "{{ pretrained_model_sizes }}"
+            HF_HUB_DISABLE_PROGRESS_BARS: "1"
+          command: ["bash"]
+          args: ["/tmp/download_pretrained.sh"]
+          files:
+            - path: /tmp/download_pretrained.sh
+              contents: |
+                set -euo pipefail
+
+                OUT="{{output}}/pretrained"
+                mkdir -p "$OUT"
+
+                cd /workspace/paidf-anomalygen
+
+                # ── Cosmos-Predict2 base model(s) + T5 + dinov2-large (HF) ────────
+                # scripts.download_checkpoints writes into checkpoints/
+                # (baked into the container image). Re-running is fast if
+                # artifacts already present.
+                echo "[DOWNLOAD] scripts.download_checkpoints --model_sizes $MODEL_SIZES"
+                python -m scripts.download_checkpoints \
+                  --model_types text2image \
+                  --model_sizes $MODEL_SIZES > /tmp/dl_checkpoints.log 2>&1 || {
+                  echo "ERROR: download_checkpoints failed. Last 20 lines:"
+                  tail -20 /tmp/dl_checkpoints.log
+                  exit 1
+                }
+                echo "[DONE] Cosmos-Predict2"
+
+                # ── Copy container-shipped + freshly-downloaded checkpoints ──────
+                # After scripts.download_checkpoints, checkpoints/ contains:
+                #   - NVDINOV2 (baked in image)
+                #   - nvidia/Cosmos-Predict2-{2B,...}-Text2Image
+                #   - google-t5/{t5-large, t5-11b}
+                #   - facebook/dinov2-large
+                #   - nvidia/C-RADIOv3-B
+                #   - sam2/sam2.1_hiera_large.pt           ← needed by AMP
+                #   - Qwen/Qwen3-VL-4B-Instruct/...        ← needed by AMP
+                # All copied into pretrained/ so the prep + finetune groups can
+                # symlink them back into /workspace/paidf-anomalygen/checkpoints/.
+                CONTAINER_CKPT=/workspace/paidf-anomalygen/checkpoints
+                echo "[COPY] container checkpoints -> $OUT"
+                for item in NVDINOV2 nvidia google-t5 facebook sam2 Qwen; do
+                  if [ -d "$CONTAINER_CKPT/$item" ]; then
+                    echo "  copying checkpoints/$item"
+                    cp -r "$CONTAINER_CKPT/$item" "$OUT/"
+                  else
+                    echo "  WARN: checkpoints/$item not found — skipping"
+                  fi
+                done
+                echo "[DONE] container checkpoints"
+
+                # ── C-RADIOv3-B (HF, single file, non-gated) ─────────────────────
+                # Local dir is nvidia/C-RADIO-V3 (matches check.sh and Day 0).
+                echo "[DOWNLOAD] nvidia/C-RADIOv3-B model.safetensors"
+                mkdir -p "$OUT/nvidia/C-RADIO-V3"
+                hf download nvidia/C-RADIOv3-B \
+                  model.safetensors \
+                  --local-dir "$OUT/nvidia/C-RADIO-V3"
+                echo "[DONE] C-RADIOv3-B"
+
+                # ── Report ─────────────────────────────────────────────────────
+                FILE_COUNT=$(find "$OUT" -type f | wc -l)
+                TOTAL=$(du -sb "$OUT" | awk '{print $1}')
+                echo "pretrained/ assembled: $FILE_COUNT files, $TOTAL bytes"
+                [ "$FILE_COUNT" -gt 0 ] || { echo "ERROR: empty pretrained tree"; exit 1; }
+                echo "=== Output layout (top 40) ==="
+                find "$OUT" -type f | sort | head -40
+          outputs:
+            - url: "{{ dig_url_root }}/models/pretrained"
+
+default-values:
+  workflow_name: setup_pretrained
+  exec_timeout: 1h
+  queue_timeout: 1h
+
+  dig_url_root: "s3://osmo-workflows/dig"
+
+  # Cosmos-anomalygen container image — pinned to the digest whose layout
+  # matches the helper-script paths the downstream workflows assume
+  # (/workspace/paidf-anomalygen/scripts/utilities/). Image ships
+  # NVDINOV2, SAM2, Qwen3-VL baked; only Cosmos-Predict2 + T5 + dinov2-large
+  # + C-RADIOv3 are fetched at runtime.
+  pretrained_image: "nvcr.io/nvidia/paidf-anomalygen:1.0.0"
+  pretrained_model_sizes: "2B"   # space-separated; "2B 14B" adds the 14B checkpoint (~64 GB)
+
+  # The assembled 2B bundle is ~80 GB on disk (Cosmos-Predict2 2B + T5 +
+  # dinov2-large + container-baked NVDINOV2/SAM2/Qwen + C-RADIOv3-B). Plus
+  # container image overlay and HF download caches the pod easily passes
+  # 150 GiB at upload time, so `storage_large` is kept at 220Gi for headroom.
+  # With `pretrained_model_sizes="2B 14B"` the tree grows by ~64 GB; raise
+  # `storage_large` to at least 300Gi.
+  cpu_large: "1"
+  memory_large: 16Gi
+  storage_large: 220Gi
+
+  platform: default

@@ -1,0 +1,45 @@
+network_arch: tao-generate-referring-expressions
+type: data
+container_image: tao_toolkit.pyt
+gpu_spec_key: null
+required_credentials: []
+actions:
+  generate:
+    command: auto_label generate -e {config_path}
+    config_format: yaml
+    mode: args
+    inputs:
+      image-dir:
+        type: folder
+      kitti-label-dir:
+        type: folder
+      input-annotations-jsonl:
+        type: file
+    outputs:
+      results-dir:
+        type: folder
+    args:
+      results_dir: '{results_dir}'
+      image_referring_expression.data.image_dir: '{image_dir}'
+      image_referring_expression.data.kitti_label_dir: '{kitti_label_dir}'
+      image_referring_expression.data.input_annotations_jsonl: '{input_annotations_jsonl}'
+      image_referring_expression.vlm.backend: '{vlm_backend}'
+      image_referring_expression.workflow.steps: '{steps}'
+      image_referring_expression.workflow.output_format: '{output_format}'
+    defaults:
+      vlm_backend: gemini
+      steps: '["0","1","2","3"]'
+      output_format: both
+      input_annotations_jsonl: ''
+tags:
+- image
+- referring-expression
+- grounding
+- kitti
+- bounding-boxes
+- phrase-grounding
+- vlm
+- auto-label
+description: Four-step image referring-expression pipeline that turns images plus
+  KITTI bounding-box labels into region descriptions, scene captions, grouped grounding
+  expressions, and (optionally) verified expressions via VLM distillation.

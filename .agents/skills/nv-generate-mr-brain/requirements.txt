@@ -1,0 +1,13 @@
+nibabel>=4.0
+numpy>=1.23
+typer>=0.9
+torch>=2.1
+monai>=1.5
+scipy>=1.10
+scikit-image>=0.20
+einops>=0.7
+huggingface_hub>=0.20
+tqdm>=4.65
+fire>=0.5
+tensorboard>=2.14
+PyYAML>=6.0

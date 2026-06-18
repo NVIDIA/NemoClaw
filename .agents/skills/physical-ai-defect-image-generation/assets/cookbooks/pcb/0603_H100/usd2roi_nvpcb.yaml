@@ -1,0 +1,74 @@
+# Demo: 0603_H100_day1
+# Source: _demo_config/0603_H100_day1/usd2roi_nvpcb.yaml
+# Component: _0603_H100/tn__0603_H100_72_  (USD instance, world xy=(-12.616, -1.215, 1.57))
+# Asset URL: datasets/pcb_demo_0603_H100_day1/assets  (scene_uninst.usda has _0603_H100_72_ + 11380 pads uninstanced)
+# Patched at runtime by day_1_workflow_demo.yaml:
+#   __SCENE__       → /osmo/data/input/0/scene_uninst.usda  (set scene_filename=scene_uninst.usda)
+#   __REAL_IMAGE__  → /osmo/data/input/0/input_real_image/0603_H100.jpg  (set real_image_filename=0603_H100.jpg)
+#   __OUTPUT__      → OSMO task output dir
+
+scene: __SCENE__
+
+semantics:
+  - match: "**/PASTEMASK_TOP/Geometry/PASTEMASK_TOP__11450_bodies__0"
+    labels: {class: pad}
+  - match: "/World/pcba_main_s_detail/PCBA/tn__60014242BASEA04_fM9E/_0603_H100/tn__0603_H100_72_/LibRef/_0603_H100/Geometry/Components/_0603_H100/surface_1_MASTER_MESH"
+    labels: {class: solder}
+  - match: "/World/pcba_main_s_detail/PCBA/tn__60014242BASEA04_fM9E/_0603_H100/tn__0603_H100_72_/LibRef/_0603_H100/Geometry/Components/_0603_H100/surface_2_MASTER_MESH"
+    labels: {class: capacitor}
+  - match: "/World/pcba_main_s_detail/PCBA/tn__60014242BASEA04_fM9E/_0603_H100/tn__0603_H100_72_/LibRef/_0603_H100/Geometry/Components/_0603_H100/surface_4_MASTER_MESH"
+    labels: {class: capacitor}
+  - match: "/World/pcba_main_s_detail/PCBA/tn__60014242BASEA04_fM9E/_0603_H100/tn__0603_H100_72_/LibRef/_0603_H100/Geometry/Components/_0603_H100/surface_6_MASTER_MESH"
+    labels: {class: capacitor}
+  - match: "/World/pcba_main_s_detail/PCBA/tn__60014242BASEA04_fM9E/_0603_H100/tn__0603_H100_72_/LibRef/_0603_H100/Geometry/Components/_0603_H100/surface_5_MASTER_MESH"
+    labels: {class: solder}
+  - match: "/World/pcba_main_s_detail/PCBA/tn__60014242BASEA04_fM9E/_0603_H100/tn__0603_H100_72_/LibRef/_0603_H100/Geometry/Components/_0603_H100/surface_7_MASTER_MESH"
+    labels: {class: solder}
+  - match: "/World/pcba_main_s_detail/PCBA/tn__60014242BASEA04_fM9E/_0603_H100/tn__0603_H100_72_/LibRef/_0603_H100/Geometry/Components/_0603_H100/surface_8_MASTER_MESH"
+    labels: {class: pad}
+
+# === Step 2: Single capture ===
+camera:
+  translate: [-12.616, -1.215]
+  horizontal_aperture: 39.28
+  rotation_xyz: [0.0, 0.0, 0.0]
+resolution: [720, 540]
+
+writer:
+  rgb: true
+  semantic_segmentation: true
+  colorize_semantic_segmentation: true
+  bounding_box_2d_tight: false
+  bounding_box_2d_loose: false
+  semantic_types: [class]
+  frame_padding: 4
+  image_output_format: png
+
+# === Step 3: Registration ===
+real_image: __REAL_IMAGE__
+
+registration:
+  sx_range: [1.1, 1.3, 0.05]
+  sy_range: [1.1, 1.5, 0.05]
+  rot_range_deg: [-0.1, 0.1, 0.05]
+  shift_range: 100
+  shift_step: 2
+  pyr_levels: 3
+  bins: 64
+  no_resize: true
+  gpu: true
+  min_mi: 0
+
+# === Step 4: Per-ROI label-based crop ===
+crop:
+  classes: [capacitor]
+  morph_kernel: 2
+  min_area: 50
+  max_area: null
+  offset: 10
+  class_dirs:
+    capacitor: passive_component
+  bridge: false
+
+output:
+  dir: __OUTPUT__

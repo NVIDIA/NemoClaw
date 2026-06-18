@@ -1,0 +1,6 @@
+{
+  "name": "deepstream-dev",
+  "description": "NVIDIA DeepStream SDK 9.0 development with Python pyservicemaker API. Use when building video analytics pipelines, GStreamer-based video processing, TensorRT inference integration, object detection/tracking, or Kafka/message broker integration.",
+  "author": "NVIDIA CORPORATION",
+  "skills": "./"
+}

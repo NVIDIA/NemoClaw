@@ -1,0 +1,173 @@
+model_name: ''
+encryption_key: ''
+results_dir: ''
+wandb:
+  enable: true
+  project: TAO Toolkit
+  entity: ''
+  group: ''
+  tags:
+  - tao-toolkit
+  reinit: false
+  sync_tensorboard: false
+  save_code: false
+  name: TAO Toolkit Training
+  run_id: ''
+model:
+  backbone:
+    type: fan_small_12_p4_hybrid
+    pretrained_backbone_path: ''
+    freeze_backbone: false
+    freeze_norm: false
+  head:
+    type: TAOLinearClsHead
+    binary: false
+    in_channels: 448
+    loss:
+      type: CrossEntropyLoss
+      label_smooth_val: 0.0
+    topk:
+    - 1
+dataset:
+  root_dir: ''
+  dataset: CLDataset
+  num_classes: 20
+  img_size: 224
+  batch_size: 8
+  workers: 1
+  shuffle: true
+  augmentation:
+    random_flip:
+      vflip_probability: 0.5
+      hflip_probability: 0.5
+      enable: true
+    random_rotate:
+      rotate_probability: 0.5
+      angle_list:
+      - 90
+      - 180
+      - 270
+      enable: true
+    random_color:
+      brightness: 0.3
+      contrast: 0.3
+      saturation: 0.3
+      hue: 0.0
+      enable: true
+      color_probability: 0.5
+    random_erase:
+      enable: true
+      erase_probability: 0.2
+    random_aug:
+      enable: true
+    with_scale_random_crop:
+      scale_range:
+      - 1
+      - 1.2
+      enable: true
+    with_random_blur: true
+    with_random_crop: true
+    mean:
+    - 0.485
+    - 0.456
+    - 0.406
+    std:
+    - 0.229
+    - 0.224
+    - 0.225
+    mixup_cutmix: false
+    mixup_alpha: 0.4
+  train_dataset:
+    images_dir: ''
+  train_nolabel:
+    folder_path: ''
+  val_dataset:
+    images_dir: ''
+  test_dataset:
+    images_dir: ''
+  quant_calibration_dataset:
+    images_dir: ''
+  classes_file: ''
+train:
+  num_gpus: 1
+  gpu_ids:
+  - 0
+  num_nodes: 1
+  seed: 1234
+  cudnn:
+    benchmark: false
+    deterministic: true
+  num_epochs: 10
+  checkpoint_interval: 1
+  checkpoint_interval_unit: epoch
+  validation_interval: 1
+  resume_training_checkpoint_path: ''
+  results_dir: ''
+  optim:
+    monitor_name: val_loss
+    optim: adamw
+    lr: 6.0e-05
+    policy: linear
+    policy_params:
+      step_size: 30
+      gamma: 0.1
+    momentum: 0.9
+    weight_decay: 0.01
+    betas:
+    - 0.9
+    - 0.999
+    skip_names: []
+    warmup_epochs: 0
+  pretrained_model_path: ''
+  tensorboard:
+    enabled: false
+    infrequent_logging_frequency: 2
+  enable_ema: false
+  ema_decay: 0.998
+  clip_grad_norm: 2.0
+  precision: fp32
+inference:
+  num_gpus: 1
+  gpu_ids:
+  - 0
+  num_nodes: 1
+  checkpoint: ???
+  trt_engine: ''
+  results_dir: ''
+  batch_size: -1
+  vis_after_n_batches: 1
+  is_quantized: false
+distill:
+  teacher:
+    backbone:
+      type: fan_small_12_p4_hybrid
+      pretrained_backbone_path: ''
+      freeze_backbone: false
+      freeze_norm: false
+    head:
+      type: TAOLinearClsHead
+      binary: false
+      in_channels: 448
+      loss:
+        type: CrossEntropyLoss
+        label_smooth_val: 0.0
+      topk:
+      - 1
+  pretrained_teacher_model_path: ???
+  loss_type: KL
+  loss_lambda: 0.5
+  mode: auto
+  use_mlp: true
+  mlp_hidden_size: 1024
+  mlp_num_inner: 0
+  results_dir: ''
+quantize:
+  backend: torchao
+  mode: weight_only_ptq
+  algorithm: minmax
+  layers: []
+  skip_names: []
+  model_path: ''
+  results_dir: ''
+  backend_kwargs: {}
+  device: cuda

@@ -1,0 +1,141 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+id: medagent.dicom_metadata_extract
+version: 0.1.0
+upstream_refs:
+  - kind: pypi_package
+    name: pydicom
+    version_constraint: ">=2.4,<4"
+license: Apache-2.0
+intended_use:
+  summary: Engineering-time DICOM metadata extraction with a PHI-tag-presence flag.
+  scope: development
+  not_for:
+    - clinical deployment
+    - regulatory de-identification
+    - autonomous diagnosis
+    - patient-facing use
+inputs:
+  - name: dicom_path
+    type: file_path
+    formats: [dicom]
+    max_size_bytes: 104857600
+outputs:
+  - name: metadata_json
+    type: json
+    schema: validators/output_schema.json
+runtime:
+  language: python
+  entrypoint: scripts/extract_metadata.py
+  python: ">=3.10"
+  args:
+    - "${python}"
+    - "${script}"
+    - "${fixture}"
+  dependencies:
+    pydicom: ">=2.4,<4"
+    typer: ">=0.9"
+  test_dependencies:
+    jsonschema: ">=4.0"
+  side_effects:
+    pip_packages: ["pydicom>=2.4,<4", "typer>=0.9"]
+    local_writes:
+      - {path: "<caller-provided --output>", approx_mb_max: 1, optional: true}
+    home_writes: []
+    network_endpoints: []
+    requires_docker: false
+    requires_gpu: none
+    env_required: []
+
+cost:
+  # Per-invocation agent-overhead token cost measured by NeMo Agent Toolkit
+  # (NAT) profiler — the cost an LLM-driven agent pays to call this skill
+  # once. The skill itself emits zero tokens. See tools/nat_audit/README.md
+  # for methodology (pinned model, agent type, tool registry size).
+  token_estimate:
+    common:
+      model: meta/llama-3.3-70b-instruct
+      agent_type: tool_calling_agent
+      measured_at: 2026-05-16
+      methodology: tools/nat_audit/README.md
+    isolated_tool_call:
+      prompt_tokens: 2250
+      completion_tokens: 40
+      total_tokens: 2290
+      llm_calls: 2
+      n_tools_in_workflow: 9
+    end_to_end_workflow:
+      prompt_tokens: 4810
+      completion_tokens: 83
+      total_tokens: 4893
+      llm_calls: 3
+      n_tools_in_workflow: 11
+      scenario: realistic_user_workflow
+
+paired_verifiers:
+  - id: medagent.verifiers.dicom_metadata_quality_v1
+    status: implemented
+    consumes: evidence_pack_dir
+    purpose: >
+      Second-pass metadata evidence audit. Confirms the source pack passed,
+      required header facts are present, PHI flag and tag-list semantics are
+      consistent, and the limited PHI scope is disclosed. Standard PHI tag
+      presence is warning-only because this skill does not de-identify data.
+
+limitations:
+  - Small PS3.15-inspired standard-tag subset only; not a complete Basic
+    Application Confidentiality Profile implementation.
+  - Private tags not checked
+  - Burnt-in pixel PHI not detected
+  - Multi-frame handling minimal
+phi_scope_disclaimer: >
+  This skill flags PHI presence in a small standard DICOM tag subset only.
+  It is NOT a de-identifier and does NOT remove or modify data. Private
+  tags and burnt-in pixel text are out of scope.
+validation:
+  expected_runtime_seconds:
+    max: 5.0
+  sanity_checks:
+    # The extractor must always populate Modality and the PHI-presence
+    # flag from a readable DICOM. matches: ".+" requires non-empty.
+    - {path: modality, matches: ".+"}
+    - {path: phi_present, exists: true}
+    - {path: phi_scope_disclaimer, matches: "Standard DICOM"}
+    - {path: study.StudyInstanceUID, matches: ".+"}
+    - {path: image.Rows, gt: 0}
+    - {path: image.Columns, gt: 0}
+  expected_cost:
+    # Pydicom header read on a single CT slice is essentially I/O bound.
+    # Bounds are intentionally generous — the canonical silent-failure
+    # detector here is the runtime envelope, not cost. cpu_seconds.max is
+    # a soft fence for "interpreter spun up but did real work".
+    wall_seconds:        {max: 5}
+    cpu_seconds:         {max: 5}
+    rss_mb_peak:         {max: 250}
+    gpu_seconds:         {max: 0}
+    gpu_memory_mb_peak:  {max: 0}
+  env_pin:
+    # PEP 440 constraints on upstream tools whose behaviour this skill
+    # depends on. The eval_engine's env_pin gate fails the run if any
+    # installed version drifts outside these bounds — catches what the
+    # loose `runtime.dependencies` ranges silently allow (e.g. a pydicom
+    # 3 → 4 bump that changes the save_as API).
+    pydicom: ">=2.4,<5"
+  reproducibility:
+    mode: repeat
+    fixture: fixtures/sample_ct.dcm
+    fixture_builder: fixtures/generate_sample.py
+    runs: 2

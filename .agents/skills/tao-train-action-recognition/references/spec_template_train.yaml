@@ -1,0 +1,86 @@
+model_name: ''
+encryption_key: ''
+results_dir: ''
+wandb:
+  enable: true
+  project: TAO Toolkit
+  entity: ''
+  group: ''
+  tags:
+  - tao-toolkit
+  reinit: false
+  sync_tensorboard: false
+  save_code: false
+  name: TAO Toolkit Training
+  run_id: ''
+model:
+  model_type: rgb
+  backbone: resnet_18
+  input_type: 2d
+  of_seq_length: 10
+  of_pretrained_model_path: ''
+  of_pretrained_num_classes: 5
+  rgb_seq_length: 3
+  rgb_pretrained_model_path: ''
+  rgb_pretrained_num_classes: 5
+  num_fc: 64
+  joint_pretrained_model_path: ''
+  sample_strategy: random_interval
+  sample_rate: 1
+  imagenet_pretrained: false
+  dropout_ratio: 0.5
+  input_width: 224
+  input_height: 224
+dataset:
+  train_dataset_dir: ''
+  val_dataset_dir: ''
+  batch_size: 2
+  workers: 8
+  clips_per_video: 1
+  augmentation_config:
+    train_crop_type: random_crop
+    scales:
+    - 1
+    horizontal_flip_prob: 0.5
+    rgb_input_mean:
+    - 0.485
+    - 0.456
+    - 0.406
+    rgb_input_std:
+    - 0.229
+    - 0.224
+    - 0.225
+    of_input_mean:
+    - 0.5
+    of_input_std:
+    - 0.5
+    val_center_crop: false
+    crop_smaller_edge: 256
+train:
+  num_gpus: 1
+  gpu_ids:
+  - 0
+  num_nodes: 1
+  seed: 1234
+  cudnn:
+    benchmark: false
+    deterministic: true
+  num_epochs: 10
+  checkpoint_interval: 1
+  checkpoint_interval_unit: epoch
+  validation_interval: 1
+  resume_training_checkpoint_path: ''
+  results_dir: ''
+  optim:
+    lr: 0.0005
+    momentum: 0.9
+    weight_decay: 0.0005
+    lr_scheduler: MultiStep
+    lr_monitor: val_loss
+    patience: 1
+    min_lr: 0.0001
+    lr_steps:
+    - 15
+    - 25
+    lr_decay: 0.1
+  clip_grad_norm: 0.0

@@ -1,0 +1,169 @@
+model_name: ''
+encryption_key: ''
+results_dir: ''
+wandb:
+  enable: true
+  project: TAO Toolkit
+  entity: ''
+  group: ''
+  tags:
+  - tao-toolkit
+  reinit: false
+  sync_tensorboard: false
+  save_code: false
+  name: TAO Toolkit Training
+  run_id: ''
+model:
+  pretrained_backbone_path: ''
+  dld_model_dir_path: ''
+  backbone: resnet_50
+  num_queries: 300
+  num_feature_levels: 4
+  cls_loss_coef: 2.0
+  bbox_loss_coef: 5.0
+  giou_loss_coef: 2.0
+  with_box_refine: true
+  num_select: 300
+  return_interm_indices:
+  - 1
+  - 2
+  - 3
+  - 4
+  focal_alpha: 0.25
+  clip_max_norm: 0.1
+  nheads: 8
+  dropout_ratio: 0.3
+  hidden_dim: 256
+  enc_layers: 6
+  dec_layers: 6
+  dim_feedforward: 1024
+  dec_n_points: 4
+  enc_n_points: 4
+  aux_loss: true
+  dilation: false
+  train_backbone: true
+  loss_types:
+  - labels
+  - boxes
+  backbone_names:
+  - backbone.0
+  linear_proj_names:
+  - reference_points
+  - sampling_offsets
+dataset:
+  train_sampler: default_sampler
+  train_data_sources:
+  - image_dir: ''
+    json_file: ''
+  val_data_sources:
+  - image_dir: ''
+    json_file: ''
+  test_data_sources:
+    image_dir: ''
+    json_file: ''
+  infer_data_sources:
+    image_dir:
+    - ''
+    classmap: ''
+  quant_calibration_data_sources:
+    image_dir: ''
+    json_file: ''
+  batch_size: 4
+  workers: 8
+  pin_memory: true
+  dataset_type: serialized
+  num_classes: 91
+  eval_class_ids:
+  - 1
+  augmentation:
+    scales:
+    - 480
+    - 512
+    - 544
+    - 576
+    - 608
+    - 640
+    - 672
+    - 704
+    - 736
+    - 768
+    - 800
+    input_mean:
+    - 0.485
+    - 0.456
+    - 0.406
+    input_std:
+    - 0.229
+    - 0.224
+    - 0.225
+    train_random_resize:
+    - 400
+    - 500
+    - 600
+    horizontal_flip_prob: 0.5
+    train_random_crop_min: 384
+    train_random_crop_max: 600
+    random_resize_max_size: 1333
+    test_random_resize: 800
+    fixed_padding: true
+    fixed_random_crop: 1024
+train:
+  num_gpus: 1
+  gpu_ids:
+  - 0
+  num_nodes: 1
+  seed: 1234
+  cudnn:
+    benchmark: false
+    deterministic: true
+  num_epochs: 10
+  checkpoint_interval: 1
+  checkpoint_interval_unit: epoch
+  validation_interval: 1
+  resume_training_checkpoint_path: ''
+  results_dir: ''
+  freeze: []
+  pretrained_model_path: ''
+  clip_grad_norm: 0.1
+  is_dry_run: false
+  optim:
+    optimizer: AdamW
+    monitor_name: val_loss
+    lr: 0.0002
+    lr_backbone: 2.0e-05
+    lr_linear_proj_mult: 0.1
+    momentum: 0.9
+    weight_decay: 0.0001
+    lr_scheduler: MultiStep
+    lr_steps:
+    - 40
+    lr_step_size: 40
+    lr_decay: 0.1
+  precision: fp32
+  distributed_strategy: ddp
+  activation_checkpoint: true
+  verbose: false
+inference:
+  num_gpus: 1
+  gpu_ids:
+  - 0
+  num_nodes: 1
+  checkpoint: ???
+  trt_engine: ''
+  results_dir: ''
+  batch_size: -1
+  conf_threshold: 0.5
+  is_internal: false
+  input_width: 640
+  input_height: 640
+  outline_width: 3
+quantize:
+  backend: torchao
+  mode: weight_only_ptq
+  algorithm: minmax
+  layers: []
+  skip_names: []
+  model_path: ''
+  results_dir: ''
+  backend_kwargs: {}
+  device: cuda

@@ -1,0 +1,59 @@
+{
+  "checkpoint": "HuggingFaceTB/SmolVLM-256M-Instruct",
+  "n_eval": 100,
+  "exact_match": 0.0,
+  "substring_match": 0.4,
+  "accuracy": 0.0,
+  "sample_predictions": [
+    {
+      "question": "How many giraffe are standing near the building?",
+      "ref": "2",
+      "pred": "There are three giraffes standing near the building."
+    },
+    {
+      "question": "How many people have sunglasses?",
+      "ref": "4",
+      "pred": "There are two people with sunglasses."
+    },
+    {
+      "question": "What kind of room is this?",
+      "ref": "bathroom",
+      "pred": "The room appears to be a kitchen."
+    },
+    {
+      "question": "How many of these women are wearing pants?",
+      "ref": "2",
+      "pred": "Two of the women are wearing pants."
+    },
+    {
+      "question": "Does the chair look velvety soft?",
+      "ref": "yes",
+      "pred": "Yes, the chair looks soft."
+    },
+    {
+      "question": "What color is the horse?",
+      "ref": "black and white",
+      "pred": "The horse is black and white in color."
+    },
+    {
+      "question": "How many slices of toast are on the plate?",
+      "ref": "4",
+      "pred": "There are two slices of toast on the plate."
+    },
+    {
+      "question": "Is there a sandwich on the plate?",
+      "ref": "no",
+      "pred": "There is no mention of a sandwich in the provided facts, so we cannot determine"
+    },
+    {
+      "question": "What time is it on the clock?",
+      "ref": "8:50",
+      "pred": "The clock is on the wall."
+    },
+    {
+      "question": "What city is this?",
+      "ref": "tokyo",
+      "pred": "It is not clear from the image."
+    }
+  ]
+}

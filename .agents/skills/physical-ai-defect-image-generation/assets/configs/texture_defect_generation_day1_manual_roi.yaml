@@ -1,0 +1,648 @@
+# Defect Image Generation Workflow — Day 1 (manual ROI): Finetune/Checkpoint → Infer (labels inline)
+#
+# NOT the default for PCBA. Pick this spec only when:
+#   - usecase is metal_surface or glass (no USD/real-photo flow exists for those), OR
+#   - the user explicitly asks to skip CAD-to-real-photo alignment on PCBA
+#     (e.g. "manual ROI", "skip usd2roi", "use NGC PCBA artifact directly").
+#
+# For default PCBA Day 1, use `texture_defect_generation_day1_real_alignment.yaml`
+# — that's the canonical path with CAD-derived USD + real photo + MI alignment
+# producing per-ROI crops.
+#
+# This spec runs inference on **manually prepared ROIs** — i.e., clean images
+# + masks that already exist upstream of this workflow (either NGC-shipped or
+# user-uploaded).
+#
+# Two operating modes, picked by what is in `<dig_url_root>/datasets/<usecase>/raw`:
+#
+#   • Mode A (default): the URL already ships `defect_spec.jsonl` + canonical
+#     `<TEXTURE>/{clean_image,cad_mask,mask}/` layout (e.g. the raw artifact
+#     produced by the relevant `setup/setup_<case>.yaml`).
+#
+#   • Mode B: the URL is a flat user upload of clean images + per-defect submasks.
+#     `anomaly-infer` stages them into the canonical layout and renders
+#     `defect_spec.jsonl` from `--set anomaly_types_json=...` at runtime.
+#
+# Both modes run two task groups: optional `finetune-job` (omitted by Jinja when
+# `use_pretrained_checkpoint=true`, the default) → `anomaly-infer`.
+#
+# Anomaly inference emits labeled output natively (no separate pseudo-label stage).
+# Suitable for metal_surface, glass, and pre-captured PCBA inspection.
+#
+# Submit (single step — the per-usecase cookbook
+# `assets/cookbooks/<usecase>/ag_config.yaml` is uploaded as a template and
+# rendered in-pod by yq when use_pretrained_checkpoint=false; passthrough mode
+# omits the finetune group entirely):
+#
+#        STAMP=$(cat /proc/sys/kernel/random/uuid | cut -c1-8)
+#        osmo workflow submit skills/physical-ai-defect-image-generation/assets/configs/texture_defect_generation_day1_manual_roi.yaml \
+#          --pool <pool> \
+#          --set name=texture_defect_gen_day1_manual_roi-$STAMP \
+#                dig_url_root=<dig_url_root> \
+#                usecase=<usecase> \
+#                use_pretrained_checkpoint=true \
+#                checkpoint_step=<step> \
+#                'anomaly_types_json=[["MAT","DEFECT"],...]' \
+#                num_sdg=30
+#
+# In finetune mode the in-pod render patches 5 fields (job.group, job.name,
+# dataset paths, val JSONL, NVDINOV2 checkpoint) and drops trainer.early_stop.
+# The cookbook is shared with the standalone `finetune.yaml` (byte-identical to
+# the shipped checkpoint's training config).
+#
+# Inference invokes the upstream chain (prep_testcase.sh → validate_jsonl.py →
+# run_sdg.sh → verify_output.sh) baked at /workspace/paidf-anomalygen/scripts/utilities/.
+# Defect ROIs are routed via defect_spec.jsonl: `free` (whole-image), `text`
+# (Qwen+SAM2), or `cad` (cad_mask+semantic labels). Default is `free` for all
+# defects unless the inference URL ships its own defect_spec.jsonl at root.
+#
+# When use_pretrained_checkpoint=false the finetune task trains from scratch using the
+# rendered cookbook config; validation.jsonl + amp/ are produced fresh inside the
+# finetune task (anomalygen Phase 1 Step 2) before torchrun starts.
+#
+# Prerequisites (run once per shell):
+#   - bash scripts/preflight_credentials.sh
+#   - bash scripts/preflight_urls.sh 1 <usecase>
+#   - URL assets exist under dig_url_root:
+#       models/pretrained, models/<usecase>, datasets/<usecase>/raw
+#   - If finetuning: datasets/<usecase>/raw exists (validation set is built inside
+#     the finetune task — no pre-baked validation.jsonl required)
+#   - If passthrough: models/<usecase> checkpoint exists
+#
+# Output: {{ dig_url_root }}/runs/<name>/anomaly — per-defect labeled images.
+# See references/flows/texture_defect_generation_day1_manual_roi.md for the full walkthrough.
+
+
+version: 2
+workflow:
+  name: "{{ workflow_name }}"
+  timeout:
+    exec_timeout: "{{ exec_timeout }}"
+    queue_timeout: "{{ queue_timeout }}"
+
+  resources:
+    gpu-infer:
+      gpu: "{{ infer_gpu }}"
+      cpu: "{{ infer_cpu }}"
+      memory: "{{ infer_memory }}"
+      storage: "{{ infer_storage }}"
+      platform: "{{ platform }}"
+    gpu-train:
+      gpu: "{{ train_gpu }}"
+      cpu: "{{ train_cpu }}"
+      memory: "{{ train_memory }}"
+      storage: "{{ train_storage }}"
+      platform: "{{ platform }}"
+
+  groups:
+
+    {% if use_pretrained_checkpoint|string|lower not in ["true", "1", "yes"] %}
+    # ── Group 1: Finetune (omitted entirely when use_pretrained_checkpoint=true;
+    # in that mode anomaly-infer reads the checkpoint URL directly) ──────────────
+    - name: finetune-job
+      tasks:
+        - name: finetune
+          lead: true
+          image: "{{ anomalygen_image }}"
+          resource: gpu-train
+          credentials:
+            hf-token:
+              HF_TOKEN: token
+          environment:
+            NUM_GPUS: "{{ train_gpu }}"
+            EXP_NAME: "{{ name }}"
+            PRETRAINED_SRC: "{{input:0}}/pretrained"
+            DATASET_DIR: "{{input:1}}"
+          inputs:
+            - url: "{{ dig_url_root }}/models/pretrained"                 # {{input:0}} pretrained/ tree
+            - url: "{{ dig_url_root }}/datasets/{{ usecase }}/raw"        # {{input:1}} raw NGC training data
+          command: ["bash"]
+          args: ["/tmp/finetune.sh"]
+          files:
+            # Cookbook template — rendered in-pod by yq below.
+            - localpath: ../cookbooks/{{ usecase }}/ag_config.yaml
+              path: /tmp/ag_config_template.yaml
+
+            - path: /tmp/finetune.sh
+              contents: |
+                set -euo pipefail
+
+                # ── Pod-template preflight (training task) ─────────────────────
+                DSHM_GB=$(df -B1G /dev/shm | tail -1 | awk '{print $2}')
+                if [ "$DSHM_GB" -lt 16 ]; then
+                  echo "ERROR: /dev/shm is ${DSHM_GB}GiB; need >= 16 GiB (32 preferred) for torchrun shared-memory."
+                  exit 1
+                fi
+                # ───────────────────────────────────────────────────────────────
+
+                # Install Mike Farah yq into /tmp (pod /usr/local/bin is non-writable; paidf-anomalygen ships wget, no curl).
+                [ -x /tmp/yq ] || {
+                  wget -q https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64 -O /tmp/yq
+                  chmod +x /tmp/yq
+                }
+                export PATH=/tmp:$PATH
+
+                OUTPUT_DIR="{{output}}"
+                mkdir -p "$OUTPUT_DIR"
+
+                # This group only runs when use_pretrained_checkpoint=false
+                # (Jinja-gated at the workflow level). Passthrough mode omits the
+                # group entirely; anomaly-infer reads the checkpoint URL directly.
+                TEMPLATE=/tmp/ag_config_template.yaml
+                [ -f "$TEMPLATE" ] || {
+                  echo "ERROR: $TEMPLATE not mounted — cookbook upload failed."
+                  echo "  Confirm assets/cookbooks/{{ usecase }}/ag_config.yaml exists."
+                  exit 1
+                }
+
+                [ -d "$PRETRAINED_SRC" ] || {
+                  echo "ERROR: pretrained tree not at $PRETRAINED_SRC"
+                  ls -la "$(dirname "$PRETRAINED_SRC")" || true
+                  exit 1
+                }
+
+                # Per-item symlink-replace into the container's checkpoint dir.
+                # IMPORTANT: do NOT wipe the dir — SAM2 + Qwen3-VL ship baked
+                # there and are referenced by other tools in the image even
+                # though this task only runs torchrun.
+                cd /workspace/paidf-anomalygen
+                CONTAINER_CKPT_DIR=/workspace/paidf-anomalygen/checkpoints
+                mkdir -p "$CONTAINER_CKPT_DIR"
+                for item in NVDINOV2 nvidia google-t5 facebook C-RADIOv2_B.pth sam2 Qwen; do
+                  if [ -e "$PRETRAINED_SRC/$item" ]; then
+                    rm -rf "$CONTAINER_CKPT_DIR/$item"
+                    ln -s "$PRETRAINED_SRC/$item" "$CONTAINER_CKPT_DIR/$item"
+                  fi
+                done
+
+                [ -d "$DATASET_DIR" ] || {
+                  echo "ERROR: training dataset not at $DATASET_DIR"
+                  exit 1
+                }
+
+                DEFECT_SPEC="$DATASET_DIR/defect_spec.jsonl"
+                [ -f "$DEFECT_SPEC" ] || {
+                  echo "ERROR: $DEFECT_SPEC missing in raw dataset."
+                  echo "  Re-run setup/setup_{{ usecase }}.yaml (or setup/setup_metal.yaml for metal_surface) for datasets/{{ usecase }}/raw."
+                  exit 1
+                }
+
+                # anomalygen helper scripts (pinned by image digest).
+                SCRIPTS=/workspace/paidf-anomalygen/scripts/utilities
+                ls "$SCRIPTS/prep_testcase.sh" >/dev/null || {
+                  echo "ERROR: $SCRIPTS/prep_testcase.sh not in image — check digest."
+                  exit 1
+                }
+
+                # ─── Phase 1 Step 1: validate dataset structure ────────────
+                echo "=== Phase 1 Step 1: validate_dataset.py ==="
+                python3 "$SCRIPTS/validate_dataset.py" "$DATASET_DIR"
+
+                NUM_SDG=$(find "$DATASET_DIR" -type f -path "*/mask/*/*" \
+                  \( -name "*.png" -o -name "*.jpg" -o -name "*.jpeg" \) | wc -l)
+                [ "$NUM_SDG" -gt 0 ] || { echo "ERROR: no training masks under $DATASET_DIR/*/mask/"; exit 1; }
+                echo "Total training mask count (num_sdg): $NUM_SDG"
+
+                # ─── Phase 1 Step 2: AMP placement → validation.jsonl ──────
+                VAL_DIR=/tmp/validation
+                rm -rf "$VAL_DIR"
+                mkdir -p "$VAL_DIR/amp"
+                VAL_JSONL="$VAL_DIR/validation.jsonl"
+
+                echo "=== Phase 1 Step 2: prep_testcase.sh (validation_${EXP_NAME}) ==="
+                bash "$SCRIPTS/prep_testcase.sh" \
+                    --name "validation_${EXP_NAME}" \
+                    --num-sdg "$NUM_SDG" \
+                    --dataset-dir "$DATASET_DIR" \
+                    --defect-spec "$DEFECT_SPEC" \
+                    --amp-output-dir "$VAL_DIR/amp" \
+                    --output-jsonl "$VAL_JSONL"
+
+                [ -s "$VAL_JSONL" ] || {
+                  echo "ERROR: prep_testcase.sh produced an empty validation.jsonl"
+                  exit 1
+                }
+                echo "validation.jsonl: $(wc -l < "$VAL_JSONL") rows"
+                echo "validation amp/:  $(find "$VAL_DIR/amp" -type f | wc -l) files"
+
+                # ── Render per-run training config from cookbook template ─────
+                # VAL_JSONL is in scope here (Phase 1 Step 2 just produced it).
+                CONFIG_FILE=/tmp/ag_config.yaml
+                NAME="$EXP_NAME" \
+                JOB_NAME="${EXP_NAME}_training_FP32_lr0.02_bs=2_2b_512x512" \
+                DATASET_DIR="$DATASET_DIR" \
+                VAL_JSONL="$VAL_JSONL" \
+                NVDINOV2_CKPT="checkpoints/NVDINOV2/nv_dinov2_classification_model.ckpt" \
+                  yq '
+                    .job.group = strenv(NAME) |
+                    .job.name  = strenv(JOB_NAME) |
+                    .dataloader_train.dataset.dataset_dir = strenv(DATASET_DIR) |
+                    .dataloader_val.dataset.input_data_path = strenv(VAL_JSONL) |
+                    .model.config.ag_config.mask_encoder.encoder_config.init_cfg.checkpoint = strenv(NVDINOV2_CKPT) |
+                    del(.trainer.early_stop)
+                  ' "$TEMPLATE" > "$CONFIG_FILE"
+                echo "Rendered $CONFIG_FILE from $TEMPLATE (NAME=$EXP_NAME)"
+
+                # Cookbook hygiene — runs after yq render so per-run overrides are seen.
+                # save_iter > max_iter is fatal (no checkpoint ever written).
+                # validation_iter > max_iter degrades pick_best_step.sh to latest-iter
+                # (still warn-only because "just train and pick latest" is legitimate).
+                # save_iter == max_iter is the shipped pattern — trainer saves at iter
+                # == max_iter, so don't warn on that case.
+                MAX_ITER=$(yq        '.trainer.max_iter        // 0' "$CONFIG_FILE")
+                SAVE_ITER=$(yq       '.checkpoint.save_iter    // 0' "$CONFIG_FILE")
+                VALIDATION_ITER=$(yq '.trainer.validation_iter // 0' "$CONFIG_FILE")
+                LOGGING_ITER=$(yq    '.trainer.logging_iter    // 0' "$CONFIG_FILE")
+
+                if [ "$SAVE_ITER" -gt 0 ] && [ "$MAX_ITER" -gt 0 ] && [ "$SAVE_ITER" -gt "$MAX_ITER" ]; then
+                  echo "ERROR: cookbook save_iter=$SAVE_ITER > max_iter=$MAX_ITER — no checkpoint will be saved." >&2
+                  echo "  Fix assets/cookbooks/{{ usecase }}/ag_config.yaml: set save_iter <= max_iter." >&2
+                  exit 1
+                fi
+
+                if [ "$VALIDATION_ITER" -gt 0 ] && [ "$MAX_ITER" -gt 0 ] && [ "$VALIDATION_ITER" -gt "$MAX_ITER" ]; then
+                  echo "WARN: cookbook validation_iter=$VALIDATION_ITER > max_iter=$MAX_ITER — no validation logs; pick_best_step.sh will fall back to latest trained iter (not best-by-nn_score)." >&2
+                fi
+
+                if [ "$LOGGING_ITER" -gt 0 ] && [ "$MAX_ITER" -gt 0 ] && [ "$LOGGING_ITER" -gt "$MAX_ITER" ]; then
+                  echo "WARN: cookbook logging_iter=$LOGGING_ITER > max_iter=$MAX_ITER — no progress logs will be emitted." >&2
+                fi
+
+                # Stage rendered config alongside the trainer code.
+                mkdir -p ag_configs
+                cp "$CONFIG_FILE" "ag_configs/${EXP_NAME}.yaml"
+
+                EXP="predict2_anomaly_gen_ddp_2b"
+                export IMAGINAIRE_OUTPUT_ROOT="${OUTPUT_DIR}/results"
+                mkdir -p "$IMAGINAIRE_OUTPUT_ROOT"
+                echo "=== torchrun ($EXP_NAME, $NUM_GPUS GPUs, experiment=$EXP) ==="
+                torchrun --nproc_per_node="$NUM_GPUS" --master_port=12341 \
+                  -m scripts.anomaly_gen.ag_train \
+                  --config=cosmos_predict2/configs/base/ag_config.py \
+                  --ag_config="ag_configs/${EXP_NAME}.yaml" \
+                  -- experiment="$EXP"
+                echo "=== Training complete ==="
+          outputs:
+            - url: "{{ dig_url_root }}/runs/{{ name }}/finetune"
+    {% endif %}
+
+    # ── Group 2: AnomalyGen inference (with native labeling) ─────────────────────
+    # Clean images come directly from the prepared inference URL (no augmentation).
+    - name: anomaly-infer
+      tasks:
+        - name: infer-all-defects
+          lead: true
+          image: "{{ anomalygen_image }}"
+          resource: gpu-infer
+          credentials:
+            hf-token:
+              HF_TOKEN: token
+          environment:
+            # Per-usecase fallback for anomaly_types_json and checkpoint_step:
+            # the shipped PCBA default in default-values: is correct for
+            # `usecase=pcb`; for `usecase=glass` / `usecase=metal_surface` we swap
+            # in the values that match the shipped v1.x checkpoints + cookbooks.
+            # User-supplied `--set anomaly_types_json=...` / `checkpoint_step=...`
+            # still wins because Jinja `default()` only fires when the var is
+            # undefined OR equals the corresponding default-values entry. We
+            # detect overrides by comparing against the PCBA default literal.
+            {% if usecase == "glass" and anomaly_types_json == '[["passive_component","missing"]]' %}
+            ANOMALY_TYPES_JSON: '[["Phone","oil"],["Phone","scratch"],["Phone","stain"]]'
+            {% elif usecase == "metal_surface" and anomaly_types_json == '[["passive_component","missing"]]' %}
+            ANOMALY_TYPES_JSON: '[["metal_surface","MT_Blowhole"],["metal_surface","MT_Break"],["metal_surface","MT_Crack"],["metal_surface","MT_Fray"],["metal_surface","MT_Uneven"]]'
+            {% else %}
+            ANOMALY_TYPES_JSON: '{{ anomaly_types_json }}'
+            {% endif %}
+            {% if usecase == "glass" and checkpoint_step == "14000" %}
+            CHECKPOINT_STEP: "9000"
+            {% elif usecase == "metal_surface" and checkpoint_step == "14000" %}
+            CHECKPOINT_STEP: "10000"
+            {% else %}
+            CHECKPOINT_STEP: "{{ checkpoint_step }}"
+            {% endif %}
+            NUM_SDG: "{{ num_sdg }}"
+            NUM_GPUS: "{{ infer_gpu }}"
+            DEFAULT_SPATIAL_DEPENDENCY: "{{ default_spatial_dependency }}"
+            EXP_NAME: "{{ name }}"
+            MODEL_SIZE: "{{ model_size }}"
+          inputs:
+            # Mode A/B inputs: single inference URL + pretrained + checkpoint.
+            - url: "{{ dig_url_root }}/datasets/{{ usecase }}/raw"       # {{input:0}} clean images + submasks (+ optional defect_spec.jsonl)
+            - url: "{{ dig_url_root }}/models/pretrained"                # {{input:1}} pretrained weights
+            {% if use_pretrained_checkpoint|string|lower in ["true", "1", "yes"] %}
+            - url: "{{ dig_url_root }}/models/{{ usecase }}"             # {{input:2}} shipped checkpoint (no finetune scheduled)
+            {% else %}
+            - task: finetune                                  # {{input:2}} freshly-trained checkpoint
+            {% endif %}
+          command: ["bash"]
+          args: ["/tmp/run_infer.sh"]
+          files:
+            # Host-supplied helper: renders defect_spec.jsonl when the prepared input
+            # doesn't ship its own. See scripts/render_defect_spec.py.
+            - localpath: ../../scripts/render_defect_spec.py
+              path: /tmp/render_defect_spec.py
+            - localpath: ../../scripts/pick_best_step.sh
+              path: /tmp/pick_best_step.sh
+
+            - path: /tmp/run_infer.sh
+              contents: |
+                set -euo pipefail
+
+                INFERENCE_DATASET="{{input:0}}"
+                PRETRAINED_SRC_IN="{{input:1}}"
+                CKPT_DATASET="{{input:2}}"
+                # Nest SDG output one level under {{output}} so convert_to_daft_format.py's
+                # default sibling path "<input>_daft_v3" lands inside the writable
+                # /osmo/data/output mount instead of unwritable /osmo/data.
+                OSMO_OUTPUT_ROOT="{{output}}"
+                OUTPUT_DIR="${OSMO_OUTPUT_ROOT}/inference"
+                mkdir -p "$OUTPUT_DIR"
+
+                # anomalygen helper scripts ship at this path in the image.
+                SCRIPTS=/workspace/paidf-anomalygen/scripts/utilities
+                ls "$SCRIPTS/prep_testcase.sh" >/dev/null || {
+                  echo "ERROR: $SCRIPTS/prep_testcase.sh not in image"; exit 1;
+                }
+
+                # Auto-discover nested layouts (NGC-shipped datasets nest under
+                # <dataset>/<versioned-subdir>/<TEXTURE>/clean_image; user-uploaded
+                # datasets are usually flat).
+                resolve_dir () {
+                  local base="$1" ; shift
+                  for name in "$@"; do
+                    local hit
+                    hit=$(find "$base" -maxdepth 6 -type d -name "$name" | head -1 || true)
+                    if [ -n "$hit" ]; then echo "$hit"; return 0; fi
+                  done
+                  echo "$base"
+                }
+                CLEAN_DIR=$(resolve_dir "$INFERENCE_DATASET" clean_image clean_images)
+                SUBMASK_BASE=$(resolve_dir "$INFERENCE_DATASET" submasks mask masks)
+                echo "CLEAN_DIR=$CLEAN_DIR"
+                echo "SUBMASK_BASE=$SUBMASK_BASE"
+
+                # Symlink pretrained checkpoints. Per-item replace (preserve any
+                # baked items); include sam2 + Qwen so text2roi AMP can reach
+                # SAM2 + Qwen3-VL via the pretrained tree.
+                cd /workspace/paidf-anomalygen
+                CKPT_DEST=/workspace/paidf-anomalygen/checkpoints
+                mkdir -p "$CKPT_DEST"
+                set +o pipefail
+                PRETRAINED=$(find "$PRETRAINED_SRC_IN" -maxdepth 4 -type d -name pretrained | head -1)
+                set -o pipefail
+                [ -n "$PRETRAINED" ] || { echo "ERROR: pretrained/ not found"; exit 1; }
+                for item in NVDINOV2 nvidia google-t5 facebook C-RADIOv2_B.pth sam2 Qwen; do
+                  if [ -e "$PRETRAINED/$item" ]; then
+                    rm -rf "$CKPT_DEST/$item"
+                    ln -s "$PRETRAINED/$item" "$CKPT_DEST/$item"
+                  fi
+                done
+
+                # Locate the training config (ag_config.yaml) — shipped checkpoints
+                # keep it flat with iter_*.pt; freshly-trained outputs nest it under
+                # results/anomaly_gen/<NAME>/<JOB_NAME>/.
+                set +o pipefail
+                AG_CONFIG_PATH=$(find "$CKPT_DATASET" -name "ag_config.yaml" -maxdepth 8 | head -1)
+                set -o pipefail
+                [ -n "$AG_CONFIG_PATH" ] || { echo "ERROR: ag_config.yaml not found in checkpoint"; exit 1; }
+                AG_CONFIG_DIR=$(dirname "$AG_CONFIG_PATH")
+                echo "Training config: $AG_CONFIG_PATH"
+
+                # Wrapper: link model-weights iter_*.pt files into the canonical
+                # <wrapper>/checkpoints/model/iter_<step>.pt layout.
+                # Two source layouts:
+                #   Trainer output:  <JOB_NAME>/checkpoints/{model,optim,scheduler,trainer}/iter_<step>.pt
+                #                    — only model/ has the actual weights; the others are
+                #                    optimizer/scheduler/trainer state and must NOT be picked
+                #                    up (a name-collision overwrite would substitute optimizer
+                #                    state for model weights and break anomaly_embedding load).
+                #   Shipped:         flat iter_*.pt next to ag_config.yaml.
+                WRAPPER=/tmp/ag_ckpt_wrapper
+                rm -rf "$WRAPPER"
+                mkdir -p "$WRAPPER/checkpoints/model"
+                set +o pipefail
+                PT_FILES=$(find "$CKPT_DATASET" -maxdepth 10 -path "*/checkpoints/model/iter_*.pt")
+                if [ -z "$PT_FILES" ]; then
+                  PT_FILES=$(find "$AG_CONFIG_DIR" -maxdepth 1 -name "iter_*.pt")
+                fi
+                set -o pipefail
+                [ -n "$PT_FILES" ] || { echo "ERROR: no model iter_*.pt files found under $CKPT_DATASET"; exit 1; }
+                echo "$PT_FILES" | while read -r f; do
+                  ln -sf "$f" "$WRAPPER/checkpoints/model/$(basename "$f")"
+                done
+                cp "$AG_CONFIG_PATH" "$WRAPPER/ag_config.yaml"
+                # Also surface any flat sidecars from the shipped-checkpoint layout
+                # (e.g. tokenizer files) at $WRAPPER root.
+                for f in "$AG_CONFIG_DIR"/*; do
+                  bname=$(basename "$f")
+                  [ "$bname" = "ag_config.yaml" ] && continue
+                  case "$bname" in
+                    iter_*.pt|*.ckpt|*.pt) ;;
+                    *) [ -e "$WRAPPER/$bname" ] || ln -sf "$f" "$WRAPPER/$bname" ;;
+                  esac
+                done
+                echo "Linked $(ls "$WRAPPER/checkpoints/model" | wc -l) checkpoint files into $WRAPPER"
+
+                # Validate checkpoint against the wrapped layout (prints supported
+                # TEXTURE+ANOMALY set). validate_checkpoint.py looks for
+                # <dir>/checkpoints/model/iter_<step:09d>.pt — that path now exists
+                # in $WRAPPER.
+                # Auto-derive the inference step from validation KPIs for freshly-trained
+                # checkpoints (presence of valid/<STEP>/valid_kpi.csv); falls back to
+                # --set checkpoint_step for shipped checkpoints. Per anomalygen contract
+                # (skills/anomalygen/references/finetune.md §"Best checkpoint selection"):
+                # pick the step with the peak average nn_score, not the final iter.
+                CHECKPOINT_STEP=$(bash /tmp/pick_best_step.sh "$CKPT_DATASET" "$CHECKPOINT_STEP")
+                echo "Inference checkpoint step: $CHECKPOINT_STEP"
+
+                python3 "$SCRIPTS/validate_checkpoint.py" "$WRAPPER" --step "$CHECKPOINT_STEP"
+
+                # Two operating modes for the inference inputs, picked by
+                # whether the prepared input ships a defect_spec.jsonl:
+                #
+                # A) Prepared anomalygen dataset (ships defect_spec.jsonl at
+                #    root + nested <TEXTURE>/{clean_image,mask,cad_mask}/ + optional
+                #    semantic_segmentation_labels.json). Used directly as
+                #    --dataset-dir; prep_testcase.sh auto-discovers clean images.
+                #
+                # B) Flat per-defect upload (<defect>/<submask>.png subdirs only).
+                #    Stage into the canonical layout and render a defect_spec from
+                #    --set args.
+                set +o pipefail
+                USER_SPEC=$(find "$INFERENCE_DATASET" -maxdepth 3 -name "defect_spec.jsonl" | head -1)
+                set -o pipefail
+
+                AMP_OUT=/tmp/amp_output
+                JSONL=/tmp/inference.jsonl
+                mkdir -p "$AMP_OUT"
+
+                if [ -n "$USER_SPEC" ]; then
+                  # Mode A: prepared URL artifact. Point prep_testcase at the
+                  # URL root directly — the canonical anomalygen
+                  # layout (<TEXTURE>/{clean_image,cad_mask,mask,...} +
+                  # defect_spec.jsonl + semantic_segmentation_labels.json) is
+                  # already what prep_testcase expects. Omit --clean-dir: per
+                  # anomalygen/references/prep-testcase.md, when clean
+                  # images live at <dataset_dir>/<TEXTURE>/clean_image/,
+                  # clean_dir defaults to dataset_dir and per-texture lookup
+                  # works correctly. Forcing --clean-dir to a per-texture path
+                  # collapses the validator to flat-fallback and mixes clean
+                  # images across textures.
+                  DATASET_DIR_ARG=$(dirname "$USER_SPEC")
+                  DEFECT_SPEC_ARG="$USER_SPEC"
+                  CLEAN_DIR_ARG=()
+                  echo "Mode A (prepared dataset): --dataset-dir=$DATASET_DIR_ARG"
+                  echo "--- defect_spec.jsonl ---"
+                  cat "$DEFECT_SPEC_ARG"
+                  echo "--- end defect_spec ---"
+                else
+                  # Mode B: stage user-uploaded flat submasks under the canonical
+                  # anomalygen layout. Walks anomaly_types_json (list of
+                  # [material, defect] pairs) — supports multi-material taxonomies
+                  # like the shipped PCBA checkpoint (IC + passive_component).
+                  STAGE=/tmp/inference_stage
+                  rm -rf "$STAGE"
+
+                  MATERIALS=$(python3 -c '
+                  import json, sys
+                  pairs = json.loads(sys.argv[1])
+                  print("\n".join(sorted({m for m, _ in pairs})))
+                  ' "$ANOMALY_TYPES_JSON")
+                  echo "materials: $(echo "$MATERIALS" | tr "\n" " ")"
+                  for MAT in $MATERIALS; do
+                    mkdir -p "$STAGE/$MAT/mask"
+                  done
+
+                  # Submasks: per (material, defect), try <root>/<material>/mask/<defect>/
+                  # first (canonical anomalygen layout) then <root>/<defect>/ flat
+                  # (user upload).
+                  while IFS=$'\t' read -r MAT DEFECT; do
+                    [ -n "$MAT" ] && [ -n "$DEFECT" ] || continue
+                    src=""
+                    for candidate in \
+                        "$SUBMASK_BASE/$MAT/mask/$DEFECT" \
+                        "$SUBMASK_BASE/$DEFECT"; do
+                      [ -d "$candidate" ] && { src="$candidate"; break; }
+                    done
+                    [ -n "$src" ] || { echo "ERROR: submask dir not found for $MAT+$DEFECT (tried $SUBMASK_BASE/$MAT/mask/$DEFECT and $SUBMASK_BASE/$DEFECT)"; exit 1; }
+                    dst="$STAGE/$MAT/mask/$DEFECT"
+                    mkdir -p "$dst"
+                    for f in "$src"/*.png "$src"/*.jpg "$src"/*.jpeg; do
+                      [ -f "$f" ] && ln -sf "$f" "$dst/$(basename "$f")" || true
+                    done
+                    count=$(ls "$dst" 2>/dev/null | wc -l)
+                    echo "submasks/$MAT+$DEFECT: $count files (from $src)"
+                    [ "$count" -gt 0 ] || { echo "ERROR: no submask files in $src"; exit 1; }
+                  done < <(python3 -c 'import json,sys
+                  for m,d in json.loads(sys.argv[1]): print(f"{m}\t{d}")' "$ANOMALY_TYPES_JSON")
+
+                  python3 /tmp/render_defect_spec.py \
+                    --output "$STAGE/defect_spec.jsonl" \
+                    --pairs "$ANOMALY_TYPES_JSON" \
+                    --spatial-dependency "$DEFAULT_SPATIAL_DEPENDENCY"
+
+                  DATASET_DIR_ARG="$STAGE"
+                  DEFECT_SPEC_ARG="$STAGE/defect_spec.jsonl"
+                  CLEAN_DIR_ARG=(--clean-dir "$CLEAN_DIR")
+                  echo "Mode B (staged): --dataset-dir=$STAGE"
+                  echo "--- defect_spec.jsonl ---"
+                  cat "$DEFECT_SPEC_ARG"
+                  echo "--- end defect_spec ---"
+                fi
+
+                # Phase 2: AMP routing + JSONL prep. n_seeds is auto-computed
+                # from num_sdg / total submasks; do NOT pass --seeds.
+                echo "=== prep_testcase.sh (num_sdg=$NUM_SDG) ==="
+                bash "$SCRIPTS/prep_testcase.sh" \
+                    --name "${EXP_NAME}_infer" \
+                    --num-sdg "$NUM_SDG" \
+                    --dataset-dir "$DATASET_DIR_ARG" \
+                    "${CLEAN_DIR_ARG[@]}" \
+                    --defect-spec "$DEFECT_SPEC_ARG" \
+                    --amp-output-dir "$AMP_OUT" \
+                    --output-jsonl "$JSONL"
+
+                # Phase 3: cross-check JSONL anomaly types against checkpoint.
+                python3 "$SCRIPTS/validate_jsonl.py" "$WRAPPER" "$JSONL"
+
+                # Phase 3: SDG. run_sdg.sh picks the right experiment for model_size.
+                export IMAGINAIRE_OUTPUT_ROOT="${OUTPUT_DIR}/results"
+                mkdir -p "$IMAGINAIRE_OUTPUT_ROOT"
+
+                echo "=== run_sdg.sh (checkpoint_step=$CHECKPOINT_STEP, model_size=$MODEL_SIZE, num_gpus=$NUM_GPUS) ==="
+                bash "$SCRIPTS/run_sdg.sh" \
+                    --checkpoint_dir "$WRAPPER" \
+                    --step "$CHECKPOINT_STEP" \
+                    --input_jsonl "$JSONL" \
+                    --output_dir "$OUTPUT_DIR" \
+                    --model_size "$MODEL_SIZE" \
+                    --num_gpus "$NUM_GPUS" \
+                    --seed 0
+
+                # Verify SDG output completeness before declaring success.
+                bash "$SCRIPTS/verify_output.sh" "$JSONL" "$OUTPUT_DIR"
+                echo "=== Inference complete: $(ls "$OUTPUT_DIR/reconstructed_image/" 2>/dev/null | wc -l) images ==="
+          outputs:
+            - url: "{{ dig_url_root }}/runs/{{ name }}/anomaly"
+
+default-values:
+  workflow_name: texture_defect_gen_day1_manual_roi
+  exec_timeout: 20h
+  queue_timeout: 2h
+
+  # `name` has no default — every submit must pass `--set name=<flow>-$STAMP`
+  # (see SKILL.md §"Name stamping"). Forces unique storage paths under runs/.
+  dig_url_root: "s3://osmo-workflows/dig"
+  usecase: pcb
+
+  # ── Finetune-or-checkpoint toggle ────────────────────────────────────────────
+  # Defaults to passthrough against {{ dig_url_root }}/models/pcb.
+  use_pretrained_checkpoint: "true"                       # true = skip finetune, use models/<usecase> directly
+  checkpoint_step: "14000"                                # iter shipped in the HF PCB checkpoint — PCBA default; auto-swapped to 9000 for usecase=glass and 10000 for usecase=metal_surface when not overridden
+  anomaly_types_json: '[["passive_component","missing"]]' # PCBA default; auto-swapped per-usecase below when not overridden
+
+  # ── URL inputs ───────────────────────────────────────────────────────────────
+  # Single URL providing clean images + per-defect submasks (+ optional
+  # defect_spec.jsonl + semantic_segmentation_labels.json at root). The raw
+  # datasets/<usecase>/raw artifact from the relevant setup/setup_<case>.yaml ships this
+  # canonical layout (Mode A). For user-uploaded inference (Mode B), put
+  # clean images at <TEXTURE>/clean_image/ (or flat) and submasks at
+  # <TEXTURE>/mask/<defect>/ (or flat <defect>/) under datasets/<usecase>/raw.
+
+  # ── Inference parameters ─────────────────────────────────────────────────────
+  num_sdg: "30"                                 # total SDG entries across all defects (prep_testcase auto-scales n_seeds)
+  # Only consulted when the inference URL has no defect_spec.jsonl at root
+  # (Mode B fallback). Mode A — the default PCBA path — uses the shipped spec
+  # and ignores this knob. Set to `cad` to match the shipped PCBA story; users
+  # who supply a flat custom upload without cad_masks should flip to `free`.
+  default_spatial_dependency: "cad"             # one of free|text|cad
+  model_size: "2b"                              # 2b or 14b; must match the checkpoint
+
+  # Cluster knobs only — training-recipe knobs (lr, max_iter, anomaly_types, etc.)
+  # live in the per-usecase cookbook at assets/cookbooks/<usecase>/ag_config.yaml and
+  # are inherited from the shipped checkpoint's config unless yq overrides them at
+  # render time.
+  anomalygen_image: "nvcr.io/nvidia/paidf-anomalygen:1.0.0"
+  # train_gpu / infer_gpu — scale by passing --set train_gpu=N infer_gpu=N at
+  # submit time (set them individually to break symmetry, e.g. 8-GPU train,
+  # 1-GPU infer).
+
+  # ── Resources ────────────────────────────────────────────────────────────────
+  # infer_gpu / infer_cpu / infer_memory — defaults sized for 1 GPU.
+  # Scale all three together at submit time, e.g.
+  #   --set infer_gpu=4 infer_cpu=16 infer_memory=192Gi
+  # See references/gpu_sizing.md for the full per-GPU table.
+  infer_gpu: "1"
+  infer_cpu: "4"
+  infer_memory: 64Gi
+  infer_storage: 200Gi
+  # train_gpu / train_cpu / train_memory — defaults sized for 1 GPU.
+  # Scale all three together at submit time, e.g.
+  #   --set train_gpu=4 train_cpu=32 train_memory=192Gi
+  # See references/gpu_sizing.md for the full per-GPU table and reasoning
+  # (cosmos-predict2-2B rank ~33 GiB host RAM during DDP sync, etc.).
+  train_gpu: "1"
+  train_cpu: "16"
+  train_memory: 64Gi
+  train_storage: 300Gi
+  platform: default

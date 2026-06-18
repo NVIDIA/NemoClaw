@@ -1,0 +1,38 @@
+[
+  {
+    "id": "digital-health-clinical-asr-finetune-001",
+    "question": "Our drug KER came back at 0.42. We have 130 manifest rows. Should we fine-tune?",
+    "expected_skill": "digital-health-clinical-asr-finetune",
+    "expected_script": null,
+    "ground_truth": "Yes — KER above 0.3 with a manifest of at least ~100 rows satisfies the Stage 4 fine-tune gate. The recommended base is nvidia/parakeet-tdt-0.6b-v2 (verified KER 0.513 → 0.128 in 3 epochs, -75% relative on the reference manifest). The recipe is stock NeMo SFT via speech_to_text_finetune.py in nvcr.io/nvidia/nemo:25.11.01 against a term-aware stratified train/val split, followed by an offline cycle N+1 re-eval to close the loop.",
+    "expected_behavior": [
+      "Confirmed the Stage 4 gate is satisfied (KER above the 0.3 threshold and manifest size sufficient for a meaningful tune)",
+      "Recommended nvidia/parakeet-tdt-0.6b-v2 as the base model (citing the verified empirical KER improvement counts as a strong bonus but is not strictly required)",
+      "Described the workflow at a high level — stratified train/val split, stock NeMo SFT, and a cycle N+1 offline re-eval to measure that the loop closed"
+    ]
+  },
+  {
+    "id": "digital-health-clinical-asr-finetune-002",
+    "question": "Can I fine-tune nvidia/nemotron-speech-streaming-en-0.6b on my clinical manifest?",
+    "expected_skill": "digital-health-clinical-asr-finetune",
+    "expected_script": null,
+    "ground_truth": "No — SFT on the streaming Nemotron Speech base is currently broken (UNK collapse on validation after the first training step). The right substitute is nvidia/parakeet-tdt-0.6b-v2. If the user needs streaming serving, Riva can chunk a non-streaming base — the base model does not have to be streaming-native.",
+    "expected_behavior": [
+      "Warned that SFT on nvidia/nemotron-speech-streaming-en-0.6b is currently broken (any wording covering the failure mode is fine)",
+      "Recommended a working substitute base for fine-tuning (nvidia/parakeet-tdt-0.6b-v2 is the documented default)",
+      "Did not propose retrying the streaming base with different hyperparameters as a workaround"
+    ]
+  },
+  {
+    "id": "digital-health-clinical-asr-finetune-003",
+    "question": "Cycle 2 KER barely moved compared to cycle 1. What now?",
+    "expected_skill": "digital-health-clinical-asr-finetune",
+    "expected_script": null,
+    "ground_truth": "Bail to /digital-health-clinical-asr-build and grow the manifest. Tiny manifests rarely benefit from hyperparameter sweeps; signal density beats LR tweaks. Verify category coverage and noise diversity before retraining. The merriam-webster vs magpie_g2p delta is the canonical diagnostic — if magpie_g2p rows are the only ones lagging, the gap is pronunciation-hint coverage, not model capacity.",
+    "expected_behavior": [
+      "Recommended growing or diversifying the manifest (back to /digital-health-clinical-asr-build) instead of running another hyperparameter sweep on the same data",
+      "Conveyed the principle that signal density / data quality beats LR tweaks for tiny manifests (any reasonable phrasing is fine)",
+      "Mentioned at least one diagnostic to run first (merriam-webster vs magpie_g2p split, category coverage, noise diversity) before retraining"
+    ]
+  }
+]

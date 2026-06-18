@@ -1,0 +1,156 @@
+# Cosmos Transfer 2.5 — VLM+LLM captioning, multi-modal controls, local executor
+
+data:
+  - inputs:
+      rgb: "/app/data/video/input.mp4"
+      controls:
+        edge: null
+        depth: null
+        seg: null
+        vis: null
+    output:
+      video: "/app/data/video/output/output.mp4"
+      caption: "/app/data/video/output/output.txt"
+      metadata: "/app/data/video/output/metadata.json"
+
+endpoints:
+  vlm:
+    url: "http://localhost:9001/v1"
+    model: "Qwen/Qwen3-VL-30B-A3B-Instruct"
+  llm:
+    url: "http://localhost:9000/v1"
+    model: "Qwen/Qwen2.5-14B-Instruct"
+  cosmos_transfer:
+    # NOTE: This is a local in-container Cosmos service URL for standalone runs.
+    # It is NOT a NIM endpoint; VDA workflows run Cosmos Transfer from
+    # HuggingFace model cache, and in OSMO workflow mode this value is
+    # overridden by worker runtime arguments.
+    url: "http://localhost:30002/"
+    model: "nvidia/Cosmos-Transfer2.5-7B"
+
+pipeline:
+  retry: 1
+  regenerate_caption_on_retry: true
+  logging:
+    enabled: true
+    level: "INFO"
+
+captioning:
+  vlm:
+    parser: "instruct"
+    system_prompt: |
+      You are a helpful assistant that describes video scenes.
+      You MUST ONLY describe the scene content itself, never the video quality
+      or technical aspects. Respond with plain descriptive text only.
+    user_prompt: >
+      Describe this outdoor European cobblestone piazza footage captured by a
+      fixed elevated camera. Focus on the cobblestone pavement and its
+      condition, outdoor café tables and chairs under canopies, parked
+      motorcycles and scooters, pedestrians walking or seated, historic stone
+      building facades with arched windows and columns, ambient lighting and
+      sky conditions, and shadows across the square. Describe only the scene
+      content.
+    parameters:
+      temperature: 0.3
+      top_p: 0.95
+      frequency_penalty: 1.05
+      max_tokens: 4096
+      stream: false
+      fps: 4.0
+      max_pixels: 307200
+
+  llm:
+    system_prompt: |
+      You are an expert at writing concise prompts for a video generation model.
+      You are given:
+      1. A caption describing the source European piazza scene.
+      2. Attribute-value pairs describing the desired target conditions.
+      Generate a single natural-language prompt that changes the scene to match the
+      target attributes while preserving viewpoint, scene layout, pedestrian positions,
+      and architectural elements.
+      Output only a JSON object with a single key "prompt" containing the final sentence.
+    parameters:
+      temperature: 0.3
+      top_p: 0.95
+      max_tokens: 4096
+      frequency_penalty: 1.05
+      presence_penalty: 0
+      stream: false
+
+    variables:
+      weather_condition: ["clear_sky", "overcast", "raining"]
+      lighting_condition: ["sunrise", "mid_morning", "afternoon", "sunset", "golden_hour", "twilight"]
+
+augmentation:
+  model:
+    name: "cosmos-transfer2.5"
+    version: "ct2.5"
+    executor_type: "local"
+
+  parameters:
+    sigma: 90
+    seed: null
+    guidance: 3
+    num_steps: 35
+    inference_name: "cosmos_transfer_inference"
+  modalities:
+    edge: 1.0
+    seg_control_prompt: "cobblestone pavement, café tables, motorcycles, pedestrians, and historic stone buildings"
+    positive_prompt: |
+      cinematic, photorealistic, ultra high quality, ultra high resolution,
+      high fidelity, high definition, realistic outdoor European piazza scene,
+      cobblestone pavement square, outdoor café tables and chairs under large
+      canopies, parked motorcycles and scooters, pedestrians walking, historic
+      stone building facades with arched windows and columns, proper physics
+      and coherent motion, realistic weather and lighting conditions
+    negative_prompt: |
+      The video captures a game playing, with bad crappy graphics and cartoonish
+      frames. It represents a recording of old outdated games. The lighting looks
+      very fake. The textures are very raw and basic. The geometries are very
+      primitive. The images are very pixelated and of poor CG quality. There are
+      many subtitles in the footage. Overall, the video is unrealistic at all.
+  local_parameters:
+    num_processes: 1
+    master_port: 12341
+
+evaluators:
+  - hallucination_check:
+      enabled: true
+      threshold: 0.682
+      params:
+        grad_thresh: 10.0
+        blur_ksize: 7
+        morph_k: 3
+        dist_tol_px: 7.0
+        max_frames: null
+  - attribute_verification:
+      enabled: true
+      question_generation:
+        system_prompt: |
+          You are an expert at creating multiple choice verification questions.
+          Your task is to generate a simple, direct question that can verify a
+          specific attribute in a video frame. The question must have 2-4 answer
+          options and test for a specific visual attribute. The question should be
+          answerable by looking at a single frame from the video.
+          Output your response as a single JSON object with no additional text or formatting.
+        parameters:
+          retry: 1
+          temperature: 0.2
+          top_p: 0.95
+          frequency_penalty: 0.0
+          presence_penalty: 0.0
+          max_tokens: 2048
+          stream: true
+      vlm_verification:
+        system_prompt: |
+          You are an expert vision model tasked with answering multiple choice questions
+          about images. Analyze the image carefully and select the single best answer from
+          the provided options. Respond with ONLY a single letter (A, B, C, or D)
+          corresponding to your answer. Do not include any explanation or additional text.
+        parameters:
+          retry: 0
+          temperature: 0.0
+          top_p: 1.0
+          frequency_penalty: 0.0
+          max_tokens: 10
+          stream: false

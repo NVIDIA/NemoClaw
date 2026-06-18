@@ -1,0 +1,103 @@
+encryption_key: tlt_encode
+task: segment
+train:
+  resume_training_checkpoint_path: null
+  pretrained_model_path: null
+  segment:
+    loss: ce
+    weights:
+    - 0.5
+    - 0.5
+    - 0.5
+    - 0.8
+    - 1.0
+  num_epochs: 200
+  num_nodes: 1
+  validation_interval: 50
+  checkpoint_interval: 200
+  optim:
+    lr: 2.0e-05
+    optim: adamw
+    policy: linear
+    momentum: 0.9
+    weight_decay: 0.01
+results_dir: null
+model:
+  backbone:
+    type: vit_large_nvdinov2
+    pretrained_backbone_path: /workspace/weights/backbone.pth
+    freeze_backbone: false
+  decode_head:
+    feature_strides:
+    - 4
+    - 8
+    - 16
+    - 32
+dataset:
+  segment:
+    dataset: CNDataset
+    root_dir: /workspace/data
+    data_name: custom
+    label_transform: norm
+    batch_size: 8
+    workers: 4
+    multi_scale_train: true
+    multi_scale_infer: false
+    num_classes: 2
+    img_size: 256
+    image_folder_name: A
+    change_image_folder_name: B
+    list_folder_name: list
+    annotation_folder_name: label
+    train_split: train
+    validation_split: val
+    test_split: test
+    predict_split: test
+    label_suffix: .png
+    color_map:
+      '0':
+      - 0
+      - 0
+      - 0
+      '1':
+      - 255
+      - 255
+      - 255
+    augmentation:
+      random_flip:
+        vflip_probability: 0.5
+        hflip_probability: 0.5
+        enable: true
+      random_rotate:
+        rotate_probability: 0.5
+        angle_list:
+        - 90
+        - 180
+        - 270
+        enable: true
+      random_color:
+        brightness: 0.3
+        contrast: 0.3
+        saturation: 0.3
+        hue: 0.3
+        enable: true
+      with_scale_random_crop:
+        enable: true
+      with_random_crop: true
+      with_random_blur: true
+evaluate:
+  checkpoint: ${results_dir}/train/changenet_model_segment_latest.pth
+  batch_size: 8
+  vis_after_n_batches: 1
+inference:
+  checkpoint: ${results_dir}/train/changenet_model_segment_latest.pth
+  batch_size: 8
+  vis_after_n_batches: 1
+export:
+  gpu_id: 0
+  checkpoint: ${results_dir}/train/changenet_model_segment_latest.pth
+  onnx_file: ${results_dir}/export/changenet_segment.onnx
+  input_width: 256
+  input_height: 256
+  opset_version: 16
+  batch_size: -1

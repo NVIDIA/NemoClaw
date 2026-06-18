@@ -1,0 +1,3234 @@
+{
+  "automl_default_parameters": [
+    "dataset.test_dataset.batch_size",
+    "dataset.val_dataset.batch_size",
+    "dataset.train_dataset.num_workers",
+    "dataset.val_dataset.num_workers",
+    "dataset.train_dataset.batch_size",
+    "dataset.test_dataset.num_workers"
+  ],
+  "automl_disabled_parameters": [
+    "model.pts_backbone.norm_cfg",
+    "model.bbox_head.bbox_coder",
+    "model.pts_backbone.layer_nums",
+    "model.view_transform.ybound",
+    "model.img_backbone.depths",
+    "model.pts_middle_encoder.norm_cfg",
+    "model.img_neck.in_channels",
+    "dataset.train_dataset",
+    "evaluate",
+    "model.pts_backbone.layer_strides",
+    "model.pts_middle_encoder.order",
+    "model.img_backbone.init_cfg",
+    "model",
+    "model.img_neck",
+    "dataset.lidar2cam",
+    "model.bbox_head.decoder_layer.cross_attn_cfg",
+    "dataset.test_dataset.data_prefix",
+    "wandb",
+    "model.pts_backbone.conv_cfg",
+    "model.img_backbone.num_heads",
+    "model.voxel_size",
+    "model.view_transform.image_size",
+    "wandb.tags",
+    "model.view_transform.dbound",
+    "model.pts_neck.in_channels",
+    "model.img_neck.norm_cfg",
+    "inference",
+    "model.img_backbone",
+    "model.view_transform",
+    "model.data_preprocessor.std",
+    "dataset",
+    "model.view_transform.zbound",
+    "model.pts_middle_encoder.sparse_shape",
+    "train.optimizer.clip_grad",
+    "model.pts_neck.out_channels",
+    "model.pts_neck.upsample_strides",
+    "model.bbox_head.common_heads",
+    "model.view_transform.feature_size",
+    "train.lr_scheduler",
+    "model.pts_voxel_encoder",
+    "train.optimizer",
+    "train.cudnn",
+    "model.bbox_head.decoder_layer.pos_encoding_cfg",
+    "model.bbox_head.decoder_layer.norm_cfg",
+    "train.gpu_ids",
+    "model.point_cloud_range",
+    "model.pts_backbone.out_channels",
+    "model.pts_neck.norm_cfg",
+    "model.pts_neck.upsample_cfg",
+    "train",
+    "dataset.test_dataset",
+    "model.bbox_head.loss_cls",
+    "model.data_preprocessor",
+    "model.img_neck.act_cfg",
+    "model.post_center_range",
+    "evaluate.gpu_ids",
+    "model.data_preprocessor.mean",
+    "model.bbox_head.loss_bbox",
+    "dataset.cam2img",
+    "model.bbox_head.decoder_layer.self_attn_cfg",
+    "model.bbox_head",
+    "inference.gpu_ids",
+    "model.view_transform.xbound",
+    "model.grid_size",
+    "model.fusion_layer.in_channels",
+    "model.fusion_layer",
+    "model.data_preprocessor.voxelize_cfg",
+    "model.bbox_head.decoder_layer",
+    "model.pts_middle_encoder",
+    "model.pts_backbone",
+    "model.pts_neck",
+    "dataset.train_dataset.data_prefix",
+    "model.bbox_head.assigner",
+    "dataset.origin",
+    "model.img_backbone.out_indices",
+    "dataset.val_dataset",
+    "model.img_neck.upsample_cfg",
+    "dataset.val_dataset.data_prefix",
+    "input_modality",
+    "model.bbox_head.decoder_layer.ffn_cfg",
+    "default_hooks",
+    "dataset.classes",
+    "model.bbox_head.loss_heatmap",
+    "train.optimizer.betas",
+    "model.bbox_head.code_weights"
+  ],
+  "default": {
+    "dataset": {
+      "box_type_3d": "lidar",
+      "classes": [
+        "person"
+      ],
+      "default_cam_key": "CAM2",
+      "gt_box_type": "camera",
+      "num_views": 1,
+      "origin": [
+        0.5,
+        1.0,
+        0.5
+      ],
+      "per_sequence": false,
+      "point_cloud_dim": 4,
+      "root_dir": "",
+      "test_dataset": {
+        "batch_size": 4,
+        "data_prefix": {
+          "img": "training/images/",
+          "pts": "training/lidar_reduced"
+        },
+        "num_workers": 8,
+        "pin_memory": true,
+        "sampler": "DefaultSampler"
+      },
+      "train_dataset": {
+        "batch_size": 4,
+        "data_prefix": {
+          "img": "training/images/",
+          "pts": "training/lidar_reduced"
+        },
+        "num_workers": 8,
+        "pin_memory": true,
+        "sampler": "DefaultSampler"
+      },
+      "type": "KittiPersonDataset",
+      "val_dataset": {
+        "batch_size": 4,
+        "data_prefix": {
+          "img": "training/images/",
+          "pts": "training/lidar_reduced"
+        },
+        "num_workers": 8,
+        "pin_memory": true,
+        "sampler": "DefaultSampler"
+      }
+    },
+    "default_hooks": {
+      "checkpoint": {
+        "by_epoch": true,
+        "interval": 1,
+        "type": "CheckpointHook"
+      },
+      "logger": {
+        "interval": 1,
+        "log_metric_by_epoch": true,
+        "type": "LoggerHook"
+      },
+      "param_scheduler": {
+        "type": "ParamSchedulerHook"
+      },
+      "sampler_seed": {
+        "type": "DistSamplerSeedHook"
+      },
+      "timer": {
+        "type": "IterTimerHook"
+      },
+      "visualization": {
+        "type": "Det3DVisualizationHook"
+      }
+    },
+    "default_scope": "mmdet3d",
+    "encryption_key": "",
+    "input_modality": {
+      "use_camera": true,
+      "use_external": false,
+      "use_lidar": true,
+      "use_map": false,
+      "use_radar": false
+    },
+    "logger_hook": "TAOBEVFusionLoggerHook",
+    "model": {
+      "bbox_head": {
+        "assigner": {
+          "cls_cost": {
+            "alpha": 0.25,
+            "gamma": 2.0,
+            "type": "mmdet.FocalLossCost",
+            "weight": 0.15
+          },
+          "iou_calculator": {
+            "coordinate": "lidar",
+            "type": "BboxOverlaps3D"
+          },
+          "iou_cost": {
+            "type": "IoU3DCost",
+            "weight": 0.25
+          },
+          "reg_cost": {
+            "type": "BBoxBEVL1Cost",
+            "weight": 0.25
+          },
+          "type": "HungarianAssigner3D"
+        },
+        "auxiliary": true,
+        "bbox_coder": {
+          "code_size": 12,
+          "score_threshold": 0.0,
+          "type": "TAO3DBBoxCoder"
+        },
+        "bn_momentum": 0.1,
+        "code_weights": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "common_heads": {
+          "center": [
+            2,
+            2
+          ],
+          "dim": [
+            3,
+            2
+          ],
+          "height": [
+            1,
+            2
+          ],
+          "rot": [
+            6,
+            2
+          ]
+        },
+        "decoder_layer": {
+          "cross_attn_cfg": {
+            "dropout": 0.1,
+            "embed_dims": 128,
+            "num_heads": 8
+          },
+          "ffn_cfg": {
+            "act_cfg": {
+              "inplace": true,
+              "type": "ReLU"
+            },
+            "embed_dims": 128,
+            "feedforward_channels": 256,
+            "ffn_drop": 0.1,
+            "num_fcs": 2
+          },
+          "norm_cfg": {
+            "type": "LN"
+          },
+          "pos_encoding_cfg": {
+            "input_channel": 2,
+            "num_pos_feats": 128
+          },
+          "self_attn_cfg": {
+            "dropout": 0.1,
+            "embed_dims": 128,
+            "num_heads": 8
+          },
+          "type": "TransformerDecoderLayer"
+        },
+        "hidden_channel": 128,
+        "in_channels": 512,
+        "loss_bbox": {
+          "loss_weight": 0.25,
+          "reduction": "mean",
+          "type": "mmdet.L1Loss"
+        },
+        "loss_cls": {
+          "alpha": 0.25,
+          "gamma": 2.0,
+          "loss_weight": 1.0,
+          "reduction": "mean",
+          "type": "mmdet.FocalLoss",
+          "use_sigmoid": true
+        },
+        "loss_heatmap": {
+          "loss_weight": 1.0,
+          "reduction": "mean",
+          "type": "mmdet.GaussianFocalLoss"
+        },
+        "nms_kernel_size": 3,
+        "num_classes": 1,
+        "num_decoder_layers": 1,
+        "num_proposals": 200,
+        "out_size_factor": 8,
+        "type": "BEVFusionHead"
+      },
+      "data_preprocessor": {
+        "bgr_to_rgb": false,
+        "mean": [
+          123.675,
+          116.28,
+          103.53
+        ],
+        "pad_size_divisor": 32,
+        "std": [
+          58.395,
+          57.12,
+          57.375
+        ],
+        "type": "Det3DDataPreprocessor",
+        "voxelize_cfg": {
+          "max_num_points": 10,
+          "max_voxels": [
+            120000,
+            160000
+          ],
+          "voxelize_reduce": true
+        }
+      },
+      "fusion_layer": {
+        "in_channels": [
+          80,
+          256
+        ],
+        "out_channels": 256,
+        "type": "ConvFuser"
+      },
+      "grid_size": [
+        1440,
+        1440,
+        41
+      ],
+      "img_backbone": {
+        "attn_drop_rate": 0.0,
+        "convert_weights": true,
+        "depths": [
+          2,
+          2,
+          6,
+          2
+        ],
+        "drop_path_rate": 0.2,
+        "drop_rate": 0.0,
+        "embed_dims": 96,
+        "init_cfg": {},
+        "mlp_ratio": 4,
+        "num_heads": [
+          3,
+          6,
+          12,
+          24
+        ],
+        "out_indices": [
+          1,
+          2,
+          3
+        ],
+        "patch_norm": true,
+        "qkv_bias": true,
+        "type": "mmdet.SwinTransformer",
+        "window_size": 7,
+        "with_cp": false
+      },
+      "img_neck": {
+        "act_cfg": {
+          "inplace": true,
+          "type": "ReLU"
+        },
+        "in_channels": [
+          192,
+          384,
+          768
+        ],
+        "norm_cfg": {
+          "requires_grad": true,
+          "type": "BN2d"
+        },
+        "num_outs": 0,
+        "out_channels": 256,
+        "start_level": 0,
+        "type": "GeneralizedLSSFPN",
+        "upsample_cfg": {
+          "align_corners": false,
+          "mode": "bilinear"
+        }
+      },
+      "point_cloud_range": [
+        0,
+        -40,
+        -3,
+        70.4,
+        40,
+        1
+      ],
+      "post_center_range": [
+        -61.2,
+        -61.2,
+        -20.0,
+        61.2,
+        61.2,
+        20.0
+      ],
+      "pts_backbone": {
+        "conv_cfg": {
+          "bias": false,
+          "type": "Conv2d"
+        },
+        "in_channels": 256,
+        "layer_nums": [
+          5,
+          5
+        ],
+        "layer_strides": [
+          1,
+          2
+        ],
+        "norm_cfg": {
+          "eps": 0.001,
+          "momentum": 0.01,
+          "type": "BN"
+        },
+        "out_channels": [
+          128,
+          256
+        ],
+        "type": "SECOND"
+      },
+      "pts_middle_encoder": {
+        "block_type": "basicblock",
+        "in_channels": 4,
+        "norm_cfg": {
+          "eps": 0.001,
+          "momentum": 0.01,
+          "type": "BN1d"
+        },
+        "order": [
+          "conv",
+          "norm",
+          "act"
+        ],
+        "sparse_shape": [
+          1440,
+          1440,
+          41
+        ],
+        "type": "BEVFusionSparseEncoder"
+      },
+      "pts_neck": {
+        "in_channels": [
+          128,
+          256
+        ],
+        "norm_cfg": {
+          "eps": 0.001,
+          "momentum": 0.01,
+          "type": "BN"
+        },
+        "out_channels": [
+          256,
+          256
+        ],
+        "type": "SECONDFPN",
+        "upsample_cfg": {
+          "bias": false,
+          "type": "deconv"
+        },
+        "upsample_strides": [
+          1,
+          2
+        ],
+        "use_conv_for_no_stride": true
+      },
+      "pts_voxel_encoder": {
+        "num_features": 4,
+        "type": "HardSimpleVFE"
+      },
+      "type": "BEVFusion",
+      "view_transform": {
+        "dbound": [
+          1.0,
+          60.0,
+          0.5
+        ],
+        "downsample": 2,
+        "feature_size": [
+          32,
+          88
+        ],
+        "image_size": [
+          256,
+          704
+        ],
+        "in_channels": 256,
+        "out_channels": 80,
+        "type": "DepthLSSTransform",
+        "xbound": [
+          -54.0,
+          54.0,
+          0.3
+        ],
+        "ybound": [
+          -54.0,
+          54.0,
+          0.3
+        ],
+        "zbound": [
+          -10.0,
+          10.0,
+          20.0
+        ]
+      },
+      "voxel_size": [
+        0.05,
+        0.05,
+        0.1
+      ]
+    },
+    "model_name": "",
+    "results_dir": "",
+    "train": {
+      "by_epoch": true,
+      "checkpoint_interval": 1,
+      "checkpoint_interval_unit": "epoch",
+      "cudnn": {
+        "benchmark": false,
+        "deterministic": true
+      },
+      "gpu_ids": [
+        0
+      ],
+      "logging_interval": 1,
+      "lr_scheduler": [
+        {
+          "begin": 0,
+          "by_epoch": false,
+          "end": 500,
+          "start_factor": 0.33333333,
+          "type": "LinearLR"
+        },
+        {
+          "T_max": 10,
+          "begin": 0,
+          "by_epoch": true,
+          "end": 10,
+          "eta_min_ratio": 0.0001,
+          "type": "CosineAnnealingLR"
+        },
+        {
+          "begin": 0,
+          "by_epoch": true,
+          "end": 2.4,
+          "eta_min": 0.8947,
+          "type": "CosineAnnealingMomentum"
+        },
+        {
+          "begin": 2.4,
+          "by_epoch": true,
+          "end": 10,
+          "eta_min": 1,
+          "type": "CosineAnnealingMomentum"
+        }
+      ],
+      "num_epochs": 10,
+      "num_gpus": 1,
+      "num_nodes": 1,
+      "optimizer": {
+        "betas": [
+          0.9,
+          0.999
+        ],
+        "clip_grad": {
+          "max_norm": 35,
+          "norm_type": 2
+        },
+        "lr": 0.0002,
+        "type": "AdamW",
+        "weight_decay": 0.01,
+        "wrapper_type": "OptimWrapper"
+      },
+      "pretrained_checkpoint": "",
+      "results_dir": "",
+      "resume": false,
+      "resume_training_checkpoint_path": "",
+      "seed": 1234,
+      "validation_interval": 1
+    },
+    "wandb": {
+      "enable": true,
+      "entity": "",
+      "group": "",
+      "name": "TAO Toolkit Training",
+      "project": "TAO Toolkit",
+      "reinit": false,
+      "run_id": "",
+      "save_code": false,
+      "sync_tensorboard": false,
+      "tags": [
+        "tao-toolkit"
+      ]
+    }
+  },
+  "popular": {
+    "evaluate": {
+      "gpu_ids": [
+        0
+      ],
+      "num_gpus": 1,
+      "num_nodes": 1
+    },
+    "inference": {
+      "gpu_ids": [
+        0
+      ],
+      "num_gpus": 1,
+      "num_nodes": 1
+    },
+    "train": {
+      "checkpoint_interval": 1,
+      "gpu_ids": [
+        0
+      ],
+      "num_epochs": 10,
+      "num_gpus": 1,
+      "num_nodes": 1,
+      "validation_interval": 1
+    }
+  },
+  "properties": {
+    "automl_disabled_parameters": [
+      "wandb",
+      "default_hooks",
+      "input_modality",
+      "model",
+      "dataset",
+      "train",
+      "evaluate",
+      "inference"
+    ],
+    "dataset": {
+      "automl_disabled_parameters": [
+        "dataset.classes",
+        "dataset.origin",
+        "dataset.train_dataset",
+        "dataset.val_dataset",
+        "dataset.test_dataset",
+        "dataset.cam2img",
+        "dataset.lidar2cam"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "box_type_3d": "lidar",
+        "classes": [
+          "person"
+        ],
+        "default_cam_key": "CAM2",
+        "gt_box_type": "camera",
+        "num_views": 1,
+        "origin": [
+          0.5,
+          1.0,
+          0.5
+        ],
+        "per_sequence": false,
+        "point_cloud_dim": 4,
+        "root_dir": "",
+        "test_dataset": {
+          "batch_size": 4,
+          "data_prefix": {
+            "img": "training/images/",
+            "pts": "training/lidar_reduced"
+          },
+          "num_workers": 8,
+          "pin_memory": true,
+          "sampler": "DefaultSampler"
+        },
+        "train_dataset": {
+          "batch_size": 4,
+          "data_prefix": {
+            "img": "training/images/",
+            "pts": "training/lidar_reduced"
+          },
+          "num_workers": 8,
+          "pin_memory": true,
+          "sampler": "DefaultSampler"
+        },
+        "type": "KittiPersonDataset",
+        "val_dataset": {
+          "batch_size": 4,
+          "data_prefix": {
+            "img": "training/images/",
+            "pts": "training/lidar_reduced"
+          },
+          "num_workers": 8,
+          "pin_memory": true,
+          "sampler": "DefaultSampler"
+        }
+      },
+      "description": "Configurable parameters to construct the dataset for a BEVFusion experiment.",
+      "properties": {
+        "box_type_3d": {
+          "default": "lidar",
+          "description": "3D bounding boxes type to be used when training.",
+          "enum": [
+            "lidar",
+            "camera"
+          ],
+          "title": "3d bbox type in training",
+          "type": "categorical"
+        },
+        "cam2img": {
+          "automl_enabled": false,
+          "description": "Camera instrinsic matrix for single file inference",
+          "title": "camera instrinsics",
+          "type": "list"
+        },
+        "classes": {
+          "automl_enabled": false,
+          "default": [
+            "person"
+          ],
+          "description": "A List of the classes to be trained.",
+          "title": "list of classes",
+          "type": "list"
+        },
+        "default_cam_key": {
+          "default": "CAM2",
+          "description": "Default camera name in dataset",
+          "title": "default camera name",
+          "type": "string"
+        },
+        "gt_box_type": {
+          "default": "camera",
+          "description": "3D bounding boxes type in ground truth.",
+          "enum": [
+            "lidar",
+            "camera"
+          ],
+          "title": "3d bbox type in ground truth",
+          "type": "categorical"
+        },
+        "img_file": {
+          "description": "Image file for single file inference",
+          "title": "infer image file",
+          "type": "string"
+        },
+        "lidar2cam": {
+          "automl_enabled": false,
+          "description": "Lidar to camera extrinsic matrix for single file inference",
+          "title": "lidar to camera extrinsic",
+          "type": "list"
+        },
+        "num_views": {
+          "default": 1,
+          "description": "Number of camera view in dataset.",
+          "title": "number of camera view",
+          "type": "int"
+        },
+        "origin": {
+          "automl_enabled": false,
+          "default": [
+            0.5,
+            1.0,
+            0.5
+          ],
+          "description": "The origin of the given center point in ground truth 3D bounding boxes.",
+          "title": "bbox center origin",
+          "type": "list"
+        },
+        "pc_file": {
+          "description": "Point cloud file for single file inference",
+          "title": "infer point cloud file",
+          "type": "string"
+        },
+        "per_sequence": {
+          "default": false,
+          "description": "Whether to save results in per sequence format.",
+          "title": "is per sequence",
+          "type": "bool"
+        },
+        "point_cloud_dim": {
+          "default": 4,
+          "description": "Input lidar point cloud data dimension",
+          "title": "point cloud data dimension",
+          "type": "int"
+        },
+        "root_dir": {
+          "default": "",
+          "description": "A path to the root directory of the given dataset",
+          "title": "root directory of the dataset",
+          "type": "string"
+        },
+        "test_dataset": {
+          "automl_default_parameters": [
+            "dataset.test_dataset.batch_size",
+            "dataset.test_dataset.num_workers"
+          ],
+          "automl_disabled_parameters": [
+            "dataset.test_dataset.data_prefix"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "batch_size": 4,
+            "data_prefix": {
+              "img": "training/images/",
+              "pts": "training/lidar_reduced"
+            },
+            "num_workers": 8,
+            "pin_memory": true,
+            "sampler": "DefaultSampler"
+          },
+          "description": "Configurable parameters to construct the test dataset.",
+          "properties": {
+            "ann_file": {
+              "description": "A path to the annotation pkl file",
+              "title": "annotation file",
+              "type": "string"
+            },
+            "batch_size": {
+              "automl_enabled": true,
+              "default": 4,
+              "description": "The batch size for training and validation",
+              "maximum": Infinity,
+              "minimum": 1,
+              "title": "batch size",
+              "type": "int"
+            },
+            "data_prefix": {
+              "automl_enabled": false,
+              "default": {
+                "img": "training/images/",
+                "pts": "training/lidar_reduced"
+              },
+              "description": "Corresponding data prefix for points and images",
+              "title": "data prefix for points and images",
+              "type": "collection"
+            },
+            "num_workers": {
+              "automl_enabled": true,
+              "default": 8,
+              "description": "The number of parallel workers processing data",
+              "maximum": Infinity,
+              "minimum": 1,
+              "title": "num workers",
+              "type": "int"
+            },
+            "pin_memory": {
+              "default": true,
+              "description": "Flag to enable the dataloader to allocate pagelocked memory for faster\n                       of data between the CPU and GPU.",
+              "title": "pin_memory",
+              "type": "bool"
+            },
+            "repeat_time": {
+              "description": "The number of repetition of the dataset when training.",
+              "title": "dataset repeat number",
+              "type": "int"
+            },
+            "sampler": {
+              "default": "DefaultSampler",
+              "description": "Name of data sampler.",
+              "title": "default data sampler",
+              "type": "string"
+            }
+          },
+          "type": "collection"
+        },
+        "train_dataset": {
+          "automl_default_parameters": [
+            "dataset.train_dataset.batch_size",
+            "dataset.train_dataset.num_workers"
+          ],
+          "automl_disabled_parameters": [
+            "dataset.train_dataset.data_prefix"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "batch_size": 4,
+            "data_prefix": {
+              "img": "training/images/",
+              "pts": "training/lidar_reduced"
+            },
+            "num_workers": 8,
+            "pin_memory": true,
+            "sampler": "DefaultSampler"
+          },
+          "description": "Configurable parameters to construct the train dataset.",
+          "properties": {
+            "ann_file": {
+              "description": "A path to the annotation pkl file",
+              "title": "annotation file",
+              "type": "string"
+            },
+            "batch_size": {
+              "automl_enabled": true,
+              "default": 4,
+              "description": "The batch size for training and validation",
+              "maximum": Infinity,
+              "minimum": 1,
+              "title": "batch size",
+              "type": "int"
+            },
+            "data_prefix": {
+              "automl_enabled": false,
+              "default": {
+                "img": "training/images/",
+                "pts": "training/lidar_reduced"
+              },
+              "description": "Corresponding data prefix for points and images",
+              "title": "data prefix for points and images",
+              "type": "collection"
+            },
+            "num_workers": {
+              "automl_enabled": true,
+              "default": 8,
+              "description": "The number of parallel workers processing data",
+              "maximum": Infinity,
+              "minimum": 1,
+              "title": "num workers",
+              "type": "int"
+            },
+            "pin_memory": {
+              "default": true,
+              "description": "Flag to enable the dataloader to allocate pagelocked memory for faster\n                       of data between the CPU and GPU.",
+              "title": "pin_memory",
+              "type": "bool"
+            },
+            "repeat_time": {
+              "description": "The number of repetition of the dataset when training.",
+              "title": "dataset repeat number",
+              "type": "int"
+            },
+            "sampler": {
+              "default": "DefaultSampler",
+              "description": "Name of data sampler.",
+              "title": "default data sampler",
+              "type": "string"
+            }
+          },
+          "type": "collection"
+        },
+        "type": {
+          "default": "KittiPersonDataset",
+          "description": "Dataset types for 3D Fusion",
+          "enum": [
+            "TAO3DSyntheticDataset",
+            "TAO3DDataset",
+            "KittiPersonDataset"
+          ],
+          "title": "dataset type",
+          "type": "categorical"
+        },
+        "val_dataset": {
+          "automl_default_parameters": [
+            "dataset.val_dataset.batch_size",
+            "dataset.val_dataset.num_workers"
+          ],
+          "automl_disabled_parameters": [
+            "dataset.val_dataset.data_prefix"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "batch_size": 4,
+            "data_prefix": {
+              "img": "training/images/",
+              "pts": "training/lidar_reduced"
+            },
+            "num_workers": 8,
+            "pin_memory": true,
+            "sampler": "DefaultSampler"
+          },
+          "description": "Configurable parameters to construct the validation dataset.",
+          "properties": {
+            "ann_file": {
+              "description": "A path to the annotation pkl file",
+              "title": "annotation file",
+              "type": "string"
+            },
+            "batch_size": {
+              "automl_enabled": true,
+              "default": 4,
+              "description": "The batch size for training and validation",
+              "maximum": Infinity,
+              "minimum": 1,
+              "title": "batch size",
+              "type": "int"
+            },
+            "data_prefix": {
+              "automl_enabled": false,
+              "default": {
+                "img": "training/images/",
+                "pts": "training/lidar_reduced"
+              },
+              "description": "Corresponding data prefix for points and images",
+              "title": "data prefix for points and images",
+              "type": "collection"
+            },
+            "num_workers": {
+              "automl_enabled": true,
+              "default": 8,
+              "description": "The number of parallel workers processing data",
+              "maximum": Infinity,
+              "minimum": 1,
+              "title": "num workers",
+              "type": "int"
+            },
+            "pin_memory": {
+              "default": true,
+              "description": "Flag to enable the dataloader to allocate pagelocked memory for faster\n                       of data between the CPU and GPU.",
+              "title": "pin_memory",
+              "type": "bool"
+            },
+            "repeat_time": {
+              "description": "The number of repetition of the dataset when training.",
+              "title": "dataset repeat number",
+              "type": "int"
+            },
+            "sampler": {
+              "default": "DefaultSampler",
+              "description": "Name of data sampler.",
+              "title": "default data sampler",
+              "type": "string"
+            }
+          },
+          "type": "collection"
+        }
+      },
+      "type": "collection"
+    },
+    "default_hooks": {
+      "automl_enabled": false,
+      "default": {
+        "checkpoint": {
+          "by_epoch": true,
+          "interval": 1,
+          "type": "CheckpointHook"
+        },
+        "logger": {
+          "interval": 1,
+          "log_metric_by_epoch": true,
+          "type": "LoggerHook"
+        },
+        "param_scheduler": {
+          "type": "ParamSchedulerHook"
+        },
+        "sampler_seed": {
+          "type": "DistSamplerSeedHook"
+        },
+        "timer": {
+          "type": "IterTimerHook"
+        },
+        "visualization": {
+          "type": "Det3DVisualizationHook"
+        }
+      },
+      "description": "Default hooks for mmlabs",
+      "title": "default hooks",
+      "type": "collection"
+    },
+    "default_scope": {
+      "default": "mmdet3d",
+      "description": "Default scope to use mmdet3d",
+      "title": "default scope",
+      "type": "string"
+    },
+    "encryption_key": {
+      "default": "",
+      "description": "Key for encrypting model checkpoints",
+      "title": "Encryption key",
+      "type": "string"
+    },
+    "input_modality": {
+      "automl_enabled": false,
+      "default": {
+        "use_camera": true,
+        "use_external": false,
+        "use_lidar": true,
+        "use_map": false,
+        "use_radar": false
+      },
+      "description": "Input modality for the model. Set True for each modality to use.",
+      "title": "input modality",
+      "type": "collection"
+    },
+    "logger_hook": {
+      "default": "TAOBEVFusionLoggerHook",
+      "description": "Default logger hook type",
+      "title": "logger hook",
+      "type": "string"
+    },
+    "manual_seed": {
+      "description": "Optional manual seed. Seed is set when the value is given in spec file.",
+      "title": "manual seed",
+      "type": "int"
+    },
+    "model": {
+      "automl_disabled_parameters": [
+        "model.point_cloud_range",
+        "model.voxel_size",
+        "model.post_center_range",
+        "model.grid_size",
+        "model.data_preprocessor",
+        "model.img_backbone",
+        "model.img_neck",
+        "model.view_transform",
+        "model.pts_backbone",
+        "model.pts_voxel_encoder",
+        "model.pts_middle_encoder",
+        "model.pts_neck",
+        "model.fusion_layer",
+        "model.bbox_head"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "bbox_head": {
+          "assigner": {
+            "cls_cost": {
+              "alpha": 0.25,
+              "gamma": 2.0,
+              "type": "mmdet.FocalLossCost",
+              "weight": 0.15
+            },
+            "iou_calculator": {
+              "coordinate": "lidar",
+              "type": "BboxOverlaps3D"
+            },
+            "iou_cost": {
+              "type": "IoU3DCost",
+              "weight": 0.25
+            },
+            "reg_cost": {
+              "type": "BBoxBEVL1Cost",
+              "weight": 0.25
+            },
+            "type": "HungarianAssigner3D"
+          },
+          "auxiliary": true,
+          "bbox_coder": {
+            "code_size": 12,
+            "score_threshold": 0.0,
+            "type": "TAO3DBBoxCoder"
+          },
+          "bn_momentum": 0.1,
+          "code_weights": [
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          "common_heads": {
+            "center": [
+              2,
+              2
+            ],
+            "dim": [
+              3,
+              2
+            ],
+            "height": [
+              1,
+              2
+            ],
+            "rot": [
+              6,
+              2
+            ]
+          },
+          "decoder_layer": {
+            "cross_attn_cfg": {
+              "dropout": 0.1,
+              "embed_dims": 128,
+              "num_heads": 8
+            },
+            "ffn_cfg": {
+              "act_cfg": {
+                "inplace": true,
+                "type": "ReLU"
+              },
+              "embed_dims": 128,
+              "feedforward_channels": 256,
+              "ffn_drop": 0.1,
+              "num_fcs": 2
+            },
+            "norm_cfg": {
+              "type": "LN"
+            },
+            "pos_encoding_cfg": {
+              "input_channel": 2,
+              "num_pos_feats": 128
+            },
+            "self_attn_cfg": {
+              "dropout": 0.1,
+              "embed_dims": 128,
+              "num_heads": 8
+            },
+            "type": "TransformerDecoderLayer"
+          },
+          "hidden_channel": 128,
+          "in_channels": 512,
+          "loss_bbox": {
+            "loss_weight": 0.25,
+            "reduction": "mean",
+            "type": "mmdet.L1Loss"
+          },
+          "loss_cls": {
+            "alpha": 0.25,
+            "gamma": 2.0,
+            "loss_weight": 1.0,
+            "reduction": "mean",
+            "type": "mmdet.FocalLoss",
+            "use_sigmoid": true
+          },
+          "loss_heatmap": {
+            "loss_weight": 1.0,
+            "reduction": "mean",
+            "type": "mmdet.GaussianFocalLoss"
+          },
+          "nms_kernel_size": 3,
+          "num_classes": 1,
+          "num_decoder_layers": 1,
+          "num_proposals": 200,
+          "out_size_factor": 8,
+          "type": "BEVFusionHead"
+        },
+        "data_preprocessor": {
+          "bgr_to_rgb": false,
+          "mean": [
+            123.675,
+            116.28,
+            103.53
+          ],
+          "pad_size_divisor": 32,
+          "std": [
+            58.395,
+            57.12,
+            57.375
+          ],
+          "type": "Det3DDataPreprocessor",
+          "voxelize_cfg": {
+            "max_num_points": 10,
+            "max_voxels": [
+              120000,
+              160000
+            ],
+            "voxelize_reduce": true
+          }
+        },
+        "fusion_layer": {
+          "in_channels": [
+            80,
+            256
+          ],
+          "out_channels": 256,
+          "type": "ConvFuser"
+        },
+        "grid_size": [
+          1440,
+          1440,
+          41
+        ],
+        "img_backbone": {
+          "attn_drop_rate": 0.0,
+          "convert_weights": true,
+          "depths": [
+            2,
+            2,
+            6,
+            2
+          ],
+          "drop_path_rate": 0.2,
+          "drop_rate": 0.0,
+          "embed_dims": 96,
+          "init_cfg": {},
+          "mlp_ratio": 4,
+          "num_heads": [
+            3,
+            6,
+            12,
+            24
+          ],
+          "out_indices": [
+            1,
+            2,
+            3
+          ],
+          "patch_norm": true,
+          "qkv_bias": true,
+          "type": "mmdet.SwinTransformer",
+          "window_size": 7,
+          "with_cp": false
+        },
+        "img_neck": {
+          "act_cfg": {
+            "inplace": true,
+            "type": "ReLU"
+          },
+          "in_channels": [
+            192,
+            384,
+            768
+          ],
+          "norm_cfg": {
+            "requires_grad": true,
+            "type": "BN2d"
+          },
+          "num_outs": 0,
+          "out_channels": 256,
+          "start_level": 0,
+          "type": "GeneralizedLSSFPN",
+          "upsample_cfg": {
+            "align_corners": false,
+            "mode": "bilinear"
+          }
+        },
+        "point_cloud_range": [
+          0,
+          -40,
+          -3,
+          70.4,
+          40,
+          1
+        ],
+        "post_center_range": [
+          -61.2,
+          -61.2,
+          -20.0,
+          61.2,
+          61.2,
+          20.0
+        ],
+        "pts_backbone": {
+          "conv_cfg": {
+            "bias": false,
+            "type": "Conv2d"
+          },
+          "in_channels": 256,
+          "layer_nums": [
+            5,
+            5
+          ],
+          "layer_strides": [
+            1,
+            2
+          ],
+          "norm_cfg": {
+            "eps": 0.001,
+            "momentum": 0.01,
+            "type": "BN"
+          },
+          "out_channels": [
+            128,
+            256
+          ],
+          "type": "SECOND"
+        },
+        "pts_middle_encoder": {
+          "block_type": "basicblock",
+          "in_channels": 4,
+          "norm_cfg": {
+            "eps": 0.001,
+            "momentum": 0.01,
+            "type": "BN1d"
+          },
+          "order": [
+            "conv",
+            "norm",
+            "act"
+          ],
+          "sparse_shape": [
+            1440,
+            1440,
+            41
+          ],
+          "type": "BEVFusionSparseEncoder"
+        },
+        "pts_neck": {
+          "in_channels": [
+            128,
+            256
+          ],
+          "norm_cfg": {
+            "eps": 0.001,
+            "momentum": 0.01,
+            "type": "BN"
+          },
+          "out_channels": [
+            256,
+            256
+          ],
+          "type": "SECONDFPN",
+          "upsample_cfg": {
+            "bias": false,
+            "type": "deconv"
+          },
+          "upsample_strides": [
+            1,
+            2
+          ],
+          "use_conv_for_no_stride": true
+        },
+        "pts_voxel_encoder": {
+          "num_features": 4,
+          "type": "HardSimpleVFE"
+        },
+        "type": "BEVFusion",
+        "view_transform": {
+          "dbound": [
+            1.0,
+            60.0,
+            0.5
+          ],
+          "downsample": 2,
+          "feature_size": [
+            32,
+            88
+          ],
+          "image_size": [
+            256,
+            704
+          ],
+          "in_channels": 256,
+          "out_channels": 80,
+          "type": "DepthLSSTransform",
+          "xbound": [
+            -54.0,
+            54.0,
+            0.3
+          ],
+          "ybound": [
+            -54.0,
+            54.0,
+            0.3
+          ],
+          "zbound": [
+            -10.0,
+            10.0,
+            20.0
+          ]
+        },
+        "voxel_size": [
+          0.05,
+          0.05,
+          0.1
+        ]
+      },
+      "description": "Configurable parameters to construct the model for a BEVFusion experiment.",
+      "properties": {
+        "bbox_head": {
+          "automl_disabled_parameters": [
+            "model.bbox_head.bbox_coder",
+            "model.bbox_head.decoder_layer",
+            "model.bbox_head.code_weights",
+            "model.bbox_head.assigner",
+            "model.bbox_head.common_heads",
+            "model.bbox_head.loss_cls",
+            "model.bbox_head.loss_heatmap",
+            "model.bbox_head.loss_bbox"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "assigner": {
+              "cls_cost": {
+                "alpha": 0.25,
+                "gamma": 2.0,
+                "type": "mmdet.FocalLossCost",
+                "weight": 0.15
+              },
+              "iou_calculator": {
+                "coordinate": "lidar",
+                "type": "BboxOverlaps3D"
+              },
+              "iou_cost": {
+                "type": "IoU3DCost",
+                "weight": 0.25
+              },
+              "reg_cost": {
+                "type": "BBoxBEVL1Cost",
+                "weight": 0.25
+              },
+              "type": "HungarianAssigner3D"
+            },
+            "auxiliary": true,
+            "bbox_coder": {
+              "code_size": 12,
+              "score_threshold": 0.0,
+              "type": "TAO3DBBoxCoder"
+            },
+            "bn_momentum": 0.1,
+            "code_weights": [
+              1.0,
+              1.0,
+              1.0,
+              1.0,
+              1.0,
+              1.0,
+              1.0,
+              1.0,
+              1.0,
+              1.0,
+              1.0,
+              1.0
+            ],
+            "common_heads": {
+              "center": [
+                2,
+                2
+              ],
+              "dim": [
+                3,
+                2
+              ],
+              "height": [
+                1,
+                2
+              ],
+              "rot": [
+                6,
+                2
+              ]
+            },
+            "decoder_layer": {
+              "cross_attn_cfg": {
+                "dropout": 0.1,
+                "embed_dims": 128,
+                "num_heads": 8
+              },
+              "ffn_cfg": {
+                "act_cfg": {
+                  "inplace": true,
+                  "type": "ReLU"
+                },
+                "embed_dims": 128,
+                "feedforward_channels": 256,
+                "ffn_drop": 0.1,
+                "num_fcs": 2
+              },
+              "norm_cfg": {
+                "type": "LN"
+              },
+              "pos_encoding_cfg": {
+                "input_channel": 2,
+                "num_pos_feats": 128
+              },
+              "self_attn_cfg": {
+                "dropout": 0.1,
+                "embed_dims": 128,
+                "num_heads": 8
+              },
+              "type": "TransformerDecoderLayer"
+            },
+            "hidden_channel": 128,
+            "in_channels": 512,
+            "loss_bbox": {
+              "loss_weight": 0.25,
+              "reduction": "mean",
+              "type": "mmdet.L1Loss"
+            },
+            "loss_cls": {
+              "alpha": 0.25,
+              "gamma": 2.0,
+              "loss_weight": 1.0,
+              "reduction": "mean",
+              "type": "mmdet.FocalLoss",
+              "use_sigmoid": true
+            },
+            "loss_heatmap": {
+              "loss_weight": 1.0,
+              "reduction": "mean",
+              "type": "mmdet.GaussianFocalLoss"
+            },
+            "nms_kernel_size": 3,
+            "num_classes": 1,
+            "num_decoder_layers": 1,
+            "num_proposals": 200,
+            "out_size_factor": 8,
+            "type": "BEVFusionHead"
+          },
+          "description": "Configurable parameters to construct the bounding box head for the bevfusion model.",
+          "properties": {
+            "assigner": {
+              "automl_enabled": false,
+              "default": {
+                "cls_cost": {
+                  "alpha": 0.25,
+                  "gamma": 2.0,
+                  "type": "mmdet.FocalLossCost",
+                  "weight": 0.15
+                },
+                "iou_calculator": {
+                  "coordinate": "lidar",
+                  "type": "BboxOverlaps3D"
+                },
+                "iou_cost": {
+                  "type": "IoU3DCost",
+                  "weight": 0.25
+                },
+                "reg_cost": {
+                  "type": "BBoxBEVL1Cost",
+                  "weight": 0.25
+                },
+                "type": "HungarianAssigner3D"
+              },
+              "description": "The configuration for assginer.",
+              "title": "assigner configuration",
+              "type": "collection"
+            },
+            "auxiliary": {
+              "default": true,
+              "description": "Whether to enable auxiliary training.",
+              "title": "is auxiliary",
+              "type": "bool"
+            },
+            "bbox_coder": {
+              "automl_enabled": false,
+              "default": {
+                "code_size": 12,
+                "score_threshold": 0.0,
+                "type": "TAO3DBBoxCoder"
+              },
+              "description": "The configuration for bounding box encoder.",
+              "properties": {
+                "code_size": {
+                  "default": 12,
+                  "description": "Bounding box encoding size.",
+                  "title": "code size",
+                  "type": "int"
+                },
+                "score_threshold": {
+                  "default": 0.0,
+                  "description": "Score threshold to filter bounding boxes in box encoder.",
+                  "title": "score threshold",
+                  "type": "float"
+                },
+                "type": {
+                  "default": "TAO3DBBoxCoder",
+                  "description": "Boudning box encoder.",
+                  "enum": [
+                    "TAO3DBBoxCoder"
+                  ],
+                  "title": "bounding box coder",
+                  "type": "categorical"
+                }
+              },
+              "type": "collection"
+            },
+            "bn_momentum": {
+              "default": 0.1,
+              "description": "Batch Norm momentum.",
+              "title": "batch norm momentum",
+              "type": "float"
+            },
+            "code_weights": {
+              "automl_enabled": false,
+              "default": [
+                1.0,
+                1.0,
+                1.0,
+                1.0,
+                1.0,
+                1.0,
+                1.0,
+                1.0,
+                1.0,
+                1.0,
+                1.0,
+                1.0
+              ],
+              "description": "Weights for box encoder.",
+              "title": "code weights",
+              "type": "list"
+            },
+            "common_heads": {
+              "automl_enabled": false,
+              "default": {
+                "center": [
+                  2,
+                  2
+                ],
+                "dim": [
+                  3,
+                  2
+                ],
+                "height": [
+                  1,
+                  2
+                ],
+                "rot": [
+                  6,
+                  2
+                ]
+              },
+              "description": "The configuration for common heads.",
+              "title": "common heads configuration",
+              "type": "collection"
+            },
+            "decoder_layer": {
+              "automl_disabled_parameters": [
+                "model.bbox_head.decoder_layer.self_attn_cfg",
+                "model.bbox_head.decoder_layer.cross_attn_cfg",
+                "model.bbox_head.decoder_layer.ffn_cfg",
+                "model.bbox_head.decoder_layer.norm_cfg",
+                "model.bbox_head.decoder_layer.pos_encoding_cfg"
+              ],
+              "automl_enabled": false,
+              "default": {
+                "cross_attn_cfg": {
+                  "dropout": 0.1,
+                  "embed_dims": 128,
+                  "num_heads": 8
+                },
+                "ffn_cfg": {
+                  "act_cfg": {
+                    "inplace": true,
+                    "type": "ReLU"
+                  },
+                  "embed_dims": 128,
+                  "feedforward_channels": 256,
+                  "ffn_drop": 0.1,
+                  "num_fcs": 2
+                },
+                "norm_cfg": {
+                  "type": "LN"
+                },
+                "pos_encoding_cfg": {
+                  "input_channel": 2,
+                  "num_pos_feats": 128
+                },
+                "self_attn_cfg": {
+                  "dropout": 0.1,
+                  "embed_dims": 128,
+                  "num_heads": 8
+                },
+                "type": "TransformerDecoderLayer"
+              },
+              "description": "The configuration for decoder layer.",
+              "properties": {
+                "cross_attn_cfg": {
+                  "automl_enabled": false,
+                  "default": {
+                    "dropout": 0.1,
+                    "embed_dims": 128,
+                    "num_heads": 8
+                  },
+                  "description": "The configuration for cross attention module.",
+                  "properties": {
+                    "dropout": {
+                      "default": 0.1,
+                      "description": "Dropout probability on attention weights.",
+                      "title": "dropout probability",
+                      "type": "float"
+                    },
+                    "embed_dims": {
+                      "default": 128,
+                      "description": "Number of input channels for attention layer.",
+                      "title": "embedding dimensions",
+                      "type": "int"
+                    },
+                    "num_heads": {
+                      "default": 8,
+                      "description": "Number of attention heads.",
+                      "title": "number of heads",
+                      "type": "int"
+                    }
+                  },
+                  "type": "collection"
+                },
+                "ffn_cfg": {
+                  "automl_enabled": false,
+                  "default": {
+                    "act_cfg": {
+                      "inplace": true,
+                      "type": "ReLU"
+                    },
+                    "embed_dims": 128,
+                    "feedforward_channels": 256,
+                    "ffn_drop": 0.1,
+                    "num_fcs": 2
+                  },
+                  "description": "The configuration for ffn module.",
+                  "title": "ffn config",
+                  "type": "collection"
+                },
+                "norm_cfg": {
+                  "automl_enabled": false,
+                  "default": {
+                    "type": "LN"
+                  },
+                  "description": "The configuration of normalization for transformer decoder layer.",
+                  "title": "normalization config",
+                  "type": "collection"
+                },
+                "pos_encoding_cfg": {
+                  "automl_enabled": false,
+                  "default": {
+                    "input_channel": 2,
+                    "num_pos_feats": 128
+                  },
+                  "description": "Position Encoding parameters.",
+                  "title": "position encoding config",
+                  "type": "collection"
+                },
+                "self_attn_cfg": {
+                  "automl_enabled": false,
+                  "default": {
+                    "dropout": 0.1,
+                    "embed_dims": 128,
+                    "num_heads": 8
+                  },
+                  "description": "The configuration for self attention module.",
+                  "properties": {
+                    "dropout": {
+                      "default": 0.1,
+                      "description": "Dropout probability on attention weights.",
+                      "title": "dropout probability",
+                      "type": "float"
+                    },
+                    "embed_dims": {
+                      "default": 128,
+                      "description": "Number of input channels for attention layer.",
+                      "title": "embedding dimensions",
+                      "type": "int"
+                    },
+                    "num_heads": {
+                      "default": 8,
+                      "description": "Number of attention heads.",
+                      "title": "number of heads",
+                      "type": "int"
+                    }
+                  },
+                  "type": "collection"
+                },
+                "type": {
+                  "default": "TransformerDecoderLayer",
+                  "description": "Transformer decoder layer name.",
+                  "title": "decoder layer name",
+                  "type": "string"
+                }
+              },
+              "type": "collection"
+            },
+            "hidden_channel": {
+              "default": 128,
+              "description": "Number of hiden channel.",
+              "title": "hidden channels",
+              "type": "int"
+            },
+            "in_channels": {
+              "default": 512,
+              "description": "Number of channels in the input feature map.",
+              "title": "input channels",
+              "type": "int"
+            },
+            "loss_bbox": {
+              "automl_enabled": false,
+              "default": {
+                "loss_weight": 0.25,
+                "reduction": "mean",
+                "type": "mmdet.L1Loss"
+              },
+              "description": "The configuration for bounding box loss.",
+              "title": "bounding box loss configuration",
+              "type": "collection"
+            },
+            "loss_cls": {
+              "automl_enabled": false,
+              "default": {
+                "alpha": 0.25,
+                "gamma": 2.0,
+                "loss_weight": 1.0,
+                "reduction": "mean",
+                "type": "mmdet.FocalLoss",
+                "use_sigmoid": true
+              },
+              "description": "The configuration for classification loss.",
+              "title": "classification loss configuration",
+              "type": "collection"
+            },
+            "loss_heatmap": {
+              "automl_enabled": false,
+              "default": {
+                "loss_weight": 1.0,
+                "reduction": "mean",
+                "type": "mmdet.GaussianFocalLoss"
+              },
+              "description": "The configuration for heatmap loss.",
+              "title": "heatmap loss configuration",
+              "type": "collection"
+            },
+            "nms_kernel_size": {
+              "default": 3,
+              "description": "NMS kernel size.",
+              "title": "nms kernel size",
+              "type": "int"
+            },
+            "nms_type": {
+              "description": "The type of NMS.",
+              "title": "nms type",
+              "type": "string"
+            },
+            "num_classes": {
+              "default": 1,
+              "description": "Number of classes.",
+              "title": "class numbers",
+              "type": "int"
+            },
+            "num_decoder_layers": {
+              "default": 1,
+              "description": "Number of decoder layer.",
+              "title": "decoder layer number",
+              "type": "int"
+            },
+            "num_proposals": {
+              "default": 200,
+              "description": "Number of proposals.",
+              "title": "number of proposals",
+              "type": "int"
+            },
+            "out_size_factor": {
+              "default": 8,
+              "description": "Output size factor.",
+              "title": "output size factor",
+              "type": "int"
+            },
+            "type": {
+              "default": "BEVFusionHead",
+              "description": "Prediction head name.",
+              "enum": [
+                "BEVFusionHead"
+              ],
+              "title": "Bounding box prediction head name",
+              "type": "categorical"
+            }
+          },
+          "type": "collection"
+        },
+        "data_preprocessor": {
+          "automl_disabled_parameters": [
+            "model.data_preprocessor.mean",
+            "model.data_preprocessor.std",
+            "model.data_preprocessor.voxelize_cfg"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "bgr_to_rgb": false,
+            "mean": [
+              123.675,
+              116.28,
+              103.53
+            ],
+            "pad_size_divisor": 32,
+            "std": [
+              58.395,
+              57.12,
+              57.375
+            ],
+            "type": "Det3DDataPreprocessor",
+            "voxelize_cfg": {
+              "max_num_points": 10,
+              "max_voxels": [
+                120000,
+                160000
+              ],
+              "voxelize_reduce": true
+            }
+          },
+          "description": "Configurable parameters to construct the preprocessor for the bevfusion model.",
+          "properties": {
+            "bgr_to_rgb": {
+              "default": false,
+              "description": "whether to convert image from BGR to RGB.",
+              "title": "no convert bgr to rgb",
+              "type": "bool"
+            },
+            "mean": {
+              "automl_enabled": false,
+              "default": [
+                123.675,
+                116.28,
+                103.53
+              ],
+              "description": "The input mean for RGB frames",
+              "title": "input mean per pixel",
+              "type": "list"
+            },
+            "pad_size_divisor": {
+              "default": 32,
+              "description": "The size of padded image should be divisible.",
+              "title": "pad size divisor",
+              "type": "int"
+            },
+            "std": {
+              "automl_enabled": false,
+              "default": [
+                58.395,
+                57.12,
+                57.375
+              ],
+              "description": "The input standard deviation per pixel for RGB frames",
+              "title": "input std per pixel",
+              "type": "list"
+            },
+            "type": {
+              "default": "Det3DDataPreprocessor",
+              "description": "Name of Data Pre-processor for 3D Fusion",
+              "title": "Data Pre-processor Type",
+              "type": "string"
+            },
+            "voxelize_cfg": {
+              "automl_enabled": false,
+              "default": {
+                "max_num_points": 10,
+                "max_voxels": [
+                  120000,
+                  160000
+                ],
+                "voxelize_reduce": true
+              },
+              "type": "collection"
+            }
+          },
+          "type": "collection"
+        },
+        "fusion_layer": {
+          "automl_disabled_parameters": [
+            "model.fusion_layer.in_channels"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "in_channels": [
+              80,
+              256
+            ],
+            "out_channels": 256,
+            "type": "ConvFuser"
+          },
+          "description": "Configurable parameters to construct the fusion layer for the bevfusion model.",
+          "properties": {
+            "in_channels": {
+              "automl_enabled": false,
+              "default": [
+                80,
+                256
+              ],
+              "description": "The number of input channels for fusion layer.",
+              "title": "input channels",
+              "type": "list"
+            },
+            "out_channels": {
+              "default": 256,
+              "description": "The number of output channels for fusion layer.",
+              "title": "output channels",
+              "type": "int"
+            },
+            "type": {
+              "default": "ConvFuser",
+              "description": "The fusion layer name.",
+              "title": "fusion layer name",
+              "type": "string"
+            }
+          },
+          "type": "collection"
+        },
+        "grid_size": {
+          "automl_enabled": false,
+          "default": [
+            1440,
+            1440,
+            41
+          ],
+          "description": "Grid size for bevfusion model",
+          "title": "grid size",
+          "type": "list"
+        },
+        "img_backbone": {
+          "automl_disabled_parameters": [
+            "model.img_backbone.depths",
+            "model.img_backbone.num_heads",
+            "model.img_backbone.out_indices",
+            "model.img_backbone.init_cfg"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "attn_drop_rate": 0.0,
+            "convert_weights": true,
+            "depths": [
+              2,
+              2,
+              6,
+              2
+            ],
+            "drop_path_rate": 0.2,
+            "drop_rate": 0.0,
+            "embed_dims": 96,
+            "init_cfg": {},
+            "mlp_ratio": 4,
+            "num_heads": [
+              3,
+              6,
+              12,
+              24
+            ],
+            "out_indices": [
+              1,
+              2,
+              3
+            ],
+            "patch_norm": true,
+            "qkv_bias": true,
+            "type": "mmdet.SwinTransformer",
+            "window_size": 7,
+            "with_cp": false
+          },
+          "description": "Configurable parameters to construct the camera image backbone for the bevfusion model.",
+          "properties": {
+            "attn_drop_rate": {
+              "default": 0.0,
+              "description": "Attention dropout rate.",
+              "title": "attention dropout rate",
+              "type": "float"
+            },
+            "convert_weights": {
+              "default": true,
+              "description": "The flag indicates whether the pre-trained model is from the original repo.",
+              "title": "convert weights",
+              "type": "bool"
+            },
+            "depths": {
+              "automl_enabled": false,
+              "default": [
+                2,
+                2,
+                6,
+                2
+              ],
+              "description": "Depths of each Swin Transformer stage.",
+              "title": "swin transformer depth",
+              "type": "list"
+            },
+            "drop_path_rate": {
+              "default": 0.2,
+              "description": "Stochastic drop rate",
+              "title": "stochastic drop rate",
+              "type": "float"
+            },
+            "drop_rate": {
+              "default": 0.0,
+              "description": "Dropout rate.",
+              "title": "dropout rate",
+              "type": "float"
+            },
+            "embed_dims": {
+              "default": 96,
+              "description": "Number of input channels.",
+              "title": "embedding dimensions",
+              "type": "int"
+            },
+            "init_cfg": {
+              "automl_enabled": false,
+              "description": "Configuration for initialzation.",
+              "type": "collection"
+            },
+            "mlp_ratio": {
+              "default": 4,
+              "description": "Ratio of mlp hidden dim to embedding dim.",
+              "title": "mlp ratio",
+              "type": "int"
+            },
+            "num_heads": {
+              "automl_enabled": false,
+              "default": [
+                3,
+                6,
+                12,
+                24
+              ],
+              "description": "Number of attention head of each stage.",
+              "title": "number of heads",
+              "type": "list"
+            },
+            "out_indices": {
+              "automl_enabled": false,
+              "default": [
+                1,
+                2,
+                3
+              ],
+              "description": "Output from which stages.",
+              "title": "output indices",
+              "type": "list"
+            },
+            "patch_norm": {
+              "default": true,
+              "description": "If True, add normalization after patch embedding.",
+              "title": "patch normalization",
+              "type": "bool"
+            },
+            "qk_scale": {
+              "description": "Override default qk scale of head_dim ** -0.5 if set.",
+              "title": "qk scale",
+              "type": "string"
+            },
+            "qkv_bias": {
+              "default": true,
+              "description": "If True, add a learnable bias to query, key, value.",
+              "title": "qkv bias",
+              "type": "bool"
+            },
+            "type": {
+              "default": "mmdet.SwinTransformer",
+              "description": "Name of Image Backbone for 3D Fusion",
+              "title": "Image Backbone Type",
+              "type": "string"
+            },
+            "window_size": {
+              "default": 7,
+              "description": "Window size for Swin Transformer.",
+              "title": "window size",
+              "type": "int"
+            },
+            "with_cp": {
+              "default": false,
+              "description": "Use checkpoint or not. Using checkpoint will save some memory while slowing down the training speed.",
+              "title": "with checkpoint",
+              "type": "bool"
+            }
+          },
+          "type": "collection"
+        },
+        "img_neck": {
+          "automl_disabled_parameters": [
+            "model.img_neck.in_channels",
+            "model.img_neck.norm_cfg",
+            "model.img_neck.act_cfg",
+            "model.img_neck.upsample_cfg"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "act_cfg": {
+              "inplace": true,
+              "type": "ReLU"
+            },
+            "in_channels": [
+              192,
+              384,
+              768
+            ],
+            "norm_cfg": {
+              "requires_grad": true,
+              "type": "BN2d"
+            },
+            "num_outs": 0,
+            "out_channels": 256,
+            "start_level": 0,
+            "type": "GeneralizedLSSFPN",
+            "upsample_cfg": {
+              "align_corners": false,
+              "mode": "bilinear"
+            }
+          },
+          "description": "Configurable parameters to construct the camera image neck for the bevfusion model.",
+          "properties": {
+            "act_cfg": {
+              "automl_enabled": false,
+              "default": {
+                "inplace": true,
+                "type": "ReLU"
+              },
+              "description": "The configuration of activation for image neck.",
+              "title": "activation config",
+              "type": "collection"
+            },
+            "in_channels": {
+              "automl_enabled": false,
+              "default": [
+                192,
+                384,
+                768
+              ],
+              "description": "The number of input channels for image neck.",
+              "title": "input channels",
+              "type": "list"
+            },
+            "norm_cfg": {
+              "automl_enabled": false,
+              "default": {
+                "requires_grad": true,
+                "type": "BN2d"
+              },
+              "description": "The configuration of normalization for image neck.",
+              "title": "normalization config",
+              "type": "collection"
+            },
+            "num_outs": {
+              "default": 0,
+              "description": "The number of outputput for image neck.",
+              "title": "number of output",
+              "type": "int"
+            },
+            "out_channels": {
+              "default": 256,
+              "description": "The number of output channels for image neck.",
+              "title": "output channels",
+              "type": "int"
+            },
+            "start_level": {
+              "default": 0,
+              "description": "Starting level for image neck.",
+              "title": "starting level",
+              "type": "int"
+            },
+            "type": {
+              "default": "GeneralizedLSSFPN",
+              "description": "Image Neck Name",
+              "title": "Image neck name",
+              "type": "string"
+            },
+            "upsample_cfg": {
+              "automl_enabled": false,
+              "default": {
+                "align_corners": false,
+                "mode": "bilinear"
+              },
+              "description": "The configuration of upsampling for image neck.",
+              "title": "upsampling config",
+              "type": "collection"
+            }
+          },
+          "type": "collection"
+        },
+        "point_cloud_range": {
+          "automl_enabled": false,
+          "default": [
+            0,
+            -40,
+            -3,
+            70.4,
+            40,
+            1
+          ],
+          "description": "point cloud range",
+          "title": "point cloud range",
+          "type": "list"
+        },
+        "post_center_range": {
+          "automl_enabled": false,
+          "default": [
+            -61.2,
+            -61.2,
+            -20.0,
+            61.2,
+            61.2,
+            20.0
+          ],
+          "description": "post processing center filter range",
+          "title": "post center range",
+          "type": "list"
+        },
+        "pts_backbone": {
+          "automl_disabled_parameters": [
+            "model.pts_backbone.out_channels",
+            "model.pts_backbone.layer_nums",
+            "model.pts_backbone.layer_strides",
+            "model.pts_backbone.norm_cfg",
+            "model.pts_backbone.conv_cfg"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "conv_cfg": {
+              "bias": false,
+              "type": "Conv2d"
+            },
+            "in_channels": 256,
+            "layer_nums": [
+              5,
+              5
+            ],
+            "layer_strides": [
+              1,
+              2
+            ],
+            "norm_cfg": {
+              "eps": 0.001,
+              "momentum": 0.01,
+              "type": "BN"
+            },
+            "out_channels": [
+              128,
+              256
+            ],
+            "type": "SECOND"
+          },
+          "description": "Configurable parameters to construct the lidar pofort cloud backbone for the bevfusion model.",
+          "properties": {
+            "conv_cfg": {
+              "automl_enabled": false,
+              "default": {
+                "bias": false,
+                "type": "Conv2d"
+              },
+              "description": "The configuration of convolution layers for lidar backbone.",
+              "title": "convolution config",
+              "type": "collection"
+            },
+            "in_channels": {
+              "default": 256,
+              "description": "The number of input channels for lidar backbone.",
+              "title": "input channels",
+              "type": "int"
+            },
+            "layer_nums": {
+              "automl_enabled": false,
+              "default": [
+                5,
+                5
+              ],
+              "description": "The number of layer in each stage for lidar backbone.",
+              "title": "number of layer",
+              "type": "list"
+            },
+            "layer_strides": {
+              "automl_enabled": false,
+              "default": [
+                1,
+                2
+              ],
+              "description": "Number of layers in each stage for lidar backbone.",
+              "title": "number of layer",
+              "type": "list"
+            },
+            "norm_cfg": {
+              "automl_enabled": false,
+              "default": {
+                "eps": 0.001,
+                "momentum": 0.01,
+                "type": "BN"
+              },
+              "description": "The configuration of normalization for lidar backbone.",
+              "title": "normalization config",
+              "type": "collection"
+            },
+            "out_channels": {
+              "automl_enabled": false,
+              "default": [
+                128,
+                256
+              ],
+              "description": "The number of output channels for lidar backbone.",
+              "title": "output channels",
+              "type": "list"
+            },
+            "type": {
+              "default": "SECOND",
+              "description": "The lidar backbone name.",
+              "title": "lidar backbone name",
+              "type": "string"
+            }
+          },
+          "type": "collection"
+        },
+        "pts_middle_encoder": {
+          "automl_disabled_parameters": [
+            "model.pts_middle_encoder.sparse_shape",
+            "model.pts_middle_encoder.order",
+            "model.pts_middle_encoder.norm_cfg"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "block_type": "basicblock",
+            "in_channels": 4,
+            "norm_cfg": {
+              "eps": 0.001,
+              "momentum": 0.01,
+              "type": "BN1d"
+            },
+            "order": [
+              "conv",
+              "norm",
+              "act"
+            ],
+            "sparse_shape": [
+              1440,
+              1440,
+              41
+            ],
+            "type": "BEVFusionSparseEncoder"
+          },
+          "description": "Configurable parameters to construct the lidar encoder for the bevfusion model.",
+          "properties": {
+            "block_type": {
+              "default": "basicblock",
+              "description": "Type of the block to use.",
+              "title": "block type",
+              "type": "string"
+            },
+            "in_channels": {
+              "default": 4,
+              "description": "The number of input channels for lidar encoder.",
+              "title": "input channels",
+              "type": "int"
+            },
+            "norm_cfg": {
+              "automl_enabled": false,
+              "default": {
+                "eps": 0.001,
+                "momentum": 0.01,
+                "type": "BN1d"
+              },
+              "description": "The configuration of normalization for lidar encoder.",
+              "title": "normalization config",
+              "type": "collection"
+            },
+            "order": {
+              "automl_enabled": false,
+              "default": [
+                "conv",
+                "norm",
+                "act"
+              ],
+              "description": "Order of conv module.",
+              "title": "convolution module order",
+              "type": "list"
+            },
+            "sparse_shape": {
+              "automl_enabled": false,
+              "default": [
+                1440,
+                1440,
+                41
+              ],
+              "description": "The sparse shape of input tensor.",
+              "title": "sparse shape",
+              "type": "list"
+            },
+            "type": {
+              "default": "BEVFusionSparseEncoder",
+              "description": "The lidar encoder name.",
+              "title": "lidar encoder name",
+              "type": "string"
+            }
+          },
+          "type": "collection"
+        },
+        "pts_neck": {
+          "automl_disabled_parameters": [
+            "model.pts_neck.in_channels",
+            "model.pts_neck.out_channels",
+            "model.pts_neck.upsample_strides",
+            "model.pts_neck.norm_cfg",
+            "model.pts_neck.upsample_cfg"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "in_channels": [
+              128,
+              256
+            ],
+            "norm_cfg": {
+              "eps": 0.001,
+              "momentum": 0.01,
+              "type": "BN"
+            },
+            "out_channels": [
+              256,
+              256
+            ],
+            "type": "SECONDFPN",
+            "upsample_cfg": {
+              "bias": false,
+              "type": "deconv"
+            },
+            "upsample_strides": [
+              1,
+              2
+            ],
+            "use_conv_for_no_stride": true
+          },
+          "description": "Configurable parameters to construct the lidar neck for the bevfusion model.",
+          "properties": {
+            "in_channels": {
+              "automl_enabled": false,
+              "default": [
+                128,
+                256
+              ],
+              "description": "The number of input channels for lidar neck.",
+              "title": "input channels",
+              "type": "list"
+            },
+            "norm_cfg": {
+              "automl_enabled": false,
+              "default": {
+                "eps": 0.001,
+                "momentum": 0.01,
+                "type": "BN"
+              },
+              "description": "The configuration of normalization for lidar neck.",
+              "title": "normalization config",
+              "type": "collection"
+            },
+            "out_channels": {
+              "automl_enabled": false,
+              "default": [
+                256,
+                256
+              ],
+              "description": "The number of output channels for lidar neck.",
+              "title": "output channels",
+              "type": "list"
+            },
+            "type": {
+              "default": "SECONDFPN",
+              "description": "The lidar neck name.",
+              "title": "lidar neck name",
+              "type": "string"
+            },
+            "upsample_cfg": {
+              "automl_enabled": false,
+              "default": {
+                "bias": false,
+                "type": "deconv"
+              },
+              "description": "The configuration of upsample layers for lidar neck.",
+              "title": "upsample configuration",
+              "type": "collection"
+            },
+            "upsample_strides": {
+              "automl_enabled": false,
+              "default": [
+                1,
+                2
+              ],
+              "description": "Strides used to upsample the feature map for lidar neck.",
+              "title": "upsample strides",
+              "type": "list"
+            },
+            "use_conv_for_no_stride": {
+              "default": true,
+              "description": "Whether to use conv when stride is 1.",
+              "title": "use convolution for stride 1",
+              "type": "bool"
+            }
+          },
+          "type": "collection"
+        },
+        "pts_voxel_encoder": {
+          "automl_enabled": false,
+          "default": {
+            "num_features": 4,
+            "type": "HardSimpleVFE"
+          },
+          "description": "Configurable parameters to construct the lidar pofort cloud voxel encoder for the bevfusion model.",
+          "type": "collection"
+        },
+        "type": {
+          "default": "BEVFusion",
+          "description": "Model name",
+          "enum": [
+            "BEVFusion"
+          ],
+          "title": "model name",
+          "type": "categorical"
+        },
+        "view_transform": {
+          "automl_disabled_parameters": [
+            "model.view_transform.image_size",
+            "model.view_transform.feature_size",
+            "model.view_transform.xbound",
+            "model.view_transform.ybound",
+            "model.view_transform.zbound",
+            "model.view_transform.dbound"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "dbound": [
+              1.0,
+              60.0,
+              0.5
+            ],
+            "downsample": 2,
+            "feature_size": [
+              32,
+              88
+            ],
+            "image_size": [
+              256,
+              704
+            ],
+            "in_channels": 256,
+            "out_channels": 80,
+            "type": "DepthLSSTransform",
+            "xbound": [
+              -54.0,
+              54.0,
+              0.3
+            ],
+            "ybound": [
+              -54.0,
+              54.0,
+              0.3
+            ],
+            "zbound": [
+              -10.0,
+              10.0,
+              20.0
+            ]
+          },
+          "description": "Configurable parameters to construct the camera view transform for the bevfusion model.",
+          "properties": {
+            "dbound": {
+              "automl_enabled": false,
+              "default": [
+                1.0,
+                60.0,
+                0.5
+              ],
+              "description": "The grid range for depth.",
+              "title": "depth range",
+              "type": "list"
+            },
+            "downsample": {
+              "default": 2,
+              "description": "The ratio for downsampling.",
+              "title": "downsample ratio",
+              "type": "int"
+            },
+            "feature_size": {
+              "automl_enabled": false,
+              "default": [
+                32,
+                88
+              ],
+              "description": "Feature size for view transform.",
+              "title": "feature size",
+              "type": "list"
+            },
+            "image_size": {
+              "automl_enabled": false,
+              "default": [
+                256,
+                704
+              ],
+              "description": "Image size for view transform.",
+              "title": "image size",
+              "type": "list"
+            },
+            "in_channels": {
+              "default": 256,
+              "description": "The number of input channels for view transform.",
+              "title": "input channels",
+              "type": "int"
+            },
+            "out_channels": {
+              "default": 80,
+              "description": "The number of output channels for view transform.",
+              "title": "output channels",
+              "type": "int"
+            },
+            "type": {
+              "default": "DepthLSSTransform",
+              "description": "Image view transform name.",
+              "enum": [
+                "DepthLSSTransform",
+                "LSSTransform"
+              ],
+              "title": "view transform Name",
+              "type": "categorical"
+            },
+            "xbound": {
+              "automl_enabled": false,
+              "default": [
+                -54.0,
+                54.0,
+                0.3
+              ],
+              "description": "The grid range for x-axis.",
+              "title": "x range",
+              "type": "list"
+            },
+            "ybound": {
+              "automl_enabled": false,
+              "default": [
+                -54.0,
+                54.0,
+                0.3
+              ],
+              "description": "The grid range for y-axis.",
+              "title": "y range",
+              "type": "list"
+            },
+            "zbound": {
+              "automl_enabled": false,
+              "default": [
+                -10.0,
+                10.0,
+                20.0
+              ],
+              "description": "The grid range for z-axis.",
+              "title": "z range",
+              "type": "list"
+            }
+          },
+          "type": "collection"
+        },
+        "voxel_size": {
+          "automl_enabled": false,
+          "default": [
+            0.05,
+            0.05,
+            0.1
+          ],
+          "description": "voxel size in voxelization",
+          "title": "voxel size",
+          "type": "list"
+        }
+      },
+      "type": "collection"
+    },
+    "model_name": {
+      "default": "",
+      "description": "Name of model if invoking task via :code:`model_agnostic`",
+      "title": "Model name",
+      "type": "string"
+    },
+    "results_dir": {
+      "default": "",
+      "description": "\n        Path to where all the assets generated from a task are stored.\n        ",
+      "title": "Results directory",
+      "type": "string"
+    },
+    "train": {
+      "automl_disabled_parameters": [
+        "train.gpu_ids",
+        "train.cudnn",
+        "train.optimizer",
+        "train.lr_scheduler"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "by_epoch": true,
+        "checkpoint_interval": 1,
+        "checkpoint_interval_unit": "epoch",
+        "cudnn": {
+          "benchmark": false,
+          "deterministic": true
+        },
+        "gpu_ids": [
+          0
+        ],
+        "logging_interval": 1,
+        "lr_scheduler": [
+          {
+            "begin": 0,
+            "by_epoch": false,
+            "end": 500,
+            "start_factor": 0.33333333,
+            "type": "LinearLR"
+          },
+          {
+            "T_max": 10,
+            "begin": 0,
+            "by_epoch": true,
+            "end": 10,
+            "eta_min_ratio": 0.0001,
+            "type": "CosineAnnealingLR"
+          },
+          {
+            "begin": 0,
+            "by_epoch": true,
+            "end": 2.4,
+            "eta_min": 0.8947,
+            "type": "CosineAnnealingMomentum"
+          },
+          {
+            "begin": 2.4,
+            "by_epoch": true,
+            "end": 10,
+            "eta_min": 1,
+            "type": "CosineAnnealingMomentum"
+          }
+        ],
+        "num_epochs": 10,
+        "num_gpus": 1,
+        "num_nodes": 1,
+        "optimizer": {
+          "betas": [
+            0.9,
+            0.999
+          ],
+          "clip_grad": {
+            "max_norm": 35,
+            "norm_type": 2
+          },
+          "lr": 0.0002,
+          "type": "AdamW",
+          "weight_decay": 0.01,
+          "wrapper_type": "OptimWrapper"
+        },
+        "pretrained_checkpoint": "",
+        "results_dir": "",
+        "resume": false,
+        "resume_training_checkpoint_path": "",
+        "seed": 1234,
+        "validation_interval": 1
+      },
+      "description": "Configurable parameters to construct the trainer for a BEVFusion experiment.",
+      "popular": [
+        "validation_interval",
+        "checkpoint_interval",
+        "num_gpus",
+        "num_nodes",
+        "num_epochs",
+        "gpu_ids"
+      ],
+      "properties": {
+        "by_epoch": {
+          "default": true,
+          "description": "Whether EpochBasedRunner is used.",
+          "title": "by epoch",
+          "type": "bool"
+        },
+        "checkpoint_interval": {
+          "default": 1,
+          "description": "The interval (in epochs) at which a checkpoint will be saved. Helps resume training.",
+          "minimum": 1,
+          "popular": true,
+          "title": "Checkpoint interval",
+          "type": "int"
+        },
+        "checkpoint_interval_unit": {
+          "default": "epoch",
+          "description": "The unit of the checkpoint interval.",
+          "enum": [
+            "epoch",
+            "step"
+          ],
+          "title": "Checkpoint interval unit",
+          "type": "categorical"
+        },
+        "cudnn": {
+          "automl_enabled": false,
+          "default": {
+            "benchmark": false,
+            "deterministic": true
+          },
+          "properties": {
+            "benchmark": {
+              "default": false,
+              "type": "bool"
+            },
+            "deterministic": {
+              "default": true,
+              "type": "bool"
+            }
+          },
+          "type": "collection"
+        },
+        "gpu_ids": {
+          "automl_enabled": false,
+          "default": [
+            0
+          ],
+          "description": "\n        List of GPU IDs to run the training on. The length of this list\n        must be equal to the number of gpus in train.num_gpus.",
+          "popular": true,
+          "title": "GPU IDs",
+          "type": "list"
+        },
+        "logging_interval": {
+          "default": 1,
+          "description": "logging interval every k iterations.",
+          "title": "logging interval",
+          "type": "int"
+        },
+        "lr_scheduler": {
+          "automl_enabled": false,
+          "default": [
+            {
+              "begin": 0,
+              "by_epoch": false,
+              "end": 500,
+              "start_factor": 0.33333333,
+              "type": "LinearLR"
+            },
+            {
+              "T_max": 10,
+              "begin": 0,
+              "by_epoch": true,
+              "end": 10,
+              "eta_min_ratio": 0.0001,
+              "type": "CosineAnnealingLR"
+            },
+            {
+              "begin": 0,
+              "by_epoch": true,
+              "end": 2.4,
+              "eta_min": 0.8947,
+              "type": "CosineAnnealingMomentum"
+            },
+            {
+              "begin": 2.4,
+              "by_epoch": true,
+              "end": 10,
+              "eta_min": 1,
+              "type": "CosineAnnealingMomentum"
+            }
+          ],
+          "description": "Hyper parameters to configure the learning rate scheduler.",
+          "title": "learning rate scheduler.",
+          "type": "list"
+        },
+        "num_epochs": {
+          "default": 10,
+          "description": "Number of epochs to run the training.",
+          "maximum": Infinity,
+          "minimum": 1,
+          "popular": true,
+          "title": "Number of epochs",
+          "type": "int"
+        },
+        "num_gpus": {
+          "default": 1,
+          "description": "The number of GPUs to run the train job.",
+          "minimum": 1,
+          "popular": true,
+          "title": "Number of GPUs",
+          "type": "int"
+        },
+        "num_nodes": {
+          "default": 1,
+          "description": "Number of nodes to run the training on. If > 1, then multi-node is enabled.",
+          "minimum": 1,
+          "popular": true,
+          "title": "Number of nodes",
+          "type": "int"
+        },
+        "optimizer": {
+          "automl_disabled_parameters": [
+            "train.optimizer.betas",
+            "train.optimizer.clip_grad"
+          ],
+          "automl_enabled": false,
+          "default": {
+            "betas": [
+              0.9,
+              0.999
+            ],
+            "clip_grad": {
+              "max_norm": 35,
+              "norm_type": 2
+            },
+            "lr": 0.0002,
+            "type": "AdamW",
+            "weight_decay": 0.01,
+            "wrapper_type": "OptimWrapper"
+          },
+          "description": "Hyper parameters to configure the optimizer",
+          "properties": {
+            "betas": {
+              "automl_enabled": false,
+              "default": [
+                0.9,
+                0.999
+              ],
+              "description": "The moving average parameter for adaptive learning rate.",
+              "title": "moving average beta",
+              "type": "list"
+            },
+            "clip_grad": {
+              "automl_enabled": false,
+              "default": {
+                "max_norm": 35,
+                "norm_type": 2
+              },
+              "description": "Clip the gradient norm of an iterable of parameters.",
+              "title": "clip gradient norm",
+              "type": "collection"
+            },
+            "lr": {
+              "default": 0.0002,
+              "description": "The initial learning rate for training the model.",
+              "math_cond": "> 0.0",
+              "title": "learning rate",
+              "type": "float"
+            },
+            "type": {
+              "default": "AdamW",
+              "description": "Type of optimizer used to train the network.",
+              "title": "Optimizer",
+              "type": "string"
+            },
+            "weight_decay": {
+              "default": 0.01,
+              "description": "The weight decay coefficient.",
+              "math_cond": "> 0.0",
+              "title": "weight decay",
+              "type": "float"
+            },
+            "wrapper_type": {
+              "default": "OptimWrapper",
+              "description": "Opitmizer Wrapper in MMengine. AmpOptimWrapper to enables mixed precision training",
+              "title": "Optimizer wrapper",
+              "type": "string"
+            }
+          },
+          "title": "optimizer",
+          "type": "collection"
+        },
+        "pretrained_checkpoint": {
+          "default": "",
+          "description": "Path to a pre-trained BEVFusion model to initialize the current training from.",
+          "type": "string"
+        },
+        "results_dir": {
+          "default": "",
+          "description": "\n        Path to where all the assets generated from a task are stored.\n        ",
+          "title": "Results directory",
+          "type": "string"
+        },
+        "resume": {
+          "default": false,
+          "description": "Whether to resume the training or not.",
+          "title": "Is resume",
+          "type": "bool"
+        },
+        "resume_training_checkpoint_path": {
+          "default": "",
+          "description": "Path to the checkpoint to resume training from.",
+          "title": "Resume checkpoint path",
+          "type": "string"
+        },
+        "seed": {
+          "default": 1234,
+          "description": "The seed for the initializer in PyTorch. If < 0, disable fixed seed.",
+          "maximum": Infinity,
+          "minimum": -1,
+          "title": "Seed for randomization",
+          "type": "int"
+        },
+        "validation_interval": {
+          "default": 1,
+          "description": "\n        The interval (in epochs) at which a evaluation\n        will be triggered on the validation dataset.",
+          "minimum": 1,
+          "popular": true,
+          "title": "Validation interval",
+          "type": "int"
+        }
+      },
+      "type": "collection"
+    },
+    "wandb": {
+      "automl_disabled_parameters": [
+        "wandb.tags"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "enable": true,
+        "entity": "",
+        "group": "",
+        "name": "TAO Toolkit Training",
+        "project": "TAO Toolkit",
+        "reinit": false,
+        "run_id": "",
+        "save_code": false,
+        "sync_tensorboard": false,
+        "tags": [
+          "tao-toolkit"
+        ]
+      },
+      "properties": {
+        "enable": {
+          "default": true,
+          "type": "bool"
+        },
+        "entity": {
+          "default": "",
+          "type": "string"
+        },
+        "group": {
+          "default": "",
+          "type": "string"
+        },
+        "name": {
+          "default": "TAO Toolkit Training",
+          "type": "string"
+        },
+        "project": {
+          "default": "TAO Toolkit",
+          "type": "string"
+        },
+        "reinit": {
+          "default": false,
+          "type": "bool"
+        },
+        "run_id": {
+          "default": "",
+          "type": "string"
+        },
+        "save_code": {
+          "default": false,
+          "type": "bool"
+        },
+        "sync_tensorboard": {
+          "default": false,
+          "type": "bool"
+        },
+        "tags": {
+          "automl_enabled": false,
+          "default": [
+            "tao-toolkit"
+          ],
+          "type": "list"
+        }
+      },
+      "type": "collection"
+    }
+  },
+  "type": "object",
+  "x_tao_schema": {
+    "action": "train",
+    "core_module": "bevfusion",
+    "model": "bevfusion",
+    "network_arch": "bevfusion",
+    "schema_action": "train",
+    "schema_version": 1,
+    "source": "tao-core dataclass config"
+  }
+}

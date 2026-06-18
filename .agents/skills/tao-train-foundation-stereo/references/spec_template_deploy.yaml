@@ -1,0 +1,58 @@
+results_dir: /results
+model:
+  # Required. Must match the trained model variant.
+  model_type: FoundationStereo
+  encoder: vits          # schema default vitl; FS small NGC ckpt was trained with vits
+dataset:
+  dataset_name: StereoDataset
+  infer_dataset:
+    data_sources:
+    - dataset_name: GenericDataset
+      data_file: /data/annotations.txt
+    batch_size: 1
+    workers: 4
+  test_dataset:
+    data_sources:
+    - dataset_name: GenericDataset
+      data_file: /data/annotations.txt
+    batch_size: 1
+    workers: 4
+    augmentation:
+      crop_size: [320, 736]
+inference:
+  trt_engine: /results/depth-net-stereo.engine
+  input_width: 736
+  input_height: 320
+evaluate:
+  trt_engine: /results/depth-net-stereo.engine
+  input_width: 736
+  input_height: 320
+gen_trt_engine:
+  gpu_id: 0
+  onnx_file: /models/model.onnx
+  trt_engine: /results/depth-net-stereo.engine
+  batch_size: -1
+  tensorrt:
+    # Precision: fp16 on the static-shape and batch-only-dynamic ONNX paths.
+    # Engine input H, W are pinned to the trace shape — H/W dynamic is not
+    # supported.
+    data_type: fp16
+    workspace_size: 1024
+    min_batch_size: 1
+    opt_batch_size: 1
+    max_batch_size: 4
+  verbose: true
+  #
+  # NGC pretrained static-shape ONNX path
+  # (deployable_foundationstereo_small_576x960_v2.0.onnx):
+  #   onnx_file: <NGC ONNX path>
+  #   batch_size: 1
+  #   tensorrt.data_type: fp16
+  #   inference/evaluate input_height: 576, input_width: 960, crop_size: [576, 960]
+  #
+  # User-trained batch-only-dynamic ONNX path (fp16 supported):
+  #   export with batch_size: -1
+  #   onnx_file: <user batch-dynamic ONNX>
+  #   batch_size: -1
+  #   tensorrt.data_type: fp16
+  #   inference/evaluate input_height/width and crop_size: same as export.input_height/width

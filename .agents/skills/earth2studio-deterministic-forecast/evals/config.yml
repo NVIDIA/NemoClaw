@@ -1,0 +1,36 @@
+# Harbor execution policy for earth2studio-deterministic-forecast live evals.
+#
+# Default (no --copy-repo): ACES stages the skill under /workspace/skills/ and
+# copies only repo files explicitly linked from SKILL.md outside the skill tree.
+# Agents typically deliver under /workspace/output/. Grading is trajectory +
+# LLM-as-judge (accuracy, behavior_check) — no live pytest against the repo.
+#
+# Optional --copy-repo: also copies the full git tree to /workspace/repo so
+# bootstrap can uv sync and agents can run pytest/make lint in a real checkout.
+# Use this when validating end-to-end dev workflow, not for routine pass/fail.
+#
+# Local run:
+#   nv-base agent-eval skills/earth2studio-deterministic-forecast \
+#     -a claude-code,codex -o ./eval-results/
+#
+# Validate before committing:
+#   astra-skill-eval validate ./skills/earth2studio-deterministic-forecast
+
+schema_version: 1
+
+harbor:
+  custom_dockerfile_mode: preserve
+  base_image_mode: disabled
+  n_attempts: 2
+  pass_threshold: 0.60
+  stop_on_pass: false
+  n_concurrent: 4
+  timeout_multiplier: 4.0
+  pre_agent_setup:
+    - /usr/local/bin/e2s-eval-bootstrap
+
+skill_workspace:
+  mode: isolated
+
+grading:
+  mode: aces_default

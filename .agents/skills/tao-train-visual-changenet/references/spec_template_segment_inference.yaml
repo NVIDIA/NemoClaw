@@ -1,0 +1,237 @@
+model_name: ''
+encryption_key: ''
+results_dir: ''
+wandb:
+  enable: true
+  project: TAO Toolkit
+  entity: ''
+  group: ''
+  tags:
+  - tao-toolkit
+  reinit: false
+  sync_tensorboard: false
+  save_code: false
+  name: TAO Toolkit Training
+  run_id: ''
+model:
+  backbone:
+    type: fan_small_12_p4_hybrid
+    feat_downsample: false
+    pretrained_backbone_path: ''
+    freeze_backbone: false
+  decode_head:
+    in_channels:
+    - 128
+    - 256
+    - 384
+    - 384
+    in_index:
+    - 0
+    - 1
+    - 2
+    - 3
+    feature_strides:
+    - 4
+    - 8
+    - 16
+    - 16
+    align_corners: false
+    decoder_params:
+      embed_dim: 256
+    use_summary_token: false
+  classify:
+    train_margin_euclid: 2.0
+    eval_margin: 2.0
+    embedding_vectors: 5
+    embed_dec: 5
+    learnable_difference_modules: 4
+    difference_module: euclidean
+dataset:
+  segment:
+    root_dir: ''
+    label_transform: norm
+    data_name: LEVIR
+    dataset: CNDataset
+    multi_scale_train: true
+    multi_scale_infer: false
+    num_classes: 2
+    img_size: 224
+    batch_size: 8
+    workers: 1
+    shuffle: true
+    image_folder_name: A
+    change_image_folder_name: B
+    list_folder_name: list
+    annotation_folder_name: label
+    augmentation:
+      random_flip:
+        vflip_probability: 0.5
+        hflip_probability: 0.5
+        enable: true
+      random_rotate:
+        rotate_probability: 0.5
+        angle_list:
+        - 90
+        - 180
+        - 270
+        enable: true
+      random_color:
+        brightness: 0.3
+        contrast: 0.3
+        saturation: 0.3
+        hue: 0.3
+        enable: true
+        color_probability: 0.5
+      with_scale_random_crop:
+        scale_range:
+        - 1
+        - 1.2
+        enable: true
+      with_random_blur: true
+      with_random_crop: true
+      mean:
+      - 0.5
+      - 0.5
+      - 0.5
+      std:
+      - 0.5
+      - 0.5
+      - 0.5
+    train_split: train
+    validation_split: val
+    test_split: test
+    predict_split: test
+    label_suffix: .png
+    quant_calibration_dataset:
+      images_dir: ''
+  classify:
+    train_dataset:
+      csv_path: ''
+      images_dir: ''
+    validation_dataset:
+      csv_path: ''
+      images_dir: ''
+    test_dataset:
+      csv_path: ''
+      images_dir: ''
+    infer_dataset:
+      csv_path: ''
+      images_dir: ''
+    image_ext: .jpg
+    batch_size: 8
+    workers: 1
+    fpratio_sampling: 0.1
+    num_input: 4
+    input_map:
+      LowAngleLight: 0
+      SolderLight: 1
+      UniformLight: 2
+      WhiteLight: 3
+    grid_map:
+      x: 2
+      y: 2
+    concat_type: linear
+    image_width: 224
+    image_height: 224
+    augmentation_config:
+      rgb_input_mean:
+      - 0.485
+      - 0.456
+      - 0.406
+      rgb_input_std:
+      - 0.226
+      - 0.226
+      - 0.226
+      random_flip:
+        vflip_probability: 0.5
+        hflip_probability: 0.5
+        enable: true
+      random_rotate:
+        rotate_probability: 0.5
+        angle_list:
+        - 90
+        - 180
+        - 270
+        enable: true
+      random_color:
+        brightness: 0.3
+        contrast: 0.3
+        saturation: 0.3
+        hue: 0.3
+        enable: true
+        color_probability: 0.5
+      with_scale_random_crop:
+        scale_range:
+        - 1
+        - 1.2
+        enable: true
+      with_random_blur: true
+      with_random_crop: true
+      augment: false
+    num_classes: 2
+    num_golden: 1
+    quant_calibration_dataset:
+      images_dir: ''
+train:
+  num_gpus: 1
+  gpu_ids:
+  - 0
+  num_nodes: 1
+  seed: 1234
+  cudnn:
+    benchmark: false
+    deterministic: true
+  num_epochs: 10
+  checkpoint_interval: 1
+  checkpoint_interval_unit: epoch
+  validation_interval: 1
+  resume_training_checkpoint_path: ''
+  results_dir: ''
+  optim:
+    monitor_name: val_loss
+    optim: adamw
+    lr: 0.0001
+    policy: linear
+    momentum: 0.9
+    weight_decay: 0.01
+  pretrained_model_path: ''
+  classify:
+    loss: contrastive
+    cls_weight:
+    - 1.0
+    - 10.0
+  segment:
+    loss: ce
+    weights:
+    - 0.5
+    - 0.5
+    - 0.5
+    - 0.8
+    - 1.0
+  tensorboard:
+    enabled: false
+    infrequent_logging_frequency: 2
+  precision: 32-true
+  sync_batchnorm: false
+  use_distributed_sampler: false
+inference:
+  num_gpus: 1
+  gpu_ids:
+  - 0
+  num_nodes: 1
+  checkpoint: ???
+  trt_engine: ''
+  results_dir: ''
+  batch_size: 8
+  vis_after_n_batches: 1
+quantize:
+  backend: torchao
+  mode: weight_only_ptq
+  algorithm: minmax
+  layers: []
+  skip_names: []
+  model_path: ''
+  results_dir: ''
+  backend_kwargs: {}
+  device: cuda
+task: segment

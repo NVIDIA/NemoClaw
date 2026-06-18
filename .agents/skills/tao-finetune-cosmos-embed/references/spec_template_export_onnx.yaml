@@ -1,0 +1,35 @@
+results_dir: /results
+
+export:
+  checkpoint: /results/train/cosmos_embed1_model_latest.pth
+  onnx_file: /results/export/cosmos_embed1_combined.onnx
+  mode: combined
+  opset_version: 17
+  batch_size: 1
+  on_cpu: true
+  verbose: false
+  simplify: false
+
+model:
+  pretrained_model_path: null
+  precision: fp32
+  input_hw: [224, 224]
+  network:
+    embed_dim: 256
+    num_query_tokens: 32
+    max_txt_len: 128
+    num_video_frames: 8
+    spatial_resolution: [224, 224]
+    temporal_encoding_type: neighboring_token_propagation
+    contrastive_type: clip
+    qformer_pretrain_ckpt: null
+    query_pooling_type: avg
+    pretrained_text_encoder: false
+    pretrained_visual_encoder: false
+    num_heldout_frames: 0
+    visual_encoder:
+      type: eva_vit_g
+      img_size: 224
+      pretrained: false
+      use_fp8: false
+      transformer_engine: false

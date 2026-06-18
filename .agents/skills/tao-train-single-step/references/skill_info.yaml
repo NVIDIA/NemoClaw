@@ -1,0 +1,16 @@
+type: workflow
+prerequisites:
+  required:
+  - name: model
+    description: A compatible TAO model (e.g., clip, nvdinov2, grounding_dino)
+  - name: train_dataset_uri
+    description: URI of the training dataset (e.g., s3://bucket/train/)
+  - name: platform
+    description: 'Compute backend: lepton, brev, slurm, local-docker, or kubernetes'
+  optional:
+  - name: eval_dataset_uri
+    description: URI of the evaluation dataset
+  - name: base_checkpoint
+    description: Pretrained model checkpoint for fine-tuning
+  - name: image
+    description: Docker image override

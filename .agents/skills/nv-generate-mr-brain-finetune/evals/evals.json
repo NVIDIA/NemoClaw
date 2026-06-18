@@ -1,0 +1,25 @@
+[
+  {
+    "id": "finetune-mr-brain-from-datalist",
+    "question": "Fine-tune the NV-Generate MR brain diffusion model using images listed in /data/mrbrain/datalist.json.",
+    "expected_skill": "nv-generate-mr-brain-finetune",
+    "ground_truth": "The agent uses scripts/run_mr_brain_finetune.py with --data-base-dir, --output-dir, and the datalist path.",
+    "expected_behavior": [
+      "the command uses skills/nv-generate-mr-brain-finetune/scripts/run_mr_brain_finetune.py",
+      "the command includes --data-base-dir",
+      "the command includes an explicit --output-dir",
+      "the agent states the output checkpoint is experimental and not clinically validated"
+    ]
+  },
+  {
+    "id": "preflight-before-gpu-run",
+    "question": "Check whether my MR-brain finetune datalist is runnable before launching the GPU job.",
+    "expected_skill": "nv-generate-mr-brain-finetune",
+    "ground_truth": "The agent runs the wrapper with --preflight and does not start training.",
+    "expected_behavior": [
+      "the command includes --preflight",
+      "the command does not call scripts.diff_model_train.py directly",
+      "the agent explains that real training still requires NIfTI images and model weights"
+    ]
+  }
+]

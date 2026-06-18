@@ -1,0 +1,28 @@
+{
+  "skills": ["rag-blueprint"],
+  "platforms": ["cpu"],
+  "env": "A Linux host with Docker + Docker Compose plugin installed and running. CPU-only — no NVIDIA GPU or driver present. NVIDIA-hosted deployment: all model inference goes to https://integrate.api.nvidia.com/v1. Required env var: NGC_API_KEY. cwd is the repo root: ${RAG_REPO_ROOT}/. Use deploy/compose/nvdev.env for cloud endpoints. IMPORTANT: use ci/vectordb-cpu.yaml instead of deploy/compose/vectordb.yaml for the vector database — the default uses a GPU Milvus image that fails on CPU-only hosts.",
+  "expects": [
+    {
+      "query": "Deploy NVIDIA RAG Blueprint using Docker Compose in NVIDIA-hosted mode (cloud NIMs). Source deploy/compose/nvdev.env, then start the vector DB, ingestor server, and rag server (with frontend) so that all containers are running. Do not start any local NIM containers (nims.yaml) — all model inference must use the cloud endpoint at integrate.api.nvidia.com.",
+      "checks": [
+        "`docker ps --format '{{.Names}}' | grep -E '^(rag-server|ingestor-server|milvus-standalone|milvus-etcd|milvus-minio)$' | wc -l` outputs a number greater than or equal to 5",
+        "`docker ps --format '{{.Names}}\\t{{.Status}}' | grep rag-server | grep -E 'Up|healthy'` returns at least one matching line",
+        "`docker ps --format '{{.Names}}'` does NOT include any container starting with 'nim-llm', 'nemoretriever-embedding-ms', or 'nemoretriever-ranking-ms' (these would indicate local NIMs were started, which contradicts NVIDIA-hosted mode)",
+        "`docker exec rag-server env 2>/dev/null | grep -E '^APP_LLM_SERVERURL=' | head -1` outputs a line containing integrate.api.nvidia.com OR is empty (when empty the cloud SDK default is used, which is also acceptable for NVIDIA-hosted mode)",
+        "The agent sourced deploy/compose/nvdev.env (or set APP_LLM_MODELNAME, APP_EMBEDDINGS_MODELNAME etc. via that env file) before running docker compose up — verifiable via the trajectory: a `source` of nvdev.env or an explicit reference to that env file in a docker compose --env-file invocation",
+        "The agent's final output claims the deployment succeeded AND, at the time of the final claim, no core container (rag-server, ingestor-server, milvus-standalone) is in 'Created' or 'Restarting' state — i.e. the agent did not declare success prematurely. Per-file enumeration is NOT required; a single overall success message is fine as long as containers are actually Up"
+      ]
+    },
+    {
+      "query": "Verify the deployed RAG stack is healthy and the API is reachable. Hit the rag-server health endpoint, the ingestor-server health endpoint, and confirm the frontend UI responds. Report the status of each.",
+      "checks": [
+        "`curl -sf -o /dev/null -w '%{http_code}' http://localhost:8081/v1/health` outputs 200",
+        "`curl -sf -o /dev/null -w '%{http_code}' http://localhost:8082/v1/health` outputs 200",
+        "`curl -sf -o /dev/null -w '%{http_code}' http://localhost:8090` outputs 200 (frontend served on port 8090)",
+        "`docker ps --format '{{.Names}}\\t{{.Status}}' | grep -E '(milvus-standalone|rag-server|ingestor-server)' | grep -v 'Up' | wc -l` outputs 0 (every core container is in 'Up' state)",
+        "The agent's final output reports a per-service health verdict for rag-server, ingestor-server, and the frontend — each service named with a clear status indicator (e.g. 'HTTP 200', 'Healthy', 'Up', or equivalent). A single overall 'all services responding' summary alone is NOT sufficient; per-service breakdown is required (an HTTP code, the word 'Healthy', or an equivalent positive indicator next to each service name counts)."
+      ]
+    }
+  ]
+}
