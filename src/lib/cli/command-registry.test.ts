@@ -55,13 +55,13 @@ describe("command-registry", () => {
   });
 
   describe("sandboxCommands()", () => {
-    it("should return exactly 48 entries", () => {
-      // 42 visible + 6 hidden (shields×3 + config get/set/rotate-token).
-      // 42 visible includes the sessions group (root + list + reset + delete +
-      // export), the agents trio (add + delete + list), the singular `agent`
-      // passthrough that forwards to `openclaw agent`, and the download +
-      // upload host-side openshell wrappers.
-      expect(sandboxCommands()).toHaveLength(48);
+    it("should return exactly 49 entries", () => {
+      // 43 visible + 6 hidden (shields×3 + config get/set/rotate-token).
+      // 43 visible includes the sessions group (root + list + reset + delete +
+      // export), the agents quartet (add + apply + delete + list), the
+      // singular `agent` passthrough that forwards to `openclaw agent`, and
+      // the download + upload host-side openshell wrappers.
+      expect(sandboxCommands()).toHaveLength(49);
     });
 
     it("every entry has scope sandbox", () => {

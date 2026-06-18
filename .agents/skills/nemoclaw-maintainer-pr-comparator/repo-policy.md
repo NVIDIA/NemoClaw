@@ -5,7 +5,7 @@ Configurable defaults that adapt the skill to a specific repository. Edit this f
 ## Contents
 
 - Required reviewer teams (CODEOWNERS)
-- Sign-off policy (DCO)
+- PR compliance policy (DCO declaration and GitHub verified signatures)
 - Automated reviewer (CodeRabbit, Copilot, etc.)
 - Documentation directory
 - Coverage threshold files
@@ -21,13 +21,17 @@ codeowners_enforced_via_branch_protection: true
 
 If your repo does NOT enforce CODEOWNERS via branch protection, set this to `false` and add an explicit list of required teams to check.
 
-## Sign-off policy
+## Commit compliance policy
 
-NemoClaw default: DCO sign-off required, enforced by `dco-check` workflow.
+NemoClaw default: a DCO sign-off declaration is required in the PR description, and GitHub verified commit signatures are required for every PR commit.
+DCO is enforced by the `dco-check` workflow.
+Verified signatures are enforced by branch protection and maintainer review.
 
 ```yaml
 dco_required: true
+dco_location: pr_description
 dco_check_name: dco-check
+github_verified_signatures_required: true
 ```
 
 ## Automated reviewers

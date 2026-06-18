@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("./gateway-state", () => ({
@@ -28,28 +29,51 @@ afterEach(() => {
 });
 
 describe("downloadFromSandbox", () => {
-  it("forwards verbatim args to `openshell sandbox download` after a live-sandbox check", async () => {
+  it("resolves a relative host destination against the caller cwd before forwarding to openshell", async () => {
     const result = await downloadFromSandbox({
       sandboxName: "alpha",
       sandboxPath: "/sandbox/.openclaw/workspace/SOUL.md",
       hostDest: "./out",
     });
 
+    const expectedHostDest = path.resolve(process.cwd(), "out");
     expect(ensureMock).toHaveBeenCalledWith("alpha", { allowNonReadyPhase: true });
     expect(runMock).toHaveBeenCalledWith(
-      ["sandbox", "download", "alpha", "/sandbox/.openclaw/workspace/SOUL.md", "./out"],
+      ["sandbox", "download", "alpha", "/sandbox/.openclaw/workspace/SOUL.md", expectedHostDest],
       expect.objectContaining({ stdio: "inherit" }),
     );
     expect(result).toEqual({
       sandboxPath: "/sandbox/.openclaw/workspace/SOUL.md",
-      hostDest: "./out",
+      hostDest: expectedHostDest,
     });
   });
 
-  it("defaults the host destination to the current directory when omitted", async () => {
+  it("defaults the host destination to the caller cwd when omitted", async () => {
     await downloadFromSandbox({ sandboxName: "alpha", sandboxPath: "/sandbox/x" });
     const args = runMock.mock.calls[0]?.[0];
-    expect(args?.at(-1)).toBe(".");
+    expect(args?.at(-1)).toBe(process.cwd());
+  });
+
+  it("forwards an absolute host destination unchanged", async () => {
+    await downloadFromSandbox({
+      sandboxName: "alpha",
+      sandboxPath: "/sandbox/x",
+      hostDest: "/tmp/dl-default",
+    });
+    const args = runMock.mock.calls[0]?.[0];
+    expect(args?.at(-1)).toBe("/tmp/dl-default");
+  });
+
+  it("preserves a trailing separator on a relative directory destination", async () => {
+    await downloadFromSandbox({
+      sandboxName: "alpha",
+      sandboxPath: "/sandbox/x",
+      hostDest: "./out/",
+    });
+    const args = runMock.mock.calls[0]?.[0];
+    const hostDest = args?.at(-1) as string;
+    expect(hostDest.endsWith(path.sep) || hostDest.endsWith("/")).toBe(true);
+    expect(hostDest.slice(0, -1)).toBe(path.resolve(process.cwd(), "out"));
   });
 
   it("throws (does not exit) when no sandbox path is given", async () => {
