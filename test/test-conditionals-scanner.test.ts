@@ -32,6 +32,29 @@ describe("test conditional scanner", () => {
     });
   });
 
+  it("detects executable if statements inside template interpolation", () => {
+    const occurrences = scanTextForTestConditionals(
+      "test/virtual-template-conditionals.test.ts",
+      [
+        'import { expect, it } from "vitest";',
+        'it("branches in interpolation", () => {',
+        "  const value = `${(() => {",
+        '    if (process.env.FLAG) return "enabled";',
+        '    return "disabled";',
+        "  })()}`;",
+        '  expect(value).toBeTypeOf("string");',
+        "});",
+      ].join("\n"),
+    );
+
+    expect(occurrences).toHaveLength(1);
+    expect(occurrences[0]).toMatchObject({
+      contextKind: "test",
+      contextName: "branches in interpolation",
+      containsControlFlow: true,
+    });
+  });
+
   it("parses JSX test files with JSX script kind", () => {
     const occurrences = scanTextForTestConditionals(
       "test/virtual-jsx-conditionals.test.jsx",
