@@ -32,6 +32,31 @@ describe("test conditional scanner", () => {
     });
   });
 
+  it("parses JSX test files with JSX script kind", () => {
+    const occurrences = scanTextForTestConditionals(
+      "test/virtual-jsx-conditionals.test.jsx",
+      `
+        import { expect, it } from "vitest";
+
+        const Component = () => <div data-testid="ok" />;
+
+        it("branches after jsx", () => {
+          const node = <Component />;
+          if (node) {
+            expect(node).toBeTruthy();
+          }
+        });
+      `,
+    );
+
+    expect(occurrences).toHaveLength(1);
+    expect(occurrences[0]).toMatchObject({
+      contextKind: "test",
+      contextName: "branches after jsx",
+      containsAssertion: true,
+    });
+  });
+
   it("scores assertion branches in test bodies above helper guard clauses", () => {
     const occurrences = scanTextForTestConditionals(
       "test/virtual-conditionals.test.ts",

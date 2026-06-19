@@ -112,7 +112,8 @@ function* walkFiles(dir: string): Generator<string> {
 
 function scriptKindFor(filePath: string): ts.ScriptKind {
   if (/\.tsx$/i.test(filePath)) return ts.ScriptKind.TSX;
-  if (/\.[cm]?jsx?$/i.test(filePath)) return ts.ScriptKind.JS;
+  if (/\.jsx$/i.test(filePath)) return ts.ScriptKind.JSX;
+  if (/\.[cm]?js$/i.test(filePath)) return ts.ScriptKind.JS;
   return ts.ScriptKind.TS;
 }
 
