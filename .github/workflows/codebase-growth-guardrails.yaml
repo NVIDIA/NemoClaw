@@ -456,7 +456,7 @@ jobs:
           }
 
           function countIfStatements(text) {
-            return stripTriviaAndLiterals(text).match(/\bif\b/g)?.length ?? 0;
+            return stripTriviaAndLiterals(text).match(/\bif\s*\(/g)?.length ?? 0;
           }
 
           async function countAt(repo, ref, file) {
