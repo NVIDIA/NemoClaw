@@ -8,7 +8,8 @@ Ordered list of what NemoClaw maintainers look for in a pull request. Higher ite
 2. **CI green** — all required checks in `statusCheckRollup` must pass.
 3. **No merge conflicts** — `mergeStateStatus` must be clean.
 4. **No unresolved major/critical CodeRabbit findings** — correctness and safety findings block; style nits do not. Use judgment on borderline cases.
-5. **Tests for touched risky code** — risky areas must have test coverage, either added in the PR or pre-existing. No exceptions.
+5. **No unresolved actionable PR Review Advisor findings** — correctness, security, acceptance-coverage, and test-depth findings block unless explicitly judged false-positive. Ask the user before acting on ambiguous or design-changing advice.
+6. **Tests for touched risky code** — risky areas must have test coverage, either added in the PR or pre-existing. No exceptions.
 
 ## Quality expectations (block if violated, but fixable via salvage)
 
@@ -29,7 +30,7 @@ The team follows a daily ship cycle. All maintainer skills operate within this r
 
 1. **Morning** (`/nemoclaw-maintainer-morning`) — triage the backlog, pick items for the day, label them with the target version (e.g., `v0.0.8`).
 2. **During the day** (`/nemoclaw-maintainer-day`) — land PRs using the maintainer loop. Version labels make progress visible on dashboards.
-3. **Evening** (`/nemoclaw-maintainer-evening`) — check what shipped, bump open items to the next version (`v0.0.9`), generate a QA-focused summary, and cut the tag.
+3. **Evening** (`/nemoclaw-maintainer-evening`) — check what shipped, bump open items to the next version (`v0.0.9`), generate a QA-focused summary, cut the tag, and prepare release notes for posting.
 4. **Overnight** — QA team (different timezone) tests the tag. Any issues they file enter the next morning's triage like any other issue.
 
 Version labels are living markers: they always mean "ship in this version." If an item doesn't make the cut, the label moves to the next patch version.

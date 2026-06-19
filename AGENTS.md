@@ -31,6 +31,10 @@ This repo ships agent skills under `.agents/skills/`, organized into three audie
 | `docs/` | MDX/Markdown | User-facing docs (Fern MDX plus legacy MyST source during migration) |
 | `fern/` | YAML/CSS/SVG | Fern site configuration and shared assets |
 
+Package-specific guides:
+
+- Messaging architecture and channel migration guidance: [`src/lib/messaging/AGENTS.md`](src/lib/messaging/AGENTS.md)
+
 ## Quick Reference
 
 | Task | Command |
@@ -148,6 +152,14 @@ All hooks managed by [prek](https://prek.j178.dev/) (installed via `npm install`
 1. Read `CONTRIBUTING.md` for the full contributor guide
 2. Run `make check` to verify your environment is set up correctly
 3. Check that `npm test` passes before starting
+
+### Git and GitHub Access Failures
+
+Follow `.agents/skills/_shared/git-github-hard-stop.md`: if SSH, `gh`, authentication, authorization, remote access, or push permission fails, stop and ask the user instead of working around access. Do not stop for ordinary merge conflicts or dirty-worktree state; resolve mechanical conflicts in the relevant workflow and ask the user only when resolution would change behavior or contributor intent.
+
+### Pull Request Follow-Up
+
+Follow `.agents/skills/_shared/pr-follow-up.md`: after opening or pushing to a PR, monitor required CI and automated review comments, address valid CodeRabbit and PR Review Advisor findings, and consult the user when feedback is ambiguous or design-changing.
 
 ### Common Patterns
 
