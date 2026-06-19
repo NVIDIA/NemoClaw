@@ -220,7 +220,31 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
         ? "https://inference.local"
         : "https://inference.local/v1",
     );
+    if (SWITCH_API === "anthropic-messages") expect(model.api_mode).toBe("anthropic_messages");
+    else if (SWITCH_API === "openai-responses") expect(model.api_mode).toBe("codex_responses");
+    else expect(model.api_mode).toBeUndefined();
+    expect(model.api_key).toMatch(/^sk-/u);
     expect(config.stdout).not.toMatch(/^models:\s*$/mu);
+
+    for (const [file, artifact] of [
+      ["/etc/nemoclaw/hermes.config-hash", "strict"],
+      ["/sandbox/.hermes/.config-hash", "compat"],
+    ] as const) {
+      const hash = await sandbox.execShell(
+        SANDBOX_NAME,
+        trustedSandboxShellScript(`sha256sum -c ${file} --status && echo OK`),
+        { artifactName: `hermes-${artifact}-hash-check`, env: env(), timeoutMs: 30_000 },
+      );
+      expect(hash.exitCode, resultText(hash)).toBe(0);
+      expect(hash.stdout).toContain("OK");
+    }
+    const strictHashPerms = await sandbox.execShell(
+      SANDBOX_NAME,
+      trustedSandboxShellScript("stat -c '%u %a' /etc/nemoclaw/hermes.config-hash"),
+      { artifactName: "hermes-strict-hash-perms", env: env(), timeoutMs: 30_000 },
+    );
+    expect(strictHashPerms.stdout.trim()).toMatch(/^0\s+[0-7]+$/u);
+    expect(Number.parseInt(strictHashPerms.stdout.trim().split(/\s+/u)[1], 8) & 0o222).toBe(0);
 
     const envHashAfter = await sandbox.exec(SANDBOX_NAME, ["sha256sum", "/sandbox/.hermes/.env"], {
       artifactName: "env-hash-after",
@@ -236,6 +260,33 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
     expect(registry.sandboxes?.[SANDBOX_NAME]?.agent).toBe("hermes");
     expect(registry.sandboxes?.[SANDBOX_NAME]?.provider).toBe(SWITCH_PROVIDER);
     expect(registry.sandboxes?.[SANDBOX_NAME]?.model).toBe(SWITCH_MODEL);
+    const session = JSON.parse(
+      fs.readFileSync(path.join(os.homedir(), ".nemoclaw", "onboard-session.json"), "utf8"),
+    );
+    expect(session.sandboxName).toBe(SANDBOX_NAME);
+    expect(session.agent).toBe("hermes");
+    expect(session.provider).toBe(SWITCH_PROVIDER);
+    expect(session.model).toBe(SWITCH_MODEL);
+
+    const inferenceLocalPayload = JSON.stringify({
+      model: SWITCH_MODEL,
+      messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
+      max_tokens: 100,
+    });
+    const inferenceLocal = await sandbox.execShell(
+      SANDBOX_NAME,
+      trustedSandboxShellScript(
+        `curl -sS --max-time 90 https://inference.local/v1/chat/completions -H 'Content-Type: application/json' -d '${inferenceLocalPayload.replace(/'/gu, `'\\''`)}'`,
+      ),
+      {
+        artifactName: "hermes-inference-local-chat-after-switch",
+        env: env(),
+        redactionValues: [apiKey],
+        timeoutMs: 120_000,
+      },
+    );
+    expect(inferenceLocal.exitCode, resultText(inferenceLocal)).toBe(0);
+    expect(chatContent(inferenceLocal.stdout)).toMatch(/PONG/i);
 
     const payload = JSON.stringify({
       model: SWITCH_MODEL,
