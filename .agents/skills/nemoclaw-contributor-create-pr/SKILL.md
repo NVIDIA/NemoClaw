@@ -259,7 +259,7 @@ Automated review: no actionable findings / addressed findings / waiting on user
 
 ## Common Mistakes to Avoid
 
-- **Do not invent your own PR body format.** Use the template from Step 5 exactly.
+- **Do not invent your own PR body format.** Use the template from Step 6 exactly.
 - **Do not omit sections.** Even if a section is not applicable, keep it with the "Skip if..." comment.
 - **Do not check boxes for steps you did not run.** If you did not run `npm run docs`, leave that box unchecked.
 - **Do not rerun hook-covered checks by default.** Normal commit and push hooks are valid verification. Use `npx prek run --from-ref main --to-ref HEAD` as the fallback when hooks were skipped, missing, or uncertain.

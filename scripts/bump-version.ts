@@ -119,7 +119,11 @@ function main(): void {
   }
 
   if (options.push) {
-    git(["push", "--atomic", "origin", "HEAD", `refs/tags/${tagName}:refs/tags/${tagName}`]);
+    const pushArgs = ["push", "--atomic", "origin", "HEAD"];
+    if (options.tag) {
+      pushArgs.push(`refs/tags/${tagName}:refs/tags/${tagName}`);
+    }
+    git(pushArgs);
   }
 
   log(`Version bump complete: ${previousVersion} -> ${options.version}`);
