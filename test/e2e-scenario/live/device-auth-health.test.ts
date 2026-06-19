@@ -235,6 +235,7 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       env: commandEnv(),
       timeoutMs: 120_000,
     });
+    expect(recoveryStatus.exitCode, resultText(recoveryStatus)).toBe(0);
     assertStatusNotOffline(resultText(recoveryStatus), "recovery status");
 
     for (let attempt = 1; attempt <= 30; attempt += 1) {
