@@ -16,8 +16,16 @@ const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const CLI = path.join(REPO_ROOT, "bin", "nemoclaw.js");
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-gpu-ollama";
 validateSandboxName(SANDBOX_NAME);
-const PROXY_PORT = process.env.NEMOCLAW_OLLAMA_PROXY_PORT ?? "11435";
+const PROXY_PORT = tcpPort(process.env.NEMOCLAW_OLLAMA_PROXY_PORT, "11435");
 const TIMEOUT_MS = 75 * 60_000;
+
+function tcpPort(value: string | undefined, fallback: string): string {
+  const raw = value ?? fallback;
+  if (!/^[1-9][0-9]*$/u.test(raw)) throw new Error(`invalid TCP port: ${raw}`);
+  const port = Number.parseInt(raw, 10);
+  if (port < 1 || port > 65_535) throw new Error(`invalid TCP port: ${raw}`);
+  return raw;
+}
 
 function env(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return {
@@ -76,6 +84,10 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       boundary:
         "GPU host + install.sh Ollama provider + OpenShell sandbox + auth proxy + inference.local",
       sandboxName: SANDBOX_NAME,
+      delegatedLegacyContracts: [
+        "Phase 11 shell retirement decides whether uninstall --delete-models remains a separate cleanup lane",
+        "The #5468 OpenClaw TUI compaction guard remains in the retained legacy shell until a TUI fixture exists",
+      ],
     });
 
     cleanup.add("destroy GPU Ollama sandbox", async () => {
@@ -145,7 +157,12 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       env: buildAvailabilityProbeEnv(),
       timeoutMs: 30_000,
     });
-    if (nvidia.exitCode !== 0) skip(`GPU runner required: ${resultText(nvidia)}`);
+    if (nvidia.exitCode !== 0) {
+      if (process.env.GITHUB_ACTIONS === "true") {
+        throw new Error(`GPU runner must provide nvidia-smi: ${resultText(nvidia)}`);
+      }
+      skip(`GPU runner required: ${resultText(nvidia)}`);
+    }
 
     const ollamaExists = await host.command("bash", ["-lc", "command -v ollama"], {
       artifactName: "command-v-ollama",
@@ -197,7 +214,18 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
 
     const log = resultText(install);
     expect(log).toContain("GPU proof passed: nvidia-smi when available");
+    expect(log).toContain("GPU proof passed: /proc/<pid>/task/<tid>/comm write");
     expect(log).toContain("GPU proof passed: cuInit(0) via libcuda.so.1");
+    if (log.includes("Docker GPU mode selected")) {
+      expect(log).toContain("GPU sandbox runtime reached local inference");
+    }
+    const route = await sandbox.openshell(["inference", "get"], {
+      artifactName: "openshell-inference-route",
+      env: env(),
+      timeoutMs: 30_000,
+    });
+    expect(route.exitCode, resultText(route)).toBe(0);
+    expect(resultText(route)).toMatch(/ollama/i);
 
     const tokenFile = path.join(process.env.HOME ?? "", ".nemoclaw", "ollama-proxy-token");
     const tokenRecord = readTokenFileChecked(tokenFile);
@@ -264,7 +292,7 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
         `set -euo pipefail
 pkill -f 'ollama-auth-proxy' 2>/dev/null || true
 sleep 2
-if curl -s -o /dev/null -w '%{http_code}' --connect-timeout 2 http://127.0.0.1:${PROXY_PORT}/api/tags 2>/dev/null | grep -Eq '^[1-9][0-9]{2}$'; then
+if curl -s -o /dev/null -w '%{http_code}' --connect-timeout 2 "http://127.0.0.1:$2/api/tags" 2>/dev/null | grep -Eq '^[1-9][0-9]{2}$'; then
   echo 'proxy still alive after kill' >&2
   exit 1
 fi
