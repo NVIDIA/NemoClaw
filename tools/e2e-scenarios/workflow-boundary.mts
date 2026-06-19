@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import YAML from "yaml";
@@ -29,6 +29,12 @@ export interface FreeStandingJobsInventory {
   freeStandingScenarios: string[];
   scenarioToJob: Map<string, string>;
 }
+
+type CachedFreeStandingJobsInventory = {
+  mtimeMs: number;
+  size: number;
+  inventory: FreeStandingJobsInventory;
+};
 
 const SELECTOR_PATTERN = /^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$/;
 const SELECTOR_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
@@ -123,8 +129,20 @@ function deriveFreeStandingJobsInventoryFromJobs(jobs: WorkflowRecord): {
   };
 }
 
+const freeStandingJobsInventoryCache = new Map<string, CachedFreeStandingJobsInventory>();
+
 function readWorkflowRecord(workflowPath: string): WorkflowRecord {
   return asRecord(YAML.parse(readFileSync(workflowPath, "utf-8")));
+}
+
+function cloneFreeStandingJobsInventory(
+  inventory: FreeStandingJobsInventory,
+): FreeStandingJobsInventory {
+  return {
+    allowedJobs: [...inventory.allowedJobs],
+    freeStandingScenarios: [...inventory.freeStandingScenarios],
+    scenarioToJob: new Map(inventory.scenarioToJob),
+  };
 }
 
 export function validateFreeStandingWorkflowInventory(
@@ -137,11 +155,22 @@ export function validateFreeStandingWorkflowInventory(
 export function readFreeStandingJobsInventory(
   workflowPath = DEFAULT_VITEST_WORKFLOW_PATH,
 ): FreeStandingJobsInventory {
+  const stats = statSync(workflowPath);
+  const cached = freeStandingJobsInventoryCache.get(workflowPath);
+  if (cached && cached.mtimeMs === stats.mtimeMs && cached.size === stats.size) {
+    return cloneFreeStandingJobsInventory(cached.inventory);
+  }
+
   const workflow = readWorkflowRecord(workflowPath);
   const { errors, inventory } = deriveFreeStandingJobsInventoryFromJobs(asRecord(workflow.jobs));
   if (errors.length > 0) {
     throw new Error(`Invalid free-standing workflow inventory:\n${errors.join("\n")}`);
   }
+  freeStandingJobsInventoryCache.set(workflowPath, {
+    mtimeMs: stats.mtimeMs,
+    size: stats.size,
+    inventory: cloneFreeStandingJobsInventory(inventory),
+  });
   return inventory;
 }
 
@@ -2479,7 +2508,9 @@ function validateDiagnosticsVitestJob(errors: string[], jobs: WorkflowRecord): v
     errors.push("diagnostics-vitest job must not expose Docker auth to branch-controlled steps");
   }
   if (jobEnv.E2E_ARTIFACT_DIR !== "${{ github.workspace }}/e2e-artifacts/vitest/diagnostics") {
-    errors.push("diagnostics-vitest job must write artifacts under e2e-artifacts/vitest/diagnostics");
+    errors.push(
+      "diagnostics-vitest job must write artifacts under e2e-artifacts/vitest/diagnostics",
+    );
   }
   if (jobEnv.NEMOCLAW_CLI_BIN !== "${{ github.workspace }}/bin/nemoclaw.js") {
     errors.push("diagnostics-vitest job must point NEMOCLAW_CLI_BIN at the repo CLI");
@@ -2499,7 +2530,12 @@ function validateDiagnosticsVitestJob(errors: string[], jobs: WorkflowRecord): v
   if (jobEnv.OPENSHELL_GATEWAY !== "nemoclaw") {
     errors.push("diagnostics-vitest job must force OPENSHELL_GATEWAY=nemoclaw");
   }
-  for (const secret of ["NVIDIA_API_KEY", "DOCKERHUB_USERNAME", "DOCKERHUB_TOKEN", "GITHUB_TOKEN"]) {
+  for (const secret of [
+    "NVIDIA_API_KEY",
+    "DOCKERHUB_USERNAME",
+    "DOCKERHUB_TOKEN",
+    "GITHUB_TOKEN",
+  ]) {
     requireEnvDoesNotExposeSecret(errors, "diagnostics-vitest job", jobEnv, secret);
   }
 
@@ -2534,7 +2570,12 @@ function validateDiagnosticsVitestJob(errors: string[], jobs: WorkflowRecord): v
   if (!setupNode) errors.push("diagnostics-vitest job missing step: Set up Node");
   requireFullShaAction(errors, setupNode, "diagnostics-vitest setup-node");
 
-  const installRootDependencies = requireJobStep(errors, jobName, steps, "Install root dependencies");
+  const installRootDependencies = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Install root dependencies",
+  );
   requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
 
   const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
