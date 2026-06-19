@@ -256,7 +256,7 @@ jobs:
           set -euo pipefail
 
           node <<'NODE'
-          const TEST_FILE_RE = /^(test|src|nemoclaw\/src)\/.*\.(test|spec)\.(?:[cm]?[jt]s|[jt]sx)$/;
+          const TEST_FILE_RE = /^(test|src|nemoclaw\/src)\/.*\.(test|spec)\.(?:[cm]?[jt]s)$/;
           const { BASE_SHA, GH_TOKEN, HEAD_REPO, HEAD_SHA, PR_NUMBER, REPO } = process.env;
           const headers = { Authorization: `Bearer ${GH_TOKEN}`, "X-GitHub-Api-Version": "2022-11-28" };
 

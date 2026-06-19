@@ -68,7 +68,7 @@ type CliOptions = {
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const DEFAULT_SCAN_ROOTS = Object.freeze(["test", "src", "nemoclaw/src"]);
-const TEST_FILE_PATTERN = /\.(?:test|spec)\.(?:[cm]?[jt]s|[jt]sx)$/;
+const TEST_FILE_PATTERN = /\.(?:test|spec)\.(?:[cm]?[jt]s)$/;
 const HIGH_SCORE_THRESHOLD = 8;
 const TEST_CALL_NAMES = new Set(["it", "test"]);
 const HOOK_CALL_NAMES = new Set(["beforeEach", "afterEach", "beforeAll", "afterAll"]);
@@ -111,10 +111,7 @@ function* walkFiles(dir: string): Generator<string> {
 }
 
 function scriptKindFor(filePath: string): ts.ScriptKind {
-  if (/\.tsx$/i.test(filePath)) return ts.ScriptKind.TSX;
-  if (/\.jsx$/i.test(filePath)) return ts.ScriptKind.JSX;
-  if (/\.[cm]?js$/i.test(filePath)) return ts.ScriptKind.JS;
-  return ts.ScriptKind.TS;
+  return /\.[cm]?js$/i.test(filePath) ? ts.ScriptKind.JS : ts.ScriptKind.TS;
 }
 
 function normalizeWhitespace(text: string): string {
