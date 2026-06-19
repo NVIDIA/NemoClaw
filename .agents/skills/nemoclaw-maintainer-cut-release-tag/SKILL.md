@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-maintainer-cut-release-tag
-description: Creates deterministic NemoClaw semver release tags on origin/main and drafts release notes. Use when cutting a release, tagging a version, shipping a build, creating vX.Y.Z tags, or preparing release announcements.
+description: Creates deterministic NemoClaw semver release tags on origin/main, handles release housekeeping, and drafts release notes. Use when cutting a release, tagging a version, shipping a build, creating vX.Y.Z tags, or preparing release announcements.
 user_invocable: true
 ---
 
@@ -9,9 +9,9 @@ user_invocable: true
 
 # Cut Release Tag
 
-Use the release scripts only. Do not run raw `git tag`, `git push`, `gh api`, or version-bump commands by hand for the normal release flow.
+Use the release scripts for normal release operations. Do not run raw `git tag`, `git push`, `gh api`, or version-bump commands by hand for the normal release flow.
 
-The release is one annotated semver tag on an already-merged `origin/main` commit. The GitHub workflow moves `latest`; release admins promote `lkg` manually after validation.
+The release is one annotated semver tag on an already-merged `origin/main` commit. The GitHub workflow moves `latest`; release admins promote `lkg` manually after validation. After the tag is cut, finish version-label housekeeping for remaining open issues/PRs and draft release notes for the maintainer to post.
 
 ## Hard Rules
 
@@ -21,6 +21,7 @@ The release is one annotated semver tag on an already-merged `origin/main` commi
 - Never push `latest` or `lkg` from this skill.
 - Never move, delete, or force-push an existing remote semver tag unless the maintainer explicitly starts protected-tag remediation.
 - Draft release notes locally. Do not create the GitHub Discussion; the maintainer does that.
+- Follow the shared [Git and GitHub Access Hard Stop](../_shared/git-github-hard-stop.md) for SSH, authentication, remote access, authorization, or permission failures.
 
 ## Workflow
 
@@ -32,8 +33,9 @@ Release Progress:
 - [ ] Step 2: Show plan and exact confirmation phrase
 - [ ] Step 3: Cut the semver tag from the confirmed plan
 - [ ] Step 4: Wait for workflow-managed latest
-- [ ] Step 5: Generate release-note data and draft Markdown
-- [ ] Step 6: Hand off announcement steps
+- [ ] Step 5: Housekeep remaining open issues/PRs
+- [ ] Step 6: Generate release-note data and draft Markdown
+- [ ] Step 7: Hand off announcement steps
 ```
 
 ### Step 1: Generate Release Plan
@@ -63,7 +65,8 @@ Read the generated `plan.json` and show the maintainer:
 - target `origin/main` commit and headline,
 - plan hash,
 - forbidden operations,
-- exact confirmation phrase.
+- exact confirmation phrase,
+- open issue/PR housekeeping plan for the release label.
 
 Ask the maintainer to paste the exact phrase:
 
@@ -87,7 +90,7 @@ The script verifies a clean worktree, unchanged `origin/main`, tag availability,
 <release-dir>/cut-result.json
 ```
 
-If the script fails, stop and report the error. Do not improvise git commands.
+If the script fails because of SSH, authentication, remote access, authorization, or permissions, follow [Git and GitHub Access Hard Stop](../_shared/git-github-hard-stop.md). For other precondition failures, report the failed precondition and use the recovery guidance below. Do not improvise git commands.
 
 ### Step 4: Wait for Workflow-Managed `latest`
 
@@ -105,7 +108,28 @@ The script waits until `vX.Y.Z^{}` and `latest^{}` both peel to the planned comm
 
 If it fails, report the failed workflow/status. Do not manually move `latest`.
 
-### Step 5: Generate Release-Note Data and Draft Markdown
+### Step 5: Housekeep Remaining Open Issues/PRs
+
+Move any remaining open issues or PRs labeled with the released version to the next patch label:
+
+```bash
+node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/bump-stragglers.ts <released-version> <next-version>
+```
+
+Then verify the released version has no open stragglers:
+
+```bash
+gh issue list --repo NVIDIA/NemoClaw --state open --label <released-version> --limit 100
+gh pr list --repo NVIDIA/NemoClaw --state open --label <released-version> --limit 100
+```
+
+Summarize:
+
+- shipped/closed items that remain associated with `<released-version>`;
+- open issues/PRs bumped to `<next-version>`;
+- any items that need manual maintainer attention.
+
+### Step 6: Generate Release-Note Data and Draft Markdown
 
 Collect deterministic release-note input:
 
@@ -129,7 +153,7 @@ Draft release notes from `notes-data.json` using the style from `nemoclaw-mainta
 
 Do not create or update a GitHub Discussion.
 
-### Step 6: Hand Off Announcement
+### Step 7: Hand Off Announcement
 
 Return:
 
@@ -138,6 +162,7 @@ Return:
 - plan path and plan hash,
 - `cut-result.json`, `latest-result.json`, and `notes-data.json` paths,
 - Markdown draft path,
+- issue/PR housekeeping summary,
 - suggested discussion title: `NemoClaw <new-version> is out`,
 - reminder: maintainer creates the Announcement discussion and shares its link in external channels.
 
@@ -149,3 +174,4 @@ Return:
 - `latest` workflow fails or times out: report the workflow/status; do not move `latest` manually.
 - `latest` workflow rejects a rollback: keep `latest` unchanged, inspect the plan target commit, and regenerate the plan for the current `origin/main` tip if appropriate.
 - `lkg` changed: stop and escalate to a release admin.
+- Housekeeping finds open items that should still ship in the released version: stop and ask the maintainer whether to leave the label or bump them.
