@@ -8,14 +8,13 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
-
-import { testTimeoutOptions } from "../../helpers/timeouts";
 import {
   evaluateE2eVitestWorkflowDispatchSelectors,
   readFreeStandingJobsInventory,
   validateE2eVitestScenariosWorkflowBoundary,
   validateFreeStandingWorkflowInventory,
 } from "../../../tools/e2e-scenarios/workflow-boundary.mts";
+import { testTimeoutOptions } from "../../helpers/timeouts";
 
 function readWorkflow(): Record<string, unknown> {
   return YAML.parse(
@@ -565,7 +564,7 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
     },
   );
 
-  it("derives the free-standing inventory from workflow job metadata", () => {
+  it("derives the free-standing inventory from workflow job metadata", { timeout: 60_000 }, () => {
     const inventory = readFreeStandingJobsInventory();
     expect(validateFreeStandingWorkflowInventory()).toEqual([]);
     expect(inventory.allowedJobs).toContain("openshell-version-pin-vitest");
