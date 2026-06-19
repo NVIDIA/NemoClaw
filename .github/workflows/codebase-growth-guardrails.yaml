@@ -289,6 +289,12 @@ jobs:
             return Buffer.from(body.content.replace(/\s/g, ""), "base64").toString("utf8");
           }
 
+          function assertRepositoryName(repo, label) {
+            if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo ?? "")) {
+              throw new Error(`${label} must be an owner/name repository name`);
+            }
+          }
+
           function stripTriviaAndLiterals(text) {
             let output = "";
             let index = 0;
@@ -418,6 +424,9 @@ jobs:
             const changedTests = files.filter(({ filename, previous_filename }) => (
               TEST_FILE_RE.test(filename) || TEST_FILE_RE.test(previous_filename ?? "")
             ));
+            assertRepositoryName(REPO, "REPO");
+            assertRepositoryName(HEAD_REPO, "HEAD_REPO");
+
             const details = [];
             let baseTotal = 0;
             let headTotal = 0;
@@ -434,8 +443,9 @@ jobs:
               }
             }
 
-            if (headTotal > baseTotal) {
-              console.error(`FAIL: changed test files add ${headTotal - baseTotal} net if statement(s).`);
+            if (details.length > 0) {
+              console.error("FAIL: changed test files add if statements.");
+              console.error(`Changed test files contain ${headTotal} if statement(s) at PR head vs ${baseTotal} at base.`);
               console.error("");
               console.error("Test bodies should stay linear. Split conditional behavior into separate test cases, use it.skipIf/it.runIf for platform or environment gates, or move non-asserting setup branches into named helpers.");
               console.error("");
