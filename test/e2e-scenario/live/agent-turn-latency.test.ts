@@ -4,7 +4,6 @@
 /** Live Vitest replacement for test/e2e/test-agent-turn-latency-e2e.sh. */
 
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
@@ -26,9 +25,14 @@ validateSandboxName(OPENCLAW_SANDBOX);
 validateSandboxName(HERMES_SANDBOX);
 const MODEL = process.env.NEMOCLAW_TURN_LATENCY_MODEL ?? "nvidia/nemotron-3-super-120b-a12b";
 const PROVIDER = process.env.NEMOCLAW_TURN_LATENCY_PROVIDER ?? "build";
-const MAX_TURN_SECONDS = Number(process.env.NEMOCLAW_TURN_LATENCY_MAX_SECONDS ?? "300");
-const INSTALL_ATTEMPTS = Number(process.env.NEMOCLAW_TURN_LATENCY_INSTALL_ATTEMPTS ?? "2");
+const MAX_TURN_SECONDS = positiveInt(process.env.NEMOCLAW_TURN_LATENCY_MAX_SECONDS, 300);
+const INSTALL_ATTEMPTS = positiveInt(process.env.NEMOCLAW_TURN_LATENCY_INSTALL_ATTEMPTS, 2);
 const TIMEOUT_MS = 90 * 60_000;
+
+function positiveInt(value: string | undefined, fallback: number): number {
+  if (!value || !/^[1-9][0-9]*$/u.test(value)) return fallback;
+  return Number.parseInt(value, 10);
+}
 
 function env(
   sandboxName: string,
@@ -78,6 +82,40 @@ function chatContent(raw: string): string {
 
 function msSince(start: bigint): number {
   return Number((process.hrtime.bigint() - start) / 1_000_000n);
+}
+
+function assertOpenClawConfig(raw: string, model: string): void {
+  const cfg = JSON.parse(raw) as {
+    agents?: { defaults?: { model?: { primary?: unknown } } };
+    models?: {
+      providers?: {
+        inference?: { baseUrl?: unknown; models?: Array<{ id?: unknown; name?: unknown }> };
+      };
+    };
+  };
+  const provider = cfg.models?.providers?.inference;
+  expect(cfg.agents?.defaults?.model?.primary).toBe(`inference/${model}`);
+  expect(provider?.baseUrl).toBe("https://inference.local/v1");
+  expect(provider?.models?.[0]?.id).toBe(model);
+  expect(provider?.models?.[0]?.name).toBe(`inference/${model}`);
+}
+
+function assertHermesConfig(raw: string, model: string): void {
+  const values: Record<string, string> = {};
+  let inModel = false;
+  for (const line of raw.split(/\r?\n/u)) {
+    if (/^model:\s*$/u.test(line)) {
+      inModel = true;
+      continue;
+    }
+    if (inModel && /^[A-Za-z0-9_-]+:/u.test(line)) break;
+    const match = inModel ? line.match(/^\s+([A-Za-z0-9_-]+):\s*(.*?)\s*$/u) : null;
+    if (match) values[match[1]] = match[2].replace(/^['"]|['"]$/gu, "");
+  }
+  expect(values.default).toBe(model);
+  expect(values.base_url).toBe("https://inference.local/v1");
+  expect(values.provider).toBe("custom");
+  expect(raw).not.toMatch(/^models:\s*\n(?:[ \t].*\n)*?[ \t]+providers:/mu);
 }
 
 async function installSandbox(
@@ -154,18 +192,25 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
     expect(docker.exitCode, resultText(docker)).toBe(0);
 
     await installSandbox(host, OPENCLAW_SANDBOX, "openclaw", apiKey);
+    const openclawRoute = await sandbox.openshell(["inference", "get", "-g", "nemoclaw"], {
+      artifactName: "openclaw-route",
+      env: env(OPENCLAW_SANDBOX, "openclaw"),
+      timeoutMs: 30_000,
+    });
+    expect(openclawRoute.exitCode, resultText(openclawRoute)).toBe(0);
+    expect(resultText(openclawRoute)).toContain(MODEL);
     const openclawConfig = await sandbox.exec(
       OPENCLAW_SANDBOX,
       ["cat", "/sandbox/.openclaw/openclaw.json"],
       {
         artifactName: "openclaw-config",
         env: env(OPENCLAW_SANDBOX, "openclaw"),
+        redactionValues: [apiKey],
         timeoutMs: 30_000,
       },
     );
     expect(openclawConfig.exitCode, resultText(openclawConfig)).toBe(0);
-    expect(openclawConfig.stdout).toContain("https://inference.local/v1");
-    expect(openclawConfig.stdout).toContain(MODEL);
+    assertOpenClawConfig(openclawConfig.stdout, MODEL);
 
     const openclawStarted = process.hrtime.bigint();
     const openclawTurn = await sandbox.execShell(
@@ -193,6 +238,19 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
     });
 
     await installSandbox(host, HERMES_SANDBOX, "hermes", apiKey);
+    const hermesRoute = await sandbox.openshell(["inference", "get", "-g", "nemoclaw"], {
+      artifactName: "hermes-route",
+      env: env(HERMES_SANDBOX, "hermes"),
+      timeoutMs: 30_000,
+    });
+    expect(hermesRoute.exitCode, resultText(hermesRoute)).toBe(0);
+    expect(resultText(hermesRoute)).toContain(MODEL);
+    const hermesHealth = await sandbox.exec(
+      HERMES_SANDBOX,
+      ["curl", "-sf", "--max-time", "10", "http://localhost:8642/health"],
+      { artifactName: "hermes-health", env: env(HERMES_SANDBOX, "hermes"), timeoutMs: 30_000 },
+    );
+    expect(hermesHealth.exitCode, resultText(hermesHealth)).toBe(0);
     const hermesConfig = await sandbox.exec(
       HERMES_SANDBOX,
       ["cat", "/sandbox/.hermes/config.yaml"],
@@ -204,8 +262,7 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       },
     );
     expect(hermesConfig.exitCode, resultText(hermesConfig)).toBe(0);
-    expect(hermesConfig.stdout).toContain("https://inference.local/v1");
-    expect(hermesConfig.stdout).toContain(MODEL);
+    assertHermesConfig(hermesConfig.stdout, MODEL);
 
     const payload = JSON.stringify({
       model: MODEL,
@@ -237,7 +294,7 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
     results.hermes = { elapsedMs: hermesMs };
     await artifacts.writeJson("turn-latency-results.json", results);
     fs.writeFileSync(
-      path.join(os.tmpdir(), "nemoclaw-e2e-agent-turn-latency.json"),
+      artifacts.pathFor("agent-turn-latency-results-legacy-path.json"),
       `${JSON.stringify(results, null, 2)}\n`,
     );
   },
