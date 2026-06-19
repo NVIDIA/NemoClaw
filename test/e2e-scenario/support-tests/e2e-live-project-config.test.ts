@@ -107,6 +107,11 @@ describe("gated E2E Vitest projects", () => {
     expect(resolveE2ERetryCount({ GITHUB_ACTIONS: "true" })).toBe(2);
     expect(resolveE2ERetryCount({ CI: "1", NEMOCLAW_E2E_RETRIES: "0" })).toBe(0);
     expect(resolveE2ERetryCount({ NEMOCLAW_E2E_RETRIES: "3" })).toBe(3);
+    expect(resolveE2ERetryCount({ NEMOCLAW_E2E_RETRIES: "5" })).toBe(5);
+    expect(resolveE2ERetryCount({ NEMOCLAW_E2E_RETRIES: "6" })).toBe(5);
+    expect(resolveE2ERetryCount({ NEMOCLAW_E2E_RETRIES: "999999" })).toBe(5);
+    expect(resolveE2ERetryCount({ CI: "1", NEMOCLAW_E2E_RETRIES: "-1" })).toBe(2);
+    expect(resolveE2ERetryCount({ CI: "1", NEMOCLAW_E2E_RETRIES: "1.5" })).toBe(2);
     expect(resolveE2ERetryCount({ CI: "1", NEMOCLAW_E2E_RETRIES: "invalid" })).toBe(2);
   });
 
