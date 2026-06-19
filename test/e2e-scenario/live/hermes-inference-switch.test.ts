@@ -67,7 +67,12 @@ function parseHermesModelBlock(text: string): Record<string, string> {
 }
 
 function chatContent(raw: string): string {
-  const parsed = JSON.parse(raw) as { choices?: Array<{ message?: Record<string, unknown> }> };
+  const parsed = JSON.parse(raw) as {
+    choices?: Array<{ message?: Record<string, unknown> }>;
+    content?: Array<{ text?: unknown }>;
+  };
+  const anthropicText = parsed.content?.find((part) => typeof part.text === "string")?.text;
+  if (typeof anthropicText === "string" && anthropicText.trim()) return anthropicText.trim();
   const message = parsed.choices?.[0]?.message ?? {};
   for (const key of ["content", "reasoning_content", "reasoning"]) {
     const value = message[key];
@@ -223,7 +228,7 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
     if (SWITCH_API === "anthropic-messages") expect(model.api_mode).toBe("anthropic_messages");
     else if (SWITCH_API === "openai-responses") expect(model.api_mode).toBe("codex_responses");
     else expect(model.api_mode).toBeUndefined();
-    expect(model.api_key).toMatch(/^sk-/u);
+    expect(typeof model.api_key === "string" && /^sk-/u.test(model.api_key)).toBe(true);
     expect(config.stdout).not.toMatch(/^models:\s*$/mu);
 
     for (const [file, artifact] of [
@@ -273,11 +278,13 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
       max_tokens: 100,
     });
+    const inferenceLocalCommand =
+      SWITCH_API === "anthropic-messages"
+        ? `curl -sS --max-time 90 https://inference.local/v1/messages -H 'Content-Type: application/json' -H 'anthropic-version: 2023-06-01' -d '${inferenceLocalPayload.replace(/'/gu, `'\\''`)}'`
+        : `curl -sS --max-time 90 https://inference.local/v1/chat/completions -H 'Content-Type: application/json' -d '${inferenceLocalPayload.replace(/'/gu, `'\\''`)}'`;
     const inferenceLocal = await sandbox.execShell(
       SANDBOX_NAME,
-      trustedSandboxShellScript(
-        `curl -sS --max-time 90 https://inference.local/v1/chat/completions -H 'Content-Type: application/json' -d '${inferenceLocalPayload.replace(/'/gu, `'\\''`)}'`,
-      ),
+      trustedSandboxShellScript(inferenceLocalCommand),
       {
         artifactName: "hermes-inference-local-chat-after-switch",
         env: env(),
