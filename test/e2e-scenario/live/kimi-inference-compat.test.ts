@@ -3,13 +3,14 @@
 
 /** Live Vitest replacement for test/e2e/test-kimi-inference-compat.sh. */
 
+import http, { type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import path from "node:path";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { trustedSandboxShellScript, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
-import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { shouldRunLiveE2EScenarios } from "../fixtures/live-project-gate.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
@@ -43,6 +44,155 @@ async function bestEffort(run: () => Promise<unknown>): Promise<void> {
   try {
     await run();
   } catch {}
+}
+
+interface KimiRequest {
+  path: string;
+  model?: string;
+  hasTools: boolean;
+  hasToolResult: boolean;
+}
+
+async function startKimiMock(): Promise<{
+  baseUrl: string;
+  requests: KimiRequest[];
+  close(): Promise<void>;
+}> {
+  const requests: KimiRequest[] = [];
+  const server = http.createServer((req, res) => {
+    if (req.method === "GET" && req.url === "/v1/models") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ object: "list", data: [{ id: KIMI_MODEL, object: "model" }] }));
+      return;
+    }
+    if (req.method !== "POST" || req.url !== "/v1/chat/completions") {
+      res.writeHead(404).end();
+      return;
+    }
+    let raw = "";
+    req.setEncoding("utf8");
+    req.on("data", (chunk) => {
+      raw += chunk;
+    });
+    req.on("end", () => {
+      const body = JSON.parse(raw || "{}") as {
+        model?: string;
+        stream?: boolean;
+        tools?: unknown[];
+        messages?: Array<{ role?: string; content?: string }>;
+      };
+      const hasTools = Array.isArray(body.tools) && body.tools.length > 0;
+      const hasToolResult = body.messages?.some((message) => message.role === "tool") ?? false;
+      requests.push({ path: req.url ?? "", model: body.model, hasTools, hasToolResult });
+      const id = `chatcmpl-kimi-${Date.now()}`;
+      const sendJson = (payload: unknown) => {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify(payload));
+      };
+      const sendSse = (chunks: unknown[]) => {
+        res.writeHead(200, { "content-type": "text/event-stream" });
+        for (const chunk of chunks) res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+        res.end("data: [DONE]\n\n");
+      };
+      const requestText = JSON.stringify(body);
+      if (requestText.includes("Reply with exactly: OK")) {
+        sendJson({
+          id,
+          object: "chat.completion",
+          model: KIMI_MODEL,
+          choices: [
+            { index: 0, message: { role: "assistant", content: "OK" }, finish_reason: "stop" },
+          ],
+        });
+        return;
+      }
+      if (hasTools && !hasToolResult) {
+        const toolCall = {
+          id: "call_kimi_exec",
+          type: "function",
+          function: {
+            name: "exec",
+            arguments: JSON.stringify({ command: "hostname; date; uptime" }),
+          },
+        };
+        if (body.stream) {
+          sendSse([
+            {
+              id,
+              object: "chat.completion.chunk",
+              model: KIMI_MODEL,
+              choices: [{ index: 0, delta: { role: "assistant" } }],
+            },
+            {
+              id,
+              object: "chat.completion.chunk",
+              model: KIMI_MODEL,
+              choices: [{ index: 0, delta: { tool_calls: [{ index: 0, ...toolCall }] } }],
+            },
+            {
+              id,
+              object: "chat.completion.chunk",
+              model: KIMI_MODEL,
+              choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
+            },
+          ]);
+        } else {
+          sendJson({
+            id,
+            object: "chat.completion",
+            model: KIMI_MODEL,
+            choices: [
+              {
+                index: 0,
+                message: { role: "assistant", content: null, tool_calls: [toolCall] },
+                finish_reason: "tool_calls",
+              },
+            ],
+          });
+        }
+        return;
+      }
+      const text = "hostname, date, and uptime completed successfully.";
+      if (body.stream) {
+        sendSse([
+          {
+            id,
+            object: "chat.completion.chunk",
+            model: KIMI_MODEL,
+            choices: [{ index: 0, delta: { role: "assistant" } }],
+          },
+          {
+            id,
+            object: "chat.completion.chunk",
+            model: KIMI_MODEL,
+            choices: [{ index: 0, delta: { content: text } }],
+          },
+          {
+            id,
+            object: "chat.completion.chunk",
+            model: KIMI_MODEL,
+            choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+          },
+        ]);
+      } else {
+        sendJson({
+          id,
+          object: "chat.completion",
+          model: KIMI_MODEL,
+          choices: [
+            { index: 0, message: { role: "assistant", content: text }, finish_reason: "stop" },
+          ],
+        });
+      }
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address() as AddressInfo;
+  return {
+    baseUrl: `http://127.0.0.1:${address.port}/v1`,
+    requests,
+    close: () => new Promise((resolve) => server.close(() => resolve())),
+  };
 }
 
 function parseConfig(raw: string): {
@@ -85,7 +235,7 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
   "Kimi-compatible endpoint config enables plugin wiring and managed inference route",
   { timeout: TIMEOUT_MS },
   async ({ artifacts, cleanup, host, sandbox }) => {
-    const fake = await startFakeOpenAiCompatibleServer({ model: KIMI_MODEL, responseText: "OK" });
+    const fake = await startKimiMock();
     cleanup.add("close fake Kimi endpoint", () => fake.close());
     cleanup.add("destroy Kimi sandbox", async () => {
       await bestEffort(() =>
@@ -163,7 +313,11 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
     expect(modelEntry, config.stdout).toBeDefined();
     expect(modelEntry?.compat?.requiresStringContent).toBe(true);
     expect(modelEntry?.compat?.requiresToolResultName).toBe(true);
+    expect(modelEntry?.compat?.maxTokensField).toBe("max_tokens");
     expect(modelEntry?.compat?.supportsStore).toBe(false);
+    expect(config.stdout).toContain(
+      "/usr/local/share/nemoclaw/openclaw-plugins/kimi-inference-compat",
+    );
     expect(parsed.primary).toBe(`inference/${KIMI_MODEL}`);
     expect(parsed.pluginEnabled).toBe(true);
     expect(parsed.toolSearch).toBe(false);
@@ -190,12 +344,36 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
     );
     expect(agent.exitCode, resultText(agent)).toBe(0);
     expect(resultText(agent)).toMatch(/OK/i);
+
+    const toolAgent = await sandbox.execShell(
+      SANDBOX_NAME,
+      trustedSandboxShellScript(
+        "openclaw agent --agent main --json --session-id e2e-kimi-tools -m 'Use the exec tool to run hostname, date, and uptime. Run each command and then say exactly: hostname, date, and uptime completed successfully.'",
+      ),
+      {
+        artifactName: "kimi-agent-tool-splitting",
+        env: env(),
+        redactionValues: ["test-kimi-key"],
+        timeoutMs: 420_000,
+      },
+    );
+    expect(toolAgent.exitCode, resultText(toolAgent)).toBe(0);
+    const trajectory = await sandbox.execShell(
+      SANDBOX_NAME,
+      trustedSandboxShellScript(
+        "python3 - <<'PY'\nimport json, pathlib\nroot=pathlib.Path('/sandbox/.openclaw')\nraw='\\n'.join(p.read_text(errors='replace') for p in root.rglob('*e2e-kimi-tools*.jsonl'))\nassert 'hostname; date; uptime' not in raw\nfor cmd in ['hostname','date','uptime']:\n    assert cmd in raw, cmd\nassert 'hostname, date, and uptime completed successfully.' in raw\nprint('OK')\nPY",
+      ),
+      { artifactName: "kimi-trajectory-tool-splitting-check", env: env(), timeoutMs: 60_000 },
+    );
+    expect(trajectory.exitCode, resultText(trajectory)).toBe(0);
     expect(
-      fake
-        .requests()
-        .some(
-          (request) => request.path.includes("/chat/completions") && request.model === KIMI_MODEL,
-        ),
+      fake.requests.some(
+        (request) =>
+          request.path.includes("/chat/completions") &&
+          request.model === KIMI_MODEL &&
+          request.hasTools,
+      ),
     ).toBe(true);
+    expect(fake.requests.some((request) => request.hasToolResult)).toBe(true);
   },
 );
