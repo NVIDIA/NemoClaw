@@ -8,6 +8,8 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { scanTextForTestConditionals } from "../scripts/find-test-conditionals";
+
 const WORKFLOW_PATH = ".github/workflows/codebase-growth-guardrails.yaml";
 const STEP_NAME = "Require changed test files not to add if statements";
 const NODE_MARKER = "node <<'NODE'\n";
@@ -43,6 +45,13 @@ function extractConditionalsNodeScript(): string {
     .replaceAll("\n          ", "\n");
 }
 
+function extractWorkflowCounterScript(): string {
+  const script = extractConditionalsNodeScript();
+  const counterStart = script.indexOf("function stripTriviaAndLiterals(text)");
+  const counterEnd = script.indexOf("async function countAt", counterStart);
+  return script.slice(counterStart, counterEnd);
+}
+
 function encodeContent(text: string): string {
   return Buffer.from(text, "utf8").toString("base64");
 }
@@ -55,6 +64,20 @@ function contentsUrl(content: MockContent): string {
 
 function pullFilesUrl(): string {
   return `https://api.github.com/repos/${ENV.REPO}/pulls/${ENV.PR_NUMBER}/files?per_page=100&page=1`;
+}
+
+function astIfCount(sourceText: string): number {
+  return scanTextForTestConditionals("test/virtual-workflow-parity.test.ts", sourceText).length;
+}
+
+function workflowIfCount(sourceText: string): number {
+  const script = `${extractWorkflowCounterScript()}\nconsole.log(countIfStatements(process.argv[1]));\n`;
+  const result = spawnSync(process.execPath, ["-e", script, sourceText], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+  });
+  expect(result.status, result.stderr).toBe(0);
+  return Number(result.stdout.trim());
 }
 
 function runWorkflowConditionalsGuard(input: {
@@ -103,6 +126,35 @@ function runWorkflowConditionalsGuard(input: {
 }
 
 describe("codebase growth guardrail test conditionals step", () => {
+  it.each([
+    {
+      name: "comments and strings",
+      source: [
+        "// if (commented) return;",
+        "const text = 'if (string)';",
+        "expect(text).toContain('if');",
+      ].join("\n"),
+    },
+    {
+      name: "regex literals",
+      source: "expect(/if \\(regex\\)/.test('if (regex)')).toBe(true);",
+    },
+    {
+      name: "real branches and else-if chains",
+      source: "if (first) run(); else if (second) recover();",
+    },
+    {
+      name: "nested template interpolation",
+      source: 'const value = `${`${(() => { if (flag) return "yes"; return "no"; })()}`}`;',
+    },
+    {
+      name: "non-statement property tokens",
+      source: "const obj = { if: true }; expect(obj.if).toBe(true); type Shape = { if: boolean };",
+    },
+  ])("matches local scanner count for $name", ({ source }) => {
+    expect(workflowIfCount(source)).toBe(astIfCount(source));
+  });
+
   it("fails a per-file increase even when another changed test removes an if", () => {
     const result = runWorkflowConditionalsGuard({
       files: [{ filename: "test/add.test.ts" }, { filename: "test/remove.test.ts" }],
@@ -142,6 +194,34 @@ describe("codebase growth guardrail test conditionals step", () => {
           repo: ENV.HEAD_REPO,
           ref: ENV.HEAD_SHA,
           text: "const obj = { if: true }; expect(obj.if).toBe(true); type Shape = { if: boolean };",
+        },
+      ],
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("PASS");
+  });
+
+  it("ignores removed files and files renamed out of test patterns", () => {
+    const result = runWorkflowConditionalsGuard({
+      files: [
+        { filename: "test/removed.test.ts", status: "removed" },
+        {
+          filename: "src/helper.ts",
+          previous_filename: "test/renamed-out.test.ts",
+          status: "renamed",
+        },
+      ],
+      contents: [
+        {
+          file: "test/removed.test.ts",
+          ref: ENV.BASE_SHA,
+          text: "if (flag) expect(flag).toBe(true);",
+        },
+        {
+          file: "test/renamed-out.test.ts",
+          ref: ENV.BASE_SHA,
+          text: "if (flag) expect(flag).toBe(true);",
         },
       ],
     });
