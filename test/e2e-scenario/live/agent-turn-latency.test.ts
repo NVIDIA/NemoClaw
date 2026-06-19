@@ -25,6 +25,7 @@ validateSandboxName(OPENCLAW_SANDBOX);
 validateSandboxName(HERMES_SANDBOX);
 const MODEL = process.env.NEMOCLAW_TURN_LATENCY_MODEL ?? "nvidia/nemotron-3-super-120b-a12b";
 const PROVIDER = process.env.NEMOCLAW_TURN_LATENCY_PROVIDER ?? "build";
+const EXPECTED_ROUTE_PROVIDER = process.env.NEMOCLAW_TURN_LATENCY_ROUTE_PROVIDER ?? "nvidia-prod";
 const MAX_TURN_SECONDS = positiveInt(process.env.NEMOCLAW_TURN_LATENCY_MAX_SECONDS, 300);
 const INSTALL_ATTEMPTS = positiveInt(process.env.NEMOCLAW_TURN_LATENCY_INSTALL_ATTEMPTS, 2);
 const TIMEOUT_MS = 90 * 60_000;
@@ -61,6 +62,28 @@ async function bestEffort(run: () => Promise<unknown>): Promise<void> {
   try {
     await run();
   } catch {}
+}
+
+function extractOpenClawAgentText(output: string): string {
+  for (const index of [...output].map((char, idx) => (char === "{" ? idx : -1)).filter((idx) => idx >= 0)) {
+    try {
+      const parsed = JSON.parse(output.slice(index)) as {
+        payloads?: Array<{ text?: unknown }>;
+        meta?: { finalAssistantVisibleText?: unknown };
+      };
+      const payloadText = parsed.payloads
+        ?.map((payload) => payload.text)
+        .find((value): value is string => typeof value === "string" && value.trim().length > 0);
+      if (payloadText) return payloadText;
+      if (typeof parsed.meta?.finalAssistantVisibleText === "string") return parsed.meta.finalAssistantVisibleText;
+    } catch {}
+  }
+  return "";
+}
+
+function responseBodyAndStatus(raw: string): { body: string; status: string } {
+  const match = raw.match(/\n__NEMOCLAW_HTTP_STATUS__=(\d{3})\s*$/u);
+  return { body: match ? raw.slice(0, match.index).trim() : raw, status: match?.[1] ?? "000" };
 }
 
 function chatContent(raw: string): string {
@@ -198,6 +221,7 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       timeoutMs: 30_000,
     });
     expect(openclawRoute.exitCode, resultText(openclawRoute)).toBe(0);
+    expect(resultText(openclawRoute)).toContain(EXPECTED_ROUTE_PROVIDER);
     expect(resultText(openclawRoute)).toContain(MODEL);
     const openclawConfig = await sandbox.exec(
       OPENCLAW_SANDBOX,
@@ -227,7 +251,7 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
     );
     const openclawMs = msSince(openclawStarted);
     expect(openclawTurn.exitCode, resultText(openclawTurn)).toBe(0);
-    expect(resultText(openclawTurn)).toMatch(/(^|[^0-9])42([^0-9]|$)/);
+    expect(extractOpenClawAgentText(openclawTurn.stdout), resultText(openclawTurn)).toMatch(/(^|[^0-9])42([^0-9]|$)/);
     expect(openclawMs).toBeLessThanOrEqual(MAX_TURN_SECONDS * 1000);
     results.openclaw = { elapsedMs: openclawMs };
 
@@ -244,6 +268,7 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       timeoutMs: 30_000,
     });
     expect(hermesRoute.exitCode, resultText(hermesRoute)).toBe(0);
+    expect(resultText(hermesRoute)).toContain(EXPECTED_ROUTE_PROVIDER);
     expect(resultText(hermesRoute)).toContain(MODEL);
     const hermesHealth = await sandbox.exec(
       HERMES_SANDBOX,
@@ -278,7 +303,8 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
     const hermesTurn = await sandbox.execShell(
       HERMES_SANDBOX,
       trustedSandboxShellScript(
-        `set -a; [ ! -f /sandbox/.hermes/.env ] || . /sandbox/.hermes/.env; set +a; curl -sS --max-time ${MAX_TURN_SECONDS} http://localhost:8642/v1/chat/completions -H 'Content-Type: application/json' -H "Authorization: Bearer \${API_SERVER_KEY:-}" -d '${payload.replace(/'/gu, `'\\''`)}'`,
+        `set -a; [ ! -f /sandbox/.hermes/.env ] || . /sandbox/.hermes/.env; set +a; tmp=$(mktemp); code=$(curl -sS -o "$tmp" -w '%{http_code}' --max-time ${MAX_TURN_SECONDS} http://localhost:8642/v1/chat/completions -H 'Content-Type: application/json' -H "Authorization: Bearer \${API_SERVER_KEY:-}" -d '${payload.replace(/'/gu, `'\\''`)}'); rc=$?; cat "$tmp"; rm -f "$tmp"; printf '\n__NEMOCLAW_HTTP_STATUS__=%s\n' "\${code:-000}"; exit "$rc"`,
+
       ),
       {
         artifactName: "hermes-api-turn",
@@ -289,7 +315,9 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
     );
     const hermesMs = msSince(hermesStarted);
     expect(hermesTurn.exitCode, resultText(hermesTurn)).toBe(0);
-    expect(chatContent(hermesTurn.stdout)).toMatch(/(^|[^0-9])42([^0-9]|$)/);
+    const hermesResponse = responseBodyAndStatus(hermesTurn.stdout);
+    expect(hermesResponse.status, resultText(hermesTurn)).toBe("200");
+    expect(chatContent(hermesResponse.body)).toMatch(/(^|[^0-9])42([^0-9]|$)/);
     expect(hermesMs).toBeLessThanOrEqual(MAX_TURN_SECONDS * 1000);
     results.hermes = { elapsedMs: hermesMs };
     await artifacts.writeJson("turn-latency-results.json", results);
