@@ -51,6 +51,7 @@ interface KimiRequest {
   model?: string;
   hasTools: boolean;
   hasToolResult: boolean;
+  authOk: boolean;
 }
 
 async function startKimiMock(): Promise<{
@@ -61,6 +62,18 @@ async function startKimiMock(): Promise<{
   const requests: KimiRequest[] = [];
   const server = http.createServer((req, res) => {
     if (req.method === "GET" && req.url === "/v1/models") {
+      if (req.headers.authorization !== "Bearer test-kimi-key") {
+        res.writeHead(401, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: { message: "missing bearer credential" } }));
+        return;
+      }
+      requests.push({
+        path: req.url,
+        model: KIMI_MODEL,
+        hasTools: false,
+        hasToolResult: false,
+        authOk: true,
+      });
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({ object: "list", data: [{ id: KIMI_MODEL, object: "model" }] }));
       return;
@@ -75,15 +88,28 @@ async function startKimiMock(): Promise<{
       raw += chunk;
     });
     req.on("end", () => {
-      const body = JSON.parse(raw || "{}") as {
+      let body: {
         model?: string;
         stream?: boolean;
         tools?: unknown[];
         messages?: Array<{ role?: string; content?: string }>;
       };
+      try {
+        body = JSON.parse(raw || "{}") as typeof body;
+      } catch {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: { message: "invalid json" } }));
+        return;
+      }
+      const authOk = req.headers.authorization === "Bearer test-kimi-key";
+      if (!authOk) {
+        res.writeHead(401, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: { message: "missing bearer credential" } }));
+        return;
+      }
       const hasTools = Array.isArray(body.tools) && body.tools.length > 0;
       const hasToolResult = body.messages?.some((message) => message.role === "tool") ?? false;
-      requests.push({ path: req.url ?? "", model: body.model, hasTools, hasToolResult });
+      requests.push({ path: req.url ?? "", model: body.model, hasTools, hasToolResult, authOk });
       const id = `chatcmpl-kimi-${Date.now()}`;
       const sendJson = (payload: unknown) => {
         res.writeHead(200, { "content-type": "application/json" });
@@ -361,7 +387,46 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
     const trajectory = await sandbox.execShell(
       SANDBOX_NAME,
       trustedSandboxShellScript(
-        "python3 - <<'PY'\nimport json, pathlib\nroot=pathlib.Path('/sandbox/.openclaw')\nraw='\\n'.join(p.read_text(errors='replace') for p in root.rglob('*e2e-kimi-tools*.jsonl'))\nassert 'hostname; date; uptime' not in raw\nfor cmd in ['hostname','date','uptime']:\n    assert cmd in raw, cmd\nassert 'hostname, date, and uptime completed successfully.' in raw\nprint('OK')\nPY",
+        String.raw`python3 - <<'PY'
+import json, pathlib, sys
+root=pathlib.Path('/sandbox/.openclaw')
+base=pathlib.Path('/sandbox/.openclaw/agents/main/sessions')
+session=base/'e2e-kimi-tools.jsonl'
+trajectory=base/'e2e-kimi-tools.trajectory.jsonl'
+if not session.exists() or not trajectory.exists():
+    print(json.dumps({'error':'missing session/trajectory','files':[str(p) for p in root.rglob('*e2e-kimi-tools*.jsonl')]}))
+    sys.exit(1)
+session_items=[json.loads(line) for line in session.read_text().splitlines() if line.strip()]
+trajectory_items=[json.loads(line) for line in trajectory.read_text().splitlines() if line.strip()]
+errors=[]
+artifacts=[item for item in trajectory_items if item.get('type')=='trace.artifacts']
+if len(artifacts)!=1: errors.append(f'trace.artifacts count={len(artifacts)}')
+data=(artifacts[-1].get('data') if artifacts else {}) or {}
+metas=data.get('toolMetas') or []
+if data.get('finalStatus')!='success': errors.append(f'finalStatus={data.get("finalStatus")!r}')
+if len(metas)!=3: errors.append(f'toolMetas count={len(metas)}')
+if [m.get('toolName') for m in metas] != ['exec','exec','exec']: errors.append('tool names mismatch')
+if sorted(m.get('meta') for m in metas) != ['date','hostname','uptime']: errors.append('tool command set mismatch')
+messages=[item.get('message',{}) for item in session_items if item.get('type')=='message']
+assistant_tool_messages=[m for m in messages if m.get('role')=='assistant' and any(b.get('type')=='toolCall' for b in m.get('content',[]))]
+source=[]
+for m in assistant_tool_messages:
+    source.extend(b.get('arguments',{}).get('command') for b in m.get('content',[]) if b.get('type')=='toolCall')
+if source != ['hostname','date','uptime']: errors.append(f'source commands={source!r}')
+if any(isinstance(c,str) and ';' in c for c in source): errors.append('combined semicolon command remains')
+raw=session.read_text()+trajectory.read_text()
+for token in ['abandoned','want me to continue']:
+    if token in raw.lower(): errors.append(f'contains {token}')
+if data.get('promptErrorSource') is not None: errors.append('promptErrorSource set')
+for field in ['aborted','externalAbort','timedOut','idleTimedOut','timedOutDuringCompaction']:
+    if data.get(field): errors.append(f'{field}={data.get(field)!r}')
+final_texts=data.get('assistantTexts') or []
+if not final_texts or final_texts[-1] != 'hostname, date, and uptime completed successfully.': errors.append('final text mismatch')
+roles=[m.get('role') for m in messages]
+if not ('toolResult' in roles and roles[-1]=='assistant'): errors.append('final assistant not after tool result')
+print(json.dumps({'errors':errors,'source':source,'toolMetas':metas,'roles':roles}, indent=2))
+sys.exit(1 if errors else 0)
+PY`,
       ),
       { artifactName: "kimi-trajectory-tool-splitting-check", env: env(), timeoutMs: 60_000 },
     );
@@ -369,11 +434,12 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
     expect(
       fake.requests.some(
         (request) =>
+          request.authOk &&
           request.path.includes("/chat/completions") &&
           request.model === KIMI_MODEL &&
           request.hasTools,
       ),
     ).toBe(true);
-    expect(fake.requests.some((request) => request.hasToolResult)).toBe(true);
+    expect(fake.requests.some((request) => request.authOk && request.hasToolResult)).toBe(true);
   },
 );
