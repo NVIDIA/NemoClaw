@@ -228,7 +228,14 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
     if (SWITCH_API === "anthropic-messages") expect(model.api_mode).toBe("anthropic_messages");
     else if (SWITCH_API === "openai-responses") expect(model.api_mode).toBe("codex_responses");
     else expect(model.api_mode).toBeUndefined();
-    expect(typeof model.api_key === "string" && /^sk-/u.test(model.api_key)).toBe(true);
+    const apiKeyShape = await sandbox.execShell(
+      SANDBOX_NAME,
+      trustedSandboxShellScript(
+        "python3 - <<'PY'\nimport re\ntext=open('/sandbox/.hermes/config.yaml', encoding='utf-8').read()\nmatch=re.search(r'^\\s+api_key:\\s*[\\\"\\']?(sk-[^\\\"\\'\\s]+)', text, re.M)\nraise SystemExit(0 if match else 1)\nPY",
+      ),
+      { artifactName: "hermes-config-api-key-shape", env: env(), timeoutMs: 30_000 },
+    );
+    expect(apiKeyShape.exitCode, resultText(apiKeyShape)).toBe(0);
     expect(config.stdout).not.toMatch(/^models:\s*$/mu);
 
     for (const [file, artifact] of [
