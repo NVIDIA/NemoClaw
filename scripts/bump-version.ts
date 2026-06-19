@@ -8,7 +8,7 @@ import process from "node:process";
 import { pathToFileURL } from "node:url";
 import YAML from "yaml";
 
-type Options = {
+export type Options = {
   version: string;
   push: boolean;
   commit: boolean;
@@ -119,17 +119,13 @@ function main(): void {
   }
 
   if (options.push) {
-    const pushArgs = ["push", "--atomic", "origin", "HEAD"];
-    if (options.tag) {
-      pushArgs.push(`refs/tags/${tagName}:refs/tags/${tagName}`);
-    }
-    git(pushArgs);
+    git(buildReleasePushArgs(tagName, options.tag));
   }
 
   log(`Version bump complete: ${previousVersion} -> ${options.version}`);
 }
 
-function parseArgs(args: string[]): Options {
+export function parseArgs(args: string[]): Options {
   let version = "";
   let push = false;
   let commit = true;
@@ -435,6 +431,14 @@ function runTypecheckAndTests(): void {
 
 function git(args: string[]): void {
   run("git", args);
+}
+
+export function buildReleasePushArgs(tagName: string, includeTag: boolean): string[] {
+  const args = ["push", "--atomic", "origin", "HEAD"];
+  if (includeTag) {
+    args.push(`refs/tags/${tagName}:refs/tags/${tagName}`);
+  }
+  return args;
 }
 
 function gitRefExists(ref: string): boolean {
