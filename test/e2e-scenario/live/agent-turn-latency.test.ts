@@ -64,21 +64,60 @@ async function bestEffort(run: () => Promise<unknown>): Promise<void> {
   } catch {}
 }
 
-function extractOpenClawAgentText(output: string): string {
-  for (const index of [...output].map((char, idx) => (char === "{" ? idx : -1)).filter((idx) => idx >= 0)) {
-    try {
-      const parsed = JSON.parse(output.slice(index)) as {
-        payloads?: Array<{ text?: unknown }>;
-        meta?: { finalAssistantVisibleText?: unknown };
-      };
-      const payloadText = parsed.payloads
-        ?.map((payload) => payload.text)
-        .find((value): value is string => typeof value === "string" && value.trim().length > 0);
-      if (payloadText) return payloadText;
-      if (typeof parsed.meta?.finalAssistantVisibleText === "string") return parsed.meta.finalAssistantVisibleText;
-    } catch {}
+function firstJsonObject(output: string): unknown {
+  for (let start = output.indexOf("{"); start >= 0; start = output.indexOf("{", start + 1)) {
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let index = start; index < output.length; index += 1) {
+      const char = output[index];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (char === "\\") escaped = true;
+        else if (char === '"') inString = false;
+        continue;
+      }
+      if (char === '"') inString = true;
+      else if (char === "{") depth += 1;
+      else if (char === "}") {
+        depth -= 1;
+        if (depth === 0) {
+          try {
+            return JSON.parse(output.slice(start, index + 1));
+          } catch {
+            break;
+          }
+        }
+      }
+    }
   }
-  return "";
+  return undefined;
+}
+
+function collectAssistantText(value: unknown): string[] {
+  if (typeof value === "string" && value.trim()) return [value.trim()];
+  if (!value || typeof value !== "object") return [];
+  if (Array.isArray(value)) return value.flatMap(collectAssistantText);
+  const record = value as Record<string, unknown>;
+  const texts: string[] = [];
+  for (const key of [
+    "result",
+    "payloads",
+    "messages",
+    "choices",
+    "message",
+    "delta",
+    "content",
+    "text",
+  ]) {
+    if (key in record) texts.push(...collectAssistantText(record[key]));
+  }
+  return texts;
+}
+
+function extractOpenClawAgentText(output: string): string {
+  const parsed = firstJsonObject(output);
+  return collectAssistantText(parsed)[0] ?? "";
 }
 
 function responseBodyAndStatus(raw: string): { body: string; status: string } {
@@ -251,7 +290,9 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
     );
     const openclawMs = msSince(openclawStarted);
     expect(openclawTurn.exitCode, resultText(openclawTurn)).toBe(0);
-    expect(extractOpenClawAgentText(openclawTurn.stdout), resultText(openclawTurn)).toMatch(/(^|[^0-9])42([^0-9]|$)/);
+    expect(extractOpenClawAgentText(openclawTurn.stdout), resultText(openclawTurn)).toMatch(
+      /(^|[^0-9])42([^0-9]|$)/,
+    );
     expect(openclawMs).toBeLessThanOrEqual(MAX_TURN_SECONDS * 1000);
     results.openclaw = { elapsedMs: openclawMs };
 
@@ -304,7 +345,6 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       HERMES_SANDBOX,
       trustedSandboxShellScript(
         `set -a; [ ! -f /sandbox/.hermes/.env ] || . /sandbox/.hermes/.env; set +a; tmp=$(mktemp); code=$(curl -sS -o "$tmp" -w '%{http_code}' --max-time ${MAX_TURN_SECONDS} http://localhost:8642/v1/chat/completions -H 'Content-Type: application/json' -H "Authorization: Bearer \${API_SERVER_KEY:-}" -d '${payload.replace(/'/gu, `'\\''`)}'); rc=$?; cat "$tmp"; rm -f "$tmp"; printf '\n__NEMOCLAW_HTTP_STATUS__=%s\n' "\${code:-000}"; exit "$rc"`,
-
       ),
       {
         artifactName: "hermes-api-turn",
