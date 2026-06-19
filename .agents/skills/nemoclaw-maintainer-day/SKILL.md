@@ -29,7 +29,7 @@ The first script determines the target version. The second shows shipped vs open
 
 From the open version-targeted items, pick the highest-value one:
 
-1. **Ready-now PR** — green CI, no conflicts, no major CodeRabbit, has tests → follow [MERGE-GATE.md](MERGE-GATE.md)
+1. **Ready-now PR** — green CI, no conflicts, no major CodeRabbit or PR Review Advisor findings, has tests → follow [MERGE-GATE.md](MERGE-GATE.md)
 2. **Salvage-now PR** — close to ready, needs small fix → follow [SALVAGE-PR.md](SALVAGE-PR.md)
 3. **Security item** — touches risky areas → follow [SECURITY-SWEEP.md](SECURITY-SWEEP.md)
 4. **Test-gap item** — risky code with weak tests → follow [TEST-GAPS.md](TEST-GAPS.md)

@@ -239,6 +239,7 @@ Commit changes and open a pull request with a concise summary of the doc updates
 Apply the `area: docs`, `area: skills`, and next-patch release label so reviewers can identify doc-only changes for the next train and generated skill updates.
 When creating the PR with `gh pr create`, pass all labels, for example a post-release docs refresh for `0.0.63` uses `--label "area: docs" --label "area: skills" --label v0.0.64`.
 If the release label does not exist, report that instead of substituting another label.
+Follow `nemoclaw-contributor-create-pr` for the PR mechanics, including [Git and GitHub Access Hard Stop](../_shared/git-github-hard-stop.md) and [PR CI and Automated Review Follow-Up](../_shared/pr-follow-up.md).
 
 ## Tips
 
@@ -270,3 +271,4 @@ User says: "Catch up the docs for everything merged since v0.1.0."
    ```
 
    If the next-patch release label does not exist, report that the PR was created without the release label or that PR creation failed because the label was missing.
+   Follow up after PR creation using [PR CI and Automated Review Follow-Up](../_shared/pr-follow-up.md); use [Git and GitHub Access Hard Stop](../_shared/git-github-hard-stop.md) if access or authentication blocks progress.
