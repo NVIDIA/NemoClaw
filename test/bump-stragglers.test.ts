@@ -37,6 +37,50 @@ function runBumpStragglers(fakeGh: string) {
 }
 
 describe("bump-stragglers release housekeeping", () => {
+  it("fails visibly when gh label lookup fails", () => {
+    const result = runBumpStragglers(`#!/usr/bin/env bash
+set -euo pipefail
+case "$*" in
+  "label list"*) echo 'auth failed' >&2; exit 4 ;;
+  *) echo "unexpected gh args: $*" >&2; exit 9 ;;
+esac
+`);
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("auth failed");
+    expect(result.stdout).toBe("");
+  });
+
+  it("fails visibly when gh returns non-array JSON", () => {
+    const result = runBumpStragglers(`#!/usr/bin/env bash
+set -euo pipefail
+case "$*" in
+  "label list"*) printf '{}' ;;
+  *) echo "unexpected gh args: $*" >&2; exit 9 ;;
+esac
+`);
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("expected JSON array");
+    expect(result.stdout).toBe("");
+  });
+
+  it("does not create the target label when it already exists", () => {
+    const result = runBumpStragglers(`#!/usr/bin/env bash
+set -euo pipefail
+case "$*" in
+  "label list"*) printf '[{"name":"v1.2.4"}]' ;;
+  "label create"*) echo 'label create should not run' >&2; exit 9 ;;
+  "pr list"*) printf '[]' ;;
+  "issue list"*) printf '[]' ;;
+  *) echo "unexpected gh args: $*" >&2; exit 9 ;;
+esac
+`);
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({ from: "v1.2.3", to: "v1.2.4", bumped: [] });
+  });
+
   it("fails visibly when gh returns invalid JSON", () => {
     const result = runBumpStragglers(`#!/usr/bin/env bash
 set -euo pipefail
@@ -52,7 +96,7 @@ esac
     expect(result.stdout).toBe("");
   });
 
-  it("fails visibly when a GitHub edit command fails", () => {
+  it("fails visibly when a GitHub PR edit command fails", () => {
     const result = runBumpStragglers(`#!/usr/bin/env bash
 set -euo pipefail
 case "$*" in
@@ -65,6 +109,23 @@ esac
 
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("auth failed");
+    expect(result.stdout).toBe("");
+  });
+
+  it("fails visibly when a GitHub issue edit command fails", () => {
+    const result = runBumpStragglers(`#!/usr/bin/env bash
+set -euo pipefail
+case "$*" in
+  "label list"*) printf '[{"name":"v1.2.4"}]' ;;
+  "pr list"*) printf '[]' ;;
+  "issue list"*) printf '[{"number":84,"title":"still open"}]' ;;
+  "issue edit"*) echo 'permission denied' >&2; exit 7 ;;
+  *) echo "unexpected gh args: $*" >&2; exit 9 ;;
+esac
+`);
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("permission denied");
     expect(result.stdout).toBe("");
   });
 });
