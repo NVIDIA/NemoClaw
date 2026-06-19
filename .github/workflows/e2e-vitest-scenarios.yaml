@@ -1842,7 +1842,9 @@ jobs:
           fi
           export OPENSHELL_BIN
           "$OPENSHELL_BIN" --version
-          npx vitest run --project e2e-scenarios-live             test/e2e-scenario/live/upgrade-stale-sandbox.test.ts             --silent=false --reporter=default
+          npx vitest run --project e2e-scenarios-live \
+            test/e2e-scenario/live/upgrade-stale-sandbox.test.ts \
+            --silent=false --reporter=default
 
       - name: Upload upgrade stale sandbox artifacts
         if: always()
