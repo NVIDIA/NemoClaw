@@ -515,6 +515,49 @@ describe("onboard session", () => {
     expect(loaded.hermesAuthMethod).toBeNull();
   });
 
+  it("classifies nullable string update intent explicitly", () => {
+    const unchanged = session.getNullableStringUpdateIntent(undefined);
+    const malformed = session.getNullableStringUpdateIntent(42);
+    const clear = session.getNullableStringUpdateIntent(null);
+    const normalizedClear = session.getNullableStringUpdateIntent(
+      "https://secret.example",
+      () => null,
+    );
+    const set = session.getNullableStringUpdateIntent("model");
+
+    expect(unchanged).toEqual({ kind: "unchanged" });
+    expect(malformed).toEqual({ kind: "unchanged" });
+    expect(clear).toEqual({ kind: "clear" });
+    expect(normalizedClear).toEqual({ kind: "clear" });
+    expect(set).toEqual({ kind: "set", value: "model" });
+    expect(session.hasSessionUpdateValue(unchanged)).toBe(false);
+    expect(session.hasSessionUpdateValue(clear)).toBe(true);
+    expect(session.isSessionUpdateClear(clear)).toBe(true);
+    expect(session.isSessionUpdateClear(set)).toBe(false);
+  });
+
+  it("applies nullable session update intent to safe updates", () => {
+    const safe: Partial<LoadedSession> = {};
+
+    session.applyNullableSessionUpdate(
+      safe,
+      "model",
+      session.getNullableStringUpdateIntent("model-a"),
+    );
+    session.applyNullableSessionUpdate(
+      safe,
+      "credentialEnv",
+      session.getNullableStringUpdateIntent(null),
+    );
+    session.applyNullableSessionUpdate(
+      safe,
+      "provider",
+      session.getNullableStringUpdateIntent(undefined),
+    );
+
+    expect(safe).toEqual({ model: "model-a", credentialEnv: null });
+  });
+
   it("accepts null as an explicit clear for every nullable string field", () => {
     // All six nullable fields that travel through filterSafeUpdates must
     // support the null-clear contract. If any regresses to the old
