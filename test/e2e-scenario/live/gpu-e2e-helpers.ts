@@ -64,6 +64,12 @@ export async function bestEffort(label: string, run: () => Promise<unknown>): Pr
   }
 }
 
+export function ollamaProxyTokenFile(): string {
+  const home = process.env.HOME;
+  if (!home) throw new Error("HOME environment variable is required");
+  return path.join(home, ".nemoclaw", "ollama-proxy-token");
+}
+
 export function readTokenFileChecked(tokenFile: string): { mode: string; token: string } {
   const fd = fs.openSync(tokenFile, "r");
   try {

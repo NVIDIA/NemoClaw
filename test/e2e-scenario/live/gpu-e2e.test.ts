@@ -3,8 +3,6 @@
 
 /** Live Vitest replacement for test/e2e/test-gpu-e2e.sh. */
 
-import path from "node:path";
-
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
@@ -20,6 +18,7 @@ import {
   detectOllamaModel,
   ensureOllama,
   env,
+  ollamaProxyTokenFile,
   PROXY_PORT,
   proxyStatus,
   REPO_ROOT,
@@ -95,10 +94,7 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
     expect(route.exitCode, resultText(route)).toBe(0);
     expect(resultText(route)).toMatch(/ollama/i);
 
-    const home = process.env.HOME;
-    if (!home) throw new Error("HOME environment variable is required");
-    const tokenFile = path.join(home, ".nemoclaw", "ollama-proxy-token");
-    const tokenRecord = readTokenFileChecked(tokenFile);
+    const tokenRecord = readTokenFileChecked(ollamaProxyTokenFile());
     expect(tokenRecord.mode).toBe("600");
     const token = tokenRecord.token;
     expect(token).not.toBe("");
