@@ -8,6 +8,8 @@ import {
   assertProviderSelectedContext,
   assertSandboxCreatedContext,
   mergeOnboardFlowContext,
+  mergeProviderModelSelectedContext,
+  mergeSandboxCreatedContext,
   type OnboardFlowContext,
   onboardFlowPhaseResult,
 } from "./flow-context";
@@ -64,6 +66,29 @@ describe("onboard flow context helpers", () => {
     expect(result.result).toMatchObject({ next: "gateway", transitionKind: "advance" });
   });
 
+  it("merges provider/model-selected context updates", () => {
+    const context = mergeProviderModelSelectedContext(baseContext(), {
+      session: createSession(),
+      sandboxName: "my-assistant",
+      provider: "nvidia-prod",
+      model: "model",
+      endpointUrl: "https://example.test/v1",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      hermesAuthMethod: null,
+      hermesToolGateways: [],
+      preferredInferenceApi: "openai-responses",
+      nimContainer: null,
+      webSearchConfig: null,
+    });
+
+    expect(context).toMatchObject({
+      sandboxName: "my-assistant",
+      provider: "nvidia-prod",
+      model: "model",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+    });
+  });
+
   it("asserts provider-selected context before sandbox setup", () => {
     const context = mergeOnboardFlowContext(baseContext(), {
       provider: "nvidia-prod",
@@ -77,6 +102,35 @@ describe("onboard flow context helpers", () => {
     expect(() => assertProviderSelectedContext(baseContext(), "sandbox setup")).toThrow(
       /Onboarding state is incomplete before sandbox setup\./,
     );
+  });
+
+  it("merges sandbox-created context updates", () => {
+    const providerContext = mergeProviderModelSelectedContext(baseContext(), {
+      session: createSession(),
+      sandboxName: null,
+      provider: "nvidia-prod",
+      model: "model",
+      endpointUrl: null,
+      credentialEnv: null,
+      hermesAuthMethod: null,
+      hermesToolGateways: [],
+      preferredInferenceApi: null,
+      nimContainer: null,
+      webSearchConfig: null,
+    });
+    const context = mergeSandboxCreatedContext(providerContext, {
+      session: createSession(),
+      sandboxName: "my-assistant",
+      webSearchConfig: null,
+      selectedMessagingChannels: ["telegram"],
+      webSearchSupported: true,
+    });
+
+    expect(context).toMatchObject({
+      sandboxName: "my-assistant",
+      selectedMessagingChannels: ["telegram"],
+      webSearchSupported: true,
+    });
   });
 
   it("asserts sandbox-created context before final phases", () => {

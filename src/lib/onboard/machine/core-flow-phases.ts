@@ -2,7 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { WebSearchConfig } from "../../inference/web-search";
-import { assertProviderSelectedContext, type OnboardFlowContext } from "./flow-context";
+import {
+  assertProviderSelectedContext,
+  mergeProviderModelSelectedContext,
+  mergeSandboxCreatedContext,
+  type OnboardFlowContext,
+} from "./flow-context";
 import { runCoreOnboardFlowSequence } from "./flow-slices";
 import {
   handleProviderInferenceState,
@@ -75,8 +80,7 @@ export function createCoreOnboardFlowPhases<
       });
 
       return {
-        context: {
-          ...context,
+        context: mergeProviderModelSelectedContext(context, {
           session: providerInferenceResult.session,
           sandboxName: providerInferenceResult.sandboxName,
           model: providerInferenceResult.model,
@@ -88,7 +92,7 @@ export function createCoreOnboardFlowPhases<
           preferredInferenceApi: providerInferenceResult.preferredInferenceApi,
           nimContainer: providerInferenceResult.nimContainer,
           webSearchConfig: providerInferenceResult.webSearchConfig,
-        },
+        }),
         result: providerInferenceResult.stateResults,
       };
     },
@@ -121,14 +125,13 @@ export function createCoreOnboardFlowPhases<
       });
 
       return {
-        context: {
-          ...context,
+        context: mergeSandboxCreatedContext(context, {
           session: sandboxStateResult.session,
           sandboxName: sandboxStateResult.sandboxName,
-          webSearchConfig: sandboxStateResult.webSearchConfig ?? null,
+          webSearchConfig: sandboxStateResult.webSearchConfig,
           selectedMessagingChannels: sandboxStateResult.selectedMessagingChannels,
           webSearchSupported: sandboxStateResult.webSearchSupported,
-        },
+        }),
         result: sandboxStateResult.stateResult,
       };
     },
