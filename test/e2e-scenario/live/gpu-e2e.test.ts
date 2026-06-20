@@ -3,6 +3,8 @@
 
 /** Live Vitest replacement for test/e2e/test-gpu-e2e.sh. */
 
+import path from "node:path";
+
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
@@ -37,6 +39,8 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       legacySource: "test/e2e/test-gpu-e2e.sh",
       boundary:
         "GPU host + install.sh Ollama provider + OpenShell sandbox + auth proxy + inference.local",
+      remoteInstallerBoundary:
+        "The official Ollama installer compatibility path runs before proxy tokens are read; the workflow uses a read-only checkout token and no explicit repository secrets. Replace with a pinned package once the GPU image provides a stable install source.",
       sandboxName: SANDBOX_NAME,
       delegatedLegacyContracts: [
         "Phase 11 shell retirement decides whether uninstall --delete-models remains a separate cleanup lane",
@@ -91,7 +95,9 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
     expect(route.exitCode, resultText(route)).toBe(0);
     expect(resultText(route)).toMatch(/ollama/i);
 
-    const tokenFile = `${process.env.HOME ?? ""}/.nemoclaw/ollama-proxy-token`;
+    const home = process.env.HOME;
+    if (!home) throw new Error("HOME environment variable is required");
+    const tokenFile = path.join(home, ".nemoclaw", "ollama-proxy-token");
     const tokenRecord = readTokenFileChecked(tokenFile);
     expect(tokenRecord.mode).toBe("600");
     const token = tokenRecord.token;

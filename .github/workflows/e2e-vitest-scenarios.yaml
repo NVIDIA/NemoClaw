@@ -777,7 +777,18 @@ jobs:
         run: |
           set -euo pipefail
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
-          export OPENSHELL_BIN="$(command -v openshell || true)"
+          if command -v openshell >/dev/null 2>&1; then
+            OPENSHELL_BIN="$(command -v openshell)"
+          elif [ -x "$HOME/.local/bin/openshell" ]; then
+            OPENSHELL_BIN="$HOME/.local/bin/openshell"
+          else
+            echo "::error::OpenShell CLI not found after install"
+            ls -la /usr/local/bin/openshell "$HOME/.local/bin/openshell" 2>&1 || true
+            exit 1
+          fi
+          export OPENSHELL_BIN
+          echo "Using OPENSHELL_BIN=$OPENSHELL_BIN"
+          "$OPENSHELL_BIN" --version
           npx vitest run --project e2e-scenarios-live             test/e2e-scenario/live/gpu-e2e.test.ts             --silent=false --reporter=default
       - name: Upload GPU E2E artifacts
         if: always()

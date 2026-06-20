@@ -39,10 +39,29 @@ export function env(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   };
 }
 
-export async function bestEffort(run: () => Promise<unknown>): Promise<void> {
+function isShellProbeResult(value: unknown): value is ShellProbeResult {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "exitCode" in value &&
+    (typeof (value as { exitCode?: unknown }).exitCode === "number" ||
+      (value as { exitCode?: unknown }).exitCode === null)
+  );
+}
+
+export async function bestEffort(label: string, run: () => Promise<unknown>): Promise<void> {
   try {
-    await run();
-  } catch {}
+    const result = await run();
+    if (isShellProbeResult(result) && result.exitCode !== 0) {
+      console.warn(
+        `[gpu-e2e cleanup] ${label} exited ${String(result.exitCode)}: ${resultText(result)}`,
+      );
+    }
+  } catch (error) {
+    console.warn(
+      `[gpu-e2e cleanup] ${label} failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 }
 
 export function readTokenFileChecked(tokenFile: string): { mode: string; token: string } {
@@ -69,21 +88,21 @@ export function chatContent(raw: string): string {
 }
 
 export async function cleanupGpu(host: HostCliClient, sandbox: SandboxClient): Promise<void> {
-  await bestEffort(() =>
+  await bestEffort("destroy GPU sandbox", () =>
     host.command("node", [CLI, SANDBOX_NAME, "destroy", "--yes"], {
       artifactName: "cleanup-destroy-gpu",
       env: env(),
       timeoutMs: 120_000,
     }),
   );
-  await bestEffort(() =>
+  await bestEffort("delete OpenShell sandbox", () =>
     sandbox.openshell(["sandbox", "delete", SANDBOX_NAME], {
       artifactName: "cleanup-delete-gpu",
       env: env(),
       timeoutMs: 60_000,
     }),
   );
-  await bestEffort(() =>
+  await bestEffort("destroy OpenShell gateway", () =>
     sandbox.openshell(["gateway", "destroy", "-g", "nemoclaw"], {
       artifactName: "cleanup-gateway-destroy-gpu",
       env: env(),
@@ -101,7 +120,7 @@ export async function cleanupOllama(
     "bash",
     [
       "-lc",
-      "systemctl --user stop ollama 2>/dev/null || true; systemctl stop ollama 2>/dev/null || true; pkill -f 'ollama serve' 2>/dev/null || true; pkill -f 'ollama-auth-proxy' 2>/dev/null || true",
+      "systemctl --user stop ollama 2>/dev/null || true; systemctl stop ollama 2>/dev/null || true; pkill -f '[o]llama serve' 2>/dev/null || true; pkill -f '[o]llama-auth-proxy' 2>/dev/null || true",
     ],
     { artifactName, env: env(), timeoutMs: 30_000 },
   );
@@ -174,23 +193,32 @@ export async function restartProxy(host: HostCliClient, token: string): Promise<
     [
       "-lc",
       `set -euo pipefail
-pkill -f 'ollama-auth-proxy' 2>/dev/null || true
+token="\${NEMOCLAW_GPU_E2E_PROXY_TOKEN:?missing proxy token}"
+proxy_pid="$(lsof -tiTCP:"$1" -sTCP:LISTEN 2>/dev/null | head -n1 || true)"
+if [ -n "$proxy_pid" ]; then
+  if ! ps -p "$proxy_pid" -o args= | grep -q '[o]llama-auth-proxy'; then
+    echo "port $1 is not owned by ollama-auth-proxy (pid $proxy_pid)" >&2
+    exit 1
+  fi
+  kill "$proxy_pid" 2>/dev/null || true
+else
+  pkill -f '[o]llama-auth-proxy' 2>/dev/null || true
+fi
 sleep 2
-if curl -s -o /dev/null -w '%{http_code}' --connect-timeout 2 "http://127.0.0.1:$2/api/tags" 2>/dev/null | grep -Eq '^[1-9][0-9]{2}$'; then
+if curl -s -o /dev/null -w '%{http_code}' --connect-timeout 2 "http://127.0.0.1:$1/api/tags" 2>/dev/null | grep -Eq '^[1-9][0-9]{2}$'; then
   echo 'proxy still alive after kill' >&2
   exit 1
 fi
-OLLAMA_PROXY_TOKEN="$1" OLLAMA_PROXY_PORT="$2" OLLAMA_BACKEND_PORT=11434 node "$3" >/tmp/nemoclaw-gpu-e2e-restarted-proxy.log 2>&1 &
+OLLAMA_PROXY_TOKEN="$token" OLLAMA_PROXY_PORT="$1" OLLAMA_BACKEND_PORT=11434 node "$2" >/tmp/nemoclaw-gpu-e2e-restarted-proxy.log 2>&1 &
 sleep 2
-curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $1" "http://127.0.0.1:$2/api/tags"`,
+curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $token" "http://127.0.0.1:$1/api/tags"`,
       "restart-proxy",
-      token,
       PROXY_PORT,
       path.join(REPO_ROOT, "scripts", "ollama-auth-proxy.js"),
     ],
     {
       artifactName: "proxy-restart-from-token",
-      env: env(),
+      env: env({ NEMOCLAW_GPU_E2E_PROXY_TOKEN: token }),
       redactionValues: [token],
       timeoutMs: 60_000,
     },
