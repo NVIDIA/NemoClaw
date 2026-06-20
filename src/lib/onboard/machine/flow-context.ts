@@ -77,11 +77,21 @@ export interface SandboxCreatedContextUpdate {
   webSearchSupported: boolean;
 }
 
+export function assertProviderModelSelectedContext<Context extends OnboardFlowContext>(
+  context: Context,
+  stepName: string,
+): asserts context is ProviderModelSelectedOnboardFlowContext<Context> {
+  if (!context.model || !context.provider) {
+    throw new Error(`Onboarding state is incomplete before ${stepName}.`);
+  }
+}
+
 export function assertProviderSelectedContext<Context extends OnboardFlowContext>(
   context: Context,
   stepName: string,
 ): asserts context is ProviderSelectedOnboardFlowContext<Context> {
-  if (!context.model || !context.provider || !context.sandboxGpuConfig) {
+  assertProviderModelSelectedContext(context, stepName);
+  if (!context.sandboxGpuConfig) {
     throw new Error(`Onboarding state is incomplete before ${stepName}.`);
   }
 }

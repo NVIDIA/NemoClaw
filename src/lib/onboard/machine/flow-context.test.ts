@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import { createSession } from "../../state/onboard-session";
 import {
+  assertProviderModelSelectedContext,
   assertProviderSelectedContext,
   assertSandboxCreatedContext,
   mergeOnboardFlowContext,
@@ -89,6 +90,17 @@ describe("onboard flow context helpers", () => {
     });
   });
 
+  it("asserts provider/model-selected context before consumers use provider output", () => {
+    const context = mergeOnboardFlowContext(baseContext(), {
+      provider: "nvidia-prod",
+      model: "model",
+    });
+
+    expect(() =>
+      assertProviderModelSelectedContext(context, "provider inference result"),
+    ).not.toThrow();
+  });
+
   it("asserts provider-selected context before sandbox setup", () => {
     const context = mergeOnboardFlowContext(baseContext(), {
       provider: "nvidia-prod",
@@ -96,6 +108,12 @@ describe("onboard flow context helpers", () => {
     });
 
     expect(() => assertProviderSelectedContext(context, "sandbox setup")).not.toThrow();
+  });
+
+  it("rejects missing provider/model-selected context fields", () => {
+    expect(() =>
+      assertProviderModelSelectedContext(baseContext(), "provider inference result"),
+    ).toThrow(/Onboarding state is incomplete before provider inference result\./);
   });
 
   it("rejects missing provider-selected context fields", () => {

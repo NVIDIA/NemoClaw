@@ -8,9 +8,9 @@ import {
   filterSafeUpdates,
   MACHINE_SNAPSHOT_VERSION,
   normalizeSession,
-  sanitizeFailure,
   type Session,
   type SessionUpdates,
+  sanitizeFailure,
 } from "../../state/onboard-session";
 import type { OnboardFlowContext, OnboardFlowPhaseResult } from "./flow-context";
 import { onboardFlowPhaseResult } from "./flow-context";
