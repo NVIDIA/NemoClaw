@@ -5,14 +5,15 @@ import fs from "node:fs";
 import path from "node:path";
 import { isErrnoException } from "../core/errno";
 import { ensureConfigDir, readConfigFile, writeConfigFile } from "./config-io";
+import type { SandboxMessagingState } from "./registry-messaging";
 import {
   cloneSandboxMessagingState,
-  serializeSandboxMessagingStateForDisk,
   getConfiguredMessagingChannels as getRegistryConfiguredMessagingChannels,
   getDisabledChannels as getRegistryDisabledChannels,
+  serializeSandboxMessagingStateForDisk,
   setChannelDisabled as setRegistryChannelDisabled,
 } from "./registry-messaging";
-import type { SandboxMessagingState } from "./registry-messaging";
+
 export {
   getActiveMessagingChannelsFromEntry,
   getConfiguredMessagingChannelsFromEntry,
@@ -96,9 +97,48 @@ export interface SandboxEntry {
   gatewayPort?: number | null;
 }
 
+export type SandboxEntryInference =
+  | { kind: "configured"; provider: string; model: string }
+  | { kind: "unconfigured" };
+
+export type SandboxGatewayBinding =
+  | { kind: "registered"; gatewayName: string; gatewayPort: number }
+  | { kind: "missing" };
+
+export interface NormalizedSandboxEntry {
+  name: string;
+  raw: SandboxEntry;
+  inference: SandboxEntryInference;
+  gateway: SandboxGatewayBinding;
+}
+
 export interface SandboxRegistry {
   sandboxes: Record<string, SandboxEntry>;
   defaultSandbox: string | null;
+}
+
+export function getSandboxEntryInference(entry: SandboxEntry): SandboxEntryInference {
+  return typeof entry.provider === "string" && typeof entry.model === "string"
+    ? { kind: "configured", provider: entry.provider, model: entry.model }
+    : { kind: "unconfigured" };
+}
+
+export function getSandboxEntryGatewayBinding(entry: SandboxEntry): SandboxGatewayBinding {
+  return typeof entry.gatewayName === "string" &&
+    typeof entry.gatewayPort === "number" &&
+    Number.isInteger(entry.gatewayPort) &&
+    entry.gatewayPort > 0
+    ? { kind: "registered", gatewayName: entry.gatewayName, gatewayPort: entry.gatewayPort }
+    : { kind: "missing" };
+}
+
+export function normalizeSandboxEntryView(entry: SandboxEntry): NormalizedSandboxEntry {
+  return {
+    name: entry.name,
+    raw: entry,
+    inference: getSandboxEntryInference(entry),
+    gateway: getSandboxEntryGatewayBinding(entry),
+  };
 }
 
 export const REGISTRY_FILE = path.join(process.env.HOME || "/tmp", ".nemoclaw", "sandboxes.json");
@@ -319,7 +359,10 @@ function normalizeRegistry(data: SandboxRegistry): SandboxRegistry {
   return {
     defaultSandbox: data.defaultSandbox ?? null,
     sandboxes: Object.fromEntries(
-      sandboxRegistryEntries(data).map(([name, entry]) => [name, normalizeSandboxEntry(entry)]),
+      sandboxRegistryEntries(data).map(([name, entry]) => [
+        name,
+        normalizeSandboxEntryForRuntime(entry),
+      ]),
     ),
   };
 }
@@ -351,7 +394,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function normalizeSandboxEntry(entry: SandboxEntry): SandboxEntry {
+function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
   const messaging = cloneSandboxMessagingState(entry.messaging);
   if (!messaging) {
     const { messaging: _messaging, ...rest } = entry;
