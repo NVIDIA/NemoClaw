@@ -38,6 +38,7 @@
     "source-shape:scan": "tsx scripts/find-source-shape-tests.ts --metrics",
     "source-shape:check": "tsx scripts/find-source-shape-tests.ts --check",
     "test-size:check": "tsx scripts/check-test-file-size-budget.ts",
+    "test-conditionals:scan": "tsx scripts/find-test-conditionals.ts",
     "bump:version": "tsx scripts/bump-version.ts",
     "release:plan": "tsx scripts/release-plan.ts",
     "release:cut": "bash scripts/release-cut-tag.sh",
