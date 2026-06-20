@@ -6,6 +6,16 @@ import path from "node:path";
 import { isErrnoException } from "../core/errno";
 import { ensureConfigDir, readConfigFile, writeConfigFile } from "./config-io";
 import type { SandboxMessagingState } from "./registry-messaging";
+
+export {
+  getSandboxEntryGatewayBinding,
+  getSandboxEntryInference,
+  type NormalizedSandboxEntry,
+  normalizeSandboxEntryView,
+  type SandboxEntryInference,
+  type SandboxGatewayBinding,
+} from "./registry-entry-view";
+
 import {
   cloneSandboxMessagingState,
   getConfiguredMessagingChannels as getRegistryConfiguredMessagingChannels,
@@ -97,48 +107,9 @@ export interface SandboxEntry {
   gatewayPort?: number | null;
 }
 
-export type SandboxEntryInference =
-  | { kind: "configured"; provider: string; model: string }
-  | { kind: "unconfigured" };
-
-export type SandboxGatewayBinding =
-  | { kind: "registered"; gatewayName: string; gatewayPort: number }
-  | { kind: "missing" };
-
-export interface NormalizedSandboxEntry {
-  name: string;
-  raw: SandboxEntry;
-  inference: SandboxEntryInference;
-  gateway: SandboxGatewayBinding;
-}
-
 export interface SandboxRegistry {
   sandboxes: Record<string, SandboxEntry>;
   defaultSandbox: string | null;
-}
-
-export function getSandboxEntryInference(entry: SandboxEntry): SandboxEntryInference {
-  return typeof entry.provider === "string" && typeof entry.model === "string"
-    ? { kind: "configured", provider: entry.provider, model: entry.model }
-    : { kind: "unconfigured" };
-}
-
-export function getSandboxEntryGatewayBinding(entry: SandboxEntry): SandboxGatewayBinding {
-  return typeof entry.gatewayName === "string" &&
-    typeof entry.gatewayPort === "number" &&
-    Number.isInteger(entry.gatewayPort) &&
-    entry.gatewayPort > 0
-    ? { kind: "registered", gatewayName: entry.gatewayName, gatewayPort: entry.gatewayPort }
-    : { kind: "missing" };
-}
-
-export function normalizeSandboxEntryView(entry: SandboxEntry): NormalizedSandboxEntry {
-  return {
-    name: entry.name,
-    raw: entry,
-    inference: getSandboxEntryInference(entry),
-    gateway: getSandboxEntryGatewayBinding(entry),
-  };
 }
 
 export const REGISTRY_FILE = path.join(process.env.HOME || "/tmp", ".nemoclaw", "sandboxes.json");

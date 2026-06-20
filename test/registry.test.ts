@@ -108,6 +108,8 @@ describe("registry", () => {
     const configured = { name: "alpha", provider: "nvidia-prod", model: "nvidia/test" };
     const missingProvider = { name: "beta", provider: null, model: "nvidia/test" };
     const missingModel = { name: "gamma", provider: "nvidia-prod", model: null };
+    const blankProvider = { name: "delta", provider: "", model: "nvidia/test" };
+    const blankModel = { name: "epsilon", provider: "nvidia-prod", model: "   " };
 
     expect(registry.getSandboxEntryInference(configured)).toEqual({
       kind: "configured",
@@ -116,6 +118,8 @@ describe("registry", () => {
     });
     expect(registry.getSandboxEntryInference(missingProvider)).toEqual({ kind: "unconfigured" });
     expect(registry.getSandboxEntryInference(missingModel)).toEqual({ kind: "unconfigured" });
+    expect(registry.getSandboxEntryInference(blankProvider)).toEqual({ kind: "unconfigured" });
+    expect(registry.getSandboxEntryInference(blankModel)).toEqual({ kind: "unconfigured" });
   });
 
   it("normalizes gateway binding fields into a discriminated view", () => {
@@ -139,6 +143,20 @@ describe("registry", () => {
         gatewayPort: 0,
       }),
     ).toEqual({ kind: "missing" });
+    expect(
+      registry.getSandboxEntryGatewayBinding({
+        name: "too-high-port",
+        gatewayName: "nemoclaw",
+        gatewayPort: 65536,
+      }),
+    ).toEqual({ kind: "missing" });
+    expect(
+      registry.getSandboxEntryGatewayBinding({
+        name: "blank-gateway",
+        gatewayName: "",
+        gatewayPort: 8080,
+      }),
+    ).toEqual({ kind: "missing" });
   });
 
   it("normalizes sandbox entries without mutating the raw registry entry", () => {
@@ -159,6 +177,19 @@ describe("registry", () => {
       gateway: { kind: "registered", gatewayName: "nemoclaw", gatewayPort: 8080 },
     });
     expect(normalized.raw).toBe(raw);
+  });
+
+  it("normalizes invalid typed fields to missing views", () => {
+    const normalized = registry.normalizeSandboxEntryView({
+      name: "invalid",
+      provider: "",
+      model: "nvidia/test",
+      gatewayName: "nemoclaw",
+      gatewayPort: 65536,
+    });
+
+    expect(normalized.inference).toEqual({ kind: "unconfigured" });
+    expect(normalized.gateway).toEqual({ kind: "missing" });
   });
 
   it("first registered becomes default", () => {
