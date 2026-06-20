@@ -9,12 +9,14 @@ import {
   shouldRunLiveE2EScenarios,
 } from "../fixtures/live-project-gate.ts";
 import config from "../../../vitest.config.ts";
+import { resolveE2ERetryCount } from "../../helpers/e2e-retries.ts";
 import { readYaml, type WorkflowStep } from "../../helpers/e2e-workflow-contract.ts";
 
 interface ProjectConfig {
   test?: {
     name?: string;
     include?: string[];
+    retry?: number;
   };
 }
 
@@ -86,6 +88,31 @@ describe("gated E2E Vitest projects", () => {
     expect(shouldRunBranchValidationE2E({ BREV_API_TOKEN: "token" })).toBe(true);
     expect(shouldRunBranchValidationE2E({ NEMOCLAW_RUN_BRANCH_VALIDATION_E2E: "true" })).toBe(true);
     expect(shouldRunBranchValidationE2E({ NEMOCLAW_RUN_BRANCH_VALIDATION_E2E: "1" })).toBe(true);
+  });
+
+  it("configures automatic retries only for live E2E Vitest projects", () => {
+    const expectedRetries = resolveE2ERetryCount();
+
+    expect(projectConfig("cli").test?.retry).toBeUndefined();
+    expect(projectConfig("e2e-vitest-support").test?.retry).toBeUndefined();
+    expect(projectConfig("e2e-scenarios-live").test?.retry).toBe(expectedRetries);
+    expect(projectConfig("e2e-branch-validation").test?.retry).toBe(expectedRetries);
+  });
+
+  it("defaults live E2E retries to CI only and supports explicit overrides", () => {
+    expect(resolveE2ERetryCount({})).toBe(0);
+    expect(resolveE2ERetryCount({ CI: "0" })).toBe(0);
+    expect(resolveE2ERetryCount({ CI: "1" })).toBe(2);
+    expect(resolveE2ERetryCount({ CI: "true" })).toBe(2);
+    expect(resolveE2ERetryCount({ GITHUB_ACTIONS: "true" })).toBe(2);
+    expect(resolveE2ERetryCount({ CI: "1", NEMOCLAW_E2E_RETRIES: "0" })).toBe(0);
+    expect(resolveE2ERetryCount({ NEMOCLAW_E2E_RETRIES: "3" })).toBe(3);
+    expect(resolveE2ERetryCount({ NEMOCLAW_E2E_RETRIES: "5" })).toBe(5);
+    expect(resolveE2ERetryCount({ NEMOCLAW_E2E_RETRIES: "6" })).toBe(5);
+    expect(resolveE2ERetryCount({ NEMOCLAW_E2E_RETRIES: "999999" })).toBe(5);
+    expect(resolveE2ERetryCount({ CI: "1", NEMOCLAW_E2E_RETRIES: "-1" })).toBe(2);
+    expect(resolveE2ERetryCount({ CI: "1", NEMOCLAW_E2E_RETRIES: "1.5" })).toBe(2);
+    expect(resolveE2ERetryCount({ CI: "1", NEMOCLAW_E2E_RETRIES: "invalid" })).toBe(2);
   });
 
   it("sets the branch-validation sentinel in the reusable workflow Vitest step", () => {
