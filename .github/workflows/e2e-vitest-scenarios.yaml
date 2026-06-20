@@ -800,6 +800,55 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  hermes-inference-switch-vitest:
+    needs: generate-matrix
+    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',hermes-inference-switch-vitest,') || contains(format(',{0},', inputs.scenarios), ',hermes-inference-switch,') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    env:
+      FREE_STANDING_VITEST_JOB: "1"
+      FREE_STANDING_SCENARIO_ID: "hermes-inference-switch"
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/hermes-inference-switch
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+      NEMOCLAW_AGENT: "hermes"
+      NEMOCLAW_SANDBOX_NAME: "e2e-hermes-inference-switch"
+      OPENSHELL_GATEWAY: "nemoclaw"
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+      - name: Build CLI
+        run: npm run build:cli
+      - name: Install OpenShell CLI
+        run: bash scripts/install-openshell.sh
+      - name: Run Hermes inference switch live Vitest test
+        env:
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
+          export OPENSHELL_BIN="$(command -v openshell || true)"
+          npx vitest run --project e2e-scenarios-live             test/e2e-scenario/live/hermes-inference-switch.test.ts             --silent=false --reporter=default
+      - name: Upload Hermes inference switch artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-vitest-scenarios-hermes-inference-switch
+          path: e2e-artifacts/vitest/hermes-inference-switch/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
+
   brave-search-vitest:
     needs: generate-matrix
     if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',brave-search-vitest,') || contains(format(',{0},', inputs.scenarios), ',brave-search,') }}
@@ -4025,6 +4074,7 @@ jobs:
         inference-routing-vitest,
         cloud-inference-vitest,
         gpu-e2e-vitest,
+        hermes-inference-switch-vitest,
         brave-search-vitest,
 
         ollama-auth-proxy-vitest,
