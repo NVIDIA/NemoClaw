@@ -7,7 +7,6 @@ import path from "node:path";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
-import { resultText } from "../fixtures/clients/index.ts";
 import {
   type SandboxClient,
   trustedSandboxShellScript,
