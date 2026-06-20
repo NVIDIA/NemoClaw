@@ -253,6 +253,8 @@ describe("PR review advisor", () => {
     );
     expect(prompt).toContain("Source-of-truth review");
     expect(prompt).toContain("Vitest E2E suite simplicity");
+    expect(prompt).toContain("Test follow-ups to resolve or justify");
+    expect(prompt).not.toContain("Consider writing more tests for");
     expect(prompt).toContain("take a closer architecture look for new systems");
     expect(prompt).toContain("Favor focused Vitest tests and local test helpers");
     expect(prompt).toContain("what invalid state is handled");
