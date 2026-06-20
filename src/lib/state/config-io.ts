@@ -43,7 +43,7 @@ function isMutableSandboxConfigPath(targetPath: string): boolean {
   );
 }
 
-function toError(error: Error | string | number | boolean | null | undefined): Error {
+function toError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
 }
 
@@ -89,6 +89,51 @@ function buildRemediation(): string {
   ].join("\n");
 }
 
+function corruptConfigPath(filePath: string): string {
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  return `${filePath}.corrupt.${timestamp}`;
+}
+
+function moveCorruptConfigFile(filePath: string): string {
+  const targetPath = corruptConfigPath(filePath);
+  fs.renameSync(filePath, targetPath);
+  return targetPath;
+}
+
+function buildCorruptRemediation(
+  filePath: string,
+  corruptPath: string | null,
+  moveError?: Error,
+): string {
+  const lines = [
+    "  NemoClaw stopped instead of falling back to defaults because this file is not valid JSON.",
+  ];
+
+  if (corruptPath) {
+    lines.push(
+      "",
+      "  The corrupt file was moved aside:",
+      `    ${corruptPath}`,
+      "",
+      "  Inspect the moved file, repair the JSON, then move it back if you want to keep the state:",
+      `    mv ${shellQuote(corruptPath)} ${shellQuote(filePath)}`,
+      "",
+      "  Remove the moved file only if you intentionally want to start with fresh defaults.",
+    );
+  } else {
+    lines.push(
+      "",
+      "  NemoClaw could not move the corrupt file aside automatically.",
+      `  Repair or move this file manually before retrying: ${filePath}`,
+    );
+    if (moveError) {
+      lines.push(`  Move failure: ${moveError.message}`);
+    }
+  }
+
+  return lines.join("\n");
+}
+
 export class ConfigPermissionError extends Error {
   code = "EACCES";
   configPath: string;
@@ -121,6 +166,27 @@ export class ConfigPermissionError extends Error {
     if (cause) {
       this.cause = cause;
     }
+  }
+}
+
+export class ConfigCorruptError extends Error {
+  code = "ECONFIGCORRUPT";
+  configPath: string;
+  filePath: string;
+  corruptPath: string | null;
+  remediation: string;
+  moveError?: Error;
+
+  constructor(filePath: string, corruptPath: string | null, cause: Error, moveError?: Error) {
+    const remediation = buildCorruptRemediation(filePath, corruptPath, moveError);
+    super(`Corrupt config file: ${filePath}\n\n${remediation}`);
+    this.name = "ConfigCorruptError";
+    this.configPath = filePath;
+    this.filePath = filePath;
+    this.corruptPath = corruptPath;
+    this.remediation = remediation;
+    this.cause = cause;
+    this.moveError = moveError;
   }
 }
 
@@ -266,31 +332,12 @@ export function readConfigFile<T>(filePath: string, fallback: T): T {
     if (error instanceof ConfigPermissionError) {
       throw error;
     }
-    // Directory doesn't exist and can't be created — fall through to let
-    // readFileSync produce the appropriate ENOENT / fallback path.
+    throw error;
   }
 
+  let rawContent: string;
   try {
-    const content = parseJson<T>(fs.readFileSync(filePath, "utf-8"));
-
-    // Heal file-level permission drift: tighten group/world bits. lstat
-    // (not stat) so we don't chmod through a symlink to a target outside
-    // the config dir. Skip mutable-sandbox OpenClaw config paths so a
-    // future caller reading openclaw.json doesn't accidentally tighten
-    // its 660 contract (#4538). Defensive duplicate of healRootLevelFiles
-    // for read paths whose dirname differs from what ensureConfigDir saw.
-    try {
-      if (!isMutableSandboxConfigPath(filePath)) {
-        const st = fs.lstatSync(filePath);
-        if (st.isFile() && (st.mode & 0o077) !== 0) {
-          fs.chmodSync(filePath, 0o600);
-        }
-      }
-    } catch {
-      // Best effort — don't fail the read if we can't heal permissions.
-    }
-
-    return content;
+    rawContent = fs.readFileSync(filePath, "utf-8");
   } catch (error) {
     const errnoError = error instanceof Error ? error : null;
     if (isPermissionError(errnoError)) {
@@ -303,8 +350,44 @@ export function readConfigFile<T>(filePath: string, fallback: T): T {
     if (isErrnoException(errnoError) && errnoError.code === "ENOENT") {
       return fallback;
     }
-    return fallback;
+    throw error;
   }
+
+  let content: T;
+  try {
+    content = parseJson<T>(rawContent);
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      let corruptPath: string | null = null;
+      let moveError: Error | undefined;
+      try {
+        corruptPath = moveCorruptConfigFile(filePath);
+      } catch (moveFailure) {
+        moveError = toError(moveFailure);
+      }
+      throw new ConfigCorruptError(filePath, corruptPath, toError(error), moveError);
+    }
+    throw error;
+  }
+
+  // Heal file-level permission drift: tighten group/world bits. lstat
+  // (not stat) so we don't chmod through a symlink to a target outside
+  // the config dir. Skip mutable-sandbox OpenClaw config paths so a
+  // future caller reading openclaw.json doesn't accidentally tighten
+  // its 660 contract (#4538). Defensive duplicate of healRootLevelFiles
+  // for read paths whose dirname differs from what ensureConfigDir saw.
+  try {
+    if (!isMutableSandboxConfigPath(filePath)) {
+      const st = fs.lstatSync(filePath);
+      if (st.isFile() && (st.mode & 0o077) !== 0) {
+        fs.chmodSync(filePath, 0o600);
+      }
+    }
+  } catch {
+    // Best effort — don't fail the read if we can't heal permissions.
+  }
+
+  return content;
 }
 
 export function writeConfigFile(filePath: string, data: SerializableConfig): void {

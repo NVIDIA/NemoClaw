@@ -7,6 +7,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  ConfigCorruptError,
   ConfigPermissionError,
   ensureConfigDir,
   readConfigFile,
@@ -24,6 +25,17 @@ function makeTempDir(): string {
 function writeFileWithMode(filePath: string, contents: string, mode: number) {
   fs.writeFileSync(filePath, contents, { mode });
   fs.chmodSync(filePath, mode);
+}
+
+function readCorruptConfig<T>(filePath: string, fallback: T): ConfigCorruptError {
+  let thrown: unknown;
+  try {
+    readConfigFile(filePath, fallback);
+  } catch (error) {
+    thrown = error;
+  }
+  expect(thrown).toBeInstanceOf(ConfigCorruptError);
+  return thrown as ConfigCorruptError;
 }
 
 afterEach(() => {
@@ -92,11 +104,33 @@ describe("config-io", () => {
     expect(readConfigFile(file, { ok: true })).toEqual({ ok: true });
   });
 
-  it("returns the fallback when the config file is malformed", () => {
+  it("moves malformed JSON aside and fails with repair guidance", () => {
     const dir = makeTempDir();
     const file = path.join(dir, "config.json");
     fs.writeFileSync(file, "{not-json");
-    expect(readConfigFile(file, { ok: true })).toEqual({ ok: true });
+
+    const error = readCorruptConfig(file, { ok: true });
+
+    expect(error.message).toContain("Corrupt config file");
+    expect(error.message).toContain("falling back to defaults");
+    expect(error.corruptPath).toMatch(/config\.json\.corrupt\.\d{4}-\d{2}-\d{2}T/);
+    expect(fs.existsSync(file)).toBe(false);
+    expect(fs.readFileSync(error.corruptPath!, "utf8")).toBe("{not-json");
+  });
+
+  it("rethrows non-ENOENT read errors instead of returning the fallback", () => {
+    const dir = makeTempDir();
+    const file = path.join(dir, "config.json");
+    const originalRead = fs.readFileSync;
+    fs.readFileSync = () => {
+      throw Object.assign(new Error("storage unavailable"), { code: "EIO" });
+    };
+
+    try {
+      expect(() => readConfigFile(file, { ok: true })).toThrow("storage unavailable");
+    } finally {
+      fs.readFileSync = originalRead;
+    }
   });
 
   it("writes and reads JSON atomically", () => {
@@ -312,6 +346,26 @@ describe("config-io", () => {
       readConfigFile(target, null);
 
       expect(fs.statSync(sibling).mode & 0o777).toBe(0o600);
+    });
+  });
+
+  it("does not return an empty sandbox registry fallback when sandboxes.json is corrupt", () => {
+    const fakeHome = makeTempDir();
+    withHome(fakeHome, () => {
+      const hostDir = path.join(fakeHome, ".nemoclaw");
+      fs.mkdirSync(hostDir, { mode: 0o700 });
+      const target = path.join(hostDir, "sandboxes.json");
+      fs.writeFileSync(target, '{"sandboxes":');
+
+      const error = readCorruptConfig(target, { sandboxes: {}, defaultSandbox: null });
+
+      expect(error.message).toContain("sandboxes.json");
+      expect(fs.existsSync(target)).toBe(false);
+      const corruptName = fs.readdirSync(hostDir).find((name) => {
+        return /^sandboxes\.json\.corrupt\.\d{4}-\d{2}-\d{2}T/.test(name);
+      });
+      expect(corruptName).toBeDefined();
+      expect(fs.readFileSync(path.join(hostDir, corruptName!), "utf8")).toBe('{"sandboxes":');
     });
   });
 
