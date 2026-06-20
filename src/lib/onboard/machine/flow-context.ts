@@ -30,9 +30,42 @@ export interface OnboardFlowContext<Agent = unknown, Gpu = unknown, SandboxGpuCo
   gpuPassthrough: boolean;
 }
 
+export type ProviderSelectedOnboardFlowContext<Context extends OnboardFlowContext> = Context & {
+  model: string;
+  provider: string;
+  sandboxGpuConfig: NonNullable<Context["sandboxGpuConfig"]>;
+};
+
+export type SandboxCreatedOnboardFlowContext<Context extends OnboardFlowContext> = Context & {
+  sandboxName: string;
+  model: string;
+  provider: string;
+};
+
+export type FinalOnboardFlowContext<Context extends OnboardFlowContext> =
+  SandboxCreatedOnboardFlowContext<Context>;
+
 export interface OnboardFlowPhaseResult<Context extends OnboardFlowContext = OnboardFlowContext> {
   context: Context;
   result: OnboardStateHandlerResult;
+}
+
+export function assertProviderSelectedContext<Context extends OnboardFlowContext>(
+  context: Context,
+  stepName: string,
+): asserts context is ProviderSelectedOnboardFlowContext<Context> {
+  if (!context.model || !context.provider || !context.sandboxGpuConfig) {
+    throw new Error(`Onboarding state is incomplete before ${stepName}.`);
+  }
+}
+
+export function assertSandboxCreatedContext<Context extends OnboardFlowContext>(
+  context: Context,
+  stepName: string,
+): asserts context is SandboxCreatedOnboardFlowContext<Context> {
+  if (!context.sandboxName || !context.model || !context.provider) {
+    throw new Error(`Onboarding state is incomplete before ${stepName}.`);
+  }
 }
 
 export function mergeOnboardFlowContext<Context extends OnboardFlowContext>(

@@ -4,12 +4,14 @@
 import { describe, expect, it } from "vitest";
 
 import { createSession } from "../../state/onboard-session";
-import { advanceTo } from "./result";
 import {
+  assertProviderSelectedContext,
+  assertSandboxCreatedContext,
   mergeOnboardFlowContext,
-  onboardFlowPhaseResult,
   type OnboardFlowContext,
+  onboardFlowPhaseResult,
 } from "./flow-context";
+import { advanceTo } from "./result";
 
 function baseContext(): OnboardFlowContext<null, { type: string }, { mode: string }> {
   return {
@@ -60,5 +62,42 @@ describe("onboard flow context helpers", () => {
 
     expect(result.context.provider).toBe("nvidia-prod");
     expect(result.result).toMatchObject({ next: "gateway", transitionKind: "advance" });
+  });
+
+  it("asserts provider-selected context before sandbox setup", () => {
+    const context = mergeOnboardFlowContext(baseContext(), {
+      provider: "nvidia-prod",
+      model: "model",
+    });
+
+    expect(() => assertProviderSelectedContext(context, "sandbox setup")).not.toThrow();
+  });
+
+  it("rejects missing provider-selected context fields", () => {
+    expect(() => assertProviderSelectedContext(baseContext(), "sandbox setup")).toThrow(
+      /Onboarding state is incomplete before sandbox setup\./,
+    );
+  });
+
+  it("asserts sandbox-created context before final phases", () => {
+    const context = mergeOnboardFlowContext(baseContext(), {
+      sandboxName: "my-assistant",
+      provider: "nvidia-prod",
+      model: "model",
+      sandboxGpuConfig: null,
+    });
+
+    expect(() => assertSandboxCreatedContext(context, "policies")).not.toThrow();
+  });
+
+  it("rejects missing sandbox name before final phases", () => {
+    const context = mergeOnboardFlowContext(baseContext(), {
+      provider: "nvidia-prod",
+      model: "model",
+    });
+
+    expect(() => assertSandboxCreatedContext(context, "policies")).toThrow(
+      /Onboarding state is incomplete before policies\./,
+    );
   });
 });

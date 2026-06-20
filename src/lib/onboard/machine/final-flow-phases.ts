@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { WebSearchConfig } from "../../inference/web-search";
-import type { OnboardFlowContext } from "./flow-context";
+import { assertSandboxCreatedContext, type OnboardFlowContext } from "./flow-context";
 import {
   createAgentSetupPhase,
   createFinalizationPhase,
@@ -38,15 +38,6 @@ export interface FinalOnboardFlowPhaseOptions<
   >["deps"];
 }
 
-function requireFinalContext<Context extends OnboardFlowContext>(
-  context: Context,
-  stepName: string,
-): asserts context is Context & { sandboxName: string; model: string; provider: string } {
-  if (!context.sandboxName || !context.model || !context.provider) {
-    throw new Error(`Onboarding state is incomplete before ${stepName}.`);
-  }
-}
-
 export function createFinalOnboardFlowPhases<
   Context extends OnboardFlowContext,
   VerifyChain = unknown,
@@ -57,7 +48,7 @@ export function createFinalOnboardFlowPhases<
   const createBranchPhase =
     options.branchState === "agent_setup" ? createAgentSetupPhase : createOpenclawSetupPhase;
   const branchSetupPhase = createBranchPhase<Context>(async (context) => {
-    requireFinalContext(context, "agent setup");
+    assertSandboxCreatedContext(context, "agent setup");
     const agentSetupResult = await handleAgentSetupState({
       agent: context.agent,
       sandboxName: context.sandboxName,
@@ -76,7 +67,7 @@ export function createFinalOnboardFlowPhases<
   });
 
   const policiesPhase = createPoliciesPhase<Context>(async (context) => {
-    requireFinalContext(context, "policies");
+    assertSandboxCreatedContext(context, "policies");
     const policiesResult = await handlePoliciesState({
       resume: context.resume,
       sandboxName: context.sandboxName,
@@ -101,7 +92,7 @@ export function createFinalOnboardFlowPhases<
   });
 
   const finalizationPhase = createFinalizationPhase<Context>(async (context) => {
-    requireFinalContext(context, "finalization");
+    assertSandboxCreatedContext(context, "finalization");
     const finalizationResult = await handleFinalizationState({
       sandboxName: context.sandboxName,
       model: context.model,

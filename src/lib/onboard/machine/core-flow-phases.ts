@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { WebSearchConfig } from "../../inference/web-search";
-import type { OnboardFlowContext } from "./flow-context";
+import { assertProviderSelectedContext, type OnboardFlowContext } from "./flow-context";
 import { runCoreOnboardFlowSequence } from "./flow-slices";
 import {
   handleProviderInferenceState,
@@ -97,9 +97,7 @@ export function createCoreOnboardFlowPhases<
   const sandboxPhase: OnboardSequencePhase<Context> = {
     state: "sandbox",
     async run(context) {
-      if (!context.model || !context.provider || !context.sandboxGpuConfig) {
-        throw new Error("Onboarding state is incomplete before sandbox setup.");
-      }
+      assertProviderSelectedContext(context, "sandbox setup");
       const sandboxStateResult = await handleSandboxState({
         resume: context.resume,
         fresh: context.fresh,
