@@ -41,12 +41,9 @@ const CURL_SAFE_FLAG_OPTIONS = new Set([
   "-sS",
   "-sf",
   "-f",
-  "-L",
-  "-sfL",
   "--fail",
   "--silent",
   "--show-error",
-  "--location",
   "--compressed",
   "--get",
 ]);

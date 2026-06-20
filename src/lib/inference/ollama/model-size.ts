@@ -45,7 +45,7 @@ export function probeRegistrySize(model: string, capture: CaptureFn = runCapture
     [
       "curl",
       ...buildValidatedCurlCommandArgs([
-        "-sfL",
+        "-sf",
         "--max-time",
         String(PROBE_TIMEOUT_SECONDS),
         "-H",

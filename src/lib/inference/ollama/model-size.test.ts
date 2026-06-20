@@ -63,6 +63,8 @@ describe("probeRegistrySize", () => {
     probeRegistrySize("qwen3.5:9b", recorder.capture);
     const [argv] = recorder.calls;
     expect(argv[0]).toBe("curl");
+    expect(argv).toContain("-sf");
+    expect(argv).not.toContain("-sfL");
     expect(argv[argv.length - 1]).toBe(
       "https://registry.ollama.ai/v2/library/qwen3.5/manifests/9b",
     );

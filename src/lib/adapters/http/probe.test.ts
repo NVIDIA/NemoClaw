@@ -222,6 +222,24 @@ describe("http-probe helpers", () => {
     expect(result.message).toContain("curl probe URL must use http or https");
   });
 
+  it.each([
+    ["-L", ["-L"]],
+    ["-sfL", ["-sfL"]],
+    ["--location", ["--location"]],
+  ])("rejects redirect-following curl option %s before spawning", (_label, args) => {
+    let spawned = false;
+    const result = runCurlProbe(["-sS", ...args, "https://example.test/models"], {
+      spawnSyncImpl: () => {
+        spawned = true;
+        throw new Error("should not spawn");
+      },
+    });
+
+    expect(spawned).toBe(false);
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("curl probe option is not allowed");
+  });
+
   it("rejects curl probe request bodies that read from local files", () => {
     let spawned = false;
     const result = runCurlProbe(
