@@ -3,8 +3,6 @@
 
 /** Live Vitest replacement for test/e2e/test-gpu-e2e.sh. */
 
-import fs from "node:fs";
-
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
