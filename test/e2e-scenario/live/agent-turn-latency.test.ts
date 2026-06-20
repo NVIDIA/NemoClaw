@@ -21,12 +21,12 @@ import {
   env,
   extractOpenClawAgentText,
   HERMES_SANDBOX,
-  hermesApiServerKey,
   hermesTurnCommand,
   installSandbox,
   MAX_TURN_SECONDS,
   MODEL,
   OPENCLAW_SANDBOX,
+  openclawConfigCommand,
   openclawTurn,
   responseBodyAndStatus,
   route,
@@ -59,6 +59,7 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
     expect(docker.exitCode, resultText(docker)).toBe(0);
 
     const cleanBeforeRetry = () => cleanupTurnSandboxes(host, sandbox);
+    await cleanupTurnSandboxes(host, sandbox);
     const openclawInstall = await installSandbox(
       host,
       OPENCLAW_SANDBOX,
@@ -71,9 +72,9 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
     expect(openclawRoute.exitCode, resultText(openclawRoute)).toBe(0);
     expect(resultText(openclawRoute)).toContain(EXPECTED_ROUTE_PROVIDER);
     expect(resultText(openclawRoute)).toContain(MODEL);
-    const openclawConfig = await sandbox.exec(
+    const openclawConfig = await sandbox.execShell(
       OPENCLAW_SANDBOX,
-      ["cat", "/sandbox/.openclaw/openclaw.json"],
+      trustedSandboxShellScript(openclawConfigCommand()),
       {
         artifactName: "openclaw-config",
         env: env(OPENCLAW_SANDBOX, "openclaw"),
@@ -136,7 +137,6 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       ],
       max_tokens: 64,
     });
-    const hermesLocalApiKey = await hermesApiServerKey(sandbox);
     const hermesStarted = process.hrtime.bigint();
     const hermesTurn = await sandbox.execShell(
       HERMES_SANDBOX,
@@ -144,7 +144,7 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       {
         artifactName: "hermes-api-turn",
         env: env(HERMES_SANDBOX, "hermes"),
-        redactionValues: [apiKey, hermesLocalApiKey],
+        redactionValues: [apiKey],
         timeoutMs: (MAX_TURN_SECONDS + 30) * 1000,
       },
     );

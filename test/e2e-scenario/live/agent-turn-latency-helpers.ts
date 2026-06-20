@@ -70,22 +70,14 @@ export function env(
   return out;
 }
 
-export async function bestEffort(run: () => Promise<unknown>): Promise<void> {
+export async function bestEffort(label: string, run: () => Promise<unknown>): Promise<void> {
   try {
     await run();
   } catch (error) {
     console.warn(
-      `best-effort cleanup failed: ${error instanceof Error ? error.message : String(error)}`,
+      `best-effort cleanup failed (${label}): ${error instanceof Error ? error.message : String(error)}`,
     );
   }
-}
-
-function firstJsonObject(output: string): unknown {
-  for (let start = output.indexOf("{"); start >= 0; start = output.indexOf("{", start + 1)) {
-    const parsed = parseJsonObjectAt(output, start);
-    if (parsed !== undefined) return parsed;
-  }
-  return undefined;
 }
 
 function parseJsonObjectAt(output: string, start: number): unknown {
@@ -152,7 +144,11 @@ function collectAssistantText(value: unknown): string[] {
 }
 
 export function extractOpenClawAgentText(output: string): string {
-  return collectAssistantText(firstJsonObject(output))[0] ?? "";
+  for (let start = output.indexOf("{"); start >= 0; start = output.indexOf("{", start + 1)) {
+    const text = collectAssistantText(parseJsonObjectAt(output, start))[0];
+    if (text) return text;
+  }
+  return "";
 }
 
 export function responseBodyAndStatus(raw: string): { body: string; status: string } {
@@ -256,14 +252,14 @@ export async function cleanupTurnSandboxes(
     [OPENCLAW_SANDBOX, "openclaw"],
     [HERMES_SANDBOX, "hermes"],
   ] as const) {
-    await bestEffort(() =>
+    await bestEffort(`destroy ${agent} sandbox`, () =>
       host.command("node", [CLI, name, "destroy", "--yes"], {
         artifactName: `cleanup-${agent}-destroy`,
         env: env(name, agent),
         timeoutMs: 120_000,
       }),
     );
-    await bestEffort(() =>
+    await bestEffort(`delete ${agent} sandbox`, () =>
       sandbox.openshell(["sandbox", "delete", name], {
         artifactName: `cleanup-${agent}-delete`,
         env: env(name, agent),
@@ -271,14 +267,14 @@ export async function cleanupTurnSandboxes(
       }),
     );
   }
-  await bestEffort(() =>
+  await bestEffort("stop Hermes API forward", () =>
     sandbox.openshell(["forward", "stop", "8642"], {
       artifactName: "cleanup-forward-stop-hermes-api",
       env: buildAvailabilityProbeEnv(),
       timeoutMs: 30_000,
     }),
   );
-  await bestEffort(() =>
+  await bestEffort("destroy OpenShell gateway", () =>
     sandbox.openshell(["gateway", "destroy", "-g", "nemoclaw"], {
       artifactName: "cleanup-gateway-destroy-turn-latency",
       env: buildAvailabilityProbeEnv(),
@@ -330,19 +326,22 @@ export async function waitHermesHealth(sandbox: SandboxClient): Promise<ShellPro
   );
 }
 
-export async function hermesApiServerKey(sandbox: SandboxClient): Promise<string> {
-  const result = await sandbox.execShell(
-    HERMES_SANDBOX,
-    trustedSandboxShellScript(
-      "set -a; [ ! -f /sandbox/.hermes/.env ] || . /sandbox/.hermes/.env; set +a; printf '%s' \"${API_SERVER_KEY:-}\"",
-    ),
-    {
-      artifactName: "hermes-api-server-key",
-      env: env(HERMES_SANDBOX, "hermes"),
-      timeoutMs: 30_000,
-    },
-  );
-  return result.stdout.trim();
+export function openclawConfigCommand(): string {
+  return `node <<'NODE'
+const fs = require('node:fs');
+function redact(value) {
+  if (Array.isArray(value)) return value.map(redact);
+  if (value && typeof value === 'object') {
+    const out = {};
+    for (const [key, entry] of Object.entries(value)) {
+      out[key] = /api[_-]?key|token|secret|credential/i.test(key) ? '[REDACTED]' : redact(entry);
+    }
+    return out;
+  }
+  return value;
+}
+console.log(JSON.stringify(redact(JSON.parse(fs.readFileSync('/sandbox/.openclaw/openclaw.json', 'utf8'))), null, 2));
+NODE`;
 }
 
 export function assertNoOpenClawTransportErrors(output: string): void {
