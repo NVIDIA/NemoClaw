@@ -243,3 +243,269 @@ jobs:
             process.exit(1);
           });
           NODE
+
+      - name: Require changed test files not to add if statements
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          node <<'NODE'
+          const TEST_FILE_RE = /^(test|src|nemoclaw\/src)\/.*\.(test|spec)\.(?:[cm]?[jt]s)$/;
+          const { BASE_SHA, GH_TOKEN, HEAD_REPO, HEAD_SHA, PR_NUMBER, REPO } = process.env;
+          const headers = { Authorization: `Bearer ${GH_TOKEN}`, "X-GitHub-Api-Version": "2022-11-28" };
+
+          async function getJson(url) {
+            const response = await fetch(url, { headers });
+            if (!response.ok) throw new Error(`${url}: HTTP ${response.status}`);
+            return response.json();
+          }
+
+          async function getPullFiles() {
+            const files = [];
+            for (let page = 1; ; page += 1) {
+              const batch = await getJson(`https://api.github.com/repos/${REPO}/pulls/${PR_NUMBER}/files?per_page=100&page=${page}`);
+              files.push(...batch);
+              if (batch.length < 100) return files;
+            }
+          }
+
+          async function getContent(repo, ref, file) {
+            if (!file) return null;
+            const encodedPath = file.split("/").map(encodeURIComponent).join("/");
+            const url = `https://api.github.com/repos/${repo}/contents/${encodedPath}?ref=${encodeURIComponent(ref)}`;
+            const response = await fetch(url, { headers });
+            if (response.status === 404) return null;
+            if (!response.ok) throw new Error(`${url}: HTTP ${response.status}`);
+            const body = await response.json();
+            if (body.type !== "file" || body.encoding !== "base64" || typeof body.content !== "string") {
+              throw new Error(`Could not decode file contents for ${file}`);
+            }
+            return Buffer.from(body.content.replace(/\s/g, ""), "base64").toString("utf8");
+          }
+
+          function assertRepositoryName(repo, label) {
+            if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo ?? "")) {
+              throw new Error(`${label} must be an owner/name repository name`);
+            }
+          }
+
+          function stripTriviaAndLiterals(text) {
+            let output = "";
+            let index = 0;
+            let previousToken = "";
+            let identifierBuffer = "";
+            let lastIdentifier = "";
+
+            function finalizeIdentifier() {
+              if (identifierBuffer !== "") {
+                lastIdentifier = identifierBuffer;
+                identifierBuffer = "";
+              }
+            }
+
+            function appendCode(char) {
+              output += char;
+              if (/[A-Za-z0-9_$]/.test(char)) {
+                identifierBuffer += char;
+              } else {
+                finalizeIdentifier();
+              }
+              if (/\S/.test(char)) previousToken = char;
+            }
+
+            function consumeQuoted(quote) {
+              output += " ";
+              index += 1;
+              while (index < text.length) {
+                const char = text[index];
+                if (char === "\\") {
+                  index += 2;
+                } else if (char === quote) {
+                  index += 1;
+                  return;
+                } else {
+                  index += 1;
+                }
+              }
+            }
+
+            function consumeTemplate() {
+              output += " ";
+              index += 1;
+              while (index < text.length) {
+                const char = text[index];
+                const next = text[index + 1];
+                if (char === "\\") {
+                  index += 2;
+                } else if (char === "`") {
+                  index += 1;
+                  return;
+                } else if (char === "$" && next === "{") {
+                  output += " ";
+                  index += 2;
+                  consumeTemplateExpression();
+                } else {
+                  index += 1;
+                }
+              }
+            }
+
+            function consumeTemplateExpression() {
+              let depth = 1;
+              while (index < text.length && depth > 0) {
+                const char = text[index];
+                const next = text[index + 1];
+                if (char === "/" && next === "/") {
+                  output += " ";
+                  index += 2;
+                  while (index < text.length && !/[\r\n]/.test(text[index])) index += 1;
+                } else if (char === "/" && next === "*") {
+                  output += " ";
+                  index += 2;
+                  while (index < text.length && !(text[index] === "*" && text[index + 1] === "/")) index += 1;
+                  index = Math.min(index + 2, text.length);
+                } else if (char === '"' || char === "'") {
+                  consumeQuoted(char);
+                } else if (char === "`") {
+                  consumeTemplate();
+                } else if (char === "/" && regexCanStart()) {
+                  consumeRegex();
+                } else if (char === "{") {
+                  depth += 1;
+                  appendCode(char);
+                  index += 1;
+                } else if (char === "}") {
+                  depth -= 1;
+                  if (depth === 0) {
+                    output += " ";
+                    index += 1;
+                  } else {
+                    appendCode(char);
+                    index += 1;
+                  }
+                } else {
+                  appendCode(char);
+                  index += 1;
+                }
+              }
+            }
+
+            function regexCanStart() {
+              const expressionKeyword = identifierBuffer || lastIdentifier;
+              return (
+                previousToken === "" ||
+                /[({[=,:;!&|?+\-*~^%<>]/.test(previousToken) ||
+                /^(?:return|throw|case|delete|void|typeof|yield|await|else|do)$/.test(expressionKeyword)
+              );
+            }
+
+            function consumeRegex() {
+              output += " ";
+              index += 1;
+              let inCharacterClass = false;
+              while (index < text.length) {
+                const char = text[index];
+                if (char === "\\") {
+                  index += 2;
+                } else if (char === "[") {
+                  inCharacterClass = true;
+                  index += 1;
+                } else if (char === "]") {
+                  inCharacterClass = false;
+                  index += 1;
+                } else if (char === "/" && !inCharacterClass) {
+                  index += 1;
+                  while (/[a-z]/i.test(text[index] ?? "")) index += 1;
+                  return;
+                } else {
+                  index += 1;
+                }
+              }
+            }
+
+            while (index < text.length) {
+              const char = text[index];
+              const next = text[index + 1];
+              if (char === "/" && next === "/") {
+                output += " ";
+                index += 2;
+                while (index < text.length && !/[\r\n]/.test(text[index])) index += 1;
+              } else if (char === "/" && next === "*") {
+                output += " ";
+                index += 2;
+                while (index < text.length && !(text[index] === "*" && text[index + 1] === "/")) index += 1;
+                index = Math.min(index + 2, text.length);
+              } else if (char === '"' || char === "'") {
+                consumeQuoted(char);
+              } else if (char === "`") {
+                consumeTemplate();
+              } else if (char === "/" && regexCanStart()) {
+                consumeRegex();
+              } else {
+                appendCode(char);
+                index += 1;
+              }
+            }
+            return output;
+          }
+
+          function countIfStatements(text) {
+            return stripTriviaAndLiterals(text).match(/\bif\s*\(/g)?.length ?? 0;
+          }
+
+          async function countAt(repo, ref, file) {
+            const text = await getContent(repo, ref, file);
+            return text === null ? 0 : countIfStatements(text);
+          }
+
+          async function main() {
+            const files = await getPullFiles();
+            const changedTests = files.filter(({ filename, previous_filename }) => (
+              TEST_FILE_RE.test(filename) || TEST_FILE_RE.test(previous_filename ?? "")
+            ));
+            assertRepositoryName(REPO, "REPO");
+            assertRepositoryName(HEAD_REPO, "HEAD_REPO");
+
+            const details = [];
+            let baseTotal = 0;
+            let headTotal = 0;
+
+            for (const file of changedTests) {
+              const basePath = TEST_FILE_RE.test(file.previous_filename ?? "") ? file.previous_filename : file.filename;
+              const headPath = file.status === "removed" || !TEST_FILE_RE.test(file.filename) ? null : file.filename;
+              const baseCount = await countAt(REPO, BASE_SHA, basePath);
+              const headCount = await countAt(HEAD_REPO, HEAD_SHA, headPath);
+              baseTotal += baseCount;
+              headTotal += headCount;
+              if (headCount > baseCount) {
+                details.push(`${headPath ?? file.filename}: ${headCount} if statement(s), up from ${baseCount}`);
+              }
+            }
+
+            if (details.length > 0) {
+              console.error("FAIL: changed test files add if statements.");
+              console.error(`Changed test files contain ${headTotal} if statement(s) at PR head vs ${baseTotal} at base.`);
+              console.error("");
+              console.error("Test bodies should stay linear. Split conditional behavior into separate test cases, use it.skipIf/it.runIf for platform or environment gates, or move non-asserting setup branches into named helpers.");
+              console.error("");
+              console.error("Files with increased if counts:");
+              for (const detail of details) console.error(`- ${detail}`);
+              console.error("");
+              console.error("Run locally: npm run test-conditionals:scan -- --top 25");
+              process.exit(1);
+            }
+
+            console.log(`PASS: changed test files did not add if statements (${headTotal} at PR head vs ${baseTotal} at base).`);
+          }
+
+          main().catch((error) => {
+            console.error(error);
+            process.exit(1);
+          });
+          NODE
