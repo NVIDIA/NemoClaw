@@ -12,6 +12,7 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 import { shouldRunLiveE2EScenarios } from "../fixtures/live-project-gate.ts";
 import {
   assertHermesConfig,
+  assertNoOpenClawTransportErrors,
   assertOpenClawConfig,
   CLI,
   chatContent,
@@ -20,6 +21,7 @@ import {
   env,
   extractOpenClawAgentText,
   HERMES_SANDBOX,
+  hermesApiServerKey,
   hermesTurnCommand,
   installSandbox,
   MAX_TURN_SECONDS,
@@ -28,6 +30,7 @@ import {
   openclawTurn,
   responseBodyAndStatus,
   route,
+  waitHermesHealth,
 } from "./agent-turn-latency-helpers.ts";
 
 const TIMEOUT_MS = 90 * 60_000;
@@ -55,7 +58,14 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
     });
     expect(docker.exitCode, resultText(docker)).toBe(0);
 
-    const openclawInstall = await installSandbox(host, OPENCLAW_SANDBOX, "openclaw", apiKey);
+    const cleanBeforeRetry = () => cleanupTurnSandboxes(host, sandbox);
+    const openclawInstall = await installSandbox(
+      host,
+      OPENCLAW_SANDBOX,
+      "openclaw",
+      apiKey,
+      cleanBeforeRetry,
+    );
     expect(openclawInstall.exitCode, resultText(openclawInstall)).toBe(0);
     const openclawRoute = await route(sandbox, OPENCLAW_SANDBOX, "openclaw", "openclaw-route");
     expect(openclawRoute.exitCode, resultText(openclawRoute)).toBe(0);
@@ -76,6 +86,7 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
 
     const openclaw = await openclawTurn(sandbox, apiKey);
     expect(openclaw.result.exitCode, resultText(openclaw.result)).toBe(0);
+    assertNoOpenClawTransportErrors(resultText(openclaw.result));
     expect(extractOpenClawAgentText(openclaw.result.stdout), resultText(openclaw.result)).toMatch(
       /(^|[^0-9])42([^0-9]|$)/,
     );
@@ -88,17 +99,19 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       timeoutMs: 120_000,
     });
 
-    const hermesInstall = await installSandbox(host, HERMES_SANDBOX, "hermes", apiKey);
+    const hermesInstall = await installSandbox(
+      host,
+      HERMES_SANDBOX,
+      "hermes",
+      apiKey,
+      cleanBeforeRetry,
+    );
     expect(hermesInstall.exitCode, resultText(hermesInstall)).toBe(0);
     const hermesRoute = await route(sandbox, HERMES_SANDBOX, "hermes", "hermes-route");
     expect(hermesRoute.exitCode, resultText(hermesRoute)).toBe(0);
     expect(resultText(hermesRoute)).toContain(EXPECTED_ROUTE_PROVIDER);
     expect(resultText(hermesRoute)).toContain(MODEL);
-    const hermesHealth = await sandbox.exec(
-      HERMES_SANDBOX,
-      ["curl", "-sf", "--max-time", "10", "http://localhost:8642/health"],
-      { artifactName: "hermes-health", env: env(HERMES_SANDBOX, "hermes"), timeoutMs: 30_000 },
-    );
+    const hermesHealth = await waitHermesHealth(sandbox);
     expect(hermesHealth.exitCode, resultText(hermesHealth)).toBe(0);
     const hermesConfig = await sandbox.exec(
       HERMES_SANDBOX,
@@ -123,6 +136,7 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       ],
       max_tokens: 64,
     });
+    const hermesLocalApiKey = await hermesApiServerKey(sandbox);
     const hermesStarted = process.hrtime.bigint();
     const hermesTurn = await sandbox.execShell(
       HERMES_SANDBOX,
@@ -130,7 +144,7 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       {
         artifactName: "hermes-api-turn",
         env: env(HERMES_SANDBOX, "hermes"),
-        redactionValues: [apiKey],
+        redactionValues: [apiKey, hermesLocalApiKey],
         timeoutMs: (MAX_TURN_SECONDS + 30) * 1000,
       },
     );

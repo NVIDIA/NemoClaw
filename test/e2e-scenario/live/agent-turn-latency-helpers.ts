@@ -22,10 +22,19 @@ export const HERMES_SANDBOX =
   process.env.NEMOCLAW_HERMES_TURN_LATENCY_SANDBOX_NAME ?? "e2e-hermes-turn-latency";
 validateSandboxName(OPENCLAW_SANDBOX);
 validateSandboxName(HERMES_SANDBOX);
-export const MODEL = process.env.NEMOCLAW_TURN_LATENCY_MODEL ?? "nvidia/nemotron-3-super-120b-a12b";
-const PROVIDER = process.env.NEMOCLAW_TURN_LATENCY_PROVIDER ?? "build";
+const DEFAULT_NVIDIA_MODEL = "nvidia/nemotron-3-super-120b-a12b";
+const DEFAULT_COMPAT_MODEL = "nvidia/nvidia/nemotron-3-super-v3";
+const USE_COMPATIBLE_HOSTED = process.env.NEMOCLAW_E2E_USE_HOSTED_INFERENCE === "1";
+export const MODEL =
+  process.env.NEMOCLAW_TURN_LATENCY_MODEL ??
+  process.env.NEMOCLAW_MODEL ??
+  process.env.NEMOCLAW_COMPAT_MODEL ??
+  (USE_COMPATIBLE_HOSTED ? DEFAULT_COMPAT_MODEL : DEFAULT_NVIDIA_MODEL);
+const PROVIDER =
+  process.env.NEMOCLAW_TURN_LATENCY_PROVIDER ?? (USE_COMPATIBLE_HOSTED ? "custom" : "build");
 export const EXPECTED_ROUTE_PROVIDER =
-  process.env.NEMOCLAW_TURN_LATENCY_ROUTE_PROVIDER ?? "nvidia-prod";
+  process.env.NEMOCLAW_TURN_LATENCY_ROUTE_PROVIDER ??
+  (PROVIDER === "custom" ? "compatible-endpoint" : "nvidia-prod");
 export const MAX_TURN_SECONDS = positiveInt(process.env.NEMOCLAW_TURN_LATENCY_MAX_SECONDS, 300);
 const INSTALL_ATTEMPTS = positiveInt(process.env.NEMOCLAW_TURN_LATENCY_INSTALL_ATTEMPTS, 2);
 
@@ -50,13 +59,25 @@ export function env(
   };
   agent === "hermes" && (out.NEMOCLAW_AGENT = "hermes");
   apiKey && Object.assign(out, { NVIDIA_INFERENCE_API_KEY: apiKey, NVIDIA_API_KEY: apiKey });
+  PROVIDER === "custom" &&
+    Object.assign(out, {
+      COMPATIBLE_API_KEY: apiKey,
+      NEMOCLAW_COMPAT_MODEL: MODEL,
+      NEMOCLAW_ENDPOINT_URL:
+        process.env.NEMOCLAW_ENDPOINT_URL ?? "https://inference-api.nvidia.com/v1",
+      NEMOCLAW_PREFERRED_API: process.env.NEMOCLAW_PREFERRED_API ?? "openai-completions",
+    });
   return out;
 }
 
 export async function bestEffort(run: () => Promise<unknown>): Promise<void> {
   try {
     await run();
-  } catch {}
+  } catch (error) {
+    console.warn(
+      `best-effort cleanup failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 }
 
 function firstJsonObject(output: string): unknown {
@@ -113,11 +134,19 @@ function collectAssistantText(value: unknown): string[] {
   return [
     "result",
     "payloads",
+    "payload",
     "messages",
     "choices",
     "message",
     "delta",
     "content",
+    "reasoning_content",
+    "response",
+    "data",
+    "output",
+    "outputs",
+    "items",
+    "segments",
     "text",
   ].flatMap((key) => (key in record ? collectAssistantText(record[key]) : []));
 }
@@ -191,6 +220,7 @@ export async function installSandbox(
   sandboxName: string,
   agent: "openclaw" | "hermes",
   apiKey: string,
+  cleanupBeforeRetry?: () => Promise<void>,
 ): Promise<ShellProbeResult> {
   let install: ShellProbeResult | undefined;
   for (let attempt = 1; attempt <= INSTALL_ATTEMPTS; attempt += 1) {
@@ -210,6 +240,7 @@ export async function installSandbox(
       isTransientProviderValidationFailure(install) &&
       attempt < INSTALL_ATTEMPTS;
     install.exitCode === 0 && (attempt = INSTALL_ATTEMPTS + 1);
+    retry && cleanupBeforeRetry && (await cleanupBeforeRetry());
     retry && (await new Promise((resolve) => setTimeout(resolve, 10_000 * attempt)));
     !retry && install.exitCode !== 0 && (attempt = INSTALL_ATTEMPTS + 1);
   }
@@ -240,6 +271,20 @@ export async function cleanupTurnSandboxes(
       }),
     );
   }
+  await bestEffort(() =>
+    sandbox.openshell(["forward", "stop", "8642"], {
+      artifactName: "cleanup-forward-stop-hermes-api",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 30_000,
+    }),
+  );
+  await bestEffort(() =>
+    sandbox.openshell(["gateway", "destroy", "-g", "nemoclaw"], {
+      artifactName: "cleanup-gateway-destroy-turn-latency",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 60_000,
+    }),
+  );
 }
 
 export async function route(
@@ -275,6 +320,37 @@ export async function openclawTurn(
   return { result, elapsedMs: msSince(started) };
 }
 
+export async function waitHermesHealth(sandbox: SandboxClient): Promise<ShellProbeResult> {
+  return await sandbox.execShell(
+    HERMES_SANDBOX,
+    trustedSandboxShellScript(
+      "for attempt in $(seq 1 10); do body=$(curl -sf --max-time 10 http://localhost:8642/health 2>/dev/null || true); printf '%s' \"$body\" | grep -qi '\"ok\"' && { printf '%s' \"$body\"; exit 0; }; sleep 5; done; printf '%s' \"$body\"; exit 1",
+    ),
+    { artifactName: "hermes-health", env: env(HERMES_SANDBOX, "hermes"), timeoutMs: 90_000 },
+  );
+}
+
+export async function hermesApiServerKey(sandbox: SandboxClient): Promise<string> {
+  const result = await sandbox.execShell(
+    HERMES_SANDBOX,
+    trustedSandboxShellScript(
+      "set -a; [ ! -f /sandbox/.hermes/.env ] || . /sandbox/.hermes/.env; set +a; printf '%s' \"${API_SERVER_KEY:-}\"",
+    ),
+    {
+      artifactName: "hermes-api-server-key",
+      env: env(HERMES_SANDBOX, "hermes"),
+      timeoutMs: 30_000,
+    },
+  );
+  return result.stdout.trim();
+}
+
+export function assertNoOpenClawTransportErrors(output: string): void {
+  expect(output).not.toMatch(
+    /SsrFBlockedError|transport error|ECONNREFUSED|EAI_AGAIN|gateway unavailable|network connection error/i,
+  );
+}
+
 export function hermesTurnCommand(payload: string): string {
-  return `set -a; [ ! -f /sandbox/.hermes/.env ] || . /sandbox/.hermes/.env; set +a; tmp=$(mktemp); code=$(curl -sS -o "$tmp" -w '%{http_code}' --max-time ${MAX_TURN_SECONDS} http://localhost:8642/v1/chat/completions -H 'Content-Type: application/json' -H "Authorization: Bearer \${API_SERVER_KEY:-}" -d '${payload.replace(/'/gu, `'\\''`)}'); rc=$?; cat "$tmp"; rm -f "$tmp"; printf '\n__NEMOCLAW_HTTP_STATUS__=%s\n' "\${code:-000}"; exit "$rc"`;
+  return `set -a; [ ! -f /sandbox/.hermes/.env ] || . /sandbox/.hermes/.env; set +a; tmp=$(mktemp); if [ -n \"\${API_SERVER_KEY:-}\" ]; then code=$(curl -sS -o \"$tmp\" -w '%{http_code}' --max-time ${MAX_TURN_SECONDS} http://localhost:8642/v1/chat/completions -H 'Content-Type: application/json' -H \"Authorization: Bearer \${API_SERVER_KEY}\" -d '${payload.replace(/'/gu, `'\\''`)}'); else code=$(curl -sS -o \"$tmp\" -w '%{http_code}' --max-time ${MAX_TURN_SECONDS} http://localhost:8642/v1/chat/completions -H 'Content-Type: application/json' -d '${payload.replace(/'/gu, `'\\''`)}'); fi; rc=$?; cat \"$tmp\"; rm -f \"$tmp\"; printf '\n__NEMOCLAW_HTTP_STATUS__=%s\n' \"\${code:-000}\"; exit \"$rc\"`;
 }
