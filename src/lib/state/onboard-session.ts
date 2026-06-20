@@ -868,6 +868,14 @@ export type NullableSessionUpdateIntent<T> =
   | { kind: "clear" }
   | { kind: "set"; value: T };
 
+export type NullableSessionUpdateKey = {
+  [K in keyof Session]-?: null extends Session[K] ? K : never;
+}[keyof Session];
+
+type NullableStringSessionUpdateKey = {
+  [K in NullableSessionUpdateKey]-?: NonNullable<Session[K]> extends string ? K : never;
+}[NullableSessionUpdateKey];
+
 function sessionUpdateUnchanged<T>(): NullableSessionUpdateIntent<T> {
   return { kind: "unchanged" };
 }
@@ -900,7 +908,7 @@ export function isSessionUpdateClear<T>(intent: NullableSessionUpdateIntent<T>):
   return intent.kind === "clear";
 }
 
-export function applyNullableSessionUpdate<K extends keyof Session>(
+export function applyNullableSessionUpdate<K extends NullableSessionUpdateKey>(
   safe: Partial<Session>,
   key: K,
   intent: NullableSessionUpdateIntent<NonNullable<Session[K]>>,
@@ -924,7 +932,7 @@ export function applyNullableSessionUpdate<K extends keyof Session>(
 // (credentialEnv=null) silently dropped the clear and left the stale value
 // on disk. The rebuild preflight then demanded a credential the current
 // sandbox does not actually need.
-function assignNullableString<K extends keyof Session>(
+function assignNullableString<K extends NullableStringSessionUpdateKey>(
   safe: Partial<Session>,
   key: K,
   value: unknown,

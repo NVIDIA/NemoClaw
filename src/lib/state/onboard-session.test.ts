@@ -16,11 +16,28 @@ type OnboardMachineEventsModule = typeof import("../../../dist/lib/onboard/machi
 type OnboardMachineEvent = import("../../../dist/lib/onboard/machine/events").OnboardMachineEvent;
 type LoadedSession = NonNullable<ReturnType<OnboardSessionModule["loadSession"]>>;
 type DebugSummary = NonNullable<ReturnType<OnboardSessionModule["summarizeForDebug"]>>;
+type NullableSessionUpdateKey =
+  import("../../../dist/lib/state/onboard-session").NullableSessionUpdateKey;
 type MessagingPlan = NonNullable<LoadedSession["messagingPlan"]>;
 type MessagingChannelId = MessagingPlan["channels"][number]["channelId"];
 let session: OnboardSessionModule;
 let machineEvents: OnboardMachineEventsModule;
 let tmpDir: string;
+
+const _nullableSessionUpdateKeyAcceptsNullableFields: Record<
+  Extract<"model" | "credentialEnv" | "webSearchConfig", NullableSessionUpdateKey>,
+  true
+> = {
+  model: true,
+  credentialEnv: true,
+  webSearchConfig: true,
+};
+const _nullableSessionUpdateKeyRejectsNonNullableFields: Record<
+  Extract<"status" | "gpuPassthrough" | "metadata", NullableSessionUpdateKey>,
+  never
+> = {};
+void _nullableSessionUpdateKeyAcceptsNullableFields;
+void _nullableSessionUpdateKeyRejectsNonNullableFields;
 
 function requireLoadedSession(
   loaded: ReturnType<OnboardSessionModule["loadSession"]>,
