@@ -471,7 +471,7 @@ describe("CLI sandbox status JSON output", () => {
     const localBin = path.join(home, "bin");
     fs.mkdirSync(localBin, { recursive: true });
     writeSandboxRegistry(home, "alpha", {
-      provider: "openai-api",
+      provider: "compatible-endpoint",
       model: "gpt-4o-mini",
       openshellDriver: "vm",
     });
@@ -481,7 +481,7 @@ describe("CLI sandbox status JSON output", () => {
         "#!/usr/bin/env bash",
         'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
         "  echo 'Gateway inference:'",
-        "  echo '  Provider: openai-api'",
+        "  echo '  Provider: compatible-endpoint'",
         "  echo '  Model: gpt-4o-mini'",
         "  exit 0",
         "fi",
