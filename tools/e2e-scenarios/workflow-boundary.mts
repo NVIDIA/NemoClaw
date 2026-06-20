@@ -1497,6 +1497,172 @@ function validateStateBackupRestoreVitestJob(errors: string[], jobs: WorkflowRec
   }
 }
 
+function validateUpgradeStaleSandboxVitestJob(errors: string[], jobs: WorkflowRecord): void {
+  const jobName = "upgrade-stale-sandbox-vitest";
+  const scenarioName = "upgrade-stale-sandbox";
+  const job = asRecord(jobs[jobName]);
+  if (Object.keys(job).length === 0) {
+    errors.push("workflow missing upgrade-stale-sandbox-vitest job");
+    return;
+  }
+
+  if (job["runs-on"] !== "ubuntu-latest") {
+    errors.push("upgrade-stale-sandbox-vitest job must run on ubuntu-latest");
+  }
+  validateFreeStandingJobSelector(errors, jobs, jobName, scenarioName);
+  if (job["timeout-minutes"] !== 55) {
+    errors.push("upgrade-stale-sandbox-vitest job must keep the legacy 55 minute timeout");
+  }
+
+  const jobEnv = asRecord(job.env);
+  if (jobEnv.NEMOCLAW_RUN_E2E_SCENARIOS !== "1") {
+    errors.push("upgrade-stale-sandbox-vitest job must set NEMOCLAW_RUN_E2E_SCENARIOS=1");
+  }
+  if (
+    jobEnv.E2E_ARTIFACT_DIR !== "${{ github.workspace }}/e2e-artifacts/vitest/upgrade-stale-sandbox"
+  ) {
+    errors.push(
+      "upgrade-stale-sandbox-vitest job must write artifacts under e2e-artifacts/vitest/upgrade-stale-sandbox",
+    );
+  }
+  if (jobEnv.NEMOCLAW_CLI_BIN !== "${{ github.workspace }}/bin/nemoclaw.js") {
+    errors.push("upgrade-stale-sandbox-vitest job must point NEMOCLAW_CLI_BIN at the repo CLI");
+  }
+  if (jobEnv.OPENSHELL_GATEWAY !== "nemoclaw") {
+    errors.push("upgrade-stale-sandbox-vitest job must force OPENSHELL_GATEWAY=nemoclaw");
+  }
+  if (jobEnv.NEMOCLAW_SANDBOX_NAME !== "e2e-upgrade-stale") {
+    errors.push(
+      "upgrade-stale-sandbox-vitest job must set NEMOCLAW_SANDBOX_NAME=e2e-upgrade-stale",
+    );
+  }
+  if ("DOCKER_CONFIG" in jobEnv) {
+    errors.push("upgrade-stale-sandbox-vitest job must not set DOCKER_CONFIG at job level");
+  }
+  for (const secret of ["NVIDIA_INFERENCE_API_KEY", ...COMMON_SECRET_ENV_NAMES]) {
+    requireEnvDoesNotExposeSecret(errors, "upgrade-stale-sandbox-vitest job", jobEnv, secret);
+  }
+
+  const steps = asSteps(job.steps);
+  requireNoDispatchInputInterpolation(errors, steps);
+  for (const step of steps) {
+    const stepName = `upgrade-stale-sandbox-vitest step '${step.name ?? step.uses ?? "<unnamed>"}'`;
+    const stepEnv = asRecord(step.env);
+    if (step.name !== "Run upgrade stale sandbox live Vitest test") {
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_INFERENCE_API_KEY");
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_API_KEY");
+    }
+    if (step.name !== "Authenticate to Docker Hub") {
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_USERNAME");
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_TOKEN");
+      requireNoDockerHubAuthInRun(errors, stepName, stringValue(step.run));
+    }
+    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "GITHUB_TOKEN");
+  }
+
+  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
+  if (!checkout) errors.push("upgrade-stale-sandbox-vitest job missing checkout step");
+  requireFullShaAction(errors, checkout, "upgrade-stale-sandbox-vitest checkout");
+  if (asRecord(checkout?.with)["persist-credentials"] !== false) {
+    errors.push("upgrade-stale-sandbox-vitest checkout step must set persist-credentials=false");
+  }
+
+  const configureDockerAuth = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Configure isolated Docker auth directory",
+  );
+  requireRunContains(
+    errors,
+    configureDockerAuth,
+    'echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-upgrade-stale-sandbox" >> "$GITHUB_ENV"',
+  );
+
+  const dockerHubAuth = requireJobStep(errors, jobName, steps, "Authenticate to Docker Hub");
+  const dockerHubEnv = asRecord(dockerHubAuth?.env);
+  if (dockerHubEnv.DOCKERHUB_USERNAME !== "${{ secrets.DOCKERHUB_USERNAME }}") {
+    errors.push(
+      "upgrade-stale-sandbox-vitest Docker Hub auth must receive DOCKERHUB_USERNAME from secrets",
+    );
+  }
+  if (dockerHubEnv.DOCKERHUB_TOKEN !== "${{ secrets.DOCKERHUB_TOKEN }}") {
+    errors.push(
+      "upgrade-stale-sandbox-vitest Docker Hub auth must receive DOCKERHUB_TOKEN from secrets",
+    );
+  }
+  requireRunContains(errors, dockerHubAuth, 'mkdir -p "${DOCKER_CONFIG}"');
+  requireRunContains(errors, dockerHubAuth, 'chmod 700 "${DOCKER_CONFIG}"');
+  requireRunContains(errors, dockerHubAuth, "docker login docker.io");
+  requireRunContains(errors, dockerHubAuth, "continuing with anonymous pulls");
+
+  const setupNode = namedStep(steps, "Set up Node");
+  if (!setupNode) errors.push("upgrade-stale-sandbox-vitest job missing step: Set up Node");
+  requireFullShaAction(errors, setupNode, "upgrade-stale-sandbox-vitest setup-node");
+
+  const installRootDependencies = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Install root dependencies",
+  );
+  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
+
+  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
+  requireRunContains(errors, buildCli, "npm run build:cli");
+
+  const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell CLI");
+  requireRunContains(errors, installOpenShell, "bash scripts/install-openshell.sh");
+  requireRunContains(errors, installOpenShell, "env -u DOCKER_CONFIG");
+  requireRunContains(errors, installOpenShell, "-u DOCKERHUB_USERNAME");
+  requireRunContains(errors, installOpenShell, "-u DOCKERHUB_TOKEN");
+  requireRunContains(errors, installOpenShell, "-u NVIDIA_INFERENCE_API_KEY");
+  requireRunContains(errors, installOpenShell, "-u NVIDIA_API_KEY");
+  requireRunContains(errors, installOpenShell, "-u GITHUB_TOKEN");
+
+  const runVitest = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Run upgrade stale sandbox live Vitest test",
+  );
+  const runVitestEnv = asRecord(runVitest?.env);
+  if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
+    errors.push(
+      "upgrade-stale-sandbox-vitest step must receive NVIDIA_INFERENCE_API_KEY from secrets",
+    );
+  }
+  requireRunContains(errors, runVitest, "OPENSHELL_BIN");
+  requireRunContains(errors, runVitest, "npx vitest run --project e2e-scenarios-live");
+  requireRunContains(errors, runVitest, "test/e2e-scenario/live/upgrade-stale-sandbox.test.ts");
+
+  const upload = requireJobStep(errors, jobName, steps, "Upload upgrade stale sandbox artifacts");
+  requireFullShaAction(errors, upload, "upgrade-stale-sandbox-vitest upload-artifact");
+  const uploadWith = asRecord(upload?.with);
+  if (uploadWith.name !== "e2e-vitest-scenarios-upgrade-stale-sandbox") {
+    errors.push("upgrade-stale-sandbox-vitest artifact upload name must be stable");
+  }
+  const uploadPath = stringValue(uploadWith.path);
+  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/vitest/upgrade-stale-sandbox/");
+  if (uploadWith["include-hidden-files"] !== false) {
+    errors.push(
+      "upgrade-stale-sandbox-vitest artifact upload must set include-hidden-files: false",
+    );
+  }
+  if (uploadWith["if-no-files-found"] !== "ignore") {
+    errors.push(
+      "upgrade-stale-sandbox-vitest artifact upload must ignore missing fixture artifacts",
+    );
+  }
+  if (uploadWith["retention-days"] !== 14) {
+    errors.push("upgrade-stale-sandbox-vitest artifact upload retention-days must be 14");
+  }
+
+  const cleanup = requireJobStep(errors, jobName, steps, "Clean up Docker auth");
+  requireRunContains(errors, cleanup, "docker logout docker.io");
+  requireRunContains(errors, cleanup, 'rm -rf "${DOCKER_CONFIG}"');
+}
+
 function validateTokenRotationVitestJob(errors: string[], jobs: WorkflowRecord): void {
   const jobName = "token-rotation-vitest";
   const job = asRecord(jobs[jobName]);
@@ -3804,6 +3970,7 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   validateRebuildOpenClawVitestJob(errors, jobs);
   validateSandboxRebuildVitestJob(errors, jobs);
   validateStateBackupRestoreVitestJob(errors, jobs);
+  validateUpgradeStaleSandboxVitestJob(errors, jobs);
   validateTokenRotationVitestJob(errors, jobs);
   validateMessagingCompatibleEndpointVitestJob(errors, jobs);
   validateFreeStandingJobSelector(

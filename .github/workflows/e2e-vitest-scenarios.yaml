@@ -791,6 +791,71 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  brave-search-vitest:
+    needs: generate-matrix
+    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',brave-search-vitest,') || contains(format(',{0},', inputs.scenarios), ',brave-search,') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      FREE_STANDING_VITEST_JOB: "1"
+      FREE_STANDING_SCENARIO_ID: "brave-search"
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/brave-search
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+      NEMOCLAW_SANDBOX_NAME: "e2e-brave-search"
+      OPENSHELL_GATEWAY: "nemoclaw"
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build CLI
+        run: npm run build:cli
+
+      - name: Install OpenShell CLI
+        run: bash scripts/install-openshell.sh
+
+      - name: Run Brave search live Vitest test
+        env:
+          BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
+          if command -v openshell >/dev/null 2>&1; then
+            OPENSHELL_BIN="$(command -v openshell)"
+          elif [ -x "$HOME/.local/bin/openshell" ]; then
+            OPENSHELL_BIN="$HOME/.local/bin/openshell"
+          else
+            echo "::error::OpenShell CLI not found after install"
+            ls -la /usr/local/bin/openshell "$HOME/.local/bin/openshell" 2>&1 || true
+            exit 1
+          fi
+          export OPENSHELL_BIN
+          "$OPENSHELL_BIN" --version
+          npx vitest run --project e2e-scenarios-live             test/e2e-scenario/live/brave-search.test.ts             --silent=false --reporter=default
+
+      - name: Upload Brave search artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-vitest-scenarios-brave-search
+          path: e2e-artifacts/vitest/brave-search/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
+
   ollama-auth-proxy-vitest:
     needs: generate-matrix
     if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',ollama-auth-proxy-vitest,') || contains(format(',{0},', inputs.scenarios), ',ollama-auth-proxy,') }}
@@ -1848,6 +1913,113 @@ jobs:
           include-hidden-files: false
           if-no-files-found: ignore
           retention-days: 14
+
+  upgrade-stale-sandbox-vitest:
+    needs: generate-matrix
+    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',upgrade-stale-sandbox-vitest,') || contains(format(',{0},', inputs.scenarios), ',upgrade-stale-sandbox,') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    env:
+      FREE_STANDING_VITEST_JOB: "1"
+      FREE_STANDING_SCENARIO_ID: "upgrade-stale-sandbox"
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/upgrade-stale-sandbox
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+      NEMOCLAW_SANDBOX_NAME: "e2e-upgrade-stale"
+      OPENSHELL_GATEWAY: "nemoclaw"
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Configure isolated Docker auth directory
+        run: echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-upgrade-stale-sandbox" >> "$GITHUB_ENV"
+
+      - name: Authenticate to Docker Hub
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          mkdir -p "${DOCKER_CONFIG}"
+          chmod 700 "${DOCKER_CONFIG}"
+          login_succeeded=0
+          for attempt in 1 2 3; do
+            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
+              login_succeeded=1
+              break
+            fi
+            if [[ "$attempt" -lt 3 ]]; then
+              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
+              sleep 5
+            fi
+          done
+          if [[ "$login_succeeded" -ne 1 ]]; then
+            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
+          fi
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build CLI
+        run: npm run build:cli
+
+      - name: Install OpenShell CLI
+        run: |
+          set -euo pipefail
+          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_INFERENCE_API_KEY -u NVIDIA_API_KEY -u GITHUB_TOKEN \
+            bash scripts/install-openshell.sh
+
+      - name: Run upgrade stale sandbox live Vitest test
+        env:
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
+          if command -v openshell >/dev/null 2>&1; then
+            OPENSHELL_BIN="$(command -v openshell)"
+          elif [ -x "$HOME/.local/bin/openshell" ]; then
+            OPENSHELL_BIN="$HOME/.local/bin/openshell"
+          else
+            echo "::error::OpenShell CLI not found after install"
+            ls -la /usr/local/bin/openshell "$HOME/.local/bin/openshell" 2>&1 || true
+            exit 1
+          fi
+          export OPENSHELL_BIN
+          "$OPENSHELL_BIN" --version
+          npx vitest run --project e2e-scenarios-live \
+            test/e2e-scenario/live/upgrade-stale-sandbox.test.ts \
+            --silent=false --reporter=default
+
+      - name: Upload upgrade stale sandbox artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-vitest-scenarios-upgrade-stale-sandbox
+          path: e2e-artifacts/vitest/upgrade-stale-sandbox/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Clean up Docker auth
+        if: always()
+        run: |
+          set -euo pipefail
+          docker logout docker.io || true
+          rm -rf "${DOCKER_CONFIG}"
 
   double-onboard-vitest:
     needs: generate-matrix
@@ -3506,6 +3678,109 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  device-auth-health-vitest:
+    needs: generate-matrix
+    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',device-auth-health-vitest,') || contains(format(',{0},', inputs.scenarios), ',device-auth-health,') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      FREE_STANDING_VITEST_JOB: "1"
+      FREE_STANDING_SCENARIO_ID: "device-auth-health"
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/device-auth-health
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+      NEMOCLAW_SANDBOX_NAME: "e2e-health-auth"
+      NEMOCLAW_DASHBOARD_PORT: "18789"
+      OPENSHELL_GATEWAY: "nemoclaw"
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Configure isolated Docker auth directory
+        run: echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-device-auth-health" >> "$GITHUB_ENV"
+
+      - name: Authenticate to Docker Hub
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          mkdir -p "${DOCKER_CONFIG}"
+          chmod 700 "${DOCKER_CONFIG}"
+          login_succeeded=0
+          for attempt in 1 2 3; do
+            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
+              login_succeeded=1
+              break
+            fi
+            if [[ "$attempt" -lt 3 ]]; then
+              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
+              sleep 5
+            fi
+          done
+          if [[ "$login_succeeded" -ne 1 ]]; then
+            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
+          fi
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build CLI
+        run: npm run build:cli
+
+      - name: Install OpenShell CLI
+        run: bash scripts/install-openshell.sh
+
+      - name: Run device auth health live Vitest test
+        env:
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
+          if command -v openshell >/dev/null 2>&1; then
+            OPENSHELL_BIN="$(command -v openshell)"
+          elif [ -x "$HOME/.local/bin/openshell" ]; then
+            OPENSHELL_BIN="$HOME/.local/bin/openshell"
+          else
+            echo "::error::OpenShell CLI not found after install"
+            ls -la /usr/local/bin/openshell "$HOME/.local/bin/openshell" 2>&1 || true
+            exit 1
+          fi
+          export OPENSHELL_BIN
+          "$OPENSHELL_BIN" --version
+          npx vitest run --project e2e-scenarios-live             test/e2e-scenario/live/device-auth-health.test.ts             --silent=false --reporter=default
+
+      - name: Upload device auth health artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-vitest-scenarios-device-auth-health
+          path: e2e-artifacts/vitest/device-auth-health/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Clean up Docker auth
+        if: always()
+        run: |
+          set -euo pipefail
+          docker logout docker.io || true
+          rm -rf "${DOCKER_CONFIG}"
+
   channels-add-remove-vitest:
     needs: generate-matrix
     if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',channels-add-remove-vitest,') || contains(format(',{0},', inputs.scenarios), ',channels-add-remove,') }}
@@ -3741,6 +4016,8 @@ jobs:
         inference-routing-vitest,
         cloud-inference-vitest,
         hermes-inference-switch-vitest,
+        brave-search-vitest,
+
         ollama-auth-proxy-vitest,
 
         cron-preflight-inference-local-vitest,
@@ -3757,6 +4034,7 @@ jobs:
         rebuild-openclaw-vitest,
         sandbox-rebuild-vitest,
         state-backup-restore-vitest,
+        upgrade-stale-sandbox-vitest,
         token-rotation-vitest,
         messaging-compatible-endpoint-vitest,
         messaging-providers-vitest,
@@ -3781,6 +4059,7 @@ jobs:
         bedrock-runtime-compatible-anthropic-vitest,
         issue-2478-crash-loop-recovery-vitest,
         gateway-health-honest-vitest,
+        device-auth-health-vitest,
         channels-add-remove-vitest,
       ]
     if: ${{ always() && github.event_name == 'workflow_dispatch' }}

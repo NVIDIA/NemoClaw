@@ -76,7 +76,16 @@ npx vitest run --project e2e-vitest-support --silent=false --reporter=default
 # Opt-in live Vitest scenarios
 npm run build:cli
 NEMOCLAW_RUN_E2E_SCENARIOS=1 npx vitest run --project e2e-scenarios-live --silent=false --reporter=default
+
+# Force two retries locally (three total attempts) for external-service flakes
+NEMOCLAW_RUN_E2E_SCENARIOS=1 NEMOCLAW_E2E_RETRIES=2 npx vitest run --project e2e-scenarios-live
 ```
+
+Live Vitest E2E projects retry failed tests automatically in CI. The default is
+2 retries after the first failure (3 total attempts). Local opt-in runs default
+to no full-test retry; set `NEMOCLAW_E2E_RETRIES=<count>` to override either
+local or CI behavior. Overrides are capped at 5 retries so a typo cannot create
+unbounded credentialed live infrastructure attempts.
 
 The retired `--emit-matrix`, direct `--scenarios` execution, and `--plan-only`
 paths must not be reintroduced.
