@@ -13,6 +13,7 @@ import {
   CLI,
   chatContent,
   cleanupHermesSwitch,
+  ensureCompatibleAnthropicSwitchProvider,
   env,
   envHash,
   expectedApiMode,
@@ -64,6 +65,7 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
 
     const install = await installHermes(host, apiKey);
     expect(install.exitCode, resultText(install)).toBe(0);
+    await ensureCompatibleAnthropicSwitchProvider(host, cleanup);
 
     const pidBefore = await hermesGatewayPid(sandbox, "pid-before");
     const envHashBefore = await envHash(sandbox, "env-hash-before");
