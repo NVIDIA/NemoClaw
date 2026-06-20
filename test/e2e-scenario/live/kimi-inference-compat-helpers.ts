@@ -67,10 +67,11 @@ export async function startKimiMock(): Promise<KimiMock> {
   const server = http.createServer((req, res) => {
     handleKimiRequest(req, res, requests);
   });
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  await new Promise<void>((resolve) => server.listen(0, "0.0.0.0", resolve));
   const address = server.address() as AddressInfo;
+  const advertisedHost = process.env.NEMOCLAW_KIMI_MOCK_HOST ?? "host.openshell.internal";
   return {
-    baseUrl: `http://127.0.0.1:${address.port}/v1`,
+    baseUrl: `http://${advertisedHost}:${address.port}/v1`,
     requests,
     close: () => new Promise((resolve) => server.close(() => resolve())),
   };
