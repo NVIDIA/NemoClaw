@@ -23,10 +23,22 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
-const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-upgrade-stale";
+const BLUEPRINT_RELPATH = path.join("nemoclaw-blueprint", "blueprint.yaml");
+const BLUEPRINT = path.join(REPO_ROOT, BLUEPRINT_RELPATH);
+const TEST_SANDBOX_PREFIX = "e2e-upgrade-stale";
+const SANDBOX_NAME =
+  process.env.NEMOCLAW_SANDBOX_NAME ??
+  [TEST_SANDBOX_PREFIX, process.env.GITHUB_RUN_ID, process.env.GITHUB_RUN_ATTEMPT, process.pid]
+    .filter(Boolean)
+    .join("-");
 validateSandboxName(SANDBOX_NAME);
+if (!SANDBOX_NAME.startsWith(TEST_SANDBOX_PREFIX)) {
+  throw new Error(
+    `upgrade-stale-sandbox live test is destructive and only accepts sandbox names with prefix ${TEST_SANDBOX_PREFIX}; got ${SANDBOX_NAME}`,
+  );
+}
 const OLD_OPENCLAW_VERSION = "2026.3.11";
-const OLD_BASE_TAG = "nemoclaw-old-base:e2e-upgrade-stale";
+const OLD_BASE_TAG = `nemoclaw-old-base:${SANDBOX_NAME.toLowerCase().replace(/[^a-z0-9_.-]+/g, "-")}`;
 const REGISTRY_FILE = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
 const SESSION_FILE = path.join(os.homedir(), ".nemoclaw", "onboard-session.json");
 const LIVE_TIMEOUT_MS = 45 * 60_000;
@@ -57,17 +69,65 @@ async function bestEffort(run: () => Promise<unknown>): Promise<void> {
   }
 }
 
-function readJsonFile(file: string): Record<string, unknown> {
+function readJsonFile<T>(file: string, fallback: T): T {
   try {
-    return JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
+    if (!fs.existsSync(file)) return fallback;
+    return JSON.parse(fs.readFileSync(file, "utf8")) as T;
   } catch {
-    return {};
+    return fallback;
   }
 }
 
+function writeJsonFile(file: string, value: unknown): void {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+}
+
+interface FileSnapshot {
+  exists: boolean;
+  content?: string;
+}
+
+function snapshotFile(file: string): FileSnapshot {
+  return fs.existsSync(file)
+    ? { exists: true, content: fs.readFileSync(file, "utf8") }
+    : { exists: false };
+}
+
+function restoreFile(file: string, snapshot: FileSnapshot): void {
+  if (!snapshot.exists) {
+    fs.rmSync(file, { force: true });
+    return;
+  }
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, snapshot.content ?? "", "utf8");
+}
+
+function createOldBaseBuildContext(): string {
+  const buildContext = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-upgrade-stale-base-"));
+  fs.mkdirSync(path.join(buildContext, path.dirname(BLUEPRINT_RELPATH)), { recursive: true });
+  const original = fs.readFileSync(BLUEPRINT, "utf8");
+  const minOpenClawVersion = /^(\s*min_openclaw_version:\s*).*/m;
+  expect(
+    minOpenClawVersion.test(original),
+    "blueprint min_openclaw_version line was not found",
+  ).toBe(true);
+  fs.writeFileSync(
+    path.join(buildContext, BLUEPRINT_RELPATH),
+    original.replace(minOpenClawVersion, `$1"${OLD_OPENCLAW_VERSION}"`),
+    "utf8",
+  );
+  return buildContext;
+}
+
 function writeStaleRegistryEntry(): void {
-  fs.mkdirSync(path.dirname(REGISTRY_FILE), { recursive: true });
-  const session = readJsonFile(SESSION_FILE);
+  // Invalid state under test: an OpenShell sandbox exists with an intentionally
+  // old OpenClaw image, while NemoClaw's local registry/session mark that same
+  // sandbox complete. Current onboard rejects this old version at the blueprint
+  // gate, so the fixture boundary is limited to host ~/.nemoclaw metadata after
+  // sandbox creation. Keep this source-of-truth shim only until NemoClaw has a
+  // first-class old-version sandbox fixture/profile for upgrade testing.
+  const session = readJsonFile<Record<string, unknown>>(SESSION_FILE, {});
   const envProvider =
     process.env.NEMOCLAW_PROVIDER === "custom"
       ? "compatible-endpoint"
@@ -82,36 +142,31 @@ function writeStaleRegistryEntry(): void {
     process.env.NEMOCLAW_COMPAT_MODEL ||
     "nvidia/nvidia/nemotron-3-super-v3";
 
-  fs.writeFileSync(
-    REGISTRY_FILE,
-    `${JSON.stringify(
-      {
-        sandboxes: {
-          [SANDBOX_NAME]: {
-            name: SANDBOX_NAME,
-            createdAt: new Date().toISOString(),
-            model,
-            provider,
-            gpuEnabled: false,
-            policies: [],
-            policyTier: null,
-            agent: null,
-            agentVersion: OLD_OPENCLAW_VERSION,
-          },
-        },
-        defaultSandbox: SANDBOX_NAME,
-      },
-      null,
-      2,
-    )}\n`,
-  );
+  const registry = readJsonFile<{
+    sandboxes?: Record<string, Record<string, unknown>>;
+    defaultSandbox?: string;
+  }>(REGISTRY_FILE, {});
+  registry.sandboxes = registry.sandboxes ?? {};
+  registry.sandboxes[SANDBOX_NAME] = {
+    name: SANDBOX_NAME,
+    createdAt: new Date().toISOString(),
+    model,
+    provider,
+    gpuEnabled: false,
+    policies: [],
+    policyTier: null,
+    agent: null,
+    agentVersion: OLD_OPENCLAW_VERSION,
+  };
+  registry.defaultSandbox = SANDBOX_NAME;
+  writeJsonFile(REGISTRY_FILE, registry);
 
   const updatedSession = {
     ...session,
     sandboxName: SANDBOX_NAME,
     status: "complete",
   };
-  fs.writeFileSync(SESSION_FILE, `${JSON.stringify(updatedSession, null, 2)}\n`);
+  writeJsonFile(SESSION_FILE, updatedSession);
 }
 
 test.skipIf(!shouldRunLiveE2EScenarios())(
@@ -149,6 +204,13 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       }
       skip(`Docker is required for stale sandbox upgrade E2E: ${resultText(dockerInfo)}`);
     }
+
+    const registrySnapshot = snapshotFile(REGISTRY_FILE);
+    const sessionSnapshot = snapshotFile(SESSION_FILE);
+    cleanup.add(`restore NemoClaw state files for ${SANDBOX_NAME}`, () => {
+      restoreFile(REGISTRY_FILE, registrySnapshot);
+      restoreFile(SESSION_FILE, sessionSnapshot);
+    });
 
     cleanup.add(`destroy stale sandbox ${SANDBOX_NAME}`, async () => {
       await bestEffort(() =>
@@ -218,23 +280,12 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       env: commandEnv(),
       timeoutMs: 120_000,
     });
-    expect(
-      deleteInstalledSandbox.exitCode === 0 || deleteInstalledSandbox.exitCode === 1,
-      resultText(deleteInstalledSandbox),
-    ).toBe(true);
+    if (deleteInstalledSandbox.exitCode !== 0) {
+      expect(deleteInstalledSandbox.exitCode, resultText(deleteInstalledSandbox)).toBe(1);
+      expect(resultText(deleteInstalledSandbox)).toMatch(/not found|does not exist|no sandbox/i);
+    }
 
-    const blueprint = path.join(REPO_ROOT, "nemoclaw-blueprint", "blueprint.yaml");
-    const originalBlueprint = fs.readFileSync(blueprint, "utf8");
-    cleanup.add("restore blueprint after old OpenClaw build", () => {
-      fs.writeFileSync(blueprint, originalBlueprint);
-    });
-    fs.writeFileSync(
-      blueprint,
-      originalBlueprint.replace(
-        /min_openclaw_version:.*/u,
-        `min_openclaw_version: "${OLD_OPENCLAW_VERSION}"`,
-      ),
-    );
+    const oldBaseBuildContext = createOldBaseBuildContext();
     try {
       const buildOldBase = await host.command(
         "docker",
@@ -246,7 +297,7 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
           path.join(REPO_ROOT, "Dockerfile.base"),
           "-t",
           OLD_BASE_TAG,
-          REPO_ROOT,
+          oldBaseBuildContext,
         ],
         {
           artifactName: "phase-2-build-old-openclaw-base",
@@ -256,7 +307,7 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       );
       expect(buildOldBase.exitCode, resultText(buildOldBase)).toBe(0);
     } finally {
-      fs.writeFileSync(blueprint, originalBlueprint);
+      fs.rmSync(oldBaseBuildContext, { recursive: true, force: true });
     }
 
     const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-old-openclaw-"));
@@ -328,6 +379,7 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       redactionValues: [apiKey],
       timeoutMs: 120_000,
     });
+    expect(staleCheck.exitCode, resultText(staleCheck)).toBe(0);
     expect(resultText(staleCheck)).toMatch(/stale|need upgrading/i);
     expect(resultText(staleCheck)).not.toMatch(/up to date/i);
 
@@ -363,6 +415,7 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       redactionValues: [apiKey],
       timeoutMs: 120_000,
     });
+    expect(cleanCheck.exitCode, resultText(cleanCheck)).toBe(0);
     expect(resultText(cleanCheck)).toMatch(/up to date/i);
   },
 );

@@ -1823,7 +1823,10 @@ jobs:
         run: npm run build:cli
 
       - name: Install OpenShell CLI
-        run: bash scripts/install-openshell.sh
+        run: |
+          set -euo pipefail
+          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_INFERENCE_API_KEY -u NVIDIA_API_KEY -u GITHUB_TOKEN \
+            bash scripts/install-openshell.sh
 
       - name: Run upgrade stale sandbox live Vitest test
         env:
