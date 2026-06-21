@@ -1139,6 +1139,10 @@ export async function collectTrustedPreviousAdvisorReview(
   token: string,
   issueComments: unknown[],
 ): Promise<PreviousAdvisorReview | null> {
+  // Kept with the deterministic context collector for now: the provenance
+  // decision depends on GitHub issue comments, Actions-run metadata, and the
+  // exact previous-review body that is injected into prompt context.
+  //
   // Source-of-truth model: issue comments are mutable, replayable PR context.
   // A previous advisor comment is accepted only when its hidden metadata is
   // bound to the actual comment id and to a PR Review / Advisor workflow run
@@ -1148,7 +1152,7 @@ export async function collectTrustedPreviousAdvisorReview(
 
   const candidates = previousAdvisorCandidates(issueComments);
   const trustedCommentIds = new Set<string>();
-  for (const candidate of candidates.slice(-10)) {
+  for (const candidate of candidates) {
     if (await isTrustedAdvisorRun(repo, token, candidate)) {
       trustedCommentIds.add(candidate.metadata.commentId);
     }

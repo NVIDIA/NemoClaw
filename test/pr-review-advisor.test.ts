@@ -5,7 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import Ajv2020 from "ajv/dist/2020.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { githubGraphql } from "../tools/advisors/github.mts";
+import { githubGraphql, upsertStickyComment } from "../tools/advisors/github.mts";
 import {
   ADVISOR_OPENAI_COMPATIBLE_BASE_URL,
   DEFAULT_ADVISOR_MODEL,
@@ -681,6 +681,117 @@ describe("PR review advisor", () => {
     ]);
 
     expect(previous).toMatchObject({ body: expect.stringContaining("trusted") });
+  });
+
+  it("rejects previous advisor comments when run attempt does not match", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        name: "PR Review / Advisor",
+        head_sha: "abc1234",
+        event: "pull_request",
+        run_attempt: 2,
+        run_started_at: "2026-01-01T00:00:00Z",
+        updated_at: "2026-01-01T00:10:00Z",
+      }),
+    } as Response);
+
+    const previous = await collectTrustedPreviousAdvisorReview("NVIDIA/NemoClaw", "token", [
+      {
+        id: 1,
+        updated_at: "2026-01-01T00:05:00Z",
+        user: { login: "github-actions[bot]" },
+        body: "<!-- nemoclaw-pr-review-advisor -->\n<!-- head_sha: abc1234; recommendation: merge_after_fixes; run_id: 99; run_attempt: 1; comment_id: 1 -->\ntrusted",
+      },
+    ]);
+
+    expect(previous).toBeNull();
+  });
+
+  it("keeps previous advisor provenance when many later bot markers are untrusted", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        name: "PR Review / Advisor",
+        head_sha: "abc1234",
+        event: "pull_request",
+        run_attempt: 1,
+        run_started_at: "2026-01-01T00:00:00Z",
+        updated_at: "2026-01-01T00:10:00Z",
+      }),
+    } as Response);
+    const comments = [
+      {
+        id: 1,
+        updated_at: "2026-01-01T00:05:00Z",
+        user: { login: "github-actions[bot]" },
+        body: "<!-- nemoclaw-pr-review-advisor -->\n<!-- head_sha: abc1234; recommendation: merge_after_fixes; run_id: 99; run_attempt: 1; comment_id: 1 -->\ntrusted",
+      },
+      ...Array.from({ length: 12 }, (_, index) => ({
+        id: index + 2,
+        updated_at: "2026-01-01T00:20:00Z",
+        user: { login: "github-actions[bot]" },
+        body: `<!-- nemoclaw-pr-review-advisor -->\n<!-- head_sha: abc1234; recommendation: merge_after_fixes; run_id: 99; run_attempt: 1; comment_id: ${index + 2} -->\nreplay ${index}`,
+      })),
+    ];
+
+    const previous = await collectTrustedPreviousAdvisorReview(
+      "NVIDIA/NemoClaw",
+      "token",
+      comments,
+    );
+
+    expect(previous).toMatchObject({ body: expect.stringContaining("trusted") });
+  });
+
+  it("upserts sticky comments with created comment-scoped bodies", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce({ ok: true, text: async () => "[]" } as Response)
+      .mockResolvedValueOnce({ ok: true, text: async () => '{"id":123}' } as Response)
+      .mockResolvedValueOnce({ ok: true, text: async () => "{}" } as Response);
+
+    await upsertStickyComment({
+      repo: "NVIDIA/NemoClaw",
+      pr: "1",
+      token: "token",
+      marker: "<!-- marker -->",
+      body: "<!-- marker --> pending",
+      label: "test",
+      bodyForComment: (comment) => `<!-- marker --> comment_id=${comment.id}`,
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(String(fetchMock.mock.calls[2]?.[0])).toContain("issues/comments/123");
+    expect(JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body))).toEqual({
+      body: "<!-- marker --> comment_id=123",
+    });
+  });
+
+  it("upserts sticky comments with existing comment-scoped bodies", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce({
+        ok: true,
+        text: async () => '[{"id":7,"body":"<!-- marker --> old"}]',
+      } as Response)
+      .mockResolvedValueOnce({ ok: true, text: async () => "{}" } as Response);
+
+    await upsertStickyComment({
+      repo: "NVIDIA/NemoClaw",
+      pr: "1",
+      token: "token",
+      marker: "<!-- marker -->",
+      body: "<!-- marker --> pending",
+      label: "test",
+      bodyForComment: (comment) => `<!-- marker --> comment_id=${comment.id}`,
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain("issues/comments/7");
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({
+      body: "<!-- marker --> comment_id=7",
+    });
   });
 
   it("summarizes retry reasons for logs without echoing model-controlled text", () => {
