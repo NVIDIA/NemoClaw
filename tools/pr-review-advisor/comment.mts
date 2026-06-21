@@ -59,6 +59,7 @@ type ReviewAdvisorResult = {
 type CommentMetadata = {
   runId?: string;
   runAttempt?: string;
+  commentId?: string;
 };
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
@@ -95,18 +96,34 @@ async function main(): Promise<void> {
     readIfExists("artifacts/pr-review-advisor/pr-review-advisor-summary.md");
   if (!summary) throw new Error(`No PR review advisor summary found at ${summaryPath}`);
   const result = readJsonIfExists<ReviewAdvisorResult>(resultPath);
+  const baseMetadata = {
+    runId: process.env.GITHUB_RUN_ID,
+    runAttempt: process.env.GITHUB_RUN_ATTEMPT,
+  };
   const body = buildComment({
     summary,
     result,
     runUrl,
     marker: MARKER,
-    metadata: {
-      runId: process.env.GITHUB_RUN_ID,
-      runAttempt: process.env.GITHUB_RUN_ATTEMPT,
-    },
+    metadata: baseMetadata,
   });
 
-  await upsertStickyComment({ repo, pr, token, marker: MARKER, body, label: "PR review advisor" });
+  await upsertStickyComment({
+    repo,
+    pr,
+    token,
+    marker: MARKER,
+    body,
+    label: "PR review advisor",
+    bodyForComment: (comment) =>
+      buildComment({
+        summary,
+        result,
+        runUrl,
+        marker: MARKER,
+        metadata: { ...baseMetadata, commentId: String(comment.id) },
+      }),
+  });
 }
 
 export function buildComment({
@@ -156,6 +173,7 @@ function renderHiddenMetadata(result?: ReviewAdvisorResult, metadata?: CommentMe
       : undefined,
     metadata?.runId ? `run_id: ${safeMetadataValue(metadata.runId)}` : undefined,
     metadata?.runAttempt ? `run_attempt: ${safeMetadataValue(metadata.runAttempt)}` : undefined,
+    metadata?.commentId ? `comment_id: ${safeMetadataValue(metadata.commentId)}` : undefined,
   ].filter((field): field is string => Boolean(field));
   return fields.length > 0 ? `<!-- ${fields.join("; ")} -->\n` : "";
 }

@@ -1153,6 +1153,7 @@ type AdvisorCommentMetadata = {
   headSha: string;
   runId: string;
   runAttempt: string;
+  commentId: string;
   recommendation: SummaryRecommendation;
 };
 
@@ -1167,18 +1168,21 @@ function previousAdvisorCandidates(issueComments: unknown[]): PreviousAdvisorCan
     const body = stringOrUndefined(getPath<unknown>(comment, ["body"]));
     if (!body?.includes("<!-- nemoclaw-pr-review-advisor -->")) return [];
     const metadata = advisorHiddenMetadata(body);
-    return metadata ? [{ body: body.slice(0, 12000), metadata }] : [];
+    const commentId = getPath<number>(comment, ["id"]);
+    if (!metadata || String(commentId) !== metadata.commentId) return [];
+    return [{ body: body.slice(0, 12000), metadata }];
   });
 }
 
 function advisorHiddenMetadata(body: string): AdvisorCommentMetadata | undefined {
   const metadataComment = body.match(
-    /<!--\s*head_sha:\s*([^;\s>]+)(?:;\s*recommendation:\s*([^;\s>]+))?(?:;\s*run_id:\s*([^;\s>]+))?(?:;\s*run_attempt:\s*([^;\s>]+))?\s*-->/i,
+    /<!--\s*head_sha:\s*([^;\s>]+)(?:;\s*recommendation:\s*([^;\s>]+))?(?:;\s*run_id:\s*([^;\s>]+))?(?:;\s*run_attempt:\s*([^;\s>]+))?(?:;\s*comment_id:\s*([^;\s>]+))?\s*-->/i,
   );
   const headSha = metadataComment?.[1];
   const recommendation = metadataComment?.[2];
   const runId = metadataComment?.[3];
   const runAttempt = metadataComment?.[4];
+  const commentId = metadataComment?.[5];
   if (!headSha || !/^[0-9a-f]{7,40}$/i.test(headSha)) return undefined;
   if (
     !recommendation ||
@@ -1188,7 +1192,14 @@ function advisorHiddenMetadata(body: string): AdvisorCommentMetadata | undefined
   }
   if (!runId || !/^\d+$/.test(runId)) return undefined;
   if (!runAttempt || !/^\d+$/.test(runAttempt)) return undefined;
-  return { headSha, recommendation: recommendation as SummaryRecommendation, runId, runAttempt };
+  if (!commentId || !/^\d+$/.test(commentId)) return undefined;
+  return {
+    headSha,
+    recommendation: recommendation as SummaryRecommendation,
+    runId,
+    runAttempt,
+    commentId,
+  };
 }
 
 function hasAdvisorCommentAuthor(comment: unknown): boolean {

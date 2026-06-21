@@ -33,7 +33,7 @@ It intentionally does not report GitHub mergeability, branch protection, CI stat
 7. Opens one Pi session and reviews the PR as a short conversation: orientation/drift, security, acceptance/correctness/tests, then final JSON synthesis.
 8. Retries synthesis once when the model output is malformed or contains low-quality placeholder fields.
 9. Writes artifacts under `artifacts/pr-review-advisor/`.
-10. Posts or updates a sticky PR comment marked by `<!-- nemoclaw-pr-review-advisor -->` plus hidden head-SHA/run metadata for follow-up reviews.
+10. Posts or updates a sticky PR comment marked by `<!-- nemoclaw-pr-review-advisor -->` plus hidden head-SHA, run, and comment-id metadata for follow-up reviews.
 
 The workflow is advisory and must not be configured as a required status check. Making it required can
 create circular wait behavior and defeats the goal of letting it observe settled required-check state.
@@ -88,7 +88,7 @@ If present, this token is used for sticky PR comments. Otherwise the workflow fa
 - `context/security-context.json` — deterministic security-risk context.
 - `context/validation-context.json` — deterministic acceptance, source-of-truth, and static test-inventory context.
 - `context/pr.diff` — truncated PR diff used by the advisor.
-- `context/previous-advisor-review.md` — previous sticky PR Review Advisor comment when one exists.
+- `context/previous-advisor-review.md` — previous sticky PR Review Advisor comment when one exists and its hidden run/comment metadata validates.
 - `pr-review-advisor-raw-output.txt` — raw multi-turn advisor transcript and diagnostics.
 - `pr-review-advisor-retry-raw-output.txt` — raw retry transcript when retry synthesis runs.
 - `pr-review-advisor-result.json` — parsed advisor response or execution metadata.
