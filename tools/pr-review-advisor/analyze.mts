@@ -954,10 +954,11 @@ function simplificationSignalForAddedLine(
 
 function computeSimpleLargeFileDeltas(changedFiles: Set<string>): SimplificationSignal[] {
   return [...changedFiles]
-    .filter((file) => /^(tools\/pr-review-advisor|src|nemoclaw\/src)\/.*\.mts?$/.test(file))
+    .filter((file) => /^(tools\/pr-review-advisor|src|nemoclaw\/src)\/.*\.(?:ts|mts)$/.test(file))
     .flatMap((file) => {
-      if (!fs.existsSync(file)) return [];
-      const lines = countLines(fs.readFileSync(file, "utf8"));
+      const text = readChangedRegularFilePrefix(file, 200000);
+      if (text === null) return [];
+      const lines = countLines(text);
       if (lines < 500) return [];
       return [
         {

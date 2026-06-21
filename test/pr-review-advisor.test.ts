@@ -522,6 +522,60 @@ diff --git a/test/example.test.ts b/test/example.test.ts
     );
   });
 
+  it("detects large TypeScript simplification signals with safe file reads", () => {
+    const largePath = path.join(ROOT, "tools", "pr-review-advisor", ".tmp-large-test.ts");
+    const smallPath = path.join(ROOT, "tools", "pr-review-advisor", ".tmp-small-test.ts");
+    fs.writeFileSync(
+      largePath,
+      `${Array.from({ length: 501 }, (_, index) => `line${index}`).join("\n")}\n`,
+    );
+    fs.writeFileSync(smallPath, "const small = true;\n");
+    try {
+      const signals = detectSimplificationSignals(
+        [path.relative(ROOT, largePath), path.relative(ROOT, smallPath)],
+        "",
+      );
+
+      expect(signals).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            kind: "large_file_growth",
+            file: path.relative(ROOT, largePath),
+          }),
+        ]),
+      );
+      expect(signals.some((signal) => signal.file === path.relative(ROOT, smallPath))).toBe(false);
+    } finally {
+      fs.rmSync(largePath, { force: true });
+      fs.rmSync(smallPath, { force: true });
+    }
+  });
+
+  it("skips symlinked large-file simplification candidates", () => {
+    const linkPath = path.join(ROOT, "tools", "pr-review-advisor", ".tmp-large-link.mts");
+    const outside = fs.mkdtempSync(path.join(ROOT, "..", ".tmp-large-outside-"));
+    const outsideFile = path.join(outside, "outside.mts");
+    fs.writeFileSync(
+      outsideFile,
+      `${Array.from({ length: 501 }, (_, index) => `secret${index}`).join("\n")}\n`,
+    );
+    try {
+      fs.symlinkSync(outsideFile, linkPath);
+    } catch {
+      fs.rmSync(outside, { recursive: true, force: true });
+      return;
+    }
+
+    try {
+      const signals = detectSimplificationSignals([path.relative(ROOT, linkPath)], "");
+
+      expect(signals).toEqual([]);
+    } finally {
+      fs.rmSync(linkPath, { force: true });
+      fs.rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
   it("detects localized patch signals from added diff lines", () => {
     const signals =
       detectLocalizedPatchSignals(`diff --git a/src/lib/example.ts b/src/lib/example.ts
