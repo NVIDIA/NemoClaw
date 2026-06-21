@@ -66,6 +66,9 @@ navigation:
               - page: "Set Up Task-Specific Sub-Agents"
                 path: inference/set-up-sub-agent.mdx
                 slug: set-up-sub-agent
+              - page: "Declarative Multi-Agent Manifest"
+                path: inference/declarative-agents-manifest.mdx
+                slug: declarative-agents-manifest
           - section: "Manage Sandboxes"
             slug: manage-sandboxes
             collapsed: open-by-default
@@ -138,6 +141,9 @@ navigation:
             slug: reference
             collapsed: open-by-default
             contents:
+              - page: "Enterprise Readiness"
+                path: _build/agent-variants/reference/enterprise-readiness.openclaw.generated.mdx
+                slug: enterprise-readiness
               - page: "Architecture Details"
                 path: _build/agent-variants/reference/architecture.openclaw.generated.mdx
                 slug: architecture
@@ -275,6 +281,9 @@ navigation:
             slug: reference
             collapsed: open-by-default
             contents:
+              - page: "Enterprise Readiness"
+                path: _build/agent-variants/reference/enterprise-readiness.hermes.generated.mdx
+                slug: enterprise-readiness
               - page: "Architecture Details"
                 path: _build/agent-variants/reference/architecture.hermes.generated.mdx
                 slug: architecture

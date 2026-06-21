@@ -22,6 +22,10 @@ import { shellQuote } from "../runner";
 export const HERMES_SECRET_BOUNDARY_VALIDATOR_PATH =
   "/usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py";
 
+export const SECRET_BOUNDARY_REFUSED_MARKER = "SECRET_BOUNDARY_REFUSED";
+export const SECRET_BOUNDARY_OK_MARKER = "SECRET_BOUNDARY_OK";
+export const SECRET_BOUNDARY_VALIDATOR_MISSING_MARKER = "SECRET_BOUNDARY_VALIDATOR_MISSING";
+
 const HERMES_GATEWAY_PROC_PATTERN = "[h]ermes[[:space:]]+gateway([[:space:]]|$)";
 const HERMES_DASHBOARD_PROC_PATTERN = "[h]ermes[[:space:]]+dashboard([[:space:]]|$)";
 const HERMES_BOUNDARY_RECOVERY_LOG = "/tmp/gateway-recovery.log";
@@ -118,9 +122,56 @@ export function buildHermesRuntimeEnvBoundaryGuard(): string {
   return `if [ ! -f ${shellQuote(validator)} ]; then ${missingLog} elif ! ${invocation}; then ${kill} echo SECRET_BOUNDARY_REFUSED; exit 1; fi;`;
 }
 
+/**
+ * Build a standalone shell snippet that evaluates the Hermes env-file
+ * secret-boundary contract without relaunching anything. Intended for the
+ * `sandbox recover` / `connect --probe-only` probe path, where the gateway
+ * is already running and the relaunch script is not reached: the host can
+ * exec this snippet inside the sandbox, parse the marker on stdout, and
+ * decide whether to refuse the probe.
+ *
+ * Marker contract on stdout (one of):
+ *   - `SECRET_BOUNDARY_OK` — validator ran and accepted the env file.
+ *   - `SECRET_BOUNDARY_REFUSED` — validator ran and refused; the snippet
+ *     killed any running gateway/dashboard process before exiting non-zero.
+ *   - `SECRET_BOUNDARY_VALIDATOR_MISSING` — validator script absent on this
+ *     sandbox image (older image, fail-open by design).
+ *
+ * Validator stderr (`[SECURITY] …` lines) is left on the exec command's
+ * stderr; the caller surfaces it directly. This keeps the snippet
+ * independent of any `/tmp/gateway-recovery.log` setup, which matters when
+ * the snippet runs via `openshell sandbox exec` (root) rather than the
+ * sandbox-user SSH recovery shell that the relaunch path uses.
+ *
+ * The kill snippet is intentionally invoked from a context the caller
+ * arranges to have authority over: a sandbox-user SSH shell cannot signal
+ * gateway-user processes (test/e2e-gateway-isolation.sh test 13), so a
+ * refusal that did not also bring the listener down would log a refusal
+ * while `/health` kept serving. Run this via the root sandbox-exec path so
+ * the kill has authority.
+ */
+export function buildHermesEnvFileBoundaryStandaloneCheck(): string {
+  const validator = HERMES_SECRET_BOUNDARY_VALIDATOR_PATH;
+  const kill = buildHermesBoundaryKillSnippet();
+  const invocation = `python3 ${shellQuote(validator)} env-file /sandbox/.hermes/.env`;
+  return [
+    `if [ ! -f ${shellQuote(validator)} ]; then`,
+    `  echo ${SECRET_BOUNDARY_VALIDATOR_MISSING_MARKER}; exit 0;`,
+    `fi;`,
+    `if ${invocation}; then`,
+    `  echo ${SECRET_BOUNDARY_OK_MARKER}; exit 0;`,
+    `else`,
+    `  ${kill}`,
+    `  echo ${SECRET_BOUNDARY_REFUSED_MARKER};`,
+    `  exit 1;`,
+    `fi;`,
+  ].join("\n");
+}
+
 export const __testing = {
   buildHermesEnvFileBoundaryGuard,
   buildHermesRuntimeEnvBoundaryGuard,
+  buildHermesEnvFileBoundaryStandaloneCheck,
   buildHermesBoundaryKillSnippet,
   HERMES_GATEWAY_PROC_PATTERN,
   HERMES_DASHBOARD_PROC_PATTERN,

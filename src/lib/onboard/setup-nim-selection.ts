@@ -13,6 +13,7 @@ export type SetupNimSelectionState<THermesAuthMethod = unknown> = {
   preferredInferenceApi: string | null;
   nimContainer: string | null;
   allowToolsIncompatible: boolean;
+  skipHostInferenceSmoke?: boolean;
 };
 
 export type CloudFallbackConfig = {
@@ -36,6 +37,7 @@ export function applyCloudFallbackSelection(
   state.preferredInferenceApi = null;
   state.nimContainer = null;
   state.allowToolsIncompatible = false;
+  state.skipHostInferenceSmoke = false;
 }
 
 export function clearNimContainerBeforeRetry(state: SetupNimSelectionState): void {

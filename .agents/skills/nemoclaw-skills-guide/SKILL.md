@@ -27,10 +27,10 @@ Covers installation, inference configuration, network policy management, monitor
 For project maintainers.
 Covers the daily maintainer cadence (morning standup, daytime loop, evening handoff), workflow policy reference, cutting releases, drafting release notes, finding PRs to review, comparing PRs, cross-issue sweeps, triage, normalizing issue and PR title tags, performing security code reviews, and verifying whether stale bug reports still reproduce on the latest release.
 
-### `nemoclaw-contributor-*` (2 skills)
+### `nemoclaw-contributor-*` (3 skills)
 
 For contributors to the NemoClaw codebase.
-Covers creating pull requests that follow the project template and drafting documentation updates from recent commits.
+Covers creating pull requests that follow the project template, monitoring CI and automated review feedback after pushing, drafting documentation updates from recent commits, and onboarding new messaging channels.
 
 ## Skill Catalog
 
@@ -60,7 +60,7 @@ Covers creating pull requests that follow the project template and drafting docu
 | `nemoclaw-maintainer-policies` | Read-only maintainer workflow policy reference for Issue Type, labels, Project fields, daily release labels, triage, duplicates, blocked items, and workflow decisions. |
 | `nemoclaw-maintainer-cross-issue-sweep` | Scan open issues for adjacent fixes or contradiction risks when reviewing a PR. |
 | `nemoclaw-maintainer-day` | Daytime loop: pick the highest-value version-targeted item and execute the right workflow (merge gate, salvage, security sweep, test gaps, hotspot cooling, or sequencing). Designed for `/loop`. |
-| `nemoclaw-maintainer-evening` | End-of-day handoff: check version progress, bump stragglers to the next patch, generate a QA handoff summary, and cut the release tag. |
+| `nemoclaw-maintainer-evening` | End-of-day handoff: check version progress, bump stragglers to the next patch, generate a QA handoff summary, cut the release tag, and hand off release notes. |
 | `nemoclaw-maintainer-cut-release-tag` | Cut an annotated semver tag on a maintainer-confirmed `origin/main` commit; the GitHub workflow moves `latest`, and `lkg` stays manual. |
 | `nemoclaw-maintainer-release-notes` | Draft release notes from live tag/compare data, with the three-paragraph narrative, categorized change list, and external-only contributor thanks. |
 | `nemoclaw-maintainer-find-review-pr` | Find open PRs labeled security + priority-high, link each to its issue, detect duplicates, and present a review summary. |
@@ -73,7 +73,8 @@ Covers creating pull requests that follow the project template and drafting docu
 
 | Skill | Summary |
 |-------|---------|
-| `nemoclaw-contributor-create-pr` | Create GitHub pull requests that follow the NemoClaw PR template, including pre-PR checks, conventional commit titles, and DCO sign-off. |
+| `nemoclaw-contributor-create-pr` | Create GitHub pull requests that follow the NemoClaw PR template, including pre-PR checks, conventional commit titles, DCO sign-off, post-push CI monitoring, and CodeRabbit/PR Review Advisor follow-up. |
+| `nemoclaw-contributor-onboard-messaging-channel` | Add or review a new messaging channel with manifest-first implementation, upstream source analysis, plugin install confirmation, reachability checks, policies, docs, and tests. |
 | `nemoclaw-contributor-update-docs` | Scan recent git commits for user-facing changes, draft or update documentation pages, and refresh generated user skills during release prep. |
 
 ## Getting Started
@@ -89,7 +90,7 @@ Skills are cumulative. Each role includes the skills from the roles above it:
 | Role | Skills included | Count | Start with |
 |------|----------------|-------|------------|
 | User | `nemoclaw-user-*` | 10 | `nemoclaw-user-get-started` |
-| Contributor | `nemoclaw-user-*` + `nemoclaw-contributor-*` | 12 | `nemoclaw-user-overview` |
-| Maintainer | All skills | 25 | `nemoclaw-maintainer-morning` |
+| Contributor | `nemoclaw-user-*` + `nemoclaw-contributor-*` | 13 | `nemoclaw-user-overview` |
+| Maintainer | All skills | 26 | `nemoclaw-maintainer-morning` |
 
 After identifying the role, present the applicable skills from the Skill Catalog above and recommend the starting skill.

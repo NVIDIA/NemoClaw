@@ -19,6 +19,7 @@ function makeState(): SetupNimSelectionState {
     preferredInferenceApi: null,
     nimContainer: null,
     allowToolsIncompatible: false,
+    skipHostInferenceSmoke: false,
   };
 }
 
@@ -181,6 +182,7 @@ describe("createSetupNimOllamaHandlers", () => {
       preferredInferenceApi: "openai-completions",
       nimContainer: null,
       allowToolsIncompatible: false,
+      skipHostInferenceSmoke: false,
     });
     assert.equal(startProxy.mock.calls.length, 0);
     assert.equal(selectModel.mock.calls.length, 0);

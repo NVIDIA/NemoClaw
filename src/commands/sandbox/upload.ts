@@ -12,7 +12,7 @@ export default class SandboxUploadCommand extends NemoClawCommand {
   static strict = true;
   static summary = "Upload a file or directory from the host into the sandbox";
   static description =
-    "Thin host-side wrapper around `openshell sandbox upload`. Validates that the sandbox is alive, then forwards the source and destination verbatim to the OpenShell transport so its file-system semantics (single-file vs. directory copy, trailing-slash handling, overwrite behaviour) stay the same.";
+    "Thin host-side wrapper around `openshell sandbox upload`. Validates that the sandbox is alive, resolves a relative host source path against the caller's working directory, and forwards the sandbox destination verbatim to the OpenShell transport. Absolute host source paths pass through unchanged, and OpenShell's file-system semantics (single-file vs. directory copy, trailing-slash handling, overwrite behaviour) stay the same.";
   static usage = ["<name> <host-path> [sandbox-dest]"];
   static examples = [
     "<%= config.bin %> sandbox upload alpha ./local-file /sandbox/",
