@@ -62,6 +62,11 @@ type CommentMetadata = {
   commentId?: string;
 };
 
+type TestingFollowup = {
+  label: string;
+  text: string;
+};
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch((error: unknown) => {
     console.error(error instanceof Error ? error.message : String(error));
@@ -271,42 +276,64 @@ function renderTestingFollowupsDetails(result?: ReviewAdvisorResult): string {
     "",
     "_If these cover changed behavior, prefer adding them in this PR; otherwise state why existing coverage is enough or link the follow-up._",
   ];
-  for (const followup of followups) lines.push(`- ${escapeCommentText(followup)}`);
+  for (const followup of followups) lines.push(formatTestingFollowup(followup));
   lines.push("", "</details>", "");
   return `${lines.join("\n")}\n`;
 }
 
-function collectTestingFollowups(result?: ReviewAdvisorResult): string[] {
-  const followups: string[] = [];
+function collectTestingFollowups(result?: ReviewAdvisorResult): TestingFollowup[] {
+  const followups: TestingFollowup[] = [];
   if (!result) return followups;
   if (result.testDepth?.verdict && result.testDepth.verdict !== "unit_sufficient") {
     const label = testDepthLabel(result.testDepth.verdict);
     const rationale = result.testDepth.rationale ? ` ${result.testDepth.rationale}` : "";
     for (const suggestion of result.testDepth.suggestedTests?.slice(0, 5) || []) {
-      followups.push(`**${label}** — ${suggestion}.${rationale}`);
+      followups.push({ label, text: `${suggestion}.${rationale}` });
     }
   }
   for (const finding of result.findings?.filter((item) => item.category === "tests").slice(0, 5) ||
     []) {
-    followups.push(
-      `**${finding.title || "Test coverage"}** — ${finding.recommendation || finding.description || "Add targeted coverage for the changed behavior."}`,
-    );
+    followups.push({
+      label: finding.title || "Test coverage",
+      text:
+        finding.recommendation ||
+        finding.description ||
+        "Add targeted coverage for the changed behavior.",
+    });
   }
   for (const clause of result.acceptanceCoverage
     ?.filter((item) => item.status && item.status !== "met")
     .slice(0, 5) || []) {
-    followups.push(
-      `**Acceptance clause:** ${clause.clause || "unspecified"} — add test evidence or identify existing coverage. ${clause.evidence || ""}`.trim(),
-    );
+    followups.push({
+      label: "Acceptance clause",
+      text: `${clause.clause || "unspecified"} — add test evidence or identify existing coverage. ${clause.evidence || ""}`.trim(),
+    });
   }
   for (const review of result.sourceOfTruthReview
     ?.filter((item) => item.status === "missing" || item.status === "needs_followup")
     .slice(0, 5) || []) {
-    followups.push(
-      `**${review.surface || "Localized behavior"}** — ${review.regressionTest || "add a regression test for the localized behavior"}. ${review.evidence || ""}`.trim(),
-    );
+    followups.push({
+      label: review.surface || "Localized behavior",
+      text: `${review.regressionTest || "add a regression test for the localized behavior"}. ${review.evidence || ""}`.trim(),
+    });
   }
-  return [...new Set(followups)].slice(0, 8);
+  return uniqueTestingFollowups(followups).slice(0, 8);
+}
+
+function formatTestingFollowup(followup: TestingFollowup): string {
+  return `- **${escapeCommentText(followup.label)}** — ${escapeCommentText(followup.text)}`;
+}
+
+function uniqueTestingFollowups(followups: TestingFollowup[]): TestingFollowup[] {
+  const seen = new Set<string>();
+  const unique: TestingFollowup[] = [];
+  for (const followup of followups) {
+    const key = `${followup.label}\u0000${followup.text}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(followup);
+  }
+  return unique;
 }
 
 function testDepthLabel(verdict: string): string {

@@ -950,6 +950,8 @@ describe("PR review advisor", () => {
       "<summary>Review findings by urgency: 1 required fix, 0 items to resolve/justify, 0 in-scope improvements</summary>",
     );
     expect(comment).toContain("<summary>Test follow-ups to resolve or justify</summary>");
+    expect(comment).toContain("- **Mocked behavioral coverage** — comment builder test.");
+    expect(comment).not.toContain("\\*\\*Mocked behavioral coverage\\*\\*");
     expect(comment).toContain("comment builder test");
     expect(comment).toContain("<!-- head_sha: abc123def456; recommendation: merge_after_fixes -->");
     expect(comment).toContain("**Review posture:** Resolve findings before merge");
@@ -1048,6 +1050,26 @@ describe("PR review advisor", () => {
       "Expected follow-up: Prefer a current-PR fix when local to changed code; defer only with rationale or linked follow-up.",
     );
     expect(comment).not.toContain("nice ideas");
+  });
+
+  it("preserves trusted test-followup markdown while escaping dynamic text", () => {
+    const result = normalizeReviewResult(
+      validResult({
+        testDepth: {
+          verdict: "mocks_recommended",
+          rationale: "check </details> and @team",
+          suggestedTests: ["probe **bold** [link](https://bad.invalid)"],
+        },
+      }),
+      metadata(),
+    );
+    const comment = buildComment({ summary: renderSummary(result), result });
+
+    expect(comment).toContain("- **Mocked behavioral coverage** — probe");
+    expect(comment).toContain("probe \\*\\*bold\\*\\* \\[link\\]\\(https://bad.invalid\\).");
+    expect(comment).toContain("&lt;/details&gt; and &#64;team");
+    expect(comment).not.toContain("- \\*\\*Mocked behavioral coverage\\*\\*");
+    expect(comment).not.toContain("check </details>");
   });
 
   it("escapes advisor finding text before rendering sticky comments", () => {
