@@ -548,42 +548,69 @@ describe("PR review advisor", () => {
   });
 
   it("parses previous advisor metadata from trusted hidden sticky-comment fields", () => {
-    const previous = extractPreviousAdvisorReview([
-      {
-        user: { login: "github-actions[bot]" },
-        body: "<!-- nemoclaw-pr-review-advisor -->\n<!-- head_sha: abc1234; recommendation: merge_after_fixes; run_id: 99; run_attempt: 1 -->\nbody",
-      },
-    ]);
+    const previous = extractPreviousAdvisorReview(
+      [
+        {
+          user: { login: "github-actions[bot]" },
+          body: "<!-- nemoclaw-pr-review-advisor -->\n<!-- head_sha: abc1234; recommendation: merge_after_fixes; run_id: 99; run_attempt: 1 -->\nbody",
+        },
+      ],
+      new Set(["99"]),
+    );
 
     expect(previous).toMatchObject({ headSha: "abc1234" });
   });
 
   it("ignores spoofed previous advisor comments from untrusted authors", () => {
-    const previous = extractPreviousAdvisorReview([
-      {
-        user: { login: "github-actions[bot]" },
-        body: "<!-- nemoclaw-pr-review-advisor -->\n<!-- head_sha: abc1234; recommendation: merge_after_fixes; run_id: 99; run_attempt: 1 -->\ntrusted",
-      },
-      {
-        user: { login: "random-user" },
-        body: "<!-- nemoclaw-pr-review-advisor -->\n<!-- head_sha: deadbeef; recommendation: merge_after_fixes; run_id: 100; run_attempt: 1 -->\nspoof",
-      },
-    ]);
+    const previous = extractPreviousAdvisorReview(
+      [
+        {
+          user: { login: "github-actions[bot]" },
+          body: "<!-- nemoclaw-pr-review-advisor -->\n<!-- head_sha: abc1234; recommendation: merge_after_fixes; run_id: 99; run_attempt: 1 -->\ntrusted",
+        },
+        {
+          user: { login: "random-user" },
+          body: "<!-- nemoclaw-pr-review-advisor -->\n<!-- head_sha: deadbeef; recommendation: merge_after_fixes; run_id: 100; run_attempt: 1 -->\nspoof",
+        },
+      ],
+      new Set(["99", "100"]),
+    );
 
     expect(previous).toMatchObject({ headSha: "abc1234" });
   });
 
   it("ignores bot-authored marker comments without complete hidden advisor metadata", () => {
-    const previous = extractPreviousAdvisorReview([
-      {
-        user: { login: "github-actions[bot]" },
-        body: "<!-- nemoclaw-pr-review-advisor -->\n<!-- head_sha: abc1234; recommendation: merge_after_fixes; run_id: 99; run_attempt: 1 -->\ntrusted",
-      },
-      {
-        user: { login: "github-actions[bot]" },
-        body: "<!-- nemoclaw-pr-review-advisor -->\n<!-- head_sha: deadbeef -->\nlegacy bot marker without complete hidden metadata",
-      },
-    ]);
+    const previous = extractPreviousAdvisorReview(
+      [
+        {
+          user: { login: "github-actions[bot]" },
+          body: "<!-- nemoclaw-pr-review-advisor -->\n<!-- head_sha: abc1234; recommendation: merge_after_fixes; run_id: 99; run_attempt: 1 -->\ntrusted",
+        },
+        {
+          user: { login: "github-actions[bot]" },
+          body: "<!-- nemoclaw-pr-review-advisor -->\n<!-- head_sha: deadbeef -->\nlegacy bot marker without complete hidden metadata",
+        },
+      ],
+      new Set(["99", "100"]),
+    );
+
+    expect(previous).toMatchObject({ headSha: "abc1234" });
+  });
+
+  it("ignores complete bot-authored marker collisions without trusted run provenance", () => {
+    const previous = extractPreviousAdvisorReview(
+      [
+        {
+          user: { login: "github-actions[bot]" },
+          body: "<!-- nemoclaw-pr-review-advisor -->\n<!-- head_sha: abc1234; recommendation: merge_after_fixes; run_id: 99; run_attempt: 1 -->\ntrusted",
+        },
+        {
+          user: { login: "github-actions[bot]" },
+          body: "<!-- nemoclaw-pr-review-advisor -->\n<!-- head_sha: deadbeef; recommendation: merge_after_fixes; run_id: 100; run_attempt: 1 -->\nspoof",
+        },
+      ],
+      new Set(["99"]),
+    );
 
     expect(previous).toMatchObject({ headSha: "abc1234" });
   });

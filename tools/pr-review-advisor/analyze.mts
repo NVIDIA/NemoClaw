@@ -976,7 +976,11 @@ async function collectGitHubContext(): Promise<GitHubReviewContext | null> {
       ),
     ]);
     context.pullRequest = pullRequest;
-    context.previousAdvisorReview = extractPreviousAdvisorReview(issueComments);
+    context.previousAdvisorReview = await collectTrustedPreviousAdvisorReview(
+      repo,
+      token,
+      issueComments,
+    );
     const prText = [
       stringOrUndefined(getPath<unknown>(pullRequest, ["title"])),
       stringOrUndefined(getPath<unknown>(pullRequest, ["body"])),
@@ -1121,18 +1125,28 @@ function extractIssueRefs(text: string, prNumber: number): number[] {
 
 export function extractPreviousAdvisorReview(
   issueComments: unknown[],
+  trustedRunIds: ReadonlySet<string>,
 ): PreviousAdvisorReview | null {
-  const trustedComments = issueComments
-    .filter(isTrustedAdvisorComment)
-    .map((comment) => stringOrUndefined(getPath<unknown>(comment, ["body"])))
-    .filter((body): body is string =>
-      Boolean(body && body.includes("<!-- nemoclaw-pr-review-advisor -->")),
-    );
-  const body = trustedComments.at(-1);
-  if (!body) return null;
-  const metadata = advisorHiddenMetadata(body);
-  if (!metadata) return null;
-  return { headSha: metadata.headSha, body: body.slice(0, 12000) };
+  const candidates = previousAdvisorCandidates(issueComments).filter((candidate) =>
+    trustedRunIds.has(candidate.metadata.runId),
+  );
+  const candidate = candidates.at(-1);
+  return candidate ? { headSha: candidate.metadata.headSha, body: candidate.body } : null;
+}
+
+async function collectTrustedPreviousAdvisorReview(
+  repo: string,
+  token: string,
+  issueComments: unknown[],
+): Promise<PreviousAdvisorReview | null> {
+  const candidates = previousAdvisorCandidates(issueComments);
+  const trustedRunIds = new Set<string>();
+  for (const candidate of candidates.slice(-10)) {
+    if (await isTrustedAdvisorRun(repo, token, candidate.metadata)) {
+      trustedRunIds.add(candidate.metadata.runId);
+    }
+  }
+  return extractPreviousAdvisorReview(issueComments, trustedRunIds);
 }
 
 type AdvisorCommentMetadata = {
@@ -1141,6 +1155,21 @@ type AdvisorCommentMetadata = {
   runAttempt: string;
   recommendation: SummaryRecommendation;
 };
+
+type PreviousAdvisorCandidate = {
+  body: string;
+  metadata: AdvisorCommentMetadata;
+};
+
+function previousAdvisorCandidates(issueComments: unknown[]): PreviousAdvisorCandidate[] {
+  return issueComments.flatMap((comment) => {
+    if (!hasAdvisorCommentAuthor(comment)) return [];
+    const body = stringOrUndefined(getPath<unknown>(comment, ["body"]));
+    if (!body?.includes("<!-- nemoclaw-pr-review-advisor -->")) return [];
+    const metadata = advisorHiddenMetadata(body);
+    return metadata ? [{ body: body.slice(0, 12000), metadata }] : [];
+  });
+}
 
 function advisorHiddenMetadata(body: string): AdvisorCommentMetadata | undefined {
   const metadataComment = body.match(
@@ -1162,12 +1191,27 @@ function advisorHiddenMetadata(body: string): AdvisorCommentMetadata | undefined
   return { headSha, recommendation: recommendation as SummaryRecommendation, runId, runAttempt };
 }
 
-function isTrustedAdvisorComment(comment: unknown): boolean {
-  const body = stringOrUndefined(getPath<unknown>(comment, ["body"]));
-  if (!body?.includes("<!-- nemoclaw-pr-review-advisor -->")) return false;
-  if (!advisorHiddenMetadata(body)) return false;
+function hasAdvisorCommentAuthor(comment: unknown): boolean {
   const author = stringOrUndefined(getPath<unknown>(comment, ["user", "login"]));
   return author === "github-actions[bot]";
+}
+
+async function isTrustedAdvisorRun(
+  repo: string,
+  token: string,
+  metadata: AdvisorCommentMetadata,
+): Promise<boolean> {
+  try {
+    const run = await githubRest<unknown>(`repos/${repo}/actions/runs/${metadata.runId}`, token);
+    const name = stringOrUndefined(getPath<unknown>(run, ["name"]));
+    const headSha = stringOrUndefined(getPath<unknown>(run, ["head_sha"]));
+    const event = stringOrUndefined(getPath<unknown>(run, ["event"]));
+    return (
+      name === "PR Review / Advisor" && headSha === metadata.headSha && event === "pull_request"
+    );
+  } catch {
+    return false;
+  }
 }
 
 export function readTrustedSecurityReviewSkill(): string {
