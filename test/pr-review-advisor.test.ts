@@ -253,11 +253,19 @@ describe("PR review advisor", () => {
     );
     expect(prompt).toContain("Source-of-truth review");
     expect(prompt).toContain("Vitest E2E suite simplicity");
+    expect(prompt).toContain("Test follow-ups to resolve or justify");
+    expect(prompt).not.toContain("Consider writing more tests for");
     expect(prompt).toContain("take a closer architecture look for new systems");
     expect(prompt).toContain("Favor focused Vitest tests and local test helpers");
     expect(prompt).toContain("what invalid state is handled");
     expect(prompt).toContain(
       "Any sourceOfTruthReview item with status=missing or status=needs_followup must also be represented as a finding",
+    );
+    expect(prompt).toContain(
+      "Finding severity mapping: blocker renders as 'Required before merge'",
+    );
+    expect(prompt).toContain(
+      "Do not write recommendations that imply blanket deferral to a future PR",
     );
     expect(prompt).toContain("multi-turn conversation");
     expect(prompt).toContain(
@@ -526,10 +534,10 @@ describe("PR review advisor", () => {
 
     expect(summary).toContain("# PR Review Advisor");
     expect(summary).toContain("trusted-code boundary");
-    expect(summary).toContain("Needs attention");
-    expect(summary).toContain("Worth checking");
-    expect(summary).toContain("Nice ideas");
-    expect(summary).toContain("## Consider writing more tests for");
+    expect(summary).toContain("Required before merge");
+    expect(summary).toContain("Resolve or justify before merge");
+    expect(summary).toContain("In-scope improvements");
+    expect(summary).toContain("## Test follow-ups to resolve or justify");
     expect(summary).toContain("comment builder test");
     expect(summary).not.toContain("🛠️");
     expect(summary).not.toContain("🔎");
@@ -541,10 +549,20 @@ describe("PR review advisor", () => {
     expect(detailed).toContain("## Source-of-truth review");
     expect(detailed).toContain("trusted-code boundary");
     expect(comment).toContain("<details>");
-    expect(comment).toContain("<summary>Review findings</summary>");
-    expect(comment).toContain("<summary>Consider writing more tests for</summary>");
+    expect(comment).toContain(
+      "<summary>Review findings by urgency: 1 required fix, 0 items to resolve/justify, 0 in-scope improvements</summary>",
+    );
+    expect(comment).toContain("<summary>Test follow-ups to resolve or justify</summary>");
     expect(comment).toContain("comment builder test");
-    expect(comment).toContain("### 🛠️ Needs attention");
+    expect(comment).toContain("### 🚨 Required before merge");
+    expect(comment).toContain("### ⚠️ Resolve or justify before merge");
+    expect(comment).toContain("### 💡 In-scope improvements");
+    expect(comment).toContain(
+      "Expected follow-up: Fix before merge or get explicit maintainer override.",
+    );
+    expect(comment).toContain(
+      "Treat suggestions as current-PR improvements when they touch changed code",
+    );
     expect(comment).not.toContain("Full advisor summary");
     expect(comment).not.toContain("## Acceptance coverage");
     expect(comment).not.toContain("## Security review");
@@ -556,7 +574,9 @@ describe("PR review advisor", () => {
     expect(comment).toContain("A human maintainer must make the final merge decision");
     expect(summary).not.toContain("## Review completeness");
     expect(summary).not.toContain("Human maintainer review required");
-    expect(comment).toContain("1 needs attention, 0 worth checking, 0 nice ideas");
+    expect(comment).toContain(
+      "1 required fix, 0 items to resolve/justify, 0 in-scope improvements",
+    );
     expect(comment).toContain("**Top item:** trusted-code boundary");
     expect(summary).not.toContain("Base: `origin/main`");
     expect(summary).not.toContain("Head: `HEAD`");
@@ -583,8 +603,39 @@ describe("PR review advisor", () => {
     expect(followUp).toContain(
       "**Since last review:** 1 prior item resolved, 1 still applies, 1 new item found",
     );
-    expect(followUp).toContain("<summary>Review findings</summary>");
+    expect(followUp).toContain("<summary>Review findings by urgency:");
     expect(followUp).toContain("<summary>Since last review details</summary>");
+  });
+
+  it("renders suggestion findings as in-scope current-review work", () => {
+    const result = normalizeReviewResult(
+      validResult({
+        findings: [
+          {
+            severity: "suggestion",
+            category: "correctness",
+            file: "src/lib/example.ts",
+            line: 12,
+            title: "Simplify changed branch",
+            description: "The new branch can reuse the existing helper.",
+            recommendation: "Refactor the changed branch in this PR if it remains local.",
+            evidence: "Diff adds a duplicate branch next to the helper call.",
+          },
+        ],
+      }),
+      metadata(),
+    );
+
+    const comment = buildComment({ summary: renderSummary(result), result });
+
+    expect(comment).toContain(
+      "0 required fixes, 0 items to resolve/justify, 1 in-scope improvement",
+    );
+    expect(comment).toContain("### 💡 In-scope improvements");
+    expect(comment).toContain(
+      "Expected follow-up: Prefer a current-PR fix when local to changed code; defer only with rationale or linked follow-up.",
+    );
+    expect(comment).not.toContain("nice ideas");
   });
 
   it("escapes advisor finding text before rendering sticky comments", () => {

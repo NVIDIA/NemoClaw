@@ -117,10 +117,11 @@ export function buildComment({
   return `${marker || MARKER}
 ## PR Review Advisor
 
-**Findings:** ${blockerCount} needs attention, ${warningCount} worth checking, ${suggestionCount} nice ideas
+**Action expectation:** Address required items before merge. Resolve or explicitly justify warnings. Treat suggestions as current-PR improvements when they touch changed code; defer only with maintainer rationale or a linked follow-up.
+**Findings:** ${countLabel(blockerCount, "required fix", "required fixes")}, ${countLabel(warningCount, "item to resolve/justify", "items to resolve/justify")}, ${countLabel(suggestionCount, "in-scope improvement", "in-scope improvements")}
 ${secondary}${findingsDetails}${testingFollowupsDetails}${previousReviewDetails}${details}
 
-This is an automated advisory review. A human maintainer must make the final merge decision.
+This is an automated, non-binding review; it still expects maintainers and agents to respond to each finding. A human maintainer must make the final merge decision.
 
 `;
 }
@@ -144,23 +145,39 @@ function topFindingTitle(result?: ReviewAdvisorResult): string | undefined {
 
 function renderFindingsDetails(result?: ReviewAdvisorResult): string {
   if (!result?.findings?.length) return "";
+  const blockerFindings = result.findings.filter((finding) => finding.severity === "blocker");
+  const warningFindings = result.findings.filter((finding) => finding.severity === "warning");
+  const suggestionFindings = result.findings.filter((finding) => finding.severity === "suggestion");
   const sections = [
     {
-      summary: "🛠️ Needs attention",
-      findings: result.findings.filter((finding) => finding.severity === "blocker"),
+      summary: "🚨 Required before merge",
+      guidance:
+        "Address these before merging unless a maintainer explicitly overrides the advisor with rationale.",
+      findings: blockerFindings,
     },
     {
-      summary: "🔎 Worth checking",
-      findings: result.findings.filter((finding) => finding.severity === "warning"),
+      summary: "⚠️ Resolve or justify before merge",
+      guidance:
+        "Investigate these in the current review; either fix them, explain why they are not applicable, or document the accepted risk.",
+      findings: warningFindings,
     },
     {
-      summary: "🌱 Nice ideas",
-      findings: result.findings.filter((finding) => finding.severity === "suggestion"),
+      summary: "💡 In-scope improvements",
+      guidance:
+        "These are lower-risk, not throwaway. Prefer fixing them in this PR when they are local to changed code; defer only with rationale or a linked follow-up.",
+      findings: suggestionFindings,
     },
   ];
-  const lines: string[] = ["", "<details>", "<summary>Review findings</summary>", ""];
+  const lines: string[] = [
+    "",
+    "<details>",
+    `<summary>Review findings by urgency: ${countLabel(blockerFindings.length, "required fix", "required fixes")}, ${countLabel(warningFindings.length, "item to resolve/justify", "items to resolve/justify")}, ${countLabel(suggestionFindings.length, "in-scope improvement", "in-scope improvements")}</summary>`,
+    "",
+  ];
+
   for (const section of sections) {
     lines.push(`### ${section.summary}`);
+    lines.push(`_${section.guidance}_`);
     if (section.findings.length === 0) {
       lines.push("- _None._");
     } else {
@@ -180,8 +197,9 @@ function renderTestingFollowupsDetails(result?: ReviewAdvisorResult): string {
   const lines: string[] = [
     "",
     "<details>",
-    "<summary>Consider writing more tests for</summary>",
+    "<summary>Test follow-ups to resolve or justify</summary>",
     "",
+    "_If these cover changed behavior, prefer adding them in this PR; otherwise state why existing coverage is enough or link the follow-up._",
   ];
   for (const followup of followups) lines.push(`- ${escapeCommentText(followup)}`);
   lines.push("", "</details>", "");
@@ -231,7 +249,7 @@ function renderPreviousReviewDetails(result?: ReviewAdvisorResult): string {
   const sinceLastReview = result?.summary?.sinceLastReview;
   if (!sinceLastReview || !result?.findings?.length) return "";
   const lines: string[] = ["<details>", "<summary>Since last review details</summary>", ""];
-  lines.push("Current findings:");
+  lines.push("Current findings, using the urgency labels above:");
   for (const finding of result.findings.slice(0, 20)) lines.push(formatFinding(finding));
   lines.push("", "</details>", "");
   return `${lines.join("\n")}\n`;
@@ -245,8 +263,19 @@ function formatFinding(finding: NonNullable<ReviewAdvisorResult["findings"]>[num
   if (finding.recommendation) {
     lines.push(`  - Recommendation: ${escapeCommentText(finding.recommendation)}`);
   }
+  const expectedFollowUp = findingExpectedFollowUp(finding.severity);
+  if (expectedFollowUp) lines.push(`  - Expected follow-up: ${expectedFollowUp}`);
   if (finding.evidence) lines.push(`  - Evidence: ${escapeCommentText(finding.evidence)}`);
   return lines.join("\n");
+}
+
+function findingExpectedFollowUp(severity?: string): string {
+  if (severity === "blocker") return "Fix before merge or get explicit maintainer override.";
+  if (severity === "warning") return "Resolve in this PR or explain why the risk is acceptable.";
+  if (severity === "suggestion") {
+    return "Prefer a current-PR fix when local to changed code; defer only with rationale or linked follow-up.";
+  }
+  return "Review and decide whether this PR should act on it.";
 }
 
 function formatFindingLocation(

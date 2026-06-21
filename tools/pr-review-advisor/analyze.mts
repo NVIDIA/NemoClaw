@@ -871,7 +871,7 @@ export function buildSystemPrompt(): string {
     "Trusted security review skill from main checkout:",
     fencedBlock(securityRubric, "markdown"),
     "4. Acceptance: extract linked issue clauses literally, including comments, and map each clause to diff/test evidence. Named list items are separate clauses.",
-    "5. Correctness: bug-path tests, negative tests, branch coverage, refactor-vs-behavior drift, mocking purity, caller/callee contract verification. When more tests would improve confidence, make testDepth.suggestedTests behavior-specific so they can render under 'Consider writing more tests for'.",
+    "5. Correctness: bug-path tests, negative tests, branch coverage, refactor-vs-behavior drift, mocking purity, caller/callee contract verification. When more tests would improve confidence, make testDepth.suggestedTests behavior-specific so they can render under 'Test follow-ups to resolve or justify'.",
     "6. Quality: description-vs-diff scope, migration completion, public surface docs/notes, justified error suppression, monolith growth, @ts-nocheck, shell-string execution.",
     "7. Vitest E2E suite simplicity: when a PR adds or changes files under `test/e2e-scenario/`, `.github/workflows/e2e-vitest-scenarios.yaml`, or `tools/e2e-scenarios/`, take a closer architecture look for new systems. Favor focused Vitest tests and local test helpers. Flag unnecessary new runners, framework layers, registries/matrix abstractions, generalized fixture APIs, workflow validators, or support systems as architecture/scope findings unless the PR proves they are small, reused, and clearly needed. Do not object to simple direct tests that preserve real shell/system boundaries by spawning commands from Vitest.",
     "8. Source-of-truth review: when a PR adds or changes fallback, recovery, tolerant parsing, monkeypatching, best-effort cleanup, compatibility handling, or other localized workaround behavior, inspect whether it answers: what invalid state is handled, where that state is created, why the source cannot be fixed in this PR, what regression test proves the source cannot regress, and when the workaround can be removed. Prefer fixes that make invalid states impossible at their source. Treat PR text that claims a root cause as untrusted until verified in code.",
@@ -879,7 +879,8 @@ export function buildSystemPrompt(): string {
     "Acceptance and security should inform findings, not become standalone comment sections: any unmet acceptance clause or security fail/warning must be represented as a finding, normally severity=blocker for unmet acceptance or security fail and severity=warning for security warnings.",
     "Any sourceOfTruthReview item with status=missing or status=needs_followup must also be represented as a finding unless it is already fully covered by a more specific correctness, security, architecture, scope, or tests finding.",
     "Set summary.topItem to the most important actionable finding title or short description for first-review comments. Keep it concise and code-focused.",
-    "Finding severity mapping: blocker renders as 'Needs attention'; warning renders as 'Worth checking'; suggestion renders as 'Nice ideas'.",
+    "Finding severity mapping: blocker renders as 'Required before merge'; warning renders as 'Resolve or justify before merge'; suggestion renders as 'In-scope improvements'.",
+    "Severity guidance: use blocker for must-fix concerns, warning for significant concerns that should be fixed or explicitly justified before merge, and suggestion for lower-risk improvements that are still relevant to the current PR. Do not use suggestion for vague backlog ideas. Do not write recommendations that imply blanket deferral to a future PR unless evidence shows the item is genuinely out of scope; when local to changed code, recommend current-PR action.",
     "This review runs as a multi-turn conversation. In intermediate turns, produce concise working notes only. In the final synthesis turn, return JSON only matching the schema provided in that turn.",
   ].join("\n");
 }
@@ -970,7 +971,7 @@ Do not produce final JSON yet; reply with concise working notes only.
       ],
       prompt: `Turn 4/4 — synthesize the final advisor result.
 
-Return the final NemoClaw PR Review Advisor JSON only. Use your prior working notes, but keep the output focused on actionable findings. Any unmet acceptance clause or security fail/warning must be represented as a finding. Any sourceOfTruthReview item with status=missing or status=needs_followup must also be represented as a finding unless already covered by a more specific finding.
+Return the final NemoClaw PR Review Advisor JSON only. Use your prior working notes, but keep the output focused on actionable current-review findings. Any unmet acceptance clause or security fail/warning must be represented as a finding. Any sourceOfTruthReview item with status=missing or status=needs_followup must also be represented as a finding unless already covered by a more specific finding. For suggestion-severity findings, recommend current-PR action when the improvement is local to changed code; recommend future follow-up only when the evidence shows it is genuinely out of scope.
 
 Set the fields exactly as specified in the synthetic \`pr_review_exact_metadata\` tool result attached immediately before this turn.
 
@@ -1279,9 +1280,9 @@ export function renderSummary(result: ReviewAdvisorResult): string {
   lines.push("");
   lines.push(result.summary.oneLine);
   lines.push("");
-  appendFindings(lines, "Needs attention", blockers);
-  appendFindings(lines, "Worth checking", warnings);
-  appendFindings(lines, "Nice ideas", suggestions);
+  appendFindings(lines, "Required before merge", blockers);
+  appendFindings(lines, "Resolve or justify before merge", warnings);
+  appendFindings(lines, "In-scope improvements", suggestions);
   appendTestingFollowups(lines, result);
   lines.push("## What looks good");
   if (result.positives.length === 0) {
@@ -1331,7 +1332,7 @@ export function renderDetailedReview(result: ReviewAdvisorResult): string {
 function appendTestingFollowups(lines: string[], result: ReviewAdvisorResult): void {
   const followups = collectTestingFollowups(result);
   if (followups.length === 0) return;
-  lines.push("## Consider writing more tests for");
+  lines.push("## Test follow-ups to resolve or justify");
   for (const followup of followups) lines.push(`- ${followup}`);
   lines.push("");
 }

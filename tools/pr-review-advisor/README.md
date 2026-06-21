@@ -5,7 +5,8 @@
 
 The PR Review Advisor is an SDK-powered, NemoClaw-specific pull request reviewer. It runs as a
 trusted GitHub Actions job, inspects PRs as read-only data, and posts a sticky advisory comment with
-blockers, warnings, suggestions, acceptance coverage, security notes, and code-review follow-up guidance.
+required-before-merge findings, resolve-or-justify warnings, in-scope improvement suggestions,
+acceptance coverage, security notes, and code-review follow-up guidance.
 
 It complements the existing PR surfaces by keeping a NemoClaw maintainer code-review lens focused on the patch itself:
 
@@ -105,4 +106,6 @@ available.
 
 `tools/pr-review-advisor/schema.json` defines the normalized JSON result shape used for the PR
 comment and future reporting work. The advisor is intentionally advisory: every result includes
-limitations and requires human maintainer review.
+limitations and requires human maintainer review. The PR comment deliberately frames suggestions as
+current-review improvements when they touch changed code; agents should not automatically defer them
+to a future PR without maintainer rationale or a linked follow-up.
