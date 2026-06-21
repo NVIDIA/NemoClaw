@@ -51,6 +51,7 @@ Authors and coding agents should follow the shared [PR CI and Automated Review F
 - Generated advisor credential config is written under `/tmp`, not uploaded artifacts.
 - The job is limited to upstream `NVIDIA/NemoClaw` PRs when model secrets are in scope.
 - The workflow posts advisory comments only; it does not approve, request changes, merge, push, label, or dispatch E2E.
+- Previous-review follow-up treats GitHub issue comments as mutable and replayable. A prior advisor comment is accepted only when hidden metadata binds it to the actual comment ID and to a matching PR Review / Advisor workflow run, attempt, head SHA, event, and update-time window. Replace this local provenance check only if GitHub exposes a stronger durable comment-to-workflow ownership signal.
 - Before model analysis, the workflow deterministically waits for required status checks from repository rulesets. If rulesets cannot be read, it falls back to the configured `PR_REVIEW_ADVISOR_REQUIRED_CHECK_FALLBACK_CONTEXTS` list.
 
 ## Required secret

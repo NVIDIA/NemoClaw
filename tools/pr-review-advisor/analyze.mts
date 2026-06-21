@@ -1134,11 +1134,18 @@ export function extractPreviousAdvisorReview(
   return candidate ? { headSha: candidate.metadata.headSha, body: candidate.body } : null;
 }
 
-async function collectTrustedPreviousAdvisorReview(
+export async function collectTrustedPreviousAdvisorReview(
   repo: string,
   token: string,
   issueComments: unknown[],
 ): Promise<PreviousAdvisorReview | null> {
+  // Source-of-truth model: issue comments are mutable, replayable PR context.
+  // A previous advisor comment is accepted only when its hidden metadata is
+  // bound to the actual comment id and to a PR Review / Advisor workflow run
+  // whose attempt, head SHA, event, and time window match the comment update.
+  // Remove this local provenance check only if GitHub exposes a durable
+  // comment-to-workflow ownership link for sticky bot comments.
+
   const candidates = previousAdvisorCandidates(issueComments);
   const trustedCommentIds = new Set<string>();
   for (const candidate of candidates.slice(-10)) {

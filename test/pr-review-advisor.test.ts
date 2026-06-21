@@ -19,6 +19,7 @@ import {
   classifyMonolithDelta,
   classifyTestDepth,
   collectStaticTestInventory,
+  collectTrustedPreviousAdvisorReview,
   detectLocalizedPatchSignals,
   extractPreviousAdvisorReview,
   normalizeReviewResult,
@@ -647,6 +648,37 @@ describe("PR review advisor", () => {
       ],
       new Set(["1"]),
     );
+
+    expect(previous).toMatchObject({ body: expect.stringContaining("trusted") });
+  });
+
+  it("validates prior advisor comments against workflow run timing", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        name: "PR Review / Advisor",
+        head_sha: "abc1234",
+        event: "pull_request",
+        run_attempt: 1,
+        run_started_at: "2026-01-01T00:00:00Z",
+        updated_at: "2026-01-01T00:10:00Z",
+      }),
+    } as Response);
+
+    const previous = await collectTrustedPreviousAdvisorReview("NVIDIA/NemoClaw", "token", [
+      {
+        id: 1,
+        updated_at: "2026-01-01T00:05:00Z",
+        user: { login: "github-actions[bot]" },
+        body: "<!-- nemoclaw-pr-review-advisor -->\n<!-- head_sha: abc1234; recommendation: merge_after_fixes; run_id: 99; run_attempt: 1; comment_id: 1 -->\ntrusted",
+      },
+      {
+        id: 2,
+        updated_at: "2026-01-01T00:20:00Z",
+        user: { login: "github-actions[bot]" },
+        body: "<!-- nemoclaw-pr-review-advisor -->\n<!-- head_sha: abc1234; recommendation: merge_after_fixes; run_id: 99; run_attempt: 1; comment_id: 2 -->\nreplay",
+      },
+    ]);
 
     expect(previous).toMatchObject({ body: expect.stringContaining("trusted") });
   });
