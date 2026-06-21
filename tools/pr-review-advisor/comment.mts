@@ -29,7 +29,10 @@ type ReviewAdvisorResult = {
     file?: string | null;
     line?: number | null;
     description?: string;
+    impact?: string;
     recommendation?: string;
+    verificationHint?: string;
+    missingRegressionTest?: string;
     evidence?: string;
   }>;
   acceptanceCoverage?: Array<{
@@ -51,6 +54,17 @@ type ReviewAdvisorResult = {
   reviewCompleteness?: {
     limitations?: string[];
   };
+};
+
+type CommentMetadata = {
+  runId?: string;
+  runAttempt?: string;
+  commentId?: string;
+};
+
+type TestingFollowup = {
+  label: string;
+  text: string;
 };
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
@@ -87,9 +101,34 @@ async function main(): Promise<void> {
     readIfExists("artifacts/pr-review-advisor/pr-review-advisor-summary.md");
   if (!summary) throw new Error(`No PR review advisor summary found at ${summaryPath}`);
   const result = readJsonIfExists<ReviewAdvisorResult>(resultPath);
-  const body = buildComment({ summary, result, runUrl, marker: MARKER });
+  const baseMetadata = {
+    runId: process.env.GITHUB_RUN_ID,
+    runAttempt: process.env.GITHUB_RUN_ATTEMPT,
+  };
+  const body = buildComment({
+    summary,
+    result,
+    runUrl,
+    marker: MARKER,
+    metadata: baseMetadata,
+  });
 
-  await upsertStickyComment({ repo, pr, token, marker: MARKER, body, label: "PR review advisor" });
+  await upsertStickyComment({
+    repo,
+    pr,
+    token,
+    marker: MARKER,
+    body,
+    label: "PR review advisor",
+    bodyForComment: (comment) =>
+      buildComment({
+        summary,
+        result,
+        runUrl,
+        marker: MARKER,
+        metadata: { ...baseMetadata, commentId: String(comment.id) },
+      }),
+  });
 }
 
 export function buildComment({
@@ -97,11 +136,13 @@ export function buildComment({
   result,
   runUrl,
   marker,
+  metadata,
 }: {
   summary: string;
   result?: ReviewAdvisorResult;
   runUrl?: string;
   marker?: string;
+  metadata?: CommentMetadata;
 }): string {
   const blockerCount =
     result?.findings?.filter((finding) => finding.severity === "blocker").length ?? 0;
@@ -114,9 +155,12 @@ export function buildComment({
   const testingFollowupsDetails = renderTestingFollowupsDetails(result);
   const previousReviewDetails = renderPreviousReviewDetails(result);
   const details = runUrl ? `\n[Workflow run details](${runUrl})` : "";
+  const hiddenMetadata = renderHiddenMetadata(result, metadata);
+  const posture = reviewPosture(result?.summary?.recommendation);
   return `${marker || MARKER}
-## PR Review Advisor
+${hiddenMetadata}## PR Review Advisor
 
+**Review posture:** ${posture}
 **Action expectation:** Address required items before merge. Resolve or explicitly justify warnings. Treat suggestions as current-PR improvements when they touch changed code; defer only with maintainer rationale or a linked follow-up.
 **Findings:** ${countLabel(blockerCount, "required fix", "required fixes")}, ${countLabel(warningCount, "item to resolve/justify", "items to resolve/justify")}, ${countLabel(suggestionCount, "in-scope improvement", "in-scope improvements")}
 ${secondary}${findingsDetails}${testingFollowupsDetails}${previousReviewDetails}${details}
@@ -124,6 +168,37 @@ ${secondary}${findingsDetails}${testingFollowupsDetails}${previousReviewDetails}
 This is an automated, non-binding review; it still expects maintainers and agents to respond to each finding. A human maintainer must make the final merge decision.
 
 `;
+}
+
+function renderHiddenMetadata(result?: ReviewAdvisorResult, metadata?: CommentMetadata): string {
+  const fields = [
+    result?.headSha ? `head_sha: ${safeMetadataValue(result.headSha)}` : undefined,
+    result?.summary?.recommendation
+      ? `recommendation: ${safeMetadataValue(result.summary.recommendation)}`
+      : undefined,
+    metadata?.runId ? `run_id: ${safeMetadataValue(metadata.runId)}` : undefined,
+    metadata?.runAttempt ? `run_attempt: ${safeMetadataValue(metadata.runAttempt)}` : undefined,
+    metadata?.commentId ? `comment_id: ${safeMetadataValue(metadata.commentId)}` : undefined,
+  ].filter((field): field is string => Boolean(field));
+  return fields.length > 0 ? `<!-- ${fields.join("; ")} -->\n` : "";
+}
+
+function safeMetadataValue(value: string): string {
+  return value
+    .replace(/[;\n\r<>]/g, "")
+    .trim()
+    .slice(0, 120);
+}
+
+function reviewPosture(recommendation?: string): string {
+  if (recommendation === "merge_as_is") return "No blocking advisor findings";
+  if (recommendation === "merge_after_fixes") return "Resolve findings before merge";
+  if (recommendation === "needs_rework" || recommendation === "blocked") {
+    return "Do not merge until addressed";
+  }
+  if (recommendation === "superseded") return "Superseded by other work";
+  if (recommendation === "info_only") return "Informational / low confidence";
+  return "Review findings and decide before merge";
 }
 
 function buildSecondarySummary(result?: ReviewAdvisorResult): string {
@@ -201,42 +276,64 @@ function renderTestingFollowupsDetails(result?: ReviewAdvisorResult): string {
     "",
     "_If these cover changed behavior, prefer adding them in this PR; otherwise state why existing coverage is enough or link the follow-up._",
   ];
-  for (const followup of followups) lines.push(`- ${escapeCommentText(followup)}`);
+  for (const followup of followups) lines.push(formatTestingFollowup(followup));
   lines.push("", "</details>", "");
   return `${lines.join("\n")}\n`;
 }
 
-function collectTestingFollowups(result?: ReviewAdvisorResult): string[] {
-  const followups: string[] = [];
+function collectTestingFollowups(result?: ReviewAdvisorResult): TestingFollowup[] {
+  const followups: TestingFollowup[] = [];
   if (!result) return followups;
   if (result.testDepth?.verdict && result.testDepth.verdict !== "unit_sufficient") {
     const label = testDepthLabel(result.testDepth.verdict);
     const rationale = result.testDepth.rationale ? ` ${result.testDepth.rationale}` : "";
     for (const suggestion of result.testDepth.suggestedTests?.slice(0, 5) || []) {
-      followups.push(`**${label}** — ${suggestion}.${rationale}`);
+      followups.push({ label, text: `${suggestion}.${rationale}` });
     }
   }
   for (const finding of result.findings?.filter((item) => item.category === "tests").slice(0, 5) ||
     []) {
-    followups.push(
-      `**${finding.title || "Test coverage"}** — ${finding.recommendation || finding.description || "Add targeted coverage for the changed behavior."}`,
-    );
+    followups.push({
+      label: finding.title || "Test coverage",
+      text:
+        finding.recommendation ||
+        finding.description ||
+        "Add targeted coverage for the changed behavior.",
+    });
   }
   for (const clause of result.acceptanceCoverage
     ?.filter((item) => item.status && item.status !== "met")
     .slice(0, 5) || []) {
-    followups.push(
-      `**Acceptance clause:** ${clause.clause || "unspecified"} — add test evidence or identify existing coverage. ${clause.evidence || ""}`.trim(),
-    );
+    followups.push({
+      label: "Acceptance clause",
+      text: `${clause.clause || "unspecified"} — add test evidence or identify existing coverage. ${clause.evidence || ""}`.trim(),
+    });
   }
   for (const review of result.sourceOfTruthReview
     ?.filter((item) => item.status === "missing" || item.status === "needs_followup")
     .slice(0, 5) || []) {
-    followups.push(
-      `**${review.surface || "Localized behavior"}** — ${review.regressionTest || "add a regression test for the localized behavior"}. ${review.evidence || ""}`.trim(),
-    );
+    followups.push({
+      label: review.surface || "Localized behavior",
+      text: `${review.regressionTest || "add a regression test for the localized behavior"}. ${review.evidence || ""}`.trim(),
+    });
   }
-  return [...new Set(followups)].slice(0, 8);
+  return uniqueTestingFollowups(followups).slice(0, 8);
+}
+
+function formatTestingFollowup(followup: TestingFollowup): string {
+  return `- **${escapeCommentText(followup.label)}** — ${escapeCommentText(followup.text)}`;
+}
+
+function uniqueTestingFollowups(followups: TestingFollowup[]): TestingFollowup[] {
+  const seen = new Set<string>();
+  const unique: TestingFollowup[] = [];
+  for (const followup of followups) {
+    const key = `${followup.label}\u0000${followup.text}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(followup);
+  }
+  return unique;
 }
 
 function testDepthLabel(verdict: string): string {
@@ -260,11 +357,18 @@ function formatFinding(finding: NonNullable<ReviewAdvisorResult["findings"]>[num
   const location = formatFindingLocation(finding);
   const description = finding.description ? `: ${escapeCommentText(finding.description)}` : "";
   const lines = [`- **${title}**${location}${description}`];
+  if (finding.impact) lines.push(`  - Impact: ${escapeCommentText(finding.impact)}`);
   if (finding.recommendation) {
     lines.push(`  - Recommendation: ${escapeCommentText(finding.recommendation)}`);
   }
   const expectedFollowUp = findingExpectedFollowUp(finding.severity);
   if (expectedFollowUp) lines.push(`  - Expected follow-up: ${expectedFollowUp}`);
+  if (finding.verificationHint) {
+    lines.push(`  - Verification hint: ${escapeCommentText(finding.verificationHint)}`);
+  }
+  if (finding.missingRegressionTest) {
+    lines.push(`  - Missing regression test: ${escapeCommentText(finding.missingRegressionTest)}`);
+  }
   if (finding.evidence) lines.push(`  - Evidence: ${escapeCommentText(finding.evidence)}`);
   return lines.join("\n");
 }
