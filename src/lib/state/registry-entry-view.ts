@@ -13,6 +13,11 @@ export type SandboxEntryInference =
   | { kind: "configured"; provider: string; model: string }
   | { kind: "unconfigured" };
 
+export type SandboxEntryDisplayInference = {
+  provider: string | null;
+  model: string | null;
+};
+
 export type SandboxGatewayBinding =
   | { kind: "registered"; gatewayName: string; gatewayPort: number }
   | { kind: "missing" };
@@ -30,6 +35,10 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }
 
+function optionalDisplayString(value: string | null | undefined): string | null {
+  return isNonEmptyString(value) ? value : null;
+}
+
 function isValidTcpPort(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 65535;
 }
@@ -44,6 +53,18 @@ export function getSandboxEntryGatewayBinding(entry: SandboxEntryViewInput): San
   return isNonEmptyString(entry.gatewayName) && isValidTcpPort(entry.gatewayPort)
     ? { kind: "registered", gatewayName: entry.gatewayName, gatewayPort: entry.gatewayPort }
     : { kind: "missing" };
+}
+
+export function getSandboxEntryDisplayInference(
+  entry: SandboxEntryViewInput,
+): SandboxEntryDisplayInference {
+  const inference = getSandboxEntryInference(entry);
+  return inference.kind === "configured"
+    ? { provider: inference.provider, model: inference.model }
+    : {
+        provider: optionalDisplayString(entry.provider),
+        model: optionalDisplayString(entry.model),
+      };
 }
 
 export function normalizeSandboxEntryView<Entry extends SandboxEntryViewInput>(

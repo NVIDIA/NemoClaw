@@ -5,7 +5,7 @@ import { CLI_NAME } from "../cli/branding";
 import type { GatewayInference } from "../inference/config";
 import { getActiveChannelIdsFromPlan } from "../messaging/plan-validation";
 import { redactFull } from "../security/redact";
-import { normalizeSandboxEntryView, type SandboxMessagingState } from "../state/registry";
+import { getSandboxEntryDisplayInference, type SandboxMessagingState } from "../state/registry";
 import { resolveDefaultSandboxName } from "../tunnel/service-command";
 
 export interface SandboxEntry {
@@ -167,27 +167,6 @@ function safeStatusString(value: string | null | undefined): string | null {
   return redactFull(value);
 }
 
-function nonEmptyInventoryString(value: string | null | undefined): string | null {
-  return typeof value === "string" && value.trim().length > 0 ? value : null;
-}
-
-function getInventoryInferenceFields(sandbox: SandboxEntry): {
-  provider: string | null;
-  model: string | null;
-} {
-  const normalized = normalizeSandboxEntryView(sandbox);
-  if (normalized.inference.kind === "configured") {
-    return {
-      provider: normalized.inference.provider,
-      model: normalized.inference.model,
-    };
-  }
-  return {
-    provider: nonEmptyInventoryString(sandbox.provider),
-    model: nonEmptyInventoryString(sandbox.model),
-  };
-}
-
 function buildSandboxInventoryRow(
   sandbox: SandboxEntry,
   defaultSandbox: string | null,
@@ -198,7 +177,7 @@ function buildSandboxInventoryRow(
     typeof sandbox.sandboxGpuEnabled === "boolean"
       ? sandbox.sandboxGpuEnabled
       : sandbox.gpuEnabled === true;
-  const inference = getInventoryInferenceFields(sandbox);
+  const inference = getSandboxEntryDisplayInference(sandbox);
 
   return {
     name: sandbox.name,
@@ -347,7 +326,7 @@ function buildStatusSandboxRow(
   const isDefault = sandbox.name === defaultSandbox;
   const liveModel = isDefault ? liveInference?.model : null;
   const liveProvider = isDefault ? liveInference?.provider : null;
-  const inference = getInventoryInferenceFields(sandbox);
+  const inference = getSandboxEntryDisplayInference(sandbox);
   const dashboardPort =
     typeof sandbox.dashboardPort === "number" && Number.isFinite(sandbox.dashboardPort)
       ? sandbox.dashboardPort
@@ -448,7 +427,7 @@ export function showStatusCommand(deps: ShowStatusCommandDeps): void {
       // agrees with `openshell inference get` (#2369).
       const liveModel = isDefault && live ? live.model : null;
       const liveProvider = isDefault && live ? live.provider : null;
-      const inference = getInventoryInferenceFields(sb);
+      const inference = getSandboxEntryDisplayInference(sb);
       const model = liveModel || inference.model;
       const provider = liveProvider || inference.provider;
       const portSuffix = sb.dashboardPort != null ? ` :${sb.dashboardPort}` : "";
