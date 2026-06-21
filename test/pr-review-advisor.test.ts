@@ -539,7 +539,7 @@ diff --git a/test/example.test.ts b/test/example.test.ts
       expect(signals).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
-            kind: "large_file_growth",
+            kind: "large_file_hotspot",
             file: path.relative(ROOT, largePath),
           }),
         ]),

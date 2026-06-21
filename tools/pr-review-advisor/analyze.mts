@@ -241,7 +241,7 @@ export type SimplificationSignal = {
     | "single_use_abstraction"
     | "single_use_config"
     | "wrapper"
-    | "large_file_growth"
+    | "large_file_hotspot"
     | "test_over_scaffold";
   evidence: string;
   reviewRule: string;
@@ -964,10 +964,10 @@ function computeSimpleLargeFileDeltas(changedFiles: Set<string>): Simplification
         {
           file,
           line: null,
-          kind: "large_file_growth" as const,
+          kind: "large_file_hotspot" as const,
           evidence: `${file} is ${lines} lines after this change.`,
           reviewRule:
-            "When a large hotspot grows, ask whether a cohesive helper can be extracted or whether the growth is justified by security/context coupling.",
+            "When a large hotspot is touched, ask whether a cohesive helper can be extracted or whether the edit is justified by security/context coupling.",
         },
       ];
     })
