@@ -354,7 +354,7 @@ async function main(): Promise<void> {
   }
 
   if (retryReason) {
-    logProgress(`Retrying PR review advisor synthesis: ${retryReason}`);
+    logProgress(retryReasonLogSummary(retryReason));
     const retryTurns = buildRetryPromptTurns({
       metadata,
       schema,
@@ -562,6 +562,14 @@ export function reviewQualityIssues(result: ReviewAdvisorResult): string[] {
     issues.push("securityCategories were defaulted because the advisor omitted verdicts");
   }
   return issues.slice(0, 20);
+}
+
+export function retryReasonLogSummary(reason: string): string {
+  const issueCount = reason
+    .split(";")
+    .map((item) => item.trim())
+    .filter(Boolean).length;
+  return `Retrying PR review advisor synthesis after ${issueCount || 1} quality issue(s); full reason is in retry prompt artifacts.`;
 }
 
 export function recordRetryFailureOnFirstPass(
@@ -1122,20 +1130,42 @@ export function extractPreviousAdvisorReview(
     );
   const body = trustedComments.at(-1);
   if (!body) return null;
-  const hiddenHeadSha = advisorHiddenHeadSha(body);
-  if (!hiddenHeadSha) return null;
-  return { headSha: hiddenHeadSha, body: body.slice(0, 12000) };
+  const metadata = advisorHiddenMetadata(body);
+  if (!metadata) return null;
+  return { headSha: metadata.headSha, body: body.slice(0, 12000) };
 }
 
-function advisorHiddenHeadSha(body: string): string | undefined {
-  const headSha = body.match(/<!--\s*head_sha:\s*([^;\s>]+)(?:;[^>]*)?\s*-->/i)?.[1];
-  return headSha && /^[0-9a-f]{7,40}$/i.test(headSha) ? headSha : undefined;
+type AdvisorCommentMetadata = {
+  headSha: string;
+  runId: string;
+  runAttempt: string;
+  recommendation: SummaryRecommendation;
+};
+
+function advisorHiddenMetadata(body: string): AdvisorCommentMetadata | undefined {
+  const metadataComment = body.match(
+    /<!--\s*head_sha:\s*([^;\s>]+)(?:;\s*recommendation:\s*([^;\s>]+))?(?:;\s*run_id:\s*([^;\s>]+))?(?:;\s*run_attempt:\s*([^;\s>]+))?\s*-->/i,
+  );
+  const headSha = metadataComment?.[1];
+  const recommendation = metadataComment?.[2];
+  const runId = metadataComment?.[3];
+  const runAttempt = metadataComment?.[4];
+  if (!headSha || !/^[0-9a-f]{7,40}$/i.test(headSha)) return undefined;
+  if (
+    !recommendation ||
+    !SUMMARY_RECOMMENDATIONS.includes(recommendation as SummaryRecommendation)
+  ) {
+    return undefined;
+  }
+  if (!runId || !/^\d+$/.test(runId)) return undefined;
+  if (!runAttempt || !/^\d+$/.test(runAttempt)) return undefined;
+  return { headSha, recommendation: recommendation as SummaryRecommendation, runId, runAttempt };
 }
 
 function isTrustedAdvisorComment(comment: unknown): boolean {
   const body = stringOrUndefined(getPath<unknown>(comment, ["body"]));
   if (!body?.includes("<!-- nemoclaw-pr-review-advisor -->")) return false;
-  if (!advisorHiddenHeadSha(body)) return false;
+  if (!advisorHiddenMetadata(body)) return false;
   const author = stringOrUndefined(getPath<unknown>(comment, ["user", "login"]));
   return author === "github-actions[bot]";
 }
