@@ -1147,8 +1147,13 @@ export async function collectTrustedPreviousAdvisorReview(
   // A previous advisor comment is accepted only when its hidden metadata is
   // bound to the actual comment id and to a PR Review / Advisor workflow run
   // whose attempt, head SHA, event, and time window match the comment update.
-  // Remove this local provenance check only if GitHub exposes a durable
-  // comment-to-workflow ownership link for sticky bot comments.
+  // This intentionally accepts the residual same-run boundary: another
+  // repository workflow would need to post a marker-bearing github-actions[bot]
+  // comment during the same PR Review / Advisor run window while knowing the
+  // run metadata. That is not a realistic cross-PR/user spoof, and preventing
+  // it fully requires a durable GitHub comment-to-workflow ownership link that
+  // the REST API does not currently expose. Remove this local provenance check
+  // only if such a stronger ownership signal becomes available.
 
   const candidates = previousAdvisorCandidates(issueComments);
   const trustedCommentIds = new Set<string>();
