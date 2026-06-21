@@ -552,11 +552,12 @@ describe("PR review advisor", () => {
       [
         {
           id: 1,
+          updated_at: "2026-01-01T00:05:00Z",
           user: { login: "github-actions[bot]" },
           body: "<!-- nemoclaw-pr-review-advisor -->\n<!-- head_sha: abc1234; recommendation: merge_after_fixes; run_id: 99; run_attempt: 1; comment_id: 1 -->\nbody",
         },
       ],
-      new Set(["99"]),
+      new Set(["1"]),
     );
 
     expect(previous).toMatchObject({ headSha: "abc1234" });
@@ -567,16 +568,18 @@ describe("PR review advisor", () => {
       [
         {
           id: 1,
+          updated_at: "2026-01-01T00:05:00Z",
           user: { login: "github-actions[bot]" },
           body: "<!-- nemoclaw-pr-review-advisor -->\n<!-- head_sha: abc1234; recommendation: merge_after_fixes; run_id: 99; run_attempt: 1; comment_id: 1 -->\ntrusted",
         },
         {
           id: 2,
+          updated_at: "2026-01-01T00:06:00Z",
           user: { login: "random-user" },
           body: "<!-- nemoclaw-pr-review-advisor -->\n<!-- head_sha: deadbeef; recommendation: merge_after_fixes; run_id: 100; run_attempt: 1; comment_id: 2 -->\nspoof",
         },
       ],
-      new Set(["99", "100"]),
+      new Set(["1", "2"]),
     );
 
     expect(previous).toMatchObject({ headSha: "abc1234" });
@@ -587,16 +590,18 @@ describe("PR review advisor", () => {
       [
         {
           id: 1,
+          updated_at: "2026-01-01T00:05:00Z",
           user: { login: "github-actions[bot]" },
           body: "<!-- nemoclaw-pr-review-advisor -->\n<!-- head_sha: abc1234; recommendation: merge_after_fixes; run_id: 99; run_attempt: 1; comment_id: 1 -->\ntrusted",
         },
         {
           id: 2,
+          updated_at: "2026-01-01T00:06:00Z",
           user: { login: "github-actions[bot]" },
           body: "<!-- nemoclaw-pr-review-advisor -->\n<!-- head_sha: deadbeef -->\nlegacy bot marker without complete hidden metadata",
         },
       ],
-      new Set(["99", "100"]),
+      new Set(["1", "2"]),
     );
 
     expect(previous).toMatchObject({ headSha: "abc1234" });
@@ -607,16 +612,18 @@ describe("PR review advisor", () => {
       [
         {
           id: 1,
+          updated_at: "2026-01-01T00:05:00Z",
           user: { login: "github-actions[bot]" },
           body: "<!-- nemoclaw-pr-review-advisor -->\n<!-- head_sha: abc1234; recommendation: merge_after_fixes; run_id: 99; run_attempt: 1; comment_id: 1 -->\ntrusted",
         },
         {
           id: 2,
+          updated_at: "2026-01-01T00:06:00Z",
           user: { login: "github-actions[bot]" },
           body: "<!-- nemoclaw-pr-review-advisor -->\n<!-- head_sha: deadbeef; recommendation: merge_after_fixes; run_id: 100; run_attempt: 1; comment_id: 2 -->\nspoof",
         },
       ],
-      new Set(["99"]),
+      new Set(["1"]),
     );
 
     expect(previous).toMatchObject({ headSha: "abc1234" });
@@ -627,16 +634,18 @@ describe("PR review advisor", () => {
       [
         {
           id: 1,
+          updated_at: "2026-01-01T00:05:00Z",
           user: { login: "github-actions[bot]" },
           body: "<!-- nemoclaw-pr-review-advisor -->\n<!-- head_sha: abc1234; recommendation: merge_after_fixes; run_id: 99; run_attempt: 1; comment_id: 1 -->\ntrusted",
         },
         {
           id: 2,
+          updated_at: "2026-01-01T00:06:00Z",
           user: { login: "github-actions[bot]" },
           body: "<!-- nemoclaw-pr-review-advisor -->\n<!-- head_sha: abc1234; recommendation: merge_after_fixes; run_id: 99; run_attempt: 1; comment_id: 1 -->\nreplay",
         },
       ],
-      new Set(["99"]),
+      new Set(["1"]),
     );
 
     expect(previous).toMatchObject({ body: expect.stringContaining("trusted") });

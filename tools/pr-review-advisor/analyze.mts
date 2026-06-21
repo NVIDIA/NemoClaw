@@ -1125,10 +1125,10 @@ function extractIssueRefs(text: string, prNumber: number): number[] {
 
 export function extractPreviousAdvisorReview(
   issueComments: unknown[],
-  trustedRunIds: ReadonlySet<string>,
+  trustedCommentIds: ReadonlySet<string>,
 ): PreviousAdvisorReview | null {
   const candidates = previousAdvisorCandidates(issueComments).filter((candidate) =>
-    trustedRunIds.has(candidate.metadata.runId),
+    trustedCommentIds.has(candidate.metadata.commentId),
   );
   const candidate = candidates.at(-1);
   return candidate ? { headSha: candidate.metadata.headSha, body: candidate.body } : null;
@@ -1140,13 +1140,13 @@ async function collectTrustedPreviousAdvisorReview(
   issueComments: unknown[],
 ): Promise<PreviousAdvisorReview | null> {
   const candidates = previousAdvisorCandidates(issueComments);
-  const trustedRunIds = new Set<string>();
+  const trustedCommentIds = new Set<string>();
   for (const candidate of candidates.slice(-10)) {
-    if (await isTrustedAdvisorRun(repo, token, candidate.metadata)) {
-      trustedRunIds.add(candidate.metadata.runId);
+    if (await isTrustedAdvisorRun(repo, token, candidate)) {
+      trustedCommentIds.add(candidate.metadata.commentId);
     }
   }
-  return extractPreviousAdvisorReview(issueComments, trustedRunIds);
+  return extractPreviousAdvisorReview(issueComments, trustedCommentIds);
 }
 
 type AdvisorCommentMetadata = {
@@ -1159,6 +1159,7 @@ type AdvisorCommentMetadata = {
 
 type PreviousAdvisorCandidate = {
   body: string;
+  updatedAt: string;
   metadata: AdvisorCommentMetadata;
 };
 
@@ -1169,8 +1170,9 @@ function previousAdvisorCandidates(issueComments: unknown[]): PreviousAdvisorCan
     if (!body?.includes("<!-- nemoclaw-pr-review-advisor -->")) return [];
     const metadata = advisorHiddenMetadata(body);
     const commentId = getPath<number>(comment, ["id"]);
-    if (!metadata || String(commentId) !== metadata.commentId) return [];
-    return [{ body: body.slice(0, 12000), metadata }];
+    const updatedAt = stringOrUndefined(getPath<unknown>(comment, ["updated_at"]));
+    if (!metadata || String(commentId) !== metadata.commentId || !updatedAt) return [];
+    return [{ body: body.slice(0, 12000), updatedAt, metadata }];
   });
 }
 
@@ -1210,19 +1212,40 @@ function hasAdvisorCommentAuthor(comment: unknown): boolean {
 async function isTrustedAdvisorRun(
   repo: string,
   token: string,
-  metadata: AdvisorCommentMetadata,
+  candidate: PreviousAdvisorCandidate,
 ): Promise<boolean> {
   try {
-    const run = await githubRest<unknown>(`repos/${repo}/actions/runs/${metadata.runId}`, token);
+    const run = await githubRest<unknown>(
+      `repos/${repo}/actions/runs/${candidate.metadata.runId}`,
+      token,
+    );
     const name = stringOrUndefined(getPath<unknown>(run, ["name"]));
     const headSha = stringOrUndefined(getPath<unknown>(run, ["head_sha"]));
     const event = stringOrUndefined(getPath<unknown>(run, ["event"]));
+    const runAttempt = getPath<number>(run, ["run_attempt"]);
+    const startedAt =
+      stringOrUndefined(getPath<unknown>(run, ["run_started_at"])) ||
+      stringOrUndefined(getPath<unknown>(run, ["created_at"]));
+    const updatedAt = stringOrUndefined(getPath<unknown>(run, ["updated_at"]));
+    if (!startedAt || !updatedAt) return false;
     return (
-      name === "PR Review / Advisor" && headSha === metadata.headSha && event === "pull_request"
+      name === "PR Review / Advisor" &&
+      headSha === candidate.metadata.headSha &&
+      event === "pull_request" &&
+      String(runAttempt) === candidate.metadata.runAttempt &&
+      isTimestampWithin(candidate.updatedAt, startedAt, updatedAt)
     );
   } catch {
     return false;
   }
+}
+
+function isTimestampWithin(value: string, start: string, end: string): boolean {
+  const valueTime = Date.parse(value);
+  const startTime = Date.parse(start);
+  const endTime = Date.parse(end);
+  if (![valueTime, startTime, endTime].every(Number.isFinite)) return false;
+  return valueTime >= startTime && valueTime <= endTime;
 }
 
 export function readTrustedSecurityReviewSkill(): string {
