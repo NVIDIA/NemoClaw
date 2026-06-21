@@ -719,8 +719,13 @@ export function collectStaticTestInventory(changedFiles: string[]): StaticTestIn
   const candidateExistingCoverage: string[] = [];
 
   for (const file of changedTestFiles) {
-    if (!fs.existsSync(file)) continue;
-    const text = fs.readFileSync(file, "utf8").slice(0, 200000);
+    const text = readChangedRegularFilePrefix(file, 200000);
+    if (text === null) {
+      candidateExistingCoverage.push(
+        `${file} changed but was skipped because it is not a regular in-repository file.`,
+      );
+      continue;
+    }
     const names = extractTestNames(text).slice(0, 20);
     nearbyTestNames.push(...names.map((name) => `${file}: ${name}`));
     candidateExistingCoverage.push(
@@ -747,6 +752,35 @@ export function collectStaticTestInventory(changedFiles: string[]): StaticTestIn
     nearbyTestNames: [...new Set(nearbyTestNames)].slice(0, 60),
     candidateExistingCoverage: [...new Set(candidateExistingCoverage)].slice(0, 40),
   };
+}
+
+function readChangedRegularFilePrefix(file: string, maxBytes: number): string | null {
+  const absolutePath = path.resolve(root, file);
+  if (!isPathInside(root, absolutePath)) return null;
+  let stat: fs.Stats;
+  try {
+    stat = fs.lstatSync(absolutePath);
+  } catch {
+    return null;
+  }
+  if (!stat.isFile() || stat.isSymbolicLink()) return null;
+  const realPath = fs.realpathSync(absolutePath);
+  if (!isPathInside(root, realPath)) return null;
+
+  const fd = fs.openSync(realPath, "r");
+  try {
+    const size = Math.min(Math.max(0, maxBytes), stat.size);
+    const buffer = Buffer.alloc(size);
+    const bytesRead = fs.readSync(fd, buffer, 0, size, 0);
+    return buffer.subarray(0, bytesRead).toString("utf8");
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function isPathInside(parent: string, child: string): boolean {
+  const relative = path.relative(parent, child);
+  return Boolean(relative) && !relative.startsWith("..") && !path.isAbsolute(relative);
 }
 
 function extractTestNames(text: string): string[] {
@@ -1088,16 +1122,20 @@ export function extractPreviousAdvisorReview(
     );
   const body = trustedComments.at(-1);
   if (!body) return null;
-  const hiddenHeadSha = body.match(/<!--\s*head_sha:\s*([^;\s>]+)(?:;[^>]*)?\s*-->/i)?.[1];
-  const legacyHeadSha = body.match(
-    /(?:\*\*Analyzed HEAD:\*\*|Analyzed SHA:)\s*`?([^`\n\s]+)`?/,
-  )?.[1];
-  return { headSha: hiddenHeadSha || legacyHeadSha, body: body.slice(0, 12000) };
+  const hiddenHeadSha = advisorHiddenHeadSha(body);
+  if (!hiddenHeadSha) return null;
+  return { headSha: hiddenHeadSha, body: body.slice(0, 12000) };
+}
+
+function advisorHiddenHeadSha(body: string): string | undefined {
+  const headSha = body.match(/<!--\s*head_sha:\s*([^;\s>]+)(?:;[^>]*)?\s*-->/i)?.[1];
+  return headSha && /^[0-9a-f]{7,40}$/i.test(headSha) ? headSha : undefined;
 }
 
 function isTrustedAdvisorComment(comment: unknown): boolean {
   const body = stringOrUndefined(getPath<unknown>(comment, ["body"]));
   if (!body?.includes("<!-- nemoclaw-pr-review-advisor -->")) return false;
+  if (!advisorHiddenHeadSha(body)) return false;
   const author = stringOrUndefined(getPath<unknown>(comment, ["user", "login"]));
   return author === "github-actions[bot]";
 }
