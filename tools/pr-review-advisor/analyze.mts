@@ -104,14 +104,18 @@ type SourceOfTruthStatus = (typeof SOURCE_OF_TRUTH_STATUSES)[number];
 
 type ArtifactPaths = {
   promptDir: string;
+  retryPromptDir: string;
+  contextDir: string;
   raw: string;
+  retryRaw: string;
   result: string;
   finalResult: string;
   summary: string;
   sessionHtml: string;
+  retrySessionHtml: string;
 };
 
-type ReviewMetadata = {
+export type ReviewMetadata = {
   baseRef: string;
   headRef: string;
   headSha: string;
@@ -126,7 +130,10 @@ type Finding = {
   line: number | null;
   title: string;
   description: string;
+  impact: string;
   recommendation: string;
+  verificationHint: string;
+  missingRegressionTest: string;
   evidence: string;
 };
 
@@ -186,17 +193,24 @@ type ReviewAdvisorResult = {
   };
 };
 
-type DeterministicReviewContext = {
+export type DeterministicReviewContext = {
   diffStat: string;
   commits: string[];
   riskyAreas: string[];
   testDepth: ReviewAdvisorResult["testDepth"];
+  staticTestInventory: StaticTestInventory;
   workflowSignals: string[];
   localizedPatchSignals: LocalizedPatchSignal[];
   monolithDeltas: MonolithDelta[];
   driftEvidence: DriftEvidence[];
   previousAdvisorReview: PreviousAdvisorReview | null;
   github: GitHubReviewContext | null;
+};
+
+export type StaticTestInventory = {
+  changedTestFiles: string[];
+  nearbyTestNames: string[];
+  candidateExistingCoverage: string[];
 };
 
 type LocalizedPatchSignal = {
@@ -243,7 +257,7 @@ type GitHubReviewContext = {
   previousAdvisorReview?: PreviousAdvisorReview | null;
 };
 
-type PreviousAdvisorReview = {
+export type PreviousAdvisorReview = {
   headSha?: string;
   body: string;
 };
@@ -290,6 +304,7 @@ async function main(): Promise<void> {
   const diff = getDiff(baseRef, headRef, 160000);
   const deterministic = await collectDeterministicContext({ baseRef, headRef, changedFiles, diff });
   const metadata = { baseRef, headRef, headSha, changedFiles, deterministic };
+  writeDeterministicContextArtifacts(artifacts, deterministic, diff);
   const systemPrompt = buildSystemPrompt();
   const promptTurns = buildPromptTurns({ metadata, diff, schema });
   writePromptArtifacts({ promptDir: artifacts.promptDir, systemPrompt, promptTurns });
@@ -309,8 +324,7 @@ async function main(): Promise<void> {
   );
   let sdkResult: RunAdvisorResult | undefined;
   try {
-    sdkResult = await runReadOnlyAdvisor({
-      cwd: root,
+    sdkResult = await runAdvisorConversation({
       promptTurns,
       systemPrompt,
       configDir,
@@ -318,16 +332,10 @@ async function main(): Promise<void> {
       timeoutMs,
       heartbeatMs,
       maxCaptureBytes,
-      credentialEnv: ADVISOR_CREDENTIAL_ENV,
       logPrefix: "pr-review-advisor",
-      logProgress,
     });
     fs.writeFileSync(artifacts.raw, sdkResult.raw);
     logProgress(`PR review advisor conversation finished: turns=${sdkResult.turnTexts.length}`);
-    if (sdkResult.turnErrors.length > 0) {
-      writeFailure(`PR review advisor SDK provider error: ${sdkResult.turnErrors.join("; ")}`);
-      process.exit(1);
-    }
   } catch (error: unknown) {
     const reason = error instanceof Error ? error.message : String(error);
     fs.writeFileSync(artifacts.raw, `PR review advisor SDK execution failed: ${reason}\n`);
@@ -335,19 +343,61 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  let result: ReviewAdvisorResult;
+  let result: ReviewAdvisorResult | null = null;
+  let retryReason: string | null = null;
   try {
-    result = normalizeReviewResult(
-      extractJson(
-        sdkResult.text || sdkResult.raw,
-        artifacts.raw,
-        "pr_review_advisor_json",
-        "PR review advisor output",
-      ),
-      metadata,
-    );
+    result = parseAdvisorResult(sdkResult.text || sdkResult.raw, artifacts.raw, metadata);
+    const qualityIssues = reviewQualityIssues(result);
+    if (qualityIssues.length > 0) retryReason = qualityIssues.join("; ");
   } catch (error: unknown) {
-    writeFailure(error instanceof Error ? error.message : String(error));
+    retryReason = error instanceof Error ? error.message : String(error);
+  }
+
+  if (retryReason) {
+    logProgress(`Retrying PR review advisor synthesis: ${retryReason}`);
+    const retryTurns = buildRetryPromptTurns({
+      metadata,
+      schema,
+      previousRaw: sdkResult.text || sdkResult.raw,
+      reason: retryReason,
+    });
+    writePromptArtifacts({
+      promptDir: artifacts.retryPromptDir,
+      systemPrompt,
+      promptTurns: retryTurns,
+    });
+    try {
+      const retryResult = await runAdvisorConversation({
+        promptTurns: retryTurns,
+        systemPrompt,
+        configDir,
+        htmlExportPath: artifacts.retrySessionHtml,
+        timeoutMs,
+        heartbeatMs,
+        maxCaptureBytes,
+        logPrefix: "pr-review-advisor-retry",
+      });
+      fs.writeFileSync(artifacts.retryRaw, retryResult.raw);
+      result = parseAdvisorResult(
+        retryResult.text || retryResult.raw,
+        artifacts.retryRaw,
+        metadata,
+      );
+      const retryQualityIssues = reviewQualityIssues(result);
+      if (retryQualityIssues.length > 0) {
+        result.reviewCompleteness.limitations = [
+          `Advisor retry still produced low-quality structured fields: ${retryQualityIssues.join("; ")}`,
+          ...result.reviewCompleteness.limitations,
+        ];
+      }
+    } catch (error: unknown) {
+      writeFailure(error instanceof Error ? error.message : String(error));
+      process.exit(1);
+    }
+  }
+
+  if (!result) {
+    writeFailure("PR review advisor did not produce a normalized result");
     process.exit(1);
   }
 
@@ -365,12 +415,41 @@ async function main(): Promise<void> {
 function artifactPaths(outDir: string): ArtifactPaths {
   return {
     promptDir: path.join(outDir, "prompts"),
+    retryPromptDir: path.join(outDir, "retry-prompts"),
+    contextDir: path.join(outDir, "context"),
     raw: path.join(outDir, "pr-review-advisor-raw-output.txt"),
+    retryRaw: path.join(outDir, "pr-review-advisor-retry-raw-output.txt"),
     result: path.join(outDir, "pr-review-advisor-result.json"),
     finalResult: path.join(outDir, "pr-review-advisor-final-result.json"),
     summary: path.join(outDir, "pr-review-advisor-summary.md"),
     sessionHtml: path.join(outDir, "pr-review-advisor-session.html"),
+    retrySessionHtml: path.join(outDir, "pr-review-advisor-retry-session.html"),
   };
+}
+
+export function writeDeterministicContextArtifacts(
+  paths: { contextDir: string },
+  context: DeterministicReviewContext,
+  diff: string,
+): void {
+  fs.rmSync(paths.contextDir, { recursive: true, force: true });
+  fs.mkdirSync(paths.contextDir, { recursive: true });
+  writeJson(path.join(paths.contextDir, "drift-context.json"), buildDriftTurnContext(context));
+  writeJson(
+    path.join(paths.contextDir, "security-context.json"),
+    buildSecurityTurnContext(context),
+  );
+  writeJson(
+    path.join(paths.contextDir, "validation-context.json"),
+    buildValidationTurnContext(context),
+  );
+  fs.writeFileSync(path.join(paths.contextDir, "pr.diff"), diff || "");
+  if (context.previousAdvisorReview?.body) {
+    fs.writeFileSync(
+      path.join(paths.contextDir, "previous-advisor-review.md"),
+      context.previousAdvisorReview.body,
+    );
+  }
 }
 
 function writeUnavailableArtifacts(
@@ -397,6 +476,85 @@ function logProgress(message: string): void {
   console.log(`[pr-review-advisor] ${new Date().toISOString()} ${message}`);
 }
 
+type AdvisorConversationOptions = {
+  promptTurns: AdvisorPromptTurn[];
+  systemPrompt: string;
+  configDir: string;
+  htmlExportPath: string;
+  timeoutMs: number;
+  heartbeatMs: number;
+  maxCaptureBytes: number;
+  logPrefix: string;
+};
+
+async function runAdvisorConversation(
+  options: AdvisorConversationOptions,
+): Promise<RunAdvisorResult> {
+  const result = await runReadOnlyAdvisor({
+    cwd: root,
+    promptTurns: options.promptTurns,
+    systemPrompt: options.systemPrompt,
+    configDir: options.configDir,
+    htmlExportPath: options.htmlExportPath,
+    timeoutMs: options.timeoutMs,
+    heartbeatMs: options.heartbeatMs,
+    maxCaptureBytes: options.maxCaptureBytes,
+    credentialEnv: ADVISOR_CREDENTIAL_ENV,
+    logPrefix: options.logPrefix,
+    logProgress,
+  });
+  if (result.turnErrors.length > 0) {
+    throw new Error(`PR review advisor SDK provider error: ${result.turnErrors.join("; ")}`);
+  }
+  return result;
+}
+
+function parseAdvisorResult(
+  text: string,
+  rawPath: string,
+  metadata: ReviewMetadata,
+): ReviewAdvisorResult {
+  return normalizeReviewResult(
+    extractJson(text, rawPath, "pr_review_advisor_json", "PR review advisor output"),
+    metadata,
+  );
+}
+
+export function reviewQualityIssues(result: ReviewAdvisorResult): string[] {
+  const issues: string[] = [];
+  const placeholderValues = new Set([
+    "No description provided.",
+    "Review manually.",
+    "No evidence provided.",
+    "No impact provided.",
+    "No verification hint provided.",
+    "No regression test recommendation provided.",
+  ]);
+  for (const [index, finding] of result.findings.entries()) {
+    const prefix = `findings[${index + 1}] ${finding.title}`;
+    for (const field of [
+      "description",
+      "impact",
+      "recommendation",
+      "verificationHint",
+      "missingRegressionTest",
+      "evidence",
+    ] as const) {
+      if (!finding[field].trim() || placeholderValues.has(finding[field])) {
+        issues.push(`${prefix} has placeholder ${field}`);
+      }
+    }
+  }
+  if (
+    result.securityCategories.some((category) =>
+      category.justification.startsWith("Advisor did not provide a category-specific verdict"),
+    )
+  ) {
+    issues.push("securityCategories were defaulted because the advisor omitted verdicts");
+  }
+  return issues.slice(0, 20);
+}
+
 async function collectDeterministicContext(options: {
   baseRef: string;
   headRef: string;
@@ -406,11 +564,13 @@ async function collectDeterministicContext(options: {
   const github = await collectGitHubContext();
   const riskyAreas = detectRiskyAreas(options.changedFiles);
   const testDepth = classifyTestDepth(options.changedFiles, options.diff);
+  const staticTestInventory = collectStaticTestInventory(options.changedFiles);
   return {
     diffStat: getDiffStat(options.baseRef, options.headRef),
     commits: getCommits(options.baseRef, options.headRef),
     riskyAreas,
     testDepth,
+    staticTestInventory,
     previousAdvisorReview: github?.previousAdvisorReview || null,
     workflowSignals: detectWorkflowSignals(options.changedFiles, options.diff),
     localizedPatchSignals: detectLocalizedPatchSignals(options.diff),
@@ -506,6 +666,52 @@ function isDocsOrTestOnly(file: string): boolean {
     file.startsWith("docs/") ||
     file.startsWith("fern/")
   );
+}
+
+export function collectStaticTestInventory(changedFiles: string[]): StaticTestInventory {
+  const changedTestFiles = changedFiles.filter(isTestFile).slice(0, 40);
+  const nearbyTestNames: string[] = [];
+  const candidateExistingCoverage: string[] = [];
+
+  for (const file of changedTestFiles) {
+    if (!fs.existsSync(file)) continue;
+    const text = fs.readFileSync(file, "utf8").slice(0, 200000);
+    const names = extractTestNames(text).slice(0, 20);
+    nearbyTestNames.push(...names.map((name) => `${file}: ${name}`));
+    candidateExistingCoverage.push(
+      names.length > 0
+        ? `${file} changed with ${names.length} named test block(s).`
+        : `${file} changed but no describe/it/test names were detected statically.`,
+    );
+  }
+
+  const sourceFiles = changedFiles.filter((file) => !isTestFile(file) && !isDocsOrTestOnly(file));
+  if (sourceFiles.length > 0 && changedTestFiles.length > 0) {
+    candidateExistingCoverage.push(
+      `Changed source files (${sourceFiles.slice(0, 8).join(", ")}) are paired with changed test files (${changedTestFiles.slice(0, 8).join(", ")}).`,
+    );
+  }
+  if (sourceFiles.length > 0 && changedTestFiles.length === 0) {
+    candidateExistingCoverage.push(
+      `No changed test files were detected for changed source files: ${sourceFiles.slice(0, 8).join(", ")}.`,
+    );
+  }
+
+  return {
+    changedTestFiles,
+    nearbyTestNames: [...new Set(nearbyTestNames)].slice(0, 60),
+    candidateExistingCoverage: [...new Set(candidateExistingCoverage)].slice(0, 40),
+  };
+}
+
+function extractTestNames(text: string): string[] {
+  const names: string[] = [];
+  const pattern = /\b(?:describe|it|test)\s*(?:\.\w+)?\s*\(\s*(["'`])([^"'`]{1,180})\1/g;
+  for (const match of text.matchAll(pattern)) {
+    const name = match[2]?.replace(/\s+/g, " ").trim();
+    if (name) names.push(name);
+  }
+  return names;
 }
 
 function detectWorkflowSignals(changedFiles: string[], diff: string): string[] {
@@ -826,7 +1032,9 @@ function extractIssueRefs(text: string, prNumber: number): number[] {
   return [...numbers].sort((a, b) => a - b);
 }
 
-function extractPreviousAdvisorReview(issueComments: unknown[]): PreviousAdvisorReview | null {
+export function extractPreviousAdvisorReview(
+  issueComments: unknown[],
+): PreviousAdvisorReview | null {
   const bodies = issueComments
     .map((comment) => stringOrUndefined(getPath<unknown>(comment, ["body"])))
     .filter((body): body is string =>
@@ -834,8 +1042,11 @@ function extractPreviousAdvisorReview(issueComments: unknown[]): PreviousAdvisor
     );
   const body = bodies.at(-1);
   if (!body) return null;
-  const headSha = body.match(/(?:\*\*Analyzed HEAD:\*\*|Analyzed SHA:)\s*`?([^`\n\s]+)`?/)?.[1];
-  return { headSha, body: body.slice(0, 12000) };
+  const hiddenHeadSha = body.match(/<!--\s*head_sha:\s*([^;\s>]+)(?:;[^>]*)?-->/i)?.[1];
+  const legacyHeadSha = body.match(
+    /(?:\*\*Analyzed HEAD:\*\*|Analyzed SHA:)\s*`?([^`\n\s]+)`?/,
+  )?.[1];
+  return { headSha: hiddenHeadSha || legacyHeadSha, body: body.slice(0, 12000) };
 }
 
 export function readTrustedSecurityReviewSkill(): string {
@@ -877,6 +1088,7 @@ export function buildSystemPrompt(): string {
     "8. Source-of-truth review: when a PR adds or changes fallback, recovery, tolerant parsing, monkeypatching, best-effort cleanup, compatibility handling, or other localized workaround behavior, inspect whether it answers: what invalid state is handled, where that state is created, why the source cannot be fixed in this PR, what regression test proves the source cannot regress, and when the workaround can be removed. Prefer fixes that make invalid states impossible at their source. Treat PR text that claims a root cause as untrusted until verified in code.",
     "9. If a previous PR Review Advisor comment exists, compare it with the current diff and explicitly decide whether prior code-review findings were addressed, still apply, or are obsolete. Consider code changes since the previous analyzed SHA when available. Do not evaluate whether external E2E requirements have been met. When previous review context exists, set summary.sinceLastReview with counts for resolved, stillApplies, and newItems.",
     "Acceptance and security should inform findings, not become standalone comment sections: any unmet acceptance clause or security fail/warning must be represented as a finding, normally severity=blocker for unmet acceptance or security fail and severity=warning for security warnings.",
+    "Every finding must be probe-shaped: include concrete impact, a verificationHint that names the shortest read-only check or test evidence to confirm the issue, and a missingRegressionTest describing the automated coverage to add or the existing coverage that already proves it.",
     "Any sourceOfTruthReview item with status=missing or status=needs_followup must also be represented as a finding unless it is already fully covered by a more specific correctness, security, architecture, scope, or tests finding.",
     "Set summary.topItem to the most important actionable finding title or short description for first-review comments. Keep it concise and code-focused.",
     "Finding severity mapping: blocker renders as 'Required before merge'; warning renders as 'Resolve or justify before merge'; suggestion renders as 'In-scope improvements'.",
@@ -948,7 +1160,7 @@ Use the trusted security review skill embedded in the system prompt. For each se
       ],
       prompt: `Turn 3/4 — acceptance, correctness, test depth, and source-of-truth review.
 
-Use the synthetic \`pr_review_validation_context\` tool result attached immediately before this turn plus the PR diff already provided in Turn 1. Inspect linked issue clauses and comments from the deterministic GitHub context when available. Map each acceptance clause to diff/test evidence. Review correctness risks, negative-path coverage, mocked boundaries, runtime-validation needs, and documentation/source-of-truth drift. When tests are advisable, make each suggested test name the concrete behavior or risk to cover. For any fallback, recovery, tolerant parsing, monkeypatch, workaround, or compatibility behavior, answer the source-of-truth questions from the system rubric.
+Use the synthetic \`pr_review_validation_context\` tool result attached immediately before this turn plus the PR diff already provided in Turn 1. Inspect linked issue clauses and comments from the deterministic GitHub context when available. Use staticTestInventory to avoid duplicating existing tests and to identify nearby changed test coverage. Map each acceptance clause to diff/test evidence. Review correctness risks, negative-path coverage, mocked boundaries, runtime-validation needs, and documentation/source-of-truth drift. When tests are advisable, make each suggested test name the concrete behavior or risk to cover. For any fallback, recovery, tolerant parsing, monkeypatch, workaround, or compatibility behavior, answer the source-of-truth questions from the system rubric.
 
 Do not produce final JSON yet; reply with concise working notes only.
 `,
@@ -971,11 +1183,56 @@ Do not produce final JSON yet; reply with concise working notes only.
       ],
       prompt: `Turn 4/4 — synthesize the final advisor result.
 
-Return the final NemoClaw PR Review Advisor JSON only. Use your prior working notes, but keep the output focused on actionable current-review findings. Any unmet acceptance clause or security fail/warning must be represented as a finding. Any sourceOfTruthReview item with status=missing or status=needs_followup must also be represented as a finding unless already covered by a more specific finding. For suggestion-severity findings, recommend current-PR action when the improvement is local to changed code; recommend future follow-up only when the evidence shows it is genuinely out of scope.
+Return the final NemoClaw PR Review Advisor JSON only. Use your prior working notes, but keep the output focused on actionable current-review findings. Any unmet acceptance clause or security fail/warning must be represented as a finding. Any sourceOfTruthReview item with status=missing or status=needs_followup must also be represented as a finding unless already covered by a more specific finding. For every finding, populate impact, verificationHint, and missingRegressionTest with concrete, non-placeholder text. For suggestion-severity findings, recommend current-PR action when the improvement is local to changed code; recommend future follow-up only when the evidence shows it is genuinely out of scope.
 
 Set the fields exactly as specified in the synthetic \`pr_review_exact_metadata\` tool result attached immediately before this turn.
 
 Return JSON matching the schema in the synthetic \`pr_review_response_schema\` tool result. Prefer <pr_review_advisor_json>{...}</pr_review_advisor_json> with raw JSON directly inside the tags and no Markdown outside the tags.
+`,
+    },
+  ];
+}
+
+export function buildRetryPromptTurns({
+  metadata,
+  schema,
+  previousRaw,
+  reason,
+}: {
+  metadata: ReviewMetadata;
+  schema: Record<string, unknown>;
+  previousRaw: string;
+  reason: string;
+}): AdvisorPromptTurn[] {
+  return [
+    {
+      name: "retry-synthesize-json",
+      syntheticToolResults: [
+        syntheticToolResult("pr_review_retry_reason", reason, "text", "retry reason"),
+        syntheticToolResult(
+          "pr_review_previous_output",
+          previousRaw.slice(-40000),
+          "text",
+          "previous advisor output tail",
+        ),
+        syntheticToolResult(
+          "pr_review_exact_metadata",
+          exactMetadataFields(metadata),
+          "text",
+          "exact metadata fields",
+        ),
+        syntheticToolResult(
+          "pr_review_response_schema",
+          JSON.stringify(schema),
+          "json",
+          "PR review advisor JSON schema",
+        ),
+      ],
+      prompt: `Retry synthesis only.
+
+The previous PR Review Advisor output was malformed or low quality for this reason: ${reason}
+
+Return corrected NemoClaw PR Review Advisor JSON only. Preserve any valid findings from the previous output, but repair the schema, placeholder fields, security-category omissions, and probe-shaped finding fields. Every finding must include concrete impact, verificationHint, missingRegressionTest, recommendation, and evidence. Use the exact metadata from the synthetic \`pr_review_exact_metadata\` tool result. Prefer <pr_review_advisor_json>{...}</pr_review_advisor_json> with raw JSON directly inside the tags and no Markdown outside the tags.
 `,
     },
   ];
@@ -1022,6 +1279,7 @@ function buildSecurityTurnContext(context: DeterministicReviewContext): Record<s
 function buildValidationTurnContext(context: DeterministicReviewContext): Record<string, unknown> {
   return {
     testDepth: context.testDepth,
+    staticTestInventory: context.staticTestInventory,
     localizedPatchSignals: context.localizedPatchSignals,
     previousAdvisorReview: context.previousAdvisorReview,
     pullRequest: context.github?.pullRequest ?? null,
@@ -1172,7 +1430,13 @@ function sanitizeFindings(value: unknown): Finding[] {
           : null,
       title: stringOrDefault(item.title, "Review finding"),
       description: stringOrDefault(item.description, "No description provided."),
+      impact: stringOrDefault(item.impact, "No impact provided."),
       recommendation: stringOrDefault(item.recommendation, "Review manually."),
+      verificationHint: stringOrDefault(item.verificationHint, "No verification hint provided."),
+      missingRegressionTest: stringOrDefault(
+        item.missingRegressionTest,
+        "No regression test recommendation provided.",
+      ),
       evidence: stringOrDefault(item.evidence, "No evidence provided."),
     }))
     .slice(0, 50);
@@ -1237,8 +1501,13 @@ function addSourceOfTruthFindings(
       line: null,
       title: `Source-of-truth review needed: ${review.surface}`,
       description: `The advisor marked localized patch analysis as ${review.status}.`,
+      impact:
+        "A localized workaround can preserve or hide an invalid state when the source boundary is unclear.",
       recommendation:
         "Identify the invalid state, source boundary, source-fix constraint, regression test, and removal condition before merging the localized behavior.",
+      verificationHint:
+        "Inspect the localized patch and source-of-truth review fields for a concrete invalid state, source boundary, source-fix constraint, regression test, and removal condition.",
+      missingRegressionTest: review.regressionTest,
       evidence: review.evidence,
     });
   }
@@ -1382,7 +1651,10 @@ function appendFindings(lines: string[], heading: string, findings: Finding[]): 
         ? ` (${finding.file}${finding.line ? `:${finding.line}` : ""})`
         : "";
       lines.push(`- **${finding.title}**${location}: ${finding.description}`);
+      lines.push(`  - Impact: ${finding.impact}`);
       lines.push(`  - Recommendation: ${finding.recommendation}`);
+      lines.push(`  - Verification hint: ${finding.verificationHint}`);
+      lines.push(`  - Missing regression test: ${finding.missingRegressionTest}`);
       lines.push(`  - Evidence: ${finding.evidence}`);
     }
   }
@@ -1416,7 +1688,13 @@ function unavailableResult(
             line: null,
             title: "PR review advisor unavailable",
             description: `The automated advisor could not complete: ${reason}`,
+            impact:
+              "Automated review evidence is incomplete, so human review must cover the changed code manually.",
             recommendation: "Re-run the PR Review Advisor or perform a manual review.",
+            verificationHint:
+              "Inspect the workflow logs and raw advisor artifact for the execution failure.",
+            missingRegressionTest:
+              "No regression test recommendation is available because the advisor did not complete.",
             evidence: reason,
           },
         ]

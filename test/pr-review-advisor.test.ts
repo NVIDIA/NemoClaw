@@ -14,14 +14,19 @@ import {
 } from "../tools/advisors/session.mts";
 import {
   buildPromptTurns,
+  buildRetryPromptTurns,
   buildSystemPrompt,
   classifyMonolithDelta,
   classifyTestDepth,
+  collectStaticTestInventory,
   detectLocalizedPatchSignals,
+  extractPreviousAdvisorReview,
   normalizeReviewResult,
   readTrustedSecurityReviewSkill,
   renderDetailedReview,
   renderSummary,
+  reviewQualityIssues,
+  writeDeterministicContextArtifacts,
   writePromptArtifacts,
 } from "../tools/pr-review-advisor/analyze.mts";
 import { buildComment } from "../tools/pr-review-advisor/comment.mts";
@@ -40,6 +45,11 @@ function metadata(overrides: Partial<ReviewMetadata> = {}): ReviewMetadata {
       verdict: "unit_sufficient",
       rationale: "deterministic fallback",
       suggestedTests: ["run unit tests"],
+    },
+    staticTestInventory: {
+      changedTestFiles: [],
+      nearbyTestNames: [],
+      candidateExistingCoverage: [],
     },
     previousAdvisorReview: null,
     workflowSignals: [],
@@ -84,7 +94,10 @@ function validResult(overrides = {}) {
         line: 42,
         title: "trusted-code boundary",
         description: "Workflow must execute trusted advisor code only.",
+        impact: "A PR-controlled workflow could run advisor code with repository secrets.",
         recommendation: "Keep implementation checkout pinned to main.",
+        verificationHint: "Inspect the workflow checkout and advisor script path.",
+        missingRegressionTest: "Keep the workflow trusted-code boundary test.",
         evidence: "advisor scripts are invoked from ADVISOR_DIR",
       },
     ],
@@ -254,6 +267,7 @@ describe("PR review advisor", () => {
     expect(prompt).toContain("Source-of-truth review");
     expect(prompt).toContain("Vitest E2E suite simplicity");
     expect(prompt).toContain("Test follow-ups to resolve or justify");
+    expect(prompt).toContain("Every finding must be probe-shaped");
     expect(prompt).not.toContain("Consider writing more tests for");
     expect(prompt).toContain("take a closer architecture look for new systems");
     expect(prompt).toContain("Favor focused Vitest tests and local test helpers");
@@ -311,8 +325,10 @@ describe("PR review advisor", () => {
     expect(turns[1]?.prompt).toContain("sandbox escape");
     expect(turns[1]?.syntheticToolResults?.[0]?.toolName).toBe("pr_review_security_context");
     expect(turns[2]?.prompt).toContain("source-of-truth questions");
+    expect(turns[2]?.prompt).toContain("staticTestInventory");
     expect(turns[2]?.prompt).not.toContain("localizedPatchSignals");
     expect(turns[2]?.syntheticToolResults?.[0]?.content).toContain("localizedPatchSignals");
+    expect(turns[2]?.syntheticToolResults?.[0]?.content).toContain("staticTestInventory");
     expect(turns[3]?.prompt).toContain("<pr_review_advisor_json>");
     expect(turns[3]?.syntheticToolResults?.map((result) => result.toolName)).toEqual([
       "pr_review_exact_metadata",
@@ -387,6 +403,55 @@ describe("PR review advisor", () => {
     }
   });
 
+  it("collects static test inventory from changed test files", () => {
+    const inventory = collectStaticTestInventory(["test/pr-review-advisor.test.ts"]);
+
+    expect(inventory.changedTestFiles).toContain("test/pr-review-advisor.test.ts");
+    expect(inventory.nearbyTestNames.some((name) => name.includes("PR review advisor"))).toBe(true);
+    expect(inventory.candidateExistingCoverage.join("\n")).toContain("named test block");
+  });
+
+  it("builds retry synthesis prompts with validation reason and previous output", () => {
+    const turns = buildRetryPromptTurns({
+      metadata: metadata(),
+      schema: loadAdvisorSchema(),
+      previousRaw: "previous malformed output",
+      reason: "missing probe-shaped fields",
+    });
+
+    expect(turns).toHaveLength(1);
+    expect(turns[0]?.name).toBe("retry-synthesize-json");
+    expect(turns[0]?.prompt).toContain("Retry synthesis only");
+    expect(turns[0]?.prompt).toContain("missing probe-shaped fields");
+    expect(turns[0]?.syntheticToolResults?.map((result) => result.toolName)).toEqual([
+      "pr_review_retry_reason",
+      "pr_review_previous_output",
+      "pr_review_exact_metadata",
+      "pr_review_response_schema",
+    ]);
+  });
+
+  it("writes auditable deterministic context artifacts", () => {
+    const tmp = fs.mkdtempSync(path.join(ROOT, ".tmp-pr-advisor-context-"));
+    try {
+      writeDeterministicContextArtifacts(
+        { contextDir: path.join(tmp, "context") },
+        metadata().deterministic,
+        "diff --git a/x b/x",
+      );
+
+      expect(fs.existsSync(path.join(tmp, "context", "drift-context.json"))).toBe(true);
+      expect(fs.existsSync(path.join(tmp, "context", "security-context.json"))).toBe(true);
+      expect(fs.existsSync(path.join(tmp, "context", "validation-context.json"))).toBe(true);
+      expect(fs.readFileSync(path.join(tmp, "context", "pr.diff"), "utf8")).toContain("diff --git");
+      expect(
+        fs.readFileSync(path.join(tmp, "context", "validation-context.json"), "utf8"),
+      ).toContain("staticTestInventory");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("detects localized patch signals from added diff lines", () => {
     const signals =
       detectLocalizedPatchSignals(`diff --git a/src/lib/example.ts b/src/lib/example.ts
@@ -445,6 +510,41 @@ describe("PR review advisor", () => {
         category: "architecture",
         title: "Source-of-truth review needed: Ollama proxy fallback",
       }),
+    );
+  });
+
+  it("parses previous advisor metadata from hidden sticky-comment fields", () => {
+    const previous = extractPreviousAdvisorReview([
+      {
+        body: "<!-- nemoclaw-pr-review-advisor -->\n<!-- head_sha: abc123; run_id: 99; run_attempt: 1 -->\nbody",
+      },
+    ]);
+
+    expect(previous).toMatchObject({ headSha: "abc123" });
+  });
+
+  it("flags low-quality normalized advisor fields for retry", () => {
+    const result = normalizeReviewResult(
+      validResult({
+        findings: [
+          {
+            severity: "warning",
+            category: "correctness",
+            file: "src/lib/example.ts",
+            line: 1,
+            title: "Missing details",
+          },
+        ],
+        securityCategories: [],
+      }),
+      metadata(),
+    );
+
+    expect(reviewQualityIssues(result)).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("placeholder impact"),
+        "securityCategories were defaulted because the advisor omitted verdicts",
+      ]),
     );
   });
 
@@ -554,9 +654,20 @@ describe("PR review advisor", () => {
     );
     expect(comment).toContain("<summary>Test follow-ups to resolve or justify</summary>");
     expect(comment).toContain("comment builder test");
+    expect(comment).toContain("<!-- head_sha: abc123def456; recommendation: merge_after_fixes -->");
+    expect(comment).toContain("**Review posture:** Resolve findings before merge");
     expect(comment).toContain("### 🚨 Required before merge");
     expect(comment).toContain("### ⚠️ Resolve or justify before merge");
     expect(comment).toContain("### 💡 In-scope improvements");
+    expect(comment).toContain(
+      "Impact: A PR-controlled workflow could run advisor code with repository secrets.",
+    );
+    expect(comment).toContain(
+      "Verification hint: Inspect the workflow checkout and advisor script path.",
+    );
+    expect(comment).toContain(
+      "Missing regression test: Keep the workflow trusted-code boundary test.",
+    );
     expect(comment).toContain(
       "Expected follow-up: Fix before merge or get explicit maintainer override.",
     );
@@ -581,7 +692,7 @@ describe("PR review advisor", () => {
     expect(summary).not.toContain("Base: `origin/main`");
     expect(summary).not.toContain("Head: `HEAD`");
     expect(summary).not.toContain("Analyzed SHA: `abc123def456`");
-    expect(comment).not.toContain("abc123def456");
+    expect(comment).not.toContain("Analyzed SHA: `abc123def456`");
     expect(comment).not.toContain("**Recommendation:** merge after fixes");
     expect(comment).not.toContain("**Confidence:** high");
 
@@ -618,7 +729,11 @@ describe("PR review advisor", () => {
             line: 12,
             title: "Simplify changed branch",
             description: "The new branch can reuse the existing helper.",
+            impact: "Duplicated branches make future fixes easier to apply in only one path.",
             recommendation: "Refactor the changed branch in this PR if it remains local.",
+            verificationHint: "Compare the changed branch with the existing helper call.",
+            missingRegressionTest:
+              "Existing unit coverage is sufficient after the branch is simplified.",
             evidence: "Diff adds a duplicate branch next to the helper call.",
           },
         ],

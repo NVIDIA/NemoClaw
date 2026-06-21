@@ -29,7 +29,10 @@ type ReviewAdvisorResult = {
     file?: string | null;
     line?: number | null;
     description?: string;
+    impact?: string;
     recommendation?: string;
+    verificationHint?: string;
+    missingRegressionTest?: string;
     evidence?: string;
   }>;
   acceptanceCoverage?: Array<{
@@ -51,6 +54,11 @@ type ReviewAdvisorResult = {
   reviewCompleteness?: {
     limitations?: string[];
   };
+};
+
+type CommentMetadata = {
+  runId?: string;
+  runAttempt?: string;
 };
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
@@ -87,7 +95,16 @@ async function main(): Promise<void> {
     readIfExists("artifacts/pr-review-advisor/pr-review-advisor-summary.md");
   if (!summary) throw new Error(`No PR review advisor summary found at ${summaryPath}`);
   const result = readJsonIfExists<ReviewAdvisorResult>(resultPath);
-  const body = buildComment({ summary, result, runUrl, marker: MARKER });
+  const body = buildComment({
+    summary,
+    result,
+    runUrl,
+    marker: MARKER,
+    metadata: {
+      runId: process.env.GITHUB_RUN_ID,
+      runAttempt: process.env.GITHUB_RUN_ATTEMPT,
+    },
+  });
 
   await upsertStickyComment({ repo, pr, token, marker: MARKER, body, label: "PR review advisor" });
 }
@@ -97,11 +114,13 @@ export function buildComment({
   result,
   runUrl,
   marker,
+  metadata,
 }: {
   summary: string;
   result?: ReviewAdvisorResult;
   runUrl?: string;
   marker?: string;
+  metadata?: CommentMetadata;
 }): string {
   const blockerCount =
     result?.findings?.filter((finding) => finding.severity === "blocker").length ?? 0;
@@ -114,9 +133,12 @@ export function buildComment({
   const testingFollowupsDetails = renderTestingFollowupsDetails(result);
   const previousReviewDetails = renderPreviousReviewDetails(result);
   const details = runUrl ? `\n[Workflow run details](${runUrl})` : "";
+  const hiddenMetadata = renderHiddenMetadata(result, metadata);
+  const posture = reviewPosture(result?.summary?.recommendation);
   return `${marker || MARKER}
-## PR Review Advisor
+${hiddenMetadata}## PR Review Advisor
 
+**Review posture:** ${posture}
 **Action expectation:** Address required items before merge. Resolve or explicitly justify warnings. Treat suggestions as current-PR improvements when they touch changed code; defer only with maintainer rationale or a linked follow-up.
 **Findings:** ${countLabel(blockerCount, "required fix", "required fixes")}, ${countLabel(warningCount, "item to resolve/justify", "items to resolve/justify")}, ${countLabel(suggestionCount, "in-scope improvement", "in-scope improvements")}
 ${secondary}${findingsDetails}${testingFollowupsDetails}${previousReviewDetails}${details}
@@ -124,6 +146,36 @@ ${secondary}${findingsDetails}${testingFollowupsDetails}${previousReviewDetails}
 This is an automated, non-binding review; it still expects maintainers and agents to respond to each finding. A human maintainer must make the final merge decision.
 
 `;
+}
+
+function renderHiddenMetadata(result?: ReviewAdvisorResult, metadata?: CommentMetadata): string {
+  const fields = [
+    result?.headSha ? `head_sha: ${safeMetadataValue(result.headSha)}` : undefined,
+    result?.summary?.recommendation
+      ? `recommendation: ${safeMetadataValue(result.summary.recommendation)}`
+      : undefined,
+    metadata?.runId ? `run_id: ${safeMetadataValue(metadata.runId)}` : undefined,
+    metadata?.runAttempt ? `run_attempt: ${safeMetadataValue(metadata.runAttempt)}` : undefined,
+  ].filter((field): field is string => Boolean(field));
+  return fields.length > 0 ? `<!-- ${fields.join("; ")} -->\n` : "";
+}
+
+function safeMetadataValue(value: string): string {
+  return value
+    .replace(/[;\n\r<>]/g, "")
+    .trim()
+    .slice(0, 120);
+}
+
+function reviewPosture(recommendation?: string): string {
+  if (recommendation === "merge_as_is") return "No blocking advisor findings";
+  if (recommendation === "merge_after_fixes") return "Resolve findings before merge";
+  if (recommendation === "needs_rework" || recommendation === "blocked") {
+    return "Do not merge until addressed";
+  }
+  if (recommendation === "superseded") return "Superseded by other work";
+  if (recommendation === "info_only") return "Informational / low confidence";
+  return "Review findings and decide before merge";
 }
 
 function buildSecondarySummary(result?: ReviewAdvisorResult): string {
@@ -260,11 +312,18 @@ function formatFinding(finding: NonNullable<ReviewAdvisorResult["findings"]>[num
   const location = formatFindingLocation(finding);
   const description = finding.description ? `: ${escapeCommentText(finding.description)}` : "";
   const lines = [`- **${title}**${location}${description}`];
+  if (finding.impact) lines.push(`  - Impact: ${escapeCommentText(finding.impact)}`);
   if (finding.recommendation) {
     lines.push(`  - Recommendation: ${escapeCommentText(finding.recommendation)}`);
   }
   const expectedFollowUp = findingExpectedFollowUp(finding.severity);
   if (expectedFollowUp) lines.push(`  - Expected follow-up: ${expectedFollowUp}`);
+  if (finding.verificationHint) {
+    lines.push(`  - Verification hint: ${escapeCommentText(finding.verificationHint)}`);
+  }
+  if (finding.missingRegressionTest) {
+    lines.push(`  - Missing regression test: ${escapeCommentText(finding.missingRegressionTest)}`);
+  }
   if (finding.evidence) lines.push(`  - Evidence: ${escapeCommentText(finding.evidence)}`);
   return lines.join("\n");
 }

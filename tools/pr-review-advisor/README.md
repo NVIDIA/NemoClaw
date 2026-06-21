@@ -12,9 +12,10 @@ It complements the existing PR surfaces by keeping a NemoClaw maintainer code-re
 
 - sandbox and workflow security review;
 - acceptance-clause coverage against linked issues;
-- previous PR Review Advisor follow-up for code findings;
+- previous PR Review Advisor follow-up for code findings, using hidden sticky-comment metadata when available;
 - codebase drift, monolith growth, and architecture guardrails;
 - source-of-truth review for fallback, recovery, tolerant parsing, monkeypatching, and other localized workaround behavior;
+- static test-inventory context from changed test files and nearby test names;
 - correctness and test-quality checks that CI cannot prove.
 
 It intentionally does not report GitHub mergeability, branch protection, CI status, reviewer state, CodeRabbit state, or E2E pass/fail status; those are handled elsewhere in the PR UI.
@@ -30,8 +31,9 @@ It intentionally does not report GitHub mergeability, branch protection, CI stat
 5. Waits for repository-required status checks, plus the E2E Advisor recommendation, to leave the pending/in-progress state.
 6. Runs `tools/pr-review-advisor/analyze.mts` from the trusted checkout.
 7. Opens one Pi session and reviews the PR as a short conversation: orientation/drift, security, acceptance/correctness/tests, then final JSON synthesis.
-8. Writes artifacts under `artifacts/pr-review-advisor/`.
-9. Posts or updates a sticky PR comment marked by `<!-- nemoclaw-pr-review-advisor -->`.
+8. Retries synthesis once when the model output is malformed or contains low-quality placeholder fields.
+9. Writes artifacts under `artifacts/pr-review-advisor/`.
+10. Posts or updates a sticky PR comment marked by `<!-- nemoclaw-pr-review-advisor -->` plus hidden head-SHA/run metadata for follow-up reviews.
 
 The workflow is advisory and must not be configured as a required status check. Making it required can
 create circular wait behavior and defeats the goal of letting it observe settled required-check state.
@@ -81,7 +83,14 @@ If present, this token is used for sticky PR comments. Otherwise the workflow fa
 - `prompts/03-acceptance-correctness-tests.synthetic-tool-results/` — deterministic validation/GitHub context injected before the validation turn.
 - `prompts/04-synthesize-json.md` — final JSON synthesis turn.
 - `prompts/04-synthesize-json.synthetic-tool-results/` — exact metadata fields and response schema injected before final synthesis.
+- `retry-prompts/` — retry synthesis prompt and synthetic tool results when the first output is malformed or low quality.
+- `context/drift-context.json` — deterministic drift, overlap, monolith, and previous-review context.
+- `context/security-context.json` — deterministic security-risk context.
+- `context/validation-context.json` — deterministic acceptance, source-of-truth, and static test-inventory context.
+- `context/pr.diff` — truncated PR diff used by the advisor.
+- `context/previous-advisor-review.md` — previous sticky PR Review Advisor comment when one exists.
 - `pr-review-advisor-raw-output.txt` — raw multi-turn advisor transcript and diagnostics.
+- `pr-review-advisor-retry-raw-output.txt` — raw retry transcript when retry synthesis runs.
 - `pr-review-advisor-result.json` — parsed advisor response or execution metadata.
 - `pr-review-advisor-final-result.json` — normalized result used for comments.
 - `pr-review-advisor-summary.md` — markdown summary used in the job summary/comment.
@@ -105,7 +114,9 @@ available.
 ## Output contract
 
 `tools/pr-review-advisor/schema.json` defines the normalized JSON result shape used for the PR
-comment and future reporting work. The advisor is intentionally advisory: every result includes
-limitations and requires human maintainer review. The PR comment deliberately frames suggestions as
-current-review improvements when they touch changed code; agents should not automatically defer them
-to a future PR without maintainer rationale or a linked follow-up.
+comment and future reporting work. Findings include probe-shaped fields for impact, verification
+hints, and missing regression-test guidance so agents know what to check rather than treating findings
+as generic commentary. The advisor is intentionally advisory: every result includes limitations and
+requires human maintainer review. The PR comment deliberately frames suggestions as current-review
+improvements when they touch changed code; agents should not automatically defer them to a future PR
+without maintainer rationale or a linked follow-up.
