@@ -93,6 +93,7 @@ const SOURCE_OF_TRUTH_STATUSES = [
   "needs_followup",
   "missing",
 ] as const;
+const SIMPLIFICATION_TAGS = ["delete", "stdlib", "native", "yagni", "shrink"] as const;
 
 type Confidence = (typeof CONFIDENCES)[number];
 type SummaryRecommendation = (typeof SUMMARY_RECOMMENDATIONS)[number];
@@ -101,6 +102,7 @@ type TestDepthVerdict = (typeof TEST_DEPTH_VERDICTS)[number];
 type AcceptanceStatus = (typeof ACCEPTANCE_STATUSES)[number];
 type SecurityVerdict = (typeof SECURITY_VERDICTS)[number];
 type SourceOfTruthStatus = (typeof SOURCE_OF_TRUTH_STATUSES)[number];
+type SimplificationTag = (typeof SIMPLIFICATION_TAGS)[number];
 
 type ArtifactPaths = {
   promptDir: string;
@@ -135,6 +137,15 @@ type Finding = {
   verificationHint: string;
   missingRegressionTest: string;
   evidence: string;
+  simplification?: SimplificationFinding;
+};
+
+type SimplificationFinding = {
+  tag: SimplificationTag;
+  cut: string;
+  replacement: string;
+  estimatedNetLines: number | null;
+  safetyBoundary: string;
 };
 
 type AcceptanceCoverage = {
@@ -199,6 +210,7 @@ export type DeterministicReviewContext = {
   riskyAreas: string[];
   testDepth: ReviewAdvisorResult["testDepth"];
   staticTestInventory: StaticTestInventory;
+  simplificationSignals: SimplificationSignal[];
   workflowSignals: string[];
   localizedPatchSignals: LocalizedPatchSignal[];
   monolithDeltas: MonolithDelta[];
@@ -217,6 +229,20 @@ type LocalizedPatchSignal = {
   file: string | null;
   line: number | null;
   kind: string;
+  evidence: string;
+  reviewRule: string;
+};
+
+export type SimplificationSignal = {
+  file: string | null;
+  line: number | null;
+  kind:
+    | "new_dependency"
+    | "single_use_abstraction"
+    | "single_use_config"
+    | "wrapper"
+    | "large_file_hotspot"
+    | "test_over_scaffold";
   evidence: string;
   reviewRule: string;
 };
@@ -624,6 +650,7 @@ async function collectDeterministicContext(options: {
     riskyAreas,
     testDepth,
     staticTestInventory,
+    simplificationSignals: detectSimplificationSignals(options.changedFiles, options.diff),
     previousAdvisorReview: github?.previousAdvisorReview || null,
     workflowSignals: detectWorkflowSignals(options.changedFiles, options.diff),
     localizedPatchSignals: detectLocalizedPatchSignals(options.diff),
@@ -821,6 +848,130 @@ function detectWorkflowSignals(changedFiles: string[], diff: string): string[] {
       "PR-controlled text may be interpolated into workflow expressions; verify shell safety.",
     );
   return signals;
+}
+
+export function detectSimplificationSignals(
+  changedFiles: string[],
+  diff: string,
+): SimplificationSignal[] {
+  const signals: SimplificationSignal[] = [];
+  let file: string | null = null;
+  let nextLine: number | null = null;
+  const changedFileSet = new Set(changedFiles);
+
+  for (const rawLine of diff.split("\n")) {
+    const fileMatch = rawLine.match(/^diff --git a\/(.+?) b\/(.+)$/);
+    if (fileMatch) {
+      file = fileMatch[2] || fileMatch[1] || null;
+      nextLine = null;
+      continue;
+    }
+    const hunkMatch = rawLine.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+    if (hunkMatch) {
+      nextLine = Number.parseInt(hunkMatch[1] || "", 10);
+      if (!Number.isFinite(nextLine)) nextLine = null;
+      continue;
+    }
+    if (rawLine === "+++" || rawLine.startsWith("+++ ")) continue;
+    if (rawLine.startsWith("+")) {
+      const content = rawLine.slice(1).trim();
+      if (content) {
+        const signal = simplificationSignalForAddedLine(file, nextLine, content);
+        if (signal) signals.push(signal);
+      }
+      if (nextLine !== null) nextLine += 1;
+      if (signals.length >= 60) break;
+      continue;
+    }
+    if (rawLine.startsWith(" ") && nextLine !== null) nextLine += 1;
+  }
+
+  for (const delta of computeSimpleLargeFileDeltas(changedFileSet)) {
+    signals.push(delta);
+    if (signals.length >= 60) break;
+  }
+
+  return signals.slice(0, 60);
+}
+
+function simplificationSignalForAddedLine(
+  file: string | null,
+  line: number | null,
+  content: string,
+): SimplificationSignal | null {
+  const makeSignal = (
+    kind: SimplificationSignal["kind"],
+    reviewRule: string,
+  ): SimplificationSignal => ({ file, line, kind, evidence: content.slice(0, 220), reviewRule });
+
+  if (
+    /^(import|const|let|var)\b.*(?:\bfrom\s+["']|\brequire\(["'])(?:lodash|moment|date-fns|axios|uuid|chalk|commander|yargs)/.test(
+      content,
+    )
+  ) {
+    return makeSignal(
+      "new_dependency",
+      "Ask whether Node.js, TypeScript, browser, shell, or an already-installed dependency covers this before accepting another dependency.",
+    );
+  }
+  if (
+    /\b(?:interface|abstract\s+class|class)\s+\w*(?:Factory|Provider|Adapter|Strategy|Registry|Manager|Builder)\b/.test(
+      content,
+    )
+  ) {
+    return makeSignal(
+      "single_use_abstraction",
+      "Flag YAGNI when an abstraction has one implementation or one caller; inline until a second real variant exists.",
+    );
+  }
+  if (
+    /\b(?:process\.env\.[A-Z0-9_]+|[A-Z0-9_]+_ENABLED|ENABLE_[A-Z0-9_]+|DEFAULT_[A-Z0-9_]+)\b/.test(
+      content,
+    )
+  ) {
+    return makeSignal(
+      "single_use_config",
+      "Check whether this config knob is actually set by users/CI or whether a constant would be clearer until a second value exists.",
+    );
+  }
+  if (/\b(?:wrap|wrapper|proxy|adapter|facade|delegate)\b/i.test(content)) {
+    return makeSignal(
+      "wrapper",
+      "Check whether this wrapper adds policy/validation; if not, call the underlying API directly.",
+    );
+  }
+  if (
+    /\b(?:matrix|registry|framework|orchestrator|plugin)\b/i.test(content) &&
+    /\b(?:test|spec|fixture|scenario)\b/i.test(file || "")
+  ) {
+    return makeSignal(
+      "test_over_scaffold",
+      "Prefer one direct behavior test over a framework or registry when there is only one scenario.",
+    );
+  }
+  return null;
+}
+
+function computeSimpleLargeFileDeltas(changedFiles: Set<string>): SimplificationSignal[] {
+  return [...changedFiles]
+    .filter((file) => /^(tools\/pr-review-advisor|src|nemoclaw\/src)\/.*\.(?:ts|mts)$/.test(file))
+    .flatMap((file) => {
+      const text = readChangedRegularFilePrefix(file, 200000);
+      if (text === null) return [];
+      const lines = countLines(text);
+      if (lines < 500) return [];
+      return [
+        {
+          file,
+          line: null,
+          kind: "large_file_hotspot" as const,
+          evidence: `${file} is ${lines} lines after this change.`,
+          reviewRule:
+            "When a large hotspot is touched, ask whether a cohesive helper can be extracted or whether the edit is justified by security/context coupling.",
+        },
+      ];
+    })
+    .slice(0, 20);
 }
 
 export function detectLocalizedPatchSignals(diff: string): LocalizedPatchSignal[] {
@@ -1302,6 +1453,7 @@ export function buildSystemPrompt(): string {
     "7. Vitest E2E suite simplicity: when a PR adds or changes files under `test/e2e-scenario/`, `.github/workflows/e2e-vitest-scenarios.yaml`, or `tools/e2e-scenarios/`, take a closer architecture look for new systems. Favor focused Vitest tests and local test helpers. Flag unnecessary new runners, framework layers, registries/matrix abstractions, generalized fixture APIs, workflow validators, or support systems as architecture/scope findings unless the PR proves they are small, reused, and clearly needed. Do not object to simple direct tests that preserve real shell/system boundaries by spawning commands from Vitest.",
     "8. Source-of-truth review: when a PR adds or changes fallback, recovery, tolerant parsing, monkeypatching, best-effort cleanup, compatibility handling, or other localized workaround behavior, inspect whether it answers: what invalid state is handled, where that state is created, why the source cannot be fixed in this PR, what regression test proves the source cannot regress, and when the workaround can be removed. Prefer fixes that make invalid states impossible at their source. Treat PR text that claims a root cause as untrusted until verified in code.",
     "9. If a previous PR Review Advisor comment exists, compare it with the current diff and explicitly decide whether prior code-review findings were addressed, still apply, or are obsolete. Consider code changes since the previous analyzed SHA when available. Do not evaluate whether external E2E requirements have been met. When previous review context exists, set summary.sinceLastReview with counts for resolved, stillApplies, and newItems.",
+    "10. Simplification review: apply this ladder before accepting new code shape: does this need to exist; does Node/Python/shell/browser/OpenShell/GitHub already provide it; does an already-installed dependency cover it; can one line or fewer files do it; only then accept a custom abstraction. Use tags delete, stdlib, native, yagni, or shrink. Never simplify away trust-boundary validation, credential redaction, SSRF/sandbox/network-policy defenses, data-loss prevention, required regression tests, DCO/signature gates, or accessibility/user-safety behavior.",
     "Acceptance and security should inform findings, not become standalone comment sections: any unmet acceptance clause or security fail/warning must be represented as a finding, normally severity=blocker for unmet acceptance or security fail and severity=warning for security warnings.",
     "Every finding must be probe-shaped: include concrete impact, a verificationHint that names the shortest read-only check or test evidence to confirm the issue, and a missingRegressionTest describing the automated coverage to add or the existing coverage that already proves it.",
     "Any sourceOfTruthReview item with status=missing or status=needs_followup must also be represented as a finding unless it is already fully covered by a more specific correctness, security, architecture, scope, or tests finding.",
@@ -1375,7 +1527,7 @@ Use the trusted security review skill embedded in the system prompt. For each se
       ],
       prompt: `Turn 3/4 — acceptance, correctness, test depth, and source-of-truth review.
 
-Use the synthetic \`pr_review_validation_context\` tool result attached immediately before this turn plus the PR diff already provided in Turn 1. Inspect linked issue clauses and comments from the deterministic GitHub context when available. Use staticTestInventory to avoid duplicating existing tests and to identify nearby changed test coverage. Map each acceptance clause to diff/test evidence. Review correctness risks, negative-path coverage, mocked boundaries, runtime-validation needs, and documentation/source-of-truth drift. When tests are advisable, make each suggested test name the concrete behavior or risk to cover. For any fallback, recovery, tolerant parsing, monkeypatch, workaround, or compatibility behavior, answer the source-of-truth questions from the system rubric.
+Use the synthetic \`pr_review_validation_context\` tool result attached immediately before this turn plus the PR diff already provided in Turn 1. Inspect linked issue clauses and comments from the deterministic GitHub context when available. Use staticTestInventory to avoid duplicating existing tests and to identify nearby changed test coverage. Use simplificationSignals to look for safe opportunities to delete, use stdlib/native/platform features, remove YAGNI abstractions, or shrink changed code without weakening security or correctness boundaries. Map each acceptance clause to diff/test evidence. Review correctness risks, negative-path coverage, mocked boundaries, runtime-validation needs, and documentation/source-of-truth drift. When tests are advisable, make each suggested test name the concrete behavior or risk to cover. For any fallback, recovery, tolerant parsing, monkeypatch, workaround, or compatibility behavior, answer the source-of-truth questions from the system rubric.
 
 Do not produce final JSON yet; reply with concise working notes only.
 `,
@@ -1398,7 +1550,7 @@ Do not produce final JSON yet; reply with concise working notes only.
       ],
       prompt: `Turn 4/4 — synthesize the final advisor result.
 
-Return the final NemoClaw PR Review Advisor JSON only. Use your prior working notes, but keep the output focused on actionable current-review findings. Any unmet acceptance clause or security fail/warning must be represented as a finding. Any sourceOfTruthReview item with status=missing or status=needs_followup must also be represented as a finding unless already covered by a more specific finding. For every finding, populate impact, verificationHint, and missingRegressionTest with concrete, non-placeholder text. For suggestion-severity findings, recommend current-PR action when the improvement is local to changed code; recommend future follow-up only when the evidence shows it is genuinely out of scope.
+Return the final NemoClaw PR Review Advisor JSON only. Use your prior working notes, but keep the output focused on actionable current-review findings. Any unmet acceptance clause or security fail/warning must be represented as a finding. Any sourceOfTruthReview item with status=missing or status=needs_followup must also be represented as a finding unless already covered by a more specific finding. For every finding, populate impact, verificationHint, and missingRegressionTest with concrete, non-placeholder text. For safe simplification findings, populate simplification with a tag, what to cut, the replacement, estimated net line delta when clear, and the safety boundary that must remain. For suggestion-severity findings, recommend current-PR action when the improvement is local to changed code; recommend future follow-up only when the evidence shows it is genuinely out of scope.
 
 Set the fields exactly as specified in the synthetic \`pr_review_exact_metadata\` tool result attached immediately before this turn.
 
@@ -1495,6 +1647,7 @@ function buildValidationTurnContext(context: DeterministicReviewContext): Record
   return {
     testDepth: context.testDepth,
     staticTestInventory: context.staticTestInventory,
+    simplificationSignals: context.simplificationSignals,
     localizedPatchSignals: context.localizedPatchSignals,
     previousAdvisorReview: context.previousAdvisorReview,
     pullRequest: context.github?.pullRequest ?? null,
@@ -1653,8 +1806,27 @@ function sanitizeFindings(value: unknown): Finding[] {
         "No regression test recommendation provided.",
       ),
       evidence: stringOrDefault(item.evidence, "No evidence provided."),
+      simplification: sanitizeSimplification(item.simplification),
     }))
     .slice(0, 50);
+}
+
+function sanitizeSimplification(value: unknown): SimplificationFinding | undefined {
+  if (!isRecord(value)) return undefined;
+  const tag = enumValue(value.tag, SIMPLIFICATION_TAGS, "shrink");
+  return {
+    tag,
+    cut: stringOrDefault(value.cut, "Unspecified code to simplify."),
+    replacement: stringOrDefault(value.replacement, "Use the simpler existing path."),
+    estimatedNetLines:
+      typeof value.estimatedNetLines === "number" && Number.isInteger(value.estimatedNetLines)
+        ? value.estimatedNetLines
+        : null,
+    safetyBoundary: stringOrDefault(
+      value.safetyBoundary,
+      "Do not remove validation, security, data-loss prevention, or required test coverage.",
+    ),
+  };
 }
 
 function sanitizeAcceptanceCoverage(value: unknown): AcceptanceCoverage[] {

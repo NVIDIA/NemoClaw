@@ -193,7 +193,20 @@
         "recommendation": { "type": "string" },
         "verificationHint": { "type": "string" },
         "missingRegressionTest": { "type": "string" },
-        "evidence": { "type": "string" }
+        "evidence": { "type": "string" },
+        "simplification": { "$ref": "#/$defs/simplification" }
+      },
+      "additionalProperties": false
+    },
+    "simplification": {
+      "type": "object",
+      "required": ["tag", "cut", "replacement", "estimatedNetLines", "safetyBoundary"],
+      "properties": {
+        "tag": { "enum": ["delete", "stdlib", "native", "yagni", "shrink"] },
+        "cut": { "type": "string" },
+        "replacement": { "type": "string" },
+        "estimatedNetLines": { "type": ["integer", "null"] },
+        "safetyBoundary": { "type": "string" }
       },
       "additionalProperties": false
     }

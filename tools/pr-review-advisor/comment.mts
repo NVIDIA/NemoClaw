@@ -34,6 +34,13 @@ type ReviewAdvisorResult = {
     verificationHint?: string;
     missingRegressionTest?: string;
     evidence?: string;
+    simplification?: {
+      tag?: string;
+      cut?: string;
+      replacement?: string;
+      estimatedNetLines?: number | null;
+      safetyBoundary?: string;
+    };
   }>;
   acceptanceCoverage?: Array<{
     clause?: string;
@@ -152,6 +159,7 @@ export function buildComment({
     result?.findings?.filter((finding) => finding.severity === "suggestion").length ?? 0;
   const secondary = buildSecondarySummary(result);
   const findingsDetails = renderFindingsDetails(result);
+  const simplificationDetails = renderSimplificationDetails(result);
   const testingFollowupsDetails = renderTestingFollowupsDetails(result);
   const previousReviewDetails = renderPreviousReviewDetails(result);
   const details = runUrl ? `\n[Workflow run details](${runUrl})` : "";
@@ -163,7 +171,7 @@ ${hiddenMetadata}## PR Review Advisor
 **Review posture:** ${posture}
 **Action expectation:** Address required items before merge. Resolve or explicitly justify warnings. Treat suggestions as current-PR improvements when they touch changed code; defer only with maintainer rationale or a linked follow-up.
 **Findings:** ${countLabel(blockerCount, "required fix", "required fixes")}, ${countLabel(warningCount, "item to resolve/justify", "items to resolve/justify")}, ${countLabel(suggestionCount, "in-scope improvement", "in-scope improvements")}
-${secondary}${findingsDetails}${testingFollowupsDetails}${previousReviewDetails}${details}
+${secondary}${findingsDetails}${simplificationDetails}${testingFollowupsDetails}${previousReviewDetails}${details}
 
 This is an automated, non-binding review; it still expects maintainers and agents to respond to each finding. A human maintainer must make the final merge decision.
 
@@ -263,6 +271,42 @@ function renderFindingsDetails(result?: ReviewAdvisorResult): string {
     lines.push("");
   }
   lines.push("</details>", "");
+  return `${lines.join("\n")}\n`;
+}
+
+function renderSimplificationDetails(result?: ReviewAdvisorResult): string {
+  const findings = result?.findings?.filter((finding) => finding.simplification) || [];
+  if (findings.length === 0) return "";
+  const netLines = findings.reduce((total, finding) => {
+    const value = finding.simplification?.estimatedNetLines;
+    return typeof value === "number" && Number.isFinite(value) ? total + value : total;
+  }, 0);
+  const netLabel = netLines < 0 ? `, net ${netLines} lines possible` : "";
+  const lines: string[] = [
+    "",
+    "<details>",
+    `<summary>Simplification opportunities: ${countLabel(findings.length, "possible cut", "possible cuts")}${netLabel}</summary>`,
+    "",
+    "_These are safe simplification checks only. Do not remove validation, security controls, data-loss prevention, or required tests._",
+  ];
+  for (const finding of findings.slice(0, 12)) {
+    const item = finding.simplification;
+    if (!item) continue;
+    const location = formatFindingLocation(finding);
+    lines.push(
+      `- **${escapeCommentText(item.tag || "shrink")}**${location}: ${escapeCommentText(item.cut || finding.title || "Review simplification")}`,
+    );
+    lines.push(
+      `  - Replacement: ${escapeCommentText(item.replacement || "Use the simpler existing path.")}`,
+    );
+    if (typeof item.estimatedNetLines === "number") {
+      lines.push(`  - Net: ${item.estimatedNetLines} lines`);
+    }
+    lines.push(
+      `  - Safety boundary: ${escapeCommentText(item.safetyBoundary || "Keep validation, security, data-loss prevention, and required tests.")}`,
+    );
+  }
+  lines.push("", "</details>", "");
   return `${lines.join("\n")}\n`;
 }
 

@@ -21,6 +21,7 @@ import {
   collectStaticTestInventory,
   collectTrustedPreviousAdvisorReview,
   detectLocalizedPatchSignals,
+  detectSimplificationSignals,
   extractPreviousAdvisorReview,
   normalizeReviewResult,
   readTrustedSecurityReviewSkill,
@@ -54,6 +55,7 @@ function metadata(overrides: Partial<ReviewMetadata> = {}): ReviewMetadata {
       nearbyTestNames: [],
       candidateExistingCoverage: [],
     },
+    simplificationSignals: [],
     previousAdvisorReview: null,
     workflowSignals: [],
     localizedPatchSignals: [],
@@ -271,6 +273,8 @@ describe("PR review advisor", () => {
     expect(prompt).toContain("Vitest E2E suite simplicity");
     expect(prompt).toContain("Test follow-ups to resolve or justify");
     expect(prompt).toContain("Every finding must be probe-shaped");
+    expect(prompt).toContain("Simplification review");
+    expect(prompt).toContain("delete, stdlib, native, yagni, or shrink");
     expect(prompt).not.toContain("Consider writing more tests for");
     expect(prompt).toContain("take a closer architecture look for new systems");
     expect(prompt).toContain("Favor focused Vitest tests and local test helpers");
@@ -329,9 +333,11 @@ describe("PR review advisor", () => {
     expect(turns[1]?.syntheticToolResults?.[0]?.toolName).toBe("pr_review_security_context");
     expect(turns[2]?.prompt).toContain("source-of-truth questions");
     expect(turns[2]?.prompt).toContain("staticTestInventory");
+    expect(turns[2]?.prompt).toContain("simplificationSignals");
     expect(turns[2]?.prompt).not.toContain("localizedPatchSignals");
     expect(turns[2]?.syntheticToolResults?.[0]?.content).toContain("localizedPatchSignals");
     expect(turns[2]?.syntheticToolResults?.[0]?.content).toContain("staticTestInventory");
+    expect(turns[2]?.syntheticToolResults?.[0]?.content).toContain("simplificationSignals");
     expect(turns[3]?.prompt).toContain("<pr_review_advisor_json>");
     expect(turns[3]?.syntheticToolResults?.map((result) => result.toolName)).toEqual([
       "pr_review_exact_metadata",
@@ -483,6 +489,89 @@ describe("PR review advisor", () => {
       );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
+      fs.rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  it("detects simplification signals from added diff lines", () => {
+    const signals = detectSimplificationSignals(
+      ["src/lib/example.ts", "test/example.test.ts"],
+      `diff --git a/src/lib/example.ts b/src/lib/example.ts
+@@ -1,2 +1,7 @@
++import moment from "moment";
++interface ExampleFactory {
++const value = process.env.NEMOCLAW_EXAMPLE_MODE;
++const wrapper = wrapClient(client);
+diff --git a/test/example.test.ts b/test/example.test.ts
+@@ -1,2 +1,4 @@
++const matrix = new ScenarioRegistry();
+`,
+    );
+
+    expect(signals).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "new_dependency",
+          evidence: expect.stringContaining("moment"),
+        }),
+        expect.objectContaining({ kind: "single_use_abstraction" }),
+        expect.objectContaining({ kind: "single_use_config" }),
+        expect.objectContaining({ kind: "wrapper" }),
+        expect.objectContaining({ kind: "test_over_scaffold" }),
+      ]),
+    );
+  });
+
+  it("detects large TypeScript simplification signals with safe file reads", () => {
+    const largePath = path.join(ROOT, "tools", "pr-review-advisor", ".tmp-large-test.ts");
+    const smallPath = path.join(ROOT, "tools", "pr-review-advisor", ".tmp-small-test.ts");
+    fs.writeFileSync(
+      largePath,
+      `${Array.from({ length: 501 }, (_, index) => `line${index}`).join("\n")}\n`,
+    );
+    fs.writeFileSync(smallPath, "const small = true;\n");
+    try {
+      const signals = detectSimplificationSignals(
+        [path.relative(ROOT, largePath), path.relative(ROOT, smallPath)],
+        "",
+      );
+
+      expect(signals).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            kind: "large_file_hotspot",
+            file: path.relative(ROOT, largePath),
+          }),
+        ]),
+      );
+      expect(signals.some((signal) => signal.file === path.relative(ROOT, smallPath))).toBe(false);
+    } finally {
+      fs.rmSync(largePath, { force: true });
+      fs.rmSync(smallPath, { force: true });
+    }
+  });
+
+  it("skips symlinked large-file simplification candidates", () => {
+    const linkPath = path.join(ROOT, "tools", "pr-review-advisor", ".tmp-large-link.mts");
+    const outside = fs.mkdtempSync(path.join(ROOT, "..", ".tmp-large-outside-"));
+    const outsideFile = path.join(outside, "outside.mts");
+    fs.writeFileSync(
+      outsideFile,
+      `${Array.from({ length: 501 }, (_, index) => `secret${index}`).join("\n")}\n`,
+    );
+    try {
+      fs.symlinkSync(outsideFile, linkPath);
+    } catch {
+      fs.rmSync(outside, { recursive: true, force: true });
+      return;
+    }
+
+    try {
+      const signals = detectSimplificationSignals([path.relative(ROOT, linkPath)], "");
+
+      expect(signals).toEqual([]);
+    } finally {
+      fs.rmSync(linkPath, { force: true });
       fs.rmSync(outside, { recursive: true, force: true });
     }
   });
@@ -1015,6 +1104,46 @@ describe("PR review advisor", () => {
     );
     expect(followUp).toContain("<summary>Review findings by urgency:");
     expect(followUp).toContain("<summary>Since last review details</summary>");
+  });
+
+  it("renders simplification opportunities without weakening safety boundaries", () => {
+    const result = normalizeReviewResult(
+      validResult({
+        findings: [
+          {
+            severity: "suggestion",
+            category: "architecture",
+            file: "src/lib/example.ts",
+            line: 12,
+            title: "Replace custom date formatter",
+            description: "The new formatter duplicates platform behavior.",
+            impact: "Less custom date code reduces maintenance.",
+            recommendation: "Use Intl.DateTimeFormat and keep validation unchanged.",
+            verificationHint: "Compare output with existing date-format test cases.",
+            missingRegressionTest: "Existing date-format test cases should still pass.",
+            evidence: "Diff adds a formatter branch for locale output.",
+            simplification: {
+              tag: "native",
+              cut: "custom date formatter helper",
+              replacement: "Intl.DateTimeFormat",
+              estimatedNetLines: -18,
+              safetyBoundary: "Keep input validation and timezone test coverage.",
+            },
+          },
+        ],
+      }),
+      metadata(),
+    );
+
+    const comment = buildComment({ summary: renderSummary(result), result });
+
+    expect(result.findings[0]?.simplification).toMatchObject({ tag: "native" });
+    expect(comment).toContain(
+      "<summary>Simplification opportunities: 1 possible cut, net -18 lines possible</summary>",
+    );
+    expect(comment).toContain("**native** (src/lib/example.ts:12): custom date formatter helper");
+    expect(comment).toContain("Replacement: Intl.DateTimeFormat");
+    expect(comment).toContain("Safety boundary: Keep input validation and timezone test coverage.");
   });
 
   it("renders suggestion findings as in-scope current-review work", () => {
