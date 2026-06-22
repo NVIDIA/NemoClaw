@@ -67,7 +67,7 @@ describe("tunnel lifecycle cloudflared log attribution", () => {
     fs.mkdirSync(sandboxDir, { recursive: true });
     fs.writeFileSync(
       path.join(sandboxDir, "cloudflared.log"),
-      "ERR Request failed error=\"Unable to reach the origin service. dial tcp 127.0.0.1:18789: connect: connection refused\"\n",
+      'ERR Request failed error="Unable to reach the origin service. dial tcp 127.0.0.1:18789: connect: connection refused"\n',
     );
 
     try {
