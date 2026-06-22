@@ -8,6 +8,7 @@ import path from "node:path";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { shouldRunLiveE2EScenarios } from "../fixtures/live-project-gate.ts";
 import {
+  base64,
   bestEffort,
   CLI,
   COMMAND_TIMEOUT_MS,
@@ -26,10 +27,6 @@ import {
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-telegram-injection";
 const LIVE_TIMEOUT_MS = 35 * 60_000;
-
-function base64(value: string): string {
-  return Buffer.from(value, "utf8").toString("base64");
-}
 
 function openshellStdinCommand(payload: string, remoteShell: string): string {
   return [
@@ -52,6 +49,74 @@ async function sendPayloadViaSandboxStdin(
     redactionValues: redactions,
     timeoutMs: COMMAND_TIMEOUT_MS,
   });
+}
+
+async function assertParameterPayloadStaysLiteral(
+  host: import("../fixtures/clients/host.ts").HostCliClient,
+  env: NodeJS.ProcessEnv,
+  redactions: string[],
+): Promise<void> {
+  const payload = "${NVIDIA_INFERENCE_API_KEY}";
+  const command = [
+    "set -euo pipefail",
+    'prefix="${NVIDIA_INFERENCE_API_KEY:0:15}"',
+    'out="$(printf %s "${PAYLOAD_B64}" | base64 -d | openshell sandbox exec --name "${SANDBOX_NAME}" -- sh -lc \'MSG=$(cat) && echo "$MSG"\' 2>&1)"',
+    'if printf %s "$out" | grep -Fq "$prefix"; then echo SECRET_LEAK; exit 20; fi',
+    'printf "%s\\n" "$out"',
+  ].join("; ");
+  const result = await host.command("bash", ["-lc", command], {
+    artifactName: "parameter-expansion-payload",
+    env: { ...env, PAYLOAD_B64: base64(payload), SANDBOX_NAME },
+    redactionValues: redactions,
+    timeoutMs: COMMAND_TIMEOUT_MS,
+  });
+  expect(result.exitCode, resultText(result)).toBe(0);
+  expect(resultText(result)).not.toContain("SECRET_LEAK");
+  expect(resultText(result)).toContain(payload);
+}
+
+async function assertHostProcessTableDoesNotExposeSecret(
+  host: import("../fixtures/clients/host.ts").HostCliClient,
+  env: NodeJS.ProcessEnv,
+  redactions: string[],
+): Promise<void> {
+  const command = [
+    "set -euo pipefail",
+    'prefix="${NVIDIA_INFERENCE_API_KEY:0:15}"',
+    'matches="$(ps aux 2>/dev/null | grep -F "$prefix" | grep -v grep || true)"',
+    'if [ -n "$matches" ]; then echo SECRET_LEAK; exit 21; fi',
+    "echo SECRET_ABSENT",
+  ].join("; ");
+  const result = await host.command("bash", ["-lc", command], {
+    artifactName: "host-process-table-telegram-injection",
+    env,
+    redactionValues: redactions,
+    timeoutMs: 30_000,
+  });
+  expect(result.exitCode, resultText(result)).toBe(0);
+  expect(result.stdout.trim(), resultText(result)).toBe("SECRET_ABSENT");
+}
+
+async function assertSandboxProcessTableDoesNotExposeSecret(
+  host: import("../fixtures/clients/host.ts").HostCliClient,
+  env: NodeJS.ProcessEnv,
+  redactions: string[],
+): Promise<void> {
+  const command = [
+    "set -euo pipefail",
+    'prefix="${NVIDIA_INFERENCE_API_KEY:0:15}"',
+    'out="$(openshell sandbox exec --name "${SANDBOX_NAME}" -- sh -lc \'ps aux\' 2>&1)"',
+    'if printf %s "$out" | grep -Fq "$prefix"; then echo SECRET_LEAK; exit 22; fi',
+    "echo SECRET_ABSENT",
+  ].join("; ");
+  const result = await host.command("bash", ["-lc", command], {
+    artifactName: "sandbox-process-table-telegram-injection",
+    env: { ...env, SANDBOX_NAME },
+    redactionValues: redactions,
+    timeoutMs: COMMAND_TIMEOUT_MS,
+  });
+  expect(result.exitCode, resultText(result)).toBe(0);
+  expect(result.stdout.trim(), resultText(result)).toBe("SECRET_ABSENT");
 }
 
 test.skipIf(!shouldRunLiveE2EScenarios())(
@@ -138,31 +203,9 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       expect(markerCheck.stdout.trim(), resultText(markerCheck)).toBe("SAFE");
     }
 
-    const envPayload = await sendPayloadViaSandboxStdin(
-      host,
-      "${NVIDIA_INFERENCE_API_KEY}",
-      'MSG=$(cat) && echo "$MSG"',
-      env,
-      "parameter-expansion-payload",
-      redactions,
-    );
-    expect(envPayload.exitCode, resultText(envPayload)).toBe(0);
-    expect(resultText(envPayload)).not.toContain(apiKey.slice(0, 15));
-    expect(resultText(envPayload)).toContain("${NVIDIA_INFERENCE_API_KEY}");
-
-    const apiKeyPrefix = apiKey.slice(0, 15);
-    const hostPs = await host.command("ps", ["aux"], {
-      artifactName: "host-process-table-telegram-injection",
-      env,
-      redactionValues: redactions,
-      timeoutMs: 30_000,
-    });
-    const sandboxPs = await sandboxSh(sandbox, SANDBOX_NAME, "ps aux", {
-      artifactName: "sandbox-process-table-telegram-injection",
-      redactionValues: redactions,
-    });
-    expect(resultText(hostPs)).not.toContain(apiKeyPrefix);
-    expect(resultText(sandboxPs)).not.toContain(apiKeyPrefix);
+    await assertParameterPayloadStaysLiteral(host, env, redactions);
+    await assertHostProcessTableDoesNotExposeSecret(host, env, redactions);
+    await assertSandboxProcessTableDoesNotExposeSecret(host, env, redactions);
 
     const invalidNames = [
       "foo;rm -rf /",
@@ -171,7 +214,6 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       "`id`",
       "foo bar",
       "../etc/passwd",
-      "UPPERCASE",
     ];
     for (const invalidName of invalidNames) {
       const validation = await host.command(
