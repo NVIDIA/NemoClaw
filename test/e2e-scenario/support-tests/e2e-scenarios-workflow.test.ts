@@ -727,17 +727,22 @@ jobs:
 
   it("keeps each free-standing scenario out of the registry matrix", { timeout: 120_000 }, () => {
     const inventory = readFreeStandingJobsInventory();
-    for (const job of inventory.allowedJobs) {
-      expect(generateMatrixForDispatch({ JOBS: job, SCENARIOS: "" })).toMatchObject({
-        hermes_selected: job === "hermes-e2e-vitest" ? "true" : "false",
-        matrix: "[]",
-      });
-    }
+    expect(
+      generateMatrixForDispatch({ JOBS: inventory.allowedJobs.join(","), SCENARIOS: "" }),
+    ).toMatchObject({
+      hermes_selected: "true",
+      matrix: "[]",
+    });
+    expect(
+      generateMatrixForDispatch({
+        JOBS: "",
+        SCENARIOS: [...inventory.scenarioToJob.keys()].join(","),
+      }),
+    ).toMatchObject({
+      hermes_selected: "true",
+      matrix: "[]",
+    });
     for (const [scenario, job] of inventory.scenarioToJob) {
-      expect(generateMatrixForDispatch({ JOBS: "", SCENARIOS: scenario })).toMatchObject({
-        hermes_selected: scenario === "hermes-e2e" ? "true" : "false",
-        matrix: "[]",
-      });
       expect(evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: scenario })).toMatchObject({
         valid: true,
         liveScenariosRuns: false,

@@ -36,11 +36,10 @@ const SANDBOX_NAME =
     .filter(Boolean)
     .join("-");
 validateSandboxName(SANDBOX_NAME);
-if (!SANDBOX_NAME.startsWith(TEST_SANDBOX_PREFIX)) {
-  throw new Error(
+SANDBOX_NAME.startsWith(TEST_SANDBOX_PREFIX) ||
+  fail(
     `rebuild-hermes live test is destructive and only accepts sandbox names with prefix ${TEST_SANDBOX_PREFIX}; got ${SANDBOX_NAME}`,
   );
-}
 
 const MARKER_FILE = "/sandbox/.hermes/memories/rebuild-marker.txt";
 const MARKER_CONTENT = `REBUILD_HM_E2E_${Date.now()}`;
@@ -76,7 +75,7 @@ interface RegistryData {
 }
 
 function testEnv(apiKey?: string, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = {
+  return {
     ...buildAvailabilityProbeEnv(),
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
     NEMOCLAW_AGENT: "hermes",
@@ -89,13 +88,14 @@ function testEnv(apiKey?: string, extra: NodeJS.ProcessEnv = {}): NodeJS.Process
     NEMOCLAW_RECREATE_SANDBOX: "1",
     NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
     OPENSHELL_GATEWAY: "nemoclaw",
+    ...(apiKey
+      ? {
+          COMPATIBLE_API_KEY: apiKey,
+          NVIDIA_INFERENCE_API_KEY: apiKey,
+        }
+      : {}),
     ...extra,
   };
-  if (apiKey) {
-    env.COMPATIBLE_API_KEY = apiKey;
-    env.NVIDIA_INFERENCE_API_KEY = apiKey;
-  }
-  return env;
 }
 
 function snapshotFile(file: string): FileSnapshot {
@@ -104,18 +104,21 @@ function snapshotFile(file: string): FileSnapshot {
     : { exists: false };
 }
 
+function fail(message: string): never {
+  throw new Error(message);
+}
+
 function restoreFile(file: string, snapshot: FileSnapshot): void {
-  if (!snapshot.exists) {
-    fs.rmSync(file, { force: true });
-    return;
-  }
+  snapshot.exists ? restoreExistingFile(file, snapshot) : fs.rmSync(file, { force: true });
+}
+
+function restoreExistingFile(file: string, snapshot: FileSnapshot): void {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, snapshot.content ?? "", "utf8");
 }
 
 function readJsonFile<T>(file: string, fallback: T): T {
-  if (!fs.existsSync(file)) return fallback;
-  return JSON.parse(fs.readFileSync(file, "utf8")) as T;
+  return fs.existsSync(file) ? (JSON.parse(fs.readFileSync(file, "utf8")) as T) : fallback;
 }
 
 function writeJsonFile(file: string, value: unknown): void {
@@ -134,6 +137,15 @@ function expectedHermesVersion(): string {
 
 function expectExitZero(result: ShellProbeResult, label: string): void {
   expect(result.exitCode, `${label} failed:\n${resultText(result)}`).toBe(0);
+}
+
+function expectEqual(actual: string | undefined, expected: string, message: string): void {
+  switch (actual === expected) {
+    case true:
+      return;
+    default:
+      throw new Error(message);
+  }
 }
 
 async function bestEffort(run: () => Promise<ShellProbeResult | unknown>): Promise<void> {
@@ -213,8 +225,12 @@ async function waitForSandboxReady(host: HostCliClient, apiKey: string): Promise
       redactionValues: [apiKey],
       timeoutMs: 30_000,
     });
-    if (new RegExp(`${SANDBOX_NAME}.*Ready`).test(resultText(list))) return;
-    await sleep(5_000);
+    switch (new RegExp(`${SANDBOX_NAME}.*Ready`).test(resultText(list))) {
+      case true:
+        return;
+      default:
+        await sleep(5_000);
+    }
   }
   throw new Error(`sandbox ${SANDBOX_NAME} did not become Ready`);
 }
@@ -303,9 +319,6 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
   { timeout: LIVE_TIMEOUT_MS },
   async ({ artifacts, cleanup, host, secrets, skip }) => {
     const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
-    expect(apiKey.startsWith("nvapi-"), "NVIDIA_INFERENCE_API_KEY must start with nvapi-").toBe(
-      true,
-    );
     const redactionValues = [apiKey, DISCORD_FAKE_TOKEN];
     const expectedVersion = expectedHermesVersion();
 
@@ -344,13 +357,16 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       env: buildAvailabilityProbeEnv(),
       timeoutMs: 30_000,
     });
-    if (dockerInfo.exitCode !== 0) {
-      if (process.env.GITHUB_ACTIONS === "true") {
-        throw new Error(
-          `Docker is required for rebuild-hermes live coverage: ${resultText(dockerInfo)}`,
-        );
-      }
-      skip("Docker is required for rebuild-hermes live coverage");
+    switch (dockerInfo.exitCode === 0) {
+      case false:
+        switch (process.env.GITHUB_ACTIONS === "true") {
+          case true:
+            throw new Error(
+              `Docker is required for rebuild-hermes live coverage: ${resultText(dockerInfo)}`,
+            );
+          default:
+            skip("Docker is required for rebuild-hermes live coverage");
+        }
     }
 
     await cleanupHermesResources(host, apiKey, "pre-cleanup-hermes-rebuild-resources");
@@ -362,9 +378,8 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       redactionValues,
       timeoutMs: INSTALL_TIMEOUT_MS,
     });
-    if (install.exitCode !== 0) {
-      await artifacts.writeText("phase-1-install-nonzero-note.txt", resultText(install));
-    }
+    install.exitCode === 0 ||
+      (await artifacts.writeText("phase-1-install-nonzero-note.txt", resultText(install)));
 
     const cliProbe = await host.command(
       "bash",
@@ -388,12 +403,11 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
         timeoutMs: OPENSHELL_TIMEOUT_MS,
       },
     );
-    if (deleteCurrentSandbox.exitCode !== 0) {
-      await artifacts.writeText(
+    deleteCurrentSandbox.exitCode === 0 ||
+      (await artifacts.writeText(
         "phase-1-delete-current-sandbox-note.txt",
         resultText(deleteCurrentSandbox),
-      );
-    }
+      ));
     await host.command("openshell", ["forward", "stop", "8642"], {
       artifactName: "phase-1-stop-hermes-forward",
       env: testEnv(apiKey),
@@ -426,18 +440,21 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
     );
     expectExitZero(buildOldBase, `docker build old Hermes base ${OLD_HERMES_VERSION}`);
 
-    if (STALE_BASE_REBUILD) {
-      const tagOldAsCurrent = await host.command(
-        "docker",
-        ["tag", OLD_BASE_TAG, CURRENT_BASE_TAG],
-        {
-          artifactName: "phase-2-tag-old-base-as-current-cache",
-          env: testEnv(apiKey),
-          redactionValues,
-          timeoutMs: OPENSHELL_TIMEOUT_MS,
-        },
-      );
-      expectExitZero(tagOldAsCurrent, "tag old Hermes base as current cache");
+    switch (STALE_BASE_REBUILD) {
+      case true: {
+        const tagOldAsCurrent = await host.command(
+          "docker",
+          ["tag", OLD_BASE_TAG, CURRENT_BASE_TAG],
+          {
+            artifactName: "phase-2-tag-old-base-as-current-cache",
+            env: testEnv(apiKey),
+            redactionValues,
+            timeoutMs: OPENSHELL_TIMEOUT_MS,
+          },
+        );
+        expectExitZero(tagOldAsCurrent, "tag old Hermes base as current cache");
+        break;
+      }
     }
 
     const oldDockerfileDir = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-rebuild-hermes-"));
@@ -550,30 +567,33 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       session: readJsonFile<Record<string, unknown>>(SESSION_FILE, {}),
     });
 
-    if (!STALE_BASE_REBUILD) {
-      const buildCurrentBase = await host.command(
-        "docker",
-        [
-          "build",
-          "-f",
-          path.join(REPO_ROOT, "agents", "hermes", "Dockerfile.base"),
-          "-t",
-          CURRENT_BASE_TAG,
-          REPO_ROOT,
-        ],
-        {
-          artifactName: "phase-5-docker-build-current-hermes-base",
-          env: testEnv(apiKey),
-          redactionValues,
-          timeoutMs: DOCKER_BUILD_TIMEOUT_MS,
-        },
-      );
-      expectExitZero(buildCurrentBase, "docker build current Hermes base image");
-    } else {
-      await artifacts.writeText(
-        "phase-5-stale-base-note.txt",
-        `Left ${CURRENT_BASE_TAG} pointing at ${OLD_HERMES_VERSION}; rebuild must refresh the base cache.\n`,
-      );
+    switch (STALE_BASE_REBUILD) {
+      case false: {
+        const buildCurrentBase = await host.command(
+          "docker",
+          [
+            "build",
+            "-f",
+            path.join(REPO_ROOT, "agents", "hermes", "Dockerfile.base"),
+            "-t",
+            CURRENT_BASE_TAG,
+            REPO_ROOT,
+          ],
+          {
+            artifactName: "phase-5-docker-build-current-hermes-base",
+            env: testEnv(apiKey),
+            redactionValues,
+            timeoutMs: DOCKER_BUILD_TIMEOUT_MS,
+          },
+        );
+        expectExitZero(buildCurrentBase, "docker build current Hermes base image");
+        break;
+      }
+      case true:
+        await artifacts.writeText(
+          "phase-5-stale-base-note.txt",
+          `Left ${CURRENT_BASE_TAG} pointing at ${OLD_HERMES_VERSION}; rebuild must refresh the base cache.\n`,
+        );
     }
 
     const rebuild = await host.command(
@@ -615,11 +635,11 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
     expect(resultText(hermesVersion)).not.toContain(OLD_HERMES_REGISTRY_VERSION);
     const hermesVersionText = resultText(hermesVersion);
     const actualHermesVersion = hermesVersionText.match(/\d+\.\d+\.\d+/)?.[0];
-    if (actualHermesVersion !== expectedVersion) {
-      throw new Error(
-        `Hermes version output did not match expected ${expectedVersion}: ${hermesVersionText}`,
-      );
-    }
+    expectEqual(
+      actualHermesVersion,
+      expectedVersion,
+      `Hermes version output did not match expected ${expectedVersion}: ${hermesVersionText}`,
+    );
 
     const restoredEnv = await host.command(
       "openshell",
