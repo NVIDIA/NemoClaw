@@ -4133,6 +4133,94 @@ jobs:
           docker logout docker.io || true
           rm -rf "${DOCKER_CONFIG}"
 
+  channels-stop-start-vitest:
+    needs: generate-matrix
+    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',channels-stop-start-vitest,') || contains(format(',{0},', inputs.scenarios), ',channels-stop-start,') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        agent: [openclaw, hermes]
+    env:
+      FREE_STANDING_VITEST_JOB: "1"
+      FREE_STANDING_SCENARIO_ID: "channels-stop-start"
+      DOCKER_CONFIG: ${{ github.workspace }}/.docker-config-channels-stop-start-${{ matrix.agent }}
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/channels-stop-start/${{ matrix.agent }}
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+      NEMOCLAW_AGENT: ${{ matrix.agent }}
+      NEMOCLAW_CHANNELS_STOP_START_AGENT: ${{ matrix.agent }}
+      NEMOCLAW_SANDBOX_NAME: e2e-channels-stop-start-${{ matrix.agent }}
+      OPENSHELL_GATEWAY: "nemoclaw"
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Authenticate to Docker Hub
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          mkdir -p "${DOCKER_CONFIG}"
+          chmod 700 "${DOCKER_CONFIG}"
+          echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin || echo "::warning::Docker Hub login failed; continuing with anonymous pulls."
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build CLI
+        run: npm run build:cli
+
+      - name: Run channels stop/start live test
+        # Migrated from test/e2e/test-channels-stop-start.sh. Preserves the
+        # OpenClaw/Hermes messaging channel stop/start, rebuild, provider
+        # reuse, registry, policy-list, and in-sandbox config contracts.
+        env:
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
+          TELEGRAM_BOT_TOKEN: test-fake-telegram-token-stop-start-${{ matrix.agent }}
+          DISCORD_BOT_TOKEN: test-fake-discord-token-stop-start-${{ matrix.agent }}
+          SLACK_BOT_TOKEN: xoxb-fake-slack-token-stop-start-${{ matrix.agent }}
+          SLACK_APP_TOKEN: xapp-fake-slack-token-stop-start-${{ matrix.agent }}
+          WECHAT_BOT_TOKEN: test-fake-wechat-token-stop-start-${{ matrix.agent }}
+        run: |
+          set -euo pipefail
+          npx vitest run --project e2e-scenarios-live \
+            test/e2e-scenario/live/channels-stop-start.test.ts \
+            --silent=false --reporter=default
+
+      - name: Upload channels stop/start artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-vitest-scenarios-channels-stop-start-${{ matrix.agent }}
+          path: e2e-artifacts/vitest/channels-stop-start/${{ matrix.agent }}/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Clean up Docker auth
+        if: always()
+        run: |
+          set -euo pipefail
+          docker logout docker.io || true
+          rm -rf "${DOCKER_CONFIG}"
+
   issue-2478-crash-loop-recovery-vitest:
     needs: generate-matrix
     if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',issue-2478-crash-loop-recovery-vitest,') || contains(format(',{0},', inputs.scenarios), ',issue-2478-crash-loop-recovery,') }}
@@ -4304,6 +4392,7 @@ jobs:
         device-auth-health-vitest,
         channels-add-remove-vitest,
         telegram-injection-vitest,
+        channels-stop-start-vitest,
       ]
     if: ${{ always() && github.event_name == 'workflow_dispatch' }}
     permissions:
