@@ -110,6 +110,7 @@ export function createSetupNimOllamaHandlers(deps: SetupNimOllamaDeps): {
     state.provider = "ollama-local";
     state.credentialEnv = null;
     state.endpointUrl = deps.getLocalProviderBaseUrl(state.provider);
+    state.skipHostInferenceSmoke = false;
     if (!state.endpointUrl) {
       console.error("  Local Ollama base URL could not be determined.");
       deps.process.exit(1);
@@ -127,6 +128,7 @@ export function createSetupNimOllamaHandlers(deps: SetupNimOllamaDeps): {
     state.preferredInferenceApi = result.preferredInferenceApi;
     state.nimContainer = null;
     state.allowToolsIncompatible = false;
+    state.skipHostInferenceSmoke = false;
   }
 
   async function handleWindowsHostOllamaSelection(

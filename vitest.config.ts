@@ -8,6 +8,7 @@ import {
   shouldRunInstallerIntegration,
   shouldRunLiveE2EScenarios,
 } from "./test/e2e-scenario/fixtures/live-project-gate.ts";
+import { resolveE2ERetryCount } from "./test/helpers/e2e-retries";
 import { testTimeout } from "./test/helpers/timeouts";
 
 const isGithubActions = process.env.GITHUB_ACTIONS === "true";
@@ -16,6 +17,7 @@ const LIVE_E2E_PROJECT_TIMEOUT_MS = 30 * 60 * 1000;
 const runInstallerIntegration = shouldRunInstallerIntegration();
 const runLiveE2EScenarios = shouldRunLiveE2EScenarios();
 const runBranchValidationE2E = shouldRunBranchValidationE2E();
+const e2eRetryCount = resolveE2ERetryCount();
 
 export default defineConfig({
   test: {
@@ -82,6 +84,10 @@ export default defineConfig({
         test: {
           name: "e2e-scenarios-live",
           testTimeout: testTimeout(LIVE_E2E_PROJECT_TIMEOUT_MS),
+          // Vitest counts retries after the initial failure. In CI the default
+          // value of 2 gives live E2Es up to three total attempts while keeping
+          // local opt-in runs single-shot unless NEMOCLAW_E2E_RETRIES is set.
+          retry: e2eRetryCount,
           include: runLiveE2EScenarios ? ["test/e2e-scenario/live/**/*.test.ts"] : [],
           // Live scenario tests are opt-in because they install, onboard, and
           // mutate real NemoClaw/OpenShell state. Run explicitly with:
@@ -91,6 +97,7 @@ export default defineConfig({
       {
         test: {
           name: "e2e-branch-validation",
+          retry: e2eRetryCount,
           include: runBranchValidationE2E ? ["test/e2e/brev-e2e.test.ts"] : [],
           // Branch validation E2E: rsyncs the branch over a Brev instance
           // provisioned from the published NemoClaw launchable image and

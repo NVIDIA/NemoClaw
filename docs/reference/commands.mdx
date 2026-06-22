@@ -630,6 +630,15 @@ If the gateway is already running, the command exits zero with a probe message a
 $$nemoclaw my-assistant recover
 ```
 
+<AgentOnly variant="hermes">
+
+`recover` re-evaluates the documented Hermes secret boundary against `/sandbox/.hermes/.env` on every run, including when the gateway is already healthy.
+If the file contains raw secret-shaped values (for example a pasted Telegram, Discord, or Slack bot token in place of the expected `openshell:resolve:env:<name>` placeholder), the command stops the running gateway, exits non-zero, and prints the offending key.
+Replace each flagged value with the `openshell:resolve:env:<name>` placeholder and re-run.
+Older Hermes sandbox images that predate the standalone validator are detected and left untouched: `recover` prints a `[boundary]` warning naming the sandbox and noting that `/sandbox/.hermes/.env` was not re-evaluated, then proceeds with the rest of the recovery path rather than blocking the gateway. Re-image the sandbox to a current Hermes build to enable the per-run boundary re-evaluation described above.
+
+</AgentOnly>
+
 ### `$$nemoclaw <name> status`
 
 Show sandbox status, health, and inference configuration.
