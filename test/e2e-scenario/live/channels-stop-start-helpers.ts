@@ -19,6 +19,7 @@ import {
   phase6Env,
   resultText,
   sandboxSh,
+  shellQuote,
 } from "./phase6-messaging-helpers.ts";
 
 const AGENT = (process.env.NEMOCLAW_CHANNELS_STOP_START_AGENT ??
@@ -233,7 +234,11 @@ async function agentConfigContains(
     const result = await sandboxSh(
       sandbox,
       SANDBOX_NAME,
-      `python3 - <<'PY'\nimport json\nchannel=${JSON.stringify(openClawChannelKey(channel))}\ncfg=json.load(open('/sandbox/.openclaw/openclaw.json'))\nprint('yes' if channel in cfg.get('channels', {}) else 'no')\nPY`,
+      `python3 -c ${shellQuote(
+        `import json; channel=${JSON.stringify(
+          openClawChannelKey(channel),
+        )}; cfg=json.load(open('/sandbox/.openclaw/openclaw.json')); print('yes' if channel in cfg.get('channels', {}) else 'no')`,
+      )}`,
       { artifactName: `config-channel-${AGENT}-${channel}`, redactionValues: redactions },
     );
     expectExitZero(result, `read OpenClaw channel ${channel}`);
