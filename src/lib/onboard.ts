@@ -16,7 +16,7 @@ const {
   setOnboardBrandingAgent,
 }: typeof import("./onboard/branding") = require("./onboard/branding");
 const {
-  createSelectOnboardAgent,
+  createOnboardAgentSelector,
 }: typeof import("./onboard/agent-selection") = require("./onboard/agent-selection");
 const {
   createInferenceSelectionValidationHelpers,
@@ -762,12 +762,7 @@ const { hydrateCredentialEnv }: typeof import("./onboard/credential-env") =
 
 const { summarizeCurlFailure, summarizeProbeFailure } = httpProbe;
 
-const selectOnboardAgent = createSelectOnboardAgent({
-  resolveAgent: agentOnboard.resolveAgent,
-  loadAgent: agentDefs.loadAgent,
-  isNonInteractive,
-  note,
-});
+const selectOnboardAgent = createOnboardAgentSelector({ isNonInteractive, note, prompt });
 
 const { getTransportRecoveryMessage } = validationRecovery;
 
@@ -4690,7 +4685,6 @@ function skippedStepMessage(
 }
 
 // ── Main ─────────────────────────────────────────────────────────
-
 async function onboard(opts: OnboardOptions = {}): Promise<void> {
   setOnboardBrandingAgent(opts.agent || process.env.NEMOCLAW_AGENT || null);
   NON_INTERACTIVE = opts.nonInteractive || process.env.NEMOCLAW_NON_INTERACTIVE === "1";
@@ -4707,6 +4701,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         env: process.env,
         stdinIsTty: Boolean(process.stdin && process.stdin.isTTY),
         stdoutIsTty: Boolean(process.stdout && process.stdout.isTTY),
+        persistedSessionStatus: onboardSession.loadSession()?.status ?? null,
       },
       {
         isNonInteractive,

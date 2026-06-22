@@ -1,9 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { buildOpenshellExecArgs, computeExitCode } from "./exec";
+import {
+  buildOpenshellExecArgs,
+  buildWorkdirProbeArgs,
+  computeExitCode,
+  evaluateWorkdirProbe,
+  validateWorkdirOrFail,
+  workdirMissingMessage,
+} from "./exec";
 
 describe("buildOpenshellExecArgs", () => {
   it("targets the sandbox by name and forwards the user command after --", () => {
@@ -113,5 +120,111 @@ describe("computeExitCode", () => {
       code: 1,
       errorMessage: "openshell: command not found",
     });
+  });
+});
+
+describe("buildWorkdirProbeArgs", () => {
+  it("targets the sandbox by name and probes the directory with test -d", () => {
+    expect(buildWorkdirProbeArgs("alpha", "/sandbox/workspace")).toEqual([
+      "sandbox",
+      "exec",
+      "--name",
+      "alpha",
+      "--",
+      "test",
+      "-d",
+      "/sandbox/workspace",
+    ]);
+  });
+
+  it("does not split a path argument that contains whitespace", () => {
+    const argv = buildWorkdirProbeArgs("alpha", "/sandbox/with spaces/dir");
+    expect(argv[argv.length - 1]).toBe("/sandbox/with spaces/dir");
+  });
+});
+
+describe("workdirMissingMessage", () => {
+  it("renders a user-facing CLI error with the offending path", () => {
+    expect(workdirMissingMessage("/sandbox/workspace")).toBe(
+      "error: --workdir: /sandbox/workspace does not exist inside the sandbox",
+    );
+  });
+});
+
+describe("evaluateWorkdirProbe", () => {
+  it("returns 'ok' when the probe exits 0", () => {
+    expect(evaluateWorkdirProbe({ status: 0 })).toBe("ok");
+  });
+
+  it("returns 'missing' only for the canonical test -d failure (exit 1)", () => {
+    expect(evaluateWorkdirProbe({ status: 1 })).toBe("missing");
+  });
+
+  it("returns 'unclear' for any other exit code so the main exec surfaces it", () => {
+    expect(evaluateWorkdirProbe({ status: 2 })).toBe("unclear");
+    expect(evaluateWorkdirProbe({ status: 127 })).toBe("unclear");
+    expect(evaluateWorkdirProbe({ status: null })).toBe("unclear");
+  });
+
+  it("returns 'unclear' when spawn reports a transport error", () => {
+    expect(evaluateWorkdirProbe({ status: null, error: new Error("ENOENT") })).toBe("unclear");
+  });
+});
+
+describe("validateWorkdirOrFail", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("passes through when the directory exists", () => {
+    const run = vi.fn(() => ({ status: 0 }));
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((_code?: number) => {
+      throw new Error("process.exit should not be called for ok outcome");
+    }) as never);
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    validateWorkdirOrFail("openshell", "alpha", "/sandbox/workspace", run);
+
+    expect(run).toHaveBeenCalledWith("openshell", [
+      "sandbox",
+      "exec",
+      "--name",
+      "alpha",
+      "--",
+      "test",
+      "-d",
+      "/sandbox/workspace",
+    ]);
+    expect(exitSpy).not.toHaveBeenCalled();
+    expect(errSpy).not.toHaveBeenCalled();
+  });
+
+  it("prints a friendly error and exits 1 when the directory is missing", () => {
+    const run = vi.fn(() => ({ status: 1 }));
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((_code?: number) => {
+      throw new Error("exit");
+    }) as never);
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    expect(() => validateWorkdirOrFail("openshell", "alpha", "/sandbox/workspace", run)).toThrow(
+      "exit",
+    );
+    expect(errSpy).toHaveBeenCalledWith(
+      "error: --workdir: /sandbox/workspace does not exist inside the sandbox",
+    );
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it("does not abort when the probe outcome is unclear (lets main exec surface it)", () => {
+    const run = vi.fn(() => ({ status: 127 }));
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((_code?: number) => {
+      throw new Error("process.exit should not be called for unclear outcome");
+    }) as never);
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    validateWorkdirOrFail("openshell", "alpha", "/sandbox/workspace", run);
+
+    expect(exitSpy).not.toHaveBeenCalled();
+    expect(errSpy).not.toHaveBeenCalled();
   });
 });
