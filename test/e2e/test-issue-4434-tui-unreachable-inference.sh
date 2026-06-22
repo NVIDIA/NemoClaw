@@ -8,12 +8,14 @@
 #
 # This mutates host firewall state. Run only on a Linux Docker host you control:
 #
-#   NEMOCLAW_ISSUE_4434_LIVE=1 NVIDIA_INFERENCE_API_KEY=nvapi-... \
+#   NEMOCLAW_ISSUE_4434_LIVE=1 NVIDIA_INFERENCE_API_KEY=... \
 #     bash test/e2e/test-issue-4434-tui-unreachable-inference.sh
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=test/e2e/lib/ci-compatible-inference.sh
+. "${SCRIPT_DIR}/lib/ci-compatible-inference.sh"
 
 SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-issue-4434-tui-unreachable}"
 INSTALL_LOG="${E2E_ISSUE_4434_INSTALL_LOG:-/tmp/nemoclaw-e2e-issue-4434-install.log}"
@@ -63,6 +65,11 @@ if [ "${NEMOCLAW_ISSUE_4434_LIVE:-0}" != "1" ]; then
   exit 0
 fi
 
+if nemoclaw_e2e_using_compatible_inference; then
+  info "skipping: hosted compatible inference is gateway-managed; this repro only blocks sandbox egress"
+  exit 0
+fi
+
 if [ "$(uname -s)" != "Linux" ]; then
   fail "Linux host required for DOCKER-USER iptables repro"
 fi
@@ -71,9 +78,8 @@ for command in docker sudo expect curl timeout perl; do
 done
 docker info >/dev/null 2>&1 || fail "Docker is not running"
 sudo -n true >/dev/null 2>&1 || fail "passwordless sudo is required for non-interactive iptables cleanup"
-if [ -z "${NVIDIA_INFERENCE_API_KEY:-}" ] || [[ "${NVIDIA_INFERENCE_API_KEY}" != nvapi-* ]]; then
-  fail "NVIDIA_INFERENCE_API_KEY must be set and start with nvapi-"
-fi
+nemoclaw_e2e_configure_compatible_inference || fail "hosted CI inference could not be configured"
+nemoclaw_e2e_require_hosted_inference_key || exit 1
 
 mkdir -p "$CAPTURE_DIR"
 CLEANUP_SANDBOX=1
@@ -110,7 +116,33 @@ if ! nemoclaw "$SANDBOX_NAME" status >"$status_log" 2>&1; then
   fail "nemoclaw ${SANDBOX_NAME} status failed before firewall block"
 fi
 if ! grep -Eiq "inference.*healthy|healthy.*inference" "$status_log"; then
-  fail "pre-block status did not report healthy inference"
+  if grep -Eiq "Inference:[[:space:]]*not probed" "$status_log"; then
+    info "status skipped inference reachability; probing inference.local directly"
+  else
+    fail "pre-block status did not report healthy or not-probed inference"
+  fi
+fi
+
+route_log="${CAPTURE_DIR}/openshell-inference-before-block.log"
+if ! route_output=$(openshell inference get 2>&1); then
+  printf '%s\n' "$route_output" >"$route_log"
+  fail "openshell inference get failed before firewall block"
+fi
+printf '%s\n' "$route_output" >"$route_log"
+expected_provider="$(nemoclaw_e2e_expected_route_provider)"
+expected_model="$(nemoclaw_e2e_hosted_inference_model)"
+if ! nemoclaw_e2e_inference_output_matches "$route_output" "$expected_provider" "$expected_model"; then
+  route_plain="$(printf '%s' "$route_output" | nemoclaw_e2e_strip_ansi)"
+  fail "pre-block OpenShell route was not ${expected_provider} / ${expected_model}: ${route_plain:0:240}"
+fi
+
+preblock_probe_log="${CAPTURE_DIR}/inference-local-before-block.log"
+preblock_payload="$(printf '{"model":"%s","messages":[{"role":"user","content":"Reply with OK."}],"max_tokens":8}' "$expected_model")"
+preblock_payload_arg="$(printf '%q' "$preblock_payload")"
+if ! timeout 90 openshell sandbox exec --name "$SANDBOX_NAME" -- sh -lc \
+  "curl -sf --max-time 60 https://inference.local/v1/chat/completions -H 'Content-Type: application/json' -d $preblock_payload_arg >/dev/null" \
+  >"$preblock_probe_log" 2>&1; then
+  fail "inference.local was not reachable from inside the sandbox before firewall block"
 fi
 
 connect_probe_log="${CAPTURE_DIR}/nemoclaw-connect-probe-before-block.log"

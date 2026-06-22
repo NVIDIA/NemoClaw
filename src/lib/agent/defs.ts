@@ -530,13 +530,24 @@ export function loadAgent(name: string): AgentDefinition {
  * OpenClaw is listed first as the default.
  */
 export function getAgentChoices(): AgentChoice[] {
-  const agents = listAgents().map((name) => {
-    const agent = loadAgent(name);
-    return {
-      name: agent.name,
-      displayName: agent.displayName,
-      description: agent.description ?? "",
-    };
+  // Build the menu defensively: a single malformed non-default manifest must
+  // not abort interactive onboarding (e.g. an OpenClaw user accepting the
+  // default). Skip agents that fail to load and surface a warning instead.
+  const agents = listAgents().flatMap((name) => {
+    try {
+      const agent = loadAgent(name);
+      return [
+        {
+          name: agent.name,
+          displayName: agent.displayName,
+          description: agent.description ?? "",
+        },
+      ];
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      console.error(`  Warning: skipping agent '${name}' — failed to load manifest: ${reason}`);
+      return [];
+    }
   });
 
   agents.sort((left, right) => {

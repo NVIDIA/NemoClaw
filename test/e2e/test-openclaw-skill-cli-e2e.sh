@@ -25,7 +25,7 @@
 #
 # Usage:
 #   NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
-#     NVIDIA_INFERENCE_API_KEY=nvapi-... bash test/e2e/test-openclaw-skill-cli-e2e.sh
+#     NVIDIA_INFERENCE_API_KEY=... bash test/e2e/test-openclaw-skill-cli-e2e.sh
 
 # shellcheck disable=SC2317
 set -uo pipefail
@@ -71,7 +71,10 @@ SKILL_DESCRIPTION="E2E fixture proving openclaw skills install + list roundtrip"
 # Source shared teardown helper
 # shellcheck source=test/e2e/lib/sandbox-teardown.sh
 . "${E2E_DIR}/lib/sandbox-teardown.sh"
+# shellcheck source=test/e2e/lib/ci-compatible-inference.sh
+. "${E2E_DIR}/lib/ci-compatible-inference.sh"
 register_sandbox_for_teardown "$SANDBOX_NAME"
+nemoclaw_e2e_configure_compatible_inference || exit 1
 
 # ══════════════════════════════════════════════════════════════════════
 # Phase 1: Install + Prerequisites
@@ -84,11 +87,9 @@ if ! docker info >/dev/null 2>&1; then
 fi
 pass "Docker is running"
 
-if [ -z "${NVIDIA_INFERENCE_API_KEY:-}" ] || [[ "${NVIDIA_INFERENCE_API_KEY}" != nvapi-* ]]; then
-  fail "NVIDIA_INFERENCE_API_KEY not set or invalid"
+if ! nemoclaw_e2e_require_hosted_inference_key; then
   exit 1
 fi
-pass "NVIDIA_INFERENCE_API_KEY is set"
 
 cd "$REPO" || {
   fail "Could not cd to repo root"

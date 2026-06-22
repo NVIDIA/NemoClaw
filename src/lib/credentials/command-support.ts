@@ -3,15 +3,11 @@
 
 import { recoverNamedGatewayRuntime } from "../actions/global";
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../cli/branding";
+import { listMessagingProviderSuffixes } from "../messaging/channels";
 
 // Suffixes that mark per-sandbox messaging integrations in the gateway's
 // provider list. These are managed by `channels`, not `credentials`.
-const BRIDGE_PROVIDER_SUFFIXES: readonly string[] = [
-  "-telegram-bridge",
-  "-discord-bridge",
-  "-slack-bridge",
-  "-slack-app",
-];
+const BRIDGE_PROVIDER_SUFFIXES: readonly string[] = [...listMessagingProviderSuffixes()];
 
 export function isBridgeProviderName(name: string): boolean {
   return BRIDGE_PROVIDER_SUFFIXES.some((suffix) => name.endsWith(suffix));

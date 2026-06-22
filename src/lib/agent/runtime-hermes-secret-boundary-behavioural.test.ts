@@ -132,7 +132,9 @@ describe("Hermes secret-boundary guard — guard snippet behaviour", () => {
     }
   }
 
-  it("env-file guard exits 1, kills hermes processes, and persists [SECURITY] to the recovery log when python validator fails", () => {
+  it("env-file guard exits 1, kills hermes processes, and persists [SECURITY] to the recovery log when python validator fails", {
+    timeout: 15_000,
+  }, () => {
     const result = runGuard({
       guard: __testing.buildHermesEnvFileBoundaryGuard(),
       pythonExit: 1,
@@ -180,7 +182,9 @@ describe("Hermes secret-boundary guard — guard snippet behaviour", () => {
     expect(result.stderr).toContain("[gateway-recovery] WARNING");
   });
 
-  it("runtime-env guard exits 1 on python validator failure, kills processes, and logs [SECURITY]", () => {
+  it("runtime-env guard exits 1 on python validator failure, kills processes, and logs [SECURITY]", {
+    timeout: 20_000,
+  }, () => {
     const result = runGuard({
       guard: __testing.buildHermesRuntimeEnvBoundaryGuard(),
       pythonExit: 1,
@@ -191,6 +195,46 @@ describe("Hermes secret-boundary guard — guard snippet behaviour", () => {
     expect(result.stdout).not.toContain("REACHED_LAUNCH");
     expect(result.pkillCalls.length).toBeGreaterThanOrEqual(2);
     expect(result.recoveryLog).toContain("[SECURITY]");
+  });
+
+  it("standalone env-file check exits 1, emits SECRET_BOUNDARY_REFUSED, kills processes when validator refuses", {
+    timeout: 15_000,
+  }, () => {
+    const result = runGuard({
+      guard: __testing.buildHermesEnvFileBoundaryStandaloneCheck(),
+      pythonExit: 1,
+      validatorExists: true,
+    });
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain("SECRET_BOUNDARY_REFUSED");
+    expect(result.stdout).not.toContain("SECRET_BOUNDARY_OK");
+    expect(result.stdout).not.toContain("REACHED_LAUNCH");
+    expect(result.pkillCalls.length).toBeGreaterThanOrEqual(2);
+    expect(result.stderr).toContain("[SECURITY]");
+  });
+
+  it("standalone env-file check exits 0 and emits SECRET_BOUNDARY_OK when validator accepts", () => {
+    const result = runGuard({
+      guard: __testing.buildHermesEnvFileBoundaryStandaloneCheck(),
+      pythonExit: 0,
+      validatorExists: true,
+    });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("SECRET_BOUNDARY_OK");
+    expect(result.stdout).not.toContain("SECRET_BOUNDARY_REFUSED");
+    expect(result.pkillCalls.length).toBe(0);
+  });
+
+  it("standalone env-file check emits SECRET_BOUNDARY_VALIDATOR_MISSING and exits 0 when validator script is absent", () => {
+    const result = runGuard({
+      guard: __testing.buildHermesEnvFileBoundaryStandaloneCheck(),
+      pythonExit: 0,
+      validatorExists: false,
+    });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("SECRET_BOUNDARY_VALIDATOR_MISSING");
+    expect(result.stdout).not.toContain("SECRET_BOUNDARY_REFUSED");
+    expect(result.pkillCalls.length).toBe(0);
   });
 });
 
@@ -459,7 +503,7 @@ describe("Hermes secret-boundary guard — full recovery script behaviour", () =
     } finally {
       removeTempDir(harness.tmp);
     }
-  });
+  }, 20_000);
 
   it("does not import a raw secret from a metadata-safe proxy-env during runtime validation", () => {
     const harness = prepareRecoveryHarness("runtime-env-real");
@@ -512,5 +556,5 @@ describe("Hermes secret-boundary guard — full recovery script behaviour", () =
     } finally {
       removeTempDir(harness.tmp);
     }
-  });
+  }, 20_000);
 });

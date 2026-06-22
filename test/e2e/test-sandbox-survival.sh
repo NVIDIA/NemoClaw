@@ -22,20 +22,20 @@
 #
 # Prerequisites:
 #   - Docker running
-#   - NVIDIA_INFERENCE_API_KEY set (real key, starts with nvapi-)
+#   - NVIDIA_INFERENCE_API_KEY set for hosted inference
 #   - Network access to inference-api.nvidia.com
 #
 # Environment variables:
 #   NEMOCLAW_NON_INTERACTIVE=1             — required
 #   NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 — required
-#   NVIDIA_INFERENCE_API_KEY                         — required for real NVIDIA Endpoints inference
+#   NVIDIA_INFERENCE_API_KEY                         — required for hosted inference
 #   NEMOCLAW_SANDBOX_NAME                  — sandbox name (default: e2e-survival)
 #   NEMOCLAW_E2E_TIMEOUT_SECONDS           — overall timeout (default: 900)
 #
 # Usage:
 #   NEMOCLAW_NON_INTERACTIVE=1 \
 #   NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
-#   NVIDIA_INFERENCE_API_KEY=nvapi-... \
+#   NVIDIA_INFERENCE_API_KEY=... \
 #     bash test/e2e/test-sandbox-survival.sh
 
 set -uo pipefail
@@ -44,6 +44,8 @@ export NEMOCLAW_E2E_DEFAULT_TIMEOUT=900
 SCRIPT_DIR_TIMEOUT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # shellcheck source=test/e2e/e2e-timeout.sh
 source "${SCRIPT_DIR_TIMEOUT}/e2e-timeout.sh"
+# shellcheck source=test/e2e/lib/ci-compatible-inference.sh
+. "${SCRIPT_DIR_TIMEOUT}/lib/ci-compatible-inference.sh"
 
 PASS=0
 FAIL=0
@@ -93,6 +95,9 @@ version_gte() {
 }
 
 SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-survival}"
+nemoclaw_e2e_configure_compatible_inference || exit 1
+HOSTED_INFERENCE_BASE_URL="$(nemoclaw_e2e_hosted_inference_base_url)"
+MODEL="$(nemoclaw_e2e_hosted_inference_model)"
 
 # shellcheck source=test/e2e/lib/sandbox-teardown.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox-teardown.sh"
@@ -102,7 +107,6 @@ REGISTRY="$HOME/.nemoclaw/sandboxes.json"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 MIN_OPENSHELL="0.0.24"
-MODEL="nvidia/nemotron-3-super-120b-a12b"
 
 # SSH helper — sets up SSH config and common options for sandbox access
 # Sets: ssh_config, SSH_OPTS, SSH_TARGET
@@ -207,17 +211,14 @@ else
   exit 1
 fi
 
-if [ -n "${NVIDIA_INFERENCE_API_KEY:-}" ] && [[ "${NVIDIA_INFERENCE_API_KEY}" == nvapi-* ]]; then
-  pass "NVIDIA_INFERENCE_API_KEY is set (starts with nvapi-)"
-else
-  fail "NVIDIA_INFERENCE_API_KEY not set or invalid — required for live inference"
+if ! nemoclaw_e2e_require_hosted_inference_key; then
   exit 1
 fi
 
-if curl -sf --max-time 10 https://inference-api.nvidia.com/v1/models >/dev/null 2>&1; then
-  pass "Network access to inference-api.nvidia.com"
+if nemoclaw_e2e_probe_hosted_inference; then
+  pass "Network access to ${HOSTED_INFERENCE_BASE_URL}"
 else
-  fail "Cannot reach inference-api.nvidia.com"
+  fail "Cannot reach ${HOSTED_INFERENCE_BASE_URL}"
   exit 1
 fi
 
@@ -382,7 +383,7 @@ else
 fi
 
 # 4b: Live inference through sandbox
-info "[LIVE] Baseline inference: user → sandbox → gateway → NVIDIA Endpoints..."
+info "[LIVE] Baseline inference: user → sandbox → gateway → hosted inference endpoint..."
 # shellcheck disable=SC2029  # client-side expansion is intentional
 baseline_response=$(run_with_timeout 90 ssh "${SSH_OPTS[@]}" "$SSH_TARGET" \
   "curl -s --max-time 60 https://inference.local/v1/chat/completions \
@@ -718,7 +719,7 @@ fi
 # ══════════════════════════════════════════════════════════════════
 section "Phase 10: Live inference after restart (THE definitive test)"
 
-info "[LIVE] Post-restart inference: user → sandbox → gateway → NVIDIA Endpoints..."
+info "[LIVE] Post-restart inference: user → sandbox → gateway → hosted inference endpoint..."
 # shellcheck disable=SC2029
 post_response=$(run_with_timeout 90 ssh "${SSH_OPTS[@]}" "$SSH_TARGET" \
   "curl -s --max-time 60 https://inference.local/v1/chat/completions \
@@ -750,7 +751,7 @@ for pong_attempt in 1 2 3; do
 done
 if $pong_ok; then
   pass "[LIVE] Post-restart: model responded with PONG through sandbox"
-  info "Full path proven: user → sandbox → openshell gateway (resumed) → NVIDIA Endpoints → response"
+  info "Full path proven: user → sandbox → openshell gateway (resumed) → hosted inference endpoint → response"
   info "This proves #859's ask: reliable non-destructive gateway lifecycle with working inference"
 else
   fail "[LIVE] Post-restart: expected PONG after 3 attempts, got: ${post_content:0:200}"

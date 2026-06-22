@@ -155,12 +155,28 @@ pass "Old sandbox created (OpenClaw ${OLD_OPENCLAW_VERSION})"
 info "Phase 4: Registering sandbox with old agentVersion..."
 
 python3 -c "
-import json
+import json, os
+sess_path = '${SESSION_FILE}'
+try:
+    with open(sess_path) as f:
+        sess = json.load(f)
+except Exception:
+    sess = {}
+env_provider = (os.environ.get('NEMOCLAW_PROVIDER') or '').strip()
+if env_provider == 'custom':
+    env_provider = 'compatible-endpoint'
+provider = sess.get('provider') or env_provider or 'compatible-endpoint'
+model = (
+    sess.get('model')
+    or os.environ.get('NEMOCLAW_MODEL')
+    or os.environ.get('NEMOCLAW_COMPAT_MODEL')
+    or 'nvidia/nvidia/nemotron-3-super-v3'
+)
 reg = {'sandboxes': {'${SANDBOX_NAME}': {
     'name': '${SANDBOX_NAME}',
     'createdAt': '$(date -u +%Y-%m-%dT%H:%M:%SZ)',
-    'model': 'nvidia/nemotron-3-super-120b-a12b',
-    'provider': 'nvidia-prod',
+    'model': model,
+    'provider': provider,
     'gpuEnabled': False,
     'policies': [],
     'policyTier': None,
@@ -170,12 +186,6 @@ reg = {'sandboxes': {'${SANDBOX_NAME}': {
 with open('${REGISTRY_FILE}', 'w') as f:
     json.dump(reg, f, indent=2)
 
-sess_path = '${SESSION_FILE}'
-try:
-    with open(sess_path) as f:
-        sess = json.load(f)
-except Exception:
-    sess = {}
 sess['sandboxName'] = '${SANDBOX_NAME}'
 sess['status'] = 'complete'
 with open(sess_path, 'w') as f:

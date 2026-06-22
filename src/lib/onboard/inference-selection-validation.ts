@@ -20,6 +20,7 @@ const { probeAnthropicEndpoint, probeOpenAiLikeEndpoint } =
 
 import { shouldForceCompletionsApi } from "../validation";
 import { getProbeRecovery } from "../validation-recovery";
+import { summarizeProbeForDisplay } from "./probe-diagnostics";
 
 export type EndpointValidationResult =
   | { ok: true; api: string | null; retry?: undefined }
@@ -80,8 +81,12 @@ export interface InferenceSelectionValidationHelpers {
 export function createInferenceSelectionValidationHelpers(
   deps: InferenceSelectionValidationDeps,
 ): InferenceSelectionValidationHelpers {
-  function printValidationFailure(label: string): void {
+  function printValidationFailure(
+    label: string,
+    probe?: { failures?: unknown[]; message?: unknown },
+  ): void {
     console.error(`  ${label} endpoint validation failed.`);
+    if (probe) console.error(`  Validation probe summary: ${summarizeProbeForDisplay(probe)}.`);
     console.error("  Validation details were omitted to avoid exposing credentials.");
   }
 
@@ -104,7 +109,7 @@ export function createInferenceSelectionValidationHelpers(
     const apiKey = credentialEnv ? getCredential(credentialEnv) : "";
     const probe = probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options);
     if (!probe.ok) {
-      printValidationFailure(label);
+      printValidationFailure(label, probe);
       if (deps.isNonInteractive()) {
         process.exit(1);
       }
@@ -139,7 +144,7 @@ export function createInferenceSelectionValidationHelpers(
     const apiKey = getCredential(credentialEnv);
     const probe = probeAnthropicEndpoint(endpointUrl, model, apiKey);
     if (!probe.ok) {
-      printValidationFailure(label);
+      printValidationFailure(label, probe);
       if (deps.isNonInteractive()) {
         process.exit(1);
       }
@@ -182,7 +187,7 @@ export function createInferenceSelectionValidationHelpers(
       }
       return { ok: true, api: probe.api ?? "openai-completions" };
     }
-    printValidationFailure(label);
+    printValidationFailure(label, probe);
     if (deps.isNonInteractive()) {
       process.exit(1);
     }
@@ -212,7 +217,7 @@ export function createInferenceSelectionValidationHelpers(
       console.log(`  ${probe.label} available — ${deps.agentProductName()} will use ${probe.api}.`);
       return { ok: true, api: probe.api };
     }
-    printValidationFailure(label);
+    printValidationFailure(label, probe);
     if (deps.isNonInteractive()) {
       process.exit(1);
     }

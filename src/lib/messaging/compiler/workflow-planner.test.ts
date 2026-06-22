@@ -636,6 +636,9 @@ describe("MessagingWorkflowPlanner", () => {
       active: false,
       disabled: true,
     });
+    expect(
+      (stopped?.runtimeSetup?.nodePreloads ?? []).some((entry) => entry.channelId === "telegram"),
+    ).toBe(false);
 
     const started = await planner().buildChannelStartPlanFromSandboxEntry({
       sandboxName: "demo",
@@ -656,6 +659,11 @@ describe("MessagingWorkflowPlanner", () => {
       active: true,
       disabled: false,
     });
+    expect(
+      (started?.runtimeSetup?.nodePreloads ?? []).some(
+        (entry) => entry.channelId === "telegram" && entry.module === "telegram-diagnostics",
+      ),
+    ).toBe(true);
   });
 
   it("removes a channel and its dependent plan entries from an existing sandbox entry plan", async () => {

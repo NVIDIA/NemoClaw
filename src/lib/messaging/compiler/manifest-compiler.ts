@@ -31,6 +31,7 @@ import { planBuildSteps } from "./engines/build-step-engine";
 import { planCredentialBindings } from "./engines/credential-binding-engine";
 import { planHealthChecks } from "./engines/health-check-engine";
 import { planNetworkPolicy } from "./engines/policy-resolver";
+import { planRuntimeSetup } from "./engines/runtime-setup-engine";
 import { planStateUpdates } from "./engines/state-update-engine";
 import type { RenderTemplateReferenceResolver } from "./engines/template";
 import type { ManifestCompilerContext } from "./types";
@@ -91,6 +92,7 @@ export class ManifestCompiler {
         ),
       )
     ).flat();
+    const runtimeSetup = planRuntimeSetup(manifests, context.agent, channels);
     const stateUpdates = manifests.flatMap((manifest) => planStateUpdates(manifest));
     const healthChecks = manifests.flatMap((manifest) => planHealthChecks(manifest));
 
@@ -105,6 +107,7 @@ export class ManifestCompiler {
       networkPolicy,
       agentRender,
       buildSteps,
+      runtimeSetup,
       stateUpdates,
       healthChecks,
     };
@@ -222,7 +225,17 @@ async function resolveChannelInputs(
   readonly inputs: SandboxMessagingInputReference[];
   readonly skipped: boolean;
 }> {
-  let inputs = manifest.inputs.map((input) => resolveChannelInput(manifest, input, context));
+  const initialInputValues: Record<string, MessagingSerializableValue> = {};
+  let inputs = manifest.inputs.map((input) => {
+    const resolved = resolveChannelInput(manifest, input, context, initialInputValues, {
+      applyDefaults: !(options.runEnrollment && options.isInteractive),
+    });
+    if (resolved.value !== undefined) {
+      initialInputValues[resolved.inputId] = resolved.value;
+      if (resolved.statePath) initialInputValues[resolved.statePath] = resolved.value;
+    }
+    return resolved;
+  });
   inputs = applyCredentialAvailability(manifest, inputs, context);
   let hookInputs = buildCompilerHookInputs(manifest, inputs);
   const enrollmentHooks = options.runEnrollment
@@ -292,6 +305,8 @@ function resolveChannelInput(
   manifest: ChannelManifest,
   input: ChannelInputSpec,
   context: ManifestCompilerContext,
+  availableInputs: Record<string, MessagingSerializableValue>,
+  options: { readonly applyDefaults: boolean },
 ): SandboxMessagingInputReference {
   const base = inputReferenceBase(manifest, input);
   const envValue = readInputEnvValue(input);
@@ -299,6 +314,10 @@ function resolveChannelInput(
     return input.kind === "secret"
       ? { ...base, credentialAvailable: true }
       : { ...base, value: envValue };
+  }
+  if (options.applyDefaults) {
+    const defaultValue = readInputDefaultValue(input, availableInputs);
+    if (defaultValue !== undefined) return { ...base, value: defaultValue };
   }
 
   return {
@@ -323,27 +342,45 @@ function inputReferenceBase(
 }
 
 function readInputEnvValue(input: ChannelInputSpec): MessagingSerializableValue | undefined {
-  const normalize = (raw: string | null | undefined): string | undefined => {
-    if (raw && /[\r\n]/.test(raw)) {
-      throw new Error("Messaging input values must not contain line breaks.");
+  if (input.envKey) {
+    if (input.kind === "config") {
+      const resolved = resolveMessagingChannelConfigEnvValue(input.envKey, process.env);
+      const normalizedResolved = normalizeInputValue(input, resolved.value);
+      if (normalizedResolved !== undefined) return normalizedResolved;
     }
-    const normalized = raw?.trim();
-    if (!normalized || normalized.length === 0) return undefined;
-    if (input.validValues && !input.validValues.includes(normalized)) return undefined;
-    return normalized;
-  };
-
-  if (!input.envKey) return undefined;
-  if (input.kind === "config") {
-    const resolved = resolveMessagingChannelConfigEnvValue(input.envKey, process.env);
-    const normalizedResolved = normalize(resolved.value);
-    if (normalizedResolved !== undefined) return normalizedResolved;
+    const normalizedEnv = normalizeInputValue(input, process.env[input.envKey]);
+    if (normalizedEnv !== undefined) return normalizedEnv;
   }
-  return normalize(process.env[input.envKey]);
+  return undefined;
 }
 
 function readInputStatePath(input: ChannelInputSpec): MessagingStatePath | undefined {
   return input.kind === "config" ? input.statePath : undefined;
+}
+
+function readInputDefaultValue(
+  input: ChannelInputSpec,
+  availableInputs: Record<string, MessagingSerializableValue>,
+): MessagingSerializableValue | undefined {
+  if (input.kind !== "config") return undefined;
+  if (input.promptWhenInput && !hasInputValue(availableInputs, input.promptWhenInput)) {
+    return undefined;
+  }
+  return normalizeInputValue(input, input.defaultValue);
+}
+
+function normalizeInputValue(
+  input: ChannelInputSpec,
+  raw: string | null | undefined,
+): string | undefined {
+  if (raw && /[\r\n]/.test(raw)) {
+    throw new Error("Messaging input values must not contain line breaks.");
+  }
+  const normalized = raw?.trim();
+  if (!normalized || normalized.length === 0) return undefined;
+  if (input.validValues && !input.validValues.includes(normalized)) return undefined;
+  if (input.formatPattern && !new RegExp(input.formatPattern).test(normalized)) return undefined;
+  return normalized;
 }
 
 function isCredentialAvailable(
@@ -460,6 +497,14 @@ function mergeHookOutputsIntoInputs(
 
 function hasDeclaredHookInputs(inputs: MessagingHookInputMap, hook: ChannelHookSpec): boolean {
   return (hook.inputs ?? []).every((inputKey) => Object.hasOwn(inputs, inputKey));
+}
+
+function hasInputValue(
+  inputs: Record<string, MessagingSerializableValue>,
+  inputId: string,
+): boolean {
+  const value = inputs[inputId];
+  return typeof value === "string" ? value.trim().length > 0 : value !== undefined;
 }
 
 function selectDeclaredHookInputs(

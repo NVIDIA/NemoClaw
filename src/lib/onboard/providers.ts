@@ -5,6 +5,7 @@
 // Provider metadata, lookup helpers, and gateway provider CRUD.
 
 const { redact } = require("../runner");
+const { normalizeCredentialValue } = require("../credentials/store");
 const {
   DEFAULT_CLOUD_MODEL,
   DEFAULT_HERMES_PROVIDER_MODEL,
@@ -22,6 +23,10 @@ const OPENAI_ENDPOINT_URL = "https://api.openai.com/v1";
 const ANTHROPIC_ENDPOINT_URL = "https://api.anthropic.com";
 const GEMINI_ENDPOINT_URL = "https://generativelanguage.googleapis.com/v1beta/openai/";
 const HERMES_INFERENCE_ENDPOINT_URL = "https://inference-api.nousresearch.com/v1";
+const HOSTED_INFERENCE_SOURCE_ENV = "NVIDIA_INFERENCE_API_KEY";
+const HOSTED_INFERENCE_CREDENTIAL_ENV = "COMPATIBLE_API_KEY";
+const HOSTED_INFERENCE_ENDPOINT_URL = "https://inference-api.nvidia.com/v1";
+const HOSTED_INFERENCE_MODEL = "nvidia/nvidia/nemotron-3-super-v3";
 
 const REMOTE_PROVIDER_CONFIG = {
   build: {
@@ -167,6 +172,7 @@ function getEffectiveProviderName(providerKey) {
 // ── Non-interactive helpers ──────────────────────────────────────
 
 function getNonInteractiveProvider() {
+  stageHostedInferenceSourceSecretEnv();
   const providerKey = (process.env.NEMOCLAW_PROVIDER || "").trim().toLowerCase();
   if (!providerKey) return null;
   const aliases = {
@@ -206,6 +212,52 @@ function getNonInteractiveProvider() {
     process.exit(1);
   }
   return normalized;
+}
+
+function stageHostedInferenceSourceSecretEnv() {
+  const sourceKey = normalizeCredentialValue(process.env[HOSTED_INFERENCE_SOURCE_ENV] ?? "");
+  if (!sourceKey) return false;
+
+  const rawProvider = (process.env.NEMOCLAW_PROVIDER || "").trim().toLowerCase();
+  const aliases = {
+    cloud: "build",
+    anthropiccompatible: "anthropicCompatible",
+    hermes: "hermesProvider",
+    "hermes-provider": "hermesProvider",
+    hermesprovider: "hermesProvider",
+    nous: "hermesProvider",
+    "nous-portal": "hermesProvider",
+  };
+  const normalizedProvider = aliases[rawProvider] || rawProvider;
+  const hostedFlag = (process.env.NEMOCLAW_E2E_USE_HOSTED_INFERENCE || "").trim() === "1";
+  const compatibleKey = normalizeCredentialValue(
+    process.env[HOSTED_INFERENCE_CREDENTIAL_ENV] ?? "",
+  );
+  const explicitHostedCustom =
+    normalizedProvider === "custom" &&
+    (hostedFlag || (!compatibleKey && !sourceKey.startsWith("nvapi-")));
+  const implicitHostedCustom =
+    !normalizedProvider && (hostedFlag || !sourceKey.startsWith("nvapi-"));
+  const shouldStage = explicitHostedCustom || implicitHostedCustom;
+
+  if (!shouldStage) return false;
+
+  if (!normalizedProvider) {
+    process.env.NEMOCLAW_PROVIDER = "custom";
+  }
+  process.env.NEMOCLAW_ENDPOINT_URL =
+    (process.env.NEMOCLAW_ENDPOINT_URL || "").trim() || HOSTED_INFERENCE_ENDPOINT_URL;
+  const model =
+    (process.env.NEMOCLAW_MODEL || "").trim() ||
+    (process.env.NEMOCLAW_COMPAT_MODEL || "").trim() ||
+    (process.env.NEMOCLAW_CLOUD_EXPERIMENTAL_MODEL || "").trim() ||
+    HOSTED_INFERENCE_MODEL;
+  process.env.NEMOCLAW_MODEL = model;
+  process.env.NEMOCLAW_COMPAT_MODEL = (process.env.NEMOCLAW_COMPAT_MODEL || "").trim() || model;
+  process.env.NEMOCLAW_PREFERRED_API =
+    (process.env.NEMOCLAW_PREFERRED_API || "").trim() || "openai-completions";
+  process.env[HOSTED_INFERENCE_CREDENTIAL_ENV] = sourceKey;
+  return true;
 }
 
 function getNonInteractiveModel(providerKey) {
@@ -399,8 +451,13 @@ module.exports = {
   OLLAMA_PROXY_CREDENTIAL_ENV,
   VLLM_LOCAL_CREDENTIAL_ENV,
   DISCORD_SNOWFLAKE_RE,
+  HOSTED_INFERENCE_SOURCE_ENV,
+  HOSTED_INFERENCE_CREDENTIAL_ENV,
+  HOSTED_INFERENCE_ENDPOINT_URL,
+  HOSTED_INFERENCE_MODEL,
   getProviderLabel,
   getEffectiveProviderName,
+  stageHostedInferenceSourceSecretEnv,
   getNonInteractiveProvider,
   getNonInteractiveModel,
   getRequestedProviderHint,

@@ -205,16 +205,12 @@ describe("ManifestCompiler", () => {
       {
         channelId: "discord",
         kind: "package-install",
-        hookId: "discord-openclaw-package-install",
-        handler: "common.staticOutputs",
         outputId: "openclawPluginPackage",
         required: true,
       },
       {
         channelId: "wechat",
         kind: "package-install",
-        hookId: "wechat-openclaw-package-install",
-        handler: "common.staticOutputs",
         outputId: "openclawPluginPackage",
         required: true,
       },
@@ -245,16 +241,12 @@ describe("ManifestCompiler", () => {
       {
         channelId: "slack",
         kind: "package-install",
-        hookId: "slack-openclaw-package-install",
-        handler: "common.staticOutputs",
         outputId: "openclawPluginPackage",
         required: true,
       },
       {
         channelId: "whatsapp",
         kind: "package-install",
-        hookId: "whatsapp-openclaw-package-install",
-        handler: "common.staticOutputs",
         outputId: "openclawPluginPackage",
         required: true,
       },
@@ -287,12 +279,31 @@ describe("ManifestCompiler", () => {
       statePath: "wechatConfig.accountId",
       env: "WECHAT_ACCOUNT_ID",
     });
-    expect(plan.healthChecks).toHaveLength(ALL_CHANNELS.length);
-    expect(plan.healthChecks.every((check) => check.requiredBefore === "lifecycle-success")).toBe(
-      true,
-    );
-    expect(plan.healthChecks.find((check) => check.channelId === "wechat")?.hookIds).toEqual([
-      "wechat-health-check",
+    expect(plan.healthChecks).toEqual([
+      {
+        channelId: "telegram",
+        phase: "health-check",
+        requiredBefore: "lifecycle-success",
+        hookIds: ["telegram-openclaw-bridge-health"],
+      },
+      {
+        channelId: "discord",
+        phase: "health-check",
+        requiredBefore: "lifecycle-success",
+        hookIds: ["discord-openclaw-bridge-health"],
+      },
+      {
+        channelId: "wechat",
+        phase: "health-check",
+        requiredBefore: "lifecycle-success",
+        hookIds: ["wechat-health-check"],
+      },
+      {
+        channelId: "slack",
+        phase: "health-check",
+        requiredBefore: "lifecycle-success",
+        hookIds: ["slack-openclaw-bridge-health"],
+      },
     ]);
     expect(
       plan.agentRender.find(
@@ -331,6 +342,7 @@ describe("ManifestCompiler", () => {
     });
     expect(plan.agentRender.map((render) => `${render.channelId}:${render.target}`)).toEqual([
       "telegram:~/.hermes/.env",
+      "telegram:~/.hermes/config.yaml",
       "telegram:~/.hermes/config.yaml",
       "discord:~/.hermes/.env",
       "discord:~/.hermes/config.yaml",
@@ -539,13 +551,18 @@ describe("ManifestCompiler", () => {
       "telegram-token-paste",
       "telegram-allowlist-aliases",
       "telegram-config-prompt",
+      "telegram-openclaw-config-prompt",
       "telegram-get-me-reachability",
+      "telegram-openclaw-bridge-health",
+      "telegram-gateway-conflict-status",
     ]);
+    expect(plan.runtimeSetup).toEqual({ nodePreloads: [], envAliases: [], secretScans: [] });
     expect(plan.credentialBindings.map((binding) => binding.channelId)).toEqual(["telegram"]);
     expect(plan.networkPolicy.entries.map((entry) => entry.channelId)).toEqual(["telegram"]);
     expect(plan.agentRender.map((render) => render.channelId)).toEqual(["telegram", "telegram"]);
     expect(plan.buildSteps).toEqual([]);
     expect(plan.stateUpdates.map((entry) => entry.channelId)).toEqual([
+      "telegram",
       "telegram",
       "telegram",
       "telegram",
@@ -702,6 +719,226 @@ describe("ManifestCompiler", () => {
     );
   });
 
+  it("reads config default values when env keys are unset", async () => {
+    const customManifest = {
+      schemaVersion: 1,
+      id: "matrix",
+      displayName: "Matrix",
+      supportedAgents: ["openclaw"],
+      auth: {
+        mode: "none",
+      },
+      inputs: [
+        {
+          id: "messagingPort",
+          kind: "config",
+          required: true,
+          envKey: "MATRIX_MESSAGING_PORT",
+          formatPattern: "^[0-9]+$",
+          defaultValue: "3978",
+          prompt: {
+            label: "Messaging port",
+          },
+        },
+        {
+          id: "groupPolicy",
+          kind: "config",
+          required: true,
+          envKey: "MATRIX_GROUP_POLICY",
+          validValues: ["open", "allowlist", "block"],
+          defaultValue: "open",
+          prompt: {
+            label: "Group policy",
+          },
+        },
+      ],
+      credentials: [],
+      policyPresets: [],
+      render: [],
+      state: {},
+      hooks: [],
+    } as const satisfies ChannelManifest;
+
+    await withEnv(
+      {
+        MATRIX_MESSAGING_PORT: undefined,
+        MATRIX_GROUP_POLICY: undefined,
+      },
+      async () => {
+        const plan = await new ManifestCompiler(
+          new ChannelManifestRegistry([customManifest]),
+          new MessagingHookRegistry([]),
+        ).compile({
+          sandboxName: "demo",
+          agent: "openclaw",
+          workflow: "onboard",
+          isInteractive: false,
+          configuredChannels: ["matrix"],
+        });
+
+        expect(plan.channels[0]).toMatchObject({
+          channelId: "matrix",
+          configured: true,
+          disabled: false,
+        });
+        expect(plan.channels[0]?.inputs).toContainEqual(
+          expect.objectContaining({
+            inputId: "messagingPort",
+            kind: "config",
+            value: "3978",
+          }),
+        );
+        expect(plan.channels[0]?.inputs).toContainEqual(
+          expect.objectContaining({
+            inputId: "groupPolicy",
+            kind: "config",
+            value: "open",
+          }),
+        );
+      },
+    );
+  });
+
+  it("leaves config defaults for interactive enrollment hooks to collect", async () => {
+    const hookInputs: unknown[] = [];
+    const customManifest = {
+      schemaVersion: 1,
+      id: "matrix",
+      displayName: "Matrix",
+      supportedAgents: ["openclaw"],
+      auth: {
+        mode: "none",
+      },
+      inputs: [
+        {
+          id: "messagingPort",
+          kind: "config",
+          required: false,
+          envKey: "MATRIX_MESSAGING_PORT",
+          defaultValue: "3978",
+          prompt: {
+            label: "Messaging port",
+          },
+        },
+      ],
+      credentials: [],
+      policyPresets: [],
+      render: [],
+      state: {},
+      hooks: [
+        {
+          id: "matrix-config-prompt",
+          phase: "enroll",
+          handler: "common.configPrompt",
+          inputs: ["messagingPort"],
+          outputs: [{ id: "messagingPort", kind: "config" }],
+        },
+      ],
+    } as const satisfies ChannelManifest;
+    const hooks = new MessagingHookRegistry([
+      {
+        id: "common.configPrompt",
+        handler: (context) => {
+          hookInputs.push(context.inputs);
+          return {
+            outputs: {
+              messagingPort: {
+                kind: "config",
+                value: "3978",
+              },
+            },
+          };
+        },
+      },
+    ]);
+
+    await withEnv(
+      {
+        MATRIX_MESSAGING_PORT: undefined,
+      },
+      async () => {
+        const plan = await new ManifestCompiler(
+          new ChannelManifestRegistry([customManifest]),
+          hooks,
+        ).compile({
+          sandboxName: "demo",
+          agent: "openclaw",
+          workflow: "onboard",
+          isInteractive: true,
+          configuredChannels: ["matrix"],
+        });
+
+        expect(hookInputs).toEqual([{}]);
+        expect(plan.channels[0]?.inputs).toContainEqual(
+          expect.objectContaining({
+            inputId: "messagingPort",
+            value: "3978",
+          }),
+        );
+      },
+    );
+  });
+
+  it("does not apply gated config defaults until the gate input is available", async () => {
+    const customManifest = {
+      schemaVersion: 1,
+      id: "matrix",
+      displayName: "Matrix",
+      supportedAgents: ["openclaw"],
+      auth: {
+        mode: "none",
+      },
+      inputs: [
+        {
+          id: "roomId",
+          kind: "config",
+          required: false,
+          envKey: "MATRIX_ROOM_ID",
+        },
+        {
+          id: "threadMode",
+          kind: "config",
+          required: false,
+          envKey: "MATRIX_THREAD_MODE",
+          promptWhenInput: "roomId",
+          validValues: ["0", "1"],
+          defaultValue: "1",
+        },
+      ],
+      credentials: [],
+      policyPresets: [],
+      render: [],
+      state: {},
+      hooks: [],
+    } as const satisfies ChannelManifest;
+
+    await withEnv(
+      {
+        MATRIX_ROOM_ID: undefined,
+        MATRIX_THREAD_MODE: undefined,
+      },
+      async () => {
+        const plan = await new ManifestCompiler(
+          new ChannelManifestRegistry([customManifest]),
+          new MessagingHookRegistry([]),
+        ).compile({
+          sandboxName: "demo",
+          agent: "openclaw",
+          workflow: "onboard",
+          isInteractive: false,
+          configuredChannels: ["matrix"],
+        });
+
+        const threadMode = plan.channels[0]?.inputs.find((input) => input.inputId === "threadMode");
+        expect(threadMode).toMatchObject({
+          inputId: "threadMode",
+          kind: "config",
+        });
+        expect(threadMode).not.toHaveProperty("value");
+      },
+    );
+  });
+
   it("keeps compiled plans serializable, deterministic, and secret-free", async () => {
     const context = {
       sandboxName: "demo",
@@ -733,6 +970,7 @@ describe("ManifestCompiler", () => {
       "networkPolicy",
       "agentRender",
       "buildSteps",
+      "runtimeSetup",
       "stateUpdates",
       "healthChecks",
     ] satisfies Array<keyof SandboxMessagingPlan>);
@@ -758,9 +996,14 @@ describe("ManifestCompiler", () => {
     expect(plan.disabledChannels).toEqual(["telegram"]);
     expect(plan.credentialBindings.map((binding) => binding.channelId)).toEqual(["telegram"]);
     expect(plan.networkPolicy.entries.map((entry) => entry.channelId)).toEqual(["telegram"]);
-    expect(plan.agentRender.map((render) => render.channelId)).toEqual(["telegram", "telegram"]);
+    expect(plan.agentRender.map((render) => render.channelId)).toEqual([
+      "telegram",
+      "telegram",
+      "telegram",
+    ]);
     expect(plan.buildSteps).toEqual([]);
     expect(plan.stateUpdates.map((entry) => entry.channelId)).toEqual([
+      "telegram",
       "telegram",
       "telegram",
       "telegram",
@@ -771,8 +1014,12 @@ describe("ManifestCompiler", () => {
       "telegram-token-paste",
       "telegram-allowlist-aliases",
       "telegram-config-prompt",
+      "telegram-openclaw-config-prompt",
       "telegram-get-me-reachability",
+      "telegram-openclaw-bridge-health",
+      "telegram-gateway-conflict-status",
     ]);
+    expect(plan.runtimeSetup).toEqual({ nodePreloads: [], envAliases: [], secretScans: [] });
   });
 
   it("compiles a non-built-in channel manifest through the same generic path", async () => {

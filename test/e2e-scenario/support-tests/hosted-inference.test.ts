@@ -1,9 +1,22 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
+
+const COMPAT_HELPER = path.join(
+  import.meta.dirname,
+  "..",
+  "..",
+  "e2e",
+  "lib",
+  "ci-compatible-inference.sh",
+);
 
 function secrets(values: Record<string, string | undefined>) {
   return {
@@ -13,6 +26,55 @@ function secrets(values: Record<string, string | undefined>) {
       return value;
     },
   };
+}
+
+type ProbeRunOptions = {
+  env?: Record<string, string>;
+  curlExitCode?: number;
+  curlStatus?: string;
+};
+
+function runHostedProbe(options: ProbeRunOptions = {}) {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hosted-probe-"));
+  const callsPath = path.join(tmpDir, "curl.calls");
+  const curlPath = path.join(tmpDir, "curl");
+  const scriptPath = path.join(tmpDir, "run-probe.sh");
+  const curlExitCode = options.curlExitCode ?? 0;
+  const curlStatus = options.curlStatus ?? "404";
+
+  fs.writeFileSync(
+    curlPath,
+    `#!/bin/sh
+for arg in "$@"; do
+  printf 'ARG:%s\n' "$arg" >> ${JSON.stringify(callsPath)}
+done
+printf %s ${JSON.stringify(curlStatus)}
+exit ${curlExitCode}
+`,
+    { mode: 0o755 },
+  );
+  fs.writeFileSync(
+    scriptPath,
+    `#!/usr/bin/env bash
+set -euo pipefail
+. ${JSON.stringify(COMPAT_HELPER)}
+nemoclaw_e2e_probe_hosted_inference
+`,
+    { mode: 0o755 },
+  );
+
+  const result = spawnSync("bash", [scriptPath], {
+    encoding: "utf-8",
+    env: {
+      ...process.env,
+      PATH: `${tmpDir}:${process.env.PATH ?? ""}`,
+      NVIDIA_INFERENCE_API_KEY: "hosted-compatible-key",
+      ...options.env,
+    },
+  });
+  const calls = fs.existsSync(callsPath) ? fs.readFileSync(callsPath, "utf-8") : "";
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+  return { result, calls };
 }
 
 describe("hosted inference E2E config", () => {
@@ -39,6 +101,50 @@ describe("hosted inference E2E config", () => {
 
     expect(cfg.apiKey).toBe("sk-compatible-key");
     expect(cfg.credentialEnv).toBe("COMPATIBLE_API_KEY");
+  });
+
+  it("uses a lightweight compatible reachability probe without API or auth requests", () => {
+    const { result, calls } = runHostedProbe({
+      env: {
+        NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1",
+        NEMOCLAW_ENDPOINT_URL: "https://inference-api.nvidia.com/v1",
+      },
+    });
+
+    expect(result.status).toBe(0);
+    expect(calls).toContain("ARG:https://inference-api.nvidia.com/v1");
+    expect(calls).not.toContain("chat/completions");
+    expect(calls).not.toContain("/models");
+    expect(calls).not.toContain("Authorization");
+    expect(calls).not.toContain("Bearer");
+  });
+
+  it("uses a lightweight nvapi reachability probe without /models or auth", () => {
+    const { result, calls } = runHostedProbe({
+      env: {
+        NVIDIA_INFERENCE_API_KEY: "nvapi-test-key",
+        NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "",
+        NEMOCLAW_PROVIDER: "cloud",
+      },
+    });
+
+    expect(result.status).toBe(0);
+    expect(calls).toContain("ARG:https://inference-api.nvidia.com/v1");
+    expect(calls).not.toContain("/models");
+    expect(calls).not.toContain("Authorization");
+    expect(calls).not.toContain("Bearer");
+  });
+
+  it("fails hosted reachability when curl returns HTTP status 000", () => {
+    const { result } = runHostedProbe({ curlStatus: "000" });
+
+    expect(result.status).not.toBe(0);
+  });
+
+  it("fails hosted reachability when curl exits nonzero", () => {
+    const { result } = runHostedProbe({ curlExitCode: 7, curlStatus: "" });
+
+    expect(result.status).not.toBe(0);
   });
 
   it("configures the custom provider route for inference-api.nvidia.com", () => {

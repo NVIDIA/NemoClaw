@@ -155,9 +155,6 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
   async ({ artifacts, cleanup, host, secrets, skip }) => {
     assertTestOwnedSandboxName();
     const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
-    expect(apiKey.startsWith("nvapi-"), "NVIDIA_INFERENCE_API_KEY must start with nvapi-").toBe(
-      true,
-    );
 
     await artifacts.writeJson("contract.json", {
       legacySource: "test/e2e/test-tunnel-lifecycle.sh",

@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createRequire } from "node:module";
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 const require = createRequire(import.meta.url);
 const { buildStatusCommandDeps } =
@@ -44,7 +44,7 @@ describe("buildStatusCommandDeps", () => {
       `#!/usr/bin/env bash
 printf '%s\n' "$*" >> ${JSON.stringify(callsFile)}
 if [ "$1" = "sandbox" ] && [ "$2" = "exec" ]; then
-  printf '7\n'
+  printf 'getUpdates conflict\\n409 Conflict\\n409: Conflict\\n'
   exit 0
 fi
 exit 0
@@ -54,11 +54,12 @@ exit 0
     const deps = buildStatusCommandDeps(tmp);
 
     expect(deps.checkMessagingBridgeHealth!("alpha", ["telegram"])).toEqual([
-      { channel: "telegram", conflicts: 7 },
+      { channel: "telegram", conflicts: 3 },
     ]);
     expect(fs.readFileSync(callsFile, "utf-8")).toContain(
       "sandbox exec -n alpha -- sh -c tail -n 200 /tmp/gateway.log",
     );
+    expect(fs.readFileSync(callsFile, "utf-8")).not.toContain("grep -cE");
   });
 
   it("skips gateway-log probes for non-Telegram channel sets", () => {

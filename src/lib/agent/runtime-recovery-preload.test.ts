@@ -43,8 +43,12 @@ function makeHarness() {
     hostileMarker: path.join(root, "hostile-proxy-env-sourced"),
   };
 
-  fs.writeFileSync(paths.sourceSafetyNet, "module.exports = 'trusted safety net';\n");
-  fs.writeFileSync(paths.sourceCiao, "module.exports = 'trusted ciao guard';\n");
+  fs.writeFileSync(paths.sourceSafetyNet, "module.exports = 'trusted safety net';\n", {
+    mode: 0o644,
+  });
+  fs.writeFileSync(paths.sourceCiao, "module.exports = 'trusted ciao guard';\n", {
+    mode: 0o644,
+  });
 
   return paths;
 }
