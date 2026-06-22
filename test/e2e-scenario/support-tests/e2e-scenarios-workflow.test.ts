@@ -1132,6 +1132,99 @@ jobs:
     }
   });
 
+  it("rejects channels stop/start workflow-boundary drift for secret and artifact handling", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-vitest-workflow-"));
+    const workflowPath = path.join(tmp, "workflow.yaml");
+    const workflow = readWorkflow() as {
+      jobs: Record<
+        string,
+        {
+          env: Record<string, unknown>;
+          steps: Array<Record<string, unknown>>;
+          strategy: { matrix: { agent: string[] }; "fail-fast": boolean };
+          "timeout-minutes"?: number;
+        }
+      >;
+    };
+    const job = workflow.jobs["channels-stop-start-vitest"];
+    expect(job).toBeDefined();
+    job["timeout-minutes"] = 45;
+    job.strategy["fail-fast"] = true;
+    job.strategy.matrix.agent = ["openclaw"];
+    job.env.NEMOCLAW_SANDBOX_NAME = "personal-dev-${{ matrix.agent }}";
+    job.env.DOCKER_CONFIG = "${{ github.workspace }}/.docker-config-shared";
+    job.env.NVIDIA_API_KEY = "${{ secrets.NVIDIA_API_KEY }}";
+    for (const step of job.steps) {
+      if (typeof step.uses === "string" && step.uses.startsWith("actions/checkout@")) {
+        step.with = { ...(step.with as Record<string, unknown>), "persist-credentials": true };
+      }
+      if (step.name === "Authenticate to Docker Hub") {
+        step.run =
+          "docker login docker.io --username user --password ${{ secrets.DOCKERHUB_TOKEN }}";
+      }
+      if (step.name === "Install root dependencies") {
+        step.run = "npm install";
+      }
+      if (step.name === "Install OpenShell") {
+        step.run = "bash scripts/install-openshell.sh";
+      }
+      if (step.name === "Run channels stop/start live test") {
+        step.env = {
+          NVIDIA_API_KEY: "${{ secrets.NVIDIA_API_KEY }}",
+          TELEGRAM_BOT_TOKEN: "real-token",
+        };
+        step.run = String(step.run).replace(
+          "test/e2e-scenario/live/channels-stop-start.test.ts",
+          "test/e2e-scenario/live/channels-add-remove.test.ts",
+        );
+      }
+      if (step.name === "Upload channels stop/start artifacts") {
+        step.uses = "actions/upload-artifact@v4";
+        step.with = {
+          ...(step.with as Record<string, unknown>),
+          name: "channels-stop-start",
+          path: "e2e-artifacts/vitest/channels-stop-start/",
+          "include-hidden-files": true,
+          "retention-days": 1,
+        };
+      }
+      if (step.name === "Clean up Docker auth") {
+        delete step.if;
+        step.run = "docker logout docker.io";
+      }
+    }
+    fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+    try {
+      const errors = validateE2eVitestScenariosWorkflowBoundary(workflowPath);
+      expect(errors).toEqual(
+        expect.arrayContaining([
+          "channels-stop-start-vitest job must keep the 90 minute timeout",
+          "channels-stop-start-vitest strategy.fail-fast must be false",
+          "channels-stop-start-vitest matrix.agent must be openclaw,hermes",
+          "channels-stop-start-vitest job must derive NEMOCLAW_SANDBOX_NAME from matrix.agent with the e2e-channels-stop-start- prefix",
+          "channels-stop-start-vitest job must isolate Docker auth by matrix agent",
+          "channels-stop-start-vitest job env must not include NVIDIA_API_KEY",
+          "channels-stop-start-vitest checkout step must set persist-credentials=false",
+          "step 'Install root dependencies' run script must include npm ci --ignore-scripts",
+          "step 'Install OpenShell' run script must include env -u DOCKER_CONFIG",
+          "channels-stop-start-vitest step 'Run channels stop/start live test' env must not include NVIDIA_API_KEY",
+          "channels-stop-start-vitest step must receive NVIDIA_INFERENCE_API_KEY from secrets",
+          "channels-stop-start-vitest step must set the fake Telegram token",
+          "step 'Run channels stop/start live test' run script must include test/e2e-scenario/live/channels-stop-start.test.ts",
+          "channels-stop-start-vitest upload-artifact action must be pinned to a full commit SHA",
+          "channels-stop-start-vitest artifact upload name must include matrix.agent",
+          "channels-stop-start-vitest artifact upload must set include-hidden-files: false",
+          "channels-stop-start-vitest artifact upload retention-days must be 14",
+          "channels-stop-start-vitest Docker auth cleanup must always run",
+          "step 'Clean up Docker auth' run script must include rm -rf \"${DOCKER_CONFIG}\"",
+        ]),
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("requires messaging-compatible-endpoint workflow and report coverage", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-vitest-workflow-"));
     const renamedWorkflowPath = path.join(tmp, "renamed-workflow.yaml");
