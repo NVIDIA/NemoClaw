@@ -61,6 +61,40 @@ export type SandboxForwardHealth = boolean | "occupied" | null;
 
 const SANDBOX_EXEC_STARTED_MARKER = "__NEMOCLAW_SANDBOX_EXEC_STARTED__";
 
+function stripSandboxExecStdoutFrame(line: string): string {
+  const trimmed = line.trimStart();
+  const stdoutPrefix = trimmed.match(/^(?:\[stdout\]|stdout:)\s*/i);
+  if (!stdoutPrefix) return line;
+  return trimmed.slice(stdoutPrefix[0].length);
+}
+
+function extractSandboxExecCommandStdout(output: string): string | null {
+  const stdout = output.trim();
+  if (!stdout) return null;
+  const lines = stdout.split(/\r?\n/);
+  const exactMarkerIndex = lines.findIndex(
+    (line) => stripSandboxExecStdoutFrame(line).trim() === SANDBOX_EXEC_STARTED_MARKER,
+  );
+  if (exactMarkerIndex >= 0) {
+    return lines
+      .slice(exactMarkerIndex + 1)
+      .map(stripSandboxExecStdoutFrame)
+      .join("\n")
+      .trim();
+  }
+
+  const markerLineIndex = lines.findIndex((line) => line.includes(SANDBOX_EXEC_STARTED_MARKER));
+  if (markerLineIndex === -1) return null;
+  const markerLine = lines[markerLineIndex];
+  const afterMarker = markerLine.slice(
+    markerLine.indexOf(SANDBOX_EXEC_STARTED_MARKER) + SANDBOX_EXEC_STARTED_MARKER.length,
+  );
+  return [afterMarker, ...lines.slice(markerLineIndex + 1)]
+    .map(stripSandboxExecStdoutFrame)
+    .join("\n")
+    .trim();
+}
+
 function isValidPort(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 65535;
 }
@@ -155,14 +189,11 @@ export function executeSandboxExecCommand(
       },
     );
     if (result.error) return null;
-    const stdout = (result.stdout || "").trim();
-    const stdoutLines = stdout.split(/\r?\n/);
-    const markerIndex = stdoutLines.indexOf(SANDBOX_EXEC_STARTED_MARKER);
-    if (markerIndex === -1) return null;
-    const commandStdoutLines = stdoutLines.slice(markerIndex + 1);
+    const commandStdout = extractSandboxExecCommandStdout(result.stdout || "");
+    if (commandStdout === null) return null;
     return {
       status: result.status ?? 1,
-      stdout: commandStdoutLines.join("\n").trim(),
+      stdout: commandStdout,
       stderr: (result.stderr || "").trim(),
     };
   } catch {
@@ -180,14 +211,11 @@ async function executeSandboxExecCommandForStatus(
     { ignoreError: true },
   );
   if (isCommandTimeout(result) || result.error) return null;
-  const stdout = (result.output || "").trim();
-  const stdoutLines = stdout.split(/\r?\n/);
-  const markerIndex = stdoutLines.indexOf(SANDBOX_EXEC_STARTED_MARKER);
-  if (markerIndex === -1) return null;
-  const commandStdoutLines = stdoutLines.slice(markerIndex + 1);
+  const commandStdout = extractSandboxExecCommandStdout(result.output || "");
+  if (commandStdout === null) return null;
   return {
     status: result.status ?? 1,
-    stdout: commandStdoutLines.join("\n").trim(),
+    stdout: commandStdout,
     stderr: "",
   };
 }

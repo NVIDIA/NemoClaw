@@ -11,6 +11,7 @@ import {
   checkAndRecoverSandboxProcesses,
   classifyForwardHealthWithReachability,
   classifySandboxForwardHealth,
+  executeSandboxExecCommand,
   resolveSandboxDashboardPort,
   type SandboxForwardListEntry,
 } from "../dist/lib/actions/sandbox/process-recovery.js";
@@ -170,6 +171,27 @@ describe("classifyForwardHealthWithReachability", () => {
         () => true,
       ),
     ).toBe("occupied");
+  });
+});
+
+describe("executeSandboxExecCommand", () => {
+  it("parses stdout-framed root exec output after the startup marker", () => {
+    const childProcess = requireDist("node:child_process");
+    vi.spyOn(childProcess, "spawnSync").mockReturnValue({
+      status: 0,
+      stdout: [
+        "OpenShell sandbox exec output:",
+        "stdout: __NEMOCLAW_SANDBOX_EXEC_STARTED__",
+        "stdout: SECRET_BOUNDARY_OK",
+      ].join("\n"),
+      stderr: "",
+    } as never);
+
+    const result = withFakeOpenshellBinary(() =>
+      executeSandboxExecCommand("hermes-box", "echo SECRET_BOUNDARY_OK"),
+    );
+
+    expect(result).toEqual({ status: 0, stdout: "SECRET_BOUNDARY_OK", stderr: "" });
   });
 });
 
@@ -744,6 +766,65 @@ hermes-box  127.0.0.1  8642  12346  running`;
     expect(errorOutput).toContain(
       "Hermes agent definition could not be loaded for sandbox 'hermes-box'",
     );
+  });
+
+  it("falls through when the Hermes secret-boundary check parses stdout-framed root exec markers", () => {
+    const openshellRuntime = requireDist("../dist/lib/adapters/openshell/runtime.js");
+    const agentRuntime = requireDist("../dist/lib/agent/runtime.js");
+    const registry = requireDist("../dist/lib/state/registry.js");
+    const forwardHealth = requireDist("../dist/lib/actions/sandbox/forward-health.js");
+    const childProcess = requireDist("node:child_process");
+    let secretBoundaryCalls = 0;
+
+    vi.spyOn(childProcess, "spawnSync").mockImplementation(
+      (_command: unknown, rawArgs: unknown) => {
+        const args = Array.isArray(rawArgs) ? rawArgs.map(String) : [];
+        const shellCommand = String(args.at(-1) ?? "");
+        if (shellCommand.includes("HTTP_CODE=$(curl")) {
+          return {
+            status: 0,
+            stdout: "stdout: __NEMOCLAW_SANDBOX_EXEC_STARTED__\nstdout: RUNNING\n",
+            stderr: "",
+          } as never;
+        }
+        if (shellCommand.includes("validate-hermes-env-secret-boundary.py")) {
+          secretBoundaryCalls += 1;
+          return {
+            status: 0,
+            stdout: "stdout: __NEMOCLAW_SANDBOX_EXEC_STARTED__\nstdout: SECRET_BOUNDARY_OK\n",
+            stderr: "",
+          } as never;
+        }
+        return { status: 0, stdout: "", stderr: "" } as never;
+      },
+    );
+    vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue({
+      name: "hermes",
+      forwardPort: 8642,
+      displayName: "Hermes Agent",
+    });
+    vi.spyOn(registry, "getSandbox").mockReturnValue({
+      name: "hermes-box",
+      agent: "hermes",
+      dashboardPort: 18789,
+    });
+    vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
+    vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
+      status: 0,
+      output: `SANDBOX  BIND  PORT  PID  STATUS\nhermes-box  127.0.0.1  18789  12345  running`,
+    });
+    vi.spyOn(openshellRuntime, "runOpenshell").mockReturnValue({ status: 0 } as never);
+
+    const result = withFakeOpenshellBinary(() =>
+      checkAndRecoverSandboxProcesses("hermes-box", { quiet: true }),
+    );
+    expect(result).toEqual({
+      checked: true,
+      wasRunning: true,
+      recovered: false,
+      forwardRecovered: false,
+    });
+    expect(secretBoundaryCalls).toBe(1);
   });
 
   it("falls through to the forward-refresh path when the Hermes secret-boundary check passes", () => {
