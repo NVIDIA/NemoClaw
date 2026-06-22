@@ -639,7 +639,7 @@ hermes-box  127.0.0.1  8642  12346  running`;
         if (shellCommand.includes("HTTP_CODE=$(curl")) {
           return {
             status: 0,
-            stdout: "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nRUNNING\n",
+            stdout: "stdout: __NEMOCLAW_SANDBOX_EXEC_STARTED__\nstdout: RUNNING\n",
             stderr: "",
           } as never;
         }
@@ -647,7 +647,7 @@ hermes-box  127.0.0.1  8642  12346  running`;
           secretBoundaryCalls += 1;
           return {
             status: 1,
-            stdout: "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nSECRET_BOUNDARY_REFUSED\n",
+            stdout: "stdout: __NEMOCLAW_SANDBOX_EXEC_STARTED__\nstdout: SECRET_BOUNDARY_REFUSED\n",
             stderr:
               "[SECURITY] Refusing Hermes startup because /sandbox/.hermes/.env contains raw secret-shaped values\n[SECURITY] TELEGRAM_BOT_TOKEN (line 3)",
           } as never;

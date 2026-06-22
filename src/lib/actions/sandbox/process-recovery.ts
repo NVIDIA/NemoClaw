@@ -61,36 +61,37 @@ export type SandboxForwardHealth = boolean | "occupied" | null;
 
 const SANDBOX_EXEC_STARTED_MARKER = "__NEMOCLAW_SANDBOX_EXEC_STARTED__";
 
-function stripSandboxExecStdoutFrame(line: string): string {
+function parseSandboxExecStdoutFrame(line: string): { text: string; framed: boolean } {
   const trimmed = line.trimStart();
   const stdoutPrefix = trimmed.match(/^(?:\[stdout\]|stdout:)\s*/i);
-  if (!stdoutPrefix) return line;
-  return trimmed.slice(stdoutPrefix[0].length);
+  if (!stdoutPrefix) return { text: line, framed: false };
+  return { text: trimmed.slice(stdoutPrefix[0].length), framed: true };
 }
 
 function extractSandboxExecCommandStdout(output: string): string | null {
   const stdout = output.trim();
   if (!stdout) return null;
-  const lines = stdout.split(/\r?\n/);
+  const lines = stdout.split(/\r?\n/).map(parseSandboxExecStdoutFrame);
   const exactMarkerIndex = lines.findIndex(
-    (line) => stripSandboxExecStdoutFrame(line).trim() === SANDBOX_EXEC_STARTED_MARKER,
+    (line) => line.text.trim() === SANDBOX_EXEC_STARTED_MARKER,
   );
   if (exactMarkerIndex >= 0) {
     return lines
       .slice(exactMarkerIndex + 1)
-      .map(stripSandboxExecStdoutFrame)
+      .map((line) => line.text)
       .join("\n")
       .trim();
   }
 
-  const markerLineIndex = lines.findIndex((line) => line.includes(SANDBOX_EXEC_STARTED_MARKER));
+  const markerLineIndex = lines.findIndex(
+    (line) => line.framed && line.text.includes(SANDBOX_EXEC_STARTED_MARKER),
+  );
   if (markerLineIndex === -1) return null;
-  const markerLine = lines[markerLineIndex];
+  const markerLine = lines[markerLineIndex].text;
   const afterMarker = markerLine.slice(
     markerLine.indexOf(SANDBOX_EXEC_STARTED_MARKER) + SANDBOX_EXEC_STARTED_MARKER.length,
   );
-  return [afterMarker, ...lines.slice(markerLineIndex + 1)]
-    .map(stripSandboxExecStdoutFrame)
+  return [afterMarker, ...lines.slice(markerLineIndex + 1).map((line) => line.text)]
     .join("\n")
     .trim();
 }
