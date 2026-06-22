@@ -11,6 +11,7 @@ import { expect } from "../fixtures/e2e-test.ts";
 import { assertChannelsStopStartSandboxName } from "./channels-stop-start-safety.ts";
 import {
   type AgentKind,
+  bestEffort,
   CLI,
   cleanupSandbox,
   dockerInfo,
@@ -327,6 +328,22 @@ async function precleanProviders(
   }
 }
 
+async function destroyNemoclawGateway(
+  host: import("../fixtures/clients/host.ts").HostCliClient,
+  env: NodeJS.ProcessEnv,
+  redactions: string[],
+  artifactName: string,
+): Promise<void> {
+  await bestEffort(() =>
+    host.command("openshell", ["gateway", "destroy", "-g", "nemoclaw"], {
+      artifactName,
+      env,
+      redactionValues: redactions,
+      timeoutMs: 60_000,
+    }),
+  );
+}
+
 async function rebuildSandbox(
   host: import("../fixtures/clients/host.ts").HostCliClient,
   sandboxName: string,
@@ -419,15 +436,33 @@ export async function runChannelsStopStartScenario({
     channels: CHANNELS,
   });
 
-  cleanup.add(`destroy channels stop/start sandbox ${SANDBOX_NAME}`, () =>
-    cleanupSandbox(host, SANDBOX_NAME, env, redactions, `cleanup-channels-stop-start-${AGENT}`),
-  );
+  cleanup.add(`destroy channels stop/start sandbox ${SANDBOX_NAME}`, async () => {
+    await cleanupSandbox(
+      host,
+      SANDBOX_NAME,
+      env,
+      redactions,
+      `cleanup-channels-stop-start-${AGENT}`,
+    );
+    await destroyNemoclawGateway(
+      host,
+      env,
+      redactions,
+      `cleanup-openshell-gateway-destroy-${AGENT}`,
+    );
+  });
   await cleanupSandbox(
     host,
     SANDBOX_NAME,
     env,
     redactions,
     `preclean-channels-stop-start-${AGENT}`,
+  );
+  await destroyNemoclawGateway(
+    host,
+    env,
+    redactions,
+    `preclean-openshell-gateway-destroy-${AGENT}`,
   );
   await precleanProviders(host, env, redactions, `preclean-channels-stop-start-${AGENT}`);
 
