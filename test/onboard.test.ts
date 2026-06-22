@@ -741,7 +741,7 @@ runner.runCapture = (command) => {
 };
 registry.updateSandbox = () => true;
 
-process.env.NVIDIA_INFERENCE_API_KEY = "nvapi-secret-value";
+process.env.NVIDIA_INFERENCE_API_KEY = "nvapi-TEST-NOT-A-REAL-VALUE";
 
 const { setupInference } = require(${onboardPath});
 
@@ -774,10 +774,10 @@ const { setupInference } = require(${onboardPath});
     assert.match(commands[0].command, /gateway select nemoclaw/);
     assert.match(commands[1].command, /provider get/);
     assert.match(commands[2].command, /--credential NVIDIA_INFERENCE_API_KEY/);
-    assert.doesNotMatch(commands[2].command, /nvapi-secret-value/);
+    assert.doesNotMatch(commands[2].command, /nvapi-TEST-NOT-A-REAL-VALUE/);
     assert.match(commands[2].command, /provider update/);
     assert.match(commands[3].command, /inference set/);
-    assert.equal(payload.nvidiaApiKey, "nvapi-secret-value");
+    assert.equal(payload.nvidiaApiKey, "nvapi-TEST-NOT-A-REAL-VALUE");
   });
 
   it("reuses a registered Hermes Provider without re-collecting host credentials", () => {
@@ -1993,7 +1993,7 @@ runner.runCapture = (command) => {
 };
 registry.updateSandbox = () => true;
 
-process.env.ANTHROPIC_API_KEY = "sk-ant-secret-value";
+process.env.ANTHROPIC_API_KEY = "sk-ant-TEST-NOT-A-REAL-VALUE";
 
 const { setupInference } = require(${onboardPath});
 
@@ -2024,7 +2024,7 @@ const { setupInference } = require(${onboardPath});
     assert.match(commands[1].command, /provider get/);
     assert.match(commands[2].command, /--type anthropic/);
     assert.match(commands[2].command, /--credential ANTHROPIC_API_KEY/);
-    assert.doesNotMatch(commands[2].command, /sk-ant-secret-value/);
+    assert.doesNotMatch(commands[2].command, /sk-ant-TEST-NOT-A-REAL-VALUE/);
     assert.match(commands[3].command, /--provider anthropic-prod/);
   });
 
@@ -2065,7 +2065,7 @@ runner.runCapture = (command) => {
 };
 registry.updateSandbox = () => true;
 
-process.env.OPENAI_API_KEY = "sk-secret-value";
+process.env.OPENAI_API_KEY = "sk-TEST-NOT-A-REAL-VALUE";
 
 const { setupInference } = require(${onboardPath});
 
@@ -2222,7 +2222,7 @@ runner.run = (command, opts = {}) => {
 runner.runCapture = () => "";
 registry.updateSandbox = () => true;
 
-process.env.OPENAI_API_KEY = "sk-secret-value";
+process.env.OPENAI_API_KEY = "sk-TEST-NOT-A-REAL-VALUE";
 
 const { setupInference } = require(${onboardPath});
 
@@ -2277,7 +2277,7 @@ const { setupInference } = require(${onboardPath});
     fs.mkdirSync(legacyDir, { recursive: true, mode: 0o700 });
     fs.writeFileSync(
       path.join(legacyDir, "credentials.json"),
-      JSON.stringify({ OPENAI_API_KEY: "sk-stored-secret" }),
+      JSON.stringify({ OPENAI_API_KEY: "sk-TEST-NOT-A-REAL-STORED-KEY" }),
       { mode: 0o600 },
     );
 
@@ -2345,7 +2345,7 @@ const { setupInference } = require(${onboardPath});
       commands: CommandEntry[];
       legacyFileGone: boolean;
     }>(result.stdout);
-    assert.equal(payload.openai, "sk-stored-secret");
+    assert.equal(payload.openai, "sk-TEST-NOT-A-REAL-STORED-KEY");
     // setupInference's hydrateCredentialEnv only stages the legacy file
     // (non-destructive). The secure unlink runs only after a full successful
     // onboard, so an interrupted run can be retried without losing the
@@ -2358,8 +2358,8 @@ const { setupInference } = require(${onboardPath});
     // commands[0]=gateway select, [1]=provider get, [2]=provider update
     const providerUpdate = payload.commands[2];
     assert.ok(providerUpdate, "expected provider update command");
-    assert.equal(providerUpdate.env?.OPENAI_API_KEY, "sk-stored-secret");
-    assert.doesNotMatch(providerUpdate.command, /sk-stored-secret/);
+    assert.equal(providerUpdate.env?.OPENAI_API_KEY, "sk-TEST-NOT-A-REAL-STORED-KEY");
+    assert.doesNotMatch(providerUpdate.command, /sk-TEST-NOT-A-REAL-STORED-KEY/);
   });
 
   it("drops stale local sandbox registry entries when the live sandbox is gone", () => {
@@ -4567,7 +4567,7 @@ runner.runCapture = (command) => {
   return "";
 };
 registry.updateSandbox = () => true;
-process.env.OPENAI_API_KEY = "sk-secret-value";
+process.env.OPENAI_API_KEY = "sk-TEST-NOT-A-REAL-VALUE";
 process.env.OPENSHELL_GATEWAY = "nemoclaw";
 
 const { setupInference } = require(${onboardPath});
@@ -4636,7 +4636,7 @@ runner.runCapture = (command) => {
   return "";
 };
 registry.updateSandbox = () => true;
-process.env.OPENAI_API_KEY = "sk-secret-value";
+process.env.OPENAI_API_KEY = "sk-TEST-NOT-A-REAL-VALUE";
 process.env.OPENSHELL_GATEWAY = "nemoclaw";
 
 const { setupInference } = require(${onboardPath});

@@ -8,10 +8,12 @@ import { ensureConfigDir, readConfigFile, writeConfigFile } from "./config-io";
 import type { SandboxMessagingState } from "./registry-messaging";
 
 export {
+  getSandboxEntryDisplayInference,
   getSandboxEntryGatewayBinding,
   getSandboxEntryInference,
   type NormalizedSandboxEntry,
   normalizeSandboxEntryView,
+  type SandboxEntryDisplayInference,
   type SandboxEntryInference,
   type SandboxGatewayBinding,
 } from "./registry-entry-view";

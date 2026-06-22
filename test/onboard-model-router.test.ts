@@ -163,7 +163,7 @@ runner.runCapture = (command) => {
 };
 registry.updateSandbox = () => true;
 
-process.env.NVIDIA_INFERENCE_API_KEY = "nvapi-router-secret";
+process.env.NVIDIA_INFERENCE_API_KEY = "nvapi-TEST-NOT-A-REAL-ROUTER-KEY";
 
 const { setupInference, getSandboxInferenceConfig } = require(${onboardPath});
 
@@ -212,8 +212,11 @@ const { setupInference, getSandboxInferenceConfig } = require(${onboardPath});
         providerCommand.command,
         new RegExp(`OPENAI_BASE_URL=http:\\/\\/host\\.openshell\\.internal:${routerPort}\\/v1`),
       );
-      assert.doesNotMatch(providerCommand.command, /nvapi-router-secret/);
-      assert.equal(providerCommand.env?.NVIDIA_INFERENCE_API_KEY, "nvapi-router-secret");
+      assert.doesNotMatch(providerCommand.command, /nvapi-TEST-NOT-A-REAL-ROUTER-KEY/);
+      assert.equal(
+        providerCommand.env?.NVIDIA_INFERENCE_API_KEY,
+        "nvapi-TEST-NOT-A-REAL-ROUTER-KEY",
+      );
 
       const inferenceCommand = payload.commands.find((entry) =>
         /inference set/.test(entry.command),
@@ -409,7 +412,7 @@ runner.runCapture = (command) => {
 };
 registry.updateSandbox = () => true;
 
-process.env.NVIDIA_INFERENCE_API_KEY = "nvapi-router-secret";
+process.env.NVIDIA_INFERENCE_API_KEY = "nvapi-TEST-NOT-A-REAL-ROUTER-KEY";
 
 const { setupInference } = require(${onboardPath});
 
@@ -599,7 +602,7 @@ runner.runCapture = (command) => {
 };
 registry.updateSandbox = () => true;
 
-process.env.NVIDIA_INFERENCE_API_KEY = "nvapi-router-secret";
+process.env.NVIDIA_INFERENCE_API_KEY = "nvapi-TEST-NOT-A-REAL-ROUTER-KEY";
 
 const { setupInference } = require(${onboardPath});
 
@@ -825,7 +828,7 @@ runner.runCapture = (command) => {
 };
 registry.updateSandbox = () => true;
 
-process.env.NVIDIA_INFERENCE_API_KEY = "nvapi-router-secret";
+process.env.NVIDIA_INFERENCE_API_KEY = "nvapi-TEST-NOT-A-REAL-ROUTER-KEY";
 
 const { setupInference } = require(${onboardPath});
 
@@ -1030,7 +1033,7 @@ runner.runCapture = (command) => {
 };
 registry.updateSandbox = () => true;
 
-process.env.NVIDIA_INFERENCE_API_KEY = "nvapi-router-secret";
+process.env.NVIDIA_INFERENCE_API_KEY = "nvapi-TEST-NOT-A-REAL-ROUTER-KEY";
 
 const { setupInference } = require(${onboardPath});
 
