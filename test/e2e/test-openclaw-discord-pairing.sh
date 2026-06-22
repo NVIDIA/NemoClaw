@@ -185,8 +185,8 @@ check_fake_discord_gateway_capture() {
 const fs = require("fs");
 const file = process.argv[2];
 const expected = process.argv[3];
-const rows = fs
-  .readFileSync(file, "utf8")
+const serialized = fs.readFileSync(file, "utf8");
+const rows = serialized
   .trim()
   .split(/\n+/)
   .filter(Boolean)
@@ -197,13 +197,21 @@ if (!identify) {
   console.log("NO_IDENTIFY");
   process.exit(2);
 }
-if (identify.tokenMatchesExpected !== true || identify.token !== expected) {
+if (identify.tokenMatchesExpected !== true) {
   console.log("BAD_TOKEN_REWRITE");
   process.exit(3);
 }
 if (identify.tokenLooksPlaceholder) {
   console.log("PLACEHOLDER_LEAK");
   process.exit(4);
+}
+if (Object.prototype.hasOwnProperty.call(identify, "token")) {
+  console.log("RAW_TOKEN_CAPTURED");
+  process.exit(5);
+}
+if (serialized.includes(expected)) {
+  console.log("RAW_TOKEN_LEAK");
+  process.exit(6);
 }
 console.log("OK");
 NODE

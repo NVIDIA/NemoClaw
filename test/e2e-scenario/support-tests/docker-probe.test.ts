@@ -28,7 +28,7 @@ describe("DockerProbe secret hygiene", () => {
         DOCKER_HOST: "unix:///tmp/docker.sock",
         DOCKER_CONTEXT: "desktop-linux",
         DOCKERHUB_TOKEN: "dockerhub-secret-token",
-        NVIDIA_INFERENCE_API_KEY: "nvapi-secret-value",
+        NVIDIA_INFERENCE_API_KEY: "nvapi-TEST-NOT-A-REAL-VALUE",
         RANDOM_SECRET: "other-secret-value",
       },
       "/tmp/docker-config",

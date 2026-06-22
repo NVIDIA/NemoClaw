@@ -315,6 +315,98 @@ else
 fi
 
 # ══════════════════════════════════════════════════════════════════
+# Phase 3.5: Implicit resume (plain `onboard`, no --resume flag) — #5470
+# ══════════════════════════════════════════════════════════════════
+# The fix auto-detects resume from a persisted in_progress session. The
+# section above proves explicit `--resume`; this proves a plain `onboard`
+# rerun resumes on its own, and that `--fresh` suppresses it.
+section "Phase 3.5: Implicit resume from in_progress session"
+
+# Re-mark the now-complete session as in_progress so a plain `onboard` has
+# something to auto-resume. Everything is already provisioned, so the resume
+# skips every cached step and finishes fast.
+# Mimic an interrupted-but-resumable session: status "in_progress" AND
+# resumable !== false. Phase 3 marks the completed session `resumable: false`,
+# so flipping status alone would (correctly) be rejected as "no resumable
+# session"; resetting resumable reconstructs the interrupted shape the resume
+# machine accepts (session-bootstrap.ts:140).
+set_session_in_progress() {
+  node -e '
+    const fs = require("fs");
+    const file = process.argv[1];
+    const data = JSON.parse(fs.readFileSync(file, "utf8"));
+    data.status = "in_progress";
+    data.resumable = true;
+    fs.writeFileSync(file, JSON.stringify(data, null, 2));
+  ' "$SESSION_FILE"
+}
+
+set_session_in_progress
+info "Running plain onboard (no --resume) on an in_progress session..."
+IMPLICIT_LOG="$(mktemp)"
+env -u NVIDIA_INFERENCE_API_KEY -u COMPATIBLE_API_KEY \
+  NEMOCLAW_NON_INTERACTIVE=1 \
+  NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
+  NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME" \
+  NEMOCLAW_POLICY_MODE=skip \
+  node "$REPO/bin/nemoclaw.js" onboard --non-interactive >"$IMPLICIT_LOG" 2>&1
+implicit_exit=$?
+implicit_output="$(cat "$IMPLICIT_LOG")"
+rm -f "$IMPLICIT_LOG"
+
+if [ $implicit_exit -eq 0 ]; then
+  pass "Implicit resume (plain onboard) completed successfully"
+else
+  fail "Implicit resume exited $implicit_exit (expected 0)"
+  echo "$implicit_output"
+fi
+
+if echo "$implicit_output" | grep -q "(resume mode)"; then
+  pass "Plain onboard auto-detected resume mode from in_progress session"
+else
+  fail "Plain onboard did not show '(resume mode)' for an in_progress session"
+fi
+
+if echo "$implicit_output" | grep -q "\[resume\] Skipping\|\[reuse\] Skipping"; then
+  pass "Implicit resume skipped cached steps"
+else
+  fail "Implicit resume did not skip any cached steps"
+fi
+
+# --fresh must suppress the auto-resume even with an in_progress session.
+# Fail-fast at preflight (step 1, before sandbox recreation) so this stays
+# cheap and non-destructive; the banner is emitted before that step.
+set_session_in_progress
+info "Running onboard --fresh on the same in_progress session (fail-fast)..."
+FRESH_LOG="$(mktemp)"
+NEMOCLAW_NON_INTERACTIVE=1 \
+  NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
+  NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME" \
+  NEMOCLAW_POLICY_MODE=skip \
+  NEMOCLAW_E2E_FAILURE_INJECTION=1 \
+  NEMOCLAW_E2E_FORCE_FAIL_AT_STEP=preflight \
+  node "$REPO/bin/nemoclaw.js" onboard --fresh --non-interactive >"$FRESH_LOG" 2>&1
+fresh_exit=$?
+fresh_output="$(cat "$FRESH_LOG")"
+rm -f "$FRESH_LOG"
+
+# Confirm the run actually executed and aborted at preflight, so the
+# banner-absence assertion below is meaningful (not a vacuous pass from an
+# unrelated early failure).
+if [ $fresh_exit -ne 0 ] && echo "$fresh_output" | grep -q "\[e2e\] Forced onboarding failure at step 'preflight'."; then
+  pass "--fresh run failed fast at preflight as intended"
+else
+  fail "--fresh run did not fail at preflight as expected (exit $fresh_exit)"
+  echo "$fresh_output"
+fi
+
+if echo "$fresh_output" | grep -q "(resume mode)"; then
+  fail "--fresh did not suppress auto-resume (unexpected '(resume mode)')"
+else
+  pass "--fresh suppressed auto-resume despite an in_progress session"
+fi
+
+# ══════════════════════════════════════════════════════════════════
 # Phase 4: Final cleanup
 # ══════════════════════════════════════════════════════════════════
 section "Phase 4: Final cleanup"

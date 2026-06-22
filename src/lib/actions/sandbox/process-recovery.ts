@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { Buffer } from "node:buffer";
 import { spawnSync } from "node:child_process";
+import { dockerSpawnSync } from "../../adapters/docker";
 import {
   captureOpenshell,
   captureOpenshellForStatus,
@@ -60,6 +62,57 @@ export type SandboxForwardListEntry = {
 export type SandboxForwardHealth = boolean | "occupied" | null;
 
 const SANDBOX_EXEC_STARTED_MARKER = "__NEMOCLAW_SANDBOX_EXEC_STARTED__";
+
+function buildSandboxExecMarkedCommand(command: string): string {
+  if (!command.includes("validate-hermes-env-secret-boundary.py")) {
+    return `printf '%s\n' '${SANDBOX_EXEC_STARTED_MARKER}'; ${command}`;
+  }
+  const encodedCommand = Buffer.from(command, "utf8").toString("base64");
+  return [
+    `printf '%s\\n' '${SANDBOX_EXEC_STARTED_MARKER}'`,
+    "command -v base64 >/dev/null 2>&1 || { echo NEMOCLAW_BASE64_MISSING >&2; exit 127; }",
+    `printf '%s' '${encodedCommand}' | base64 -d | sh`,
+  ].join("; ");
+}
+
+function parseSandboxExecStdoutFrame(line: string): { text: string; framed: boolean } {
+  const trimmed = line.trimStart();
+  const stdoutPrefix = trimmed.match(/^(?:\[stdout\]|stdout:)\s*/i);
+  if (!stdoutPrefix) return { text: line, framed: false };
+  return { text: trimmed.slice(stdoutPrefix[0].length), framed: true };
+}
+
+/**
+ * Extract child-command stdout from `openshell sandbox exec` output after the
+ * sentinel printed by `markedCommand`. Some OpenShell versions frame child
+ * stdout for humans, e.g. `stdout: __NEMOCLAW_SANDBOX_EXEC_STARTED__`, while
+ * older versions pass raw stdout through unchanged. Normalize only recognized
+ * stdout frame prefixes at this transport boundary so recovery, status, and
+ * Hermes boundary callers keep consuming plain command stdout.
+ *
+ * Security boundary: the sentinel must occupy its own stdout line after optional
+ * frame-prefix stripping. A preamble that merely contains the sentinel string is
+ * rejected so sandbox output cannot move the parser boundary forward. Remove
+ * this compatibility shim once OpenShell exposes a stable machine-readable exec
+ * output mode that preserves child stdout/stderr without human framing.
+ */
+function extractSandboxExecCommandStdout(output: string): string | null {
+  const stdout = output.trim();
+  if (!stdout) return null;
+  const lines = stdout.split(/\r?\n/).map(parseSandboxExecStdoutFrame);
+  const exactMarkerIndex = lines.findIndex(
+    (line) => line.text.trim() === SANDBOX_EXEC_STARTED_MARKER,
+  );
+  if (exactMarkerIndex >= 0) {
+    return lines
+      .slice(exactMarkerIndex + 1)
+      .map((line) => line.text)
+      .join("\n")
+      .trim();
+  }
+
+  return null;
+}
 
 function isValidPort(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 65535;
@@ -133,12 +186,66 @@ export function executeSandboxCommand(
   }
 }
 
+function parseSandboxCommandResult(
+  result: ReturnType<typeof spawnSync>,
+): SandboxCommandResult | null {
+  if (result.error) return null;
+  const stdout = typeof result.stdout === "string" ? result.stdout : String(result.stdout || "");
+  const stderr = typeof result.stderr === "string" ? result.stderr : String(result.stderr || "");
+  const commandStdout = extractSandboxExecCommandStdout(stdout);
+  if (commandStdout === null) return null;
+  return {
+    status: result.status ?? 1,
+    stdout: commandStdout,
+    stderr: stderr.trim(),
+  };
+}
+
+function findLocalDockerSandboxContainer(sandboxName: string): string | null {
+  const expectedName = `openshell-${sandboxName}`;
+  try {
+    const result = dockerSpawnSync(["ps", "--format", "{{.ID}}\t{{.Names}}"], {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 5000,
+    });
+    if (result.error || result.status !== 0) return null;
+    for (const line of String(result.stdout || "").split(/\r?\n/)) {
+      const [id = "", names = ""] = line.split("\t");
+      const containerNames = names.split(",").map((name) => name.trim());
+      if (id && containerNames.includes(expectedName)) return id;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function executeLocalDockerSandboxCommand(
+  sandboxName: string,
+  markedCommand: string,
+  timeout: number,
+): SandboxCommandResult | null {
+  const containerId = findLocalDockerSandboxContainer(sandboxName);
+  if (!containerId) return null;
+  try {
+    const result = dockerSpawnSync(["exec", "-u", "root", containerId, "sh", "-c", markedCommand], {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout,
+    });
+    return parseSandboxCommandResult(result);
+  } catch {
+    return null;
+  }
+}
+
 export function executeSandboxExecCommand(
   sandboxName: string,
   command: string,
   timeout = 15000,
 ): SandboxCommandResult | null {
-  const markedCommand = `printf '%s\n' '${SANDBOX_EXEC_STARTED_MARKER}'; ${command}`;
+  const markedCommand = buildSandboxExecMarkedCommand(command);
   const timeoutOverride = Number(process.env.NEMOCLAW_SANDBOX_EXEC_TIMEOUT_MS || "");
   const effectiveTimeout =
     Number.isFinite(timeoutOverride) && timeoutOverride > 0 ? timeoutOverride : timeout;
@@ -154,19 +261,12 @@ export function executeSandboxExecCommand(
         timeout: effectiveTimeout,
       },
     );
-    if (result.error) return null;
-    const stdout = (result.stdout || "").trim();
-    const stdoutLines = stdout.split(/\r?\n/);
-    const markerIndex = stdoutLines.indexOf(SANDBOX_EXEC_STARTED_MARKER);
-    if (markerIndex === -1) return null;
-    const commandStdoutLines = stdoutLines.slice(markerIndex + 1);
-    return {
-      status: result.status ?? 1,
-      stdout: commandStdoutLines.join("\n").trim(),
-      stderr: (result.stderr || "").trim(),
-    };
+    return (
+      parseSandboxCommandResult(result) ??
+      executeLocalDockerSandboxCommand(sandboxName, markedCommand, effectiveTimeout)
+    );
   } catch {
-    return null;
+    return executeLocalDockerSandboxCommand(sandboxName, markedCommand, effectiveTimeout);
   }
 }
 
@@ -174,20 +274,17 @@ async function executeSandboxExecCommandForStatus(
   sandboxName: string,
   command: string,
 ): Promise<SandboxCommandResult | null> {
-  const markedCommand = `printf '%s\n' '${SANDBOX_EXEC_STARTED_MARKER}'; ${command}`;
+  const markedCommand = buildSandboxExecMarkedCommand(command);
   const result = await captureOpenshellForStatus(
     ["sandbox", "exec", "--name", sandboxName, "--", "sh", "-c", markedCommand],
     { ignoreError: true },
   );
   if (isCommandTimeout(result) || result.error) return null;
-  const stdout = (result.output || "").trim();
-  const stdoutLines = stdout.split(/\r?\n/);
-  const markerIndex = stdoutLines.indexOf(SANDBOX_EXEC_STARTED_MARKER);
-  if (markerIndex === -1) return null;
-  const commandStdoutLines = stdoutLines.slice(markerIndex + 1);
+  const commandStdout = extractSandboxExecCommandStdout(result.output || "");
+  if (commandStdout === null) return null;
   return {
     status: result.status ?? 1,
-    stdout: commandStdoutLines.join("\n").trim(),
+    stdout: commandStdout,
     stderr: "",
   };
 }

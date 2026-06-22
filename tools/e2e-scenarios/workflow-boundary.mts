@@ -1228,6 +1228,167 @@ function validateRebuildOpenClawVitestJob(errors: string[], jobs: WorkflowRecord
   }
 }
 
+function validateRebuildHermesVitestJob(
+  errors: string[],
+  jobs: WorkflowRecord,
+  options: { staleBase: boolean },
+): void {
+  const jobName = options.staleBase ? "rebuild-hermes-stale-base-vitest" : "rebuild-hermes-vitest";
+  const scenarioName = options.staleBase ? "rebuild-hermes-stale-base" : "rebuild-hermes";
+  const job = asRecord(jobs[jobName]);
+  if (Object.keys(job).length === 0) {
+    errors.push(`workflow missing ${jobName} job`);
+    return;
+  }
+
+  if (job["runs-on"] !== "ubuntu-latest") {
+    errors.push(`${jobName} job must run on ubuntu-latest`);
+  }
+  validateFreeStandingJobSelector(errors, jobs, jobName, scenarioName);
+  if (job["timeout-minutes"] !== 90) {
+    errors.push(`${jobName} job must keep the legacy 90 minute timeout`);
+  }
+  const jobEnv = asRecord(job.env);
+  if (jobEnv.NEMOCLAW_RUN_E2E_SCENARIOS !== "1") {
+    errors.push(`${jobName} job must set NEMOCLAW_RUN_E2E_SCENARIOS=1`);
+  }
+  const artifactRoot = options.staleBase
+    ? "${{ github.workspace }}/e2e-artifacts/vitest/rebuild-hermes-stale-base"
+    : "${{ github.workspace }}/e2e-artifacts/vitest/rebuild-hermes";
+  if (jobEnv.E2E_ARTIFACT_DIR !== artifactRoot) {
+    errors.push(`${jobName} job must write artifacts under ${artifactRoot}`);
+  }
+  if (jobEnv.NEMOCLAW_AGENT !== "hermes") {
+    errors.push(`${jobName} job must set NEMOCLAW_AGENT=hermes`);
+  }
+  if (jobEnv.NEMOCLAW_PROVIDER !== "custom") {
+    errors.push(`${jobName} job must use the hosted compatible endpoint provider`);
+  }
+  if (jobEnv.NEMOCLAW_ENDPOINT_URL !== "https://inference-api.nvidia.com/v1") {
+    errors.push(`${jobName} job must target hosted CI inference endpoint`);
+  }
+  if (jobEnv.NEMOCLAW_MODEL !== "nvidia/nvidia/nemotron-3-super-v3") {
+    errors.push(`${jobName} job must pin the CI-safe Hermes rebuild model`);
+  }
+  if (jobEnv.NEMOCLAW_COMPAT_MODEL !== "nvidia/nvidia/nemotron-3-super-v3") {
+    errors.push(`${jobName} job must pin the CI-safe compatible model`);
+  }
+  if (jobEnv.OPENSHELL_GATEWAY !== "nemoclaw") {
+    errors.push(`${jobName} job must force OPENSHELL_GATEWAY=nemoclaw`);
+  }
+  if (options.staleBase) {
+    if (jobEnv.NEMOCLAW_HERMES_STALE_BASE_REBUILD_E2E !== "1") {
+      errors.push(`${jobName} job must enable NEMOCLAW_HERMES_STALE_BASE_REBUILD_E2E=1`);
+    }
+    if (jobEnv.NEMOCLAW_SANDBOX_NAME !== "e2e-rebuild-hermes-base") {
+      errors.push(`${jobName} job must set NEMOCLAW_SANDBOX_NAME=e2e-rebuild-hermes-base`);
+    }
+  } else if (jobEnv.NEMOCLAW_SANDBOX_NAME !== "e2e-rebuild-hermes") {
+    errors.push(`${jobName} job must set NEMOCLAW_SANDBOX_NAME=e2e-rebuild-hermes`);
+  }
+  for (const secret of [
+    "NVIDIA_INFERENCE_API_KEY",
+    "DOCKERHUB_USERNAME",
+    "DOCKERHUB_TOKEN",
+    "GITHUB_TOKEN",
+  ]) {
+    requireEnvDoesNotExposeSecret(errors, `${jobName} job`, jobEnv, secret);
+  }
+
+  const steps = asSteps(job.steps);
+  requireNoDispatchInputInterpolation(errors, steps);
+  for (const step of steps) {
+    const stepName = `${jobName} step '${step.name ?? step.uses ?? "<unnamed>"}'`;
+    const stepEnv = asRecord(step.env);
+    if (!step.name?.startsWith("Run Hermes")) {
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_INFERENCE_API_KEY");
+    }
+    if (step.name !== "Authenticate to Docker Hub") {
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_USERNAME");
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_TOKEN");
+      requireNoDockerHubAuthInRun(errors, stepName, stringValue(step.run));
+    }
+    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "GITHUB_TOKEN");
+  }
+
+  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
+  if (!checkout) errors.push(`${jobName} job missing checkout step`);
+  requireFullShaAction(errors, checkout, `${jobName} checkout`);
+  if (asRecord(checkout?.with)["persist-credentials"] !== false) {
+    errors.push(`${jobName} checkout step must set persist-credentials=false`);
+  }
+
+  const dockerHubAuth = requireJobStep(errors, jobName, steps, "Authenticate to Docker Hub");
+  const dockerHubEnv = asRecord(dockerHubAuth?.env);
+  if (dockerHubEnv.DOCKERHUB_USERNAME !== "${{ secrets.DOCKERHUB_USERNAME }}") {
+    errors.push(`${jobName} Docker Hub auth must receive DOCKERHUB_USERNAME from secrets`);
+  }
+  if (dockerHubEnv.DOCKERHUB_TOKEN !== "${{ secrets.DOCKERHUB_TOKEN }}") {
+    errors.push(`${jobName} Docker Hub auth must receive DOCKERHUB_TOKEN from secrets`);
+  }
+  requireRunContains(errors, dockerHubAuth, "docker login docker.io");
+  requireRunContains(errors, dockerHubAuth, "continuing with anonymous pulls");
+
+  const setupNode = namedStep(steps, "Set up Node");
+  if (!setupNode) errors.push(`${jobName} job missing step: Set up Node`);
+  requireFullShaAction(errors, setupNode, `${jobName} setup-node`);
+
+  const installRootDependencies = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Install root dependencies",
+  );
+  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
+
+  const runVitest = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    options.staleBase ? "Run Hermes stale-base rebuild live test" : "Run Hermes rebuild live test",
+  );
+  const runVitestEnv = asRecord(runVitest?.env);
+  if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
+    errors.push(`${jobName} step must receive NVIDIA_INFERENCE_API_KEY from secrets`);
+  }
+  requireRunContains(errors, runVitest, "npx vitest run --project e2e-scenarios-live");
+  requireRunContains(errors, runVitest, "test/e2e-scenario/live/rebuild-hermes.test.ts");
+
+  const upload = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    options.staleBase
+      ? "Upload Hermes stale-base rebuild artifacts"
+      : "Upload Hermes rebuild artifacts",
+  );
+  requireFullShaAction(errors, upload, `${jobName} upload-artifact`);
+  const uploadWith = asRecord(upload?.with);
+  const artifactName = options.staleBase
+    ? "e2e-vitest-scenarios-rebuild-hermes-stale-base"
+    : "e2e-vitest-scenarios-rebuild-hermes";
+  if (uploadWith.name !== artifactName) {
+    errors.push(`${jobName} artifact upload name must be stable`);
+  }
+  const uploadPath = stringValue(uploadWith.path);
+  requireUploadPathContains(
+    errors,
+    uploadPath,
+    options.staleBase
+      ? "e2e-artifacts/vitest/rebuild-hermes-stale-base/"
+      : "e2e-artifacts/vitest/rebuild-hermes/",
+  );
+  if (uploadWith["include-hidden-files"] !== false) {
+    errors.push(`${jobName} artifact upload must set include-hidden-files: false`);
+  }
+  if (uploadWith["if-no-files-found"] !== "ignore") {
+    errors.push(`${jobName} artifact upload must ignore missing fixture artifacts`);
+  }
+  if (uploadWith["retention-days"] !== 14) {
+    errors.push(`${jobName} artifact upload retention-days must be 14`);
+  }
+}
+
 function validateSandboxRebuildVitestJob(errors: string[], jobs: WorkflowRecord): void {
   const jobName = "sandbox-rebuild-vitest";
   const scenarioName = "sandbox-rebuild";
@@ -3138,6 +3299,192 @@ function validateModelRouterProviderRoutedInferenceVitestJob(
   requireRunContains(errors, cleanup, 'rm -rf "${DOCKER_CONFIG}"');
 }
 
+function runContainsCloudflaredAptInstall(run: string): boolean {
+  return /apt-get\s+install[\s\S]*cloudflared|apt\s+install[\s\S]*cloudflared|pkg\.cloudflare\.com\/cloudflared/.test(
+    run,
+  );
+}
+
+function validateTunnelLifecycleVitestJob(errors: string[], jobs: WorkflowRecord): void {
+  const jobName = "tunnel-lifecycle-vitest";
+  const scenarioName = "tunnel-lifecycle";
+  const job = asRecord(jobs[jobName]);
+  if (Object.keys(job).length === 0) {
+    errors.push("workflow missing tunnel-lifecycle-vitest job");
+    return;
+  }
+
+  if (job["runs-on"] !== "ubuntu-latest") {
+    errors.push("tunnel-lifecycle-vitest job must run on ubuntu-latest");
+  }
+  if (job["timeout-minutes"] !== 75) {
+    errors.push("tunnel-lifecycle-vitest job must keep the 75 minute timeout");
+  }
+  validateFreeStandingJobSelector(errors, jobs, jobName, scenarioName);
+
+  const jobEnv = asRecord(job.env);
+  if ("DOCKER_CONFIG" in jobEnv) {
+    errors.push("tunnel-lifecycle-vitest job must not set DOCKER_CONFIG at job level");
+  }
+  if (jobEnv.NEMOCLAW_CLI_BIN !== "${{ github.workspace }}/bin/nemoclaw.js") {
+    errors.push("tunnel-lifecycle-vitest job must point NEMOCLAW_CLI_BIN at the repo CLI");
+  }
+  if (jobEnv.FREE_STANDING_VITEST_JOB !== "1") {
+    errors.push("tunnel-lifecycle-vitest job must set FREE_STANDING_VITEST_JOB=1");
+  }
+  if (jobEnv.FREE_STANDING_SCENARIO_ID !== scenarioName) {
+    errors.push(`tunnel-lifecycle-vitest job must set FREE_STANDING_SCENARIO_ID=${scenarioName}`);
+  }
+  if (jobEnv.NEMOCLAW_RUN_E2E_SCENARIOS !== "1") {
+    errors.push("tunnel-lifecycle-vitest job must set NEMOCLAW_RUN_E2E_SCENARIOS=1");
+  }
+  requireEnvDoesNotExposeSecret(
+    errors,
+    "tunnel-lifecycle-vitest job",
+    jobEnv,
+    "NVIDIA_INFERENCE_API_KEY",
+  );
+
+  const steps = asSteps(job.steps);
+  requireNoDispatchInputInterpolation(errors, steps);
+  for (const step of steps) {
+    const stepName = `tunnel-lifecycle-vitest step '${step.name ?? step.uses ?? "<unnamed>"}'`;
+    const stepEnv = asRecord(step.env);
+    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "GITHUB_TOKEN");
+    if (step.name !== "Run tunnel lifecycle live test") {
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_INFERENCE_API_KEY");
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_API_KEY");
+    }
+    if (step.name !== "Authenticate to Docker Hub") {
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_USERNAME");
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_TOKEN");
+      requireNoDockerHubAuthInRun(errors, stepName, stringValue(step.run));
+    }
+  }
+
+  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
+  if (!checkout) {
+    errors.push("tunnel-lifecycle-vitest job missing checkout step");
+  }
+  requireFullShaAction(errors, checkout, "tunnel-lifecycle-vitest checkout");
+  if (asRecord(checkout?.with)["persist-credentials"] !== false) {
+    errors.push("tunnel-lifecycle-vitest checkout step must set persist-credentials=false");
+  }
+
+  const configureDockerAuth = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Configure isolated Docker auth directory",
+  );
+  requireRunContains(
+    errors,
+    configureDockerAuth,
+    'echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-tunnel-lifecycle" >> "$GITHUB_ENV"',
+  );
+  requireRunDoesNotContain(errors, configureDockerAuth, "${{ runner.temp }}");
+  requireRunDoesNotContain(errors, configureDockerAuth, "${{ github.workspace }}");
+
+  const dockerLogin = requireJobStep(errors, jobName, steps, "Authenticate to Docker Hub");
+  const dockerLoginEnv = asRecord(dockerLogin?.env);
+  if (dockerLoginEnv.DOCKERHUB_USERNAME !== "${{ secrets.DOCKERHUB_USERNAME }}") {
+    errors.push(
+      "tunnel-lifecycle-vitest Docker Hub auth must receive DOCKERHUB_USERNAME from secrets",
+    );
+  }
+  if (dockerLoginEnv.DOCKERHUB_TOKEN !== "${{ secrets.DOCKERHUB_TOKEN }}") {
+    errors.push(
+      "tunnel-lifecycle-vitest Docker Hub auth must receive DOCKERHUB_TOKEN from secrets",
+    );
+  }
+  requireRunContains(errors, dockerLogin, 'mkdir -p "${DOCKER_CONFIG}"');
+  requireRunContains(errors, dockerLogin, 'chmod 700 "${DOCKER_CONFIG}"');
+  requireRunContains(errors, dockerLogin, "docker login docker.io");
+  requireRunContains(errors, dockerLogin, "--password-stdin");
+  requireRunContains(errors, dockerLogin, "continuing with anonymous pulls");
+
+  const setupNode = namedStep(steps, "Set up Node");
+  if (!setupNode) {
+    errors.push("tunnel-lifecycle-vitest job missing step: Set up Node");
+  }
+  requireFullShaAction(errors, setupNode, "tunnel-lifecycle-vitest setup-node");
+
+  const installRootDependencies = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Install root dependencies",
+  );
+  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
+
+  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
+  requireRunContains(errors, buildCli, "npm run build:cli");
+
+  const cloudflaredPrereq = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Install and verify cloudflared prerequisite",
+  );
+  const cloudflaredPrereqEnv = asRecord(cloudflaredPrereq?.env);
+  requireEnvDoesNotExposeSecret(
+    errors,
+    "tunnel-lifecycle-vitest cloudflared prerequisite step",
+    cloudflaredPrereqEnv,
+    "NVIDIA_INFERENCE_API_KEY",
+  );
+  requireEnvDoesNotExposeSecret(
+    errors,
+    "tunnel-lifecycle-vitest cloudflared prerequisite step",
+    cloudflaredPrereqEnv,
+    "NVIDIA_API_KEY",
+  );
+  requireRunContains(errors, cloudflaredPrereq, "cloudflared --version");
+  requireRunContains(errors, cloudflaredPrereq, "test/e2e/lib/cloudflared-version-resolver.sh");
+  requireRunContains(errors, cloudflaredPrereq, "sudo apt-get install -y");
+  requireRunContains(errors, cloudflaredPrereq, "cloudflared=${cf_version}");
+
+  const runVitest = requireJobStep(errors, jobName, steps, "Run tunnel lifecycle live test");
+  const runVitestEnv = asRecord(runVitest?.env);
+  if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
+    errors.push(
+      "tunnel-lifecycle-vitest Vitest step must receive NVIDIA_INFERENCE_API_KEY from secrets",
+    );
+  }
+  if (runContainsCloudflaredAptInstall(stringValue(runVitest?.run))) {
+    errors.push(
+      "tunnel-lifecycle-vitest Vitest step must not run cloudflared APT installation with NVIDIA_INFERENCE_API_KEY in scope",
+    );
+  }
+  requireRunContains(errors, runVitest, "npx vitest run --project e2e-scenarios-live");
+  requireRunContains(errors, runVitest, "test/e2e-scenario/live/tunnel-lifecycle.test.ts");
+
+  const upload = requireJobStep(errors, jobName, steps, "Upload tunnel lifecycle artifacts");
+  requireFullShaAction(errors, upload, "tunnel-lifecycle-vitest upload-artifact");
+  const uploadWith = asRecord(upload?.with);
+  if (uploadWith.name !== "e2e-vitest-scenarios-tunnel-lifecycle") {
+    errors.push("tunnel-lifecycle-vitest artifact upload name must be stable");
+  }
+  const uploadPath = stringValue(uploadWith.path);
+  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/vitest/tunnel-lifecycle/");
+  if (uploadWith["include-hidden-files"] !== false) {
+    errors.push("tunnel-lifecycle-vitest artifact upload must set include-hidden-files: false");
+  }
+  if (uploadWith["if-no-files-found"] !== "ignore") {
+    errors.push("tunnel-lifecycle-vitest artifact upload must ignore missing fixture artifacts");
+  }
+  if (uploadWith["retention-days"] !== 14) {
+    errors.push("tunnel-lifecycle-vitest artifact upload retention-days must be 14");
+  }
+
+  const cleanup = requireJobStep(errors, jobName, steps, "Clean up Docker auth");
+  if (cleanup?.if !== "always()") {
+    errors.push("tunnel-lifecycle-vitest Docker auth cleanup must always run");
+  }
+  requireRunContains(errors, cleanup, "docker logout docker.io");
+  requireRunContains(errors, cleanup, 'rm -rf "${DOCKER_CONFIG}"');
+}
+
 function validateIssue2478CrashLoopRecoveryVitestJob(errors: string[], jobs: WorkflowRecord): void {
   const jobName = "issue-2478-crash-loop-recovery-vitest";
   const scenarioName = "issue-2478-crash-loop-recovery";
@@ -3472,6 +3819,628 @@ function validateChannelsAddRemoveVitestJob(errors: string[], jobs: WorkflowReco
   if (uploadWith["retention-days"] !== 14) {
     errors.push("channels-add-remove-vitest artifact upload retention-days must be 14");
   }
+}
+
+function validateOpenClawDiscordPairingVitestJob(errors: string[], jobs: WorkflowRecord): void {
+  const jobName = "openclaw-discord-pairing-vitest";
+  const scenarioName = "openclaw-discord-pairing";
+  const job = asRecord(jobs[jobName]);
+  if (Object.keys(job).length === 0) {
+    errors.push("workflow missing openclaw-discord-pairing-vitest job");
+    return;
+  }
+
+  if (job["runs-on"] !== "ubuntu-latest") {
+    errors.push("openclaw-discord-pairing-vitest job must run on ubuntu-latest");
+  }
+  if (job["timeout-minutes"] !== 60) {
+    errors.push("openclaw-discord-pairing-vitest job must keep the 60 minute timeout");
+  }
+  validateFreeStandingJobSelector(errors, jobs, jobName, scenarioName);
+
+  const jobEnv = asRecord(job.env);
+  if ("DOCKER_CONFIG" in jobEnv) {
+    errors.push("openclaw-discord-pairing-vitest job must not set DOCKER_CONFIG at job level");
+  }
+  for (const secret of ["NVIDIA_INFERENCE_API_KEY", "NVIDIA_API_KEY", ...COMMON_SECRET_ENV_NAMES]) {
+    requireEnvDoesNotExposeSecret(errors, "openclaw-discord-pairing-vitest job", jobEnv, secret);
+  }
+
+  const steps = asSteps(job.steps);
+  requireNoDispatchInputInterpolation(errors, steps);
+  for (const step of steps) {
+    const stepName = `openclaw-discord-pairing-vitest step '${step.name ?? step.uses ?? "<unnamed>"}'`;
+    const stepEnv = asRecord(step.env);
+    if (step.name !== "Run OpenClaw Discord pairing live test") {
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_INFERENCE_API_KEY");
+    }
+    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_API_KEY");
+    if (step.name !== "Authenticate to Docker Hub") {
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_USERNAME");
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_TOKEN");
+      requireNoDockerHubAuthInRun(errors, stepName, stringValue(step.run));
+    }
+    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "GITHUB_TOKEN");
+  }
+
+  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
+  if (!checkout) errors.push("openclaw-discord-pairing-vitest job missing checkout step");
+  requireFullShaAction(errors, checkout, "openclaw-discord-pairing-vitest checkout");
+  if (asRecord(checkout?.with)["persist-credentials"] !== false) {
+    errors.push("openclaw-discord-pairing-vitest checkout step must set persist-credentials=false");
+  }
+
+  const setupNode = namedStep(steps, "Set up Node");
+  if (!setupNode) errors.push("openclaw-discord-pairing-vitest job missing step: Set up Node");
+  requireFullShaAction(errors, setupNode, "openclaw-discord-pairing-vitest setup-node");
+
+  const installRootDependencies = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Install root dependencies",
+  );
+  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
+
+  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
+  requireRunContains(errors, buildCli, "npm run build:cli");
+
+  const configureDockerAuth = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Configure isolated Docker auth directory",
+  );
+  requireRunContains(
+    errors,
+    configureDockerAuth,
+    'echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-openclaw-discord-pairing" >> "$GITHUB_ENV"',
+  );
+  requireRunDoesNotContain(errors, configureDockerAuth, "${{ runner.temp }}");
+  requireRunDoesNotContain(errors, configureDockerAuth, "${{ github.workspace }}");
+
+  const dockerLogin = requireJobStep(errors, jobName, steps, "Authenticate to Docker Hub");
+  const dockerLoginEnv = asRecord(dockerLogin?.env);
+  if (dockerLoginEnv.DOCKERHUB_USERNAME !== "${{ secrets.DOCKERHUB_USERNAME }}") {
+    errors.push(
+      "openclaw-discord-pairing-vitest Docker Hub auth must receive DOCKERHUB_USERNAME from secrets",
+    );
+  }
+  if (dockerLoginEnv.DOCKERHUB_TOKEN !== "${{ secrets.DOCKERHUB_TOKEN }}") {
+    errors.push(
+      "openclaw-discord-pairing-vitest Docker Hub auth must receive DOCKERHUB_TOKEN from secrets",
+    );
+  }
+  requireRunContains(errors, dockerLogin, 'mkdir -p "${DOCKER_CONFIG}"');
+  requireRunContains(errors, dockerLogin, 'chmod 700 "${DOCKER_CONFIG}"');
+  requireRunContains(errors, dockerLogin, "docker login docker.io");
+  requireRunContains(errors, dockerLogin, "--password-stdin");
+
+  const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell CLI");
+  requireRunContains(errors, installOpenShell, "bash scripts/install-openshell.sh");
+  requireRunContains(errors, installOpenShell, "env -u DOCKER_CONFIG");
+  requireRunContains(errors, installOpenShell, "-u DOCKERHUB_USERNAME");
+  requireRunContains(errors, installOpenShell, "-u DOCKERHUB_TOKEN");
+  requireRunContains(errors, installOpenShell, "-u NVIDIA_API_KEY");
+  requireRunContains(errors, installOpenShell, "-u NVIDIA_INFERENCE_API_KEY");
+  requireRunContains(errors, installOpenShell, "-u GITHUB_TOKEN");
+
+  const runVitest = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Run OpenClaw Discord pairing live test",
+  );
+  const runVitestEnv = asRecord(runVitest?.env);
+  if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
+    errors.push(
+      "openclaw-discord-pairing-vitest step must receive NVIDIA_INFERENCE_API_KEY from secrets",
+    );
+  }
+  if (runVitestEnv.DISCORD_BOT_TOKEN !== "test-fake-discord-pairing-e2e") {
+    errors.push("openclaw-discord-pairing-vitest step must use fake Discord token");
+  }
+  requireRunContains(errors, runVitest, "npx vitest run --project e2e-scenarios-live");
+  requireRunContains(errors, runVitest, "test/e2e-scenario/live/openclaw-discord-pairing.test.ts");
+
+  const upload = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Upload OpenClaw Discord pairing artifacts",
+  );
+  requireFullShaAction(errors, upload, "openclaw-discord-pairing-vitest upload-artifact");
+  const uploadWith = asRecord(upload?.with);
+  const uploadPath = stringValue(uploadWith.path);
+  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/vitest/openclaw-discord-pairing/");
+  if (uploadWith["include-hidden-files"] !== false) {
+    errors.push(
+      "openclaw-discord-pairing-vitest artifact upload must set include-hidden-files: false",
+    );
+  }
+  if (uploadWith["if-no-files-found"] !== "ignore") {
+    errors.push(
+      "openclaw-discord-pairing-vitest artifact upload must ignore missing fixture artifacts",
+    );
+  }
+  if (uploadWith["retention-days"] !== 14) {
+    errors.push("openclaw-discord-pairing-vitest artifact upload retention-days must be 14");
+  }
+
+  const cleanup = requireJobStep(errors, jobName, steps, "Clean up Docker auth");
+  if (cleanup?.if !== "always()") {
+    errors.push("openclaw-discord-pairing-vitest Docker auth cleanup must always run");
+  }
+  requireRunContains(errors, cleanup, "docker logout docker.io");
+  requireRunContains(errors, cleanup, 'rm -rf "${DOCKER_CONFIG}"');
+}
+
+function validateOpenClawSlackPairingVitestJob(errors: string[], jobs: WorkflowRecord): void {
+  const jobName = "openclaw-slack-pairing-vitest";
+  const scenarioName = "openclaw-slack-pairing";
+  const job = asRecord(jobs[jobName]);
+  if (Object.keys(job).length === 0) {
+    errors.push("workflow missing openclaw-slack-pairing-vitest job");
+    return;
+  }
+
+  if (job["runs-on"] !== "ubuntu-latest") {
+    errors.push("openclaw-slack-pairing-vitest job must run on ubuntu-latest");
+  }
+  if (job["timeout-minutes"] !== 60) {
+    errors.push("openclaw-slack-pairing-vitest job must keep the 60 minute timeout");
+  }
+  validateFreeStandingJobSelector(errors, jobs, jobName, scenarioName);
+
+  const jobEnv = asRecord(job.env);
+  if ("DOCKER_CONFIG" in jobEnv) {
+    errors.push("openclaw-slack-pairing-vitest job must not set DOCKER_CONFIG at job level");
+  }
+  for (const secret of ["NVIDIA_INFERENCE_API_KEY", "NVIDIA_API_KEY", ...COMMON_SECRET_ENV_NAMES]) {
+    requireEnvDoesNotExposeSecret(errors, "openclaw-slack-pairing-vitest job", jobEnv, secret);
+  }
+
+  const steps = asSteps(job.steps);
+  requireNoDispatchInputInterpolation(errors, steps);
+  for (const step of steps) {
+    const stepName = `openclaw-slack-pairing-vitest step '${step.name ?? step.uses ?? "<unnamed>"}'`;
+    const stepEnv = asRecord(step.env);
+    if (step.name !== "Run OpenClaw Slack pairing live test") {
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_INFERENCE_API_KEY");
+    }
+    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_API_KEY");
+    if (step.name !== "Authenticate to Docker Hub") {
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_USERNAME");
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_TOKEN");
+      requireNoDockerHubAuthInRun(errors, stepName, stringValue(step.run));
+    }
+    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "GITHUB_TOKEN");
+  }
+
+  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
+  if (!checkout) errors.push("openclaw-slack-pairing-vitest job missing checkout step");
+  requireFullShaAction(errors, checkout, "openclaw-slack-pairing-vitest checkout");
+  if (asRecord(checkout?.with)["persist-credentials"] !== false) {
+    errors.push("openclaw-slack-pairing-vitest checkout step must set persist-credentials=false");
+  }
+
+  const setupNode = namedStep(steps, "Set up Node");
+  if (!setupNode) errors.push("openclaw-slack-pairing-vitest job missing step: Set up Node");
+  requireFullShaAction(errors, setupNode, "openclaw-slack-pairing-vitest setup-node");
+
+  const installRootDependencies = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Install root dependencies",
+  );
+  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
+
+  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
+  requireRunContains(errors, buildCli, "npm run build:cli");
+
+  const configureDockerAuth = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Configure isolated Docker auth directory",
+  );
+  requireRunContains(
+    errors,
+    configureDockerAuth,
+    'echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-openclaw-slack-pairing" >> "$GITHUB_ENV"',
+  );
+  requireRunDoesNotContain(errors, configureDockerAuth, "${{ runner.temp }}");
+  requireRunDoesNotContain(errors, configureDockerAuth, "${{ github.workspace }}");
+
+  const dockerLogin = requireJobStep(errors, jobName, steps, "Authenticate to Docker Hub");
+  const dockerLoginEnv = asRecord(dockerLogin?.env);
+  if (dockerLoginEnv.DOCKERHUB_USERNAME !== "${{ secrets.DOCKERHUB_USERNAME }}") {
+    errors.push(
+      "openclaw-slack-pairing-vitest Docker Hub auth must receive DOCKERHUB_USERNAME from secrets",
+    );
+  }
+  if (dockerLoginEnv.DOCKERHUB_TOKEN !== "${{ secrets.DOCKERHUB_TOKEN }}") {
+    errors.push(
+      "openclaw-slack-pairing-vitest Docker Hub auth must receive DOCKERHUB_TOKEN from secrets",
+    );
+  }
+  requireRunContains(errors, dockerLogin, 'mkdir -p "${DOCKER_CONFIG}"');
+  requireRunContains(errors, dockerLogin, 'chmod 700 "${DOCKER_CONFIG}"');
+  requireRunContains(errors, dockerLogin, "docker login docker.io");
+  requireRunContains(errors, dockerLogin, "--password-stdin");
+
+  const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell CLI");
+  requireRunContains(errors, installOpenShell, "bash scripts/install-openshell.sh");
+  requireRunContains(errors, installOpenShell, "env -u DOCKER_CONFIG");
+  requireRunContains(errors, installOpenShell, "-u DOCKERHUB_USERNAME");
+  requireRunContains(errors, installOpenShell, "-u DOCKERHUB_TOKEN");
+  requireRunContains(errors, installOpenShell, "-u NVIDIA_API_KEY");
+  requireRunContains(errors, installOpenShell, "-u NVIDIA_INFERENCE_API_KEY");
+  requireRunContains(errors, installOpenShell, "-u GITHUB_TOKEN");
+
+  const runVitest = requireJobStep(errors, jobName, steps, "Run OpenClaw Slack pairing live test");
+  const runVitestEnv = asRecord(runVitest?.env);
+  if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
+    errors.push(
+      "openclaw-slack-pairing-vitest step must receive NVIDIA_INFERENCE_API_KEY from secrets",
+    );
+  }
+  if (runVitestEnv.SLACK_BOT_TOKEN !== "xoxb-fake-slack-pairing-e2e") {
+    errors.push("openclaw-slack-pairing-vitest step must use fake Slack bot token");
+  }
+  if (runVitestEnv.SLACK_APP_TOKEN !== "xapp-fake-slack-pairing-e2e") {
+    errors.push("openclaw-slack-pairing-vitest step must use fake Slack app token");
+  }
+  requireRunContains(errors, runVitest, "npx vitest run --project e2e-scenarios-live");
+  requireRunContains(errors, runVitest, "test/e2e-scenario/live/openclaw-slack-pairing.test.ts");
+
+  const upload = requireJobStep(errors, jobName, steps, "Upload OpenClaw Slack pairing artifacts");
+  requireFullShaAction(errors, upload, "openclaw-slack-pairing-vitest upload-artifact");
+  const uploadWith = asRecord(upload?.with);
+  const uploadPath = stringValue(uploadWith.path);
+  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/vitest/openclaw-slack-pairing/");
+  if (uploadWith["include-hidden-files"] !== false) {
+    errors.push(
+      "openclaw-slack-pairing-vitest artifact upload must set include-hidden-files: false",
+    );
+  }
+  if (uploadWith["if-no-files-found"] !== "ignore") {
+    errors.push(
+      "openclaw-slack-pairing-vitest artifact upload must ignore missing fixture artifacts",
+    );
+  }
+  if (uploadWith["retention-days"] !== 14) {
+    errors.push("openclaw-slack-pairing-vitest artifact upload retention-days must be 14");
+  }
+
+  const cleanup = requireJobStep(errors, jobName, steps, "Clean up Docker auth");
+  if (cleanup?.if !== "always()") {
+    errors.push("openclaw-slack-pairing-vitest Docker auth cleanup must always run");
+  }
+  requireRunContains(errors, cleanup, "docker logout docker.io");
+  requireRunContains(errors, cleanup, 'rm -rf "${DOCKER_CONFIG}"');
+}
+
+function validateChannelsStopStartVitestJob(errors: string[], jobs: WorkflowRecord): void {
+  const jobName = "channels-stop-start-vitest";
+  const scenarioName = "channels-stop-start";
+  const job = asRecord(jobs[jobName]);
+  if (Object.keys(job).length === 0) {
+    errors.push("workflow missing channels-stop-start-vitest job");
+    return;
+  }
+
+  if (job["runs-on"] !== "ubuntu-latest") {
+    errors.push("channels-stop-start-vitest job must run on ubuntu-latest");
+  }
+  validateFreeStandingJobSelector(errors, jobs, jobName, scenarioName);
+  if (job["timeout-minutes"] !== 90) {
+    errors.push("channels-stop-start-vitest job must keep the 90 minute timeout");
+  }
+  const strategy = asRecord(job.strategy);
+  if (strategy["fail-fast"] !== false) {
+    errors.push("channels-stop-start-vitest strategy.fail-fast must be false");
+  }
+  const matrix = asRecord(strategy.matrix);
+  if (!Array.isArray(matrix.agent) || matrix.agent.join(",") !== "openclaw,hermes") {
+    errors.push("channels-stop-start-vitest matrix.agent must be openclaw,hermes");
+  }
+
+  const jobEnv = asRecord(job.env);
+  if (jobEnv.NEMOCLAW_RUN_E2E_SCENARIOS !== "1") {
+    errors.push("channels-stop-start-vitest job must set NEMOCLAW_RUN_E2E_SCENARIOS=1");
+  }
+  if (
+    jobEnv.E2E_ARTIFACT_DIR !==
+    "${{ github.workspace }}/e2e-artifacts/vitest/channels-stop-start/${{ matrix.agent }}"
+  ) {
+    errors.push(
+      "channels-stop-start-vitest job must write artifacts under e2e-artifacts/vitest/channels-stop-start/${{ matrix.agent }}",
+    );
+  }
+  if (jobEnv.NEMOCLAW_CLI_BIN !== "${{ github.workspace }}/bin/nemoclaw.js") {
+    errors.push("channels-stop-start-vitest job must point NEMOCLAW_CLI_BIN at the repo CLI");
+  }
+  if (jobEnv.NEMOCLAW_SANDBOX_NAME !== "e2e-channels-stop-start-${{ matrix.agent }}") {
+    errors.push(
+      "channels-stop-start-vitest job must derive NEMOCLAW_SANDBOX_NAME from matrix.agent with the e2e-channels-stop-start- prefix",
+    );
+  }
+  if (jobEnv.NEMOCLAW_AGENT !== "${{ matrix.agent }}") {
+    errors.push("channels-stop-start-vitest job must pass matrix.agent through NEMOCLAW_AGENT");
+  }
+  if (jobEnv.NEMOCLAW_CHANNELS_STOP_START_AGENT !== "${{ matrix.agent }}") {
+    errors.push(
+      "channels-stop-start-vitest job must pass matrix.agent through NEMOCLAW_CHANNELS_STOP_START_AGENT",
+    );
+  }
+  if (jobEnv.NEMOCLAW_NON_INTERACTIVE !== "1") {
+    errors.push("channels-stop-start-vitest job must set NEMOCLAW_NON_INTERACTIVE=1");
+  }
+  if (jobEnv.NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE !== "1") {
+    errors.push("channels-stop-start-vitest job must set NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1");
+  }
+  if (jobEnv.OPENSHELL_GATEWAY !== "nemoclaw") {
+    errors.push("channels-stop-start-vitest job must force OPENSHELL_GATEWAY=nemoclaw");
+  }
+  if (
+    jobEnv.DOCKER_CONFIG !==
+    "${{ github.workspace }}/.docker-config-channels-stop-start-${{ matrix.agent }}"
+  ) {
+    errors.push("channels-stop-start-vitest job must isolate Docker auth by matrix agent");
+  }
+  for (const secret of [
+    "NVIDIA_INFERENCE_API_KEY",
+    "NVIDIA_API_KEY",
+    "DOCKERHUB_USERNAME",
+    "DOCKERHUB_TOKEN",
+    "GITHUB_TOKEN",
+  ]) {
+    requireEnvDoesNotExposeSecret(errors, "channels-stop-start-vitest job", jobEnv, secret);
+  }
+
+  const steps = asSteps(job.steps);
+  requireNoDispatchInputInterpolation(errors, steps);
+  for (const step of steps) {
+    const stepName = `channels-stop-start-vitest step '${step.name ?? step.uses ?? "<unnamed>"}'`;
+    const stepEnv = asRecord(step.env);
+    if (step.name !== "Run channels stop/start live test") {
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_INFERENCE_API_KEY");
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_API_KEY");
+    }
+    if (step.name !== "Authenticate to Docker Hub") {
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_USERNAME");
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_TOKEN");
+      requireNoDockerHubAuthInRun(errors, stepName, stringValue(step.run));
+    }
+    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "GITHUB_TOKEN");
+  }
+
+  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
+  if (!checkout) errors.push("channels-stop-start-vitest job missing checkout step");
+  requireFullShaAction(errors, checkout, "channels-stop-start-vitest checkout");
+  if (asRecord(checkout?.with)["persist-credentials"] !== false) {
+    errors.push("channels-stop-start-vitest checkout step must set persist-credentials=false");
+  }
+
+  const dockerHubAuth = requireJobStep(errors, jobName, steps, "Authenticate to Docker Hub");
+  const dockerHubEnv = asRecord(dockerHubAuth?.env);
+  if (dockerHubEnv.DOCKERHUB_USERNAME !== "${{ secrets.DOCKERHUB_USERNAME }}") {
+    errors.push(
+      "channels-stop-start-vitest Docker Hub auth must receive DOCKERHUB_USERNAME from secrets",
+    );
+  }
+  if (dockerHubEnv.DOCKERHUB_TOKEN !== "${{ secrets.DOCKERHUB_TOKEN }}") {
+    errors.push(
+      "channels-stop-start-vitest Docker Hub auth must receive DOCKERHUB_TOKEN from secrets",
+    );
+  }
+  requireRunContains(errors, dockerHubAuth, 'mkdir -p "${DOCKER_CONFIG}"');
+  requireRunContains(errors, dockerHubAuth, 'chmod 700 "${DOCKER_CONFIG}"');
+  requireRunContains(errors, dockerHubAuth, "docker login docker.io");
+  requireRunContains(errors, dockerHubAuth, "--password-stdin");
+  requireRunContains(errors, dockerHubAuth, "continuing with anonymous pulls");
+
+  const setupNode = namedStep(steps, "Set up Node");
+  if (!setupNode) errors.push("channels-stop-start-vitest job missing step: Set up Node");
+  requireFullShaAction(errors, setupNode, "channels-stop-start-vitest setup-node");
+
+  const installRootDependencies = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Install root dependencies",
+  );
+  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
+
+  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
+  requireRunContains(errors, buildCli, "npm run build:cli");
+
+  const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell");
+  requireRunContains(errors, installOpenShell, "bash scripts/install-openshell.sh");
+  requireRunContains(errors, installOpenShell, "env -u DOCKER_CONFIG");
+  requireRunContains(errors, installOpenShell, "-u DOCKERHUB_USERNAME");
+  requireRunContains(errors, installOpenShell, "-u DOCKERHUB_TOKEN");
+  requireRunContains(errors, installOpenShell, "-u NVIDIA_API_KEY");
+  requireRunContains(errors, installOpenShell, "-u GITHUB_TOKEN");
+
+  const runVitest = requireJobStep(errors, jobName, steps, "Run channels stop/start live test");
+  const runVitestEnv = asRecord(runVitest?.env);
+  requireEnvDoesNotExposeSecret(
+    errors,
+    "channels-stop-start-vitest step 'Run channels stop/start live test'",
+    runVitestEnv,
+    "NVIDIA_API_KEY",
+  );
+  if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
+    errors.push(
+      "channels-stop-start-vitest step must receive NVIDIA_INFERENCE_API_KEY from secrets",
+    );
+  }
+  if (
+    runVitestEnv.TELEGRAM_BOT_TOKEN !== "test-fake-telegram-token-stop-start-${{ matrix.agent }}"
+  ) {
+    errors.push("channels-stop-start-vitest step must set the fake Telegram token");
+  }
+  if (runVitestEnv.DISCORD_BOT_TOKEN !== "test-fake-discord-token-stop-start-${{ matrix.agent }}") {
+    errors.push("channels-stop-start-vitest step must set the fake Discord token");
+  }
+  if (runVitestEnv.SLACK_BOT_TOKEN !== "xoxb-fake-slack-token-stop-start-${{ matrix.agent }}") {
+    errors.push("channels-stop-start-vitest step must set the fake Slack bot token");
+  }
+  if (runVitestEnv.SLACK_APP_TOKEN !== "xapp-fake-slack-token-stop-start-${{ matrix.agent }}") {
+    errors.push("channels-stop-start-vitest step must set the fake Slack app token");
+  }
+  if (runVitestEnv.WECHAT_BOT_TOKEN !== "test-fake-wechat-token-stop-start-${{ matrix.agent }}") {
+    errors.push("channels-stop-start-vitest step must set the fake WeChat token");
+  }
+  requireRunContains(errors, runVitest, "OPENSHELL_BIN");
+  requireRunContains(errors, runVitest, "npx vitest run --project e2e-scenarios-live");
+  requireRunContains(errors, runVitest, "test/e2e-scenario/live/channels-stop-start.test.ts");
+
+  const upload = requireJobStep(errors, jobName, steps, "Upload channels stop/start artifacts");
+  requireFullShaAction(errors, upload, "channels-stop-start-vitest upload-artifact");
+  const uploadWith = asRecord(upload?.with);
+  if (uploadWith.name !== "e2e-vitest-scenarios-channels-stop-start-${{ matrix.agent }}") {
+    errors.push("channels-stop-start-vitest artifact upload name must include matrix.agent");
+  }
+  const uploadPath = stringValue(uploadWith.path);
+  requireUploadPathContains(
+    errors,
+    uploadPath,
+    "e2e-artifacts/vitest/channels-stop-start/${{ matrix.agent }}/",
+  );
+  if (uploadWith["include-hidden-files"] !== false) {
+    errors.push("channels-stop-start-vitest artifact upload must set include-hidden-files: false");
+  }
+  if (uploadWith["if-no-files-found"] !== "ignore") {
+    errors.push("channels-stop-start-vitest artifact upload must ignore missing fixture artifacts");
+  }
+  if (uploadWith["retention-days"] !== 14) {
+    errors.push("channels-stop-start-vitest artifact upload retention-days must be 14");
+  }
+
+  const cleanup = requireJobStep(errors, jobName, steps, "Clean up Docker auth");
+  if (cleanup?.if !== "always()") {
+    errors.push("channels-stop-start-vitest Docker auth cleanup must always run");
+  }
+  requireRunContains(errors, cleanup, "docker logout docker.io");
+  requireRunContains(errors, cleanup, 'rm -rf "${DOCKER_CONFIG}"');
+}
+
+function validateTelegramInjectionVitestJob(errors: string[], jobs: WorkflowRecord): void {
+  const jobName = "telegram-injection-vitest";
+  const scenarioName = "telegram-injection";
+  const job = asRecord(jobs[jobName]);
+  if (Object.keys(job).length === 0) {
+    errors.push("workflow missing telegram-injection-vitest job");
+    return;
+  }
+
+  if (job["runs-on"] !== "ubuntu-latest") {
+    errors.push("telegram-injection-vitest job must run on ubuntu-latest");
+  }
+  if (job["timeout-minutes"] !== 45) {
+    errors.push("telegram-injection-vitest job must keep the 45 minute timeout");
+  }
+  validateFreeStandingJobSelector(errors, jobs, jobName, scenarioName);
+
+  const jobEnv = asRecord(job.env);
+  if ("DOCKER_CONFIG" in jobEnv) {
+    errors.push("telegram-injection-vitest job must not set DOCKER_CONFIG at job level");
+  }
+  for (const secret of ["NVIDIA_INFERENCE_API_KEY", "NVIDIA_API_KEY", ...COMMON_SECRET_ENV_NAMES]) {
+    requireEnvDoesNotExposeSecret(errors, "telegram-injection-vitest job", jobEnv, secret);
+  }
+
+  const steps = asSteps(job.steps);
+  requireNoDispatchInputInterpolation(errors, steps);
+  for (const step of steps) {
+    const stepName = `telegram-injection-vitest step '${step.name ?? step.uses ?? "<unnamed>"}'`;
+    const stepEnv = asRecord(step.env);
+    if (step.name !== "Run Telegram injection live test") {
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_INFERENCE_API_KEY");
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_API_KEY");
+    }
+    if (step.name !== "Authenticate to Docker Hub") {
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_USERNAME");
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_TOKEN");
+      requireNoDockerHubAuthInRun(errors, stepName, stringValue(step.run));
+    }
+    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "GITHUB_TOKEN");
+  }
+
+  const configureDockerAuth = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Configure isolated Docker auth directory",
+  );
+  requireRunContains(
+    errors,
+    configureDockerAuth,
+    'echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-telegram-injection" >> "$GITHUB_ENV"',
+  );
+  requireRunDoesNotContain(errors, configureDockerAuth, "${{ runner.temp }}");
+  requireRunDoesNotContain(errors, configureDockerAuth, "${{ github.workspace }}");
+
+  const dockerLogin = requireJobStep(errors, jobName, steps, "Authenticate to Docker Hub");
+  const dockerLoginEnv = asRecord(dockerLogin?.env);
+  if (dockerLoginEnv.DOCKERHUB_USERNAME !== "${{ secrets.DOCKERHUB_USERNAME }}") {
+    errors.push(
+      "telegram-injection-vitest Docker Hub auth must receive DOCKERHUB_USERNAME from secrets",
+    );
+  }
+  if (dockerLoginEnv.DOCKERHUB_TOKEN !== "${{ secrets.DOCKERHUB_TOKEN }}") {
+    errors.push(
+      "telegram-injection-vitest Docker Hub auth must receive DOCKERHUB_TOKEN from secrets",
+    );
+  }
+  requireRunContains(errors, dockerLogin, 'mkdir -p "${DOCKER_CONFIG}"');
+  requireRunContains(errors, dockerLogin, 'chmod 700 "${DOCKER_CONFIG}"');
+  requireRunContains(errors, dockerLogin, "docker login docker.io");
+  requireRunContains(errors, dockerLogin, "--password-stdin");
+
+  const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell");
+  requireRunContains(errors, installOpenShell, "bash scripts/install-openshell.sh");
+  requireRunContains(errors, installOpenShell, "env -u DOCKER_CONFIG");
+  requireRunContains(errors, installOpenShell, "-u DOCKERHUB_USERNAME");
+  requireRunContains(errors, installOpenShell, "-u DOCKERHUB_TOKEN");
+  requireRunContains(errors, installOpenShell, "-u NVIDIA_API_KEY");
+  requireRunContains(errors, installOpenShell, "-u NVIDIA_INFERENCE_API_KEY");
+  requireRunContains(errors, installOpenShell, "-u GITHUB_TOKEN");
+
+  const runVitest = requireJobStep(errors, jobName, steps, "Run Telegram injection live test");
+  const runVitestEnv = asRecord(runVitest?.env);
+  if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
+    errors.push(
+      "telegram-injection-vitest step must receive NVIDIA_INFERENCE_API_KEY from secrets",
+    );
+  }
+  requireRunContains(errors, runVitest, "npx vitest run --project e2e-scenarios-live");
+  requireRunContains(errors, runVitest, "test/e2e-scenario/live/telegram-injection.test.ts");
+
+  const upload = requireJobStep(errors, jobName, steps, "Upload Telegram injection artifacts");
+  const uploadWith = asRecord(upload?.with);
+  const uploadPath = stringValue(uploadWith.path);
+  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/vitest/telegram-injection/");
+  if (uploadWith["include-hidden-files"] !== false) {
+    errors.push("telegram-injection-vitest artifact upload must set include-hidden-files: false");
+  }
+  if (uploadWith["if-no-files-found"] !== "ignore") {
+    errors.push("telegram-injection-vitest artifact upload must ignore missing fixture artifacts");
+  }
+  if (uploadWith["retention-days"] !== 14) {
+    errors.push("telegram-injection-vitest artifact upload retention-days must be 14");
+  }
+
+  const cleanup = requireJobStep(errors, jobName, steps, "Clean up Docker auth");
+  if (cleanup?.if !== "always()") {
+    errors.push("telegram-injection-vitest Docker auth cleanup must always run");
+  }
+  requireRunContains(errors, cleanup, "docker logout docker.io");
+  requireRunContains(errors, cleanup, 'rm -rf "${DOCKER_CONFIG}"');
 }
 
 function validateBedrockRuntimeCompatibleAnthropicVitestJob(
@@ -3968,6 +4937,8 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   validateCommonEgressAgentVitestJob(errors, jobs);
   validateShieldsConfigVitestJob(errors, jobs);
   validateRebuildOpenClawVitestJob(errors, jobs);
+  validateRebuildHermesVitestJob(errors, jobs, { staleBase: false });
+  validateRebuildHermesVitestJob(errors, jobs, { staleBase: true });
   validateSandboxRebuildVitestJob(errors, jobs);
   validateStateBackupRestoreVitestJob(errors, jobs);
   validateUpgradeStaleSandboxVitestJob(errors, jobs);
@@ -4007,6 +4978,8 @@ export function validateE2eVitestScenariosWorkflowBoundary(
 
   validateIssue2478CrashLoopRecoveryVitestJob(errors, jobs);
 
+  validateTunnelLifecycleVitestJob(errors, jobs);
+
   validateFreeStandingJobSelector(
     errors,
     jobs,
@@ -4022,6 +4995,10 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   );
 
   validateChannelsAddRemoveVitestJob(errors, jobs);
+  validateOpenClawDiscordPairingVitestJob(errors, jobs);
+  validateOpenClawSlackPairingVitestJob(errors, jobs);
+  validateChannelsStopStartVitestJob(errors, jobs);
+  validateTelegramInjectionVitestJob(errors, jobs);
 
   const reportToPr = asRecord(jobs["report-to-pr"]);
   if (Object.keys(reportToPr).length === 0) {
@@ -4074,6 +5051,19 @@ export function validateE2eVitestScenariosWorkflowBoundary(
       errors.push(
         "step 'Post Vitest scenario results to PR' run script must omit rejected scenario selectors",
       );
+    }
+    if (!reportScript.includes("reportedEntries")) {
+      errors.push(
+        "step 'Post Vitest scenario results to PR' run script must filter reported entries for selective dispatches",
+      );
+    }
+    if (!reportScript.includes("missingRequested")) {
+      errors.push(
+        "step 'Post Vitest scenario results to PR' run script must report missing requested jobs",
+      );
+    }
+    if (!reportScript.includes("cancelled")) {
+      errors.push("step 'Post Vitest scenario results to PR' run script must count cancelled jobs");
     }
     if (!reportScript.includes("**Requested jobs:**")) {
       errors.push(
