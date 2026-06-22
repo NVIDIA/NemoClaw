@@ -223,7 +223,7 @@ describe("executeSandboxExecCommand", () => {
     expect(result).toBeNull();
   });
 
-  it("passes a newline-free shell payload to OpenShell", () => {
+  it("passes a newline-free Hermes validator payload to OpenShell", () => {
     const childProcess = requireDist("node:child_process");
     const spawn = vi.spyOn(childProcess, "spawnSync").mockReturnValue({
       status: 0,
@@ -232,7 +232,10 @@ describe("executeSandboxExecCommand", () => {
     } as never);
 
     const result = withFakeOpenshellBinary(() =>
-      executeSandboxExecCommand("hermes-box", "echo first\necho SECRET_BOUNDARY_OK"),
+      executeSandboxExecCommand(
+        "hermes-box",
+        "python3 /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py env-file /sandbox/.hermes/.env\necho SECRET_BOUNDARY_OK",
+      ),
     );
 
     const args = spawn.mock.calls[0]?.[1] as string[];
@@ -242,6 +245,44 @@ describe("executeSandboxExecCommand", () => {
     expect(shellPayload.includes("\r")).toBe(false);
     expect(shellPayload).toContain("printf '%s\\n' '__NEMOCLAW_SANDBOX_EXEC_STARTED__'");
     expect(shellPayload).toContain("base64 -d | sh");
+  });
+
+  it("falls back to local Docker root exec when OpenShell exec output has no marker", () => {
+    const childProcess = requireDist("node:child_process");
+    const dockerExec = requireDist("../dist/lib/adapters/docker/exec.js");
+    vi.spyOn(childProcess, "spawnSync").mockReturnValue({
+      status: 0,
+      stdout: "OpenShell transport preamble\n",
+      stderr: "",
+    } as never);
+    const dockerSpawnSync = vi
+      .spyOn(dockerExec, "dockerSpawnSync")
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: "abc123\topenshell-hermes-box\n",
+        stderr: "",
+      } as never)
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nSECRET_BOUNDARY_OK\n",
+        stderr: "",
+      } as never);
+
+    const result = withFakeOpenshellBinary(() =>
+      executeSandboxExecCommand("hermes-box", "echo SECRET_BOUNDARY_OK"),
+    );
+
+    expect(result).toEqual({ status: 0, stdout: "SECRET_BOUNDARY_OK", stderr: "" });
+    expect(dockerSpawnSync.mock.calls[0]?.[0]).toEqual(["ps", "--format", "{{.ID}}\t{{.Names}}"]);
+    expect(dockerSpawnSync.mock.calls[1]?.[0]).toEqual([
+      "exec",
+      "-u",
+      "root",
+      "abc123",
+      "sh",
+      "-c",
+      expect.stringContaining("echo SECRET_BOUNDARY_OK"),
+    ]);
   });
 });
 

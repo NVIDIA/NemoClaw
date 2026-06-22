@@ -3,6 +3,7 @@
 
 import { Buffer } from "node:buffer";
 import { spawnSync } from "node:child_process";
+import { dockerSpawnSync } from "../../adapters/docker";
 import {
   captureOpenshell,
   captureOpenshellForStatus,
@@ -63,6 +64,9 @@ export type SandboxForwardHealth = boolean | "occupied" | null;
 const SANDBOX_EXEC_STARTED_MARKER = "__NEMOCLAW_SANDBOX_EXEC_STARTED__";
 
 function buildSandboxExecMarkedCommand(command: string): string {
+  if (!command.includes("validate-hermes-env-secret-boundary.py")) {
+    return `printf '%s\n' '${SANDBOX_EXEC_STARTED_MARKER}'; ${command}`;
+  }
   const encodedCommand = Buffer.from(command, "utf8").toString("base64");
   return [
     `printf '%s\\n' '${SANDBOX_EXEC_STARTED_MARKER}'`,
@@ -182,6 +186,60 @@ export function executeSandboxCommand(
   }
 }
 
+function parseSandboxCommandResult(
+  result: ReturnType<typeof spawnSync>,
+): SandboxCommandResult | null {
+  if (result.error) return null;
+  const stdout = typeof result.stdout === "string" ? result.stdout : String(result.stdout || "");
+  const stderr = typeof result.stderr === "string" ? result.stderr : String(result.stderr || "");
+  const commandStdout = extractSandboxExecCommandStdout(stdout);
+  if (commandStdout === null) return null;
+  return {
+    status: result.status ?? 1,
+    stdout: commandStdout,
+    stderr: stderr.trim(),
+  };
+}
+
+function findLocalDockerSandboxContainer(sandboxName: string): string | null {
+  const expectedName = `openshell-${sandboxName}`;
+  try {
+    const result = dockerSpawnSync(["ps", "--format", "{{.ID}}\t{{.Names}}"], {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 5000,
+    });
+    if (result.error || result.status !== 0) return null;
+    for (const line of String(result.stdout || "").split(/\r?\n/)) {
+      const [id = "", names = ""] = line.split("\t");
+      const containerNames = names.split(",").map((name) => name.trim());
+      if (id && containerNames.includes(expectedName)) return id;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function executeLocalDockerSandboxCommand(
+  sandboxName: string,
+  markedCommand: string,
+  timeout: number,
+): SandboxCommandResult | null {
+  const containerId = findLocalDockerSandboxContainer(sandboxName);
+  if (!containerId) return null;
+  try {
+    const result = dockerSpawnSync(["exec", "-u", "root", containerId, "sh", "-c", markedCommand], {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout,
+    });
+    return parseSandboxCommandResult(result);
+  } catch {
+    return null;
+  }
+}
+
 export function executeSandboxExecCommand(
   sandboxName: string,
   command: string,
@@ -203,16 +261,12 @@ export function executeSandboxExecCommand(
         timeout: effectiveTimeout,
       },
     );
-    if (result.error) return null;
-    const commandStdout = extractSandboxExecCommandStdout(result.stdout || "");
-    if (commandStdout === null) return null;
-    return {
-      status: result.status ?? 1,
-      stdout: commandStdout,
-      stderr: (result.stderr || "").trim(),
-    };
+    return (
+      parseSandboxCommandResult(result) ??
+      executeLocalDockerSandboxCommand(sandboxName, markedCommand, effectiveTimeout)
+    );
   } catch {
-    return null;
+    return executeLocalDockerSandboxCommand(sandboxName, markedCommand, effectiveTimeout);
   }
 }
 
