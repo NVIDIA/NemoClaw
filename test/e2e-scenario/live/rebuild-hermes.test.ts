@@ -148,14 +148,6 @@ function expectEqual(actual: string | undefined, expected: string, message: stri
   }
 }
 
-async function bestEffort(run: () => Promise<ShellProbeResult | unknown>): Promise<void> {
-  try {
-    await run();
-  } catch {
-    // Cleanup remains best-effort so the primary contract failure stays visible.
-  }
-}
-
 async function cleanupHermesResources(
   host: HostCliClient,
   apiKey: string | undefined,
