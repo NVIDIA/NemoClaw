@@ -521,6 +521,22 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       selectedFreeStandingJobs: ["channels-add-remove-vitest"],
       registryScenarios: [],
     });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "tunnel-lifecycle" }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["tunnel-lifecycle-vitest"],
+      registryScenarios: [],
+    });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({ jobs: "tunnel-lifecycle-vitest" }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["tunnel-lifecycle-vitest"],
+      registryScenarios: [],
+    });
   });
 
   it("derives the free-standing inventory from workflow job metadata", () => {
