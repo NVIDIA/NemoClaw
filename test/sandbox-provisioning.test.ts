@@ -470,8 +470,30 @@ describe("sandbox provisioning: image health checks (#1430)", () => {
       // --ignore-ancestors prevents pgrep from self-matching the
       // healthcheck shell whose argv contains the gateway pattern.
       // The [ -] class matches both `openclaw gateway` (launcher) and
-      // `openclaw-gateway` (re-execed binary).
+      // `openclaw-gateway` (re-execed binary). Bare `openclaw` is verified
+      // through the recorded PID fallback below so unrelated CLI invocations
+      // cannot keep the container healthy.
       expect(probe.calls).toContain("pgrep --ignore-ancestors -f openclaw[ -]gateway");
+    });
+
+    it("uses a pgrep liveness pattern that matches gateway argv and rewritten titles but not ordinary openclaw CLI use (#4710)", () => {
+      const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");
+      const match = dockerfile.match(/pgrep --ignore-ancestors -f '([^']+)'/);
+      const pattern = match?.[1] ?? "$.^";
+      const matches = (cmdline: string) =>
+        spawnSync("grep", ["-qE", pattern], { input: cmdline, encoding: "utf-8" }).status === 0;
+
+      // The launcher argv and legacy rewritten-title form must match.
+      expect(matches("node /usr/local/bin/openclaw gateway run --port 18789")).toBe(true);
+      expect(matches("openclaw-gateway")).toBe(true);
+
+      // Bare `openclaw` and ordinary agent CLI invocations must not satisfy the
+      // pgrep liveness probe; the #4952 path below checks bare gateway argv
+      // through the recorded PID instead.
+      expect(matches("openclaw")).toBe(false);
+      expect(matches("openclaw plugins registry --refresh")).toBe(false);
+      expect(matches("node /usr/local/bin/openclaw devices list")).toBe(false);
+      expect(matches("vim openclaw-notes.txt")).toBe(false);
     });
 
     it("reports unhealthy when curl times out (wedged HTTP server, not namespace mismatch)", () => {

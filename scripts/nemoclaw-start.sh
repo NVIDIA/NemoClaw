@@ -244,6 +244,10 @@ NEMOCLAW_CMD=("$@")
 # exists if-and-only-if this container is about to start the gateway. Both the
 # root and non-root entrypoint paths call `mark_in_container_gateway` directly
 # before their `openclaw gateway run` invocation.
+# Internal test seam shared by the PID writer and watchdog. This is deliberately
+# not documented as a public env API; production always keeps the default path.
+GATEWAY_PID_FILE=/tmp/nemoclaw-gateway.pid
+
 # Best-effort: a write failure must never block startup.
 mark_in_container_gateway() {
   _nemoclaw_safe_create_tmp_file /tmp/nemoclaw-gateway-local 600 "" best-effort 2>/dev/null || true
@@ -256,7 +260,7 @@ mark_in_container_gateway() {
 # is tracked and a window where the gateway is down reads as unhealthy.
 # Best-effort: a write failure must never block startup.
 record_gateway_pid() {
-  printf '%s\n' "${1:-}" | _nemoclaw_safe_replace_tmp_file /tmp/nemoclaw-gateway.pid 600 "" best-effort 2>/dev/null || true
+  printf '%s\n' "${1:-}" | _nemoclaw_safe_replace_tmp_file "$GATEWAY_PID_FILE" 600 "" best-effort 2>/dev/null || true
 }
 
 _chat_ui_url_port() {
@@ -3696,6 +3700,124 @@ start_plugin_registry_refresh() {
   PLUGIN_REFRESH_PID=$!
 }
 
+# Watchdog for the in-container gateway HTTP listener (#4710). OpenClaw's
+# config reloader can SIGUSR1-restart the gateway in-process; in containers a
+# failed restart parks the process alive with its listener closed ("gateway
+# startup failed: ... Process will stay alive"). The #2757 respawn loop only
+# observes process exit, so an alive-but-deaf gateway would stay wedged until
+# a human runs `nemoclaw <sandbox> recover`. This watchdog probes the local
+# health endpoint and — once it has seen a listener at least once — kills the
+# gateway after sustained connection-refused so the respawn loop relaunches
+# it. Only curl exit 7 counts as "listener gone": 200/401 mean serving, and
+# timeout / HTTP-error outcomes (curl 28/22) mean a listener exists and remain
+# the Docker HEALTHCHECK's responsibility. Arming only after the first
+# non-refused probe means a slow first boot is never killed; failed first
+# boots stay the respawn loop's and HEALTHCHECK's job.
+
+# PID-reuse / tamper defense: only kill a process whose cmdline still looks
+# like the OpenClaw gateway. Same pattern family as the host-side recovery
+# script (src/lib/agent/runtime.ts): matches the launch argv
+# ("... openclaw gateway run --port N") and the rewritten process titles
+# ("openclaw-gateway", bare "openclaw").
+gateway_pid_is_openclaw_gateway() {
+  # _NEMOCLAW_PROC_ROOT is a test seam (unit tests also run on macOS, which
+  # has no /proc). Production always uses /proc: the watchdog inherits PID 1's
+  # environment, which the sandbox user cannot influence.
+  local cmdline
+  cmdline="$(tr '\0' ' ' <"${_NEMOCLAW_PROC_ROOT:-/proc}/$1/cmdline" 2>/dev/null)" || return 1
+  cmdline="${cmdline%"${cmdline##*[![:space:]]}"}"
+  [ -n "$cmdline" ] || return 1
+  printf '%s' "$cmdline" | grep -qE 'openclaw([ -]gateway| gateway run|$)'
+}
+
+start_gateway_serving_watchdog() {
+  (
+    local interval refused_threshold armed=0 refused_streak=0 pid last_pid="" rc msg
+    interval="${NEMOCLAW_GATEWAY_WATCHDOG_INTERVAL_SECONDS:-30}"
+    refused_threshold="${NEMOCLAW_GATEWAY_WATCHDOG_REFUSED_THRESHOLD:-4}"
+    # Both knobs must be positive integers: a zero/garbage interval would
+    # busy-loop the probe, and a zero threshold would kill on the first
+    # refusal. Fall back to the defaults rather than trusting bad input.
+    case "$interval" in
+      [1-9] | [1-9][0-9]*) ;;
+      *)
+        echo "[gateway-watchdog] invalid NEMOCLAW_GATEWAY_WATCHDOG_INTERVAL_SECONDS='${interval}'; defaulting to 30" >&2
+        interval=30
+        ;;
+    esac
+    case "$refused_threshold" in
+      [1-9] | [1-9][0-9]*) ;;
+      *)
+        echo "[gateway-watchdog] invalid NEMOCLAW_GATEWAY_WATCHDOG_REFUSED_THRESHOLD='${refused_threshold}'; defaulting to 4" >&2
+        refused_threshold=4
+        ;;
+    esac
+    [ -n "${_DASHBOARD_PORT:-}" ] || exit 0
+    while :; do
+      sleep "$interval"
+      pid="$(cat "$GATEWAY_PID_FILE" 2>/dev/null)" || pid=""
+      case "$pid" in
+        '' | *[!0-9]*)
+          last_pid=""
+          armed=0
+          refused_streak=0
+          continue
+          ;;
+      esac
+      # A respawned gateway must earn its own armed state — never inherit
+      # the previous PID's serve history, or a booting replacement could be
+      # killed for refusals that belong to its predecessor.
+      if [ "$pid" != "$last_pid" ]; then
+        last_pid="$pid"
+        armed=0
+        refused_streak=0
+      fi
+      if ! kill -0 "$pid" 2>/dev/null; then
+        # Process exit is the respawn loop's signal, not ours.
+        last_pid=""
+        armed=0
+        refused_streak=0
+        continue
+      fi
+      rc=0
+      curl -s -o /dev/null --max-time 5 "http://127.0.0.1:${_DASHBOARD_PORT}/health" 2>/dev/null || rc=$?
+      if [ "$rc" -ne 7 ]; then
+        armed=1
+        refused_streak=0
+        continue
+      fi
+      [ "$armed" -eq 1 ] || continue
+      refused_streak=$((refused_streak + 1))
+      if [ "$refused_streak" -lt "$refused_threshold" ]; then
+        echo "[gateway-watchdog] gateway pid $pid alive but port ${_DASHBOARD_PORT} refused connection ($refused_streak/$refused_threshold) (#4710)" >&2
+        continue
+      fi
+      if ! gateway_pid_is_openclaw_gateway "$pid"; then
+        echo "[gateway-watchdog] pid $pid no longer looks like the openclaw gateway; not killing (#4710)" >&2
+        armed=0
+        refused_streak=0
+        continue
+      fi
+      msg="[gateway-watchdog] CRITICAL: gateway pid $pid is alive but dropped its HTTP listener on port ${_DASHBOARD_PORT} ($refused_streak consecutive refused probes); killing it so the respawn loop can relaunch (#4710)"
+      echo "$msg" >&2
+      # _NEMOCLAW_GATEWAY_LOG is a test seam; production always appends to
+      # /tmp/gateway.log alongside the gateway's own output.
+      echo "$msg" >>"${_NEMOCLAW_GATEWAY_LOG:-/tmp/gateway.log}" 2>/dev/null || true
+      kill -TERM "$pid" 2>/dev/null || true
+      for _ in 1 2 3 4 5 6 7 8 9 10; do
+        kill -0 "$pid" 2>/dev/null || break
+        sleep 1
+      done
+      if kill -0 "$pid" 2>/dev/null; then
+        kill -KILL "$pid" 2>/dev/null || true
+      fi
+      armed=0
+      refused_streak=0
+    done
+  ) &
+  GATEWAY_WATCHDOG_PID=$!
+}
+
 # ── Main ─────────────────────────────────────────────────────────
 
 # Migrate legacy symlink layout before anything else reads .openclaw
@@ -3816,6 +3938,7 @@ if [ "$(id -u)" -ne 0 ]; then
   start_persistent_gateway_log_mirror || exit 1
   start_auto_pair
   start_plugin_registry_refresh
+  start_gateway_serving_watchdog
   # NOTE: PIDs are collected after launch; a signal arriving between trap
   # registration and the final append is a small race window (same as before
   # the shared-library refactor). Acceptable for entrypoint-level cleanup.
@@ -3824,6 +3947,7 @@ if [ "$(id -u)" -ne 0 ]; then
   [ -n "${GATEWAY_LOG_TAIL_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$GATEWAY_LOG_TAIL_PID")
   [ -n "${GATEWAY_LOG_PERSIST_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$GATEWAY_LOG_PERSIST_PID")
   [ -n "${PLUGIN_REFRESH_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$PLUGIN_REFRESH_PID")
+  [ -n "${GATEWAY_WATCHDOG_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$GATEWAY_WATCHDOG_PID")
   # shellcheck disable=SC2034  # read by cleanup_on_signal from sandbox-init.sh
   SANDBOX_WAIT_PID="$GATEWAY_PID"
   trap cleanup_on_signal SIGTERM SIGINT
@@ -4066,6 +4190,8 @@ start_auto_pair
 # proves /nemoclaw registration without the refresh.
 start_plugin_registry_refresh
 
+start_gateway_serving_watchdog
+
 # NOTE: PIDs are collected after launch; a signal arriving between trap
 # registration and the final append is a small race window (same as before
 # the shared-library refactor). Acceptable for entrypoint-level cleanup.
@@ -4074,6 +4200,7 @@ SANDBOX_CHILD_PIDS=("$GATEWAY_PID")
 [ -n "${GATEWAY_LOG_TAIL_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$GATEWAY_LOG_TAIL_PID")
 [ -n "${GATEWAY_LOG_PERSIST_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$GATEWAY_LOG_PERSIST_PID")
 [ -n "${PLUGIN_REFRESH_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$PLUGIN_REFRESH_PID")
+[ -n "${GATEWAY_WATCHDOG_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$GATEWAY_WATCHDOG_PID")
 # shellcheck disable=SC2034  # read by cleanup_on_signal from sandbox-init.sh
 SANDBOX_WAIT_PID="$GATEWAY_PID"
 trap cleanup_on_signal SIGTERM SIGINT
