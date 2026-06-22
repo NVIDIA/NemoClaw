@@ -4169,6 +4169,7 @@ jobs:
       FREE_STANDING_SCENARIO_ID: "tunnel-lifecycle"
       DOCKER_CONFIG: ${{ github.workspace }}/.docker-config-tunnel-lifecycle
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/tunnel-lifecycle
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"

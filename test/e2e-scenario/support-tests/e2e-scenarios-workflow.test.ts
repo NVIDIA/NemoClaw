@@ -1061,6 +1061,27 @@ jobs:
     }
   });
 
+  it("requires tunnel lifecycle to use the repo NemoClaw CLI boundary", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-vitest-workflow-"));
+    const workflowPath = path.join(tmp, "workflow.yaml");
+    const workflow = readWorkflow() as {
+      jobs: Record<string, { env?: Record<string, unknown> }>;
+    };
+    const job = workflow.jobs["tunnel-lifecycle-vitest"];
+    expect(job).toBeDefined();
+    job.env = { ...job.env };
+    delete job.env.NEMOCLAW_CLI_BIN;
+    fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+    try {
+      expect(validateE2eVitestScenariosWorkflowBoundary(workflowPath)).toContain(
+        "tunnel-lifecycle-vitest job must point NEMOCLAW_CLI_BIN at the repo CLI",
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("applies boundary checks to newly marked free-standing jobs", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-vitest-workflow-"));
     const workflowPath = path.join(tmp, "workflow.yaml");

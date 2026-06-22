@@ -3138,6 +3138,53 @@ function validateModelRouterProviderRoutedInferenceVitestJob(
   requireRunContains(errors, cleanup, 'rm -rf "${DOCKER_CONFIG}"');
 }
 
+function validateTunnelLifecycleVitestJob(errors: string[], jobs: WorkflowRecord): void {
+  const jobName = "tunnel-lifecycle-vitest";
+  const scenarioName = "tunnel-lifecycle";
+  const job = asRecord(jobs[jobName]);
+  if (Object.keys(job).length === 0) {
+    errors.push("workflow missing tunnel-lifecycle-vitest job");
+    return;
+  }
+
+  if (job["runs-on"] !== "ubuntu-latest") {
+    errors.push("tunnel-lifecycle-vitest job must run on ubuntu-latest");
+  }
+  if (job["timeout-minutes"] !== 75) {
+    errors.push("tunnel-lifecycle-vitest job must keep the 75 minute timeout");
+  }
+  validateFreeStandingJobSelector(errors, jobs, jobName, scenarioName);
+
+  const jobEnv = asRecord(job.env);
+  if (jobEnv.NEMOCLAW_CLI_BIN !== "${{ github.workspace }}/bin/nemoclaw.js") {
+    errors.push("tunnel-lifecycle-vitest job must point NEMOCLAW_CLI_BIN at the repo CLI");
+  }
+  if (jobEnv.FREE_STANDING_VITEST_JOB !== "1") {
+    errors.push("tunnel-lifecycle-vitest job must set FREE_STANDING_VITEST_JOB=1");
+  }
+  if (jobEnv.FREE_STANDING_SCENARIO_ID !== scenarioName) {
+    errors.push(`tunnel-lifecycle-vitest job must set FREE_STANDING_SCENARIO_ID=${scenarioName}`);
+  }
+  if (jobEnv.NEMOCLAW_RUN_E2E_SCENARIOS !== "1") {
+    errors.push("tunnel-lifecycle-vitest job must set NEMOCLAW_RUN_E2E_SCENARIOS=1");
+  }
+  requireEnvDoesNotExposeSecret(errors, "tunnel-lifecycle-vitest job", jobEnv, "NVIDIA_INFERENCE_API_KEY");
+
+  const steps = asSteps(job.steps);
+  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
+  requireRunContains(errors, buildCli, "npm run build:cli");
+
+  const runVitest = requireJobStep(errors, jobName, steps, "Run tunnel lifecycle live test");
+  const runVitestEnv = asRecord(runVitest?.env);
+  if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
+    errors.push(
+      "tunnel-lifecycle-vitest Vitest step must receive NVIDIA_INFERENCE_API_KEY from secrets",
+    );
+  }
+  requireRunContains(errors, runVitest, "npx vitest run --project e2e-scenarios-live");
+  requireRunContains(errors, runVitest, "test/e2e-scenario/live/tunnel-lifecycle.test.ts");
+}
+
 function validateIssue2478CrashLoopRecoveryVitestJob(errors: string[], jobs: WorkflowRecord): void {
   const jobName = "issue-2478-crash-loop-recovery-vitest";
   const scenarioName = "issue-2478-crash-loop-recovery";
@@ -4006,6 +4053,8 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   validateBedrockRuntimeCompatibleAnthropicVitestJob(errors, jobs);
 
   validateIssue2478CrashLoopRecoveryVitestJob(errors, jobs);
+
+  validateTunnelLifecycleVitestJob(errors, jobs);
 
   validateFreeStandingJobSelector(
     errors,
