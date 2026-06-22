@@ -4124,7 +4124,7 @@ jobs:
           NEMOCLAW_NON_INTERACTIVE: "1"
         run: |
           set -euo pipefail
-          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
+          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
 
       - name: Run Telegram injection live test
         # Migrated from test/e2e/test-telegram-injection.sh. Preserves the

@@ -35,6 +35,26 @@ function openshellStdinCommand(payload: string, remoteShell: string): string {
   ].join("; ");
 }
 
+function openshellSshStdinCommand(payload: string, remoteShell: string): string {
+  return [
+    "set -euo pipefail",
+    'ssh_config="$(mktemp)"',
+    `trap 'rm -f "$ssh_config"' EXIT`,
+    `openshell sandbox ssh-config ${shellQuote(SANDBOX_NAME)} > "$ssh_config"`,
+    [
+      `printf %s ${shellQuote(base64(payload))} | base64 -d`,
+      "| timeout 30s ssh",
+      '-F "$ssh_config"',
+      "-o StrictHostKeyChecking=no",
+      "-o UserKnownHostsFile=/dev/null",
+      "-o ConnectTimeout=10",
+      "-o LogLevel=ERROR",
+      shellQuote(`openshell-${SANDBOX_NAME}`),
+      shellQuote(remoteShell),
+    ].join(" "),
+  ].join("; ");
+}
+
 async function sendPayloadViaSandboxStdin(
   host: import("../fixtures/clients/host.ts").HostCliClient,
   payload: string,
@@ -51,6 +71,22 @@ async function sendPayloadViaSandboxStdin(
   });
 }
 
+async function sendPayloadViaOpenShellSshStdin(
+  host: import("../fixtures/clients/host.ts").HostCliClient,
+  payload: string,
+  remoteShell: string,
+  env: NodeJS.ProcessEnv,
+  artifactName: string,
+  redactions: string[],
+) {
+  return host.command("bash", ["-lc", openshellSshStdinCommand(payload, remoteShell)], {
+    artifactName,
+    env,
+    redactionValues: redactions,
+    timeoutMs: COMMAND_TIMEOUT_MS,
+  });
+}
+
 async function assertParameterPayloadStaysLiteral(
   host: import("../fixtures/clients/host.ts").HostCliClient,
   env: NodeJS.ProcessEnv,
@@ -60,13 +96,52 @@ async function assertParameterPayloadStaysLiteral(
   const command = [
     "set -euo pipefail",
     'prefix="${NVIDIA_INFERENCE_API_KEY:0:15}"',
-    'out="$(printf %s "${PAYLOAD_B64}" | base64 -d | openshell sandbox exec --name "${SANDBOX_NAME}" -- sh -lc \'MSG=$(cat) && echo "$MSG"\' 2>&1)"',
+    `out="$(printf %s "\${PAYLOAD_B64}" | base64 -d | openshell sandbox exec --name ${shellQuote(SANDBOX_NAME)} -- sh -lc 'MSG=$(cat) && echo "$MSG"' 2>&1)"`,
     'if printf %s "$out" | grep -Fq "$prefix"; then echo SECRET_LEAK; exit 20; fi',
     'printf "%s\\n" "$out"',
   ].join("; ");
   const result = await host.command("bash", ["-lc", command], {
     artifactName: "parameter-expansion-payload",
     env: { ...env, PAYLOAD_B64: base64(payload), SANDBOX_NAME },
+    redactionValues: redactions,
+    timeoutMs: COMMAND_TIMEOUT_MS,
+  });
+  expect(result.exitCode, resultText(result)).toBe(0);
+  expect(resultText(result)).not.toContain("SECRET_LEAK");
+  expect(resultText(result)).toContain(payload);
+}
+
+async function assertSshParameterPayloadStaysLiteral(
+  host: import("../fixtures/clients/host.ts").HostCliClient,
+  env: NodeJS.ProcessEnv,
+  redactions: string[],
+): Promise<void> {
+  const payload = "${NVIDIA_INFERENCE_API_KEY}";
+  const command = [
+    "set -euo pipefail",
+    'prefix="${NVIDIA_INFERENCE_API_KEY:0:15}"',
+    'ssh_config="$(mktemp)"',
+    'out_file="$(mktemp)"',
+    `trap 'rm -f "$ssh_config" "$out_file"' EXIT`,
+    `openshell sandbox ssh-config ${shellQuote(SANDBOX_NAME)} > "$ssh_config"`,
+    [
+      `printf %s ${shellQuote(base64(payload))} | base64 -d`,
+      "| timeout 30s ssh",
+      '-F "$ssh_config"',
+      "-o StrictHostKeyChecking=no",
+      "-o UserKnownHostsFile=/dev/null",
+      "-o ConnectTimeout=10",
+      "-o LogLevel=ERROR",
+      shellQuote(`openshell-${SANDBOX_NAME}`),
+      shellQuote('MSG=$(cat) && echo "$MSG"'),
+      '> "$out_file" 2>&1',
+    ].join(" "),
+    'if grep -Fq "$prefix" "$out_file"; then echo SECRET_LEAK; exit 23; fi',
+    'cat "$out_file"',
+  ].join("; ");
+  const result = await host.command("bash", ["-lc", command], {
+    artifactName: "ssh-parameter-expansion-payload",
+    env,
     redactionValues: redactions,
     timeoutMs: COMMAND_TIMEOUT_MS,
   });
@@ -105,7 +180,7 @@ async function assertSandboxProcessTableDoesNotExposeSecret(
   const command = [
     "set -euo pipefail",
     'prefix="${NVIDIA_INFERENCE_API_KEY:0:15}"',
-    'out="$(openshell sandbox exec --name "${SANDBOX_NAME}" -- sh -lc \'ps aux\' 2>&1)"',
+    `out="$(openshell sandbox exec --name ${shellQuote(SANDBOX_NAME)} -- sh -lc 'ps aux' 2>&1)"`,
     'if printf %s "$out" | grep -Fq "$prefix"; then echo SECRET_LEAK; exit 22; fi',
     "echo SECRET_ABSENT",
   ].join("; ");
@@ -124,17 +199,21 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
   { timeout: LIVE_TIMEOUT_MS },
   async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
     const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
-    const env = phase6Env({ sandboxName: SANDBOX_NAME, agent: "openclaw", apiKey });
+    const env = phase6Env({
+      sandboxName: SANDBOX_NAME,
+      agent: "openclaw",
+      apiKey,
+    });
     const redactions = redactionValues(apiKey);
 
     await artifacts.writeJson("scenario.json", {
       id: "telegram-injection",
       legacySource: "test/e2e/test-telegram-injection.sh",
       boundary:
-        "install.sh OpenClaw sandbox + OpenShell sandbox exec stdin path + process table and validateName probes",
+        "install.sh OpenClaw sandbox + OpenShell sandbox exec and ssh-config stdin paths + process table and validateName probes",
       sandboxName: SANDBOX_NAME,
       contracts: [
-        "command substitution payloads are literal input and do not create files",
+        "command substitution payloads are literal input through exec and ssh-config paths and do not create files",
         "parameter expansion does not leak NVIDIA_INFERENCE_API_KEY",
         "host and sandbox process tables do not expose the API key after setup",
         "invalid sandbox names with shell metacharacters are rejected by validateName",
@@ -201,9 +280,37 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       );
       expectExitZero(markerCheck, `check ${label} marker`);
       expect(markerCheck.stdout.trim(), resultText(markerCheck)).toBe("SAFE");
+
+      const sshMarker = marker.replace("/tmp/injection-proof-", "/tmp/injection-proof-ssh-");
+      await sandboxSh(sandbox, SANDBOX_NAME, `rm -f ${shellQuote(sshMarker)}`, {
+        artifactName: `remove-${label}-ssh-marker`,
+        redactionValues: redactions,
+      });
+      const sshPayload = payload.replace(marker, sshMarker);
+      const sshSend = await sendPayloadViaOpenShellSshStdin(
+        host,
+        sshPayload,
+        'MSG=$(cat) && echo "Received: $MSG"',
+        env,
+        `send-${label}-ssh-payload`,
+        redactions,
+      );
+      expect(sshSend.exitCode, resultText(sshSend)).toBe(0);
+      const sshMarkerCheck = await sandboxSh(
+        sandbox,
+        SANDBOX_NAME,
+        `test -f ${shellQuote(sshMarker)} && echo EXPLOITED || echo SAFE`,
+        {
+          artifactName: `check-${label}-ssh-marker`,
+          redactionValues: redactions,
+        },
+      );
+      expectExitZero(sshMarkerCheck, `check ${label} ssh marker`);
+      expect(sshMarkerCheck.stdout.trim(), resultText(sshMarkerCheck)).toBe("SAFE");
     }
 
     await assertParameterPayloadStaysLiteral(host, env, redactions);
+    await assertSshParameterPayloadStaysLiteral(host, env, redactions);
     await assertHostProcessTableDoesNotExposeSecret(host, env, redactions);
     await assertSandboxProcessTableDoesNotExposeSecret(host, env, redactions);
 
@@ -214,6 +321,7 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       "`id`",
       "foo bar",
       "../etc/passwd",
+      "UPPERCASE",
     ];
     for (const invalidName of invalidNames) {
       const validation = await host.command(
@@ -221,6 +329,7 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
         [
           "-e",
           `const { validateName } = require(${JSON.stringify(path.join(REPO_ROOT, "dist/lib/runner"))});\ntry { validateName(process.argv[1], "SANDBOX_NAME"); console.log("ACCEPTED"); } catch (error) { console.log("REJECTED:" + error.message); }`,
+          "--",
           invalidName,
         ],
         {
