@@ -219,13 +219,29 @@ For substantial features or behavior changes, start with a GitHub Discussion bef
 
 ### DCO Sign-Off
 
-This project requires a [Developer Certificate of Origin (DCO)](https://developercertificate.org/) sign-off on every commit. Add the following trailer to each commit message:
+This project requires a [Developer Certificate of Origin (DCO)](https://developercertificate.org/) sign-off declaration in every pull request description.
+Add the following trailer at the bottom of the PR description:
 
 ```text
 Signed-off-by: Your Name <your.email@example.com>
 ```
 
-Use `git commit -s` to add the sign-off automatically. CI will reject commits that are missing it.
+CI will reject PRs whose descriptions are missing this declaration.
+
+### Verified Commit Signatures
+
+This project also requires every PR commit to appear as `Verified` in GitHub.
+Configure your local Git client or GitHub web editor to create verified signed commits before you open a pull request.
+Maintainers do not repair contributor signature failures.
+
+Use GitHub's official documentation to set this up:
+
+- [About commit signature verification](https://docs.github.com/en/authentication/managing-commit-signature-verification/about-commit-signature-verification)
+- [Signing commits](https://docs.github.com/en/authentication/managing-commit-signature-verification/signing-commits)
+
+If the PR description is missing the DCO declaration, update the PR description before requesting review.
+If any commit is missing GitHub verification, fix the branch before opening a PR.
+If force-push is not allowed after an unverified commit is published, open a fresh branch and fresh PR with a clean compliant history.
 
 > [!WARNING]
 > Accounts that repeatedly exceed this limit or submit automated bulk PRs may have their PRs closed or their access restricted.
@@ -249,7 +265,8 @@ Follow these steps to submit a pull request.
 3. Run the relevant checks.
    Let normal commit and push hooks provide hook verification, run targeted tests for changed behavior, and run `npm run docs` for doc changes.
    If hooks were skipped or unavailable, run `npx prek run --from-ref main --to-ref HEAD`.
-4. Open a PR.
+4. Confirm the PR description includes the DCO declaration and every commit appears as `Verified` in GitHub.
+5. Open a PR.
 
 ### Commit Messages
 

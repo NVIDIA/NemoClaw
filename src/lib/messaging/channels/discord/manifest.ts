@@ -44,6 +44,7 @@ export const discordManifest = {
       statePath: "discordGuilds.requireMention",
       promptWhenInput: "serverId",
       validValues: ["0", "1"],
+      defaultValue: "1",
       prompt: {
         label: "Discord mention mode",
         help: "Choose whether the bot should reply only when @mentioned or to all messages in this server.",
@@ -181,6 +182,7 @@ export const discordManifest = {
   ],
   runtime: {
     openclaw: {
+      channelName: "discord",
       visibility: {
         configKeys: ["discord"],
         logPatterns: ["discord"],

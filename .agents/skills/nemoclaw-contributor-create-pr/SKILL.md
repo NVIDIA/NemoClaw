@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-contributor-create-pr
-description: Create GitHub pull requests that follow the NemoClaw PR template. Use when the user wants to create a new PR, submit code for review, open a pull request, or push changes for review. Trigger keywords - create PR, pull request, new PR, submit for review, open PR, push for review.
+description: Create GitHub pull requests that follow the NemoClaw PR template, then monitor CI and automated review feedback. Use when the user wants to create a new PR, submit code for review, open a pull request, or push changes for review. Trigger keywords - create PR, pull request, new PR, submit for review, open PR, push for review.
 ---
 
 # Create GitHub Pull Request
@@ -12,6 +12,11 @@ Create pull requests on the NemoClaw GitHub repository using the `gh` CLI. This 
 - The `gh` CLI must be authenticated (`gh auth status`).
 - You must be in the NemoClaw git repository.
 - You must have commits on a branch that is pushed to the remote.
+- The PR description must include a valid DCO `Signed-off-by:` declaration, and every commit that will appear in the PR must appear as `Verified` in GitHub.
+
+## Hard Stop: Git, SSH, and Authentication Problems
+
+Follow the shared [Git and GitHub Access Hard Stop](../_shared/git-github-hard-stop.md) guardrail for SSH, authentication, remote access, authorization, or permission failures. Resolve ordinary Git workflow problems such as merge conflicts or dirty worktrees in the current workflow.
 
 ## Step 1: Verify Branch State
 
@@ -85,7 +90,36 @@ Ensure the branch is pushed to the remote.
 git push -u origin HEAD
 ```
 
-## Step 4: Determine PR Metadata
+If the push fails because of SSH, authentication, remote access, authorization, or permission problems, follow [Git and GitHub Access Hard Stop](../_shared/git-github-hard-stop.md). Resolve ordinary non-access Git failures, such as merge conflicts or dirty worktrees, in the current workflow.
+
+## Step 4: Prepare DCO Declaration and Verify GitHub Commits
+
+Before creating the PR, prepare the DCO declaration for the PR body and verify every commit in `main..HEAD`.
+This is a hard contributor self-serve gate.
+Do not run `gh pr create` until the PR body will include the DCO declaration and every commit passes GitHub verification.
+
+1. **DCO declaration.** The PR body must include a `Signed-off-by:` declaration for the contributor.
+   Use the contributor's configured Git identity unless the contributor provides a different valid identity.
+
+   ```bash
+   git config user.name
+   git config user.email
+   ```
+
+2. **GitHub verification.** Each pushed commit must appear as verified in GitHub.
+   Check the commit SHAs from `main..HEAD` with the GitHub API before opening the PR.
+
+   ```bash
+   for sha in $(git rev-list main..HEAD); do
+     gh api "/repos/NVIDIA/NemoClaw/commits/$sha" --jq '.sha + " verified=" + (.commit.verification.verified | tostring) + " reason=" + .commit.verification.reason'
+   done
+   ```
+
+If the PR body would miss the DCO declaration or any commit is missing GitHub verification, stop.
+Tell the contributor to fix the issue before opening a PR.
+If force-push is not allowed and the published branch already contains an unverified commit, require a fresh branch and fresh PR with a clean compliant history.
+
+## Step 5: Determine PR Metadata
 
 ### Title
 
@@ -120,14 +154,15 @@ Check the branch name and commit messages for issue references. If an issue exis
 
 ### DCO Sign-Off
 
-The PR body must include a DCO sign-off line. Determine the user's name and email from git config:
+The PR body must include a DCO sign-off line.
+Determine the user's name and email from git config:
 
 ```bash
 git config user.name
 git config user.email
 ```
 
-## Step 5: Compose the PR Body
+## Step 6: Compose the PR Body
 
 Use the exact template structure below. Fill in each section based on the diff (`git diff main...HEAD`). Check the applicable boxes and leave others unchecked. Do not add, remove, or reorganize sections.
 
@@ -149,6 +184,7 @@ Use the exact template structure below. Fill in each section based on the diff (
 
 ## Verification
 <!-- Check each item you ran and confirmed. Leave unchecked items you skipped. Doc-only changes do not require npm test unless you ran it. -->
+- [ ] PR description includes the DCO sign-off declaration and every commit appears as `Verified` in GitHub
 - [ ] Git hooks passed during commit and push, or `npx prek run --from-ref main --to-ref HEAD` passes
 - [ ] Targeted tests pass for changed behavior
 - [ ] Full `npm test` passes (broad runtime changes only)
@@ -160,7 +196,7 @@ Use the exact template structure below. Fill in each section based on the diff (
 - [ ] New doc pages include SPDX header and frontmatter (new pages only)
 
 ---
-<!-- DCO sign-off required by CI. Run: git config user.name && git config user.email -->
+<!-- DCO sign-off is required in this PR description, and every commit must appear as Verified in GitHub. Run: git config user.name && git config user.email -->
 Signed-off-by: {name} <{email}>
 ```
 
@@ -172,19 +208,20 @@ Follow these rules when filling in the template:
 - **Related Issue:** Include `Fixes #NNN` or `Closes #NNN` if an issue exists. Remove the section entirely if there is no related issue.
 - **Changes:** Bullet list of key changes. Be specific — reference file names, commands, or behaviors that changed.
 - **Type of Change:** Check exactly one box. Use `[x]` for checked, `[ ]` for unchecked.
-- **Verification:** Check only the boxes for steps you actually ran and confirmed passing, or for Git hooks that passed during normal commit and push. Do not check boxes for steps you skipped or did not verify. For doc-only changes, `npm test` is not required; leave it unchecked unless you ran it.
+- **Verification:** Check only the boxes for steps you actually ran and confirmed passing, or for Git hooks that passed during normal commit and push. Do not check boxes for steps you skipped or did not verify. The DCO declaration and GitHub verification checkbox is mandatory before PR creation because Step 4 must pass first. For doc-only changes, `npm test` is not required; leave it unchecked unless you ran it.
 - **DCO Sign-Off:** Replace `{name}` and `{email}` with values from `git config user.name` and `git config user.email`.
 
-## Step 6: Create the PR
+## Step 7: Create the PR
 
 Use `gh pr create` with the `--assignee @me` flag and a HEREDOC for the body to preserve formatting.
+Only run this step after Step 4 confirms that the PR body includes the DCO declaration and every commit is GitHub-verified.
 
 ```bash
 gh pr create \
   --title "<type>(<scope>): <description>" \
   --assignee "@me" \
   --body "$(cat <<'EOF'
-<full PR body from Step 5>
+<full PR body from Step 6>
 EOF
 )"
 ```
@@ -206,21 +243,31 @@ For work-in-progress that is not ready for review:
 gh pr create --draft --title "..." --assignee "@me" --body "..."
 ```
 
-## Step 7: Report the Result
+## Step 8: Monitor CI and Review Feedback
 
-After the PR is created, display the PR URL as a clickable markdown link:
+After creating the PR, do not stop at the URL. Follow the shared [PR CI and Automated Review Follow-Up](../_shared/pr-follow-up.md) workflow: watch required CI, inspect CodeRabbit and PR Review Advisor feedback, address valid findings, and consult the user when feedback is ambiguous or design-changing.
+
+## Step 9: Report the Result
+
+After the PR is created and the initial CI/reviewer follow-up is handled, display the PR URL as a clickable markdown link and summarize the status:
 
 ```text
 Created PR [#NNN](https://github.com/NVIDIA/NemoClaw/pull/NNN)
+CI: passing/pending/failing
+Automated review: no actionable findings / addressed findings / waiting on user
 ```
 
 ## Common Mistakes to Avoid
 
-- **Do not invent your own PR body format.** Use the template from Step 5 exactly.
+- **Do not invent your own PR body format.** Use the template from Step 6 exactly.
 - **Do not omit sections.** Even if a section is not applicable, keep it with the "Skip if..." comment.
 - **Do not check boxes for steps you did not run.** If you did not run `npm run docs`, leave that box unchecked.
 - **Do not rerun hook-covered checks by default.** Normal commit and push hooks are valid verification. Use `npx prek run --from-ref main --to-ref HEAD` as the fallback when hooks were skipped, missing, or uncertain.
 - **Do not run the full test suite for doc-only changes by default.** Run the docs build instead, and leave `npm test` unchecked unless you actually ran it.
-- **Do not forget the DCO sign-off.** CI will reject the PR without it.
+- **Do not forget the DCO sign-off declaration in the PR body.** CI will reject the PR without it.
+- **Do not create PRs with unverified commits.** GitHub must report every PR commit as `Verified` before the PR is opened.
+- **Do not rely on maintainers to repair contributor signature history.** If force-push is not allowed and the branch contains an unverified commit, use a fresh branch and fresh PR.
 - **Do not forget `--assignee @me`.** Every PR must be assigned to its creator.
 - **Do not create PRs from main.** Always use a feature branch.
+- **Do not troubleshoot Git/GitHub access in-agent.** If SSH, `gh`, authentication, remote access, authorization, or push permissions fail, stop and ask the user to fix access. Do resolve ordinary merge conflicts and dirty-worktree state when the workflow calls for it.
+- **Do not abandon the PR immediately after creation.** Watch CI and automated feedback from CodeRabbit and the PR Review Advisor, address valid findings, and consult the user when feedback is ambiguous.

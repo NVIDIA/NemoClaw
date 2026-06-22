@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { SandboxMessagingPlan } from "./manifest";
+import { compactSandboxMessagingPlanForPersistence } from "./persistence";
 import {
   getActiveChannelIdsFromPlan,
   getConfiguredChannelIdsFromPlan,
@@ -12,7 +13,6 @@ import {
   getMessagingPlanStateValues,
   parseSandboxMessagingPlan,
 } from "./plan-validation";
-import { compactSandboxMessagingPlanForPersistence } from "./persistence";
 
 function makePlan(overrides: Partial<SandboxMessagingPlan> = {}): SandboxMessagingPlan {
   return {
@@ -221,6 +221,15 @@ describe("plan channel derivation", () => {
               statePath: "telegramConfig.requireMention",
               value: "1",
             },
+            {
+              channelId: "telegram",
+              inputId: "groupPolicy",
+              kind: "config",
+              required: false,
+              sourceEnv: "TELEGRAM_GROUP_POLICY",
+              statePath: "telegramConfig.groupPolicy",
+              value: "allowlist",
+            },
           ],
         },
         {
@@ -322,6 +331,12 @@ describe("plan channel derivation", () => {
           env: "TELEGRAM_REQUIRE_MENTION",
         },
         {
+          channelId: "telegram",
+          kind: "rebuild-hydration",
+          statePath: "telegramConfig.groupPolicy",
+          env: "TELEGRAM_GROUP_POLICY",
+        },
+        {
           channelId: "wechat",
           kind: "rebuild-hydration",
           statePath: "wechatConfig.accountId",
@@ -362,6 +377,7 @@ describe("plan channel derivation", () => {
 
     expect(getMessagingPlanStateValues(plan)).toMatchObject({
       "telegramConfig.requireMention": "1",
+      "telegramConfig.groupPolicy": "allowlist",
       "wechatConfig.accountId": "wechat-account",
       "wechatConfig.baseUrl": "https://wechat.example",
       "allowedIds.slack": "U01ABC2DEF3",
@@ -371,6 +387,7 @@ describe("plan channel derivation", () => {
     });
     expect(getMessagingChannelConfigFromPlan(plan)).toEqual({
       TELEGRAM_REQUIRE_MENTION: "1",
+      TELEGRAM_GROUP_POLICY: "allowlist",
       WECHAT_ACCOUNT_ID: "wechat-account",
       WECHAT_BASE_URL: "https://wechat.example",
       SLACK_ALLOWED_USERS: "U01ABC2DEF3",

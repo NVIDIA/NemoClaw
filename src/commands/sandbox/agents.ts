@@ -15,6 +15,7 @@ export default class SandboxAgentsCommand extends NemoClawCommand {
     "<%= config.bin %> sandbox agents alpha --help",
     "<%= config.bin %> sandbox agents list alpha --json",
     "<%= config.bin %> sandbox agents add alpha work --model gpt-4o",
+    "<%= config.bin %> sandbox agents apply alpha -f ./agents.yaml --yes",
     "<%= config.bin %> sandbox agents delete alpha work --force --json",
   ];
 
