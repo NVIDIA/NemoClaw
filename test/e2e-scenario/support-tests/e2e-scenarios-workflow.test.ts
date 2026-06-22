@@ -1154,45 +1154,56 @@ jobs:
     job.env.NEMOCLAW_SANDBOX_NAME = "personal-dev-${{ matrix.agent }}";
     job.env.DOCKER_CONFIG = "${{ github.workspace }}/.docker-config-shared";
     job.env.NVIDIA_API_KEY = "${{ secrets.NVIDIA_API_KEY }}";
-    for (const step of job.steps) {
-      if (typeof step.uses === "string" && step.uses.startsWith("actions/checkout@")) {
-        step.with = { ...(step.with as Record<string, unknown>), "persist-credentials": true };
-      }
-      if (step.name === "Authenticate to Docker Hub") {
-        step.run =
-          "docker login docker.io --username user --password ${{ secrets.DOCKERHUB_TOKEN }}";
-      }
-      if (step.name === "Install root dependencies") {
-        step.run = "npm install";
-      }
-      if (step.name === "Install OpenShell") {
-        step.run = "bash scripts/install-openshell.sh";
-      }
-      if (step.name === "Run channels stop/start live test") {
-        step.env = {
-          NVIDIA_API_KEY: "${{ secrets.NVIDIA_API_KEY }}",
-          TELEGRAM_BOT_TOKEN: "real-token",
-        };
-        step.run = String(step.run).replace(
-          "test/e2e-scenario/live/channels-stop-start.test.ts",
-          "test/e2e-scenario/live/channels-add-remove.test.ts",
-        );
-      }
-      if (step.name === "Upload channels stop/start artifacts") {
-        step.uses = "actions/upload-artifact@v4";
-        step.with = {
-          ...(step.with as Record<string, unknown>),
-          name: "channels-stop-start",
-          path: "e2e-artifacts/vitest/channels-stop-start/",
-          "include-hidden-files": true,
-          "retention-days": 1,
-        };
-      }
-      if (step.name === "Clean up Docker auth") {
-        delete step.if;
-        step.run = "docker logout docker.io";
-      }
-    }
+    const checkoutStep = job.steps.find(
+      (step) => typeof step.uses === "string" && step.uses.startsWith("actions/checkout@"),
+    );
+    expect(checkoutStep).toBeDefined();
+    checkoutStep!.with = {
+      ...(checkoutStep!.with as Record<string, unknown>),
+      "persist-credentials": true,
+    };
+
+    const dockerAuthStep = job.steps.find((step) => step.name === "Authenticate to Docker Hub");
+    expect(dockerAuthStep).toBeDefined();
+    dockerAuthStep!.run =
+      "docker login docker.io --username user --password ${{ secrets.DOCKERHUB_TOKEN }}";
+
+    const installRootStep = job.steps.find((step) => step.name === "Install root dependencies");
+    expect(installRootStep).toBeDefined();
+    installRootStep!.run = "npm install";
+
+    const installOpenShellStep = job.steps.find((step) => step.name === "Install OpenShell");
+    expect(installOpenShellStep).toBeDefined();
+    installOpenShellStep!.run = "bash scripts/install-openshell.sh";
+
+    const runStep = job.steps.find((step) => step.name === "Run channels stop/start live test");
+    expect(runStep).toBeDefined();
+    runStep!.env = {
+      NVIDIA_API_KEY: "${{ secrets.NVIDIA_API_KEY }}",
+      TELEGRAM_BOT_TOKEN: "real-token",
+    };
+    runStep!.run = String(runStep!.run).replace(
+      "test/e2e-scenario/live/channels-stop-start.test.ts",
+      "test/e2e-scenario/live/channels-add-remove.test.ts",
+    );
+
+    const uploadStep = job.steps.find(
+      (step) => step.name === "Upload channels stop/start artifacts",
+    );
+    expect(uploadStep).toBeDefined();
+    uploadStep!.uses = "actions/upload-artifact@v4";
+    uploadStep!.with = {
+      ...(uploadStep!.with as Record<string, unknown>),
+      name: "channels-stop-start",
+      path: "e2e-artifacts/vitest/channels-stop-start/",
+      "include-hidden-files": true,
+      "retention-days": 1,
+    };
+
+    const cleanupStep = job.steps.find((step) => step.name === "Clean up Docker auth");
+    expect(cleanupStep).toBeDefined();
+    delete cleanupStep!.if;
+    cleanupStep!.run = "docker logout docker.io";
     fs.writeFileSync(workflowPath, YAML.stringify(workflow));
 
     try {
