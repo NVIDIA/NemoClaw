@@ -602,19 +602,21 @@ function formatFindingLocation(finding: Finding): string {
 function formatInlineLocation(finding: Finding): string {
   if (!finding.file) return "";
   const line = Number.isInteger(finding.line) && Number(finding.line) > 0 ? `:${finding.line}` : "";
-  return `\`${escapeCodeSpan(`${finding.file}${line}`)}\``;
+  return `<code>${escapeLocationHtml(`${finding.file}${line}`)}</code>`;
 }
 
 function formatTableLocation(finding: Finding): string {
   return formatInlineLocation(finding) || "—";
 }
 
-function escapeCodeSpan(value: string): string {
+function escapeLocationHtml(value: string): string {
   return value
+    .replace(/\s+/g, " ")
+    .trim()
     .replaceAll("&", "&amp;")
-    .replaceAll("`", "\\`")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
+    .replaceAll("|", "&#124;")
     .replaceAll("@", "&#64;");
 }
 

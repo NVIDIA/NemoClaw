@@ -1205,6 +1205,52 @@ diff --git a/test/example.test.ts b/test/example.test.ts
     expect(comment).not.toContain("check </details>");
   });
 
+  it("keeps hostile file locations inside checklist and table fields", () => {
+    const result = normalizeReviewResult(
+      validResult({
+        findings: [
+          {
+            severity: "blocker",
+            category: "correctness",
+            file: "src/a|b.ts",
+            line: 7,
+            title: "Pipe in path",
+            description: "Location should not add a table cell.",
+          },
+          {
+            severity: "warning",
+            category: "correctness",
+            file: "src/a\nb.ts",
+            line: 8,
+            title: "Newline in path",
+            description: "Location should stay on one rendered line.",
+          },
+          {
+            severity: "suggestion",
+            category: "correctness",
+            file: "src/a`b.ts",
+            line: 9,
+            title: "Backtick in path",
+            description: "Location should not break a Markdown code span.",
+          },
+        ],
+      }),
+      metadata(),
+    );
+    const comment = buildComment({ summary: renderSummary(result), result });
+    const indexRows = comment.split("\n").filter((line) => /^\| `PRA-/.test(line));
+
+    expect(indexRows).toHaveLength(3);
+    expect(indexRows[0]).toContain("<code>src/a&#124;b.ts:7</code>");
+    expect(indexRows[1]).toContain("<code>src/a b.ts:8</code>");
+    expect(indexRows[2]).toContain("<code>src/a`b.ts:9</code>");
+    for (const row of indexRows) expect(row.match(/\|/g)).toHaveLength(6);
+    expect(comment).toContain("- [ ] `PRA-1` Fix: Pipe in path in <code>src/a&#124;b.ts:7</code>");
+    expect(comment).toContain("- **Location:** <code>src/a b.ts:8</code>");
+    expect(comment).not.toContain("src/a\nb.ts");
+    expect(comment).not.toContain("`src/a`b.ts:9`");
+  });
+
   it("escapes advisor finding text before rendering sticky comments", () => {
     const result = normalizeReviewResult(
       validResult({
