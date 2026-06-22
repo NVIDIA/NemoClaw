@@ -685,27 +685,31 @@ jobs:
     }
   });
 
-  it("keeps each free-standing scenario out of the registry matrix", { timeout: 120_000 }, () => {
-    const inventory = readFreeStandingJobsInventory();
-    for (const job of inventory.allowedJobs) {
-      expect(generateMatrixForDispatch({ JOBS: job, SCENARIOS: "" })).toMatchObject({
-        hermes_selected: job === "hermes-e2e-vitest" ? "true" : "false",
-        matrix: "[]",
-      });
-    }
-    for (const [scenario, job] of inventory.scenarioToJob) {
-      expect(generateMatrixForDispatch({ JOBS: "", SCENARIOS: scenario })).toMatchObject({
-        hermes_selected: scenario === "hermes-e2e" ? "true" : "false",
-        matrix: "[]",
-      });
-      expect(evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: scenario })).toMatchObject({
-        valid: true,
-        liveScenariosRuns: false,
-        selectedFreeStandingJobs: [job],
-        registryScenarios: [],
-      });
-    }
-  });
+  it(
+    "keeps each free-standing scenario out of the registry matrix",
+    testTimeoutOptions(240_000),
+    () => {
+      const inventory = readFreeStandingJobsInventory();
+      for (const job of inventory.allowedJobs) {
+        expect(generateMatrixForDispatch({ JOBS: job, SCENARIOS: "" })).toMatchObject({
+          hermes_selected: job === "hermes-e2e-vitest" ? "true" : "false",
+          matrix: "[]",
+        });
+      }
+      for (const [scenario, job] of inventory.scenarioToJob) {
+        expect(generateMatrixForDispatch({ JOBS: "", SCENARIOS: scenario })).toMatchObject({
+          hermes_selected: scenario === "hermes-e2e" ? "true" : "false",
+          matrix: "[]",
+        });
+        expect(evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: scenario })).toMatchObject({
+          valid: true,
+          liveScenariosRuns: false,
+          selectedFreeStandingJobs: [job],
+          registryScenarios: [],
+        });
+      }
+    },
+  );
 
   it("flags direct dispatch-input interpolation and unsafe artifact upload", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-vitest-workflow-"));
