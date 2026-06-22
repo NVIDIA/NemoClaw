@@ -1150,6 +1150,37 @@ diff --git a/test/example.test.ts b/test/example.test.ts
     expect(comment).toContain("Safety boundary: Keep input validation and timezone test coverage.");
   });
 
+  it("prioritizes warning findings ahead of test follow-ups", () => {
+    const result = normalizeReviewResult(
+      validResult({
+        findings: [
+          {
+            severity: "warning",
+            category: "correctness",
+            file: "src/lib/example.ts",
+            line: 12,
+            title: "Resolve the warning first",
+            description: "Warnings should remain ahead of test follow-ups in scan-first sections.",
+            recommendation:
+              "Resolve or justify this warning before working through test follow-ups.",
+          },
+        ],
+      }),
+      metadata(),
+    );
+
+    const comment = buildComment({ summary: renderSummary(result), result });
+    const warningChecklist = "- [ ] `PRA-1` Resolve or justify: Resolve the warning first";
+    const testChecklist = "- [ ] `PRA-T1` Add or justify test follow-up";
+
+    expect(comment).toContain(
+      "**Primary next action:** Resolve or justify `PRA-1`: Resolve the warning first.",
+    );
+    expect(comment).toContain(warningChecklist);
+    expect(comment).toContain(testChecklist);
+    expect(comment.indexOf(warningChecklist)).toBeLessThan(comment.indexOf(testChecklist));
+  });
+
   it("renders suggestion findings as in-scope current-review work", () => {
     const result = normalizeReviewResult(
       validResult({

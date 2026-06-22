@@ -262,12 +262,12 @@ function primaryNextAction(
       testingFollowups.length > 0 ? `; then add or justify \`${testingFollowups[0]?.id}\`` : "";
     return `Fix \`${blocker.id}\`: ${escapeCommentText(findingTitle(blocker.finding))}${testText}.`;
   }
-  if (testingFollowups.length > 0) {
-    return `Add or justify \`${testingFollowups[0]?.id || "PRA-T1"}\` and any related test follow-ups.`;
-  }
   const warning = records.find((record) => record.finding.severity === "warning");
   if (warning) {
     return `Resolve or justify \`${warning.id}\`: ${escapeCommentText(findingTitle(warning.finding))}.`;
+  }
+  if (testingFollowups.length > 0) {
+    return `Add or justify \`${testingFollowups[0]?.id || "PRA-T1"}\` and any related test follow-ups.`;
   }
   const suggestion = records.find((record) => record.finding.severity === "suggestion");
   if (suggestion) {
@@ -305,11 +305,11 @@ function renderActionChecklist(
   for (const record of records.filter((item) => item.finding.severity === "blocker").slice(0, 10)) {
     lines.push(formatChecklistFinding(record, "Fix"));
   }
-  for (const followup of testingFollowups.slice(0, 8))
-    lines.push(formatChecklistFollowup(followup));
   for (const record of records.filter((item) => item.finding.severity === "warning").slice(0, 10)) {
     lines.push(formatChecklistFinding(record, "Resolve or justify"));
   }
+  for (const followup of testingFollowups.slice(0, 8))
+    lines.push(formatChecklistFollowup(followup));
   for (const record of records
     .filter((item) => item.finding.severity === "suggestion")
     .slice(0, 10)) {
