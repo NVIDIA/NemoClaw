@@ -3,23 +3,22 @@
 
 /** Live Vitest replacement for test/e2e/test-channels-stop-start.sh. */
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { expect } from "../fixtures/e2e-test.ts";
 import {
   type AgentKind,
-  arrayRecords,
+  CLI,
   cleanupSandbox,
   dockerInfo,
   expectExitZero,
   expectSandboxReady,
   installSandboxOrSkipOnRateLimit,
-  messagingPlan,
   phase6Env,
-  phase6Tokens,
-  rebuildSandbox,
-  redactionValues,
   resultText,
   sandboxSh,
-  stringArray,
 } from "./phase6-messaging-helpers.ts";
 
 const AGENT = (process.env.NEMOCLAW_CHANNELS_STOP_START_AGENT ??
@@ -29,6 +28,7 @@ if (AGENT !== "openclaw" && AGENT !== "hermes") {
   throw new Error(`NEMOCLAW_CHANNELS_STOP_START_AGENT must be openclaw or hermes, got ${AGENT}`);
 }
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? `e2e-channels-stop-start-${AGENT}`;
+const REGISTRY_FILE = path.join(process.env.HOME ?? os.homedir(), ".nemoclaw", "sandboxes.json");
 const CHANNELS = ["telegram", "discord", "wechat", "slack", "whatsapp"] as const;
 const PROVIDERS: Record<string, (sandbox: string) => string[]> = {
   telegram: (sandbox) => [`${sandbox}-telegram-bridge`],
@@ -40,6 +40,105 @@ const PROVIDERS: Record<string, (sandbox: string) => string[]> = {
 export const LIVE_TIMEOUT_MS = 80 * 60_000;
 
 type ChannelState = "active" | "disabled";
+type JsonRecord = Record<string, unknown>;
+type Phase6Tokens = {
+  telegram: string;
+  discord: string;
+  slackBot: string;
+  slackApp: string;
+  wechat: string;
+};
+
+function phase6Tokens(suffix: string): Phase6Tokens {
+  return {
+    telegram: process.env.TELEGRAM_BOT_TOKEN ?? `test-fake-telegram-token-${suffix}`,
+    discord: process.env.DISCORD_BOT_TOKEN ?? `test-fake-discord-token-${suffix}`,
+    slackBot: process.env.SLACK_BOT_TOKEN ?? `xoxb-fake-slack-token-${suffix}`,
+    slackApp: process.env.SLACK_APP_TOKEN ?? `xapp-fake-slack-token-${suffix}`,
+    wechat: process.env.WECHAT_BOT_TOKEN ?? `test-fake-wechat-token-${suffix}`,
+  };
+}
+
+function phase6TokenEnv(tokens: Phase6Tokens): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {
+    TELEGRAM_BOT_TOKEN: tokens.telegram,
+    TELEGRAM_ALLOWED_IDS: process.env.TELEGRAM_ALLOWED_IDS ?? "123456789,987654321",
+    TELEGRAM_REQUIRE_MENTION: process.env.TELEGRAM_REQUIRE_MENTION ?? "0",
+    DISCORD_BOT_TOKEN: tokens.discord,
+    DISCORD_SERVER_ID: process.env.DISCORD_SERVER_ID ?? "1491590992753590594",
+    DISCORD_SERVER_IDS:
+      process.env.DISCORD_SERVER_IDS ?? process.env.DISCORD_SERVER_ID ?? "1491590992753590594",
+    DISCORD_USER_ID: process.env.DISCORD_USER_ID ?? "1005536447329222676",
+    DISCORD_ALLOWED_IDS:
+      process.env.DISCORD_ALLOWED_IDS ?? process.env.DISCORD_USER_ID ?? "1005536447329222676",
+    DISCORD_REQUIRE_MENTION: process.env.DISCORD_REQUIRE_MENTION ?? "0",
+    SLACK_BOT_TOKEN: tokens.slackBot,
+    SLACK_APP_TOKEN: tokens.slackApp,
+    SLACK_ALLOWED_USERS: process.env.SLACK_ALLOWED_USERS ?? "U0123456789,U09ABCDEFGH",
+    WECHAT_BOT_TOKEN: tokens.wechat,
+    WECHAT_ACCOUNT_ID: process.env.WECHAT_ACCOUNT_ID ?? `e2e-fake-account-${SANDBOX_NAME}`,
+    WECHAT_BASE_URL: process.env.WECHAT_BASE_URL ?? "https://ilinkai.wechat.com",
+    WECHAT_USER_ID: process.env.WECHAT_USER_ID ?? "wxid_e2e_operator",
+    WECHAT_ALLOWED_IDS:
+      process.env.WECHAT_ALLOWED_IDS ?? process.env.WECHAT_USER_ID ?? "wxid_e2e_operator",
+  };
+  if (tokens.telegram.includes("fake")) env.NEMOCLAW_SKIP_TELEGRAM_REACHABILITY = "1";
+  if (
+    /^(xoxb|xapp)-(fake|test)-/.test(tokens.slackBot) ||
+    /^(xoxb|xapp)-(fake|test)-/.test(tokens.slackApp)
+  ) {
+    env.NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION = "1";
+  }
+  return env;
+}
+
+function redactionValues(apiKey: string | undefined, tokens: Phase6Tokens): string[] {
+  return [apiKey, ...Object.values(tokens)].filter(
+    (value): value is string => typeof value === "string" && value.length > 0,
+  );
+}
+
+function arrayRecords(value: unknown): JsonRecord[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is JsonRecord => Boolean(item) && typeof item === "object")
+    : [];
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
+}
+
+function readRegistryEntry(sandboxName: string): JsonRecord {
+  expect(fs.existsSync(REGISTRY_FILE), `${REGISTRY_FILE} missing`).toBe(true);
+  const registry = JSON.parse(fs.readFileSync(REGISTRY_FILE, "utf8")) as {
+    sandboxes?: Record<string, JsonRecord>;
+  };
+  const entry = registry.sandboxes?.[sandboxName];
+  expect(entry, `registry entry ${sandboxName} missing`).toBeTruthy();
+  if (!entry) throw new Error(`registry entry ${sandboxName} missing`);
+  return entry;
+}
+
+function messagingState(sandboxName: string): JsonRecord {
+  const messaging = readRegistryEntry(sandboxName).messaging;
+  expect(messaging && typeof messaging === "object", "registry messaging state missing").toBe(true);
+  if (!messaging || typeof messaging !== "object")
+    throw new Error("registry messaging state missing");
+  const state = messaging as JsonRecord;
+  expect(state.schemaVersion, "messaging.schemaVersion").toBe(1);
+  return state;
+}
+
+function messagingPlan(sandboxName: string): JsonRecord {
+  const plan = messagingState(sandboxName).plan;
+  expect(plan && typeof plan === "object", "registry messaging.plan missing").toBe(true);
+  if (!plan || typeof plan !== "object") throw new Error("registry messaging.plan missing");
+  const record = plan as JsonRecord;
+  expect(record.schemaVersion, "messaging.plan.schemaVersion").toBe(1);
+  return record;
+}
 
 function planChannel(channelId: string) {
   return arrayRecords(messagingPlan(SANDBOX_NAME).channels).find(
@@ -221,6 +320,21 @@ async function precleanProviders(
   }
 }
 
+async function rebuildSandbox(
+  host: import("../fixtures/clients/host.ts").HostCliClient,
+  sandboxName: string,
+  env: NodeJS.ProcessEnv,
+  redactions: string[],
+  artifactName: string,
+) {
+  return host.command("node", [CLI, sandboxName, "rebuild", "--yes"], {
+    artifactName,
+    env,
+    redactionValues: redactions,
+    timeoutMs: 30 * 60_000,
+  });
+}
+
 async function policyPresetActive(
   host: import("../fixtures/clients/host.ts").HostCliClient,
   env: NodeJS.ProcessEnv,
@@ -280,7 +394,12 @@ export async function runChannelsStopStartScenario({
 }): Promise<void> {
   const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
   const tokens = phase6Tokens(AGENT);
-  const env = phase6Env({ sandboxName: SANDBOX_NAME, agent: AGENT, apiKey, tokens });
+  const env = phase6Env({
+    sandboxName: SANDBOX_NAME,
+    agent: AGENT,
+    apiKey,
+    extra: phase6TokenEnv(tokens),
+  });
   const redactions = redactionValues(apiKey, tokens);
 
   await artifacts.writeJson("scenario.json", {
