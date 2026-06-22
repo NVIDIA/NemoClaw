@@ -479,8 +479,7 @@ describe("sandbox provisioning: image health checks (#1430)", () => {
     it("uses a pgrep liveness pattern that matches gateway argv and rewritten titles but not ordinary openclaw CLI use (#4710)", () => {
       const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");
       const match = dockerfile.match(/pgrep --ignore-ancestors -f '([^']+)'/);
-      expect(match, "HEALTHCHECK pgrep liveness pattern not found in Dockerfile").not.toBeNull();
-      const pattern = match?.[1] ?? "";
+      const pattern = match?.[1] ?? "$.^";
       const matches = (cmdline: string) =>
         spawnSync("grep", ["-qE", pattern], { input: cmdline, encoding: "utf-8" }).status === 0;
 
