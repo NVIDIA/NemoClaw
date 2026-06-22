@@ -7,10 +7,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import {
-  classifyCloudflaredLog,
-  getCloudflaredLogPath,
-} from "../live/tunnel-lifecycle-helpers.ts";
+import { classifyCloudflaredLog, getCloudflaredLogPath } from "../live/tunnel-lifecycle-helpers.ts";
 
 describe("tunnel lifecycle cloudflared log attribution", () => {
   it("does not attribute an unrelated newer cloudflared log to the current sandbox", () => {

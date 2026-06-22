@@ -1090,25 +1090,31 @@ jobs:
     };
     const job = workflow.jobs["tunnel-lifecycle-vitest"];
     expect(job).toBeDefined();
-    for (const step of job.steps) {
-      if (typeof step.uses === "string" && step.uses.startsWith("actions/checkout@")) {
-        step.with = { ...(step.with as Record<string, unknown>), "persist-credentials": true };
-      }
-      if (step.name === "Install root dependencies") {
-        step.run = "npm install";
-      }
-      if (step.name === "Upload tunnel lifecycle artifacts") {
-        step.with = {
-          ...(step.with as Record<string, unknown>),
-          path: "e2e-artifacts/vitest/",
-          "include-hidden-files": true,
-        };
-      }
-      if (step.name === "Clean up Docker auth") {
-        step.if = "success()";
-        step.run = 'set -euo pipefail\necho "missing Docker auth cleanup"\n';
-      }
-    }
+    const checkout = job.steps.find((step) =>
+      String(step.uses ?? "").startsWith("actions/checkout@"),
+    );
+    expect(checkout).toBeDefined();
+    checkout!.with = {
+      ...(checkout!.with as Record<string, unknown>),
+      "persist-credentials": true,
+    };
+
+    const install = job.steps.find((step) => step.name === "Install root dependencies");
+    expect(install).toBeDefined();
+    install!.run = "npm install";
+
+    const upload = job.steps.find((step) => step.name === "Upload tunnel lifecycle artifacts");
+    expect(upload).toBeDefined();
+    upload!.with = {
+      ...(upload!.with as Record<string, unknown>),
+      path: "e2e-artifacts/vitest/",
+      "include-hidden-files": true,
+    };
+
+    const cleanup = job.steps.find((step) => step.name === "Clean up Docker auth");
+    expect(cleanup).toBeDefined();
+    cleanup!.if = "success()";
+    cleanup!.run = 'set -euo pipefail\necho "missing Docker auth cleanup"\n';
     fs.writeFileSync(workflowPath, YAML.stringify(workflow));
 
     try {
