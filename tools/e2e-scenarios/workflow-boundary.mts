@@ -4398,6 +4398,19 @@ export function validateE2eVitestScenariosWorkflowBoundary(
         "step 'Post Vitest scenario results to PR' run script must omit rejected scenario selectors",
       );
     }
+    if (!reportScript.includes("reportedEntries")) {
+      errors.push(
+        "step 'Post Vitest scenario results to PR' run script must filter reported entries for selective dispatches",
+      );
+    }
+    if (!reportScript.includes("missingRequested")) {
+      errors.push(
+        "step 'Post Vitest scenario results to PR' run script must report missing requested jobs",
+      );
+    }
+    if (!reportScript.includes("cancelled")) {
+      errors.push("step 'Post Vitest scenario results to PR' run script must count cancelled jobs");
+    }
     if (!reportScript.includes("**Requested jobs:**")) {
       errors.push(
         "step 'Post Vitest scenario results to PR' run script must include **Requested jobs:**",

@@ -4487,21 +4487,57 @@ jobs:
               prNumber = prs[0].number;
             }
 
+            const requestedJobList = requestedJobs
+              .split(',')
+              .map((job) => job.trim())
+              .filter(Boolean);
+            const requestedJobSet = new Set(requestedJobList);
+            const selectiveDispatch =
+              requestedJobList.length > 0 || Boolean(requestedScenarios) || scenariosRejected || jobsRejected;
             const emoji = { success: '✅', failure: '❌', cancelled: '⚠️', skipped: '⏭️' };
-            const entries = Object.entries(needs).sort(([a], [b]) => a.localeCompare(b));
-            const rows = entries.map(
+            const allEntries = Object.entries(needs).sort(([a], [b]) => a.localeCompare(b));
+            const missingRequested = selectorValidationPassed
+              ? requestedJobList.filter((job) => !(job in needs))
+              : [];
+            const selectedEntries = requestedJobList.length > 0
+              ? allEntries.filter(([name]) => requestedJobSet.has(name))
+              : selectiveDispatch
+                ? allEntries.filter(
+                    ([name, { result }]) => result !== 'skipped' && name !== 'generate-matrix',
+                  )
+                : allEntries;
+            const reportedEntries = selectedEntries.length > 0
+              ? selectedEntries
+              : selectiveDispatch
+                ? allEntries.filter(([, { result }]) => result !== 'skipped')
+                : allEntries;
+            const rows = reportedEntries.map(
               ([name, { result }]) => `| ${name} | ${emoji[result] || '❓'} ${result} |`,
             );
-            const ran = entries.filter(([, v]) => v.result !== 'skipped');
+            for (const name of missingRequested) {
+              rows.push(`| ${name} | ❓ not reported |`);
+            }
+
+            const ran = reportedEntries.filter(([, v]) => v.result !== 'skipped');
             const passed = ran.filter(([, v]) => v.result === 'success');
             const failed = ran.filter(([, v]) => v.result === 'failure');
-            const skipped = entries.filter(([, v]) => v.result === 'skipped');
+            const skipped = reportedEntries.filter(([, v]) => v.result === 'skipped');
+            const cancelled = ran.filter(([, v]) => v.result === 'cancelled');
+            const passingStatus = requestedJobList.length > 0
+              ? '✅ All requested jobs passed'
+              : selectiveDispatch
+                ? '✅ All selected jobs passed'
+                : '✅ All jobs passed';
             const status =
-              failed.length > 0
+              failed.length > 0 || missingRequested.length > 0
                 ? '❌ Some jobs failed'
-                : skipped.length > 0 && passed.length === 0
-                  ? '⚠️ No jobs ran'
-                  : '✅ All jobs passed';
+                : cancelled.length > 0 && passed.length === 0
+                  ? '⚠️ Run cancelled — no signal'
+                  : cancelled.length > 0 && passed.length > 0
+                    ? '⚠️ Some jobs cancelled — partial pass'
+                    : skipped.length > 0 && passed.length === 0
+                      ? '⚠️ No selected jobs ran'
+                      : passingStatus;
 
             const lines = [
               `### Vitest E2E Scenario Results — ${status}`,
@@ -4518,7 +4554,7 @@ jobs:
                 : requestedJobs
                   ? `**Requested jobs:** \`${requestedJobs}\``
                   : '**Requested jobs:** _(default — all free-standing when no scenarios are requested)_',
-              `**Summary:** ${passed.length} passed, ${failed.length} failed, ${skipped.length} skipped`,
+              `**Summary:** ${passed.length} passed, ${failed.length} failed, ${cancelled.length} cancelled, ${skipped.length} skipped`,
               '',
               '| Job | Result |',
               '|-----|--------|',
@@ -4527,6 +4563,12 @@ jobs:
             if (failed.length > 0) {
               const failedNames = failed.map(([name]) => name).join(', ');
               lines.push('', `> **Failed jobs:** ${failedNames}. Check [run artifacts](${runUrl}) for logs.`);
+            }
+            if (missingRequested.length > 0) {
+              lines.push(
+                '',
+                `> **Missing requested jobs:** ${missingRequested.join(', ')}. The reporting workflow needs to include these jobs.`,
+              );
             }
 
             await github.rest.issues.createComment({

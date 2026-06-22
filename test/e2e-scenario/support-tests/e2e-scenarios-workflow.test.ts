@@ -953,6 +953,9 @@ jobs:
           "report-to-pr step must pass jobs through JOBS env",
           "step 'Post Vitest scenario results to PR' run script must check selector validation before echoing selectors",
           "step 'Post Vitest scenario results to PR' run script must omit rejected job selectors",
+          "step 'Post Vitest scenario results to PR' run script must filter reported entries for selective dispatches",
+          "step 'Post Vitest scenario results to PR' run script must report missing requested jobs",
+          "step 'Post Vitest scenario results to PR' run script must count cancelled jobs",
         ]),
       );
     } finally {
