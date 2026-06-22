@@ -104,9 +104,10 @@ function cloudflaredLogTail(lines = 80): string {
   const logPath = getCloudflaredLogPath();
   if (!logPath) return "(no cloudflared.log found under /tmp/nemoclaw-services-*/)";
   const text = fs.readFileSync(logPath, "utf8");
-  return [`--- cloudflared.log (${logPath}, last ${lines} lines) ---`, ...text.split(/\r?\n/).slice(-lines)].join(
-    "\n",
-  );
+  return [
+    `--- cloudflared.log (${logPath}, last ${lines} lines) ---`,
+    ...text.split(/\r?\n/).slice(-lines),
+  ].join("\n");
 }
 
 function classifyCloudflaredLog():
@@ -152,7 +153,10 @@ async function bestEffort(run: () => Promise<unknown>): Promise<void> {
 
 export const TUNNEL_LIFECYCLE_TEST_TIMEOUT_MS = TEST_TIMEOUT_MS;
 
-type TunnelLifecycleFixtures = Pick<E2EScenarioFixtures, "artifacts" | "cleanup" | "host" | "secrets"> & {
+type TunnelLifecycleFixtures = Pick<
+  E2EScenarioFixtures,
+  "artifacts" | "cleanup" | "host" | "secrets"
+> & {
   skip: (note?: string) => never;
 };
 
@@ -163,303 +167,323 @@ export async function runTunnelLifecycleContract({
   secrets,
   skip,
 }: TunnelLifecycleFixtures): Promise<void> {
-    assertTestOwnedSandboxName();
-    const hosted = requireHostedInferenceConfig(secrets);
-    const apiKey = hosted.apiKey;
+  assertTestOwnedSandboxName();
+  const hosted = requireHostedInferenceConfig(secrets);
+  const apiKey = hosted.apiKey;
 
-    await artifacts.writeJson("contract.json", {
-      legacySource: "test/e2e/test-tunnel-lifecycle.sh",
-      sandboxName: SANDBOX_NAME,
-      localDashboardPort: LOCAL_DASHBOARD_PORT,
-      preservedBoundaries: [
-        "real Docker/OpenShell OpenClaw sandbox onboarding",
-        "host cloudflared binary and quick-tunnel registration",
-        "nemoclaw tunnel start/status/stop CLI commands",
-        "local dashboard origin readiness before tunnel attribution",
-        "public trycloudflare HTTP probe with dashboard marker assertion",
-        "cloudflared.log classification for NemoClaw-vs-Cloudflare failures",
-      ],
-      inferenceCredential: hosted.contractLabel,
-    });
+  await artifacts.writeJson("contract.json", {
+    legacySource: "test/e2e/test-tunnel-lifecycle.sh",
+    sandboxName: SANDBOX_NAME,
+    localDashboardPort: LOCAL_DASHBOARD_PORT,
+    preservedBoundaries: [
+      "real Docker/OpenShell OpenClaw sandbox onboarding",
+      "host cloudflared binary and quick-tunnel registration",
+      "nemoclaw tunnel start/status/stop CLI commands",
+      "local dashboard origin readiness before tunnel attribution",
+      "public trycloudflare HTTP probe with dashboard marker assertion",
+      "cloudflared.log classification for NemoClaw-vs-Cloudflare failures",
+    ],
+    inferenceCredential: hosted.contractLabel,
+  });
 
-    cleanup.add("stop cloudflared quick tunnel", async () => {
-      await bestEffort(() =>
-        host.nemoclaw(["tunnel", "stop"], {
-          artifactName: "cleanup-tunnel-stop",
-          env: commandEnv(),
-          timeoutMs: COMMAND_TIMEOUT_MS,
-        }),
-      );
-    });
-    cleanup.add(`destroy sandbox ${SANDBOX_NAME}`, async () => {
-      if (process.env.NEMOCLAW_E2E_KEEP_SANDBOX === "1") return;
-      await bestEffort(() =>
-        host.cleanupSandbox(SANDBOX_NAME, {
-          artifactName: "cleanup-nemoclaw-destroy-tunnel-lifecycle",
-          timeoutMs: 15 * 60_000,
-        }),
-      );
-    });
-
-    const docker = await host.command("docker", ["info"], {
-      artifactName: "prereq-docker-info-tunnel-lifecycle",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 30_000,
-    });
-    if (docker.exitCode !== 0) {
-      if (process.env.GITHUB_ACTIONS === "true") {
-        throw new Error(`Docker is required for tunnel lifecycle E2E: ${resultText(docker)}`);
-      }
-      skip("Docker is required for tunnel lifecycle E2E");
-    }
-
-    const cloudflared = await host.command(
-      "bash",
-      [
-        "-lc",
-        [
-          "set -euo pipefail",
-          "if command -v cloudflared >/dev/null 2>&1; then",
-          "  cloudflared --version",
-          "  exit 0",
-          "fi",
-          'if [ "${GITHUB_ACTIONS:-}" != "true" ]; then',
-          '  echo "cloudflared not found" >&2',
-          "  exit 127",
-          "fi",
-          "source test/e2e/lib/cloudflared-version-resolver.sh",
-          "sudo mkdir -p --mode=0755 /usr/share/keyrings",
-          "curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg | sudo tee /usr/share/keyrings/cloudflare-main.gpg >/dev/null",
-          'echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/cloudflared.list >/dev/null',
-          "sudo apt-get update -qq",
-          'available_versions="$(apt-cache madison cloudflared | awk \'{print $3}\')"',
-          'cf_min_version="${CLOUDFLARED_MIN_VERSION:-$CLOUDFLARED_DEFAULT_MIN_VERSION}"',
-          'if [ -n "${CLOUDFLARED_VERSION:-}" ]; then',
-          '  cf_version="$(cloudflared_resolve_package_version "$available_versions" "$cf_min_version" "$CLOUDFLARED_VERSION")"',
-          "else",
-          '  cf_version="$(cloudflared_resolve_package_version "$available_versions" "$cf_min_version")"',
-          "fi",
-          'sudo apt-get install -y "cloudflared=${cf_version}"',
-          "cloudflared --version",
-        ].join("\n"),
-      ],
-      {
-        artifactName: "prereq-cloudflared-version",
-        cwd: REPO_ROOT,
-        env: {
-          ...buildAvailabilityProbeEnv(),
-          ...(process.env.CLOUDFLARED_VERSION
-            ? { CLOUDFLARED_VERSION: process.env.CLOUDFLARED_VERSION }
-            : {}),
-          ...(process.env.CLOUDFLARED_MIN_VERSION
-            ? { CLOUDFLARED_MIN_VERSION: process.env.CLOUDFLARED_MIN_VERSION }
-            : {}),
-        },
-        timeoutMs: 5 * 60_000,
-      },
-    );
-    if (cloudflared.exitCode !== 0) {
-      if (process.env.GITHUB_ACTIONS === "true") {
-        throw new Error(`cloudflared is required for tunnel lifecycle E2E: ${resultText(cloudflared)}`);
-      }
-      skip("cloudflared is required for tunnel lifecycle E2E");
-    }
-
-    expect(fs.existsSync(path.join(REPO_ROOT, "install.sh"))).toBe(true);
-    await host.bestEffortCleanupSandbox(SANDBOX_NAME, {
-      artifactName: "pre-cleanup-nemoclaw-destroy-tunnel-lifecycle",
-      timeoutMs: 15 * 60_000,
-    });
-
-    const install = await host.command(
-      "bash",
-      ["install.sh", "--non-interactive", "--yes-i-accept-third-party-software"],
-      {
-        artifactName: "install-sh-tunnel-lifecycle",
-        cwd: REPO_ROOT,
-        env: commandEnv({
-          ...hosted.env,
-          NVIDIA_INFERENCE_API_KEY: apiKey,
-          NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1",
-        }),
-        redactionValues: [apiKey],
-        timeoutMs: ONBOARD_TIMEOUT_MS,
-      },
-    );
-    expect(install.exitCode, resultText(install)).toBe(0);
-
-    await host.expectListed(SANDBOX_NAME, { artifactName: "post-install-nemoclaw-list" });
-
-    let localReady = false;
-    for (let attempt = 1; attempt <= 30; attempt += 1) {
-      const local = await host.command(
-        "curl",
-        ["-sS", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "5", `http://localhost:${LOCAL_DASHBOARD_PORT}/`],
-        {
-          artifactName: `local-dashboard-ready-${attempt}`,
-          env: buildAvailabilityProbeEnv(),
-          timeoutMs: 10_000,
-        },
-      );
-      const code = local.stdout.trim() || "000";
-      if (code !== "000") {
-        localReady = true;
-        break;
-      }
-      await sleep(1_000);
-    }
-    expect(
-      localReady,
-      `[NemoClaw fault] Local OpenClaw dashboard not reachable on localhost:${LOCAL_DASHBOARD_PORT} after 30s; tunnel cannot proxy a dead origin.`,
-    ).toBe(true);
-
-    const start = await host.nemoclaw(["tunnel", "start"], {
-      artifactName: "tunnel-start",
-      env: commandEnv(),
-      timeoutMs: 90_000,
-    });
-    if (start.exitCode !== 0) {
-      await artifacts.writeText("cloudflared-log-after-start-failure.txt", cloudflaredLogTail());
-      if (isCloudflareTransientText(resultText(start)) || classifyCloudflaredLog() === "cloudflare") {
-        await bestEffort(() =>
-          host.nemoclaw(["tunnel", "stop"], {
-            artifactName: "tunnel-stop-after-cloudflare-start-failure",
-            env: commandEnv(),
-            timeoutMs: COMMAND_TIMEOUT_MS,
-          }),
-        );
-        skip(
-          `[Cloudflare fault] nemoclaw tunnel start exited ${start.exitCode ?? "unknown"} because quick-tunnel registration returned a transient external error.`,
-        );
-      }
-      throw new Error(
-        `[NemoClaw fault] nemoclaw tunnel start failed with exit ${start.exitCode ?? "unknown"}: ${resultText(start)}`,
-      );
-    }
-
-    let tunnelUrl: string | undefined;
-    let lastStatusText = "";
-    for (let attempt = 1; attempt <= 15; attempt += 1) {
-      const status = await host.nemoclaw(["status"], {
-        artifactName: `status-with-tunnel-url-${attempt}`,
+  cleanup.add("stop cloudflared quick tunnel", async () => {
+    await bestEffort(() =>
+      host.nemoclaw(["tunnel", "stop"], {
+        artifactName: "cleanup-tunnel-stop",
         env: commandEnv(),
         timeoutMs: COMMAND_TIMEOUT_MS,
-      });
-      lastStatusText = resultText(status);
-      tunnelUrl = extractTunnelUrl(lastStatusText);
-      if (tunnelUrl) break;
-      await sleep(1_000);
-    }
+      }),
+    );
+  });
+  cleanup.add(`destroy sandbox ${SANDBOX_NAME}`, async () => {
+    if (process.env.NEMOCLAW_E2E_KEEP_SANDBOX === "1") return;
+    await bestEffort(() =>
+      host.cleanupSandbox(SANDBOX_NAME, {
+        artifactName: "cleanup-nemoclaw-destroy-tunnel-lifecycle",
+        timeoutMs: 15 * 60_000,
+      }),
+    );
+  });
 
-    if (!tunnelUrl) {
-      await artifacts.writeText("cloudflared-log-without-status-url.txt", cloudflaredLogTail());
-      const cfClass = classifyCloudflaredLog();
+  const docker = await host.command("docker", ["info"], {
+    artifactName: "prereq-docker-info-tunnel-lifecycle",
+    env: buildAvailabilityProbeEnv(),
+    timeoutMs: 30_000,
+  });
+  if (docker.exitCode !== 0) {
+    if (process.env.GITHUB_ACTIONS === "true") {
+      throw new Error(`Docker is required for tunnel lifecycle E2E: ${resultText(docker)}`);
+    }
+    skip("Docker is required for tunnel lifecycle E2E");
+  }
+
+  const cloudflared = await host.command(
+    "bash",
+    [
+      "-lc",
+      [
+        "set -euo pipefail",
+        "if command -v cloudflared >/dev/null 2>&1; then",
+        "  cloudflared --version",
+        "  exit 0",
+        "fi",
+        'if [ "${GITHUB_ACTIONS:-}" != "true" ]; then',
+        '  echo "cloudflared not found" >&2',
+        "  exit 127",
+        "fi",
+        "source test/e2e/lib/cloudflared-version-resolver.sh",
+        "sudo mkdir -p --mode=0755 /usr/share/keyrings",
+        "curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg | sudo tee /usr/share/keyrings/cloudflare-main.gpg >/dev/null",
+        'echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/cloudflared.list >/dev/null',
+        "sudo apt-get update -qq",
+        "available_versions=\"$(apt-cache madison cloudflared | awk '{print $3}')\"",
+        'cf_min_version="${CLOUDFLARED_MIN_VERSION:-$CLOUDFLARED_DEFAULT_MIN_VERSION}"',
+        'if [ -n "${CLOUDFLARED_VERSION:-}" ]; then',
+        '  cf_version="$(cloudflared_resolve_package_version "$available_versions" "$cf_min_version" "$CLOUDFLARED_VERSION")"',
+        "else",
+        '  cf_version="$(cloudflared_resolve_package_version "$available_versions" "$cf_min_version")"',
+        "fi",
+        'sudo apt-get install -y "cloudflared=${cf_version}"',
+        "cloudflared --version",
+      ].join("\n"),
+    ],
+    {
+      artifactName: "prereq-cloudflared-version",
+      cwd: REPO_ROOT,
+      env: {
+        ...buildAvailabilityProbeEnv(),
+        ...(process.env.CLOUDFLARED_VERSION
+          ? { CLOUDFLARED_VERSION: process.env.CLOUDFLARED_VERSION }
+          : {}),
+        ...(process.env.CLOUDFLARED_MIN_VERSION
+          ? { CLOUDFLARED_MIN_VERSION: process.env.CLOUDFLARED_MIN_VERSION }
+          : {}),
+      },
+      timeoutMs: 5 * 60_000,
+    },
+  );
+  if (cloudflared.exitCode !== 0) {
+    if (process.env.GITHUB_ACTIONS === "true") {
+      throw new Error(
+        `cloudflared is required for tunnel lifecycle E2E: ${resultText(cloudflared)}`,
+      );
+    }
+    skip("cloudflared is required for tunnel lifecycle E2E");
+  }
+
+  expect(fs.existsSync(path.join(REPO_ROOT, "install.sh"))).toBe(true);
+  await host.bestEffortCleanupSandbox(SANDBOX_NAME, {
+    artifactName: "pre-cleanup-nemoclaw-destroy-tunnel-lifecycle",
+    timeoutMs: 15 * 60_000,
+  });
+
+  const install = await host.command(
+    "bash",
+    ["install.sh", "--non-interactive", "--yes-i-accept-third-party-software"],
+    {
+      artifactName: "install-sh-tunnel-lifecycle",
+      cwd: REPO_ROOT,
+      env: commandEnv({
+        ...hosted.env,
+        NVIDIA_INFERENCE_API_KEY: apiKey,
+        NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1",
+      }),
+      redactionValues: [apiKey],
+      timeoutMs: ONBOARD_TIMEOUT_MS,
+    },
+  );
+  expect(install.exitCode, resultText(install)).toBe(0);
+
+  await host.expectListed(SANDBOX_NAME, { artifactName: "post-install-nemoclaw-list" });
+
+  let localReady = false;
+  for (let attempt = 1; attempt <= 30; attempt += 1) {
+    const local = await host.command(
+      "curl",
+      [
+        "-sS",
+        "-o",
+        "/dev/null",
+        "-w",
+        "%{http_code}",
+        "--max-time",
+        "5",
+        `http://localhost:${LOCAL_DASHBOARD_PORT}/`,
+      ],
+      {
+        artifactName: `local-dashboard-ready-${attempt}`,
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 10_000,
+      },
+    );
+    const code = local.stdout.trim() || "000";
+    if (code !== "000") {
+      localReady = true;
+      break;
+    }
+    await sleep(1_000);
+  }
+  expect(
+    localReady,
+    `[NemoClaw fault] Local OpenClaw dashboard not reachable on localhost:${LOCAL_DASHBOARD_PORT} after 30s; tunnel cannot proxy a dead origin.`,
+  ).toBe(true);
+
+  const start = await host.nemoclaw(["tunnel", "start"], {
+    artifactName: "tunnel-start",
+    env: commandEnv(),
+    timeoutMs: 90_000,
+  });
+  if (start.exitCode !== 0) {
+    await artifacts.writeText("cloudflared-log-after-start-failure.txt", cloudflaredLogTail());
+    if (isCloudflareTransientText(resultText(start)) || classifyCloudflaredLog() === "cloudflare") {
       await bestEffort(() =>
         host.nemoclaw(["tunnel", "stop"], {
-          artifactName: "tunnel-stop-after-missing-url",
+          artifactName: "tunnel-stop-after-cloudflare-start-failure",
           env: commandEnv(),
           timeoutMs: COMMAND_TIMEOUT_MS,
         }),
       );
-      if (cfClass === "cloudflare") {
-        skip("[Cloudflare fault] cloudflared failed to register a quick tunnel URL.");
-      }
-      let reason: string;
-      switch (cfClass) {
-        case "nemoclaw_no_spawn":
-          reason = "cloudflared.log missing — NemoClaw failed to spawn the cloudflared process";
-          break;
-        case "nemoclaw_capture_bug":
-          reason = "cloudflared.log has a trycloudflare URL but nemoclaw status did not surface it";
-          break;
-        case "nemoclaw_local":
-          reason = `cloudflared.log reports it cannot reach localhost:${LOCAL_DASHBOARD_PORT}`;
-          break;
-        default:
-          reason = `tunnel URL did not surface and cloudflared.log did not match a known pattern; status was:\n${lastStatusText}`;
-      }
-      throw new Error(`[NemoClaw fault] ${reason}`);
-    }
-
-    let lastPublicProbe: CurlProbe | undefined;
-    let backoffMs = 2_000;
-    for (let attempt = 1; attempt <= 15; attempt += 1) {
-      const probe = parseCurlProbe(
-        await host.command(
-          "curl",
-          ["-sS", "-L", "--max-time", "30", "-w", "\n__HTTP_CODE:%{http_code}\n", tunnelUrl],
-          {
-            artifactName: `public-tunnel-probe-${attempt}`,
-            env: buildAvailabilityProbeEnv(),
-            timeoutMs: 35_000,
-          },
-        ),
-      );
-      lastPublicProbe = probe;
-      if (probe.httpCode === "200") break;
-
-      const local = await host.command(
-        "curl",
-        ["-sS", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "5", `http://localhost:${LOCAL_DASHBOARD_PORT}/`],
-        {
-          artifactName: `local-dashboard-recheck-${attempt}`,
-          env: buildAvailabilityProbeEnv(),
-          timeoutMs: 10_000,
-        },
-      );
-      const localCode = local.stdout.trim() || "000";
-      if (localCode === "000") {
-        throw new Error(
-          `[NemoClaw fault] Tunnel returned ${probe.httpCode} and local dashboard regressed during retry loop; likely sandbox/dashboard crash, not Cloudflare.`,
-        );
-      }
-      await sleep(backoffMs);
-      backoffMs = Math.min(backoffMs * 2, 30_000);
-    }
-
-    expect(lastPublicProbe, "public tunnel probe should have run").toBeTruthy();
-    if (lastPublicProbe!.httpCode !== "200") {
-      if (
-        isCloudflareTransientHttpCode(lastPublicProbe!.httpCode) ||
-        isCloudflareTransientText(lastPublicProbe!.body) ||
-        isCloudflareTransientText(readCloudflaredLog())
-      ) {
-        skip(
-          `[Cloudflare fault] Tunnel URL never became reachable while local stayed healthy; last HTTP status ${lastPublicProbe!.httpCode}.`,
-        );
-      }
-      throw new Error(
-        `[NemoClaw fault] Tunnel returned unexpected HTTP ${lastPublicProbe!.httpCode} while local stayed healthy; body prefix: ${lastPublicProbe!.body.slice(0, 200)}`,
+      skip(
+        `[Cloudflare fault] nemoclaw tunnel start exited ${start.exitCode ?? "unknown"} because quick-tunnel registration returned a transient external error.`,
       );
     }
-    expect(lastPublicProbe!.body, "public tunnel must serve OpenClaw dashboard markers").toMatch(
-      DASHBOARD_MARKER_PATTERN,
+    throw new Error(
+      `[NemoClaw fault] nemoclaw tunnel start failed with exit ${start.exitCode ?? "unknown"}: ${resultText(start)}`,
     );
+  }
 
-    const stop = await host.nemoclaw(["tunnel", "stop"], {
-      artifactName: "tunnel-stop",
+  let tunnelUrl: string | undefined;
+  let lastStatusText = "";
+  for (let attempt = 1; attempt <= 15; attempt += 1) {
+    const status = await host.nemoclaw(["status"], {
+      artifactName: `status-with-tunnel-url-${attempt}`,
       env: commandEnv(),
       timeoutMs: COMMAND_TIMEOUT_MS,
     });
-    expect(stop.exitCode, resultText(stop)).toBe(0);
+    lastStatusText = resultText(status);
+    tunnelUrl = extractTunnelUrl(lastStatusText);
+    if (tunnelUrl) break;
+    await sleep(1_000);
+  }
 
-    let postStopUrl: string | undefined;
-    let statusReadable = false;
-    for (let attempt = 1; attempt <= 10; attempt += 1) {
-      const status = await host.nemoclaw(["status"], {
-        artifactName: `status-after-tunnel-stop-${attempt}`,
+  if (!tunnelUrl) {
+    await artifacts.writeText("cloudflared-log-without-status-url.txt", cloudflaredLogTail());
+    const cfClass = classifyCloudflaredLog();
+    await bestEffort(() =>
+      host.nemoclaw(["tunnel", "stop"], {
+        artifactName: "tunnel-stop-after-missing-url",
         env: commandEnv(),
         timeoutMs: COMMAND_TIMEOUT_MS,
-      });
-      if (status.exitCode !== 0) {
-        await sleep(1_000);
-        continue;
-      }
-      statusReadable = true;
-      postStopUrl = extractTunnelUrl(resultText(status));
-      if (!postStopUrl) break;
-      await sleep(1_000);
+      }),
+    );
+    if (cfClass === "cloudflare") {
+      skip("[Cloudflare fault] cloudflared failed to register a quick tunnel URL.");
     }
-    expect(statusReadable, "nemoclaw status should be readable after tunnel stop").toBe(true);
-    expect(postStopUrl, "tunnel URL must be absent after nemoclaw tunnel stop").toBeUndefined();
+    let reason: string;
+    switch (cfClass) {
+      case "nemoclaw_no_spawn":
+        reason = "cloudflared.log missing — NemoClaw failed to spawn the cloudflared process";
+        break;
+      case "nemoclaw_capture_bug":
+        reason = "cloudflared.log has a trycloudflare URL but nemoclaw status did not surface it";
+        break;
+      case "nemoclaw_local":
+        reason = `cloudflared.log reports it cannot reach localhost:${LOCAL_DASHBOARD_PORT}`;
+        break;
+      default:
+        reason = `tunnel URL did not surface and cloudflared.log did not match a known pattern; status was:\n${lastStatusText}`;
+    }
+    throw new Error(`[NemoClaw fault] ${reason}`);
+  }
+
+  let lastPublicProbe: CurlProbe | undefined;
+  let backoffMs = 2_000;
+  for (let attempt = 1; attempt <= 15; attempt += 1) {
+    const probe = parseCurlProbe(
+      await host.command(
+        "curl",
+        ["-sS", "-L", "--max-time", "30", "-w", "\n__HTTP_CODE:%{http_code}\n", tunnelUrl],
+        {
+          artifactName: `public-tunnel-probe-${attempt}`,
+          env: buildAvailabilityProbeEnv(),
+          timeoutMs: 35_000,
+        },
+      ),
+    );
+    lastPublicProbe = probe;
+    if (probe.httpCode === "200") break;
+
+    const local = await host.command(
+      "curl",
+      [
+        "-sS",
+        "-o",
+        "/dev/null",
+        "-w",
+        "%{http_code}",
+        "--max-time",
+        "5",
+        `http://localhost:${LOCAL_DASHBOARD_PORT}/`,
+      ],
+      {
+        artifactName: `local-dashboard-recheck-${attempt}`,
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 10_000,
+      },
+    );
+    const localCode = local.stdout.trim() || "000";
+    if (localCode === "000") {
+      throw new Error(
+        `[NemoClaw fault] Tunnel returned ${probe.httpCode} and local dashboard regressed during retry loop; likely sandbox/dashboard crash, not Cloudflare.`,
+      );
+    }
+    await sleep(backoffMs);
+    backoffMs = Math.min(backoffMs * 2, 30_000);
+  }
+
+  expect(lastPublicProbe, "public tunnel probe should have run").toBeTruthy();
+  if (lastPublicProbe!.httpCode !== "200") {
+    if (
+      isCloudflareTransientHttpCode(lastPublicProbe!.httpCode) ||
+      isCloudflareTransientText(lastPublicProbe!.body) ||
+      isCloudflareTransientText(readCloudflaredLog())
+    ) {
+      skip(
+        `[Cloudflare fault] Tunnel URL never became reachable while local stayed healthy; last HTTP status ${lastPublicProbe!.httpCode}.`,
+      );
+    }
+    throw new Error(
+      `[NemoClaw fault] Tunnel returned unexpected HTTP ${lastPublicProbe!.httpCode} while local stayed healthy; body prefix: ${lastPublicProbe!.body.slice(0, 200)}`,
+    );
+  }
+  expect(lastPublicProbe!.body, "public tunnel must serve OpenClaw dashboard markers").toMatch(
+    DASHBOARD_MARKER_PATTERN,
+  );
+
+  const stop = await host.nemoclaw(["tunnel", "stop"], {
+    artifactName: "tunnel-stop",
+    env: commandEnv(),
+    timeoutMs: COMMAND_TIMEOUT_MS,
+  });
+  expect(stop.exitCode, resultText(stop)).toBe(0);
+
+  let postStopUrl: string | undefined;
+  let statusReadable = false;
+  for (let attempt = 1; attempt <= 10; attempt += 1) {
+    const status = await host.nemoclaw(["status"], {
+      artifactName: `status-after-tunnel-stop-${attempt}`,
+      env: commandEnv(),
+      timeoutMs: COMMAND_TIMEOUT_MS,
+    });
+    if (status.exitCode !== 0) {
+      await sleep(1_000);
+      continue;
+    }
+    statusReadable = true;
+    postStopUrl = extractTunnelUrl(resultText(status));
+    if (!postStopUrl) break;
+    await sleep(1_000);
+  }
+  expect(statusReadable, "nemoclaw status should be readable after tunnel stop").toBe(true);
+  expect(postStopUrl, "tunnel URL must be absent after nemoclaw tunnel stop").toBeUndefined();
 }
