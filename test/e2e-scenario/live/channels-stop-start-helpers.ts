@@ -49,7 +49,8 @@ function planChannel(channelId: string) {
 
 function expectPlanChannelState(channelId: string, expected: ChannelState): void {
   const plan = messagingPlan(SANDBOX_NAME);
-  const channel = planChannel(channelId);
+  const channels = arrayRecords(plan.channels);
+  const channel = channels.find((entry) => entry.channelId === channelId);
   expect(channel, `${channelId} missing from messaging.plan.channels`).toBeTruthy();
   expect(channel?.configured, `${channelId} configured`).toBe(true);
   expect(plan.sandboxName, "messaging.plan.sandboxName").toBe(SANDBOX_NAME);
@@ -85,6 +86,10 @@ function expectPlanChannelState(channelId: string, expected: ChannelState): void
   expect(Object.hasOwn(plan, "agentRender"), "messaging.plan.agentRender should not persist").toBe(
     false,
   );
+  expect(
+    channels.some((entry) => Object.hasOwn(entry, "hooks")),
+    "messaging.plan.channels hooks should not persist",
+  ).toBe(false);
 }
 
 function expectChannelInputs(): void {
@@ -188,6 +193,34 @@ async function expectProvidersExist(
   }
 }
 
+async function precleanProviders(
+  host: import("../fixtures/clients/host.ts").HostCliClient,
+  env: NodeJS.ProcessEnv,
+  redactions: string[],
+  context: string,
+): Promise<void> {
+  for (const channel of CHANNELS) {
+    for (const provider of PROVIDERS[channel](SANDBOX_NAME)) {
+      await host.command("openshell", ["provider", "delete", provider], {
+        artifactName: `provider-delete-${provider}-${context}`,
+        env,
+        redactionValues: redactions,
+        timeoutMs: 60_000,
+      });
+      const result = await host.command("openshell", ["provider", "get", provider], {
+        artifactName: `provider-absent-${provider}-${context}`,
+        env,
+        redactionValues: redactions,
+        timeoutMs: 60_000,
+      });
+      expect(
+        result.exitCode,
+        `${provider} absent after provider pre-clean\n${resultText(result)}`,
+      ).not.toBe(0);
+    }
+  }
+}
+
 async function policyPresetActive(
   host: import("../fixtures/clients/host.ts").HostCliClient,
   env: NodeJS.ProcessEnv,
@@ -270,6 +303,7 @@ export async function runChannelsStopStartScenario({
     redactions,
     `preclean-channels-stop-start-${AGENT}`,
   );
+  await precleanProviders(host, env, redactions, `preclean-channels-stop-start-${AGENT}`);
 
   const docker = await dockerInfo(host, env);
   expect(docker.exitCode, resultText(docker)).toBe(0);
