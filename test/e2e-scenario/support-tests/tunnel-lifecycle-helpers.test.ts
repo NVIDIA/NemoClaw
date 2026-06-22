@@ -7,11 +7,105 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { CleanupRegistry } from "../fixtures/cleanup.ts";
+import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   classifyCloudflaredLog,
   getCloudflaredLogPath,
   publicTunnelProbeCurlArgs,
+  registerTunnelLifecycleCleanup,
 } from "../live/tunnel-lifecycle-helpers.ts";
+
+function shellResult(overrides: Partial<ShellProbeResult> = {}): ShellProbeResult {
+  return {
+    command: ["nemoclaw"],
+    exitCode: 0,
+    signal: null,
+    timedOut: false,
+    stdout: "",
+    stderr: "",
+    artifacts: {
+      stdout: "stdout.txt",
+      stderr: "stderr.txt",
+      result: "result.json",
+    },
+    ...overrides,
+  };
+}
+
+describe("tunnel lifecycle cleanup registration", () => {
+  it("stops the tunnel before destroying the sandbox during registered cleanup", async () => {
+    const calls: string[] = [];
+    const cleanup = new CleanupRegistry();
+    registerTunnelLifecycleCleanup(cleanup, {
+      cleanupSandbox: async () => {
+        calls.push("destroy");
+      },
+      nemoclaw: async () => {
+        calls.push("stop");
+        return shellResult();
+      },
+    });
+
+    const result = await cleanup.runAll();
+
+    expect(result.failures).toEqual([]);
+    expect(calls).toEqual(["stop", "destroy"]);
+  });
+
+  it("surfaces unexpected tunnel-stop cleanup failures", async () => {
+    const cleanup = new CleanupRegistry();
+    registerTunnelLifecycleCleanup(cleanup, {
+      cleanupSandbox: async () => {},
+      nemoclaw: async () =>
+        shellResult({
+          exitCode: 1,
+          stderr: "permission denied while stopping cloudflared",
+        }),
+    });
+
+    const result = await cleanup.runAll();
+
+    expect(result.failures).toEqual([
+      {
+        name: "stop cloudflared quick tunnel",
+        message:
+          "[NemoClaw fault] cleanup tunnel stop failed with exit 1: permission denied while stopping cloudflared",
+      },
+    ]);
+  });
+
+  it("surfaces unexpected sandbox-destroy cleanup failures", async () => {
+    const cleanup = new CleanupRegistry();
+    registerTunnelLifecycleCleanup(cleanup, {
+      cleanupSandbox: async () => {
+        throw new Error("docker daemon denied sandbox destroy");
+      },
+      nemoclaw: async () => shellResult(),
+    });
+
+    const result = await cleanup.runAll();
+
+    expect(result.failures).toEqual([
+      {
+        name: "destroy sandbox e2e-tunnel-lifecycle",
+        message: "docker daemon denied sandbox destroy",
+      },
+    ]);
+  });
+
+  it("suppresses already-stopped tunnel cleanup states", async () => {
+    const cleanup = new CleanupRegistry();
+    registerTunnelLifecycleCleanup(cleanup, {
+      cleanupSandbox: async () => {},
+      nemoclaw: async () => shellResult({ exitCode: 1, stderr: "no active tunnel" }),
+    });
+
+    const result = await cleanup.runAll();
+
+    expect(result.failures).toEqual([]);
+  });
+});
 
 describe("tunnel lifecycle cloudflared log attribution", () => {
   it("does not follow redirects from the public trycloudflare probe", () => {

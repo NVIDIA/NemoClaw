@@ -153,8 +153,14 @@ async function bestEffort(run: () => Promise<unknown>): Promise<void> {
   try {
     await run();
   } catch {
-    // Cleanup remains best-effort so the primary E2E failure stays visible.
+    // Inline recovery remains best-effort so the primary E2E failure stays visible.
   }
+}
+
+function isBenignTunnelStopFailure(text: string): boolean {
+  return /no active tunnel|no tunnel.*running|tunnel.*not.*running|already stopped|cloudflared.*not.*running|no cloudflared/i.test(
+    text,
+  );
 }
 
 export const TUNNEL_LIFECYCLE_TEST_TIMEOUT_MS = TEST_TIMEOUT_MS;
@@ -165,6 +171,45 @@ type TunnelLifecycleFixtures = Pick<
 > & {
   skip: (note?: string) => never;
 };
+
+type TunnelLifecycleCleanupHost = Pick<E2EScenarioFixtures["host"], "cleanupSandbox" | "nemoclaw">;
+
+type TunnelLifecycleCleanupRegistry = Pick<E2EScenarioFixtures["cleanup"], "add">;
+
+export function registerTunnelLifecycleCleanup(
+  cleanup: TunnelLifecycleCleanupRegistry,
+  host: TunnelLifecycleCleanupHost,
+): void {
+  // CleanupRegistry runs callbacks in reverse registration order. Register the
+  // sandbox destroy first so host `cloudflared` is stopped before the sandbox is
+  // torn down on early failures. Source boundary: `nemoclaw tunnel stop` owns
+  // quick-tunnel process cleanup; `cleanupSandbox` owns the Docker/OpenShell
+  // sandbox and only suppresses already-missing sandboxes. Keep both callbacks
+  // strict so unexpected cleanup failures surface in cleanup.json. Removal
+  // condition: replace this ordering guard once NemoClaw exposes one atomic
+  // machine-readable lifecycle cleanup that stops tunnels before destroying the
+  // sandbox.
+  cleanup.add(`destroy sandbox ${SANDBOX_NAME}`, async () => {
+    if (process.env.NEMOCLAW_E2E_KEEP_SANDBOX === "1") return;
+    await host.cleanupSandbox(SANDBOX_NAME, {
+      artifactName: "cleanup-nemoclaw-destroy-tunnel-lifecycle",
+      timeoutMs: 15 * 60_000,
+    });
+  });
+  cleanup.add("stop cloudflared quick tunnel", async () => {
+    const stop = await host.nemoclaw(["tunnel", "stop"], {
+      artifactName: "cleanup-tunnel-stop",
+      env: commandEnv(),
+      timeoutMs: COMMAND_TIMEOUT_MS,
+    });
+    if (stop.exitCode === 0) return;
+    const text = resultText(stop);
+    if (isBenignTunnelStopFailure(text)) return;
+    throw new Error(
+      `[NemoClaw fault] cleanup tunnel stop failed with exit ${stop.exitCode ?? "unknown"}: ${text}`,
+    );
+  });
+}
 
 export async function runTunnelLifecycleContract({
   artifacts,
@@ -192,24 +237,7 @@ export async function runTunnelLifecycleContract({
     inferenceCredential: hosted.contractLabel,
   });
 
-  cleanup.add("stop cloudflared quick tunnel", async () => {
-    await bestEffort(() =>
-      host.nemoclaw(["tunnel", "stop"], {
-        artifactName: "cleanup-tunnel-stop",
-        env: commandEnv(),
-        timeoutMs: COMMAND_TIMEOUT_MS,
-      }),
-    );
-  });
-  cleanup.add(`destroy sandbox ${SANDBOX_NAME}`, async () => {
-    if (process.env.NEMOCLAW_E2E_KEEP_SANDBOX === "1") return;
-    await bestEffort(() =>
-      host.cleanupSandbox(SANDBOX_NAME, {
-        artifactName: "cleanup-nemoclaw-destroy-tunnel-lifecycle",
-        timeoutMs: 15 * 60_000,
-      }),
-    );
-  });
+  registerTunnelLifecycleCleanup(cleanup, host);
 
   const docker = await host.command("docker", ["info"], {
     artifactName: "prereq-docker-info-tunnel-lifecycle",

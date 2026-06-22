@@ -97,6 +97,10 @@ describe("tunnel lifecycle workflow boundary", () => {
 
     const install = job.steps.find((step) => step.name === "Install root dependencies");
     expect(install).toBeDefined();
+    install!.env = {
+      NVIDIA_INFERENCE_API_KEY: "${{ secrets.NVIDIA_INFERENCE_API_KEY }}",
+      NVIDIA_API_KEY: "${{ secrets.NVIDIA_API_KEY }}",
+    };
     install!.run = "npm install";
 
     const upload = job.steps.find((step) => step.name === "Upload tunnel lifecycle artifacts");
@@ -120,6 +124,8 @@ describe("tunnel lifecycle workflow boundary", () => {
           'step \'Configure isolated Docker auth directory\' run script must include echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-tunnel-lifecycle" >> "$GITHUB_ENV"',
           "step 'Configure isolated Docker auth directory' run script must not include ${{ github.workspace }}",
           "tunnel-lifecycle-vitest checkout step must set persist-credentials=false",
+          "tunnel-lifecycle-vitest step 'Install root dependencies' env must not include NVIDIA_INFERENCE_API_KEY",
+          "tunnel-lifecycle-vitest step 'Install root dependencies' env must not include NVIDIA_API_KEY",
           "step 'Install root dependencies' run script must include npm ci --ignore-scripts",
           "artifact upload path must include e2e-artifacts/vitest/tunnel-lifecycle/",
           "tunnel-lifecycle-vitest artifact upload must set include-hidden-files: false",
