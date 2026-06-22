@@ -776,26 +776,36 @@ hermes-box  127.0.0.1  8642  12346  running`;
     const childProcess = requireDist("node:child_process");
     let secretBoundaryCalls = 0;
 
-    vi.spyOn(childProcess, "spawnSync").mockImplementation(
-      (_command: unknown, rawArgs: unknown) => {
-        const args = Array.isArray(rawArgs) ? rawArgs.map(String) : [];
-        const shellCommand = String(args.at(-1) ?? "");
-        if (shellCommand.includes("HTTP_CODE=$(curl")) {
-          return {
+    const execResponses: Array<[string, () => never]> = [
+      [
+        "HTTP_CODE=$(curl",
+        () =>
+          ({
             status: 0,
             stdout: "stdout: __NEMOCLAW_SANDBOX_EXEC_STARTED__\nstdout: RUNNING\n",
             stderr: "",
-          } as never;
-        }
-        if (shellCommand.includes("validate-hermes-env-secret-boundary.py")) {
+          }) as never,
+      ],
+      [
+        "validate-hermes-env-secret-boundary.py",
+        () => {
           secretBoundaryCalls += 1;
           return {
             status: 0,
             stdout: "stdout: __NEMOCLAW_SANDBOX_EXEC_STARTED__\nstdout: SECRET_BOUNDARY_OK\n",
             stderr: "",
           } as never;
-        }
-        return { status: 0, stdout: "", stderr: "" } as never;
+        },
+      ],
+    ];
+    vi.spyOn(childProcess, "spawnSync").mockImplementation(
+      (_command: unknown, rawArgs: unknown) => {
+        const args = Array.isArray(rawArgs) ? rawArgs.map(String) : [];
+        const shellCommand = String(args.at(-1) ?? "");
+        return (
+          execResponses.find(([needle]) => shellCommand.includes(needle))?.[1] ??
+          (() => ({ status: 0, stdout: "", stderr: "" }) as never)
+        )();
       },
     );
     vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue({
