@@ -4440,6 +4440,28 @@ jobs:
       - name: Build CLI
         run: npm run build:cli
 
+      - name: Install and verify cloudflared prerequisite
+        run: |
+          set -euo pipefail
+          if command -v cloudflared >/dev/null 2>&1; then
+            cloudflared --version
+            exit 0
+          fi
+          source test/e2e/lib/cloudflared-version-resolver.sh
+          sudo mkdir -p --mode=0755 /usr/share/keyrings
+          curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg | sudo tee /usr/share/keyrings/cloudflare-main.gpg >/dev/null
+          echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/cloudflared.list >/dev/null
+          sudo apt-get update -qq
+          available_versions="$(apt-cache madison cloudflared | awk '{print $3}')"
+          cf_min_version="${CLOUDFLARED_MIN_VERSION:-$CLOUDFLARED_DEFAULT_MIN_VERSION}"
+          if [ -n "${CLOUDFLARED_VERSION:-}" ]; then
+            cf_version="$(cloudflared_resolve_package_version "$available_versions" "$cf_min_version" "$CLOUDFLARED_VERSION")"
+          else
+            cf_version="$(cloudflared_resolve_package_version "$available_versions" "$cf_min_version")"
+          fi
+          sudo apt-get install -y "cloudflared=${cf_version}"
+          cloudflared --version
+
       - name: Run tunnel lifecycle live test
         # Migrated from test/e2e/test-tunnel-lifecycle.sh. This preserves the
         # real Docker/OpenShell onboard, host cloudflared quick-tunnel,

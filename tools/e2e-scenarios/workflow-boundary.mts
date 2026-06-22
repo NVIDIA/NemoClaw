@@ -3138,6 +3138,12 @@ function validateModelRouterProviderRoutedInferenceVitestJob(
   requireRunContains(errors, cleanup, 'rm -rf "${DOCKER_CONFIG}"');
 }
 
+function runContainsCloudflaredAptInstall(run: string): boolean {
+  return /apt-get\s+install[\s\S]*cloudflared|apt\s+install[\s\S]*cloudflared|pkg\.cloudflare\.com\/cloudflared/.test(
+    run,
+  );
+}
+
 function validateTunnelLifecycleVitestJob(errors: string[], jobs: WorkflowRecord): void {
   const jobName = "tunnel-lifecycle-vitest";
   const scenarioName = "tunnel-lifecycle";
@@ -3253,11 +3259,40 @@ function validateTunnelLifecycleVitestJob(errors: string[], jobs: WorkflowRecord
   const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
   requireRunContains(errors, buildCli, "npm run build:cli");
 
+  const cloudflaredPrereq = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Install and verify cloudflared prerequisite",
+  );
+  const cloudflaredPrereqEnv = asRecord(cloudflaredPrereq?.env);
+  requireEnvDoesNotExposeSecret(
+    errors,
+    "tunnel-lifecycle-vitest cloudflared prerequisite step",
+    cloudflaredPrereqEnv,
+    "NVIDIA_INFERENCE_API_KEY",
+  );
+  requireEnvDoesNotExposeSecret(
+    errors,
+    "tunnel-lifecycle-vitest cloudflared prerequisite step",
+    cloudflaredPrereqEnv,
+    "NVIDIA_API_KEY",
+  );
+  requireRunContains(errors, cloudflaredPrereq, "cloudflared --version");
+  requireRunContains(errors, cloudflaredPrereq, "test/e2e/lib/cloudflared-version-resolver.sh");
+  requireRunContains(errors, cloudflaredPrereq, "sudo apt-get install -y");
+  requireRunContains(errors, cloudflaredPrereq, "cloudflared=${cf_version}");
+
   const runVitest = requireJobStep(errors, jobName, steps, "Run tunnel lifecycle live test");
   const runVitestEnv = asRecord(runVitest?.env);
   if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
     errors.push(
       "tunnel-lifecycle-vitest Vitest step must receive NVIDIA_INFERENCE_API_KEY from secrets",
+    );
+  }
+  if (runContainsCloudflaredAptInstall(stringValue(runVitest?.run))) {
+    errors.push(
+      "tunnel-lifecycle-vitest Vitest step must not run cloudflared APT installation with NVIDIA_INFERENCE_API_KEY in scope",
     );
   }
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-scenarios-live");

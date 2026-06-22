@@ -251,51 +251,11 @@ export async function runTunnelLifecycleContract({
     skip("Docker is required for tunnel lifecycle E2E");
   }
 
-  const cloudflared = await host.command(
-    "bash",
-    [
-      "-lc",
-      [
-        "set -euo pipefail",
-        "if command -v cloudflared >/dev/null 2>&1; then",
-        "  cloudflared --version",
-        "  exit 0",
-        "fi",
-        'if [ "${GITHUB_ACTIONS:-}" != "true" ]; then',
-        '  echo "cloudflared not found" >&2',
-        "  exit 127",
-        "fi",
-        "source test/e2e/lib/cloudflared-version-resolver.sh",
-        "sudo mkdir -p --mode=0755 /usr/share/keyrings",
-        "curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg | sudo tee /usr/share/keyrings/cloudflare-main.gpg >/dev/null",
-        'echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/cloudflared.list >/dev/null',
-        "sudo apt-get update -qq",
-        "available_versions=\"$(apt-cache madison cloudflared | awk '{print $3}')\"",
-        'cf_min_version="${CLOUDFLARED_MIN_VERSION:-$CLOUDFLARED_DEFAULT_MIN_VERSION}"',
-        'if [ -n "${CLOUDFLARED_VERSION:-}" ]; then',
-        '  cf_version="$(cloudflared_resolve_package_version "$available_versions" "$cf_min_version" "$CLOUDFLARED_VERSION")"',
-        "else",
-        '  cf_version="$(cloudflared_resolve_package_version "$available_versions" "$cf_min_version")"',
-        "fi",
-        'sudo apt-get install -y "cloudflared=${cf_version}"',
-        "cloudflared --version",
-      ].join("\n"),
-    ],
-    {
-      artifactName: "prereq-cloudflared-version",
-      cwd: REPO_ROOT,
-      env: {
-        ...buildAvailabilityProbeEnv(),
-        ...(process.env.CLOUDFLARED_VERSION
-          ? { CLOUDFLARED_VERSION: process.env.CLOUDFLARED_VERSION }
-          : {}),
-        ...(process.env.CLOUDFLARED_MIN_VERSION
-          ? { CLOUDFLARED_MIN_VERSION: process.env.CLOUDFLARED_MIN_VERSION }
-          : {}),
-      },
-      timeoutMs: 5 * 60_000,
-    },
-  );
+  const cloudflared = await host.command("cloudflared", ["--version"], {
+    artifactName: "prereq-cloudflared-version",
+    env: buildAvailabilityProbeEnv(),
+    timeoutMs: 30_000,
+  });
   if (cloudflared.exitCode !== 0) {
     if (process.env.GITHUB_ACTIONS === "true") {
       throw new Error(
