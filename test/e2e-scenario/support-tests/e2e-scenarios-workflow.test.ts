@@ -14,6 +14,7 @@ import {
   validateE2eVitestScenariosWorkflowBoundary,
   validateFreeStandingWorkflowInventory,
 } from "../../../tools/e2e-scenarios/workflow-boundary.mts";
+import { testTimeoutOptions } from "../../helpers/timeouts";
 
 function readWorkflow(): Record<string, unknown> {
   return YAML.parse(
@@ -75,461 +76,525 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
     expect(validateE2eVitestScenariosWorkflowBoundary()).toEqual([]);
   });
 
-  it("evaluates high-risk dispatch selector behavior before secret-bearing jobs run", () => {
-    expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({
-        scenarios: "network-policy,../escape",
-      }),
-    ).toMatchObject({
-      valid: false,
-      liveScenariosRuns: false,
-      selectedFreeStandingJobs: [],
-    });
-    expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({
-        jobs: "network-policy-vitest",
-        scenarios: "network-policy",
-      }),
-    ).toMatchObject({
-      valid: false,
-      liveScenariosRuns: false,
-      selectedFreeStandingJobs: [],
-    });
-    expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({
-        scenarios: "network-policy",
-      }),
-    ).toMatchObject({
-      valid: true,
-      liveScenariosRuns: false,
-      selectedFreeStandingJobs: ["network-policy-vitest"],
-      registryScenarios: [],
-    });
-    expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({
-        scenarios: "network-policy,ubuntu-repo-cloud-openclaw",
-      }),
-    ).toMatchObject({
-      valid: true,
-      liveScenariosRuns: true,
-      selectedFreeStandingJobs: ["network-policy-vitest"],
-      registryScenarios: ["ubuntu-repo-cloud-openclaw"],
-    });
-    expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({
-        scenarios: "openshell-version-pin",
-      }),
-    ).toMatchObject({
-      valid: true,
-      liveScenariosRuns: false,
-      selectedFreeStandingJobs: ["openshell-version-pin-vitest"],
-      registryScenarios: [],
-    });
-    expect(evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "skill-agent" })).toMatchObject({
-      valid: true,
-      liveScenariosRuns: false,
-      selectedFreeStandingJobs: ["skill-agent-vitest"],
-      registryScenarios: [],
-    });
-    expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({
-        jobs: "skill-agent-vitest",
-      }),
-    ).toMatchObject({
-      valid: true,
-      liveScenariosRuns: false,
-      selectedFreeStandingJobs: ["skill-agent-vitest"],
-      registryScenarios: [],
-    });
-    expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({
-        scenarios: "openclaw-skill-cli",
-      }),
-    ).toMatchObject({
-      valid: true,
-      liveScenariosRuns: false,
-      selectedFreeStandingJobs: ["openclaw-skill-cli-vitest"],
-      registryScenarios: [],
-    });
-    expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({
-        jobs: "openclaw-skill-cli-vitest",
-      }),
-    ).toMatchObject({
-      valid: true,
-      liveScenariosRuns: false,
-      selectedFreeStandingJobs: ["openclaw-skill-cli-vitest"],
-      registryScenarios: [],
-    });
-    expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({
-        scenarios: "credential-sanitization",
-      }),
-    ).toMatchObject({
-      valid: true,
-      liveScenariosRuns: false,
-      selectedFreeStandingJobs: ["credential-sanitization-vitest"],
-      registryScenarios: [],
-    });
-    expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({
-        jobs: "credential-sanitization-vitest",
-      }),
-    ).toMatchObject({
-      valid: true,
-      liveScenariosRuns: false,
-      selectedFreeStandingJobs: ["credential-sanitization-vitest"],
-      registryScenarios: [],
-    });
-    expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({
-        scenarios: "sessions-agents-cli",
-      }),
-    ).toMatchObject({
-      valid: true,
-      liveScenariosRuns: false,
-      selectedFreeStandingJobs: ["sessions-agents-cli-vitest"],
-      registryScenarios: [],
-    });
-    expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({
-        jobs: "sessions-agents-cli-vitest",
-      }),
-    ).toMatchObject({
-      valid: true,
-      liveScenariosRuns: false,
-      selectedFreeStandingJobs: ["sessions-agents-cli-vitest"],
-      registryScenarios: [],
-    });
-    expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({
-        jobs: "runtime-overrides-vitest",
-      }),
-    ).toMatchObject({
-      valid: true,
-      liveScenariosRuns: false,
-      selectedFreeStandingJobs: ["runtime-overrides-vitest"],
-      registryScenarios: [],
-    });
-    expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({
-        scenarios: "runtime-overrides",
-      }),
-    ).toMatchObject({
-      valid: true,
-      liveScenariosRuns: false,
-      selectedFreeStandingJobs: ["runtime-overrides-vitest"],
-      registryScenarios: [],
-    });
-    expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({
-        scenarios: "messaging-compatible-endpoint",
-      }),
-    ).toMatchObject({
-      valid: true,
-      liveScenariosRuns: false,
-      selectedFreeStandingJobs: ["messaging-compatible-endpoint-vitest"],
-      registryScenarios: [],
-    });
-    expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({
-        jobs: "messaging-compatible-endpoint-vitest",
-      }),
-    ).toMatchObject({
-      valid: true,
-      liveScenariosRuns: false,
-      selectedFreeStandingJobs: ["messaging-compatible-endpoint-vitest"],
-      registryScenarios: [],
-    });
-    expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({
-        scenarios: "inference-routing",
-      }),
-    ).toMatchObject({
-      valid: true,
-      liveScenariosRuns: false,
-      selectedFreeStandingJobs: ["inference-routing-vitest"],
-      registryScenarios: [],
-    });
-    expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({
-        jobs: "inference-routing-vitest",
-      }),
-    ).toMatchObject({
-      valid: true,
-      liveScenariosRuns: false,
-      selectedFreeStandingJobs: ["inference-routing-vitest"],
-      registryScenarios: [],
-    });
-    expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({
-        scenarios: "cloud-inference",
-      }),
-    ).toMatchObject({
-      valid: true,
-      liveScenariosRuns: false,
-      selectedFreeStandingJobs: ["cloud-inference-vitest"],
-      registryScenarios: [],
-    });
-    expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({
-        jobs: "cloud-inference-vitest",
-      }),
-    ).toMatchObject({
-      valid: true,
-      liveScenariosRuns: false,
-      selectedFreeStandingJobs: ["cloud-inference-vitest"],
-      registryScenarios: [],
-    });
-    expect(evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "hermes-e2e" })).toMatchObject({
-      valid: true,
-      liveScenariosRuns: false,
-      selectedFreeStandingJobs: ["hermes-e2e-vitest"],
-      registryScenarios: [],
-    });
-    expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({
-        scenarios: "hermes-root-entrypoint-smoke",
-      }),
-    ).toMatchObject({
-      valid: true,
-      liveScenariosRuns: false,
-      selectedFreeStandingJobs: ["hermes-root-entrypoint-smoke-vitest"],
-      registryScenarios: [],
-    });
-    expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({
-        jobs: "hermes-root-entrypoint-smoke-vitest",
-      }),
-    ).toMatchObject({
-      valid: true,
-      liveScenariosRuns: false,
-      selectedFreeStandingJobs: ["hermes-root-entrypoint-smoke-vitest"],
-      registryScenarios: [],
-    });
-    expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({
-        scenarios: "common-egress-agent",
-      }),
-    ).toMatchObject({
-      valid: true,
-      liveScenariosRuns: false,
-      selectedFreeStandingJobs: ["common-egress-agent-vitest"],
-      registryScenarios: [],
-    });
-    expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({
-        jobs: "common-egress-agent-vitest",
-      }),
-    ).toMatchObject({
-      valid: true,
-      liveScenariosRuns: false,
-      selectedFreeStandingJobs: ["common-egress-agent-vitest"],
-      registryScenarios: [],
-    });
-    expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({
-        scenarios: "shields-config",
-      }),
-    ).toMatchObject({
-      valid: true,
-      liveScenariosRuns: false,
-      selectedFreeStandingJobs: ["shields-config-vitest"],
-      registryScenarios: [],
-    });
-    expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({
-        jobs: "shields-config-vitest",
-      }),
-    ).toMatchObject({
-      valid: true,
-      liveScenariosRuns: false,
-      selectedFreeStandingJobs: ["shields-config-vitest"],
-      registryScenarios: [],
-    });
-    expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({
-        scenarios: "rebuild-openclaw",
-      }),
-    ).toMatchObject({
-      valid: true,
-      liveScenariosRuns: false,
-      selectedFreeStandingJobs: ["rebuild-openclaw-vitest"],
-      registryScenarios: [],
-    });
-    expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({
-        jobs: "rebuild-openclaw-vitest",
-      }),
-    ).toMatchObject({
-      valid: true,
-      liveScenariosRuns: false,
-      selectedFreeStandingJobs: ["rebuild-openclaw-vitest"],
-      registryScenarios: [],
-    });
-    expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({
-        scenarios: "state-backup-restore",
-      }),
-    ).toMatchObject({
-      valid: true,
-      liveScenariosRuns: false,
-      selectedFreeStandingJobs: ["state-backup-restore-vitest"],
-      registryScenarios: [],
-    });
-    expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({
-        jobs: "state-backup-restore-vitest",
-      }),
-    ).toMatchObject({
-      valid: true,
-      liveScenariosRuns: false,
-      selectedFreeStandingJobs: ["state-backup-restore-vitest"],
-      registryScenarios: [],
-    });
-    expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({
-        scenarios: "model-router-provider-routed-inference",
-      }),
-    ).toMatchObject({
-      valid: true,
-      liveScenariosRuns: false,
-      selectedFreeStandingJobs: ["model-router-provider-routed-inference-vitest"],
-      registryScenarios: [],
-    });
-    expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({
-        jobs: "model-router-provider-routed-inference-vitest",
-      }),
-    ).toMatchObject({
-      valid: true,
-      liveScenariosRuns: false,
-      selectedFreeStandingJobs: ["model-router-provider-routed-inference-vitest"],
-      registryScenarios: [],
-    });
-    expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({
-        scenarios: "gateway-drift-preflight",
-      }),
-    ).toMatchObject({
-      valid: true,
-      liveScenariosRuns: false,
-      selectedFreeStandingJobs: ["gateway-drift-preflight-vitest"],
-      registryScenarios: [],
-    });
-    expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({
-        jobs: "gateway-drift-preflight-vitest",
-      }),
-    ).toMatchObject({
-      valid: true,
-      liveScenariosRuns: false,
-      selectedFreeStandingJobs: ["gateway-drift-preflight-vitest"],
-      registryScenarios: [],
-    });
-    expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({
-        scenarios: "openclaw-inference-switch",
-      }),
-    ).toMatchObject({
-      valid: true,
-      liveScenariosRuns: false,
-      selectedFreeStandingJobs: ["openclaw-inference-switch-vitest"],
-      registryScenarios: [],
-    });
-    expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({
-        jobs: "openclaw-inference-switch-vitest",
-      }),
-    ).toMatchObject({
-      valid: true,
-      liveScenariosRuns: false,
-      selectedFreeStandingJobs: ["openclaw-inference-switch-vitest"],
-      registryScenarios: [],
-    });
-    expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({
-        scenarios: "bedrock-runtime-compatible-anthropic",
-      }),
-    ).toMatchObject({
-      valid: true,
-      liveScenariosRuns: false,
-      selectedFreeStandingJobs: ["bedrock-runtime-compatible-anthropic-vitest"],
-      registryScenarios: [],
-    });
-    expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({
-        jobs: "bedrock-runtime-compatible-anthropic-vitest",
-      }),
-    ).toMatchObject({
-      valid: true,
-      liveScenariosRuns: false,
-      selectedFreeStandingJobs: ["bedrock-runtime-compatible-anthropic-vitest"],
-      registryScenarios: [],
-    });
-    expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({
-        scenarios: "issue-2478-crash-loop-recovery",
-      }),
-    ).toMatchObject({
-      valid: true,
-      liveScenariosRuns: false,
-      selectedFreeStandingJobs: ["issue-2478-crash-loop-recovery-vitest"],
-      registryScenarios: [],
-    });
-    expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({
-        jobs: "issue-2478-crash-loop-recovery-vitest",
-      }),
-    ).toMatchObject({
-      valid: true,
-      liveScenariosRuns: false,
-      selectedFreeStandingJobs: ["issue-2478-crash-loop-recovery-vitest"],
-      registryScenarios: [],
-    });
-    expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "gateway-health-honest" }),
-    ).toMatchObject({
-      valid: true,
-      liveScenariosRuns: false,
-      selectedFreeStandingJobs: ["gateway-health-honest-vitest"],
-      registryScenarios: [],
-    });
-    expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({ jobs: "gateway-health-honest-vitest" }),
-    ).toMatchObject({
-      valid: true,
-      liveScenariosRuns: false,
-      selectedFreeStandingJobs: ["gateway-health-honest-vitest"],
-      registryScenarios: [],
-    });
-    expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "channels-add-remove" }),
-    ).toMatchObject({
-      valid: true,
-      liveScenariosRuns: false,
-      selectedFreeStandingJobs: ["channels-add-remove-vitest"],
-      registryScenarios: [],
-    });
-    expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({
-        jobs: "channels-add-remove-vitest",
-      }),
-    ).toMatchObject({
-      valid: true,
-      liveScenariosRuns: false,
-      selectedFreeStandingJobs: ["channels-add-remove-vitest"],
-      registryScenarios: [],
-    });
-  });
+  it(
+    "evaluates high-risk dispatch selector behavior before secret-bearing jobs run",
+    testTimeoutOptions(30_000),
+    () => {
+      expect(
+        evaluateE2eVitestWorkflowDispatchSelectors({
+          scenarios: "network-policy,../escape",
+        }),
+      ).toMatchObject({
+        valid: false,
+        liveScenariosRuns: false,
+        selectedFreeStandingJobs: [],
+      });
+      expect(
+        evaluateE2eVitestWorkflowDispatchSelectors({
+          jobs: "network-policy-vitest",
+          scenarios: "network-policy",
+        }),
+      ).toMatchObject({
+        valid: false,
+        liveScenariosRuns: false,
+        selectedFreeStandingJobs: [],
+      });
+      expect(
+        evaluateE2eVitestWorkflowDispatchSelectors({
+          scenarios: "network-policy",
+        }),
+      ).toMatchObject({
+        valid: true,
+        liveScenariosRuns: false,
+        selectedFreeStandingJobs: ["network-policy-vitest"],
+        registryScenarios: [],
+      });
+      expect(
+        evaluateE2eVitestWorkflowDispatchSelectors({
+          scenarios: "network-policy,ubuntu-repo-cloud-openclaw",
+        }),
+      ).toMatchObject({
+        valid: true,
+        liveScenariosRuns: true,
+        selectedFreeStandingJobs: ["network-policy-vitest"],
+        registryScenarios: ["ubuntu-repo-cloud-openclaw"],
+      });
+      expect(
+        evaluateE2eVitestWorkflowDispatchSelectors({
+          scenarios: "openshell-version-pin",
+        }),
+      ).toMatchObject({
+        valid: true,
+        liveScenariosRuns: false,
+        selectedFreeStandingJobs: ["openshell-version-pin-vitest"],
+        registryScenarios: [],
+      });
+      expect(
+        evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "skill-agent" }),
+      ).toMatchObject({
+        valid: true,
+        liveScenariosRuns: false,
+        selectedFreeStandingJobs: ["skill-agent-vitest"],
+        registryScenarios: [],
+      });
+      expect(
+        evaluateE2eVitestWorkflowDispatchSelectors({
+          jobs: "skill-agent-vitest",
+        }),
+      ).toMatchObject({
+        valid: true,
+        liveScenariosRuns: false,
+        selectedFreeStandingJobs: ["skill-agent-vitest"],
+        registryScenarios: [],
+      });
+      expect(
+        evaluateE2eVitestWorkflowDispatchSelectors({
+          scenarios: "openclaw-skill-cli",
+        }),
+      ).toMatchObject({
+        valid: true,
+        liveScenariosRuns: false,
+        selectedFreeStandingJobs: ["openclaw-skill-cli-vitest"],
+        registryScenarios: [],
+      });
+      expect(
+        evaluateE2eVitestWorkflowDispatchSelectors({
+          jobs: "openclaw-skill-cli-vitest",
+        }),
+      ).toMatchObject({
+        valid: true,
+        liveScenariosRuns: false,
+        selectedFreeStandingJobs: ["openclaw-skill-cli-vitest"],
+        registryScenarios: [],
+      });
+      expect(
+        evaluateE2eVitestWorkflowDispatchSelectors({
+          scenarios: "credential-sanitization",
+        }),
+      ).toMatchObject({
+        valid: true,
+        liveScenariosRuns: false,
+        selectedFreeStandingJobs: ["credential-sanitization-vitest"],
+        registryScenarios: [],
+      });
+      expect(
+        evaluateE2eVitestWorkflowDispatchSelectors({
+          jobs: "credential-sanitization-vitest",
+        }),
+      ).toMatchObject({
+        valid: true,
+        liveScenariosRuns: false,
+        selectedFreeStandingJobs: ["credential-sanitization-vitest"],
+        registryScenarios: [],
+      });
+      expect(
+        evaluateE2eVitestWorkflowDispatchSelectors({
+          scenarios: "sessions-agents-cli",
+        }),
+      ).toMatchObject({
+        valid: true,
+        liveScenariosRuns: false,
+        selectedFreeStandingJobs: ["sessions-agents-cli-vitest"],
+        registryScenarios: [],
+      });
+      expect(
+        evaluateE2eVitestWorkflowDispatchSelectors({
+          jobs: "sessions-agents-cli-vitest",
+        }),
+      ).toMatchObject({
+        valid: true,
+        liveScenariosRuns: false,
+        selectedFreeStandingJobs: ["sessions-agents-cli-vitest"],
+        registryScenarios: [],
+      });
+      expect(
+        evaluateE2eVitestWorkflowDispatchSelectors({
+          jobs: "runtime-overrides-vitest",
+        }),
+      ).toMatchObject({
+        valid: true,
+        liveScenariosRuns: false,
+        selectedFreeStandingJobs: ["runtime-overrides-vitest"],
+        registryScenarios: [],
+      });
+      expect(
+        evaluateE2eVitestWorkflowDispatchSelectors({
+          scenarios: "runtime-overrides",
+        }),
+      ).toMatchObject({
+        valid: true,
+        liveScenariosRuns: false,
+        selectedFreeStandingJobs: ["runtime-overrides-vitest"],
+        registryScenarios: [],
+      });
+      expect(
+        evaluateE2eVitestWorkflowDispatchSelectors({
+          scenarios: "messaging-compatible-endpoint",
+        }),
+      ).toMatchObject({
+        valid: true,
+        liveScenariosRuns: false,
+        selectedFreeStandingJobs: ["messaging-compatible-endpoint-vitest"],
+        registryScenarios: [],
+      });
+      expect(
+        evaluateE2eVitestWorkflowDispatchSelectors({
+          jobs: "messaging-compatible-endpoint-vitest",
+        }),
+      ).toMatchObject({
+        valid: true,
+        liveScenariosRuns: false,
+        selectedFreeStandingJobs: ["messaging-compatible-endpoint-vitest"],
+        registryScenarios: [],
+      });
+      expect(
+        evaluateE2eVitestWorkflowDispatchSelectors({
+          scenarios: "inference-routing",
+        }),
+      ).toMatchObject({
+        valid: true,
+        liveScenariosRuns: false,
+        selectedFreeStandingJobs: ["inference-routing-vitest"],
+        registryScenarios: [],
+      });
+      expect(
+        evaluateE2eVitestWorkflowDispatchSelectors({
+          jobs: "inference-routing-vitest",
+        }),
+      ).toMatchObject({
+        valid: true,
+        liveScenariosRuns: false,
+        selectedFreeStandingJobs: ["inference-routing-vitest"],
+        registryScenarios: [],
+      });
+      expect(
+        evaluateE2eVitestWorkflowDispatchSelectors({
+          scenarios: "cloud-inference",
+        }),
+      ).toMatchObject({
+        valid: true,
+        liveScenariosRuns: false,
+        selectedFreeStandingJobs: ["cloud-inference-vitest"],
+        registryScenarios: [],
+      });
+      expect(
+        evaluateE2eVitestWorkflowDispatchSelectors({
+          jobs: "cloud-inference-vitest",
+        }),
+      ).toMatchObject({
+        valid: true,
+        liveScenariosRuns: false,
+        selectedFreeStandingJobs: ["cloud-inference-vitest"],
+        registryScenarios: [],
+      });
+      expect(evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "hermes-e2e" })).toMatchObject(
+        {
+          valid: true,
+          liveScenariosRuns: false,
+          selectedFreeStandingJobs: ["hermes-e2e-vitest"],
+          registryScenarios: [],
+        },
+      );
+      expect(
+        evaluateE2eVitestWorkflowDispatchSelectors({
+          scenarios: "hermes-root-entrypoint-smoke",
+        }),
+      ).toMatchObject({
+        valid: true,
+        liveScenariosRuns: false,
+        selectedFreeStandingJobs: ["hermes-root-entrypoint-smoke-vitest"],
+        registryScenarios: [],
+      });
+      expect(
+        evaluateE2eVitestWorkflowDispatchSelectors({
+          jobs: "hermes-root-entrypoint-smoke-vitest",
+        }),
+      ).toMatchObject({
+        valid: true,
+        liveScenariosRuns: false,
+        selectedFreeStandingJobs: ["hermes-root-entrypoint-smoke-vitest"],
+        registryScenarios: [],
+      });
+      expect(
+        evaluateE2eVitestWorkflowDispatchSelectors({
+          scenarios: "common-egress-agent",
+        }),
+      ).toMatchObject({
+        valid: true,
+        liveScenariosRuns: false,
+        selectedFreeStandingJobs: ["common-egress-agent-vitest"],
+        registryScenarios: [],
+      });
+      expect(
+        evaluateE2eVitestWorkflowDispatchSelectors({
+          jobs: "common-egress-agent-vitest",
+        }),
+      ).toMatchObject({
+        valid: true,
+        liveScenariosRuns: false,
+        selectedFreeStandingJobs: ["common-egress-agent-vitest"],
+        registryScenarios: [],
+      });
+      expect(
+        evaluateE2eVitestWorkflowDispatchSelectors({
+          scenarios: "shields-config",
+        }),
+      ).toMatchObject({
+        valid: true,
+        liveScenariosRuns: false,
+        selectedFreeStandingJobs: ["shields-config-vitest"],
+        registryScenarios: [],
+      });
+      expect(
+        evaluateE2eVitestWorkflowDispatchSelectors({
+          jobs: "shields-config-vitest",
+        }),
+      ).toMatchObject({
+        valid: true,
+        liveScenariosRuns: false,
+        selectedFreeStandingJobs: ["shields-config-vitest"],
+        registryScenarios: [],
+      });
+      expect(
+        evaluateE2eVitestWorkflowDispatchSelectors({
+          scenarios: "rebuild-openclaw",
+        }),
+      ).toMatchObject({
+        valid: true,
+        liveScenariosRuns: false,
+        selectedFreeStandingJobs: ["rebuild-openclaw-vitest"],
+        registryScenarios: [],
+      });
+      expect(
+        evaluateE2eVitestWorkflowDispatchSelectors({
+          jobs: "rebuild-openclaw-vitest",
+        }),
+      ).toMatchObject({
+        valid: true,
+        liveScenariosRuns: false,
+        selectedFreeStandingJobs: ["rebuild-openclaw-vitest"],
+        registryScenarios: [],
+      });
+      expect(
+        evaluateE2eVitestWorkflowDispatchSelectors({
+          scenarios: "state-backup-restore",
+        }),
+      ).toMatchObject({
+        valid: true,
+        liveScenariosRuns: false,
+        selectedFreeStandingJobs: ["state-backup-restore-vitest"],
+        registryScenarios: [],
+      });
+      expect(
+        evaluateE2eVitestWorkflowDispatchSelectors({
+          jobs: "state-backup-restore-vitest",
+        }),
+      ).toMatchObject({
+        valid: true,
+        liveScenariosRuns: false,
+        selectedFreeStandingJobs: ["state-backup-restore-vitest"],
+        registryScenarios: [],
+      });
+      expect(
+        evaluateE2eVitestWorkflowDispatchSelectors({
+          scenarios: "upgrade-stale-sandbox",
+        }),
+      ).toMatchObject({
+        valid: true,
+        liveScenariosRuns: false,
+        selectedFreeStandingJobs: ["upgrade-stale-sandbox-vitest"],
+        registryScenarios: [],
+      });
+      expect(
+        evaluateE2eVitestWorkflowDispatchSelectors({
+          jobs: "upgrade-stale-sandbox-vitest",
+        }),
+      ).toMatchObject({
+        valid: true,
+        liveScenariosRuns: false,
+        selectedFreeStandingJobs: ["upgrade-stale-sandbox-vitest"],
+        registryScenarios: [],
+      });
+      expect(
+        evaluateE2eVitestWorkflowDispatchSelectors({
+          scenarios: "model-router-provider-routed-inference",
+        }),
+      ).toMatchObject({
+        valid: true,
+        liveScenariosRuns: false,
+        selectedFreeStandingJobs: ["model-router-provider-routed-inference-vitest"],
+        registryScenarios: [],
+      });
+      expect(
+        evaluateE2eVitestWorkflowDispatchSelectors({
+          jobs: "model-router-provider-routed-inference-vitest",
+        }),
+      ).toMatchObject({
+        valid: true,
+        liveScenariosRuns: false,
+        selectedFreeStandingJobs: ["model-router-provider-routed-inference-vitest"],
+        registryScenarios: [],
+      });
+      expect(
+        evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "diagnostics" }),
+      ).toMatchObject({
+        valid: true,
+        liveScenariosRuns: false,
+        selectedFreeStandingJobs: ["diagnostics-vitest"],
+        registryScenarios: [],
+      });
+      expect(
+        evaluateE2eVitestWorkflowDispatchSelectors({ jobs: "diagnostics-vitest" }),
+      ).toMatchObject({
+        valid: true,
+        liveScenariosRuns: false,
+        selectedFreeStandingJobs: ["diagnostics-vitest"],
+        registryScenarios: [],
+      });
+      expect(
+        evaluateE2eVitestWorkflowDispatchSelectors({
+          scenarios: "gateway-drift-preflight",
+        }),
+      ).toMatchObject({
+        valid: true,
+        liveScenariosRuns: false,
+        selectedFreeStandingJobs: ["gateway-drift-preflight-vitest"],
+        registryScenarios: [],
+      });
+      expect(
+        evaluateE2eVitestWorkflowDispatchSelectors({
+          jobs: "gateway-drift-preflight-vitest",
+        }),
+      ).toMatchObject({
+        valid: true,
+        liveScenariosRuns: false,
+        selectedFreeStandingJobs: ["gateway-drift-preflight-vitest"],
+        registryScenarios: [],
+      });
+      expect(
+        evaluateE2eVitestWorkflowDispatchSelectors({
+          scenarios: "openclaw-inference-switch",
+        }),
+      ).toMatchObject({
+        valid: true,
+        liveScenariosRuns: false,
+        selectedFreeStandingJobs: ["openclaw-inference-switch-vitest"],
+        registryScenarios: [],
+      });
+      expect(
+        evaluateE2eVitestWorkflowDispatchSelectors({
+          jobs: "openclaw-inference-switch-vitest",
+        }),
+      ).toMatchObject({
+        valid: true,
+        liveScenariosRuns: false,
+        selectedFreeStandingJobs: ["openclaw-inference-switch-vitest"],
+        registryScenarios: [],
+      });
+      expect(
+        evaluateE2eVitestWorkflowDispatchSelectors({
+          scenarios: "bedrock-runtime-compatible-anthropic",
+        }),
+      ).toMatchObject({
+        valid: true,
+        liveScenariosRuns: false,
+        selectedFreeStandingJobs: ["bedrock-runtime-compatible-anthropic-vitest"],
+        registryScenarios: [],
+      });
+      expect(
+        evaluateE2eVitestWorkflowDispatchSelectors({
+          jobs: "bedrock-runtime-compatible-anthropic-vitest",
+        }),
+      ).toMatchObject({
+        valid: true,
+        liveScenariosRuns: false,
+        selectedFreeStandingJobs: ["bedrock-runtime-compatible-anthropic-vitest"],
+        registryScenarios: [],
+      });
+      expect(
+        evaluateE2eVitestWorkflowDispatchSelectors({
+          scenarios: "issue-2478-crash-loop-recovery",
+        }),
+      ).toMatchObject({
+        valid: true,
+        liveScenariosRuns: false,
+        selectedFreeStandingJobs: ["issue-2478-crash-loop-recovery-vitest"],
+        registryScenarios: [],
+      });
+      expect(
+        evaluateE2eVitestWorkflowDispatchSelectors({
+          jobs: "issue-2478-crash-loop-recovery-vitest",
+        }),
+      ).toMatchObject({
+        valid: true,
+        liveScenariosRuns: false,
+        selectedFreeStandingJobs: ["issue-2478-crash-loop-recovery-vitest"],
+        registryScenarios: [],
+      });
+      expect(
+        evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "gateway-health-honest" }),
+      ).toMatchObject({
+        valid: true,
+        liveScenariosRuns: false,
+        selectedFreeStandingJobs: ["gateway-health-honest-vitest"],
+        registryScenarios: [],
+      });
+      expect(
+        evaluateE2eVitestWorkflowDispatchSelectors({ jobs: "gateway-health-honest-vitest" }),
+      ).toMatchObject({
+        valid: true,
+        liveScenariosRuns: false,
+        selectedFreeStandingJobs: ["gateway-health-honest-vitest"],
+        registryScenarios: [],
+      });
+      expect(
+        evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "concurrent-gateway-ports" }),
+      ).toMatchObject({
+        valid: true,
+        liveScenariosRuns: false,
+        selectedFreeStandingJobs: ["concurrent-gateway-ports-vitest"],
+        registryScenarios: [],
+      });
+      expect(
+        evaluateE2eVitestWorkflowDispatchSelectors({ jobs: "concurrent-gateway-ports-vitest" }),
+      ).toMatchObject({
+        valid: true,
+        liveScenariosRuns: false,
+        selectedFreeStandingJobs: ["concurrent-gateway-ports-vitest"],
+        registryScenarios: [],
+      });
+      expect(
+        evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "channels-add-remove" }),
+      ).toMatchObject({
+        valid: true,
+        liveScenariosRuns: false,
+        selectedFreeStandingJobs: ["channels-add-remove-vitest"],
+        registryScenarios: [],
+      });
+      expect(
+        evaluateE2eVitestWorkflowDispatchSelectors({
+          jobs: "channels-add-remove-vitest",
+        }),
+      ).toMatchObject({
+        valid: true,
+        liveScenariosRuns: false,
+        selectedFreeStandingJobs: ["channels-add-remove-vitest"],
+        registryScenarios: [],
+      });
+    },
+  );
 
-  it("derives the free-standing inventory from workflow job metadata", () => {
+  it("derives the free-standing inventory from workflow job metadata", { timeout: 60_000 }, () => {
     const inventory = readFreeStandingJobsInventory();
     expect(validateFreeStandingWorkflowInventory()).toEqual([]);
     expect(inventory.allowedJobs).toContain("openshell-version-pin-vitest");
     expect(inventory.allowedJobs).toContain("gateway-guard-recovery");
+    expect(inventory.allowedJobs).toContain("upgrade-stale-sandbox-vitest");
     expect(inventory.scenarioToJob.get("openshell-version-pin")).toBe(
       "openshell-version-pin-vitest",
+    );
+    expect(inventory.scenarioToJob.get("upgrade-stale-sandbox")).toBe(
+      "upgrade-stale-sandbox-vitest",
     );
     expect(inventory.scenarioToJob.get("credential-migration")).toBeUndefined();
     expect(
@@ -864,7 +929,9 @@ jobs:
           "step 'Run double-onboard live Vitest test' run script must not interpolate dispatch inputs directly",
           "workflow missing hermes-e2e-vitest job",
           "workflow missing skill-agent-vitest job",
+          "workflow missing diagnostics-vitest job",
           "workflow missing model-router-provider-routed-inference-vitest job",
+          "workflow missing snapshot-commands-vitest job",
           "report-to-pr job must wait for live-scenarios",
           "report-to-pr step must pass jobs through JOBS env",
           "step 'Post Vitest scenario results to PR' run script must check selector validation before echoing selectors",
@@ -891,6 +958,87 @@ jobs:
     try {
       expect(validateE2eVitestScenariosWorkflowBoundary(workflowPath)).toContain(
         "free-standing inventory mapping sandbox-rebuild:sandbox-rebuild-vitest must match the workflow job selector",
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("requires snapshot commands workflow boundary coverage", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-vitest-workflow-"));
+    const workflowPath = path.join(tmp, "workflow.yaml");
+    const workflow = fs.readFileSync(
+      path.join(process.cwd(), ".github/workflows/e2e-vitest-scenarios.yaml"),
+      "utf8",
+    );
+    const parsedWorkflow = YAML.parse(workflow) as {
+      jobs: Record<
+        string,
+        {
+          env: Record<string, string>;
+          steps: Array<Record<string, unknown>>;
+          "timeout-minutes"?: number;
+        }
+      >;
+    };
+    const snapshotJob = parsedWorkflow.jobs["snapshot-commands-vitest"];
+    snapshotJob["timeout-minutes"] = 30;
+    snapshotJob.env.DOCKER_CONFIG = "${{ github.workspace }}/.docker-config-shared";
+    snapshotJob.env.NVIDIA_API_KEY = "${{ secrets.NVIDIA_API_KEY }}";
+    for (const step of snapshotJob.steps) {
+      if (typeof step.uses === "string" && step.uses.startsWith("actions/checkout@")) {
+        step.with = { ...(step.with as Record<string, unknown>), "persist-credentials": true };
+      }
+      if (step.name === "Configure isolated Docker auth directory") {
+        step.run =
+          'echo "DOCKER_CONFIG=${{ github.workspace }}/.docker-config-shared" >> "$GITHUB_ENV"';
+      }
+      if (step.name === "Set up Node") {
+        step.env = { NVIDIA_API_KEY: "${{ secrets.NVIDIA_API_KEY }}" };
+      }
+      if (step.name === "Install root dependencies") {
+        step.env = {
+          DOCKERHUB_USERNAME: "${{ secrets.DOCKERHUB_USERNAME }}",
+          DOCKERHUB_TOKEN: "${{ secrets.DOCKERHUB_TOKEN }}",
+        };
+        step.run = "npm install";
+      }
+      if (step.name === "Run snapshot commands live test") {
+        step.run = String(step.run).replace(
+          "test/e2e-scenario/live/snapshot-commands.test.ts",
+          "test/e2e-scenario/live/registry-scenarios.test.ts",
+        );
+      }
+      if (step.name === "Upload snapshot commands artifacts") {
+        step.with = {
+          ...(step.with as Record<string, unknown>),
+          path: "e2e-artifacts/vitest/",
+          "include-hidden-files": true,
+        };
+      }
+      if (step.name === "Clean up Docker auth") {
+        step.run = String(step.run).replace('rm -rf "${DOCKER_CONFIG}"', 'echo "missing cleanup"');
+      }
+    }
+    fs.writeFileSync(workflowPath, YAML.stringify(parsedWorkflow));
+
+    try {
+      expect(validateE2eVitestScenariosWorkflowBoundary(workflowPath)).toEqual(
+        expect.arrayContaining([
+          "snapshot-commands-vitest job must keep a 40 minute timeout",
+          "snapshot-commands-vitest job must not set DOCKER_CONFIG at job level",
+          'step \'Configure isolated Docker auth directory\' run script must include echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-snapshot-commands" >> "$GITHUB_ENV"',
+          "snapshot-commands-vitest checkout step must set persist-credentials=false",
+          "snapshot-commands-vitest job env must not include NVIDIA_API_KEY",
+          "snapshot-commands-vitest step 'Set up Node' env must not include NVIDIA_API_KEY",
+          "snapshot-commands-vitest step 'Install root dependencies' env must not include DOCKERHUB_USERNAME",
+          "snapshot-commands-vitest step 'Install root dependencies' env must not include DOCKERHUB_TOKEN",
+          "snapshot-commands-vitest artifact upload must set include-hidden-files: false",
+          "artifact upload path must include e2e-artifacts/vitest/snapshot-commands/",
+          "step 'Clean up Docker auth' run script must include rm -rf \"${DOCKER_CONFIG}\"",
+          "step 'Install root dependencies' run script must include npm ci --ignore-scripts",
+          "step 'Run snapshot commands live test' run script must include test/e2e-scenario/live/snapshot-commands.test.ts",
+        ]),
       );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
@@ -1050,6 +1198,67 @@ jobs:
       const errors = validateE2eVitestScenariosWorkflowBoundary(workflowPath);
       expect(errors).toContain(
         "runtime-overrides-vitest step 'Run runtime overrides live test' run script must not use docker login or inline secret interpolation",
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects diagnostics workflow-boundary drift for secret and Docker auth handling", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-vitest-workflow-"));
+    const workflowPath = path.join(tmp, "workflow.yaml");
+    const workflow = readWorkflow() as {
+      jobs: Record<
+        string,
+        { env?: Record<string, unknown>; steps: Array<Record<string, unknown>> }
+      >;
+    };
+    const job = workflow.jobs["diagnostics-vitest"];
+    expect(job).toBeDefined();
+    expect(job.steps).toEqual(expect.any(Array));
+    job.env = {
+      ...job.env,
+      DOCKER_CONFIG: "${{ github.workspace }}/.docker-config-diagnostics",
+      NVIDIA_API_KEY: "${{ secrets.NVIDIA_API_KEY }}",
+      GITHUB_TOKEN: "${{ github.token }}",
+    };
+    const setupNodeIndex = job.steps.findIndex((step) => step.name === "Set up Node");
+    expect(setupNodeIndex).toBeGreaterThan(0);
+    job.steps.splice(setupNodeIndex, 0, {
+      name: "Authenticate to Docker Hub",
+      env: {
+        DOCKERHUB_USERNAME: "${{ secrets.DOCKERHUB_USERNAME }}",
+        DOCKERHUB_TOKEN: "${{ secrets.DOCKERHUB_TOKEN }}",
+      },
+      run: 'docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin',
+    });
+    const runStep = job.steps.find((step) => step.name === "Run diagnostics live test");
+    expect(runStep).toBeDefined();
+    runStep!.run = `${runStep!.run}\necho "\${{ inputs.jobs }}"`;
+    const uploadStep = job.steps.find((step) => step.name === "Upload diagnostics artifacts");
+    expect(uploadStep).toBeDefined();
+    uploadStep!.with = {
+      ...((uploadStep!.with as Record<string, unknown>) ?? {}),
+      "include-hidden-files": true,
+      "retention-days": 1,
+    };
+    fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+    try {
+      const errors = validateE2eVitestScenariosWorkflowBoundary(workflowPath);
+      expect(errors).toEqual(
+        expect.arrayContaining([
+          "diagnostics-vitest job must not expose Docker auth to branch-controlled steps",
+          "diagnostics-vitest job env must not include NVIDIA_API_KEY",
+          "diagnostics-vitest job env must not include GITHUB_TOKEN",
+          "diagnostics-vitest job must not authenticate to Docker Hub before branch-controlled test code runs",
+          "diagnostics-vitest step 'Authenticate to Docker Hub' env must not include DOCKERHUB_USERNAME",
+          "diagnostics-vitest step 'Authenticate to Docker Hub' env must not include DOCKERHUB_TOKEN",
+          "diagnostics-vitest step 'Authenticate to Docker Hub' run script must not use docker login or inline secret interpolation",
+          "step 'Run diagnostics live test' run script must not interpolate dispatch inputs directly",
+          "diagnostics-vitest artifact upload must set include-hidden-files: false",
+          "diagnostics-vitest artifact upload retention-days must be 14",
+        ]),
       );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });

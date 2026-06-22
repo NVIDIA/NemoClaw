@@ -15,12 +15,21 @@ const manifestConfigInputs = BUILT_IN_CHANNEL_MANIFESTS.flatMap((manifest) =>
       validValues: "validValues" in input ? input.validValues : undefined,
     })),
 );
-const requireMentionKeys = new Set(
-  [
-    ...channels.map((channel) => channel.requireMentionEnvKey),
-    ...manifestConfigInputs.filter(hasBooleanStringValues).map((input) => input.envKey),
-  ].filter((key): key is string => typeof key === "string" && key.length > 0),
+const validValuesByKey = new Map<string, ReadonlySet<string>>(
+  manifestConfigInputs.flatMap((input) => {
+    if (
+      typeof input.envKey !== "string" ||
+      input.envKey.length === 0 ||
+      !Array.isArray(input.validValues)
+    ) {
+      return [];
+    }
+    return [[input.envKey, new Set(input.validValues)] as const];
+  }),
 );
+for (const key of channels.map((channel) => channel.requireMentionEnvKey)) {
+  if (key && !validValuesByKey.has(key)) validValuesByKey.set(key, new Set(["0", "1"]));
+}
 
 const configKeyAliases = getMessagingConfigEnvAliases();
 
@@ -48,10 +57,6 @@ export const MESSAGING_CHANNEL_CONFIG_ENV_KEYS: readonly string[] = [
 ];
 
 const knownConfigKeys = new Set(MESSAGING_CHANNEL_CONFIG_ENV_KEYS);
-
-function hasBooleanStringValues(input: { readonly validValues?: readonly string[] }): boolean {
-  return input.validValues?.includes("0") === true && input.validValues.includes("1");
-}
 
 export type MessagingChannelConfigEnvResolution = {
   canonicalKey: string | null;
@@ -83,7 +88,8 @@ export function normalizeMessagingChannelConfigValue(key: string, value: unknown
   if (!canonical) return null;
   const normalized = normalizeValue(value);
   if (!normalized) return null;
-  if (requireMentionKeys.has(canonical) && normalized !== "0" && normalized !== "1") {
+  const validValues = validValuesByKey.get(canonical);
+  if (validValues && !validValues.has(normalized)) {
     return null;
   }
   return normalized;

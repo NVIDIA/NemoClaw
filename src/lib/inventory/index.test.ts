@@ -134,6 +134,64 @@ describe("inventory commands", () => {
     expect(getLiveInference).not.toHaveBeenCalled();
   });
 
+  it("normalizes invalid configured inference fields out of inventory rows", async () => {
+    const inventory = await getSandboxInventory({
+      recoverRegistryEntries: async () => ({
+        sandboxes: [
+          { name: "blank-provider", provider: "", model: "nvidia/test" },
+          { name: "blank-model", provider: "nvidia-prod", model: "   " },
+          { name: "configured", provider: "nvidia-prod", model: "nvidia/test" },
+        ],
+        defaultSandbox: "blank-provider",
+      }),
+      getLiveInference: () => null,
+      loadLastSession: () => null,
+    });
+
+    expect(inventory.sandboxes).toMatchObject([
+      { name: "blank-provider", provider: null, model: "nvidia/test" },
+      { name: "blank-model", provider: "nvidia-prod", model: null },
+      { name: "configured", provider: "nvidia-prod", model: "nvidia/test" },
+    ]);
+  });
+
+  it("normalizes invalid configured inference fields out of status rows", () => {
+    const report = getStatusReport({
+      listSandboxes: () => ({
+        sandboxes: [
+          { name: "blank-provider", provider: "", model: "nvidia/test" },
+          { name: "blank-model", provider: "nvidia-prod", model: "   " },
+          { name: "configured", provider: "nvidia-prod", model: "nvidia/test" },
+        ],
+        defaultSandbox: "blank-provider",
+      }),
+      getLiveInference: () => null,
+      showServiceStatus: vi.fn(),
+    });
+
+    expect(report.sandboxes).toMatchObject([
+      { name: "blank-provider", provider: null, model: "nvidia/test" },
+      { name: "blank-model", provider: "nvidia-prod", model: null },
+      { name: "configured", provider: "nvidia-prod", model: "nvidia/test" },
+    ]);
+  });
+
+  it("omits invalid configured inference fields from status text", () => {
+    const lines: string[] = [];
+    showStatusCommand({
+      listSandboxes: () => ({
+        sandboxes: [{ name: "alpha", provider: "", model: "   " }],
+        defaultSandbox: "alpha",
+      }),
+      getLiveInference: () => null,
+      showServiceStatus: vi.fn(),
+      log: (message = "") => lines.push(message),
+    });
+
+    expect(lines).toContain("    alpha *");
+    expect(lines.some((line) => line.includes("Inference:"))).toBe(false);
+  });
+
   it("prints the empty-state onboarding hint when no sandboxes exist", async () => {
     const lines: string[] = [];
     await listSandboxesCommand({

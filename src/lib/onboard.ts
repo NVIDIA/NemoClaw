@@ -25,7 +25,11 @@ const {
   applyCloudFallbackSelection,
   clearNimContainerBeforeRetry,
   createRemoteModelValidator,
+  requireProviderChoice,
 }: typeof import("./onboard/setup-nim-selection") = require("./onboard/setup-nim-selection");
+const {
+  createSetupNimOllamaHandlers,
+}: typeof import("./onboard/setup-nim-ollama") = require("./onboard/setup-nim-ollama");
 const inferenceInputCapability = require("./onboard/inference-input-capability");
 const { cleanupTempDir }: typeof import("./onboard/temp-files") = require("./onboard/temp-files");
 const {
@@ -179,9 +183,7 @@ const {
   pullAndResolveBaseImageDigest,
 }: typeof import("./onboard/base-image") = require("./onboard/base-image");
 const { requireValue }: typeof import("./core/require-value") = require("./core/require-value");
-const {
-  logMissingNvidiaApiKeyHelp,
-}: typeof import("./onboard/missing-credential-hints") = require("./onboard/missing-credential-hints");
+const buildCredentialReuse: typeof import("./onboard/build-credential-reuse") = require("./onboard/build-credential-reuse");
 
 type RunnerOptions = {
   env?: NodeJS.ProcessEnv;
@@ -1063,6 +1065,36 @@ const {
   printOllamaExposureWarning,
   prepareOllamaModel,
 } = require("./inference/ollama/proxy");
+
+const {
+  handleWindowsHostOllamaSelection,
+  handleRunningOllamaSelection,
+  handleInstallOllamaSelection,
+} = createSetupNimOllamaHandlers({
+  OLLAMA_PORT,
+  OLLAMA_PROXY_PORT,
+  process,
+  isNonInteractive,
+  prompt,
+  checkOllamaPortsOrWarn,
+  ensureOllamaLoopbackSystemdOverride,
+  runOllamaStartupOrGate,
+  shouldFrontOllamaWithProxy,
+  startOllamaAuthProxy,
+  getLocalProviderBaseUrl,
+  selectAndValidateOllamaModel,
+  printOllamaExposureWarning,
+  switchToWindowsOllamaHost,
+  installOllamaOnWindowsHost,
+  awaitWindowsOllamaReady,
+  setupWindowsOllamaWith0000Binding,
+  printWindowsOllamaTimeoutDiagnostics,
+  resetOllamaHostCache,
+  installOllamaOnMacOS,
+  installOllamaOnLinux,
+  abortNonInteractive,
+  assertOllamaUpgradeApplied,
+});
 
 const ollamaModelSize: typeof import("./inference/ollama/model-size") = require("./inference/ollama/model-size");
 
@@ -3759,18 +3791,12 @@ async function handleRemoteProviderSelection(
       process.env.NVIDIA_INFERENCE_API_KEY = _nvProviderKey;
     }
     if (isNonInteractive()) {
-      const resolvedNvidiaKey = resolveProviderCredential("NVIDIA_INFERENCE_API_KEY");
-      if (resolvedNvidiaKey) {
-        const keyError = validateNvidiaApiKeyValue(resolvedNvidiaKey);
-        if (keyError) {
-          console.error(keyError);
-          console.error(`  Get a key from ${REMOTE_PROVIDER_CONFIG.build.helpUrl}`);
-          process.exit(1);
-        }
-      } else if (!providerExistsInGateway(state.provider)) {
-        logMissingNvidiaApiKeyHelp(REMOTE_PROVIDER_CONFIG.build.helpUrl);
-        process.exit(1);
-      }
+      state.skipHostInferenceSmoke = buildCredentialReuse.resolveNonInteractiveBuildCredential({
+        provider: state.provider,
+        helpUrl: REMOTE_PROVIDER_CONFIG.build.helpUrl,
+        recoveredFromSandbox,
+        providerExistsInGateway,
+      });
     } else {
       await ensureApiKey();
     }
@@ -3900,29 +3926,30 @@ async function handleRemoteProviderSelection(
   }
 
   if (selected.key === "build") {
-    while (true) {
-      const validation = await validateOpenAiLikeSelection(
-        remoteConfig.label,
-        requireValue(state.endpointUrl, `Missing endpoint URL for ${remoteConfig.label}`),
-        state.model,
-        state.credentialEnv,
-        "Please choose a provider/model again.",
-        remoteConfig.helpUrl,
-        {
-          requireResponsesToolCalling: shouldRequireResponsesToolCalling(state.provider),
-          skipResponsesProbe: shouldSkipResponsesProbe(state.provider),
-          authMode: getProbeAuthMode(state.provider),
-        },
-      );
-      if (validation.ok) {
-        state.preferredInferenceApi = validation.api;
-        break;
-      }
-      if (validation.retry === "credential" || validation.retry === "retry") {
-        continue;
-      }
-      return "retry-selection";
-    }
+    const buildModel = requireValue(
+      isBackToSelection(state.model) ? null : state.model,
+      `Missing model for ${remoteConfig.label}`,
+    );
+    const buildValidation = await buildCredentialReuse.resolveBuildPreferredInferenceApi({
+      reuseGatewayCredentialWithoutLocalKey: state.skipHostInferenceSmoke === true,
+      note,
+      probe: () =>
+        validateOpenAiLikeSelection(
+          remoteConfig.label,
+          requireValue(state.endpointUrl, `Missing endpoint URL for ${remoteConfig.label}`),
+          buildModel,
+          state.credentialEnv,
+          "Please choose a provider/model again.",
+          remoteConfig.helpUrl,
+          {
+            requireResponsesToolCalling: shouldRequireResponsesToolCalling(state.provider),
+            skipResponsesProbe: shouldSkipResponsesProbe(state.provider),
+            authMode: getProbeAuthMode(state.provider),
+          },
+        ),
+    });
+    if (buildValidation.retrySelection) return "retry-selection";
+    state.preferredInferenceApi = buildValidation.preferredInferenceApi;
   }
 
   console.log(`  Using ${remoteConfig.label} with model: ${state.model}`);
@@ -3943,6 +3970,7 @@ async function setupNim(
   preferredInferenceApi: string | null;
   nimContainer: string | null;
   allowToolsIncompatible: boolean;
+  skipHostInferenceSmoke: boolean;
 }> {
   step(3, 8, "Configuring inference provider");
 
@@ -3955,6 +3983,7 @@ async function setupNim(
   let hermesToolGateways: string[] = [];
   let preferredInferenceApi: string | null = null;
   let allowToolsIncompatible = false;
+  let skipHostInferenceSmoke = false;
 
   const providerHostState = detectInferenceProviderHostState({
     gpu,
@@ -4071,10 +4100,7 @@ async function setupNim(
         });
       }
 
-      if (!selected) {
-        console.error("  No provider was selected.");
-        process.exit(1);
-      }
+      selected = requireProviderChoice(selected);
       if (selected.key !== "hermesProvider") {
         hermesAuthMethod = null;
         hermesToolGateways = [];
@@ -4090,6 +4116,7 @@ async function setupNim(
           hermesToolGateways,
           preferredInferenceApi,
           nimContainer,
+          allowToolsIncompatible,
         };
         const result = await handleRemoteProviderSelection(
           { selected, requestedModel, recoveredFromSandbox, recoveredModel, sandboxName },
@@ -4103,7 +4130,9 @@ async function setupNim(
           hermesAuthMethod,
           hermesToolGateways,
           preferredInferenceApi,
+          allowToolsIncompatible,
         } = state);
+        skipHostInferenceSmoke = state.skipHostInferenceSmoke === true;
         if (result === "retry-selection") continue selectionLoop;
         break;
       } else if (selected.key === "nim-local") {
@@ -4116,6 +4145,7 @@ async function setupNim(
           hermesToolGateways,
           preferredInferenceApi,
           nimContainer,
+          allowToolsIncompatible,
         };
         const result = await handleNimLocalSelection(
           gpu,
@@ -4138,187 +4168,96 @@ async function setupNim(
         if (rejectWindowsHostOllama(selected.key, isWindowsHostOllama)) {
           continue selectionLoop;
         }
-        if (!checkOllamaPortsOrWarn({ isNonInteractive })) continue selectionLoop;
-        let ollamaReady = ollamaRunning;
-        const overrideState = ensureOllamaLoopbackSystemdOverride({ isNonInteractive });
-        if (overrideState === "ready") {
-          ollamaReady = true;
-        } else if (overrideState === "failed") {
-          console.error(
-            "  Ollama systemd restart did not recover after applying the loopback override.",
-          );
-          process.exit(1);
-        }
-        const ollamaStartup = runOllamaStartupOrGate({
-          ollamaReady,
-          ollamaPort: OLLAMA_PORT,
-          getLocalProviderBaseUrl,
-          isNonInteractive,
-        });
-        if (ollamaStartup.kind === "continue") continue selectionLoop;
-        if (ollamaStartup.kind === "fallback") {
-          ({ provider, credentialEnv, endpointUrl, model, preferredInferenceApi } =
-            ollamaStartup.result);
-          break;
-        }
-        if (shouldFrontOllamaWithProxy()) {
-          if (!startOllamaAuthProxy()) process.exit(1);
-          console.log(
-            `  ✓ Using Ollama on localhost:${OLLAMA_PORT} (proxy on :${OLLAMA_PROXY_PORT})`,
-          );
-        } else {
-          console.log(`  ✓ Using Ollama on localhost:${OLLAMA_PORT}`);
-        }
-        provider = "ollama-local";
-        // Local Ollama needs no user-supplied API key — the auth proxy uses
-        // an internal token (NEMOCLAW_OLLAMA_PROXY_TOKEN, set in setupInference).
-        // Leaving this null prevents the wizard from prompting for / caching
-        // OPENAI_API_KEY and prevents the rebuild preflight from requiring it.
-        // See GH #2519.
-        credentialEnv = null;
-        endpointUrl = getLocalProviderBaseUrl(provider);
-        if (!endpointUrl) {
-          console.error("  Local Ollama base URL could not be determined.");
-          process.exit(1);
-        }
-        {
-          const result = await selectAndValidateOllamaModel(gpu, provider, {
-            requestedModel,
-            recoveredModel: recoveredFromSandbox ? recoveredModel : null,
-          });
-          if (result.outcome === "back-to-selection") continue selectionLoop;
-          ({ model, allowToolsIncompatible } = result);
-          preferredInferenceApi = "openai-completions";
-        }
+        const state: SetupNimSelectionState = {
+          model,
+          provider,
+          endpointUrl,
+          credentialEnv,
+          hermesAuthMethod,
+          hermesToolGateways,
+          preferredInferenceApi,
+          nimContainer,
+          allowToolsIncompatible,
+        };
+        const result = await handleRunningOllamaSelection(
+          gpu,
+          requestedModel,
+          recoveredFromSandbox ? recoveredModel : null,
+          ollamaRunning,
+          state,
+        );
+        ({
+          model,
+          provider,
+          endpointUrl,
+          credentialEnv,
+          preferredInferenceApi,
+          allowToolsIncompatible,
+        } = state);
+        if (result === "retry-selection") continue selectionLoop;
         break;
       } else if (["start-windows-ollama", "install-windows-ollama"].includes(selected.key)) {
         if (rejectWindowsHostOllama(selected.key, true)) {
           continue selectionLoop;
         }
-        if (!checkOllamaPortsOrWarn({ isNonInteractive })) continue selectionLoop;
-        const isInstall = selected.key === "install-windows-ollama";
-        const isSwitch = !isInstall && windowsOllamaReachable;
-        const isRestart = !isInstall && !isSwitch && winOllamaLoopbackOnly;
-        if (!isSwitch) {
-          printOllamaExposureWarning();
-        }
-        const promptMsg = isInstall
-          ? "  Install and launch Ollama on the Windows host with OLLAMA_HOST=0.0.0.0:11434? [Y/n]: "
-          : isSwitch
-            ? "  Use Ollama on the Windows host (already running)? [Y/n]: "
-            : isRestart
-              ? "  Stop the running Ollama and restart it with OLLAMA_HOST=0.0.0.0:11434? [Y/n]: "
-              : "  Launch Ollama on the Windows host with OLLAMA_HOST=0.0.0.0:11434? [Y/n]: ";
-        const proceed = isNonInteractive()
-          ? true
-          : !(await prompt(promptMsg)).trim().toLowerCase().startsWith("n");
-        if (!proceed) {
-          continue selectionLoop;
-        }
-
-        if (isSwitch) {
-          switchToWindowsOllamaHost();
-        } else if (isInstall) {
-          const installResult = await installOllamaOnWindowsHost();
-          if (!installResult.ok) {
-            console.error(
-              "  Install did not produce ollama.exe on PATH. Check the installer output above.",
-            );
-            if (isNonInteractive()) process.exit(1);
-            continue selectionLoop;
-          }
-          if (!awaitWindowsOllamaReady()) {
-            console.log("  Installer did not leave a reachable Ollama daemon; restarting it...");
-            if (
-              !setupWindowsOllamaWith0000Binding({
-                installedPath: installResult.path,
-              })
-            ) {
-              printWindowsOllamaTimeoutDiagnostics();
-              if (isNonInteractive()) process.exit(1);
-              continue selectionLoop;
-            }
-          }
-          console.log(`  ✓ Using Ollama on host.docker.internal:${OLLAMA_PORT}`);
-        } else {
-          if (
-            !setupWindowsOllamaWith0000Binding({
-              announceStop: isRestart,
-              installedPath: winOllamaInstalledPath || undefined,
-            })
-          ) {
-            printWindowsOllamaTimeoutDiagnostics();
-            if (isNonInteractive()) process.exit(1);
-            continue selectionLoop;
-          }
-          console.log(`  ✓ Using Ollama on host.docker.internal:${OLLAMA_PORT}`);
-        }
-        provider = "ollama-local";
-        credentialEnv = null;
-        endpointUrl = getLocalProviderBaseUrl(provider);
-        if (!endpointUrl) {
-          console.error("  Local Ollama base URL could not be determined.");
-          process.exit(1);
-        }
-
-        {
-          const result = await selectAndValidateOllamaModel(gpu, provider, {
-            requestedModel,
-            recoveredModel: null,
-          });
-          if (result.outcome === "back-to-selection") {
-            // The Windows-host action pinned resolved host to
-            // host.docker.internal. Clear it so a subsequent provider pick
-            // (e.g. plain WSL Ollama) starts from a fresh probe.
-            resetOllamaHostCache();
-            continue selectionLoop;
-          }
-          ({ model, allowToolsIncompatible } = result);
-          preferredInferenceApi = "openai-completions";
-        }
+        const state: SetupNimSelectionState = {
+          model,
+          provider,
+          endpointUrl,
+          credentialEnv,
+          hermesAuthMethod,
+          hermesToolGateways,
+          preferredInferenceApi,
+          nimContainer,
+          allowToolsIncompatible,
+        };
+        const result = await handleWindowsHostOllamaSelection(
+          gpu,
+          selected.key,
+          requestedModel,
+          windowsOllamaReachable,
+          winOllamaLoopbackOnly,
+          winOllamaInstalledPath,
+          state,
+        );
+        ({
+          model,
+          provider,
+          endpointUrl,
+          credentialEnv,
+          preferredInferenceApi,
+          allowToolsIncompatible,
+        } = state);
+        if (result === "retry-selection") continue selectionLoop;
         break;
       } else if (selected.key === "install-ollama") {
-        if (!checkOllamaPortsOrWarn({ isNonInteractive })) continue selectionLoop;
-        const isUpgrade = ollamaInstallMenu.hasUpgradableOllama;
-        const installResult =
-          process.platform === "darwin"
-            ? installOllamaOnMacOS({ isNonInteractive, isUpgrade })
-            : installOllamaOnLinux({ isNonInteractive, isUpgrade });
-        if (!installResult.ok) {
-          if (isNonInteractive()) abortNonInteractive("Ollama install failed. See errors above.");
-          continue selectionLoop;
-        }
-        const upgradeCheck = assertOllamaUpgradeApplied(ollamaInstallMenu);
-        if (!upgradeCheck.ok) {
-          console.error(`  ${upgradeCheck.message}`);
-          if (isNonInteractive()) process.exit(1);
-          continue selectionLoop;
-        }
-        if (shouldFrontOllamaWithProxy()) {
-          if (!startOllamaAuthProxy()) process.exit(1);
-          console.log(
-            `  ✓ Using Ollama on localhost:${OLLAMA_PORT} (proxy on :${OLLAMA_PROXY_PORT})`,
-          );
-        } else {
-          console.log(`  ✓ Using Ollama on localhost:${OLLAMA_PORT}`);
-        }
-        provider = "ollama-local";
-        // See above ollama branch — internal proxy token, no user API key.
-        credentialEnv = null;
-        endpointUrl = getLocalProviderBaseUrl(provider);
-        if (!endpointUrl) {
-          console.error("  Local Ollama base URL could not be determined.");
-          process.exit(1);
-        }
-        {
-          const result = await selectAndValidateOllamaModel(gpu, provider, {
-            requestedModel,
-            recoveredModel: recoveredFromSandbox ? recoveredModel : null,
-          });
-          if (result.outcome === "back-to-selection") continue selectionLoop;
-          ({ model, allowToolsIncompatible } = result);
-          preferredInferenceApi = "openai-completions";
-        }
+        const state: SetupNimSelectionState = {
+          model,
+          provider,
+          endpointUrl,
+          credentialEnv,
+          hermesAuthMethod,
+          hermesToolGateways,
+          preferredInferenceApi,
+          nimContainer,
+          allowToolsIncompatible,
+        };
+        const result = await handleInstallOllamaSelection(
+          gpu,
+          requestedModel,
+          recoveredFromSandbox ? recoveredModel : null,
+          state,
+          ollamaInstallMenu,
+        );
+        ({
+          model,
+          provider,
+          endpointUrl,
+          credentialEnv,
+          preferredInferenceApi,
+          allowToolsIncompatible,
+        } = state);
+        if (result === "retry-selection") continue selectionLoop;
         break;
       } else if (selected.key === "install-vllm") {
         if (!vllmProfile) {
@@ -4350,10 +4289,18 @@ async function setupNim(
           hermesToolGateways,
           preferredInferenceApi,
           nimContainer,
+          allowToolsIncompatible,
         };
         const result = await handleVllmSelection(state);
-        ({ model, provider, endpointUrl, credentialEnv, preferredInferenceApi, nimContainer } =
-          state);
+        ({
+          model,
+          provider,
+          endpointUrl,
+          credentialEnv,
+          preferredInferenceApi,
+          nimContainer,
+          allowToolsIncompatible,
+        } = state);
         if (result === "retry-selection") continue selectionLoop;
         break;
       } else if (selected.key === "routed") {
@@ -4366,10 +4313,18 @@ async function setupNim(
           hermesToolGateways,
           preferredInferenceApi,
           nimContainer,
+          allowToolsIncompatible,
         };
         const result = await handleRoutedSelection(state);
-        ({ model, provider, endpointUrl, credentialEnv, preferredInferenceApi, nimContainer } =
-          state);
+        ({
+          model,
+          provider,
+          endpointUrl,
+          credentialEnv,
+          preferredInferenceApi,
+          nimContainer,
+          allowToolsIncompatible,
+        } = state);
         if (result === "retry-selection") continue selectionLoop;
         break;
       }
@@ -4391,6 +4346,7 @@ async function setupNim(
     preferredInferenceApi,
     nimContainer,
     allowToolsIncompatible,
+    skipHostInferenceSmoke,
   };
 }
 
@@ -4404,7 +4360,7 @@ async function setupInference(
   credentialEnv: string | null = null,
   hermesAuthMethod: HermesAuthMethod | string | null = null,
   hermesToolGateways: string[] = [],
-  options: { allowToolsIncompatible?: boolean } = {},
+  options: { allowToolsIncompatible?: boolean; skipHostInferenceSmoke?: boolean } = {},
 ): Promise<{ ok: true; retry?: undefined } | { retry: "selection" }> {
   step(4, 8, "Setting up inference provider");
   runOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
@@ -4516,7 +4472,9 @@ async function setupInference(
   }
 
   verifyInferenceRoute(provider, model);
-  verifyOnboardInferenceSmoke({ provider, model, endpointUrl, credentialEnv });
+  if (options.skipHostInferenceSmoke === true)
+    console.log("  Reusing existing gateway credential; skipping host inference smoke.");
+  else verifyOnboardInferenceSmoke({ provider, model, endpointUrl, credentialEnv });
   if (sandboxName) {
     registry.updateSandbox(sandboxName, { model, provider });
   }
