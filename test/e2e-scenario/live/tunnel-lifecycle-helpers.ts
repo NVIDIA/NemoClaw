@@ -18,6 +18,7 @@ import { resultText } from "../fixtures/clients/index.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import type { E2EScenarioFixtures } from "../fixtures/e2e-test.ts";
 import { expect } from "../fixtures/e2e-test.ts";
+import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
@@ -163,7 +164,8 @@ export async function runTunnelLifecycleContract({
   skip,
 }: TunnelLifecycleFixtures): Promise<void> {
     assertTestOwnedSandboxName();
-    const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
+    const hosted = requireHostedInferenceConfig(secrets);
+    const apiKey = hosted.apiKey;
 
     await artifacts.writeJson("contract.json", {
       legacySource: "test/e2e/test-tunnel-lifecycle.sh",
@@ -177,6 +179,7 @@ export async function runTunnelLifecycleContract({
         "public trycloudflare HTTP probe with dashboard marker assertion",
         "cloudflared.log classification for NemoClaw-vs-Cloudflare failures",
       ],
+      inferenceCredential: hosted.contractLabel,
     });
 
     cleanup.add("stop cloudflared quick tunnel", async () => {
@@ -274,7 +277,11 @@ export async function runTunnelLifecycleContract({
       {
         artifactName: "install-sh-tunnel-lifecycle",
         cwd: REPO_ROOT,
-        env: commandEnv({ NVIDIA_INFERENCE_API_KEY: apiKey }),
+        env: commandEnv({
+          ...hosted.env,
+          NVIDIA_INFERENCE_API_KEY: apiKey,
+          NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1",
+        }),
         redactionValues: [apiKey],
         timeoutMs: ONBOARD_TIMEOUT_MS,
       },
