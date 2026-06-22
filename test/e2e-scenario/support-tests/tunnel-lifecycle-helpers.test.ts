@@ -60,4 +60,38 @@ describe("tunnel lifecycle cloudflared log attribution", () => {
       fs.rmSync(logRoot, { recursive: true, force: true });
     }
   });
+
+  it("classifies localhost/origin-refused logs as a NemoClaw local-origin fault", () => {
+    const logRoot = fs.mkdtempSync(path.join(os.tmpdir(), "tunnel-lifecycle-logs-"));
+    const sandboxDir = path.join(logRoot, "nemoclaw-services-e2e-tunnel-lifecycle-current");
+    fs.mkdirSync(sandboxDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(sandboxDir, "cloudflared.log"),
+      "ERR Request failed error=\"Unable to reach the origin service. dial tcp 127.0.0.1:18789: connect: connection refused\"\n",
+    );
+
+    try {
+      expect(classifyCloudflaredLog(logRoot, "e2e-tunnel-lifecycle-current")).toBe(
+        "nemoclaw_local",
+      );
+    } finally {
+      fs.rmSync(logRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("classifies representative quick-tunnel registration failures as Cloudflare faults", () => {
+    const logRoot = fs.mkdtempSync(path.join(os.tmpdir(), "tunnel-lifecycle-logs-"));
+    const sandboxDir = path.join(logRoot, "nemoclaw-services-e2e-tunnel-lifecycle-current");
+    fs.mkdirSync(sandboxDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(sandboxDir, "cloudflared.log"),
+      "ERR failed to unmarshal quick Tunnel response: tunnel server returned 503 bad gateway\n",
+    );
+
+    try {
+      expect(classifyCloudflaredLog(logRoot, "e2e-tunnel-lifecycle-current")).toBe("cloudflare");
+    } finally {
+      fs.rmSync(logRoot, { recursive: true, force: true });
+    }
+  });
 });
