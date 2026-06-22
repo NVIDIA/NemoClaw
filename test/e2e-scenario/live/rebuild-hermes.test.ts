@@ -17,9 +17,12 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
 
 // Direct Vitest replacement coverage for test/e2e/test-rebuild-hermes.sh.
-// The legacy contract stays real: install.sh, Docker base-image builds,
-// OpenShell provider/sandbox commands, direct Hermes sandbox exec, local
-// NemoClaw registry/session state, and `nemoclaw <name> rebuild --yes`.
+// The migrated scope is the legacy non-interactive shell regression: install.sh,
+// Docker base-image builds, OpenShell provider/sandbox commands, direct Hermes
+// sandbox exec, curated local NemoClaw registry/session state, and
+// `nemoclaw <name> rebuild --yes`. Literal interactive issue #3025 reproduction
+// paths (`./bin/nemoclaw.js onboard --agent hermes`, `hermes rebuild`, modal
+// prompt, and `Y` confirmation) are outside this shell-lane migration.
 // The converted shell entry point remains present until #5098 Phase 11 cleanup.
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
@@ -72,6 +75,25 @@ interface FileSnapshot {
 interface RegistryData {
   sandboxes?: Record<string, Record<string, unknown>>;
   defaultSandbox?: string;
+}
+
+interface SessionArtifactSummary {
+  sandboxName: string;
+  agent: "hermes";
+  status: "complete";
+  provider: "compatible-endpoint";
+  model: string;
+  messagingPlan: {
+    schemaVersion: number;
+    channelIds: string[];
+    credentialBindings: Array<{
+      channelId: string;
+      credentialId: string;
+      providerEnvKey: string;
+      placeholder: string;
+      credentialAvailable: boolean;
+    }>;
+  };
 }
 
 function testEnv(apiKey?: string, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
@@ -227,7 +249,7 @@ async function waitForSandboxReady(host: HostCliClient, apiKey: string): Promise
   throw new Error(`sandbox ${SANDBOX_NAME} did not become Ready`);
 }
 
-function seedRegistryAndSession(): void {
+function seedRegistryAndSession(): SessionArtifactSummary {
   const registry = readJsonFile<RegistryData>(REGISTRY_FILE, {});
   registry.sandboxes = registry.sandboxes ?? {};
 
@@ -285,19 +307,34 @@ function seedRegistryAndSession(): void {
   registry.defaultSandbox = SANDBOX_NAME;
   writeJsonFile(REGISTRY_FILE, registry);
 
-  const session = readJsonFile<Record<string, unknown>>(SESSION_FILE, {});
-  Object.assign(session, {
+  const session = {
     sandboxName: SANDBOX_NAME,
-    agent: "hermes",
-    status: "complete",
-    provider: session.provider ?? "compatible-endpoint",
-    model: session.model ?? HOSTED_MODEL,
+    agent: "hermes" as const,
+    status: "complete" as const,
+    provider: "compatible-endpoint" as const,
+    model: HOSTED_MODEL,
     messagingPlan,
-  });
-  for (const key of ["messagingChannels", "messagingChannelConfig", "disabledChannels"]) {
-    delete session[key];
-  }
+  };
   writeJsonFile(SESSION_FILE, session);
+
+  return {
+    sandboxName: session.sandboxName,
+    agent: session.agent,
+    status: session.status,
+    provider: session.provider,
+    model: session.model,
+    messagingPlan: {
+      schemaVersion: messagingPlan.schemaVersion,
+      channelIds: messagingPlan.channels.map((channel) => channel.channelId),
+      credentialBindings: messagingPlan.credentialBindings.map((binding) => ({
+        channelId: binding.channelId,
+        credentialId: binding.credentialId,
+        providerEnvKey: binding.providerEnvKey,
+        placeholder: binding.placeholder,
+        credentialAvailable: binding.credentialAvailable,
+      })),
+    },
+  };
 }
 
 function registryVersion(): unknown {
@@ -337,10 +374,14 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
         "bash install.sh --non-interactive",
         "docker build agents/hermes/Dockerfile.base for old/current Hermes base images",
         "openshell provider create/update and sandbox create/exec/list",
-        "local ~/.nemoclaw registry and onboard-session rebuild metadata",
+        "curated local ~/.nemoclaw registry and onboard-session rebuild metadata",
         "real nemoclaw <sandbox> rebuild --yes --verbose",
         "Hermes .env/config.yaml messaging placeholder preservation",
         "backup credential leak scan under ~/.nemoclaw/rebuild-backups",
+      ],
+      outOfScope: [
+        "interactive ./bin/nemoclaw.js onboard --agent hermes reproduction path",
+        "interactive hermes rebuild modal prompt and Y confirmation",
       ],
     });
 
@@ -552,11 +593,11 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
     expectExitZero(preConfig, "read pre-rebuild Hermes config.yaml");
     expect(preConfig.stdout).toContain("discord:");
 
-    seedRegistryAndSession();
+    const sessionSummary = seedRegistryAndSession();
     await artifacts.writeJson("phase-4-registry-session-summary.json", {
       registryVersion: registryVersion(),
       provider: readJsonFile<RegistryData>(REGISTRY_FILE, {}).sandboxes?.[SANDBOX_NAME]?.provider,
-      session: readJsonFile<Record<string, unknown>>(SESSION_FILE, {}),
+      session: sessionSummary,
     });
 
     switch (STALE_BASE_REBUILD) {
