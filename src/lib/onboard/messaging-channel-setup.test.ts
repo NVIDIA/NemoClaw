@@ -4,11 +4,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { getCredential, prompt, saveCredential } from "../credentials/store";
-import { HOST_QR_LOGIN_HANDLERS } from "../host-qr-handlers";
 import { createBuiltInChannelManifestRegistry, MessagingSetupApplier } from "../messaging";
 import { MESSAGING_SETUP_APPLIER_ENV_KEY } from "../messaging/applier/types";
-import { setupMessagingChannels, setupSelectedMessagingChannels } from "./messaging-channel-setup";
 import { validateSlackCredentials } from "../messaging/channels/slack/hooks/credential-validation";
+import { runWechatHostQrLogin } from "../messaging/channels/wechat/login";
+import { setupMessagingChannels, setupSelectedMessagingChannels } from "./messaging-channel-setup";
 
 vi.mock("../credentials/store", () => ({
   getCredential: vi.fn(() => null),
@@ -19,10 +19,8 @@ vi.mock("../credentials/store", () => ({
   saveCredential: vi.fn(),
 }));
 
-vi.mock("../host-qr-handlers", () => ({
-  HOST_QR_LOGIN_HANDLERS: {
-    wechat: vi.fn(),
-  },
+vi.mock("../messaging/channels/wechat/login", () => ({
+  runWechatHostQrLogin: vi.fn(),
 }));
 
 vi.mock("../messaging/channels/slack/hooks/credential-validation", () => ({
@@ -228,11 +226,42 @@ describe("setupSelectedMessagingChannels", () => {
       "  Telegram Bot Token: ",
       "  Reply only when @mentioned? [Y/n]: ",
       "  Telegram User ID (for DM access): ",
+      "  Telegram group policy [open/allowlist/disabled; default: open]: ",
       "  Discord Bot Token: ",
       "  Discord Server ID (for guild workspace access): ",
     ]);
     expect(process.env.TELEGRAM_REQUIRE_MENTION).toBe("0");
+    expect(process.env.TELEGRAM_GROUP_POLICY).toBe("open");
     expect(process.env.TELEGRAM_ALLOWED_IDS).toBe("123456789");
+  });
+
+  it("does not prompt for OpenClaw-only Telegram group policy during Hermes onboarding", async () => {
+    const questions: string[] = [];
+    vi.mocked(prompt).mockImplementation(async (question) => {
+      questions.push(question);
+      if (question.includes("Telegram Bot Token")) return "123456:telegram-token";
+      if (question.includes("Reply only")) return "n";
+      if (question.includes("Telegram User ID")) return "123456789";
+      return "";
+    });
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    const plan = await setupSelectedMessagingChannels(
+      ["telegram"],
+      new Set(["telegram"]),
+      manifests("telegram"),
+      { agent: { name: "hermes" } },
+    );
+
+    expect(plan?.agent).toBe("hermes");
+    expect(questions).toEqual([
+      "  Telegram Bot Token: ",
+      "  Reply only when @mentioned? [Y/n]: ",
+      "  Telegram User ID (for DM access): ",
+    ]);
+    expect(process.env.TELEGRAM_REQUIRE_MENTION).toBe("0");
+    expect(process.env.TELEGRAM_ALLOWED_IDS).toBe("123456789");
+    expect(process.env.TELEGRAM_GROUP_POLICY).toBeUndefined();
   });
 
   it("prompts Discord guild-only config after the manifest server ID input is set", async () => {
@@ -257,16 +286,14 @@ describe("setupSelectedMessagingChannels", () => {
   });
 
   it("runs WeChat host-QR enrollment through the manifest hook", async () => {
-    vi.mocked(HOST_QR_LOGIN_HANDLERS.wechat).mockResolvedValue({
+    vi.mocked(runWechatHostQrLogin).mockResolvedValue({
       kind: "ok",
-      token: "wechat-token",
-      extraEnv: {
-        WECHAT_ACCOUNT_ID: "wechat-account",
-        WECHAT_BASE_URL: "https://ilinkai.wechat.com",
-        WECHAT_USER_ID: "wechat-user",
+      credentials: {
+        token: "wechat-token",
+        accountId: "wechat-account",
+        baseUrl: "https://ilinkai.wechat.com",
+        userId: "wechat-user",
       },
-      defaultUserId: "wechat-user",
-      summary: "account wechat-account",
     });
     const logs: string[] = [];
     vi.spyOn(console, "log").mockImplementation((message = "") => {

@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # Salvage PR Workflow
 
 Take one near-mergeable PR and make the smallest safe change to unblock it.
@@ -57,7 +60,9 @@ Use only commands matching the changed area.
 
 ## Step 8: Push
 
-Push when: fix is small, improves mergeability, validation passed, you have push permission. Never force-push. If you cannot push, prepare a comment describing the fix.
+Push when: fix is small, improves mergeability, validation passed, you have push permission. Never force-push.
+
+If the push fails because of SSH, authentication, remote access, authorization, or permission problems, follow [Git and GitHub Access Hard Stop](../_shared/git-github-hard-stop.md). Resolve ordinary merge conflicts or dirty-worktree state in the salvage workflow.
 
 **Fork PRs:** Most PRs come from contributor forks. Check where to push:
 
@@ -73,9 +78,13 @@ git push git@github.com:<owner>/<repo>.git <local-branch>:<headRefName>
 
 Do **not** push to `origin` — that creates a separate branch on NVIDIA/NemoClaw that won't appear in the PR.
 
-## Step 9: Route to Merge Gate
+## Step 9: Monitor After Push
 
-If PR looks ready, follow [MERGE-GATE.md](MERGE-GATE.md).
+After any maintainer push, follow [PR CI and Automated Review Follow-Up](../_shared/pr-follow-up.md) before routing onward. Keep salvage narrow: address valid correctness, security, and test-coverage findings with the smallest safe follow-up; consult the user when feedback is ambiguous, design-changing, or outside the salvage scope.
+
+## Step 10: Route to Merge Gate
+
+If PR looks ready after CI and automated feedback settle, follow [MERGE-GATE.md](MERGE-GATE.md).
 
 ## Notes
 

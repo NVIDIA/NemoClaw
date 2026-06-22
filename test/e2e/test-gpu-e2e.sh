@@ -619,6 +619,93 @@ else
 fi
 
 # ══════════════════════════════════════════════════════════════════
+# Phase 5.5: OpenClaw TUI first-turn compaction guard (#5468)
+# ══════════════════════════════════════════════════════════════════
+# Local Ollama small-context models (e.g. qwen2.5:0.5b) are floored to a 16k
+# runtime window. With OpenClaw 2026.5.x's default 20k compaction reserve that
+# leaves only ~8k of first-turn prompt budget, so the very first user turn
+# overflowed and preemptive auto-compaction (no prior history to compact) failed
+# with "Auto-compaction could not recover this turn". The fix bakes a
+# context-aware agents.defaults.compaction reserve into openclaw.json. This phase
+# guards both the baked config and the real first-turn TUI outcome.
+section "Phase 5.5: OpenClaw TUI first-turn compaction guard (#5468)"
+
+# 5.5a: The baked openclaw.json must carry a small-context compaction reserve
+# policy whenever the served window is small enough to need it (<= 28k). The
+# expected reserve is recomputed from the config's own contextWindow/maxTokens
+# so the assertion tracks the policy exactly (reserve = min(maxTokens,
+# contextWindow - 8000)) instead of a hard-coded budget.
+tui_config=$(openshell sandbox exec -n "$SANDBOX_NAME" -- sh -lc 'cat /sandbox/.openclaw/openclaw.json' 2>/dev/null)
+if echo "$tui_config" | python3 -c "
+import json, sys
+cfg = json.load(sys.stdin)
+defaults = cfg.get('agents', {}).get('defaults', {})
+comp = defaults.get('compaction')
+window = max_tokens = None
+for provider in cfg['models']['providers'].values():
+    model = provider['models'][0]
+    window = model.get('contextWindow')
+    max_tokens = model.get('maxTokens')
+# Only small windows need the policy; larger windows keep OpenClaw's default.
+if window is not None and window <= 28000:
+    assert isinstance(comp, dict), 'missing compaction policy for small window'
+    expected = min(max_tokens, max(0, window - 8000))
+    assert comp.get('reserveTokens') == expected, f'reserveTokens {comp.get(\"reserveTokens\")} != {expected}'
+    assert comp.get('reserveTokensFloor') == expected, 'reserveTokensFloor mismatch'
+sys.exit(0)
+" 2>/dev/null; then
+  pass "[#5468] Baked openclaw.json carries the small-context compaction reserve policy"
+else
+  fail "[#5468] Baked openclaw.json missing/incorrect small-context compaction policy"
+fi
+
+# 5.5b: Drive the real OpenClaw TUI first turn and assert preemptive
+# auto-compaction does not block the reply. Requires `expect`; skip cleanly if
+# it is unavailable so the rest of the GPU lane still runs. The harness waits
+# for the gateway to connect before sending (so a slow host cannot drop the
+# keystroke), treats a healthy reply ("streaming") as success, and fails — not
+# passes — on a dropped turn, an early EOF/crash, or an inconclusive timeout, so
+# a turn that never ran can never be scored as a pass.
+if command -v expect >/dev/null 2>&1; then
+  TUI_CAPTURE="/tmp/nemoclaw-5468-tui-capture.log"
+  : >"$TUI_CAPTURE"
+  TUI_TIMEOUT_SEC="${NEMOCLAW_5468_TUI_TIMEOUT_SEC:-240}"
+  tui_expect_script=$(mktemp "${TMPDIR:-/tmp}/nemoclaw-5468-tui.XXXXXX")
+  cat >"$tui_expect_script" <<EXPECT
+set timeout ${TUI_TIMEOUT_SEC}
+log_file -a ${TUI_CAPTURE}
+spawn openshell sandbox exec --name ${SANDBOX_NAME} --tty -- sh -lc {export TERM=xterm-256color; cd /sandbox; openclaw tui}
+expect {
+  -nocase "connected" {}
+  timeout { send "\003"; sleep 1; send "\003"; exit 23 }
+  eof { exit 22 }
+}
+sleep 2
+send -- "hello\r"
+expect {
+  -nocase -re {could not recover this turn|context limit exceeded} { sleep 1; send "\003"; sleep 1; send "\003"; exit 30 }
+  -nocase -re {streaming} { sleep 2; send "\003"; sleep 1; send "\003"; exit 0 }
+  timeout { send "\003"; sleep 1; send "\003"; exit 20 }
+  eof { exit 22 }
+}
+EXPECT
+  expect "$tui_expect_script" >/dev/null 2>&1
+  tui_rc=$?
+  rm -f "$tui_expect_script"
+  if grep -qiE "could not recover this turn|context limit exceeded" "$TUI_CAPTURE"; then
+    fail "[#5468] OpenClaw TUI first turn blocked by preemptive auto-compaction"
+    info "TUI capture (first 800 chars): $(tr -d '\000' <"$TUI_CAPTURE" | head -c 800)"
+  elif [ "$tui_rc" -eq 0 ]; then
+    pass "[#5468] OpenClaw TUI first turn produced a reply without auto-compaction failure"
+  else
+    fail "[#5468] OpenClaw TUI first turn did not complete (rc=$tui_rc) — see capture"
+    info "TUI capture (first 800 chars): $(tr -d '\000' <"$TUI_CAPTURE" | head -c 800)"
+  fi
+else
+  skip "[#5468] expect not installed — TUI first-turn compaction guard not exercised"
+fi
+
+# ══════════════════════════════════════════════════════════════════
 # Phase 6: Destroy and uninstall
 # ══════════════════════════════════════════════════════════════════
 section "Phase 6: Destroy and uninstall"

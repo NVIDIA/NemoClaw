@@ -38,7 +38,18 @@ function planChannel(channelId: string) {
     configured: true,
     disabled: false,
     inputs: [],
-    hooks: [],
+    hooks:
+      channelId === "slack"
+        ? [
+            {
+              channelId: "slack",
+              id: "slack-socket-mode-gateway-conflict",
+              phase: "pre-enable",
+              handler: "slack.socketModeGatewayConflict",
+              onFailure: "abort",
+            },
+          ]
+        : [],
   };
 }
 
@@ -229,7 +240,7 @@ describe("prepareSandboxMessagingPreflight", () => {
       expect.stringContaining("Slack Socket Mode is already enabled for sandbox 'other'"),
     );
     expect(deps.error).toHaveBeenCalledWith(
-      expect.stringContaining("only one sandbox per gateway can receive Slack Socket Mode events"),
+      expect.stringContaining("resolve the messaging pre-enable conflict above"),
     );
   });
 

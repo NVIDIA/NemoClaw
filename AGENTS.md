@@ -31,6 +31,10 @@ This repo ships agent skills under `.agents/skills/`, organized into three audie
 | `docs/` | MDX/Markdown | User-facing docs (Fern MDX plus legacy MyST source during migration) |
 | `fern/` | YAML/CSS/SVG | Fern site configuration and shared assets |
 
+Package-specific guides:
+
+- Messaging architecture and channel migration guidance: [`src/lib/messaging/AGENTS.md`](src/lib/messaging/AGENTS.md)
+
 ## Quick Reference
 
 | Task | Command |
@@ -149,6 +153,14 @@ All hooks managed by [prek](https://prek.j178.dev/) (installed via `npm install`
 2. Run `make check` to verify your environment is set up correctly
 3. Check that `npm test` passes before starting
 
+### Git and GitHub Access Failures
+
+Follow `.agents/skills/_shared/git-github-hard-stop.md`: if SSH, `gh`, authentication, authorization, remote access, or push permission fails, stop and ask the user instead of working around access. Do not stop for ordinary merge conflicts or dirty-worktree state; resolve mechanical conflicts in the relevant workflow and ask the user only when resolution would change behavior or contributor intent.
+
+### Pull Request Follow-Up
+
+Follow `.agents/skills/_shared/pr-follow-up.md`: after opening or pushing to a PR, monitor required CI and automated review comments, address valid CodeRabbit and PR Review Advisor findings, and consult the user when feedback is ambiguous or design-changing.
+
 ### Common Patterns
 
 **Adding a CLI command:**
@@ -196,6 +208,10 @@ All hooks managed by [prek](https://prek.j178.dev/) (installed via `npm install`
 
 - Create feature branch from `main`
 - Let normal commit and push hooks provide hook verification before submitting
+- Contributor-owned PRs must self-serve the DCO declaration and GitHub commit verification before opening a PR
+- Every contributor-owned PR description must include a valid `Signed-off-by:` declaration for the contributor, and every commit in the PR must appear as `Verified` in GitHub
+- Contributor agents must stop before `gh pr create` if the PR body will not include the DCO declaration or any commit is missing GitHub verification; tell the contributor to fix the issue before opening a PR
+- If force-push is not allowed and an already-published branch contains an unverified commit, require a fresh branch and fresh PR with a clean compliant history
 - Run targeted tests for changed behavior, and run `npm run docs` for doc changes
 - Use `npx prek run --from-ref main --to-ref HEAD` if hooks were skipped or unavailable
 - Follow PR template (`.github/PULL_REQUEST_TEMPLATE.md`)

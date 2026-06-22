@@ -5,7 +5,7 @@ import { CLI_NAME } from "../cli/branding";
 import type { GatewayInference } from "../inference/config";
 import { getActiveChannelIdsFromPlan } from "../messaging/plan-validation";
 import { redactFull } from "../security/redact";
-import type { SandboxMessagingState } from "../state/registry";
+import { getSandboxEntryDisplayInference, type SandboxMessagingState } from "../state/registry";
 import { resolveDefaultSandboxName } from "../tunnel/service-command";
 
 export interface SandboxEntry {
@@ -87,10 +87,8 @@ export interface SandboxInventoryResult {
 export interface MessagingOverlap {
   channel: string;
   sandboxes: [string, string];
-  // "slack-socket-mode-gateway": both sandboxes have Slack Socket Mode active on
-  // the same OpenShell gateway, so only one receives events (#4953) — distinct
-  // from the credential-sharing reasons, which catch a *shared* token.
-  reason?: "matching-token" | "unknown-token" | "slack-socket-mode-gateway";
+  reason?: "matching-token" | "unknown-token" | string;
+  message?: string;
 }
 
 export interface GatewayHealth {
@@ -119,7 +117,11 @@ export interface ShowStatusCommandDeps {
    * detect the degraded state from `$?` (#3386).
    */
   getGatewayHealth?: () => GatewayHealth;
-  checkMessagingBridgeHealth?: (sandboxName: string, channels: string[]) => MessagingBridgeHealth[];
+  checkMessagingBridgeHealth?: (
+    sandboxName: string,
+    channels: string[],
+    agent?: string | null,
+  ) => MessagingBridgeHealth[];
   findMessagingOverlaps?: () => MessagingOverlap[];
   readGatewayLog?: (sandboxName: string) => string | null;
   log?: (message?: string) => void;
@@ -175,11 +177,12 @@ function buildSandboxInventoryRow(
     typeof sandbox.sandboxGpuEnabled === "boolean"
       ? sandbox.sandboxGpuEnabled
       : sandbox.gpuEnabled === true;
+  const inference = getSandboxEntryDisplayInference(sandbox);
 
   return {
     name: sandbox.name,
-    model: sandbox.model || null,
-    provider: sandbox.provider || null,
+    model: inference.model,
+    provider: inference.provider,
     gpuEnabled: sandbox.gpuEnabled === true,
     hostGpuDetected: sandbox.hostGpuDetected === true,
     sandboxGpuEnabled,
@@ -323,6 +326,7 @@ function buildStatusSandboxRow(
   const isDefault = sandbox.name === defaultSandbox;
   const liveModel = isDefault ? liveInference?.model : null;
   const liveProvider = isDefault ? liveInference?.provider : null;
+  const inference = getSandboxEntryDisplayInference(sandbox);
   const dashboardPort =
     typeof sandbox.dashboardPort === "number" && Number.isFinite(sandbox.dashboardPort)
       ? sandbox.dashboardPort
@@ -333,8 +337,8 @@ function buildStatusSandboxRow(
       : sandbox.gpuEnabled === true;
   return {
     name: safeStatusString(sandbox.name) || sandbox.name,
-    model: safeStatusString(liveModel || sandbox.model || null),
-    provider: safeStatusString(liveProvider || sandbox.provider || null),
+    model: safeStatusString(liveModel || inference.model),
+    provider: safeStatusString(liveProvider || inference.provider),
     gpuEnabled: sandbox.gpuEnabled === true,
     hostGpuDetected: sandbox.hostGpuDetected === true,
     sandboxGpuEnabled,
@@ -423,12 +427,13 @@ export function showStatusCommand(deps: ShowStatusCommandDeps): void {
       // agrees with `openshell inference get` (#2369).
       const liveModel = isDefault && live ? live.model : null;
       const liveProvider = isDefault && live ? live.provider : null;
-      const model = liveModel || sb.model;
-      const provider = liveProvider || sb.provider;
+      const inference = getSandboxEntryDisplayInference(sb);
+      const model = liveModel || inference.model;
+      const provider = liveProvider || inference.provider;
       const portSuffix = sb.dashboardPort != null ? ` :${sb.dashboardPort}` : "";
       log(`    ${sb.name}${def}${model ? ` (${model})` : ""}${portSuffix}`);
-      if (isDefault && liveModel && liveModel !== sb.model) {
-        log(`      (onboarded: ${sb.model || "unknown"})`);
+      if (isDefault && liveModel && liveModel !== inference.model) {
+        log(`      (onboarded: ${inference.model || "unknown"})`);
       }
       // #2604: surface the configured Inference (provider/model) and
       // Connected (active-session count) as labeled fields. Bare
@@ -478,11 +483,9 @@ export function showStatusCommand(deps: ShowStatusCommandDeps): void {
     const overlaps = deps.findMessagingOverlaps();
     if (overlaps.length > 0) {
       log("");
-      for (const { channel, sandboxes: pair, reason } of overlaps) {
-        if (reason === "slack-socket-mode-gateway") {
-          log(
-            `  ⚠ '${pair[0]}' and '${pair[1]}' both have Slack Socket Mode enabled on the same gateway; only one sandbox can receive Slack Socket Mode events unless the gateway supports multiplexing.`,
-          );
+      for (const { channel, sandboxes: pair, reason, message } of overlaps) {
+        if (message) {
+          log(`  ⚠ ${formatMessagingOverlapMessage(message, channel, pair)}`);
           continue;
         }
         const detail =
@@ -504,7 +507,11 @@ export function showStatusCommand(deps: ShowStatusCommandDeps): void {
     const defaultEntry = refreshed.find((sb) => sb.name === resolvedDefault);
     const channels = getActiveChannelIdsFromPlan(defaultEntry?.messaging?.plan);
     if (channels.length > 0) {
-      const degraded = deps.checkMessagingBridgeHealth(resolvedDefault, channels);
+      const degraded = deps.checkMessagingBridgeHealth(
+        resolvedDefault,
+        channels,
+        defaultEntry?.agent,
+      );
       if (degraded.length > 0) {
         log("");
         for (const { channel, conflicts } of degraded) {
@@ -528,4 +535,15 @@ export function showStatusCommand(deps: ShowStatusCommandDeps): void {
       }
     }
   }
+}
+
+function formatMessagingOverlapMessage(
+  template: string,
+  channel: string,
+  pair: readonly [string, string],
+): string {
+  return template
+    .replaceAll("{channel}", channel)
+    .replaceAll("{first}", pair[0])
+    .replaceAll("{second}", pair[1]);
 }
