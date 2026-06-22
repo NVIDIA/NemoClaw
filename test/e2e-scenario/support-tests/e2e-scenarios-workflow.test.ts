@@ -1082,6 +1082,52 @@ jobs:
     }
   });
 
+  it("rejects tunnel lifecycle trusted-boundary drift", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-vitest-workflow-"));
+    const workflowPath = path.join(tmp, "workflow.yaml");
+    const workflow = readWorkflow() as {
+      jobs: Record<string, { steps: Array<Record<string, unknown>> }>;
+    };
+    const job = workflow.jobs["tunnel-lifecycle-vitest"];
+    expect(job).toBeDefined();
+    for (const step of job.steps) {
+      if (typeof step.uses === "string" && step.uses.startsWith("actions/checkout@")) {
+        step.with = { ...(step.with as Record<string, unknown>), "persist-credentials": true };
+      }
+      if (step.name === "Install root dependencies") {
+        step.run = "npm install";
+      }
+      if (step.name === "Upload tunnel lifecycle artifacts") {
+        step.with = {
+          ...(step.with as Record<string, unknown>),
+          path: "e2e-artifacts/vitest/",
+          "include-hidden-files": true,
+        };
+      }
+      if (step.name === "Clean up Docker auth") {
+        step.if = "success()";
+        step.run = 'set -euo pipefail\necho "missing Docker auth cleanup"\n';
+      }
+    }
+    fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+    try {
+      expect(validateE2eVitestScenariosWorkflowBoundary(workflowPath)).toEqual(
+        expect.arrayContaining([
+          "tunnel-lifecycle-vitest checkout step must set persist-credentials=false",
+          "step 'Install root dependencies' run script must include npm ci --ignore-scripts",
+          "artifact upload path must include e2e-artifacts/vitest/tunnel-lifecycle/",
+          "tunnel-lifecycle-vitest artifact upload must set include-hidden-files: false",
+          "tunnel-lifecycle-vitest Docker auth cleanup must always run",
+          "step 'Clean up Docker auth' run script must include docker logout docker.io",
+          "step 'Clean up Docker auth' run script must include rm -rf \"${DOCKER_CONFIG}\"",
+        ]),
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("applies boundary checks to newly marked free-standing jobs", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-vitest-workflow-"));
     const workflowPath = path.join(tmp, "workflow.yaml");

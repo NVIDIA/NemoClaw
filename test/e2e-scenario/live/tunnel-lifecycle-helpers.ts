@@ -78,20 +78,19 @@ function isCloudflareTransientHttpCode(code: string): boolean {
   return ["000", "502", "503", "504"].includes(code);
 }
 
-function getCloudflaredLogPath(): string | undefined {
-  const sandboxLog = path.join("/tmp", `nemoclaw-services-${SANDBOX_NAME}`, "cloudflared.log");
-  if (fs.existsSync(sandboxLog)) return sandboxLog;
-  let candidates: string[] = [];
-  try {
-    candidates = fs
-      .readdirSync("/tmp", { withFileTypes: true })
-      .filter((entry) => entry.isDirectory() && entry.name.startsWith("nemoclaw-services-"))
-      .map((entry) => path.join("/tmp", entry.name, "cloudflared.log"))
-      .filter((candidate) => fs.existsSync(candidate));
-  } catch {
-    return undefined;
-  }
-  return candidates.sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs).at(0);
+export function getCloudflaredLogPath(
+  logRoot = "/tmp",
+  sandboxName = SANDBOX_NAME,
+): string | undefined {
+  // Source boundary: NemoClaw owns the per-sandbox cloudflared service log at
+  // /tmp/nemoclaw-services-${sandboxName}/cloudflared.log. If that exact file
+  // is missing, this live contract classifies the invalid state as
+  // `nemoclaw_no_spawn` instead of falling back to the newest /tmp log, because
+  // unrelated parallel/stale sandboxes can otherwise corrupt fault attribution.
+  // Remove this filesystem fallback point entirely once NemoClaw exposes
+  // machine-readable tunnel diagnostics from `nemoclaw status --json`.
+  const sandboxLog = path.join(logRoot, `nemoclaw-services-${sandboxName}`, "cloudflared.log");
+  return fs.existsSync(sandboxLog) ? sandboxLog : undefined;
 }
 
 function readCloudflaredLog(): string {
@@ -110,13 +109,11 @@ function cloudflaredLogTail(lines = 80): string {
   ].join("\n");
 }
 
-function classifyCloudflaredLog():
-  | "nemoclaw_no_spawn"
-  | "nemoclaw_capture_bug"
-  | "nemoclaw_local"
-  | "cloudflare"
-  | "unknown" {
-  const logPath = getCloudflaredLogPath();
+export function classifyCloudflaredLog(
+  logRoot = "/tmp",
+  sandboxName = SANDBOX_NAME,
+): "nemoclaw_no_spawn" | "nemoclaw_capture_bug" | "nemoclaw_local" | "cloudflare" | "unknown" {
+  const logPath = getCloudflaredLogPath(logRoot, sandboxName);
   if (!logPath) return "nemoclaw_no_spawn";
   const log = fs.readFileSync(logPath, "utf8");
   if (TUNNEL_URL_PATTERN.test(log)) return "nemoclaw_capture_bug";
