@@ -97,6 +97,7 @@ export interface ChannelSecretInputSpec extends ChannelInputBaseSpec {
 /** Non-secret input metadata that may persist into channel state. */
 export interface ChannelConfigInputSpec extends ChannelInputBaseSpec {
   readonly kind: "config";
+  readonly defaultValue?: string;
   readonly statePath?: MessagingStatePath;
   readonly promptWhenInput?: string;
 }

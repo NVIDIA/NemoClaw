@@ -304,10 +304,19 @@ describe("built-in channel manifests", () => {
     const botToken = findInput(telegramManifest, "botToken");
     const allowedIds = findInput(telegramManifest, "allowedIds");
     const requireMention = findInput(telegramManifest, "requireMention");
+    const groupPolicy = findInput(telegramManifest, "groupPolicy");
     expect(getChannelTokenKeys(KNOWN_CHANNELS.telegram)).toEqual(["TELEGRAM_BOT_TOKEN"]);
     expect(botToken.envKey).toBe("TELEGRAM_BOT_TOKEN");
     expect(allowedIds.envKey).toBe("TELEGRAM_ALLOWED_IDS");
     expect(requireMention.envKey).toBe("TELEGRAM_REQUIRE_MENTION");
+    expect(requireMention).toMatchObject({ kind: "config", defaultValue: "1" });
+    expect(groupPolicy).toMatchObject({
+      kind: "config",
+      envKey: "TELEGRAM_GROUP_POLICY",
+      statePath: "telegramConfig.groupPolicy",
+      defaultValue: "open",
+      validValues: ["open", "allowlist", "disabled"],
+    });
     expect(KNOWN_CHANNELS.telegram.allowIdsMode).toBe("dm");
     expect(telegramManifest.credentials).toEqual([
       {
@@ -327,6 +336,8 @@ describe("built-in channel manifests", () => {
     expect(renderJson(telegramManifest)).toContain("groupPolicy");
     expect(renderJson(telegramManifest)).toContain("channels.telegram.groups");
     expect(renderJson(telegramManifest)).toContain("telegramConfig.requireMention");
+    expect(renderJson(telegramManifest)).toContain("telegramConfig.groupPolicy");
+    expect(renderJson(telegramManifest)).toContain("telegramConfig.openclawGroups");
     expect(renderJson(telegramManifest)).toContain("platforms.telegram");
     expectTokenPasteEnrollHook(telegramManifest, ["botToken"]);
     expect(telegramManifest.hooks).toContainEqual({
@@ -341,6 +352,18 @@ describe("built-in channel manifests", () => {
       ],
     });
     expectConfigPromptEnrollHook(telegramManifest, ["requireMention", "allowedIds"]);
+    expect(telegramManifest.hooks).toContainEqual({
+      id: "telegram-openclaw-config-prompt",
+      phase: "enroll",
+      handler: COMMON_CONFIG_PROMPT_HOOK_HANDLER_ID,
+      agents: ["openclaw"],
+      outputs: [
+        {
+          id: "groupPolicy",
+          kind: "config",
+        },
+      ],
+    });
     expectReachabilityHook(telegramManifest, ["botToken"]);
     expectOpenClawNodePreload(telegramManifest, "telegram-diagnostics");
     expect(JSON.stringify(telegramManifest.runtime?.openclaw)).toContain("telegram-diagnostics");
@@ -367,6 +390,7 @@ describe("built-in channel manifests", () => {
     expect(botToken.envKey).toBe("DISCORD_BOT_TOKEN");
     expect(serverId.envKey).toBe("DISCORD_SERVER_ID");
     expect(requireMention.envKey).toBe("DISCORD_REQUIRE_MENTION");
+    expect(requireMention).toMatchObject({ kind: "config", defaultValue: "1" });
     expect(userId.envKey).toBe("DISCORD_USER_ID");
     expect(KNOWN_CHANNELS.discord.allowIdsMode).toBe("guild");
     expect(discordManifest.credentials).toEqual([

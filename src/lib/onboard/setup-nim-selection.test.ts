@@ -22,12 +22,15 @@ function makeState(): SetupNimSelectionState {
     hermesToolGateways: [],
     preferredInferenceApi: "openai-completions",
     nimContainer: "nemoclaw-nim-test",
+    allowToolsIncompatible: false,
+    skipHostInferenceSmoke: false,
   };
 }
 
 describe("setupNim selection state helpers", () => {
-  it("applies a complete cloud fallback and clears stale NIM state", () => {
+  it("applies a complete cloud fallback and clears stale local-provider state", () => {
     const state = makeState();
+    state.allowToolsIncompatible = true;
 
     applyCloudFallbackSelection(state, {
       providerName: "nvidia-prod",
@@ -45,6 +48,8 @@ describe("setupNim selection state helpers", () => {
       hermesToolGateways: [],
       preferredInferenceApi: null,
       nimContainer: null,
+      allowToolsIncompatible: false,
+      skipHostInferenceSmoke: false,
     });
   });
 

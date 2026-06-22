@@ -29,6 +29,8 @@ type ConnectHarnessOptions = {
     wasRunning?: boolean;
     recovered?: boolean;
     forwardRecovered?: boolean;
+    secretBoundaryRefused?: boolean;
+    secretBoundaryReason?: "raw-secret" | "inconclusive";
   };
   spawnStatus?: number | null;
 };
@@ -220,6 +222,112 @@ describe("connectSandbox flow", () => {
       ["sandbox", "connect", "alpha"],
       expect.any(Object),
     );
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it("probe-only mode exits with raw-secret remediation when the Hermes boundary refuses recovery", async () => {
+    const harness = createConnectHarness({
+      processCheck: {
+        checked: true,
+        wasRunning: true,
+        recovered: false,
+        forwardRecovered: false,
+        secretBoundaryRefused: true,
+        secretBoundaryReason: "raw-secret",
+      },
+    });
+    const agentRuntime = requireDist("../../../../dist/lib/agent/runtime.js");
+    vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue({ name: "hermes" });
+    vi.spyOn(agentRuntime, "getAgentDisplayName").mockReturnValue("Hermes");
+    const errorSpy = vi.spyOn(console, "error");
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(harness.runAutoPairSpy).not.toHaveBeenCalled();
+    expect(harness.spawnSyncSpy).not.toHaveBeenCalledWith(
+      "openshell",
+      ["sandbox", "connect", "alpha"],
+      expect.any(Object),
+    );
+    const errorOutput = errorSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
+    expect(errorOutput).toContain(
+      "Probe failed: refused to confirm Hermes gateway in 'alpha' — /sandbox/.hermes/.env contains raw secret-shaped values.",
+    );
+    expect(errorOutput).toContain(
+      "Replace raw secret values with openshell:resolve:env:<name> placeholders and re-run.",
+    );
+    const logOutput = harness.logSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
+    expect(logOutput).not.toContain("Probe complete");
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it("non-probe connect exits before Ollama/inference-route/auto-pair when the Hermes boundary refuses", async () => {
+    const harness = createConnectHarness({
+      processCheck: {
+        checked: true,
+        wasRunning: true,
+        recovered: false,
+        forwardRecovered: false,
+        secretBoundaryRefused: true,
+        secretBoundaryReason: "raw-secret",
+      },
+    });
+    const agentRuntime = requireDist("../../../../dist/lib/agent/runtime.js");
+    vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue({ name: "hermes" });
+    vi.spyOn(agentRuntime, "getAgentDisplayName").mockReturnValue("Hermes");
+    const errorSpy = vi.spyOn(console, "error");
+
+    await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(1)");
+
+    expect(harness.ensureOllamaAuthProxySpy).not.toHaveBeenCalled();
+    expect(harness.runAutoPairSpy).not.toHaveBeenCalled();
+    expect(harness.spawnSyncSpy).not.toHaveBeenCalledWith(
+      "openshell",
+      ["sandbox", "connect", "alpha"],
+      expect.any(Object),
+    );
+    const errorOutput = errorSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
+    expect(errorOutput).toContain(
+      "Connect failed: refused to confirm Hermes gateway in 'alpha' — /sandbox/.hermes/.env contains raw secret-shaped values.",
+    );
+    expect(errorOutput).toContain(
+      "Replace raw secret values with openshell:resolve:env:<name> placeholders and re-run.",
+    );
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it("probe-only mode exits with inconclusive guidance when the Hermes boundary check could not run", async () => {
+    const harness = createConnectHarness({
+      processCheck: {
+        checked: true,
+        wasRunning: true,
+        recovered: false,
+        forwardRecovered: false,
+        secretBoundaryRefused: true,
+        secretBoundaryReason: "inconclusive",
+      },
+    });
+    const agentRuntime = requireDist("../../../../dist/lib/agent/runtime.js");
+    vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue({ name: "hermes" });
+    vi.spyOn(agentRuntime, "getAgentDisplayName").mockReturnValue("Hermes");
+    const errorSpy = vi.spyOn(console, "error");
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(harness.runAutoPairSpy).not.toHaveBeenCalled();
+    const errorOutput = errorSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
+    expect(errorOutput).toContain(
+      "Probe failed: secret-boundary check did not complete for Hermes gateway in 'alpha'.",
+    );
+    expect(errorOutput).toContain(
+      "Inspect the validator output above and re-run `nemoclaw <sandbox> recover`.",
+    );
+    const logOutput = harness.logSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
+    expect(logOutput).not.toContain("Probe complete");
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 });

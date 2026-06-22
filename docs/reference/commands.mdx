@@ -112,7 +112,7 @@ The wizard creates an OpenShell gateway, registers inference providers, builds t
 Use this command for new installs and for recreating a sandbox after changes to policy or configuration.
 
 ```bash
-$$nemoclaw onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--agent <name>] [--control-ui-port <N>] [--yes | -y] [--no-ollama-autostart] [--yes-i-accept-third-party-software]
+$$nemoclaw onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--agent <name>] [--agents <agents.yaml>] [--control-ui-port <N>] [--yes | -y] [--no-ollama-autostart] [--yes-i-accept-third-party-software]
 ```
 
 <AgentOnly variant="hermes">
@@ -263,6 +263,13 @@ It also prints a `Try: <suggested-slug>` recovery line whenever it can derive a 
 Names that match global CLI commands (`status`, `list`, `debug`, etc.) are rejected to avoid routing conflicts.
 Use `--agent <name>` to target a specific installed agent profile during onboarding.
 
+<AgentOnly variant="openclaw">
+
+Use `--agents <agents.yaml>` to declare secondary OpenClaw agents, `agents.defaults`, and main-agent overrides in a checked-in manifest that NemoClaw bakes into the sandbox image at build time.
+See [Declarative Multi-Agent Manifest](../inference/declarative-agents-manifest) for the schema and OpenClaw-native sub-agent field semantics.
+
+</AgentOnly>
+
 Use `--control-ui-port <N>` to choose the host dashboard port for a sandbox.
 The value must be an integer from `1024` through `65535`.
 This flag takes precedence over `CHAT_UI_URL`, `NEMOCLAW_DASHBOARD_PORT`, the previous registry value, and the default port.
@@ -282,9 +289,13 @@ If you enable Discord during onboarding, the wizard can also prompt for a Discor
 NemoClaw bakes those values into the sandbox image as Discord guild workspace config so the bot can respond in the selected server, not just in DMs.
 If you leave the Discord User ID blank, the guild config omits the user allowlist and any member of the configured server can message the bot.
 Guild responses remain mention-gated by default unless you opt into all-message replies.
+If `DISCORD_SERVER_ID` is set and `DISCORD_REQUIRE_MENTION` is unset, NemoClaw records the existing mention-only default (`DISCORD_REQUIRE_MENTION=1`).
 
 If you enable Telegram during onboarding, the wizard can also prompt for whether group chats should reply only to `@mentions` or to all group messages.
-Set `TELEGRAM_REQUIRE_MENTION=1` for non-interactive onboarding when you want mention-only group replies.
+Mention-only group replies are the default.
+Set `TELEGRAM_REQUIRE_MENTION=0` for non-interactive onboarding when you want all group messages to trigger replies.
+For OpenClaw, Telegram group access defaults to `TELEGRAM_GROUP_POLICY=open`; set `TELEGRAM_GROUP_POLICY=allowlist` or `TELEGRAM_GROUP_POLICY=disabled` before non-interactive onboarding when you want stricter group access.
+Hermes does not have an equivalent disable-groups policy; `TELEGRAM_ALLOWED_IDS` maps to Hermes `TELEGRAM_ALLOWED_USERS`, which authorizes those users across DMs, groups, and forums.
 Pairing and `TELEGRAM_ALLOWED_IDS` still govern direct messages.
 
 If you cancel a brand-new onboarding run at the policy preset step, NemoClaw rolls back the sandbox, registry entry, and onboarding session instead of leaving a default sandbox with unfinished policy state.
@@ -532,11 +543,11 @@ The exit code is the remote command's exit code.
 
 ### `$$nemoclaw <name> agent`
 
+<AgentOnly variant="openclaw">
+
 Run one OpenClaw agent turn non-interactively in a running sandbox.
 This command forwards every argument verbatim to `openclaw agent ...` inside the sandbox via `openshell sandbox exec`, with `HOME=/sandbox` so the addressed agent profile resolves the same way as `connect`.
 Use this when driving the sandbox programmatically from another process (CI job, multi-agent platform, evaluation harness) rather than from an interactive terminal.
-
-<AgentOnly variant="openclaw">
 
 All flags accepted by the in-sandbox OpenClaw CLI are forwarded verbatim, so the upstream surface stays the single source of truth.
 
@@ -554,7 +565,8 @@ Common upstream flags include `-m <text>`, `--session-id <id>`, `--agent <id>`, 
 </AgentOnly>
 <AgentOnly variant="hermes">
 
-Only OpenClaw sandboxes support the `agent` wrapper today; Hermes sandboxes already expose an OpenAI-compatible HTTP API on port `8642` inside the sandbox, so non-interactive use does not need a wrapper command.
+The `agent` wrapper is an OpenClaw passthrough and rejects Hermes sandboxes with guidance for the Hermes HTTP API.
+Hermes sandboxes expose an OpenAI-compatible API on port `8642` inside the sandbox, so non-interactive use does not need a wrapper command.
 
 Forward the port and POST chat completions directly:
 
@@ -617,6 +629,15 @@ If the gateway is already running, the command exits zero with a probe message a
 ```bash
 $$nemoclaw my-assistant recover
 ```
+
+<AgentOnly variant="hermes">
+
+`recover` re-evaluates the documented Hermes secret boundary against `/sandbox/.hermes/.env` on every run, including when the gateway is already healthy.
+If the file contains raw secret-shaped values (for example a pasted Telegram, Discord, or Slack bot token in place of the expected `openshell:resolve:env:<name>` placeholder), the command stops the running gateway, exits non-zero, and prints the offending key.
+Replace each flagged value with the `openshell:resolve:env:<name>` placeholder and re-run.
+Older Hermes sandbox images that predate the standalone validator are detected and left untouched: `recover` prints a `[boundary]` warning naming the sandbox and noting that `/sandbox/.hermes/.env` was not re-evaluated, then proceeds with the rest of the recovery path rather than blocking the gateway. Re-image the sandbox to a current Hermes build to enable the per-run boundary re-evaluation described above.
+
+</AgentOnly>
 
 ### `$$nemoclaw <name> status`
 
@@ -1118,6 +1139,8 @@ $$nemoclaw my-assistant channels add telegram
 
 Slack requires both `SLACK_BOT_TOKEN` (bot user OAuth) and `SLACK_APP_TOKEN` (app-level Socket Mode token); the command prompts for each in turn.
 Optional Slack allowlists come from `SLACK_ALLOWED_USERS` and `SLACK_ALLOWED_CHANNELS` at rebuild time.
+Telegram and Discord mention mode default to `1` when no environment, session, or saved state value exists for that setting.
+Discord applies that default only when a server ID is configured.
 When `NEMOCLAW_NON_INTERACTIVE=1` is set, any missing token fails fast and no rebuild prompt is shown — instead, the change is queued and you are told to run `$$nemoclaw <name> rebuild` manually.
 If you omit the required `<channel>` argument, the CLI prints the `channels add <channel>` usage with the supported channel list instead of falling back to top-level help.
 
@@ -1284,6 +1307,24 @@ $$nemoclaw my-assistant agents delete work
 $$nemoclaw my-assistant agents delete work --force --json
 ```
 
+<AgentOnly variant="openclaw">
+
+### `$$nemoclaw <name> agents apply`
+
+Reconcile the live sandbox roster against a declarative [agents.yaml manifest](../inference/declarative-agents-manifest).
+The verb lists current agents via `openclaw agents list --json`, diffs them against the manifest, and adds missing secondaries or deletes orphan ones through `openclaw agents add|delete`.
+Per-agent `model`, `subagents.*`, `tools`, top-level `defaults`, and `main` overrides need a sandbox rebuild and are surfaced as warnings rather than silently dropped; rerun `$$nemoclaw onboard --agents <agents.yaml> --recreate-sandbox` to bake those fields.
+
+```bash
+$$nemoclaw my-assistant agents apply -f ./agents.yaml
+$$nemoclaw my-assistant agents apply -f ./agents.yaml --yes
+$$nemoclaw my-assistant agents apply -f ./agents.yaml --yes --non-interactive
+```
+
+Pass `-f` / `--file <agents.yaml>` to point at the manifest; `--yes` confirms the roster diff above; `--non-interactive` fails fast when `--yes` is absent so scripted callers cannot accidentally hang on a missing prompt.
+
+</AgentOnly>
+
 ### `$$nemoclaw <name> sessions`
 
 List OpenClaw conversation sessions in the sandbox.
@@ -1378,7 +1419,8 @@ Session JSONL can contain pasted secrets (API keys, tokens), so exported files a
 ### `$$nemoclaw <name> download <sandbox-path> [host-dest]`
 
 Host-side wrapper around `openshell sandbox download` that adds a live-sandbox readiness check.
-The source path inside the sandbox and the host destination are forwarded to OpenShell verbatim, so the file-system semantics (single-file vs directory copy, trailing-slash handling, overwrite behaviour) follow the OpenShell transport.
+The sandbox source path is forwarded to OpenShell verbatim; a relative host destination is resolved against the caller's working directory before it reaches OpenShell, so the downloaded file lands where the user invoked the CLI from rather than inside the install directory.
+Absolute host destinations pass through unchanged, and the OpenShell transport keeps its file-system semantics (single-file vs directory copy, trailing-slash handling, overwrite behaviour).
 With no `host-dest` the destination defaults to the current directory.
 
 ```bash
@@ -1779,7 +1821,7 @@ The `$$nemoclaw setup` command is deprecated.
 Use `$$nemoclaw onboard` instead.
 </Warning>
 
-This command remains as a compatibility alias to `$$nemoclaw onboard` and accepts the same flags: `--non-interactive`, `--resume`, `--fresh`, `--recreate-sandbox`, `--gpu` / `--no-gpu`, `--from`, `--name`, `--sandbox-gpu` / `--no-sandbox-gpu`, `--sandbox-gpu-device`, `--agent`, `--control-ui-port`, `--yes` / `-y`, `--no-ollama-autostart`, `--yes-i-accept-third-party-software`.
+This command remains as a compatibility alias to `$$nemoclaw onboard` and accepts the same flags: `--non-interactive`, `--resume`, `--fresh`, `--recreate-sandbox`, `--gpu` / `--no-gpu`, `--from`, `--name`, `--sandbox-gpu` / `--no-sandbox-gpu`, `--sandbox-gpu-device`, `--agent`, `--agents <agents.yaml>`, `--control-ui-port`, `--yes` / `-y`, `--no-ollama-autostart`, `--yes-i-accept-third-party-software`.
 
 ```bash
 $$nemoclaw setup
@@ -1792,7 +1834,7 @@ The `$$nemoclaw setup-spark` command is deprecated.
 Use the standard installer and run `$$nemoclaw onboard` instead, because current OpenShell releases handle the older DGX Spark cgroup behavior.
 </Warning>
 
-This command remains as a compatibility alias to `$$nemoclaw onboard` and accepts the same flags: `--non-interactive`, `--resume`, `--fresh`, `--recreate-sandbox`, `--gpu` / `--no-gpu`, `--from`, `--name`, `--sandbox-gpu` / `--no-sandbox-gpu`, `--sandbox-gpu-device`, `--agent`, `--control-ui-port`, `--yes` / `-y`, `--no-ollama-autostart`, `--yes-i-accept-third-party-software`.
+This command remains as a compatibility alias to `$$nemoclaw onboard` and accepts the same flags: `--non-interactive`, `--resume`, `--fresh`, `--recreate-sandbox`, `--gpu` / `--no-gpu`, `--from`, `--name`, `--sandbox-gpu` / `--no-sandbox-gpu`, `--sandbox-gpu-device`, `--agent`, `--agents <agents.yaml>`, `--control-ui-port`, `--yes` / `-y`, `--no-ollama-autostart`, `--yes-i-accept-third-party-software`.
 
 ```bash
 $$nemoclaw setup-spark

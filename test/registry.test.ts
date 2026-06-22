@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect, beforeEach } from "vitest";
 import fs from "node:fs";
-import path from "node:path";
-import os from "node:os";
 import { createRequire } from "node:module";
+import os from "node:os";
+import path from "node:path";
+import { beforeEach, describe, expect, it } from "vitest";
 
 // Use a temp dir so tests don't touch real ~/.nemoclaw.
 // HOME must be set before loading registry (it reads HOME at require time),
@@ -102,6 +102,94 @@ describe("registry", () => {
     // The second registration must not retarget the first sandbox's binding.
     expect(registry.getSandbox("first").gatewayName).toBe("nemoclaw");
     expect(registry.getSandbox("first").gatewayPort).toBe(8080);
+  });
+
+  it("normalizes configured inference fields into a discriminated view", () => {
+    const configured = { name: "alpha", provider: "nvidia-prod", model: "nvidia/test" };
+    const missingProvider = { name: "beta", provider: null, model: "nvidia/test" };
+    const missingModel = { name: "gamma", provider: "nvidia-prod", model: null };
+    const blankProvider = { name: "delta", provider: "", model: "nvidia/test" };
+    const blankModel = { name: "epsilon", provider: "nvidia-prod", model: "   " };
+
+    expect(registry.getSandboxEntryInference(configured)).toEqual({
+      kind: "configured",
+      provider: "nvidia-prod",
+      model: "nvidia/test",
+    });
+    expect(registry.getSandboxEntryInference(missingProvider)).toEqual({ kind: "unconfigured" });
+    expect(registry.getSandboxEntryInference(missingModel)).toEqual({ kind: "unconfigured" });
+    expect(registry.getSandboxEntryInference(blankProvider)).toEqual({ kind: "unconfigured" });
+    expect(registry.getSandboxEntryInference(blankModel)).toEqual({ kind: "unconfigured" });
+  });
+
+  it("normalizes gateway binding fields into a discriminated view", () => {
+    expect(
+      registry.getSandboxEntryGatewayBinding({
+        name: "alpha",
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+      }),
+    ).toEqual({ kind: "registered", gatewayName: "nemoclaw", gatewayPort: 8080 });
+    expect(
+      registry.getSandboxEntryGatewayBinding({ name: "missing-name", gatewayPort: 8080 }),
+    ).toEqual({ kind: "missing" });
+    expect(
+      registry.getSandboxEntryGatewayBinding({ name: "missing-port", gatewayName: "nemoclaw" }),
+    ).toEqual({ kind: "missing" });
+    expect(
+      registry.getSandboxEntryGatewayBinding({
+        name: "invalid-port",
+        gatewayName: "nemoclaw",
+        gatewayPort: 0,
+      }),
+    ).toEqual({ kind: "missing" });
+    expect(
+      registry.getSandboxEntryGatewayBinding({
+        name: "too-high-port",
+        gatewayName: "nemoclaw",
+        gatewayPort: 65536,
+      }),
+    ).toEqual({ kind: "missing" });
+    expect(
+      registry.getSandboxEntryGatewayBinding({
+        name: "blank-gateway",
+        gatewayName: "",
+        gatewayPort: 8080,
+      }),
+    ).toEqual({ kind: "missing" });
+  });
+
+  it("normalizes sandbox entries without mutating the raw registry entry", () => {
+    const raw = {
+      name: "alpha",
+      provider: "nvidia-prod",
+      model: "nvidia/test",
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+    };
+
+    const normalized = registry.normalizeSandboxEntryView(raw);
+
+    expect(normalized).toEqual({
+      name: "alpha",
+      raw,
+      inference: { kind: "configured", provider: "nvidia-prod", model: "nvidia/test" },
+      gateway: { kind: "registered", gatewayName: "nemoclaw", gatewayPort: 8080 },
+    });
+    expect(normalized.raw).toBe(raw);
+  });
+
+  it("normalizes invalid typed fields to missing views", () => {
+    const normalized = registry.normalizeSandboxEntryView({
+      name: "invalid",
+      provider: "",
+      model: "nvidia/test",
+      gatewayName: "nemoclaw",
+      gatewayPort: 65536,
+    });
+
+    expect(normalized.inference).toEqual({ kind: "unconfigured" });
+    expect(normalized.gateway).toEqual({ kind: "missing" });
   });
 
   it("first registered becomes default", () => {

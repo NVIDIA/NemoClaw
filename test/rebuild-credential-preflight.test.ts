@@ -76,6 +76,7 @@ function createFixture(opts: {
   /** If set, the onboard-session.json provider_selection step status */
   providerSelectionStatus?: string;
   agent?: string | null;
+  agents?: unknown[] | null;
   hermesAuthMethod?: string | null;
   messagingPlanChannels?: string[] | null;
   dockerBuildExitCode?: number;
@@ -90,6 +91,7 @@ function createFixture(opts: {
     savedCredential,
     providerSelectionStatus = "complete",
     agent = null,
+    agents = null,
     hermesAuthMethod = null,
     messagingPlanChannels = null,
     dockerBuildExitCode = 0,
@@ -119,6 +121,7 @@ function createFixture(opts: {
           gpuEnabled: false,
           policies: [],
           agent,
+          ...(agents ? { agents } : {}),
           ...(messagingPlan ? { messaging: { schemaVersion: 1, plan: messagingPlan } } : {}),
         },
       },
@@ -395,6 +398,27 @@ describe("Issue #2273: atomic rebuild", () => {
       expect(output).not.toContain("Cancelled.");
       expect(output).not.toContain("preflight failed");
       expect(output).toContain("Backing up sandbox state");
+    });
+
+    it("aborts multi-agent rebuild before prompting, preflight, or backup", {
+      timeout: 60_000,
+    }, () => {
+      const f = createFixture({
+        agents: [{ name: "openclaw" }, { name: "hermes" }],
+        savedCredential: {
+          key: "NVIDIA_INFERENCE_API_KEY",
+          value: "nvapi-test-key-for-rebuild",
+        },
+      });
+
+      const result = runRebuild(f, {}, { yes: false, input: "YES\n" });
+      const output = (result.stderr || "") + (result.stdout || "");
+
+      expect(result.status).not.toBe(0);
+      expect(output).toContain("Multi-agent sandbox rebuild is not yet supported");
+      expect(output).not.toContain("Proceed? [y/N]:");
+      expect(output).not.toContain("Backing up sandbox state");
+      expect(registryHasSandbox(f)).toBe(true);
     });
 
     it("prints active SSH session warning before interactive confirmation", {

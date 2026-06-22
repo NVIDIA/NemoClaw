@@ -503,13 +503,13 @@ describe("generate-openclaw-config.mts: config generation", () => {
     expect(config.channels.telegram.groups).toBeUndefined();
   });
 
-  it("defaults Telegram groupPolicy to 'open' with no groups stanza when telegramConfig is empty (#3022)", () => {
+  it("defaults Telegram group replies to require mentions when telegramConfig is empty (#3022)", () => {
     const channels = Buffer.from(JSON.stringify(["telegram"])).toString("base64");
     const config = runConfigScript({
       NEMOCLAW_MESSAGING_CHANNELS_B64: channels,
     });
     expect(config.channels.telegram.accounts.default.groupPolicy).toBe("open");
-    expect(config.channels.telegram.groups).toBeUndefined();
+    expect(config.channels.telegram.groups).toEqual({ "*": { requireMention: true } });
   });
 
   it("emits OpenClaw-valid Discord guild allowlist config when guilds are provided", () => {
@@ -876,7 +876,6 @@ describe("generate-openclaw-config.mts: config generation", () => {
   // without "main" present.
 
   const TOOLS_OK = { profile: "minimal", allow: ["read"], deny: ["exec"] };
-  const SUBAGENTS_OK = { maxSpawnDepth: 0 };
 
   function makeExtra(overrides: Record<string, unknown> = {}): Record<string, unknown> {
     return {
@@ -884,7 +883,6 @@ describe("generate-openclaw-config.mts: config generation", () => {
       workspace: "/sandbox/.openclaw/workspace-research",
       agentDir: "/sandbox/.openclaw/agents/research",
       tools: TOOLS_OK,
-      subagents: SUBAGENTS_OK,
       ...overrides,
     };
   }
@@ -1056,27 +1054,28 @@ describe("generate-openclaw-config.mts: config generation", () => {
     );
   });
 
-  it("rejects extras whose subagents.maxSpawnDepth is missing or invalid", () => {
-    expectBuildConfigError(
-      {
-        NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([makeExtra({ subagents: undefined })]),
-      },
-      /\.subagents must be an object/,
-    );
+  it("treats subagents as optional and omits it when absent or empty", () => {
+    const config = runConfigScript({
+      NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([makeExtra()]),
+    });
+    expect(config.agents.list[1]).not.toHaveProperty("subagents");
+  });
+
+  it("rejects per-agent subagents.maxSpawnDepth with a migration hint", () => {
     expectBuildConfigError(
       {
         NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([
-          makeExtra({ subagents: { maxSpawnDepth: -1 } }),
+          makeExtra({ subagents: { maxSpawnDepth: 2 } }),
         ]),
       },
-      /maxSpawnDepth must be a non-negative integer/,
+      /maxSpawnDepth is not accepted per-agent.*defaults\.subagents\.maxSpawnDepth/,
     );
   });
 
-  it("rejects extras when the payload is not an array", () => {
+  it("rejects extras when the payload is neither array nor object", () => {
     expectBuildConfigError(
-      { NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64({ id: "research" }) },
-      /must decode to a JSON array/,
+      { NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64("not-a-list") },
+      /must decode to a JSON array of agent objects or an object with/,
     );
   });
 
@@ -1105,22 +1104,9 @@ describe("generate-openclaw-config.mts: config generation", () => {
   it("rejects extras that smuggle credential-like keys inside subagents", () => {
     expectBuildConfigError(
       {
-        NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([
-          makeExtra({ subagents: { ...SUBAGENTS_OK, token: "x" } }),
-        ]),
+        NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([makeExtra({ subagents: { token: "x" } })]),
       },
       /\.subagents contains unsupported field\(s\): token/,
-    );
-  });
-
-  it("rejects extras with an operator-supplied model override (currently unsupported)", () => {
-    expectBuildConfigError(
-      {
-        NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([
-          makeExtra({ model: { primary: "evil/model" } }),
-        ]),
-      },
-      /contains unsupported field\(s\): model/,
     );
   });
 
@@ -1143,11 +1129,15 @@ describe("generate-openclaw-config.mts: config generation", () => {
   });
 
   it("strips operator entries to the allowlist when writing agents.list", () => {
-    // Even if the operator includes an unrecognised but harmless-looking
-    // field, the validator must drop it before it reaches the baked image.
-    // (The previous test confirms unknown fields fail; this test guards
-    // against an allowlist drift where an unknown field is accepted but a
-    // known one is dropped.)
+    // The validator must drop unknown keys at every nesting level before
+    // they reach the baked image. (The previous tests confirm unknown
+    // fields fail; this test guards against an allowlist drift where an
+    // unknown field is accepted but a known one is dropped.)
+    const subagentsInput = {
+      delegationMode: "prefer",
+      allowAgents: ["analyst"],
+      requireAgentId: true,
+    };
     const config = runConfigScript({
       NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([
         {
@@ -1155,7 +1145,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
           workspace: "/sandbox/.openclaw/workspace-research",
           agentDir: "/sandbox/.openclaw/agents/research",
           tools: TOOLS_OK,
-          subagents: SUBAGENTS_OK,
+          subagents: subagentsInput,
           description: "Researches things",
         },
       ]),
@@ -1165,7 +1155,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
       workspace: "/sandbox/.openclaw/workspace-research",
       agentDir: "/sandbox/.openclaw/agents/research",
       tools: TOOLS_OK,
-      subagents: SUBAGENTS_OK,
+      subagents: subagentsInput,
       description: "Researches things",
     });
   });
@@ -1190,6 +1180,11 @@ describe("generate-openclaw-config.mts: config generation", () => {
     const resolved = list.find((entry) => entry.default === true)?.id ?? list[0]?.id;
     expect(resolved).toBe("main");
   });
+
+  // ─── agents-manifest extensions ───────────────────────────────────────────
+  // The v1 `{agents,defaults?,main?}` payload shape covered by
+  // test/generate-openclaw-config-agents-manifest.test.ts to keep this file
+  // under the legacy size budget.
 
   it("keeps compatible endpoints on the managed inference.local OpenClaw provider", () => {
     const config = runConfigScript({

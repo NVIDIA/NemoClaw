@@ -22,17 +22,20 @@ describe("messaging channel config", () => {
       "SLACK_ALLOWED_USERS",
       "SLACK_ALLOWED_CHANNELS",
       "WHATSAPP_ALLOWED_IDS",
+      "TELEGRAM_GROUP_POLICY",
       "WECHAT_ACCOUNT_ID",
       "WECHAT_BASE_URL",
       "WECHAT_USER_ID",
     ]);
   });
 
-  it("sanitizes persisted config and rejects malformed reply-mode values", () => {
+  it("sanitizes persisted config and rejects malformed choice values", () => {
     expect(
       sanitizeMessagingChannelConfig({
         TELEGRAM_ALLOWED_IDS: "  123,456  ",
         TELEGRAM_REQUIRE_MENTION: "yes",
+        TELEGRAM_GROUP_POLICY: "allowlist",
+        TELEGRAM_GROUP_POLICY_INVALID: "disabled",
         DISCORD_SERVER_ID: "1491590992753590594",
         DISCORD_REQUIRE_MENTION: "0",
         SLACK_ALLOWED_USERS: "  U01ABC2DEF3, U04GHI5JKL6  ",
@@ -41,6 +44,7 @@ describe("messaging channel config", () => {
       }),
     ).toEqual({
       TELEGRAM_ALLOWED_IDS: "123,456",
+      TELEGRAM_GROUP_POLICY: "allowlist",
       DISCORD_SERVER_ID: "1491590992753590594",
       DISCORD_REQUIRE_MENTION: "0",
       SLACK_ALLOWED_USERS: "U01ABC2DEF3, U04GHI5JKL6",
@@ -93,6 +97,7 @@ describe("messaging channel config", () => {
         {
           TELEGRAM_ALLOWED_IDS: "stored-user",
           TELEGRAM_REQUIRE_MENTION: "1",
+          TELEGRAM_GROUP_POLICY: "nonsense",
           DISCORD_REQUIRE_MENTION: "maybe",
         },
         env,
@@ -103,6 +108,7 @@ describe("messaging channel config", () => {
     });
     expect(env.TELEGRAM_ALLOWED_IDS).toBe("env-user");
     expect(env.TELEGRAM_REQUIRE_MENTION).toBe("1");
+    expect(env.TELEGRAM_GROUP_POLICY).toBeUndefined();
     expect(env.DISCORD_REQUIRE_MENTION).toBeUndefined();
   });
 
@@ -121,10 +127,12 @@ describe("messaging channel config", () => {
         DISCORD_SERVER_ID: "1491590992753590594",
         DISCORD_REQUIRE_MENTION: "2",
         TELEGRAM_REQUIRE_MENTION: "0",
+        TELEGRAM_GROUP_POLICY: "disabled",
       }),
     ).toEqual({
       DISCORD_SERVER_ID: "1491590992753590594",
       TELEGRAM_REQUIRE_MENTION: "0",
+      TELEGRAM_GROUP_POLICY: "disabled",
     });
   });
 });
