@@ -1211,8 +1211,12 @@ diff --git a/test/example.test.ts b/test/example.test.ts
     );
     expect(comment).toContain("### 💡 In-scope improvements");
     expect(comment).toContain(
+      "- [ ] `PRA-1` In-scope improvement: Simplify changed branch in <code>src/lib/example.ts:12</code>",
+    );
+    expect(comment).toContain(
       "- **Expected follow-up:** Prefer a current-PR fix when local to changed code; defer only with rationale or linked follow-up.",
     );
+    expect(comment).not.toContain("Optional: Simplify changed branch");
     expect(comment).not.toContain("nice ideas");
   });
 

@@ -313,7 +313,7 @@ function renderActionChecklist(
   for (const record of records
     .filter((item) => item.finding.severity === "suggestion")
     .slice(0, 10)) {
-    lines.push(formatChecklistFinding(record, "Optional"));
+    lines.push(formatChecklistFinding(record, "In-scope improvement"));
   }
   return `${lines.join("\n")}\n`;
 }
