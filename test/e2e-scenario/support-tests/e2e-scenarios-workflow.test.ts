@@ -15,6 +15,7 @@ import {
   validateFreeStandingWorkflowInventory,
 } from "../../../tools/e2e-scenarios/workflow-boundary.mts";
 import { testTimeoutOptions } from "../../helpers/timeouts";
+import { assertChannelsStopStartSandboxName } from "../live/channels-stop-start-safety.ts";
 
 function readWorkflow(): Record<string, unknown> {
   return YAML.parse(
@@ -72,6 +73,18 @@ function generateMatrixForDispatch(env: {
 }
 
 describe("e2e-vitest-scenarios workflow boundary", () => {
+  it("guards channels-stop-start destructive cleanup to test-owned sandboxes", () => {
+    expect(() => assertChannelsStopStartSandboxName("personal-dev")).toThrow(
+      /only accepts sandbox names with prefix e2e-channels-stop-start-/,
+    );
+    expect(() =>
+      assertChannelsStopStartSandboxName("e2e-channels-stop-start-openclaw"),
+    ).not.toThrow();
+    expect(() =>
+      assertChannelsStopStartSandboxName("e2e-channels-stop-start-hermes"),
+    ).not.toThrow();
+  });
+
   it("keeps the live Vitest scenario workflow manual, pinned, and artifact-safe", () => {
     expect(validateE2eVitestScenariosWorkflowBoundary()).toEqual([]);
   });

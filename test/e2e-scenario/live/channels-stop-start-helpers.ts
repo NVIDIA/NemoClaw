@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { expect } from "../fixtures/e2e-test.ts";
+import { assertChannelsStopStartSandboxName } from "./channels-stop-start-safety.ts";
 import {
   type AgentKind,
   CLI,
@@ -29,6 +30,7 @@ if (AGENT !== "openclaw" && AGENT !== "hermes") {
   throw new Error(`NEMOCLAW_CHANNELS_STOP_START_AGENT must be openclaw or hermes, got ${AGENT}`);
 }
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? `e2e-channels-stop-start-${AGENT}`;
+assertChannelsStopStartSandboxName(SANDBOX_NAME);
 const REGISTRY_FILE = path.join(process.env.HOME ?? os.homedir(), ".nemoclaw", "sandboxes.json");
 const CHANNELS = ["telegram", "discord", "wechat", "slack", "whatsapp"] as const;
 const PROVIDERS: Record<string, (sandbox: string) => string[]> = {
