@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { Buffer } from "node:buffer";
 import { spawnSync } from "node:child_process";
 import {
   captureOpenshell,
@@ -60,6 +61,15 @@ export type SandboxForwardListEntry = {
 export type SandboxForwardHealth = boolean | "occupied" | null;
 
 const SANDBOX_EXEC_STARTED_MARKER = "__NEMOCLAW_SANDBOX_EXEC_STARTED__";
+
+function buildSandboxExecMarkedCommand(command: string): string {
+  const encodedCommand = Buffer.from(command, "utf8").toString("base64");
+  return [
+    `printf '%s\\n' '${SANDBOX_EXEC_STARTED_MARKER}'`,
+    "command -v base64 >/dev/null 2>&1 || { echo NEMOCLAW_BASE64_MISSING >&2; exit 127; }",
+    `printf '%s' '${encodedCommand}' | base64 -d | sh`,
+  ].join("; ");
+}
 
 function parseSandboxExecStdoutFrame(line: string): { text: string; framed: boolean } {
   const trimmed = line.trimStart();
@@ -177,7 +187,7 @@ export function executeSandboxExecCommand(
   command: string,
   timeout = 15000,
 ): SandboxCommandResult | null {
-  const markedCommand = `printf '%s\n' '${SANDBOX_EXEC_STARTED_MARKER}'; ${command}`;
+  const markedCommand = buildSandboxExecMarkedCommand(command);
   const timeoutOverride = Number(process.env.NEMOCLAW_SANDBOX_EXEC_TIMEOUT_MS || "");
   const effectiveTimeout =
     Number.isFinite(timeoutOverride) && timeoutOverride > 0 ? timeoutOverride : timeout;
@@ -210,7 +220,7 @@ async function executeSandboxExecCommandForStatus(
   sandboxName: string,
   command: string,
 ): Promise<SandboxCommandResult | null> {
-  const markedCommand = `printf '%s\n' '${SANDBOX_EXEC_STARTED_MARKER}'; ${command}`;
+  const markedCommand = buildSandboxExecMarkedCommand(command);
   const result = await captureOpenshellForStatus(
     ["sandbox", "exec", "--name", sandboxName, "--", "sh", "-c", markedCommand],
     { ignoreError: true },
