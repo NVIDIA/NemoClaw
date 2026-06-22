@@ -1086,10 +1086,18 @@ jobs:
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-vitest-workflow-"));
     const workflowPath = path.join(tmp, "workflow.yaml");
     const workflow = readWorkflow() as {
-      jobs: Record<string, { steps: Array<Record<string, unknown>> }>;
+      jobs: Record<
+        string,
+        { env?: Record<string, unknown>; steps: Array<Record<string, unknown>> }
+      >;
     };
     const job = workflow.jobs["tunnel-lifecycle-vitest"];
     expect(job).toBeDefined();
+    job.env = {
+      ...job.env,
+      DOCKER_CONFIG: "${{ github.workspace }}/e2e-artifacts/vitest/tunnel-lifecycle/docker-config",
+    };
+
     const checkout = job.steps.find((step) =>
       String(step.uses ?? "").startsWith("actions/checkout@"),
     );
@@ -1098,6 +1106,13 @@ jobs:
       ...(checkout!.with as Record<string, unknown>),
       "persist-credentials": true,
     };
+
+    const configureDockerAuth = job.steps.find(
+      (step) => step.name === "Configure isolated Docker auth directory",
+    );
+    expect(configureDockerAuth).toBeDefined();
+    configureDockerAuth!.run =
+      'echo "DOCKER_CONFIG=${{ github.workspace }}/docker-config-tunnel-lifecycle" >> "$GITHUB_ENV"';
 
     const install = job.steps.find((step) => step.name === "Install root dependencies");
     expect(install).toBeDefined();
@@ -1120,6 +1135,9 @@ jobs:
     try {
       expect(validateE2eVitestScenariosWorkflowBoundary(workflowPath)).toEqual(
         expect.arrayContaining([
+          "tunnel-lifecycle-vitest job must not set DOCKER_CONFIG at job level",
+          'step \'Configure isolated Docker auth directory\' run script must include echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-tunnel-lifecycle" >> "$GITHUB_ENV"',
+          "step 'Configure isolated Docker auth directory' run script must not include ${{ github.workspace }}",
           "tunnel-lifecycle-vitest checkout step must set persist-credentials=false",
           "step 'Install root dependencies' run script must include npm ci --ignore-scripts",
           "artifact upload path must include e2e-artifacts/vitest/tunnel-lifecycle/",

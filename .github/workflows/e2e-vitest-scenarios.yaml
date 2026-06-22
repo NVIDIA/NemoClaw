@@ -4167,7 +4167,6 @@ jobs:
     env:
       FREE_STANDING_VITEST_JOB: "1"
       FREE_STANDING_SCENARIO_ID: "tunnel-lifecycle"
-      DOCKER_CONFIG: ${{ github.workspace }}/.docker-config-tunnel-lifecycle
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/tunnel-lifecycle
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
@@ -4179,6 +4178,9 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
+
+      - name: Configure isolated Docker auth directory
+        run: echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-tunnel-lifecycle" >> "$GITHUB_ENV"
 
       - name: Authenticate to Docker Hub
         env:

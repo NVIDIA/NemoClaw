@@ -3156,6 +3156,9 @@ function validateTunnelLifecycleVitestJob(errors: string[], jobs: WorkflowRecord
   validateFreeStandingJobSelector(errors, jobs, jobName, scenarioName);
 
   const jobEnv = asRecord(job.env);
+  if ("DOCKER_CONFIG" in jobEnv) {
+    errors.push("tunnel-lifecycle-vitest job must not set DOCKER_CONFIG at job level");
+  }
   if (jobEnv.NEMOCLAW_CLI_BIN !== "${{ github.workspace }}/bin/nemoclaw.js") {
     errors.push("tunnel-lifecycle-vitest job must point NEMOCLAW_CLI_BIN at the repo CLI");
   }
@@ -3196,6 +3199,20 @@ function validateTunnelLifecycleVitestJob(errors: string[], jobs: WorkflowRecord
   if (asRecord(checkout?.with)["persist-credentials"] !== false) {
     errors.push("tunnel-lifecycle-vitest checkout step must set persist-credentials=false");
   }
+
+  const configureDockerAuth = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Configure isolated Docker auth directory",
+  );
+  requireRunContains(
+    errors,
+    configureDockerAuth,
+    'echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-tunnel-lifecycle" >> "$GITHUB_ENV"',
+  );
+  requireRunDoesNotContain(errors, configureDockerAuth, "${{ runner.temp }}");
+  requireRunDoesNotContain(errors, configureDockerAuth, "${{ github.workspace }}");
 
   const dockerLogin = requireJobStep(errors, jobName, steps, "Authenticate to Docker Hub");
   const dockerLoginEnv = asRecord(dockerLogin?.env);
