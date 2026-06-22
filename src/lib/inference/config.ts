@@ -20,7 +20,7 @@ export const DEFAULT_CLOUD_MODEL = "nvidia/nemotron-3-super-120b-a12b";
 // separately (cloud context-window registry).
 export const DEFAULT_CONTEXT_WINDOW = 131072;
 export const HERMES_PROVIDER_MODEL_OPTIONS = [
-  "moonshotai/kimi-k2.6",
+  "moonshotai/kimi-k2.7-code",
   "xiaomi/mimo-v2.5-pro",
   "xiaomi/mimo-v2.5",
   "tencent/hy3-preview",
@@ -58,7 +58,7 @@ export const CLOUD_MODEL_OPTIONS = [
   { id: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning", label: "Nemotron 3 Nano Omni 30B" },
   { id: "z-ai/glm-5.1", label: "GLM-5" },
   { id: "minimaxai/minimax-m2.7", label: "MiniMax M2.7" },
-  { id: "moonshotai/kimi-k2.6", label: "Kimi K2.6" },
+  { id: "moonshotai/kimi-k2.7-code", label: "Kimi K2.7 Code" },
   { id: "openai/gpt-oss-120b", label: "GPT-OSS 120B" },
   { id: "deepseek-ai/deepseek-v4-pro", label: "DeepSeek V4 Pro" },
 ];

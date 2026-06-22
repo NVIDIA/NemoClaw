@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 // Import from compiled dist/ for correct coverage attribution.
 import {
   CLOUD_MODEL_OPTIONS,
+  DEFAULT_CLOUD_MODEL,
   DEFAULT_HERMES_PROVIDER_MODEL,
   DEFAULT_OLLAMA_MODEL,
   DEFAULT_ROUTE_CREDENTIAL_ENV,
@@ -31,16 +32,17 @@ describe("inference selection config", () => {
       "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
       "z-ai/glm-5.1",
       "minimaxai/minimax-m2.7",
-      "moonshotai/kimi-k2.6",
+      "moonshotai/kimi-k2.7-code",
       "openai/gpt-oss-120b",
       "deepseek-ai/deepseek-v4-pro",
     ]);
+    expect(DEFAULT_CLOUD_MODEL).toBe("nvidia/nemotron-3-super-120b-a12b");
   });
 
   it("aligns Hermes Provider defaults with the Hermes Agent Nous catalog", () => {
-    expect(DEFAULT_HERMES_PROVIDER_MODEL).toBe("moonshotai/kimi-k2.6");
+    expect(DEFAULT_HERMES_PROVIDER_MODEL).toBe("moonshotai/kimi-k2.7-code");
     expect(HERMES_PROVIDER_MODEL_OPTIONS.slice(0, 10)).toEqual([
-      "moonshotai/kimi-k2.6",
+      "moonshotai/kimi-k2.7-code",
       "xiaomi/mimo-v2.5-pro",
       "xiaomi/mimo-v2.5",
       "tencent/hy3-preview",
@@ -266,6 +268,22 @@ describe("getSandboxInferenceConfig", () => {
     ).toEqual({
       providerKey: MANAGED_PROVIDER_ID,
       primaryModelRef: `${MANAGED_PROVIDER_ID}/moonshotai/kimi-k2.6`,
+      inferenceBaseUrl: INFERENCE_ROUTE_URL,
+      inferenceApi: "openai-completions",
+      inferenceCompat: null,
+    });
+  });
+
+  it("leaves Kimi K2.7 Code compat to the model-specific setup registry", () => {
+    expect(
+      getSandboxInferenceConfig(
+        "moonshotai/kimi-k2.7-code",
+        "nvidia-prod",
+        "openai-completions",
+      ),
+    ).toEqual({
+      providerKey: MANAGED_PROVIDER_ID,
+      primaryModelRef: `${MANAGED_PROVIDER_ID}/moonshotai/kimi-k2.7-code`,
       inferenceBaseUrl: INFERENCE_ROUTE_URL,
       inferenceApi: "openai-completions",
       inferenceCompat: null,

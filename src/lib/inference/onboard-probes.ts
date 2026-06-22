@@ -33,6 +33,10 @@ const EXTENDED_NVIDIA_ENDPOINT_VALIDATION_MODELS = new Set([
   "qwen/qwen3.5-397b-a17b",
   "deepseek-ai/deepseek-v4-flash",
 ]);
+const KIMI_NVIDIA_CHAT_COMPLETIONS_MODELS = new Set([
+  "moonshotai/kimi-k2.6",
+  "moonshotai/kimi-k2.7-code",
+]);
 const CURL_TIMEOUT_STATUS = 28;
 const NODE_SPAWN_TIMEOUT_STATUS = -110;
 
@@ -492,13 +496,17 @@ function isKimiK26Model(model) {
   return String(model || "").toLowerCase() === "moonshotai/kimi-k2.6";
 }
 
+function isKimiNvidiaChatCompletionsModel(model) {
+  return KIMI_NVIDIA_CHAT_COMPLETIONS_MODELS.has(String(model || "").toLowerCase());
+}
+
 function needsExtendedNvidiaEndpointValidationBudget(model) {
   return EXTENDED_NVIDIA_ENDPOINT_VALIDATION_MODELS.has(String(model || "").toLowerCase());
 }
 
 function getChatCompletionsProbeTimingArgs(model, opts) {
   if (isDeepSeekV4ProModel(model)) return getDeepSeekV4ProValidationProbeCurlArgs(opts);
-  if (isKimiK26Model(model)) return getKimiK26ValidationProbeCurlArgs(opts);
+  if (isKimiNvidiaChatCompletionsModel(model)) return getKimiK26ValidationProbeCurlArgs(opts);
   if (needsExtendedNvidiaEndpointValidationBudget(model)) {
     return getExtendedNvidiaEndpointValidationProbeCurlArgs(opts);
   }

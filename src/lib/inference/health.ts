@@ -51,7 +51,10 @@ export interface ProviderHealthProbeOptions {
 const COMPATIBLE_PROVIDERS = new Set(["compatible-endpoint", "compatible-anthropic-endpoint"]);
 const NVIDIA_MANAGED_PROVIDERS = new Set(["nvidia-prod", "nvidia-nim"]);
 const NVIDIA_HEALTH_CREDENTIAL_ENV = "NVIDIA_INFERENCE_API_KEY";
-const KIMI_K26_MODEL = "moonshotai/kimi-k2.6";
+const KIMI_NVIDIA_CHAT_COMPLETIONS_MODELS = new Set([
+  "moonshotai/kimi-k2.6",
+  "moonshotai/kimi-k2.7-code",
+]);
 const KIMI_STATUS_CONNECT_TIMEOUT_SECONDS = "3";
 const KIMI_STATUS_MAX_TIME_SECONDS = "5";
 const KIMI_HEALTH_CURL_CONFIG_PREFIX = "nemoclaw-kimi-health-curl";
@@ -62,8 +65,13 @@ function normalizeModel(model: string | null | undefined): string | null {
   return trimmed || null;
 }
 
-function isKimiK26Model(model: string | null | undefined): model is string {
-  return normalizeModel(model)?.toLowerCase() === KIMI_K26_MODEL;
+function isNvidiaKimiChatCompletionsModel(model: string | null | undefined): model is string {
+  const normalized = normalizeModel(model);
+  return normalized ? KIMI_NVIDIA_CHAT_COMPLETIONS_MODELS.has(normalized.toLowerCase()) : false;
+}
+
+function kimiHealthLabel(model: string): string {
+  return model.toLowerCase() === "moonshotai/kimi-k2.7-code" ? "Kimi K2.7 Code" : "Kimi K2.6";
 }
 
 function resolveProbeCredential(envName: string, options: ProviderHealthProbeOptions): string {
@@ -177,11 +185,12 @@ function buildRemoteProbeDetail(
 
 function buildKimiChatCompletionsDetail(
   providerLabel: string,
+  model: string,
   endpoint: string,
   healthy: boolean,
   result: CurlProbeResult,
 ): string {
-  const route = `${providerLabel} Kimi K2.6 chat-completions route`;
+  const route = `${providerLabel} ${kimiHealthLabel(model)} chat-completions route`;
   if (healthy) {
     return `${route} is healthy at ${endpoint}.`;
   }
@@ -191,7 +200,7 @@ function buildKimiChatCompletionsDetail(
   );
 }
 
-function probeNvidiaKimiK26Health(
+function probeNvidiaKimiHealth(
   provider: string,
   model: string,
   options: ProviderHealthProbeOptions,
@@ -210,7 +219,7 @@ function probeNvidiaKimiK26Health(
       providerLabel,
       endpoint,
       detail:
-        `Could not resolve ${NVIDIA_HEALTH_CREDENTIAL_ENV} for Kimi K2.6 health; ` +
+        `Could not resolve ${NVIDIA_HEALTH_CREDENTIAL_ENV} for ${kimiHealthLabel(model)} health; ` +
         `skipping model-specific chat-completions probe. (${reason})`,
     };
   }
@@ -222,7 +231,7 @@ function probeNvidiaKimiK26Health(
       providerLabel,
       endpoint,
       detail:
-        `Kimi K2.6 health requires ${NVIDIA_HEALTH_CREDENTIAL_ENV}; ` +
+        `${kimiHealthLabel(model)} health requires ${NVIDIA_HEALTH_CREDENTIAL_ENV}; ` +
         "skipping model-specific chat-completions probe instead of using provider-level /models reachability.",
     };
   }
@@ -239,7 +248,7 @@ function probeNvidiaKimiK26Health(
       providerLabel,
       endpoint,
       detail:
-        `Could not prepare ${NVIDIA_HEALTH_CREDENTIAL_ENV} for Kimi K2.6 health; ` +
+        `Could not prepare ${NVIDIA_HEALTH_CREDENTIAL_ENV} for ${kimiHealthLabel(model)} health; ` +
         `skipping model-specific chat-completions probe. (${reason})`,
     };
   }
@@ -261,7 +270,7 @@ function probeNvidiaKimiK26Health(
     probed: true,
     providerLabel,
     endpoint,
-    detail: buildKimiChatCompletionsDetail(providerLabel, endpoint, healthy, result),
+    detail: buildKimiChatCompletionsDetail(providerLabel, model, endpoint, healthy, result),
     ...(healthy ? {} : { failureLabel: result.curlStatus === 0 ? "unhealthy" : "unreachable" }),
   };
 }
@@ -292,8 +301,8 @@ export function probeRemoteProviderHealth(
     };
   }
 
-  if (NVIDIA_MANAGED_PROVIDERS.has(provider) && isKimiK26Model(model)) {
-    return probeNvidiaKimiK26Health(provider, model, options);
+  if (NVIDIA_MANAGED_PROVIDERS.has(provider) && isNvidiaKimiChatCompletionsModel(model)) {
+    return probeNvidiaKimiHealth(provider, model, options);
   }
 
   const endpoint = getRemoteProviderHealthEndpoint(provider);

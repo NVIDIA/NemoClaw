@@ -607,6 +607,7 @@ const { setupNim } = require(${onboardPath});
     assert.equal(payload.result.model, "deepseek-ai/deepseek-v4-pro");
     assert.equal(payload.result.preferredInferenceApi, "openai-completions");
     assert.match(payload.messages[1], /Choose model \[1\]/);
+    assert.ok(payload.lines.some((line: string) => line.includes("Kimi K2.7 Code")));
     assert.ok(payload.lines.some((line: string) => line.includes("DeepSeek V4 Pro")));
     assert.ok(
       payload.lines.some((line: string) => line.includes("Chat Completions API available")),

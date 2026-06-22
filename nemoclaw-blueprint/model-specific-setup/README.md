@@ -20,7 +20,7 @@ Manifests follow `schema.json`:
 - `match`: model/provider route predicates.
 - `effects`: declarative, agent-scoped effects.
 
-The first OpenClaw entry is `openclaw/kimi-k2.6-managed-inference.json`. It preserves the Kimi K2.6 managed `inference.local` compatibility behavior from PR #3046.
+The first OpenClaw entry is `openclaw/kimi-k2.6-managed-inference.json`. It preserves the Kimi K2.6 managed `inference.local` compatibility behavior from PR #3046 and also covers later Kimi Code variants that need the same OpenClaw route handling.
 
 ## Contributor Guidance
 

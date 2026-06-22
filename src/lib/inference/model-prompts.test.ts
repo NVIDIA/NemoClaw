@@ -43,6 +43,16 @@ describe("model prompt helpers", () => {
     expect(result).toBe("deepseek-ai/deepseek-v4-pro");
   });
 
+  it("returns Kimi K2.7 Code from the default cloud model menu", async () => {
+    const promptFn = promptSequence(["6"]);
+    const result = await promptCloudModel({
+      promptFn,
+      writeLine: vi.fn(),
+    });
+
+    expect(result).toBe("moonshotai/kimi-k2.7-code");
+  });
+
   it("validates manual cloud model ids against the saved NVIDIA key", async () => {
     const promptFn = promptSequence(["9", "bad-model", "nemotron-custom"]);
     const errorLine = vi.fn();

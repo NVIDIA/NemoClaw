@@ -380,6 +380,27 @@ describe("OpenAI-compatible inference probes", () => {
     expect(args).toContain(JSON.stringify(getChatCompletionsProbePayload("moonshotai/kimi-k2.6")));
   });
 
+  it("uses the Kimi validation budget for Kimi K2.7 Code without K2.6 thinking suppression", () => {
+    expect(getChatCompletionsProbePayload("moonshotai/kimi-k2.7-code")).toEqual({
+      model: "moonshotai/kimi-k2.7-code",
+      messages: [{ role: "user", content: "Reply with exactly: OK" }],
+      max_tokens: 8,
+    });
+
+    const args = getChatCompletionsProbeCurlArgs({
+      authHeader: ["-H", "Authorization: Bearer nvapi-test"],
+      model: "moonshotai/kimi-k2.7-code",
+      url: "https://integrate.api.nvidia.com/v1/chat/completions",
+      isWsl: false,
+    });
+
+    expect(args).toContain("--max-time");
+    expect(args[args.indexOf("--max-time") + 1]).toBe("60");
+    expect(args).toContain(
+      JSON.stringify(getChatCompletionsProbePayload("moonshotai/kimi-k2.7-code")),
+    );
+  });
+
   it("uses an extended streaming validation budget for DeepSeek V4 Pro", () => {
     expect(getDeepSeekV4ProValidationProbeCurlArgs({ isWsl: false })).toEqual([
       "--connect-timeout",

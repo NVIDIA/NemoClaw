@@ -1275,6 +1275,27 @@ describe("generate-openclaw-config.mts: config generation", () => {
     });
   });
 
+  it("adds Kimi K2.7 Code compat through the existing managed inference setup", () => {
+    const config = runConfigScript({
+      NEMOCLAW_MODEL: "moonshotai/kimi-k2.7-code",
+      NEMOCLAW_PROVIDER_KEY: "inference",
+      NEMOCLAW_PRIMARY_MODEL_REF: "inference/moonshotai/kimi-k2.7-code",
+      NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
+      NEMOCLAW_INFERENCE_API: "openai-completions",
+      NEMOCLAW_INFERENCE_COMPAT_B64: Buffer.from("null").toString("base64"),
+    });
+
+    expect(config.models.providers.inference.models[0].compat).toEqual({
+      supportsStore: false,
+      requiresStringContent: true,
+      maxTokensField: "max_tokens",
+      requiresToolResultName: true,
+    });
+    expect(config.plugins.entries["nemoclaw-kimi-inference-compat"]).toEqual({
+      enabled: true,
+    });
+  });
+
   it("rejects inference compat blobs that decode to non-object JSON", () => {
     expectBuildConfigError(
       { NEMOCLAW_INFERENCE_COMPAT_B64: Buffer.from('"not-an-object"').toString("base64") },
