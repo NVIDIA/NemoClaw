@@ -1035,29 +1035,33 @@ diff --git a/test/example.test.ts b/test/example.test.ts
     expect(detailed).toContain("## Source-of-truth review");
     expect(detailed).toContain("trusted-code boundary");
     expect(comment).toContain("<details>");
-    expect(comment).toContain(
-      "<summary>Review findings by urgency: 1 required fix, 0 items to resolve/justify, 0 in-scope improvements</summary>",
-    );
+    expect(comment).toContain("### Action checklist");
+    expect(comment).toContain("### Findings index");
+    expect(comment).toContain("| `PRA-1` | Required | workflow |");
     expect(comment).toContain("<summary>Test follow-ups to resolve or justify</summary>");
-    expect(comment).toContain("- **Mocked behavioral coverage** — comment builder test.");
+    expect(comment).toContain("- `PRA-T1` **Mocked behavioral coverage** — comment builder test.");
     expect(comment).not.toContain("\\*\\*Mocked behavioral coverage\\*\\*");
     expect(comment).toContain("comment builder test");
     expect(comment).toContain("<!-- head_sha: abc123def456; recommendation: merge_after_fixes -->");
-    expect(comment).toContain("**Review posture:** Resolve findings before merge");
+    expect(comment).toContain("## PR Review Advisor — Changes requested");
+    expect(comment).toContain("**Merge posture:** Do not merge yet");
+    expect(comment).toContain("**Primary next action:** Fix `PRA-1`: trusted-code boundary");
     expect(comment).toContain("### 🚨 Required before merge");
-    expect(comment).toContain("### ⚠️ Resolve or justify before merge");
-    expect(comment).toContain("### 💡 In-scope improvements");
+    expect(comment).toContain("#### `PRA-1` Required — trusted-code boundary");
     expect(comment).toContain(
-      "Impact: A PR-controlled workflow could run advisor code with repository secrets.",
+      "- **Impact:** A PR-controlled workflow could run advisor code with repository secrets.",
     );
     expect(comment).toContain(
-      "Verification hint: Inspect the workflow checkout and advisor script path.",
+      "- **Verification:** Inspect the workflow checkout and advisor script path.",
     );
     expect(comment).toContain(
-      "Missing regression test: Keep the workflow trusted-code boundary test.",
+      "- **Missing regression test:** Keep the workflow trusted-code boundary test.",
     );
     expect(comment).toContain(
-      "Expected follow-up: Fix before merge or get explicit maintainer override.",
+      "- **Expected follow-up:** Fix before merge or get explicit maintainer override.",
+    );
+    expect(comment).toContain(
+      "- **Done when:** The required change is committed and verification passes: Inspect the workflow checkout and advisor script path.",
     );
     expect(comment).toContain(
       "Treat suggestions as current-PR improvements when they touch changed code",
@@ -1074,7 +1078,7 @@ diff --git a/test/example.test.ts b/test/example.test.ts
     expect(summary).not.toContain("## Review completeness");
     expect(summary).not.toContain("Human maintainer review required");
     expect(comment).toContain(
-      "1 required fix, 0 items to resolve/justify, 0 in-scope improvements",
+      "**Open items:** 1 required · 0 warnings · 0 suggestions · 1 test follow-up",
     );
     expect(comment).toContain("**Top item:** trusted-code boundary");
     expect(summary).not.toContain("Base: `origin/main`");
@@ -1100,9 +1104,9 @@ diff --git a/test/example.test.ts b/test/example.test.ts
       result: followUpResult,
     });
     expect(followUp).toContain(
-      "**Since last review:** 1 prior item resolved, 1 still applies, 1 new item found",
+      "**Since last review:** 1 prior item resolved · 1 still applies · 1 new item found",
     );
-    expect(followUp).toContain("<summary>Review findings by urgency:");
+    expect(followUp).toContain("### Action checklist");
     expect(followUp).toContain("<summary>Since last review details</summary>");
   });
 
@@ -1176,7 +1180,7 @@ diff --git a/test/example.test.ts b/test/example.test.ts
     );
     expect(comment).toContain("### 💡 In-scope improvements");
     expect(comment).toContain(
-      "Expected follow-up: Prefer a current-PR fix when local to changed code; defer only with rationale or linked follow-up.",
+      "- **Expected follow-up:** Prefer a current-PR fix when local to changed code; defer only with rationale or linked follow-up.",
     );
     expect(comment).not.toContain("nice ideas");
   });
@@ -1194,7 +1198,7 @@ diff --git a/test/example.test.ts b/test/example.test.ts
     );
     const comment = buildComment({ summary: renderSummary(result), result });
 
-    expect(comment).toContain("- **Mocked behavioral coverage** — probe");
+    expect(comment).toContain("- `PRA-T1` **Mocked behavioral coverage** — probe");
     expect(comment).toContain("probe \\*\\*bold\\*\\* \\[link\\]\\(https://bad.invalid\\).");
     expect(comment).toContain("&lt;/details&gt; and &#64;team");
     expect(comment).not.toContain("- \\*\\*Mocked behavioral coverage\\*\\*");
@@ -1231,7 +1235,7 @@ diff --git a/test/example.test.ts b/test/example.test.ts
     expect(comment).toContain(
       "&lt;/details&gt; &#64;team \\*\\*boom\\*\\* \\[x\\]\\(https://bad.invalid\\)",
     );
-    expect(comment).toContain("src/&lt;bad&gt;\\(1\\).ts:7");
+    expect(comment).toContain("src/&lt;bad&gt;(1).ts:7");
     expect(comment).toContain("first ### injected &lt;script&gt;");
     expect(comment).toContain("ping &#64;here &amp; fix \\_now\\_");
     expect(comment).toContain("\\`code\\` &lt;tag&gt;");
