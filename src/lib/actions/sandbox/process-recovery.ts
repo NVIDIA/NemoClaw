@@ -68,6 +68,20 @@ function parseSandboxExecStdoutFrame(line: string): { text: string; framed: bool
   return { text: trimmed.slice(stdoutPrefix[0].length), framed: true };
 }
 
+/**
+ * Extract child-command stdout from `openshell sandbox exec` output after the
+ * sentinel printed by `markedCommand`. Some OpenShell versions frame child
+ * stdout for humans, e.g. `stdout: __NEMOCLAW_SANDBOX_EXEC_STARTED__`, while
+ * older versions pass raw stdout through unchanged. Normalize only recognized
+ * stdout frame prefixes at this transport boundary so recovery, status, and
+ * Hermes boundary callers keep consuming plain command stdout.
+ *
+ * Security boundary: the sentinel must occupy its own stdout line after optional
+ * frame-prefix stripping. A preamble that merely contains the sentinel string is
+ * rejected so sandbox output cannot move the parser boundary forward. Remove
+ * this compatibility shim once OpenShell exposes a stable machine-readable exec
+ * output mode that preserves child stdout/stderr without human framing.
+ */
 function extractSandboxExecCommandStdout(output: string): string | null {
   const stdout = output.trim();
   if (!stdout) return null;
@@ -83,17 +97,7 @@ function extractSandboxExecCommandStdout(output: string): string | null {
       .trim();
   }
 
-  const markerLineIndex = lines.findIndex(
-    (line) => line.framed && line.text.includes(SANDBOX_EXEC_STARTED_MARKER),
-  );
-  if (markerLineIndex === -1) return null;
-  const markerLine = lines[markerLineIndex].text;
-  const afterMarker = markerLine.slice(
-    markerLine.indexOf(SANDBOX_EXEC_STARTED_MARKER) + SANDBOX_EXEC_STARTED_MARKER.length,
-  );
-  return [afterMarker, ...lines.slice(markerLineIndex + 1).map((line) => line.text)]
-    .join("\n")
-    .trim();
+  return null;
 }
 
 function isValidPort(value: unknown): value is number {

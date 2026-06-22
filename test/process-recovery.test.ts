@@ -193,6 +193,24 @@ describe("executeSandboxExecCommand", () => {
 
     expect(result).toEqual({ status: 0, stdout: "SECRET_BOUNDARY_OK", stderr: "" });
   });
+
+  it("rejects a non-frame preamble that contains the startup marker", () => {
+    const childProcess = requireDist("node:child_process");
+    vi.spyOn(childProcess, "spawnSync").mockReturnValue({
+      status: 0,
+      stdout: [
+        "operator preamble mentions __NEMOCLAW_SANDBOX_EXEC_STARTED__ before child stdout",
+        "stdout: RUNNING",
+      ].join("\n"),
+      stderr: "",
+    } as never);
+
+    const result = withFakeOpenshellBinary(() =>
+      executeSandboxExecCommand("hermes-box", "echo RUNNING"),
+    );
+
+    expect(result).toBeNull();
+  });
 });
 
 describe("checkAndRecoverSandboxProcesses", () => {
