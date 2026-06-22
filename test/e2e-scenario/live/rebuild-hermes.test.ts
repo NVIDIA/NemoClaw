@@ -634,11 +634,11 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
     expectExitZero(hermesVersion, "Hermes version after rebuild");
     expect(resultText(hermesVersion)).not.toContain(OLD_HERMES_REGISTRY_VERSION);
     const hermesVersionText = resultText(hermesVersion);
-    const actualHermesVersion = hermesVersionText.match(/\d+\.\d+\.\d+/)?.[0];
+    const actualHermesVersion = hermesVersionText.match(/\((\d+\.\d+\.\d+)\)/)?.[1];
     expectEqual(
       actualHermesVersion,
       expectedVersion,
-      `Hermes version output did not match expected ${expectedVersion}: ${hermesVersionText}`,
+      `Hermes version output did not include expected release ${expectedVersion}: ${hermesVersionText}`,
     );
 
     const restoredEnv = await host.command(
