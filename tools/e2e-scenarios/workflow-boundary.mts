@@ -1228,6 +1228,167 @@ function validateRebuildOpenClawVitestJob(errors: string[], jobs: WorkflowRecord
   }
 }
 
+function validateRebuildHermesVitestJob(
+  errors: string[],
+  jobs: WorkflowRecord,
+  options: { staleBase: boolean },
+): void {
+  const jobName = options.staleBase ? "rebuild-hermes-stale-base-vitest" : "rebuild-hermes-vitest";
+  const scenarioName = options.staleBase ? "rebuild-hermes-stale-base" : "rebuild-hermes";
+  const job = asRecord(jobs[jobName]);
+  if (Object.keys(job).length === 0) {
+    errors.push(`workflow missing ${jobName} job`);
+    return;
+  }
+
+  if (job["runs-on"] !== "ubuntu-latest") {
+    errors.push(`${jobName} job must run on ubuntu-latest`);
+  }
+  validateFreeStandingJobSelector(errors, jobs, jobName, scenarioName);
+  if (job["timeout-minutes"] !== 90) {
+    errors.push(`${jobName} job must keep the legacy 90 minute timeout`);
+  }
+  const jobEnv = asRecord(job.env);
+  if (jobEnv.NEMOCLAW_RUN_E2E_SCENARIOS !== "1") {
+    errors.push(`${jobName} job must set NEMOCLAW_RUN_E2E_SCENARIOS=1`);
+  }
+  const artifactRoot = options.staleBase
+    ? "${{ github.workspace }}/e2e-artifacts/vitest/rebuild-hermes-stale-base"
+    : "${{ github.workspace }}/e2e-artifacts/vitest/rebuild-hermes";
+  if (jobEnv.E2E_ARTIFACT_DIR !== artifactRoot) {
+    errors.push(`${jobName} job must write artifacts under ${artifactRoot}`);
+  }
+  if (jobEnv.NEMOCLAW_AGENT !== "hermes") {
+    errors.push(`${jobName} job must set NEMOCLAW_AGENT=hermes`);
+  }
+  if (jobEnv.NEMOCLAW_PROVIDER !== "custom") {
+    errors.push(`${jobName} job must use the hosted compatible endpoint provider`);
+  }
+  if (jobEnv.NEMOCLAW_ENDPOINT_URL !== "https://inference-api.nvidia.com/v1") {
+    errors.push(`${jobName} job must target hosted CI inference endpoint`);
+  }
+  if (jobEnv.NEMOCLAW_MODEL !== "nvidia/nvidia/nemotron-3-super-v3") {
+    errors.push(`${jobName} job must pin the CI-safe Hermes rebuild model`);
+  }
+  if (jobEnv.NEMOCLAW_COMPAT_MODEL !== "nvidia/nvidia/nemotron-3-super-v3") {
+    errors.push(`${jobName} job must pin the CI-safe compatible model`);
+  }
+  if (jobEnv.OPENSHELL_GATEWAY !== "nemoclaw") {
+    errors.push(`${jobName} job must force OPENSHELL_GATEWAY=nemoclaw`);
+  }
+  if (options.staleBase) {
+    if (jobEnv.NEMOCLAW_HERMES_STALE_BASE_REBUILD_E2E !== "1") {
+      errors.push(`${jobName} job must enable NEMOCLAW_HERMES_STALE_BASE_REBUILD_E2E=1`);
+    }
+    if (jobEnv.NEMOCLAW_SANDBOX_NAME !== "e2e-rebuild-hermes-base") {
+      errors.push(`${jobName} job must set NEMOCLAW_SANDBOX_NAME=e2e-rebuild-hermes-base`);
+    }
+  } else if (jobEnv.NEMOCLAW_SANDBOX_NAME !== "e2e-rebuild-hermes") {
+    errors.push(`${jobName} job must set NEMOCLAW_SANDBOX_NAME=e2e-rebuild-hermes`);
+  }
+  for (const secret of [
+    "NVIDIA_INFERENCE_API_KEY",
+    "DOCKERHUB_USERNAME",
+    "DOCKERHUB_TOKEN",
+    "GITHUB_TOKEN",
+  ]) {
+    requireEnvDoesNotExposeSecret(errors, `${jobName} job`, jobEnv, secret);
+  }
+
+  const steps = asSteps(job.steps);
+  requireNoDispatchInputInterpolation(errors, steps);
+  for (const step of steps) {
+    const stepName = `${jobName} step '${step.name ?? step.uses ?? "<unnamed>"}'`;
+    const stepEnv = asRecord(step.env);
+    if (!step.name?.startsWith("Run Hermes")) {
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_INFERENCE_API_KEY");
+    }
+    if (step.name !== "Authenticate to Docker Hub") {
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_USERNAME");
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_TOKEN");
+      requireNoDockerHubAuthInRun(errors, stepName, stringValue(step.run));
+    }
+    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "GITHUB_TOKEN");
+  }
+
+  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
+  if (!checkout) errors.push(`${jobName} job missing checkout step`);
+  requireFullShaAction(errors, checkout, `${jobName} checkout`);
+  if (asRecord(checkout?.with)["persist-credentials"] !== false) {
+    errors.push(`${jobName} checkout step must set persist-credentials=false`);
+  }
+
+  const dockerHubAuth = requireJobStep(errors, jobName, steps, "Authenticate to Docker Hub");
+  const dockerHubEnv = asRecord(dockerHubAuth?.env);
+  if (dockerHubEnv.DOCKERHUB_USERNAME !== "${{ secrets.DOCKERHUB_USERNAME }}") {
+    errors.push(`${jobName} Docker Hub auth must receive DOCKERHUB_USERNAME from secrets`);
+  }
+  if (dockerHubEnv.DOCKERHUB_TOKEN !== "${{ secrets.DOCKERHUB_TOKEN }}") {
+    errors.push(`${jobName} Docker Hub auth must receive DOCKERHUB_TOKEN from secrets`);
+  }
+  requireRunContains(errors, dockerHubAuth, "docker login docker.io");
+  requireRunContains(errors, dockerHubAuth, "continuing with anonymous pulls");
+
+  const setupNode = namedStep(steps, "Set up Node");
+  if (!setupNode) errors.push(`${jobName} job missing step: Set up Node`);
+  requireFullShaAction(errors, setupNode, `${jobName} setup-node`);
+
+  const installRootDependencies = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Install root dependencies",
+  );
+  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
+
+  const runVitest = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    options.staleBase ? "Run Hermes stale-base rebuild live test" : "Run Hermes rebuild live test",
+  );
+  const runVitestEnv = asRecord(runVitest?.env);
+  if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
+    errors.push(`${jobName} step must receive NVIDIA_INFERENCE_API_KEY from secrets`);
+  }
+  requireRunContains(errors, runVitest, "npx vitest run --project e2e-scenarios-live");
+  requireRunContains(errors, runVitest, "test/e2e-scenario/live/rebuild-hermes.test.ts");
+
+  const upload = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    options.staleBase
+      ? "Upload Hermes stale-base rebuild artifacts"
+      : "Upload Hermes rebuild artifacts",
+  );
+  requireFullShaAction(errors, upload, `${jobName} upload-artifact`);
+  const uploadWith = asRecord(upload?.with);
+  const artifactName = options.staleBase
+    ? "e2e-vitest-scenarios-rebuild-hermes-stale-base"
+    : "e2e-vitest-scenarios-rebuild-hermes";
+  if (uploadWith.name !== artifactName) {
+    errors.push(`${jobName} artifact upload name must be stable`);
+  }
+  const uploadPath = stringValue(uploadWith.path);
+  requireUploadPathContains(
+    errors,
+    uploadPath,
+    options.staleBase
+      ? "e2e-artifacts/vitest/rebuild-hermes-stale-base/"
+      : "e2e-artifacts/vitest/rebuild-hermes/",
+  );
+  if (uploadWith["include-hidden-files"] !== false) {
+    errors.push(`${jobName} artifact upload must set include-hidden-files: false`);
+  }
+  if (uploadWith["if-no-files-found"] !== "ignore") {
+    errors.push(`${jobName} artifact upload must ignore missing fixture artifacts`);
+  }
+  if (uploadWith["retention-days"] !== 14) {
+    errors.push(`${jobName} artifact upload retention-days must be 14`);
+  }
+}
+
 function validateSandboxRebuildVitestJob(errors: string[], jobs: WorkflowRecord): void {
   const jobName = "sandbox-rebuild-vitest";
   const scenarioName = "sandbox-rebuild";
@@ -3968,6 +4129,8 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   validateCommonEgressAgentVitestJob(errors, jobs);
   validateShieldsConfigVitestJob(errors, jobs);
   validateRebuildOpenClawVitestJob(errors, jobs);
+  validateRebuildHermesVitestJob(errors, jobs, { staleBase: false });
+  validateRebuildHermesVitestJob(errors, jobs, { staleBase: true });
   validateSandboxRebuildVitestJob(errors, jobs);
   validateStateBackupRestoreVitestJob(errors, jobs);
   validateUpgradeStaleSandboxVitestJob(errors, jobs);

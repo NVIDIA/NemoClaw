@@ -377,6 +377,46 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       });
       expect(
         evaluateE2eVitestWorkflowDispatchSelectors({
+          scenarios: "rebuild-hermes",
+        }),
+      ).toMatchObject({
+        valid: true,
+        liveScenariosRuns: false,
+        selectedFreeStandingJobs: ["rebuild-hermes-vitest"],
+        registryScenarios: [],
+      });
+      expect(
+        evaluateE2eVitestWorkflowDispatchSelectors({
+          jobs: "rebuild-hermes-vitest",
+        }),
+      ).toMatchObject({
+        valid: true,
+        liveScenariosRuns: false,
+        selectedFreeStandingJobs: ["rebuild-hermes-vitest"],
+        registryScenarios: [],
+      });
+      expect(
+        evaluateE2eVitestWorkflowDispatchSelectors({
+          scenarios: "rebuild-hermes-stale-base",
+        }),
+      ).toMatchObject({
+        valid: true,
+        liveScenariosRuns: false,
+        selectedFreeStandingJobs: ["rebuild-hermes-stale-base-vitest"],
+        registryScenarios: [],
+      });
+      expect(
+        evaluateE2eVitestWorkflowDispatchSelectors({
+          jobs: "rebuild-hermes-stale-base-vitest",
+        }),
+      ).toMatchObject({
+        valid: true,
+        liveScenariosRuns: false,
+        selectedFreeStandingJobs: ["rebuild-hermes-stale-base-vitest"],
+        registryScenarios: [],
+      });
+      expect(
+        evaluateE2eVitestWorkflowDispatchSelectors({
           scenarios: "state-backup-restore",
         }),
       ).toMatchObject({
