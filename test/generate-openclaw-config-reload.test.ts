@@ -46,17 +46,17 @@ afterEach(() => {
 
 function withConfigEnv<T>(envOverrides: Record<string, string>, fn: () => T): T {
   const originalEnv = { ...process.env };
-  for (const key of Object.keys(process.env)) {
-    if (key.startsWith("NEMOCLAW_") || key === "CHAT_UI_URL") {
-      delete process.env[key];
-    }
+  for (const key of Object.keys(process.env).filter(
+    (key) => key.startsWith("NEMOCLAW_") || key === "CHAT_UI_URL",
+  )) {
+    delete process.env[key];
   }
   Object.assign(process.env, BASE_ENV, envOverrides, { HOME: tmpDir });
   try {
     return fn();
   } finally {
-    for (const key of Object.keys(process.env)) {
-      if (!(key in originalEnv)) delete process.env[key];
+    for (const key of Object.keys(process.env).filter((key) => !(key in originalEnv))) {
+      delete process.env[key];
     }
     Object.assign(process.env, originalEnv);
   }

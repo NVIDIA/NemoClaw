@@ -32,27 +32,19 @@ function readFileIfPresent(filePath: string): string | null {
 function extractShellFunction(src: string, name: string): string {
   const header = `${name}() {`;
   const start = src.indexOf(header);
-  if (start === -1) {
-    throw new Error(`Expected ${name} in scripts/nemoclaw-start.sh`);
-  }
+  expect(start, `Expected ${name} in scripts/nemoclaw-start.sh`).not.toBe(-1);
   const bodyStart = start + header.length;
-  const lines = src.slice(bodyStart).split(/(?<=\n)/);
-  let offset = 0;
-  for (const line of lines) {
-    if (line.replace(/\r?\n$/, "") === "}") {
-      return `${name}() {${src.slice(bodyStart, bodyStart + offset)}\n}`;
-    }
-    offset += line.length;
-  }
-  throw new Error(`Expected closing brace for ${name} in scripts/nemoclaw-start.sh`);
+  const body = src.slice(bodyStart);
+  const closing = body.match(/^}$/m);
+  expect(closing, `Expected closing brace for ${name} in scripts/nemoclaw-start.sh`).not.toBeNull();
+  return `${name}() {${body.slice(0, closing?.index ?? 0)}\n}`;
 }
 
 function safeTmpHelpers(src: string): string {
   const start = src.indexOf("_nemoclaw_safe_replace_tmp_file() {");
-  const end = src.indexOf("_START_LOG=", start);
-  if (start === -1 || end === -1 || end <= start) {
-    throw new Error("Expected safe temp helpers in scripts/nemoclaw-start.sh");
-  }
+  const end = src.indexOf("_START_LOG=", Math.max(start, 0));
+  expect(start, "Expected safe temp helpers in scripts/nemoclaw-start.sh").not.toBe(-1);
+  expect(end, "Expected safe temp helpers in scripts/nemoclaw-start.sh").toBeGreaterThan(start);
   return src.slice(start, end);
 }
 
@@ -440,9 +432,9 @@ describe("gateway_pid_is_openclaw_gateway", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-watchdog-cmdline-"));
     try {
       const procRoot = path.join(tmpDir, "proc");
-      if (rawCmdline !== null) {
+      for (const cmdline of rawCmdline === null ? [] : [rawCmdline]) {
         fs.mkdirSync(path.join(procRoot, "4242"), { recursive: true });
-        fs.writeFileSync(path.join(procRoot, "4242", "cmdline"), rawCmdline);
+        fs.writeFileSync(path.join(procRoot, "4242", "cmdline"), cmdline);
       }
       const script = path.join(tmpDir, "run.sh");
       fs.writeFileSync(
@@ -492,16 +484,12 @@ describe("healthcheck marker (#4503, #4710)", () => {
   // there), independent of env hints like OPENSHELL_DRIVERS.
   it("mark_in_container_gateway writes the marker file idempotently (#4710)", () => {
     const src = fs.readFileSync(START_SCRIPT, "utf-8");
-    const fnStart = src.indexOf("mark_in_container_gateway() {");
-    const fnEnd = src.indexOf("}", fnStart);
-    if (fnStart === -1 || fnEnd === -1) {
-      throw new Error("mark_in_container_gateway function not found");
-    }
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gw-marker-"));
     const markerPath = path.join(tmpDir, "nemoclaw-gateway-local");
-    const fnSrc = src
-      .slice(fnStart, fnEnd + 1)
-      .replaceAll("/tmp/nemoclaw-gateway-local", markerPath);
+    const fnSrc = extractShellFunction(src, "mark_in_container_gateway").replaceAll(
+      "/tmp/nemoclaw-gateway-local",
+      markerPath,
+    );
 
     try {
       const script = [
@@ -537,9 +525,10 @@ describe("gateway launch wiring (#4710)", () => {
         : "# Start the gateway as the 'gateway' user.";
     const start = src.indexOf(startMarker);
     const trap = src.indexOf("trap cleanup_on_signal SIGTERM SIGINT", start);
-    if (start === -1 || trap === -1) {
-      throw new Error(`Expected ${kind} gateway launch block in scripts/nemoclaw-start.sh`);
-    }
+    expect(start, `Expected ${kind} gateway launch block in scripts/nemoclaw-start.sh`).not.toBe(
+      -1,
+    );
+    expect(trap, `Expected ${kind} gateway launch block in scripts/nemoclaw-start.sh`).not.toBe(-1);
     return src.slice(start, src.indexOf("\n", trap));
   }
 
@@ -645,14 +634,12 @@ describe("respawn loop pidfile refresh (#4710)", () => {
   function respawnLoop(src: string, kind: "non-root" | "root"): string {
     const first = src.indexOf("RESPAWN_TIMES=()");
     const start = kind === "non-root" ? first : src.indexOf("RESPAWN_TIMES=()", first + 1);
-    if (start === -1) {
-      throw new Error(`Expected ${kind} respawn loop in scripts/nemoclaw-start.sh`);
-    }
+    expect(start, `Expected ${kind} respawn loop in scripts/nemoclaw-start.sh`).not.toBe(-1);
     const endToken = kind === "non-root" ? "\n  done" : "\ndone";
     const end = src.indexOf(endToken, start);
-    if (end === -1) {
-      throw new Error(`Expected ${kind} respawn loop terminator in scripts/nemoclaw-start.sh`);
-    }
+    expect(end, `Expected ${kind} respawn loop terminator in scripts/nemoclaw-start.sh`).not.toBe(
+      -1,
+    );
     return src.slice(start, end + endToken.length);
   }
 
@@ -757,9 +744,10 @@ describe("nemoclaw-start gateway launch signal handling", () => {
         : "# Start the gateway as the 'gateway' user.";
     const start = src.indexOf(startMarker);
     const trap = src.indexOf("trap cleanup_on_signal SIGTERM SIGINT", start);
-    if (start === -1 || trap === -1) {
-      throw new Error(`Expected ${kind} gateway launch block in scripts/nemoclaw-start.sh`);
-    }
+    expect(start, `Expected ${kind} gateway launch block in scripts/nemoclaw-start.sh`).not.toBe(
+      -1,
+    );
+    expect(trap, `Expected ${kind} gateway launch block in scripts/nemoclaw-start.sh`).not.toBe(-1);
     const lineEnd = src.indexOf("\n", trap);
     return src.slice(start, lineEnd).replaceAll("/tmp/gateway.log", gatewayLog);
   }
