@@ -132,6 +132,15 @@ function extractTunnelUrl(text: string): string | undefined {
   return text.match(TUNNEL_URL_PATTERN)?.[0];
 }
 
+export function publicTunnelProbeCurlArgs(tunnelUrl: string): string[] {
+  // Source boundary: the public tunnel URL already came from `nemoclaw status`
+  // and matched `*.trycloudflare.com`. Do not ask curl to follow redirects;
+  // a 3xx response is a tunnel/output contract failure unless NemoClaw grows a
+  // documented same-host redirect requirement. If that happens, replace this
+  // with explicit redirect target inspection before issuing a second request.
+  return ["-sS", "--max-time", "30", "-w", "\n__HTTP_CODE:%{http_code}\n", tunnelUrl];
+}
+
 function parseCurlProbe(result: ShellProbeResult): CurlProbe {
   const text = result.stdout;
   const match = text.match(/\n__HTTP_CODE:(\d{3})\s*$/);
@@ -397,15 +406,11 @@ export async function runTunnelLifecycleContract({
   let backoffMs = 2_000;
   for (let attempt = 1; attempt <= 15; attempt += 1) {
     const probe = parseCurlProbe(
-      await host.command(
-        "curl",
-        ["-sS", "-L", "--max-time", "30", "-w", "\n__HTTP_CODE:%{http_code}\n", tunnelUrl],
-        {
-          artifactName: `public-tunnel-probe-${attempt}`,
-          env: buildAvailabilityProbeEnv(),
-          timeoutMs: 35_000,
-        },
-      ),
+      await host.command("curl", publicTunnelProbeCurlArgs(tunnelUrl), {
+        artifactName: `public-tunnel-probe-${attempt}`,
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 35_000,
+      }),
     );
     lastPublicProbe = probe;
     if (probe.httpCode === "200") break;

@@ -7,9 +7,24 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { classifyCloudflaredLog, getCloudflaredLogPath } from "../live/tunnel-lifecycle-helpers.ts";
+import {
+  classifyCloudflaredLog,
+  getCloudflaredLogPath,
+  publicTunnelProbeCurlArgs,
+} from "../live/tunnel-lifecycle-helpers.ts";
 
 describe("tunnel lifecycle cloudflared log attribution", () => {
+  it("does not follow redirects from the public trycloudflare probe", () => {
+    expect(publicTunnelProbeCurlArgs("https://current.trycloudflare.com/")).toEqual([
+      "-sS",
+      "--max-time",
+      "30",
+      "-w",
+      "\n__HTTP_CODE:%{http_code}\n",
+      "https://current.trycloudflare.com/",
+    ]);
+  });
+
   it("does not attribute an unrelated newer cloudflared log to the current sandbox", () => {
     const logRoot = fs.mkdtempSync(path.join(os.tmpdir(), "tunnel-lifecycle-logs-"));
     const unrelatedDir = path.join(logRoot, "nemoclaw-services-other-sandbox");
