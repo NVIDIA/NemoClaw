@@ -343,7 +343,7 @@ describe("core onboard flow phases", () => {
       phases,
       resume: true,
       recordStateResult: async (result) => {
-        if (result.type === "transition") recorded.push(result.next);
+        recorded.push((result as ReturnType<typeof advanceTo>).next);
       },
     });
 

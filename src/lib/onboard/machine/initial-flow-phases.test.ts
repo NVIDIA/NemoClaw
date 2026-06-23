@@ -448,7 +448,7 @@ describe("initial onboard flow phases", () => {
       phases,
       resume: true,
       recordStateResult: async (stateResult) => {
-        if (stateResult.type === "transition") recorded.push(stateResult.next);
+        recorded.push((stateResult as ReturnType<typeof advanceTo>).next);
       },
     });
 
