@@ -100,6 +100,9 @@ describe("openclaw-agent-json.py", () => {
     expect(result.stdout).toContain("exec call_node_missing");
     expect(result.stdout).toContain("node-not-a-real-command");
     expect(result.stdout).toContain("The script was saved successfully.");
+    expect(result.stdout.indexOf("[openclaw provenance] failed tool result")).toBeLessThan(
+      result.stdout.indexOf("The script was saved successfully."),
+    );
   });
 
   it("labels untrusted child-agent payloads before assistant text", () => {
@@ -126,6 +129,9 @@ describe("openclaw-agent-json.py", () => {
     expect(result.stdout).toContain("[openclaw provenance] untrusted child result present");
     expect(result.stdout).toContain("unverified URL");
     expect(result.stdout).toContain("The web-search skill found");
+    expect(
+      result.stdout.indexOf("[openclaw provenance] untrusted child result present"),
+    ).toBeLessThan(result.stdout.indexOf("The web-search skill found"));
   });
 
   it("routes the shell E2E parser through the provenance-preserving helper", () => {
@@ -148,5 +154,8 @@ describe("openclaw-agent-json.py", () => {
     expect(result.stdout).toContain("[openclaw provenance] failed tool result");
     expect(result.stdout).toContain("/bin/false exited 1");
     expect(result.stdout).toContain("Finished.");
+    expect(result.stdout.indexOf("[openclaw provenance] failed tool result")).toBeLessThan(
+      result.stdout.indexOf("Finished."),
+    );
   });
 });

@@ -60,4 +60,29 @@ describe("openClawAgentJsonProvenanceLines", () => {
     expect(lines[0]).toContain("untrusted child result present");
     expect(lines[1]).toContain("Found an unverified URL");
   });
+
+  it("scans balanced log-prefixed JSON candidates without reparsing every brace", () => {
+    const noisyPrefix = Array.from(
+      { length: 200 },
+      (_, index) => `progress {not-json-${index}}`,
+    ).join("\n");
+
+    const lines = openClawAgentJsonProvenanceLines(
+      `${noisyPrefix}\n${JSON.stringify({
+        messages: [
+          {
+            role: "toolResult",
+            toolCallId: "call_noisy",
+            toolName: "exec",
+            isError: true,
+            text: "exec failed after noisy progress output",
+          },
+        ],
+      })}`,
+    );
+
+    expect(lines).toEqual([
+      "[openclaw provenance] failed tool result (exec call_noisy): exec failed after noisy progress output",
+    ]);
+  });
 });

@@ -142,11 +142,14 @@ function collectUntrustedChildProvenance(raw: string, docs: unknown[]): string[]
   return lines;
 }
 
-function findJsonObjectEnd(raw: string, start: number): number | null {
+function parseLogPrefixedJsonDocs(raw: string): unknown[] {
+  const docs: unknown[] = [];
+  let start: number | null = null;
   let depth = 0;
   let inString = false;
   let escaped = false;
-  for (let index = start; index < raw.length; index += 1) {
+
+  for (let index = 0; index < raw.length; index += 1) {
     const char = raw[index];
     if (inString) {
       if (escaped) escaped = false;
@@ -154,14 +157,24 @@ function findJsonObjectEnd(raw: string, start: number): number | null {
       else if (char === '"') inString = false;
       continue;
     }
-    if (char === '"') inString = true;
-    else if (char === "{") depth += 1;
-    else if (char === "}") {
+    if (depth > 0 && char === '"') inString = true;
+    else if (char === "{") {
+      if (depth === 0) start = index;
+      depth += 1;
+    } else if (depth > 0 && char === "}") {
       depth -= 1;
-      if (depth === 0) return index + 1;
+      if (depth === 0 && start !== null) {
+        try {
+          const parsed = JSON.parse(raw.slice(start, index + 1)) as unknown;
+          docs.push(...(Array.isArray(parsed) ? parsed : [parsed]));
+        } catch {
+          // Continue scanning for the next balanced candidate object.
+        }
+        start = null;
+      }
     }
   }
-  return null;
+  return docs;
 }
 
 function parseOpenClawJsonDocs(raw: string): unknown[] {
@@ -172,19 +185,7 @@ function parseOpenClawJsonDocs(raw: string): unknown[] {
     // OpenClaw has emitted log-prefixed JSON streams; scan for later objects.
   }
 
-  const docs: unknown[] = [];
-  for (const match of raw.matchAll(/\{/gu)) {
-    const start = match.index;
-    const end = findJsonObjectEnd(raw, start);
-    if (end === null) continue;
-    try {
-      const parsed = JSON.parse(raw.slice(start, end)) as unknown;
-      docs.push(...(Array.isArray(parsed) ? parsed : [parsed]));
-    } catch {
-      // Continue scanning for the next candidate object.
-    }
-  }
-  return docs;
+  return parseLogPrefixedJsonDocs(raw);
 }
 
 function dedupe(lines: string[]): string[] {
