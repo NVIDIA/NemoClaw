@@ -84,12 +84,19 @@ check_fake_discord_gateway_rewrite_capture() {
   node - "$capture_file" "$expected_token" <<'NODE'
 const fs = require("fs");
 const [file, expected] = process.argv.slice(2);
-const serialized = fs.readFileSync(file, "utf8");
-const rows = serialized
-  .trim()
-  .split(/\n+/)
-  .filter(Boolean)
-  .map((line) => JSON.parse(line));
+let serialized;
+let rows;
+try {
+  serialized = fs.readFileSync(file, "utf8");
+  rows = serialized
+    .trim()
+    .split(/\n+/)
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
+} catch {
+  console.log("CAPTURE_PARSE_ERROR");
+  process.exit(8);
+}
 
 const identify = rows.filter((row) => row.event === "identify").at(-1);
 if (!identify) {
