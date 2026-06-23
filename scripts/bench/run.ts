@@ -219,8 +219,8 @@ function preflight(options: CliOptions): void {
   const missing: string[] = [];
   if (options.runInference) {
     const apiKey = resolveApiKey(options.apiKeyEnv);
-    if (!options.baseUrl) missing.push("--base-url (or OPENAI_BASE_URL)");
-    if (!options.model) missing.push("--model (or OPENAI_MODEL)");
+    if (!options.baseUrl) missing.push("--base-url (or OPENAI_BASE_URL / NEMOCLAW_BENCH_BASE_URL)");
+    if (!options.model) missing.push("--model (or OPENAI_MODEL / NEMOCLAW_BENCH_MODEL)");
     if (!apiKey.value) missing.push(`API key in env ${apiKey.name}`);
   }
   if (missing.length > 0) {
