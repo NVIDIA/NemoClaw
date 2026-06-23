@@ -929,6 +929,8 @@ describe("sandbox provisioning: unified .openclaw layout (#2227)", () => {
       const bashrcContent = fs.readFileSync(bashrc, "utf-8");
       expect(bashrcContent.split(rlimitShim).length - 1).toBe(1);
       expect(bashrcContent.split(runtimeEnvShim).length - 1).toBe(1);
+      expect(bashrcContent.indexOf(runtimeEnvShim)).toBeLessThan(bashrcContent.indexOf(rlimitShim));
+      expect(bashrcContent.split("\n").slice(0, 2).join("\n")).toContain(runtimeEnvShim);
       expect(bashrcContent).toContain("# existing bashrc");
       expect((fs.statSync(bashrc).mode & 0o777).toString(8)).toBe("444");
     } finally {
@@ -968,6 +970,8 @@ describe("sandbox provisioning: unified .openclaw layout (#2227)", () => {
       const bashrcContent = fs.readFileSync(bashrc, "utf-8");
       expect(bashrcContent.split(rlimitShim).length - 1).toBe(1);
       expect(bashrcContent.split(runtimeEnvShim).length - 1).toBe(1);
+      expect(bashrcContent.indexOf(runtimeEnvShim)).toBeLessThan(bashrcContent.indexOf(rlimitShim));
+      expect(bashrcContent.split("\n").slice(0, 2).join("\n")).toContain(runtimeEnvShim);
       expect(bashrcContent).toContain("# stale base bashrc");
       expect((fs.statSync(bashrc).mode & 0o777).toString(8)).toBe("444");
     } finally {

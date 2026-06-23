@@ -175,11 +175,11 @@ RUN chmod 444 /usr/local/lib/nemoclaw/sandbox-rlimits.sh \
         > /etc/profile.d/nemoclaw-proxy.sh \
     && chmod 444 /etc/profile.d/nemoclaw-proxy.sh \
     && { printf '%s\n' \
-            '# NemoClaw sandbox resource limits — see sandbox-rlimits.sh (#2173)' \
-            '[ -f /usr/local/lib/nemoclaw/sandbox-rlimits.sh ] && . /usr/local/lib/nemoclaw/sandbox-rlimits.sh && harden_resource_limits --quiet' \
-            '' \
             '# NemoClaw runtime proxy config — see /tmp/nemoclaw-proxy-env.sh (#2704)' \
             '[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh' \
+            '' \
+            '# NemoClaw sandbox resource limits — see sandbox-rlimits.sh (#2173)' \
+            '[ -f /usr/local/lib/nemoclaw/sandbox-rlimits.sh ] && . /usr/local/lib/nemoclaw/sandbox-rlimits.sh && harden_resource_limits --quiet' \
             ''; \
          cat /etc/bash.bashrc; \
        } > /etc/bash.bashrc.new \

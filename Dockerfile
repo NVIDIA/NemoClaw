@@ -961,28 +961,18 @@ RUN chmod 444 /usr/local/lib/nemoclaw/sandbox-rlimits.sh \
             > /etc/profile.d/nemoclaw-proxy.sh \
         && chmod 444 /etc/profile.d/nemoclaw-proxy.sh; \
     fi \
-    && if ! head -4 /etc/bash.bashrc | grep -q "sandbox-rlimits.sh"; then \
-        chmod 644 /etc/bash.bashrc 2>/dev/null || true; \
-        { printf '%s\n' \
-              '# NemoClaw sandbox resource limits — see sandbox-rlimits.sh (#2173)' \
-              '[ -f /usr/local/lib/nemoclaw/sandbox-rlimits.sh ] && . /usr/local/lib/nemoclaw/sandbox-rlimits.sh && harden_resource_limits --quiet' \
-              ''; \
-          cat /etc/bash.bashrc; \
-        } > /etc/bash.bashrc.new \
-        && mv /etc/bash.bashrc.new /etc/bash.bashrc \
-        && chmod 444 /etc/bash.bashrc; \
-    fi \
-    && if ! head -4 /etc/bash.bashrc | grep -q "/tmp/nemoclaw-proxy-env.sh"; then \
-        chmod 644 /etc/bash.bashrc 2>/dev/null || true; \
-        { printf '%s\n' \
-              '# NemoClaw runtime proxy config — see /tmp/nemoclaw-proxy-env.sh (#2704)' \
-              '[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh' \
-              ''; \
-          cat /etc/bash.bashrc; \
-        } > /etc/bash.bashrc.new \
-        && mv /etc/bash.bashrc.new /etc/bash.bashrc \
-        && chmod 444 /etc/bash.bashrc; \
-    fi
+    && chmod 644 /etc/bash.bashrc 2>/dev/null || true \
+    && { printf '%s\n' \
+          '# NemoClaw runtime proxy config — see /tmp/nemoclaw-proxy-env.sh (#2704)' \
+          '[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh' \
+          '' \
+          '# NemoClaw sandbox resource limits — see sandbox-rlimits.sh (#2173)' \
+          '[ -f /usr/local/lib/nemoclaw/sandbox-rlimits.sh ] && . /usr/local/lib/nemoclaw/sandbox-rlimits.sh && harden_resource_limits --quiet' \
+          ''; \
+        grep -Ev 'NemoClaw runtime proxy config|nemoclaw-proxy-env[.]sh|NemoClaw sandbox resource limits|sandbox-rlimits[.]sh' /etc/bash.bashrc; \
+      } > /etc/bash.bashrc.new \
+    && mv /etc/bash.bashrc.new /etc/bash.bashrc \
+    && chmod 444 /etc/bash.bashrc
 
 # Pin config hash at build time so the entrypoint can verify integrity.
 RUN sha256sum /sandbox/.openclaw/openclaw.json > /sandbox/.openclaw/.config-hash \
