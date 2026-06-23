@@ -945,6 +945,11 @@ describe("E2E reusable workflow contract", () => {
     expect(exportStep?.with?.["nvidia-api-key"]).toBe(RAW_PUBLIC_NVIDIA_SECRET);
     expect(exportStep?.with?.["export-nvidia-api-key"]).toBe("${{ inputs.nvidia_api_key_alias }}");
 
+    const runStep = runnerWorkflow.jobs.run.steps.find((step) => step.name === "Run E2E script");
+    expect(runStep?.env?.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
+    expect(runStep?.env?.COMPATIBLE_API_KEY).toBeUndefined();
+    expect(runStep?.env?.NVIDIA_API_KEY).toBeUndefined();
+
     expect(hostedJobs.length).toBeGreaterThan(20);
     for (const [name, job] of hostedJobs) {
       expect(job.with?.nvidia_secret_as_compatible_api_key, name).toBeUndefined();

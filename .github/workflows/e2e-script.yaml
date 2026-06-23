@@ -241,7 +241,6 @@ jobs:
         env:
           BRAVE_API_KEY: ${{ inputs.brave_api_key && secrets.BRAVE_API_KEY || '' }}
           GITHUB_TOKEN: ${{ inputs.github_token && github.token || '' }}
-          NVIDIA_INFERENCE_API_KEY: ${{ inputs.nvidia_api_key && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
           TELEGRAM_BOT_TOKEN_REAL: ${{ inputs.messaging_live_secrets && secrets.TELEGRAM_BOT_TOKEN_REAL || '' }}
           TELEGRAM_CHAT_ID_E2E: ${{ inputs.messaging_live_secrets && secrets.TELEGRAM_CHAT_ID_E2E || '' }}
           DISCORD_BOT_TOKEN_REAL: ${{ inputs.messaging_live_secrets && secrets.DISCORD_BOT_TOKEN_REAL || '' }}
