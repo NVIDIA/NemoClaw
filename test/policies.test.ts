@@ -143,6 +143,7 @@ describe("policies", () => {
         "public-reference",
         "pypi",
         "slack",
+        "tavily",
         "teams",
         "telegram",
         "weather",
@@ -174,6 +175,18 @@ describe("policies", () => {
         expect(content).toContain("/usr/local/bin/node");
         expect(content).toContain("/usr/bin/node");
       }
+    });
+
+    it("tavily preset is opt-in: declares api.tavily.com but stays out of the deepagents default policy", () => {
+      const tavily = requirePresetContent(policies.loadPreset("tavily"));
+      expect(tavily).toContain("api.tavily.com");
+      expect(tavily).toContain("/usr/bin/python3*");
+      const deepagentsPolicy = fs.readFileSync(
+        path.join(REPO_ROOT, "agents/langchain-deepagents-code/policy-additions.yaml"),
+        "utf8",
+      );
+      expect(deepagentsPolicy).not.toContain("api.tavily.com");
+      expect(deepagentsPolicy).not.toContain("api.smith.langchain.com");
     });
 
     it("whatsapp preset routes web.whatsapp.com as a raw L4 tunnel with TLS pass-through", () => {
