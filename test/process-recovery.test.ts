@@ -79,6 +79,15 @@ describe("resolveSandboxDashboardPort", () => {
     ).toBe(8642);
   });
 
+  it("does not invent a dashboard port for terminal agents without declared forwards", () => {
+    expect(
+      resolveSandboxDashboardPort("terminal-box", {
+        getSessionAgent: () => ({ runtime: { kind: "terminal" } }),
+        getSandbox: () => ({ name: "terminal-box", dashboardPort: 18790 }),
+      }),
+    ).toBe(18790);
+  });
+
   it("ignores invalid agent forward ports and falls back to registry metadata", () => {
     expect(
       resolveSandboxDashboardPort("beta", {
@@ -287,6 +296,21 @@ describe("executeSandboxExecCommand", () => {
 });
 
 describe("checkAndRecoverSandboxProcesses", () => {
+  it("does not attempt gateway recovery for terminal agents", () => {
+    const agentRuntime = requireDist("../dist/lib/agent/runtime.js");
+    vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue({
+      runtime: { kind: "terminal" },
+    } as never);
+
+    expect(checkAndRecoverSandboxProcesses("terminal-box", { quiet: true })).toEqual({
+      checked: true,
+      wasRunning: null,
+      recovered: false,
+      forwardRecovered: false,
+      runtime: "terminal",
+    });
+  });
+
   it("scopes forward stop to the target sandbox when restarting a dead forward", () => {
     const openshellRuntime = requireDist("../dist/lib/adapters/openshell/runtime.js");
     const agentRuntime = requireDist("../dist/lib/agent/runtime.js");

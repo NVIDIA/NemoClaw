@@ -40,6 +40,10 @@ describe("onboard sandbox naming helpers", () => {
       expect(getDefaultSandboxNameForAgent(hermes)).toBe("hermes");
       expect(getSandboxPromptDefault(hermes)).toBe("hermes");
 
+      const deepAgentsCode = loadAgent("langchain-deepagents-code");
+      expect(getDefaultSandboxNameForAgent(deepAgentsCode)).toBe("deepagents-code");
+      expect(getSandboxPromptDefault(deepAgentsCode)).toBe("deepagents-code");
+
       process.env.NEMOCLAW_SANDBOX_NAME = "custom-hermes";
       expect(getSandboxPromptDefault(hermes)).toBe("custom-hermes");
     } finally {

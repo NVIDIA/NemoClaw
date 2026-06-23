@@ -1830,11 +1830,13 @@ print(account.get('token', ''))
     skip "M9: No Discord token to check"
   fi
 
-  # M9b: Discord Gateway WebSocket routing uses the per-account proxy.
-  # OpenClaw's Discord gateway client only tunnels when the Discord account
-  # proxy is set, while the top-level managed proxy remains configured for the
-  # rest of the channel stack. The fake Gateway proof in M13b-M13g exercises
-  # the same OpenShell relay path using the generated managed proxy config.
+  # M9b: Discord Gateway WebSocket routing uses OpenClaw's managed proxy.
+  # OpenClaw's Discord plugin validates the per-account proxy and rejects any
+  # non-loopback host, so NemoClaw must not bake a Discord-only account.proxy
+  # (the sandbox egress proxy 10.200.0.1:3128 is not loopback). Discord
+  # gateway/REST egress is carried by the top-level managed proxy
+  # (proxy.loopbackMode "gateway-only"). The fake Gateway proof in M13b-M13g
+  # exercises the same OpenShell relay path using that managed proxy config.
   dc_proxy=$(echo "$channel_json" | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
@@ -1851,10 +1853,10 @@ if proxy.get('enabled') is True:
     print(proxy.get('proxyUrl') or '')
 \"" 2>/dev/null || true)
   expected_managed_proxy="http://${NEMOCLAW_PROXY_HOST:-10.200.0.1}:${NEMOCLAW_PROXY_PORT:-3128}"
-  if [ -n "$dc_token" ] && [ "$dc_proxy" = "$expected_managed_proxy" ] && [ "$managed_proxy_url" = "$expected_managed_proxy" ]; then
-    pass "M9b: Discord uses per-account proxy while OpenClaw managed proxy config remains set"
+  if [ -n "$dc_token" ] && [ -z "$dc_proxy" ] && [ "$managed_proxy_url" = "$expected_managed_proxy" ]; then
+    pass "M9b: Discord relies on OpenClaw managed proxy config, with no per-account loopback proxy"
   elif [ -n "$dc_token" ]; then
-    fail "M9b: Discord proxy wiring wrong; expected account.proxy='${expected_managed_proxy}' and proxy.proxyUrl='${expected_managed_proxy}' (account.proxy='${dc_proxy}', proxy.proxyUrl='${managed_proxy_url}')"
+    fail "M9b: Discord proxy wiring wrong; expected account.proxy='' and proxy.proxyUrl='${expected_managed_proxy}' (account.proxy='${dc_proxy}', proxy.proxyUrl='${managed_proxy_url}')"
   else
     skip "M9b: No Discord channel config to check"
   fi
@@ -2466,13 +2468,16 @@ else
   fail "M13e: Discord Gateway protocol proof incomplete: ${dc_ws_native:0:400}"
 fi
 
-if [ "$fake_gateway_ready" = "1" ] \
-  && grep -Fq "\"token\":\"$DISCORD_TOKEN\"" "$FAKE_DISCORD_GATEWAY_CAPTURE_FILE" \
-  && ! grep -Fq "openshell:resolve:env:DISCORD_BOT_TOKEN" "$FAKE_DISCORD_GATEWAY_CAPTURE_FILE"; then
-  pass "M13f: Fake Gateway received host-side Discord token; sandbox-visible IDENTIFY used only the placeholder"
+fake_gateway_capture_check=""
+if [ "$fake_gateway_ready" = "1" ]; then
+  fake_gateway_capture_check=$(check_fake_discord_gateway_rewrite_capture "$FAKE_DISCORD_GATEWAY_CAPTURE_FILE" "$DISCORD_TOKEN" 2>&1 || true)
+fi
+
+if [ "$fake_gateway_ready" = "1" ] && [ "$fake_gateway_capture_check" = "OK" ]; then
+  pass "M13f: Fake Gateway proved placeholder-to-token rewrite without logging the raw token"
 else
   if [ "$fake_gateway_ready" = "1" ]; then
-    info "Fake Discord Gateway capture: $(tail -20 "$FAKE_DISCORD_GATEWAY_CAPTURE_FILE" 2>/dev/null | tr '\n' ' ' | cut -c1-500)"
+    info "Fake Discord Gateway capture check: ${fake_gateway_capture_check:0:300}"
   fi
   fail "M13f: Fake Gateway did not prove placeholder-to-token rewrite at the relay boundary"
 fi
