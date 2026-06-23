@@ -64,13 +64,14 @@ function asResultArray(
 
 /**
  * Run a live onboard flow slice through the strict runner when the current
- * machine state is exactly at the slice entry point. Resume/ahead-state flows
- * use the compatibility path so repair/backstop phase bodies still execute even
- * when a saved session has already advanced beyond the slice. Non-resume
- * compatibility is limited to caller-declared ahead states so earlier machine
- * states fail before running slice side effects out of order. Callers supply the
- * compatibility recorder so each live slice keeps using the runtime boundary
- * that validates or intentionally skips stale legacy step results.
+ * machine state is exactly at the slice entry point. Declared compatibility
+ * states use the compatibility path so repair/backstop phase bodies still
+ * execute during resume or when a saved session has already advanced beyond the
+ * slice. Compatibility is limited to caller-declared states so earlier or
+ * unexpected machine states fail before running slice side effects out of order.
+ * Callers supply the compatibility recorder so each live slice keeps using the
+ * runtime boundary that validates or intentionally skips stale legacy step
+ * results.
  */
 export async function runLiveOnboardFlowSlice<Context>({
   context,
@@ -86,7 +87,7 @@ export async function runLiveOnboardFlowSlice<Context>({
   if (!resume && runWhenState.includes(current.machine.state)) {
     return runSlice({ context, runtime, phases });
   }
-  if (!resume && !compatibilityWhenState.includes(current.machine.state)) {
+  if (!compatibilityWhenState.includes(current.machine.state)) {
     throw new UnexpectedLiveOnboardFlowSliceStateError(
       current.machine.state,
       runWhenState,

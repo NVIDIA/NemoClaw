@@ -177,7 +177,7 @@ export async function runFinalOnboardFlowSlice<Context extends OnboardFlowContex
     phases: withContextObserver(options.phases, options.onContextUpdated),
     resume: options.resume,
     runWhenState: ["openclaw", "agent_setup"],
-    compatibilityWhenState: ["policies", "finalizing", "post_verify"],
+    compatibilityWhenState: ["openclaw", "agent_setup", "policies", "finalizing", "post_verify"],
     runSlice: runFinalOnboardFlowSequence,
     applyCompatibleResult: async (stateResult) => {
       await options.recordStateResult(stateResult);

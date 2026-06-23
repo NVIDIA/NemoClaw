@@ -2466,13 +2466,16 @@ else
   fail "M13e: Discord Gateway protocol proof incomplete: ${dc_ws_native:0:400}"
 fi
 
-if [ "$fake_gateway_ready" = "1" ] \
-  && grep -Fq "\"token\":\"$DISCORD_TOKEN\"" "$FAKE_DISCORD_GATEWAY_CAPTURE_FILE" \
-  && ! grep -Fq "openshell:resolve:env:DISCORD_BOT_TOKEN" "$FAKE_DISCORD_GATEWAY_CAPTURE_FILE"; then
-  pass "M13f: Fake Gateway received host-side Discord token; sandbox-visible IDENTIFY used only the placeholder"
+fake_gateway_capture_check=""
+if [ "$fake_gateway_ready" = "1" ]; then
+  fake_gateway_capture_check=$(check_fake_discord_gateway_rewrite_capture "$FAKE_DISCORD_GATEWAY_CAPTURE_FILE" "$DISCORD_TOKEN" 2>&1 || true)
+fi
+
+if [ "$fake_gateway_ready" = "1" ] && [ "$fake_gateway_capture_check" = "OK" ]; then
+  pass "M13f: Fake Gateway proved placeholder-to-token rewrite without logging the raw token"
 else
   if [ "$fake_gateway_ready" = "1" ]; then
-    info "Fake Discord Gateway capture: $(tail -20 "$FAKE_DISCORD_GATEWAY_CAPTURE_FILE" 2>/dev/null | tr '\n' ' ' | cut -c1-500)"
+    info "Fake Discord Gateway capture check: ${fake_gateway_capture_check:0:300}"
   fi
   fail "M13f: Fake Gateway did not prove placeholder-to-token rewrite at the relay boundary"
 fi

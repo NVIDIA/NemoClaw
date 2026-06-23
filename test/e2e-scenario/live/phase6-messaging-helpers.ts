@@ -189,6 +189,55 @@ export async function sandboxSh(
   });
 }
 
+export async function sandboxEncodedSh(
+  sandbox: SandboxClient,
+  sandboxName: string,
+  script: string,
+  args: string[],
+  options: {
+    artifactName: string;
+    redactionValues?: string[];
+    timeoutMs?: number;
+  },
+): Promise<ShellProbeResult> {
+  const command = [
+    "tmp=$(mktemp)",
+    "trap 'rm -f \"$tmp\"' EXIT",
+    `printf %s ${shellQuote(base64(script))} | base64 -d > "$tmp"`,
+    `sh "$tmp" ${args.map(shellQuote).join(" ")}`,
+  ].join("; ");
+  return sandboxSh(sandbox, sandboxName, command, options);
+}
+
+export async function sandboxNode(
+  sandbox: SandboxClient,
+  sandboxName: string,
+  source: string,
+  env: Record<string, string>,
+  options: {
+    artifactName: string;
+    redactionValues?: string[];
+    timeoutMs?: number;
+  },
+): Promise<ShellProbeResult> {
+  const exports = Object.entries(env)
+    .map(([key, value]) => {
+      /^[A-Za-z_][A-Za-z0-9_]*$/.test(key) ||
+        (() => {
+          throw new Error(`invalid env key: ${key}`);
+        })();
+      return `export ${key}=${shellQuote(value)}`;
+    })
+    .join("\n");
+  return sandboxEncodedSh(
+    sandbox,
+    sandboxName,
+    `${exports}\nnode --input-type=module <<'NODE'\n${source}\nNODE\n`,
+    [],
+    options,
+  );
+}
+
 export async function dockerInfo(
   host: HostCliClient,
   env: NodeJS.ProcessEnv,
