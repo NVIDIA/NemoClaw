@@ -181,6 +181,8 @@ describe("policies", () => {
       const tavily = requirePresetContent(policies.loadPreset("tavily"));
       expect(tavily).toContain("api.tavily.com");
       expect(tavily).toContain("/usr/bin/python3*");
+      expect(tavily).toContain("/usr/bin/node");
+      expect(tavily).toContain("/usr/bin/curl");
       const deepagentsPolicy = fs.readFileSync(
         path.join(REPO_ROOT, "agents/langchain-deepagents-code/policy-additions.yaml"),
         "utf8",
