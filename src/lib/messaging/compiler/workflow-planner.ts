@@ -167,7 +167,10 @@ export class MessagingWorkflowPlanner {
   }
 
   private credentialAvailabilityFromSandboxEntry(
-    context: Pick<MessagingWorkflowPlannerSandboxContext, "agent" | "sandboxEntry" | "sandboxName">,
+    context: Pick<
+      MessagingWorkflowPlannerSandboxContext,
+      "agent" | "sandboxEntry" | "sandboxName" | "supportedChannelIds"
+    >,
     channelIds: readonly MessagingChannelId[],
   ): MessagingCompilerCredentialAvailability | undefined {
     const plan = readSandboxEntryPlan(context);
@@ -238,11 +241,15 @@ function onlyConfiguredChannels(
 }
 
 function readSandboxEntryPlan(
-  context: Pick<MessagingWorkflowPlannerSandboxContext, "agent" | "sandboxEntry" | "sandboxName">,
+  context: Pick<
+    MessagingWorkflowPlannerSandboxContext,
+    "agent" | "sandboxEntry" | "sandboxName" | "supportedChannelIds"
+  >,
 ): SandboxMessagingPlan | null {
   const plan = parseSandboxMessagingPlan(context.sandboxEntry?.messaging?.plan, {
     sandboxName: context.sandboxName,
     agent: context.agent,
+    supportedChannelIds: context.supportedChannelIds,
   });
   return plan ? hydrateDerivedSandboxMessagingPlanFields(plan) : null;
 }
