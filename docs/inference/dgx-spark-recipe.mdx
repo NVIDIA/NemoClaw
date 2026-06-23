@@ -129,6 +129,44 @@ After onboarding completes, confirm the assistant is responsive and tool-capable
    Interpret the timings as advisory until owner-approved thresholds land
    ([#3776](https://github.com/NVIDIA/NemoClaw/issues/3776)).
 
+## Single-User Settings Validation Matrix
+
+Use this worksheet to validate the single-user serving settings on real DGX Spark
+hardware (issue [#5615](https://github.com/NVIDIA/NemoClaw/issues/5615)). The **Current**
+column is what NemoClaw ships today; fill the **Recommended** column from the DGX Spark
+intake guidance and the measurement rows from a run on Spark.
+
+| Setting | Current (shipped) | Recommended (intake) | Rationale |
+|---------|-------------------|----------------------|-----------|
+| `--max-num-seqs` | `4` | _TBD_ | Single-user concurrency lever |
+| `--gpu-memory-utilization` | `0.4` | _TBD_ | Memory budget vs. KV-cache headroom |
+| `--max-num-batched-tokens` | `8192` | _TBD_ | Prefill batch size |
+| `--kv-cache-dtype` | `fp8` | _TBD_ | KV-cache precision |
+| `--enable-prefix-caching` | on | _TBD_ | Repeated-prefix reuse |
+| `--speculative-config` | MTP, 3 tokens | _TBD_ | Decode speedup |
+
+Capture at least one **real single-user local-assistant workflow** (a tool-using agent
+task), not only synthetic throughput. Measure each candidate configuration with the value
+benchmark (#5604) and record:
+
+| Measurement | Current | Recommended |
+|-------------|---------|-------------|
+| First-token latency (TTFT) | _TBD_ | _TBD_ |
+| Round-trip latency (median / p95) | _TBD_ | _TBD_ |
+| Throughput (tokens/s) | _TBD_ | _TBD_ |
+| Tool-call reliability (pass/total) | _TBD_ | _TBD_ |
+| Stability over the workflow | _TBD_ | _TBD_ |
+
+Apply a candidate without editing the registry by exporting
+`NEMOCLAW_VLLM_EXTRA_ARGS_JSON` before onboarding, for example:
+
+```bash
+NEMOCLAW_VLLM_EXTRA_ARGS_JSON='["--max-num-seqs","2"]' NEMOCLAW_PROVIDER=install-vllm nemoclaw onboard
+```
+
+Then record the outcome and decide whether each change should become a default, recipe
+guidance, or advanced tuning. File code/config changes as separate PRs linked to #5615.
+
 ## Defaults Audit (Open)
 
 The issue asks that NemoClaw, Hermes, and OpenClaw defaults be reviewed against this recipe
