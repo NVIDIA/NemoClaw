@@ -12,9 +12,13 @@ export interface StepMutationOptions {
   updateMachine?: boolean;
 }
 
-export const LEGACY_MACHINE_STEP_MUTATION_OPTIONS: StepMutationOptions = { updateMachine: true };
+export const LEGACY_MACHINE_STEP_MUTATION_OPTIONS: Readonly<StepMutationOptions> = Object.freeze({
+  updateMachine: true,
+});
 
-export const RECORD_ONLY_STEP_MUTATION_OPTIONS: StepMutationOptions = { updateMachine: false };
+export const RECORD_ONLY_STEP_MUTATION_OPTIONS: Readonly<StepMutationOptions> = Object.freeze({
+  updateMachine: false,
+});
 
 export function shouldUpdateMachine(options: StepMutationOptions | undefined): boolean {
   return options?.updateMachine !== false;
