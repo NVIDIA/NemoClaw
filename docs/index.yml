@@ -63,6 +63,9 @@ navigation:
               - page: "Tool-Calling Reliability"
                 path: inference/tool-calling-reliability.mdx
                 slug: tool-calling-reliability
+              - page: "DGX Spark Golden Recipe"
+                path: inference/dgx-spark-recipe.mdx
+                slug: dgx-spark-recipe
               - page: "Switch Inference Providers"
                 path: _build/agent-variants/inference/switch-inference-providers.openclaw.generated.mdx
                 slug: switch-inference-providers

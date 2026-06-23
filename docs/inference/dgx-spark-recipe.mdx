@@ -1,0 +1,149 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "DGX Spark Local-Assistant Golden Recipe"
+sidebar-title: "DGX Spark Golden Recipe"
+description: "Recommended single-user local-assistant setup for NemoClaw on a DGX Spark: model, vLLM serving settings, onboarding flow, and a validation checklist."
+description-agent: "Canonical DGX Spark single-user local-assistant recipe: the model NemoClaw serves by default, the managed vLLM serving flags, the onboarding command flow, and how to validate a useful agent. Use when setting up or tuning NemoClaw as a local assistant on a DGX Spark."
+keywords: ["dgx spark recipe", "nemoclaw local assistant", "spark vllm settings", "qwen3.6 nvfp4", "single user inference"]
+content:
+  type: "how_to"
+---
+
+This page is the recommended path for running NemoClaw as a strong **single-user local
+assistant** on a fresh DGX Spark. It consolidates the settings NemoClaw already ships
+for Spark into one place: the model, the managed vLLM serving backend, the onboarding
+flow, and a checklist to confirm the agent is useful.
+
+<Note>
+The values below reflect NemoClaw's current shipped Spark defaults (the managed-vLLM
+`DGX Spark` profile and model registry). Items marked **Needs maintainer confirmation**
+are product/design decisions for the [golden-recipe issue (#5614)](https://github.com/NVIDIA/NemoClaw/issues/5614)
+and are not yet ratified as the canonical recommendation.
+</Note>
+
+This page uses the `nemoclaw` CLI. For a Hermes sandbox, substitute `nemohermes`.
+
+## Who This Is For
+
+- A single operator running one agent interactively on one DGX Spark.
+- Throughput for many concurrent sessions is **not** the goal; responsiveness for one
+  user is. The current serving flags already lean single-user (`--max-num-seqs 4`).
+
+## Recommended Model
+
+| Role | Model | Notes |
+|------|-------|-------|
+| Default | `nvidia/Qwen3.6-35B-A3B-NVFP4` | NemoClaw's current DGX Spark profile default. MoE, NVFP4 weights, tuned for Spark-class GB10 GPUs. |
+| Alternative | `Qwen/Qwen3.6-27B-FP8` | Cross-platform option (the DGX Station default); use when you prefer dense FP8 over the MoE NVFP4 build. |
+
+Select a model without prompting by exporting `NEMOCLAW_VLLM_MODEL` before onboarding
+(slug `qwen3.6-35b-a3b-nvfp4`, or the full Hugging Face id). An unrecognized value fails
+fast with the list of valid slugs.
+
+> **Needs maintainer confirmation:** whether `nvidia/Qwen3.6-35B-A3B-NVFP4` is the single
+> canonical recommendation, or whether the recipe should recommend by use case (e.g. the
+> 27B FP8 build for lower latency). This should be backed by the capability audit
+> ([#3123](https://github.com/NVIDIA/NemoClaw/issues/3123)) and benchmark evidence
+> ([#5604](https://github.com/NVIDIA/NemoClaw/issues/5604)).
+
+## Serving Backend (Managed vLLM)
+
+On a detected DGX Spark, NemoClaw serves the model with managed vLLM using the `DGX Spark`
+profile:
+
+- Container image: `nvcr.io/nvidia/vllm:26.05.post1-py3`
+- Container name: `nemoclaw-vllm`, listening on `localhost:8000`
+- Run flags: `--gpus all --ipc=host` with the host Hugging Face cache mounted at
+  `~/.cache/huggingface` (`HF_HOME=/root/.cache/huggingface`).
+
+The default model is served with these `vllm serve` flags (from the model registry; the
+shared defaults also set `--tensor-parallel-size/--pipeline-parallel-size/--data-parallel-size 1`,
+`--port 8000`, and `--trust-remote-code`):
+
+```text
+--max-model-len 262144
+--gpu-memory-utilization 0.4
+--dtype auto
+--quantization modelopt
+--kv-cache-dtype fp8
+--attention-backend flashinfer
+--moe-backend marlin
+--max-num-seqs 4
+--max-num-batched-tokens 8192
+--enable-chunked-prefill
+--async-scheduling
+--enable-prefix-caching
+--enable-auto-tool-choice
+--tool-call-parser qwen3_xml
+--reasoning-parser qwen3
+--speculative-config '{"method":"mtp","num_speculative_tokens":3,"moe_backend":"triton"}'
+--load-format fastsafetensors
+```
+
+Append advanced, operator-owned tuning with `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` (a JSON array
+of individual `vllm serve` tokens) rather than editing the registry.
+
+> **Needs maintainer confirmation (#5615):** whether `--max-num-seqs 4` and
+> `--gpu-memory-utilization 0.4` are the right single-user values, or whether a lower
+> `--max-num-seqs` (and matching memory budget) improves single-user latency. This needs
+> a comparison run on real DGX Spark hardware; see the validation issue
+> [#5615](https://github.com/NVIDIA/NemoClaw/issues/5615).
+
+## Fresh-Machine Setup
+
+From a fresh DGX Spark with NemoClaw installed:
+
+```bash
+# Optional: pick the model without the interactive picker.
+export NEMOCLAW_VLLM_MODEL=qwen3.6-35b-a3b-nvfp4
+
+# Managed vLLM install/start path (default-available on DGX Spark).
+NEMOCLAW_PROVIDER=install-vllm nemoclaw onboard
+```
+
+The first run pulls the vLLM image and downloads model weights into
+`~/.cache/huggingface` (10–30 minutes); later runs reuse the cache. NemoClaw polls
+`/v1/models` until the model is ready and bakes the served context window into the agent
+config.
+
+For the interactive flow and the BYO-vLLM ("already running") variant, see
+[Inference Options](inference-options) and [Use a Local Inference Server](use-local-inference).
+
+## Validate a Useful Agent
+
+After onboarding completes, confirm the assistant is responsive and tool-capable:
+
+1. `nemoclaw <name> status` — confirm the provider is `Local vLLM` and inference is healthy.
+2. `nemoclaw <name> connect`, then run a short prompt and a tool-using prompt (for example,
+   ask the agent to read a file). Tool calls must execute, not print raw JSON — see
+   [Tool-Calling Reliability](tool-calling-reliability).
+3. Measure responsiveness with the value benchmark
+   ([#5604](https://github.com/NVIDIA/NemoClaw/issues/5604)):
+
+   ```bash
+   export OPENAI_API_KEY=dummy   # local vLLM accepts any non-empty key
+   npm run bench -- --base-url http://localhost:8000/v1 --model nvidia/Qwen3.6-35B-A3B-NVFP4 --json bench.json
+   ```
+
+   Interpret the timings as advisory until owner-approved thresholds land
+   ([#3776](https://github.com/NVIDIA/NemoClaw/issues/3776)).
+
+## Defaults Audit (Open)
+
+The issue asks that NemoClaw, Hermes, and OpenClaw defaults be reviewed against this recipe
+and any needed Spark-specific changes be filed. The following are **open for review** and
+not yet resolved:
+
+- Baked `contextWindow` vs. the served `--max-model-len` (`262144`).
+- `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` (default `180s`) for first-token cold loads on Spark.
+- Whether single-user serving flags should become a named profile rather than per-model defaults.
+
+File any default change as a separate issue/PR linked back here.
+
+## Related
+
+- [Validate single-user vLLM settings for DGX Spark (#5615)](https://github.com/NVIDIA/NemoClaw/issues/5615)
+- [Agent-runnable benchmark harness (#5604)](https://github.com/NVIDIA/NemoClaw/issues/5604)
+- [Model performance and capability audit (#3123)](https://github.com/NVIDIA/NemoClaw/issues/3123)
+- [Inference Options](inference-options) · [Use a Local Inference Server](use-local-inference) · [Tool-Calling Reliability](tool-calling-reliability)
