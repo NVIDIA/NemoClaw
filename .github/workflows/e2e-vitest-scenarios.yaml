@@ -5600,7 +5600,7 @@ jobs:
               ? '✅ All requested jobs passed'
               : selectiveDispatch
                 ? '✅ All selected jobs passed'
-                : '✅ All jobs passed';
+                : '✅ All default jobs passed';
             const status =
               failed.length > 0 || missingRequested.length > 0
                 ? '❌ Some jobs failed'
@@ -5626,7 +5626,7 @@ jobs:
                 ? '**Requested jobs:** _(selector rejected by workflow validation)_'
                 : requestedJobs
                   ? `**Requested jobs:** \`${requestedJobs}\``
-                  : '**Requested jobs:** _(default — all free-standing when no scenarios are requested)_',
+                  : '**Requested jobs:** _(default — all default-enabled free-standing jobs; explicit-only jobs such as `jetson-nvmap-gpu-vitest` are skipped unless selected)_',
               `**Summary:** ${passed.length} passed, ${failed.length} failed, ${cancelled.length} cancelled, ${skipped.length} skipped`,
               '',
               '| Job | Result |',
