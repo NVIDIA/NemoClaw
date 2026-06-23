@@ -443,6 +443,7 @@ describe("E2E reusable workflow contract", () => {
         "${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_TOKEN || '' }}",
     };
     const nvidiaBuildJobs = new Set([
+      "messaging-providers-e2e",
       "channels-add-remove-e2e",
       "channels-stop-start-openclaw-e2e",
       "channels-stop-start-hermes-e2e",
@@ -996,6 +997,8 @@ describe("E2E reusable workflow contract", () => {
     expect(exportStep?.env?.NVIDIA_BUILD_API_KEY).toBe(RAW_PUBLIC_NVIDIA_SECRET);
     expect(exportStep?.run).toContain('case "${NEMOCLAW_E2E_INFERENCE_ROUTE:-hosted-custom}" in');
     expect(exportStep?.run).toContain("nvidia-build)");
+    expect(exportStep?.run).toContain("Build route source of truth");
+    expect(exportStep?.run).toContain("Mirror it to NVIDIA_INFERENCE_API_KEY only for");
     expect(exportStep?.run).toContain("NVIDIA_API_KEY nvapi-* secret is required");
     expect(exportStep?.run).toContain("hosted-custom)");
     expect(exportStep?.run).toContain("Unsupported inference_route");
@@ -1017,6 +1020,14 @@ describe("E2E reusable workflow contract", () => {
     });
     expect(hostedEnv.NVIDIA_API_KEY).toBeUndefined();
 
+    const hostedEnvWithBuildSecret = runInferenceExportStep(script, {
+      NEMOCLAW_E2E_INFERENCE_ROUTE: "hosted-custom",
+      HOSTED_NVIDIA_INFERENCE_API_KEY: "hosted-compatible-key",
+      NVIDIA_BUILD_API_KEY: "nvapi-build-key",
+    });
+    expect(hostedEnvWithBuildSecret).toMatchObject(hostedEnv);
+    expect(hostedEnvWithBuildSecret.NVIDIA_API_KEY).toBeUndefined();
+
     const nvidiaBuildEnv = runInferenceExportStep(script, {
       NEMOCLAW_E2E_INFERENCE_ROUTE: "nvidia-build",
       NVIDIA_BUILD_API_KEY: "nvapi-build-key",
@@ -1032,6 +1043,26 @@ describe("E2E reusable workflow contract", () => {
     expect(nvidiaBuildEnv.NEMOCLAW_E2E_USE_HOSTED_INFERENCE).toBeUndefined();
     expect(nvidiaBuildEnv.NEMOCLAW_ENDPOINT_URL).toBeUndefined();
     expect(nvidiaBuildEnv.NEMOCLAW_COMPAT_MODEL).toBeUndefined();
+
+    expect(() =>
+      runInferenceExportStep(script, {
+        NEMOCLAW_E2E_INFERENCE_ROUTE: "nvidia-build",
+        NVIDIA_BUILD_API_KEY: "",
+      }),
+    ).toThrow();
+    expect(() =>
+      runInferenceExportStep(script, {
+        NEMOCLAW_E2E_INFERENCE_ROUTE: "nvidia-build",
+        NVIDIA_BUILD_API_KEY: "hosted-compatible-key",
+      }),
+    ).toThrow();
+    expect(() =>
+      runInferenceExportStep(script, {
+        NEMOCLAW_E2E_INFERENCE_ROUTE: "unsupported-route",
+        HOSTED_NVIDIA_INFERENCE_API_KEY: "hosted-compatible-key",
+        NVIDIA_BUILD_API_KEY: "nvapi-build-key",
+      }),
+    ).toThrow();
 
     expect(hostedJobs.length).toBeGreaterThan(20);
     for (const name of nvidiaBuildJobs) {
@@ -1049,6 +1080,13 @@ describe("E2E reusable workflow contract", () => {
     }
 
     expect(nightlyWorkflow.jobs["common-egress-agent-e2e"].with?.inference_route).toBeUndefined();
+
+    const compatibleInferenceShim = readFileSync("test/e2e/lib/ci-compatible-inference.sh", "utf8");
+    expect(compatibleInferenceShim).toContain("nvidia-build lanes source secrets.NVIDIA_API_KEY");
+    expect(compatibleInferenceShim).toContain("temporary");
+    expect(compatibleInferenceShim).toContain(
+      "compatibility bridge for legacy E2E script preflights",
+    );
   });
 
   it("keeps rebuild fixture registry inference aligned with hosted custom inference", () => {

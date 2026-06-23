@@ -2,10 +2,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# CI-only inference shim: live E2E lanes can use the repository's
-# NVIDIA_INFERENCE_API_KEY secret either against the hosted OpenAI-compatible
-# endpoint at inference-api.nvidia.com or the built-in NVIDIA Endpoints route at
-# integrate.api.nvidia.com. Keep this helper in test/e2e so product-facing
+# CI-only inference shim. hosted-custom lanes source the repository's
+# NVIDIA_INFERENCE_API_KEY secret for the hosted OpenAI-compatible endpoint at
+# inference-api.nvidia.com. nvidia-build lanes source secrets.NVIDIA_API_KEY and
+# the reusable workflow mirrors it to NVIDIA_INFERENCE_API_KEY as a temporary
+# compatibility bridge for legacy E2E script preflights; remove that mirror once
+# converted scripts consume NVIDIA_API_KEY directly or stop preflighting the
+# legacy env name. Keep this helper in test/e2e so product-facing
 # provider/default endpoint behavior remains explicit.
 
 NEMOCLAW_E2E_COMPATIBLE_INFERENCE_MODEL_DEFAULT="nvidia/nvidia/nemotron-3-super-v3"

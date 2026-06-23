@@ -231,6 +231,10 @@ jobs:
 
           case "${NEMOCLAW_E2E_INFERENCE_ROUTE:-hosted-custom}" in
             nvidia-build)
+              # Build route source of truth: callers pass secrets.NVIDIA_API_KEY into
+              # NVIDIA_BUILD_API_KEY. Mirror it to NVIDIA_INFERENCE_API_KEY only for
+              # legacy script compatibility until converted scripts accept the
+              # canonical NVIDIA_API_KEY or stop preflighting the legacy env name.
               if [[ -z "${NVIDIA_BUILD_API_KEY:-}" || "${NVIDIA_BUILD_API_KEY}" != nvapi-* ]]; then
                 echo "::error::NVIDIA_API_KEY nvapi-* secret is required for NVIDIA Build CI inference; it is withheld for workflow_dispatch target_ref runs." >&2
                 exit 1
@@ -244,6 +248,8 @@ jobs:
               } >> "$GITHUB_ENV"
               ;;
             hosted-custom)
+              # Hosted custom route remains on secrets.NVIDIA_INFERENCE_API_KEY and
+              # never exports NVIDIA_API_KEY, even if the Build secret is present.
               if [ -z "${HOSTED_NVIDIA_INFERENCE_API_KEY:-}" ]; then
                 echo "::error::NVIDIA_INFERENCE_API_KEY secret is required for hosted CI inference; it is withheld for workflow_dispatch target_ref runs." >&2
                 exit 1
