@@ -209,6 +209,26 @@ describe("LangChain Deep Agents Code image contracts", () => {
     );
   });
 
+  it("ships a headless inference acceptance check for Deep Agents Code", () => {
+    const headlessCheck = fs.readFileSync(
+      path.join(
+        process.cwd(),
+        "test",
+        "e2e",
+        "e2e-cloud-experimental",
+        "checks",
+        "07-deepagents-code-headless-inference.sh",
+      ),
+      "utf8",
+    );
+
+    expect(headlessCheck).toContain("test -d /sandbox/.deepagents && command -v dcode");
+    expect(headlessCheck).toContain("dcode -n 'Reply with exactly one word: PONG'");
+    expect(headlessCheck).toContain("inference.local");
+    expect(headlessCheck).toContain("nvapi-");
+    expect(headlessCheck).toContain("/tmp/nemoclaw-proxy-env.sh");
+  });
+
   it("hash-locks Deep Agents Code base image PyPI installs", () => {
     const baseDockerfile = readAgentFile("Dockerfile.base");
     const requirementsLock = readAgentFile("requirements.lock");
