@@ -96,7 +96,9 @@ $$nemoclaw my-assistant policy-add outlook --dry-run
 $$nemoclaw my-assistant policy-add outlook --yes
 ```
 
-Configure the email or calendar tool credentials through the integration you run in the sandbox.
+`policy-add` exits non-zero if the `outlook` preset is already applied. If you applied it in the lifecycle example above, run `$$nemoclaw my-assistant policy-remove outlook --yes` first (or skip this apply step).
+
+Then configure the email or calendar tool credentials through the integration you run in the sandbox.
 Keep OAuth client secrets and refresh tokens out of policy files.
 
 If the tool still fails, run `openshell term`, trigger the workflow again, and inspect the blocked request.

@@ -175,20 +175,23 @@ NemoClaw also selects the matching network policy preset during policy setup so 
 For scripted setup, export the credentials and optional settings for the channels you want to enable before you run onboarding:
 
 ```bash
-export TELEGRAM_BOT_TOKEN=<your-bot-token>
+export TELEGRAM_BOT_TOKEN="<your-bot-token>"
 export TELEGRAM_REQUIRE_MENTION=1
-export DISCORD_BOT_TOKEN=<your-discord-bot-token>
-export DISCORD_SERVER_ID=<your-discord-server-id>
-export SLACK_BOT_TOKEN=<your-slack-bot-token>
-export SLACK_APP_TOKEN=<your-slack-app-token>
-export SLACK_ALLOWED_USERS=<your-slack-member-id>
-export SLACK_ALLOWED_CHANNELS=<your-slack-channel-id>
-export MSTEAMS_APP_ID=<your-teams-app-id>
-export MSTEAMS_APP_PASSWORD=<your-teams-client-secret>
-export MSTEAMS_TENANT_ID=<your-teams-tenant-id>
-export TEAMS_ALLOWED_USERS=<your-entra-object-id>
+export DISCORD_BOT_TOKEN="<your-discord-bot-token>"
+export DISCORD_SERVER_ID="<your-discord-server-id>"
+export SLACK_BOT_TOKEN="<your-slack-bot-token>"
+export SLACK_APP_TOKEN="<your-slack-app-token>"
+export SLACK_ALLOWED_USERS="<your-slack-member-id>"
+export SLACK_ALLOWED_CHANNELS="<your-slack-channel-id>"
+export MSTEAMS_APP_ID="<your-teams-app-id>"
+export MSTEAMS_APP_PASSWORD="<your-teams-client-secret>"
+export MSTEAMS_TENANT_ID="<your-teams-tenant-id>"
+export TEAMS_ALLOWED_USERS="<your-entra-object-id>"
 export MSTEAMS_PORT=3978
 ```
+
+The placeholder values are quoted because angle brackets are shell metacharacters; the quotes keep the export from triggering a redirection or syntax error when you paste a real token in place.
+Before you run onboarding or channel commands, make sure Docker is running and that your user can access the Docker socket, either through the `docker` group or by using the documented `sudo` workflow for your host.
 
 This release does not support non-interactive WeChat configuration because the iLink QR handshake requires a human to scan the QR on a paired phone.
 Run `$$nemoclaw onboard` interactively when you want to enable WeChat.
