@@ -23,6 +23,8 @@ type ConnectHarness = {
 };
 
 type ConnectHarnessOptions = {
+  agentName?: string;
+  sessionAgent?: unknown;
   listOutput?: string;
   processCheck?: {
     checked: boolean;
@@ -100,11 +102,13 @@ function createConnectHarness(options: ConnectHarnessOptions = {}): ConnectHarne
     .mockImplementation(() => undefined);
   vi.spyOn(registry, "getSandbox").mockReturnValue({
     name: "alpha",
-    agent: "openclaw",
+    agent: options.agentName ?? "openclaw",
     provider: null,
     model: null,
   });
-  vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue({ name: "openclaw" });
+  vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue(
+    (options.sessionAgent ?? { name: "openclaw" }) as never,
+  );
   vi.spyOn(agentRuntime, "getAgentDisplayName").mockReturnValue("OpenClaw");
   const runAutoPairSpy = vi
     .spyOn(autoPairApproval, "runSandboxAutoPairApprovalPass")
@@ -170,6 +174,23 @@ describe("connectSandbox flow", () => {
     const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
     expect(output).toContain("existing SSH sessions");
     expect(output).toContain("Connecting to sandbox 'alpha'");
+    expect(exitSpy).toHaveBeenCalledWith(0);
+  });
+
+  it("prints the terminal launch command in the connect hint for terminal agents", async () => {
+    const harness = createConnectHarness({
+      agentName: "langchain-deepagents-code",
+      sessionAgent: {
+        name: "langchain-deepagents-code",
+        runtime: { kind: "terminal", interactive_command: "dcode", headless_command: "dcode -n" },
+      },
+    });
+
+    await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(0)");
+
+    const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(output).toContain("Inside the sandbox, run `dcode`");
+    expect(output).not.toContain("Inside the sandbox, run `langchain-deepagents-code`");
     expect(exitSpy).toHaveBeenCalledWith(0);
   });
 

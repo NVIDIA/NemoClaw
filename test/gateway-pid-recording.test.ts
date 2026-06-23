@@ -40,13 +40,11 @@ describe("nemoclaw-start gateway PID recording for HEALTHCHECK (#4952)", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gw-pid-"));
     try {
       const pidPath = path.join(tmp, "nemoclaw-gateway.pid");
-      const fn = extractFunction(src, "record_gateway_pid").replaceAll(
-        "/tmp/nemoclaw-gateway.pid",
-        pidPath,
-      );
+      const fn = extractFunction(src, "record_gateway_pid");
       const script = [
         "set -euo pipefail",
         safeTmpHelpers(src),
+        `GATEWAY_PID_FILE=${JSON.stringify(pidPath)}`,
         fn,
         'record_gateway_pid "12345"',
       ].join("\n");
@@ -65,13 +63,11 @@ describe("nemoclaw-start gateway PID recording for HEALTHCHECK (#4952)", () => {
     // The writer must swallow errors: a failed write must never abort the
     // entrypoint. Point it at an unwritable path and assert success.
     const src = fs.readFileSync(START_SCRIPT, "utf-8");
-    const fn = extractFunction(src, "record_gateway_pid").replaceAll(
-      "/tmp/nemoclaw-gateway.pid",
-      "/nonexistent-dir/nemoclaw-gateway.pid",
-    );
+    const fn = extractFunction(src, "record_gateway_pid");
     const script = [
       "set -euo pipefail",
       safeTmpHelpers(src),
+      "GATEWAY_PID_FILE=/nonexistent-dir/nemoclaw-gateway.pid",
       fn,
       'record_gateway_pid "12345"',
     ].join("\n");

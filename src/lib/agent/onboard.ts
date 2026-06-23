@@ -16,14 +16,18 @@ import type { JsonObject as LooseObject } from "../core/json-types";
 import { sleepSeconds } from "../core/wait";
 import { getProviderSelectionConfig } from "../inference/config";
 import { runSandboxConfigSync } from "../onboard/config-sync";
-import { ROOT, redact, run, shellQuote } from "../runner";
+import { ROOT, redact, run } from "../runner";
 import {
   buildLocalBaseTag,
   resolveSandboxBaseImage,
   SANDBOX_BASE_TAG,
 } from "../sandbox-base-image";
+import { describeAgentBinaryFailure, verifyAgentBinaryAvailable } from "./binary-availability";
 import { printOptionalDashboardUi } from "./dashboard-ui";
-import { type AgentDefinition, loadAgent, resolveAgentName } from "./defs";
+import { type AgentDefinition, isTerminalAgent, loadAgent, resolveAgentName } from "./defs";
+import { runAgentSmokeCommands } from "./terminal-smoke";
+
+export { verifyAgentBinaryAvailable } from "./binary-availability";
 
 export interface OnboardContext {
   step: (current: number, total: number, message: string) => void;
@@ -163,7 +167,7 @@ export function createAgentSandbox(
     const dockerfile = fs.readFileSync(stagedDockerfile, "utf8");
     fs.writeFileSync(
       stagedDockerfile,
-      dockerfile.replace(/^ARG BASE_IMAGE=.*$/m, `ARG BASE_IMAGE=${baseImageRef}`),
+      dockerfile.replace(/^ARG BASE_IMAGE(?:=.*)?$/m, `ARG BASE_IMAGE=${baseImageRef}`),
     );
   }
   console.log(`  Using ${agent.displayName} Dockerfile: ${agentDockerfile}`);
@@ -192,24 +196,6 @@ function agentCliName(agent: AgentDefinition): string {
   return getAgentBranding(agent.name).cli;
 }
 
-/**
- * Resolve the executable name expected inside the agent sandbox.
- */
-function agentExecutableName(agent: AgentDefinition): string {
-  const configuredPath = typeof agent.binary_path === "string" ? agent.binary_path.trim() : "";
-  return path.basename(configuredPath || agent.name);
-}
-
-type AgentBinaryAvailability =
-  | { available: true }
-  | {
-      available: false;
-      reason: "not_found" | "not_executable" | "path_mismatch";
-      binaryPath?: string;
-      resolvedPath?: string;
-    };
-
-const AGENT_BINARY_CHECK_PREFIX = "NEMOCLAW_AGENT_BINARY_CHECK:";
 const HERMES_TIRITH_MARKER_ABSENT = "tirith marker: absent";
 const HERMES_STARTUP_DIAGNOSTICS_SCRIPT = `
 set +e
@@ -246,81 +232,6 @@ for log in /tmp/nemoclaw-start.log /tmp/gateway.log; do
   fi
 done
 `.trim();
-
-/**
- * Check whether the selected agent binary is available inside the sandbox.
- *
- * Exported so tests can exercise the sandbox-side guard without running the
- * full onboarding flow.
- */
-export function verifyAgentBinaryAvailable(
-  sandboxName: string,
-  agent: AgentDefinition,
-  runCaptureOpenshell: OnboardContext["runCaptureOpenshell"],
-): AgentBinaryAvailability {
-  const executable = agentExecutableName(agent);
-  const binaryPath = typeof agent.binary_path === "string" ? agent.binary_path.trim() : "";
-  const script = binaryPath
-    ? [
-        `if [ -x ${shellQuote(binaryPath)} ]; then echo ${shellQuote(`${AGENT_BINARY_CHECK_PREFIX}ok`)}; exit 0; fi`,
-        `resolved="$(command -v ${shellQuote(executable)} 2>/dev/null || true)"`,
-        `[ -n "$resolved" ] || { echo ${shellQuote(`${AGENT_BINARY_CHECK_PREFIX}not_found`)}; exit 0; }`,
-        `[ -x "$resolved" ] || { printf '${AGENT_BINARY_CHECK_PREFIX}not_executable:%s\\n' "$resolved"; exit 0; }`,
-        `printf '${AGENT_BINARY_CHECK_PREFIX}path_mismatch:%s\\n' "$resolved"`,
-      ].join("; ")
-    : [
-        `resolved="$(command -v ${shellQuote(executable)} 2>/dev/null || true)"`,
-        `[ -n "$resolved" ] && [ -x "$resolved" ] && echo ${shellQuote(`${AGENT_BINARY_CHECK_PREFIX}ok`)} || echo ${shellQuote(`${AGENT_BINARY_CHECK_PREFIX}not_found`)}`,
-      ].join("; ");
-  const result = runCaptureOpenshell(
-    ["sandbox", "exec", "-n", sandboxName, "--", "sh", "-lc", script],
-    {
-      ignoreError: true,
-    },
-  );
-  const status = result?.trim() ?? "";
-  const marker = status
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .find((line) => line.startsWith(AGENT_BINARY_CHECK_PREFIX));
-  const checkStatus = marker?.slice(AGENT_BINARY_CHECK_PREFIX.length) ?? "";
-  if (checkStatus === "ok") {
-    return { available: true };
-  }
-  if (binaryPath && checkStatus) {
-    const mismatch = checkStatus.match(/^path_mismatch:(.+)$/);
-    if (mismatch) {
-      return {
-        available: false,
-        reason: "path_mismatch",
-        binaryPath,
-        resolvedPath: mismatch[1].trim(),
-      };
-    }
-    if (checkStatus.startsWith("not_executable")) {
-      return { available: false, reason: "not_executable", binaryPath };
-    }
-  }
-  return { available: false, reason: "not_found", binaryPath: binaryPath || undefined };
-}
-
-/**
- * Format a user-facing explanation for an agent binary availability failure.
- */
-function describeAgentBinaryFailure(
-  sandboxName: string,
-  agent: AgentDefinition,
-  result: Exclude<AgentBinaryAvailability, { available: true }>,
-): string {
-  const executable = agentExecutableName(agent);
-  if (result.reason === "path_mismatch") {
-    return `${agent.displayName} binary '${executable}' resolves to '${result.resolvedPath}', expected '${result.binaryPath}' inside sandbox '${sandboxName}'`;
-  }
-  if (result.reason === "not_executable") {
-    return `${agent.displayName} configured binary '${result.binaryPath}' is not executable inside sandbox '${sandboxName}'`;
-  }
-  return `${agent.displayName} binary '${executable}' is missing inside sandbox '${sandboxName}'`;
-}
 
 /**
  * Collect read-only Hermes startup diagnostics for Step 7 health timeouts.
@@ -426,6 +337,23 @@ export async function handleAgentSetup(
   };
 
   if (resume && sandboxName) {
+    if (isTerminalAgent(agent)) {
+      const binaryAvailability = verifyAgentBinaryAvailable(
+        sandboxName,
+        agent,
+        runCaptureOpenshell,
+      );
+      if (binaryAvailability.available) {
+        syncNemoClawConfig();
+        const smokeResult = runAgentSmokeCommands(sandboxName, agent, runCaptureOpenshell);
+        if (smokeResult.ok) {
+          skippedStepMessage("agent_setup", sandboxName);
+          await recordStepComplete("agent_setup", { sandboxName, provider, model });
+          return;
+        }
+      }
+    }
+
     const probe = agent.healthProbe;
     if (probe?.url) {
       const result = runCaptureOpenshell(
@@ -467,6 +395,22 @@ export async function handleAgentSetup(
   }
 
   syncNemoClawConfig();
+
+  if (isTerminalAgent(agent)) {
+    const smokeResult = runAgentSmokeCommands(sandboxName, agent, runCaptureOpenshell);
+    if (!smokeResult.ok) {
+      await failAgentSetup(
+        sandboxName,
+        agent,
+        `${agent.displayName} terminal smoke command failed: ${smokeResult.command}`,
+        recordStepFailed,
+        smokeResult.output ? [String(redact(smokeResult.output)).slice(0, 500)] : [],
+      );
+    }
+    console.log(`  \u2713 ${agent.displayName} terminal runtime is ready`);
+    await recordStepComplete("agent_setup", { sandboxName, provider, model });
+    return;
+  }
 
   const probe = agent.healthProbe;
   if (probe?.url) {
@@ -631,7 +575,7 @@ function printAdditionalForwardPorts(
 ): void {
   const declared = Array.isArray(agent.forward_ports) ? agent.forward_ports : [];
   if (declared.length === 0) return;
-  const apiPort = agent.healthProbe.port;
+  const apiPort = agent.healthProbe?.port;
   for (const port of declared) {
     if (!Number.isInteger(port) || port < 1 || port > 65535) continue;
     if (port === primaryPort) continue;

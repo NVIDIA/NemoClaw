@@ -11,12 +11,22 @@ import { DASHBOARD_PORT } from "../core/ports";
 import { shellQuote } from "../runner";
 import * as onboardSession from "../state/onboard-session";
 import * as registry from "../state/registry";
-import { type AgentDefinition, loadAgent } from "./defs";
+import { isTerminalAgent, loadAgent, type AgentDefinition } from "./defs";
 import {
   buildHermesEnvFileBoundaryGuard,
   buildHermesRuntimeEnvBoundaryGuard,
 } from "./hermes-recovery-boundary";
 import { buildGatewayGuardRecoveryLines } from "./runtime-recovery-preload";
+
+export const TERMINAL_AGENT_RECOVERY_SCRIPT = Object.freeze({ kind: "terminal" } as const);
+
+export type AgentRecoveryScript = string | typeof TERMINAL_AGENT_RECOVERY_SCRIPT | null;
+
+export function isTerminalAgentRecoveryScript(
+  script: AgentRecoveryScript,
+): script is typeof TERMINAL_AGENT_RECOVERY_SCRIPT {
+  return script === TERMINAL_AGENT_RECOVERY_SCRIPT;
+}
 
 /**
  * Resolve the agent for a sandbox. Checks the per-sandbox registry first
@@ -54,7 +64,23 @@ export function getSessionAgent(sandboxName?: string): AgentDefinition | null {
  */
 export function getHealthProbeUrl(agent: AgentDefinition | null): string {
   if (!agent) return `http://127.0.0.1:${DASHBOARD_PORT}/health`;
+  if (isTerminalAgent(agent)) return "";
   return agent.healthProbe?.url || `http://127.0.0.1:${DASHBOARD_PORT}/health`;
+}
+
+export function hasGatewayRuntime(
+  agent: { runtime?: { kind?: unknown } | null } | null | undefined,
+): boolean {
+  return !isTerminalAgent(agent);
+}
+
+export function getTerminalCommand(
+  agent: AgentDefinition | null,
+  mode: "interactive" | "headless" = "interactive",
+): string | null {
+  if (!agent || !isTerminalAgent(agent)) return null;
+  if (mode === "headless") return agent.runtime?.headless_command ?? null;
+  return agent.runtime?.interactive_command ?? agent.runtime?.headless_command ?? null;
 }
 
 function escapeEre(value: string): string {
@@ -138,6 +164,10 @@ function buildGatewayLogSelection(): string {
   return '_GATEWAY_LOG=/tmp/gateway.log; if ! : >> "$_GATEWAY_LOG" 2>/dev/null; then _GATEWAY_LOG=/tmp/gateway-recovery.log; : >> "$_GATEWAY_LOG" 2>/dev/null || true; fi;';
 }
 
+function gatewayGuardRefusalCommand(): string {
+  return '[ "$_GUARDS_MISSING" = "1" ] && { _E="[gateway-recovery] ERROR: NODE_OPTIONS missing safety-net preload or ciao preload after trusted recovery - refusing unguarded gateway relaunch (#2478/#2701)"; echo "$_E" >&2; echo "$_E" >> "$_GATEWAY_LOG"; exit 1; };';
+}
+
 function gatewayLaunchCommand(command: string, runAsUser?: string): string {
   const logSelection = buildGatewayLogSelection();
   const userLaunch = `nohup ${command} >> "$_GATEWAY_LOG" 2>&1 &`;
@@ -198,7 +228,7 @@ export function buildOpenClawRecoveryScript(port: number): string {
     ...buildGatewayLogSetup(true, "gateway"),
     buildGatewayLogSelection(),
     ...buildGatewayGuardRecoveryLines(),
-    '[ "$_GUARDS_MISSING" = "1" ] && { _E="[gateway-recovery] ERROR: NODE_OPTIONS missing safety-net preload or ciao preload after trusted recovery - refusing unguarded gateway relaunch (#2478/#2701)"; echo "$_E" >&2; echo "$_E" >> "$_GATEWAY_LOG"; exit 1; };',
+    gatewayGuardRefusalCommand(),
     "[ -f ~/.bashrc ] && . ~/.bashrc;",
     `_GW_CODE=$(curl -so /dev/null -w '%{http_code}' --max-time 3 http://127.0.0.1:${port}/health 2>/dev/null || echo 000); case "$_GW_CODE" in 200|401) echo ALREADY_RUNNING; exit 0 ;; esac;`,
     "rm -rf /tmp/openclaw-*/gateway.*.lock 2>/dev/null;",
@@ -214,15 +244,27 @@ export function buildOpenClawRecoveryScript(port: number): string {
 
 /**
  * Build the recovery shell script for a non-OpenClaw agent.
- * Returns the script string, or null if agent is null (use existing inline
- * OpenClaw script instead).
+ * Returns the script string, null if agent is null (use existing inline
+ * OpenClaw script instead), or a terminal sentinel for agents without a
+ * gateway process.
  */
+export function buildRecoveryScript(
+  agent: AgentDefinition & { runtime: { kind: "terminal" } },
+  port: number,
+  options?: { hermesDashboard?: HermesDashboardRecoveryConfig | null },
+): typeof TERMINAL_AGENT_RECOVERY_SCRIPT;
+export function buildRecoveryScript(
+  agent: AgentDefinition | null,
+  port: number,
+  options?: { hermesDashboard?: HermesDashboardRecoveryConfig | null },
+): string | null;
 export function buildRecoveryScript(
   agent: AgentDefinition | null,
   port: number,
   options: { hermesDashboard?: HermesDashboardRecoveryConfig | null } = {},
-): string | null {
+): AgentRecoveryScript {
   if (!agent) return null;
+  if (isTerminalAgent(agent)) return TERMINAL_AGENT_RECOVERY_SCRIPT;
 
   const probeUrl = getHealthProbeUrl(agent);
   const binaryPath = agent.binary_path || "/usr/local/bin/openclaw";
@@ -267,7 +309,7 @@ export function buildRecoveryScript(
     ...buildGatewayLogSetup(false),
     buildGatewayLogSelection(),
     ...buildGatewayGuardRecoveryLines(),
-    '[ "$_GUARDS_MISSING" = "1" ] && { _E="[gateway-recovery] ERROR: NODE_OPTIONS missing safety-net preload or ciao preload after trusted recovery - refusing unguarded gateway relaunch (#2478/#2701)"; echo "$_E" >&2; echo "$_E" >> "$_GATEWAY_LOG"; exit 1; };',
+    gatewayGuardRefusalCommand(),
     "[ -f ~/.bashrc ] && . ~/.bashrc;",
     `_GW_CODE=$(curl -so /dev/null -w '%{http_code}' --max-time 3 ${shellQuote(probeUrl)} 2>/dev/null || echo 000); case "$_GW_CODE" in 200|401) echo ALREADY_RUNNING; exit 0 ;; esac;`,
     `_GATEWAY_PROC_PATTERN=${shellQuote(staleGatewayPattern)};`,
@@ -294,6 +336,7 @@ export function getAgentDisplayName(agent: AgentDefinition | null): string {
  * Get the gateway command for the current agent.
  */
 export function getGatewayCommand(agent: AgentDefinition | null): string {
+  if (agent && isTerminalAgent(agent)) return getTerminalCommand(agent) ?? agent.versionCommand;
   return agent?.gateway_command || "openclaw gateway run";
 }
 
@@ -303,14 +346,25 @@ export function getGatewayCommand(agent: AgentDefinition | null): string {
  * process alive after disconnect and preserves the agent-specific launch shape.
  */
 export function buildManualRecoveryCommand(agent: AgentDefinition | null, port: number): string {
+  if (agent && isTerminalAgent(agent)) return getTerminalCommand(agent) ?? agent.versionCommand;
   const binaryPath = agent?.binary_path || "/usr/local/bin/openclaw";
   const defaultGatewayCommand = `${shellQuote(binaryPath)} gateway run`;
   const gatewayCmd = agent?.gateway_command?.trim() || defaultGatewayCommand;
   const isHermes = agent?.name === "hermes";
   const envPrefix = isHermes ? `${hermesGatewayEnvPrefix()} ` : "";
   const portFlag = isHermes ? "" : ` --port ${port}`;
-  const boundaryGuards = isHermes
-    ? `${buildHermesEnvFileBoundaryGuard()} ${buildHermesRuntimeEnvBoundaryGuard()} `
-    : "";
-  return `${buildGatewayLogSelection()} ${boundaryGuards}${envPrefix}nohup ${gatewayCmd}${portFlag} >> "$_GATEWAY_LOG" 2>&1 &`;
+  const hermesHome = isHermes ? "export HERMES_HOME=/sandbox/.hermes;" : "";
+  return [
+    hermesHome,
+    ...(isHermes ? [buildHermesEnvFileBoundaryGuard()] : []),
+    ...buildGatewayLogSetup(false),
+    buildGatewayLogSelection(),
+    ...buildGatewayGuardRecoveryLines(),
+    gatewayGuardRefusalCommand(),
+    "[ -f ~/.bashrc ] && . ~/.bashrc;",
+    ...(isHermes ? [buildHermesRuntimeEnvBoundaryGuard()] : []),
+    `${envPrefix}nohup ${gatewayCmd}${portFlag} >> "$_GATEWAY_LOG" 2>&1 &`,
+  ]
+    .filter(Boolean)
+    .join(" ");
 }
