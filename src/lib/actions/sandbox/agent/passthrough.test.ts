@@ -141,6 +141,23 @@ describe("runAgentPassthrough", () => {
     expect(all).not.toMatch(/No target session selected/);
   });
 
+  it("rejects with exit 2 when the selector token appears after the `--` argv separator", async () => {
+    execMock.mockClear();
+    ensureLiveMock.mockClear();
+    getSandboxMock.mockReturnValueOnce({ agent: "openclaw" });
+    const { writes, exit, proc } = makeProcMock();
+    await expect(
+      runAgentPassthrough(
+        "alpha",
+        { extraArgs: ["--", "--agent", "work", "-m", "hi"] },
+        { process: proc },
+      ),
+    ).rejects.toThrow("__exit:2");
+    expect(execMock).not.toHaveBeenCalled();
+    expect(exit).toHaveBeenCalledWith(2);
+    expect(writes.join("")).toMatch(/No target session selected/);
+  });
+
   it("accepts selector in --flag=value form and forwards verbatim", async () => {
     execMock.mockClear();
     getSandboxMock.mockReturnValueOnce({ agent: "openclaw" });

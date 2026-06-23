@@ -53,7 +53,10 @@
 //    - Source boundary: OpenClaw owns the argv contract; NemoClaw mirrors
 //      only the selector requirement (one of `--agent`, `--session-id`,
 //      `--session-key`, `--to`) to surface a clean exit 2 with a usage hint
-//      before sending the argv into the sandbox.
+//      before sending the argv into the sandbox. The scan stops at the
+//      first literal `--`, mirroring the help-token boundary, so a token
+//      that looks like a selector after the argv separator is treated as
+//      OpenClaw's payload and not as the host-side selector.
 //    - Source-fix constraint: NemoClaw forwards the rest of OpenClaw's argv
 //      verbatim, so the mirror is intentionally narrow — only the missing-
 //      selector case is intercepted; everything else still flows through to
@@ -151,9 +154,13 @@ function rejectRegistryReadError(
 const TARGET_SELECTOR_FLAGS = ["--agent", "--session-id", "--session-key", "--to"] as const;
 
 function hasTargetSelector(args: readonly string[]): boolean {
-  return args.some((arg) =>
-    TARGET_SELECTOR_FLAGS.some((flag) => arg === flag || arg.startsWith(`${flag}=`)),
-  );
+  for (const arg of args) {
+    if (arg === "--") return false;
+    if (TARGET_SELECTOR_FLAGS.some((flag) => arg === flag || arg.startsWith(`${flag}=`))) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function rejectNoTargetSelector(proc: NonNullable<AgentPassthroughDeps["process"]>): never {
