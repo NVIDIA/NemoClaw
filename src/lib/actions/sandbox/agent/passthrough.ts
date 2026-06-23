@@ -67,7 +67,7 @@
 // Regression tests: `passthrough.test.ts` covers the Hermes redirect, the
 // registry-miss fallback to OpenClaw, the registry-error fail-closed path,
 // the enforced `--no-tty` argv shape, the non-Ready phase recovery path,
-// the no-phase-output tolerant path, the no-selector and empty-args
+// the unparseable phase fail-closed path, the no-selector and empty-args
 // rejection branches, and the `--flag=value` selector-acceptance branch.
 //
 // Removal conditions:
