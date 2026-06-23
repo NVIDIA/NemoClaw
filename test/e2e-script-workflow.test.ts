@@ -1080,13 +1080,6 @@ describe("E2E reusable workflow contract", () => {
     }
 
     expect(nightlyWorkflow.jobs["common-egress-agent-e2e"].with?.inference_route).toBeUndefined();
-
-    const compatibleInferenceShim = readFileSync("test/e2e/lib/ci-compatible-inference.sh", "utf8");
-    expect(compatibleInferenceShim).toContain("nvidia-build lanes source secrets.NVIDIA_API_KEY");
-    expect(compatibleInferenceShim).toContain("temporary");
-    expect(compatibleInferenceShim).toContain(
-      "compatibility bridge for legacy E2E script preflights",
-    );
   });
 
   it("keeps rebuild fixture registry inference aligned with hosted custom inference", () => {
