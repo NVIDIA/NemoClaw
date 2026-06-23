@@ -639,6 +639,50 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  hermes-sandbox-secret-boundary-vitest:
+    needs: generate-matrix
+    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',hermes-sandbox-secret-boundary-vitest,') || contains(format(',{0},', inputs.scenarios), ',hermes-sandbox-secret-boundary,') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      FREE_STANDING_VITEST_JOB: "1"
+      FREE_STANDING_SCENARIO_ID: "hermes-sandbox-secret-boundary"
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/hermes-sandbox-secret-boundary
+      NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Run Hermes sandbox secret-boundary live test
+        # Migrated from test/e2e/test-hermes-sandbox-secret-boundary.sh. This
+        # builds the real Hermes images unless prebuilt NEMOCLAW_HERMES_* image
+        # env vars are supplied, then probes image and startup secret boundaries.
+        run: |
+          set -euo pipefail
+          npx vitest run --project e2e-scenarios-live \
+            test/e2e-scenario/live/hermes-sandbox-secret-boundary.test.ts \
+            --silent=false --reporter=default
+
+      - name: Upload Hermes sandbox secret-boundary artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-vitest-scenarios-hermes-sandbox-secret-boundary
+          path: e2e-artifacts/vitest/hermes-sandbox-secret-boundary/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
+
   inference-routing-vitest:
     needs: generate-matrix
     if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',inference-routing-vitest,') || contains(format(',{0},', inputs.scenarios), ',inference-routing,') }}
@@ -2714,6 +2758,109 @@ jobs:
           include-hidden-files: false
           if-no-files-found: ignore
           retention-days: 14
+
+  jetson-nvmap-gpu-vitest:
+    needs: generate-matrix
+    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',jetson-nvmap-gpu-vitest,') || contains(format(',{0},', inputs.scenarios), ',jetson-nvmap-gpu,') }}
+    runs-on: ${{ vars.JETSON_E2E_RUNNER_LABEL || 'linux-arm64-gpu-jetson-orin-latest-1' }}
+    timeout-minutes: 60
+    env:
+      FREE_STANDING_VITEST_JOB: "1"
+      FREE_STANDING_SCENARIO_ID: "jetson-nvmap-gpu"
+      DOCKER_CONFIG: ${{ github.workspace }}/.docker-config-jetson-nvmap-gpu
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/jetson-nvmap-gpu
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+      NEMOCLAW_SANDBOX_NAME: "e2e-jetson-nvmap"
+      NEMOCLAW_RECREATE_SANDBOX: "1"
+      NEMOCLAW_PROVIDER: "ollama"
+      OPENSHELL_GATEWAY: "nemoclaw"
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Authenticate to Docker Hub
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          mkdir -p "${DOCKER_CONFIG}"
+          chmod 700 "${DOCKER_CONFIG}"
+          login_succeeded=0
+          for attempt in 1 2 3; do
+            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
+              login_succeeded=1
+              break
+            fi
+            if [[ "$attempt" -lt 3 ]]; then
+              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
+              sleep 5
+            fi
+          done
+          if [[ "$login_succeeded" -ne 1 ]]; then
+            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
+          fi
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build CLI
+        run: npm run build:cli
+
+      - name: Verify Jetson GPU availability
+        run: |
+          set -euo pipefail
+          echo "=== Tegra release ==="
+          cat /etc/nv_tegra_release 2>/dev/null || echo "(no /etc/nv_tegra_release)"
+          echo ""
+          echo "=== /dev/nvmap ==="
+          ls -l /dev/nvmap 2>/dev/null || echo "(no /dev/nvmap)"
+          echo ""
+          echo "=== Docker ==="
+          docker info --format '{{.ServerVersion}}'
+          docker info --format '{{json .Runtimes}}'
+
+      - name: Run Jetson nvmap GPU live Vitest test
+        # Migrated from test/e2e/test-jetson-nvmap-gpu.sh. Keeps the
+        # Jetson/Tegra host, NVIDIA Docker runtime, install.sh, OpenShell
+        # sandbox exec, /dev/nvmap, CUDA cuInit(0), and status-proof boundary.
+        run: |
+          set -euo pipefail
+          npx vitest run --project e2e-scenarios-live \
+            test/e2e-scenario/live/jetson-nvmap-gpu.test.ts \
+            --silent=false --reporter=default
+
+      - name: Upload Jetson nvmap GPU artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-vitest-scenarios-jetson-nvmap-gpu
+          path: e2e-artifacts/vitest/jetson-nvmap-gpu/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Clean up Docker auth
+        if: always()
+        run: |
+          set -euo pipefail
+          docker logout docker.io || true
+          rm -rf "${DOCKER_CONFIG}"
 
   concurrent-gateway-ports-vitest:
     needs: generate-matrix
@@ -5326,6 +5473,7 @@ jobs:
         hermes-slack-vitest,
         hermes-discord-vitest,
         hermes-root-entrypoint-smoke-vitest,
+        hermes-sandbox-secret-boundary-vitest,
         network-policy-vitest,
         common-egress-agent-vitest,
         shields-config-vitest,
@@ -5342,6 +5490,7 @@ jobs:
         messaging-providers-vitest,
         launchable-smoke-vitest,
         double-onboard-vitest,
+        jetson-nvmap-gpu-vitest,
         concurrent-gateway-ports-vitest,
         full-e2e-vitest,
         cloud-onboard-vitest,

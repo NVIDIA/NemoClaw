@@ -29,6 +29,13 @@ export type DockerProbeRunner = (
   options: SpawnSyncOptionsWithStringEncoding,
 ) => SpawnSyncReturns<string>;
 
+type DockerProbeRunOptions = {
+  artifactName: string;
+  timeoutMs?: number;
+  artifactRedactionValues?: string[];
+  returnRaw?: boolean;
+};
+
 const DOCKER_ENV_ALLOWLIST = [
   "DOCKER_HOST",
   "DOCKER_CONTEXT",
@@ -98,7 +105,7 @@ export class DockerProbe {
 
   async run(
     args: string[],
-    options: { artifactName: string; timeoutMs?: number } = { artifactName: "docker" },
+    options: DockerProbeRunOptions = { artifactName: "docker" },
   ): Promise<DockerCommandResult> {
     fs.mkdirSync(this.dockerConfigDir, { recursive: true });
     const command = ["docker", ...args];
@@ -109,16 +116,16 @@ export class DockerProbe {
       maxBuffer: 10 * 1024 * 1024,
       timeout: options.timeoutMs ?? 30_000,
     });
-    const commandResult = redactDockerProbeResult(
-      {
-        command,
-        exitCode: result.status,
-        signal: result.signal,
-        stdout: result.stdout ?? "",
-        stderr: result.stderr ?? "",
-        error: result.error instanceof Error ? result.error.message : undefined,
-      },
-      this.redact,
+    const rawCommandResult = {
+      command,
+      exitCode: result.status,
+      signal: result.signal,
+      stdout: result.stdout ?? "",
+      stderr: result.stderr ?? "",
+      error: result.error instanceof Error ? result.error.message : undefined,
+    };
+    const commandResult = redactDockerProbeResult(rawCommandResult, (text) =>
+      this.redact(text, options.artifactRedactionValues ?? []),
     );
     const artifactBase = `docker/${String(++this.sequence).padStart(3, "0")}-${safeName(
       options.artifactName,
@@ -126,13 +133,15 @@ export class DockerProbe {
     await this.artifacts.writeText(`${artifactBase}.stdout.txt`, commandResult.stdout);
     await this.artifacts.writeText(`${artifactBase}.stderr.txt`, commandResult.stderr);
     await this.artifacts.writeJson(`${artifactBase}.result.json`, commandResult);
-    return commandResult;
+    return options.returnRaw === true ? rawCommandResult : commandResult;
   }
 
-  async expect(
-    args: string[],
-    options: { artifactName: string; timeoutMs?: number },
-  ): Promise<DockerCommandResult> {
+  async expect(args: string[], options: DockerProbeRunOptions): Promise<DockerCommandResult> {
+    if (options.returnRaw === true) {
+      throw new Error(
+        "DockerProbe.expect cannot return raw Docker output; use run(..., { returnRaw: true }) only for explicit leak assertions that never log the raw result.",
+      );
+    }
     const result = await this.run(args, options);
     if (result.exitCode !== 0) {
       throw new Error(resultText(result));
