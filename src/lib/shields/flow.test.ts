@@ -206,7 +206,8 @@ describe("shields command flow", () => {
         error.code = "ESRCH";
         throw error;
       };
-      (pid === 4242 && signal === 0 && failDeadTimerProbe()) || true;
+      const deadTimerProbe = `${pid}:${signal}` === "4242:0" ? failDeadTimerProbe : undefined;
+      deadTimerProbe?.();
       return true;
     });
 
