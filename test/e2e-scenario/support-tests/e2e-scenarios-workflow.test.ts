@@ -1044,7 +1044,7 @@ jobs:
     const snapshotJob = parsedWorkflow.jobs["snapshot-commands-vitest"];
     snapshotJob["timeout-minutes"] = 30;
     snapshotJob.env.DOCKER_CONFIG = "${{ github.workspace }}/.docker-config-shared";
-    snapshotJob.env.NVIDIA_API_KEY = "${{ secrets.NVIDIA_API_KEY }}";
+    snapshotJob.env.NVIDIA_INFERENCE_API_KEY = "${{ secrets.NVIDIA_INFERENCE_API_KEY }}";
     for (const step of snapshotJob.steps) {
       if (typeof step.uses === "string" && step.uses.startsWith("actions/checkout@")) {
         step.with = { ...(step.with as Record<string, unknown>), "persist-credentials": true };
@@ -1054,7 +1054,7 @@ jobs:
           'echo "DOCKER_CONFIG=${{ github.workspace }}/.docker-config-shared" >> "$GITHUB_ENV"';
       }
       if (step.name === "Set up Node") {
-        step.env = { NVIDIA_API_KEY: "${{ secrets.NVIDIA_API_KEY }}" };
+        step.env = { NVIDIA_INFERENCE_API_KEY: "${{ secrets.NVIDIA_INFERENCE_API_KEY }}" };
       }
       if (step.name === "Install root dependencies") {
         step.env = {
@@ -1089,8 +1089,8 @@ jobs:
           "snapshot-commands-vitest job must not set DOCKER_CONFIG at job level",
           'step \'Configure isolated Docker auth directory\' run script must include echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-snapshot-commands" >> "$GITHUB_ENV"',
           "snapshot-commands-vitest checkout step must set persist-credentials=false",
-          "snapshot-commands-vitest job env must not include NVIDIA_API_KEY",
-          "snapshot-commands-vitest step 'Set up Node' env must not include NVIDIA_API_KEY",
+          "snapshot-commands-vitest job env must not include NVIDIA_INFERENCE_API_KEY",
+          "snapshot-commands-vitest step 'Set up Node' env must not include NVIDIA_INFERENCE_API_KEY",
           "snapshot-commands-vitest step 'Install root dependencies' env must not include DOCKERHUB_USERNAME",
           "snapshot-commands-vitest step 'Install root dependencies' env must not include DOCKERHUB_TOKEN",
           "snapshot-commands-vitest artifact upload must set include-hidden-files: false",
@@ -1118,13 +1118,13 @@ jobs:
       env: {
         FREE_STANDING_VITEST_JOB: "1",
         FREE_STANDING_SCENARIO_ID: "ad-hoc-derived",
-        NVIDIA_API_KEY: "${{ secrets.NVIDIA_API_KEY }}",
+        NVIDIA_INFERENCE_API_KEY: "${{ secrets.NVIDIA_INFERENCE_API_KEY }}",
       },
       steps: [
         { uses: "actions/checkout@v4" },
         {
           name: "Run ad hoc",
-          run: "echo ${{ inputs.jobs }} && echo ${{ secrets.NVIDIA_API_KEY }}",
+          run: "echo ${{ inputs.jobs }} && echo ${{ secrets.NVIDIA_INFERENCE_API_KEY }}",
         },
       ],
     };
@@ -1135,7 +1135,7 @@ jobs:
         expect.arrayContaining([
           "ad-hoc-derived-vitest job must depend on generate-matrix",
           "ad-hoc-derived-vitest job must use the shared jobs selector condition",
-          "ad-hoc-derived-vitest job env must not include NVIDIA_API_KEY",
+          "ad-hoc-derived-vitest job env must not include NVIDIA_INFERENCE_API_KEY",
           "ad-hoc-derived-vitest step 'actions/checkout@v4' action must be pinned to a full commit SHA",
           "step 'Run ad hoc' run script must not interpolate dispatch inputs directly",
           "ad-hoc-derived-vitest step 'Run ad hoc' run script must not interpolate secrets directly",
@@ -1196,7 +1196,7 @@ jobs:
     job.strategy.matrix.agent = ["openclaw"];
     job.env.NEMOCLAW_SANDBOX_NAME = "personal-dev-${{ matrix.agent }}";
     job.env.DOCKER_CONFIG = "${{ github.workspace }}/.docker-config-shared";
-    job.env.NVIDIA_API_KEY = "${{ secrets.NVIDIA_API_KEY }}";
+    job.env.NVIDIA_INFERENCE_API_KEY = "${{ secrets.NVIDIA_INFERENCE_API_KEY }}";
     const checkoutStep = job.steps.find(
       (step) => typeof step.uses === "string" && step.uses.startsWith("actions/checkout@"),
     );
@@ -1222,7 +1222,6 @@ jobs:
     const runStep = job.steps.find((step) => step.name === "Run channels stop/start live test");
     expect(runStep).toBeDefined();
     runStep!.env = {
-      NVIDIA_API_KEY: "${{ secrets.NVIDIA_API_KEY }}",
       TELEGRAM_BOT_TOKEN: "real-token",
     };
     runStep!.run = String(runStep!.run).replace(
@@ -1258,11 +1257,10 @@ jobs:
           "channels-stop-start-vitest matrix.agent must be openclaw,hermes",
           "channels-stop-start-vitest job must derive NEMOCLAW_SANDBOX_NAME from matrix.agent with the e2e-channels-stop-start- prefix",
           "channels-stop-start-vitest job must isolate Docker auth by matrix agent",
-          "channels-stop-start-vitest job env must not include NVIDIA_API_KEY",
+          "channels-stop-start-vitest job env must not include NVIDIA_INFERENCE_API_KEY",
           "channels-stop-start-vitest checkout step must set persist-credentials=false",
           "step 'Install root dependencies' run script must include npm ci --ignore-scripts",
           "step 'Install OpenShell' run script must include env -u DOCKER_CONFIG",
-          "channels-stop-start-vitest step 'Run channels stop/start live test' env must not include NVIDIA_API_KEY",
           "channels-stop-start-vitest step must receive NVIDIA_INFERENCE_API_KEY from secrets",
           "channels-stop-start-vitest step must set the fake Telegram token",
           "step 'Run channels stop/start live test' run script must include test/e2e-scenario/live/channels-stop-start.test.ts",
@@ -1383,7 +1381,7 @@ jobs:
     job.env = {
       ...job.env,
       DOCKER_CONFIG: "${{ github.workspace }}/.docker-config-diagnostics",
-      NVIDIA_API_KEY: "${{ secrets.NVIDIA_API_KEY }}",
+      NVIDIA_INFERENCE_API_KEY: "${{ secrets.NVIDIA_INFERENCE_API_KEY }}",
       GITHUB_TOKEN: "${{ github.token }}",
     };
     const setupNodeIndex = job.steps.findIndex((step) => step.name === "Set up Node");
@@ -1413,7 +1411,7 @@ jobs:
       expect(errors).toEqual(
         expect.arrayContaining([
           "diagnostics-vitest job must not expose Docker auth to branch-controlled steps",
-          "diagnostics-vitest job env must not include NVIDIA_API_KEY",
+          "diagnostics-vitest job env must not include NVIDIA_INFERENCE_API_KEY",
           "diagnostics-vitest job env must not include GITHUB_TOKEN",
           "diagnostics-vitest job must not authenticate to Docker Hub before branch-controlled test code runs",
           "diagnostics-vitest step 'Authenticate to Docker Hub' env must not include DOCKERHUB_USERNAME",

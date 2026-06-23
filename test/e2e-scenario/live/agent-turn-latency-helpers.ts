@@ -58,7 +58,7 @@ export function env(
     OPENSHELL_GATEWAY: process.env.OPENSHELL_GATEWAY ?? "nemoclaw",
   };
   agent === "hermes" && (out.NEMOCLAW_AGENT = "hermes");
-  apiKey && Object.assign(out, { NVIDIA_INFERENCE_API_KEY: apiKey, NVIDIA_API_KEY: apiKey });
+  apiKey && Object.assign(out, { NVIDIA_INFERENCE_API_KEY: apiKey });
   PROVIDER === "custom" &&
     Object.assign(out, {
       COMPATIBLE_API_KEY: apiKey,

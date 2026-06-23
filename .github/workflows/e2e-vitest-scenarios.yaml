@@ -572,7 +572,7 @@ jobs:
 
       - name: Run OpenClaw skill CLI live test
         env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
           npx vitest run --project e2e-scenarios-live \
@@ -769,7 +769,7 @@ jobs:
         # request through sandbox inference.local, and reuses the skill
         # filesystem validators from the retained bash helpers.
         env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
           npx vitest run --project e2e-scenarios-live \
@@ -1493,7 +1493,7 @@ jobs:
       - name: Install OpenShell CLI
         run: |
           set -euo pipefail
-          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u GITHUB_TOKEN \
+          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN \
             bash scripts/install-openshell.sh
 
       - name: Run sessions/agents CLI live test
@@ -1502,7 +1502,7 @@ jobs:
         # OpenClaw gateway dispatch, pending pairing/scope approval, and JSON
         # envelope handling for sessions/agents commands.
         env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
@@ -1911,14 +1911,14 @@ jobs:
           NEMOCLAW_NON_INTERACTIVE: "1"
         run: |
           set -euo pipefail
-          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
+          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
 
       - name: Run common-egress agent live test
         # Migrated from test/e2e/test-common-egress-agent-e2e.sh. Preserves
         # OpenClaw balanced/open and Hermes open common-egress agent-turn
         # coverage against real sandbox policy and live hosted inference.
         env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
@@ -2530,11 +2530,11 @@ jobs:
           NEMOCLAW_NON_INTERACTIVE: "1"
         run: |
           set -euo pipefail
-          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
+          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
 
       - name: Run state backup restore live test
         env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
@@ -2629,7 +2629,7 @@ jobs:
       - name: Install OpenShell CLI
         run: |
           set -euo pipefail
-          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_INFERENCE_API_KEY -u NVIDIA_API_KEY -u GITHUB_TOKEN \
+          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN \
             bash scripts/install-openshell.sh
 
       - name: Run upgrade stale sandbox live Vitest test
@@ -3633,7 +3633,7 @@ jobs:
         # the legacy fake-token defaults, optional _REAL secret overrides,
         # provider placeholder redaction checks, and WhatsApp QR-only parity.
         env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
           TELEGRAM_BOT_TOKEN_REAL: ${{ secrets.TELEGRAM_BOT_TOKEN_REAL }}
           DISCORD_BOT_TOKEN_REAL: ${{ secrets.DISCORD_BOT_TOKEN_REAL }}
           SLACK_BOT_TOKEN_REAL: ${{ secrets.SLACK_BOT_TOKEN_REAL }}
@@ -3887,10 +3887,10 @@ jobs:
 
       - name: Run snapshot commands live test
         # Migrated from test/e2e/test-snapshot-commands.sh. Preserves the
-        # original ubuntu-latest + Docker/OpenShell + NVIDIA_API_KEY runner
+        # original ubuntu-latest + Docker/OpenShell + NVIDIA_INFERENCE_API_KEY runner
         # contract by driving install.sh and the real snapshot CLI lifecycle.
         env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
           npx vitest run --project e2e-scenarios-live \
@@ -4038,11 +4038,11 @@ jobs:
 
       - name: Run diagnostics live test
         # Migrated from test/e2e/test-diagnostics.sh. This preserves the
-        # ubuntu-latest + Docker/OpenShell + NVIDIA_API_KEY lane by running
+        # ubuntu-latest + Docker/OpenShell + NVIDIA_INFERENCE_API_KEY lane by running
         # debug archives, install.sh/onboard, sandbox exec/status, and
         # gateway-backed credentials list/reset from Vitest.
         env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
           npx vitest run --project e2e-scenarios-live             test/e2e-scenario/live/diagnostics.test.ts             --silent=false --reporter=default
@@ -4341,7 +4341,7 @@ jobs:
         # Vitest owns the route, config, registry, inference.local, and agent
         # assertions.
         env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
           npx vitest run --project e2e-scenarios-live \
@@ -4690,7 +4690,7 @@ jobs:
           NEMOCLAW_NON_INTERACTIVE: "1"
         run: |
           set -euo pipefail
-          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
+          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
 
       - name: Run channels add/remove live test
         # Migrated from test/e2e/test-channels-add-remove.sh. Preserves the
@@ -4698,7 +4698,7 @@ jobs:
         # channels add, rebuild, gateway credential reuse, policy-list, and
         # channels remove cleanup.
         env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
           TELEGRAM_BOT_TOKEN: "test-fake-telegram-token-add-remove-e2e"
           TELEGRAM_ALLOWED_IDS: "123456789"
           TELEGRAM_REQUIRE_MENTION: "0"
@@ -4805,7 +4805,7 @@ jobs:
           NEMOCLAW_NON_INTERACTIVE: "1"
         run: |
           set -euo pipefail
-          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
+          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
 
       - name: Run Telegram injection live test
         # Migrated from test/e2e/test-telegram-injection.sh. Preserves the
@@ -4907,7 +4907,7 @@ jobs:
           NEMOCLAW_NON_INTERACTIVE: "1"
         run: |
           set -euo pipefail
-          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
+          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
 
       - name: Run channels stop/start live test
         # Migrated from test/e2e/test-channels-stop-start.sh. Preserves the
@@ -5010,7 +5010,7 @@ jobs:
       - name: Install OpenShell CLI
         run: |
           set -euo pipefail
-          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
+          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
 
       - name: Run OpenClaw Slack pairing live test
         # Migrated from test/e2e/test-openclaw-slack-pairing.sh. Preserves
@@ -5224,7 +5224,7 @@ jobs:
       - name: Install OpenShell CLI
         run: |
           set -euo pipefail
-          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
+          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
 
       - name: Run OpenClaw Discord pairing live test
         # Migrated from test/e2e/test-openclaw-discord-pairing.sh. Preserves
@@ -5420,7 +5420,7 @@ jobs:
         # install.sh/public curl|bash boundary, install-log retention, PATH
         # refresh, and post-install nemoclaw/openshell/--help checks.
         env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
           npx vitest run --project e2e-scenarios-live \

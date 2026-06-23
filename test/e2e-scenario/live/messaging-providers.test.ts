@@ -64,8 +64,8 @@ runLiveTest(
   "messaging providers preserve placeholder, policy, runtime, and send contracts",
   testTimeoutOptions(LIVE_TIMEOUT_MS),
   async ({ artifacts, cleanup, host, sandbox, skip }) => {
-    if (!process.env.NVIDIA_API_KEY) {
-      skip("NVIDIA_API_KEY is required for live messaging-provider E2E");
+    if (!process.env.NVIDIA_INFERENCE_API_KEY) {
+      skip("NVIDIA_INFERENCE_API_KEY is required for live messaging-provider E2E");
       return;
     }
     if (!fs.existsSync(CLI_ENTRYPOINT)) {

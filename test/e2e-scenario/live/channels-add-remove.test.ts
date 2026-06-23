@@ -363,7 +363,7 @@ liveTest(
         `channels-add-remove live test is destructive and only accepts sandbox names with prefix ${TEST_SANDBOX_PREFIX}; got ${SANDBOX_NAME}`,
       );
     }
-    const apiKey = secrets.required("NVIDIA_API_KEY");
+    const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
     const secretsToRedact = redactionValues(apiKey);
 
     const ready = await environment.assertReady({
@@ -381,7 +381,7 @@ liveTest(
       contract: [
         "onboard creates an OpenClaw sandbox with no Telegram channel",
         "channels add telegram registers the bridge and persists messaging.plan",
-        "post-add rebuild reuses the gateway-stored inference credential when NVIDIA_API_KEY is absent",
+        "post-add rebuild reuses the gateway-stored inference credential when NVIDIA_INFERENCE_API_KEY is absent",
         "post-add rebuild applies the Telegram policy preset and renders openclaw.json channel state",
         "channels remove telegram removes provider, policy, registry plan, and rendered channel state after rebuild",
       ],
@@ -489,7 +489,7 @@ liveTest(
 
     const remove = await host.nemoclaw([SANDBOX_NAME, "channels", "remove", "telegram"], {
       artifactName: "phase-5-channels-remove-telegram",
-      env: channelEnv({ NVIDIA_API_KEY: apiKey }),
+      env: channelEnv({ NVIDIA_INFERENCE_API_KEY: apiKey }),
       redactionValues: secretsToRedact,
       timeoutMs: COMMAND_TIMEOUT_MS,
     });
@@ -499,7 +499,7 @@ liveTest(
 
     const rebuildRemove = await host.nemoclaw([SANDBOX_NAME, "rebuild", "--yes"], {
       artifactName: "phase-5-rebuild-after-remove",
-      env: channelEnv({ NVIDIA_API_KEY: apiKey }),
+      env: channelEnv({ NVIDIA_INFERENCE_API_KEY: apiKey }),
       redactionValues: secretsToRedact,
       timeoutMs: REBUILD_TIMEOUT_MS,
     });

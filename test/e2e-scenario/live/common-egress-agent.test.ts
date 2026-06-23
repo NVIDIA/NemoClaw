@@ -258,8 +258,8 @@ async function assertPrerequisites(
   });
   expect(openshell.exitCode, text(openshell)).toBe(0);
 
-  const apiKey = secrets.required("NVIDIA_API_KEY");
-  expect(apiKey.startsWith("nvapi-"), "NVIDIA_API_KEY must start with nvapi-").toBe(true);
+  const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
+  expect(apiKey.startsWith("nvapi-"), "NVIDIA_INFERENCE_API_KEY must start with nvapi-").toBe(true);
   expect(process.env.NEMOCLAW_NON_INTERACTIVE, "NEMOCLAW_NON_INTERACTIVE=1 is required").toBe("1");
   expect(
     process.env.NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE,
@@ -356,7 +356,7 @@ async function runOnboard(
       artifactName: `onboard-common-egress-${args.sandboxName}`,
       cwd: REPO_ROOT,
       env: commandEnv({
-        NVIDIA_API_KEY: args.apiKey,
+        NVIDIA_INFERENCE_API_KEY: args.apiKey,
         NEMOCLAW_AGENT: args.agent,
         NEMOCLAW_POLICY_MODE: "suggested",
         NEMOCLAW_POLICY_TIER: args.tier,
@@ -666,7 +666,8 @@ test("common-egress agent classifies pre-contract provider validation skips", ()
   expect(
     classifyPreContractProviderValidationSkip({
       stdout: "",
-      stderr: "NVIDIA Endpoints endpoint validation failed.\ninvalid NVIDIA_API_KEY credential",
+      stderr:
+        "NVIDIA Endpoints endpoint validation failed.\ninvalid NVIDIA_INFERENCE_API_KEY credential",
     }),
   ).toMatchObject({ matches: false });
 });

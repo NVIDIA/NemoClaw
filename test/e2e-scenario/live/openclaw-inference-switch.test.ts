@@ -817,7 +817,7 @@ RUN_OPENCLAW_INFERENCE_SWITCH_TEST(
       switchModel: SWITCH_MODEL,
       switchInferenceApi: SWITCH_INFERENCE_API,
       contracts: [
-        "Docker is running and NVIDIA_API_KEY is nvapi-prefixed",
+        "Docker is running and NVIDIA_INFERENCE_API_KEY is nvapi-prefixed",
         "install.sh --non-interactive onboards an OpenClaw sandbox",
         "nemoclaw inference set switches the running sandbox route",
         "OpenClaw gateway process stays running across the switch when its PID is observable",
@@ -848,8 +848,10 @@ RUN_OPENCLAW_INFERENCE_SWITCH_TEST(
       skip("Docker is required for OpenClaw inference switch E2E");
     }
 
-    const apiKey = secrets.required("NVIDIA_API_KEY");
-    expect(apiKey.startsWith("nvapi-"), "NVIDIA_API_KEY must start with nvapi-").toBe(true);
+    const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
+    expect(apiKey.startsWith("nvapi-"), "NVIDIA_INFERENCE_API_KEY must start with nvapi-").toBe(
+      true,
+    );
 
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-switch-home-"));
     let mockProvider: MockAnthropicProvider | undefined;
@@ -868,7 +870,7 @@ RUN_OPENCLAW_INFERENCE_SWITCH_TEST(
         artifactName: "install-and-onboard-openclaw-inference-switch",
         cwd: REPO_ROOT,
         env: commandEnv(home, {
-          NVIDIA_API_KEY: apiKey,
+          NVIDIA_INFERENCE_API_KEY: apiKey,
           NEMOCLAW_RECREATE_SANDBOX: "1",
         }),
         redactionValues: [apiKey],

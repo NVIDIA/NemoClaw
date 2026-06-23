@@ -166,7 +166,6 @@ function commandEnv(apiKey?: string): NodeJS.ProcessEnv {
   };
   if (apiKey) {
     env.NVIDIA_INFERENCE_API_KEY = apiKey;
-    env.NVIDIA_API_KEY = apiKey;
   }
   return env;
 }

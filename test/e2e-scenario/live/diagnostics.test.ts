@@ -121,7 +121,9 @@ function assertNoSecretInExtractedArchive(extractDir: string, apiKey: string): v
     if (/nvapi-[A-Za-z0-9_-]{10,}/.test(text)) patternLeaks.push(path.relative(extractDir, file));
   }
 
-  expect(leakedFiles, "debug archive must not contain the exact NVIDIA_API_KEY").toEqual([]);
+  expect(leakedFiles, "debug archive must not contain the exact NVIDIA_INFERENCE_API_KEY").toEqual(
+    [],
+  );
   expect(patternLeaks, "debug archive must not contain nvapi-shaped credentials").toEqual([]);
 }
 
@@ -136,8 +138,10 @@ runDiagnosticsTest(
       "run `npm run build:cli` before live repo CLI scenarios",
     ).toBe(true);
 
-    const apiKey = secrets.required("NVIDIA_API_KEY");
-    expect(apiKey.startsWith("nvapi-"), "NVIDIA_API_KEY must start with nvapi-").toBe(true);
+    const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
+    expect(apiKey.startsWith("nvapi-"), "NVIDIA_INFERENCE_API_KEY must start with nvapi-").toBe(
+      true,
+    );
 
     await artifacts.writeJson("scenario.json", {
       id: "diagnostics",
@@ -195,7 +199,7 @@ runDiagnosticsTest(
       fs.rmSync(home, { recursive: true, force: true });
     });
 
-    const env = testEnv(home, { NVIDIA_API_KEY: apiKey });
+    const env = testEnv(home, { NVIDIA_INFERENCE_API_KEY: apiKey });
     await bestEffort(() =>
       host.command("node", [CLI_ENTRYPOINT, SANDBOX_NAME, "destroy", "--yes"], {
         artifactName: "pre-cleanup-nemoclaw-destroy-diagnostics",
@@ -351,7 +355,7 @@ runDiagnosticsTest(
     expect(rawCredentialsList.status, redactForAssertion(credentialsText, apiKey)).toBe(0);
     expect(
       credentialsText.includes(apiKey),
-      "credentials list must not expose the exact NVIDIA_API_KEY",
+      "credentials list must not expose the exact NVIDIA_INFERENCE_API_KEY",
     ).toBe(false);
     expect(
       /nvapi-[A-Za-z0-9_-]{10,}/.test(credentialsText),
@@ -390,7 +394,7 @@ runDiagnosticsTest(
       expect(postResetText.includes("nvidia-prod")).toBe(false);
       expect(
         postResetText.includes(apiKey),
-        "post-reset credentials list must not expose the exact NVIDIA_API_KEY",
+        "post-reset credentials list must not expose the exact NVIDIA_INFERENCE_API_KEY",
       ).toBe(false);
       expect(
         /nvapi-[A-Za-z0-9_-]{10,}/.test(postResetText),

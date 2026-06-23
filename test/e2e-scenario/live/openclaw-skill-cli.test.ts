@@ -160,7 +160,7 @@ runOpenClawSkillCliTest(
       sandboxName: SANDBOX_NAME,
       contracts: [
         "Docker is available before install/onboard",
-        "NVIDIA_API_KEY is present and nvapi-prefixed",
+        "NVIDIA_INFERENCE_API_KEY is present and nvapi-prefixed",
         "install.sh creates/recreates a real OpenClaw sandbox",
         "OPENCLAW_HOME, OPENCLAW_STATE_DIR, and OPENCLAW_WORKSPACE_DIR reach the sandbox runtime shell",
         "openclaw skills install <path> accepts a non-managed source directory inside the sandbox",
@@ -171,8 +171,10 @@ runOpenClawSkillCliTest(
       ],
     });
 
-    const apiKey = secrets.required("NVIDIA_API_KEY");
-    expect(apiKey.startsWith("nvapi-"), "NVIDIA_API_KEY must start with nvapi-").toBe(true);
+    const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
+    expect(apiKey.startsWith("nvapi-"), "NVIDIA_INFERENCE_API_KEY must start with nvapi-").toBe(
+      true,
+    );
 
     const docker = await host.command("docker", ["info"], {
       artifactName: "prereq-docker-info-openclaw-skill-cli",
@@ -201,7 +203,7 @@ runOpenClawSkillCliTest(
         artifactName: "install-and-onboard-openclaw-skill-cli",
         cwd: REPO_ROOT,
         env: testEnv(home, {
-          NVIDIA_API_KEY: apiKey,
+          NVIDIA_INFERENCE_API_KEY: apiKey,
           NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
           NEMOCLAW_RECREATE_SANDBOX: "1",
         }),

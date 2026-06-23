@@ -44,7 +44,7 @@ export function env(apiKey?: string, extra: NodeJS.ProcessEnv = {}): NodeJS.Proc
     NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
     OPENSHELL_GATEWAY: process.env.OPENSHELL_GATEWAY ?? "nemoclaw",
   };
-  apiKey && Object.assign(out, { NVIDIA_INFERENCE_API_KEY: apiKey, NVIDIA_API_KEY: apiKey });
+  apiKey && Object.assign(out, { NVIDIA_INFERENCE_API_KEY: apiKey });
   return { ...out, ...extra };
 }
 
