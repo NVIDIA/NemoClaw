@@ -10,6 +10,12 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
+  HOSTED_INFERENCE_LEGACY_NVIDIA_API_KEY_SCRIPT_JOBS,
+  HOSTED_INFERENCE_LEGACY_NVIDIA_API_KEY_SCRIPT_JOB_SET,
+  HOSTED_INFERENCE_PUBLIC_NVIDIA_FALLBACK_SCRIPT_JOB_SET,
+} from "../tools/e2e-scenarios/hosted-inference-legacy-alias.mts";
+
+import {
   loadE2eWorkflowContract,
   readYaml,
   reusableNightlyJobs,
@@ -49,6 +55,7 @@ const TRUSTED_REF_GUARD = "github.event_name != 'workflow_dispatch' || inputs.ta
 const GUARDED_HOSTED_INFERENCE_SECRET = `\${{ (${TRUSTED_REF_GUARD}) && secrets.NVIDIA_INFERENCE_API_KEY || '' }}`;
 const GUARDED_PUBLIC_NVIDIA_SECRET = `\${{ (${TRUSTED_REF_GUARD}) && secrets.NVIDIA_API_KEY || '' }}`;
 const RAW_HOSTED_INFERENCE_SECRET = "${{ secrets.NVIDIA_INFERENCE_API_KEY }}";
+const RAW_PUBLIC_NVIDIA_SECRET = "${{ secrets.NVIDIA_API_KEY }}";
 
 function timingSummary(
   phases: Record<string, number> = { "nemoclaw.onboard.phase.preflight": 1000 },
@@ -402,6 +409,9 @@ describe("E2E reusable workflow contract", () => {
       DOCKERHUB_TOKEN:
         "${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_TOKEN || '' }}",
     };
+    const legacyAliasSecret = {
+      NVIDIA_API_KEY: GUARDED_PUBLIC_NVIDIA_SECRET,
+    };
     const messagingLiveSecrets = {
       TELEGRAM_BOT_TOKEN_REAL: `\${{ (${TRUSTED_REF_GUARD}) && secrets.TELEGRAM_BOT_TOKEN_REAL || '' }}`,
       TELEGRAM_CHAT_ID_E2E: `\${{ (${TRUSTED_REF_GUARD}) && secrets.TELEGRAM_CHAT_ID_E2E || '' }}`,
@@ -415,9 +425,13 @@ describe("E2E reusable workflow contract", () => {
     expect(reusableJobs.length).toBeGreaterThan(20);
     for (const [name, job] of reusableJobs) {
       const expectsLiveMessaging = name === "messaging-providers-e2e";
+      const expectsPublicNvidiaFallback =
+        HOSTED_INFERENCE_PUBLIC_NVIDIA_FALLBACK_SCRIPT_JOB_SET.has(name);
       const expectedSecrets = expectsLiveMessaging
-        ? { ...defaultSecrets, ...messagingLiveSecrets }
-        : defaultSecrets;
+        ? { ...defaultSecrets, ...legacyAliasSecret, ...messagingLiveSecrets }
+        : expectsPublicNvidiaFallback
+          ? { ...defaultSecrets, ...legacyAliasSecret }
+          : defaultSecrets;
       expect(job.secrets, name).toEqual(expectedSecrets);
       expect(job.with?.messaging_live_secrets ?? false, name).toBe(
         expectsLiveMessaging
@@ -919,21 +933,48 @@ describe("E2E reusable workflow contract", () => {
       type: "boolean",
       default: false,
     });
+    expect(workflowCall?.inputs?.nvidia_api_key_alias).toMatchObject({
+      required: false,
+      type: "boolean",
+      default: false,
+    });
     expect(workflowCall?.inputs?.nvidia_secret_as_compatible_api_key).toBeUndefined();
     expect(exportStep?.if).toBe("${{ inputs.nvidia_api_key }}");
-    expect(exportStep?.env?.NVIDIA_INFERENCE_API_KEY).toBe(RAW_HOSTED_INFERENCE_SECRET);
-    expect(exportStep?.run).toContain("withheld for workflow_dispatch target_ref runs");
-    expect(exportStep?.run).toContain("NEMOCLAW_E2E_USE_HOSTED_INFERENCE=1");
-    expect(exportStep?.run).toContain("NEMOCLAW_PROVIDER=custom");
-    expect(exportStep?.run).toContain("NEMOCLAW_ENDPOINT_URL=https://inference-api.nvidia.com/v1");
-    expect(exportStep?.run).toContain("NEMOCLAW_MODEL=nvidia/nvidia/nemotron-3-super-v3");
-    expect(exportStep?.run).toContain("NEMOCLAW_COMPAT_MODEL=nvidia/nvidia/nemotron-3-super-v3");
-    expect(exportStep?.run).toContain("NEMOCLAW_PREFERRED_API=openai-completions");
-    expect(exportStep?.run).toContain("COMPATIBLE_API_KEY=%s");
+    expect(exportStep?.uses).toBe("./workflow-actions/.github/actions/export-e2e-hosted-inference");
+    expect(exportStep?.with?.["nvidia-inference-api-key"]).toBe(RAW_HOSTED_INFERENCE_SECRET);
+    expect(exportStep?.with?.["nvidia-api-key"]).toBe(RAW_PUBLIC_NVIDIA_SECRET);
+    expect(exportStep?.with?.["export-nvidia-api-key"]).toBe("${{ inputs.nvidia_api_key_alias }}");
+
+    const runStep = runnerWorkflow.jobs.run.steps.find((step) => step.name === "Run E2E script");
+    expect(runStep?.env?.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
+    expect(runStep?.env?.COMPATIBLE_API_KEY).toBeUndefined();
+    expect(runStep?.env?.NVIDIA_API_KEY).toBeUndefined();
 
     expect(hostedJobs.length).toBeGreaterThan(20);
     for (const [name, job] of hostedJobs) {
       expect(job.with?.nvidia_secret_as_compatible_api_key, name).toBeUndefined();
+      expect(String(job.with?.nvidia_api_key_alias) === "true", name).toBe(
+        HOSTED_INFERENCE_LEGACY_NVIDIA_API_KEY_SCRIPT_JOB_SET.has(name),
+      );
+    }
+  });
+
+  it("exposes the reusable shell NVIDIA_API_KEY alias only to documented legacy consumers", () => {
+    const aliasJobs = reusableNightlyJobs(nightlyWorkflow)
+      .filter(([, job]) => String(job.with?.nvidia_api_key_alias) === "true")
+      .map(([name]) => name)
+      .sort();
+
+    expect(aliasJobs).toEqual([...HOSTED_INFERENCE_LEGACY_NVIDIA_API_KEY_SCRIPT_JOBS].sort());
+    const shellScriptJobs = reusableNightlyJobs(nightlyWorkflow)
+      .map(([name, job]) => ({ name, job, script: String(job.with?.script ?? "") }))
+      .filter(({ script }) => script.startsWith("test/e2e/") && existsSync(script));
+
+    for (const { name, job, script } of shellScriptJobs) {
+      const readsLegacyAlias = readFileSync(script, "utf8").includes("NVIDIA_API_KEY");
+      expect(HOSTED_INFERENCE_LEGACY_NVIDIA_API_KEY_SCRIPT_JOB_SET.has(name), name).toBe(
+        readsLegacyAlias && String(job.with?.nvidia_api_key) === "true",
+      );
     }
   });
 

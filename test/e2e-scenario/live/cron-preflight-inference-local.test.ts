@@ -19,6 +19,7 @@ import { type SandboxClient, validateSandboxName } from "../fixtures/clients/san
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { shouldRunLiveE2EScenarios } from "../fixtures/live-project-gate.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import { installShOnboardArgs } from "./install-sh-onboard.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
@@ -265,20 +266,16 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
 
     let install: ShellProbeResult | undefined;
     for (let attempt = 1; attempt <= INSTALL_ATTEMPTS; attempt += 1) {
-      install = await host.command(
-        "bash",
-        ["install.sh", "--non-interactive", "--yes-i-accept-third-party-software"],
-        {
-          artifactName:
-            attempt === 1
-              ? "phase-1-install-cron-preflight"
-              : `phase-1-install-cron-preflight-attempt-${attempt}`,
-          cwd: REPO_ROOT,
-          env: commandEnv(apiKey),
-          redactionValues: [apiKey],
-          timeoutMs: 20 * 60_000,
-        },
-      );
+      install = await host.command("bash", installShOnboardArgs(), {
+        artifactName:
+          attempt === 1
+            ? "phase-1-install-cron-preflight"
+            : `phase-1-install-cron-preflight-attempt-${attempt}`,
+        cwd: REPO_ROOT,
+        env: commandEnv(apiKey),
+        redactionValues: [apiKey],
+        timeoutMs: 20 * 60_000,
+      });
       if (install.exitCode === 0) break;
       if (isTransientProviderValidationFailure(install) && attempt < INSTALL_ATTEMPTS) {
         await new Promise((resolve) => setTimeout(resolve, 10_000 * attempt));
