@@ -32,6 +32,17 @@ const mockedReadFileSync = vi.mocked(readFileSync);
 const mockedLoadOnboardConfig = vi.mocked(loadOnboardConfig);
 const originalReadFileSync = (await vi.importActual<typeof import("node:fs")>("node:fs"))
   .readFileSync;
+let stderrWrite: ReturnType<typeof vi.spyOn>;
+
+function mockStderrWrite(): void {
+  stderrWrite = vi
+    .spyOn(process.stderr, "write")
+    .mockImplementation((() => true) as typeof process.stderr.write);
+}
+
+function stderrOutput(): string {
+  return stderrWrite.mock.calls.map(([chunk]) => String(chunk)).join("");
+}
 
 function mockMissingOpenClawConfig(): void {
   mockedReadFileSync.mockReset();
@@ -67,6 +78,7 @@ function createMockApi(): OpenClawPluginApi {
 describe("plugin registration", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockStderrWrite();
     mockMissingOpenClawConfig();
     mockedLoadOnboardConfig.mockReturnValue(null);
   });
@@ -140,8 +152,15 @@ describe("plugin registration", () => {
     expect(providerArg.models?.chat).toEqual([
       expect.objectContaining({ id: "inference/nvidia/live-model", label: "nvidia/live-model" }),
     ]);
-    const logLines = vi.mocked(api.logger.info).mock.calls.map(([message]) => message);
-    expect(logLines.some((line) => line.includes("Model:     nvidia/live-model"))).toBe(true);
+    expect(stderrOutput()).toContain("Model:     nvidia/live-model");
+  });
+
+  it("writes the registration banner to stderr instead of plugin info logs", () => {
+    const api = createMockApi();
+    register(api);
+
+    expect(stderrOutput()).toContain("NemoClaw registered");
+    expect(api.logger.info).not.toHaveBeenCalled();
   });
 
   it("falls back to onboard config when openclaw.json has no primary model", () => {
@@ -178,18 +197,17 @@ describe("plugin registration", () => {
       expect.objectContaining({ id: "nvidia/nemotron-3-nano-30b-a3b" }),
     ]);
 
-    const logLines = vi.mocked(api.logger.info).mock.calls.map(([message]) => message);
-    expect(logLines.some((line) => line.includes("Endpoint:  build.nvidia.com"))).toBe(true);
-    expect(logLines.some((line) => line.includes("Provider:  NVIDIA Endpoints"))).toBe(true);
-    expect(
-      logLines.some((line) => line.includes("Model:     nvidia/nemotron-3-super-120b-a12b")),
-    ).toBe(true);
+    const stderr = stderrOutput();
+    expect(stderr).toContain("Endpoint:  build.nvidia.com");
+    expect(stderr).toContain("Provider:  NVIDIA Endpoints");
+    expect(stderr).toContain("Model:     nvidia/nemotron-3-super-120b-a12b");
   });
 });
 
 describe("before_tool_call secret scanner hook (#1233)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockStderrWrite();
     mockMissingOpenClawConfig();
     mockedLoadOnboardConfig.mockReturnValue(null);
   });
