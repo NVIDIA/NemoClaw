@@ -31,21 +31,24 @@ const TOUCHED_ENV = [
 ];
 
 describe("issue #5667: hosted inference default model namespace", () => {
-  let saved: Record<string, string | undefined>;
+  // Snapshot the whole environment and restore it wholesale so the teardown
+  // stays linear (no per-key conditional): clear every key, then repopulate
+  // from the snapshot. Keys added during a test are dropped; original values
+  // (all strings) are reinstated exactly.
+  let envSnapshot: Record<string, string | undefined>;
 
   beforeEach(() => {
-    saved = {};
+    envSnapshot = { ...process.env };
     for (const key of TOUCHED_ENV) {
-      saved[key] = process.env[key];
       delete process.env[key];
     }
   });
 
   afterEach(() => {
-    for (const key of TOUCHED_ENV) {
-      if (saved[key] === undefined) delete process.env[key];
-      else process.env[key] = saved[key];
+    for (const key of Object.keys(process.env)) {
+      delete process.env[key];
     }
+    Object.assign(process.env, envSnapshot);
   });
 
   it("default hosted inference model has a single nvidia/ namespace segment", () => {
