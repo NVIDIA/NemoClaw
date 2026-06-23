@@ -7781,7 +7781,6 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   if (jetsonJob.if !== explicitOnlyFreeStandingJobIf("jetson-nvmap-gpu-vitest", "jetson-nvmap-gpu")) {
     errors.push("jetson-nvmap-gpu-vitest job must run only when explicitly selected");
   }
-
   validateFreeStandingJobSelector(
     errors,
     jobs,
@@ -7892,6 +7891,21 @@ export function validateE2eVitestScenariosWorkflowBoundary(
     if (!reportScript.includes("default-enabled free-standing jobs")) {
       errors.push(
         "step 'Post Vitest scenario results to PR' run script must say empty dispatch uses default-enabled free-standing jobs",
+      );
+    }
+    if (!reportScript.includes("Explicit-only jobs skipped")) {
+      errors.push(
+        "step 'Post Vitest scenario results to PR' run script must list explicit-only skipped jobs on default dispatch",
+      );
+    }
+    if (!reportScript.includes("jobs=${job}") || !reportScript.includes("jetson-nvmap-gpu-vitest")) {
+      errors.push(
+        "step 'Post Vitest scenario results to PR' run script must document the explicit Jetson jobs selector",
+      );
+    }
+    if (!reportScript.includes("scenarios=${scenario}") || !reportScript.includes("jetson-nvmap-gpu")) {
+      errors.push(
+        "step 'Post Vitest scenario results to PR' run script must document the explicit Jetson scenario selector",
       );
     }
     for (const forbidden of [
