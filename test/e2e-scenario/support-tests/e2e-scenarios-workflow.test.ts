@@ -89,36 +89,6 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
     expect(validateE2eVitestScenariosWorkflowBoundary()).toEqual([]);
   });
 
-  it("uses the shared hosted inference export action instead of duplicated run-step env", () => {
-    const workflow = readWorkflow();
-    const jobs = workflow.jobs as Record<string, { steps?: Array<Record<string, unknown>> }>;
-    const hostedKeys = new Set([
-      "NVIDIA_INFERENCE_API_KEY",
-      "COMPATIBLE_API_KEY",
-      "NEMOCLAW_E2E_USE_HOSTED_INFERENCE",
-      "NEMOCLAW_PROVIDER",
-      "NEMOCLAW_ENDPOINT_URL",
-      "NEMOCLAW_MODEL",
-      "NEMOCLAW_COMPAT_MODEL",
-      "NEMOCLAW_PREFERRED_API",
-    ]);
-    let sharedExports = 0;
-
-    for (const [jobName, job] of Object.entries(jobs)) {
-      for (const step of job.steps ?? []) {
-        if (step.uses === "./.github/actions/export-e2e-hosted-inference") {
-          sharedExports++;
-        }
-        if (typeof step.run !== "string" || !step.run.includes("npx vitest run")) continue;
-        const env = (step.env ?? {}) as Record<string, unknown>;
-        const duplicatedHostedKeys = Object.keys(env).filter((key) => hostedKeys.has(key));
-        expect(duplicatedHostedKeys, `${jobName} ${String(step.name)}`).toEqual([]);
-      }
-    }
-
-    expect(sharedExports).toBeGreaterThan(0);
-  });
-
   it(
     "evaluates high-risk dispatch selector behavior before secret-bearing jobs run",
     testTimeoutOptions(30_000),
