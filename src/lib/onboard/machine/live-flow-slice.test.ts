@@ -204,6 +204,7 @@ describe("runLiveOnboardFlowSlice", () => {
         context: { value: 1 },
         runtime: liveRuntime.runtime,
         phases: [blocked],
+
         runWhenState: ["preflight"],
         compatibilityWhenState: ["sandbox"],
         runSlice,
