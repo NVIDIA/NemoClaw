@@ -3298,7 +3298,9 @@ sys.exit(exit_code)
     const output = `${result.stdout}${result.stderr}`;
     expect(result.status, output).toBe(0);
     expect(output).toMatch(/Detected DGX Spark/);
-    expect(output).toMatch(/Express install will configure managed local vLLM with model custom-qwen3\.6/);
+    expect(output).toMatch(
+      /Express install will configure managed local vLLM with model custom-qwen3\.6/,
+    );
     expect(output).toMatch(
       /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-vllm MODEL= VLLM_MODEL=custom-qwen3\.6 POLICY=suggested YES=1 SANDBOX=my-spark-assistant/,
     );
