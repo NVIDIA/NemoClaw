@@ -71,13 +71,13 @@ function createHarness(options: HarnessOptions = {}): ShieldsHarness {
   vi.spyOn(dockerExec, "dockerExecFileSync").mockImplementation((argv: unknown) => {
     if (options.dockerExecFileSync) return options.dockerExecFileSync(argv);
     const args = Array.isArray(argv) ? argv.map(String) : [];
-    if (args.includes("sha256sum")) return "a".repeat(64) + "  /sandbox/.openclaw/openclaw.json\n";
-    if (args.includes("stat")) {
-      return args.at(-1) === "/sandbox/.openclaw"
-        ? "2770 sandbox:sandbox\n"
-        : "660 sandbox:sandbox\n";
-    }
-    return "";
+    return args.includes("sha256sum")
+      ? "a".repeat(64) + "  /sandbox/.openclaw/openclaw.json\n"
+      : args.includes("stat")
+        ? args.at(-1) === "/sandbox/.openclaw"
+          ? "2770 sandbox:sandbox\n"
+          : "660 sandbox:sandbox\n"
+        : "";
   });
   vi.spyOn(audit, "appendAuditEntry").mockImplementation(() => undefined);
 
