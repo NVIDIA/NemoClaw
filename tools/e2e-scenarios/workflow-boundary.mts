@@ -4141,6 +4141,135 @@ function validateHermesRootEntrypointSmokeVitestJob(
   }
 }
 
+function validateHermesSandboxSecretBoundaryVitestJob(
+  errors: string[],
+  jobs: WorkflowRecord,
+): void {
+  const jobName = "hermes-sandbox-secret-boundary-vitest";
+  const scenarioName = "hermes-sandbox-secret-boundary";
+  const job = asRecord(jobs[jobName]);
+  if (Object.keys(job).length === 0) {
+    errors.push("workflow missing hermes-sandbox-secret-boundary-vitest job");
+    return;
+  }
+
+  if (job["runs-on"] !== "ubuntu-latest") {
+    errors.push("hermes-sandbox-secret-boundary-vitest job must run on ubuntu-latest");
+  }
+  validateFreeStandingJobSelector(errors, jobs, jobName, scenarioName);
+  if (job["timeout-minutes"] !== 60) {
+    errors.push("hermes-sandbox-secret-boundary-vitest job must keep the 60 minute timeout");
+  }
+
+  const jobEnv = asRecord(job.env);
+  if (jobEnv.NEMOCLAW_RUN_E2E_SCENARIOS !== "1") {
+    errors.push("hermes-sandbox-secret-boundary-vitest job must set NEMOCLAW_RUN_E2E_SCENARIOS=1");
+  }
+  if (
+    jobEnv.E2E_ARTIFACT_DIR !==
+    "${{ github.workspace }}/e2e-artifacts/vitest/hermes-sandbox-secret-boundary"
+  ) {
+    errors.push(
+      "hermes-sandbox-secret-boundary-vitest job must write artifacts under e2e-artifacts/vitest/hermes-sandbox-secret-boundary",
+    );
+  }
+  for (const secret of ["NVIDIA_INFERENCE_API_KEY", "DOCKERHUB_USERNAME", "DOCKERHUB_TOKEN"]) {
+    requireEnvDoesNotExposeSecret(
+      errors,
+      "hermes-sandbox-secret-boundary-vitest job",
+      jobEnv,
+      secret,
+    );
+  }
+
+  const steps = asSteps(job.steps);
+  requireNoDispatchInputInterpolation(errors, steps);
+  for (const step of steps) {
+    const stepName = `hermes-sandbox-secret-boundary-vitest step '${
+      step.name ?? step.uses ?? "<unnamed>"
+    }'`;
+    const stepEnv = asRecord(step.env);
+    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_INFERENCE_API_KEY");
+    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_USERNAME");
+    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_TOKEN");
+    requireNoDockerHubAuthInRun(errors, stepName, stringValue(step.run));
+  }
+
+  if (namedStep(steps, "Authenticate to Docker Hub")) {
+    errors.push(
+      "hermes-sandbox-secret-boundary-vitest must not authenticate to Docker Hub before branch-controlled test code runs",
+    );
+  }
+
+  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
+  if (!checkout) errors.push("hermes-sandbox-secret-boundary-vitest job missing checkout step");
+  requireFullShaAction(errors, checkout, "hermes-sandbox-secret-boundary-vitest checkout");
+  if (asRecord(checkout?.with)["persist-credentials"] !== false) {
+    errors.push(
+      "hermes-sandbox-secret-boundary-vitest checkout step must set persist-credentials=false",
+    );
+  }
+
+  const setupNode = namedStep(steps, "Set up Node");
+  if (!setupNode)
+    errors.push("hermes-sandbox-secret-boundary-vitest job missing step: Set up Node");
+  requireFullShaAction(errors, setupNode, "hermes-sandbox-secret-boundary-vitest setup-node");
+
+  const installRootDependencies = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Install root dependencies",
+  );
+  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
+
+  const runVitest = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Run Hermes sandbox secret-boundary live test",
+  );
+  requireRunContains(errors, runVitest, "npx vitest run --project e2e-scenarios-live");
+  requireRunContains(
+    errors,
+    runVitest,
+    "test/e2e-scenario/live/hermes-sandbox-secret-boundary.test.ts",
+  );
+  requireRunDoesNotContain(errors, runVitest, "${{ inputs.");
+
+  const upload = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Upload Hermes sandbox secret-boundary artifacts",
+  );
+  requireFullShaAction(errors, upload, "hermes-sandbox-secret-boundary-vitest upload-artifact");
+  const uploadWith = asRecord(upload?.with);
+  if (uploadWith.name !== "e2e-vitest-scenarios-hermes-sandbox-secret-boundary") {
+    errors.push("hermes-sandbox-secret-boundary-vitest artifact upload name must be stable");
+  }
+  const uploadPath = stringValue(uploadWith.path);
+  requireUploadPathContains(
+    errors,
+    uploadPath,
+    "e2e-artifacts/vitest/hermes-sandbox-secret-boundary/",
+  );
+  if (uploadWith["include-hidden-files"] !== false) {
+    errors.push(
+      "hermes-sandbox-secret-boundary-vitest artifact upload must set include-hidden-files: false",
+    );
+  }
+  if (uploadWith["if-no-files-found"] !== "ignore") {
+    errors.push(
+      "hermes-sandbox-secret-boundary-vitest artifact upload must ignore missing fixture artifacts",
+    );
+  }
+  if (uploadWith["retention-days"] !== 14) {
+    errors.push("hermes-sandbox-secret-boundary-vitest artifact upload retention-days must be 14");
+  }
+}
+
+
 function validateDiagnosticsVitestJob(
   errors: string[],
   jobs: WorkflowRecord,
@@ -7564,6 +7693,7 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   validateHermesE2EVitestJob(errors, jobs);
   validateFreeStandingJobSelector(errors, jobs, "hermes-discord-vitest", "hermes-discord");
   validateHermesRootEntrypointSmokeVitestJob(errors, jobs);
+  validateHermesSandboxSecretBoundaryVitestJob(errors, jobs);
   validateNetworkPolicyVitestJob(errors, jobs);
   validateCommonEgressAgentVitestJob(errors, jobs);
   validateShieldsConfigVitestJob(errors, jobs);
@@ -7618,6 +7748,8 @@ export function validateE2eVitestScenariosWorkflowBoundary(
     "gateway-health-honest-vitest",
     "gateway-health-honest",
   );
+
+  validateFreeStandingJobSelector(errors, jobs, "jetson-nvmap-gpu-vitest", "jetson-nvmap-gpu");
 
   validateFreeStandingJobSelector(
     errors,
