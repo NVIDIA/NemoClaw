@@ -313,7 +313,11 @@ describe("core onboard flow phases", () => {
     expect(recorded).toEqual(["sandbox", "openclaw"]);
   });
 
-  it("lets resume sessions already at policy application pass through core compatibility", async () => {
+  it.each([
+    "policies",
+    "finalizing",
+    "post_verify",
+  ] as const)("lets resume sessions at %s pass through core compatibility", async (state) => {
     const recorded: string[] = [];
     const phases: readonly OnboardSequencePhase<CoreContext>[] = [
       {
@@ -333,7 +337,7 @@ describe("core onboard flow phases", () => {
           createSession({
             machine: {
               version: 1,
-              state: "policies",
+              state,
               stateEnteredAt: "2026-06-09T00:00:00.000Z",
               revision: 7,
             },
@@ -348,6 +352,38 @@ describe("core onboard flow phases", () => {
     });
 
     expect(recorded).toEqual(["sandbox", "openclaw"]);
+  });
+
+  it.each([
+    "complete",
+    "failed",
+  ] as const)("rejects terminal %s sessions before core compatibility side effects", async (state) => {
+    const phase: OnboardSequencePhase<CoreContext> = {
+      state: "provider_selection",
+      run: vi.fn((ctx) => ({ context: ctx, result: advanceTo("sandbox") })),
+    };
+
+    await expect(
+      runCoreOnboardFlowSlice({
+        context: context({ resume: true }),
+        runtime: {
+          session: async () =>
+            createSession({
+              machine: {
+                version: 1,
+                state,
+                stateEnteredAt: "2026-06-09T00:00:00.000Z",
+                revision: 7,
+              },
+            }),
+          applyResult: async () => createSession(),
+        },
+        phases: [phase],
+        resume: true,
+        recordStateResult: async () => undefined,
+      }),
+    ).rejects.toThrow("Unexpected onboarding live flow state before slice entry");
+    expect(phase.run).not.toHaveBeenCalled();
   });
 
   it("keeps non-resume ahead-state sessions on the compatibility path", async () => {

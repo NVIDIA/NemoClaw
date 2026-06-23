@@ -420,7 +420,15 @@ describe("initial onboard flow phases", () => {
     expect(recorded).toEqual(["gateway", "provider_selection"]);
   });
 
-  it("lets resume sessions already at policy application pass through initial compatibility", async () => {
+  it.each([
+    "inference",
+    "sandbox",
+    "openclaw",
+    "agent_setup",
+    "policies",
+    "finalizing",
+    "post_verify",
+  ] as const)("lets resume sessions at %s pass through initial compatibility", async (state) => {
     const recorded: string[] = [];
     const phases: readonly OnboardSequencePhase<Context>[] = [
       {
@@ -439,7 +447,7 @@ describe("initial onboard flow phases", () => {
         createSession({
           machine: {
             version: 1,
-            state: "policies",
+            state,
             stateEnteredAt: "2026-06-09T00:00:00.000Z",
             revision: 7,
           },
@@ -453,6 +461,36 @@ describe("initial onboard flow phases", () => {
     });
 
     expect(recorded).toEqual(["gateway", "provider_selection"]);
+  });
+
+  it.each([
+    "complete",
+    "failed",
+  ] as const)("rejects terminal %s sessions before initial compatibility side effects", async (state) => {
+    const phase: OnboardSequencePhase<Context> = {
+      state: "preflight",
+      run: vi.fn((ctx) => ({ context: ctx, result: advanceTo("gateway") })),
+    };
+
+    await expect(
+      runInitialOnboardFlowSlice({
+        context: context({ resume: true }),
+        runtime: runtime(
+          createSession({
+            machine: {
+              version: 1,
+              state,
+              stateEnteredAt: "2026-06-09T00:00:00.000Z",
+              revision: 7,
+            },
+          }),
+        ),
+        phases: [phase],
+        resume: true,
+        recordStateResult: async () => undefined,
+      }),
+    ).rejects.toThrow("Unexpected onboarding live flow state before slice entry");
+    expect(phase.run).not.toHaveBeenCalled();
   });
 
   it("uses the strict runner for fresh init sessions", async () => {
