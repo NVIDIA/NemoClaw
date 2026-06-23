@@ -2125,15 +2125,18 @@ run_onboard() {
           } else if (data.status === "failed" || data.failure) {
             out = "failed";
           } else if (data.status === "in_progress") {
-            // A run interrupted before sandbox creation has no sandbox to
-            // resume (no sandboxName recorded and the sandbox step never
-            // completed). Auto-attaching --resume here dead-ends at the CLI
-            // non-interactive resume guard (#2753) with no recovery path for
-            // curl|bash installs (#5626), so start fresh instead. Only
-            // auto-resume once a sandbox actually exists to resume into.
+            // A run interrupted before confirmed sandbox creation has no
+            // sandbox to resume. Auto-attaching --resume here dead-ends at the
+            // CLI non-interactive resume guard (#2753) with no recovery path
+            // for curl|bash installs (#5626), so start fresh instead. Only
+            // auto-resume once the session has both the sandbox name and the
+            // completed sandbox step that onboard-session.ts records.
             const sandboxCreated =
-              (typeof data.sandboxName === "string" && data.sandboxName.trim() !== "") ||
-              (data.steps && data.steps.sandbox && data.steps.sandbox.status === "complete");
+              typeof data.sandboxName === "string" &&
+              data.sandboxName.trim() !== "" &&
+              data.steps &&
+              data.steps.sandbox &&
+              data.steps.sandbox.status === "complete";
             out = sandboxCreated ? "resume" : "fresh-recover";
           } else {
             // Unknown or missing status — do not auto-resume a file we

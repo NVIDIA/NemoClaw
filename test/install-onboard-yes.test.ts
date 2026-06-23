@@ -171,6 +171,33 @@ describe("install.sh run_onboard — session classification (#5626)", () => {
     expect(argv).not.toContain("--fresh");
   });
 
+  it.each([
+    {
+      name: "sandbox name without completed sandbox step",
+      session: {
+        version: 1,
+        status: "in_progress",
+        resumable: true,
+        sandboxName: "phantom-box",
+        steps: { sandbox: { status: "pending" } },
+      },
+    },
+    {
+      name: "completed sandbox step without sandbox name",
+      session: {
+        version: 1,
+        status: "in_progress",
+        resumable: true,
+        sandboxName: null,
+        steps: { sandbox: { status: "complete" } },
+      },
+    },
+  ])("starts fresh for $name", ({ session }) => {
+    const argv = runOnboardWithSession({ NON_INTERACTIVE: "1" }, session);
+    expect(argv).toContain("--fresh");
+    expect(argv).not.toContain("--resume");
+  });
+
   it("does not resume or reset a completed session", () => {
     const argv = runOnboardWithSession(
       { NON_INTERACTIVE: "1" },
