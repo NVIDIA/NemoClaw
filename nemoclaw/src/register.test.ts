@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawPluginApi } from "./index.js";
 
 vi.mock("node:fs", async (importOriginal) => {
@@ -81,6 +81,10 @@ describe("plugin registration", () => {
     mockStderrWrite();
     mockMissingOpenClawConfig();
     mockedLoadOnboardConfig.mockReturnValue(null);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it("registers a slash command", () => {
@@ -210,6 +214,10 @@ describe("before_tool_call secret scanner hook (#1233)", () => {
     mockStderrWrite();
     mockMissingOpenClawConfig();
     mockedLoadOnboardConfig.mockReturnValue(null);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   function getHookHandler(api: OpenClawPluginApi) {
