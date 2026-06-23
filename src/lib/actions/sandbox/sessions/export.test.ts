@@ -610,6 +610,44 @@ describe("exportSandboxSessions (hermes sandbox)", () => {
     expect(result.format).toBe("jsonl");
   });
 
+  it("warns about a non-zero in-sandbox cleanup exit so a leftover sensitive JSONL never disappears silently from the sandbox", async () => {
+    getSandboxMock.mockReturnValue({ name: "alpha", agent: "hermes" });
+    runMock
+      .mockReturnValueOnce(makeRun(0))
+      .mockReturnValueOnce(makeRun(0))
+      .mockReturnValueOnce(makeRun(2));
+    const consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    try {
+      const result = await exportSandboxSessions({ sandboxName: "alpha" });
+      expect(result.agent).toBe("hermes");
+      expect(consoleWarnSpy).toHaveBeenCalledWith(
+        expect.stringMatching(
+          /failed to remove in-sandbox staging file '\/sandbox\/\.nemoclaw-staging\/sessions-export-hermes-[0-9a-f]+\.jsonl'.*sandbox 'alpha'.*exit 2/,
+        ),
+      );
+    } finally {
+      consoleWarnSpy.mockRestore();
+    }
+  });
+
+  it("warns about a non-zero in-sandbox cleanup exit without masking the primary export error", async () => {
+    getSandboxMock.mockReturnValue({ name: "alpha", agent: "hermes" });
+    runMock.mockReturnValueOnce(makeRun(1)).mockReturnValueOnce(makeRun(3));
+    const consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    try {
+      await expect(exportSandboxSessions({ sandboxName: "alpha" })).rejects.toThrow(
+        /Failed to export hermes sessions/,
+      );
+      expect(consoleWarnSpy).toHaveBeenCalledWith(
+        expect.stringMatching(/failed to remove in-sandbox staging file.*exit 3/),
+      );
+    } finally {
+      consoleWarnSpy.mockRestore();
+    }
+  });
+
   it("warns with the local staging directory when host cleanup fails after a finalization error so a leftover JSONL with pasted secrets does not vanish silently", async () => {
     getSandboxMock.mockReturnValue({ name: "alpha", agent: "hermes" });
     chmodSpy.mockImplementation(() => {

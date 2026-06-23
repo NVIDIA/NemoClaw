@@ -263,6 +263,49 @@ export async function exportSandboxSessions(
   return result;
 }
 
+// Scope boundary for `nemoclaw <name> sessions export` on a Hermes sandbox:
+//
+//   - Invalid state addressed: Hermes owns its session store as an in-sandbox
+//     SQLite database that is not directly reachable from the host. Exporting
+//     it therefore requires a two-hop orchestration (in-sandbox export, then
+//     host-side download), the same shape as the OpenClaw path above but with
+//     a different upstream CLI and on-disk contract.
+//   - Source boundary:
+//       * NemoClaw side (this helper): pick a unique in-sandbox staging path
+//         under `/sandbox/.nemoclaw-staging`, run `hermes sessions export`
+//         under a `umask 077` + `chmod 600` envelope, download the staged
+//         JSONL via `openshell sandbox download`, finalise it onto the host
+//         destination via atomic chmod-then-rename, and best-effort clean up
+//         the in-sandbox staging file. The cleanup result is captured and
+//         surfaced as a warning when non-zero so a sensitive session JSONL
+//         is never left behind in the sandbox without telling the user.
+//       * Hermes side (upstream `hermes` CLI staged under `agents/hermes/`):
+//         owns the SQLite session store and the `hermes sessions export
+//         <path>` contract that emits a single JSONL stream. NemoClaw never
+//         reads or rewrites that store and only invokes the upstream CLI;
+//         changing the store layout or the export shape are upstream
+//         concerns.
+//   - Source-fix constraint: `openshell sandbox download` refuses any source
+//     path outside `/sandbox`, so the staging file must live under
+//     `/sandbox/.nemoclaw-staging` (the same hidden, NemoClaw-owned prefix
+//     the OpenClaw path uses). NemoClaw cannot read the Hermes SQLite
+//     database directly from the host, so the two-hop orchestration is the
+//     only safe option until Hermes exposes a host-reachable export RPC.
+//   - Regression-test coverage:
+//       * Host-side: `export.test.ts > exportSandboxSessions (hermes sandbox)`
+//         covers the `hermes sessions export` route, the
+//         `/sandbox/.nemoclaw-staging/sessions-export-hermes-<rand>.jsonl`
+//         path shape, atomic chmod-then-rename finalisation, the
+//         `--agent hermes` no-op alias, refusal of OpenClaw-only options,
+//         and the remote cleanup warning on a non-zero `rm -f` exit.
+//       * E2E (stub openshell): `test/sandbox-sessions-export-cli.test.ts`
+//         exercises the dispatch through the public CLI with a fake
+//         openshell binary, proving the `exec hermes sessions export`,
+//         `download`, and `exec rm` wire calls happen in the expected order.
+//   - Removal condition: this Hermes branch can be removed when Hermes
+//     exposes a host-reachable export RPC (or NemoClaw is granted a stable
+//     contract for the SQLite store layout), making the two-hop in-sandbox
+//     staging + download orchestration unnecessary.
 async function exportHermesSessions(opts: SessionsExportOptions): Promise<SessionsExportResult> {
   rejectOpenClawOnlyOptions(opts);
   await ensureLiveSandboxOrExit(opts.sandboxName, { allowNonReadyPhase: true });
@@ -301,10 +344,18 @@ async function exportHermesSessions(opts: SessionsExportOptions): Promise<Sessio
     fs.chmodSync(hostStagingPath, 0o600);
     fs.renameSync(hostStagingPath, hostDest);
   } finally {
-    runOpenshell(["sandbox", "exec", "--name", opts.sandboxName, "--", "rm", "-f", stagingRemote], {
-      ignoreError: true,
-      stdio: "ignore",
-    });
+    // Best-effort cleanup of the in-sandbox staging JSONL. The host throw (if
+    // any) is already in flight, so a console.warn here cannot mask it — the
+    // primary error still propagates once the `finally` block returns.
+    const remoteCleanup = runOpenshell(
+      ["sandbox", "exec", "--name", opts.sandboxName, "--", "rm", "-f", stagingRemote],
+      { ignoreError: true, stdio: "ignore" },
+    );
+    if (remoteCleanup.status !== 0) {
+      console.warn(
+        `  Warning: failed to remove in-sandbox staging file '${stagingRemote}' from sandbox '${opts.sandboxName}' (exit ${remoteCleanup.status}). The file may still contain a session JSONL with pasted secrets; remove it manually with \`${CLI_NAME} sandbox exec --name ${opts.sandboxName} -- rm -f ${stagingRemote}\`.`,
+      );
+    }
     try {
       fs.rmSync(hostStagingDir, { recursive: true, force: true });
     } catch (cleanupErr) {
