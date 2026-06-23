@@ -188,17 +188,16 @@ detect_express_platform
     );
   });
 
-  it("skips express install without a controlling TTY", () => {
-    if (process.platform === "darwin") {
-      return;
-    }
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-express-no-tty-"));
-    const result = spawnSync(
-      "setsid",
-      [
-        "bash",
-        "-c",
-        `
+  it.skipIf(process.platform === "darwin")(
+    "skips express install without a controlling TTY",
+    () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-express-no-tty-"));
+      const result = spawnSync(
+        "setsid",
+        [
+          "bash",
+          "-c",
+          `
 source "$INSTALLER_UNDER_TEST" >/dev/null
 detect_express_platform() { printf "DGX Spark"; }
 NON_INTERACTIVE=""
@@ -209,25 +208,26 @@ printf "RESULT NON_INTERACTIVE=%s SUDO_MODE=%s PROVIDER=%s MODEL=%s VLLM_MODEL=%
   "\${NON_INTERACTIVE:-}" "\${NEMOCLAW_NON_INTERACTIVE_SUDO_MODE:-}" "\${NEMOCLAW_PROVIDER:-}" "\${NEMOCLAW_MODEL:-}" \\
   "\${NEMOCLAW_VLLM_MODEL:-}" "\${NEMOCLAW_POLICY_MODE:-}" "\${NEMOCLAW_YES:-}" "\${NEMOCLAW_SANDBOX_NAME:-}"
 `,
-      ],
-      {
-        cwd: tmp,
-        encoding: "utf-8",
-        input: "",
-        env: {
-          HOME: tmp,
-          PATH: TEST_SYSTEM_PATH,
-          INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
+        ],
+        {
+          cwd: tmp,
+          encoding: "utf-8",
+          input: "",
+          env: {
+            HOME: tmp,
+            PATH: TEST_SYSTEM_PATH,
+            INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
+          },
         },
-      },
-    );
-    const output = `${result.stdout}${result.stderr}`;
-    expect(result.status, output).toBe(0);
-    expect(output).toMatch(/Detected DGX Spark/);
-    expect(output).toMatch(/Skipping express prompt \(no TTY\)/);
-    expect(output).not.toMatch(/Run express install/);
-    expect(output).toMatch(
-      /RESULT NON_INTERACTIVE= SUDO_MODE= PROVIDER= MODEL= VLLM_MODEL= POLICY= YES= SANDBOX=/,
-    );
-  });
+      );
+      const output = `${result.stdout}${result.stderr}`;
+      expect(result.status, output).toBe(0);
+      expect(output).toMatch(/Detected DGX Spark/);
+      expect(output).toMatch(/Skipping express prompt \(no TTY\)/);
+      expect(output).not.toMatch(/Run express install/);
+      expect(output).toMatch(
+        /RESULT NON_INTERACTIVE= SUDO_MODE= PROVIDER= MODEL= VLLM_MODEL= POLICY= YES= SANDBOX=/,
+      );
+    },
+  );
 });
