@@ -131,9 +131,9 @@ function createRuntimeHarness(overrides: Partial<Session> = {}) {
       stepOptionCalls.push({ method: "markStepFailed", options });
       return updateSession((current) => {
         current.steps[stepName].status = "failed";
-        if (shouldUpdateMachine(options)) {
-          current.failure = { step: stepName, message: message ?? null, recordedAt: "now" };
-        }
+        current.failure = shouldUpdateMachine(options)
+          ? { step: stepName, message: message ?? null, recordedAt: "now" }
+          : current.failure;
         return current;
       });
     },
