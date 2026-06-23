@@ -93,7 +93,7 @@ describe("runAgentPassthrough", () => {
     expect(all).toMatch(/EACCES/);
   });
 
-  it("rejects with exit 2 when no target selector flag is present", async () => {
+  it("rejects with exit 2 when no target selector flag is present on a Ready sandbox", async () => {
     execMock.mockClear();
     ensureLiveMock.mockClear();
     getSandboxMock.mockReturnValueOnce({ agent: "openclaw" });
@@ -102,7 +102,7 @@ describe("runAgentPassthrough", () => {
       runAgentPassthrough("alpha", { extraArgs: ["-m", "hi"] }, { process: proc }),
     ).rejects.toThrow("__exit:2");
     expect(execMock).not.toHaveBeenCalled();
-    expect(ensureLiveMock).not.toHaveBeenCalled();
+    expect(ensureLiveMock).toHaveBeenCalledWith("alpha", { allowNonReadyPhase: true });
     expect(exit).toHaveBeenCalledWith(2);
     const all = writes.join("");
     expect(all).toMatch(/No target session selected/);
@@ -110,15 +110,33 @@ describe("runAgentPassthrough", () => {
     expect(all).toMatch(/openclaw agents list/);
   });
 
-  it("rejects with exit 2 when extraArgs is empty", async () => {
+  it("rejects with exit 2 when extraArgs is empty on a Ready sandbox", async () => {
     execMock.mockClear();
     ensureLiveMock.mockClear();
     getSandboxMock.mockReturnValueOnce({ agent: "openclaw" });
     const { exit, proc } = makeProcMock();
     await expect(runAgentPassthrough("alpha", {}, { process: proc })).rejects.toThrow("__exit:2");
     expect(execMock).not.toHaveBeenCalled();
-    expect(ensureLiveMock).not.toHaveBeenCalled();
+    expect(ensureLiveMock).toHaveBeenCalledWith("alpha", { allowNonReadyPhase: true });
     expect(exit).toHaveBeenCalledWith(2);
+  });
+
+  it("prints recovery hints with exit 1 before selector rejection when the sandbox phase is non-Ready (covers the literal #5655 stopped-sandbox repro `agent -m ping`)", async () => {
+    execMock.mockClear();
+    ensureLiveMock.mockClear();
+    ensureLiveMock.mockResolvedValueOnce({ output: "Phase: Error" });
+    getSandboxMock.mockReturnValueOnce({ agent: "openclaw" });
+    const { writes, exit, proc } = makeProcMock();
+    await expect(
+      runAgentPassthrough("my-assistant", { extraArgs: ["-m", "ping"] }, { process: proc }),
+    ).rejects.toThrow("__exit:1");
+    expect(execMock).not.toHaveBeenCalled();
+    expect(ensureLiveMock).toHaveBeenCalledWith("my-assistant", { allowNonReadyPhase: true });
+    expect(exit).toHaveBeenCalledWith(1);
+    const all = writes.join("");
+    expect(all).toMatch(/Sandbox 'my-assistant' is not ready for the agent wrapper \(phase: Error\)/);
+    expect(all).toMatch(/my-assistant recover/);
+    expect(all).not.toMatch(/No target session selected/);
   });
 
   it("accepts selector in --flag=value form and forwards verbatim", async () => {

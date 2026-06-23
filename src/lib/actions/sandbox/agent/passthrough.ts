@@ -1,35 +1,76 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-// Source-of-truth boundary for the `nemoclaw <name> agent` passthrough:
+// Source-of-truth boundary for the `nemoclaw <name> agent` passthrough.
 //
-// - Invalid state: the local registry is the source of truth for which agent a
-//   sandbox runs (openclaw vs hermes vs future variants). Forwarding to
-//   `openclaw agent` against a non-OpenClaw sandbox triggers an in-sandbox
-//   binary that does not exist (or exists with incompatible flags), and would
-//   silently bypass the host-side guard intended to redirect Hermes callers to
-//   the OpenAI-compatible API on port 8642.
+// The wrapper enforces three host-side mirrors of upstream contracts:
 //
-// - Source boundary: this wrapper owns the host-side guard only; the in-sandbox
-//   agent invocation, its argv contract, and its streaming behaviour are owned
-//   by upstream OpenClaw. NemoClaw does not rewrite OpenClaw flags here; it
-//   forwards them verbatim.
+// 1. Agent-kind guard (registry mirror).
 //
-// - Source-fix constraint: NemoClaw cannot prove agent type from anywhere
-//   except the registry, because the OpenShell exec transport has no
-//   pre-execution probe that reveals the sandbox's configured agent. A
-//   registry read failure therefore has to fail closed — silently degrading
-//   to OpenClaw-as-default would let a Hermes-onboarded sandbox dispatch the
-//   wrong binary on transient I/O errors.
+//    - Invalid state: the local registry is the source of truth for which
+//      agent a sandbox runs (openclaw vs hermes vs future variants).
+//      Forwarding to `openclaw agent` against a non-OpenClaw sandbox triggers
+//      an in-sandbox binary that does not exist (or exists with incompatible
+//      flags), and would silently bypass the host-side guard intended to
+//      redirect Hermes callers to the OpenAI-compatible API on port 8642.
+//    - Source boundary: the registry is NemoClaw-owned; the in-sandbox agent
+//      invocation, its argv contract, and its streaming behaviour are owned
+//      by upstream OpenClaw. NemoClaw does not rewrite OpenClaw flags here;
+//      it forwards them verbatim.
+//    - Source-fix constraint: NemoClaw cannot prove agent type from anywhere
+//      except the registry, because the OpenShell exec transport has no
+//      pre-execution probe that reveals the sandbox's configured agent. A
+//      registry read failure therefore has to fail closed — silently
+//      degrading to OpenClaw-as-default would let a Hermes-onboarded sandbox
+//      dispatch the wrong binary on transient I/O errors.
 //
-// - Regression tests: `passthrough.test.ts` covers the Hermes redirect, the
-//   forwarded argv, the registry-miss fallback to OpenClaw, the registry-error
-//   fail-closed path, and the enforced `--no-tty` argv shape.
+// 2. Non-ready phase guard (OpenShell phase mirror).
 //
-// - Removal condition: when OpenShell exposes a metadata endpoint that returns
-//   the sandbox's configured agent, drop the registry read and consult that
-//   endpoint directly. The fail-closed branch can then be retired in favour of
-//   the live source.
+//    - Invalid state: when a sandbox container is stopped, errored, or
+//      otherwise not Ready/Running, a bare `openshell sandbox exec` either
+//      hangs, fails with a generic transport error, or silently runs against
+//      a stale container. None of those surface the documented recovery
+//      paths (`recover`, `rebuild --yes`, `onboard --resume`).
+//    - Source boundary: OpenShell owns the phase value and the underlying
+//      readiness mechanism; NemoClaw owns the host-side recovery copy and
+//      the precedence of the phase check vs the selector check.
+//    - Source-fix constraint: NemoClaw cannot teach `openshell sandbox exec`
+//      to emit recovery commands on its own — that would require an upstream
+//      change to OpenShell. The wrapper therefore inspects `ensureLive`'s
+//      gateway-state output and rejects with NemoClaw's recovery copy before
+//      forwarding to the in-sandbox binary. The phase check runs before the
+//      selector check so a stopped sandbox still gets recovery guidance even
+//      when the caller forgot the selector flag.
+//
+// 3. Selector-required guard (OpenClaw argv mirror).
+//
+//    - Invalid state: upstream `openclaw agent` rejects a missing target
+//      selector with exit code 127 instead of exit 2, which masks the
+//      precise misuse and confuses CLI consumers that expect 2 for argv
+//      misuse.
+//    - Source boundary: OpenClaw owns the argv contract; NemoClaw mirrors
+//      only the selector requirement (one of `--agent`, `--session-id`,
+//      `--session-key`, `--to`) to surface a clean exit 2 with a usage hint
+//      before sending the argv into the sandbox.
+//    - Source-fix constraint: NemoClaw forwards the rest of OpenClaw's argv
+//      verbatim, so the mirror is intentionally narrow — only the missing-
+//      selector case is intercepted; everything else still flows through to
+//      the in-sandbox binary.
+//
+// Regression tests: `passthrough.test.ts` covers the Hermes redirect, the
+// registry-miss fallback to OpenClaw, the registry-error fail-closed path,
+// the enforced `--no-tty` argv shape, the non-Ready phase recovery path,
+// the no-phase-output tolerant path, the no-selector and empty-args
+// rejection branches, and the `--flag=value` selector-acceptance branch.
+//
+// Removal conditions:
+//
+//   - Drop the registry-based agent-kind guard when OpenShell exposes a
+//     metadata endpoint that returns the sandbox's configured agent.
+//   - Drop the host-side phase guard when `openshell sandbox exec` surfaces
+//     readiness or recovery guidance itself.
+//   - Drop the selector mirror when upstream `openclaw agent` rejects a
+//     missing selector with a clean exit 2 and an actionable message.
 
 import { CLI_NAME } from "../../../cli/branding";
 import * as registry from "../../../state/registry";
@@ -155,14 +196,14 @@ export async function runAgentPassthrough(
   if (lookup.kind === "agent" && lookup.agent && lookup.agent !== "openclaw") {
     rejectNonOpenclawAgent(sandboxName, lookup.agent, proc);
   }
-  if (!hasTargetSelector(extraArgs)) {
-    rejectNoTargetSelector(proc);
-  }
   const ensureLive = deps.ensureLive ?? ensureLiveSandboxOrExit;
   const state = await ensureLive(sandboxName, { allowNonReadyPhase: true });
   const phase = parseSandboxPhase(state?.output ?? "");
   if (phase && phase !== "Ready" && phase !== "Running") {
     rejectNotReadyForAgent(sandboxName, phase, proc);
+  }
+  if (!hasTargetSelector(extraArgs)) {
+    rejectNoTargetSelector(proc);
   }
   const command = ["openclaw", "agent", ...extraArgs];
   const exec = deps.exec ?? execSandbox;
