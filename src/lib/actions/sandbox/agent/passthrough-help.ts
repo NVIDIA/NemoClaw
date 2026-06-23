@@ -24,7 +24,7 @@ export function printAgentPassthroughHelp(): void {
   );
   console.log("");
   console.log(
-    "  Every invocation must include exactly one target selector — --agent, --session-id,",
+    "  Every invocation must include at least one target selector — --agent, --session-id,",
   );
   console.log(
     "  --session-key, or --to. Invocations without a selector exit 2 with `No target session",

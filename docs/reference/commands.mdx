@@ -551,7 +551,7 @@ Use this when driving the sandbox programmatically from another process (CI job,
 
 All flags accepted by the in-sandbox OpenClaw CLI are forwarded verbatim, so the upstream surface stays the single source of truth.
 
-Every invocation must include exactly one target selector — `--agent`, `--session-id`, `--session-key`, or `--to` — so the wrapper never falls back to the unspecified default-session behaviour.
+Every invocation must include at least one target selector — `--agent`, `--session-id`, `--session-key`, or `--to` — so the wrapper never falls back to the unspecified default-session behaviour. Conflict resolution between multiple selectors is delegated to the in-sandbox `openclaw agent` argv contract; the host-side guard only checks presence.
 
 ```bash
 $$nemoclaw my-assistant agent --agent work -m "Summarise README.md"
