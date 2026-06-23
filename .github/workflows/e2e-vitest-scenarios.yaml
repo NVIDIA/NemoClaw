@@ -2914,7 +2914,6 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-
   cloud-onboard-vitest:
     needs: generate-matrix
     if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',cloud-onboard-vitest,') || contains(format(',{0},', inputs.scenarios), ',cloud-onboard,') }}
@@ -5251,6 +5250,59 @@ jobs:
           docker logout docker.io || true
           rm -rf "${DOCKER_CONFIG}"
 
+  spark-install-vitest:
+    needs: generate-matrix
+    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',spark-install-vitest,') || contains(format(',{0},', inputs.scenarios), ',spark-install,') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      FREE_STANDING_VITEST_JOB: "1"
+      FREE_STANDING_SCENARIO_ID: "spark-install"
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/spark-install
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+      NEMOCLAW_FRESH: "1"
+      NEMOCLAW_SANDBOX_NAME: "e2e-spark-install-vitest"
+      NEMOCLAW_PROVIDER: "cloud"
+      OPENSHELL_GATEWAY: "nemoclaw"
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Run Spark install live test
+        # Migrated from test/e2e/test-spark-install.sh. This preserves the
+        # Linux + Docker prerequisite gate, the plain non-interactive
+        # install.sh/public curl|bash boundary, install-log retention, PATH
+        # refresh, and post-install nemoclaw/openshell/--help checks.
+        env:
+          NVIDIA_API_KEY: ${{ startsWith(secrets.NVIDIA_API_KEY, 'nvapi-') && secrets.NVIDIA_API_KEY || (startsWith(secrets.NVIDIA_INFERENCE_API_KEY, 'nvapi-') && secrets.NVIDIA_INFERENCE_API_KEY || '') }}
+        run: |
+          set -euo pipefail
+          npx vitest run --project e2e-scenarios-live \
+            test/e2e-scenario/live/spark-install.test.ts \
+            --silent=false --reporter=default
+
+      - name: Upload Spark install artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-vitest-scenarios-spark-install
+          path: e2e-artifacts/vitest/spark-install/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
 
   # ── PR result comment (mirrors nightly-e2e.yaml's report-to-pr) ───────────
   # Posts a results table on the open PR for the dispatching branch (or the
@@ -5327,6 +5379,7 @@ jobs:
         openclaw-discord-pairing-vitest,
         openclaw-slack-pairing-vitest,
         channels-stop-start-vitest,
+        spark-install-vitest,
       ]
     if: ${{ always() && github.event_name == 'workflow_dispatch' }}
     permissions:
