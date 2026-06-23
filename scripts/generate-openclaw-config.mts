@@ -1231,6 +1231,19 @@ export function buildConfig(env: Env = process.env): JsonObject {
       },
       trustedProxies: ["127.0.0.1", "::1"],
       auth: { token: "" },
+      // Restart-class config changes (plugins.installs, models.pricing,
+      // unrecognized keys, ...) must not let the gateway SIGUSR1-restart
+      // itself: in containers the in-process restart path can fail and park
+      // the process alive with no HTTP listener, which the PID-wait respawn
+      // loop in nemoclaw-start.sh cannot observe (#4710). Hot mode makes the
+      // gateway ignore plan-driven restarts; NemoClaw applies restart-class
+      // changes through sandbox rebuild or `nemoclaw <name> recover` instead.
+      // Removal condition (also for the serving watchdog in
+      // nemoclaw-start.sh): once the pinned OpenClaw release exits non-zero
+      // when a failed in-process restart cannot re-bind its listener — so the
+      // respawn loop sees the death — this pin can revert to the default
+      // reload mode after a wedge drill proves no regression.
+      reload: { mode: "hot" },
     },
   };
 

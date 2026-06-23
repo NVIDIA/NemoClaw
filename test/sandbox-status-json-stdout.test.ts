@@ -56,4 +56,23 @@ describe("sandbox status --json keeps stdout clean during gateway recovery", () 
     expect(report.found).toBe(false);
     expect(report.gatewayState).toBe("gateway_unreachable_after_restart");
   });
+
+  it("reports unknown runtime when a non-OpenClaw registry agent cannot be loaded", async () => {
+    const report = await getSandboxStatusReport("custom-sandbox", {
+      getSandbox: () =>
+        ({
+          name: "custom-sandbox",
+          agent: "missing-terminal-agent",
+          provider: "nvidia-prod",
+          model: "test-model",
+          policies: [],
+          openshellDriver: "native",
+        }) as never,
+      reconcile: async () => ({ state: "missing", output: "" }),
+    });
+
+    expect(report.agent).toBe("missing-terminal-agent");
+    expect(report.agentRuntime).toBe("unknown");
+    expect(report.agentLoadError).toMatch(/missing-terminal-agent/);
+  });
 });

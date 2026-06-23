@@ -11,6 +11,7 @@ import { resolveQrSelectedChannels } from "./messaging-state";
 import { buildSandboxGpuCreateArgs, type SandboxGpuCreateConfig } from "./sandbox-gpu-create";
 
 type MessagingTokenDef = {
+  name?: string;
   envKey: string;
   token: string | null;
 };
@@ -47,6 +48,7 @@ export type PrepareSandboxCreatePlanInput = {
   ): string[];
   getMessagingChannelForEnvKey(envKey: string): string | null;
   getHermesToolGatewayProviderName(sandboxName: string): string;
+  agentName?: string | null;
   deps?: SandboxCreatePlanDeps;
 };
 
@@ -75,6 +77,48 @@ function getInitialSandboxCreatePolicy(
   return prepareInitialSandboxCreatePolicy(...args);
 }
 
+function filterEnabledChannelNames(
+  channelNames: readonly string[],
+  disabledChannelNames: ReadonlySet<string>,
+): string[] {
+  return channelNames.filter((channelName) => !disabledChannelNames.has(channelName));
+}
+
+function filterMessagingTokenDefsByEnabledChannel(
+  messagingTokenDefs: MessagingTokenDef[],
+  disabledChannelNames: ReadonlySet<string>,
+  getMessagingChannelForEnvKey: (envKey: string) => string | null,
+): MessagingTokenDef[] {
+  return messagingTokenDefs.filter(({ envKey }) => {
+    const channel = getMessagingChannelForEnvKey(envKey);
+    return !channel || !disabledChannelNames.has(channel);
+  });
+}
+
+function resolveTokenProviderChannelMap(
+  messagingTokenDefs: MessagingTokenDef[],
+  getMessagingChannelForEnvKey: (envKey: string) => string | null,
+): Map<string, string> {
+  const providerChannels = new Map<string, string>();
+  for (const { envKey, name } of messagingTokenDefs) {
+    if (!name) continue;
+    const channel = getMessagingChannelForEnvKey(envKey);
+    if (channel) providerChannels.set(name, channel);
+  }
+  return providerChannels;
+}
+
+function filterMessagingProvidersByEnabledChannel(
+  providerNames: string[],
+  providerChannels: ReadonlyMap<string, string>,
+  disabledChannelNames: ReadonlySet<string>,
+): string[] {
+  return providerNames.filter((providerName) => {
+    const channel = providerChannels.get(providerName);
+    return !channel || !disabledChannelNames.has(channel);
+  });
+}
+
 function resolveActiveMessagingChannels({
   channels,
   disabledChannelNames,
@@ -97,18 +141,21 @@ function resolveActiveMessagingChannels({
     enabledChannels,
     disabledChannelNames,
   );
-  return [
-    ...new Set([
-      ...messagingTokenDefs
-        .filter(({ token }) => !!token)
-        .flatMap(({ envKey }) => {
-          const channel = getMessagingChannelForEnvKey(envKey);
-          return channel && primaryCredentialEnvKeys.has(envKey) ? [channel] : [];
-        }),
-      ...reusableMessagingChannels,
-      ...qrSelectedChannels,
-    ]),
-  ];
+  return filterEnabledChannelNames(
+    [
+      ...new Set([
+        ...messagingTokenDefs
+          .filter(({ token }) => !!token)
+          .flatMap(({ envKey }) => {
+            const channel = getMessagingChannelForEnvKey(envKey);
+            return channel && primaryCredentialEnvKeys.has(envKey) ? [channel] : [];
+          }),
+        ...reusableMessagingChannels,
+        ...qrSelectedChannels,
+      ]),
+    ],
+    disabledChannelNames,
+  );
 }
 
 function getPrimaryCredentialEnvKeys(): Set<string> {
@@ -157,14 +204,24 @@ export function prepareSandboxCreatePlan({
   upsertMessagingProviders,
   getMessagingChannelForEnvKey,
   getHermesToolGatewayProviderName,
+  agentName,
   deps = {},
 }: PrepareSandboxCreatePlanInput): SandboxCreatePlan {
+  const enabledMessagingTokenDefs = filterMessagingTokenDefsByEnabledChannel(
+    messagingTokenDefs,
+    disabledChannelNames,
+    getMessagingChannelForEnvKey,
+  );
+  const providerChannels = resolveTokenProviderChannelMap(
+    messagingTokenDefs,
+    getMessagingChannelForEnvKey,
+  );
   const activeMessagingChannels = resolveActiveMessagingChannels({
     channels,
     disabledChannelNames,
     enabledChannels,
     getMessagingChannelForEnvKey,
-    messagingTokenDefs,
+    messagingTokenDefs: enabledMessagingTokenDefs,
     reusableMessagingChannels,
   });
   const { useDockerGpuPatch, logMessage: sandboxGpuLogMessage } = (
@@ -176,6 +233,7 @@ export function prepareSandboxCreatePlan({
     directGpu: sandboxGpuConfig.sandboxGpuEnabled,
     dockerGpuPatch: useDockerGpuPatch,
     additionalPresets: hermesToolGateways,
+    agentName,
   });
   const createArgs = [
     "--from",
@@ -191,12 +249,16 @@ export function prepareSandboxCreatePlan({
 
   appendResourceFlags(createArgs);
   runProviderPreDeleteCleanup();
-  const messagingProviders = [
-    ...new Set([
-      ...upsertMessagingProviders(messagingTokenDefs, { replaceExisting: true }),
-      ...reusableMessagingProviders,
-    ]),
-  ];
+  const messagingProviders = filterMessagingProvidersByEnabledChannel(
+    [
+      ...new Set([
+        ...upsertMessagingProviders(enabledMessagingTokenDefs, { replaceExisting: true }),
+        ...reusableMessagingProviders,
+      ]),
+    ],
+    providerChannels,
+    disabledChannelNames,
+  );
   for (const provider of messagingProviders) {
     createArgs.push("--provider", provider);
   }

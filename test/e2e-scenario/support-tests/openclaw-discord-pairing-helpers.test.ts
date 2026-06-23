@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
@@ -14,6 +14,7 @@ import {
   buildPairingPendingCommand,
   DISCORD_GATEWAY_PROOF_SOURCE,
   LOAD_CONVERSATION_RUNTIME_SOURCE,
+  SLACK_PROBE_INPUT_VALIDATION_SOURCE,
 } from "../live/openclaw-pairing-helpers.ts";
 import { sandboxNode } from "../live/phase6-messaging-helpers.ts";
 
@@ -138,6 +139,50 @@ describe("OpenClaw Discord pairing helper contracts", () => {
     expect(approveCommand).not.toContain('"abc$(touch /tmp/e2e-should-not-run)"');
   });
 
+  it("finds the active OpenClaw package when shell startup shadows openclaw with a function", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-runtime-shadowed-"));
+    try {
+      const packageRoot = path.join(tmp, "openclaw-package");
+      const packageBin = path.join(packageRoot, "bin");
+      const pathBin = path.join(tmp, "path-bin");
+      const home = path.join(tmp, "home");
+      const runtimeDir = path.join(packageRoot, "dist/plugin-sdk");
+      fs.mkdirSync(packageBin, { recursive: true });
+      fs.mkdirSync(pathBin, { recursive: true });
+      fs.mkdirSync(home, { recursive: true });
+      fs.mkdirSync(runtimeDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(packageRoot, "package.json"),
+        JSON.stringify({ name: "openclaw" }),
+      );
+      fs.writeFileSync(
+        path.join(runtimeDir, "conversation-runtime.js"),
+        "export const issuePairingChallenge = true;\n",
+      );
+      fs.writeFileSync(path.join(packageBin, "openclaw"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      fs.symlinkSync(path.join(packageBin, "openclaw"), path.join(pathBin, "openclaw"));
+      fs.writeFileSync(
+        path.join(home, ".bashrc"),
+        "openclaw() { echo shadowed-shell-function; }\nexport -f openclaw\n",
+      );
+
+      const result = spawnSync(process.execPath, ["--input-type=module"], {
+        input: `${LOAD_CONVERSATION_RUNTIME_SOURCE}\nconst runtime = await loadConversationRuntime();\nconsole.log(runtime.issuePairingChallenge);\n`,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          BASH_ENV: path.join(home, ".bashrc"),
+          PATH: `${pathBin}:${process.env.PATH ?? ""}`,
+        },
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("true");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("fails closed when the active OpenClaw package lacks the conversation runtime", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-runtime-missing-"));
     try {
@@ -164,13 +209,55 @@ describe("OpenClaw Discord pairing helper contracts", () => {
         expect.stringContaining("OpenClaw conversation runtime not found; checked:"),
       );
       expect(result.stderr).toEqual(expect.stringContaining(packageRoot));
-      expect(result.stderr).toEqual(
-        expect.not.stringContaining("/usr/local/lib/node_modules/openclaw"),
-      );
-      expect(result.stderr).toEqual(expect.not.stringContaining("/usr/lib/node_modules/openclaw"));
+      expect(result.stderr).toEqual(expect.not.stringContaining("/usr/local/bin/openclaw"));
+      expect(result.stderr).toEqual(expect.not.stringContaining("/usr/bin/openclaw"));
+      expect(result.stderr).toEqual(expect.not.stringContaining("shadowed-shell-function"));
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
+  });
+
+  it.each([
+    {
+      name: "missing fake port",
+      env: { FAKE_SLACK_API_PORT: "", HTTP_PROXY: "", http_proxy: "" },
+      error: "FAKE_SLACK_API_PORT must be an integer in 1..65535",
+    },
+    {
+      name: "out-of-range fake port",
+      env: { FAKE_SLACK_API_PORT: "70000", HTTP_PROXY: "", http_proxy: "" },
+      error: "FAKE_SLACK_API_PORT must be an integer in 1..65535",
+    },
+    {
+      name: "malformed proxy",
+      env: { FAKE_SLACK_API_PORT: "12345", HTTP_PROXY: "http://[", http_proxy: "" },
+      error: "HTTP proxy for Slack pairing probe is malformed",
+    },
+    {
+      name: "non-HTTP proxy",
+      env: { FAKE_SLACK_API_PORT: "12345", HTTP_PROXY: "socks5://127.0.0.1:1080", http_proxy: "" },
+      error: "Slack pairing probe only supports HTTP proxies",
+    },
+    {
+      name: "invalid proxy port",
+      env: { FAKE_SLACK_API_PORT: "12345", HTTP_PROXY: "http://127.0.0.1:70000", http_proxy: "" },
+      error: "HTTP proxy for Slack pairing probe is malformed",
+    },
+    {
+      name: "unexpected valid proxy host",
+      env: { FAKE_SLACK_API_PORT: "12345", HTTP_PROXY: "http://127.0.0.1:3128", http_proxy: "" },
+      error: "unexpected HTTP proxy for Slack pairing probe",
+    },
+  ])("fails closed on invalid Slack probe input before network access: $name", ({ env, error }) => {
+    const result = spawnSync(process.execPath, ["--input-type=module"], {
+      input: `${SLACK_PROBE_INPUT_VALIDATION_SOURCE}\nlet networkAttempted = false;\ntry { parseFakeSlackPort(); parseProxyTarget(); networkAttempted = true; } catch (error) { console.error(error.message); console.error("NETWORK_ATTEMPTED=" + networkAttempted); process.exit(1); }\n`,
+      encoding: "utf8",
+      env: { ...process.env, ...env },
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toEqual(expect.stringContaining(error));
+    expect(result.stderr).toEqual(expect.stringContaining("NETWORK_ATTEMPTED=false"));
   });
 
   it("keeps Discord Gateway proof source valid for sandbox node heredoc", () => {
@@ -182,6 +269,42 @@ describe("OpenClaw Discord pairing helper contracts", () => {
     expect(result.status, result.stderr).toBe(0);
     expect(DISCORD_GATEWAY_PROOF_SOURCE).toContain('"\\r\\n"');
     expect(DISCORD_GATEWAY_PROOF_SOURCE).toContain("IDENTIFY_SENT_PLACEHOLDER");
+  });
+
+  it.each([
+    {
+      name: "malformed proxy",
+      env: { HTTP_PROXY: "http://[", http_proxy: "" },
+      error: "HTTP proxy for Discord Gateway proof is malformed",
+    },
+    {
+      name: "non-HTTP proxy",
+      env: { HTTP_PROXY: "socks5://127.0.0.1:1080", http_proxy: "" },
+      error: "Discord Gateway proof only supports HTTP proxies",
+    },
+    {
+      name: "invalid proxy port",
+      env: { HTTP_PROXY: "http://127.0.0.1:70000", http_proxy: "" },
+      error: "HTTP proxy for Discord Gateway proof is malformed",
+    },
+    {
+      name: "unexpected valid proxy host",
+      env: { HTTP_PROXY: "http://127.0.0.1:3128", http_proxy: "" },
+      error: "unexpected HTTP proxy for Discord Gateway proof",
+    },
+  ])("fails closed on invalid Discord Gateway proxy input before network access: $name", ({
+    env,
+    error,
+  }) => {
+    const result = spawnSync(process.execPath, ["--input-type=module"], {
+      input: `${DISCORD_GATEWAY_PROOF_SOURCE}\n`,
+      encoding: "utf8",
+      env: { ...process.env, FAKE_DISCORD_GATEWAY_PORT: "12345", ...env },
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toEqual(expect.stringContaining(error));
+    expect(result.stderr).not.toContain("ECONNREFUSED");
   });
 
   it("rejects malformed sandboxNode env keys before sandbox execution", async () => {

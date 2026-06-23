@@ -47,6 +47,9 @@ navigation:
               - page: "Quickstart with OpenClaw"
                 path: get-started/quickstart.mdx
                 slug: quickstart
+              - page: "Quickstart with LangChain Deep Agents Code"
+                path: get-started/quickstart-langchain-deepagents-code.mdx
+                slug: quickstart-langchain-deepagents-code
           - section: "Inference"
             slug: inference
             collapsed: open-by-default
