@@ -104,16 +104,14 @@ function runOnboardWithStubAtPath(
 // real so `command_exists node` is true and the real node classifier runs.
 function runOnboardWithSession(
   env: Record<string, string>,
-  session: Record<string, unknown> | null,
+  session: Record<string, unknown>,
 ): string[] {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-onboard-session-"));
   const home = path.join(tmp, "home");
   const stubBin = path.join(tmp, "stub-cli");
   const argvLog = path.join(tmp, "argv.txt");
   fs.mkdirSync(path.join(home, ".nemoclaw"), { recursive: true });
-  if (session !== null) {
-    fs.writeFileSync(path.join(home, ".nemoclaw", "onboard-session.json"), JSON.stringify(session));
-  }
+  fs.writeFileSync(path.join(home, ".nemoclaw", "onboard-session.json"), JSON.stringify(session));
   fs.writeFileSync(stubBin, `#!/usr/bin/env bash\nprintf '%s\\n' "$@" > "${argvLog}"\nexit 0\n`, {
     mode: 0o755,
   });
@@ -131,9 +129,7 @@ function runOnboardWithSession(
     encoding: "utf-8",
     env: { ...process.env, ...env, HOME: home },
   });
-  if (result.status !== 0) {
-    throw new Error(`shell exit ${result.status}: ${result.stderr}`);
-  }
+  expect(result.status, result.stderr).toBe(0);
   const captured = fs.existsSync(argvLog) ? fs.readFileSync(argvLog, "utf-8") : "";
   return captured.split("\n").filter((line) => line.length > 0);
 }
