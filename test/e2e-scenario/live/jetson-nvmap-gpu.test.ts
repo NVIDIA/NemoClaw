@@ -63,10 +63,9 @@ pkill -f "ollama-auth-proxy" 2>/dev/null || true`,
   ).catch(() => undefined);
 }
 
-function expectGroupMembership(idOutput: string, gid: string): void {
+function expectGroupMembership(idGroupsOutput: string, gid: string): void {
   expect(gid).toMatch(/^[0-9]+$/u);
-  const groupPattern = new RegExp(`(^|[(,=])${gid}([(,) ]|$)`, "u");
-  expect(idOutput).toMatch(groupPattern);
+  expect(idGroupsOutput.trim().split(/\s+/u)).toContain(gid);
 }
 
 liveTest(
@@ -171,8 +170,8 @@ fi`,
     );
 
     // A5: the sandbox user must be in the host /dev/nvmap owning GID.
-    const sandboxId = await sandbox.execShell(SANDBOX_NAME, trustedSandboxShellScript("id"), {
-      artifactName: "phase-3-sandbox-id",
+    const sandboxId = await sandbox.execShell(SANDBOX_NAME, trustedSandboxShellScript("id -G"), {
+      artifactName: "phase-3-sandbox-id-groups",
       env: env(),
       timeoutMs: 60_000,
     });
