@@ -13,9 +13,23 @@ const HOST_PROXY_ENV_NAMES = [
   "no_proxy",
 ] as const;
 
+type HostProxyEnvOptions = {
+  dropCredentialBearingProxyUrls?: boolean;
+};
+
+function isCredentialBearingProxyUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value.includes("://") ? value : `http://${value}`);
+    return parsed.username !== "" || parsed.password !== "";
+  } catch {
+    return /[^/@:]+:[^/@]*@/.test(value);
+  }
+}
+
 export function appendHostProxyEnvArgs(
   envArgs: string[],
   env: NodeJS.ProcessEnv = process.env,
+  options: HostProxyEnvOptions = {},
 ): void {
   const proxyEnv: Record<string, string> = {};
   for (const name of HOST_PROXY_ENV_NAMES) {
@@ -25,7 +39,12 @@ export function appendHostProxyEnvArgs(
       // Filter on the trimmed value but ALSO store the trimmed value —
       // forwarding the surrounding whitespace would break consumers that
       // don't re-trim.
-      if (trimmed !== "") proxyEnv[name] = trimmed;
+      if (
+        trimmed !== "" &&
+        !(options.dropCredentialBearingProxyUrls && isCredentialBearingProxyUrl(trimmed))
+      ) {
+        proxyEnv[name] = trimmed;
+      }
     }
   }
 
