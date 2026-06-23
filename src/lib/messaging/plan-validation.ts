@@ -45,10 +45,9 @@ export function parseSandboxMessagingPlan(
   if (options.sandboxName && value.sandboxName !== options.sandboxName) return null;
   if (options.agent && value.agent !== options.agent) return null;
 
-  const supported =
-    options.supportedChannelIds && options.supportedChannelIds.length > 0
-      ? new Set(options.supportedChannelIds)
-      : null;
+  const supported = Array.isArray(options.supportedChannelIds)
+    ? new Set(options.supportedChannelIds)
+    : null;
   for (const [index, channel] of value.channels.entries()) {
     if (!isObject(channel) || typeof channel.channelId !== "string") return null;
     if (Object.hasOwn(channel, "configured") && typeof channel.configured !== "boolean") {

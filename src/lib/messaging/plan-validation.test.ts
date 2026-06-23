@@ -158,6 +158,10 @@ describe("parseSandboxMessagingPlan", () => {
     ).toBeNull();
   });
 
+  it("rejects any persisted channel when supportedChannelIds: [] is passed (deny-all)", () => {
+    expect(parseSandboxMessagingPlan(makePlan(), { supportedChannelIds: [] })).toBeNull();
+  });
+
   it("rejects malformed channel arrays without throwing", () => {
     const plan = makePlan() as unknown as { channels: unknown[] };
     plan.channels = [null];

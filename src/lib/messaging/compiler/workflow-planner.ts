@@ -25,7 +25,7 @@ export interface MessagingWorkflowPlannerBuildContext {
   readonly isInteractive: boolean;
   readonly configuredChannels?: readonly MessagingChannelId[];
   readonly disabledChannels?: readonly MessagingChannelId[];
-  readonly supportedChannelIds?: readonly MessagingChannelId[];
+  readonly supportedChannelIds?: readonly MessagingChannelId[] | null;
   readonly credentialAvailability?: MessagingCompilerCredentialAvailability;
 }
 
@@ -146,10 +146,9 @@ export class MessagingWorkflowPlanner {
   private supportedChannelIds(
     context: Pick<MessagingWorkflowPlannerBuildContext, "agent" | "supportedChannelIds">,
   ): MessagingChannelId[] {
-    const supportedFilter =
-      context.supportedChannelIds && context.supportedChannelIds.length > 0
-        ? new Set(context.supportedChannelIds)
-        : null;
+    const supportedFilter = Array.isArray(context.supportedChannelIds)
+      ? new Set(context.supportedChannelIds)
+      : null;
 
     return this.registry
       .list()
@@ -207,7 +206,7 @@ export interface MessagingWorkflowPlannerSandboxContext {
   readonly sandboxName: string;
   readonly agent: MessagingAgentId;
   readonly sandboxEntry?: MessagingWorkflowPlannerSandboxEntry | null;
-  readonly supportedChannelIds?: readonly MessagingChannelId[];
+  readonly supportedChannelIds?: readonly MessagingChannelId[] | null;
   readonly credentialAvailability?: MessagingCompilerCredentialAvailability;
 }
 
