@@ -1581,35 +1581,6 @@ function waitForSandboxReady(sandboxName: string, attempts = 10, delaySeconds = 
 
 // ── Step 1: Preflight ────────────────────────────────────────────
 
-// Keep the Docker CDI guard near preflight so resume hits the same early failure path.
-// Jetson/Tegra uses Docker's NVIDIA runtime backend and is exempt from CDI.
-function assertCdiNvidiaGpuSpecPresent(
-  host: ReturnType<typeof assessHost>,
-  explicitlyOptedOutGpuPassthrough: boolean,
-  hostGpuPlatform: string | null | undefined = null,
-): void {
-  if (hostGpuPlatform === "jetson" || preflightUtils.isWslDockerDesktopRuntime(host)) return;
-  // #5489: enforce based on EXPLICIT opt-out only. The previous gate skipped
-  // whenever sandbox GPU passthrough was disabled — including the auto-disable
-  // that happens when `nvidia-smi` is unavailable — so a present-but-driverless
-  // NVIDIA GPU with a missing toolkit/CDI spec slipped past [1/8]. Now a host
-  // with GPU hardware (which is what sets cdiNvidiaGpuSpecMissing) blocks unless
-  // the operator explicitly passed --no-gpu.
-  if (
-    !preflightUtils.shouldEnforceCdiNvidiaGpuSpec({
-      cdiNvidiaGpuSpecMissing: host.cdiNvidiaGpuSpecMissing,
-      cdiNvidiaGpuSpecNeedsRepair: host.cdiNvidiaGpuSpecNeedsRepair ?? false,
-      explicitlyOptedOutGpuPassthrough,
-    })
-  )
-    return;
-  console.error(
-    "  Docker is configured for CDI device injection (CDISpecDirs is set), but the NVIDIA GPU CDI spec is missing or stale. OpenShell GPU startup can fail until the CDI spec is refreshed.",
-  );
-  printRemediationActions(planHostRemediation(host));
-  process.exit(1);
-}
-
 type PreflightOptions = Pick<
   OnboardOptions,
   "sandboxGpu" | "sandboxGpuDevice" | "gpu" | "noGpu"
@@ -1656,13 +1627,13 @@ async function preflight(
     device: preflightOpts.sandboxGpuDevice ?? null,
   });
   exitOnSandboxGpuConfigErrors(sandboxGpuConfig);
-  // Only an EXPLICIT GPU opt-out should skip the CDI/toolkit enforcement.
-  // `!sandboxGpuConfig.sandboxGpuEnabled` also covers the AUTO-disable that
-  // happens when `nvidia-smi` is unavailable — passing that here was the #5489
-  // bypass, so it is intentionally excluded.
   const explicitlyOptedOutGpuPassthrough =
     preflightOpts.optedOutGpuPassthrough === true || preflightOpts.noGpu === true;
-  assertCdiNvidiaGpuSpecPresent(host, explicitlyOptedOutGpuPassthrough, sandboxGpuConfig.hostGpuPlatform);
+  preflightUtils.assertCdiNvidiaGpuSpecPresent(
+    host,
+    explicitlyOptedOutGpuPassthrough,
+    sandboxGpuConfig.hostGpuPlatform,
+  );
 
   assertDockerBridgeAndContainerDnsHealthy(host, isNonInteractive());
 
@@ -4704,7 +4675,6 @@ function skippedStepMessage(
 }
 
 // ── Main ─────────────────────────────────────────────────────────
-
 async function onboard(opts: OnboardOptions = {}): Promise<void> {
   setOnboardBrandingAgent(opts.agent || process.env.NEMOCLAW_AGENT || null);
   NON_INTERACTIVE = opts.nonInteractive || process.env.NEMOCLAW_NON_INTERACTIVE === "1";
@@ -4975,7 +4945,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         detectGpu: nim.detectGpu,
         runPreflight: (preflightOptions) => preflight({ ...opts, ...preflightOptions }),
         assessHost,
-        assertCdiNvidiaGpuSpecPresent,
+        assertCdiNvidiaGpuSpecPresent: preflightUtils.assertCdiNvidiaGpuSpecPresent,
         rejectUnsupportedContainerRuntime,
         assertDockerBridgeAndContainerDnsHealthy,
         resolveSandboxGpuConfig,

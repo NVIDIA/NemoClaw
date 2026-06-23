@@ -16,6 +16,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { DASHBOARD_PORT } from "../core/ports";
+import { printRemediationActions } from "./remediation";
 import {
   assessNvidiaCdiHost,
   buildNvidiaCdiRefreshCommands,
@@ -657,6 +658,27 @@ export function shouldEnforceCdiNvidiaGpuSpec(opts: {
 }): boolean {
   if (opts.explicitlyOptedOutGpuPassthrough) return false;
   return opts.cdiNvidiaGpuSpecNeedsRepair || opts.cdiNvidiaGpuSpecMissing;
+}
+
+export function assertCdiNvidiaGpuSpecPresent(
+  host: HostAssessment,
+  explicitlyOptedOutGpuPassthrough: boolean,
+  hostGpuPlatform: string | null | undefined = null,
+): void {
+  if (hostGpuPlatform === "jetson" || isWslDockerDesktopRuntime(host)) return;
+  if (
+    !shouldEnforceCdiNvidiaGpuSpec({
+      cdiNvidiaGpuSpecMissing: host.cdiNvidiaGpuSpecMissing,
+      cdiNvidiaGpuSpecNeedsRepair: host.cdiNvidiaGpuSpecNeedsRepair ?? false,
+      explicitlyOptedOutGpuPassthrough,
+    })
+  )
+    return;
+  console.error(
+    "  Docker is configured for CDI device injection (CDISpecDirs is set), but the NVIDIA GPU CDI spec is missing or stale. OpenShell GPU startup can fail until the CDI spec is refreshed.",
+  );
+  printRemediationActions(planHostRemediation(host));
+  process.exit(1);
 }
 
 export function planHostRemediation(assessment: HostAssessment): RemediationAction[] {
