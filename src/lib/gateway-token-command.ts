@@ -77,7 +77,7 @@ function notApplicableLines(sandboxName: string, agent: string): readonly string
     return [
       lead,
       `  For Hermes dashboard access, run: ${cliName} ${sandboxName} dashboard-url`,
-      "  Hermes dashboard auth is read from the in-sandbox config (~/.hermes/config.yaml), not a gateway token.",
+      "  Hermes dashboard auth is read from the in-sandbox config (/sandbox/.hermes/config.yaml), not a gateway token.",
     ];
   }
   return [lead];
