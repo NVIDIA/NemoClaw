@@ -34,6 +34,7 @@
 import * as registry from "../../../state/registry";
 import { execSandbox } from "../exec";
 import { ensureLiveSandboxOrExit } from "../gateway-state";
+import { runAgentJsonPassthrough, type AgentJsonPassthroughProcess } from "./passthrough-json";
 
 export {
   hasAgentPassthroughHelpToken,
@@ -48,8 +49,10 @@ export interface AgentPassthroughDeps {
   getSandbox?: typeof registry.getSandbox;
   ensureLive?: typeof ensureLiveSandboxOrExit;
   exec?: typeof execSandbox;
+  execJson?: typeof runAgentJsonPassthrough;
   process?: {
     exit(code: number): never;
+    stdout?: { write(s: string): unknown };
     stderr: { write(s: string): unknown };
   };
 }
@@ -119,6 +122,15 @@ export async function runAgentPassthrough(
   const ensureLive = deps.ensureLive ?? ensureLiveSandboxOrExit;
   await ensureLive(sandboxName, { allowNonReadyPhase: true });
   const command = ["openclaw", "agent", ...extraArgs];
+  if (extraArgs.includes("--json")) {
+    const execJson = deps.execJson ?? runAgentJsonPassthrough;
+    execJson(sandboxName, command, {
+      exit: proc.exit.bind(proc),
+      stdout: proc.stdout ?? process.stdout,
+      stderr: proc.stderr,
+    } satisfies AgentJsonPassthroughProcess);
+    return;
+  }
   const exec = deps.exec ?? execSandbox;
   await exec(sandboxName, command, { tty: false });
 }

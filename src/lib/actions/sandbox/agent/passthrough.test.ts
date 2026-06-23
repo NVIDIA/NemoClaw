@@ -51,13 +51,41 @@ describe("runAgentPassthrough", () => {
     ensureLiveMock.mockClear();
     getSandboxMock.mockReturnValueOnce({ agent: "openclaw" });
     await runAgentPassthrough("alpha", {
-      extraArgs: ["--agent", "work", "--session-id", "s-1", "-m", "ping", "--json"],
+      extraArgs: ["--agent", "work", "--session-id", "s-1", "-m", "ping"],
     });
     expect(ensureLiveMock).toHaveBeenCalledWith("alpha", { allowNonReadyPhase: true });
     expect(execMock).toHaveBeenCalledWith(
       "alpha",
-      ["openclaw", "agent", "--agent", "work", "--session-id", "s-1", "-m", "ping", "--json"],
+      ["openclaw", "agent", "--agent", "work", "--session-id", "s-1", "-m", "ping"],
       { tty: false },
+    );
+  });
+
+  it("uses the captured JSON path for `openclaw agent --json` so provenance can be emitted on stderr", async () => {
+    execMock.mockClear();
+    ensureLiveMock.mockClear();
+    const execJson = vi.fn(() => {
+      throw new Error("__exit:0");
+    });
+    getSandboxMock.mockReturnValueOnce({ agent: "openclaw" });
+    const { proc } = makeProcMock();
+
+    await expect(
+      runAgentPassthrough(
+        "alpha",
+        {
+          extraArgs: ["--agent", "work", "--session-id", "s-1", "-m", "ping", "--json"],
+        },
+        { execJson, process: proc },
+      ),
+    ).rejects.toThrow("__exit:0");
+
+    expect(ensureLiveMock).toHaveBeenCalledWith("alpha", { allowNonReadyPhase: true });
+    expect(execMock).not.toHaveBeenCalled();
+    expect(execJson).toHaveBeenCalledWith(
+      "alpha",
+      ["openclaw", "agent", "--agent", "work", "--session-id", "s-1", "-m", "ping", "--json"],
+      expect.objectContaining({ stderr: proc.stderr }),
     );
   });
 
