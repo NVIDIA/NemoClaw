@@ -21,7 +21,7 @@ done
 if [[ "${canonical}" != nvapi-* && "${public_alias}" == nvapi-* ]]; then
   canonical="${public_alias}"
 fi
-if [[ -z "${public_alias}" && "${canonical}" == nvapi-* ]]; then
+if [[ "${public_alias}" != nvapi-* && "${canonical}" == nvapi-* ]]; then
   public_alias="${canonical}"
 fi
 

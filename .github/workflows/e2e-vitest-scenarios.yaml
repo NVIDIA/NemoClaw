@@ -5147,7 +5147,8 @@ jobs:
         # Migrated from test/e2e/test-openclaw-slack-pairing.sh. Preserves
         # fake Slack Socket Mode/REST token rewrite and connect-shell approval.
         env:
-          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ startsWith(secrets.NVIDIA_INFERENCE_API_KEY, 'nvapi-') && secrets.NVIDIA_INFERENCE_API_KEY || (startsWith(secrets.NVIDIA_API_KEY, 'nvapi-') && secrets.NVIDIA_API_KEY || '') }}
+          COMPATIBLE_API_KEY: ${{ startsWith(secrets.NVIDIA_INFERENCE_API_KEY, 'nvapi-') && secrets.NVIDIA_INFERENCE_API_KEY || (startsWith(secrets.NVIDIA_API_KEY, 'nvapi-') && secrets.NVIDIA_API_KEY || '') }}
           NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
           NEMOCLAW_PROVIDER: custom
           NEMOCLAW_ENDPOINT_URL: https://inference-api.nvidia.com/v1
@@ -5367,7 +5368,8 @@ jobs:
         # Migrated from test/e2e/test-openclaw-discord-pairing.sh. Preserves
         # fake Discord Gateway token rewrite and connect-shell pairing approval.
         env:
-          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ startsWith(secrets.NVIDIA_INFERENCE_API_KEY, 'nvapi-') && secrets.NVIDIA_INFERENCE_API_KEY || (startsWith(secrets.NVIDIA_API_KEY, 'nvapi-') && secrets.NVIDIA_API_KEY || '') }}
+          COMPATIBLE_API_KEY: ${{ startsWith(secrets.NVIDIA_INFERENCE_API_KEY, 'nvapi-') && secrets.NVIDIA_INFERENCE_API_KEY || (startsWith(secrets.NVIDIA_API_KEY, 'nvapi-') && secrets.NVIDIA_API_KEY || '') }}
           NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
           NEMOCLAW_PROVIDER: custom
           NEMOCLAW_ENDPOINT_URL: https://inference-api.nvidia.com/v1

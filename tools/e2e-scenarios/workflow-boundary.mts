@@ -5982,14 +5982,11 @@ function validateOpenClawDiscordPairingVitestJob(
     "Run OpenClaw Discord pairing live test",
   );
   const runVitestEnv = asRecord(runVitest?.env);
-  if (
-    runVitestEnv.NVIDIA_INFERENCE_API_KEY !==
-    "${{ secrets.NVIDIA_INFERENCE_API_KEY }}"
-  ) {
-    errors.push(
-      "openclaw-discord-pairing-vitest step must receive NVIDIA_INFERENCE_API_KEY from secrets",
-    );
-  }
+  requireHostedInferenceCredentialEnv(
+    errors,
+    "openclaw-discord-pairing-vitest step",
+    runVitestEnv,
+  );
   if (runVitestEnv.DISCORD_BOT_TOKEN !== "test-fake-discord-pairing-e2e") {
     errors.push(
       "openclaw-discord-pairing-vitest step must use fake Discord token",
@@ -6235,14 +6232,11 @@ function validateOpenClawSlackPairingVitestJob(
     "Run OpenClaw Slack pairing live test",
   );
   const runVitestEnv = asRecord(runVitest?.env);
-  if (
-    runVitestEnv.NVIDIA_INFERENCE_API_KEY !==
-    "${{ secrets.NVIDIA_INFERENCE_API_KEY }}"
-  ) {
-    errors.push(
-      "openclaw-slack-pairing-vitest step must receive NVIDIA_INFERENCE_API_KEY from secrets",
-    );
-  }
+  requireHostedInferenceCredentialEnv(
+    errors,
+    "openclaw-slack-pairing-vitest step",
+    runVitestEnv,
+  );
   if (runVitestEnv.SLACK_BOT_TOKEN !== "xoxb-fake-slack-pairing-e2e") {
     errors.push(
       "openclaw-slack-pairing-vitest step must use fake Slack bot token",

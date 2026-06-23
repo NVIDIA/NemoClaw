@@ -38,12 +38,15 @@ export function requireHostedInferenceConfig(
 ): HostedInferenceConfig {
   const canonicalApiKey = secrets.required(HOSTED_INFERENCE_SECRET);
   const publicFallbackApiKey = secrets.optional?.(HOSTED_INFERENCE_PUBLIC_FALLBACK_SECRET);
+  const hostedPublicFallbackApiKey = publicFallbackApiKey?.startsWith("nvapi-")
+    ? publicFallbackApiKey
+    : undefined;
   const apiKey = canonicalApiKey.startsWith("nvapi-")
     ? canonicalApiKey
-    : publicFallbackApiKey || canonicalApiKey;
+    : hostedPublicFallbackApiKey || canonicalApiKey;
   const sourceSecretName = canonicalApiKey.startsWith("nvapi-")
     ? HOSTED_INFERENCE_SECRET
-    : publicFallbackApiKey
+    : hostedPublicFallbackApiKey
       ? HOSTED_INFERENCE_PUBLIC_FALLBACK_SECRET
       : HOSTED_INFERENCE_SECRET;
   const endpointUrl = env.NEMOCLAW_ENDPOINT_URL || DEFAULT_HOSTED_INFERENCE_BASE_URL;

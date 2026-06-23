@@ -132,6 +132,20 @@ describe("hosted inference E2E config", () => {
     expect(cfg.env.COMPATIBLE_API_KEY).toBe("nvapi-canonical-hosted-key");
   });
 
+  it("ignores a non-nvapi public fallback alias", () => {
+    const cfg = requireHostedInferenceConfig(
+      secrets({
+        NVIDIA_INFERENCE_API_KEY: "sk-compatible-key",
+        NVIDIA_API_KEY: "not-hosted-public-alias",
+      }),
+      {},
+    );
+
+    expect(cfg.apiKey).toBe("sk-compatible-key");
+    expect(cfg.sourceSecretName).toBe("NVIDIA_INFERENCE_API_KEY");
+    expect(cfg.env.COMPATIBLE_API_KEY).toBe("sk-compatible-key");
+  });
+
   it("uses a lightweight compatible reachability probe without API or auth requests", () => {
     const { result, calls } = runHostedProbe({
       env: {
