@@ -49,7 +49,9 @@ const COMMON_SECRET_ENV_NAMES = [
 const FREE_STANDING_SELECTOR_SPECIAL_CASES = new Set([
   "hermes-e2e-vitest",
   "hermes-root-entrypoint-smoke-vitest",
+  "jetson-nvmap-gpu-vitest",
 ]);
+const FULL_SUITE_EXCLUDED_FREE_STANDING_JOBS = new Set(["jetson-nvmap-gpu-vitest"]);
 
 function asRecord(value: unknown): WorkflowRecord {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -275,7 +277,9 @@ export function evaluateE2eVitestWorkflowDispatchSelectors(input: {
     return {
       valid: true,
       errors: [],
-      selectedFreeStandingJobs: [...freeStandingVitestJobIds].sort(),
+      selectedFreeStandingJobs: freeStandingVitestJobIds
+        .filter((job) => !FULL_SUITE_EXCLUDED_FREE_STANDING_JOBS.has(job))
+        .sort(),
       registryScenarios: [],
       liveScenariosRuns: true,
     };
@@ -448,6 +452,13 @@ function freeStandingJobIf(jobName: string, scenarioName?: string): string {
     ? ` || contains(format(',{0},', inputs.scenarios), ',${scenarioName},')`
     : "";
   return `\${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',${jobName},')${scenarioSelector} }}`;
+}
+
+function explicitOnlyFreeStandingJobIf(jobName: string, scenarioName?: string): string {
+  const scenarioSelector = scenarioName
+    ? ` || contains(format(',{0},', inputs.scenarios), ',${scenarioName},')`
+    : "";
+  return `\${{ contains(format(',{0},', inputs.jobs), ',${jobName},')${scenarioSelector} }}`;
 }
 
 function validateFreeStandingJobSelector(
@@ -7749,7 +7760,13 @@ export function validateE2eVitestScenariosWorkflowBoundary(
     "gateway-health-honest",
   );
 
-  validateFreeStandingJobSelector(errors, jobs, "jetson-nvmap-gpu-vitest", "jetson-nvmap-gpu");
+  const jetsonJob = asRecord(jobs["jetson-nvmap-gpu-vitest"]);
+  if (jetsonJob.needs !== "generate-matrix") {
+    errors.push("jetson-nvmap-gpu-vitest job must depend on generate-matrix");
+  }
+  if (jetsonJob.if !== explicitOnlyFreeStandingJobIf("jetson-nvmap-gpu-vitest", "jetson-nvmap-gpu")) {
+    errors.push("jetson-nvmap-gpu-vitest job must run only when explicitly selected");
+  }
 
   validateFreeStandingJobSelector(
     errors,
