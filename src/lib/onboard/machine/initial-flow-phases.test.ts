@@ -420,6 +420,41 @@ describe("initial onboard flow phases", () => {
     expect(recorded).toEqual(["gateway", "provider_selection"]);
   });
 
+  it("lets resume sessions already at policy application pass through initial compatibility", async () => {
+    const recorded: string[] = [];
+    const phases: readonly OnboardSequencePhase<Context>[] = [
+      {
+        state: "preflight",
+        run: (ctx) => ({ context: ctx, result: advanceTo("gateway") }),
+      },
+      {
+        state: "gateway",
+        run: (ctx) => ({ context: ctx, result: advanceTo("provider_selection") }),
+      },
+    ];
+
+    await runInitialOnboardFlowSlice({
+      context: context({ resume: true }),
+      runtime: runtime(
+        createSession({
+          machine: {
+            version: 1,
+            state: "policies",
+            stateEnteredAt: "2026-06-09T00:00:00.000Z",
+            revision: 7,
+          },
+        }),
+      ),
+      phases,
+      resume: true,
+      recordStateResult: async (stateResult) => {
+        if (stateResult.type === "transition") recorded.push(stateResult.next);
+      },
+    });
+
+    expect(recorded).toEqual(["gateway", "provider_selection"]);
+  });
+
   it("uses the strict runner for fresh init sessions", async () => {
     const order: string[] = [];
     const session = createSession();

@@ -313,6 +313,43 @@ describe("core onboard flow phases", () => {
     expect(recorded).toEqual(["sandbox", "openclaw"]);
   });
 
+  it("lets resume sessions already at policy application pass through core compatibility", async () => {
+    const recorded: string[] = [];
+    const phases: readonly OnboardSequencePhase<CoreContext>[] = [
+      {
+        state: "provider_selection",
+        run: (ctx) => ({ context: ctx, result: advanceTo("sandbox") }),
+      },
+      {
+        state: "sandbox",
+        run: (ctx) => ({ context: ctx, result: advanceTo("openclaw") }),
+      },
+    ];
+
+    await runCoreOnboardFlowSlice({
+      context: context({ resume: true }),
+      runtime: {
+        session: async () =>
+          createSession({
+            machine: {
+              version: 1,
+              state: "policies",
+              stateEnteredAt: "2026-06-09T00:00:00.000Z",
+              revision: 7,
+            },
+          }),
+        applyResult: async () => createSession(),
+      },
+      phases,
+      resume: true,
+      recordStateResult: async (result) => {
+        if (result.type === "transition") recorded.push(result.next);
+      },
+    });
+
+    expect(recorded).toEqual(["sandbox", "openclaw"]);
+  });
+
   it("keeps non-resume ahead-state sessions on the compatibility path", async () => {
     const calls: string[] = [];
     const skipped: string[] = [];
