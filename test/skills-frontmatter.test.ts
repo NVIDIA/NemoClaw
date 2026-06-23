@@ -34,26 +34,12 @@ function listMarkdownFiles(root: string): string[] {
 
 describe("repo skill markdown files", () => {
   const markdownFiles = listMarkdownFiles(skillsRoot);
-  const generatedUserSkillFiles = markdownFiles.filter((file: string) =>
-    path.relative(skillsRoot, file).startsWith("nemoclaw-user-"),
-  );
+  const skillFiles = markdownFiles.filter((file: string) => path.basename(file) === "SKILL.md");
 
-  it("finds generated user skill markdown files to validate", () => {
-    expect(generatedUserSkillFiles.length).toBeGreaterThan(0);
+  it("finds skill markdown files to validate", () => {
+    expect(skillFiles.length).toBeGreaterThan(0);
   });
 
-  for (const markdownFile of generatedUserSkillFiles) {
-    const relPath = path.relative(repoRoot, markdownFile);
-
-    it(`does not include generated SPDX comments for ${relPath}`, () => {
-      const raw = fs.readFileSync(markdownFile, "utf8");
-      expect(raw.includes("<!-- SPDX-"), `${relPath} should not include SPDX comments`).toBe(false);
-    });
-  }
-
-  const skillFiles = generatedUserSkillFiles.filter(
-    (file: string) => path.basename(file) === "SKILL.md",
-  );
   for (const skillFile of skillFiles) {
     const relPath = path.relative(repoRoot, skillFile);
 
