@@ -6,8 +6,8 @@
 The `skills/` directory at the repo root is the NVSkills CI watched location.
 Whatever lives there is what gets signed and published. There is no
 allowlist, manifest, or generator script.
-NemoClaw links customer-facing source skills into `skills/` so the catalog path
-and `.agents/skills/` stay in sync. This is needed for the NVSkills CI to find the skill.
+NemoClaw hard-copies customer-facing source skills into `skills/` so NVSkills CI
+can read the catalog path directly.
 
 NemoClaw currently maintains one customer-facing skill, `nemoclaw-user-guide`.
 That skill is a small routing guide to the canonical Fern Markdown docs.
@@ -17,7 +17,8 @@ Do not publish copied documentation pages as generated `nemoclaw-user-*` skills.
 
 ```bash
 mkdir -p skills
-ln -s ../.agents/skills/nemoclaw-user-guide skills/nemoclaw-user-guide
+rm -rf skills/nemoclaw-user-guide
+cp -R .agents/skills/nemoclaw-user-guide skills/
 git add skills/nemoclaw-user-guide
 git commit -m "chore(skills): publish nemoclaw-user-guide"
 ```
@@ -29,18 +30,21 @@ NVSkills CI signs one skill at a time.
 ## Update an already-published skill
 
 ```bash
-test -L skills/nemoclaw-user-guide || ln -s ../.agents/skills/nemoclaw-user-guide skills/nemoclaw-user-guide
+rm -rf skills/nemoclaw-user-guide
+cp -R .agents/skills/nemoclaw-user-guide skills/
 git add -A skills/nemoclaw-user-guide
 git commit -m "chore(skills): refresh nemoclaw-user-guide"
 ```
 
-Use `git add -A` so symlink changes are staged alongside source-skill edits.
+Use `git add -A` so newly added files in the refreshed skill are staged
+alongside removals tracked by `git commit -a`.
 
 ## Spot-checking for drift
 
 Source (`/.agents/skills/nemoclaw-user-guide/`) and published
-(`/skills/nemoclaw-user-guide`) should resolve to the same directory.
-To check, ask an agent to verify the symlink target before requesting signing.
+(`/skills/nemoclaw-user-guide/`) can drift if a source-side edit lands without a
+corresponding refresh PR.
+To check, ask an agent to compare the two directories before requesting signing.
 
 ## What goes in the catalog
 
