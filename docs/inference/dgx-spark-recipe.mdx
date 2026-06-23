@@ -20,9 +20,9 @@ local assistant** on a DGX Spark, based on the managed-vLLM profile NemoClaw shi
 Spark. It covers the model, the serving backend, the onboarding flow, and how to confirm
 the agent is useful.
 
-This page uses the `nemoclaw` CLI. For a Hermes sandbox, substitute `nemohermes`.
-
 ## Who This Is For
+
+This recipe targets a single-user, interactive workload:
 
 - A single operator running one agent interactively on one DGX Spark.
 - Responsiveness for one user, not throughput across many concurrent sessions. The serving
@@ -83,7 +83,7 @@ From a fresh DGX Spark with NemoClaw installed:
 export NEMOCLAW_VLLM_MODEL=qwen3.6-35b-a3b-nvfp4
 
 # Managed vLLM install/start path (default-available on DGX Spark).
-NEMOCLAW_PROVIDER=install-vllm nemoclaw onboard
+NEMOCLAW_PROVIDER=install-vllm $$nemoclaw onboard
 ```
 
 The first run pulls the vLLM image and downloads model weights into
@@ -98,8 +98,8 @@ For the interactive flow and the BYO-vLLM ("already running") variant, see
 
 After onboarding completes, confirm the assistant is responsive and tool-capable:
 
-1. `nemoclaw <name> status` — confirm the provider is `Local vLLM` and inference is healthy.
-2. `nemoclaw <name> connect`, then run a short prompt and a tool-using prompt (for example,
+1. `$$nemoclaw <name> status` — confirm the provider is `Local vLLM` and inference is healthy.
+2. `$$nemoclaw <name> connect`, then run a short prompt and a tool-using prompt (for example,
    ask the agent to read a file). Tool calls must execute, not print raw JSON — see
    [Tool-Calling Reliability](tool-calling-reliability).
 3. Measure responsiveness with the value benchmark:
@@ -119,7 +119,7 @@ different setting (for example a lower `--max-num-seqs` or a different
 `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` before onboarding, then re-measure:
 
 ```bash
-NEMOCLAW_VLLM_EXTRA_ARGS_JSON='["--max-num-seqs","2"]' NEMOCLAW_PROVIDER=install-vllm nemoclaw onboard
+NEMOCLAW_VLLM_EXTRA_ARGS_JSON='["--max-num-seqs","2"]' NEMOCLAW_PROVIDER=install-vllm $$nemoclaw onboard
 ```
 
 Compare first-token latency, round-trip latency, throughput, and tool-call reliability
@@ -127,7 +127,9 @@ across candidates with a real single-user workflow (a tool-using agent task), no
 synthetic throughput, and keep the configuration that gives the best single-user
 responsiveness.
 
-## Related
+## Next Steps
+
+Continue with the related inference guides:
 
 - [Inference Options](inference-options)
 - [Use a Local Inference Server](use-local-inference)
