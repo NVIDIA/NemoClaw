@@ -2476,7 +2476,6 @@ if [ "$fake_gateway_ready" = "1" ] && [ "$fake_gateway_capture_check" = "OK" ]; 
 else
   if [ "$fake_gateway_ready" = "1" ]; then
     info "Fake Discord Gateway capture check: ${fake_gateway_capture_check:0:300}"
-    info "Fake Discord Gateway capture: $(tail -20 "$FAKE_DISCORD_GATEWAY_CAPTURE_FILE" 2>/dev/null | tr '\n' ' ' | cut -c1-500)"
   fi
   fail "M13f: Fake Gateway did not prove placeholder-to-token rewrite at the relay boundary"
 fi
