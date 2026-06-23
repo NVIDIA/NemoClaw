@@ -3179,6 +3179,7 @@ describe("installer express install prompt (sourced)", () => {
     answer: string,
     stdinMode: "pipe" | "tty",
     platform = "DGX Spark",
+    extraEnv: Record<string, string> = {},
   ) {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-express-prompt-"));
     const python =
@@ -3268,6 +3269,7 @@ sys.exit(exit_code)
       env: {
         HOME: tmp,
         PATH: TEST_SYSTEM_PATH,
+        ...extraEnv,
       },
     });
   }
@@ -3286,6 +3288,19 @@ sys.exit(exit_code)
     expect(output).toMatch(/Using express install for DGX Spark/);
     expect(output).toMatch(
       /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-vllm MODEL= VLLM_MODEL=qwen3\.6-35b-a3b-nvfp4 POLICY=suggested YES=1 SANDBOX=my-spark-assistant/,
+    );
+  });
+
+  it("preserves a preset Spark vLLM model in the prompt and exported env", () => {
+    const result = runExpressPromptWithTty("y\n", "pipe", "DGX Spark", {
+      NEMOCLAW_VLLM_MODEL: "custom-qwen3.6",
+    });
+    const output = `${result.stdout}${result.stderr}`;
+    expect(result.status, output).toBe(0);
+    expect(output).toMatch(/Detected DGX Spark/);
+    expect(output).toMatch(/Express install will configure managed local vLLM with model custom-qwen3\.6/);
+    expect(output).toMatch(
+      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-vllm MODEL= VLLM_MODEL=custom-qwen3\.6 POLICY=suggested YES=1 SANDBOX=my-spark-assistant/,
     );
   });
 
