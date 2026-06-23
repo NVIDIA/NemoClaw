@@ -44,10 +44,12 @@
 //
 // 3. Selector-required guard (OpenClaw argv mirror).
 //
-//    - Invalid state: upstream `openclaw agent` rejects a missing target
-//      selector with exit code 127 instead of exit 2, which masks the
-//      precise misuse and confuses CLI consumers that expect 2 for argv
-//      misuse.
+//    - Invalid state: upstream `openclaw agent` reports the missing-selector
+//      error on stderr but then exits with status `0` (success), so CLI
+//      consumers that branch on the exit code see the call as successful
+//      and never learn that no selector was provided. The host-side mirror
+//      converts that misuse into a clean exit `2` with the same diagnostic
+//      before any in-sandbox dispatch runs.
 //    - Source boundary: OpenClaw owns the argv contract; NemoClaw mirrors
 //      only the selector requirement (one of `--agent`, `--session-id`,
 //      `--session-key`, `--to`) to surface a clean exit 2 with a usage hint
