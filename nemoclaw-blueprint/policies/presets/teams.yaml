@@ -36,6 +36,9 @@ network_policies:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
       # Public Teams Bot Connector service URL used by incoming activities.
+      # The SDK follows serviceUrl values from inbound activities, and Bot
+      # Framework connector paths are region/tenant dependent; keep the
+      # connector host method-scoped while Graph/media hosts stay read-only.
       - host: smba.trafficmanager.net
         port: 443
         protocol: rest
@@ -54,7 +57,6 @@ network_policies:
         request_body_credential_rewrite: true
         rules:
           - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
       # Read-only Teams/Office media surfaces referenced by Teams messages.
       - host: teams.microsoft.com
         port: 443

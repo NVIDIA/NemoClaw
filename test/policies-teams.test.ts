@@ -32,12 +32,24 @@ function allowedMethods(
   policy: { endpoints: Array<{ host?: string; rules?: Array<{ allow?: { method?: string } }> }> },
   host: string,
 ): string[] {
-  const endpoint = policy.endpoints.find((entry) => entry.host === host);
-  expect(endpoint).toBeTruthy();
-  return (endpoint?.rules ?? [])
-    .map((rule) => rule.allow?.method)
+  return allowedRules(policy, host)
+    .map((rule) => rule.method)
     .filter((method): method is string => typeof method === "string")
     .sort();
+}
+
+function allowedRules(
+  policy: {
+    endpoints: Array<{
+      host?: string;
+      rules?: Array<{ allow?: { method?: string; path?: string } }>;
+    }>;
+  },
+  host: string,
+): Array<{ method?: string; path?: string }> {
+  const endpoint = policy.endpoints.find((entry) => entry.host === host);
+  expect(endpoint).toBeTruthy();
+  return (endpoint?.rules ?? []).map((rule) => rule.allow ?? {});
 }
 
 describe("Teams policy preset", () => {
@@ -51,7 +63,13 @@ describe("Teams policy preset", () => {
     expect(hosts).toContain("graph.microsoft.com");
     expect(hosts).toContain("*.sharepoint.com");
     const teamsPolicy = YAML.parse(content).network_policies.teams;
-    expect(allowedMethods(teamsPolicy, "graph.microsoft.com")).toEqual(["GET", "POST"]);
+    expect(allowedMethods(teamsPolicy, "graph.microsoft.com")).toEqual(["GET"]);
+    expect(allowedRules(teamsPolicy, "smba.trafficmanager.net")).toEqual([
+      { method: "GET", path: "/**" },
+      { method: "POST", path: "/**" },
+      { method: "PUT", path: "/**" },
+      { method: "DELETE", path: "/**" },
+    ]);
     expect(allowedMethods(teamsPolicy, "teams.microsoft.com")).toEqual(["GET"]);
     expect(allowedMethods(teamsPolicy, "teams.cdn.office.net")).toEqual(["GET"]);
     expect(allowedMethods(teamsPolicy, "statics.teams.cdn.office.net")).toEqual(["GET"]);
@@ -140,7 +158,13 @@ exit 1
           "*.sharepoint.com",
         ]),
       );
-      expect(allowedMethods(teamsPolicy, "graph.microsoft.com")).toEqual(["GET", "POST"]);
+      expect(allowedMethods(teamsPolicy, "graph.microsoft.com")).toEqual(["GET"]);
+      expect(allowedRules(teamsPolicy, "smba.trafficmanager.net")).toEqual([
+        { method: "GET", path: "/**" },
+        { method: "POST", path: "/**" },
+        { method: "PUT", path: "/**" },
+        { method: "DELETE", path: "/**" },
+      ]);
       expect(allowedMethods(teamsPolicy, "teams.microsoft.com")).toEqual(["GET"]);
       expect(allowedMethods(teamsPolicy, "*.sharepoint.com")).toEqual(["GET"]);
       expect(payload.registry.policies).toEqual(["teams"]);

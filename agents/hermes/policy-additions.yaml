@@ -282,6 +282,9 @@ network_policies:
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
+      # The SDK follows Bot Connector serviceUrl values from inbound Teams
+      # activities, so this host remains method-scoped while Graph/media hosts
+      # stay read-only.
       - host: smba.trafficmanager.net
         port: 443
         protocol: rest
@@ -299,7 +302,6 @@ network_policies:
         request_body_credential_rewrite: true
         rules:
           - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
       - host: teams.microsoft.com
         port: 443
         protocol: rest
