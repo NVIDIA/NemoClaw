@@ -105,6 +105,14 @@ function parseDryRun(envOverrides: Record<string, string> = {}) {
   return JSON.parse(result.stdout);
 }
 
+function decodePlan(encoded: string): any {
+  return JSON.parse(Buffer.from(encoded, "base64").toString("utf-8"));
+}
+
+function encodePlan(plan: any): string {
+  return Buffer.from(JSON.stringify(plan)).toString("base64");
+}
+
 describe("messaging-build-applier.mts: agent-install", () => {
   it("collects selected messaging plugin install specs", () => {
     const payload = parseDryRun({
@@ -541,6 +549,58 @@ describe("messaging-build-applier.mts: agent-install", () => {
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
+  });
+
+  it("rejects Hermes Python packages not declared by trusted built-in channel manifests", () => {
+    const baseEnv = withLegacyMessagingPlanEnv(
+      {
+        PATH: process.env.PATH || "/usr/bin:/bin",
+        NEMOCLAW_MESSAGING_CHANNELS_B64: channelsB64(["teams"]),
+        NEMOCLAW_TEAMS_CONFIG_B64: teamsConfigB64(),
+      },
+      "hermes",
+    );
+    const plan = decodePlan(baseEnv.NEMOCLAW_MESSAGING_PLAN_B64);
+    plan.buildSteps = [
+      ...plan.buildSteps,
+      {
+        channelId: "teams",
+        kind: "package-install",
+        outputId: "tamperedHermesPackage",
+        required: true,
+        value: {
+          manager: "hermes-uv-pip",
+          spec: "unexpected-package==1.2.3",
+        },
+      },
+    ];
+
+    const result = spawnSync(
+      "node",
+      [
+        "--experimental-strip-types",
+        SCRIPT_PATH,
+        "--agent",
+        "hermes",
+        "--phase",
+        "agent-install",
+        "--dry-run",
+      ],
+      {
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"],
+        env: {
+          ...baseEnv,
+          NEMOCLAW_MESSAGING_PLAN_B64: encodePlan(plan),
+        },
+        timeout: 10_000,
+      },
+    );
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("tamperedHermesPackage");
+    expect(result.stderr).toContain("not declared by a trusted built-in manifest");
+    expect(result.stderr).toContain("unexpected-package==1.2.3");
   });
 
   it("#4246: messaging post-agent-install render reaches the mocked OpenClaw doctor boundary", () => {
