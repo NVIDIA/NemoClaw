@@ -2158,36 +2158,53 @@ Export the credential before running `$$nemoclaw onboard` for that profile.
 
 #### Extra OpenClaw agents
 
-Set `NEMOCLAW_EXTRA_AGENTS_JSON` to a JSON array of secondary-agent entries to bake them into `agents.list[]` at image build time.
-Each entry must declare `id` and `tools`; `workspace`, `agentDir`, and `subagents.maxSpawnDepth` are optional.
+Set `NEMOCLAW_EXTRA_AGENTS_JSON` to either a JSON array of secondary-agent entries, or an object payload of the form `{"agents": [...], "defaults": {...}, "main": {...}}`, to bake them into `agents.list[]` at image build time.
+Each entry must declare `id` and `tools`; `workspace`, `agentDir`, `subagents`, `description`, and `model` are optional.
 The canonical `main` entry is always written first with `default: true`, so secondary agents cannot displace the primary agent.
 Malformed JSON or invalid entries fail the image build with a structured error.
 
 Field rules:
 
 - `id` must match `^[a-z][a-z0-9_-]{0,31}$` and must not be `main`.
-- `workspace` defaults to `/sandbox/.openclaw/workspace-<id>`; when set, must equal that exact value.
-- `agentDir` defaults to `/sandbox/.openclaw/agents/<id>`; when set, must equal that exact value.
+- `workspace` defaults to `/sandbox/.openclaw/workspace-<id>`; when set, it must be an absolute path that resolves to that value.
+- `agentDir` defaults to `/sandbox/.openclaw/agents/<id>`; when set, it must be an absolute path that resolves to that value.
 - `tools` must declare a non-empty `allow[]` or `deny[]`; nothing is implicitly granted.
-- `subagents.maxSpawnDepth` must be a non-negative integer; set to `0` to forbid further spawning.
+- `model`, when set, must be a `"provider/model"` string whose provider portion matches the primary onboard provider.
 - `default: true` is rejected because the primary agent is the only default.
-- Allowed entry fields: `id`, `workspace`, `agentDir`, `tools`, `subagents`, `description`. Any other key fails the image build (no implicit credential or env pass-through).
-- Allowed `tools` fields: `profile`, `allow`, `deny`. Allowed `subagents` fields: `maxSpawnDepth`. Any other nested key fails the image build.
+- Allowed entry fields: `id`, `workspace`, `agentDir`, `tools`, `subagents`, `description`, `model`. Any other key fails the image build (no implicit credential or env pass-through).
+- Allowed `tools` fields: `profile`, `allow`, `deny`. Allowed per-agent `subagents` fields: `delegationMode`, `allowAgents`, `model`, `thinking`, `requireAgentId`. Any other nested key fails the image build.
 
-Example:
+OpenClaw accepts `subagents.maxSpawnDepth` only on `agents.defaults.subagents`, never inside a per-agent `subagents` object. To set it, use the object payload shape and pass it under `defaults`:
+
+```json
+{
+  "agents": [
+    {
+      "id": "research",
+      "tools": {
+        "profile": "minimal",
+        "allow": ["web_search", "web_fetch", "read", "write"],
+        "deny": ["exec", "gateway"]
+      }
+    }
+  ],
+  "defaults": {
+    "subagents": { "maxSpawnDepth": 0 }
+  }
+}
+```
+
+Array-shape example (paths defaulted):
 
 ```json
 [
   {
     "id": "research",
-    "workspace": "/sandbox/.openclaw/workspace-research",
-    "agentDir": "/sandbox/.openclaw/agents/research",
     "tools": {
       "profile": "minimal",
       "allow": ["web_search", "web_fetch", "read", "write"],
       "deny": ["exec", "gateway"]
-    },
-    "subagents": { "maxSpawnDepth": 0 }
+    }
   }
 ]
 ```

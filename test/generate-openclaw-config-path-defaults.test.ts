@@ -89,4 +89,34 @@ describe("generate-openclaw-config.mts: extra-agents path defaulting", () => {
       agentDir: "/sandbox/.openclaw/agents/beta",
     });
   });
+
+  it("accepts the legacy allow-only array payload with defaulted workspace and agentDir", () => {
+    const config = runConfigScript({
+      NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([
+        { id: "legacy-worker", tools: { allow: ["read"] } },
+      ]),
+    });
+    expect(config.agents.list).toHaveLength(2);
+    expect(config.agents.list[1]).toMatchObject({
+      id: "legacy-worker",
+      workspace: "/sandbox/.openclaw/workspace-legacy-worker",
+      agentDir: "/sandbox/.openclaw/agents/legacy-worker",
+      tools: { allow: ["read"] },
+    });
+  });
+
+  it("auto-fills workspace and agentDir for the object-shaped {agents} payload", () => {
+    const config = runConfigScript({
+      NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64({
+        agents: [{ id: "legacy-worker", tools: { allow: ["read"] } }],
+      }),
+    });
+    expect(config.agents.list).toHaveLength(2);
+    expect(config.agents.list[1]).toMatchObject({
+      id: "legacy-worker",
+      workspace: "/sandbox/.openclaw/workspace-legacy-worker",
+      agentDir: "/sandbox/.openclaw/agents/legacy-worker",
+      tools: { allow: ["read"] },
+    });
+  });
 });
