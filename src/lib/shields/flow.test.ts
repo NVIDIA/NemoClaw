@@ -158,19 +158,21 @@ describe("shields command flow", () => {
     const configHash = "a".repeat(64);
     const hashHash = "b".repeat(64);
     const execCalls: string[] = [];
+    const execResponses = new Map([
+      [` stat -c %a %U:%G ${hashPath}`, "444 root:root\n"],
+      [` stat -c %a %U:%G ${configPath}`, "444 root:root\n"],
+      [` stat -c %a %U:%G ${configDir}`, "755 root:root\n"],
+      [` lsattr -d ${hashPath}`, `----i---------e----- ${hashPath}\n`],
+      [` lsattr -d ${configPath}`, `----i---------e----- ${configPath}\n`],
+      [` sha256sum ${hashPath}`, `${hashHash}  ${hashPath}\n`],
+      [` sha256sum ${configPath}`, `${configHash}  ${configPath}\n`],
+    ]);
     const harness = createHarness({
       dockerExecFileSync: (argv: unknown) => {
         const args = Array.isArray(argv) ? argv.map(String) : [];
         const cmd = args.join(" ");
         execCalls.push(cmd);
-        if (cmd.includes(` stat -c %a %U:%G ${hashPath}`)) return "444 root:root\n";
-        if (cmd.includes(` stat -c %a %U:%G ${configPath}`)) return "444 root:root\n";
-        if (cmd.includes(` stat -c %a %U:%G ${configDir}`)) return "755 root:root\n";
-        if (cmd.includes(` lsattr -d ${hashPath}`)) return `----i---------e----- ${hashPath}\n`;
-        if (cmd.includes(` lsattr -d ${configPath}`)) return `----i---------e----- ${configPath}\n`;
-        if (cmd.includes(` sha256sum ${hashPath}`)) return `${hashHash}  ${hashPath}\n`;
-        if (cmd.includes(` sha256sum ${configPath}`)) return `${configHash}  ${configPath}\n`;
-        return "";
+        return [...execResponses].find(([needle]) => cmd.includes(needle))?.[1] ?? "";
       },
     });
     const stateDir = path.join(tmpDir, ".nemoclaw", "state");
@@ -199,11 +201,12 @@ describe("shields command flow", () => {
       }),
     );
     vi.spyOn(process, "kill").mockImplementation((pid: number, signal?: string | number) => {
-      if (pid === 4242 && signal === 0) {
+      const failDeadTimerProbe = () => {
         const error = new Error("timer is gone") as NodeJS.ErrnoException;
         error.code = "ESRCH";
         throw error;
-      }
+      };
+      (pid === 4242 && signal === 0 && failDeadTimerProbe()) || true;
       return true;
     });
 
