@@ -134,7 +134,9 @@ describe("runAgentPassthrough", () => {
     expect(ensureLiveMock).toHaveBeenCalledWith("my-assistant", { allowNonReadyPhase: true });
     expect(exit).toHaveBeenCalledWith(1);
     const all = writes.join("");
-    expect(all).toMatch(/Sandbox 'my-assistant' is not ready for the agent wrapper \(phase: Error\)/);
+    expect(all).toMatch(
+      /Sandbox 'my-assistant' is not ready for the agent wrapper \(phase: Error\)/,
+    );
     expect(all).toMatch(/my-assistant recover/);
     expect(all).not.toMatch(/No target session selected/);
   });
