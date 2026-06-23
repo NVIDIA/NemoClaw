@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Session, SessionUpdates } from "../state/onboard-session";
-import type { StepMutationOptions } from "../state/onboard-step-mutation";
+import {
+  RECORD_ONLY_STEP_MUTATION_OPTIONS,
+  type StepMutationOptions,
+} from "../state/onboard-step-mutation";
 import type { OnboardStateFailedResult, OnboardStateResult } from "./machine/result";
 import { OnboardRuntime } from "./machine/runtime";
 import { assertValidOnboardMachineTransition } from "./machine/transitions";
@@ -18,8 +21,6 @@ function assertSkippableTransitionResult(result: OnboardStateResult): void {
   }
   throw new Error("Cannot skip onboarding state result with context updates");
 }
-
-const RECORD_ONLY_STEP_MUTATION_OPTIONS: StepMutationOptions = { updateMachine: false };
 
 export interface OnboardRuntimeBoundaryOptions {
   toSessionUpdates(updates: Record<string, unknown>): SessionUpdates;

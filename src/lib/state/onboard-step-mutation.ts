@@ -3,16 +3,16 @@
 
 export interface StepMutationOptions {
   /**
-   * Transitional FSM migration escape hatch for fresh-flow slices where the
-   * runtime applies explicit OnboardStateResult transitions immediately after
-   * legacy step helpers record status. Production record-only writes should be
-   * paired with an explicit runtime result through OnboardRuntimeBoundary-owned
-   * adapters so the runtime remains the durable machine source of truth. Remove
-   * this option once all live phase bodies return explicit FSM results without
-   * relying on step helper machine mutation.
+   * Transitional FSM migration escape hatch for paths where legacy step helpers
+   * still move session.machine. Runtime-owned onboarding should use record-only
+   * step writes paired with explicit OnboardStateResult transitions so the
+   * runtime remains the durable machine source of truth. Remove this option once
+   * direct step helpers no longer own machine transitions.
    */
   updateMachine?: boolean;
 }
+
+export const RECORD_ONLY_STEP_MUTATION_OPTIONS: StepMutationOptions = { updateMachine: false };
 
 export function shouldUpdateMachine(options: StepMutationOptions | undefined): boolean {
   return options?.updateMachine !== false;
