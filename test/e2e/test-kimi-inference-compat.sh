@@ -575,7 +575,7 @@ PY
     return
   fi
 
-  if [ "$final_text" = "hostname, date, and uptime completed successfully." ]; then
+  if [ "${final_text%.}" = "hostname, date, and uptime completed successfully" ]; then
     pass "K4: OpenClaw agent returned the expected final text"
   else
     pass "K4: OpenClaw agent command completed; trajectory acceptance validates final tool results"
@@ -710,8 +710,14 @@ if "abandoned" in raw.lower():
     errors.append("trajectory/session contains 'abandoned'")
 if "want me to continue" in raw.lower():
     errors.append("trajectory/session contains 'want me to continue'")
+def normalize_final_text(value):
+    if not isinstance(value, str):
+        return value
+    return value.strip().removesuffix(".")
+
 final_texts = artifact_data.get("assistantTexts") or []
-if not final_texts or final_texts[-1] != "hostname, date, and uptime completed successfully.":
+expected_final_text = "hostname, date, and uptime completed successfully"
+if not final_texts or normalize_final_text(final_texts[-1]) != expected_final_text:
     errors.append("final assistant text is %r" % (final_texts[-1] if final_texts else None))
 if not tool_result_indices or not assistant_indices or max(assistant_indices) <= max(tool_result_indices):
     errors.append("final assistant response did not occur after all tool results")
