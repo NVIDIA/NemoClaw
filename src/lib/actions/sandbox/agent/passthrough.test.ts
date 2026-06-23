@@ -195,14 +195,23 @@ describe("runAgentPassthrough", () => {
     expect(all).toMatch(/onboard --resume/);
   });
 
-  it("does not reject on phase when ensureLive returns no output", async () => {
+  it("fails closed with exit 2 when ensureLive returns output without a parseable Phase line, never invoking exec", async () => {
     execMock.mockClear();
     ensureLiveMock.mockClear();
-    ensureLiveMock.mockResolvedValueOnce({});
+    ensureLiveMock.mockResolvedValueOnce({ output: "Name: alpha\n(no phase line here)\n" });
     getSandboxMock.mockReturnValueOnce({ agent: "openclaw" });
-    await runAgentPassthrough("alpha", { extraArgs: ["--agent", "main"] });
-    expect(execMock).toHaveBeenCalledWith("alpha", ["openclaw", "agent", "--agent", "main"], {
-      tty: false,
-    });
+    const { writes, exit, proc } = makeProcMock();
+    await expect(
+      runAgentPassthrough(
+        "alpha",
+        { extraArgs: ["--agent", "main", "-m", "hi"] },
+        { process: proc },
+      ),
+    ).rejects.toThrow("__exit:2");
+    expect(execMock).not.toHaveBeenCalled();
+    expect(exit).toHaveBeenCalledWith(2);
+    const all = writes.join("");
+    expect(all).toMatch(/Could not parse a 'Phase:' line/);
+    expect(all).toMatch(/Refusing to forward/);
   });
 });

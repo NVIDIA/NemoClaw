@@ -40,7 +40,9 @@
 //      gateway-state output and rejects with NemoClaw's recovery copy before
 //      forwarding to the in-sandbox binary. The phase check runs before the
 //      selector check so a stopped sandbox still gets recovery guidance even
-//      when the caller forgot the selector flag.
+//      when the caller forgot the selector flag. If the gateway-state output
+//      cannot be parsed for a `Phase:` line at all, the wrapper fails closed
+//      with exit 2 rather than dispatching against an unknown phase.
 //
 // 3. Selector-required guard (OpenClaw argv mirror).
 //
@@ -171,6 +173,22 @@ function rejectNoTargetSelector(proc: NonNullable<AgentPassthroughDeps["process"
   return proc.exit(2);
 }
 
+function rejectUnparseablePhase(
+  sandboxName: string,
+  proc: NonNullable<AgentPassthroughDeps["process"]>,
+): never {
+  proc.stderr.write(
+    `  Could not parse a 'Phase:' line from the live state of sandbox '${sandboxName}'.\n`,
+  );
+  proc.stderr.write(
+    "  Refusing to forward to `openclaw agent` because the readiness guard cannot fail closed.\n",
+  );
+  proc.stderr.write(
+    `  Run \`${CLI_NAME} ${sandboxName} status\` to inspect the gateway-state output.\n`,
+  );
+  return proc.exit(2);
+}
+
 function rejectNotReadyForAgent(
   sandboxName: string,
   phase: string,
@@ -208,7 +226,10 @@ export async function runAgentPassthrough(
   const ensureLive = deps.ensureLive ?? ensureLiveSandboxOrExit;
   const state = await ensureLive(sandboxName, { allowNonReadyPhase: true });
   const phase = parseSandboxPhase(state?.output ?? "");
-  if (phase && phase !== "Ready" && phase !== "Running") {
+  if (!phase) {
+    rejectUnparseablePhase(sandboxName, proc);
+  }
+  if (phase !== "Ready" && phase !== "Running") {
     rejectNotReadyForAgent(sandboxName, phase, proc);
   }
   if (!hasTargetSelector(extraArgs)) {
