@@ -2175,7 +2175,7 @@ Field rules:
 - Allowed `tools` fields: `profile`, `allow`, `deny`. Allowed per-agent `subagents` fields: `delegationMode`, `allowAgents`, `model`, `thinking`, `requireAgentId`. Any other nested key fails the image build.
 
 OpenClaw accepts `subagents.maxSpawnDepth` only on `agents.defaults.subagents`, never inside a per-agent `subagents` object.
-To set it, use the object payload shape and pass it under `defaults`:
+The value must be an integer between `1` and `5` (OpenClaw's accepted range); to set it, use the object payload shape and pass it under `defaults`:
 
 ```json
 {
@@ -2190,7 +2190,7 @@ To set it, use the object payload shape and pass it under `defaults`:
     }
   ],
   "defaults": {
-    "subagents": { "maxSpawnDepth": 0 }
+    "subagents": { "maxSpawnDepth": 1 }
   }
 }
 ```
