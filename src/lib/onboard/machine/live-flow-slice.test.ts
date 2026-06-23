@@ -198,6 +198,30 @@ describe("runLiveOnboardFlowSlice", () => {
     expect(applyCompatibleResult).not.toHaveBeenCalled();
   });
 
+  it("rejects undeclared resume states before running side effects", async () => {
+    const liveRuntime = runtime("provider_selection");
+    const blocked = phase("preflight", 2);
+    const runSlice = vi.fn(async ({ context }) => ({ context, session: createSession() }));
+    const applyCompatibleResult = vi.fn(async () => undefined);
+
+    await expect(
+      runLiveOnboardFlowSlice({
+        context: { value: 1 },
+        runtime: liveRuntime.runtime,
+        phases: [blocked],
+        resume: true,
+        runWhenState: ["preflight"],
+        compatibilityWhenState: ["sandbox"],
+        runSlice,
+        applyCompatibleResult,
+      }),
+    ).rejects.toBeInstanceOf(UnexpectedLiveOnboardFlowSliceStateError);
+
+    expect(runSlice).not.toHaveBeenCalled();
+    expect(blocked.run).not.toHaveBeenCalled();
+    expect(applyCompatibleResult).not.toHaveBeenCalled();
+  });
+
   it("rejects duplicate compatibility phases before running side effects", async () => {
     const liveRuntime = runtime("provider_selection");
     const first = phase("preflight", 2);
