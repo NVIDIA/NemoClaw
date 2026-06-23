@@ -148,6 +148,35 @@ describe("DockerProbe secret hygiene", () => {
     }
   });
 
+  it("rejects raw Docker output from expect to keep thrown diagnostics redacted", async () => {
+    const leakedSecret = "SENTINEL_RAW_SECRET_VALUE";
+    const artifactsRoot = await fs.mkdtemp(path.join(os.tmpdir(), "docker-probe-expect-raw-"));
+    const artifacts = new ArtifactSink(artifactsRoot);
+    const secrets = new SecretStore({}, (message) => {
+      throw new Error(message ?? "unexpected skip");
+    });
+    const probe = new DockerProbe(
+      artifacts,
+      (text, extraValues) => secrets.redact(text, extraValues),
+      () => ({
+        pid: 123,
+        output: [null, "", `startup rejected DEVTEST_API_TOKEN=${leakedSecret}`],
+        stdout: "",
+        stderr: `startup rejected DEVTEST_API_TOKEN=${leakedSecret}`,
+        status: 1,
+        signal: null,
+      }),
+    );
+
+    await expect(
+      probe.expect(["run", "hermes"], {
+        artifactName: "startup-rejects-env-file-devtest-api-token",
+        artifactRedactionValues: [leakedSecret],
+        returnRaw: true,
+      }),
+    ).rejects.toThrow("DockerProbe.expect cannot return raw Docker output");
+  });
+
   it("redacts diagnostic-style Docker inspect, logs, process, start-log, and gateway-log artifacts", async () => {
     const secret = "docker-diagnostic-artifact-secret";
     const diagnostics = new Map([

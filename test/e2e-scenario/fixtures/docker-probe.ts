@@ -137,6 +137,11 @@ export class DockerProbe {
   }
 
   async expect(args: string[], options: DockerProbeRunOptions): Promise<DockerCommandResult> {
+    if (options.returnRaw === true) {
+      throw new Error(
+        "DockerProbe.expect cannot return raw Docker output; use run(..., { returnRaw: true }) only for explicit leak assertions that never log the raw result.",
+      );
+    }
     const result = await this.run(args, options);
     if (result.exitCode !== 0) {
       throw new Error(resultText(result));
