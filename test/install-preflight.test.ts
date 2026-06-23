@@ -783,9 +783,22 @@ exit 0
     fs.mkdirSync(path.join(prefix, "bin"), { recursive: true });
     fs.mkdirSync(path.join(tmp, ".nemoclaw"), { recursive: true });
 
+    // A session interrupted after the sandbox was created (sandboxName
+    // recorded + sandbox step complete) is genuinely resumable, so the
+    // installer auto-attaches --resume. A pre-sandbox-creation session is
+    // covered by the fresh-recover case below (#5626).
     fs.writeFileSync(
       path.join(tmp, ".nemoclaw", "onboard-session.json"),
-      JSON.stringify({ resumable: true, status: "in_progress" }, null, 2),
+      JSON.stringify(
+        {
+          resumable: true,
+          status: "in_progress",
+          sandboxName: "my-assistant",
+          steps: { sandbox: { status: "complete" } },
+        },
+        null,
+        2,
+      ),
     );
 
     writeNodeStub(fakeBin);
