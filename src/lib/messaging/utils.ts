@@ -27,9 +27,7 @@ export function getMessagingManifestAvailabilityContext(
 ): ChannelManifestAvailabilityContext {
   return {
     agent: toMessagingAgentId(agent),
-    supportedChannelIds: Array.isArray(agent?.messagingPlatforms)
-      ? agent.messagingPlatforms
-      : null,
+    supportedChannelIds: Array.isArray(agent?.messagingPlatforms) ? agent.messagingPlatforms : null,
   };
 }
 
