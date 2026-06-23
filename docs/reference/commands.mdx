@@ -2160,7 +2160,7 @@ Export the credential before running `$$nemoclaw onboard` for that profile.
 
 Set `NEMOCLAW_EXTRA_AGENTS_JSON` to either a JSON array of secondary-agent entries, or an object payload of the form `{"agents": [...], "defaults": {...}, "main": {...}}`, to bake them into `agents.list[]` at image build time.
 Each entry must declare `id` and `tools`; `workspace`, `agentDir`, `subagents`, `description`, and `model` are optional.
-The canonical `main` entry is always written first with `default: true`, so secondary agents cannot displace the primary agent.
+The generator always writes the canonical `main` entry first with `default: true`, so secondary agents cannot displace the primary agent.
 Malformed JSON or invalid entries fail the image build with a structured error.
 
 Field rules:
@@ -2174,7 +2174,8 @@ Field rules:
 - Allowed entry fields: `id`, `workspace`, `agentDir`, `tools`, `subagents`, `description`, `model`. Any other key fails the image build (no implicit credential or env pass-through).
 - Allowed `tools` fields: `profile`, `allow`, `deny`. Allowed per-agent `subagents` fields: `delegationMode`, `allowAgents`, `model`, `thinking`, `requireAgentId`. Any other nested key fails the image build.
 
-OpenClaw accepts `subagents.maxSpawnDepth` only on `agents.defaults.subagents`, never inside a per-agent `subagents` object. To set it, use the object payload shape and pass it under `defaults`:
+OpenClaw accepts `subagents.maxSpawnDepth` only on `agents.defaults.subagents`, never inside a per-agent `subagents` object.
+To set it, use the object payload shape and pass it under `defaults`:
 
 ```json
 {
