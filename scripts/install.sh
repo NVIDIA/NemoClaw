@@ -2417,7 +2417,7 @@ describe_express_install() {
 
   case "$platform" in
     "DGX Spark")
-      inference_summary="managed local Ollama with model qwen3.6:35b"
+      inference_summary="managed local vLLM with model ${NEMOCLAW_VLLM_MODEL:-qwen3.6-35b-a3b-nvfp4}"
       sandbox_summary="${NEMOCLAW_SANDBOX_NAME:-my-spark-assistant}"
       ;;
     "DGX Station")
@@ -2514,8 +2514,8 @@ maybe_offer_express_install() {
       case "$platform" in
         "DGX Spark")
           export NEMOCLAW_SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-my-spark-assistant}"
-          export NEMOCLAW_PROVIDER=install-ollama
-          export NEMOCLAW_MODEL=qwen3.6:35b
+          export NEMOCLAW_PROVIDER=install-vllm
+          export NEMOCLAW_VLLM_MODEL="${NEMOCLAW_VLLM_MODEL:-qwen3.6-35b-a3b-nvfp4}"
           ;;
         "DGX Station")
           export NEMOCLAW_PROVIDER=install-vllm
