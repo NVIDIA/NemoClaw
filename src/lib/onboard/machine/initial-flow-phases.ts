@@ -200,7 +200,7 @@ export async function runInitialOnboardFlowSlice<Context extends OnboardFlowCont
     phases: options.phases,
     resume: options.resume,
     runWhenState: ["init", "preflight"],
-    compatibilityWhenState: ["gateway", "provider_selection"],
+    compatibilityWhenState: ["init", "preflight", "gateway", "provider_selection"],
     runSlice: runInitialOnboardFlowSequence,
     applyCompatibleResult: options.recordStateResult,
   });
