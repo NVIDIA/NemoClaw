@@ -12,6 +12,7 @@ import {
 } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import { installShOnboardArgs } from "./install-sh-onboard.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
 
 export const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
@@ -220,17 +221,13 @@ export async function installSandbox(
 ): Promise<ShellProbeResult> {
   let install: ShellProbeResult | undefined;
   for (let attempt = 1; attempt <= INSTALL_ATTEMPTS; attempt += 1) {
-    install = await host.command(
-      "bash",
-      ["install.sh", "--non-interactive", "--yes-i-accept-third-party-software"],
-      {
-        artifactName: `${agent}-install-attempt-${attempt}`,
-        cwd: REPO_ROOT,
-        env: env(sandboxName, agent, apiKey),
-        redactionValues: [apiKey],
-        timeoutMs: 30 * 60_000,
-      },
-    );
+    install = await host.command("bash", installShOnboardArgs(), {
+      artifactName: `${agent}-install-attempt-${attempt}`,
+      cwd: REPO_ROOT,
+      env: env(sandboxName, agent, apiKey),
+      redactionValues: [apiKey],
+      timeoutMs: 30 * 60_000,
+    });
     const retry =
       install.exitCode !== 0 &&
       isTransientProviderValidationFailure(install) &&
