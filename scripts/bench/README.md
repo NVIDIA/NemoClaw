@@ -1,0 +1,99 @@
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+-->
+
+# NemoClaw value benchmark
+
+A small, developer- and agent-runnable benchmark that answers "is NemoClaw fast
+enough on this machine?". It measures core first-use and inference-path timings
+and emits both machine-readable JSON and a concise Markdown value report.
+
+It addresses [#5604](https://github.com/NVIDIA/NemoClaw/issues/5604). v1 is
+deliberately **advisory**: it does not ship owner-approved pass/warn/fail
+thresholds (those are tracked by #3776), so the numbers are for comparing runs,
+not for gating.
+
+> The harness only sends requests to the inference endpoint you configure. It
+> never uploads results or sends telemetry to any external service.
+
+## Metrics
+
+| Metric | Source | Notes |
+|--------|--------|-------|
+| `inference-round-trip` | live request | Times N OpenAI-compatible `/v1/chat/completions` calls (warm-up + samples), reports min/median/p95/mean/max. |
+| `sandbox-cold-start` | onboard trace | `nemoclaw.sandbox.create_stream` + `nemoclaw.sandbox.readiness_wait` spans from a `NEMOCLAW_TRACE` artifact. Marked `unsupported` when no trace is supplied. |
+| `policy-shield-overhead` | onboard trace | `nemoclaw.policy.application` span. Marked `unsupported` when no trace is supplied. |
+
+## Prerequisites
+
+- Node `>=22.16` (`tsx` is a dev dependency; run via `npm`/`npx`).
+- An OpenAI-compatible inference endpoint and model you can reach from the host
+  (e.g. an NVIDIA endpoint, a local vLLM/Ollama server, or — from inside a
+  sandbox — `https://inference.local/v1`).
+- The API key in an environment variable (never passed as a flag).
+- Optional: an onboard trace artifact for the sandbox/policy metrics. Produce one
+  by running `NEMOCLAW_TRACE=1 nemoclaw onboard ...`; the trace file path is
+  printed and also controlled by `NEMOCLAW_TRACE_FILE` / `NEMOCLAW_TRACE_DIR`.
+
+## Usage
+
+One documented command produces both outputs:
+
+```bash
+export OPENAI_API_KEY=...            # or NVIDIA_INFERENCE_API_KEY
+npm run bench -- \
+  --base-url https://integrate.api.nvidia.com/v1 \
+  --model nvidia/nemotron-3-super-120b-a12b \
+  --samples 10 \
+  --json bench-result.json
+```
+
+This prints the Markdown report to stdout and writes structured JSON to
+`bench-result.json`. Add the sandbox/policy metrics by pointing at an onboard
+trace:
+
+```bash
+npm run bench -- \
+  --base-url https://inference.local/v1 --model <model> \
+  --trace .e2e/traces/onboard.json \
+  --report bench-report.md --json bench-result.json
+```
+
+Trace-only run (no live inference):
+
+```bash
+npm run bench -- --no-inference --trace .e2e/traces/onboard.json
+```
+
+Run `npm run bench -- --help` for all flags.
+
+## How an agent should use this
+
+1. Confirm a provider is configured (`nemoclaw <name> status`) and export the key.
+2. Run `npm run bench -- --base-url <url> --model <model> --json bench.json`.
+3. Read `bench.json` (`schema_version: nemoclaw.bench.v1`). Summarize each
+   metric's `status` and `stats` (median + p95) and surface any `error`/
+   `unsupported` `reason`. Do not present the timings as pass/fail — they are
+   advisory until thresholds land (#3776).
+4. On `error` exit status, report the `reason` and the troubleshooting pointers
+   from the Markdown report.
+
+## Output schema (`nemoclaw.bench.v1`)
+
+```jsonc
+{
+  "schema_version": "nemoclaw.bench.v1",
+  "generated_at": "<ISO-8601>",
+  "environment": { "os", "arch", "node", "cpus", "cpu_model", "total_mem_gib" },
+  "target": { "base_url": "<redacted>", "model": "...", "api_key_present": true },
+  "metrics": [
+    { "id": "inference-round-trip", "status": "ok", "unit": "ms",
+      "source": "live-request", "interpretation": "advisory-non-normative",
+      "samples": 10, "stats": { "min_ms", "median_ms", "p95_ms", "mean_ms", "max_ms" } }
+  ]
+}
+```
+
+The harness exits non-zero when a selected metric errors or when required
+prerequisites (endpoint, model, API key) are missing.
