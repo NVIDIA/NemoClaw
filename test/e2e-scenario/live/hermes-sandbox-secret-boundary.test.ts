@@ -423,11 +423,16 @@ async function inspectManagedToolBoundary(probe: DockerProbe, image: string): Pr
   ).toBe(0);
 }
 
+function redactExpectedSecret(value: string, text: string): string {
+  return text.split(value).join("[REDACTED_TEST_SECRET]");
+}
+
 async function runStartupWithEnvFileEntry(
   probe: DockerProbe,
   image: string,
   assignment: string,
   key: string,
+  value: string,
 ): Promise<DockerCommandResult> {
   const script = `set -euo pipefail; printf '%s\n' ${shellQuote(
     assignment,
@@ -436,6 +441,8 @@ async function runStartupWithEnvFileEntry(
     ["run", "--rm", "--user", "sandbox", "--entrypoint", "/bin/bash", image, "-lc", script],
     {
       artifactName: `startup-rejects-env-file-${safeArtifactPart(key)}`,
+      artifactRedactionValues: [value],
+      returnRaw: true,
       timeoutMs: RUN_TIMEOUT_MS,
     },
   );
@@ -446,6 +453,7 @@ async function runStartupWithRuntimeEnvEntry(
   image: string,
   assignment: string,
   key: string,
+  value: string,
 ): Promise<DockerCommandResult> {
   return probe.run(
     [
@@ -462,6 +470,8 @@ async function runStartupWithRuntimeEnvEntry(
     ],
     {
       artifactName: `startup-rejects-runtime-env-${safeArtifactPart(key)}`,
+      artifactRedactionValues: [value],
+      returnRaw: true,
       timeoutMs: RUN_TIMEOUT_MS,
     },
   );
@@ -474,10 +484,11 @@ async function expectStartupRejectsEnvFileEntry(
   key: string,
   value: string,
 ): Promise<void> {
-  const result = await runStartupWithEnvFileEntry(probe, image, assignment, key);
+  const result = await runStartupWithEnvFileEntry(probe, image, assignment, key, value);
   const output = `${result.stdout}\n${result.stderr}`;
+  const safeResultText = redactExpectedSecret(value, resultText(result));
 
-  expect(result.exitCode, `Hermes startup should reject ${key}\n${resultText(result)}`).not.toBe(0);
+  expect(result.exitCode, `Hermes startup should reject ${key}\n${safeResultText}`).not.toBe(0);
   expect(
     output,
     `Hermes startup rejection should mention raw secret-shaped values for ${key}`,
@@ -493,12 +504,13 @@ async function expectStartupRejectsRuntimeEnvEntry(
   key: string,
   value: string,
 ): Promise<void> {
-  const result = await runStartupWithRuntimeEnvEntry(probe, image, assignment, key);
+  const result = await runStartupWithRuntimeEnvEntry(probe, image, assignment, key, value);
   const output = `${result.stdout}\n${result.stderr}`;
+  const safeResultText = redactExpectedSecret(value, resultText(result));
 
   expect(
     result.exitCode,
-    `Hermes startup should reject runtime env ${key}\n${resultText(result)}`,
+    `Hermes startup should reject runtime env ${key}\n${safeResultText}`,
   ).not.toBe(0);
   expect(
     output,
