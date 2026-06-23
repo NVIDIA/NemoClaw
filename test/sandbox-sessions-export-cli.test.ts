@@ -270,6 +270,51 @@ describe("sandbox sessions export CLI", () => {
     }
   });
 
+  // #5510: exact NVB repro steps — a bare dash-prefixed key with no trailing flags.
+  it("rejects a bare dash-prefixed key (no flags) with exit 2 and a corrected suggestion", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sessions-export-bare-"));
+    try {
+      writeSandboxRegistry(home);
+      const openshellLog = path.join(home, "openshell-calls.log");
+      const localBin = buildStubOpenshell(home, openshellLog, "[]");
+
+      const result = runWithEnv("alpha sessions export -mytypo 2>&1", {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+      });
+      expect(result.code).toBe(2);
+      expect(result.out).toContain("Unknown flag or option-shaped key: -mytypo");
+      expect(result.out).toContain("Did you mean: nemoclaw alpha sessions export mytypo?");
+      expect(result.out).not.toMatch(/Nonexistent flag/i);
+
+      const calls = fs.existsSync(openshellLog) ? fs.readFileSync(openshellLog, "utf8") : "";
+      expect(calls).not.toMatch(/sandbox download/);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  // Lock the multi-token de-dash + join behaviour in the suggestion line.
+  it("lists multiple stray dash keys and joins their de-dashed forms in the suggestion", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sessions-export-multi-"));
+    try {
+      writeSandboxRegistry(home);
+      const openshellLog = path.join(home, "openshell-calls.log");
+      const localBin = buildStubOpenshell(home, openshellLog, "[]");
+
+      const result = runWithEnv("alpha sessions export -a -b 2>&1", {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+      });
+      expect(result.code).toBe(2);
+      expect(result.out).toContain("Unknown flag or option-shaped key: -a, -b");
+      expect(result.out).toContain("Did you mean: nemoclaw alpha sessions export a b?");
+      expect(result.out).not.toMatch(/Nonexistent flag/i);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("routes a dash-free positional key through the normal session-key path (no regression)", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sessions-export-dashfree-"));
     try {

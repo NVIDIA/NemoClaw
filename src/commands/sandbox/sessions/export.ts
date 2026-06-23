@@ -4,6 +4,7 @@
 import { Flags } from "@oclif/core";
 
 import { exportSandboxSessions } from "../../../lib/actions/sandbox/sessions/export";
+import { CLI_NAME } from "../../../lib/cli/branding";
 import { NemoClawCommand } from "../../../lib/cli/nemoclaw-oclif-command";
 
 export default class SandboxSessionsExportCommand extends NemoClawCommand {
@@ -80,7 +81,7 @@ export default class SandboxSessionsExportCommand extends NemoClawCommand {
       const deDashed = stray.map((token) => token.replace(/^-+/, "")).filter(Boolean);
       if (deDashed.length > 0) {
         lines.push(
-          `  Did you mean: nemoclaw ${sandboxName} sessions export ${deDashed.join(" ")}?`,
+          `  Did you mean: ${CLI_NAME} ${sandboxName} sessions export ${deDashed.join(" ")}?`,
         );
       }
       this.failWithLines(lines, 2);
