@@ -562,6 +562,11 @@ The wrapper inherits the remote command's exit code, so host-side pipelines can 
 
 Common upstream flags include `-m <text>`, `--session-id <id>`, `--agent <id>`, `--model <id>`, `--thinking <level>`, `--json`, `--deliver`, `--reply-channel <channel>`, and `--timeout <seconds>`. Run `$$nemoclaw <name> agent --help` for the wrapper-level summary, or invoke `$$nemoclaw <name> exec -- openclaw agent --help` to view the upstream OpenClaw help text directly.
 
+Host-side validation runs before the sandbox dispatch:
+
+- At least one target selector flag — `--agent`, `--session-id`, `--session-key`, or `--to` (in either `--flag value` or `--flag=value` form) — must be present. Invocations without a selector exit `2` and print `No target session selected` locally, without paying the in-sandbox dispatch cost.
+- If the sandbox is registered but not in a `Ready` or `Running` phase, the wrapper exits `1` and prints the documented recovery commands (`$$nemoclaw <name> recover`, `$$nemoclaw <name> rebuild --yes`, `$$nemoclaw onboard --resume`) rather than deferring the readiness rejection to `openshell sandbox exec`.
+
 </AgentOnly>
 <AgentOnly variant="hermes">
 

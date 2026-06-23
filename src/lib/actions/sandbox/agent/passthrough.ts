@@ -31,7 +31,9 @@
 //   endpoint directly. The fail-closed branch can then be retired in favour of
 //   the live source.
 
+import { CLI_NAME } from "../../../cli/branding";
 import * as registry from "../../../state/registry";
+import { parseSandboxPhase } from "../../../state/gateway";
 import { execSandbox } from "../exec";
 import { ensureLiveSandboxOrExit } from "../gateway-state";
 
@@ -103,6 +105,52 @@ function rejectRegistryReadError(
   return proc.exit(2);
 }
 
+const TARGET_SELECTOR_FLAGS = [
+  "--agent",
+  "--session-id",
+  "--session-key",
+  "--to",
+] as const;
+
+function hasTargetSelector(args: readonly string[]): boolean {
+  return args.some((arg) =>
+    TARGET_SELECTOR_FLAGS.some((flag) => arg === flag || arg.startsWith(`${flag}=`)),
+  );
+}
+
+function rejectNoTargetSelector(
+  proc: NonNullable<AgentPassthroughDeps["process"]>,
+): never {
+  proc.stderr.write(
+    "  No target session selected. Use --agent <id>, --session-key <key>, --session-id <id>, or --to <E.164>.\n",
+  );
+  proc.stderr.write(
+    "  Run `openclaw agents list` inside the sandbox to see available agents.\n",
+  );
+  return proc.exit(2);
+}
+
+function rejectNotReadyForAgent(
+  sandboxName: string,
+  phase: string,
+  proc: NonNullable<AgentPassthroughDeps["process"]>,
+): never {
+  proc.stderr.write(
+    `  Sandbox '${sandboxName}' is not ready for the agent wrapper (phase: ${phase}).\n`,
+  );
+  proc.stderr.write("  Documented recovery paths:\n");
+  proc.stderr.write(
+    `    ${CLI_NAME} ${sandboxName} recover         — gateway down, sandbox alive\n`,
+  );
+  proc.stderr.write(
+    `    ${CLI_NAME} ${sandboxName} rebuild --yes   — recreate container, workspace preserved\n`,
+  );
+  proc.stderr.write(
+    `    ${CLI_NAME} onboard --resume               — restore sandbox registration\n`,
+  );
+  return proc.exit(1);
+}
+
 export async function runAgentPassthrough(
   sandboxName: string,
   { extraArgs = [] }: AgentPassthroughOptions = {},
@@ -116,8 +164,15 @@ export async function runAgentPassthrough(
   if (lookup.kind === "agent" && lookup.agent && lookup.agent !== "openclaw") {
     rejectNonOpenclawAgent(sandboxName, lookup.agent, proc);
   }
+  if (!hasTargetSelector(extraArgs)) {
+    rejectNoTargetSelector(proc);
+  }
   const ensureLive = deps.ensureLive ?? ensureLiveSandboxOrExit;
-  await ensureLive(sandboxName, { allowNonReadyPhase: true });
+  const state = await ensureLive(sandboxName, { allowNonReadyPhase: true });
+  const phase = parseSandboxPhase(state?.output ?? "");
+  if (phase && phase !== "Ready" && phase !== "Running") {
+    rejectNotReadyForAgent(sandboxName, phase, proc);
+  }
   const command = ["openclaw", "agent", ...extraArgs];
   const exec = deps.exec ?? execSandbox;
   await exec(sandboxName, command, { tty: false });
