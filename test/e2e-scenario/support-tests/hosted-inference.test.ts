@@ -119,7 +119,7 @@ describe("hosted inference E2E config", () => {
     expect(calls).not.toContain("Bearer");
   });
 
-  it("uses a lightweight nvapi reachability probe without /models or auth", () => {
+  it("uses the NVIDIA Endpoints reachability probe for nvapi cloud routes", () => {
     const { result, calls } = runHostedProbe({
       env: {
         NVIDIA_INFERENCE_API_KEY: "nvapi-test-key",
@@ -129,7 +129,7 @@ describe("hosted inference E2E config", () => {
     });
 
     expect(result.status).toBe(0);
-    expect(calls).toContain("ARG:https://inference-api.nvidia.com/v1");
+    expect(calls).toContain("ARG:https://integrate.api.nvidia.com/v1");
     expect(calls).not.toContain("/models");
     expect(calls).not.toContain("Authorization");
     expect(calls).not.toContain("Bearer");

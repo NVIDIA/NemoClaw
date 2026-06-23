@@ -2,13 +2,15 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# CI-only hosted inference shim: live E2E lanes use the repository's
-# NVIDIA_INFERENCE_API_KEY secret against the hosted OpenAI-compatible endpoint
-# at inference-api.nvidia.com. Keep this helper in test/e2e so the
-# product-facing provider/default endpoint remain unchanged.
+# CI-only inference shim: live E2E lanes can use the repository's
+# NVIDIA_INFERENCE_API_KEY secret either against the hosted OpenAI-compatible
+# endpoint at inference-api.nvidia.com or the built-in NVIDIA Endpoints route at
+# integrate.api.nvidia.com. Keep this helper in test/e2e so product-facing
+# provider/default endpoint behavior remains explicit.
 
 NEMOCLAW_E2E_COMPATIBLE_INFERENCE_MODEL_DEFAULT="nvidia/nvidia/nemotron-3-super-v3"
 NEMOCLAW_E2E_HOSTED_INFERENCE_PROVIDER_DEFAULT="compatible-endpoint"
+NEMOCLAW_E2E_NVIDIA_INFERENCE_ENDPOINT_DEFAULT="https://integrate.api.nvidia.com/v1"
 NEMOCLAW_E2E_NVIDIA_INFERENCE_MODEL_DEFAULT="nvidia/nemotron-3-super-120b-a12b"
 
 nemoclaw_e2e_using_compatible_inference() {
@@ -49,7 +51,7 @@ nemoclaw_e2e_hosted_inference_base_url() {
   if nemoclaw_e2e_using_compatible_inference; then
     printf '%s' "${NEMOCLAW_ENDPOINT_URL:-https://inference-api.nvidia.com/v1}"
   else
-    printf '%s' "https://inference-api.nvidia.com/v1"
+    printf '%s' "$NEMOCLAW_E2E_NVIDIA_INFERENCE_ENDPOINT_DEFAULT"
   fi
 }
 

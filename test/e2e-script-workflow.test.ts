@@ -49,6 +49,7 @@ const TRUSTED_REF_GUARD = "github.event_name != 'workflow_dispatch' || inputs.ta
 const GUARDED_HOSTED_INFERENCE_SECRET = `\${{ (${TRUSTED_REF_GUARD}) && secrets.NVIDIA_INFERENCE_API_KEY || '' }}`;
 const GUARDED_PUBLIC_NVIDIA_SECRET = `\${{ (${TRUSTED_REF_GUARD}) && secrets.NVIDIA_API_KEY || '' }}`;
 const RAW_HOSTED_INFERENCE_SECRET = "${{ secrets.NVIDIA_INFERENCE_API_KEY }}";
+const RAW_PUBLIC_NVIDIA_SECRET = "${{ secrets.NVIDIA_API_KEY }}";
 
 function timingSummary(
   phases: Record<string, number> = { "nemoclaw.onboard.phase.preflight": 1000 },
@@ -396,6 +397,7 @@ describe("E2E reusable workflow contract", () => {
     const reusableJobs = reusableNightlyJobs(nightlyWorkflow);
     const defaultSecrets = {
       NVIDIA_INFERENCE_API_KEY: GUARDED_HOSTED_INFERENCE_SECRET,
+      NVIDIA_API_KEY: GUARDED_PUBLIC_NVIDIA_SECRET,
       BRAVE_API_KEY: "${{ secrets.BRAVE_API_KEY }}",
       DOCKERHUB_USERNAME:
         "${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_USERNAME || '' }}",
@@ -905,14 +907,25 @@ describe("E2E reusable workflow contract", () => {
     expect(exportStep?.run).toContain('>> "$GITHUB_ENV"');
   });
 
-  it("routes reusable hosted inference jobs through the hosted custom endpoint", () => {
+  it("routes reusable NVIDIA-key jobs through explicit hosted or NVIDIA Build env", () => {
     const exportStep = runnerWorkflow.jobs.run.steps.find(
-      (step) => step.name === "Export hosted CI inference environment",
+      (step) => step.name === "Export CI inference environment",
     );
     const workflowCall = runnerWorkflow.on?.workflow_call ?? runnerWorkflow.true?.workflow_call;
     const hostedJobs = reusableNightlyJobs(nightlyWorkflow).filter(
       ([, job]) => String(job.with?.nvidia_api_key) === "true",
     );
+    const nvidiaBuildJobs = new Set([
+      "messaging-providers-e2e",
+      "channels-add-remove-e2e",
+      "channels-stop-start-openclaw-e2e",
+      "channels-stop-start-hermes-e2e",
+      "common-egress-agent-e2e",
+      "hermes-discord-e2e",
+      "upgrade-stale-sandbox-e2e",
+      "rebuild-hermes-e2e",
+      "rebuild-hermes-stale-base-e2e",
+    ]);
 
     expect(workflowCall?.inputs?.nvidia_api_key).toMatchObject({
       required: false,
@@ -920,9 +933,19 @@ describe("E2E reusable workflow contract", () => {
       default: false,
     });
     expect(workflowCall?.inputs?.nvidia_secret_as_compatible_api_key).toBeUndefined();
+    expect(workflowCall?.secrets?.NVIDIA_API_KEY).toMatchObject({ required: false });
     expect(exportStep?.if).toBe("${{ inputs.nvidia_api_key }}");
-    expect(exportStep?.env?.NVIDIA_INFERENCE_API_KEY).toBe(RAW_HOSTED_INFERENCE_SECRET);
-    expect(exportStep?.run).toContain("withheld for workflow_dispatch target_ref runs");
+    expect(exportStep?.env?.HOSTED_NVIDIA_INFERENCE_API_KEY).toBe(RAW_HOSTED_INFERENCE_SECRET);
+    expect(exportStep?.env?.NVIDIA_BUILD_API_KEY).toBe(RAW_PUBLIC_NVIDIA_SECRET);
+    expect(exportStep?.run).toContain('case "${NEMOCLAW_PROVIDER:-}" in');
+    expect(exportStep?.run).toContain("build|cloud)");
+    expect(exportStep?.run).toContain(
+      "NVIDIA_API_KEY or NVIDIA_INFERENCE_API_KEY nvapi-* secret is required",
+    );
+    expect(exportStep?.run).toContain("NVIDIA_INFERENCE_API_KEY=%s");
+    expect(exportStep?.run).toContain("NVIDIA_API_KEY=%s");
+    expect(exportStep?.run).toContain("NEMOCLAW_MODEL=%s");
+    expect(exportStep?.run).toContain("nvidia/nemotron-3-super-120b-a12b");
     expect(exportStep?.run).toContain("NEMOCLAW_E2E_USE_HOSTED_INFERENCE=1");
     expect(exportStep?.run).toContain("NEMOCLAW_PROVIDER=custom");
     expect(exportStep?.run).toContain("NEMOCLAW_ENDPOINT_URL=https://inference-api.nvidia.com/v1");
@@ -934,6 +957,15 @@ describe("E2E reusable workflow contract", () => {
     expect(hostedJobs.length).toBeGreaterThan(20);
     for (const [name, job] of hostedJobs) {
       expect(job.with?.nvidia_secret_as_compatible_api_key, name).toBeUndefined();
+      const envJson = JSON.parse(job.with?.env_json ?? "{}") as Record<string, unknown>;
+      if (nvidiaBuildJobs.has(name)) {
+        expect(envJson.NEMOCLAW_PROVIDER, name).toBe("cloud");
+        expect(envJson.NEMOCLAW_MODEL, name).toBe("nvidia/nemotron-3-super-120b-a12b");
+        expect(envJson.NEMOCLAW_PREFERRED_API, name).toBe("openai-completions");
+      } else {
+        expect(envJson.NEMOCLAW_PROVIDER, name).not.toBe("cloud");
+        expect(envJson.NEMOCLAW_MODEL, name).not.toBe("nvidia/nemotron-3-super-120b-a12b");
+      }
     }
   });
 

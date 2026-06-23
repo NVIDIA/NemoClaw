@@ -58,7 +58,7 @@ on:
         type: string
         default: ""
       nvidia_api_key:
-        description: Pass the hosted inference source secret as the CI custom endpoint credential.
+        description: Pass the NVIDIA inference credential to the script. Defaults to hosted custom inference unless env_json selects cloud/build.
         required: false
         type: boolean
         default: false
@@ -79,6 +79,8 @@ on:
         default: false
     secrets:
       NVIDIA_INFERENCE_API_KEY:
+        required: false
+      NVIDIA_API_KEY:
         required: false
       BRAVE_API_KEY:
         required: false
@@ -212,27 +214,46 @@ jobs:
             echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
           fi
 
-      - name: Export hosted CI inference environment
+      - name: Export CI inference environment
         if: ${{ inputs.nvidia_api_key }}
         env:
-          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
+          HOSTED_NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
+          NVIDIA_BUILD_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
         shell: bash
         run: |
           set -euo pipefail
 
-          if [ -z "${NVIDIA_INFERENCE_API_KEY:-}" ]; then
+          case "${NEMOCLAW_PROVIDER:-}" in
+            build|cloud)
+              nvidia_key="${NVIDIA_BUILD_API_KEY:-${HOSTED_NVIDIA_INFERENCE_API_KEY:-}}"
+              if [[ -z "${nvidia_key}" || "${nvidia_key}" != nvapi-* ]]; then
+                echo "::error::NVIDIA_API_KEY or NVIDIA_INFERENCE_API_KEY nvapi-* secret is required for NVIDIA Build CI inference; it is withheld for workflow_dispatch target_ref runs." >&2
+                exit 1
+              fi
+              {
+                printf 'NVIDIA_INFERENCE_API_KEY=%s\n' "${nvidia_key}"
+                printf 'NVIDIA_API_KEY=%s\n' "${nvidia_key}"
+                printf 'NEMOCLAW_MODEL=%s\n' "${NEMOCLAW_MODEL:-nvidia/nemotron-3-super-120b-a12b}"
+                printf 'NEMOCLAW_PREFERRED_API=%s\n' "${NEMOCLAW_PREFERRED_API:-openai-completions}"
+              } >> "$GITHUB_ENV"
+              exit 0
+              ;;
+          esac
+
+          if [ -z "${HOSTED_NVIDIA_INFERENCE_API_KEY:-}" ]; then
             echo "::error::NVIDIA_INFERENCE_API_KEY secret is required for hosted CI inference; it is withheld for workflow_dispatch target_ref runs." >&2
             exit 1
           fi
 
           {
+            printf 'NVIDIA_INFERENCE_API_KEY=%s\n' "${HOSTED_NVIDIA_INFERENCE_API_KEY}"
             printf 'NEMOCLAW_E2E_USE_HOSTED_INFERENCE=1\n'
             printf 'NEMOCLAW_PROVIDER=custom\n'
             printf 'NEMOCLAW_ENDPOINT_URL=https://inference-api.nvidia.com/v1\n'
             printf 'NEMOCLAW_MODEL=nvidia/nvidia/nemotron-3-super-v3\n'
             printf 'NEMOCLAW_COMPAT_MODEL=nvidia/nvidia/nemotron-3-super-v3\n'
             printf 'NEMOCLAW_PREFERRED_API=openai-completions\n'
-            printf 'COMPATIBLE_API_KEY=%s\n' "${NVIDIA_INFERENCE_API_KEY}"
+            printf 'COMPATIBLE_API_KEY=%s\n' "${HOSTED_NVIDIA_INFERENCE_API_KEY}"
           } >> "$GITHUB_ENV"
 
       - name: Run E2E script
@@ -248,7 +269,6 @@ jobs:
         env:
           BRAVE_API_KEY: ${{ inputs.brave_api_key && secrets.BRAVE_API_KEY || '' }}
           GITHUB_TOKEN: ${{ inputs.github_token && github.token || '' }}
-          NVIDIA_INFERENCE_API_KEY: ${{ inputs.nvidia_api_key && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
           TELEGRAM_BOT_TOKEN_REAL: ${{ inputs.messaging_live_secrets && secrets.TELEGRAM_BOT_TOKEN_REAL || '' }}
           TELEGRAM_CHAT_ID_E2E: ${{ inputs.messaging_live_secrets && secrets.TELEGRAM_CHAT_ID_E2E || '' }}
           DISCORD_BOT_TOKEN_REAL: ${{ inputs.messaging_live_secrets && secrets.DISCORD_BOT_TOKEN_REAL || '' }}
