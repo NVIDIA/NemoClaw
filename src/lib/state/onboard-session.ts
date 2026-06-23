@@ -25,7 +25,12 @@ import {
 import { isOnboardMachineState } from "../onboard/machine/transitions";
 import type { OnboardMachineState } from "../onboard/machine/types";
 import { redactSensitiveText, redactUrl } from "../security/redact";
-import { type StepMutationOptions, shouldUpdateMachine } from "./onboard-step-mutation";
+import {
+  LEGACY_MACHINE_STEP_MUTATION_OPTIONS,
+  RECORD_ONLY_STEP_MUTATION_OPTIONS,
+  type StepMutationOptions,
+  shouldUpdateMachine,
+} from "./onboard-step-mutation";
 import { nextMachineStateAfterCompletedStep } from "./onboard-step-state";
 
 export const SESSION_VERSION = 1;
@@ -1040,7 +1045,10 @@ export function updateSession(mutator: (session: Session) => Session | void): Se
   return saveSession(next);
 }
 
-function markStepStartedWithOptions(stepName: string, options: StepMutationOptions = {}): Session {
+function markStepStartedWithOptions(
+  stepName: string,
+  options: StepMutationOptions = LEGACY_MACHINE_STEP_MUTATION_OPTIONS,
+): Session {
   let shouldEmit = false;
   const updatedSession = updateSession((session) => {
     const step = session.steps[stepName];
@@ -1069,7 +1077,7 @@ function markStepStartedWithOptions(stepName: string, options: StepMutationOptio
 function markStepCompleteWithOptions(
   stepName: string,
   updates: SessionUpdates = {},
-  options: StepMutationOptions = {},
+  options: StepMutationOptions = LEGACY_MACHINE_STEP_MUTATION_OPTIONS,
 ): Session {
   const safeUpdates = filterSafeUpdates(updates);
   const hasUpdates = Object.keys(safeUpdates).length > 0;
@@ -1111,18 +1119,21 @@ function markStepCompleteWithOptions(
   return updatedSession;
 }
 
-export function markStepStarted(stepName: string, options: StepMutationOptions = {}): Session {
+export function markStepStarted(
+  stepName: string,
+  options: StepMutationOptions = LEGACY_MACHINE_STEP_MUTATION_OPTIONS,
+): Session {
   return markStepStartedWithOptions(stepName, options);
 }
 
 export function markStepStartedRecordOnly(stepName: string): Session {
-  return markStepStartedWithOptions(stepName, { updateMachine: false });
+  return markStepStartedWithOptions(stepName, RECORD_ONLY_STEP_MUTATION_OPTIONS);
 }
 
 export function markStepComplete(
   stepName: string,
   updates: SessionUpdates = {},
-  options: StepMutationOptions = {},
+  options: StepMutationOptions = LEGACY_MACHINE_STEP_MUTATION_OPTIONS,
 ): Session {
   return markStepCompleteWithOptions(stepName, updates, options);
 }
@@ -1131,7 +1142,7 @@ export function markStepCompleteRecordOnly(
   stepName: string,
   updates: SessionUpdates = {},
 ): Session {
-  return markStepCompleteWithOptions(stepName, updates, { updateMachine: false });
+  return markStepCompleteWithOptions(stepName, updates, RECORD_ONLY_STEP_MUTATION_OPTIONS);
 }
 
 export function markStepSkipped(stepName: string): Session {
@@ -1159,7 +1170,7 @@ export function markStepSkipped(stepName: string): Session {
 function markStepFailedWithOptions(
   stepName: string,
   message: string | null = null,
-  options: StepMutationOptions = {},
+  options: StepMutationOptions = LEGACY_MACHINE_STEP_MUTATION_OPTIONS,
 ): Session {
   let shouldEmit = false;
   const updatedSession = updateSession((session) => {
@@ -1202,13 +1213,13 @@ function markStepFailedWithOptions(
 export function markStepFailed(
   stepName: string,
   message: string | null = null,
-  options: StepMutationOptions = {},
+  options: StepMutationOptions = LEGACY_MACHINE_STEP_MUTATION_OPTIONS,
 ): Session {
   return markStepFailedWithOptions(stepName, message, options);
 }
 
 export function markStepFailedRecordOnly(stepName: string, message: string | null = null): Session {
-  return markStepFailedWithOptions(stepName, message, { updateMachine: false });
+  return markStepFailedWithOptions(stepName, message, RECORD_ONLY_STEP_MUTATION_OPTIONS);
 }
 
 export function completeSession(updates: SessionUpdates = {}): Session {
