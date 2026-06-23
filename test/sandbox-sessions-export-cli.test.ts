@@ -266,15 +266,18 @@ describe("sandbox sessions export CLI", () => {
       expect(listLine).toBeUndefined();
       expect(hermesExportLine).toBeDefined();
       expect(hermesExportLine).toMatch(
-        /umask 077 && hermes sessions export \/tmp\/sessions-export-hermes-[0-9a-f]+\.jsonl && chmod 600/,
+        /umask 077 && mkdir -p \/sandbox\/\.nemoclaw-staging && chmod 700 \/sandbox\/\.nemoclaw-staging && hermes sessions export \/sandbox\/\.nemoclaw-staging\/sessions-export-hermes-[0-9a-f]+\.jsonl && chmod 600/,
       );
       expect(downloadLine).toContain("alpha");
+      expect(downloadLine).toMatch(
+        /sandbox download alpha \/sandbox\/\.nemoclaw-staging\/sessions-export-hermes-[0-9a-f]+\.jsonl/,
+      );
       const escapedHome = home.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       expect(downloadLine).toMatch(
         new RegExp(`${escapedHome}/\\.sessions-export-hermes-[^/]+/hermes-sessions\\.jsonl`),
       );
       expect(cleanupLine).toBeDefined();
-      expect(cleanupLine).toContain("/tmp/sessions-export-hermes-");
+      expect(cleanupLine).toContain("/sandbox/.nemoclaw-staging/sessions-export-hermes-");
 
       expect(fs.existsSync(out)).toBe(true);
       expect(fs.readFileSync(out, "utf8")).toBe("session-data");

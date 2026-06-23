@@ -1398,8 +1398,9 @@ By default it writes a browsable directory of session files (`dir` format); pass
 With no positional keys, the command exports every session for the agent.
 Pass one or more keys (alias or canonical `agent:<id>:<rest>`) to filter.
 
-For a Hermes sandbox, the command invokes the in-sandbox `hermes sessions export` against a staging path, then downloads the resulting single JSONL stream to the host.
-Hermes stores session history in a SQLite database, so the command refuses positional keys, `--agent`, `--format tar`, and `--include-trajectory` with a clear error when the sandbox is Hermes.
+For a Hermes sandbox, the command invokes the in-sandbox `hermes sessions export` against a staging path under `/sandbox/.nemoclaw-staging` (the same downloadable workspace boundary OpenClaw uses), then downloads the resulting single JSONL stream to the host.
+Hermes stores session history in a SQLite database, so the command refuses positional keys, `--format tar`, and `--include-trajectory` with a clear error when the sandbox is Hermes.
+`--agent` accepts only `hermes` as a no-op alias on a Hermes sandbox and rejects any other value.
 The host destination defaults to `./sessions-<sandbox>.jsonl`; `--out` picks a different path.
 
 ```bash
@@ -1411,7 +1412,7 @@ $$nemoclaw my-assistant sessions export --format tar --out ./bundles/alpha.tgz -
 
 | Flag | Description |
 |------|-------------|
-| `--agent <id>` | OpenClaw only. Agent id when `<keys>` are aliases rather than the canonical `agent:<id>:<rest>` form. |
+| `--agent <id>` | OpenClaw: agent id when `<keys>` are aliases rather than the canonical `agent:<id>:<rest>` form. Hermes: accepts only `hermes` as a no-op alias and rejects any other value. |
 | `--format <dir\|tar>` | OpenClaw only. `dir` (default) writes a directory of session files; `tar` writes a single `.tgz` bundle for sharing/upload. |
 | `--out <path>` | Host destination. OpenClaw defaults to `./sessions-<sandbox>/` for `dir` or `./sessions-<sandbox>-<agent>.tgz` for `tar`; Hermes defaults to `./sessions-<sandbox>.jsonl`. |
 | `--include-trajectory` | OpenClaw only. Include the (large) `*.trajectory.jsonl` files in the export. Excluded by default. |

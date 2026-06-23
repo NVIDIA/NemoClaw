@@ -307,7 +307,11 @@ async function exportHermesSessions(opts: SessionsExportOptions): Promise<Sessio
     });
     try {
       fs.rmSync(hostStagingDir, { recursive: true, force: true });
-    } catch {}
+    } catch (cleanupErr) {
+      console.warn(
+        `  Warning: failed to remove local staging directory '${hostStagingDir}': ${(cleanupErr as Error).message}. The directory may still contain a session JSONL with pasted secrets; remove it manually.`,
+      );
+    }
   }
 
   let bundleBytes: number | null = null;
@@ -340,9 +344,9 @@ async function exportHermesSessions(opts: SessionsExportOptions): Promise<Sessio
 }
 
 function rejectOpenClawOnlyOptions(opts: SessionsExportOptions): void {
-  if (opts.agent) {
+  if (opts.agent && opts.agent !== "hermes") {
     throw new Error(
-      "Refusing to export: --agent is OpenClaw-specific and is not supported on a Hermes sandbox.",
+      `Refusing to export: --agent ${opts.agent} is OpenClaw-specific and is not supported on a Hermes sandbox. Pass --agent hermes or omit the flag.`,
     );
   }
   if (opts.keys && opts.keys.length > 0) {
@@ -364,12 +368,13 @@ function rejectOpenClawOnlyOptions(opts: SessionsExportOptions): void {
 
 function hermesStagingPath(): string {
   const suffix = randomBytes(6).toString("hex");
-  return `/tmp/sessions-export-hermes-${suffix}.jsonl`;
+  return `${STAGING_DIR_IN_SANDBOX}/sessions-export-hermes-${suffix}.jsonl`;
 }
 
 function buildHermesShellInvocation(stagingRemote: string): string {
   const quotedStaging = shellQuote(stagingRemote);
-  return `umask 077 && hermes sessions export ${quotedStaging} && chmod 600 ${quotedStaging}`;
+  const quotedStagingDir = shellQuote(STAGING_DIR_IN_SANDBOX);
+  return `umask 077 && mkdir -p ${quotedStagingDir} && chmod 700 ${quotedStagingDir} && hermes sessions export ${quotedStaging} && chmod 600 ${quotedStaging}`;
 }
 
 function resolveHermesHostDestination(out: string | undefined, sandboxName: string): string {

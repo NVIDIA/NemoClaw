@@ -488,12 +488,14 @@ describe("exportSandboxSessions (hermes sandbox)", () => {
     expect(execCall.slice(0, 7)).toEqual(["sandbox", "exec", "--name", "alpha", "--", "sh", "-c"]);
     const shellCommand = execCall[7] as string;
     expect(shellCommand).toMatch(
-      /^umask 077 && hermes sessions export \/tmp\/sessions-export-hermes-[0-9a-f]+\.jsonl && chmod 600 \/tmp\/sessions-export-hermes-[0-9a-f]+\.jsonl$/,
+      /^umask 077 && mkdir -p \/sandbox\/\.nemoclaw-staging && chmod 700 \/sandbox\/\.nemoclaw-staging && hermes sessions export \/sandbox\/\.nemoclaw-staging\/sessions-export-hermes-[0-9a-f]+\.jsonl && chmod 600 \/sandbox\/\.nemoclaw-staging\/sessions-export-hermes-[0-9a-f]+\.jsonl$/,
     );
 
     const downloadCall = runMock.mock.calls[1]?.[0] as string[];
     expect(downloadCall.slice(0, 3)).toEqual(["sandbox", "download", "alpha"]);
-    expect(downloadCall[3]).toMatch(/^\/tmp\/sessions-export-hermes-[0-9a-f]+\.jsonl$/);
+    expect(downloadCall[3]).toMatch(
+      /^\/sandbox\/\.nemoclaw-staging\/sessions-export-hermes-[0-9a-f]+\.jsonl$/,
+    );
     const hostStagingPath = downloadCall.at(-1) as string;
     expect(hostStagingPath).toContain(".sessions-export-hermes-");
     expect(hostStagingPath.endsWith("sessions-alpha.jsonl")).toBe(true);
@@ -578,10 +580,10 @@ describe("exportSandboxSessions (hermes sandbox)", () => {
     expect(cleanupCall?.[0]).toContain("-f");
   });
 
-  it("refuses OpenClaw-only flags on a hermes sandbox so users see a clear error rather than a silent half-export", async () => {
+  it("refuses non-hermes --agent values, positional keys, --include-trajectory, and --format tar on a hermes sandbox so users see a clear error rather than a silent half-export", async () => {
     getSandboxMock.mockReturnValue({ name: "alpha", agent: "hermes" });
     await expect(exportSandboxSessions({ sandboxName: "alpha", agent: "main" })).rejects.toThrow(
-      /--agent is OpenClaw-specific/,
+      /--agent main is OpenClaw-specific/,
     );
     await expect(exportSandboxSessions({ sandboxName: "alpha", keys: ["main"] })).rejects.toThrow(
       /positional session keys are OpenClaw-specific/,
@@ -593,5 +595,40 @@ describe("exportSandboxSessions (hermes sandbox)", () => {
       /--format tar is OpenClaw-specific/,
     );
     expect(runMock).not.toHaveBeenCalled();
+  });
+
+  it("accepts `--agent hermes` as a no-op alias on a hermes sandbox and still routes to `hermes sessions export`", async () => {
+    getSandboxMock.mockReturnValue({ name: "alpha", agent: "hermes" });
+
+    const result = await exportSandboxSessions({ sandboxName: "alpha", agent: "hermes" });
+
+    expect(captureMock).not.toHaveBeenCalled();
+    const execCall = runMock.mock.calls[0]?.[0] as string[];
+    const shellCommand = execCall[7] as string;
+    expect(shellCommand).toContain("hermes sessions export");
+    expect(result.agent).toBe("hermes");
+    expect(result.format).toBe("jsonl");
+  });
+
+  it("warns with the local staging directory when host cleanup fails after a finalization error so a leftover JSONL with pasted secrets does not vanish silently", async () => {
+    getSandboxMock.mockReturnValue({ name: "alpha", agent: "hermes" });
+    chmodSpy.mockImplementation(() => {
+      throw new Error("EPERM");
+    });
+    rmSpy.mockImplementation(() => {
+      throw new Error("EACCES");
+    });
+    const consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    try {
+      await expect(exportSandboxSessions({ sandboxName: "alpha" })).rejects.toThrow(/EPERM/);
+      expect(consoleWarnSpy).toHaveBeenCalledWith(
+        expect.stringMatching(
+          /failed to remove local staging directory '.*\.sessions-export-hermes-.*'.*EACCES/,
+        ),
+      );
+    } finally {
+      consoleWarnSpy.mockRestore();
+    }
   });
 });
