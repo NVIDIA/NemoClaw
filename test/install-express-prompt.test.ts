@@ -114,7 +114,7 @@ sys.exit(exit_code)
     expect(result.status, output).toBe(0);
     expect(output).toMatch(/Detected DGX Spark/);
     expect(output).toMatch(
-      /Express install will configure managed local vLLM with model qwen3\.6-35b-a3b-nvfp4/,
+      /Express install will configure managed local vLLM using the DGX Spark profile default model/,
     );
     expect(output).toMatch(
       /Managed vLLM pulls the configured vLLM image\/model and runs a local vLLM inference container/,
@@ -124,7 +124,7 @@ sys.exit(exit_code)
     expect(output).toMatch(/Run express install/);
     expect(output).toMatch(/Using express install for DGX Spark/);
     expect(output).toMatch(
-      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-vllm MODEL= VLLM_MODEL=qwen3\.6-35b-a3b-nvfp4 POLICY=suggested YES=1 SANDBOX=my-spark-assistant/,
+      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-vllm MODEL= VLLM_MODEL= POLICY=suggested YES=1 SANDBOX=my-spark-assistant/,
     );
   });
 

@@ -2418,7 +2418,11 @@ describe_express_install() {
 
   case "$platform" in
     "DGX Spark")
-      inference_summary="managed local vLLM with model ${NEMOCLAW_VLLM_MODEL:-qwen3.6-35b-a3b-nvfp4}"
+      if [ -n "${NEMOCLAW_VLLM_MODEL:-}" ]; then
+        inference_summary="managed local vLLM with model ${NEMOCLAW_VLLM_MODEL}"
+      else
+        inference_summary="managed local vLLM using the DGX Spark profile default model"
+      fi
       inference_disclosure="Managed vLLM pulls the configured vLLM image/model and runs a local vLLM inference container."
       sandbox_summary="${NEMOCLAW_SANDBOX_NAME:-my-spark-assistant}"
       ;;
@@ -2521,7 +2525,9 @@ maybe_offer_express_install() {
         "DGX Spark")
           export NEMOCLAW_SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-my-spark-assistant}"
           export NEMOCLAW_PROVIDER=install-vllm
-          export NEMOCLAW_VLLM_MODEL="${NEMOCLAW_VLLM_MODEL:-qwen3.6-35b-a3b-nvfp4}"
+          if [ -n "${NEMOCLAW_VLLM_MODEL:-}" ]; then
+            export NEMOCLAW_VLLM_MODEL
+          fi
           ;;
         "DGX Station")
           export NEMOCLAW_PROVIDER=install-vllm
