@@ -12,7 +12,7 @@ on:
         default: ""
         type: string
       jobs:
-        description: "Optional comma-separated free-standing live Vitest job ids. Empty runs all jobs only when scenarios is also empty."
+        description: "Optional comma-separated free-standing live Vitest job ids. Empty runs default-enabled jobs only when scenarios is also empty; explicit-only jobs such as jetson-nvmap-gpu-vitest are skipped unless selected."
         required: false
         default: ""
         type: string

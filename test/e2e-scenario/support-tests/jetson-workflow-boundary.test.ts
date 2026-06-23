@@ -1,17 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
-import path from "node:path";
-
 import { describe, expect, it } from "vitest";
 import {
   evaluateE2eVitestWorkflowDispatchSelectors,
   readFreeStandingJobsInventory,
   validateE2eVitestScenariosWorkflowBoundary,
 } from "../../../tools/e2e-scenarios/workflow-boundary.mts";
-
-const WORKFLOW_PATH = path.join(process.cwd(), ".github/workflows/e2e-vitest-scenarios.yaml");
 
 describe("Jetson nvmap GPU Vitest workflow boundary", () => {
   it("keeps Jetson selectable but excluded from full-suite dispatch", () => {
@@ -39,12 +34,6 @@ describe("Jetson nvmap GPU Vitest workflow boundary", () => {
   });
 
   it("reports default jobs without claiming explicit-only Jetson ran", () => {
-    const workflow = fs.readFileSync(WORKFLOW_PATH, "utf8");
-    expect(workflow).not.toContain("All jobs passed");
-    expect(workflow).not.toContain("default — all free-standing when no scenarios are requested");
-    expect(workflow).toContain("All default jobs passed");
-    expect(workflow).toContain(
-      "default — all default-enabled free-standing jobs; explicit-only jobs such as `jetson-nvmap-gpu-vitest` are skipped unless selected",
-    );
+    expect(validateE2eVitestScenariosWorkflowBoundary()).toEqual([]);
   });
 });

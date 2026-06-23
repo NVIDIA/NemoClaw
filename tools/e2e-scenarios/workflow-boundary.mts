@@ -323,9 +323,12 @@ function requireInput(
   errors: string[],
   inputs: WorkflowRecord,
   name: string,
-): void {
-  if (!Object.hasOwn(inputs, name))
+): WorkflowRecord {
+  if (!Object.hasOwn(inputs, name)) {
     errors.push(`workflow_dispatch missing input: ${name}`);
+    return {};
+  }
+  return asRecord(inputs[name]);
 }
 
 function requireStep(
@@ -7361,7 +7364,18 @@ export function validateE2eVitestScenariosWorkflowBoundary(
 
   const dispatchInputs = asRecord(workflowDispatch.inputs);
   requireInput(errors, dispatchInputs, "scenarios");
-  requireInput(errors, dispatchInputs, "jobs");
+  const jobsInput = requireInput(errors, dispatchInputs, "jobs");
+  const jobsDescription = stringValue(jobsInput.description);
+  if (!jobsDescription.includes("default-enabled jobs")) {
+    errors.push(
+      "workflow_dispatch jobs input description must say empty dispatch runs default-enabled jobs",
+    );
+  }
+  if (!jobsDescription.includes("explicit-only jobs")) {
+    errors.push(
+      "workflow_dispatch jobs input description must say explicit-only jobs are skipped unless selected",
+    );
+  }
   if (Object.hasOwn(dispatchInputs, "test_filter")) {
     errors.push("workflow_dispatch must not expose legacy test_filter input");
   }
@@ -7868,6 +7882,16 @@ export function validateE2eVitestScenariosWorkflowBoundary(
     if (!reportScript.includes("**Requested scenarios:**")) {
       errors.push(
         "step 'Post Vitest scenario results to PR' run script must include **Requested scenarios:**",
+      );
+    }
+    if (!reportScript.includes("All default jobs passed")) {
+      errors.push(
+        "step 'Post Vitest scenario results to PR' run script must label empty dispatch as default jobs passed",
+      );
+    }
+    if (!reportScript.includes("default-enabled free-standing jobs")) {
+      errors.push(
+        "step 'Post Vitest scenario results to PR' run script must say empty dispatch uses default-enabled free-standing jobs",
       );
     }
     for (const forbidden of [
