@@ -169,14 +169,12 @@ describe("OnboardRuntimeBoundary", () => {
     expect(harness.events[1]).toMatchObject({ state: "init" });
   });
 
-  it("forwards configured step mutation options through boundary recorders", async () => {
+  it("defaults boundary step recorders to record-only machine mutations", async () => {
     const harness = createRuntimeHarness();
-    const recordOnlyOptions = { updateMachine: false };
     const boundary = new OnboardRuntimeBoundary({
       toSessionUpdates: (updates) => filterSafeUpdates(updates as SessionUpdates) as SessionUpdates,
       maybeForceE2eStepFailure: () => undefined,
       createRuntime: harness.createRuntime,
-      stepMutationOptions: recordOnlyOptions,
     });
 
     await boundary.startRecordedStep("preflight");
@@ -184,9 +182,30 @@ describe("OnboardRuntimeBoundary", () => {
     await boundary.recordStepFailed("gateway", "boom");
 
     expect(harness.stepOptionCalls).toEqual([
-      { method: "markStepStarted", options: recordOnlyOptions },
-      { method: "markStepComplete", options: recordOnlyOptions },
-      { method: "markStepFailed", options: recordOnlyOptions },
+      { method: "markStepStarted", options: { updateMachine: false } },
+      { method: "markStepComplete", options: { updateMachine: false } },
+      { method: "markStepFailed", options: { updateMachine: false } },
+    ]);
+  });
+
+  it("forwards configured step mutation options through boundary recorders", async () => {
+    const harness = createRuntimeHarness();
+    const legacyOptions = { updateMachine: true };
+    const boundary = new OnboardRuntimeBoundary({
+      toSessionUpdates: (updates) => filterSafeUpdates(updates as SessionUpdates) as SessionUpdates,
+      maybeForceE2eStepFailure: () => undefined,
+      createRuntime: harness.createRuntime,
+      stepMutationOptions: legacyOptions,
+    });
+
+    await boundary.startRecordedStep("preflight");
+    await boundary.recordStepComplete("preflight");
+    await boundary.recordStepFailed("gateway", "boom");
+
+    expect(harness.stepOptionCalls).toEqual([
+      { method: "markStepStarted", options: legacyOptions },
+      { method: "markStepComplete", options: legacyOptions },
+      { method: "markStepFailed", options: legacyOptions },
     ]);
   });
 

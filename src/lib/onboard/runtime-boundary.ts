@@ -19,10 +19,17 @@ function assertSkippableTransitionResult(result: OnboardStateResult): void {
   throw new Error("Cannot skip onboarding state result with context updates");
 }
 
+const RECORD_ONLY_STEP_MUTATION_OPTIONS: StepMutationOptions = { updateMachine: false };
+
 export interface OnboardRuntimeBoundaryOptions {
   toSessionUpdates(updates: Record<string, unknown>): SessionUpdates;
   maybeForceE2eStepFailure(stepName: string): void;
   createRuntime?(): OnboardRuntime;
+  /**
+   * Override for legacy/test harnesses. Production boundary writes default to
+   * status-only step mutations so explicit OnboardStateResult transitions stay
+   * the durable machine source of truth.
+   */
   stepMutationOptions?: StepMutationOptions;
 }
 
@@ -76,7 +83,7 @@ export class OnboardRuntimeBoundary {
     } = {},
   ): Promise<void> {
     const runtime = this.getRuntime();
-    await runtime.markStepStarted(stepName, this.options.stepMutationOptions);
+    await runtime.markStepStarted(stepName, this.stepMutationOptions());
     if (Object.keys(updates).length > 0) {
       await runtime.updateContext(this.options.toSessionUpdates(updates));
     }
@@ -84,7 +91,7 @@ export class OnboardRuntimeBoundary {
   }
 
   async recordStepComplete(stepName: string, updates: SessionUpdates = {}): Promise<Session> {
-    return this.getRuntime().markStepComplete(stepName, updates, this.options.stepMutationOptions);
+    return this.getRuntime().markStepComplete(stepName, updates, this.stepMutationOptions());
   }
 
   async recordStepSkipped(stepName: string): Promise<Session> {
@@ -92,7 +99,11 @@ export class OnboardRuntimeBoundary {
   }
 
   async recordStepFailed(stepName: string, message: string | null): Promise<Session> {
-    return this.getRuntime().markStepFailed(stepName, message, this.options.stepMutationOptions);
+    return this.getRuntime().markStepFailed(stepName, message, this.stepMutationOptions());
+  }
+
+  private stepMutationOptions(): StepMutationOptions {
+    return this.options.stepMutationOptions ?? RECORD_ONLY_STEP_MUTATION_OPTIONS;
   }
 
   async recordStateSkipped(
