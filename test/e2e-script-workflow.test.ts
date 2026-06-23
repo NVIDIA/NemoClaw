@@ -986,7 +986,10 @@ describe("E2E reusable workflow contract", () => {
       default: "hosted-custom",
     });
     expect(workflowCall?.inputs?.nvidia_secret_as_compatible_api_key).toBeUndefined();
-    expect(workflowCall?.secrets?.NVIDIA_API_KEY).toMatchObject({ required: false });
+    expect(
+      (workflowCall as { secrets?: Record<string, { required?: boolean }> } | undefined)?.secrets
+        ?.NVIDIA_API_KEY,
+    ).toMatchObject({ required: false });
     expect(exportStep?.if).toBe("${{ inputs.nvidia_api_key }}");
     expect(exportStep?.env?.NEMOCLAW_E2E_INFERENCE_ROUTE).toBe("${{ inputs.inference_route }}");
     expect(exportStep?.env?.HOSTED_NVIDIA_INFERENCE_API_KEY).toBe(RAW_HOSTED_INFERENCE_SECRET);
