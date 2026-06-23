@@ -96,6 +96,54 @@ describe("prepareSandboxCreateLaunch", () => {
     ]);
   });
 
+  it("omits dashboard env when dashboard management is disabled", () => {
+    const result = prepareSandboxCreateLaunch({
+      agent: { name: "langchain-deepagents-code" } as any,
+      chatUiUrl: "",
+      createArgs: [],
+      env: {},
+      extraPlaceholderKeys: [],
+      getDashboardForwardPort: vi.fn(() => {
+        throw new Error("dashboard port should not be resolved");
+      }),
+      hermesDashboardState: disabledHermesDashboardState,
+      manageDashboard: false,
+      openshellShellCommand: (args) => args.join(" "),
+      buildEnv: () => ({}),
+    });
+
+    expect(result.effectiveDashboardPort).toBe("0");
+    expect(result.envArgs).toEqual([]);
+    expect(result.sandboxStartupCommand).toEqual(["env", "nemoclaw-start"]);
+  });
+
+  it("drops credential-bearing proxy URLs from Deep Agents Code sandbox create env", () => {
+    const result = prepareSandboxCreateLaunch({
+      agent: { name: "langchain-deepagents-code" } as any,
+      chatUiUrl: "",
+      createArgs: ["--name", "deepagents"],
+      env: {
+        HTTP_PROXY: "http://safe-proxy.example:8080",
+        HTTPS_PROXY: "https://user:pass@proxy.example:8443",
+        http_proxy: "user:pass@proxy.example:8080",
+        https_proxy: "https://safe-lower.example:8443",
+      },
+      extraPlaceholderKeys: [],
+      getDashboardForwardPort: vi.fn(() => "0"),
+      hermesDashboardState: disabledHermesDashboardState,
+      manageDashboard: false,
+      openshellShellCommand: (args) => args.join(" "),
+      buildEnv: () => ({}),
+    });
+
+    const serialized = `${result.envArgs.join("\n")}\n${result.sandboxStartupCommand.join(" ")}\n${result.createCommand}`;
+    expect(serialized).toContain("HTTP_PROXY=http://safe-proxy.example:8080");
+    expect(serialized).toContain("https_proxy=https://safe-lower.example:8443");
+    expect(serialized).not.toContain("user:pass");
+    expect(serialized).not.toContain("HTTPS_PROXY=");
+    expect(serialized).not.toContain("http_proxy=");
+  });
+
   it("ignores invalid runtime proxy overrides", () => {
     const result = prepareSandboxCreateLaunch({
       agent: null,

@@ -1,0 +1,33 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+apiVersion: nemoclaw.io/v1
+kind: NemoClawInstance
+metadata:
+  name: langchain-deepagents-code-nvidia
+spec:
+  setup:
+    install:
+      source: repo-current
+    runtime:
+      containerEngine: docker
+      containerDaemon: running
+    platform:
+      os: ubuntu
+      executionTarget: local
+  onboarding:
+    agent: langchain-deepagents-code
+    provider: nvidia
+    modelRoute: inference-local
+    policyTier: balanced
+    messaging: []
+    features:
+      terminalRuntime: true
+      interactiveCommand: dcode
+      headlessCommand: dcode -n
+      remoteDeepAgentsSandboxes: false
+      mcpAutoLoad: false
+  state:
+    workspaceRef: default
+    credentialRefs:
+      - NVIDIA_INFERENCE_API_KEY
