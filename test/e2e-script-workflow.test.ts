@@ -1031,17 +1031,18 @@ describe("E2E reusable workflow contract", () => {
     expect(nvidiaBuildEnv.NEMOCLAW_COMPAT_MODEL).toBeUndefined();
 
     expect(hostedJobs.length).toBeGreaterThan(20);
-    for (const [name, job] of hostedJobs) {
-      expect(job.with?.nvidia_secret_as_compatible_api_key, name).toBeUndefined();
+    for (const name of nvidiaBuildJobs) {
+      const job = nightlyWorkflow.jobs[name];
       const envJson = JSON.parse(job.with?.env_json ?? "{}") as Record<string, unknown>;
-      if (nvidiaBuildJobs.has(name)) {
-        expect(job.with?.inference_route, name).toBe("nvidia-build");
-        expect(envJson.NEMOCLAW_MODEL, name).toBe("nvidia/nemotron-3-super-120b-a12b");
-        expect(envJson.NEMOCLAW_PROVIDER, name).toBeUndefined();
-        expect(envJson.NEMOCLAW_PREFERRED_API, name).toBeUndefined();
-      } else {
-        expect(job.with?.inference_route, name).toBeUndefined();
-      }
+      expect(job.with?.nvidia_secret_as_compatible_api_key, name).toBeUndefined();
+      expect(job.with?.inference_route, name).toBe("nvidia-build");
+      expect(envJson.NEMOCLAW_MODEL, name).toBe("nvidia/nemotron-3-super-120b-a12b");
+      expect(envJson.NEMOCLAW_PROVIDER, name).toBeUndefined();
+      expect(envJson.NEMOCLAW_PREFERRED_API, name).toBeUndefined();
+    }
+    for (const [name, job] of hostedJobs.filter(([name]) => !nvidiaBuildJobs.has(name))) {
+      expect(job.with?.nvidia_secret_as_compatible_api_key, name).toBeUndefined();
+      expect(job.with?.inference_route, name).toBeUndefined();
     }
 
     expect(nightlyWorkflow.jobs["common-egress-agent-e2e"].with?.inference_route).toBeUndefined();
