@@ -24,6 +24,7 @@ const ANTHROPIC_ENDPOINT_URL = "https://api.anthropic.com";
 const GEMINI_ENDPOINT_URL = "https://generativelanguage.googleapis.com/v1beta/openai/";
 const HERMES_INFERENCE_ENDPOINT_URL = "https://inference-api.nousresearch.com/v1";
 const HOSTED_INFERENCE_SOURCE_ENV = "NVIDIA_INFERENCE_API_KEY";
+const HOSTED_INFERENCE_PROVIDER_KEY_ENV = "NEMOCLAW_PROVIDER_KEY";
 const HOSTED_INFERENCE_CREDENTIAL_ENV = "COMPATIBLE_API_KEY";
 const HOSTED_INFERENCE_ENDPOINT_URL = "https://inference-api.nvidia.com/v1";
 const HOSTED_INFERENCE_MODEL = "nvidia/nemotron-3-super-v3";
@@ -215,7 +216,9 @@ function getNonInteractiveProvider() {
 }
 
 function stageHostedInferenceSourceSecretEnv() {
-  const sourceKey = normalizeCredentialValue(process.env[HOSTED_INFERENCE_SOURCE_ENV] ?? "");
+  const sourceKey =
+    normalizeCredentialValue(process.env[HOSTED_INFERENCE_SOURCE_ENV] ?? "") ||
+    normalizeCredentialValue(process.env[HOSTED_INFERENCE_PROVIDER_KEY_ENV] ?? "");
   if (!sourceKey) return false;
 
   const rawProvider = (process.env.NEMOCLAW_PROVIDER || "").trim().toLowerCase();

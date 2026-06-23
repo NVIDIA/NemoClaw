@@ -55,6 +55,7 @@ const {
 function withProviderEnv(next: Record<string, string | undefined>, testBody: () => void): void {
   const keys = new Set([
     "NVIDIA_INFERENCE_API_KEY",
+    "NEMOCLAW_PROVIDER_KEY",
     "NEMOCLAW_PROVIDER",
     "NEMOCLAW_ENDPOINT_URL",
     "NEMOCLAW_MODEL",
@@ -305,6 +306,23 @@ describe("onboard provider helpers", () => {
         expect(process.env.NEMOCLAW_MODEL).toBe(HOSTED_INFERENCE_MODEL);
         expect(process.env.NEMOCLAW_COMPAT_MODEL).toBe(HOSTED_INFERENCE_MODEL);
         expect(process.env.NEMOCLAW_PREFERRED_API).toBe("openai-completions");
+        expect(process.env.COMPATIBLE_API_KEY).toBe("repo-hosted-key");
+      },
+    );
+  });
+
+  it("stages NEMOCLAW_PROVIDER_KEY as hosted custom inference when no dedicated source env is set", () => {
+    withProviderEnv(
+      {
+        NEMOCLAW_PROVIDER_KEY: "  repo-hosted-key  ",
+      },
+      () => {
+        expect(stageHostedInferenceSourceSecretEnv()).toBe(true);
+        expect(getRequestedProviderHint(true)).toBe("custom");
+        expect(process.env.NEMOCLAW_PROVIDER).toBe("custom");
+        expect(process.env.NEMOCLAW_ENDPOINT_URL).toBe(HOSTED_INFERENCE_ENDPOINT_URL);
+        expect(process.env.NEMOCLAW_MODEL).toBe(HOSTED_INFERENCE_MODEL);
+        expect(process.env.NEMOCLAW_COMPAT_MODEL).toBe(HOSTED_INFERENCE_MODEL);
         expect(process.env.COMPATIBLE_API_KEY).toBe("repo-hosted-key");
       },
     );
