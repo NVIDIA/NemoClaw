@@ -89,6 +89,36 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
     expect(validateE2eVitestScenariosWorkflowBoundary()).toEqual([]);
   });
 
+  it("uses the shared hosted inference export action instead of duplicated run-step env", () => {
+    const workflow = readWorkflow();
+    const jobs = workflow.jobs as Record<string, { steps?: Array<Record<string, unknown>> }>;
+    const hostedKeys = new Set([
+      "NVIDIA_INFERENCE_API_KEY",
+      "COMPATIBLE_API_KEY",
+      "NEMOCLAW_E2E_USE_HOSTED_INFERENCE",
+      "NEMOCLAW_PROVIDER",
+      "NEMOCLAW_ENDPOINT_URL",
+      "NEMOCLAW_MODEL",
+      "NEMOCLAW_COMPAT_MODEL",
+      "NEMOCLAW_PREFERRED_API",
+    ]);
+    let sharedExports = 0;
+
+    for (const [jobName, job] of Object.entries(jobs)) {
+      for (const step of job.steps ?? []) {
+        if (step.uses === "./.github/actions/export-e2e-hosted-inference") {
+          sharedExports++;
+        }
+        if (typeof step.run !== "string" || !step.run.includes("npx vitest run")) continue;
+        const env = (step.env ?? {}) as Record<string, unknown>;
+        const duplicatedHostedKeys = Object.keys(env).filter((key) => hostedKeys.has(key));
+        expect(duplicatedHostedKeys, `${jobName} ${String(step.name)}`).toEqual([]);
+      }
+    }
+
+    expect(sharedExports).toBeGreaterThan(0);
+  });
+
   it(
     "evaluates high-risk dispatch selector behavior before secret-bearing jobs run",
     testTimeoutOptions(30_000),
@@ -976,7 +1006,7 @@ jobs:
           "live-scenarios job must run on the matrix runner",
           "live-scenarios job env must not include NVIDIA_INFERENCE_API_KEY",
           "step 'Run Vitest live E2E scenarios' run script must not interpolate dispatch inputs directly",
-          "Vitest step must receive NVIDIA_INFERENCE_API_KEY from hosted inference secrets",
+          "Vitest step must consume the shared hosted inference export action",
           "artifact upload must set include-hidden-files: false",
           "upload-artifact action must be pinned to a full commit SHA",
           "openshell-version-pin-vitest job must use the shared jobs selector condition",

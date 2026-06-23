@@ -65,6 +65,8 @@ const HOSTED_INFERENCE_DEFAULT_ENV = {
   NEMOCLAW_COMPAT_MODEL: "nvidia/nvidia/nemotron-3-super-v3",
   NEMOCLAW_PREFERRED_API: "openai-completions",
 } as const;
+const HOSTED_INFERENCE_EXPORT_ACTION = "./.github/actions/export-e2e-hosted-inference";
+let currentWorkflowJobs: WorkflowRecord = {};
 const DIRECT_PUBLIC_NVIDIA_API_KEY_JOBS = new Set(["spark-install-vitest"]);
 const FREE_STANDING_SELECTOR_SPECIAL_CASES = new Set([
   "hermes-e2e-vitest",
@@ -426,6 +428,27 @@ function requireNoHostedInferenceCredentialEnv(
   }
 }
 
+function hasHostedInferenceExportAction(
+  jobName: string | undefined,
+  allowLegacyNvidiaApiKey: boolean,
+): boolean {
+  if (!jobName) return false;
+  const steps = asSteps(asRecord(currentWorkflowJobs[jobName]).steps);
+  return steps.some((step) => {
+    if (step.uses !== HOSTED_INFERENCE_EXPORT_ACTION) return false;
+    const actionWith = asRecord(step.with);
+    if (actionWith["nvidia-inference-api-key"] !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
+      return false;
+    }
+    if (actionWith["nvidia-api-key"] !== "${{ secrets.NVIDIA_API_KEY }}") {
+      return false;
+    }
+    return allowLegacyNvidiaApiKey
+      ? actionWith["export-nvidia-api-key"] === "true"
+      : actionWith["export-nvidia-api-key"] !== "true";
+  });
+}
+
 function requireHostedInferenceCredentialEnv(
   errors: string[],
   owner: string,
@@ -438,6 +461,19 @@ function requireHostedInferenceCredentialEnv(
       ? HOSTED_INFERENCE_LEGACY_NVIDIA_API_KEY_JOB_SET.has(options.jobName) ||
         HOSTED_INFERENCE_PUBLIC_NVIDIA_FALLBACK_VITEST_JOB_SET.has(options.jobName)
       : false);
+  const hostedEnvKeys = new Set([
+    ...HOSTED_INFERENCE_SECRET_ENV_NAMES,
+    "NVIDIA_API_KEY",
+    ...Object.keys(HOSTED_INFERENCE_DEFAULT_ENV),
+  ]);
+  const hasDirectHostedEnv = [...hostedEnvKeys].some((name) => Object.hasOwn(env, name));
+
+  if (!hasDirectHostedEnv) {
+    if (!hasHostedInferenceExportAction(options.jobName, allowLegacyNvidiaApiKey)) {
+      errors.push(`${owner} must consume the shared hosted inference export action`);
+    }
+    return;
+  }
 
   if (env.NVIDIA_INFERENCE_API_KEY !== HOSTED_INFERENCE_SECRET_EXPR) {
     errors.push(`${owner} must receive NVIDIA_INFERENCE_API_KEY from hosted inference secrets`);
@@ -499,7 +535,9 @@ function requireFullShaAction(
   description: string,
 ): void {
   if (!step) return;
-  if (!/@[0-9a-f]{40}$/i.test(stringValue(step.uses))) {
+  const uses = stringValue(step.uses);
+  if (uses.startsWith("./")) return;
+  if (!/@[0-9a-f]{40}$/i.test(uses)) {
     errors.push(`${description} action must be pinned to a full commit SHA`);
   }
 }
@@ -621,7 +659,8 @@ function validateHostedInferenceLegacyAliasInventoryBoundary(
     if (
       !vitestSteps.some(
         (step) => asRecord(step.env).NVIDIA_API_KEY === HOSTED_NVIDIA_API_KEY_EXPR,
-      )
+      ) &&
+      !hasHostedInferenceExportAction(jobName, true)
     ) {
       errors.push(`${jobName} legacy alias consumer must receive NVIDIA_API_KEY`);
     }
@@ -5986,6 +6025,7 @@ function validateOpenClawDiscordPairingVitestJob(
     errors,
     "openclaw-discord-pairing-vitest step",
     runVitestEnv,
+    { jobName },
   );
   if (runVitestEnv.DISCORD_BOT_TOKEN !== "test-fake-discord-pairing-e2e") {
     errors.push(
@@ -6236,6 +6276,7 @@ function validateOpenClawSlackPairingVitestJob(
     errors,
     "openclaw-slack-pairing-vitest step",
     runVitestEnv,
+    { jobName },
   );
   if (runVitestEnv.SLACK_BOT_TOKEN !== "xoxb-fake-slack-pairing-e2e") {
     errors.push(
@@ -6543,16 +6584,12 @@ function validateChannelsStopStartVitestJob(
     runVitestEnv,
     "NVIDIA_API_KEY",
   );
-  if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== HOSTED_INFERENCE_SECRET_EXPR) {
-    errors.push(
-      "channels-stop-start-vitest step must receive NVIDIA_INFERENCE_API_KEY from hosted inference secrets",
-    );
-  }
-  if (runVitestEnv.COMPATIBLE_API_KEY !== HOSTED_INFERENCE_SECRET_EXPR) {
-    errors.push(
-      "channels-stop-start-vitest step must receive COMPATIBLE_API_KEY from hosted inference secrets",
-    );
-  }
+  requireHostedInferenceCredentialEnv(
+    errors,
+    "channels-stop-start-vitest step",
+    runVitestEnv,
+    { jobName },
+  );
   if (
     runVitestEnv.TELEGRAM_BOT_TOKEN !==
     "test-fake-telegram-token-stop-start-${{ matrix.agent }}"
@@ -7174,6 +7211,7 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   requireNoHostedInferenceDefaultEnv(errors, "workflow", workflowEnv);
 
   const jobs = asRecord(workflow.jobs);
+  currentWorkflowJobs = jobs;
   const { errors: inventoryErrors, inventory: freeStandingInventory } =
     deriveFreeStandingJobsInventoryFromJobs(jobs);
   errors.push(...inventoryErrors);
