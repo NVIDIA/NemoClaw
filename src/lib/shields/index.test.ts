@@ -380,6 +380,8 @@ describe("shields — unit logic", () => {
 
     it("shieldsStatus attempts inline recovery for expired marker when timer PID is dead", async () => {
       const sandboxName = "openclaw";
+      const configPath = "/sandbox/.openclaw/openclaw.json";
+      const hashPath = "/sandbox/.openclaw/.config-hash";
       const snapshotPath = path.join(stateDir(), "policy-snapshot-test.yaml");
       fs.mkdirSync(stateDir(), { recursive: true });
       fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies: {}\n");
@@ -417,20 +419,20 @@ describe("shields — unit logic", () => {
       >;
       dockerExecFileSync.mockImplementation((_file: string, argv?: readonly string[]) => {
         const cmd = Array.isArray(argv) ? argv.join(" ") : "";
-        if (cmd.includes(" stat -c %a %U:%G /sandbox/.openclaw/.config-hash")) {
+        if (cmd.includes(` stat -c %a %U:%G ${hashPath}`)) {
           return "444 root:root";
         }
-        if (cmd.includes(" stat -c %a %U:%G /sandbox/.openclaw/openclaw.json")) {
+        if (cmd.includes(` stat -c %a %U:%G ${configPath}`)) {
           return "444 root:root";
         }
-        if (cmd.includes(" lsattr -d /sandbox/.openclaw/.config-hash")) {
-          return "----i---------e----- /sandbox/.openclaw/.config-hash";
+        if (cmd.includes(` lsattr -d ${hashPath}`)) {
+          return `----i---------e----- ${hashPath}`;
         }
         if (cmd.includes(" stat -c %a %U:%G /sandbox/.openclaw")) {
           return "755 root:root";
         }
-        if (cmd.includes(" lsattr -d /sandbox/.openclaw/openclaw.json")) {
-          return "----i---------e----- /sandbox/.openclaw/openclaw.json";
+        if (cmd.includes(` lsattr -d ${configPath}`)) {
+          return `----i---------e----- ${configPath}`;
         }
         return "";
       });
