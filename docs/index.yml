@@ -47,6 +47,9 @@ navigation:
               - page: "Quickstart with OpenClaw"
                 path: get-started/quickstart.mdx
                 slug: quickstart
+              - page: "Quickstart with LangChain Deep Agents Code"
+                path: get-started/quickstart-langchain-deepagents-code.mdx
+                slug: quickstart-langchain-deepagents-code
           - section: "Inference"
             slug: inference
             collapsed: open-by-default
@@ -66,6 +69,9 @@ navigation:
               - page: "Set Up Task-Specific Sub-Agents"
                 path: inference/set-up-sub-agent.mdx
                 slug: set-up-sub-agent
+              - page: "Declarative Multi-Agent Manifest"
+                path: inference/declarative-agents-manifest.mdx
+                slug: declarative-agents-manifest
           - section: "Manage Sandboxes"
             slug: manage-sandboxes
             collapsed: open-by-default

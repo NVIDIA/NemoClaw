@@ -39,6 +39,30 @@ export type SandboxBaseImageResolution = {
 
 const BASE_IMAGE_INPUT_PATHS = ["Dockerfile.base", "nemoclaw-blueprint/blueprint.yaml"];
 
+function normalizeBaseImageInputPaths(rootDir: string, paths: string[] = []): string[] {
+  const absoluteRootDir = path.resolve(rootDir);
+  const normalizedPaths = paths
+    .map((inputPath) => {
+      const trimmed = String(inputPath || "").trim();
+      if (!trimmed) return null;
+      const absolutePath = path.isAbsolute(trimmed)
+        ? path.resolve(trimmed)
+        : path.resolve(absoluteRootDir, trimmed);
+      const relativePath = path.relative(absoluteRootDir, absolutePath);
+      if (
+        !relativePath ||
+        relativePath === ".." ||
+        relativePath.startsWith(`..${path.sep}`) ||
+        path.isAbsolute(relativePath)
+      ) {
+        return null;
+      }
+      return relativePath.split(path.sep).join("/");
+    })
+    .filter((inputPath): inputPath is string => !!inputPath);
+  return Array.from(new Set([...BASE_IMAGE_INPUT_PATHS, ...normalizedPaths]));
+}
+
 /**
  * Combine stderr + stdout from a captured `dockerBuild` failure and pass them
  * through the runner's redaction so secrets in build output never reach the
@@ -230,8 +254,9 @@ function gitHasPathDiff(
   rootDir: string,
   args: string[],
   env: NodeJS.ProcessEnv = process.env,
+  inputPaths = BASE_IMAGE_INPUT_PATHS,
 ): boolean | null {
-  const status = gitStatus(rootDir, [...args, "--", ...BASE_IMAGE_INPUT_PATHS], env);
+  const status = gitStatus(rootDir, [...args, "--", ...inputPaths], env);
   if (status === 0) return false;
   if (status === 1) return true;
   return null;
@@ -240,11 +265,13 @@ function gitHasPathDiff(
 export function baseImageInputsChangedSinceMain(
   rootDir = ROOT,
   env: NodeJS.ProcessEnv = process.env,
+  paths: string[] = [],
 ): boolean {
-  const worktreeDiff = gitHasPathDiff(rootDir, ["diff", "--quiet"], env);
+  const inputPaths = normalizeBaseImageInputPaths(rootDir, paths);
+  const worktreeDiff = gitHasPathDiff(rootDir, ["diff", "--quiet"], env, inputPaths);
   if (worktreeDiff === true) return true;
 
-  const stagedDiff = gitHasPathDiff(rootDir, ["diff", "--cached", "--quiet"], env);
+  const stagedDiff = gitHasPathDiff(rootDir, ["diff", "--cached", "--quiet"], env, inputPaths);
   if (stagedDiff === true) return true;
 
   const baseBranch = String(env.GITHUB_BASE_REF || "main").trim() || "main";
@@ -259,7 +286,7 @@ export function baseImageInputsChangedSinceMain(
 
   for (const ref of Array.from(new Set(candidates))) {
     if (!gitRefExists(rootDir, ref, env)) continue;
-    const diff = gitHasPathDiff(rootDir, ["diff", "--quiet", ref, "HEAD"], env);
+    const diff = gitHasPathDiff(rootDir, ["diff", "--quiet", ref, "HEAD"], env, inputPaths);
     if (diff != null) return diff;
   }
 
@@ -423,7 +450,7 @@ export function resolveSandboxBaseImage(
       if (resolved) return resolved;
     }
 
-    if (baseImageInputsChangedSinceMain(options.rootDir || ROOT, env)) {
+    if (baseImageInputsChangedSinceMain(options.rootDir || ROOT, env, [options.dockerfilePath])) {
       const local = resolveLocalCandidate(options);
       if (local) return local;
       // The base Dockerfile changed, so fail closed instead of silently using stale :latest.

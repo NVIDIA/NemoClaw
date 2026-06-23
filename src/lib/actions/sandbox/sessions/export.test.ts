@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -124,8 +125,10 @@ describe("exportSandboxSessions", () => {
     });
 
     // Session JSONL can contain pasted secrets, so the downloaded host bundle
-    // must be locked down to owner-only, not just the in-sandbox staging copy.
-    expect(chmodSpy).toHaveBeenCalledWith("./out.tgz", 0o600);
+    // must be locked down to owner-only at the resolved host path, not at a
+    // path that drifts with the caller's cwd.
+    const expectedHostDest = path.resolve(process.cwd(), "out.tgz");
+    expect(chmodSpy).toHaveBeenCalledWith(expectedHostDest, 0o600);
     chmodSpy.mockRestore();
 
     expect(captureMock).toHaveBeenCalledTimes(1);
@@ -139,19 +142,28 @@ describe("exportSandboxSessions", () => {
     const tarCall = runMock.mock.calls[0]?.[0] as string[];
     expect(tarCall.slice(0, 7)).toEqual(["sandbox", "exec", "--name", "alpha", "--", "sh", "-c"]);
     const shellCommand = tarCall[7] as string;
-    expect(shellCommand).toMatch(/^umask 077 && tar -czf /);
+    // Staging directory inside /sandbox keeps openshell's workspace check happy
+    // and the umask + chmod chain seals the staging tarball to owner-only.
+    expect(shellCommand).toMatch(
+      /^umask 077 && mkdir -p \/sandbox\/\.nemoclaw-staging && chmod 700 \/sandbox\/\.nemoclaw-staging && tar -czf \/sandbox\/\.nemoclaw-staging\/sessions-export-main-[0-9a-f]+\.tgz/,
+    );
     expect(shellCommand).toMatch(/-- \.\/sid-a\.jsonl \.\/sid-b\.jsonl/);
-    expect(shellCommand).toMatch(/&& chmod 600 /);
+    expect(shellCommand).toMatch(
+      /&& chmod 600 \/sandbox\/\.nemoclaw-staging\/sessions-export-main-[0-9a-f]+\.tgz$/,
+    );
     expect(shellCommand).not.toMatch(/sid-a\.trajectory\.jsonl/);
 
     const downloadCall = runMock.mock.calls[1]?.[0] as string[];
     expect(downloadCall.slice(0, 3)).toEqual(["sandbox", "download", "alpha"]);
-    expect(downloadCall.at(-1)).toBe("./out.tgz");
+    expect(downloadCall[3]).toMatch(
+      /^\/sandbox\/\.nemoclaw-staging\/sessions-export-main-[0-9a-f]+\.tgz$/,
+    );
+    expect(downloadCall.at(-1)).toBe(expectedHostDest);
 
     expect(result.selectedKeys).toBe("all");
     expect(result.resolvedSessionIds).toEqual(["sid-a", "sid-b"]);
     expect(result.resolvedFiles).toEqual(["sid-a.jsonl", "sid-b.jsonl"]);
-    expect(result.hostDest).toBe("./out.tgz");
+    expect(result.hostDest).toBe(expectedHostDest);
     expect(result.bundleBytes).toBeNull();
   });
 
@@ -177,8 +189,13 @@ describe("exportSandboxSessions", () => {
     });
 
     // dir is the default: no in-sandbox tar/staging, just a per-file download
-    // straight into the host directory.
-    expect(mkdirSpy).toHaveBeenCalledWith("./sessions-alpha", { recursive: true });
+    // straight into the host directory. The host directory is resolved
+    // against process.cwd() so the chmod hardening hits the real file even
+    // though openshell runs with a different cwd.
+    const expectedDir = path.resolve(process.cwd(), "sessions-alpha");
+    const expectedSidA = path.join(expectedDir, "sid-a.jsonl");
+    const expectedSidB = path.join(expectedDir, "sid-b.jsonl");
+    expect(mkdirSpy).toHaveBeenCalledWith(expectedDir, { recursive: true });
     const shellCalls = runMock.mock.calls.filter((c) => (c[0] as string[]).includes("sh"));
     expect(shellCalls).toHaveLength(0);
     const downloadCalls = runMock.mock.calls.filter((c) => (c[0] as string[])[1] === "download");
@@ -188,25 +205,35 @@ describe("exportSandboxSessions", () => {
       "download",
       "alpha",
       "/sandbox/.openclaw/agents/main/sessions/sid-a.jsonl",
-      "sessions-alpha/sid-a.jsonl",
+      expectedSidA,
     ]);
-    // Each downloaded file is locked to owner-only (session JSONL may hold secrets).
-    expect(chmodSpy).toHaveBeenCalledWith("sessions-alpha/sid-a.jsonl", 0o600);
+    expect(downloadCalls[1]?.[0]).toEqual([
+      "sandbox",
+      "download",
+      "alpha",
+      "/sandbox/.openclaw/agents/main/sessions/sid-b.jsonl",
+      expectedSidB,
+    ]);
+    // Every downloaded session file is locked to owner-only — the bug observed
+    // in production was inconsistent perms across files in the same export
+    // run, so both files in this two-session fixture must see the chmod.
+    expect(chmodSpy).toHaveBeenCalledWith(expectedSidA, 0o600);
+    expect(chmodSpy).toHaveBeenCalledWith(expectedSidB, 0o600);
 
     expect(result.format).toBe("dir");
-    expect(result.hostDest).toBe("./sessions-alpha");
+    expect(result.hostDest).toBe(expectedDir);
     expect(result.bundleBytes).toBeNull();
     expect(result.sessions).toEqual([
       {
         key: "agent:main:main",
         sessionId: "sid-a",
-        path: "sessions-alpha/sid-a.jsonl",
+        path: expectedSidA,
         sizeBytes: 42,
       },
       {
         key: "agent:main:telegram:t-1",
         sessionId: "sid-b",
-        path: "sessions-alpha/sid-b.jsonl",
+        path: expectedSidB,
         sizeBytes: 42,
       },
     ]);
@@ -414,7 +441,7 @@ describe("exportSandboxSessions", () => {
       selectedKeys: "all",
       resolvedSessionIds: ["sid-a"],
       resolvedFiles: ["sid-a.jsonl"],
-      hostDest: "./out.tgz",
+      hostDest: path.resolve(process.cwd(), "out.tgz"),
     });
     expect(parsed).toHaveProperty("bundleBytes");
   });

@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-contributor-create-pr
-description: Create GitHub pull requests that follow the NemoClaw PR template. Use when the user wants to create a new PR, submit code for review, open a pull request, or push changes for review. Trigger keywords - create PR, pull request, new PR, submit for review, open PR, push for review.
+description: Create GitHub pull requests that follow the NemoClaw PR template, then monitor CI and automated review feedback. Use when the user wants to create a new PR, submit code for review, open a pull request, or push changes for review. Trigger keywords - create PR, pull request, new PR, submit for review, open PR, push for review.
 ---
 
 # Create GitHub Pull Request
@@ -13,6 +13,10 @@ Create pull requests on the NemoClaw GitHub repository using the `gh` CLI. This 
 - You must be in the NemoClaw git repository.
 - You must have commits on a branch that is pushed to the remote.
 - The PR description must include a valid DCO `Signed-off-by:` declaration, and every commit that will appear in the PR must appear as `Verified` in GitHub.
+
+## Hard Stop: Git, SSH, and Authentication Problems
+
+Follow the shared [Git and GitHub Access Hard Stop](../_shared/git-github-hard-stop.md) guardrail for SSH, authentication, remote access, authorization, or permission failures. Resolve ordinary Git workflow problems such as merge conflicts or dirty worktrees in the current workflow.
 
 ## Step 1: Verify Branch State
 
@@ -85,6 +89,8 @@ Ensure the branch is pushed to the remote.
 ```bash
 git push -u origin HEAD
 ```
+
+If the push fails because of SSH, authentication, remote access, authorization, or permission problems, follow [Git and GitHub Access Hard Stop](../_shared/git-github-hard-stop.md). Resolve ordinary non-access Git failures, such as merge conflicts or dirty worktrees, in the current workflow.
 
 ## Step 4: Prepare DCO Declaration and Verify GitHub Commits
 
@@ -215,7 +221,7 @@ gh pr create \
   --title "<type>(<scope>): <description>" \
   --assignee "@me" \
   --body "$(cat <<'EOF'
-<full PR body from Step 5>
+<full PR body from Step 6>
 EOF
 )"
 ```
@@ -237,17 +243,23 @@ For work-in-progress that is not ready for review:
 gh pr create --draft --title "..." --assignee "@me" --body "..."
 ```
 
-## Step 8: Report the Result
+## Step 8: Monitor CI and Review Feedback
 
-After the PR is created, display the PR URL as a clickable markdown link:
+After creating the PR, do not stop at the URL. Follow the shared [PR CI and Automated Review Follow-Up](../_shared/pr-follow-up.md) workflow: watch required CI, inspect CodeRabbit and PR Review Advisor feedback, address valid findings, and consult the user when feedback is ambiguous or design-changing.
+
+## Step 9: Report the Result
+
+After the PR is created and the initial CI/reviewer follow-up is handled, display the PR URL as a clickable markdown link and summarize the status:
 
 ```text
 Created PR [#NNN](https://github.com/NVIDIA/NemoClaw/pull/NNN)
+CI: passing/pending/failing
+Automated review: no actionable findings / addressed findings / waiting on user
 ```
 
 ## Common Mistakes to Avoid
 
-- **Do not invent your own PR body format.** Use the template from Step 5 exactly.
+- **Do not invent your own PR body format.** Use the template from Step 6 exactly.
 - **Do not omit sections.** Even if a section is not applicable, keep it with the "Skip if..." comment.
 - **Do not check boxes for steps you did not run.** If you did not run `npm run docs`, leave that box unchecked.
 - **Do not rerun hook-covered checks by default.** Normal commit and push hooks are valid verification. Use `npx prek run --from-ref main --to-ref HEAD` as the fallback when hooks were skipped, missing, or uncertain.
@@ -257,3 +269,5 @@ Created PR [#NNN](https://github.com/NVIDIA/NemoClaw/pull/NNN)
 - **Do not rely on maintainers to repair contributor signature history.** If force-push is not allowed and the branch contains an unverified commit, use a fresh branch and fresh PR.
 - **Do not forget `--assignee @me`.** Every PR must be assigned to its creator.
 - **Do not create PRs from main.** Always use a feature branch.
+- **Do not troubleshoot Git/GitHub access in-agent.** If SSH, `gh`, authentication, remote access, authorization, or push permissions fail, stop and ask the user to fix access. Do resolve ordinary merge conflicts and dirty-worktree state when the workflow calls for it.
+- **Do not abandon the PR immediately after creation.** Watch CI and automated feedback from CodeRabbit and the PR Review Advisor, address valid findings, and consult the user when feedback is ambiguous.

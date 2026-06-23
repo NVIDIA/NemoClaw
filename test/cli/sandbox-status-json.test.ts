@@ -7,9 +7,9 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 
-import { runWithEnv, writeSandboxRegistry } from "./helpers";
+import { runWithEnv, testTimeoutOptions, writeSandboxRegistry } from "./helpers";
 
-describe("CLI sandbox status JSON output", () => {
+describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
   it("sandbox status --json emits structured per-sandbox report", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sandbox-status-json-"));
     const localBin = path.join(home, "bin");
@@ -471,7 +471,7 @@ describe("CLI sandbox status JSON output", () => {
     const localBin = path.join(home, "bin");
     fs.mkdirSync(localBin, { recursive: true });
     writeSandboxRegistry(home, "alpha", {
-      provider: "openai-api",
+      provider: "compatible-endpoint",
       model: "gpt-4o-mini",
       openshellDriver: "vm",
     });
@@ -481,7 +481,7 @@ describe("CLI sandbox status JSON output", () => {
         "#!/usr/bin/env bash",
         'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
         "  echo 'Gateway inference:'",
-        "  echo '  Provider: openai-api'",
+        "  echo '  Provider: compatible-endpoint'",
         "  echo '  Model: gpt-4o-mini'",
         "  exit 0",
         "fi",

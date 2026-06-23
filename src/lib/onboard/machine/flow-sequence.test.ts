@@ -8,9 +8,9 @@ import {
   filterSafeUpdates,
   MACHINE_SNAPSHOT_VERSION,
   normalizeSession,
-  sanitizeFailure,
   type Session,
   type SessionUpdates,
+  sanitizeFailure,
 } from "../../state/onboard-session";
 import type { OnboardFlowContext, OnboardFlowPhaseResult } from "./flow-context";
 import { onboardFlowPhaseResult } from "./flow-context";
@@ -21,7 +21,7 @@ import { runOnboardSequenceWithRunner } from "./sequence-runner";
 
 type Context = OnboardFlowContext<null, { type: string }, { mode: string }>;
 
-function context(): Context {
+function context(patch: Partial<Context> = {}): Context {
   return {
     resume: false,
     fresh: false,
@@ -45,6 +45,7 @@ function context(): Context {
     gpu: null,
     sandboxGpuConfig: { mode: "0" },
     gpuPassthrough: false,
+    ...patch,
   };
 }
 
@@ -141,8 +142,10 @@ describe("onboard flow phase sequence", () => {
       preflight: async (ctx) =>
         result({ ...ctx, gpu: { type: "nvidia" }, gpuPassthrough: true }, "gateway"),
       gateway: async (ctx) => result(ctx, "provider_selection"),
-      providerInference: async (ctx) => result(ctx, "sandbox"),
-      sandbox: async (ctx) => onboardFlowPhaseResult(ctx, branchTo("openclaw")),
+      providerInference: async (ctx) =>
+        result({ ...ctx, provider: "nvidia", model: "model" }, "sandbox"),
+      sandbox: async (ctx) =>
+        onboardFlowPhaseResult({ ...ctx, sandboxName: "my-assistant" }, branchTo("openclaw")),
       openclaw: async (ctx) => result(ctx, "policies"),
       agentSetup: async (ctx) => result(ctx, "policies"),
       policies: async (ctx) => result(ctx, "finalizing"),
@@ -154,6 +157,47 @@ describe("onboard flow phase sequence", () => {
 
     expect(preflight.context.gpu).toEqual({ type: "nvidia" });
     expect(preflight.result).toMatchObject({ next: "gateway" });
+  });
+
+  it("rejects provider inference results that omit provider or model", async () => {
+    const phases = buildOnboardFlowPhaseSequence<Context>({
+      preflight: async (ctx) => result(ctx, "gateway"),
+      gateway: async (ctx) => result(ctx, "provider_selection"),
+      providerInference: async (ctx) =>
+        result({ ...ctx, model: "model", provider: null }, "sandbox"),
+      sandbox: async (ctx) => onboardFlowPhaseResult(ctx, branchTo("openclaw")),
+      openclaw: async (ctx) => result(ctx, "policies"),
+      agentSetup: async (ctx) => result(ctx, "policies"),
+      policies: async (ctx) => result(ctx, "finalizing"),
+      finalization: async (ctx) => result(ctx, "post_verify"),
+      postVerify: async (ctx) => onboardFlowPhaseResult(ctx, completeOnboardMachine()),
+    });
+
+    await expect(phases[2].run(context())).rejects.toThrow(
+      /Onboarding state is incomplete before provider inference result\./,
+    );
+  });
+
+  it("rejects sandbox results that omit sandbox name", async () => {
+    const phases = buildOnboardFlowPhaseSequence<Context>({
+      preflight: async (ctx) => result(ctx, "gateway"),
+      gateway: async (ctx) => result(ctx, "provider_selection"),
+      providerInference: async (ctx) =>
+        result({ ...ctx, provider: "nvidia", model: "model" }, "sandbox"),
+      sandbox: async (ctx) =>
+        onboardFlowPhaseResult({ ...ctx, sandboxName: null }, branchTo("openclaw")),
+      openclaw: async (ctx) => result(ctx, "policies"),
+      agentSetup: async (ctx) => result(ctx, "policies"),
+      policies: async (ctx) => result(ctx, "finalizing"),
+      finalization: async (ctx) => result(ctx, "post_verify"),
+      postVerify: async (ctx) => onboardFlowPhaseResult(ctx, completeOnboardMachine()),
+    });
+
+    await expect(
+      phases[3].run(
+        context({ provider: "nvidia", model: "model", sandboxGpuConfig: { mode: "0" } }),
+      ),
+    ).rejects.toThrow(/Onboarding state is incomplete before sandbox result\./);
   });
 
   it("runs ordered provider results through runtime transition validation", async () => {

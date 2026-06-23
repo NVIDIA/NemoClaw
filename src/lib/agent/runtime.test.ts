@@ -367,6 +367,17 @@ describe("buildManualRecoveryCommand (#2426)", () => {
     expect(cmd).not.toContain(">/tmp/gateway.log 2>&1");
   });
 
+  it("uses the same preload guard before the manual nohup launch", () => {
+    const cmd = buildManualRecoveryCommand(minimalAgent, 19000);
+    const guardIndex = cmd.indexOf("_GUARDS_MISSING");
+    const launchIndex = cmd.indexOf("nohup test-agent gateway run --port 19000");
+    expect(cmd).toContain("nemoclaw-sandbox-safety-net");
+    expect(cmd).toContain("nemoclaw-ciao-network-guard");
+    expect(cmd).toContain("refusing unguarded gateway relaunch");
+    expect(guardIndex).toBeGreaterThanOrEqual(0);
+    expect(launchIndex).toBeGreaterThan(guardIndex);
+  });
+
   it("omits --port for Hermes and uses the current Hermes home", () => {
     const cmd = buildManualRecoveryCommand(hermesAgent, 8642);
     expect(cmd).toContain("HERMES_HOME=/sandbox/.hermes");
