@@ -9,7 +9,6 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
-import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import { shouldRunLiveE2EScenarios } from "../fixtures/live-project-gate.ts";
 
 // Migrated from test/e2e/test-credential-migration.sh. This is a focused live
@@ -18,10 +17,10 @@ import { shouldRunLiveE2EScenarios } from "../fixtures/live-project-gate.ts";
 // a successful real onboard registers the migrated value with the OpenShell
 // gateway, the plaintext file is removed after success, credentials list reads
 // from the gateway, and secure unlink removes a planted symlink without touching
-// its target. The repository secret is named NVIDIA_INFERENCE_API_KEY, but the
-// hosted E2E service is the OpenAI-compatible inference-api.nvidia.com endpoint,
-// so the migration contract stages that value as COMPATIBLE_API_KEY and expects
-// the compatible-endpoint gateway provider.
+// its target. The legacy shell lane stages NVIDIA_INFERENCE_API_KEY and lets
+// non-interactive onboarding use the default NVIDIA Endpoints provider; this
+// Vitest migration keeps that credential migration contract intact instead of
+// layering hosted-compatible endpoint selection onto the migration path.
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const CLI_ENTRYPOINT = path.join(REPO_ROOT, "bin", "nemoclaw.js");
@@ -29,7 +28,8 @@ const DIST_CREDENTIAL_STORE = path.join(REPO_ROOT, "dist", "lib", "credentials",
 const ONBOARD_TIMEOUT_MS = 30 * 60_000;
 const INSTALL_TIMEOUT_MS = 10 * 60_000;
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? `e2e-cred-migration-${process.pid}`;
-const CREDENTIAL_MIGRATION_MODEL = "openai/gpt-oss-120b";
+const MIGRATION_CREDENTIAL_ENV = "NVIDIA_INFERENCE_API_KEY";
+const MIGRATION_PROVIDER_NAME = "nvidia-prod";
 validateSandboxName(SANDBOX_NAME);
 
 const runCredentialMigrationTest = shouldRunLiveE2EScenarios() ? test : test.skip;
@@ -146,14 +146,11 @@ runCredentialMigrationTest(
     // onboard child env below deliberately does not receive that credential, so
     // the only source is ~/.nemoclaw/credentials.json — matching the retired
     // shell lane's migration contract.
-    const hostedInference = requireHostedInferenceConfig(secrets, process.env, {
-      model: CREDENTIAL_MIGRATION_MODEL,
-    });
-    const migratedCredentialValue = hostedInference.apiKey;
-    const {
-      [hostedInference.credentialEnv]: _omittedCredential,
-      ...hostedInferenceEnvWithoutCredential
-    } = hostedInference.env;
+    const migratedCredentialValue = secrets.required(MIGRATION_CREDENTIAL_ENV);
+    expect(
+      migratedCredentialValue.startsWith("nvapi-"),
+      `${MIGRATION_CREDENTIAL_ENV} must start with nvapi-`,
+    ).toBe(true);
     expect(fs.existsSync(CLI_ENTRYPOINT), "bin/nemoclaw.js missing").toBe(true);
     expect(
       fs.existsSync(DIST_CREDENTIAL_STORE),
@@ -190,9 +187,9 @@ runCredentialMigrationTest(
       sandboxName: SANDBOX_NAME,
       contracts: [
         "legacy credentials.json stages allowlisted provider keys into onboard env",
-        `successful onboard registers the migrated value with the ${hostedInference.providerName} OpenShell gateway provider`,
-        `${hostedInference.sourceSecretName} is migrated into the ${hostedInference.credentialEnv} provider credential`,
-        `onboard uses the ${hostedInference.provider} provider and ${hostedInference.endpointUrl} endpoint path`,
+        `successful onboard registers the migrated value with the ${MIGRATION_PROVIDER_NAME} OpenShell gateway provider`,
+        `${MIGRATION_CREDENTIAL_ENV} is migrated into the gateway provider credential`,
+        "onboard uses the default NVIDIA Endpoints non-interactive provider path",
         "successful onboard removes plaintext credentials.json",
         "tampered non-credential keys do not become gateway providers",
         "credentials list reads providers from the gateway, not disk",
@@ -209,7 +206,7 @@ runCredentialMigrationTest(
       legacyFile,
       JSON.stringify(
         {
-          [hostedInference.credentialEnv]: migratedCredentialValue,
+          [MIGRATION_CREDENTIAL_ENV]: migratedCredentialValue,
           OPENSHELL_GATEWAY: "evil-gw-from-tampered-file",
           NODE_OPTIONS: "--require=/tmp/evil.js",
         },
@@ -222,7 +219,6 @@ runCredentialMigrationTest(
     const onboard = await host.command("node", [CLI_ENTRYPOINT, "onboard", "--non-interactive"], {
       artifactName: "onboard-from-legacy-credentials",
       env: testEnv(home, {
-        ...hostedInferenceEnvWithoutCredential,
         NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
         NEMOCLAW_RECREATE_SANDBOX: "1",
       }),
@@ -254,9 +250,13 @@ runCredentialMigrationTest(
       .map((line) => line.trim())
       .filter((line) => /^[a-zA-Z][a-zA-Z0-9_-]*$/.test(line));
     expect(
+      providerNames.length,
+      `expected a migrated provider\n${providersText}`,
+    ).toBeGreaterThanOrEqual(1);
+    expect(
       providerNames,
-      `expected migrated ${hostedInference.providerName} provider\n${providersText}`,
-    ).toContain(hostedInference.providerName);
+      `expected migrated ${MIGRATION_PROVIDER_NAME} provider\n${providersText}`,
+    ).toContain(MIGRATION_PROVIDER_NAME);
     expect(providerNames).not.toContain("OPENSHELL_GATEWAY");
     expect(providerNames).not.toContain("NODE_OPTIONS");
 
@@ -299,9 +299,8 @@ runCredentialMigrationTest(
     await artifacts.writeJson("scenario-result.json", {
       id: "credential-migration",
       sandboxName: SANDBOX_NAME,
-      model: hostedInference.model || CREDENTIAL_MIGRATION_MODEL,
-      provider: hostedInference.providerName,
-      credentialEnv: hostedInference.credentialEnv,
+      provider: MIGRATION_PROVIDER_NAME,
+      credentialEnv: MIGRATION_CREDENTIAL_ENV,
       providerNames,
       assertions: {
         onboardSucceeded: onboard.exitCode === 0,
@@ -309,7 +308,7 @@ runCredentialMigrationTest(
           "Staged 1 legacy credential(s) for migration to the OpenShell gateway.",
         ),
         legacyFileRemovedAfterOnboard: !fs.existsSync(legacyFile),
-        migratedProviderRegistered: providerNames.includes(hostedInference.providerName),
+        migratedProviderRegistered: providerNames.includes(MIGRATION_PROVIDER_NAME),
         tamperedKeysExcluded:
           !providerNames.includes("OPENSHELL_GATEWAY") && !providerNames.includes("NODE_OPTIONS"),
         credentialsListReadsGateway: credentialsText.includes(

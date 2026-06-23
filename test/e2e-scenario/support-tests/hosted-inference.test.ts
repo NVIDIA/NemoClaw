@@ -20,6 +20,7 @@ const COMPAT_HELPER = path.join(
 
 function secrets(values: Record<string, string | undefined>) {
   return {
+    optional: (name: string) => values[name],
     required: (name: string) => {
       const value = values[name];
       if (!value) throw new Error(`missing ${name}`);
@@ -103,6 +104,48 @@ describe("hosted inference E2E config", () => {
     expect(cfg.credentialEnv).toBe("COMPATIBLE_API_KEY");
   });
 
+  it("prefers the hosted public fallback secret when the canonical secret is not hosted", () => {
+    const cfg = requireHostedInferenceConfig(
+      secrets({
+        NVIDIA_INFERENCE_API_KEY: "build-only-key",
+        NVIDIA_API_KEY: "nvapi-hosted-key",
+      }),
+      {},
+    );
+
+    expect(cfg.apiKey).toBe("nvapi-hosted-key");
+    expect(cfg.sourceSecretName).toBe("NVIDIA_API_KEY");
+    expect(cfg.env.COMPATIBLE_API_KEY).toBe("nvapi-hosted-key");
+  });
+
+  it("keeps the canonical hosted secret when both hosted aliases are available", () => {
+    const cfg = requireHostedInferenceConfig(
+      secrets({
+        NVIDIA_INFERENCE_API_KEY: "nvapi-canonical-hosted-key",
+        NVIDIA_API_KEY: "nvapi-public-hosted-key",
+      }),
+      {},
+    );
+
+    expect(cfg.apiKey).toBe("nvapi-canonical-hosted-key");
+    expect(cfg.sourceSecretName).toBe("NVIDIA_INFERENCE_API_KEY");
+    expect(cfg.env.COMPATIBLE_API_KEY).toBe("nvapi-canonical-hosted-key");
+  });
+
+  it("ignores a non-nvapi public fallback alias", () => {
+    const cfg = requireHostedInferenceConfig(
+      secrets({
+        NVIDIA_INFERENCE_API_KEY: "sk-compatible-key",
+        NVIDIA_API_KEY: "not-hosted-public-alias",
+      }),
+      {},
+    );
+
+    expect(cfg.apiKey).toBe("sk-compatible-key");
+    expect(cfg.sourceSecretName).toBe("NVIDIA_INFERENCE_API_KEY");
+    expect(cfg.env.COMPATIBLE_API_KEY).toBe("sk-compatible-key");
+  });
+
   it("uses a lightweight compatible reachability probe without API or auth requests", () => {
     const { result, calls } = runHostedProbe({
       env: {
@@ -158,7 +201,39 @@ describe("hosted inference E2E config", () => {
       NEMOCLAW_ENDPOINT_URL: "https://inference-api.nvidia.com/v1",
       NEMOCLAW_MODEL: "nvidia/custom-model",
       NEMOCLAW_COMPAT_MODEL: "nvidia/custom-model",
+      NEMOCLAW_PREFERRED_API: "openai-completions",
       COMPATIBLE_API_KEY: "repo-hosted-key",
     });
+  });
+
+  it("preserves workflow-hosted model defaults ahead of fixture fallbacks", () => {
+    const cfg = requireHostedInferenceConfig(
+      secrets({ NVIDIA_INFERENCE_API_KEY: "repo-hosted-key" }),
+      { NEMOCLAW_MODEL: "nvidia/workflow-model" },
+      { model: "nvidia/scenario-model" },
+    );
+
+    expect(cfg.model).toBe("nvidia/workflow-model");
+    expect(cfg.env.NEMOCLAW_MODEL).toBe("nvidia/workflow-model");
+    expect(cfg.env.NEMOCLAW_COMPAT_MODEL).toBe("nvidia/workflow-model");
+  });
+
+  it("preserves an explicit hosted inference API preference", () => {
+    const cfg = requireHostedInferenceConfig(
+      secrets({ NVIDIA_INFERENCE_API_KEY: "repo-hosted-key" }),
+      { NEMOCLAW_PREFERRED_API: "openai-responses" },
+    );
+
+    expect(cfg.env.NEMOCLAW_PREFERRED_API).toBe("openai-responses");
+  });
+
+  it("prefers an explicit fixture API preference over workflow defaults", () => {
+    const cfg = requireHostedInferenceConfig(
+      secrets({ NVIDIA_INFERENCE_API_KEY: "repo-hosted-key" }),
+      { NEMOCLAW_PREFERRED_API: "openai-responses" },
+      { preferredApi: "openai-completions" },
+    );
+
+    expect(cfg.env.NEMOCLAW_PREFERRED_API).toBe("openai-completions");
   });
 });

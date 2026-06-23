@@ -1,0 +1,39 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Export E2E hosted inference environment
+description: Canonicalize NemoClaw hosted inference secrets and export the shared E2E env contract.
+inputs:
+  nvidia-inference-api-key:
+    description: Canonical repository-hosted NVIDIA inference credential.
+    required: false
+    default: ""
+  nvidia-api-key:
+    description: >-
+      Temporary compatibility alias for legacy E2E lanes that still read
+      NVIDIA_API_KEY directly. The source-owned inventories and removal
+      conditions live in tools/e2e-scenarios/hosted-inference-legacy-alias.mts.
+    required: false
+    default: ""
+  export-nvidia-api-key:
+    description: >-
+      Emit NVIDIA_API_KEY only for documented legacy consumers that still need
+      the compatibility alias. Defaults to false so hosted CI inference exports
+      only NVIDIA_INFERENCE_API_KEY and COMPATIBLE_API_KEY.
+    required: false
+    default: "false"
+  require-hosted-inference:
+    description: Fail when no nvapi-prefixed hosted inference credential is available.
+    required: false
+    default: "true"
+runs:
+  using: composite
+  steps:
+    - name: Export hosted inference env
+      shell: bash
+      env:
+        INPUT_NVIDIA_INFERENCE_API_KEY: ${{ inputs.nvidia-inference-api-key }}
+        INPUT_NVIDIA_API_KEY: ${{ inputs.nvidia-api-key }}
+        INPUT_EXPORT_NVIDIA_API_KEY: ${{ inputs.export-nvidia-api-key }}
+        INPUT_REQUIRE_HOSTED_INFERENCE: ${{ inputs.require-hosted-inference }}
+      run: bash "${GITHUB_ACTION_PATH}/export.sh"
