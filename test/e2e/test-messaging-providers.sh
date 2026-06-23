@@ -2467,8 +2467,8 @@ else
 fi
 
 if [ "$fake_gateway_ready" = "1" ] \
-  && grep -Fq "\"token\":\"$DISCORD_TOKEN\"" "$FAKE_DISCORD_GATEWAY_CAPTURE_FILE" \
-  && ! grep -Fq "openshell:resolve:env:DISCORD_BOT_TOKEN" "$FAKE_DISCORD_GATEWAY_CAPTURE_FILE"; then
+  && grep -Fq '"tokenMatchesExpected":true' "$FAKE_DISCORD_GATEWAY_CAPTURE_FILE" \
+  && ! grep -Fq '"tokenLooksPlaceholder":true' "$FAKE_DISCORD_GATEWAY_CAPTURE_FILE"; then
   pass "M13f: Fake Gateway received host-side Discord token; sandbox-visible IDENTIFY used only the placeholder"
 else
   if [ "$fake_gateway_ready" = "1" ]; then
