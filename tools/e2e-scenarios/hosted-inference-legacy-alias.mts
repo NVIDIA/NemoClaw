@@ -23,7 +23,6 @@ export const HOSTED_INFERENCE_LEGACY_NVIDIA_API_KEY_JOBS = [
   "cloud-inference-vitest",
   "sessions-agents-cli-vitest",
   "common-egress-agent-vitest",
-  "spark-install-vitest",
   "state-backup-restore-vitest",
   "messaging-providers-vitest",
   "snapshot-commands-vitest",

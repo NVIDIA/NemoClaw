@@ -130,7 +130,7 @@ describe("spark install workflow boundary", () => {
           "spark-install-vitest setup-node action must be pinned to a full commit SHA",
           "spark-install-vitest step 'Install root dependencies' env must not include NVIDIA_API_KEY",
           "step 'Install root dependencies' run script must include npm ci --ignore-scripts",
-          "spark-install-vitest Vitest step must receive NVIDIA_API_KEY from hosted inference secrets",
+          "spark-install-vitest Vitest step must receive NVIDIA_API_KEY from secrets",
           "step 'Run Spark install live test' run script must include set -euo pipefail",
           "step 'Run Spark install live test' run script must include test/e2e-scenario/live/spark-install.test.ts",
           "spark-install-vitest artifact upload name must be stable",

@@ -65,6 +65,7 @@ const HOSTED_INFERENCE_DEFAULT_ENV = {
   NEMOCLAW_COMPAT_MODEL: "nvidia/nvidia/nemotron-3-super-v3",
   NEMOCLAW_PREFERRED_API: "openai-completions",
 } as const;
+const DIRECT_PUBLIC_NVIDIA_API_KEY_JOBS = new Set(["spark-install-vitest"]);
 const FREE_STANDING_SELECTOR_SPECIAL_CASES = new Set([
   "hermes-e2e-vitest",
   "hermes-root-entrypoint-smoke-vitest",
@@ -595,7 +596,8 @@ function validateFreeStandingInventoryBoundary(
       if (
         Object.hasOwn(stepEnv, "NVIDIA_API_KEY") &&
         !HOSTED_INFERENCE_LEGACY_NVIDIA_API_KEY_JOB_SET.has(jobName) &&
-        !HOSTED_INFERENCE_PUBLIC_NVIDIA_FALLBACK_VITEST_JOB_SET.has(jobName)
+        !HOSTED_INFERENCE_PUBLIC_NVIDIA_FALLBACK_VITEST_JOB_SET.has(jobName) &&
+        !DIRECT_PUBLIC_NVIDIA_API_KEY_JOBS.has(jobName)
       ) {
         errors.push(
           `${jobName} step '${step.name ?? step.uses ?? "<unnamed>"}' must not receive NVIDIA_API_KEY unless listed as a legacy alias consumer`,
@@ -4458,9 +4460,9 @@ function validateSparkInstallVitestJob(
     "Run Spark install live test",
   );
   const runVitestEnv = asRecord(runVitest?.env);
-  if (runVitestEnv.NVIDIA_API_KEY !== HOSTED_NVIDIA_API_KEY_EXPR) {
+  if (runVitestEnv.NVIDIA_API_KEY !== "${{ secrets.NVIDIA_API_KEY }}") {
     errors.push(
-      "spark-install-vitest Vitest step must receive NVIDIA_API_KEY from hosted inference secrets",
+      "spark-install-vitest Vitest step must receive NVIDIA_API_KEY from secrets",
     );
   }
   requireRunContains(errors, runVitest, "set -euo pipefail");
