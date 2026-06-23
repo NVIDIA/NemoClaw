@@ -105,12 +105,7 @@ function rejectRegistryReadError(
   return proc.exit(2);
 }
 
-const TARGET_SELECTOR_FLAGS = [
-  "--agent",
-  "--session-id",
-  "--session-key",
-  "--to",
-] as const;
+const TARGET_SELECTOR_FLAGS = ["--agent", "--session-id", "--session-key", "--to"] as const;
 
 function hasTargetSelector(args: readonly string[]): boolean {
   return args.some((arg) =>
@@ -118,15 +113,11 @@ function hasTargetSelector(args: readonly string[]): boolean {
   );
 }
 
-function rejectNoTargetSelector(
-  proc: NonNullable<AgentPassthroughDeps["process"]>,
-): never {
+function rejectNoTargetSelector(proc: NonNullable<AgentPassthroughDeps["process"]>): never {
   proc.stderr.write(
     "  No target session selected. Use --agent <id>, --session-key <key>, --session-id <id>, or --to <E.164>.\n",
   );
-  proc.stderr.write(
-    "  Run `openclaw agents list` inside the sandbox to see available agents.\n",
-  );
+  proc.stderr.write("  Run `openclaw agents list` inside the sandbox to see available agents.\n");
   return proc.exit(2);
 }
 

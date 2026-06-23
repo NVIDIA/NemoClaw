@@ -141,12 +141,18 @@ describe("runAgentPassthrough", () => {
     getSandboxMock.mockReturnValueOnce({ agent: "openclaw" });
     const { writes, exit, proc } = makeProcMock();
     await expect(
-      runAgentPassthrough("my-assistant", { extraArgs: ["--agent", "main", "-m", "hi"] }, { process: proc }),
+      runAgentPassthrough(
+        "my-assistant",
+        { extraArgs: ["--agent", "main", "-m", "hi"] },
+        { process: proc },
+      ),
     ).rejects.toThrow("__exit:1");
     expect(execMock).not.toHaveBeenCalled();
     expect(exit).toHaveBeenCalledWith(1);
     const all = writes.join("");
-    expect(all).toMatch(/Sandbox 'my-assistant' is not ready for the agent wrapper \(phase: Error\)/);
+    expect(all).toMatch(
+      /Sandbox 'my-assistant' is not ready for the agent wrapper \(phase: Error\)/,
+    );
     expect(all).toMatch(/my-assistant recover/);
     expect(all).toMatch(/my-assistant rebuild --yes/);
     expect(all).toMatch(/onboard --resume/);
@@ -158,10 +164,8 @@ describe("runAgentPassthrough", () => {
     ensureLiveMock.mockResolvedValueOnce({});
     getSandboxMock.mockReturnValueOnce({ agent: "openclaw" });
     await runAgentPassthrough("alpha", { extraArgs: ["--agent", "main"] });
-    expect(execMock).toHaveBeenCalledWith(
-      "alpha",
-      ["openclaw", "agent", "--agent", "main"],
-      { tty: false },
-    );
+    expect(execMock).toHaveBeenCalledWith("alpha", ["openclaw", "agent", "--agent", "main"], {
+      tty: false,
+    });
   });
 });
