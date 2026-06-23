@@ -284,6 +284,7 @@ describe("sandbox sessions export CLI", () => {
       });
       expect(result.code).toBe(2);
       expect(result.out).toContain("Unknown flag or option-shaped key: -mytypo");
+      expect(result.out).toContain("Session keys must not start with '-'");
       expect(result.out).toContain("Did you mean: nemoclaw alpha sessions export mytypo?");
       expect(result.out).not.toMatch(/Nonexistent flag/i);
 
@@ -308,6 +309,7 @@ describe("sandbox sessions export CLI", () => {
       });
       expect(result.code).toBe(2);
       expect(result.out).toContain("Unknown flag or option-shaped key: -a, -b");
+      expect(result.out).toContain("Session keys must not start with '-'");
       expect(result.out).toContain("Did you mean: nemoclaw alpha sessions export a b?");
       expect(result.out).not.toMatch(/Nonexistent flag/i);
     } finally {
