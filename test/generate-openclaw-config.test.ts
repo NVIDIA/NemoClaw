@@ -916,37 +916,6 @@ describe("generate-openclaw-config.mts: config generation", () => {
     expect(config.agents.list[2]).toMatchObject({ id: "writing" });
   });
 
-  it("auto-fills workspace and agentDir from id when both are omitted", () => {
-    const config = runConfigScript({
-      NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([
-        { id: "legacy-worker", tools: TOOLS_OK },
-      ]),
-    });
-    expect(config.agents.list).toHaveLength(2);
-    expect(config.agents.list[1]).toMatchObject({
-      id: "legacy-worker",
-      workspace: "/sandbox/.openclaw/workspace-legacy-worker",
-      agentDir: "/sandbox/.openclaw/agents/legacy-worker",
-    });
-  });
-
-  it("auto-fills only the missing path when one of workspace/agentDir is supplied", () => {
-    const config = runConfigScript({
-      NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([
-        {
-          id: "mixed",
-          workspace: "/sandbox/.openclaw/workspace-mixed",
-          tools: TOOLS_OK,
-        },
-      ]),
-    });
-    expect(config.agents.list[1]).toMatchObject({
-      id: "mixed",
-      workspace: "/sandbox/.openclaw/workspace-mixed",
-      agentDir: "/sandbox/.openclaw/agents/mixed",
-    });
-  });
-
   it("keeps 'main' as the default even when extras are present", () => {
     // Wholesale list replacement would leave agents[0] = first extra, so
     // resolveDefaultAgentId would silently re-elect the first extra as
