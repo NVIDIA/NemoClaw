@@ -19,6 +19,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import * as session from "../dist/lib/state/onboard-session";
+import { LEGACY_MACHINE_STEP_MUTATION_OPTIONS } from "../dist/lib/state/onboard-step-mutation";
 
 const tmpHomes: string[] = [];
 
@@ -34,10 +35,28 @@ afterEach(() => {
   }
 });
 
+function markStepStartedLegacy(stepName: string): ReturnType<typeof session.markStepStarted> {
+  return session.markStepStarted(stepName, LEGACY_MACHINE_STEP_MUTATION_OPTIONS);
+}
+
+function markStepCompleteLegacy(
+  stepName: string,
+  updates?: Parameters<typeof session.markStepComplete>[1],
+): ReturnType<typeof session.markStepComplete> {
+  return session.markStepComplete(stepName, updates, LEGACY_MACHINE_STEP_MUTATION_OPTIONS);
+}
+
+function markStepFailedLegacy(
+  stepName: string,
+  message: string | null = null,
+): ReturnType<typeof session.markStepFailed> {
+  return session.markStepFailed(stepName, message, LEGACY_MACHINE_STEP_MUTATION_OPTIONS);
+}
+
 describe("Issue #1751 — GPU passthrough session persistence", () => {
   it("filterSafeUpdates: gpuPassthrough=true is propagated to safe", () => {
     session.saveSession(session.createSession());
-    session.markStepComplete("provider_selection", { gpuPassthrough: true });
+    markStepCompleteLegacy("provider_selection", { gpuPassthrough: true });
     const loaded = session.loadSession()!;
     expect(loaded.gpuPassthrough).toBe(true);
   });
@@ -45,7 +64,7 @@ describe("Issue #1751 — GPU passthrough session persistence", () => {
   it("filterSafeUpdates: gpuPassthrough=false is propagated to safe", () => {
     const s = session.createSession({ gpuPassthrough: true });
     session.saveSession(s);
-    session.markStepComplete("provider_selection", { gpuPassthrough: false });
+    markStepCompleteLegacy("provider_selection", { gpuPassthrough: false });
     const loaded = session.loadSession()!;
     expect(loaded.gpuPassthrough).toBe(false);
   });
@@ -62,7 +81,7 @@ describe("Issue #1751 — GPU passthrough session persistence", () => {
     // Garbage shapes: string, number, null. None should clobber the existing true.
     const garbageValues: unknown[] = ["yes", 1, null, undefined, "true"];
     for (const v of garbageValues) {
-      session.markStepComplete("provider_selection", {
+      markStepCompleteLegacy("provider_selection", {
         gpuPassthrough: v as unknown as boolean,
       });
       const loaded = session.loadSession()!;
@@ -87,12 +106,12 @@ describe("Issue #1751 — GPU passthrough session persistence", () => {
 
   it("completeSession persists gpuPassthrough via filterSafeUpdates", () => {
     session.saveSession(session.createSession());
-    session.markStepStarted("preflight");
-    session.markStepComplete("preflight", { gpuPassthrough: true });
-    session.markStepStarted("gateway");
-    session.markStepComplete("gateway");
-    session.markStepStarted("sandbox");
-    session.markStepComplete("sandbox");
+    markStepStartedLegacy("preflight");
+    markStepCompleteLegacy("preflight", { gpuPassthrough: true });
+    markStepStartedLegacy("gateway");
+    markStepCompleteLegacy("gateway");
+    markStepStartedLegacy("sandbox");
+    markStepCompleteLegacy("sandbox");
     session.completeSession({ gpuPassthrough: true });
     const loaded = session.loadSession()!;
     expect(loaded.gpuPassthrough).toBe(true);
@@ -107,8 +126,8 @@ describe("Issue #1751 — GPU passthrough session persistence", () => {
 
   it("markStepFailed preserves gpuPassthrough", () => {
     session.saveSession(session.createSession({ gpuPassthrough: true }));
-    session.markStepStarted("gateway");
-    session.markStepFailed("gateway", "test failure");
+    markStepStartedLegacy("gateway");
+    markStepFailedLegacy("gateway", "test failure");
     const loaded = session.loadSession()!;
     expect(loaded.gpuPassthrough).toBe(true);
     expect(loaded.steps.gateway?.status).toBe("failed");

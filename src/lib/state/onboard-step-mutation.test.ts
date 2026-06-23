@@ -60,7 +60,7 @@ describe("record-only onboard step mutation", () => {
     }).toThrow(TypeError);
 
     session.saveSession(session.createSession());
-    session.markStepStarted("preflight");
+    session.markStepStarted("preflight", stepMutation.LEGACY_MACHINE_STEP_MUTATION_OPTIONS);
     let loaded = requireLoadedSession(session.loadSession());
     expect(loaded.machine).toMatchObject({ state: "preflight", revision: 1 });
 
