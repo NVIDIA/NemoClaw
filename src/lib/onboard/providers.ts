@@ -56,8 +56,8 @@ const NON_INTERACTIVE_PROVIDER_KEYS = new Set([
   "install-windows-ollama",
   "start-windows-ollama",
 ]);
-const NON_INTERACTIVE_PROVIDER_HELP =
-  "build, openai, anthropic, anthropicCompatible, gemini, hermes-provider, ollama, custom, nim-local, vllm, routed, install-vllm, install-ollama, install-windows-ollama, start-windows-ollama";
+const NON_INTERACTIVE_PROVIDER_VALID_VALUES =
+  "Valid values: build, openai, anthropic, anthropicCompatible, gemini, hermes-provider, ollama, custom, nim-local, vllm, routed, install-vllm, install-ollama, install-windows-ollama, start-windows-ollama";
 const PROVIDER_KEY_ROUTE_VALUES = new Set(
   [
     "inference",
@@ -216,7 +216,7 @@ function getNonInteractiveProvider() {
   const normalized = NON_INTERACTIVE_PROVIDER_ALIASES[providerKey] || providerKey;
   if (!NON_INTERACTIVE_PROVIDER_KEYS.has(normalized)) {
     console.error(`  Unsupported NEMOCLAW_PROVIDER: ${providerKey}`);
-    console.error(`  Valid values: ${NON_INTERACTIVE_PROVIDER_HELP}`);
+    console.error(`  ${NON_INTERACTIVE_PROVIDER_VALID_VALUES}`);
     process.exit(1);
   }
   return normalized;
