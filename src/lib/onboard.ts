@@ -341,8 +341,8 @@ const { resolveSandboxImageTagFromCreateOutput } =
 const nim: typeof import("./inference/nim") = require("./inference/nim");
 const onboardSession: typeof import("./state/onboard-session") = require("./state/onboard-session");
 const {
-  LEGACY_MACHINE_STEP_MUTATION_OPTIONS,
-}: typeof import("./state/onboard-step-mutation") = require("./state/onboard-step-mutation");
+  markLastStartedStepFailed,
+}: typeof import("./onboard/exit-step-failure") = require("./onboard/exit-step-failure");
 const {
   getFutureShellPathHint,
   getPortConflictServiceHints,
@@ -4856,17 +4856,8 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
 
     let completed = false;
     process.once("exit", (code) => {
-      if (!completed && code !== 0) {
-        const current = onboardSession.loadSession();
-        const failedStep = current?.lastStepStarted;
-        if (failedStep) {
-          onboardSession.markStepFailed(
-            failedStep,
-            "Onboarding exited before the step completed.",
-            LEGACY_MACHINE_STEP_MUTATION_OPTIONS,
-          );
-        }
-      }
+      if (!completed && code !== 0)
+        markLastStartedStepFailed(onboardSession, "Onboarding exited before the step completed.");
     });
 
     const agent = await selectOnboardAgent({
