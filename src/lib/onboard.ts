@@ -3477,7 +3477,6 @@ async function handleRoutedSelection(
   if (routedCredential) {
     saveCredential(routerCredentialEnv, routedCredential);
   }
-
   // check-direct-credential-env-ignore -- provider-key compatibility bridge; resolved into the router credential env below.
   const _providerKeyHint = (process.env.NEMOCLAW_PROVIDER_KEY || "").trim();
   if (_providerKeyHint && !resolveProviderCredential(routerCredentialEnv)) {
@@ -3775,9 +3774,7 @@ async function handleRemoteProviderSelection(
     console.log(`  Using ${remoteConfig.label} with model: ${state.model}`);
     return "selected";
   }
-
   hydrateCredentialEnv(state.credentialEnv);
-
   if (selected.key === "build") {
     // check-direct-credential-env-ignore -- Build provider compatibility bridge for callers that still pass the NVIDIA key here.
     const _nvProviderKey = (process.env.NEMOCLAW_PROVIDER_KEY || "").trim();
