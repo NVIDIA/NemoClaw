@@ -50,7 +50,7 @@ import {
   createBuiltInChannelManifestRegistry,
   MessagingSetupApplier,
   MessagingWorkflowPlanner,
-  toMessagingAgentId,
+  tryGetMessagingAgentId,
 } from "../../messaging";
 import { hydrateMessagingChannelConfig } from "../../messaging-channel-config";
 import { getStoredMessagingChannelConfig } from "../../onboard/messaging-config";
@@ -231,10 +231,18 @@ async function stageMessagingManifestPlanForRebuild(
   log: (msg: string) => void,
 ): Promise<SandboxMessagingPlan | null> {
   const agent = loadAgent(rebuildAgent || "openclaw");
+  const agentId = tryGetMessagingAgentId(agent);
+  if (agentId === null) {
+    MessagingSetupApplier.clearPlanEnv();
+    log(
+      `Messaging manifest rebuild plan skipped: agent '${agent.name}' does not support messaging`,
+    );
+    return null;
+  }
   const planner = new MessagingWorkflowPlanner(createBuiltInChannelManifestRegistry());
   const plan = await planner.buildRebuildPlanFromSandboxEntry({
     sandboxName,
-    agent: toMessagingAgentId(agent),
+    agent: agentId,
     sandboxEntry,
     supportedChannelIds: agent.messagingPlatforms,
   });

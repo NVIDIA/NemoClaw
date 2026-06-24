@@ -17,6 +17,7 @@ import {
   createMessagingPreEnableHookInputs,
   getMessagingManifestAvailabilityContext,
   isMessagingHookConflictError,
+  isMessagingSupportedAgent,
   MessagingHostStateApplier,
   MessagingSetupApplier,
   MessagingWorkflowPlanner,
@@ -900,6 +901,13 @@ export async function addSandboxChannel(
   const canonical = manifest.id;
 
   const agent = resolveAgentForSandbox(sandboxName);
+  if (!isMessagingSupportedAgent(agent)) {
+    console.error(
+      `  Agent '${agent.name}' does not support messaging channels for sandbox '${sandboxName}'.`,
+    );
+    console.error("  Messaging-capable agents: openclaw, hermes.");
+    process.exit(1);
+  }
   if (!channelSupportedByAgent(canonical, agent)) {
     console.error(
       `  Channel '${canonical}' is not supported by agent '${agent.name}' for sandbox '${sandboxName}'.`,
