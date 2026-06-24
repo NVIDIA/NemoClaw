@@ -17,10 +17,10 @@ Load the specific skill you need after identifying it here.
 Skills are grouped into three buckets by audience.
 The prefix in each skill name indicates who it is for.
 
-### `nemoclaw-user-*` (10 skills)
+### `nemoclaw-user-*` (1 skill)
 
 For end users operating a NemoClaw sandbox.
-Covers installation, inference configuration, network policy management, monitoring, remote deployment, security configuration, workspace management, and reference material.
+Covers routing human users' AI agents to the canonical NemoClaw Markdown documentation.
 
 ### `nemoclaw-maintainer-*` (13 skills)
 
@@ -39,16 +39,7 @@ Covers creating pull requests that follow the project template, monitoring CI an
 <!-- user-skills-table:begin -->
 | Skill | Summary |
 |-------|---------|
-| `nemoclaw-user-overview` | What NemoClaw is, ecosystem placement (OpenClaw + OpenShell + NemoClaw), how it works internally, and release notes. |
-| `nemoclaw-user-get-started` | Install NemoClaw, launch a sandbox, and run the first agent prompt. |
-| `nemoclaw-user-configure-inference` | Choose inference providers during onboarding, switch models without restarting, and set up local inference servers (Ollama, vLLM, TensorRT-LLM, NIM). |
-| `nemoclaw-user-manage-policy` | Approve or deny blocked egress requests in the TUI and customize the sandbox network policy (add, remove, or modify allowed endpoints). |
-| `nemoclaw-user-monitor-sandbox` | Check sandbox health, read logs, and trace agent behavior to diagnose problems. |
-| `nemoclaw-user-deploy-remote` | Deploy NemoClaw to a remote GPU instance, set up the Telegram bridge, and review sandbox container hardening. |
-| `nemoclaw-user-configure-security` | Review the risk framework for every configurable security control, understand credential storage, and assess posture trade-offs. |
-| `nemoclaw-user-manage-sandboxes` | Manage day-two sandbox operations, including status, logs, diagnostics, rebuilds, upgrades, messaging channels, workspace files, backup, and restore. |
-| `nemoclaw-user-reference` | CLI command reference, plugin and blueprint architecture, baseline network policies, and troubleshooting guide. |
-| `nemoclaw-user-agent-skills` | Describes the agent skills shipped with NemoClaw and how to access them by cloning the repository. |
+| `nemoclaw-user-guide` | Route human users' AI agents to `llms.txt` and the relevant NemoClaw Markdown docs for installation, configuration, operation, security, and troubleshooting. |
 <!-- user-skills-table:end -->
 
 ### Maintainer Skills
@@ -75,7 +66,7 @@ Covers creating pull requests that follow the project template, monitoring CI an
 |-------|---------|
 | `nemoclaw-contributor-create-pr` | Create GitHub pull requests that follow the NemoClaw PR template, including pre-PR checks, conventional commit titles, DCO sign-off, post-push CI monitoring, and CodeRabbit/PR Review Advisor follow-up. |
 | `nemoclaw-contributor-onboard-messaging-channel` | Add or review a new messaging channel with manifest-first implementation, upstream source analysis, plugin install confirmation, reachability checks, policies, docs, and tests. |
-| `nemoclaw-contributor-update-docs` | Scan recent git commits for user-facing changes, draft or update documentation pages, and refresh generated user skills during release prep. |
+| `nemoclaw-contributor-update-docs` | Scan recent git commits for user-facing changes and draft or update documentation pages during release prep. |
 
 ## Getting Started
 
@@ -89,8 +80,8 @@ Skills are cumulative. Each role includes the skills from the roles above it:
 
 | Role | Skills included | Count | Start with |
 |------|----------------|-------|------------|
-| User | `nemoclaw-user-*` | 10 | `nemoclaw-user-get-started` |
-| Contributor | `nemoclaw-user-*` + `nemoclaw-contributor-*` | 13 | `nemoclaw-user-overview` |
-| Maintainer | All skills | 26 | `nemoclaw-maintainer-morning` |
+| User | `nemoclaw-user-*` | 1 | `nemoclaw-user-guide` |
+| Contributor | `nemoclaw-user-*` + `nemoclaw-contributor-*` | 4 | `nemoclaw-user-guide` |
+| Maintainer | All skills | 17 | `nemoclaw-maintainer-morning` |
 
 After identifying the role, present the applicable skills from the Skill Catalog above and recommend the starting skill.
