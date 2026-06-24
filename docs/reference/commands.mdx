@@ -1316,7 +1316,7 @@ $$nemoclaw my-assistant agents delete work --force --json
 Reconcile the live sandbox roster against a declarative [agents.yaml manifest](../inference/declarative-agents-manifest).
 The verb lists current agents via `openclaw agents list --json`, diffs them against the manifest, and adds missing secondaries or deletes orphan ones through `openclaw agents add|delete`.
 Per-agent `model`, `subagents.*`, `tools`, top-level `defaults`, and `main` overrides need a sandbox rebuild and are surfaced as warnings rather than silently dropped; rerun `$$nemoclaw onboard --agents <agents.yaml> --recreate-sandbox` to bake those fields.
-When the diff removes orphan agents, NemoClaw calls OpenClaw delete with `--force` only.
+When the diff removes orphan agents, NemoClaw invokes OpenClaw's confirmation-skipping delete mode internally.
 `--non-interactive` controls the host-side `agents apply` prompt and is not forwarded to OpenClaw's delete command.
 
 ```bash
