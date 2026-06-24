@@ -334,7 +334,9 @@ print(block)
 
   it("every `path:line` citation embedded in matrix notes resolves to a non-empty line in the repo", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
-    const matrix = JSON.parse(readFileSync(path.join(repoRoot, "ci", "platform-matrix.json"), "utf-8"));
+    const matrix = JSON.parse(
+      readFileSync(path.join(repoRoot, "ci", "platform-matrix.json"), "utf-8"),
+    );
     const citationRe = /([a-z][a-z0-9_/.-]*\.(?:ts|sh|py|yaml|yml|mdx|md|json)):(\d+)/gi;
     const citations: Array<{ section: string; file: string; line: number }> = [];
     for (const section of [
@@ -380,7 +382,10 @@ print(block)
     const repoRoot = path.join(import.meta.dirname, "..");
     const hookConfig = readFileSync(path.join(repoRoot, ".pre-commit-config.yaml"), "utf-8");
     const hookSection = hookConfig.match(/id: platform-matrix-sync[\s\S]*?priority: \d+/)?.[0];
-    expect(hookSection, ".pre-commit-config.yaml is missing the platform-matrix-sync hook").toBeDefined();
+    expect(
+      hookSection,
+      ".pre-commit-config.yaml is missing the platform-matrix-sync hook",
+    ).toBeDefined();
 
     const generatorSource = readFileSync(
       path.join(repoRoot, "scripts", "generate-platform-docs.py"),
@@ -431,7 +436,8 @@ print(block)
     const repoRoot = path.join(import.meta.dirname, "..");
     const indexYaml = readFileSync(path.join(repoRoot, "docs", "index.yml"), "utf-8");
 
-    const referenceSectionRe = /- section: "Reference"[\s\S]*?(?=\n {10}- section:|\n {6}- tab:|\Z)/g;
+    const referenceSectionRe =
+      /- section: "Reference"[\s\S]*?(?=\n {10}- section:|\n {6}- tab:|\Z)/g;
     const sections = [...indexYaml.matchAll(referenceSectionRe)];
     expect(
       sections.length,
