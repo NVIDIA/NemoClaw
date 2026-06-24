@@ -144,6 +144,9 @@ navigation:
             slug: reference
             collapsed: open-by-default
             contents:
+              - page: "Platform Support"
+                path: reference/platform-support.mdx
+                slug: platform-support
               - page: "Enterprise Readiness"
                 path: _build/agent-variants/reference/enterprise-readiness.openclaw.generated.mdx
                 slug: enterprise-readiness
@@ -284,6 +287,9 @@ navigation:
             slug: reference
             collapsed: open-by-default
             contents:
+              - page: "Platform Support"
+                path: reference/platform-support.mdx
+                slug: platform-support
               - page: "Enterprise Readiness"
                 path: _build/agent-variants/reference/enterprise-readiness.hermes.generated.mdx
                 slug: enterprise-readiness
