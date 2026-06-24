@@ -8,7 +8,12 @@
 // fallback must be the canonical single-prefix id and the staged onboarding env
 // must never contain "nvidia/nvidia/".
 
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
 import { createRequire } from "node:module";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 const require = createRequire(import.meta.url);
@@ -16,6 +21,15 @@ const providers = require("../dist/lib/onboard/providers.js") as {
   HOSTED_INFERENCE_MODEL: string;
   stageHostedInferenceSourceSecretEnv: () => boolean;
 };
+const { patchStagedDockerfile } = require("../dist/lib/onboard/dockerfile-patch.js") as {
+  patchStagedDockerfile: (
+    dockerfilePath: string,
+    model: string,
+    chatUiUrl: string | null,
+    buildId: string,
+  ) => void;
+};
+const REPO_ROOT = path.join(import.meta.dirname, "..");
 
 // Env keys touched by stageHostedInferenceSourceSecretEnv that we save/restore.
 const TOUCHED_ENV = [
@@ -31,6 +45,25 @@ const TOUCHED_ENV = [
   "NEMOCLAW_PREFERRED_API",
   "NEMOCLAW_E2E_USE_HOSTED_INFERENCE",
 ];
+
+function writeOpenAiCompatibleCurl(fakeBin: string): void {
+  fs.writeFileSync(
+    path.join(fakeBin, "curl"),
+    `#!/usr/bin/env bash
+outfile=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    -w) shift 2 ;;
+    *) shift ;;
+  esac
+done
+printf '{"choices":[{"message":{"content":"OK"}}]}' > "$outfile"
+printf '200'
+`,
+    { mode: 0o755 },
+  );
+}
 
 describe("issue #5667: hosted inference default model namespace", () => {
   // Snapshot the whole environment and restore it wholesale so the teardown
@@ -86,5 +119,130 @@ describe("issue #5667: hosted inference default model namespace", () => {
     expect(process.env.NEMOCLAW_MODEL).not.toContain("nvidia/nvidia/");
     expect(process.env.NEMOCLAW_MODEL).toBe("nvidia/nemotron-3-super-v3");
     expect(process.env.NEMOCLAW_COMPAT_MODEL).toBe("nvidia/nemotron-3-super-v3");
+  });
+
+  it("drives setupNim and downstream Deep Agents surfaces with a single-prefix model", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-issue-5667-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const home = path.join(tmpDir, "home");
+    const scriptPath = path.join(tmpDir, "setup-nim.cjs");
+    const onboardPath = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "runner.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.mkdirSync(home, { recursive: true });
+    writeOpenAiCompatibleCurl(fakeBin);
+    fs.writeFileSync(
+      scriptPath,
+      String.raw`
+const runner = require(${runnerPath});
+runner.runCapture = () => "";
+
+process.env.NEMOCLAW_NON_INTERACTIVE = "1";
+process.env.NEMOCLAW_YES = "1";
+process.env.NEMOCLAW_TEST_NO_SLEEP = "1";
+process.env.NEMOCLAW_AGENT = "langchain-deepagents-code";
+process.env.NEMOCLAW_PROVIDER_KEY = "sk-test-inference-hub-key";
+delete process.env.NEMOCLAW_MODEL;
+delete process.env.NEMOCLAW_COMPAT_MODEL;
+delete process.env.NEMOCLAW_PROVIDER;
+delete process.env.NVIDIA_INFERENCE_API_KEY;
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  const originalLog = console.log;
+  const originalError = console.error;
+  const lines = [];
+  console.log = (...args) => lines.push(args.join(" "));
+  console.error = (...args) => lines.push(args.join(" "));
+  try {
+    const result = await setupNim(null, null, null);
+    originalLog(JSON.stringify({
+      result,
+      env: {
+        provider: process.env.NEMOCLAW_PROVIDER,
+        model: process.env.NEMOCLAW_MODEL,
+        compatModel: process.env.NEMOCLAW_COMPAT_MODEL,
+        compatibleKey: process.env.COMPATIBLE_API_KEY,
+        preferredApi: process.env.NEMOCLAW_PREFERRED_API,
+      },
+      lines,
+    }));
+  } finally {
+    console.log = originalLog;
+    console.error = originalError;
+  }
+})().catch((error) => {
+  console.error(error && error.stack ? error.stack : String(error));
+  process.exit(1);
+});
+`,
+    );
+
+    try {
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: REPO_ROOT,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          HOME: home,
+          PATH: `${fakeBin}:${process.env.PATH || ""}`,
+          VITEST: "false",
+        },
+        timeout: 60_000,
+      });
+      const output = `${result.stdout}\n${result.stderr}`;
+      assert.equal(result.status, 0, output);
+      const payload = JSON.parse(result.stdout.trim());
+
+      expect(payload.result.provider).toBe("compatible-endpoint");
+      expect(payload.result.credentialEnv).toBe("COMPATIBLE_API_KEY");
+      expect(payload.result.model).toBe("nvidia/nemotron-3-super-v3");
+      expect(payload.result.preferredInferenceApi).toBe("openai-completions");
+      expect(payload.env).toMatchObject({
+        provider: "custom",
+        model: "nvidia/nemotron-3-super-v3",
+        compatModel: "nvidia/nemotron-3-super-v3",
+        compatibleKey: "sk-test-inference-hub-key",
+        preferredApi: "openai-completions",
+      });
+      expect(output).not.toContain("nvidia/nvidia/");
+
+      const dockerfilePath = path.join(tmpDir, "Dockerfile");
+      fs.writeFileSync(dockerfilePath, "FROM scratch\nARG NEMOCLAW_MODEL=old\n");
+      patchStagedDockerfile(dockerfilePath, payload.result.model, null, "issue-5667-single-prefix");
+      expect(fs.readFileSync(dockerfilePath, "utf8")).toContain(
+        "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-v3",
+      );
+
+      const configResult = spawnSync(
+        process.execPath,
+        [
+          "--experimental-strip-types",
+          path.join(REPO_ROOT, "agents", "langchain-deepagents-code", "generate-config.ts"),
+        ],
+        {
+          cwd: REPO_ROOT,
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            HOME: home,
+            NEMOCLAW_MODEL: payload.result.model,
+            NEMOCLAW_PROVIDER_KEY: "inference",
+            NEMOCLAW_UPSTREAM_PROVIDER: payload.result.provider,
+            NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
+            NEMOCLAW_INFERENCE_API: payload.result.preferredInferenceApi,
+          },
+          timeout: 60_000,
+        },
+      );
+      assert.equal(configResult.status, 0, `${configResult.stdout}\n${configResult.stderr}`);
+      const config = fs.readFileSync(path.join(home, ".deepagents", "config.toml"), "utf8");
+      expect(config).toContain('default = "openai:nvidia/nemotron-3-super-v3"');
+      expect(config).not.toContain("nvidia/nvidia/");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 });

@@ -28,6 +28,30 @@ const HOSTED_INFERENCE_PROVIDER_KEY_ENV = "NEMOCLAW_PROVIDER_KEY";
 const HOSTED_INFERENCE_CREDENTIAL_ENV = "COMPATIBLE_API_KEY";
 const HOSTED_INFERENCE_ENDPOINT_URL = "https://inference-api.nvidia.com/v1";
 const HOSTED_INFERENCE_MODEL = "nvidia/nemotron-3-super-v3";
+const PROVIDER_KEY_ROUTE_VALUES = new Set([
+  "anthropic",
+  "anthropiccompatible",
+  "build",
+  "cloud",
+  "custom",
+  "gemini",
+  "hermes",
+  "hermes-provider",
+  "hermesprovider",
+  "inference",
+  "install-ollama",
+  "install-vllm",
+  "install-windows-ollama",
+  "nim",
+  "nim-local",
+  "nous",
+  "nous-portal",
+  "ollama",
+  "openai",
+  "routed",
+  "start-windows-ollama",
+  "vllm",
+]);
 
 const REMOTE_PROVIDER_CONFIG = {
   build: {
@@ -217,10 +241,17 @@ function getNonInteractiveProvider() {
 
 function stageHostedInferenceSourceSecretEnv() {
   const agentName = (process.env.NEMOCLAW_AGENT || "").trim().toLowerCase();
-  const providerKeySource =
+  const rawProviderKeySource =
     agentName === "langchain-deepagents-code"
       ? normalizeCredentialValue(process.env[HOSTED_INFERENCE_PROVIDER_KEY_ENV] ?? "")
       : "";
+  // Source boundary: repository/E2E Deep Agents onboarding historically passed
+  // its hosted-compatible API key via NEMOCLAW_PROVIDER_KEY. Keep that
+  // compatibility only for the Deep Agents agent and only when the value is not
+  // a route/provider selector such as "inference" or "custom".
+  const providerKeySource = isHostedInferenceProviderKeyCredentialCandidate(rawProviderKeySource)
+    ? rawProviderKeySource
+    : "";
   const sourceKey =
     normalizeCredentialValue(process.env[HOSTED_INFERENCE_SOURCE_ENV] ?? "") || providerKeySource;
   if (!sourceKey) return false;
@@ -265,6 +296,11 @@ function stageHostedInferenceSourceSecretEnv() {
     (process.env.NEMOCLAW_PREFERRED_API || "").trim() || "openai-completions";
   process.env[HOSTED_INFERENCE_CREDENTIAL_ENV] = sourceKey;
   return true;
+}
+
+function isHostedInferenceProviderKeyCredentialCandidate(value) {
+  if (!value) return false;
+  return !PROVIDER_KEY_ROUTE_VALUES.has(value.trim().toLowerCase());
 }
 
 function getNonInteractiveModel(providerKey) {

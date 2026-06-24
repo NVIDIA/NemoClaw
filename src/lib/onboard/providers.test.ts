@@ -330,6 +330,20 @@ describe("onboard provider helpers", () => {
     );
   });
 
+  it("does not stage route-like Deep Agents NEMOCLAW_PROVIDER_KEY values as credentials", () => {
+    withProviderEnv(
+      {
+        NEMOCLAW_AGENT: "langchain-deepagents-code",
+        NEMOCLAW_PROVIDER_KEY: "inference",
+      },
+      () => {
+        expect(stageHostedInferenceSourceSecretEnv()).toBe(false);
+        expect(process.env.NEMOCLAW_PROVIDER).toBeUndefined();
+        expect(process.env.COMPATIBLE_API_KEY).toBeUndefined();
+      },
+    );
+  });
+
   it("keeps generic NEMOCLAW_PROVIDER_KEY from implying hosted custom inference", () => {
     withProviderEnv(
       {

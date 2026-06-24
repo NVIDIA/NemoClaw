@@ -17,6 +17,7 @@ import * as ts from "typescript";
 const CREDENTIAL_ENV_KEYS = new Set([
   "NVIDIA_INFERENCE_API_KEY",
   "NVIDIA_API_KEY",
+  "NEMOCLAW_PROVIDER_KEY",
   "OPENAI_API_KEY",
   "ANTHROPIC_API_KEY",
   "GEMINI_API_KEY",
