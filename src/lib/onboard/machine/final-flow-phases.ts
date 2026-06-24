@@ -160,17 +160,12 @@ export async function runFinalOnboardFlowSlice<Context extends OnboardFlowContex
   onContextUpdated?(context: Context): void;
 }): Promise<void> {
   // Keep resume and ahead-state sessions on the compatibility path for now.
-  // The persisted invalid states for this slice are "policies", "finalizing",
-  // and "post_verify": a previous run may have advanced `session.machine`
-  // there via legacy step helpers, but resume still needs to re-run branch
-  // setup/readiness, policy reconciliation, and final verification. Those
-  // legacy helpers remain a second machine snapshot writer in
-  // OnboardRuntimeBoundary/recordStateResultWithStepCompatibility, so this
-  // slice cannot make those persisted states impossible at the source without
-  // changing the broader step persistence contract. Remove this fallback once
-  // final-phase repair checks are first-class resumable FSM states, or once
-  // legacy step helpers no longer advance `session.machine` and handler FSM
-  // results are the sole transition source.
+  // The tolerated downstream states for this slice are "policies",
+  // "finalizing", and "post_verify": a previous or repaired run may persist a
+  // machine snapshot there, but resume still needs to re-run branch
+  // setup/readiness, policy reconciliation, and final verification. Remove this
+  // fallback once final-phase repair checks are first-class resumable FSM
+  // recovery states.
   await runLiveOnboardFlowSlice({
     context: options.context,
     runtime: withAfterPoliciesResultApplied(options.runtime, options.afterPoliciesResultApplied),
