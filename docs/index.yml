@@ -47,6 +47,9 @@ navigation:
               - page: "Quickstart with OpenClaw"
                 path: get-started/quickstart.mdx
                 slug: quickstart
+              - page: "Quickstart with LangChain Deep Agents Code"
+                path: get-started/quickstart-langchain-deepagents-code.mdx
+                slug: quickstart-langchain-deepagents-code
           - section: "Inference"
             slug: inference
             collapsed: open-by-default
@@ -163,7 +166,7 @@ navigation:
             slug: resources
             collapsed: open-by-default
             contents:
-              - page: "Agent Skills"
+              - page: "AI Agent Docs"
                 path: _build/agent-variants/resources/agent-skills.openclaw.generated.mdx
                 slug: agent-skills
               - link: "Community Examples"
@@ -303,7 +306,7 @@ navigation:
             slug: resources
             collapsed: open-by-default
             contents:
-              - page: "Agent Skills"
+              - page: "AI Agent Docs"
                 path: _build/agent-variants/resources/agent-skills.hermes.generated.mdx
                 slug: agent-skills
               - link: "Community Examples"

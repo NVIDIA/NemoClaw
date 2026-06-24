@@ -3,6 +3,7 @@
 
 import { spawn } from "node:child_process";
 import { getOpenshellBinary, runOpenshell } from "../../adapters/openshell/runtime";
+import * as agentRuntime from "../../agent/runtime";
 import type { SandboxLogsOptions } from "../../domain/sandbox/log-options";
 import {
   buildEnableSandboxAuditLogsArgs,
@@ -27,6 +28,7 @@ export type SandboxLogsRuntimeDeps = {
   env?: NodeJS.ProcessEnv;
   exit?: ExitFn;
   getOpenshellBinary?: typeof getOpenshellBinary;
+  getSessionAgent?: typeof agentRuntime.getSessionAgent;
   isDockerRuntimeDown?: typeof isDockerRuntimeDown;
   printDockerRuntimeDownGuidance?: typeof printDockerRuntimeDownGuidance;
   runOpenshell?: RunOpenshellFn;
@@ -65,14 +67,21 @@ function runOpenclawGatewayLogs(
   return result;
 }
 
+function shouldIncludeGatewayLogSource(sandboxName: string, deps: SandboxLogsRuntimeDeps): boolean {
+  const getSessionAgent = deps.getSessionAgent ?? agentRuntime.getSessionAgent;
+  const agent = getSessionAgent(sandboxName);
+  return agentRuntime.hasGatewayRuntime(agent);
+}
+
 function streamSandboxFollowLogs(
   sandboxName: string,
   options: SandboxLogsOptions,
   deps: SandboxLogsRuntimeDeps,
 ): void {
-  const openclawArgs = options.since
-    ? null
-    : buildSandboxOpenclawGatewayLogsArgs(sandboxName, options);
+  const openclawArgs =
+    options.since || !shouldIncludeGatewayLogSource(sandboxName, deps)
+      ? null
+      : buildSandboxOpenclawGatewayLogsArgs(sandboxName, options);
   const openshellArgs = buildSandboxLogsArgs(sandboxName, options);
   const exit = deps.exit ?? process.exit;
   const spawnOptions = {
@@ -237,7 +246,7 @@ export function showSandboxLogsWithDeps(
   // to the merged stream rather than independently per source
   // (which previously returned up to 2*N lines). Closes #4100.
   let gatewayResult: LogProbeResult | null = null;
-  if (!logsOptions.since) {
+  if (!logsOptions.since && shouldIncludeGatewayLogSource(sandboxName, deps)) {
     gatewayResult = runOpenclawGatewayLogs(sandboxName, logsOptions, deps);
   }
 

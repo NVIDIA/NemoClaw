@@ -46,7 +46,7 @@ export type SandboxCommandResult = {
   stderr: string;
 };
 
-type SandboxPortAgent = { forwardPort?: unknown } | null;
+type SandboxPortAgent = { forwardPort?: unknown; runtime?: { kind?: unknown } } | null;
 
 type SandboxPortDeps = {
   getSandbox?: typeof registry.getSandbox;
@@ -124,7 +124,7 @@ export function resolveSandboxDashboardPort(
 ): number {
   const getSessionAgent = deps.getSessionAgent ?? agentRuntime.getSessionAgent;
   const agent = getSessionAgent(sandboxName);
-  if (agent && isValidPort(agent.forwardPort)) {
+  if (agent && agentRuntime.hasGatewayRuntime(agent) && isValidPort(agent.forwardPort)) {
     return agent.forwardPort;
   }
 
@@ -135,7 +135,7 @@ export function resolveSandboxDashboardPort(
 
 function getSandboxHealthProbeUrl(sandboxName: string): string {
   const agent = agentRuntime.getSessionAgent(sandboxName);
-  if (agent) return agentRuntime.getHealthProbeUrl(agent);
+  if (agent && agentRuntime.hasGatewayRuntime(agent)) return agentRuntime.getHealthProbeUrl(agent);
   return `http://127.0.0.1:${resolveSandboxDashboardPort(sandboxName)}/health`;
 }
 
@@ -308,6 +308,8 @@ function parseSandboxGatewayProbe(result: SandboxCommandResult | null): boolean 
  * "Health Offline" readings.
  */
 function isSandboxGatewayRunning(sandboxName: string): boolean | null {
+  const agent = agentRuntime.getSessionAgent(sandboxName);
+  if (agent && !agentRuntime.hasGatewayRuntime(agent)) return null;
   const probeUrl = getSandboxHealthProbeUrl(sandboxName);
   const command = `HTTP_CODE=$(curl -so /dev/null -w '%{http_code}' --max-time 3 ${shellQuote(probeUrl)} 2>/dev/null || echo 000); case "$HTTP_CODE" in 200|401) echo RUNNING ;; *) echo STOPPED ;; esac`;
   const execProbe = parseSandboxGatewayProbe(executeSandboxExecCommand(sandboxName, command));
@@ -318,6 +320,8 @@ function isSandboxGatewayRunning(sandboxName: string): boolean | null {
 export async function isSandboxGatewayRunningForStatus(
   sandboxName: string,
 ): Promise<boolean | null> {
+  const agent = agentRuntime.getSessionAgent(sandboxName);
+  if (agent && !agentRuntime.hasGatewayRuntime(agent)) return null;
   const probeUrl = getSandboxHealthProbeUrl(sandboxName);
   const command = `HTTP_CODE=$(curl -so /dev/null -w '%{http_code}' --max-time 3 ${shellQuote(probeUrl)} 2>/dev/null || echo 000); case "$HTTP_CODE" in 200|401) echo RUNNING ;; *) echo STOPPED ;; esac`;
   return parseSandboxGatewayProbe(await executeSandboxExecCommandForStatus(sandboxName, command));
@@ -386,6 +390,7 @@ function recoverSandboxProcesses(sandboxName: string): boolean {
   const recoveredSsh = (result: SandboxCommandResult | null) =>
     !!(result && result.status === 0 && hasRecoveryMarker(result));
 
+  if (agentRuntime.isTerminalAgentRecoveryScript(agentScript)) return false;
   if (agentScript) {
     // Non-OpenClaw manifests do not yet declare a runtime user for root
     // sandbox exec. Recover them over SSH so the launch inherits the sandbox
@@ -398,6 +403,18 @@ function recoverSandboxProcesses(sandboxName: string): boolean {
   if (hasRecoveryMarker(execResult)) return true;
   if (execResult !== null) return false;
   return recoveredSsh(executeSandboxCommand(sandboxName, script));
+}
+
+function recoverDeclaredAgentForwardPorts(
+  sandboxName: string,
+  recoveryPort: number,
+  { quiet }: { quiet: boolean },
+): boolean | null {
+  const recovered = ensureDeclaredAgentForwardPortsHealthy(sandboxName, recoveryPort);
+  if (!quiet && recovered === false) {
+    console.error("  One or more agent-declared port forwards could not be re-established.");
+  }
+  return recovered;
 }
 
 function readNonNegativeNumberEnv(name: string, fallback: number): number {
@@ -699,11 +716,20 @@ export function checkAndRecoverSandboxProcesses(
   sandboxName: string,
   { quiet = false }: { quiet?: boolean } = {},
 ) {
+  const recoveryAgent = agentRuntime.getSessionAgent(sandboxName);
+  if (recoveryAgent && !agentRuntime.hasGatewayRuntime(recoveryAgent)) {
+    return {
+      checked: true,
+      wasRunning: null,
+      recovered: false,
+      forwardRecovered: false,
+      runtime: "terminal" as const,
+    };
+  }
   const running = isSandboxGatewayRunning(sandboxName);
   if (running === null) {
     return { checked: false, wasRunning: null, recovered: false, forwardRecovered: false };
   }
-  const recoveryAgent = agentRuntime.getSessionAgent(sandboxName);
   const recoveryPort = resolveSandboxDashboardPort(sandboxName);
   if (running) {
     const enforcement = enforceHermesSecretBoundaryOnRunningGateway(sandboxName, recoveryAgent);
@@ -732,9 +758,12 @@ export function checkAndRecoverSandboxProcesses(
       }
       const forwardRecovered = ensureSandboxPortForward(sandboxName);
       const dashboardForwardRecovered = ensureHermesDashboardPortForwardIfEnabled(sandboxName);
-      const declaredForwardsRecovered = ensureDeclaredAgentForwardPortsHealthy(
+      const declaredForwardsRecovered = recoverDeclaredAgentForwardPorts(
         sandboxName,
         recoveryPort,
+        {
+          quiet,
+        },
       );
       if (!quiet) {
         if (forwardRecovered) {
@@ -744,9 +773,6 @@ export function checkAndRecoverSandboxProcesses(
           console.error(
             `  Run \`openshell forward start --background <port> ${sandboxName}\` manually.`,
           );
-        }
-        if (declaredForwardsRecovered === false) {
-          console.error("  One or more agent-declared port forwards could not be re-established.");
         }
       }
       return {
@@ -769,13 +795,9 @@ export function checkAndRecoverSandboxProcesses(
       return { checked: true, wasRunning: true, recovered: false, forwardRecovered: false };
     }
     const dashboardForwardRecovered = ensureHermesDashboardPortForwardIfEnabled(sandboxName);
-    const declaredForwardsRecovered = ensureDeclaredAgentForwardPortsHealthy(
-      sandboxName,
-      recoveryPort,
-    );
-    if (!quiet && declaredForwardsRecovered === false) {
-      console.error("  One or more agent-declared port forwards could not be re-established.");
-    }
+    const declaredForwardsRecovered = recoverDeclaredAgentForwardPorts(sandboxName, recoveryPort, {
+      quiet,
+    });
     return {
       checked: true,
       wasRunning: true,
@@ -814,10 +836,9 @@ export function checkAndRecoverSandboxProcesses(
     }
     const forwardRecovered = ensureSandboxPortForward(sandboxName);
     const dashboardForwardRecovered = ensureHermesDashboardPortForwardIfEnabled(sandboxName);
-    const declaredForwardsRecovered = ensureDeclaredAgentForwardPortsHealthy(
-      sandboxName,
-      recoveryPort,
-    );
+    const declaredForwardsRecovered = recoverDeclaredAgentForwardPorts(sandboxName, recoveryPort, {
+      quiet,
+    });
     if (!quiet) {
       console.log(
         `  ${G}✓${R} ${agentRuntime.getAgentDisplayName(recoveryAgent)} gateway restarted inside sandbox.`,
@@ -829,9 +850,6 @@ export function checkAndRecoverSandboxProcesses(
         console.error(
           `  Run \`openshell forward start --background <port> ${sandboxName}\` manually.`,
         );
-      }
-      if (declaredForwardsRecovered === false) {
-        console.error("  One or more agent-declared port forwards could not be re-established.");
       }
     }
     return {
