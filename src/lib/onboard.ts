@@ -5311,6 +5311,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         liveFinalFlowContext = context;
       },
     });
+    completed = true;
     traceCompleted = true;
   } finally {
     releaseOnboardLock();
