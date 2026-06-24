@@ -12,6 +12,10 @@ export interface ExitStepFailureSessionDeps {
   markStepFailed(stepName: string, message?: string | null, options?: StepMutationOptions): Session;
 }
 
+export interface OnboardExitFailureProcessLike {
+  once(event: "exit", listener: (code: number) => void): unknown;
+}
+
 export function markLastStartedStepFailed(
   deps: ExitStepFailureSessionDeps,
   message: string,
@@ -19,4 +23,16 @@ export function markLastStartedStepFailed(
   const failedStep = deps.loadSession()?.lastStepStarted;
   if (!failedStep) return null;
   return deps.markStepFailed(failedStep, message, LEGACY_MACHINE_STEP_MUTATION_OPTIONS);
+}
+
+export function registerIncompleteOnboardExitFailureHandler(
+  deps: ExitStepFailureSessionDeps,
+  isComplete: () => boolean,
+  message: string,
+  processLike: OnboardExitFailureProcessLike = process,
+): void {
+  processLike.once("exit", (code) => {
+    if (isComplete() || code === 0) return;
+    markLastStartedStepFailed(deps, message);
+  });
 }

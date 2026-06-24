@@ -341,7 +341,7 @@ const { resolveSandboxImageTagFromCreateOutput } =
 const nim: typeof import("./inference/nim") = require("./inference/nim");
 const onboardSession: typeof import("./state/onboard-session") = require("./state/onboard-session");
 const {
-  markLastStartedStepFailed,
+  registerIncompleteOnboardExitFailureHandler,
 }: typeof import("./onboard/exit-step-failure") = require("./onboard/exit-step-failure");
 const {
   getFutureShellPathHint,
@@ -4856,11 +4856,11 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     }
 
     let completed = false;
-    process.once("exit", (code) => {
-      if (!completed && code !== 0) {
-        markLastStartedStepFailed(onboardSession, "Onboarding exited before the step completed.");
-      }
-    });
+    registerIncompleteOnboardExitFailureHandler(
+      onboardSession,
+      () => completed,
+      "Onboarding exited before the step completed.",
+    );
 
     const agent = await selectOnboardAgent({
       agentFlag: opts.agent,
