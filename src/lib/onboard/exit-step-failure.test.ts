@@ -14,6 +14,15 @@ const originalHome = process.env.HOME;
 let tmpDir: string;
 let session: typeof sessionModule;
 
+const restoreOriginalHome =
+  originalHome === undefined
+    ? () => {
+        delete process.env.HOME;
+      }
+    : () => {
+        process.env.HOME = originalHome;
+      };
+
 beforeEach(async () => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-exit-step-failure-"));
   process.env.HOME = tmpDir;
@@ -25,18 +34,17 @@ beforeEach(async () => {
 afterEach(() => {
   session.clearSession();
   fs.rmSync(tmpDir, { recursive: true, force: true });
-  if (originalHome === undefined) {
-    delete process.env.HOME;
-  } else {
-    process.env.HOME = originalHome;
-  }
+  restoreOriginalHome();
 });
+
+function missingLoadedSession(): never {
+  throw new Error("Expected onboard session to be present");
+}
 
 function requireLoadedSession() {
   const loaded = session.loadSession();
   expect(loaded).not.toBeNull();
-  if (!loaded) throw new Error("Expected onboard session to be present");
-  return loaded;
+  return loaded ?? missingLoadedSession();
 }
 
 describe("terminal step failure helper", () => {
