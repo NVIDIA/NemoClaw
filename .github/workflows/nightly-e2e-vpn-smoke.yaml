@@ -1,0 +1,47 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: E2E / Nightly VPN Smoke
+
+on:
+  push:
+    branches:
+      - add-vpn-nightly-e2e
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-e2e-vpn-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cloud-inference-e2e:
+    if: github.repository == 'NVIDIA/NemoClaw'
+    uses: ./.github/workflows/e2e-script-vpn.yaml
+    with:
+      ref: ${{ github.sha }}
+      script: test/e2e-vpn/test-cloud-inference-e2e.sh
+      runner: linux-amd64-cpu4
+      timeout_minutes: 30
+      artifact_name: "vpn-smoke-cloud-inference-log"
+      artifact_path: "/tmp/nemoclaw-e2e-cloud-inference-install.log"
+      env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-vpn-smoke-cloud-inference"}'
+      nvidia_api_key: true
+    secrets:
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+
+  inference-routing-e2e:
+    if: github.repository == 'NVIDIA/NemoClaw'
+    uses: ./.github/workflows/e2e-script-vpn.yaml
+    with:
+      ref: ${{ github.sha }}
+      script: test/e2e-vpn/test-inference-routing.sh
+      runner: linux-amd64-cpu4
+      timeout_minutes: 30
+      artifact_name: "vpn-smoke-inference-routing-log"
+      artifact_path: "test-inference-routing-*.log"
+      env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_POLICY_TIER":"open"}'
+      nvidia_api_key: true
+    secrets:
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
