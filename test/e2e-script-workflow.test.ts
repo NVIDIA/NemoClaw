@@ -1058,6 +1058,8 @@ describe("E2E reusable workflow contract", () => {
     expect(helper).toContain('NEMOCLAW_ENDPOINT_URL="$FAKE_OPENAI_BASE_URL"');
     expect(helper).toContain("unset NVIDIA_INFERENCE_API_KEY NEMOCLAW_E2E_USE_HOSTED_INFERENCE");
     expect(helper).toContain('COMPATIBLE_API_KEY="$fake_key"');
+    expect(helper).toContain("FAKE_OPENAI_REQUIRE_AUTH=1");
+    expect(helper).not.toContain('FAKE_OPENAI_REQUIRE_AUTH="${FAKE_OPENAI_REQUIRE_AUTH:-1}"');
   });
 
   it("keeps converted jobs dispatchable through the reusable workflow", () => {

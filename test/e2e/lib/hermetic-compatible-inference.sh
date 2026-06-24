@@ -47,7 +47,7 @@ nemoclaw_e2e_start_hermetic_compatible_inference() {
   export FAKE_OPENAI_PUBLIC_HOST="${FAKE_OPENAI_PUBLIC_HOST:-$(nemoclaw_e2e_host_ip_for_sandbox)}"
   export FAKE_OPENAI_MODEL="${FAKE_OPENAI_MODEL:-${NEMOCLAW_E2E_COMPATIBLE_MODEL:-test-model}}"
   export FAKE_OPENAI_API_KEY="$fake_key"
-  export FAKE_OPENAI_REQUIRE_AUTH="${FAKE_OPENAI_REQUIRE_AUTH:-1}"
+  export FAKE_OPENAI_REQUIRE_AUTH=1
   export NEMOCLAW_FAKE_OPENAI_REQUESTS_FILE="$FAKE_OPENAI_REQUESTS_FILE"
 
   if ! start_fake_openai_compatible_api; then
