@@ -63,7 +63,7 @@ on:
         type: boolean
         default: false
       inference_route:
-        description: "Inference route to export when nvidia_api_key is true: hosted-custom or nvidia-build."
+        description: "Inference route to export when nvidia_api_key is true: hosted-custom or nvidia-internal."
         required: false
         type: string
         default: hosted-custom
@@ -84,8 +84,6 @@ on:
         default: false
     secrets:
       NVIDIA_INFERENCE_API_KEY:
-        required: false
-      NVIDIA_API_KEY:
         required: false
       BRAVE_API_KEY:
         required: false
@@ -224,32 +222,33 @@ jobs:
         env:
           NEMOCLAW_E2E_INFERENCE_ROUTE: ${{ inputs.inference_route }}
           HOSTED_NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
-          NVIDIA_BUILD_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
         shell: bash
         run: |
           set -euo pipefail
 
           case "${NEMOCLAW_E2E_INFERENCE_ROUTE:-hosted-custom}" in
-            nvidia-build)
-              # Build route source of truth: callers pass secrets.NVIDIA_API_KEY into
-              # NVIDIA_BUILD_API_KEY. Mirror it to NVIDIA_INFERENCE_API_KEY only for
-              # legacy script compatibility until converted scripts accept the
-              # canonical NVIDIA_API_KEY or stop preflighting the legacy env name.
-              if [[ -z "${NVIDIA_BUILD_API_KEY:-}" || "${NVIDIA_BUILD_API_KEY}" != nvapi-* ]]; then
-                echo "::error::NVIDIA_API_KEY nvapi-* secret is required for NVIDIA Build CI inference; it is withheld for workflow_dispatch target_ref runs." >&2
+            nvidia-internal)
+              # Internal hosted route source of truth: callers pass the repository
+              # NVIDIA_INFERENCE_API_KEY secret to the OpenAI-compatible internal
+              # inference endpoint. COMPATIBLE_API_KEY is an env alias required by
+              # the custom provider runtime, not a separate secret value.
+              if [ -z "${HOSTED_NVIDIA_INFERENCE_API_KEY:-}" ]; then
+                echo "::error::NVIDIA_INFERENCE_API_KEY secret is required for internal CI inference; it is withheld for workflow_dispatch target_ref runs." >&2
                 exit 1
               fi
               {
-                printf 'NVIDIA_INFERENCE_API_KEY=%s\n' "${NVIDIA_BUILD_API_KEY}"
-                printf 'NVIDIA_API_KEY=%s\n' "${NVIDIA_BUILD_API_KEY}"
-                printf 'NEMOCLAW_PROVIDER=cloud\n'
-                printf 'NEMOCLAW_MODEL=%s\n' "${NEMOCLAW_MODEL:-nvidia/nemotron-3-super-120b-a12b}"
-                printf 'NEMOCLAW_PREFERRED_API=%s\n' "${NEMOCLAW_PREFERRED_API:-openai-completions}"
+                printf 'NVIDIA_INFERENCE_API_KEY=%s\n' "${HOSTED_NVIDIA_INFERENCE_API_KEY}"
+                printf 'NEMOCLAW_E2E_USE_HOSTED_INFERENCE=1\n'
+                printf 'NEMOCLAW_PROVIDER=custom\n'
+                printf 'NEMOCLAW_ENDPOINT_URL=https://inference-api.nvidia.com/v1\n'
+                printf 'NEMOCLAW_MODEL=nvidia/nemotron-3-super-v3\n'
+                printf 'NEMOCLAW_COMPAT_MODEL=nvidia/nemotron-3-super-v3\n'
+                printf 'NEMOCLAW_PREFERRED_API=openai-completions\n'
+                printf 'COMPATIBLE_API_KEY=%s\n' "${HOSTED_NVIDIA_INFERENCE_API_KEY}"
               } >> "$GITHUB_ENV"
               ;;
             hosted-custom)
-              # Hosted custom route remains on secrets.NVIDIA_INFERENCE_API_KEY and
-              # never exports NVIDIA_API_KEY, even if the Build secret is present.
+              # Hosted custom route remains the default legacy CI route.
               if [ -z "${HOSTED_NVIDIA_INFERENCE_API_KEY:-}" ]; then
                 echo "::error::NVIDIA_INFERENCE_API_KEY secret is required for hosted CI inference; it is withheld for workflow_dispatch target_ref runs." >&2
                 exit 1

@@ -434,24 +434,6 @@ describe("E2E reusable workflow contract", () => {
       DOCKERHUB_TOKEN:
         "${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_TOKEN || '' }}",
     };
-    const nvidiaBuildSecrets = {
-      NVIDIA_API_KEY: GUARDED_PUBLIC_NVIDIA_SECRET,
-      BRAVE_API_KEY: "${{ secrets.BRAVE_API_KEY }}",
-      DOCKERHUB_USERNAME:
-        "${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_USERNAME || '' }}",
-      DOCKERHUB_TOKEN:
-        "${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_TOKEN || '' }}",
-    };
-    const nvidiaBuildJobs = new Set([
-      "messaging-providers-e2e",
-      "channels-add-remove-e2e",
-      "channels-stop-start-openclaw-e2e",
-      "channels-stop-start-hermes-e2e",
-      "hermes-discord-e2e",
-      "upgrade-stale-sandbox-e2e",
-      "rebuild-hermes-e2e",
-      "rebuild-hermes-stale-base-e2e",
-    ]);
     const messagingLiveSecrets = {
       TELEGRAM_BOT_TOKEN_REAL: `\${{ (${TRUSTED_REF_GUARD}) && secrets.TELEGRAM_BOT_TOKEN_REAL || '' }}`,
       TELEGRAM_CHAT_ID_E2E: `\${{ (${TRUSTED_REF_GUARD}) && secrets.TELEGRAM_CHAT_ID_E2E || '' }}`,
@@ -466,10 +448,8 @@ describe("E2E reusable workflow contract", () => {
     for (const [name, job] of reusableJobs) {
       const expectsLiveMessaging = name === "messaging-providers-e2e";
       const expectedSecrets = expectsLiveMessaging
-        ? { ...nvidiaBuildSecrets, ...messagingLiveSecrets }
-        : nvidiaBuildJobs.has(name)
-          ? nvidiaBuildSecrets
-          : defaultSecrets;
+        ? { ...defaultSecrets, ...messagingLiveSecrets }
+        : defaultSecrets;
       expect(job.secrets, name).toEqual(expectedSecrets);
       expect(job.with?.messaging_live_secrets ?? false, name).toBe(
         expectsLiveMessaging
@@ -957,7 +937,7 @@ describe("E2E reusable workflow contract", () => {
     expect(exportStep?.run).toContain('>> "$GITHUB_ENV"');
   });
 
-  it("routes reusable NVIDIA-key jobs through explicit hosted or NVIDIA Build env", () => {
+  it("routes reusable NVIDIA-key jobs through explicit hosted or internal NVIDIA env", () => {
     const exportStep = runnerWorkflow.jobs.run.steps.find(
       (step) => step.name === "Export CI inference environment",
     );
@@ -965,7 +945,7 @@ describe("E2E reusable workflow contract", () => {
     const hostedJobs = reusableNightlyJobs(nightlyWorkflow).filter(
       ([, job]) => String(job.with?.nvidia_api_key) === "true",
     );
-    const nvidiaBuildJobs = new Set([
+    const internalInferenceJobs = new Set([
       "messaging-providers-e2e",
       "channels-add-remove-e2e",
       "channels-stop-start-openclaw-e2e",
@@ -990,16 +970,16 @@ describe("E2E reusable workflow contract", () => {
     expect(
       (workflowCall as { secrets?: Record<string, { required?: boolean }> } | undefined)?.secrets
         ?.NVIDIA_API_KEY,
-    ).toMatchObject({ required: false });
+    ).toBeUndefined();
     expect(exportStep?.if).toBe("${{ inputs.nvidia_api_key }}");
     expect(exportStep?.env?.NEMOCLAW_E2E_INFERENCE_ROUTE).toBe("${{ inputs.inference_route }}");
     expect(exportStep?.env?.HOSTED_NVIDIA_INFERENCE_API_KEY).toBe(RAW_HOSTED_INFERENCE_SECRET);
-    expect(exportStep?.env?.NVIDIA_BUILD_API_KEY).toBe(RAW_PUBLIC_NVIDIA_SECRET);
+    expect(exportStep?.env?.NVIDIA_BUILD_API_KEY).toBeUndefined();
     expect(exportStep?.run).toContain('case "${NEMOCLAW_E2E_INFERENCE_ROUTE:-hosted-custom}" in');
-    expect(exportStep?.run).toContain("nvidia-build)");
-    expect(exportStep?.run).toContain("Build route source of truth");
-    expect(exportStep?.run).toContain("Mirror it to NVIDIA_INFERENCE_API_KEY only for");
-    expect(exportStep?.run).toContain("NVIDIA_API_KEY nvapi-* secret is required");
+    expect(exportStep?.run).toContain("nvidia-internal)");
+    expect(exportStep?.run).toContain(
+      "NVIDIA_INFERENCE_API_KEY secret is required for internal CI inference",
+    );
     expect(exportStep?.run).toContain("hosted-custom)");
     expect(exportStep?.run).toContain("Unsupported inference_route");
 
@@ -1020,61 +1000,56 @@ describe("E2E reusable workflow contract", () => {
     });
     expect(hostedEnv.NVIDIA_API_KEY).toBeUndefined();
 
-    const hostedEnvWithBuildSecret = runInferenceExportStep(script, {
+    const hostedEnvWithPublicSecret = runInferenceExportStep(script, {
       NEMOCLAW_E2E_INFERENCE_ROUTE: "hosted-custom",
       HOSTED_NVIDIA_INFERENCE_API_KEY: "hosted-compatible-key",
-      NVIDIA_BUILD_API_KEY: "nvapi-build-key",
+      NVIDIA_API_KEY: "nvapi-public-build-key",
     });
-    expect(hostedEnvWithBuildSecret).toMatchObject(hostedEnv);
-    expect(hostedEnvWithBuildSecret.NVIDIA_API_KEY).toBeUndefined();
+    expect(hostedEnvWithPublicSecret).toMatchObject(hostedEnv);
+    expect(hostedEnvWithPublicSecret.NVIDIA_API_KEY).toBeUndefined();
 
-    const nvidiaBuildEnv = runInferenceExportStep(script, {
-      NEMOCLAW_E2E_INFERENCE_ROUTE: "nvidia-build",
-      NVIDIA_BUILD_API_KEY: "nvapi-build-key",
+    const internalInferenceEnv = runInferenceExportStep(script, {
+      NEMOCLAW_E2E_INFERENCE_ROUTE: "nvidia-internal",
+      HOSTED_NVIDIA_INFERENCE_API_KEY: "hosted-compatible-key",
     });
-    expect(nvidiaBuildEnv).toMatchObject({
-      NVIDIA_INFERENCE_API_KEY: "nvapi-build-key",
-      NVIDIA_API_KEY: "nvapi-build-key",
-      NEMOCLAW_PROVIDER: "cloud",
-      NEMOCLAW_MODEL: "nvidia/nemotron-3-super-120b-a12b",
+    expect(internalInferenceEnv).toMatchObject({
+      NVIDIA_INFERENCE_API_KEY: "hosted-compatible-key",
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1",
+      NEMOCLAW_PROVIDER: "custom",
+      NEMOCLAW_ENDPOINT_URL: "https://inference-api.nvidia.com/v1",
+      NEMOCLAW_MODEL: "nvidia/nemotron-3-super-v3",
+      NEMOCLAW_COMPAT_MODEL: "nvidia/nemotron-3-super-v3",
       NEMOCLAW_PREFERRED_API: "openai-completions",
+      COMPATIBLE_API_KEY: "hosted-compatible-key",
     });
-    expect(nvidiaBuildEnv.COMPATIBLE_API_KEY).toBeUndefined();
-    expect(nvidiaBuildEnv.NEMOCLAW_E2E_USE_HOSTED_INFERENCE).toBeUndefined();
-    expect(nvidiaBuildEnv.NEMOCLAW_ENDPOINT_URL).toBeUndefined();
-    expect(nvidiaBuildEnv.NEMOCLAW_COMPAT_MODEL).toBeUndefined();
+    expect(internalInferenceEnv.NVIDIA_API_KEY).toBeUndefined();
 
     expect(() =>
       runInferenceExportStep(script, {
-        NEMOCLAW_E2E_INFERENCE_ROUTE: "nvidia-build",
-        NVIDIA_BUILD_API_KEY: "",
-      }),
-    ).toThrow();
-    expect(() =>
-      runInferenceExportStep(script, {
-        NEMOCLAW_E2E_INFERENCE_ROUTE: "nvidia-build",
-        NVIDIA_BUILD_API_KEY: "hosted-compatible-key",
+        NEMOCLAW_E2E_INFERENCE_ROUTE: "nvidia-internal",
+        HOSTED_NVIDIA_INFERENCE_API_KEY: "",
       }),
     ).toThrow();
     expect(() =>
       runInferenceExportStep(script, {
         NEMOCLAW_E2E_INFERENCE_ROUTE: "unsupported-route",
         HOSTED_NVIDIA_INFERENCE_API_KEY: "hosted-compatible-key",
-        NVIDIA_BUILD_API_KEY: "nvapi-build-key",
       }),
     ).toThrow();
 
     expect(hostedJobs.length).toBeGreaterThan(20);
-    for (const name of nvidiaBuildJobs) {
+    for (const name of internalInferenceJobs) {
       const job = nightlyWorkflow.jobs[name];
       const envJson = JSON.parse(job.with?.env_json ?? "{}") as Record<string, unknown>;
       expect(job.with?.nvidia_secret_as_compatible_api_key, name).toBeUndefined();
-      expect(job.with?.inference_route, name).toBe("nvidia-build");
-      expect(envJson.NEMOCLAW_MODEL, name).toBe("nvidia/nemotron-3-super-120b-a12b");
+      expect(job.with?.inference_route, name).toBe("nvidia-internal");
+      expect(job.secrets?.NVIDIA_INFERENCE_API_KEY, name).toBe(GUARDED_HOSTED_INFERENCE_SECRET);
+      expect(job.secrets?.NVIDIA_API_KEY, name).toBeUndefined();
+      expect(envJson.NEMOCLAW_MODEL, name).toBeUndefined();
       expect(envJson.NEMOCLAW_PROVIDER, name).toBeUndefined();
       expect(envJson.NEMOCLAW_PREFERRED_API, name).toBeUndefined();
     }
-    for (const [name, job] of hostedJobs.filter(([name]) => !nvidiaBuildJobs.has(name))) {
+    for (const [name, job] of hostedJobs.filter(([name]) => !internalInferenceJobs.has(name))) {
       expect(job.with?.nvidia_secret_as_compatible_api_key, name).toBeUndefined();
       expect(job.with?.inference_route, name).toBeUndefined();
     }
