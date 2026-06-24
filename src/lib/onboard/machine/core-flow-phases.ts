@@ -147,13 +147,16 @@ export async function runCoreOnboardFlowSlice<Context extends OnboardFlowContext
   resume: boolean;
   recordStateResult(result: OnboardStateResult): Promise<unknown>;
 }): Promise<OnboardMachineRunnerResult<Context>> {
-  // Compatibility bridge for live host glue while legacy step helpers remain a
-  // second machine snapshot writer. OnboardRuntimeBoundary records skipped
-  // stale/already-reached transition results from handlers whose source state
-  // was advanced by markStepStarted()/markStepComplete() in the durable session.
-  // Keep resume and ahead-state sessions here so provider/sandbox repair checks
-  // still run. Remove this path once legacy step helpers no longer advance
-  // session.machine and handler FSM results are the only transition source.
+  // Compatibility bridge for live resume repair while legacy step helpers and
+  // OnboardRuntimeBoundary compatibility replay can leave the durable machine
+  // snapshot already downstream of this slice. The tolerated downstream family
+  // includes sandbox branch states and the final slice handoff states: openclaw,
+  // agent_setup, policies, finalizing, and post_verify. Resume still needs to
+  // re-run provider and sandbox repair/backstop checks before policy or final
+  // verification handling observes the session. This PR does not fix the
+  // broader persistence contract because those repairs are not strict FSM states
+  // yet. Remove this fallback once resume repairs are strict FSM states, or once
+  // direct legacy step helpers no longer write session.machine.
   return runLiveOnboardFlowSlice({
     context: options.context,
     runtime: options.runtime,
@@ -166,6 +169,9 @@ export async function runCoreOnboardFlowSlice<Context extends OnboardFlowContext
       "sandbox",
       "openclaw",
       "agent_setup",
+      "policies",
+      "finalizing",
+      "post_verify",
     ],
     runSlice: runCoreOnboardFlowSequence,
     applyCompatibleResult: options.recordStateResult,
