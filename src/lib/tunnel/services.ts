@@ -628,7 +628,7 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
 
   ensurePidDir(pidDir);
 
-  // Messaging (Telegram, Discord, Slack) is now handled natively by OpenClaw
+  // Messaging channels are handled natively by the agent runtime
   // inside the sandbox via the OpenShell provider/placeholder/L7-proxy pipeline.
   // No host-side bridge processes are needed. See: PR #1081.
 
