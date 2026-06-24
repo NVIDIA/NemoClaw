@@ -11,7 +11,7 @@ import {
 } from "./core-flow-phases";
 import type { OnboardFlowContext } from "./flow-context";
 import type { OnboardStateResult } from "./result";
-import { advanceTo } from "./result";
+import { advanceTo, branchTo } from "./result";
 import type { OnboardSequencePhase } from "./sequence-runner";
 
 type Agent = { name: string };
@@ -272,6 +272,74 @@ describe("core onboard flow phases", () => {
       selectedMessagingChannels: ["slack", "discord"],
       webSearchSupported: true,
     });
+  });
+
+  it("uses the strict runner for fresh provider selection sessions", async () => {
+    const calls: string[] = [];
+    const applied: string[] = [];
+    let runtimeSession = createSession({
+      machine: {
+        version: 1,
+        state: "provider_selection",
+        stateEnteredAt: "2026-06-09T00:00:00.000Z",
+        revision: 1,
+      },
+    });
+    const phases: readonly OnboardSequencePhase<CoreContext>[] = [
+      {
+        state: "provider_selection",
+        run: (ctx) => {
+          calls.push("provider_selection");
+          return {
+            context: ctx,
+            result: [
+              advanceTo("inference", { metadata: { state: "provider_selection" } }),
+              advanceTo("sandbox", { metadata: { state: "inference" } }),
+            ],
+          };
+        },
+      },
+      {
+        state: "sandbox",
+        run: (ctx) => {
+          calls.push("sandbox");
+          return {
+            context: { ...ctx, sandboxName: "created-sandbox" },
+            result: branchTo("openclaw", { metadata: { state: "sandbox" } }),
+          };
+        },
+      },
+    ];
+
+    const result = await runCoreOnboardFlowSlice({
+      context: context({ model: "nvidia/test", provider: "nim" }),
+      runtime: {
+        session: async () => runtimeSession,
+        applyResult: async (stateResult) => {
+          const next = (stateResult as ReturnType<typeof advanceTo>).next;
+          applied.push(next);
+          runtimeSession = createSession({
+            machine: {
+              version: 1,
+              state: next,
+              stateEnteredAt: "2026-06-09T00:03:00.000Z",
+              revision: runtimeSession.machine.revision + 1,
+            },
+          });
+          return runtimeSession;
+        },
+      },
+      phases,
+      resume: false,
+      recordStateResult: async () => {
+        throw new Error("compatibility recorder should not run");
+      },
+    });
+
+    expect(calls).toEqual(["provider_selection", "sandbox"]);
+    expect(applied).toEqual(["inference", "sandbox", "openclaw"]);
+    expect(result.context.sandboxName).toBe("created-sandbox");
+    expect(result.session.machine.state).toBe("openclaw");
   });
 
   it("records each phase result on the resume compatibility path", async () => {
