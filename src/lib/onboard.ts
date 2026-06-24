@@ -341,6 +341,9 @@ const { resolveSandboxImageTagFromCreateOutput } =
 const nim: typeof import("./inference/nim") = require("./inference/nim");
 const onboardSession: typeof import("./state/onboard-session") = require("./state/onboard-session");
 const {
+  registerIncompleteOnboardExitHandlerForSession,
+}: typeof import("./onboard/onboard-exit-handler") = require("./onboard/onboard-exit-handler");
+const {
   getFutureShellPathHint,
   getPortConflictServiceHints,
   printRemediationActions,
@@ -4647,7 +4650,6 @@ const onboardRuntimeBoundary = new OnboardRuntimeBoundary({
   toSessionUpdates: (updates: Record<string, unknown>) =>
     toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
   maybeForceE2eStepFailure,
-  stepMutationOptions: { updateMachine: false },
 });
 
 const sandboxCancelRollback = installSandboxCancelRollback({
@@ -4664,6 +4666,8 @@ const recordStateSkipped = onboardRuntimeBoundary.recordStateSkipped.bind(onboar
 const recordRepairEvent = onboardRuntimeBoundary.recordRepairEvent.bind(onboardRuntimeBoundary);
 const recordStateResult =
   onboardRuntimeBoundary.recordStateResultWithStepCompatibility.bind(onboardRuntimeBoundary);
+const recordCompatibleStateResult =
+  onboardRuntimeBoundary.recordCompatibleStateResult.bind(onboardRuntimeBoundary);
 const recordPostVerifyStarted =
   onboardRuntimeBoundary.recordPostVerifyStarted.bind(onboardRuntimeBoundary);
 
@@ -4829,13 +4833,12 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       },
     );
     await onboardRuntimeBoundary.recordOnboardStarted(resume);
-    await recordStateResult(advanceTo("preflight", { metadata: { state: "init" } }));
-    // Backstop for the resume path: a session may exist (so the early guard
-    // skipped because resume === true) but never have recorded a sandboxName
-    // — sandbox creation could have failed before that step ran. Without a
-    // --name or env-var seed, the downstream prompt path would fall back to
-    // 'my-assistant' under no TTY, exactly the silent-default the early
-    // guard is meant to prevent.
+    await (resume ? recordCompatibleStateResult : recordStateResult)(
+      advanceTo("preflight", { metadata: { state: "init" } }),
+    );
+    // Resume backstop: a session may exist without a sandboxName if sandbox
+    // creation failed before that step. Non-interactive --from cannot infer a
+    // safe name in that state.
     if (
       resume &&
       cannotPrompt &&
@@ -4853,15 +4856,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     }
 
     let completed = false;
-    process.once("exit", (code) => {
-      if (!completed && code !== 0) {
-        const current = onboardSession.loadSession();
-        const failedStep = current?.lastStepStarted;
-        if (failedStep) {
-          onboardSession.markStepFailed(failedStep, "Onboarding exited before the step completed.");
-        }
-      }
-    });
+    registerIncompleteOnboardExitHandlerForSession(onboardSession, () => completed);
 
     const agent = await selectOnboardAgent({
       agentFlag: opts.agent,
@@ -5007,7 +5002,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       runtime: onboardRuntimeBoundary.getRuntime(),
       phases: [preflightPhase, gatewayPhase],
       resume,
-      recordStateResult,
+      recordStateResult: recordCompatibleStateResult,
     });
 
     const initialContext = initialFlowResult.context;
@@ -5154,7 +5149,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       runtime: onboardRuntimeBoundary.getRuntime(),
       phases: [providerInferencePhase, sandboxPhase],
       resume,
-      recordStateResult,
+      recordStateResult: recordCompatibleStateResult,
     });
 
     const coreContext = coreFlowResult.context;
@@ -5308,7 +5303,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       runtime: onboardRuntimeBoundary.getRuntime(),
       phases: [branchSetupPhase, policiesPhase, finalizationPhase],
       resume,
-      recordStateResult,
+      recordStateResult: recordCompatibleStateResult,
       afterPoliciesResultApplied: () => {
         sandboxCancelRollback.disarm();
       },
@@ -5316,6 +5311,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         liveFinalFlowContext = context;
       },
     });
+    completed = true;
     traceCompleted = true;
   } finally {
     releaseOnboardLock();
@@ -5449,6 +5445,7 @@ module.exports = {
   getSandboxPromptDefault,
   getRequestedSandboxAgentName,
   normalizeSandboxAgentName,
+  registerIncompleteOnboardExitHandlerForSession,
   hydrateCredentialEnv,
   pruneKnownHostsEntries,
   shouldIncludeBuildContextPath,

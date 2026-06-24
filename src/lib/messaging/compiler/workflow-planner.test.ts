@@ -17,6 +17,7 @@ const TEST_CREDENTIALS: Readonly<Record<string, string>> = {
   WECHAT_BOT_TOKEN: "test-wechat-token",
   SLACK_BOT_TOKEN: "xoxb-test-slack-token",
   SLACK_APP_TOKEN: "xapp-test-slack-token",
+  MSTEAMS_APP_PASSWORD: "test-teams-client-secret",
 };
 const TEST_WECHAT_LOGIN = {
   token: "test-wechat-token",
@@ -666,6 +667,85 @@ describe("MessagingWorkflowPlanner", () => {
     ).toBe(true);
   });
 
+  it("removes Teams host forwarding while the channel is disabled", async () => {
+    await withEnv(
+      {
+        MSTEAMS_APP_ID: "test-teams-app-id",
+        MSTEAMS_TENANT_ID: "test-teams-tenant-id",
+        TEAMS_ALLOWED_USERS: "00000000-0000-0000-0000-000000000001",
+        MSTEAMS_PORT: "3977",
+      },
+      async () => {
+        const existingPlan = await planner().buildPlan({
+          sandboxName: "demo",
+          agent: "openclaw",
+          workflow: "onboard",
+          isInteractive: false,
+          configuredChannels: ["teams"],
+          credentialAvailability: {
+            MSTEAMS_APP_PASSWORD: true,
+          },
+        });
+
+        expect(
+          existingPlan.channels.find((channel) => channel.channelId === "teams"),
+        ).toMatchObject({
+          hostForward: {
+            channelId: "teams",
+            port: 3977,
+            label: "Microsoft Teams webhook",
+          },
+        });
+
+        const stopped = await planner().buildChannelStopPlanFromSandboxEntry({
+          sandboxName: "demo",
+          agent: "openclaw",
+          sandboxEntry: {
+            name: "demo",
+            messaging: {
+              schemaVersion: 1,
+              plan: existingPlan,
+            },
+          },
+          channelId: "teams",
+        });
+
+        expect(stopped?.workflow).toBe("stop-channel");
+        expect(stopped?.channels.find((channel) => channel.channelId === "teams")).toMatchObject({
+          active: false,
+          disabled: true,
+        });
+        expect(
+          stopped?.channels.find((channel) => channel.channelId === "teams")?.hostForward,
+        ).toBeUndefined();
+
+        const started = await planner().buildChannelStartPlanFromSandboxEntry({
+          sandboxName: "demo",
+          agent: "openclaw",
+          sandboxEntry: {
+            name: "demo",
+            messaging: {
+              schemaVersion: 1,
+              plan: stopped!,
+            },
+          },
+          channelId: "teams",
+        });
+
+        expect(started?.workflow).toBe("start-channel");
+        expect(started?.channels.find((channel) => channel.channelId === "teams")).toMatchObject({
+          active: true,
+          disabled: false,
+          hostForward: {
+            channelId: "teams",
+            port: 3977,
+            label: "Microsoft Teams webhook",
+          },
+        });
+      },
+    );
+  });
+
   it("removes a channel and its dependent plan entries from an existing sandbox entry plan", async () => {
     const existingPlan = await planner().buildPlan({
       sandboxName: "demo",
@@ -770,6 +850,75 @@ describe("MessagingWorkflowPlanner", () => {
     expect(rebuilt).toBeNull();
   });
 
+  it("drops a persisted Telegram plan during rebuild when supportedChannelIds: [] declares deny-all", async () => {
+    const existingPlan = await planner().buildPlan({
+      sandboxName: "demo",
+      agent: "openclaw",
+      workflow: "onboard",
+      isInteractive: false,
+      configuredChannels: ["telegram"],
+      credentialAvailability: { TELEGRAM_BOT_TOKEN: true },
+    });
+
+    const rebuilt = await planner().buildRebuildPlanFromSandboxEntry({
+      sandboxName: "demo",
+      agent: "openclaw",
+      sandboxEntry: {
+        name: "demo",
+        messaging: { schemaVersion: 1, plan: existingPlan },
+      },
+      supportedChannelIds: [],
+    });
+
+    expect(rebuilt).toBeNull();
+  });
+
+  it("drops a persisted plan during stop/start/remove mutations when supportedChannelIds: [] denies the stored channel", async () => {
+    const existingPlan = await planner().buildPlan({
+      sandboxName: "demo",
+      agent: "openclaw",
+      workflow: "onboard",
+      isInteractive: false,
+      configuredChannels: ["telegram"],
+      credentialAvailability: { TELEGRAM_BOT_TOKEN: true },
+    });
+
+    const baseEntry = {
+      name: "demo",
+      messaging: { schemaVersion: 1, plan: existingPlan } as const,
+    };
+
+    expect(
+      await planner().buildChannelStopPlanFromSandboxEntry({
+        sandboxName: "demo",
+        agent: "openclaw",
+        channelId: "telegram",
+        sandboxEntry: baseEntry,
+        supportedChannelIds: [],
+      }),
+    ).toBeNull();
+
+    expect(
+      await planner().buildChannelStartPlanFromSandboxEntry({
+        sandboxName: "demo",
+        agent: "openclaw",
+        channelId: "telegram",
+        sandboxEntry: baseEntry,
+        supportedChannelIds: [],
+      }),
+    ).toBeNull();
+
+    expect(
+      await planner().buildChannelRemovePlanFromSandboxEntry({
+        sandboxName: "demo",
+        agent: "openclaw",
+        channelId: "telegram",
+        sandboxEntry: baseEntry,
+        supportedChannelIds: [],
+      }),
+    ).toBeNull();
+  });
+
   it("reports unsupported channels deterministically before compiling", async () => {
     await expect(
       planner().buildPlan({
@@ -781,6 +930,19 @@ describe("MessagingWorkflowPlanner", () => {
         supportedChannelIds: ["telegram"],
       }),
     ).rejects.toThrow("Unsupported messaging channel(s) for openclaw: discord, slack");
+  });
+
+  it("rejects every configured channel when supportedChannelIds is an explicit empty array (deny-all)", async () => {
+    await expect(
+      planner().buildPlan({
+        sandboxName: "demo",
+        agent: "openclaw",
+        workflow: "onboard",
+        isInteractive: false,
+        configuredChannels: ["telegram"],
+        supportedChannelIds: [],
+      }),
+    ).rejects.toThrow("Unsupported messaging channel(s) for openclaw: telegram");
   });
 
   it("returns serializable, secret-free plans suitable for dry-run and shadow output", async () => {

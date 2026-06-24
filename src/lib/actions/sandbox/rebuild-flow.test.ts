@@ -11,9 +11,30 @@ type RebuildSandbox =
 const requireDist = createRequire(import.meta.url);
 const rebuildModulePath = "../../../../dist/lib/actions/sandbox/rebuild.js";
 
+type RebuildFlowStep = {
+  status: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  error: string | null;
+};
+
+type RebuildFlowSession = Record<string, unknown> & {
+  lastStepStarted: string | null;
+  status: string;
+  failure: { step: string; message: string | null; recordedAt: string } | null;
+  machine: {
+    version: number;
+    state: string;
+    stateEnteredAt: string;
+    revision: number;
+  };
+  steps: Record<string, RebuildFlowStep>;
+};
+
 type RebuildFlowOverrides = {
   applyPreset?: (presetName: string) => boolean;
   executeSandboxCommand?: () => { status: number; stdout: string; stderr: string } | null;
+  onboard?: (session: RebuildFlowSession) => Promise<void> | void;
   repairMutableConfigPerms?: () =>
     | { applied: false; skipReason: "agent" | "locked" | "unreadable"; reason: string }
     | { applied: true; verified: boolean; errors: string[] };
@@ -33,16 +54,80 @@ type RebuildFlowHarness = {
   backupSandboxStateSpy: MockInstance;
   errorSpy: MockInstance;
   executeSandboxCommandSpy: MockInstance;
+  ensureMessagingHostForwardAfterRebuildSpy: MockInstance;
   logSpy: MockInstance;
+  markStepFailedSpy: MockInstance;
   onboardSpy: MockInstance;
   registryUpdateSpy: MockInstance;
+  releaseOnboardLockSpy: MockInstance;
   relockSpy: MockInstance;
   restoreSandboxStateSpy: MockInstance;
   runOpenshellSpy: MockInstance;
   messagingRebuildPlanSpy: MockInstance;
+  session: RebuildFlowSession;
 };
 
 const originalSandboxName = process.env.NEMOCLAW_SANDBOX_NAME;
+
+function createStep(status: string): RebuildFlowStep {
+  return { status, startedAt: null, completedAt: null, error: null };
+}
+
+function createRebuildFlowSession(machineSnapshotVersion: number): RebuildFlowSession {
+  return {
+    sandboxName: "alpha",
+    provider: "ollama-local",
+    model: "nvidia/nemotron",
+    credentialEnv: null,
+    metadata: {},
+    hermesToolGateways: [],
+    lastStepStarted: null,
+    status: "in_progress",
+    failure: null,
+    machine: {
+      version: machineSnapshotVersion,
+      state: "gateway",
+      stateEnteredAt: "2026-06-01T00:00:00.000Z",
+      revision: 2,
+    },
+    steps: {
+      preflight: createStep("complete"),
+      gateway: createStep("complete"),
+      provider_selection: createStep("pending"),
+      inference: createStep("pending"),
+      sandbox: createStep("pending"),
+      openclaw: createStep("pending"),
+      agent_setup: createStep("pending"),
+      policies: createStep("pending"),
+    },
+  };
+}
+
+function installTerminalStepFailureMock(
+  onboardSession: { markStepFailed: (...args: unknown[]) => unknown },
+  session: RebuildFlowSession,
+): MockInstance {
+  return vi
+    .spyOn(onboardSession, "markStepFailed")
+    .mockImplementation((stepName: unknown, message: unknown, options: unknown) => {
+      const stepKey = String(stepName);
+      const step = session.steps[stepKey] ?? createStep("pending");
+      session.steps[stepKey] = step;
+      step.status = "failed";
+      step.error = typeof message === "string" ? message : null;
+      session.status = "failed";
+      session.failure = {
+        step: stepKey,
+        message: typeof message === "string" ? message : null,
+        recordedAt: "2026-06-01T00:02:00.000Z",
+      };
+      const updateMachine =
+        (options as { updateMachine?: boolean } | undefined)?.updateMachine === true;
+      session.machine.state = updateMachine ? "failed" : session.machine.state;
+      session.machine.revision += updateMachine ? 1 : 0;
+      return session;
+    });
+}
 
 function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): RebuildFlowHarness {
   delete require.cache[requireDist.resolve(rebuildModulePath)];
@@ -68,17 +153,13 @@ function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): Rebuild
   const nim = requireDist("../../../../dist/lib/inference/nim.js");
   const policies = requireDist("../../../../dist/lib/policy/index.js");
   const processRecovery = requireDist("../../../../dist/lib/actions/sandbox/process-recovery.js");
+  const messagingHostForwardLifecycle = requireDist(
+    "../../../../dist/lib/actions/sandbox/messaging-host-forward-lifecycle.js",
+  );
   const messaging = requireDist("../../../../dist/lib/messaging/index.js");
   const shields = requireDist("../../../../dist/lib/shields/index.js");
 
-  const session = {
-    sandboxName: "alpha",
-    provider: "ollama-local",
-    model: "nvidia/nemotron",
-    credentialEnv: null,
-    metadata: {},
-    hermesToolGateways: [],
-  };
+  const session = createRebuildFlowSession(onboardSession.MACHINE_SNAPSHOT_VERSION);
   const rebuildShieldsWindow = { relocked: false, wasLocked: false };
   const agentDef = { name: "openclaw", expectedVersion: "0.2.0", messagingPlatforms: [] };
 
@@ -99,6 +180,10 @@ function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): Rebuild
     (mutator as (value: typeof session) => typeof session | void)(session);
     return session;
   });
+  const releaseOnboardLockSpy = vi
+    .spyOn(onboardSession, "releaseOnboardLock")
+    .mockImplementation(() => undefined);
+  const markStepFailedSpy = installTerminalStepFailureMock(onboardSession, session);
   vi.spyOn(registry, "getSandbox").mockReturnValue({
     name: "alpha",
     provider: "ollama-local",
@@ -153,7 +238,9 @@ function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): Rebuild
   vi.spyOn(destroy, "removeSandboxRegistryEntry").mockImplementation(() => undefined);
   vi.spyOn(nim, "stopNimContainer").mockImplementation(() => undefined);
   vi.spyOn(nim, "stopNimContainerByName").mockImplementation(() => undefined);
-  const onboardSpy = vi.spyOn(onboardMod, "onboard").mockResolvedValue(undefined);
+  const onboardSpy = vi.spyOn(onboardMod, "onboard").mockImplementation(async () => {
+    await overrides.onboard?.(session);
+  });
   const applyPresetSpy = vi
     .spyOn(policies, "applyPreset")
     .mockImplementation((_sandboxName: unknown, presetName: unknown) => {
@@ -173,6 +260,9 @@ function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): Rebuild
   const messagingRebuildPlanSpy = vi
     .spyOn(messaging.MessagingWorkflowPlanner.prototype, "buildRebuildPlanFromSandboxEntry")
     .mockImplementation(overrides.buildMessagingRebuildPlan ?? (() => null));
+  const ensureMessagingHostForwardAfterRebuildSpy = vi
+    .spyOn(messagingHostForwardLifecycle, "ensureMessagingHostForwardAfterRebuild")
+    .mockReturnValue(true);
 
   errorSpy.mockClear();
   logSpy.mockClear();
@@ -184,13 +274,87 @@ function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): Rebuild
     backupSandboxStateSpy,
     errorSpy,
     executeSandboxCommandSpy,
+    ensureMessagingHostForwardAfterRebuildSpy,
     logSpy,
+    markStepFailedSpy,
     onboardSpy,
     registryUpdateSpy,
+    releaseOnboardLockSpy,
     relockSpy,
     restoreSandboxStateSpy,
     runOpenshellSpy,
     messagingRebuildPlanSpy,
+    session,
+  };
+}
+
+function makeActiveTeamsMessagingPlan() {
+  return {
+    schemaVersion: 1,
+    sandboxName: "alpha",
+    agent: "openclaw",
+    workflow: "rebuild",
+    channels: [
+      {
+        channelId: "teams",
+        displayName: "Microsoft Teams",
+        authMode: "token-paste",
+        active: true,
+        selected: true,
+        configured: true,
+        disabled: false,
+        inputs: [
+          {
+            channelId: "teams",
+            inputId: "appId",
+            kind: "config",
+            required: true,
+            sourceEnv: "MSTEAMS_APP_ID",
+            statePath: "teamsConfig.appId",
+            value: "teams-app-id",
+          },
+          {
+            channelId: "teams",
+            inputId: "clientSecret",
+            kind: "secret",
+            required: true,
+            sourceEnv: "MSTEAMS_APP_PASSWORD",
+            credentialAvailable: true,
+          },
+          {
+            channelId: "teams",
+            inputId: "tenantId",
+            kind: "config",
+            required: true,
+            sourceEnv: "MSTEAMS_TENANT_ID",
+            statePath: "teamsConfig.tenantId",
+            value: "teams-tenant-id",
+          },
+          {
+            channelId: "teams",
+            inputId: "webhookPort",
+            kind: "config",
+            required: false,
+            sourceEnv: "MSTEAMS_PORT",
+            statePath: "teamsConfig.webhookPort",
+            value: "3978",
+          },
+        ],
+        hostForward: {
+          channelId: "teams",
+          port: 3978,
+          label: "Microsoft Teams webhook",
+        },
+        hooks: [],
+      },
+    ],
+    disabledChannels: [],
+    credentialBindings: [],
+    networkPolicy: { presets: ["teams"], entries: [] },
+    agentRender: [],
+    buildSteps: [],
+    stateUpdates: [],
+    healthChecks: [],
   };
 }
 
@@ -269,6 +433,23 @@ describe("rebuildSandbox flow", () => {
     expect(harness.onboardSpy).not.toHaveBeenCalled();
   });
 
+  it("starts the active Teams host forward after a successful rebuild", async () => {
+    const plan = makeActiveTeamsMessagingPlan();
+    const harness = createRebuildFlowHarness({
+      applyPreset: () => true,
+      buildMessagingRebuildPlan: () => plan,
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
+
+    expect(harness.ensureMessagingHostForwardAfterRebuildSpy).toHaveBeenCalledWith("alpha", plan);
+    expect(
+      harness.ensureMessagingHostForwardAfterRebuildSpy.mock.invocationCallOrder[0],
+    ).toBeGreaterThan(harness.onboardSpy.mock.invocationCallOrder[0]);
+  });
+
   it("finishes the rebuild while surfacing incomplete post-restore work", async () => {
     const harness = createRebuildFlowHarness({
       executeSandboxCommand: () => ({ status: 1, stdout: "", stderr: "hash refresh failed" }),
@@ -299,5 +480,33 @@ describe("rebuildSandbox flow", () => {
     expect(harness.applyPresetSpy).toHaveBeenCalledWith("alpha", "throw");
     expect(harness.errorSpy).toHaveBeenCalledWith(expect.stringContaining("bad, throw"));
     expect(harness.relockSpy).toHaveBeenCalledWith("alpha", expect.any(Object), true, "nemoclaw");
+  });
+
+  it("marks recreate onboarding failures as terminal and preserves retry cleanup", async () => {
+    const harness = createRebuildFlowHarness({
+      onboard: (session) => {
+        session.lastStepStarted = "sandbox";
+        throw new Error("inner recreate boom");
+      },
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("Recreate failed");
+
+    expect(harness.releaseOnboardLockSpy).toHaveBeenCalled();
+    expect(harness.markStepFailedSpy).toHaveBeenCalledWith(
+      "sandbox",
+      "Rebuild recreate failed",
+      expect.objectContaining({ updateMachine: true }),
+    );
+    expect(harness.session).toMatchObject({
+      status: "failed",
+      failure: { step: "sandbox", message: "Rebuild recreate failed" },
+      machine: { state: "failed" },
+      steps: { sandbox: { status: "failed", error: "Rebuild recreate failed" } },
+    });
+    expect(harness.relockSpy).toHaveBeenCalledWith("alpha", expect.any(Object), false, "nemoclaw");
+    expect(process.env.NEMOCLAW_SANDBOX_NAME).toBe("alpha");
   });
 });

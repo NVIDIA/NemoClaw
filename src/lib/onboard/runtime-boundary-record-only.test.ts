@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   createSession,
@@ -115,6 +115,38 @@ describe("OnboardRuntimeBoundary record-only step/result pairing", () => {
     ]);
   });
 
+  it("applies validated step completion results directly without compatibility diagnostics", async () => {
+    const { boundary, events } = createRuntimeHarness();
+    const compatibilitySpy = vi
+      .spyOn(boundary, "recordStateResultWithStepCompatibility")
+      .mockRejectedValue(new Error("compatibility bridge should not be used"));
+
+    try {
+      await boundary.recordStateResult(advanceTo("preflight"));
+      const completed = await boundary.recordStepCompleteWithStateResult(
+        "preflight",
+        { sandboxName: "strict-path-sb" },
+        advanceTo("gateway", { metadata: { state: "preflight" } }),
+      );
+
+      expect(completed).toMatchObject({
+        sandboxName: "strict-path-sb",
+        machine: { state: "gateway", revision: 2 },
+        steps: { preflight: { status: "complete" } },
+      });
+      expect(compatibilitySpy).not.toHaveBeenCalled();
+      expect(events.map((event) => event.type)).toEqual([
+        "state.exited",
+        "state.entered",
+        "state.exited",
+        "state.entered",
+      ]);
+      expect(events.some((event) => event.type === "state.result.skipped")).toBe(false);
+    } finally {
+      compatibilitySpy.mockRestore();
+    }
+  });
+
   it("pairs record-only step failure with an explicit failure result", async () => {
     const { boundary, events } = createRuntimeHarness();
 
@@ -151,5 +183,44 @@ describe("OnboardRuntimeBoundary record-only step/result pairing", () => {
       machine: { state: "preflight", revision: 1 },
       steps: { preflight: { status: "pending" } },
     });
+  });
+
+  it("rejects stale state results when record-only steps did not advance the machine", async () => {
+    const { boundary, events } = createRuntimeHarness();
+
+    await boundary.recordStateResultWithStepCompatibility(
+      advanceTo("preflight", { metadata: { state: "init" } }),
+    );
+    await expect(
+      boundary.recordStateResultWithStepCompatibility(
+        advanceTo("preflight", { metadata: { state: "init" } }),
+      ),
+    ).rejects.toThrow("Record-only step result already reached target state: preflight");
+    await expect(
+      boundary.recordStateResultWithStepCompatibility(
+        advanceTo("gateway", { metadata: { state: "init" } }),
+      ),
+    ).rejects.toThrow("Record-only step result source mismatch: init != preflight");
+    await boundary.recordStateResultWithStepCompatibility(
+      advanceTo("gateway", { metadata: { state: "preflight" } }),
+    );
+
+    expect(events.map((event) => event.type)).toEqual([
+      "state.exited",
+      "state.entered",
+      "state.exited",
+      "state.entered",
+    ]);
+    expect(events[1]).toMatchObject({ state: "preflight" });
+    expect(events[3]).toMatchObject({ state: "gateway" });
+  });
+
+  it("rejects stale default results before compatibility replay", async () => {
+    const { boundary } = createRuntimeHarness();
+    const result = advanceTo("preflight", { metadata: { state: "missing" } });
+
+    await expect(boundary.recordStateResultWithStepCompatibility(result)).rejects.toThrow(
+      "Record-only step result source mismatch: missing != init",
+    );
   });
 });
