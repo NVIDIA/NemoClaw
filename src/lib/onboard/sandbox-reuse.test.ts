@@ -128,4 +128,70 @@ describe("applyReusedSandboxDashboardState", () => {
     });
     expect(result.hermesDashboardState).toBe(hermesDashboardState);
   });
+
+  it("skips dashboard forwarding while preserving reuse metadata for terminal agents", () => {
+    const updateSandbox = vi.fn();
+    const env: NodeJS.ProcessEnv = { CHAT_UI_URL: "https://chat.example.test:19000" };
+    const sandboxGpuConfig: SandboxGpuConfig = {
+      hostGpuDetected: false,
+      hostGpuPlatform: null,
+      sandboxGpuEnabled: false,
+      mode: "auto",
+      sandboxGpuDevice: null,
+      errors: [],
+    };
+    const ensureDashboardForward = vi.fn(() => {
+      throw new Error("dashboard forward should not be restored");
+    });
+    const hermesDashboardForwarding = {
+      resolveStateForPort: vi.fn(),
+      ensureForState: vi.fn(),
+    };
+    const updateReusedSandboxMetadata = vi.fn();
+
+    const result = applyReusedSandboxDashboardState({
+      sandboxName: "terminal-box",
+      chatUiUrl: "",
+      env,
+      agent: { name: "langchain-deepagents-code" } as any,
+      model: "test-model",
+      provider: "nvidia-prod",
+      selectionVerified: true,
+      sandboxGpuConfig,
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      manageDashboard: false,
+      ensureDashboardForward,
+      hermesDashboardForwarding,
+      updateSandbox,
+      updateReusedSandboxMetadata,
+    });
+
+    expect(ensureDashboardForward).not.toHaveBeenCalled();
+    expect(hermesDashboardForwarding.resolveStateForPort).not.toHaveBeenCalled();
+    expect(hermesDashboardForwarding.ensureForState).not.toHaveBeenCalled();
+    expect(env.CHAT_UI_URL).toBe("https://chat.example.test:19000");
+    expect(updateReusedSandboxMetadata).toHaveBeenCalledWith(
+      "terminal-box",
+      { name: "langchain-deepagents-code" },
+      "test-model",
+      "nvidia-prod",
+      0,
+      true,
+      sandboxGpuConfig,
+    );
+    expect(updateSandbox).toHaveBeenCalledWith("terminal-box", {
+      hermesDashboardEnabled: undefined,
+      hermesDashboardPort: undefined,
+      hermesDashboardInternalPort: undefined,
+      hermesDashboardTui: undefined,
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+    });
+    expect(result).toEqual({
+      chatUiUrl: "",
+      dashboardPort: 0,
+      hermesDashboardState: { enabled: false, config: null },
+    });
+  });
 });

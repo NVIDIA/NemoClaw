@@ -384,6 +384,25 @@ describe("handleAgentSetup guards", () => {
     expect(result).toEqual({ available: true });
     expect(script).toContain("NEMOCLAW_AGENT_BINARY_CHECK:ok");
   });
+
+  it("reports a configured binary path that exists but is not executable", () => {
+    let script = "";
+    const result = verifyAgentBinaryAvailable(
+      "alpha",
+      makeAgent({ name: "hermes", binary_path: "/usr/local/bin/hermes" }),
+      (args) => {
+        script = String(args[7] || "");
+        return "openshell noise\nNEMOCLAW_AGENT_BINARY_CHECK:not_executable";
+      },
+    );
+
+    expect(result).toEqual({
+      available: false,
+      reason: "not_executable",
+      binaryPath: "/usr/local/bin/hermes",
+    });
+    expect(script).toContain("[ -e '/usr/local/bin/hermes' ] && [ ! -x '/usr/local/bin/hermes' ]");
+  });
 });
 
 describe("collectHermesStartupDiagnostics", () => {

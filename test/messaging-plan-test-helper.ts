@@ -140,6 +140,13 @@ function legacyMessagingConfigEnv(env: Record<string, string>): Record<string, s
   const slackConfig = decodeJsonEnv<Record<string, unknown>>(env, "NEMOCLAW_SLACK_CONFIG_B64", {});
   assignCsv(next, "SLACK_ALLOWED_CHANNELS", slackConfig.allowedChannels);
 
+  const teamsConfig = decodeJsonEnv<Record<string, unknown>>(env, "NEMOCLAW_TEAMS_CONFIG_B64", {});
+  assignString(next, "MSTEAMS_APP_ID", teamsConfig.appId);
+  assignString(next, "MSTEAMS_TENANT_ID", teamsConfig.tenantId);
+  assignCsv(next, "TEAMS_ALLOWED_USERS", teamsConfig.allowedUsers);
+  assignString(next, "MSTEAMS_PORT", teamsConfig.webhookPort);
+  assignMentionMode(next, "TEAMS_REQUIRE_MENTION", teamsConfig.requireMention);
+
   return next;
 }
 
@@ -234,11 +241,13 @@ function credentialAvailability(): Record<string, boolean> {
     "wechatBotToken",
     "slackBotToken",
     "slackAppToken",
+    "teamsClientSecret",
     "TELEGRAM_BOT_TOKEN",
     "DISCORD_BOT_TOKEN",
     "WECHAT_BOT_TOKEN",
     "SLACK_BOT_TOKEN",
     "SLACK_APP_TOKEN",
+    "MSTEAMS_APP_PASSWORD",
   ];
   return Object.fromEntries(keys.map((key) => [key, true]));
 }

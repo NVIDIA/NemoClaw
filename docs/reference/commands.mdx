@@ -906,6 +906,7 @@ Do not log it, share it, or commit it to version control.
 
 `gateway-token` is not applicable to Hermes sandboxes.
 Hermes API access uses bearer-token authentication configured through the Hermes runtime, not the OpenClaw gateway token.
+For browser access to the dashboard, use `nemohermes my-assistant dashboard-url`; Hermes dashboard auth is read from the in-sandbox config (`/sandbox/.hermes/config.yaml`), not a gateway token.
 If you need the endpoint for an OpenAI-compatible client, use `nemohermes my-assistant status` and the API URL it reports.
 
 </AgentOnly>

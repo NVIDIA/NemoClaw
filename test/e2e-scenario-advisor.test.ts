@@ -83,6 +83,8 @@ describe("Vitest E2E scenario advisor — prompt construction", () => {
     expect(systemPrompt).toContain("trusted advisor checkout");
     expect(systemPrompt).toContain("recommend the `e2e-scenarios-all` fan-out");
     expect(systemPrompt).toContain("single NemoClaw E2E system");
+    expect(systemPrompt).toContain("onboard-resume-vitest");
+    expect(systemPrompt).toContain("onboard-repair-vitest");
     expect(systemPrompt).not.toContain("non-scenario E2E");
     expect(systemPrompt).not.toContain("e2e-scenarios-all.yaml");
     expect(systemPrompt).not.toContain("e2e-scenarios.yaml");

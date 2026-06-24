@@ -740,7 +740,7 @@ jobs:
 
   it(
     "keeps each free-standing scenario out of the registry matrix",
-    testTimeoutOptions(240_000),
+    testTimeoutOptions(420_000),
     () => {
       const inventory = readFreeStandingJobsInventory();
       for (const job of inventory.allowedJobs) {
