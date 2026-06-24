@@ -114,17 +114,34 @@ export class MessagingWorkflowPlanner {
     context: MessagingWorkflowPlannerSandboxRebuildContext,
   ): Promise<SandboxMessagingPlan | null> {
     const existingPlan = readSandboxEntryPlan(context);
-    if (existingPlan) {
-      return refreshRuntimeSetup(
-        setPlanDisabledChannels(
-          existingPlan,
-          disabledChannelsFromSandboxEntry(context.sandboxEntry, existingPlan),
-          "rebuild",
-        ),
-        this.registry,
-      );
+    if (!existingPlan) return null;
+
+    const filteredPlan = this.filterPlanChannelsToSupportedAllowlist(existingPlan, context);
+    if (!filteredPlan || filteredPlan.channels.length === 0) return null;
+
+    return refreshRuntimeSetup(
+      setPlanDisabledChannels(
+        filteredPlan,
+        disabledChannelsFromSandboxEntry(context.sandboxEntry, filteredPlan),
+        "rebuild",
+      ),
+      this.registry,
+    );
+  }
+
+  private filterPlanChannelsToSupportedAllowlist(
+    plan: SandboxMessagingPlan,
+    context: Pick<MessagingWorkflowPlannerBuildContext, "agent" | "supportedChannelIds">,
+  ): SandboxMessagingPlan | null {
+    if (!Array.isArray(context.supportedChannelIds)) return plan;
+    const allowlist = new Set(context.supportedChannelIds);
+    let filtered = plan;
+    for (const channel of plan.channels) {
+      if (!allowlist.has(channel.channelId)) {
+        filtered = removePlanChannel(filtered, channel.channelId, "rebuild");
+      }
     }
-    return null;
+    return filtered;
   }
 
   private assertSupportedChannels(
