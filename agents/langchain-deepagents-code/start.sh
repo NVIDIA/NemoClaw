@@ -51,6 +51,15 @@ write_proxy_export_pair() {
   write_export_if_set "$secondary"
 }
 
+load_messaging_env() {
+  local env_file="/sandbox/.deepagents/.env"
+  [ -r "$env_file" ] || return 0
+  set -a
+  # shellcheck disable=SC1090
+  . "$env_file"
+  set +a
+}
+
 prepare_runtime_env() {
   local target=/tmp/nemoclaw-proxy-env.sh
   local tmp
@@ -75,11 +84,22 @@ prepare_runtime_env() {
     write_export_if_set LANGSMITH_TRACING
     write_export_if_set LANGSMITH_PROJECT
     write_export_if_set DEEPAGENTS_CODE_LANGSMITH_PROJECT
+    write_export_if_set TELEGRAM_BOT_TOKEN
+    write_export_if_set TELEGRAM_ALLOWED_USERS
+    write_export_if_set DISCORD_BOT_TOKEN
+    write_export_if_set NEMOCLAW_DISCORD_GUILD_IDS
+    write_export_if_set DISCORD_ALLOWED_USERS
+    write_export_if_set DISCORD_ALLOW_ALL_USERS
+    write_export_if_set SLACK_BOT_TOKEN
+    write_export_if_set SLACK_APP_TOKEN
+    write_export_if_set SLACK_ALLOWED_USERS
+    write_export_if_set SLACK_ALLOWED_CHANNELS
   } >"$tmp"
   chmod 400 "$tmp"
   mv -f "$tmp" "$target"
 }
 
+load_messaging_env
 prepare_runtime_env
 
 if [ "$#" -eq 0 ]; then

@@ -83,6 +83,15 @@ Mock external messaging APIs. Do not call real Telegram, Discord, Slack, WeChat,
 User-facing behavior changes usually need docs under `docs/manage-sandboxes/messaging-channels.mdx` or `docs/reference/commands.mdx`.
 Update `.agents/skills/nemoclaw-user-guide/SKILL.md` only when AI-agent docs routing guidance changes.
 
+## DeepAgents Messaging Artifact Contract
+
+LangChain Deep Agents Code is a terminal-oriented harness. NemoClaw does not run a long-running messaging bridge inside the DeepAgents sandbox today; the integration is artifact-only.
+
+- **Build-time artifacts.** Channel manifests render two targets per DeepAgents-supported channel: an env-lines fragment to `~/.deepagents/.env` and a JSON fragment to `~/.deepagents/messaging.json`. The build applier writes both during `--phase post-agent-install` in the DeepAgents Dockerfile.
+- **Startup consumer.** `agents/langchain-deepagents-code/start.sh` sources `~/.deepagents/.env` before launching `dcode`, so messaging-related env vars (Telegram bot token, Discord guild ids, Slack app token, etc.) are present in the agent process environment.
+- **No inbound bridge.** The harness does not spawn channel bot processes. Inbound messages from Telegram, Discord, or Slack do not currently reach `dcode`. The Ready state reported after rebuild reflects the agent runtime, not channel reachability. A future change must add a bot/bridge process before claiming end-to-end channel functionality.
+- **Removal condition.** Drop this artifact-only contract once a DeepAgents-side messaging bridge (or upstream `dcode` feature) consumes `~/.deepagents/messaging.json` and routes messages to/from `dcode`. Until then, this section is the documented limit of the integration.
+
 ## Agent Gating and Stale Plan Cleanup
 
 - **Invalid state.** A sandbox can be configured with an agent whose manifest declares no messaging support (`messaging_platforms.supported: []`) or an agent name outside the messaging runtime allowlist. Without an explicit gate the channel-add path can still tear down the sandbox before failing at `dockerfile-patch.ts`, and a rebuild can carry a stale `NEMOCLAW_MESSAGING_PLAN_B64` into the Dockerfile patch step for an agent that does not declare the matching `ARG`. The current runtime allowlist is `openclaw`, `hermes`, and `langchain-deepagents-code` — see `MESSAGING_AGENT_IDS` in `utils.ts`.
