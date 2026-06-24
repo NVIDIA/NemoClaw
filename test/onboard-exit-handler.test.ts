@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
@@ -30,10 +31,10 @@ const restoreOriginalHome =
         process.env.HOME = originalHome;
       };
 
-function requireLoadedSession() {
-  const loaded = onboardSession.loadSession();
+function requireLoadedSession(sessionDeps = onboardSession) {
+  const loaded = sessionDeps.loadSession();
   expect(loaded).not.toBeNull();
-  return loaded ?? onboardSession.createSession();
+  return loaded ?? sessionDeps.createSession();
 }
 
 describe("onboard exit handler registration", () => {
@@ -91,5 +92,100 @@ describe("onboard exit handler registration", () => {
     expect(loaded.status).toBe("in_progress");
     expect(loaded.failure).toBeNull();
     expect(loaded.machine.state).toBe("init");
+  });
+
+  it("onboard() registers incomplete nonzero exit handling after bootstrap", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const scriptPath = path.join(tmpDir, "onboard-exit-registration.cjs");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const flowSlicesPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "onboard", "machine", "flow-slices.js"),
+    );
+    const sessionPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "state", "onboard-session.js"),
+    );
+
+    fs.writeFileSync(
+      scriptPath,
+      `
+const flowSlices = require(${flowSlicesPath});
+const onboardSession = require(${sessionPath});
+const sentinel = new Error("stop-after-exit-registration");
+const exitListeners = [];
+const originalOnce = process.once;
+const originalExit = process.exit;
+
+process.once = function once(event, listener) {
+  if (event === "exit") {
+    exitListeners.push(listener);
+    return process;
+  }
+  return originalOnce.call(process, event, listener);
+};
+process.exit = function exit(code) {
+  throw new Error("process.exit:" + String(code));
+};
+
+flowSlices.runInitialOnboardFlowSequence = async ({ runtime }) => {
+  await runtime.markStepStarted("preflight");
+  throw sentinel;
+};
+
+const { onboard } = require(${onboardPath});
+
+(async () => {
+  try {
+    await onboard({
+      nonInteractive: true,
+      autoYes: true,
+      acceptThirdPartySoftware: true,
+      noGpu: true,
+      sandboxName: "exit-seam",
+    });
+    throw new Error("expected sentinel");
+  } catch (error) {
+    if (error !== sentinel && error?.message !== sentinel.message) {
+      throw error;
+    }
+    const exitHandler = exitListeners.at(-1);
+    if (!exitHandler) throw new Error("missing exit handler");
+    exitHandler(1);
+    const loaded = onboardSession.loadSession();
+    console.log(JSON.stringify({ loaded, exitListeners: exitListeners.length }));
+  } finally {
+    process.once = originalOnce;
+    process.exit = originalExit;
+  }
+})().catch((error) => {
+  console.error(error && error.stack ? error.stack : String(error));
+  process.exitCode = 1;
+});
+`,
+    );
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        TMPDIR: tmpDir,
+        NEMOCLAW_TEST_NO_SLEEP: "1",
+      },
+      timeout: 60_000,
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    const lastLine = result.stdout.trim().split(/\n/).at(-1) ?? "";
+    const payload = JSON.parse(lastLine) as {
+      loaded: ReturnType<typeof onboardSession.createSession>;
+      exitListeners: number;
+    };
+    expect(payload.exitListeners).toBeGreaterThanOrEqual(2);
+    expect(payload.loaded.steps.preflight.status).toBe("failed");
+    expect(payload.loaded.status).toBe("failed");
+    expect(payload.loaded.failure?.step).toBe("preflight");
+    expect(payload.loaded.failure?.message).toBe("Onboarding exited before the step completed.");
+    expect(payload.loaded.machine.state).toBe("failed");
   });
 });
