@@ -184,21 +184,20 @@ describe("resolveCreateSandboxDashboardPort", () => {
     assert.equal(result.chatUiUrl, "http://remote.example.test:18790");
   });
 
-  it("preserves malformed CHAT_UI_URL failure when the env URL would be used", () => {
-    assert.throws(
-      () =>
-        resolveCreateSandboxDashboardPort({
-          sandboxName: "cursor",
-          controlUiPort: null,
-          chatUiUrlEnv: "https://example.test:abc",
-          persistedPort: 18791,
-          agentForwardPort: null,
-          defaultPort: 18789,
-          forwardListOutput: "",
-          findAvailablePort: (_sandboxName, preferredPort) => preferredPort,
-        }),
-      /Invalid URL/,
-    );
+  it("ignores malformed CHAT_UI_URL when rewriting the dashboard URL", () => {
+    const result = resolveCreateSandboxDashboardPort({
+      sandboxName: "cursor",
+      controlUiPort: null,
+      chatUiUrlEnv: "https://example.test:abc",
+      persistedPort: 18791,
+      agentForwardPort: null,
+      defaultPort: 18789,
+      forwardListOutput: "",
+      findAvailablePort: (_sandboxName, preferredPort) => preferredPort,
+    });
+
+    assert.equal(result.preferredPort, 18791);
+    assert.equal(result.chatUiUrl, "http://127.0.0.1:18791");
   });
 
   it("ignores malformed CHAT_UI_URL when --control-ui-port supplies the URL", () => {

@@ -420,6 +420,134 @@ describe("initial onboard flow phases", () => {
     expect(recorded).toEqual(["gateway", "provider_selection"]);
   });
 
+  it.each([
+    "inference",
+    "sandbox",
+    "openclaw",
+    "agent_setup",
+    "policies",
+    "finalizing",
+    "post_verify",
+  ] as const)("lets resume sessions at %s pass through initial compatibility", async (state) => {
+    const recorded: string[] = [];
+    const phases: readonly OnboardSequencePhase<Context>[] = [
+      {
+        state: "preflight",
+        run: (ctx) => ({ context: ctx, result: advanceTo("gateway") }),
+      },
+      {
+        state: "gateway",
+        run: (ctx) => ({ context: ctx, result: advanceTo("provider_selection") }),
+      },
+    ];
+
+    await runInitialOnboardFlowSlice({
+      context: context({ resume: true }),
+      runtime: runtime(
+        createSession({
+          machine: {
+            version: 1,
+            state,
+            stateEnteredAt: "2026-06-09T00:00:00.000Z",
+            revision: 7,
+          },
+        }),
+      ),
+      phases,
+      resume: true,
+      recordStateResult: async (stateResult) => {
+        recorded.push((stateResult as ReturnType<typeof advanceTo>).next);
+      },
+    });
+
+    expect(recorded).toEqual(["gateway", "provider_selection"]);
+  });
+
+  it.each([
+    "complete",
+    "failed",
+  ] as const)("rejects terminal %s sessions before initial compatibility side effects", async (state) => {
+    const phase: OnboardSequencePhase<Context> = {
+      state: "preflight",
+      run: vi.fn((ctx) => ({ context: ctx, result: advanceTo("gateway") })),
+    };
+
+    await expect(
+      runInitialOnboardFlowSlice({
+        context: context({ resume: true }),
+        runtime: runtime(
+          createSession({
+            machine: {
+              version: 1,
+              state,
+              stateEnteredAt: "2026-06-09T00:00:00.000Z",
+              revision: 7,
+            },
+          }),
+        ),
+        phases: [phase],
+        resume: true,
+        recordStateResult: async () => undefined,
+      }),
+    ).rejects.toThrow("Unexpected onboarding live flow state before slice entry");
+    expect(phase.run).not.toHaveBeenCalled();
+  });
+
+  it("uses the strict runner for fresh preflight sessions", async () => {
+    const order: string[] = [];
+    const applied: string[] = [];
+    const session = createSession({
+      machine: {
+        version: 1,
+        state: "preflight",
+        stateEnteredAt: "2026-06-09T00:00:00.000Z",
+        revision: 1,
+      },
+    });
+    const phases: readonly OnboardSequencePhase<Context>[] = [
+      {
+        state: "preflight",
+        run: (ctx) => {
+          order.push("preflight");
+          return { context: ctx, result: advanceTo("gateway") };
+        },
+      },
+      {
+        state: "gateway",
+        run: (ctx) => {
+          order.push("gateway");
+          return { context: ctx, result: advanceTo("provider_selection") };
+        },
+      },
+    ];
+
+    const result = await runInitialOnboardFlowSlice({
+      context: context(),
+      runtime: {
+        session: async () => session,
+        applyResult: async (stateResult) => {
+          const next = (stateResult as ReturnType<typeof advanceTo>).next;
+          applied.push(next);
+          session.machine = {
+            ...session.machine,
+            state: next,
+            revision: session.machine.revision + 1,
+          };
+          return session;
+        },
+      },
+      phases,
+      resume: false,
+      recordStateResult: async () => {
+        throw new Error("compatibility recorder should not run");
+      },
+    });
+
+    expect(order).toEqual(["preflight", "gateway"]);
+    expect(applied).toEqual(["gateway", "provider_selection"]);
+    expect(result.session.machine.state).toBe("provider_selection");
+  });
+
   it("uses the strict runner for fresh init sessions", async () => {
     const order: string[] = [];
     const session = createSession();

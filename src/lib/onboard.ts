@@ -16,7 +16,7 @@ const {
   setOnboardBrandingAgent,
 }: typeof import("./onboard/branding") = require("./onboard/branding");
 const {
-  createSelectOnboardAgent,
+  createOnboardAgentSelector,
 }: typeof import("./onboard/agent-selection") = require("./onboard/agent-selection");
 const {
   createInferenceSelectionValidationHelpers,
@@ -85,6 +85,7 @@ const {
   agentSupportsWebSearch,
 }: typeof import("./onboard/web-search-support") = require("./onboard/web-search-support");
 const onboardDashboard: typeof import("./onboard/dashboard") = require("./onboard/dashboard");
+const dashboardRuntime: typeof import("./onboard/dashboard-runtime") = require("./onboard/dashboard-runtime");
 const {
   buildGatewayBootstrapSecretsScript,
   createGatewayBootstrapRepairHelpers,
@@ -762,12 +763,7 @@ const { hydrateCredentialEnv }: typeof import("./onboard/credential-env") =
 
 const { summarizeCurlFailure, summarizeProbeFailure } = httpProbe;
 
-const selectOnboardAgent = createSelectOnboardAgent({
-  resolveAgent: agentOnboard.resolveAgent,
-  loadAgent: agentDefs.loadAgent,
-  isNonInteractive,
-  note,
-});
+const selectOnboardAgent = createOnboardAgentSelector({ isNonInteractive, note, prompt });
 
 const { getTransportRecoveryMessage } = validationRecovery;
 
@@ -2565,17 +2561,21 @@ async function createSandbox(
   enabledChannels = filterEnabledChannelsByAgent(enabledChannels, agent);
   const effectiveSandboxGpuConfig =
     sandboxGpuConfig ?? resolveSandboxGpuConfig(gpu, { flag: null, device: null });
-
-  let { effectivePort, chatUiUrl } = resolveCreateSandboxDashboardPort({
-    sandboxName,
-    controlUiPort,
-    chatUiUrlEnv: process.env.CHAT_UI_URL,
-    persistedPort: registry.getSandbox(sandboxName)?.dashboardPort ?? null,
-    agentForwardPort: agent?.forwardPort,
-    defaultPort: DASHBOARD_PORT,
-    forwardListOutput: runCaptureOpenshell(["forward", "list"], { ignoreError: true }),
-    warn: (message) => console.warn(message),
-  });
+  const manageDashboard = dashboardRuntime.shouldManageDashboardForAgent(agent);
+  let effectivePort = 0,
+    chatUiUrl = "";
+  if (manageDashboard) {
+    ({ effectivePort, chatUiUrl } = resolveCreateSandboxDashboardPort({
+      sandboxName,
+      controlUiPort,
+      chatUiUrlEnv: process.env.CHAT_UI_URL,
+      persistedPort: registry.getSandbox(sandboxName)?.dashboardPort ?? null,
+      agentForwardPort: dashboardRuntime.getAgentPrimaryForwardPort(agent, DASHBOARD_PORT),
+      defaultPort: DASHBOARD_PORT,
+      forwardListOutput: runCaptureOpenshell(["forward", "list"], { ignoreError: true }),
+      warn: (message) => console.warn(message),
+    }));
+  }
   const hermesDashboardForwarding = onboardHermesDashboard.createHermesDashboardOnboardForwarding({
     agentName: agent?.name,
     env: process.env,
@@ -2780,6 +2780,7 @@ async function createSandbox(
               sandboxGpuConfig: effectiveSandboxGpuConfig,
               gatewayName: GATEWAY_NAME,
               gatewayPort: GATEWAY_PORT,
+              manageDashboard,
               ensureDashboardForward,
               hermesDashboardForwarding,
               updateReusedSandboxMetadata,
@@ -2822,6 +2823,7 @@ async function createSandbox(
               sandboxGpuConfig: effectiveSandboxGpuConfig,
               gatewayName: GATEWAY_NAME,
               gatewayPort: GATEWAY_PORT,
+              manageDashboard,
               ensureDashboardForward,
               hermesDashboardForwarding,
               updateReusedSandboxMetadata,
@@ -2976,6 +2978,7 @@ async function createSandbox(
     getMessagingChannelForEnvKey,
     getHermesToolGatewayProviderName: (targetSandbox) =>
       getHermesToolGatewayBroker().getHermesToolGatewayProviderName(targetSandbox),
+    agentName: agent?.name,
   });
   if (initialSandboxPolicy.cleanup) {
     process.on("exit", initialSandboxPolicy.cleanup);
@@ -2992,10 +2995,9 @@ async function createSandbox(
   const plannedMessagingState =
     envMessagingState?.plan.sandboxName === sandboxName ? envMessagingState : undefined;
   const plannedMessagingPlan = plannedMessagingState?.plan;
-  const configuredMessagingChannels =
-    getChannelsFromPlan(plannedMessagingPlan) ?? activeMessagingChannels;
   sandboxBuildPatchConfig.prepareSandboxBuildPatchConfig({
-    configuredMessagingChannels,
+    configuredMessagingChannels:
+      getChannelsFromPlan(plannedMessagingPlan) ?? activeMessagingChannels,
   });
   const { buildId } = await sandboxDockerfilePatchFlow.prepareSandboxDockerfilePatch({
     agent,
@@ -3023,6 +3025,7 @@ async function createSandbox(
       extraPlaceholderKeys,
       getDashboardForwardPort,
       hermesDashboardState,
+      manageDashboard,
       openshellShellCommand,
     });
   const dockerGpuCreatePatch = dockerGpuSandboxCreate.createDockerGpuSandboxCreatePatch({
@@ -3140,18 +3143,15 @@ async function createSandbox(
     process.exit(1);
   }
 
-  // Wait for the branded dashboard to become fully ready (web server live)
-  // This prevents port forwards from connecting to a non-existent port
-  // or seeing 502/503 errors during initial load.
-  // Probes /health endpoint and accepts 200 or 401 (device auth) as "alive".
-  // Previously used `curl -sf` which failed on 401, causing false negatives. Fixes #2342.
-  console.log("  Waiting for NemoClaw dashboard to become ready...");
-  sandboxReadinessTracing.waitForDashboardReadyWithTrace({
-    sandboxName,
-    port: effectiveDashboardPort,
-    runCaptureOpenshell,
-    sleep: sleepSeconds,
-  });
+  if (manageDashboard) {
+    console.log("  Waiting for NemoClaw dashboard to become ready...");
+    sandboxReadinessTracing.waitForDashboardReadyWithTrace({
+      sandboxName,
+      port: effectiveDashboardPort,
+      runCaptureOpenshell,
+      sleep: sleepSeconds,
+    });
+  }
 
   if (effectiveSandboxGpuConfig.sandboxGpuEnabled) {
     // Runs the GPU proof, preserving Docker-GPU patch Error-phase diagnostics
@@ -3168,24 +3168,19 @@ async function createSandbox(
     });
   }
 
-  // Release any stale forward on the dashboard port before claiming it for the new sandbox.
-  // A previous onboard run may have left the port forwarded to a different sandbox,
-  // which would silently prevent the new sandbox's dashboard from being reachable.
-  // Auto-allocates the next free port if the preferred one is taken (Fixes #2174).
-  // Roll back the just-created openshell sandbox on unrecoverable allocation
-  // failure so the registry and `openshell sandbox list` don't drift (#2174).
-  const actualDashboardPort = ensureDashboardForward(sandboxName, chatUiUrl, {
-    rollbackSandboxOnFailure: true,
-  });
-  // Update chatUiUrl and CHAT_UI_URL env so printDashboard / getDashboardAccessInfo
-  // see the final port (they re-read process.env.CHAT_UI_URL independently).
-  if (actualDashboardPort !== Number(getDashboardForwardPort(chatUiUrl))) {
-    chatUiUrl = `http://127.0.0.1:${actualDashboardPort}`;
+  let actualDashboardPort = 0;
+  let finalHermesDashboardState = hermesDashboardState;
+  if (manageDashboard) {
+    actualDashboardPort = ensureDashboardForward(sandboxName, chatUiUrl, {
+      rollbackSandboxOnFailure: true,
+    });
+    if (actualDashboardPort !== Number(getDashboardForwardPort(chatUiUrl))) {
+      chatUiUrl = `http://127.0.0.1:${actualDashboardPort}`;
+    }
+    process.env.CHAT_UI_URL = chatUiUrl;
+    finalHermesDashboardState = hermesDashboardForwarding.resolveStateForPort(actualDashboardPort);
+    hermesDashboardForwarding.ensureForState(finalHermesDashboardState, sandboxName, true);
   }
-  process.env.CHAT_UI_URL = chatUiUrl;
-  const finalHermesDashboardState =
-    hermesDashboardForwarding.resolveStateForPort(actualDashboardPort);
-  hermesDashboardForwarding.ensureForState(finalHermesDashboardState, sandboxName, true);
 
   // Register only after confirmed ready — prevents phantom entries
   // openshell tags images with seconds; buildId is ms. Parse actual tag from output. Fixes #2672.
@@ -4691,6 +4686,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         env: process.env,
         stdinIsTty: Boolean(process.stdin && process.stdin.isTTY),
         stdoutIsTty: Boolean(process.stdout && process.stdout.isTTY),
+        persistedSessionStatus: onboardSession.loadSession()?.status ?? null,
       },
       {
         isNonInteractive,
@@ -5251,7 +5247,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         getChatUiUrl: () => process.env.CHAT_UI_URL || `http://127.0.0.1:${DASHBOARD_PORT}`,
         buildVerifyChain: (chatUiUrl) =>
           // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-          buildChain({ chatUiUrl, isWsl: isWsl(), wslHostAddress: getWslHostAddress(), dashboardHealthEndpoint: agent?.dashboard.healthPath, gatewayPort: agent?.healthProbe.port, gatewayHealthEndpoint: agent?.healthProbe.url }),
+          buildChain({ chatUiUrl, isWsl: isWsl(), wslHostAddress: getWslHostAddress(), dashboardHealthEndpoint: agent?.dashboard.healthPath, gatewayPort: agent?.healthProbe?.port, gatewayHealthEndpoint: agent?.healthProbe?.url }),
         verifyDeployment: async (name, chain) => {
           const verifyDeploymentModule: typeof import("./verify-deployment") =
             require("./verify-deployment");

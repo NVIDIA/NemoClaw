@@ -80,4 +80,5 @@ Mock external messaging APIs. Do not call real Telegram, Discord, Slack, WeChat,
 
 ## Documentation
 
-User-facing behavior changes usually need docs under `docs/manage-sandboxes/messaging-channels.mdx` or `docs/reference/commands.mdx`. Do not edit generated user skills under `.agents/skills/nemoclaw-user-*/` for normal docs changes.
+User-facing behavior changes usually need docs under `docs/manage-sandboxes/messaging-channels.mdx` or `docs/reference/commands.mdx`.
+Update `.agents/skills/nemoclaw-user-guide/SKILL.md` only when AI-agent docs routing guidance changes.

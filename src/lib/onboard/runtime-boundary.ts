@@ -56,8 +56,6 @@ export class OnboardRuntimeBoundary {
       recordStateResult: this.recordStateResult.bind(this),
       recordStepCompleteWithStateResult: this.recordStepCompleteWithStateResult.bind(this),
       recordStepFailedWithStateResult: this.recordStepFailedWithStateResult.bind(this),
-      recordStateResultWithStepCompatibility:
-        this.recordStateResultWithStepCompatibility.bind(this),
       recordStepFailed: this.recordStepFailed.bind(this),
       recordPostVerifyStarted: this.recordPostVerifyStarted.bind(this),
       recordSessionComplete: this.recordSessionComplete.bind(this),
@@ -197,14 +195,6 @@ export class OnboardRuntimeBoundary {
     }
 
     return runtime.applyResult(result);
-  }
-
-  async recordStateResultsWithStepCompatibility(results: OnboardStateResult[]): Promise<Session> {
-    let session = await this.getRuntime().session();
-    for (const result of results) {
-      session = await this.recordStateResultWithStepCompatibility(result);
-    }
-    return session;
   }
 
   async recordResumeConflict(conflict: ResumeConfigConflict): Promise<Session> {

@@ -39,7 +39,8 @@ describe("agent definitions", () => {
 
     expect(openclaw.name).toBe("openclaw");
     expect(openclaw.displayName).toBe("OpenClaw");
-    expect(openclaw.healthProbe.port).toBe(18789);
+    expect(openclaw.runtime).toEqual({ kind: "gateway" });
+    expect(openclaw.healthProbe?.port).toBe(18789);
     expect(openclaw.forwardPort).toBe(18789);
     expect(openclaw.configPaths).toEqual({
       dir: "/sandbox/.openclaw",
@@ -66,6 +67,7 @@ describe("agent definitions", () => {
 
     expect(hermes.name).toBe("hermes");
     expect(hermes.displayName).toBe("Hermes Agent");
+    expect(hermes.runtime).toEqual({ kind: "gateway" });
     expect(hermes.hasDevicePairing).toBe(false);
     expect(hermes.configPaths).toEqual({
       dir: "/sandbox/.hermes",
@@ -74,7 +76,7 @@ describe("agent definitions", () => {
       format: "yaml",
     });
     expect(hermes.inferenceProviderOptions).toEqual(["hermesProvider"]);
-    expect(hermes.healthProbe.url).toBe("http://localhost:8642/health");
+    expect(hermes.healthProbe?.url).toBe("http://localhost:8642/health");
     expect(hermes.forwardPort).toBe(18789);
     expect(hermes.forward_ports).toEqual([18789, 8642]);
     expect(hermes.dashboard).toEqual({
@@ -92,6 +94,40 @@ describe("agent definitions", () => {
       "wechat",
       "whatsapp",
     ]);
+  });
+
+  it("loads the LangChain Deep Agents Code terminal acceptance contract", () => {
+    const deepAgentsCode = loadAgent("langchain-deepagents-code");
+
+    expect(deepAgentsCode.name).toBe("langchain-deepagents-code");
+    expect(deepAgentsCode.displayName).toBe("LangChain Deep Agents Code");
+    expect(deepAgentsCode.runtime).toEqual({
+      kind: "terminal",
+      interactive_command: "dcode",
+      headless_command: "dcode -n",
+      smoke_commands: [
+        "dcode --version",
+        "test -s /sandbox/.deepagents/config.toml && echo NEMOCLAW_DEEPAGENTS_CONFIG_OK",
+      ],
+    });
+    expect(deepAgentsCode.binary_path).toBe("/usr/local/bin/dcode");
+    expect(deepAgentsCode.versionCommand).toBe("dcode --version");
+    expect(deepAgentsCode.expectedVersion).toBe("0.1.12");
+    expect(deepAgentsCode.healthProbe).toBeNull();
+    expect(deepAgentsCode.forwardPort).toBe(0);
+    expect(deepAgentsCode.configPaths).toEqual({
+      dir: "/sandbox/.deepagents",
+      configFile: "config.toml",
+      envFile: ".env",
+      format: "toml",
+    });
+    expect(deepAgentsCode.inference?.provider_type).toBe("openai_compatible");
+    expect(deepAgentsCode.stateDirs).toEqual([".state", "skills"]);
+    expect(deepAgentsCode.stateFiles).toEqual([
+      { path: "config.toml", strategy: "copy" },
+      { path: "hooks.json", strategy: "copy" },
+    ]);
+    expect(deepAgentsCode.stateFiles.map((entry) => entry.path)).not.toContain(".env");
   });
 
   it("orders OpenClaw first in interactive choices", () => {
@@ -231,5 +267,78 @@ describe("agent definitions", () => {
     );
 
     expect(() => loadAgent(agentName)).toThrow(/inference\.provider_type/);
+  });
+
+  it("loads terminal runtime manifests without OpenClaw gateway defaults", () => {
+    const agentName = `terminal-agent-${String(Date.now())}`;
+    writeTempAgentManifest(
+      agentName,
+      [
+        `name: ${agentName}`,
+        "display_name: Terminal Agent",
+        "binary_path: /usr/local/bin/terminal-agent",
+        "version_command: terminal-agent --version",
+        "runtime:",
+        "  kind: terminal",
+        "  interactive_command: terminal-agent",
+        "  headless_command: terminal-agent -n",
+        "  smoke_commands:",
+        "    - terminal-agent --version",
+      ].join("\n"),
+    );
+
+    const agent = loadAgent(agentName);
+
+    expect(agent.runtime).toEqual({
+      kind: "terminal",
+      interactive_command: "terminal-agent",
+      headless_command: "terminal-agent -n",
+      smoke_commands: ["terminal-agent --version"],
+    });
+    expect(agent.healthProbe).toBeNull();
+    expect(agent.forwardPort).toBe(0);
+  });
+
+  it("rejects invalid runtime kinds in manifests", () => {
+    const agentName = `invalid-runtime-kind-${String(Date.now())}`;
+    writeTempAgentManifest(
+      agentName,
+      [`name: ${agentName}`, "display_name: Broken Runtime", "runtime:", "  kind: daemon"].join(
+        "\n",
+      ),
+    );
+
+    expect(() => loadAgent(agentName)).toThrow(/runtime\.kind/);
+  });
+
+  it("requires terminal manifests to declare a launch command", () => {
+    const agentName = `invalid-terminal-runtime-${String(Date.now())}`;
+    writeTempAgentManifest(
+      agentName,
+      [`name: ${agentName}`, "display_name: Broken Terminal", "runtime:", "  kind: terminal"].join(
+        "\n",
+      ),
+    );
+
+    expect(() => loadAgent(agentName)).toThrow(/interactive_command or headless_command/);
+  });
+
+  it("rejects invalid terminal smoke command values in manifests", () => {
+    const agentName = `invalid-terminal-smoke-${String(Date.now())}`;
+    writeTempAgentManifest(
+      agentName,
+      [
+        `name: ${agentName}`,
+        "display_name: Broken Terminal Smoke",
+        "runtime:",
+        "  kind: terminal",
+        "  interactive_command: broken-terminal",
+        "  smoke_commands:",
+        "    - broken-terminal --version",
+        "    - 42",
+      ].join("\n"),
+    );
+
+    expect(() => loadAgent(agentName)).toThrow(/runtime\.smoke_commands/);
   });
 });
