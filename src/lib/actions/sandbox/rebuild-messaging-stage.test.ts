@@ -35,7 +35,7 @@ describe("stageMessagingManifestPlanForRebuild non-messaging agent guard (#5729)
     vi.restoreAllMocks();
   });
 
-  it("returns null and logs the skip message for langchain-deepagents-code without staging any plan", async () => {
+  it("emits the unknown-runtime skip message for langchain-deepagents-code without staging any plan", async () => {
     const loadAgentSpy = vi.spyOn(defs, "loadAgent").mockReturnValue({
       name: "langchain-deepagents-code",
       messagingPlatforms: [],
@@ -52,13 +52,16 @@ describe("stageMessagingManifestPlanForRebuild non-messaging agent guard (#5729)
 
     expect(loadAgentSpy).toHaveBeenCalledWith("langchain-deepagents-code");
     expect(clearPlanEnvSpy).toHaveBeenCalledTimes(1);
-    expect(messages).toEqual(
-      expect.arrayContaining([expect.stringMatching(/does not support messaging/)]),
+    expect(messages).toContain(
+      "Messaging manifest rebuild plan skipped: agent 'langchain-deepagents-code' is not a messaging-capable runtime",
+    );
+    expect(messages.some((msg) => msg.includes("declares no supported messaging channels"))).toBe(
+      false,
     );
     expect(result).toBeNull();
   });
 
-  it("skips planner output for any agent whose name is not openclaw or hermes", async () => {
+  it("emits the unknown-runtime skip message for any agent whose name is not openclaw or hermes", async () => {
     vi.spyOn(defs, "loadAgent").mockReturnValue({
       name: "future-non-messaging-agent",
       messagingPlatforms: [],
@@ -74,10 +77,13 @@ describe("stageMessagingManifestPlanForRebuild non-messaging agent guard (#5729)
     );
 
     expect(clearPlanEnvSpy).toHaveBeenCalledTimes(1);
+    expect(messages).toContain(
+      "Messaging manifest rebuild plan skipped: agent 'future-non-messaging-agent' is not a messaging-capable runtime",
+    );
     expect(result).toBeNull();
   });
 
-  it("skips planner output for a known agent whose messagingPlatforms is an explicit empty allowlist, even with a stored plan", async () => {
+  it("emits the empty-allowlist skip message for a known agent whose messagingPlatforms is an explicit empty allowlist", async () => {
     vi.spyOn(defs, "loadAgent").mockReturnValue({
       name: "openclaw",
       messagingPlatforms: [],
@@ -128,6 +134,10 @@ describe("stageMessagingManifestPlanForRebuild non-messaging agent guard (#5729)
 
     expect(clearPlanEnvSpy).toHaveBeenCalledTimes(1);
     expect(writePlanEnvSpy).not.toHaveBeenCalled();
+    expect(messages).toContain(
+      "Messaging manifest rebuild plan skipped: agent 'openclaw' declares no supported messaging channels",
+    );
+    expect(messages.some((msg) => msg.includes("is not a messaging-capable runtime"))).toBe(false);
     expect(result).toBeNull();
   });
 });

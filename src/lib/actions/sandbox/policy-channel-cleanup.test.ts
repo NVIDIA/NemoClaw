@@ -17,10 +17,9 @@ const D = (p: string) => requireDist(`../../../../dist/lib/${p}`);
 const registry = D("state/registry.js");
 const defs = D("agent/defs.js");
 
-const {
-  persistManifestChannelDisabledPlan,
-  persistManifestChannelRemovePlan,
-} = D("actions/sandbox/policy-channel.js") as {
+const { persistManifestChannelDisabledPlan, persistManifestChannelRemovePlan } = D(
+  "actions/sandbox/policy-channel.js",
+) as {
   persistManifestChannelDisabledPlan: (
     sandboxName: string,
     channelId: string,

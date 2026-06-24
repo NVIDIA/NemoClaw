@@ -233,10 +233,17 @@ export async function stageMessagingManifestPlanForRebuild(
 ): Promise<SandboxMessagingPlan | null> {
   const agent = loadAgent(rebuildAgent || "openclaw");
   const agentId = tryGetMessagingAgentId(agent);
-  if (agentId === null || !isMessagingSupportedAgent(agent)) {
+  if (agentId === null) {
     MessagingSetupApplier.clearPlanEnv();
     log(
-      `Messaging manifest rebuild plan skipped: agent '${agent.name}' does not support messaging`,
+      `Messaging manifest rebuild plan skipped: agent '${agent.name}' is not a messaging-capable runtime`,
+    );
+    return null;
+  }
+  if (!isMessagingSupportedAgent(agent)) {
+    MessagingSetupApplier.clearPlanEnv();
+    log(
+      `Messaging manifest rebuild plan skipped: agent '${agent.name}' declares no supported messaging channels`,
     );
     return null;
   }
