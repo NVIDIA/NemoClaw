@@ -11,6 +11,17 @@
     ]
   },
   {
+    "id": "nemoclaw-user-guide-mcp-server-001",
+    "question": "Configure my coding assistant to search the NemoClaw docs through MCP before answering setup questions.",
+    "expected_skill": "nemoclaw-user-guide",
+    "ground_truth": "A NemoClaw-specific answer that uses the user guide skill to configure the docs MCP server at `https://docs.nvidia.com/nemoclaw/_mcp/server`, mentions the read-only `searchDocs` docs search tool, and gives client-specific setup guidance such as the Claude Code command or Cursor MCP server configuration.",
+    "expected_behavior": [
+      "Uses `nemoclaw-user-guide`.",
+      "Includes `https://docs.nvidia.com/nemoclaw/_mcp/server`.",
+      "Mentions MCP docs search before falling back to Markdown docs."
+    ]
+  },
+  {
     "id": "nemoclaw-user-guide-hermes-variant-001",
     "question": "Use the Hermes version of the NemoClaw docs and walk me through the first sandbox setup.",
     "expected_skill": "nemoclaw-user-guide",

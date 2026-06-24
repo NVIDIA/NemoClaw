@@ -3,46 +3,44 @@
 # SPDX-License-Identifier: Apache-2.0
 title: "Use NemoClaw Docs with Your AI Coding Assistant"
 sidebar-title: "AI Agent Docs"
-description: "NemoClaw exposes Markdown documentation that AI coding assistants can fetch directly when they help you install, configure, or operate a sandbox."
-description-agent: "Guides users and their AI coding assistants to the canonical NemoClaw Markdown documentation, llms.txt index, and optional docs-routing skill. Use when users ask about AI agent support, Markdown docs, agent skills, Cursor, Claude Code, Codex, or Copilot."
-keywords: ["nemoclaw ai agent docs", "nemoclaw markdown docs", "llms.txt", "cursor", "claude code", "copilot"]
+description: "NemoClaw exposes an MCP docs server and Markdown documentation that AI coding agents can use when they help you install, configure, or operate a sandbox."
+description-agent: "Guides users and their AI coding agents to the NemoClaw docs MCP server, canonical Markdown documentation, llms.txt index, and optional docs-routing skill. Use when users ask about AI agent support, Markdown docs, MCP docs server, agent skills, Cursor, Claude Code, Codex, or Copilot."
+keywords: ["nemoclaw ai agent docs", "nemoclaw mcp docs", "nemoclaw markdown docs", "llms.txt", "cursor", "claude code", "copilot"]
 content:
   type: "how_to"
 ---
-NemoClaw publishes clean Markdown versions of its Fern documentation for AI coding assistants.
-Your assistant can fetch the same canonical pages that appear on the docs site, then apply that guidance to your local setup.
+import { StarterPromptButton } from "../_components/StarterPromptButton";
 
-Use this page when you want your assistant to help with installation, inference configuration, network policy management, monitoring, deployment, security, workspace management, or command reference lookup.
+NemoClaw publishes an MCP docs server and clean Markdown versions of its Fern documentation for AI coding agents.
+Your agent can search or fetch the same canonical pages that appear on the docs site, then apply that guidance to your local setup.
 
-<Note>
-NemoClaw no longer generates a separate user skill for every documentation section.
-The documentation is the source of truth, and AI agents should fetch the Markdown docs directly.
-</Note>
+Use this page when you want your agent to help with installation, inference configuration, network policy management, monitoring, deployment, security, workspace management, or command reference lookup.
 
-## Give Your Assistant the Starter Prompt
+## Give Your Agent the Starter Prompt
 
-The fastest path is to copy the starter prompt from the NemoClaw home page and paste it into your local coding assistant.
-The prompt tells the assistant to use the Markdown docs, ask one question at a time, run commands only with permission, and handle credentials safely.
+The fastest path is to copy the starter prompt from the NemoClaw home page and paste it into your local coding agent.
+The prompt tells the agent to use the Markdown docs, ask one question at a time, run commands only with permission, and handle credentials safely.
 
-Open the [NemoClaw home page](../home) and click **Copy Starter Prompt**.
+<StarterPromptButton />
 
-## Markdown Documentation Entry Points
+## Configure the Docs MCP Server
 
-Give your assistant these URLs when it needs source material:
+If your coding agent supports MCP, configure the NemoClaw docs server before you ask installation or troubleshooting questions.
+The server URL is `https://docs.nvidia.com/nemoclaw/_mcp/server`.
+It exposes a read-only `searchDocs` tool that searches the NemoClaw documentation and returns source URLs.
 
-- Documentation index for AI clients: `https://docs.nvidia.com/nemoclaw/llms.txt`.
-- OpenClaw home: `https://docs.nvidia.com/nemoclaw/latest/user-guide/openclaw/home.md`.
-- OpenClaw prerequisites: `https://docs.nvidia.com/nemoclaw/latest/user-guide/openclaw/get-started/prerequisites.md`.
-- OpenClaw quickstart: `https://docs.nvidia.com/nemoclaw/latest/user-guide/openclaw/get-started/quickstart.md`.
-- Hermes home: `https://docs.nvidia.com/nemoclaw/latest/user-guide/hermes/home.md`.
-- Hermes prerequisites: `https://docs.nvidia.com/nemoclaw/latest/user-guide/hermes/get-started/prerequisites.md`.
-- Hermes quickstart: `https://docs.nvidia.com/nemoclaw/latest/user-guide/hermes/get-started/quickstart.md`.
+For Claude Code, run:
 
-If your assistant finds a rendered HTML documentation page, tell it to use the same URL with `.md` appended or replacing `.html`.
+```bash
+claude mcp add --transport http fern-docs https://docs.nvidia.com/nemoclaw/_mcp/server
+```
+
+For Cursor, add `https://docs.nvidia.com/nemoclaw/_mcp/server` to your MCP server configuration.
+For other MCP clients, configure a streamable HTTP MCP server at that URL.
 
 ## Optional Docs-Routing Skill
 
-If your coding assistant supports local project skills, you can fetch the single user skill that encodes the same routing rules.
+If your coding agent supports local project skills, you can fetch the single user skill that encodes the same routing rules.
 This skill is small because it points back to the Markdown docs instead of copying the docs into the repository.
 
 Fetch only the docs-routing skill and root instructions without downloading the full source tree:
@@ -56,14 +54,3 @@ git checkout
 
 Open the `NemoClaw` directory in your AI coding assistant.
 The assistant discovers `nemoclaw-user-guide` and uses it to fetch the relevant Markdown documentation.
-
-## What to Ask
-
-Ask your assistant a NemoClaw question in natural language.
-For example:
-
-- "Help me install NemoClaw with OpenClaw on macOS."
-- "Use the NemoClaw Markdown docs and switch my sandbox to Ollama."
-- "A network request was blocked. Help me approve it safely."
-- "Show me how to inspect sandbox logs and troubleshoot startup."
-- "Use the Hermes docs variant and help me add a messaging channel."

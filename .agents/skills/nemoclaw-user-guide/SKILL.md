@@ -1,6 +1,6 @@
 ---
 name: "nemoclaw-user-guide"
-description: "Guides human users' AI agents to the canonical NemoClaw Fern documentation in Markdown form. Use when users ask how to install, configure, operate, troubleshoot, secure, or learn NemoClaw with an AI coding assistant. Trigger keywords - nemoclaw docs, use nemoclaw with ai agent, nemoclaw install help, nemoclaw quickstart, nemoclaw markdown docs, llms.txt, agent skills."
+description: "Guides human users' AI agents to the NemoClaw docs MCP server and canonical Fern documentation in Markdown form. Use when users ask how to install, configure, operate, troubleshoot, secure, or learn NemoClaw with an AI coding assistant. Trigger keywords - nemoclaw docs, use nemoclaw with ai agent, nemoclaw mcp docs, nemoclaw install help, nemoclaw quickstart, nemoclaw markdown docs, llms.txt, agent skills."
 license: "Apache-2.0"
 ---
 
@@ -11,10 +11,23 @@ Do not answer from stale copied docs or generated skill references when the live
 
 ## Retrieval Order
 
-1. Fetch the AI documentation index first: `https://docs.nvidia.com/nemoclaw/llms.txt`.
-2. Fetch the specific `.md` page listed in the index for the user's task.
-3. If you only find an HTML documentation URL, replace the `.html` suffix with `.md`, or append `.md` to the route when the URL has no suffix.
-4. Prefer the user's selected agent variant, either OpenClaw or Hermes, and do not mix variant-specific instructions unless you explain why.
+1. If the assistant supports MCP, configure the NemoClaw docs MCP server at `https://docs.nvidia.com/nemoclaw/_mcp/server`.
+2. Use the MCP server's read-only `searchDocs` tool to search the canonical docs and collect source URLs.
+3. If MCP is not available, fetch the AI documentation index first: `https://docs.nvidia.com/nemoclaw/llms.txt`.
+4. Fetch the specific `.md` page listed in the index or returned by docs search for the user's task.
+5. If you only find an HTML documentation URL, replace the `.html` suffix with `.md`, or append `.md` to the route when the URL has no suffix.
+6. Prefer the user's selected agent variant, either OpenClaw or Hermes, and do not mix variant-specific instructions unless you explain why.
+
+## Configure the MCP Server
+
+For Claude Code, run:
+
+```bash
+claude mcp add --transport http fern-docs https://docs.nvidia.com/nemoclaw/_mcp/server
+```
+
+For Cursor, add `https://docs.nvidia.com/nemoclaw/_mcp/server` to the MCP server configuration.
+For other MCP clients, configure a streamable HTTP MCP server at that URL.
 
 ## Starting Pages
 
