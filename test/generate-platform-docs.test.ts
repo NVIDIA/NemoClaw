@@ -131,13 +131,19 @@ for raw in cases:
     expect(lines.every((line) => line.startsWith("REJECTED:"))).toBe(true);
   });
 
-  it("accepts a real engineering owner alias", () => {
+  it("accepts a real engineering owner alias with a complete project_status block", () => {
     const output = runPython(`
 ${loadGeneratorAs("g")}
 
 matrix = {
   "statuses": {"tested": "Validated."},
   "owners": {"engineering": "@NVIDIA/nemoclaw-maintainer"},
+  "project_status": {
+    "stage": "alpha",
+    "label": "Early preview",
+    "since": "2026-03-16",
+    "notes": "Maintainer-run, best-effort responses."
+  },
   "platforms": [], "providers": [], "agents": [], "integrations": [],
   "deployment_paths": [], "capabilities": [], "out_of_scope": []
 }
@@ -145,6 +151,29 @@ module._validate_matrix(matrix)
 print("OK")
 `);
     expect(output.trim()).toBe("OK");
+  });
+
+  it("rejects an incomplete project_status block (matches the validator's failure mode)", () => {
+    const output = runPython(`
+${loadGeneratorAs("g")}
+
+matrix = {
+  "statuses": {"tested": "Validated."},
+  "owners": {"engineering": "@NVIDIA/nemoclaw-maintainer"},
+  "project_status": {"stage": "alpha", "label": "Early preview"},
+  "platforms": [], "providers": [], "agents": [], "integrations": [],
+  "deployment_paths": [], "capabilities": [], "out_of_scope": []
+}
+try:
+    module._validate_matrix(matrix)
+    print("NO_ERROR")
+except ValueError as exc:
+    print(str(exc))
+`);
+    expect(output).toContain("project_status missing required keys");
+    expect(output).toContain("since");
+    expect(output).toContain("notes");
+    expect(output).not.toContain("NO_ERROR");
   });
 
   // PRA-4 on #5345: the partial provider table renders the canonical label
@@ -343,4 +372,39 @@ print(block)
     }
   });
 
+  // PRA-5 on #5712: a sync hook that runs the generator but doesn't stage the
+  // canonical doc would leave the page silently behind the matrix. Pin every
+  // path the generator emits against the hook's git-add list so a future
+  // table sentinel cannot land without the hook also covering it.
+  it("pre-commit platform-matrix-sync hook stages every doc the generator can emit", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const hookConfig = readFileSync(path.join(repoRoot, ".pre-commit-config.yaml"), "utf-8");
+    const hookSection = hookConfig.match(/id: platform-matrix-sync[\s\S]*?priority: \d+/)?.[0];
+    expect(hookSection, ".pre-commit-config.yaml is missing the platform-matrix-sync hook").toBeDefined();
+
+    const generatorSource = readFileSync(
+      path.join(repoRoot, "scripts", "generate-platform-docs.py"),
+      "utf-8",
+    );
+    const emittedTargets = new Set<string>();
+    for (const match of generatorSource.matchAll(/REPO_ROOT \/ "([^"]+)" \/ "([^"]+)"(?: \/ "([^"]+)")?/g)) {
+      const segments = [match[1], match[2], match[3]].filter(Boolean);
+      // Only assert on emitted output paths under docs/. The matrix path
+      // under ci/ is the source, and the script invocation in the hook
+      // entry is what represents it; the git-add list is for outputs only.
+      if (segments[0] !== "docs") continue;
+      emittedTargets.add(segments.join("/"));
+    }
+    expect(
+      emittedTargets.size,
+      "generator should declare at least one docs/ target file via REPO_ROOT path joins",
+    ).toBeGreaterThan(0);
+
+    for (const target of emittedTargets) {
+      expect(
+        hookSection?.includes(target),
+        `.pre-commit-config.yaml platform-matrix-sync hook does not stage ${target} even though the generator emits it`,
+      ).toBe(true);
+    }
+  });
 });
