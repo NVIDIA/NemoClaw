@@ -19,7 +19,7 @@ const D = (p: string) => requireDist(`../../../../dist/lib/${p}`);
 
 const defs = D("agent/defs.js");
 const messaging = D("messaging/index.js") as {
-  MessagingSetupApplier: { clearPlanEnv: () => void };
+  MessagingSetupApplier: { clearPlanEnv: () => void; writePlanToEnv: (plan: unknown) => void };
 };
 const { stageMessagingManifestPlanForRebuild } = D("actions/sandbox/rebuild.js") as {
   stageMessagingManifestPlanForRebuild: (
@@ -74,6 +74,60 @@ describe("stageMessagingManifestPlanForRebuild non-messaging agent guard (#5729)
     );
 
     expect(clearPlanEnvSpy).toHaveBeenCalledTimes(1);
+    expect(result).toBeNull();
+  });
+
+  it("skips planner output for a known agent whose messagingPlatforms is an explicit empty allowlist, even with a stored plan", async () => {
+    vi.spyOn(defs, "loadAgent").mockReturnValue({
+      name: "openclaw",
+      messagingPlatforms: [],
+    });
+    const clearPlanEnvSpy = vi.spyOn(messaging.MessagingSetupApplier, "clearPlanEnv");
+    const writePlanEnvSpy = vi.spyOn(messaging.MessagingSetupApplier, "writePlanToEnv");
+
+    const sandboxEntryWithStoredPlan = {
+      name: "openclaw-sandbox",
+      messaging: {
+        schemaVersion: 1,
+        plan: {
+          schemaVersion: 1,
+          sandboxName: "openclaw-sandbox",
+          agent: "openclaw",
+          workflow: "rebuild",
+          channels: [
+            {
+              channelId: "telegram",
+              displayName: "telegram",
+              authMode: "token-paste",
+              active: true,
+              selected: true,
+              configured: true,
+              disabled: false,
+              inputs: [],
+              hooks: [],
+            },
+          ],
+          disabledChannels: [],
+          credentialBindings: [],
+          networkPolicy: { presets: [], entries: [] },
+          agentRender: [],
+          buildSteps: [],
+          stateUpdates: [],
+          healthChecks: [],
+        },
+      },
+    };
+
+    const messages: string[] = [];
+    const result = await stageMessagingManifestPlanForRebuild(
+      "openclaw-sandbox",
+      sandboxEntryWithStoredPlan,
+      "openclaw",
+      (msg) => messages.push(msg),
+    );
+
+    expect(clearPlanEnvSpy).toHaveBeenCalledTimes(1);
+    expect(writePlanEnvSpy).not.toHaveBeenCalled();
     expect(result).toBeNull();
   });
 });

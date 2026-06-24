@@ -48,6 +48,7 @@ import type {
 } from "../../messaging";
 import {
   createBuiltInChannelManifestRegistry,
+  isMessagingSupportedAgent,
   MessagingSetupApplier,
   MessagingWorkflowPlanner,
   tryGetMessagingAgentId,
@@ -232,7 +233,7 @@ export async function stageMessagingManifestPlanForRebuild(
 ): Promise<SandboxMessagingPlan | null> {
   const agent = loadAgent(rebuildAgent || "openclaw");
   const agentId = tryGetMessagingAgentId(agent);
-  if (agentId === null) {
+  if (agentId === null || !isMessagingSupportedAgent(agent)) {
     MessagingSetupApplier.clearPlanEnv();
     log(
       `Messaging manifest rebuild plan skipped: agent '${agent.name}' does not support messaging`,
