@@ -159,23 +159,31 @@ def _is_placeholder_owner(value: str) -> bool:
 def _escape_cell(value) -> str:
     """Escape Markdown table cells for safe MDX rendering.
 
-    `|` breaks the column count; literal newlines break the row layout (an
-    embedded newline turns one row into two malformed rows). `<` and `>` are
-    HTML control characters in MDX, so a future matrix edit that contains
-    `<script>` or even a benign `<...>` snippet would be interpreted as JSX,
-    not literal text. `{` and `}` are MDX expression delimiters, so a raw
-    `{foo}` in a matrix note would be evaluated as a JSX expression rather
-    than rendered as text. Backticks already protect inline code spans in
-    the notes; this function targets the structural, HTML, and MDX
-    expression hazards. Encoding is HTML-entity style so MDX renders the
-    original glyph.
+    `|` breaks the column count and literal newlines break the row layout
+    regardless of context, so those are normalized everywhere.
+
+    `<`, `>`, `{`, and `}` are MDX-meaningful glyphs that would be parsed
+    as JSX or expression delimiters in prose. They are encoded outside
+    inline code spans only. Inside backtick-delimited code spans MDX
+    treats the content as literal, and encoding there would corrupt
+    rendered command placeholders like `$$nemoclaw <name> policy-add`.
+    Backtick splitting alternates inside/outside segments starting with
+    outside at index 0.
     """
     text = "" if value is None else str(value)
     text = text.replace("\r\n", " ").replace("\n", " ").replace("\r", " ")
     text = text.replace("|", "\\|")
-    text = text.replace("<", "&lt;").replace(">", "&gt;")
-    text = text.replace("{", "&#123;").replace("}", "&#125;")
-    return text
+    parts = text.split("`")
+    for i in range(len(parts)):
+        if i % 2 == 0:
+            parts[i] = (
+                parts[i]
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("{", "&#123;")
+                .replace("}", "&#125;")
+            )
+    return "`".join(parts)
 
 
 def _validate_matrix(matrix: dict) -> None:
@@ -234,6 +242,19 @@ def _validate_matrix(matrix: dict) -> None:
                 f"ci/platform-matrix.json: owners.{key} is a placeholder ({value!r}); "
                 "remove the field or set a real value before generating docs"
             )
+
+    # generate_project_status_block subscripts these four keys; without the
+    # check a typo at the source crashes with raw KeyError later instead of
+    # the controlled ValueError this hardening adds.
+    project_status = matrix.get("project_status") or {}
+    project_status_keys = ("stage", "label", "since", "notes")
+    missing_status = [
+        k for k in project_status_keys if k not in project_status or project_status[k] in (None, "")
+    ]
+    if missing_status:
+        raise ValueError(
+            f"ci/platform-matrix.json: project_status missing required keys: {missing_status}"
+        )
 
 
 def generate_platform_table(platforms: list[dict]) -> str:
