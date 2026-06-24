@@ -121,6 +121,35 @@ is_unresolved_placeholder_rejection() {
   printf '%s\n' "$1" | grep -qiE 'credential_injection_failed|unresolved credential placeholder'
 }
 
+text_contains_all() {
+  local haystack="$1"
+  shift
+
+  local needle
+  for needle in "$@"; do
+    case "$haystack" in
+      *"$needle"*) ;;
+      *) return 1 ;;
+    esac
+  done
+
+  return 0
+}
+
+text_contains_any() {
+  local haystack="$1"
+  shift
+
+  local needle
+  for needle in "$@"; do
+    case "$haystack" in
+      *"$needle"*) return 0 ;;
+    esac
+  done
+
+  return 1
+}
+
 # Determine repo root
 if [ -d /workspace ] && [ -f /workspace/install.sh ]; then
   REPO="/workspace"
@@ -896,9 +925,10 @@ else
 fi
 
 whatsapp_policy_pre=$(openshell policy get --full "$SANDBOX_NAME" 2>/dev/null || true)
-if echo "$whatsapp_policy_pre" | grep -q "web.whatsapp.com" \
-  && echo "$whatsapp_policy_pre" | grep -q "whatsapp.net" \
-  && echo "$whatsapp_policy_pre" | grep -q "raw.githubusercontent.com"; then
+if text_contains_all "$whatsapp_policy_pre" \
+  "web.whatsapp.com" \
+  "whatsapp.net" \
+  "raw.githubusercontent.com"; then
   pass "M-WA3: WhatsApp policy preset applied before rebuild"
 else
   fail "M-WA3: WhatsApp policy preset missing expected endpoints before rebuild"
@@ -915,10 +945,13 @@ else
 fi
 
 whatsapp_policy_post=$(openshell policy get --full "$SANDBOX_NAME" 2>/dev/null || true)
-if echo "$whatsapp_policy_post" | grep -q "web.whatsapp.com" \
-  && echo "$whatsapp_policy_post" | grep -q "whatsapp.net" \
-  && echo "$whatsapp_policy_post" | grep -q "raw.githubusercontent.com" \
-  && { echo "$whatsapp_policy_post" | grep -q "/usr/local/bin/node" || echo "$whatsapp_policy_post" | grep -q "/usr/bin/node"; }; then
+if text_contains_all "$whatsapp_policy_post" \
+  "web.whatsapp.com" \
+  "whatsapp.net" \
+  "raw.githubusercontent.com" \
+  && text_contains_any "$whatsapp_policy_post" \
+    "/usr/local/bin/node" \
+    "/usr/bin/node"; then
   pass "M-WA5: WhatsApp policy preset survived rebuild with Node binary scope"
 else
   fail "M-WA5: WhatsApp policy preset missing expected endpoints/binaries after rebuild"

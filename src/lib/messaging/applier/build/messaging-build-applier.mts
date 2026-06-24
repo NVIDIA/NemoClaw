@@ -7,6 +7,13 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { homedir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
+import { discordManifest } from "../../channels/discord/manifest.ts";
+import { slackManifest } from "../../channels/slack/manifest.ts";
+import { teamsManifest } from "../../channels/teams/manifest.ts";
+import { telegramManifest } from "../../channels/telegram/manifest.ts";
+import { wechatManifest } from "../../channels/wechat/manifest.ts";
+import { whatsappManifest } from "../../channels/whatsapp/manifest.ts";
+import type { ChannelManifest } from "../../manifest/types.ts";
 
 type Env = Record<string, string | undefined>;
 type JsonObject = Record<string, any>;
@@ -99,6 +106,7 @@ export type BuildCommandResult = {
   readonly runtimePlanPath: string;
   readonly doctorEnv: Record<string, string>;
   readonly installSpecs: readonly string[];
+  readonly hermesUvPackages: readonly string[];
   readonly openclawVersion: string;
 };
 
@@ -106,6 +114,25 @@ type OpenClawPluginInstall = {
   readonly spec: string;
   readonly pin: boolean;
 };
+
+type HermesUvPackageInstall = {
+  readonly spec: string;
+};
+
+const TRUSTED_CHANNEL_MANIFESTS: readonly ChannelManifest[] = [
+  telegramManifest,
+  discordManifest,
+  wechatManifest,
+  slackManifest,
+  whatsappManifest,
+  teamsManifest,
+] as const;
+
+function isPinnedHermesUvPackageSpec(spec: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9_.-]*(?:\[[A-Za-z0-9][A-Za-z0-9_.-]*(?:,[A-Za-z0-9][A-Za-z0-9_.-]*)*\])?==[A-Za-z0-9][A-Za-z0-9_.!+~-]*$/.test(
+    spec,
+  );
+}
 
 export class MessagingBuildApplierError extends Error {}
 
@@ -401,6 +428,11 @@ export function collectOpenClawMessagingPluginInstallSpecs(
   return collectOpenClawMessagingPluginInstalls(plan, env).map((install) => install.spec);
 }
 
+export function collectHermesMessagingUvPackages(plan: MessagingBuildPlan | null): string[] {
+  if (plan?.agent !== "hermes") return [];
+  return collectHermesMessagingUvPackageInstalls(plan).map((install) => install.spec);
+}
+
 function collectOpenClawMessagingPluginInstalls(
   plan: MessagingBuildPlan | null,
   env: Env,
@@ -426,6 +458,62 @@ function collectOpenClawMessagingPluginInstalls(
     installs.push(resolvedInstall);
   }
   return installs;
+}
+
+function collectHermesMessagingUvPackageInstalls(
+  plan: MessagingBuildPlan | null,
+): HermesUvPackageInstall[] {
+  const installs: HermesUvPackageInstall[] = [];
+  const seen = new Set<string>();
+  const trustedSpecs = trustedHermesUvPackageSpecsForPlan(plan);
+  for (const step of enabledBuildStepsForPhase(plan, "agent-install")) {
+    if (step.kind !== "package-install") continue;
+    if (step.value === undefined) {
+      if (step.required) {
+        throw new MessagingBuildApplierError(
+          `Messaging package-install output ${step.outputId} is missing`,
+        );
+      }
+      continue;
+    }
+    const install = readHermesUvPipPackageInstall(step.value, step.outputId);
+    if (!trustedSpecs.has(install.spec)) {
+      throw new MessagingBuildApplierError(
+        `Messaging package-install output ${step.outputId} is not declared by a trusted built-in manifest for active Hermes channels: ${install.spec}`,
+      );
+    }
+    if (seen.has(install.spec)) continue;
+    seen.add(install.spec);
+    installs.push(install);
+  }
+  return installs;
+}
+
+/**
+ * Security boundary: NEMOCLAW_MESSAGING_PLAN_B64 is a derived build artifact,
+ * not authority to choose root-time Hermes packages. Invalid state: a serialized
+ * plan contains a hermes-uv-pip package spec absent from the trusted built-in
+ * manifest for a selected active channel. Source fix: update the channel
+ * manifest's agentPackages, not the serialized plan/env. Remove this recheck
+ * only once package installs are no longer serialized or plans are signed and
+ * attested at the Docker build boundary.
+ */
+function trustedHermesUvPackageSpecsForPlan(plan: MessagingBuildPlan | null): Set<string> {
+  const active = new Set(activeChannels(plan));
+  const specs = new Set<string>();
+  for (const manifest of TRUSTED_CHANNEL_MANIFESTS) {
+    if (!active.has(manifest.id)) continue;
+    for (const packageSpec of manifest.agentPackages ?? []) {
+      if (packageSpec.agent !== "hermes" || packageSpec.manager !== "hermes-uv-pip") continue;
+      if (!isPinnedHermesUvPackageSpec(packageSpec.spec)) {
+        throw new MessagingBuildApplierError(
+          `Trusted manifest ${manifest.id} declares an unsafe Hermes Python package spec: ${packageSpec.spec}`,
+        );
+      }
+      specs.add(packageSpec.spec);
+    }
+  }
+  return specs;
 }
 
 export function openClawDoctorEnvOverrides(
@@ -833,6 +921,35 @@ function readOpenClawPackageInstall(
     readonly spec: string;
     readonly pin?: boolean;
   };
+}
+
+function readHermesUvPipPackageInstall(
+  value: MessagingSerializableValue,
+  outputId: string,
+): HermesUvPackageInstall {
+  if (!isObject(value)) {
+    throw new MessagingBuildApplierError(
+      `Messaging package-install output ${outputId} must be an object`,
+    );
+  }
+  const install = value as JsonObject;
+  if (install.manager !== "hermes-uv-pip") {
+    throw new MessagingBuildApplierError(
+      `Messaging package-install output ${outputId} must use manager 'hermes-uv-pip'`,
+    );
+  }
+  if (typeof install.spec !== "string" || install.spec.trim().length === 0) {
+    throw new MessagingBuildApplierError(
+      `Messaging package-install output ${outputId} must include a Hermes Python package spec`,
+    );
+  }
+  const spec = install.spec.trim();
+  if (!isPinnedHermesUvPackageSpec(spec)) {
+    throw new MessagingBuildApplierError(
+      `Messaging package-install output ${outputId} must use a safe exact-pinned Hermes Python package spec`,
+    );
+  }
+  return { spec };
 }
 
 function resolveOpenClawPackageSpec(spec: string, env: Env): string {
@@ -1299,6 +1416,10 @@ export function installMessagingPackages(plan: MessagingBuildPlan | null, env: E
     installOpenClawMessagingPlugins(plan, env);
     return;
   }
+  if (plan.agent === "hermes") {
+    installHermesMessagingUvPackages(plan, env);
+    return;
+  }
 
   const packageSteps = enabledBuildStepsForPhase(plan, "agent-install").filter(
     (step) => step.kind === "package-install",
@@ -1308,6 +1429,26 @@ export function installMessagingPackages(plan: MessagingBuildPlan | null, env: E
       `Messaging package-install is not supported for ${plan.agent}`,
     );
   }
+}
+
+function installHermesMessagingUvPackages(plan: MessagingBuildPlan | null, env: Env): void {
+  const selectedPackages = collectHermesMessagingUvPackageInstalls(plan).map(
+    (install) => install.spec,
+  );
+  if (selectedPackages.length === 0) return;
+  runCommand(
+    [
+      "uv",
+      "pip",
+      "install",
+      "--python",
+      "/opt/hermes/.venv/bin/python",
+      "--no-cache",
+      "--",
+      ...selectedPackages,
+    ],
+    env,
+  );
 }
 
 export function describeMessagingBuildPhase(
@@ -1326,6 +1467,7 @@ export function describeMessagingBuildPhase(
     doctorEnv: plan?.agent === "openclaw" ? openClawDoctorEnvOverrides(plan, env) : {},
     installSpecs:
       plan?.agent === "openclaw" ? collectOpenClawMessagingPluginInstallSpecs(plan, env) : [],
+    hermesUvPackages: plan?.agent === "hermes" ? collectHermesMessagingUvPackages(plan) : [],
     openclawVersion: env.OPENCLAW_VERSION || "",
   };
 }

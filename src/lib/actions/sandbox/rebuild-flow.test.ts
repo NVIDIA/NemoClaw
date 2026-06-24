@@ -33,6 +33,7 @@ type RebuildFlowHarness = {
   backupSandboxStateSpy: MockInstance;
   errorSpy: MockInstance;
   executeSandboxCommandSpy: MockInstance;
+  ensureMessagingHostForwardAfterRebuildSpy: MockInstance;
   logSpy: MockInstance;
   onboardSpy: MockInstance;
   registryUpdateSpy: MockInstance;
@@ -68,6 +69,9 @@ function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): Rebuild
   const nim = requireDist("../../../../dist/lib/inference/nim.js");
   const policies = requireDist("../../../../dist/lib/policy/index.js");
   const processRecovery = requireDist("../../../../dist/lib/actions/sandbox/process-recovery.js");
+  const messagingHostForwardLifecycle = requireDist(
+    "../../../../dist/lib/actions/sandbox/messaging-host-forward-lifecycle.js",
+  );
   const messaging = requireDist("../../../../dist/lib/messaging/index.js");
   const shields = requireDist("../../../../dist/lib/shields/index.js");
 
@@ -173,6 +177,9 @@ function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): Rebuild
   const messagingRebuildPlanSpy = vi
     .spyOn(messaging.MessagingWorkflowPlanner.prototype, "buildRebuildPlanFromSandboxEntry")
     .mockImplementation(overrides.buildMessagingRebuildPlan ?? (() => null));
+  const ensureMessagingHostForwardAfterRebuildSpy = vi
+    .spyOn(messagingHostForwardLifecycle, "ensureMessagingHostForwardAfterRebuild")
+    .mockReturnValue(true);
 
   errorSpy.mockClear();
   logSpy.mockClear();
@@ -184,6 +191,7 @@ function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): Rebuild
     backupSandboxStateSpy,
     errorSpy,
     executeSandboxCommandSpy,
+    ensureMessagingHostForwardAfterRebuildSpy,
     logSpy,
     onboardSpy,
     registryUpdateSpy,
@@ -191,6 +199,76 @@ function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): Rebuild
     restoreSandboxStateSpy,
     runOpenshellSpy,
     messagingRebuildPlanSpy,
+  };
+}
+
+function makeActiveTeamsMessagingPlan() {
+  return {
+    schemaVersion: 1,
+    sandboxName: "alpha",
+    agent: "openclaw",
+    workflow: "rebuild",
+    channels: [
+      {
+        channelId: "teams",
+        displayName: "Microsoft Teams",
+        authMode: "token-paste",
+        active: true,
+        selected: true,
+        configured: true,
+        disabled: false,
+        inputs: [
+          {
+            channelId: "teams",
+            inputId: "appId",
+            kind: "config",
+            required: true,
+            sourceEnv: "MSTEAMS_APP_ID",
+            statePath: "teamsConfig.appId",
+            value: "teams-app-id",
+          },
+          {
+            channelId: "teams",
+            inputId: "clientSecret",
+            kind: "secret",
+            required: true,
+            sourceEnv: "MSTEAMS_APP_PASSWORD",
+            credentialAvailable: true,
+          },
+          {
+            channelId: "teams",
+            inputId: "tenantId",
+            kind: "config",
+            required: true,
+            sourceEnv: "MSTEAMS_TENANT_ID",
+            statePath: "teamsConfig.tenantId",
+            value: "teams-tenant-id",
+          },
+          {
+            channelId: "teams",
+            inputId: "webhookPort",
+            kind: "config",
+            required: false,
+            sourceEnv: "MSTEAMS_PORT",
+            statePath: "teamsConfig.webhookPort",
+            value: "3978",
+          },
+        ],
+        hostForward: {
+          channelId: "teams",
+          port: 3978,
+          label: "Microsoft Teams webhook",
+        },
+        hooks: [],
+      },
+    ],
+    disabledChannels: [],
+    credentialBindings: [],
+    networkPolicy: { presets: ["teams"], entries: [] },
+    agentRender: [],
+    buildSteps: [],
+    stateUpdates: [],
+    healthChecks: [],
   };
 }
 
@@ -267,6 +345,23 @@ describe("rebuildSandbox flow", () => {
       expect.anything(),
     );
     expect(harness.onboardSpy).not.toHaveBeenCalled();
+  });
+
+  it("starts the active Teams host forward after a successful rebuild", async () => {
+    const plan = makeActiveTeamsMessagingPlan();
+    const harness = createRebuildFlowHarness({
+      applyPreset: () => true,
+      buildMessagingRebuildPlan: () => plan,
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
+
+    expect(harness.ensureMessagingHostForwardAfterRebuildSpy).toHaveBeenCalledWith("alpha", plan);
+    expect(
+      harness.ensureMessagingHostForwardAfterRebuildSpy.mock.invocationCallOrder[0],
+    ).toBeGreaterThan(harness.onboardSpy.mock.invocationCallOrder[0]);
   });
 
   it("finishes the rebuild while surfacing incomplete post-restore work", async () => {

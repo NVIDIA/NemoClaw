@@ -13,6 +13,7 @@ import type {
   SandboxMessagingPlan,
   SandboxMessagingRuntimeSetupPlan,
 } from "../manifest";
+import { planHostForward } from "./engines/host-forward-engine";
 import { planRuntimeSetup } from "./engines/runtime-setup-engine";
 import type { RenderTemplateReferenceResolver } from "./engines/template";
 import { ManifestCompiler } from "./manifest-compiler";
@@ -35,7 +36,7 @@ export class MessagingWorkflowPlanner {
   constructor(
     private readonly registry: ChannelManifestRegistry,
     hooks = new MessagingHookRegistry(),
-    renderTemplateResolver?: RenderTemplateReferenceResolver,
+    private readonly renderTemplateResolver?: RenderTemplateReferenceResolver,
   ) {
     this.compiler = new ManifestCompiler(registry, hooks, renderTemplateResolver);
   }
@@ -84,9 +85,10 @@ export class MessagingWorkflowPlanner {
   ): Promise<SandboxMessagingPlan | null> {
     const plan = await this.planForSandboxEntryMutation(context, "stop-channel");
     return plan
-      ? refreshRuntimeSetup(
+      ? refreshDerivedPlanFields(
           setPlanChannelDisabled(plan, context.channelId, true, "stop-channel"),
           this.registry,
+          this.renderTemplateResolver,
         )
       : null;
   }
@@ -96,9 +98,10 @@ export class MessagingWorkflowPlanner {
   ): Promise<SandboxMessagingPlan | null> {
     const plan = await this.planForSandboxEntryMutation(context, "start-channel");
     return plan
-      ? refreshRuntimeSetup(
+      ? refreshDerivedPlanFields(
           setPlanChannelDisabled(plan, context.channelId, false, "start-channel"),
           this.registry,
+          this.renderTemplateResolver,
         )
       : null;
   }
@@ -115,13 +118,14 @@ export class MessagingWorkflowPlanner {
   ): Promise<SandboxMessagingPlan | null> {
     const existingPlan = readSandboxEntryPlan(context);
     if (existingPlan) {
-      return refreshRuntimeSetup(
+      return refreshDerivedPlanFields(
         setPlanDisabledChannels(
           existingPlan,
           disabledChannelsFromSandboxEntry(context.sandboxEntry, existingPlan),
           "rebuild",
         ),
         this.registry,
+        this.renderTemplateResolver,
       );
     }
     return null;
@@ -427,17 +431,33 @@ function filterRuntimeSetup(
   };
 }
 
-function refreshRuntimeSetup(
+function refreshDerivedPlanFields(
   plan: SandboxMessagingPlan,
   registry: ChannelManifestRegistry,
+  referenceResolver?: RenderTemplateReferenceResolver,
 ): SandboxMessagingPlan {
   const manifests = plan.channels.flatMap((channel) => {
     const manifest = registry.get(channel.channelId);
     return manifest ? [manifest] : [];
   });
+  const manifestById = new Map(manifests.map((manifest) => [manifest.id, manifest]));
+  const channels = plan.channels.map((channel) => {
+    const { hostForward: _oldHostForward, ...channelWithoutHostForward } = channel;
+    const manifest = manifestById.get(channel.channelId);
+    const active =
+      channel.active && !channel.disabled && !plan.disabledChannels.includes(channel.channelId);
+    const hostForward = manifest
+      ? planHostForward(manifest, channel.inputs, active, referenceResolver)
+      : undefined;
+    return {
+      ...channelWithoutHostForward,
+      ...(hostForward ? { hostForward } : {}),
+    };
+  });
   return clonePlan({
     ...plan,
-    runtimeSetup: planRuntimeSetup(manifests, plan.agent, plan.channels),
+    channels,
+    runtimeSetup: planRuntimeSetup(manifests, plan.agent, channels),
   });
 }
 
