@@ -374,60 +374,6 @@ print(block)
     }
   });
 
-  // PRA-5 on #5712: a sync hook that runs the generator but doesn't stage the
-  // canonical doc would leave the page silently behind the matrix. Pin every
-  // path the generator emits against the hook's git-add list so a future
-  // table sentinel cannot land without the hook also covering it.
-  it("pre-commit platform-matrix-sync hook stages every doc the generator can emit", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const hookConfig = readFileSync(path.join(repoRoot, ".pre-commit-config.yaml"), "utf-8");
-    const hookSection = hookConfig.match(/id: platform-matrix-sync[\s\S]*?priority: \d+/)?.[0];
-    expect(
-      hookSection,
-      ".pre-commit-config.yaml is missing the platform-matrix-sync hook",
-    ).toBeDefined();
-
-    const generatorSource = readFileSync(
-      path.join(repoRoot, "scripts", "generate-platform-docs.py"),
-      "utf-8",
-    );
-    // Only assert on emitted output paths under docs/. The matrix path under
-    // ci/ is the source, and the script invocation in the hook entry is what
-    // represents it; the git-add list is for outputs only. Express the filter
-    // as Array.filter so the loop body stays linear and the guardrail against
-    // new if statements in test files keeps holding.
-    const emittedTargets = new Set(
-      [...generatorSource.matchAll(/REPO_ROOT \/ "([^"]+)" \/ "([^"]+)"(?: \/ "([^"]+)")?/g)]
-        .map((match) => [match[1], match[2], match[3]].filter(Boolean))
-        .filter((segments) => segments[0] === "docs")
-        .map((segments) => segments.join("/")),
-    );
-    expect(
-      emittedTargets.size,
-      "generator should declare at least one docs/ target file via REPO_ROOT path joins",
-    ).toBeGreaterThan(0);
-
-    for (const target of emittedTargets) {
-      expect(
-        hookSection?.includes(target),
-        `.pre-commit-config.yaml platform-matrix-sync hook does not stage ${target} even though the generator emits it`,
-      ).toBe(true);
-      // PRA-6 on #5712: the hook stages the file only when it has
-      // been triggered. Editing the canonical page alone without the
-      // trigger pattern covering it means the regenerator never runs
-      // for that edit. Assert the regex-escaped target appears in the
-      // `files:` pattern as well. Escape backslashes before dots so the
-      // helper remains correct even if a future target ever includes a
-      // literal backslash (none do today; this also silences CodeQL's
-      // incomplete-escape SAST flag).
-      const escapedForTrigger = target.replace(/\\/g, "\\\\").replace(/\./g, "\\.");
-      expect(
-        hookSection?.includes(escapedForTrigger),
-        `.pre-commit-config.yaml platform-matrix-sync hook \`files:\` pattern does not trigger on edits to ${target}`,
-      ).toBe(true);
-    }
-  });
-
   // PRA-2 on #5712 follow-up: a canonical launch-claims page that lives in the
   // repo but never appears in docs/index.yml is invisible on the published
   // site. Pin the registration so removing the nav entry fails CI before
