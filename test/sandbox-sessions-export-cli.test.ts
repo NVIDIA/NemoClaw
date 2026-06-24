@@ -74,7 +74,7 @@ describe("sandbox sessions export CLI", () => {
       expect(downloadLine).toContain("alpha");
       expect(downloadLine).toContain(out);
       expect(cleanupLine).toBeDefined();
-      expect(cleanupLine).toContain("/tmp/sessions-export-main-");
+      expect(cleanupLine).toContain("/sandbox/.nemoclaw-staging/sessions-export-main-");
 
       const manifest = JSON.parse(result.out.trim().split("\n").at(-1) as string);
       expect(manifest).toMatchObject({

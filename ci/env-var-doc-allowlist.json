@@ -36,6 +36,10 @@
     "reason": "Test sentinel that bypasses real-time sleep() calls in onboard inference probes. Set to '1' only by Vitest tests; never user-set."
   },
   {
+    "name": "NEMOCLAW_TELEGRAM_STARTUP_GRACE_MS",
+    "reason": "Internal Vitest-only override that shortens the Telegram diagnostics startup-grace timer. Production uses the built-in default."
+  },
+  {
     "name": "NEMOCLAW_E2E_FAILURE_INJECTION",
     "reason": "Internal E2E-only sentinel that enables deterministic onboarding fault injection for resume/repair scripts. Never user-set in production."
   },

@@ -39,4 +39,17 @@ describe("shouldApplyDockerGpuPatch on Docker Desktop WSL", () => {
       ),
     ).toBe(false);
   });
+
+  it("defaults the driver-gateway path on for Docker Desktop WSL", () => {
+    expect(
+      shouldApplyDockerGpuPatch(
+        { sandboxGpuEnabled: true },
+        {
+          env: {},
+          platform: "darwin",
+          dockerDesktopWsl: true,
+        },
+      ),
+    ).toBe(true);
+  });
 });

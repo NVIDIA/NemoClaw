@@ -863,6 +863,64 @@ export function releaseOnboardLock(): void {
 
 // ── Step management ──────────────────────────────────────────────
 
+export type NullableSessionUpdateIntent<T> =
+  | { kind: "unchanged" }
+  | { kind: "clear" }
+  | { kind: "set"; value: T };
+
+export type NullableSessionUpdateKey = {
+  [K in keyof Session]-?: null extends Session[K] ? K : never;
+}[keyof Session];
+
+type NullableStringSessionUpdateKey = {
+  [K in NullableSessionUpdateKey]-?: NonNullable<Session[K]> extends string ? K : never;
+}[NullableSessionUpdateKey];
+
+function sessionUpdateUnchanged<T>(): NullableSessionUpdateIntent<T> {
+  return { kind: "unchanged" };
+}
+
+function sessionUpdateClear<T>(): NullableSessionUpdateIntent<T> {
+  return { kind: "clear" };
+}
+
+function sessionUpdateSet<T>(value: T): NullableSessionUpdateIntent<T> {
+  return { kind: "set", value };
+}
+
+export function getNullableStringUpdateIntent(
+  value: unknown,
+  normalize?: (v: string) => string | null,
+): NullableSessionUpdateIntent<string> {
+  if (value === undefined) return sessionUpdateUnchanged();
+  if (value === null) return sessionUpdateClear();
+  if (typeof value !== "string") return sessionUpdateUnchanged();
+
+  const normalized = normalize ? normalize(value) : value;
+  return normalized === null ? sessionUpdateClear() : sessionUpdateSet(normalized);
+}
+
+export function hasSessionUpdateValue<T>(intent: NullableSessionUpdateIntent<T>): boolean {
+  return intent.kind !== "unchanged";
+}
+
+export function isSessionUpdateClear<T>(intent: NullableSessionUpdateIntent<T>): boolean {
+  return intent.kind === "clear";
+}
+
+export function applyNullableSessionUpdate<K extends NullableSessionUpdateKey>(
+  safe: Partial<Session>,
+  key: K,
+  intent: NullableSessionUpdateIntent<NonNullable<Session[K]>>,
+): void {
+  if (intent.kind === "unchanged") return;
+  if (intent.kind === "clear") {
+    (safe as Record<K, Session[K] | null>)[key] = null as Session[K] & null;
+    return;
+  }
+  (safe as Record<K, Session[K]>)[key] = intent.value as Session[K];
+}
+
 // Apply an explicit-clear-aware update for a nullable session field.
 //
 //   value === "string"  → assign (after optional normalizer)
@@ -874,27 +932,19 @@ export function releaseOnboardLock(): void {
 // (credentialEnv=null) silently dropped the clear and left the stale value
 // on disk. The rebuild preflight then demanded a credential the current
 // sandbox does not actually need.
-function assignNullableString<K extends keyof Session>(
+function assignNullableString<K extends NullableStringSessionUpdateKey>(
   safe: Partial<Session>,
   key: K,
   value: unknown,
   normalize?: (v: string) => string | null,
 ): void {
-  if (value === undefined) return;
-  if (value === null) {
-    (safe as Record<K, Session[K] | null>)[key] = null as Session[K] & null;
-    return;
-  }
-  if (typeof value === "string") {
-    const normalized = normalize ? normalize(value) : value;
-    if (normalized === null) {
-      // A normalizer that returned null means the input was unredactable;
-      // treat the same as an explicit clear rather than dropping silently.
-      (safe as Record<K, Session[K] | null>)[key] = null as Session[K] & null;
-      return;
-    }
-    (safe as Record<K, Session[K]>)[key] = normalized as Session[K];
-  }
+  applyNullableSessionUpdate(
+    safe,
+    key,
+    getNullableStringUpdateIntent(value, normalize) as NullableSessionUpdateIntent<
+      NonNullable<Session[K]>
+    >,
+  );
   // Non-string, non-null, non-undefined values are silently dropped —
   // matches the pre-#2625 behavior for malformed input (e.g. numbers via
   // JSON re-entry).

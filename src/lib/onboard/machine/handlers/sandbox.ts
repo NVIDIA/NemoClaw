@@ -55,9 +55,7 @@ export interface SandboxStateOptions<
       right: MessagingChannelConfig | null,
     ): boolean;
     getSandboxReuseState(sandboxName: string | null): string;
-    computeTelegramRequireMention(): boolean | null;
     hasSandboxGpuDrift(sandboxName: string, config: SandboxGpuConfig): boolean;
-    hasWechatConfigDrift(session: Session | null): boolean;
     getSandboxHermesToolGateways(sandboxName: string): unknown;
     normalizeHermesToolGatewaySelections(value: unknown): string[];
     stringSetsEqual(left: string[], right: string[]): boolean;
@@ -140,10 +138,6 @@ export interface SandboxStateResult<WebSearchConfig> {
   stateResult: OnboardStateTransitionResult;
 }
 
-function sameEffectiveTelegramRequireMention(left: boolean | null, right: boolean | null): boolean {
-  return (left ?? false) === (right ?? false);
-}
-
 function refreshCredentialHashesFromEnv(plan: SandboxMessagingPlan): {
   plan: SandboxMessagingPlan;
   changed: boolean;
@@ -222,19 +216,9 @@ export async function handleSandboxState<
   const sandboxReuseState = deps.getSandboxReuseState(sandboxName);
   const webSearchConfigChanged =
     webSearchSupportDropped || Boolean(session?.webSearchConfig) !== Boolean(webSearchConfig);
-  const currentTelegramRequireMention = deps.computeTelegramRequireMention();
-  const recordedTelegramRequireMention = session?.telegramConfig?.requireMention ?? null;
-  // Telegram mention-mode is baked into openclaw.json at sandbox build time.
-  // Compare effective modes because null and false both produce groupPolicy: open
-  // during config generation. This preserves the original #1737/#2417 drift rule.
-  const telegramConfigChanged = !sameEffectiveTelegramRequireMention(
-    currentTelegramRequireMention,
-    recordedTelegramRequireMention,
-  );
   const sandboxGpuConfigChanged = sandboxName
     ? deps.hasSandboxGpuDrift(sandboxName, sandboxGpuConfig)
     : false;
-  const wechatConfigChanged = deps.hasWechatConfigDrift(session);
   const recordedHermesToolGateways = sandboxName
     ? deps.normalizeHermesToolGatewaySelections(deps.getSandboxHermesToolGateways(sandboxName))
     : [];
@@ -246,9 +230,7 @@ export async function handleSandboxState<
     resume &&
     !resumeAgentChanged &&
     !webSearchConfigChanged &&
-    !telegramConfigChanged &&
     !sandboxGpuConfigChanged &&
-    !wechatConfigChanged &&
     !messagingChannelConfigChanged &&
     !hermesToolGatewayConfigChanged &&
     session?.steps?.sandbox?.status === "complete" &&
@@ -267,14 +249,8 @@ export async function handleSandboxState<
       } else if (webSearchConfigChanged) {
         deps.note("  [resume] Web Search configuration changed; recreating sandbox.");
         if (sandboxName) deps.removeSandboxFromRegistry(sandboxName);
-      } else if (telegramConfigChanged) {
-        deps.note("  [resume] TELEGRAM_REQUIRE_MENTION changed; recreating sandbox.");
-        if (sandboxName) deps.removeSandboxFromRegistry(sandboxName);
       } else if (sandboxGpuConfigChanged) {
         deps.note("  [resume] Sandbox GPU settings changed; recreating sandbox.");
-        if (sandboxName) deps.removeSandboxFromRegistry(sandboxName);
-      } else if (wechatConfigChanged) {
-        deps.note("  [resume] WeChat account metadata changed; recreating sandbox.");
         if (sandboxName) deps.removeSandboxFromRegistry(sandboxName);
       } else if (messagingChannelConfigChanged) {
         deps.note("  [resume] Messaging channel configuration changed; recreating sandbox.");

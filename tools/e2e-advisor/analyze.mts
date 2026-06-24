@@ -222,7 +222,7 @@ function logProgress(message: string): void {
   console.log(`[e2e-advisor] ${new Date().toISOString()} ${message}`);
 }
 
-function buildSystemPrompt(): string {
+export function buildSystemPrompt(): string {
   return [
     "You are the NemoClaw E2E recommendation advisor for CI.",
     "",
@@ -236,6 +236,7 @@ function buildSystemPrompt(): string {
     "",
     "Decision policy:",
     "- Required E2E: changes that can affect installer/onboarding, sandbox lifecycle, credentials, security boundaries, network policy, inference routing, deployment, or real assistant user flows.",
+    "- Onboarding resume compatibility rule: changes to src/lib/onboard/machine live slice orchestration, resume compatibility states, resume repair policy, session bootstrap, or onboarding state transitions MUST require both `onboard-resume-e2e` and `onboard-repair-e2e` unless the PR is tests-only. If the change can also affect full hosted onboarding, require `cloud-onboard-e2e`. Do not rely only on unit/runtime-boundary tests for these state-machine resume paths.",
     "- Optional E2E: useful confidence checks for adjacent behavior, but not merge-blocking.",
     "- No E2E: safe docs, tests-only, comments, refactors, or tooling changes that cannot affect runtime/user flows; explain in noE2eReason.",
     "- Missing coverage: use newE2eRecommendations. Do not invent existing test names.",

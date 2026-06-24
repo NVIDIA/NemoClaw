@@ -21,8 +21,12 @@ export function createRecoveryPreloadHarnessPaths(root: string): RecoveryPreload
     preloadTmpSafetyNet: path.join(root, "preload-tmp-safety-net.js"),
     preloadTmpCiao: path.join(root, "preload-tmp-ciao.js"),
   };
-  fs.writeFileSync(paths.preloadSourceSafetyNet, "module.exports = 'trusted safety net';\n");
-  fs.writeFileSync(paths.preloadSourceCiao, "module.exports = 'trusted ciao guard';\n");
+  fs.writeFileSync(paths.preloadSourceSafetyNet, "module.exports = 'trusted safety net';\n", {
+    mode: 0o644,
+  });
+  fs.writeFileSync(paths.preloadSourceCiao, "module.exports = 'trusted ciao guard';\n", {
+    mode: 0o644,
+  });
   return paths;
 }
 

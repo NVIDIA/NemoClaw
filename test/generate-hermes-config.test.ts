@@ -5,8 +5,8 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import YAML from "yaml";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import YAML from "yaml";
 import { HERMES_PROXY_API_KEY_PLACEHOLDER } from "../src/lib/hermes-proxy-api-key";
 import { withLegacyMessagingPlanEnv } from "./messaging-plan-test-helper";
 
@@ -523,7 +523,10 @@ describe("agents/hermes/generate-config.ts", () => {
         telegram: ["123456789"],
         slack: ["U0123456789", "U09ABCDEFGH"],
       }),
-      NEMOCLAW_TELEGRAM_CONFIG_B64: encodeJson({ requireMention: true }),
+      NEMOCLAW_TELEGRAM_CONFIG_B64: encodeJson({
+        requireMention: true,
+        groupPolicy: "disabled",
+      }),
       NEMOCLAW_SLACK_CONFIG_B64: encodeJson({
         allowedChannels: ["C012AB3CD", "C987ZY6XW"],
       }),
@@ -641,13 +644,13 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(envFile).not.toContain("WEIXIN_ACCOUNT_ID=");
   });
 
-  it("omits Telegram behavior config when requireMention is not boolean", () => {
+  it("defaults Telegram behavior config when requireMention is non-canonical", () => {
     const { config, envFile } = runConfigScript({
       NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson(["telegram"]),
       NEMOCLAW_TELEGRAM_CONFIG_B64: encodeJson({ requireMention: "true" }),
     });
 
-    expect(config.telegram).toBeUndefined();
+    expect(config.telegram).toEqual({ require_mention: true });
     expect(config.platforms.telegram).toEqual({ enabled: true });
     expectRemotePlatformToolsets(config.platform_toolsets.telegram);
     expect(envFile).toContain("TELEGRAM_BOT_TOKEN=openshell:resolve:env:TELEGRAM_BOT_TOKEN\n");

@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { detectContainerRuntimeFromDockerInfo } from "../adapters/docker/runtime";
+import { isLocalProviderHostHealthy } from "../inference/local";
+import { ensureOllamaAuthProxy, isProxyHealthy } from "../inference/ollama/proxy";
 import { type ContainerRuntime, containerCanReachHostLoopback } from "../platform";
 import { ensureOllamaLoopbackSystemdOverride } from "./ollama-systemd";
 
@@ -153,4 +155,52 @@ export function repairLocalInferenceSystemdOverrideOrExit(
     console.error("  Ollama systemd restart did not recover after applying the loopback override.");
     process.exit(1);
   }
+}
+
+export interface LocalProviderReachabilityDeps {
+  shouldFrontOllamaWithProxy: () => boolean;
+  ensureOllamaAuthProxy: () => void;
+  isProxyHealthy: () => boolean;
+  isLocalProviderHostHealthy: (provider: string) => boolean;
+}
+
+const defaultLocalProviderReachabilityDeps: LocalProviderReachabilityDeps = {
+  shouldFrontOllamaWithProxy,
+  ensureOllamaAuthProxy,
+  isProxyHealthy,
+  isLocalProviderHostHealthy,
+};
+
+// Decide whether a local inference provider is genuinely reachable, so the
+// caller can skip OpenShell's host-side verification without trusting a route
+// blindly.
+//
+// INVALID STATE: `openshell inference set` verifies by POSTing to the
+//   provider's sandbox-facing base URL, http://host.openshell.internal:<port>.
+//   That hostname is container-scoped (k3s CoreDNS / NodeHosts) and does NOT
+//   resolve from the host where the CLI runs — so the verify ALWAYS fails for
+//   ollama-local/vllm-local even when the route is valid at runtime.
+//
+// SOURCE BOUNDARY: the verifier is owned by OpenShell and runs in its CLI
+//   process; NemoClaw cannot change where OpenShell runs the probe. NemoClaw
+//   therefore substitutes its own POSITIVE reachability check and passes
+//   --no-verify, the same posture as onboard/connect.
+//
+// POSITIVE SIGNAL ONLY: proceed only on real evidence the provider is up — a
+//   healthy auth proxy (ollama proxy topology) or a responding host endpoint
+//   (isLocalProviderHostHealthy). Never treat a failed container probe's
+//   diagnostic as reachability.
+//
+// REMOVAL CONDITION: drop this workaround once OpenShell verifies from the
+//   gateway/sandbox routing context (where host.openshell.internal resolves),
+//   or exposes a definitive sandbox-path probe.
+export function ensureLocalProviderReachable(
+  provider: string,
+  deps: LocalProviderReachabilityDeps = defaultLocalProviderReachabilityDeps,
+): boolean {
+  if (provider === "ollama-local" && deps.shouldFrontOllamaWithProxy()) {
+    deps.ensureOllamaAuthProxy();
+    return deps.isProxyHealthy();
+  }
+  return deps.isLocalProviderHostHealthy(provider);
 }

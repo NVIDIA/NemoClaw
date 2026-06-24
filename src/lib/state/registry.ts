@@ -5,14 +5,27 @@ import fs from "node:fs";
 import path from "node:path";
 import { isErrnoException } from "../core/errno";
 import { ensureConfigDir, readConfigFile, writeConfigFile } from "./config-io";
+import type { SandboxMessagingState } from "./registry-messaging";
+
+export {
+  getSandboxEntryDisplayInference,
+  getSandboxEntryGatewayBinding,
+  getSandboxEntryInference,
+  type NormalizedSandboxEntry,
+  normalizeSandboxEntryView,
+  type SandboxEntryDisplayInference,
+  type SandboxEntryInference,
+  type SandboxGatewayBinding,
+} from "./registry-entry-view";
+
 import {
   cloneSandboxMessagingState,
-  serializeSandboxMessagingStateForDisk,
   getConfiguredMessagingChannels as getRegistryConfiguredMessagingChannels,
   getDisabledChannels as getRegistryDisabledChannels,
+  serializeSandboxMessagingStateForDisk,
   setChannelDisabled as setRegistryChannelDisabled,
 } from "./registry-messaging";
-import type { SandboxMessagingState } from "./registry-messaging";
+
 export {
   getActiveMessagingChannelsFromEntry,
   getConfiguredMessagingChannelsFromEntry,
@@ -81,7 +94,6 @@ export interface SandboxEntry {
   // are never auto-rebuilt onto the default image (#5026).
   nemoclawVersion?: string | null;
   imageTag?: string | null;
-  providerCredentialHashes?: Record<string, string>;
   messaging?: SandboxMessagingState;
   hermesToolGateways?: string[];
   hermesDashboardEnabled?: boolean;
@@ -320,7 +332,10 @@ function normalizeRegistry(data: SandboxRegistry): SandboxRegistry {
   return {
     defaultSandbox: data.defaultSandbox ?? null,
     sandboxes: Object.fromEntries(
-      sandboxRegistryEntries(data).map(([name, entry]) => [name, normalizeSandboxEntry(entry)]),
+      sandboxRegistryEntries(data).map(([name, entry]) => [
+        name,
+        normalizeSandboxEntryForRuntime(entry),
+      ]),
     ),
   };
 }
@@ -352,7 +367,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function normalizeSandboxEntry(entry: SandboxEntry): SandboxEntry {
+function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
   const messaging = cloneSandboxMessagingState(entry.messaging);
   if (!messaging) {
     const { messaging: _messaging, ...rest } = entry;
@@ -412,7 +427,6 @@ export function registerSandbox(entry: SandboxEntry): void {
       agentVersion: entry.agentVersion || null,
       nemoclawVersion: entry.nemoclawVersion || null,
       imageTag: entry.imageTag || null,
-      providerCredentialHashes: entry.providerCredentialHashes || undefined,
       messaging: cloneSandboxMessagingState(entry.messaging),
       hermesToolGateways:
         Array.isArray(entry.hermesToolGateways) && entry.hermesToolGateways.length > 0

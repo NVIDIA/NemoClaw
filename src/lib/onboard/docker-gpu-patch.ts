@@ -528,12 +528,16 @@ export function shouldApplyDockerGpuPatch(
 ): boolean {
   const env = options.env ?? process.env;
   const platform = options.platform ?? process.platform;
-  const dockerDriverGateway = options.dockerDriverGateway ?? platform === "linux";
-  if (!(config.sandboxGpuEnabled && platform === "linux" && dockerDriverGateway)) {
+  const dockerDesktopWsl = options.dockerDesktopWsl === true;
+  const dockerDriverGateway =
+    options.dockerDriverGateway ?? (platform === "linux" || dockerDesktopWsl);
+  if (
+    !(config.sandboxGpuEnabled && (platform === "linux" || dockerDesktopWsl) && dockerDriverGateway)
+  ) {
     return false;
   }
   const optedOut = String(env.NEMOCLAW_DOCKER_GPU_PATCH || "").trim() === "0";
-  if (optedOut && options.dockerDesktopWsl) {
+  if (optedOut && dockerDesktopWsl) {
     const log = options.log ?? ((message: string) => console.warn(message));
     log(
       "  NEMOCLAW_DOCKER_GPU_PATCH=0 ignored on Docker Desktop WSL: GPU passthrough on this runtime requires the patch.",

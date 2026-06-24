@@ -28,7 +28,12 @@ cloudflared_resolve_package_version() {
 
   # Emergency repro knob: install the exact requested version and let APT report
   # unavailable overrides, rather than silently substituting another package.
+  # Still validate Debian-version syntax before the sudo apt install boundary.
   if [[ -n "$override_version" ]]; then
+    if ! cloudflared_is_debian_version "$override_version"; then
+      printf 'ERROR: invalid CLOUDFLARED_VERSION %q\n' "$override_version" >&2
+      return 1
+    fi
     printf '%s\n' "$override_version"
     return 0
   fi

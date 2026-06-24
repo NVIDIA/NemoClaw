@@ -447,13 +447,16 @@ else
   fail "Hermes native Gateway protocol probe failed: ${native_gateway_protocol:0:300}"
 fi
 
-if [ "$fake_gateway_ready" = "1" ] \
-  && grep -Fq "\"token\":\"$DISCORD_TOKEN\"" "$FAKE_DISCORD_GATEWAY_CAPTURE_FILE" \
-  && ! grep -Fq "openshell:resolve:env:DISCORD_BOT_TOKEN" "$FAKE_DISCORD_GATEWAY_CAPTURE_FILE"; then
-  pass "Hermes fake Gateway received host-side Discord token while sandbox sent only the placeholder"
+fake_gateway_capture_check=""
+if [ "$fake_gateway_ready" = "1" ]; then
+  fake_gateway_capture_check=$(check_fake_discord_gateway_rewrite_capture "$FAKE_DISCORD_GATEWAY_CAPTURE_FILE" "$DISCORD_TOKEN" 2>&1 || true)
+fi
+
+if [ "$fake_gateway_ready" = "1" ] && [ "$fake_gateway_capture_check" = "OK" ]; then
+  pass "Hermes fake Gateway proved WebSocket placeholder rewrite without logging the raw token"
 else
   if [ "$fake_gateway_ready" = "1" ]; then
-    info "Hermes fake Gateway capture: $(tail -20 "$FAKE_DISCORD_GATEWAY_CAPTURE_FILE" 2>/dev/null | tr '\n' ' ' | cut -c1-500)"
+    info "Hermes fake Gateway capture check: ${fake_gateway_capture_check:0:300}"
   fi
   fail "Hermes fake Gateway did not prove WebSocket placeholder rewrite"
 fi

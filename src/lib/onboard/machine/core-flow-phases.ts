@@ -2,7 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { WebSearchConfig } from "../../inference/web-search";
-import type { OnboardFlowContext } from "./flow-context";
+import {
+  assertProviderSelectedContext,
+  mergeProviderModelSelectedContext,
+  mergeSandboxCreatedContext,
+  type OnboardFlowContext,
+} from "./flow-context";
 import { runCoreOnboardFlowSequence } from "./flow-slices";
 import {
   handleProviderInferenceState,
@@ -75,8 +80,7 @@ export function createCoreOnboardFlowPhases<
       });
 
       return {
-        context: {
-          ...context,
+        context: mergeProviderModelSelectedContext(context, {
           session: providerInferenceResult.session,
           sandboxName: providerInferenceResult.sandboxName,
           model: providerInferenceResult.model,
@@ -88,7 +92,7 @@ export function createCoreOnboardFlowPhases<
           preferredInferenceApi: providerInferenceResult.preferredInferenceApi,
           nimContainer: providerInferenceResult.nimContainer,
           webSearchConfig: providerInferenceResult.webSearchConfig,
-        },
+        }),
         result: providerInferenceResult.stateResults,
       };
     },
@@ -97,9 +101,7 @@ export function createCoreOnboardFlowPhases<
   const sandboxPhase: OnboardSequencePhase<Context> = {
     state: "sandbox",
     async run(context) {
-      if (!context.model || !context.provider || !context.sandboxGpuConfig) {
-        throw new Error("Onboarding state is incomplete before sandbox setup.");
-      }
+      assertProviderSelectedContext(context, "sandbox setup");
       const sandboxStateResult = await handleSandboxState({
         resume: context.resume,
         fresh: context.fresh,
@@ -123,14 +125,13 @@ export function createCoreOnboardFlowPhases<
       });
 
       return {
-        context: {
-          ...context,
+        context: mergeSandboxCreatedContext(context, {
           session: sandboxStateResult.session,
           sandboxName: sandboxStateResult.sandboxName,
-          webSearchConfig: sandboxStateResult.webSearchConfig ?? null,
+          webSearchConfig: sandboxStateResult.webSearchConfig,
           selectedMessagingChannels: sandboxStateResult.selectedMessagingChannels,
           webSearchSupported: sandboxStateResult.webSearchSupported,
-        },
+        }),
         result: sandboxStateResult.stateResult,
       };
     },
@@ -146,20 +147,33 @@ export async function runCoreOnboardFlowSlice<Context extends OnboardFlowContext
   resume: boolean;
   recordStateResult(result: OnboardStateResult): Promise<unknown>;
 }): Promise<OnboardMachineRunnerResult<Context>> {
-  // Compatibility bridge for live host glue while legacy step helpers remain a
-  // second machine snapshot writer. OnboardRuntimeBoundary records skipped
-  // stale/already-reached transition results from handlers whose source state
-  // was advanced by markStepStarted()/markStepComplete() in the durable session.
-  // Keep resume and ahead-state sessions here so provider/sandbox repair checks
-  // still run. Remove this path once legacy step helpers no longer advance
-  // session.machine and handler FSM results are the only transition source.
+  // Compatibility bridge for live resume repair while legacy step helpers and
+  // OnboardRuntimeBoundary compatibility replay can leave the durable machine
+  // snapshot already downstream of this slice. The tolerated downstream family
+  // includes sandbox branch states and the final slice handoff states: openclaw,
+  // agent_setup, policies, finalizing, and post_verify. Resume still needs to
+  // re-run provider and sandbox repair/backstop checks before policy or final
+  // verification handling observes the session. This PR does not fix the
+  // broader persistence contract because those repairs are not strict FSM states
+  // yet. Remove this fallback once resume repairs are strict FSM states, or once
+  // direct legacy step helpers no longer write session.machine.
   return runLiveOnboardFlowSlice({
     context: options.context,
     runtime: options.runtime,
     phases: options.phases,
-    resume: options.resume,
     runWhenState: ["provider_selection"],
-    compatibilityWhenState: ["inference", "sandbox", "openclaw", "agent_setup"],
+    compatibilityWhenState: options.resume
+      ? [
+          "provider_selection",
+          "inference",
+          "sandbox",
+          "openclaw",
+          "agent_setup",
+          "policies",
+          "finalizing",
+          "post_verify",
+        ]
+      : ["inference", "sandbox", "openclaw", "agent_setup"],
     runSlice: runCoreOnboardFlowSequence,
     applyCompatibleResult: options.recordStateResult,
   });

@@ -6,7 +6,7 @@ user_invocable: true
 
 # NemoClaw Maintainer Evening
 
-Wrap up the day: check progress, bump stragglers, summarize for QA, cut the tag.
+Wrap up the day: check progress, bump stragglers, summarize for QA, cut the tag, and prepare release notes for posting.
 
 See [PR-REVIEW-PRIORITIES.md](../nemoclaw-maintainer-day/PR-REVIEW-PRIORITIES.md) for the daily cadence.
 
@@ -35,15 +35,16 @@ node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer
 
 This lists commits since the last tag, identifies risky areas touched, and suggests QA test focus areas. Format the output as a concise summary the user can paste into the tag annotation or a handoff channel.
 
-## Step 4: Cut the Tag
+## Step 4: Cut the Tag and Publish Release Notes
 
-Load `cut-release-tag`. The version is already known — default to patch bump, but still show the commit and changelog for confirmation.
+Load `cut-release-tag`. The version is already known — default to patch bump, but still show the commit, changelog, housekeeping plan, and release notes draft for confirmation. NemoClaw releases are tag-based: tag `main`, let the workflow move `latest`, verify remaining open issues/PRs have been bumped, and prepare the release notes announcement for the maintainer to post.
 
 ## Step 5: Confirm and Share
 
-After the tag is cut, present the final summary:
+After the tag is cut and release notes are drafted or posted by the maintainer, present the final summary:
 
 - **Tag**: `v0.0.8` at commit `abc1234`
+- **Release notes draft**: `../nemoclaw-release-v0.0.8/release-note-draft.md`
 - **Shipped**: 4 items (#1234, #1235, #1236, #1237)
 - **Bumped to v0.0.9**: 1 item (#1238 — still needs CI fix)
 - **QA focus areas**: installer changes, new onboard preset
@@ -58,6 +59,6 @@ node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer
 
 ## Notes
 
-- Never cut a tag without user confirmation.
+- Never cut a tag or hand off release notes without user confirmation.
 - If nothing was labeled or nothing shipped, ask whether to skip the tag today.
 - Version labels are living markers: they always mean "ship in this version." If an item slips, the label moves forward.

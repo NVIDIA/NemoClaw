@@ -21,6 +21,7 @@ export interface SandboxCreateLaunchInput {
   extraPlaceholderKeys: readonly string[];
   getDashboardForwardPort(chatUiUrl: string): string;
   hermesDashboardState: HermesDashboardOnboardState;
+  manageDashboard?: boolean;
   openshellShellCommand: OpenshellShellCommand;
   buildEnv?(): Record<string, string>;
 }
@@ -35,19 +36,27 @@ export interface SandboxCreateLaunch {
 
 export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): SandboxCreateLaunch {
   const env = input.env ?? process.env;
-  const envArgs = [formatEnvAssignment("CHAT_UI_URL", input.chatUiUrl)];
+  const manageDashboard = input.manageDashboard ?? true;
+  const envArgs = manageDashboard ? [formatEnvAssignment("CHAT_UI_URL", input.chatUiUrl)] : [];
 
-  // Always pass the effective dashboard port into the sandbox so
-  // nemoclaw-start.sh starts the gateway on the correct port. When the
-  // user sets CHAT_UI_URL with a custom port (e.g. :18790), the port
-  // must reach the container; otherwise _DASHBOARD_PORT defaults to
-  // 18789 and the gateway listens on the wrong port. (#2267, #1925)
-  const effectiveDashboardPort = input.getDashboardForwardPort(input.chatUiUrl);
-  envArgs.push(formatEnvAssignment("NEMOCLAW_DASHBOARD_PORT", effectiveDashboardPort));
+  // When manageDashboard is enabled, pass the effective dashboard port into
+  // the sandbox so nemoclaw-start.sh starts the gateway on the correct port.
+  // If CHAT_UI_URL has a custom port (e.g. :18790), that port must reach the
+  // container; otherwise _DASHBOARD_PORT defaults to 18789 and the gateway
+  // listens on the wrong port. With manageDashboard disabled, CHAT_UI_URL and
+  // _DASHBOARD_PORT are intentionally not injected. (#2267, #1925)
+  const effectiveDashboardPort = manageDashboard
+    ? input.getDashboardForwardPort(input.chatUiUrl)
+    : "0";
+  if (manageDashboard) {
+    envArgs.push(formatEnvAssignment("NEMOCLAW_DASHBOARD_PORT", effectiveDashboardPort));
+  }
 
   appendOpenClawRuntimeEnvArgs(envArgs, input.agent ?? null);
   appendHermesDashboardEnvArgs(envArgs, input.hermesDashboardState, formatEnvAssignment);
-  appendHostProxyEnvArgs(envArgs, env);
+  appendHostProxyEnvArgs(envArgs, env, {
+    dropCredentialBearingProxyUrls: input.agent?.name === "langchain-deepagents-code",
+  });
 
   // Propagate NEMOCLAW_PROXY_HOST / NEMOCLAW_PROXY_PORT to the runtime
   // sandbox container. patchStagedDockerfile() already substitutes them

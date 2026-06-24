@@ -4,6 +4,7 @@
 import { runOpenshell } from "../../adapters/openshell/runtime";
 import { CLI_NAME } from "../../cli/branding";
 import { ensureLiveSandboxOrExit } from "./gateway-state";
+import { resolveHostPathFromCwd } from "./host-path";
 
 export interface SandboxDownloadOptions {
   sandboxName: string;
@@ -26,7 +27,7 @@ export async function downloadFromSandbox(
       `No sandbox path provided; usage: ${CLI_NAME} ${opts.sandboxName} download <sandbox-path> [host-dest]`,
     );
   }
-  const hostDest = (opts.hostDest ?? "").trim() || ".";
+  const hostDest = resolveHostPathFromCwd((opts.hostDest ?? "").trim() || ".");
 
   await ensureLiveSandboxOrExit(opts.sandboxName, {
     allowNonReadyPhase: opts.allowNonReadyPhase ?? true,

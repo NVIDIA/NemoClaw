@@ -14,7 +14,7 @@
 # IDC host either bridge can hit must be listed explicitly here.
 #
 # Known hosts (extend when an operator observes a new IDC redirect):
-#   - ilinkai.weixin.qq.com           bootstrap; hard-coded in src/ext/wechat/qr.ts
+#   - ilinkai.weixin.qq.com           bootstrap; hard-coded in src/lib/messaging/channels/wechat/qr.ts
 #                                     and Hermes' WEIXIN_BASE_URL default per
 #                                     hermes-agent docs/messaging/weixin
 #   - ilinkai.wechat.com              per-account baseUrl returned after QR confirm

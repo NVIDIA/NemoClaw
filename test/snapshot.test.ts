@@ -79,7 +79,7 @@ beforeEach(() => {
 function writeExecutable(filePath: string, source: string): void {
   fs.writeFileSync(filePath, source, { mode: 0o755 });
 }
-function writeOpenClawRegistry(sandboxName: string): void {
+function writeAgentRegistry(sandboxName: string, agent: string | null): void {
   fs.mkdirSync(path.join(TMP_HOME, ".nemoclaw"), { recursive: true });
   fs.writeFileSync(
     path.join(TMP_HOME, ".nemoclaw", "sandboxes.json"),
@@ -92,11 +92,15 @@ function writeOpenClawRegistry(sandboxName: string): void {
           provider: "p",
           gpuEnabled: false,
           policies: [],
-          agent: null,
+          agent,
         },
       },
     }),
   );
+}
+
+function writeOpenClawRegistry(sandboxName: string): void {
+  writeAgentRegistry(sandboxName, null);
 }
 function writeFakeOpenshell(binDir: string): string {
   const openshell = path.join(binDir, "openshell");
@@ -1190,6 +1194,120 @@ process.exit(0);
       } else {
         process.env.NEMOCLAW_OPENSHELL_BIN = oldOpenshell;
       }
+      process.env.PATH = oldPath;
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("Deep Agents Code durable state files", () => {
+  it("backs up manifest-declared state while excluding credential-bearing files", () => {
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-deepagents-snapshot-"));
+    const oldPath = process.env.PATH;
+    const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
+    try {
+      const binDir = path.join(fixture, "bin");
+      const fakeRoot = path.join(fixture, "sandbox-root");
+      const deepAgentsDir = path.join(fakeRoot, ".deepagents");
+      const sshLog = path.join(fixture, "ssh-log.jsonl");
+      fs.mkdirSync(binDir, { recursive: true });
+      fs.mkdirSync(path.join(deepAgentsDir, ".state"), { recursive: true });
+      fs.mkdirSync(path.join(deepAgentsDir, "skills"), { recursive: true });
+      fs.writeFileSync(path.join(deepAgentsDir, ".state", "thread.json"), "{}\n");
+      fs.writeFileSync(path.join(deepAgentsDir, "skills", "README.md"), "skill\n");
+      fs.writeFileSync(path.join(deepAgentsDir, "config.toml"), "generated config\n");
+      fs.writeFileSync(path.join(deepAgentsDir, "hooks.json"), "{}\n");
+      fs.writeFileSync(path.join(deepAgentsDir, ".env"), "NVIDIA_API_KEY=should-not-copy\n");
+      fs.writeFileSync(path.join(deepAgentsDir, ".mcp.json"), '{"token":"should-not-copy"}\n');
+
+      const openshell = path.join(binDir, "openshell");
+      writeExecutable(
+        openshell,
+        `#!/usr/bin/env node
+const args = process.argv.slice(2);
+if (args[0] === "sandbox" && args[1] === "ssh-config") {
+  process.stdout.write("Host openshell-deepagents\\n  HostName 127.0.0.1\\n  User sandbox\\n");
+  process.exit(0);
+}
+process.exit(0);
+`,
+      );
+
+      writeExecutable(
+        path.join(binDir, "ssh"),
+        `#!/usr/bin/env node
+const fs = require("fs");
+const path = require("path");
+const { spawnSync } = require("child_process");
+const root = ${JSON.stringify(fakeRoot)};
+const log = ${JSON.stringify(sshLog)};
+const cmd = process.argv[process.argv.length - 1] || "";
+fs.appendFileSync(log, JSON.stringify({ cmd }) + "\\n");
+const deepAgentsDir = path.join(root, ".deepagents");
+if (cmd.includes("config.toml") && cmd.includes("cat --")) {
+  process.stdout.write(fs.readFileSync(path.join(deepAgentsDir, "config.toml")));
+  process.exit(0);
+}
+if (cmd.includes("hooks.json") && cmd.includes("cat --")) {
+  process.stdout.write(fs.readFileSync(path.join(deepAgentsDir, "hooks.json")));
+  process.exit(0);
+}
+if (cmd.includes(".env") || cmd.includes(".mcp.json")) {
+  process.exit(99);
+}
+if (cmd.includes("[ -d ")) {
+  process.stdout.write(".state\\nskills\\n");
+  process.exit(0);
+}
+if (cmd.includes("find ")) {
+  process.exit(0);
+}
+if (cmd.includes("tar -cf -")) {
+  const r = spawnSync("tar", ["-cf", "-", "-C", deepAgentsDir, ".state", "skills"], {
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (r.stdout) fs.writeSync(1, r.stdout);
+  if (r.stderr) fs.writeSync(2, r.stderr);
+  process.exit(r.status || 0);
+}
+process.exit(0);
+`,
+      );
+
+      writeAgentRegistry("deepagents", "langchain-deepagents-code");
+      process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
+      process.env.PATH = `${binDir}:${oldPath || ""}`;
+
+      const backup = sandboxState.backupSandboxState("deepagents", { name: "deepagents-state" });
+      expect(backup.success).toBe(true);
+      expect(backup.backedUpDirs).toEqual([".state", "skills"]);
+      expect(backup.backedUpFiles).toEqual(["config.toml", "hooks.json"]);
+      expect(backup.failedDirs).toEqual([]);
+      expect(backup.failedFiles).toEqual([]);
+      expect(backup.manifest?.agentType).toBe("langchain-deepagents-code");
+      expect(backup.manifest?.stateDirs).toEqual([".state", "skills"]);
+      expect(backup.manifest?.stateFiles).toEqual([
+        { path: "config.toml", strategy: "copy" },
+        { path: "hooks.json", strategy: "copy" },
+      ]);
+      expect(fs.existsSync(path.join(backup.manifest!.backupPath, ".state", "thread.json"))).toBe(
+        true,
+      );
+      expect(fs.existsSync(path.join(backup.manifest!.backupPath, "skills", "README.md"))).toBe(
+        true,
+      );
+      expect(fs.readFileSync(path.join(backup.manifest!.backupPath, "config.toml"), "utf-8")).toBe(
+        "generated config\n",
+      );
+      expect(fs.existsSync(path.join(backup.manifest!.backupPath, ".env"))).toBe(false);
+      expect(fs.existsSync(path.join(backup.manifest!.backupPath, ".mcp.json"))).toBe(false);
+      const loggedCommands = fs.readFileSync(sshLog, "utf-8");
+      expect(loggedCommands).not.toContain(".env");
+      expect(loggedCommands).not.toContain(".mcp.json");
+    } finally {
+      oldOpenshell === undefined
+        ? delete process.env.NEMOCLAW_OPENSHELL_BIN
+        : (process.env.NEMOCLAW_OPENSHELL_BIN = oldOpenshell);
       process.env.PATH = oldPath;
       fs.rmSync(fixture, { recursive: true, force: true });
     }

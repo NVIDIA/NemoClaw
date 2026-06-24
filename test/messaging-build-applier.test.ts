@@ -197,15 +197,138 @@ describe("messaging-build-applier.mts: agent-install", () => {
     expect(result.stderr).toContain("NEMOCLAW_MESSAGING_PLAN_B64");
   });
 
-  it("rejects tampered package-install specs before invoking OpenClaw", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-package-allowlist-"));
+  it("writes a reduced runtime plan artifact for entrypoint startup", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-runtime-plan-artifact-"));
+    const artifactPath = path.join(tmp, "runtime", "messaging-runtime-plan.json");
+    const plan = {
+      schemaVersion: 1,
+      sandboxName: "test-sandbox",
+      agent: "openclaw",
+      workflow: "rebuild",
+      channels: [
+        {
+          channelId: "telegram",
+          active: true,
+          disabled: false,
+          inputs: [{ value: "do-not-persist-input-value" }],
+        },
+        { channelId: "slack", active: false, disabled: true },
+      ],
+      disabledChannels: ["slack"],
+      credentialBindings: [
+        {
+          channelId: "telegram",
+          credentialId: "telegram-bot-token",
+          providerName: "telegram-provider-name",
+          providerEnvKey: "TELEGRAM_BOT_TOKEN",
+          placeholder: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
+          credentialHash: "do-not-persist-hash",
+        },
+      ],
+      agentRender: [
+        {
+          channelId: "telegram",
+          agent: "openclaw",
+          target: "openclaw.json",
+          kind: "json-fragment",
+          path: "channels.telegram",
+          value: { token: "do-not-persist-render-value" },
+        },
+      ],
+      buildSteps: [
+        {
+          channelId: "telegram",
+          kind: "build-file",
+          outputId: "seed-file",
+          value: { content: "do-not-persist-build-step" },
+        },
+      ],
+      runtimeSetup: {
+        nodePreloads: [
+          {
+            channelId: "telegram",
+            module: "telegram-diagnostics",
+            source: "/usr/local/lib/nemoclaw/preloads/telegram-diagnostics.js",
+            target: "/tmp/nemoclaw-telegram-diagnostics.js",
+            injectInto: ["boot", "connect"],
+            optional: false,
+            installMessage: "[channels] install telegram diagnostics",
+            installedMessage: "[channels] installed telegram diagnostics",
+          },
+        ],
+        envAliases: [],
+        secretScans: [],
+      },
+    };
+
+    try {
+      const result = spawnSync(
+        "node",
+        [
+          "--experimental-strip-types",
+          SCRIPT_PATH,
+          "--agent",
+          "openclaw",
+          "--phase",
+          "runtime-setup",
+        ],
+        {
+          encoding: "utf-8",
+          stdio: ["pipe", "pipe", "pipe"],
+          env: {
+            PATH: process.env.PATH || "/usr/bin:/bin",
+            NEMOCLAW_MESSAGING_RUNTIME_PLAN_PATH: artifactPath,
+            NEMOCLAW_MESSAGING_PLAN_B64: Buffer.from(JSON.stringify(plan)).toString("base64"),
+          },
+          timeout: 10_000,
+        },
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+      const artifact = JSON.parse(fs.readFileSync(artifactPath, "utf-8"));
+      expect(artifact).toMatchObject({
+        schemaVersion: 1,
+        sandboxName: "test-sandbox",
+        agent: "openclaw",
+        workflow: "rebuild",
+        channels: [
+          { channelId: "telegram", active: true, disabled: false },
+          { channelId: "slack", active: false, disabled: true },
+        ],
+        disabledChannels: ["slack"],
+        credentialBindings: [{ channelId: "telegram", providerEnvKey: "TELEGRAM_BOT_TOKEN" }],
+        runtimeSetup: {
+          nodePreloads: [
+            {
+              channelId: "telegram",
+              source: "/usr/local/lib/nemoclaw/preloads/telegram-diagnostics.js",
+              target: "/tmp/nemoclaw-telegram-diagnostics.js",
+              injectInto: ["boot", "connect"],
+              optional: false,
+            },
+          ],
+          envAliases: [],
+          secretScans: [],
+        },
+      });
+      expect(JSON.stringify(artifact)).not.toContain("do-not-persist");
+      expect(JSON.stringify(artifact)).not.toContain("openshell:resolve:env");
+      expect(artifact.runtimeSetup.nodePreloads[0]).not.toHaveProperty("module");
+      expect((fs.statSync(artifactPath).mode & 0o777).toString(8)).toBe("644");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("installs package-install specs supplied by the compiled plan", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-package-plan-"));
     const tracePath = path.join(tmp, "openclaw.trace");
     const fakeOpenclaw = path.join(tmp, "openclaw");
     fs.writeFileSync(
       fakeOpenclaw,
       [
         "#!/usr/bin/env node",
-        "require('node:fs').appendFileSync(process.env.OPENCLAW_TRACE, 'invoked\\n');",
+        "require('node:fs').appendFileSync(process.env.OPENCLAW_TRACE, `${process.argv.slice(2).join('|')}\\n`);",
         "process.exit(0);",
         "",
       ].join("\n"),
@@ -227,8 +350,8 @@ describe("messaging-build-applier.mts: agent-install", () => {
           required: true,
           value: {
             manager: "openclaw-plugin",
-            spec: "npm:@evil/plugin@1.0.0",
-            pin: true,
+            spec: "npm:@example/manifest-owned-plugin@{{openclaw.version}}",
+            pin: false,
           },
         },
       ],
@@ -258,9 +381,10 @@ describe("messaging-build-applier.mts: agent-install", () => {
         },
       );
 
-      expect(result.status).not.toBe(0);
-      expect(result.stderr).toContain("not allowed");
-      expect(fs.existsSync(tracePath)).toBe(false);
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.readFileSync(tracePath, "utf-8").trim()).toBe(
+        "plugins|install|npm:@example/manifest-owned-plugin@2026.5.22",
+      );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

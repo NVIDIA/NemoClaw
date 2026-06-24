@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   buildGatewayLogScanScript,
   compareChannelSets,
@@ -150,7 +150,10 @@ describe("buildGatewayLogScanScript", () => {
     const script = buildGatewayLogScanScript("/tmp/gateway.log");
     expect(script).toContain("(launched|respawning)");
     expect(script).toContain('buf=""');
-    expect(script).toContain("grep -iwoE 'telegram|discord|slack|whatsapp|wechat|openclaw-weixin'");
+    expect(script).toContain("grep -iwoE '");
+    for (const token of ["telegram", "discord", "slack", "whatsapp", "wechat", "openclaw-weixin"]) {
+      expect(script).toContain(token);
+    }
     expect(script).not.toContain("tail -n");
     expect(script).not.toContain("grep -m 1 -iwF 'telegram'");
   });

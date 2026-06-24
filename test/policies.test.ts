@@ -421,7 +421,7 @@ describe("policies", () => {
       // OpenShell's SSRF engine doesn't expand `*.<tld>` wildcards at
       // runtime, so the preset lists each known iLink IDC host explicitly.
       // Both hosts are load-bearing today — `ilinkai.weixin.qq.com` is the
-      // bootstrap (hard-coded in src/ext/wechat/qr.ts), `ilinkai.wechat.com`
+      // bootstrap (hard-coded in src/lib/messaging/channels/wechat/qr.ts), `ilinkai.wechat.com`
       // is the per-account baseUrl returned after QR confirm. Additional
       // IDC hosts may need to be added when operators observe new
       // `DENIED ... -> <host>:443` lines in OCSF logs.

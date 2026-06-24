@@ -4,8 +4,8 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  resolveOnboardEntryOptions,
   type OnboardEntryOptionsDeps,
+  resolveOnboardEntryOptions,
 } from "../../../dist/lib/onboard/entry-options";
 
 class ExitError extends Error {
@@ -136,6 +136,57 @@ describe("resolveOnboardEntryOptions", () => {
     expect(deps.error).not.toHaveBeenCalledWith("  Use lowercase letters, numbers, and hyphens.");
     expect(deps.getNameValidationGuidance).not.toHaveBeenCalled();
     expect(deps.exitProcess).toHaveBeenCalledTimes(1);
+  });
+
+  it("auto-detects resume from a persisted in_progress session without --resume (#5470)", () => {
+    const deps = createDeps();
+
+    const result = resolveOnboardEntryOptions(
+      {
+        opts: {},
+        env: {},
+        stdinIsTty: true,
+        stdoutIsTty: true,
+        persistedSessionStatus: "in_progress",
+      },
+      deps,
+    );
+
+    expect(result.resume).toBe(true);
+    expect(deps.error).not.toHaveBeenCalled();
+  });
+
+  it("does not auto-resume when --fresh is set even with an in_progress session (#5470)", () => {
+    const deps = createDeps();
+
+    const result = resolveOnboardEntryOptions(
+      {
+        opts: { fresh: true },
+        env: {},
+        stdinIsTty: true,
+        stdoutIsTty: true,
+        persistedSessionStatus: "in_progress",
+      },
+      deps,
+    );
+
+    // --fresh wins; an auto-detected resume must NOT trip the mutual-exclusion
+    // error (that guard is for explicit --resume + --fresh only).
+    expect(result.resume).toBe(false);
+    expect(result.fresh).toBe(true);
+    expect(deps.error).not.toHaveBeenCalled();
+  });
+
+  it("does not auto-resume when the persisted session is not in_progress (#5470)", () => {
+    const deps = createDeps();
+
+    for (const status of ["complete", "failed", "pending", "", null, undefined] as const) {
+      const result = resolveOnboardEntryOptions(
+        { opts: {}, env: {}, stdinIsTty: true, stdoutIsTty: true, persistedSessionStatus: status },
+        deps,
+      );
+      expect(result.resume).toBe(false);
+    }
   });
 
   it("prints validation guidance for invalid sandbox names", () => {

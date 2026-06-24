@@ -12,6 +12,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { CleanupSandboxServicesDeps } from "../dist/lib/actions/sandbox/destroy.js";
 import { cleanupSandboxServices } from "../dist/lib/actions/sandbox/destroy.js";
+import { SANDBOX_PROVIDER_SUFFIXES } from "../dist/lib/onboard/sandbox-provider-cleanup.js";
 
 type SandboxLike = { provider?: string | null } | null;
 
@@ -93,13 +94,8 @@ describe("cleanupSandboxServices Ollama unload (#2717)", () => {
       .mocked(harness.deps.runOpenshell)
       .mock.calls.map((args) => args[0])
       .filter((argv) => argv[0] === "provider" && argv[1] === "delete");
-    expect(providerDeleteCalls.map((argv) => argv[2])).toEqual([
-      "regression-2717-telegram-bridge",
-      "regression-2717-discord-bridge",
-      "regression-2717-slack-bridge",
-      "regression-2717-slack-app",
-      "regression-2717-wechat-bridge",
-      "regression-2717-brave-search",
-    ]);
+    expect(providerDeleteCalls.map((argv) => argv[2])).toEqual(
+      SANDBOX_PROVIDER_SUFFIXES.map((suffix) => `regression-2717-${suffix}`),
+    );
   });
 });

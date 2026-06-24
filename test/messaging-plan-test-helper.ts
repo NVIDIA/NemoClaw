@@ -119,6 +119,7 @@ function legacyMessagingConfigEnv(env: Record<string, string>): Record<string, s
     {},
   );
   assignMentionMode(next, "TELEGRAM_REQUIRE_MENTION", telegramConfig.requireMention);
+  assignString(next, "TELEGRAM_GROUP_POLICY", telegramConfig.groupPolicy);
 
   const discordGuilds = decodeJsonEnv<Record<string, unknown>>(
     env,

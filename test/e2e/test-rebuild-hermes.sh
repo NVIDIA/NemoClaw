@@ -307,10 +307,7 @@ reg = {'sandboxes': {'${SANDBOX_NAME}': {
     'policyTier': None,
     'agent': 'hermes',
     'agentVersion': '${OLD_HERMES_REGISTRY_VERSION}',
-    'messaging': {'schemaVersion': 1, 'plan': plan},
-    'providerCredentialHashes': {
-        'DISCORD_BOT_TOKEN': credential_hash
-    }
+    'messaging': {'schemaVersion': 1, 'plan': plan}
 }}, 'defaultSandbox': '${SANDBOX_NAME}'}
 with open('${REGISTRY_FILE}', 'w') as f:
     json.dump(reg, f, indent=2)

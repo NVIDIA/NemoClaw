@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect, beforeEach } from "vitest";
 import fs from "node:fs";
-import path from "node:path";
-import os from "node:os";
 import { createRequire } from "node:module";
+import os from "node:os";
+import path from "node:path";
+import { beforeEach, describe, expect, it } from "vitest";
 
 // Use a temp dir so tests don't touch real ~/.nemoclaw.
 // HOME must be set before loading registry (it reads HOME at require time),
@@ -102,6 +102,94 @@ describe("registry", () => {
     // The second registration must not retarget the first sandbox's binding.
     expect(registry.getSandbox("first").gatewayName).toBe("nemoclaw");
     expect(registry.getSandbox("first").gatewayPort).toBe(8080);
+  });
+
+  it("normalizes configured inference fields into a discriminated view", () => {
+    const configured = { name: "alpha", provider: "nvidia-prod", model: "nvidia/test" };
+    const missingProvider = { name: "beta", provider: null, model: "nvidia/test" };
+    const missingModel = { name: "gamma", provider: "nvidia-prod", model: null };
+    const blankProvider = { name: "delta", provider: "", model: "nvidia/test" };
+    const blankModel = { name: "epsilon", provider: "nvidia-prod", model: "   " };
+
+    expect(registry.getSandboxEntryInference(configured)).toEqual({
+      kind: "configured",
+      provider: "nvidia-prod",
+      model: "nvidia/test",
+    });
+    expect(registry.getSandboxEntryInference(missingProvider)).toEqual({ kind: "unconfigured" });
+    expect(registry.getSandboxEntryInference(missingModel)).toEqual({ kind: "unconfigured" });
+    expect(registry.getSandboxEntryInference(blankProvider)).toEqual({ kind: "unconfigured" });
+    expect(registry.getSandboxEntryInference(blankModel)).toEqual({ kind: "unconfigured" });
+  });
+
+  it("normalizes gateway binding fields into a discriminated view", () => {
+    expect(
+      registry.getSandboxEntryGatewayBinding({
+        name: "alpha",
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+      }),
+    ).toEqual({ kind: "registered", gatewayName: "nemoclaw", gatewayPort: 8080 });
+    expect(
+      registry.getSandboxEntryGatewayBinding({ name: "missing-name", gatewayPort: 8080 }),
+    ).toEqual({ kind: "missing" });
+    expect(
+      registry.getSandboxEntryGatewayBinding({ name: "missing-port", gatewayName: "nemoclaw" }),
+    ).toEqual({ kind: "missing" });
+    expect(
+      registry.getSandboxEntryGatewayBinding({
+        name: "invalid-port",
+        gatewayName: "nemoclaw",
+        gatewayPort: 0,
+      }),
+    ).toEqual({ kind: "missing" });
+    expect(
+      registry.getSandboxEntryGatewayBinding({
+        name: "too-high-port",
+        gatewayName: "nemoclaw",
+        gatewayPort: 65536,
+      }),
+    ).toEqual({ kind: "missing" });
+    expect(
+      registry.getSandboxEntryGatewayBinding({
+        name: "blank-gateway",
+        gatewayName: "",
+        gatewayPort: 8080,
+      }),
+    ).toEqual({ kind: "missing" });
+  });
+
+  it("normalizes sandbox entries without mutating the raw registry entry", () => {
+    const raw = {
+      name: "alpha",
+      provider: "nvidia-prod",
+      model: "nvidia/test",
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+    };
+
+    const normalized = registry.normalizeSandboxEntryView(raw);
+
+    expect(normalized).toEqual({
+      name: "alpha",
+      raw,
+      inference: { kind: "configured", provider: "nvidia-prod", model: "nvidia/test" },
+      gateway: { kind: "registered", gatewayName: "nemoclaw", gatewayPort: 8080 },
+    });
+    expect(normalized.raw).toBe(raw);
+  });
+
+  it("normalizes invalid typed fields to missing views", () => {
+    const normalized = registry.normalizeSandboxEntryView({
+      name: "invalid",
+      provider: "",
+      model: "nvidia/test",
+      gatewayName: "nemoclaw",
+      gatewayPort: 65536,
+    });
+
+    expect(normalized.inference).toEqual({ kind: "unconfigured" });
+    expect(normalized.gateway).toEqual({ kind: "missing" });
   });
 
   it("first registered becomes default", () => {
@@ -229,14 +317,51 @@ describe("registry", () => {
   });
 
   it("stores messaging plan state at registration time", () => {
-    const plan = makeMessagingPlan("messaging", ["telegram"]);
+    const basePlan = makeMessagingPlan("messaging", ["telegram"]);
+    const plan = {
+      ...basePlan,
+      channels: [
+        {
+          ...basePlan.channels[0],
+          inputs: [
+            {
+              channelId: "telegram",
+              inputId: "botToken",
+              kind: "secret",
+              required: true,
+              sourceEnv: "TELEGRAM_BOT_TOKEN",
+              credentialAvailable: true,
+            },
+          ],
+        },
+      ],
+      credentialBindings: [
+        {
+          channelId: "telegram",
+          credentialId: "telegramBotToken",
+          sourceInput: "botToken",
+          providerName: "messaging-telegram-bridge",
+          providerEnvKey: "TELEGRAM_BOT_TOKEN",
+          placeholder: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
+          credentialAvailable: true,
+          credentialHash: "hash",
+        },
+      ],
+    };
     registry.registerSandbox({
       name: "messaging",
       messaging: { schemaVersion: 1, plan },
     });
 
     const sb = registry.getSandbox("messaging");
-    expect(sb.messaging).toEqual({ schemaVersion: 1, plan });
+    expect(sb.messaging).toMatchObject({
+      schemaVersion: 1,
+      plan: {
+        schemaVersion: 1,
+        sandboxName: "messaging",
+        channels: [expect.objectContaining({ channelId: "telegram", active: true })],
+      },
+    });
     const rawSandbox = sb as unknown as Record<string, unknown>;
     expect(rawSandbox.messagingChannels).toBeUndefined();
     expect(rawSandbox.messagingChannelConfig).toBeUndefined();
@@ -257,8 +382,31 @@ describe("registry", () => {
       sandboxName: "messaging",
       channels: [{ channelId: "telegram" }],
     });
+    expect(data.sandboxes.messaging.messaging.plan.networkPolicy).toEqual({
+      presets: [],
+      entries: [],
+    });
     expect(data.sandboxes.messaging.messaging.plan.agentRender).toBeUndefined();
+    expect(data.sandboxes.messaging.messaging.plan.buildSteps).toBeUndefined();
+    expect(data.sandboxes.messaging.messaging.plan.runtimeSetup).toBeUndefined();
+    expect(data.sandboxes.messaging.messaging.plan.stateUpdates).toBeUndefined();
+    expect(data.sandboxes.messaging.messaging.plan.healthChecks).toBeUndefined();
+    expect(data.sandboxes.messaging.messaging.plan.channels[0]).toEqual({
+      channelId: "telegram",
+      active: true,
+      configured: true,
+      disabled: false,
+      inputs: [{ inputId: "botToken", credentialAvailable: true }],
+    });
     expect(data.sandboxes.messaging.messaging.plan.channels[0].hooks).toBeUndefined();
+    expect(data.sandboxes.messaging.messaging.plan.credentialBindings).toEqual([
+      {
+        channelId: "telegram",
+        providerEnvKey: "TELEGRAM_BOT_TOKEN",
+        credentialAvailable: true,
+        credentialHash: "hash",
+      },
+    ]);
     expect(data.sandboxes.messaging.messagingChannels).toBeUndefined();
     expect(data.sandboxes.messaging.messagingChannelConfig).toBeUndefined();
   });

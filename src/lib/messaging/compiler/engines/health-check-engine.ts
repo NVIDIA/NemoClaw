@@ -4,14 +4,16 @@
 import type { ChannelManifest, SandboxMessagingHealthCheckPlan } from "../../manifest";
 
 export function planHealthChecks(manifest: ChannelManifest): SandboxMessagingHealthCheckPlan[] {
+  const hookIds = manifest.hooks
+    .filter((hook) => hook.phase === "health-check")
+    .map((hook) => hook.id);
+  if (hookIds.length === 0) return [];
   return [
     {
       channelId: manifest.id,
       phase: "health-check",
       requiredBefore: "lifecycle-success",
-      hookIds: manifest.hooks
-        .filter((hook) => hook.phase === "health-check")
-        .map((hook) => hook.id),
+      hookIds,
     },
   ];
 }

@@ -25,7 +25,15 @@ COPY nemoclaw/src/ /opt/nemoclaw/src/
 WORKDIR /opt/nemoclaw
 RUN npm ci && npm run build
 
-# Stage 2: Runtime image — pull cached base from GHCR
+# Stage 2: Build TypeScript messaging runtime preloads.
+FROM builder AS runtime-preload-builder
+WORKDIR /opt/nemoclaw-root
+COPY tsconfig.runtime-preloads.json /opt/nemoclaw-root/
+COPY src/lib/messaging/channels/ /opt/nemoclaw-root/src/lib/messaging/channels/
+RUN ln -s /opt/nemoclaw/node_modules /opt/nemoclaw-root/node_modules \
+    && /opt/nemoclaw/node_modules/.bin/tsc -p tsconfig.runtime-preloads.json
+
+# Stage 3: Runtime image — pull cached base from GHCR
 # hadolint ignore=DL3006
 FROM ${BASE_IMAGE}
 ARG OPENCLAW_VERSION=2026.5.27
@@ -92,10 +100,8 @@ ENV NPM_CONFIG_AUDIT=false \
 RUN npm ci --omit=dev
 COPY scripts/patch-openclaw-tool-catalog.js /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.js
 COPY scripts/patch-openclaw-chat-send.js /usr/local/lib/nemoclaw/patch-openclaw-chat-send.js
-COPY scripts/patch-openclaw-slack-deny-feedback.mts /usr/local/lib/nemoclaw/patch-openclaw-slack-deny-feedback.mts
 RUN chmod 755 /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.js \
-        /usr/local/lib/nemoclaw/patch-openclaw-chat-send.js \
-        /usr/local/lib/nemoclaw/patch-openclaw-slack-deny-feedback.mts
+        /usr/local/lib/nemoclaw/patch-openclaw-chat-send.js
 
 # Upgrade OpenClaw if the base image is stale.
 #
@@ -528,8 +534,11 @@ COPY scripts/lib/clean_runtime_shell_env_shim.py /usr/local/lib/nemoclaw/clean_r
 COPY scripts/nemoclaw-start.sh /usr/local/bin/nemoclaw-start
 # Copy NODE_OPTIONS preload modules to a Landlock-accessible path. OpenShell ≥0.0.36
 # blocks /opt/nemoclaw-blueprint/ from non-root users, but the entrypoint
-# needs to read these files to install runtime preloads under /tmp.
+# needs to read these files to install Node runtime preloads under /tmp.
+# Channel runtime preloads are authored as TypeScript and compiled in the
+# runtime-preload-builder stage before being flattened by filename for --require.
 COPY nemoclaw-blueprint/scripts/*.js /usr/local/lib/nemoclaw/preloads/
+COPY --from=runtime-preload-builder /opt/nemoclaw-root/dist/lib/messaging/channels/ /usr/local/lib/nemoclaw/preloads-compiled-channels/
 COPY scripts/codex-acp-wrapper.sh /usr/local/bin/nemoclaw-codex-acp
 COPY scripts/generate-openclaw-config.mts /scripts/generate-openclaw-config.mts
 COPY src/lib/messaging/ /src/lib/messaging/
@@ -541,6 +550,11 @@ RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-codex-acp \
     && chmod -R a+rX /src/lib/messaging \
     && chmod 644 /usr/local/lib/nemoclaw/openclaw_device_approval_policy.py \
         /usr/local/lib/nemoclaw/clean_runtime_shell_env_shim.py \
+    && if [ -d /usr/local/lib/nemoclaw/preloads-compiled-channels ]; then \
+        find /usr/local/lib/nemoclaw/preloads-compiled-channels -path '*/runtime/*.js' -type f \
+            -exec sh -c 'for file do cp "$file" "/usr/local/lib/nemoclaw/preloads/$(basename "$file")"; done' sh {} +; \
+    fi \
+    && rm -rf /usr/local/lib/nemoclaw/preloads-compiled-channels \
     && if [ -d /usr/local/lib/nemoclaw/preloads ]; then find /usr/local/lib/nemoclaw/preloads -type f -name '*.js' -exec chmod 644 {} +; fi \
     && chmod 755 /usr/local/share/nemoclaw \
         /usr/local/share/nemoclaw/openclaw-plugins \
@@ -551,6 +565,12 @@ RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-codex-acp \
 # nemoclaw onboard passes these at image build time.
 ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b
 ARG NEMOCLAW_PROVIDER_KEY=inference
+# User-selected upstream provider (e.g. ollama-local, nim-local, nvidia-prod),
+# carried separately from NEMOCLAW_PROVIDER_KEY which collapses managed routes to
+# "inference". generate-openclaw-config.mts reads this to apply provider-specific
+# config such as the Local Ollama small-context compaction policy (#5468). Empty
+# default keeps prior behavior when onboard does not supply a value.
+ARG NEMOCLAW_UPSTREAM_PROVIDER=
 ARG NEMOCLAW_PRIMARY_MODEL_REF=inference/nvidia/nemotron-3-super-120b-a12b
 # Default dashboard port 18789 — override at runtime via NEMOCLAW_DASHBOARD_PORT.
 ARG CHAT_UI_URL=http://127.0.0.1:18789
@@ -621,6 +641,7 @@ ARG NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE=1.0
 # Direct ARG interpolation into inline source is a code injection vector (C-2).
 ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_PROVIDER_KEY=${NEMOCLAW_PROVIDER_KEY} \
+    NEMOCLAW_UPSTREAM_PROVIDER=${NEMOCLAW_UPSTREAM_PROVIDER} \
     NEMOCLAW_PRIMARY_MODEL_REF=${NEMOCLAW_PRIMARY_MODEL_REF} \
     CHAT_UI_URL=${CHAT_UI_URL} \
     NEMOCLAW_INFERENCE_BASE_URL=${NEMOCLAW_INFERENCE_BASE_URL} \
@@ -643,6 +664,13 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_OPENCLAW_OTEL_ENDPOINT=${NEMOCLAW_OPENCLAW_OTEL_ENDPOINT} \
     NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME=${NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME} \
     NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE=${NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE}
+
+# Bake reduced messaging runtime metadata for the entrypoint. The full
+# NEMOCLAW_MESSAGING_PLAN_B64 is a build input; OpenShell sandbox create only
+# forwards explicit runtime env, so nemoclaw-start reads this generic artifact
+# when the env plan is absent.
+# hadolint ignore=DL3059
+RUN node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent openclaw --phase runtime-setup
 
 WORKDIR /sandbox
 USER sandbox
@@ -686,21 +714,6 @@ RUN set -eu; \
 
 # hadolint ignore=DL3059,DL4006
 RUN node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent openclaw --phase agent-install
-
-# Patch the OpenClaw Slack channel (@openclaw/slack) so a denied explicit
-# @-mention still blocks the command but sends one bounded sender-facing
-# feedback message instead of dropping silently (NemoClaw #4752). The script
-# classifies the installed Slack dist by content signature, fails the build if
-# a @openclaw/slack package is present but the deny path shape is unrecognized,
-# and is a no-op when the Slack channel is not enabled for this image.
-# Scoped to the sandbox-writable OpenClaw config dir: `openclaw plugins install`
-# stages external channel packages under $HOME/.openclaw/npm, and this step runs
-# as the sandbox user, so do not scan the root-owned global node_modules tree.
-# Removal criteria: drop when upstream OpenClaw notifies the sender on a denied
-# explicit Slack @-mention, or when NemoClaw no longer ships @openclaw/slack.
-# hadolint ignore=DL3059
-RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-slack-deny-feedback.mts \
-    /sandbox/.openclaw
 
 # Lock down npm for the next RUN: the local OpenClaw plugin install must
 # resolve from /opt/nemoclaw and the staged plugin-runtime-deps tree without

@@ -768,20 +768,71 @@ harden_config_symlinks() {
 }
 
 # ── Messaging channels ──────────────────────────────────────────
-# Channel entries are baked into the config at image build time via
-# NEMOCLAW_MESSAGING_PLAN_B64 manifest render hooks. Placeholder tokens
-# flow through to the L7 proxy for rewriting at egress. Real tokens are
-# never visible inside the sandbox.
+# Channel entries are baked into the config at image build time via manifest
+# render hooks. Placeholder tokens flow through to the L7 proxy for rewriting
+# at egress. Real tokens are never visible inside the sandbox.
 #
 # This function just logs which channels are active. Runtime patching
 # of config files is not possible — Landlock enforces read-only at
 # the kernel level.
 configure_messaging_channels() {
-  [ -n "${TELEGRAM_BOT_TOKEN:-}" ] || [ -n "${DISCORD_BOT_TOKEN:-}" ] || [ -n "${SLACK_BOT_TOKEN:-}" ] || return 0
+  local channels
+  channels="$(read_messaging_plan_channels || true)"
+  [ -n "$channels" ] || return 0
 
   echo "[channels] Messaging channels active (baked at build time):" >&2
-  [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && echo "[channels]   telegram" >&2
-  [ -n "${DISCORD_BOT_TOKEN:-}" ] && echo "[channels]   discord" >&2
-  [ -n "${SLACK_BOT_TOKEN:-}" ] && echo "[channels]   slack" >&2
+  while IFS= read -r channel; do
+    [ -n "$channel" ] || continue
+    echo "[channels]   $channel" >&2
+  done <<EOF
+$channels
+EOF
   return 0
+}
+
+read_messaging_plan_channels() {
+  python3 - <<'PY'
+import base64
+import json
+import os
+
+DEFAULT_ARTIFACT_PATH = "/usr/local/share/nemoclaw/messaging-runtime-plan.json"
+
+
+def read_plan():
+    raw = os.environ.get("NEMOCLAW_MESSAGING_PLAN_B64", "").strip()
+    if raw:
+        try:
+            return json.loads(base64.b64decode(raw).decode("utf-8"))
+        except Exception:
+            raise SystemExit(0)
+    artifact_path = os.environ.get("NEMOCLAW_MESSAGING_RUNTIME_PLAN_PATH", DEFAULT_ARTIFACT_PATH)
+    if not artifact_path or not os.path.isfile(artifact_path):
+        raise SystemExit(0)
+    try:
+        with open(artifact_path, encoding="utf-8") as handle:
+            return json.load(handle)
+    except Exception:
+        raise SystemExit(0)
+
+
+plan = read_plan()
+if not isinstance(plan, dict):
+    raise SystemExit(0)
+seen = set()
+disabled = {
+    str(channel).strip().lower()
+    for channel in plan.get("disabledChannels", [])
+    if isinstance(channel, str)
+}
+for item in plan.get("channels", []):
+    if not isinstance(item, dict):
+        continue
+    channel = str(item.get("channelId") or "").strip().lower()
+    if not channel or channel in seen:
+        continue
+    if item.get("active") is True and item.get("disabled") is not True and channel not in disabled:
+        seen.add(channel)
+        print(channel)
+PY
 }

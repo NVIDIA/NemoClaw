@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isRecord } from "../core/json-types.js";
+import { listOpenClawManagedChannelNames } from "../messaging/channels/index.js";
+
+const MANAGED_OPENCLAW_CHANNEL_NAMES = listOpenClawManagedChannelNames();
 
 /**
  * Ownership contract for restoring OpenClaw's durable openclaw.json snapshot.
@@ -15,7 +18,7 @@ export const OPENCLAW_CONFIG_RESTORE_OWNERSHIP = {
   /** Fresh rebuild output owns these whole top-level runtime sections. */
   runtimeSections: ["gateway", "proxy", "diagnostics"],
   /** NemoClaw-managed channels reflect current add/remove/start/stop state. */
-  managedChannels: ["discord", "slack", "telegram", "whatsapp", "wechat", "openclaw-weixin"],
+  managedChannels: MANAGED_OPENCLAW_CHANNEL_NAMES,
   /** Current generated entries win by id; backup-only user entries are kept. */
   currentGeneratedEntryMaps: ["plugins.entries"],
   /**

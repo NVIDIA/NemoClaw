@@ -43,6 +43,10 @@ function stageLegacySandboxBuildContext(
 ): StagedBuildContext {
   const buildCtx = createBuildContextDir(tmpDir);
   fs.copyFileSync(path.join(rootDir, "Dockerfile"), path.join(buildCtx, "Dockerfile"));
+  fs.copyFileSync(
+    path.join(rootDir, "tsconfig.runtime-preloads.json"),
+    path.join(buildCtx, "tsconfig.runtime-preloads.json"),
+  );
   fs.cpSync(path.join(rootDir, "nemoclaw"), path.join(buildCtx, "nemoclaw"), { recursive: true });
   fs.cpSync(path.join(rootDir, "nemoclaw-blueprint"), path.join(buildCtx, "nemoclaw-blueprint"), {
     recursive: true,
@@ -77,6 +81,10 @@ function stageOptimizedSandboxBuildContext(
   const stagedScriptsDir = path.join(buildCtx, "scripts");
 
   fs.copyFileSync(path.join(rootDir, "Dockerfile"), stagedDockerfile);
+  fs.copyFileSync(
+    path.join(rootDir, "tsconfig.runtime-preloads.json"),
+    path.join(buildCtx, "tsconfig.runtime-preloads.json"),
+  );
 
   fs.mkdirSync(stagedNemoclawDir, { recursive: true });
   for (const fileName of [
@@ -160,10 +168,6 @@ function stageOptimizedSandboxBuildContext(
   fs.copyFileSync(
     path.join(rootDir, "scripts", "patch-openclaw-chat-send.js"),
     path.join(stagedScriptsDir, "patch-openclaw-chat-send.js"),
-  );
-  fs.copyFileSync(
-    path.join(rootDir, "scripts", "patch-openclaw-slack-deny-feedback.mts"),
-    path.join(stagedScriptsDir, "patch-openclaw-slack-deny-feedback.mts"),
   );
 
   return { buildCtx, stagedDockerfile };

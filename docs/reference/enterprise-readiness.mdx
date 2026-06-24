@@ -1,0 +1,149 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "NemoClaw Enterprise Readiness and Admin Capability Guidance"
+sidebar-title: "Enterprise Readiness"
+description: "A reviewed reference for what NemoClaw supports today, what requires manual or admin handling, what is platform-owned, and what is roadmap-only."
+description-agent: "Classifies NemoClaw enterprise readiness and admin/control-plane capabilities by current support state, with workarounds and tracked issues. Use when answering enterprise evaluation, support-boundary, or admin-capability questions, or when preparing field and customer conversations about what NemoClaw supports today."
+keywords: ["nemoclaw enterprise readiness", "nemoclaw support boundaries", "nemoclaw admin capabilities", "nemoclaw control plane"]
+content:
+  type: "reference"
+---
+import { AgentOnly } from "../_components/AgentGuide";
+
+This page gives field teams and enterprise evaluators a single reference for what NemoClaw supports today, what an operator must handle manually, what the OpenShell platform or the inference provider owns, and what is roadmap-only.
+Use it to answer enterprise readiness and support-boundary questions consistently instead of inferring an answer from individual bug fixes.
+
+NemoClaw is an open-source reference stack for running sandboxed agents more safely inside OpenShell.
+It is in active development, and interfaces can change between releases.
+NemoClaw is not a hardened, multi-tenant enterprise control plane, and several admin and control-plane expectations are platform-owned or roadmap-only.
+This page states where each capability stands so evaluators do not treat roadmap items as current commitments.
+
+<Warning title="Confirm before you commit">
+Treat this page as a living reference for an active evaluation window, not a contractual support matrix.
+Confirm the current state of any capability with the NemoClaw product and engineering owners before you repeat it in a customer commitment.
+Statuses can change between releases, and the tracked issues linked here may resolve or change scope.
+</Warning>
+
+## How to Use This Guidance
+
+Each capability below carries one status from the following vocabulary.
+
+| Status | Meaning |
+|---|---|
+| Supported | Works today through the standard NemoClaw CLI and is covered by the documentation. |
+| Supported with caveats | Works today, but with manual steps, platform limits, or known rough edges. |
+| Manual or admin-only | No turnkey command. An operator performs it by hand with host-side commands, file edits, or container flags. |
+| Platform or partner-owned | Owned by OpenShell (the sandbox runtime) or the inference provider, not by NemoClaw. |
+| Experimental | Behind a flag or not fully validated. Use for evaluation only. |
+| Roadmap-only | Not available today. Tracked or planned. |
+| Out of scope | NemoClaw is a reference stack and does not intend to provide this. |
+
+This page covers support boundaries and admin capability classification.
+For validated platform, inference, and launch claims, pair it with the launch claims and platform support matrix tracked in [NVIDIA/NemoClaw#4630](https://github.com/NVIDIA/NemoClaw/issues/4630).
+
+## Support Boundaries
+
+NemoClaw orchestrates several components that it does not all own.
+Knowing who enforces each boundary prevents misattributing a limitation to NemoClaw when the owner is OpenShell, the agent runtime, or the provider.
+
+| Component | Owner | Responsibility |
+|---|---|---|
+| Host CLI and onboarding | NemoClaw | Onboarding, provider validation, blueprint resolution, sandbox lifecycle commands, and credential handling on the host. |
+| Blueprint and policy presets | NemoClaw | Versioned blueprint, baseline network policy, filesystem and process defaults, and integration presets. |
+| Gateway, sandbox runtime, and egress enforcement | OpenShell | Network namespace isolation, the CONNECT proxy, policy enforcement, inference routing, TLS termination, and structured platform logging. |
+| Agent behavior | OpenClaw or Hermes | The agent loop, tools, skills, and in-sandbox configuration. |
+| Model inference and data handling | Inference provider | Model execution, per-token cost, rate limits, and provider-side data policies. |
+| Operator decisions | You | Endpoint approvals, policy widening, posture choices, provider selection, and credential rotation. |
+
+For the architecture behind these boundaries, refer to [How It Works](../about/how-it-works) and [Architecture Details](architecture).
+
+## Enterprise Readiness by Capability Area
+
+The following matrix answers the most common enterprise evaluation questions.
+Each row links to the deeper documentation and, where a concrete fix is in progress, to the tracked issue.
+
+| Capability area | Status | Notes, workaround, and tracked work |
+|---|---|---|
+| Deny-by-default egress and operator approval | Supported | The sandbox blocks all unlisted outbound traffic and surfaces blocked requests for approval in `openshell term`. Approvals persist within a sandbox instance and reset to the baseline when you destroy and recreate it. See [Approve or Deny Network Requests](../network-policy/approve-network-requests). |
+| Network policy configuration | Supported | Edit baseline policy in the blueprint, apply presets, or add endpoints to a running sandbox with `$$nemoclaw <sandbox> policy-add --from-file`. See [Customize the Network Policy](../network-policy/customize-network-policy) and [Network Policies](network-policies). |
+| Network policy and denial visibility | Supported with caveats | Live activity appears in `openshell term`; lifecycle and gateway output appear in `$$nemoclaw <sandbox> logs`. Denial log readability is being improved in [#4760](https://github.com/NVIDIA/NemoClaw/issues/4760). Default-policy gaps for plugin installs are tracked in [#4104](https://github.com/NVIDIA/NemoClaw/issues/4104) and [#4015](https://github.com/NVIDIA/NemoClaw/issues/4015), and a `policy-add` YAML defect in [#991](https://github.com/NVIDIA/NemoClaw/issues/991). |
+| Model and provider switching | Supported | Switch the active provider or model with the NemoClaw inference commands. Some changes rebuild the sandbox image. See [Switch Inference Providers](../inference/switch-inference-providers) and [Inference Options](../inference/inference-options). |
+| Multi-agent and multi-sandbox usage | Supported with caveats | Side-by-side sandboxes run on distinct names and dashboard ports, and each name maps to exactly one agent type. Known multi-instance issues include gateway-port collisions ([#5359](https://github.com/NVIDIA/NemoClaw/issues/5359)) and parallel inference routing fallback ([#5343](https://github.com/NVIDIA/NemoClaw/issues/5343)). A declarative multi-agent manifest is roadmap ([#2853](https://github.com/NVIDIA/NemoClaw/issues/2853)). |
+| Monitoring and health | Supported | Use `$$nemoclaw <sandbox> status`, `$$nemoclaw <sandbox> logs --follow`, and `openshell term`. See [Monitor Sandbox Activity](../monitoring/monitor-sandbox-activity). |
+| External telemetry and observability export | Roadmap-only | NemoClaw has no built-in metrics or trace export to external observability backends. An observability adapter plugin is tracked in [#3915](https://github.com/NVIDIA/NemoClaw/issues/3915). OpenShell emits structured platform logs (platform-owned). |
+| Audit and session records | Supported with caveats | OpenClaw stores per-session JSONL event logs you can export for audit or compliance review; Hermes stores its own runtime state. Export is manual per sandbox. See [Inspect Agent Session State](../monitoring/monitor-sandbox-activity#inspect-agent-session-state). |
+| Resource quotas | Supported with caveats | The entrypoint applies best-effort process and file-descriptor limits (`ulimit -u 512`, `ulimit -n 65536`). Set hard limits through the container runtime for fail-closed enforcement. See [Process Controls](../security/best-practices#process-controls). |
+| Cost and spend controls | Platform or partner-owned | Deny-by-default egress and routed inference reduce exfiltration and stray endpoints, but NemoClaw does not enforce per-token spend budgets. Set spend limits with your inference provider and monitor unattended agents. |
+| Credential isolation | Supported | Inference credentials stay on the host and never enter the sandbox; the agent reaches models through `inference.local`. CLI output redaction adds defense in depth, and OpenClaw sandboxes also run a memory secret scanner. See [Credential Storage](../security/credential-storage) and [Security Best Practices](../security/best-practices). |
+| Upgrades and lifecycle | Supported with caveats | Upgrade NemoClaw, then run `$$nemoclaw <sandbox> rebuild` to recreate the sandbox with the current image while backing up and restoring state. Do not run `openclaw update` inside the sandbox; the agent is image-pinned. Known gaps include config restore after rebuild ([#5202](https://github.com/NVIDIA/NemoClaw/issues/5202)) and version attachment flexibility ([#2217](https://github.com/NVIDIA/NemoClaw/issues/2217)). |
+| Backup and restore | Supported | Create snapshots and restore workspace and agent state with the snapshot and backup commands. See [Back Up and Restore](../manage-sandboxes/backup-restore). |
+| Remote and cloud deployment | Supported with caveats | Provision the host, run the installer, and run `$$nemoclaw onboard`; the `$$nemoclaw deploy` Brev wrapper is deprecated. Remote dashboard origins can disable device pairing, so avoid exposing them on shared networks. Brev rough edges are tracked in [#3959](https://github.com/NVIDIA/NemoClaw/issues/3959) and [#3365](https://github.com/NVIDIA/NemoClaw/issues/3365). |
+
+<AgentOnly variant="openclaw">
+For remote deployment specifics, refer to [Deploy to Remote GPU Instances](../deployment/deploy-to-remote-gpu) and [Brev Web UI](../deployment/brev-web-ui).
+For container-level hardening beyond the entrypoint defaults, refer to [Sandbox Hardening](../deployment/sandbox-hardening).
+</AgentOnly>
+<AgentOnly variant="hermes">
+For remote deployment and Brev specifics, refer to the Brev section of the [Troubleshooting](troubleshooting#brev) guide.
+</AgentOnly>
+
+## Admin and Control-Plane Capabilities
+
+Enterprise admins often expect a control plane with centralized management, identity integration, and fleet-wide policy.
+NemoClaw targets a single-operator, single-host reference workflow today.
+The following table classifies each admin and control-plane expectation by current support state so you can set accurate expectations.
+
+| Capability | Status | Notes |
+|---|---|---|
+| Centralized fleet and sandbox management across hosts | Manual or admin-only | Each host is managed independently with the NemoClaw CLI. There is no cross-host management console. |
+| Role-based access control for operators | Out of scope | NemoClaw assumes a single trusted operator per host. There is no operator RBAC layer. |
+| Enterprise identity integration (SSO, OIDC, SAML) | Roadmap-only | Gateway access uses device pairing for the OpenClaw dashboard or bearer-token auth for the Hermes API, not enterprise identity providers. |
+| Multi-tenant isolation | Out of scope | Isolation is per-sandbox at the container level. NemoClaw does not provide tenant separation for multiple untrusted users on one host. |
+| Centralized audit export and SIEM integration | Manual or admin-only | Export per-session JSONL logs by hand for audit review. External telemetry forwarding is roadmap ([#3915](https://github.com/NVIDIA/NemoClaw/issues/3915)). |
+| Usage quotas, cost budgets, and billing | Platform or partner-owned | Set token and rate limits with your inference provider. NemoClaw does not meter or cap spend. |
+| Credential and secrets management | Supported with caveats | Provider credentials live on the host with restricted permissions and redaction. Integration with an external secrets manager is manual. See [Credential Storage](../security/credential-storage). |
+| Policy as code distributed across a fleet | Manual or admin-only | Baseline policy and presets are versioned in the blueprint and applied per sandbox. There is no fleet-wide policy distribution service. |
+| High availability and horizontal gateway scaling | Platform or partner-owned | The NemoClaw reference flow targets a single host. Gateway scaling and availability are OpenShell concerns. |
+| Disaster recovery across a fleet | Manual or admin-only | Per-sandbox snapshot, backup, and restore are supported. Fleet-level disaster recovery is an operator responsibility. |
+
+## Known Limitations and Workarounds
+
+These limitations are most likely to surface during an enterprise evaluation.
+Each one includes the current workaround or next step.
+
+| Limitation | Impact | Workaround or next step |
+|---|---|---|
+| Approved endpoints reset on sandbox recreation | One-off approvals do not survive a destroy and recreate. | Add durable endpoints to the baseline policy or a preset rather than relying on repeated approvals. See [Customize the Network Policy](../network-policy/customize-network-policy). |
+| Controls bypassed outside the managed gateway path | Network policy and inference auth are not enforced if a runtime starts outside the NemoClaw-managed entrypoint. | Use NemoClaw-managed onboarding and sandbox entrypoints for production workflows. See [Known Limitations](../security/best-practices#known-limitations). |
+| One consumer per messaging bot token | Two sandboxes sharing a bot token disconnect each other and drop messages. | Use a distinct bot token per sandbox. See the messaging troubleshooting in [Troubleshooting](troubleshooting#messaging-bridge-appears-running-but-no-messages-arrive). |
+| In-sandbox config edits do not persist | Direct edits to agent config inside the running sandbox do not survive rebuilds. | Make durable config changes from the host by re-running `$$nemoclaw onboard`, not inside the sandbox. See [Troubleshooting](troubleshooting). |
+| Landlock filesystem enforcement degrades on old kernels | Filesystem restrictions fall back to container mounts below Linux kernel 5.13. | Run on kernel 5.13 or later for full enforcement. See [Landlock LSM Enforcement](../security/best-practices#landlock-lsm-enforcement). |
+| Best-effort capability and resource limits | Capability drops and ulimits skip silently when the runtime blocks them. | Pass `--cap-drop=ALL` and `--ulimit` at the container runtime, or set `NEMOCLAW_REQUIRE_CAP_DROP=1` to fail closed. See [Process Controls](../security/best-practices#process-controls). |
+
+## Field Conversation Guidance
+
+Use the following phrasing to describe NemoClaw accurately in customer and field conversations.
+
+- Describe NemoClaw as an open-source reference stack for running agents more safely inside OpenShell, in active development, rather than a finished enterprise control plane.
+- State that egress is deny-by-default and that an operator approves new endpoints, so the agent cannot reach arbitrary hosts.
+- Explain that inference credentials stay on the host and the agent calls models through a routed `inference.local` endpoint, so the sandbox never holds provider keys.
+- Frame centralized fleet management, operator RBAC, enterprise SSO, and multi-tenant isolation as roadmap-only or out of scope today, and avoid presenting them as current capabilities.
+- Position cost controls and spend limits as provider-owned, and recommend setting provider-side limits for unattended agents.
+- When a customer hits a known limitation, point to the workaround in this guide and the tracked issue rather than promising a fix date.
+
+## Ownership and Keeping This Current
+
+This guidance must stay accurate for the duration of the evaluation window.
+
+- The NemoClaw product and engineering owners review this page before it is reused in launch-facing or customer-facing material.
+- Update the affected rows whenever a tracked issue resolves, a capability ships, or a status changes, and align the status vocabulary with the platform support matrix in [#4630](https://github.com/NVIDIA/NemoClaw/issues/4630).
+- Treat each linked issue as the source of truth for in-progress work, and remove the link when the work lands and the row moves to a supported status.
+
+## Related Topics
+
+- [Security Best Practices](../security/best-practices) for the full control-by-control risk framework.
+- [Network Policies](network-policies) for the baseline egress policy reference.
+- [Monitor Sandbox Activity](../monitoring/monitor-sandbox-activity) for status, logs, audit records, and the TUI.
+- [Troubleshooting](troubleshooting) for installation, onboarding, and runtime issue resolution.
+- [How It Works](../about/how-it-works) for the protection-layer architecture.

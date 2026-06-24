@@ -5,6 +5,8 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { CLI_NAME } from "../cli/branding";
+import { applyAgentsManifestEnv } from "./agents-manifest";
+import { isOpenclawAgent } from "./openclaw-otel-policy-presets";
 
 export interface OnboardCommandOptions {
   nonInteractive: boolean;
@@ -17,6 +19,7 @@ export interface OnboardCommandOptions {
   sandboxGpuDevice: string | null;
   acceptThirdPartySoftware: boolean;
   agent: string | null;
+  agentsManifest: string | null;
   controlUiPort: number | null;
   gpu: boolean;
   noGpu: boolean;
@@ -55,9 +58,10 @@ const ONBOARD_BASE_ARGS = [
 function onboardUsageLines(noticeAcceptFlag: string): string[] {
   const name = CLI_NAME;
   return [
-    `  Usage: ${name} onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--agent <name>] [--control-ui-port <N>] [--yes | -y] [--no-ollama-autostart] [${noticeAcceptFlag}]`,
+    `  Usage: ${name} onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--agent <name>] [--agents <agents.yaml>] [--control-ui-port <N>] [--yes | -y] [--no-ollama-autostart] [${noticeAcceptFlag}]`,
     "",
     "  --from <Dockerfile> uses the Dockerfile's parent directory as the Docker build context.",
+    "  --agents <agents.yaml> declares secondary OpenClaw agents, agents.defaults, and main-agent overrides; the YAML is baked into the sandbox image at build time.",
     "  --no-ollama-autostart skips the wizard's eager Ollama auto-start during inference-provider selection so onboard surfaces the unreachable-Ollama warning and the default fallback model; later setup steps still expect a reachable Ollama, and on Linux hosts with a systemd Ollama unit the loopback-override path may still restart the daemon ahead of this gate.",
     "  --gpu enables direct NVIDIA GPU access inside the sandbox; --no-gpu forces CPU sandbox behavior.",
     "  --sandbox-gpu enables direct NVIDIA GPU access inside the sandbox; --no-sandbox-gpu forces CPU sandbox behavior.",
@@ -139,6 +143,39 @@ export function parseOnboardArgs(
     }
     agent = agentValue;
     parsedArgs.splice(agentIdx, 2);
+  }
+
+  let agentsManifest: string | null = null;
+  const agentsIdx = parsedArgs.indexOf("--agents");
+  if (agentsIdx !== -1) {
+    const agentsValue = parsedArgs[agentsIdx + 1];
+    if (
+      typeof agentsValue !== "string" ||
+      agentsValue.length === 0 ||
+      agentsValue.startsWith("--")
+    ) {
+      error("  --agents requires a path to a YAML manifest");
+      printOnboardUsage(error, noticeAcceptFlag);
+      exit(1);
+    }
+    if (!isOpenclawAgent(agent)) {
+      error(
+        `  --agents is OpenClaw-specific and cannot be used with --agent ${agent}; the declarative manifest only drives OpenClaw secondary agents.`,
+      );
+      printOnboardUsage(error, noticeAcceptFlag);
+      exit(1);
+    }
+    const resolved = path.resolve(agentsValue);
+    if (!fs.existsSync(resolved)) {
+      error(`  --agents path not found: ${resolved}`);
+      exit(1);
+    }
+    if (!fs.statSync(resolved).isFile()) {
+      error(`  --agents must point to a file: ${resolved}`);
+      exit(1);
+    }
+    agentsManifest = resolved;
+    parsedArgs.splice(agentsIdx, 2);
   }
 
   let controlUiPort: number | null = null;
@@ -244,6 +281,7 @@ export function parseOnboardArgs(
     acceptThirdPartySoftware:
       parsedArgs.includes(noticeAcceptFlag) || String(deps.env[noticeAcceptEnv] || "") === "1",
     agent,
+    agentsManifest,
     controlUiPort,
     gpu,
     noGpu,
@@ -261,6 +299,9 @@ export async function runOnboardCommand(deps: RunOnboardCommandDeps): Promise<vo
 
   const options = parseOnboardArgs(deps.args, deps.noticeAcceptFlag, deps.noticeAcceptEnv, deps);
   if (options.noOllamaAutostart) process.env.NEMOCLAW_OLLAMA_NO_AUTOSTART = "1";
+  if (options.agentsManifest) {
+    applyAgentsManifestEnv(options.agentsManifest);
+  }
   await deps.runOnboard(options);
 }
 

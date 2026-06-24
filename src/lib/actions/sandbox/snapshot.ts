@@ -12,6 +12,7 @@ import {
 import { CLI_NAME } from "../../cli/branding";
 import { prompt as askPrompt } from "../../credentials/store";
 import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
+import { listMessagingProviderSuffixes } from "../../messaging/channels";
 import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import * as policies from "../../policy";
 import { ROOT, run, shellQuote, validateName } from "../../runner";
@@ -153,18 +154,12 @@ async function autoCreateSandboxFromSource(
   srcName: string,
   dstName: string,
   srcEntry: SandboxEntry | { name: string },
+  fromImage: string,
 ): Promise<void> {
   const sandboxCreateStream = require("../../sandbox/create-stream");
   const { isSandboxReady } = require("../../state/gateway");
   const basePolicy = path.join(ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml");
   const openshellBin = getOpenshellBinary();
-
-  const fromImage = resolveSrcPodImage(srcName, srcEntry);
-  if (!fromImage) {
-    console.error(`  Cannot auto-create '${dstName}': could not resolve '${srcName}' pod image.`);
-    console.error(`  Create '${dstName}' manually with '${CLI_NAME} onboard'.`);
-    snapshotExit(1);
-  }
 
   const cmdParts = [
     openshellBin,
@@ -189,7 +184,9 @@ async function autoCreateSandboxFromSource(
     initialPhase: "create",
     // Wait until the sandbox actually reaches Ready state, not just appears in the list.
     readyCheck: () => {
-      const list = captureOpenshell(["sandbox", "list"], { ignoreError: true });
+      const list = captureOpenshell(["sandbox", "list"], {
+        ignoreError: true,
+      });
       if (list.status !== 0) return false;
       return isSandboxReady(list.output || "", dstName);
     },
@@ -276,22 +273,19 @@ function deleteSandboxForRestore(name: string): void {
   // Destination-only cleanup so the recreated sandbox does not inherit stale
   // host-side state or hit provider-name conflicts (Codex #3796 P2):
   // - /tmp/nemoclaw-services-<name>: PID dir for this sandbox's services
-  // - OpenShell providers named <name>-{telegram,discord,slack,wechat}-bridge
-  //   and <name>-slack-app: per-sandbox messaging bridges
+  // - OpenShell per-sandbox messaging bridge providers declared by channel
+  //   manifests.
   // - shields-<name>.json + shields timer: per-sandbox shields artifacts
   try {
-    fs.rmSync(`/tmp/nemoclaw-services-${name}`, { recursive: true, force: true });
+    fs.rmSync(`/tmp/nemoclaw-services-${name}`, {
+      recursive: true,
+      force: true,
+    });
   } catch {
     // PID dir may not exist \u2014 ignore.
   }
-  for (const suffix of [
-    "telegram-bridge",
-    "discord-bridge",
-    "slack-bridge",
-    "slack-app",
-    "wechat-bridge",
-  ]) {
-    runOpenshell(["provider", "delete", `${name}-${suffix}`], {
+  for (const suffix of listMessagingProviderSuffixes()) {
+    runOpenshell(["provider", "delete", `${name}${suffix}`], {
       ignoreError: true,
       stdio: ["ignore", "ignore", "ignore"],
     });
@@ -333,9 +327,11 @@ function verifyRestoreDestinationOnOwnGateway(targetSandbox: string): void {
 }
 
 function isSnapshotCreationAllowedByShields(sandboxName: string): boolean {
-  // Snapshot creation is a shields/policy boundary. If a packaged or mocked
-  // CommonJS interop surface ever omits the helper, fail closed before any
-  // backup side effect instead of throwing an ambiguous TypeError.
+  // Snapshot creation is a shields/policy boundary. Production builds should
+  // always export this helper, but stale compiled artifacts, package-boundary
+  // skew, or test doubles can present a missing CommonJS interop surface. There
+  // is no safe runtime source fix once snapshot creation has started, so keep
+  // this as permanent defense-in-depth and fail closed before backup side effects.
   const isShieldsDown = shields.isShieldsDown;
   if (typeof isShieldsDown !== "function") {
     console.error("  Cannot verify shields state. Refusing to create snapshot.");
@@ -344,57 +340,344 @@ function isSnapshotCreationAllowedByShields(sandboxName: string): boolean {
   return isShieldsDown(sandboxName);
 }
 
+function runSnapshotCreate(
+  sandboxName: string,
+  request: Extract<SnapshotRequest, { kind: "create" }>,
+): void {
+  const liveNames = requireLiveSandboxesOnSandboxGateway(
+    sandboxName,
+    "  Failed to query live sandbox state from OpenShell.",
+  );
+  if (!liveNames.has(sandboxName)) {
+    console.error(`  Sandbox '${sandboxName}' is not running. Cannot create snapshot.`);
+    snapshotExit(1);
+  }
+  if (!isSnapshotCreationAllowedByShields(sandboxName)) {
+    console.error("  Cannot create snapshot while shields are up.");
+    console.error(`  Run \`${CLI_NAME} ${sandboxName} shields down\` first, then retry.`);
+    snapshotExit(1);
+  }
+  const label = request.name ? ` (--name ${request.name})` : "";
+  console.log(`  Creating snapshot of '${sandboxName}'${label}...`);
+  const result = sandboxState.backupSandboxState(sandboxName, {
+    name: request.name ?? null,
+  });
+  if (result.success) {
+    const manifest = result.manifest!;
+    const entry = sandboxState.findBackup(sandboxName, manifest.timestamp).match ?? manifest;
+    const v = formatSnapshotVersion(entry);
+    const nameSuffix = entry.name ? ` name=${entry.name}` : "";
+    const itemSummary = `${result.backedUpDirs.length} directories, ${result.backedUpFiles.length} files`;
+    console.log(`  ${G}✓${R} Snapshot ${v}${nameSuffix} created (${itemSummary})`);
+    console.log(`    ${manifest.backupPath}`);
+    return;
+  }
+  if (result.error) {
+    console.error(`  ${result.error}`);
+  } else {
+    console.error("  Snapshot failed.");
+    if (result.failedDirs.length > 0) {
+      console.error(`  Failed directories: ${result.failedDirs.join(", ")}`);
+    }
+    if (result.failedFiles.length > 0) {
+      console.error(`  Failed files: ${result.failedFiles.join(", ")}`);
+    }
+  }
+  snapshotExit(1);
+}
+
+function repairRestoredOpenClawConfigPerms(
+  targetSandbox: string,
+  result: ReturnType<typeof sandboxState.restoreSandboxState>,
+): void {
+  if (!result.restoredFiles.includes("openclaw.json")) return;
+  try {
+    const permRepair = shields.repairMutableConfigPerms(targetSandbox);
+    if (permRepair.applied && permRepair.verified) {
+      console.log(`  ${G}✓${R} OpenClaw config permissions restored`);
+    } else if (!permRepair.applied && permRepair.skipReason === "unreadable") {
+      console.warn(`  Warning: could not verify OpenClaw config permissions: ${permRepair.reason}`);
+    } else if (permRepair.applied && !permRepair.verified) {
+      console.warn(
+        `  Warning: OpenClaw config permission repair incomplete: ${permRepair.errors.join("; ")}`,
+      );
+    }
+  } catch (err) {
+    console.warn(
+      `  Warning: OpenClaw config permission repair errored: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
+function reconcileSnapshotPolicyPresets(
+  targetSandbox: string,
+  resolvedSnapshot: ReturnType<typeof sandboxState.getLatestBackup>,
+): void {
+  if (!resolvedSnapshot || !Array.isArray(resolvedSnapshot.policyPresets)) return;
+  const snapshotPresets = resolvedSnapshot.policyPresets;
+  // getAppliedPresets includes custom-policy names for display/CLI parity.
+  // Built-in preset reconciliation must not remove those; custom policy content
+  // is reconciled separately below from registry.getCustomPolicies().
+  const customPolicyNames = new Set(registry.getCustomPolicies(targetSandbox).map((p) => p.name));
+  const currentPresets = policies
+    .getAppliedPresets(targetSandbox)
+    .filter((preset: string) => !customPolicyNames.has(preset));
+  const toRemove = currentPresets.filter((p: string) => !snapshotPresets.includes(p));
+  const toAdd = snapshotPresets.filter((p: string) => !currentPresets.includes(p));
+  if (toRemove.length === 0 && toAdd.length === 0) return;
+
+  const summary: string[] = [];
+  if (toAdd.length > 0) summary.push(`add ${toAdd.join(", ")}`);
+  if (toRemove.length > 0) summary.push(`remove ${toRemove.join(", ")}`);
+  console.log(`  Reconciling policy presets on '${targetSandbox}': ${summary.join("; ")}`);
+
+  const failed: string[] = [];
+  for (const preset of toRemove) {
+    try {
+      if (!policies.removePreset(targetSandbox, preset)) failed.push(`${preset} (remove failed)`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      failed.push(`${preset} (remove: ${message})`);
+    }
+  }
+  for (const preset of toAdd) {
+    try {
+      if (!policies.applyPreset(targetSandbox, preset)) failed.push(`${preset} (apply failed)`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      failed.push(`${preset} (apply: ${message})`);
+    }
+  }
+  if (failed.length > 0) {
+    console.warn(`  Warning: could not reconcile preset(s): ${failed.join("; ")}`);
+  }
+}
+
+function reconcileSnapshotCustomPolicies(
+  targetSandbox: string,
+  resolvedSnapshot: ReturnType<typeof sandboxState.getLatestBackup>,
+): void {
+  if (!resolvedSnapshot || !Array.isArray(resolvedSnapshot.customPolicies)) return;
+  const snapshotCustom = resolvedSnapshot.customPolicies;
+  const currentCustom = registry.getCustomPolicies(targetSandbox);
+  const snapshotByName = new Map(snapshotCustom.map((entry) => [entry.name, entry]));
+  const currentByName = new Map(currentCustom.map((entry) => [entry.name, entry]));
+  const toRemove = currentCustom.filter((c) => !snapshotByName.has(c.name));
+  const toAdd = snapshotCustom.filter((sp) => {
+    const current = currentByName.get(sp.name);
+    return !current || current.content !== sp.content || current.sourcePath !== sp.sourcePath;
+  });
+  if (toRemove.length === 0 && toAdd.length === 0) return;
+
+  const summary: string[] = [];
+  if (toAdd.length > 0) summary.push(`add ${toAdd.map((c) => c.name).join(", ")}`);
+  if (toRemove.length > 0) summary.push(`remove ${toRemove.map((c) => c.name).join(", ")}`);
+  console.log(`  Reconciling custom policies on '${targetSandbox}': ${summary.join("; ")}`);
+
+  const failed: string[] = [];
+  for (const entry of toRemove) {
+    try {
+      if (!policies.removePreset(targetSandbox, entry.name)) {
+        failed.push(`${entry.name} (remove failed)`);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      failed.push(`${entry.name} (remove: ${message})`);
+    }
+  }
+  for (const entry of toAdd) {
+    try {
+      if (
+        !policies.applyPresetContent(targetSandbox, entry.name, entry.content, {
+          custom: { sourcePath: entry.sourcePath },
+        })
+      ) {
+        failed.push(`${entry.name} (apply failed)`);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      failed.push(`${entry.name} (apply: ${message})`);
+    }
+  }
+  if (failed.length > 0) {
+    console.warn(`  Warning: could not reconcile custom policy(ies): ${failed.join("; ")}`);
+  }
+}
+
+async function runSnapshotRestore(
+  sandboxName: string,
+  request: Extract<SnapshotRequest, { kind: "restore" }>,
+): Promise<void> {
+  // `--to <dst>` restores the snapshot from sandboxName into a different
+  // sandbox. If `dst` is not yet live, it is auto-created by cloning the
+  // source sandbox's baked image. Without `--to`, restore targets
+  // sandboxName itself
+  const target = request.to ?? sandboxName;
+  const targetSandbox =
+    target === sandboxName ? sandboxName : validateName(target, "target sandbox name");
+  const sourceLiveNames = requireLiveSandboxesOnSandboxGateway(
+    sandboxName,
+    "  Failed to query live sandbox state from OpenShell.",
+  );
+  const isCrossSandboxRestore = targetSandbox !== sandboxName;
+  const targetEntry = isCrossSandboxRestore ? registry.getSandbox(targetSandbox) : null;
+  const targetExists = sourceLiveNames.has(targetSandbox) || Boolean(targetEntry);
+
+  // #3756 P1 preflight: resolve the snapshot selector AND the source pod
+  // image before any destructive action. A bad selector, missing snapshot,
+  // or unresolvable source image must not be allowed to delete the
+  // destination first and only fail afterwards.
+  const selector = request.selector ?? null;
+  let backupPath: string;
+  let resolvedSnapshot: ReturnType<typeof sandboxState.getLatestBackup>;
+  if (selector) {
+    const { match } = sandboxState.findBackup(sandboxName, selector);
+    if (!match) {
+      console.error(`  No snapshot matching '${selector}' found for '${sandboxName}'.`);
+      console.error("  Selector must be an exact version (v<N>), name, or timestamp.");
+      console.error(`  Run: ${CLI_NAME} ${sandboxName} snapshot list`);
+      snapshotExit(1);
+    }
+    backupPath = match.backupPath;
+    resolvedSnapshot = match;
+    const v = formatSnapshotVersion(match);
+    const nameSuffix = match.name ? ` name=${match.name}` : "";
+    console.log(`  Using snapshot ${v}${nameSuffix} (${match.timestamp})`);
+  } else {
+    const latest = sandboxState.getLatestBackup(sandboxName);
+    if (!latest) {
+      console.error(`  No snapshots found for '${sandboxName}'.`);
+      snapshotExit(1);
+    }
+    backupPath = latest.backupPath;
+    resolvedSnapshot = latest;
+    const v = formatSnapshotVersion(latest);
+    const nameSuffix = latest.name ? ` name=${latest.name}` : "";
+    console.log(`  Using latest snapshot ${v}${nameSuffix} (${latest.timestamp})`);
+  }
+
+  if (!isCrossSandboxRestore) {
+    // Self-restore: target is `sandboxName`. Cannot auto-create; the
+    // source pod is the target, so it must already be live.
+    if (!targetExists) {
+      console.error(`  Sandbox '${targetSandbox}' is not running. Cannot restore snapshot.`);
+      snapshotExit(1);
+    }
+  } else {
+    // #3756: cross-sandbox restore into a destination that already exists
+    // used to overlay onto the live filesystem silently. Refuse by default
+    // *before* doing any source-side preflight, so the user sees the
+    // precise "destination exists" error instead of a misleading
+    // "source not found" or "cannot resolve image" message when both are
+    // also broken.
+    if (targetExists && !request.force) {
+      console.error(`  Destination sandbox '${targetSandbox}' already exists.`);
+      console.error(
+        "  Restoring into an existing sandbox is unsupported because it would silently mutate its filesystem.",
+      );
+      console.error(
+        `  Re-run with --force to delete '${targetSandbox}' and recreate it from the snapshot, or pick a different name.`,
+      );
+      snapshotExit(1);
+    }
+    // Cross-sandbox restore — whether dst exists (with --force) or not,
+    // we must be able to clone the source's running pod image. Resolve it
+    // upfront so a missing source / unresolvable image cannot delete the
+    // destination first (#3756 P1).
+    if (!sourceLiveNames.has(sandboxName)) {
+      if (targetExists) {
+        console.error(
+          `  Cannot recreate '${targetSandbox}' from snapshot: source '${sandboxName}' not found.`,
+        );
+      } else {
+        console.error(
+          `  Cannot auto-create '${targetSandbox}': source '${sandboxName}' not found.`,
+        );
+        console.error(`  Create '${targetSandbox}' manually with '${CLI_NAME} onboard'.`);
+      }
+      snapshotExit(1);
+    }
+    const srcEntry = registry.getSandbox(sandboxName) || { name: sandboxName };
+    const fromImage = resolveSrcPodImage(sandboxName, srcEntry);
+    if (!fromImage) {
+      console.error(
+        `  Cannot resolve image for source sandbox '${sandboxName}' — aborting before ` +
+          (targetExists ? `deleting '${targetSandbox}'.` : `creating '${targetSandbox}'.`),
+      );
+      snapshotExit(1);
+    }
+    if (targetExists) {
+      // --force confirmed above. Prompt for the destination name (unless
+      // --yes or NEMOCLAW_NON_INTERACTIVE=1), then delete and recreate.
+      const nonInteractive = process.env.NEMOCLAW_NON_INTERACTIVE === "1";
+      if (!request.yes && !nonInteractive) {
+        const answer = (
+          await askPrompt(
+            `  This will DELETE sandbox '${targetSandbox}' and restore the snapshot into a fresh copy.\n` +
+              `  Type '${targetSandbox}' to confirm: `,
+          )
+        ).trim();
+        if (answer !== targetSandbox) {
+          console.error("  Confirmation did not match — aborting.");
+          snapshotExit(1);
+        }
+      }
+      if (targetEntry) {
+        verifyRestoreDestinationOnOwnGateway(targetSandbox);
+      }
+      deleteSandboxForRestore(targetSandbox);
+      requireLiveSandboxesOnSandboxGateway(
+        sandboxName,
+        "  Failed to re-select source sandbox gateway after deleting destination.",
+      );
+    }
+    await autoCreateSandboxFromSource(sandboxName, targetSandbox, srcEntry, fromImage);
+  }
+  if (targetSandbox !== sandboxName) {
+    console.log(`  Restoring snapshot from '${sandboxName}' into '${targetSandbox}'...`);
+  } else {
+    console.log(`  Restoring snapshot into '${sandboxName}'...`);
+  }
+  const result = sandboxState.restoreSandboxState(targetSandbox, backupPath);
+  if (result.success) {
+    console.log(
+      `  ${G}\u2713${R} Restored ${result.restoredDirs.length} directories, ${result.restoredFiles.length} files`,
+    );
+  } else {
+    console.error(`  Restore failed.`);
+    if (result.restoredDirs.length > 0) {
+      console.error(`  Partial: ${result.restoredDirs.join(", ")}`);
+    }
+    if (result.failedDirs.length > 0) {
+      console.error(`  Failed: ${result.failedDirs.join(", ")}`);
+    }
+    if (result.failedFiles.length > 0) {
+      console.error(`  Failed files: ${result.failedFiles.join(", ")}`);
+    }
+    snapshotExit(1);
+  }
+  // Post-restore security-state reconciliation is best-effort by design: the
+  // filesystem restore succeeded and old snapshots may target hosts where policy
+  // providers or mutable-config repair are temporarily unavailable. Surface every
+  // failure as a warning, but keep the restore result tied to state restoration.
+  // #5027/#4538: openclaw.json restores via the generic copy strategy, which
+  // lands it at 0640. Repair the mutable config contract when needed.
+  repairRestoredOpenClawConfigPerms(targetSandbox, result);
+  // Reconcile the target's policy presets to match the snapshot manifest
+  // exactly. Skip legacy snapshots that predate the `policyPresets` field.
+  reconcileSnapshotPolicyPresets(targetSandbox, resolvedSnapshot);
+  // Reconcile custom policy presets (applied via --from-file/--from-dir).
+  // Skipped for legacy snapshots that predate the `customPolicies` field.
+  reconcileSnapshotCustomPolicies(targetSandbox, resolvedSnapshot);
+}
+
 export async function runSandboxSnapshot(
   sandboxName: string,
   request: SnapshotRequest = { kind: "help" },
 ) {
   switch (request.kind) {
     case "create": {
-      // Select the sandbox's gateway before the health probe and `sandbox list`
-      // — Docker/VM-driver health and the sandbox listing both require the
-      // sandbox's gateway to be the active one, otherwise a sandbox registered
-      // on a non-default `NEMOCLAW_GATEWAY_PORT` fails health-check before the
-      // subsequent list ever runs.
-      const liveNames = requireLiveSandboxesOnSandboxGateway(
-        sandboxName,
-        "  Failed to query live sandbox state from OpenShell.",
-      );
-      if (!liveNames.has(sandboxName)) {
-        console.error(`  Sandbox '${sandboxName}' is not running. Cannot create snapshot.`);
-        snapshotExit(1);
-      }
-      if (!isSnapshotCreationAllowedByShields(sandboxName)) {
-        console.error("  Cannot create snapshot while shields are up.");
-        console.error(`  Run \`${CLI_NAME} ${sandboxName} shields down\` first, then retry.`);
-        snapshotExit(1);
-      }
-      const label = request.name ? ` (--name ${request.name})` : "";
-      console.log(`  Creating snapshot of '${sandboxName}'${label}...`);
-      const result = sandboxState.backupSandboxState(sandboxName, { name: request.name ?? null });
-      if (result.success) {
-        // Virtual snapshotVersion is only assigned by listBackups, so re-resolve
-        // the just-created snapshot by its timestamp to get a valid v<N>.
-        const manifest = result.manifest!;
-        const entry = sandboxState.findBackup(sandboxName, manifest.timestamp).match ?? manifest;
-        const v = formatSnapshotVersion(entry);
-        const nameSuffix = entry.name ? ` name=${entry.name}` : "";
-        const itemSummary = `${result.backedUpDirs.length} directories, ${result.backedUpFiles.length} files`;
-        console.log(`  ${G}\u2713${R} Snapshot ${v}${nameSuffix} created (${itemSummary})`);
-        console.log(`    ${manifest.backupPath}`);
-      } else {
-        if (result.error) {
-          console.error(`  ${result.error}`);
-        } else {
-          console.error("  Snapshot failed.");
-          if (result.failedDirs.length > 0) {
-            console.error(`  Failed directories: ${result.failedDirs.join(", ")}`);
-          }
-          if (result.failedFiles.length > 0) {
-            console.error(`  Failed files: ${result.failedFiles.join(", ")}`);
-          }
-        }
-        snapshotExit(1);
-      }
+      runSnapshotCreate(sandboxName, request);
       break;
     }
     case "list": {
@@ -412,280 +695,7 @@ export async function runSandboxSnapshot(
       break;
     }
     case "restore": {
-      // `--to <dst>` restores the snapshot from sandboxName into a different
-      // sandbox. If `dst` is not yet live, it is auto-created by cloning the
-      // source sandbox's baked image. Without `--to`, restore targets
-      // sandboxName itself
-      const target = request.to ?? sandboxName;
-      const targetSandbox =
-        target === sandboxName ? sandboxName : validateName(target, "target sandbox name");
-      const sourceLiveNames = requireLiveSandboxesOnSandboxGateway(
-        sandboxName,
-        "  Failed to query live sandbox state from OpenShell.",
-      );
-      const isCrossSandboxRestore = targetSandbox !== sandboxName;
-      const targetEntry = isCrossSandboxRestore ? registry.getSandbox(targetSandbox) : null;
-      const targetExists = sourceLiveNames.has(targetSandbox) || Boolean(targetEntry);
-
-      // #3756 P1 preflight: resolve the snapshot selector AND the source pod
-      // image before any destructive action. A bad selector, missing snapshot,
-      // or unresolvable source image must not be allowed to delete the
-      // destination first and only fail afterwards.
-      const selector = request.selector ?? null;
-      let backupPath: string;
-      let resolvedSnapshot: ReturnType<typeof sandboxState.getLatestBackup>;
-      if (selector) {
-        const { match } = sandboxState.findBackup(sandboxName, selector);
-        if (!match) {
-          console.error(`  No snapshot matching '${selector}' found for '${sandboxName}'.`);
-          console.error("  Selector must be an exact version (v<N>), name, or timestamp.");
-          console.error(`  Run: ${CLI_NAME} ${sandboxName} snapshot list`);
-          snapshotExit(1);
-        }
-        backupPath = match.backupPath;
-        resolvedSnapshot = match;
-        const v = formatSnapshotVersion(match);
-        const nameSuffix = match.name ? ` name=${match.name}` : "";
-        console.log(`  Using snapshot ${v}${nameSuffix} (${match.timestamp})`);
-      } else {
-        const latest = sandboxState.getLatestBackup(sandboxName);
-        if (!latest) {
-          console.error(`  No snapshots found for '${sandboxName}'.`);
-          snapshotExit(1);
-        }
-        backupPath = latest.backupPath;
-        resolvedSnapshot = latest;
-        const v = formatSnapshotVersion(latest);
-        const nameSuffix = latest.name ? ` name=${latest.name}` : "";
-        console.log(`  Using latest snapshot ${v}${nameSuffix} (${latest.timestamp})`);
-      }
-
-      if (!isCrossSandboxRestore) {
-        // Self-restore: target is `sandboxName`. Cannot auto-create; the
-        // source pod is the target, so it must already be live.
-        if (!targetExists) {
-          console.error(`  Sandbox '${targetSandbox}' is not running. Cannot restore snapshot.`);
-          snapshotExit(1);
-        }
-      } else {
-        // #3756: cross-sandbox restore into a destination that already exists
-        // used to overlay onto the live filesystem silently. Refuse by default
-        // *before* doing any source-side preflight, so the user sees the
-        // precise "destination exists" error instead of a misleading
-        // "source not found" or "cannot resolve image" message when both are
-        // also broken.
-        if (targetExists && !request.force) {
-          console.error(`  Destination sandbox '${targetSandbox}' already exists.`);
-          console.error(
-            "  Restoring into an existing sandbox is unsupported because it would silently mutate its filesystem.",
-          );
-          console.error(
-            `  Re-run with --force to delete '${targetSandbox}' and recreate it from the snapshot, or pick a different name.`,
-          );
-          snapshotExit(1);
-        }
-        // Cross-sandbox restore — whether dst exists (with --force) or not,
-        // we must be able to clone the source's running pod image. Resolve it
-        // upfront so a missing source / unresolvable image cannot delete the
-        // destination first (#3756 P1).
-        if (!sourceLiveNames.has(sandboxName)) {
-          if (targetExists) {
-            console.error(
-              `  Cannot recreate '${targetSandbox}' from snapshot: source '${sandboxName}' not found.`,
-            );
-          } else {
-            console.error(
-              `  Cannot auto-create '${targetSandbox}': source '${sandboxName}' not found.`,
-            );
-            console.error(`  Create '${targetSandbox}' manually with '${CLI_NAME} onboard'.`);
-          }
-          snapshotExit(1);
-        }
-        const srcEntry = registry.getSandbox(sandboxName) || { name: sandboxName };
-        const fromImage = resolveSrcPodImage(sandboxName, srcEntry);
-        if (!fromImage) {
-          console.error(
-            `  Cannot resolve image for source sandbox '${sandboxName}' — aborting before ` +
-              (targetExists ? `deleting '${targetSandbox}'.` : `creating '${targetSandbox}'.`),
-          );
-          snapshotExit(1);
-        }
-        if (targetExists) {
-          // --force confirmed above. Prompt for the destination name (unless
-          // --yes or NEMOCLAW_NON_INTERACTIVE=1), then delete and recreate.
-          const nonInteractive = process.env.NEMOCLAW_NON_INTERACTIVE === "1";
-          if (!request.yes && !nonInteractive) {
-            const answer = (
-              await askPrompt(
-                `  This will DELETE sandbox '${targetSandbox}' and restore the snapshot into a fresh copy.\n` +
-                  `  Type '${targetSandbox}' to confirm: `,
-              )
-            ).trim();
-            if (answer !== targetSandbox) {
-              console.error("  Confirmation did not match — aborting.");
-              snapshotExit(1);
-            }
-          }
-          if (targetEntry) {
-            verifyRestoreDestinationOnOwnGateway(targetSandbox);
-          }
-          deleteSandboxForRestore(targetSandbox);
-          requireLiveSandboxesOnSandboxGateway(
-            sandboxName,
-            "  Failed to re-select source sandbox gateway after deleting destination.",
-          );
-        }
-        await autoCreateSandboxFromSource(sandboxName, targetSandbox, srcEntry);
-      }
-      if (targetSandbox !== sandboxName) {
-        console.log(`  Restoring snapshot from '${sandboxName}' into '${targetSandbox}'...`);
-      } else {
-        console.log(`  Restoring snapshot into '${sandboxName}'...`);
-      }
-      const result = sandboxState.restoreSandboxState(targetSandbox, backupPath);
-      if (result.success) {
-        console.log(
-          `  ${G}\u2713${R} Restored ${result.restoredDirs.length} directories, ${result.restoredFiles.length} files`,
-        );
-      } else {
-        console.error(`  Restore failed.`);
-        if (result.restoredDirs.length > 0) {
-          console.error(`  Partial: ${result.restoredDirs.join(", ")}`);
-        }
-        if (result.failedDirs.length > 0) {
-          console.error(`  Failed: ${result.failedDirs.join(", ")}`);
-        }
-        if (result.failedFiles.length > 0) {
-          console.error(`  Failed files: ${result.failedFiles.join(", ")}`);
-        }
-        snapshotExit(1);
-      }
-      // #5027/#4538: openclaw.json restores via the generic copy strategy,
-      // which lands it at 0640. The always-on OpenClaw gateway needs the
-      // mutable config contract (setgid dir + group-writable openclaw.json) to
-      // keep writing config at runtime. Rebuild repairs this in its
-      // post-restore sequence; the standalone snapshot-restore path must do the
-      // same. Gated on openclaw.json having been restored (only OpenClaw
-      // declares it) and posture-aware (a no-op for shields-up/non-OpenClaw).
-      if (result.restoredFiles.includes("openclaw.json")) {
-        try {
-          const permRepair = shields.repairMutableConfigPerms(targetSandbox);
-          if (permRepair.applied && permRepair.verified) {
-            console.log(`  ${G}✓${R} OpenClaw config permissions restored`);
-          } else if (!permRepair.applied && permRepair.skipReason === "unreadable") {
-            console.warn(
-              `  Warning: could not verify OpenClaw config permissions: ${permRepair.reason}`,
-            );
-          } else if (permRepair.applied && !permRepair.verified) {
-            console.warn(
-              `  Warning: OpenClaw config permission repair incomplete: ${permRepair.errors.join("; ")}`,
-            );
-          }
-        } catch (err) {
-          console.warn(
-            `  Warning: OpenClaw config permission repair errored: ${err instanceof Error ? err.message : String(err)}`,
-          );
-        }
-      }
-      // Reconcile the target's policy presets to match the snapshot manifest
-      // exactly — add anything the snapshot recorded but the target is
-      // missing, and remove anything the target has that the snapshot did
-      // not. This mirrors how stateDirs are restored (full replacement, not
-      // additive) so the command's semantics are consistent.
-      //
-      // When the snapshot predates the `policyPresets` field (undefined),
-      // skip the reconcile entirely — we have no recorded state to match.
-      if (resolvedSnapshot && Array.isArray(resolvedSnapshot.policyPresets)) {
-        const snapshotPresets = resolvedSnapshot.policyPresets;
-        const currentPresets = policies.getAppliedPresets(targetSandbox);
-        const toRemove = currentPresets.filter((p: string) => !snapshotPresets.includes(p));
-        const toAdd = snapshotPresets.filter((p: string) => !currentPresets.includes(p));
-
-        if (toRemove.length > 0 || toAdd.length > 0) {
-          const summary: string[] = [];
-          if (toAdd.length > 0) summary.push(`add ${toAdd.join(", ")}`);
-          if (toRemove.length > 0) summary.push(`remove ${toRemove.join(", ")}`);
-          console.log(`  Reconciling policy presets on '${targetSandbox}': ${summary.join("; ")}`);
-
-          const failed: string[] = [];
-          for (const preset of toRemove) {
-            try {
-              if (!policies.removePreset(targetSandbox, preset)) {
-                failed.push(`${preset} (remove failed)`);
-              }
-            } catch (err) {
-              const message = err instanceof Error ? err.message : String(err);
-              failed.push(`${preset} (remove: ${message})`);
-            }
-          }
-          for (const preset of toAdd) {
-            try {
-              if (!policies.applyPreset(targetSandbox, preset)) {
-                failed.push(`${preset} (apply failed)`);
-              }
-            } catch (err) {
-              const message = err instanceof Error ? err.message : String(err);
-              failed.push(`${preset} (apply: ${message})`);
-            }
-          }
-          if (failed.length > 0) {
-            console.warn(`  Warning: could not reconcile preset(s): ${failed.join("; ")}`);
-          }
-        }
-      }
-      // Reconcile custom policy presets (applied via --from-file/--from-dir).
-      // Their full content travels in the manifest, so re-apply by content
-      // (which also re-records them in the registry). Diff by content + source,
-      // not just name: a same-name preset whose body changed must be re-applied.
-      // Full replacement, mirroring the built-in preset reconcile above; skipped
-      // for legacy snapshots that predate the `customPolicies` field.
-      if (resolvedSnapshot && Array.isArray(resolvedSnapshot.customPolicies)) {
-        const snapshotCustom = resolvedSnapshot.customPolicies;
-        const currentCustom = registry.getCustomPolicies(targetSandbox);
-        const snapshotByName = new Map(snapshotCustom.map((entry) => [entry.name, entry]));
-        const currentByName = new Map(currentCustom.map((entry) => [entry.name, entry]));
-        const toRemove = currentCustom.filter((c) => !snapshotByName.has(c.name));
-        const toAdd = snapshotCustom.filter((sp) => {
-          const current = currentByName.get(sp.name);
-          return !current || current.content !== sp.content || current.sourcePath !== sp.sourcePath;
-        });
-
-        if (toRemove.length > 0 || toAdd.length > 0) {
-          const summary: string[] = [];
-          if (toAdd.length > 0) summary.push(`add ${toAdd.map((c) => c.name).join(", ")}`);
-          if (toRemove.length > 0) summary.push(`remove ${toRemove.map((c) => c.name).join(", ")}`);
-          console.log(`  Reconciling custom policies on '${targetSandbox}': ${summary.join("; ")}`);
-
-          const failed: string[] = [];
-          for (const entry of toRemove) {
-            try {
-              if (!policies.removePreset(targetSandbox, entry.name)) {
-                failed.push(`${entry.name} (remove failed)`);
-              }
-            } catch (err) {
-              const message = err instanceof Error ? err.message : String(err);
-              failed.push(`${entry.name} (remove: ${message})`);
-            }
-          }
-          for (const entry of toAdd) {
-            try {
-              if (
-                !policies.applyPresetContent(targetSandbox, entry.name, entry.content, {
-                  custom: { sourcePath: entry.sourcePath },
-                })
-              ) {
-                failed.push(`${entry.name} (apply failed)`);
-              }
-            } catch (err) {
-              const message = err instanceof Error ? err.message : String(err);
-              failed.push(`${entry.name} (apply: ${message})`);
-            }
-          }
-          if (failed.length > 0) {
-            console.warn(`  Warning: could not reconcile custom policy(ies): ${failed.join("; ")}`);
-          }
-        }
-      }
+      await runSnapshotRestore(sandboxName, request);
       break;
     }
     default:

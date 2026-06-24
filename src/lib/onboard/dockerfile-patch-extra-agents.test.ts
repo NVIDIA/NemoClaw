@@ -72,7 +72,7 @@ describe("patchStagedDockerfile :: NEMOCLAW_EXTRA_AGENTS_JSON", () => {
         workspace: "/sandbox/.openclaw/workspace-research",
         agentDir: "/sandbox/.openclaw/agents/research",
         tools: { profile: "minimal", allow: ["read"], deny: ["exec"] },
-        subagents: { maxSpawnDepth: 0 },
+        subagents: { allowAgents: ["analyst"] },
       },
     ];
     withExtraAgentsEnv(JSON.stringify(extras), () =>

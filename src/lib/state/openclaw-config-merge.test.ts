@@ -58,11 +58,36 @@ describe("mergeOpenClawRestoredConfig", () => {
     expect((merged as { channels: Record<string, unknown> }).channels.slack).toBeUndefined();
   });
 
+  it("keeps the rebuilt gateway section — including the reload pin — over the backup's (#4710)", () => {
+    // gateway.reload.mode="hot" is what keeps the in-sandbox gateway from
+    // SIGUSR1-restarting itself out from under the nemoclaw-start respawn
+    // loop. A backup taken before the pin existed (or carrying a different
+    // mode) must not reintroduce restart-mode reloads on restore.
+    const merged = mergeOpenClawRestoredConfig(
+      {
+        gateway: {
+          auth: { token: "stale-token" },
+          reload: { mode: "hybrid" },
+          controlUi: { allowInsecureAuth: true },
+        },
+      },
+      { gateway: { auth: { token: "fresh-token" }, reload: { mode: "hot" } } },
+    ) as { gateway: unknown };
+
+    expect(merged.gateway).toEqual({
+      auth: { token: "fresh-token" },
+      reload: { mode: "hot" },
+    });
+  });
+
   it("does not resurrect managed channels when the rebuilt config omits channels", () => {
     const merged = mergeOpenClawRestoredConfig(
       {
         channels: {
           telegram: { accounts: { default: { token: "openshell:resolve:env:v111_TOKEN" } } },
+          whatsapp: { accounts: { default: { session: "stale" } } },
+          wechat: { accounts: { default: { accountId: "legacy" } } },
+          "openclaw-weixin": { accounts: { default: { accountId: "stale-current" } } },
           matrix: { accounts: { default: { room: "#ops" } } },
         },
       },
@@ -71,9 +96,16 @@ describe("mergeOpenClawRestoredConfig", () => {
 
     expect(merged).toMatchObject({
       gateway: { auth: { token: "fresh-token" } },
-      channels: { matrix: { accounts: { default: { room: "#ops" } } } },
+      channels: {
+        wechat: { accounts: { default: { accountId: "legacy" } } },
+        matrix: { accounts: { default: { room: "#ops" } } },
+      },
     });
     expect((merged as { channels: Record<string, unknown> }).channels.telegram).toBeUndefined();
+    expect((merged as { channels: Record<string, unknown> }).channels.whatsapp).toBeUndefined();
+    expect(
+      (merged as { channels: Record<string, unknown> }).channels["openclaw-weixin"],
+    ).toBeUndefined();
   });
 
   it("preserves backup provider and plugin entries when current entry maps are absent", () => {

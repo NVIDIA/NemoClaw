@@ -188,14 +188,14 @@ describe("vllm model registry", () => {
     expect(qwen35b!.gated).toBe(false);
   });
 
-  it("builds the NVFP4 serve command with env exports, the fastsafetensors install, and additive model flags", () => {
+  it("builds the NVFP4 serve command from the DGX Spark model-card recipe", () => {
     const qwen35b = VLLM_MODELS.find((m) => m.envValue === "qwen3.6-35b-a3b-nvfp4");
     const cmd = buildVllmServeCommand(qwen35b!);
-    // Env exports are prefixed before serve.
-    expect(cmd).toContain("export VLLM_USE_FLASHINFER_MOE_FP4=0");
-    expect(cmd).toContain("export VLLM_FP8_MOE_BACKEND=flashinfer_cutlass");
-    expect(cmd).toContain("export FLASHINFER_DISABLE_VERSION_CHECK=1");
-    expect(cmd).toContain("export CUTE_DSL_ARCH=sm_121a");
+    // The current NVIDIA model card no longer needs Spark-specific env exports.
+    expect(cmd).not.toContain("VLLM_USE_FLASHINFER_MOE_FP4");
+    expect(cmd).not.toContain("VLLM_FP8_MOE_BACKEND");
+    expect(cmd).not.toContain("FLASHINFER_DISABLE_VERSION_CHECK");
+    expect(cmd).not.toContain("CUTE_DSL_ARCH");
     // fastsafetensors is always installed and used.
     expect(cmd).toContain("pip install vllm[fastsafetensors]");
     expect(cmd).toContain("--load-format fastsafetensors");
@@ -206,18 +206,18 @@ describe("vllm model registry", () => {
     expect(cmd).toContain("--attention-backend flashinfer");
     expect(cmd).toContain("--moe-backend marlin");
     expect(cmd).toContain("--enable-auto-tool-choice");
-    expect(cmd).toContain("--tool-call-parser qwen3_coder");
+    expect(cmd).toContain("--tool-call-parser qwen3_xml");
     expect(cmd).toContain("--reasoning-parser qwen3");
-    expect(cmd).toContain("--max-model-len 131072");
+    expect(cmd).toContain("--max-model-len 262144");
     expect(cmd).toContain(
       `--speculative-config '{"method":"mtp","num_speculative_tokens":3,"moe_backend":"triton"}'`,
     );
-    // Single-node parallel flags stay shared; 0.7 utilization stays
-    // model-specific, not a stale 0.85 override.
-    expect(cmd).toContain("--gpu-memory-utilization 0.7");
+    // Single-node parallel flags stay shared; 0.4 utilization follows the
+    // current DGX Spark model-card recipe.
+    expect(cmd).toContain("--gpu-memory-utilization 0.4");
     expect(cmd).toContain("--pipeline-parallel-size 1");
     expect(cmd).toContain("--data-parallel-size 1");
-    expect(cmd).not.toContain("--gpu-memory-utilization 0.85");
+    expect(cmd).not.toContain("--gpu-memory-utilization 0.7");
   });
 });
 

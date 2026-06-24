@@ -245,6 +245,8 @@ describe("credentials oclif commands", () => {
 
     expect(output.stderr).toContain("per-sandbox messaging bridge");
     expect(output.stderr).toContain("channels remove");
+    expect(output.stderr).toContain("channels remove <channel>");
+    expect(output.stderr).not.toContain("channels remove <discord");
   });
 
   it("explains provider-name usage when reset receives an env var name", async () => {

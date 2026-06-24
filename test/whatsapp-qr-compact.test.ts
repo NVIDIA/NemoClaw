@@ -12,9 +12,13 @@ const REPO_ROOT = path.join(import.meta.dirname, "..");
 const START_SCRIPT = path.join(REPO_ROOT, "scripts", "nemoclaw-start.sh");
 const PRELOAD_SOURCE = path.join(
   REPO_ROOT,
-  "nemoclaw-blueprint",
-  "scripts",
-  "whatsapp-qr-compact.js",
+  "src",
+  "lib",
+  "messaging",
+  "channels",
+  "whatsapp",
+  "runtime",
+  "whatsapp-qr-compact.ts",
 );
 
 // The WhatsApp pairing QR is rendered by the `qrcode` package (bundled inside
@@ -242,10 +246,14 @@ describe("WhatsApp pairing guard (channels login --channel whatsapp)", () => {
 
       const preloadPath = path.join(tempDir, "nemoclaw-whatsapp-qr-compact.js");
       if (opts.preloadPresent) fs.writeFileSync(preloadPath, "// stub preload\n");
+      const connectPreloadsPath = path.join(tempDir, "nemoclaw-messaging-connect-preloads.list");
+      if (opts.preloadPresent) fs.writeFileSync(connectPreloadsPath, `${preloadPath}\n`);
 
-      // The guard body hardcodes the literal /tmp path (single-quoted heredoc);
-      // redirect it to the temp file for the test.
-      const guardBody = guard.replaceAll("/tmp/nemoclaw-whatsapp-qr-compact.js", preloadPath);
+      // The guard body hardcodes literal /tmp paths (single-quoted heredoc);
+      // redirect them to temp files for the test.
+      const guardBody = guard
+        .replaceAll("/tmp/nemoclaw-whatsapp-qr-compact.js", preloadPath)
+        .replaceAll("/tmp/nemoclaw-messaging-connect-preloads.list", connectPreloadsPath);
 
       const wrapperLines = [
         "#!/usr/bin/env bash",
