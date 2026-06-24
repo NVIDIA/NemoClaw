@@ -24,7 +24,7 @@ const { persistManifestChannelDisabledPlan, persistManifestChannelRemovePlan } =
     sandboxName: string,
     channelId: string,
     disabled: boolean,
-  ) => Promise<boolean>;
+  ) => Promise<unknown>;
   persistManifestChannelRemovePlan: (sandboxName: string, channelId: string) => Promise<boolean>;
 };
 
@@ -105,7 +105,7 @@ describe("persistManifestChannelRemovePlan with non-messaging agent (#5729)", ()
 });
 
 describe("persistManifestChannelDisabledPlan with non-messaging agent (#5729)", () => {
-  it("returns false without throwing or mutating the registry when the agent does not support messaging", async () => {
+  it("returns null without throwing or mutating the registry when the agent does not support messaging", async () => {
     vi.spyOn(defs, "loadAgent").mockReturnValue({
       name: "langchain-deepagents-code",
       messagingPlatforms: [],
@@ -114,11 +114,11 @@ describe("persistManifestChannelDisabledPlan with non-messaging agent (#5729)", 
 
     const result = await persistManifestChannelDisabledPlan("da-test", "discord", true);
 
-    expect(result).toBe(false);
+    expect(result).toBeNull();
     expect(updateSandboxMock).not.toHaveBeenCalled();
   });
 
-  it("returns false without throwing when there is no stored messaging plan", async () => {
+  it("returns null without throwing when there is no stored messaging plan", async () => {
     vi.spyOn(defs, "loadAgent").mockReturnValue({
       name: "langchain-deepagents-code",
       messagingPlatforms: [],
@@ -127,7 +127,7 @@ describe("persistManifestChannelDisabledPlan with non-messaging agent (#5729)", 
 
     const result = await persistManifestChannelDisabledPlan("da-test", "discord", true);
 
-    expect(result).toBe(false);
+    expect(result).toBeNull();
     expect(updateSandboxMock).not.toHaveBeenCalled();
   });
 });

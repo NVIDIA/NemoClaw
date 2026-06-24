@@ -12,7 +12,7 @@ on:
         default: ""
         type: string
       jobs:
-        description: "Optional comma-separated free-standing live Vitest job ids. Empty runs all jobs only when scenarios is also empty."
+        description: "Optional comma-separated free-standing live Vitest job ids. Empty runs default-enabled jobs only when scenarios is also empty; explicit-only jobs such as jetson-nvmap-gpu-vitest are skipped unless selected."
         required: false
         default: ""
         type: string
@@ -2761,7 +2761,10 @@ jobs:
 
   jetson-nvmap-gpu-vitest:
     needs: generate-matrix
-    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',jetson-nvmap-gpu-vitest,') || contains(format(',{0},', inputs.scenarios), ',jetson-nvmap-gpu,') }}
+    # Explicit-only until a stable Jetson runner is available; otherwise full-suite dispatches remain queued forever.
+    # Required validation path: dispatch with jobs=jetson-nvmap-gpu-vitest or scenarios=jetson-nvmap-gpu.
+    # Re-enable default dispatch only after a stable Jetson runner exists, then remove this job from FULL_SUITE_EXCLUDED_FREE_STANDING_JOBS.
+    if: ${{ contains(format(',{0},', inputs.jobs), ',jetson-nvmap-gpu-vitest,') || contains(format(',{0},', inputs.scenarios), ',jetson-nvmap-gpu,') }}
     runs-on: ${{ vars.JETSON_E2E_RUNNER_LABEL || 'linux-arm64-gpu-jetson-orin-latest-1' }}
     timeout-minutes: 60
     env:
@@ -5541,6 +5544,13 @@ jobs:
             const selectorValidationPassed = needs['generate-matrix']?.result === 'success';
             const requestedScenarios = selectorValidationPassed ? rawRequestedScenarios : '';
             const requestedJobs = selectorValidationPassed ? rawRequestedJobs : '';
+            const explicitOnlySkippedJobs = [
+              {
+                job: 'jetson-nvmap-gpu-vitest',
+                scenario: 'jetson-nvmap-gpu',
+                reason: 'default dispatch excludes Jetson until a stable Jetson runner is available',
+              },
+            ];
             const scenariosRejected = rawRequestedScenarios && !selectorValidationPassed;
             const jobsRejected = rawRequestedJobs && !selectorValidationPassed;
 
@@ -5599,7 +5609,7 @@ jobs:
               ? '✅ All requested jobs passed'
               : selectiveDispatch
                 ? '✅ All selected jobs passed'
-                : '✅ All jobs passed';
+                : '✅ All default jobs passed';
             const status =
               failed.length > 0 || missingRequested.length > 0
                 ? '❌ Some jobs failed'
@@ -5625,13 +5635,22 @@ jobs:
                 ? '**Requested jobs:** _(selector rejected by workflow validation)_'
                 : requestedJobs
                   ? `**Requested jobs:** \`${requestedJobs}\``
-                  : '**Requested jobs:** _(default — all free-standing when no scenarios are requested)_',
+                  : '**Requested jobs:** _(default — all default-enabled free-standing jobs; explicit-only jobs such as `jetson-nvmap-gpu-vitest` are skipped unless selected)_',
               `**Summary:** ${passed.length} passed, ${failed.length} failed, ${cancelled.length} cancelled, ${skipped.length} skipped`,
               '',
               '| Job | Result |',
               '|-----|--------|',
               ...rows,
             ];
+            if (!selectiveDispatch) {
+              const skippedJobHints = explicitOnlySkippedJobs
+                .map(
+                  ({ job, scenario, reason }) =>
+                    `\`${job}\` (${reason}; validate with \`jobs=${job}\` or \`scenarios=${scenario}\`)`,
+                )
+                .join(', ');
+              lines.push('', `> **Explicit-only jobs skipped:** ${skippedJobHints}.`);
+            }
             if (failed.length > 0) {
               const failedNames = failed.map(([name]) => name).join(', ');
               lines.push('', `> **Failed jobs:** ${failedNames}. Check [run artifacts](${runUrl}) for logs.`);

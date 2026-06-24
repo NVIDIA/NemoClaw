@@ -140,6 +140,12 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER=${NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER} \
     NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64=${NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64}
 
+# Apply messaging agent-install hooks as root so Hermes Python packages can update
+# /opt/hermes/.venv before the runtime drops to the sandbox user.
+WORKDIR /opt/hermes
+# hadolint ignore=DL3059
+RUN node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent hermes --phase agent-install
+
 WORKDIR /sandbox
 USER sandbox
 
@@ -153,10 +159,6 @@ RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0 \
 # SECURITY: Uses a separate script file instead of inline code to avoid
 # code injection via build-arg interpolation (same concern as OpenClaw C-2).
 RUN node --experimental-strip-types /opt/nemoclaw-hermes-config/generate-config.ts
-
-# Apply messaging agent-install hooks before Hermes plugin installation.
-# hadolint ignore=DL3059
-RUN node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent hermes --phase agent-install
 
 # Install NemoClaw plugin into Hermes
 # hadolint ignore=DL3059
