@@ -30,8 +30,11 @@ describe("Deep Agents Code sandbox entrypoint keep-alive (#5717)", () => {
     // with no persistent process, flapping it into OpenShell's Error phase and
     // breaking the Docker GPU-patch supervisor reconnect. Run with stdin closed
     // and a short timeout: a correct keep-alive is still running at the
-    // deadline (killed by the timeout signal), not exited cleanly.
-    const result = spawnSync("bash", [START_SCRIPT], {
+    // deadline (killed by the timeout signal), not exited cleanly. Execute the
+    // script directly (not via `bash`) so this also exercises the real ENTRYPOINT
+    // contract — the image runs /usr/local/bin/nemoclaw-start directly, so a
+    // broken shebang or execute bit would also be caught here.
+    const result = spawnSync(START_SCRIPT, [], {
       input: "",
       timeout: 3000,
       encoding: "utf-8",
@@ -44,7 +47,7 @@ describe("Deep Agents Code sandbox entrypoint keep-alive (#5717)", () => {
   });
 
   it("execs an explicitly supplied command instead of idling", () => {
-    const result = spawnSync("bash", [START_SCRIPT, "printf", "RAN_CMD"], {
+    const result = spawnSync(START_SCRIPT, ["printf", "RAN_CMD"], {
       input: "",
       timeout: 3000,
       encoding: "utf-8",
