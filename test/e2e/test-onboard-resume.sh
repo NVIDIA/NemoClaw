@@ -15,10 +15,10 @@
 #   - Docker running
 #   - openshell CLI installed
 #   - Node.js available
-#   - NVIDIA_INFERENCE_API_KEY set before starting the test
+#   - local fake OpenAI-compatible endpoint reachable from host and sandbox
 #
 # Usage:
-#   NVIDIA_INFERENCE_API_KEY=... bash test/e2e/test-onboard-resume.sh
+#   bash test/e2e/test-onboard-resume.sh
 
 set -uo pipefail
 
@@ -77,13 +77,28 @@ fi
 
 # shellcheck source=test/e2e/lib/sandbox-teardown.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox-teardown.sh"
-# shellcheck source=test/e2e/lib/ci-compatible-inference.sh
-. "$(dirname "${BASH_SOURCE[0]}")/lib/ci-compatible-inference.sh"
+# shellcheck source=test/e2e/lib/openai-compatible-api-proof.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/openai-compatible-api-proof.sh"
 register_sandbox_for_teardown "$SANDBOX_NAME"
+
+cleanup_on_exit() {
+  stop_fake_openai_compatible_api
+  _nemoclaw_sandbox_teardown
+}
+trap cleanup_on_exit EXIT
 
 SESSION_FILE="$HOME/.nemoclaw/onboard-session.json"
 REGISTRY="$HOME/.nemoclaw/sandboxes.json"
-RESTORE_API_KEY="${NVIDIA_INFERENCE_API_KEY:-}"
+RESTORE_API_KEY="${COMPATIBLE_API_KEY:-${NVIDIA_INFERENCE_API_KEY:-e2e-compatible-key}}"
+EXPECTED_PROVIDER="compatible-endpoint"
+FAKE_OPENAI_LOG="${FAKE_OPENAI_LOG:-$(mktemp)}"
+FAKE_OPENAI_PORT="${FAKE_OPENAI_PORT:-0}"
+FAKE_OPENAI_HOST="${FAKE_OPENAI_HOST:-0.0.0.0}"
+FAKE_OPENAI_READY_HOST="${FAKE_OPENAI_READY_HOST:-127.0.0.1}"
+FAKE_OPENAI_MODEL="${FAKE_OPENAI_MODEL:-test-model}"
+FAKE_OPENAI_API_KEY="$RESTORE_API_KEY"
+FAKE_OPENAI_REQUIRE_AUTH="${FAKE_OPENAI_REQUIRE_AUTH:-1}"
+export FAKE_OPENAI_LOG FAKE_OPENAI_PORT FAKE_OPENAI_HOST FAKE_OPENAI_READY_HOST FAKE_OPENAI_MODEL FAKE_OPENAI_API_KEY FAKE_OPENAI_REQUIRE_AUTH
 
 # ══════════════════════════════════════════════════════════════════
 # Phase 0: Pre-cleanup
@@ -123,25 +138,48 @@ else
   exit 1
 fi
 
-if [[ -z "$RESTORE_API_KEY" ]]; then
-  fail "NVIDIA_INFERENCE_API_KEY not set or invalid — required for resume completion"
-  exit 1
-fi
-pass "NVIDIA_INFERENCE_API_KEY is set"
+pass "Compatible endpoint credential is staged for the first onboard run"
 
-export NVIDIA_INFERENCE_API_KEY="$RESTORE_API_KEY"
-nemoclaw_e2e_configure_compatible_inference || exit 1
-HOSTED_INFERENCE_BASE_URL="$(nemoclaw_e2e_hosted_inference_base_url)"
-EXPECTED_PROVIDER="$(nemoclaw_e2e_expected_route_provider)"
+host_ip_for_sandbox() {
+  local ip_addr
+  ip_addr="$(ip route get 1.1.1.1 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}')"
+  if [ -n "$ip_addr" ]; then
+    echo "$ip_addr"
+    return
+  fi
+  ip_addr="$(hostname -I 2>/dev/null | awk '{print $1}')"
+  if [ -n "$ip_addr" ]; then
+    echo "$ip_addr"
+    return
+  fi
+  echo "127.0.0.1"
+}
 
-if nemoclaw_e2e_probe_hosted_inference; then
-  pass "Network access to ${HOSTED_INFERENCE_BASE_URL}"
+FAKE_OPENAI_PUBLIC_HOST="${FAKE_OPENAI_PUBLIC_HOST:-$(host_ip_for_sandbox)}"
+if start_fake_openai_compatible_api; then
+  pass "Fake OpenAI-compatible endpoint started at ${FAKE_OPENAI_BASE_URL}"
 else
-  fail "Cannot reach ${HOSTED_INFERENCE_BASE_URL}"
+  fail "Fake OpenAI-compatible endpoint failed to start"
+  sed 's/^/    /' "$FAKE_OPENAI_LOG" 2>/dev/null || true
   exit 1
 fi
 
-pass "Exported NVIDIA_INFERENCE_API_KEY for the resume run (host writes nothing to disk; OpenShell gateway is the system of record)"
+if curl -sf "${FAKE_OPENAI_BASE_URL}/models" >/dev/null 2>&1; then
+  pass "Network access to fake OpenAI-compatible endpoint"
+else
+  fail "Cannot reach fake OpenAI-compatible endpoint at ${FAKE_OPENAI_BASE_URL}"
+  exit 1
+fi
+
+export NEMOCLAW_PROVIDER=custom
+export NEMOCLAW_ENDPOINT_URL="$FAKE_OPENAI_BASE_URL"
+export NEMOCLAW_MODEL="$FAKE_OPENAI_MODEL"
+export NEMOCLAW_COMPAT_MODEL="$FAKE_OPENAI_MODEL"
+export NEMOCLAW_PREFERRED_API=openai-completions
+export COMPATIBLE_API_KEY="$RESTORE_API_KEY"
+unset NEMOCLAW_E2E_USE_HOSTED_INFERENCE
+
+pass "Configured onboard resume test for hermetic compatible-endpoint inference"
 
 # ══════════════════════════════════════════════════════════════════
 # Phase 2: First onboard (forced failure after sandbox creation)
