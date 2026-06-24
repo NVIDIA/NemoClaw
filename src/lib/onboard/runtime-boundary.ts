@@ -175,7 +175,7 @@ export class OnboardRuntimeBoundary {
   ): Promise<Session> {
     await this.assertStateResultWillApply(result);
     await this.getRuntime().markStepCompleteRecordOnly(stepName, updates);
-    return this.recordStateResultWithStepCompatibility(result);
+    return this.recordStateResult(result);
   }
 
   async recordStepFailedWithStateResult(
