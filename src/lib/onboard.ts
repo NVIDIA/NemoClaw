@@ -4688,6 +4688,18 @@ function skippedStepMessage(
   console.log(`  ${prefix} Skipping ${stepName}${detail ? ` (${detail})` : ""}`);
 }
 
+function registerIncompleteOnboardExitHandlerForSession(
+  isComplete: () => boolean,
+  processLike?: Parameters<typeof registerIncompleteOnboardExitFailureHandler>[3],
+): void {
+  registerIncompleteOnboardExitFailureHandler(
+    onboardSession,
+    isComplete,
+    "Onboarding exited before the step completed.",
+    processLike,
+  );
+}
+
 // ── Main ─────────────────────────────────────────────────────────
 async function onboard(opts: OnboardOptions = {}): Promise<void> {
   setOnboardBrandingAgent(opts.agent || process.env.NEMOCLAW_AGENT || null);
@@ -4856,11 +4868,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     }
 
     let completed = false;
-    registerIncompleteOnboardExitFailureHandler(
-      onboardSession,
-      () => completed,
-      "Onboarding exited before the step completed.",
-    );
+    registerIncompleteOnboardExitHandlerForSession(() => completed);
 
     const agent = await selectOnboardAgent({
       agentFlag: opts.agent,
@@ -5448,6 +5456,7 @@ module.exports = {
   getSandboxPromptDefault,
   getRequestedSandboxAgentName,
   normalizeSandboxAgentName,
+  registerIncompleteOnboardExitHandlerForSession,
   hydrateCredentialEnv,
   pruneKnownHostsEntries,
   shouldIncludeBuildContextPath,
