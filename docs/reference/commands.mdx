@@ -130,6 +130,7 @@ nemoclaw onboard --agent hermes [options]
 
 NemoClaw records onboarding progress so interrupted runs can continue.
 Use `--resume` to continue a resumable onboarding session with the provider, model, sandbox name, agent, and custom Dockerfile path recorded by the original run.
+During resume, NemoClaw reruns preflight, gateway, provider, and sandbox repair checks even when the saved session has already reached a later nonterminal onboarding phase.
 If the recorded session conflicts with flags you pass on the recovery run, NemoClaw exits and tells you to either rerun with the original settings or start over.
 
 Use `--fresh` to discard the saved onboarding session and start the wizard from the beginning.
@@ -1315,6 +1316,8 @@ $$nemoclaw my-assistant agents delete work --force --json
 Reconcile the live sandbox roster against a declarative [agents.yaml manifest](../inference/declarative-agents-manifest).
 The verb lists current agents via `openclaw agents list --json`, diffs them against the manifest, and adds missing secondaries or deletes orphan ones through `openclaw agents add|delete`.
 Per-agent `model`, `subagents.*`, `tools`, top-level `defaults`, and `main` overrides need a sandbox rebuild and are surfaced as warnings rather than silently dropped; rerun `$$nemoclaw onboard --agents <agents.yaml> --recreate-sandbox` to bake those fields.
+When the diff removes orphan agents, NemoClaw invokes OpenClaw's confirmation-skipping delete mode internally.
+`--non-interactive` controls the host-side `agents apply` prompt and is not forwarded to OpenClaw's delete command.
 
 ```bash
 $$nemoclaw my-assistant agents apply -f ./agents.yaml

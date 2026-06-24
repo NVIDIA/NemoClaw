@@ -26,7 +26,7 @@ const HERMES_INFERENCE_ENDPOINT_URL = "https://inference-api.nousresearch.com/v1
 const HOSTED_INFERENCE_SOURCE_ENV = "NVIDIA_INFERENCE_API_KEY";
 const HOSTED_INFERENCE_CREDENTIAL_ENV = "COMPATIBLE_API_KEY";
 const HOSTED_INFERENCE_ENDPOINT_URL = "https://inference-api.nvidia.com/v1";
-const HOSTED_INFERENCE_MODEL = "nvidia/nvidia/nemotron-3-super-v3";
+const HOSTED_INFERENCE_MODEL = "nvidia/nvidia/nemotron-3-ultra";
 
 const REMOTE_PROVIDER_CONFIG = {
   build: {
