@@ -94,6 +94,17 @@ describe("isMessagingSupportedAgent", () => {
 });
 
 describe("getMessagingManifestAvailabilityContext", () => {
+  it("returns a null agent when no agent is provided (default-agent caller path)", () => {
+    expect(getMessagingManifestAvailabilityContext(null)).toEqual({
+      agent: null,
+      supportedChannelIds: null,
+    });
+    expect(getMessagingManifestAvailabilityContext(undefined)).toEqual({
+      agent: null,
+      supportedChannelIds: null,
+    });
+  });
+
   it("returns the resolved messaging agent id and an explicit allowlist when present", () => {
     expect(
       getMessagingManifestAvailabilityContext({

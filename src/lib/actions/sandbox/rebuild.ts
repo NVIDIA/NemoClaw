@@ -224,7 +224,7 @@ function preflightHermesProviderCredentials(
   return false;
 }
 
-async function stageMessagingManifestPlanForRebuild(
+export async function stageMessagingManifestPlanForRebuild(
   sandboxName: string,
   sandboxEntry: registry.SandboxEntry,
   rebuildAgent: string | null,

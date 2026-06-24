@@ -783,6 +783,19 @@ describe("MessagingWorkflowPlanner", () => {
     ).rejects.toThrow("Unsupported messaging channel(s) for openclaw: discord, slack");
   });
 
+  it("rejects every configured channel when supportedChannelIds is an explicit empty allowlist", async () => {
+    await expect(
+      planner().buildPlan({
+        sandboxName: "demo",
+        agent: "openclaw",
+        workflow: "onboard",
+        isInteractive: false,
+        configuredChannels: ["telegram"],
+        supportedChannelIds: [],
+      }),
+    ).rejects.toThrow("Unsupported messaging channel(s) for openclaw: telegram");
+  });
+
   it("returns serializable, secret-free plans suitable for dry-run and shadow output", async () => {
     await withEnv(
       {

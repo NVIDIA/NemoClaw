@@ -1,0 +1,79 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+// Regression: stageMessagingManifestPlanForRebuild() must clear any stale
+// NEMOCLAW_MESSAGING_PLAN_B64 and skip planning for agents whose manifest
+// declares no messaging support, so a non-messaging sandbox rebuild cannot
+// carry messaging-plan state into the Dockerfile patch step.
+//
+// Loaded from dist/ to match the rest of the rebuild test suite (runner.ts
+// loads './platform' via runtime CommonJS `require()` that vitest cannot
+// resolve from a TS source file). Run `npm run build:cli` first.
+
+import { createRequire } from "node:module";
+
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+const requireDist = createRequire(import.meta.url);
+const D = (p: string) => requireDist(`../../../../dist/lib/${p}`);
+
+const defs = D("agent/defs.js");
+const messaging = D("messaging/index.js") as {
+  MessagingSetupApplier: { clearPlanEnv: () => void };
+};
+const { stageMessagingManifestPlanForRebuild } = D("actions/sandbox/rebuild.js") as {
+  stageMessagingManifestPlanForRebuild: (
+    sandboxName: string,
+    sandboxEntry: unknown,
+    rebuildAgent: string | null,
+    log: (msg: string) => void,
+  ) => Promise<unknown>;
+};
+
+describe("stageMessagingManifestPlanForRebuild non-messaging agent guard (#5729)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("returns null and logs the skip message for langchain-deepagents-code without staging any plan", async () => {
+    const loadAgentSpy = vi.spyOn(defs, "loadAgent").mockReturnValue({
+      name: "langchain-deepagents-code",
+      messagingPlatforms: [],
+    });
+    const clearPlanEnvSpy = vi.spyOn(messaging.MessagingSetupApplier, "clearPlanEnv");
+
+    const messages: string[] = [];
+    const result = await stageMessagingManifestPlanForRebuild(
+      "deepagents-sandbox",
+      { name: "deepagents-sandbox" },
+      "langchain-deepagents-code",
+      (msg) => messages.push(msg),
+    );
+
+    expect(loadAgentSpy).toHaveBeenCalledWith("langchain-deepagents-code");
+    expect(clearPlanEnvSpy).toHaveBeenCalledTimes(1);
+    expect(messages).toEqual(
+      expect.arrayContaining([expect.stringMatching(/does not support messaging/)]),
+    );
+    expect(result).toBeNull();
+  });
+
+  it("skips planner output for any agent whose name is not openclaw or hermes", async () => {
+    vi.spyOn(defs, "loadAgent").mockReturnValue({
+      name: "future-non-messaging-agent",
+      messagingPlatforms: [],
+    });
+    const clearPlanEnvSpy = vi.spyOn(messaging.MessagingSetupApplier, "clearPlanEnv");
+
+    const messages: string[] = [];
+    const result = await stageMessagingManifestPlanForRebuild(
+      "future-sandbox",
+      { name: "future-sandbox" },
+      "future-non-messaging-agent",
+      (msg) => messages.push(msg),
+    );
+
+    expect(clearPlanEnvSpy).toHaveBeenCalledTimes(1);
+    expect(result).toBeNull();
+  });
+});

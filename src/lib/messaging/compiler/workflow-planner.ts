@@ -146,10 +146,9 @@ export class MessagingWorkflowPlanner {
   private supportedChannelIds(
     context: Pick<MessagingWorkflowPlannerBuildContext, "agent" | "supportedChannelIds">,
   ): MessagingChannelId[] {
-    const supportedFilter =
-      context.supportedChannelIds && context.supportedChannelIds.length > 0
-        ? new Set(context.supportedChannelIds)
-        : null;
+    const supportedFilter = Array.isArray(context.supportedChannelIds)
+      ? new Set(context.supportedChannelIds)
+      : null;
 
     return this.registry
       .list()
