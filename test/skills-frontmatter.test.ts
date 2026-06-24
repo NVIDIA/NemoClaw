@@ -34,22 +34,13 @@ function listMarkdownFiles(root: string): string[] {
 }
 
 function listFiles(root: string): string[] {
-  const files: string[] = [];
-
-  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
-    const fullPath = path.join(root, entry.name);
-
-    if (entry.isDirectory()) {
-      files.push(...listFiles(fullPath));
-      continue;
-    }
-
-    if (entry.isFile()) {
-      files.push(fullPath);
-    }
-  }
-
-  return files.sort();
+  return fs
+    .readdirSync(root, { withFileTypes: true })
+    .flatMap((entry) => {
+      const fullPath = path.join(root, entry.name);
+      return entry.isDirectory() ? listFiles(fullPath) : entry.isFile() ? [fullPath] : [];
+    })
+    .sort();
 }
 
 function expectValidSkillMarkdown(skillFile: string) {
@@ -58,11 +49,8 @@ function expectValidSkillMarkdown(skillFile: string) {
   const match = raw.match(skillFrontmatterRe);
 
   expect(match, `${relPath} must start with YAML frontmatter`).not.toBeNull();
-  if (!match) {
-    throw new Error(`${relPath} must start with YAML frontmatter`);
-  }
 
-  const frontmatterText = match[1];
+  const frontmatterText = match?.[1] ?? "";
   const doc = YAML.parseDocument(frontmatterText, { prettyErrors: true });
   const errors = doc.errors.map((error) => String(error));
 
@@ -80,7 +68,7 @@ function expectValidSkillMarkdown(skillFile: string) {
     frontmatter.description.trim().length,
     `${relPath} is missing frontmatter.description`,
   ).toBeGreaterThan(0);
-  const body = raw.slice(match[0].length).trim();
+  const body = raw.slice(match?.[0].length ?? 0).trim();
   expect(body.length, `${relPath} body is too short`).toBeGreaterThan(20);
 }
 
@@ -108,7 +96,8 @@ describe("repo skill markdown files", () => {
     const catalogRoot = path.join(catalogSkillsRoot, "nemoclaw-user-guide");
     const sourceFiles = listFiles(sourceRoot).map((file) => path.relative(sourceRoot, file));
     const catalogFiles = listFiles(catalogRoot).map((file) => path.relative(catalogRoot, file));
-    expect(catalogFiles).toEqual(sourceFiles);
+    const signedCatalogArtifacts = ["BENCHMARK.md", "skill-card.md", "skill.oms.sig"];
+    expect(catalogFiles).toEqual([...sourceFiles, ...signedCatalogArtifacts].sort());
 
     for (const relativeFile of sourceFiles) {
       const sourceFile = path.join(sourceRoot, relativeFile);
