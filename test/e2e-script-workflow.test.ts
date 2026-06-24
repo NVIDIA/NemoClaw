@@ -1045,11 +1045,19 @@ describe("E2E reusable workflow contract", () => {
     expect(runStep?.env?.NEMOCLAW_PREFERRED_API).toBeUndefined();
 
     const script = readFileSync(new URL("./e2e/test-onboard-resume.sh", import.meta.url), "utf8");
-    expect(script).toContain("lib/openai-compatible-api-proof.sh");
-    expect(script).toContain("start_fake_openai_compatible_api");
-    expect(script).toContain('NEMOCLAW_ENDPOINT_URL="$FAKE_OPENAI_BASE_URL"');
-    expect(script).toContain("assert_fake_openai_authenticated_inference");
+    const helper = readFileSync(
+      new URL("./e2e/lib/hermetic-compatible-inference.sh", import.meta.url),
+      "utf8",
+    );
+    expect(script).toContain("lib/hermetic-compatible-inference.sh");
+    expect(script).toContain("nemoclaw_e2e_start_hermetic_compatible_inference");
+    expect(script).toContain("nemoclaw_e2e_assert_hermetic_compatible_inference_used");
     expect(script).not.toContain("lib/ci-compatible-inference.sh");
+    expect(helper).toContain("openai-compatible-api-proof.sh");
+    expect(helper).toContain("NEMOCLAW_PROVIDER=custom");
+    expect(helper).toContain('NEMOCLAW_ENDPOINT_URL="$FAKE_OPENAI_BASE_URL"');
+    expect(helper).toContain("unset NVIDIA_INFERENCE_API_KEY NEMOCLAW_E2E_USE_HOSTED_INFERENCE");
+    expect(helper).toContain('COMPATIBLE_API_KEY="$fake_key"');
   });
 
   it("keeps converted jobs dispatchable through the reusable workflow", () => {

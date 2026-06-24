@@ -77,30 +77,19 @@ fi
 
 # shellcheck source=test/e2e/lib/sandbox-teardown.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox-teardown.sh"
-# shellcheck source=test/e2e/lib/openai-compatible-api-proof.sh
-. "$(dirname "${BASH_SOURCE[0]}")/lib/openai-compatible-api-proof.sh"
+# shellcheck source=test/e2e/lib/hermetic-compatible-inference.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/hermetic-compatible-inference.sh"
 register_sandbox_for_teardown "$SANDBOX_NAME"
 
 cleanup_on_exit() {
-  stop_fake_openai_compatible_api
+  nemoclaw_e2e_stop_hermetic_compatible_inference
   _nemoclaw_sandbox_teardown
 }
 trap cleanup_on_exit EXIT
 
 SESSION_FILE="$HOME/.nemoclaw/onboard-session.json"
 REGISTRY="$HOME/.nemoclaw/sandboxes.json"
-RESTORE_API_KEY="${COMPATIBLE_API_KEY:-${NVIDIA_INFERENCE_API_KEY:-e2e-compatible-key}}"
 EXPECTED_PROVIDER="compatible-endpoint"
-FAKE_OPENAI_LOG="${FAKE_OPENAI_LOG:-$(mktemp)}"
-FAKE_OPENAI_REQUESTS_FILE="${FAKE_OPENAI_REQUESTS_FILE:-$(mktemp)}"
-FAKE_OPENAI_PORT="${FAKE_OPENAI_PORT:-0}"
-FAKE_OPENAI_HOST="${FAKE_OPENAI_HOST:-0.0.0.0}"
-FAKE_OPENAI_READY_HOST="${FAKE_OPENAI_READY_HOST:-127.0.0.1}"
-FAKE_OPENAI_MODEL="${FAKE_OPENAI_MODEL:-test-model}"
-FAKE_OPENAI_API_KEY="$RESTORE_API_KEY"
-FAKE_OPENAI_REQUIRE_AUTH="${FAKE_OPENAI_REQUIRE_AUTH:-1}"
-NEMOCLAW_FAKE_OPENAI_REQUESTS_FILE="$FAKE_OPENAI_REQUESTS_FILE"
-export FAKE_OPENAI_LOG FAKE_OPENAI_REQUESTS_FILE FAKE_OPENAI_PORT FAKE_OPENAI_HOST FAKE_OPENAI_READY_HOST FAKE_OPENAI_MODEL FAKE_OPENAI_API_KEY FAKE_OPENAI_REQUIRE_AUTH NEMOCLAW_FAKE_OPENAI_REQUESTS_FILE
 
 # ══════════════════════════════════════════════════════════════════
 # Phase 0: Pre-cleanup
@@ -140,29 +129,11 @@ else
   exit 1
 fi
 
-pass "Compatible endpoint credential is staged for the first onboard run"
-
-host_ip_for_sandbox() {
-  local ip_addr
-  ip_addr="$(ip route get 1.1.1.1 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}')"
-  if [ -n "$ip_addr" ]; then
-    echo "$ip_addr"
-    return
-  fi
-  ip_addr="$(hostname -I 2>/dev/null | awk '{print $1}')"
-  if [ -n "$ip_addr" ]; then
-    echo "$ip_addr"
-    return
-  fi
-  echo "127.0.0.1"
-}
-
-FAKE_OPENAI_PUBLIC_HOST="${FAKE_OPENAI_PUBLIC_HOST:-$(host_ip_for_sandbox)}"
-if start_fake_openai_compatible_api; then
-  pass "Fake OpenAI-compatible endpoint started at ${FAKE_OPENAI_BASE_URL}"
+if nemoclaw_e2e_start_hermetic_compatible_inference; then
+  pass "Configured onboard resume test for hermetic compatible-endpoint inference at ${FAKE_OPENAI_BASE_URL}"
 else
   fail "Fake OpenAI-compatible endpoint failed to start"
-  sed 's/^/    /' "$FAKE_OPENAI_LOG" 2>/dev/null || true
+  sed 's/^/    /' "${FAKE_OPENAI_LOG:-/dev/null}" 2>/dev/null || true
   exit 1
 fi
 
@@ -172,45 +143,6 @@ else
   fail "Cannot reach fake OpenAI-compatible endpoint at ${FAKE_OPENAI_BASE_URL}"
   exit 1
 fi
-
-export NEMOCLAW_PROVIDER=custom
-export NEMOCLAW_ENDPOINT_URL="$FAKE_OPENAI_BASE_URL"
-export NEMOCLAW_MODEL="$FAKE_OPENAI_MODEL"
-export NEMOCLAW_COMPAT_MODEL="$FAKE_OPENAI_MODEL"
-export NEMOCLAW_PREFERRED_API=openai-completions
-export COMPATIBLE_API_KEY="$RESTORE_API_KEY"
-unset NEMOCLAW_E2E_USE_HOSTED_INFERENCE
-
-pass "Configured onboard resume test for hermetic compatible-endpoint inference"
-
-assert_fake_openai_authenticated_inference() {
-  node - "$FAKE_OPENAI_REQUESTS_FILE" <<'NODE'
-const fs = require("fs");
-const requestsFile = process.argv[2];
-if (!fs.existsSync(requestsFile)) {
-  throw new Error(`request log missing: ${requestsFile}`);
-}
-const entries = fs.readFileSync(requestsFile, "utf8")
-  .split(/\n+/)
-  .filter(Boolean)
-  .map((line) => JSON.parse(line));
-const inferencePosts = entries.filter((entry) =>
-  entry.method === "POST" &&
-  ["/v1/chat/completions", "/v1/responses"].includes(entry.path),
-);
-if (inferencePosts.length === 0) {
-  throw new Error(`expected at least one fake inference POST, got ${JSON.stringify(entries)}`);
-}
-const missingAuth = entries.filter((entry) => entry.auth === "missing");
-if (missingAuth.length > 0) {
-  throw new Error(`fake endpoint saw missing auth: ${JSON.stringify(missingAuth)}`);
-}
-const unauthenticated = inferencePosts.filter((entry) => entry.auth !== "ok");
-if (unauthenticated.length > 0) {
-  throw new Error(`fake inference POST had missing auth: ${JSON.stringify(unauthenticated)}`);
-}
-NODE
-}
 
 # ══════════════════════════════════════════════════════════════════
 # Phase 2: First onboard (forced failure after sandbox creation)
@@ -279,7 +211,7 @@ case $? in
   *) fail "Session file did not record the expected interrupted state" ;;
 esac
 
-if assert_fake_openai_authenticated_inference; then
+if nemoclaw_e2e_assert_hermetic_compatible_inference_used; then
   pass "Fake OpenAI-compatible endpoint handled authenticated inference"
 else
   fail "Fake OpenAI-compatible endpoint did not record authenticated inference"
