@@ -538,6 +538,7 @@
       ],
       "values": [
         "integration: brave",
+        "integration: dcode",
         "integration: discord",
         "integration: hermes",
         "integration: openclaw",
@@ -552,6 +553,12 @@
           "description": "Brave integration behavior.",
           "positive_signals": ["Brave", "browser integration", "Brave-specific channel or app behavior"],
           "negative_signals": ["generic browser issue without Brave evidence"]
+        },
+        {
+          "name": "integration: dcode",
+          "description": "LangChain Deep Code integration behavior.",
+          "positive_signals": ["LangChain Deep Code", "Deep Code", "langchain-deepagents-code", "dcode", "agents/langchain-deepagents-code"],
+          "negative_signals": ["generic LangChain issue without Deep Code evidence", "generic coding-agent issue without LangChain Deep Code evidence"]
         },
         {
           "name": "integration: discord",

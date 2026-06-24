@@ -257,16 +257,32 @@ function defaultListAgents(sandboxName: string): OpenClawAgentEntry[] {
   });
 }
 
-function defaultAddAgent(sandboxName: string, id: string, workspace: string | undefined): void {
-  const { getOpenshellBinary } =
-    require("../../../adapters/openshell/runtime") as typeof import("../../../adapters/openshell/runtime");
+// OpenClaw flag contract differs by agents verb:
+//   `agents add`    accepts --non-interactive (and --workspace)
+//   `agents delete` accepts --force (skip confirmation) but NOT --non-interactive
+// Passing --non-interactive to `agents delete` makes OpenClaw 2026.5.27 exit 1
+// ("does not recognize option --non-interactive"), which left orphan agents in
+// place during `agents apply` (#5656). --force already makes delete unattended.
+export function buildOpenclawAgentAddArgs(id: string, workspace?: string | null): string[] {
   const args = ["openclaw", "agents", "add", id, "--non-interactive"];
   if (workspace) {
     args.push("--workspace", workspace);
   }
-  const result = spawnSync(getOpenshellBinary(), buildOpenshellExecArgs(sandboxName, args), {
-    stdio: "inherit",
-  });
+  return args;
+}
+
+export function buildOpenclawAgentDeleteArgs(id: string): string[] {
+  return ["openclaw", "agents", "delete", id, "--force"];
+}
+
+function defaultAddAgent(sandboxName: string, id: string, workspace: string | undefined): void {
+  const { getOpenshellBinary } =
+    require("../../../adapters/openshell/runtime") as typeof import("../../../adapters/openshell/runtime");
+  const result = spawnSync(
+    getOpenshellBinary(),
+    buildOpenshellExecArgs(sandboxName, buildOpenclawAgentAddArgs(id, workspace)),
+    { stdio: "inherit" },
+  );
   if (result.status !== 0) {
     throw new Error(`openclaw agents add ${id} failed (exit ${result.status ?? "?"})`);
   }
@@ -277,14 +293,7 @@ function defaultDeleteAgent(sandboxName: string, id: string): void {
     require("../../../adapters/openshell/runtime") as typeof import("../../../adapters/openshell/runtime");
   const result = spawnSync(
     getOpenshellBinary(),
-    buildOpenshellExecArgs(sandboxName, [
-      "openclaw",
-      "agents",
-      "delete",
-      id,
-      "--force",
-      "--non-interactive",
-    ]),
+    buildOpenshellExecArgs(sandboxName, buildOpenclawAgentDeleteArgs(id)),
     { stdio: "inherit" },
   );
   if (result.status !== 0) {

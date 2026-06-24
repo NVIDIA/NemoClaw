@@ -11,7 +11,7 @@ import {
 } from "./core-flow-phases";
 import type { OnboardFlowContext } from "./flow-context";
 import type { OnboardStateResult } from "./result";
-import { advanceTo } from "./result";
+import { advanceTo, branchTo } from "./result";
 import type { OnboardSequencePhase } from "./sequence-runner";
 
 type Agent = { name: string };
@@ -274,6 +274,74 @@ describe("core onboard flow phases", () => {
     });
   });
 
+  it("uses the strict runner for fresh provider selection sessions", async () => {
+    const calls: string[] = [];
+    const applied: string[] = [];
+    let runtimeSession = createSession({
+      machine: {
+        version: 1,
+        state: "provider_selection",
+        stateEnteredAt: "2026-06-09T00:00:00.000Z",
+        revision: 1,
+      },
+    });
+    const phases: readonly OnboardSequencePhase<CoreContext>[] = [
+      {
+        state: "provider_selection",
+        run: (ctx) => {
+          calls.push("provider_selection");
+          return {
+            context: ctx,
+            result: [
+              advanceTo("inference", { metadata: { state: "provider_selection" } }),
+              advanceTo("sandbox", { metadata: { state: "inference" } }),
+            ],
+          };
+        },
+      },
+      {
+        state: "sandbox",
+        run: (ctx) => {
+          calls.push("sandbox");
+          return {
+            context: { ...ctx, sandboxName: "created-sandbox" },
+            result: branchTo("openclaw", { metadata: { state: "sandbox" } }),
+          };
+        },
+      },
+    ];
+
+    const result = await runCoreOnboardFlowSlice({
+      context: context({ model: "nvidia/test", provider: "nim" }),
+      runtime: {
+        session: async () => runtimeSession,
+        applyResult: async (stateResult) => {
+          const next = (stateResult as ReturnType<typeof advanceTo>).next;
+          applied.push(next);
+          runtimeSession = createSession({
+            machine: {
+              version: 1,
+              state: next,
+              stateEnteredAt: "2026-06-09T00:03:00.000Z",
+              revision: runtimeSession.machine.revision + 1,
+            },
+          });
+          return runtimeSession;
+        },
+      },
+      phases,
+      resume: false,
+      recordStateResult: async () => {
+        throw new Error("compatibility recorder should not run");
+      },
+    });
+
+    expect(calls).toEqual(["provider_selection", "sandbox"]);
+    expect(applied).toEqual(["inference", "sandbox", "openclaw"]);
+    expect(result.context.sandboxName).toBe("created-sandbox");
+    expect(result.session.machine.state).toBe("openclaw");
+  });
+
   it("records each phase result on the resume compatibility path", async () => {
     const recorded: string[] = [];
     const phases: readonly OnboardSequencePhase<
@@ -311,6 +379,79 @@ describe("core onboard flow phases", () => {
     });
 
     expect(recorded).toEqual(["sandbox", "openclaw"]);
+  });
+
+  it.each([
+    "policies",
+    "finalizing",
+    "post_verify",
+  ] as const)("lets resume sessions at %s pass through core compatibility", async (state) => {
+    const recorded: string[] = [];
+    const phases: readonly OnboardSequencePhase<CoreContext>[] = [
+      {
+        state: "provider_selection",
+        run: (ctx) => ({ context: ctx, result: advanceTo("sandbox") }),
+      },
+      {
+        state: "sandbox",
+        run: (ctx) => ({ context: ctx, result: advanceTo("openclaw") }),
+      },
+    ];
+
+    await runCoreOnboardFlowSlice({
+      context: context({ resume: true }),
+      runtime: {
+        session: async () =>
+          createSession({
+            machine: {
+              version: 1,
+              state,
+              stateEnteredAt: "2026-06-09T00:00:00.000Z",
+              revision: 7,
+            },
+          }),
+        applyResult: async () => createSession(),
+      },
+      phases,
+      resume: true,
+      recordStateResult: async (result) => {
+        recorded.push((result as ReturnType<typeof advanceTo>).next);
+      },
+    });
+
+    expect(recorded).toEqual(["sandbox", "openclaw"]);
+  });
+
+  it.each([
+    "complete",
+    "failed",
+  ] as const)("rejects terminal %s sessions before core compatibility side effects", async (state) => {
+    const phase: OnboardSequencePhase<CoreContext> = {
+      state: "provider_selection",
+      run: vi.fn((ctx) => ({ context: ctx, result: advanceTo("sandbox") })),
+    };
+
+    await expect(
+      runCoreOnboardFlowSlice({
+        context: context({ resume: true }),
+        runtime: {
+          session: async () =>
+            createSession({
+              machine: {
+                version: 1,
+                state,
+                stateEnteredAt: "2026-06-09T00:00:00.000Z",
+                revision: 7,
+              },
+            }),
+          applyResult: async () => createSession(),
+        },
+        phases: [phase],
+        resume: true,
+        recordStateResult: async () => undefined,
+      }),
+    ).rejects.toThrow("Unexpected onboarding live flow state before slice entry");
+    expect(phase.run).not.toHaveBeenCalled();
   });
 
   it("keeps non-resume ahead-state sessions on the compatibility path", async () => {
