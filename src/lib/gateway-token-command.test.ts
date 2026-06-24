@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   GatewayTokenCommandError,
@@ -156,15 +156,101 @@ describe("runGatewayTokenCommand", () => {
     expect(getSandboxAgent).toHaveBeenCalledWith("hermes");
     expect(fetchToken).not.toHaveBeenCalled();
     expect(sinks.out).toEqual([]);
-    // Issue #3180 contract: a single agent-aware "not applicable" line.
+    // Nothing is written to the live stderr sink; diagnostics travel on the
+    // thrown error's `lines` so the caller renders them.
     expect(sinks.err).toEqual([]);
-    expect(thrown?.lines).toHaveLength(1);
-    const stderr = thrown?.lines[0] ?? "";
+    const stderr = thrown?.lines.join("\n") ?? "";
+    // Issue #3180 contract: an agent-aware "not applicable" lead line.
     expect(stderr).toMatch(/hermes/);
     expect(stderr).toMatch(/OpenClaw/);
     expect(stderr).toMatch(/not applicable/i);
     expect(stderr).not.toMatch(/sandbox is running/i);
     expect(stderr).not.toMatch(/ExitError|@oclif\/core|at Object\.exit/);
+    // Issue #5249: the Hermes message must direct users to the supported
+    // dashboard auth path instead of dead-ending on the OpenClaw-only note.
+    expect(stderr).toMatch(/dashboard-url/);
+    expect(stderr).toMatch(/\.hermes\/config\.yaml/);
+  });
+
+  // PRA-2 on #5252: the Hermes diagnostic must reflect the invoked CLI alias
+  // so users who type `nemohermes` see `nemohermes` in the next-step hint,
+  // not the hardcoded `nemoclaw`. The launcher binaries set
+  // `NEMOCLAW_INVOKED_AS` so `getAgentBranding().cli` resolves to the right
+  // command at runtime. `vi.stubEnv` + `vi.unstubAllEnvs` keep the test
+  // deterministic without conditional state restoration in a `finally`.
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("Hermes diagnostic uses nemohermes when invoked through the NemoHermes alias", () => {
+    vi.stubEnv("NEMOCLAW_INVOKED_AS", "nemohermes");
+    const sinks = makeSinks();
+    let thrown: GatewayTokenCommandError | null = null;
+    try {
+      runGatewayTokenCommand(
+        "hermes",
+        { quiet: false },
+        {
+          fetchToken: () => "should-not-be-called",
+          getSandboxAgent: () => "hermes",
+          log: sinks.log,
+          error: sinks.error,
+        },
+      );
+    } catch (error) {
+      thrown = error as GatewayTokenCommandError;
+    }
+    expect(thrown).toBeInstanceOf(GatewayTokenCommandError);
+    const stderr = thrown?.lines.join("\n") ?? "";
+    expect(stderr).toContain("For Hermes dashboard access, run: nemohermes hermes dashboard-url");
+    expect(stderr).not.toContain("nemoclaw hermes dashboard-url");
+  });
+
+  it("Hermes diagnostic uses nemoclaw when Hermes is selected through the nemoclaw binary", () => {
+    vi.stubEnv("NEMOCLAW_INVOKED_AS", "nemoclaw");
+    const sinks = makeSinks();
+    let thrown: GatewayTokenCommandError | null = null;
+    try {
+      runGatewayTokenCommand(
+        "hermes",
+        { quiet: false },
+        {
+          fetchToken: () => "should-not-be-called",
+          getSandboxAgent: () => "hermes",
+          log: sinks.log,
+          error: sinks.error,
+        },
+      );
+    } catch (error) {
+      thrown = error as GatewayTokenCommandError;
+    }
+    expect(thrown).toBeInstanceOf(GatewayTokenCommandError);
+    const stderr = thrown?.lines.join("\n") ?? "";
+    expect(stderr).toContain("For Hermes dashboard access, run: nemoclaw hermes dashboard-url");
+    expect(stderr).not.toContain("nemohermes hermes dashboard-url");
+  });
+
+  it("keeps a single explanatory line for non-Hermes, non-OpenClaw agents", () => {
+    const sinks = makeSinks();
+    let thrown: GatewayTokenCommandError | null = null;
+    try {
+      runGatewayTokenCommand(
+        "beta",
+        { quiet: false },
+        {
+          fetchToken: () => "unused",
+          getSandboxAgent: () => "someother",
+          log: sinks.log,
+          error: sinks.error,
+        },
+      );
+    } catch (error) {
+      thrown = error as GatewayTokenCommandError;
+    }
+    expect(thrown).toBeInstanceOf(GatewayTokenCommandError);
+    expect(thrown?.lines).toHaveLength(1);
+    expect(thrown?.lines[0]).toMatch(/not applicable/i);
+    expect(thrown?.lines[0]).not.toMatch(/dashboard-url/);
   });
 
   it("falls back to fetchToken when the agent lookup throws", () => {

@@ -49,7 +49,7 @@ Use the checks that match the diff and the verification you already have.
 
 If the commits were created normally and the branch was pushed normally, count the installed hooks as verification:
 
-- `pre-commit` runs file fixers, formatters, linters, docs-to-skills dry-run validation, and changed-surface Vitest hooks.
+- `pre-commit` runs file fixers, formatters, linters, skill frontmatter validation, and changed-surface Vitest hooks.
 - `commit-msg` runs commitlint.
 - `pre-push` runs TypeScript build and type-check gates.
 

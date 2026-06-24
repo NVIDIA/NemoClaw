@@ -48,6 +48,7 @@ import type {
 } from "../../messaging";
 import {
   createBuiltInChannelManifestRegistry,
+  createBuiltInRenderTemplateResolver,
   MessagingSetupApplier,
   MessagingWorkflowPlanner,
   toMessagingAgentId,
@@ -70,6 +71,7 @@ import {
   getActiveSandboxSessions,
 } from "../../state/sandbox-session";
 import { removeSandboxRegistryEntry } from "./destroy";
+import { ensureMessagingHostForwardAfterRebuild } from "./messaging-host-forward-lifecycle";
 import { executeSandboxCommand } from "./process-recovery";
 import {
   backupSandboxStateForRebuild,
@@ -232,7 +234,11 @@ async function stageMessagingManifestPlanForRebuild(
   log: (msg: string) => void,
 ): Promise<SandboxMessagingPlan | null> {
   const agent = loadAgent(rebuildAgent || "openclaw");
-  const planner = new MessagingWorkflowPlanner(createBuiltInChannelManifestRegistry());
+  const planner = new MessagingWorkflowPlanner(
+    createBuiltInChannelManifestRegistry(),
+    undefined,
+    createBuiltInRenderTemplateResolver(),
+  );
   const plan = await planner.buildRebuildPlanFromSandboxEntry({
     sandboxName,
     agent: toMessagingAgentId(agent),
@@ -999,6 +1005,7 @@ export async function rebuildSandbox(
     // gateway-side config writes, so the final result is downgraded below.
     let mutablePermsRepairUnverified = false;
     let mutableConfigHashRefreshUnverified = false;
+    let messagingHostForwardUnverified = false;
     if (agentDef.name === "openclaw") {
       // openclaw doctor --fix validates and repairs directory structure.
       // Idempotent and safe — catches structural changes between OpenClaw versions
@@ -1091,9 +1098,17 @@ export async function rebuildSandbox(
     log(`Registry updated: agentVersion=${agentDef.expectedVersion}`);
 
     if (!relockShieldsIfNeeded(true)) return bail("Failed to re-apply shields lockdown.");
+    if (!ensureMessagingHostForwardAfterRebuild(sandboxName, rebuildMessagingPlan)) {
+      messagingHostForwardUnverified = true;
+    }
 
     console.log("");
-    if (restoreSucceeded && !mutablePermsRepairUnverified && !mutableConfigHashRefreshUnverified) {
+    if (
+      restoreSucceeded &&
+      !mutablePermsRepairUnverified &&
+      !mutableConfigHashRefreshUnverified &&
+      !messagingHostForwardUnverified
+    ) {
       console.log(`  ${G}\u2713${R} Sandbox '${sandboxName}' rebuilt successfully`);
       if (staleRecovery) {
         console.log(
@@ -1124,6 +1139,11 @@ export async function rebuildSandbox(
       if (mutableConfigHashRefreshUnverified) {
         console.log(
           `    Mutable OpenClaw config hash was not refreshed \u2014 restart the sandbox or re-run \`${CLI_NAME} ${sandboxName} rebuild\` before relying on config integrity checks`,
+        );
+      }
+      if (messagingHostForwardUnverified) {
+        console.log(
+          `    Messaging webhook forward was not verified \u2014 run \`${CLI_NAME} ${sandboxName} connect\` after resolving the port conflict`,
         );
       }
     }
