@@ -64,7 +64,8 @@ node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer
 
 ## Commit Hygiene
 
-The prek "Regenerate agent skills from docs" hook auto-stages `.agents/skills/` files. Before every `git add` and `git commit` on a PR branch, run `git reset HEAD .agents/skills/nemoclaw-maintainer-*` to unstage them. Only commit skill files in dedicated skill PRs.
+Only commit skill files when the task intentionally changes agent guidance.
+Keep unrelated `.agents/skills/` changes out of ordinary code or docs PRs.
 
 ## Stop and Ask When
 

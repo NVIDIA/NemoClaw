@@ -14,7 +14,6 @@ export interface LiveOnboardFlowSliceOptions<Context> {
   context: Context;
   runtime: OnboardMachineRunnerRuntime;
   phases: readonly OnboardSequencePhase<Context>[];
-  resume: boolean;
   runWhenState: readonly OnboardMachineState[];
   compatibilityWhenState?: readonly OnboardMachineState[];
   runSlice(options: {
@@ -77,14 +76,16 @@ export async function runLiveOnboardFlowSlice<Context>({
   context,
   runtime,
   phases,
-  resume,
   runWhenState,
   compatibilityWhenState = [],
   runSlice,
   applyCompatibleResult,
 }: LiveOnboardFlowSliceOptions<Context>): Promise<OnboardMachineRunnerResult<Context>> {
   const current = await runtime.session();
-  if (!resume && runWhenState.includes(current.machine.state)) {
+  if (
+    runWhenState.includes(current.machine.state) &&
+    !compatibilityWhenState.includes(current.machine.state)
+  ) {
     return runSlice({ context, runtime, phases });
   }
   if (!compatibilityWhenState.includes(current.machine.state)) {

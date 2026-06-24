@@ -101,7 +101,7 @@ async function runRecordOnlyResumeSequence(initial: Session): Promise<Session> {
   initial.status = "in_progress";
   const { boundary, getSession } = createBoundaryHarness(initial);
   await boundary.recordOnboardStarted(true);
-  await boundary.recordStateResultsWithStepCompatibility([
+  const results = [
     advanceTo("preflight", { metadata: { state: "init" } }),
     advanceTo("gateway", { metadata: { state: "preflight" } }),
     advanceTo("provider_selection", { metadata: { state: "gateway" } }),
@@ -110,7 +110,10 @@ async function runRecordOnlyResumeSequence(initial: Session): Promise<Session> {
     branchTo("openclaw", { metadata: { state: "sandbox" } }),
     advanceTo("policies", { metadata: { state: "openclaw" } }),
     advanceTo("finalizing", { metadata: { state: "policies" } }),
-  ]);
+  ];
+  for (const result of results) {
+    await boundary.recordStateResultWithStepCompatibility(result);
+  }
   await boundary.recordSessionComplete();
   return getSession();
 }
