@@ -22,7 +22,7 @@ These instructions are for agents and skills that evaluate NemoClaw issues and P
 
 1. Classify the issue using native GitHub Issue Type: `Bug`, `Enhancement`, `Task`, `Documentation`, `Epic`, or `Initiative`.
 2. Add area labels only when the affected surface is clear.
-3. Add platform, provider, or integration labels only with explicit evidence. When a listed integration is named as the affected subject, include the matching `integration:*` label rather than only the broad `area: integrations` label.
+3. Add platform, provider, or integration labels only with explicit evidence. When a listed integration is named as the affected subject, include the matching `integration:*` label rather than only the broad `area: integrations` label. Use `integration: dcode` for LangChain Deep Code, Deep Code, `langchain-deepagents-code`, or `dcode` evidence.
 4. Add `needs:*` only when an immediate blocking action queue is needed. Do not add `needs: triage` during normal triage.
 5. Recommend Project Priority from impact evidence, not user urgency language.
 6. Recommend Project Status separately from labels.
