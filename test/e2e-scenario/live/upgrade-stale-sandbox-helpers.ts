@@ -122,7 +122,7 @@ export function writeStaleRegistryEntry(): void {
     (typeof session.model === "string" && session.model) ||
     process.env.NEMOCLAW_MODEL ||
     process.env.NEMOCLAW_COMPAT_MODEL ||
-    "nvidia/nvidia/nemotron-3-super-v3";
+    "nvidia/nvidia/nemotron-3-ultra";
   const registry = readJsonFile<{
     sandboxes?: Record<string, Record<string, unknown>>;
     defaultSandbox?: string;
