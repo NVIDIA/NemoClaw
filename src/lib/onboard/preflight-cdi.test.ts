@@ -42,6 +42,18 @@ function baseAssessment(overrides: Partial<HostAssessment> = {}): HostAssessment
   };
 }
 
+function runCaptureWithLspci(lspciOutput: string): (command: readonly string[]) => string {
+  const resultByCmd: Record<string, string> = { "nvidia-smi": "", lspci: lspciOutput };
+  return (command) => {
+    const last = command[command.length - 1];
+    return command[0] === "sh" && command[1] === "-c"
+      ? last === "lspci" || last === "apt-get"
+        ? `/usr/bin/${last}`
+        : ""
+      : (resultByCmd[command[0]] ?? "");
+  };
+}
+
 function healthySystemctlAndStat(command: readonly string[]) {
   if (command[0] === "systemctl" && command[1] === "is-enabled") return "enabled";
   if (command[0] === "systemctl" && command[1] === "is-active") return "active";
@@ -330,21 +342,6 @@ describe("planHostRemediation — CDI", () => {
     // CDI spec and emit the install_nvidia_container_toolkit remediation block.
     // Drive detection through runCaptureImpl (the real detectNvidiaGpu path)
     // rather than gpuProbeImpl so the red->green transition exercises the fix.
-    const runCaptureImpl = (command: readonly string[]): string => {
-      const last = command[command.length - 1];
-      if (command[0] === "sh" && command[1] === "-c") {
-        // `command -v <name>` probes used by commandExists().
-        return last === "lspci" || last === "apt-get" ? `/usr/bin/${last}` : "";
-      }
-      // Driver not loaded: nvidia-smi cannot enumerate GPUs.
-      if (command[0] === "nvidia-smi") return "";
-      // PCI bus still reports the physical NVIDIA GPU.
-      if (command[0] === "lspci") {
-        return "01:00.0 VGA compatible controller: NVIDIA Corporation GK104 [GeForce GTX 660 Ti] (rev a1)";
-      }
-      return "";
-    };
-
     const result = assessHost({
       platform: "linux",
       env: {},
@@ -357,7 +354,9 @@ describe("planHostRemediation — CDI", () => {
         CDISpecDirs: ["/etc/cdi", "/var/run/cdi"],
       }),
       commandExistsImpl: (name: string) => name === "docker",
-      runCaptureImpl,
+      runCaptureImpl: runCaptureWithLspci(
+        "01:00.0 VGA compatible controller: NVIDIA Corporation GK104 [GeForce GTX 660 Ti] (rev a1)",
+      ),
     });
 
     expect(result.hasNvidiaGpu).toBe(true);
@@ -384,21 +383,6 @@ describe("planHostRemediation — CDI", () => {
     // expose "nvidia" in lspci output without any display-class GPU. The
     // hardware fallback must restrict matching to display PCI classes so these
     // hosts are not falsely flagged and forced through CDI/toolkit remediation.
-    const runCaptureImpl = (command: readonly string[]): string => {
-      const last = command[command.length - 1];
-      if (command[0] === "sh" && command[1] === "-c") {
-        return last === "lspci" || last === "apt-get" ? `/usr/bin/${last}` : "";
-      }
-      if (command[0] === "nvidia-smi") return "";
-      if (command[0] === "lspci") {
-        return [
-          "01:00.0 Ethernet controller: Mellanox Technologies MT27800 Family [ConnectX-5]",
-          "02:00.0 Infiniband controller: NVIDIA Corporation MT28908 Family [ConnectX-6]",
-        ].join("\n");
-      }
-      return "";
-    };
-
     const result = assessHost({
       platform: "linux",
       env: {},
@@ -411,7 +395,12 @@ describe("planHostRemediation — CDI", () => {
         CDISpecDirs: ["/etc/cdi", "/var/run/cdi"],
       }),
       commandExistsImpl: (name: string) => name === "docker",
-      runCaptureImpl,
+      runCaptureImpl: runCaptureWithLspci(
+        [
+          "01:00.0 Ethernet controller: Mellanox Technologies MT27800 Family [ConnectX-5]",
+          "02:00.0 Infiniband controller: NVIDIA Corporation MT28908 Family [ConnectX-6]",
+        ].join("\n"),
+      ),
     });
 
     expect(result.hasNvidiaGpu).toBe(false);
