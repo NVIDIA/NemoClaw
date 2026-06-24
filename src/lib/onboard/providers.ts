@@ -27,7 +27,7 @@ const HOSTED_INFERENCE_SOURCE_ENV = "NVIDIA_INFERENCE_API_KEY";
 const HOSTED_INFERENCE_PROVIDER_KEY_ENV = "NEMOCLAW_PROVIDER_KEY";
 const HOSTED_INFERENCE_CREDENTIAL_ENV = "COMPATIBLE_API_KEY";
 const HOSTED_INFERENCE_ENDPOINT_URL = "https://inference-api.nvidia.com/v1";
-const HOSTED_INFERENCE_MODEL = "nvidia/nemotron-3-super-v3";
+const HOSTED_INFERENCE_MODEL = "nvidia/nemotron-3-ultra";
 const NON_INTERACTIVE_PROVIDER_ALIASES = {
   cloud: "build",
   nim: "nim-local",

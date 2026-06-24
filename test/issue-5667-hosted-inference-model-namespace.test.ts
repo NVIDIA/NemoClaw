@@ -3,7 +3,7 @@
 //
 // Regression test for issue #5667: onboarding a Deep Agents / OpenAI-compatible
 // sandbox without an explicit NEMOCLAW_MODEL recorded the default model id as
-// "nvidia/nvidia/nemotron-3-super-v3" — a doubled "nvidia/" namespace prefix.
+// "nvidia/nvidia/nemotron-3-ultra" — a doubled "nvidia/" namespace prefix.
 // Standard NIM model ids carry exactly one namespace segment, so the default
 // fallback must be the canonical single-prefix id and the staged onboarding env
 // must never contain "nvidia/nvidia/".
@@ -143,7 +143,7 @@ describe("issue #5667: hosted inference default model namespace", () => {
 
   it("default hosted inference model has a single nvidia/ namespace segment", () => {
     expect(providers.HOSTED_INFERENCE_MODEL).not.toContain("nvidia/nvidia/");
-    expect(providers.HOSTED_INFERENCE_MODEL).toBe("nvidia/nemotron-3-super-v3");
+    expect(providers.HOSTED_INFERENCE_MODEL).toBe("nvidia/nemotron-3-ultra");
   });
 
   it("staging the hosted inference secret without NEMOCLAW_MODEL records a single-prefix model", () => {
@@ -156,8 +156,8 @@ describe("issue #5667: hosted inference default model namespace", () => {
 
     expect(staged).toBe(true);
     expect(process.env.NEMOCLAW_MODEL).not.toContain("nvidia/nvidia/");
-    expect(process.env.NEMOCLAW_MODEL).toBe("nvidia/nemotron-3-super-v3");
-    expect(process.env.NEMOCLAW_COMPAT_MODEL).toBe("nvidia/nemotron-3-super-v3");
+    expect(process.env.NEMOCLAW_MODEL).toBe("nvidia/nemotron-3-ultra");
+    expect(process.env.NEMOCLAW_COMPAT_MODEL).toBe("nvidia/nemotron-3-ultra");
   });
 
   it("stages the Deep Agents NEMOCLAW_PROVIDER_KEY path with a single-prefix model", () => {
@@ -172,8 +172,8 @@ describe("issue #5667: hosted inference default model namespace", () => {
     expect(process.env.NEMOCLAW_PROVIDER).toBe("custom");
     expect(process.env.COMPATIBLE_API_KEY).toBe("sk-test-inference-hub-key");
     expect(process.env.NEMOCLAW_MODEL).not.toContain("nvidia/nvidia/");
-    expect(process.env.NEMOCLAW_MODEL).toBe("nvidia/nemotron-3-super-v3");
-    expect(process.env.NEMOCLAW_COMPAT_MODEL).toBe("nvidia/nemotron-3-super-v3");
+    expect(process.env.NEMOCLAW_MODEL).toBe("nvidia/nemotron-3-ultra");
+    expect(process.env.NEMOCLAW_COMPAT_MODEL).toBe("nvidia/nemotron-3-ultra");
   });
 
   it("drives setupNim and downstream Deep Agents surfaces with a single-prefix model", async () => {
@@ -253,12 +253,12 @@ const { setupNim } = require(${onboardPath});
 
       expect(payload.result.provider).toBe("compatible-endpoint");
       expect(payload.result.credentialEnv).toBe("COMPATIBLE_API_KEY");
-      expect(payload.result.model).toBe("nvidia/nemotron-3-super-v3");
+      expect(payload.result.model).toBe("nvidia/nemotron-3-ultra");
       expect(payload.result.preferredInferenceApi).toBe("openai-completions");
       expect(payload.env).toMatchObject({
         provider: "custom",
-        model: "nvidia/nemotron-3-super-v3",
-        compatModel: "nvidia/nemotron-3-super-v3",
+        model: "nvidia/nemotron-3-ultra",
+        compatModel: "nvidia/nemotron-3-ultra",
         compatibleKey: "sk-test-inference-hub-key",
         preferredApi: "openai-completions",
       });
@@ -278,15 +278,15 @@ const { setupNim } = require(${onboardPath});
       });
       const statusModelLine = `    Model:    ${statusSnapshot.currentModel}`;
       expect(statusSnapshot.currentProvider).toBe("compatible-endpoint");
-      expect(statusSnapshot.currentModel).toBe("nvidia/nemotron-3-super-v3");
-      expect(statusModelLine).toBe("    Model:    nvidia/nemotron-3-super-v3");
+      expect(statusSnapshot.currentModel).toBe("nvidia/nemotron-3-ultra");
+      expect(statusModelLine).toBe("    Model:    nvidia/nemotron-3-ultra");
       expect(statusModelLine).not.toContain("nvidia/nvidia/");
 
       const dockerfilePath = path.join(tmpDir, "Dockerfile");
       fs.writeFileSync(dockerfilePath, "FROM scratch\nARG NEMOCLAW_MODEL=old\n");
       patchStagedDockerfile(dockerfilePath, payload.result.model, null, "issue-5667-single-prefix");
       expect(fs.readFileSync(dockerfilePath, "utf8")).toContain(
-        "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-v3",
+        "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-ultra",
       );
 
       const configResult = spawnSync(
@@ -312,7 +312,7 @@ const { setupNim } = require(${onboardPath});
       );
       assert.equal(configResult.status, 0, `${configResult.stdout}\n${configResult.stderr}`);
       const config = fs.readFileSync(path.join(home, ".deepagents", "config.toml"), "utf8");
-      expect(config).toContain('default = "openai:nvidia/nemotron-3-super-v3"');
+      expect(config).toContain('default = "openai:nvidia/nemotron-3-ultra"');
       expect(config).not.toContain("nvidia/nvidia/");
 
       const dcodeWrapperPath = writeDcodeWrapperFixture(tmpDir, home);
@@ -329,7 +329,7 @@ const { setupNim } = require(${onboardPath});
       const dcodeOutput = `${dcodeResult.stdout}\n${dcodeResult.stderr}`;
       assert.equal(dcodeResult.status, 0, dcodeOutput);
       expect(dcodeOutput).toContain(
-        "App: v0.1.12 | Agent: agent (default) | Model: nvidia/nemotron-3-super-v3",
+        "App: v0.1.12 | Agent: agent (default) | Model: nvidia/nemotron-3-ultra",
       );
       expect(dcodeOutput).toContain("ARGS:--sandbox none --no-mcp -n ping");
       expect(dcodeOutput).not.toContain("nvidia/nvidia/");

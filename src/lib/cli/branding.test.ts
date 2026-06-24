@@ -61,4 +61,14 @@ describe("getAgentBranding", () => {
     expect(branding.product).toBe("Hermes");
     expect(branding.cli).toBe("nemoclaw");
   });
+
+  it("uses Deep Agents Code product branding under the nemoclaw CLI (#5665)", () => {
+    // langchain-deepagents-code runs under the nemoclaw CLI (no dedicated
+    // launcher), so the display stays NemoClaw but the product name must be the
+    // agent's own, not the OpenClaw default.
+    const branding = getAgentBranding("langchain-deepagents-code");
+    expect(branding.cli).toBe("nemoclaw");
+    expect(branding.display).toBe("NemoClaw");
+    expect(branding.product).toBe("LangChain Deep Agents Code");
+  });
 });

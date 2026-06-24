@@ -107,6 +107,7 @@ web_auth_env: API_SERVER_KEY
 # https://hermes-agent.nousresearch.com/docs/user-guide/messaging/weixin.
 # WhatsApp pairs in the sandbox via `hermes whatsapp`; the selected channel
 # bakes WHATSAPP_ENABLED/WHATSAPP_MODE into .env and preserves session state.
+# Microsoft Teams uses the Bot Framework webhook adapter at /api/messages.
 messaging_platforms:
   supported:
     - telegram
@@ -114,6 +115,7 @@ messaging_platforms:
     - slack
     - wechat
     - whatsapp
+    - teams
   # Future: signal, matrix, mattermost, email, etc.
   # Each needs a network policy entry before enabling.
 

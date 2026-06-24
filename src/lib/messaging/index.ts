@@ -6,6 +6,7 @@ export * from "./channels";
 export * from "./compiler";
 export * from "./diagnostics";
 export * from "./hooks";
+export * from "./host-forward";
 export * from "./manifest";
 export * from "./persistence";
 export * from "./utils";

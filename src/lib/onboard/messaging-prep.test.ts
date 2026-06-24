@@ -144,6 +144,7 @@ describe("prepareCreateSandboxMessaging", () => {
 
     expect([...result.messagingTokenDefs.map(({ envKey }) => envKey)].sort()).toEqual([
       "DISCORD_BOT_TOKEN",
+      "MSTEAMS_APP_PASSWORD",
       "SLACK_APP_TOKEN",
       "SLACK_BOT_TOKEN",
       "TELEGRAM_BOT_TOKEN",
