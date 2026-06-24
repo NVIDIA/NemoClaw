@@ -5145,7 +5145,6 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           exitProcess: (code) => process.exit(code),
         },
       });
-
     const coreFlowResult = await runCoreOnboardFlowSlice({
       context: coreFlowContext,
       runtime: onboardRuntimeBoundary.getRuntime(),
@@ -5153,7 +5152,6 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       resume,
       recordStateResult: recordCompatibleStateResult,
     });
-
     const coreContext = coreFlowResult.context;
     session = coreContext.session;
     sandboxName = coreContext.sandboxName;
