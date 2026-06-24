@@ -147,16 +147,14 @@ export async function runCoreOnboardFlowSlice<Context extends OnboardFlowContext
   resume: boolean;
   recordStateResult(result: OnboardStateResult): Promise<unknown>;
 }): Promise<OnboardMachineRunnerResult<Context>> {
-  // Compatibility bridge for live resume repair while legacy step helpers and
-  // OnboardRuntimeBoundary compatibility replay can leave the durable machine
-  // snapshot already downstream of this slice. The tolerated downstream family
-  // includes sandbox branch states and the final slice handoff states: openclaw,
-  // agent_setup, policies, finalizing, and post_verify. Resume still needs to
-  // re-run provider and sandbox repair/backstop checks before policy or final
-  // verification handling observes the session. This PR does not fix the
-  // broader persistence contract because those repairs are not strict FSM states
-  // yet. Remove this fallback once resume repairs are strict FSM states, or once
-  // direct legacy step helpers no longer write session.machine.
+  // Compatibility bridge for live resume repair while saved sessions can carry
+  // durable machine snapshots already downstream of this slice. The tolerated
+  // downstream family includes sandbox branch states and the final slice handoff
+  // states: openclaw, agent_setup, policies, finalizing, and post_verify. Resume
+  // still needs to re-run provider and sandbox repair/backstop checks before
+  // policy or final verification handling observes the session. Remove this
+  // fallback once those repair/backstop checks are modeled as strict FSM
+  // recovery states.
   return runLiveOnboardFlowSlice({
     context: options.context,
     runtime: options.runtime,
