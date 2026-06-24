@@ -16,11 +16,11 @@
   },
 
   "statuses": {
-    "tested": "Validated by CI/QA. Primary path.",
-    "caveated": "Tested with limitations. See Notes.",
-    "experimental": "Requires NEMOCLAW_EXPERIMENTAL=1.",
-    "deferred": "Planned but not yet validated.",
-    "unsupported": "Explicitly out of scope. Not validated and not planned.",
+    "tested": "Validated by CI or QA. Safe to claim and to demo.",
+    "caveated": "Works on the listed setup with documented caveats. Caveats must be cited whenever this row is claimed.",
+    "experimental": "Available behind `NEMOCLAW_EXPERIMENTAL=1` or an equivalent opt-in flag. Do not claim in launch-facing material without the opt-in mentioned.",
+    "deferred": "Planned but not yet validated. Roadmap-only. Do not claim as supported.",
+    "unsupported": "Explicitly out of scope. Not validated and not planned. Documented to set expectations and prevent drift.",
     "hermes only": "Available only when onboarding the Hermes agent."
   },
 

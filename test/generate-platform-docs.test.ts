@@ -405,6 +405,16 @@ print(block)
         hookSection?.includes(target),
         `.pre-commit-config.yaml platform-matrix-sync hook does not stage ${target} even though the generator emits it`,
       ).toBe(true);
+      // PRA-6 on #5712: the hook stages the file only when it has
+      // been triggered. Editing the canonical page alone without the
+      // trigger pattern covering it means the regenerator never runs
+      // for that edit. Assert the regex-escaped target appears in the
+      // `files:` pattern as well.
+      const escapedForTrigger = target.replace(/\./g, "\\.");
+      expect(
+        hookSection?.includes(escapedForTrigger),
+        `.pre-commit-config.yaml platform-matrix-sync hook \`files:\` pattern does not trigger on edits to ${target}`,
+      ).toBe(true);
     }
   });
 });

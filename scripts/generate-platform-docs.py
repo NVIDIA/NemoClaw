@@ -106,7 +106,16 @@ TABLES = [
             REPO_ROOT / "docs" / "reference" / "platform-support.mdx",
         ],
     ),
+    (
+        "status-vocabulary",
+        "status_vocabulary",
+        [
+            REPO_ROOT / "docs" / "reference" / "platform-support.mdx",
+        ],
+    ),
 ]
+
+
 
 
 def _sentinel_pairs(name: str) -> list[tuple[str, str]]:
@@ -174,8 +183,15 @@ def _escape_cell(value) -> str:
     text = text.replace("\r\n", " ").replace("\n", " ").replace("\r", " ")
     text = text.replace("|", "\\|")
     parts = text.split("`")
+    # An odd number of backticks means an unmatched span. Treating the trailing
+    # segment as "inside a code span" (the parity branch) would leave its
+    # control characters unencoded, so any escape we would otherwise apply
+    # would be silently skipped. Encode every segment instead; the matrix is
+    # validated to reject unmatched backticks at load time so the well-formed
+    # path still hits the alternating-segment optimization.
+    everything_encoded = (text.count("`") % 2) != 0
     for i in range(len(parts)):
-        if i % 2 == 0:
+        if everything_encoded or i % 2 == 0:
             parts[i] = (
                 parts[i]
                 .replace("<", "&lt;")
@@ -255,6 +271,19 @@ def _validate_matrix(matrix: dict) -> None:
         raise ValueError(
             f"ci/platform-matrix.json: project_status missing required keys: {missing_status}"
         )
+
+    # Reject unmatched backticks in every notes field. The cell escaper relies
+    # on alternating in/out-of-code-span segments to leave inline code intact
+    # while still encoding MDX hazards in prose; an odd backtick count is
+    # ambiguous and would either bypass escaping or corrupt rendered code.
+    for section in sections:
+        for idx, entry in enumerate(matrix.get(section, [])):
+            note = entry.get("notes") or ""
+            if note.count("`") % 2 != 0:
+                raise ValueError(
+                    f"ci/platform-matrix.json: {section}[{idx}].notes has an odd number "
+                    "of backticks; pair every code span before regenerating docs"
+                )
 
 
 def generate_platform_table(platforms: list[dict]) -> str:
@@ -428,6 +457,23 @@ def generate_owners_block(owners: dict) -> str:
     )
 
 
+def generate_status_vocabulary_table(statuses: dict) -> str:
+    """Render the status vocabulary directly from the matrix `statuses` dict.
+
+    The doc table that listed each status and its meaning used to be hand
+    authored, so the matrix `statuses` definition and the docs prose drifted
+    independently. Generate the table here so the two stay aligned by
+    construction.
+    """
+    header = "| Status | Meaning |"
+    separator = "|--------|---------|"
+    rows = [
+        f"| {_escape_cell(_label(key))} | {_escape_cell(meaning)} |"
+        for key, meaning in statuses.items()
+    ]
+    return "\n".join([header, separator, *rows])
+
+
 TABLE_GENERATORS = {
     "platforms": generate_platform_table,
     "providers": generate_provider_table,
@@ -440,6 +486,7 @@ TABLE_GENERATORS = {
     "out_of_scope": generate_out_of_scope_table,
     "project_status": generate_project_status_block,
     "owners": generate_owners_block,
+    "status_vocabulary": generate_status_vocabulary_table,
 }
 
 # The generator key isn't always the matrix dict key. The "full" tables
@@ -447,6 +494,7 @@ TABLE_GENERATORS = {
 GENERATOR_MATRIX_KEY = {
     "platforms_full": "platforms",
     "providers_full": "providers",
+    "status_vocabulary": "statuses",
 }
 
 
