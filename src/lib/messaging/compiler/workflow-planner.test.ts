@@ -850,6 +850,75 @@ describe("MessagingWorkflowPlanner", () => {
     expect(rebuilt).toBeNull();
   });
 
+  it("drops a persisted Telegram plan during rebuild when supportedChannelIds: [] declares deny-all", async () => {
+    const existingPlan = await planner().buildPlan({
+      sandboxName: "demo",
+      agent: "openclaw",
+      workflow: "onboard",
+      isInteractive: false,
+      configuredChannels: ["telegram"],
+      credentialAvailability: { TELEGRAM_BOT_TOKEN: true },
+    });
+
+    const rebuilt = await planner().buildRebuildPlanFromSandboxEntry({
+      sandboxName: "demo",
+      agent: "openclaw",
+      sandboxEntry: {
+        name: "demo",
+        messaging: { schemaVersion: 1, plan: existingPlan },
+      },
+      supportedChannelIds: [],
+    });
+
+    expect(rebuilt).toBeNull();
+  });
+
+  it("drops a persisted plan during stop/start/remove mutations when supportedChannelIds: [] denies the stored channel", async () => {
+    const existingPlan = await planner().buildPlan({
+      sandboxName: "demo",
+      agent: "openclaw",
+      workflow: "onboard",
+      isInteractive: false,
+      configuredChannels: ["telegram"],
+      credentialAvailability: { TELEGRAM_BOT_TOKEN: true },
+    });
+
+    const baseEntry = {
+      name: "demo",
+      messaging: { schemaVersion: 1, plan: existingPlan } as const,
+    };
+
+    expect(
+      await planner().buildChannelStopPlanFromSandboxEntry({
+        sandboxName: "demo",
+        agent: "openclaw",
+        channelId: "telegram",
+        sandboxEntry: baseEntry,
+        supportedChannelIds: [],
+      }),
+    ).toBeNull();
+
+    expect(
+      await planner().buildChannelStartPlanFromSandboxEntry({
+        sandboxName: "demo",
+        agent: "openclaw",
+        channelId: "telegram",
+        sandboxEntry: baseEntry,
+        supportedChannelIds: [],
+      }),
+    ).toBeNull();
+
+    expect(
+      await planner().buildChannelRemovePlanFromSandboxEntry({
+        sandboxName: "demo",
+        agent: "openclaw",
+        channelId: "telegram",
+        sandboxEntry: baseEntry,
+        supportedChannelIds: [],
+      }),
+    ).toBeNull();
+  });
+
   it("reports unsupported channels deterministically before compiling", async () => {
     await expect(
       planner().buildPlan({
@@ -861,6 +930,19 @@ describe("MessagingWorkflowPlanner", () => {
         supportedChannelIds: ["telegram"],
       }),
     ).rejects.toThrow("Unsupported messaging channel(s) for openclaw: discord, slack");
+  });
+
+  it("rejects every configured channel when supportedChannelIds is an explicit empty array (deny-all)", async () => {
+    await expect(
+      planner().buildPlan({
+        sandboxName: "demo",
+        agent: "openclaw",
+        workflow: "onboard",
+        isInteractive: false,
+        configuredChannels: ["telegram"],
+        supportedChannelIds: [],
+      }),
+    ).rejects.toThrow("Unsupported messaging channel(s) for openclaw: telegram");
   });
 
   it("returns serializable, secret-free plans suitable for dry-run and shadow output", async () => {

@@ -122,10 +122,9 @@ export class ManifestCompiler {
     context: ManifestCompilerContext,
   ): ChannelManifest[] {
     const requestedIds = new Set(channelIds);
-    const supportedIds =
-      context.supportedChannelIds && context.supportedChannelIds.length > 0
-        ? new Set(context.supportedChannelIds)
-        : null;
+    const supportedIds = Array.isArray(context.supportedChannelIds)
+      ? new Set(context.supportedChannelIds)
+      : null;
 
     const manifests = this.registry
       .list()

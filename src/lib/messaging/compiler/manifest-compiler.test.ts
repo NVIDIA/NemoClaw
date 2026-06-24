@@ -1390,4 +1390,17 @@ describe("ManifestCompiler", () => {
     expect(hookCalls).toEqual(["enroll", "reachability:!room:example.com"]);
     expect(JSON.stringify(plan)).not.toContain("raw-matrix-token");
   });
+
+  it("treats supportedChannelIds: [] as deny-all and reports the requested channel as missing", async () => {
+    await expect(
+      compiler().compile({
+        sandboxName: "demo",
+        agent: "openclaw",
+        workflow: "onboard",
+        isInteractive: false,
+        configuredChannels: ["telegram"],
+        supportedChannelIds: [],
+      }),
+    ).rejects.toThrow("Missing messaging channel manifest(s): telegram");
+  });
 });

@@ -43,6 +43,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { captureOpenshell, runOpenshell } from "../../../adapters/openshell/runtime";
 import { CLI_NAME } from "../../../cli/branding";
+import * as registry from "../../../state/registry";
 import { ensureLiveSandboxOrExit } from "../gateway-state";
 import { resolveHostPathFromCwd } from "../host-path";
 import {
@@ -52,7 +53,7 @@ import {
   validateSessionKey,
 } from "./paths";
 
-export type SessionsExportFormat = "dir" | "tar";
+export type SessionsExportFormat = "dir" | "tar" | "jsonl";
 
 export interface SessionsExportOptions {
   sandboxName: string;
@@ -107,6 +108,9 @@ const STAGING_DIR_IN_SANDBOX = "/sandbox/.nemoclaw-staging";
 export async function exportSandboxSessions(
   opts: SessionsExportOptions,
 ): Promise<SessionsExportResult> {
+  if (registry.getSandbox(opts.sandboxName)?.agent === "hermes") {
+    return exportHermesSessions(opts);
+  }
   const agent = resolveAgentId(opts);
   const trimmedKeys = (opts.keys ?? []).map((value) => validateSessionKey(value));
   enforceAgentScope(agent, trimmedKeys);
@@ -257,6 +261,176 @@ export async function exportSandboxSessions(
   }
 
   return result;
+}
+
+// Scope boundary for `nemoclaw <name> sessions export` on a Hermes sandbox:
+//
+//   - Invalid state addressed: Hermes owns its session store as an in-sandbox
+//     SQLite database that is not directly reachable from the host. Exporting
+//     it therefore requires a two-hop orchestration (in-sandbox export, then
+//     host-side download), the same shape as the OpenClaw path above but with
+//     a different upstream CLI and on-disk contract.
+//   - Source boundary:
+//       * NemoClaw side (this helper): pick a unique in-sandbox staging path
+//         under `/sandbox/.nemoclaw-staging`, run `hermes sessions export`
+//         under a `umask 077` + `chmod 600` envelope, download the staged
+//         JSONL via `openshell sandbox download`, finalise it onto the host
+//         destination via atomic chmod-then-rename, and best-effort clean up
+//         the in-sandbox staging file. The cleanup result is captured and
+//         surfaced as a warning when non-zero so a sensitive session JSONL
+//         is never left behind in the sandbox without telling the user.
+//       * Hermes side (upstream `hermes` CLI staged under `agents/hermes/`):
+//         owns the SQLite session store and the `hermes sessions export
+//         <path>` contract that emits a single JSONL stream. NemoClaw never
+//         reads or rewrites that store and only invokes the upstream CLI;
+//         changing the store layout or the export shape are upstream
+//         concerns.
+//   - Source-fix constraint: `openshell sandbox download` refuses any source
+//     path outside `/sandbox`, so the staging file must live under
+//     `/sandbox/.nemoclaw-staging` (the same hidden, NemoClaw-owned prefix
+//     the OpenClaw path uses). NemoClaw cannot read the Hermes SQLite
+//     database directly from the host, so the two-hop orchestration is the
+//     only safe option until Hermes exposes a host-reachable export RPC.
+//   - Regression-test coverage:
+//       * Host-side: `export.test.ts > exportSandboxSessions (hermes sandbox)`
+//         covers the `hermes sessions export` route, the
+//         `/sandbox/.nemoclaw-staging/sessions-export-hermes-<rand>.jsonl`
+//         path shape, atomic chmod-then-rename finalisation, the
+//         `--agent hermes` no-op alias, refusal of OpenClaw-only options,
+//         and the remote cleanup warning on a non-zero `rm -f` exit.
+//       * E2E (stub openshell): `test/sandbox-sessions-export-cli.test.ts`
+//         exercises the dispatch through the public CLI with a fake
+//         openshell binary, proving the `exec hermes sessions export`,
+//         `download`, and `exec rm` wire calls happen in the expected order.
+//   - Removal condition: this Hermes branch can be removed when Hermes
+//     exposes a host-reachable export RPC (or NemoClaw is granted a stable
+//     contract for the SQLite store layout), making the two-hop in-sandbox
+//     staging + download orchestration unnecessary.
+async function exportHermesSessions(opts: SessionsExportOptions): Promise<SessionsExportResult> {
+  rejectOpenClawOnlyOptions(opts);
+  await ensureLiveSandboxOrExit(opts.sandboxName, { allowNonReadyPhase: true });
+
+  const hostDest = resolveHermesHostDestination(opts.out, opts.sandboxName);
+  const stagingRemote = hermesStagingPath();
+  const shellCommand = buildHermesShellInvocation(stagingRemote);
+
+  const absoluteHostDest = path.resolve(hostDest);
+  const hostStagingDir = fs.mkdtempSync(
+    path.join(path.dirname(absoluteHostDest), ".sessions-export-hermes-"),
+  );
+  const hostStagingPath = path.join(hostStagingDir, path.basename(absoluteHostDest));
+
+  try {
+    const exportResult = runOpenshell(
+      ["sandbox", "exec", "--name", opts.sandboxName, "--", "sh", "-c", shellCommand],
+      { ignoreError: true, stdio: "inherit" },
+    );
+    if (exportResult.status !== 0) {
+      throw new Error(
+        `Failed to export hermes sessions in sandbox '${opts.sandboxName}' (exit ${exportResult.status}). Verify the sandbox is live with \`${CLI_NAME} ${opts.sandboxName} status\`.`,
+      );
+    }
+
+    const downloadResult = runOpenshell(
+      ["sandbox", "download", opts.sandboxName, stagingRemote, hostStagingPath],
+      { ignoreError: true, stdio: "inherit" },
+    );
+    if (downloadResult.status !== 0) {
+      throw new Error(
+        `Failed to download '${stagingRemote}' from sandbox '${opts.sandboxName}' (exit ${downloadResult.status}).`,
+      );
+    }
+
+    fs.chmodSync(hostStagingPath, 0o600);
+    fs.renameSync(hostStagingPath, hostDest);
+  } finally {
+    // Best-effort cleanup of the in-sandbox staging JSONL. The host throw (if
+    // any) is already in flight, so a console.warn here cannot mask it — the
+    // primary error still propagates once the `finally` block returns.
+    const remoteCleanup = runOpenshell(
+      ["sandbox", "exec", "--name", opts.sandboxName, "--", "rm", "-f", stagingRemote],
+      { ignoreError: true, stdio: "ignore" },
+    );
+    if (remoteCleanup.status !== 0) {
+      console.warn(
+        `  Warning: failed to remove in-sandbox staging file '${stagingRemote}' from sandbox '${opts.sandboxName}' (exit ${remoteCleanup.status}). The file may still contain a session JSONL with pasted secrets; remove it manually with \`${CLI_NAME} sandbox exec --name ${opts.sandboxName} -- rm -f ${stagingRemote}\`.`,
+      );
+    }
+    try {
+      fs.rmSync(hostStagingDir, { recursive: true, force: true });
+    } catch (cleanupErr) {
+      console.warn(
+        `  Warning: failed to remove local staging directory '${hostStagingDir}': ${(cleanupErr as Error).message}. The directory may still contain a session JSONL with pasted secrets; remove it manually.`,
+      );
+    }
+  }
+
+  let bundleBytes: number | null = null;
+  try {
+    bundleBytes = fs.statSync(hostDest).size;
+  } catch {
+    bundleBytes = null;
+  }
+
+  const result: SessionsExportResult = {
+    sandboxName: opts.sandboxName,
+    agent: "hermes",
+    format: "jsonl",
+    selectedKeys: "all",
+    resolvedSessionIds: [],
+    resolvedFiles: [path.basename(hostDest)],
+    hostDest,
+    bundleBytes,
+    sessions: [],
+  };
+
+  if (opts.json) {
+    console.log(JSON.stringify(result));
+  } else {
+    const sizeNote = bundleBytes !== null ? ` (${bundleBytes} byte(s))` : "";
+    console.error(`  Exported hermes sessions to ${hostDest}${sizeNote}`);
+  }
+
+  return result;
+}
+
+function rejectOpenClawOnlyOptions(opts: SessionsExportOptions): void {
+  if (opts.agent && opts.agent !== "hermes") {
+    throw new Error(
+      `Refusing to export: --agent ${opts.agent} is OpenClaw-specific and is not supported on a Hermes sandbox. Pass --agent hermes or omit the flag.`,
+    );
+  }
+  if (opts.keys && opts.keys.length > 0) {
+    throw new Error(
+      "Refusing to export: positional session keys are OpenClaw-specific. A Hermes sandbox exports the full session store as a single JSONL.",
+    );
+  }
+  if (opts.includeTrajectory) {
+    throw new Error(
+      "Refusing to export: --include-trajectory is OpenClaw-specific. Hermes has no separate trajectory files.",
+    );
+  }
+  if (opts.format === "tar") {
+    throw new Error(
+      "Refusing to export: --format tar is OpenClaw-specific. Hermes export is a single JSONL stream.",
+    );
+  }
+}
+
+function hermesStagingPath(): string {
+  const suffix = randomBytes(6).toString("hex");
+  return `${STAGING_DIR_IN_SANDBOX}/sessions-export-hermes-${suffix}.jsonl`;
+}
+
+function buildHermesShellInvocation(stagingRemote: string): string {
+  const quotedStaging = shellQuote(stagingRemote);
+  const quotedStagingDir = shellQuote(STAGING_DIR_IN_SANDBOX);
+  return `umask 077 && mkdir -p ${quotedStagingDir} && chmod 700 ${quotedStagingDir} && hermes sessions export ${quotedStaging} && chmod 600 ${quotedStaging}`;
+}
+
+function resolveHermesHostDestination(out: string | undefined, sandboxName: string): string {
+  if (out && out.trim()) return out.trim();
+  return `./sessions-${sandboxName}.jsonl`;
 }
 
 // Restrict a freshly written host artefact to owner-only (0600). Best-effort:
