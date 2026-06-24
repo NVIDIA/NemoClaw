@@ -49,7 +49,6 @@ const TRUSTED_REF_GUARD = "github.event_name != 'workflow_dispatch' || inputs.ta
 const GUARDED_HOSTED_INFERENCE_SECRET = `\${{ (${TRUSTED_REF_GUARD}) && secrets.NVIDIA_INFERENCE_API_KEY || '' }}`;
 const GUARDED_PUBLIC_NVIDIA_SECRET = `\${{ (${TRUSTED_REF_GUARD}) && secrets.NVIDIA_API_KEY || '' }}`;
 const RAW_HOSTED_INFERENCE_SECRET = "${{ secrets.NVIDIA_INFERENCE_API_KEY }}";
-const RAW_PUBLIC_NVIDIA_SECRET = "${{ secrets.NVIDIA_API_KEY }}";
 
 function timingSummary(
   phases: Record<string, number> = { "nemoclaw.onboard.phase.preflight": 1000 },
