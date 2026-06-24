@@ -153,6 +153,53 @@ print("OK")
     expect(output.trim()).toBe("OK");
   });
 
+  // PRA-2 on #5712: matrix.get(section, []) used to silently accept a missing
+  // top-level section and render an empty table. _validate_matrix now requires
+  // each generator-backed section to be present and list-typed before render.
+  it("rejects a matrix that is missing a generator-backed top-level section", () => {
+    const output = runPython(`
+${loadGeneratorAs("g")}
+
+matrix = {
+  "statuses": {"tested": "Validated."},
+  "owners": {"engineering": "@NVIDIA/nemoclaw-maintainer"},
+  "project_status": {"stage":"a","label":"b","since":"c","notes":"d"},
+  "platforms": [], "providers": [], "integrations": [],
+  "deployment_paths": [], "capabilities": [], "out_of_scope": []
+  # 'agents' intentionally omitted
+}
+try:
+    module._validate_matrix(matrix)
+    print("NO_ERROR")
+except ValueError as exc:
+    print(str(exc))
+`);
+    expect(output).toContain("required top-level section 'agents' is missing");
+    expect(output).not.toContain("NO_ERROR");
+  });
+
+  it("rejects a top-level section that is the wrong type (not a list)", () => {
+    const output = runPython(`
+${loadGeneratorAs("g")}
+
+matrix = {
+  "statuses": {"tested": "Validated."},
+  "owners": {"engineering": "@NVIDIA/nemoclaw-maintainer"},
+  "project_status": {"stage":"a","label":"b","since":"c","notes":"d"},
+  "platforms": [], "providers": [], "agents": "oops-a-string",
+  "integrations": [], "deployment_paths": [], "capabilities": [], "out_of_scope": []
+}
+try:
+    module._validate_matrix(matrix)
+    print("NO_ERROR")
+except ValueError as exc:
+    print(str(exc))
+`);
+    expect(output).toContain("'agents' must be a list");
+    expect(output).toContain("got str");
+    expect(output).not.toContain("NO_ERROR");
+  });
+
   it("rejects an incomplete project_status block (matches the validator's failure mode)", () => {
     const output = runPython(`
 ${loadGeneratorAs("g")}

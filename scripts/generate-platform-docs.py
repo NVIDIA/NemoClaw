@@ -237,8 +237,22 @@ def _validate_matrix(matrix: dict) -> None:
         "capabilities": ("name", "status", "notes"),
         "out_of_scope": ("name", "status", "notes"),
     }
+    # Assert every generator-backed top-level section is present as a list
+    # before iterating. matrix.get(section, []) would otherwise silently
+    # accept a missing or wrong-typed section and render an empty table,
+    # losing the drift signal this validator is supposed to provide.
+    for section in sections:
+        if section not in matrix:
+            raise ValueError(
+                f"ci/platform-matrix.json: required top-level section {section!r} is missing"
+            )
+        if not isinstance(matrix[section], list):
+            raise ValueError(
+                f"ci/platform-matrix.json: top-level section {section!r} must be a list, "
+                f"got {type(matrix[section]).__name__}"
+            )
     for section, keys in sections.items():
-        for idx, entry in enumerate(matrix.get(section, [])):
+        for idx, entry in enumerate(matrix[section]):
             _require_keys(section, idx, entry, keys)
             _check_status(section, idx, entry["status"])
 
@@ -277,7 +291,7 @@ def _validate_matrix(matrix: dict) -> None:
     # while still encoding MDX hazards in prose; an odd backtick count is
     # ambiguous and would either bypass escaping or corrupt rendered code.
     for section in sections:
-        for idx, entry in enumerate(matrix.get(section, [])):
+        for idx, entry in enumerate(matrix[section]):
             note = entry.get("notes") or ""
             if note.count("`") % 2 != 0:
                 raise ValueError(
