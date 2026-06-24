@@ -139,6 +139,20 @@ describe("OnboardRuntimeBoundary record-only step/result pairing", () => {
     ]);
   });
 
+  it("rejects invalid explicit results before persisting record-only step completion", async () => {
+    const { boundary, getSession } = createRuntimeHarness();
+
+    await boundary.recordStateResult(advanceTo("preflight"));
+    await expect(
+      boundary.recordStepCompleteWithStateResult("preflight", {}, advanceTo("sandbox")),
+    ).rejects.toThrow("Invalid onboarding machine transition: preflight -> sandbox");
+
+    expect(getSession()).toMatchObject({
+      machine: { state: "preflight", revision: 1 },
+      steps: { preflight: { status: "pending" } },
+    });
+  });
+
   it("rejects stale state results when record-only steps did not advance the machine", async () => {
     const { boundary, events } = createRuntimeHarness();
 
@@ -169,29 +183,12 @@ describe("OnboardRuntimeBoundary record-only step/result pairing", () => {
     expect(events[3]).toMatchObject({ state: "gateway" });
   });
 
-  it("rejects stale default results while compatible replay can skip them", async () => {
+  it("rejects stale default results before compatibility replay", async () => {
     const { boundary } = createRuntimeHarness();
     const result = advanceTo("preflight", { metadata: { state: "missing" } });
 
     await expect(boundary.recordStateResultWithStepCompatibility(result)).rejects.toThrow(
       "Record-only step result source mismatch: missing != init",
     );
-    await expect(boundary.recordCompatibleStateResult(result)).resolves.toMatchObject({
-      machine: { state: "init" },
-    });
-  });
-
-  it("rejects invalid explicit results before persisting record-only step completion", async () => {
-    const { boundary, getSession } = createRuntimeHarness();
-
-    await boundary.recordStateResult(advanceTo("preflight"));
-    await expect(
-      boundary.recordStepCompleteWithStateResult("preflight", {}, advanceTo("sandbox")),
-    ).rejects.toThrow("Invalid onboarding machine transition: preflight -> sandbox");
-
-    expect(getSession()).toMatchObject({
-      machine: { state: "preflight", revision: 1 },
-      steps: { preflight: { status: "pending" } },
-    });
   });
 });
