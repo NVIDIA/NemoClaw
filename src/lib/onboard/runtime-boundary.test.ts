@@ -285,6 +285,20 @@ describe("OnboardRuntimeBoundary", () => {
     });
   });
 
+  it("emits diagnostics for explicit compatible replay of stale default results", async () => {
+    const harness = createRuntimeHarness();
+    const boundary = new OnboardRuntimeBoundary({
+      toSessionUpdates: (updates) => filterSafeUpdates(updates as SessionUpdates) as SessionUpdates,
+      maybeForceE2eStepFailure: () => undefined,
+      createRuntime: harness.createRuntime,
+    });
+
+    const result = advanceTo("preflight", { metadata: { state: "missing" } });
+    await expect(boundary.recordCompatibleStateResult(result)).resolves.toMatchObject({
+      machine: { state: "init" },
+    });
+  });
+
   it("rejects skipped transition results that carry context updates", async () => {
     const harness = createRuntimeHarness();
     const boundary = new OnboardRuntimeBoundary({
