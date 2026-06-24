@@ -126,6 +126,7 @@ const {
   setupMessagingChannels: setupMessagingChannelsImpl,
   readMessagingPlanFromEnv,
   writePlanToEnv,
+  clearPlanEnv,
   getRegistrySandboxMessagingPlan,
   MessagingHostStateApplier,
 } = require("./onboard/messaging-channel-setup") as typeof import("./onboard/messaging-channel-setup");
@@ -5105,6 +5106,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           setupMessagingChannels,
           readMessagingPlanFromEnv,
           writePlanToEnv,
+          clearPlanEnv,
           getRegistrySandboxMessagingPlan,
           promptValidatedSandboxName,
           selectResourceProfileForSandbox: () =>
@@ -5124,7 +5126,6 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           exitProcess: (code) => process.exit(code),
         },
       });
-
     const coreFlowResult = await runCoreOnboardFlowSlice({
       context: coreFlowContext,
       runtime: onboardRuntimeBoundary.getRuntime(),
@@ -5132,7 +5133,6 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       resume,
       recordStateResult: recordCompatibleStateResult,
     });
-
     const coreContext = coreFlowResult.context;
     session = coreContext.session;
     sandboxName = coreContext.sandboxName;

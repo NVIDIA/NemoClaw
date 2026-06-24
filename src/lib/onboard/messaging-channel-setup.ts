@@ -269,6 +269,10 @@ export function writePlanToEnv(plan: SandboxMessagingPlan): void {
   MessagingSetupApplier.writePlanToEnv(plan);
 }
 
+export function clearPlanEnv(): void {
+  MessagingSetupApplier.clearPlanEnv();
+}
+
 export function getRegistrySandboxMessagingPlan(sandboxName: string): SandboxMessagingPlan | null {
   return registry.getHydratedMessagingPlanFromEntry(registry.getSandbox(sandboxName));
 }

@@ -49,9 +49,10 @@ import type {
 import {
   createBuiltInChannelManifestRegistry,
   createBuiltInRenderTemplateResolver,
+  isMessagingSupportedAgent,
   MessagingSetupApplier,
   MessagingWorkflowPlanner,
-  toMessagingAgentId,
+  tryGetMessagingAgentId,
 } from "../../messaging";
 import { hydrateMessagingChannelConfig } from "../../messaging-channel-config";
 import { markLastStartedStepFailed } from "../../onboard/exit-step-failure";
@@ -227,13 +228,28 @@ function preflightHermesProviderCredentials(
   return false;
 }
 
-async function stageMessagingManifestPlanForRebuild(
+export async function stageMessagingManifestPlanForRebuild(
   sandboxName: string,
   sandboxEntry: registry.SandboxEntry,
   rebuildAgent: string | null,
   log: (msg: string) => void,
 ): Promise<SandboxMessagingPlan | null> {
   const agent = loadAgent(rebuildAgent || "openclaw");
+  const agentId = tryGetMessagingAgentId(agent);
+  if (agentId === null) {
+    MessagingSetupApplier.clearPlanEnv();
+    log(
+      `Messaging manifest rebuild plan skipped: agent '${agent.name}' is not a messaging-capable runtime`,
+    );
+    return null;
+  }
+  if (!isMessagingSupportedAgent(agent)) {
+    MessagingSetupApplier.clearPlanEnv();
+    log(
+      `Messaging manifest rebuild plan skipped: agent '${agent.name}' declares no supported messaging channels`,
+    );
+    return null;
+  }
   const planner = new MessagingWorkflowPlanner(
     createBuiltInChannelManifestRegistry(),
     undefined,
@@ -241,7 +257,7 @@ async function stageMessagingManifestPlanForRebuild(
   );
   const plan = await planner.buildRebuildPlanFromSandboxEntry({
     sandboxName,
-    agent: toMessagingAgentId(agent),
+    agent: agentId,
     sandboxEntry,
     supportedChannelIds: agent.messagingPlatforms,
   });
