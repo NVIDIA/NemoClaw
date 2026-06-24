@@ -191,9 +191,10 @@ function runInferenceExportStep(
   env: Record<string, string>,
 ): Record<string, string> {
   const result = runInferenceExportStepRaw(script, env);
-  if (result.failed) {
-    throw new Error(result.stderr || "Inference export step failed");
-  }
+  result.failed &&
+    (() => {
+      throw new Error(result.stderr || "Inference export step failed");
+    })();
   return result.env;
 }
 
