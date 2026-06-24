@@ -7,13 +7,13 @@ import {
   type StepMutationOptions,
 } from "../state/onboard-step-mutation";
 
-export interface TerminalStepFailureSessionDeps {
+export interface ExitStepFailureSessionDeps {
   loadSession(): Pick<Session, "lastStepStarted"> | null;
   markStepFailed(stepName: string, message?: string | null, options?: StepMutationOptions): Session;
 }
 
 export function markLastStartedStepFailed(
-  deps: TerminalStepFailureSessionDeps,
+  deps: ExitStepFailureSessionDeps,
   message: string,
 ): Session | null {
   const failedStep = deps.loadSession()?.lastStepStarted;

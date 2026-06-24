@@ -8,14 +8,14 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type * as sessionModule from "../state/onboard-session";
-import { markLastStartedStepFailed } from "./terminal-step-failure";
+import { markLastStartedStepFailed } from "./exit-step-failure";
 
 const originalHome = process.env.HOME;
 let tmpDir: string;
 let session: typeof sessionModule;
 
 beforeEach(async () => {
-  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-terminal-step-failure-"));
+  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-exit-step-failure-"));
   process.env.HOME = tmpDir;
   vi.resetModules();
   session = await import("../state/onboard-session");

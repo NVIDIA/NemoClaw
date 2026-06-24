@@ -342,7 +342,7 @@ const nim: typeof import("./inference/nim") = require("./inference/nim");
 const onboardSession: typeof import("./state/onboard-session") = require("./state/onboard-session");
 const {
   markLastStartedStepFailed,
-}: typeof import("./onboard/terminal-step-failure") = require("./onboard/terminal-step-failure");
+}: typeof import("./onboard/exit-step-failure") = require("./onboard/exit-step-failure");
 const {
   getFutureShellPathHint,
   getPortConflictServiceHints,
