@@ -108,6 +108,7 @@ Use these descriptions to match labels to issue/PR content:
 - `Platform: ARM64`: Issue specific to ARM64 / aarch64 architecture
 - `Integration: Slack`: Issue or feature involving the Slack integration or Slack bridge
 - `Integration: Discord`: Issue or feature involving the Discord integration
+- `integration: dcode`: Issue or feature involving LangChain Deep Code, Deep Code, `langchain-deepagents-code`, or `dcode`
 - `Integration: Telegram`: Issue or feature involving the Telegram integration
 - `Integration: GitHub`: Issue or feature involving GitHub-specific behavior (not the repo itself)
 - `Provider: NVIDIA`: Issue or feature specific to NVIDIA inference endpoints or NIM
