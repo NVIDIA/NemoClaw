@@ -73,7 +73,15 @@ export async function backupAll(): Promise<void> {
       continue;
     }
     console.log(`  Backing up '${sb.name}'...`);
-    const result = sandboxState.backupSandboxState(sb.name);
+    let result: sandboxState.BackupResult;
+    try {
+      result = sandboxState.backupSandboxState(sb.name);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.log(`  ${YW}⚠${R} Skipped '${sb.name}': ${msg}`);
+      skipped++;
+      continue;
+    }
     if (result.success) {
       console.log(
         `  ${G}✓${R} ${sb.name}: ${result.backedUpDirs.length} dirs, ${result.backedUpFiles.length} files → ${result.manifest?.backupPath || "unknown"}`,
