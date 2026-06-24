@@ -216,9 +216,13 @@ function getNonInteractiveProvider() {
 }
 
 function stageHostedInferenceSourceSecretEnv() {
+  const agentName = (process.env.NEMOCLAW_AGENT || "").trim().toLowerCase();
+  const providerKeySource =
+    agentName === "langchain-deepagents-code"
+      ? normalizeCredentialValue(process.env[HOSTED_INFERENCE_PROVIDER_KEY_ENV] ?? "")
+      : "";
   const sourceKey =
-    normalizeCredentialValue(process.env[HOSTED_INFERENCE_SOURCE_ENV] ?? "") ||
-    normalizeCredentialValue(process.env[HOSTED_INFERENCE_PROVIDER_KEY_ENV] ?? "");
+    normalizeCredentialValue(process.env[HOSTED_INFERENCE_SOURCE_ENV] ?? "") || providerKeySource;
   if (!sourceKey) return false;
 
   const rawProvider = (process.env.NEMOCLAW_PROVIDER || "").trim().toLowerCase();

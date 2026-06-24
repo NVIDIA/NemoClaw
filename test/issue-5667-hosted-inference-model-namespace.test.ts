@@ -20,6 +20,7 @@ const providers = require("../dist/lib/onboard/providers.js") as {
 // Env keys touched by stageHostedInferenceSourceSecretEnv that we save/restore.
 const TOUCHED_ENV = [
   "NVIDIA_INFERENCE_API_KEY",
+  "NEMOCLAW_AGENT",
   "NEMOCLAW_PROVIDER_KEY",
   "COMPATIBLE_API_KEY",
   "NEMOCLAW_PROVIDER",
@@ -74,6 +75,7 @@ describe("issue #5667: hosted inference default model namespace", () => {
   it("stages the Deep Agents NEMOCLAW_PROVIDER_KEY path with a single-prefix model", () => {
     // Reproduce the issue command: a Deep Agents compatible endpoint key is
     // supplied via the generic provider-key hint, with no explicit model.
+    process.env.NEMOCLAW_AGENT = "langchain-deepagents-code";
     process.env.NEMOCLAW_PROVIDER_KEY = "sk-test-inference-hub-key";
 
     const staged = providers.stageHostedInferenceSourceSecretEnv();

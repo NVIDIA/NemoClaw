@@ -55,6 +55,7 @@ const {
 function withProviderEnv(next: Record<string, string | undefined>, testBody: () => void): void {
   const keys = new Set([
     "NVIDIA_INFERENCE_API_KEY",
+    "NEMOCLAW_AGENT",
     "NEMOCLAW_PROVIDER_KEY",
     "NEMOCLAW_PROVIDER",
     "NEMOCLAW_ENDPOINT_URL",
@@ -311,9 +312,10 @@ describe("onboard provider helpers", () => {
     );
   });
 
-  it("stages NEMOCLAW_PROVIDER_KEY as hosted custom inference when no dedicated source env is set", () => {
+  it("stages Deep Agents NEMOCLAW_PROVIDER_KEY as hosted custom inference", () => {
     withProviderEnv(
       {
+        NEMOCLAW_AGENT: "langchain-deepagents-code",
         NEMOCLAW_PROVIDER_KEY: "  repo-hosted-key  ",
       },
       () => {
@@ -324,6 +326,19 @@ describe("onboard provider helpers", () => {
         expect(process.env.NEMOCLAW_MODEL).toBe(HOSTED_INFERENCE_MODEL);
         expect(process.env.NEMOCLAW_COMPAT_MODEL).toBe(HOSTED_INFERENCE_MODEL);
         expect(process.env.COMPATIBLE_API_KEY).toBe("repo-hosted-key");
+      },
+    );
+  });
+
+  it("keeps generic NEMOCLAW_PROVIDER_KEY from implying hosted custom inference", () => {
+    withProviderEnv(
+      {
+        NEMOCLAW_PROVIDER_KEY: "repo-hosted-key",
+      },
+      () => {
+        expect(stageHostedInferenceSourceSecretEnv()).toBe(false);
+        expect(process.env.NEMOCLAW_PROVIDER).toBeUndefined();
+        expect(process.env.COMPATIBLE_API_KEY).toBeUndefined();
       },
     );
   });
