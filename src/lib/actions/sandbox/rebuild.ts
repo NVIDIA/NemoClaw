@@ -62,6 +62,7 @@ import { redact } from "../../security/redact";
 import * as shields from "../../shields";
 import type { Session } from "../../state/onboard-session";
 import * as onboardSession from "../../state/onboard-session";
+import { LEGACY_MACHINE_STEP_MUTATION_OPTIONS } from "../../state/onboard-step-mutation";
 import * as registry from "../../state/registry";
 import * as sandboxState from "../../state/sandbox";
 import {
@@ -837,7 +838,11 @@ export async function rebuildSandbox(
       try {
         const failedStep = onboardSession.loadSession()?.lastStepStarted;
         if (failedStep) {
-          onboardSession.markStepFailed(failedStep, "Rebuild recreate failed");
+          onboardSession.markStepFailed(
+            failedStep,
+            "Rebuild recreate failed",
+            LEGACY_MACHINE_STEP_MUTATION_OPTIONS,
+          );
         }
       } catch {
         /* best effort */

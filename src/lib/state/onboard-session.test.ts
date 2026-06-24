@@ -206,31 +206,31 @@ describe("onboard session", () => {
     expect(loaded.machine.state).toBe("failed");
   });
 
-  it("keeps no-options step helpers on legacy machine mutation", () => {
+  it("defaults no-options step helpers to record-only machine mutation", () => {
     const emitted: OnboardMachineEvent[] = [];
     machineEvents.addOnboardMachineEventListener((event) => emitted.push(event));
     session.saveSession(session.createSession());
 
     session.markStepStarted("preflight");
     let loaded = requireLoadedSession(session.loadSession());
-    expect(loaded.machine).toMatchObject({ state: "preflight", revision: 1 });
+    expect(loaded.steps.preflight.status).toBe("in_progress");
+    expect(loaded.machine).toMatchObject({ state: "init", revision: 0 });
 
-    session.markStepComplete("preflight");
+    session.markStepComplete("preflight", { sandboxName: "my-assistant" });
     loaded = requireLoadedSession(session.loadSession());
-    expect(loaded.machine).toMatchObject({ state: "gateway", revision: 2 });
+    expect(loaded.steps.preflight.status).toBe("complete");
+    expect(loaded.sandboxName).toBe("my-assistant");
+    expect(loaded.machine).toMatchObject({ state: "init", revision: 0 });
 
     session.markStepFailed("gateway", "Gateway failed: NVIDIA_INFERENCE_API_KEY=nvapi-secret");
     loaded = requireLoadedSession(session.loadSession());
-    expect(loaded.status).toBe("failed");
-    expect(loaded.failure?.message).toBe("Gateway failed: NVIDIA_INFERENCE_API_KEY=<REDACTED>");
-    expect(loaded.failure?.message).not.toContain("nvapi-secret");
-    expect(loaded.machine).toMatchObject({ state: "failed", revision: 3 });
-    expect(emitted.map((event) => event.type)).toEqual([
-      "state.entered",
-      "state.completed",
-      "state.failed",
-      "onboard.failed",
-    ]);
+    expect(loaded.steps.gateway.status).toBe("failed");
+    expect(loaded.steps.gateway.error).toBe("Gateway failed: NVIDIA_INFERENCE_API_KEY=<REDACTED>");
+    expect(loaded.steps.gateway.error).not.toContain("nvapi-secret");
+    expect(loaded.status).toBe("in_progress");
+    expect(loaded.failure).toBeNull();
+    expect(loaded.machine).toMatchObject({ state: "init", revision: 0 });
+    expect(emitted.map((event) => event.type)).toEqual(["context.updated"]);
   });
 
   it("can record step boundaries without mutating the machine snapshot", () => {

@@ -341,6 +341,9 @@ const { resolveSandboxImageTagFromCreateOutput } =
 const nim: typeof import("./inference/nim") = require("./inference/nim");
 const onboardSession: typeof import("./state/onboard-session") = require("./state/onboard-session");
 const {
+  LEGACY_MACHINE_STEP_MUTATION_OPTIONS,
+}: typeof import("./state/onboard-step-mutation") = require("./state/onboard-step-mutation");
+const {
   getFutureShellPathHint,
   getPortConflictServiceHints,
   printRemediationActions,
@@ -4857,7 +4860,11 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         const current = onboardSession.loadSession();
         const failedStep = current?.lastStepStarted;
         if (failedStep) {
-          onboardSession.markStepFailed(failedStep, "Onboarding exited before the step completed.");
+          onboardSession.markStepFailed(
+            failedStep,
+            "Onboarding exited before the step completed.",
+            LEGACY_MACHINE_STEP_MUTATION_OPTIONS,
+          );
         }
       }
     });
