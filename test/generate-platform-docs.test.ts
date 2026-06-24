@@ -386,15 +386,17 @@ print(block)
       path.join(repoRoot, "scripts", "generate-platform-docs.py"),
       "utf-8",
     );
-    const emittedTargets = new Set<string>();
-    for (const match of generatorSource.matchAll(/REPO_ROOT \/ "([^"]+)" \/ "([^"]+)"(?: \/ "([^"]+)")?/g)) {
-      const segments = [match[1], match[2], match[3]].filter(Boolean);
-      // Only assert on emitted output paths under docs/. The matrix path
-      // under ci/ is the source, and the script invocation in the hook
-      // entry is what represents it; the git-add list is for outputs only.
-      if (segments[0] !== "docs") continue;
-      emittedTargets.add(segments.join("/"));
-    }
+    // Only assert on emitted output paths under docs/. The matrix path under
+    // ci/ is the source, and the script invocation in the hook entry is what
+    // represents it; the git-add list is for outputs only. Express the filter
+    // as Array.filter so the loop body stays linear and the guardrail against
+    // new if statements in test files keeps holding.
+    const emittedTargets = new Set(
+      [...generatorSource.matchAll(/REPO_ROOT \/ "([^"]+)" \/ "([^"]+)"(?: \/ "([^"]+)")?/g)]
+        .map((match) => [match[1], match[2], match[3]].filter(Boolean))
+        .filter((segments) => segments[0] === "docs")
+        .map((segments) => segments.join("/")),
+    );
     expect(
       emittedTargets.size,
       "generator should declare at least one docs/ target file via REPO_ROOT path joins",
