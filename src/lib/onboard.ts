@@ -101,6 +101,7 @@ const {
 const {
   resolveRequestedProviderSelection,
 }: typeof import("./onboard/provider-selection") = require("./onboard/provider-selection");
+const providerKeyBridge: typeof import("./onboard/provider-key-bridge") = require("./onboard/provider-key-bridge");
 const {
   reportProviderSelectionFailure,
 }: typeof import("./onboard/provider-selection-failure") = require("./onboard/provider-selection-failure");
@@ -282,7 +283,6 @@ const {
   getProviderLabel,
   getNonInteractiveProvider,
   getNonInteractiveModel,
-  isProviderKeyCredentialCandidate,
   getSandboxInferenceConfig,
 } = onboardProviders as {
   OPENAI_ENDPOINT_URL: string;
@@ -294,7 +294,6 @@ const {
   getProviderLabel: (key: string) => string;
   getNonInteractiveProvider: () => string | null;
   getNonInteractiveModel: (providerKey: string) => string | null;
-  isProviderKeyCredentialCandidate: (value: string | null | undefined) => boolean;
   getSandboxInferenceConfig: (
     model: string,
     provider?: string | null,
@@ -3479,14 +3478,7 @@ async function handleRoutedSelection(
   if (routedCredential) {
     saveCredential(routerCredentialEnv, routedCredential);
   }
-  // check-direct-credential-env-ignore -- provider-key compatibility bridge; resolved into the router credential env below.
-  const _providerKeyHint = (process.env.NEMOCLAW_PROVIDER_KEY || "").trim();
-  if (
-    isProviderKeyCredentialCandidate(_providerKeyHint) &&
-    !resolveProviderCredential(routerCredentialEnv)
-  ) {
-    saveCredential(routerCredentialEnv, _providerKeyHint);
-  }
+  providerKeyBridge.stageRouterProviderKeyBridge(routerCredentialEnv);
   if (isNonInteractive()) {
     if (!resolveProviderCredential(routerCredentialEnv)) {
       console.error(
@@ -3781,14 +3773,7 @@ async function handleRemoteProviderSelection(
   }
   hydrateCredentialEnv(state.credentialEnv);
   if (selected.key === "build") {
-    // check-direct-credential-env-ignore -- Build provider compatibility bridge for callers that still pass the NVIDIA key here.
-    const _nvProviderKey = (process.env.NEMOCLAW_PROVIDER_KEY || "").trim();
-    const existingNvidiaKey = ["NVIDIA_INFERENCE_API_KEY", "NVIDIA_API_KEY"]
-      .map((envName) => normalizeCredentialValue(process.env[envName] ?? ""))
-      .find(Boolean);
-    if (isProviderKeyCredentialCandidate(_nvProviderKey) && !existingNvidiaKey) {
-      process.env.NVIDIA_INFERENCE_API_KEY = _nvProviderKey;
-    }
+    providerKeyBridge.stageBuildProviderKeyBridge();
     if (isNonInteractive()) {
       state.skipHostInferenceSmoke = buildCredentialReuse.resolveNonInteractiveBuildCredential({
         provider: state.provider,
@@ -3813,16 +3798,7 @@ async function handleRemoteProviderSelection(
       return "retry-selection";
     }
   } else {
-    // check-direct-credential-env-ignore -- remote provider compatibility bridge; copied only into the selected credential env when empty.
-    const _providerKeyHint = (process.env.NEMOCLAW_PROVIDER_KEY || "").trim();
-    if (isProviderKeyCredentialCandidate(_providerKeyHint) && state.credentialEnv) {
-      const existingCredentialKey = normalizeCredentialValue(
-        process.env[state.credentialEnv] ?? "",
-      );
-      if (!existingCredentialKey) {
-        process.env[state.credentialEnv] = _providerKeyHint;
-      }
-    }
+    providerKeyBridge.stageRemoteProviderKeyBridge(state.credentialEnv);
 
     const _envModelRemote = (process.env.NEMOCLAW_MODEL || "").trim();
     const defaultModel =
