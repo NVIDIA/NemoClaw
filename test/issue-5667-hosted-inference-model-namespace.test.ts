@@ -29,6 +29,24 @@ const { patchStagedDockerfile } = require("../dist/lib/onboard/dockerfile-patch.
     buildId: string,
   ) => void;
 };
+const { collectSandboxStatusSnapshot } =
+  require("../dist/lib/actions/sandbox/status-snapshot.js") as {
+    collectSandboxStatusSnapshot: (
+      sandboxName: string,
+      opts: {
+        deps: {
+          getSandbox: () => {
+            name: string;
+            provider: string;
+            model: string;
+            policies: string[];
+            agent: string;
+          };
+          reconcile: () => Promise<{ state: string; output: string }>;
+        };
+      },
+    ) => Promise<{ currentModel: string; currentProvider: string }>;
+  };
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 
 // Env keys touched by stageHostedInferenceSourceSecretEnv that we save/restore.
@@ -121,7 +139,7 @@ describe("issue #5667: hosted inference default model namespace", () => {
     expect(process.env.NEMOCLAW_COMPAT_MODEL).toBe("nvidia/nemotron-3-super-v3");
   });
 
-  it("drives setupNim and downstream Deep Agents surfaces with a single-prefix model", () => {
+  it("drives setupNim and downstream Deep Agents surfaces with a single-prefix model", async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-issue-5667-"));
     const fakeBin = path.join(tmpDir, "bin");
     const home = path.join(tmpDir, "home");
@@ -208,6 +226,24 @@ const { setupNim } = require(${onboardPath});
         preferredApi: "openai-completions",
       });
       expect(output).not.toContain("nvidia/nvidia/");
+
+      const statusSnapshot = await collectSandboxStatusSnapshot("dcode-test", {
+        deps: {
+          getSandbox: () => ({
+            name: "dcode-test",
+            provider: payload.result.provider,
+            model: payload.result.model,
+            policies: [],
+            agent: "langchain-deepagents-code",
+          }),
+          reconcile: async () => ({ state: "missing", output: "" }),
+        },
+      });
+      const statusModelLine = `    Model:    ${statusSnapshot.currentModel}`;
+      expect(statusSnapshot.currentProvider).toBe("compatible-endpoint");
+      expect(statusSnapshot.currentModel).toBe("nvidia/nemotron-3-super-v3");
+      expect(statusModelLine).toBe("    Model:    nvidia/nemotron-3-super-v3");
+      expect(statusModelLine).not.toContain("nvidia/nvidia/");
 
       const dockerfilePath = path.join(tmpDir, "Dockerfile");
       fs.writeFileSync(dockerfilePath, "FROM scratch\nARG NEMOCLAW_MODEL=old\n");

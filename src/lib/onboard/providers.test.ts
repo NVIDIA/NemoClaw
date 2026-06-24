@@ -344,6 +344,35 @@ describe("onboard provider helpers", () => {
     );
   });
 
+  it.each([
+    "anthropic",
+    "build",
+    "cloud",
+    "custom",
+    "gemini",
+    "hermes-provider",
+    "inference",
+    "install-ollama",
+    "install-vllm",
+    "nim-local",
+    "ollama",
+    "openai",
+    "routed",
+    "vllm",
+  ])("keeps Deep Agents provider-key selector %s from being staged as a credential", (providerKey) => {
+    withProviderEnv(
+      {
+        NEMOCLAW_AGENT: "langchain-deepagents-code",
+        NEMOCLAW_PROVIDER_KEY: providerKey,
+      },
+      () => {
+        expect(stageHostedInferenceSourceSecretEnv()).toBe(false);
+        expect(process.env.NEMOCLAW_PROVIDER).toBeUndefined();
+        expect(process.env.COMPATIBLE_API_KEY).toBeUndefined();
+      },
+    );
+  });
+
   it("keeps generic NEMOCLAW_PROVIDER_KEY from implying hosted custom inference", () => {
     withProviderEnv(
       {

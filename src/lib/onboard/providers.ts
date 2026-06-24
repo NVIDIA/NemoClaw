@@ -241,19 +241,25 @@ function getNonInteractiveProvider() {
 
 function stageHostedInferenceSourceSecretEnv() {
   const agentName = (process.env.NEMOCLAW_AGENT || "").trim().toLowerCase();
-  const rawProviderKeySource =
-    agentName === "langchain-deepagents-code"
-      ? normalizeCredentialValue(process.env[HOSTED_INFERENCE_PROVIDER_KEY_ENV] ?? "")
+  let providerKeySource = "";
+  if (agentName === "langchain-deepagents-code") {
+    const rawProviderKeySource = normalizeCredentialValue(
+      // check-direct-credential-env-ignore -- Deep Agents provider-key alias is immediately route-filtered and restaged as COMPATIBLE_API_KEY.
+      process.env[HOSTED_INFERENCE_PROVIDER_KEY_ENV] ?? "",
+    );
+    // Deep Agents contract: NEMOCLAW_PROVIDER_KEY is a permanent
+    // hosted-compatible credential alias for langchain-deepagents-code only.
+    // It shares the same env var name as provider/route selection, so keep
+    // PROVIDER_KEY_ROUTE_VALUES synchronized with every supported selector.
+    providerKeySource = isHostedInferenceProviderKeyCredentialCandidate(rawProviderKeySource)
+      ? rawProviderKeySource
       : "";
-  // Source boundary: repository/E2E Deep Agents onboarding historically passed
-  // its hosted-compatible API key via NEMOCLAW_PROVIDER_KEY. Keep that
-  // compatibility only for the Deep Agents agent and only when the value is not
-  // a route/provider selector such as "inference" or "custom".
-  const providerKeySource = isHostedInferenceProviderKeyCredentialCandidate(rawProviderKeySource)
-    ? rawProviderKeySource
-    : "";
-  const sourceKey =
-    normalizeCredentialValue(process.env[HOSTED_INFERENCE_SOURCE_ENV] ?? "") || providerKeySource;
+  }
+  const hostedInferenceSourceKey = normalizeCredentialValue(
+    // check-direct-credential-env-ignore -- hosted inference staging migrates this source env into COMPATIBLE_API_KEY.
+    process.env[HOSTED_INFERENCE_SOURCE_ENV] ?? "",
+  );
+  const sourceKey = hostedInferenceSourceKey || providerKeySource;
   if (!sourceKey) return false;
 
   const rawProvider = (process.env.NEMOCLAW_PROVIDER || "").trim().toLowerCase();
@@ -269,6 +275,7 @@ function stageHostedInferenceSourceSecretEnv() {
   const normalizedProvider = aliases[rawProvider] || rawProvider;
   const hostedFlag = (process.env.NEMOCLAW_E2E_USE_HOSTED_INFERENCE || "").trim() === "1";
   const compatibleKey = normalizeCredentialValue(
+    // check-direct-credential-env-ignore -- read-only guard to avoid overwriting an explicit compatible endpoint key.
     process.env[HOSTED_INFERENCE_CREDENTIAL_ENV] ?? "",
   );
   const explicitHostedCustom =

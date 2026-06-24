@@ -76,6 +76,10 @@ describe("direct credential env guard", () => {
     // Dynamic read with credential-containing variable name
     ["if (!process.env[credentialEnv]) {}", "[credentialEnv]"],
     ["const x = process.env[resolvedCredentialEnv];", "[resolvedCredentialEnv]"],
+    [
+      'const HOSTED_INFERENCE_PROVIDER_KEY_ENV = "NEMOCLAW_PROVIDER_KEY";\nconst key = process.env[HOSTED_INFERENCE_PROVIDER_KEY_ENV];',
+      "NEMOCLAW_PROVIDER_KEY",
+    ],
 
     // Suppression token inside non-comment text must not suppress.
     [
@@ -86,11 +90,16 @@ describe("direct credential env guard", () => {
     expect(findDirectCredentialEnvReads(code)).toMatchObject([{ key }]);
   });
 
-  it("onboard.ts has zero violations", () => {
+  it("onboarding credential boundary files have zero violations", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const result = spawnSync(
       "npx",
-      ["tsx", "scripts/checks/direct-credential-env.ts", "src/lib/onboard.ts"],
+      [
+        "tsx",
+        "scripts/checks/direct-credential-env.ts",
+        "src/lib/onboard.ts",
+        "src/lib/onboard/providers.ts",
+      ],
       {
         cwd: repoRoot,
         encoding: "utf-8",

@@ -19,7 +19,11 @@ const CHECKS: readonly CheckCommand[] = [
   {
     name: "direct-credential-env",
     command: TSX,
-    args: ["scripts/checks/direct-credential-env.ts", "src/lib/onboard.ts"],
+    args: [
+      "scripts/checks/direct-credential-env.ts",
+      "src/lib/onboard.ts",
+      "src/lib/onboard/providers.ts",
+    ],
   },
   {
     name: "no-coverage-ignore",
