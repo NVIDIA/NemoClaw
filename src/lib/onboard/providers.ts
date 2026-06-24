@@ -28,30 +28,43 @@ const HOSTED_INFERENCE_PROVIDER_KEY_ENV = "NEMOCLAW_PROVIDER_KEY";
 const HOSTED_INFERENCE_CREDENTIAL_ENV = "COMPATIBLE_API_KEY";
 const HOSTED_INFERENCE_ENDPOINT_URL = "https://inference-api.nvidia.com/v1";
 const HOSTED_INFERENCE_MODEL = "nvidia/nemotron-3-super-v3";
-const PROVIDER_KEY_ROUTE_VALUES = new Set([
-  "anthropic",
-  "anthropiccompatible",
+const NON_INTERACTIVE_PROVIDER_ALIASES = {
+  cloud: "build",
+  nim: "nim-local",
+  vllm: "vllm",
+  anthropiccompatible: "anthropicCompatible",
+  hermes: "hermesProvider",
+  "hermes-provider": "hermesProvider",
+  hermesprovider: "hermesProvider",
+  nous: "hermesProvider",
+  "nous-portal": "hermesProvider",
+};
+const NON_INTERACTIVE_PROVIDER_KEYS = new Set([
   "build",
-  "cloud",
-  "custom",
-  "gemini",
-  "hermes",
-  "hermes-provider",
-  "hermesprovider",
-  "inference",
-  "install-ollama",
-  "install-vllm",
-  "install-windows-ollama",
-  "nim",
-  "nim-local",
-  "nous",
-  "nous-portal",
-  "ollama",
   "openai",
-  "routed",
-  "start-windows-ollama",
+  "anthropic",
+  "anthropicCompatible",
+  "gemini",
+  "hermesProvider",
+  "ollama",
+  "custom",
+  "nim-local",
   "vllm",
+  "routed",
+  "install-vllm",
+  "install-ollama",
+  "install-windows-ollama",
+  "start-windows-ollama",
 ]);
+const NON_INTERACTIVE_PROVIDER_HELP =
+  "build, openai, anthropic, anthropicCompatible, gemini, hermes-provider, ollama, custom, nim-local, vllm, routed, install-vllm, install-ollama, install-windows-ollama, start-windows-ollama";
+const PROVIDER_KEY_ROUTE_VALUES = new Set(
+  [
+    "inference",
+    ...Object.keys(NON_INTERACTIVE_PROVIDER_ALIASES),
+    ...Array.from(NON_INTERACTIVE_PROVIDER_KEYS),
+  ].map((value) => value.toLowerCase()),
+);
 
 const REMOTE_PROVIDER_CONFIG = {
   build: {
@@ -200,40 +213,10 @@ function getNonInteractiveProvider() {
   stageHostedInferenceSourceSecretEnv();
   const providerKey = (process.env.NEMOCLAW_PROVIDER || "").trim().toLowerCase();
   if (!providerKey) return null;
-  const aliases = {
-    cloud: "build",
-    nim: "nim-local",
-    vllm: "vllm",
-    anthropiccompatible: "anthropicCompatible",
-    hermes: "hermesProvider",
-    "hermes-provider": "hermesProvider",
-    hermesprovider: "hermesProvider",
-    nous: "hermesProvider",
-    "nous-portal": "hermesProvider",
-  };
-  const normalized = aliases[providerKey] || providerKey;
-  const validProviders = new Set([
-    "build",
-    "openai",
-    "anthropic",
-    "anthropicCompatible",
-    "gemini",
-    "hermesProvider",
-    "ollama",
-    "custom",
-    "nim-local",
-    "vllm",
-    "routed",
-    "install-vllm",
-    "install-ollama",
-    "install-windows-ollama",
-    "start-windows-ollama",
-  ]);
-  if (!validProviders.has(normalized)) {
+  const normalized = NON_INTERACTIVE_PROVIDER_ALIASES[providerKey] || providerKey;
+  if (!NON_INTERACTIVE_PROVIDER_KEYS.has(normalized)) {
     console.error(`  Unsupported NEMOCLAW_PROVIDER: ${providerKey}`);
-    console.error(
-      "  Valid values: build, openai, anthropic, anthropicCompatible, gemini, hermes-provider, ollama, custom, nim-local, vllm, routed, install-vllm, install-ollama, install-windows-ollama, start-windows-ollama",
-    );
+    console.error(`  Valid values: ${NON_INTERACTIVE_PROVIDER_HELP}`);
     process.exit(1);
   }
   return normalized;
@@ -249,8 +232,10 @@ function stageHostedInferenceSourceSecretEnv() {
     );
     // Deep Agents contract: NEMOCLAW_PROVIDER_KEY is a permanent
     // hosted-compatible credential alias for langchain-deepagents-code only.
-    // It shares the same env var name as provider/route selection, so keep
-    // PROVIDER_KEY_ROUTE_VALUES synchronized with every supported selector.
+    // It repairs the external env contract where older automation supplied
+    // the hosted credential through the provider-key slot; selector-like
+    // values remain source-of-truth provider choices and are rejected by the
+    // invariant tied to NON_INTERACTIVE_PROVIDER_* below.
     providerKeySource = isHostedInferenceProviderKeyCredentialCandidate(rawProviderKeySource)
       ? rawProviderKeySource
       : "";
@@ -263,16 +248,7 @@ function stageHostedInferenceSourceSecretEnv() {
   if (!sourceKey) return false;
 
   const rawProvider = (process.env.NEMOCLAW_PROVIDER || "").trim().toLowerCase();
-  const aliases = {
-    cloud: "build",
-    anthropiccompatible: "anthropicCompatible",
-    hermes: "hermesProvider",
-    "hermes-provider": "hermesProvider",
-    hermesprovider: "hermesProvider",
-    nous: "hermesProvider",
-    "nous-portal": "hermesProvider",
-  };
-  const normalizedProvider = aliases[rawProvider] || rawProvider;
+  const normalizedProvider = NON_INTERACTIVE_PROVIDER_ALIASES[rawProvider] || rawProvider;
   const hostedFlag = (process.env.NEMOCLAW_E2E_USE_HOSTED_INFERENCE || "").trim() === "1";
   const compatibleKey = normalizeCredentialValue(
     // check-direct-credential-env-ignore -- read-only guard to avoid overwriting an explicit compatible endpoint key.
@@ -507,6 +483,8 @@ module.exports = {
   HOSTED_INFERENCE_CREDENTIAL_ENV,
   HOSTED_INFERENCE_ENDPOINT_URL,
   HOSTED_INFERENCE_MODEL,
+  NON_INTERACTIVE_PROVIDER_ALIASES,
+  NON_INTERACTIVE_PROVIDER_KEYS,
   getProviderLabel,
   getEffectiveProviderName,
   stageHostedInferenceSourceSecretEnv,

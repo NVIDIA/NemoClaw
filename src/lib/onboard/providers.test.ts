@@ -10,6 +10,8 @@ type RunOpenshell = (command: string[], opts?: RunOptions) => RunResult;
 const {
   HOSTED_INFERENCE_ENDPOINT_URL,
   HOSTED_INFERENCE_MODEL,
+  NON_INTERACTIVE_PROVIDER_ALIASES,
+  NON_INTERACTIVE_PROVIDER_KEYS,
   buildProviderArgs,
   getRequestedModelHint,
   getRequestedProviderHint,
@@ -21,6 +23,8 @@ const {
 } = require("../../../dist/lib/onboard/providers") as {
   HOSTED_INFERENCE_ENDPOINT_URL: string;
   HOSTED_INFERENCE_MODEL: string;
+  NON_INTERACTIVE_PROVIDER_ALIASES: Record<string, string>;
+  NON_INTERACTIVE_PROVIDER_KEYS: Set<string>;
   buildProviderArgs: (
     action: "create" | "update",
     name: string,
@@ -355,6 +359,18 @@ describe("onboard provider helpers", () => {
     ["routed", false],
   ])("classifies provider-key compatibility bridge value %s", (value, expected) => {
     expect(isProviderKeyCredentialCandidate(value)).toBe(expected);
+  });
+
+  it("rejects every supported non-interactive provider selector and alias as a provider-key credential", () => {
+    const selectors = new Set([
+      "inference",
+      ...Object.keys(NON_INTERACTIVE_PROVIDER_ALIASES),
+      ...Array.from(NON_INTERACTIVE_PROVIDER_KEYS),
+    ]);
+
+    for (const selector of selectors) {
+      expect(isProviderKeyCredentialCandidate(selector)).toBe(false);
+    }
   });
 
   it.each([

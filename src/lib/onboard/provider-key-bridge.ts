@@ -9,6 +9,12 @@ const {
   isProviderKeyCredentialCandidate: (value: string | null | undefined) => boolean;
 } = require("./providers");
 
+// NEMOCLAW_PROVIDER_KEY is a permanent compatibility fallback for callers that
+// passed provider credentials through the overloaded provider-key env before
+// provider-specific credential envs were consistently documented. The source
+// boundary is external automation env; removing it would break non-interactive
+// callers, so this bridge filters selector values against providers.ts and is
+// covered by onboard-provider-key-bridge plus the direct-credential-env check.
 function getProviderKeyBridgeHint(): string {
   // check-direct-credential-env-ignore -- compatibility bridge filters selector values before staging credentials.
   return (process.env.NEMOCLAW_PROVIDER_KEY || "").trim();
