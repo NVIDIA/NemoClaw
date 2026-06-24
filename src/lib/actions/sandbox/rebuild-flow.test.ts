@@ -148,21 +148,28 @@ function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): Rebuild
   const markStepFailedSpy = vi
     .spyOn(onboardSession, "markStepFailed")
     .mockImplementation((stepName: unknown, message: unknown, options: unknown) => {
-      const step = session.steps[String(stepName) as keyof typeof session.steps];
-      if (step) {
-        step.status = "failed";
-        step.error = typeof message === "string" ? message : null;
-      }
+      const stepKey = String(stepName);
+      const step =
+        session.steps[stepKey] ??
+        ({
+          status: "pending",
+          startedAt: null,
+          completedAt: null,
+          error: null,
+        } satisfies RebuildFlowStep);
+      session.steps[stepKey] = step;
+      step.status = "failed";
+      step.error = typeof message === "string" ? message : null;
       session.status = "failed";
       session.failure = {
-        step: String(stepName),
+        step: stepKey,
         message: typeof message === "string" ? message : null,
         recordedAt: "2026-06-01T00:02:00.000Z",
       };
-      if ((options as { updateMachine?: boolean } | undefined)?.updateMachine) {
-        session.machine.state = "failed";
-        session.machine.revision += 1;
-      }
+      const updateMachine =
+        (options as { updateMachine?: boolean } | undefined)?.updateMachine === true;
+      session.machine.state = updateMachine ? "failed" : session.machine.state;
+      session.machine.revision += updateMachine ? 1 : 0;
       return session;
     });
   vi.spyOn(registry, "getSandbox").mockReturnValue({
