@@ -1016,8 +1016,8 @@ describe("E2E reusable workflow contract", () => {
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1",
       NEMOCLAW_PROVIDER: "custom",
       NEMOCLAW_ENDPOINT_URL: "https://inference-api.nvidia.com/v1",
-      NEMOCLAW_MODEL: "nvidia/nemotron-3-super-v3",
-      NEMOCLAW_COMPAT_MODEL: "nvidia/nemotron-3-super-v3",
+      NEMOCLAW_MODEL: "nvidia/nvidia/nemotron-3-super-v3",
+      NEMOCLAW_COMPAT_MODEL: "nvidia/nvidia/nemotron-3-super-v3",
       NEMOCLAW_PREFERRED_API: "openai-completions",
       COMPATIBLE_API_KEY: "hosted-compatible-key",
     });
