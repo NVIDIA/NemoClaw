@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 type OnboardModule = typeof import("../dist/lib/onboard") & {
   onboardSession: typeof import("../dist/lib/state/onboard-session");
   registerIncompleteOnboardExitHandlerForSession: (
+    deps: typeof import("../dist/lib/state/onboard-session"),
     isComplete: () => boolean,
     processLike: { once(event: "exit", listener: (code: number) => void): unknown },
   ) => void;
@@ -61,7 +62,11 @@ describe("onboard exit handler registration", () => {
   it("onboard marks an incomplete nonzero exit as a terminal machine failure", () => {
     onboardSession.saveSession(onboardSession.createSession({ lastStepStarted: "inference" }));
 
-    onboard.registerIncompleteOnboardExitHandlerForSession(() => false, processLike);
+    onboard.registerIncompleteOnboardExitHandlerForSession(
+      onboardSession,
+      () => false,
+      processLike,
+    );
     listeners[0](0);
     expect(requireLoadedSession().status).toBe("in_progress");
 
@@ -78,7 +83,7 @@ describe("onboard exit handler registration", () => {
   it("onboard leaves completed nonzero exits untouched", () => {
     onboardSession.saveSession(onboardSession.createSession({ lastStepStarted: "inference" }));
 
-    onboard.registerIncompleteOnboardExitHandlerForSession(() => true, processLike);
+    onboard.registerIncompleteOnboardExitHandlerForSession(onboardSession, () => true, processLike);
     listeners[0](1);
 
     const loaded = requireLoadedSession();

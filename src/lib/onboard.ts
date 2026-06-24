@@ -341,8 +341,8 @@ const { resolveSandboxImageTagFromCreateOutput } =
 const nim: typeof import("./inference/nim") = require("./inference/nim");
 const onboardSession: typeof import("./state/onboard-session") = require("./state/onboard-session");
 const {
-  registerIncompleteOnboardExitFailureHandler,
-}: typeof import("./onboard/exit-step-failure") = require("./onboard/exit-step-failure");
+  registerIncompleteOnboardExitHandlerForSession,
+}: typeof import("./onboard/onboard-exit-handler") = require("./onboard/onboard-exit-handler");
 const {
   getFutureShellPathHint,
   getPortConflictServiceHints,
@@ -4688,18 +4688,6 @@ function skippedStepMessage(
   console.log(`  ${prefix} Skipping ${stepName}${detail ? ` (${detail})` : ""}`);
 }
 
-function registerIncompleteOnboardExitHandlerForSession(
-  isComplete: () => boolean,
-  processLike?: Parameters<typeof registerIncompleteOnboardExitFailureHandler>[3],
-): void {
-  registerIncompleteOnboardExitFailureHandler(
-    onboardSession,
-    isComplete,
-    "Onboarding exited before the step completed.",
-    processLike,
-  );
-}
-
 // ── Main ─────────────────────────────────────────────────────────
 async function onboard(opts: OnboardOptions = {}): Promise<void> {
   setOnboardBrandingAgent(opts.agent || process.env.NEMOCLAW_AGENT || null);
@@ -4868,7 +4856,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     }
 
     let completed = false;
-    registerIncompleteOnboardExitHandlerForSession(() => completed);
+    registerIncompleteOnboardExitHandlerForSession(onboardSession, () => completed);
 
     const agent = await selectOnboardAgent({
       agentFlag: opts.agent,
