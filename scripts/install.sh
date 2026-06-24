@@ -2429,17 +2429,24 @@ detect_express_platform() {
 describe_express_install() {
   local platform="$1"
   local inference_summary=""
+  local inference_disclosure=""
   local sandbox_summary=""
   local tier="${NEMOCLAW_POLICY_TIER:-balanced}"
   local policy_summary=""
 
   case "$platform" in
     "DGX Spark")
-      inference_summary="managed local Ollama with model qwen3.6:35b"
+      if [ -n "${NEMOCLAW_VLLM_MODEL:-}" ]; then
+        inference_summary="managed local vLLM with model ${NEMOCLAW_VLLM_MODEL}"
+      else
+        inference_summary="managed local vLLM using the DGX Spark profile default model"
+      fi
+      inference_disclosure="Managed vLLM pulls the configured vLLM image/model and runs a local vLLM inference container."
       sandbox_summary="${NEMOCLAW_SANDBOX_NAME:-my-spark-assistant}"
       ;;
     "DGX Station")
       inference_summary="managed local vLLM"
+      inference_disclosure="Managed vLLM pulls the configured vLLM image/model and runs a local vLLM inference container."
       sandbox_summary="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
       ;;
     "Windows WSL")
@@ -2471,6 +2478,9 @@ describe_express_install() {
   esac
 
   printf "  Express install will configure %s.\n" "$inference_summary"
+  if [ -n "$inference_disclosure" ]; then
+    printf "  %s\n" "$inference_disclosure"
+  fi
   printf "  Sandbox name: %s.\n" "$sandbox_summary"
   printf "  It runs onboarding non-interactively, but still prompts for sudo when host setup needs it.\n"
   printf "  Sandbox policy: suggested mode, tier '%s'. This uses the %s.\n" "$tier" "$policy_summary"
@@ -2532,8 +2542,10 @@ maybe_offer_express_install() {
       case "$platform" in
         "DGX Spark")
           export NEMOCLAW_SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-my-spark-assistant}"
-          export NEMOCLAW_PROVIDER=install-ollama
-          export NEMOCLAW_MODEL=qwen3.6:35b
+          export NEMOCLAW_PROVIDER=install-vllm
+          if [ -n "${NEMOCLAW_VLLM_MODEL:-}" ]; then
+            export NEMOCLAW_VLLM_MODEL
+          fi
           ;;
         "DGX Station")
           export NEMOCLAW_PROVIDER=install-vllm
