@@ -11,9 +11,6 @@ import type * as sessionModule from "../state/onboard-session";
 import { markLastStartedStepFailed } from "./exit-step-failure";
 
 const originalHome = process.env.HOME;
-let tmpDir: string;
-let session: typeof sessionModule;
-
 const restoreOriginalHome =
   originalHome === undefined
     ? () => {
@@ -22,6 +19,8 @@ const restoreOriginalHome =
     : () => {
         process.env.HOME = originalHome;
       };
+let tmpDir: string;
+let session: typeof sessionModule;
 
 beforeEach(async () => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-exit-step-failure-"));
