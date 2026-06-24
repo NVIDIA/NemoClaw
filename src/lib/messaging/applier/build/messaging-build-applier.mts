@@ -17,7 +17,7 @@ import type { ChannelManifest } from "../../manifest/types.ts";
 
 type Env = Record<string, string | undefined>;
 type JsonObject = Record<string, any>;
-type MessagingAgentId = "openclaw" | "hermes";
+type MessagingAgentId = "openclaw" | "hermes" | "langchain-deepagents-code";
 type MessagingHookPhase = "agent-install" | "post-agent-install";
 type MessagingRuntimeSetupKey = "nodePreloads" | "envAliases" | "secretScans";
 type MessagingSerializableValue =
@@ -692,7 +692,12 @@ function resolveAgentRenderTarget(
   options: { readonly homeDir?: string } = {},
 ): string {
   const home = options.homeDir ?? homedir();
-  const agentRoot = agent === "hermes" ? join(home, ".hermes") : join(home, ".openclaw");
+  const agentRoot =
+    agent === "hermes"
+      ? join(home, ".hermes")
+      : agent === "langchain-deepagents-code"
+        ? join(home, ".deepagents")
+        : join(home, ".openclaw");
   const normalizedRoot = resolve(agentRoot);
   if (agent === "openclaw" && target === "openclaw.json") {
     return join(agentRoot, "openclaw.json");
@@ -713,6 +718,14 @@ function resolveAgentRenderTarget(
       );
     }
     relativePath = target.slice("~/.hermes/".length);
+  }
+  if (target.startsWith("~/.deepagents/")) {
+    if (agent !== "langchain-deepagents-code") {
+      throw new MessagingBuildApplierError(
+        `Messaging render target ${target} does not match ${agent}.`,
+      );
+    }
+    relativePath = target.slice("~/.deepagents/".length);
   }
   if (relativePath !== null) {
     const resolvedTarget = resolve(agentRoot, relativePath);
@@ -779,10 +792,13 @@ function applyBuildFileOutputToLocalAgentRoot(
   file: BuildFileOutput,
   options: { readonly homeDir?: string } = {},
 ): string {
+  const home = options.homeDir ?? homedir();
   const root =
     agent === "hermes"
-      ? join(options.homeDir ?? homedir(), ".hermes")
-      : join(options.homeDir ?? homedir(), ".openclaw");
+      ? join(home, ".hermes")
+      : agent === "langchain-deepagents-code"
+        ? join(home, ".deepagents")
+        : join(home, ".openclaw");
   const relativePath = normalizeBuildFilePath(file.path);
   const target = resolve(root, relativePath);
   const normalizedRoot = resolve(root);
@@ -1530,8 +1546,12 @@ function parseMessagingBuildArgs(argv: readonly string[]): {
 }
 
 function readAgentArg(value: string | undefined): MessagingAgentId {
-  if (value === "openclaw" || value === "hermes") return value;
-  throw new MessagingBuildApplierError("--agent must be 'openclaw' or 'hermes'");
+  if (value === "openclaw" || value === "hermes" || value === "langchain-deepagents-code") {
+    return value;
+  }
+  throw new MessagingBuildApplierError(
+    "--agent must be 'openclaw', 'hermes', or 'langchain-deepagents-code'",
+  );
 }
 
 function readPhaseArg(value: string | undefined): MessagingBuildPhase {

@@ -1047,7 +1047,7 @@ export function updateSession(mutator: (session: Session) => Session | void): Se
 
 function markStepStartedWithOptions(
   stepName: string,
-  options: StepMutationOptions = LEGACY_MACHINE_STEP_MUTATION_OPTIONS,
+  options: StepMutationOptions = RECORD_ONLY_STEP_MUTATION_OPTIONS,
 ): Session {
   let shouldEmit = false;
   const updatedSession = updateSession((session) => {
@@ -1077,7 +1077,7 @@ function markStepStartedWithOptions(
 function markStepCompleteWithOptions(
   stepName: string,
   updates: SessionUpdates = {},
-  options: StepMutationOptions = LEGACY_MACHINE_STEP_MUTATION_OPTIONS,
+  options: StepMutationOptions = RECORD_ONLY_STEP_MUTATION_OPTIONS,
 ): Session {
   const safeUpdates = filterSafeUpdates(updates);
   const hasUpdates = Object.keys(safeUpdates).length > 0;
@@ -1121,7 +1121,7 @@ function markStepCompleteWithOptions(
 
 export function markStepStarted(
   stepName: string,
-  options: StepMutationOptions = LEGACY_MACHINE_STEP_MUTATION_OPTIONS,
+  options: StepMutationOptions = RECORD_ONLY_STEP_MUTATION_OPTIONS,
 ): Session {
   return markStepStartedWithOptions(stepName, options);
 }
@@ -1133,7 +1133,7 @@ export function markStepStartedRecordOnly(stepName: string): Session {
 export function markStepComplete(
   stepName: string,
   updates: SessionUpdates = {},
-  options: StepMutationOptions = LEGACY_MACHINE_STEP_MUTATION_OPTIONS,
+  options: StepMutationOptions = RECORD_ONLY_STEP_MUTATION_OPTIONS,
 ): Session {
   return markStepCompleteWithOptions(stepName, updates, options);
 }
@@ -1170,7 +1170,7 @@ export function markStepSkipped(stepName: string): Session {
 function markStepFailedWithOptions(
   stepName: string,
   message: string | null = null,
-  options: StepMutationOptions = LEGACY_MACHINE_STEP_MUTATION_OPTIONS,
+  options: StepMutationOptions = RECORD_ONLY_STEP_MUTATION_OPTIONS,
 ): Session {
   let shouldEmit = false;
   const updatedSession = updateSession((session) => {
@@ -1213,7 +1213,7 @@ function markStepFailedWithOptions(
 export function markStepFailed(
   stepName: string,
   message: string | null = null,
-  options: StepMutationOptions = LEGACY_MACHINE_STEP_MUTATION_OPTIONS,
+  options: StepMutationOptions = RECORD_ONLY_STEP_MUTATION_OPTIONS,
 ): Session {
   return markStepFailedWithOptions(stepName, message, options);
 }

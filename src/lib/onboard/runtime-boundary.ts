@@ -5,6 +5,7 @@ import type { Session, SessionUpdates } from "../state/onboard-session";
 import {
   RECORD_ONLY_STEP_MUTATION_OPTIONS,
   type StepMutationOptions,
+  shouldUpdateMachine,
 } from "../state/onboard-step-mutation";
 import type { OnboardStateFailedResult, OnboardStateResult } from "./machine/result";
 import { OnboardRuntime } from "./machine/runtime";
@@ -32,6 +33,16 @@ export interface OnboardRuntimeBoundaryOptions {
    * the durable machine source of truth.
    */
   stepMutationOptions?: StepMutationOptions;
+}
+
+export interface StateResultCompatibilityOptions {
+  /**
+   * Explicitly tolerate stale transition results while replaying live flow
+   * slices for repaired resume or persisted ahead-state sessions. This is the
+   * remaining named compatibility source after default step helpers became
+   * record-only.
+   */
+  allowRepairedResumeCompatibility?: boolean;
 }
 
 export class OnboardRuntimeBoundary {
@@ -107,6 +118,10 @@ export class OnboardRuntimeBoundary {
     return this.options.stepMutationOptions ?? RECORD_ONLY_STEP_MUTATION_OPTIONS;
   }
 
+  private usesLegacyMachineStepMutation(): boolean {
+    return shouldUpdateMachine(this.stepMutationOptions());
+  }
+
   async recordStateSkipped(
     state: OnboardMachineState,
     metadata: Record<string, unknown> | null = null,
@@ -116,6 +131,12 @@ export class OnboardRuntimeBoundary {
 
   async recordStateResult(result: OnboardStateResult): Promise<Session> {
     return this.getRuntime().applyResult(result);
+  }
+
+  async recordCompatibleStateResult(result: OnboardStateResult): Promise<Session> {
+    return this.recordStateResultWithStepCompatibility(result, {
+      allowRepairedResumeCompatibility: true,
+    });
   }
 
   private async assertStateResultWillApply(result: OnboardStateResult): Promise<void> {
@@ -154,7 +175,7 @@ export class OnboardRuntimeBoundary {
   ): Promise<Session> {
     await this.assertStateResultWillApply(result);
     await this.getRuntime().markStepCompleteRecordOnly(stepName, updates);
-    return this.recordStateResultWithStepCompatibility(result);
+    return this.recordStateResult(result);
   }
 
   async recordStepFailedWithStateResult(
@@ -168,21 +189,33 @@ export class OnboardRuntimeBoundary {
   }
 
   /**
-   * Compatibility bridge for the live onboarding host glue while legacy step helpers remain a
-   * second machine snapshot writer. `markStepStarted()` and `markStepComplete()` still mutate
-   * `session.machine` in src/lib/state/onboard-session.ts, so handlers that also return FSM
-   * transition results can hand back a result whose target has already been reached or whose
-   * source state is stale after a later legacy step advanced the snapshot. This change is limited
-   * to consuming handler results at the runtime boundary; removing legacy step mutation is a
-   * broader persistence/resume migration. Skipped transition results must stay metadata-only:
-   * applying context updates after skipping a transition would
-   * make the stale result an implicit source of truth. Remove this bridge once legacy step helpers
-   * no longer advance `session.machine` and handler FSM results are the only transition source.
+   * Compatibility bridge for two named stale-result sources:
+   * 1. legacy/test boundaries explicitly configured with `updateMachine === true`;
+   * 2. live flow-slice replay for repaired resume or persisted ahead-state
+   *    sessions, where safety checks must re-run even when the durable machine
+   *    snapshot is already downstream.
+   *
+   * Default record-only paths reject stale transition results before applying
+   * them. Skipped compatible results must stay metadata-only so stale results
+   * cannot become a context source. Remove this bridge once resume
+   * repair/ahead-state replay is represented by first-class FSM recovery states
+   * and no boundary opts into legacy machine step mutation.
    */
-  async recordStateResultWithStepCompatibility(result: OnboardStateResult): Promise<Session> {
+  async recordStateResultWithStepCompatibility(
+    result: OnboardStateResult,
+    options: StateResultCompatibilityOptions = {},
+  ): Promise<Session> {
     const runtime = this.getRuntime();
     const current = await runtime.session();
     if (result.type !== "transition") return runtime.applyResult(result);
+
+    if (
+      !this.usesLegacyMachineStepMutation() &&
+      options.allowRepairedResumeCompatibility !== true
+    ) {
+      await this.assertStateResultWillApply(result);
+      return runtime.applyResult(result);
+    }
 
     if (current.machine.state === result.next) {
       assertSkippableTransitionResult(result);

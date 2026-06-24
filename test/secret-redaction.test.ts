@@ -178,5 +178,11 @@ describe("secret redaction consistency (#1736)", () => {
       expect(text).not.toContain("xoxb-notreal");
       expect(text).not.toContain("xapp-notreal");
     });
+
+    it("redacts Deep Agents provider-key env-var assignments", () => {
+      const text = redactSensitiveText("NEMOCLAW_PROVIDER_KEY=sk-test-inference-hub-key");
+      expect(text).not.toContain("sk-test-inference-hub-key");
+      expect(text).toBe("NEMOCLAW_PROVIDER_KEY=<REDACTED>");
+    });
   });
 });

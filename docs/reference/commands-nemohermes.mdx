@@ -89,6 +89,7 @@ nemoclaw onboard --agent hermes [options]
 
 NemoClaw records onboarding progress so interrupted runs can continue.
 Use `--resume` to continue a resumable onboarding session with the provider, model, sandbox name, agent, and custom Dockerfile path recorded by the original run.
+During resume, NemoClaw reruns preflight, gateway, provider, and sandbox repair checks even when the saved session has already reached a later nonterminal onboarding phase.
 If the recorded session conflicts with flags you pass on the recovery run, NemoClaw exits and tells you to either rerun with the original settings or start over.
 
 Use `--fresh` to discard the saved onboarding session and start the wizard from the beginning.
@@ -1102,12 +1103,18 @@ nemohermes my-assistant sessions delete agent:main:slack:c-9 --json
 
 ### `nemohermes <name> sessions export [keys...]`
 
-Export the OpenClaw session JSONL from a running sandbox to the host, replacing the two-hop `docker exec kubectl cp` plus `docker cp` workaround.
+Export the agent's session history from a running sandbox to the host.
+The command routes by the sandbox's agent kind recorded in the registry.
 
-The command always enumerates the session store through `openclaw sessions list --agent <id> --json` and copies only the matching `<sessionId>.jsonl` (plus optional `<sessionId>.trajectory.jsonl`) files, so the export never picks up `sessions.json`, stale `.jsonl.lock` files, or other store bookkeeping.
+For an OpenClaw sandbox, the command enumerates the session store through `openclaw sessions list --agent <id> --json` and copies only the matching `<sessionId>.jsonl` (plus optional `<sessionId>.trajectory.jsonl`) files, so the export never picks up `sessions.json`, stale `.jsonl.lock` files, or other store bookkeeping.
 By default it writes a browsable directory of session files (`dir` format); pass `--format tar` for a single `.tgz` bundle suited to sharing or upload.
 With no positional keys, the command exports every session for the agent.
 Pass one or more keys (alias or canonical `agent:<id>:<rest>`) to filter.
+
+For a Hermes sandbox, the command invokes the in-sandbox `hermes sessions export` against a staging path under `/sandbox/.nemoclaw-staging` (the same downloadable workspace boundary OpenClaw uses), then downloads the resulting single JSONL stream to the host.
+Hermes stores session history in a SQLite database, so the command refuses positional keys, `--format tar`, and `--include-trajectory` with a clear error when the sandbox is Hermes.
+`--agent` accepts only `hermes` as a no-op alias on a Hermes sandbox and rejects any other value.
+The host destination defaults to `./sessions-<sandbox>.jsonl`; `--out` picks a different path.
 
 ```bash
 nemohermes my-assistant sessions export
@@ -1118,15 +1125,15 @@ nemohermes my-assistant sessions export --format tar --out ./bundles/alpha.tgz -
 
 | Flag | Description |
 |------|-------------|
-| `--agent <id>` | Agent id when `<keys>` are aliases rather than the canonical `agent:<id>:<rest>` form. |
-| `--format <dir\|tar>` | `dir` (default) writes a directory of session files; `tar` writes a single `.tgz` bundle for sharing/upload. |
-| `--out <path>` | Host destination. Defaults to `./sessions-<sandbox>/` for `dir`, or `./sessions-<sandbox>-<agent>.tgz` for `tar`. |
-| `--include-trajectory` | Include the (large) `*.trajectory.jsonl` files in the export. Excluded by default. |
+| `--agent <id>` | OpenClaw: agent id when `<keys>` are aliases rather than the canonical `agent:<id>:<rest>` form. Hermes: accepts only `hermes` as a no-op alias and rejects any other value. |
+| `--format <dir\|tar>` | OpenClaw only. `dir` (default) writes a directory of session files; `tar` writes a single `.tgz` bundle for sharing/upload. |
+| `--out <path>` | Host destination. OpenClaw defaults to `./sessions-<sandbox>/` for `dir` or `./sessions-<sandbox>-<agent>.tgz` for `tar`; Hermes defaults to `./sessions-<sandbox>.jsonl`. |
+| `--include-trajectory` | OpenClaw only. Include the (large) `*.trajectory.jsonl` files in the export. Excluded by default. |
 | `--json` | Print the export manifest as JSON instead of a status line. |
 
 Mismatched `--agent` plus canonical-key combinations are refused before any download runs.
 Session keys that begin with `-` are rejected at the command boundary instead of being silently dropped.
-Session JSONL can contain pasted secrets (API keys, tokens), so exported files are written owner-only (`0600`); for `tar` format the in-sandbox staging tarball is additionally created with `umask 077` and removed after the host download completes.
+Session JSONL can contain pasted secrets (API keys, tokens), so exported files are written owner-only (`0600`); the in-sandbox staging artefact is additionally created with `umask 077` and removed after the host download completes.
 
 ### `nemohermes <name> download <sandbox-path> [host-dest]`
 

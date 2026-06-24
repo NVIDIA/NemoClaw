@@ -26,7 +26,7 @@ export interface MessagingWorkflowPlannerBuildContext {
   readonly isInteractive: boolean;
   readonly configuredChannels?: readonly MessagingChannelId[];
   readonly disabledChannels?: readonly MessagingChannelId[];
-  readonly supportedChannelIds?: readonly MessagingChannelId[];
+  readonly supportedChannelIds?: readonly MessagingChannelId[] | null;
   readonly credentialAvailability?: MessagingCompilerCredentialAvailability;
 }
 
@@ -116,19 +116,36 @@ export class MessagingWorkflowPlanner {
   async buildRebuildPlanFromSandboxEntry(
     context: MessagingWorkflowPlannerSandboxRebuildContext,
   ): Promise<SandboxMessagingPlan | null> {
-    const existingPlan = readSandboxEntryPlan(context);
-    if (existingPlan) {
-      return refreshDerivedPlanFields(
-        setPlanDisabledChannels(
-          existingPlan,
-          disabledChannelsFromSandboxEntry(context.sandboxEntry, existingPlan),
-          "rebuild",
-        ),
-        this.registry,
-        this.renderTemplateResolver,
-      );
+    const existingPlan = readSandboxEntryPlan({ ...context, supportedChannelIds: null });
+    if (!existingPlan) return null;
+
+    const filteredPlan = this.filterPlanChannelsToSupportedAllowlist(existingPlan, context);
+    if (!filteredPlan || filteredPlan.channels.length === 0) return null;
+
+    return refreshDerivedPlanFields(
+      setPlanDisabledChannels(
+        filteredPlan,
+        disabledChannelsFromSandboxEntry(context.sandboxEntry, filteredPlan),
+        "rebuild",
+      ),
+      this.registry,
+      this.renderTemplateResolver,
+    );
+  }
+
+  private filterPlanChannelsToSupportedAllowlist(
+    plan: SandboxMessagingPlan,
+    context: Pick<MessagingWorkflowPlannerBuildContext, "agent" | "supportedChannelIds">,
+  ): SandboxMessagingPlan | null {
+    if (!Array.isArray(context.supportedChannelIds)) return plan;
+    const allowlist = new Set(context.supportedChannelIds);
+    let filtered = plan;
+    for (const channel of plan.channels) {
+      if (!allowlist.has(channel.channelId)) {
+        filtered = removePlanChannel(filtered, channel.channelId, "rebuild");
+      }
     }
-    return null;
+    return filtered;
   }
 
   private assertSupportedChannels(
@@ -150,10 +167,9 @@ export class MessagingWorkflowPlanner {
   private supportedChannelIds(
     context: Pick<MessagingWorkflowPlannerBuildContext, "agent" | "supportedChannelIds">,
   ): MessagingChannelId[] {
-    const supportedFilter =
-      context.supportedChannelIds && context.supportedChannelIds.length > 0
-        ? new Set(context.supportedChannelIds)
-        : null;
+    const supportedFilter = Array.isArray(context.supportedChannelIds)
+      ? new Set(context.supportedChannelIds)
+      : null;
 
     return this.registry
       .list()
@@ -172,7 +188,10 @@ export class MessagingWorkflowPlanner {
   }
 
   private credentialAvailabilityFromSandboxEntry(
-    context: Pick<MessagingWorkflowPlannerSandboxContext, "agent" | "sandboxEntry" | "sandboxName">,
+    context: Pick<
+      MessagingWorkflowPlannerSandboxContext,
+      "agent" | "sandboxEntry" | "sandboxName" | "supportedChannelIds"
+    >,
     channelIds: readonly MessagingChannelId[],
   ): MessagingCompilerCredentialAvailability | undefined {
     const plan = readSandboxEntryPlan(context);
@@ -211,7 +230,7 @@ export interface MessagingWorkflowPlannerSandboxContext {
   readonly sandboxName: string;
   readonly agent: MessagingAgentId;
   readonly sandboxEntry?: MessagingWorkflowPlannerSandboxEntry | null;
-  readonly supportedChannelIds?: readonly MessagingChannelId[];
+  readonly supportedChannelIds?: readonly MessagingChannelId[] | null;
   readonly credentialAvailability?: MessagingCompilerCredentialAvailability;
 }
 
@@ -243,11 +262,15 @@ function onlyConfiguredChannels(
 }
 
 function readSandboxEntryPlan(
-  context: Pick<MessagingWorkflowPlannerSandboxContext, "agent" | "sandboxEntry" | "sandboxName">,
+  context: Pick<
+    MessagingWorkflowPlannerSandboxContext,
+    "agent" | "sandboxEntry" | "sandboxName" | "supportedChannelIds"
+  >,
 ): SandboxMessagingPlan | null {
   const plan = parseSandboxMessagingPlan(context.sandboxEntry?.messaging?.plan, {
     sandboxName: context.sandboxName,
     agent: context.agent,
+    supportedChannelIds: context.supportedChannelIds,
   });
   return plan ? hydrateDerivedSandboxMessagingPlanFields(plan) : null;
 }

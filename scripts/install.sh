@@ -2109,8 +2109,9 @@ run_onboard() {
     info "Starting a fresh onboarding session (--fresh)."
     onboard_cmd+=(--fresh)
   elif command_exists node && [[ -f "$session_file" ]]; then
-    # Classify the session: "resume" (auto-attach --resume), "failed"
-    # (last run reported a step failure — user must choose), "skip"
+    # Classify the session: "resume" (auto-attach --resume), "fresh-recover"
+    # (interrupted before sandbox creation — nothing to resume, start over),
+    # "failed" (last run reported a step failure — user must choose), "skip"
     # (complete / missing / unreadable — nothing to resume), or "corrupt".
     local session_state
     session_state="$(
@@ -2124,7 +2125,19 @@ run_onboard() {
           } else if (data.status === "failed" || data.failure) {
             out = "failed";
           } else if (data.status === "in_progress") {
-            out = "resume";
+            // A run interrupted before confirmed sandbox creation has no
+            // sandbox to resume. Auto-attaching --resume here dead-ends at the
+            // CLI non-interactive resume guard (#2753) with no recovery path
+            // for curl|bash installs (#5626), so start fresh instead. Only
+            // auto-resume once the session has both the sandbox name and the
+            // completed sandbox step that onboard-session.ts records.
+            const sandboxCreated =
+              typeof data.sandboxName === "string" &&
+              data.sandboxName.trim() !== "" &&
+              data.steps &&
+              data.steps.sandbox &&
+              data.steps.sandbox.status === "complete";
+            out = sandboxCreated ? "resume" : "fresh-recover";
           } else {
             // Unknown or missing status — do not auto-resume a file we
             // cannot classify against what onboard-session.ts actually
@@ -2141,6 +2154,11 @@ run_onboard() {
       resume)
         info "Found an interrupted onboarding session — resuming it."
         onboard_cmd+=(--resume)
+        ;;
+      fresh-recover)
+        # #5626: interrupted before sandbox creation; nothing to resume.
+        info "Found an interrupted onboarding session with no sandbox yet — starting fresh."
+        onboard_cmd+=(--fresh)
         ;;
       failed)
         # #2430: a previous run failed. The user's provider/inference
