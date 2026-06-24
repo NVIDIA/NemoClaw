@@ -417,4 +417,26 @@ print(block)
       ).toBe(true);
     }
   });
+
+  // PRA-2 on #5712 follow-up: a canonical launch-claims page that lives in the
+  // repo but never appears in docs/index.yml is invisible on the published
+  // site. Pin the registration so removing the nav entry fails CI before
+  // the docs build silently drops the page.
+  it("docs/index.yml registers the canonical Platform Support page in every Reference section", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const indexYaml = readFileSync(path.join(repoRoot, "docs", "index.yml"), "utf-8");
+
+    const referenceSectionRe = /- section: "Reference"[\s\S]*?(?=\n {10}- section:|\n {6}- tab:|\Z)/g;
+    const sections = [...indexYaml.matchAll(referenceSectionRe)];
+    expect(
+      sections.length,
+      "expected at least one Reference section in docs/index.yml",
+    ).toBeGreaterThan(0);
+    for (const section of sections) {
+      expect(
+        section[0],
+        "Reference section in docs/index.yml does not register reference/platform-support.mdx",
+      ).toMatch(/path:\s*reference\/platform-support\.mdx/);
+    }
+  });
 });
