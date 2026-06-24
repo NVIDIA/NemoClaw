@@ -25,6 +25,7 @@ import {
   type SandboxMessagingChannelPlan,
   type SandboxMessagingPlan,
   toMessagingAgentId,
+  tryGetMessagingAgentId,
 } from "../../messaging";
 import { hydrateMessagingChannelConfig } from "../../messaging-channel-config";
 import { hashCredential } from "../../security/credential-hash";
@@ -756,7 +757,7 @@ async function planSandboxChannelAdd(
   }
 }
 
-async function persistManifestChannelDisabledPlan(
+export async function persistManifestChannelDisabledPlan(
   sandboxName: string,
   channelId: string,
   disabled: boolean,
@@ -764,10 +765,12 @@ async function persistManifestChannelDisabledPlan(
   const entry = registry.getSandbox(sandboxName);
   if (!entry?.messaging?.plan) return false;
   const agent = resolveAgentForSandbox(sandboxName);
+  const agentId = tryGetMessagingAgentId(agent);
+  if (agentId === null) return false;
   const planner = new MessagingWorkflowPlanner(messagingManifestRegistry);
   const context = {
     sandboxName,
-    agent: toMessagingAgentId(agent),
+    agent: agentId,
     channelId,
     sandboxEntry: entry,
     supportedChannelIds: availableManifestChannelsForAgent(agent).map((manifest) => manifest.id),
@@ -778,17 +781,24 @@ async function persistManifestChannelDisabledPlan(
   return plan ? MessagingHostStateApplier.applyPlanToRegistry(sandboxName, plan) : false;
 }
 
-async function persistManifestChannelRemovePlan(
+export async function persistManifestChannelRemovePlan(
   sandboxName: string,
   channelId: string,
 ): Promise<boolean> {
   const entry = registry.getSandbox(sandboxName);
   if (!entry) return false;
   const agent = resolveAgentForSandbox(sandboxName);
+  const agentId = tryGetMessagingAgentId(agent);
+  if (agentId === null) {
+    if (entry.messaging?.plan) {
+      return registry.updateSandbox(sandboxName, { messaging: undefined });
+    }
+    return true;
+  }
   const planner = new MessagingWorkflowPlanner(messagingManifestRegistry);
   const plan = await planner.buildChannelRemovePlanFromSandboxEntry({
     sandboxName,
-    agent: toMessagingAgentId(agent),
+    agent: agentId,
     channelId,
     sandboxEntry: entry,
     supportedChannelIds: availableManifestChannelsForAgent(agent).map((manifest) => manifest.id),

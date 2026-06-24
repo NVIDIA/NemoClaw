@@ -795,7 +795,9 @@ describe("MessagingWorkflowPlanner", () => {
     });
 
     expect(rebuilt?.channels.map((channel) => channel.channelId)).toEqual(["telegram"]);
-    expect(rebuilt?.credentialBindings.some((binding) => binding.channelId === "slack")).toBe(false);
+    expect(rebuilt?.credentialBindings.some((binding) => binding.channelId === "slack")).toBe(
+      false,
+    );
     expect(rebuilt?.networkPolicy.entries.some((entry) => entry.channelId === "slack")).toBe(false);
     expect(rebuilt?.agentRender.some((entry) => entry.channelId === "slack")).toBe(false);
   });
