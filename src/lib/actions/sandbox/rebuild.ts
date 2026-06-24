@@ -55,6 +55,7 @@ import {
 import { hydrateMessagingChannelConfig } from "../../messaging-channel-config";
 import { getStoredMessagingChannelConfig } from "../../onboard/messaging-config";
 import { pruneDisabledMessagingPolicyPresets } from "../../onboard/messaging-policy-presets";
+import { markLastStartedStepFailed } from "../../onboard/terminal-step-failure";
 import * as policies from "../../policy";
 import { shellQuote } from "../../runner";
 import * as sandboxVersion from "../../sandbox/version";
@@ -62,7 +63,6 @@ import { redact } from "../../security/redact";
 import * as shields from "../../shields";
 import type { Session } from "../../state/onboard-session";
 import * as onboardSession from "../../state/onboard-session";
-import { LEGACY_MACHINE_STEP_MUTATION_OPTIONS } from "../../state/onboard-step-mutation";
 import * as registry from "../../state/registry";
 import * as sandboxState from "../../state/sandbox";
 import {
@@ -71,14 +71,14 @@ import {
 } from "../../state/sandbox-session";
 import { removeSandboxRegistryEntry } from "./destroy";
 import { executeSandboxCommand } from "./process-recovery";
-import { buildRebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
 import {
   backupSandboxStateForRebuild,
   ensureRebuildAgentBaseImage,
   openRebuildShieldsWindowForState,
-  resolveRebuildLiveState,
   type RebuildSandboxEntry,
+  resolveRebuildLiveState,
 } from "./rebuild-flow-helpers";
+import { buildRebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
 import { printRebuildShieldsRecovery, relockRebuildShieldsWindow } from "./rebuild-shields";
 
 export function buildRefreshMutableOpenClawConfigHashCommand(
@@ -836,14 +836,7 @@ export async function rebuildSandbox(
         /* best effort */
       }
       try {
-        const failedStep = onboardSession.loadSession()?.lastStepStarted;
-        if (failedStep) {
-          onboardSession.markStepFailed(
-            failedStep,
-            "Rebuild recreate failed",
-            LEGACY_MACHINE_STEP_MUTATION_OPTIONS,
-          );
-        }
+        markLastStartedStepFailed(onboardSession, "Rebuild recreate failed");
       } catch {
         /* best effort */
       }
