@@ -100,4 +100,31 @@ describe("record-only onboard step mutation", () => {
     expect(loaded.machine).toMatchObject({ state: "init", revision: 0 });
     expect(emitted.map((event) => event.type)).toEqual(["context.updated"]);
   });
+
+  it("keeps no-options step helpers on legacy machine mutation", () => {
+    const emitted: eventsModule.OnboardMachineEvent[] = [];
+    machineEvents.addOnboardMachineEventListener((event) => emitted.push(event));
+    session.saveSession(session.createSession());
+
+    session.markStepStarted("preflight");
+    let loaded = requireLoadedSession(session.loadSession());
+    expect(loaded.machine).toMatchObject({ state: "preflight", revision: 1 });
+
+    session.markStepComplete("preflight");
+    loaded = requireLoadedSession(session.loadSession());
+    expect(loaded.machine).toMatchObject({ state: "gateway", revision: 2 });
+
+    session.markStepFailed("gateway", "Gateway failed: NVIDIA_INFERENCE_API_KEY=nvapi-secret");
+    loaded = requireLoadedSession(session.loadSession());
+    expect(loaded.status).toBe("failed");
+    expect(loaded.failure?.message).toBe("Gateway failed: NVIDIA_INFERENCE_API_KEY=<REDACTED>");
+    expect(loaded.failure?.message).not.toContain("nvapi-secret");
+    expect(loaded.machine).toMatchObject({ state: "failed", revision: 3 });
+    expect(emitted.map((event) => event.type)).toEqual([
+      "state.entered",
+      "state.completed",
+      "state.failed",
+      "onboard.failed",
+    ]);
+  });
 });
