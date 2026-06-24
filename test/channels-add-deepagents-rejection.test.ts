@@ -41,7 +41,10 @@ function parseResultPayload<T extends Record<string, unknown>>(
   result: SpawnSyncReturns<string>,
 ): T {
   const marker = result.stdout.lastIndexOf("__RESULT__");
-  assert.ok(marker >= 0, `no __RESULT__ marker in stdout:\n${result.stdout}\n---stderr---\n${result.stderr}`);
+  assert.ok(
+    marker >= 0,
+    `no __RESULT__ marker in stdout:\n${result.stdout}\n---stderr---\n${result.stderr}`,
+  );
   return JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim()) as T;
 }
 
@@ -166,7 +169,11 @@ const ctx = module.exports;
       unexpectedError: { message: string; stack: string } | null;
     }>(result);
 
-    assert.equal(payload.unexpectedError, null, `unexpected exception: ${payload.unexpectedError?.stack}`);
+    assert.equal(
+      payload.unexpectedError,
+      null,
+      `unexpected exception: ${payload.unexpectedError?.stack}`,
+    );
     assert.equal(payload.exitCode, 1, "expected addSandboxChannel to exit with code 1");
     assert.ok(
       payload.errors.some((msg) =>
@@ -182,13 +189,33 @@ const ctx = module.exports;
     );
 
     assert.deepEqual(payload.policyCalls.loadPreset, [], "loadPreset must not run before the gate");
-    assert.deepEqual(payload.policyCalls.applyPreset, [], "applyPreset must not run before the gate");
-    assert.deepEqual(payload.providerCalls, [], "upsertMessagingProviders must not run before the gate");
+    assert.deepEqual(
+      payload.policyCalls.applyPreset,
+      [],
+      "applyPreset must not run before the gate",
+    );
+    assert.deepEqual(
+      payload.providerCalls,
+      [],
+      "upsertMessagingProviders must not run before the gate",
+    );
     assert.deepEqual(payload.registryUpdates, [], "updateSandbox must not run before the gate");
     assert.deepEqual(payload.rebuildCalls, [], "rebuildSandbox must not run before the gate");
-    assert.deepEqual(payload.credentialCalls.save, [], "saveCredential must not run before the gate");
-    assert.deepEqual(payload.credentialCalls.delete, [], "deleteCredential must not run before the gate");
+    assert.deepEqual(
+      payload.credentialCalls.save,
+      [],
+      "saveCredential must not run before the gate",
+    );
+    assert.deepEqual(
+      payload.credentialCalls.delete,
+      [],
+      "deleteCredential must not run before the gate",
+    );
     assert.deepEqual(payload.credentialCalls.prompt, [], "prompt must not run before the gate");
-    assert.deepEqual(payload.runOpenshellCalls, [], "openshell must not be invoked before the gate");
+    assert.deepEqual(
+      payload.runOpenshellCalls,
+      [],
+      "openshell must not be invoked before the gate",
+    );
   });
 });
