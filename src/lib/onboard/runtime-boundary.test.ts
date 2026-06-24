@@ -236,41 +236,6 @@ describe("OnboardRuntimeBoundary", () => {
     expect(harness.getSession().machine.state).toBe("gateway");
   });
 
-  it("rejects stale state results when default record-only steps did not advance the machine", async () => {
-    const harness = createRuntimeHarness();
-    const boundary = new OnboardRuntimeBoundary({
-      toSessionUpdates: (updates) => filterSafeUpdates(updates as SessionUpdates) as SessionUpdates,
-      maybeForceE2eStepFailure: () => undefined,
-      createRuntime: harness.createRuntime,
-    });
-
-    await boundary.recordStateResultWithStepCompatibility(
-      advanceTo("preflight", { metadata: { state: "init" } }),
-    );
-    await expect(
-      boundary.recordStateResultWithStepCompatibility(
-        advanceTo("preflight", { metadata: { state: "init" } }),
-      ),
-    ).rejects.toThrow("Record-only step result already reached target state: preflight");
-    await expect(
-      boundary.recordStateResultWithStepCompatibility(
-        advanceTo("gateway", { metadata: { state: "init" } }),
-      ),
-    ).rejects.toThrow("Record-only step result source mismatch: init != preflight");
-    await boundary.recordStateResultWithStepCompatibility(
-      advanceTo("gateway", { metadata: { state: "preflight" } }),
-    );
-
-    expect(harness.events.map((event) => event.type)).toEqual([
-      "state.exited",
-      "state.entered",
-      "state.exited",
-      "state.entered",
-    ]);
-    expect(harness.events[1]).toMatchObject({ state: "preflight" });
-    expect(harness.events[3]).toMatchObject({ state: "gateway" });
-  });
-
   it("emits diagnostics for legacy-compatible stale state results", async () => {
     const harness = createRuntimeHarness();
     const boundary = new OnboardRuntimeBoundary({
@@ -317,24 +282,6 @@ describe("OnboardRuntimeBoundary", () => {
         sourceState: "preflight",
         targetState: "gateway",
       },
-    });
-  });
-
-  it("rejects stale default results while compatible replay can skip them", async () => {
-    const harness = createRuntimeHarness();
-    const boundary = new OnboardRuntimeBoundary({
-      toSessionUpdates: (updates) => filterSafeUpdates(updates as SessionUpdates) as SessionUpdates,
-      maybeForceE2eStepFailure: () => undefined,
-      createRuntime: harness.createRuntime,
-    });
-
-    const result = advanceTo("preflight", { metadata: { state: "missing" } });
-    await expect(boundary.recordStateResultWithStepCompatibility(result)).rejects.toThrow(
-      "Record-only step result source mismatch: missing != init",
-    );
-
-    await expect(boundary.recordCompatibleStateResult(result)).resolves.toMatchObject({
-      machine: { state: "init" },
     });
   });
 

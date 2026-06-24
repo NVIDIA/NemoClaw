@@ -139,6 +139,48 @@ describe("OnboardRuntimeBoundary record-only step/result pairing", () => {
     ]);
   });
 
+  it("rejects stale state results when record-only steps did not advance the machine", async () => {
+    const { boundary, events } = createRuntimeHarness();
+
+    await boundary.recordStateResultWithStepCompatibility(
+      advanceTo("preflight", { metadata: { state: "init" } }),
+    );
+    await expect(
+      boundary.recordStateResultWithStepCompatibility(
+        advanceTo("preflight", { metadata: { state: "init" } }),
+      ),
+    ).rejects.toThrow("Record-only step result already reached target state: preflight");
+    await expect(
+      boundary.recordStateResultWithStepCompatibility(
+        advanceTo("gateway", { metadata: { state: "init" } }),
+      ),
+    ).rejects.toThrow("Record-only step result source mismatch: init != preflight");
+    await boundary.recordStateResultWithStepCompatibility(
+      advanceTo("gateway", { metadata: { state: "preflight" } }),
+    );
+
+    expect(events.map((event) => event.type)).toEqual([
+      "state.exited",
+      "state.entered",
+      "state.exited",
+      "state.entered",
+    ]);
+    expect(events[1]).toMatchObject({ state: "preflight" });
+    expect(events[3]).toMatchObject({ state: "gateway" });
+  });
+
+  it("rejects stale default results while compatible replay can skip them", async () => {
+    const { boundary } = createRuntimeHarness();
+    const result = advanceTo("preflight", { metadata: { state: "missing" } });
+
+    await expect(boundary.recordStateResultWithStepCompatibility(result)).rejects.toThrow(
+      "Record-only step result source mismatch: missing != init",
+    );
+    await expect(boundary.recordCompatibleStateResult(result)).resolves.toMatchObject({
+      machine: { state: "init" },
+    });
+  });
+
   it("rejects invalid explicit results before persisting record-only step completion", async () => {
     const { boundary, getSession } = createRuntimeHarness();
 
