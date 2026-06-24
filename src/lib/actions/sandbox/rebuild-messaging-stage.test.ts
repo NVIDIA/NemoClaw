@@ -30,39 +30,13 @@ const { stageMessagingManifestPlanForRebuild } = D("actions/sandbox/rebuild.js")
   ) => Promise<unknown>;
 };
 
-describe("stageMessagingManifestPlanForRebuild non-messaging agent guard (#5729)", () => {
+describe("stageMessagingManifestPlanForRebuild non-messaging agent guard", () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
-  it("emits the unknown-runtime skip message for langchain-deepagents-code without staging any plan", async () => {
+  it("emits the unknown-runtime skip message for any agent whose name is not in the runtime allowlist", async () => {
     const loadAgentSpy = vi.spyOn(defs, "loadAgent").mockReturnValue({
-      name: "langchain-deepagents-code",
-      messagingPlatforms: [],
-    });
-    const clearPlanEnvSpy = vi.spyOn(messaging.MessagingSetupApplier, "clearPlanEnv");
-
-    const messages: string[] = [];
-    const result = await stageMessagingManifestPlanForRebuild(
-      "deepagents-sandbox",
-      { name: "deepagents-sandbox" },
-      "langchain-deepagents-code",
-      (msg) => messages.push(msg),
-    );
-
-    expect(loadAgentSpy).toHaveBeenCalledWith("langchain-deepagents-code");
-    expect(clearPlanEnvSpy).toHaveBeenCalledTimes(1);
-    expect(messages).toContain(
-      "Messaging manifest rebuild plan skipped: agent 'langchain-deepagents-code' is not a messaging-capable runtime",
-    );
-    expect(messages.some((msg) => msg.includes("declares no supported messaging channels"))).toBe(
-      false,
-    );
-    expect(result).toBeNull();
-  });
-
-  it("emits the unknown-runtime skip message for any agent whose name is not openclaw or hermes", async () => {
-    vi.spyOn(defs, "loadAgent").mockReturnValue({
       name: "future-non-messaging-agent",
       messagingPlatforms: [],
     });
@@ -76,9 +50,13 @@ describe("stageMessagingManifestPlanForRebuild non-messaging agent guard (#5729)
       (msg) => messages.push(msg),
     );
 
+    expect(loadAgentSpy).toHaveBeenCalledWith("future-non-messaging-agent");
     expect(clearPlanEnvSpy).toHaveBeenCalledTimes(1);
     expect(messages).toContain(
       "Messaging manifest rebuild plan skipped: agent 'future-non-messaging-agent' is not a messaging-capable runtime",
+    );
+    expect(messages.some((msg) => msg.includes("declares no supported messaging channels"))).toBe(
+      false,
     );
     expect(result).toBeNull();
   });

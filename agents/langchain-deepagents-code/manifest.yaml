@@ -54,7 +54,10 @@ state_files:
 device_pairing: false
 
 messaging_platforms:
-  supported: []
+  supported:
+    - telegram
+    - discord
+    - slack
 
 # ── Inference ───────────────────────────────────────────────────
 # V1 routes NVIDIA/OpenAI-compatible selections through OpenShell's managed

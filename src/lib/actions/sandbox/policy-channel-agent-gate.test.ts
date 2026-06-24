@@ -1,11 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-// Lifecycle-boundary regression: `addSandboxChannel` must refuse non-messaging
-// agents (including any agent with an explicit empty `messagingPlatforms`
-// allowlist) BEFORE any preset load, policy mutation, provider upsert, registry
-// write, credential prompt, or rebuild trigger. Without this gate, a
-// destructive sandbox rebuild can run and fail late at Dockerfile patching.
+// Lifecycle-boundary regression: `addSandboxChannel` must refuse agents that
+// either fall outside the runtime allowlist or carry an explicit empty
+// `messagingPlatforms` allowlist BEFORE any preset load, policy mutation,
+// provider upsert, registry write, credential prompt, or rebuild trigger.
+// Without this gate, a destructive sandbox rebuild can run and fail late at
+// Dockerfile patching.
 //
 // Why dist + vi.spyOn (matches policy-channel-conflict.test.ts): the source
 // policy-channel.ts loads several deps via runtime CommonJS `require()`. In
@@ -88,10 +89,10 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("addSandboxChannel agent gate (#5729)", () => {
-  it("rejects langchain-deepagents-code before any preset, mutation, provider, credential, or rebuild call", async () => {
+describe("addSandboxChannel agent gate", () => {
+  it("rejects an unknown agent before any preset, mutation, provider, credential, or rebuild call", async () => {
     vi.spyOn(defs, "loadAgent").mockReturnValue({
-      name: "langchain-deepagents-code",
+      name: "custom-agent",
       messagingPlatforms: [],
     });
 
@@ -106,10 +107,10 @@ describe("addSandboxChannel agent gate (#5729)", () => {
     const errorText = (errSpy.mock.calls as unknown[][])
       .map((call) => call.map(String).join(" "))
       .join("\n");
+    expect(errorText).toMatch(/Agent 'custom-agent' does not support messaging channels/);
     expect(errorText).toMatch(
-      /Agent 'langchain-deepagents-code' does not support messaging channels/,
+      /Messaging-capable agents: openclaw, hermes, langchain-deepagents-code/,
     );
-    expect(errorText).toMatch(/Messaging-capable agents: openclaw, hermes/);
 
     expect(loadPresetMock).not.toHaveBeenCalled();
     expect(applyPresetMock).not.toHaveBeenCalled();

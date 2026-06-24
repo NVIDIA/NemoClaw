@@ -8,7 +8,7 @@ export const slackManifest = {
   id: "slack",
   displayName: "Slack",
   description: "Slack bot messaging",
-  supportedAgents: ["openclaw", "hermes"],
+  supportedAgents: ["openclaw", "hermes", "langchain-deepagents-code"],
   auth: {
     mode: "token-paste",
   },

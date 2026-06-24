@@ -20,8 +20,13 @@ describe("tryGetMessagingAgentId", () => {
     expect(tryGetMessagingAgentId({ name: "hermes" })).toBe("hermes");
   });
 
+  it("returns 'langchain-deepagents-code' for the DeepAgents agent name", () => {
+    expect(tryGetMessagingAgentId({ name: "langchain-deepagents-code" })).toBe(
+      "langchain-deepagents-code",
+    );
+  });
+
   it("returns null for unknown agent names instead of silently defaulting", () => {
-    expect(tryGetMessagingAgentId({ name: "langchain-deepagents-code" })).toBeNull();
     expect(tryGetMessagingAgentId({ name: "custom-agent" })).toBeNull();
   });
 
@@ -36,6 +41,9 @@ describe("toMessagingAgentId", () => {
   it("returns the messaging agent id for known names", () => {
     expect(toMessagingAgentId({ name: "openclaw" })).toBe("openclaw");
     expect(toMessagingAgentId({ name: "hermes" })).toBe("hermes");
+    expect(toMessagingAgentId({ name: "langchain-deepagents-code" })).toBe(
+      "langchain-deepagents-code",
+    );
   });
 
   it("falls back to openclaw when no agent name is supplied (legacy default convention)", () => {
@@ -47,9 +55,6 @@ describe("toMessagingAgentId", () => {
   });
 
   it("throws MessagingAgentNotSupportedError for an explicit unknown agent", () => {
-    expect(() => toMessagingAgentId({ name: "langchain-deepagents-code" })).toThrow(
-      MessagingAgentNotSupportedError,
-    );
     expect(() => toMessagingAgentId({ name: "custom-agent" })).toThrow(
       MessagingAgentNotSupportedError,
     );
@@ -57,11 +62,11 @@ describe("toMessagingAgentId", () => {
 
   it("surfaces the offending agent name on the thrown error", () => {
     try {
-      toMessagingAgentId({ name: "langchain-deepagents-code" });
+      toMessagingAgentId({ name: "custom-agent" });
     } catch (err) {
       expect(err).toBeInstanceOf(MessagingAgentNotSupportedError);
-      expect((err as MessagingAgentNotSupportedError).agentName).toBe("langchain-deepagents-code");
-      expect((err as Error).message).toMatch(/openclaw, hermes/);
+      expect((err as MessagingAgentNotSupportedError).agentName).toBe("custom-agent");
+      expect((err as Error).message).toMatch(/openclaw, hermes, langchain-deepagents-code/);
       return;
     }
     throw new Error("expected toMessagingAgentId to throw");
@@ -69,25 +74,31 @@ describe("toMessagingAgentId", () => {
 });
 
 describe("isMessagingSupportedAgent", () => {
-  it("returns true for openclaw and hermes regardless of messagingPlatforms", () => {
+  it("returns true for openclaw, hermes, and DeepAgents regardless of messagingPlatforms", () => {
     expect(isMessagingSupportedAgent({ name: "openclaw" })).toBe(true);
     expect(isMessagingSupportedAgent({ name: "hermes", messagingPlatforms: ["telegram"] })).toBe(
       true,
     );
+    expect(
+      isMessagingSupportedAgent({
+        name: "langchain-deepagents-code",
+        messagingPlatforms: ["discord"],
+      }),
+    ).toBe(true);
   });
 
   it("returns false for known agents whose messagingPlatforms is an explicit empty allowlist", () => {
     expect(isMessagingSupportedAgent({ name: "openclaw", messagingPlatforms: [] })).toBe(false);
     expect(isMessagingSupportedAgent({ name: "hermes", messagingPlatforms: [] })).toBe(false);
-  });
-
-  it("returns false for unknown agents", () => {
     expect(
       isMessagingSupportedAgent({
         name: "langchain-deepagents-code",
         messagingPlatforms: [],
       }),
     ).toBe(false);
+  });
+
+  it("returns false for unknown agents", () => {
     expect(isMessagingSupportedAgent({ name: "custom-agent" })).toBe(false);
     expect(isMessagingSupportedAgent(null)).toBe(false);
   });
@@ -136,7 +147,7 @@ describe("getMessagingManifestAvailabilityContext", () => {
   it("returns a null agent for unknown agents and never silently defaults to openclaw", () => {
     expect(
       getMessagingManifestAvailabilityContext({
-        name: "langchain-deepagents-code",
+        name: "custom-agent",
         messagingPlatforms: [],
       }),
     ).toEqual({

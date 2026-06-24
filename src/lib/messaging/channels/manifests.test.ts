@@ -274,11 +274,15 @@ describe("built-in channel manifests", () => {
       teams: teamsManifest,
     };
 
+    const channelsSupportingDeepAgents = new Set(["telegram", "discord", "slack"]);
     for (const [channelId, manifest] of Object.entries(manifests)) {
       const legacy = KNOWN_CHANNELS[channelId];
       expect(manifest.description).toBe(legacy.description);
       expect(policyPresetNames(manifest)).toEqual([channelId]);
-      expect(manifest.supportedAgents).toEqual(["openclaw", "hermes"]);
+      const expectedAgents = channelsSupportingDeepAgents.has(channelId)
+        ? ["openclaw", "hermes", "langchain-deepagents-code"]
+        : ["openclaw", "hermes"];
+      expect(manifest.supportedAgents).toEqual(expectedAgents);
       expect(manifest.auth.mode).toBe(legacy.loginMethod ?? "token-paste");
     }
 

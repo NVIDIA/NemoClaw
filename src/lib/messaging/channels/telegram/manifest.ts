@@ -12,7 +12,7 @@ export const telegramManifest = {
     "For Telegram group chats, disable privacy mode in @BotFather (/setprivacy -> your bot -> Disable).",
     "After changing privacy mode, remove and re-add the bot to each group before testing @mentions.",
   ],
-  supportedAgents: ["openclaw", "hermes"],
+  supportedAgents: ["openclaw", "hermes", "langchain-deepagents-code"],
   auth: {
     mode: "token-paste",
   },

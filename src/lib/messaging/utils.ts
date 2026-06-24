@@ -16,7 +16,11 @@ export interface MessagingAgentDescriptor {
 
 export type MessagingInputResolver = (input: ChannelInputSpec) => string | null;
 
-const MESSAGING_AGENT_IDS = ["openclaw", "hermes"] as const satisfies readonly MessagingAgentId[];
+const MESSAGING_AGENT_IDS = [
+  "openclaw",
+  "hermes",
+  "langchain-deepagents-code",
+] as const satisfies readonly MessagingAgentId[];
 
 export class MessagingAgentNotSupportedError extends Error {
   readonly agentName: string;

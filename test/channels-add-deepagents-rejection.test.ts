@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
-// Behaviour-level regression for #5729. `nemoclaw <sandbox> channels add <channel>`
-// on an agent whose manifest declares no messaging support must exit nonzero
-// before any preset load, policy mutation, provider upsert, registry write,
-// credential save, prompt, rebuild call, or openshell invocation.
+// Behaviour-level regression: `nemoclaw <sandbox> channels add <channel>` on an
+// agent whose manifest declares no messaging support must exit nonzero before
+// any preset load, policy mutation, provider upsert, registry write, credential
+// save, prompt, rebuild call, or openshell invocation.
 //
 // Spawns the assembled `addSandboxChannel` action in a real Node process so
 // the entire module graph loads, then asserts the no-mutation invariant from
@@ -126,9 +126,9 @@ module.exports = {
 `;
 }
 
-describe("addSandboxChannel agent gate (behaviour, #5729)", () => {
-  it("DeepAgents channels add discord exits non-mutatingly with the unsupported-agent message", () => {
-    const script = `${buildPreamble("langchain-deepagents-code")}
+describe("addSandboxChannel agent gate (behaviour)", () => {
+  it("custom non-messaging agent channels add discord exits non-mutatingly with the unsupported-agent message", () => {
+    const script = `${buildPreamble("custom-agent")}
 const ctx = module.exports;
 (async () => {
   let caught = null;
@@ -170,12 +170,14 @@ const ctx = module.exports;
     assert.equal(payload.exitCode, 1, "expected addSandboxChannel to exit with code 1");
     assert.ok(
       payload.errors.some((msg) =>
-        /Agent 'langchain-deepagents-code' does not support messaging channels/.test(msg),
+        /Agent 'custom-agent' does not support messaging channels/.test(msg),
       ),
       `missing unsupported-agent error in stderr: ${JSON.stringify(payload.errors)}`,
     );
     assert.ok(
-      payload.errors.some((msg) => /Messaging-capable agents: openclaw, hermes/.test(msg)),
+      payload.errors.some((msg) =>
+        /Messaging-capable agents: openclaw, hermes, langchain-deepagents-code/.test(msg),
+      ),
       `missing supported-agents hint in stderr: ${JSON.stringify(payload.errors)}`,
     );
 

@@ -34,7 +34,7 @@ let updateSandboxMock: MockInstance;
 function entryWithStalePlan(sandboxName: string, channelId: string) {
   return {
     name: sandboxName,
-    agent: "langchain-deepagents-code",
+    agent: "custom-agent",
     messaging: {
       schemaVersion: 1,
       plan: {
@@ -79,7 +79,7 @@ afterEach(() => {
 describe("persistManifestChannelRemovePlan with non-messaging agent (#5729)", () => {
   it("strips stale messaging state from the registry without throwing", async () => {
     vi.spyOn(defs, "loadAgent").mockReturnValue({
-      name: "langchain-deepagents-code",
+      name: "custom-agent",
       messagingPlatforms: [],
     });
     getSandboxMock.mockReturnValue(entryWithStalePlan("da-test", "discord"));
@@ -92,10 +92,10 @@ describe("persistManifestChannelRemovePlan with non-messaging agent (#5729)", ()
 
   it("returns true and skips registry update when no stale plan exists", async () => {
     vi.spyOn(defs, "loadAgent").mockReturnValue({
-      name: "langchain-deepagents-code",
+      name: "custom-agent",
       messagingPlatforms: [],
     });
-    getSandboxMock.mockReturnValue({ name: "da-test", agent: "langchain-deepagents-code" });
+    getSandboxMock.mockReturnValue({ name: "da-test", agent: "custom-agent" });
 
     const result = await persistManifestChannelRemovePlan("da-test", "discord");
 
@@ -107,7 +107,7 @@ describe("persistManifestChannelRemovePlan with non-messaging agent (#5729)", ()
 describe("persistManifestChannelDisabledPlan with non-messaging agent (#5729)", () => {
   it("returns null without throwing or mutating the registry when the agent does not support messaging", async () => {
     vi.spyOn(defs, "loadAgent").mockReturnValue({
-      name: "langchain-deepagents-code",
+      name: "custom-agent",
       messagingPlatforms: [],
     });
     getSandboxMock.mockReturnValue(entryWithStalePlan("da-test", "discord"));
@@ -120,10 +120,10 @@ describe("persistManifestChannelDisabledPlan with non-messaging agent (#5729)", 
 
   it("returns null without throwing when there is no stored messaging plan", async () => {
     vi.spyOn(defs, "loadAgent").mockReturnValue({
-      name: "langchain-deepagents-code",
+      name: "custom-agent",
       messagingPlatforms: [],
     });
-    getSandboxMock.mockReturnValue({ name: "da-test", agent: "langchain-deepagents-code" });
+    getSandboxMock.mockReturnValue({ name: "da-test", agent: "custom-agent" });
 
     const result = await persistManifestChannelDisabledPlan("da-test", "discord", true);
 
