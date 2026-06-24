@@ -11,7 +11,9 @@ Status: Active development. Interfaces may change without notice.
 
 ## Agent Skills
 
-This repo ships agent skills under `.agents/skills/`, organized into three audience buckets: `nemoclaw-user-*` (end users), `nemoclaw-maintainer-*` (project maintainers), and `nemoclaw-contributor-*` (codebase contributors). Load the `nemoclaw-skills-guide` skill for a full catalog and quick decision guide mapping tasks to skills.
+This repo ships agent skills under `.agents/skills/`.
+Use `nemoclaw-user-guide` for end-user documentation routing, `nemoclaw-contributor-*` for contributor workflows, and `nemoclaw-maintainer-*` for maintainer workflows.
+Load the `nemoclaw-skills-guide` skill for a full catalog and quick decision guide mapping tasks to skills.
 
 ## Architecture
 
@@ -28,7 +30,7 @@ This repo ships agent skills under `.agents/skills/`, organized into three audie
 | `scripts/` | Bash/JS/TS | Install helpers, setup, automation, E2E tooling |
 | `test/` | JavaScript (ESM) | Root-level integration tests (Vitest) |
 | `test/e2e/` | Bash/JS/TS | End-to-end tests, scenario-based runner (see `test/e2e/README.md`) |
-| `docs/` | MDX/Markdown | User-facing docs (Fern MDX plus legacy MyST source during migration) |
+| `docs/` | MDX/Markdown | User-facing Fern docs and Markdown routes for AI documentation clients |
 | `fern/` | YAML/CSS/SVG | Fern site configuration and shared assets |
 
 Package-specific guides:
@@ -57,7 +59,7 @@ Package-specific guides:
 
 - **CLI and plugin**: TypeScript (`src/`, `nemoclaw/src/`) with a small CommonJS launcher in `bin/`; ESM in `test/`
 - **Blueprint**: YAML configuration (`nemoclaw-blueprint/`)
-- **Docs**: Fern MDX for migrated pages; legacy MyST Markdown remains during the transition for generated skills and parity checks
+- **Docs**: Fern MDX for user-facing pages, with Markdown routes exposed by Fern for AI documentation clients
 - **Tooling scripts**: Bash and Python
 
 The `bin/` directory uses CommonJS intentionally for the launcher and a few compatibility helpers so the CLI still has a stable executable entry point. The main CLI implementation lives in `src/` and compiles to `dist/`. The `nemoclaw/` plugin uses TypeScript and requires compilation.
@@ -201,8 +203,9 @@ Follow `.agents/skills/_shared/pr-follow-up.md`: after opening or pushing to a P
 
 - Treat `docs/` as the source of truth for user-facing documentation and follow `docs/CONTRIBUTING.md`.
 - After completing development changes, run a documentation writer subagent before final handoff. Give it the changed files, behavior summary, and test evidence so it can update docs or report that no doc changes are needed.
-- For normal docs changes, include only source pages under `docs/`. Do not edit generated user skills under `.agents/skills/nemoclaw-user-*/`.
-- During release prep, run `nemoclaw-contributor-update-docs`, make doc version bumps, regenerate user skills, and open the docs refresh PR with both docs and generated user skills.
+- For normal docs changes, include source pages under `docs/`.
+- Update `.agents/skills/nemoclaw-user-guide/SKILL.md` only when the AI-agent docs routing guidance changes.
+- During release prep, run `nemoclaw-contributor-update-docs`, make doc version bumps, and open the docs refresh PR with the docs changes.
 
 ## PR Requirements
 
