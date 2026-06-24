@@ -83,6 +83,43 @@ printf '200'
   );
 }
 
+function writeDcodeWrapperFixture(tmpDir: string, home: string): string {
+  const wrapperPath = path.join(tmpDir, "dcode-wrapper.sh");
+  const wrapper = fs
+    .readFileSync(
+      path.join(REPO_ROOT, "agents", "langchain-deepagents-code", "dcode-wrapper.sh"),
+      "utf8",
+    )
+    .replace("export HOME=/sandbox", `export HOME=${JSON.stringify(home)}`);
+  fs.writeFileSync(wrapperPath, wrapper, { mode: 0o755 });
+  return wrapperPath;
+}
+
+function writeFakeDeepAgentsCodeModule(tmpDir: string): string {
+  const pythonPath = path.join(tmpDir, "python");
+  const packageDir = path.join(pythonPath, "deepagents_code");
+  fs.mkdirSync(packageDir, { recursive: true });
+  fs.writeFileSync(path.join(packageDir, "__init__.py"), "", "utf8");
+  fs.writeFileSync(
+    path.join(packageDir, "__main__.py"),
+    [
+      "import pathlib",
+      "import re",
+      "import sys",
+      "",
+      'config = pathlib.Path.home() / ".deepagents" / "config.toml"',
+      'text = config.read_text(encoding="utf-8")',
+      'match = re.search(r\'^default = "openai:([^"]+)"\', text, re.MULTILINE)',
+      "if not match:",
+      '    raise SystemExit("missing default model")',
+      'print(f"App: v0.1.12 | Agent: agent (default) | Model: {match.group(1)}")',
+      'print("ARGS:" + " ".join(sys.argv[1:]))',
+    ].join("\n"),
+    "utf8",
+  );
+  return pythonPath;
+}
+
 describe("issue #5667: hosted inference default model namespace", () => {
   // Snapshot the whole environment and restore it wholesale so the teardown
   // stays linear (no per-key conditional): clear every key, then repopulate
@@ -277,6 +314,25 @@ const { setupNim } = require(${onboardPath});
       const config = fs.readFileSync(path.join(home, ".deepagents", "config.toml"), "utf8");
       expect(config).toContain('default = "openai:nvidia/nemotron-3-super-v3"');
       expect(config).not.toContain("nvidia/nvidia/");
+
+      const dcodeWrapperPath = writeDcodeWrapperFixture(tmpDir, home);
+      const fakePythonPath = writeFakeDeepAgentsCodeModule(tmpDir);
+      const dcodeResult = spawnSync("bash", [dcodeWrapperPath, "-n", "ping"], {
+        cwd: REPO_ROOT,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          PYTHONPATH: fakePythonPath,
+        },
+        timeout: 60_000,
+      });
+      const dcodeOutput = `${dcodeResult.stdout}\n${dcodeResult.stderr}`;
+      assert.equal(dcodeResult.status, 0, dcodeOutput);
+      expect(dcodeOutput).toContain(
+        "App: v0.1.12 | Agent: agent (default) | Model: nvidia/nemotron-3-super-v3",
+      );
+      expect(dcodeOutput).toContain("ARGS:--sandbox none --no-mcp -n ping");
+      expect(dcodeOutput).not.toContain("nvidia/nvidia/");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
