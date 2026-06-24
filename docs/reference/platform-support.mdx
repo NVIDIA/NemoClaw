@@ -51,7 +51,7 @@ The engineering owner is the GitHub team auto-assigned to review changes to `ci/
 1. A change to a status or note opens a PR that touches `ci/platform-matrix.json`.
 2. CODEOWNERS auto-requests review from the engineering owner team.
 3. If the change is launch-facing (any status promotion, demotion, or new public claim), the engineering owner team explicitly acknowledges the launch impact in the PR review before approval.
-4. The pre-commit `python3 scripts/generate-platform-docs.py --check` hook fails CI if the rendered tables on this page have drifted from the JSON.
+4. The `platform-matrix-sync` pre-commit hook runs `python3 scripts/generate-platform-docs.py` and stages the regenerated tables on every commit that touches the matrix, the generator, or any rendered page, so commits cannot land with the tables out of sync. Run `python3 scripts/generate-platform-docs.py --check` locally or in CI to verify the rendered tables match the JSON without regenerating.
 5. After merge, the next NemoClaw release picks up the updated matrix automatically through the docs build.
 
 ## Agents
@@ -186,4 +186,4 @@ The items below come up in conversations but are explicitly out of scope. They a
 1. Edit [`ci/platform-matrix.json`](https://github.com/NVIDIA/NemoClaw/blob/main/ci/platform-matrix.json).
 2. Run `python3 scripts/generate-platform-docs.py` to regenerate this page and the partial tables on prerequisites and inference-options.
 3. Open a PR. The engineering owner team is auto-assigned through CODEOWNERS and explicitly acknowledges launch impact in the PR review for any launch-facing claim change.
-4. The `generate-platform-docs.py --check` step in pre-commit fails if the docs drift from the JSON.
+4. The `platform-matrix-sync` pre-commit hook regenerates and stages the rendered tables before the commit lands; run `python3 scripts/generate-platform-docs.py --check` to verify drift without regenerating.
