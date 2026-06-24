@@ -11,7 +11,7 @@ import type * as sessionModule from "../state/onboard-session";
 import { markLastStartedStepFailed } from "./exit-step-failure";
 
 const originalHome = process.env.HOME;
-const restoreHome =
+const restoreOriginalHome =
   originalHome === undefined
     ? () => {
         delete process.env.HOME;
@@ -33,13 +33,17 @@ beforeEach(async () => {
 afterEach(() => {
   session.clearSession();
   fs.rmSync(tmpDir, { recursive: true, force: true });
-  restoreHome();
+  restoreOriginalHome();
 });
 
-function requireLoadedSession(): NonNullable<ReturnType<typeof session.loadSession>> {
+function missingLoadedSession(): never {
+  throw new Error("Expected onboard session to be present");
+}
+
+function requireLoadedSession() {
   const loaded = session.loadSession();
   expect(loaded).not.toBeNull();
-  return loaded as NonNullable<ReturnType<typeof session.loadSession>>;
+  return loaded ?? missingLoadedSession();
 }
 
 describe("terminal step failure helper", () => {
