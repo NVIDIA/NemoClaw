@@ -47,7 +47,7 @@ describe("ChannelManifestRegistry", () => {
     );
   });
 
-  it("filters available manifests by agent and platform support lists", () => {
+  it("filters available manifests by agent and explicit platform support lists", () => {
     const registry = new ChannelManifestRegistry([TELEGRAM_MANIFEST, WECHAT_MANIFEST]);
 
     expect(registry.listAvailable().map((manifest) => manifest.id)).toEqual(["telegram", "wechat"]);
@@ -61,7 +61,7 @@ describe("ChannelManifestRegistry", () => {
     ).toEqual(["wechat"]);
   });
 
-  it("treats an explicit empty supportedChannelIds array as no channels available", () => {
+  it("treats an explicit empty supportedChannelIds array as deny-all", () => {
     const registry = new ChannelManifestRegistry([TELEGRAM_MANIFEST, WECHAT_MANIFEST]);
 
     expect(
@@ -74,7 +74,7 @@ describe("ChannelManifestRegistry", () => {
     ).toEqual([]);
   });
 
-  it("treats omitted or null supportedChannelIds as no platform restriction", () => {
+  it("treats null or undefined supportedChannelIds as no constraint", () => {
     const registry = new ChannelManifestRegistry([TELEGRAM_MANIFEST, WECHAT_MANIFEST]);
 
     expect(

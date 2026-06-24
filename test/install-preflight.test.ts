@@ -785,7 +785,7 @@ exit 0
 
     fs.writeFileSync(
       path.join(tmp, ".nemoclaw", "onboard-session.json"),
-      JSON.stringify({ resumable: true, status: "in_progress" }, null, 2),
+      '{"resumable":true,"status":"in_progress","sandboxName":"box","steps":{"sandbox":{"status":"complete"}}}\n',
     );
 
     writeNodeStub(fakeBin);

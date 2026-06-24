@@ -130,6 +130,7 @@ nemoclaw onboard --agent hermes [options]
 
 NemoClaw records onboarding progress so interrupted runs can continue.
 Use `--resume` to continue a resumable onboarding session with the provider, model, sandbox name, agent, and custom Dockerfile path recorded by the original run.
+During resume, NemoClaw reruns preflight, gateway, provider, and sandbox repair checks even when the saved session has already reached a later nonterminal onboarding phase.
 If the recorded session conflicts with flags you pass on the recovery run, NemoClaw exits and tells you to either rerun with the original settings or start over.
 
 Use `--fresh` to discard the saved onboarding session and start the wizard from the beginning.
@@ -1315,6 +1316,8 @@ $$nemoclaw my-assistant agents delete work --force --json
 Reconcile the live sandbox roster against a declarative [agents.yaml manifest](../inference/declarative-agents-manifest).
 The verb lists current agents via `openclaw agents list --json`, diffs them against the manifest, and adds missing secondaries or deletes orphan ones through `openclaw agents add|delete`.
 Per-agent `model`, `subagents.*`, `tools`, top-level `defaults`, and `main` overrides need a sandbox rebuild and are surfaced as warnings rather than silently dropped; rerun `$$nemoclaw onboard --agents <agents.yaml> --recreate-sandbox` to bake those fields.
+When the diff removes orphan agents, NemoClaw invokes OpenClaw's confirmation-skipping delete mode internally.
+`--non-interactive` controls the host-side `agents apply` prompt and is not forwarded to OpenClaw's delete command.
 
 ```bash
 $$nemoclaw my-assistant agents apply -f ./agents.yaml
@@ -1391,12 +1394,18 @@ $$nemoclaw my-assistant sessions delete agent:main:slack:c-9 --json
 
 ### `$$nemoclaw <name> sessions export [keys...]`
 
-Export the OpenClaw session JSONL from a running sandbox to the host, replacing the two-hop `docker exec kubectl cp` plus `docker cp` workaround.
+Export the agent's session history from a running sandbox to the host.
+The command routes by the sandbox's agent kind recorded in the registry.
 
-The command always enumerates the session store through `openclaw sessions list --agent <id> --json` and copies only the matching `<sessionId>.jsonl` (plus optional `<sessionId>.trajectory.jsonl`) files, so the export never picks up `sessions.json`, stale `.jsonl.lock` files, or other store bookkeeping.
+For an OpenClaw sandbox, the command enumerates the session store through `openclaw sessions list --agent <id> --json` and copies only the matching `<sessionId>.jsonl` (plus optional `<sessionId>.trajectory.jsonl`) files, so the export never picks up `sessions.json`, stale `.jsonl.lock` files, or other store bookkeeping.
 By default it writes a browsable directory of session files (`dir` format); pass `--format tar` for a single `.tgz` bundle suited to sharing or upload.
 With no positional keys, the command exports every session for the agent.
 Pass one or more keys (alias or canonical `agent:<id>:<rest>`) to filter.
+
+For a Hermes sandbox, the command invokes the in-sandbox `hermes sessions export` against a staging path under `/sandbox/.nemoclaw-staging` (the same downloadable workspace boundary OpenClaw uses), then downloads the resulting single JSONL stream to the host.
+Hermes stores session history in a SQLite database, so the command refuses positional keys, `--format tar`, and `--include-trajectory` with a clear error when the sandbox is Hermes.
+`--agent` accepts only `hermes` as a no-op alias on a Hermes sandbox and rejects any other value.
+The host destination defaults to `./sessions-<sandbox>.jsonl`; `--out` picks a different path.
 
 ```bash
 $$nemoclaw my-assistant sessions export
@@ -1407,15 +1416,15 @@ $$nemoclaw my-assistant sessions export --format tar --out ./bundles/alpha.tgz -
 
 | Flag | Description |
 |------|-------------|
-| `--agent <id>` | Agent id when `<keys>` are aliases rather than the canonical `agent:<id>:<rest>` form. |
-| `--format <dir\|tar>` | `dir` (default) writes a directory of session files; `tar` writes a single `.tgz` bundle for sharing/upload. |
-| `--out <path>` | Host destination. Defaults to `./sessions-<sandbox>/` for `dir`, or `./sessions-<sandbox>-<agent>.tgz` for `tar`. |
-| `--include-trajectory` | Include the (large) `*.trajectory.jsonl` files in the export. Excluded by default. |
+| `--agent <id>` | OpenClaw: agent id when `<keys>` are aliases rather than the canonical `agent:<id>:<rest>` form. Hermes: accepts only `hermes` as a no-op alias and rejects any other value. |
+| `--format <dir\|tar>` | OpenClaw only. `dir` (default) writes a directory of session files; `tar` writes a single `.tgz` bundle for sharing/upload. |
+| `--out <path>` | Host destination. OpenClaw defaults to `./sessions-<sandbox>/` for `dir` or `./sessions-<sandbox>-<agent>.tgz` for `tar`; Hermes defaults to `./sessions-<sandbox>.jsonl`. |
+| `--include-trajectory` | OpenClaw only. Include the (large) `*.trajectory.jsonl` files in the export. Excluded by default. |
 | `--json` | Print the export manifest as JSON instead of a status line. |
 
 Mismatched `--agent` plus canonical-key combinations are refused before any download runs.
 Session keys that begin with `-` are rejected at the command boundary instead of being silently dropped.
-Session JSONL can contain pasted secrets (API keys, tokens), so exported files are written owner-only (`0600`); for `tar` format the in-sandbox staging tarball is additionally created with `umask 077` and removed after the host download completes.
+Session JSONL can contain pasted secrets (API keys, tokens), so exported files are written owner-only (`0600`); the in-sandbox staging artefact is additionally created with `umask 077` and removed after the host download completes.
 
 ### `$$nemoclaw <name> download <sandbox-path> [host-dest]`
 
@@ -2159,36 +2168,54 @@ Export the credential before running `$$nemoclaw onboard` for that profile.
 
 #### Extra OpenClaw agents
 
-Set `NEMOCLAW_EXTRA_AGENTS_JSON` to a JSON array of secondary-agent entries to bake them into `agents.list[]` at image build time.
-Each entry must declare `id`, `workspace`, `agentDir`, `tools`, and `subagents.maxSpawnDepth`.
-The canonical `main` entry is always written first with `default: true`, so secondary agents cannot displace the primary agent.
+Set `NEMOCLAW_EXTRA_AGENTS_JSON` to either a JSON array of secondary-agent entries, or an object payload of the form `{"agents": [...], "defaults": {...}, "main": {...}}`, to bake them into `agents.list[]` at image build time.
+Each entry must declare `id` and `tools`; `workspace`, `agentDir`, `subagents`, `description`, and `model` are optional.
+The generator always writes the canonical `main` entry first with `default: true`, so secondary agents cannot displace the primary agent.
 Malformed JSON or invalid entries fail the image build with a structured error.
 
 Field rules:
 
 - `id` must match `^[a-z][a-z0-9_-]{0,31}$` and must not be `main`.
-- `workspace` must equal `/sandbox/.openclaw/workspace-<id>` exactly.
-- `agentDir` must equal `/sandbox/.openclaw/agents/<id>` exactly.
+- `workspace` defaults to `/sandbox/.openclaw/workspace-<id>`; when set, it must be an absolute path that resolves to that value.
+- `agentDir` defaults to `/sandbox/.openclaw/agents/<id>`; when set, it must be an absolute path that resolves to that value.
 - `tools` must declare a non-empty `allow[]` or `deny[]`; nothing is implicitly granted.
-- `subagents.maxSpawnDepth` must be a non-negative integer; set to `0` to forbid further spawning.
+- `model`, when set, must be a `"provider/model"` string whose provider portion matches the primary onboard provider.
 - `default: true` is rejected because the primary agent is the only default.
-- Allowed entry fields: `id`, `workspace`, `agentDir`, `tools`, `subagents`, `description`. Any other key fails the image build (no implicit credential or env pass-through).
-- Allowed `tools` fields: `profile`, `allow`, `deny`. Allowed `subagents` fields: `maxSpawnDepth`. Any other nested key fails the image build.
+- Allowed entry fields: `id`, `workspace`, `agentDir`, `tools`, `subagents`, `description`, `model`. Any other key fails the image build (no implicit credential or env pass-through).
+- Allowed `tools` fields: `profile`, `allow`, `deny`. Allowed per-agent `subagents` fields: `delegationMode`, `allowAgents`, `model`, `thinking`, `requireAgentId`. Any other nested key fails the image build.
 
-Example:
+OpenClaw accepts `subagents.maxSpawnDepth` only on `agents.defaults.subagents`, never inside a per-agent `subagents` object.
+The value must be an integer between `1` and `5` (OpenClaw's accepted range); to set it, use the object payload shape and pass it under `defaults`:
+
+```json
+{
+  "agents": [
+    {
+      "id": "research",
+      "tools": {
+        "profile": "minimal",
+        "allow": ["web_search", "web_fetch", "read", "write"],
+        "deny": ["exec", "gateway"]
+      }
+    }
+  ],
+  "defaults": {
+    "subagents": { "maxSpawnDepth": 1 }
+  }
+}
+```
+
+Array-shape example (paths defaulted):
 
 ```json
 [
   {
     "id": "research",
-    "workspace": "/sandbox/.openclaw/workspace-research",
-    "agentDir": "/sandbox/.openclaw/agents/research",
     "tools": {
       "profile": "minimal",
       "allow": ["web_search", "web_fetch", "read", "write"],
       "deny": ["exec", "gateway"]
-    },
-    "subagents": { "maxSpawnDepth": 0 }
+    }
   }
 ]
 ```

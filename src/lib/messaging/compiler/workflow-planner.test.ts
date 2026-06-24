@@ -905,6 +905,51 @@ describe("MessagingWorkflowPlanner", () => {
     expect(rebuilt).toBeNull();
   });
 
+  it("drops a persisted plan during stop/start/remove mutations when supportedChannelIds: [] denies the stored channel", async () => {
+    const existingPlan = await planner().buildPlan({
+      sandboxName: "demo",
+      agent: "openclaw",
+      workflow: "onboard",
+      isInteractive: false,
+      configuredChannels: ["telegram"],
+      credentialAvailability: { TELEGRAM_BOT_TOKEN: true },
+    });
+
+    const baseEntry = {
+      name: "demo",
+      messaging: { schemaVersion: 1, plan: existingPlan } as const,
+    };
+
+    expect(
+      await planner().buildChannelStopPlanFromSandboxEntry({
+        sandboxName: "demo",
+        agent: "openclaw",
+        channelId: "telegram",
+        sandboxEntry: baseEntry,
+        supportedChannelIds: [],
+      }),
+    ).toBeNull();
+
+    expect(
+      await planner().buildChannelStartPlanFromSandboxEntry({
+        sandboxName: "demo",
+        agent: "openclaw",
+        channelId: "telegram",
+        sandboxEntry: baseEntry,
+        supportedChannelIds: [],
+      }),
+    ).toBeNull();
+
+    expect(
+      await planner().buildChannelRemovePlanFromSandboxEntry({
+        sandboxName: "demo",
+        agent: "openclaw",
+        channelId: "telegram",
+        sandboxEntry: baseEntry,
+        supportedChannelIds: [],
+      }),
+    ).toBeNull();
+  });
   it("reports unsupported channels deterministically before compiling", async () => {
     await expect(
       planner().buildPlan({

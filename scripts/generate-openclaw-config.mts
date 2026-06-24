@@ -858,13 +858,17 @@ function validateExtraAgents(value: unknown, primaryProvider: string): ExtraAgen
     const canonicalPaths: Record<string, string> = {};
     for (const pathKey of ["workspace", "agentDir"] as const) {
       const pathValue = entry[pathKey];
+      const expected = expectedAgentPath(pathKey, id);
+      if (pathValue === undefined) {
+        canonicalPaths[pathKey] = expected;
+        continue;
+      }
       if (typeof pathValue !== "string" || pathValue.length === 0) {
-        throw new Error(`${label}.${pathKey} must be a non-empty string`);
+        throw new Error(`${label}.${pathKey} must be a non-empty string when present`);
       }
       if (!isAbsolute(pathValue)) {
         throw new Error(`${label}.${pathKey} must be an absolute path, got "${pathValue}"`);
       }
-      const expected = expectedAgentPath(pathKey, id);
       if (resolve(pathValue) !== expected) {
         throw new Error(
           `${label}.${pathKey} must equal "${expected}" for agent id "${id}", got "${pathValue}"`,

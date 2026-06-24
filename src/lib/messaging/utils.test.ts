@@ -74,7 +74,7 @@ describe("toMessagingAgentId", () => {
 });
 
 describe("isMessagingSupportedAgent", () => {
-  it("returns true for openclaw, hermes, and DeepAgents regardless of messagingPlatforms", () => {
+  it("returns true for openclaw, hermes, and DeepAgents regardless of populated messagingPlatforms", () => {
     expect(isMessagingSupportedAgent({ name: "openclaw" })).toBe(true);
     expect(isMessagingSupportedAgent({ name: "hermes", messagingPlatforms: ["telegram"] })).toBe(
       true,
@@ -126,6 +126,24 @@ describe("getMessagingManifestAvailabilityContext", () => {
       agent: "openclaw",
       supportedChannelIds: ["telegram", "discord"],
     });
+  });
+
+  it("preserves hermes agent identity alongside platform constraints", () => {
+    expect(
+      getMessagingManifestAvailabilityContext({
+        name: "hermes",
+        messagingPlatforms: ["telegram"],
+      }),
+    ).toEqual({ agent: "hermes", supportedChannelIds: ["telegram"] });
+  });
+
+  it("preserves DeepAgents agent identity alongside platform constraints", () => {
+    expect(
+      getMessagingManifestAvailabilityContext({
+        name: "langchain-deepagents-code",
+        messagingPlatforms: ["discord"],
+      }),
+    ).toEqual({ agent: "langchain-deepagents-code", supportedChannelIds: ["discord"] });
   });
 
   it("distinguishes an empty allowlist from an absent one", () => {
