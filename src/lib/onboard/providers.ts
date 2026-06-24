@@ -310,6 +310,8 @@ function isHostedInferenceProviderKeyCredentialCandidate(value) {
   return !PROVIDER_KEY_ROUTE_VALUES.has(value.trim().toLowerCase());
 }
 
+const isProviderKeyCredentialCandidate = isHostedInferenceProviderKeyCredentialCandidate;
+
 function getNonInteractiveModel(providerKey) {
   const model = (process.env.NEMOCLAW_MODEL || "").trim();
   if (!model) return null;
@@ -512,6 +514,7 @@ module.exports = {
   getNonInteractiveModel,
   getRequestedProviderHint,
   getRequestedModelHint,
+  isProviderKeyCredentialCandidate,
   buildProviderArgs,
   upsertProvider,
   providerExistsInGateway,

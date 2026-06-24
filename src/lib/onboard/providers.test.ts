@@ -13,6 +13,7 @@ const {
   buildProviderArgs,
   getRequestedModelHint,
   getRequestedProviderHint,
+  isProviderKeyCredentialCandidate,
   providerExistsInGateway,
   stageHostedInferenceSourceSecretEnv,
   upsertProvider,
@@ -29,6 +30,7 @@ const {
   ) => string[];
   getRequestedModelHint: (nonInteractive: boolean) => string | null;
   getRequestedProviderHint: (nonInteractive: boolean) => string | null;
+  isProviderKeyCredentialCandidate: (value: string | null | undefined) => boolean;
   providerExistsInGateway: (name: string, runOpenshell: RunOpenshell) => boolean;
   stageHostedInferenceSourceSecretEnv: () => boolean;
   upsertProvider: (
@@ -342,6 +344,17 @@ describe("onboard provider helpers", () => {
         expect(process.env.COMPATIBLE_API_KEY).toBeUndefined();
       },
     );
+  });
+
+  it.each([
+    ["sk-fallback-key", true],
+    ["nvapi-fallback-key", true],
+    [" build ", false],
+    ["custom", false],
+    ["inference", false],
+    ["routed", false],
+  ])("classifies provider-key compatibility bridge value %s", (value, expected) => {
+    expect(isProviderKeyCredentialCandidate(value)).toBe(expected);
   });
 
   it.each([

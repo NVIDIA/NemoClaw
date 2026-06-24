@@ -282,6 +282,7 @@ const {
   getProviderLabel,
   getNonInteractiveProvider,
   getNonInteractiveModel,
+  isProviderKeyCredentialCandidate,
   getSandboxInferenceConfig,
 } = onboardProviders as {
   OPENAI_ENDPOINT_URL: string;
@@ -293,6 +294,7 @@ const {
   getProviderLabel: (key: string) => string;
   getNonInteractiveProvider: () => string | null;
   getNonInteractiveModel: (providerKey: string) => string | null;
+  isProviderKeyCredentialCandidate: (value: string | null | undefined) => boolean;
   getSandboxInferenceConfig: (
     model: string,
     provider?: string | null,
@@ -3479,7 +3481,10 @@ async function handleRoutedSelection(
   }
   // check-direct-credential-env-ignore -- provider-key compatibility bridge; resolved into the router credential env below.
   const _providerKeyHint = (process.env.NEMOCLAW_PROVIDER_KEY || "").trim();
-  if (_providerKeyHint && !resolveProviderCredential(routerCredentialEnv)) {
+  if (
+    isProviderKeyCredentialCandidate(_providerKeyHint) &&
+    !resolveProviderCredential(routerCredentialEnv)
+  ) {
     saveCredential(routerCredentialEnv, _providerKeyHint);
   }
   if (isNonInteractive()) {
@@ -3781,7 +3786,7 @@ async function handleRemoteProviderSelection(
     const existingNvidiaKey = ["NVIDIA_INFERENCE_API_KEY", "NVIDIA_API_KEY"]
       .map((envName) => normalizeCredentialValue(process.env[envName] ?? ""))
       .find(Boolean);
-    if (_nvProviderKey && !existingNvidiaKey) {
+    if (isProviderKeyCredentialCandidate(_nvProviderKey) && !existingNvidiaKey) {
       process.env.NVIDIA_INFERENCE_API_KEY = _nvProviderKey;
     }
     if (isNonInteractive()) {
@@ -3810,7 +3815,7 @@ async function handleRemoteProviderSelection(
   } else {
     // check-direct-credential-env-ignore -- remote provider compatibility bridge; copied only into the selected credential env when empty.
     const _providerKeyHint = (process.env.NEMOCLAW_PROVIDER_KEY || "").trim();
-    if (_providerKeyHint && state.credentialEnv) {
+    if (isProviderKeyCredentialCandidate(_providerKeyHint) && state.credentialEnv) {
       const existingCredentialKey = normalizeCredentialValue(
         process.env[state.credentialEnv] ?? "",
       );
