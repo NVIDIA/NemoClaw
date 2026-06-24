@@ -48,7 +48,7 @@ const PROBED_AT = new Date("2026-05-28T04:00:00.000Z");
 function fakeAgent(name: "openclaw" | "hermes" = "openclaw"): AgentDefinition {
   const configDir = name === "openclaw" ? "/sandbox/.openclaw" : "/sandbox/.hermes";
   const stateDirs = name === "openclaw" ? ["whatsapp"] : ["platforms"];
-  const messagingPlatforms = ["telegram", "discord", "slack", "wechat", "whatsapp"];
+  const messagingPlatforms = ["telegram", "discord", "slack", "wechat", "whatsapp", "teams"];
   return {
     name,
     agentDir: `/fake/${name}`,

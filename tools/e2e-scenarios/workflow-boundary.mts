@@ -49,7 +49,9 @@ const COMMON_SECRET_ENV_NAMES = [
 const FREE_STANDING_SELECTOR_SPECIAL_CASES = new Set([
   "hermes-e2e-vitest",
   "hermes-root-entrypoint-smoke-vitest",
+  "jetson-nvmap-gpu-vitest",
 ]);
+const FULL_SUITE_EXCLUDED_FREE_STANDING_JOBS = new Set(["jetson-nvmap-gpu-vitest"]);
 
 function asRecord(value: unknown): WorkflowRecord {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -275,7 +277,9 @@ export function evaluateE2eVitestWorkflowDispatchSelectors(input: {
     return {
       valid: true,
       errors: [],
-      selectedFreeStandingJobs: [...freeStandingVitestJobIds].sort(),
+      selectedFreeStandingJobs: freeStandingVitestJobIds
+        .filter((job) => !FULL_SUITE_EXCLUDED_FREE_STANDING_JOBS.has(job))
+        .sort(),
       registryScenarios: [],
       liveScenariosRuns: true,
     };
@@ -319,9 +323,12 @@ function requireInput(
   errors: string[],
   inputs: WorkflowRecord,
   name: string,
-): void {
-  if (!Object.hasOwn(inputs, name))
+): WorkflowRecord {
+  if (!Object.hasOwn(inputs, name)) {
     errors.push(`workflow_dispatch missing input: ${name}`);
+    return {};
+  }
+  return asRecord(inputs[name]);
 }
 
 function requireStep(
@@ -448,6 +455,13 @@ function freeStandingJobIf(jobName: string, scenarioName?: string): string {
     ? ` || contains(format(',{0},', inputs.scenarios), ',${scenarioName},')`
     : "";
   return `\${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',${jobName},')${scenarioSelector} }}`;
+}
+
+function explicitOnlyFreeStandingJobIf(jobName: string, scenarioName?: string): string {
+  const scenarioSelector = scenarioName
+    ? ` || contains(format(',{0},', inputs.scenarios), ',${scenarioName},')`
+    : "";
+  return `\${{ contains(format(',{0},', inputs.jobs), ',${jobName},')${scenarioSelector} }}`;
 }
 
 function validateFreeStandingJobSelector(
@@ -7350,7 +7364,18 @@ export function validateE2eVitestScenariosWorkflowBoundary(
 
   const dispatchInputs = asRecord(workflowDispatch.inputs);
   requireInput(errors, dispatchInputs, "scenarios");
-  requireInput(errors, dispatchInputs, "jobs");
+  const jobsInput = requireInput(errors, dispatchInputs, "jobs");
+  const jobsDescription = stringValue(jobsInput.description);
+  if (!jobsDescription.includes("default-enabled jobs")) {
+    errors.push(
+      "workflow_dispatch jobs input description must say empty dispatch runs default-enabled jobs",
+    );
+  }
+  if (!jobsDescription.includes("explicit-only jobs")) {
+    errors.push(
+      "workflow_dispatch jobs input description must say explicit-only jobs are skipped unless selected",
+    );
+  }
   if (Object.hasOwn(dispatchInputs, "test_filter")) {
     errors.push("workflow_dispatch must not expose legacy test_filter input");
   }
@@ -7749,8 +7774,13 @@ export function validateE2eVitestScenariosWorkflowBoundary(
     "gateway-health-honest",
   );
 
-  validateFreeStandingJobSelector(errors, jobs, "jetson-nvmap-gpu-vitest", "jetson-nvmap-gpu");
-
+  const jetsonJob = asRecord(jobs["jetson-nvmap-gpu-vitest"]);
+  if (jetsonJob.needs !== "generate-matrix") {
+    errors.push("jetson-nvmap-gpu-vitest job must depend on generate-matrix");
+  }
+  if (jetsonJob.if !== explicitOnlyFreeStandingJobIf("jetson-nvmap-gpu-vitest", "jetson-nvmap-gpu")) {
+    errors.push("jetson-nvmap-gpu-vitest job must run only when explicitly selected");
+  }
   validateFreeStandingJobSelector(
     errors,
     jobs,
@@ -7851,6 +7881,31 @@ export function validateE2eVitestScenariosWorkflowBoundary(
     if (!reportScript.includes("**Requested scenarios:**")) {
       errors.push(
         "step 'Post Vitest scenario results to PR' run script must include **Requested scenarios:**",
+      );
+    }
+    if (!reportScript.includes("All default jobs passed")) {
+      errors.push(
+        "step 'Post Vitest scenario results to PR' run script must label empty dispatch as default jobs passed",
+      );
+    }
+    if (!reportScript.includes("default-enabled free-standing jobs")) {
+      errors.push(
+        "step 'Post Vitest scenario results to PR' run script must say empty dispatch uses default-enabled free-standing jobs",
+      );
+    }
+    if (!reportScript.includes("Explicit-only jobs skipped")) {
+      errors.push(
+        "step 'Post Vitest scenario results to PR' run script must list explicit-only skipped jobs on default dispatch",
+      );
+    }
+    if (!reportScript.includes("jobs=${job}") || !reportScript.includes("jetson-nvmap-gpu-vitest")) {
+      errors.push(
+        "step 'Post Vitest scenario results to PR' run script must document the explicit Jetson jobs selector",
+      );
+    }
+    if (!reportScript.includes("scenarios=${scenario}") || !reportScript.includes("jetson-nvmap-gpu")) {
+      errors.push(
+        "step 'Post Vitest scenario results to PR' run script must document the explicit Jetson scenario selector",
       );
     }
     for (const forbidden of [

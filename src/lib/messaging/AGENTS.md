@@ -5,7 +5,7 @@
 
 ## Purpose
 
-This package owns NemoClaw's manifest-first messaging architecture. It turns channel declarations for Telegram, Discord, Slack, WeChat, and WhatsApp into a serializable `SandboxMessagingPlan`, then applies that plan during onboard, channel add/remove/start/stop, rebuild, image build, runtime setup, diagnostics, and conflict checks.
+This package owns NemoClaw's manifest-first messaging architecture. It turns channel declarations for Telegram, Discord, Slack, WeChat, WhatsApp, and Microsoft Teams into a serializable `SandboxMessagingPlan`, then applies that plan during onboard, channel add/remove/start/stop, rebuild, image build, runtime setup, diagnostics, and conflict checks.
 
 The design goal is to keep messaging channel behavior out of core onboard/rebuild logic. Add channel-specific behavior to manifests, template resolvers, hooks, runtime assets, and policy metadata first; only change shared engines when the manifest vocabulary cannot express the required behavior.
 
@@ -76,8 +76,9 @@ Use the narrowest test that covers the changed surface:
 - Build-time render/install behavior: `npx vitest run test/messaging-build-applier.test.ts`
 - Onboard/channel CLI integration: `npx vitest run test/onboard-messaging.test.ts test/channels-add-preset.test.ts src/lib/onboard/messaging-channel-setup.test.ts`
 
-Mock external messaging APIs. Do not call real Telegram, Discord, Slack, WeChat, WhatsApp, NVIDIA, or OpenShell services from unit tests.
+Mock external messaging APIs. Do not call real Telegram, Discord, Slack, WeChat, WhatsApp, Microsoft Teams, NVIDIA, or OpenShell services from unit tests.
 
 ## Documentation
 
-User-facing behavior changes usually need docs under `docs/manage-sandboxes/messaging-channels.mdx` or `docs/reference/commands.mdx`. Do not edit generated user skills under `.agents/skills/nemoclaw-user-*/` for normal docs changes.
+User-facing behavior changes usually need docs under `docs/manage-sandboxes/messaging-channels.mdx` or `docs/reference/commands.mdx`.
+Update `.agents/skills/nemoclaw-user-guide/SKILL.md` only when AI-agent docs routing guidance changes.
