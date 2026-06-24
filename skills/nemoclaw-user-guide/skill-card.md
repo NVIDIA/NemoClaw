@@ -1,5 +1,5 @@
 ## Description: <br>
-Guides human users' AI agents to the canonical NemoClaw Fern documentation in Markdown form. <br>
+Guides human users' AI agents to the NemoClaw docs MCP server and canonical Fern documentation in Markdown form. <br>
 
 This skill is ready for commercial/non-commercial use. <br>
 
@@ -9,7 +9,7 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers who need to install, configure, operate, troubleshoot, or learn NemoClaw using an AI coding assistant. <br>
+Developers and engineers using AI coding assistants who need to install, configure, operate, troubleshoot, or secure NemoClaw sandboxed AI agents. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
@@ -19,15 +19,15 @@ Risk: Review before execution as proposals could introduce incorrect or misleadi
 Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
-- [NemoClaw AI Documentation Index](https://docs.nvidia.com/nemoclaw/llms.txt) <br>
-- [OpenClaw User Guide Home](https://docs.nvidia.com/nemoclaw/latest/user-guide/openclaw/home.md) <br>
-- [Hermes User Guide Home](https://docs.nvidia.com/nemoclaw/latest/user-guide/hermes/home.md) <br>
-- [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) <br>
+- [NemoClaw Docs MCP Server](https://docs.nvidia.com/nemoclaw/_mcp/server) <br>
+- [NemoClaw AI Documentation Index (llms.txt)](https://docs.nvidia.com/nemoclaw/llms.txt) <br>
+- [OpenClaw Quickstart](https://docs.nvidia.com/nemoclaw/latest/user-guide/openclaw/get-started/quickstart.md) <br>
+- [Hermes Quickstart](https://docs.nvidia.com/nemoclaw/latest/user-guide/hermes/get-started/quickstart.md) <br>
 
 
 ## Skill Output: <br>
-**Output Type(s):** [Documentation references, Configuration instructions] <br>
-**Output Format:** [Markdown with inline code blocks] <br>
+**Output Type(s):** [Documentation routing, Configuration instructions, Shell commands] <br>
+**Output Format:** [Markdown with inline bash code blocks] <br>
 **Output Parameters:** [1D] <br>
 **Other Properties Related to Output:** [None] <br>
 
@@ -38,7 +38,7 @@ Mitigation: Review and scan skill before deployment. <br>
 
 
 ## Evaluation Tasks: <br>
-Evaluated against 4 evaluation tasks in the `external` NVSkills-Eval profile within an `astra-sandbox` environment. <br>
+Evaluated against 5 internal skill-activation tasks in the NVSkills-Eval external profile. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
@@ -62,11 +62,11 @@ Underlying evaluation signals used in this run: <br>
 ## Evaluation Results: <br>
 | Dimension | Num | `claude-code` | `codex` |
 |---|---:|---:|---:|
-| Security | 4 | 100% (+0%) | 100% (+0%) |
-| Correctness | 4 | 88% (+64%) | 85% (+33%) |
-| Discoverability | 4 | 82% (+64%) | 62% (+24%) |
-| Effectiveness | 4 | 72% (+64%) | 75% (+36%) |
-| Efficiency | 4 | 66% (+41%) | 51% (+15%) |
+| Security | 5 | 90% (-10%) | 100% (+10%) |
+| Correctness | 5 | 90% (+68%) | 86% (+47%) |
+| Discoverability | 5 | 86% (+67%) | 67% (+22%) |
+| Effectiveness | 5 | 80% (+74%) | 87% (+64%) |
+| Efficiency | 5 | 71% (+45%) | 57% (+15%) |
 
 ## Skill Version(s): <br>
 0.1.0 (source: package.json) <br>

@@ -10,7 +10,7 @@ This benchmark summarizes 3-Tier Evaluation from NVSkills-Eval results for the s
 - Evaluation date: 2026-06-24
 - NVSkills-Eval profile: `external`
 - Environment: `astra-sandbox`
-- Dataset: 4 evaluation tasks
+- Dataset: 5 evaluation tasks
 - Attempts per task: 1
 - Pass threshold: 50%
 - Overall verdict: PASS
@@ -42,9 +42,9 @@ Underlying evaluation signals used in this run:
 
 ## Test Tasks
 
-The benchmark dataset contained 4 evaluation tasks:
+The benchmark dataset contained 5 evaluation tasks:
 
-- Positive tasks: 4 tasks where the skill was expected to activate.
+- Positive tasks: 5 tasks where the skill was expected to activate.
 - Negative tasks: 0 tasks where no skill was expected.
 - Unlabeled tasks: 0 tasks where positive/negative intent could not be inferred.
 
@@ -54,11 +54,11 @@ Task composition is derived from the evaluation dataset when possible. Entries w
 
 | Dimension | Num | `claude-code` | `codex` |
 |---|---:|---:|---:|
-| Security | 4 | 100% (+0%) | 100% (+0%) |
-| Correctness | 4 | 88% (+64%) | 85% (+33%) |
-| Discoverability | 4 | 82% (+64%) | 62% (+24%) |
-| Effectiveness | 4 | 72% (+64%) | 75% (+36%) |
-| Efficiency | 4 | 66% (+41%) | 51% (+15%) |
+| Security | 5 | 90% (-10%) | 100% (+10%) |
+| Correctness | 5 | 90% (+68%) | 86% (+47%) |
+| Discoverability | 5 | 86% (+67%) | 67% (+22%) |
+| Effectiveness | 5 | 80% (+74%) | 87% (+64%) |
+| Efficiency | 5 | 71% (+45%) | 57% (+15%) |
 
 Score values show skill-assisted performance. Values in parentheses show uplift versus the no-skill baseline when baseline data is available.
 
