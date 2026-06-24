@@ -71,7 +71,7 @@ repos:
         name: SPDX license headers (insert if missing)
         entry: bash scripts/check-spdx-headers.sh --fix
         language: system
-        files: ^(nemoclaw/src/.*\.ts|scripts/export-catalog-skills\.py|scripts/.*\.ts|nemoclaw-blueprint/.*\.py|.*\.sh)$
+        files: ^(nemoclaw/src/.*\.ts|scripts/.*\.ts|nemoclaw-blueprint/.*\.py|.*\.sh)$
         exclude: ^nemoclaw-blueprint/.*__init__\.py$
         pass_filenames: true
         priority: 4
@@ -203,16 +203,6 @@ repos:
       - id: markdownlint-cli2
         priority: 10
 
-  - repo: local
-    hooks:
-      - id: docs-to-skills-dry-run
-        name: Verify docs-to-skills output
-        entry: python3 scripts/docs-to-skills.py docs/ .agents/skills/ skills/ --prefix nemoclaw-user --doc-platform fern-mdx --dry-run
-        language: system
-        files: ^(docs/.*\.mdx?$|docs/conf\.py$|ci/platform-matrix\.json$|scripts/docs-to-skills\.py$|scripts/generate-platform-docs\.py$)
-        pass_filenames: false
-        priority: 10
-
   # ── commit-msg hooks ────────────────────────────────────────────────────────
   - repo: https://github.com/alessandrojcm/commitlint-pre-commit-hook
     rev: v9.24.0
@@ -320,7 +310,7 @@ repos:
         entry: npx vitest run test/skills-frontmatter.test.ts
         language: system
         pass_filenames: false
-        files: ^(\.agents/skills/|docs/.*\.mdx?$|scripts/docs-to-skills\.py$|test/skills-frontmatter\.test\.js$)
+        files: ^(\.agents/skills/|skills/|test/skills-frontmatter\.test\.ts$)
         priority: 20
 
 default_language_version:

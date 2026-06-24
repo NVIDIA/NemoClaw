@@ -166,7 +166,7 @@ navigation:
             slug: resources
             collapsed: open-by-default
             contents:
-              - page: "Agent Skills"
+              - page: "AI Agent Docs"
                 path: _build/agent-variants/resources/agent-skills.openclaw.generated.mdx
                 slug: agent-skills
               - link: "Community Examples"
@@ -306,7 +306,7 @@ navigation:
             slug: resources
             collapsed: open-by-default
             contents:
-              - page: "Agent Skills"
+              - page: "AI Agent Docs"
                 path: _build/agent-variants/resources/agent-skills.hermes.generated.mdx
                 slug: agent-skills
               - link: "Community Examples"
