@@ -17,6 +17,7 @@ import {
   createMessagingPreEnableHookInputs,
   getMessagingManifestAvailabilityContext,
   isMessagingHookConflictError,
+  isMessagingSupportedAgent,
   MessagingHostStateApplier,
   MessagingSetupApplier,
   MessagingWorkflowPlanner,
@@ -24,6 +25,7 @@ import {
   type SandboxMessagingChannelPlan,
   type SandboxMessagingPlan,
   toMessagingAgentId,
+  tryGetMessagingAgentId,
 } from "../../messaging";
 import { hydrateMessagingChannelConfig } from "../../messaging-channel-config";
 import { hashCredential } from "../../security/credential-hash";
@@ -756,7 +758,7 @@ async function planSandboxChannelAdd(
   }
 }
 
-async function persistManifestChannelDisabledPlan(
+export async function persistManifestChannelDisabledPlan(
   sandboxName: string,
   channelId: string,
   disabled: boolean,
@@ -764,6 +766,8 @@ async function persistManifestChannelDisabledPlan(
   const entry = registry.getSandbox(sandboxName);
   if (!entry?.messaging?.plan) return null;
   const agent = resolveAgentForSandbox(sandboxName);
+  const agentId = tryGetMessagingAgentId(agent);
+  if (agentId === null) return null;
   const planner = new MessagingWorkflowPlanner(
     messagingManifestRegistry,
     undefined,
@@ -771,7 +775,7 @@ async function persistManifestChannelDisabledPlan(
   );
   const context = {
     sandboxName,
-    agent: toMessagingAgentId(agent),
+    agent: agentId,
     channelId,
     sandboxEntry: entry,
     supportedChannelIds: availableManifestChannelsForAgent(agent).map((manifest) => manifest.id),
@@ -783,13 +787,20 @@ async function persistManifestChannelDisabledPlan(
   return MessagingHostStateApplier.applyPlanToRegistry(sandboxName, plan) ? plan : null;
 }
 
-async function persistManifestChannelRemovePlan(
+export async function persistManifestChannelRemovePlan(
   sandboxName: string,
   channelId: string,
 ): Promise<boolean> {
   const entry = registry.getSandbox(sandboxName);
   if (!entry) return false;
   const agent = resolveAgentForSandbox(sandboxName);
+  const agentId = tryGetMessagingAgentId(agent);
+  if (agentId === null) {
+    if (entry.messaging?.plan) {
+      return registry.updateSandbox(sandboxName, { messaging: undefined });
+    }
+    return true;
+  }
   const planner = new MessagingWorkflowPlanner(
     messagingManifestRegistry,
     undefined,
@@ -797,7 +808,7 @@ async function persistManifestChannelRemovePlan(
   );
   const plan = await planner.buildChannelRemovePlanFromSandboxEntry({
     sandboxName,
-    agent: toMessagingAgentId(agent),
+    agent: agentId,
     channelId,
     sandboxEntry: entry,
     supportedChannelIds: availableManifestChannelsForAgent(agent).map((manifest) => manifest.id),
@@ -910,6 +921,13 @@ export async function addSandboxChannel(
   const canonical = manifest.id;
 
   const agent = resolveAgentForSandbox(sandboxName);
+  if (!isMessagingSupportedAgent(agent)) {
+    console.error(
+      `  Agent '${agent.name}' does not support messaging channels for sandbox '${sandboxName}'.`,
+    );
+    console.error("  Messaging-capable agents: openclaw, hermes.");
+    process.exit(1);
+  }
   if (!channelSupportedByAgent(canonical, agent)) {
     console.error(
       `  Channel '${canonical}' is not supported by agent '${agent.name}' for sandbox '${sandboxName}'.`,

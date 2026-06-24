@@ -159,6 +159,7 @@ function createPhases(
       setupMessagingChannels: vi.fn(async () => ["slack", "discord"]),
       readMessagingPlanFromEnv: () => null,
       writePlanToEnv: vi.fn(),
+      clearPlanEnv: vi.fn(),
       getRegistrySandboxMessagingPlan: () => null,
       promptValidatedSandboxName: vi.fn(async () => "my-sandbox"),
       selectResourceProfileForSandbox: vi.fn(async () => null),

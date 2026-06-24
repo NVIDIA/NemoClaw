@@ -161,7 +161,11 @@ function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): Rebuild
 
   const session = createRebuildFlowSession(onboardSession.MACHINE_SNAPSHOT_VERSION);
   const rebuildShieldsWindow = { relocked: false, wasLocked: false };
-  const agentDef = { name: "openclaw", expectedVersion: "0.2.0", messagingPlatforms: [] };
+  const agentDef = {
+    name: "openclaw",
+    expectedVersion: "0.2.0",
+    messagingPlatforms: ["telegram", "discord", "slack", "wechat", "whatsapp"],
+  };
 
   vi.spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue").mockReturnValue(null);
   vi.spyOn(gatewayDrift, "detectOpenShellStateRpcResultIssue").mockReturnValue(null);

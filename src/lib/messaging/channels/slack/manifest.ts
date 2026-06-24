@@ -144,6 +144,30 @@ export const slackManifest = {
         },
       },
     },
+    {
+      id: "slack-deepagents-env",
+      kind: "env-lines",
+      agent: "langchain-deepagents-code",
+      target: "~/.deepagents/.env",
+      lines: [
+        "SLACK_BOT_TOKEN={{credential.slackBotToken.placeholder}}",
+        "SLACK_APP_TOKEN={{credential.slackAppToken.placeholder}}",
+        "SLACK_ALLOWED_USERS={{allowedIds.slack.csv}}",
+        "SLACK_ALLOWED_CHANNELS={{slackConfig.allowedChannels.csv}}",
+      ],
+    },
+    {
+      id: "slack-deepagents-channel",
+      kind: "json-fragment",
+      agent: "langchain-deepagents-code",
+      target: "~/.deepagents/messaging.json",
+      fragment: {
+        path: "channels.slack",
+        value: {
+          enabled: true,
+        },
+      },
+    },
   ],
   runtime: {
     openclaw: {
