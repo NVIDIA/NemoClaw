@@ -341,8 +341,8 @@ const { resolveSandboxImageTagFromCreateOutput } =
 const nim: typeof import("./inference/nim") = require("./inference/nim");
 const onboardSession: typeof import("./state/onboard-session") = require("./state/onboard-session");
 const {
-  markLastStartedStepFailed,
-}: typeof import("./onboard/exit-step-failure") = require("./onboard/exit-step-failure");
+  registerIncompleteOnboardExitHandlerForSession,
+}: typeof import("./onboard/onboard-exit-handler") = require("./onboard/onboard-exit-handler");
 const {
   getFutureShellPathHint,
   getPortConflictServiceHints,
@@ -4856,11 +4856,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     }
 
     let completed = false;
-    process.once("exit", (code) => {
-      if (!completed && code !== 0) {
-        markLastStartedStepFailed(onboardSession, "Onboarding exited before the step completed.");
-      }
-    });
+    registerIncompleteOnboardExitHandlerForSession(onboardSession, () => completed);
 
     const agent = await selectOnboardAgent({
       agentFlag: opts.agent,
@@ -5315,6 +5311,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         liveFinalFlowContext = context;
       },
     });
+    completed = true;
     traceCompleted = true;
   } finally {
     releaseOnboardLock();
@@ -5448,6 +5445,7 @@ module.exports = {
   getSandboxPromptDefault,
   getRequestedSandboxAgentName,
   normalizeSandboxAgentName,
+  registerIncompleteOnboardExitHandlerForSession,
   hydrateCredentialEnv,
   pruneKnownHostsEntries,
   shouldIncludeBuildContextPath,

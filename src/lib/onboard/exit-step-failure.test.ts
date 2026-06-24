@@ -8,7 +8,10 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type * as sessionModule from "../state/onboard-session";
-import { markLastStartedStepFailed } from "./exit-step-failure";
+import {
+  markLastStartedStepFailed,
+  registerIncompleteOnboardExitFailureHandler,
+} from "./exit-step-failure";
 
 const originalHome = process.env.HOME;
 const restoreOriginalHome =
@@ -51,6 +54,41 @@ describe("terminal step failure helper", () => {
     session.saveSession(session.createSession({ lastStepStarted: "inference" }));
 
     markLastStartedStepFailed(session, "Onboarding exited before the step completed.");
+
+    const loaded = requireLoadedSession();
+    expect(loaded.steps.inference.status).toBe("failed");
+    expect(loaded.status).toBe("failed");
+    expect(loaded.failure?.step).toBe("inference");
+    expect(loaded.failure?.message).toBe("Onboarding exited before the step completed.");
+    expect(loaded.machine.state).toBe("failed");
+  });
+
+  it("simulates the onboard exit listener and ignores successful or complete exits", () => {
+    const listeners: Array<(code: number) => void> = [];
+    let complete = false;
+    const processLike = {
+      once: (event: "exit", listener: (code: number) => void) => {
+        expect(event).toBe("exit");
+        listeners.push(listener);
+      },
+    };
+    session.saveSession(session.createSession({ lastStepStarted: "inference" }));
+
+    registerIncompleteOnboardExitFailureHandler(
+      session,
+      () => complete,
+      "Onboarding exited before the step completed.",
+      processLike,
+    );
+    listeners[0](0);
+    expect(requireLoadedSession().status).toBe("in_progress");
+
+    complete = true;
+    listeners[0](1);
+    expect(requireLoadedSession().status).toBe("in_progress");
+
+    complete = false;
+    listeners[0](1);
 
     const loaded = requireLoadedSession();
     expect(loaded.steps.inference.status).toBe("failed");
