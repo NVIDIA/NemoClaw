@@ -1034,15 +1034,21 @@ describe("E2E reusable workflow contract", () => {
     expect(buildStep?.run).toBe("npm run build:cli");
     expect(installOpenShellStep?.run).toContain("scripts/install-openshell.sh");
     expect(installOpenShellStep?.run).toContain("-u NVIDIA_INFERENCE_API_KEY");
+    expect(installOpenShellStep?.run).toContain("-u GITHUB_TOKEN");
     expect(runStep?.env?.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
     expect(runStep?.env?.COMPATIBLE_API_KEY).toBeUndefined();
     expect(runStep?.env?.NEMOCLAW_ENDPOINT_URL).toBeUndefined();
     expect(runStep?.env?.NEMOCLAW_PROVIDER).toBeUndefined();
+    expect(runStep?.env?.NEMOCLAW_E2E_USE_HOSTED_INFERENCE).toBeUndefined();
+    expect(runStep?.env?.NEMOCLAW_MODEL).toBeUndefined();
+    expect(runStep?.env?.NEMOCLAW_COMPAT_MODEL).toBeUndefined();
+    expect(runStep?.env?.NEMOCLAW_PREFERRED_API).toBeUndefined();
 
     const script = readFileSync(new URL("./e2e/test-onboard-resume.sh", import.meta.url), "utf8");
     expect(script).toContain("lib/openai-compatible-api-proof.sh");
     expect(script).toContain("start_fake_openai_compatible_api");
     expect(script).toContain('NEMOCLAW_ENDPOINT_URL="$FAKE_OPENAI_BASE_URL"');
+    expect(script).toContain("assert_fake_openai_authenticated_inference");
     expect(script).not.toContain("lib/ci-compatible-inference.sh");
   });
 
