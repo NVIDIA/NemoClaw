@@ -69,6 +69,66 @@ type RebuildFlowHarness = {
 
 const originalSandboxName = process.env.NEMOCLAW_SANDBOX_NAME;
 
+function createStep(status: string): RebuildFlowStep {
+  return { status, startedAt: null, completedAt: null, error: null };
+}
+
+function createRebuildFlowSession(machineSnapshotVersion: number): RebuildFlowSession {
+  return {
+    sandboxName: "alpha",
+    provider: "ollama-local",
+    model: "nvidia/nemotron",
+    credentialEnv: null,
+    metadata: {},
+    hermesToolGateways: [],
+    lastStepStarted: null,
+    status: "in_progress",
+    failure: null,
+    machine: {
+      version: machineSnapshotVersion,
+      state: "gateway",
+      stateEnteredAt: "2026-06-01T00:00:00.000Z",
+      revision: 2,
+    },
+    steps: {
+      preflight: createStep("complete"),
+      gateway: createStep("complete"),
+      provider_selection: createStep("pending"),
+      inference: createStep("pending"),
+      sandbox: createStep("pending"),
+      openclaw: createStep("pending"),
+      agent_setup: createStep("pending"),
+      policies: createStep("pending"),
+    },
+  };
+}
+
+function installTerminalStepFailureMock(
+  onboardSession: { markStepFailed: (...args: unknown[]) => unknown },
+  session: RebuildFlowSession,
+): MockInstance {
+  return vi
+    .spyOn(onboardSession, "markStepFailed")
+    .mockImplementation((stepName: unknown, message: unknown, options: unknown) => {
+      const stepKey = String(stepName);
+      const step = session.steps[stepKey] ?? createStep("pending");
+      session.steps[stepKey] = step;
+      step.status = "failed";
+      step.error = typeof message === "string" ? message : null;
+      session.status = "failed";
+      session.failure = {
+        step: stepKey,
+        message: typeof message === "string" ? message : null,
+        recordedAt: "2026-06-01T00:02:00.000Z",
+      };
+      const updateMachine =
+        (options as { updateMachine?: boolean } | undefined)?.updateMachine === true;
+      session.machine.state = updateMachine ? "failed" : session.machine.state;
+      session.machine.revision += updateMachine ? 1 : 0;
+      return session;
+    });
+}
+
 function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): RebuildFlowHarness {
   delete require.cache[requireDist.resolve(rebuildModulePath)];
 
@@ -99,33 +159,7 @@ function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): Rebuild
   const messaging = requireDist("../../../../dist/lib/messaging/index.js");
   const shields = requireDist("../../../../dist/lib/shields/index.js");
 
-  const session: RebuildFlowSession = {
-    sandboxName: "alpha",
-    provider: "ollama-local",
-    model: "nvidia/nemotron",
-    credentialEnv: null,
-    metadata: {},
-    hermesToolGateways: [],
-    lastStepStarted: null,
-    status: "in_progress",
-    failure: null,
-    machine: {
-      version: onboardSession.MACHINE_SNAPSHOT_VERSION,
-      state: "gateway",
-      stateEnteredAt: "2026-06-01T00:00:00.000Z",
-      revision: 2,
-    },
-    steps: {
-      preflight: { status: "complete", startedAt: null, completedAt: null, error: null },
-      gateway: { status: "complete", startedAt: null, completedAt: null, error: null },
-      provider_selection: { status: "pending", startedAt: null, completedAt: null, error: null },
-      inference: { status: "pending", startedAt: null, completedAt: null, error: null },
-      sandbox: { status: "pending", startedAt: null, completedAt: null, error: null },
-      openclaw: { status: "pending", startedAt: null, completedAt: null, error: null },
-      agent_setup: { status: "pending", startedAt: null, completedAt: null, error: null },
-      policies: { status: "pending", startedAt: null, completedAt: null, error: null },
-    },
-  };
+  const session = createRebuildFlowSession(onboardSession.MACHINE_SNAPSHOT_VERSION);
   const rebuildShieldsWindow = { relocked: false, wasLocked: false };
   const agentDef = { name: "openclaw", expectedVersion: "0.2.0", messagingPlatforms: [] };
 
@@ -149,33 +183,7 @@ function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): Rebuild
   const releaseOnboardLockSpy = vi
     .spyOn(onboardSession, "releaseOnboardLock")
     .mockImplementation(() => undefined);
-  const markStepFailedSpy = vi
-    .spyOn(onboardSession, "markStepFailed")
-    .mockImplementation((stepName: unknown, message: unknown, options: unknown) => {
-      const stepKey = String(stepName);
-      const step =
-        session.steps[stepKey] ??
-        ({
-          status: "pending",
-          startedAt: null,
-          completedAt: null,
-          error: null,
-        } satisfies RebuildFlowStep);
-      session.steps[stepKey] = step;
-      step.status = "failed";
-      step.error = typeof message === "string" ? message : null;
-      session.status = "failed";
-      session.failure = {
-        step: stepKey,
-        message: typeof message === "string" ? message : null,
-        recordedAt: "2026-06-01T00:02:00.000Z",
-      };
-      const updateMachine =
-        (options as { updateMachine?: boolean } | undefined)?.updateMachine === true;
-      session.machine.state = updateMachine ? "failed" : session.machine.state;
-      session.machine.revision += updateMachine ? 1 : 0;
-      return session;
-    });
+  const markStepFailedSpy = installTerminalStepFailureMock(onboardSession, session);
   vi.spyOn(registry, "getSandbox").mockReturnValue({
     name: "alpha",
     provider: "ollama-local",
