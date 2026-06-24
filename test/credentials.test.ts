@@ -402,7 +402,7 @@ describe("legacy credentials.json migration (two-phase: stage then remove)", () 
     const credsDir = path.join(home, ".nemoclaw");
     const legacyFile = path.join(credsDir, "credentials.json");
     fs.mkdirSync(credsDir, { recursive: true });
-    const cleartext = JSON.stringify({ NVIDIA_INFERENCE_API_KEY: "nvapi-secret-payload" });
+    const cleartext = JSON.stringify({ NVIDIA_INFERENCE_API_KEY: "nvapi-TEST-NOT-A-REAL-PAYLOAD" });
     fs.writeFileSync(legacyFile, cleartext, { mode: 0o600 });
 
     // Capture the pre-unlink content via a wrapper that intercepts the unlink
@@ -511,7 +511,10 @@ describe("removeLegacyCredentialsFileIfEmpty (post-upgrade cleanup, #3105)", () 
     const credsDir = path.join(home, ".nemoclaw");
     const legacyFile = path.join(credsDir, "credentials.json");
     fs.mkdirSync(credsDir, { recursive: true });
-    const payload = JSON.stringify({ NVIDIA_INFERENCE_API_KEY: "nvapi-real-secret", FOO: "bar" });
+    const payload = JSON.stringify({
+      NVIDIA_INFERENCE_API_KEY: "nvapi-TEST-NOT-A-REAL-SECRET",
+      FOO: "bar",
+    });
     fs.writeFileSync(legacyFile, payload, { mode: 0o600 });
 
     const credentials = await importCredentialsModule(home);
@@ -700,15 +703,15 @@ prompt('secret: ', { secret: true })
       credentials.readCredentialPrompt("secret: ", async () => " help "),
     ).resolves.toEqual({ kind: "help" });
     await expect(
-      credentials.readCredentialPrompt("secret: ", async () => " sk-real-key "),
-    ).resolves.toEqual({ kind: "credential", value: "sk-real-key" });
+      credentials.readCredentialPrompt("secret: ", async () => " sk-TEST-NOT-A-REAL-KEY "),
+    ).resolves.toEqual({ kind: "credential", value: "sk-TEST-NOT-A-REAL-KEY" });
   });
 
   it("re-prompts shared credential prompts after help input", () => {
     const script = `
 const credentials = require(${JSON.stringify(path.join(import.meta.dirname, "..", "dist", "lib", "credentials", "store.js"))});
 const { createCredentialPromptHelpers } = require(${JSON.stringify(path.join(import.meta.dirname, "..", "dist", "lib", "onboard", "credential-navigation.js"))});
-const answers = ["help", "sk-real-key"];
+const answers = ["help", "sk-TEST-NOT-A-REAL-KEY"];
 const logs = [];
 credentials.prompt = async () => answers.shift() || "";
 const originalLog = console.log;
@@ -728,7 +731,7 @@ createCredentialPromptHelpers(() => { throw new Error("unexpected exit"); }).rea
     expect(result.status).toBe(0);
     const payload = JSON.parse(String(result.stdout).trim());
     expect(payload).toEqual({
-      value: "sk-real-key",
+      value: "sk-TEST-NOT-A-REAL-KEY",
       logs: ["  Type back to choose a different provider, or exit to quit."],
       remaining: 0,
     });

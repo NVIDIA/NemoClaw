@@ -277,4 +277,18 @@ network_policies:
     expect(prepared.policyPath).not.toBe(basePolicyPath);
     expect(prepared.cleanup?.()).toBe(true);
   });
+
+  it("does not merge OpenClaw OTEL policy at create time for terminal agents", () => {
+    const basePolicyPath = tmpPolicy("version: 1\nnetwork_policies:\n  base: {}\n");
+    process.env.NEMOCLAW_OPENCLAW_OTEL = "1";
+    process.env.NEMOCLAW_OPENCLAW_OTEL_ENDPOINT = "http://host.openshell.internal:4318";
+
+    const prepared = prepareInitialSandboxCreatePolicy(basePolicyPath, [], {
+      agentName: "langchain-deepagents-code",
+    });
+
+    expect(prepared.appliedPresets).toEqual([]);
+    expect(prepared.policyPath).toBe(basePolicyPath);
+    expect(prepared.cleanup).toBeUndefined();
+  });
 });

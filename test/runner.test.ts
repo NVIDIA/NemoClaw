@@ -154,10 +154,10 @@ describe("runner env merging", () => {
       const output = runCapture(
         ["sh", "-c", 'printf "%s %s" "$OPENSHELL_GATEWAY" "$OPENAI_API_KEY"'],
         {
-          env: { OPENAI_API_KEY: "sk-test-secret" },
+          env: { OPENAI_API_KEY: "sk-TEST-NOT-A-REAL-SECRET" },
         },
       );
-      expect(output).toBe("nemoclaw sk-test-secret");
+      expect(output).toBe("nemoclaw sk-TEST-NOT-A-REAL-SECRET");
     } finally {
       if (originalGateway === undefined) {
         delete process.env.OPENSHELL_GATEWAY;
